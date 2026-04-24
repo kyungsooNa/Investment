@@ -5,7 +5,7 @@ import tempfile
 import shutil
 import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock, AsyncMock, patch, mock_open, call
+from unittest.mock import MagicMock, AsyncMock, patch, mock_open, call, ANY
 from common.types import TradeSignal, ErrorCode, ResCommonResponse, Exchange, OrderState
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig, SignalRecord
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
@@ -382,6 +382,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             exchange=Exchange.KRX,
             source="strategy:테스트전략",
             finalize_immediately=False,
+            trace_id=ANY,
         )
 
     async def test_run_strategy_scan_respects_max_positions(self):
@@ -1117,6 +1118,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             exchange=Exchange.KRX,
             source="strategy:TestStrategy",
             finalize_immediately=False,
+            trace_id=ANY,
         )
         # 3. live 모드 가상매매 기록은 체결 확인 이후 OrderExecutionService가 처리
         vm.log_sell_by_strategy_async.assert_not_awaited()
@@ -1151,6 +1153,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             exchange=Exchange.KRX,
             source="strategy:TestStrategy",
             finalize_immediately=False,
+            trace_id=ANY,
         )
         vm.log_sell_by_strategy_async.assert_not_awaited()
 
@@ -1257,6 +1260,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             exchange=Exchange.KRX,
             source="strategy:TestStrat",
             finalize_immediately=False,
+            trace_id=ANY,
         )
         vm.log_sell_by_strategy_async.assert_not_awaited()
 
@@ -1343,6 +1347,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             exchange=Exchange.KRX,
             source="strategy:TestStrat",
             finalize_immediately=False,
+            trace_id=ANY,
         )
 
         vm.log_sell_by_strategy_async.assert_not_awaited()
@@ -1685,6 +1690,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             exchange=Exchange.KRX,
             source="strategy:S",
             finalize_immediately=False,
+            trace_id=ANY,
         )
 
     async def test_execute_signal_market_price_api_error(self):
@@ -1964,6 +1970,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             exchange=Exchange.KRX,
             source="strategy:S1",
             finalize_immediately=False,
+            trace_id=ANY,
         )
 
     async def test_restore_state_with_price_subscription(self):

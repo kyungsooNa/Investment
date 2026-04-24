@@ -4,6 +4,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState, OrderExecutionReport
+from core.loggers.trace_context import trace_scope, get_trace_id, new_trace_id
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
 from repositories.streaming_stock_repo import StreamingType
@@ -223,54 +224,60 @@ class OrderExecutionService:
                 )
                 return None
 
-            if context.state.is_terminal:
-                return context
+            with trace_scope(context.trace_id or ""):
+                return await self._apply_execution_report_inner(context, report)
 
-            if not self._mark_execution_event_seen(report.event_key):
-                return context
+    async def _apply_execution_report_inner(
+        self, context: OrderContext, report: OrderExecutionReport
+    ) -> Optional[OrderContext]:
+        if context.state.is_terminal:
+            return context
 
-            if not context.broker_order_no:
-                context = self._transition_order_context(
-                    context.order_key,
-                    context.state,
-                    broker_order_no=report.broker_order_no,
-                )
+        if not self._mark_execution_event_seen(report.event_key):
+            return context
 
-            if report.event_state == OrderState.REJECTED:
-                return self._transition_order_context(
-                    context.order_key,
-                    OrderState.REJECTED,
-                    error_message=report.message or "주문 거부",
-                )
-
-            if report.event_state == OrderState.CANCELED:
-                canceled = self._transition_order_context(context.order_key, OrderState.CANCELED)
-                return await self._persist_virtual_trade_for_terminal_report(canceled, report)
-
-            if report.fill_qty <= 0:
-                if context.state == OrderState.PENDING_SUBMIT:
-                    return self._transition_order_context(context.order_key, OrderState.SUBMITTED)
-                return context
-
-            if report.cumulative_filled_qty is not None:
-                filled_qty = max(report.cumulative_filled_qty, context.filled_qty)
-            else:
-                filled_qty = context.filled_qty + report.fill_qty
-
-            if report.remaining_qty is not None:
-                is_filled = report.remaining_qty <= 0
-            else:
-                is_filled = filled_qty >= context.qty
-            if is_filled:
-                filled_qty = max(filled_qty, context.qty)
-            next_state = OrderState.FILLED if is_filled else OrderState.PARTIAL_FILLED
-            transitioned = self._transition_order_context(
+        if not context.broker_order_no:
+            context = self._transition_order_context(
                 context.order_key,
-                next_state,
-                filled_qty=filled_qty,
+                context.state,
                 broker_order_no=report.broker_order_no,
             )
-            return await self._persist_virtual_trade_for_terminal_report(transitioned, report)
+
+        if report.event_state == OrderState.REJECTED:
+            return self._transition_order_context(
+                context.order_key,
+                OrderState.REJECTED,
+                error_message=report.message or "주문 거부",
+            )
+
+        if report.event_state == OrderState.CANCELED:
+            canceled = self._transition_order_context(context.order_key, OrderState.CANCELED)
+            return await self._persist_virtual_trade_for_terminal_report(canceled, report)
+
+        if report.fill_qty <= 0:
+            if context.state == OrderState.PENDING_SUBMIT:
+                return self._transition_order_context(context.order_key, OrderState.SUBMITTED)
+            return context
+
+        if report.cumulative_filled_qty is not None:
+            filled_qty = max(report.cumulative_filled_qty, context.filled_qty)
+        else:
+            filled_qty = context.filled_qty + report.fill_qty
+
+        if report.remaining_qty is not None:
+            is_filled = report.remaining_qty <= 0
+        else:
+            is_filled = filled_qty >= context.qty
+        if is_filled:
+            filled_qty = max(filled_qty, context.qty)
+        next_state = OrderState.FILLED if is_filled else OrderState.PARTIAL_FILLED
+        transitioned = self._transition_order_context(
+            context.order_key,
+            next_state,
+            filled_qty=filled_qty,
+            broker_order_no=report.broker_order_no,
+        )
+        return await self._persist_virtual_trade_for_terminal_report(transitioned, report)
 
     async def handle_signing_notice(self, data: dict, tr_id: str = "") -> Optional[OrderContext]:
         """WebSocket signing_notice payload를 정규화한 뒤 FSM에 적용합니다."""
@@ -340,50 +347,52 @@ class OrderExecutionService:
         notified_count = 0
 
         for context in self._active_order_contexts():
-            entered_at = context.state_entered_at or context.created_at
-            if entered_at is None:
-                continue
+            with trace_scope(context.trace_id or ""):
+                entered_at = context.state_entered_at or context.created_at
+                if entered_at is None:
+                    continue
 
-            age_sec = max((now - entered_at).total_seconds(), 0)
-            alert_level = self._get_stuck_order_alert_level(context, age_sec)
-            if alert_level is None:
-                continue
-            if context.last_stuck_alert_level == alert_level.value:
-                continue
+                age_sec = max((now - entered_at).total_seconds(), 0)
+                alert_level = self._get_stuck_order_alert_level(context, age_sec)
+                if alert_level is None:
+                    continue
+                if context.last_stuck_alert_level == alert_level.value:
+                    continue
 
-            age_text = f"{age_sec:.0f}s"
-            message = (
-                f"stuck order detected: order_key={context.order_key}, "
-                f"broker_order_no={context.broker_order_no or 'N/A'}, "
-                f"side={context.side.value}, qty={context.qty}, "
-                f"filled_qty={context.filled_qty}, remaining_qty={context.remaining_qty}, "
-                f"source={context.source}, state={context.state.value}, age={age_text}"
-            )
-
-            if alert_level == NotificationLevel.CRITICAL:
-                self.logger.critical(message)
-            else:
-                self.logger.warning(message)
-
-            if self._notification_service:
-                await self._notification_service.emit(
-                    NotificationCategory.TRADE,
-                    alert_level,
-                    "Stuck order detected",
-                    message,
-                    metadata={
-                        "order_key": context.order_key,
-                        "broker_order_no": context.broker_order_no or "",
-                        "stock_code": context.stock_code,
-                        "side": context.side.value,
-                        "qty": context.qty,
-                        "filled_qty": context.filled_qty,
-                        "remaining_qty": context.remaining_qty,
-                        "source": context.source,
-                        "state": context.state.value,
-                        "age_sec": int(age_sec),
-                    },
+                age_text = f"{age_sec:.0f}s"
+                message = (
+                    f"stuck order detected: order_key={context.order_key}, "
+                    f"broker_order_no={context.broker_order_no or 'N/A'}, "
+                    f"side={context.side.value}, qty={context.qty}, "
+                    f"filled_qty={context.filled_qty}, remaining_qty={context.remaining_qty}, "
+                    f"source={context.source}, state={context.state.value}, age={age_text}"
                 )
+
+                if alert_level == NotificationLevel.CRITICAL:
+                    self.logger.critical(message)
+                else:
+                    self.logger.warning(message)
+
+                if self._notification_service:
+                    await self._notification_service.emit(
+                        NotificationCategory.TRADE,
+                        alert_level,
+                        "Stuck order detected",
+                        message,
+                        metadata={
+                            "order_key": context.order_key,
+                            "broker_order_no": context.broker_order_no or "",
+                            "stock_code": context.stock_code,
+                            "side": context.side.value,
+                            "qty": context.qty,
+                            "filled_qty": context.filled_qty,
+                            "remaining_qty": context.remaining_qty,
+                            "source": context.source,
+                            "state": context.state.value,
+                            "age_sec": int(age_sec),
+                            "trace_id": context.trace_id or "",
+                        },
+                    )
 
             self._transition_order_context(
                 context.order_key,
@@ -440,42 +449,51 @@ class OrderExecutionService:
 
         applied_count = 0
         for context in contexts:
-            side_code = "02" if context.side == OrderSide.BUY else "01"
-            response = await self.broker_api_wrapper.inquire_daily_ccld(
-                start_date=start_date,
-                end_date=end_date,
-                side_code=side_code,
-                stock_code=context.stock_code,
-                ccld_dvsn="00",
-                order_no=context.broker_order_no or "",
-                exchange=context.exchange,
-            )
-            if not response or response.rt_cd != ErrorCode.SUCCESS.value:
-                msg = response.msg1 if response else "응답 없음"
-                self.logger.warning(f"주문조회 polling 실패: {context.order_key} - {msg}")
-                continue
+            with trace_scope(context.trace_id or ""):
+                applied_count += await self._poll_single_order_context(context, start_date, end_date)
+        return applied_count
 
-            for row in self._extract_order_query_rows(response.data):
-                if not self._query_row_matches_context(row, context):
-                    continue
-                report = OrderExecutionReport.from_order_query(row)
-                if not report.broker_order_no or not report.stock_code:
-                    continue
-                was_seen = report.event_key in self._processed_execution_events
-                before = self._find_context_for_execution_report(report)
-                before_snapshot = (
-                    before.state,
-                    before.filled_qty,
-                    before.broker_order_no,
-                ) if before else None
-                applied = await self.apply_execution_report(report)
-                after_snapshot = (
-                    applied.state,
-                    applied.filled_qty,
-                    applied.broker_order_no,
-                ) if applied else None
-                if applied is not None and not was_seen and before_snapshot != after_snapshot:
-                    applied_count += 1
+    async def _poll_single_order_context(
+        self, context: OrderContext, start_date: str, end_date: str
+    ) -> int:
+        """단일 OrderContext에 대한 polling 처리. trace_scope 내부에서 호출됩니다."""
+        applied_count = 0
+        side_code = "02" if context.side == OrderSide.BUY else "01"
+        response = await self.broker_api_wrapper.inquire_daily_ccld(
+            start_date=start_date,
+            end_date=end_date,
+            side_code=side_code,
+            stock_code=context.stock_code,
+            ccld_dvsn="00",
+            order_no=context.broker_order_no or "",
+            exchange=context.exchange,
+        )
+        if not response or response.rt_cd != ErrorCode.SUCCESS.value:
+            msg = response.msg1 if response else "응답 없음"
+            self.logger.warning(f"주문조회 polling 실패: {context.order_key} - {msg}")
+            return applied_count
+
+        for row in self._extract_order_query_rows(response.data):
+            if not self._query_row_matches_context(row, context):
+                continue
+            report = OrderExecutionReport.from_order_query(row)
+            if not report.broker_order_no or not report.stock_code:
+                continue
+            was_seen = report.event_key in self._processed_execution_events
+            before = self._find_context_for_execution_report(report)
+            before_snapshot = (
+                before.state,
+                before.filled_qty,
+                before.broker_order_no,
+            ) if before else None
+            applied = await self.apply_execution_report(report)
+            after_snapshot = (
+                applied.state,
+                applied.filled_qty,
+                applied.broker_order_no,
+            ) if applied else None
+            if applied is not None and not was_seen and before_snapshot != after_snapshot:
+                applied_count += 1
 
         return applied_count
 
@@ -687,6 +705,7 @@ class OrderExecutionService:
         side: OrderSide,
         source: str,
         finalize_immediately: bool,
+        trace_id: Optional[str] = None,
     ) -> ResCommonResponse:
         order_key = self._make_order_key(stock_code, side, exchange)
         action_kr = "매수" if side == OrderSide.BUY else "매도"
@@ -714,6 +733,7 @@ class OrderExecutionService:
                 price=price,
                 qty=qty,
                 source=source,
+                trace_id=trace_id,
             )
             self._set_order_context(context)
 
@@ -752,49 +772,54 @@ class OrderExecutionService:
         exchange: Exchange = Exchange.KRX,
         source: str = "default",
         finalize_immediately: bool = True,
+        *,
+        trace_id: Optional[str] = None,
     ):
         """주식 매수 주문 요청 및 결과 출력."""
-        t_start = self.pm.start_timer()
-        if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
-            self.logger.warning("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
-            return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
-        # Fallback if market_calendar_service is not available (though it should be)
-        elif not self.market_calendar_service and not self.market_clock.is_market_operating_hours():
-            return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
+        current_trace = trace_id or get_trace_id() or new_trace_id("MANUAL")
+        with trace_scope(current_trace):
+            t_start = self.pm.start_timer()
+            if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
+                self.logger.warning("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
+                return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
+            # Fallback if market_calendar_service is not available (though it should be)
+            elif not self.market_calendar_service and not self.market_clock.is_market_operating_hours():
+                return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
-        buy_order_result: ResCommonResponse = await self._submit_order_with_fsm(
-            stock_code=stock_code,
-            price=price,
-            qty=qty,
-            exchange=exchange,
-            side=OrderSide.BUY,
-            source=source,
-            finalize_immediately=finalize_immediately,
-        )
-        if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
-            self.logger.info(
-                f"주식 매수 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
-            if self._price_sub_svc:
-                asyncio.create_task(self._price_sub_svc.add_subscription(
-                    stock_code, SubscriptionPriority.HIGH, "portfolio", StreamingType.UNIFIED_PRICE
-                ))
-            if self._notification_service:
-                await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "매수 주문 성공",
-                                    f"{stock_code} {qty}주 @ {price}원",
-                                    metadata={"code": stock_code, "qty": qty, "price": price})
-        else:
-            rt_cd = buy_order_result.rt_cd if buy_order_result else 'None'
-            msg1 = buy_order_result.msg1 if buy_order_result else '응답 없음'
-            self.logger.error(
-                f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
-            if self._virtual_trade_service:
-                await self._virtual_trade_service.log_order_failure_async("BUY", stock_code, price, qty, msg1)
-            if self._notification_service:
-                await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "매수 주문 실패",
-                                    f"{stock_code} - {msg1}",
-                                    metadata={"code": stock_code, "error": msg1})
-        self.pm.log_timer(f"OrderExecutionService.handle_place_buy_order({stock_code})", t_start)
-        return buy_order_result
+            buy_order_result: ResCommonResponse = await self._submit_order_with_fsm(
+                stock_code=stock_code,
+                price=price,
+                qty=qty,
+                exchange=exchange,
+                side=OrderSide.BUY,
+                source=source,
+                finalize_immediately=finalize_immediately,
+                trace_id=current_trace,
+            )
+            if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
+                self.logger.info(
+                    f"주식 매수 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
+                if self._price_sub_svc:
+                    asyncio.create_task(self._price_sub_svc.add_subscription(
+                        stock_code, SubscriptionPriority.HIGH, "portfolio", StreamingType.UNIFIED_PRICE
+                    ))
+                if self._notification_service:
+                    await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "매수 주문 성공",
+                                        f"{stock_code} {qty}주 @ {price}원",
+                                        metadata={"code": stock_code, "qty": qty, "price": price, "trace_id": current_trace})
+            else:
+                rt_cd = buy_order_result.rt_cd if buy_order_result else 'None'
+                msg1 = buy_order_result.msg1 if buy_order_result else '응답 없음'
+                self.logger.error(
+                    f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
+                if self._virtual_trade_service:
+                    await self._virtual_trade_service.log_order_failure_async("BUY", stock_code, price, qty, msg1)
+                if self._notification_service:
+                    await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "매수 주문 실패",
+                                        f"{stock_code} - {msg1}",
+                                        metadata={"code": stock_code, "error": msg1, "trace_id": current_trace})
+            self.pm.log_timer(f"OrderExecutionService.handle_place_buy_order({stock_code})", t_start)
+            return buy_order_result
 
     async def handle_place_sell_order(
         self,
@@ -804,49 +829,54 @@ class OrderExecutionService:
         exchange: Exchange = Exchange.KRX,
         source: str = "default",
         finalize_immediately: bool = True,
+        *,
+        trace_id: Optional[str] = None,
     ):
         """주식 매도 주문 요청 및 결과 출력."""
-        t_start = self.pm.start_timer()
-        if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
-            self.logger.warning("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
-            return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
-        # Fallback if market_calendar_service is not available
-        elif not self.market_calendar_service and not self.market_clock.is_market_operating_hours():
-            return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
+        current_trace = trace_id or get_trace_id() or new_trace_id("MANUAL")
+        with trace_scope(current_trace):
+            t_start = self.pm.start_timer()
+            if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
+                self.logger.warning("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
+                return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
+            # Fallback if market_calendar_service is not available
+            elif not self.market_calendar_service and not self.market_clock.is_market_operating_hours():
+                return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
-        sell_order_result: ResCommonResponse = await self._submit_order_with_fsm(
-            stock_code=stock_code,
-            price=price,
-            qty=qty,
-            exchange=exchange,
-            side=OrderSide.SELL,
-            source=source,
-            finalize_immediately=finalize_immediately,
-        )
-        if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
-            self.logger.info(
-                f"주식 매도 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
-            if self._price_sub_svc:
-                asyncio.create_task(self._price_sub_svc.remove_subscription(
-                    stock_code, "portfolio"
-                ))
-            if self._notification_service:
-                await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "매도 주문 성공",
-                                    f"{stock_code} {qty}주 @ {price}원",
-                                    metadata={"code": stock_code, "qty": qty, "price": price})
-        else:
-            rt_cd = sell_order_result.rt_cd if sell_order_result else 'None'
-            msg1 = sell_order_result.msg1 if sell_order_result else '응답 없음'
-            self.logger.error(
-                f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
-            if self._virtual_trade_service:
-                await self._virtual_trade_service.log_order_failure_async("SELL", stock_code, price, qty, msg1)
-            if self._notification_service:
-                await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "매도 주문 실패",
-                                    f"{stock_code} - {msg1}",
-                                    metadata={"code": stock_code, "error": msg1})
-        self.pm.log_timer(f"OrderExecutionService.handle_place_sell_order({stock_code})", t_start)
-        return sell_order_result
+            sell_order_result: ResCommonResponse = await self._submit_order_with_fsm(
+                stock_code=stock_code,
+                price=price,
+                qty=qty,
+                exchange=exchange,
+                side=OrderSide.SELL,
+                source=source,
+                finalize_immediately=finalize_immediately,
+                trace_id=current_trace,
+            )
+            if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
+                self.logger.info(
+                    f"주식 매도 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
+                if self._price_sub_svc:
+                    asyncio.create_task(self._price_sub_svc.remove_subscription(
+                        stock_code, "portfolio"
+                    ))
+                if self._notification_service:
+                    await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "매도 주문 성공",
+                                        f"{stock_code} {qty}주 @ {price}원",
+                                        metadata={"code": stock_code, "qty": qty, "price": price, "trace_id": current_trace})
+            else:
+                rt_cd = sell_order_result.rt_cd if sell_order_result else 'None'
+                msg1 = sell_order_result.msg1 if sell_order_result else '응답 없음'
+                self.logger.error(
+                    f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
+                if self._virtual_trade_service:
+                    await self._virtual_trade_service.log_order_failure_async("SELL", stock_code, price, qty, msg1)
+                if self._notification_service:
+                    await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "매도 주문 실패",
+                                        f"{stock_code} - {msg1}",
+                                        metadata={"code": stock_code, "error": msg1, "trace_id": current_trace})
+            self.pm.log_timer(f"OrderExecutionService.handle_place_sell_order({stock_code})", t_start)
+            return sell_order_result
 
     async def handle_buy_stock(
         self,

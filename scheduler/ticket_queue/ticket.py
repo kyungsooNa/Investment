@@ -23,6 +23,7 @@ class Ticket:
     payload: dict
     attempt: int = 0
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    trace_id: str = ""
 
     def __lt__(self, other: "Ticket") -> bool:
         """PriorityQueue 비교: 낮은 숫자 = 높은 우선순위."""

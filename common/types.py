@@ -91,6 +91,7 @@ class OrderContext(BaseModel):
     state_entered_at: Optional[datetime] = None
     last_stuck_alert_at: Optional[datetime] = None
     last_stuck_alert_level: str = ""
+    trace_id: Optional[str] = None
 
     @model_validator(mode="after")
     def sync_remaining_qty(self) -> "OrderContext":
