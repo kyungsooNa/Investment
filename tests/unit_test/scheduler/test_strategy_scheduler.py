@@ -4,6 +4,7 @@ import asyncio
 import tempfile
 import shutil
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch, mock_open, call
 from common.types import TradeSignal, ErrorCode, ResCommonResponse, Exchange, OrderState
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig, SignalRecord
@@ -195,6 +196,68 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(strat_status["max_positions"], 5)
         self.assertEqual(strat_status["interval_minutes"], 10)
 
+    def test_get_status_uses_strategy_position_state_when_virtual_trade_is_empty(self):
+        """가상매매 DB가 비어 있어도 전략 position_state 기준 보유를 반환한다."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="오닐PP/BGU")
+        strategy._position_state = {
+            "489790": SimpleNamespace(entry_price=82000, entry_date="20260424")
+        }
+        scheduler._signal_history = [
+            SignalRecord(
+                strategy_name="오닐PP/BGU",
+                code="489790",
+                name="한화비전",
+                action="BUY",
+                price=82000,
+                qty=6,
+                reason="test",
+                timestamp="2026-04-24 13:14:18",
+                api_success=True,
+            )
+        ]
+        scheduler.register(StrategySchedulerConfig(strategy=strategy, interval_minutes=3, max_positions=5))
+        vm.get_holds_by_strategy.return_value = []
+
+        status = scheduler.get_status()
+
+        self.assertEqual(status["strategies"][0]["current_holds"], 1)
+        self.assertEqual(status["strategies"][0]["holdings"][0]["code"], "489790")
+        self.assertEqual(status["strategies"][0]["holdings"][0]["buy_price"], 82000)
+        self.assertEqual(status["strategies"][0]["holdings"][0]["qty"], 6)
+
+    def test_get_status_skips_invalid_strategy_code_and_recovers_buy_price_from_signal_history(self):
+        """잘못된 position_state 코드는 제외하고 신호 이력으로 진입가를 복원한다."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="거래량돌파(전통)")
+        strategy._position_state = {
+            "B": SimpleNamespace(breakout_level=1000, peak_price=1100),
+            "010060": SimpleNamespace(breakout_level=326500, peak_price=377500),
+        }
+        scheduler._signal_history = [
+            SignalRecord(
+                strategy_name="거래량돌파(전통)",
+                code="010060",
+                name="OCI홀딩스",
+                action="BUY",
+                price=377500,
+                qty=1,
+                reason="test",
+                timestamp="2026-04-24 12:38:34",
+                api_success=True,
+            )
+        ]
+        scheduler.register(StrategySchedulerConfig(strategy=strategy, interval_minutes=1, max_positions=5))
+        vm.get_holds_by_strategy.return_value = []
+
+        status = scheduler.get_status()
+
+        self.assertEqual(status["strategies"][0]["current_holds"], 1)
+        holding = status["strategies"][0]["holdings"][0]
+        self.assertEqual(holding["code"], "010060")
+        self.assertEqual(holding["buy_price"], 377500)
+        self.assertEqual(holding["buy_date"], "2026-04-24 12:38:34")
+
     def test_get_status_empty(self):
         """전략 미등록 상태에서 get_status 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
@@ -283,6 +346,77 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         # max_positions 도달 → log_buy 호출 안됨
         vm.log_buy_async.assert_not_called()
+
+    async def test_run_strategy_uses_strategy_position_state_for_exit_and_capacity(self):
+        """전략 position_state도 현재 보유로 간주해 exit/max_positions에 반영한다."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="오닐PP/BGU")
+        strategy._position_state = {
+            "489790": SimpleNamespace(entry_price=82000, entry_date="20260424")
+        }
+        strategy.check_exits = AsyncMock(return_value=[])
+        strategy.scan = AsyncMock(return_value=[
+            TradeSignal(
+                code="100840", name="SNT에너지", action="BUY",
+                price=57700, qty=8, reason="scan", strategy_name="오닐PP/BGU"
+            )
+        ])
+        scheduler._signal_history = [
+            SignalRecord(
+                strategy_name="오닐PP/BGU",
+                code="489790",
+                name="한화비전",
+                action="BUY",
+                price=82000,
+                qty=6,
+                reason="test",
+                timestamp="2026-04-24 13:14:18",
+                api_success=True,
+            )
+        ]
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=1)
+        scheduler.register(config)
+        vm.get_holds_by_strategy.return_value = []
+
+        await scheduler._run_strategy(config)
+
+        strategy.check_exits.assert_awaited_once()
+        self.assertEqual(strategy.check_exits.await_args.args[0][0]["code"], "489790")
+        strategy.scan.assert_not_awaited()
+
+    async def test_run_strategy_recovers_buy_price_from_signal_history_for_state_only_holding(self):
+        """state-only 보유도 신호 이력으로 buy_price를 복원해 check_exits에 전달한다."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="거래량돌파(전통)")
+        strategy._position_state = {
+            "010060": SimpleNamespace(breakout_level=326500, peak_price=377500)
+        }
+        strategy.check_exits = AsyncMock(return_value=[])
+        strategy.scan = AsyncMock(return_value=[])
+        scheduler._signal_history = [
+            SignalRecord(
+                strategy_name="거래량돌파(전통)",
+                code="010060",
+                name="OCI홀딩스",
+                action="BUY",
+                price=377500,
+                qty=1,
+                reason="test",
+                timestamp="2026-04-24 12:38:34",
+                api_success=True,
+            )
+        ]
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=5)
+        scheduler.register(config)
+        vm.get_holds_by_strategy.return_value = []
+
+        await scheduler._run_strategy(config)
+
+        strategy.check_exits.assert_awaited_once()
+        holding = strategy.check_exits.await_args.args[0][0]
+        self.assertEqual(holding["code"], "010060")
+        self.assertEqual(holding["buy_price"], 377500)
+        self.assertEqual(holding["qty"], 1)
 
     async def test_run_strategy_scan_respects_max_positions_growing_holdings(self):
         """remaining 슬라이싱으로 max_positions 초과 매수를 방지하는지 테스트.
