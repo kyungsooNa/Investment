@@ -414,6 +414,7 @@ class WebAppContext:
             notification_service=self.notification_service,
             market_calendar_service=self._mcs,
             price_subscription_service=self.price_subscription_service,
+            virtual_trade_service=self.virtual_trade_service,
         )
         self.streaming_service.register_handler(
             "signing_notice",

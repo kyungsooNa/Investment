@@ -28,6 +28,7 @@ def mock_trade(**kwargs):
 async def test_virtual_endpoints(web_client, mock_web_ctx):
     """모의투자 관련 엔드포인트 테스트"""
     web_api._PRICE_CACHE.clear()
+    mock_web_ctx.virtual_trade_service.sync_live_strategy_positions = MagicMock()
     # Summary
     mock_web_ctx.virtual_trade_service.get_summary.return_value = {"total_trades": 10}
     response = web_client.get("/api/virtual/summary")
@@ -64,6 +65,24 @@ async def test_virtual_endpoints(web_client, mock_web_ctx):
     assert "trades" in response.json()
     assert len(response.json()["trades"]) == 1
     assert response.json()["trades"][0]["stock_name"] == "삼성전자"
+    assert mock_web_ctx.virtual_trade_service.sync_live_strategy_positions.call_count >= 3
+
+
+@pytest.mark.asyncio
+async def test_virtual_chart_syncs_live_strategy_positions(web_client, mock_web_ctx):
+    """차트 조회도 live 전략 포지션 sync를 먼저 수행한다."""
+    mock_web_ctx.virtual_trade_service.sync_live_strategy_positions = MagicMock()
+    mock_web_ctx.virtual_trade_service.get_strategy_return_history.return_value = [
+        {"date": "2025-01-01", "return_rate": 1.0}
+    ]
+    mock_web_ctx.stock_query_service.get_ohlcv_range.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data=[{"date": "20250101", "close": 30000}]
+    )
+
+    response = web_client.get("/api/virtual/chart/StrategyA")
+
+    assert response.status_code == 200
+    mock_web_ctx.virtual_trade_service.sync_live_strategy_positions.assert_called_once_with()
 
 
 @pytest.mark.asyncio

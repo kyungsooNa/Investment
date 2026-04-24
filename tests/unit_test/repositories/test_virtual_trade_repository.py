@@ -875,3 +875,68 @@ def test_migrate_legacy_data_handles_failures(tmp_path):
     loaded_cache = repo._load_price_cache()
     assert loaded_cache["005930"]["2025-01-01"] == 70000
     assert mock_logger.warning.call_count >= 2
+
+
+def test_sync_live_strategy_positions_backfills_missing_strategy_holds(virutal_trade_repository, tmp_path):
+    """전략 상태 파일 + scheduler signal_history를 기준으로 누락 HOLD를 복구한다."""
+    data_root = tmp_path / "data"
+    scheduler_dir = data_root / "StrategyScheduler"
+    scheduler_dir.mkdir(parents=True, exist_ok=True)
+
+    state_payload = {
+        "positions": {
+            "489790": {"entry_price": 82000, "entry_date": "20260424"},
+            "100840": {"entry_price": 57700, "entry_date": "20260424"},
+        }
+    }
+    (data_root / "pp_position_state.json").write_text(json.dumps(state_payload), encoding="utf-8")
+
+    scheduler_db = scheduler_dir / "scheduler.db"
+    with sqlite3.connect(scheduler_db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE signal_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                strategy_name TEXT NOT NULL,
+                code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                action TEXT NOT NULL,
+                price INTEGER NOT NULL,
+                qty INTEGER NOT NULL DEFAULT 1,
+                return_rate REAL,
+                reason TEXT,
+                timestamp TEXT NOT NULL,
+                api_success INTEGER NOT NULL DEFAULT 1
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO signal_history
+            (strategy_name, code, name, action, price, qty, return_rate, reason, timestamp, api_success)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("오닐PP/BGU", "489790", "한화비전", "BUY", 82000, 6, None, "", "2026-04-24 13:14:18", 1),
+                ("오닐PP/BGU", "100840", "SNT에너지", "BUY", 57700, 8, None, "", "2026-04-24 12:39:43", 1),
+                ("오닐PP/BGU", "100840", "SNT에너지", "SELL", 60000, 8, None, "", "2026-04-24 14:00:00", 1),
+            ],
+        )
+
+    inserted = virutal_trade_repository.sync_live_strategy_positions()
+    holds = virutal_trade_repository.get_holds_by_strategy("오닐PP/BGU")
+
+    assert len(inserted) == 2
+    assert {row["code"] for row in inserted} == {"489790", "100840"}
+    assert len(holds) == 2
+
+    by_code = {row["code"]: row for row in holds}
+    assert by_code["489790"]["buy_price"] == 82000
+    assert by_code["489790"]["qty"] == 6
+    assert by_code["489790"]["buy_date"] == "2026-04-24 13:14:18"
+    assert by_code["100840"]["buy_price"] == 57700
+    assert by_code["100840"]["qty"] == 1
+    assert by_code["100840"]["buy_date"] == "2026-04-24 00:00:00"
+
+    inserted_again = virutal_trade_repository.sync_live_strategy_positions()
+    assert inserted_again == []

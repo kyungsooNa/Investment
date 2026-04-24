@@ -277,6 +277,16 @@ async def test_facade_delegation(virtual_trade_service, mock_repo):
     mock_repo.log_sell_async.assert_awaited_with("005930", 1200)
 
 
+def test_sync_live_strategy_positions_delegates_to_repo(virtual_trade_service, mock_repo):
+    """live 전략 포지션 sync 요청은 repository로 위임한다."""
+    mock_repo.sync_live_strategy_positions.return_value = [{"code": "489790"}]
+
+    result = virtual_trade_service.sync_live_strategy_positions()
+
+    mock_repo.sync_live_strategy_positions.assert_called_once_with()
+    assert result == [{"code": "489790"}]
+
+
 @pytest.mark.asyncio
 async def test_reconcile_with_broker_force_closes_missing_local_holds(virtual_trade_service, mock_repo):
     """로컬 HOLD인데 실제 잔고가 없으면 강제 종결한다."""

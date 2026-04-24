@@ -17,6 +17,12 @@ from utils.transaction_cost_utils import TransactionCostUtils
 logger = logging.getLogger(__name__)
 
 COLUMNS = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status", "reason"]
+LIVE_STRATEGY_STATE_FILES = {
+    "오닐PP/BGU": "pp_position_state.json",
+    "오닐스퀴즈돌파": "osb_position_state.json",
+    "하이타이트플래그": "htf_position_state.json",
+    "첫눌림목": "fp_position_state.json",
+}
 
 _SELECT_TRADES = (
     "SELECT strategy, code, buy_date, buy_price, qty, sell_date, sell_price, return_rate, status, reason "
@@ -180,6 +186,168 @@ class VirtualTradeRepository:
         with self._db:
             self._db.execute("DELETE FROM trades")
             self._db.executemany(_INSERT_TRADE, rows)
+
+    def _get_data_root_dir(self) -> str:
+        base_dir = os.path.dirname(os.path.dirname(self.db_path))
+        return base_dir if base_dir else "data"
+
+    @staticmethod
+    def _normalize_entry_date(entry_date: str) -> str:
+        raw = str(entry_date or "").strip()
+        if len(raw) == 8 and raw.isdigit():
+            return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]} 00:00:00"
+        if len(raw) == 10 and raw.count("-") == 2:
+            return f"{raw} 00:00:00"
+        return raw
+
+    def _load_live_strategy_state_positions(self) -> list[dict]:
+        data_root = self._get_data_root_dir()
+        positions: list[dict] = []
+
+        for strategy_name, file_name in LIVE_STRATEGY_STATE_FILES.items():
+            path = os.path.join(data_root, file_name)
+            if not os.path.exists(path):
+                continue
+
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+            except Exception as e:
+                logger.warning(f"[가상매매] 전략 상태파일 로드 실패 {path}: {e}")
+                continue
+
+            raw_positions = payload.get("positions", {}) if isinstance(payload, dict) else {}
+            for code, state in raw_positions.items():
+                if not isinstance(state, dict):
+                    continue
+
+                positions.append({
+                    "strategy": strategy_name,
+                    "code": str(code).strip(),
+                    "buy_price": float(state.get("entry_price", 0) or 0),
+                    "buy_date": self._normalize_entry_date(state.get("entry_date", "")),
+                })
+
+        return [p for p in positions if p["code"] and p["buy_price"] > 0 and p["buy_date"]]
+
+    def _load_scheduler_open_signal_map(self, target_pairs: set[tuple[str, str]]) -> dict[tuple[str, str], dict]:
+        if not target_pairs:
+            return {}
+
+        scheduler_db_path = os.path.join(self._get_data_root_dir(), "StrategyScheduler", "scheduler.db")
+        if not os.path.exists(scheduler_db_path):
+            return {}
+
+        try:
+            with sqlite3.connect(scheduler_db_path) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT id, strategy_name, code, action, price, qty, timestamp
+                    FROM signal_history
+                    WHERE api_success=1
+                    ORDER BY id
+                    """
+                ).fetchall()
+        except Exception as e:
+            logger.warning(f"[가상매매] scheduler signal_history 로드 실패: {e}")
+            return {}
+
+        signals_by_pair: dict[tuple[str, str], list[dict]] = {}
+        for row_id, strategy_name, code, action, price, qty, timestamp in rows:
+            key = (str(strategy_name).strip(), str(code).strip())
+            if key not in target_pairs:
+                continue
+            signals_by_pair.setdefault(key, []).append({
+                "id": row_id,
+                "action": str(action).strip().upper(),
+                "price": int(price or 0),
+                "qty": int(qty or 0),
+                "timestamp": str(timestamp or "").strip(),
+            })
+
+        open_signal_map: dict[tuple[str, str], dict] = {}
+        for key, signal_rows in signals_by_pair.items():
+            remaining_sell_qty = 0
+            open_lots: list[dict] = []
+
+            for row in reversed(signal_rows):
+                qty = int(row["qty"] or 0)
+                if qty <= 0:
+                    continue
+
+                if row["action"] == "SELL":
+                    remaining_sell_qty += qty
+                    continue
+                if row["action"] != "BUY":
+                    continue
+
+                if remaining_sell_qty >= qty:
+                    remaining_sell_qty -= qty
+                    continue
+
+                open_qty = qty - remaining_sell_qty
+                remaining_sell_qty = 0
+                open_lots.append({
+                    "qty": open_qty,
+                    "price": row["price"],
+                    "timestamp": row["timestamp"],
+                })
+
+            if not open_lots:
+                continue
+
+            latest_lot = open_lots[0]
+            open_signal_map[key] = {
+                "qty": sum(int(lot["qty"]) for lot in open_lots),
+                "buy_price": latest_lot["price"],
+                "buy_date": latest_lot["timestamp"],
+            }
+
+        return open_signal_map
+
+    def sync_live_strategy_positions(self) -> list[dict]:
+        positions = self._load_live_strategy_state_positions()
+        if not positions:
+            return []
+
+        target_pairs = {(p["strategy"], p["code"]) for p in positions}
+        open_signal_map = self._load_scheduler_open_signal_map(target_pairs)
+        inserted: list[dict] = []
+
+        with self._lock:
+            for position in positions:
+                strategy_name = position["strategy"]
+                code = position["code"]
+                row = self._db.execute(
+                    "SELECT 1 FROM trades WHERE strategy=? AND code=? AND status='HOLD' LIMIT 1",
+                    (strategy_name, code)
+                ).fetchone()
+                if row is not None:
+                    continue
+
+                signal_meta = open_signal_map.get((strategy_name, code), {})
+                buy_price = float(signal_meta.get("buy_price") or position["buy_price"])
+                buy_date = str(signal_meta.get("buy_date") or position["buy_date"])
+                qty = int(signal_meta.get("qty") or 1)
+
+                with self._db:
+                    self._db.execute(
+                        _INSERT_TRADE,
+                        (strategy_name, code, buy_date, buy_price, qty, None, None, 0.0, "HOLD", "")
+                    )
+
+                inserted.append({
+                    "strategy": strategy_name,
+                    "code": code,
+                    "buy_date": buy_date,
+                    "buy_price": buy_price,
+                    "qty": qty,
+                })
+
+        if inserted:
+            logger.info(f"[가상매매] live 전략 포지션 동기화: {inserted}")
+
+        return inserted
 
     # ---- 매수/매도 ----
 
@@ -765,13 +933,17 @@ class VirtualTradeRepository:
     def get_all_strategies(self) -> list[str]:
         data = self._load_data()
         daily = data.get("daily", {})
-        if not daily:
-            return []
 
         strategies = set()
-        recent_dates = sorted(daily.keys(), reverse=True)[:5]  # 최근 5거래일만 확인
-        for date in recent_dates:
-            strategies.update(daily[date].keys())
+        if daily:
+            recent_dates = sorted(daily.keys(), reverse=True)[:5]  # 최근 5거래일만 확인
+            for date in recent_dates:
+                strategies.update(daily[date].keys())
+
+        trade_rows = self._db.execute(
+            "SELECT DISTINCT strategy FROM trades WHERE strategy != '' AND strategy != 'ALL' AND status != 'FAILED'"
+        ).fetchall()
+        strategies.update(row[0] for row in trade_rows if row and row[0])
 
         if "ALL" in strategies:
             strategies.remove("ALL")
