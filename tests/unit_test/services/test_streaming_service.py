@@ -415,6 +415,20 @@ async def test_subscribe_realtime_price_marks_subscription_requested(streaming_s
 
 
 @pytest.mark.asyncio
+async def test_subscribe_unified_price_marks_subscription_requested_even_on_failure(streaming_service, mock_broker):
+    """브로커 구독이 실패해도 watchdog이 추적할 수 있게 요청 시각은 먼저 기록한다."""
+    mock_broker.subscribe_unified_price.return_value = False
+    mock_price_stream = MagicMock()
+    streaming_service.set_price_stream_service(mock_price_stream)
+
+    result = await streaming_service.subscribe_unified_price("005930")
+
+    assert result is False
+    mock_price_stream.mark_subscription_requested.assert_called_once_with("005930")
+    mock_broker.subscribe_unified_price.assert_awaited_once_with("005930")
+
+
+@pytest.mark.asyncio
 async def test_unsubscribe_unified_price_clears_subscription_state(streaming_service, mock_broker):
     """통합 체결가 해지 시 price stream service의 추적 상태를 정리한다."""
     mock_price_stream = MagicMock()
