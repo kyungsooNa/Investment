@@ -62,7 +62,7 @@ def _make_ohlcv_pole_and_flag(
 # ── Fixtures ─────────────────────────────────────────────────────────
 
 # _save_state_async 파일 I/O 차단 (파일 I/O 전용 TC 제외)
-_FILE_IO_TESTS = {"test_state_persistence"}
+_FILE_IO_TESTS = {"test_state_persistence", "test_save_state_async_logs_error"}
 
 @pytest.fixture(autouse=True)
 def _block_async_file_io(monkeypatch, request):
@@ -70,6 +70,7 @@ def _block_async_file_io(monkeypatch, request):
     if request.node.name in _FILE_IO_TESTS:
         yield
         return
+    monkeypatch.setattr(HighTightFlagStrategy, "_load_state", MagicMock())
     monkeypatch.setattr(HighTightFlagStrategy, "_save_state_async", AsyncMock())
     yield
 
@@ -999,3 +1000,233 @@ async def test_check_exits_invalid_price_data(mock_deps):
     sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "0"}})
     signals = await strategy.check_exits(holdings)
     assert len(signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_logs_candidate_exception(htf_scan_setup):
+    strategy, _, _, _, logger = htf_scan_setup
+    strategy._check_htf_setup = AsyncMock(side_effect=RuntimeError("boom"))
+
+    signals = await strategy.scan()
+
+    assert signals == []
+    logger.error.assert_called_once()
+
+
+def test_detect_pole_and_flag_rejects_zero_pole_low(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    ohlcv = _make_ohlcv_pole_and_flag()
+    for row in ohlcv[:25]:
+        row["low"] = 0
+
+    assert strategy._detect_pole_and_flag(ohlcv) is None
+
+
+def test_detect_pole_and_flag_rejects_zero_average_volume(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    ohlcv = _make_ohlcv_pole_and_flag(pole_volume=0, flag_volume=0)
+
+    assert strategy._detect_pole_and_flag(ohlcv) is None
+
+
+@pytest.mark.asyncio
+async def test_check_breakout_early_morning_guard(breakout_setup):
+    strategy, sqs, code, item, pattern, ohlcv, _ = breakout_setup
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10500"}}
+    )
+
+    signal = await strategy._check_breakout(code, item, pattern, ohlcv, progress=0.03)
+
+    assert signal is None
+    sqs.get_stock_conclusion.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_breakout_rejects_smart_money_filter(breakout_setup):
+    strategy, sqs, code, item, pattern, ohlcv, progress = breakout_setup
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "10500",
+            "stck_hgpr": "10510",
+            "stck_lwpr": "10400",
+            "acml_vol": "800000",
+            "pgtr_ntby_qty": "0",
+            "acml_tr_pbmn": "10000000000",
+        }}
+    )
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "151.0"}]}
+    )
+
+    signal = await strategy._check_breakout(code, item, pattern, ohlcv, progress)
+
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_check_exits_empty_holdings(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+
+    assert await strategy.check_exits([]) == []
+
+
+@pytest.mark.asyncio
+async def test_check_exits_logs_single_exit_exception(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    strategy._check_single_exit = AsyncMock(side_effect=RuntimeError("exit boom"))
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000}])
+
+    assert signals == []
+    logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_check_exits_partial_profit_sell(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    strategy._position_state["005930"] = HTFPositionState(10000, "20250101", 11000, 9500)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "12100"}}
+    )
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000, "qty": 10}])
+
+    assert len(signals) == 1
+    assert signals[0].qty == 5
+    state = strategy._position_state["005930"]
+    assert state.last_partial_sell_price == 12100
+    assert state.breakeven_armed is True
+
+
+@pytest.mark.asyncio
+async def test_check_exits_partial_profit_full_sell_when_qty_one(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    strategy._position_state["005930"] = HTFPositionState(10000, "20250101", 10000, 9500)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "12100"}}
+    )
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000, "qty": 1}])
+
+    assert len(signals) == 1
+    assert signals[0].qty == 1
+
+
+@pytest.mark.asyncio
+async def test_check_exits_breakeven_stop_after_partial_profit(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    strategy._position_state["005930"] = HTFPositionState(
+        10000, "20250101", 12100, 9500, last_partial_sell_price=12100, breakeven_armed=True
+    )
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9900"}}
+    )
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000, "qty": 3}])
+
+    assert len(signals) == 1
+    assert signals[0].qty == 3
+    assert "005930" in strategy._cooldown
+
+
+@pytest.mark.asyncio
+async def test_check_trailing_ma_stop_peak_drop(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    state = HTFPositionState(10000, "20250101", 12000, 9500)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=[{"close": 10000} for _ in range(5)]
+    )
+
+    is_break, reason = await strategy._check_trailing_ma_stop("005930", 11000, state)
+
+    assert is_break is True
+    assert "고점" in reason
+
+
+@pytest.mark.asyncio
+async def test_check_trailing_ma_stop_ignores_missing_closes(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    state = HTFPositionState(10000, "20250101", 12000, 9500)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=[{"close": 0} for _ in range(5)]
+    )
+
+    assert await strategy._check_trailing_ma_stop("005930", 11000, state) == (False, "")
+
+
+@pytest.mark.asyncio
+async def test_check_single_exit_price_output_object(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+    strategy._position_state["005930"] = HTFPositionState(10000, "20250101", 10000, 9500)
+
+    class PriceOutput:
+        stck_prpr = "9400"
+
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": PriceOutput()}
+    )
+
+    signals, dirty = await strategy._check_single_exit({"code": "005930", "buy_price": 10000, "qty": 2})
+
+    assert dirty is True
+    assert len(signals) == 1
+    assert signals[0].qty == 2
+
+
+def test_smart_money_market_cap_thresholds(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
+
+    large_ok, large_metrics = strategy._is_smart_money_ok(
+        "000001", current=10000, pg_buy=1100000, trade_value=100_000_000_000,
+        market_cap=10_000_000_000_000, cgld_val=130.0
+    )
+    mid_ok, mid_metrics = strategy._is_smart_money_ok(
+        "000002", current=10000, pg_buy=250000, trade_value=20_000_000_000,
+        market_cap=1_000_000_000_000, cgld_val=130.0
+    )
+
+    assert large_ok is True
+    assert large_metrics["mc_threshold"] == 0.1
+    assert mid_ok is True
+    assert mid_metrics["mc_threshold"] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_load_state_async_missing_file_returns(mock_deps, tmp_path):
+    _, _, _, logger = mock_deps
+    strategy = object.__new__(HighTightFlagStrategy)
+    strategy._logger = logger
+    strategy._position_state = {}
+    strategy._cooldown = {}
+    strategy.STATE_FILE = str(tmp_path / "missing.json")
+
+    await strategy._load_state_async()
+
+    assert strategy._position_state == {}
+
+
+@pytest.mark.asyncio
+async def test_save_state_async_logs_error(mock_deps, monkeypatch):
+    _, _, _, logger = mock_deps
+    strategy = object.__new__(HighTightFlagStrategy)
+    strategy._logger = logger
+    strategy._position_state = {}
+    strategy._cooldown = {}
+    strategy.STATE_FILE = "data/htf_position_state.json"
+    monkeypatch.setattr("strategies.high_tight_flag_strategy.asyncio.to_thread", AsyncMock(side_effect=OSError("disk")))
+
+    await strategy._save_state_async()
+
+    logger.error.assert_called()
