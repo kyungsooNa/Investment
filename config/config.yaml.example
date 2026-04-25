@@ -25,3 +25,13 @@ custtype: "P"
 market_open_time: "09:00"
 market_close_time: "15:40"
 market_timezone: "Asia/Seoul"
+
+# 계좌 보호용 Kill Switch
+kill_switch:
+  enabled: true
+  daily_loss_threshold_won: 1000000      # 일손실 한도 (원). 초과 시 트립.
+  daily_loss_threshold_pct: 5.0          # 일손실 한도 (%). 원화/% 중 하나라도 초과하면 트립.
+  max_consecutive_losses: 3              # 연속 손실 한도. 초과 시 트립.
+  max_consecutive_api_errors: 10         # 연속 API 오류 한도. 초과 시 트립.
+  abnormal_fill_deviation_pct: 3.0       # 체결가가 주문가 대비 이 비율 이상 이탈 시 트립.
+  state_file_path: "data/kill_switch_state.json"
