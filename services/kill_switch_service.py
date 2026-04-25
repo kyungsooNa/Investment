@@ -126,7 +126,7 @@ class KillSwitchService:
                 )
                 return
 
-            if account_balance_won and account_balance_won > 0:
+            if account_balance_won is not None and account_balance_won > 0:
                 loss_pct = loss_abs / account_balance_won * 100
                 if loss_pct >= self._cfg.daily_loss_threshold_pct:
                     await self._trip(
