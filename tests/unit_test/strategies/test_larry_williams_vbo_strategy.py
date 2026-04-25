@@ -404,6 +404,128 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         await strategy.scan()
         self.assertGreater(sqs.get_recent_daily_ohlcv.call_count, first_call_count)
 
+    async def test_scan_skips_candidate_without_code(self):
+        strategy, sqs, _ = self._make_strategy()
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="OK",
+            data=[{"hts_kor_isnm": "NO_CODE", "stck_avls": "500000000000"}],
+        )
+
+        signals = await strategy.scan()
+
+        self.assertEqual(signals, [])
+        sqs.handle_get_current_stock_price.assert_not_called()
+
+    async def test_scan_rejects_price_api_failure_and_zero_price(self):
+        strategy, sqs, _ = self._make_strategy()
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value,
+            msg1="err",
+        )
+
+        self.assertEqual(await strategy.scan(), [])
+
+        strategy, sqs, _ = self._make_strategy()
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(current=0, open_price=70000)
+
+        self.assertEqual(await strategy.scan(), [])
+
+    async def test_scan_continues_when_candidate_processing_raises(self):
+        strategy, sqs, _ = self._make_strategy()
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.side_effect = ValueError("boom")
+
+        signals = await strategy.scan()
+
+        self.assertEqual(signals, [])
+
+    async def test_scan_rejects_validity_filter_failures(self):
+        strategy, _, _ = self._make_strategy(
+            min_market_cap=200_000_000_000,
+            min_5d_trading_value=10_000_000_000,
+        )
+
+        self.assertFalse(strategy._passes_validity_filter(
+            {"market_cap": 100_000_000_000, "avg_5d_tv": 20_000_000_000},
+            {"code": "LOW_CAP"},
+        ))
+        self.assertFalse(strategy._passes_validity_filter(
+            {"market_cap": 300_000_000_000, "avg_5d_tv": 1_000_000_000},
+            {"code": "LOW_TV"},
+        ))
+
+    async def test_load_pool_b_returns_empty_when_universe_raises(self):
+        strategy, sqs, _ = self._make_strategy()
+        universe = MagicMock()
+        universe.get_watchlist = AsyncMock(side_effect=RuntimeError("universe down"))
+        strategy._universe = universe
+
+        result = await strategy._load_pool_b()
+
+        self.assertEqual(result, [])
+        sqs.get_top_trading_value_stocks.assert_not_called()
+
+    async def test_refresh_range_cache_skips_empty_rows_and_logs_exceptions(self):
+        strategy, sqs, _ = self._make_strategy()
+        sqs.get_recent_daily_ohlcv.side_effect = [
+            ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[]),
+            RuntimeError("ohlcv down"),
+        ]
+
+        await strategy._refresh_range_cache("20260115", ["EMPTY", "RAISE"])
+
+        self.assertEqual(strategy._range_cache.ranges, {})
+        self.assertEqual(sqs.get_recent_daily_ohlcv.call_count, 2)
+
+    async def test_get_execution_strength_returns_zero_on_exception(self):
+        strategy, sqs, _ = self._make_strategy()
+        sqs.get_stock_conclusion.side_effect = RuntimeError("conclusion down")
+
+        self.assertEqual(await strategy._get_execution_strength("005930"), 0.0)
+
+    async def test_program_buy_filter_rejects_missing_values_and_bad_payload(self):
+        strategy, _, _ = self._make_strategy()
+
+        self.assertFalse(strategy._passes_program_buy_filter(
+            {"pgtr_ntby_qty": "1", "stck_prpr": "0", "acml_tr_pbmn": "0"},
+            {"code": "ZERO"},
+        ))
+        self.assertFalse(strategy._passes_program_buy_filter(
+            {"pgtr_ntby_qty": "not-int", "stck_prpr": "72000", "acml_tr_pbmn": "50000000000"},
+            {"code": "BAD"},
+        ))
+
+    async def test_check_exits_skips_invalid_holding_and_zero_current_price(self):
+        strategy, sqs, tm = self._make_strategy(now_time=_kst(11, 0))
+        today = tm.get_current_kst_time().strftime("%Y%m%d")
+        sqs.handle_get_current_stock_price.return_value = _price_resp(current=0, open_price=70000)
+        holdings = [
+            {"code": "", "buy_price": 70000, "buy_date": today},
+            {"code": "005930", "buy_price": 0, "buy_date": today},
+            {"code": "000660", "buy_price": 70000, "buy_date": today},
+        ]
+
+        signals = await strategy.check_exits(holdings)
+
+        self.assertEqual(signals, [])
+        sqs.handle_get_current_stock_price.assert_called_once()
+
+    async def test_check_exits_continues_when_holding_processing_raises(self):
+        strategy, sqs, tm = self._make_strategy(now_time=_kst(11, 0))
+        today = tm.get_current_kst_time().strftime("%Y%m%d")
+        sqs.handle_get_current_stock_price.side_effect = ValueError("price down")
+        holdings = [{"code": "005930", "buy_price": 70000, "buy_date": today, "qty": 1}]
+
+        signals = await strategy.check_exits(holdings)
+
+        self.assertEqual(signals, [])
+
 
 if __name__ == "__main__":
     unittest.main()
