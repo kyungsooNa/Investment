@@ -17,6 +17,7 @@ class MockLogger:
         self.warning = MagicMock()
         self.error = MagicMock()
         self.critical = MagicMock()
+        self.exception = MagicMock()
 
 @pytest.fixture
 def mock_broker_api_wrapper():
@@ -1480,3 +1481,421 @@ async def test_handle_place_buy_order_allowed_when_kill_switch_ok(
 
     assert result.rt_cd == ErrorCode.SUCCESS.value
     mock_broker_api_wrapper.place_stock_order.assert_awaited_once()
+
+
+def test_order_execution_service_small_helpers_cover_edge_cases(handler):
+    class OrderData:
+        ordno = "OBJ001"
+
+    context = OrderContext(
+        order_key=handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX),
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=OrderState.SUBMITTED,
+        exchange=Exchange.KRX,
+        price=70000,
+        qty=10,
+        broker_order_no="A0001",
+    )
+
+    assert handler.has_active_order("005930") is False
+    handler._set_order_context(context)
+    assert handler.has_active_order("005930") is True
+    assert handler._extract_broker_order_no(ResCommonResponse(rt_cd="0", msg1="OK", data=OrderData())) == "OBJ001"
+    assert handler._extract_broker_order_no(ResCommonResponse(rt_cd="0", msg1="OK", data={"order_no": "DICT001"})) == "DICT001"
+    assert handler._extract_broker_order_no(ResCommonResponse(rt_cd="0", msg1="OK", data="unexpected")) is None
+    assert handler._strategy_name_from_source("") == ("수동매매", False)
+    assert handler._strategy_name_from_source("web") == ("수동매매", False)
+    assert handler._strategy_name_from_source("scanner") == ("scanner", False)
+    assert handler._mark_execution_event_seen("E1") is True
+    handler._processed_execution_event_limit = 0
+    assert handler._mark_execution_event_seen("E2") is True
+    assert handler._processed_execution_events == {}
+
+
+def test_order_query_row_helpers_cover_non_dict_and_mismatch(handler):
+    context = OrderContext(
+        order_key=handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX),
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=OrderState.SUBMITTED,
+        exchange=Exchange.KRX,
+        price=70000,
+        qty=10,
+        broker_order_no="A0001",
+    )
+
+    assert OrderExecutionService._extract_order_query_rows([{"odno": "A0001"}, "skip"]) == [{"odno": "A0001"}]
+    assert OrderExecutionService._extract_order_query_rows("bad") == []
+    assert OrderExecutionService._extract_order_query_rows({"output": {"odno": "A0001"}}) == [{"odno": "A0001"}]
+    assert OrderExecutionService._query_row_matches_context({"odno": "B0001", "pdno": "005930"}, context) is False
+    assert OrderExecutionService._query_row_matches_context({"odno": "A0001", "pdno": "000660"}, context) is False
+
+
+@pytest.mark.asyncio
+async def test_apply_execution_report_ignores_invalid_or_unknown_report(handler, mock_logger):
+    missing_identifiers = OrderExecutionReport(
+        broker_order_no="",
+        stock_code="",
+        event_state=OrderState.FILLED,
+        fill_qty=1,
+    )
+    unknown_context = OrderExecutionReport(
+        broker_order_no="UNKNOWN",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        event_state=OrderState.FILLED,
+        fill_qty=1,
+    )
+
+    assert await handler.apply_execution_report(missing_identifiers) is None
+    assert await handler.apply_execution_report(unknown_context) is None
+    assert mock_logger.warning.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_execution_report_without_fill_moves_pending_to_submitted(handler):
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    handler._set_order_context(OrderContext(
+        order_key=order_key,
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=OrderState.PENDING_SUBMIT,
+        exchange=Exchange.KRX,
+        price=70000,
+        qty=10,
+    ))
+
+    updated = await handler.apply_execution_report(OrderExecutionReport(
+        broker_order_no="A0001",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        event_state=OrderState.SUBMITTED,
+        fill_qty=0,
+        remaining_qty=10,
+    ))
+
+    assert updated.state == OrderState.SUBMITTED
+    assert updated.broker_order_no == "A0001"
+
+
+@pytest.mark.asyncio
+async def test_manual_sell_terminal_report_uses_plain_virtual_sell_and_records_kill_switch(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    virtual_trade_service = AsyncMock()
+    kill_switch = AsyncMock()
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+        kill_switch_service=kill_switch,
+    )
+    kill_switch.check_orders_allowed = AsyncMock(return_value=(True, None))
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"ordno": "S0001"}
+    )
+    await handler.handle_place_sell_order(
+        "005930", 70000, 3, source="manual:web", finalize_immediately=False
+    )
+
+    filled = await handler.apply_execution_report(OrderExecutionReport(
+        broker_order_no="S0001",
+        stock_code="005930",
+        side=OrderSide.SELL,
+        event_state=OrderState.FILLED,
+        order_qty=3,
+        fill_qty=3,
+        fill_price=69900,
+        cumulative_filled_qty=3,
+        remaining_qty=0,
+    ))
+
+    assert filled.virtual_recorded_qty == 3
+    virtual_trade_service.log_sell_async.assert_awaited_once_with("005930", 69900, 3)
+    kill_switch.record_fill_event.assert_awaited_once_with(70000, 69900, "005930", 3)
+
+
+@pytest.mark.asyncio
+async def test_virtual_trade_persist_failure_keeps_unrecorded_context(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    virtual_trade_service = AsyncMock()
+    virtual_trade_service.log_sell_async.side_effect = RuntimeError("journal locked")
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"ordno": "S0001"}
+    )
+    await handler.handle_place_sell_order(
+        "005930", 70000, 3, source="manual:web", finalize_immediately=False
+    )
+
+    filled = await handler.apply_execution_report(OrderExecutionReport(
+        broker_order_no="S0001",
+        stock_code="005930",
+        side=OrderSide.SELL,
+        event_state=OrderState.FILLED,
+        order_qty=3,
+        fill_qty=3,
+        fill_price=69900,
+        cumulative_filled_qty=3,
+        remaining_qty=0,
+    ))
+
+    assert filled.virtual_recorded_qty == 0
+    mock_logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_rejects_mismatched_broker_order_no(handler, mock_broker_api_wrapper):
+    _seed_order_context(
+        handler,
+        state=OrderState.SUBMITTED,
+        broker_order_no="A0001",
+        remaining_qty=10,
+    )
+
+    result = await handler.cancel_order(
+        stock_code="005930",
+        is_buy=True,
+        broker_order_no="B0001",
+    )
+
+    assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+    mock_broker_api_wrapper.cancel_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_rejects_context_without_remaining_qty(handler, mock_broker_api_wrapper):
+    _seed_order_context(
+        handler,
+        state=OrderState.PARTIAL_FILLED,
+        broker_order_no="A0001",
+        remaining_qty=0,
+    )
+
+    result = await handler.cancel_order(broker_order_no="A0001")
+
+    assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+    mock_broker_api_wrapper.cancel_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_returns_unknown_error_when_broker_raises(handler, mock_broker_api_wrapper, mock_logger):
+    _seed_order_context(
+        handler,
+        state=OrderState.SUBMITTED,
+        broker_order_no="A0001",
+        remaining_qty=10,
+    )
+    mock_broker_api_wrapper.cancel_stock_order.side_effect = RuntimeError("cancel timeout")
+
+    result = await handler.cancel_order(broker_order_no="A0001")
+
+    assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
+    assert "cancel timeout" in result.msg1
+    mock_logger.exception.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_poll_active_orders_once_returns_zero_without_contexts(handler, mock_broker_api_wrapper):
+    assert await handler.poll_active_orders_once() == 0
+    mock_broker_api_wrapper.inquire_daily_ccld.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_poll_single_order_context_ignores_failed_and_unmatched_rows(
+    handler,
+    mock_broker_api_wrapper,
+    mock_logger,
+):
+    context = _seed_order_context(
+        handler,
+        state=OrderState.SUBMITTED,
+        broker_order_no="A0001",
+        remaining_qty=10,
+    )
+    mock_broker_api_wrapper.inquire_daily_ccld.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value,
+        msg1="query failed",
+        data=None,
+    )
+
+    failed_count = await handler._poll_single_order_context(context, "20260424", "20260424")
+
+    mock_broker_api_wrapper.inquire_daily_ccld.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data={"output1": [{"odno": "OTHER", "pdno": "005930"}]},
+    )
+    unmatched_count = await handler._poll_single_order_context(context, "20260424", "20260424")
+
+    assert failed_count == 0
+    assert unmatched_count == 0
+    mock_logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_and_mark_rejected_ignore_missing_or_terminal_context(handler):
+    assert await handler.resolve_submitted_order("005930", True) is None
+    assert await handler.mark_order_rejected("005930", True, error_message="missing") is None
+
+    _seed_order_context(handler, state=OrderState.FILLED, broker_order_no="A0001", remaining_qty=0)
+
+    assert (await handler.resolve_submitted_order("005930", True)).state == OrderState.FILLED
+    assert (await handler.mark_order_rejected("005930", True, error_message="done")).state == OrderState.FILLED
+
+
+@pytest.mark.asyncio
+async def test_execute_order_via_broker_records_kill_switch_failure_and_exception(
+    handler_with_ks,
+    mock_broker_api_wrapper,
+    mock_kill_switch,
+):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="API error", data=None
+    )
+
+    result = await handler_with_ks._execute_order_via_broker("005930", 70000, 10, is_buy=True)
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    mock_kill_switch.record_api_failure.assert_awaited_with(ErrorCode.API_ERROR.value)
+
+    mock_broker_api_wrapper.place_stock_order.side_effect = RuntimeError("network down")
+
+    exception_result = await handler_with_ks._execute_order_via_broker("005930", 70000, 10, is_buy=True)
+
+    assert exception_result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
+    mock_kill_switch.record_api_failure.assert_awaited_with("network down")
+
+
+@pytest.mark.asyncio
+async def test_market_clock_fallback_blocks_orders_when_calendar_service_missing(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+):
+    mock_market_clock.is_market_operating_hours.return_value = False
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=None,
+    )
+
+    buy_result = await handler.handle_place_buy_order("005930", 70000, 10)
+    sell_result = await handler.handle_place_sell_order("005930", 70000, 10)
+    sell_all_result = await handler.sell_all_stocks()
+
+    assert buy_result.rt_cd == ErrorCode.MARKET_CLOSED.value
+    assert sell_result.rt_cd == ErrorCode.MARKET_CLOSED.value
+    assert sell_all_result.rt_cd == ErrorCode.MARKET_CLOSED.value
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_successful_orders_manage_price_subscription_tasks(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    price_sub_svc = AsyncMock()
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        price_subscription_service=price_sub_svc,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"ordno": "A0001"}
+    )
+
+    with patch("asyncio.create_task") as mock_create_task:
+        await handler.handle_place_buy_order("005930", 70000, 10)
+        await handler.handle_place_sell_order("005930", 70000, 10)
+
+    assert mock_create_task.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_order_failure_records_virtual_trade_failure(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    virtual_trade_service = AsyncMock()
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="API rejected", data=None
+    )
+
+    await handler.handle_place_buy_order("005930", 70000, 10)
+    await handler.handle_place_sell_order("005930", 70000, 10)
+
+    virtual_trade_service.log_order_failure_async.assert_has_awaits([
+        call("BUY", "005930", 70000, 10, "API rejected"),
+        call("SELL", "005930", 70000, 10, "API rejected"),
+    ])
+
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_returns_no_valid_holdings(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data={"output1": [{"pdno": "005930", "hldg_qty": "0"}, {"pdno": "", "hldg_qty": "10"}]},
+    )
+
+    result = await handler.sell_all_stocks()
+
+    assert result["results"] == []
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_captures_per_order_exception(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data={"output1": [{"pdno": "005930", "hldg_qty": "10"}]},
+    )
+
+    with patch.object(handler, "handle_place_sell_order", new=AsyncMock(side_effect=RuntimeError("order boom"))):
+        result = await handler.sell_all_stocks()
+
+    assert result["results"] == [
+        {"stock_code": "005930", "success": False, "message": "order boom"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_captures_unexpected_outer_exception(handler, mock_broker_api_wrapper, mock_logger):
+    mock_broker_api_wrapper.get_account_balance.side_effect = RuntimeError("balance boom")
+
+    result = await handler.sell_all_stocks()
+
+    assert "balance boom" in result["error"]
+    mock_logger.critical.assert_called_once()
