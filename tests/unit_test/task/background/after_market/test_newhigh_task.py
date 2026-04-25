@@ -958,6 +958,184 @@ def test_filter_newhigh_rs_defaults_to_dash_when_no_rs_rating(task):
     assert result[0]["rs"] == "-"
 
 
+@pytest.mark.asyncio
+async def test_get_newhigh_cache_triggers_refresh_when_empty(task):
+    with patch.object(task, "trigger_refresh", return_value=True) as mock_trigger:
+        result = await task.get_newhigh_cache()
+
+    assert result == []
+    mock_trigger.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_newhigh_cache_returns_limited_cache_without_refresh(task):
+    task._newhigh_cache = [{"code": "A"}, {"code": "B"}]
+
+    with patch.object(task, "trigger_refresh") as mock_trigger:
+        result = await task.get_newhigh_cache(limit=1)
+
+    assert result == [{"code": "A"}]
+    mock_trigger.assert_not_called()
+
+
+def test_trigger_refresh_without_running_loop_returns_false(task):
+    assert task.trigger_refresh() is False
+
+
+@pytest.mark.asyncio
+async def test_clear_refresh_task_handles_exception_and_resets_progress(task):
+    done_task = MagicMock()
+    done_task.result.side_effect = Exception("boom")
+    with patch("asyncio.create_task", return_value=done_task):
+        assert task.trigger_refresh() is True
+
+    task._clear_refresh_task(done_task)
+
+    assert task._refresh_task is None
+    assert task._progress["running"] is False
+    assert task._progress["status"] is None
+    task._logger.error.assert_called_once()
+
+
+def test_clear_refresh_task_ignores_cancelled_task(task):
+    done_task = MagicMock()
+    done_task.result.side_effect = asyncio.CancelledError()
+    task._progress["running"] = True
+    task._progress["status"] = "?좉퀬媛 媛깆떊 ?湲?以?.."
+
+    task._clear_refresh_task(done_task)
+
+    assert task._progress["running"] is False
+    task._logger.error.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_load_snapshots_after_collector_still_empty_sets_error(
+    task_with_collector, mock_stock_repo, mock_daily_price_collector
+):
+    mock_stock_repo.get_all_daily_snapshots.side_effect = [
+        [_snap("005930", "?쇱꽦?꾩옄", 80000, 0)],
+        [],
+    ]
+
+    result = await task_with_collector._load_snapshots_for_newhigh("20260413")
+
+    assert result == []
+    mock_daily_price_collector.force_run.assert_awaited_once()
+    assert "20260413" in task_with_collector._progress["last_error"]
+
+
+@pytest.mark.asyncio
+async def test_write_newhigh_fields_writes_code_records(task, mock_stock_repo):
+    mock_stock_repo.update_newhigh_fields = AsyncMock()
+    stocks = [
+        {"code": "005930", "is_historical_new_high": True},
+        {"code": "", "is_historical_new_high": True},
+        {"name": "no code"},
+    ]
+
+    await task._write_newhigh_fields("20260413", stocks)
+
+    mock_stock_repo.update_newhigh_fields.assert_awaited_once_with(
+        "20260413",
+        [{"code": "005930", "is_newhigh": True, "is_historical_new_high": True}],
+    )
+
+
+@pytest.mark.asyncio
+async def test_write_newhigh_fields_logs_warning_on_failure(task, mock_stock_repo):
+    mock_stock_repo.update_newhigh_fields = AsyncMock(side_effect=Exception("db down"))
+
+    await task._write_newhigh_fields("20260413", [{"code": "005930"}])
+
+    task._logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_notification_failure_still_marks_completed(task, mock_stock_repo, mock_notification_service):
+    mock_stock_repo.get_all_daily_snapshots.return_value = [
+        _snap("005930", "?쇱꽦?꾩옄", 80000, 80000),
+    ]
+    mock_notification_service.emit.side_effect = Exception("notify down")
+
+    await task._on_market_closed("20260413")
+
+    assert task._last_collected_date == "20260413"
+    assert task.get_progress()["newhigh_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_send_reports_without_notification_service(mock_stock_repo, mock_telegram_reporter):
+    task = NewHighTask(
+        stock_repo=mock_stock_repo,
+        logger=MagicMock(),
+        telegram_reporter=mock_telegram_reporter,
+        notification_service=None,
+    )
+
+    await task._send_reports([{"code": "005930"}], "20260413", 1.2)
+
+    mock_telegram_reporter.send_newhigh_report.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_newhigh_applies_rs_rating_service(
+    task, mock_stock_repo, mock_stock_query_service, mock_rs_rating_service
+):
+    task._rs_rating_service = mock_rs_rating_service
+    task._rs_rating_min = 80
+    mock_stock_repo.get_all_daily_snapshots.return_value = [
+        _snap("005930", "?쇱꽦?꾩옄", 80000, 80000),
+    ]
+    mock_stock_query_service.get_ohlcv.return_value = MagicMock(
+        rt_cd="0", data=[{"high": 70000}, {"high": 80000}]
+    )
+    mock_rs_rating_service.get_ratings_by_date.return_value = MagicMock(
+        rt_cd="0", data={"005930": 90}
+    )
+
+    await task._run_newhigh("20260413")
+
+    assert task._newhigh_cache[0]["rs_rating"] == 90
+    mock_rs_rating_service.get_ratings_by_date.assert_awaited_once_with("20260413")
+
+
+@pytest.mark.asyncio
+async def test_enrich_and_filter_rs_rating_all_passes_no_filter_log(task, mock_rs_rating_service):
+    task._rs_rating_service = mock_rs_rating_service
+    task._rs_rating_min = 80
+    mock_rs_rating_service.get_ratings_by_date.return_value = MagicMock(
+        rt_cd="0", data={"005930": 85, "000660": 90}
+    )
+    stocks = [{"code": "005930"}, {"code": "000660"}]
+
+    result = await task._enrich_and_filter_rs_rating(stocks, "20260413")
+
+    assert [s["code"] for s in result] == ["005930", "000660"]
+    task._logger.info.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_enrich_historical_high_keeps_stock_without_code(task, mock_stock_query_service):
+    stocks = [{"name": "no code", "current_price": 2000}]
+
+    enriched = await task._enrich_historical_high(stocks)
+
+    assert enriched[0]["is_historical_new_high"] is False
+    mock_stock_query_service.get_ohlcv.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_enrich_historical_high_logs_warning_on_exception(task, mock_stock_query_service):
+    mock_stock_query_service.get_ohlcv.side_effect = Exception("ohlcv down")
+    stocks = [{"code": "005930", "current_price": 2000}]
+
+    enriched = await task._enrich_historical_high(stocks)
+
+    assert enriched[0]["is_historical_new_high"] is False
+    task._logger.warning.assert_called()
+
+
 def test_filter_newhigh_rs_preserved_when_already_set(task):
     """스냅샷에 rs 값이 이미 있으면 rs_rating과 무관하게 기존 rs 값을 유지하는지 검증."""
     snap = _snap("005930", "삼성전자", 80000, 80000, market_cap=1_000_000_000)

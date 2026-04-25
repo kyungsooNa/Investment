@@ -369,6 +369,39 @@ def test_get_background_status_idle_with_internal_flag_error(web_client, mock_we
     assert data[0]["progress"] == {"running": False, "error": "test error"}
 
 
+def test_get_background_status_idle_without_progress_flag(web_client, mock_web_ctx):
+    """IDLE task without an internal progress flag returns a safe waiting placeholder."""
+    mock_task = MagicMock()
+    if hasattr(mock_task, "_progress"):
+        delattr(mock_task, "_progress")
+    mock_task._is_refreshing = False
+
+    mock_web_ctx.background_scheduler = MagicMock()
+    mock_web_ctx.background_scheduler.get_all_status.return_value = [
+        {"name": "some_idle_task", "state": "idle", "priority": 100},
+    ]
+    mock_web_ctx.background_scheduler.get_task.return_value = mock_task
+
+    response = web_client.get("/api/background/status")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data[0]["progress"] == {"running": False, "status": "Waiting to start"}
+    mock_task.get_progress.assert_not_called()
+
+
+def test_background_status_time_dispatcher_exception_is_ignored(web_client, mock_web_ctx):
+    """TimeDispatcher status errors should not break the background status endpoint."""
+    mock_web_ctx.background_scheduler = None
+    mock_web_ctx.time_dispatcher = MagicMock()
+    mock_web_ctx.time_dispatcher.get_status.side_effect = Exception("boom")
+
+    response = web_client.get("/api/background/status")
+
+    assert response.status_code == 200
+    assert response.json()["time_dispatcher"] is None
+
+
 def test_get_background_status_running_error(web_client, mock_web_ctx):
     """태스크가 RUNNING 상태에서 get_progress()가 예외를 발생시키는 경우 처리 확인"""
     mock_task = MagicMock()
@@ -902,3 +935,159 @@ def test_get_subscription_status_adds_program_trading_to_critical(web_client, mo
     assert data["pending_by_priority"]["CRITICAL"][0]["code"] == "035720"
     assert data["pending_by_priority"]["CRITICAL"][0]["active"] is True
     assert data["pending_by_priority"]["MEDIUM"][0]["code"] == "035720"
+
+
+def test_get_subscription_status_ignores_repo_error(web_client, mock_web_ctx):
+    """streaming_stock_repo errors are ignored and existing pending data is still returned."""
+    mock_svc = MagicMock()
+    mock_svc.get_status.return_value = {
+        "active_count": 1,
+        "max_subscriptions": 40,
+        "active_codes_price": ["005930"],
+        "active_codes_pt": [],
+        "pending_by_priority": {"HIGH": ["005930"]},
+    }
+    mock_web_ctx.price_subscription_service = mock_svc
+    mock_web_ctx.streaming_stock_repo = MagicMock()
+    mock_web_ctx.streaming_stock_repo.get_desired.side_effect = Exception("repo down")
+    mock_web_ctx.streaming_service = MagicMock()
+    mock_web_ctx.streaming_service.get_cached_realtime_price.return_value = {
+        "price": "70000",
+        "received_at": 1700000000.0,
+    }
+    mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "Samsung"
+
+    response = web_client.get("/api/subscriptions/status")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["pending_count"] == 1
+    row = data["pending_by_priority"]["HIGH"][0]
+    assert row["code"] == "005930"
+    assert row["price"] == "70000"
+    assert row["received_at"] == 1700000000.0
+
+
+def test_get_subscription_debug_missing_dependency(web_client, mock_web_ctx):
+    """subscriptions debug returns data null until every required service is initialized."""
+    mock_web_ctx.price_stream_service = None
+
+    response = web_client.get("/api/subscriptions/debug")
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True, "data": None}
+
+
+def test_get_subscription_debug_requested_codes(web_client, mock_web_ctx):
+    """subscriptions debug reports detailed state for explicitly requested codes."""
+    mock_sub_svc = MagicMock()
+    mock_sub_svc.get_status.return_value = {
+        "active_codes_price": ["005930"],
+        "active_codes_pt": ["035720"],
+    }
+    mock_web_ctx.price_subscription_service = mock_sub_svc
+
+    mock_web_ctx.streaming_stock_repo = MagicMock()
+    mock_web_ctx.streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.UNIFIED_PRICE else {"035720"}
+    )
+    mock_web_ctx.streaming_stock_repo.get_active.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.UNIFIED_PRICE else set()
+    )
+
+    mock_web_ctx.streaming_service = MagicMock()
+    mock_web_ctx.streaming_service.get_cached_realtime_price.side_effect = lambda code: {
+        "005930": {"price": "70000", "received_at": 1700000000.0},
+        "000660": None,
+    }.get(code)
+    mock_web_ctx.streaming_service.is_subscribed_realtime_price.side_effect = lambda code: code == "005930"
+
+    mock_web_ctx.price_stream_service = MagicMock()
+    mock_web_ctx.price_stream_service.get_last_tick_ts.side_effect = lambda code: 123.0 if code == "005930" else None
+    mock_web_ctx.price_stream_service.get_subscription_age.side_effect = lambda code: 10.5 if code == "005930" else None
+
+    websocket_api = MagicMock()
+    websocket_api._subscribed_items = {("H0STCNT0", "005930"), ("H0STASP0", "000660")}
+    websocket_api._pending_requests = {("H0STCNI0", "005930"): object(), ("H0STASP0", "035720"): object()}
+    raw_client = MagicMock()
+    raw_client._websocketAPI = websocket_api
+    raw_client._client = None
+    wrapper = MagicMock()
+    wrapper._client = raw_client
+    broker = MagicMock()
+    broker._client = wrapper
+    broker.is_websocket_receive_alive.return_value = True
+    mock_web_ctx.broker = broker
+
+    mock_web_ctx.stock_code_repository.get_name_by_code.side_effect = lambda code: {
+        "005930": "Samsung",
+        "000660": "SK Hynix",
+    }.get(code)
+
+    response = web_client.get("/api/subscriptions/debug?codes=005930,%20000660,,")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["receive_alive"] is True
+    assert [row["code"] for row in data["rows"]] == ["005930", "000660"]
+
+    by_code = {row["code"]: row for row in data["rows"]}
+    samsung = by_code["005930"]
+    assert samsung["name"] == "Samsung"
+    assert samsung["desired_price"] is True
+    assert samsung["desired_pt"] is False
+    assert samsung["repo_active_price"] is True
+    assert samsung["policy_active_price"] is True
+    assert samsung["is_subscribed_realtime_price"] is True
+    assert samsung["cached_price"] == "70000"
+    assert samsung["cached_received_at"] == 1700000000.0
+    assert samsung["last_tick_ts"] == 123.0
+    assert samsung["subscription_age_sec"] == 10.5
+    assert samsung["broker_subscribed_tr_ids"] == ["H0STCNT0"]
+    assert samsung["broker_pending_tr_ids"] == ["H0STCNI0"]
+
+    hynix = by_code["000660"]
+    assert hynix["name"] == "SK Hynix"
+    assert hynix["cached_price"] is None
+    assert hynix["broker_subscribed_tr_ids"] == ["H0STASP0"]
+
+
+def test_get_subscription_debug_uses_union_when_codes_not_requested(web_client, mock_web_ctx):
+    """without a codes query, debug rows are built from repo and policy code unions."""
+    mock_sub_svc = MagicMock()
+    mock_sub_svc.get_status.return_value = {
+        "active_codes_price": ["005930"],
+        "active_codes_pt": ["035720"],
+    }
+    mock_web_ctx.price_subscription_service = mock_sub_svc
+
+    mock_web_ctx.streaming_stock_repo = MagicMock()
+    mock_web_ctx.streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"000660"} if stream_type == StreamingType.UNIFIED_PRICE else {"035720"}
+    )
+    mock_web_ctx.streaming_stock_repo.get_active.side_effect = (
+        lambda stream_type: set() if stream_type == StreamingType.UNIFIED_PRICE else {"051910"}
+    )
+
+    mock_web_ctx.streaming_service = MagicMock()
+    mock_web_ctx.streaming_service.get_cached_realtime_price.return_value = None
+    mock_web_ctx.streaming_service.is_subscribed_realtime_price.return_value = False
+    mock_web_ctx.price_stream_service = MagicMock()
+    mock_web_ctx.price_stream_service.get_last_tick_ts.return_value = None
+    mock_web_ctx.price_stream_service.get_subscription_age.return_value = None
+    mock_web_ctx.stock_code_repository.get_name_by_code.side_effect = lambda code: code
+
+    raw_client = MagicMock()
+    raw_client._websocketAPI = None
+    raw_client._client = None
+    broker = MagicMock()
+    broker._client = raw_client
+    broker.is_websocket_receive_alive.return_value = False
+    mock_web_ctx.broker = broker
+
+    response = web_client.get("/api/subscriptions/debug")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["receive_alive"] is False
+    assert [row["code"] for row in data["rows"]] == ["000660", "005930", "035720", "051910"]
