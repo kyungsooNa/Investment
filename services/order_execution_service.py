@@ -11,6 +11,7 @@ from repositories.streaming_stock_repo import StreamingType
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 from services.market_calendar_service import MarketCalendarService
 from services.price_subscription_service import SubscriptionPriority
+from services.kill_switch_service import KillSwitchService
 
 
 class OrderExecutionService:
@@ -34,7 +35,8 @@ class OrderExecutionService:
                  notification_service: Optional[NotificationService] = None,
                  market_calendar_service: Optional[MarketCalendarService] = None,
                  price_subscription_service=None,
-                 virtual_trade_service=None):
+                 virtual_trade_service=None,
+                 kill_switch_service: Optional[KillSwitchService] = None):
         self.broker_api_wrapper = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
@@ -43,6 +45,7 @@ class OrderExecutionService:
         self.market_calendar_service = market_calendar_service
         self._price_sub_svc = price_subscription_service
         self._virtual_trade_service = virtual_trade_service
+        self._kill_switch = kill_switch_service
         self._order_states: Dict[str, OrderContext] = {}
         self._order_locks: Dict[str, asyncio.Lock] = {}
         self._order_no_index: Dict[str, str] = {}
@@ -160,6 +163,10 @@ class OrderExecutionService:
         strategy_name, is_strategy_source = self._strategy_name_from_source(context.source)
         record_qty = context.filled_qty
         record_price = report.fill_price or context.price
+        if self._kill_switch and report.fill_price and context.price > 0:
+            await self._kill_switch.record_fill_event(
+                context.price, report.fill_price, context.stock_code, record_qty
+            )
         try:
             if context.side == OrderSide.BUY:
                 await self._virtual_trade_service.log_buy_async(
@@ -690,9 +697,18 @@ class OrderExecutionService:
         action_str = "매수" if is_buy else "매도"
         self.logger.info(f"OrderExecutionService - 주식 {action_str} 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}")
         try:
-            return await self.broker_api_wrapper.place_stock_order(stock_code, price, qty, is_buy=is_buy, exchange=exchange)
+            result = await self.broker_api_wrapper.place_stock_order(stock_code, price, qty, is_buy=is_buy, exchange=exchange)
+            if self._kill_switch:
+                if result and result.rt_cd == ErrorCode.SUCCESS.value:
+                    await self._kill_switch.record_api_success()
+                else:
+                    rt = result.rt_cd if result else "no_response"
+                    await self._kill_switch.record_api_failure(rt)
+            return result
         except Exception as e:
             self.logger.exception(f"{action_str} 주문 중 오류 발생: {str(e)}")
+            if self._kill_switch:
+                await self._kill_switch.record_api_failure(str(e))
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"{action_str} 주문 처리 중 예외 발생: {str(e)}", data=None)
 
     async def _submit_order_with_fsm(
@@ -779,6 +795,11 @@ class OrderExecutionService:
         current_trace = trace_id or get_trace_id() or new_trace_id("MANUAL")
         with trace_scope(current_trace):
             t_start = self.pm.start_timer()
+            if self._kill_switch:
+                allowed, ks_reason = await self._kill_switch.check_orders_allowed()
+                if not allowed:
+                    self.logger.warning(f"Kill Switch 활성: 매수 주문 차단 - {ks_reason}")
+                    return ResCommonResponse(rt_cd=ErrorCode.KILL_SWITCH_BLOCKED.value, msg1=f"Kill Switch 활성: {ks_reason}", data=None)
             if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
                 self.logger.warning("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
                 return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
@@ -836,6 +857,11 @@ class OrderExecutionService:
         current_trace = trace_id or get_trace_id() or new_trace_id("MANUAL")
         with trace_scope(current_trace):
             t_start = self.pm.start_timer()
+            if self._kill_switch:
+                allowed, ks_reason = await self._kill_switch.check_orders_allowed()
+                if not allowed:
+                    self.logger.warning(f"Kill Switch 활성: 매도 주문 차단 - {ks_reason}")
+                    return ResCommonResponse(rt_cd=ErrorCode.KILL_SWITCH_BLOCKED.value, msg1=f"Kill Switch 활성: {ks_reason}", data=None)
             if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
                 self.logger.warning("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
                 return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)

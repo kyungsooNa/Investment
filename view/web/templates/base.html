@@ -57,6 +57,9 @@
         <span id="status-time">--</span>
         <span id="status-market" class="badge closed">--</span>
         <span id="status-env" class="badge paper clickable" onclick="toggleEnvironment()" title="클릭하여 환경 전환">--</span>
+        <button id="ks-badge" class="badge ks-ok" onclick="openKillSwitchModal()" title="Kill Switch 상태 (클릭하여 제어)">
+            <span id="ks-badge-text">KS ✓</span>
+        </button>
         <div class="notification-wrapper">
             <button class="notification-bell" onclick="toggleNotificationPanel()" title="알림">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -117,9 +120,33 @@
     <span class="page-loading-text">페이지 이동 중...</span>
 </div>
 
+<!-- Kill Switch 모달 -->
+<div id="ks-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9100;" onclick="closeKillSwitchModal()"></div>
+<div id="ks-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+    background:#1e1e2e;color:#cdd6f4;border:1px solid #45475a;border-radius:12px;
+    padding:24px 28px;z-index:9101;min-width:340px;max-width:460px;box-shadow:0 8px 32px rgba(0,0,0,0.6);">
+    <h3 style="margin:0 0 16px;font-size:1.1rem;">🛡️ Kill Switch 상태</h3>
+    <div id="ks-modal-body" style="font-size:0.88rem;line-height:1.7;"></div>
+    <div style="margin-top:20px;display:flex;gap:10px;justify-content:flex-end;">
+        <button id="ks-btn-reset" onclick="resetKillSwitch()"
+            style="display:none;padding:8px 18px;background:#a6e3a1;color:#1e1e2e;border:none;border-radius:6px;cursor:pointer;font-weight:600;">
+            해제
+        </button>
+        <button id="ks-btn-trip" onclick="tripKillSwitch()"
+            style="padding:8px 18px;background:#f38ba8;color:#1e1e2e;border:none;border-radius:6px;cursor:pointer;font-weight:600;">
+            수동 트립
+        </button>
+        <button onclick="closeKillSwitchModal()"
+            style="padding:8px 18px;background:#45475a;color:#cdd6f4;border:none;border-radius:6px;cursor:pointer;">
+            닫기
+        </button>
+    </div>
+</div>
+
 <!-- 공통 스크립트 -->
 <script src="/static/js/common.js?v=1"></script>
 <script src="/static/js/notifications.js?v=1"></script>
+<script src="/static/js/kill_switch.js?v=1"></script>
 
 <!-- ── 서버 요청 진단 패널 (hang 디버깅용) ─────────────────────────────
      - 모든 페이지에 항상 떠있음 (좌하단 고정)
