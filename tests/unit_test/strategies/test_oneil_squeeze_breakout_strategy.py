@@ -819,3 +819,355 @@ async def test_scan_parallel_exception_in_one_does_not_block_others(mock_strateg
     # 정상 종목은 시그널 생성
     assert len(signals) == 1
     assert signals[0].code == "000002"
+
+
+@pytest.mark.asyncio
+async def test_scan_skip_cooldown_candidate(scan_setup):
+    """scan: 쿨다운 해제일 전에는 후보에서 제외한다."""
+    strategy, sqs, _, tm, _ = scan_setup
+    strategy._cooldown["005930"] = "20250102"
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
+
+    signals = await strategy.scan()
+
+    assert signals == []
+    sqs.get_current_price.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scan_early_morning_guard_blocks_breakout(scan_setup):
+    """scan: 장 시작 15분 이내에는 돌파 후보라도 매수하지 않는다."""
+    strategy, sqs, _, tm, logger = scan_setup
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 10, 0)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "71000",
+            "stck_hgpr": "71100",
+            "stck_lwpr": "70500",
+            "acml_vol": "40000",
+            "pgtr_ntby_qty": "10000",
+            "acml_tr_pbmn": "2840000000",
+        }}
+    )
+
+    signals = await strategy.scan()
+
+    assert signals == []
+    logger.debug.assert_called()
+    sqs.get_stock_conclusion.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scan_no_signal_if_over_extended(scan_setup):
+    """scan: 20일 고가 대비 과확장되면 추격 매수하지 않는다."""
+    strategy, sqs, _, _, logger = scan_setup
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "72000",
+            "stck_hgpr": "72100",
+            "stck_lwpr": "71500",
+            "acml_vol": "200000",
+            "pgtr_ntby_qty": "30000",
+            "acml_tr_pbmn": "14200000000",
+        }}
+    )
+
+    signals = await strategy.scan()
+
+    assert signals == []
+    logger.debug.assert_called()
+    sqs.get_stock_conclusion.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scan_no_signal_if_price_output_missing(scan_setup):
+    """scan: 현재가 응답에 output이 없으면 조용히 스킵한다."""
+    strategy, sqs, _, _, _ = scan_setup
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={})
+
+    signals = await strategy.scan()
+
+    assert signals == []
+
+
+@pytest.mark.asyncio
+async def test_scan_rejects_when_execution_strength_lookup_fails(scan_setup):
+    """scan: 체결강도 조회 실패 시 0으로 간주되어 매수하지 않는다."""
+    strategy, sqs, _, _, logger = scan_setup
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "71000",
+            "stck_hgpr": "71100",
+            "stck_lwpr": "70500",
+            "acml_vol": "200000",
+            "pgtr_ntby_qty": "30000",
+            "acml_tr_pbmn": "14200000000",
+        }}
+    )
+    sqs.get_stock_conclusion.side_effect = Exception("conclusion timeout")
+
+    signals = await strategy.scan()
+
+    assert signals == []
+    logger.warning.assert_called()
+
+
+def test_is_smart_money_ok_dynamic_market_cap_thresholds(mock_strategy_deps):
+    """_is_smart_money_ok: 대형/중형 시총별 가변 허들을 적용한다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+
+    large_ok, large_metrics = strategy._is_smart_money_ok(
+        "BIG", current=10000, pg_buy=1_000_000, trade_value=50_000_000_000,
+        market_cap=10_000_000_000_000, cgld_val=150.0,
+    )
+    mid_ok, mid_metrics = strategy._is_smart_money_ok(
+        "MID", current=10000, pg_buy=200_000, trade_value=10_000_000_000,
+        market_cap=1_000_000_000_000, cgld_val=150.0,
+    )
+    zero_denominator_ok, zero_metrics = strategy._is_smart_money_ok(
+        "ZERO", current=10000, pg_buy=1, trade_value=0,
+        market_cap=0, cgld_val=150.0,
+    )
+
+    assert large_ok is True
+    assert large_metrics["mc_threshold"] == 0.1
+    assert mid_ok is True
+    assert mid_metrics["mc_threshold"] == 0.2
+    assert zero_denominator_ok is False
+    assert zero_metrics["pg_to_tv_pct"] == 0
+    assert zero_metrics["pg_to_mc_pct"] == 0
+
+
+def test_check_trend_break_guard_paths(mock_strategy_deps):
+    """_check_trend_break: 데이터 부족/10MA 미이탈 경로를 검증한다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+
+    assert strategy._check_trend_break("005930", 10000, 1000, []) == (False, "")
+    ohlcv = [{"close": 10000, "volume": 100000} for _ in range(20)]
+    assert strategy._check_trend_break("005930", 10000, 1000, ohlcv) == (False, "")
+
+
+@pytest.mark.asyncio
+async def test_check_exits_empty_and_invalid_holding(mock_strategy_deps):
+    """check_exits: 빈 보유 목록과 필수 필드 누락 보유 항목을 스킵한다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+
+    assert await strategy.check_exits([]) == []
+    assert await strategy.check_exits([{"code": "005930"}]) == []
+    sqs.get_current_price.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_exits_partial_profit_updates_state(mock_strategy_deps):
+    """check_exits: 조기 부분익절 시 일부 수량 매도와 본절스탑 무장을 기록한다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state_async = AsyncMock()
+    strategy._position_state["005930"] = OSBPositionState(10000, "20250101", 10000, 9500)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10800", "acml_vol": "10000"}}
+    )
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000, "qty": 10}])
+
+    assert len(signals) == 1
+    assert signals[0].qty == 3
+    assert "조기부분익절" in signals[0].reason
+    state = strategy._position_state["005930"]
+    assert state.last_partial_sell_price == 10800
+    assert state.breakeven_armed is True
+    strategy._save_state_async.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_check_exits_partial_profit_full_quantity(mock_strategy_deps):
+    """check_exits: 부분익절 계산 수량이 보유 수량 이상이면 전량익절로 표시한다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    strategy._position_state["005930"] = OSBPositionState(10000, "20250101", 10000, 9500)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10800", "acml_vol": "10000"}}
+    )
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000, "qty": 1}])
+
+    assert len(signals) == 1
+    assert signals[0].qty == 1
+    assert "전량익절" in signals[0].reason
+
+
+@pytest.mark.asyncio
+async def test_check_exits_breakeven_stop_after_partial_profit(mock_strategy_deps):
+    """check_exits: 부분익절 후 진입가를 하회하면 본절스탑 매도 신호를 낸다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    state = OSBPositionState(10000, "20250101", 10000, 9500)
+    state.breakeven_armed = True
+    state.last_partial_sell_price = 10800
+    strategy._position_state["005930"] = state
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9900", "acml_vol": "10000"}}
+    )
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000, "qty": 5}])
+
+    assert len(signals) == 1
+    assert signals[0].qty == 5
+    assert "본절스탑" in signals[0].reason
+    assert "005930" not in strategy._position_state
+    assert strategy._cooldown["005930"] >= datetime.today().strftime("%Y%m%d")
+
+
+@pytest.mark.asyncio
+async def test_check_exits_time_stop_signal(mock_strategy_deps):
+    """check_exits: N거래일 횡보 조건이면 시간손절 신호를 낸다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    strategy._cfg.time_stop_days = 5
+    strategy._cfg.time_stop_box_range_pct = 2.0
+    strategy._position_state["005930"] = OSBPositionState(10000, "20250101", 10000, 9500)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10100", "acml_vol": "10000"}}
+    )
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=[
+            {"date": "20250101"},
+            {"date": "20250102"},
+            {"date": "20250103"},
+            {"date": "20250104"},
+            {"date": "20250105"},
+            {"date": "20250106"},
+        ],
+    )
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 10, 12, 0, 0)
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000, "qty": 5}])
+
+    assert len(signals) == 1
+    assert signals[0].qty == 5
+    assert "시간손절" in signals[0].reason
+
+
+def test_init_uses_default_strategy_logger(mock_strategy_deps, monkeypatch):
+    """__init__: logger 미주입 시 전략 로거를 생성한다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    created_logger = MagicMock()
+    get_logger = MagicMock(return_value=created_logger)
+    monkeypatch.setattr(
+        "strategies.oneil_squeeze_breakout_strategy.get_strategy_logger",
+        get_logger,
+    )
+
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm)
+
+    get_logger.assert_called_once_with("OneilSqueezeBreakout")
+    assert strategy._logger is created_logger
+
+
+def test_is_smart_money_rejects_non_positive_program_buy(mock_strategy_deps):
+    """_is_smart_money_ok: 프로그램 순매수가 0 이하이면 즉시 실패한다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+
+    ok, metrics = strategy._is_smart_money_ok(
+        "005930", current=10000, pg_buy=0, trade_value=1_000_000,
+        market_cap=100_000_000_000, cgld_val=150.0,
+    )
+
+    assert ok is False
+    assert metrics == {}
+
+
+@pytest.mark.asyncio
+async def test_scan_no_signal_if_smart_money_rejects_after_execution_strength(scan_setup):
+    """scan: 체결강도 통과 후 스마트머니 조건만 실패하면 매수하지 않는다."""
+    strategy, sqs, _, _, _ = scan_setup
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "71000",
+            "stck_hgpr": "71100",
+            "stck_lwpr": "70500",
+            "acml_vol": "200000",
+            "pgtr_ntby_qty": "1000",
+            "acml_tr_pbmn": "14200000000",
+        }}
+    )
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "150.0"}]}
+    )
+
+    signals = await strategy.scan()
+
+    assert signals == []
+
+
+@pytest.mark.asyncio
+async def test_check_exits_logs_exception_from_single_exit(mock_strategy_deps):
+    """check_exits: 개별 청산 검사 예외를 로깅하고 빈 결과를 반환한다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    strategy._check_single_exit = AsyncMock(side_effect=Exception("exit boom"))
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000}])
+
+    assert signals == []
+    logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_check_exits_creates_state_when_missing(mock_strategy_deps):
+    """_check_single_exit: 내부 상태가 없으면 매수가 기준 상태를 생성한다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10000", "acml_vol": "10000"}}
+    )
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000}])
+
+    assert signals == []
+    assert strategy._position_state["005930"].entry_price == 10000
+
+
+@pytest.mark.asyncio
+async def test_check_exits_returns_empty_on_missing_output_and_zero_price(mock_strategy_deps):
+    """_check_single_exit: output 누락/현재가 0 방어 경로를 검증한다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    strategy._position_state["005930"] = OSBPositionState(10000, "20250101", 10000, 9500)
+
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={})
+    assert await strategy.check_exits([{"code": "005930", "buy_price": 10000}]) == []
+
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "0", "acml_vol": "10000"}}
+    )
+    assert await strategy.check_exits([{"code": "005930", "buy_price": 10000}]) == []
+
+
+@pytest.mark.asyncio
+async def test_check_exits_skips_trailing_when_peak_price_zero(mock_strategy_deps):
+    """_check_single_exit: peak_price가 0이면 트레일링스탑 평가를 건너뛴다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    strategy._position_state["005930"] = OSBPositionState(10000, "20250101", 0, 9500)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10100", "acml_vol": "10000"}}
+    )
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000}])
+
+    assert signals == []
+
+
+def test_check_time_stop_invalid_state_returns_false(mock_strategy_deps):
+    """_check_time_stop: 진입일/진입가가 유효하지 않으면 False를 반환한다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+
+    assert strategy._check_time_stop(OSBPositionState(0, "", 0, 0), 10000, [{"date": "20250102"}]) is False
