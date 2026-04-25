@@ -1,4 +1,7 @@
 # tests/unit_test/test_first_pullback_strategy.py
+import asyncio
+import json
+
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime
@@ -116,7 +119,15 @@ def watchlist_item():
 
 
 # _save_state_async 파일 I/O 차단 (파일 I/O 전용 TC 제외)
-_FILE_IO_TESTS = {"test_load_save_state", "test_save_state_permission_error"}
+_FILE_IO_TESTS = {
+    "test_load_save_state",
+    "test_save_state_permission_error",
+    "test_load_state_async_missing_file",
+    "test_load_state_async_corrupted_file",
+    "test_load_state_async_reads_positions_and_cooldown",
+    "test_save_state_async_logs_write_error",
+    "test_save_state_async_writes_file",
+}
 
 @pytest.fixture(autouse=True)
 def _block_async_file_io(monkeypatch, request):
@@ -125,6 +136,7 @@ def _block_async_file_io(monkeypatch, request):
         yield
         return
     monkeypatch.setattr(FirstPullbackStrategy, "_save_state_async", AsyncMock())
+    monkeypatch.setattr(FirstPullbackStrategy, "_load_state_async", AsyncMock())
     yield
 
 
@@ -376,6 +388,298 @@ async def test_scan_skip_existing_position(fp_scan_setup):
     sqs.get_recent_daily_ohlcv.reset_mock()
     assert await strategy.scan() == []
     sqs.get_recent_daily_ohlcv.assert_not_called()
+
+
+def test_init_uses_default_strategy_logger(mock_deps):
+    sqs, universe, tm, _ = mock_deps
+
+    with patch("strategies.first_pullback_strategy.get_strategy_logger") as mock_get_logger:
+        mock_get_logger.return_value = MagicMock()
+        FirstPullbackStrategy(sqs, universe, tm)
+
+    mock_get_logger.assert_called_once_with("FirstPullback", sub_dir="oneil")
+
+
+@pytest.mark.asyncio
+async def test_scan_skips_future_cooldown(fp_scan_setup):
+    strategy, sqs, _, _, _ = fp_scan_setup
+    strategy._cooldown["005930"] = "20250102"
+
+    signals = await strategy.scan()
+
+    assert signals == []
+    sqs.get_current_price.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_entry_returns_none_when_price_output_missing(fp_scan_setup, watchlist_item):
+    strategy, sqs, _, _, _ = fp_scan_setup
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": None})
+
+    result = await strategy._check_entry("005930", watchlist_item, 0.5)
+
+    assert result is None
+    sqs.get_recent_daily_ohlcv.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_entry_accepts_object_price_output(fp_scan_setup, watchlist_item):
+    strategy, sqs, _, _, _ = fp_scan_setup
+    ohlcv = sqs.get_recent_daily_ohlcv.return_value.data
+    ma_20 = sum(r["close"] for r in ohlcv[-20:]) / 20
+    output = MagicMock()
+    output.stck_prpr = str(int(ma_20 * 1.02))
+    output.stck_oprc = str(int(ma_20 * 1.005))
+    output.stck_hgpr = str(int(ma_20 * 1.03))
+    output.stck_lwpr = str(int(ma_20 * 1.01))
+    output.prdy_vrss = "100"
+    output.prdy_vrss_sign = "2"
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": output})
+
+    result = await strategy._check_entry("005930", watchlist_item, 0.5, {"KOSPI": True})
+
+    assert result is not None
+    assert result.action == "BUY"
+
+
+@pytest.mark.asyncio
+async def test_check_entry_handles_down_sign_and_zero_price(fp_scan_setup, watchlist_item):
+    strategy, sqs, _, _, _ = fp_scan_setup
+    ohlcv = sqs.get_recent_daily_ohlcv.return_value.data
+    ma_20 = sum(r["close"] for r in ohlcv[-20:]) / 20
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data={"output": {
+            "stck_prpr": str(int(ma_20 * 1.02)),
+            "stck_oprc": str(int(ma_20 * 1.005)),
+            "stck_hgpr": str(int(ma_20 * 1.03)),
+            "stck_lwpr": str(int(ma_20 * 1.01)),
+            "prdy_vrss": "100",
+            "prdy_vrss_sign": "5",
+        }},
+    )
+
+    result = await strategy._check_entry("005930", watchlist_item, 0.5)
+    assert result is not None
+
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data={"output": {"stck_prpr": "0", "stck_lwpr": "10000"}},
+    )
+    assert await strategy._check_entry("005930", watchlist_item, 0.5) is None
+
+
+@pytest.mark.asyncio
+async def test_check_entry_rejects_short_ohlcv(fp_scan_setup, watchlist_item):
+    strategy, sqs, _, _, _ = fp_scan_setup
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data=_make_ohlcv(10),
+    )
+
+    result = await strategy._check_entry("005930", watchlist_item, 0.5)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_check_exits_empty_and_exception_result(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+
+    assert await strategy.check_exits([]) == []
+
+    strategy._check_single_exit = AsyncMock(side_effect=RuntimeError("exit boom"))
+    assert await strategy.check_exits([{"code": "005930", "buy_price": 10000}]) == []
+    logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_check_single_exit_object_output_and_zero_price(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": None})
+
+    signals, dirty = await strategy._check_single_exit({"code": "005930", "buy_price": 10000})
+
+    assert signals == []
+    assert dirty is False
+
+    output = MagicMock()
+    output.stck_prpr = "0"
+    sqs.get_current_price.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data={"output": output})
+
+    signals, dirty = await strategy._check_single_exit({"code": "005930", "buy_price": 10000})
+
+    assert signals == []
+    assert dirty is False
+
+
+@pytest.mark.asyncio
+async def test_check_single_exit_ma_break_grace_and_reset(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+    strategy._position_state["005930"] = FPPositionState(10000, "20250101", 10000, 12000)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data=[{"close": 10000} for _ in range(20)],
+    )
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data={"output": {"stck_prpr": "9700"}},
+    )
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 10, 0, 0)
+
+    signals, dirty = await strategy._check_single_exit({"code": "005930", "buy_price": 10000, "qty": 2})
+
+    assert signals == []
+    assert dirty is True
+    assert strategy._position_state["005930"].ma_break_since_ts == "20250101100000"
+
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 10, 11, 0)
+    signals, dirty = await strategy._check_single_exit({"code": "005930", "buy_price": 10000, "qty": 2})
+
+    assert len(signals) == 1
+    assert dirty is True
+    assert "005930" not in strategy._position_state
+
+    strategy._position_state["005930"] = FPPositionState(
+        10000, "20250101", 10000, 12000, ma_break_since_ts="20250101100000"
+    )
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data={"output": {"stck_prpr": "10000"}},
+    )
+    signals, dirty = await strategy._check_single_exit({"code": "005930", "buy_price": 10000, "qty": 2})
+
+    assert signals == []
+    assert dirty is True
+    assert strategy._position_state["005930"].ma_break_since_ts is None
+
+
+@pytest.mark.asyncio
+async def test_check_single_exit_breakeven_stop(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+    strategy._position_state["005930"] = FPPositionState(
+        10000, "20250101", 11000, 12000, breakeven_armed=True
+    )
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data={"output": {"stck_prpr": "9900"}},
+    )
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data=[{"close": 9000} for _ in range(20)],
+    )
+
+    signals, dirty = await strategy._check_single_exit({"code": "005930", "buy_price": 10000, "qty": 3})
+
+    assert len(signals) == 1
+    assert signals[0].qty == 3
+    assert dirty is True
+    assert strategy._cooldown["005930"] >= datetime.today().strftime("%Y%m%d")
+
+
+@pytest.mark.asyncio
+async def test_save_state_inside_running_loop_schedules_async_save(mock_deps):
+    sqs, universe, tm, logger = mock_deps
+    strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state_async = AsyncMock()
+
+    strategy._save_state()
+    await asyncio.sleep(0)
+
+    strategy._save_state_async.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_load_state_async_missing_file(mock_deps, tmp_path):
+    sqs, universe, tm, logger = mock_deps
+    with patch.object(FirstPullbackStrategy, "_load_state", lambda self: None):
+        strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+    strategy.STATE_FILE = str(tmp_path / "missing.json")
+
+    await strategy._load_state_async()
+
+    assert strategy._position_state == {}
+
+
+@pytest.mark.asyncio
+async def test_load_state_async_corrupted_file(mock_deps, tmp_path):
+    sqs, universe, tm, logger = mock_deps
+    with patch.object(FirstPullbackStrategy, "_load_state", lambda self: None):
+        strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+    state_file = tmp_path / "bad.json"
+    state_file.write_text("{bad json")
+    strategy.STATE_FILE = str(state_file)
+
+    await strategy._load_state_async()
+
+    logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_load_state_async_reads_positions_and_cooldown(mock_deps, tmp_path):
+    sqs, universe, tm, logger = mock_deps
+    with patch.object(FirstPullbackStrategy, "_load_state", lambda self: None):
+        strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+    state_file = tmp_path / "state.json"
+    state_file.write_text(json.dumps({
+        "positions": {
+            "005930": {
+                "entry_price": 10000,
+                "entry_date": "20250101",
+                "peak_price": 11000,
+                "surge_day_high": 12000,
+            }
+        },
+        "cooldown": {"005930": "20250105"},
+    }))
+    strategy.STATE_FILE = str(state_file)
+
+    await strategy._load_state_async()
+
+    assert strategy._position_state["005930"].entry_price == 10000
+    assert strategy._cooldown["005930"] == "20250105"
+
+
+@pytest.mark.asyncio
+async def test_save_state_async_logs_write_error(mock_deps, tmp_path):
+    sqs, universe, tm, logger = mock_deps
+    with patch.object(FirstPullbackStrategy, "_load_state", lambda self: None):
+        strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+    strategy.STATE_FILE = str(tmp_path / "state.json")
+
+    with patch("os.makedirs", side_effect=OSError("no write")):
+        await strategy._save_state_async()
+
+    logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_save_state_async_writes_file(mock_deps, tmp_path):
+    sqs, universe, tm, logger = mock_deps
+    with patch.object(FirstPullbackStrategy, "_load_state", lambda self: None):
+        strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+    state_file = tmp_path / "state.json"
+    strategy.STATE_FILE = str(state_file)
+    strategy._position_state["005930"] = FPPositionState(10000, "20250101", 11000, 12000)
+    strategy._cooldown["005930"] = "20250105"
+
+    await strategy._save_state_async()
+
+    data = json.loads(state_file.read_text())
+    assert data["positions"]["005930"]["entry_price"] == 10000
+    assert data["cooldown"]["005930"] == "20250105"
 
 
 @pytest.mark.asyncio
