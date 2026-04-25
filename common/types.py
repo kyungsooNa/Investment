@@ -25,6 +25,7 @@ class ErrorCode(Enum):
     WRONG_RET_TYPE = "106"  # WRONG_RET_TYPE
     EMPTY_VALUES = "107"  # 조회 결과 없음
     MARKET_CLOSED = "108"  # 장 마감
+    KILL_SWITCH_BLOCKED = "109"  # Kill Switch 활성 상태로 주문 차단
     UNKNOWN_ERROR = "999"  # 기타 오류
 
     @property

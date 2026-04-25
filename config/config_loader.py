@@ -23,6 +23,15 @@ class CacheConfig(BaseModel):
     memory_cache_enabled: bool = True
     file_cache_enabled: bool = True
 
+class KillSwitchConfig(BaseModel):
+    enabled: bool = True
+    daily_loss_threshold_won: int = 1_000_000
+    daily_loss_threshold_pct: float = 5.0
+    max_consecutive_losses: int = 3
+    max_consecutive_api_errors: int = 10
+    abnormal_fill_deviation_pct: float = 3.0
+    state_file_path: str = "data/kill_switch_state.json"
+
 class AppConfig(BaseModel):
     # Core API keys
     api_key: Optional[str] = None
@@ -41,6 +50,7 @@ class AppConfig(BaseModel):
     # Sub-configs
     web: WebConfig
     cache: CacheConfig = Field(default_factory=CacheConfig)
+    kill_switch: KillSwitchConfig = Field(default_factory=KillSwitchConfig)
     
     # Dynamic/Merged configs
     tr_ids: Dict[str, Any] = Field(default_factory=dict)

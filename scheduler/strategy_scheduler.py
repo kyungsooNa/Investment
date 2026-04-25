@@ -31,6 +31,7 @@ from core.performance_profiler import PerformanceProfiler
 from scheduler.strategy_scheduler_store import StrategySchedulerStore, SCHEDULER_DB_FILE
 from services.price_subscription_service import SubscriptionPriority
 from core.loggers.trace_context import trace_scope, get_trace_id, new_trace_id
+from services.kill_switch_service import KillSwitchService
 
 
 @dataclass
@@ -88,6 +89,7 @@ class StrategyScheduler:
         performance_profiler: Optional[PerformanceProfiler] = None,
         store: Optional[StrategySchedulerStore] = None,
         price_subscription_service=None,
+        kill_switch_service: Optional[KillSwitchService] = None,
     ):
         self._virtual_trade_service = virtual_trade_service
         self._oes = order_execution_service
@@ -102,6 +104,7 @@ class StrategyScheduler:
 
         self._store = store or StrategySchedulerStore(db_path=SCHEDULER_DB_FILE, logger=self._logger)
         self._price_sub_svc = price_subscription_service
+        self._kill_switch = kill_switch_service
 
         self._strategies: List[StrategySchedulerConfig] = []
         self._running = False
@@ -131,6 +134,10 @@ class StrategyScheduler:
         if self._running:
             self._logger.warning("[Scheduler] 이미 실행 중")
             return
+        if self._kill_switch:
+            allowed, reason = await self._kill_switch.check_strategies_allowed()
+            if not allowed:
+                self._logger.warning(f"[Scheduler] Kill Switch 활성 상태로 시작 — 전략 실행은 차단됨: {reason}")
         for cfg in self._strategies:
             cfg.enabled = True
         self._running = True
@@ -213,6 +220,15 @@ class StrategyScheduler:
                     await self._run_reconciliation()
                 in_force_exit_window = minutes_to_close <= self.FORCE_EXIT_MINUTES_BEFORE
 
+                # Kill switch 체크: 트립 시 일반 전략 실행 차단 (force_exit 청산은 유지)
+                _ks_allowed = True
+                if self._kill_switch:
+                    _ks_allowed, _ks_reason = await self._kill_switch.check_strategies_allowed()
+                    if not _ks_allowed:
+                        self._logger.warning(
+                            f"[Scheduler] Kill Switch 활성 ({_ks_reason}) — 일반 전략 실행 차단 (청산은 유지)"
+                        )
+
                 # 1. 실행이 필요한 전략들을 수집 (기아 현상 방지를 위해 나중에 우선순위 정렬)
                 evaluations = []
                 for cfg in self._strategies:
@@ -222,15 +238,17 @@ class StrategyScheduler:
                     last = self._last_run.get(name)
                     elapsed = (now - last).total_seconds() if last else float('inf')
 
-                    # 강제 청산: 마감 N분 전이면 즉시 실행 (1회만)
+                    # 강제 청산: 마감 N분 전이면 즉시 실행 (1회만) — kill switch와 무관하게 허용
                     force_exit = (cfg.force_exit_on_close
                                   and in_force_exit_window
                                   and name not in self._force_exit_done)
 
                     # 정규 실행: force_exit_on_close 전략은 마감 전 구간에서 새 매수 금지
+                    # kill switch 활성 시 신규 전략 실행 차단
                     should_run = (not force_exit
                                   and not (cfg.force_exit_on_close and in_force_exit_window)
-                                  and elapsed >= cfg.interval_minutes * 60)
+                                  and elapsed >= cfg.interval_minutes * 60
+                                  and _ks_allowed)
 
                     if should_run or force_exit:
                         # 지연 시간(초) 계산 - 처음 실행 시(last가 None) 무한대로 처리

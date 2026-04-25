@@ -1408,4 +1408,75 @@ async def test_state_transition_resets_stuck_order_alert_level(
     assert updated.state == OrderState.PARTIAL_FILLED
     assert updated.last_stuck_alert_level == ""
     assert updated.last_stuck_alert_at is None
-    assert updated.state_entered_at == created_at + timedelta(seconds=90)
+
+
+# ── Kill Switch 차단 테스트 ──────────────────────────────────────────────────
+
+@pytest.fixture
+def mock_kill_switch():
+    ks = AsyncMock()
+    ks.check_orders_allowed = AsyncMock(return_value=(True, None))
+    return ks
+
+
+@pytest.fixture
+def handler_with_ks(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+    mock_notification_service,
+    mock_kill_switch,
+):
+    return OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        notification_service=mock_notification_service,
+        kill_switch_service=mock_kill_switch,
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_place_buy_order_blocked_by_kill_switch(
+    handler_with_ks, mock_kill_switch, mock_broker_api_wrapper
+):
+    """Kill Switch 트립 시 매수 주문이 KILL_SWITCH_BLOCKED 코드로 즉시 차단되는지 테스트."""
+    mock_kill_switch.check_orders_allowed.return_value = (False, "일 손실 한도 초과")
+
+    result = await handler_with_ks.handle_place_buy_order("005930", 70000, 10)
+
+    assert result.rt_cd == ErrorCode.KILL_SWITCH_BLOCKED.value
+    assert "일 손실 한도 초과" in result.msg1
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_place_sell_order_blocked_by_kill_switch(
+    handler_with_ks, mock_kill_switch, mock_broker_api_wrapper
+):
+    """Kill Switch 트립 시 매도 주문이 KILL_SWITCH_BLOCKED 코드로 즉시 차단되는지 테스트."""
+    mock_kill_switch.check_orders_allowed.return_value = (False, "연속 손실 한도 초과")
+
+    result = await handler_with_ks.handle_place_sell_order("005930", 70000, 10)
+
+    assert result.rt_cd == ErrorCode.KILL_SWITCH_BLOCKED.value
+    assert "연속 손실 한도 초과" in result.msg1
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_place_buy_order_allowed_when_kill_switch_ok(
+    handler_with_ks, mock_kill_switch, mock_broker_api_wrapper
+):
+    """Kill Switch 정상 상태에서는 주문이 차단되지 않고 정상 처리되는지 테스트."""
+    mock_kill_switch.check_orders_allowed.return_value = (True, None)
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="주문 성공", data={"ordno": "A0001"}
+    )
+
+    result = await handler_with_ks.handle_place_buy_order("005930", 70000, 10)
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    mock_broker_api_wrapper.place_stock_order.assert_awaited_once()

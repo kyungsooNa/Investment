@@ -4,7 +4,7 @@ TradingApp의 초기화 로직을 참고하여 서비스 레이어만 초기화�
 """
 import asyncio
 import time
-from config.config_loader import load_configs
+from config.config_loader import load_configs, KillSwitchConfig
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 import os
 from brokers.broker_api_wrapper import BrokerAPIWrapper
@@ -58,6 +58,7 @@ from services.program_trading_stream_service import ProgramTradingStreamService
 from services.market_data_service import MarketDataService
 from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService, NotificationCategory
+from services.kill_switch_service import KillSwitchService
 from services.price_subscription_service import PriceSubscriptionService
 from services.price_stream_service import PriceStreamService
 from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
@@ -83,6 +84,7 @@ class WebAppContext:
         self.stock_query_service: StockQueryService = None
         self.streaming_service: StreamingService = None
         self.order_execution_service: OrderExecutionService = None
+        self.kill_switch_service: KillSwitchService = None
         self.indicator_service: IndicatorService = None
         self.virtual_repo = VirtualTradeRepository()
         self.virtual_trade_service = VirtualTradeService(repository=self.virtual_repo, market_clock=self.market_clock)
@@ -148,6 +150,11 @@ class WebAppContext:
             logger=self.logger
         )
         self.notification_service = NotificationService(self.market_clock)
+        self.kill_switch_service = KillSwitchService(
+            config=getattr(self.full_config, "kill_switch", None) or KillSwitchConfig(),
+            notification_service=self.notification_service,
+            logger=self.logger,
+        )
         # ---------------------------------------------------------
         # [추가] Telegram Notifier 초기화 및 핸들러 등록
         telegram_backlog_bot_token = config_dict.get("telegram_backlog_bot_token")
@@ -415,6 +422,7 @@ class WebAppContext:
             market_calendar_service=self._mcs,
             price_subscription_service=self.price_subscription_service,
             virtual_trade_service=self.virtual_trade_service,
+            kill_switch_service=self.kill_switch_service,
         )
         self.streaming_service.register_handler(
             "signing_notice",
@@ -648,6 +656,7 @@ class WebAppContext:
             notification_service=self.notification_service,
             performance_profiler=self.pm,
             price_subscription_service=self.price_subscription_service,
+            kill_switch_service=self.kill_switch_service,
         )
 
         # 거래량 돌파 전략 등록
