@@ -2033,5 +2033,72 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             
             scheduler._logger.error.assert_called()
 
+    # ── Kill Switch 테스트 ───────────────────────────────────────────────────
+
+    async def test_loop_skips_strategy_when_kill_switch_tripped(self):
+        """Kill Switch 트립 시 _loop()가 일반 전략을 실행하지 않는지 테스트."""
+        from datetime import datetime
+        scheduler, _, oes, tm, mcs = self._make_scheduler()
+
+        mock_ks = AsyncMock()
+        mock_ks.check_strategies_allowed = AsyncMock(return_value=(False, "일 손실 한도 초과"))
+        scheduler._kill_switch = mock_ks
+
+        now_dt = datetime(2026, 4, 24, 10, 0, 0)
+        close_dt = datetime(2026, 4, 24, 15, 30, 0)
+        tm.get_current_kst_time.return_value = now_dt
+        tm.get_market_close_time.return_value = close_dt
+
+        strategy = MockStrategy(name="전략A", scan_signals=[])
+        config = StrategySchedulerConfig(strategy=strategy, interval_minutes=0)
+        scheduler.register(config)
+        scheduler._running = True
+
+        mcs.is_market_open_now.side_effect = [True, asyncio.CancelledError()]
+
+        with patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as mock_run:
+            try:
+                await scheduler._loop()
+            except asyncio.CancelledError:
+                pass
+
+        mock_run.assert_not_awaited()
+        scheduler._logger.warning.assert_called()
+
+    async def test_loop_allows_force_exit_when_kill_switch_tripped(self):
+        """Kill Switch 트립 중에도 force_exit_on_close 강제 청산은 실행되는지 테스트."""
+        from datetime import datetime
+        scheduler, _, oes, tm, mcs = self._make_scheduler()
+
+        mock_ks = AsyncMock()
+        mock_ks.check_strategies_allowed = AsyncMock(return_value=(False, "수동 트립"))
+        scheduler._kill_switch = mock_ks
+
+        # 마감 25분 전 (FORCE_EXIT_MINUTES_BEFORE=30 이내)
+        now_dt = datetime(2026, 4, 24, 15, 5, 0)
+        close_dt = datetime(2026, 4, 24, 15, 30, 0)
+        tm.get_current_kst_time.return_value = now_dt
+        tm.get_market_close_time.return_value = close_dt
+
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(
+            strategy=strategy, force_exit_on_close=True, interval_minutes=60
+        )
+        scheduler.register(config)
+        scheduler._running = True
+
+        mcs.is_market_open_now.side_effect = [True, asyncio.CancelledError()]
+
+        with patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as mock_run:
+            try:
+                await scheduler._loop()
+            except asyncio.CancelledError:
+                pass
+
+        # force_exit_only=True 로 한 번 호출되어야 함
+        mock_run.assert_awaited_once()
+        _, kwargs = mock_run.call_args
+        self.assertTrue(kwargs.get("force_exit_only"))
+
 if __name__ == "__main__":
     unittest.main()
