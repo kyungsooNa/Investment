@@ -3,6 +3,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock
 from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime
+from types import SimpleNamespace
 from common.types import ResCommonResponse, TradeSignal
 from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.oneil_common_types import (
@@ -1336,3 +1337,195 @@ def test_load_save_state_exceptions(mock_deps, tmp_path):
     with patch("os.makedirs", side_effect=OSError("Permission denied")):
         strategy._save_state()
     logger.error.assert_called()
+
+
+def test_init_uses_default_strategy_logger(mock_deps, monkeypatch):
+    """__init__: logger 미주입 시 전략 전용 로거를 생성한다."""
+    sqs, universe, tm, _ = mock_deps
+    created_logger = MagicMock()
+    get_logger = MagicMock(return_value=created_logger)
+    monkeypatch.setattr(
+        "strategies.oneil_pocket_pivot_strategy.get_strategy_logger",
+        get_logger,
+    )
+
+    strategy = OneilPocketPivotStrategy(sqs, universe, tm)
+
+    get_logger.assert_called_once_with("OneilPocketPivot")
+    assert strategy._logger is created_logger
+
+
+@pytest.mark.asyncio
+async def test_scan_entry_accepts_object_price_output(pp_scan_setup):
+    """scan: 현재가 output이 객체 형태여도 PP 진입을 평가한다."""
+    strategy, sqs, _, _, _ = pp_scan_setup
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": SimpleNamespace(
+            stck_prpr="68500", acml_vol="200000",
+            pgtr_ntby_qty="30000", acml_tr_pbmn="14200000000",
+            stck_oprc="68000", stck_hgpr="69000", stck_lwpr="67500",
+            prdy_vrss="1500", prdy_vrss_sign="2",
+        )}
+    )
+    sqs.get_stock_conclusion.return_value = _cgld_output("150.0")
+
+    signals = await strategy.scan()
+
+    assert len(signals) == 1
+    assert signals[0].action == "BUY"
+    assert "PP진입" in signals[0].reason
+
+
+@pytest.mark.asyncio
+async def test_scan_logs_save_state_async_failure(pp_scan_setup):
+    """scan: 진입 상태 저장 실패는 에러 로그만 남기고 매수 시그널을 반환한다."""
+    strategy, sqs, _, _, logger = pp_scan_setup
+    strategy._save_state_async = AsyncMock(side_effect=Exception("disk full"))
+    sqs.get_current_price.return_value = _pp_price_output()
+    sqs.get_stock_conclusion.return_value = _cgld_output("150.0")
+
+    signals = await strategy.scan()
+
+    assert len(signals) == 1
+    logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_scan_generic_entry_type_reason(pp_scan_setup):
+    """_check_entry: PP/BGU 외 entry_type도 기본 사유 메시지를 만든다."""
+    strategy, sqs, _, _, _ = pp_scan_setup
+    strategy._check_pocket_pivot = MagicMock(return_value=("ALT", "", 0, {}))
+    strategy._check_smart_money = MagicMock(return_value=True)
+    strategy._save_state_async = AsyncMock()
+    sqs.get_current_price.return_value = _pp_price_output()
+    sqs.get_stock_conclusion.return_value = _cgld_output("150.0")
+
+    signals = await strategy.scan()
+
+    assert len(signals) == 1
+    assert "ALT진입" in signals[0].reason
+
+
+def test_check_bgu_rejects_missing_or_low_program_buy(mock_deps):
+    """_check_bgu: BGU 전용 PG 최소 조건 미달 경로를 검증한다."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 30, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+    ohlcv = _make_ohlcv(60, close=69000, open_=68500, volume=100000)
+
+    assert strategy._check_bgu(
+        "005930", 72900, 500000, 0.1, ohlcv, 72800, 72000, 70000,
+        pg_buy=0, trade_value=14200000000,
+    ) is None
+    assert strategy._check_bgu(
+        "005930", 72900, 500000, 0.1, ohlcv, 72800, 72000, 70000,
+        pg_buy=100, trade_value=14200000000,
+    ) is None
+    logger.debug.assert_called()
+
+
+def test_check_smart_money_market_cap_filter_disabled(mock_deps):
+    """_check_smart_money: 시총 필터가 0이면 거래대금 조건만으로 통과 가능하다."""
+    sqs, universe, tm, logger = mock_deps
+    cfg = OneilPocketPivotConfig(program_to_market_cap_pct=0.0)
+    strategy = OneilPocketPivotStrategy(sqs, universe, tm, config=cfg, logger=logger)
+
+    assert strategy._check_smart_money(
+        "005930", current=1000, pg_buy=10_000,
+        trade_value=100_000_000, market_cap=0,
+    ) is True
+
+
+@pytest.mark.asyncio
+async def test_check_exits_empty_and_exception_result(mock_deps):
+    """check_exits: 빈 holdings와 개별 청산 예외를 방어한다."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
+    assert await strategy.check_exits([]) == []
+
+    universe.is_market_timing_ok.return_value = True
+    strategy._check_single_exit = AsyncMock(side_effect=Exception("exit failed"))
+    assert await strategy.check_exits([{"code": "005930", "buy_price": 10000}]) == []
+    logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_check_exits_logs_save_failure_when_dirty(mock_deps):
+    """check_exits: dirty 상태 저장 실패 시 에러 로그를 남긴다."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
+    universe.is_market_timing_ok.return_value = True
+    strategy._check_single_exit = AsyncMock(return_value=(
+        [TradeSignal(
+            code="005930", name="삼성전자", action="SELL",
+            price=10000, qty=1, reason="테스트", strategy_name=strategy.name,
+        )],
+        True,
+    ))
+    strategy._save_state_async = AsyncMock(side_effect=Exception("save failed"))
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000}])
+
+    assert len(signals) == 1
+    logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_check_single_exit_accepts_object_output(mock_deps):
+    """_check_single_exit: 현재가 output이 객체 형태여도 청산 평가를 진행한다."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
+    universe.is_market_timing_ok.return_value = True
+    strategy._position_state["005930"] = PPPositionState("PP", 10000, "20250101", 10000, "20", 0)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": SimpleNamespace(
+            stck_prpr="10100", pgtr_ntby_qty="1000", acml_tr_pbmn="100000000",
+        )}
+    )
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000, "market": "KOSPI"}])
+
+    assert signals == []
+
+
+@pytest.mark.asyncio
+async def test_check_exits_smart_money_exit_signal(mock_deps):
+    """check_exits: 손실 중 PG/체결강도가 진입 대비 급감하면 수급이탈로 청산한다."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
+    universe.is_market_timing_ok.return_value = True
+    strategy._position_state["005930"] = PPPositionState(
+        "PP", 10000, "20250101", 10000, "20", 0,
+        entry_pg_buy_amount=100_000_000, entry_cgld=150.0,
+    )
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "9900", "pgtr_ntby_qty": "100", "acml_tr_pbmn": "100000000",
+        }}
+    )
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    sqs.get_stock_conclusion.return_value = _cgld_output("40.0")
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": 10000, "market": "KOSPI"}])
+
+    assert len(signals) == 1
+    assert "수급이탈" in signals[0].reason
+    assert "005930" not in strategy._position_state
+    assert "005930" in strategy._cooldown
+
+
+@pytest.mark.asyncio
+async def test_check_hard_stop_queries_market_timing_when_not_cached(mock_deps):
+    """_check_hard_stop: 캐시값이 없으면 유니버스 서비스로 마켓타이밍을 조회한다."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
+    universe.is_market_timing_ok.return_value = False
+    state = PPPositionState("PP", 10000, "20250101", 10000, "20", 0)
+
+    reason = await strategy._check_hard_stop(state, 10000, "KOSPI", market_timing_ok=None)
+
+    assert reason == "하드스탑(마켓타이밍 악화)"
