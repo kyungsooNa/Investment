@@ -426,11 +426,6 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
 
 ## 바로 착수 추천 순서
 
-1. `services/order_execution_service.py`
-   - 실전 `finalize_immediately` 제거/비활성화
-   - 주문 접수와 체결 완료 상태 분리
-   - 부분체결/미체결/취소 상태 보강
-
 2. `services/risk_gate_service.py`
    - 신규 생성
    - kill switch, position sizing, 계좌 노출, 미체결 상태를 공통 검증

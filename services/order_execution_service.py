@@ -438,12 +438,29 @@ class OrderExecutionService:
                         },
                     )
 
-            self._transition_order_context(
-                context.order_key,
-                context.state,
-                stuck_alert_at=now,
-                stuck_alert_level=alert_level.value,
-            )
+                if alert_level == NotificationLevel.CRITICAL:
+                    today = now.strftime("%Y%m%d")
+                    poll_applied = await self._poll_single_order_context(context, today, today)
+                    if poll_applied > 0:
+                        self.logger.info(
+                            f"stuck order 상태 보정 완료(polling): order_key={context.order_key}, "
+                            f"applied={poll_applied}"
+                        )
+                    else:
+                        self.logger.warning(
+                            f"stuck order polling 결과 모호(상태 전이 없음): "
+                            f"order_key={context.order_key}"
+                        )
+
+            # polling 이 상태를 terminal 로 전이했을 수 있으므로 재조회 후 갱신
+            current_context = self._order_states.get(context.order_key)
+            if current_context and not current_context.state.is_terminal:
+                self._transition_order_context(
+                    context.order_key,
+                    current_context.state,
+                    stuck_alert_at=now,
+                    stuck_alert_level=alert_level.value,
+                )
             notified_count += 1
 
         return notified_count

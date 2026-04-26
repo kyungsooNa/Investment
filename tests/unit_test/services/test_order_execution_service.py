@@ -1357,7 +1357,8 @@ async def test_check_stuck_orders_once_escalates_to_critical_in_real_mode(
 
     assert warning_count == 1
     assert critical_count == 1
-    mock_logger.warning.assert_called_once()
+    # WARNING: stuck detected(61s) + polling failure + polling ambiguous → 최소 1회
+    assert mock_logger.warning.call_count >= 1
     mock_logger.critical.assert_called_once()
     emit_calls = mock_notification_service.emit.await_args_list
     assert emit_calls[0].args[1] == NotificationLevel.WARNING
@@ -2053,3 +2054,96 @@ def test_internal_transition_raises_on_invalid(handler):
 
     with pytest.raises((ValueError, Exception)):
         handler._transition_order_context(ctx.order_key, OrderState.SUBMITTED)
+
+
+# ── PR2: stuck order CRITICAL 시 broker polling 상태 보정 테스트 ───────────────
+
+@pytest.mark.asyncio
+async def test_stuck_order_critical_triggers_polling(handler_real, mock_logger):
+    """CRITICAL stuck order 감지 시 _poll_single_order_context 가 호출돼야 한다."""
+    now = datetime(2026, 4, 24, 10, 0, 0)
+    entered_at = now - timedelta(seconds=OrderExecutionService._STUCK_ORDER_CRITICAL_SEC + 10)
+    _seed_order_context(handler_real, state=OrderState.SUBMITTED, broker_order_no="C0001",
+                        remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
+
+    with patch.object(handler_real, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
+        mock_poll.return_value = 0
+        await handler_real.check_stuck_orders_once(now=now)
+
+    mock_poll.assert_awaited_once()
+    call_args = mock_poll.call_args
+    assert call_args.args[1] == now.strftime("%Y%m%d")  # start_date
+    assert call_args.args[2] == now.strftime("%Y%m%d")  # end_date
+
+
+@pytest.mark.asyncio
+async def test_stuck_order_polling_clear_response_transitions_state(handler_real, mock_logger):
+    """polling 이 1건 적용되면 INFO 로그가 기록되고 stuck_alert 메타 업데이트는 생략된다."""
+    now = datetime(2026, 4, 24, 10, 0, 0)
+    entered_at = now - timedelta(seconds=OrderExecutionService._STUCK_ORDER_CRITICAL_SEC + 10)
+    ctx = _seed_order_context(handler_real, state=OrderState.SUBMITTED, broker_order_no="C0002",
+                              remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
+
+    def fake_poll(context, start_date, end_date):
+        # polling 이 상태를 FILLED 로 전이시킨 것처럼 시뮬레이션
+        handler_real._order_states[ctx.order_key] = handler_real._order_states[ctx.order_key].model_copy(
+            update={"state": OrderState.FILLED, "filled_qty": 10, "remaining_qty": 0}
+        )
+        return 1
+
+    with patch.object(handler_real, "_poll_single_order_context", side_effect=fake_poll):
+        count = await handler_real.check_stuck_orders_once(now=now)
+
+    assert count == 1
+    info_calls = [str(c) for c in mock_logger.info.call_args_list]
+    assert any("상태 보정 완료" in s for s in info_calls)
+    # terminal 상태이므로 stuck_alert_level 메타 업데이트 시도 없음 → _order_states 에 FILLED 유지
+    assert handler_real._order_states[ctx.order_key].state == OrderState.FILLED
+
+
+@pytest.mark.asyncio
+async def test_stuck_order_polling_ambiguous_response_no_transition(handler_real, mock_logger):
+    """polling 이 0건 반환하면 WARNING 로그만 기록하고 상태는 SUBMITTED 유지된다."""
+    now = datetime(2026, 4, 24, 10, 0, 0)
+    entered_at = now - timedelta(seconds=OrderExecutionService._STUCK_ORDER_CRITICAL_SEC + 10)
+    ctx = _seed_order_context(handler_real, state=OrderState.SUBMITTED, broker_order_no="C0003",
+                              remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
+
+    with patch.object(handler_real, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
+        mock_poll.return_value = 0
+        count = await handler_real.check_stuck_orders_once(now=now)
+
+    assert count == 1
+    warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+    assert any("모호" in s for s in warning_calls)
+    # 상태 전이 없음 — SUBMITTED 유지
+    assert handler_real._order_states[ctx.order_key].state == OrderState.SUBMITTED
+
+
+@pytest.mark.asyncio
+async def test_stuck_order_warning_level_does_not_trigger_polling(handler_real, mock_logger):
+    """WARNING 수준 stuck order 에서는 polling 을 호출하지 않는다."""
+    now = datetime(2026, 4, 24, 10, 0, 0)
+    # WARNING 범위: WARNING_SEC 이상 ~ CRITICAL_SEC 미만
+    entered_at = now - timedelta(seconds=OrderExecutionService._STUCK_ORDER_WARNING_SEC + 5)
+    _seed_order_context(handler_real, state=OrderState.SUBMITTED, broker_order_no="W0001",
+                        remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
+
+    with patch.object(handler_real, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
+        await handler_real.check_stuck_orders_once(now=now)
+
+    mock_poll.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stuck_order_paper_mode_no_polling(handler, mock_logger):
+    """paper mode 에서는 CRITICAL 알림이 없으므로 polling 이 호출되지 않는다."""
+    now = datetime(2026, 4, 24, 10, 0, 0)
+    entered_at = now - timedelta(seconds=OrderExecutionService._STUCK_ORDER_CRITICAL_SEC + 10)
+    _seed_order_context(handler, state=OrderState.SUBMITTED, broker_order_no="P0001",
+                        remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
+
+    with patch.object(handler, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
+        await handler.check_stuck_orders_once(now=now)
+
+    mock_poll.assert_not_awaited()
