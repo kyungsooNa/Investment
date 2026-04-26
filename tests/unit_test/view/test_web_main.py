@@ -23,6 +23,10 @@ def mock_web_app_context_cls():
         mock_instance.scheduler.stop = AsyncMock()
         mock_instance.start_background_tasks = MagicMock()
         mock_instance.shutdown = AsyncMock()
+        oes = MagicMock()
+        oes.restore_state_from_broker = AsyncMock(return_value=0)
+        oes.reconcile_orders_with_broker = AsyncMock(return_value=0)
+        mock_instance.order_execution_service = oes
         yield MockClass
 
 @pytest.fixture

@@ -2354,3 +2354,143 @@ async def test_reconcile_consecutive_counter_resets_on_match(handler, mock_broke
     await handler.reconcile_orders_with_broker()
 
     assert handler._reconcile_consecutive_mismatch_by_key.get(ctx.order_key, 0) == 0
+
+
+# ── PR5: restore_state_from_broker 테스트 ────────────────────────────────
+
+def _restore_response(rows: list[dict]) -> ResCommonResponse:
+    """restore용 full row dict 리스트로 응답 생성."""
+    return ResCommonResponse(rt_cd="0", msg1="", data={"output": rows})
+
+
+def _restore_row(odno: str, pdno: str, sll_buy: str = "02",
+                 ord_qty: str = "10", ord_unpr: str = "50000",
+                 tot_ccld_qty: str = "0") -> dict:
+    return {
+        "odno": odno, "pdno": pdno, "sll_buy_dvsn_cd": sll_buy,
+        "ord_qty": ord_qty, "ord_unpr": ord_unpr, "tot_ccld_qty": tot_ccld_qty,
+    }
+
+
+def _real_mode(broker_mock):
+    """broker_api_wrapper.env.is_paper_trading = False 설정."""
+    mock_env = MagicMock()
+    mock_env.is_paper_trading = False
+    broker_mock.env = mock_env
+
+
+@pytest.mark.asyncio
+async def test_restore_paper_mode_skips(handler, mock_broker_api_wrapper):
+    """paper mode(기본값)에서는 API를 호출하지 않고 0을 반환한다."""
+    count = await handler.restore_state_from_broker()
+    assert count == 0
+    mock_broker_api_wrapper.inquire_unfilled_orders.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_restore_rebuilds_submitted_from_unfilled(handler, mock_broker_api_wrapper):
+    """미체결 조회 응답으로 SUBMITTED 컨텍스트가 재구성된다."""
+    _real_mode(mock_broker_api_wrapper)
+    row = _restore_row("ORD001", "005930", sll_buy="02", ord_qty="5", ord_unpr="70000")
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _restore_response([row])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _restore_response([])
+
+    count = await handler.restore_state_from_broker()
+
+    assert count == 1
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    ctx = handler._order_states.get(order_key)
+    assert ctx is not None
+    assert ctx.state == OrderState.SUBMITTED
+    assert ctx.broker_order_no == "ORD001"
+    assert ctx.source == "restored"
+    assert handler._order_no_index.get("ORD001") == order_key
+
+
+@pytest.mark.asyncio
+async def test_restore_rebuilds_filled_from_filled_history(handler, mock_broker_api_wrapper):
+    """당일 체결내역으로 FILLED 컨텍스트가 재구성된다."""
+    _real_mode(mock_broker_api_wrapper)
+    row = _restore_row("ORD002", "000660", sll_buy="01", ord_qty="3", ord_unpr="120000", tot_ccld_qty="3")
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _restore_response([])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _restore_response([row])
+
+    count = await handler.restore_state_from_broker()
+
+    assert count == 1
+    order_key = handler._make_order_key("000660", OrderSide.SELL, Exchange.KRX)
+    ctx = handler._order_states.get(order_key)
+    assert ctx is not None
+    assert ctx.state == OrderState.FILLED
+    assert ctx.broker_order_no == "ORD002"
+    assert ctx.filled_qty == 3
+    assert ctx.source == "restored"
+
+
+@pytest.mark.asyncio
+async def test_restore_submitted_upgraded_to_filled(handler, mock_broker_api_wrapper):
+    """미체결로 SUBMITTED 복원 후 체결내역에서 동일 주문 발견 시 FILLED로 전이."""
+    _real_mode(mock_broker_api_wrapper)
+    unfilled_row = _restore_row("ORD003", "035720", sll_buy="02", ord_qty="2", ord_unpr="60000")
+    filled_row = _restore_row("ORD003", "035720", sll_buy="02", ord_qty="2", ord_unpr="60000", tot_ccld_qty="2")
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _restore_response([unfilled_row])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _restore_response([filled_row])
+
+    count = await handler.restore_state_from_broker()
+
+    order_key = handler._make_order_key("035720", OrderSide.BUY, Exchange.KRX)
+    ctx = handler._order_states.get(order_key)
+    assert ctx is not None
+    assert ctx.state == OrderState.FILLED
+    assert ctx.filled_qty == 2
+    assert count == 1  # SUBMITTED 복원 1건, FILLED 전이는 count 미포함
+
+
+@pytest.mark.asyncio
+async def test_restore_skips_existing_context(handler, mock_broker_api_wrapper):
+    """이미 _order_states에 존재하는 order_key는 복원 스킵."""
+    _real_mode(mock_broker_api_wrapper)
+    _seed_context(handler, stock_code="005930", state=OrderState.SUBMITTED)
+    row = _restore_row("ORD999", "005930", sll_buy="02")
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _restore_response([row])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _restore_response([])
+
+    count = await handler.restore_state_from_broker()
+
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_restore_unfilled_api_failure_logs_warning(handler, mock_broker_api_wrapper, mock_logger):
+    """미체결 조회 실패 시 warning 로그 후 체결내역 조회도 계속 진행."""
+    _real_mode(mock_broker_api_wrapper)
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _fail_response("조회 실패")
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _restore_response([])
+
+    count = await handler.restore_state_from_broker()
+
+    assert count == 0
+    mock_logger.warning.assert_called()
+    mock_broker_api_wrapper.inquire_filled_history.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_restore_state_rebuilds_order_indices(handler, mock_broker_api_wrapper):
+    """복원된 컨텍스트는 _order_no_index에도 정확히 등록된다."""
+    _real_mode(mock_broker_api_wrapper)
+    rows = [
+        _restore_row("ORDB001", "035420", sll_buy="02", ord_qty="1"),
+        _restore_row("ORDS001", "000270", sll_buy="01", ord_qty="1"),
+    ]
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _restore_response(rows)
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _restore_response([])
+
+    count = await handler.restore_state_from_broker()
+
+    assert count == 2
+    assert "ORDB001" in handler._order_no_index
+    assert "ORDS001" in handler._order_no_index
+    buy_key = handler._make_order_key("035420", OrderSide.BUY, Exchange.KRX)
+    sell_key = handler._make_order_key("000270", OrderSide.SELL, Exchange.KRX)
+    assert handler._order_no_index["ORDB001"] == buy_key
+    assert handler._order_no_index["ORDS001"] == sell_key

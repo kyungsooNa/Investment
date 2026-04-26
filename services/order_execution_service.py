@@ -559,6 +559,119 @@ class OrderExecutionService:
 
         return applied_count
 
+    async def restore_state_from_broker(self) -> int:
+        """
+        시스템 재시작 시 broker 미체결/체결내역에서 주문 상태를 복원합니다.
+        paper mode에서는 스킵합니다.
+
+        반환: 복원된 컨텍스트 수
+        """
+        if self._is_paper_trading_mode():
+            self.logger.info("restore_state_from_broker: 모의투자 모드 — 복원 스킵")
+            return 0
+
+        now = self._get_now()
+        today = now.strftime("%Y%m%d")
+        restored_count = 0
+
+        # 1. 미체결 주문 → SUBMITTED 복원
+        unfilled_response = await self.broker_api_wrapper.inquire_unfilled_orders()
+        if unfilled_response and unfilled_response.rt_cd == ErrorCode.SUCCESS.value:
+            for row in self._extract_order_query_rows(unfilled_response.data):
+                odno = str(row.get("odno") or row.get("ODNO") or "").strip()
+                pdno = str(row.get("pdno") or row.get("PDNO") or "").strip()
+                if not odno or not pdno:
+                    continue
+                sll_buy = str(row.get("sll_buy_dvsn_cd") or "").strip()
+                try:
+                    qty = int(row.get("ord_qty") or 0)
+                    price = int(float(row.get("ord_unpr") or 0))
+                    filled_qty = int(row.get("tot_ccld_qty") or 0)
+                except (TypeError, ValueError):
+                    continue
+                side = OrderSide.BUY if sll_buy == "02" else OrderSide.SELL
+                order_key = self._make_order_key(pdno, side, Exchange.KRX)
+                if order_key in self._order_states:
+                    continue
+                context = OrderContext(
+                    order_key=order_key,
+                    stock_code=pdno,
+                    side=side,
+                    state=OrderState.SUBMITTED,
+                    price=price,
+                    qty=qty,
+                    exchange=Exchange.KRX,
+                    source="restored",
+                    filled_qty=filled_qty,
+                    broker_order_no=odno,
+                    created_at=now,
+                    state_entered_at=now,
+                )
+                self._set_order_context(context)
+                restored_count += 1
+                self.logger.info(
+                    f"restore: 미체결 주문 복원 — stock_code={pdno}, side={side.value}, odno={odno}"
+                )
+        else:
+            self.logger.warning(
+                f"restore: 미체결 조회 실패 — "
+                f"{unfilled_response.msg1 if unfilled_response else '응답 없음'}"
+            )
+
+        # 2. 당일 체결내역 → FILLED 복원 (또는 기존 SUBMITTED → FILLED 전이)
+        filled_response = await self.broker_api_wrapper.inquire_filled_history(
+            start_date=today, end_date=today
+        )
+        if filled_response and filled_response.rt_cd == ErrorCode.SUCCESS.value:
+            for row in self._extract_order_query_rows(filled_response.data):
+                odno = str(row.get("odno") or row.get("ODNO") or "").strip()
+                pdno = str(row.get("pdno") or row.get("PDNO") or "").strip()
+                if not odno or not pdno:
+                    continue
+                sll_buy = str(row.get("sll_buy_dvsn_cd") or "").strip()
+                try:
+                    qty = int(row.get("ord_qty") or 0)
+                    price = int(float(row.get("ord_unpr") or 0))
+                    filled_qty = int(row.get("tot_ccld_qty") or 0)
+                except (TypeError, ValueError):
+                    continue
+                side = OrderSide.BUY if sll_buy == "02" else OrderSide.SELL
+                order_key = self._make_order_key(pdno, side, Exchange.KRX)
+                existing = self._order_states.get(order_key)
+                if existing:
+                    if not existing.state.is_terminal:
+                        self._safe_transition_order_context(
+                            order_key, OrderState.FILLED, filled_qty=filled_qty
+                        )
+                    continue
+                context = OrderContext(
+                    order_key=order_key,
+                    stock_code=pdno,
+                    side=side,
+                    state=OrderState.FILLED,
+                    price=price,
+                    qty=qty,
+                    exchange=Exchange.KRX,
+                    source="restored",
+                    filled_qty=filled_qty,
+                    broker_order_no=odno,
+                    created_at=now,
+                    state_entered_at=now,
+                )
+                self._set_order_context(context)
+                restored_count += 1
+                self.logger.info(
+                    f"restore: 당일 체결 복원 — stock_code={pdno}, side={side.value}, odno={odno}"
+                )
+        else:
+            self.logger.warning(
+                f"restore: 체결내역 조회 실패 — "
+                f"{filled_response.msg1 if filled_response else '응답 없음'}"
+            )
+
+        self.logger.info(f"restore_state_from_broker: 총 {restored_count}건 복원 완료")
+        return restored_count
+
     async def reconcile_orders_with_broker(self) -> int:
         """
         활성 주문 상태를 broker 미체결/체결내역/잔고와 비교하여 불일치를 감지합니다.
