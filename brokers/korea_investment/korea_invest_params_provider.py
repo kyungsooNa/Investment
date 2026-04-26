@@ -655,6 +655,20 @@ class InquireDailyCcldParams:
 
 
 @dataclass(frozen=True)
+class InquirePsblRvsecnclParams:
+    CANO: str
+    ACNT_PRDT_CD: str = "01"
+    CTX_AREA_FK100: str = ""
+    CTX_AREA_NK100: str = ""
+    INQR_DVSN_1: str = "0"   # 0: 조회순서, 1: 주문순, 2: 종목순
+    INQR_DVSN_2: str = "0"   # 0: 전체, 1: 매도, 2: 매수
+    EXCG_ID_DVSN_CD: str = ""
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class OrderCashBody:
     CANO: str
     ACNT_PRDT_CD: str
@@ -868,6 +882,27 @@ class Params:
             CTX_AREA_FK100=ctx_area_fk100,
             CTX_AREA_NK100=ctx_area_nk100,
             EXCG_ID_DVSN_CD=exchange_code,
+        ).to_dict()
+
+    @staticmethod
+    def inquire_psbl_rvsecncl(
+            *,
+            cano: str,
+            acnt_prdt_cd: str = "01",
+            inqr_dvsn_1: str = "0",
+            inqr_dvsn_2: str = "0",
+            exchange_code: str = "",
+            ctx_area_fk100: str = "",
+            ctx_area_nk100: str = "",
+    ) -> Dict[str, str]:
+        return InquirePsblRvsecnclParams(
+            CANO=cano,
+            ACNT_PRDT_CD=acnt_prdt_cd,
+            INQR_DVSN_1=inqr_dvsn_1,
+            INQR_DVSN_2=inqr_dvsn_2,
+            EXCG_ID_DVSN_CD=exchange_code,
+            CTX_AREA_FK100=ctx_area_fk100,
+            CTX_AREA_NK100=ctx_area_nk100,
         ).to_dict()
 
     @staticmethod

@@ -71,6 +71,9 @@ class KoreaInvestTrIdProvider:
             if key is TrId.ORDER_RVSECNCL:
                 leaf = TrIdLeaf.ORDER_RVSECNCL_PAPER if is_paper else TrIdLeaf.ORDER_RVSECNCL_REAL
                 return self.get_by_leaf(leaf)
+            if key is TrId.INQUIRE_PSBL_RVSECNCL:
+                leaf = TrIdLeaf.INQUIRE_PSBL_RVSECNCL_PAPER if is_paper else TrIdLeaf.INQUIRE_PSBL_RVSECNCL_REAL
+                return self.get_by_leaf(leaf)
             raise KeyError(f"지원하지 않는 논리 키: {key}")
 
         # leaf 키 그대로
@@ -85,6 +88,9 @@ class KoreaInvestTrIdProvider:
 
     def account_inquire_daily_ccld(self) -> str:
         return self.get(TrId.INQUIRE_DAILY_CCLD)
+
+    def account_inquire_psbl_rvsecncl(self) -> str:
+        return self.get(TrId.INQUIRE_PSBL_RVSECNCL)
 
     def trading_order_cash(self, is_buy: bool) -> str:
         return self.get(TrId.ORDER_CASH_BUY if is_buy else TrId.ORDER_CASH_SELL)
