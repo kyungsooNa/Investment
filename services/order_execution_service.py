@@ -57,6 +57,7 @@ class OrderExecutionService:
         self._post_submit_fast_poll_until: Dict[str, datetime] = {}
         self._reconcile_mismatch_count: int = 0
         self._reconcile_alarm: bool = False
+        self._reconcile_consecutive_mismatch_by_key: Dict[str, int] = {}
 
     def _get_now(self) -> datetime:
         return self.market_clock.get_current_kst_time() if self.market_clock else datetime.now()
@@ -558,6 +559,161 @@ class OrderExecutionService:
 
         return applied_count
 
+    async def reconcile_orders_with_broker(self) -> int:
+        """
+        활성 주문 상태를 broker 미체결/체결내역/잔고와 비교하여 불일치를 감지합니다.
+
+        정책:
+        - 1회 불일치: _reconcile_alarm=True + WARNING, 상태 전이 없음
+        - 2회 연속 + 명시 근거(잔고·체결 없음): CANCELED 추정 전이 (assumed=true)
+        - 내부 FILLED인데 잔고 없음 → CRITICAL + alarm
+        - 잔고에만 있고 내부 컨텍스트 없음 → INFO (외부 주문 가능성)
+
+        반환: 감지된 불일치 건수
+        """
+        now = self._get_now()
+        today = now.strftime("%Y%m%d")
+        mismatch_count = 0
+
+        # --- 1. broker 미체결 주문 조회 ---
+        unfilled_response = await self.broker_api_wrapper.inquire_unfilled_orders()
+        if not unfilled_response or unfilled_response.rt_cd != ErrorCode.SUCCESS.value:
+            self.logger.warning(
+                f"reconcile: 미체결 조회 실패 — "
+                f"{unfilled_response.msg1 if unfilled_response else '응답 없음'}"
+            )
+            return 0
+
+        broker_unfilled_order_nos: set[str] = set()
+        for row in self._extract_order_query_rows(unfilled_response.data):
+            ono = str(row.get("odno") or row.get("ODNO") or "").strip()
+            if ono:
+                broker_unfilled_order_nos.add(ono)
+
+        # --- 2. broker 당일 체결내역 조회 ---
+        filled_response = await self.broker_api_wrapper.inquire_filled_history(
+            start_date=today, end_date=today
+        )
+        if not filled_response or filled_response.rt_cd != ErrorCode.SUCCESS.value:
+            self.logger.warning(
+                f"reconcile: 체결내역 조회 실패 — "
+                f"{filled_response.msg1 if filled_response else '응답 없음'}"
+            )
+            return 0
+
+        broker_filled: dict[str, int] = {}
+        for row in self._extract_order_query_rows(filled_response.data):
+            ono = str(row.get("odno") or row.get("ODNO") or "").strip()
+            qty_raw = row.get("tot_ccld_qty") or row.get("TOT_CCLD_QTY") or "0"
+            try:
+                qty = int(qty_raw)
+            except (TypeError, ValueError):
+                qty = 0
+            if ono:
+                broker_filled[ono] = max(broker_filled.get(ono, 0), qty)
+
+        # --- 3. 잔고 조회 ---
+        balance_response = await self.broker_api_wrapper.get_account_balance()
+        if not balance_response or balance_response.rt_cd != ErrorCode.SUCCESS.value:
+            self.logger.warning(
+                f"reconcile: 잔고 조회 실패 — "
+                f"{balance_response.msg1 if balance_response else '응답 없음'}"
+            )
+            return 0
+
+        broker_balance: dict[str, int] = {}
+        raw_holdings = (balance_response.data or {}).get("output1", []) if isinstance(balance_response.data, dict) else []
+        for stock in raw_holdings:
+            pdno = str(stock.get("pdno") or "").strip()
+            qty_raw = stock.get("hldg_qty") or "0"
+            try:
+                qty = int(qty_raw)
+            except (TypeError, ValueError):
+                qty = 0
+            if pdno and qty > 0:
+                broker_balance[pdno] = qty
+
+        # --- 4. 활성 주문과 비교 ---
+        active_contexts = self._active_order_contexts()
+        seen_stock_codes: set[str] = {c.stock_code for c in active_contexts}
+
+        for context in active_contexts:
+            broker_order_no = context.broker_order_no
+            if not broker_order_no:
+                continue
+
+            in_unfilled = broker_order_no in broker_unfilled_order_nos
+            in_filled = broker_order_no in broker_filled
+
+            if in_unfilled or in_filled:
+                self._reconcile_consecutive_mismatch_by_key.pop(context.order_key, None)
+                continue
+
+            # broker 어디에도 없음 → 불일치 의심
+            consecutive = self._reconcile_consecutive_mismatch_by_key.get(context.order_key, 0) + 1
+            self._reconcile_consecutive_mismatch_by_key[context.order_key] = consecutive
+            self._reconcile_mismatch_count += 1
+            mismatch_count += 1
+
+            self.logger.warning(
+                f"reconcile mismatch (consecutive={consecutive}): order_key={context.order_key}, "
+                f"broker_order_no={broker_order_no}, state={context.state.value} "
+                f"— broker 미체결/체결내역 어디에도 없음"
+            )
+            if not self._reconcile_alarm:
+                self._reconcile_alarm = True
+                self.logger.warning("reconcile: _reconcile_alarm=True 설정 → 신규 주문 차단")
+
+            if consecutive >= 2:
+                filled_from_broker = broker_filled.get(broker_order_no, 0)
+                balance_qty = broker_balance.get(context.stock_code, 0)
+                if context.side == OrderSide.SELL:
+                    clear_evidence = filled_from_broker == 0
+                else:
+                    clear_evidence = filled_from_broker == 0 and balance_qty == 0
+
+                if clear_evidence:
+                    self.logger.warning(
+                        f"reconcile: 2회 연속 mismatch + 명시 근거 → CANCELED 추정 전이 "
+                        f"(assumed=true): order_key={context.order_key}, "
+                        f"broker_order_no={broker_order_no}"
+                    )
+                    self._safe_transition_order_context(
+                        context.order_key,
+                        OrderState.CANCELED,
+                        error_message="reconcile assumed=true: broker 미체결/체결 근거 없음",
+                    )
+                    self._reconcile_consecutive_mismatch_by_key.pop(context.order_key, None)
+
+        # --- 5. 내부 FILLED인데 잔고 없음 → CRITICAL ---
+        for order_key, context in self._order_states.items():
+            if context.state == OrderState.FILLED and context.side == OrderSide.BUY:
+                if context.stock_code not in broker_balance:
+                    self.logger.critical(
+                        f"reconcile: 내부 FILLED이지만 잔고 없음 — "
+                        f"order_key={order_key}, stock_code={context.stock_code}, "
+                        f"filled_qty={context.filled_qty}"
+                    )
+                    if not self._reconcile_alarm:
+                        self._reconcile_alarm = True
+                        self.logger.warning("reconcile: _reconcile_alarm=True 설정 → 신규 주문 차단")
+
+        # --- 6. 잔고에만 있고 활성 컨텍스트 없음 → INFO ---
+        for stock_code, broker_qty in broker_balance.items():
+            if stock_code in seen_stock_codes:
+                continue
+            has_filled = any(
+                c.stock_code == stock_code and c.state == OrderState.FILLED
+                for c in self._order_states.values()
+            )
+            if not has_filled:
+                self.logger.info(
+                    f"reconcile: 잔고에 종목 있지만 내부 활성 컨텍스트 없음 "
+                    f"(외부 주문 가능성) — stock_code={stock_code}, broker_qty={broker_qty}"
+                )
+
+        return mismatch_count
+
     async def resolve_submitted_order(
         self,
         stock_code,
@@ -779,6 +935,16 @@ class OrderExecutionService:
     ) -> ResCommonResponse:
         order_key = self._make_order_key(stock_code, side, exchange)
         action_kr = "매수" if side == OrderSide.BUY else "매도"
+
+        if self._reconcile_alarm:
+            self.logger.warning(
+                f"reconcile alarm 활성 → 신규 주문 차단: stock_code={stock_code}, side={side.value}"
+            )
+            return ResCommonResponse(
+                rt_cd=ErrorCode.API_ERROR.value,
+                msg1="reconcile alarm 활성: 불일치 감지로 신규 주문이 차단되었습니다.",
+                data=None,
+            )
 
         async with self._get_symbol_lock(stock_code, exchange):
             for existing_side in (OrderSide.BUY, OrderSide.SELL):
