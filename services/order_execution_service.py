@@ -1,9 +1,11 @@
 # app/order_execution_service.py
 import asyncio
+import uuid
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState, OrderExecutionReport
+from core.retry_queue.retry_classifier import classify, RequestOutcome
 from core.loggers.trace_context import trace_scope, get_trace_id, new_trace_id
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
@@ -21,7 +23,7 @@ class OrderExecutionService:
     TradingService, Logger, MarketClock 인스턴스를 주입받아 사용합니다.
     """
 
-    _ORDER_MAX_RETRIES = 5
+    _ORDER_MAX_RETRIES = 3
     _ORDER_RETRY_DELAY_SEC = 3
     _PROCESSED_EXECUTION_EVENT_LIMIT = 5000
     _FAST_POLL_INTERVAL_SEC = 5
@@ -58,6 +60,7 @@ class OrderExecutionService:
         self._reconcile_mismatch_count: int = 0
         self._reconcile_alarm: bool = False
         self._reconcile_consecutive_mismatch_by_key: Dict[str, int] = {}
+        self._intent_index: Dict[str, str] = {}  # intent_id → order_key
 
     def _get_now(self) -> datetime:
         return self.market_clock.get_current_kst_time() if self.market_clock else datetime.now()
@@ -143,6 +146,8 @@ class OrderExecutionService:
         self._order_states[order_key] = next_context
         if next_context.broker_order_no:
             self._order_no_index[next_context.broker_order_no] = order_key
+        if next_context.state.is_terminal and next_context.intent_id:
+            self._intent_index.pop(next_context.intent_id, None)
         return next_context
 
     def _safe_transition_order_context(self, order_key: str, new_state: OrderState, **kwargs) -> Optional[OrderContext]:
@@ -974,7 +979,10 @@ class OrderExecutionService:
         )
 
     async def _retry_order(self, order_fn, stock_code, price, qty, order_key: Optional[str] = None) -> ResCommonResponse:
-        """재시도 가능한 오류에 대해 주문 API를 재시도."""
+        """재시도 가능한 오류에 대해 주문 API를 재시도.
+        - FAIL (비즈니스 거부): 즉시 REJECTED, 재시도 없음.
+        - RETRY (일시적 오류): 지수 백오프, 최대 _ORDER_MAX_RETRIES 회.
+        """
         last_result = None
         for attempt in range(1, self._ORDER_MAX_RETRIES + 1):
             result: ResCommonResponse = await order_fn(stock_code, price, qty)
@@ -989,13 +997,25 @@ class OrderExecutionService:
                 return result
             last_result = result
 
-            error_code = None
-            if result:
-                try:
-                    error_code = ErrorCode(result.rt_cd)
-                except ValueError:
-                    pass
+            outcome = classify(result)
 
+            if outcome == RequestOutcome.FAIL:
+                # 비즈니스 거부(잔고부족, 종목코드오류 등) → 즉시 REJECTED, 재시도 없음
+                self.logger.warning(
+                    f"주문 비즈니스 거부 (재시도 없음) — {stock_code}, "
+                    f"사유: {result.msg1 if result else '응답 없음'}"
+                )
+                if order_key and order_key in self._order_states:
+                    self._transition_order_context(
+                        order_key,
+                        OrderState.REJECTED,
+                        attempt_count=attempt,
+                        error_code=result.rt_cd if result else None,
+                        error_message=result.msg1 if result else "응답 없음",
+                    )
+                break
+
+            # RETRY (일시적 오류)
             if order_key and order_key in self._order_states:
                 current_state = OrderState.PENDING_SUBMIT if attempt < self._ORDER_MAX_RETRIES else OrderState.REJECTED
                 self._transition_order_context(
@@ -1006,10 +1026,10 @@ class OrderExecutionService:
                     error_message=result.msg1 if result else "응답 없음",
                 )
 
-            if error_code and error_code.is_retriable and attempt < self._ORDER_MAX_RETRIES:
+            if attempt < self._ORDER_MAX_RETRIES:
                 self.logger.warning(
                     f"주문 재시도 {attempt}/{self._ORDER_MAX_RETRIES}: "
-                    f"{stock_code}, 사유: {result.msg1}"
+                    f"{stock_code}, 사유: {result.msg1 if result else '응답 없음'}"
                 )
                 await self.market_clock.async_sleep(self._ORDER_RETRY_DELAY_SEC * attempt)
                 continue
@@ -1045,9 +1065,11 @@ class OrderExecutionService:
         source: str,
         finalize_immediately: bool,
         trace_id: Optional[str] = None,
+        intent_id: Optional[str] = None,
     ) -> ResCommonResponse:
         order_key = self._make_order_key(stock_code, side, exchange)
         action_kr = "매수" if side == OrderSide.BUY else "매도"
+        resolved_intent_id = intent_id or str(uuid.uuid4())
 
         if self._reconcile_alarm:
             self.logger.warning(
@@ -1060,6 +1082,21 @@ class OrderExecutionService:
             )
 
         async with self._get_symbol_lock(stock_code, exchange):
+            # 중복 intent 차단: 동일 intent_id + 활성 상태이면 즉시 거부
+            existing_key_for_intent = self._intent_index.get(resolved_intent_id)
+            if existing_key_for_intent:
+                existing_ctx = self._order_states.get(existing_key_for_intent)
+                if existing_ctx and not existing_ctx.state.is_terminal:
+                    self.logger.warning(
+                        f"중복 intent 차단: intent_id={resolved_intent_id}, "
+                        f"order_key={existing_key_for_intent}, state={existing_ctx.state.value}"
+                    )
+                    return ResCommonResponse(
+                        rt_cd=ErrorCode.API_ERROR.value,
+                        msg1=f"duplicate intent: 이미 처리 중인 주문 요청입니다. intent_id={resolved_intent_id}",
+                        data=existing_ctx.to_dict(),
+                    )
+
             for existing_side in (OrderSide.BUY, OrderSide.SELL):
                 existing = self._get_order_context_by_side(stock_code, existing_side, exchange)
                 if existing and not existing.state.is_terminal:
@@ -1083,8 +1120,10 @@ class OrderExecutionService:
                 qty=qty,
                 source=source,
                 trace_id=trace_id,
+                intent_id=resolved_intent_id,
             )
             self._set_order_context(context)
+            self._intent_index[resolved_intent_id] = order_key
 
             result = await self._retry_order(
                 lambda c, p, q: self._execute_order_via_broker(
@@ -1123,6 +1162,7 @@ class OrderExecutionService:
         finalize_immediately: bool = True,
         *,
         trace_id: Optional[str] = None,
+        intent_id: Optional[str] = None,
     ):
         """주식 매수 주문 요청 및 결과 출력."""
         current_trace = trace_id or get_trace_id() or new_trace_id("MANUAL")
@@ -1149,6 +1189,7 @@ class OrderExecutionService:
                 source=source,
                 finalize_immediately=finalize_immediately,
                 trace_id=current_trace,
+                intent_id=intent_id,
             )
             if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
                 self.logger.info(
@@ -1185,6 +1226,7 @@ class OrderExecutionService:
         finalize_immediately: bool = True,
         *,
         trace_id: Optional[str] = None,
+        intent_id: Optional[str] = None,
     ):
         """주식 매도 주문 요청 및 결과 출력."""
         current_trace = trace_id or get_trace_id() or new_trace_id("MANUAL")
@@ -1211,6 +1253,7 @@ class OrderExecutionService:
                 source=source,
                 finalize_immediately=finalize_immediately,
                 trace_id=current_trace,
+                intent_id=intent_id,
             )
             if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
                 self.logger.info(

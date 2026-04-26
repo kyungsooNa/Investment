@@ -470,7 +470,7 @@ async def test_retry_order_retriable_error_exhausted(handler, mock_broker_api_wr
         lambda c, p, q: handler._execute_order_via_broker(c, p, q, is_buy=True), "005930", 70000, 10
     )
     assert result.rt_cd == ErrorCode.RETRY_LIMIT.value
-    assert mock_broker_api_wrapper.place_stock_order.await_count == 5
+    assert mock_broker_api_wrapper.place_stock_order.await_count == 3  # _ORDER_MAX_RETRIES=3
 
 
 @pytest.mark.asyncio
@@ -2494,3 +2494,109 @@ async def test_restore_state_rebuilds_order_indices(handler, mock_broker_api_wra
     sell_key = handler._make_order_key("000270", OrderSide.SELL, Exchange.KRX)
     assert handler._order_no_index["ORDB001"] == buy_key
     assert handler._order_no_index["ORDS001"] == sell_key
+
+
+# ── PR6: intent_id, 중복 차단, business reject, max retry 3 테스트 ──────────────
+
+@pytest.mark.asyncio
+async def test_intent_id_auto_generated_when_missing(
+    handler, mock_broker_api_wrapper, mock_market_calendar_service
+):
+    """intent_id 미전달 시 uuid가 자동 생성되어 OrderContext에 저장된다."""
+    import uuid as _uuid
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"ordno": "A0001"}
+    )
+    result = await handler.handle_place_buy_order("005930", 70000, 10)
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    ctx = handler._order_states.get(order_key)
+    assert ctx is not None
+    assert ctx.intent_id
+    _uuid.UUID(ctx.intent_id)  # 유효한 UUID 형식
+
+
+@pytest.mark.asyncio
+async def test_duplicate_intent_id_blocked(
+    handler, mock_broker_api_wrapper, mock_market_calendar_service
+):
+    """동일 intent_id + 활성(non-terminal) 상태 주문이 있으면 두 번째 주문을 즉시 거부."""
+    iid = "fixed-intent-id"
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    handler._set_order_context(OrderContext(
+        order_key=order_key,
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=OrderState.SUBMITTED,
+        exchange=Exchange.KRX,
+        price=70000,
+        qty=10,
+        intent_id=iid,
+    ))
+    handler._intent_index[iid] = order_key
+
+    # 동일 intent_id로 다른 종목에 주문 시도 → 차단되어야 한다
+    result = await handler.handle_place_buy_order("000660", 60000, 5, intent_id=iid)
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert "duplicate intent" in result.msg1
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+
+
+def test_intent_index_cleaned_up_on_terminal_transition(handler):
+    """terminal 상태로 전이 시 _intent_index에서 intent_id가 제거된다."""
+    iid = "cleanup-intent"
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    handler._set_order_context(OrderContext(
+        order_key=order_key,
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=OrderState.SUBMITTED,
+        exchange=Exchange.KRX,
+        price=70000,
+        qty=10,
+        intent_id=iid,
+    ))
+    handler._intent_index[iid] = order_key
+
+    handler._transition_order_context(order_key, OrderState.FILLED, filled_qty=10)
+
+    assert iid not in handler._intent_index
+
+
+@pytest.mark.asyncio
+async def test_business_reject_no_retry_marks_rejected(
+    handler, mock_broker_api_wrapper, mock_market_calendar_service
+):
+    """잔고부족 등 비즈니스 거부 응답은 즉시 REJECTED 전이, place_stock_order 1회 호출."""
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="잔고부족으로 주문 불가", data=None
+    )
+    result = await handler.handle_place_buy_order("005930", 70000, 10)
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    mock_broker_api_wrapper.place_stock_order.assert_awaited_once()
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    ctx = handler._order_states.get(order_key)
+    assert ctx is not None
+    assert ctx.state == OrderState.REJECTED
+
+
+@pytest.mark.asyncio
+async def test_transient_api_retried_max_3(
+    handler, mock_broker_api_wrapper, mock_market_clock, mock_market_calendar_service
+):
+    """일시적(NETWORK_ERROR) API 오류는 최대 3회 호출 후 REJECTED."""
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.NETWORK_ERROR.value, msg1="네트워크 오류", data=None
+    )
+    result = await handler.handle_place_buy_order("005930", 70000, 10)
+
+    assert result.rt_cd == ErrorCode.NETWORK_ERROR.value
+    assert mock_broker_api_wrapper.place_stock_order.await_count == 3
+    # sleep은 retry 사이에만 호출: 1→2, 2→3 총 2회
+    assert mock_market_clock.async_sleep.await_count == 2
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    ctx = handler._order_states.get(order_key)
+    assert ctx is not None
+    assert ctx.state == OrderState.REJECTED
