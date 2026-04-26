@@ -94,6 +94,55 @@ class TestKoreaInvestApiEnv(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.env.active_config['base_url'], "https://real-api.com")
         self.logger.info.assert_called_with("거래 모드가 실전투자 환경으로 변경되었습니다.")
 
+    async def test_set_trading_mode_paper_to_real_swaps_base_url(self):
+        """paper→real 전환 시 _base_url과 active_config.base_url이 실전 도메인으로 교체된다."""
+        self.env.set_trading_mode(True)
+        self.assertEqual(self.env._base_url, "https://paper-api.com")
+
+        self.env.set_trading_mode(False)
+        self.assertEqual(self.env._base_url, "https://real-api.com")
+        self.assertEqual(self.env.active_config['base_url'], "https://real-api.com")
+        self.assertEqual(self.env._websocket_url, "wss://real-ws")
+
+    async def test_set_trading_mode_paper_to_real_swaps_active_account(self):
+        """paper→real 전환 시 활성 계좌번호와 API 키가 실전 값으로 교체된다."""
+        self.env.set_trading_mode(True)
+        self.assertEqual(self.env.active_config['stock_account_number'], "test_paper_account")
+        self.assertEqual(self.env.active_config['api_key'], "test_paper_app_key")
+
+        self.env.set_trading_mode(False)
+        self.assertEqual(self.env.active_config['stock_account_number'], "test_real_account")
+        self.assertEqual(self.env.active_config['api_key'], "test_real_app_key")
+        self.assertEqual(self.env.active_config['api_secret_key'], "test_real_app_secret")
+
+    async def test_set_trading_mode_swaps_token_provider_reference(self):
+        """모드 전환 시 _token_provider가 paper/real 전용 인스턴스로 교체된다.
+
+        각 provider는 독립적인 token 파일을 사용하므로, 모드별 stale token 노출이 없다.
+        """
+        self.env.set_trading_mode(True)
+        paper_provider = self.env._token_provider
+        self.assertIs(paper_provider, self.env._token_provider_paper)
+
+        self.env.set_trading_mode(False)
+        real_provider = self.env._token_provider
+        self.assertIs(real_provider, self.env._token_provider_real)
+        self.assertIsNot(real_provider, paper_provider)
+
+        # 다시 paper로 → 동일한 paper provider 인스턴스가 재사용됨
+        self.env.set_trading_mode(True)
+        self.assertIs(self.env._token_provider, paper_provider)
+
+    async def test_set_trading_mode_no_change_does_not_swap_provider(self):
+        """동일 모드 재호출 시 token provider/URL이 변경되지 않는다 (no-op)."""
+        self.env.set_trading_mode(True)
+        before_provider = self.env._token_provider
+        before_url = self.env._base_url
+
+        self.env.set_trading_mode(True)
+        self.assertIs(self.env._token_provider, before_provider)
+        self.assertEqual(self.env._base_url, before_url)
+
     async def test_get_base_headers(self):
         headers = self.env.get_base_headers()
         self.assertIn("Content-Type", headers)

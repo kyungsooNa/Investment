@@ -67,9 +67,9 @@
 ### 3-2. Web/CLI에 모드 상태 노출
 
 - [x] 웹 화면 status-bar에 실전/모의 모드 배지를 노출한다. (`view/web/templates/base.html:59` `status-env`)
-- [ ] 실전 모드에서는 주문 버튼 색상/문구를 변경하고 주문 확인 modal(1단계)을 추가한다.
-- [ ] CLI 주문 경로(`UserActionExecutor`)에 실전 모드 시 `[REAL]` prefix와 `y/N` 확인 프롬프트를 추가한다.
-- [ ] `KoreaInvestEnv.set_trading_mode()` 호출 시 토큰/URL/provider 캐시 무효화 회귀 테스트를 추가한다.
+- [x] 실전 모드에서는 주문 화면에 경고 배너 노출 + 주문 버튼 외곽선 강조 + 2단계 확인(`confirm` → "REAL" 입력) 플로우를 적용한다. (`view/web/templates/order.html`, `view/web/static/js/order.js`)
+- [~] CLI 주문 경로 — N/A. 현재 main.py는 web 전용으로 동작하며 CLI 모드는 제거된 상태(`view/cli/`, `app/user_action_executor.py` 부재).
+- [x] `KoreaInvestEnv.set_trading_mode()` 호출 시 base_url/active_account/token_provider가 모드별로 교체되는지 회귀 테스트로 보장한다. (`tests/unit_test/brokers/korea_investment/test_korea_invest_env.py` — `_swaps_base_url`, `_swaps_active_account`, `_swaps_token_provider_reference`, `_no_change_does_not_swap_provider` 4종)
 
 주요 파일:
 

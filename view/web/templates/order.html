@@ -2,8 +2,11 @@
 
 {% block content %}
     <div id="section-order" class="section">
+        <div id="order-real-banner" style="display:none; padding:10px 14px; margin-bottom:12px; background:#7a1f1f; color:#fff; border:2px solid #ff4d4d; border-radius:6px; font-weight:bold;">
+            ⚠️ 실전투자 모드입니다. 실제 자금으로 주문이 체결됩니다.
+        </div>
         <div class="card">
-            <h2>주식 주문</h2>
+            <h2>주식 주문 <span id="order-mode-label" style="font-size:0.7em; color:#aaa;"></span></h2>
             <div class="form-row">
                 <label>종목코드</label>
                 <input type="text" id="order-code" placeholder="예: 005930" maxlength="6" onkeydown="if(event.key==='Enter') document.getElementById('order-qty').focus()">
@@ -26,5 +29,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/order.js?v=1"></script>
+<script src="/static/js/order.js?v=2"></script>
 {% endblock %}
