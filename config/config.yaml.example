@@ -36,6 +36,13 @@ kill_switch:
   abnormal_fill_deviation_pct: 3.0       # 체결가가 주문가 대비 이 비율 이상 이탈 시 트립.
   state_file_path: "data/kill_switch_state.json"
 
+# 주문 직전 Risk Gate (hard block)
+risk_gate:
+  enabled: true
+  max_order_amount_won: 10000000
+  max_pending_orders: 10
+  max_total_exposure_pct: 95.0
+
 # 포지션 사이징 (Fixed Fractional / Penbold 식)
 position_sizing:
   enabled: true

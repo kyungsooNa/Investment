@@ -6,8 +6,11 @@ import builtins
 from unittest.mock import call, ANY
 from services.market_calendar_service import MarketCalendarService
 from common.types import ResCommonResponse, ErrorCode, Exchange, OrderContext, OrderState, OrderExecutionReport, OrderSide
+from config.config_loader import RiskGateConfig
+from core.account_snapshot import AccountSnapshot
 from services.notification_service import NotificationCategory, NotificationLevel
 from services.order_execution_service import OrderExecutionService
+from services.risk_gate_service import RiskGateService
 
 # 테스트를 위한 MockLogger
 class MockLogger:
@@ -1430,6 +1433,18 @@ def handler_with_ks(
     mock_notification_service,
     mock_kill_switch,
 ):
+    account_snapshot_cache = MagicMock()
+    account_snapshot_cache.get = AsyncMock(return_value=AccountSnapshot(
+        total_equity=100_000_000,
+        available_cash=100_000_000,
+        positions={},
+    ))
+    risk_gate = RiskGateService(
+        config=RiskGateConfig(),
+        kill_switch_service=mock_kill_switch,
+        account_snapshot_cache=account_snapshot_cache,
+        logger=mock_logger,
+    )
     return OrderExecutionService(
         broker_api_wrapper=mock_broker_api_wrapper,
         logger=mock_logger,
@@ -1437,6 +1452,7 @@ def handler_with_ks(
         market_calendar_service=mock_market_calendar_service,
         notification_service=mock_notification_service,
         kill_switch_service=mock_kill_switch,
+        risk_gate_service=risk_gate,
     )
 
 
@@ -1806,6 +1822,78 @@ async def test_market_clock_fallback_blocks_orders_when_calendar_service_missing
     assert sell_result.rt_cd == ErrorCode.MARKET_CLOSED.value
     assert sell_all_result.rt_cd == ErrorCode.MARKET_CLOSED.value
     mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_risk_gate_blocks_before_broker_submit(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    risk_gate = AsyncMock()
+    risk_gate.validate_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.RISK_GATE_BLOCKED.value,
+        msg1="Risk Gate 차단",
+        data=None,
+    )
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        risk_gate_service=risk_gate,
+    )
+
+    result = await handler.handle_place_buy_order("005930", 70_000, 10)
+
+    assert result.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
+    risk_gate.validate_order.assert_awaited_once()
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_risk_gate_uses_active_context_count_not_all_order_states(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    risk_gate = AsyncMock()
+    risk_gate.validate_order.return_value = None
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        risk_gate_service=risk_gate,
+    )
+    filled_context = OrderContext(
+        order_key=handler._make_order_key("000660", OrderSide.BUY, Exchange.KRX),
+        stock_code="000660",
+        side=OrderSide.BUY,
+        state=OrderState.FILLED,
+        exchange=Exchange.KRX,
+        price=100_000,
+        qty=1,
+    )
+    handler._set_order_context(filled_context)
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+
+    result = await handler.handle_place_buy_order(
+        "005930",
+        70_000,
+        10,
+        finalize_immediately=False,
+    )
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert risk_gate.validate_order.await_args.kwargs["active_order_count"] == 0
+    assert handler.get_order_context("005930", True).state == OrderState.SUBMITTED
 
 
 @pytest.mark.asyncio

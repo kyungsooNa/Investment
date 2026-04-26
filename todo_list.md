@@ -48,10 +48,10 @@
 
 ### 2-1. `RiskGateService` 신규 생성
 
-- [ ] `services/risk_gate_service.py`를 생성한다.
-- [ ] `KillSwitchService`, `PositionSizingService`, 계좌/잔고/미체결 조회를 통합한다.
-- [ ] 모든 주문은 broker 호출 직전 Risk Gate를 통과하도록 연결한다.
-- [ ] 실패 시 broker API를 호출하지 않고 명확한 reason을 반환한다.
+- [X] `services/risk_gate_service.py`를 생성한다.
+- [X] `KillSwitchService`, `PositionSizingService`, 계좌/잔고/미체결 조회를 통합한다.
+- [X] 모든 주문은 broker 호출 직전 Risk Gate를 통과하도록 연결한다.
+- [X] 실패 시 broker API를 호출하지 않고 명확한 reason을 반환한다.
 
 주요 파일:
 

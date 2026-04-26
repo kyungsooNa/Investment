@@ -45,6 +45,15 @@ class PositionSizingConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class RiskGateConfig(BaseModel):
+    enabled: bool = True
+    max_order_amount_won: int = 10_000_000
+    max_pending_orders: int = 10
+    max_total_exposure_pct: float = 95.0
+
+    model_config = {"extra": "allow"}
+
+
 class AppConfig(BaseModel):
     # Core API keys
     api_key: Optional[str] = None
@@ -64,6 +73,7 @@ class AppConfig(BaseModel):
     web: WebConfig
     cache: CacheConfig = Field(default_factory=CacheConfig)
     kill_switch: KillSwitchConfig = Field(default_factory=KillSwitchConfig)
+    risk_gate: RiskGateConfig = Field(default_factory=RiskGateConfig)
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
     
     # Dynamic/Merged configs
