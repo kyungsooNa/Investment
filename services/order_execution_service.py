@@ -15,6 +15,7 @@ from services.market_calendar_service import MarketCalendarService
 from services.price_subscription_service import SubscriptionPriority
 from services.kill_switch_service import KillSwitchService
 from services.risk_gate_service import RiskGateService
+from services.order_policy_service import OrderPolicyService
 from core.account_snapshot import AccountSnapshotCache
 
 
@@ -42,7 +43,8 @@ class OrderExecutionService:
                  virtual_trade_service=None,
                  kill_switch_service: Optional[KillSwitchService] = None,
                  account_snapshot_cache: Optional[AccountSnapshotCache] = None,
-                 risk_gate_service: Optional[RiskGateService] = None):
+                 risk_gate_service: Optional[RiskGateService] = None,
+                 order_policy_service: Optional[OrderPolicyService] = None):
         self.broker_api_wrapper = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
@@ -54,6 +56,7 @@ class OrderExecutionService:
         self._kill_switch = kill_switch_service
         self._account_snapshot_cache = account_snapshot_cache
         self._risk_gate = risk_gate_service
+        self._order_policy = order_policy_service
         self._order_states: Dict[str, OrderContext] = {}
         self._order_locks: Dict[str, asyncio.Lock] = {}
         self._order_no_index: Dict[str, str] = {}
@@ -1126,6 +1129,27 @@ class OrderExecutionService:
                         msg1=f"진행 중인 주문이 있어 {action_kr} 주문을 차단했습니다. 상태={existing.state.value}",
                         data=existing.to_dict(),
                     )
+
+            if self._order_policy is not None:
+                policy_decision = await self._order_policy.validate_order(
+                    stock_code=stock_code,
+                    price=price,
+                    qty=qty,
+                    side=side,
+                    exchange=exchange,
+                )
+                if policy_decision.blocked:
+                    return policy_decision.to_response()
+                if (
+                    policy_decision.adjusted_price is not None
+                    and policy_decision.adjusted_price != price
+                ):
+                    self.logger.info(
+                        f"OrderPolicy 가격 조정: 종목={stock_code}, "
+                        f"{price} -> {policy_decision.adjusted_price}, "
+                        f"rule={policy_decision.rule}"
+                    )
+                    price = policy_decision.adjusted_price
 
             if self._risk_gate is not None:
                 strategy_name, is_strategy_source = self._strategy_name_from_source(source)

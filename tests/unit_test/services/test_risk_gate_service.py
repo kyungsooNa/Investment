@@ -85,13 +85,13 @@ async def test_order_amount_over_limit_blocks_buy():
 
 
 @pytest.mark.asyncio
-async def test_buy_with_non_positive_price_blocks():
+async def test_negative_price_blocks():
     svc, _, _ = _service()
 
-    result = await svc.validate_order("005930", 0, 10, OrderSide.BUY, Exchange.KRX, 0)
+    result = await svc.validate_order("005930", -1, 10, OrderSide.BUY, Exchange.KRX, 0)
 
     assert result.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
-    assert "0 이하 가격" in result.msg1
+    assert result.data["rule"] == "negative_price"
 
 
 @pytest.mark.asyncio

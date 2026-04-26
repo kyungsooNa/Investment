@@ -62,7 +62,8 @@ from services.kill_switch_service import KillSwitchService
 from core.account_snapshot import AccountSnapshotCache
 from services.position_sizing_service import PositionSizingService
 from services.risk_gate_service import RiskGateService
-from config.config_loader import PositionSizingConfig
+from services.order_policy_service import OrderPolicyService
+from config.config_loader import PositionSizingConfig, OrderPolicyConfig
 from services.price_subscription_service import PriceSubscriptionService
 from services.price_stream_service import PriceStreamService
 from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
@@ -101,6 +102,7 @@ class WebAppContext:
         )
         self.account_snapshot_cache: AccountSnapshotCache = None
         self.risk_gate_service: RiskGateService = None
+        self.order_policy_service: OrderPolicyService = None
         self.position_sizing_service: PositionSizingService = None
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
@@ -440,6 +442,11 @@ class WebAppContext:
             strategy_risk_provider=self.virtual_trade_service,
             logger=self.logger,
         )
+        self.order_policy_service = OrderPolicyService(
+            config=getattr(self.full_config, "order_policy", None) or OrderPolicyConfig(),
+            quote_provider=self.broker,
+            logger=self.logger,
+        )
 
         self.order_execution_service = OrderExecutionService(
             broker_api_wrapper=self.broker,
@@ -452,6 +459,7 @@ class WebAppContext:
             kill_switch_service=self.kill_switch_service,
             account_snapshot_cache=self.account_snapshot_cache,
             risk_gate_service=self.risk_gate_service,
+            order_policy_service=self.order_policy_service,
         )
         self.streaming_service.register_handler(
             "signing_notice",

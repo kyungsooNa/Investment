@@ -82,10 +82,10 @@ class RiskGateService:
         if blocked is not None:
             return blocked
 
-        if side == OrderSide.BUY and price <= 0:
+        if price < 0:
             return self._blocked(
-                "buy_non_positive_price",
-                "BUY 주문은 0 이하 가격을 허용하지 않습니다.",
+                "negative_price",
+                "주문 가격은 음수일 수 없습니다.",
                 stock_code=stock_code,
                 price=price,
                 side=side.value,

@@ -95,4 +95,4 @@ risk_gate:
 
 ## Out Of Scope
 
-시장가/지정가, 호가단위, 슬리피지, 스프레드/호가 공백 검증은 2-3의 `OrderPolicy` 계층에서 다룬다.
+시장가/지정가, 호가단위, 슬리피지, 스프레드/호가 공백 검증은 `OrderPolicyService` 계층에서 다룬다.
