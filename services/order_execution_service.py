@@ -682,13 +682,19 @@ class OrderExecutionService:
         활성 주문 상태를 broker 미체결/체결내역/잔고와 비교하여 불일치를 감지합니다.
 
         정책:
+        - 모의투자 모드: 즉시 0 반환 (broker API 호출 없음)
         - 1회 불일치: _reconcile_alarm=True + WARNING, 상태 전이 없음
         - 2회 연속 + 명시 근거(잔고·체결 없음): CANCELED 추정 전이 (assumed=true)
         - 내부 FILLED인데 잔고 없음 → CRITICAL + alarm
         - 잔고에만 있고 내부 컨텍스트 없음 → INFO (외부 주문 가능성)
+        - 불일치 0건으로 완료 시: _reconcile_alarm 자동 해제 (일시적 오류 복구)
 
         반환: 감지된 불일치 건수
         """
+        if self._is_paper_trading_mode():
+            self.logger.info("reconcile_orders_with_broker: 모의투자 모드 — 스킵")
+            return 0
+
         now = self._get_now()
         today = now.strftime("%Y%m%d")
         mismatch_count = 0
@@ -829,6 +835,11 @@ class OrderExecutionService:
                     f"reconcile: 잔고에 종목 있지만 내부 활성 컨텍스트 없음 "
                     f"(외부 주문 가능성) — stock_code={stock_code}, broker_qty={broker_qty}"
                 )
+
+        # 불일치 0건: alarm 자동 해제 (일시적 오류가 해소된 경우)
+        if mismatch_count == 0 and self._reconcile_alarm:
+            self._reconcile_alarm = False
+            self.logger.info("reconcile: 불일치 없음 → _reconcile_alarm=False 해제")
 
         return mismatch_count
 
