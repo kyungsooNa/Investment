@@ -242,3 +242,78 @@ async def test_disabled_gate_allows_without_checks():
     assert result is None
     kill_switch.check_orders_allowed.assert_not_awaited()
     cache.get.assert_not_awaited()
+
+
+def _env(*, is_paper: bool, base_url: str, real_account="50000000-01", paper_account="50123456-01", active_account=None):
+    env = MagicMock()
+    env.is_paper_trading = is_paper
+    env._base_url = base_url
+    env.stock_account_number = real_account
+    env.paper_stock_account_number = paper_account
+    env.active_config = {
+        "stock_account_number": active_account if active_account is not None else (paper_account if is_paper else real_account),
+    }
+    return env
+
+
+@pytest.mark.asyncio
+async def test_env_consistency_paper_with_real_url_blocks():
+    env = _env(is_paper=True, base_url="https://openapi.koreainvestment.com:9443")
+    svc, _, _ = _service()
+    svc._env = env
+
+    result = await svc.validate_order("005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result is not None
+    assert result.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
+    assert result.data["rule"] == "env_mismatch_url"
+
+
+@pytest.mark.asyncio
+async def test_env_consistency_real_with_paper_url_blocks():
+    env = _env(is_paper=False, base_url="https://openapivts.koreainvestment.com:29443")
+    svc, _, _ = _service()
+    svc._env = env
+
+    result = await svc.validate_order("005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result is not None
+    assert result.data["rule"] == "env_mismatch_url"
+
+
+@pytest.mark.asyncio
+async def test_env_consistency_account_mismatch_blocks():
+    env = _env(
+        is_paper=False,
+        base_url="https://openapi.koreainvestment.com:9443",
+        active_account="50123456-01",  # paper account in real-mode
+    )
+    svc, _, _ = _service()
+    svc._env = env
+
+    result = await svc.validate_order("005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result is not None
+    assert result.data["rule"] == "env_mismatch_account"
+
+
+@pytest.mark.asyncio
+async def test_env_consistency_consistent_passes():
+    env = _env(is_paper=False, base_url="https://openapi.koreainvestment.com:9443")
+    svc, _, _ = _service()
+    svc._env = env
+
+    result = await svc.validate_order("005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_env_none_skips_consistency_check():
+    """env 미주입 시 fail-open. 기존 테스트 회귀 방지."""
+    svc, _, _ = _service()
+    assert svc._env is None
+
+    result = await svc.validate_order("005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result is None

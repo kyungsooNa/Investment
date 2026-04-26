@@ -47,11 +47,12 @@
 
 ### 3-1. 실전 모드 이중 안전 체크
 
-- [ ] `real_trading_enabled: false`를 기본값으로 둔다.
-- [ ] 실전 주문 전 dry-run 로그를 남긴다.
-- [ ] 실전 주문 API 호출 직전 환경, URL, TR ID, 계좌번호 prefix를 다시 검증한다.
-- [ ] 실전 모드 최대 주문금액과 1일 최대 주문금액을 설정화한다.
-- [ ] 실전 전용 API가 paper 모드에서 호출될 때 명확히 차단한다.
+- [x] `is_paper_trading` 기본값을 안전(=True/모의)으로 둔다. (`config_loader.py:96`, 키 컨벤션은 `real_trading_enabled`가 아닌 `is_paper_trading`로 통일)
+- [x] 단건 최대 주문금액(`max_order_amount_won`)을 설정화하고 RiskGate에서 검증한다. (`config_loader.py:58`, `risk_gate_service.py:103-110`)
+- [x] 실전 주문 직전 dry-run preview 로그를 남긴다. (`order_execution_service.py` `_log_real_order_preview()` — 종목/수량/가격/계좌 prefix/URL host/source/trace_id 출력, `[REAL ORDER PREVIEW]` 키워드)
+- [x] `RiskGateService`에 환경 재검증 가드를 추가한다. (`_check_env_consistency()` — `env.is_paper_trading` vs URL host(`vts` 포함 여부) vs 활성 계좌번호 일치 확인 → 불일치 시 hard block)
+- [ ] **1일 최대 주문금액(daily cap)** 을 설정화한다. (현재 단건 한도만 존재, 일 누적 한도 미구현)
+- [ ] paper 모드에서 실전 전용 API(랭킹/시총/상한가 등) 호출 시 명시적 `PAPER_NOT_SUPPORTED` 에러를 반환한다. (현재 URL/Key 분기만 있고 차단 로직 없음)
 
 주요 파일:
 
@@ -59,14 +60,16 @@
 - `config/config.yaml.example`
 - `brokers/korea_investment/korea_invest_env.py`
 - `brokers/korea_investment/korea_invest_tr_id_provider.py`
+- `services/order_execution_service.py`
+- `services/risk_gate_service.py`
 - `view/web/web_app_initializer.py`
 
 ### 3-2. Web/CLI에 모드 상태 노출
 
-- [ ] 웹 화면에 실전/모의 상태를 항상 노출한다.
-- [ ] 실전 모드에서는 주문 버튼 또는 주문 확인 플로우에 별도 경고 상태를 둔다.
-- [ ] CLI 주문 경로에도 실전 모드 표시와 확인 단계를 추가한다.
-- [ ] 모드 변경 시 기존 토큰/URL/provider가 섞이지 않는지 테스트한다.
+- [x] 웹 화면 status-bar에 실전/모의 모드 배지를 노출한다. (`view/web/templates/base.html:59` `status-env`)
+- [ ] 실전 모드에서는 주문 버튼 색상/문구를 변경하고 주문 확인 modal(1단계)을 추가한다.
+- [ ] CLI 주문 경로(`UserActionExecutor`)에 실전 모드 시 `[REAL]` prefix와 `y/N` 확인 프롬프트를 추가한다.
+- [ ] `KoreaInvestEnv.set_trading_mode()` 호출 시 토큰/URL/provider 캐시 무효화 회귀 테스트를 추가한다.
 
 주요 파일:
 
