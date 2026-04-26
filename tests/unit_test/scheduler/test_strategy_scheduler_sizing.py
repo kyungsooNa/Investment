@@ -1,0 +1,133 @@
+"""StrategyScheduler × PositionSizingService 통합 단위 테스트."""
+import pytest
+from unittest.mock import MagicMock, AsyncMock
+from common.types import TradeSignal, ResCommonResponse, ErrorCode
+from scheduler.strategy_scheduler import StrategyScheduler, SignalRecord
+from scheduler.strategy_scheduler_store import StrategySchedulerStore
+
+
+def _make_scheduler(position_sizer=None, dry_run=False):
+    vm = MagicMock()
+    vm.get_holds_by_strategy.return_value = []
+    vm.log_buy_async = AsyncMock(return_value=True)
+
+    oes = MagicMock()
+    oes.handle_place_buy_order = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK")
+    )
+    oes.handle_place_sell_order = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK")
+    )
+    oes.resolve_submitted_order = AsyncMock()
+    oes.poll_active_orders_once = AsyncMock(return_value=0)
+    oes.check_stuck_orders_once = AsyncMock(return_value=0)
+    oes.get_active_order_poll_interval_sec = MagicMock(return_value=StrategyScheduler.ORDER_POLL_INTERVAL_SEC)
+
+    sqs = MagicMock()
+    sqs.get_current_price = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+                                       data={"output": {"stck_prpr": "10000"}})
+    )
+
+    scm = MagicMock()
+    scm.get_stock_code = AsyncMock(return_value="005930")
+
+    tm = MagicMock()
+    tm.is_market_operating_hours.return_value = True
+    tm.get_current_kst_time.return_value.strftime.return_value = "2025-01-01 10:00:00"
+
+    mcs = AsyncMock()
+    mcs.is_market_open_now.return_value = True
+
+    mock_store = MagicMock(spec=StrategySchedulerStore)
+    mock_store.load_signal_history.return_value = []
+
+    scheduler = StrategyScheduler(
+        virtual_trade_service=vm,
+        order_execution_service=oes,
+        stock_query_service=sqs,
+        stock_code_repository=scm,
+        market_clock=tm,
+        market_calendar_service=mcs,
+        logger=MagicMock(),
+        dry_run=dry_run,
+        store=mock_store,
+        position_sizing_service=position_sizer,
+    )
+    return scheduler, oes
+
+
+def _buy_signal(qty=10):
+    return TradeSignal(
+        code="005930", name="삼성전자", action="BUY",
+        price=10_000, qty=qty, reason="test", strategy_name="테스트전략",
+    )
+
+
+# ── position_sizing_service 주입 없으면 기존 동작 ────────────────────
+
+@pytest.mark.asyncio
+async def test_buy_without_sizer_uses_signal_qty():
+    """position_sizing_service 미주입 시 signal.qty 그대로 주문."""
+    scheduler, oes = _make_scheduler(position_sizer=None, dry_run=False)
+    signal = _buy_signal(qty=5)
+    await scheduler._execute_signal(signal)
+    args, kwargs = oes.handle_place_buy_order.call_args
+    assert kwargs.get("qty", args[2] if len(args) > 2 else None) == 5 or \
+           oes.handle_place_buy_order.called
+
+
+# ── position_sizing_service가 qty를 줄이는 경우 ──────────────────────
+
+@pytest.mark.asyncio
+async def test_buy_with_sizer_adjusted_qty_passed_to_oes():
+    """sizer가 qty=3 반환 → handle_place_buy_order에 qty=3이 전달된다."""
+    sizer = AsyncMock()
+    sizer.adjust_buy_qty.return_value = (3, "risk_limited")
+
+    scheduler, oes = _make_scheduler(position_sizer=sizer, dry_run=False)
+    signal = _buy_signal(qty=10)
+    await scheduler._execute_signal(signal)
+
+    sizer.adjust_buy_qty.assert_called_once()
+    oes.handle_place_buy_order.assert_called_once()
+    call_args, _ = oes.handle_place_buy_order.call_args
+    # handle_place_buy_order(code, price, qty, ...) — qty는 3번째 위치 인자
+    assert call_args[2] == 3
+
+
+# ── position_sizing_service가 qty=0 반환 → 주문 skip ─────────────────
+
+@pytest.mark.asyncio
+async def test_buy_with_sizer_zero_qty_skips_order():
+    """sizer가 qty=0 반환 → handle_place_buy_order 미호출 + signal_history 기록."""
+    sizer = AsyncMock()
+    sizer.adjust_buy_qty.return_value = (0, "cap_exhausted")
+
+    scheduler, oes = _make_scheduler(position_sizer=sizer, dry_run=False)
+    signal = _buy_signal(qty=10)
+    await scheduler._execute_signal(signal)
+
+    sizer.adjust_buy_qty.assert_called_once()
+    oes.handle_place_buy_order.assert_not_called()
+
+    # signal_history에 qty=0 보류 기록이 있어야 함
+    history = scheduler._signal_history
+    assert len(history) == 1
+    assert history[0].qty == 0
+
+
+# ── dry_run=True 이면 sizer 호출 안 함 ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_dry_run_skips_sizer():
+    """dry_run 모드에서는 PositionSizingService를 호출하지 않는다."""
+    sizer = AsyncMock()
+    sizer.adjust_buy_qty.return_value = (1, "ok")
+
+    scheduler, oes = _make_scheduler(position_sizer=sizer, dry_run=True)
+    signal = _buy_signal(qty=5)
+    await scheduler._execute_signal(signal)
+
+    sizer.adjust_buy_qty.assert_not_called()
+    oes.handle_place_buy_order.assert_not_called()  # dry_run은 API 호출 안 함

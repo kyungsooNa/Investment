@@ -252,7 +252,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         return TradeSignal(
             code=code, name=item.name, action="BUY", price=current, qty=qty,
-            reason=reason_msg, strategy_name=self.name
+            reason=reason_msg, strategy_name=self.name,
+            stop_loss_pct=self._cfg.stop_loss_pct,
         )
 
     def _is_smart_money_ok(self, code: str, current: int, pg_buy: int, trade_value: int, market_cap: int, cgld_val: float) -> Tuple[bool, dict]:

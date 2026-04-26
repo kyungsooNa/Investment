@@ -59,6 +59,9 @@ from services.market_data_service import MarketDataService
 from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService, NotificationCategory
 from services.kill_switch_service import KillSwitchService
+from core.account_snapshot import AccountSnapshotCache
+from services.position_sizing_service import PositionSizingService
+from config.config_loader import PositionSizingConfig
 from services.price_subscription_service import PriceSubscriptionService
 from services.price_stream_service import PriceStreamService
 from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
@@ -95,6 +98,8 @@ class WebAppContext:
             repository=self.favorite_repo,
             stock_code_repository=self.stock_code_repository,
         )
+        self.account_snapshot_cache: AccountSnapshotCache = None
+        self.position_sizing_service: PositionSizingService = None
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
         self.ranking_task: RankingTask = None
@@ -414,6 +419,19 @@ class WebAppContext:
             worker_pool=self.worker_pool,
         )
 
+        _ps_cfg = getattr(self.full_config, "position_sizing", None) or PositionSizingConfig()
+        self.account_snapshot_cache = AccountSnapshotCache(
+            broker_api_wrapper=self.broker,
+            logger=self.logger,
+            ttl_sec=_ps_cfg.snapshot_ttl_sec if _ps_cfg else 60,
+        )
+        self.position_sizing_service = PositionSizingService(
+            account_snapshot_cache=self.account_snapshot_cache,
+            indicator_service=self.indicator_service,
+            config=_ps_cfg,
+            logger=self.logger,
+        )
+
         self.order_execution_service = OrderExecutionService(
             broker_api_wrapper=self.broker,
             logger=self.logger, market_clock=self.market_clock,
@@ -423,6 +441,7 @@ class WebAppContext:
             price_subscription_service=self.price_subscription_service,
             virtual_trade_service=self.virtual_trade_service,
             kill_switch_service=self.kill_switch_service,
+            account_snapshot_cache=self.account_snapshot_cache,
         )
         self.streaming_service.register_handler(
             "signing_notice",
@@ -657,6 +676,8 @@ class WebAppContext:
             performance_profiler=self.pm,
             price_subscription_service=self.price_subscription_service,
             kill_switch_service=self.kill_switch_service,
+            account_snapshot_cache=self.account_snapshot_cache,
+            position_sizing_service=self.position_sizing_service,
         )
 
         # 거래량 돌파 전략 등록

@@ -166,6 +166,30 @@ class IndicatorService:
             period  # <-- calc_func에 전달될 *calc_args (정상 작동!)
         )
 
+    async def calculate_atr(
+        self,
+        stock_code: str,
+        period: int = 14,
+        candle_type: str = "D",
+        ohlcv_data: Optional[List[Dict]] = None,
+    ) -> ResCommonResponse:
+        """ATR(Average True Range) 조회 — 포지션 사이징용.
+        응답 data: List[{"code", "date", "close", "atr"}] (마지막 항목의 atr 이 현재 ATR)
+        """
+        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data=ohlcv_data)
+        if err_resp:
+            return err_resp
+
+        return await self._get_with_incremental_cache(
+            stock_code,
+            candle_type,
+            f"atr_{period}",
+            data,
+            period,
+            self._calculate_atr_full,
+            period,
+        )
+
     async def get_moving_average(
         self, 
         stock_code: str, 
@@ -402,6 +426,21 @@ class IndicatorService:
         df[target_col] = 100 - (100 / (1 + rs))
         return df
 
+    @staticmethod
+    def _compute_atr(df: pd.DataFrame, period: int, target_col: str = "atr") -> pd.DataFrame:
+        """ATR(Average True Range) 계산 — Wilder's RMA (ewm alpha=1/period)"""
+        for col in ("high", "low"):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        df["_tr"] = pd.concat([
+            df["high"] - df["low"],
+            (df["high"] - df["close"].shift(1)).abs(),
+            (df["low"]  - df["close"].shift(1)).abs(),
+        ], axis=1).max(axis=1)
+        df[target_col] = df["_tr"].ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+        df.drop(columns=["_tr"], inplace=True)
+        return df
+
     def calc_bb_widths_sync(
         self,
         ohlcv_data: List[Dict],
@@ -476,6 +515,27 @@ class IndicatorService:
                     "code": stock_code, "date": str(row.date), 
                     "close": self._safe_float(row.close), 
                     "rsi": self._safe_float(row.rsi)
+                }
+                for row in df.itertuples(index=False)
+            ]
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=results)
+        except Exception as e:
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
+
+    def _calculate_atr_full(self, stock_code, data, period) -> ResCommonResponse:
+        """ATR 시계열 전체 계산 (내부용)"""
+        try:
+            df = self._to_dataframe(data)
+            if "high" not in df.columns or "low" not in df.columns:
+                return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="ATR 계산에 필요한 high/low 컬럼 없음", data=None)
+
+            df = self._compute_atr(df, period, target_col="atr")
+
+            results = [
+                {
+                    "code": stock_code, "date": str(row.date),
+                    "close": self._safe_float(row.close),
+                    "atr": self._safe_float(row.atr),
                 }
                 for row in df.itertuples(index=False)
             ]

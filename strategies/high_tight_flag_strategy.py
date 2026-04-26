@@ -361,6 +361,7 @@ class HighTightFlagStrategy(LiveStrategy):
         return TradeSignal(
             code=code, name=item.name, action="BUY", price=current, qty=qty,
             reason=reason_msg, strategy_name=self.name,
+            stop_loss_pct=self._cfg.stop_loss_pct,
         )
 
     # ── check_exits ──────────────────────────────────────────────────
