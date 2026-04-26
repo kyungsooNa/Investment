@@ -55,6 +55,8 @@ class OrderExecutionService:
         self._processed_execution_events: OrderedDict[str, None] = OrderedDict()
         self._processed_execution_event_limit = self._PROCESSED_EXECUTION_EVENT_LIMIT
         self._post_submit_fast_poll_until: Dict[str, datetime] = {}
+        self._reconcile_mismatch_count: int = 0
+        self._reconcile_alarm: bool = False
 
     def _get_now(self) -> datetime:
         return self.market_clock.get_current_kst_time() if self.market_clock else datetime.now()
@@ -62,6 +64,17 @@ class OrderExecutionService:
     def _is_paper_trading_mode(self) -> bool:
         env = getattr(self.broker_api_wrapper, "env", None)
         return getattr(env, "is_paper_trading", True)
+
+    def _resolve_finalize(self, requested: bool) -> bool:
+        """paper mode 에서는 caller 값 그대로, real mode 에서는 항상 False."""
+        if self._is_paper_trading_mode():
+            return requested
+        if requested:
+            self.logger.warning(
+                "실전 모드: finalize_immediately=True 요청을 무시합니다. "
+                "체결 확정은 WebSocket/polling 체결 통보로만 처리됩니다."
+            )
+        return False
 
     def _make_order_key(self, stock_code: str, side: OrderSide, exchange: Exchange) -> str:
         return f"{exchange.value}:{stock_code}:{side.value}"
@@ -130,6 +143,24 @@ class OrderExecutionService:
         if next_context.broker_order_no:
             self._order_no_index[next_context.broker_order_no] = order_key
         return next_context
+
+    def _safe_transition_order_context(self, order_key: str, new_state: OrderState, **kwargs) -> Optional[OrderContext]:
+        """외부 이벤트(broker 응답, reconcile, WebSocket) 로 트리거된 상태 전이에 사용.
+        invalid transition 은 raise 하지 않고 WARNING + no-op 으로 처리한다.
+        내부 개발 오류성 전이는 _transition_order_context 를 직접 사용해 ValueError 를 유지한다.
+        """
+        try:
+            return self._transition_order_context(order_key, new_state, **kwargs)
+        except (ValueError, KeyError) as e:
+            context = self._order_states.get(order_key)
+            current_state = context.state.value if context else "unknown"
+            self._reconcile_mismatch_count += 1
+            self.logger.warning(
+                f"외부 이벤트 상태 전이 실패(no-op): order_key={order_key}, "
+                f"current={current_state}, requested={new_state.value}, error={e}, "
+                f"mismatch_count={self._reconcile_mismatch_count}"
+            )
+            return context
 
     def _mark_virtual_trade_recorded(self, context: OrderContext, recorded_qty: int) -> OrderContext:
         next_context = context.model_copy(update={
@@ -773,7 +804,7 @@ class OrderExecutionService:
             if result and result.rt_cd == ErrorCode.SUCCESS.value:
                 if latest and latest.state == OrderState.SUBMITTED:
                     self._register_post_submit_fast_poll(order_key)
-                if finalize_immediately and latest and latest.state == OrderState.SUBMITTED:
+                if self._resolve_finalize(finalize_immediately) and latest and latest.state == OrderState.SUBMITTED:
                     self._transition_order_context(order_key, OrderState.FILLED, filled_qty=qty)
                 return result
 

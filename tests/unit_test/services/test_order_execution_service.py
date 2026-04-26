@@ -1899,3 +1899,157 @@ async def test_sell_all_stocks_captures_unexpected_outer_exception(handler, mock
 
     assert "balance boom" in result["error"]
     mock_logger.critical.assert_called_once()
+
+
+# ── PR1: _resolve_finalize + real mode 즉시 체결 확정 제거 테스트 ─────────────
+
+@pytest.fixture
+def mock_broker_api_wrapper_real(mock_broker_api_wrapper):
+    """실전 모드(is_paper_trading=False) BrokerAPIWrapper 픽스처."""
+    mock_broker_api_wrapper.env.is_paper_trading = False
+    return mock_broker_api_wrapper
+
+
+@pytest.fixture
+def handler_real(mock_broker_api_wrapper_real, mock_logger, mock_market_clock, mock_market_calendar_service):
+    """실전 모드 OrderExecutionService 픽스처."""
+    return OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper_real,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+
+
+# _resolve_finalize
+
+def test_resolve_finalize_paper_mode_true(handler):
+    assert handler._resolve_finalize(True) is True
+
+
+def test_resolve_finalize_paper_mode_false(handler):
+    assert handler._resolve_finalize(False) is False
+
+
+def test_resolve_finalize_real_mode_forced_false(handler_real):
+    assert handler_real._resolve_finalize(True) is False
+
+
+def test_resolve_finalize_real_mode_false_stays_false(handler_real):
+    assert handler_real._resolve_finalize(False) is False
+
+
+def test_resolve_finalize_real_mode_logs_warning_when_true_requested(handler_real, mock_logger):
+    handler_real._resolve_finalize(True)
+    mock_logger.warning.assert_called_once()
+    assert "finalize_immediately=True" in mock_logger.warning.call_args[0][0]
+
+
+def test_resolve_finalize_real_mode_no_warning_when_false_requested(handler_real, mock_logger):
+    handler_real._resolve_finalize(False)
+    # warning 중 finalize 관련만 없어야 한다 (다른 warning이 끼어들지 않도록 필터)
+    finalize_warnings = [
+        c for c in mock_logger.warning.call_args_list
+        if "finalize_immediately" in str(c)
+    ]
+    assert len(finalize_warnings) == 0
+
+
+# real mode 즉시 FILLED 제거
+
+@pytest.mark.asyncio
+async def test_real_mode_buy_order_stays_submitted_even_with_finalize_true(
+    handler_real, mock_broker_api_wrapper_real
+):
+    mock_broker_api_wrapper_real.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="주문 성공", data={"ordno": "A0001"}
+    )
+    result = await handler_real.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=True
+    )
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    ctx = handler_real.get_order_context("005930", is_buy=True)
+    assert ctx.state == OrderState.SUBMITTED
+
+
+@pytest.mark.asyncio
+async def test_real_mode_sell_order_stays_submitted_even_with_finalize_true(
+    handler_real, mock_broker_api_wrapper_real
+):
+    mock_broker_api_wrapper_real.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="매도 성공", data={"ordno": "S0001"}
+    )
+    result = await handler_real.handle_place_sell_order(
+        "005930", 70000, 5, finalize_immediately=True
+    )
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    ctx = handler_real.get_order_context("005930", is_buy=False)
+    assert ctx.state == OrderState.SUBMITTED
+
+
+@pytest.mark.asyncio
+async def test_paper_mode_buy_order_transitions_to_filled_immediately(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="주문 성공", data={"ordno": "A0001"}
+    )
+    result = await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=True
+    )
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    ctx = handler.get_order_context("005930", is_buy=True)
+    assert ctx.state == OrderState.FILLED
+
+
+# ── PR1: _safe_transition_order_context 테스트 ────────────────────────────────
+
+def test_safe_transition_noop_on_invalid_transition(handler):
+    ctx = _seed_order_context(handler, state=OrderState.FILLED, broker_order_no="A0001", remaining_qty=0)
+
+    result = handler._safe_transition_order_context(ctx.order_key, OrderState.SUBMITTED)
+
+    assert result is not None
+    assert result.state == OrderState.FILLED
+
+
+def test_safe_transition_increments_mismatch_count(handler):
+    ctx = _seed_order_context(handler, state=OrderState.FILLED, broker_order_no="A0001", remaining_qty=0)
+    assert handler._reconcile_mismatch_count == 0
+
+    handler._safe_transition_order_context(ctx.order_key, OrderState.SUBMITTED)
+
+    assert handler._reconcile_mismatch_count == 1
+
+
+def test_safe_transition_logs_warning_on_invalid(handler, mock_logger):
+    ctx = _seed_order_context(handler, state=OrderState.REJECTED, broker_order_no="A0001", remaining_qty=0)
+    mock_logger.warning.reset_mock()
+
+    handler._safe_transition_order_context(ctx.order_key, OrderState.FILLED)
+
+    finalize_warnings = [c for c in mock_logger.warning.call_args_list if "외부 이벤트 상태 전이 실패" in str(c)]
+    assert len(finalize_warnings) == 1
+    assert "no-op" in finalize_warnings[0][0][0]
+
+
+def test_safe_transition_succeeds_on_valid_transition(handler):
+    ctx = _seed_order_context(handler, state=OrderState.SUBMITTED, broker_order_no="A0001", remaining_qty=10)
+
+    result = handler._safe_transition_order_context(ctx.order_key, OrderState.FILLED, filled_qty=10)
+
+    assert result is not None
+    assert result.state == OrderState.FILLED
+    assert handler._reconcile_mismatch_count == 0
+
+
+def test_safe_transition_noop_on_missing_order_key(handler):
+    result = handler._safe_transition_order_context("nonexistent:key", OrderState.FILLED)
+
+    assert result is None
+    assert handler._reconcile_mismatch_count == 1
+
+
+def test_internal_transition_raises_on_invalid(handler):
+    ctx = _seed_order_context(handler, state=OrderState.FILLED, broker_order_no="A0001", remaining_qty=0)
+
+    with pytest.raises((ValueError, Exception)):
+        handler._transition_order_context(ctx.order_key, OrderState.SUBMITTED)
