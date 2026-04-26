@@ -2280,5 +2280,225 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         scheduler._logger.error.assert_called()
 
+    async def test_loop_continues_after_market_closed_wait_returns(self):
+        scheduler, _, _, _, mcs = self._make_scheduler()
+        scheduler._running = True
+        scheduler._force_exit_done = set()
+        mcs.is_market_open_now.return_value = False
+        mcs.wait_until_next_open = AsyncMock(
+            side_effect=[None, asyncio.CancelledError()]
+        )
+
+        await scheduler._loop()
+
+        self.assertEqual(mcs.wait_until_next_open.await_count, 2)
+
+    async def test_loop_skips_disabled_strategy_and_logs_run_exception(self):
+        from datetime import datetime
+
+        scheduler, _, _, tm, mcs = self._make_scheduler()
+        now_dt = datetime(2026, 4, 24, 10, 0, 0)
+        tm.get_current_kst_time.return_value = now_dt
+        tm.get_market_close_time.return_value = datetime(2026, 4, 24, 15, 30, 0)
+        mcs.is_market_open_now.return_value = True
+        scheduler.register(StrategySchedulerConfig(
+            strategy=MockStrategy(name="Disabled"),
+            enabled=False,
+            interval_minutes=0,
+        ))
+        scheduler.register(StrategySchedulerConfig(
+            strategy=MockStrategy(name="Raises"),
+            interval_minutes=0,
+        ))
+        scheduler._running = True
+
+        with patch.object(scheduler, "_run_reconciliation", new_callable=AsyncMock), \
+             patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as mock_run, \
+             patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+            mock_run.side_effect = RuntimeError("run failed")
+            await scheduler._loop()
+
+        mock_run.assert_awaited_once()
+        scheduler._logger.error.assert_called()
+
+    async def test_loop_emits_notification_on_unexpected_loop_error(self):
+        scheduler, _, _, _, mcs = self._make_scheduler()
+        scheduler._notification_service = AsyncMock()
+        scheduler._running = True
+        mcs.is_market_open_now.side_effect = RuntimeError("calendar failed")
+
+        with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+            try:
+                await scheduler._loop()
+            except asyncio.CancelledError:
+                pass
+
+        scheduler._notification_service.emit.assert_awaited_once()
+
+    async def test_loop_runs_due_strategy_after_stagger_window(self):
+        from datetime import datetime, timedelta
+
+        scheduler, _, _, tm, mcs = self._make_scheduler()
+        now_dt = datetime(2026, 4, 24, 10, 0, 0)
+        tm.get_current_kst_time.return_value = now_dt
+        tm.get_market_close_time.return_value = datetime(2026, 4, 24, 15, 30, 0)
+        mcs.is_market_open_now.return_value = True
+        scheduler.register(StrategySchedulerConfig(
+            strategy=MockStrategy(name="Due"),
+            interval_minutes=0,
+        ))
+        scheduler._last_execution_time = now_dt - timedelta(
+            seconds=StrategyScheduler.STAGGER_INTERVAL_SEC
+        )
+        scheduler._running = True
+
+        with patch.object(scheduler, "_run_reconciliation", new_callable=AsyncMock), \
+             patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as mock_run, \
+             patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+            await scheduler._loop()
+
+        mock_run.assert_awaited_once()
+
+    async def test_execute_signal_dry_run_uses_name_fallback_and_price_subscriptions(self):
+        scheduler, vm, _, _, _ = self._make_scheduler(dry_run=True)
+        scheduler.stock_code_repository.get_name_by_code.return_value = "Samsung"
+        scheduler._price_sub_svc = AsyncMock()
+
+        buy_sig = TradeSignal(
+            code="005930", name="005930", action="BUY",
+            price=70000, qty=1, reason="Test", strategy_name="DrySub"
+        )
+        await scheduler._execute_signal(buy_sig)
+
+        self.assertEqual(buy_sig.name, "Samsung")
+        scheduler._price_sub_svc.add_subscription.assert_awaited_once()
+
+        sell_sig = TradeSignal(
+            code="005930", name="", action="SELL",
+            price=71000, qty=1, reason="Test", strategy_name="DrySub"
+        )
+        await scheduler._execute_signal(sell_sig)
+
+        self.assertEqual(sell_sig.name, "Samsung")
+        scheduler._price_sub_svc.remove_subscription.assert_awaited_once_with(
+            "005930", "scheduler_DrySub"
+        )
+
+    async def test_force_liquidate_skips_empty_code_and_falls_back_on_orderbook_error(self):
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
+        oes.broker_api_wrapper.get_asking_price = AsyncMock(
+            side_effect=RuntimeError("orderbook failed")
+        )
+        vm.get_holds_by_strategy.return_value = [
+            {"code": "", "name": "Empty", "qty": 1},
+            {"code": "005930", "name": "Samsung", "qty": 0},
+        ]
+        config = StrategySchedulerConfig(
+            strategy=MockStrategy(name="ExitFallback"),
+            order_qty=7,
+        )
+
+        with patch.object(scheduler, "_execute_signal", new_callable=AsyncMock) as mock_exec:
+            await scheduler._force_liquidate_strategy(config)
+
+        mock_exec.assert_awaited_once()
+        signal = mock_exec.await_args.args[0]
+        self.assertEqual(signal.code, "005930")
+        self.assertEqual(signal.price, 0)
+        self.assertEqual(signal.qty, 7)
+        scheduler._logger.warning.assert_called()
+
+    def test_position_evidence_uses_repo_holdings_and_persist_noop_without_save_hook(self):
+        scheduler, _, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="NoSaveHook")
+
+        self.assertTrue(
+            scheduler._has_open_position_evidence(
+                "S",
+                "005930",
+                repo_holdings=[{"code": " 005930 "}],
+            )
+        )
+
+        scheduler._persist_strategy_position_state(strategy)
+
+        scheduler._logger.warning.assert_not_called()
+
+    def test_build_strategy_state_holding_uses_failed_signal_entry_date_and_name_fallbacks(self):
+        scheduler, _, _, _, _ = self._make_scheduler()
+        scheduler.stock_code_repository.get_name_by_code.return_value = "FallbackName"
+        scheduler._signal_history = [
+            SignalRecord(
+                strategy_name="StateFallback",
+                code="005930",
+                name="",
+                action="BUY",
+                price=70000,
+                qty=3,
+                reason="failed buy",
+                timestamp="",
+                api_success=False,
+            )
+        ]
+
+        holding = scheduler._build_strategy_state_holding(
+            "StateFallback",
+            "005930",
+            SimpleNamespace(entry_date="20260424"),
+        )
+
+        self.assertEqual(holding["buy_price"], 70000)
+        self.assertEqual(holding["qty"], 3)
+        self.assertEqual(holding["buy_date"], "2026-04-24 00:00:00")
+        self.assertEqual(holding["name"], "FallbackName")
+
+        holding_with_text_date = scheduler._build_strategy_state_holding(
+            "NoSignal",
+            "000660",
+            SimpleNamespace(entry_date="2026/04/24"),
+        )
+
+        self.assertEqual(holding_with_text_date["buy_date"], "2026/04/24")
+        self.assertEqual(holding_with_text_date["qty"], 1)
+
+    def test_get_strategy_holdings_skips_blank_position_state_code(self):
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="BlankState")
+        strategy._position_state = {
+            "": SimpleNamespace(entry_price=1000),
+            "005930": SimpleNamespace(entry_price=70000),
+        }
+        scheduler.stock_code_repository.get_name_by_code.return_value = "Samsung"
+        vm.get_holds_by_strategy.return_value = []
+        config = StrategySchedulerConfig(strategy=strategy)
+
+        holdings = scheduler._get_strategy_holdings(config)
+
+        self.assertEqual([h["code"] for h in holdings], ["005930"])
+
+    async def test_restore_state_price_subscription_skips_unrestored_strategy_and_empty_code(self):
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        scheduler._price_sub_svc = AsyncMock()
+        scheduler.register(StrategySchedulerConfig(strategy=MockStrategy(name="Restored")))
+        scheduler.register(StrategySchedulerConfig(strategy=MockStrategy(name="Stopped")))
+        scheduler._store.load_state.return_value = {
+            "enabled_strategies": ["Restored"],
+            "current_positions": [],
+            "strategy_configs": {},
+        }
+        vm.get_holds_by_strategy.return_value = [
+            {"code": ""},
+            {"code": "005930"},
+        ]
+
+        with patch.object(scheduler, "_loop", new_callable=AsyncMock):
+            await scheduler.restore_state()
+
+        scheduler._price_sub_svc.add_subscription.assert_awaited_once()
+        self.assertEqual(
+            scheduler._price_sub_svc.add_subscription.await_args.args[0],
+            "005930",
+        )
+
 if __name__ == "__main__":
     unittest.main()
