@@ -58,7 +58,7 @@ def ks_client(web_app):
     """Kill Switch 서비스가 정상 상태인 테스트 클라이언트."""
     ks_svc = _make_ks_service(is_tripped=False)
     api_common.set_ctx(_make_ctx(ks_svc))
-    with TestClient(web_app) as client:
+    with TestClient(web_app, cookies={"access_token": _SECRET}) as client:
         yield client, ks_svc
     api_common.set_ctx(None)
 
@@ -68,7 +68,7 @@ def ks_tripped_client(web_app):
     """Kill Switch가 트립된 상태의 테스트 클라이언트."""
     ks_svc = _make_ks_service(is_tripped=True)
     api_common.set_ctx(_make_ctx(ks_svc))
-    with TestClient(web_app) as client:
+    with TestClient(web_app, cookies={"access_token": _SECRET}) as client:
         yield client, ks_svc
     api_common.set_ctx(None)
 
@@ -77,18 +77,15 @@ def ks_tripped_client(web_app):
 def no_ks_client(web_app):
     """Kill Switch 서비스가 None인 테스트 클라이언트 (503 검증용)."""
     api_common.set_ctx(_make_ctx(ks_service=None))
-    with TestClient(web_app) as client:
+    with TestClient(web_app, cookies={"access_token": _SECRET}) as client:
         yield client
     api_common.set_ctx(None)
-
-
-_AUTH_COOKIE = {"access_token": _SECRET}
 
 
 def test_get_status_normal(ks_client):
     """정상 상태의 Kill Switch 상태 조회 — 200 + is_tripped=False."""
     client, _ = ks_client
-    resp = client.get("/api/kill-switch/status", cookies=_AUTH_COOKIE)
+    resp = client.get("/api/kill-switch/status")
     assert resp.status_code == 200
     data = resp.json()
     assert data["is_tripped"] is False
@@ -98,7 +95,7 @@ def test_get_status_normal(ks_client):
 def test_get_status_tripped(ks_tripped_client):
     """트립 상태의 Kill Switch 상태 조회 — 200 + is_tripped=True + trip_reason."""
     client, _ = ks_tripped_client
-    resp = client.get("/api/kill-switch/status", cookies=_AUTH_COOKIE)
+    resp = client.get("/api/kill-switch/status")
     assert resp.status_code == 200
     data = resp.json()
     assert data["is_tripped"] is True
@@ -111,7 +108,6 @@ def test_trip_kill_switch(ks_client):
     resp = client.post(
         "/api/kill-switch/trip",
         json={"reason": "테스트 트립"},
-        cookies=_AUTH_COOKIE,
     )
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
@@ -122,7 +118,7 @@ def test_trip_kill_switch(ks_client):
 def test_reset_kill_switch(ks_tripped_client):
     """수동 해제 API — 200 + ok=True + manual_reset 호출 확인."""
     client, ks_svc = ks_tripped_client
-    resp = client.post("/api/kill-switch/reset", cookies=_AUTH_COOKIE)
+    resp = client.post("/api/kill-switch/reset")
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
     ks_svc.manual_reset.assert_awaited_once()
@@ -130,19 +126,19 @@ def test_reset_kill_switch(ks_tripped_client):
 
 def test_status_service_unavailable(no_ks_client):
     """kill_switch_service=None 일 때 GET status → 503."""
-    resp = no_ks_client.get("/api/kill-switch/status", cookies=_AUTH_COOKIE)
+    resp = no_ks_client.get("/api/kill-switch/status")
     assert resp.status_code == 503
 
 
 def test_trip_service_unavailable(no_ks_client):
     """kill_switch_service=None 일 때 POST trip → 503."""
     resp = no_ks_client.post(
-        "/api/kill-switch/trip", json={"reason": "test"}, cookies=_AUTH_COOKIE
+        "/api/kill-switch/trip", json={"reason": "test"}
     )
     assert resp.status_code == 503
 
 
 def test_reset_service_unavailable(no_ks_client):
     """kill_switch_service=None 일 때 POST reset → 503."""
-    resp = no_ks_client.post("/api/kill-switch/reset", cookies=_AUTH_COOKIE)
+    resp = no_ks_client.post("/api/kill-switch/reset")
     assert resp.status_code == 503
