@@ -40,6 +40,11 @@ class FakeRespBadJson:
         # _get_hashkey가 json.JSONDecodeError를 캐치하므로 정확히 그 예외를 던짐
         raise json.JSONDecodeError("bad json", "doc", 0)
 
+class HashDataBadJson:
+    text = "not-json"
+    def get(self, key):
+        raise json.JSONDecodeError("bad json", "doc", 0)
+
 @pytest.mark.asyncio
 async def test_place_stock_order_buy_success():
     mock_config = {
@@ -177,7 +182,7 @@ async def test_get_hashkey_json_decode_error():
     with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock()) as mock_call:
         mock_call.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="ok",
-            data=FakeRespBadJson()
+            data=HashDataBadJson()
         )
         out = await api._get_hashkey({"k":"v"})
         assert out is None
@@ -207,7 +212,7 @@ async def test_get_hashkey_missing_hash_field():
         # HASH 키가 없음
         mock_call.return_value = ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value, msg1="ok",
-            data=FakeResp({"NO_HASH": "zzz"})
+            data={"NO_HASH": "zzz"}
         )
         out = await api._get_hashkey({"k":"v"})
         assert out is None
@@ -298,6 +303,82 @@ async def test_place_stock_order_hashkey_none():
 
         # 해시키 실패했으므로 실제 주문 API 호출 X
         mock_call.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_place_stock_order_rejects_nxt_market_order():
+    api = make_api()
+    api._get_hashkey = AsyncMock()
+    api.call_api = AsyncMock()
+
+    result = await api.place_stock_order(
+        stock_code="005930",
+        order_price=0,
+        order_qty=10,
+        is_buy=True,
+        exchange=Exchange.NXT,
+    )
+
+    assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+    assert "NXT 거래소에서는 시장가 주문을 지원하지 않습니다" in result.msg1
+    api._get_hashkey.assert_not_awaited()
+    api.call_api.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_place_stock_order_adjusts_price_and_sets_nxt_exchange_code():
+    api = make_api()
+    api._env.active_config.update({
+        "custtype": "P",
+        "stock_account_number": "12345678",
+    })
+    api._trid_provider.trading_order_cash.return_value = "TTTC0802U"
+    api._get_hashkey = AsyncMock(return_value="hash123")
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"odno": "A0002"},
+    ))
+
+    result = await api.place_stock_order(
+        stock_code="005930",
+        order_price=70001,
+        order_qty=3,
+        is_buy=True,
+        exchange=Exchange.NXT,
+    )
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    body = api._get_hashkey.await_args.args[0]
+    assert body["ORD_DVSN"] == "00"
+    assert body["ORD_UNPR"] == "70000"
+    assert body["EXCG_ID_DVSN_CD"] == Exchange.NXT.value
+    assert any("호가단위 보정: 70001" in call.args[0] for call in api._logger.info.call_args_list)
+    api.call_api.assert_awaited_once_with(
+        "POST",
+        EndpointKey.ORDER_CASH,
+        data=body,
+        retry_count=10,
+    )
+
+@pytest.mark.asyncio
+async def test_cancel_stock_order_hashkey_none():
+    api = make_api()
+    api._env.active_config.update({
+        "custtype": "P",
+        "stock_account_number": "12345678",
+    })
+    api._trid_provider.trading_order_rvsecncl.return_value = "VTTC0803U"
+    api._get_hashkey = AsyncMock(return_value=None)
+    api.call_api = AsyncMock()
+
+    result = await api.cancel_stock_order(
+        broker_order_no="A0001",
+        order_qty=6,
+    )
+
+    assert result.rt_cd == ErrorCode.MISSING_KEY.value
+    assert "hashkey" in result.msg1
+    api._get_hashkey.assert_awaited_once()
+    api.call_api.assert_not_awaited()
 
 @pytest.mark.asyncio
 async def test_get_hashkey_timeout_exception():

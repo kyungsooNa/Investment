@@ -199,6 +199,17 @@ class TestStop:
         assert task.state == TaskState.STOPPED
         assert task._tasks == []
 
+    async def test_stop_does_not_cancel_done_task(self, task):
+        mock_asyncio_task = MagicMock()
+        mock_asyncio_task.done.return_value = True
+        mock_asyncio_task.cancel = MagicMock()
+        task._tasks.append(mock_asyncio_task)
+
+        with patch("asyncio.gather", new_callable=AsyncMock):
+            await task.stop()
+
+        mock_asyncio_task.cancel.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # suspend / resume: IDLE 상태 noop 검증
@@ -355,3 +366,80 @@ class TestStart:
                 assert task.state == TaskState.RUNNING
             finally:
                 await task.stop()
+
+    async def test_start_when_running_is_noop(self):
+        task = _ConcreteTaskWithBaseStart(
+            mcs=MagicMock(), market_clock=MagicMock(), logger=MagicMock(), worker_pool=None
+        )
+        task._state = TaskState.RUNNING
+
+        with patch.object(task, "_on_start_hook", new_callable=AsyncMock) as mock_hook:
+            await task.start()
+
+        mock_hook.assert_not_called()
+        assert task._tasks == []
+        assert task.state == TaskState.RUNNING
+
+
+# ---------------------------------------------------------------------------
+# scheduler exception paths
+# ---------------------------------------------------------------------------
+
+class TestAfterMarketSchedulerExceptions:
+
+    async def test_scheduler_reraises_cancelled_error(self, task):
+        with patch(
+            "task.background.after_market.after_market_task_base.run_after_market_loop",
+            new_callable=AsyncMock,
+            side_effect=asyncio.CancelledError,
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await task._after_market_scheduler()
+
+    async def test_scheduler_suppresses_logger_error_failure(self, task):
+        task._logger.error.side_effect = RuntimeError("logger failed")
+
+        with patch(
+            "task.background.after_market.after_market_task_base.run_after_market_loop",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("loop failed"),
+        ):
+            await task._after_market_scheduler()
+
+        task._logger.error.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# execute() / force_run(): WorkerPool handler base behavior
+# ---------------------------------------------------------------------------
+
+class TestExecuteAndForceRun:
+
+    async def test_execute_delegates_payload_date_under_running_state(self, task):
+        called = []
+
+        async def mock_on_closed(date: str):
+            called.append((date, task.state))
+
+        task._on_market_closed = mock_on_closed
+
+        await task.execute({"date": "20260409"})
+
+        assert called == [("20260409", TaskState.RUNNING)]
+        assert task.state == TaskState.IDLE
+
+    async def test_execute_uses_empty_date_when_payload_missing_date(self, task):
+        called = []
+
+        async def mock_on_closed(date: str):
+            called.append(date)
+
+        task._on_market_closed = mock_on_closed
+
+        await task.execute({})
+
+        assert called == [""]
+
+    async def test_force_run_raises_not_implemented_error(self, task):
+        with pytest.raises(NotImplementedError, match="test_task.force_run"):
+            await task.force_run()

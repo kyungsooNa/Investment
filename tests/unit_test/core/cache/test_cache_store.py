@@ -2,7 +2,7 @@
 
 import pytest
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from core.cache.cache_store import CacheStore
 from core.cache.file_cache import FileCache
 from core.cache.db_cache import DBCache
@@ -343,3 +343,98 @@ def test_config_selection_with_integer_flags(tmp_path):
     cm = CacheStore(config=config)
     assert isinstance(cm.file_cache, DBCache)
     assert cm.memory_cache is None
+
+
+def test_cache_store_loads_default_config_when_config_is_none(tmp_path):
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "memory_cache_enabled": False,
+            "file_cache_enabled": False,
+        }
+    }
+
+    with patch("core.cache.cache_store.load_cache_config", return_value=config) as mock_load:
+        cm = CacheStore()
+
+    mock_load.assert_called_once()
+    assert cm.memory_cache is None
+    assert cm.file_cache is None
+
+
+def test_cache_store_set_logger_warns_when_cleanup_fails(tmp_path):
+    config = {
+        "cache": {
+            "base_dir": str(tmp_path),
+            "enabled_methods": [],
+            "deserializable_classes": [],
+            "file_cache_enabled": True,
+            "retention_days": 3,
+            "max_size_mb": 12,
+        }
+    }
+    cm = CacheStore(config=config)
+    cm.file_cache.cleanup_old_files = MagicMock(side_effect=RuntimeError("cleanup failed"))
+    logger = MagicMock()
+
+    cm.set_logger(logger)
+
+    cm.file_cache.cleanup_old_files.assert_called_once_with(days=3, max_size_mb=12)
+    logger.warning.assert_called_once()
+
+
+def test_cache_store_get_raw_rejects_invalid_timestamp(cache_store):
+    key = "invalid_timestamp"
+    cache_store.set(key, {
+        "timestamp": "not-a-date",
+        "data": {"value": 1},
+    })
+    logger = MagicMock()
+    cache_store.set_logger(logger)
+
+    assert cache_store.get_raw(key) is None
+    logger.warning.assert_called()
+
+
+def test_cache_store_get_raw_logs_memory_and_file_miss(cache_store):
+    logger = MagicMock()
+    cache_store.set_logger(logger)
+
+    assert cache_store.get_raw("missing_key") is None
+    debug_messages = [call.args[0] for call in logger.debug.call_args_list]
+    assert any("Memory Cache MISS: missing_key" in message for message in debug_messages)
+    assert any("File Cache MISS: missing_key" in message for message in debug_messages)
+    logger.warning.assert_called_once()
+
+
+def test_cache_store_get_raw_logs_file_hit_after_memory_clear(cache_store):
+    key = "file_hit_with_logger"
+    payload = {
+        "timestamp": datetime.now().isoformat(),
+        "data": {"value": 2},
+    }
+    cache_store.set(key, payload, save_to_file=True)
+    cache_store.memory_cache.clear()
+    logger = MagicMock()
+    cache_store.set_logger(logger)
+
+    loaded, cache_type = cache_store.get_raw(key)
+
+    assert loaded == payload
+    assert cache_type == "file"
+    debug_messages = [call.args[0] for call in logger.debug.call_args_list]
+    assert any(f"File Cache HIT: {key}" in message for message in debug_messages)
+
+
+def test_cache_store_get_raw_rejects_invalid_timestamp_without_logger(cache_store):
+    key = "invalid_timestamp_no_logger"
+    cache_store.set(key, {
+        "timestamp": "not-a-date",
+        "data": {"value": 3},
+    })
+
+    assert cache_store.get_raw(key) is None
+
+
+def test_cache_store_get_returns_none(cache_store):
+    assert cache_store.get("missing_key") is None
