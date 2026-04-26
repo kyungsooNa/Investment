@@ -27,6 +27,8 @@ class TrIdLeaf(str, Enum):
     INQUIRE_BALANCE_PAPER = "inquire_balance_paper"
     INQUIRE_DAILY_CCLD_REAL = "inquire_daily_ccld_real"
     INQUIRE_DAILY_CCLD_PAPER = "inquire_daily_ccld_paper"
+    INQUIRE_PSBL_RVSECNCL_REAL = "inquire_psbl_rvsecncl_real"
+    INQUIRE_PSBL_RVSECNCL_PAPER = "inquire_psbl_rvsecncl_paper"
 
     # ── 주문(trading) ───────────────────────────────────────────
     ORDER_CASH_BUY_REAL = "order_cash_buy_real"
@@ -54,6 +56,7 @@ class TrId(str, Enum):
     # account
     INQUIRE_BALANCE = "inquire_balance"
     INQUIRE_DAILY_CCLD = "inquire_daily_ccld"
+    INQUIRE_PSBL_RVSECNCL = "inquire_psbl_rvsecncl"
     # trading
     ORDER_CASH_BUY = "order_cash_buy"
     ORDER_CASH_SELL = "order_cash_sell"

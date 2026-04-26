@@ -470,7 +470,7 @@ async def test_retry_order_retriable_error_exhausted(handler, mock_broker_api_wr
         lambda c, p, q: handler._execute_order_via_broker(c, p, q, is_buy=True), "005930", 70000, 10
     )
     assert result.rt_cd == ErrorCode.RETRY_LIMIT.value
-    assert mock_broker_api_wrapper.place_stock_order.await_count == 5
+    assert mock_broker_api_wrapper.place_stock_order.await_count == 3  # _ORDER_MAX_RETRIES=3
 
 
 @pytest.mark.asyncio
@@ -1357,7 +1357,8 @@ async def test_check_stuck_orders_once_escalates_to_critical_in_real_mode(
 
     assert warning_count == 1
     assert critical_count == 1
-    mock_logger.warning.assert_called_once()
+    # WARNING: stuck detected(61s) + polling failure + polling ambiguous → 최소 1회
+    assert mock_logger.warning.call_count >= 1
     mock_logger.critical.assert_called_once()
     emit_calls = mock_notification_service.emit.await_args_list
     assert emit_calls[0].args[1] == NotificationLevel.WARNING
@@ -1899,3 +1900,712 @@ async def test_sell_all_stocks_captures_unexpected_outer_exception(handler, mock
 
     assert "balance boom" in result["error"]
     mock_logger.critical.assert_called_once()
+
+
+# ── PR1: _resolve_finalize + real mode 즉시 체결 확정 제거 테스트 ─────────────
+
+@pytest.fixture
+def mock_broker_api_wrapper_real(mock_broker_api_wrapper):
+    """실전 모드(is_paper_trading=False) BrokerAPIWrapper 픽스처."""
+    mock_broker_api_wrapper.env.is_paper_trading = False
+    return mock_broker_api_wrapper
+
+
+@pytest.fixture
+def handler_real(mock_broker_api_wrapper_real, mock_logger, mock_market_clock, mock_market_calendar_service):
+    """실전 모드 OrderExecutionService 픽스처."""
+    return OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper_real,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+
+
+# _resolve_finalize
+
+def test_resolve_finalize_paper_mode_true(handler):
+    assert handler._resolve_finalize(True) is True
+
+
+def test_resolve_finalize_paper_mode_false(handler):
+    assert handler._resolve_finalize(False) is False
+
+
+def test_resolve_finalize_real_mode_forced_false(handler_real):
+    assert handler_real._resolve_finalize(True) is False
+
+
+def test_resolve_finalize_real_mode_false_stays_false(handler_real):
+    assert handler_real._resolve_finalize(False) is False
+
+
+def test_resolve_finalize_real_mode_logs_warning_when_true_requested(handler_real, mock_logger):
+    handler_real._resolve_finalize(True)
+    mock_logger.warning.assert_called_once()
+    assert "finalize_immediately=True" in mock_logger.warning.call_args[0][0]
+
+
+def test_resolve_finalize_real_mode_no_warning_when_false_requested(handler_real, mock_logger):
+    handler_real._resolve_finalize(False)
+    # warning 중 finalize 관련만 없어야 한다 (다른 warning이 끼어들지 않도록 필터)
+    finalize_warnings = [
+        c for c in mock_logger.warning.call_args_list
+        if "finalize_immediately" in str(c)
+    ]
+    assert len(finalize_warnings) == 0
+
+
+# real mode 즉시 FILLED 제거
+
+@pytest.mark.asyncio
+async def test_real_mode_buy_order_stays_submitted_even_with_finalize_true(
+    handler_real, mock_broker_api_wrapper_real
+):
+    mock_broker_api_wrapper_real.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="주문 성공", data={"ordno": "A0001"}
+    )
+    result = await handler_real.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=True
+    )
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    ctx = handler_real.get_order_context("005930", is_buy=True)
+    assert ctx.state == OrderState.SUBMITTED
+
+
+@pytest.mark.asyncio
+async def test_real_mode_sell_order_stays_submitted_even_with_finalize_true(
+    handler_real, mock_broker_api_wrapper_real
+):
+    mock_broker_api_wrapper_real.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="매도 성공", data={"ordno": "S0001"}
+    )
+    result = await handler_real.handle_place_sell_order(
+        "005930", 70000, 5, finalize_immediately=True
+    )
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    ctx = handler_real.get_order_context("005930", is_buy=False)
+    assert ctx.state == OrderState.SUBMITTED
+
+
+@pytest.mark.asyncio
+async def test_paper_mode_buy_order_transitions_to_filled_immediately(handler, mock_broker_api_wrapper):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="주문 성공", data={"ordno": "A0001"}
+    )
+    result = await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=True
+    )
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    ctx = handler.get_order_context("005930", is_buy=True)
+    assert ctx.state == OrderState.FILLED
+
+
+# ── PR1: _safe_transition_order_context 테스트 ────────────────────────────────
+
+def test_safe_transition_noop_on_invalid_transition(handler):
+    ctx = _seed_order_context(handler, state=OrderState.FILLED, broker_order_no="A0001", remaining_qty=0)
+
+    result = handler._safe_transition_order_context(ctx.order_key, OrderState.SUBMITTED)
+
+    assert result is not None
+    assert result.state == OrderState.FILLED
+
+
+def test_safe_transition_increments_mismatch_count(handler):
+    ctx = _seed_order_context(handler, state=OrderState.FILLED, broker_order_no="A0001", remaining_qty=0)
+    assert handler._reconcile_mismatch_count == 0
+
+    handler._safe_transition_order_context(ctx.order_key, OrderState.SUBMITTED)
+
+    assert handler._reconcile_mismatch_count == 1
+
+
+def test_safe_transition_logs_warning_on_invalid(handler, mock_logger):
+    ctx = _seed_order_context(handler, state=OrderState.REJECTED, broker_order_no="A0001", remaining_qty=0)
+    mock_logger.warning.reset_mock()
+
+    handler._safe_transition_order_context(ctx.order_key, OrderState.FILLED)
+
+    finalize_warnings = [c for c in mock_logger.warning.call_args_list if "외부 이벤트 상태 전이 실패" in str(c)]
+    assert len(finalize_warnings) == 1
+    assert "no-op" in finalize_warnings[0][0][0]
+
+
+def test_safe_transition_succeeds_on_valid_transition(handler):
+    ctx = _seed_order_context(handler, state=OrderState.SUBMITTED, broker_order_no="A0001", remaining_qty=10)
+
+    result = handler._safe_transition_order_context(ctx.order_key, OrderState.FILLED, filled_qty=10)
+
+    assert result is not None
+    assert result.state == OrderState.FILLED
+    assert handler._reconcile_mismatch_count == 0
+
+
+def test_safe_transition_noop_on_missing_order_key(handler):
+    result = handler._safe_transition_order_context("nonexistent:key", OrderState.FILLED)
+
+    assert result is None
+    assert handler._reconcile_mismatch_count == 1
+
+
+def test_internal_transition_raises_on_invalid(handler):
+    ctx = _seed_order_context(handler, state=OrderState.FILLED, broker_order_no="A0001", remaining_qty=0)
+
+    with pytest.raises((ValueError, Exception)):
+        handler._transition_order_context(ctx.order_key, OrderState.SUBMITTED)
+
+
+# ── PR2: stuck order CRITICAL 시 broker polling 상태 보정 테스트 ───────────────
+
+@pytest.mark.asyncio
+async def test_stuck_order_critical_triggers_polling(handler_real, mock_logger):
+    """CRITICAL stuck order 감지 시 _poll_single_order_context 가 호출돼야 한다."""
+    now = datetime(2026, 4, 24, 10, 0, 0)
+    entered_at = now - timedelta(seconds=OrderExecutionService._STUCK_ORDER_CRITICAL_SEC + 10)
+    _seed_order_context(handler_real, state=OrderState.SUBMITTED, broker_order_no="C0001",
+                        remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
+
+    with patch.object(handler_real, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
+        mock_poll.return_value = 0
+        await handler_real.check_stuck_orders_once(now=now)
+
+    mock_poll.assert_awaited_once()
+    call_args = mock_poll.call_args
+    assert call_args.args[1] == now.strftime("%Y%m%d")  # start_date
+    assert call_args.args[2] == now.strftime("%Y%m%d")  # end_date
+
+
+@pytest.mark.asyncio
+async def test_stuck_order_polling_clear_response_transitions_state(handler_real, mock_logger):
+    """polling 이 1건 적용되면 INFO 로그가 기록되고 stuck_alert 메타 업데이트는 생략된다."""
+    now = datetime(2026, 4, 24, 10, 0, 0)
+    entered_at = now - timedelta(seconds=OrderExecutionService._STUCK_ORDER_CRITICAL_SEC + 10)
+    ctx = _seed_order_context(handler_real, state=OrderState.SUBMITTED, broker_order_no="C0002",
+                              remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
+
+    def fake_poll(context, start_date, end_date):
+        # polling 이 상태를 FILLED 로 전이시킨 것처럼 시뮬레이션
+        handler_real._order_states[ctx.order_key] = handler_real._order_states[ctx.order_key].model_copy(
+            update={"state": OrderState.FILLED, "filled_qty": 10, "remaining_qty": 0}
+        )
+        return 1
+
+    with patch.object(handler_real, "_poll_single_order_context", side_effect=fake_poll):
+        count = await handler_real.check_stuck_orders_once(now=now)
+
+    assert count == 1
+    info_calls = [str(c) for c in mock_logger.info.call_args_list]
+    assert any("상태 보정 완료" in s for s in info_calls)
+    # terminal 상태이므로 stuck_alert_level 메타 업데이트 시도 없음 → _order_states 에 FILLED 유지
+    assert handler_real._order_states[ctx.order_key].state == OrderState.FILLED
+
+
+@pytest.mark.asyncio
+async def test_stuck_order_polling_ambiguous_response_no_transition(handler_real, mock_logger):
+    """polling 이 0건 반환하면 WARNING 로그만 기록하고 상태는 SUBMITTED 유지된다."""
+    now = datetime(2026, 4, 24, 10, 0, 0)
+    entered_at = now - timedelta(seconds=OrderExecutionService._STUCK_ORDER_CRITICAL_SEC + 10)
+    ctx = _seed_order_context(handler_real, state=OrderState.SUBMITTED, broker_order_no="C0003",
+                              remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
+
+    with patch.object(handler_real, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
+        mock_poll.return_value = 0
+        count = await handler_real.check_stuck_orders_once(now=now)
+
+    assert count == 1
+    warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+    assert any("모호" in s for s in warning_calls)
+    # 상태 전이 없음 — SUBMITTED 유지
+    assert handler_real._order_states[ctx.order_key].state == OrderState.SUBMITTED
+
+
+@pytest.mark.asyncio
+async def test_stuck_order_warning_level_does_not_trigger_polling(handler_real, mock_logger):
+    """WARNING 수준 stuck order 에서는 polling 을 호출하지 않는다."""
+    now = datetime(2026, 4, 24, 10, 0, 0)
+    # WARNING 범위: WARNING_SEC 이상 ~ CRITICAL_SEC 미만
+    entered_at = now - timedelta(seconds=OrderExecutionService._STUCK_ORDER_WARNING_SEC + 5)
+    _seed_order_context(handler_real, state=OrderState.SUBMITTED, broker_order_no="W0001",
+                        remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
+
+    with patch.object(handler_real, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
+        await handler_real.check_stuck_orders_once(now=now)
+
+    mock_poll.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stuck_order_paper_mode_no_polling(handler, mock_logger):
+    """paper mode 에서는 CRITICAL 알림이 없으므로 polling 이 호출되지 않는다."""
+    now = datetime(2026, 4, 24, 10, 0, 0)
+    entered_at = now - timedelta(seconds=OrderExecutionService._STUCK_ORDER_CRITICAL_SEC + 10)
+    _seed_order_context(handler, state=OrderState.SUBMITTED, broker_order_no="P0001",
+                        remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
+
+    with patch.object(handler, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
+        await handler.check_stuck_orders_once(now=now)
+
+    mock_poll.assert_not_awaited()
+
+
+# ── PR4: reconcile_orders_with_broker 테스트 ────────────────────────────────
+
+def _make_unfilled_response(order_nos: list[str]) -> ResCommonResponse:
+    rows = [{"odno": ono, "pdno": "005930"} for ono in order_nos]
+    return ResCommonResponse(rt_cd="0", msg1="", data={"output1": rows})
+
+
+def _make_filled_response(rows: list[dict]) -> ResCommonResponse:
+    return ResCommonResponse(rt_cd="0", msg1="", data={"output1": rows})
+
+
+def _make_balance_response(holdings: list[dict]) -> ResCommonResponse:
+    return ResCommonResponse(rt_cd="0", msg1="", data={"output1": holdings})
+
+
+def _fail_response(msg="오류") -> ResCommonResponse:
+    return ResCommonResponse(rt_cd="1", msg1=msg, data=None)
+
+
+def _seed_context(handler, *, stock_code="005930", side=OrderSide.BUY,
+                  state=OrderState.SUBMITTED, broker_order_no="O0001",
+                  qty=10, filled_qty=0) -> OrderContext:
+    order_key = handler._make_order_key(stock_code, side, Exchange.KRX)
+    return handler._set_order_context(OrderContext(
+        order_key=order_key,
+        stock_code=stock_code,
+        side=side,
+        state=state,
+        exchange=Exchange.KRX,
+        price=70000,
+        qty=qty,
+        filled_qty=filled_qty,
+        remaining_qty=qty - filled_qty,
+        broker_order_no=broker_order_no,
+        source="strategy:test",
+    ))
+
+
+@pytest.mark.asyncio
+async def test_reconcile_no_active_orders_returns_zero(handler, mock_broker_api_wrapper):
+    """활성 주문이 없으면 0 을 반환하고 alarm이 설정되지 않는다."""
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])
+    mock_broker_api_wrapper.get_account_balance.return_value = _make_balance_response([])
+
+    result = await handler.reconcile_orders_with_broker()
+
+    assert result == 0
+    assert not handler._reconcile_alarm
+
+
+@pytest.mark.asyncio
+async def test_reconcile_order_in_unfilled_list_no_mismatch(handler, mock_broker_api_wrapper):
+    """broker 미체결 목록에 주문번호가 있으면 불일치가 아니다."""
+    _real_mode(mock_broker_api_wrapper)
+    _seed_context(handler, broker_order_no="O0001")
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response(["O0001"])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])
+    mock_broker_api_wrapper.get_account_balance.return_value = _make_balance_response([])
+
+    result = await handler.reconcile_orders_with_broker()
+
+    assert result == 0
+    assert not handler._reconcile_alarm
+
+
+@pytest.mark.asyncio
+async def test_reconcile_order_in_filled_history_no_mismatch(handler, mock_broker_api_wrapper):
+    """broker 체결내역에 주문번호가 있으면 불일치가 아니다."""
+    _real_mode(mock_broker_api_wrapper)
+    _seed_context(handler, broker_order_no="O0001")
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response(
+        [{"odno": "O0001", "tot_ccld_qty": "10"}]
+    )
+    mock_broker_api_wrapper.get_account_balance.return_value = _make_balance_response([])
+
+    result = await handler.reconcile_orders_with_broker()
+
+    assert result == 0
+    assert not handler._reconcile_alarm
+
+
+@pytest.mark.asyncio
+async def test_reconcile_one_mismatch_sets_alarm_no_transition(handler, mock_broker_api_wrapper, mock_logger):
+    """1회 불일치: _reconcile_alarm=True + WARNING, 상태 전이 없음."""
+    _real_mode(mock_broker_api_wrapper)
+    ctx = _seed_context(handler, broker_order_no="O0001", state=OrderState.SUBMITTED)
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])
+    mock_broker_api_wrapper.get_account_balance.return_value = _make_balance_response([])
+
+    result = await handler.reconcile_orders_with_broker()
+
+    assert result == 1
+    assert handler._reconcile_alarm is True
+    assert handler._reconcile_mismatch_count == 1
+    assert handler._order_states[ctx.order_key].state == OrderState.SUBMITTED
+    mock_logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_two_consecutive_with_evidence_marks_canceled(handler, mock_broker_api_wrapper, mock_logger):
+    """2회 연속 + 명시 근거(잔고·체결 없음) → CANCELED 추정 전이."""
+    _real_mode(mock_broker_api_wrapper)
+    ctx = _seed_context(handler, broker_order_no="O0001", state=OrderState.SUBMITTED)
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])
+    mock_broker_api_wrapper.get_account_balance.return_value = _make_balance_response([])
+
+    await handler.reconcile_orders_with_broker()
+    assert handler._order_states[ctx.order_key].state == OrderState.SUBMITTED
+
+    await handler.reconcile_orders_with_broker()
+
+    assert handler._order_states[ctx.order_key].state == OrderState.CANCELED
+    warning_msgs = " ".join(str(c) for c in mock_logger.warning.call_args_list)
+    assert "assumed=true" in warning_msgs
+
+
+@pytest.mark.asyncio
+async def test_reconcile_two_consecutive_buy_with_balance_no_transition(handler, mock_broker_api_wrapper):
+    """2회 연속이지만 매수 종목이 잔고에 있으면 명시 근거 부족 → 전이 없음."""
+    _real_mode(mock_broker_api_wrapper)
+    ctx = _seed_context(handler, broker_order_no="O0001", state=OrderState.SUBMITTED)
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])
+    mock_broker_api_wrapper.get_account_balance.return_value = _make_balance_response(
+        [{"pdno": "005930", "hldg_qty": "10"}]
+    )
+
+    await handler.reconcile_orders_with_broker()
+    await handler.reconcile_orders_with_broker()
+
+    assert handler._order_states[ctx.order_key].state == OrderState.SUBMITTED
+
+
+@pytest.mark.asyncio
+async def test_reconcile_filled_without_balance_logs_critical(handler, mock_broker_api_wrapper, mock_logger):
+    """내부 FILLED인데 잔고 없음 → CRITICAL 로그 + alarm."""
+    _real_mode(mock_broker_api_wrapper)
+    _seed_context(handler, broker_order_no="O0001", state=OrderState.FILLED,
+                  qty=10, filled_qty=10)
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])
+    mock_broker_api_wrapper.get_account_balance.return_value = _make_balance_response([])
+
+    await handler.reconcile_orders_with_broker()
+
+    assert handler._reconcile_alarm is True
+    mock_logger.critical.assert_called()
+    critical_msg = mock_logger.critical.call_args[0][0]
+    assert "FILLED" in critical_msg and "잔고 없음" in critical_msg
+
+
+@pytest.mark.asyncio
+async def test_reconcile_balance_without_context_logs_info_only(handler, mock_broker_api_wrapper, mock_logger):
+    """잔고에 종목이 있지만 내부 컨텍스트 없음 → INFO만, alarm 없음."""
+    _real_mode(mock_broker_api_wrapper)
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])
+    mock_broker_api_wrapper.get_account_balance.return_value = _make_balance_response(
+        [{"pdno": "999999", "hldg_qty": "5"}]
+    )
+
+    await handler.reconcile_orders_with_broker()
+
+    assert not handler._reconcile_alarm
+    mock_logger.info.assert_called()
+    info_msg = " ".join(str(c) for c in mock_logger.info.call_args_list)
+    assert "외부 주문" in info_msg
+
+
+@pytest.mark.asyncio
+async def test_reconcile_unfilled_api_failure_returns_zero(handler, mock_broker_api_wrapper, mock_logger):
+    """미체결 조회 실패 시 0 반환, alarm 없음."""
+    _real_mode(mock_broker_api_wrapper)
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _fail_response("API 오류")
+
+    result = await handler.reconcile_orders_with_broker()
+
+    assert result == 0
+    assert not handler._reconcile_alarm
+    mock_logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_alarm_blocks_new_order(handler_real, mock_broker_api_wrapper):
+    """_reconcile_alarm=True 면 신규 주문이 차단된다."""
+    handler_real._reconcile_alarm = True
+
+    result = await handler_real.handle_place_buy_order("005930", 70000, 1)
+
+    assert result.rt_cd != ErrorCode.SUCCESS.value
+    assert "reconcile alarm" in result.msg1
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_consecutive_counter_resets_on_match(handler, mock_broker_api_wrapper):
+    """불일치 후 다음 reconcile에서 broker에 나타나면 연속 카운터가 초기화된다."""
+    _real_mode(mock_broker_api_wrapper)
+    ctx = _seed_context(handler, broker_order_no="O0001", state=OrderState.SUBMITTED)
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])
+    mock_broker_api_wrapper.get_account_balance.return_value = _make_balance_response([])
+
+    await handler.reconcile_orders_with_broker()
+    assert handler._reconcile_consecutive_mismatch_by_key.get(ctx.order_key, 0) == 1
+
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response(["O0001"])
+    await handler.reconcile_orders_with_broker()
+
+    assert handler._reconcile_consecutive_mismatch_by_key.get(ctx.order_key, 0) == 0
+
+
+# ── PR5: restore_state_from_broker 테스트 ────────────────────────────────
+
+def _restore_response(rows: list[dict]) -> ResCommonResponse:
+    """restore용 full row dict 리스트로 응답 생성."""
+    return ResCommonResponse(rt_cd="0", msg1="", data={"output": rows})
+
+
+def _restore_row(odno: str, pdno: str, sll_buy: str = "02",
+                 ord_qty: str = "10", ord_unpr: str = "50000",
+                 tot_ccld_qty: str = "0") -> dict:
+    return {
+        "odno": odno, "pdno": pdno, "sll_buy_dvsn_cd": sll_buy,
+        "ord_qty": ord_qty, "ord_unpr": ord_unpr, "tot_ccld_qty": tot_ccld_qty,
+    }
+
+
+def _real_mode(broker_mock):
+    """broker_api_wrapper.env.is_paper_trading = False 설정."""
+    mock_env = MagicMock()
+    mock_env.is_paper_trading = False
+    broker_mock.env = mock_env
+
+
+@pytest.mark.asyncio
+async def test_restore_paper_mode_skips(handler, mock_broker_api_wrapper):
+    """paper mode(기본값)에서는 API를 호출하지 않고 0을 반환한다."""
+    count = await handler.restore_state_from_broker()
+    assert count == 0
+    mock_broker_api_wrapper.inquire_unfilled_orders.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_restore_rebuilds_submitted_from_unfilled(handler, mock_broker_api_wrapper):
+    """미체결 조회 응답으로 SUBMITTED 컨텍스트가 재구성된다."""
+    _real_mode(mock_broker_api_wrapper)
+    row = _restore_row("ORD001", "005930", sll_buy="02", ord_qty="5", ord_unpr="70000")
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _restore_response([row])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _restore_response([])
+
+    count = await handler.restore_state_from_broker()
+
+    assert count == 1
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    ctx = handler._order_states.get(order_key)
+    assert ctx is not None
+    assert ctx.state == OrderState.SUBMITTED
+    assert ctx.broker_order_no == "ORD001"
+    assert ctx.source == "restored"
+    assert handler._order_no_index.get("ORD001") == order_key
+
+
+@pytest.mark.asyncio
+async def test_restore_rebuilds_filled_from_filled_history(handler, mock_broker_api_wrapper):
+    """당일 체결내역으로 FILLED 컨텍스트가 재구성된다."""
+    _real_mode(mock_broker_api_wrapper)
+    row = _restore_row("ORD002", "000660", sll_buy="01", ord_qty="3", ord_unpr="120000", tot_ccld_qty="3")
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _restore_response([])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _restore_response([row])
+
+    count = await handler.restore_state_from_broker()
+
+    assert count == 1
+    order_key = handler._make_order_key("000660", OrderSide.SELL, Exchange.KRX)
+    ctx = handler._order_states.get(order_key)
+    assert ctx is not None
+    assert ctx.state == OrderState.FILLED
+    assert ctx.broker_order_no == "ORD002"
+    assert ctx.filled_qty == 3
+    assert ctx.source == "restored"
+
+
+@pytest.mark.asyncio
+async def test_restore_submitted_upgraded_to_filled(handler, mock_broker_api_wrapper):
+    """미체결로 SUBMITTED 복원 후 체결내역에서 동일 주문 발견 시 FILLED로 전이."""
+    _real_mode(mock_broker_api_wrapper)
+    unfilled_row = _restore_row("ORD003", "035720", sll_buy="02", ord_qty="2", ord_unpr="60000")
+    filled_row = _restore_row("ORD003", "035720", sll_buy="02", ord_qty="2", ord_unpr="60000", tot_ccld_qty="2")
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _restore_response([unfilled_row])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _restore_response([filled_row])
+
+    count = await handler.restore_state_from_broker()
+
+    order_key = handler._make_order_key("035720", OrderSide.BUY, Exchange.KRX)
+    ctx = handler._order_states.get(order_key)
+    assert ctx is not None
+    assert ctx.state == OrderState.FILLED
+    assert ctx.filled_qty == 2
+    assert count == 1  # SUBMITTED 복원 1건, FILLED 전이는 count 미포함
+
+
+@pytest.mark.asyncio
+async def test_restore_skips_existing_context(handler, mock_broker_api_wrapper):
+    """이미 _order_states에 존재하는 order_key는 복원 스킵."""
+    _real_mode(mock_broker_api_wrapper)
+    _seed_context(handler, stock_code="005930", state=OrderState.SUBMITTED)
+    row = _restore_row("ORD999", "005930", sll_buy="02")
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _restore_response([row])
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _restore_response([])
+
+    count = await handler.restore_state_from_broker()
+
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_restore_unfilled_api_failure_logs_warning(handler, mock_broker_api_wrapper, mock_logger):
+    """미체결 조회 실패 시 warning 로그 후 체결내역 조회도 계속 진행."""
+    _real_mode(mock_broker_api_wrapper)
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _fail_response("조회 실패")
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _restore_response([])
+
+    count = await handler.restore_state_from_broker()
+
+    assert count == 0
+    mock_logger.warning.assert_called()
+    mock_broker_api_wrapper.inquire_filled_history.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_restore_state_rebuilds_order_indices(handler, mock_broker_api_wrapper):
+    """복원된 컨텍스트는 _order_no_index에도 정확히 등록된다."""
+    _real_mode(mock_broker_api_wrapper)
+    rows = [
+        _restore_row("ORDB001", "035420", sll_buy="02", ord_qty="1"),
+        _restore_row("ORDS001", "000270", sll_buy="01", ord_qty="1"),
+    ]
+    mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _restore_response(rows)
+    mock_broker_api_wrapper.inquire_filled_history.return_value = _restore_response([])
+
+    count = await handler.restore_state_from_broker()
+
+    assert count == 2
+    assert "ORDB001" in handler._order_no_index
+    assert "ORDS001" in handler._order_no_index
+    buy_key = handler._make_order_key("035420", OrderSide.BUY, Exchange.KRX)
+    sell_key = handler._make_order_key("000270", OrderSide.SELL, Exchange.KRX)
+    assert handler._order_no_index["ORDB001"] == buy_key
+    assert handler._order_no_index["ORDS001"] == sell_key
+
+
+# ── PR6: intent_id, 중복 차단, business reject, max retry 3 테스트 ──────────────
+
+@pytest.mark.asyncio
+async def test_intent_id_auto_generated_when_missing(
+    handler, mock_broker_api_wrapper, mock_market_calendar_service
+):
+    """intent_id 미전달 시 uuid가 자동 생성되어 OrderContext에 저장된다."""
+    import uuid as _uuid
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"ordno": "A0001"}
+    )
+    result = await handler.handle_place_buy_order("005930", 70000, 10)
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    ctx = handler._order_states.get(order_key)
+    assert ctx is not None
+    assert ctx.intent_id
+    _uuid.UUID(ctx.intent_id)  # 유효한 UUID 형식
+
+
+@pytest.mark.asyncio
+async def test_duplicate_intent_id_blocked(
+    handler, mock_broker_api_wrapper, mock_market_calendar_service
+):
+    """동일 intent_id + 활성(non-terminal) 상태 주문이 있으면 두 번째 주문을 즉시 거부."""
+    iid = "fixed-intent-id"
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    handler._set_order_context(OrderContext(
+        order_key=order_key,
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=OrderState.SUBMITTED,
+        exchange=Exchange.KRX,
+        price=70000,
+        qty=10,
+        intent_id=iid,
+    ))
+    handler._intent_index[iid] = order_key
+
+    # 동일 intent_id로 다른 종목에 주문 시도 → 차단되어야 한다
+    result = await handler.handle_place_buy_order("000660", 60000, 5, intent_id=iid)
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert "duplicate intent" in result.msg1
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+
+
+def test_intent_index_cleaned_up_on_terminal_transition(handler):
+    """terminal 상태로 전이 시 _intent_index에서 intent_id가 제거된다."""
+    iid = "cleanup-intent"
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    handler._set_order_context(OrderContext(
+        order_key=order_key,
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=OrderState.SUBMITTED,
+        exchange=Exchange.KRX,
+        price=70000,
+        qty=10,
+        intent_id=iid,
+    ))
+    handler._intent_index[iid] = order_key
+
+    handler._transition_order_context(order_key, OrderState.FILLED, filled_qty=10)
+
+    assert iid not in handler._intent_index
+
+
+@pytest.mark.asyncio
+async def test_business_reject_no_retry_marks_rejected(
+    handler, mock_broker_api_wrapper, mock_market_calendar_service
+):
+    """잔고부족 등 비즈니스 거부 응답은 즉시 REJECTED 전이, place_stock_order 1회 호출."""
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="잔고부족으로 주문 불가", data=None
+    )
+    result = await handler.handle_place_buy_order("005930", 70000, 10)
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    mock_broker_api_wrapper.place_stock_order.assert_awaited_once()
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    ctx = handler._order_states.get(order_key)
+    assert ctx is not None
+    assert ctx.state == OrderState.REJECTED
+
+
+@pytest.mark.asyncio
+async def test_transient_api_retried_max_3(
+    handler, mock_broker_api_wrapper, mock_market_clock, mock_market_calendar_service
+):
+    """일시적(NETWORK_ERROR) API 오류는 최대 3회 호출 후 REJECTED."""
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.NETWORK_ERROR.value, msg1="네트워크 오류", data=None
+    )
+    result = await handler.handle_place_buy_order("005930", 70000, 10)
+
+    assert result.rt_cd == ErrorCode.NETWORK_ERROR.value
+    assert mock_broker_api_wrapper.place_stock_order.await_count == 3
+    # sleep은 retry 사이에만 호출: 1→2, 2→3 총 2회
+    assert mock_market_clock.async_sleep.await_count == 2
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    ctx = handler._order_states.get(order_key)
+    assert ctx is not None
+    assert ctx.state == OrderState.REJECTED

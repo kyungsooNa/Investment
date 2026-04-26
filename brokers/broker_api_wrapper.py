@@ -235,6 +235,14 @@ class BrokerAPIWrapper:
         """주문체결내역을 조회합니다(KoreaInvestApiAccount 위임)."""
         return await self._client.inquire_daily_ccld(**kwargs)
 
+    async def inquire_unfilled_orders(self, exchange: Exchange = Exchange.KRX, **kwargs) -> ResCommonResponse:
+        """미체결 주문(정정/취소 가능) 목록을 조회합니다(KoreaInvestApiAccount 위임)."""
+        return await self._client.inquire_unfilled_orders(exchange=exchange, **kwargs)
+
+    async def inquire_filled_history(self, **kwargs) -> ResCommonResponse:
+        """당일 체결 내역(체결분만)을 조회합니다(KoreaInvestApiAccount 위임)."""
+        return await self._client.inquire_filled_history(**kwargs)
+
     # --- 서킷 브레이커 ---
 
     def _cb_is_open(self) -> bool:

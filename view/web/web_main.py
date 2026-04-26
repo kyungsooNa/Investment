@@ -89,6 +89,11 @@ async def lifespan(app: FastAPI):
     ctx.initialize_scheduler()
     await ctx.scheduler.restore_state()
 
+    # 5. 실전 주문 상태 복원 및 reconcile (WebSocket 구독 전, 전략 스케줄러 전)
+    if ctx.order_execution_service:
+        await ctx.order_execution_service.restore_state_from_broker()
+        await ctx.order_execution_service.reconcile_orders_with_broker()
+
     # 백그라운드 태스크 시작 (데이터 Flush 등)
     ctx.start_background_tasks()
 

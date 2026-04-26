@@ -92,6 +92,12 @@ class KoreaInvestApiClient:
     async def inquire_daily_ccld(self, **kwargs) -> ResCommonResponse:
         return await self._account.inquire_daily_ccld(**kwargs)
 
+    async def inquire_unfilled_orders(self, exchange: Exchange = Exchange.KRX, **kwargs) -> ResCommonResponse:
+        return await self._account.inquire_unfilled_orders(exchange=exchange, **kwargs)
+
+    async def inquire_filled_history(self, **kwargs) -> ResCommonResponse:
+        return await self._account.inquire_filled_history(**kwargs)
+
     # --- Trading API delegation ---
     async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool,
                                 exchange: Exchange = Exchange.KRX) -> ResCommonResponse:

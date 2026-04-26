@@ -104,3 +104,49 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
 
         self._logger.info(f"주문체결내역 조회 시도: 종목={stock_code or 'ALL'}, 주문번호={order_no or 'ALL'}")
         return await self.call_api("GET", EndpointKey.INQUIRE_DAILY_CCLD, params=params, retry_count=1)
+
+    async def inquire_unfilled_orders(
+        self,
+        exchange: Exchange = Exchange.KRX,
+        inqr_dvsn_1: str = "0",
+        inqr_dvsn_2: str = "0",
+    ) -> ResCommonResponse:
+        """미체결 주문(정정/취소 가능 주문) 목록을 조회합니다."""
+        full_config = self._env.active_config
+        tr_id = self._trid_provider.account_inquire_psbl_rvsecncl()
+        self._headers.set_tr_id(tr_id)
+        self._headers.set_custtype(full_config["custtype"])
+
+        full_account_number = full_config["stock_account_number"]
+        if "-" in full_account_number and len(full_account_number.split("-")[1]) == 2:
+            cano, acnt_prdt_cd = full_account_number.split("-")
+        else:
+            cano = full_account_number
+            acnt_prdt_cd = "01"
+
+        exchange_code = "NX" if exchange == Exchange.NXT else ""
+        params = Params.inquire_psbl_rvsecncl(
+            cano=cano,
+            acnt_prdt_cd=acnt_prdt_cd,
+            inqr_dvsn_1=inqr_dvsn_1,
+            inqr_dvsn_2=inqr_dvsn_2,
+            exchange_code=exchange_code,
+        )
+
+        self._logger.info("미체결 주문 조회 시도...")
+        return await self.call_api("GET", EndpointKey.INQUIRE_PSBL_RVSECNCL, params=params, retry_count=1)
+
+    async def inquire_filled_history(
+        self,
+        *,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        exchange: Exchange = Exchange.KRX,
+    ) -> ResCommonResponse:
+        """당일 체결 내역만 조회합니다 (ccld_dvsn='01': 체결분만)."""
+        return await self.inquire_daily_ccld(
+            start_date=start_date,
+            end_date=end_date,
+            ccld_dvsn="01",
+            exchange=exchange,
+        )

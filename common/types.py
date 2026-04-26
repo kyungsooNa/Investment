@@ -1,4 +1,5 @@
 # common/types.py
+import uuid
 from datetime import datetime
 from typing import Optional, Generic, TypeVar, Type, Any, Dict
 from enum import Enum, auto
@@ -95,6 +96,7 @@ class OrderContext(BaseModel):
     last_stuck_alert_at: Optional[datetime] = None
     last_stuck_alert_level: str = ""
     trace_id: Optional[str] = None
+    intent_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
     @model_validator(mode="after")
     def sync_remaining_qty(self) -> "OrderContext":

@@ -27,6 +27,8 @@ tr_ids:
     inquire_balance_paper: VTTC8434R # 모의 계좌 잔고 조회
     inquire_daily_ccld_real: TTTC0081R # 실전 주문체결내역 조회
     inquire_daily_ccld_paper: VTTC0081R # 모의 주문체결내역 조회
+    inquire_psbl_rvsecncl_real: TTTC8036R # 실전 주식정정취소가능주문조회 (미체결)
+    inquire_psbl_rvsecncl_paper: VTTC8036R # 모의 주식정정취소가능주문조회 (미체결)
   trading:
     order_cash_buy_real: TTTC0012U # 실전 주식 현금 매수
     order_cash_sell_real: TTTC0011U # 실전 주식 현금 매도
