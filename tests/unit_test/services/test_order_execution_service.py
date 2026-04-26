@@ -2203,6 +2203,7 @@ async def test_reconcile_no_active_orders_returns_zero(handler, mock_broker_api_
 @pytest.mark.asyncio
 async def test_reconcile_order_in_unfilled_list_no_mismatch(handler, mock_broker_api_wrapper):
     """broker 미체결 목록에 주문번호가 있으면 불일치가 아니다."""
+    _real_mode(mock_broker_api_wrapper)
     _seed_context(handler, broker_order_no="O0001")
     mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response(["O0001"])
     mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])
@@ -2217,6 +2218,7 @@ async def test_reconcile_order_in_unfilled_list_no_mismatch(handler, mock_broker
 @pytest.mark.asyncio
 async def test_reconcile_order_in_filled_history_no_mismatch(handler, mock_broker_api_wrapper):
     """broker 체결내역에 주문번호가 있으면 불일치가 아니다."""
+    _real_mode(mock_broker_api_wrapper)
     _seed_context(handler, broker_order_no="O0001")
     mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
     mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response(
@@ -2233,6 +2235,7 @@ async def test_reconcile_order_in_filled_history_no_mismatch(handler, mock_broke
 @pytest.mark.asyncio
 async def test_reconcile_one_mismatch_sets_alarm_no_transition(handler, mock_broker_api_wrapper, mock_logger):
     """1회 불일치: _reconcile_alarm=True + WARNING, 상태 전이 없음."""
+    _real_mode(mock_broker_api_wrapper)
     ctx = _seed_context(handler, broker_order_no="O0001", state=OrderState.SUBMITTED)
     mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
     mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])
@@ -2250,6 +2253,7 @@ async def test_reconcile_one_mismatch_sets_alarm_no_transition(handler, mock_bro
 @pytest.mark.asyncio
 async def test_reconcile_two_consecutive_with_evidence_marks_canceled(handler, mock_broker_api_wrapper, mock_logger):
     """2회 연속 + 명시 근거(잔고·체결 없음) → CANCELED 추정 전이."""
+    _real_mode(mock_broker_api_wrapper)
     ctx = _seed_context(handler, broker_order_no="O0001", state=OrderState.SUBMITTED)
     mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
     mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])
@@ -2268,6 +2272,7 @@ async def test_reconcile_two_consecutive_with_evidence_marks_canceled(handler, m
 @pytest.mark.asyncio
 async def test_reconcile_two_consecutive_buy_with_balance_no_transition(handler, mock_broker_api_wrapper):
     """2회 연속이지만 매수 종목이 잔고에 있으면 명시 근거 부족 → 전이 없음."""
+    _real_mode(mock_broker_api_wrapper)
     ctx = _seed_context(handler, broker_order_no="O0001", state=OrderState.SUBMITTED)
     mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
     mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])
@@ -2284,6 +2289,7 @@ async def test_reconcile_two_consecutive_buy_with_balance_no_transition(handler,
 @pytest.mark.asyncio
 async def test_reconcile_filled_without_balance_logs_critical(handler, mock_broker_api_wrapper, mock_logger):
     """내부 FILLED인데 잔고 없음 → CRITICAL 로그 + alarm."""
+    _real_mode(mock_broker_api_wrapper)
     _seed_context(handler, broker_order_no="O0001", state=OrderState.FILLED,
                   qty=10, filled_qty=10)
     mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
@@ -2301,6 +2307,7 @@ async def test_reconcile_filled_without_balance_logs_critical(handler, mock_brok
 @pytest.mark.asyncio
 async def test_reconcile_balance_without_context_logs_info_only(handler, mock_broker_api_wrapper, mock_logger):
     """잔고에 종목이 있지만 내부 컨텍스트 없음 → INFO만, alarm 없음."""
+    _real_mode(mock_broker_api_wrapper)
     mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
     mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])
     mock_broker_api_wrapper.get_account_balance.return_value = _make_balance_response(
@@ -2318,6 +2325,7 @@ async def test_reconcile_balance_without_context_logs_info_only(handler, mock_br
 @pytest.mark.asyncio
 async def test_reconcile_unfilled_api_failure_returns_zero(handler, mock_broker_api_wrapper, mock_logger):
     """미체결 조회 실패 시 0 반환, alarm 없음."""
+    _real_mode(mock_broker_api_wrapper)
     mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _fail_response("API 오류")
 
     result = await handler.reconcile_orders_with_broker()
@@ -2342,6 +2350,7 @@ async def test_reconcile_alarm_blocks_new_order(handler_real, mock_broker_api_wr
 @pytest.mark.asyncio
 async def test_reconcile_consecutive_counter_resets_on_match(handler, mock_broker_api_wrapper):
     """불일치 후 다음 reconcile에서 broker에 나타나면 연속 카운터가 초기화된다."""
+    _real_mode(mock_broker_api_wrapper)
     ctx = _seed_context(handler, broker_order_no="O0001", state=OrderState.SUBMITTED)
     mock_broker_api_wrapper.inquire_unfilled_orders.return_value = _make_unfilled_response([])
     mock_broker_api_wrapper.inquire_filled_history.return_value = _make_filled_response([])

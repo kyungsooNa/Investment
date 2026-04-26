@@ -698,6 +698,7 @@ class OrderExecutionService:
         now = self._get_now()
         today = now.strftime("%Y%m%d")
         mismatch_count = 0
+        alarm_triggered_this_run = False
 
         # --- 1. broker 미체결 주문 조회 ---
         unfilled_response = await self.broker_api_wrapper.inquire_unfilled_orders()
@@ -787,6 +788,7 @@ class OrderExecutionService:
             if not self._reconcile_alarm:
                 self._reconcile_alarm = True
                 self.logger.warning("reconcile: _reconcile_alarm=True 설정 → 신규 주문 차단")
+            alarm_triggered_this_run = True
 
             if consecutive >= 2:
                 filled_from_broker = broker_filled.get(broker_order_no, 0)
@@ -821,6 +823,7 @@ class OrderExecutionService:
                     if not self._reconcile_alarm:
                         self._reconcile_alarm = True
                         self.logger.warning("reconcile: _reconcile_alarm=True 설정 → 신규 주문 차단")
+                    alarm_triggered_this_run = True
 
         # --- 6. 잔고에만 있고 활성 컨텍스트 없음 → INFO ---
         for stock_code, broker_qty in broker_balance.items():
@@ -836,10 +839,10 @@ class OrderExecutionService:
                     f"(외부 주문 가능성) — stock_code={stock_code}, broker_qty={broker_qty}"
                 )
 
-        # 불일치 0건: alarm 자동 해제 (일시적 오류가 해소된 경우)
-        if mismatch_count == 0 and self._reconcile_alarm:
+        # 이번 실행에서 알람 트리거 없음: alarm 자동 해제 (일시적 오류 복구)
+        if not alarm_triggered_this_run and self._reconcile_alarm:
             self._reconcile_alarm = False
-            self.logger.info("reconcile: 불일치 없음 → _reconcile_alarm=False 해제")
+            self.logger.info("reconcile: 이상 없음 → _reconcile_alarm=False 해제")
 
         return mismatch_count
 
