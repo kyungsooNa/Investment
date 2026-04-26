@@ -1,6 +1,8 @@
 import inspect
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any, Optional, Protocol
 
 from common.types import ErrorCode, Exchange, OrderSide, ResCommonResponse
@@ -62,6 +64,7 @@ class RiskGateService:
         self._strategy_risk_provider = strategy_risk_provider
         self._logger = logger or logging.getLogger(__name__)
         self._env = env
+        self._daily_total: dict[date, int] = defaultdict(int)
 
     async def validate_order(
         self,
@@ -116,6 +119,10 @@ class RiskGateService:
                     max_order_amount_won=self._cfg.max_order_amount_won,
                 )
 
+            daily_blocked = self._check_daily_cap(stock_code=stock_code, order_amount=order_amount, side=side)
+            if daily_blocked is not None:
+                return daily_blocked
+
             if side == OrderSide.BUY:
                 strategy_blocked = await self._check_strategy_risk(
                     stock_code=stock_code,
@@ -131,7 +138,49 @@ class RiskGateService:
                 if exposure_blocked is not None:
                     return exposure_blocked
 
+            self._record_daily_amount(order_amount)
+
         return None
+
+    def _today(self) -> date:
+        return datetime.now().date()
+
+    def _check_daily_cap(
+        self,
+        stock_code: str,
+        order_amount: int,
+        side: OrderSide,
+    ) -> Optional[ResCommonResponse]:
+        cap = getattr(self._cfg, "max_daily_order_amount_won", 0) or 0
+        if cap <= 0:
+            return None
+
+        today = self._today()
+        current = self._daily_total.get(today, 0)
+        next_total = current + order_amount
+        if next_total > cap:
+            return self._blocked(
+                "max_daily_order_amount",
+                "1일 누적 주문 금액 한도 초과",
+                stock_code=stock_code,
+                side=side.value,
+                order_amount=order_amount,
+                daily_total_before=current,
+                daily_total_after=next_total,
+                max_daily_order_amount_won=cap,
+            )
+        return None
+
+    def _record_daily_amount(self, order_amount: int) -> None:
+        cap = getattr(self._cfg, "max_daily_order_amount_won", 0) or 0
+        if cap <= 0:
+            return
+        today = self._today()
+        self._daily_total[today] += order_amount
+        # 7일 이상 된 키 정리 (메모리 leak 방지)
+        stale = [d for d in self._daily_total.keys() if (today - d).days > 7]
+        for d in stale:
+            self._daily_total.pop(d, None)
 
     def _check_env_consistency(
         self,

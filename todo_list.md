@@ -51,8 +51,8 @@
 - [x] 단건 최대 주문금액(`max_order_amount_won`)을 설정화하고 RiskGate에서 검증한다. (`config_loader.py:58`, `risk_gate_service.py:103-110`)
 - [x] 실전 주문 직전 dry-run preview 로그를 남긴다. (`order_execution_service.py` `_log_real_order_preview()` — 종목/수량/가격/계좌 prefix/URL host/source/trace_id 출력, `[REAL ORDER PREVIEW]` 키워드)
 - [x] `RiskGateService`에 환경 재검증 가드를 추가한다. (`_check_env_consistency()` — `env.is_paper_trading` vs URL host(`vts` 포함 여부) vs 활성 계좌번호 일치 확인 → 불일치 시 hard block)
-- [ ] **1일 최대 주문금액(daily cap)** 을 설정화한다. (현재 단건 한도만 존재, 일 누적 한도 미구현)
-- [ ] paper 모드에서 실전 전용 API(랭킹/시총/상한가 등) 호출 시 명시적 `PAPER_NOT_SUPPORTED` 에러를 반환한다. (현재 URL/Key 분기만 있고 차단 로직 없음)
+- [x] **1일 최대 주문금액(daily cap)** 을 설정화한다. (`RiskGateConfig.max_daily_order_amount_won`, `risk_gate_service.py` `_check_daily_cap()` + in-memory 누적 트래커, 7일 이상 된 키 자동 정리)
+- [x] paper 모드에서 실전 전용 API(랭킹/시총/거래량 랭킹) 호출 시 명시적 `PAPER_NOT_SUPPORTED` 에러를 반환한다. (`korea_invest_quotations_api.py` `@_real_only` 데코레이터 — `get_top_market_cap_stocks_code`, `get_top_rise_fall_stocks`, `get_top_volume_stocks`)
 
 주요 파일:
 

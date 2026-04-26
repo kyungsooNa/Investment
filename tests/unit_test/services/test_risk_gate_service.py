@@ -309,6 +309,39 @@ async def test_env_consistency_consistent_passes():
 
 
 @pytest.mark.asyncio
+async def test_daily_cap_blocks_when_accumulated_amount_exceeds_limit():
+    cfg = RiskGateConfig(
+        max_order_amount_won=100_000_000,
+        max_daily_order_amount_won=2_000_000,
+    )
+    svc, _, _ = _service(config=cfg)
+
+    # 1차: 1,000,000 (통과, 누적 1,000,000)
+    r1 = await svc.validate_order("005930", 1_000, 1_000, OrderSide.SELL, Exchange.KRX, 0)
+    assert r1 is None
+    # 2차: 1,000,000 (통과, 누적 2,000,000)
+    r2 = await svc.validate_order("005930", 1_000, 1_000, OrderSide.SELL, Exchange.KRX, 0)
+    assert r2 is None
+    # 3차: 1 (누적 2,000,001 > 2,000,000 → 차단)
+    r3 = await svc.validate_order("005930", 1, 1, OrderSide.SELL, Exchange.KRX, 0)
+    assert r3 is not None
+    assert r3.data["rule"] == "max_daily_order_amount"
+
+
+@pytest.mark.asyncio
+async def test_daily_cap_disabled_when_zero():
+    cfg = RiskGateConfig(
+        max_order_amount_won=100_000_000,
+        max_daily_order_amount_won=0,
+    )
+    svc, _, _ = _service(config=cfg)
+
+    for _ in range(5):
+        r = await svc.validate_order("005930", 100_000, 100, OrderSide.SELL, Exchange.KRX, 0)
+        assert r is None
+
+
+@pytest.mark.asyncio
 async def test_env_none_skips_consistency_check():
     """env 미주입 시 fail-open. 기존 테스트 회귀 방지."""
     svc, _, _ = _service()
