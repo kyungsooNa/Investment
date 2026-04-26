@@ -11,7 +11,7 @@ NotificationQueueTask 단위 테스트.
 import asyncio
 import pytest
 from datetime import datetime
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 
 from task.background.always_on.notification_queue_task import NotificationQueueTask
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
@@ -88,6 +88,27 @@ async def test_stop_sets_stopped_state_and_clears_tasks(queue_task):
 
 
 @pytest.mark.asyncio
+async def test_stop_without_started_sets_stopped_state(queue_task):
+    await queue_task.stop()
+    assert queue_task.state == TaskState.STOPPED
+    assert queue_task._tasks == []
+
+
+@pytest.mark.asyncio
+async def test_stop_keeps_already_done_task_uncancelled(queue_task):
+    done_task = asyncio.Future()
+    done_task.set_result(None)
+    done_task.cancel = MagicMock()
+    queue_task._tasks = [done_task]
+
+    await queue_task.stop()
+
+    done_task.cancel.assert_not_called()
+    assert queue_task.state == TaskState.STOPPED
+    assert queue_task._tasks == []
+
+
+@pytest.mark.asyncio
 async def test_suspend_sets_suspended_state(queue_task):
     await queue_task.start()
     await queue_task.suspend()
@@ -113,6 +134,16 @@ async def test_suspend_noop_when_not_running(queue_task):
 
 
 @pytest.mark.asyncio
+async def test_suspend_running_without_resume_event(queue_task):
+    queue_task._state = TaskState.RUNNING
+    queue_task._resume_event = None
+
+    await queue_task.suspend()
+
+    assert queue_task.state == TaskState.SUSPENDED
+
+
+@pytest.mark.asyncio
 async def test_resume_noop_when_running(queue_task):
     """RUNNING 상태에서 resume()를 호출해도 상태가 변경되지 않아야 한다."""
     await queue_task.start()
@@ -122,6 +153,16 @@ async def test_resume_noop_when_running(queue_task):
 
 
 # ── get_progress ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_resume_suspended_without_resume_event(queue_task):
+    queue_task._state = TaskState.SUSPENDED
+    queue_task._resume_event = None
+
+    await queue_task.resume()
+
+    assert queue_task.state == TaskState.RUNNING
 
 
 @pytest.mark.asyncio
@@ -257,3 +298,40 @@ async def test_suspend_accumulates_events_without_calling_handlers(ns):
     await task.stop()
 
     assert handler.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_drain_loop_continues_when_queue_get_times_out(ns):
+    logger = MagicMock()
+    task = NotificationQueueTask(ns, poll_interval=0, logger=logger)
+    task._resume_event = asyncio.Event()
+    task._resume_event.set()
+
+    with patch(
+        "task.background.always_on.notification_queue_task.asyncio.wait_for",
+        new=AsyncMock(side_effect=[asyncio.TimeoutError(), asyncio.CancelledError()]),
+    ) as mock_wait_for:
+        await task._drain_loop()
+
+    assert mock_wait_for.await_count == 2
+    logger.info.assert_called_with("NotificationQueueTask drain_loop 취소됨")
+
+
+@pytest.mark.asyncio
+async def test_drain_loop_logs_unexpected_exception_and_keeps_running(ns):
+    logger = MagicMock()
+    task = NotificationQueueTask(ns, poll_interval=0, logger=logger)
+    task._resume_event = MagicMock()
+    task._resume_event.wait = AsyncMock(
+        side_effect=[RuntimeError("resume event broken"), asyncio.CancelledError()]
+    )
+
+    with patch(
+        "task.background.always_on.notification_queue_task.asyncio.sleep",
+        new=AsyncMock(),
+    ) as mock_sleep:
+        await task._drain_loop()
+
+    logger.error.assert_called_once()
+    assert "[NotificationQueueTask] drain_loop" in logger.error.call_args.args[0]
+    mock_sleep.assert_awaited_once_with(1.0)
