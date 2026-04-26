@@ -490,6 +490,64 @@ def test_stock_repository_get_cache_stats(repo):
     assert "hits" in stats
     assert "items" in stats
 
+def test_stock_repository_get_cache_stats_logs_when_requested(repo):
+    repo._cache_logger = MagicMock()
+
+    stats = repo.get_cache_stats(log_stats=True)
+
+    assert "hit_rate" in stats
+    repo._cache_logger.log_stats.assert_called_once_with(
+        stats["price_cache"],
+        stats["ohlcv_cache"],
+    )
+
+def test_stock_repository_streaming_state(repo):
+    code = "005930"
+
+    assert repo.is_streaming(code) is False
+
+    repo.mark_streaming(code)
+    assert repo.is_streaming(code) is True
+
+    repo.unmark_streaming(code)
+    assert repo.is_streaming(code) is False
+
+@pytest.mark.asyncio
+async def test_stock_repository_minervini_and_newhigh_proxy_methods(repo):
+    records = [{"code": "005930", "minervini_stage": 2, "is_newhigh": 1}]
+    repo._ohlcv_repo.update_minervini_fields = AsyncMock()
+    repo._ohlcv_repo.get_all_daily_snapshots = AsyncMock(return_value=[{"code": "005930"}])
+    repo._ohlcv_repo.update_newhigh_fields = AsyncMock()
+    repo._ohlcv_repo.get_newhigh_stocks = AsyncMock(return_value=[{"code": "005930"}])
+
+    await repo.update_minervini_fields("20260426", records)
+    snapshots = await repo.get_all_daily_snapshots("20260426")
+    await repo.update_newhigh_fields("20260426", records)
+    newhighs = await repo.get_newhigh_stocks("20260426")
+
+    repo._ohlcv_repo.update_minervini_fields.assert_awaited_once_with("20260426", records)
+    repo._ohlcv_repo.get_all_daily_snapshots.assert_awaited_once_with("20260426")
+    repo._ohlcv_repo.update_newhigh_fields.assert_awaited_once_with("20260426", records)
+    repo._ohlcv_repo.get_newhigh_stocks.assert_awaited_once_with("20260426")
+    assert snapshots == [{"code": "005930"}]
+    assert newhighs == [{"code": "005930"}]
+
+@pytest.mark.asyncio
+async def test_stock_repository_daily_count_and_cleanup_proxy_methods(repo):
+    repo._ohlcv_repo.get_count_by_date = AsyncMock(return_value=123)
+    repo._ohlcv_repo.get_minervini_stage_count = AsyncMock(return_value=45)
+    repo._ohlcv_repo.cleanup_old_data = AsyncMock()
+
+    count = await repo.get_count_by_date("20260426")
+    stage_count = await repo.get_minervini_stage_count("20260426")
+    await repo.cleanup_old_data(30)
+
+    repo._ohlcv_repo.get_count_by_date.assert_awaited_once_with("20260426")
+    repo._ohlcv_repo.get_minervini_stage_count.assert_awaited_once_with("20260426")
+    repo._ohlcv_repo.cleanup_old_data.assert_awaited_once_with(30)
+    assert count == 123
+    assert stage_count == 45
+
 def test_cache_separation_price_does_not_pollute_ohlcv(repo):
     """대량의 현재가 set이 OHLCV 캐시에 영향을 주지 않는지 검증합니다."""
     # OHLCV 캐시에 데이터 적재
