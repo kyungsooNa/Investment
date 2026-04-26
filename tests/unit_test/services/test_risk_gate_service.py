@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from common.types import ErrorCode, Exchange, OrderSide
-from config.config_loader import RiskGateConfig
+from config.config_loader import RiskGateConfig, RiskGateStrategyLimitConfig
 from core.account_snapshot import AccountSnapshot
 from services.risk_gate_service import RiskGateService
 
@@ -13,6 +13,7 @@ def _service(
     config: RiskGateConfig | None = None,
     kill_switch=None,
     snapshot: AccountSnapshot | None = None,
+    strategy_provider=None,
     logger=None,
 ):
     if kill_switch is None:
@@ -28,6 +29,7 @@ def _service(
         config=config or RiskGateConfig(),
         kill_switch_service=kill_switch,
         account_snapshot_cache=cache,
+        strategy_risk_provider=strategy_provider,
         logger=logger or MagicMock(),
     ), kill_switch, cache
 
@@ -83,13 +85,13 @@ async def test_order_amount_over_limit_blocks_buy():
 
 
 @pytest.mark.asyncio
-async def test_buy_with_non_positive_price_blocks():
+async def test_negative_price_blocks():
     svc, _, _ = _service()
 
-    result = await svc.validate_order("005930", 0, 10, OrderSide.BUY, Exchange.KRX, 0)
+    result = await svc.validate_order("005930", -1, 10, OrderSide.BUY, Exchange.KRX, 0)
 
     assert result.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
-    assert "0 이하 가격" in result.msg1
+    assert result.data["rule"] == "negative_price"
 
 
 @pytest.mark.asyncio
@@ -129,7 +131,94 @@ async def test_buy_exposure_over_limit_blocks_but_sell_passes():
 
     assert buy_result.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
     assert "계좌 노출 한도 초과" in buy_result.msg1
+    assert buy_result.data["rule"] == "max_total_exposure"
     assert sell_result is None
+
+
+@pytest.mark.asyncio
+async def test_duplicate_strategy_position_blocks_same_strategy_only():
+    provider = MagicMock()
+    provider.is_holding.side_effect = lambda strategy, code: strategy == "모멘텀"
+    svc, _, _ = _service(strategy_provider=provider)
+
+    blocked = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0,
+        source="strategy:모멘텀",
+    )
+    allowed = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0,
+        source="strategy:눌림목",
+    )
+
+    assert blocked.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
+    assert blocked.data["rule"] == "duplicate_strategy_position"
+    assert blocked.data["strategy_name"] == "모멘텀"
+    assert allowed is None
+
+
+@pytest.mark.asyncio
+async def test_strategy_exposure_limit_blocks():
+    provider = MagicMock()
+    provider.is_holding.return_value = False
+    provider.get_strategy_return_history.return_value = []
+    provider.get_holds_by_strategy.return_value = [
+        {"code": "000660", "buy_price": 10_000, "qty": 50},
+    ]
+    cfg = RiskGateConfig(
+        strategy_limits={
+            "모멘텀": RiskGateStrategyLimitConfig(max_exposure_pct=1.0),
+        },
+    )
+    svc, _, _ = _service(config=cfg, strategy_provider=provider)
+
+    result = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0,
+        source="strategy:모멘텀",
+    )
+
+    assert result.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
+    assert result.data["rule"] == "strategy_exposure_limit"
+    assert result.data["next_exposure_pct"] == 1.2
+
+
+@pytest.mark.asyncio
+async def test_strategy_loss_limit_blocks():
+    provider = MagicMock()
+    provider.is_holding.return_value = False
+    provider.get_strategy_return_history.return_value = [
+        {"date": "2026-04-24", "return_rate": -6.1},
+    ]
+    provider.get_holds_by_strategy.return_value = []
+    cfg = RiskGateConfig(
+        strategy_limits={
+            "모멘텀": RiskGateStrategyLimitConfig(max_loss_pct=5.0),
+        },
+    )
+    svc, _, _ = _service(config=cfg, strategy_provider=provider)
+
+    result = await svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0,
+        source="strategy:모멘텀",
+    )
+
+    assert result.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
+    assert result.data["rule"] == "strategy_loss_limit"
+    assert result.data["latest_return_pct"] == -6.1
+
+
+@pytest.mark.asyncio
+async def test_block_logs_structured_context():
+    logger = MagicMock()
+    svc, _, _ = _service(
+        config=RiskGateConfig(max_order_amount_won=100_000),
+        logger=logger,
+    )
+
+    result = await svc.validate_order("005930", 70_000, 2, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result.data["rule"] == "max_order_amount"
+    logger.warning.assert_called()
+    assert "[RiskGate][BLOCK]" in logger.warning.call_args.args[0]
 
 
 @pytest.mark.asyncio

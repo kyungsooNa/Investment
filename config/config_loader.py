@@ -45,11 +45,37 @@ class PositionSizingConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class RiskGateStrategyLimitConfig(BaseModel):
+    max_exposure_pct: Optional[float] = None
+    max_loss_pct: Optional[float] = None
+    block_duplicate_position: bool = True
+
+    model_config = {"extra": "allow"}
+
+
 class RiskGateConfig(BaseModel):
     enabled: bool = True
     max_order_amount_won: int = 10_000_000
     max_pending_orders: int = 10
     max_total_exposure_pct: float = 95.0
+    block_duplicate_strategy_position: bool = True
+    default_strategy_limit: RiskGateStrategyLimitConfig = Field(default_factory=RiskGateStrategyLimitConfig)
+    strategy_limits: Dict[str, RiskGateStrategyLimitConfig] = Field(default_factory=dict)
+
+    model_config = {"extra": "allow"}
+
+
+class OrderPolicyConfig(BaseModel):
+    enabled: bool = True
+    allow_market_buy: bool = True
+    allow_market_sell: bool = True
+    allow_nxt_market_order: bool = False
+    tick_size_policy: str = "adjust"        # adjust | block | ignore
+    order_book_checks_enabled: bool = False
+    max_market_slippage_pct: float = 1.0
+    max_spread_pct: float = 1.0
+    block_empty_order_book: bool = True
+    quote_fail_policy: str = "allow"        # allow | block
 
     model_config = {"extra": "allow"}
 
@@ -74,6 +100,7 @@ class AppConfig(BaseModel):
     cache: CacheConfig = Field(default_factory=CacheConfig)
     kill_switch: KillSwitchConfig = Field(default_factory=KillSwitchConfig)
     risk_gate: RiskGateConfig = Field(default_factory=RiskGateConfig)
+    order_policy: OrderPolicyConfig = Field(default_factory=OrderPolicyConfig)
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
     
     # Dynamic/Merged configs

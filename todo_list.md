@@ -41,66 +41,6 @@
 
 ---
 
-
-## P2. 공통 Risk Gate와 주문 정책 분리
-
-목표는 주문 실행 서비스가 모든 리스크 판단을 직접 떠안지 않게 하고, 주문 직전 검증을 공통 서비스로 강제하는 것입니다.
-
-### 2-1. `RiskGateService` 신규 생성
-
-- [X] `services/risk_gate_service.py`를 생성한다.
-- [X] `KillSwitchService`, `PositionSizingService`, 계좌/잔고/미체결 조회를 통합한다.
-- [X] 모든 주문은 broker 호출 직전 Risk Gate를 통과하도록 연결한다.
-- [X] 실패 시 broker API를 호출하지 않고 명확한 reason을 반환한다.
-
-주요 파일:
-
-- `services/risk_gate_service.py`
-- `services/order_execution_service.py`
-- `services/kill_switch_service.py`
-- `services/position_sizing_service.py`
-- `brokers/broker_api_wrapper.py`
-
-검증:
-
-- kill switch 발동 시 주문 차단
-- 주문 금액 초과 시 주문 차단
-- 미체결 주문 과다 시 주문 차단
-- 계좌 노출 한도 초과 시 주문 차단
-
-### 2-2. 포트폴리오 레벨 리스크 관리
-
-- [ ] 총 투자금 대비 최대 노출 비율을 제한한다. 예: 70%
-- [ ] 전략별 자본 할당과 손실 한도를 둔다.
-- [ ] 동일 종목/동일 전략 중복 진입을 제한한다.
-- [ ] 섹터/테마 집중도 제한을 위한 데이터 소스와 모델을 정한다.
-- [ ] 상관관계 기반 포지션 축소는 후순위 실험 과제로 분리한다.
-
-주요 파일:
-
-- `services/risk_gate_service.py`
-- `services/position_sizing_service.py`
-- `services/account_snapshot_service.py`
-- `strategies/strategy_executor.py`
-- `repositories/*`
-
-### 2-3. 시장가, 지정가, 호가단위 정책 분리
-
-- [ ] 주문 타입 정책을 `OrderPolicy` 또는 설정 객체로 분리한다.
-- [ ] 시장가/지정가/NXT 제한 조건을 서비스 레벨에서 검증한다.
-- [ ] 호가단위 보정은 broker API 계층에서만 암묵 처리하지 말고 사전 검증 결과로 노출한다.
-- [ ] 시장가 주문 시 허용 슬리피지 제한을 추가한다.
-- [ ] 스프레드 급증 또는 호가 공백 감지 시 주문을 차단한다.
-
-주요 파일:
-
-- `services/order_execution_service.py`
-- `brokers/broker_api_wrapper.py`
-- `brokers/korea_investment/korea_invest_trading_api.py`
-- `brokers/korea_investment/*provider.py`
-
----
-
 ## P3. 실전/모의 모드 안전장치 강화
 
 실전 계좌로 잘못 주문하는 사고를 막기 위한 보호막입니다. 기본값은 항상 안전한 쪽이어야 합니다.
@@ -425,12 +365,6 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
 ---
 
 ## 바로 착수 추천 순서
-
-2. `services/risk_gate_service.py`
-   - 신규 생성
-   - kill switch, position sizing, 계좌 노출, 미체결 상태를 공통 검증
-   - 모든 주문 직전 호출
-
 3. `brokers/broker_api_wrapper.py`
    - 미체결 주문 조회
    - 체결 내역 조회

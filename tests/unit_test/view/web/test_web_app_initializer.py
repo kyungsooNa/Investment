@@ -16,6 +16,7 @@ def mock_deps():
         ("sqs", patch("view.web.web_app_initializer.StockQueryService", autospec=True)),
         ("oes", patch("view.web.web_app_initializer.OrderExecutionService", autospec=True)),
         ("risk_gate", patch("view.web.web_app_initializer.RiskGateService", autospec=True)),
+        ("order_policy", patch("view.web.web_app_initializer.OrderPolicyService", autospec=True)),
         ("vtm", patch("view.web.web_app_initializer.VirtualTradeRepository", autospec=True)),
         ("scm", patch("view.web.web_app_initializer.StockCodeRepository", autospec=True)),
         ("sched", patch("view.web.web_app_initializer.StrategyScheduler", autospec=True)),
@@ -105,6 +106,8 @@ async def test_initialize_services_success(mock_deps):
     assert oes_kwargs.get("virtual_trade_service") is ctx.virtual_trade_service
     mock_deps["risk_gate"].assert_called_once()
     assert oes_kwargs.get("risk_gate_service") is mock_deps["risk_gate"].return_value
+    mock_deps["order_policy"].assert_called_once()
+    assert oes_kwargs.get("order_policy_service") is mock_deps["order_policy"].return_value
     mock_deps["ous"].assert_called()
     _, report_kwargs = mock_deps["strategy_log_report_service"].call_args
     assert report_kwargs.get("stock_code_repo") is mock_deps["scm"].return_value

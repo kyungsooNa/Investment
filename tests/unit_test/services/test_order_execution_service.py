@@ -11,6 +11,7 @@ from core.account_snapshot import AccountSnapshot
 from services.notification_service import NotificationCategory, NotificationLevel
 from services.order_execution_service import OrderExecutionService
 from services.risk_gate_service import RiskGateService
+from services.order_policy_service import OrderPolicyDecision
 
 # 테스트를 위한 MockLogger
 class MockLogger:
@@ -1893,7 +1894,95 @@ async def test_risk_gate_uses_active_context_count_not_all_order_states(
 
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert risk_gate.validate_order.await_args.kwargs["active_order_count"] == 0
+    assert risk_gate.validate_order.await_args.kwargs["source"] == "default"
+    assert risk_gate.validate_order.await_args.kwargs["strategy_name"] is None
     assert handler.get_order_context("005930", True).state == OrderState.SUBMITTED
+
+
+@pytest.mark.asyncio
+async def test_risk_gate_receives_strategy_context(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    risk_gate = AsyncMock()
+    risk_gate.validate_order.return_value = None
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        risk_gate_service=risk_gate,
+    )
+
+    result = await handler.handle_place_buy_order(
+        "005930", 70_000, 10, source="strategy:모멘텀"
+    )
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert risk_gate.validate_order.await_args.kwargs["source"] == "strategy:모멘텀"
+    assert risk_gate.validate_order.await_args.kwargs["strategy_name"] == "모멘텀"
+
+
+@pytest.mark.asyncio
+async def test_order_policy_blocks_before_broker_submit(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    order_policy = AsyncMock()
+    order_policy.validate_order.return_value = OrderPolicyDecision(
+        allowed=False,
+        rule="nxt_market_order_not_supported",
+        reason="NXT 거래소에서는 시장가 주문을 허용하지 않습니다.",
+    )
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        order_policy_service=order_policy,
+    )
+
+    result = await handler.handle_place_buy_order("005930", 0, 10, exchange=Exchange.NXT)
+
+    assert result.rt_cd == ErrorCode.ORDER_POLICY_BLOCKED.value
+    assert result.data["rule"] == "nxt_market_order_not_supported"
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_order_policy_adjusted_price_is_submitted(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    order_policy = AsyncMock()
+    order_policy.validate_order.return_value = OrderPolicyDecision(
+        allowed=True,
+        rule="tick_size_adjusted",
+        reason="호가단위 보정",
+        adjusted_price=70_000,
+    )
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        order_policy_service=order_policy,
+    )
+
+    result = await handler.handle_place_buy_order("005930", 70_051, 10)
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    mock_broker_api_wrapper.place_stock_order.assert_awaited_once_with(
+        "005930", 70_000, 10, is_buy=True, exchange=Exchange.KRX
+    )
+    context = handler.get_order_context("005930", True)
+    assert context.price == 70_000
 
 
 @pytest.mark.asyncio
