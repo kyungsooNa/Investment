@@ -1128,6 +1128,7 @@ class OrderExecutionService:
                     )
 
             if self._risk_gate is not None:
+                strategy_name, is_strategy_source = self._strategy_name_from_source(source)
                 blocked = await self._risk_gate.validate_order(
                     stock_code=stock_code,
                     price=price,
@@ -1135,6 +1136,8 @@ class OrderExecutionService:
                     side=side,
                     exchange=exchange,
                     active_order_count=len(self._active_order_contexts()),
+                    source=source,
+                    strategy_name=strategy_name if is_strategy_source else None,
                 )
                 if blocked is not None:
                     return blocked

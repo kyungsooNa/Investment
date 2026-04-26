@@ -45,11 +45,22 @@ class PositionSizingConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class RiskGateStrategyLimitConfig(BaseModel):
+    max_exposure_pct: Optional[float] = None
+    max_loss_pct: Optional[float] = None
+    block_duplicate_position: bool = True
+
+    model_config = {"extra": "allow"}
+
+
 class RiskGateConfig(BaseModel):
     enabled: bool = True
     max_order_amount_won: int = 10_000_000
     max_pending_orders: int = 10
     max_total_exposure_pct: float = 95.0
+    block_duplicate_strategy_position: bool = True
+    default_strategy_limit: RiskGateStrategyLimitConfig = Field(default_factory=RiskGateStrategyLimitConfig)
+    strategy_limits: Dict[str, RiskGateStrategyLimitConfig] = Field(default_factory=dict)
 
     model_config = {"extra": "allow"}
 

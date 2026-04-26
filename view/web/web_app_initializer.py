@@ -437,6 +437,7 @@ class WebAppContext:
             config=getattr(self.full_config, "risk_gate", None) or RiskGateConfig(),
             kill_switch_service=self.kill_switch_service,
             account_snapshot_cache=self.account_snapshot_cache,
+            strategy_risk_provider=self.virtual_trade_service,
             logger=self.logger,
         )
 
