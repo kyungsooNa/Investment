@@ -175,6 +175,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 signals.append(TradeSignal(
                     code=code, name=name, action="BUY", price=current, qty=1,
                     reason=reason, strategy_name=self.name,
+                    stop_loss_pct=self._cfg.stop_loss_pct,
                 ))
                 self._bought_today.add(code)
                 self._logger.info({

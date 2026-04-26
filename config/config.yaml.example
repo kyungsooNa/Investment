@@ -35,3 +35,14 @@ kill_switch:
   max_consecutive_api_errors: 10         # 연속 API 오류 한도. 초과 시 트립.
   abnormal_fill_deviation_pct: 3.0       # 체결가가 주문가 대비 이 비율 이상 이탈 시 트립.
   state_file_path: "data/kill_switch_state.json"
+
+# 포지션 사이징 (Fixed Fractional / Penbold 식)
+position_sizing:
+  enabled: true
+  per_trade_risk_pct: 1.5          # 1주당 리스크 한도 (총자산 대비 %)
+  max_per_position_pct: 10.0       # 단일 종목 비중 상한 (%)
+  default_stop_loss_pct: -5.0      # 시그널 미전달 시 폴백 손절폭 (음수)
+  atr_period: 14
+  atr_multiplier: 2.0
+  min_stop_distance_pct: 1.0       # 산식 보호용 최소 손절 거리 (%)
+  snapshot_ttl_sec: 60             # 잔고 스냅샷 안전망 TTL (초)

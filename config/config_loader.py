@@ -32,6 +32,19 @@ class KillSwitchConfig(BaseModel):
     abnormal_fill_deviation_pct: float = 3.0
     state_file_path: str = "data/kill_switch_state.json"
 
+class PositionSizingConfig(BaseModel):
+    enabled: bool = True
+    per_trade_risk_pct: float = 1.5        # 1주당 리스크 한도 (총자산 대비 %)
+    max_per_position_pct: float = 10.0     # 단일 종목 비중 상한 (%)
+    default_stop_loss_pct: float = -5.0    # 시그널 미전달 시 폴백 손절폭 (음수)
+    atr_period: int = 14
+    atr_multiplier: float = 2.0
+    min_stop_distance_pct: float = 1.0     # 분모 보호용 최소 손절 거리 (%)
+    snapshot_ttl_sec: int = 60             # 잔고 스냅샷 TTL (초)
+
+    model_config = {"extra": "allow"}
+
+
 class AppConfig(BaseModel):
     # Core API keys
     api_key: Optional[str] = None
@@ -51,6 +64,7 @@ class AppConfig(BaseModel):
     web: WebConfig
     cache: CacheConfig = Field(default_factory=CacheConfig)
     kill_switch: KillSwitchConfig = Field(default_factory=KillSwitchConfig)
+    position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
     
     # Dynamic/Merged configs
     tr_ids: Dict[str, Any] = Field(default_factory=dict)

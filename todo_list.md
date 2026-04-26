@@ -58,13 +58,6 @@
     - 현재가 REST 조회 실패 상황에서 `rest_failed` 로그가 남는지 확인한다.
     - 장 마감 후 조용한 상태를 장애로 오탐하지 않는지 로그를 함께 점검한다.
 
-- [ ] 포지션 사이징 고도화
-  - 목표: ATR 또는 변동성 기반으로 진입 수량을 동적으로 제한하고 계좌 노출을 제어한다.
-  - 대상:
-    - `services/order_execution_service.py`
-    - `services/indicator_service.py`
-    - 필요 시 신규 유틸 모듈
-
 ---
 
 ## Tier 2. 구조 안정화 / 유지보수성

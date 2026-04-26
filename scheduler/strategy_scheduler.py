@@ -32,6 +32,8 @@ from scheduler.strategy_scheduler_store import StrategySchedulerStore, SCHEDULER
 from services.price_subscription_service import SubscriptionPriority
 from core.loggers.trace_context import trace_scope, get_trace_id, new_trace_id
 from services.kill_switch_service import KillSwitchService
+from core.account_snapshot import AccountSnapshotCache
+from services.position_sizing_service import PositionSizingService
 
 
 @dataclass
@@ -90,6 +92,8 @@ class StrategyScheduler:
         store: Optional[StrategySchedulerStore] = None,
         price_subscription_service=None,
         kill_switch_service: Optional[KillSwitchService] = None,
+        account_snapshot_cache: Optional[AccountSnapshotCache] = None,
+        position_sizing_service: Optional[PositionSizingService] = None,
     ):
         self._virtual_trade_service = virtual_trade_service
         self._oes = order_execution_service
@@ -105,6 +109,8 @@ class StrategyScheduler:
         self._store = store or StrategySchedulerStore(db_path=SCHEDULER_DB_FILE, logger=self._logger)
         self._price_sub_svc = price_subscription_service
         self._kill_switch = kill_switch_service
+        self._account_snapshot_cache = account_snapshot_cache
+        self._position_sizer = position_sizing_service
 
         self._strategies: List[StrategySchedulerConfig] = []
         self._running = False
@@ -444,10 +450,41 @@ class StrategyScheduler:
                 except ValueError:
                     signal_exchange = Exchange.KRX
                 if signal.action == "BUY":
+                    # 포지션 사이징 보정
+                    buy_qty = signal.qty
+                    if self._position_sizer is not None:
+                        buy_qty, sizing_reason = await self._position_sizer.adjust_buy_qty(
+                            signal, signal_exchange
+                        )
+                        if buy_qty == 0:
+                            self._logger.warning(
+                                f"[Scheduler] 포지션 사이징 결과 qty=0, 주문 skip: "
+                                f"{signal.code} reason={sizing_reason}"
+                            )
+                            _skip_now = self._tm.get_current_kst_time()
+                            _skip_record = SignalRecord(
+                                strategy_name=signal.strategy_name,
+                                code=signal.code,
+                                name=signal.name,
+                                action=signal.action,
+                                price=signal.price,
+                                qty=0,
+                                reason=f"sizing_skip:{sizing_reason}",
+                                timestamp=_skip_now.strftime("%Y-%m-%d %H:%M:%S"),
+                                api_success=False,
+                                trace_id=tid,
+                            )
+                            self._signal_history.append(_skip_record)
+                            if len(self._signal_history) > self.MAX_HISTORY:
+                                self._signal_history = self._signal_history[-self.MAX_HISTORY:]
+                            await self._append_signal_db(_skip_record)
+                            await self._notify_subscribers(_skip_record)
+                            return
+
                     resp = await self._oes.handle_place_buy_order(
                         signal.code,
                         signal.price,
-                        signal.qty,
+                        buy_qty,
                         exchange=signal_exchange,
                         source=f"strategy:{signal.strategy_name}",
                         finalize_immediately=False,
@@ -578,6 +615,12 @@ class StrategyScheduler:
 
     async def _run_reconciliation(self):
         """실제 증권사 잔고와 로컬 DB를 비교하여 불일치를 처리한다 (장 시작 시 1회)."""
+        # 계좌 스냅샷 갱신 — 장 시작 직후 1회, 이후 포지션 사이징에서 캐시 사용
+        if self._account_snapshot_cache is not None:
+            try:
+                await self._account_snapshot_cache.warm_up()
+            except Exception as _e:
+                self._logger.warning(f"[Scheduler] 계좌 스냅샷 warm_up 실패: {_e}")
         try:
             resp = await self._oes.broker_api_wrapper.get_account_balance()
             if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:

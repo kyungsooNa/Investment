@@ -1658,3 +1658,71 @@ async def test_get_chart_indicators_no_volume_no_vol_ma(indicator_service):
     assert "vol_ma20" not in result.data
     # 가격 MA는 정상 존재
     assert "ma5" in result.data
+
+
+# ── calculate_atr 테스트 ───────────────────────────────────────────────
+
+def _make_ohlcv(n=20, base_close=10000, spread=200):
+    """n일 OHLCV 생성 (고/저는 close ± spread/2)."""
+    data = []
+    for i in range(n):
+        close = base_close + i * 10
+        data.append({
+            "date": f"2025{(i // 28) + 1:02d}{(i % 28) + 1:02d}",
+            "open": close, "high": close + spread // 2,
+            "low": close - spread // 2, "close": close, "volume": 1000,
+        })
+    return data
+
+
+@pytest.mark.asyncio
+async def test_calculate_atr_basic(indicator_service):
+    """ATR 기본 계산: 일정 spread → ATR 값이 spread와 유사."""
+    service, mock_sqs = indicator_service
+    data = _make_ohlcv(n=30, base_close=10000, spread=200)
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+    result = await service.calculate_atr("005930", period=14)
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data is not None
+    last = result.data[-1] if isinstance(result.data, list) else result.data
+    atr_val = last.get("atr") if isinstance(last, dict) else getattr(last, "atr", None)
+    assert atr_val is not None
+    assert atr_val > 0
+
+
+@pytest.mark.asyncio
+async def test_calculate_atr_insufficient_data(indicator_service):
+    """ATR period 미만 데이터 → 마지막 ATR은 None."""
+    service, mock_sqs = indicator_service
+    data = _make_ohlcv(n=5)
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+    result = await service.calculate_atr("005930", period=14)
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    last = result.data[-1] if isinstance(result.data, list) else result.data
+    atr_val = last.get("atr") if isinstance(last, dict) else getattr(last, "atr", None)
+    assert atr_val is None
+
+
+@pytest.mark.asyncio
+async def test_calculate_atr_api_failure(indicator_service):
+    """OHLCV API 실패 시 ATR도 에러 응답."""
+    service, mock_sqs = indicator_service
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="Fail", data=None
+    )
+    result = await service.calculate_atr("005930")
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+
+
+@pytest.mark.asyncio
+async def test_calculate_atr_with_ohlcv_data(indicator_service):
+    """ohlcv_data 직접 전달 시 get_ohlcv 미호출."""
+    service, mock_sqs = indicator_service
+    data = _make_ohlcv(n=20)
+    result = await service.calculate_atr("005930", period=14, ohlcv_data=data)
+    mock_sqs.get_ohlcv.assert_not_called()
+    assert result.rt_cd == ErrorCode.SUCCESS.value

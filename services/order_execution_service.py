@@ -12,6 +12,7 @@ from services.notification_service import NotificationService, NotificationCateg
 from services.market_calendar_service import MarketCalendarService
 from services.price_subscription_service import SubscriptionPriority
 from services.kill_switch_service import KillSwitchService
+from core.account_snapshot import AccountSnapshotCache
 
 
 class OrderExecutionService:
@@ -36,7 +37,8 @@ class OrderExecutionService:
                  market_calendar_service: Optional[MarketCalendarService] = None,
                  price_subscription_service=None,
                  virtual_trade_service=None,
-                 kill_switch_service: Optional[KillSwitchService] = None):
+                 kill_switch_service: Optional[KillSwitchService] = None,
+                 account_snapshot_cache: Optional[AccountSnapshotCache] = None):
         self.broker_api_wrapper = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
@@ -46,6 +48,7 @@ class OrderExecutionService:
         self._price_sub_svc = price_subscription_service
         self._virtual_trade_service = virtual_trade_service
         self._kill_switch = kill_switch_service
+        self._account_snapshot_cache = account_snapshot_cache
         self._order_states: Dict[str, OrderContext] = {}
         self._order_locks: Dict[str, asyncio.Lock] = {}
         self._order_no_index: Dict[str, str] = {}
@@ -186,6 +189,9 @@ class OrderExecutionService:
                 f"수량={record_qty}, 사유={e}"
             )
             return context
+        # 체결 확정 → 잔고 스냅샷 캐시 무효화 (PositionSizingService 가 다음 조회 시 refresh)
+        if self._account_snapshot_cache is not None:
+            self._account_snapshot_cache.invalidate()
         return self._mark_virtual_trade_recorded(context, record_qty)
 
     def _find_context_for_execution_report(self, report: OrderExecutionReport) -> Optional[OrderContext]:
