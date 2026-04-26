@@ -104,9 +104,8 @@ class RiskGateService:
         snapshot = await self._account_snapshot_cache.get(exchange)
         if snapshot.total_equity <= 0:
             self._logger.warning(
-                "[RiskGate] total_equity<=0: 노출 검증 fail-open. code=%s equity=%s",
-                stock_code,
-                snapshot.total_equity,
+                f"[RiskGate] total_equity<=0: 노출 검증 fail-open. "
+                f"code={stock_code} equity={snapshot.total_equity}"
             )
             return None
 
