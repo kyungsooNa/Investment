@@ -22,6 +22,13 @@ def adapter(mock_strategy_scheduler):
     return StrategySchedulerTaskAdapter(mock_strategy_scheduler)
 
 
+@pytest.fixture
+def mock_market_clock():
+    clock = MagicMock()
+    clock.get_sleep_seconds_until_market_close.return_value = 1800
+    return clock
+
+
 def test_task_name(adapter):
     assert adapter.task_name == "strategy_scheduler"
 
@@ -101,6 +108,55 @@ async def test_resume_not_suspended(adapter):
     assert adapter.state == TaskState.RUNNING
     await adapter.resume()
     assert adapter.state == TaskState.RUNNING
+
+
+async def test_state_running_during_market_hours(mock_strategy_scheduler, mock_market_clock):
+    """장 시간대면 RUNNING 상태를 그대로 반환한다."""
+    adapter = StrategySchedulerTaskAdapter(mock_strategy_scheduler, market_clock=mock_market_clock)
+
+    await adapter.start()
+
+    assert adapter.state == TaskState.RUNNING
+    mock_market_clock.get_sleep_seconds_until_market_close.assert_called_once()
+
+
+@pytest.mark.parametrize("seconds_until_close", [3601, 0, -1])
+async def test_state_running_outside_market_hours_returns_idle(
+    mock_strategy_scheduler,
+    mock_market_clock,
+    seconds_until_close,
+):
+    """장 시간대가 아니면 RUNNING 상태라도 IDLE로 표시한다."""
+    mock_market_clock.get_sleep_seconds_until_market_close.return_value = seconds_until_close
+    adapter = StrategySchedulerTaskAdapter(mock_strategy_scheduler, market_clock=mock_market_clock)
+
+    await adapter.start()
+
+    assert adapter.state == TaskState.IDLE
+
+
+async def test_state_running_with_non_numeric_market_clock_value_keeps_running(
+    mock_strategy_scheduler,
+    mock_market_clock,
+):
+    """market_clock 반환값이 숫자가 아니면 상태를 변경하지 않는다."""
+    mock_market_clock.get_sleep_seconds_until_market_close.return_value = None
+    adapter = StrategySchedulerTaskAdapter(mock_strategy_scheduler, market_clock=mock_market_clock)
+
+    await adapter.start()
+
+    assert adapter.state == TaskState.RUNNING
+
+
+async def test_state_not_running_does_not_query_market_clock(
+    mock_strategy_scheduler,
+    mock_market_clock,
+):
+    """RUNNING이 아닌 상태에서는 market_clock을 조회하지 않는다."""
+    adapter = StrategySchedulerTaskAdapter(mock_strategy_scheduler, market_clock=mock_market_clock)
+
+    assert adapter.state == TaskState.IDLE
+    mock_market_clock.get_sleep_seconds_until_market_close.assert_not_called()
 
 
 async def test_full_lifecycle(adapter, mock_strategy_scheduler):
