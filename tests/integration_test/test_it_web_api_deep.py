@@ -601,6 +601,9 @@ class TestDeepRanking:
         payload = _make_ranking_rise_payload()
         patch_session_get(quot_api, mocker, payload)
 
+        # 상승률 랭킹은 실전 전용 API. 테스트는 HTTP 스택 검증이 목적이므로 임시 해제.
+        quot_api._env.is_paper_trading = False
+
         # ranking_task의 캐시 비활성화 (실시간 API 호출 유도)
         deep_paper_ctx.stock_query_service.ranking_task = None
 
@@ -624,6 +627,9 @@ class TestDeepRanking:
         quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
         payload = _make_volume_ranking_payload()
         patch_session_get(quot_api, mocker, payload)
+
+        # 거래량 랭킹은 실전 전용 API. HTTP 스택 검증이 목적이므로 임시 해제.
+        quot_api._env.is_paper_trading = False
 
         deep_paper_ctx.stock_query_service.ranking_task = None
 
