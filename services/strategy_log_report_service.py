@@ -74,6 +74,8 @@ _MAX_REJECTED_SHOWN = 5
 _MAX_NEAR_MISS_SHOWN = 3
 _CONFLUENCE_MIN_STRATEGIES = 2
 _REJECT_REASON_SUMMARY_THRESHOLD = 10
+_FORCE_CLOSE_REASON = "reconciled_force_close"
+_MAX_SOLD_DETAILS_SHOWN = 5
 _MA_PROXIMITY_LOWER_PCT = -2.0
 _MA_PROXIMITY_UPPER_PCT = 4.0
 _MA_NEAR_MISS_MAX_EXCESS_PCT = 4.0
@@ -327,11 +329,46 @@ class StrategyLogReportService:
 
         lines = ["<b>💰 오늘의 포트폴리오 요약</b>", self._format_buy_preview(today_buys or fallback_buys)]
 
-        if today_solds:
-            avg_return = sum(float(trade.get('return_rate') or 0.0) for trade in today_solds) / len(today_solds)
-            lines.append(f"• 당일 청산: {len(today_solds)}건 (평균 수익률 {avg_return:+.2f}%)")
-        else:
+        # 정상 매도와 강제 종결(브로커 잔고 미일치)을 분리 — 통계 왜곡 방지
+        normal_solds, force_closed = [], []
+        for trade in today_solds:
+            reason = str(trade.get('reason') or '').strip()
+            if reason == _FORCE_CLOSE_REASON:
+                force_closed.append(trade)
+            else:
+                normal_solds.append(trade)
+
+        if normal_solds:
+            avg_return = sum(float(t.get('return_rate') or 0.0) for t in normal_solds) / len(normal_solds)
+            lines.append(f"• 당일 청산: {len(normal_solds)}건 (평균 수익률 {avg_return:+.2f}%)")
+            for t in normal_solds[:_MAX_SOLD_DETAILS_SHOWN]:
+                code = str(t.get('code', '')).strip()
+                name = self._db_resolve(code, str(t.get('name') or code))
+                rr = float(t.get('return_rate') or 0.0)
+                try:
+                    sp = int(float(t.get('sell_price') or 0))
+                    sp_str = f" @ ₩{sp:,}" if sp else ""
+                except (TypeError, ValueError):
+                    sp_str = ""
+                strategy = t.get('strategy') or ''
+                strategy_str = f" [{strategy}]" if strategy else ""
+                lines.append(f"  - {name}({code}){sp_str} {rr:+.2f}%{strategy_str}")
+            rest = len(normal_solds) - _MAX_SOLD_DETAILS_SHOWN
+            if rest > 0:
+                lines.append(f"  …외 {rest}건")
+        elif not force_closed:
             lines.append("• 당일 청산: 없음")
+
+        if force_closed:
+            names = []
+            for t in force_closed[:3]:
+                code = str(t.get('code', '')).strip()
+                names.append(self._db_resolve(code, str(t.get('name') or code)))
+            extra = f" 외 {len(force_closed) - 3}건" if len(force_closed) > 3 else ""
+            lines.append(
+                f"• ⚠️ 강제 종결: {len(force_closed)}건 — 브로커 잔고 미일치 ({', '.join(names)}{extra}). "
+                "외부 매도 또는 정합성 점검 필요."
+            )
 
         if hold_codes:
             lines.append(f"• 현재 보유: {len(hold_codes)}종목")

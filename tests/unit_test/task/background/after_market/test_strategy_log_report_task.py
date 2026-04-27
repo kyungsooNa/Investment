@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 from task.background.after_market.strategy_log_report_task import StrategyLogReportTask
 from interfaces.schedulable_task import TaskPriority, TaskState
-from services.notification_service import NotificationCategory, NotificationLevel
 
 
 # ---------------------------------------------------------------------------
@@ -83,13 +82,10 @@ class TestOnMarketClosed:
         await task._on_market_closed("20260419")
         mock_report_service.generate_report.assert_awaited_once_with("20260419")
 
-    async def test_notification_emitted_with_report_html(self, task, mock_notification_service):
+    async def test_telegram_reporter_receives_report_html(self, task, mock_telegram):
         await task._on_market_closed("20260419")
-        mock_notification_service.emit.assert_awaited_once_with(
-            NotificationCategory.BACKGROUND,
-            NotificationLevel.INFO,
-            "전략 로그 리포트",
-            "<html>report</html>",
+        mock_telegram.send_strategy_log_report.assert_awaited_once_with(
+            "<html>report</html>", "20260419"
         )
 
     async def test_telegram_send_called(self, task, mock_telegram):
@@ -122,7 +118,7 @@ class TestOnMarketClosed:
             logger=MagicMock(),
         )
         await task._on_market_closed("20260419")
-        mock_notification_service.emit.assert_awaited_once()
+        mock_report_service.generate_report.assert_awaited_once_with("20260419")
 
     async def test_telegram_failure_logs_warning_and_does_not_raise(
         self, task, mock_telegram

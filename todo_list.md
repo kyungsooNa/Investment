@@ -404,3 +404,26 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
 - paper/real URL, TR ID, 토큰, 계좌 분기가 테스트로 검증된다.
 - 전략 성과는 수수료, 세금, 슬리피지를 반영한 순수익 기준으로 추적된다.
 - 장애, 데이터 지연, websocket 끊김, reconcile 실패 시 신규 주문 차단 또는 경고 상태로 전환된다.
+
+
+
+# Strategy Log 남은작업
+남은 작업
+즉시 가능
+(a) 1번 A+B 묶음 커밋
+미커밋 4파일을 의미 있는 커밋 메시지로 봉합 — 진행 여부 확인만 받으면 바로 가능합니다.
+
+미착수
+(b) 2번: 로그 파일 누적
+
+위치: core/logger.py:115 get_strategy_logger
+원인: 호출 시마다 {timestamp}_{strategy}.log.json 새 파일 생성, 200KB 미만이라 rotation 안 걸리고 30일 cleanup만 있음 → 7,414개 누적
+진단 단계만 끝난 상태 — 수정 방향(같은 날 같은 전략 append 통합 / 전략당 N개 초과 시 가장 오래된 것 삭제)을 정해야 작업 가능
+후속 옵션 (이전 세션 멘션)
+(c) 1번-C: get_summary() 통계에서 강제 종결 제외
+A+B의 후속 — 웹 UI 통계 정확성. 이전 세션에서 "필요 시"로 분류되어 미진행.
+
+(d) 3번 후속
+BB 스퀴즈 제거 효과는 다음 거래일(2026-04-28) build_watchlist_finished 로그로 확인 후, 부족 시 옵션 2(시총 별도 범위) / 3(거래대금 완화) 진행.
+
+(e) 오닐 PP/BGU에 매수한적 없는 "삼성전자" 종목이 50일째 보유중으로 잘못 나옴. 원인 파악이 안되있으니 원인부터 파악.

@@ -166,7 +166,7 @@ class VirtualTradeService:
     async def reconcile_with_broker(self, actual_holdings: list, logger=None) -> dict:
         """실제 증권사 잔고와 로컬 DB를 비교하여 불일치를 처리한다.
 
-        - 로컬 HOLD인데 실제 잔고 없음 → log_sell_async(code, 0) 강제 종결 + 경고
+        - 로컬 HOLD인데 실제 잔고 없음 → log_sell_async(code, 0, reason="reconciled_force_close") 강제 종결 + 경고
         - 실제 잔고 있는데 로컬 없음 → 경고 로그만 (전략명 불명확 → 자동 insert 불가)
 
         Args:
@@ -195,7 +195,7 @@ class VirtualTradeService:
                     f"[Reconciliation] 로컬 HOLD이나 실제 잔고 없음 → 강제 종결: "
                     f"{code} (strategy={hold.get('strategy')})"
                 )
-                await self.log_sell_async(code, 0)
+                await self.log_sell_async(code, 0, reason="reconciled_force_close")
                 force_closed.append(code)
 
         unknown_in_broker = sorted(actual_codes - local_codes)

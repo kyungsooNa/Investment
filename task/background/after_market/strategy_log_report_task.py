@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
 from task.background.after_market.after_market_task_base import AfterMarketTask
-from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
+from services.notification_service import NotificationService
 
 if TYPE_CHECKING:
     from services.strategy_log_report_service import StrategyLogReportService
@@ -53,14 +53,6 @@ class StrategyLogReportTask(AfterMarketTask):
         except Exception as e:
             self._logger.error(f"전략 로그 리포트 생성 실패: {e}", exc_info=True)
             return
-
-        if self._notification_service:
-            await self._notification_service.emit(
-                NotificationCategory.BACKGROUND,
-                NotificationLevel.INFO,
-                "전략 로그 리포트",
-                report_html,
-            )
 
         if self._telegram_reporter:
             try:

@@ -323,7 +323,7 @@ async def test_reconcile_with_broker_force_closes_missing_local_holds(virtual_tr
         logger=test_logger,
     )
 
-    mock_repo.log_sell_async.assert_awaited_once_with("005930", 0)
+    mock_repo.log_sell_async.assert_awaited_once_with("005930", 0, reason="reconciled_force_close")
     assert result == {"force_closed": ["005930"], "unknown_in_broker": []}
     test_logger.warning.assert_called_once()
 
