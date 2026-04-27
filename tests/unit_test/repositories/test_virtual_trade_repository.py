@@ -103,6 +103,42 @@ def test_get_summary_calculation(virutal_trade_repository):
     assert summary['win_rate'] == 50.0
     assert summary['avg_return'] == 5.0 # (20 - 10) / 2
 
+
+def test_get_summary_excludes_forced_close(virutal_trade_repository):
+    """강제종결(reason="reconciled_force_close") 매도는 win_rate / avg_return 계산에서 제외한다.
+
+    reconcile 로 sell_price=0 처리되는 강제종결이 통계를 왜곡하지 않도록 분리.
+    force_closed_count 는 별도 노출되어 UI 가 표시 가능.
+    """
+    virutal_trade_repository.log_buy("S1", "001", 1000)
+    virutal_trade_repository.log_sell("001", 1200)
+    virutal_trade_repository.log_buy("S1", "002", 1000)
+    virutal_trade_repository.log_sell("002", 900)
+
+    virutal_trade_repository.log_buy("S1", "003", 1000)
+    virutal_trade_repository.log_sell("003", 0, reason="reconciled_force_close")
+
+    summary = virutal_trade_repository.get_summary()
+
+    assert summary["total_trades"] == 3
+    assert summary["win_rate"] == 50.0
+    assert summary["avg_return"] == 5.0
+    assert summary["force_closed_count"] == 1
+
+
+def test_get_summary_all_forced_close_returns_zero(virutal_trade_repository):
+    """정상 매도가 없고 강제종결뿐이면 win_rate/avg_return 은 0 으로 반환한다."""
+    virutal_trade_repository.log_buy("S1", "001", 1000)
+    virutal_trade_repository.log_sell("001", 0, reason="reconciled_force_close")
+
+    summary = virutal_trade_repository.get_summary()
+
+    assert summary["total_trades"] == 1
+    assert summary["win_rate"] == 0
+    assert summary["avg_return"] == 0
+    assert summary["force_closed_count"] == 1
+
+
 def test_fix_sell_price_logic(virutal_trade_repository):
     """매도가 0인 기록 보정 로직 확인"""
     virutal_trade_repository.log_buy("S1", "005930", 10000)

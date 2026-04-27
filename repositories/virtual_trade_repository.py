@@ -17,6 +17,11 @@ from utils.transaction_cost_utils import TransactionCostUtils
 logger = logging.getLogger(__name__)
 
 COLUMNS = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price", "return_rate", "status", "reason"]
+
+# 강제종결 reason 마커 — reconcile 시 로컬 HOLD 인데 브로커 잔고 없음 판정 시 sell_price=0 으로 처리되며,
+# 이를 통계에서 제외해 승률/평균수익률 왜곡을 방지한다. (services/strategy_log_report_service.py 와 동일 값)
+_FORCE_CLOSE_REASON = "reconciled_force_close"
+
 LIVE_STRATEGY_STATE_FILES = {
     "오닐PP/BGU": "pp_position_state.json",
     "오닐스퀴즈돌파": "osb_position_state.json",
@@ -553,28 +558,51 @@ class VirtualTradeRepository:
             logger.info(f"[가상매매] {code} sell_price 보정 완료 → {correct_price}")
 
     def get_summary(self, apply_cost: bool = False) -> dict:
-        """전체 매매 요약 통계 (HOLD + SOLD 모두 포함)."""
+        """전체 매매 요약 통계 (HOLD + SOLD 모두 포함).
+
+        win_rate / avg_return 은 강제종결(reason="reconciled_force_close") 매매를 제외한
+        정상 매도만으로 계산한다 — 브로커 잔고 미일치로 sell_price=0 처리되는 강제종결이
+        승률·평균수익률 통계를 왜곡하지 않도록 분리.
+        force_closed_count 는 별도 노출하여 UI 가 필요 시 표시할 수 있게 한다.
+        """
         df = self._read()
         total_trades = len(df)
         sold_df = df[df['status'] == 'SOLD']
 
-        if sold_df.empty:
-            return {"total_trades": total_trades, "win_rate": 0, "avg_return": 0}
+        if 'reason' in sold_df.columns:
+            reason_series = sold_df['reason'].fillna('').astype(str)
+            force_closed_count = int((reason_series == _FORCE_CLOSE_REASON).sum())
+            natural_sold_df = sold_df[reason_series != _FORCE_CLOSE_REASON]
+        else:
+            force_closed_count = 0
+            natural_sold_df = sold_df
+
+        if natural_sold_df.empty:
+            return {
+                "total_trades": total_trades,
+                "win_rate": 0,
+                "avg_return": 0,
+                "force_closed_count": force_closed_count,
+            }
 
         # 수익률 시리즈 추출 (비용 적용 시 재계산)
         if apply_cost:
-            returns = sold_df.apply(lambda row: self.calculate_return(row['buy_price'], row['sell_price'], row['qty'], True), axis=1)
+            returns = natural_sold_df.apply(
+                lambda row: self.calculate_return(row['buy_price'], row['sell_price'], row['qty'], True),
+                axis=1,
+            )
         else:
-            returns = sold_df['return_rate']
+            returns = natural_sold_df['return_rate']
 
         win_trades = len(returns[returns > 0])
-        win_rate = (win_trades / len(sold_df) * 100)
+        win_rate = (win_trades / len(natural_sold_df) * 100)
         avg_return = returns.mean()
 
         return {
             "total_trades": total_trades,
             "win_rate": round(win_rate, 1),
-            "avg_return": round(avg_return, 2)
+            "avg_return": round(avg_return, 2),
+            "force_closed_count": force_closed_count,
         }
 
     # ---- 종가 캐시 (backfill용) ----
