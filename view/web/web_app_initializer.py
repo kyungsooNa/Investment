@@ -158,6 +158,8 @@ class WebAppContext:
             timezone=config_dict.get('market_timezone', "Asia/Seoul"),
             logger=self.logger
         )
+        self.virtual_repo.tm = self.market_clock
+        self.virtual_trade_service.tm = self.market_clock
         self.notification_service = NotificationService(self.market_clock)
         self.kill_switch_service = KillSwitchService(
             config=getattr(self.full_config, "kill_switch", None) or KillSwitchConfig(),
