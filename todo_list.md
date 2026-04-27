@@ -408,22 +408,29 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
 
 
 # Strategy Log 남은작업
-남은 작업
-즉시 가능
-(a) 1번 A+B 묶음 커밋
-미커밋 4파일을 의미 있는 커밋 메시지로 봉합 — 진행 여부 확인만 받으면 바로 가능합니다.
 
-미착수
-(b) 2번: 로그 파일 누적
+## 완료 (2026-04-28 세션)
 
-위치: core/logger.py:115 get_strategy_logger
-원인: 호출 시마다 {timestamp}_{strategy}.log.json 새 파일 생성, 200KB 미만이라 rotation 안 걸리고 30일 cleanup만 있음 → 7,414개 누적
-진단 단계만 끝난 상태 — 수정 방향(같은 날 같은 전략 append 통합 / 전략당 N개 초과 시 가장 오래된 것 삭제)을 정해야 작업 가능
-후속 옵션 (이전 세션 멘션)
-(c) 1번-C: get_summary() 통계에서 강제 종결 제외
-A+B의 후속 — 웹 UI 통계 정확성. 이전 세션에서 "필요 시"로 분류되어 미진행.
+- (a) ✅ 1번 A+B 묶음 커밋 — 반영 완료
+- (b) ✅ 전략 로그 파일 누적 (7,414개) 해소
+  - 변경: `core/logger.py:get_strategy_logger` 멱등화 + 날짜-only 파일명 + `append_to_latest=True`
+  - 파일: `core/loggers/log_config.py`, `core/loggers/size_time_rotating_file_handler.py`, `core/logger.py`, `tests/unit_test/core/test_logger.py`
+  - 효과: 같은 프로세스 내 반복 호출 시 핸들러 재사용, 같은 날엔 같은 파일에 append, 10MB 단위 자연 롤오버, 30일 cleanup 유지
+- (c) ✅ `get_summary()` 강제종결 제외
+  - 변경: `reason=="reconciled_force_close"` 매도는 win_rate/avg_return 계산에서 제외, `force_closed_count` 별도 노출
+  - 파일: `repositories/virtual_trade_repository.py`, `tests/unit_test/repositories/test_virtual_trade_repository.py`
+- (e) ✅ "삼성전자 50일째 보유중" 오인 표시 — 원인 추적 + 데이터 cleanup + 방어 로그
+  - 원인: `data/{pp,osb,fp}_position_state.json` 의 가짜 시드 entry → `sync_live_strategy_positions()` 가 production DB 에 INSERT → DB id 201/202/203 가짜 HOLD 행
+  - cleanup: state 파일 가짜 entry 제거, DB 가짜 행 3건 삭제 (백업: `virtual_trade.db.bak_before_fake_cleanup`)
+  - 방어: `sync_live_strategy_positions()` 에 INSERT 행 단위 추적 로그 + 자정 buy_date 의심 패턴 warning 추가
+  - 가장 유력한 root cause: 테스트/스크립트가 production STATE_FILE 경로(`data/*_position_state.json`)에 직접 시드 데이터 기록
 
-(d) 3번 후속
-BB 스퀴즈 제거 효과는 다음 거래일(2026-04-28) build_watchlist_finished 로그로 확인 후, 부족 시 옵션 2(시총 별도 범위) / 3(거래대금 완화) 진행.
+## 미진행 — 2026-04-28 장마감 이후 재확인 예정
 
-(e) 오닐 PP/BGU에 매수한적 없는 "삼성전자" 종목이 50일째 보유중으로 잘못 나옴. 원인 파악이 안되있으니 원인부터 파악.
+- (d) BB 스퀴즈 제거 효과 검증
+  - 거래일(2026-04-28) `build_watchlist_finished` 로그로 후보 수 확인
+  - 부족 시 옵션 2(시총 별도 범위) / 옵션 3(거래대금 완화) 진행
+- (e') 테스트가 production STATE_FILE 경로 못 쓰게 격리 강제
+  - 현재 strategy 클래스의 `STATE_FILE` 이 class-level hardcode (`data/pp_position_state.json` 등) → 테스트가 override 안 하면 production 파일 덮어씀
+  - 후보 수정: `STATE_FILE` 을 인스턴스 인자로 변경 (또는 환경변수 prefix), 테스트 fixture 자동 tmp_path override
+  - 영향 범위 큼 → 별도 작업 권장
