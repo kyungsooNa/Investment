@@ -441,6 +441,7 @@ class WebAppContext:
             account_snapshot_cache=self.account_snapshot_cache,
             strategy_risk_provider=self.virtual_trade_service,
             logger=self.logger,
+            env=getattr(self.broker, "env", None),
         )
         self.order_policy_service = OrderPolicyService(
             config=getattr(self.full_config, "order_policy", None) or OrderPolicyConfig(),

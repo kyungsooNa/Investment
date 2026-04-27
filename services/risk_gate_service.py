@@ -1,6 +1,8 @@
 import inspect
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any, Optional, Protocol
 
 from common.types import ErrorCode, Exchange, OrderSide, ResCommonResponse
@@ -54,12 +56,15 @@ class RiskGateService:
         account_snapshot_cache: Optional[AccountSnapshotCache],
         strategy_risk_provider: Optional[StrategyRiskDataProvider] = None,
         logger: Optional[logging.Logger] = None,
+        env: Optional[Any] = None,
     ):
         self._cfg = config
         self._kill_switch = kill_switch_service
         self._account_snapshot_cache = account_snapshot_cache
         self._strategy_risk_provider = strategy_risk_provider
         self._logger = logger or logging.getLogger(__name__)
+        self._env = env
+        self._daily_total: dict[date, int] = defaultdict(int)
 
     async def validate_order(
         self,
@@ -77,6 +82,10 @@ class RiskGateService:
             return None
 
         strategy_name = strategy_name or self._strategy_name_from_source(source)
+
+        env_blocked = self._check_env_consistency(stock_code=stock_code, side=side)
+        if env_blocked is not None:
+            return env_blocked
 
         blocked = await self._check_kill_switch()
         if blocked is not None:
@@ -110,6 +119,10 @@ class RiskGateService:
                     max_order_amount_won=self._cfg.max_order_amount_won,
                 )
 
+            daily_blocked = self._check_daily_cap(stock_code=stock_code, order_amount=order_amount, side=side)
+            if daily_blocked is not None:
+                return daily_blocked
+
             if side == OrderSide.BUY:
                 strategy_blocked = await self._check_strategy_risk(
                     stock_code=stock_code,
@@ -124,6 +137,97 @@ class RiskGateService:
                 exposure_blocked = await self._check_buy_exposure(stock_code, order_amount, exchange)
                 if exposure_blocked is not None:
                     return exposure_blocked
+
+            self._record_daily_amount(order_amount)
+
+        return None
+
+    def _today(self) -> date:
+        return datetime.now().date()
+
+    def _check_daily_cap(
+        self,
+        stock_code: str,
+        order_amount: int,
+        side: OrderSide,
+    ) -> Optional[ResCommonResponse]:
+        cap = getattr(self._cfg, "max_daily_order_amount_won", 0) or 0
+        if cap <= 0:
+            return None
+
+        today = self._today()
+        current = self._daily_total.get(today, 0)
+        next_total = current + order_amount
+        if next_total > cap:
+            return self._blocked(
+                "max_daily_order_amount",
+                "1일 누적 주문 금액 한도 초과",
+                stock_code=stock_code,
+                side=side.value,
+                order_amount=order_amount,
+                daily_total_before=current,
+                daily_total_after=next_total,
+                max_daily_order_amount_won=cap,
+            )
+        return None
+
+    def _record_daily_amount(self, order_amount: int) -> None:
+        cap = getattr(self._cfg, "max_daily_order_amount_won", 0) or 0
+        if cap <= 0:
+            return
+        today = self._today()
+        self._daily_total[today] += order_amount
+        # 7일 이상 된 키 정리 (메모리 leak 방지)
+        stale = [d for d in self._daily_total.keys() if (today - d).days > 7]
+        for d in stale:
+            self._daily_total.pop(d, None)
+
+    def _check_env_consistency(
+        self,
+        stock_code: str,
+        side: OrderSide,
+    ) -> Optional[ResCommonResponse]:
+        """실전/모의 모드와 실제 사용중인 URL/계좌가 일치하는지 cross-check.
+
+        주문 직전 hard block. env 미주입 시 fail-open(skip).
+        - paper 모드: base_url에 'vts' 포함 + 활성 계좌가 paper_stock_account_number와 일치
+        - real 모드: base_url에 'vts' 미포함 + 활성 계좌가 stock_account_number와 일치
+        """
+        env = self._env
+        if env is None:
+            return None
+
+        is_paper = bool(getattr(env, "is_paper_trading", None))
+        base_url = getattr(env, "_base_url", None) or ""
+        active_cfg = getattr(env, "active_config", None) or {}
+        active_account = active_cfg.get("stock_account_number") if isinstance(active_cfg, dict) else None
+        real_account = getattr(env, "stock_account_number", None)
+        paper_account = getattr(env, "paper_stock_account_number", None)
+
+        url_is_paper = "vts" in base_url.lower()
+
+        if is_paper != url_is_paper:
+            return self._blocked(
+                "env_mismatch_url",
+                "실전/모의 모드와 base_url 호스트가 일치하지 않습니다.",
+                stock_code=stock_code,
+                side=side.value,
+                is_paper_trading=is_paper,
+                base_url_paper=url_is_paper,
+            )
+
+        if active_account is not None:
+            expected_account = paper_account if is_paper else real_account
+            if expected_account is not None and active_account != expected_account:
+                return self._blocked(
+                    "env_mismatch_account",
+                    "실전/모의 모드와 활성 계좌번호가 일치하지 않습니다.",
+                    stock_code=stock_code,
+                    side=side.value,
+                    is_paper_trading=is_paper,
+                    active_account_prefix=str(active_account)[:4],
+                    expected_account_prefix=str(expected_account)[:4],
+                )
 
         return None
 

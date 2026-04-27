@@ -19,6 +19,34 @@ from common.types import (
 )
 
 
+def _real_only(method):
+    """모의투자 모드에서 호출 시 PAPER_NOT_SUPPORTED 응답을 반환하는 데코레이터.
+
+    KIS Open API는 시가총액/랭킹/상한가 등 일부 시세 API를 실전 도메인에서만 제공한다.
+    paper 모드에서 호출되면 broker 호출 전에 즉시 차단한다.
+    """
+    async def wrapper(self, *args, **kwargs):
+        env = getattr(self, "_env", None)
+        # 명시적 True만 차단 (MagicMock의 자동 속성 회피)
+        is_paper = getattr(env, "is_paper_trading", None) if env is not None else None
+        if is_paper is True:
+            logger = getattr(self, "_logger", None) or getattr(self, "logger", None)
+            if logger is not None:
+                logger.warning(
+                    f"[PAPER_NOT_SUPPORTED] {method.__name__}는 실전 모드 전용 API입니다. "
+                    f"모의투자 모드에서 호출되어 차단되었습니다."
+                )
+            return ResCommonResponse(
+                rt_cd=ErrorCode.PAPER_NOT_SUPPORTED.value,
+                msg1=f"{method.__name__}는 실전 모드 전용 API입니다.",
+                data=None,
+            )
+        return await method(self, *args, **kwargs)
+    wrapper.__name__ = method.__name__
+    wrapper.__doc__ = method.__doc__
+    return wrapper
+
+
 def _exchange_to_market_code(exchange: Exchange) -> str:
     """Exchange enum을 API 마켓코드 문자열로 변환합니다."""
     if exchange == Exchange.NXT:
@@ -263,6 +291,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=0
             )
 
+    @_real_only
     async def get_top_market_cap_stocks_code(self, market_code: str, count: int = 30) -> ResCommonResponse:
         """
         시가총액 상위 종목 목록을 반환합니다. 최대 30개까지만 지원됩니다.
@@ -588,9 +617,10 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         return response
 
+    @_real_only
     async def get_top_rise_fall_stocks(self, rise: bool = True) -> ResCommonResponse:
         """
-        상승률/하락률 상위 종목 조회
+        상승률/하락률 상위 종목 조회 (실전 모드 전용)
         """
         full_config = self._env.active_config
         tr_id = self._trid_provider.quotations(TrIdLeaf.RANKING_FLUCTUATION)
@@ -639,9 +669,10 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=None
             )
 
+    @_real_only
     async def get_top_volume_stocks(self) -> ResCommonResponse:
         """
-        거래량 상위 종목 조회
+        거래량 상위 종목 조회 (실전 모드 전용)
         """
         full_config = self._env.active_config
         tr_id = self._trid_provider.quotations(TrIdLeaf.RANKING_VOLUME)

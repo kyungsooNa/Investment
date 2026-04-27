@@ -218,6 +218,8 @@ class TestVolumeBreakoutLiveScan:
         from strategies.volume_breakout_strategy import VolumeBreakoutConfig
 
         quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
+        # 거래대금/거래량 랭킹은 실전 전용 API. HTTP 스택 검증이 목적이므로 임시 해제.
+        quot_api._env.is_paper_trading = False
 
         # 거래대금 상위 → 현재가 조회 순서대로 응답
         trading_value_resp = _make_trading_value_response([
@@ -306,8 +308,10 @@ class TestProgramBuyFollowScan:
     async def test_scan_generates_signal_with_positive_pgtr(self, deep_paper_ctx, mocker):
         """프로그램 순매수가 양수인 종목에 BUY 시그널 생성."""
         from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy, ProgramBuyFollowConfig
-    
+
         quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
+        # 거래대금 랭킹은 실전 전용 API. HTTP 스택 검증이 목적이므로 임시 해제.
+        quot_api._env.is_paper_trading = False
     
         trading_value_resp = _make_trading_value_response([
             _make_trading_value_stock("005930", "삼성전자"),

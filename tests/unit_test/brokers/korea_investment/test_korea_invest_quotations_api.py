@@ -1904,3 +1904,37 @@ async def test_get_program_trade_by_stock_daily_parsing_error(mock_quotations):
     assert result.rt_cd == ErrorCode.PARSING_ERROR.value
     assert result.data is None
     api._logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_real_only_blocks_in_paper_mode(mock_quotations):
+    """paper 모드에서 실전 전용 API 호출 시 PAPER_NOT_SUPPORTED 차단 검증."""
+    mock_quotations._env.is_paper_trading = True
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="should not be called", data={}
+    ))
+
+    for coro in (
+        mock_quotations.get_top_volume_stocks(),
+        mock_quotations.get_top_rise_fall_stocks(rise=True),
+        mock_quotations.get_top_market_cap_stocks_code("0000"),
+    ):
+        result = await coro
+        assert result.rt_cd == ErrorCode.PAPER_NOT_SUPPORTED.value
+        assert result.data is None
+
+    # 실제 broker 호출이 발생하지 않았는지 검증
+    mock_quotations.call_api.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_real_only_passes_through_in_real_mode(mock_quotations):
+    """real 모드(is_paper_trading=False)에서는 데코레이터가 통과시킨다."""
+    mock_quotations._env.is_paper_trading = False
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": []}
+    ))
+
+    result = await mock_quotations.get_top_volume_stocks()
+    assert result.rt_cd != ErrorCode.PAPER_NOT_SUPPORTED.value
+    mock_quotations.call_api.assert_called()

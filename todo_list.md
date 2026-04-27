@@ -47,11 +47,12 @@
 
 ### 3-1. 실전 모드 이중 안전 체크
 
-- [ ] `real_trading_enabled: false`를 기본값으로 둔다.
-- [ ] 실전 주문 전 dry-run 로그를 남긴다.
-- [ ] 실전 주문 API 호출 직전 환경, URL, TR ID, 계좌번호 prefix를 다시 검증한다.
-- [ ] 실전 모드 최대 주문금액과 1일 최대 주문금액을 설정화한다.
-- [ ] 실전 전용 API가 paper 모드에서 호출될 때 명확히 차단한다.
+- [x] `is_paper_trading` 기본값을 안전(=True/모의)으로 둔다. (`config_loader.py:96`, 키 컨벤션은 `real_trading_enabled`가 아닌 `is_paper_trading`로 통일)
+- [x] 단건 최대 주문금액(`max_order_amount_won`)을 설정화하고 RiskGate에서 검증한다. (`config_loader.py:58`, `risk_gate_service.py:103-110`)
+- [x] 실전 주문 직전 dry-run preview 로그를 남긴다. (`order_execution_service.py` `_log_real_order_preview()` — 종목/수량/가격/계좌 prefix/URL host/source/trace_id 출력, `[REAL ORDER PREVIEW]` 키워드)
+- [x] `RiskGateService`에 환경 재검증 가드를 추가한다. (`_check_env_consistency()` — `env.is_paper_trading` vs URL host(`vts` 포함 여부) vs 활성 계좌번호 일치 확인 → 불일치 시 hard block)
+- [x] **1일 최대 주문금액(daily cap)** 을 설정화한다. (`RiskGateConfig.max_daily_order_amount_won`, `risk_gate_service.py` `_check_daily_cap()` + in-memory 누적 트래커, 7일 이상 된 키 자동 정리)
+- [x] paper 모드에서 실전 전용 API(랭킹/시총/거래량 랭킹) 호출 시 명시적 `PAPER_NOT_SUPPORTED` 에러를 반환한다. (`korea_invest_quotations_api.py` `@_real_only` 데코레이터 — `get_top_market_cap_stocks_code`, `get_top_rise_fall_stocks`, `get_top_volume_stocks`)
 
 주요 파일:
 
@@ -59,14 +60,16 @@
 - `config/config.yaml.example`
 - `brokers/korea_investment/korea_invest_env.py`
 - `brokers/korea_investment/korea_invest_tr_id_provider.py`
+- `services/order_execution_service.py`
+- `services/risk_gate_service.py`
 - `view/web/web_app_initializer.py`
 
 ### 3-2. Web/CLI에 모드 상태 노출
 
-- [ ] 웹 화면에 실전/모의 상태를 항상 노출한다.
-- [ ] 실전 모드에서는 주문 버튼 또는 주문 확인 플로우에 별도 경고 상태를 둔다.
-- [ ] CLI 주문 경로에도 실전 모드 표시와 확인 단계를 추가한다.
-- [ ] 모드 변경 시 기존 토큰/URL/provider가 섞이지 않는지 테스트한다.
+- [x] 웹 화면 status-bar에 실전/모의 모드 배지를 노출한다. (`view/web/templates/base.html:59` `status-env`)
+- [x] 실전 모드에서는 주문 화면에 경고 배너 노출 + 주문 버튼 외곽선 강조 + 2단계 확인(`confirm` → "REAL" 입력) 플로우를 적용한다. (`view/web/templates/order.html`, `view/web/static/js/order.js`)
+- [~] CLI 주문 경로 — N/A. 현재 main.py는 web 전용으로 동작하며 CLI 모드는 제거된 상태(`view/cli/`, `app/user_action_executor.py` 부재).
+- [x] `KoreaInvestEnv.set_trading_mode()` 호출 시 base_url/active_account/token_provider가 모드별로 교체되는지 회귀 테스트로 보장한다. (`tests/unit_test/brokers/korea_investment/test_korea_invest_env.py` — `_swaps_base_url`, `_swaps_active_account`, `_swaps_token_provider_reference`, `_no_change_does_not_swap_provider` 4종)
 
 주요 파일:
 
@@ -75,6 +78,12 @@
 - `view/cli/cli_view.py`
 - `app/user_action_executor.py`
 
+남은 작업
+- P4: 실행 품질(슬리피지 추적), 유동성 관리(거래대금 필터, 호가잔량 제한)
+- P5: 전략별 실전 제한값, 백테스트–실거래 괴리 추적, 시장 상태 필터, 신규 전략(RSI2/펜볼드 채널), 백테스트 고도화(포트폴리오/마켓레짐/슬리피지/몬테카를로)
+- P6: 데이터 품질 검증, 알림/대시보드 강화, 스케줄러 장애 복구
+- P7: WebAppContext 분리, BrokerAPIWrapper 테스트 안정화, 스트리밍/DB 성능
+- P8: 주문/리스크/브로커/전략 테스트 보강
 ---
 
 ## P4. 실행 품질과 유동성 관리

@@ -29,6 +29,7 @@ class ErrorCode(Enum):
     KILL_SWITCH_BLOCKED = "109"  # Kill Switch 활성 상태로 주문 차단
     RISK_GATE_BLOCKED = "110"  # Risk Gate 정책으로 주문 차단
     ORDER_POLICY_BLOCKED = "111"  # Order Policy 정책으로 주문 차단
+    PAPER_NOT_SUPPORTED = "112"  # 모의투자 모드에서 지원하지 않는 API
     UNKNOWN_ERROR = "999"  # 기타 오류
 
     @property

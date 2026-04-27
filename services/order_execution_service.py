@@ -75,6 +75,44 @@ class OrderExecutionService:
         env = getattr(self.broker_api_wrapper, "env", None)
         return getattr(env, "is_paper_trading", True)
 
+    def _log_real_order_preview(
+        self,
+        *,
+        stock_code: str,
+        side: OrderSide,
+        price,
+        qty,
+        exchange: Exchange,
+        source: str,
+        trace_id,
+        intent_id: str,
+        order_key: str,
+    ) -> None:
+        """실전 모드에서 broker API 호출 직전 요청 payload 요약을 INFO 로그로 남김.
+
+        사후 감사용. 모의투자 모드에서는 no-op.
+        민감정보(전체 계좌번호, 토큰)는 prefix만 출력한다.
+        """
+        if self._is_paper_trading_mode():
+            return
+
+        env = getattr(self.broker_api_wrapper, "env", None)
+        active_cfg = getattr(env, "active_config", None) or {}
+        account = active_cfg.get("stock_account_number") if isinstance(active_cfg, dict) else None
+        account_prefix = (str(account)[:4] + "...") if account else "unknown"
+        base_url = getattr(env, "_base_url", None) or ""
+        url_host = base_url.split("//", 1)[-1].split("/", 1)[0] if base_url else "unknown"
+
+        try:
+            self.logger.info(
+                f"[REAL ORDER PREVIEW] order_key={order_key} code={stock_code} "
+                f"side={side.value} qty={qty} price={price} exchange={exchange.value} "
+                f"account_prefix={account_prefix} url_host={url_host} "
+                f"source={source} trace_id={trace_id} intent_id={intent_id}"
+            )
+        except Exception as exc:
+            self.logger.warning(f"[REAL ORDER PREVIEW] 로그 작성 실패: {exc}")
+
     def _resolve_finalize(self, requested: bool) -> bool:
         """paper mode 에서는 caller 값 그대로, real mode 에서는 항상 False."""
         if self._is_paper_trading_mode():
@@ -1180,6 +1218,18 @@ class OrderExecutionService:
             )
             self._set_order_context(context)
             self._intent_index[resolved_intent_id] = order_key
+
+            self._log_real_order_preview(
+                stock_code=stock_code,
+                side=side,
+                price=price,
+                qty=qty,
+                exchange=exchange,
+                source=source,
+                trace_id=trace_id,
+                intent_id=resolved_intent_id,
+                order_key=order_key,
+            )
 
             result = await self._retry_order(
                 lambda c, p, q: self._execute_order_via_broker(
