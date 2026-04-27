@@ -74,6 +74,8 @@ def test_load_config_and_env(mock_deps):
     mock_deps["load_configs"].assert_called_once()
     mock_deps["env"].assert_called_once()
     mock_deps["tm"].assert_called_once()
+    assert ctx.virtual_repo.tm is mock_deps["tm"].return_value
+    assert ctx.virtual_trade_service.tm is mock_deps["tm"].return_value
     assert ctx.full_config is not None
 
 @pytest.mark.asyncio

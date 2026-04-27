@@ -51,9 +51,9 @@ def _build_strategy_return_history(daily: dict, strategy_name: str) -> list[dict
 
 class VirtualTradeService:
     """모의매매 통계 계산 및 성과 분석을 담당하는 비즈니스 서비스 계층"""
-    def __init__(self, repository: VirtualTradeRepository, market_clock: MarketClock):
+    def __init__(self, repository: VirtualTradeRepository, market_clock: MarketClock = None):
         self._repo = repository
-        self.tm = market_clock
+        self.tm = market_clock or getattr(repository, "tm", None) or MarketClock()
 
     # ── 비즈니스 & 통계 계산 로직 ──
 
