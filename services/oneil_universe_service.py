@@ -516,15 +516,13 @@ class OneilUniverseService:
                 if logger: logger.debug({"event": "drop", "code": code, "reason": "far_from_52w_high", "dist": dist})
                 return None
 
-        # BB 스퀴즈
+        # BB 폭 계산 (Pool B는 squeeze 조건 미적용 — 급등 중 종목은 변동성 확장 단계라 squeeze 자체가 본질에 부적합)
         widths = self._indicator.calc_bb_widths_sync(ohlcv[:-1], period=self._cfg.bb_period, multiplier=self._cfg.multiplier)
         if len(widths) < period:
             return None
         bb_min = min(widths[-period:])
         prev_width = widths[-1]
-        if prev_width > bb_min * self._cfg.squeeze_tolerance:
-            return None
-        
+
         # RS 계산
         rs_return = self._indicator.calc_rs_sync(ohlcv[:-1], period_days=self._cfg.rs_period_days)
         market = "KOSDAQ" if self.stock_code_repository.is_kosdaq(code) else "KOSPI"
