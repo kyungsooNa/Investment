@@ -388,7 +388,7 @@ class VirtualTradeRepository:
         """log_buy의 비동기 래퍼 (스레드 실행)."""
         await asyncio.to_thread(self.log_buy, strategy_name, code, current_price, qty)
 
-    def log_sell(self, code: str, current_price, qty: int = 1):
+    def log_sell(self, code: str, current_price, qty: int = 1, reason: str = ""):
         """가상 매도 — 해당 종목 가장 최근 HOLD 건."""
         with self._lock:
             row = self._db.execute(
@@ -403,16 +403,16 @@ class VirtualTradeRepository:
             sell_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
             with self._db:
                 self._db.execute(
-                    "UPDATE trades SET sell_date=?, sell_price=?, return_rate=?, status='SOLD' WHERE id=?",
-                    (sell_date, current_price, round(return_rate, 2), trade_id)
+                    "UPDATE trades SET sell_date=?, sell_price=?, return_rate=?, status='SOLD', reason=? WHERE id=?",
+                    (sell_date, current_price, round(return_rate, 2), reason, trade_id)
                 )
-            logger.info(f"[가상매매] {code} 매도 기록 (수익률: {return_rate:.2f}%)")
+            logger.info(f"[가상매매] {code} 매도 기록 (수익률: {return_rate:.2f}%{', 사유: '+reason if reason else ''})")
 
-    async def log_sell_async(self, code: str, current_price, qty: int = 1):
+    async def log_sell_async(self, code: str, current_price, qty: int = 1, reason: str = ""):
         """log_sell의 비동기 래퍼 (스레드 실행)."""
-        await asyncio.to_thread(self.log_sell, code, current_price, qty)
+        await asyncio.to_thread(self.log_sell, code, current_price, qty, reason)
 
-    def log_sell_by_strategy(self, strategy_name: str, code: str, current_price, qty: int = 1) -> float | None:
+    def log_sell_by_strategy(self, strategy_name: str, code: str, current_price, qty: int = 1, reason: str = "") -> float | None:
         """전략+종목 매칭 매도. 성공 시 수익률 반환, 실패 시 None 반환."""
         with self._lock:
             row = self._db.execute(
@@ -427,15 +427,15 @@ class VirtualTradeRepository:
             sell_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
             with self._db:
                 self._db.execute(
-                    "UPDATE trades SET sell_date=?, sell_price=?, return_rate=?, status='SOLD' WHERE id=?",
-                    (sell_date, current_price, round(return_rate, 2), trade_id)
+                    "UPDATE trades SET sell_date=?, sell_price=?, return_rate=?, status='SOLD', reason=? WHERE id=?",
+                    (sell_date, current_price, round(return_rate, 2), reason, trade_id)
                 )
-            logger.info(f"[가상매매] {strategy_name}/{code} 매도 기록 (수익률: {round(return_rate, 2):.2f}%)")
+            logger.info(f"[가상매매] {strategy_name}/{code} 매도 기록 (수익률: {round(return_rate, 2):.2f}%{', 사유: '+reason if reason else ''})")
             return round(return_rate, 2)
 
-    async def log_sell_by_strategy_async(self, strategy_name: str, code: str, current_price, qty: int = 1) -> float | None:
+    async def log_sell_by_strategy_async(self, strategy_name: str, code: str, current_price, qty: int = 1, reason: str = "") -> float | None:
         """log_sell_by_strategy의 비동기 래퍼 (스레드 실행). 성공 시 수익률 반환."""
-        return await asyncio.to_thread(self.log_sell_by_strategy, strategy_name, code, current_price, qty)
+        return await asyncio.to_thread(self.log_sell_by_strategy, strategy_name, code, current_price, qty, reason)
 
     def log_order_failure(self, action: str, code: str, price, qty: int, reason: str, strategy_name: str = ""):
         """주문 최종 실패 시 FAILED 상태로 기록."""

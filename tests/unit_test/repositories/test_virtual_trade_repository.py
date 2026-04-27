@@ -362,14 +362,14 @@ async def test_log_sell_async_thread_execution(virutal_trade_repository):
     """log_sell_async가 asyncio.to_thread를 사용하여 log_sell을 실행하는지 테스트."""
     with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
         await virutal_trade_repository.log_sell_async("005930", 1200, 5)
-        mock_to_thread.assert_awaited_once_with(virutal_trade_repository.log_sell, "005930", 1200, 5)
+        mock_to_thread.assert_awaited_once_with(virutal_trade_repository.log_sell, "005930", 1200, 5, "")
 
 @pytest.mark.asyncio
 async def test_log_sell_by_strategy_async_thread_execution(virutal_trade_repository):
     """log_sell_by_strategy_async가 asyncio.to_thread를 사용하여 실행하는지 테스트."""
     with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
         await virutal_trade_repository.log_sell_by_strategy_async("S1", "005930", 1200, 5)
-        mock_to_thread.assert_awaited_once_with(virutal_trade_repository.log_sell_by_strategy, "S1", "005930", 1200, 5)
+        mock_to_thread.assert_awaited_once_with(virutal_trade_repository.log_sell_by_strategy, "S1", "005930", 1200, 5, "")
 
 def test_log_sell_failure_no_hold(virutal_trade_repository):
     """보유하지 않은 종목 매도 시도 시 처리 확인"""
