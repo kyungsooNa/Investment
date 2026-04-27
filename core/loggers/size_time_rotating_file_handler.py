@@ -8,7 +8,8 @@ class SizeTimeRotatingFileHandler(RotatingFileHandler):
     인덱스가 클수록 최신 파일입니다.
     예: app_1.log (가장 오래됨) ... app_25.log (오래된 백업) -> app_26.log (현재 활성)
     """
-    def __init__(self, filename, mode='a', maxBytes=0, backupCount=0, encoding=None, delay=False):
+    def __init__(self, filename, mode='a', maxBytes=0, backupCount=0, encoding=None, delay=False,
+                 append_to_latest=False):
         # 확장자 처리 (예: .log.json)
         if filename.endswith(".log.json"):
             root, ext = filename[:-len(".log.json")], ".log.json"
@@ -17,9 +18,26 @@ class SizeTimeRotatingFileHandler(RotatingFileHandler):
 
         self._log_root = root
         self._log_ext = ext
-        self._current_index = self._find_max_index()
+        max_index = self._find_max_index()
 
-        initial_filename = f"{self._log_root}_{self._current_index + 1}{self._log_ext}"
+        # append_to_latest=True: 기존 최신 인덱스 파일이 있고 maxBytes 미만이면 그 파일에 append.
+        # maxBytes를 넘었거나 기존 파일이 없으면 다음 인덱스 신규 생성.
+        if append_to_latest and max_index > 0:
+            latest_path = f"{self._log_root}_{max_index}{self._log_ext}"
+            try:
+                latest_size = os.path.getsize(latest_path)
+            except OSError:
+                latest_size = 0
+            if maxBytes <= 0 or latest_size < maxBytes:
+                initial_index = max_index
+            else:
+                initial_index = max_index + 1
+        else:
+            initial_index = max_index + 1
+
+        # 활성 파일은 항상 _{_current_index + 1} 규약 (기존 doRollover 호환).
+        self._current_index = initial_index - 1
+        initial_filename = f"{self._log_root}_{initial_index}{self._log_ext}"
         super().__init__(initial_filename, mode=mode, maxBytes=maxBytes,
                          backupCount=backupCount, encoding=encoding, delay=delay)
 

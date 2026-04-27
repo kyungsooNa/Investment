@@ -9,6 +9,7 @@ from core.loggers.log_config import (
     LOG_BACKUP_COUNT,
     LOG_LEVEL,
     get_log_timestamp,
+    get_strategy_log_date,
     reset_log_timestamp_for_test
 )
 from core.loggers.size_time_rotating_file_handler import SizeTimeRotatingFileHandler
@@ -115,39 +116,50 @@ def get_cache_event_logger(log_dir: str = "logs") -> "CacheEventLogger":
 def get_strategy_logger(strategy_name: str, log_dir="logs", sub_dir: str = None):
     """
     전략별 전용 로거를 생성하고 반환합니다.
-    - 실행 시마다 타임스탬프가 찍힌 JSON 파일 핸들러 생성
-    - 콘솔 스트림 핸들러
+
+    - 파일명은 날짜(YYYYMMDD)로 고정되어, 같은 날의 모든 프로세스/호출이 동일 파일에 append 된다.
+    - 같은 프로세스 내에서 동일 (strategy_name, sub_dir) 조합으로 재호출되면 멱등하게 기존 logger를 반환한다
+      (핸들러 중복 생성으로 인한 신규 _N 파일 누적 방지).
+    - 활성 파일이 maxBytes 를 넘으면 SizeTimeRotatingFileHandler 가 자동으로 _N+1 로 롤오버한다.
     """
-    logger = logging.getLogger(f"strategy.{strategy_name}")
-
-    if logger.handlers:
-        # 이미 핸들러가 설정된 경우, 새 실행을 위해 기존 핸들러를 제거하고 다시 설정
-        for handler in logger.handlers[:]:
-            handler.close()
-            logger.removeHandler(handler)
-
-    logger.setLevel(LOG_LEVEL)
-    logger.propagate = True
+    logger_key = f"strategy.{strategy_name}"
+    if sub_dir:
+        logger_key = f"{logger_key}.{sub_dir}"
+    logger = logging.getLogger(logger_key)
 
     strategy_log_dir = os.path.join(log_dir, "strategies")
     if sub_dir:
         strategy_log_dir = os.path.join(strategy_log_dir, sub_dir)
+    expected_dir = os.path.abspath(strategy_log_dir)
+
+    # 같은 (logger_name, log_dir) 조합으로 재호출되면 기존 logger를 그대로 재사용한다.
+    # log_dir 이 다르면 (테스트의 tmp_path 격리 등) 기존 핸들러를 정리하고 재구성한다.
+    if logger.handlers and getattr(logger, "_strategy_log_dir", None) == expected_dir:
+        return logger
+    if logger.handlers:
+        for h in logger.handlers[:]:
+            h.close()
+            logger.removeHandler(h)
+
+    logger.setLevel(LOG_LEVEL)
+    logger.propagate = True
+
     if not os.path.exists(strategy_log_dir):
         os.makedirs(strategy_log_dir, exist_ok=True)
 
-    timestamp = get_log_timestamp()
-    
-    # 1. JSON 파일 핸들러 (실행마다 새로 생성)
-    log_file = os.path.join(strategy_log_dir, f"{timestamp}_{strategy_name}.log.json")
+    log_date = get_strategy_log_date()
+    log_file = os.path.join(strategy_log_dir, f"{log_date}_{strategy_name}.log.json")
     file_handler = SizeTimeRotatingFileHandler(
         log_file,
         mode='a',
         encoding='utf-8',
         maxBytes=LOG_MAX_BYTES,
-        backupCount=LOG_BACKUP_COUNT
+        backupCount=LOG_BACKUP_COUNT,
+        append_to_latest=True,
     )
     file_handler.setFormatter(JsonFormatter())
     setup_async_logger(logger, file_handler)
+    logger._strategy_log_dir = expected_dir
 
     return logger
 
