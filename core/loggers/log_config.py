@@ -23,6 +23,11 @@ def get_log_timestamp():
         _log_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return _log_timestamp
 
+def get_strategy_log_date():
+    """전략 로그 파일명용 날짜(YYYYMMDD).
+    같은 날 내의 모든 프로세스/호출이 동일한 파일에 append 되도록 날짜만 반환한다."""
+    return datetime.now().strftime("%Y%m%d")
+
 def reset_log_timestamp_for_test():
     """테스트 격리를 위해 전역 타임스탬프를 리셋합니다."""
     global _log_timestamp
