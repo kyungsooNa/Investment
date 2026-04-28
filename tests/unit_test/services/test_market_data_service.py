@@ -1035,16 +1035,19 @@ async def test_get_intraday_minutes_by_date_real(trading_service_fixture, mock_d
 
 @pytest.mark.asyncio
 async def test_get_intraday_minutes_by_date_paper(trading_service_fixture, mock_deps):
-    """일별 분봉 조회 (모의투자) 테스트 - 미지원"""
+    """일별 분봉 조회는 모의투자에서도 조회 엔드포인트로 위임한다."""
     broker = mock_deps.broker
     env = mock_deps.env
     env.is_paper_trading = True
-    
+    expected = ResCommonResponse(rt_cd="0", msg1="OK", data={})
+    broker.inquire_time_dailychartprice = AsyncMock(return_value=expected)
+
     resp = await trading_service_fixture.get_intraday_minutes_by_date(stock_code="005930", input_date_1="20250101")
-    
-    assert resp.rt_cd == ErrorCode.API_ERROR.value
-    assert "모의투자 미지원" in resp.msg1
-    broker.inquire_time_dailychartprice.assert_not_called()
+
+    assert resp == expected
+    broker.inquire_time_dailychartprice.assert_awaited_once_with(
+        stock_code="005930", input_date_1="20250101", input_hour_1="", pw_data_incu_yn="Y", fake_tick_incu_yn=""
+    )
 
 @pytest.mark.asyncio
 async def test_get_top_rise_fall_stocks(trading_service_fixture, mock_deps):
@@ -1823,14 +1826,21 @@ async def test_get_intraday_minutes_today_delegates_to_broker(trading_service_fi
 
 
 @pytest.mark.asyncio
-async def test_get_intraday_minutes_by_date_returns_error_in_paper_mode(trading_service_fixture, mock_deps):
+async def test_get_intraday_minutes_by_date_delegates_in_paper_mode(trading_service_fixture, mock_deps):
     mock_deps.env.is_paper_trading = True
+    expected = ResCommonResponse(rt_cd="0", msg1="OK", data=[{"date": "20250102"}])
+    mock_deps.broker.inquire_time_dailychartprice = AsyncMock(return_value=expected)
 
     result = await trading_service_fixture.get_intraday_minutes_by_date(stock_code="005930", input_date_1="20250102")
 
-    assert result.rt_cd == ErrorCode.API_ERROR.value
-    assert result.data == []
-    mock_deps.broker.inquire_time_dailychartprice.assert_not_called()
+    assert result == expected
+    mock_deps.broker.inquire_time_dailychartprice.assert_awaited_once_with(
+        stock_code="005930",
+        input_date_1="20250102",
+        input_hour_1="",
+        pw_data_incu_yn="Y",
+        fake_tick_incu_yn="",
+    )
 
 
 @pytest.mark.asyncio

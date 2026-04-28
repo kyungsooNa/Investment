@@ -1907,12 +1907,18 @@ async def test_get_program_trade_by_stock_daily_parsing_error(mock_quotations):
 
 
 @pytest.mark.asyncio
-async def test_real_only_blocks_in_paper_mode(mock_quotations):
-    """paper 모드에서 실전 전용 API 호출 시 PAPER_NOT_SUPPORTED 차단 검증."""
+async def test_read_only_ranking_apis_pass_through_in_paper_mode(mock_quotations):
+    """paper 모드에서도 조회성 랭킹 API는 KIS 조회 엔드포인트로 전달한다."""
     mock_quotations._env.is_paper_trading = True
-    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
-        rt_cd="0", msg1="should not be called", data={}
-    ))
+    mock_quotations.call_api = AsyncMock(side_effect=[
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": []}),
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": []}),
+        ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="OK",
+            data={"output": [{"mksc_shrn_iscd": "005930", "stck_avls": "100"}]},
+        ),
+    ])
 
     for coro in (
         mock_quotations.get_top_volume_stocks(),
@@ -1920,16 +1926,16 @@ async def test_real_only_blocks_in_paper_mode(mock_quotations):
         mock_quotations.get_top_market_cap_stocks_code("0000"),
     ):
         result = await coro
-        assert result.rt_cd == ErrorCode.PAPER_NOT_SUPPORTED.value
-        assert result.data is None
+        assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert result.rt_cd != ErrorCode.PAPER_NOT_SUPPORTED.value
 
-    # 실제 broker 호출이 발생하지 않았는지 검증
-    mock_quotations.call_api.assert_not_called()
+    mock_quotations.call_api.assert_awaited()
+    assert mock_quotations.call_api.await_count == 3
 
 
 @pytest.mark.asyncio
-async def test_real_only_passes_through_in_real_mode(mock_quotations):
-    """real 모드(is_paper_trading=False)에서는 데코레이터가 통과시킨다."""
+async def test_read_only_ranking_apis_pass_through_in_real_mode(mock_quotations):
+    """real 모드에서도 조회성 랭킹 API는 KIS 조회 엔드포인트로 전달한다."""
     mock_quotations._env.is_paper_trading = False
     mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": []}

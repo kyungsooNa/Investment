@@ -103,14 +103,18 @@ class TestUpperLimitStocks(unittest.IsolatedAsyncioTestCase):
     # --- handle_upper_limit_stocks 테스트 케이스들 ---
 
     async def test_handle_upper_limit_stocks_paper_trading(self):
-        """모의투자 환경에서 상한가 종목 조회 시도 (미지원)."""
+        """상한가 종목 조회는 모의투자에서도 조회 엔드포인트로 위임한다."""
         self.mock_env.is_paper_trading = True
+        self.market_data_service.get_top_market_cap_stocks_code = AsyncMock(return_value=ResCommonResponse(
+            rt_cd="0",
+            msg1="정상",
+            data=[]
+        ))
 
         result = await self.stock_query_service.handle_upper_limit_stocks(market_code="0000", limit=500)
 
-        self.assertEqual(result, ResCommonResponse(rt_cd='100', msg1='시가총액 상위 종목 조회 실패', data=None))
-        self.mock_broker_api_wrapper.client.quotations.get_top_market_cap_stocks_code.assert_not_called()
-        self.mock_logger.warning.assert_called_once_with("MarketDataService - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
+        self.assertEqual(result, ResCommonResponse(rt_cd="0", msg1="조회 성공", data=[]))
+        self.market_data_service.get_top_market_cap_stocks_code.assert_called_once_with("0000", 500)
 
     async def test_handle_upper_limit_stocks_no_top_stocks_found(self):
         """상위 종목 목록이 비어있을 때."""

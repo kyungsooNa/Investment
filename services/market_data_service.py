@@ -119,9 +119,6 @@ class MarketDataService:
             self._logger.warning(f"[경고] count 파라미터가 명시되지 않아 기본값 30을 사용합니다. market_code={market_code}")
 
         self._logger.info(f"MarketDataService - 시가총액 상위 종목 조회 요청 - 시장: {market_code}, 개수: {limit}")
-        if self._env.is_paper_trading:
-            self._logger.warning("MarketDataService - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
-            return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1="모의투자 미지원 API입니다.", data=[])
 
         return await self._broker_api_wrapper.get_top_market_cap_stocks_code(market_code, limit)
 
@@ -561,7 +558,6 @@ class MarketDataService:
         URL: /quotations/inquire-time-dailychartprice
         TR : FHKST03010230 (실전만)
         """
-        if self._env.is_paper_trading: return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="모의투자 미지원", data=[])
         return await self._broker_api_wrapper.inquire_time_dailychartprice(stock_code=stock_code, input_date_1=input_date_1, input_hour_1=input_hour_1, pw_data_incu_yn="Y", fake_tick_incu_yn="")
 
     async def get_latest_trading_date(self) -> Optional[str]:
