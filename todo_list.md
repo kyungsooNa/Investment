@@ -329,9 +329,9 @@
 - `web_api.set_ctx()` 호출을 `web_main.py`의 lifespan으로 이동해 순환 의존 해소
 - 각 bootstrap 단계를 `try/except` + 컴포넌트 이름 로깅으로 감쌈
 
-- [ ] broker bootstrap, service bootstrap, strategy/task bootstrap을 분리한다.
-- [ ] 서비스 간 순환 의존을 줄인다. (`web_api.set_ctx` → `web_main.py` lifespan으로 이동)
-- [ ] 초기화 실패 시 어떤 컴포넌트가 실패했는지 명확히 로깅한다.
+- [X] broker bootstrap, service bootstrap, strategy/task bootstrap을 분리한다.
+- [X] 서비스 간 순환 의존을 줄인다. (`web_api.set_ctx` → `web_main.py` lifespan으로 이동)
+- [X] 초기화 실패 시 어떤 컴포넌트가 실패했는지 명확히 로깅한다.
 
 주요 파일:
 
