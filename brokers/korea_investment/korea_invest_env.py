@@ -48,7 +48,7 @@ class KoreaInvestApiEnv:
         self.htsid = self._config_data.get('htsid')
         self.custtype = self._config_data.get('custtype', 'P')
 
-        self.is_paper_trading = self._config_data.get('is_paper_trading', False)
+        self.is_paper_trading = self._config_data.get('is_paper_trading', True)
 
         self.my_agent = self._config_data.get('my_agent',
                                               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")

@@ -1,6 +1,6 @@
 # Investment Trading App - 실전 운영 개선 To-Do
 
-최종 업데이트: 2026-04-26
+최종 업데이트: 2026-04-28
 
 이 문서는 `AGENTS.md`, `SKILL.md`, `CODEBASE_SUMMARY.md`, `CODEX_WORKFLOW.md`와 repo review 내용을 기준으로 정리한 실행형 To-Do입니다.
 
@@ -48,10 +48,11 @@
 ### 3-1. 실전 모드 이중 안전 체크
 
 - [x] `is_paper_trading` 기본값을 안전(=True/모의)으로 둔다. (`config_loader.py:96`, 키 컨벤션은 `real_trading_enabled`가 아닌 `is_paper_trading`로 통일)
+- [x] raw config 기반 `KoreaInvestApiEnv._load_config()`에서도 `is_paper_trading` 누락 시 안전(=True/모의)으로 기본 동작한다. (`korea_invest_env.py`, `test_missing_is_paper_trading_defaults_to_paper_mode`)
 - [x] 단건 최대 주문금액(`max_order_amount_won`)을 설정화하고 RiskGate에서 검증한다. (`config_loader.py:58`, `risk_gate_service.py:103-110`)
 - [x] 실전 주문 직전 dry-run preview 로그를 남긴다. (`order_execution_service.py` `_log_real_order_preview()` — 종목/수량/가격/계좌 prefix/URL host/source/trace_id 출력, `[REAL ORDER PREVIEW]` 키워드)
 - [x] `RiskGateService`에 환경 재검증 가드를 추가한다. (`_check_env_consistency()` — `env.is_paper_trading` vs URL host(`vts` 포함 여부) vs 활성 계좌번호 일치 확인 → 불일치 시 hard block)
-- [x] **1일 최대 주문금액(daily cap)** 을 설정화한다. (`RiskGateConfig.max_daily_order_amount_won`, `risk_gate_service.py` `_check_daily_cap()` + in-memory 누적 트래커, 7일 이상 된 키 자동 정리)
+- [x] **1일 최대 주문금액(daily cap)** 을 설정화한다. (`RiskGateConfig.max_daily_order_amount_won`, `config.yaml.example`, `risk_gate_service.py` `_check_daily_cap()` + in-memory 누적 트래커, 7일 이상 된 키 자동 정리)
 - [x] paper 모드에서 실전 전용 API(랭킹/시총/거래량 랭킹) 호출 시 명시적 `PAPER_NOT_SUPPORTED` 에러를 반환한다. (`korea_invest_quotations_api.py` `@_real_only` 데코레이터 — `get_top_market_cap_stocks_code`, `get_top_rise_fall_stocks`, `get_top_volume_stocks`)
 
 주요 파일:
@@ -67,14 +68,21 @@
 ### 3-2. Web/CLI에 모드 상태 노출
 
 - [x] 웹 화면 status-bar에 실전/모의 모드 배지를 노출한다. (`view/web/templates/base.html:59` `status-env`)
+- [x] `/api/status`에 `is_paper_trading` boolean을 내려 웹 모드 판정이 표시 문구/인코딩에 의존하지 않도록 한다. (`view/web/routes/stock.py`, `view/web/static/js/common.js`)
 - [x] 실전 모드에서는 주문 화면에 경고 배너 노출 + 주문 버튼 외곽선 강조 + 2단계 확인(`confirm` → "REAL" 입력) 플로우를 적용한다. (`view/web/templates/order.html`, `view/web/static/js/order.js`)
+- [x] 실전 수동 주문은 클라이언트 확인뿐 아니라 서버에서도 `real_order_confirmation == "REAL"` 없이는 broker/order service 호출 전 차단한다. (`OrderRequest.real_order_confirmation`, `view/web/routes/order.py`)
+- [x] 웹에서 실전 모드로 전환할 때도 서버에서 `real_mode_confirmation == "REAL"` 없이는 차단한다. 모의 전환은 확인 문자열 없이 허용한다. (`EnvironmentRequest.real_mode_confirmation`, `view/web/routes/stock.py`)
 - [~] CLI 주문 경로 — N/A. 현재 main.py는 web 전용으로 동작하며 CLI 모드는 제거된 상태(`view/cli/`, `app/user_action_executor.py` 부재).
 - [x] `KoreaInvestEnv.set_trading_mode()` 호출 시 base_url/active_account/token_provider가 모드별로 교체되는지 회귀 테스트로 보장한다. (`tests/unit_test/brokers/korea_investment/test_korea_invest_env.py` — `_swaps_base_url`, `_swaps_active_account`, `_swaps_token_provider_reference`, `_no_change_does_not_swap_provider` 4종)
 
 주요 파일:
 
 - `view/web/routes/order.py`
+- `view/web/routes/stock.py`
+- `view/web/api_common.py`
 - `view/web/templates/*`
+- `view/web/static/js/common.js`
+- `view/web/static/js/order.js`
 - `view/cli/cli_view.py`
 - `app/user_action_executor.py`
 
@@ -92,9 +100,10 @@
 
 ### 4-1. Execution Quality 추적
 
-- [ ] 주문별 예상 체결가와 실제 체결가를 기록한다.
-- [ ] 슬리피지 금액과 슬리피지 비율을 계산한다.
-- [ ] 주문 타입, 주문 시각, 호가 스프레드, 체결 지연 시간을 함께 기록한다.
+- [x] 주문별 예상 체결가와 실제 체결가를 기록한다. (`OrderContext.expected_fill_price`, `average_fill_price`)
+- [x] 슬리피지 금액과 슬리피지 비율을 계산한다. (`slippage_amount_won`, `slippage_pct`)
+- [x] 주문 타입, 주문 시각, 체결 지연 시간을 함께 기록한다. (`order_type`, `created_at`, `first_fill_latency_sec`)
+- [~] 호가 스프레드는 시장가 주문 정책 판단 컨텍스트에 기록한다. 영속 리포트 반영은 후속 작업으로 남긴다.
 - [ ] 전략별/종목별 체결 품질 리포트를 추가한다.
 - [ ] 체결 품질이 기준 이하인 전략은 경고 또는 자동 비활성화 후보로 표시한다.
 
@@ -107,11 +116,11 @@
 
 ### 4-2. Liquidity Control 추가
 
-- [ ] 최소 거래대금 필터를 설정화한다. 예: 100억 이상
-- [ ] 호가잔량 기준 진입 제한을 추가한다.
+- [x] 최소 거래대금 필터를 설정화한다. 예: 100억 이상 (`order_policy.min_trading_value_won`)
+- [x] 호가잔량 기준 진입 제한을 추가한다. (`order_policy.max_top_of_book_participation_pct`)
 - [ ] 체결 강도/체결 속도 기반 필터를 검토한다.
 - [ ] 소형주, 관리종목, 투자경고 종목 제외 규칙을 추가한다.
-- [ ] 유동성 부족으로 차단된 신호를 전략 로그에 남긴다.
+- [~] 유동성 부족으로 차단된 신호를 주문 정책 응답/로그에 남긴다. 전략 로그 연동은 후속 작업으로 남긴다.
 
 주요 파일:
 

@@ -68,10 +68,12 @@ class OrderRequest(BaseModel):
     price: str
     qty: str
     side: str  # "buy" or "sell"
+    real_order_confirmation: str | None = None
 
 
 class EnvironmentRequest(BaseModel):
     is_paper: bool
+    real_mode_confirmation: str | None = None
 
 
 class ProgramTradingRequest(BaseModel):

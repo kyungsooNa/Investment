@@ -7,11 +7,19 @@ from view.web.api_common import _get_ctx, _serialize_response, OrderRequest
 router = APIRouter()
 
 
+def _is_real_trading_mode(ctx) -> bool:
+    env = getattr(ctx, "env", None)
+    return not bool(getattr(env, "is_paper_trading", True))
+
+
 @router.post("/order")
 async def place_order(req: OrderRequest):
     """매수/매도 주문. 가상 매매 기록은 실제 체결 확인 후 OrderExecutionService가 처리한다."""
     ctx = _get_ctx()
     t_start = ctx.pm.start_timer()
+
+    if _is_real_trading_mode(ctx) and req.real_order_confirmation != "REAL":
+        raise HTTPException(status_code=400, detail="실전 주문 확인 문자열이 필요합니다.")
 
     # 1. 실제/모의 투자 주문 전송
     if req.side == "buy":

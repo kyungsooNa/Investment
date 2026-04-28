@@ -249,10 +249,19 @@ async function updateStatus() {
         envBadge.innerText = data.env_type || "Unknown";
         if (data.env_type === "모의투자") {
             envBadge.className = "badge paper clickable";
+            envBadge.dataset.mode = "paper";
         } else if (data.env_type === "실전투자") {
             envBadge.className = "badge real clickable";
+            envBadge.dataset.mode = "real";
         } else {
             envBadge.className = "badge closed clickable";
+            envBadge.dataset.mode = "unknown";
+        }
+        if (typeof data.is_paper_trading === 'boolean') {
+            envBadge.className = data.is_paper_trading
+                ? "badge paper clickable"
+                : "badge real clickable";
+            envBadge.dataset.mode = data.is_paper_trading ? "paper" : "real";
         }
 
     } catch (e) {
@@ -263,15 +272,34 @@ async function updateStatus() {
 async function toggleEnvironment() {
     if (!confirm("거래 환경을 전환하시겠습니까? (서버 재설정)")) return;
 
-    const currentText = document.getElementById('status-env').innerText;
+    const envBadge = document.getElementById('status-env');
+    const currentText = envBadge.innerText;
     const isCurrentlyPaper = (currentText === "모의투자");
-    const targetIsPaper = !isCurrentlyPaper;
+    const targetIsPaper = envBadge.dataset.mode
+        ? envBadge.dataset.mode === "real"
+        : !isCurrentlyPaper;
+    let realModeConfirmation = null;
+
+    if (!targetIsPaper) {
+        const step1 = confirm(
+            "실전투자 모드로 전환합니다.\n\n실제 계좌와 실전 주문 API가 사용됩니다. 계속하시겠습니까?"
+        );
+        if (!step1) return;
+        realModeConfirmation = prompt('최종 확인을 위해 "REAL"을 입력하세요:');
+        if (realModeConfirmation !== "REAL") {
+            alert("확인 문자열이 일치하지 않아 실전 모드 전환이 취소되었습니다.");
+            return;
+        }
+    }
 
     try {
         const res = await fetch('/api/environment', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ is_paper: targetIsPaper })
+            body: JSON.stringify({
+                is_paper: targetIsPaper,
+                real_mode_confirmation: realModeConfirmation
+            })
         });
         const data = await res.json();
 

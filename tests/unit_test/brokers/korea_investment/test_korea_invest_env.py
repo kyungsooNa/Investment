@@ -87,6 +87,17 @@ class TestKoreaInvestApiEnv(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.env.active_config['base_url'], "https://paper-api.com")
         self.logger.info.assert_called_with("거래 모드가 모의투자 환경으로 변경되었습니다.")
 
+    async def test_missing_is_paper_trading_defaults_to_paper_mode(self):
+        config_data = dict(self.mock_config_data)
+        config_data.pop("is_paper_trading", None)
+        env = KoreaInvestApiEnv(config_data, logger=self.logger)
+
+        env.set_trading_mode(config_data.get("is_paper_trading", True))
+
+        self.assertTrue(env.is_paper_trading)
+        self.assertEqual(env.active_config["stock_account_number"], "test_paper_account")
+        self.assertEqual(env.active_config["base_url"], "https://paper-api.com")
+
     async def test_set_trading_mode_to_real(self):
         self.env.set_trading_mode(False)
         self.assertFalse(self.env.is_paper_trading)

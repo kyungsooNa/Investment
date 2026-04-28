@@ -2,7 +2,9 @@
 
 function _isRealMode() {
     const badge = document.getElementById('status-env');
-    return !!(badge && badge.innerText.trim() === '실전투자');
+    return !!(badge && (
+        badge.dataset.mode === 'real' || badge.classList.contains('real')
+    ));
 }
 
 function _refreshOrderRealBanner() {
@@ -47,6 +49,7 @@ async function placeOrder(side) {
     const sideKr = side === 'buy' ? '매수' : '매도';
     const isReal = _isRealMode();
 
+    let realOrderConfirmation = null;
     if (isReal) {
         // 실전 모드: 2단계 확인
         const step1 = confirm(
@@ -56,8 +59,8 @@ async function placeOrder(side) {
         );
         if (!step1) return;
 
-        const typed = prompt(`최종 확인을 위해 "REAL"을 입력하세요:`);
-        if (typed !== 'REAL') {
+        realOrderConfirmation = prompt(`최종 확인을 위해 "REAL"을 입력하세요:`);
+        if (realOrderConfirmation !== 'REAL') {
             alert('확인 문자열이 일치하지 않아 주문이 취소되었습니다.');
             return;
         }
@@ -78,7 +81,13 @@ async function placeOrder(side) {
         const res = await fetchWithTimeout('/api/order', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ code, qty, price, side })
+            body: JSON.stringify({
+                code,
+                qty,
+                price,
+                side,
+                real_order_confirmation: realOrderConfirmation
+            })
         });
         const json = await res.json();
 

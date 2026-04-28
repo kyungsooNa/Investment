@@ -175,6 +175,13 @@ class OrderPolicyService:
             return self._quote_failure_decision(stock_code, reason)
 
         quote = self._extract_quote_data(quote_resp.data)
+        trading_value = self._to_int(self._pick(
+            quote,
+            "acml_tr_pbmn",
+            "trading_value",
+            "acc_trading_value",
+            "누적거래대금",
+        ))
         ask = self._to_int(self._pick(quote, "askp1", "매도호가1"))
         bid = self._to_int(self._pick(quote, "bidp1", "매수호가1"))
         ask_qty = self._to_int(self._pick(quote, "askp_rsqn1", "매도호가잔량1"))
@@ -222,6 +229,23 @@ class OrderPolicyService:
                 max_market_slippage_pct=self._cfg.max_market_slippage_pct,
             )
 
+        if self._cfg.min_trading_value_won > 0:
+            if trading_value <= 0:
+                return self._blocked(
+                    "trading_value_unavailable",
+                    "거래대금 데이터가 없어 유동성 검증을 통과할 수 없습니다.",
+                    stock_code=stock_code,
+                    min_trading_value_won=self._cfg.min_trading_value_won,
+                )
+            if trading_value < self._cfg.min_trading_value_won:
+                return self._blocked(
+                    "trading_value_too_low",
+                    "거래대금이 최소 유동성 기준보다 작습니다.",
+                    stock_code=stock_code,
+                    trading_value_won=trading_value,
+                    min_trading_value_won=self._cfg.min_trading_value_won,
+                )
+
         book_qty = ask_qty if side == OrderSide.BUY else bid_qty
         if book_qty > 0 and qty > book_qty:
             return self._blocked(
@@ -232,6 +256,19 @@ class OrderPolicyService:
                 qty=qty,
                 top_of_book_qty=book_qty,
             )
+        if book_qty > 0 and self._cfg.max_top_of_book_participation_pct > 0:
+            participation_pct = qty / book_qty * 100
+            if participation_pct > self._cfg.max_top_of_book_participation_pct:
+                return self._blocked(
+                    "top_of_book_participation_too_high",
+                    "주문 수량이 최우선 호가 잔량 대비 허용 비율을 초과합니다.",
+                    stock_code=stock_code,
+                    side=side.value,
+                    qty=qty,
+                    top_of_book_qty=book_qty,
+                    participation_pct=round(participation_pct, 3),
+                    max_top_of_book_participation_pct=self._cfg.max_top_of_book_participation_pct,
+                )
 
         return OrderPolicyDecision(
             allowed=True,
@@ -244,6 +281,10 @@ class OrderPolicyService:
                 "stock_code": stock_code,
                 "ask": ask,
                 "bid": bid,
+                "executable_price": executable_price,
+                "reference_price": reference_price,
+                "top_of_book_qty": book_qty,
+                "trading_value_won": trading_value,
                 "spread_pct": round(spread_pct, 3),
                 "slippage_pct": round(slippage_pct, 3),
             },

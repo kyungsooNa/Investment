@@ -91,6 +91,15 @@ def test_app_config_validation_success():
     assert config.base_url == "https://api.test.com"
     assert config.web.port == 8080
 
+
+def test_app_config_defaults_to_paper_trading_when_omitted():
+    config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        cache={"base_dir": ".cache", "memory_cache_enabled": True, "file_cache_enabled": True},
+    )
+
+    assert config.is_paper_trading is True
+
 def test_app_config_validation_invalid_url():
     """AppConfig base_url 유효성 검사 실패 테스트"""
     config_data = {

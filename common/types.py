@@ -100,6 +100,13 @@ class OrderContext(BaseModel):
     last_stuck_alert_level: str = ""
     trace_id: Optional[str] = None
     intent_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    expected_fill_price: Optional[int] = None
+    average_fill_price: Optional[float] = None
+    total_fill_amount: int = 0
+    last_fill_price: Optional[int] = None
+    slippage_amount_won: Optional[float] = None
+    slippage_pct: Optional[float] = None
+    first_fill_latency_sec: Optional[float] = None
 
     @model_validator(mode="after")
     def sync_remaining_qty(self) -> "OrderContext":
@@ -145,6 +152,12 @@ class OrderContext(BaseModel):
         transition_time: Optional[datetime] = None,
         stuck_alert_at: Optional[datetime] = None,
         stuck_alert_level: Optional[str] = None,
+        average_fill_price: Optional[float] = None,
+        total_fill_amount: Optional[int] = None,
+        last_fill_price: Optional[int] = None,
+        slippage_amount_won: Optional[float] = None,
+        slippage_pct: Optional[float] = None,
+        first_fill_latency_sec: Optional[float] = None,
     ) -> "OrderContext":
         if not self.can_transition_to(new_state):
             raise ValueError(f"잘못된 주문 상태 전이: {self.state} -> {new_state}")
@@ -180,6 +193,16 @@ class OrderContext(BaseModel):
             "state_entered_at": next_state_entered_at,
             "last_stuck_alert_at": next_last_stuck_alert_at,
             "last_stuck_alert_level": next_last_stuck_alert_level,
+            "average_fill_price": self.average_fill_price if average_fill_price is None else average_fill_price,
+            "total_fill_amount": self.total_fill_amount if total_fill_amount is None else max(total_fill_amount, 0),
+            "last_fill_price": self.last_fill_price if last_fill_price is None else max(last_fill_price, 0),
+            "slippage_amount_won": self.slippage_amount_won if slippage_amount_won is None else slippage_amount_won,
+            "slippage_pct": self.slippage_pct if slippage_pct is None else slippage_pct,
+            "first_fill_latency_sec": (
+                self.first_fill_latency_sec
+                if first_fill_latency_sec is None
+                else max(first_fill_latency_sec, 0)
+            ),
         })
 
 

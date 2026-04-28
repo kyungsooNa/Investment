@@ -1598,6 +1598,59 @@ async def test_execution_report_without_fill_moves_pending_to_submitted(handler)
 
 
 @pytest.mark.asyncio
+async def test_execution_report_records_execution_quality_metrics(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    created_at = datetime(2026, 4, 24, 9, 0, 0)
+    mock_market_clock.get_current_kst_time.return_value = created_at + timedelta(seconds=5)
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+    )
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    handler._set_order_context(OrderContext(
+        order_key=order_key,
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=OrderState.SUBMITTED,
+        exchange=Exchange.KRX,
+        price=70000,
+        qty=10,
+        broker_order_no="A0001",
+        expected_fill_price=70000,
+        created_at=created_at,
+    ))
+
+    updated = await handler.apply_execution_report(OrderExecutionReport(
+        broker_order_no="A0001",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        event_state=OrderState.FILLED,
+        order_qty=10,
+        fill_qty=10,
+        fill_price=70100,
+        cumulative_filled_qty=10,
+        remaining_qty=0,
+    ))
+
+    assert updated.average_fill_price == 70100
+    assert updated.total_fill_amount == 701000
+    assert updated.slippage_amount_won == 100
+    assert updated.slippage_pct == pytest.approx(100 / 70000 * 100)
+    assert updated.first_fill_latency_sec == 5
+    mock_logger.info.assert_any_call(ANY)
+    assert any(
+        "[EXECUTION QUALITY]" in call.args[0]
+        for call in mock_logger.info.call_args_list
+    )
+
+
+@pytest.mark.asyncio
 async def test_manual_sell_terminal_report_uses_plain_virtual_sell_and_records_kill_switch(
     mock_broker_api_wrapper,
     mock_logger,
