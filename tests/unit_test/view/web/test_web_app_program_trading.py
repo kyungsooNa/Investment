@@ -11,7 +11,6 @@ def mock_ctx():
     app_context.env = MagicMock()
 
     with patch('view.web.web_app_initializer.ProgramTradingStreamService') as MockRDM, \
-         patch('view.web.web_app_initializer.web_api'), \
          patch('view.web.web_app_initializer.StockRepository'), \
          patch('view.web.web_app_initializer.StockCodeRepository'), \
          patch('view.web.web_app_initializer.VirtualTradeService'), \

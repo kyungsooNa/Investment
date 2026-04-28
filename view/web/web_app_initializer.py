@@ -68,7 +68,7 @@ from services.price_subscription_service import PriceSubscriptionService
 from services.price_stream_service import PriceStreamService
 from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
-from view.web import web_api  # 임포트 확인
+
 from core.cache.cache_store import CacheStore
 from services.rs_rating_service import RSRatingService
 from services.minervini_stage_service import MinerviniStageService
@@ -136,8 +136,6 @@ class WebAppContext:
 
         # 실시간 스트리밍 전용 이벤트 로거 (logs/streaming/)
         self.streaming_event_logger = get_streaming_logger()
-        
-        web_api.set_ctx(self)
 
     def load_config_and_env(self):
         """설정 파일 로드 및 환경 초기화."""
@@ -198,32 +196,46 @@ class WebAppContext:
         
 
     async def initialize_services(self, is_paper_trading: bool = True):
-        """서비스 레이어 초기화. TradingApp._complete_api_initialization() 참조."""
+        """서비스 레이어 초기화."""
         self.env.set_trading_mode(is_paper_trading)
-        token_acquired = await self.env.get_access_token()
-        if not token_acquired:
-            self.logger.critical("웹 앱: 토큰 발급 실패.")
+        if not await self._bootstrap_broker(is_paper_trading):
             return False
-        # 모의투자 모드에서도 실전 토큰 사전 발급 (조회 API는 항상 실전 인증 사용)
-        if is_paper_trading:
-            await self.env.get_real_access_token()
+        try:
+            self._bootstrap_services()
+            self._bootstrap_schedulers()
+        except Exception as e:
+            self.logger.critical(f"웹 앱: 서비스 초기화 실패: {e}", exc_info=True)
+            return False
+        self.initialized = True
+        mode = "모의투자" if is_paper_trading else "실전투자"
+        self.logger.info(f"웹 앱: 서비스 초기화 완료 ({mode})")
+        return True
 
-        self.broker = BrokerAPIWrapper(
-            env=self.env, logger=self.logger, market_clock=self.market_clock,
-            market_calendar_service=self._mcs,
-            streaming_logger=self.streaming_event_logger,
-            stock_code_repository=self.stock_code_repository,
-        )
+    async def _bootstrap_broker(self, is_paper_trading: bool) -> bool:
+        """토큰 발급 및 BrokerAPIWrapper 초기화."""
+        try:
+            token_acquired = await self.env.get_access_token()
+            if not token_acquired:
+                self.logger.critical("[BrokerBootstrap] 토큰 발급 실패.")
+                return False
+            # 모의투자 모드에서도 실전 토큰 사전 발급 (조회 API는 항상 실전 인증 사용)
+            if is_paper_trading:
+                await self.env.get_real_access_token()
+            self.broker = BrokerAPIWrapper(
+                env=self.env, logger=self.logger, market_clock=self.market_clock,
+                market_calendar_service=self._mcs,
+                streaming_logger=self.streaming_event_logger,
+                stock_code_repository=self.stock_code_repository,
+            )
+            self._mcs.set_broker(self.broker)
+            await self._mcs._sync_calendar_if_needed()
+        except Exception as e:
+            self.logger.critical(f"[BrokerBootstrap] 초기화 실패: {e}", exc_info=True)
+            return False
+        return True
 
-        # [수정] MarketCalendarService에 Broker 주입 (Fetcher 로직은 Manager 내부로 이동)
-        self._mcs.set_broker(self.broker)
-        
-        # [신규] 휴장일 정보 동기화 
-        # 이를 통해 get_next_market_open_time 등이 임시공휴일을 정확히 인지하게 됨
-        await self._mcs._sync_calendar_if_needed()
-
-        # 캐시 매니저 생성
-        # Pydantic 모델(AppConfig)을 dict로 변환하여 전달
+    def _bootstrap_services(self):
+        """서비스 레이어 초기화 — 실패 시 컴포넌트명과 함께 예외를 전파한다."""
         config_dict = self.full_config
         if hasattr(config_dict, "model_dump"):
             config_dict = config_dict.model_dump()
@@ -232,19 +244,18 @@ class WebAppContext:
 
         perf_log = config_dict.get("performance_logging", False)
         perf_threshold = config_dict.get("performance_threshold", 0.1)
-        # [변경] PerformanceProfiler 인스턴스 생성 및 주입 준비
         self.pm = PerformanceProfiler(enabled=perf_log, threshold=perf_threshold)
 
-        cache_store = CacheStore(config_dict)
-        cache_store.set_logger(self.logger)
+        try:
+            cache_store = CacheStore(config_dict)
+            cache_store.set_logger(self.logger)
+            self.stock_repository = StockRepository(logger=self.logger)
+        except Exception as e:
+            self.logger.critical(f"[ServiceBootstrap:Repository] 초기화 실패: {e}", exc_info=True)
+            raise
 
-        # Repository 초기화 (StockQueryService 주입을 위해 선 생성)
-        self.stock_repository = StockRepository(logger=self.logger)
-
-        # RS Rating 저장소 및 서비스 초기화 (웹에서 종목 조회 시 활용)
         try:
             self.rs_rating_repository = RSRatingRepository(logger=self.logger)
-            # StockRepository 내부의 OHLCV 리포를 재사용하여 DB 커넥션 공유
             self.rs_rating_service = RSRatingService(
                 stock_ohlcv_repository=self.stock_repository._ohlcv_repo,
                 rs_rating_repository=self.rs_rating_repository,
@@ -253,65 +264,66 @@ class WebAppContext:
                 performance_profiler=self.pm,
             )
         except Exception as e:
-            # 실패 시에도 앱은 계속 동작하도록 로깅만 수행
-            self.logger.warning(f"RSRatingService 초기화 실패: {e}")
+            self.logger.warning(f"[ServiceBootstrap:RSRating] 초기화 실패: {e}")
 
-        self.market_data_service = MarketDataService(
-            broker_api_wrapper=self.broker, env=self.env, logger=self.logger, market_clock=self.market_clock, cache_store=cache_store,
-            market_calendar_service=self._mcs,
-            performance_profiler=self.pm,
-            stock_repository=self.stock_repository
-        )
+        try:
+            self.market_data_service = MarketDataService(
+                broker_api_wrapper=self.broker, env=self.env, logger=self.logger, market_clock=self.market_clock, cache_store=cache_store,
+                market_calendar_service=self._mcs,
+                performance_profiler=self.pm,
+                stock_repository=self.stock_repository
+            )
+            self.indicator_service = IndicatorService(cache_store=cache_store, performance_profiler=self.pm)
+            self.message_broker = MessageBroker()
+            self.dlq_manager = DlqManager(logger=self.logger)
+            self.worker_pool = WorkerPool(
+                broker=self.message_broker,
+                dlq_manager=self.dlq_manager,
+                logger=self.logger,
+                num_workers=1,  # after_market 태스크는 API 레이트 리밋 고려해 순차 실행
+            )
+            self.time_dispatcher = TimeDispatcher(
+                broker=self.message_broker,
+                market_clock=self.market_clock,
+                mcs=self._mcs,
+                logger=self.logger,
+            )
+        except Exception as e:
+            self.logger.critical(f"[ServiceBootstrap:CoreServices] 초기화 실패: {e}", exc_info=True)
+            raise
 
-        # IndicatorService 초기화 (순환 참조 해결을 위해 먼저 생성 후 주입)
-        self.indicator_service = IndicatorService(cache_store=cache_store, performance_profiler=self.pm)
-        
-        # Ticket-driven 인프라 초기화
-        self.message_broker = MessageBroker()
-        self.dlq_manager = DlqManager(logger=self.logger)
-        self.worker_pool = WorkerPool(
-            broker=self.message_broker,
-            dlq_manager=self.dlq_manager,
-            logger=self.logger,
-            num_workers=1,  # after_market 태스크는 API 레이트 리밋 고려해 순차 실행
-        )
-        self.time_dispatcher = TimeDispatcher(
-            broker=self.message_broker,
-            market_clock=self.market_clock,
-            mcs=self._mcs,
-            logger=self.logger,
-        )
+        try:
+            self.ranking_task = RankingTask(
+                broker_api_wrapper=self.broker,
+                stock_code_repository=self.stock_code_repository,
+                env=self.env,
+                logger=self.logger,
+                market_clock=self.market_clock,
+                performance_profiler=self.pm,
+                notification_service=self.notification_service,
+                telegram_reporter=getattr(self, 'telegram_reporter', None),
+                market_calendar_service=self._mcs,
+                market_data_service=self.market_data_service,
+                worker_pool=self.worker_pool,
+            )
+            self.stock_query_service = StockQueryService(
+                market_data_service=self.market_data_service, logger=self.logger, market_clock=self.market_clock,
+                indicator_service=self.indicator_service,
+                ranking_task=self.ranking_task,
+                performance_profiler=self.pm,
+                notification_service=self.notification_service,
+                broker_api_wrapper=self.broker,
+                streaming_logger=self.streaming_event_logger,
+            )
+            # IndicatorService에 StockQueryService 주입 (순환 참조 해결)
+            self.indicator_service.stock_query_service = self.stock_query_service
+            self.favorite_service.stock_query_service = self.stock_query_service
+            self.favorite_service.stock_repository = self.stock_repository
+            self.favorite_service.rs_rating_service = getattr(self, "rs_rating_service", None)
+        except Exception as e:
+            self.logger.critical(f"[ServiceBootstrap:QueryServices] 초기화 실패: {e}", exc_info=True)
+            raise
 
-        self.ranking_task = RankingTask(
-            broker_api_wrapper=self.broker,
-            stock_code_repository=self.stock_code_repository,
-            env=self.env,
-            logger=self.logger,
-            market_clock=self.market_clock,
-            performance_profiler=self.pm,
-            notification_service=self.notification_service,
-            telegram_reporter=getattr(self, 'telegram_reporter', None),
-            market_calendar_service=self._mcs,
-            market_data_service=self.market_data_service,
-            worker_pool=self.worker_pool,
-        )
-        self.stock_query_service = StockQueryService(
-            market_data_service=self.market_data_service, logger=self.logger, market_clock=self.market_clock,
-            indicator_service=self.indicator_service,
-            ranking_task=self.ranking_task,
-            performance_profiler=self.pm,
-            notification_service=self.notification_service,
-            broker_api_wrapper=self.broker,
-            streaming_logger=self.streaming_event_logger,
-        )
-        # IndicatorService에 StockQueryService 주입
-        self.indicator_service.stock_query_service = self.stock_query_service
-        # FavoriteService에 StockQueryService, StockRepository 주입 (현재가 조회용)
-        self.favorite_service.stock_query_service = self.stock_query_service
-        self.favorite_service.stock_repository = self.stock_repository
-        self.favorite_service.rs_rating_service = getattr(self, "rs_rating_service", None)
-
-        # MinerviniStageService 초기화 (stock_query_service 초기화 이후에 생성)
         try:
             self.minervini_stage_service = MinerviniStageService(
                 stock_query_service=self.stock_query_service,
@@ -321,10 +333,9 @@ class WebAppContext:
             )
             self.favorite_service.minervini_stage_service = self.minervini_stage_service
         except Exception as e:
-            self.logger.warning(f"MinerviniStageService 초기화 실패: {e}")
+            self.logger.warning(f"[ServiceBootstrap:MinerviniStage] 초기화 실패: {e}")
             self.minervini_stage_service = None
 
-        # Minervini Stage2 백그라운드 업데이트 태스크 초기화
         try:
             self.minervini_update_task = MinerviniUpdateTask(
                 minervini_service=getattr(self, 'minervini_stage_service', None),
@@ -342,281 +353,259 @@ class WebAppContext:
                 worker_pool=self.worker_pool,
             )
         except Exception as e:
-            self.logger.warning(f"MinerviniUpdateTask 초기화 실패: {e}")
+            self.logger.warning(f"[ServiceBootstrap:MinerviniUpdate] 초기화 실패: {e}")
             self.minervini_update_task = None
 
         # MinerviniStageService에 MinerviniUpdateTask 연결 (생성 순서 때문에 사후 주입)
         if self.minervini_stage_service and self.minervini_update_task:
             self.minervini_stage_service._minervini_update_task = self.minervini_update_task
 
-        # NOTE: MinerviniUpdateTask._daily_price_collector_task는 DailyPriceCollectorTask 생성 후 사후 주입
+        try:
+            self.streaming_service = StreamingService(
+                broker_api_wrapper=self.broker,
+                logger=self.logger,
+                market_clock=self.market_clock,
+                market_data_service=self.market_data_service,
+                streaming_logger=self.streaming_event_logger,
+            )
+            self.price_stream_service = PriceStreamService(
+                stock_repo=self.stock_repository,
+                logger=self.logger,
+            )
+            self.streaming_service.set_price_stream_service(self.price_stream_service)
+            self.streaming_stock_repo = StreamingStockRepo(logger=self.logger)
+            self.streaming_stock_repo.load_pt_desired_from_db("data/program_subscribe/program_trading.db")
+            self.streaming_service.set_streaming_stock_repo(self.streaming_stock_repo)
+            self.program_trading_stream_service.wire_streaming_stock_repo(self.streaming_stock_repo)
+            self.price_subscription_service = PriceSubscriptionService(
+                streaming_service=self.streaming_service,
+                stock_repo=self.stock_repository,
+                logger=self.logger,
+                streaming_logger=self.streaming_event_logger,
+                streaming_stock_repo=self.streaming_stock_repo,
+                market_calendar=self._mcs,
+            )
+            self.websocket_watchdog_task = WebSocketWatchdogTask(
+                streaming_service=self.streaming_service,
+                program_trading_stream_service=self.program_trading_stream_service,
+                market_calendar_service=self._mcs,
+                performance_profiler=self.pm,
+                notification_service=self.notification_service,
+                logger=self.logger,
+                streaming_logger=self.streaming_event_logger,
+                streaming_stock_repo=self.streaming_stock_repo,
+                price_subscription_service=self.price_subscription_service,
+                price_stream_service=self.price_stream_service,
+            )
+            self.daily_price_collector_task = DailyPriceCollectorTask(
+                stock_query_service=self.stock_query_service,
+                stock_code_repository=self.stock_code_repository,
+                stock_repo=self.stock_repository,
+                market_calendar_service=self._mcs,
+                market_clock=self.market_clock,
+                performance_profiler=self.pm,
+                notification_service=self.notification_service,
+                logger=self.logger,
+                rs_rating_service=getattr(self, "rs_rating_service", None),
+                worker_pool=self.worker_pool,
+            )
+            # NOTE: MinerviniUpdateTask._daily_price_collector_task는 DailyPriceCollectorTask 생성 후 사후 주입
+            if self.minervini_update_task and self.daily_price_collector_task:
+                self.minervini_update_task._daily_price_collector_task = self.daily_price_collector_task
+            self.ohlcv_update_task = OhlcvUpdateTask(
+                stock_query_service=self.stock_query_service,
+                stock_code_repository=self.stock_code_repository,
+                stock_repo=self.stock_repository,
+                market_calendar_service=self._mcs,
+                market_clock=self.market_clock,
+                performance_profiler=self.pm,
+                notification_service=self.notification_service,
+                logger=self.logger,
+                worker_pool=self.worker_pool,
+            )
+        except Exception as e:
+            self.logger.critical(f"[ServiceBootstrap:Streaming] 초기화 실패: {e}", exc_info=True)
+            raise
 
-        # StreamingService 초기화
-        self.streaming_service = StreamingService(
-            broker_api_wrapper=self.broker,
-            logger=self.logger,
-            market_clock=self.market_clock,
-            market_data_service=self.market_data_service,
-            streaming_logger=self.streaming_event_logger,
-        )
-        # PriceStreamService 초기화 — 체결가 틱 캐시 + StockRepository 업데이트 전담
-        self.price_stream_service = PriceStreamService(
-            stock_repo=self.stock_repository,
-            logger=self.logger,
-        )
-        self.streaming_service.set_price_stream_service(self.price_stream_service)
-
-        # StreamingStockRepo 초기화 (구독 상태 중앙 저장소)
-        self.streaming_stock_repo = StreamingStockRepo(logger=self.logger)
-        self.streaming_stock_repo.load_pt_desired_from_db("data/program_subscribe/program_trading.db")
-        self.streaming_service.set_streaming_stock_repo(self.streaming_stock_repo)
-        self.program_trading_stream_service.wire_streaming_stock_repo(self.streaming_stock_repo)
-
-        # PriceSubscriptionService 초기화 (StreamingService 생성 이후)
-        self.price_subscription_service = PriceSubscriptionService(
-            streaming_service=self.streaming_service,
-            stock_repo=self.stock_repository,
-            logger=self.logger,
-            streaming_logger=self.streaming_event_logger,
-            streaming_stock_repo=self.streaming_stock_repo,
-            market_calendar=self._mcs,
-        )
-
-        # WebSocketWatchdogTask 초기화
-        self.websocket_watchdog_task = WebSocketWatchdogTask(
-            streaming_service=self.streaming_service,
-            program_trading_stream_service=self.program_trading_stream_service,
-            market_calendar_service=self._mcs,
-            performance_profiler=self.pm,
-            notification_service=self.notification_service,
-            logger=self.logger,
-            streaming_logger=self.streaming_event_logger,
-            streaming_stock_repo=self.streaming_stock_repo,
-            price_subscription_service=self.price_subscription_service,
-            price_stream_service=self.price_stream_service,
-        )
-
-        self.daily_price_collector_task = DailyPriceCollectorTask(
-            stock_query_service=self.stock_query_service,
-            stock_code_repository=self.stock_code_repository,
-            stock_repo=self.stock_repository,
-            market_calendar_service=self._mcs,
-            market_clock=self.market_clock,
-            performance_profiler=self.pm,
-            notification_service=self.notification_service,
-            logger=self.logger,
-            rs_rating_service=getattr(self, "rs_rating_service", None),
-            worker_pool=self.worker_pool,
-        )
-
-        # MinerviniUpdateTask에 DailyPriceCollectorTask 사후 주입 (생성 순서 역전 해결)
-        if self.minervini_update_task and self.daily_price_collector_task:
-            self.minervini_update_task._daily_price_collector_task = self.daily_price_collector_task
-
-        self.ohlcv_update_task = OhlcvUpdateTask(
-            stock_query_service=self.stock_query_service,
-            stock_code_repository=self.stock_code_repository,
-            stock_repo=self.stock_repository,
-            market_calendar_service=self._mcs,
-            market_clock=self.market_clock,
-            performance_profiler=self.pm,
-            notification_service=self.notification_service,
-            logger=self.logger,
-            worker_pool=self.worker_pool,
-        )
-
-        _ps_cfg = getattr(self.full_config, "position_sizing", None) or PositionSizingConfig()
-        self.account_snapshot_cache = AccountSnapshotCache(
-            broker_api_wrapper=self.broker,
-            logger=self.logger,
-            ttl_sec=_ps_cfg.snapshot_ttl_sec if _ps_cfg else 60,
-        )
-        self.position_sizing_service = PositionSizingService(
-            account_snapshot_cache=self.account_snapshot_cache,
-            indicator_service=self.indicator_service,
-            config=_ps_cfg,
-            logger=self.logger,
-        )
-        self.risk_gate_service = RiskGateService(
-            config=getattr(self.full_config, "risk_gate", None) or RiskGateConfig(),
-            kill_switch_service=self.kill_switch_service,
-            account_snapshot_cache=self.account_snapshot_cache,
-            strategy_risk_provider=self.virtual_trade_service,
-            logger=self.logger,
-            env=getattr(self.broker, "env", None),
-        )
-        self.order_policy_service = OrderPolicyService(
-            config=getattr(self.full_config, "order_policy", None) or OrderPolicyConfig(),
-            quote_provider=self.broker,
-            logger=self.logger,
-        )
-
-        self.order_execution_service = OrderExecutionService(
-            broker_api_wrapper=self.broker,
-            logger=self.logger, market_clock=self.market_clock,
-            performance_profiler=self.pm,
-            notification_service=self.notification_service,
-            market_calendar_service=self._mcs,
-            price_subscription_service=self.price_subscription_service,
-            virtual_trade_service=self.virtual_trade_service,
-            kill_switch_service=self.kill_switch_service,
-            account_snapshot_cache=self.account_snapshot_cache,
-            risk_gate_service=self.risk_gate_service,
-            order_policy_service=self.order_policy_service,
-        )
-        self.streaming_service.register_handler(
-            "signing_notice",
-            self.order_execution_service.handle_signing_notice,
-        )
-        
-        # [신규] 오닐 유니버스 서비스 초기화
-        self.oneil_universe_service = OneilUniverseService(
-            stock_query_service=self.stock_query_service,
-            indicator_service=self.indicator_service,
-            stock_code_repository=self.stock_code_repository,
-            market_clock=self.market_clock,
-            scraper_service=NaverFinanceScraperService(logger=self.logger),
-            logger=self.logger,
-            performance_profiler=self.pm,
-            price_subscription_service=self.price_subscription_service,
-            rs_rating_service=getattr(self, "rs_rating_service", None),
-            minervini_service=getattr(self, "minervini_stage_service", None),
-            notification_service=getattr(self, "notification_service", None),
-        )
-
-        self.premium_watchlist_generator_task = PremiumWatchlistGeneratorTask(
-            universe_service=self.oneil_universe_service,
-            market_calendar_service=self._mcs,
-            market_clock=self.market_clock,
-            notification_service=self.notification_service,
-            logger=self.logger,
-            worker_pool=self.worker_pool,
-            telegram_reporter=getattr(self, 'telegram_reporter', None),
-        )
-
-        self.cache_warmup_task = CacheWarmupTask(
-            market_data_service=self.market_data_service,
-            stock_query_service=self.stock_query_service,
-            universe_service=self.oneil_universe_service,
-            market_calendar_service=self._mcs,
-            market_clock=self.market_clock,
-            notification_service=self.notification_service,
-            logger=self.logger,
-            worker_pool=self.worker_pool,
-        )
-
-        self.log_cleanup_task = LogCleanupTask(
-            log_dir=self.logger.log_dir,
-            delete_days=30,
-            compress_days=7,
-            market_calendar_service=self._mcs,
-            market_clock=self.market_clock,
-            logger=self.logger,
-            worker_pool=self.worker_pool,
-        )
-
-        self.newhigh_task = NewHighTask(
-            stock_repo=self.stock_repository,
-            market_calendar_service=self._mcs,
-            market_clock=self.market_clock,
-            logger=self.logger,
-            telegram_reporter=getattr(self, 'telegram_reporter', None),
-            notification_service=self.notification_service,
-            daily_price_collector_task=self.daily_price_collector_task,
-            stock_query_service=self.stock_query_service,
-            rs_rating_service=getattr(self, 'rs_rating_service', None),
-            worker_pool=self.worker_pool,
-        )
-
-        self.newhigh_service = NewHighService(
-            stock_repository=self.stock_repository,
-            newhigh_task=self.newhigh_task,
-            logger=self.logger,
-        )
-
-        self.strategy_log_report_task = StrategyLogReportTask(
-            report_service=StrategyLogReportService(
-                log_dir=os.path.join(self.logger.log_dir, "strategies"),
-                stock_code_repo=self.stock_code_repository,
+        try:
+            _ps_cfg = getattr(self.full_config, "position_sizing", None) or PositionSizingConfig()
+            self.account_snapshot_cache = AccountSnapshotCache(
+                broker_api_wrapper=self.broker,
+                logger=self.logger,
+                ttl_sec=_ps_cfg.snapshot_ttl_sec if _ps_cfg else 60,
+            )
+            self.position_sizing_service = PositionSizingService(
+                account_snapshot_cache=self.account_snapshot_cache,
+                indicator_service=self.indicator_service,
+                config=_ps_cfg,
+                logger=self.logger,
+            )
+            self.risk_gate_service = RiskGateService(
+                config=getattr(self.full_config, "risk_gate", None) or RiskGateConfig(),
+                kill_switch_service=self.kill_switch_service,
+                account_snapshot_cache=self.account_snapshot_cache,
+                strategy_risk_provider=self.virtual_trade_service,
+                logger=self.logger,
+                env=getattr(self.broker, "env", None),
+            )
+            self.order_policy_service = OrderPolicyService(
+                config=getattr(self.full_config, "order_policy", None) or OrderPolicyConfig(),
+                quote_provider=self.broker,
+                logger=self.logger,
+            )
+            self.order_execution_service = OrderExecutionService(
+                broker_api_wrapper=self.broker,
+                logger=self.logger, market_clock=self.market_clock,
+                performance_profiler=self.pm,
+                notification_service=self.notification_service,
+                market_calendar_service=self._mcs,
+                price_subscription_service=self.price_subscription_service,
                 virtual_trade_service=self.virtual_trade_service,
-            ),
-            notification_service=self.notification_service,
-            telegram_reporter=getattr(self, 'telegram_reporter', None),
-            mcs=self._mcs,
-            market_clock=self.market_clock,
-            logger=self.logger,
-            worker_pool=self.worker_pool,
-        )
+                kill_switch_service=self.kill_switch_service,
+                account_snapshot_cache=self.account_snapshot_cache,
+                risk_gate_service=self.risk_gate_service,
+                order_policy_service=self.order_policy_service,
+            )
+            self.streaming_service.register_handler(
+                "signing_notice",
+                self.order_execution_service.handle_signing_notice,
+            )
+        except Exception as e:
+            self.logger.critical(f"[ServiceBootstrap:OrderServices] 초기화 실패: {e}", exc_info=True)
+            raise
 
-        # NotificationQueueTask 초기화
-        self.notification_queue_task = NotificationQueueTask(
-            notification_service=self.notification_service,
-            poll_interval=config_dict.get("notification_queue_poll_interval", 1.0),
-            logger=self.logger,
-        )
+        try:
+            self.oneil_universe_service = OneilUniverseService(
+                stock_query_service=self.stock_query_service,
+                indicator_service=self.indicator_service,
+                stock_code_repository=self.stock_code_repository,
+                market_clock=self.market_clock,
+                scraper_service=NaverFinanceScraperService(logger=self.logger),
+                logger=self.logger,
+                performance_profiler=self.pm,
+                price_subscription_service=self.price_subscription_service,
+                rs_rating_service=getattr(self, "rs_rating_service", None),
+                minervini_service=getattr(self, "minervini_stage_service", None),
+                notification_service=getattr(self, "notification_service", None),
+            )
+            self.premium_watchlist_generator_task = PremiumWatchlistGeneratorTask(
+                universe_service=self.oneil_universe_service,
+                market_calendar_service=self._mcs,
+                market_clock=self.market_clock,
+                notification_service=self.notification_service,
+                logger=self.logger,
+                worker_pool=self.worker_pool,
+                telegram_reporter=getattr(self, 'telegram_reporter', None),
+            )
+            self.cache_warmup_task = CacheWarmupTask(
+                market_data_service=self.market_data_service,
+                stock_query_service=self.stock_query_service,
+                universe_service=self.oneil_universe_service,
+                market_calendar_service=self._mcs,
+                market_clock=self.market_clock,
+                notification_service=self.notification_service,
+                logger=self.logger,
+                worker_pool=self.worker_pool,
+            )
+            self.log_cleanup_task = LogCleanupTask(
+                log_dir=self.logger.log_dir,
+                delete_days=30,
+                compress_days=7,
+                market_calendar_service=self._mcs,
+                market_clock=self.market_clock,
+                logger=self.logger,
+                worker_pool=self.worker_pool,
+            )
+            self.newhigh_task = NewHighTask(
+                stock_repo=self.stock_repository,
+                market_calendar_service=self._mcs,
+                market_clock=self.market_clock,
+                logger=self.logger,
+                telegram_reporter=getattr(self, 'telegram_reporter', None),
+                notification_service=self.notification_service,
+                daily_price_collector_task=self.daily_price_collector_task,
+                stock_query_service=self.stock_query_service,
+                rs_rating_service=getattr(self, 'rs_rating_service', None),
+                worker_pool=self.worker_pool,
+            )
+            self.newhigh_service = NewHighService(
+                stock_repository=self.stock_repository,
+                newhigh_task=self.newhigh_task,
+                logger=self.logger,
+            )
+            self.strategy_log_report_task = StrategyLogReportTask(
+                report_service=StrategyLogReportService(
+                    log_dir=os.path.join(self.logger.log_dir, "strategies"),
+                    stock_code_repo=self.stock_code_repository,
+                    virtual_trade_service=self.virtual_trade_service,
+                ),
+                notification_service=self.notification_service,
+                telegram_reporter=getattr(self, 'telegram_reporter', None),
+                mcs=self._mcs,
+                market_clock=self.market_clock,
+                logger=self.logger,
+                worker_pool=self.worker_pool,
+            )
+            self.notification_queue_task = NotificationQueueTask(
+                notification_service=self.notification_service,
+                poll_interval=config_dict.get("notification_queue_poll_interval", 1.0),
+                logger=self.logger,
+            )
+        except Exception as e:
+            self.logger.critical(f"[ServiceBootstrap:Universe] 초기화 실패: {e}", exc_info=True)
+            raise
 
-        # TimeDispatcher에 after_market 태스크 등록
-        _delays = load_after_market_delays()
-        for task, priority in [
-            (self.ranking_task,                     TaskPriority.LOW),
-            (self.minervini_update_task,             TaskPriority.LOW),
-            (self.daily_price_collector_task,        TaskPriority.LOW),
-            (self.ohlcv_update_task,                 TaskPriority.LOW),
-            (self.premium_watchlist_generator_task,  TaskPriority.LOW),
-            (self.cache_warmup_task,                 TaskPriority.LOW),
-            (self.newhigh_task,                      TaskPriority.LOW),
-            (self.log_cleanup_task,                  TaskPriority.MAINTENANCE),
-            (self.strategy_log_report_task,          TaskPriority.LOW),
-        ]:
-            if task:
-                self.time_dispatcher.register_task(
-                    task.task_name, priority, delay_sec=_delays.get(task.task_name, 0)
-                )
+    def _bootstrap_schedulers(self):
+        """스케줄러 인프라 초기화 — TimeDispatcher 태스크 등록 및 BackgroundScheduler 생성."""
+        try:
+            _delays = load_after_market_delays()
+            for task, priority in [
+                (self.ranking_task,                     TaskPriority.LOW),
+                (self.minervini_update_task,             TaskPriority.LOW),
+                (self.daily_price_collector_task,        TaskPriority.LOW),
+                (self.ohlcv_update_task,                 TaskPriority.LOW),
+                (self.premium_watchlist_generator_task,  TaskPriority.LOW),
+                (self.cache_warmup_task,                 TaskPriority.LOW),
+                (self.newhigh_task,                      TaskPriority.LOW),
+                (self.log_cleanup_task,                  TaskPriority.MAINTENANCE),
+                (self.strategy_log_report_task,          TaskPriority.LOW),
+            ]:
+                if task:
+                    self.time_dispatcher.register_task(
+                        task.task_name, priority, delay_sec=_delays.get(task.task_name, 0)
+                    )
 
-        # BackgroundScheduler 초기화 및 태스크 등록
-        self.background_scheduler = BackgroundScheduler(
-            logger=self.logger,
-            performance_profiler=self.pm,
-            worker_pool=self.worker_pool,
-            time_dispatcher=self.time_dispatcher,
-        )
-        if self.ranking_task:
-            self.background_scheduler.register(self.ranking_task)
-        if self.minervini_update_task:
-            self.background_scheduler.register(self.minervini_update_task)
-        if self.websocket_watchdog_task:
-            self.background_scheduler.register(self.websocket_watchdog_task)
-        if self.daily_price_collector_task:
-            self.background_scheduler.register(self.daily_price_collector_task)
-        if self.ohlcv_update_task:
-            self.background_scheduler.register(self.ohlcv_update_task)
-        if self.premium_watchlist_generator_task:
-            self.background_scheduler.register(self.premium_watchlist_generator_task)
-        if self.cache_warmup_task:
-            self.background_scheduler.register(self.cache_warmup_task)
-        if self.log_cleanup_task:
-            self.background_scheduler.register(self.log_cleanup_task)
-        if self.newhigh_task:
-            self.background_scheduler.register(self.newhigh_task)
-        if self.notification_queue_task:
-            self.background_scheduler.register(self.notification_queue_task)
-        if self.strategy_log_report_task:
-            self.background_scheduler.register(self.strategy_log_report_task)
+            self.background_scheduler = BackgroundScheduler(
+                logger=self.logger,
+                performance_profiler=self.pm,
+                worker_pool=self.worker_pool,
+                time_dispatcher=self.time_dispatcher,
+            )
+            for task in [
+                self.ranking_task,
+                self.minervini_update_task,
+                self.websocket_watchdog_task,
+                self.daily_price_collector_task,
+                self.ohlcv_update_task,
+                self.premium_watchlist_generator_task,
+                self.cache_warmup_task,
+                self.log_cleanup_task,
+                self.newhigh_task,
+                self.notification_queue_task,
+                self.strategy_log_report_task,
+            ]:
+                if task:
+                    self.background_scheduler.register(task)
 
-        # ForegroundScheduler 초기화
-        self.foreground_scheduler = ForegroundScheduler(
-            background_scheduler=self.background_scheduler,
-            logger=self.logger,
-            performance_profiler=self.pm,
-        )
-
-        # 기동 시 포트폴리오/프리미엄 종목 구독 초기화
-        asyncio.create_task(self._initialize_price_subscriptions())
-
-        self.initialized = True
-        mode = "모의투자" if is_paper_trading else "실전투자"
-        self.logger.info(f"웹 앱: 서비스 초기화 완료 ({mode})")
-        return True
+            self.foreground_scheduler = ForegroundScheduler(
+                background_scheduler=self.background_scheduler,
+                logger=self.logger,
+                performance_profiler=self.pm,
+            )
+            asyncio.create_task(self._initialize_price_subscriptions())
+        except Exception as e:
+            self.logger.critical(f"[SchedulerBootstrap] 초기화 실패: {e}", exc_info=True)
+            raise
 
     async def _initialize_price_subscriptions(self) -> None:
         """기동 시 포트폴리오(HIGH) 및 프리미엄 종목(MEDIUM) 구독을 초기화."""

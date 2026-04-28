@@ -22,7 +22,7 @@ def mock_deps():
         ("sched", patch("view.web.web_app_initializer.StrategyScheduler", autospec=True)),
         ("rdm", patch("view.web.web_app_initializer.ProgramTradingStreamService", autospec=True)),
         ("ind", patch("view.web.web_app_initializer.IndicatorService", autospec=True)),
-        ("web_api", patch("view.web.web_app_initializer.web_api")),
+
         ("ous", patch("view.web.web_app_initializer.OneilUniverseService", autospec=True)),
         ("ranking_task", patch("view.web.web_app_initializer.RankingTask", autospec=True)),
         ("watchdog_task", patch("view.web.web_app_initializer.WebSocketWatchdogTask", autospec=True)),
@@ -63,8 +63,6 @@ def test_initialization(mock_deps):
     
     # Assert
     assert ctx.initialized is False
-    # web_api에 context가 설정되었는지 확인
-    mock_deps["web_api"].set_ctx.assert_called_with(ctx)
 
 def test_load_config_and_env(mock_deps):
     """설정 로드 및 환경 객체 초기화 검증"""

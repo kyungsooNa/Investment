@@ -310,13 +310,33 @@
 
 ### 7-1. `WebAppContext` 비대화 해소
 
-- [ ] broker bootstrap, service bootstrap, strategy/task bootstrap을 분리한다.
-- [ ] 서비스 간 순환 의존을 줄인다.
-- [ ] 초기화 실패 시 어떤 컴포넌트가 실패했는지 명확히 로깅한다.
+현황 (2026-04-28 분석, `web_app_initializer.py` 1069줄):
+
+| 메서드 | 현재 역할 | 문제 |
+|---|---|---|
+| `__init__` | 필드 30+ 선언 + `web_api.set_ctx(self)` | 순환 임포트 (`web_api` ↔ `web_app_initializer`) |
+| `load_config_and_env()` | config + env + MarketClock + 알림 서비스 | broker 전처리까지 포함 |
+| `initialize_services()` | 토큰 발급 + Broker 생성 + 서비스 전체 | broker/service bootstrap 미분리 |
+| `initialize_scheduler()` | 전략 + 태스크 + Scheduler 전체 | strategy/task bootstrap 미분리 |
+
+구체적 이슈:
+- `line 71`: `from view.web import web_api` + `line 140`: `web_api.set_ctx(self)` — 계층 역전 (initializer → web_api 임포트)
+- `initialize_services()` 내부에서 토큰 발급(broker auth) + `BrokerAPIWrapper` 생성 + 모든 서비스 생성이 순차 실행
+- 개별 서비스 생성 실패 시 try/except 없이 전파되어 어느 컴포넌트가 실패했는지 알 수 없음
+
+개선 방향:
+- `initialize_services()` → `_bootstrap_broker()` + `_bootstrap_services()` + `_bootstrap_tasks()`로 분해
+- `web_api.set_ctx()` 호출을 `web_main.py`의 lifespan으로 이동해 순환 의존 해소
+- 각 bootstrap 단계를 `try/except` + 컴포넌트 이름 로깅으로 감쌈
+
+- [X] broker bootstrap, service bootstrap, strategy/task bootstrap을 분리한다.
+- [X] 서비스 간 순환 의존을 줄인다. (`web_api.set_ctx` → `web_main.py` lifespan으로 이동)
+- [X] 초기화 실패 시 어떤 컴포넌트가 실패했는지 명확히 로깅한다.
 
 주요 파일:
 
 - `view/web/web_app_initializer.py`
+- `view/web/web_main.py`
 
 ### 7-2. `BrokerAPIWrapper` 테스트 안정화
 
