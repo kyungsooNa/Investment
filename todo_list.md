@@ -1,6 +1,8 @@
 # Investment Trading App - 실전 운영 개선 To-Do
 
-최종 업데이트: 2026-04-28
+최종 업데이트: 2026-04-29
+
+현재 main 확인: `main...origin/main` 동기화 상태. 최근 반영 커밋 기준으로 주문 안전장치, Web 모드 보호, WebAppContext 분리, 전략 로그 정리, 일부 운영 복구/스트리밍 성능 개선이 반영되어 있다.
 
 이 문서는 `AGENTS.md`, `SKILL.md`, `CODEBASE_SUMMARY.md`, `CODEX_WORKFLOW.md`와 repo review 내용을 기준으로 정리한 실행형 To-Do입니다.
 
@@ -87,13 +89,19 @@
 - `app/user_action_executor.py`
 
 진행 중.
-- P4: 실행 품질(슬리피지 추적), 유동성 관리(거래대금 필터, 호가잔량 제한)
+- P4: 전략별/종목별 체결 품질 리포트, 품질 저하 전략 경고/비활성화 후보 표시
+- P5: 백테스트-실거래 괴리 추적, 시장 상태 필터, RSI(2) 전략, 펜볼드/돈천 채널형 전략, 백테스트 고도화
+- P6: 데이터 품질 공통 검증, 대시보드 강화, 스케줄러 장애 복구 고도화
+- P7: BrokerAPIWrapper 테스트 안정화, 남은 DB/전략 계산 성능 측정
+- P8: 주문/리스크/브로커/전략 회귀 테스트 보강
 
-남은 작업
-- P5: 전략별 실전 제한값, 백테스트–실거래 괴리 추적, 시장 상태 필터, 신규 전략(RSI2/펜볼드 채널), 백테스트 고도화(포트폴리오/마켓레짐/슬리피지/몬테카를로)
-- P6: 데이터 품질 검증, 알림/대시보드 강화, 스케줄러 장애 복구
-- P7: WebAppContext 분리, BrokerAPIWrapper 테스트 안정화, 스트리밍/DB 성능
-- P8: 주문/리스크/브로커/전략 테스트 보강
+main 반영 확인.
+- WebAppContext 비대화 해소 1차 완료: broker/service/scheduler bootstrap 분리, `web_api.set_ctx()` 이동, 초기화 실패 로깅 보강
+- 주문 복구/reconcile 1차 완료: 미체결 주문 복원, broker 미체결/체결/잔고 대사, 불일치 시 신규 주문 차단 알람
+- Kill Switch 1차 완료: 일손실/API 오류/비정상 체결 기반 trip, 상태 저장/복원, 알림 연동
+- 전략별 제한 1차 완료: `StrategySchedulerConfig.max_positions`, 웹 max positions 수정, RiskGate 전략 손실/노출/중복 보유 차단
+- 스트리밍 성능 1차 완료: program trading tick write buffer/bulk insert, desired subscription batch flush, SQLite WAL 적용 범위 확대
+- 신규 전략 1차 완료: `LarryWilliamsVBOStrategy` 추가. 다만 todo의 펜볼드/돈천 채널 전략과는 규칙이 달라 후속 과제로 유지
 ---
 
 ## P4. 실행 품질과 유동성 관리
@@ -140,11 +148,11 @@
 
 ### 5-1. 전략별 실전 제한값 추가
 
-- [ ] 전략별 최대 진입 종목 수를 설정화한다.
-- [ ] 전략별 일손실 제한을 추가한다.
+- [x] 전략별 최대 진입 종목 수를 설정화한다. (`StrategySchedulerConfig.max_positions`, 웹 스케줄러에서 수정 가능, 상태 저장/복원 포함)
+- [x] 전략별 손실 제한을 추가한다. (`RiskGateStrategyLimitConfig.max_loss_pct`, `RiskGateService._check_strategy_loss_limit()`)
 - [ ] 전략별 거래대금/유동성 필터를 추가한다.
-- [ ] 전략별 자본 할당과 논리적 계좌 분리를 도입한다.
-- [ ] 한 전략의 손실이 전체 계좌 주문 차단으로 번지지 않도록 격리 정책을 둔다.
+- [~] 전략별 자본 할당을 추가한다. (`RiskGateStrategyLimitConfig.max_exposure_pct` 기반 전략 노출 한도는 있음. 논리적 계좌/자본 장부 분리는 남음)
+- [~] 한 전략의 손실이 전체 계좌 주문 차단으로 번지지 않도록 격리 정책을 둔다. (전략별 loss/exposure block은 있음. Kill Switch와의 우선순위/운영 정책 정리는 남음)
 
 주요 파일:
 
@@ -190,7 +198,7 @@
   - Oneil/Minervini universe 기반 주도주만 대상으로 한다.
   - RSI(2) 과매도 후 반등을 진입 조건으로 둔다.
   - 5MA 회복 또는 손절 조건을 명확히 둔다.
-- [ ] Larry Williams 채널 돌파 전략 후보를 별도 전략으로 설계한다.
+- [~] Larry Williams 계열 전략 후보를 별도 전략으로 설계한다. (`strategies/larry_williams_vbo_strategy.py`에 VBO 전략은 추가됨. 아래의 펜볼드/돈천 채널 규칙은 미구현)
   - RS Rating, ADX, 거래대금 필터를 함께 적용한다.
   - 20일 고가 돌파, 10일 저가 trailing stop을 검토한다.
   - fixed fractional position sizing을 적용한다.
@@ -273,11 +281,11 @@
 
 ### 6-2. 알림과 대시보드 강화
 
-- [ ] 주문 실패 알림을 추가한다.
-- [ ] Kill Switch 발동 알림을 추가한다.
-- [ ] 체결 이상/슬리피지 과다 알림을 추가한다.
-- [ ] 시스템 상태 대시보드에 활성 전략 수, 현재 포지션, 미체결 주문, 손익을 표시한다.
-- [ ] Telegram/Slack 등 외부 알림 채널을 설정화한다.
+- [x] 주문 실패 알림을 추가한다. (`OrderExecutionService` 매수/매도 실패 시 `NotificationService.emit()` + 실패 거래 기록)
+- [x] Kill Switch 발동 알림을 추가한다. (`KillSwitchService._trip()` → notification 연동, 상태 저장/복원)
+- [~] 체결 이상/슬리피지 과다 알림을 추가한다. (Kill Switch의 abnormal fill deviation trip은 있음. 전략별 슬리피지 리포트/알림은 남음)
+- [~] 시스템 상태 대시보드에 활성 전략 수, 현재 포지션, 미체결 주문, 손익을 표시한다. (스케줄러/전략 상태와 max positions UI는 있음. 미체결/손익 통합 운영 대시보드는 남음)
+- [~] Telegram/Slack 등 외부 알림 채널을 설정화한다. (`TelegramNotifier`/`TelegramReporter`는 있음. Slack 및 채널별 config 정리는 남음)
 
 주요 파일:
 
@@ -290,10 +298,10 @@
 
 - [ ] 스케줄러 중복 실행 방지 lock을 추가한다.
 - [ ] 장 시작 전 상태 점검 task를 추가한다.
-- [ ] 장 종료 후 미체결/잔고 검증 task를 추가한다.
-- [ ] WebSocket 끊김 후 자동 재구독 성공 여부를 검증한다.
-- [ ] 장애 발생 시 신규 주문 차단 상태로 전환한다.
-- [ ] background task `start/stop/cancel/sleep` lifecycle 테스트를 보강한다.
+- [~] 장 종료 후 미체결/잔고 검증 task를 추가한다. (`OrderExecutionService.reconcile_orders_with_broker()`는 있음. 장 종료 task wiring은 남음)
+- [x] WebSocket 끊김 후 자동 재구독 성공 여부를 검증한다. (`KoreaInvestWebSocketApi` auto reconnect/resubscribe, `WebSocketWatchdogTask.force_reconnect()`, 단위 테스트)
+- [x] 장애 발생 시 신규 주문 차단 상태로 전환한다. (reconcile alarm 및 Kill Switch 활성 시 신규 주문 차단)
+- [~] background task `start/stop/cancel/sleep` lifecycle 테스트를 보강한다. (일부 scheduler/time dispatcher/watchdog 테스트는 있음. `AfterMarketTask` 계열 전반 표준화는 남음)
 
 주요 파일:
 
@@ -341,7 +349,7 @@
 ### 7-2. `BrokerAPIWrapper` 테스트 안정화
 
 - [ ] retry/cache wrapper를 우회하는 테스트 helper를 표준화한다.
-- [ ] wrapper 테스트 mock 반환값은 가능하면 `ResCommonResponse`로 통일한다.
+- [~] wrapper 테스트 mock 반환값은 가능하면 `ResCommonResponse`로 통일한다. (일부 테스트는 아직 plain dict 반환 사용)
 - [ ] `@patch` decorator와 async fixture 혼용을 제거한다.
 - [ ] `asyncio.sleep` patch 범위를 retry queue 내부까지 확인한다.
 
@@ -354,8 +362,8 @@
 
 ### 7-3. 스트리밍/DB 성능 개선
 
-- [ ] tick 단위 DB write를 batch insert 또는 queue flush로 전환한다.
-- [ ] 이미 적용된 SQLite WAL 범위를 점검한다.
+- [x] tick 단위 DB write를 batch insert 또는 queue flush로 전환한다. (`ProgramTradingRepo` write buffer/bulk insert/flush loop)
+- [~] 이미 적용된 SQLite WAL 범위를 점검한다. (`cache`, `favorite`, `program_trading`, `rs_rating`, `stock_ohlcv`, `virtual_trade`, `strategy_scheduler_store` 등에 WAL 적용 확인. 전체 DB 경로 점검은 남음)
 - [ ] pandas append/concat 병목이 있으면 `deque` 또는 circular buffer로 교체한다.
 - [ ] 전략 계산이 event loop를 막는 구간을 측정하고 필요한 경우 worker/process pool로 분리한다.
 
@@ -373,25 +381,25 @@
 
 ### 8-1. 주문/리스크 테스트
 
-- [ ] `tests/unit_test/test_order_execution_service.py`를 보강한다.
-- [ ] `tests/unit_test/test_risk_gate_service.py`를 신규 생성한다.
-- [ ] 실전 `finalize_immediately=False` 강제 테스트를 추가한다.
-- [ ] 주문 접수/부분체결/미체결/취소/거부 상태 테스트를 추가한다.
-- [ ] 재시작 후 reconcile 테스트를 추가한다.
+- [x] `tests/unit_test/services/test_order_execution_service.py`를 보강한다.
+- [x] `tests/unit_test/services/test_risk_gate_service.py`를 신규 생성한다.
+- [x] 실전 `finalize_immediately=False` 강제 테스트를 추가한다.
+- [x] 주문 접수/부분체결/미체결/취소/거부 상태 테스트를 추가한다.
+- [x] 재시작 후 restore/reconcile 테스트를 추가한다. (`restore_active_orders_from_broker`, `reconcile_orders_with_broker`, reconcile alarm 차단)
 
 ### 8-2. 브로커 계층 테스트
 
-- [ ] 미체결 주문 조회 wrapper 테스트를 추가한다.
-- [ ] 체결 내역 조회 wrapper 테스트를 추가한다.
-- [ ] 주문 타입별 API 파라미터 검증 테스트를 추가한다.
-- [ ] paper/real TR ID 분기 테스트를 추가한다.
+- [x] 미체결 주문 조회 wrapper/API 테스트를 추가한다. (`BrokerAPIWrapper.inquire_unfilled_orders`, `KoreaInvestAccountApi.inquire_unfilled_orders`)
+- [x] 체결 내역 조회 wrapper/API 테스트를 추가한다. (`inquire_daily_ccld` delegation/params/fixture contract)
+- [~] 주문 타입별 API 파라미터 검증 테스트를 추가한다. (일부 주문/계좌 조회 params 테스트는 있음. 주문 타입별 정책 매트릭스는 남음)
+- [x] paper/real TR ID 분기 테스트를 추가한다. (`test_korea_invest_trid_provider.py`, env mode swap tests)
 
 ### 8-3. 전략/스케줄러 테스트
 
-- [ ] 전략별 최대 진입 종목 수 테스트를 추가한다.
-- [ ] 전략별 일손실 제한 테스트를 추가한다.
+- [x] 전략별 최대 진입 종목 수 테스트를 추가한다. (`test_run_strategy_scan_respects_max_positions`, update/status/restore tests)
+- [x] 전략별 손실/노출 제한 테스트를 추가한다. (`test_strategy_loss_limit_blocks`, `test_strategy_exposure_limit_blocks`)
 - [ ] 시장 상태 필터 ON/OFF 테스트를 추가한다.
-- [ ] background task 시작 테스트에는 반드시 `try/finally await stop()`을 적용한다.
+- [~] background task 시작 테스트에는 반드시 `try/finally await stop()`을 적용한다. (일부 반영. `AfterMarketTask` 계열 전체 점검은 남음)
 - [ ] xdist 병렬 실행 시 외부 네트워크 호출이 발생하지 않도록 fixture를 점검한다.
 
 권장 실행:
@@ -405,25 +413,24 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
 ---
 
 ## 바로 착수 추천 순서
-3. `brokers/broker_api_wrapper.py`
-   - 미체결 주문 조회
-   - 체결 내역 조회
-   - reconcile용 계좌/주문 조회 메서드
+1. P0 실전 KIS `inquire-daily-ccld` 실제 응답 검증
+   - 실전 체결 이력 fixture 확보 및 민감정보 제거
+   - paper/real 필드 차이 회귀 테스트 확정
+   - 주문번호/체결수량/미체결수량/평균체결가/취소·거부 필드 매핑 확정
 
-4. `brokers/korea_investment/*account_api.py`, `*trading_api.py`
-   - KIS 응답 필드 검증
-   - 주문 타입별 파라미터 검증
-   - 호가단위/시장가/지정가 정책 정리
+2. P4 체결 품질 리포트
+   - 전략별/종목별 slippage/latency 집계
+   - 기준 이하 전략을 경고/비활성화 후보로 표시
 
-5. `config/config_loader.py`, `config/*.yaml`
-   - `real_trading_enabled: false`
-   - 실전 최대 주문금액
-   - dry-run/logging 설정
+3. P5 전략 고도화
+   - RSI(2) 눌림목 전략 설계/구현
+   - 기존 `LarryWilliamsVBO`와 별도로 펜볼드/돈천 채널 전략 구현 여부 결정
+   - 백테스트-실거래 괴리, 시장 상태 필터, 포트폴리오 백테스트 추가
 
-6. 테스트 보강
-   - `tests/unit_test/test_order_execution_service.py`
-   - `tests/unit_test/test_risk_gate_service.py`
-   - broker wrapper 및 KIS API 계층 회귀 테스트
+4. P6/P7 운영 안정화
+   - 데이터 latency/sanity 공통 검증
+   - 장 시작 전/장 종료 후 상태 점검 task wiring
+   - BrokerAPIWrapper 테스트 helper 표준화 및 xdist 외부 I/O 점검
 
 ---
 
