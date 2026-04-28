@@ -434,3 +434,22 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
   - 현재 strategy 클래스의 `STATE_FILE` 이 class-level hardcode (`data/pp_position_state.json` 등) → 테스트가 override 안 하면 production 파일 덮어씀
   - 후보 수정: `STATE_FILE` 을 인스턴스 인자로 변경 (또는 환경변수 prefix), 테스트 fixture 자동 tmp_path override
   - 영향 범위 큼 → 별도 작업 권장
+
+## 미진행 — 2026-04-29 장중/장마감 이후 재확인 예정
+
+- (d-2) Pool B 전용 완화 효과 검증
+  - 적용 내용: `daily_surge_min_avg_trading_value_5d=50억`, `daily_surge_cap_min=1000억`, `daily_surge_cap_max=100조`
+  - 거래일(2026-04-29) 전략 로그에서 `daily_surge_candidates_collected` 확인
+    - `raw_count`, `skip_count`, `candidate_count`
+  - `daily_surge_pool_sorted` 확인
+    - `candidate_count`, `selected_count`, `items`
+  - `build_watchlist_finished` 확인
+    - `daily_surge_stocks`가 0에서 증가했는지 확인
+  - 여전히 0이면 drop 로그 분포 확인
+    - `daily_surge_low_trading_value`
+    - `daily_surge_market_cap_out_of_range`
+    - `not_uptrend`
+    - `far_from_52w_high`
+  - 부족 시 다음 후보
+    - 거래대금 50억 → 30억 추가 완화
+    - 정배열 조건을 Pool B 전용으로 `current > ma_20d` 중심으로 완화 검토
