@@ -75,6 +75,8 @@ class OrderPolicyConfig(BaseModel):
     order_book_checks_enabled: bool = False
     max_market_slippage_pct: float = 1.0
     max_spread_pct: float = 1.0
+    min_trading_value_won: int = 0
+    max_top_of_book_participation_pct: float = 100.0
     block_empty_order_book: bool = True
     quote_fail_policy: str = "allow"        # allow | block
 

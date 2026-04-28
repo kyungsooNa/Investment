@@ -1,6 +1,6 @@
 # Investment Trading App - 실전 운영 개선 To-Do
 
-최종 업데이트: 2026-04-26
+최종 업데이트: 2026-04-28
 
 이 문서는 `AGENTS.md`, `SKILL.md`, `CODEBASE_SUMMARY.md`, `CODEX_WORKFLOW.md`와 repo review 내용을 기준으로 정리한 실행형 To-Do입니다.
 
@@ -100,9 +100,10 @@
 
 ### 4-1. Execution Quality 추적
 
-- [ ] 주문별 예상 체결가와 실제 체결가를 기록한다.
-- [ ] 슬리피지 금액과 슬리피지 비율을 계산한다.
-- [ ] 주문 타입, 주문 시각, 호가 스프레드, 체결 지연 시간을 함께 기록한다.
+- [x] 주문별 예상 체결가와 실제 체결가를 기록한다. (`OrderContext.expected_fill_price`, `average_fill_price`)
+- [x] 슬리피지 금액과 슬리피지 비율을 계산한다. (`slippage_amount_won`, `slippage_pct`)
+- [x] 주문 타입, 주문 시각, 체결 지연 시간을 함께 기록한다. (`order_type`, `created_at`, `first_fill_latency_sec`)
+- [~] 호가 스프레드는 시장가 주문 정책 판단 컨텍스트에 기록한다. 영속 리포트 반영은 후속 작업으로 남긴다.
 - [ ] 전략별/종목별 체결 품질 리포트를 추가한다.
 - [ ] 체결 품질이 기준 이하인 전략은 경고 또는 자동 비활성화 후보로 표시한다.
 
@@ -115,11 +116,11 @@
 
 ### 4-2. Liquidity Control 추가
 
-- [ ] 최소 거래대금 필터를 설정화한다. 예: 100억 이상
-- [ ] 호가잔량 기준 진입 제한을 추가한다.
+- [x] 최소 거래대금 필터를 설정화한다. 예: 100억 이상 (`order_policy.min_trading_value_won`)
+- [x] 호가잔량 기준 진입 제한을 추가한다. (`order_policy.max_top_of_book_participation_pct`)
 - [ ] 체결 강도/체결 속도 기반 필터를 검토한다.
 - [ ] 소형주, 관리종목, 투자경고 종목 제외 규칙을 추가한다.
-- [ ] 유동성 부족으로 차단된 신호를 전략 로그에 남긴다.
+- [~] 유동성 부족으로 차단된 신호를 주문 정책 응답/로그에 남긴다. 전략 로그 연동은 후속 작업으로 남긴다.
 
 주요 파일:
 

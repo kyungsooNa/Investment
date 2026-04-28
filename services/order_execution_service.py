@@ -15,7 +15,7 @@ from services.market_calendar_service import MarketCalendarService
 from services.price_subscription_service import SubscriptionPriority
 from services.kill_switch_service import KillSwitchService
 from services.risk_gate_service import RiskGateService
-from services.order_policy_service import OrderPolicyService
+from services.order_policy_service import OrderPolicyDecision, OrderPolicyService
 from core.account_snapshot import AccountSnapshotCache
 
 
@@ -179,6 +179,73 @@ class OrderExecutionService:
         if context.broker_order_no:
             self._order_no_index[context.broker_order_no] = context.order_key
         return context
+
+    def _resolve_expected_fill_price(
+        self,
+        price: int,
+        policy_decision: Optional[OrderPolicyDecision],
+    ) -> Optional[int]:
+        if price > 0:
+            return price
+        if policy_decision is None:
+            return None
+        context = policy_decision.context or {}
+        expected = context.get("executable_price") or context.get("reference_price")
+        try:
+            return int(expected) if expected else None
+        except (TypeError, ValueError):
+            return None
+
+    def _build_execution_quality_update(
+        self,
+        context: OrderContext,
+        report: OrderExecutionReport,
+        filled_qty: int,
+    ) -> dict:
+        fill_delta_qty = max(filled_qty - context.filled_qty, 0)
+        fill_price = report.fill_price or context.average_fill_price or context.price
+        fill_amount_delta = int(fill_price * fill_delta_qty) if fill_price and fill_delta_qty else 0
+        total_fill_amount = context.total_fill_amount + fill_amount_delta
+        average_fill_price = (
+            total_fill_amount / filled_qty
+            if filled_qty > 0 and total_fill_amount > 0
+            else context.average_fill_price
+        )
+        expected = context.expected_fill_price or (context.price if context.price > 0 else None)
+
+        slippage_amount = context.slippage_amount_won
+        slippage_pct = context.slippage_pct
+        if expected and average_fill_price:
+            if context.side == OrderSide.BUY:
+                slippage_amount = average_fill_price - expected
+            else:
+                slippage_amount = expected - average_fill_price
+            slippage_pct = slippage_amount / expected * 100
+
+        first_fill_latency = context.first_fill_latency_sec
+        if first_fill_latency is None and context.created_at is not None and fill_delta_qty > 0:
+            first_fill_latency = (self._get_now() - context.created_at).total_seconds()
+
+        return {
+            "average_fill_price": average_fill_price,
+            "total_fill_amount": total_fill_amount,
+            "last_fill_price": int(fill_price) if fill_price else None,
+            "slippage_amount_won": slippage_amount,
+            "slippage_pct": slippage_pct,
+            "first_fill_latency_sec": first_fill_latency,
+        }
+
+    def _log_execution_quality(self, context: OrderContext) -> None:
+        if context.average_fill_price is None:
+            return
+        self.logger.info(
+            f"[EXECUTION QUALITY] order_key={context.order_key} code={context.stock_code} "
+            f"side={context.side.value} expected_price={context.expected_fill_price} "
+            f"avg_fill_price={context.average_fill_price:.2f} filled_qty={context.filled_qty} "
+            f"slippage_won={context.slippage_amount_won} slippage_pct={context.slippage_pct} "
+            f"first_fill_latency_sec={context.first_fill_latency_sec} source={context.source} "
+            f"trace_id={context.trace_id}"
+        )
 
     def _transition_order_context(self, order_key: str, new_state: OrderState, **kwargs) -> OrderContext:
         context = self._order_states[order_key]
@@ -365,12 +432,15 @@ class OrderExecutionService:
         if is_filled:
             filled_qty = max(filled_qty, context.qty)
         next_state = OrderState.FILLED if is_filled else OrderState.PARTIAL_FILLED
+        quality_update = self._build_execution_quality_update(context, report, filled_qty)
         transitioned = self._transition_order_context(
             context.order_key,
             next_state,
             filled_qty=filled_qty,
             broker_order_no=report.broker_order_no,
+            **quality_update,
         )
+        self._log_execution_quality(transitioned)
         return await self._persist_virtual_trade_for_terminal_report(transitioned, report)
 
     async def handle_signing_notice(self, data: dict, tr_id: str = "") -> Optional[OrderContext]:
@@ -1168,6 +1238,7 @@ class OrderExecutionService:
                         data=existing.to_dict(),
                     )
 
+            policy_decision = None
             if self._order_policy is not None:
                 policy_decision = await self._order_policy.validate_order(
                     stock_code=stock_code,
@@ -1215,6 +1286,7 @@ class OrderExecutionService:
                 source=source,
                 trace_id=trace_id,
                 intent_id=resolved_intent_id,
+                expected_fill_price=self._resolve_expected_fill_price(price, policy_decision),
             )
             self._set_order_context(context)
             self._intent_index[resolved_intent_id] = order_key
