@@ -13,6 +13,7 @@ def test_get_status(web_client, mock_web_ctx):
     assert response.status_code == 200
     assert response.json() == {
         "market_open": True,
+        "is_paper_trading": True,
         "env_type": "모의투자",
         "current_time": "2025-01-01 12:00:00",
         "initialized": True
@@ -177,11 +178,35 @@ async def test_change_environment(web_client, mock_web_ctx):
     mock_web_ctx.initialize_services = AsyncMock(return_value=True)
     mock_web_ctx.get_env_type.return_value = "실전투자"
 
-    response = web_client.post("/api/environment", json={"is_paper": False})
+    response = web_client.post(
+        "/api/environment",
+        json={"is_paper": False, "real_mode_confirmation": "REAL"},
+    )
     assert response.status_code == 200
     assert response.json()["success"] is True
     assert response.json()["env_type"] == "실전투자"
     mock_web_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=False)
+
+
+@pytest.mark.asyncio
+async def test_change_environment_to_real_requires_confirmation(web_client, mock_web_ctx):
+    mock_web_ctx.initialize_services = AsyncMock(return_value=True)
+
+    response = web_client.post("/api/environment", json={"is_paper": False})
+
+    assert response.status_code == 400
+    mock_web_ctx.initialize_services.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_change_environment_to_paper_does_not_require_confirmation(web_client, mock_web_ctx):
+    mock_web_ctx.initialize_services = AsyncMock(return_value=True)
+    mock_web_ctx.get_env_type.return_value = "paper"
+
+    response = web_client.post("/api/environment", json={"is_paper": True})
+
+    assert response.status_code == 200
+    mock_web_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=True)
 
 
 @pytest.mark.asyncio
@@ -204,6 +229,7 @@ async def test_get_status_ctx_none(web_client, monkeypatch):
     assert response.json() == {
         "market_open": False,
         "env_type": "미설정",
+        "is_paper_trading": True,
         "current_time": "",
         "initialized": False
     }
@@ -279,7 +305,10 @@ async def test_change_environment_ctx_none(web_client, monkeypatch):
     import view.web.api_common as api_common
     monkeypatch.setattr(api_common, "_ctx", None)
     
-    response = web_client.post("/api/environment", json={"is_paper": False})
+    response = web_client.post(
+        "/api/environment",
+        json={"is_paper": False, "real_mode_confirmation": "REAL"},
+    )
     assert response.status_code == 503
     assert response.json()["detail"] == "서비스가 초기화되지 않았습니다."
 

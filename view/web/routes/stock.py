@@ -26,7 +26,13 @@ async def get_status():
 
     ctx = _get_ctx()
     if ctx is None:
-        return {"market_open": False, "env_type": "미설정", "current_time": "", "initialized": False}
+        return {
+            "market_open": False,
+            "env_type": "미설정",
+            "is_paper_trading": True,
+            "current_time": "",
+            "initialized": False,
+        }
 
     now = time.monotonic()
     if _status_cache is not None and (now - _status_cache_ts) < _STATUS_CACHE_TTL:
@@ -37,6 +43,7 @@ async def get_status():
     result = {
         "market_open": await ctx.is_market_open_now(),
         "env_type": ctx.get_env_type(),
+        "is_paper_trading": bool(getattr(getattr(ctx, "env", None), "is_paper_trading", True)),
         "current_time": ctx.get_current_time_str(),
         "initialized": ctx.initialized
     }
@@ -218,6 +225,8 @@ async def change_environment(req: EnvironmentRequest):
     ctx = api_common._ctx
     if ctx is None:
         raise HTTPException(status_code=503, detail="서비스가 초기화되지 않았습니다.")
+    if not req.is_paper and req.real_mode_confirmation != "REAL":
+        raise HTTPException(status_code=400, detail="실전 모드 전환 확인 문자열이 필요합니다.")
     success = await ctx.initialize_services(is_paper_trading=req.is_paper)
     # 환경 전환 시 상태 캐시 무효화
     _status_cache = None

@@ -94,7 +94,7 @@ class AppConfig(BaseModel):
     htsid: Optional[str] = None
     
     # Flags
-    is_paper_trading: bool = False
+    is_paper_trading: bool = True
     
     # Sub-configs
     web: WebConfig

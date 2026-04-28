@@ -48,6 +48,37 @@ async def test_place_order_invalid_side(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_real_order_without_confirmation_is_blocked(web_client, mock_web_ctx):
+    mock_web_ctx.env.is_paper_trading = False
+
+    payload = {"code": "005930", "price": "70000", "qty": "10", "side": "buy"}
+    response = web_client.post("/api/order", json=payload)
+
+    assert response.status_code == 400
+    mock_web_ctx.order_execution_service.handle_buy_stock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_real_order_with_confirmation_calls_service(web_client, mock_web_ctx):
+    mock_web_ctx.env.is_paper_trading = False
+    mock_web_ctx.order_execution_service.handle_buy_stock.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Order Placed", data={"ord_no": "12345"}
+    )
+
+    payload = {
+        "code": "005930",
+        "price": "70000",
+        "qty": "10",
+        "side": "buy",
+        "real_order_confirmation": "REAL",
+    }
+    response = web_client.post("/api/order", json=payload)
+
+    assert response.status_code == 200
+    mock_web_ctx.order_execution_service.handle_buy_stock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_place_order_market_price_and_exception(web_client, mock_web_ctx):
     """POST /api/order 시장가(0) 주문 및 로깅 예외 테스트"""
     mock_web_ctx.order_execution_service.handle_buy_stock.return_value = ResCommonResponse(

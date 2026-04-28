@@ -48,10 +48,11 @@
 ### 3-1. 실전 모드 이중 안전 체크
 
 - [x] `is_paper_trading` 기본값을 안전(=True/모의)으로 둔다. (`config_loader.py:96`, 키 컨벤션은 `real_trading_enabled`가 아닌 `is_paper_trading`로 통일)
+- [x] raw config 기반 `KoreaInvestApiEnv._load_config()`에서도 `is_paper_trading` 누락 시 안전(=True/모의)으로 기본 동작한다. (`korea_invest_env.py`, `test_missing_is_paper_trading_defaults_to_paper_mode`)
 - [x] 단건 최대 주문금액(`max_order_amount_won`)을 설정화하고 RiskGate에서 검증한다. (`config_loader.py:58`, `risk_gate_service.py:103-110`)
 - [x] 실전 주문 직전 dry-run preview 로그를 남긴다. (`order_execution_service.py` `_log_real_order_preview()` — 종목/수량/가격/계좌 prefix/URL host/source/trace_id 출력, `[REAL ORDER PREVIEW]` 키워드)
 - [x] `RiskGateService`에 환경 재검증 가드를 추가한다. (`_check_env_consistency()` — `env.is_paper_trading` vs URL host(`vts` 포함 여부) vs 활성 계좌번호 일치 확인 → 불일치 시 hard block)
-- [x] **1일 최대 주문금액(daily cap)** 을 설정화한다. (`RiskGateConfig.max_daily_order_amount_won`, `risk_gate_service.py` `_check_daily_cap()` + in-memory 누적 트래커, 7일 이상 된 키 자동 정리)
+- [x] **1일 최대 주문금액(daily cap)** 을 설정화한다. (`RiskGateConfig.max_daily_order_amount_won`, `config.yaml.example`, `risk_gate_service.py` `_check_daily_cap()` + in-memory 누적 트래커, 7일 이상 된 키 자동 정리)
 - [x] paper 모드에서 실전 전용 API(랭킹/시총/거래량 랭킹) 호출 시 명시적 `PAPER_NOT_SUPPORTED` 에러를 반환한다. (`korea_invest_quotations_api.py` `@_real_only` 데코레이터 — `get_top_market_cap_stocks_code`, `get_top_rise_fall_stocks`, `get_top_volume_stocks`)
 
 주요 파일:
@@ -67,14 +68,21 @@
 ### 3-2. Web/CLI에 모드 상태 노출
 
 - [x] 웹 화면 status-bar에 실전/모의 모드 배지를 노출한다. (`view/web/templates/base.html:59` `status-env`)
+- [x] `/api/status`에 `is_paper_trading` boolean을 내려 웹 모드 판정이 표시 문구/인코딩에 의존하지 않도록 한다. (`view/web/routes/stock.py`, `view/web/static/js/common.js`)
 - [x] 실전 모드에서는 주문 화면에 경고 배너 노출 + 주문 버튼 외곽선 강조 + 2단계 확인(`confirm` → "REAL" 입력) 플로우를 적용한다. (`view/web/templates/order.html`, `view/web/static/js/order.js`)
+- [x] 실전 수동 주문은 클라이언트 확인뿐 아니라 서버에서도 `real_order_confirmation == "REAL"` 없이는 broker/order service 호출 전 차단한다. (`OrderRequest.real_order_confirmation`, `view/web/routes/order.py`)
+- [x] 웹에서 실전 모드로 전환할 때도 서버에서 `real_mode_confirmation == "REAL"` 없이는 차단한다. 모의 전환은 확인 문자열 없이 허용한다. (`EnvironmentRequest.real_mode_confirmation`, `view/web/routes/stock.py`)
 - [~] CLI 주문 경로 — N/A. 현재 main.py는 web 전용으로 동작하며 CLI 모드는 제거된 상태(`view/cli/`, `app/user_action_executor.py` 부재).
 - [x] `KoreaInvestEnv.set_trading_mode()` 호출 시 base_url/active_account/token_provider가 모드별로 교체되는지 회귀 테스트로 보장한다. (`tests/unit_test/brokers/korea_investment/test_korea_invest_env.py` — `_swaps_base_url`, `_swaps_active_account`, `_swaps_token_provider_reference`, `_no_change_does_not_swap_provider` 4종)
 
 주요 파일:
 
 - `view/web/routes/order.py`
+- `view/web/routes/stock.py`
+- `view/web/api_common.py`
 - `view/web/templates/*`
+- `view/web/static/js/common.js`
+- `view/web/static/js/order.js`
 - `view/cli/cli_view.py`
 - `app/user_action_executor.py`
 
