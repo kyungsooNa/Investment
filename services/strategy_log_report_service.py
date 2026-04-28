@@ -178,7 +178,7 @@ def _build_metric_str(event: str, reason: str, data: dict) -> str:
         pct = data.get('pullback_pct')
         allowed = data.get('allowed_range', '')
         if pct is not None:
-            return f"{pct:+.1f}% / 기준 {allowed}" if allowed else f"{pct:+.1f}%"
+            return f"{pct:+.1f}% / 기준 {_esc(allowed)}" if allowed else f"{pct:+.1f}%"
         return ""
     if reason_key == "over_extended":
         current = data.get('current', 0)
@@ -203,7 +203,7 @@ def _build_metric_str(event: str, reason: str, data: dict) -> str:
         if close is not None and ma20 is not None:
             return f"종가 {int(close):,} <= MA20 {int(ma20):,}"
         detail = data.get('detail')
-        return detail if isinstance(detail, str) else ""
+        return _esc(detail) if isinstance(detail, str) else ""
     return ""
 
 
@@ -582,8 +582,10 @@ class StrategyLogReportService:
                 for code, info in shown:
                     reason_kr = _reason_to_korean(info['reason'])
                     metric = _build_metric_str(info.get('event', ''), info['reason'], info.get('data', {}))
-                    metric_str = f" ({_esc(metric)})" if metric else ""
-                    lines.append(f"• {_esc(info['name'])}({code}): {_esc(reason_kr)}{metric_str}")
+                    metric_str = f" ({metric})" if metric else ""
+                    count = info.get('count', 1)
+                    count_str = f" {count}회 탈락" if count > 1 else ""
+                    lines.append(f"• {_esc(info['name'])}({code}): {_esc(reason_kr)}{metric_str}{count_str}")
                 if rest_count > 0:
                     lines.append(f"  …외 {rest_count}건")
             else:
@@ -596,7 +598,7 @@ class StrategyLogReportService:
             if top3:
                 lines.append("\n🎯 매수 근접")
                 for c in top3:
-                    metric = f" ({_esc(c['metric_str'])})" if c['metric_str'] else ""
+                    metric = f" ({c['metric_str']})" if c['metric_str'] else ""
                     time_str = f" ({c['time']})" if c.get('time') else ""
                     note_str = f" - {_esc(c['note'])}" if c.get('note') else ""
                     lines.append(f"• {_esc(c['name'])}: {_esc(c['reason_kr'])}{metric}{time_str}{note_str}")
