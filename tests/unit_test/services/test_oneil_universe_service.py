@@ -1520,7 +1520,7 @@ async def test_analyze_surge_candidate_success_with_dict_output(mock_deps):
         "stck_hgpr": "2550",
         "stck_lwpr": "2350",
         "w52_hgpr": "1500",
-        "hts_avls": "5000",
+        "hts_avls": "800000",
     }
     sqs.get_current_price.side_effect = [
         ResCommonResponse(rt_cd="0", msg1="OK", data={"output": price_output}),
@@ -1533,7 +1533,7 @@ async def test_analyze_surge_candidate_success_with_dict_output(mock_deps):
 
     assert item is not None
     assert item.market == "KOSPI"
-    assert item.market_cap == 500000000000
+    assert item.market_cap == 80000000000000
     assert item.w52_hgpr == 1500
     passed_ohlcv = indicator.calc_bb_widths_sync.call_args[0][0]
     assert passed_ohlcv[-1]["date"] != "20250102"

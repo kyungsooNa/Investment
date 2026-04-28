@@ -222,6 +222,12 @@ class OneilUniverseService:
         
         # [성능 개선] 순차 처리 -> 청크 단위 병렬 처리 (asyncio.gather)
         candidates = [(c, n) for c, n in candidate_map.items() if c not in skip_codes]
+        logger.debug({
+            "event": "daily_surge_candidates_collected",
+            "raw_count": len(candidate_map),
+            "skip_count": len(candidate_map) - len(candidates),
+            "candidate_count": len(candidates),
+        })
         
         for chunk in _chunked(candidates, self._cfg.api_chunk_size):
             tasks = [self._analyze_surge_candidate(code, name, logger=logger) for code, name in chunk]
@@ -251,6 +257,8 @@ class OneilUniverseService:
         top_n_for_log = 10
         logger.debug({
             "event": "daily_surge_pool_sorted",
+            "candidate_count": len(candidates),
+            "selected_count": len(items),
             "top_n": top_n_for_log,
             "items": [
                 {
@@ -332,7 +340,7 @@ class OneilUniverseService:
             cap_billion = int(getattr(output, "hts_avls", 0) or getattr(output, "stck_llam", 0) or 0)
         stck_llam = cap_billion * 100_000_000  # 억 단위 -> 원 단위 변환
 
-        # 필터: 시가총액 (2천억 ~ 2조)
+        # Pool B 전용 시가총액 필터
         if not (self._cfg.premium_stocks_cap_min <= stck_llam <= self._cfg.premium_stocks_cap_max):
             if logger: logger.debug({"event": "drop", "code": code, "reason": "market_cap_out_of_range", "cap": stck_llam})
             return None
@@ -479,11 +487,19 @@ class OneilUniverseService:
         recent_5 = ohlcv[-5:]
         tv_5d = sum([(r.get("volume", 0) * r.get("close", 0)) for r in recent_5]) / len(recent_5)
         
-        if tv_5d < self._cfg.min_avg_trading_value_5d:
+        if tv_5d < self._cfg.daily_surge_min_avg_trading_value_5d:
+            if logger: logger.debug({
+                "event": "drop", "code": code, "reason": "daily_surge_low_trading_value",
+                "value": tv_5d, "threshold": self._cfg.daily_surge_min_avg_trading_value_5d
+            })
             return None
 
         # 필터: 정배열 (실시간 주가 반영)
         if not (current > ma_20d > ma_50d):
+            if logger: logger.debug({
+                "event": "drop", "code": code, "reason": "not_uptrend",
+                "current": current, "ma20": ma_20d, "ma50": ma_50d
+            })
             return None
 
         # 필터: 52주 고가 근접
@@ -505,8 +521,11 @@ class OneilUniverseService:
         stck_llam = cap_billion * 100_000_000
 
         # 필터: 시가총액 (2천억 ~ 2조)
-        if not (self._cfg.premium_stocks_cap_min <= stck_llam <= self._cfg.premium_stocks_cap_max):
-            if logger: logger.debug({"event": "drop", "code": code, "reason": "market_cap_out_of_range", "cap": stck_llam})
+        if not (self._cfg.daily_surge_cap_min <= stck_llam <= self._cfg.daily_surge_cap_max):
+            if logger: logger.debug({
+                "event": "drop", "code": code, "reason": "daily_surge_market_cap_out_of_range",
+                "cap": stck_llam, "min": self._cfg.daily_surge_cap_min, "max": self._cfg.daily_surge_cap_max
+            })
             return None
 
         dist = 0

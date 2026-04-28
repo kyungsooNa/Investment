@@ -41,6 +41,9 @@ class OneilUniverseConfig(BaseStrategyConfig):
     premium_stocks_cap_min: int = 200_000_000_000   # 2000억
     premium_stocks_cap_max: int = 20_000_000_000_000 # 20조
     daily_surge_size: int = 30
+    daily_surge_min_avg_trading_value_5d: int = 5_000_000_000
+    daily_surge_cap_min: int = 100_000_000_000
+    daily_surge_cap_max: int = 100_000_000_000_000
 
     max_watchlist: int = premium_stocks_kospi_size + premium_stocks_kosdaq_size + daily_surge_size # 최대 감시 종목 수
 
