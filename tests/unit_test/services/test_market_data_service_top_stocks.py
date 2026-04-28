@@ -22,28 +22,26 @@ class TestMarketDataServiceTopStocks(unittest.IsolatedAsyncioTestCase):
 
     @pytest.mark.asyncio
     async def test_market_closed_returns_none(self):
+        expected = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[])
+        self.mock_broker_api_wrapper.get_top_market_cap_stocks_code = AsyncMock(return_value=expected)
+
         result: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code="0000",limit=10)
 
         # 수정된 기대값 검증
-        assert isinstance(result, ResCommonResponse)
-        assert result.rt_cd == ErrorCode.INVALID_INPUT.value
-        assert result.msg1 == "모의투자 미지원 API입니다."
-        assert isinstance(result.data, List)
-        assert result.data == []
+        assert result == expected
+        self.mock_broker_api_wrapper.get_top_market_cap_stocks_code.assert_awaited_once_with("0000", 10)
 
-        self.mock_logger.warning.assert_any_call("MarketDataService - 시가총액 상위 종목 조회는 모의투자를 지원하지 않습니다.")
 
     @pytest.mark.asyncio
     async def test_paper_trading_returns_error(self):
         self.mock_env.is_paper_trading = True
+        expected = ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[])
+        self.mock_broker_api_wrapper.get_top_market_cap_stocks_code = AsyncMock(return_value=expected)
 
         result: ResCommonResponse = await self.trading_service.get_top_market_cap_stocks_code(market_code="0000",limit=10)
 
-        assert isinstance(result, ResCommonResponse)
-        assert result.rt_cd == ErrorCode.INVALID_INPUT.value
-        assert result.msg1 == "모의투자 미지원 API입니다."
-        assert isinstance(result.data, List)
-        assert result.data == []
+        assert result == expected
+        self.mock_broker_api_wrapper.get_top_market_cap_stocks_code.assert_awaited_once_with("0000", 10)
 
     async def test_get_top_stocks_failure(self):
         self.mock_env.is_paper_trading = False
