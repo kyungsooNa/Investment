@@ -22,7 +22,7 @@ except ImportError:
         return json.loads(line)
 
 
-_STRATEGY_NAME_RE = re.compile(r'^\d{8}_\d{6}_(.+?)(?:\.log\.json.*)$')
+_STRATEGY_NAME_RE = re.compile(r'^\d{8}_(?:\d{6}_)?(.+?)(?:_\d+)?\.log\.json.*$')
 
 # 매수 근접 추적 상수 ─────────────────────────────────────────────────
 

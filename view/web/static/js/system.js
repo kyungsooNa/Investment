@@ -443,6 +443,7 @@ const FORCE_UPDATE_CONFIG = {
     cache_warmup:         { endpoint: '/api/background/cache-warmup/force-update',     label: '강제 웜업' },
     newhigh:              { endpoint: '/api/background/newhigh/force-update',          label: '강제 수집' },
     minervini_update:     { endpoint: '/api/background/minervini/force-update',         label: '강제 수집' },
+    strategy_log_report:  { endpoint: '/api/background/strategy-log-report/force-update', label: '강제 발송' },
 };
 
 function renderActionCell(task) {

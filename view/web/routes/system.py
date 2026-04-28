@@ -441,6 +441,22 @@ async def force_newhigh_update():
     return {"success": True, "message": "52주 신고가 강제 탐색이 시작되었습니다."}
 
 
+@router.post("/background/strategy-log-report/force-update")
+async def force_strategy_log_report():
+    """skip 조건을 무시하고 당일 전략 로그 리포트를 강제로 생성/전송한다."""
+    ctx = _get_ctx()
+    task = getattr(ctx, "strategy_log_report_task", None)
+    if not task:
+        raise HTTPException(status_code=503, detail="StrategyLogReportTask가 초기화되지 않았습니다")
+
+    progress = task.get_progress()
+    if progress.get("running"):
+        raise HTTPException(status_code=409, detail="이미 리포트 생성이 진행 중입니다")
+
+    asyncio.create_task(task.force_run())
+    return {"success": True, "message": "전략 로그 리포트 강제 생성이 시작되었습니다."}
+
+
 @router.post("/background/minervini/force-update")
 async def force_minervini_update():
     """skip 조건을 무시하고 Minervini Stage2 캐시를 강제 갱신한다."""
