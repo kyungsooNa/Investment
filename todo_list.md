@@ -112,7 +112,7 @@ main 반영 확인.
 
 - [x] 주문별 예상 체결가와 실제 체결가를 기록한다. (`OrderContext.expected_fill_price`, `average_fill_price`)
 - [x] 슬리피지 금액과 슬리피지 비율을 계산한다. (`slippage_amount_won`, `slippage_pct`)
-- [x] 주문 타입, 주문 시각, 체결 지연 시간을 함께 기록한다. (`order_type`, `created_at`, `first_fill_latency_sec`)
+- [~] 주문 타입, 주문 시각, 체결 지연 시간을 함께 기록한다. (`created_at`, `first_fill_latency_sec`는 `OrderContext`에 기록됨. `order_type`은 `OrderPolicyDecision.context`에 남으며 `OrderContext` 영속 필드는 아님)
 - [~] 호가 스프레드는 시장가 주문 정책 판단 컨텍스트에 기록한다. 영속 리포트 반영은 후속 작업으로 남긴다.
 - [ ] 전략별/종목별 체결 품질 리포트를 추가한다.
 - [ ] 체결 품질이 기준 이하인 전략은 경고 또는 자동 비활성화 후보로 표시한다.
@@ -269,7 +269,7 @@ main 반영 확인.
 - [ ] 체결 데이터 누락을 감지한다.
 - [ ] API 응답 값 sanity check를 공통화한다.
 - [ ] 데이터 latency를 측정하고 기준 초과 시 주문을 차단한다.
-- [ ] REST 조회 실패, websocket 미구독, subscribed-no-tick 상태를 구분해 로깅한다.
+- [~] REST 조회 실패, websocket 미구독, subscribed-no-tick 상태를 구분해 로깅한다. (`subscribed_no_tick`, stale price, force reconnect 로깅은 있음. REST 실패/공통 데이터 품질 차단까지는 남음)
 
 주요 파일:
 
@@ -405,8 +405,8 @@ main 반영 확인.
 권장 실행:
 
 ```powershell
-C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\unit_test\test_order_execution_service.py -v -o addopts=
-C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\unit_test\test_risk_gate_service.py -v -o addopts=
+C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\unit_test\services\test_order_execution_service.py -v -o addopts=
+C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\unit_test\services\test_risk_gate_service.py -v -o addopts=
 C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_test -v -o addopts=
 ```
 
