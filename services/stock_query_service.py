@@ -211,17 +211,8 @@ class StockQueryService:
         """
         self.logger.debug(f"상한가 스캔 요청 (시장={market_code}, limit={limit})")
 
-        # 모의투자 / 장시간 검증
-        if getattr(self.market_data_service._env, "is_paper_trading", False):
-            self.logger.warning("모의투자 환경에서는 상한가 조회 미지원")
-            return ResCommonResponse(
-                rt_cd=ErrorCode.API_ERROR.value,
-                msg1="모의투자 미지원 API입니다.",
-                data=None
-            )
 
         try:
-            # 상위 종목 조회
             top_res: ResCommonResponse = await self.market_data_service.get_top_market_cap_stocks_code(market_code, limit)
             if not top_res or top_res.rt_cd != ErrorCode.SUCCESS.value:
                 self.logger.error(f"상위 종목 목록 조회 실패: {top_res}")
@@ -780,7 +771,7 @@ class StockQueryService:
         # 배치 호출 함수 선택
         async def _fetch_batch(cursor_hhmmss: str):
             cursor_hhmmss = self.market_clock.to_hhmmss(cursor_hhmmss)
-            if self.market_data_service._env.is_paper_trading:
+            if not date_ymd:
                 # 오늘(모의/실전; 배치당 30개)
                 return await self.get_intraday_minutes_today(
                     stock_code, input_hour_1=cursor_hhmmss
