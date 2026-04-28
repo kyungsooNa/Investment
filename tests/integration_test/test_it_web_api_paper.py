@@ -418,7 +418,7 @@ class TestEnvironmentPaper:
         stock._status_cache = {"env_type": "모의투자", "current_time": "cached"}
         mock_paper_ctx.get_env_type.return_value = "실전투자"
 
-        resp = paper_client.post("/api/environment", json={"is_paper": False})
+        resp = paper_client.post("/api/environment", json={"is_paper": False, "real_mode_confirmation": "REAL"})
         assert resp.status_code == 200
 
         body = resp.json()
@@ -434,7 +434,7 @@ class TestEnvironmentPaper:
         stock._status_cache = {"env_type": "모의투자", "current_time": "cached"}
         mock_paper_ctx.initialize_services = AsyncMock(return_value=False)
 
-        resp = paper_client.post("/api/environment", json={"is_paper": False})
+        resp = paper_client.post("/api/environment", json={"is_paper": False, "real_mode_confirmation": "REAL"})
         assert resp.status_code == 500
         mock_paper_ctx.start_background_tasks.assert_not_called()
         assert stock._status_cache is None

@@ -158,7 +158,8 @@ class TestBuyOrderReal:
         )
 
         resp = real_client.post("/api/order", json={
-            "code": "005930", "price": "70000", "qty": "10", "side": "buy"
+            "code": "005930", "price": "70000", "qty": "10", "side": "buy",
+            "real_order_confirmation": "REAL"
         })
         assert resp.status_code == 200
 
@@ -176,7 +177,8 @@ class TestBuyOrderReal:
         )
 
         resp = real_client.post("/api/order", json={
-            "code": "005930", "price": "70000", "qty": "10", "side": "buy"
+            "code": "005930", "price": "70000", "qty": "10", "side": "buy",
+            "real_order_confirmation": "REAL"
         })
         assert resp.status_code == 200
         assert resp.json()["rt_cd"] == "1"
@@ -196,7 +198,8 @@ class TestSellOrderReal:
         )
 
         resp = real_client.post("/api/order", json={
-            "code": "005930", "price": "71000", "qty": "5", "side": "sell"
+            "code": "005930", "price": "71000", "qty": "5", "side": "sell",
+            "real_order_confirmation": "REAL"
         })
         assert resp.status_code == 200
 
@@ -214,7 +217,8 @@ class TestSellOrderReal:
         )
 
         resp = real_client.post("/api/order", json={
-            "code": "005930", "price": "71000", "qty": "5", "side": "sell"
+            "code": "005930", "price": "71000", "qty": "5", "side": "sell",
+            "real_order_confirmation": "REAL"
         })
         assert resp.status_code == 200
         assert resp.json()["rt_cd"] == "1"
