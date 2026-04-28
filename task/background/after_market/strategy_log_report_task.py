@@ -66,7 +66,15 @@ class StrategyLogReportTask(AfterMarketTask):
         return {"running": self._state.value == "running"}
 
     async def force_run(self) -> None:
-        today = datetime.now().strftime('%Y%m%d')
-        self._logger.info(f"StrategyLogReportTask 강제 실행: {today}")
+        """skip/delay 를 우회하고 즉시 리포트를 생성·발송한다."""
+        self._logger.info("StrategyLogReportTask 강제 실행 요청")
         async with self._running_state():
-            await self._on_market_closed(today)
+            target_date: Optional[str] = None
+            if self._mcs:
+                try:
+                    target_date = await self._mcs.get_latest_trading_date()
+                except Exception as e:
+                    self._logger.warning(f"최근 거래일 조회 실패 — 오늘 날짜로 대체: {e}")
+            if not target_date:
+                target_date = datetime.now().strftime('%Y%m%d')
+            await self._on_market_closed(target_date)
