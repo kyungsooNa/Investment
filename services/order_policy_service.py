@@ -13,6 +13,11 @@ class QuoteProvider(Protocol):
         ...
 
 
+class SecurityInfoProvider(Protocol):
+    async def get_current_price(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
+        ...
+
+
 @dataclass
 class OrderPolicyDecision:
     allowed: bool
@@ -50,10 +55,12 @@ class OrderPolicyService:
         self,
         config: OrderPolicyConfig,
         quote_provider: Optional[QuoteProvider] = None,
+        security_info_provider: Optional[SecurityInfoProvider] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self._cfg = config
         self._quote_provider = quote_provider
+        self._security_info_provider = security_info_provider
         self._logger = logger or logging.getLogger(__name__)
 
     async def validate_order(
@@ -73,6 +80,13 @@ class OrderPolicyService:
         if price < 0:
             return self._blocked("negative_price", "주문 가격은 음수일 수 없습니다.", price=price)
 
+        security_context: dict[str, Any] = {}
+        if self._cfg.security_status_checks_enabled:
+            security_decision = await self._check_security_status(stock_code, exchange)
+            security_context = security_decision.context
+            if security_decision.blocked:
+                return security_decision
+
         order_type = "market" if price == 0 else "limit"
         if order_type == "market":
             order_type_blocked = self._check_market_order_type(side, exchange)
@@ -89,14 +103,14 @@ class OrderPolicyService:
                 )
                 if quote_decision.blocked:
                     return quote_decision
-                return quote_decision
+                return self._with_context(quote_decision, security_context)
             return OrderPolicyDecision(
                 allowed=True,
                 rule="market_order",
                 reason="market_order_allowed",
                 adjusted_price=price,
                 severity="pass",
-                context={"order_type": "market"},
+                context={"order_type": "market", **security_context},
             )
 
         tick_decision = self._check_limit_tick_size(stock_code, price)
@@ -115,7 +129,98 @@ class OrderPolicyService:
             if quote_decision.blocked:
                 return quote_decision
 
-        return tick_decision
+        return self._with_context(tick_decision, security_context)
+
+    async def _check_security_status(
+        self,
+        stock_code: str,
+        exchange: Exchange,
+    ) -> OrderPolicyDecision:
+        if self._security_info_provider is None:
+            return self._security_status_failure_decision(stock_code, "security_info_provider_missing")
+
+        try:
+            price_resp = self._security_info_provider.get_current_price(stock_code, exchange=exchange)
+            if inspect.isawaitable(price_resp):
+                price_resp = await price_resp
+        except TypeError:
+            try:
+                price_resp = self._security_info_provider.get_current_price(stock_code)
+                if inspect.isawaitable(price_resp):
+                    price_resp = await price_resp
+            except Exception as exc:
+                return self._security_status_failure_decision(stock_code, str(exc))
+        except Exception as exc:
+            return self._security_status_failure_decision(stock_code, str(exc))
+
+        if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
+            reason = price_resp.msg1 if price_resp else "응답 없음"
+            return self._security_status_failure_decision(stock_code, reason)
+
+        output = self._extract_stock_output(price_resp.data)
+        iscd_stat_cls_code = str(self._pick(output, "iscd_stat_cls_code") or "").strip()
+        mang_issu_cls_code = str(self._pick(output, "mang_issu_cls_code") or "").strip()
+        mrkt_warn_cls_code = str(self._pick(output, "mrkt_warn_cls_code") or "").strip()
+        invt_caful_yn = str(self._pick(output, "invt_caful_yn") or "").strip().upper()
+        market_cap = self._to_int(self._pick(output, "hts_avls", "stck_llam", "market_cap"))
+
+        context = {
+            "stock_code": stock_code,
+            "iscd_stat_cls_code": iscd_stat_cls_code,
+            "mang_issu_cls_code": mang_issu_cls_code,
+            "mrkt_warn_cls_code": mrkt_warn_cls_code,
+            "invt_caful_yn": invt_caful_yn,
+            "market_cap_won": market_cap,
+        }
+
+        if self._cfg.block_managed_issue and self._is_flagged_code(mang_issu_cls_code):
+            return self._blocked(
+                "managed_issue_stock",
+                "관리종목은 주문할 수 없습니다.",
+                **context,
+            )
+
+        blocked_status_codes = {str(code).strip() for code in self._cfg.blocked_stock_status_codes}
+        if self._cfg.block_investment_warning and (
+            self._is_flagged_code(mrkt_warn_cls_code) or iscd_stat_cls_code in blocked_status_codes
+        ):
+            return self._blocked(
+                "investment_warning_stock",
+                "투자경고/위험 또는 거래정지 상태 종목은 주문할 수 없습니다.",
+                blocked_stock_status_codes=sorted(blocked_status_codes),
+                **context,
+            )
+
+        if self._cfg.block_investment_caution and invt_caful_yn == "Y":
+            return self._blocked(
+                "investment_caution_stock",
+                "투자주의 종목은 주문할 수 없습니다.",
+                **context,
+            )
+
+        if self._cfg.min_market_cap_won > 0:
+            if market_cap <= 0:
+                return self._blocked(
+                    "market_cap_unavailable",
+                    "시가총액 데이터가 없어 소형주 검증을 통과할 수 없습니다.",
+                    min_market_cap_won=self._cfg.min_market_cap_won,
+                    **context,
+                )
+            if market_cap < self._cfg.min_market_cap_won:
+                return self._blocked(
+                    "market_cap_too_low",
+                    "시가총액이 최소 기준보다 작습니다.",
+                    min_market_cap_won=self._cfg.min_market_cap_won,
+                    **context,
+                )
+
+        return OrderPolicyDecision(
+            allowed=True,
+            rule="security_status",
+            reason="security_status_allowed",
+            severity="pass",
+            context=context,
+        )
 
     def _check_market_order_type(
         self,
@@ -335,6 +440,26 @@ class OrderPolicyService:
             context={"stock_code": stock_code, "quote_error": reason},
         )
 
+    def _security_status_failure_decision(self, stock_code: str, reason: str) -> OrderPolicyDecision:
+        if self._cfg.security_status_fail_policy == "block":
+            return self._blocked(
+                "security_status_unavailable",
+                "종목 상태 조회 실패로 주문을 검증할 수 없습니다.",
+                stock_code=stock_code,
+                security_status_error=reason,
+            )
+        self._logger.warning(
+            f"[OrderPolicy][CHECK_ERROR] rule=security_status_unavailable "
+            f"stock_code={stock_code} reason={reason}"
+        )
+        return OrderPolicyDecision(
+            allowed=True,
+            rule="security_status_unavailable",
+            reason="security_status_check_fail_open",
+            severity="pass",
+            context={"stock_code": stock_code, "security_status_error": reason},
+        )
+
     @staticmethod
     def _extract_quote_data(data) -> dict:
         if isinstance(data, dict):
@@ -343,6 +468,19 @@ class OrderPolicyService:
             if isinstance(data.get("output"), dict):
                 return data["output"]
             return data
+        return {}
+
+    @staticmethod
+    def _extract_stock_output(data) -> dict:
+        if isinstance(data, dict):
+            output = data.get("output")
+            if hasattr(output, "to_dict"):
+                return output.to_dict()
+            if isinstance(output, dict):
+                return output
+            return data
+        if hasattr(data, "to_dict"):
+            return data.to_dict()
         return {}
 
     @staticmethod
@@ -358,6 +496,21 @@ class OrderPolicyService:
             return int(float(str(value or "0").replace(",", "")))
         except (TypeError, ValueError):
             return 0
+
+    @staticmethod
+    def _is_flagged_code(value: str) -> bool:
+        text = str(value or "").strip().upper()
+        return text not in ("", "0", "00", "000", "N", "NONE", "NULL")
+
+    @staticmethod
+    def _with_context(decision: OrderPolicyDecision, extra_context: dict[str, Any]) -> OrderPolicyDecision:
+        if not extra_context:
+            return decision
+        merged = dict(decision.context)
+        for key, value in extra_context.items():
+            merged.setdefault(key, value)
+        decision.context = merged
+        return decision
 
     def _blocked(self, rule: str, reason: str, **context) -> OrderPolicyDecision:
         self._logger.warning(

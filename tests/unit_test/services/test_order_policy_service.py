@@ -7,10 +7,14 @@ from config.config_loader import OrderPolicyConfig
 from services.order_policy_service import OrderPolicyService
 
 
-def _service(*, config=None, quote_provider=None, logger=None):
+def _service(*, config=None, quote_provider=None, security_info_provider=None, logger=None):
+    cfg = config or OrderPolicyConfig()
+    if security_info_provider is None:
+        cfg = cfg.model_copy(update={"security_status_checks_enabled": False})
     return OrderPolicyService(
-        config=config or OrderPolicyConfig(),
+        config=cfg,
         quote_provider=quote_provider,
+        security_info_provider=security_info_provider,
         logger=logger or MagicMock(),
     )
 
@@ -26,6 +30,29 @@ def _quote(ask=70_100, bid=70_000, ask_qty=100, bid_qty=100, current=70_000, tra
             "bidp_rsqn1": str(bid_qty),
             "stck_prpr": str(current),
             "acml_tr_pbmn": str(trading_value),
+        },
+    )
+
+
+def _stock_info(
+    *,
+    market_cap=500_000_000_000,
+    iscd_stat_cls_code="",
+    mang_issu_cls_code="",
+    mrkt_warn_cls_code="",
+    invt_caful_yn="N",
+):
+    return ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data={
+            "output": {
+                "hts_avls": str(market_cap),
+                "iscd_stat_cls_code": iscd_stat_cls_code,
+                "mang_issu_cls_code": mang_issu_cls_code,
+                "mrkt_warn_cls_code": mrkt_warn_cls_code,
+                "invt_caful_yn": invt_caful_yn,
+            }
         },
     )
 
@@ -271,3 +298,164 @@ async def test_limit_order_top_of_book_participation_blocks():
 
     assert decision.blocked is True
     assert decision.rule == "top_of_book_participation_too_high"
+
+
+@pytest.mark.asyncio
+async def test_security_status_blocks_managed_issue():
+    provider = AsyncMock()
+    provider.get_current_price.return_value = _stock_info(mang_issu_cls_code="1")
+    svc = _service(security_info_provider=provider)
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "managed_issue_stock"
+    assert decision.context["mang_issu_cls_code"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_security_status_blocks_investment_warning_code():
+    provider = AsyncMock()
+    provider.get_current_price.return_value = _stock_info(mrkt_warn_cls_code="2")
+    svc = _service(security_info_provider=provider)
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "investment_warning_stock"
+
+
+@pytest.mark.asyncio
+async def test_security_status_blocks_configured_stock_status_code():
+    provider = AsyncMock()
+    provider.get_current_price.return_value = _stock_info(iscd_stat_cls_code="53")
+    svc = _service(security_info_provider=provider)
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "investment_warning_stock"
+
+
+@pytest.mark.asyncio
+async def test_security_status_blocks_investment_caution_when_enabled():
+    provider = AsyncMock()
+    provider.get_current_price.return_value = _stock_info(invt_caful_yn="Y")
+    svc = _service(
+        config=OrderPolicyConfig(block_investment_caution=True),
+        security_info_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "investment_caution_stock"
+
+
+@pytest.mark.asyncio
+async def test_security_status_blocks_small_market_cap():
+    provider = AsyncMock()
+    provider.get_current_price.return_value = _stock_info(market_cap=50_000_000_000)
+    svc = _service(
+        config=OrderPolicyConfig(min_market_cap_won=100_000_000_000),
+        security_info_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "market_cap_too_low"
+    assert decision.context["market_cap_won"] == 50_000_000_000
+
+
+@pytest.mark.asyncio
+async def test_security_status_context_is_included_when_allowed():
+    provider = AsyncMock()
+    provider.get_current_price.return_value = _stock_info(market_cap=500_000_000_000)
+    svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False, min_market_cap_won=100_000_000_000),
+        security_info_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.allowed is True
+    assert decision.context["market_cap_won"] == 500_000_000_000
+
+
+@pytest.mark.asyncio
+async def test_security_status_failure_blocks_by_default():
+    provider = AsyncMock()
+    provider.get_current_price.return_value = ResCommonResponse(rt_cd="1", msg1="API error")
+    svc = _service(security_info_provider=provider)
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "security_status_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_security_status_failure_can_fail_open():
+    provider = AsyncMock()
+    provider.get_current_price.return_value = ResCommonResponse(rt_cd="1", msg1="API error")
+    svc = _service(
+        config=OrderPolicyConfig(
+            order_book_checks_enabled=False,
+            security_status_fail_policy="allow",
+        ),
+        security_info_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.allowed is True
+    assert decision.context["security_status_error"] == "API error"

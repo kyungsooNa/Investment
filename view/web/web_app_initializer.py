@@ -452,6 +452,7 @@ class WebAppContext:
             self.order_policy_service = OrderPolicyService(
                 config=getattr(self.full_config, "order_policy", None) or OrderPolicyConfig(),
                 quote_provider=self.broker,
+                security_info_provider=self.broker,
                 logger=self.logger,
             )
             self.order_execution_service = OrderExecutionService(

@@ -73,11 +73,18 @@ class OrderPolicyConfig(BaseModel):
     allow_nxt_market_order: bool = False
     tick_size_policy: str = "adjust"        # adjust | block | ignore
     order_book_checks_enabled: bool = True
+    security_status_checks_enabled: bool = True
+    security_status_fail_policy: str = "block"  # allow | block
     max_market_slippage_pct: float = 1.0
     max_spread_pct: float = 1.0
     min_trading_value_won: int = 0
+    min_market_cap_won: int = 0
     max_top_of_book_participation_pct: float = 100.0
     block_empty_order_book: bool = True
+    block_managed_issue: bool = True
+    block_investment_warning: bool = True
+    block_investment_caution: bool = False
+    blocked_stock_status_codes: List[str] = Field(default_factory=lambda: ["51", "52", "53", "58"])
     quote_fail_policy: str = "block"        # allow | block
 
     model_config = {"extra": "allow"}
