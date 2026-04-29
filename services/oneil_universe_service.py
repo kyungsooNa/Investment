@@ -520,7 +520,7 @@ class OneilUniverseService:
             cap_billion = int(getattr(output, "hts_avls", 0) or getattr(output, "stck_llam", 0) or 0)
         stck_llam = cap_billion * 100_000_000
 
-        # 필터: 시가총액 (2천억 ~ 2조)
+        # 필터: 시가총액 (1000억 ~ 100조)
         if not (self._cfg.daily_surge_cap_min <= stck_llam <= self._cfg.daily_surge_cap_max):
             if logger: logger.debug({
                 "event": "drop", "code": code, "reason": "daily_surge_market_cap_out_of_range",
