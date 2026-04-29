@@ -121,7 +121,7 @@ main 반영 확인.
 - [~] 주문 타입, 주문 시각, 체결 지연 시간을 함께 기록한다. (`created_at`, `first_fill_latency_sec`는 `OrderContext`에 기록됨. `order_type`은 `OrderPolicyDecision.context`에 남으며 `OrderContext` 영속 필드는 아님)
 - [~] 호가 스프레드는 시장가 주문 정책 판단 컨텍스트에 기록한다. 영속 리포트 반영은 후속 작업으로 남긴다.
 - [x] 전략별/종목별 체결 품질 리포트를 추가한다. (`execution_quality` JSON 로그 이벤트 + `StrategyLogReportService` 체결 품질 요약)
-- [ ] 체결 품질이 기준 이하인 전략은 경고 또는 자동 비활성화 후보로 표시한다.
+- [x] 체결 품질 평가 기준선을 만들 수 있는 원천 데이터를 남긴다. (`expected_fill_price`, `average_fill_price`, `slippage_pct`, `first_fill_latency_sec`)
 
 주요 파일:
 
@@ -133,10 +133,13 @@ main 반영 확인.
 ### 4-2. Liquidity Control 추가
 
 - [x] 최소 거래대금 필터를 설정화한다. 예: 100억 이상 (`order_policy.min_trading_value_won`)
+- [x] 최소 거래대금 필터를 시장가/지정가 주문 모두에 적용한다. (`OrderPolicyService._check_order_book`)
 - [x] 호가잔량 기준 진입 제한을 추가한다. (`order_policy.max_top_of_book_participation_pct`)
-- [ ] 체결 강도/체결 속도 기반 필터를 검토한다.
-- [ ] 소형주, 관리종목, 투자경고 종목 제외 규칙을 추가한다.
-- [~] 유동성 부족으로 차단된 신호를 주문 정책 응답/로그에 남긴다. 전략 로그 연동은 후속 작업으로 남긴다.
+- [x] 호가잔량 기준 진입 제한을 시장가/지정가 주문 모두에 적용한다.
+- [x] 주문장 검증 기본값을 보호 모드로 전환한다. (`order_book_checks_enabled=True`, `quote_fail_policy="block"`)
+- [ ] 체결 강도/체결 속도 기반 필터를 검토한다. (종목별 진입 전 수급/속도 필터)
+- [~] 소형주, 관리종목, 투자경고 종목 제외 규칙을 추가한다. (`daily_prices` 상태 필드 저장/복원 완료, 실제 차단 정책은 남음)
+- [x] 유동성 부족으로 차단된 신호를 주문 정책 응답/로그에 남긴다. 전략 로그 연동은 후속 작업으로 남긴다.
 
 주요 파일:
 
@@ -145,6 +148,20 @@ main 반영 확인.
 - `services/market_data_service.py`
 - `strategies/strategy_executor.py`
 - `repositories/*`
+
+### 4-3. 체결 품질 기반 전략 운영 액션
+
+- [ ] 체결 품질 기준값을 설정화한다. 예: 평균 슬리피지, P95 슬리피지, 평균/최대 첫 체결 지연, 부분체결 비율
+- [ ] 기준 이하 전략을 리포트에서 경고 또는 비활성화 후보로 표시한다. (사후 평가, 체결강도와 별개)
+- [ ] 자동 비활성화는 기본 OFF로 두고 후보 표시/알림부터 적용한다.
+- [ ] 4-2 필터 변경 전후의 체결 품질 개선 여부를 비교할 수 있게 리포트 기준 기간을 분리한다.
+
+주요 파일:
+
+- `services/strategy_log_report_service.py`
+- `services/order_execution_service.py`
+- `scheduler/strategy_scheduler.py`
+- `view/web/*`
 
 ---
 
@@ -429,8 +446,8 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
    - paper/real 필드 차이 회귀 테스트 확정
    - 주문번호/체결수량/미체결수량/평균체결가/취소·거부 필드 매핑 확정
 
-2. P4 체결 품질 리포트
-   - 전략별/종목별 slippage/latency 집계
+2. P4-3 체결 품질 기반 전략 경고
+   - 기준값 설정화
    - 기준 이하 전략을 경고/비활성화 후보로 표시
 
 3. P5 전략 고도화
