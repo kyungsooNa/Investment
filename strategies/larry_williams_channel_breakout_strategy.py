@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from dataclasses import asdict
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Dict, List, Optional, Tuple
 
 from interfaces.live_strategy import LiveStrategy
@@ -251,7 +251,7 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
                 "reason": reason, "pnl_pct": round(pnl_pct, 2),
             })
             self._position_state.pop(code, None)
-            unblock = (date.today() + timedelta(days=self._cfg.cooldown_days)).strftime("%Y%m%d")
+            unblock = (self._tm.get_current_kst_time().date() + timedelta(days=self._cfg.cooldown_days)).strftime("%Y%m%d")
             self._cooldown[code] = unblock
             return (
                 TradeSignal(
