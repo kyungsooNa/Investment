@@ -184,9 +184,15 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
             "hard_stop": hard_stop_price, "channel_low_10d": channel_low_10d,
             "qty": qty,
         })
+        # PositionSizingService(Fixed Fractional)에 동적 손절폭을 전달:
+        # hard_stop은 종목별로 max(channel_low_20d, price_stop)이라 종목마다 다름.
+        # stop_loss_pct는 음수 규약 (예: -7.0). 스케줄러가 abs() 처리.
+        stop_loss_pct = (hard_stop_price - current) / current * 100.0
+
         return TradeSignal(
             code=code, name=item.name, action="BUY", price=current, qty=qty,
             reason=reason_msg, strategy_name=self.name,
+            stop_loss_pct=stop_loss_pct,
         )
 
     # ── check_exits ─────────────────────────────────────────────────

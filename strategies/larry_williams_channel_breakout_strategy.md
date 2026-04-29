@@ -31,7 +31,9 @@ MA 정배열 조건: 적용하지 않음. ADX 가 추세 검증 역할을 하므
 포지션 사이징 (Fixed Fractional — 핵심):
 $$수량 = \frac{총자산 \times 0.015}{진입가 - 손절가}$$
 단일 종목 손실이 전체 자산의 1.5%를 넘지 않도록 수량을 자동 결정.
-- PositionSizingService.adjust_buy_qty() 위임. Config의 per_trade_risk_pct=1.5 설정.
+- 전략은 TradeSignal에 동적 stop_loss_pct = (hard_stop − 진입가) / 진입가 × 100 을 부여한다.
+- StrategyScheduler가 PositionSizingService.adjust_buy_qty(signal) 를 호출해 risk_qty / cap_qty / cash_qty 4-way min으로 최종 수량을 결정한다.
+- per_trade_risk_pct(기본 1.5)는 글로벌 PositionSizingConfig에서 관리되며 전략별 Config가 아니다.
 - 손절가: max(직전 20일 채널 하단, 진입가 × 0.93) — 아래 페이즈 3 참조.
 
 중복 진입 금지: 동일 종목 보유 중이면 추가 매수 금지. 청산 후 최소 2거래일 쿨다운.
@@ -39,7 +41,7 @@ $$수량 = \frac{총자산 \times 0.015}{진입가 - 손절가}$$
 3. ✂️ 페이즈 3: 추세 추종 청산 (Exit)
 익절은 시장에 맡기되, 손절은 기계적으로 집행합니다.
 
-트레일링 채널 스탑 (주 청산 수단): 종가 < 최근 10거래일 최저가(channel_low_10d) 일 때 다음 장 시초가 매도.
+트레일링 채널 스탑 (주 청산 수단): 장중 현재가 < 최근 10거래일 최저가(channel_low_10d) 일 때 즉시 매도 (라이브 실행은 폴링 기반 실시간 감지). channel_low_10d는 매 청산 검사 시 OHLCV 재조회로 상향만 갱신.
 - channel_low_10d 는 보유 기간 중 매 장마감 후 재계산하여 LarryWilliamsCBPositionState 에 갱신.
 - 수익이 날수록 channel_low_10d 가 상향되어 자동으로 익절선이 올라오는 구조.
 
