@@ -38,6 +38,7 @@ class HighTightFlagStrategy(LiveStrategy):
         market_clock: MarketClock,
         config: Optional[HTFConfig] = None,
         logger: Optional[logging.Logger] = None,
+        state_file: Optional[str] = None,
     ):
         self._sqs = stock_query_service
         self._universe = universe_service
@@ -50,6 +51,8 @@ class HighTightFlagStrategy(LiveStrategy):
 
         self._position_state: Dict[str, HTFPositionState] = {}
         self._cooldown: Dict[str, str] = {}
+        if state_file is not None:
+            self.STATE_FILE = str(state_file)
         self._load_state()
 
     @property

@@ -52,6 +52,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         market_clock: MarketClock,
         config: Optional[OneilBreakoutConfig] = None,
         logger: Optional[logging.Logger] = None,
+        state_file: Optional[str] = None,
     ):
         self._sqs = stock_query_service
         self._universe = universe_service
@@ -64,6 +65,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         self._position_state: Dict[str, OSBPositionState] = {}
         self._cooldown: Dict[str, str] = {}
+        if state_file is not None:
+            self.STATE_FILE = str(state_file)
         self._load_state()
 
     @property
