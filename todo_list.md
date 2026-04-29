@@ -155,7 +155,7 @@ main 반영 확인.
 - [x] 기준 이하 전략을 리포트에서 경고 또는 비활성화 후보로 표시한다. (사후 평가, 체결강도와 별개)
 - [x] 자동 비활성화는 기본 OFF로 두고 후보 표시부터 적용한다. (`auto_disable_enabled=false`)
 - [ ] 비활성화 후보를 알림/웹 UI에서 더 눈에 띄게 표시한다.
-- [ ] 부분체결 비율/미체결 지속 시간을 체결 품질 기준에 추가한다.
+- [x] 부분체결 비율/미체결 지속 시간을 체결 품질 기준에 추가한다. (`order_qty`, `remaining_qty`, `fill_ratio_pct`, `unfilled_ratio_pct`, `order_age_sec`)
 - [ ] 4-2 필터 변경 전후의 체결 품질 개선 여부를 비교할 수 있게 리포트 기준 기간을 분리한다.
 
 주요 파일:
@@ -450,7 +450,6 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
 
 2. P4-3 체결 품질 기반 전략 경고
    - 비활성화 후보 알림/웹 UI 표시 강화
-   - 부분체결 비율/미체결 지속 시간 기준 추가
 
 3. P5 전략 고도화
    - RSI(2) 눌림목 전략 설계/구현

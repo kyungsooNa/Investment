@@ -460,6 +460,7 @@ class StrategyLogReportService:
         if not records:
             return None
 
+        records = self._latest_execution_quality_records(records)
         by_strategy: Dict[str, List[dict]] = {}
         by_symbol: Dict[Tuple[str, str], List[dict]] = {}
         for record in records:
@@ -483,6 +484,21 @@ class StrategyLogReportService:
             avg_slip = sum(slip_values) / len(slip_values) if slip_values else None
             max_slip = max(slip_values) if slip_values else None
             avg_latency = sum(latency_values) / len(latency_values) if latency_values else None
+            incomplete_count = sum(
+                1
+                for item in items
+                if item.get("order_qty", 0) > 0 and item.get("remaining_qty", 0) > 0
+            )
+            unfilled_values = [
+                item["unfilled_ratio_pct"]
+                for item in items
+                if item.get("unfilled_ratio_pct") is not None
+            ]
+            age_values = [
+                item["order_age_sec"]
+                for item in items
+                if item.get("order_age_sec") is not None
+            ]
             strategy_rows.append({
                 "strategy": strategy,
                 "count": len(items),
@@ -490,19 +506,31 @@ class StrategyLogReportService:
                 "p95_slip": self._percentile(slip_values, 95),
                 "max_slip": max_slip,
                 "avg_latency": avg_latency,
+                "incomplete_fill_ratio": incomplete_count / len(items) * 100 if items else 0.0,
+                "avg_unfilled_ratio": sum(unfilled_values) / len(unfilled_values) if unfilled_values else None,
+                "avg_order_age": sum(age_values) / len(age_values) if age_values else None,
             })
 
-        strategy_rows.sort(key=lambda row: (row["avg_slip"] is None, -(row["avg_slip"] or 0), row["strategy"]))
+        strategy_rows.sort(key=lambda row: (
+            row["avg_slip"] is None,
+            -(row["avg_slip"] or 0),
+            -(row["avg_unfilled_ratio"] or 0),
+            row["strategy"],
+        ))
         for row in strategy_rows[:_MAX_EXECUTION_QUALITY_ROWS]:
             slip_str = f"{row['avg_slip']:.3f}%" if row["avg_slip"] is not None else "N/A"
             p95_str = f"{row['p95_slip']:.3f}%" if row["p95_slip"] is not None else "N/A"
             max_str = f"{row['max_slip']:.3f}%" if row["max_slip"] is not None else "N/A"
             latency_str = f"{row['avg_latency']:.1f}s" if row["avg_latency"] is not None else "N/A"
+            incomplete_str = f"{row['incomplete_fill_ratio']:.1f}%"
+            unfilled_str = f"{row['avg_unfilled_ratio']:.1f}%" if row["avg_unfilled_ratio"] is not None else "N/A"
+            age_str = f"{row['avg_order_age']:.1f}s" if row["avg_order_age"] is not None else "N/A"
             quality_label = self._execution_quality_label(row)
             quality_str = f" {quality_label}" if quality_label else ""
             lines.append(
                 f"• {_esc(row['strategy'])}: {row['count']}건, 평균 슬리피지 {slip_str}, "
-                f"P95 {p95_str}, 최대 {max_str}, 평균 지연 {latency_str}{quality_str}"
+                f"P95 {p95_str}, 최대 {max_str}, 평균 지연 {latency_str}, "
+                f"불완전 체결 {incomplete_str}, 평균 잔량 {unfilled_str}, 평균 지속 {age_str}{quality_str}"
             )
 
         symbol_rows = []
@@ -531,6 +559,16 @@ class StrategyLogReportService:
         return "\n".join(lines)
 
     @staticmethod
+    def _latest_execution_quality_records(records: List[dict]) -> List[dict]:
+        latest: Dict[str, dict] = {}
+        for idx, record in enumerate(records):
+            order_key = str(record.get("order_key") or f"missing:{idx}")
+            prev = latest.get(order_key)
+            if prev is None or str(record.get("timestamp", "")) >= str(prev.get("timestamp", "")):
+                latest[order_key] = record
+        return list(latest.values())
+
+    @staticmethod
     def _percentile(values: List[float], percentile: int) -> Optional[float]:
         if not values:
             return None
@@ -553,14 +591,23 @@ class StrategyLogReportService:
         avg_slip = row.get("avg_slip")
         p95_slip = row.get("p95_slip")
         avg_latency = row.get("avg_latency")
+        incomplete_fill_ratio = row.get("incomplete_fill_ratio")
+        avg_unfilled_ratio = row.get("avg_unfilled_ratio")
+        avg_order_age = row.get("avg_order_age")
 
         candidate_reasons = self._quality_threshold_reasons(
             avg_slip=avg_slip,
             p95_slip=p95_slip,
             avg_latency=avg_latency,
+            incomplete_fill_ratio=incomplete_fill_ratio,
+            avg_unfilled_ratio=avg_unfilled_ratio,
+            avg_order_age=avg_order_age,
             avg_slip_threshold=getattr(cfg, "candidate_avg_slippage_pct", None),
             p95_slip_threshold=getattr(cfg, "candidate_p95_slippage_pct", None),
             avg_latency_threshold=getattr(cfg, "candidate_avg_first_fill_latency_sec", None),
+            incomplete_fill_ratio_threshold=getattr(cfg, "candidate_incomplete_fill_ratio_pct", None),
+            avg_unfilled_ratio_threshold=getattr(cfg, "candidate_avg_unfilled_ratio_pct", None),
+            avg_order_age_threshold=getattr(cfg, "candidate_avg_order_age_sec", None),
         )
         if candidate_reasons:
             suffix = "자동 OFF" if bool(getattr(cfg, "auto_disable_enabled", False)) else "후보"
@@ -570,9 +617,15 @@ class StrategyLogReportService:
             avg_slip=avg_slip,
             p95_slip=p95_slip,
             avg_latency=avg_latency,
+            incomplete_fill_ratio=incomplete_fill_ratio,
+            avg_unfilled_ratio=avg_unfilled_ratio,
+            avg_order_age=avg_order_age,
             avg_slip_threshold=getattr(cfg, "warn_avg_slippage_pct", None),
             p95_slip_threshold=getattr(cfg, "warn_p95_slippage_pct", None),
             avg_latency_threshold=getattr(cfg, "warn_avg_first_fill_latency_sec", None),
+            incomplete_fill_ratio_threshold=getattr(cfg, "warn_incomplete_fill_ratio_pct", None),
+            avg_unfilled_ratio_threshold=getattr(cfg, "warn_avg_unfilled_ratio_pct", None),
+            avg_order_age_threshold=getattr(cfg, "warn_avg_order_age_sec", None),
         )
         if warn_reasons:
             return f"⚠️ 경고: {', '.join(warn_reasons)}"
@@ -584,9 +637,15 @@ class StrategyLogReportService:
         avg_slip: Optional[float],
         p95_slip: Optional[float],
         avg_latency: Optional[float],
+        incomplete_fill_ratio: Optional[float],
+        avg_unfilled_ratio: Optional[float],
+        avg_order_age: Optional[float],
         avg_slip_threshold: Optional[float],
         p95_slip_threshold: Optional[float],
         avg_latency_threshold: Optional[float],
+        incomplete_fill_ratio_threshold: Optional[float],
+        avg_unfilled_ratio_threshold: Optional[float],
+        avg_order_age_threshold: Optional[float],
     ) -> List[str]:
         reasons = []
         if avg_slip is not None and avg_slip_threshold is not None and avg_slip > avg_slip_threshold:
@@ -595,6 +654,20 @@ class StrategyLogReportService:
             reasons.append(f"P95 슬리피지 {p95_slip:.3f}%")
         if avg_latency is not None and avg_latency_threshold is not None and avg_latency > avg_latency_threshold:
             reasons.append(f"평균 지연 {avg_latency:.1f}s")
+        if (
+            incomplete_fill_ratio is not None
+            and incomplete_fill_ratio_threshold is not None
+            and incomplete_fill_ratio > incomplete_fill_ratio_threshold
+        ):
+            reasons.append(f"불완전 체결 {incomplete_fill_ratio:.1f}%")
+        if (
+            avg_unfilled_ratio is not None
+            and avg_unfilled_ratio_threshold is not None
+            and avg_unfilled_ratio > avg_unfilled_ratio_threshold
+        ):
+            reasons.append(f"평균 잔량 {avg_unfilled_ratio:.1f}%")
+        if avg_order_age is not None and avg_order_age_threshold is not None and avg_order_age > avg_order_age_threshold:
+            reasons.append(f"평균 지속 {avg_order_age:.1f}s")
         return reasons
 
     # ── 리포트 생성 ──────────────────────────────────────────────
@@ -662,11 +735,19 @@ class StrategyLogReportService:
                     elif event == 'execution_quality' and code:
                         name_value = name_map.get(code) or data.get('name') or code
                         execution_quality_records.append({
+                            "timestamp": ts,
+                            "order_key": data.get("order_key") or f"{ts}:{code}:{len(execution_quality_records)}",
                             "strategy": _strategy_name_from_source(data.get("source") or data.get("strategy_name")),
                             "code": str(code).strip(),
                             "name": self._db_resolve(str(code).strip(), str(name_value)),
                             "side": data.get("side", ""),
+                            "state": data.get("state", ""),
+                            "order_qty": int(_to_float(data.get("order_qty")) or 0),
                             "filled_qty": int(_to_float(data.get("filled_qty")) or 0),
+                            "remaining_qty": int(_to_float(data.get("remaining_qty")) or 0),
+                            "fill_ratio_pct": _to_float(data.get("fill_ratio_pct")),
+                            "unfilled_ratio_pct": _to_float(data.get("unfilled_ratio_pct")),
+                            "order_age_sec": _to_float(data.get("order_age_sec")),
                             "slippage_amount_won": _to_float(data.get("slippage_amount_won")),
                             "slippage_pct": _to_float(data.get("slippage_pct")),
                             "first_fill_latency_sec": _to_float(data.get("first_fill_latency_sec")),

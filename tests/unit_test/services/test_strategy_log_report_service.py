@@ -486,8 +486,14 @@ async def test_report_includes_execution_quality_summary(log_dir):
     report = await svc.generate_report("20260418")
 
     assert "체결 품질 요약" in report
-    assert "전략A: 2건, 평균 슬리피지 0.150%, P95 0.195%, 최대 0.200%, 평균 지연 3.0s" in report
-    assert "수동매매: 1건, 평균 슬리피지 0.500%, P95 0.500%, 최대 0.500%, 평균 지연 9.0s" in report
+    assert (
+        "전략A: 2건, 평균 슬리피지 0.150%, P95 0.195%, 최대 0.200%, 평균 지연 3.0s, "
+        "불완전 체결 0.0%, 평균 잔량 N/A, 평균 지속 N/A"
+    ) in report
+    assert (
+        "수동매매: 1건, 평균 슬리피지 0.500%, P95 0.500%, 최대 0.500%, 평균 지연 9.0s, "
+        "불완전 체결 0.0%, 평균 잔량 N/A, 평균 지속 N/A"
+    ) in report
     assert "종목별 슬리피지 상위: SK하이닉스(000660) 0.500%/1건, 삼성전자(005930) 0.150%/2건" in report
 
 
@@ -533,6 +539,61 @@ async def test_report_marks_poor_execution_quality_strategy(log_dir):
     assert "평균 슬리피지" in report
     assert "P95 슬리피지" in report
     assert "평균 지연" in report
+
+
+@pytest.mark.asyncio
+async def test_report_marks_incomplete_fill_quality_strategy(log_dir):
+    """부분체결/미체결 지속 시간이 기준을 넘는 전략을 표시한다."""
+    log_path = os.path.join(log_dir, "20260418_093000_Execution.log.json")
+    _write_log(log_path, [
+        {
+            "timestamp": f"2026-04-18 10:0{idx}:00,000",
+            "level": "INFO",
+            "name": "order.execution",
+            "data": {
+                "event": "execution_quality",
+                "order_key": f"order-{idx}",
+                "code": f"00000{idx}",
+                "name": f"종목{idx}",
+                "source": "strategy:잔량전략",
+                "side": "BUY",
+                "state": "CANCELED" if idx == 1 else "PARTIAL_FILLED",
+                "order_qty": 10,
+                "filled_qty": 0 if idx == 1 else 4,
+                "remaining_qty": 10 if idx == 1 else 6,
+                "fill_ratio_pct": 0.0 if idx == 1 else 40.0,
+                "unfilled_ratio_pct": 100.0 if idx == 1 else 60.0,
+                "order_age_sec": 180.0,
+            },
+        }
+        for idx in range(1, 4)
+    ])
+
+    cfg = SimpleNamespace(
+        enabled=True,
+        min_sample_count=3,
+        warn_avg_slippage_pct=10.0,
+        warn_p95_slippage_pct=10.0,
+        warn_avg_first_fill_latency_sec=999.0,
+        warn_incomplete_fill_ratio_pct=20.0,
+        warn_avg_unfilled_ratio_pct=20.0,
+        warn_avg_order_age_sec=120.0,
+        candidate_avg_slippage_pct=20.0,
+        candidate_p95_slippage_pct=20.0,
+        candidate_avg_first_fill_latency_sec=999.0,
+        candidate_incomplete_fill_ratio_pct=80.0,
+        candidate_avg_unfilled_ratio_pct=90.0,
+        candidate_avg_order_age_sec=300.0,
+        auto_disable_enabled=False,
+    )
+    svc = StrategyLogReportService(log_dir=log_dir, execution_quality_config=cfg)
+    report = await svc.generate_report("20260418")
+
+    assert "잔량전략: 3건" in report
+    assert "불완전 체결 100.0%" in report
+    assert "평균 잔량 73.3%" in report
+    assert "평균 지속 180.0s" in report
+    assert "비활성화 후보" in report
 
 
 # ── _build_metric_str ─────────────────────────────────────────────

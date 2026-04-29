@@ -236,17 +236,27 @@ class OrderExecutionService:
         }
 
     def _log_execution_quality(self, context: OrderContext) -> None:
-        if context.average_fill_price is None:
+        if context.average_fill_price is None and not context.state.is_terminal:
             return
+        now = self._get_now()
+        order_age_sec = (now - context.created_at).total_seconds() if context.created_at else None
+        fill_ratio_pct = (context.filled_qty / context.qty * 100) if context.qty > 0 else None
+        unfilled_ratio_pct = (context.remaining_qty / context.qty * 100) if context.qty > 0 else None
         event = {
             "event": "execution_quality",
             "order_key": context.order_key,
             "code": context.stock_code,
             "side": context.side.value,
             "source": context.source,
+            "state": context.state.value,
+            "order_qty": context.qty,
             "expected_fill_price": context.expected_fill_price,
             "average_fill_price": context.average_fill_price,
             "filled_qty": context.filled_qty,
+            "remaining_qty": context.remaining_qty,
+            "fill_ratio_pct": fill_ratio_pct,
+            "unfilled_ratio_pct": unfilled_ratio_pct,
+            "order_age_sec": order_age_sec,
             "slippage_amount_won": context.slippage_amount_won,
             "slippage_pct": context.slippage_pct,
             "first_fill_latency_sec": context.first_fill_latency_sec,
@@ -260,10 +270,18 @@ class OrderExecutionService:
                 get_strategy_logger("ExecutionQuality", log_dir=log_dir).info(event)
             except Exception as exc:
                 self.logger.warning(f"execution_quality 전략 로그 기록 실패: {exc}")
+        avg_fill_price_str = (
+            f"{context.average_fill_price:.2f}"
+            if context.average_fill_price is not None
+            else "N/A"
+        )
         self.logger.info(
             f"[EXECUTION QUALITY] order_key={context.order_key} code={context.stock_code} "
-            f"side={context.side.value} expected_price={context.expected_fill_price} "
-            f"avg_fill_price={context.average_fill_price:.2f} filled_qty={context.filled_qty} "
+            f"side={context.side.value} state={context.state.value} "
+            f"expected_price={context.expected_fill_price} avg_fill_price={avg_fill_price_str} "
+            f"filled_qty={context.filled_qty} remaining_qty={context.remaining_qty} "
+            f"fill_ratio_pct={fill_ratio_pct} unfilled_ratio_pct={unfilled_ratio_pct} "
+            f"order_age_sec={order_age_sec} "
             f"slippage_won={context.slippage_amount_won} slippage_pct={context.slippage_pct} "
             f"first_fill_latency_sec={context.first_fill_latency_sec} source={context.source} "
             f"trace_id={context.trace_id}"
@@ -427,14 +445,17 @@ class OrderExecutionService:
             )
 
         if report.event_state == OrderState.REJECTED:
-            return self._transition_order_context(
+            rejected = self._transition_order_context(
                 context.order_key,
                 OrderState.REJECTED,
                 error_message=report.message or "주문 거부",
             )
+            self._log_execution_quality(rejected)
+            return rejected
 
         if report.event_state == OrderState.CANCELED:
             canceled = self._transition_order_context(context.order_key, OrderState.CANCELED)
+            self._log_execution_quality(canceled)
             return await self._persist_virtual_trade_for_terminal_report(canceled, report)
 
         if report.fill_qty <= 0:
@@ -997,7 +1018,10 @@ class OrderExecutionService:
         if not context or context.state.is_terminal:
             return context
         qty = context.qty if filled_qty is None and final_state == OrderState.FILLED else (filled_qty or context.filled_qty)
-        return self._transition_order_context(order_key, final_state, filled_qty=qty)
+        transitioned = self._transition_order_context(order_key, final_state, filled_qty=qty)
+        if transitioned.state.is_terminal or transitioned.average_fill_price is not None:
+            self._log_execution_quality(transitioned)
+        return transitioned
 
     async def mark_order_partial_filled(
         self,

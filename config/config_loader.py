@@ -89,9 +89,15 @@ class ExecutionQualityReportConfig(BaseModel):
     warn_avg_slippage_pct: float = 0.5
     warn_p95_slippage_pct: float = 1.0
     warn_avg_first_fill_latency_sec: float = 30.0
+    warn_incomplete_fill_ratio_pct: float = 20.0
+    warn_avg_unfilled_ratio_pct: float = 20.0
+    warn_avg_order_age_sec: float = 120.0
     candidate_avg_slippage_pct: float = 1.0
     candidate_p95_slippage_pct: float = 2.0
     candidate_avg_first_fill_latency_sec: float = 90.0
+    candidate_incomplete_fill_ratio_pct: float = 40.0
+    candidate_avg_unfilled_ratio_pct: float = 40.0
+    candidate_avg_order_age_sec: float = 300.0
     auto_disable_enabled: bool = False
 
     model_config = {"extra": "allow"}
