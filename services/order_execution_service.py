@@ -238,6 +238,28 @@ class OrderExecutionService:
     def _log_execution_quality(self, context: OrderContext) -> None:
         if context.average_fill_price is None:
             return
+        event = {
+            "event": "execution_quality",
+            "order_key": context.order_key,
+            "code": context.stock_code,
+            "side": context.side.value,
+            "source": context.source,
+            "expected_fill_price": context.expected_fill_price,
+            "average_fill_price": context.average_fill_price,
+            "filled_qty": context.filled_qty,
+            "slippage_amount_won": context.slippage_amount_won,
+            "slippage_pct": context.slippage_pct,
+            "first_fill_latency_sec": context.first_fill_latency_sec,
+            "trace_id": context.trace_id,
+        }
+        self.logger.info(event)
+        log_dir = getattr(self.logger, "log_dir", None)
+        if isinstance(log_dir, str):
+            try:
+                from core.logger import get_strategy_logger
+                get_strategy_logger("ExecutionQuality", log_dir=log_dir).info(event)
+            except Exception as exc:
+                self.logger.warning(f"execution_quality 전략 로그 기록 실패: {exc}")
         self.logger.info(
             f"[EXECUTION QUALITY] order_key={context.order_key} code={context.stock_code} "
             f"side={context.side.value} expected_price={context.expected_fill_price} "

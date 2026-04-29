@@ -101,6 +101,7 @@ _MAX_SOLD_DETAILS_SHOWN = 5
 _MA_PROXIMITY_LOWER_PCT = -2.0
 _MA_PROXIMITY_UPPER_PCT = 4.0
 _MA_NEAR_MISS_MAX_EXCESS_PCT = 4.0
+_MAX_EXECUTION_QUALITY_ROWS = 5
 
 
 def _to_float(value: Any) -> Optional[float]:
@@ -119,6 +120,19 @@ def _first_number(data: dict, *keys: str) -> Optional[float]:
             if value is not None:
                 return value
     return None
+
+
+def _strategy_name_from_source(source: Any) -> str:
+    raw = str(source or "").strip()
+    if not raw:
+        return "미분류"
+    if raw.startswith("strategy:"):
+        value = raw.split(":", 1)[1].strip()
+        return value or "미분류"
+    if raw.startswith("manual:"):
+        value = raw.split(":", 1)[1].strip()
+        return value or "수동매매"
+    return raw
 
 
 def _normalize_reason(reason: str) -> str:
@@ -440,6 +454,76 @@ class StrategyLogReportService:
 
         return "\n".join(lines)
 
+    def _build_execution_quality_section(self, records: List[dict]) -> Optional[str]:
+        if not records:
+            return None
+
+        by_strategy: Dict[str, List[dict]] = {}
+        by_symbol: Dict[Tuple[str, str], List[dict]] = {}
+        for record in records:
+            strategy = record["strategy"]
+            by_strategy.setdefault(strategy, []).append(record)
+            by_symbol.setdefault((record["code"], record["name"]), []).append(record)
+
+        lines = ["<b>📈 체결 품질 요약</b>"]
+        strategy_rows = []
+        for strategy, items in by_strategy.items():
+            slip_values = [
+                abs(item["slippage_pct"])
+                for item in items
+                if item.get("slippage_pct") is not None
+            ]
+            latency_values = [
+                item["first_fill_latency_sec"]
+                for item in items
+                if item.get("first_fill_latency_sec") is not None
+            ]
+            avg_slip = sum(slip_values) / len(slip_values) if slip_values else None
+            max_slip = max(slip_values) if slip_values else None
+            avg_latency = sum(latency_values) / len(latency_values) if latency_values else None
+            strategy_rows.append({
+                "strategy": strategy,
+                "count": len(items),
+                "avg_slip": avg_slip,
+                "max_slip": max_slip,
+                "avg_latency": avg_latency,
+            })
+
+        strategy_rows.sort(key=lambda row: (row["avg_slip"] is None, -(row["avg_slip"] or 0), row["strategy"]))
+        for row in strategy_rows[:_MAX_EXECUTION_QUALITY_ROWS]:
+            slip_str = f"{row['avg_slip']:.3f}%" if row["avg_slip"] is not None else "N/A"
+            max_str = f"{row['max_slip']:.3f}%" if row["max_slip"] is not None else "N/A"
+            latency_str = f"{row['avg_latency']:.1f}s" if row["avg_latency"] is not None else "N/A"
+            lines.append(
+                f"• {_esc(row['strategy'])}: {row['count']}건, 평균 슬리피지 {slip_str}, "
+                f"최대 {max_str}, 평균 지연 {latency_str}"
+            )
+
+        symbol_rows = []
+        for (code, name), items in by_symbol.items():
+            slip_values = [
+                abs(item["slippage_pct"])
+                for item in items
+                if item.get("slippage_pct") is not None
+            ]
+            if not slip_values:
+                continue
+            symbol_rows.append({
+                "code": code,
+                "name": name,
+                "count": len(items),
+                "avg_slip": sum(slip_values) / len(slip_values),
+            })
+        symbol_rows.sort(key=lambda row: (-row["avg_slip"], row["name"], row["code"]))
+        if symbol_rows:
+            parts = [
+                f"{_esc(row['name'])}({row['code']}) {row['avg_slip']:.3f}%/{row['count']}건"
+                for row in symbol_rows[:3]
+            ]
+            lines.append("• 종목별 슬리피지 상위: " + ", ".join(parts))
+
+        return "\n".join(lines)
+
     # ── 리포트 생성 ──────────────────────────────────────────────
 
     async def generate_report(self, target_date: str) -> str:
@@ -463,6 +547,7 @@ class StrategyLogReportService:
 
         # 전략 로직과 무관한 데이터 수신/파싱 오류를 따로 집계
         data_errors_by_strategy: Dict[str, int] = {}
+        execution_quality_records: List[dict] = []
 
         for name, files in sorted(strategy_files.items()):
             bought: Dict[str, dict] = {}
@@ -500,6 +585,19 @@ class StrategyLogReportService:
                         }
                         rejected.pop(code, None)
                         near_miss.pop(code, None)
+
+                    elif event == 'execution_quality' and code:
+                        name_value = name_map.get(code) or data.get('name') or code
+                        execution_quality_records.append({
+                            "strategy": _strategy_name_from_source(data.get("source") or data.get("strategy_name")),
+                            "code": str(code).strip(),
+                            "name": self._db_resolve(str(code).strip(), str(name_value)),
+                            "side": data.get("side", ""),
+                            "filled_qty": int(_to_float(data.get("filled_qty")) or 0),
+                            "slippage_amount_won": _to_float(data.get("slippage_amount_won")),
+                            "slippage_pct": _to_float(data.get("slippage_pct")),
+                            "first_fill_latency_sec": _to_float(data.get("first_fill_latency_sec")),
+                        })
 
                     elif code and (event in self.REJECTED_EVENTS or event.endswith('_rejected')):
                         if code not in bought:
@@ -680,9 +778,14 @@ class StrategyLogReportService:
         warnings_section = ""
         if system_warnings:
             warnings_section = "<b>⚠️ 시스템 경고</b>\n" + "\n".join(system_warnings)
+        execution_quality_section = self._build_execution_quality_section(execution_quality_records)
 
         if not active_sections:
-            extra = f"\n\n{warnings_section}" if warnings_section else ""
+            extra_sections = [
+                section for section in (warnings_section, execution_quality_section) if section
+            ]
+            extra_body = "\n\n".join(extra_sections)
+            extra = f"\n\n{extra_body}" if extra_body else ""
             return header + extra + "\n\n당일 활동한 전략이 없습니다." + footer
 
         sections: List[str] = []
@@ -693,6 +796,8 @@ class StrategyLogReportService:
         portfolio_summary = self._build_portfolio_summary(target_date, fallback_buys)
         if portfolio_summary:
             body += f"\n\n{portfolio_summary}"
+        if execution_quality_section:
+            body += f"\n\n{execution_quality_section}"
 
         if inactive_names:
             inactive_summary = f"\n\n💤 <i>활동 없음: {_esc(', '.join(inactive_names[:3]))}"
