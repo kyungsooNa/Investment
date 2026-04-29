@@ -226,8 +226,9 @@ function renderSchedulerHistory(history) {
     }
 
     tbody.innerHTML = history.map(h => {
-        const actionClass = h.action === 'BUY' ? 'text-red' : 'text-blue';
-        const actionLabel = h.action === 'BUY' ? '매수' : '매도';
+        const isSizingSkip = h.action === 'BUY' && Number(h.qty || 0) <= 0 && String(h.reason || '').startsWith('sizing_skip:');
+        const actionClass = isSizingSkip ? '' : (h.action === 'BUY' ? 'text-red' : 'text-blue');
+        const actionLabel = isSizingSkip ? '스킵' : (h.action === 'BUY' ? '매수' : '매도');
         const statusIcon = h.api_success ? '' : ' <span title="API 주문 실패" style="color:orange;">⚠</span>';
 
         let returnRateHtml = '<td>-</td>';

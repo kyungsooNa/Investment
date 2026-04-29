@@ -880,6 +880,20 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await scheduler.start_strategy("전략A"))
         self.assertTrue(scheduler._strategies[0].enabled)
 
+    async def test_start_strategy_clears_stop_event_after_full_stop(self):
+        """전체 정지 후 개별 전략 시작 시 루프가 즉시 종료되지 않도록 stop_event를 해제한다."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="RSI2눌림목")
+        scheduler.register(StrategySchedulerConfig(strategy=strategy, enabled=False))
+        scheduler._stop_event.set()
+
+        with patch.object(scheduler, '_loop', new_callable=AsyncMock):
+            self.assertTrue(await scheduler.start_strategy("RSI2눌림목"))
+
+        self.assertFalse(scheduler._stop_event.is_set())
+        self.assertTrue(scheduler._running)
+        self.assertTrue(scheduler._strategies[0].enabled)
+
     async def test_update_max_positions_success(self):
         """최대 포지션 수가 성공적으로 변경되는지 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
