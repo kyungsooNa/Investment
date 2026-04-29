@@ -194,11 +194,16 @@ main 반영 확인.
 
 ### 5-4. 신규 전략 후보
 
-- [ ] RSI(2) 눌림목 전략 후보를 별도 전략으로 설계한다.
+- [X] RSI(2) 눌림목 전략 후보를 별도 전략으로 설계한다.
   - Oneil/Minervini universe 기반 주도주만 대상으로 한다.
   - RSI(2) 과매도 후 반등을 진입 조건으로 둔다.
   - 5MA 회복 또는 손절 조건을 명확히 둔다.
-- [~] Larry Williams 계열 전략 후보를 별도 전략으로 설계한다. (`strategies/larry_williams_vbo_strategy.py`에 VBO 전략은 추가됨. 아래의 펜볼드/돈천 채널 규칙은 미구현)
+  - [X] 설계 MD: `strategies/rsi2_pullback_strategy.md`
+  - [X] 구현: `strategies/rsi2_pullback_strategy.py` + `strategies/rsi2_pullback_types.py`
+  - [X] 단위 테스트: `tests/unit_test/strategies/test_rsi2_pullback_strategy.py` (11건)
+  - [X] 통합 테스트: `tests/integration_test/strategies/test_it_api_rsi2_pullback_strategy.py` + `test_it_strategy_scan.py::TestRSI2PullbackScan` (5건)
+  - [X] WebAppContext 등록 및 StrategyScheduler 연결 (`view/web/web_app_initializer.py`, `enabled=False` 수동 활성화 대기)
+- [ ] Larry Williams 채널 돌파 전략 후보를 별도 전략으로 설계한다.
   - RS Rating, ADX, 거래대금 필터를 함께 적용한다.
   - 20일 고가 돌파, 10일 저가 trailing stop을 검토한다.
   - fixed fractional position sizing을 적용한다.
@@ -210,7 +215,7 @@ main 반영 확인.
 - `services/indicator_service.py`
 - `services/oneil_universe_service.py`
 
-   - [ ] 신규 전략 추가
+   - [ ] 신규 전략 추가 (확장 2: RSI(2) 눌림목 완료, 확장 3: 펜볼드 채널 돌파 미구현)
    - 🦅 [확장 2] 래리 코너스 RSI(2) 눌림목핵심 철학: "대세 상승장(Stage 2)에서도 주가는 숨을 고른다. RSI(2)가 10 이하라는 것은 고무줄이 팽팽하게 당겨진 상태와 같으므로 반등의 탄성이 가장 크다."
       1. 🚀 페이즈 1: 주도주 및 추세 확인 (Setup)WatchList: OneilUniverseService의 Pool A (우량주) 사용.장기 추세 (미너비니): 주가가 200일 이동평균선 위에 위치하며 200일선이 우상향 중일 것.단기 과매도: 실시간 RSI(기간: 2) 값이 10 이하로 떨어질 것.
       2. 🎯 페이즈 2: 매수 진입 (Trigger)진입 타이밍: RSI(2) < 10 조건이 충족된 상태에서 15:10 이후 종가 베팅 진입.안전장치: 지수 마켓 타이밍(20MA 우상향)이 🔴이더라도, 개별 종목의 장기 추세(200MA)가 강력하다면 비중의 50%만 진입 허용.
