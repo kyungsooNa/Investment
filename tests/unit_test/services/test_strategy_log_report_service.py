@@ -384,6 +384,49 @@ async def test_report_includes_portfolio_summary_from_virtual_trade_service(log_
     assert "현재 보유: 2종목" in report
 
 
+@pytest.mark.asyncio
+async def test_report_uses_virtual_trade_records_for_completed_buys_when_available(log_dir):
+    """운영 원장이 있으면 buy_signal_generated가 아닌 실제 매수 기록 기준으로 매수 완료를 집계한다."""
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return [
+                {
+                    "strategy": "OtherStrategy",
+                    "code": "000660",
+                    "name": "SK하이닉스",
+                    "buy_date": "2026-04-18 09:10:00",
+                    "buy_price": 120000,
+                    "status": "HOLD",
+                },
+            ]
+
+        def get_solds(self):
+            return []
+
+        def get_holds(self):
+            return []
+
+    _write_log(os.path.join(log_dir, "20260418_093000_LarryWilliamsVBO.log.json"), [
+        _make_entry("buy_signal_generated", "005930", "삼성전자", reason="VBO돌파", price=75000),
+        _make_entry("breakout_rejected", "035420", "NAVER", reason="low_execution_strength"),
+    ])
+    _write_log(os.path.join(log_dir, "20260418_093000_OtherStrategy.log.json"), [
+        _make_entry("buy_signal_generated", "000660", "SK하이닉스", reason="실행됨", price=120000),
+    ])
+
+    svc = StrategyLogReportService(
+        log_dir=log_dir,
+        virtual_trade_service=DummyVirtualTradeService(),
+    )
+    report = await svc.generate_report("20260418")
+
+    vbo_section = report.split("<b>1. LarryWilliamsVBO</b>", 1)[1].split("<b>2. OtherStrategy</b>", 1)[0]
+    other_section = report.split("<b>2. OtherStrategy</b>", 1)[1]
+    assert "매수 완료: 없음" in vbo_section
+    assert "삼성전자" not in vbo_section
+    assert "SK하이닉스" in other_section
+
+
 # ── _build_metric_str ─────────────────────────────────────────────
 
 def test_build_metric_str_low_execution_strength():

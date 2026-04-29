@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, AsyncMock
 from common.types import TradeSignal, ResCommonResponse, ErrorCode
 from scheduler.strategy_scheduler import StrategyScheduler, SignalRecord
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
+from services.notification_service import NotificationCategory, NotificationLevel
 
 
 def _make_scheduler(position_sizer=None, dry_run=False):
@@ -115,6 +116,49 @@ async def test_buy_with_sizer_zero_qty_skips_order():
     history = scheduler._signal_history
     assert len(history) == 1
     assert history[0].qty == 0
+
+
+@pytest.mark.asyncio
+async def test_buy_with_sizer_zero_qty_emits_failure_notification():
+    """sizer가 qty=0 반환 → 전략 실패 알림을 발행한다."""
+    sizer = AsyncMock()
+    sizer.adjust_buy_qty.return_value = (0, "risk_zero")
+
+    scheduler, oes = _make_scheduler(position_sizer=sizer, dry_run=False)
+    notifier = AsyncMock()
+    scheduler._notification_service = notifier
+
+    signal = _buy_signal(qty=10)
+    await scheduler._execute_signal(signal)
+
+    oes.handle_place_buy_order.assert_not_called()
+    notifier.emit.assert_awaited_once()
+    args, kwargs = notifier.emit.call_args
+    assert args[0] == NotificationCategory.STRATEGY
+    assert args[1] == NotificationLevel.ERROR
+    assert "매수 실패" in args[2]
+    assert "포지션 사이징 결과 수량 0" in args[3]
+    assert kwargs["metadata"]["qty"] == 0
+    assert kwargs["metadata"]["reason"] == "sizing_skip:risk_zero"
+
+
+@pytest.mark.asyncio
+async def test_buy_with_sizer_adjusted_qty_recorded_and_notified():
+    """sizer가 수량을 줄이면 기록과 알림에도 실제 주문 수량을 사용한다."""
+    sizer = AsyncMock()
+    sizer.adjust_buy_qty.return_value = (3, "risk_limited")
+
+    scheduler, oes = _make_scheduler(position_sizer=sizer, dry_run=False)
+    notifier = AsyncMock()
+    scheduler._notification_service = notifier
+
+    signal = _buy_signal(qty=10)
+    await scheduler._execute_signal(signal)
+
+    assert scheduler._signal_history[0].qty == 3
+    args, kwargs = notifier.emit.call_args
+    assert "3주" in args[3]
+    assert kwargs["metadata"]["qty"] == 3
 
 
 # ── dry_run=True 이면 sizer 호출 안 함 ────────────────────────────────

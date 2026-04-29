@@ -479,7 +479,29 @@ class StrategyScheduler:
                                 self._signal_history = self._signal_history[-self.MAX_HISTORY:]
                             await self._append_signal_db(_skip_record)
                             await self._notify_subscribers(_skip_record)
+                            if self._notification_service:
+                                await self._notification_service.emit(
+                                    NotificationCategory.STRATEGY,
+                                    NotificationLevel.ERROR,
+                                    f"[{signal.strategy_name}] {signal.name} 매수 실패",
+                                    (
+                                        f"종목: {signal.name}({signal.code})\n"
+                                        f"주문 스킵: 포지션 사이징 결과 수량 0\n"
+                                        f"사유: {sizing_reason}"
+                                    ),
+                                    metadata={
+                                        "strategy_name": signal.strategy_name,
+                                        "code": signal.code,
+                                        "action": signal.action,
+                                        "price": signal.price,
+                                        "qty": 0,
+                                        "reason": f"sizing_skip:{sizing_reason}",
+                                        "api_success": False,
+                                        "trace_id": tid,
+                                    },
+                                )
                             return
+                        signal.qty = buy_qty
 
                     resp = await self._oes.handle_place_buy_order(
                         signal.code,
@@ -887,6 +909,20 @@ class StrategyScheduler:
                 norm_code,
                 state,
                 existing=merged.get(norm_code),
+            )
+
+        for record in reversed(self._signal_history):
+            if record.strategy_name != strategy_name or record.action != "BUY":
+                continue
+            code = str(record.code).strip()
+            if not code or code in merged or not self._is_valid_strategy_code(code):
+                continue
+            if self._get_signal_net_qty(strategy_name, code, only_success=True) <= 0:
+                continue
+            merged[code] = self._build_strategy_state_holding(
+                strategy_name,
+                code,
+                object(),
             )
 
         return list(merged.values())

@@ -148,3 +148,58 @@ async def test_concurrent_get_calls_api_once():
     results = await asyncio.gather(*[cache.get() for _ in range(5)])
     assert fetch_count == 1
     assert all(r.total_equity == 10_000_000 for r in results)
+
+
+@pytest.mark.asyncio
+async def test_parses_kis_output2_list_shape():
+    """KIS 잔고 API의 실제 output2=[{...}] 형태를 파싱한다."""
+    resp = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data={
+            "output1": [
+                {"pdno": "007810", "evlu_amt": "672000"},
+            ],
+            "output2": [
+                {
+                    "dnca_tot_amt": "496594461",
+                    "prvs_rcdl_excc_amt": "496594461",
+                    "tot_evlu_amt": "509521941",
+                    "nass_amt": "509521941",
+                }
+            ],
+        },
+    )
+    broker = _make_broker(response=resp)
+    cache = AccountSnapshotCache(broker_api_wrapper=broker, ttl_sec=60)
+
+    snap = await cache.get()
+
+    assert snap.total_equity == 509_521_941
+    assert snap.available_cash == 496_594_461
+    assert snap.positions == {"007810": 672_000}
+
+
+@pytest.mark.asyncio
+async def test_parses_total_equity_from_nass_amt_fallback():
+    resp = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data={
+            "output1": [],
+            "output2": [
+                {
+                    "dnca_tot_amt": "1,500,000",
+                    "tot_evlu_amt": "",
+                    "nass_amt": "2,000,000",
+                }
+            ],
+        },
+    )
+    broker = _make_broker(response=resp)
+    cache = AccountSnapshotCache(broker_api_wrapper=broker, ttl_sec=60)
+
+    snap = await cache.get()
+
+    assert snap.total_equity == 2_000_000
+    assert snap.available_cash == 1_500_000
