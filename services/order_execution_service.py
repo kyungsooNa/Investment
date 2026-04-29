@@ -295,23 +295,35 @@ class OrderExecutionService:
                 get_strategy_logger("ExecutionQuality", log_dir=log_dir).info(event)
             except Exception as exc:
                 self.logger.warning(f"execution_quality 전략 로그 기록 실패: {exc}")
-        avg_fill_price_str = (
-            f"{context.average_fill_price:.2f}"
-            if context.average_fill_price is not None
-            else "N/A"
-        )
+        avg_fill_price_str = self._fmt_optional(context.average_fill_price)
+        spread_pct_str = self._fmt_optional(context.spread_pct)
+        fill_ratio_pct_str = self._fmt_optional(fill_ratio_pct)
+        unfilled_ratio_pct_str = self._fmt_optional(unfilled_ratio_pct)
+        order_age_sec_str = self._fmt_optional(order_age_sec)
+        slippage_won_str = self._fmt_optional(context.slippage_amount_won)
+        slippage_pct_str = self._fmt_optional(context.slippage_pct)
+        first_fill_latency_str = self._fmt_optional(context.first_fill_latency_sec)
         self.logger.info(
             f"[EXECUTION QUALITY] order_key={context.order_key} code={context.stock_code} "
             f"side={context.side.value} state={context.state.value} "
-            f"order_type={context.order_type} spread_pct={context.spread_pct} "
+            f"order_type={context.order_type} spread_pct={spread_pct_str} "
             f"expected_price={context.expected_fill_price} avg_fill_price={avg_fill_price_str} "
             f"filled_qty={context.filled_qty} remaining_qty={context.remaining_qty} "
-            f"fill_ratio_pct={fill_ratio_pct} unfilled_ratio_pct={unfilled_ratio_pct} "
-            f"order_age_sec={order_age_sec} "
-            f"slippage_won={context.slippage_amount_won} slippage_pct={context.slippage_pct} "
-            f"first_fill_latency_sec={context.first_fill_latency_sec} source={context.source} "
+            f"fill_ratio_pct={fill_ratio_pct_str} unfilled_ratio_pct={unfilled_ratio_pct_str} "
+            f"order_age_sec={order_age_sec_str} "
+            f"slippage_won={slippage_won_str} slippage_pct={slippage_pct_str} "
+            f"first_fill_latency_sec={first_fill_latency_str} source={context.source} "
             f"trace_id={context.trace_id}"
         )
+
+    @staticmethod
+    def _fmt_optional(value, precision: int = 2) -> str:
+        if value is None:
+            return "N/A"
+        try:
+            return f"{float(value):.{precision}f}"
+        except (TypeError, ValueError):
+            return str(value)
 
     def _transition_order_context(self, order_key: str, new_state: OrderState, **kwargs) -> OrderContext:
         context = self._order_states[order_key]
