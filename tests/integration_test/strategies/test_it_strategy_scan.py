@@ -825,6 +825,130 @@ class TestOneilPocketPivotScan:
 
 
 # ============================================================================
+# RSI2PullbackStrategy scan() IT
+# ============================================================================
+
+class TestRSI2PullbackScan:
+    """래리 코너스 RSI(2) 눌림목 전략 scan() 통합 테스트."""
+
+    async def test_scan_emits_buy_when_stage2_and_rsi_oversold(self, deep_paper_ctx, mocker):
+        """Stage 2 + RSI(2) ≤ 10 + 15:10 이후 → BUY 시그널 1건."""
+        from datetime import datetime, timedelta
+        from strategies.rsi2_pullback_strategy import RSI2PullbackStrategy
+        from strategies.rsi2_pullback_types import RSI2PullbackConfig
+        from strategies.oneil_common_types import OSBWatchlistItem
+        from services.oneil_universe_service import OneilUniverseService
+
+        # 마지막 2영업일에 큰 음봉을 배치하여 IndicatorService가 RSI(2) ≤ 10 을 산출하도록 구성
+        base_dt = datetime(2026, 3, 7)
+        ohlcv = []
+        for i in range(30):
+            dt = base_dt - timedelta(days=29 - i)
+            date_str = dt.strftime("%Y%m%d")
+            if i < 28:
+                price = int(10000 * (1.0 + 0.005 * i))
+            else:
+                prev = ohlcv[-1]["close"]
+                price = int(prev * 0.97)
+            ohlcv.append({
+                "date": date_str,
+                "open": price - 50, "high": price + 100,
+                "low": price - 100, "close": price, "volume": 500000,
+            })
+        last_close = ohlcv[-1]["close"]
+
+        mock_ohlcv_resp = MagicMock()
+        mock_ohlcv_resp.rt_cd = "0"
+        mock_ohlcv_resp.data = ohlcv
+        mocker.patch.object(
+            deep_paper_ctx.stock_query_service, "get_ohlcv",
+            new_callable=AsyncMock, return_value=mock_ohlcv_resp,
+        )
+
+        mock_price_resp = MagicMock()
+        mock_price_resp.rt_cd = "0"
+        mock_price_resp.data = {"output": _make_current_price_output(
+            code="005930", price=str(last_close), open_price=str(last_close),
+            high=str(last_close + 100), low=str(last_close - 100),
+            prev_close=str(int(last_close / 0.97)),
+        )}
+        mocker.patch.object(
+            deep_paper_ctx.stock_query_service, "get_current_price",
+            new_callable=AsyncMock, return_value=mock_price_resp,
+        )
+
+        mock_universe = MagicMock(spec=OneilUniverseService)
+        watchlist_item = OSBWatchlistItem(
+            code="005930", name="삼성전자", market="KOSPI",
+            high_20d=int(last_close * 1.5), ma_20d=float(last_close * 1.05),
+            ma_50d=float(last_close * 1.02), avg_vol_20d=600000.0,
+            bb_width_min_20d=0.03, prev_bb_width=0.04,
+            w52_hgpr=int(last_close * 1.6), avg_trading_value_5d=500_000_000_000,
+            market_cap=400_000_000_000,
+            ma_200d=float(last_close * 0.85), minervini_stage=2,
+        )
+        mock_universe.get_watchlist = AsyncMock(return_value={"005930": watchlist_item})
+        mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
+
+        from pytz import timezone
+        kst = timezone("Asia/Seoul")
+        mock_tm = MagicMock()
+        # 15:15 → cutoff 15:10 통과
+        mock_tm.get_current_kst_time.return_value = datetime(2026, 3, 9, 15, 15, tzinfo=kst)
+        mock_tm.get_market_open_time.return_value = datetime(2026, 3, 9, 9, 0, tzinfo=kst)
+        mock_tm.get_market_close_time.return_value = datetime(2026, 3, 9, 15, 30, tzinfo=kst)
+
+        strategy = RSI2PullbackStrategy(
+            stock_query_service=deep_paper_ctx.stock_query_service,
+            universe_service=mock_universe,
+            indicator_service=deep_paper_ctx.indicator_service,
+            market_clock=mock_tm,
+            config=RSI2PullbackConfig(),
+        )
+        strategy._save_state = MagicMock()
+
+        signals = await strategy.scan()
+
+        assert len(signals) == 1
+        sig = signals[0]
+        assert sig.code == "005930"
+        assert sig.action == "BUY"
+        assert sig.strategy_name == "RSI2눌림목"
+        assert "RSI" in sig.reason
+
+    async def test_scan_skips_before_cutoff_time(self, deep_paper_ctx, mocker):
+        """15:10 이전이면 watchlist 조회 자체를 건너뛴다."""
+        from datetime import datetime
+        from strategies.rsi2_pullback_strategy import RSI2PullbackStrategy
+        from strategies.rsi2_pullback_types import RSI2PullbackConfig
+        from services.oneil_universe_service import OneilUniverseService
+
+        mock_universe = MagicMock(spec=OneilUniverseService)
+        mock_universe.get_watchlist = AsyncMock(return_value={})
+        mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
+
+        from pytz import timezone
+        kst = timezone("Asia/Seoul")
+        mock_tm = MagicMock()
+        mock_tm.get_current_kst_time.return_value = datetime(2026, 3, 9, 14, 0, tzinfo=kst)
+        mock_tm.get_market_open_time.return_value = datetime(2026, 3, 9, 9, 0, tzinfo=kst)
+        mock_tm.get_market_close_time.return_value = datetime(2026, 3, 9, 15, 30, tzinfo=kst)
+
+        strategy = RSI2PullbackStrategy(
+            stock_query_service=deep_paper_ctx.stock_query_service,
+            universe_service=mock_universe,
+            indicator_service=deep_paper_ctx.indicator_service,
+            market_clock=mock_tm,
+            config=RSI2PullbackConfig(),
+        )
+        strategy._save_state = MagicMock()
+
+        signals = await strategy.scan()
+        assert signals == []
+        mock_universe.get_watchlist.assert_not_called()
+
+
+# ============================================================================
 # scan() 청크 기반 병렬화 안전성 테스트
 # ============================================================================
 
