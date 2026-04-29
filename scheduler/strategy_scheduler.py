@@ -911,6 +911,20 @@ class StrategyScheduler:
                 existing=merged.get(norm_code),
             )
 
+        for record in reversed(self._signal_history):
+            if record.strategy_name != strategy_name or record.action != "BUY":
+                continue
+            code = str(record.code).strip()
+            if not code or code in merged or not self._is_valid_strategy_code(code):
+                continue
+            if self._get_signal_net_qty(strategy_name, code, only_success=True) <= 0:
+                continue
+            merged[code] = self._build_strategy_state_holding(
+                strategy_name,
+                code,
+                object(),
+            )
+
         return list(merged.values())
 
     def _get_all_current_positions(self) -> List[dict]:

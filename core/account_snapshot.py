@@ -85,12 +85,15 @@ class AccountSnapshotCache:
                 )
 
             data = resp.data or {}
-            output2 = data.get("output2") if isinstance(data, dict) else {}
+            raw_output2 = data.get("output2") if isinstance(data, dict) else {}
+            output2 = self._first_dict(raw_output2)
             output1 = data.get("output1") if isinstance(data, dict) else []
 
-            total_equity = self._parse_int(output2, "tot_evlu_amt")
+            total_equity = self._parse_int(output2, "tot_evlu_amt") or \
+                           self._parse_int(output2, "nass_amt")
             # D+2 예수금 또는 주문가능현금 중 사용 가능한 키 우선
             available_cash = self._parse_int(output2, "ord_psbl_cash") or \
+                             self._parse_int(output2, "dnca_tot_amt") or \
                              self._parse_int(output2, "prvs_rcdl_excc_amt")
 
             positions: Dict[str, int] = {}
@@ -126,6 +129,14 @@ class AccountSnapshotCache:
             return int(str(obj.get(key) or "0").replace(",", "") or "0")
         except (ValueError, TypeError):
             return 0
+
+    @staticmethod
+    def _first_dict(value) -> dict:
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, list) and value and isinstance(value[0], dict):
+            return value[0]
+        return {}
 
     @staticmethod
     def _get_str(obj: dict | None, key: str) -> str:

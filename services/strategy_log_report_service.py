@@ -323,6 +323,47 @@ class StrategyLogReportService:
                 parts.append(f"기타({other_count}건)")
         return f"• 주요 탈락 사유: {', '.join(parts)}"
 
+    def _executed_buys_by_strategy(self, target_date: str) -> Tuple[bool, Dict[str, Dict[str, dict]]]:
+        """가상매매 원장 기준 당일 실제 매수 기록을 전략별로 반환한다."""
+        if not self._virtual_trade_service:
+            return False, {}
+
+        date_prefix = _fmt_date(target_date)
+        result: Dict[str, Dict[str, dict]] = {}
+        try:
+            all_trades = self._virtual_trade_service.get_all_trades()
+        except Exception:
+            return False, result
+
+        saw_target_date_trade = False
+        saw_strategy_tag = False
+        for trade in all_trades:
+            if not str(trade.get('buy_date', '')).startswith(date_prefix):
+                continue
+            saw_target_date_trade = True
+            if trade.get('status') not in {"HOLD", "SOLD"}:
+                continue
+
+            strategy = str(trade.get('strategy') or '').strip()
+            code = str(trade.get('code') or '').strip()
+            if not strategy or not code:
+                continue
+            saw_strategy_tag = True
+
+            try:
+                price = int(float(trade.get('buy_price') or 0))
+            except (TypeError, ValueError):
+                price = 0
+
+            result.setdefault(strategy, {})[code] = {
+                'name': str(trade.get('name') or code),
+                'price': price,
+                'reason': str(trade.get('reason') or '체결 원장 기록'),
+                'time': str(trade.get('buy_date', ''))[11:16],
+            }
+
+        return (not saw_target_date_trade) or saw_strategy_tag, result
+
     def _build_portfolio_summary(
         self,
         target_date: str,
@@ -418,6 +459,7 @@ class StrategyLogReportService:
         strategy_summaries: List[dict] = []
         inactive_names: List[str] = []
         market_timing: Dict[str, Tuple[str, bool]] = {}
+        has_executed_buy_source, executed_buys_by_strategy = self._executed_buys_by_strategy(target_date)
 
         # 전략 로직과 무관한 데이터 수신/파싱 오류를 따로 집계
         data_errors_by_strategy: Dict[str, int] = {}
@@ -505,6 +547,9 @@ class StrategyLogReportService:
                             }
 
             # StockCodeRepository로 미해결 종목명 보완
+            if has_executed_buy_source:
+                bought = executed_buys_by_strategy.get(name, {})
+
             if self._stock_code_repo:
                 for code, info in bought.items():
                     info['name'] = self._db_resolve(code, info['name'])

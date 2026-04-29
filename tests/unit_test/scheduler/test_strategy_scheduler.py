@@ -237,6 +237,45 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status["strategies"][0]["holdings"][0]["buy_price"], 82000)
         self.assertEqual(status["strategies"][0]["holdings"][0]["qty"], 6)
 
+    def test_get_status_uses_successful_buy_signal_history_when_virtual_trade_is_empty(self):
+        """체결 원장 반영 전에도 성공 BUY 이력은 포지션 슬롯 계산에 포함한다."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="래리윌리엄스VBO")
+        scheduler._signal_history = [
+            SignalRecord(
+                strategy_name="래리윌리엄스VBO",
+                code="425420",
+                name="티에프이",
+                action="BUY",
+                price=63500,
+                qty=3,
+                reason="submitted",
+                timestamp="2026-04-29 09:14:17",
+                api_success=True,
+            ),
+            SignalRecord(
+                strategy_name="래리윌리엄스VBO",
+                code="006340",
+                name="대원전선",
+                action="BUY",
+                price=11620,
+                qty=0,
+                reason="sizing_skip:risk_zero",
+                timestamp="2026-04-29 09:14:17",
+                api_success=False,
+            ),
+        ]
+        scheduler.register(StrategySchedulerConfig(strategy=strategy, max_positions=3))
+        vm.get_holds_by_strategy.return_value = []
+
+        status = scheduler.get_status()
+
+        self.assertEqual(status["strategies"][0]["current_holds"], 1)
+        holding = status["strategies"][0]["holdings"][0]
+        self.assertEqual(holding["code"], "425420")
+        self.assertEqual(holding["buy_price"], 63500)
+        self.assertEqual(holding["qty"], 3)
+
     def test_get_status_skips_invalid_strategy_code_and_recovers_buy_price_from_signal_history(self):
         """잘못된 position_state 코드는 제외하고 신호 이력으로 진입가를 복원한다."""
         scheduler, vm, _, _, _ = self._make_scheduler()
