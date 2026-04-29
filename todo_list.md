@@ -1,6 +1,6 @@
 # Investment Trading App - 실전 운영 개선 To-Do
 
-최종 업데이트: 2026-04-29
+최종 업데이트: 2026-04-30
 
 ## 2026-04-29 Update - O'Neil Market Timing
 
@@ -137,7 +137,7 @@ main 반영 확인.
 - [x] 호가잔량 기준 진입 제한을 추가한다. (`order_policy.max_top_of_book_participation_pct`)
 - [x] 호가잔량 기준 진입 제한을 시장가/지정가 주문 모두에 적용한다.
 - [x] 주문장 검증 기본값을 보호 모드로 전환한다. (`order_book_checks_enabled=True`, `quote_fail_policy="block"`)
-- [ ] 체결 강도/체결 속도 기반 필터를 검토한다. (종목별 진입 전 수급/속도 필터)
+- [x] 체결 강도/체결 속도 기반 필터를 검토하고 주문 정책에 보수적 체결 흐름 차단을 추가한다. (`ExecutionFlowService`, `order_policy.trade_flow_*`)
 - [x] 소형주, 관리종목, 투자경고 종목 제외 규칙을 추가한다. (`order_policy.security_status_checks_enabled`, `min_market_cap_won`, 상태/경고 코드 차단)
 - [x] 유동성 부족으로 차단된 신호를 주문 정책 응답/로그에 남긴다. 전략 로그 연동은 후속 작업으로 남긴다.
 

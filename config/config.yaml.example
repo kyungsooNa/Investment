@@ -50,6 +50,14 @@ order_policy:
   order_book_checks_enabled: true
   security_status_checks_enabled: true
   security_status_fail_policy: "block"
+  trade_flow_checks_enabled: true
+  trade_flow_fail_policy: "block"
+  trade_flow_cache_ttl_sec: 3.0
+  trade_flow_sample_window_sec: 60
+  max_last_trade_age_sec: 60.0
+  min_recent_trade_count: 1
+  min_trade_value_per_min_won: 0
+  min_execution_strength_pct: 0.0
   max_market_slippage_pct: 1.0
   max_spread_pct: 1.0
   min_trading_value_won: 100000000

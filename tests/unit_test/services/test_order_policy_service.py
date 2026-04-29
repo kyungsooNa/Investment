@@ -1,20 +1,25 @@
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from common.types import ErrorCode, Exchange, OrderSide, ResCommonResponse
 from config.config_loader import OrderPolicyConfig
+from services.execution_flow_service import ExecutionFlowSnapshot
 from services.order_policy_service import OrderPolicyService
 
 
-def _service(*, config=None, quote_provider=None, security_info_provider=None, logger=None):
+def _service(*, config=None, quote_provider=None, security_info_provider=None, trade_flow_provider=None, logger=None):
     cfg = config or OrderPolicyConfig()
     if security_info_provider is None:
         cfg = cfg.model_copy(update={"security_status_checks_enabled": False})
+    if trade_flow_provider is None:
+        cfg = cfg.model_copy(update={"trade_flow_checks_enabled": False})
     return OrderPolicyService(
         config=cfg,
         quote_provider=quote_provider,
         security_info_provider=security_info_provider,
+        trade_flow_provider=trade_flow_provider,
         logger=logger or MagicMock(),
     )
 
@@ -55,6 +60,25 @@ def _stock_info(
             }
         },
     )
+
+
+def _flow_snapshot(**kwargs):
+    data = {
+        "code": "005930",
+        "measured_at": datetime.now(),
+        "source": "rest",
+        "execution_strength_pct": 105.0,
+        "recent_trade_count": 3,
+        "recent_trade_volume": 30,
+        "recent_trade_value_won": 2_100_000,
+        "trade_velocity_per_min": 3.0,
+        "volume_velocity_per_min": 30.0,
+        "last_trade_age_sec": 10.0,
+        "data_age_sec": 10.0,
+        "sample_window_sec": 60,
+    }
+    data.update(kwargs)
+    return ExecutionFlowSnapshot(**data)
 
 
 @pytest.mark.asyncio
@@ -459,3 +483,161 @@ async def test_security_status_failure_can_fail_open():
 
     assert decision.allowed is True
     assert decision.context["security_status_error"] == "API error"
+
+
+@pytest.mark.asyncio
+async def test_trade_flow_context_is_included_when_allowed():
+    provider = AsyncMock()
+    provider.get_snapshot.return_value = _flow_snapshot()
+    svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False),
+        trade_flow_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.allowed is True
+    assert decision.context["recent_trade_count"] == 3
+    assert decision.context["execution_strength_pct"] == 105.0
+
+
+@pytest.mark.asyncio
+async def test_trade_flow_blocks_stale_recent_trade():
+    provider = AsyncMock()
+    provider.get_snapshot.return_value = _flow_snapshot(last_trade_age_sec=90.0)
+    svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False, max_last_trade_age_sec=60.0),
+        trade_flow_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "trade_flow_stale"
+
+
+@pytest.mark.asyncio
+async def test_trade_flow_blocks_low_recent_trade_count():
+    provider = AsyncMock()
+    provider.get_snapshot.return_value = _flow_snapshot(recent_trade_count=0)
+    svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False, min_recent_trade_count=1),
+        trade_flow_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "trade_flow_velocity_too_low"
+
+
+@pytest.mark.asyncio
+async def test_trade_flow_blocks_when_time_concluded_unavailable_for_velocity_check():
+    provider = AsyncMock()
+    provider.get_snapshot.return_value = _flow_snapshot(
+        recent_trade_count=None,
+        quality_flags=["time_concluded_unavailable"],
+    )
+    svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False, min_recent_trade_count=1),
+        trade_flow_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "trade_flow_unavailable"
+    assert decision.context["trade_flow_error"] == "time_concluded_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_trade_flow_blocks_low_trade_value_per_min():
+    provider = AsyncMock()
+    provider.get_snapshot.return_value = _flow_snapshot(recent_trade_value_won=500_000)
+    svc = _service(
+        config=OrderPolicyConfig(
+            order_book_checks_enabled=False,
+            min_trade_value_per_min_won=1_000_000,
+        ),
+        trade_flow_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "trade_flow_value_velocity_too_low"
+
+
+@pytest.mark.asyncio
+async def test_trade_flow_failure_blocks_by_default():
+    provider = AsyncMock()
+    provider.get_snapshot.side_effect = RuntimeError("API error")
+    svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False),
+        trade_flow_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "trade_flow_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_trade_flow_failure_can_fail_open():
+    provider = AsyncMock()
+    provider.get_snapshot.side_effect = RuntimeError("API error")
+    svc = _service(
+        config=OrderPolicyConfig(
+            order_book_checks_enabled=False,
+            trade_flow_fail_policy="allow",
+        ),
+        trade_flow_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.allowed is True
+    assert decision.context["trade_flow_error"] == "API error"

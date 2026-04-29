@@ -5,6 +5,7 @@ from typing import Any, Optional, Protocol
 
 from common.types import ErrorCode, Exchange, OrderSide, ResCommonResponse
 from config.config_loader import OrderPolicyConfig
+from services.execution_flow_service import ExecutionFlowSnapshot
 from utils.korea_invest_price_utils import adjust_price, get_tick_size
 
 
@@ -15,6 +16,17 @@ class QuoteProvider(Protocol):
 
 class SecurityInfoProvider(Protocol):
     async def get_current_price(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
+        ...
+
+
+class TradeFlowProvider(Protocol):
+    async def get_snapshot(
+        self,
+        stock_code: str,
+        exchange: Exchange = Exchange.KRX,
+        *,
+        force_refresh: bool = False,
+    ) -> ExecutionFlowSnapshot:
         ...
 
 
@@ -56,11 +68,13 @@ class OrderPolicyService:
         config: OrderPolicyConfig,
         quote_provider: Optional[QuoteProvider] = None,
         security_info_provider: Optional[SecurityInfoProvider] = None,
+        trade_flow_provider: Optional[TradeFlowProvider] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self._cfg = config
         self._quote_provider = quote_provider
         self._security_info_provider = security_info_provider
+        self._trade_flow_provider = trade_flow_provider
         self._logger = logger or logging.getLogger(__name__)
 
     async def validate_order(
@@ -87,7 +101,15 @@ class OrderPolicyService:
             if security_decision.blocked:
                 return security_decision
 
+        trade_flow_context: dict[str, Any] = {}
+        if self._cfg.trade_flow_checks_enabled:
+            trade_flow_decision = await self._check_trade_flow(stock_code, exchange)
+            trade_flow_context = trade_flow_decision.context
+            if trade_flow_decision.blocked:
+                return trade_flow_decision
+
         order_type = "market" if price == 0 else "limit"
+        common_context = {**security_context, **trade_flow_context}
         if order_type == "market":
             order_type_blocked = self._check_market_order_type(side, exchange)
             if order_type_blocked is not None:
@@ -103,14 +125,14 @@ class OrderPolicyService:
                 )
                 if quote_decision.blocked:
                     return quote_decision
-                return self._with_context(quote_decision, security_context)
+                return self._with_context(quote_decision, common_context)
             return OrderPolicyDecision(
                 allowed=True,
                 rule="market_order",
                 reason="market_order_allowed",
                 adjusted_price=price,
                 severity="pass",
-                context={"order_type": "market", **security_context},
+                context={"order_type": "market", **common_context},
             )
 
         tick_decision = self._check_limit_tick_size(stock_code, price)
@@ -129,7 +151,106 @@ class OrderPolicyService:
             if quote_decision.blocked:
                 return quote_decision
 
-        return self._with_context(tick_decision, security_context)
+        return self._with_context(tick_decision, common_context)
+
+    async def _check_trade_flow(
+        self,
+        stock_code: str,
+        exchange: Exchange,
+    ) -> OrderPolicyDecision:
+        if self._trade_flow_provider is None:
+            return self._trade_flow_failure_decision(stock_code, "trade_flow_provider_missing")
+
+        try:
+            snapshot = self._trade_flow_provider.get_snapshot(stock_code, exchange=exchange)
+            if inspect.isawaitable(snapshot):
+                snapshot = await snapshot
+        except TypeError:
+            try:
+                snapshot = self._trade_flow_provider.get_snapshot(stock_code)
+                if inspect.isawaitable(snapshot):
+                    snapshot = await snapshot
+            except Exception as exc:
+                return self._trade_flow_failure_decision(stock_code, str(exc))
+        except Exception as exc:
+            return self._trade_flow_failure_decision(stock_code, str(exc))
+
+        if snapshot is None:
+            return self._trade_flow_failure_decision(stock_code, "snapshot_missing")
+
+        context = {
+            "stock_code": stock_code,
+            **snapshot.to_policy_context(),
+        }
+
+        unavailable_flags = {"conclusion_unavailable", "time_concluded_unavailable"}
+        if unavailable_flags.issubset(set(snapshot.quality_flags)):
+            return self._trade_flow_failure_decision(stock_code, "all_trade_flow_sources_unavailable")
+        if "time_concluded_unavailable" in snapshot.quality_flags and (
+            self._cfg.max_last_trade_age_sec > 0
+            or self._cfg.min_recent_trade_count > 0
+            or self._cfg.min_trade_value_per_min_won > 0
+        ):
+            return self._trade_flow_failure_decision(stock_code, "time_concluded_unavailable")
+        if "conclusion_unavailable" in snapshot.quality_flags and self._cfg.min_execution_strength_pct > 0:
+            return self._trade_flow_failure_decision(stock_code, "conclusion_unavailable")
+
+        if (
+            self._cfg.max_last_trade_age_sec > 0
+            and snapshot.last_trade_age_sec is not None
+            and snapshot.last_trade_age_sec > self._cfg.max_last_trade_age_sec
+        ):
+            return self._blocked(
+                "trade_flow_stale",
+                "최근 체결 데이터가 오래되어 주문을 차단합니다.",
+                max_last_trade_age_sec=self._cfg.max_last_trade_age_sec,
+                **context,
+            )
+
+        if (
+            self._cfg.min_recent_trade_count > 0
+            and snapshot.recent_trade_count is not None
+            and snapshot.recent_trade_count < self._cfg.min_recent_trade_count
+        ):
+            return self._blocked(
+                "trade_flow_velocity_too_low",
+                "최근 체결 건수가 최소 기준보다 작습니다.",
+                min_recent_trade_count=self._cfg.min_recent_trade_count,
+                **context,
+            )
+
+        if self._cfg.min_trade_value_per_min_won > 0:
+            value_per_min = snapshot.recent_trade_value_won
+            if value_per_min is not None:
+                value_per_min = value_per_min / (snapshot.sample_window_sec / 60)
+            if value_per_min is not None and value_per_min < self._cfg.min_trade_value_per_min_won:
+                return self._blocked(
+                    "trade_flow_value_velocity_too_low",
+                    "최근 분당 체결대금이 최소 기준보다 작습니다.",
+                    min_trade_value_per_min_won=self._cfg.min_trade_value_per_min_won,
+                    recent_trade_value_per_min_won=int(value_per_min),
+                    **context,
+                )
+
+        if (
+            self._cfg.min_execution_strength_pct > 0
+            and snapshot.execution_strength_pct is not None
+            and snapshot.execution_strength_pct < self._cfg.min_execution_strength_pct
+        ):
+            return self._blocked(
+                "trade_flow_strength_too_low",
+                "체결강도가 최소 기준보다 작습니다.",
+                min_execution_strength_pct=self._cfg.min_execution_strength_pct,
+                **context,
+            )
+
+        return OrderPolicyDecision(
+            allowed=True,
+            rule="trade_flow",
+            reason="trade_flow_allowed",
+            severity="pass",
+            context=context,
+        )
 
     async def _check_security_status(
         self,
@@ -458,6 +579,26 @@ class OrderPolicyService:
             reason="security_status_check_fail_open",
             severity="pass",
             context={"stock_code": stock_code, "security_status_error": reason},
+        )
+
+    def _trade_flow_failure_decision(self, stock_code: str, reason: str) -> OrderPolicyDecision:
+        if self._cfg.trade_flow_fail_policy == "block":
+            return self._blocked(
+                "trade_flow_unavailable",
+                "체결 흐름 조회 실패로 주문을 검증할 수 없습니다.",
+                stock_code=stock_code,
+                trade_flow_error=reason,
+            )
+        self._logger.warning(
+            f"[OrderPolicy][CHECK_ERROR] rule=trade_flow_unavailable "
+            f"stock_code={stock_code} reason={reason}"
+        )
+        return OrderPolicyDecision(
+            allowed=True,
+            rule="trade_flow_unavailable",
+            reason="trade_flow_check_fail_open",
+            severity="pass",
+            context={"stock_code": stock_code, "trade_flow_error": reason},
         )
 
     @staticmethod

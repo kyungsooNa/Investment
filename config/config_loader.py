@@ -75,6 +75,14 @@ class OrderPolicyConfig(BaseModel):
     order_book_checks_enabled: bool = True
     security_status_checks_enabled: bool = True
     security_status_fail_policy: str = "block"  # allow | block
+    trade_flow_checks_enabled: bool = True
+    trade_flow_fail_policy: str = "block"       # allow | block
+    trade_flow_cache_ttl_sec: float = 3.0
+    trade_flow_sample_window_sec: int = 60
+    max_last_trade_age_sec: float = 60.0
+    min_recent_trade_count: int = 1
+    min_trade_value_per_min_won: int = 0
+    min_execution_strength_pct: float = 0.0
     max_market_slippage_pct: float = 1.0
     max_spread_pct: float = 1.0
     min_trading_value_won: int = 0
