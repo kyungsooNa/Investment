@@ -88,6 +88,10 @@ class StockOhlcvRepository:
                         w52_high INTEGER,
                         w52_low INTEGER,
                         market TEXT,
+                        iscd_stat_cls_code TEXT,
+                        mang_issu_cls_code TEXT,
+                        mrkt_warn_cls_code TEXT,
+                        invt_caful_yn TEXT,
                         minervini_stage INTEGER,
                         minervini_reason TEXT,
                         rs_rating REAL,
@@ -106,8 +110,12 @@ class StockOhlcvRepository:
             "ALTER TABLE daily_prices ADD COLUMN minervini_stage INTEGER",
             "ALTER TABLE daily_prices ADD COLUMN minervini_reason TEXT",
             "ALTER TABLE daily_prices ADD COLUMN rs_rating REAL",
-                "ALTER TABLE daily_prices ADD COLUMN is_newhigh INTEGER",
-                "ALTER TABLE daily_prices ADD COLUMN is_historical_newhigh INTEGER",
+            "ALTER TABLE daily_prices ADD COLUMN is_newhigh INTEGER",
+            "ALTER TABLE daily_prices ADD COLUMN is_historical_newhigh INTEGER",
+            "ALTER TABLE daily_prices ADD COLUMN iscd_stat_cls_code TEXT",
+            "ALTER TABLE daily_prices ADD COLUMN mang_issu_cls_code TEXT",
+            "ALTER TABLE daily_prices ADD COLUMN mrkt_warn_cls_code TEXT",
+            "ALTER TABLE daily_prices ADD COLUMN invt_caful_yn TEXT",
         ]:
             try:
                 with sqlite3.connect(self._db_path) as conn:
@@ -335,7 +343,9 @@ class StockOhlcvRepository:
                         volume, trading_value, market_cap,
                         per, pbr, eps,
                         w52_high, w52_low,
-                        market, minervini_stage, minervini_reason, rs_rating, collected_at
+                        market,
+                        iscd_stat_cls_code, mang_issu_cls_code, mrkt_warn_cls_code, invt_caful_yn,
+                        minervini_stage, minervini_reason, rs_rating, collected_at
                     ) VALUES (
                         :code, :trade_date, :name,
                         :current_price, :open_price, :high_price, :low_price, :prev_close,
@@ -343,7 +353,9 @@ class StockOhlcvRepository:
                         :volume, :trading_value, :market_cap,
                         :per, :pbr, :eps,
                         :w52_high, :w52_low,
-                        :market, :minervini_stage, :minervini_reason, :rs_rating, :collected_at
+                        :market,
+                        :iscd_stat_cls_code, :mang_issu_cls_code, :mrkt_warn_cls_code, :invt_caful_yn,
+                        :minervini_stage, :minervini_reason, :rs_rating, :collected_at
                     )
                     ON CONFLICT(code, trade_date) DO UPDATE SET
                         name            = excluded.name,
@@ -364,6 +376,10 @@ class StockOhlcvRepository:
                         w52_high        = excluded.w52_high,
                         w52_low         = excluded.w52_low,
                         market          = excluded.market,
+                        iscd_stat_cls_code = COALESCE(excluded.iscd_stat_cls_code, iscd_stat_cls_code),
+                        mang_issu_cls_code = COALESCE(excluded.mang_issu_cls_code, mang_issu_cls_code),
+                        mrkt_warn_cls_code = COALESCE(excluded.mrkt_warn_cls_code, mrkt_warn_cls_code),
+                        invt_caful_yn      = COALESCE(excluded.invt_caful_yn,      invt_caful_yn),
                         minervini_stage  = COALESCE(excluded.minervini_stage,  minervini_stage),
                         minervini_reason = COALESCE(excluded.minervini_reason, minervini_reason),
                         rs_rating        = COALESCE(excluded.rs_rating,        rs_rating),
@@ -371,6 +387,10 @@ class StockOhlcvRepository:
                     -- is_newhigh, is_historical_newhigh 는 언급하지 않으므로 기존 값 보존
                     """,
                     [{**r, "trade_date": trade_date, "collected_at": now,
+                      "iscd_stat_cls_code": r.get("iscd_stat_cls_code"),
+                      "mang_issu_cls_code": r.get("mang_issu_cls_code"),
+                      "mrkt_warn_cls_code": r.get("mrkt_warn_cls_code"),
+                      "invt_caful_yn": r.get("invt_caful_yn"),
                       "minervini_stage": r.get("minervini_stage"), "minervini_reason": r.get("minervini_reason"),
                       "rs_rating": r.get("rs_rating")}
                      for r in records],
@@ -616,6 +636,10 @@ class StockOhlcvRepository:
                 "hts_kor_isnm":  str(r.get("name") or ""),
                 "stck_bsop_date": str(r.get("trade_date") or ""),
                 "stck_shrn_iscd": str(r.get("code") or ""),
+                "iscd_stat_cls_code": str(r.get("iscd_stat_cls_code") or ""),
+                "mang_issu_cls_code": str(r.get("mang_issu_cls_code") or ""),
+                "mrkt_warn_cls_code": str(r.get("mrkt_warn_cls_code") or ""),
+                "invt_caful_yn": str(r.get("invt_caful_yn") or ""),
             }
             return {"output": output, "_source": "daily_snapshot", "_trade_date": r.get("trade_date")}
         except Exception as e:

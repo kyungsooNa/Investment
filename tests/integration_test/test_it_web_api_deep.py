@@ -211,6 +211,87 @@ def _make_order_success_payload():
     }
 
 
+def _make_asking_price_payload():
+    """주문 정책 호가/거래대금 검증용 API 응답."""
+    return {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output1": {
+            "askp1": "70100",
+            "bidp1": "70000",
+            "askp_rsqn1": "100000",
+            "bidp_rsqn1": "100000",
+            "stck_prpr": "70050",
+            "acml_tr_pbmn": "1050000000000",
+        },
+    }
+
+
+def _make_conclusion_payload():
+    """체결강도 스냅샷 API 응답."""
+    return {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output": [
+            {
+                "tday_rltv": "110.5",
+                "shnu_cntg_csnu": "120",
+                "seln_cntg_csnu": "100",
+            }
+        ],
+    }
+
+
+def _make_time_conclude_payload():
+    """최근 체결속도 검증용 API 응답.
+
+    시간 필드는 일부러 생략한다. 테스트는 주문 HTTP 스택 검증이 목적이므로
+    현재 시각과 체결 시각의 날짜/시간 차이에 영향받지 않게 한다.
+    """
+    return {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output": [
+            {"stck_prpr": "70050", "cntg_vol": "10"},
+            {"stck_prpr": "70000", "cntg_vol": "15"},
+        ],
+    }
+
+
+def _patch_order_policy_quote_gets(deep_paper_ctx, mocker):
+    """주문 전 OrderPolicyService가 호출하는 시세 조회 API를 모두 mock한다."""
+    quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
+
+    from brokers.korea_investment.korea_invest_url_keys import EndpointKey
+
+    inquire_price_url = quot_api.url(EndpointKey.INQUIRE_PRICE)
+    asking_price_url = quot_api.url(EndpointKey.ASKING_PRICE)
+    conclusion_url = quot_api.url(EndpointKey.INQUIRE_CONCLUSION)
+    time_conclude_url = quot_api.url(EndpointKey.TIME_CONCLUDE)
+
+    async def _side_effect(url, *args, **kwargs):
+        u = str(url)
+        if u == inquire_price_url:
+            return make_http_response(_make_stock_price_payload())
+        if u == asking_price_url:
+            return make_http_response(_make_asking_price_payload())
+        if u == conclusion_url:
+            return make_http_response(_make_conclusion_payload())
+        if u == time_conclude_url:
+            return make_http_response(_make_time_conclude_payload())
+        return make_http_response({"rt_cd": "0", "msg1": "ok"})
+
+    return mocker.patch.object(
+        quot_api._async_session,
+        "get",
+        new_callable=AsyncMock,
+        side_effect=_side_effect,
+    )
+
+
 def _make_ranking_rise_payload():
     """상승률 랭킹 API 응답."""
     return {
@@ -438,6 +519,7 @@ class TestDeepBuyOrder:
         
         trading_api = _get_trading_api_from_ctx(deep_paper_ctx)
         assert trading_api is not None, "Trading API를 찾을 수 없습니다"
+        _patch_order_policy_quote_gets(deep_paper_ctx, mocker)
 
         order_payload = _make_order_success_payload()
 
@@ -513,6 +595,7 @@ class TestDeepSellOrder:
 
         trading_api = _get_trading_api_from_ctx(deep_paper_ctx)
         assert trading_api is not None
+        _patch_order_policy_quote_gets(deep_paper_ctx, mocker)
 
         order_payload = _make_order_success_payload()
         # MarketCalendarService.is_market_open_now()가 비동기 메서드이므로 AsyncMock으로 설정

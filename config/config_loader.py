@@ -72,13 +72,49 @@ class OrderPolicyConfig(BaseModel):
     allow_market_sell: bool = True
     allow_nxt_market_order: bool = False
     tick_size_policy: str = "adjust"        # adjust | block | ignore
-    order_book_checks_enabled: bool = False
+    order_book_checks_enabled: bool = True
+    security_status_checks_enabled: bool = True
+    security_status_fail_policy: str = "block"  # allow | block
+    trade_flow_checks_enabled: bool = True
+    trade_flow_fail_policy: str = "block"       # allow | block
+    trade_flow_cache_ttl_sec: float = 3.0
+    trade_flow_sample_window_sec: int = 60
+    max_last_trade_age_sec: float = 60.0
+    min_recent_trade_count: int = 1
+    min_trade_value_per_min_won: int = 0
+    min_execution_strength_pct: float = 0.0
     max_market_slippage_pct: float = 1.0
     max_spread_pct: float = 1.0
     min_trading_value_won: int = 0
+    min_market_cap_won: int = 0
     max_top_of_book_participation_pct: float = 100.0
     block_empty_order_book: bool = True
-    quote_fail_policy: str = "allow"        # allow | block
+    block_managed_issue: bool = True
+    block_investment_warning: bool = True
+    block_investment_caution: bool = False
+    blocked_stock_status_codes: List[str] = Field(default_factory=lambda: ["51", "52", "53", "58"])
+    quote_fail_policy: str = "block"        # allow | block
+
+    model_config = {"extra": "allow"}
+
+
+class ExecutionQualityReportConfig(BaseModel):
+    enabled: bool = True
+    min_sample_count: int = 3
+    liquidity_control_effective_date: Optional[str] = None
+    warn_avg_slippage_pct: float = 0.5
+    warn_p95_slippage_pct: float = 1.0
+    warn_avg_first_fill_latency_sec: float = 30.0
+    warn_incomplete_fill_ratio_pct: float = 20.0
+    warn_avg_unfilled_ratio_pct: float = 20.0
+    warn_avg_order_age_sec: float = 120.0
+    candidate_avg_slippage_pct: float = 1.0
+    candidate_p95_slippage_pct: float = 2.0
+    candidate_avg_first_fill_latency_sec: float = 90.0
+    candidate_incomplete_fill_ratio_pct: float = 40.0
+    candidate_avg_unfilled_ratio_pct: float = 40.0
+    candidate_avg_order_age_sec: float = 300.0
+    auto_disable_enabled: bool = False
 
     model_config = {"extra": "allow"}
 
@@ -105,6 +141,7 @@ class AppConfig(BaseModel):
     risk_gate: RiskGateConfig = Field(default_factory=RiskGateConfig)
     order_policy: OrderPolicyConfig = Field(default_factory=OrderPolicyConfig)
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
+    execution_quality_report: ExecutionQualityReportConfig = Field(default_factory=ExecutionQualityReportConfig)
     
     # Dynamic/Merged configs
     tr_ids: Dict[str, Any] = Field(default_factory=dict)

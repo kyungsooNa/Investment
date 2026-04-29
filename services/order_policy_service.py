@@ -5,11 +5,28 @@ from typing import Any, Optional, Protocol
 
 from common.types import ErrorCode, Exchange, OrderSide, ResCommonResponse
 from config.config_loader import OrderPolicyConfig
+from services.execution_flow_service import ExecutionFlowSnapshot
 from utils.korea_invest_price_utils import adjust_price, get_tick_size
 
 
 class QuoteProvider(Protocol):
     async def get_asking_price(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
+        ...
+
+
+class SecurityInfoProvider(Protocol):
+    async def get_current_price(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
+        ...
+
+
+class TradeFlowProvider(Protocol):
+    async def get_snapshot(
+        self,
+        stock_code: str,
+        exchange: Exchange = Exchange.KRX,
+        *,
+        force_refresh: bool = False,
+    ) -> ExecutionFlowSnapshot:
         ...
 
 
@@ -50,10 +67,14 @@ class OrderPolicyService:
         self,
         config: OrderPolicyConfig,
         quote_provider: Optional[QuoteProvider] = None,
+        security_info_provider: Optional[SecurityInfoProvider] = None,
+        trade_flow_provider: Optional[TradeFlowProvider] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self._cfg = config
         self._quote_provider = quote_provider
+        self._security_info_provider = security_info_provider
+        self._trade_flow_provider = trade_flow_provider
         self._logger = logger or logging.getLogger(__name__)
 
     async def validate_order(
@@ -73,29 +94,254 @@ class OrderPolicyService:
         if price < 0:
             return self._blocked("negative_price", "주문 가격은 음수일 수 없습니다.", price=price)
 
-        is_market = price == 0
-        if is_market:
+        security_context: dict[str, Any] = {}
+        if self._cfg.security_status_checks_enabled:
+            security_decision = await self._check_security_status(stock_code, exchange)
+            security_context = security_decision.context
+            if security_decision.blocked:
+                return security_decision
+
+        trade_flow_context: dict[str, Any] = {}
+        if self._cfg.trade_flow_checks_enabled:
+            trade_flow_decision = await self._check_trade_flow(stock_code, exchange)
+            trade_flow_context = trade_flow_decision.context
+            if trade_flow_decision.blocked:
+                return trade_flow_decision
+
+        order_type = "market" if price == 0 else "limit"
+        common_context = {**security_context, **trade_flow_context}
+        if order_type == "market":
             order_type_blocked = self._check_market_order_type(side, exchange)
             if order_type_blocked is not None:
                 return order_type_blocked
             if self._cfg.order_book_checks_enabled:
-                quote_decision = await self._check_market_order_book(stock_code, qty, side, exchange)
+                quote_decision = await self._check_order_book(
+                    stock_code=stock_code,
+                    price=price,
+                    qty=qty,
+                    side=side,
+                    exchange=exchange,
+                    order_type=order_type,
+                )
                 if quote_decision.blocked:
                     return quote_decision
-                return quote_decision
+                return self._with_context(quote_decision, common_context)
             return OrderPolicyDecision(
                 allowed=True,
                 rule="market_order",
                 reason="market_order_allowed",
                 adjusted_price=price,
                 severity="pass",
-                context={"order_type": "market"},
+                context={"order_type": "market", **common_context},
             )
 
         tick_decision = self._check_limit_tick_size(stock_code, price)
         if tick_decision.blocked:
             return tick_decision
-        return tick_decision
+
+        if self._cfg.order_book_checks_enabled:
+            quote_decision = await self._check_order_book(
+                stock_code=stock_code,
+                price=tick_decision.adjusted_price if tick_decision.adjusted_price is not None else price,
+                qty=qty,
+                side=side,
+                exchange=exchange,
+                order_type=order_type,
+            )
+            if quote_decision.blocked:
+                return quote_decision
+
+        return self._with_context(tick_decision, common_context)
+
+    async def _check_trade_flow(
+        self,
+        stock_code: str,
+        exchange: Exchange,
+    ) -> OrderPolicyDecision:
+        if self._trade_flow_provider is None:
+            return self._trade_flow_failure_decision(stock_code, "trade_flow_provider_missing")
+
+        try:
+            snapshot = self._trade_flow_provider.get_snapshot(stock_code, exchange=exchange)
+            if inspect.isawaitable(snapshot):
+                snapshot = await snapshot
+        except TypeError:
+            try:
+                snapshot = self._trade_flow_provider.get_snapshot(stock_code)
+                if inspect.isawaitable(snapshot):
+                    snapshot = await snapshot
+            except Exception as exc:
+                return self._trade_flow_failure_decision(stock_code, str(exc))
+        except Exception as exc:
+            return self._trade_flow_failure_decision(stock_code, str(exc))
+
+        if snapshot is None:
+            return self._trade_flow_failure_decision(stock_code, "snapshot_missing")
+
+        context = {
+            "stock_code": stock_code,
+            **snapshot.to_policy_context(),
+        }
+
+        unavailable_flags = {"conclusion_unavailable", "time_concluded_unavailable"}
+        if unavailable_flags.issubset(set(snapshot.quality_flags)):
+            return self._trade_flow_failure_decision(stock_code, "all_trade_flow_sources_unavailable")
+        if "time_concluded_unavailable" in snapshot.quality_flags and (
+            self._cfg.max_last_trade_age_sec > 0
+            or self._cfg.min_recent_trade_count > 0
+            or self._cfg.min_trade_value_per_min_won > 0
+        ):
+            return self._trade_flow_failure_decision(stock_code, "time_concluded_unavailable")
+        if "conclusion_unavailable" in snapshot.quality_flags and self._cfg.min_execution_strength_pct > 0:
+            return self._trade_flow_failure_decision(stock_code, "conclusion_unavailable")
+
+        if (
+            self._cfg.max_last_trade_age_sec > 0
+            and snapshot.last_trade_age_sec is not None
+            and snapshot.last_trade_age_sec > self._cfg.max_last_trade_age_sec
+        ):
+            return self._blocked(
+                "trade_flow_stale",
+                "최근 체결 데이터가 오래되어 주문을 차단합니다.",
+                max_last_trade_age_sec=self._cfg.max_last_trade_age_sec,
+                **context,
+            )
+
+        if (
+            self._cfg.min_recent_trade_count > 0
+            and snapshot.recent_trade_count is not None
+            and snapshot.recent_trade_count < self._cfg.min_recent_trade_count
+        ):
+            return self._blocked(
+                "trade_flow_velocity_too_low",
+                "최근 체결 건수가 최소 기준보다 작습니다.",
+                min_recent_trade_count=self._cfg.min_recent_trade_count,
+                **context,
+            )
+
+        if self._cfg.min_trade_value_per_min_won > 0:
+            value_per_min = snapshot.recent_trade_value_won
+            if value_per_min is not None:
+                value_per_min = value_per_min / (snapshot.sample_window_sec / 60)
+            if value_per_min is not None and value_per_min < self._cfg.min_trade_value_per_min_won:
+                return self._blocked(
+                    "trade_flow_value_velocity_too_low",
+                    "최근 분당 체결대금이 최소 기준보다 작습니다.",
+                    min_trade_value_per_min_won=self._cfg.min_trade_value_per_min_won,
+                    recent_trade_value_per_min_won=int(value_per_min),
+                    **context,
+                )
+
+        if (
+            self._cfg.min_execution_strength_pct > 0
+            and snapshot.execution_strength_pct is not None
+            and snapshot.execution_strength_pct < self._cfg.min_execution_strength_pct
+        ):
+            return self._blocked(
+                "trade_flow_strength_too_low",
+                "체결강도가 최소 기준보다 작습니다.",
+                min_execution_strength_pct=self._cfg.min_execution_strength_pct,
+                **context,
+            )
+
+        return OrderPolicyDecision(
+            allowed=True,
+            rule="trade_flow",
+            reason="trade_flow_allowed",
+            severity="pass",
+            context=context,
+        )
+
+    async def _check_security_status(
+        self,
+        stock_code: str,
+        exchange: Exchange,
+    ) -> OrderPolicyDecision:
+        if self._security_info_provider is None:
+            return self._security_status_failure_decision(stock_code, "security_info_provider_missing")
+
+        try:
+            price_resp = self._security_info_provider.get_current_price(stock_code, exchange=exchange)
+            if inspect.isawaitable(price_resp):
+                price_resp = await price_resp
+        except TypeError:
+            try:
+                price_resp = self._security_info_provider.get_current_price(stock_code)
+                if inspect.isawaitable(price_resp):
+                    price_resp = await price_resp
+            except Exception as exc:
+                return self._security_status_failure_decision(stock_code, str(exc))
+        except Exception as exc:
+            return self._security_status_failure_decision(stock_code, str(exc))
+
+        if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
+            reason = price_resp.msg1 if price_resp else "응답 없음"
+            return self._security_status_failure_decision(stock_code, reason)
+
+        output = self._extract_stock_output(price_resp.data)
+        iscd_stat_cls_code = str(self._pick(output, "iscd_stat_cls_code") or "").strip()
+        mang_issu_cls_code = str(self._pick(output, "mang_issu_cls_code") or "").strip()
+        mrkt_warn_cls_code = str(self._pick(output, "mrkt_warn_cls_code") or "").strip()
+        invt_caful_yn = str(self._pick(output, "invt_caful_yn") or "").strip().upper()
+        market_cap = self._to_int(self._pick(output, "hts_avls", "stck_llam", "market_cap"))
+
+        context = {
+            "stock_code": stock_code,
+            "iscd_stat_cls_code": iscd_stat_cls_code,
+            "mang_issu_cls_code": mang_issu_cls_code,
+            "mrkt_warn_cls_code": mrkt_warn_cls_code,
+            "invt_caful_yn": invt_caful_yn,
+            "market_cap_won": market_cap,
+        }
+
+        if self._cfg.block_managed_issue and self._is_flagged_code(mang_issu_cls_code):
+            return self._blocked(
+                "managed_issue_stock",
+                "관리종목은 주문할 수 없습니다.",
+                **context,
+            )
+
+        blocked_status_codes = {str(code).strip() for code in self._cfg.blocked_stock_status_codes}
+        if self._cfg.block_investment_warning and (
+            self._is_flagged_code(mrkt_warn_cls_code) or iscd_stat_cls_code in blocked_status_codes
+        ):
+            return self._blocked(
+                "investment_warning_stock",
+                "투자경고/위험 또는 거래정지 상태 종목은 주문할 수 없습니다.",
+                blocked_stock_status_codes=sorted(blocked_status_codes),
+                **context,
+            )
+
+        if self._cfg.block_investment_caution and invt_caful_yn == "Y":
+            return self._blocked(
+                "investment_caution_stock",
+                "투자주의 종목은 주문할 수 없습니다.",
+                **context,
+            )
+
+        if self._cfg.min_market_cap_won > 0:
+            if market_cap <= 0:
+                return self._blocked(
+                    "market_cap_unavailable",
+                    "시가총액 데이터가 없어 소형주 검증을 통과할 수 없습니다.",
+                    min_market_cap_won=self._cfg.min_market_cap_won,
+                    **context,
+                )
+            if market_cap < self._cfg.min_market_cap_won:
+                return self._blocked(
+                    "market_cap_too_low",
+                    "시가총액이 최소 기준보다 작습니다.",
+                    min_market_cap_won=self._cfg.min_market_cap_won,
+                    **context,
+                )
+
+        return OrderPolicyDecision(
+            allowed=True,
+            rule="security_status",
+            reason="security_status_allowed",
+            severity="pass",
+            context=context,
+        )
 
     def _check_market_order_type(
         self,
@@ -153,12 +399,14 @@ class OrderPolicyService:
             context=context,
         )
 
-    async def _check_market_order_book(
+    async def _check_order_book(
         self,
         stock_code: str,
+        price: int,
         qty: int,
         side: OrderSide,
         exchange: Exchange,
+        order_type: str,
     ) -> OrderPolicyDecision:
         if self._quote_provider is None:
             return self._quote_failure_decision(stock_code, "quote_provider_missing")
@@ -212,12 +460,14 @@ class OrderPolicyService:
 
         executable_price = ask if side == OrderSide.BUY else bid
         reference_price = current_price or mid
-        slippage_pct = (
-            abs(executable_price - reference_price) / reference_price * 100
-            if reference_price and executable_price
-            else 0.0
-        )
-        if slippage_pct > self._cfg.max_market_slippage_pct:
+        slippage_pct = 0.0
+        if order_type == "market":
+            slippage_pct = (
+                abs(executable_price - reference_price) / reference_price * 100
+                if reference_price and executable_price
+                else 0.0
+            )
+        if order_type == "market" and slippage_pct > self._cfg.max_market_slippage_pct:
             return self._blocked(
                 "market_slippage_too_high",
                 "시장가 예상 슬리피지가 허용 범위를 초과했습니다.",
@@ -272,12 +522,12 @@ class OrderPolicyService:
 
         return OrderPolicyDecision(
             allowed=True,
-            rule="market_order_book",
-            reason="market_order_book_allowed",
-            adjusted_price=0,
+            rule=f"{order_type}_order_book",
+            reason=f"{order_type}_order_book_allowed",
+            adjusted_price=price,
             severity="pass",
             context={
-                "order_type": "market",
+                "order_type": order_type,
                 "stock_code": stock_code,
                 "ask": ask,
                 "bid": bid,
@@ -294,7 +544,7 @@ class OrderPolicyService:
         if self._cfg.quote_fail_policy == "block":
             return self._blocked(
                 "quote_unavailable",
-                "호가 조회 실패로 시장가 주문을 검증할 수 없습니다.",
+                "호가 조회 실패로 주문을 검증할 수 없습니다.",
                 stock_code=stock_code,
                 quote_error=reason,
             )
@@ -311,6 +561,46 @@ class OrderPolicyService:
             context={"stock_code": stock_code, "quote_error": reason},
         )
 
+    def _security_status_failure_decision(self, stock_code: str, reason: str) -> OrderPolicyDecision:
+        if self._cfg.security_status_fail_policy == "block":
+            return self._blocked(
+                "security_status_unavailable",
+                "종목 상태 조회 실패로 주문을 검증할 수 없습니다.",
+                stock_code=stock_code,
+                security_status_error=reason,
+            )
+        self._logger.warning(
+            f"[OrderPolicy][CHECK_ERROR] rule=security_status_unavailable "
+            f"stock_code={stock_code} reason={reason}"
+        )
+        return OrderPolicyDecision(
+            allowed=True,
+            rule="security_status_unavailable",
+            reason="security_status_check_fail_open",
+            severity="pass",
+            context={"stock_code": stock_code, "security_status_error": reason},
+        )
+
+    def _trade_flow_failure_decision(self, stock_code: str, reason: str) -> OrderPolicyDecision:
+        if self._cfg.trade_flow_fail_policy == "block":
+            return self._blocked(
+                "trade_flow_unavailable",
+                "체결 흐름 조회 실패로 주문을 검증할 수 없습니다.",
+                stock_code=stock_code,
+                trade_flow_error=reason,
+            )
+        self._logger.warning(
+            f"[OrderPolicy][CHECK_ERROR] rule=trade_flow_unavailable "
+            f"stock_code={stock_code} reason={reason}"
+        )
+        return OrderPolicyDecision(
+            allowed=True,
+            rule="trade_flow_unavailable",
+            reason="trade_flow_check_fail_open",
+            severity="pass",
+            context={"stock_code": stock_code, "trade_flow_error": reason},
+        )
+
     @staticmethod
     def _extract_quote_data(data) -> dict:
         if isinstance(data, dict):
@@ -319,6 +609,19 @@ class OrderPolicyService:
             if isinstance(data.get("output"), dict):
                 return data["output"]
             return data
+        return {}
+
+    @staticmethod
+    def _extract_stock_output(data) -> dict:
+        if isinstance(data, dict):
+            output = data.get("output")
+            if hasattr(output, "to_dict"):
+                return output.to_dict()
+            if isinstance(output, dict):
+                return output
+            return data
+        if hasattr(data, "to_dict"):
+            return data.to_dict()
         return {}
 
     @staticmethod
@@ -334,6 +637,21 @@ class OrderPolicyService:
             return int(float(str(value or "0").replace(",", "")))
         except (TypeError, ValueError):
             return 0
+
+    @staticmethod
+    def _is_flagged_code(value: str) -> bool:
+        text = str(value or "").strip().upper()
+        return text not in ("", "0", "00", "000", "N", "NONE", "NULL")
+
+    @staticmethod
+    def _with_context(decision: OrderPolicyDecision, extra_context: dict[str, Any]) -> OrderPolicyDecision:
+        if not extra_context:
+            return decision
+        merged = dict(decision.context)
+        for key, value in extra_context.items():
+            merged.setdefault(key, value)
+        decision.context = merged
+        return decision
 
     def _blocked(self, rule: str, reason: str, **context) -> OrderPolicyDecision:
         self._logger.warning(

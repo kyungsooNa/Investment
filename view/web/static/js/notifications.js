@@ -58,6 +58,8 @@ function connectNotificationSSE() {
                 showToast(`[${notif.category}] ${notif.title}: ${notif.message}`, 'success');
             } else if (notif.level === 'error') {
                 showToast(`${notif.title}: ${notif.message}`, 'error');
+            } else if (notif.level === 'warning' && notif.metadata && notif.metadata.alert_type === 'execution_quality_candidate') {
+                showToast(`${notif.title}: ${notif.message}`, 'error');
             }
         } catch (e) {
             console.warn('[Notification SSE] parse error', e);

@@ -572,6 +572,10 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 .notif-item.category-TRADE {
     border-left-color: var(--positive);
 }
+.notif-item.category-STRATEGY {
+    border-left-color: #b7791f;
+    background: rgba(183, 121, 31, 0.06);
+}
 .notif-item.category-SYSTEM {
     border-left-color: var(--negative);
 }
@@ -593,6 +597,7 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     color: #fff;
 }
 .notif-category.cat-TRADE { background: var(--positive); }
+.notif-category.cat-STRATEGY { background: #b7791f; }
 .notif-category.cat-SYSTEM { background: var(--negative); }
 .notif-category.cat-API { background: var(--neutral); }
 .notif-time {

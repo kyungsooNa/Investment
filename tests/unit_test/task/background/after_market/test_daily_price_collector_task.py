@@ -535,7 +535,16 @@ async def test_collect_via_broker_api_skips_sleep_for_cache_hits_and_flushes_tai
     cached_resp = ResCommonResponse(
         rt_cd="0",
         msg1="",
-        data={"output": {"stck_prpr": "80000", "stck_oprc": "79000", "stck_hgpr": "81000", "stck_lwpr": "78000"}},
+        data={"output": {
+            "stck_prpr": "80000",
+            "stck_oprc": "79000",
+            "stck_hgpr": "81000",
+            "stck_lwpr": "78000",
+            "iscd_stat_cls_code": "53",
+            "mang_issu_cls_code": "Y",
+            "mrkt_warn_cls_code": "2",
+            "invt_caful_yn": "Y",
+        }},
     )
     cached_resp._cache_hit = True
 
@@ -546,6 +555,11 @@ async def test_collect_via_broker_api_skips_sleep_for_cache_hits_and_flushes_tai
 
     mock_sleep.assert_not_awaited()
     task._stock_repo.upsert_daily_snapshot.assert_awaited_once()
+    saved_batch = task._stock_repo.upsert_daily_snapshot.await_args.args[1]
+    assert saved_batch[0]["iscd_stat_cls_code"] == "53"
+    assert saved_batch[0]["mang_issu_cls_code"] == "Y"
+    assert saved_batch[0]["mrkt_warn_cls_code"] == "2"
+    assert saved_batch[0]["invt_caful_yn"] == "Y"
 
 
 @pytest.mark.asyncio

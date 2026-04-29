@@ -64,6 +64,7 @@ from core.account_snapshot import AccountSnapshotCache
 from services.position_sizing_service import PositionSizingService
 from services.risk_gate_service import RiskGateService
 from services.order_policy_service import OrderPolicyService
+from services.execution_flow_service import ExecutionFlowService
 from config.config_loader import PositionSizingConfig, OrderPolicyConfig
 from services.price_subscription_service import PriceSubscriptionService
 from services.price_stream_service import PriceStreamService
@@ -104,6 +105,7 @@ class WebAppContext:
         self.account_snapshot_cache: AccountSnapshotCache = None
         self.risk_gate_service: RiskGateService = None
         self.order_policy_service: OrderPolicyService = None
+        self.execution_flow_service: ExecutionFlowService = None
         self.position_sizing_service: PositionSizingService = None
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
@@ -449,9 +451,19 @@ class WebAppContext:
                 logger=self.logger,
                 env=getattr(self.broker, "env", None),
             )
+            _op_cfg = getattr(self.full_config, "order_policy", None) or OrderPolicyConfig()
+            self.execution_flow_service = ExecutionFlowService(
+                data_provider=self.broker,
+                market_clock=self.market_clock,
+                logger=self.logger,
+                cache_ttl_sec=_op_cfg.trade_flow_cache_ttl_sec,
+                sample_window_sec=_op_cfg.trade_flow_sample_window_sec,
+            )
             self.order_policy_service = OrderPolicyService(
-                config=getattr(self.full_config, "order_policy", None) or OrderPolicyConfig(),
+                config=_op_cfg,
                 quote_provider=self.broker,
+                security_info_provider=self.broker,
+                trade_flow_provider=self.execution_flow_service,
                 logger=self.logger,
             )
             self.order_execution_service = OrderExecutionService(
@@ -539,6 +551,7 @@ class WebAppContext:
                     log_dir=os.path.join(self.logger.log_dir, "strategies"),
                     stock_code_repo=self.stock_code_repository,
                     virtual_trade_service=self.virtual_trade_service,
+                    execution_quality_config=getattr(self.full_config, "execution_quality_report", None),
                 ),
                 notification_service=self.notification_service,
                 telegram_reporter=getattr(self, 'telegram_reporter', None),

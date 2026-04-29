@@ -44,15 +44,49 @@ risk_gate:
   max_pending_orders: 10
   max_total_exposure_pct: 95.0
 
-# Order policy / liquidity guard before market-order submit
+# Order policy / liquidity guard before order submit
 order_policy:
   enabled: true
-  order_book_checks_enabled: false
+  order_book_checks_enabled: true
+  security_status_checks_enabled: true
+  security_status_fail_policy: "block"
+  trade_flow_checks_enabled: true
+  trade_flow_fail_policy: "block"
+  trade_flow_cache_ttl_sec: 3.0
+  trade_flow_sample_window_sec: 60
+  max_last_trade_age_sec: 60.0
+  min_recent_trade_count: 1
+  min_trade_value_per_min_won: 0
+  min_execution_strength_pct: 0.0
   max_market_slippage_pct: 1.0
   max_spread_pct: 1.0
   min_trading_value_won: 100000000
+  min_market_cap_won: 100000000000
   max_top_of_book_participation_pct: 100.0
-  quote_fail_policy: "allow"
+  block_managed_issue: true
+  block_investment_warning: true
+  block_investment_caution: false
+  blocked_stock_status_codes: ["51", "52", "53", "58"]
+  quote_fail_policy: "block"
+
+# 체결 품질 리포트 경고 기준 (사후 평가용, 자동 비활성화는 기본 OFF)
+execution_quality_report:
+  enabled: true
+  min_sample_count: 3
+  liquidity_control_effective_date: null   # YYYYMMDD. 설정 시 4-2 Liquidity Control 적용 전/후 라벨 분리
+  warn_avg_slippage_pct: 0.5
+  warn_p95_slippage_pct: 1.0
+  warn_avg_first_fill_latency_sec: 30.0
+  warn_incomplete_fill_ratio_pct: 20.0
+  warn_avg_unfilled_ratio_pct: 20.0
+  warn_avg_order_age_sec: 120.0
+  candidate_avg_slippage_pct: 1.0
+  candidate_p95_slippage_pct: 2.0
+  candidate_avg_first_fill_latency_sec: 90.0
+  candidate_incomplete_fill_ratio_pct: 40.0
+  candidate_avg_unfilled_ratio_pct: 40.0
+  candidate_avg_order_age_sec: 300.0
+  auto_disable_enabled: false
 
 # 포지션 사이징 (Fixed Fractional / Penbold 식)
 position_sizing:

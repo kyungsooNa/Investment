@@ -1,6 +1,6 @@
 # Investment Trading App - 실전 운영 개선 To-Do
 
-최종 업데이트: 2026-04-29
+최종 업데이트: 2026-04-30
 
 ## 2026-04-29 Update - O'Neil Market Timing
 
@@ -95,7 +95,6 @@
 - `app/user_action_executor.py`
 
 진행 중.
-- P4: 전략별/종목별 체결 품질 리포트, 품질 저하 전략 경고/비활성화 후보 표시
 - P5: 백테스트-실거래 괴리 추적, 시장 상태 필터, RSI(2) 전략, 펜볼드/돈천 채널형 전략, 백테스트 고도화
 - P6: 데이터 품질 공통 검증, 대시보드 강화, 스케줄러 장애 복구 고도화
 - P7: BrokerAPIWrapper 테스트 안정화, 남은 DB/전략 계산 성능 측정
@@ -108,44 +107,6 @@ main 반영 확인.
 - 전략별 제한 1차 완료: `StrategySchedulerConfig.max_positions`, 웹 max positions 수정, RiskGate 전략 손실/노출/중복 보유 차단
 - 스트리밍 성능 1차 완료: program trading tick write buffer/bulk insert, desired subscription batch flush, SQLite WAL 적용 범위 확대
 - 신규 전략 1차 완료: `LarryWilliamsVBOStrategy` 추가. 다만 todo의 펜볼드/돈천 채널 전략과는 규칙이 달라 후속 과제로 유지
----
-
-## P4. 실행 품질과 유동성 관리
-
-실전 수익률은 전략 신호뿐 아니라 체결 품질에 크게 좌우됩니다. “전략이 틀린 것인지, 체결이 나쁜 것인지”를 분리해서 볼 수 있어야 합니다.
-
-### 4-1. Execution Quality 추적
-
-- [x] 주문별 예상 체결가와 실제 체결가를 기록한다. (`OrderContext.expected_fill_price`, `average_fill_price`)
-- [x] 슬리피지 금액과 슬리피지 비율을 계산한다. (`slippage_amount_won`, `slippage_pct`)
-- [~] 주문 타입, 주문 시각, 체결 지연 시간을 함께 기록한다. (`created_at`, `first_fill_latency_sec`는 `OrderContext`에 기록됨. `order_type`은 `OrderPolicyDecision.context`에 남으며 `OrderContext` 영속 필드는 아님)
-- [~] 호가 스프레드는 시장가 주문 정책 판단 컨텍스트에 기록한다. 영속 리포트 반영은 후속 작업으로 남긴다.
-- [x] 전략별/종목별 체결 품질 리포트를 추가한다. (`execution_quality` JSON 로그 이벤트 + `StrategyLogReportService` 체결 품질 요약)
-- [ ] 체결 품질이 기준 이하인 전략은 경고 또는 자동 비활성화 후보로 표시한다.
-
-주요 파일:
-
-- `services/order_execution_service.py`
-- `services/strategy_log_report_service.py`
-- `repositories/*`
-- `core/loggers/json_formatter.py`
-
-### 4-2. Liquidity Control 추가
-
-- [x] 최소 거래대금 필터를 설정화한다. 예: 100억 이상 (`order_policy.min_trading_value_won`)
-- [x] 호가잔량 기준 진입 제한을 추가한다. (`order_policy.max_top_of_book_participation_pct`)
-- [ ] 체결 강도/체결 속도 기반 필터를 검토한다.
-- [ ] 소형주, 관리종목, 투자경고 종목 제외 규칙을 추가한다.
-- [~] 유동성 부족으로 차단된 신호를 주문 정책 응답/로그에 남긴다. 전략 로그 연동은 후속 작업으로 남긴다.
-
-주요 파일:
-
-- `services/risk_gate_service.py`
-- `services/stock_query_service.py`
-- `services/market_data_service.py`
-- `strategies/strategy_executor.py`
-- `repositories/*`
-
 ---
 
 ## P5. 전략 검증, 비용 반영, 전략 격리
@@ -429,9 +390,9 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
    - paper/real 필드 차이 회귀 테스트 확정
    - 주문번호/체결수량/미체결수량/평균체결가/취소·거부 필드 매핑 확정
 
-2. P4 체결 품질 리포트
-   - 전략별/종목별 slippage/latency 집계
-   - 기준 이하 전략을 경고/비활성화 후보로 표시
+2. P4-3 체결 품질 기반 전략 경고
+   - 완료: 비활성화 후보 리포트 요약, 전략 경고 알림, 웹 알림 센터 강조
+   - 완료: 4-2 적용 전/후 리포트 라벨 분리
 
 3. P5 전략 고도화
    - RSI(2) 눌림목 전략 설계/구현

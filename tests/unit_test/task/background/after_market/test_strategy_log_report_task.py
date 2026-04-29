@@ -14,6 +14,7 @@ from interfaces.schedulable_task import TaskPriority, TaskState
 def mock_report_service():
     svc = MagicMock()
     svc.generate_report = AsyncMock(return_value="<html>report</html>")
+    svc.get_last_execution_quality_candidates.return_value = []
     return svc
 
 
@@ -87,6 +88,26 @@ class TestOnMarketClosed:
         mock_telegram.send_strategy_log_report.assert_awaited_once_with(
             "<html>report</html>", "20260419"
         )
+
+    async def test_execution_quality_candidates_emit_strategy_warning(
+        self, task, mock_report_service, mock_notification_service
+    ):
+        mock_report_service.get_last_execution_quality_candidates.return_value = [{
+            "strategy": "잔량전략",
+            "period": "4-2 적용 후",
+            "reason": "평균 잔량 73.3%",
+            "count": 3,
+        }]
+
+        await task._on_market_closed("20260419")
+
+        mock_notification_service.emit.assert_awaited_once()
+        args, kwargs = mock_notification_service.emit.await_args
+        assert args[0].value == "STRATEGY"
+        assert args[1].value == "warning"
+        assert args[2] == "체결 품질 비활성화 후보"
+        assert "잔량전략" in args[3]
+        assert kwargs["metadata"]["alert_type"] == "execution_quality_candidate"
 
     async def test_telegram_send_called(self, task, mock_telegram):
         await task._on_market_closed("20260419")
