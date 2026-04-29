@@ -196,6 +196,29 @@ class OrderExecutionService:
         except (TypeError, ValueError):
             return None
 
+    def _resolve_order_type(
+        self,
+        price: int,
+        policy_decision: Optional[OrderPolicyDecision],
+    ) -> str:
+        context = policy_decision.context if policy_decision else {}
+        order_type = str((context or {}).get("order_type") or "").strip()
+        if order_type:
+            return order_type
+        return "market" if price == 0 else "limit"
+
+    def _resolve_spread_pct(
+        self,
+        policy_decision: Optional[OrderPolicyDecision],
+    ) -> Optional[float]:
+        if policy_decision is None:
+            return None
+        try:
+            value = (policy_decision.context or {}).get("spread_pct")
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
     def _build_execution_quality_update(
         self,
         context: OrderContext,
@@ -249,6 +272,8 @@ class OrderExecutionService:
             "side": context.side.value,
             "source": context.source,
             "state": context.state.value,
+            "order_type": context.order_type,
+            "spread_pct": context.spread_pct,
             "order_qty": context.qty,
             "expected_fill_price": context.expected_fill_price,
             "average_fill_price": context.average_fill_price,
@@ -278,6 +303,7 @@ class OrderExecutionService:
         self.logger.info(
             f"[EXECUTION QUALITY] order_key={context.order_key} code={context.stock_code} "
             f"side={context.side.value} state={context.state.value} "
+            f"order_type={context.order_type} spread_pct={context.spread_pct} "
             f"expected_price={context.expected_fill_price} avg_fill_price={avg_fill_price_str} "
             f"filled_qty={context.filled_qty} remaining_qty={context.remaining_qty} "
             f"fill_ratio_pct={fill_ratio_pct} unfilled_ratio_pct={unfilled_ratio_pct} "
@@ -1333,6 +1359,8 @@ class OrderExecutionService:
                 trace_id=trace_id,
                 intent_id=resolved_intent_id,
                 expected_fill_price=self._resolve_expected_fill_price(price, policy_decision),
+                order_type=self._resolve_order_type(price, policy_decision),
+                spread_pct=self._resolve_spread_pct(policy_decision),
             )
             self._set_order_context(context)
             self._intent_index[resolved_intent_id] = order_key

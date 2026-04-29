@@ -101,6 +101,8 @@ class OrderContext(BaseModel):
     trace_id: Optional[str] = None
     intent_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     expected_fill_price: Optional[int] = None
+    order_type: str = ""
+    spread_pct: Optional[float] = None
     average_fill_price: Optional[float] = None
     total_fill_amount: int = 0
     last_fill_price: Optional[int] = None

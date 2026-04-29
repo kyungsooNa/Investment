@@ -505,6 +505,15 @@ class StrategyLogReportService:
                 for item in items
                 if item.get("order_age_sec") is not None
             ]
+            spread_values = [
+                item["spread_pct"]
+                for item in items
+                if item.get("spread_pct") is not None
+            ]
+            order_type_counts = Counter(
+                str(item.get("order_type") or "unknown")
+                for item in items
+            )
             strategy_rows.append({
                 "strategy": strategy,
                 "count": len(items),
@@ -516,6 +525,8 @@ class StrategyLogReportService:
                 "incomplete_fill_ratio": incomplete_count / len(items) * 100 if items else 0.0,
                 "avg_unfilled_ratio": sum(unfilled_values) / len(unfilled_values) if unfilled_values else None,
                 "avg_order_age": sum(age_values) / len(age_values) if age_values else None,
+                "avg_spread": sum(spread_values) / len(spread_values) if spread_values else None,
+                "order_type_counts": dict(order_type_counts),
             })
 
         strategy_rows.sort(key=lambda row: (
@@ -560,13 +571,16 @@ class StrategyLogReportService:
             incomplete_str = f"{row['incomplete_fill_ratio']:.1f}%"
             unfilled_str = f"{row['avg_unfilled_ratio']:.1f}%" if row["avg_unfilled_ratio"] is not None else "N/A"
             age_str = f"{row['avg_order_age']:.1f}s" if row["avg_order_age"] is not None else "N/A"
+            spread_str = f"{row['avg_spread']:.3f}%" if row["avg_spread"] is not None else "N/A"
+            order_type_str = self._format_order_type_counts(row.get("order_type_counts", {}))
             period_str = f"[{row['period']}] " if row.get("period") else ""
             quality_label = row["quality_label"]
             quality_str = f" {quality_label}" if quality_label else ""
             lines.append(
                 f"• {period_str}{_esc(row['strategy'])}: {row['count']}건, 평균 슬리피지 {slip_str}, "
                 f"P95 {p95_str}, 최대 {max_str}, 평균 지연 {latency_str}, "
-                f"불완전 체결 {incomplete_str}, 평균 잔량 {unfilled_str}, 평균 지속 {age_str}{quality_str}"
+                f"불완전 체결 {incomplete_str}, 평균 잔량 {unfilled_str}, 평균 지속 {age_str}, "
+                f"평균 스프레드 {spread_str}, 주문유형 {order_type_str}{quality_str}"
             )
 
         symbol_rows = []
@@ -688,6 +702,27 @@ class StrategyLogReportService:
         return ""
 
     @staticmethod
+    def _format_order_type_counts(counts: dict) -> str:
+        if not counts:
+            return "N/A"
+        labels = {
+            "market": "시장가",
+            "limit": "지정가",
+            "unknown": "미상",
+        }
+        order = ("market", "limit", "unknown")
+        parts = []
+        for key in order:
+            count = int(counts.get(key) or 0)
+            if count:
+                parts.append(f"{labels.get(key, key)} {count}")
+        for key, count in sorted(counts.items()):
+            if key in order or not count:
+                continue
+            parts.append(f"{labels.get(key, key)} {int(count)}")
+        return "/".join(parts) if parts else "N/A"
+
+    @staticmethod
     def _quality_threshold_reasons(
         *,
         avg_slip: Optional[float],
@@ -799,6 +834,8 @@ class StrategyLogReportService:
                             "name": self._db_resolve(str(code).strip(), str(name_value)),
                             "side": data.get("side", ""),
                             "state": data.get("state", ""),
+                            "order_type": str(data.get("order_type") or "unknown"),
+                            "spread_pct": _to_float(data.get("spread_pct")),
                             "order_qty": int(_to_float(data.get("order_qty")) or 0),
                             "filled_qty": int(_to_float(data.get("filled_qty")) or 0),
                             "remaining_qty": int(_to_float(data.get("remaining_qty")) or 0),

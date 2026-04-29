@@ -1623,6 +1623,8 @@ async def test_execution_report_records_execution_quality_metrics(
         qty=10,
         broker_order_no="A0001",
         expected_fill_price=70000,
+        order_type="limit",
+        spread_pct=0.143,
         created_at=created_at,
     ))
 
@@ -1654,6 +1656,8 @@ async def test_execution_report_records_execution_quality_metrics(
     assert quality_events[-1]["order_qty"] == 10
     assert quality_events[-1]["filled_qty"] == 10
     assert quality_events[-1]["remaining_qty"] == 0
+    assert quality_events[-1]["order_type"] == "limit"
+    assert quality_events[-1]["spread_pct"] == 0.143
     assert quality_events[-1]["fill_ratio_pct"] == 100
     assert quality_events[-1]["unfilled_ratio_pct"] == 0
     assert quality_events[-1]["order_age_sec"] == 5

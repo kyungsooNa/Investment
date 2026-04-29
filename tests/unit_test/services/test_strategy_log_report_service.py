@@ -443,6 +443,8 @@ async def test_report_includes_execution_quality_summary(log_dir):
                 "name": "삼성전자",
                 "source": "strategy:전략A",
                 "side": "BUY",
+                "order_type": "limit",
+                "spread_pct": 0.2,
                 "filled_qty": 10,
                 "slippage_pct": 0.2,
                 "slippage_amount_won": 140,
@@ -459,6 +461,8 @@ async def test_report_includes_execution_quality_summary(log_dir):
                 "name": "삼성전자",
                 "source": "strategy:전략A",
                 "side": "BUY",
+                "order_type": "market",
+                "spread_pct": 0.4,
                 "filled_qty": 5,
                 "slippage_pct": -0.1,
                 "slippage_amount_won": -70,
@@ -475,6 +479,8 @@ async def test_report_includes_execution_quality_summary(log_dir):
                 "name": "SK하이닉스",
                 "source": "manual:수동매매",
                 "side": "SELL",
+                "order_type": "market",
+                "spread_pct": 0.7,
                 "filled_qty": 1,
                 "slippage_pct": 0.5,
                 "first_fill_latency_sec": 9.0,
@@ -488,11 +494,11 @@ async def test_report_includes_execution_quality_summary(log_dir):
     assert "체결 품질 요약" in report
     assert (
         "전략A: 2건, 평균 슬리피지 0.150%, P95 0.195%, 최대 0.200%, 평균 지연 3.0s, "
-        "불완전 체결 0.0%, 평균 잔량 N/A, 평균 지속 N/A"
+        "불완전 체결 0.0%, 평균 잔량 N/A, 평균 지속 N/A, 평균 스프레드 0.300%, 주문유형 시장가 1/지정가 1"
     ) in report
     assert (
         "수동매매: 1건, 평균 슬리피지 0.500%, P95 0.500%, 최대 0.500%, 평균 지연 9.0s, "
-        "불완전 체결 0.0%, 평균 잔량 N/A, 평균 지속 N/A"
+        "불완전 체결 0.0%, 평균 잔량 N/A, 평균 지속 N/A, 평균 스프레드 0.700%, 주문유형 시장가 1"
     ) in report
     assert "종목별 슬리피지 상위: SK하이닉스(000660) 0.500%/1건, 삼성전자(005930) 0.150%/2건" in report
 
