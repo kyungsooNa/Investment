@@ -52,6 +52,7 @@ from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.high_tight_flag_strategy import HighTightFlagStrategy
 from strategies.first_pullback_strategy import FirstPullbackStrategy
 from strategies.larry_williams_vbo_strategy import LarryWilliamsVBOStrategy
+from strategies.rsi2_pullback_strategy import RSI2PullbackStrategy
 from services.oneil_universe_service import OneilUniverseService
 from repositories.stock_repository import StockRepository
 from services.program_trading_stream_service import ProgramTradingStreamService
@@ -823,6 +824,23 @@ class WebAppContext:
             enabled=False,
             force_exit_on_close=True,   # 오버나이트 금지 — 당일 장 마감 전 강제 청산
             allow_pyramiding=False,
+        ))
+        # 래리 코너스 RSI(2) 눌림목 전략 등록
+        rsi2_strategy = RSI2PullbackStrategy(
+            stock_query_service=self.stock_query_service,
+            universe_service=self.oneil_universe_service,
+            indicator_service=self.indicator_service,
+            market_clock=self.market_clock,
+            logger=get_strategy_logger('RSI2Pullback'),
+        )
+        self.scheduler.register(StrategySchedulerConfig(
+            strategy=rsi2_strategy,
+            interval_minutes=5,
+            max_positions=5,
+            order_qty=1,
+            enabled=False,
+            force_exit_on_close=False,  # 평균 보유 ~2.5일 — 오버나잇 허용
+            allow_pyramiding=False,     # 1종목 1회 진입 invariant
         ))
 
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
