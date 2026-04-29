@@ -441,6 +441,33 @@ class IndicatorService:
         df.drop(columns=["_tr"], inplace=True)
         return df
 
+    @staticmethod
+    def _compute_adx(df: pd.DataFrame, period: int) -> pd.DataFrame:
+        """ADX(Average Directional Index) 계산 — Wilder's RMA (ewm alpha=1/period)"""
+        for col in ("high", "low", "close"):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        df["_tr"] = pd.concat([
+            df["high"] - df["low"],
+            (df["high"] - df["close"].shift(1)).abs(),
+            (df["low"]  - df["close"].shift(1)).abs(),
+        ], axis=1).max(axis=1)
+        up_move   = df["high"] - df["high"].shift(1)
+        down_move = df["low"].shift(1) - df["low"]
+        df["_pdm"] = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+        df["_ndm"] = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+        atr14  = df["_tr"].ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+        pdm14  = df["_pdm"].ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+        ndm14  = df["_ndm"].ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+        df["plus_di"]  = (pdm14 / atr14.replace(0, np.nan)) * 100
+        df["minus_di"] = (ndm14 / atr14.replace(0, np.nan)) * 100
+        di_sum  = df["plus_di"] + df["minus_di"]
+        di_diff = (df["plus_di"] - df["minus_di"]).abs()
+        df["_dx"] = (di_diff / di_sum.replace(0, np.nan)) * 100
+        df["adx"] = df["_dx"].ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+        df.drop(columns=["_tr", "_pdm", "_ndm", "_dx"], inplace=True)
+        return df
+
     def calc_bb_widths_sync(
         self,
         ohlcv_data: List[Dict],
@@ -477,6 +504,34 @@ class IndicatorService:
             return round(((recent_close - past_close) / past_close) * 100, 2)
         except Exception:
             return 0.0
+
+    def calc_adx_sync(
+        self,
+        ohlcv_data: List[Dict],
+        period: int = 14,
+        slope_lookback: int = 3,
+    ) -> Dict:
+        """이미 확보한 OHLCV 데이터로 ADX/+DI/-DI를 동기 계산합니다.
+        반환: {"adx": float, "plus_di": float, "minus_di": float, "adx_rising": bool}
+        계산 실패 또는 데이터 부족 시 빈 dict 반환 — 전략에서 `if not result` 로 skip."""
+        try:
+            if len(ohlcv_data) < period * 2 + slope_lookback:
+                return {}
+            df = self._to_dataframe(ohlcv_data)
+            if not {"high", "low", "close"}.issubset(df.columns):
+                return {}
+            df = self._compute_adx(df, period)
+            adx_series = df["adx"].dropna()
+            if len(adx_series) < slope_lookback + 1:
+                return {}
+            return {
+                "adx":       round(float(adx_series.iloc[-1]), 2),
+                "plus_di":   round(float(df["plus_di"].dropna().iloc[-1]), 2),
+                "minus_di":  round(float(df["minus_di"].dropna().iloc[-1]), 2),
+                "adx_rising": bool(adx_series.iloc[-1] > adx_series.iloc[-(slope_lookback + 1)]),
+            }
+        except Exception:
+            return {}
 
     def _calculate_bollinger_bands_full(self, stock_code, data, period, std_dev) -> ResCommonResponse:
         """볼린저 밴드 전체 계산 (내부용)"""

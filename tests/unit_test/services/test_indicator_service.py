@@ -1726,3 +1726,50 @@ async def test_calculate_atr_with_ohlcv_data(indicator_service):
     result = await service.calculate_atr("005930", period=14, ohlcv_data=data)
     mock_sqs.get_ohlcv.assert_not_called()
     assert result.rt_cd == ErrorCode.SUCCESS.value
+
+
+# ── calc_adx_sync ──────────────────────────────────────────────────────────
+
+def test_calc_adx_sync_returns_expected_keys(indicator_service):
+    """충분한 데이터(50봉) → adx/plus_di/minus_di/adx_rising 네 키 반환."""
+    service, _ = indicator_service
+    data = _make_ohlcv(n=50, spread=300)
+    result = service.calc_adx_sync(data, period=14)
+    assert result, "빈 dict 반환 — 데이터 또는 계산 실패"
+    assert set(result.keys()) == {"adx", "plus_di", "minus_di", "adx_rising"}
+    assert 0.0 <= result["adx"] <= 100.0
+    assert isinstance(result["adx_rising"], bool)
+
+
+def test_calc_adx_sync_insufficient_data_returns_empty(indicator_service):
+    """데이터 부족(15봉, period=14 → period*2+slope_lookback=31 미만) → 빈 dict."""
+    service, _ = indicator_service
+    data = _make_ohlcv(n=15)
+    result = service.calc_adx_sync(data, period=14)
+    assert result == {}
+
+
+def test_calc_adx_sync_rising_trend(indicator_service):
+    """강한 상승 추세(close·high 단조 증가) → ADX가 계산되고 plus_di > minus_di."""
+    service, _ = indicator_service
+    n = 60
+    data = []
+    for i in range(n):
+        close = 10000 + i * 50
+        data.append({
+            "date": f"2025{(i // 28) + 1:02d}{(i % 28) + 1:02d}",
+            "open": close, "high": close + 100,
+            "low": close - 50, "close": close, "volume": 1000,
+        })
+    result = service.calc_adx_sync(data, period=14)
+    assert result
+    assert result["plus_di"] > result["minus_di"], "강한 상승 추세에서 +DI > -DI 기대"
+
+
+def test_calc_adx_sync_missing_high_low_returns_empty(indicator_service):
+    """high/low 컬럼 없는 데이터 → 빈 dict."""
+    service, _ = indicator_service
+    data = [{"date": f"20250{i+1:02d}01", "close": 10000 + i * 10, "volume": 100}
+            for i in range(50)]
+    result = service.calc_adx_sync(data, period=14)
+    assert result == {}

@@ -55,6 +55,7 @@ from strategies.high_tight_flag_strategy import HighTightFlagStrategy
 from strategies.first_pullback_strategy import FirstPullbackStrategy
 from strategies.larry_williams_vbo_strategy import LarryWilliamsVBOStrategy
 from strategies.rsi2_pullback_strategy import RSI2PullbackStrategy
+from strategies.larry_williams_channel_breakout_strategy import LarryWilliamsChannelBreakoutStrategy
 from services.oneil_universe_service import OneilUniverseService
 from repositories.stock_repository import StockRepository
 from services.program_trading_stream_service import ProgramTradingStreamService
@@ -896,6 +897,23 @@ class WebAppContext:
             enabled=False,
             force_exit_on_close=False,  # 평균 보유 ~2.5일 — 오버나잇 허용
             allow_pyramiding=False,     # 1종목 1회 진입 invariant
+        ))
+        # 래리 윌리엄스 / 펜볼드 돈천 채널 돌파 전략 등록
+        lwcb_strategy = LarryWilliamsChannelBreakoutStrategy(
+            stock_query_service=self.stock_query_service,
+            universe_service=self.oneil_universe_service,
+            indicator_service=self.indicator_service,
+            market_clock=self.market_clock,
+            logger=get_strategy_logger('LarryWilliamsCB'),
+        )
+        self.scheduler.register(StrategySchedulerConfig(
+            strategy=lwcb_strategy,
+            interval_minutes=5,
+            max_positions=5,
+            order_qty=1,
+            enabled=False,              # 수동 활성화 대기
+            force_exit_on_close=False,  # 스윙 포지션 — 오버나잇 허용
+            allow_pyramiding=False,     # 1종목 1포지션 invariant
         ))
 
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
