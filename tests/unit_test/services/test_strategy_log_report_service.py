@@ -535,6 +535,7 @@ async def test_report_marks_poor_execution_quality_strategy(log_dir):
     report = await svc.generate_report("20260418")
 
     assert "추격전략: 3건" in report
+    assert "비활성화 후보 1개" in report
     assert "비활성화 후보" in report
     assert "평균 슬리피지" in report
     assert "P95 슬리피지" in report
@@ -572,6 +573,7 @@ async def test_report_marks_incomplete_fill_quality_strategy(log_dir):
     cfg = SimpleNamespace(
         enabled=True,
         min_sample_count=3,
+        liquidity_control_effective_date="20260418",
         warn_avg_slippage_pct=10.0,
         warn_p95_slippage_pct=10.0,
         warn_avg_first_fill_latency_sec=999.0,
@@ -589,7 +591,13 @@ async def test_report_marks_incomplete_fill_quality_strategy(log_dir):
     svc = StrategyLogReportService(log_dir=log_dir, execution_quality_config=cfg)
     report = await svc.generate_report("20260418")
 
+    candidates = svc.get_last_execution_quality_candidates()
+    assert candidates
+    assert candidates[0]["strategy"] == "잔량전략"
+    assert candidates[0]["period"] == "4-2 적용 후"
     assert "잔량전략: 3건" in report
+    assert "[4-2 적용 후] 잔량전략" in report
+    assert "비활성화 후보 1개" in report
     assert "불완전 체결 100.0%" in report
     assert "평균 잔량 73.3%" in report
     assert "평균 지속 180.0s" in report

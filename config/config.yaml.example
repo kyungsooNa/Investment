@@ -58,6 +58,7 @@ order_policy:
 execution_quality_report:
   enabled: true
   min_sample_count: 3
+  liquidity_control_effective_date: null   # YYYYMMDD. 설정 시 4-2 Liquidity Control 적용 전/후 라벨 분리
   warn_avg_slippage_pct: 0.5
   warn_p95_slippage_pct: 1.0
   warn_avg_first_fill_latency_sec: 30.0

@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
 from task.background.after_market.after_market_task_base import AfterMarketTask
-from services.notification_service import NotificationService
+from services.notification_service import NotificationCategory, NotificationLevel, NotificationService
 
 if TYPE_CHECKING:
     from services.strategy_log_report_service import StrategyLogReportService
@@ -54,6 +54,8 @@ class StrategyLogReportTask(AfterMarketTask):
             self._logger.error(f"전략 로그 리포트 생성 실패: {e}", exc_info=True)
             return
 
+        await self._emit_execution_quality_candidate_alert(latest_trading_date)
+
         if self._telegram_reporter:
             try:
                 await self._telegram_reporter.send_strategy_log_report(report_html, latest_trading_date)
@@ -61,6 +63,36 @@ class StrategyLogReportTask(AfterMarketTask):
                 self._logger.warning(f"Telegram 리포트 전송 실패: {e}")
 
         self._logger.info("전략 로그 리포트 발송 완료")
+
+    async def _emit_execution_quality_candidate_alert(self, report_date: str) -> None:
+        if not self._notification_service:
+            return
+        getter = getattr(self._report_service, "get_last_execution_quality_candidates", None)
+        if not callable(getter):
+            return
+        candidates = getter() or []
+        if not candidates:
+            return
+
+        shown = []
+        for item in candidates[:3]:
+            strategy = item.get("strategy", "미분류")
+            reason = item.get("reason", "")
+            period = item.get("period", "")
+            period_text = f"{period} " if period else ""
+            shown.append(f"{strategy}({period_text}{reason})")
+        extra = f" 외 {len(candidates) - 3}개" if len(candidates) > 3 else ""
+        await self._notification_service.emit(
+            NotificationCategory.STRATEGY,
+            NotificationLevel.WARNING,
+            "체결 품질 비활성화 후보",
+            f"{report_date}: {', '.join(shown)}{extra}",
+            metadata={
+                "alert_type": "execution_quality_candidate",
+                "report_date": report_date,
+                "candidates": candidates,
+            },
+        )
 
     def get_progress(self) -> dict:
         return {"running": self._state.value == "running"}

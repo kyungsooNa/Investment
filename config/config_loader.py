@@ -86,6 +86,7 @@ class OrderPolicyConfig(BaseModel):
 class ExecutionQualityReportConfig(BaseModel):
     enabled: bool = True
     min_sample_count: int = 3
+    liquidity_control_effective_date: Optional[str] = None
     warn_avg_slippage_pct: float = 0.5
     warn_p95_slippage_pct: float = 1.0
     warn_avg_first_fill_latency_sec: float = 30.0

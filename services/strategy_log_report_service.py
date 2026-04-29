@@ -259,6 +259,11 @@ class StrategyLogReportService:
         self._stock_code_repo = stock_code_repo
         self._virtual_trade_service = virtual_trade_service
         self._execution_quality_config = execution_quality_config
+        self._last_execution_quality_candidates: List[dict] = []
+
+    def get_last_execution_quality_candidates(self) -> List[dict]:
+        """최근 generate_report 실행에서 산출된 체결 품질 비활성화 후보 목록."""
+        return list(self._last_execution_quality_candidates)
 
     # ── 파일 탐색 ────────────────────────────────────────────────
 
@@ -458,6 +463,7 @@ class StrategyLogReportService:
 
     def _build_execution_quality_section(self, records: List[dict]) -> Optional[str]:
         if not records:
+            self._last_execution_quality_candidates = []
             return None
 
         records = self._latest_execution_quality_records(records)
@@ -502,6 +508,7 @@ class StrategyLogReportService:
             strategy_rows.append({
                 "strategy": strategy,
                 "count": len(items),
+                "period": self._execution_quality_period_for_items(items),
                 "avg_slip": avg_slip,
                 "p95_slip": self._percentile(slip_values, 95),
                 "max_slip": max_slip,
@@ -517,6 +524,34 @@ class StrategyLogReportService:
             -(row["avg_unfilled_ratio"] or 0),
             row["strategy"],
         ))
+        candidate_rows = []
+        self._last_execution_quality_candidates = []
+        for row in strategy_rows:
+            row["quality_label"] = self._execution_quality_label(row)
+            if "비활성화" in row["quality_label"]:
+                candidate_rows.append(row)
+                self._last_execution_quality_candidates.append({
+                    "strategy": row["strategy"],
+                    "period": row.get("period", ""),
+                    "count": row["count"],
+                    "reason": row["quality_label"].split(":", 1)[-1].strip(),
+                    "avg_slip": row.get("avg_slip"),
+                    "p95_slip": row.get("p95_slip"),
+                    "avg_latency": row.get("avg_latency"),
+                    "incomplete_fill_ratio": row.get("incomplete_fill_ratio"),
+                    "avg_unfilled_ratio": row.get("avg_unfilled_ratio"),
+                    "avg_order_age": row.get("avg_order_age"),
+                })
+
+        if candidate_rows:
+            parts = []
+            for row in candidate_rows[:3]:
+                period = f"{row['period']} " if row.get("period") else ""
+                reason = row["quality_label"].split(":", 1)[-1].strip()
+                parts.append(f"{_esc(row['strategy'])}({period}{_esc(reason)})")
+            extra = f" 외 {len(candidate_rows) - 3}개" if len(candidate_rows) > 3 else ""
+            lines.append(f"• ⚠️ 비활성화 후보 {len(candidate_rows)}개: {', '.join(parts)}{extra}")
+
         for row in strategy_rows[:_MAX_EXECUTION_QUALITY_ROWS]:
             slip_str = f"{row['avg_slip']:.3f}%" if row["avg_slip"] is not None else "N/A"
             p95_str = f"{row['p95_slip']:.3f}%" if row["p95_slip"] is not None else "N/A"
@@ -525,10 +560,11 @@ class StrategyLogReportService:
             incomplete_str = f"{row['incomplete_fill_ratio']:.1f}%"
             unfilled_str = f"{row['avg_unfilled_ratio']:.1f}%" if row["avg_unfilled_ratio"] is not None else "N/A"
             age_str = f"{row['avg_order_age']:.1f}s" if row["avg_order_age"] is not None else "N/A"
-            quality_label = self._execution_quality_label(row)
+            period_str = f"[{row['period']}] " if row.get("period") else ""
+            quality_label = row["quality_label"]
             quality_str = f" {quality_label}" if quality_label else ""
             lines.append(
-                f"• {_esc(row['strategy'])}: {row['count']}건, 평균 슬리피지 {slip_str}, "
+                f"• {period_str}{_esc(row['strategy'])}: {row['count']}건, 평균 슬리피지 {slip_str}, "
                 f"P95 {p95_str}, 최대 {max_str}, 평균 지연 {latency_str}, "
                 f"불완전 체결 {incomplete_str}, 평균 잔량 {unfilled_str}, 평균 지속 {age_str}{quality_str}"
             )
@@ -567,6 +603,26 @@ class StrategyLogReportService:
             if prev is None or str(record.get("timestamp", "")) >= str(prev.get("timestamp", "")):
                 latest[order_key] = record
         return list(latest.values())
+
+    def _execution_quality_period_for_items(self, items: List[dict]) -> str:
+        periods = {self._execution_quality_period_label(item.get("timestamp", "")) for item in items}
+        periods.discard("")
+        if not periods:
+            return ""
+        if len(periods) == 1:
+            return next(iter(periods))
+        return "4-2 전후 혼합"
+
+    def _execution_quality_period_label(self, timestamp: str) -> str:
+        cfg = self._execution_quality_config
+        effective = str(getattr(cfg, "liquidity_control_effective_date", "") or "").strip()
+        effective = re.sub(r"\D", "", effective)
+        if len(effective) != 8:
+            return ""
+        ts_date = re.sub(r"\D", "", str(timestamp)[:10])
+        if len(ts_date) != 8:
+            return ""
+        return "4-2 적용 후" if ts_date >= effective else "4-2 적용 전"
 
     @staticmethod
     def _percentile(values: List[float], percentile: int) -> Optional[float]:
@@ -678,6 +734,7 @@ class StrategyLogReportService:
         전략별 매수 완료/실패를 분석한 HTML 리포트 문자열을 반환한다.
         """
         date_prefix = f"{target_date[:4]}-{target_date[4:6]}-{target_date[6:8]}"
+        self._last_execution_quality_candidates = []
         strategy_files = self._find_strategy_files()
 
         if not strategy_files:
