@@ -1144,3 +1144,178 @@ class TestStrategyScanApiFailure:
 
         signals = await strategy.scan()
         assert signals == []
+
+
+# ============================================================================
+# LarryWilliamsChannelBreakoutStrategy scan() / check_exits() IT
+# ============================================================================
+
+class TestLarryWilliamsCBScan:
+    """LWCB 전략 scan/check_exits — 실제 StockQueryService 스택 사용, HTTP mock."""
+
+    _CODE = "005930"
+
+    def _make_watchlist_item(self, code: str = "005930", **kwargs):
+        from strategies.oneil_common_types import OSBWatchlistItem
+        defaults = dict(
+            name=f"종목{code}", market="KOSPI",
+            high_20d=74_000, ma_20d=68_000.0, ma_50d=65_000.0,
+            avg_vol_20d=1_000_000.0, bb_width_min_20d=0.03, prev_bb_width=0.04,
+            w52_hgpr=80_000, avg_trading_value_5d=500_000_000_000,
+            rs_rating=85,
+        )
+        defaults.update(kwargs)
+        return OSBWatchlistItem(code=code, **defaults)
+
+    def _make_ohlcv_data(self, days: int = 35, base_low: int = 65_000) -> list:
+        data = []
+        for i in range(days):
+            close = 70_000 + i * 100
+            data.append({
+                "date": f"20260{1 + i // 28:02d}{1 + i % 28:02d}",
+                "open": close - 100,
+                "high": close + 500,
+                "low": base_low,
+                "close": close,
+                "volume": 1_000_000,
+            })
+        return data
+
+    def _build_strategy(self, sqs, mock_universe, mock_indicator, mock_tm, tmp_path):
+        from strategies.larry_williams_channel_breakout_strategy import (
+            LarryWilliamsChannelBreakoutStrategy,
+        )
+        from strategies.larry_williams_cb_types import LarryWilliamsCBConfig
+
+        return LarryWilliamsChannelBreakoutStrategy(
+            stock_query_service=sqs,
+            universe_service=mock_universe,
+            indicator_service=mock_indicator,
+            market_clock=mock_tm,
+            config=LarryWilliamsCBConfig(cooldown_days=2),
+            state_file=str(tmp_path / "lwcb_state.json"),
+        )
+
+    async def test_scan_generates_buy_signal_via_real_sqs(
+        self, deep_paper_ctx, mocker, tmp_path
+    ):
+        """전체 조건 충족 시 실제 StockQueryService 스택을 통해 BUY 신호 생성.
+
+        StockQueryService → MarketDataService 경계를 실 객체로 유지하되,
+        universe/indicator는 mock으로 주입하여 전략 진입 흐름 전체를 검증.
+        """
+        from datetime import datetime
+        from pytz import timezone
+        from common.types import ResCommonResponse
+        from services.indicator_service import IndicatorService
+        from services.oneil_universe_service import OneilUniverseService
+
+        kst = timezone("Asia/Seoul")
+        mock_tm = MagicMock()
+        mock_tm.get_current_kst_time.return_value = datetime(2026, 4, 30, 15, 15, tzinfo=kst)
+
+        # indicator: ADX 조건 통과
+        mock_indicator = MagicMock(spec=IndicatorService)
+        mock_indicator.calc_adx_sync.return_value = {
+            "adx": 30.0, "plus_di": 25.0, "minus_di": 15.0, "adx_rising": True,
+        }
+
+        # universe: 종목 1개, RS=85, high_20d=74_000
+        mock_universe = MagicMock(spec=OneilUniverseService)
+        mock_universe.get_watchlist = AsyncMock(return_value={
+            self._CODE: self._make_watchlist_item(self._CODE),
+        })
+
+        sqs = deep_paper_ctx.stock_query_service
+
+        # OHLCV: 35봉, low=65_000 (채널 하단 예측 가능)
+        ohlcv_data = self._make_ohlcv_data(35, 65_000)
+        mocker.patch.object(
+            sqs, "get_ohlcv",
+            new_callable=AsyncMock,
+            return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=ohlcv_data),
+        )
+        # 현재가: 75_000 > high_20d 74_000, 거래량 2_000_000 ≥ 1_000_000 × 1.5
+        mocker.patch.object(
+            sqs, "get_current_price",
+            new_callable=AsyncMock,
+            return_value=ResCommonResponse(
+                rt_cd="0", msg1="ok",
+                data={"output": {"stck_prpr": "75000", "acml_vol": "2000000"}},
+            ),
+        )
+
+        strategy = self._build_strategy(sqs, mock_universe, mock_indicator, mock_tm, tmp_path)
+        signals = await strategy.scan()
+
+        assert len(signals) == 1
+        sig = signals[0]
+        assert sig.code == self._CODE
+        assert sig.action == "BUY"
+        assert sig.price == 75_000
+        assert sig.strategy_name == "LarryWilliamsCB"
+        assert self._CODE in strategy._position_state
+
+    async def test_check_exits_hard_stop_via_real_sqs(
+        self, deep_paper_ctx, mocker, tmp_path
+    ):
+        """칼손절 조건 충족 시 SELL 신호 + 쿨다운 등록 (실제 SQS 스택 경유)."""
+        from datetime import datetime
+        from pytz import timezone
+        from common.types import ResCommonResponse
+        from services.indicator_service import IndicatorService
+        from services.oneil_universe_service import OneilUniverseService
+        from strategies.larry_williams_cb_types import LarryWilliamsCBPositionState
+
+        kst = timezone("Asia/Seoul")
+        mock_tm = MagicMock()
+        mock_tm.get_current_kst_time.return_value = datetime(2026, 4, 30, 15, 15, tzinfo=kst)
+        mock_indicator = MagicMock(spec=IndicatorService)
+        mock_universe = MagicMock(spec=OneilUniverseService)
+
+        sqs = deep_paper_ctx.stock_query_service
+        mocker.patch.object(
+            sqs, "get_current_price",
+            new_callable=AsyncMock,
+            return_value=ResCommonResponse(
+                rt_cd="0", msg1="ok",
+                data={"output": {"stck_prpr": "69000", "acml_vol": "1000000"}},
+            ),
+        )
+
+        strategy = self._build_strategy(sqs, mock_universe, mock_indicator, mock_tm, tmp_path)
+        strategy._position_state[self._CODE] = LarryWilliamsCBPositionState(
+            entry_price=75_000, entry_date="20260429",
+            hard_stop_price=69_750, channel_low_10d=65_000,
+        )
+
+        holdings = [{"code": self._CODE, "name": "삼성전자", "buy_price": 75_000, "qty": 1}]
+        signals = await strategy.check_exits(holdings)
+
+        assert len(signals) == 1
+        assert signals[0].action == "SELL"
+        assert "칼손절" in signals[0].reason
+        assert self._CODE not in strategy._position_state
+        assert self._CODE in strategy._cooldown
+
+    async def test_scan_before_cutoff_no_signal(self, deep_paper_ctx, mocker, tmp_path):
+        """15:10 이전이면 SQS 호출 없이 빈 리스트 반환."""
+        from datetime import datetime
+        from pytz import timezone
+        from services.indicator_service import IndicatorService
+        from services.oneil_universe_service import OneilUniverseService
+
+        kst = timezone("Asia/Seoul")
+        mock_tm = MagicMock()
+        mock_tm.get_current_kst_time.return_value = datetime(2026, 4, 30, 14, 50, tzinfo=kst)
+        mock_indicator = MagicMock(spec=IndicatorService)
+        mock_universe = MagicMock(spec=OneilUniverseService)
+
+        sqs = deep_paper_ctx.stock_query_service
+        spy_ohlcv = mocker.patch.object(sqs, "get_ohlcv", new_callable=AsyncMock)
+
+        strategy = self._build_strategy(sqs, mock_universe, mock_indicator, mock_tm, tmp_path)
+        signals = await strategy.scan()
+
+        assert signals == []
+        spy_ohlcv.assert_not_called()

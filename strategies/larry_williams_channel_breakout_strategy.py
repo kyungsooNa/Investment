@@ -111,7 +111,7 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
     async def _check_entry(self, code: str, item) -> Optional[TradeSignal]:
         """진입 조건 검사: RS → ADX → 채널 상단 돌파 → 거래량 → 신호 생성."""
         # OHLCV 한 번 조회 후 ADX/채널 계산에 공유
-        ohlcv_resp = await self._sqs.get_ohlcv(code, candle_type="D", caller=self.name)
+        ohlcv_resp = await self._sqs.get_ohlcv(code, period="D", caller=self.name)
         if not ohlcv_resp or ohlcv_resp.rt_cd != "0" or not ohlcv_resp.data:
             return None
         ohlcv = ohlcv_resp.data
@@ -263,7 +263,7 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
 
         # 청산 없음 → channel_low_10d 상향 갱신
         if state:
-            ohlcv_resp = await self._sqs.get_ohlcv(code, candle_type="D", caller=self.name)
+            ohlcv_resp = await self._sqs.get_ohlcv(code, period="D", caller=self.name)
             if ohlcv_resp and ohlcv_resp.rt_cd == "0" and ohlcv_resp.data:
                 new_low = self._calc_channel_low(ohlcv_resp.data, period=self._cfg.channel_low_period)
                 if new_low > state.channel_low_10d:
