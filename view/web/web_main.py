@@ -173,10 +173,6 @@ _FOREGROUND_PATHS = frozenset({
     "/api/program-trading/subscribe",
     "/api/program-trading/history/",
     "/api/program-trading/unsubscribe",
-    # scheduler.py — start/stop/strategy 제어
-    "/api/scheduler/start",
-    "/api/scheduler/stop",
-    "/api/scheduler/strategy/",
     # virtual.py — broker API 호출하는 엔드포인트만
     "/api/virtual/chart/",
     "/api/virtual/history",

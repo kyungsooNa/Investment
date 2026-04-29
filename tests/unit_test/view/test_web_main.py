@@ -190,6 +190,7 @@ def test_needs_foreground():
     assert _needs_foreground("/api/order") is True
     assert _needs_foreground("/api/ranking/progress") is False
     assert _needs_foreground("/api/stock/search") is False
+    assert _needs_foreground("/api/scheduler/strategy/RSI2눌림목/start") is False
     assert _needs_foreground("/api/system") is False
 
 def test_foreground_priority_middleware(mock_web_app_context_cls):
