@@ -768,28 +768,70 @@ class OneilUniverseService:
         ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(etf_code, limit=period + days + 5)
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
 
-        if not ohlcv or len(ohlcv) < period + days: # This check should be based on the actual 'closes' list length
-            return False, "데이터 부족", []
-        
-        closes = [r.get("close", 0) for r in ohlcv] # Changed: Do not filter out 0 values
+        if not ohlcv or len(ohlcv) < period + days:
+            return False, "insufficient data", []
+
+        closes = [r.get("close", 0) for r in ohlcv]
+        if len(closes) < period + days:
+            return False, "insufficient close data", []
+
         ma_values = []
         for i in range(days + 1):
             end = len(closes) - days + i
             ma_values.append(sum(closes[end-period:end]) / period)
-            
+
+        daily_changes_pct = []
+        for j in range(1, len(ma_values)):
+            prev = ma_values[j - 1]
+            curr = ma_values[j]
+            daily_changes_pct.append(((curr - prev) / prev * 100) if prev else 0.0)
+
+        first_ma = ma_values[0]
+        last_ma = ma_values[-1]
+        net_change_pct = ((last_ma - first_ma) / first_ma * 100) if first_ma else 0.0
+        max_daily_drop_pct = min(daily_changes_pct) if daily_changes_pct else 0.0
+        worst_drop_idx = daily_changes_pct.index(max_daily_drop_pct) + 1 if daily_changes_pct else 0
+
+        min_net_change_pct = getattr(self._cfg, "market_ma_min_net_change_pct", -0.10)
+        daily_dip_tolerance_pct = getattr(self._cfg, "market_ma_daily_dip_tolerance_pct", -0.20)
+        hard_decline_pct = getattr(self._cfg, "market_ma_hard_decline_pct", -0.50)
+
         is_rising = True
         fail_detail = ""
-        for j in range(1, len(ma_values)):
-            if ma_values[j] <= ma_values[j-1]:
-                is_rising = False
-                fail_detail = f"MA decline: {ma_values[j-1]:.2f} -> {ma_values[j]:.2f} (idx {j})"
-                break
+        trend_status = "rising"
+        if max_daily_drop_pct < hard_decline_pct:
+            is_rising = False
+            fail_detail = (
+                f"MA hard decline: {max_daily_drop_pct:.2f}% < {hard_decline_pct:.2f}% "
+                f"(idx {worst_drop_idx}, {ma_values[worst_drop_idx-1]:.2f} -> {ma_values[worst_drop_idx]:.2f})"
+            )
+            trend_status = "hard_decline"
+        elif net_change_pct < min_net_change_pct:
+            is_rising = False
+            fail_detail = (
+                f"MA trend weak: net {net_change_pct:.2f}% < {min_net_change_pct:.2f}% "
+                f"({first_ma:.2f} -> {last_ma:.2f})"
+            )
+            trend_status = "weak_trend"
+        elif max_daily_drop_pct < daily_dip_tolerance_pct:
+            trend_status = "uptrend_under_pressure"
 
         log_data = {
             "event": "market_timing_check",
             "etf_code": etf_code,
             "is_rising": is_rising,
-            "ma_values": [round(v, 2) for v in ma_values]
+            "trend_status": trend_status,
+            "ma_period": period,
+            "lookback_days": days,
+            "ma_values": [round(v, 2) for v in ma_values],
+            "daily_changes_pct": [round(v, 3) for v in daily_changes_pct],
+            "net_change_pct": round(net_change_pct, 3),
+            "max_daily_drop_pct": round(max_daily_drop_pct, 3),
+            "thresholds": {
+                "min_net_change_pct": min_net_change_pct,
+                "daily_dip_tolerance_pct": daily_dip_tolerance_pct,
+                "hard_decline_pct": hard_decline_pct,
+            },
         }
         if not is_rising:
             log_data["fail_detail"] = fail_detail

@@ -23,6 +23,9 @@ class OneilUniverseConfig(BaseStrategyConfig):
     kospi_etf_code: str = "069500"    # KODEX 200
     market_ma_period: int = 20
     market_ma_rising_days: int = 3
+    market_ma_min_net_change_pct: float = -0.10
+    market_ma_daily_dip_tolerance_pct: float = -0.20
+    market_ma_hard_decline_pct: float = -0.50
 
     # V2 스코어링
     rs_period_days: int = 63

@@ -672,7 +672,7 @@ async def test_check_etf_ma_rising_exact_calculation(mock_deps):
     assert log_call["event"] == "market_timing_check"
     assert log_call["is_rising"] is False
     assert "fail_detail" in log_call
-    assert "MA decline: 40.00 -> 36.00" in log_call["fail_detail"]
+    assert "MA hard decline" in log_call["fail_detail"]
 
     # Case 3: 중간에 MA 하락 (실패)
     logger.debug.reset_mock()
@@ -687,7 +687,32 @@ async def test_check_etf_ma_rising_exact_calculation(mock_deps):
     assert log_call["event"] == "market_timing_check"
     assert log_call["is_rising"] is False
     assert "fail_detail" in log_call
-    assert "MA decline: 30.00 -> 28.00" in log_call["fail_detail"]
+    assert "MA hard decline" in log_call["fail_detail"]
+
+
+async def test_check_etf_ma_rising_tolerates_small_ma_noise(mock_deps):
+    """_check_etf_ma_rising: small MA dips are tolerated when the net trend is intact."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    service._cfg.market_ma_period = 1
+    service._cfg.market_ma_rising_days = 3
+
+    closes = [18928.25, 18952.75, 18941.25, 18939.50]
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=[{"close": c} for c in closes]
+    )
+
+    is_rising, fail_detail, ma_values = await service._check_etf_ma_rising("229200")
+
+    assert is_rising is True
+    assert fail_detail == ""
+    assert ma_values == closes
+
+    log_call = logger.debug.call_args[0][0]
+    assert log_call["event"] == "market_timing_check"
+    assert log_call["trend_status"] == "rising"
+    assert log_call["net_change_pct"] > 0
+    assert log_call["max_daily_drop_pct"] > service._cfg.market_ma_daily_dip_tolerance_pct
 
 
 async def test_build_daily_surge_pool_logic(mock_deps):

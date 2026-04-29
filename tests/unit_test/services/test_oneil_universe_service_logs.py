@@ -57,6 +57,11 @@ async def test_check_etf_ma_rising_logs(service, mock_components):
             assert arg["etf_code"] == "TEST_ETF"
             assert arg["is_rising"] is True
             assert "ma_values" in arg
+            assert arg["trend_status"] == "rising"
+            assert "daily_changes_pct" in arg
+            assert "net_change_pct" in arg
+            assert "max_daily_drop_pct" in arg
+            assert arg["thresholds"]["min_net_change_pct"] == service._cfg.market_ma_min_net_change_pct
             found_log = True
             break
     assert found_log, "market_timing_check 이벤트 로그가 기록되지 않았습니다."
