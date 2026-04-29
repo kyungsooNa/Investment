@@ -1,10 +1,29 @@
 # AGENTS.md — Investment Project Context
 
-> **작업 전 필수**: 모든 작업 시작 전 [SKILL.md](SKILL.md) 를 확인하고 규칙을 준수한다.
+> **Codex 작업 규칙**: Codex는 이 문서만 우선 확인한다. [SKILL.md](SKILL.md)는 Claude 전용 도구 규칙이므로, 사용자가 명시적으로 요청하거나 Claude 규칙 자체를 수정할 때만 읽는다.
 
-## 파일 읽기 규칙
-파일을 **탐색·분석** 목적으로 읽을 때는 `mcp__plugin_context-mode_context-mode__ctx_execute` (shell/python) 도구를 사용한다.
-`Read` 도구는 **Edit를 위해 파일 내용을 컨텍스트에 올려야 할 때만** 사용한다.
+## Codex 작업 규칙
+
+### 파일 탐색·읽기
+- 파일 탐색은 `rg`, `rg --files`를 우선 사용한다.
+- PowerShell에서 파일을 읽을 때는 기본 인코딩에 맡기지 않고 `Get-Content -Raw -Encoding UTF8 <path>`를 사용한다.
+- 한글 출력이 깨질 가능성이 있으면 작업 초기에 아래 설정을 적용한다.
+  ```powershell
+  chcp 65001
+  $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+  ```
+- 대형 파일은 전체를 읽기보다 변경 대상 함수·블록 중심으로 필요한 범위만 확인한다.
+- `mcp__plugin_context-mode_context-mode__ctx_execute` 도구가 제공되는 환경에서는 탐색·분석 목적의 shell/python 실행에 해당 도구를 우선 사용한다. 해당 도구가 없는 Codex 환경에서는 일반 shell 도구를 사용한다.
+
+### 파일 수정
+- 파일 수정은 기본적으로 `apply_patch`를 사용한다.
+- PowerShell의 `Set-Content`, `Out-File`은 Windows PowerShell 버전에 따라 BOM/인코딩 차이가 생길 수 있으므로 한글 포함 파일 수정에는 가급적 사용하지 않는다.
+- 클래스/모듈을 분리할 때는 기존 파일을 복사한 뒤 불필요한 부분을 제거하는 방식을 우선 고려한다. 새 파일을 통째로 재작성하기보다 기존 코드의 import, 타입, 한글 메시지를 보존하기 위함이다.
+- 복잡한 리팩토링이나 다수 파일 수정은 먼저 변경 범위와 순서를 짧게 정리한 뒤 진행한다. 별도 `Changes.md` 작성은 사용자가 요청했거나 작업 규모상 실제로 도움이 될 때만 한다.
+
+### Claude 전용 규칙 분리
+- Claude의 `Read`, `Edit`, `Write` 도구 사용 규칙은 [SKILL.md](SKILL.md)에 둔다.
+- Codex는 `Read/Edit/Write` 기반 규칙을 그대로 적용하지 않는다. Codex 도구 체계에 맞게 `rg`, UTF-8 명시 읽기, `apply_patch`를 우선한다.
 
 ## 프로젝트 개요
 한국투자증권 Open API 기반 **주식 자동매매 시스템** (Python 3.10+, Anaconda `py310` 환경).

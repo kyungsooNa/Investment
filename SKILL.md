@@ -1,6 +1,7 @@
-# SKILL.md — Claude 작업 전 필수 확인 규칙
+# SKILL.md — Claude 전용 작업 규칙
 
-> 모든 작업 시작 전 이 문서를 확인하고 아래 규칙을 반드시 준수한다.
+> 이 문서는 Claude의 `Read`, `Edit`, `Write` 도구 사용 규칙이다.
+> Codex는 작업 시작 시 이 문서를 읽지 않고, [AGENTS.md](AGENTS.md)의 Codex 작업 규칙을 따른다.
 
 ---
 
@@ -133,30 +134,6 @@ for i, entry in enumerate(log):
 
 ---
 
-## 규칙 7. 파일 읽기 실패 시 재시도 순서
-
-PowerShell로 파일을 읽을 때 초기에 접근 오류가 나면 아래 순서로 재시도한다.
-
-1. **먼저 `-NoProfile`로 재시도**한다.
-   - `Microsoft.PowerShell_profile.ps1` 로딩 실패 때문에 첫 명령이 막히는 경우가 있다.
-2. `Get-Content`가 **`Access is denied` / `UnauthorizedAccessException`** 을 반환하면
-   **샌드박스 권한 문제 가능성**을 우선 의심한다.
-3. 이 경우 중요한 작업 파일이면 **즉시 권한 상승(`require_escalated`)으로 같은 읽기 명령을 재시도**한다.
-4. 읽기 성공 후에는 그 결과를 기준으로 계속 작업하고, 같은 이유로 다른 파일도 막히면
-   동일 패턴(`-NoProfile` → 필요 시 escalated read)으로 처리한다.
-
-```powershell
-# 1차: 프로필 없이 읽기
-powershell -NoProfile -Command "Get-Content -Raw -Encoding UTF8 services\foo.py"
-
-# 2차: Access denied면 동일 명령을 escalated로 재시도
-```
-
-**Why:** 초기 실패 원인이 파일 자체 문제가 아니라 PowerShell 프로필 또는 샌드박스 권한인 경우가 많다.  
-처음부터 재시도 순서를 정해 두면 불필요한 우회 시도와 시간 낭비를 줄일 수 있다.
-
----
-
 ## 체크리스트
 
 작업 시작 전 다음을 확인한다:
@@ -171,4 +148,3 @@ powershell -NoProfile -Command "Get-Content -Raw -Encoding UTF8 services\foo.py"
   - [ ] Test Update Specification
   - [ ] Execution Notes
 - [ ] JSONL 로그 분석 시 assistant/user 턴 기준으로 LLM 대기·Tool 실행을 구분하는가?
-- [ ] 파일 읽기 실패 시 `-NoProfile`로 먼저 재시도했고, 필요하면 escalated read를 사용했는가?
