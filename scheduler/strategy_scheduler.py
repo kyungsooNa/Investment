@@ -676,7 +676,9 @@ class StrategyScheduler:
                 # 루프가 안 돌고 있으면 자동으로 시작
                 if not self._running:
                     self._running = True
-                    self._task = asyncio.create_task(self._loop())
+                    self._stop_event.clear()
+                    if self._task is None or self._task.done():
+                        self._task = asyncio.create_task(self._loop())
                     self._logger.info("[Scheduler] 루프 자동 시작 (개별 전략 활성화)")
                 return True
         return False

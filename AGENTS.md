@@ -6,6 +6,8 @@
 
 ### 파일 탐색·읽기
 - 파일 탐색은 `rg`, `rg --files`를 우선 사용한다.
+- 이 Windows/Codex 환경에서 `rg.exe` 실행이 `Access is denied`로 실패할 수 있다. 이 경우 같은 탐색을 PowerShell 기본 도구(`Get-ChildItem`, `Select-String`)로 즉시 우회한다.
+- 전체 파일 검색 시 `__pycache__`, `.pytest_cache`, `htmlcov`, `logs`, `.git`, 빌드/캐시 산출물까지 훑으면 타임아웃과 바이너리 출력이 발생할 수 있다. 우선 `app`, `brokers`, `common`, `config`, `core`, `interfaces`, `managers`, `market_data`, `repositories`, `scheduler`, `services`, `strategies`, `task`, `tests`, `utils`, `view` 등 소스/테스트 범위로 줄이고, 필요하면 제외 조건을 명시한다.
 - PowerShell에서 파일을 읽을 때는 기본 인코딩에 맡기지 않고 `Get-Content -Raw -Encoding UTF8 <path>`를 사용한다.
 - 한글 출력이 깨질 가능성이 있으면 작업 초기에 아래 설정을 적용한다.
   ```powershell

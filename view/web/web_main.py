@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import threading
@@ -71,9 +72,36 @@ def _start_debug_server():
 
 _start_debug_server()
 
+
+def _is_ignorable_connection_reset(exc: BaseException | None) -> bool:
+    """Windows Proactor가 끊긴 HTTP/SSE 소켓 정리 중 올리는 잡음성 예외인지 판단."""
+    if not isinstance(exc, ConnectionResetError):
+        return False
+    return getattr(exc, "winerror", None) in (None, 10054)
+
+
+def _install_asyncio_exception_filter() -> None:
+    """브라우저 연결 해제에서 파생된 WinError 10054 로그만 억제한다."""
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+
+    def _handler(loop, context):
+        exc = context.get("exception")
+        if _is_ignorable_connection_reset(exc):
+            return
+        if previous_handler:
+            previous_handler(loop, context)
+        else:
+            loop.default_exception_handler(context)
+
+    loop.set_exception_handler(_handler)
+
+
 # [추가] 서버 시작 시 초기화 로직
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _install_asyncio_exception_filter()
+
     # 1. 초기화 객체 생성 (app_context 대용으로 빈 객체 전달)
     class SimpleContext: env = None
     ctx = WebAppContext(SimpleContext())
@@ -173,10 +201,6 @@ _FOREGROUND_PATHS = frozenset({
     "/api/program-trading/subscribe",
     "/api/program-trading/history/",
     "/api/program-trading/unsubscribe",
-    # scheduler.py — start/stop/strategy 제어
-    "/api/scheduler/start",
-    "/api/scheduler/stop",
-    "/api/scheduler/strategy/",
     # virtual.py — broker API 호출하는 엔드포인트만
     "/api/virtual/chart/",
     "/api/virtual/history",

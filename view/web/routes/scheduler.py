@@ -13,6 +13,11 @@ class UpdateMaxPositionsRequest(BaseModel):
     max_positions: int
 
 
+def _save_scheduler_state_later(ctx) -> None:
+    """상태 저장은 응답 경로를 막지 않도록 백그라운드에서 수행한다."""
+    asyncio.create_task(asyncio.to_thread(ctx.scheduler._save_scheduler_state))
+
+
 @router.get("/scheduler/status")
 async def get_scheduler_status():
     """스케줄러 상태 조회."""
@@ -43,8 +48,8 @@ async def start_scheduler():
     if not ctx.scheduler:
         raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
     await ctx.scheduler.start()
-    ctx.scheduler._save_scheduler_state()
-    return {"success": True, "status": ctx.scheduler.get_status()}
+    _save_scheduler_state_later(ctx)
+    return {"success": True}
 
 
 @router.post("/scheduler/stop")
@@ -55,7 +60,7 @@ async def stop_scheduler():
         raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
     await ctx.scheduler.stop(save_state=False)
     ctx.scheduler.clear_saved_state()
-    return {"success": True, "status": ctx.scheduler.get_status()}
+    return {"success": True}
 
 
 @router.post("/scheduler/strategy/{name:path}/start")
@@ -66,8 +71,8 @@ async def start_strategy(name: str):
         raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
     if not await ctx.scheduler.start_strategy(name):
         raise HTTPException(status_code=404, detail=f"전략 '{name}'을 찾을 수 없습니다")
-    ctx.scheduler._save_scheduler_state()
-    return {"success": True, "status": ctx.scheduler.get_status()}
+    _save_scheduler_state_later(ctx)
+    return {"success": True}
 
 
 @router.post("/scheduler/strategy/{name:path}/stop")
@@ -78,8 +83,8 @@ async def stop_strategy(name: str):
         raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
     if not await ctx.scheduler.stop_strategy(name):
         raise HTTPException(status_code=404, detail=f"전략 '{name}'을 찾을 수 없습니다")
-    ctx.scheduler._save_scheduler_state()
-    return {"success": True, "status": ctx.scheduler.get_status()}
+    _save_scheduler_state_later(ctx)
+    return {"success": True}
 
 
 @router.post("/scheduler/strategy/{name:path}/max-positions")
@@ -92,7 +97,7 @@ async def update_strategy_max_positions(name: str, req: UpdateMaxPositionsReques
     success = await ctx.scheduler.update_max_positions(name, req.max_positions)
     if not success:
         raise HTTPException(status_code=400, detail="최대 포지션 수 변경 실패 (1 이상이어야 함)")
-    return {"success": True, "status": ctx.scheduler.get_status()}
+    return {"success": True}
 
 @router.get("/scheduler/history")
 async def get_scheduler_history(strategy: str = None):

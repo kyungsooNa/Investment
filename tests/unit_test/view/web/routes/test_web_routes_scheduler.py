@@ -4,6 +4,7 @@
 import asyncio
 import pytest
 from unittest.mock import MagicMock, AsyncMock
+from urllib.parse import quote
 
 
 @pytest.mark.asyncio
@@ -106,6 +107,19 @@ async def test_scheduler_strategy_control(web_client, mock_web_ctx):
     resp = web_client.post("/api/scheduler/strategy/TestStrat/stop")
     assert resp.status_code == 200
     mock_web_ctx.scheduler.stop_strategy.assert_awaited_with("TestStrat")
+
+
+@pytest.mark.asyncio
+async def test_scheduler_strategy_control_with_korean_name(web_client, mock_web_ctx):
+    """한글 전략명도 URL 인코딩된 경로에서 올바르게 전달된다."""
+    mock_web_ctx.scheduler.start_strategy = AsyncMock(return_value=True)
+    mock_web_ctx.scheduler.get_status = MagicMock(return_value={})
+
+    strategy_name = "RSI2눌림목"
+    resp = web_client.post(f"/api/scheduler/strategy/{quote(strategy_name)}/start")
+
+    assert resp.status_code == 200
+    mock_web_ctx.scheduler.start_strategy.assert_awaited_with(strategy_name)
 
 
 @pytest.mark.asyncio

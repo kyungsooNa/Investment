@@ -490,3 +490,8 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
   - 판단: 추가 완화는 보류. 후보 부족 현상이 재발할 때만 아래 항목 재검토
   - 다음 조정 후보: 거래대금 50억 → 30억 추가 완화
   - 다음 조정 후보: 정배열 조건을 Pool B 전용으로 `current > ma_20d` 중심으로 완화 검토
+
+
+
+# UI 개선
+- `scheduler.html`, `virtual.html`, `system.html`, `ranking.html` 등 UI Page에서 종목들의 history나 종목 list를 표기할 때 한 화면에 20개씩 분리해서 표현 할 수 있도록 Pagination(Paging) 기능 추가. 필요시 view/web/static/pagination.js로 분리해서 재활용하는 방향으로 검토.

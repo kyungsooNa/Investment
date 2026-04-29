@@ -5,7 +5,14 @@ import time
 from unittest.mock import MagicMock, AsyncMock, patch
 from fastapi.testclient import TestClient
 import view.web.api_common as api_common
-from view.web.web_main import app, lifespan, _DebugHandler, _start_debug_server, _needs_foreground
+from view.web.web_main import (
+    app,
+    lifespan,
+    _DebugHandler,
+    _start_debug_server,
+    _is_ignorable_connection_reset,
+    _needs_foreground,
+)
 
 # --- Fixtures ---
 @pytest.fixture
@@ -190,7 +197,17 @@ def test_needs_foreground():
     assert _needs_foreground("/api/order") is True
     assert _needs_foreground("/api/ranking/progress") is False
     assert _needs_foreground("/api/stock/search") is False
+    assert _needs_foreground("/api/scheduler/strategy/RSI2눌림목/start") is False
     assert _needs_foreground("/api/system") is False
+
+
+def test_ignorable_connection_reset_filter():
+    """Windows Proactor의 끊긴 연결 정리 예외만 무시 대상으로 본다."""
+    exc = ConnectionResetError(10054, "현재 연결은 원격 호스트에 의해 강제로 끊겼습니다")
+    exc.winerror = 10054
+
+    assert _is_ignorable_connection_reset(exc) is True
+    assert _is_ignorable_connection_reset(RuntimeError("boom")) is False
 
 def test_foreground_priority_middleware(mock_web_app_context_cls):
     """Foreground 우선순위 미들웨어 동작(context 진입) 확인"""

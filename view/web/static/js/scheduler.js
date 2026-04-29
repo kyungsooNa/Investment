@@ -15,6 +15,12 @@ function syncSchedulerRealtimeState(data) {
     stopSchedulerPolling();
 }
 
+function refreshSchedulerStatusSoon(delayMs = 500) {
+    window.setTimeout(() => {
+        loadSchedulerStatus().catch(() => {});
+    }, delayMs);
+}
+
 async function loadSchedulerStatus() {
     try {
         // 두 요청을 동시에 시작 (병렬)
@@ -104,8 +110,7 @@ async function startScheduler() {
         const res = await fetch('/api/scheduler/start', { method: 'POST' });
         const data = await res.json();
         if (data.success) {
-            renderSchedulerStatus(data.status);
-            syncSchedulerRealtimeState(data.status);
+            refreshSchedulerStatusSoon();
         }
     } catch (e) {
         alert('스케줄러 시작 실패');
@@ -117,8 +122,7 @@ async function stopScheduler() {
         const res = await fetch('/api/scheduler/stop', { method: 'POST' });
         const data = await res.json();
         if (data.success) {
-            renderSchedulerStatus(data.status);
-            syncSchedulerRealtimeState(data.status);
+            refreshSchedulerStatusSoon();
         }
     } catch (e) {
         alert('스케줄러 정지 실패');
@@ -130,8 +134,7 @@ async function startStrategy(name) {
         const res = await fetch(`/api/scheduler/strategy/${encodeURIComponent(name)}/start`, { method: 'POST' });
         const data = await res.json();
         if (data.success) {
-            renderSchedulerStatus(data.status);
-            syncSchedulerRealtimeState(data.status);
+            refreshSchedulerStatusSoon();
         } else {
             alert(data.detail || '전략 시작 실패');
         }
@@ -145,8 +148,7 @@ async function stopStrategy(name) {
         const res = await fetch(`/api/scheduler/strategy/${encodeURIComponent(name)}/stop`, { method: 'POST' });
         const data = await res.json();
         if (data.success) {
-            renderSchedulerStatus(data.status);
-            syncSchedulerRealtimeState(data.status);
+            refreshSchedulerStatusSoon();
         } else {
             alert(data.detail || '전략 정지 실패');
         }
@@ -173,8 +175,7 @@ async function updateMaxPositions(name, currentMax) {
         });
         const data = await res.json();
         if (data.success) {
-            renderSchedulerStatus(data.status);
-            syncSchedulerRealtimeState(data.status);
+            refreshSchedulerStatusSoon();
         } else {
             alert(data.detail || '포지션 수 변경 실패');
         }
@@ -226,8 +227,9 @@ function renderSchedulerHistory(history) {
     }
 
     tbody.innerHTML = history.map(h => {
-        const actionClass = h.action === 'BUY' ? 'text-red' : 'text-blue';
-        const actionLabel = h.action === 'BUY' ? '매수' : '매도';
+        const isSizingSkip = h.action === 'BUY' && Number(h.qty || 0) <= 0 && String(h.reason || '').startsWith('sizing_skip:');
+        const actionClass = isSizingSkip ? '' : (h.action === 'BUY' ? 'text-red' : 'text-blue');
+        const actionLabel = isSizingSkip ? '스킵' : (h.action === 'BUY' ? '매수' : '매도');
         const statusIcon = h.api_success ? '' : ' <span title="API 주문 실패" style="color:orange;">⚠</span>';
 
         let returnRateHtml = '<td>-</td>';
@@ -254,7 +256,7 @@ function renderSchedulerHistory(history) {
 function startSchedulerPolling() {
     stopSchedulerPolling();
     schedulerPollingId = setInterval(loadSchedulerStatus, 10000);
-    connectSchedulerSSE();
+    disconnectSchedulerSSE();
 }
 
 function stopSchedulerPolling() {
