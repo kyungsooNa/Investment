@@ -427,6 +427,69 @@ async def test_report_uses_virtual_trade_records_for_completed_buys_when_availab
     assert "SK하이닉스" in other_section
 
 
+@pytest.mark.asyncio
+async def test_report_includes_execution_quality_summary(log_dir):
+    """execution_quality 로그를 전략별/종목별 체결 품질로 집계한다."""
+    log_path = os.path.join(log_dir, "20260418_093000_Execution.log.json")
+    _write_log(log_path, [
+        {
+            "timestamp": "2026-04-18 10:00:00,000",
+            "level": "INFO",
+            "name": "order.execution",
+            "data": {
+                "event": "execution_quality",
+                "code": "005930",
+                "name": "삼성전자",
+                "source": "strategy:전략A",
+                "side": "BUY",
+                "filled_qty": 10,
+                "slippage_pct": 0.2,
+                "slippage_amount_won": 140,
+                "first_fill_latency_sec": 4.0,
+            },
+        },
+        {
+            "timestamp": "2026-04-18 10:01:00,000",
+            "level": "INFO",
+            "name": "order.execution",
+            "data": {
+                "event": "execution_quality",
+                "code": "005930",
+                "name": "삼성전자",
+                "source": "strategy:전략A",
+                "side": "BUY",
+                "filled_qty": 5,
+                "slippage_pct": -0.1,
+                "slippage_amount_won": -70,
+                "first_fill_latency_sec": 2.0,
+            },
+        },
+        {
+            "timestamp": "2026-04-18 10:02:00,000",
+            "level": "INFO",
+            "name": "order.execution",
+            "data": {
+                "event": "execution_quality",
+                "code": "000660",
+                "name": "SK하이닉스",
+                "source": "manual:수동매매",
+                "side": "SELL",
+                "filled_qty": 1,
+                "slippage_pct": 0.5,
+                "first_fill_latency_sec": 9.0,
+            },
+        },
+    ])
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "체결 품질 요약" in report
+    assert "전략A: 2건, 평균 슬리피지 0.150%, 최대 0.200%, 평균 지연 3.0s" in report
+    assert "수동매매: 1건, 평균 슬리피지 0.500%, 최대 0.500%, 평균 지연 9.0s" in report
+    assert "종목별 슬리피지 상위: SK하이닉스(000660) 0.500%/1건, 삼성전자(005930) 0.150%/2건" in report
+
+
 # ── _build_metric_str ─────────────────────────────────────────────
 
 def test_build_metric_str_low_execution_strength():

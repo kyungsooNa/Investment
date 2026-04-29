@@ -19,10 +19,10 @@
 
 ### 0-1. 실전 KIS `inquire-daily-ccld` 응답 필드 검증
 
-- [ ] 실제 체결 이력이 있는 실전 계좌 응답을 캡처한다.
-- [ ] 민감정보를 제거한 fixture를 추가한다.
-- [ ] paper fixture와 real fixture의 필드 차이를 회귀 테스트에 반영한다.
-- [ ] 주문번호, 종목코드, 매수/매도 구분, 주문수량, 누적체결수량, 미체결수량, 평균체결가, 취소/거부 필드 매핑을 확정한다.
+- [blocked] 실제 체결 이력이 있는 실전 계좌 응답을 캡처한다. (현재 실전 계좌 체결 이력 부재)
+- [blocked] 민감정보를 제거한 fixture를 추가한다. (실전 응답 확보 후 진행)
+- [blocked] paper fixture와 real fixture의 필드 차이를 회귀 테스트에 반영한다. (실전 응답 확보 후 진행)
+- [blocked] 주문번호, 종목코드, 매수/매도 구분, 주문수량, 누적체결수량, 미체결수량, 평균체결가, 취소/거부 필드 매핑을 확정한다. (실전 응답 확보 후 진행)
 
 주요 파일:
 
@@ -114,7 +114,7 @@ main 반영 확인.
 - [x] 슬리피지 금액과 슬리피지 비율을 계산한다. (`slippage_amount_won`, `slippage_pct`)
 - [~] 주문 타입, 주문 시각, 체결 지연 시간을 함께 기록한다. (`created_at`, `first_fill_latency_sec`는 `OrderContext`에 기록됨. `order_type`은 `OrderPolicyDecision.context`에 남으며 `OrderContext` 영속 필드는 아님)
 - [~] 호가 스프레드는 시장가 주문 정책 판단 컨텍스트에 기록한다. 영속 리포트 반영은 후속 작업으로 남긴다.
-- [ ] 전략별/종목별 체결 품질 리포트를 추가한다.
+- [x] 전략별/종목별 체결 품질 리포트를 추가한다. (`execution_quality` JSON 로그 이벤트 + `StrategyLogReportService` 체결 품질 요약)
 - [ ] 체결 품질이 기준 이하인 전략은 경고 또는 자동 비활성화 후보로 표시한다.
 
 주요 파일:
