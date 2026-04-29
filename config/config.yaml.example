@@ -44,15 +44,15 @@ risk_gate:
   max_pending_orders: 10
   max_total_exposure_pct: 95.0
 
-# Order policy / liquidity guard before market-order submit
+# Order policy / liquidity guard before order submit
 order_policy:
   enabled: true
-  order_book_checks_enabled: false
+  order_book_checks_enabled: true
   max_market_slippage_pct: 1.0
   max_spread_pct: 1.0
   min_trading_value_won: 100000000
   max_top_of_book_participation_pct: 100.0
-  quote_fail_policy: "allow"
+  quote_fail_policy: "block"
 
 # 포지션 사이징 (Fixed Fractional / Penbold 식)
 position_sizing:

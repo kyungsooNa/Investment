@@ -33,7 +33,7 @@ def _quote(ask=70_100, bid=70_000, ask_qty=100, bid_qty=100, current=70_000, tra
 @pytest.mark.asyncio
 async def test_limit_tick_size_adjusts_by_default():
     logger = MagicMock()
-    svc = _service(logger=logger)
+    svc = _service(config=OrderPolicyConfig(order_book_checks_enabled=False), logger=logger)
 
     decision = await svc.validate_order(
         stock_code="005930",
@@ -160,6 +160,24 @@ async def test_market_order_quote_failure_can_fail_open():
 
 
 @pytest.mark.asyncio
+async def test_market_order_quote_failure_blocks_by_default_when_order_book_enabled():
+    provider = AsyncMock()
+    provider.get_asking_price.return_value = ResCommonResponse(rt_cd="1", msg1="API error")
+    svc = _service(quote_provider=provider)
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=0,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "quote_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_market_order_trading_value_blocks_when_below_minimum():
     provider = AsyncMock()
     provider.get_asking_price.return_value = _quote(trading_value=50_000_000)
@@ -184,6 +202,30 @@ async def test_market_order_trading_value_blocks_when_below_minimum():
 
 
 @pytest.mark.asyncio
+async def test_limit_order_trading_value_blocks_when_below_minimum():
+    provider = AsyncMock()
+    provider.get_asking_price.return_value = _quote(trading_value=50_000_000)
+    svc = _service(
+        config=OrderPolicyConfig(
+            order_book_checks_enabled=True,
+            min_trading_value_won=100_000_000,
+        ),
+        quote_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "trading_value_too_low"
+
+
+@pytest.mark.asyncio
 async def test_market_order_top_of_book_participation_blocks():
     provider = AsyncMock()
     provider.get_asking_price.return_value = _quote(ask_qty=100)
@@ -198,6 +240,30 @@ async def test_market_order_top_of_book_participation_blocks():
     decision = await svc.validate_order(
         stock_code="005930",
         price=0,
+        qty=60,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "top_of_book_participation_too_high"
+
+
+@pytest.mark.asyncio
+async def test_limit_order_top_of_book_participation_blocks():
+    provider = AsyncMock()
+    provider.get_asking_price.return_value = _quote(ask_qty=100)
+    svc = _service(
+        config=OrderPolicyConfig(
+            order_book_checks_enabled=True,
+            max_top_of_book_participation_pct=50.0,
+        ),
+        quote_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
         qty=60,
         side=OrderSide.BUY,
         exchange=Exchange.KRX,

@@ -73,13 +73,20 @@ class OrderPolicyService:
         if price < 0:
             return self._blocked("negative_price", "주문 가격은 음수일 수 없습니다.", price=price)
 
-        is_market = price == 0
-        if is_market:
+        order_type = "market" if price == 0 else "limit"
+        if order_type == "market":
             order_type_blocked = self._check_market_order_type(side, exchange)
             if order_type_blocked is not None:
                 return order_type_blocked
             if self._cfg.order_book_checks_enabled:
-                quote_decision = await self._check_market_order_book(stock_code, qty, side, exchange)
+                quote_decision = await self._check_order_book(
+                    stock_code=stock_code,
+                    price=price,
+                    qty=qty,
+                    side=side,
+                    exchange=exchange,
+                    order_type=order_type,
+                )
                 if quote_decision.blocked:
                     return quote_decision
                 return quote_decision
@@ -95,6 +102,19 @@ class OrderPolicyService:
         tick_decision = self._check_limit_tick_size(stock_code, price)
         if tick_decision.blocked:
             return tick_decision
+
+        if self._cfg.order_book_checks_enabled:
+            quote_decision = await self._check_order_book(
+                stock_code=stock_code,
+                price=tick_decision.adjusted_price if tick_decision.adjusted_price is not None else price,
+                qty=qty,
+                side=side,
+                exchange=exchange,
+                order_type=order_type,
+            )
+            if quote_decision.blocked:
+                return quote_decision
+
         return tick_decision
 
     def _check_market_order_type(
@@ -153,12 +173,14 @@ class OrderPolicyService:
             context=context,
         )
 
-    async def _check_market_order_book(
+    async def _check_order_book(
         self,
         stock_code: str,
+        price: int,
         qty: int,
         side: OrderSide,
         exchange: Exchange,
+        order_type: str,
     ) -> OrderPolicyDecision:
         if self._quote_provider is None:
             return self._quote_failure_decision(stock_code, "quote_provider_missing")
@@ -212,12 +234,14 @@ class OrderPolicyService:
 
         executable_price = ask if side == OrderSide.BUY else bid
         reference_price = current_price or mid
-        slippage_pct = (
-            abs(executable_price - reference_price) / reference_price * 100
-            if reference_price and executable_price
-            else 0.0
-        )
-        if slippage_pct > self._cfg.max_market_slippage_pct:
+        slippage_pct = 0.0
+        if order_type == "market":
+            slippage_pct = (
+                abs(executable_price - reference_price) / reference_price * 100
+                if reference_price and executable_price
+                else 0.0
+            )
+        if order_type == "market" and slippage_pct > self._cfg.max_market_slippage_pct:
             return self._blocked(
                 "market_slippage_too_high",
                 "시장가 예상 슬리피지가 허용 범위를 초과했습니다.",
@@ -272,12 +296,12 @@ class OrderPolicyService:
 
         return OrderPolicyDecision(
             allowed=True,
-            rule="market_order_book",
-            reason="market_order_book_allowed",
-            adjusted_price=0,
+            rule=f"{order_type}_order_book",
+            reason=f"{order_type}_order_book_allowed",
+            adjusted_price=price,
             severity="pass",
             context={
-                "order_type": "market",
+                "order_type": order_type,
                 "stock_code": stock_code,
                 "ask": ask,
                 "bid": bid,
@@ -294,7 +318,7 @@ class OrderPolicyService:
         if self._cfg.quote_fail_policy == "block":
             return self._blocked(
                 "quote_unavailable",
-                "호가 조회 실패로 시장가 주문을 검증할 수 없습니다.",
+                "호가 조회 실패로 주문을 검증할 수 없습니다.",
                 stock_code=stock_code,
                 quote_error=reason,
             )
