@@ -480,6 +480,10 @@ class DailyPriceCollectorTask(AfterMarketTask):
                 "w52_high": _safe_int(_get("w52_hgpr")),
                 "w52_low": _safe_int(_get("w52_lwpr")),
                 "market": market,
+                "iscd_stat_cls_code": _get("iscd_stat_cls_code"),
+                "mang_issu_cls_code": _get("mang_issu_cls_code"),
+                "mrkt_warn_cls_code": _get("mrkt_warn_cls_code"),
+                "invt_caful_yn": _get("invt_caful_yn"),
             }
         except Exception:
             return None
@@ -630,6 +634,10 @@ class DailyPriceCollectorTask(AfterMarketTask):
                     "w52_high": None,
                     "w52_low": None,
                     "market": meta["market"],
+                    "iscd_stat_cls_code": None,
+                    "mang_issu_cls_code": None,
+                    "mrkt_warn_cls_code": None,
+                    "invt_caful_yn": None,
                 }
                 records.append(record)
                 

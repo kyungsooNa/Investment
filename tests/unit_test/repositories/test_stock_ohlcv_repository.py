@@ -17,7 +17,18 @@ async def repo(tmp_path):
     await r.close()
 
 
-def _make_snapshot(code, name="테스트", stage=2, rs_rating=80.0, price=50000, market_cap=1_000_000):
+def _make_snapshot(
+    code,
+    name="테스트",
+    stage=2,
+    rs_rating=80.0,
+    price=50000,
+    market_cap=1_000_000,
+    iscd_stat_cls_code=None,
+    mang_issu_cls_code=None,
+    mrkt_warn_cls_code=None,
+    invt_caful_yn=None,
+):
     return {
         "code": code,
         "name": name,
@@ -38,6 +49,10 @@ def _make_snapshot(code, name="테스트", stage=2, rs_rating=80.0, price=50000,
         "w52_high": None,
         "w52_low": None,
         "market": "KOSPI",
+        "iscd_stat_cls_code": iscd_stat_cls_code,
+        "mang_issu_cls_code": mang_issu_cls_code,
+        "mrkt_warn_cls_code": mrkt_warn_cls_code,
+        "invt_caful_yn": invt_caful_yn,
         "minervini_stage": stage,
         "minervini_reason": "test",
         "rs_rating": rs_rating,
@@ -582,6 +597,42 @@ class TestGetLatestDailySnapshot:
         result = await repo.get_latest_daily_snapshot("A001")
         assert result["output"]["stck_prpr"] == "2000"
         assert result["_trade_date"] == "20260414"
+
+    @pytest.mark.asyncio
+    async def test_preserves_status_fields_in_latest_snapshot_output(self, repo):
+        """관리/경고 상태 필드를 저장하고 현재가 API output 포맷으로 복원한다."""
+        await repo.upsert_daily_snapshot("20260414", [
+            _make_snapshot(
+                "A001",
+                iscd_stat_cls_code="53",
+                mang_issu_cls_code="Y",
+                mrkt_warn_cls_code="2",
+                invt_caful_yn="Y",
+            ),
+        ])
+
+        result = await repo.get_latest_daily_snapshot("A001")
+        output = result["output"]
+        assert output["iscd_stat_cls_code"] == "53"
+        assert output["mang_issu_cls_code"] == "Y"
+        assert output["mrkt_warn_cls_code"] == "2"
+        assert output["invt_caful_yn"] == "Y"
+
+    @pytest.mark.asyncio
+    async def test_status_fields_are_preserved_when_next_upsert_has_no_status(self, repo):
+        """대체 수집 경로처럼 상태 필드가 없으면 기존 상태 값을 보존한다."""
+        await repo.upsert_daily_snapshot("20260414", [
+            _make_snapshot("A001", mrkt_warn_cls_code="2", invt_caful_yn="Y"),
+        ])
+        await repo.upsert_daily_snapshot("20260414", [
+            _make_snapshot("A001", price=60000, mrkt_warn_cls_code=None, invt_caful_yn=None),
+        ])
+
+        result = await repo.get_latest_daily_snapshot("A001")
+        output = result["output"]
+        assert output["stck_prpr"] == "60000"
+        assert output["mrkt_warn_cls_code"] == "2"
+        assert output["invt_caful_yn"] == "Y"
 
     @pytest.mark.asyncio
     async def test_exception_returns_none(self, repo, monkeypatch):
