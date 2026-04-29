@@ -2,6 +2,12 @@
 
 최종 업데이트: 2026-04-29
 
+## 2026-04-29 Update - O'Neil Market Timing
+
+- [x] `_check_etf_ma_rising()` strict consecutive MA(20) rise filter was relaxed to a net-trend check with small daily MA dip tolerance.
+- [x] Market timing debug logs now include `trend_status`, `daily_changes_pct`, `net_change_pct`, `max_daily_drop_pct`, and the active threshold values.
+- [x] Unit tests were updated for small KOSDAQ-style MA noise, hard MA declines, and enriched market timing logs.
+
 현재 main 확인: `main...origin/main` 동기화 상태. 최근 반영 커밋 기준으로 주문 안전장치, Web 모드 보호, WebAppContext 분리, 전략 로그 정리, 일부 운영 복구/스트리밍 성능 개선이 반영되어 있다.
 
 이 문서는 `AGENTS.md`, `SKILL.md`, `CODEBASE_SUMMARY.md`, `CODEX_WORKFLOW.md`와 repo review 내용을 기준으로 정리한 실행형 To-Do입니다.
