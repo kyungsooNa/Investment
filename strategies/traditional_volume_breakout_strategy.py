@@ -86,6 +86,7 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
         market_clock: MarketClock,
         config: Optional[TraditionalVBConfig] = None,
         logger: Optional[logging.Logger] = None,
+        state_file: Optional[str] = None,
     ):
         self._sqs = stock_query_service
         self.stock_code_repository = stock_code_repository
@@ -102,6 +103,8 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
         self._position_state: Dict[str, PositionState] = {}
 
         # 파일에서 포지션 상태 복원
+        if state_file is not None:
+            self.STATE_FILE = str(state_file)
         self._load_state()
 
     @property

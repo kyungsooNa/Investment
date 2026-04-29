@@ -44,6 +44,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         market_clock: MarketClock,
         config: Optional[OneilPocketPivotConfig] = None,
         logger: Optional[logging.Logger] = None,
+        state_file: Optional[str] = None,
     ):
         self._sqs = stock_query_service
         self._universe = universe_service
@@ -56,6 +57,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
         self._position_state: Dict[str, PPPositionState] = {}
         self._cooldown: Dict[str, str] = {}
+        if state_file is not None:
+            self.STATE_FILE = str(state_file)
         self._load_state()
 
     @property

@@ -50,6 +50,7 @@ class RSI2PullbackStrategy(LiveStrategy):
         market_clock: MarketClock,
         config: Optional[RSI2PullbackConfig] = None,
         logger: Optional[logging.Logger] = None,
+        state_file: Optional[str] = None,
     ):
         self._sqs = stock_query_service
         self._universe = universe_service
@@ -63,6 +64,8 @@ class RSI2PullbackStrategy(LiveStrategy):
 
         self._position_state: Dict[str, RSI2PositionState] = {}
         self._cooldown: Dict[str, str] = {}  # code → unblock_date (YYYYMMDD)
+        if state_file is not None:
+            self.STATE_FILE = str(state_file)
         self._load_state()
 
     @property
