@@ -139,6 +139,33 @@ def test_get_active_requests_no_ctx(web_client, monkeypatch):
         api_common._active_requests = original_requests
 
 
+# ── GET /api/system/operations/status ───────────────────────────────────────
+
+
+def test_get_operations_status_partial_services(web_client, mock_web_ctx):
+    """운영 요약은 일부 서비스가 없어도 기본값으로 응답한다."""
+    mock_web_ctx.scheduler = None
+    mock_web_ctx.order_execution_service = None
+    mock_web_ctx.virtual_trade_service = None
+    mock_web_ctx.data_quality_service = None
+    mock_web_ctx.websocket_watchdog_task = None
+    mock_web_ctx.kill_switch_service = None
+    mock_web_ctx.notification_service = None
+    mock_web_ctx.broker = None
+
+    response = web_client.get("/api/system/operations/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    data = body["data"]
+    assert data["active_strategy_count"] == 0
+    assert data["position_count"] == 0
+    assert data["orders"]["active_order_count"] == 0
+    assert data["data_quality"]["enabled"] is False
+    assert data["websocket"]["receive_alive"] is False
+
+
 # ── GET /api/background/status ──────────────────────────────────────────────
 
 

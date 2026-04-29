@@ -22,6 +22,7 @@ import time
 from typing import Dict, List, Optional
 
 from repositories.stock_repository import StockRepository
+from services.notification_service import NotificationCategory, NotificationLevel
 
 
 class PriceStreamService:
@@ -31,9 +32,13 @@ class PriceStreamService:
         self,
         stock_repo: "StockRepository",
         logger=None,
+        data_quality_service=None,
+        notification_service=None,
     ):
         self._stock_repo = stock_repo
         self._logger = logger or logging.getLogger(__name__)
+        self._data_quality_service = data_quality_service
+        self._notification_service = notification_service
         self._latest_prices: Dict[str, dict] = {}
         self._sse_queues: Dict[str, List[asyncio.Queue]] = {}  # code → SSE 구독 큐 목록
         self._last_tick_ts: Dict[str, float] = {}
@@ -54,6 +59,33 @@ class PriceStreamService:
             return
 
         now_ts = time.time()
+        quality_status = "ok"
+        quality_reason = "ok"
+        latency_sec = 0.0
+        if self._data_quality_service is not None:
+            result = self._data_quality_service.validate_price_tick(realtime_data, received_at=now_ts)
+            quality_status = "ok" if result.ok else result.severity
+            quality_reason = result.reason
+            latency_sec = result.latency_sec or 0.0
+            if not result.ok:
+                self._logger.warning(
+                    f"실시간 체결가 품질 검증 실패: code={result.code or stock_code}, reason={result.reason}, "
+                    f"metadata={result.metadata}"
+                )
+                if self._notification_service is not None:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self._notification_service.emit(
+                            NotificationCategory.SYSTEM,
+                            NotificationLevel.ERROR,
+                            "실시간 체결가 품질 검증 실패",
+                            f"{result.code or stock_code}: {result.reason}",
+                            metadata=result.to_dict(),
+                        ))
+                    except RuntimeError:
+                        pass
+                return
+
         self._last_tick_ts[stock_code] = now_ts
         self._last_any_tick_ts = now_ts
 
@@ -63,6 +95,9 @@ class PriceStreamService:
             "rate": realtime_data.get('전일대비율', '0.00'),
             "sign": realtime_data.get('전일대비부호', '3'),
             "received_at": now_ts,
+            "latency_sec": latency_sec,
+            "quality_status": quality_status,
+            "quality_reason": quality_reason,
         }
 
         try:
@@ -120,6 +155,9 @@ class PriceStreamService:
             "rate": rate,
             "sign": sign,
             "received_at": now_ts,
+            "latency_sec": 0.0,
+            "quality_status": "ok",
+            "quality_reason": "rest_snapshot",
         }
 
         try:

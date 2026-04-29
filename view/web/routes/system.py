@@ -98,6 +98,103 @@ def get_active_requests():
     }
 
 
+@router.get("/system/operations/status")
+def get_operations_status():
+    """운영 요약 상태 반환: 전략, 주문, 손익, 데이터 품질, WebSocket, 알림 큐."""
+    ctx = _get_ctx()
+
+    scheduler_status = {}
+    scheduler = getattr(ctx, "scheduler", None)
+    if scheduler is not None:
+        try:
+            raw = scheduler.get_status()
+            scheduler_status = raw if isinstance(raw, dict) else {}
+        except Exception:
+            scheduler_status = {}
+
+    strategies = scheduler_status.get("strategies") or []
+    active_strategy_count = sum(1 for item in strategies if item.get("enabled"))
+    position_count = sum(int(item.get("current_holds") or 0) for item in strategies)
+
+    order_summary = {
+        "active_order_count": 0,
+        "unfilled_order_count": 0,
+        "orders": [],
+        "reconcile_alarm": False,
+        "reconcile_mismatch_count": 0,
+    }
+    oes = getattr(ctx, "order_execution_service", None)
+    if oes is not None and hasattr(oes, "get_active_order_summary"):
+        try:
+            summary = oes.get_active_order_summary()
+            if isinstance(summary, dict):
+                order_summary.update(summary)
+        except Exception:
+            pass
+
+    pnl = None
+    vts = getattr(ctx, "virtual_trade_service", None)
+    if vts is not None:
+        try:
+            pnl = vts.get_summary(apply_cost=True)
+        except TypeError:
+            try:
+                pnl = vts.get_summary()
+            except Exception:
+                pnl = None
+        except Exception:
+            pnl = None
+
+    dq = getattr(ctx, "data_quality_service", None)
+    data_quality = dq.get_health() if dq is not None and hasattr(dq, "get_health") else {
+        "enabled": False,
+        "last_result": None,
+    }
+
+    broker = getattr(ctx, "broker", None)
+    websocket = {
+        "receive_alive": bool(broker and broker.is_websocket_receive_alive()),
+    }
+    watchdog = getattr(ctx, "websocket_watchdog_task", None)
+    if watchdog is not None and hasattr(watchdog, "get_progress"):
+        try:
+            progress = watchdog.get_progress()
+            if isinstance(progress, dict):
+                websocket.update(progress)
+        except Exception:
+            pass
+
+    ns = getattr(ctx, "notification_service", None)
+    queue_depth = 0
+    if ns is not None and hasattr(ns, "external_handler_queue"):
+        try:
+            queue_depth = ns.external_handler_queue.qsize()
+        except Exception:
+            queue_depth = 0
+
+    kill_switch = None
+    ks = getattr(ctx, "kill_switch_service", None)
+    if ks is not None and hasattr(ks, "get_status"):
+        try:
+            kill_switch = ks.get_status()
+        except Exception:
+            kill_switch = None
+
+    return {
+        "success": True,
+        "data": {
+            "active_strategy_count": active_strategy_count,
+            "position_count": position_count,
+            "orders": order_summary,
+            "pnl": pnl,
+            "data_quality": data_quality,
+            "websocket": websocket,
+            "notification_queue_depth": queue_depth,
+            "kill_switch": kill_switch,
+        },
+    }
+
+
 # 1. 동기(def) 함수를 비동기(async def) 함수로 변경하여 이벤트 루프 데드락 방지
 @router.get("/background/status")
 async def get_background_status(): 

@@ -12,6 +12,7 @@ from services.notification_service import NotificationCategory, NotificationLeve
 from services.order_execution_service import OrderExecutionService
 from services.risk_gate_service import RiskGateService
 from services.order_policy_service import OrderPolicyDecision
+from services.data_quality_service import DataQualityResult
 
 # 테스트를 위한 MockLogger
 class MockLogger:
@@ -71,6 +72,39 @@ def handler(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market
         notification_service=mock_notification_service,
     )
     return handler_instance
+
+
+@pytest.mark.asyncio
+async def test_data_quality_blocks_order_before_broker_call(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+    mock_notification_service,
+):
+    dq = MagicMock()
+    dq.validate_order_reference = AsyncMock(return_value=DataQualityResult(
+        ok=False,
+        severity="error",
+        reason="stale_price",
+        code="005930",
+        latency_sec=9.0,
+    ))
+    handler_instance = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        notification_service=mock_notification_service,
+        data_quality_service=dq,
+    )
+
+    result = await handler_instance.handle_place_buy_order("005930", 70000, 1)
+
+    assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+    assert "데이터 품질 차단" in result.msg1
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+    mock_notification_service.emit.assert_awaited()
 
 # --- Pytest 스타일 테스트 케이스 ---
 

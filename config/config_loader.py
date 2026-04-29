@@ -98,6 +98,30 @@ class OrderPolicyConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class DataQualityConfig(BaseModel):
+    enabled: bool = True
+    max_tick_age_sec: float = 5.0
+    max_rest_age_sec: float = 10.0
+    max_price_jump_pct: float = 15.0
+    block_on_stale_price: bool = True
+    block_on_invalid_api_response: bool = True
+    alert_cooldown_sec: float = 60.0
+
+    model_config = {"extra": "allow"}
+
+
+class NotificationTelegramConfig(BaseModel):
+    enabled: bool = True
+
+    model_config = {"extra": "allow"}
+
+
+class NotificationsConfig(BaseModel):
+    telegram: NotificationTelegramConfig = Field(default_factory=NotificationTelegramConfig)
+
+    model_config = {"extra": "allow"}
+
+
 class ExecutionQualityReportConfig(BaseModel):
     enabled: bool = True
     min_sample_count: int = 3
@@ -140,6 +164,8 @@ class AppConfig(BaseModel):
     kill_switch: KillSwitchConfig = Field(default_factory=KillSwitchConfig)
     risk_gate: RiskGateConfig = Field(default_factory=RiskGateConfig)
     order_policy: OrderPolicyConfig = Field(default_factory=OrderPolicyConfig)
+    data_quality: DataQualityConfig = Field(default_factory=DataQualityConfig)
+    notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
     execution_quality_report: ExecutionQualityReportConfig = Field(default_factory=ExecutionQualityReportConfig)
     

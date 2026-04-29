@@ -132,7 +132,7 @@ class NotificationService:
             items = [e for e in items if e.category == category]
         return [e.to_dict() for e in items[-count:]][::-1]
 
-    # ── 외부 핸들러 등록 (Telegram/Slack 등) ──
+    # ── 외부 핸들러 등록 (Telegram) ──
 
     def register_external_handler(
         self, handler: Callable[..., Coroutine[Any, Any, None]]

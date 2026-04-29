@@ -44,7 +44,8 @@ class OrderExecutionService:
                  kill_switch_service: Optional[KillSwitchService] = None,
                  account_snapshot_cache: Optional[AccountSnapshotCache] = None,
                  risk_gate_service: Optional[RiskGateService] = None,
-                 order_policy_service: Optional[OrderPolicyService] = None):
+                 order_policy_service: Optional[OrderPolicyService] = None,
+                 data_quality_service=None):
         self.broker_api_wrapper = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
@@ -57,6 +58,7 @@ class OrderExecutionService:
         self._account_snapshot_cache = account_snapshot_cache
         self._risk_gate = risk_gate_service
         self._order_policy = order_policy_service
+        self._data_quality = data_quality_service
         self._order_states: Dict[str, OrderContext] = {}
         self._order_locks: Dict[str, asyncio.Lock] = {}
         self._order_no_index: Dict[str, str] = {}
@@ -536,6 +538,28 @@ class OrderExecutionService:
             for context in self._order_states.values()
             if not context.state.is_terminal
         ]
+
+    def get_active_order_summary(self) -> dict:
+        contexts = self._active_order_contexts()
+        return {
+            "active_order_count": len(contexts),
+            "unfilled_order_count": sum(1 for c in contexts if c.remaining_qty > 0),
+            "orders": [
+                {
+                    "order_key": c.order_key,
+                    "stock_code": c.stock_code,
+                    "side": c.side.value,
+                    "state": c.state.value,
+                    "qty": c.qty,
+                    "filled_qty": c.filled_qty,
+                    "remaining_qty": c.remaining_qty,
+                    "broker_order_no": c.broker_order_no,
+                }
+                for c in contexts
+            ],
+            "reconcile_alarm": self._reconcile_alarm,
+            "reconcile_mismatch_count": self._reconcile_mismatch_count,
+        }
 
     def _register_post_submit_fast_poll(self, order_key: str, now: Optional[datetime] = None) -> None:
         now = now or (self.market_clock.get_current_kst_time() if self.market_clock else datetime.now())
@@ -1320,6 +1344,32 @@ class OrderExecutionService:
                         rt_cd=ErrorCode.RETRY_LIMIT.value,
                         msg1=f"진행 중인 주문이 있어 {action_kr} 주문을 차단했습니다. 상태={existing.state.value}",
                         data=existing.to_dict(),
+                    )
+
+            if self._data_quality is not None:
+                quality = await self._data_quality.validate_order_reference(
+                    stock_code=stock_code,
+                    price=price,
+                    qty=qty,
+                )
+                if not quality.ok:
+                    msg = f"데이터 품질 차단: {quality.reason}"
+                    self.logger.error(
+                        f"{msg} stock_code={stock_code}, side={side.value}, "
+                        f"latency={quality.latency_sec}, metadata={quality.metadata}"
+                    )
+                    if self._notification_service:
+                        await self._notification_service.emit(
+                            NotificationCategory.SYSTEM,
+                            NotificationLevel.ERROR if quality.severity == "error" else NotificationLevel.WARNING,
+                            "데이터 품질 주문 차단",
+                            f"{stock_code} {side.value}: {quality.reason}",
+                            metadata=quality.to_dict(),
+                        )
+                    return ResCommonResponse(
+                        rt_cd=ErrorCode.INVALID_INPUT.value,
+                        msg1=msg,
+                        data=quality.to_dict(),
                     )
 
             policy_decision = None

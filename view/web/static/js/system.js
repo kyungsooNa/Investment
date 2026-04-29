@@ -536,7 +536,49 @@ async function updateBackgroundStatus() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => setTimeout(updateBackgroundStatus, 1500));  // 캐시 폴링과 시차 분산
+function renderOpsMetric(label, value, tone = 'normal') {
+    const color = tone === 'bad' ? 'var(--danger-color,#f44336)' : (tone === 'warn' ? 'orange' : 'var(--text-primary,#eee)');
+    return `<div style="border:1px solid var(--border,#444);border-radius:6px;padding:10px;background:var(--bg-secondary,#222);">
+        <div style="font-size:0.8em;color:var(--text-secondary,#aaa);">${label}</div>
+        <div style="font-size:1.2em;font-weight:bold;color:${color};">${value}</div>
+    </div>`;
+}
+
+async function updateOperationsStatus() {
+    try {
+        const response = await fetch('/api/system/operations/status');
+        if (!response.ok) return;
+        const body = await response.json();
+        const data = body.data || {};
+        const el = document.getElementById('operations-summary');
+        if (!el) return;
+        const dq = data.data_quality || {};
+        const dqResult = dq.last_result || {};
+        const ws = data.websocket || {};
+        const orders = data.orders || {};
+        const ks = data.kill_switch || {};
+        const pnl = data.pnl || {};
+        el.innerHTML = [
+            renderOpsMetric('활성 전략', data.active_strategy_count ?? 0),
+            renderOpsMetric('현재 포지션', data.position_count ?? 0),
+            renderOpsMetric('활성 주문', orders.active_order_count ?? 0, (orders.active_order_count || 0) > 0 ? 'warn' : 'normal'),
+            renderOpsMetric('미체결 주문', orders.unfilled_order_count ?? 0, (orders.unfilled_order_count || 0) > 0 ? 'warn' : 'normal'),
+            renderOpsMetric('평균 수익률', pnl.avg_return != null ? `${pnl.avg_return}%` : '-'),
+            renderOpsMetric('Data Quality', dq.enabled ? (dqResult.reason || 'ok') : 'disabled', dqResult.ok === false ? 'bad' : 'normal'),
+            renderOpsMetric('WebSocket', ws.receive_alive ? 'alive' : 'down', ws.receive_alive ? 'normal' : 'warn'),
+            renderOpsMetric('알림 큐', data.notification_queue_depth ?? 0),
+            renderOpsMetric('Kill Switch', ks && ks.is_tripped ? 'TRIPPED' : 'normal', ks && ks.is_tripped ? 'bad' : 'normal')
+        ].join('');
+    } catch (e) {
+        console.error('운영 요약 조회 오류:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(updateOperationsStatus, 700);
+    setTimeout(updateBackgroundStatus, 1500);
+});  // 캐시 폴링과 시차 분산
+setInterval(updateOperationsStatus, 5000);
 setInterval(updateBackgroundStatus, 5000);
 
 // ── 실시간 현재가 구독 현황 ──────────────────────────────────

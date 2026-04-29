@@ -3,6 +3,7 @@ import pytest
 import time
 from unittest.mock import MagicMock
 from services.price_stream_service import PriceStreamService
+from services.data_quality_service import DataQualityResult
 
 
 @pytest.fixture
@@ -277,3 +278,33 @@ def test_clear_subscription_state_removes_cached_tracking(price_stream_service):
     assert price_stream_service.get_cached_price("005930") is None
     assert price_stream_service.get_last_tick_ts("005930") == 0.0
     assert price_stream_service.get_subscription_age("005930") == 0.0
+
+
+def test_on_price_tick_quality_metadata_saved(mock_stock_repo, mock_logger):
+    dq = MagicMock()
+    dq.validate_price_tick.return_value = DataQualityResult(ok=True, reason="ok", latency_sec=0.25)
+    svc = PriceStreamService(stock_repo=mock_stock_repo, logger=mock_logger, data_quality_service=dq)
+
+    svc.on_price_tick({"유가증권단축종목코드": "005930", "주식현재가": "75000", "누적거래량": "1"})
+
+    cached = svc.get_cached_price("005930")
+    assert cached["quality_status"] == "ok"
+    assert cached["quality_reason"] == "ok"
+    assert cached["latency_sec"] == 0.25
+
+
+def test_on_price_tick_invalid_quality_not_cached(mock_stock_repo, mock_logger):
+    dq = MagicMock()
+    dq.validate_price_tick.return_value = DataQualityResult(
+        ok=False,
+        severity="error",
+        reason="invalid_tick",
+        code="005930",
+    )
+    svc = PriceStreamService(stock_repo=mock_stock_repo, logger=mock_logger, data_quality_service=dq)
+
+    svc.on_price_tick({"유가증권단축종목코드": "005930", "주식현재가": "0", "누적거래량": "1"})
+
+    assert svc.get_cached_price("005930") is None
+    mock_stock_repo.update_realtime_data.assert_not_called()
+    mock_logger.warning.assert_called()
