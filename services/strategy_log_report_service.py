@@ -253,10 +253,12 @@ class StrategyLogReportService:
         log_dir: str = "logs/strategies",
         stock_code_repo: Optional[Any] = None,
         virtual_trade_service: Optional[Any] = None,
+        execution_quality_config: Optional[Any] = None,
     ):
         self._log_dir = log_dir
         self._stock_code_repo = stock_code_repo
         self._virtual_trade_service = virtual_trade_service
+        self._execution_quality_config = execution_quality_config
 
     # ── 파일 탐색 ────────────────────────────────────────────────
 
@@ -485,6 +487,7 @@ class StrategyLogReportService:
                 "strategy": strategy,
                 "count": len(items),
                 "avg_slip": avg_slip,
+                "p95_slip": self._percentile(slip_values, 95),
                 "max_slip": max_slip,
                 "avg_latency": avg_latency,
             })
@@ -492,11 +495,14 @@ class StrategyLogReportService:
         strategy_rows.sort(key=lambda row: (row["avg_slip"] is None, -(row["avg_slip"] or 0), row["strategy"]))
         for row in strategy_rows[:_MAX_EXECUTION_QUALITY_ROWS]:
             slip_str = f"{row['avg_slip']:.3f}%" if row["avg_slip"] is not None else "N/A"
+            p95_str = f"{row['p95_slip']:.3f}%" if row["p95_slip"] is not None else "N/A"
             max_str = f"{row['max_slip']:.3f}%" if row["max_slip"] is not None else "N/A"
             latency_str = f"{row['avg_latency']:.1f}s" if row["avg_latency"] is not None else "N/A"
+            quality_label = self._execution_quality_label(row)
+            quality_str = f" {quality_label}" if quality_label else ""
             lines.append(
                 f"• {_esc(row['strategy'])}: {row['count']}건, 평균 슬리피지 {slip_str}, "
-                f"최대 {max_str}, 평균 지연 {latency_str}"
+                f"P95 {p95_str}, 최대 {max_str}, 평균 지연 {latency_str}{quality_str}"
             )
 
         symbol_rows = []
@@ -523,6 +529,73 @@ class StrategyLogReportService:
             lines.append("• 종목별 슬리피지 상위: " + ", ".join(parts))
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _percentile(values: List[float], percentile: int) -> Optional[float]:
+        if not values:
+            return None
+        ordered = sorted(values)
+        if len(ordered) == 1:
+            return ordered[0]
+        rank = (len(ordered) - 1) * percentile / 100
+        lower = int(rank)
+        upper = min(lower + 1, len(ordered) - 1)
+        weight = rank - lower
+        return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+    def _execution_quality_label(self, row: dict) -> str:
+        cfg = self._execution_quality_config
+        if cfg is None or not bool(getattr(cfg, "enabled", True)):
+            return ""
+        if row.get("count", 0) < int(getattr(cfg, "min_sample_count", 3) or 0):
+            return ""
+
+        avg_slip = row.get("avg_slip")
+        p95_slip = row.get("p95_slip")
+        avg_latency = row.get("avg_latency")
+
+        candidate_reasons = self._quality_threshold_reasons(
+            avg_slip=avg_slip,
+            p95_slip=p95_slip,
+            avg_latency=avg_latency,
+            avg_slip_threshold=getattr(cfg, "candidate_avg_slippage_pct", None),
+            p95_slip_threshold=getattr(cfg, "candidate_p95_slippage_pct", None),
+            avg_latency_threshold=getattr(cfg, "candidate_avg_first_fill_latency_sec", None),
+        )
+        if candidate_reasons:
+            suffix = "자동 OFF" if bool(getattr(cfg, "auto_disable_enabled", False)) else "후보"
+            return f"⚠️ 비활성화 {suffix}: {', '.join(candidate_reasons)}"
+
+        warn_reasons = self._quality_threshold_reasons(
+            avg_slip=avg_slip,
+            p95_slip=p95_slip,
+            avg_latency=avg_latency,
+            avg_slip_threshold=getattr(cfg, "warn_avg_slippage_pct", None),
+            p95_slip_threshold=getattr(cfg, "warn_p95_slippage_pct", None),
+            avg_latency_threshold=getattr(cfg, "warn_avg_first_fill_latency_sec", None),
+        )
+        if warn_reasons:
+            return f"⚠️ 경고: {', '.join(warn_reasons)}"
+        return ""
+
+    @staticmethod
+    def _quality_threshold_reasons(
+        *,
+        avg_slip: Optional[float],
+        p95_slip: Optional[float],
+        avg_latency: Optional[float],
+        avg_slip_threshold: Optional[float],
+        p95_slip_threshold: Optional[float],
+        avg_latency_threshold: Optional[float],
+    ) -> List[str]:
+        reasons = []
+        if avg_slip is not None and avg_slip_threshold is not None and avg_slip > avg_slip_threshold:
+            reasons.append(f"평균 슬리피지 {avg_slip:.3f}%")
+        if p95_slip is not None and p95_slip_threshold is not None and p95_slip > p95_slip_threshold:
+            reasons.append(f"P95 슬리피지 {p95_slip:.3f}%")
+        if avg_latency is not None and avg_latency_threshold is not None and avg_latency > avg_latency_threshold:
+            reasons.append(f"평균 지연 {avg_latency:.1f}s")
+        return reasons
 
     # ── 리포트 생성 ──────────────────────────────────────────────
 

@@ -539,6 +539,7 @@ class WebAppContext:
                     log_dir=os.path.join(self.logger.log_dir, "strategies"),
                     stock_code_repo=self.stock_code_repository,
                     virtual_trade_service=self.virtual_trade_service,
+                    execution_quality_config=getattr(self.full_config, "execution_quality_report", None),
                 ),
                 notification_service=self.notification_service,
                 telegram_reporter=getattr(self, 'telegram_reporter', None),

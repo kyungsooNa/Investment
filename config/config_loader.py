@@ -83,6 +83,20 @@ class OrderPolicyConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class ExecutionQualityReportConfig(BaseModel):
+    enabled: bool = True
+    min_sample_count: int = 3
+    warn_avg_slippage_pct: float = 0.5
+    warn_p95_slippage_pct: float = 1.0
+    warn_avg_first_fill_latency_sec: float = 30.0
+    candidate_avg_slippage_pct: float = 1.0
+    candidate_p95_slippage_pct: float = 2.0
+    candidate_avg_first_fill_latency_sec: float = 90.0
+    auto_disable_enabled: bool = False
+
+    model_config = {"extra": "allow"}
+
+
 class AppConfig(BaseModel):
     # Core API keys
     api_key: Optional[str] = None
@@ -105,6 +119,7 @@ class AppConfig(BaseModel):
     risk_gate: RiskGateConfig = Field(default_factory=RiskGateConfig)
     order_policy: OrderPolicyConfig = Field(default_factory=OrderPolicyConfig)
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
+    execution_quality_report: ExecutionQualityReportConfig = Field(default_factory=ExecutionQualityReportConfig)
     
     # Dynamic/Merged configs
     tr_ids: Dict[str, Any] = Field(default_factory=dict)
