@@ -467,13 +467,13 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
   - cleanup: state 파일 가짜 entry 제거, DB 가짜 행 3건 삭제 (백업: `virtual_trade.db.bak_before_fake_cleanup`)
   - 방어: `sync_live_strategy_positions()` 에 INSERT 행 단위 추적 로그 + 자정 buy_date 의심 패턴 warning 추가
   - 가장 유력한 root cause: 테스트/스크립트가 production STATE_FILE 경로(`data/*_position_state.json`)에 직접 시드 데이터 기록
+- (e') ✅ 테스트가 production STATE_FILE 경로 못 쓰게 격리 강제
+  - 변경: live strategy 6종 생성자에 optional `state_file` 인자를 추가하고 `_load_state()` 전 인스턴스 `STATE_FILE`에 반영.
+  - 격리: `tests/conftest.py` autouse fixture가 PP/OSB/HTF/FP/RSI2/TVB 기본 state file을 매 테스트 `tmp_path/strategy_state/`로 강제 override.
+  - 회귀 방지: `tests/unit_test/strategies/test_strategy_state_file_isolation.py` 추가.
+  - 검증: strategy 관련 단위 테스트 302개 + 신규 격리 테스트 1개 통과.
 
 ## 남은 작업
-
-- (e') 테스트가 production STATE_FILE 경로 못 쓰게 격리 강제
-  - 현재 strategy 클래스의 `STATE_FILE` 이 class-level hardcode (`data/pp_position_state.json` 등) → 테스트가 override 안 하면 production 파일 덮어씀
-  - 후보 수정: `STATE_FILE` 을 인스턴스 인자로 변경 (또는 환경변수 prefix), 테스트 fixture 자동 tmp_path override
-  - 영향 범위 큼 → 별도 작업 권장
 
 ## 튜닝 메모
 
