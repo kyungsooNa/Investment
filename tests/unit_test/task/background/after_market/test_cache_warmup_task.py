@@ -107,17 +107,21 @@ class TestTaskProperties:
 class TestStartStop:
 
     async def test_start_sets_running_state(self, task):
-        await task.start()
-        assert task.state == TaskState.RUNNING
-        assert len(task._tasks) == 1
-        await task.stop()
+        try:
+            await task.start()
+            assert task.state == TaskState.RUNNING
+            assert len(task._tasks) == 1
+        finally:
+            await task.stop()
 
     async def test_start_idempotent(self, task):
-        await task.start()
-        count = len(task._tasks)
-        await task.start()
-        assert len(task._tasks) == count
-        await task.stop()
+        try:
+            await task.start()
+            count = len(task._tasks)
+            await task.start()
+            assert len(task._tasks) == count
+        finally:
+            await task.stop()
 
     async def test_stop_sets_stopped_state(self, task):
         await task.start()

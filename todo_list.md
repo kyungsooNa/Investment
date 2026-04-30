@@ -117,13 +117,13 @@
 
 ### 8-1. 브로커 계층 테스트
 
-- [~] 주문 타입별 API 파라미터 검증 테스트를 추가한다. (일부 주문/계좌 조회 params 테스트는 있음. 주문 타입별 정책 매트릭스는 남음)
+- [x] 주문 타입별 API 파라미터 검증 테스트를 추가한다. (KRX 시장가·지정가 excg_id_dvsn_cd="" 검증, NXT 시장가 차단, NXT 지정가 + adjust_price 로깅 모두 완료)
 
 ### 8-2. 전략/스케줄러 테스트
 
-- [ ] 시장 상태 필터 ON/OFF 테스트를 추가한다.
-- [~] background task 시작 테스트에는 반드시 `try/finally await stop()`을 적용한다. (일부 반영. `AfterMarketTask` 계열 전체 점검은 남음)
-- [ ] xdist 병렬 실행 시 외부 네트워크 호출이 발생하지 않도록 fixture를 점검한다.
+- [x] 시장 상태 필터 ON/OFF 테스트를 추가한다. (`test_loop_runs_enabled_strategy_when_market_open`, `test_loop_skips_all_strategies_when_market_closed` 추가)
+- [x] background task 시작 테스트에는 반드시 `try/finally await stop()`을 적용한다. (`cache_warmup`, `log_cleanup`, `ohlcv_update` `TestStartStop` 수정 완료)
+- [ ] xdist 병렬 실행 시 외부 네트워크 호출이 발생하지 않도록 fixture를 점검한다. (unit_test conftest의 sqlite3/httpx 패치는 적용됨. 추가 I/O 소스 점검 남음)
 
 권장 실행:
 

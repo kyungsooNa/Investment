@@ -2356,6 +2356,57 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         scheduler._logger.error.assert_called()
 
+    # ── 시장 상태 필터 ON/OFF ────────────────────────────────────────────────
+
+    async def test_loop_runs_enabled_strategy_when_market_open(self):
+        """시장 상태 필터 ON: 장중 + enabled=True → _run_strategy 호출."""
+        from datetime import datetime
+        scheduler, _, _, tm, mcs = self._make_scheduler()
+
+        now_dt = datetime(2026, 4, 24, 10, 0, 0)
+        close_dt = datetime(2026, 4, 24, 15, 30, 0)
+        tm.get_current_kst_time.return_value = now_dt
+        tm.get_market_close_time.return_value = close_dt
+
+        strategy = MockStrategy(name="EnabledStrat")
+        config = StrategySchedulerConfig(strategy=strategy, enabled=True, interval_minutes=0)
+        scheduler.register(config)
+        scheduler._running = True
+
+        # 첫 루프: 장중 처리, 두 번째: CancelledError로 루프 탈출
+        mcs.is_market_open_now.side_effect = [True, asyncio.CancelledError()]
+
+        with patch.object(scheduler, "_run_reconciliation", new_callable=AsyncMock), \
+             patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as mock_run, \
+             patch.object(scheduler, "_poll_active_orders_if_due", new_callable=AsyncMock), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            try:
+                await scheduler._loop()
+            except asyncio.CancelledError:
+                pass
+
+        mock_run.assert_awaited()
+
+    async def test_loop_skips_all_strategies_when_market_closed(self):
+        """시장 상태 필터 OFF: 장 외 시간 → _run_strategy 호출 없이 wait_until_next_open 대기."""
+        scheduler, _, _, _, mcs = self._make_scheduler()
+
+        mcs.is_market_open_now.return_value = False
+        mcs.wait_until_next_open.side_effect = asyncio.CancelledError()
+
+        strategy = MockStrategy(name="AnyStrat")
+        scheduler.register(StrategySchedulerConfig(strategy=strategy, enabled=True, interval_minutes=0))
+        scheduler._running = True
+
+        with patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as mock_run:
+            try:
+                await scheduler._loop()
+            except asyncio.CancelledError:
+                pass
+
+        mock_run.assert_not_awaited()
+        mcs.wait_until_next_open.assert_awaited_once()
+
     async def test_loop_continues_after_market_closed_wait_returns(self):
         scheduler, _, _, _, mcs = self._make_scheduler()
         scheduler._running = True
