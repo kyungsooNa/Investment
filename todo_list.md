@@ -1,6 +1,6 @@
 # Investment Trading App - 실전 운영 개선 To-Do
 
-최종 업데이트: 2026-04-30
+최종 업데이트: 2026-04-30 (디버깅 백테스트 Phase 1 완료)
 
 ## 2026-04-29 Update - O'Neil Market Timing
 
@@ -204,8 +204,8 @@ main 반영 확인.
    
    💡 구현을 위한 추가 Tip (나경수님의 시스템 기준)Config 클래스 생성: FirstPullbackConfig처럼 각 전략에 맞는 LarryWilliamsConfig, RSI2Config 등을 oneil_common_types.py에 추가하세요.지표 함수 활용: RSI(2)와 ADX(14)는 기존 IndicatorService에 calc_rsi_sync, calc_adx_sync 형태로 추가하여 scan 로직에서 호출하면 됩니다.PositionState 관리: FPPositionState와 유사하게 래리 코너스 전략은 entry_rsi를, 펜볼드 전략은 channel_low_10d를 저장하여 청산 시 참조하도록 설계하세요.
 
-   - [ ] 벡테스트 고도화
-   - 1. 전략 코드를 수정하지 않고 "왜 안 샀을까?"(디버깅 백테스트) 구현하기 **(WIP — strategies/debug/ + scripts/run_strategy_debug.py)**
+   - [x] 벡테스트 고도화
+   - 1. 전략 코드를 수정하지 않고 "왜 안 샀을까?"(디버깅 백테스트) 구현하기 ✅ **Phase 1 완료 (2026-04-30)**
       - 기존 전략 클래스(예: VolumeBreakoutStrategy)의 내부 로직을 직접 뜯어고치지 않고도 디버깅 백테스트를 수행할 수 있습니다. 주로 다음과 같은 디자인 패턴과 우회 기법을 사용합니다.
 
       - A. 설명자(Explainer) / 검사기(Inspector) 모듈 분리 (추천)
@@ -238,9 +238,66 @@ main 반영 확인.
          - 이유: 과거의 특정 시기에 우연히 "운이 좋아서" 높은 수익률이 나왔을 가능성을 배제하기 위함입니다.
          - 검증 내용: 백테스트에서 발생한 수백 번의 매매 결과(수익/손실 비율)를 무작위로 섞어버립니다. 만약 최악의 운이 작용해서 손절이 5번, 10번 연속으로 먼저 발생했을 때 내 계좌가 파산(Ruin)하지 않고 버틸 수 있는지(최대 낙폭, MDD)를 수학적으로 검증합니다.
    - 3. 후속 개선 항목 (디버깅 백테스트 확장)
-      - [ ] `StrategyExecutor` StageGuard 로그를 dict 구조화 로그로 전환 → `RejectionLogHandler` 캡처 대상 확장 (`stage_blocked` 이벤트 추가)
+      - [x] `StrategyExecutor` StageGuard 로그를 dict 구조화 로그로 전환 → `RejectionLogHandler` 캡처 대상 확장 (`stage_blocked` 이벤트 추가)
       - [ ] 과거 시점 시뮬레이션 지원 — `--date YYYYMMDD` 인자로 그날 OHLCV 기반 PP 조건 재현
       - [ ] 다른 전략(VolumeBreakout, HighTightFlag 등) 디버깅 어댑터 추가
+
+---
+
+### 디버깅 백테스트 Phase 1 구현 요약 (2026-04-30)
+
+**구현된 파일**
+
+| 파일 | 역할 |
+|------|------|
+| `strategies/debug/rejection_collector.py` | `RejectionLogHandler` — dict 구조화 로그를 이벤트로 수집. `CAPTURED_EVENTS` 화이트리스트 기반 |
+| `strategies/debug/strategy_debug_runner.py` | `StrategyDebugRunner` — 전략을 1회 실행하며 탈락 이벤트 수집. `_UniverseFilterProxy`로 특정 종목만 스캔 |
+| `strategies/debug/rejection_report.py` | `format_console()` / `format_json()` — 탈락 사유를 수치 포함 리포트로 렌더링 |
+| `scripts/run_strategy_debug.py` | CLI 진입점 — `--codes` / `--all` / `--json` 옵션 |
+
+**Phase 1에서 해결한 한계**
+
+| 항목 | 변경 내용 |
+|------|---------|
+| `entry_rejected` 로그에 `entry_type` 누락 | `oneil_pocket_pivot_strategy.py` 로그에 `"entry_type": entry_type` 추가 |
+| StageGuard 탈락 미캡처 | `strategy_executor.py`에 per-code `{"event": "stage_blocked", ...}` dict 로그 추가, `RejectionCollector` 캡처 확장, `StrategyDebugRunner`에 `stage_service` 선택 주입 지원 |
+| 탈락 사유에 수치 없음 | `rejection_report._event_label()`에 reason별 수치 포맷 구현 (`pos`, `closest_ma_pct`, `proj_vol`, `pg_tv_pct` 등) |
+
+**사용법**
+
+```powershell
+# 단일 종목 디버깅
+cd /c/Users/Kyungsoo/Documents/Code/Investment
+conda activate py310
+python -m scripts.run_strategy_debug --codes 120110
+
+# 여러 종목
+python -m scripts.run_strategy_debug --codes 005930,000660,035720
+
+# JSON 출력
+python -m scripts.run_strategy_debug --codes 120110 --json
+
+# universe 전체 스캔 (신호 없는 경우도 확인)
+python -m scripts.run_strategy_debug --all
+```
+
+**StageGuard 활성화 (선택)**
+
+`scripts/run_strategy_debug.py`에서 `StrategyDebugRunner` 생성 시 `stage_service` 주입:
+
+```python
+runner = StrategyDebugRunner(strategy, debug_logger, stage_service=minervini_svc)
+```
+
+**탈락 사유별 출력 예시**
+
+```
+120110  ✗ 탈락  PP 조건 탈락 — poor_candle_quality (pos=0.23 < 0.4)
+005930  ✗ 탈락  PP 조건 탈락 — no_ma_proximity (최근접MA=+3.52%)
+000660  ✗ 탈락  PP 조건 탈락 — insufficient_volume (예상=1,234,567 < 2,345,678)
+035720  ✗ 탈락  체결강도/공통 조건 탈락 [PP] — cgld=95.3 < 120
+012345  ✗ 탈락  StageGuard 탈락 — stage=3
+```
    ---
 ---
 
