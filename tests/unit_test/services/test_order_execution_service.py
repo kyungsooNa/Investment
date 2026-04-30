@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from io import StringIO
@@ -6,7 +7,7 @@ import builtins
 from unittest.mock import call, ANY
 from services.market_calendar_service import MarketCalendarService
 from common.types import ResCommonResponse, ErrorCode, Exchange, OrderContext, OrderState, OrderExecutionReport, OrderSide
-from config.config_loader import RiskGateConfig
+from config.config_loader import ExecutionQualityReportConfig, RiskGateConfig
 from core.account_snapshot import AccountSnapshot
 from services.notification_service import NotificationCategory, NotificationLevel
 from services.order_execution_service import OrderExecutionService
@@ -1699,6 +1700,71 @@ async def test_execution_report_records_execution_quality_metrics(
         "[EXECUTION QUALITY]" in call.args[0]
         for call in mock_logger.info.call_args_list
     )
+
+
+@pytest.mark.asyncio
+async def test_execution_quality_threshold_breach_emits_notification_once(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+    mock_notification_service,
+):
+    created_at = datetime(2026, 4, 24, 9, 0, 0)
+    mock_market_clock.get_current_kst_time.return_value = created_at + timedelta(seconds=45)
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        notification_service=mock_notification_service,
+        execution_quality_config=ExecutionQualityReportConfig(
+            warn_avg_slippage_pct=0.1,
+            candidate_avg_slippage_pct=0.3,
+            warn_avg_first_fill_latency_sec=30.0,
+            candidate_avg_first_fill_latency_sec=90.0,
+        ),
+    )
+    order_key = handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX)
+    handler._set_order_context(OrderContext(
+        order_key=order_key,
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=OrderState.SUBMITTED,
+        exchange=Exchange.KRX,
+        price=70000,
+        qty=10,
+        broker_order_no="A0001",
+        expected_fill_price=70000,
+        created_at=created_at,
+    ))
+
+    updated = await handler.apply_execution_report(OrderExecutionReport(
+        broker_order_no="A0001",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        event_state=OrderState.FILLED,
+        order_qty=10,
+        fill_qty=10,
+        fill_price=70300,
+        cumulative_filled_qty=10,
+        remaining_qty=0,
+    ))
+    await asyncio.sleep(0.01)
+
+    mock_notification_service.emit.assert_called_once()
+    args = mock_notification_service.emit.call_args.args
+    assert args[0] == NotificationCategory.TRADE
+    assert args[1] == NotificationLevel.ERROR
+    assert args[2] == "체결 품질 임계 초과"
+    metadata = mock_notification_service.emit.call_args.kwargs["metadata"]
+    breach_metrics = {item["metric"] for item in metadata["breaches"]}
+    assert "slippage_pct" in breach_metrics
+    assert "first_fill_latency_sec" in breach_metrics
+
+    handler._log_execution_quality(updated)
+    await asyncio.sleep(0.01)
+    assert mock_notification_service.emit.call_count == 1
 
 
 @pytest.mark.asyncio

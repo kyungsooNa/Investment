@@ -29,10 +29,12 @@ class NotificationQueueTask(SchedulableTask):
         self,
         notification_service: "NotificationService",
         poll_interval: float = 1.0,
+        telegram_config=None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._ns = notification_service
         self._poll_interval = poll_interval
+        self._telegram_config = telegram_config
         self._logger = logger or logging.getLogger(__name__)
         self._state: TaskState = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
@@ -112,6 +114,11 @@ class NotificationQueueTask(SchedulableTask):
                 except asyncio.TimeoutError:
                     continue
 
+                if not self._should_send_external(event):
+                    queue.task_done()
+                    await asyncio.sleep(self._poll_interval)
+                    continue
+
                 for handler in self._ns.external_handlers:
                     try:
                         await handler(event)
@@ -129,3 +136,17 @@ class NotificationQueueTask(SchedulableTask):
             except Exception as e:
                 self._logger.error(f"[NotificationQueueTask] drain_loop 예외: {e}", exc_info=True)
                 await asyncio.sleep(1.0)
+
+    def _should_send_external(self, event) -> bool:
+        cfg = self._telegram_config
+        if cfg is None:
+            return True
+        if not getattr(cfg, "enabled", True):
+            return False
+        route_levels = getattr(cfg, "route_levels", None)
+        if not route_levels:
+            return True
+        category = getattr(event.category, "value", str(event.category))
+        level = getattr(event.level, "value", str(event.level))
+        allowed = route_levels.get(category) or route_levels.get(category.upper()) or []
+        return level in allowed

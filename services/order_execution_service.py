@@ -17,6 +17,7 @@ from services.kill_switch_service import KillSwitchService
 from services.risk_gate_service import RiskGateService
 from services.order_policy_service import OrderPolicyDecision, OrderPolicyService
 from core.account_snapshot import AccountSnapshotCache
+from config.config_loader import ExecutionQualityReportConfig
 
 
 class OrderExecutionService:
@@ -45,7 +46,8 @@ class OrderExecutionService:
                  account_snapshot_cache: Optional[AccountSnapshotCache] = None,
                  risk_gate_service: Optional[RiskGateService] = None,
                  order_policy_service: Optional[OrderPolicyService] = None,
-                 data_quality_service=None):
+                 data_quality_service=None,
+                 execution_quality_config: Optional[ExecutionQualityReportConfig] = None):
         self.broker_api_wrapper = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
@@ -59,6 +61,9 @@ class OrderExecutionService:
         self._risk_gate = risk_gate_service
         self._order_policy = order_policy_service
         self._data_quality = data_quality_service
+        self._execution_quality_config = execution_quality_config or ExecutionQualityReportConfig()
+        self._execution_quality_alerted: set[tuple[str, str]] = set()
+        self._notification_tasks: set[asyncio.Task] = set()
         self._order_states: Dict[str, OrderContext] = {}
         self._order_locks: Dict[str, asyncio.Lock] = {}
         self._order_no_index: Dict[str, str] = {}
@@ -317,6 +322,108 @@ class OrderExecutionService:
             f"first_fill_latency_sec={first_fill_latency_str} source={context.source} "
             f"trace_id={context.trace_id}"
         )
+        self._emit_execution_quality_alert(context, event)
+
+    def _emit_execution_quality_alert(self, context: OrderContext, event: dict) -> None:
+        if not self._notification_service or not getattr(self._execution_quality_config, "enabled", True):
+            return
+        breaches = self._find_execution_quality_breaches(event)
+        if not breaches:
+            return
+
+        new_breaches = []
+        for breach in breaches:
+            key = (context.order_key, breach["metric"])
+            if key in self._execution_quality_alerted:
+                continue
+            self._execution_quality_alerted.add(key)
+            new_breaches.append(breach)
+        if not new_breaches:
+            return
+
+        level = NotificationLevel.ERROR if any(item.get("severity") == "error" for item in new_breaches) else NotificationLevel.WARNING
+        message = ", ".join(
+            f"{item['metric']}={item['value']:.2f} (기준 {item['threshold']:.2f})"
+            for item in new_breaches
+        )
+        metadata = {
+            **event,
+            "breaches": new_breaches,
+        }
+        try:
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(self._notification_service.emit(
+                NotificationCategory.TRADE,
+                level,
+                "체결 품질 임계 초과",
+                f"{context.stock_code} {context.side.value}: {message}",
+                metadata=metadata,
+            ))
+            self._notification_tasks.add(task)
+            task.add_done_callback(self._notification_tasks.discard)
+        except RuntimeError:
+            self.logger.warning(f"체결 품질 알림 발행 실패(이벤트 루프 없음): {metadata}")
+
+    def _find_execution_quality_breaches(self, event: dict) -> list[dict]:
+        cfg = self._execution_quality_config
+        breaches: list[dict] = []
+
+        def _add(metric: str, value, warn_threshold, error_threshold=None) -> None:
+            if value is None or warn_threshold is None:
+                return
+            try:
+                numeric = float(value)
+                warn = float(warn_threshold)
+            except (TypeError, ValueError):
+                return
+            if warn <= 0 or numeric < warn:
+                return
+            severity = "warning"
+            if error_threshold is not None:
+                try:
+                    if numeric >= float(error_threshold):
+                        severity = "error"
+                except (TypeError, ValueError):
+                    pass
+            breaches.append({
+                "metric": metric,
+                "value": numeric,
+                "threshold": warn,
+                "severity": severity,
+            })
+
+        slippage_pct = event.get("slippage_pct")
+        try:
+            adverse_slippage = slippage_pct is not None and float(slippage_pct) > 0
+        except (TypeError, ValueError):
+            adverse_slippage = False
+        if adverse_slippage:
+            _add(
+                "slippage_pct",
+                slippage_pct,
+                cfg.warn_avg_slippage_pct,
+                cfg.candidate_avg_slippage_pct,
+            )
+        _add(
+            "first_fill_latency_sec",
+            event.get("first_fill_latency_sec"),
+            cfg.warn_avg_first_fill_latency_sec,
+            cfg.candidate_avg_first_fill_latency_sec,
+        )
+        _add(
+            "unfilled_ratio_pct",
+            event.get("unfilled_ratio_pct"),
+            cfg.warn_avg_unfilled_ratio_pct,
+            cfg.candidate_avg_unfilled_ratio_pct,
+        )
+        if event.get("state") in {OrderState.CANCELED.value, OrderState.REJECTED.value}:
+            _add(
+                "incomplete_fill_ratio_pct",
+                event.get("unfilled_ratio_pct"),
+                cfg.warn_incomplete_fill_ratio_pct,
+                cfg.candidate_incomplete_fill_ratio_pct,
+            )
+        return breaches
 
     @staticmethod
     def _fmt_optional(value, precision: int = 2) -> str:

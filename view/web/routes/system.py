@@ -132,18 +132,7 @@ def get_operations_status():
         except Exception:
             pass
 
-    pnl = None
-    vts = getattr(ctx, "virtual_trade_service", None)
-    if vts is not None:
-        try:
-            pnl = vts.get_summary(apply_cost=True)
-        except TypeError:
-            try:
-                pnl = vts.get_summary()
-            except Exception:
-                pnl = None
-        except Exception:
-            pnl = None
+    pnl = _build_operations_pnl(ctx)
 
     dq = getattr(ctx, "data_quality_service", None)
     data_quality = dq.get_health() if dq is not None and hasattr(dq, "get_health") else {
@@ -201,6 +190,111 @@ def get_operations_status():
             "kill_switch": kill_switch,
             "after_market_reconcile": reconcile,
         },
+    }
+
+
+def _to_float(value, default: float = 0.0) -> float:
+    try:
+        if value in (None, "", "N/A"):
+            return default
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return default
+
+
+def _build_operations_pnl(ctx) -> dict:
+    realized = {
+        "summary": None,
+        "realized_pnl_won": None,
+        "sold_count": 0,
+    }
+    evaluation = {
+        "broker_total_equity": None,
+        "available_cash": None,
+        "position_eval_amount": None,
+        "broker_position_count": 0,
+        "virtual_holding_buy_amount": None,
+        "estimated_unrealized_pnl_won": None,
+        "snapshot_fetched_at": None,
+    }
+    day = {
+        "current_return_pct": None,
+        "daily_change_pct": None,
+        "baseline_date": None,
+    }
+
+    vts = getattr(ctx, "virtual_trade_service", None)
+    if vts is not None:
+        try:
+            realized["summary"] = vts.get_summary(apply_cost=True)
+        except TypeError:
+            try:
+                realized["summary"] = vts.get_summary()
+            except Exception:
+                realized["summary"] = None
+        except Exception:
+            realized["summary"] = None
+
+        try:
+            trades = vts.get_all_trades(apply_cost=False)
+            sold = [row for row in trades if row.get("status") == "SOLD"]
+            realized["sold_count"] = len(sold)
+            realized["realized_pnl_won"] = round(sum(
+                (_to_float(row.get("sell_price")) - _to_float(row.get("buy_price")))
+                * _to_float(row.get("qty"), 1.0)
+                for row in sold
+            ))
+        except Exception:
+            pass
+
+        try:
+            holds = vts.get_holds()
+            evaluation["virtual_holding_buy_amount"] = round(sum(
+                _to_float(row.get("buy_price")) * _to_float(row.get("qty"), 1.0)
+                for row in holds
+            ))
+        except Exception:
+            pass
+
+        try:
+            data = vts._load_data()
+            daily = data.get("daily", {}) if isinstance(data, dict) else {}
+            if daily:
+                latest_date = sorted(daily.keys())[-1]
+                current_return = daily.get(latest_date, {}).get("ALL")
+                if current_return is not None:
+                    day["current_return_pct"] = _to_float(current_return)
+                    change, baseline_date = vts.get_daily_change("ALL", day["current_return_pct"], _data=data)
+                    day["daily_change_pct"] = change
+                    day["baseline_date"] = baseline_date
+        except Exception:
+            pass
+
+    snapshot_cache = getattr(ctx, "account_snapshot_cache", None)
+    snapshot = getattr(snapshot_cache, "_snapshot", None) if snapshot_cache is not None else None
+    if snapshot is not None:
+        try:
+            positions = getattr(snapshot, "positions", {}) or {}
+            position_eval_amount = sum(int(v or 0) for v in positions.values())
+            evaluation.update({
+                "broker_total_equity": getattr(snapshot, "total_equity", None),
+                "available_cash": getattr(snapshot, "available_cash", None),
+                "position_eval_amount": position_eval_amount,
+                "broker_position_count": len(positions),
+                "snapshot_fetched_at": getattr(snapshot, "fetched_at", None).isoformat()
+                    if getattr(snapshot, "fetched_at", None) else None,
+            })
+            if evaluation["virtual_holding_buy_amount"] is not None:
+                evaluation["estimated_unrealized_pnl_won"] = (
+                    position_eval_amount - evaluation["virtual_holding_buy_amount"]
+                )
+        except Exception:
+            pass
+
+    return {
+        "realized": realized,
+        "evaluation": evaluation,
+        "day": day,
     }
 
 

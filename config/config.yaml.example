@@ -92,6 +92,13 @@ data_quality:
 notifications:
   telegram:
     enabled: true
+    # Telegram으로 즉시 발송할 이벤트 레벨. 여기에 없는 info 이벤트는 웹 SSE/히스토리에만 남긴다.
+    route_levels:
+      SYSTEM: ["error", "critical"]
+      TRADE: ["warning", "error", "critical"]
+      BACKGROUND: ["error", "critical"]
+      STRATEGY: ["warning", "error", "critical"]
+      API: ["error", "critical"]
 
 # 체결 품질 리포트 경고 기준 (사후 평가용, 자동 비활성화는 기본 OFF)
 execution_quality_report:

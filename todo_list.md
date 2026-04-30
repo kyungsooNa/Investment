@@ -278,9 +278,9 @@ main 반영 확인.
 
 남은 작업:
 
-- [ ] 전략별 슬리피지/체결 품질 리포트 결과를 임계 초과 시 즉시 알림으로 발행한다.
-- [ ] 운영 요약 패널의 손익을 broker 평가손익/계좌 스냅샷과 통합해 실현/평가/일중 손익으로 분리한다.
-- [ ] Telegram 알림 라우팅을 이벤트 카테고리/레벨별로 정리한다. (예: SYSTEM critical만 즉시 발송, info는 웹 SSE만)
+- [x] 전략별 슬리피지/체결 품질 리포트 결과를 임계 초과 시 즉시 알림으로 발행한다. (`OrderExecutionService` execution quality 즉시 Notification, 주문별 지표 dedupe)
+- [x] 운영 요약 패널의 손익을 broker 평가손익/계좌 스냅샷과 통합해 실현/평가/일중 손익으로 분리한다. (`pnl.realized/evaluation/day`)
+- [x] Telegram 알림 라우팅을 이벤트 카테고리/레벨별로 정리한다. (`notifications.telegram.route_levels`; info는 기본 웹 SSE/히스토리만)
 
 주요 파일:
 
@@ -304,8 +304,8 @@ main 반영 확인.
 
 - [x] `PreMarketHealthCheckTask`의 점검 항목을 broker/token/config 존재 확인에서 실제 API ping/권한/계좌 조회까지 확장한다. (`get_access_token`, `get_current_price("005930")`, `get_account_balance` probe)
 - [x] `AfterMarketReconcileTask` 결과를 운영 대시보드와 알림 히스토리에서 추적 가능하게 저장한다. (`/api/system/reconcile/history`, 운영 요약 포함, 성공/불일치/실패 알림)
-- [ ] `AfterMarketTask` 계열 전체에 start/stop/cancel/sleep lifecycle 표준 테스트를 확대한다.
-- [ ] 중복 실행 guard가 실제 웹 lifespan/수동 start 연타 상황에서도 원하는 로그만 남기는지 브라우저/수동 시나리오로 확인한다.
+- [x] `AfterMarketTask` 계열 전체에 start/stop/cancel/sleep lifecycle 표준 테스트를 확대한다. (`AfterMarketTask` active scheduler task 기준 중복 start 방지 + cancel/stop 회귀 테스트)
+- [x] 중복 실행 guard가 실제 웹 lifespan/수동 start 연타 상황에서도 원하는 로그만 남기는지 브라우저/수동 시나리오로 확인한다. (`BackgroundScheduler` started/shutdown-completed guard + `WebAppContext.start_background_tasks()` 연타 테스트)
 
 주요 파일:
 

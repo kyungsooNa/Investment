@@ -512,6 +512,7 @@ class WebAppContext:
                 risk_gate_service=self.risk_gate_service,
                 order_policy_service=self.order_policy_service,
                 data_quality_service=self.data_quality_service,
+                execution_quality_config=getattr(self.full_config, "execution_quality_report", None),
             )
             self.streaming_service.register_handler(
                 "signing_notice",
@@ -597,6 +598,7 @@ class WebAppContext:
             self.notification_queue_task = NotificationQueueTask(
                 notification_service=self.notification_service,
                 poll_interval=config_dict.get("notification_queue_poll_interval", 1.0),
+                telegram_config=getattr(getattr(self.full_config, "notifications", None), "telegram", None),
                 logger=self.logger,
             )
             self.after_market_reconcile_task = AfterMarketReconcileTask(

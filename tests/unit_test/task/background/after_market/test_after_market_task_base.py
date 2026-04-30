@@ -380,6 +380,81 @@ class TestStart:
         assert task._tasks == []
         assert task.state == TaskState.RUNNING
 
+    async def test_fallback_start_is_idempotent_while_scheduler_waits_idle(self):
+        """scheduler task가 대기 중이면 state가 IDLE이어도 start()는 중복 생성하지 않는다."""
+        task = _ConcreteTaskWithBaseStart(
+            mcs=MagicMock(), market_clock=MagicMock(), logger=MagicMock(), worker_pool=None
+        )
+        loop_entered = asyncio.Event()
+        release_loop = asyncio.Event()
+
+        async def blocking_loop(*args, **kwargs):
+            loop_entered.set()
+            await release_loop.wait()
+
+        with patch(
+            "task.background.after_market.after_market_task_base.run_after_market_loop",
+            side_effect=blocking_loop,
+        ):
+            await task.start()
+            try:
+                await asyncio.wait_for(loop_entered.wait(), timeout=1)
+                assert task.state == TaskState.IDLE
+                assert len(task._tasks) == 1
+
+                await task.start()
+
+                assert len(task._tasks) == 1
+            finally:
+                release_loop.set()
+                await task.stop()
+
+    async def test_fallback_start_prunes_completed_scheduler_before_restart(self):
+        """완료된 scheduler task는 정리한 뒤 재시작할 수 있다."""
+        task = _ConcreteTaskWithBaseStart(
+            mcs=MagicMock(), market_clock=MagicMock(), logger=MagicMock(), worker_pool=None
+        )
+
+        with patch(
+            "task.background.after_market.after_market_task_base.run_after_market_loop",
+            new_callable=AsyncMock,
+        ):
+            await task.start()
+            await asyncio.wait_for(task._tasks[0], timeout=1)
+            assert all(t.done() for t in task._tasks)
+
+            await task.start()
+            try:
+                assert len(task._tasks) == 1
+            finally:
+                await task.stop()
+
+    async def test_stop_cancels_real_background_scheduler_task(self):
+        """stop()은 실제 asyncio.Task를 취소하고 task 목록을 비운다."""
+        task = _ConcreteTaskWithBaseStart(
+            mcs=MagicMock(), market_clock=MagicMock(), logger=MagicMock(), worker_pool=None
+        )
+        loop_entered = asyncio.Event()
+        never_release = asyncio.Event()
+
+        async def sleeping_loop(*args, **kwargs):
+            loop_entered.set()
+            await never_release.wait()
+
+        with patch(
+            "task.background.after_market.after_market_task_base.run_after_market_loop",
+            side_effect=sleeping_loop,
+        ):
+            await task.start()
+            await asyncio.wait_for(loop_entered.wait(), timeout=1)
+            created = task._tasks[0]
+
+            await task.stop()
+
+        assert created.cancelled()
+        assert task._tasks == []
+        assert task.state == TaskState.STOPPED
+
 
 # ---------------------------------------------------------------------------
 # scheduler exception paths

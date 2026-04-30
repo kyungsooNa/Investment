@@ -11,6 +11,7 @@ NotificationQueueTask 단위 테스트.
 import asyncio
 import pytest
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from task.background.always_on.notification_queue_task import NotificationQueueTask
@@ -254,6 +255,54 @@ async def test_drain_loop_handler_exception_does_not_stop_processing(ns):
     # 실패 핸들러도 호출되었고, 이후 정상 핸들러도 호출되어야 함
     fail_handler.assert_awaited_once_with(event)
     ok_handler.assert_awaited_once_with(event)
+
+
+@pytest.mark.asyncio
+async def test_drain_loop_filters_telegram_by_category_level(ns):
+    handler = AsyncMock()
+    ns.register_external_handler(handler)
+    task = NotificationQueueTask(
+        ns,
+        poll_interval=0,
+        telegram_config=SimpleNamespace(
+            enabled=True,
+            route_levels={
+                "SYSTEM": ["error", "critical"],
+                "TRADE": ["warning", "error", "critical"],
+            },
+        ),
+        logger=MagicMock(),
+    )
+
+    info_event = await ns.emit(NotificationCategory.SYSTEM, NotificationLevel.INFO, "info", "web only")
+    warning_event = await ns.emit(NotificationCategory.TRADE, NotificationLevel.WARNING, "warn", "telegram")
+
+    await task.start()
+    await asyncio.wait_for(ns.external_handler_queue.join(), timeout=2.0)
+    await task.stop()
+
+    handler.assert_awaited_once_with(warning_event)
+    assert info_event.title == "info"
+
+
+@pytest.mark.asyncio
+async def test_drain_loop_skips_external_when_telegram_disabled(ns):
+    handler = AsyncMock()
+    ns.register_external_handler(handler)
+    task = NotificationQueueTask(
+        ns,
+        poll_interval=0,
+        telegram_config=SimpleNamespace(enabled=False, route_levels={}),
+        logger=MagicMock(),
+    )
+
+    await ns.emit(NotificationCategory.SYSTEM, NotificationLevel.CRITICAL, "critical", "m")
+
+    await task.start()
+    await asyncio.wait_for(ns.external_handler_queue.join(), timeout=2.0)
+    await task.stop()
+
+    handler.assert_not_awaited()
 
 
 @pytest.mark.asyncio
