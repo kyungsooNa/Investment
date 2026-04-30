@@ -404,6 +404,30 @@ class StrategyScheduler:
         with trace_scope(tid):
             await self._execute_signal_inner(signal, tid)
 
+    def _estimate_return_rate_from_hold(self, strategy_name: str, code: str, sell_price: int) -> Optional[float]:
+        if not self._virtual_trade_service or sell_price <= 0:
+            return None
+        try:
+            holds = self._virtual_trade_service.get_holds_by_strategy(strategy_name) or []
+        except Exception as exc:
+            self._logger.warning(
+                f"[Scheduler] 수익률 추정 실패: strategy={strategy_name} code={code} error={exc}"
+            )
+            return None
+
+        for hold in reversed(holds):
+            if str(hold.get("code", "")) != code:
+                continue
+            try:
+                buy_price = float(hold.get("buy_price") or 0)
+            except (TypeError, ValueError):
+                return None
+            if buy_price <= 0:
+                return None
+            return round((sell_price - buy_price) / buy_price * 100, 2)
+
+        return None
+
     async def _execute_signal_inner(self, signal: TradeSignal, tid: str):
         self._logger.info(
             f"[Scheduler] 시그널 실행: [{signal.strategy_name}] {signal.action} {signal.name}({signal.code}) "
@@ -546,6 +570,11 @@ class StrategyScheduler:
                     f"[Scheduler] API 주문 예외: {signal.action} {signal.code} - {e} "
                     f"(CSV는 기록됨)"
                 )
+
+        if signal.action == "SELL" and return_rate is None and api_success:
+            return_rate = self._estimate_return_rate_from_hold(
+                signal.strategy_name, signal.code, log_price
+            )
 
         # 시그널 이력 기록 (메모리 + CSV 영속화)
         now = self._tm.get_current_kst_time()
