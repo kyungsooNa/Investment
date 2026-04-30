@@ -145,13 +145,13 @@
 </div>
 
 <!-- 공통 스크립트 -->
-<script src="/static/js/common.js?v=1"></script>
+<script src="/static/js/common.js?v=2"></script>
 <script src="/static/js/notifications.js?v=1"></script>
-<script src="/static/js/kill_switch.js?v=1"></script>
+<script src="/static/js/kill_switch.js?v=2"></script>
 <script src="/static/js/pagination.js?v=1"></script>
 
 <!-- ── 서버 요청 진단 패널 (hang 디버깅용) ─────────────────────────────
-     - 모든 페이지에 항상 떠있음 (좌하단 고정)
+     - ?debug=1 또는 localStorage.debugRequests='1' 일 때만 활성화
      - 2초마다 /api/debug/requests 폴링 → in-flight 요청 + FG 상태 표시
      - 2초 이상 걸리는 요청이 생기면 자동으로 패널 열림 + 주황색 경고
      - 콘솔 헬퍼: __debug.requests() / __debug.fg()
@@ -179,6 +179,21 @@
 </div>
 <script>
 (function () {
+    const debugEnabled = new URLSearchParams(window.location.search).get('debug') === '1'
+        || window.localStorage.getItem('debugRequests') === '1';
+    if (!debugEnabled) {
+        const panel = document.getElementById('dbg-panel');
+        if (panel) panel.remove();
+        window.__debug = {
+            enable: () => {
+                window.localStorage.setItem('debugRequests', '1');
+                window.location.reload();
+            },
+            disable: () => window.localStorage.removeItem('debugRequests'),
+        };
+        return;
+    }
+
     const panel  = document.getElementById('dbg-panel');
     const header = document.getElementById('dbg-header');
     const title  = document.getElementById('dbg-title');
@@ -201,7 +216,11 @@
     const DBG_URL  = 'http://127.0.0.1:8001/debug/requests';
     const MAIN_URL = '/api/debug/requests';
 
+    let pollInFlight = false;
+
     async function poll() {
+        if (pollInFlight) return;
+        pollInFlight = true;
         try {
             const r = await fetch(DBG_URL, { signal: AbortSignal.timeout(1500) });
             if (r.ok) { render(await r.json()); return; }
@@ -210,6 +229,9 @@
             const r = await fetch(MAIN_URL, { signal: AbortSignal.timeout(1500) });
             if (r.ok) render(await r.json());
         } catch (_) {}
+        finally {
+            pollInFlight = false;
+        }
     }
 
     function render(d) {
@@ -276,6 +298,10 @@
             fetch('/api/background/status')
                 .then(r => r.json())
                 .then(d => { console.log('[ForegroundScheduler]', d.foreground); console.table(d.data); return d; }),
+        disable: () => {
+            window.localStorage.removeItem('debugRequests');
+            window.location.reload();
+        },
     };
 })();
 </script>

@@ -25,7 +25,7 @@ async def get_scheduler_status():
     if not ctx.scheduler:
         return {"running": False, "strategies": []}
     
-    status = ctx.scheduler.get_status()
+    status = await asyncio.to_thread(ctx.scheduler.get_status)
     
     # [BugFix] 보유 종목명 보정
     mapper = getattr(ctx, 'stock_code_repository', None)

@@ -229,9 +229,15 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(updateStatus, 5000);
 });
 
+let _statusInFlight = false;
+
 async function updateStatus() {
+    if (_statusInFlight) return;
+    _statusInFlight = true;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
     try {
-        const res = await fetch('/api/status');
+        const res = await fetch('/api/status', { signal: controller.signal });
         const data = await res.json();
 
         document.getElementById('status-time').innerText = data.current_time || '--:--:--';
@@ -266,6 +272,9 @@ async function updateStatus() {
 
     } catch (e) {
         console.error("Status update failed:", e);
+    } finally {
+        clearTimeout(timer);
+        _statusInFlight = false;
     }
 }
 

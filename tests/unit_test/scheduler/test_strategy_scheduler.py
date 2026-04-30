@@ -333,8 +333,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(strategy._position_state, {})
         strategy._save_state.assert_called_once()
 
-    def test_get_status_keeps_disabled_force_exit_strategy_state_when_signal_evidence_exists(self):
-        """비활성 당일청산 전략이라도 열린 포지션 근거가 있으면 state를 유지한다."""
+    def test_get_status_prunes_disabled_force_exit_strategy_state_even_when_signal_evidence_exists(self):
+        """비활성 당일청산 전략은 과거 시그널 이력만으로 stale state를 유지하지 않는다."""
         scheduler, vm, _, _, _ = self._make_scheduler()
         strategy = MockStrategy(name="거래량돌파(전통)")
         strategy._position_state = {
@@ -365,9 +365,10 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         status = scheduler.get_status()
 
-        self.assertEqual(status["strategies"][0]["current_holds"], 1)
-        self.assertEqual(status["strategies"][0]["holdings"][0]["code"], "010060")
-        strategy._save_state.assert_not_called()
+        self.assertEqual(status["strategies"][0]["current_holds"], 0)
+        self.assertEqual(status["strategies"][0]["holdings"], [])
+        self.assertEqual(strategy._position_state, {})
+        strategy._save_state.assert_called_once()
 
     def test_get_status_empty(self):
         """전략 미등록 상태에서 get_status 테스트."""
@@ -1236,6 +1237,25 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             
             mock_liquidate.assert_called_once_with(config)
             self.assertFalse(config.enabled)
+
+    async def test_stop_strategy_clears_force_exit_position_state(self):
+        """당일청산 전략 정지 후 내부 position_state가 UI 보유로 되살아나지 않도록 정리한다."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="AutoCloseStrategy")
+        strategy._position_state = {"005930": SimpleNamespace(entry_price=70000)}
+        strategy._save_state = MagicMock()
+        config = StrategySchedulerConfig(
+            strategy=strategy,
+            force_exit_on_close=True,
+            enabled=True,
+        )
+        scheduler.register(config)
+
+        with patch.object(scheduler, '_force_liquidate_strategy', new_callable=AsyncMock):
+            await scheduler.stop_strategy("AutoCloseStrategy")
+
+        self.assertEqual(strategy._position_state, {})
+        strategy._save_state.assert_called_once()
 
     async def test_stop_strategy_no_liquidation_if_disabled(self):
         """이미 비활성화된 전략은 stop_strategy 호출 시 강제 청산 미수행."""

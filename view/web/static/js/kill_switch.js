@@ -4,18 +4,27 @@
  */
 
 let _ksStatus = null;
+let _ksStatusInFlight = false;
 
 function _fmtNumber(n) {
     return n != null ? Number(n).toLocaleString() : '-';
 }
 
 async function loadKillSwitchStatus() {
+    if (_ksStatusInFlight) return;
+    _ksStatusInFlight = true;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
     try {
-        const res = await fetch('/api/kill-switch/status');
+        const res = await fetch('/api/kill-switch/status', { signal: controller.signal });
         if (!res.ok) return;
         _ksStatus = await res.json();
         _updateBadge(_ksStatus);
     } catch (_) { /* silent */ }
+    finally {
+        clearTimeout(timer);
+        _ksStatusInFlight = false;
+    }
 }
 
 function _updateBadge(s) {

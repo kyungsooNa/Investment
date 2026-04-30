@@ -4,6 +4,21 @@ let schedulerPollingId = null;
 let allSchedulerHistory = [];
 let currentSchedulerFilter = '전체';
 let schedulerEventSource = null;
+let schedulerStatusInFlight = false;
+
+function fetchSchedulerJson(url, options = {}, timeoutMs = 8000) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...options, signal: controller.signal })
+        .then(async (res) => {
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(data.detail || `HTTP ${res.status}`);
+            }
+            return data;
+        })
+        .finally(() => window.clearTimeout(timer));
+}
 
 function syncSchedulerRealtimeState(data) {
     if (data && data.running) {
@@ -22,24 +37,33 @@ function refreshSchedulerStatusSoon(delayMs = 500) {
 }
 
 async function loadSchedulerStatus() {
+    if (schedulerStatusInFlight) return;
+    schedulerStatusInFlight = true;
+    let statusData = null;
     try {
         // 두 요청을 동시에 시작 (병렬)
-        const statusPromise  = fetch('/api/scheduler/status');
-        const historyPromise = fetch('/api/scheduler/history');
+        const statusPromise  = fetchSchedulerJson('/api/scheduler/status');
+        const historyPromise = fetchSchedulerJson('/api/scheduler/history');
 
         // status가 도착하는 즉시 렌더링 — history를 기다리지 않음
-        const statusData = await statusPromise.then(r => r.json());
+        statusData = await statusPromise;
         renderSchedulerStatus(statusData);
         syncSchedulerRealtimeState(statusData);
 
         // history가 도착하면 이력 테이블 렌더링
-        const historyData = await historyPromise.then(r => r.json());
-        allSchedulerHistory = historyData.history || [];
-        buildSchedulerHistoryTabs(statusData.strategies || []);
-        filterSchedulerHistory(currentSchedulerFilter);
+        try {
+            const historyData = await historyPromise;
+            allSchedulerHistory = historyData.history || [];
+            buildSchedulerHistoryTabs(statusData.strategies || []);
+            filterSchedulerHistory(currentSchedulerFilter);
+        } catch (historyError) {
+            console.warn('[Scheduler] history fetch failed:', historyError);
+        }
     } catch (e) {
         const info = document.getElementById('scheduler-info');
-        if (info) info.innerHTML = '<span>스케줄러 상태 조회 실패</span>';
+        if (info && !statusData) info.innerHTML = '<span>스케줄러 상태 조회 실패</span>';
+    } finally {
+        schedulerStatusInFlight = false;
     }
 }
 
@@ -107,53 +131,45 @@ function renderSchedulerStatus(data) {
 
 async function startScheduler() {
     try {
-        const res = await fetch('/api/scheduler/start', { method: 'POST' });
-        const data = await res.json();
+        const data = await fetchSchedulerJson('/api/scheduler/start', { method: 'POST' });
         if (data.success) {
             refreshSchedulerStatusSoon();
         }
     } catch (e) {
-        alert('스케줄러 시작 실패');
+        alert(`스케줄러 시작 실패: ${e.message}`);
     }
 }
 
 async function stopScheduler() {
     try {
-        const res = await fetch('/api/scheduler/stop', { method: 'POST' });
-        const data = await res.json();
+        const data = await fetchSchedulerJson('/api/scheduler/stop', { method: 'POST' });
         if (data.success) {
             refreshSchedulerStatusSoon();
         }
     } catch (e) {
-        alert('스케줄러 정지 실패');
+        alert(`스케줄러 정지 실패: ${e.message}`);
     }
 }
 
 async function startStrategy(name) {
     try {
-        const res = await fetch(`/api/scheduler/strategy/${encodeURIComponent(name)}/start`, { method: 'POST' });
-        const data = await res.json();
+        const data = await fetchSchedulerJson(`/api/scheduler/strategy/${encodeURIComponent(name)}/start`, { method: 'POST' });
         if (data.success) {
             refreshSchedulerStatusSoon();
-        } else {
-            alert(data.detail || '전략 시작 실패');
         }
     } catch (e) {
-        alert('전략 시작 실패');
+        alert(`전략 시작 실패: ${e.message}`);
     }
 }
 
 async function stopStrategy(name) {
     try {
-        const res = await fetch(`/api/scheduler/strategy/${encodeURIComponent(name)}/stop`, { method: 'POST' });
-        const data = await res.json();
+        const data = await fetchSchedulerJson(`/api/scheduler/strategy/${encodeURIComponent(name)}/stop`, { method: 'POST' });
         if (data.success) {
             refreshSchedulerStatusSoon();
-        } else {
-            alert(data.detail || '전략 정지 실패');
         }
     } catch (e) {
-        alert('전략 정지 실패');
+        alert(`전략 정지 실패: ${e.message}`);
     }
 }
 
@@ -168,19 +184,16 @@ async function updateMaxPositions(name, currentMax) {
     }
 
     try {
-        const res = await fetch(`/api/scheduler/strategy/${encodeURIComponent(name)}/max-positions`, {
+        const data = await fetchSchedulerJson(`/api/scheduler/strategy/${encodeURIComponent(name)}/max-positions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ max_positions: parsed })
         });
-        const data = await res.json();
         if (data.success) {
             refreshSchedulerStatusSoon();
-        } else {
-            alert(data.detail || '포지션 수 변경 실패');
         }
     } catch (e) {
-        alert('포지션 수 변경 중 오류가 발생했습니다.');
+        alert(`포지션 수 변경 실패: ${e.message}`);
     }
 }
 
@@ -286,8 +299,7 @@ function connectSchedulerSSE() {
             }
             filterSchedulerHistory(currentSchedulerFilter);
 
-            fetch('/api/scheduler/status')
-                .then(res => res.json())
+            fetchSchedulerJson('/api/scheduler/status')
                 .then(data => {
                     renderSchedulerStatus(data);
                     syncSchedulerRealtimeState(data);
