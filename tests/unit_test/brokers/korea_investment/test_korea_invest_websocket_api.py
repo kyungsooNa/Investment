@@ -84,9 +84,16 @@ async def test_websocket_api_connect_success(websocket_api_instance):
     api = websocket_api_instance
 
     patch_target = f"{KoreaInvestWebSocketAPI.__module__}.websockets.connect"
+    created_task = MagicMock()
+    created_task.done.return_value = True
+
+    def close_receive_coro(coro):
+        coro.close()
+        return created_task
 
     with patch(patch_target, new_callable=AsyncMock) as mock_connect, \
-            patch.object(api, "_get_approval_key", new_callable=AsyncMock, return_value="approval-key"):
+            patch.object(api, "_get_approval_key", new_callable=AsyncMock, return_value="approval-key"), \
+            patch("asyncio.create_task", side_effect=close_receive_coro):
         # ✅ 웹소켓 객체를 명확히 설정
         mock_websocket = AsyncMock()
         mock_websocket.recv = AsyncMock(return_value="0|mock message")  # ✅ 경고 방지 핵심
@@ -952,8 +959,16 @@ async def test_websocket_keepalive_logic(websocket_api_instance):
 
     # 1. 연결 시 ping_interval 설정 확인
     patch_target = f"{KoreaInvestWebSocketAPI.__module__}.websockets.connect"
+    created_task = MagicMock()
+    created_task.done.return_value = True
+
+    def close_receive_coro(coro):
+        coro.close()
+        return created_task
+
     with patch(patch_target, new_callable=AsyncMock) as mock_connect, \
-         patch.object(api, "_get_approval_key", return_value="key"):
+         patch.object(api, "_get_approval_key", return_value="key"), \
+         patch("asyncio.create_task", side_effect=close_receive_coro):
         
         await api.connect()
         
@@ -2389,6 +2404,7 @@ async def test_receive_messages_timeout_closes_when_market_check_true(websocket_
     api._mcs.is_market_open_now = AsyncMock(return_value=True)
 
     async def wait_for_side_effect(*args, **kwargs):
+        args[0].close()
         api._auto_reconnect = False
         raise asyncio.TimeoutError
 
@@ -2412,6 +2428,7 @@ async def test_receive_messages_timeout_keeps_connection_when_market_closed(webs
     api._mcs.is_market_open_now = AsyncMock(return_value=False)
 
     async def wait_for_side_effect(*args, **kwargs):
+        args[0].close()
         api._auto_reconnect = False
         raise asyncio.TimeoutError
 
@@ -2433,6 +2450,7 @@ async def test_receive_messages_connection_lost_without_warning_when_auto_reconn
     api._streaming_logger = MagicMock()
 
     async def wait_for_side_effect(*args, **kwargs):
+        args[0].close()
         api._auto_reconnect = False
         raise Exception("socket lost")
 
@@ -2453,6 +2471,7 @@ async def test_receive_messages_connection_lost_close_error_swallowed(websocket_
     api.approval_key = "approval"
 
     async def wait_for_side_effect(*args, **kwargs):
+        args[0].close()
         api._auto_reconnect = False
         raise Exception("socket lost")
 
@@ -2483,9 +2502,14 @@ async def test_connect_cancels_existing_receive_task_before_restart(websocket_ap
 
     existing_task = DummyTask()
     api._receive_task = existing_task
+    created_task = MagicMock()
+
+    def close_receive_coro(coro):
+        coro.close()
+        return created_task
 
     with patch.object(api, "_establish_connection", new_callable=AsyncMock, return_value=True), \
-         patch("asyncio.create_task", return_value=MagicMock()) as mock_create_task:
+         patch("asyncio.create_task", side_effect=close_receive_coro) as mock_create_task:
         result = await api.connect()
 
     assert result is True

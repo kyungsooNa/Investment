@@ -2,10 +2,11 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime
+from types import SimpleNamespace
 
 from common.types import ResCommonResponse, TradeSignal
 from strategies.rsi2_pullback_strategy import RSI2PullbackStrategy
-from strategies.rsi2_pullback_types import RSI2PullbackConfig
+from strategies.rsi2_pullback_types import RSI2PullbackConfig, RSI2PositionState
 from strategies.oneil_common_types import OSBWatchlistItem
 from services.stock_query_service import StockQueryService
 from services.indicator_service import IndicatorService
@@ -154,6 +155,43 @@ async def test_scan_market_timing_off_marks_risk_off(scan_setup):
     assert state.risk_off_entry is True
 
 
+@pytest.mark.asyncio
+async def test_scan_skips_empty_watchlist(scan_setup):
+    strategy, _, universe, _, _, _ = scan_setup
+    universe.get_watchlist.return_value = {}
+
+    signals = await strategy.scan()
+
+    assert signals == []
+
+
+@pytest.mark.asyncio
+async def test_scan_logs_entry_check_exception(scan_setup):
+    strategy, _, _, indicator, _, logger = scan_setup
+    indicator.get_rsi.side_effect = RuntimeError("rsi down")
+
+    signals = await strategy.scan()
+
+    assert signals == []
+    logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_check_entry_skips_bad_rsi_current_price_and_zero_qty(scan_setup, watchlist_item_stage2):
+    strategy, sqs, _, indicator, _, _ = scan_setup
+
+    indicator.get_rsi.return_value = ResCommonResponse(rt_cd="1", msg1="fail", data=None)
+    assert await strategy._check_entry("005930", watchlist_item_stage2, {"KOSPI": True}) is None
+
+    indicator.get_rsi.return_value = _rsi_resp(8.0)
+    sqs.get_current_price.return_value = _price_resp("0")
+    assert await strategy._check_entry("005930", watchlist_item_stage2, {"KOSPI": True}) is None
+
+    sqs.get_current_price.return_value = _price_resp("10000")
+    strategy._calculate_qty = MagicMock(return_value=0)
+    assert await strategy._check_entry("005930", watchlist_item_stage2, {"KOSPI": True}) is None
+
+
 # ── check_exits() 테스트 ─────────────────────────────────────────
 
 @pytest.fixture
@@ -229,6 +267,108 @@ async def test_check_exits_no_signal_when_in_range(exit_setup):
     holdings = [{"code": "005930", "name": "삼성전자", "buy_price": 10000, "qty": 5}]
     signals = await strategy.check_exits(holdings)
     assert signals == []
+
+
+@pytest.mark.asyncio
+async def test_check_exits_empty_and_bad_holdings_are_ignored(exit_setup):
+    strategy, sqs, _ = exit_setup
+
+    assert await strategy.check_exits([]) == []
+    assert await strategy._check_single_exit({}) is None
+
+    sqs.get_current_price.return_value = _price_resp("0")
+    assert await strategy._check_single_exit({"code": "005930"}) is None
+
+
+@pytest.mark.asyncio
+async def test_check_exits_logs_exceptions_and_ignores_none_results(exit_setup):
+    strategy, _, _ = exit_setup
+    strategy._check_single_exit = AsyncMock(side_effect=[RuntimeError("exit down"), None])
+
+    signals = await strategy.check_exits([{"code": "005930"}, {"code": "000660"}])
+
+    assert signals == []
+    strategy._logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_check_single_exit_defaults_buy_price_to_current(exit_setup):
+    strategy, sqs, indicator = exit_setup
+    sqs.get_current_price.return_value = _price_resp("10500")
+    indicator.get_moving_average.side_effect = [
+        _ma_resp(9000.0),
+        _ma_resp(10400.0),
+    ]
+
+    result = await strategy._check_single_exit({"code": "005930", "buy_price": 0})
+
+    signal, dirty = result
+    assert signal.price == 10500
+    assert dirty is False
+
+
+def test_extract_current_price_handles_invalid_responses_and_objects():
+    assert RSI2PullbackStrategy._extract_current_price(None) == 0
+    assert RSI2PullbackStrategy._extract_current_price(ResCommonResponse(rt_cd="1", msg1="fail", data=None)) == 0
+    assert RSI2PullbackStrategy._extract_current_price(ResCommonResponse(rt_cd="0", msg1="OK", data={})) == 0
+    assert RSI2PullbackStrategy._extract_current_price(ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "bad"}})) == 0
+    assert RSI2PullbackStrategy._extract_current_price(ResCommonResponse(rt_cd="0", msg1="OK", data=SimpleNamespace(stck_prpr="12345"))) == 12345
+
+
+def test_latest_ma_handles_invalid_responses():
+    assert RSI2PullbackStrategy._latest_ma(RuntimeError("boom")) is None
+    assert RSI2PullbackStrategy._latest_ma(None) is None
+    assert RSI2PullbackStrategy._latest_ma(ResCommonResponse(rt_cd="1", msg1="fail", data=[])) is None
+    assert RSI2PullbackStrategy._latest_ma(ResCommonResponse(rt_cd="0", msg1="OK", data=[{"ma": "bad"}])) is None
+
+
+def test_calculate_qty_variable_sizing_and_invalid_price(mock_deps):
+    sqs, universe, indicator, tm, logger = mock_deps
+    cfg = RSI2PullbackConfig(use_fixed_qty=False, total_portfolio_krw=1_000_000, position_size_pct=10.0, min_qty=1)
+    strategy = RSI2PullbackStrategy(sqs, universe, indicator, tm, config=cfg, logger=logger)
+
+    assert strategy._calculate_qty(0) == 1
+    assert strategy._calculate_qty(10_000, risk_off=False) == 10
+    assert strategy._calculate_qty(10_000, risk_off=True) == 5
+
+
+def test_state_file_load_and_save_round_trip(tmp_path, mock_deps):
+    sqs, universe, indicator, tm, logger = mock_deps
+    state_file = tmp_path / "rsi2_state.json"
+    state_file.write_text(
+        (
+            '{"positions": {"005930": {"entry_price": 10000, "entry_date": "20260430", '
+            '"entry_rsi": 8.5, "risk_off_entry": true}}, "cooldown": {"000660": "20260502"}}'
+        ),
+        encoding="utf-8",
+    )
+
+    strategy = RSI2PullbackStrategy(sqs, universe, indicator, tm, logger=logger, state_file=state_file)
+    assert strategy._position_state["005930"].entry_price == 10000
+    assert strategy._cooldown["000660"] == "20260502"
+
+    strategy._position_state["035720"] = RSI2PositionState(
+        entry_price=50000,
+        entry_date="20260430",
+        entry_rsi=7.0,
+    )
+    strategy._save_state()
+
+    saved = state_file.read_text(encoding="utf-8")
+    assert "035720" in saved
+
+
+def test_state_load_and_save_errors_are_logged(tmp_path, mock_deps):
+    sqs, universe, indicator, tm, logger = mock_deps
+    bad_state = tmp_path / "bad.json"
+    bad_state.write_text("{bad json", encoding="utf-8")
+
+    strategy = RSI2PullbackStrategy(sqs, universe, indicator, tm, logger=logger, state_file=bad_state)
+    logger.error.assert_called()
+
+    strategy.STATE_FILE = str(tmp_path)
+    strategy._save_state()
+    assert logger.error.call_count >= 2
 
 
 # ── 인터페이스 ────────────────────────────────────────────────────
