@@ -623,7 +623,6 @@ class WebAppContext:
                 (self.daily_price_collector_task,        TaskPriority.LOW),
                 (self.ohlcv_update_task,                 TaskPriority.LOW),
                 (self.premium_watchlist_generator_task,  TaskPriority.LOW),
-                (self.cache_warmup_task,                 TaskPriority.LOW),
                 (self.newhigh_task,                      TaskPriority.LOW),
                 (self.log_cleanup_task,                  TaskPriority.MAINTENANCE),
                 (self.strategy_log_report_task,          TaskPriority.LOW),

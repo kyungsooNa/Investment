@@ -19,6 +19,7 @@ router = APIRouter()
 _SCHEDULE_TYPES = {
     "pre_market_health_check": "pre_market",
     "websocket_watchdog":  "intraday",
+    "cache_warmup":       "pre_market",
     "strategy_scheduler":  "intraday",
     "ranking_refresh":     "after_market",
     "daily_price_collector": "after_market",
