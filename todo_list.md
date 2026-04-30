@@ -170,6 +170,7 @@ main 반영 확인.
   - [X] 단위 테스트: `tests/unit_test/strategies/test_rsi2_pullback_strategy.py` (11건)
   - [X] 통합 테스트: `tests/integration_test/strategies/test_it_api_rsi2_pullback_strategy.py` + `test_it_strategy_scan.py::TestRSI2PullbackScan` (5건)
   - [X] WebAppContext 등록 및 StrategyScheduler 연결 (`view/web/web_app_initializer.py`, `enabled=False` 수동 활성화 대기)
+
 - [X] Larry Williams / 브렌트 펜볼드 돈천 채널 돌파 전략을 설계·구현한다. (L218 확장 3과 동일 전략으로 통합)
   - [X] RS Rating ≥ 80, ADX(14) ≥ 25 우상향, 거래대금 필터를 함께 적용한다.
   - [X] 20일 고가 돌파 진입, 10일 저가 trailing stop 청산.
@@ -180,7 +181,10 @@ main 반영 확인.
   - [X] ADX 인프라: `services/indicator_service.py` — `_compute_adx` + `calc_adx_sync` 추가
   - [X] 단위 테스트: `tests/unit_test/strategies/test_larry_williams_channel_breakout_strategy.py` (16건) + ADX 테스트 4건
   - [X] WebAppContext 등록 (`view/web/web_app_initializer.py`, `enabled=False` 수동 활성화 대기)
-
+  - 미적용 리뷰 항목
+      ADX 우상황 주석: 본 전략 파일이 아닌 IndicatorService.calc_adx_sync 내부 사항이라 별도 PR 권장.
+      _extract_* None 체크 명시화: 사소, 동작 동일하므로 보류.
+      check_exits OHLCV 재호출: 문서에 트레이드오프 명시됨. 운영 모니터링 후 결정.
 주요 파일:
 
 - `strategies/*`

@@ -199,6 +199,10 @@ window.toggleVirtualStrategy = function(strategyName, btnElement) {
 };
 
 function applyVirtualFilter() {
+    if (window.Paginator) {
+        window.Paginator.reset('virtual-hold');
+        window.Paginator.reset('virtual-sold');
+    }
     const isAll = selectedVirtualStrategies.has('ALL');
     const selectedArray = isAll ? ['ALL'] : [...selectedVirtualStrategies];
     const displayLabel = isAll ? 'ALL' : selectedArray.join(', ');
@@ -520,9 +524,14 @@ function renderVirtualHoldTable() {
 
     if (data.length === 0) {
         holdBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px;">보유 종목이 없습니다.</td></tr>';
+        const ctrl = document.getElementById('virtual-hold-pagination');
+        if (ctrl) ctrl.innerHTML = '';
         return;
     }
-    data.forEach(item => {
+    const pageData = window.Paginator
+        ? window.Paginator.paginate('virtual-hold', data, 'virtual-hold-pagination', renderVirtualHoldTable)
+        : data;
+    pageData.forEach(item => {
         const ror = item.return_rate || 0;
         const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
         const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
@@ -581,9 +590,14 @@ function renderVirtualSoldTable() {
 
     if (data.length === 0) {
         soldBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px;">매도 기록이 없습니다.</td></tr>';
+        const ctrl = document.getElementById('virtual-sold-pagination');
+        if (ctrl) ctrl.innerHTML = '';
         return;
     }
-    data.forEach(item => {
+    const pageData = window.Paginator
+        ? window.Paginator.paginate('virtual-sold', data, 'virtual-sold-pagination', renderVirtualSoldTable)
+        : data;
+    pageData.forEach(item => {
         const ror = item.return_rate || 0;
         const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
         const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
@@ -637,6 +651,9 @@ function sortVirtual(table, key) {
         state.dir = 'asc';
     }
 
+    if (window.Paginator) {
+        window.Paginator.reset(table === 'hold' ? 'virtual-hold' : 'virtual-sold');
+    }
     if (table === 'hold') renderVirtualHoldTable();
     else renderVirtualSoldTable();
 }

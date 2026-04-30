@@ -46,6 +46,7 @@
                 <tbody id="virtual-hold-body"></tbody>
             </table>
         </div>
+        <div id="virtual-hold-pagination" class="pagination-wrap"></div>
 
         <h3 style="margin:24px 0 8px; color:var(--text-primary);">매도 완료</h3>
         <div class="table-container">
@@ -62,13 +63,14 @@
                 <tbody id="virtual-sold-body"></tbody>
             </table>
         </div>
+        <div id="virtual-sold-pagination" class="pagination-wrap"></div>
     </div>
 {% endblock %}
 
 {% block scripts %}
 <script src="/static/js/virtual_chart.js?v=8"></script>
 <script src="/static/js/stock.js?v=1"></script>
-<script src="/static/js/virtual.js?v=1"></script>
+<script src="/static/js/virtual.js?v=2"></script>
 <script>
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => loadVirtualHistory(), { once: true });
