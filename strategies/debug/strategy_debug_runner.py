@@ -63,6 +63,12 @@ class StrategyDebugRunner:
         runner = StrategyDebugRunner(strategy, debug_logger, stage_service=minervini_svc)
     """
 
+    LIMITATIONS = [
+        "entry_rejected(reason=low_execution_strength) 로그에는 entry_type 필드가 없어 "
+        "PP/BGU 중 어느 쪽이 통과 후 탈락했는지 '추정'으로만 표시함.",
+        "StageGuard 탈락은 stage_service가 주입된 디버그 실행에서만 수집함.",
+    ]
+
     def __init__(
         self,
         strategy: LiveStrategy,
@@ -140,4 +146,5 @@ class StrategyDebugRunner:
             missing_codes=missing_codes,
             signals=signals,
             events=col.events,
+            limitations=list(self.LIMITATIONS),
         )
