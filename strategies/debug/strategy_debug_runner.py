@@ -133,10 +133,6 @@ class StrategyDebugRunner:
             if proxy is not None and original_universe is not None:
                 self._strategy._universe = original_universe
 
-        limitations: List[str] = []
-        if self._stage_service is None:
-            limitations.append("stage_service 미주입으로 StageGuard 필터링이 비활성입니다.")
-
         return DebugReport(
             strategy_name=self._strategy.name,
             requested_codes=candidate_codes,
@@ -144,5 +140,4 @@ class StrategyDebugRunner:
             missing_codes=missing_codes,
             signals=signals,
             events=col.events,
-            limitations=limitations,
         )
