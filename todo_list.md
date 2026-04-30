@@ -166,9 +166,30 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
 
 ## 완료 기준
 
-- 실전 모드에서 주문 접수만으로 보유/체결이 확정되지 않는다.
-- 모든 주문은 Risk Gate 통과 전 broker API를 호출하지 않는다.
-- 서비스 재시작 후 미체결 주문과 잔고를 복원 또는 reconcile할 수 있다.
-- paper/real URL, TR ID, 토큰, 계좌 분기가 테스트로 검증된다.
-- 전략 성과는 수수료, 세금, 슬리피지를 반영한 순수익 기준으로 추적된다.
-- 장애, 데이터 지연, websocket 끊김, reconcile 실패 시 신규 주문 차단 또는 경고 상태로 전환된다.
+표기: `[x]` 완료, `[~]` 부분 완료/진행 필요, `[ ]` 미완료
+
+- [x] 실전 모드에서 주문 접수만으로 보유/체결이 확정되지 않는다.
+  - 근거: 실전 모드에서는 `finalize_immediately=True`도 무시하고 `SUBMITTED` 상태를 유지한다.
+  - 확인 파일: `services/order_execution_service.py`, `tests/unit_test/services/test_order_execution_service.py`
+
+- [x] 모든 주문은 Risk Gate 통과 전 broker API를 호출하지 않는다.
+  - 근거: `_submit_order_with_fsm()`에서 `RiskGateService.validate_order()` 차단 응답 시 broker 주문 호출 전에 반환한다.
+  - 확인 파일: `services/order_execution_service.py`, `services/risk_gate_service.py`, `tests/unit_test/services/test_order_execution_service.py`
+
+- [x] 서비스 재시작 후 미체결 주문과 잔고를 복원 또는 reconcile할 수 있다.
+  - 근거: Web 시작 시 `restore_state_from_broker()`를 호출하며, 미체결/당일 체결 내역으로 주문 상태를 복원하고 `reconcile_orders_with_broker()`로 미체결/체결/잔고 불일치를 점검한다.
+  - 확인 파일: `view/web/web_main.py`, `services/order_execution_service.py`, `tests/unit_test/services/test_order_execution_service.py`
+
+- [x] paper/real URL, TR ID, 토큰, 계좌 분기가 테스트로 검증된다.
+  - 근거: 환경 전환 시 URL/계좌/API 키/token provider 교체, TR ID paper/real 선택, 토큰 provider 위임 테스트가 있다.
+  - 확인 파일: `brokers/korea_investment/korea_invest_env.py`, `brokers/korea_investment/korea_invest_trid_provider.py`, `tests/unit_test/brokers/korea_investment/`
+
+- [~] 전략 성과는 수수료, 세금, 슬리피지를 반영한 순수익 기준으로 추적된다.
+  - 완료된 부분: 거래 비용 계산 유틸과 테스트가 있고, 체결 품질 로그/리포트에서 슬리피지를 추적한다.
+  - 진행 필요: 전략별 성과 지표가 수수료+세금+슬리피지를 모두 반영한 순수익(`net PnL/return`)을 기본값으로 저장·집계하도록 표준화해야 한다.
+  - 관련 파일: `utils/transaction_cost_utils.py`, `services/order_execution_service.py`, `services/strategy_log_report_service.py`, `tests/unit_test/utils/test_transaction_cost_utils.py`
+
+- [~] 장애, 데이터 지연, websocket 끊김, reconcile 실패 시 신규 주문 차단 또는 경고 상태로 전환된다.
+  - 완료된 부분: Kill Switch/Risk Gate 주문 차단, 데이터 품질 오류 주문 차단, websocket watchdog 재연결/경고, reconcile alarm 신규 주문 차단이 구현·테스트되어 있다.
+  - 진행 필요: 장애 유형별 정책이 모두 동일한 수준으로 연결되었는지 운영 매트릭스를 확정하고, reconcile task 실패 자체가 주문 차단 또는 명시 경고 상태로 이어지는지 end-to-end 검증을 보강해야 한다.
+  - 관련 파일: `services/kill_switch_service.py`, `services/data_quality_service.py`, `services/risk_gate_service.py`, `services/order_execution_service.py`, `task/background/intraday/websocket_watchdog_task.py`, `task/background/after_market/after_market_reconcile_task.py`
