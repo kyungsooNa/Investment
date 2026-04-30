@@ -36,6 +36,20 @@ class BackgroundScheduler:
         self._worker_pool = worker_pool
         self._time_dispatcher = time_dispatcher
         self._infra_tasks: List[asyncio.Task] = []  # WorkerPool/Dispatcher asyncio.Task 목록
+        self._start_lock: Optional[asyncio.Lock] = None
+        self._shutdown_lock: Optional[asyncio.Lock] = None
+        self._starting: bool = False
+        self._shutting_down: bool = False
+
+    def _get_start_lock(self) -> asyncio.Lock:
+        if self._start_lock is None:
+            self._start_lock = asyncio.Lock()
+        return self._start_lock
+
+    def _get_shutdown_lock(self) -> asyncio.Lock:
+        if self._shutdown_lock is None:
+            self._shutdown_lock = asyncio.Lock()
+        return self._shutdown_lock
 
     def register(self, task: SchedulableTask) -> None:
         """SchedulableTask를 등록한다."""
@@ -57,6 +71,18 @@ class BackgroundScheduler:
 
         Ticket-driven 인프라(WorkerPool, TimeDispatcher)가 주입된 경우 먼저 시작한다.
         """
+        lock = self._get_start_lock()
+        if self._starting or lock.locked():
+            self._logger.warning("[BackgroundScheduler] start_all 중복 호출 무시")
+            return
+        self._starting = True
+        async with lock:
+            try:
+                await self._start_all_locked()
+            finally:
+                self._starting = False
+
+    async def _start_all_locked(self) -> None:
         t_start = self._pm.start_timer()
         self._logger.info(f"[BackgroundScheduler] 전체 시작: {len(self._tasks)}개 태스크")
 
@@ -89,6 +115,18 @@ class BackgroundScheduler:
 
         순서: 1) TimeDispatcher 중지 → 2) SchedulableTask 종료 → 3) WorkerPool shutdown
         """
+        lock = self._get_shutdown_lock()
+        if self._shutting_down or lock.locked():
+            self._logger.warning("[BackgroundScheduler] shutdown 중복 호출 무시")
+            return
+        self._shutting_down = True
+        async with lock:
+            try:
+                await self._shutdown_locked()
+            finally:
+                self._shutting_down = False
+
+    async def _shutdown_locked(self) -> None:
         t_start = self._pm.start_timer()
         self._logger.info(f"[BackgroundScheduler] 전체 종료: {len(self._tasks)}개 태스크")
 

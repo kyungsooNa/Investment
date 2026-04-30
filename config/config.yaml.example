@@ -69,6 +69,30 @@ order_policy:
   blocked_stock_status_codes: ["51", "52", "53", "58"]
   quote_fail_policy: "block"
 
+# 데이터 품질 게이트 (주문 전 차단 + 실시간/REST sanity check)
+data_quality:
+  enabled: true
+  # 운영 기본값. 유동성이 낮은 종목의 정상 tick 공백을 고려해 5초보다 완화한다.
+  max_tick_age_sec: 30.0
+  max_rest_age_sec: 10.0
+  max_price_jump_pct: 15.0
+  # 모의투자는 지연/공백이 더 잦을 수 있어 실전보다 완화한다.
+  paper_max_tick_age_sec: 60.0
+  paper_max_rest_age_sec: 15.0
+  paper_max_price_jump_pct: 20.0
+  # 실전은 주문 전 차단 기준을 더 보수적으로 둔다.
+  real_max_tick_age_sec: 30.0
+  real_max_rest_age_sec: 10.0
+  real_max_price_jump_pct: 15.0
+  block_on_stale_price: true
+  block_on_invalid_api_response: true
+  alert_cooldown_sec: 60.0
+
+# 외부 알림 채널
+notifications:
+  telegram:
+    enabled: true
+
 # 체결 품질 리포트 경고 기준 (사후 평가용, 자동 비활성화는 기본 OFF)
 execution_quality_report:
   enabled: true

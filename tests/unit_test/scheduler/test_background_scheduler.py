@@ -3,6 +3,7 @@ BackgroundScheduler 단위 테스트.
 태스크 등록, start_all, shutdown, suspend_all, resume_all 검증.
 """
 import pytest
+import asyncio
 from unittest.mock import MagicMock, AsyncMock
 from scheduler.background_scheduler import BackgroundScheduler
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
@@ -287,3 +288,25 @@ async def test_resume_all_handles_exception(scheduler):
 
     t1.resume.assert_awaited_once()
     t2.resume.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_start_all_concurrent_call_is_serialized(scheduler):
+    t1 = _make_mock_task("slow", TaskState.IDLE)
+    scheduler.register(t1)
+    scheduler._starting = True
+
+    await scheduler.start_all()
+
+    t1.start.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_concurrent_call_is_serialized(scheduler):
+    t1 = _make_mock_task("slow", TaskState.RUNNING)
+    scheduler.register(t1)
+    scheduler._shutting_down = True
+
+    await scheduler.shutdown()
+
+    t1.stop.assert_not_awaited()

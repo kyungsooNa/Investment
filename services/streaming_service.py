@@ -47,6 +47,7 @@ class StreamingService:
         streaming_logger: Optional["StreamingEventLogger"] = None,
         price_stream_service: Optional["PriceStreamService"] = None,
         streaming_stock_repo: Optional["StreamingStockRepo"] = None,
+        data_quality_service=None,
     ):
         self.broker = broker_api_wrapper
         self.logger = logger
@@ -55,6 +56,7 @@ class StreamingService:
         self._streaming_logger = streaming_logger
         self._price_stream_service: Optional["PriceStreamService"] = None
         self._streaming_stock_repo: Optional["StreamingStockRepo"] = streaming_stock_repo
+        self._data_quality_service = data_quality_service
         self._last_console_print_time: float = 0.0
         self._PRINT_THROTTLE_SEC: float = 0.5
         self._callback = None  # 재연결 시 콜백 유실 방지용 저장
@@ -232,6 +234,13 @@ class StreamingService:
         """
         data_type = data.get('type', '')
         inner = data.get('data', {})
+
+        if data_type == "signing_notice" and self._data_quality_service is not None:
+            quality = self._data_quality_service.validate_execution_report(inner)
+            if not quality.ok:
+                self.logger.warning(
+                    f"체결통보 품질 검증 실패: reason={quality.reason}, metadata={quality.metadata}"
+                )
 
         self.logger.debug(
             f"실시간 데이터 수신: Type={data_type}, TR_ID={data.get('tr_id')}, Data={inner}"
