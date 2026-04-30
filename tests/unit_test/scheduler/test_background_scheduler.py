@@ -85,6 +85,23 @@ async def test_shutdown(scheduler):
 
 
 @pytest.mark.asyncio
+async def test_shutdown_stops_idle_task_with_active_background_loop(scheduler):
+    """상태는 IDLE이어도 내부 백그라운드 루프가 살아 있으면 shutdown에서 stop한다."""
+    t1 = _make_mock_task("idle_loop", TaskState.IDLE)
+    pending = asyncio.create_task(asyncio.sleep(60))
+    t1._tasks = [pending]
+    scheduler.register(t1)
+
+    try:
+        await scheduler.shutdown()
+    finally:
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+
+    t1.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_suspend_all(scheduler):
     t1 = _make_mock_task("t1", TaskState.RUNNING)
     t2 = _make_mock_task("t2", TaskState.IDLE)  # idle → 스킵

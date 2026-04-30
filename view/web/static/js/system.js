@@ -196,6 +196,7 @@ const STATE_BADGE = {
 
 const SCHEDULE_TYPE_BADGE = {
     always_on:     { label: '실시간',     color: '#E64A19' },
+    pre_market:    { label: '장전 점검',   color: '#00897B' },
     intraday:     { label: '장중 전용',   color: '#1976D2' },
     after_market: { label: '장마감 후',   color: '#6A1B9A' },
 };
