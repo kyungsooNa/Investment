@@ -212,6 +212,7 @@ function filterSchedulerHistory(strategyName, btnElement) {
     const filtered = strategyName === '전체'
         ? allSchedulerHistory
         : allSchedulerHistory.filter(h => h.strategy_name === strategyName);
+    if (window.Paginator) window.Paginator.reset('scheduler-history');
     renderSchedulerHistory(filtered);
 }
 
@@ -223,10 +224,16 @@ function renderSchedulerHistory(history) {
 
     if (!history || history.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:15px;">실행 이력이 없습니다.</td></tr>';
+        const ctrl = document.getElementById('scheduler-history-pagination');
+        if (ctrl) ctrl.innerHTML = '';
         return;
     }
 
-    tbody.innerHTML = history.map(h => {
+    const pageData = window.Paginator
+        ? window.Paginator.paginate('scheduler-history', history, 'scheduler-history-pagination',
+            () => renderSchedulerHistory(history))
+        : history;
+    tbody.innerHTML = pageData.map(h => {
         const isSizingSkip = h.action === 'BUY' && Number(h.qty || 0) <= 0 && String(h.reason || '').startsWith('sizing_skip:');
         const actionClass = isSizingSkip ? '' : (h.action === 'BUY' ? 'text-red' : 'text-blue');
         const actionLabel = isSizingSkip ? '스킵' : (h.action === 'BUY' ? '매수' : '매도');

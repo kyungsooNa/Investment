@@ -101,7 +101,12 @@ function renderPriceCacheDetails(stats) {
     renderCallersSection('price-details-inner', stats.callers);
     const tbody = document.getElementById('price-items-body');
     if (!tbody || !stats.items) return;
-    tbody.innerHTML = stats.items.map(item => {
+    const _items = stats.items;
+    const pageData = window.Paginator
+        ? window.Paginator.paginate('price-items', _items, 'price-items-pagination',
+            () => renderPriceCacheDetails(stats))
+        : _items;
+    tbody.innerHTML = pageData.map(item => {
         const displayName = item.name && item.name !== item.code ? `${item.name}(${item.code})` : (item.code || '-');
         const streamBadge = item.is_streaming
             ? `<span style="background:var(--success-color,#4CAF50);color:#fff;padding:1px 7px;border-radius:8px;font-size:0.82em;font-weight:bold;">실시간</span>`
@@ -128,7 +133,12 @@ function renderOhlcvCacheDetails(stats) {
     renderCallersSection('ohlcv-details-inner', stats.callers);
     const tbody = document.getElementById('ohlcv-items-body');
     if (!tbody || !stats.items) return;
-    tbody.innerHTML = stats.items.map(item => {
+    const _items = stats.items;
+    const pageData = window.Paginator
+        ? window.Paginator.paginate('ohlcv-items', _items, 'ohlcv-items-pagination',
+            () => renderOhlcvCacheDetails(stats))
+        : _items;
+    tbody.innerHTML = pageData.map(item => {
         const displayName = item.name && item.name !== item.code ? `${item.name}(${item.code})` : (item.code || '-');
         const completeBadge = item.historical_complete
             ? `<span style="color:var(--success-color,#4CAF50);">완전</span>`
@@ -505,10 +515,16 @@ async function updateBackgroundStatus() {
 
         if (result.data.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#888;">등록된 태스크 없음</td></tr>';
+            const ctrl = document.getElementById('background-tasks-pagination');
+            if (ctrl) ctrl.innerHTML = '';
             return;
         }
 
-        tbody.innerHTML = result.data.map(task => {
+        const _tasks = result.data;
+        const pageData = window.Paginator
+            ? window.Paginator.paginate('background-tasks', _tasks, 'background-tasks-pagination', updateBackgroundStatus)
+            : _tasks;
+        tbody.innerHTML = pageData.map(task => {
             const badge = STATE_BADGE[task.state] || { label: task.state.toUpperCase(), color: '#888' };
             const priorityLabel = PRIORITY_LABEL[task.priority] ?? task.priority;
             const progressHtml = renderProgressCell(task.progress, task.name);
@@ -590,6 +606,7 @@ function selectSubTab(btn, priority) {
     _subTab = priority;
     document.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    if (window.Paginator) window.Paginator.reset('sub-table');
     renderSubTable();
 }
 
@@ -600,10 +617,15 @@ function renderSubTable() {
     const rows = _subData.pending_by_priority ? _subData.pending_by_priority[_subTab] || [] : [];
     if (rows.length === 0) {
         tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:#888;">구독 종목 없음</td></tr>`;
+        const ctrl = document.getElementById('sub-table-pagination');
+        if (ctrl) ctrl.innerHTML = '';
         return;
     }
 
-    tbody.innerHTML = rows.map(item => {
+    const pageData = window.Paginator
+        ? window.Paginator.paginate('sub-table', rows, 'sub-table-pagination', renderSubTable)
+        : rows;
+    tbody.innerHTML = pageData.map(item => {
         const displayName = item.name && item.name !== item.code ? `${item.name}(${item.code})` : item.code;
         const activeBadge = item.active
             ? `<span style="background:var(--success-color,#4CAF50); color:#fff; padding:2px 8px; border-radius:10px; font-size:0.82em; font-weight:bold;">구독 중</span>`

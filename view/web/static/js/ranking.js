@@ -48,6 +48,7 @@ async function loadRanking(category) {
         clearTimeout(_rankingPollTimer);
         _rankingPollTimer = null;
     }
+    if (window.Paginator) window.Paginator.reset('ranking');
     _rankingCurrentCategory = category;
     _rankingDirection = null;
 
@@ -153,6 +154,7 @@ async function loadInvestorRanking() {
     const dir = _rankingDirection;
     const investors = Array.from(_rankingSelectedInvestors);
 
+    if (window.Paginator) window.Paginator.reset('ranking');
     _rankingSortState = { key: null, dir: 'asc' };
     _rankingCurrentCategory = `investor_${dir}`;
 
@@ -380,6 +382,10 @@ function renderRankingTable() {
         else data = rankingSortCompare(data, _rankingSortState.key, _rankingSortState.dir);
     }
 
+    const pageData = window.Paginator
+        ? window.Paginator.paginate('ranking', data, 'ranking-pagination', renderRankingTable)
+        : data;
+
     const formatMarketCap = (val) => {
         if (!val) return '-';
         let v = parseFloat(val);
@@ -394,7 +400,7 @@ function renderRankingTable() {
     };
 
     let rows = '';
-    data.forEach(item => {
+    pageData.forEach(item => {
         const rate = parseFloat(item.prdy_ctrt || 0);
         const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
         const code = item.stck_shrn_iscd || item.iscd || item.mksc_shrn_iscd || item.code || '';
@@ -453,6 +459,7 @@ function sortRanking(key) {
         _rankingSortState.key = key;
         _rankingSortState.dir = 'asc';
     }
+    if (window.Paginator) window.Paginator.reset('ranking');
     renderRankingTable();
 }
 
