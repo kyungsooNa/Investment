@@ -828,6 +828,22 @@ async def test_exits_7week_rule_triggered(mock_deps):
     assert "50MA" in signals[0].reason
 
 
+def test_check_7week_rule_normalizes_timestamp_holding_start_date(mock_deps):
+    """7주 룰 기준일에 시간이 붙어도 날짜만 비교한다."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = OneilPocketPivotStrategy(sqs, universe, tm, logger=logger)
+    state = PPPositionState("BGU", 10000, "20241201", 9000, "", 8000, True, "2025-01-01 09:13:18")
+    dates_before = [f"202412{i:02d}" for i in range(1, 21)]
+    dates_jan = [f"202501{i:02d}" for i in range(2, 32)]
+    dates_feb = [f"202502{i:02d}" for i in range(1, 11)]
+    ohlcv = [{"date": d, "close": 9000, "volume": 50000} for d in dates_before + dates_jan + dates_feb]
+
+    reason = strategy._check_7week_hold(state, 8800, ohlcv)
+
+    assert reason is not None
+    assert "7주룰" in reason
+
+
 @pytest.mark.asyncio
 async def test_exits_7week_rule_not_triggered_above_ma(mock_deps):
     """7주 룰: 35거래일 경과했어도 50MA 위이면 홀딩 유지."""

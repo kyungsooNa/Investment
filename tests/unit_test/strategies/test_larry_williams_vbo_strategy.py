@@ -253,6 +253,33 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertIn("오버나이트방어", signals[0].reason)
         sqs.handle_get_current_stock_price.assert_not_called()
 
+    async def test_check_exits_does_not_sell_same_day_timestamp_buy_date(self):
+        """매수일이 타임스탬프 문자열이어도 같은 날짜면 오버나이트 청산하지 않는다."""
+        strategy, sqs, _ = self._make_strategy(now_time=_kst(9, 19, date="2026-04-30"))
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=10200, open_price=9590
+        )
+        holdings = [{"code": "025860", "name": "남해화학", "buy_price": 10200,
+                     "buy_date": "2026-04-30 09:13:18", "qty": 1}]
+
+        signals = await strategy.check_exits(holdings)
+
+        self.assertEqual(signals, [])
+        sqs.handle_get_current_stock_price.assert_called_once()
+
+    async def test_check_exits_overnight_guard_normalizes_timestamp_buy_date(self):
+        """전일 타임스탬프 문자열은 날짜만 비교해 오버나이트 청산한다."""
+        strategy, sqs, _ = self._make_strategy(now_time=_kst(10, 0, date="2026-04-30"))
+        holdings = [{"code": "005930", "name": "삼성전자", "buy_price": 70000,
+                     "buy_date": "2026-04-29 14:55:01", "qty": 1}]
+
+        signals = await strategy.check_exits(holdings)
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].action, "SELL")
+        self.assertIn("매수일(20260429)", signals[0].reason)
+        sqs.handle_get_current_stock_price.assert_not_called()
+
     # ── check_exits: 칼손절 ───────────────────────────────────────────
 
     async def test_check_exits_stop_loss(self):

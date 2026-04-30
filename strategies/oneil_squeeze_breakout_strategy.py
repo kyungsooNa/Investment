@@ -9,6 +9,7 @@ from dataclasses import dataclass, asdict
 from typing import List, Optional, Dict, Tuple
 
 from interfaces.live_strategy import LiveStrategy
+from common.date_utils import normalize_yyyymmdd
 from common.types import TradeSignal, ErrorCode
 from services.stock_query_service import StockQueryService
 from core.market_clock import MarketClock
@@ -496,18 +497,21 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             return False
 
         today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
-        if state.entry_date.replace("-", "") == today_str:
+        safe_entry_date = normalize_yyyymmdd(state.entry_date)
+        if not safe_entry_date:
+            return False
+
+        if safe_entry_date == today_str:
             return False
 
         if not ohlcv:
             return False
 
         trading_days = 0
-        safe_entry_date = state.entry_date.replace("-", "")
 
         # 🌟 버그 수정: == 대신 >= 를 사용하여 하이픈 제거 및 진입일 이후 데이터 필터링
         for candle in ohlcv:
-            date_str = str(candle.get('date', '')).replace("-", "")
+            date_str = normalize_yyyymmdd(candle.get('date', ''))
             if date_str > safe_entry_date: # 진입일 '다음 날'부터 1일로 카운트
                 trading_days += 1
 

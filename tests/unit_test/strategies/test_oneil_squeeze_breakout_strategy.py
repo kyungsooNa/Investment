@@ -570,6 +570,19 @@ def test_check_time_stop_logic(mock_strategy_deps):
     ohlcv_short = ohlcv[:-1]  # 4일치
     assert strategy._check_time_stop(state, 10100, ohlcv_short) is False
 
+    # Case 6: 진입일에 시간이 붙어도 날짜만 비교한다
+    state_with_time = OSBPositionState(
+        entry_price=10000,
+        entry_date="2025-01-01 09:13:18",
+        peak_price=10000,
+        breakout_level=10000,
+    )
+    assert strategy._check_time_stop(state_with_time, 10100, ohlcv) is True
+
+    # Case 7: 오늘 진입한 타임스탬프는 당일 시간손절 대상이 아니다
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
+    assert strategy._check_time_stop(state_with_time, 10100, ohlcv) is False
+
 @pytest.mark.asyncio
 async def test_check_exits_trend_break(mock_strategy_deps):
     """check_exits: 추세 이탈(10MA 하향 + 대량 거래량) 시 매도 시그널 검증."""

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import time
 from typing import TYPE_CHECKING, Dict, List, Optional
 
+from common.date_utils import normalize_yyyymmdd
 from common.types import ErrorCode, TradeSignal
 from core.logger import get_strategy_logger
 from core.market_clock import MarketClock
@@ -206,7 +207,8 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         for hold in holdings:
             code = str(hold.get("code", ""))
             buy_price_raw = hold.get("buy_price", 0)
-            buy_date = str(hold.get("buy_date", ""))
+            buy_date_raw = hold.get("buy_date", "")
+            buy_date = normalize_yyyymmdd(buy_date_raw)
             stock_name = hold.get("name", code)
 
             if not code or not buy_price_raw:
