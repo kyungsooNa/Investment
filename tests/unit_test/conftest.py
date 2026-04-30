@@ -96,7 +96,9 @@ def fast_sleep(request):
         return
 
     # unittest.TestCase 호환성을 위해 mock.patch 사용
-    with mock.patch("time.sleep"), mock.patch("asyncio.sleep", new_callable=AsyncMock):
+    with mock.patch("time.sleep"), \
+         mock.patch("asyncio.sleep", new_callable=AsyncMock), \
+         mock.patch("core.retry_queue.api_request_queue.asyncio.sleep", new_callable=AsyncMock):
         yield
 
 
