@@ -1,6 +1,6 @@
 # Investment Trading App - 실전 운영 개선 To-Do
 
-최종 업데이트: 2026-04-30 (디버깅 백테스트 Phase 1 완료)
+최종 업데이트: 2026-04-30 (디버깅 백테스트 Phase 1 + 상태 격리 보강 완료)
 
 ## 2026-04-29 Update - O'Neil Market Timing
 
@@ -238,9 +238,32 @@ main 반영 확인.
          - 이유: 과거의 특정 시기에 우연히 "운이 좋아서" 높은 수익률이 나왔을 가능성을 배제하기 위함입니다.
          - 검증 내용: 백테스트에서 발생한 수백 번의 매매 결과(수익/손실 비율)를 무작위로 섞어버립니다. 만약 최악의 운이 작용해서 손절이 5번, 10번 연속으로 먼저 발생했을 때 내 계좌가 파산(Ruin)하지 않고 버틸 수 있는지(최대 낙폭, MDD)를 수학적으로 검증합니다.
    - 3. 후속 개선 항목 (디버깅 백테스트 확장)
+      - [x] 특정 종목이 당일 매수되지 않은 이유를 CLI에서 확인하는 기능 추가
+         - `python -m scripts.run_strategy_debug --codes 005930,000660`
+         - `RejectionCollector`가 전략의 dict 구조화 로그를 수집하고, `StrategyDebugRunner`가 특정 종목만 스캔하도록 universe를 프록시한다.
+         - 디버그 실행 중 매수 신호가 발생해도 실전 전략 상태 파일(`data/pp_position_state.json`)을 변경하지 않도록 임시 state file을 주입한다.
+         - universe 전체 스캔 시에도 실제 스캔 종목 수가 리포트에 표시되도록 보강한다.
       - [x] `StrategyExecutor` StageGuard 로그를 dict 구조화 로그로 전환 → `RejectionLogHandler` 캡처 대상 확장 (`stage_blocked` 이벤트 추가)
       - [ ] 과거 시점 시뮬레이션 지원 — `--date YYYYMMDD` 인자로 그날 OHLCV 기반 PP 조건 재현
       - [ ] 다른 전략(VolumeBreakout, HighTightFlag 등) 디버깅 어댑터 추가
+      - [ ] 디버깅 리포트에 `scan_skipped`(장 미개장/마켓타이밍 불량/워치리스트 없음)와 종목별 탈락 이벤트를 구분해 표시한다.
+      - [ ] PP/BGU 공통 진입 단계에 `entry_type`을 항상 포함해 체결강도/스마트머니 탈락 원인을 추정이 아닌 확정값으로 표시한다.
+
+   - 4. 백테스트 엔진 후속 작업
+      - [ ] `--date YYYYMMDD` / `--from YYYYMMDD --to YYYYMMDD` 기반 과거 시점 재현용 market clock과 데이터 스냅샷 주입 구조를 만든다.
+      - [ ] 실시간 API 응답 대신 과거 OHLCV/체결강도/프로그램매매 데이터를 공급하는 `BacktestStockQueryService` 또는 data replay adapter를 추가한다.
+      - [ ] 체결 시뮬레이터를 분리한다: 지정가/시장가, 당일 고가·저가 도달 여부, 거래량 기반 부분체결, 미체결, 다음 봉 체결 정책을 명시한다.
+      - [ ] 수수료, 거래세, 슬리피지, 호가 단위 반올림을 모든 백테스트 성과 계산에 기본 반영한다.
+      - [ ] 포트폴리오 단위 현금/보유/예약주문 장부를 만든다. 동시 신호 발생 시 자금 부족, 전략별 max positions, 우선순위 정렬을 재현한다.
+      - [ ] 리스크 게이트와 포지션 사이징을 백테스트에서도 동일하게 호출하거나, 동일 contract의 dry-run 구현으로 검증한다.
+      - [ ] 마켓 타이밍/시장 국면별 성과 분해를 리포트한다. 상승장/하락장/횡보장, KOSPI/KOSDAQ 타이밍 ON/OFF별 기대값을 비교한다.
+      - [ ] 전략별 trade journal을 표준 포맷으로 저장한다: signal_time, decision_reason, rejected_reason, order_price, fill_price, cost, pnl, MFE/MAE.
+      - [ ] 실거래 로그와 백테스트 로그를 같은 schema로 맞춰 backtest-vs-live 괴리 리포트를 생성한다.
+      - [ ] walk-forward 검증을 추가한다. 기간을 train/tune/test로 나누고, 파라미터 튜닝 구간과 검증 구간을 분리한다.
+      - [ ] 몬테카를로 시뮬레이션을 추가한다. trade 결과 순서를 섞어 최악 MDD, 연속 손실, ruin probability를 계산한다.
+      - [ ] 결과 저장소를 정한다. 초기에는 JSON/CSV, 이후 필요 시 SQLite repository로 승격한다.
+      - [ ] CLI를 정리한다: `run_strategy_debug`는 미매수 사유 진단, `run_backtest`는 기간 수익률/포트폴리오 검증으로 역할을 분리한다.
+      - [ ] 단위 테스트 fixture를 만든다: 특정 날짜에 PP 통과, PP 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 고정 데이터로 검증한다.
 
 ---
 
