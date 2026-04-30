@@ -432,11 +432,11 @@ class IndicatorService:
         for col in ("high", "low"):
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
-        df["_tr"] = pd.concat([
-            df["high"] - df["low"],
-            (df["high"] - df["close"].shift(1)).abs(),
-            (df["low"]  - df["close"].shift(1)).abs(),
-        ], axis=1).max(axis=1)
+        df["_tr"] = np.fmax(
+            np.fmax(df["high"] - df["low"],
+                    (df["high"] - df["close"].shift(1)).abs()),
+            (df["low"] - df["close"].shift(1)).abs(),
+        )
         df[target_col] = df["_tr"].ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
         df.drop(columns=["_tr"], inplace=True)
         return df
@@ -447,11 +447,11 @@ class IndicatorService:
         for col in ("high", "low", "close"):
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
-        df["_tr"] = pd.concat([
-            df["high"] - df["low"],
-            (df["high"] - df["close"].shift(1)).abs(),
-            (df["low"]  - df["close"].shift(1)).abs(),
-        ], axis=1).max(axis=1)
+        df["_tr"] = np.fmax(
+            np.fmax(df["high"] - df["low"],
+                    (df["high"] - df["close"].shift(1)).abs()),
+            (df["low"] - df["close"].shift(1)).abs(),
+        )
         up_move   = df["high"] - df["high"].shift(1)
         down_move = df["low"].shift(1) - df["low"]
         df["_pdm"] = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)

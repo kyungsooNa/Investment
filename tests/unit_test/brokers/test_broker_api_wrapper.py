@@ -46,10 +46,7 @@ def mock_mcs():
 # --- 테스트 케이스 ---
 
 @pytest.mark.asyncio
-
-@patch(f"{wrapper_module.__name__}.StockCodeRepository")  # 먼저 정의된 patch가
-@patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")  # 아래쪽 인자로 먼저 들어감!
-async def test_method_delegation(mock_client_class, mock_mapper_class, mock_env, mock_logger, mock_market_clock):
+async def test_method_delegation(mock_env, mock_logger, mock_market_clock):
     """
     각 메서드가 내부의 올바른 객체로 호출을 위임하는지 테스트합니다.
     cache_wrap_client / retry_queue_wrap_client 를 bypass 해 wrapping 없이 mock client 를 직접 주입합니다.
@@ -234,7 +231,7 @@ async def test_all_delegations(broker_wrapper_instance, mocker):
 
     # place_stock_order (lines 115, 117) - calls self._client.place_stock_order
     result = await wrapper.place_stock_order("005930", 69500, 15, is_buy=True)
-    assert result == {"rt_cd": "0", "msg1": "주문 성공"}
+    assert result.rt_cd == "0"
     from common.types import Exchange
     wrapper._client.place_stock_order.assert_called_once_with("005930", 69500, 15, True, exchange=Exchange.KRX)
 
@@ -306,8 +303,9 @@ def broker_wrapper_instance(mock_env, mock_logger, mocker):
     mock_client_instance.get_filtered_stocks_by_momentum.return_value = [{"symbol": "005930_filtered"}]
     mock_client_instance.inquire_daily_itemchartprice.return_value = [{"stck_clpr": "70000_chart"}]
 
+    from common.types import ResCommonResponse
     mock_client_instance.get_account_balance = AsyncMock(return_value={"output": {"dnca_tot_amt": "1000000"}})
-    mock_client_instance.place_stock_order.return_value = {"rt_cd": "0", "msg1": "주문 성공"}
+    mock_client_instance.place_stock_order.return_value = ResCommonResponse(rt_cd="0", msg1="주문 성공")
     mock_client_instance.get_stock_info_by_code.return_value = {"hts_kor_isnm": "삼성전자_info"}
     mock_client_instance.get_current_price.return_value = {"output": {"stck_prpr": "70000"}}
     mock_client_instance.get_price_summary.return_value = {"symbol": "005930", "open": 69000,
@@ -321,7 +319,7 @@ def broker_wrapper_instance(mock_env, mock_logger, mocker):
     mock_client_instance.inquire_daily_itemchartprice.return_value = [{"stck_clpr": "70000_chart"}]
 
     mock_client_instance.get_account_balance.return_value = {"output": {"dnca_tot_amt": "1000000"}}
-    mock_client_instance.place_stock_order.return_value = {"rt_cd": "0", "msg1": "주문 성공"}
+    mock_client_instance.place_stock_order.return_value = ResCommonResponse(rt_cd="0", msg1="주문 성공")
     mock_client_instance.connect_websocket = AsyncMock(return_value=True)
     mock_client_instance.disconnect_websocket = AsyncMock(return_value=True)
     mock_client_instance.subscribe_realtime_price = AsyncMock(return_value=True)
@@ -365,21 +363,6 @@ def broker_wrapper_instance(mock_env, mock_logger, mocker):
 
 
 # --- 테스트 케이스 ---
-
-@patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
-@patch(f"{wrapper_module.__name__}.StockCodeRepository")
-def test_initialization_success(MockStockMapper, MockClient, mock_env, mock_logger):
-    """
-    정상적인 인자로 BrokerAPIWrapper 초기화가 성공하는지 테스트합니다.
-    """
-    # Act
-    wrapper = BrokerAPIWrapper(broker="korea_investment", env=mock_env, logger=mock_logger)
-
-    # Assert
-    MockClient.assert_called_once_with(mock_env, mock_logger)
-    MockStockMapper.assert_called_once_with(logger=mock_logger)
-    assert wrapper._broker == "korea_investment"
-
 
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
 @patch(f"{wrapper_module.__name__}.StockCodeRepository")

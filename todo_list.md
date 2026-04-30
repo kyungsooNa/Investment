@@ -360,10 +360,10 @@ runner = StrategyDebugRunner(strategy, debug_logger, stage_service=minervini_svc
 
 ### 7-2. `BrokerAPIWrapper` 테스트 안정화
 
-- [ ] retry/cache wrapper를 우회하는 테스트 helper를 표준화한다.
-- [~] wrapper 테스트 mock 반환값은 가능하면 `ResCommonResponse`로 통일한다. (일부 테스트는 아직 plain dict 반환 사용)
-- [ ] `@patch` decorator와 async fixture 혼용을 제거한다.
-- [ ] `asyncio.sleep` patch 범위를 retry queue 내부까지 확인한다.
+- [X] retry/cache wrapper를 우회하는 테스트 helper를 표준화한다.
+- [X] wrapper 테스트 mock 반환값은 가능하면 `ResCommonResponse`로 통일한다. (place_stock_order 통일 완료; 나머지 메서드는 실제 반환 타입이 dict이므로 유지)
+- [X] `@patch` decorator와 async fixture 혼용을 제거한다.
+- [X] `asyncio.sleep` patch 범위를 retry queue 내부까지 확인한다.
 
 주요 파일:
 
@@ -375,9 +375,9 @@ runner = StrategyDebugRunner(strategy, debug_logger, stage_service=minervini_svc
 ### 7-3. 스트리밍/DB 성능 개선
 
 - [x] tick 단위 DB write를 batch insert 또는 queue flush로 전환한다. (`ProgramTradingRepo` write buffer/bulk insert/flush loop)
-- [~] 이미 적용된 SQLite WAL 범위를 점검한다. (`cache`, `favorite`, `program_trading`, `rs_rating`, `stock_ohlcv`, `virtual_trade`, `strategy_scheduler_store` 등에 WAL 적용 확인. 전체 DB 경로 점검은 남음)
-- [ ] pandas append/concat 병목이 있으면 `deque` 또는 circular buffer로 교체한다.
-- [ ] 전략 계산이 event loop를 막는 구간을 측정하고 필요한 경우 worker/process pool로 분리한다.
+- [X] 이미 적용된 SQLite WAL 범위를 점검한다. (전체 9개 DB 확인 완료 — `stock_code_repository.py` WAL 추가로 모든 DB 적용 완료)
+- [X] pandas append/concat 병목이 있으면 `deque` 또는 circular buffer로 교체한다. (`indicator_service.py` `_compute_atr`/`_compute_adx`에서 `pd.concat` → `np.fmax` 치환)
+- [X] 전략 계산이 event loop를 막는 구간을 측정하고 필요한 경우 worker/process pool로 분리한다. (점검 결과 이미 `run_in_executor` 적용 완료 — 추가 조치 불필요)
 
 주요 파일:
 

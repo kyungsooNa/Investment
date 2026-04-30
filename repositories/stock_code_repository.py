@@ -12,6 +12,7 @@ def _write_minimal_db(db_path: str, logger=None):
     """빈/손상된 DB 대신 최소 유효 DB를 써서 앱이 시작되도록 합니다."""
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA journal_mode=WAL")
     try:
         conn.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
         conn.execute(
@@ -57,6 +58,7 @@ class StockCodeRepository:
     def _load_data(self):
         try:
             conn = sqlite3.connect(self._db_path)
+            conn.execute("PRAGMA journal_mode=WAL")
             try:
                 self.df = pd.read_sql(
                     f"SELECT * FROM {TABLE_NAME}", conn, dtype={"종목코드": str}
@@ -88,6 +90,7 @@ class StockCodeRepository:
             try:
                 save_stock_code_list(force_update=True)
                 conn = sqlite3.connect(self._db_path)
+                conn.execute("PRAGMA journal_mode=WAL")
                 try:
                     self.df = pd.read_sql(
                         f"SELECT * FROM {TABLE_NAME}", conn, dtype={"종목코드": str}
@@ -105,6 +108,7 @@ class StockCodeRepository:
                     self.logger.warning("갱신 실패. 최소 DB로 앱을 시작합니다.")
                 _write_minimal_db(self._db_path, self.logger)
                 conn = sqlite3.connect(self._db_path)
+                conn.execute("PRAGMA journal_mode=WAL")
                 try:
                     self.df = pd.read_sql(
                         f"SELECT * FROM {TABLE_NAME}", conn, dtype={"종목코드": str}
