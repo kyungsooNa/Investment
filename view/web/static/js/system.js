@@ -447,6 +447,7 @@ function _renderProgressBody(progress, taskName) {
 
 // 태스크별 강제 수집 설정 (task_name → {endpoint, label})
 const FORCE_UPDATE_CONFIG = {
+    after_market_reconcile:{ endpoint: '/api/background/reconcile/force-update',     label: '강제 검증' },
     ohlcv_update:         { endpoint: '/api/ohlcv/force-update',                       label: '강제 수집' },
     ranking_refresh:      { endpoint: '/api/background/ranking/force-update',          label: '강제 수집' },
     daily_price_collector:{ endpoint: '/api/background/daily-price/force-update',      label: '강제 수집' },
@@ -535,8 +536,8 @@ async function updateBackgroundStatus() {
                 ? `<span style="background:${schBadge.color}; color:#fff; padding:1px 6px; border-radius:8px; font-size:0.75em; margin-left:6px; vertical-align:middle;">${schBadge.label}</span>`
                 : '';
             const delayMin = task.delay_sec ? Math.round(task.delay_sec / 60) : 0;
-            const delayHtml = delayMin > 0
-                ? `<span style="color:#aaa; font-size:0.75em; margin-left:5px; vertical-align:middle;">+${delayMin}m</span>`
+            const delayHtml = task.schedule_type === 'after_market'
+                ? `<span style="color:#aaa; font-size:0.75em; margin-left:5px; vertical-align:middle;">${delayMin > 0 ? `+${delayMin}m` : '즉시'}</span>`
                 : '';
             return `
                 <tr>

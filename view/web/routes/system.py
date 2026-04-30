@@ -710,3 +710,19 @@ async def force_minervini_update():
 
     asyncio.create_task(task.force_run())
     return {"success": True, "message": "Minervini S2 강제 갱신이 시작되었습니다."}
+
+
+@router.post("/background/reconcile/force-update")
+async def force_after_market_reconcile():
+    """주문/브로커 상태 reconcile을 즉시 강제 실행한다."""
+    ctx = _get_ctx()
+    task = getattr(ctx, "after_market_reconcile_task", None)
+    if not task:
+        raise HTTPException(status_code=503, detail="AfterMarketReconcileTask가 초기화되지 않았습니다")
+
+    progress = task.get_progress()
+    if progress.get("running"):
+        raise HTTPException(status_code=409, detail="이미 주문/브로커 검증이 진행 중입니다")
+
+    asyncio.create_task(task.force_run())
+    return {"success": True, "message": "주문/브로커 상태 강제 검증이 시작되었습니다."}

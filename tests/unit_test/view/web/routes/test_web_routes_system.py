@@ -772,6 +772,44 @@ async def test_force_minervini_update_not_init(web_client, mock_web_ctx):
     assert response.status_code == 503
 
 
+# ── POST /api/background/reconcile/force-update ───────────────────────
+
+@pytest.mark.asyncio
+async def test_force_after_market_reconcile_success(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": False}
+    mock_task.force_run = AsyncMock()
+    mock_web_ctx.after_market_reconcile_task = mock_task
+
+    response = web_client.post("/api/background/reconcile/force-update")
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    await asyncio.sleep(0)
+    mock_task.force_run.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_force_after_market_reconcile_running(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": True}
+    mock_web_ctx.after_market_reconcile_task = mock_task
+
+    response = web_client.post("/api/background/reconcile/force-update")
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_force_after_market_reconcile_not_init(web_client, mock_web_ctx):
+    mock_web_ctx.after_market_reconcile_task = None
+
+    response = web_client.post("/api/background/reconcile/force-update")
+
+    assert response.status_code == 503
+
+
 # ── GET /api/background/status — time_dispatcher 티켓 발행 현황 ──────────────
 
 def _make_td_mock(last_dispatched_date, last_dispatched_at=None, market_is_open=False, registered_tasks=None):
