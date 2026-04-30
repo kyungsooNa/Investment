@@ -13,6 +13,7 @@ import asyncio
 import logging
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -84,20 +85,22 @@ async def _run(args: argparse.Namespace) -> None:
         print(f"[ERROR] {e}", file=sys.stderr)
         sys.exit(1)
 
-    strategy = OneilPocketPivotStrategy(
-        stock_query_service=sqs,
-        universe_service=universe_service,
-        market_clock=market_clock,
-        logger=debug_logger,
-    )
-
     candidate_codes = None
     if args.codes:
         candidate_codes = [c.strip() for c in args.codes.split(",") if c.strip()]
 
-    runner = StrategyDebugRunner(strategy, debug_logger)
-    print("[INFO] 전략 스캔 실행 중...\n")
-    report = await runner.run(candidate_codes)
+    with tempfile.TemporaryDirectory(prefix="strategy_debug_") as tmp_dir:
+        strategy = OneilPocketPivotStrategy(
+            stock_query_service=sqs,
+            universe_service=universe_service,
+            market_clock=market_clock,
+            logger=debug_logger,
+            state_file=os.path.join(tmp_dir, "pp_position_state.json"),
+        )
+
+        runner = StrategyDebugRunner(strategy, debug_logger)
+        print("[INFO] 전략 스캔 실행 중...\n")
+        report = await runner.run(candidate_codes)
 
     result = format_json(report) if args.output == "json" else format_console(report)
 

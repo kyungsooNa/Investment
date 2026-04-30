@@ -27,15 +27,23 @@ class _UniverseFilterProxy:
     get_watchlist()가 Dict[code, item] 형태로 반환한다는 것을 전제로 한다.
     """
 
-    def __init__(self, inner: object, allowed: Set[str]) -> None:
+    def __init__(self, inner: object, allowed: Optional[Set[str]] = None) -> None:
         self._inner = inner
         self._allowed = allowed
         self._last_full_set: Set[str] = set()
+        self._last_full_codes: List[str] = []
+        self._last_scanned_codes: List[str] = []
 
     async def get_watchlist(self, **kw) -> Dict:
         full: Dict = await self._inner.get_watchlist(**kw)
-        self._last_full_set = set(full.keys())
-        return {code: item for code, item in full.items() if code in self._allowed}
+        self._last_full_codes = list(full.keys())
+        self._last_full_set = set(self._last_full_codes)
+        if self._allowed is None:
+            self._last_scanned_codes = list(full.keys())
+            return full
+        filtered = {code: item for code, item in full.items() if code in self._allowed}
+        self._last_scanned_codes = list(filtered.keys())
+        return filtered
 
     def __getattr__(self, name: str):
         # is_market_timing_ok 등 다른 메서드는 원본에 그대로 위임
@@ -75,23 +83,26 @@ class StrategyDebugRunner:
         scanned_codes: List[str] = []
         missing_codes: List[str] = []
 
-        if candidate_codes and original_universe is not None:
-            proxy = _UniverseFilterProxy(original_universe, allowed=set(candidate_codes))
+        if original_universe is not None:
+            allowed = set(candidate_codes) if candidate_codes else None
+            proxy = _UniverseFilterProxy(original_universe, allowed=allowed)
 
         try:
             if proxy is not None:
                 self._strategy._universe = proxy
-                # _last_full_set을 사전에 채워 둔다. scan()이 get_watchlist를 호출하지
-                # 않거나(예: 장 마감, mock 환경) 호출 순서가 바뀌어도 scanned/missing가 정확히 계산된다.
-                await proxy.get_watchlist()
+                if candidate_codes:
+                    # requested 중 watchlist에 없는 종목을 scan 전에도 정확히 구분한다.
+                    await proxy.get_watchlist()
 
             with RejectionCollector(logger=self._debug_logger) as col:
                 signals = await self._strategy.scan()
 
-            if proxy is not None:
+            if proxy is not None and candidate_codes:
                 full_set = proxy._last_full_set
                 scanned_codes = [c for c in candidate_codes if c in full_set]
                 missing_codes = [c for c in candidate_codes if c not in full_set]
+            elif proxy is not None:
+                scanned_codes = list(proxy._last_scanned_codes)
             elif candidate_codes:
                 scanned_codes = list(candidate_codes)
 

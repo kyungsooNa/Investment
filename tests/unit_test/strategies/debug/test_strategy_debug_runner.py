@@ -174,10 +174,20 @@ class TestStrategyDebugRunner:
         assert report.signals[0].code == "005930"
 
     async def test_run_without_candidate_codes_uses_full_universe(self):
-        """candidate_codes=None 이면 proxy 없이 scan()을 그대로 호출한다."""
-        strategy = _make_strategy(watchlist={})
+        """candidate_codes=None 이면 전체 watchlist 스캔 수를 리포트한다."""
+        watchlist = {
+            "005930": _make_watchlist_item("005930"),
+            "000660": _make_watchlist_item("000660"),
+        }
+        strategy = _make_strategy(watchlist=watchlist)
+
+        async def fake_scan():
+            await strategy._universe.get_watchlist()
+            return []
+
+        strategy.scan = fake_scan
         runner = StrategyDebugRunner(strategy, _make_debug_logger())
         report = await runner.run(candidate_codes=None)
 
         assert report.requested_codes is None
-        strategy.scan.assert_called_once()
+        assert report.scanned_codes == ["005930", "000660"]
