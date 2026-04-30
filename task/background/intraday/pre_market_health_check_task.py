@@ -56,9 +56,10 @@ class PreMarketHealthCheckTask(SchedulableTask):
         return self._state
 
     async def start(self) -> None:
-        if self._state == TaskState.RUNNING:
+        if any(not task.done() for task in self._tasks):
             return
-        self._state = TaskState.RUNNING
+        if self._state == TaskState.STOPPED:
+            self._state = TaskState.IDLE
         self._tasks.append(asyncio.create_task(self._loop()))
 
     async def stop(self) -> None:
@@ -76,7 +77,7 @@ class PreMarketHealthCheckTask(SchedulableTask):
 
     async def resume(self) -> None:
         if self._state == TaskState.SUSPENDED:
-            self._state = TaskState.RUNNING
+            self._state = TaskState.IDLE
 
     def get_progress(self) -> Dict:
         return {
@@ -92,7 +93,12 @@ class PreMarketHealthCheckTask(SchedulableTask):
                 if self._state == TaskState.SUSPENDED:
                     continue
                 if await self._should_run_now():
-                    await self.run_once()
+                    self._state = TaskState.RUNNING
+                    try:
+                        await self.run_once()
+                    finally:
+                        if self._state == TaskState.RUNNING:
+                            self._state = TaskState.IDLE
             except asyncio.CancelledError:
                 break
             except Exception as exc:

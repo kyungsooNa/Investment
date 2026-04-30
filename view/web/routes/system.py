@@ -13,9 +13,11 @@ router = APIRouter()
 
 # 태스크별 실행 스케줄 유형
 # intraday: 장 중에만 의미있는 태스크 (장 마감 후 비활성)
+# pre_market: 장 시작 전 준비/상태 점검 태스크
 # after_market: 장 마감 후 실행되는 배치 태스크 (장 중 비활성)
 # always_on: 항상 동작해야 하는 실시간 태스크
 _SCHEDULE_TYPES = {
+    "pre_market_health_check": "pre_market",
     "websocket_watchdog":  "intraday",
     "strategy_scheduler":  "intraday",
     "ranking_refresh":     "after_market",
@@ -29,8 +31,9 @@ _SCHEDULE_TYPES = {
 
 _SCHEDULE_ORDER = {
     "always_on": 0,
-    "intraday": 1,
-    "after_market": 2,
+    "pre_market": 1,
+    "intraday": 2,
+    "after_market": 3,
     "unknown": 99,
 }
 
@@ -377,7 +380,10 @@ async def get_background_status():
         schedule_type = "unknown"
         if task:
             module_name = task.__class__.__module__
-            if "strategy_scheduler" in module_name:
+            configured_type = _SCHEDULE_TYPES.get(name)
+            if configured_type:
+                schedule_type = configured_type
+            elif "strategy_scheduler" in module_name:
                 schedule_type = "intraday"
             elif "after_market" in module_name:
                 schedule_type = "after_market"
@@ -704,3 +710,19 @@ async def force_minervini_update():
 
     asyncio.create_task(task.force_run())
     return {"success": True, "message": "Minervini S2 강제 갱신이 시작되었습니다."}
+
+
+@router.post("/background/reconcile/force-update")
+async def force_after_market_reconcile():
+    """주문/브로커 상태 reconcile을 즉시 강제 실행한다."""
+    ctx = _get_ctx()
+    task = getattr(ctx, "after_market_reconcile_task", None)
+    if not task:
+        raise HTTPException(status_code=503, detail="AfterMarketReconcileTask가 초기화되지 않았습니다")
+
+    progress = task.get_progress()
+    if progress.get("running"):
+        raise HTTPException(status_code=409, detail="이미 주문/브로커 검증이 진행 중입니다")
+
+    asyncio.create_task(task.force_run())
+    return {"success": True, "message": "주문/브로커 상태 강제 검증이 시작되었습니다."}

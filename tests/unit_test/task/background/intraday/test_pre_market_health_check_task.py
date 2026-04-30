@@ -162,16 +162,16 @@ async def test_pre_market_task_lifecycle_progress_suspend_resume_stop():
 
     try:
         await task.start()
-        assert task.state == TaskState.RUNNING
-        assert task.get_progress()["running"] is True
+        assert task.state == TaskState.IDLE
+        assert task.get_progress()["running"] is False
 
         await task.start()
         assert len(task._tasks) == 1
 
         await task.suspend()
-        assert task.state == TaskState.SUSPENDED
+        assert task.state == TaskState.IDLE
         await task.resume()
-        assert task.state == TaskState.RUNNING
+        assert task.state == TaskState.IDLE
     finally:
         await task.stop()
 
@@ -274,7 +274,7 @@ async def test_pre_market_check_broker_api_accepts_sync_response_and_plain_rt_cd
 @pytest.mark.asyncio
 async def test_pre_market_loop_runs_once_and_logs_errors():
     task = PreMarketHealthCheckTask(logger=MagicMock())
-    task._state = TaskState.RUNNING
+    task._state = TaskState.IDLE
     task._should_run_now = AsyncMock(side_effect=[True, RuntimeError("loop boom"), asyncio.CancelledError()])
     task.run_once = AsyncMock()
 
@@ -283,3 +283,24 @@ async def test_pre_market_loop_runs_once_and_logs_errors():
 
     task.run_once.assert_awaited_once()
     task._logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_pre_market_loop_marks_running_only_while_checking():
+    task = PreMarketHealthCheckTask(logger=MagicMock())
+    task._state = TaskState.IDLE
+    task._should_run_now = AsyncMock(side_effect=[True, asyncio.CancelledError()])
+    seen_states = []
+
+    async def _run_once():
+        seen_states.append(task.state)
+        seen_states.append(task.get_progress()["running"])
+
+    task.run_once = AsyncMock(side_effect=_run_once)
+
+    with patch("task.background.intraday.pre_market_health_check_task.asyncio.sleep", new_callable=AsyncMock):
+        await task._loop()
+
+    assert seen_states == [TaskState.RUNNING, True]
+    assert task.state == TaskState.IDLE
+    assert task.get_progress()["running"] is False

@@ -459,6 +459,30 @@ def test_get_background_status_module_names(web_client, mock_web_ctx):
     assert all(v == 0 for v in delays.values())
 
 
+def test_get_background_status_pre_market_health_check_schedule_type(web_client, mock_web_ctx):
+    """pre_market_health_check는 일반 장중 태스크가 아니라 장전 점검으로 분류한다."""
+    class PreMarketTask:
+        pass
+
+    PreMarketTask.__module__ = "task.background.intraday.pre_market_health_check_task"
+    mock_task = PreMarketTask()
+    mock_task.get_progress = MagicMock(return_value={"running": False, "last_checked_date": None})
+
+    mock_web_ctx.background_scheduler = MagicMock()
+    mock_web_ctx.background_scheduler.get_all_status.return_value = [
+        {"name": "pre_market_health_check", "state": "idle", "priority": 50},
+    ]
+    mock_web_ctx.background_scheduler.get_task.return_value = mock_task
+
+    response = web_client.get("/api/background/status")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data[0]["name"] == "pre_market_health_check"
+    assert data[0]["schedule_type"] == "pre_market"
+    assert data[0]["progress"] == {"running": False, "status": "Waiting to start"}
+
+
 def test_get_background_status_idle_with_internal_flag(web_client, mock_web_ctx):
     """태스크가 IDLE 상태지만 내부 플래그(_is_refreshing)가 있는 경우 get_progress() 호출 확인"""
     mock_task = MagicMock()
@@ -745,6 +769,44 @@ async def test_force_minervini_update_running(web_client, mock_web_ctx):
 async def test_force_minervini_update_not_init(web_client, mock_web_ctx):
     mock_web_ctx.minervini_update_task = None
     response = web_client.post("/api/background/minervini/force-update")
+    assert response.status_code == 503
+
+
+# ── POST /api/background/reconcile/force-update ───────────────────────
+
+@pytest.mark.asyncio
+async def test_force_after_market_reconcile_success(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": False}
+    mock_task.force_run = AsyncMock()
+    mock_web_ctx.after_market_reconcile_task = mock_task
+
+    response = web_client.post("/api/background/reconcile/force-update")
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    await asyncio.sleep(0)
+    mock_task.force_run.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_force_after_market_reconcile_running(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": True}
+    mock_web_ctx.after_market_reconcile_task = mock_task
+
+    response = web_client.post("/api/background/reconcile/force-update")
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_force_after_market_reconcile_not_init(web_client, mock_web_ctx):
+    mock_web_ctx.after_market_reconcile_task = None
+
+    response = web_client.post("/api/background/reconcile/force-update")
+
     assert response.status_code == 503
 
 

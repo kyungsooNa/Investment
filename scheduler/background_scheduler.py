@@ -154,7 +154,7 @@ class BackgroundScheduler:
 
         # 2. SchedulableTask 종료
         for name, task in self._tasks.items():
-            if task.state in (TaskState.RUNNING, TaskState.SUSPENDED):
+            if task.state in (TaskState.RUNNING, TaskState.SUSPENDED) or self._has_active_internal_tasks(task):
                 try:
                     await task.stop()
                     self._logger.info(f"[BackgroundScheduler] '{name}' 종료 완료")
@@ -167,6 +167,13 @@ class BackgroundScheduler:
             self._logger.info("[BackgroundScheduler] WorkerPool 종료 완료")
 
         self._pm.log_timer("BackgroundScheduler.shutdown", t_start)
+
+    @staticmethod
+    def _has_active_internal_tasks(task: SchedulableTask) -> bool:
+        internal_tasks = getattr(task, "_tasks", None)
+        if not internal_tasks:
+            return False
+        return any(not internal_task.done() for internal_task in internal_tasks)
 
     async def suspend_all(self) -> None:
         """실행 중인 모든 태스크를 일시 중지한다 (WorkerPool 포함)."""
