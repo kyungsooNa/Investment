@@ -100,10 +100,13 @@ class AfterMarketTask(SchedulableTask, ABC):
         주입되지 않은 경우: 기존 after_market_loop 방식으로 폴백.
           - state를 RUNNING으로 전환 후 백그라운드 루프를 시작한다.
         """
+        self._tasks = [task for task in self._tasks if not task.done()]
         if self._state == TaskState.RUNNING:
             return
         if self._worker_pool is not None and self._registered:
             return  # 이미 등록됨 — 중복 start() 방지
+        if self._worker_pool is None and self._tasks:
+            return  # scheduler task가 대기(IDLE) 중인 상태의 중복 start() 방지
         await self._on_start_hook()
         if self._worker_pool is not None:
             self._registered = True

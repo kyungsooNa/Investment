@@ -285,7 +285,8 @@ class WebAppContext:
                 broker_api_wrapper=self.broker, env=self.env, logger=self.logger, market_clock=self.market_clock, cache_store=cache_store,
                 market_calendar_service=self._mcs,
                 performance_profiler=self.pm,
-                stock_repository=self.stock_repository
+                stock_repository=self.stock_repository,
+                data_quality_service=getattr(self, "data_quality_service", None),
             )
             self.indicator_service = IndicatorService(cache_store=cache_store, performance_profiler=self.pm)
             self.message_broker = MessageBroker()
@@ -308,6 +309,7 @@ class WebAppContext:
                 logger=self.logger,
             )
             self.data_quality_service.apply_trading_mode(bool(getattr(self.env, "is_paper_trading", True)))
+            self.market_data_service._data_quality_service = self.data_quality_service
         except Exception as e:
             self.logger.critical(f"[ServiceBootstrap:CoreServices] 초기화 실패: {e}", exc_info=True)
             raise
@@ -510,6 +512,7 @@ class WebAppContext:
                 risk_gate_service=self.risk_gate_service,
                 order_policy_service=self.order_policy_service,
                 data_quality_service=self.data_quality_service,
+                execution_quality_config=getattr(self.full_config, "execution_quality_report", None),
             )
             self.streaming_service.register_handler(
                 "signing_notice",
@@ -595,6 +598,7 @@ class WebAppContext:
             self.notification_queue_task = NotificationQueueTask(
                 notification_service=self.notification_service,
                 poll_interval=config_dict.get("notification_queue_poll_interval", 1.0),
+                telegram_config=getattr(getattr(self.full_config, "notifications", None), "telegram", None),
                 logger=self.logger,
             )
             self.after_market_reconcile_task = AfterMarketReconcileTask(

@@ -118,6 +118,13 @@ class DataQualityConfig(BaseModel):
 
 class NotificationTelegramConfig(BaseModel):
     enabled: bool = True
+    route_levels: Dict[str, List[str]] = Field(default_factory=lambda: {
+        "SYSTEM": ["error", "critical"],
+        "TRADE": ["warning", "error", "critical"],
+        "BACKGROUND": ["error", "critical"],
+        "STRATEGY": ["warning", "error", "critical"],
+        "API": ["error", "critical"],
+    })
 
     model_config = {"extra": "allow"}
 

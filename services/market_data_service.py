@@ -28,7 +28,8 @@ class MarketDataService:
     def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
                  market_clock: MarketClock = None, cache_store: Optional[CacheStore] = None,
                  market_calendar_service: Optional[MarketCalendarService] = None, performance_profiler: Optional[PerformanceProfiler] = None,
-                 stock_repository: Optional['StockRepository'] = None):
+                 stock_repository: Optional['StockRepository'] = None,
+                 data_quality_service=None):
         self._broker_api_wrapper = broker_api_wrapper
         self._env = env
         self._logger = logger if logger else logging.getLogger(__name__)
@@ -37,11 +38,41 @@ class MarketDataService:
         self._mcs = market_calendar_service
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._stock_repo = stock_repository
+        self._data_quality_service = data_quality_service
         
         self._ETF_PREFIXES = (
             "KODEX", "TIGER", "KBSTAR", "ARIRANG", "SOL", "ACE",
             "HANARO", "KOSEF", "PLUS", "TIMEFOLIO", "WON", "FOCUS",
             "VITA", "TREX", "MASTER", "WOORI", "KINDEX",
+        )
+
+    def _validate_rest_response(
+        self,
+        resp: Optional[ResCommonResponse],
+        *,
+        code: str = "",
+        require_output: bool = False,
+        required_data_keys: Optional[list[str]] = None,
+        operation: str = "",
+    ) -> Optional[ResCommonResponse]:
+        if self._data_quality_service is None:
+            return None
+        quality = self._data_quality_service.validate_api_response(
+            resp,
+            code=code,
+            require_output=require_output,
+            required_data_keys=required_data_keys,
+        )
+        if quality.ok:
+            return None
+        self._logger.warning(
+            f"MarketDataService REST 품질 검증 실패: operation={operation}, code={code}, "
+            f"reason={quality.reason}, metadata={quality.metadata}"
+        )
+        return ResCommonResponse(
+            rt_cd=ErrorCode.PARSING_ERROR.value if quality.reason == "rest_invalid" else ErrorCode.API_ERROR.value,
+            msg1=f"데이터 품질 검증 실패: {quality.reason}",
+            data=quality.to_dict(),
         )
 
     async def get_name_by_code(self, code: str) -> str:
@@ -92,6 +123,9 @@ class MarketDataService:
         if count_stats:
             self._logger.info(f"MarketDataService - {stock_code} 현재가 조회 요청")
         resp = await self._broker_api_wrapper.get_current_price(stock_code, exchange=exchange)
+        invalid = self._validate_rest_response(resp, code=stock_code, require_output=True, operation="get_current_price")
+        if invalid:
+            return invalid
 
         # 3. 조회 결과를 StockRepository에 갱신
         if resp and resp.rt_cd == ErrorCode.SUCCESS.value and self._stock_repo:
@@ -107,7 +141,9 @@ class MarketDataService:
     async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
         """복수종목 현재가 조회 (최대 30종목)"""
         self._logger.info(f"MarketDataService - 복수종목 현재가 조회 요청 ({len(stock_codes)}종목)")
-        return await self._broker_api_wrapper.get_multi_price(stock_codes)
+        resp = await self._broker_api_wrapper.get_multi_price(stock_codes)
+        invalid = self._validate_rest_response(resp, code=",".join(stock_codes), operation="get_multi_price")
+        return invalid or resp
 
     async def get_top_market_cap_stocks_code(self, market_code: str, limit: int = None) -> ResCommonResponse:
         """
@@ -120,7 +156,9 @@ class MarketDataService:
 
         self._logger.info(f"MarketDataService - 시가총액 상위 종목 조회 요청 - 시장: {market_code}, 개수: {limit}")
 
-        return await self._broker_api_wrapper.get_top_market_cap_stocks_code(market_code, limit)
+        resp = await self._broker_api_wrapper.get_top_market_cap_stocks_code(market_code, limit)
+        invalid = self._validate_rest_response(resp, code=market_code, operation="get_top_market_cap_stocks_code")
+        return invalid or resp
 
     async def get_current_upper_limit_stocks(self, rise_stocks: List) -> ResCommonResponse:
         """
@@ -177,12 +215,21 @@ class MarketDataService:
     async def get_asking_price(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """종목의 실시간 호가 정보를 조회합니다."""
         self._logger.info(f"MarketDataService - {stock_code} 종목 호가 정보 조회 요청")
-        return await self._broker_api_wrapper.get_asking_price(stock_code, exchange=exchange)
+        resp = await self._broker_api_wrapper.get_asking_price(stock_code, exchange=exchange)
+        invalid = self._validate_rest_response(
+            resp,
+            code=stock_code,
+            required_data_keys=["output1"],
+            operation="get_asking_price",
+        )
+        return invalid or resp
 
     async def get_time_concluded_prices(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """종목의 시간대별 체결가 정보를 조회합니다."""
         self._logger.info(f"MarketDataService - {stock_code} 종목 시간대별 체결가 조회 요청")
-        return await self._broker_api_wrapper.get_time_concluded_prices(stock_code, exchange=exchange)
+        resp = await self._broker_api_wrapper.get_time_concluded_prices(stock_code, exchange=exchange)
+        invalid = self._validate_rest_response(resp, code=stock_code, required_data_keys=["output"], operation="get_time_concluded_prices")
+        return invalid or resp
 
     async def inquire_daily_itemchartprice(self, stock_code: str, start_date: str, end_date: str, fid_period_div_code: str = 'D', exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """일별/분봉 주식 시세 차트 데이터를 조회합니다 (KoreaInvestApiQuotations 위임)."""
@@ -193,12 +240,16 @@ class MarketDataService:
         """상승률 또는 하락률 상위 종목을 조회합니다."""
         direction = "상승" if rise else "하락"
         self._logger.info(f"MarketDataService - {direction}률 상위 종목 조회 요청")
-        return await self._broker_api_wrapper.get_top_rise_fall_stocks(rise)
+        resp = await self._broker_api_wrapper.get_top_rise_fall_stocks(rise)
+        invalid = self._validate_rest_response(resp, code=direction, operation="get_top_rise_fall_stocks")
+        return invalid or resp
 
     async def get_top_volume_stocks(self) -> ResCommonResponse:
         """거래량 상위 종목을 조회합니다."""
         self._logger.info("MarketDataService - 거래량 상위 종목 조회 요청")
-        return await self._broker_api_wrapper.get_top_volume_stocks()
+        resp = await self._broker_api_wrapper.get_top_volume_stocks()
+        invalid = self._validate_rest_response(resp, code="volume", operation="get_top_volume_stocks")
+        return invalid or resp
 
     async def get_top_trading_value_stocks(self) -> ResCommonResponse:
         """

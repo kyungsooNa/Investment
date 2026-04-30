@@ -5,7 +5,9 @@ GET /api/cache/status, GET /api/background/status, GET /api/subscriptions/status
 import asyncio
 import pytest
 import time
+from datetime import datetime
 from unittest.mock import MagicMock, AsyncMock
+from core.account_snapshot import AccountSnapshot
 from repositories.streaming_stock_repo import StreamingType
 from view.web import api_common
 
@@ -153,6 +155,7 @@ def test_get_operations_status_partial_services(web_client, mock_web_ctx):
     mock_web_ctx.notification_service = None
     mock_web_ctx.broker = None
     mock_web_ctx.after_market_reconcile_task = None
+    mock_web_ctx.account_snapshot_cache = None
 
     response = web_client.get("/api/system/operations/status")
 
@@ -166,6 +169,50 @@ def test_get_operations_status_partial_services(web_client, mock_web_ctx):
     assert data["data_quality"]["enabled"] is False
     assert data["websocket"]["receive_alive"] is False
     assert data["after_market_reconcile"] is None
+    assert data["pnl"]["realized"]["realized_pnl_won"] is None
+    assert data["pnl"]["evaluation"]["estimated_unrealized_pnl_won"] is None
+
+
+def test_get_operations_status_pnl_breakdown(web_client, mock_web_ctx):
+    vts = MagicMock()
+    vts.get_summary.return_value = {"total_trades": 3, "win_rate": 50.0, "avg_return": 1.2}
+    vts.get_all_trades.return_value = [
+        {"status": "SOLD", "buy_price": 1000, "sell_price": 1200, "qty": 2},
+        {"status": "HOLD", "buy_price": 2000, "qty": 1},
+    ]
+    vts.get_holds.return_value = [
+        {"buy_price": 2000, "qty": 1},
+        {"buy_price": 3000, "qty": 2},
+    ]
+    data = {
+        "daily": {
+            "2026-04-29": {"ALL": 1.0},
+            "2026-04-30": {"ALL": 2.5},
+        }
+    }
+    vts._load_data.return_value = data
+    vts.get_daily_change.return_value = (1.5, "2026-04-29")
+    mock_web_ctx.virtual_trade_service = vts
+    mock_web_ctx.account_snapshot_cache = MagicMock()
+    mock_web_ctx.account_snapshot_cache._snapshot = AccountSnapshot(
+        total_equity=10_000_000,
+        available_cash=3_000_000,
+        positions={"005930": 4_000_000, "000660": 2_500_000},
+        fetched_at=datetime(2026, 4, 30, 15, 30),
+    )
+
+    response = web_client.get("/api/system/operations/status")
+
+    assert response.status_code == 200
+    pnl = response.json()["data"]["pnl"]
+    assert pnl["realized"]["realized_pnl_won"] == 400
+    assert pnl["realized"]["summary"]["avg_return"] == 1.2
+    assert pnl["evaluation"]["broker_total_equity"] == 10_000_000
+    assert pnl["evaluation"]["position_eval_amount"] == 6_500_000
+    assert pnl["evaluation"]["virtual_holding_buy_amount"] == 8_000
+    assert pnl["evaluation"]["estimated_unrealized_pnl_won"] == 6_492_000
+    assert pnl["day"]["daily_change_pct"] == 1.5
+    assert pnl["day"]["baseline_date"] == "2026-04-29"
 
 
 def test_get_operations_status_includes_after_market_reconcile(web_client, mock_web_ctx):

@@ -96,7 +96,6 @@
 
 진행 중.
 - P5: 백테스트-실거래 괴리 추적, 시장 상태 필터, RSI(2) 전략, 펜볼드/돈천 채널형 전략, 백테스트 고도화
-- P6: 데이터 품질 공통 검증, 대시보드 강화, 스케줄러 장애 복구 고도화
 - P7: BrokerAPIWrapper 테스트 안정화, 남은 DB/전략 계산 성능 측정
 - P8: 주문/리스크/브로커/전략 회귀 테스트 보강
 
@@ -241,83 +240,6 @@ main 반영 확인.
    ---
 ---
 
-## P6. 데이터 품질, 모니터링, 운영 복구
-
-실시간 자동매매에서 잘못된 데이터와 장애 미감지는 주문 버그만큼 위험합니다.
-
-### 6-1. Data Integrity 검증
-
-- [x] 가격 이상치 감지 규칙을 추가한다. (`DataQualityService.validate_price_tick()` + 주문 기준가 이탈 차단)
-- [x] 체결 데이터 누락을 감지한다. (`DataQualityService.validate_execution_report()`를 `StreamingService` 체결통보 dispatch 전에 연결)
-- [x] API 응답 값 sanity check를 공통화한다. (`DataQualityService.validate_api_response()`)
-- [x] 데이터 latency를 측정하고 기준 초과 시 주문을 차단한다. (`PriceStreamService` tick metadata + `OrderExecutionService` 주문 전 품질 게이트)
-- [x] REST 조회 실패, websocket 미구독, subscribed-no-tick 상태를 구분해 로깅한다. (`rest_failed`, `rest_invalid`, `not_subscribed`, `subscribed_no_tick`, `stale_price`, `invalid_tick`, `latency_exceeded` vocabulary 정리)
-
-남은 작업:
-
-- [x] `DataQualityConfig` 임계값을 실전/모의 운영값으로 캘리브레이션한다. (모의: tick 60초/REST 15초/급변 20%, 실전: tick 30초/REST 10초/급변 15%)
-- [x] 데이터 품질 차단 이력을 운영자가 볼 수 있도록 알림/로그 검색 또는 별도 히스토리 API를 추가한다. (`/api/system/data-quality/history`)
-- [ ] `DataQualityService`를 REST 보강 외의 주요 시세/랭킹/호가 조회 경로에도 점진적으로 적용한다.
-
-주요 파일:
-
-- `services/streaming_service.py`
-- `services/price_stream_service.py`
-- `services/data_quality_service.py`
-- `services/price_subscription_service.py`
-- `brokers/korea_investment/korea_invest_websocket_api.py`
-- `task/background/intraday/websocket_watchdog_task.py`
-
-### 6-2. 알림과 대시보드 강화
-
-- [x] 주문 실패 알림을 추가한다. (`OrderExecutionService` 매수/매도 실패 시 `NotificationService.emit()` + 실패 거래 기록)
-- [x] Kill Switch 발동 알림을 추가한다. (`KillSwitchService._trip()` → notification 연동, 상태 저장/복원)
-- [~] 체결 이상/슬리피지 과다 알림을 추가한다. (Kill Switch의 abnormal fill deviation trip은 있음. 전략별 슬리피지 리포트/알림은 남음)
-- [x] 시스템 상태 대시보드에 활성 전략 수, 현재 포지션, 미체결 주문, 손익을 표시한다. (`/api/system/operations/status` + 시스템 화면 운영 요약 패널)
-- [x] Telegram 외부 알림 채널을 설정화한다. (`notifications.telegram.enabled`; Slack은 제거하고 Telegram으로 통일)
-
-남은 작업:
-
-- [ ] 전략별 슬리피지/체결 품질 리포트 결과를 임계 초과 시 즉시 알림으로 발행한다.
-- [ ] 운영 요약 패널의 손익을 broker 평가손익/계좌 스냅샷과 통합해 실현/평가/일중 손익으로 분리한다.
-- [ ] Telegram 알림 라우팅을 이벤트 카테고리/레벨별로 정리한다. (예: SYSTEM critical만 즉시 발송, info는 웹 SSE만)
-
-주요 파일:
-
-- `services/notification_service.py`
-- `task/background/always_on/notification_queue_task.py`
-- `view/web/routes/system.py`
-- `view/web/static/js/system.js`
-- `view/web/routes/*`
-- `view/web/templates/*`
-
-### 6-3. 스케줄러 장애와 재시작 대응
-
-- [x] 스케줄러 중복 실행 방지 lock을 추가한다. (`BackgroundScheduler.start_all()` / `shutdown()` reentrant guard)
-- [x] 장 시작 전 상태 점검 task를 추가한다. (`PreMarketHealthCheckTask`)
-- [x] 장 종료 후 미체결/잔고 검증 task를 추가한다. (`AfterMarketReconcileTask` → `OrderExecutionService.reconcile_orders_with_broker()` wiring)
-- [x] WebSocket 끊김 후 자동 재구독 성공 여부를 검증한다. (`KoreaInvestWebSocketApi` auto reconnect/resubscribe, `WebSocketWatchdogTask.force_reconnect()`, 단위 테스트)
-- [x] 장애 발생 시 신규 주문 차단 상태로 전환한다. (reconcile alarm 및 Kill Switch 활성 시 신규 주문 차단)
-- [~] background task `start/stop/cancel/sleep` lifecycle 테스트를 보강한다. (일부 scheduler/time dispatcher/watchdog 테스트는 있음. `AfterMarketTask` 계열 전반 표준화는 남음)
-
-남은 작업:
-
-- [x] `PreMarketHealthCheckTask`의 점검 항목을 broker/token/config 존재 확인에서 실제 API ping/권한/계좌 조회까지 확장한다. (`get_access_token`, `get_current_price("005930")`, `get_account_balance` probe)
-- [x] `AfterMarketReconcileTask` 결과를 운영 대시보드와 알림 히스토리에서 추적 가능하게 저장한다. (`/api/system/reconcile/history`, 운영 요약 포함, 성공/불일치/실패 알림)
-- [ ] `AfterMarketTask` 계열 전체에 start/stop/cancel/sleep lifecycle 표준 테스트를 확대한다.
-- [ ] 중복 실행 guard가 실제 웹 lifespan/수동 start 연타 상황에서도 원하는 로그만 남기는지 브라우저/수동 시나리오로 확인한다.
-
-주요 파일:
-
-- `scheduler/*`
-- `task/background/*`
-- `task/background/intraday/pre_market_health_check_task.py`
-- `task/background/after_market/after_market_reconcile_task.py`
-- `view/web/web_app_initializer.py`
-- `services/order_execution_service.py`
-
----
-
 ## P7. 구조 개선과 성능 고도화
 
 운영 안정성에 직접 영향을 주는 구조 개선입니다. 기능 구현보다 후순위이지만, 반복 장애를 줄이는 데 중요합니다.
@@ -433,9 +355,7 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
    - 기존 `LarryWilliamsVBO`와 별도로 펜볼드/돈천 채널 전략 구현 여부 결정
    - 백테스트-실거래 괴리, 시장 상태 필터, 포트폴리오 백테스트 추가
 
-4. P6/P7 운영 안정화
-   - 데이터 latency/sanity 공통 검증
-   - 장 시작 전/장 종료 후 상태 점검 task wiring
+4. P7 운영 안정화
    - BrokerAPIWrapper 테스트 helper 표준화 및 xdist 외부 I/O 점검
 
 ---
@@ -485,8 +405,3 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
   - 판단: 추가 완화는 보류. 후보 부족 현상이 재발할 때만 아래 항목 재검토
   - 다음 조정 후보: 거래대금 50억 → 30억 추가 완화
   - 다음 조정 후보: 정배열 조건을 Pool B 전용으로 `current > ma_20d` 중심으로 완화 검토
-
-
-
-# UI 개선
-- `scheduler.html`, `virtual.html`, `system.html`, `ranking.html` 등 UI Page에서 종목들의 history나 종목 list를 표기할 때 한 화면에 20개씩 분리해서 표현 할 수 있도록 Pagination(Paging) 기능 추가. 필요시 view/web/static/pagination.js로 분리해서 재활용하는 방향으로 검토.

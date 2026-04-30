@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 from view.web.web_app_initializer import WebAppContext
 from pydantic import BaseModel
@@ -443,6 +444,56 @@ async def test_start_background_tasks_with_restore(mock_deps):
 
     # Assert — BackgroundScheduler.start_all()이 create_task로 호출되었는지 확인
     mock_create_task.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_start_background_tasks_manual_repeat_is_guarded(mock_deps):
+    """웹 start hook/수동 start 연타가 들어와도 실제 task start는 한 번만 수행된다."""
+    from scheduler.background_scheduler import BackgroundScheduler
+    from interfaces.schedulable_task import TaskPriority, TaskState
+
+    ctx = WebAppContext(None)
+    ctx.streaming_service = None
+    scheduler = BackgroundScheduler(logger=MagicMock())
+    started = asyncio.Event()
+    release = asyncio.Event()
+    task = MagicMock()
+    task.task_name = "web_manual_start"
+    task.priority = TaskPriority.LOW
+    task.state = TaskState.IDLE
+
+    async def slow_start():
+        started.set()
+        await release.wait()
+
+    task.start = AsyncMock(side_effect=slow_start)
+    task.stop = AsyncMock()
+    task.suspend = AsyncMock()
+    task.resume = AsyncMock()
+    scheduler.register(task)
+    ctx.background_scheduler = scheduler
+
+    created = []
+    original_create_task = asyncio.create_task
+
+    def track_create_task(coro):
+        created_task = original_create_task(coro)
+        created.append(created_task)
+        return created_task
+
+    with patch("view.web.web_app_initializer.asyncio.create_task", side_effect=track_create_task):
+        ctx.start_background_tasks()
+        await asyncio.wait_for(started.wait(), timeout=1)
+        ctx.start_background_tasks()
+        release.set()
+        await asyncio.gather(*created)
+
+        ctx.start_background_tasks()
+        await created[-1]
+
+    task.start.assert_awaited_once()
+    scheduler._logger.warning.assert_any_call("[BackgroundScheduler] start_all 중복 호출 무시")
+    scheduler._logger.warning.assert_any_call("[BackgroundScheduler] 이미 시작됨 — start_all 호출 무시")
 
 def test_load_config_and_env_with_telegram(mock_deps):
     """설정에 텔레그램 정보가 있으면 TelegramReporter가 초기화되는지 검증"""

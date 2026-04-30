@@ -165,6 +165,10 @@ async def test_start_all_with_worker_pool_and_time_dispatcher():
     assert len(scheduler._infra_tasks) == 1
     task.start.assert_awaited_once()
 
+    await scheduler.start_all()
+    mock_worker_pool.start.assert_awaited_once()
+    assert len(scheduler._infra_tasks) == 1
+
     # 정리
     scheduler._infra_tasks[0].cancel()
     import asyncio
@@ -302,6 +306,44 @@ async def test_start_all_concurrent_call_is_serialized(scheduler):
 
 
 @pytest.mark.asyncio
+async def test_start_all_concurrent_calls_start_tasks_once(scheduler):
+    """실제 동시 start_all 호출에서도 첫 호출만 태스크를 시작한다."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    t1 = _make_mock_task("slow", TaskState.IDLE)
+
+    async def slow_start():
+        started.set()
+        await release.wait()
+
+    t1.start = AsyncMock(side_effect=slow_start)
+    scheduler.register(t1)
+
+    first = asyncio.create_task(scheduler.start_all())
+    await asyncio.wait_for(started.wait(), timeout=1)
+    second = asyncio.create_task(scheduler.start_all())
+    release.set()
+
+    await asyncio.gather(first, second)
+
+    t1.start.assert_awaited_once()
+    scheduler._logger.warning.assert_any_call("[BackgroundScheduler] start_all 중복 호출 무시")
+
+
+@pytest.mark.asyncio
+async def test_start_all_sequential_repeat_is_noop(scheduler):
+    """웹 lifespan/수동 start 연타처럼 시작 완료 후 다시 눌러도 재시작하지 않는다."""
+    t1 = _make_mock_task("manual_start", TaskState.IDLE)
+    scheduler.register(t1)
+
+    await scheduler.start_all()
+    await scheduler.start_all()
+
+    t1.start.assert_awaited_once()
+    scheduler._logger.warning.assert_any_call("[BackgroundScheduler] 이미 시작됨 — start_all 호출 무시")
+
+
+@pytest.mark.asyncio
 async def test_shutdown_concurrent_call_is_serialized(scheduler):
     t1 = _make_mock_task("slow", TaskState.RUNNING)
     scheduler.register(t1)
@@ -310,3 +352,41 @@ async def test_shutdown_concurrent_call_is_serialized(scheduler):
     await scheduler.shutdown()
 
     t1.stop.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_concurrent_calls_stop_tasks_once(scheduler):
+    """실제 동시 shutdown 호출에서도 첫 호출만 태스크를 종료한다."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    t1 = _make_mock_task("slow_stop", TaskState.RUNNING)
+
+    async def slow_stop():
+        started.set()
+        await release.wait()
+
+    t1.stop = AsyncMock(side_effect=slow_stop)
+    scheduler.register(t1)
+
+    first = asyncio.create_task(scheduler.shutdown())
+    await asyncio.wait_for(started.wait(), timeout=1)
+    second = asyncio.create_task(scheduler.shutdown())
+    release.set()
+
+    await asyncio.gather(first, second)
+
+    t1.stop.assert_awaited_once()
+    scheduler._logger.warning.assert_any_call("[BackgroundScheduler] shutdown 중복 호출 무시")
+
+
+@pytest.mark.asyncio
+async def test_shutdown_sequential_repeat_is_noop(scheduler):
+    """종료 완료 후 shutdown 재호출은 stop을 반복하지 않는다."""
+    t1 = _make_mock_task("manual_shutdown", TaskState.RUNNING)
+    scheduler.register(t1)
+
+    await scheduler.shutdown()
+    await scheduler.shutdown()
+
+    t1.stop.assert_awaited_once()
+    scheduler._logger.warning.assert_any_call("[BackgroundScheduler] 이미 종료됨 — shutdown 호출 무시")

@@ -40,6 +40,8 @@ class BackgroundScheduler:
         self._shutdown_lock: Optional[asyncio.Lock] = None
         self._starting: bool = False
         self._shutting_down: bool = False
+        self._started: bool = False
+        self._shutdown_completed: bool = False
 
     def _get_start_lock(self) -> asyncio.Lock:
         if self._start_lock is None:
@@ -75,10 +77,15 @@ class BackgroundScheduler:
         if self._starting or lock.locked():
             self._logger.warning("[BackgroundScheduler] start_all 중복 호출 무시")
             return
+        if self._started:
+            self._logger.warning("[BackgroundScheduler] 이미 시작됨 — start_all 호출 무시")
+            return
         self._starting = True
         async with lock:
             try:
                 await self._start_all_locked()
+                self._started = True
+                self._shutdown_completed = False
             finally:
                 self._starting = False
 
@@ -119,10 +126,15 @@ class BackgroundScheduler:
         if self._shutting_down or lock.locked():
             self._logger.warning("[BackgroundScheduler] shutdown 중복 호출 무시")
             return
+        if self._shutdown_completed:
+            self._logger.warning("[BackgroundScheduler] 이미 종료됨 — shutdown 호출 무시")
+            return
         self._shutting_down = True
         async with lock:
             try:
                 await self._shutdown_locked()
+                self._started = False
+                self._shutdown_completed = True
             finally:
                 self._shutting_down = False
 

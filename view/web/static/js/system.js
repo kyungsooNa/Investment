@@ -574,12 +574,19 @@ async function updateOperationsStatus() {
         const orders = data.orders || {};
         const ks = data.kill_switch || {};
         const pnl = data.pnl || {};
+        const realized = pnl.realized || {};
+        const evaluation = pnl.evaluation || {};
+        const day = pnl.day || {};
+        const fmtWon = (value) => value == null ? '-' : `${Number(value).toLocaleString()}원`;
+        const fmtPct = (value) => value == null ? '-' : `${Number(value).toFixed(2)}%`;
         el.innerHTML = [
             renderOpsMetric('활성 전략', data.active_strategy_count ?? 0),
             renderOpsMetric('현재 포지션', data.position_count ?? 0),
             renderOpsMetric('활성 주문', orders.active_order_count ?? 0, (orders.active_order_count || 0) > 0 ? 'warn' : 'normal'),
             renderOpsMetric('미체결 주문', orders.unfilled_order_count ?? 0, (orders.unfilled_order_count || 0) > 0 ? 'warn' : 'normal'),
-            renderOpsMetric('평균 수익률', pnl.avg_return != null ? `${pnl.avg_return}%` : '-'),
+            renderOpsMetric('실현손익', fmtWon(realized.realized_pnl_won), (realized.realized_pnl_won || 0) < 0 ? 'warn' : 'normal'),
+            renderOpsMetric('평가손익', fmtWon(evaluation.estimated_unrealized_pnl_won), (evaluation.estimated_unrealized_pnl_won || 0) < 0 ? 'warn' : 'normal'),
+            renderOpsMetric('일중수익률', fmtPct(day.daily_change_pct), (day.daily_change_pct || 0) < 0 ? 'warn' : 'normal'),
             renderOpsMetric('Data Quality', dq.enabled ? (dqResult.reason || 'ok') : 'disabled', dqResult.ok === false ? 'bad' : 'normal'),
             renderOpsMetric('WebSocket', ws.receive_alive ? 'alive' : 'down', ws.receive_alive ? 'normal' : 'warn'),
             renderOpsMetric('알림 큐', data.notification_queue_depth ?? 0),
