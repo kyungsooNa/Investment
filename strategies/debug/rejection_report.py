@@ -24,14 +24,45 @@ _STAGE_LABELS = {
 def _event_label(event: RejectionEvent) -> str:
     label = _STAGE_LABELS.get(event.event, event.event)
     reason = event.details.get("reason", "")
+    d = event.details
+
     if event.event == "entry_rejected" and reason == "low_execution_strength":
-        cgld = event.details.get("cgld", "?")
-        thr = event.details.get("threshold", "?")
-        entry_type = event.details.get("entry_type", "?")
+        entry_type = d.get("entry_type", "?")
+        cgld = d.get("cgld", "?")
+        thr = d.get("threshold", "?")
         return f"{label} 탈락 [{entry_type}] — cgld={cgld} < {thr}"
+
     if event.event == "stage_blocked":
-        stage = event.details.get("stage", "?")
-        return f"{label} 탈락 — stage={stage}"
+        return f"{label} 탈락 — stage={d.get('stage', '?')}"
+
+    if reason == "poor_candle_quality":
+        pos = d.get("pos", "?")
+        thr = d.get("threshold", "?")
+        return f"{label} 탈락 — {reason} (pos={pos} < {thr})"
+
+    if reason == "no_ma_proximity":
+        closest = d.get("closest_ma_pct")
+        closest_str = f"{closest:+.2f}%" if isinstance(closest, (int, float)) else str(closest)
+        return f"{label} 탈락 — {reason} (최근접MA={closest_str})"
+
+    if reason == "insufficient_volume":
+        proj = d.get("proj_vol", "?")
+        thr = d.get("threshold", "?")
+        fmt = lambda v: f"{v:,}" if isinstance(v, int) else str(v)
+        return f"{label} 탈락 — {reason} (예상={fmt(proj)} < {fmt(thr)})"
+
+    if reason == "low_pg_ratio":
+        pg_tv = d.get("pg_to_tv_pct", "?")
+        thr = d.get("threshold", "?")
+        return f"{label} 탈락 — {reason} (pg_tv={pg_tv}% < {thr}%)"
+
+    if reason == "low_pg_metrics":
+        pg_tv = d.get("pg_tv_pct", "?")
+        pg_mc = d.get("pg_mc_pct", "?")
+        mc_thr = d.get("mc_threshold", "?")
+        cgld = d.get("cgld", "?")
+        return f"{label} 탈락 — {reason} (pg_tv={pg_tv}% pg_mc={pg_mc}% < {mc_thr}% cgld={cgld})"
+
     if reason:
         return f"{label} 탈락 — {reason}"
     return label

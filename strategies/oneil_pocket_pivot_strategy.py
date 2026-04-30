@@ -329,7 +329,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             # 저가 대비 현재 위치 (0.0: 저가, 1.0: 고가)
             relative_pos = (current - day_low) / day_range
             if relative_pos < self._cfg.pp_min_candle_relative_pos:
-                self._logger.debug({"event": "pp_rejected", "code": code, "reason": "poor_candle_quality", "pos": round(relative_pos, 2)})
+                self._logger.debug({"event": "pp_rejected", "code": code, "reason": "poor_candle_quality", "pos": round(relative_pos, 2), "threshold": self._cfg.pp_min_candle_relative_pos})
                 return None
 
         # 3. 당일 상승일 확인 (양봉 및 전일비 상승)
