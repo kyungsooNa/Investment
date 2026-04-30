@@ -45,13 +45,23 @@ def mock_heavy_io(monkeypatch):
         return None
     monkeypatch.setattr(httpx.AsyncClient, "aclose", _mock_aclose)
 
+    # 3. websockets.connect: 실전 WebSocket 서버 접속 차단 (xdist 병렬 실행 시 hang 방지)
+    #    WebSocket이 필요한 테스트는 반드시 patch("...websockets.connect")로 개별 모킹한다.
+    import websockets
+    async def _mock_ws_connect(*args, **kwargs):
+        raise RuntimeError(
+            "Real WebSocket connections are blocked in unit tests. "
+            "Use patch('module.websockets.connect') in the test."
+        )
+    monkeypatch.setattr(websockets, "connect", _mock_ws_connect)
+
 # --- Web API 관련 공통 Fixture ---
 
 
 @pytest.fixture(scope="session")
 def test_cache_config():
     # test_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".cache"))
-    test_base_dir = tempfile.mktemp()
+    test_base_dir = tempfile.mkdtemp()
     return {
         "cache": {
             "base_dir": test_base_dir,
