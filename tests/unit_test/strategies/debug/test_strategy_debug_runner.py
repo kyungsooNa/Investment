@@ -1,5 +1,6 @@
 """Unit tests for StrategyDebugRunner and _UniverseFilterProxy."""
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -191,3 +192,41 @@ class TestStrategyDebugRunner:
 
         assert report.requested_codes is None
         assert report.scanned_codes == ["005930", "000660"]
+
+    async def test_stage_guard_filters_codes_and_captures_blocked_events(self):
+        watchlist = {
+            "005930": _make_watchlist_item("005930"),
+            "000660": _make_watchlist_item("000660"),
+            "035720": _make_watchlist_item("035720"),
+        }
+        debug_logger = _make_debug_logger()
+        strategy = _make_strategy(watchlist=watchlist)
+        scanned_inside_strategy = []
+
+        async def fake_scan():
+            scanned_inside_strategy.extend((await strategy._universe.get_watchlist()).keys())
+            return []
+
+        strategy.scan = fake_scan
+        stage_service = MagicMock()
+        stage_service.get_stage_for_code = AsyncMock(side_effect=[(2, "Stage 2"), 3, RuntimeError("stage down")])
+        runner = StrategyDebugRunner(strategy, debug_logger, stage_service=stage_service)
+
+        report = await runner.run(candidate_codes=["005930", "000660", "035720"])
+
+        assert report.scanned_codes == ["005930", "000660", "035720"]
+        assert report.events == []
+        assert scanned_inside_strategy == ["005930"]
+
+    async def test_run_without_universe_uses_candidate_codes(self):
+        strategy = SimpleNamespace(
+            name="무유니버스전략",
+            scan=AsyncMock(return_value=[]),
+        )
+        debug_logger = _make_debug_logger()
+        runner = StrategyDebugRunner(strategy, debug_logger)
+
+        report = await runner.run(candidate_codes=["005930"])
+
+        assert report.scanned_codes == ["005930"]
+        assert report.missing_codes == []
