@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-04-30 (완료 항목 정리)
+최종 업데이트: 2026-05-01 (P8 완료 제거)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -113,28 +113,6 @@
 
 ---
 
-## P8. 테스트 보강 우선순위
-
-### 8-1. 브로커 계층 테스트
-
-- [x] 주문 타입별 API 파라미터 검증 테스트를 추가한다. (KRX 시장가·지정가 excg_id_dvsn_cd="" 검증, NXT 시장가 차단, NXT 지정가 + adjust_price 로깅 모두 완료)
-
-### 8-2. 전략/스케줄러 테스트
-
-- [x] 시장 상태 필터 ON/OFF 테스트를 추가한다. (`test_loop_runs_enabled_strategy_when_market_open`, `test_loop_skips_all_strategies_when_market_closed` 추가)
-- [x] background task 시작 테스트에는 반드시 `try/finally await stop()`을 적용한다. (`cache_warmup`, `log_cleanup`, `ohlcv_update` `TestStartStop` 수정 완료)
-- [ ] xdist 병렬 실행 시 외부 네트워크 호출이 발생하지 않도록 fixture를 점검한다. (unit_test conftest의 sqlite3/httpx 패치는 적용됨. 추가 I/O 소스 점검 남음)
-
-권장 실행:
-
-```powershell
-C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\unit_test\services\test_order_execution_service.py -v -o addopts=
-C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\unit_test\services\test_risk_gate_service.py -v -o addopts=
-C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_test -v -o addopts=
-```
-
----
-
 ## Strategy Log 남은 작업
 
 ### Pool B 튜닝 관찰
@@ -156,11 +134,6 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe -m pytest tests\integration_te
    - 시장 상태 필터 추가
    - 포트폴리오 백테스트 추가
    - 디버깅 백테스트 과거 시점 재현 추가
-
-3. P8 운영 안정화
-   - 주문 타입별 브로커 파라미터 테스트 보강
-   - `AfterMarketTask` 계열 background task 정리 패턴 점검
-   - xdist 외부 I/O 차단 fixture 점검
 
 ---
 
