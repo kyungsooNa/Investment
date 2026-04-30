@@ -1,10 +1,11 @@
 """
 CacheWarmupTask 단위 테스트.
-장 마감 후 watchlist/보유종목/우량주 캐시 웜업 태스크 검증.
+장전/장중 watchlist/보유종목 캐시 웜업 태스크 검증.
 """
-import json
+import asyncio
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch, mock_open
+from datetime import datetime
+from unittest.mock import MagicMock, AsyncMock, patch
 
 from task.background.after_market.cache_warmup_task import CacheWarmupTask
 from common.types import ResCommonResponse, ErrorCode
@@ -106,10 +107,10 @@ class TestTaskProperties:
 
 class TestStartStop:
 
-    async def test_start_sets_running_state(self, task):
+    async def test_start_schedules_premarket_loop_and_stays_idle_until_run(self, task):
         try:
             await task.start()
-            assert task.state == TaskState.RUNNING
+            assert task.state == TaskState.IDLE
             assert len(task._tasks) == 1
         finally:
             await task.stop()
@@ -148,7 +149,7 @@ class TestSuspendResume:
     async def test_resume_from_suspended(self, task):
         task._state = TaskState.SUSPENDED
         await task.resume()
-        assert task.state == TaskState.RUNNING
+        assert task.state == TaskState.IDLE
 
     async def test_suspend_when_not_running_is_noop(self, task):
         assert task.state == TaskState.IDLE
@@ -165,25 +166,67 @@ class TestSuspendResume:
 # _on_market_closed
 # ---------------------------------------------------------------------------
 
-class TestOnMarketClosed:
+class TestShouldRunNow:
 
-    async def test_runs_warmup_for_new_date(self, task, mock_mds):
-        task._last_warmed_date = None
-        with patch.object(task, "_run_warmup", new_callable=AsyncMock) as mock_run:
-            await task._on_market_closed("20260320")
-            mock_run.assert_awaited_once_with("20260320")
+    async def test_should_run_in_pre_open_window(self, task, mock_mcs, mock_market_clock):
+        mock_market_clock.get_current_kst_time.return_value = datetime(2026, 3, 20, 8, 45)
+        mock_market_clock.get_market_open_time.return_value = datetime(2026, 3, 20, 9, 0)
+        mock_market_clock.is_market_operating_hours.return_value = False
+        mock_mcs.is_business_day = AsyncMock(return_value=True)
 
-    async def test_skips_warmup_for_same_date(self, task):
+        should_run, date_key = await task._should_run_now()
+
+        assert should_run is True
+        assert date_key == "20260320"
+
+    async def test_should_run_during_market_hours_for_late_start(self, task, mock_mcs, mock_market_clock):
+        mock_market_clock.get_current_kst_time.return_value = datetime(2026, 3, 20, 10, 0)
+        mock_market_clock.get_market_open_time.return_value = datetime(2026, 3, 20, 9, 0)
+        mock_market_clock.is_market_operating_hours.return_value = True
+        mock_mcs.is_business_day = AsyncMock(return_value=True)
+
+        should_run, date_key = await task._should_run_now()
+
+        assert should_run is True
+        assert date_key == "20260320"
+
+    async def test_should_not_run_twice_same_day(self, task, mock_mcs, mock_market_clock):
         task._last_warmed_date = "20260320"
-        with patch.object(task, "_run_warmup", new_callable=AsyncMock) as mock_run:
-            await task._on_market_closed("20260320")
-            mock_run.assert_not_awaited()
+        mock_market_clock.get_current_kst_time.return_value = datetime(2026, 3, 20, 10, 0)
+        mock_market_clock.is_market_operating_hours.return_value = True
+        mock_mcs.is_business_day = AsyncMock(return_value=True)
 
-    async def test_runs_warmup_for_next_trading_date(self, task):
-        task._last_warmed_date = "20260319"
-        with patch.object(task, "_run_warmup", new_callable=AsyncMock) as mock_run:
-            await task._on_market_closed("20260320")
-            mock_run.assert_awaited_once_with("20260320")
+        should_run, date_key = await task._should_run_now()
+
+        assert should_run is False
+        assert date_key == "20260320"
+
+    async def test_should_not_run_on_closed_day_or_without_dependencies(self, task, mock_mcs, mock_market_clock):
+        empty_task = CacheWarmupTask(
+            market_data_service=MagicMock(),
+            stock_query_service=MagicMock(),
+            market_calendar_service=None,
+            market_clock=None,
+            logger=MagicMock(),
+        )
+        assert await empty_task._should_run_now() == (False, None)
+
+        mock_market_clock.get_current_kst_time.return_value = datetime(2026, 3, 21, 8, 45)
+        mock_mcs.is_business_day = AsyncMock(return_value=False)
+        assert await task._should_run_now() == (False, "20260321")
+
+
+class TestLoop:
+
+    async def test_loop_runs_immediately_when_market_is_open(self, task):
+        task._should_run_now = AsyncMock(side_effect=[(True, "20260320"), asyncio.CancelledError()])
+        task._run_warmup = AsyncMock()
+
+        with patch("task.background.after_market.cache_warmup_task.asyncio.sleep", new_callable=AsyncMock):
+            await task._loop()
+
+        task._run_warmup.assert_awaited_once_with("20260320")
+        assert task.state == TaskState.IDLE
 
 
 # ---------------------------------------------------------------------------
@@ -353,16 +396,14 @@ class TestGetHoldingsCodes:
 class TestCollectTargetCodes:
 
     async def test_deduplicates_across_sources(self, task, mock_universe_service, mock_sqs):
-        """watchlist·보유·우량주에 중복 종목이 있어도 Set으로 중복 제거된다."""
-        # watchlist: 035720, 035420
-        # holdings: 005930, 000660
-        # premium: 035720 (중복), 005930 (중복)
-        fake_data = json.dumps({"kospi": ["035720", "005930"], "kosdaq": []})
-        with patch("builtins.open", mock_open(read_data=fake_data)), \
-             patch("os.path.exists", return_value=True):
-            codes = await task._collect_target_codes()
+        """watchlist·보유 종목에 중복 종목이 있어도 Set으로 중복 제거된다."""
+        mock_universe_service.get_watchlist.return_value = {
+            "035720": MagicMock(),
+            "005930": MagicMock(),
+        }
+        codes = await task._collect_target_codes()
 
-        assert codes == {"035720", "035420", "005930", "000660"}
+        assert codes == {"035720", "005930", "000660"}
 
     async def test_empty_when_all_sources_fail(self, task, mock_universe_service, mock_sqs):
         mock_universe_service.get_watchlist.side_effect = RuntimeError()

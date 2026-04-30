@@ -1,27 +1,25 @@
 # task/background/after_market/cache_warmup_task.py
 """
-Watchlist / 보유종목 / 관심종목(우량주) 위주로 캐시를 사전 구성하는 백그라운드 태스크.
+Watchlist / 보유종목 위주로 캐시를 사전 구성하는 백그라운드 태스크.
 
-장 마감 후 전략 실행에 자주 쓰이는 종목들의 가격 요약 데이터를 미리 캐시에 적재하여
-다음날 장 시작 전·후 전략이 빠르게 데이터에 접근할 수 있도록 한다.
+장전 또는 장중 기동 직후 전략 실행에 자주 쓰이는 종목들의 가격 요약 데이터를
+미리 캐시에 적재하여 장중 전략이 빠르게 데이터에 접근할 수 있도록 한다.
 
 대상 종목 (우선순위 순):
   1. OneilUniverseService watchlist — 전략이 직접 참조하는 핵심 관심 풀
   2. 보유종목(계좌 잔고 output2.pdno) — 리스크 관리 최우선
-  3. 우량주 풀(data/premium_stocks.json) — 전일기준 주도주
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
 import time
+from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
 from common.types import ErrorCode
-from task.background.after_market.after_market_task_base import AfterMarketTask
-from interfaces.schedulable_task import TaskState
+from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 
 if TYPE_CHECKING:
@@ -30,11 +28,6 @@ if TYPE_CHECKING:
     from services.oneil_universe_service import OneilUniverseService
     from services.market_calendar_service import MarketCalendarService
     from core.market_clock import MarketClock
-
-_PREMIUM_STOCKS_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "..", "..", "..", "data", "premium_stocks.json",
-)
 
 # 청크당 병렬 호출 수 — 가격 조회는 가벼우므로 다소 넉넉하게 설정
 _API_CHUNK_SIZE = 10
@@ -46,8 +39,11 @@ def _chunked(lst: list, size: int):
         yield lst[i:i + size]
 
 
-class CacheWarmupTask(AfterMarketTask):
-    """장 마감 후 주요 관심 종목의 가격 데이터를 캐시에 사전 적재하는 태스크."""
+class CacheWarmupTask(SchedulableTask):
+    """장 시작 전/장중 주요 관심 종목의 가격 데이터를 캐시에 사전 적재하는 태스크."""
+
+    CHECK_INTERVAL_SEC = 60
+    PRE_OPEN_WINDOW_MIN = 30
 
     def __init__(
         self,
@@ -60,16 +56,17 @@ class CacheWarmupTask(AfterMarketTask):
         logger=None,
         worker_pool=None,
     ) -> None:
-        super().__init__(
-            mcs=market_calendar_service,
-            market_clock=market_clock,
-            logger=logger or logging.getLogger(__name__),
-            worker_pool=worker_pool,
-        )
+        self._mcs = market_calendar_service
+        self._market_clock = market_clock
+        self._logger = logger or logging.getLogger(__name__)
         self._mds = market_data_service
         self._sqs = stock_query_service
         self._universe_service = universe_service
         self._ns = notification_service
+        self._worker_pool = worker_pool
+        self._state: TaskState = TaskState.IDLE
+        self._tasks: List[asyncio.Task] = []
+        self._running_depth: int = 0
 
         self._suspend_event: asyncio.Event = asyncio.Event()
         self._suspend_event.set()
@@ -93,8 +90,33 @@ class CacheWarmupTask(AfterMarketTask):
         return "cache_warmup"
 
     @property
-    def _scheduler_label(self) -> str:
-        return "CacheWarmup"
+    def priority(self) -> TaskPriority:
+        return TaskPriority.LOW
+
+    @property
+    def state(self) -> TaskState:
+        return self._state
+
+    async def start(self) -> None:
+        self._tasks = [task for task in self._tasks if not task.done()]
+        if self._tasks:
+            return
+        if self._state == TaskState.STOPPED:
+            self._state = TaskState.IDLE
+        await self._on_start_hook()
+        self._tasks.append(asyncio.create_task(self._loop()))
+        self._logger.info("CacheWarmupTask 장전/장중 웜업 루프 시작")
+
+    async def stop(self) -> None:
+        self._logger.info(f"cache_warmup 종료 시작: {len(self._tasks)}개 태스크")
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+        self._state = TaskState.STOPPED
+        self._logger.info("cache_warmup 종료 완료")
 
     async def _on_start_hook(self) -> None:
         self._suspend_event.set()
@@ -108,22 +130,62 @@ class CacheWarmupTask(AfterMarketTask):
     async def resume(self) -> None:
         if self._state == TaskState.SUSPENDED:
             self._suspend_event.set()
-            self._state = TaskState.RUNNING
+            self._state = TaskState.IDLE
             self._logger.info("CacheWarmupTask 재개")
 
     def get_progress(self) -> Dict:
         return dict(self._progress)
 
-    # ── 장 마감 콜백 ─────────────────────────────────────────────
+    @asynccontextmanager
+    async def _running_state(self):
+        entered = self._state not in (TaskState.SUSPENDED, TaskState.STOPPED)
+        if entered:
+            self._running_depth += 1
+            self._state = TaskState.RUNNING
+        try:
+            yield
+        finally:
+            if entered:
+                self._running_depth -= 1
+                if self._running_depth == 0 and self._state == TaskState.RUNNING:
+                    self._state = TaskState.IDLE
 
-    async def _on_market_closed(self, latest_trading_date: str) -> None:
-        """장 마감 후 콜백: 해당 거래일 캐시 웜업이 필요하면 실행."""
-        if self._last_warmed_date == latest_trading_date:
-            self._logger.info(
-                f"CacheWarmupTask: {latest_trading_date} 이미 웜업 완료 — 스킵"
-            )
-            return
-        await self._run_warmup(latest_trading_date)
+    # ── 장전/장중 스케줄 ─────────────────────────────────────────
+
+    async def _loop(self) -> None:
+        while True:
+            try:
+                if self._state != TaskState.SUSPENDED:
+                    should_run, trading_date = await self._should_run_now()
+                    if should_run and trading_date:
+                        async with self._running_state():
+                            await self._run_warmup(trading_date)
+                await asyncio.sleep(self.CHECK_INTERVAL_SEC)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                self._logger.error(f"CacheWarmupTask 루프 오류: {exc}", exc_info=True)
+                await asyncio.sleep(self.CHECK_INTERVAL_SEC)
+
+    async def _should_run_now(self) -> tuple[bool, Optional[str]]:
+        if not self._market_clock or not self._mcs:
+            return False, None
+        now = self._market_clock.get_current_kst_time()
+        date_key = now.strftime("%Y%m%d")
+        if self._last_warmed_date == date_key:
+            return False, date_key
+        try:
+            if not await self._mcs.is_business_day(date_key):
+                return False, date_key
+        except Exception:
+            return False, date_key
+
+        if self._market_clock.is_market_operating_hours():
+            return True, date_key
+
+        open_time = self._market_clock.get_market_open_time()
+        should_run = open_time - timedelta(minutes=self.PRE_OPEN_WINDOW_MIN) <= now < open_time
+        return should_run, date_key
 
     # ── 강제 실행 ─────────────────────────────────────────────────
 

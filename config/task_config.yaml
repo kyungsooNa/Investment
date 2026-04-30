@@ -1,5 +1,5 @@
 # config/task_config.yaml
-# 장 마감 후 백그라운드 태스크 설정
+# 백그라운드 태스크 설정
 #
 # after_market_delay_min
 #   장 마감 감지 후 해당 태스크를 실제로 실행하기까지의 Padding 시간(분).
@@ -20,5 +20,4 @@ after_market_tasks:
     newhigh: 21                  # NewHighTask — daily_price_collector 완료(21분) + 여유
     minervini_update: 21        # MinerviniUpdateTask — 장 마감 21분 후
     전일기준주도주_생성: 50        # PremiumWatchlistGeneratorTask — 장 마감 50분 후
-    cache_warmup: 60             # CacheWarmupTask — 장 마감 60분 후 (우량주 생성 완료 후)
     log_cleanup: 300              # LogCleanupTask — 장 마감 300분(5시간) 후

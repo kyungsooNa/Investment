@@ -483,6 +483,30 @@ def test_get_background_status_pre_market_health_check_schedule_type(web_client,
     assert data[0]["progress"] == {"running": False, "status": "Waiting to start"}
 
 
+def test_get_background_status_cache_warmup_schedule_type(web_client, mock_web_ctx):
+    """cache_warmup은 장마감 티켓 배치가 아니라 장전/장중 웜업으로 분류한다."""
+    class CacheWarmupTask:
+        pass
+
+    CacheWarmupTask.__module__ = "task.background.after_market.cache_warmup_task"
+    mock_task = CacheWarmupTask()
+    mock_task._progress = {"running": False}
+    mock_task.get_progress = MagicMock(return_value={"running": False, "last_warmed_date": None})
+
+    mock_web_ctx.background_scheduler = MagicMock()
+    mock_web_ctx.background_scheduler.get_all_status.return_value = [
+        {"name": "cache_warmup", "state": "idle", "priority": 100},
+    ]
+    mock_web_ctx.background_scheduler.get_task.return_value = mock_task
+
+    response = web_client.get("/api/background/status")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data[0]["name"] == "cache_warmup"
+    assert data[0]["schedule_type"] == "pre_market"
+
+
 def test_get_background_status_idle_with_internal_flag(web_client, mock_web_ctx):
     """태스크가 IDLE 상태지만 내부 플래그(_is_refreshing)가 있는 경우 get_progress() 호출 확인"""
     mock_task = MagicMock()
