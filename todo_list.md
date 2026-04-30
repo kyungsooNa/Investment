@@ -1,6 +1,6 @@
 # Investment Trading App - 실전 운영 개선 To-Do
 
-최종 업데이트: 2026-04-30
+최종 업데이트: 2026-04-30 (디버깅 백테스트 Phase 1 + 상태 격리 보강 완료)
 
 ## 2026-04-29 Update - O'Neil Market Timing
 
@@ -204,8 +204,8 @@ main 반영 확인.
    
    💡 구현을 위한 추가 Tip (나경수님의 시스템 기준)Config 클래스 생성: FirstPullbackConfig처럼 각 전략에 맞는 LarryWilliamsConfig, RSI2Config 등을 oneil_common_types.py에 추가하세요.지표 함수 활용: RSI(2)와 ADX(14)는 기존 IndicatorService에 calc_rsi_sync, calc_adx_sync 형태로 추가하여 scan 로직에서 호출하면 됩니다.PositionState 관리: FPPositionState와 유사하게 래리 코너스 전략은 entry_rsi를, 펜볼드 전략은 channel_low_10d를 저장하여 청산 시 참조하도록 설계하세요.
 
-   - [ ] 벡테스트 고도화
-   - 1. 전략 코드를 수정하지 않고 "왜 안 샀을까?"(디버깅 백테스트) 구현하기
+   - [x] 벡테스트 고도화
+   - 1. 전략 코드를 수정하지 않고 "왜 안 샀을까?"(디버깅 백테스트) 구현하기 ✅ **Phase 1 완료 (2026-04-30)**
       - 기존 전략 클래스(예: VolumeBreakoutStrategy)의 내부 로직을 직접 뜯어고치지 않고도 디버깅 백테스트를 수행할 수 있습니다. 주로 다음과 같은 디자인 패턴과 우회 기법을 사용합니다.
 
       - A. 설명자(Explainer) / 검사기(Inspector) 모듈 분리 (추천)
@@ -221,22 +221,106 @@ main 반영 확인.
    - 2. 단일 종목 / 수익률 검증 외에 반드시 필요한 백테스트 유형
       - VCP 패턴이나 포켓 피봇과 같은 추세 추종 및 돌파 매매는 단순히 종목 하나의 과거 수익률을 보는 것만으로는 실전 성과를 담보하기 어렵습니다. 시스템을 고도화하기 위해 다음의 4가지 백테스트가 추가로 필요합니다.
 
-      -  ① 포트폴리오(계좌) 단위 백테스트 (System / Portfolio Backtest)
+      -  ① 포트폴리오(계좌) 단위 백테스트 (System / Portfolio Backtest) **[우선순위 1 — 가장 중요]**
          - 가장 중요한 백테스트입니다. 종목 하나가 아니라 계좌 전체의 자금 흐름과 제약을 시뮬레이션합니다.
          - 이유: 돌파 매매 특성상 시장이 좋아지는 특정 시점에 여러 주도주에서 동시에 매수 신호가 터져 나옵니다. 종목별 백테스트에서는 모두 수익이 난 것으로 계산되지만, 실제로는 계좌에 현금이 없어 3번째 종목부터는 매수하지 못합니다.
          - 검증 내용: 동시다발적 신호 발생 시 우선순위(예: RS Rating이 더 높은 것 우선) 기준 작동 여부, 자금의 100%가 묶였을 때의 기회비용, 포지션 사이징(예: 종목당 비중 20% 제한) 로직의 성과를 검증합니다.
 
-      - ② 마켓 타이밍(시장 지수) 연동 백테스트 (Market Regime Testing)
+      - ② 마켓 타이밍(시장 지수) 연동 백테스트 (Market Regime Testing) **[우선순위 2]**
          - 이유: 개별 종목의 조건이 아무리 좋아도 코스피/코스닥 지수가 20일선 아래에서 역배열로 꺾이고 있다면 돌파는 휩소(속임수)로 끝날 확률이 매우 높습니다.
          - 검증 내용: 대세 하락장(Bear Market), 횡보장, 대세 상승장(Bull Market) 등 시장 국면을 나누어 전략의 성과를 분리해 봅니다. 지표(예: 지수 20MA 이탈)에 따라 전략의 진입 비중을 줄이거나 아예 매매를 멈추는 룰(Kill-switch)이 계좌를 얼마나 방어해주는지 확인합니다.
 
-      - ③ 슬리피지 및 체결 지연 스트레스 테스트 (Slippage Sensitivity Analysis)
+      - ③ 슬리피지 및 체결 지연 스트레스 테스트 (Slippage Sensitivity Analysis) **[우선순위 3]**
          - 이유: 거래량 돌파 전략은 돌파 순간에 시장가 매수세가 몰립니다. 백테스트 상으로는 +10% 트리거에 정확히 체결된 것으로 나오지만, 실전에서는 호가창이 얇거나 체결 속도가 밀려 +11%, +12%에 체결(슬리피지)될 수 있습니다.
          - 검증 내용: 진입가와 청산가에 고의로 페널티(예: 매수 시 +0.5% 비싸게, 매도 시 -0.5% 싸게 체결)를 주었을 때도 전략이 우상향하는지 검증합니다. 이 페널티를 견디지 못한다면 실전에서는 수수료와 세금, 슬리피지에 계좌가 녹아내리게 됩니다.
 
-      - ④ 몬테카를로 시뮬레이션 (Monte Carlo Simulation)
+      - ④ 몬테카를로 시뮬레이션 (Monte Carlo Simulation) **[우선순위 4]**
          - 이유: 과거의 특정 시기에 우연히 "운이 좋아서" 높은 수익률이 나왔을 가능성을 배제하기 위함입니다.
          - 검증 내용: 백테스트에서 발생한 수백 번의 매매 결과(수익/손실 비율)를 무작위로 섞어버립니다. 만약 최악의 운이 작용해서 손절이 5번, 10번 연속으로 먼저 발생했을 때 내 계좌가 파산(Ruin)하지 않고 버틸 수 있는지(최대 낙폭, MDD)를 수학적으로 검증합니다.
+   - 3. 후속 개선 항목 (디버깅 백테스트 확장)
+      - [x] 특정 종목이 당일 매수되지 않은 이유를 CLI에서 확인하는 기능 추가
+         - `python -m scripts.run_strategy_debug --codes 005930,000660`
+         - `RejectionCollector`가 전략의 dict 구조화 로그를 수집하고, `StrategyDebugRunner`가 특정 종목만 스캔하도록 universe를 프록시한다.
+         - 디버그 실행 중 매수 신호가 발생해도 실전 전략 상태 파일(`data/pp_position_state.json`)을 변경하지 않도록 임시 state file을 주입한다.
+         - universe 전체 스캔 시에도 실제 스캔 종목 수가 리포트에 표시되도록 보강한다.
+      - [x] `StrategyExecutor` StageGuard 로그를 dict 구조화 로그로 전환 → `RejectionLogHandler` 캡처 대상 확장 (`stage_blocked` 이벤트 추가)
+      - [ ] 과거 시점 시뮬레이션 지원 — `--date YYYYMMDD` 인자로 그날 OHLCV 기반 PP 조건 재현
+      - [ ] 다른 전략(VolumeBreakout, HighTightFlag 등) 디버깅 어댑터 추가
+      - [ ] 디버깅 리포트에 `scan_skipped`(장 미개장/마켓타이밍 불량/워치리스트 없음)와 종목별 탈락 이벤트를 구분해 표시한다.
+      - [ ] PP/BGU 공통 진입 단계에 `entry_type`을 항상 포함해 체결강도/스마트머니 탈락 원인을 추정이 아닌 확정값으로 표시한다.
+
+   - 4. 백테스트 엔진 후속 작업
+      - [ ] `--date YYYYMMDD` / `--from YYYYMMDD --to YYYYMMDD` 기반 과거 시점 재현용 market clock과 데이터 스냅샷 주입 구조를 만든다.
+      - [ ] 실시간 API 응답 대신 과거 OHLCV/체결강도/프로그램매매 데이터를 공급하는 `BacktestStockQueryService` 또는 data replay adapter를 추가한다.
+      - [ ] 체결 시뮬레이터를 분리한다: 지정가/시장가, 당일 고가·저가 도달 여부, 거래량 기반 부분체결, 미체결, 다음 봉 체결 정책을 명시한다.
+      - [ ] 수수료, 거래세, 슬리피지, 호가 단위 반올림을 모든 백테스트 성과 계산에 기본 반영한다.
+      - [ ] 포트폴리오 단위 현금/보유/예약주문 장부를 만든다. 동시 신호 발생 시 자금 부족, 전략별 max positions, 우선순위 정렬을 재현한다.
+      - [ ] 리스크 게이트와 포지션 사이징을 백테스트에서도 동일하게 호출하거나, 동일 contract의 dry-run 구현으로 검증한다.
+      - [ ] 마켓 타이밍/시장 국면별 성과 분해를 리포트한다. 상승장/하락장/횡보장, KOSPI/KOSDAQ 타이밍 ON/OFF별 기대값을 비교한다.
+      - [ ] 전략별 trade journal을 표준 포맷으로 저장한다: signal_time, decision_reason, rejected_reason, order_price, fill_price, cost, pnl, MFE/MAE.
+      - [ ] 실거래 로그와 백테스트 로그를 같은 schema로 맞춰 backtest-vs-live 괴리 리포트를 생성한다.
+      - [ ] walk-forward 검증을 추가한다. 기간을 train/tune/test로 나누고, 파라미터 튜닝 구간과 검증 구간을 분리한다.
+      - [ ] 몬테카를로 시뮬레이션을 추가한다. trade 결과 순서를 섞어 최악 MDD, 연속 손실, ruin probability를 계산한다.
+      - [ ] 결과 저장소를 정한다. 초기에는 JSON/CSV, 이후 필요 시 SQLite repository로 승격한다.
+      - [ ] CLI를 정리한다: `run_strategy_debug`는 미매수 사유 진단, `run_backtest`는 기간 수익률/포트폴리오 검증으로 역할을 분리한다.
+      - [ ] 단위 테스트 fixture를 만든다: 특정 날짜에 PP 통과, PP 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 고정 데이터로 검증한다.
+
+---
+
+### 디버깅 백테스트 Phase 1 구현 요약 (2026-04-30)
+
+**구현된 파일**
+
+| 파일 | 역할 |
+|------|------|
+| `strategies/debug/rejection_collector.py` | `RejectionLogHandler` — dict 구조화 로그를 이벤트로 수집. `CAPTURED_EVENTS` 화이트리스트 기반 |
+| `strategies/debug/strategy_debug_runner.py` | `StrategyDebugRunner` — 전략을 1회 실행하며 탈락 이벤트 수집. `_UniverseFilterProxy`로 특정 종목만 스캔 |
+| `strategies/debug/rejection_report.py` | `format_console()` / `format_json()` — 탈락 사유를 수치 포함 리포트로 렌더링 |
+| `scripts/run_strategy_debug.py` | CLI 진입점 — `--codes` / `--all` / `--json` 옵션 |
+
+**Phase 1에서 해결한 한계**
+
+| 항목 | 변경 내용 |
+|------|---------|
+| `entry_rejected` 로그에 `entry_type` 누락 | `oneil_pocket_pivot_strategy.py` 로그에 `"entry_type": entry_type` 추가 |
+| StageGuard 탈락 미캡처 | `strategy_executor.py`에 per-code `{"event": "stage_blocked", ...}` dict 로그 추가, `RejectionCollector` 캡처 확장, `StrategyDebugRunner`에 `stage_service` 선택 주입 지원 |
+| 탈락 사유에 수치 없음 | `rejection_report._event_label()`에 reason별 수치 포맷 구현 (`pos`, `closest_ma_pct`, `proj_vol`, `pg_tv_pct` 등) |
+
+**사용법**
+
+```powershell
+# 단일 종목 디버깅
+cd /c/Users/Kyungsoo/Documents/Code/Investment
+conda activate py310
+python -m scripts.run_strategy_debug --codes 120110
+
+# 여러 종목
+python -m scripts.run_strategy_debug --codes 005930,000660,035720
+
+# JSON 출력
+python -m scripts.run_strategy_debug --codes 120110 --json
+
+# universe 전체 스캔 (신호 없는 경우도 확인)
+python -m scripts.run_strategy_debug --all
+```
+
+**StageGuard 활성화 (선택)**
+
+`scripts/run_strategy_debug.py`에서 `StrategyDebugRunner` 생성 시 `stage_service` 주입:
+
+```python
+runner = StrategyDebugRunner(strategy, debug_logger, stage_service=minervini_svc)
+```
+
+**탈락 사유별 출력 예시**
+
+```
+120110  ✗ 탈락  PP 조건 탈락 — poor_candle_quality (pos=0.23 < 0.4)
+005930  ✗ 탈락  PP 조건 탈락 — no_ma_proximity (최근접MA=+3.52%)
+000660  ✗ 탈락  PP 조건 탈락 — insufficient_volume (예상=1,234,567 < 2,345,678)
+035720  ✗ 탈락  체결강도/공통 조건 탈락 [PP] — cgld=95.3 < 120
+012345  ✗ 탈락  StageGuard 탈락 — stage=3
+```
    ---
 ---
 

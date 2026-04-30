@@ -212,7 +212,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             return None
 
         if cgld_val < self._cfg.execution_strength_min:
-            self._logger.info({"event": "entry_rejected", "code": code, "name": item.name, "reason": "low_execution_strength", "cgld": cgld_val, "threshold": self._cfg.execution_strength_min})
+            self._logger.info({"event": "entry_rejected", "code": code, "name": item.name, "reason": "low_execution_strength", "entry_type": entry_type, "cgld": cgld_val, "threshold": self._cfg.execution_strength_min})
             return None
 
         # 6. ★ 공통 스마트 머니 필터 (cgld_val 전달로 유연 조건 활성화)
@@ -329,7 +329,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             # 저가 대비 현재 위치 (0.0: 저가, 1.0: 고가)
             relative_pos = (current - day_low) / day_range
             if relative_pos < self._cfg.pp_min_candle_relative_pos:
-                self._logger.debug({"event": "pp_rejected", "code": code, "reason": "poor_candle_quality", "pos": round(relative_pos, 2)})
+                self._logger.debug({"event": "pp_rejected", "code": code, "reason": "poor_candle_quality", "pos": round(relative_pos, 2), "threshold": self._cfg.pp_min_candle_relative_pos})
                 return None
 
         # 3. 당일 상승일 확인 (양봉 및 전일비 상승)
