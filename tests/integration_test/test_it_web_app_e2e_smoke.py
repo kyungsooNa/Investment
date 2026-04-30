@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from common.types import ResCommonResponse
+from common.types import Exchange, ResCommonResponse
 import view.web.api_common as api_common
 from view.web.routes import stock as stock_routes
 import view.web.web_main as web_main
@@ -96,9 +96,36 @@ def fake_web_ctx():
         )
     )
 
+    ctx.stock_query_service = MagicMock()
+    ctx.stock_query_service.handle_get_current_stock_price = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd="0",
+            msg1="정상",
+            data={
+                "code": "005930",
+                "name": "삼성전자",
+                "price": 70500,
+                "rate": 1.73,
+            },
+        )
+    )
+    ctx.stock_query_service.handle_get_account_balance = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd="0",
+            msg1="정상",
+            data={
+                "cash": 5000000,
+                "stocks": [{"code": "005930", "name": "삼성전자", "qty": 10}],
+            },
+        )
+    )
+    ctx.stock_query_service.get_ohlcv = AsyncMock(return_value=[])
+
     ctx.pm = MagicMock()
     ctx.pm.start_timer.return_value = "timer-token"
     ctx.pm.log_timer = MagicMock()
+    ctx.logger = MagicMock()
+    ctx.stock_code_repository = MagicMock()
 
     ctx.is_market_open_now = AsyncMock(return_value=True)
     ctx.get_env_type.return_value = "모의투자"
@@ -209,3 +236,128 @@ def test_real_app_page_falls_back_to_login_when_context_missing():
     assert response.status_code == 200
     assert "Investment Login" in response.text
     assert 'id="username"' in response.text
+
+
+def test_real_app_login_gate_and_auth_cookie_allow_page(client_with_fake_lifespan, fake_web_ctx):
+    fake_web_ctx.full_config = {
+        "use_login": True,
+        "auth": {
+            "username": "tester",
+            "password": "secret",
+            "secret_key": "test-token",
+        },
+    }
+
+    blocked = client_with_fake_lifespan.get("/order")
+    assert blocked.status_code == 200
+    assert "Investment Login" in blocked.text
+
+    denied = client_with_fake_lifespan.post(
+        "/api/auth/login",
+        data={"username": "tester", "password": "wrong"},
+    )
+    assert denied.status_code == 401
+    assert denied.json()["success"] is False
+
+    login = client_with_fake_lifespan.post(
+        "/api/auth/login",
+        data={"username": "tester", "password": "secret"},
+    )
+    assert login.status_code == 200
+    assert login.json() == {"success": True}
+    assert "access_token=test-token" in login.headers["set-cookie"]
+
+    allowed = client_with_fake_lifespan.get("/order")
+    assert allowed.status_code == 200
+    assert 'id="order-code"' in allowed.text
+
+
+def test_real_app_balance_page_embeds_initial_data(client_with_fake_lifespan, fake_web_ctx):
+    response = client_with_fake_lifespan.get("/balance")
+
+    assert response.status_code == 200
+    assert 'id="section-balance"' in response.text
+    assert 'id="page-initial-data"' in response.text
+    assert "12345678-01" in response.text
+    assert "005930" in response.text
+    assert "5000000" in response.text
+    fake_web_ctx.stock_query_service.handle_get_account_balance.assert_awaited_once_with(
+        exchange=Exchange.KRX
+    )
+
+
+def test_real_app_stock_price_api_uses_service_and_foreground(
+    client_with_fake_lifespan,
+    fake_web_ctx,
+):
+    response = client_with_fake_lifespan.get("/api/stock/005930?exchange=KRX")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rt_cd"] == "0"
+    assert body["data"]["code"] == "005930"
+    assert body["data"]["price"] == 70500
+    fake_web_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with(
+        "005930",
+        caller="stock.py - get_stock_price",
+        exchange=Exchange.KRX,
+    )
+    fake_web_ctx.pm.log_timer.assert_called_with("get_stock_price(005930)", "timer-token")
+    assert fake_web_ctx.foreground_scheduler.enter_count == 1
+    assert fake_web_ctx.foreground_scheduler.exit_count == 1
+    assert any(item["path"] == "/api/stock/005930" for item in api_common._recent_completed)
+
+
+def test_real_app_real_order_requires_confirmation_before_service_call(
+    client_with_fake_lifespan,
+    fake_web_ctx,
+):
+    fake_web_ctx.env.is_paper_trading = False
+
+    blocked = client_with_fake_lifespan.post(
+        "/api/order",
+        json={"code": "005930", "qty": "2", "price": "70000", "side": "buy"},
+    )
+    assert blocked.status_code == 400
+    assert "실전 주문 확인 문자열" in blocked.json()["detail"]
+    fake_web_ctx.order_execution_service.handle_buy_stock.assert_not_awaited()
+
+    allowed = client_with_fake_lifespan.post(
+        "/api/order",
+        json={
+            "code": "005930",
+            "qty": "2",
+            "price": "70000",
+            "side": "buy",
+            "real_order_confirmation": "REAL",
+        },
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["rt_cd"] == "0"
+    fake_web_ctx.order_execution_service.handle_buy_stock.assert_awaited_once()
+
+
+def test_real_app_environment_switch_requires_real_confirmation_and_restarts_services(
+    client_with_fake_lifespan,
+    fake_web_ctx,
+):
+    fake_web_ctx.initialize_services.reset_mock()
+    fake_web_ctx.start_background_tasks.reset_mock()
+    fake_web_ctx.get_env_type.return_value = "실전투자"
+
+    blocked = client_with_fake_lifespan.post(
+        "/api/environment",
+        json={"is_paper": False},
+    )
+    assert blocked.status_code == 400
+    assert "실전 모드 전환 확인 문자열" in blocked.json()["detail"]
+    fake_web_ctx.initialize_services.assert_not_awaited()
+
+    allowed = client_with_fake_lifespan.post(
+        "/api/environment",
+        json={"is_paper": False, "real_mode_confirmation": "REAL"},
+    )
+    assert allowed.status_code == 200
+    assert allowed.json() == {"success": True, "env_type": "실전투자"}
+    fake_web_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=False)
+    fake_web_ctx.start_background_tasks.assert_called_once_with()
