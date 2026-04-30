@@ -10,6 +10,7 @@ from datetime import timedelta
 from typing import List, Optional, Dict, Tuple
 
 from interfaces.live_strategy import LiveStrategy
+from common.date_utils import normalize_yyyymmdd
 from common.types import TradeSignal, ErrorCode
 from services.stock_query_service import StockQueryService
 from core.market_clock import MarketClock
@@ -745,10 +746,13 @@ class OneilPocketPivotStrategy(LiveStrategy):
         if not state.holding_start_date or not ohlcv:
             return None
 
-        safe_date = state.holding_start_date.replace("-", "")
+        safe_date = normalize_yyyymmdd(state.holding_start_date)
+        if not safe_date:
+            return None
+
         trading_days = sum(
             1 for candle in ohlcv
-            if str(candle.get("date", "")).replace("-", "") > safe_date
+            if normalize_yyyymmdd(candle.get("date", "")) > safe_date
         )
 
         if trading_days < self._cfg.holding_rule_days:

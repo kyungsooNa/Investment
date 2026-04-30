@@ -2010,6 +2010,29 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[1], NotificationLevel.CRITICAL)
         self.assertTrue("성공" in args[2])
 
+    async def test_execute_sell_signal_notification_includes_estimated_return_rate(self):
+        """실전 매도 알림은 체결 확정 전에도 보유 매수가 기준 수익률을 포함한다."""
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
+        vm.get_holds_by_strategy.return_value = [
+            {"strategy": "S1", "code": "005930", "buy_price": 10000, "qty": 1}
+        ]
+        mock_notifier = AsyncMock()
+        scheduler._notification_service = mock_notifier
+
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="SELL",
+            price=11000, qty=1, reason="익절", strategy_name="S1"
+        )
+
+        await scheduler._execute_signal(signal)
+
+        vm.log_sell_by_strategy_async.assert_not_awaited()
+        mock_notifier.emit.assert_awaited_once()
+        args, kwargs = mock_notifier.emit.call_args
+        self.assertEqual(args[0], NotificationCategory.STRATEGY)
+        self.assertEqual(kwargs["metadata"]["return_rate"], 10.0)
+        self.assertEqual(scheduler._signal_history[-1].return_rate, 10.0)
+
     async def test_execute_signal_notification_failure(self):
         """_execute_signal() API 주문 실패 시 알림 전송 테스트."""
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
