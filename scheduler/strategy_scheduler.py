@@ -718,6 +718,7 @@ class StrategyScheduler:
             if cfg.strategy.name == name:
                 if perform_force_exit and cfg.enabled and cfg.force_exit_on_close:
                     await self._force_liquidate_strategy(cfg)
+                    self._clear_force_exit_position_state(cfg)
 
                 cfg.enabled = False
                 self._logger.info(f"[Scheduler] 전략 비활성화: {name}")
@@ -809,6 +810,7 @@ class StrategyScheduler:
         code: str,
         *,
         repo_holdings: Optional[List[dict]] = None,
+        allow_signal_history: bool = True,
     ) -> bool:
         """가상매매 DB 또는 시그널 이력에 현재 포지션 근거가 남아 있는지 확인한다."""
         target_code = str(code).strip()
@@ -819,6 +821,9 @@ class StrategyScheduler:
         for hold in holdings:
             if str(hold.get("code", "")).strip() == target_code:
                 return True
+
+        if not allow_signal_history:
+            return False
 
         return (
             self._get_signal_net_qty(strategy_name, target_code, only_success=True) > 0
@@ -849,6 +854,7 @@ class StrategyScheduler:
                 cfg.strategy.name,
                 norm_code,
                 repo_holdings=repo_holdings,
+                allow_signal_history=False,
             ):
                 continue
             stale_codes.append(raw_code)
@@ -862,6 +868,24 @@ class StrategyScheduler:
         self._persist_strategy_position_state(cfg.strategy)
         self._logger.warning(
             f"[Scheduler] stale position_state cleared: strategy={cfg.strategy.name}, codes={stale_codes}"
+        )
+        return True
+
+    def _clear_force_exit_position_state(self, cfg: StrategySchedulerConfig) -> bool:
+        """당일청산 전략이 수동 정지되면 전략 내부 보유 state를 정리한다."""
+        if not cfg.force_exit_on_close:
+            return False
+
+        position_state = self._get_strategy_position_state(cfg.strategy)
+        if not position_state:
+            return False
+
+        cleared_codes = list(position_state.keys())
+        position_state.clear()
+        self._persist_strategy_position_state(cfg.strategy)
+        self._logger.warning(
+            f"[Scheduler] force-exit position_state cleared on stop: "
+            f"strategy={cfg.strategy.name}, codes={cleared_codes}"
         )
         return True
 
@@ -942,19 +966,20 @@ class StrategyScheduler:
                 existing=merged.get(norm_code),
             )
 
-        for record in reversed(self._signal_history):
-            if record.strategy_name != strategy_name or record.action != "BUY":
-                continue
-            code = str(record.code).strip()
-            if not code or code in merged or not self._is_valid_strategy_code(code):
-                continue
-            if self._get_signal_net_qty(strategy_name, code, only_success=True) <= 0:
-                continue
-            merged[code] = self._build_strategy_state_holding(
-                strategy_name,
-                code,
-                object(),
-            )
+        if cfg.enabled or not cfg.force_exit_on_close:
+            for record in reversed(self._signal_history):
+                if record.strategy_name != strategy_name or record.action != "BUY":
+                    continue
+                code = str(record.code).strip()
+                if not code or code in merged or not self._is_valid_strategy_code(code):
+                    continue
+                if self._get_signal_net_qty(strategy_name, code, only_success=True) <= 0:
+                    continue
+                merged[code] = self._build_strategy_state_holding(
+                    strategy_name,
+                    code,
+                    object(),
+                )
 
         return list(merged.values())
 

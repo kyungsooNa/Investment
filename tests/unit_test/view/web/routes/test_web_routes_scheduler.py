@@ -123,6 +123,18 @@ async def test_scheduler_strategy_control_with_korean_name(web_client, mock_web_
 
 
 @pytest.mark.asyncio
+async def test_scheduler_strategy_control_with_larry_williams_cb(web_client, mock_web_ctx):
+    """LarryWilliamsCB 전략명도 개별 시작 엔드포인트로 정상 전달된다."""
+    mock_web_ctx.scheduler.start_strategy = AsyncMock(return_value=True)
+    mock_web_ctx.scheduler.get_status = MagicMock(return_value={})
+
+    resp = web_client.post("/api/scheduler/strategy/LarryWilliamsCB/start")
+
+    assert resp.status_code == 200
+    mock_web_ctx.scheduler.start_strategy.assert_awaited_with("LarryWilliamsCB")
+
+
+@pytest.mark.asyncio
 async def test_scheduler_not_initialized(web_client, mock_web_ctx):
     """스케줄러 미초기화 상태 테스트"""
     mock_web_ctx.scheduler = None
