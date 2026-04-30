@@ -152,6 +152,7 @@ def test_get_operations_status_partial_services(web_client, mock_web_ctx):
     mock_web_ctx.kill_switch_service = None
     mock_web_ctx.notification_service = None
     mock_web_ctx.broker = None
+    mock_web_ctx.after_market_reconcile_task = None
 
     response = web_client.get("/api/system/operations/status")
 
@@ -164,6 +165,60 @@ def test_get_operations_status_partial_services(web_client, mock_web_ctx):
     assert data["orders"]["active_order_count"] == 0
     assert data["data_quality"]["enabled"] is False
     assert data["websocket"]["receive_alive"] is False
+    assert data["after_market_reconcile"] is None
+
+
+def test_get_operations_status_includes_after_market_reconcile(web_client, mock_web_ctx):
+    task = MagicMock()
+    task.get_progress.return_value = {
+        "running": False,
+        "last_result": {"date": "20260430", "mismatch_count": 0, "error": None},
+        "history_count": 1,
+    }
+    mock_web_ctx.after_market_reconcile_task = task
+
+    response = web_client.get("/api/system/operations/status")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["after_market_reconcile"]["last_result"]["date"] == "20260430"
+
+
+def test_get_reconcile_history(web_client, mock_web_ctx):
+    task = MagicMock()
+    task.get_history.return_value = [{"date": "20260430", "mismatch_count": 1, "error": None}]
+    mock_web_ctx.after_market_reconcile_task = task
+
+    response = web_client.get("/api/system/reconcile/history?count=10")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"][0]["mismatch_count"] == 1
+    task.get_history.assert_called_once_with(count=10)
+
+
+def test_get_data_quality_history(web_client, mock_web_ctx):
+    dq = MagicMock()
+    dq.get_violation_history.return_value = [{"code": "005930", "reason": "stale_price"}]
+    mock_web_ctx.data_quality_service = dq
+
+    response = web_client.get("/api/system/data-quality/history?count=5&code=005930&reason=stale_price")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"][0]["reason"] == "stale_price"
+    dq.get_violation_history.assert_called_once_with(count=5, code="005930", reason="stale_price")
+
+
+def test_get_data_quality_history_missing_service(web_client, mock_web_ctx):
+    mock_web_ctx.data_quality_service = None
+
+    response = web_client.get("/api/system/data-quality/history")
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True, "data": []}
 
 
 # ── GET /api/background/status ──────────────────────────────────────────────

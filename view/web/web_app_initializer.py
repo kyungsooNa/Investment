@@ -306,6 +306,7 @@ class WebAppContext:
                 market_clock=self.market_clock,
                 logger=self.logger,
             )
+            self.data_quality_service.apply_trading_mode(bool(getattr(self.env, "is_paper_trading", True)))
         except Exception as e:
             self.logger.critical(f"[ServiceBootstrap:CoreServices] 초기화 실패: {e}", exc_info=True)
             raise

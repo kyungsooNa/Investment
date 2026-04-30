@@ -3,7 +3,7 @@
 """
 import asyncio
 import time
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from repositories.streaming_stock_repo import StreamingType
 from view.web.api_common import _get_ctx
 import view.web.api_common as api_common
@@ -180,6 +180,14 @@ def get_operations_status():
         except Exception:
             kill_switch = None
 
+    reconcile = None
+    reconcile_task = getattr(ctx, "after_market_reconcile_task", None)
+    if reconcile_task is not None and hasattr(reconcile_task, "get_progress"):
+        try:
+            reconcile = reconcile_task.get_progress()
+        except Exception:
+            reconcile = None
+
     return {
         "success": True,
         "data": {
@@ -191,8 +199,42 @@ def get_operations_status():
             "websocket": websocket,
             "notification_queue_depth": queue_depth,
             "kill_switch": kill_switch,
+            "after_market_reconcile": reconcile,
         },
     }
+
+
+@router.get("/system/reconcile/history")
+def get_reconcile_history(count: int = Query(20, ge=1, le=100)):
+    """장 종료 후 주문/브로커 reconcile 결과 이력 반환."""
+    ctx = _get_ctx()
+    task = getattr(ctx, "after_market_reconcile_task", None)
+    if task is not None and hasattr(task, "get_history"):
+        try:
+            return {"success": True, "data": task.get_history(count=count)}
+        except Exception:
+            pass
+    return {"success": True, "data": []}
+
+
+@router.get("/system/data-quality/history")
+def get_data_quality_history(
+    count: int = Query(50, ge=1, le=200),
+    code: str | None = None,
+    reason: str | None = None,
+):
+    """데이터 품질 위반/차단 이력 반환."""
+    ctx = _get_ctx()
+    dq = getattr(ctx, "data_quality_service", None)
+    if dq is not None and hasattr(dq, "get_violation_history"):
+        try:
+            return {
+                "success": True,
+                "data": dq.get_violation_history(count=count, code=code, reason=reason),
+            }
+        except Exception:
+            pass
+    return {"success": True, "data": []}
 
 
 # 1. 동기(def) 함수를 비동기(async def) 함수로 변경하여 이벤트 루프 데드락 방지

@@ -245,8 +245,8 @@ main 반영 확인.
 
 남은 작업:
 
-- [ ] `DataQualityConfig` 임계값을 실전/모의 운영값으로 캘리브레이션한다. (현재 기본값: tick 5초, REST 10초, 가격 급변 15%)
-- [ ] 데이터 품질 차단 이력을 운영자가 볼 수 있도록 알림/로그 검색 또는 별도 히스토리 API를 추가한다.
+- [x] `DataQualityConfig` 임계값을 실전/모의 운영값으로 캘리브레이션한다. (모의: tick 60초/REST 15초/급변 20%, 실전: tick 30초/REST 10초/급변 15%)
+- [x] 데이터 품질 차단 이력을 운영자가 볼 수 있도록 알림/로그 검색 또는 별도 히스토리 API를 추가한다. (`/api/system/data-quality/history`)
 - [ ] `DataQualityService`를 REST 보강 외의 주요 시세/랭킹/호가 조회 경로에도 점진적으로 적용한다.
 
 주요 파일:
@@ -292,8 +292,8 @@ main 반영 확인.
 
 남은 작업:
 
-- [ ] `PreMarketHealthCheckTask`의 점검 항목을 broker/token/config 존재 확인에서 실제 API ping/권한/계좌 조회까지 확장한다.
-- [ ] `AfterMarketReconcileTask` 결과를 운영 대시보드와 알림 히스토리에서 추적 가능하게 저장한다.
+- [x] `PreMarketHealthCheckTask`의 점검 항목을 broker/token/config 존재 확인에서 실제 API ping/권한/계좌 조회까지 확장한다. (`get_access_token`, `get_current_price("005930")`, `get_account_balance` probe)
+- [x] `AfterMarketReconcileTask` 결과를 운영 대시보드와 알림 히스토리에서 추적 가능하게 저장한다. (`/api/system/reconcile/history`, 운영 요약 포함, 성공/불일치/실패 알림)
 - [ ] `AfterMarketTask` 계열 전체에 start/stop/cancel/sleep lifecycle 표준 테스트를 확대한다.
 - [ ] 중복 실행 guard가 실제 웹 lifespan/수동 start 연타 상황에서도 원하는 로그만 남기는지 브라우저/수동 시나리오로 확인한다.
 

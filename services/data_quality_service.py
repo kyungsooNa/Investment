@@ -25,6 +25,8 @@ class DataQualityResult:
 class DataQualityService:
     """Centralized sanity, latency, and outlier checks."""
 
+    MAX_VIOLATION_HISTORY = 200
+
     REASON_REST_FAILED = "rest_failed"
     REASON_REST_INVALID = "rest_invalid"
     REASON_NOT_SUBSCRIBED = "not_subscribed"
@@ -47,6 +49,8 @@ class DataQualityService:
         self._logger = logger
         self._last_good_price: dict[str, float] = {}
         self._last_result: DataQualityResult = DataQualityResult(ok=True, reason="not_checked")
+        self._profile = "base"
+        self._violation_history: list[dict[str, Any]] = []
 
     @property
     def config(self) -> DataQualityConfig:
@@ -54,6 +58,24 @@ class DataQualityService:
 
     def set_price_stream_service(self, svc) -> None:
         self._price_stream_service = svc
+
+    def apply_trading_mode(self, is_paper_trading: bool) -> None:
+        """Activate calibrated thresholds for the current broker mode."""
+        profile = "paper" if is_paper_trading else "real"
+        mappings = {
+            "max_tick_age_sec": f"{profile}_max_tick_age_sec",
+            "max_rest_age_sec": f"{profile}_max_rest_age_sec",
+            "max_price_jump_pct": f"{profile}_max_price_jump_pct",
+        }
+        applied = {}
+        for target, source in mappings.items():
+            value = getattr(self._cfg, source, None)
+            if value is not None:
+                setattr(self._cfg, target, value)
+                applied[target] = value
+        self._profile = profile
+        if self._logger:
+            self._logger.info(f"DataQuality 프로파일 적용: {profile} {applied}")
 
     @staticmethod
     def _to_float(value: Any) -> Optional[float]:
@@ -72,7 +94,28 @@ class DataQualityService:
     def _result(self, ok: bool, reason: str = "", severity: str = "warning", **kwargs) -> DataQualityResult:
         result = DataQualityResult(ok=ok, reason=reason, severity=severity, **kwargs)
         self._last_result = result
+        if not ok:
+            self._violation_history.append({
+                "timestamp": time.time(),
+                **result.to_dict(),
+            })
+            if len(self._violation_history) > self.MAX_VIOLATION_HISTORY:
+                self._violation_history = self._violation_history[-self.MAX_VIOLATION_HISTORY:]
         return result
+
+    def get_violation_history(
+        self,
+        *,
+        count: int = 50,
+        code: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        items = self._violation_history
+        if code:
+            items = [item for item in items if item.get("code") == code]
+        if reason:
+            items = [item for item in items if item.get("reason") == reason]
+        return list(reversed(items[-count:]))
 
     def validate_api_response(
         self,
@@ -216,7 +259,10 @@ class DataQualityService:
     def get_health(self) -> dict:
         return {
             "enabled": self._cfg.enabled,
+            "profile": self._profile,
             "last_result": self._last_result.to_dict(),
+            "violation_count": len(self._violation_history),
             "max_tick_age_sec": self._cfg.max_tick_age_sec,
+            "max_rest_age_sec": self._cfg.max_rest_age_sec,
             "max_price_jump_pct": self._cfg.max_price_jump_pct,
         }

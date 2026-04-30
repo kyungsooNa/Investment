@@ -19,6 +19,64 @@ def test_validate_api_response_ok():
     assert result.reason == "ok"
 
 
+def test_apply_trading_mode_uses_paper_threshold_profile():
+    svc = DataQualityService(DataQualityConfig())
+
+    svc.apply_trading_mode(is_paper_trading=True)
+    health = svc.get_health()
+
+    assert health["profile"] == "paper"
+    assert health["max_tick_age_sec"] == 60.0
+    assert health["max_rest_age_sec"] == 15.0
+    assert health["max_price_jump_pct"] == 20.0
+
+
+def test_apply_trading_mode_uses_real_threshold_profile():
+    svc = DataQualityService(DataQualityConfig())
+
+    svc.apply_trading_mode(is_paper_trading=False)
+    health = svc.get_health()
+
+    assert health["profile"] == "real"
+    assert health["max_tick_age_sec"] == 30.0
+    assert health["max_rest_age_sec"] == 10.0
+    assert health["max_price_jump_pct"] == 15.0
+
+
+def test_apply_trading_mode_allows_explicit_profile_overrides():
+    svc = DataQualityService(
+        DataQualityConfig(
+            paper_max_tick_age_sec=45.0,
+            paper_max_rest_age_sec=12.0,
+            paper_max_price_jump_pct=18.0,
+        )
+    )
+
+    svc.apply_trading_mode(is_paper_trading=True)
+    health = svc.get_health()
+
+    assert health["max_tick_age_sec"] == 45.0
+    assert health["max_rest_age_sec"] == 12.0
+    assert health["max_price_jump_pct"] == 18.0
+
+
+def test_violation_history_records_and_filters_failures():
+    svc = DataQualityService()
+
+    svc.validate_api_response(ResCommonResponse(rt_cd="1", msg1="fail", data=None), code="005930")
+    svc.validate_price_tick({"유가증권단축종목코드": "000660", "주식현재가": "-1", "누적거래량": "1"})
+
+    all_items = svc.get_violation_history()
+    by_code = svc.get_violation_history(code="005930")
+    by_reason = svc.get_violation_history(reason="invalid_tick")
+    health = svc.get_health()
+
+    assert len(all_items) == 2
+    assert by_code[0]["code"] == "005930"
+    assert by_reason[0]["code"] == "000660"
+    assert health["violation_count"] == 2
+
+
 def test_validate_api_response_failure_and_invalid_output():
     svc = DataQualityService()
 

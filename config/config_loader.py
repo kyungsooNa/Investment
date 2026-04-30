@@ -100,9 +100,15 @@ class OrderPolicyConfig(BaseModel):
 
 class DataQualityConfig(BaseModel):
     enabled: bool = True
-    max_tick_age_sec: float = 5.0
+    max_tick_age_sec: float = 30.0
     max_rest_age_sec: float = 10.0
     max_price_jump_pct: float = 15.0
+    paper_max_tick_age_sec: Optional[float] = 60.0
+    paper_max_rest_age_sec: Optional[float] = 15.0
+    paper_max_price_jump_pct: Optional[float] = 20.0
+    real_max_tick_age_sec: Optional[float] = 30.0
+    real_max_rest_age_sec: Optional[float] = 10.0
+    real_max_price_jump_pct: Optional[float] = 15.0
     block_on_stale_price: bool = True
     block_on_invalid_api_response: bool = True
     alert_cooldown_sec: float = 60.0
