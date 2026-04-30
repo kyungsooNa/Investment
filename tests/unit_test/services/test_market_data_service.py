@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 from datetime import datetime, timedelta
 from services.market_data_service import MarketDataService
+from services.data_quality_service import DataQualityService
 from common.types import ErrorCode, ResCommonResponse, ResFluctuation, ResBasicStockInfo, ResStockFullInfoApiOutput
 from types import SimpleNamespace
 
@@ -93,6 +94,38 @@ async def test_get_current_price_uses_cache_by_default(trading_service_fixture, 
     assert result.rt_cd == "0"
     assert result.msg1 == "성공(Cache)"
     mock_deps.broker.get_current_price.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_data_quality_invalid_response_not_cached(trading_service_fixture, mock_deps):
+    service = trading_service_fixture
+    service._data_quality_service = DataQualityService()
+    mock_deps.broker.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="정상",
+        data={"not_output": {}},
+    )
+
+    result = await service.get_current_price("005930", force_fresh=True)
+
+    assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+    assert result.data["reason"] == "rest_invalid"
+    mock_deps.stock_repo.set_current_price.assert_not_called()
+    assert service._data_quality_service.get_violation_history(code="005930")[0]["reason"] == "rest_invalid"
+
+
+@pytest.mark.asyncio
+async def test_get_asking_price_data_quality_requires_output1(trading_service_fixture, mock_deps):
+    service = trading_service_fixture
+    service._data_quality_service = DataQualityService()
+    mock_deps.broker.get_asking_price = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="정상", data={"output": {}})
+    )
+
+    result = await service.get_asking_price("005930")
+
+    assert result.rt_cd == ErrorCode.PARSING_ERROR.value
+    assert result.data["metadata"]["missing_keys"] == ["output1"]
 
 
 @pytest.mark.asyncio

@@ -285,7 +285,8 @@ class WebAppContext:
                 broker_api_wrapper=self.broker, env=self.env, logger=self.logger, market_clock=self.market_clock, cache_store=cache_store,
                 market_calendar_service=self._mcs,
                 performance_profiler=self.pm,
-                stock_repository=self.stock_repository
+                stock_repository=self.stock_repository,
+                data_quality_service=getattr(self, "data_quality_service", None),
             )
             self.indicator_service = IndicatorService(cache_store=cache_store, performance_profiler=self.pm)
             self.message_broker = MessageBroker()
@@ -308,6 +309,7 @@ class WebAppContext:
                 logger=self.logger,
             )
             self.data_quality_service.apply_trading_mode(bool(getattr(self.env, "is_paper_trading", True)))
+            self.market_data_service._data_quality_service = self.data_quality_service
         except Exception as e:
             self.logger.critical(f"[ServiceBootstrap:CoreServices] 초기화 실패: {e}", exc_info=True)
             raise

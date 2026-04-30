@@ -257,7 +257,7 @@ main 반영 확인.
 
 - [x] `DataQualityConfig` 임계값을 실전/모의 운영값으로 캘리브레이션한다. (모의: tick 60초/REST 15초/급변 20%, 실전: tick 30초/REST 10초/급변 15%)
 - [x] 데이터 품질 차단 이력을 운영자가 볼 수 있도록 알림/로그 검색 또는 별도 히스토리 API를 추가한다. (`/api/system/data-quality/history`)
-- [ ] `DataQualityService`를 REST 보강 외의 주요 시세/랭킹/호가 조회 경로에도 점진적으로 적용한다.
+- [x] `DataQualityService`를 REST 보강 외의 주요 시세/랭킹/호가 조회 경로에도 점진적으로 적용한다. (`MarketDataService` 현재가/복수현재가/호가/체결/시총/상승률/거래량 조회 검증)
 
 주요 파일:
 

@@ -77,6 +77,20 @@ def test_violation_history_records_and_filters_failures():
     assert health["violation_count"] == 2
 
 
+def test_validate_api_response_required_data_keys():
+    svc = DataQualityService()
+
+    result = svc.validate_api_response(
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {}}),
+        code="005930",
+        required_data_keys=["output1"],
+    )
+
+    assert result.ok is False
+    assert result.reason == "rest_invalid"
+    assert result.metadata["missing_keys"] == ["output1"]
+
+
 def test_validate_api_response_failure_and_invalid_output():
     svc = DataQualityService()
 

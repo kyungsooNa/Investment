@@ -123,6 +123,7 @@ class DataQualityService:
         *,
         code: str = "",
         require_output: bool = False,
+        required_data_keys: Optional[list[str]] = None,
     ) -> DataQualityResult:
         if not self._cfg.enabled:
             return self._result(True, "disabled", "info", code=code)
@@ -141,6 +142,24 @@ class DataQualityService:
             output = data.get("output") if isinstance(data, dict) else getattr(data, "output", None)
             if not output:
                 return self._result(False, self.REASON_REST_INVALID, "error", code=code)
+        if required_data_keys:
+            if not isinstance(data, dict):
+                return self._result(
+                    False,
+                    self.REASON_REST_INVALID,
+                    "error",
+                    code=code,
+                    metadata={"required_data_keys": required_data_keys},
+                )
+            missing = [key for key in required_data_keys if not data.get(key)]
+            if missing:
+                return self._result(
+                    False,
+                    self.REASON_REST_INVALID,
+                    "error",
+                    code=code,
+                    metadata={"missing_keys": missing, "required_data_keys": required_data_keys},
+                )
         return self._result(True, "ok", "info", code=code)
 
     def validate_price_tick(self, realtime_data: dict, *, received_at: Optional[float] = None) -> DataQualityResult:
