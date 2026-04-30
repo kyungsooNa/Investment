@@ -687,11 +687,11 @@ class TestWebAppContextInitialization:
             assert ctx.scheduler is not None
             assert isinstance(ctx.scheduler, StrategyScheduler)
 
-            # 등록된 전략 개수 검증 (9개: VolumeBreakoutLive, ProgramBuyFollow,
+            # 등록된 전략 개수 검증 (10개: VolumeBreakoutLive, ProgramBuyFollow,
             # TraditionalVolumeBreakout, OneilSqueezeBreakout, OneilPocketPivot, HighTightFlag, FirstPullback,
-            # LarryWilliamsVBO, RSI2Pullback)
+            # LarryWilliamsVBO, RSI2Pullback, LarryWilliamsCB)
             registered = ctx.scheduler.get_status()
-            assert len(registered["strategies"]) == 9
+            assert len(registered["strategies"]) == 10
 
     @pytest.mark.asyncio
     async def test_initialize_then_switch_environment(self, mock_config, test_logger):
