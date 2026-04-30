@@ -17,6 +17,7 @@ _STAGE_LABELS = {
     "cgld_check_failed": "체결강도 조회 오류",
     "scan_skipped": "스캔 스킵",
     "buy_signal_generated": "매수 신호 발생",
+    "stage_blocked": "StageGuard",
 }
 
 
@@ -26,7 +27,11 @@ def _event_label(event: RejectionEvent) -> str:
     if event.event == "entry_rejected" and reason == "low_execution_strength":
         cgld = event.details.get("cgld", "?")
         thr = event.details.get("threshold", "?")
-        return f"{label} 탈락 [entry_type 미확인] — cgld={cgld} < {thr} (추정: PP/BGU 통과 후)"
+        entry_type = event.details.get("entry_type", "?")
+        return f"{label} 탈락 [{entry_type}] — cgld={cgld} < {thr}"
+    if event.event == "stage_blocked":
+        stage = event.details.get("stage", "?")
+        return f"{label} 탈락 — stage={stage}"
     if reason:
         return f"{label} 탈락 — {reason}"
     return label
@@ -75,7 +80,7 @@ def format_console(report: DebugReport) -> str:
         else:
             lines.append(
                 f"{code:<10} {'- 정보없음':<12} "
-                "(이벤트 미캡처 — StageGuard 탈락 또는 로그 미출력 가능)"
+                "(이벤트 미캡처 — 로그 미출력 가능)"
             )
 
     # 탈락 사유 Top 5

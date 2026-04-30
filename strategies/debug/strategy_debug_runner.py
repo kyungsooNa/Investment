@@ -58,18 +58,37 @@ class StrategyDebugRunner:
         strategy = OneilPocketPivotStrategy(..., logger=debug_logger)
         runner = StrategyDebugRunner(strategy, debug_logger)
         report = await runner.run(candidate_codes=["005930", "000660"])
+
+    StageGuard 활성화:
+        runner = StrategyDebugRunner(strategy, debug_logger, stage_service=minervini_svc)
     """
 
-    LIMITATIONS = [
-        "entry_rejected(reason=low_execution_strength) 로그에는 entry_type 필드가 없어 "
-        "PP/BGU 중 어느 쪽이 통과 후 탈락했는지 '추정'으로만 표시함.",
-        "StageGuard 탈락 종목은 1차 캡처 범위 외 "
-        "(strategy_executor 구조화 로그 전환 완료 후 확장 예정).",
-    ]
-
-    def __init__(self, strategy: LiveStrategy, debug_logger: logging.Logger) -> None:
+    def __init__(
+        self,
+        strategy: LiveStrategy,
+        debug_logger: logging.Logger,
+        stage_service=None,
+        allowed_stages: tuple = (0, 2),
+    ) -> None:
         self._strategy = strategy
         self._debug_logger = debug_logger
+        self._stage_service = stage_service
+        self._allowed_stages = allowed_stages
+
+    async def _apply_stage_guard(self, codes: List[str]) -> List[str]:
+        """stage_service가 주입된 경우 stage 필터를 적용하고 stage_blocked 이벤트를 emit한다."""
+        allowed: List[str] = []
+        for code in codes:
+            try:
+                result = await self._stage_service.get_stage_for_code(code)
+                stage = result[0] if isinstance(result, tuple) else int(result)
+            except Exception:
+                stage = -1
+            if stage in self._allowed_stages:
+                allowed.append(code)
+            else:
+                self._debug_logger.info({"event": "stage_blocked", "code": code, "stage": stage})
+        return allowed
 
     async def run(self, candidate_codes: Optional[List[str]] = None) -> DebugReport:
         """전략을 1회 실행하고 DebugReport를 반환한다.
@@ -90,9 +109,13 @@ class StrategyDebugRunner:
         try:
             if proxy is not None:
                 self._strategy._universe = proxy
-                if candidate_codes:
-                    # requested 중 watchlist에 없는 종목을 scan 전에도 정확히 구분한다.
+                # candidate_codes 지정 시 missing_codes 정확히 계산, stage_service 주입 시 stage 체크를 위해 먼저 호출
+                if candidate_codes or self._stage_service is not None:
                     await proxy.get_watchlist()
+
+                if self._stage_service is not None:
+                    passed = await self._apply_stage_guard(proxy._last_scanned_codes)
+                    proxy._allowed = set(passed)
 
             with RejectionCollector(logger=self._debug_logger) as col:
                 signals = await self._strategy.scan()
@@ -110,6 +133,10 @@ class StrategyDebugRunner:
             if proxy is not None and original_universe is not None:
                 self._strategy._universe = original_universe
 
+        limitations: List[str] = []
+        if self._stage_service is None:
+            limitations.append("stage_service 미주입으로 StageGuard 필터링이 비활성입니다.")
+
         return DebugReport(
             strategy_name=self._strategy.name,
             requested_codes=candidate_codes,
@@ -117,5 +144,5 @@ class StrategyDebugRunner:
             missing_codes=missing_codes,
             signals=signals,
             events=col.events,
-            limitations=list(self.LIMITATIONS),
+            limitations=limitations,
         )

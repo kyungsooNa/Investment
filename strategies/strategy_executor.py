@@ -89,4 +89,6 @@ class StrategyExecutor:
                 f"(Stage {sorted({s for _, s in blocked})}): "
                 f"{[c for c, _ in blocked]}"
             )
+            for code, stage in blocked:
+                self._logger.info({"event": "stage_blocked", "code": code, "stage": stage})
         return allowed

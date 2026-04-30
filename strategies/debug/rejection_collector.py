@@ -20,8 +20,6 @@ class RejectionEvent:
 class RejectionLogHandler(logging.Handler):
     """LogRecord.msg가 dict이고 event in CAPTURED_EVENTS면 수집하는 로그 핸들러."""
 
-    # 실제 OneilPocketPivotStrategy에 존재하는 구조화 로그 이벤트만 포함.
-    # stage_blocked(StrategyExecutor f-string)는 1차 범위 외.
     CAPTURED_EVENTS = {
         "pp_rejected",
         "bgu_rejected",
@@ -31,6 +29,7 @@ class RejectionLogHandler(logging.Handler):
         "buy_signal_generated",
         "scan_skipped",
         "cgld_check_failed",
+        "stage_blocked",
     }
 
     def __init__(self) -> None:

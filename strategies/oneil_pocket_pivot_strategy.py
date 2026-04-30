@@ -212,7 +212,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             return None
 
         if cgld_val < self._cfg.execution_strength_min:
-            self._logger.info({"event": "entry_rejected", "code": code, "name": item.name, "reason": "low_execution_strength", "cgld": cgld_val, "threshold": self._cfg.execution_strength_min})
+            self._logger.info({"event": "entry_rejected", "code": code, "name": item.name, "reason": "low_execution_strength", "entry_type": entry_type, "cgld": cgld_val, "threshold": self._cfg.execution_strength_min})
             return None
 
         # 6. ★ 공통 스마트 머니 필터 (cgld_val 전달로 유연 조건 활성화)
