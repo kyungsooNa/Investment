@@ -415,3 +415,63 @@ async def test_get_hashkey_api_failure_response():
     with patch.object(KoreaInvestApiTrading, "call_api", new=AsyncMock(return_value=failure_response)):
         result = await api._get_hashkey({"k": "v"})
         assert result == failure_response
+
+@pytest.mark.asyncio
+async def test_place_stock_order_krx_market_order():
+    """KRX 시장가 주문(order_price=0): order_dvsn='01', excg_id_dvsn_cd="" 검증."""
+    api = make_api()
+    api._env.active_config.update({
+        "custtype": "P",
+        "stock_account_number": "12345678",
+    })
+    api._trid_provider.trading_order_cash.return_value = "TTTC0802U"
+    api._get_hashkey = AsyncMock(return_value="hash123")
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"odno": "A0003"},
+    ))
+
+    result = await api.place_stock_order(
+        stock_code="005930",
+        order_price=0,
+        order_qty=5,
+        is_buy=True,
+        exchange=Exchange.KRX,
+    )
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    body = api._get_hashkey.await_args.args[0]
+    assert body["ORD_DVSN"] == "01"
+    assert body["ORD_UNPR"] == "0"
+    assert body["EXCG_ID_DVSN_CD"] == ""
+    # 시장가이므로 호가단위 보정 로그가 없어야 함
+    assert not any("호가단위 보정" in str(call) for call in api._logger.info.call_args_list)
+
+@pytest.mark.asyncio
+async def test_place_stock_order_krx_limit_order_excg_empty():
+    """KRX 지정가 주문: excg_id_dvsn_cd="" (빈 문자열) 검증."""
+    api = make_api()
+    api._env.active_config.update({
+        "custtype": "P",
+        "stock_account_number": "12345678",
+    })
+    api._trid_provider.trading_order_cash.return_value = "TTTC0802U"
+    api._get_hashkey = AsyncMock(return_value="hash123")
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"odno": "A0004"},
+    ))
+
+    await api.place_stock_order(
+        stock_code="005930",
+        order_price=60000,
+        order_qty=1,
+        is_buy=True,
+        exchange=Exchange.KRX,
+    )
+
+    body = api._get_hashkey.await_args.args[0]
+    assert body["ORD_DVSN"] == "00"
+    assert body["EXCG_ID_DVSN_CD"] == ""

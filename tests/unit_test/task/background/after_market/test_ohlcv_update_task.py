@@ -753,15 +753,19 @@ class TestSuspendResume:
 class TestStartStop:
 
     async def test_start_sets_running_state(self, task):
-        await task.start()
-        assert task.state == TaskState.RUNNING
-        await task.stop()
+        try:
+            await task.start()
+            assert task.state == TaskState.RUNNING
+        finally:
+            await task.stop()
 
     async def test_start_creates_two_tasks(self, task):
         """start() 시 scheduler 1개 asyncio.Task 생성."""
-        await task.start()
-        assert len(task._tasks) == 1
-        await task.stop()
+        try:
+            await task.start()
+            assert len(task._tasks) == 1
+        finally:
+            await task.stop()
 
     async def test_stop_sets_stopped_state(self, task):
         await task.start()
@@ -771,13 +775,13 @@ class TestStartStop:
 
     async def test_start_idempotent(self, task):
         """RUNNING 중 start() 재호출 시 태스크가 추가되지 않는다."""
-        await task.start()
-        task_count = len(task._tasks)
-
-        await task.start()  # 중복 호출
-
-        assert len(task._tasks) == task_count
-        await task.stop()
+        try:
+            await task.start()
+            task_count = len(task._tasks)
+            await task.start()  # 중복 호출
+            assert len(task._tasks) == task_count
+        finally:
+            await task.stop()
 
 
 # ──────────────────────────────────────────────
