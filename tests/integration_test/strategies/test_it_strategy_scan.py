@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, AsyncMock
 from tests.integration_test.conftest import (
     _get_quotations_api_from_ctx,
     patch_session_get,
+    patch_session_get_router,
     make_http_response,
 )
 
@@ -212,25 +213,6 @@ def _make_ohlcv_api_response(ohlcv_list):
         "output1": {},
         "output2": output2
     }
-
-
-# ============================================================================
-# 헬퍼: HTTP mock에 side_effect 패턴 적용
-# ============================================================================
-
-def _build_get_side_effect(url_responses: dict):
-    """URL 패턴 매칭 기반 side_effect 함수 생성.
-
-    url_responses: {url_substring: payload_dict, ...}
-    """
-    async def _side_effect(url, *args, **kwargs):
-        u = str(url)
-        for pattern, payload in url_responses.items():
-            if pattern in u:
-                return make_http_response(payload)
-        # fallback
-        return make_http_response({"rt_cd": "0", "msg1": "ok"})
-    return _side_effect
 
 
 # ============================================================================
@@ -440,16 +422,12 @@ class TestTraditionalVolumeBreakoutScan:
         ])
 
         # 2. HTTP 네트워크 레이어 Mocking (서비스 레이어 Mock 제거)
-        side_effect_func = _build_get_side_effect({
+        patch_session_get_router(quot_api, mocker, {
             "volume-rank": trading_value_resp,
             "ranking": trading_value_resp,
             "inquire-daily-itemchartprice": ohlcv_api_resp,
             "inquire-price": price_resp,
         })
-        mocker.patch.object(
-            quot_api._async_session, "get",
-            new_callable=AsyncMock, side_effect=side_effect_func
-        )
 
         # 3. 시간 및 환경 설정
         from repositories.stock_code_repository import StockCodeRepository
@@ -512,17 +490,12 @@ class TestTraditionalVolumeBreakoutScan:
 
         ohlcv_api_resp = _make_ohlcv_api_response(ohlcv_data)
 
-        side_effect_func = _build_get_side_effect({
+        patch_session_get_router(quot_api, mocker, {
             "volume-rank": trading_value_resp,
             "ranking": trading_value_resp,
             "inquire-daily-itemchartprice": ohlcv_api_resp,
             "inquire-price": price_resp,
         })
-
-        mocker.patch.object(
-            quot_api._async_session, "get",
-            new_callable=AsyncMock, side_effect=side_effect_func,
-        )
 
         mock_mapper = MagicMock(spec=StockCodeRepository)
         mock_mapper.get_name_by_code = MagicMock(return_value="삼성전자")
@@ -576,16 +549,11 @@ class TestOneilSqueezeBreakoutScan:
         # 체결강도 135%
         conclusion_resp = _make_conclusion_response(tday_rltv="135.50")
 
-        side_effect_func = _build_get_side_effect({
+        patch_session_get_router(quot_api, mocker, {
             "inquire-ccnl": conclusion_resp,
             "conclusion": conclusion_resp,
             "inquire-price": price_resp,
         })
-        
-        mocker.patch.object(
-            quot_api._async_session, "get",
-            new_callable=AsyncMock, side_effect=side_effect_func,
-        )
 
         # 실제 UniverseService를 활용하여 서비스 간 통합 검증 (HTTP만 모킹)
         watchlist_item = OSBWatchlistItem(
@@ -652,16 +620,11 @@ class TestOneilSqueezeBreakoutScan:
         # 체결강도 95% → 120% 미만
         conclusion_resp = _make_conclusion_response(tday_rltv="95.00")
 
-        side_effect_func = _build_get_side_effect({
+        patch_session_get_router(quot_api, mocker, {
             "inquire-ccnl": conclusion_resp,
             "conclusion": conclusion_resp,
             "inquire-price": price_resp,
         })
-        
-        mocker.patch.object(
-            quot_api._async_session, "get",
-            new_callable=AsyncMock, side_effect=side_effect_func,
-        )
 
         watchlist_item = OSBWatchlistItem(
             code="005930", name="삼성전자", market="KOSPI",
@@ -734,17 +697,12 @@ class TestOneilPocketPivotScan:
         ohlcv_api_resp = _make_ohlcv_api_response(ohlcv_data)
 
         # HTTP 통신 계층 Mocking (서비스 레이어 Mock 제거)
-        side_effect_func = _build_get_side_effect({
+        patch_session_get_router(quot_api, mocker, {
             "inquire-ccnl": conclusion_resp,
             "conclusion": conclusion_resp,
             "inquire-daily-itemchartprice": ohlcv_api_resp,
             "inquire-price": {"rt_cd": "0", "msg_cd": "MCA00000", "msg1": "정상", "output": price_output},
         })
-
-        mocker.patch.object(
-            quot_api._async_session, "get",
-            new_callable=AsyncMock, side_effect=side_effect_func,
-        )
 
         watchlist_item = OSBWatchlistItem(
             code="005930", name="삼성전자", market="KOSPI",
@@ -890,15 +848,10 @@ class TestRSI2PullbackScan:
             prev_close=str(int(last_close / 0.97)),
         )
 
-        side_effect_func = _build_get_side_effect({
+        patch_session_get_router(quot_api, mocker, {
             "inquire-daily-itemchartprice": ohlcv_api_resp,
             "inquire-price": {"rt_cd": "0", "msg_cd": "MCA00000", "msg1": "정상", "output": price_output},
         })
-
-        mocker.patch.object(
-            quot_api._async_session, "get",
-            new_callable=AsyncMock, side_effect=side_effect_func,
-        )
 
         watchlist_item = OSBWatchlistItem(
             code="005930", name="삼성전자", market="KOSPI",
@@ -1284,15 +1237,10 @@ class TestLarryWilliamsCBScan:
         # 현재가: 75_000 > high_20d 74_000, 거래량 2_000_000 ≥ 1_000_000 × 1.5
         price_output = _make_current_price_output(code=self._CODE, price="75000", vol="2000000")
 
-        side_effect_func = _build_get_side_effect({
+        patch_session_get_router(quot_api, mocker, {
             "inquire-daily-itemchartprice": ohlcv_api_resp,
             "inquire-price": {"rt_cd": "0", "msg_cd": "MCA00000", "msg1": "정상", "output": price_output},
         })
-
-        mocker.patch.object(
-            quot_api._async_session, "get",
-            new_callable=AsyncMock, side_effect=side_effect_func,
-        )
 
         strategy = self._build_strategy(deep_paper_ctx, mock_tm, tmp_path)
         signals = await strategy.scan()
@@ -1324,14 +1272,9 @@ class TestLarryWilliamsCBScan:
         quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
 
         price_output = _make_current_price_output(code=self._CODE, price="69000", vol="1000000")
-        side_effect_func = _build_get_side_effect({
+        patch_session_get_router(quot_api, mocker, {
             "inquire-price": {"rt_cd": "0", "msg_cd": "MCA00000", "msg1": "정상", "output": price_output},
         })
-        
-        mocker.patch.object(
-            quot_api._async_session, "get",
-            new_callable=AsyncMock, side_effect=side_effect_func,
-        )
 
         strategy = self._build_strategy(deep_paper_ctx, mock_tm, tmp_path)
         strategy._position_state[self._CODE] = LarryWilliamsCBPositionState(
