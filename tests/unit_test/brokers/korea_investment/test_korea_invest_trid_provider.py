@@ -29,7 +29,9 @@ def mock_tr_ids():
             "order_cash_sell_paper": "TR_SELL_PAPER",
             "order_cash_sell_real": "TR_SELL_REAL",
             "order_rvsecncl_paper": "TR_CANCEL_PAPER",
-            "order_rvsecncl_real": "TR_CANCEL_REAL"
+            "order_rvsecncl_real": "TR_CANCEL_REAL",
+            "inquire_psbl_rvsecncl_paper": "TR_PSBL_CANCEL_PAPER",
+            "inquire_psbl_rvsecncl_real": "TR_PSBL_CANCEL_REAL"
         }
     }
 
@@ -107,7 +109,24 @@ def test_convenience_methods(mock_env, mock_tr_ids):
     assert provider.trading_order_cash(is_buy=True) == "TR_BUY_PAPER"
     assert provider.trading_order_cash(is_buy=False) == "TR_SELL_PAPER"
     assert provider.trading_order_rvsecncl() == "TR_CANCEL_PAPER"
+    assert provider.account_inquire_psbl_rvsecncl() == "TR_PSBL_CANCEL_PAPER"
     
     assert provider.daily_itemchartprice() == "TR_DAILY_CHART"
     assert provider.time_itemchartprice() == "TR_TIME_CHART"
     assert provider.time_daily_itemchartprice() == "TR_TIME_DAILY_CHART"
+
+
+def test_get_inquire_psbl_rvsecncl_logical_key_for_paper_and_real(mock_env, mock_tr_ids):
+    provider = KoreaInvestTrIdProvider(mock_env, mock_tr_ids)
+
+    mock_env.is_paper_trading = True
+    assert provider.get(TrId.INQUIRE_PSBL_RVSECNCL) == "TR_PSBL_CANCEL_PAPER"
+
+    mock_env.is_paper_trading = False
+    assert provider.get(TrId.INQUIRE_PSBL_RVSECNCL) == "TR_PSBL_CANCEL_REAL"
+
+
+def test_get_leaf_string_delegates_to_leaf_lookup(mock_env, mock_tr_ids):
+    provider = KoreaInvestTrIdProvider(mock_env, mock_tr_ids)
+
+    assert provider.get("inquire_daily_itemchartprice") == "TR_DAILY_CHART"

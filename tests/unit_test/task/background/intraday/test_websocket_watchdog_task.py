@@ -808,6 +808,15 @@ async def test_streaming_watchdog_no_realtime_service(watchdog_task):
 
 
 @pytest.mark.asyncio
+async def test_refresh_subscribed_no_tick_returns_without_streaming_service(watchdog_task):
+    watchdog_task._streaming_service = None
+
+    await watchdog_task._refresh_subscribed_no_tick_codes(["005930"])
+
+    assert watchdog_task._last_subscribed_no_tick_refresh_ts == {}
+
+
+@pytest.mark.asyncio
 async def test_streaming_watchdog_no_desired_codes(watchdog_task):
     """PT 구독도 없고 체결가 구독도 없을 때 워치독 루프가 스킵되는지 검증."""
     svc = watchdog_task

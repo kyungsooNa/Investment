@@ -2,6 +2,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime
+from types import SimpleNamespace
 
 from common.types import ResCommonResponse, TradeSignal
 from strategies.larry_williams_channel_breakout_strategy import LarryWilliamsChannelBreakoutStrategy
@@ -194,6 +195,29 @@ async def test_scan_skips_already_in_position(scan_setup):
     assert signals == []
 
 
+@pytest.mark.asyncio
+async def test_scan_logs_exception_from_entry_check(scan_setup):
+    strategy, *_ = scan_setup
+    strategy._check_entry = AsyncMock(side_effect=RuntimeError("entry boom"))
+
+    signals = await strategy.scan()
+
+    assert signals == []
+    strategy._logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_check_entry_returns_none_for_bad_ohlcv_or_price(scan_setup):
+    strategy, sqs, *_ = scan_setup
+
+    sqs.get_ohlcv.return_value = ResCommonResponse(rt_cd="1", msg1="fail", data=None)
+    assert await strategy._check_entry("005930", _watchlist_item()) is None
+
+    sqs.get_ohlcv.return_value = _ohlcv_resp(n=35)
+    sqs.get_current_price.return_value = _price_resp(current="0", volume="200000")
+    assert await strategy._check_entry("005930", _watchlist_item()) is None
+
+
 # ── check_exits() 테스트 ─────────────────────────────────────────
 
 @pytest.fixture
@@ -269,6 +293,30 @@ async def test_check_exits_no_signal_when_holding_range(exit_setup):
     assert strategy._position_state["005930"].channel_low_10d == before_low
 
 
+@pytest.mark.asyncio
+async def test_check_exits_logs_exceptions_and_skips_none_results(exit_setup):
+    strategy, _ = exit_setup
+    strategy._check_single_exit = AsyncMock(side_effect=[RuntimeError("exit boom"), None])
+
+    signals = await strategy.check_exits([
+        {"code": "005930", "buy_price": 1, "qty": 1},
+        {"code": "000660", "buy_price": 1, "qty": 1},
+    ])
+
+    assert signals == []
+    strategy._logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_check_single_exit_skips_missing_code_and_bad_price(exit_setup):
+    strategy, sqs = exit_setup
+
+    assert await strategy._check_single_exit({}) is None
+
+    sqs.get_current_price.return_value = _price_resp(current="0")
+    assert await strategy._check_single_exit({"code": "005930"}) is None
+
+
 # ── 헬퍼 / 인터페이스 ────────────────────────────────────────────
 
 def test_name_property(mock_deps):
@@ -290,3 +338,64 @@ def test_calc_channel_low_returns_min_of_period(mock_deps):
 def test_calc_channel_low_empty_returns_zero(mock_deps):
     result = LarryWilliamsChannelBreakoutStrategy._calc_channel_low([], period=10)
     assert result == 0
+
+
+def test_extract_price_and_volume_handle_failure_object_and_invalid_values():
+    assert LarryWilliamsChannelBreakoutStrategy._extract_current_price(None) == 0
+    assert LarryWilliamsChannelBreakoutStrategy._extract_current_price(ResCommonResponse(rt_cd="1", msg1="fail")) == 0
+    assert LarryWilliamsChannelBreakoutStrategy._extract_current_price(
+        ResCommonResponse(rt_cd="0", msg1="OK", data=SimpleNamespace(stck_prpr="12345"))
+    ) == 12345
+    assert LarryWilliamsChannelBreakoutStrategy._extract_current_price(
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "bad"}})
+    ) == 0
+
+    assert LarryWilliamsChannelBreakoutStrategy._extract_today_volume(None) == 0
+    assert LarryWilliamsChannelBreakoutStrategy._extract_today_volume(ResCommonResponse(rt_cd="1", msg1="fail")) == 0
+    assert LarryWilliamsChannelBreakoutStrategy._extract_today_volume(
+        ResCommonResponse(rt_cd="0", msg1="OK", data=SimpleNamespace(acml_vol="123"))
+    ) == 123
+    assert LarryWilliamsChannelBreakoutStrategy._extract_today_volume(
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": {"acml_vol": "bad"}})
+    ) == 0
+
+
+def test_calc_channel_low_invalid_rows_returns_zero():
+    assert LarryWilliamsChannelBreakoutStrategy._calc_channel_low([{"low": object()}], period=10) == 0
+
+
+def test_state_load_and_save_error_paths(mock_deps, tmp_path):
+    sqs, universe, indicator, tm, logger = mock_deps
+    bad_state = tmp_path / "bad_state.json"
+    bad_state.write_text("{bad json", encoding="utf-8")
+
+    strategy = LarryWilliamsChannelBreakoutStrategy(
+        sqs, universe, indicator, tm, logger=logger, state_file=str(bad_state)
+    )
+    assert strategy._position_state == {}
+    logger.error.assert_called()
+
+    logger.reset_mock()
+    strategy.STATE_FILE = str(tmp_path)
+    strategy._save_state()
+    logger.error.assert_called()
+
+
+def test_state_roundtrip_loads_positions_and_cooldown(mock_deps, tmp_path):
+    sqs, universe, indicator, tm, logger = mock_deps
+    state_file = tmp_path / "state.json"
+    state_file.write_text(
+        (
+            '{"positions":{"005930":{"entry_price":100,"entry_date":"20250101",'
+            '"hard_stop_price":90,"channel_low_10d":95,"entry_adx":30}},'
+            '"cooldown":{"000660":"20250110"}}'
+        ),
+        encoding="utf-8",
+    )
+
+    strategy = LarryWilliamsChannelBreakoutStrategy(
+        sqs, universe, indicator, tm, logger=logger, state_file=str(state_file)
+    )
+
+    assert strategy._position_state["005930"].entry_price == 100
+    assert strategy._cooldown == {"000660": "20250110"}

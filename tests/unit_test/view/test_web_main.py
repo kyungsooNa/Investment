@@ -207,7 +207,31 @@ def test_ignorable_connection_reset_filter():
     exc.winerror = 10054
 
     assert _is_ignorable_connection_reset(exc) is True
+    assert _is_ignorable_connection_reset(ConnectionResetError("plain reset")) is True
     assert _is_ignorable_connection_reset(RuntimeError("boom")) is False
+
+
+def test_asyncio_exception_filter_uses_previous_or_default_handler():
+    from view.web import web_main
+
+    previous = MagicMock()
+    loop = MagicMock()
+    loop.get_exception_handler.return_value = previous
+
+    with patch("view.web.web_main.asyncio.get_running_loop", return_value=loop):
+        web_main._install_asyncio_exception_filter()
+
+    handler = loop.set_exception_handler.call_args.args[0]
+    handler(loop, {"exception": RuntimeError("boom")})
+    previous.assert_called_once()
+
+    previous.reset_mock()
+    loop.get_exception_handler.return_value = None
+    with patch("view.web.web_main.asyncio.get_running_loop", return_value=loop):
+        web_main._install_asyncio_exception_filter()
+    handler = loop.set_exception_handler.call_args.args[0]
+    handler(loop, {"exception": RuntimeError("boom")})
+    loop.default_exception_handler.assert_called()
 
 def test_foreground_priority_middleware(mock_web_app_context_cls):
     """Foreground 우선순위 미들웨어 동작(context 진입) 확인"""
@@ -237,7 +261,7 @@ def test_all_page_routers(mock_web_app_context_cls):
     with patch("view.web.web_api._get_ctx", return_value=mock_ctx):
         with TestClient(app) as client:
             client.cookies.set("access_token", "correct_token")
-            pages = ["/stock", "/balance", "/order", "/ranking", "/marketcap", "/virtual", "/scheduler", "/program", "/system"]
+            pages = ["/stock", "/balance", "/order", "/ranking", "/marketcap", "/virtual", "/scheduler", "/program", "/system", "/favorite"]
             for page in pages:
                 response = client.get(page)
                 assert response.status_code == 200
