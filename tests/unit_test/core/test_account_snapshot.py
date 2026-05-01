@@ -203,3 +203,46 @@ async def test_parses_total_equity_from_nass_amt_fallback():
 
     assert snap.total_equity == 2_000_000
     assert snap.available_cash == 1_500_000
+
+
+@pytest.mark.asyncio
+async def test_get_returns_fresh_snapshot_without_fetching_again():
+    broker = _make_broker(_ok_response(total_equity=8_000_000))
+    cache = AccountSnapshotCache(broker_api_wrapper=broker, ttl_sec=60)
+
+    first = await cache.get()
+    second = await cache.get()
+
+    assert second is first
+    broker.get_account_balance.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fetch_exception_returns_empty_snapshot_and_preserves_previous():
+    logger = MagicMock()
+    broker = AsyncMock()
+    broker.get_account_balance.side_effect = RuntimeError("boom")
+    cache = AccountSnapshotCache(broker_api_wrapper=broker, logger=logger, ttl_sec=60)
+
+    empty = await cache.get()
+    assert empty.total_equity == 0
+    assert empty.available_cash == 0
+    logger.error.assert_called_once()
+
+    broker.get_account_balance.side_effect = None
+    broker.get_account_balance.return_value = _ok_response(total_equity=7_000_000)
+    await cache.warm_up()
+    cache._snapshot.fetched_at = cache._snapshot.fetched_at.replace(year=2000)
+    broker.get_account_balance.side_effect = RuntimeError("again")
+
+    stale = await cache.get()
+
+    assert stale.total_equity == 7_000_000
+
+
+def test_account_snapshot_parse_helpers_handle_invalid_shapes():
+    assert AccountSnapshotCache._parse_int(None, "x") == 0
+    assert AccountSnapshotCache._parse_int({"x": "bad"}, "x") == 0
+    assert AccountSnapshotCache._first_dict([]) == {}
+    assert AccountSnapshotCache._first_dict([{"a": 1}]) == {"a": 1}
+    assert AccountSnapshotCache._get_str(None, "pdno") == ""

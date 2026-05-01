@@ -9,9 +9,14 @@ from types import SimpleNamespace
 
 from services.strategy_log_report_service import (
     StrategyLogReportService,
+    _first_number,
     _extract_strategy_name,
     _fmt_date,
     _build_metric_str,
+    _is_data_error_reason,
+    _ma_proximity_excess_pct,
+    _strategy_name_from_source,
+    _to_float,
 )
 
 
@@ -42,6 +47,140 @@ def _make_entry(event: str, code: str, name: str, date: str = "2026-04-18",
         "data": {"event": event, "code": code, "name": name,
                  "reason": reason, "price": price},
     }
+
+
+def test_low_level_helpers_cover_empty_and_parse_edges():
+    """리포트 헬퍼의 빈 값/파싱 실패/수동 소스명 경계를 검증한다."""
+    assert _is_data_error_reason("") is False
+    assert _is_data_error_reason("invalid price data: open or current is zero") is True
+    assert _to_float(object()) is None
+    assert _first_number({"a": "bad", "b": "3.5"}, "a", "b") == 3.5
+    assert _first_number({"a": "bad"}, "a") is None
+    assert _strategy_name_from_source("") == "미분류"
+    assert _strategy_name_from_source("manual:") == "수동매매"
+    assert _ma_proximity_excess_pct(None) is None
+    assert _ma_proximity_excess_pct(-5.0) == 3.0
+    assert _ma_proximity_excess_pct(6.5) == 2.5
+    assert _ma_proximity_excess_pct(1.0) == 0.0
+
+
+def test_metric_string_missing_value_edges():
+    """metric 문자열은 필수 숫자가 없으면 빈 문자열을 반환한다."""
+    assert _build_metric_str("entry_rejected", "pullback_out_of_range", {}) == ""
+    assert _build_metric_str("entry_rejected", "over_extended", {"current": 100}) == ""
+    assert _build_metric_str("entry_rejected", "not_near_high", {"distance_pct": 4.0}) == ""
+    assert _build_metric_str("entry_rejected", "not_in_uptrend", {"detail": "<bad&detail>"}) == "&lt;bad&amp;detail&gt;"
+
+
+def test_service_helper_branches_for_summaries_and_quality_labels():
+    """섹션 요약/체결품질 헬퍼의 낮은 빈도 분기를 확인한다."""
+    svc = StrategyLogReportService(log_dir=".")
+
+    assert svc._format_buy_preview([]) == "• 신규 매수: 없음"
+    assert svc._build_rejected_reason_summary({}) is None
+    rejected = {
+        f"C{i:03d}": {"reason": reason}
+        for i, reason in enumerate(
+            ["low_execution_strength"] * 5
+            + ["insufficient_volume"] * 4
+            + ["not_near_high"] * 3
+        )
+    }
+    summary = svc._build_rejected_reason_summary(rejected)
+    assert "기타(3건)" in summary
+
+    assert svc._format_order_type_counts({}) == "N/A"
+    assert svc._format_order_type_counts({"market": 2, "custom": 1, "limit": 0}) == "시장가 2/custom 1"
+
+    reasons = svc._quality_threshold_reasons(
+        avg_slip=0.2,
+        p95_slip=0.3,
+        avg_latency=1.0,
+        incomplete_fill_ratio=2.0,
+        avg_unfilled_ratio=8.0,
+        avg_order_age=12.0,
+        avg_slip_threshold=1.0,
+        p95_slip_threshold=1.0,
+        avg_latency_threshold=5.0,
+        incomplete_fill_ratio_threshold=5.0,
+        avg_unfilled_ratio_threshold=5.0,
+        avg_order_age_threshold=10.0,
+    )
+    assert reasons == ["평균 잔량 8.0%", "평균 지속 12.0s"]
+
+
+def test_execution_quality_record_period_and_label_edges():
+    """중복 order_key 최신화와 period/label 경계를 검증한다."""
+    cfg = SimpleNamespace(
+        enabled=True,
+        min_sample_count=2,
+        liquidity_control_effective_date="2026-04-02",
+        candidate_avg_slippage_pct=1.0,
+        candidate_p95_slippage_pct=None,
+        candidate_avg_first_fill_latency_sec=None,
+        candidate_incomplete_fill_ratio_pct=None,
+        candidate_avg_unfilled_ratio_pct=None,
+        candidate_avg_order_age_sec=None,
+        auto_disable_enabled=True,
+        warn_avg_slippage_pct=0.5,
+        warn_p95_slippage_pct=None,
+        warn_avg_first_fill_latency_sec=None,
+        warn_incomplete_fill_ratio_pct=None,
+        warn_avg_unfilled_ratio_pct=None,
+        warn_avg_order_age_sec=None,
+    )
+    svc = StrategyLogReportService(log_dir=".", execution_quality_config=cfg)
+
+    latest = svc._latest_execution_quality_records([
+        {"order_key": "A", "timestamp": "2026-04-01 09:00:00", "value": 1},
+        {"order_key": "A", "timestamp": "2026-04-03 09:00:00", "value": 2},
+        {"timestamp": "2026-04-03 09:01:00", "value": 3},
+    ])
+    assert {item["value"] for item in latest} == {2, 3}
+    assert svc._execution_quality_period_label("bad") == ""
+    assert svc._execution_quality_period_for_items([
+        {"timestamp": "2026-04-01 10:00:00"},
+        {"timestamp": "2026-04-03 10:00:00"},
+    ]) == "4-2 전후 혼합"
+
+    assert svc._execution_quality_label({"count": 1, "avg_slip": 10.0}) == ""
+    candidate = svc._execution_quality_label({"count": 2, "avg_slip": 1.5})
+    assert "비활성화 자동 OFF" in candidate
+
+    cfg.candidate_avg_slippage_pct = 2.0
+    warn = svc._execution_quality_label({"count": 2, "avg_slip": 0.8})
+    assert "경고" in warn
+
+
+def test_executed_buys_and_portfolio_summary_edges():
+    """가상 원장 기반 매수/포트폴리오 요약의 예외와 강제종결 분기를 확인한다."""
+    svc = StrategyLogReportService(log_dir=".")
+    assert svc._executed_buys_by_strategy("20260418") == (False, {})
+
+    svc._virtual_trade_service = SimpleNamespace(get_all_trades=lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert svc._executed_buys_by_strategy("20260418") == (False, {})
+
+    trades = [
+        {"buy_date": "2026-04-18 09:00:00", "status": "FAILED", "strategy": "S1", "code": "000001"},
+        {"buy_date": "2026-04-18 09:01:00", "status": "HOLD", "strategy": "S1", "code": "005930", "buy_price": "bad"},
+    ]
+    svc._virtual_trade_service = SimpleNamespace(get_all_trades=lambda: trades, get_holds=lambda: [])
+    has_source, by_strategy = svc._executed_buys_by_strategy("20260418")
+    assert has_source is True
+    assert by_strategy["S1"]["005930"]["price"] == 0
+
+    portfolio_trades = [
+        {"buy_date": "2026-04-18 09:00:00", "sell_date": "2026-04-18 10:00:00", "status": "SOLD", "code": "A", "name": "A", "return_rate": 1.0, "sell_price": "bad"},
+        {"buy_date": "2026-04-18 09:00:00", "sell_date": "2026-04-18 10:00:00", "status": "SOLD", "code": "B", "name": "B", "return_rate": 0.0, "sell_price": 0, "reason": "reconciled_force_close"},
+    ]
+    svc._virtual_trade_service = SimpleNamespace(
+        get_all_trades=lambda: portfolio_trades,
+        get_solds=lambda: portfolio_trades,
+        get_holds=lambda: [{"code": "H"}],
+    )
+    summary = svc._build_portfolio_summary("20260418", {})
+    assert "강제 종결" in summary
+    assert "현재 보유: 1종목" in summary
 
 
 # ── _extract_strategy_name ────────────────────────────────────────

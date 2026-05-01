@@ -115,6 +115,24 @@ async def test_connect_websocket_stores_callback(streaming_service, mock_broker)
 
 
 @pytest.mark.asyncio
+async def test_connect_websocket_logs_order_notice_subscription_failure(
+    mock_broker, mock_logger, mock_market_clock, mock_market_data_service
+):
+    mock_broker.connect_websocket.return_value = True
+    mock_broker.subscribe_order_notice.side_effect = RuntimeError("notice down")
+    service = StreamingService(
+        broker_api_wrapper=mock_broker,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_data_service=mock_market_data_service,
+    )
+
+    assert await service.connect_websocket() is True
+
+    mock_logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_connect_websocket_no_callback(streaming_service, mock_broker):
     """connect_websocket: 콜백 없이 호출 시 None이 전달됨"""
     await streaming_service.connect_websocket()
@@ -336,6 +354,18 @@ def test_handler_without_running_loop_falls_back_to_sync_call(streaming_service)
     handler.assert_called_once_with(inner)
 
 
+def test_signing_notice_data_quality_failure_logs_warning(streaming_service):
+    quality = MagicMock(ok=False, reason="bad_notice", metadata={"x": 1})
+    dq = MagicMock()
+    dq.validate_execution_report.return_value = quality
+    streaming_service._data_quality_service = dq
+
+    streaming_service.dispatch_realtime_message({"type": "signing_notice", "data": {"주문번호": "1"}})
+
+    dq.validate_execution_report.assert_called_once()
+    streaming_service.logger.warning.assert_called_once()
+
+
 def test_set_price_stream_service_registers_handler(streaming_service):
     """set_price_stream_service: on_price_tick이 realtime_price 핸들러로 등록됨"""
     mock_svc = MagicMock()
@@ -378,6 +408,10 @@ def test_get_cached_realtime_price_returns_none_without_service(streaming_servic
     """get_cached_realtime_price: PriceStreamService 미설정 시 None 반환"""
     result = streaming_service.get_cached_realtime_price("005930")
     assert result is None
+
+
+def test_is_subscribed_realtime_price_false_without_repo(streaming_service):
+    assert streaming_service.is_subscribed_realtime_price("005930") is False
 
 
 def test_is_subscribed_realtime_price_uses_streaming_stock_repo(streaming_service):
@@ -438,6 +472,21 @@ async def test_unsubscribe_unified_price_clears_subscription_state(streaming_ser
 
     mock_price_stream.clear_subscription_state.assert_called_once_with("005930")
     mock_broker.unsubscribe_unified_price.assert_awaited_once_with("005930")
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_realtime_price_clears_state_only_on_success(streaming_service, mock_broker):
+    mock_price_stream = MagicMock()
+    streaming_service.set_price_stream_service(mock_price_stream)
+
+    mock_broker.unsubscribe_realtime_price.return_value = True
+    assert await streaming_service.unsubscribe_realtime_price("005930") is True
+    mock_price_stream.clear_subscription_state.assert_called_once_with("005930")
+
+    mock_price_stream.clear_subscription_state.reset_mock()
+    mock_broker.unsubscribe_realtime_price.return_value = False
+    assert await streaming_service.unsubscribe_realtime_price("005930") is False
+    mock_price_stream.clear_subscription_state.assert_not_called()
 
 
 def test_dispatch_realtime_message_realtime_price_console_log(streaming_service):

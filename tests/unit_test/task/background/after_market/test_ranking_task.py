@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from task.background.after_market.ranking_task import RankingTask, _ETF_PREFIXES, _chunked
 from common.types import ResCommonResponse, ErrorCode
 from services.market_calendar_service import MarketCalendarService
+from interfaces.schedulable_task import TaskState
 
 
 def _make_program_response(ntby_tr_pbmn=0, ntby_qty=0, stck_clpr="10000", prdy_ctrt="1.0"):
@@ -374,6 +375,21 @@ async def test_refresh_investor_ranking_duplicate_prevention(bg_service, mock_de
 
 
 @pytest.mark.asyncio
+async def test_suspend_resume_and_force_run(bg_service):
+    bg_service._state = TaskState.RUNNING
+
+    await bg_service.suspend()
+    assert bg_service.state.name == "SUSPENDED"
+
+    await bg_service.resume()
+    assert bg_service.state.name == "RUNNING"
+
+    bg_service.refresh_investor_ranking = AsyncMock()
+    await bg_service.force_run()
+    bg_service.refresh_investor_ranking.assert_awaited_once_with(force=True)
+
+
+@pytest.mark.asyncio
 async def test_refresh_investor_ranking_limit(bg_service, mock_deps):
     """상위 30개만 반환되는지 확인."""
     broker, mapper, _, _, _, _ = mock_deps
@@ -627,6 +643,73 @@ def test_load_all_stocks_filters_preferred_and_spac(bg_service, mock_deps):
     assert "000660" in loaded_codes
     assert "005935" not in loaded_codes
     assert "123456" not in loaded_codes
+
+
+def test_load_all_stocks_skips_blank_and_non_target_market(bg_service, mock_deps):
+    """빈 코드와 지원하지 않는 시장은 랭킹 수집 대상에서 제외한다."""
+    _, mapper, _, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([
+        ("", "빈코드", "KOSPI"),
+        ("005930", "삼성전자", "KONEX"),
+        ("000660", "SK하이닉스", "KOSPI"),
+    ])
+
+    assert bg_service._load_all_stocks() == [("000660", "SK하이닉스", "KOSPI")]
+
+
+@pytest.mark.asyncio
+async def test_on_start_hook_and_suspend_resume_noop_states(bg_service):
+    """시작 hook은 suspend event를 세팅하고, 상태가 맞지 않으면 suspend/resume은 no-op이다."""
+    bg_service._suspend_event.clear()
+    await bg_service._on_start_hook()
+    assert bg_service._suspend_event.is_set()
+
+    bg_service._state = TaskState.IDLE
+    await bg_service.suspend()
+    assert bg_service._state == TaskState.IDLE
+
+    await bg_service.resume()
+    assert bg_service._state == TaskState.IDLE
+
+
+@pytest.mark.asyncio
+async def test_execute_refreshes_needed_parts_and_skips_duplicate(bg_service):
+    """WorkerPool execute는 날짜별 미수집 파트만 갱신하고 완료 날짜는 스킵한다."""
+    bg_service.refresh_basic_ranking = AsyncMock()
+    bg_service.refresh_investor_ranking = AsyncMock()
+
+    await bg_service.execute({"date": "20250102"})
+    bg_service.refresh_basic_ranking.assert_awaited_once()
+    bg_service.refresh_investor_ranking.assert_awaited_once()
+    assert bg_service._basic_last_collected_date == "20250102"
+    assert bg_service._last_collected_date == "20250102"
+
+    bg_service.refresh_basic_ranking.reset_mock()
+    bg_service.refresh_investor_ranking.reset_mock()
+    await bg_service.execute({"date": "20250102"})
+    bg_service.refresh_basic_ranking.assert_not_awaited()
+    bg_service.refresh_investor_ranking.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_refresh_investor_ranking_no_latest_date_and_duplicate_notification(bg_service, mock_deps):
+    """최근 거래일이 없거나 이미 수집된 날짜면 조기 종료한다."""
+    _, _, _, logger, _, market_calendar_service = mock_deps
+    market_calendar_service.get_latest_trading_date.return_value = None
+
+    await bg_service.refresh_investor_ranking()
+
+    logger.error.assert_called_with("최근 거래일을 확인할 수 없어 투자자 랭킹 갱신을 중단합니다.")
+    assert bg_service._is_refreshing is False
+
+    notifier = AsyncMock()
+    bg_service._notification_service = notifier
+    bg_service._last_collected_date = "20250101"
+    market_calendar_service.get_latest_trading_date.return_value = "20250101"
+
+    await bg_service.refresh_investor_ranking()
+
+    notifier.emit.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_refresh_investor_ranking_optimization(bg_service, mock_deps):

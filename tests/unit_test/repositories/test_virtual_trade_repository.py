@@ -9,7 +9,11 @@ import concurrent.futures
 import random
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock, AsyncMock
-from repositories.virtual_trade_repository import VirtualTradeRepository
+from repositories.virtual_trade_repository import (
+    VirtualTradeRepository,
+    _build_strategy_return_history,
+    _get_trading_dates,
+)
 from services.virtual_trade_service import VirtualTradeService
 
 @pytest.fixture
@@ -995,3 +999,107 @@ def test_sync_live_strategy_positions_backfills_missing_strategy_holds(virutal_t
 
     inserted_again = virutal_trade_repository.sync_live_strategy_positions()
     assert inserted_again == []
+
+
+def test_trading_dates_and_strategy_history_empty_edges():
+    """스냅샷 헬퍼의 빈/무효 데이터 경계를 확인한다."""
+    assert _get_trading_dates({"2025-01-04": {"S1": 1.0}}) == []
+    assert _build_strategy_return_history({"2025-01-01": {"S1": None}}, "S1") == []
+
+
+def test_normalize_entry_date_edges(virutal_trade_repository):
+    """전략 state entry_date는 날짜 포맷별로 표준화된다."""
+    assert virutal_trade_repository._normalize_entry_date("20260424") == "2026-04-24 00:00:00"
+    assert virutal_trade_repository._normalize_entry_date("2026-04-24") == "2026-04-24 00:00:00"
+    assert virutal_trade_repository._normalize_entry_date("2026/04/24 09:30") == "2026/04/24 09:30"
+
+
+def test_load_live_strategy_positions_skips_bad_files_and_invalid_positions(virutal_trade_repository, tmp_path):
+    """전략 state 파일 로드 실패와 잘못된 position row는 복구 대상에서 제외한다."""
+    data_root = tmp_path / "data"
+    data_root.mkdir(exist_ok=True)
+    (data_root / "pp_position_state.json").write_text("{bad json", encoding="utf-8")
+    (data_root / "htf_position_state.json").write_text(
+        json.dumps({
+            "positions": {
+                "005930": {"entry_price": 70000, "entry_date": "20260424"},
+                "000660": "broken",
+                "035420": {"entry_price": 0, "entry_date": "20260424"},
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    with patch.object(virutal_trade_repository, "_get_data_root_dir", return_value=str(data_root)), \
+         patch("repositories.virtual_trade_repository.logger") as mock_logger:
+        positions = virutal_trade_repository._load_live_strategy_state_positions()
+
+    assert positions == [{
+        "strategy": "하이타이트플래그",
+        "code": "005930",
+        "buy_price": 70000.0,
+        "buy_date": "2026-04-24 00:00:00",
+    }]
+    mock_logger.warning.assert_called_once()
+
+
+def test_scheduler_open_signal_map_empty_missing_and_error_paths(virutal_trade_repository, tmp_path):
+    """scheduler signal_history 로딩의 조기 반환/DB 오류 경로를 확인한다."""
+    data_root = tmp_path / "data"
+    scheduler_dir = data_root / "StrategyScheduler"
+    scheduler_dir.mkdir(parents=True)
+
+    with patch.object(virutal_trade_repository, "_get_data_root_dir", return_value=str(data_root)):
+        assert virutal_trade_repository._load_scheduler_open_signal_map(set()) == {}
+        assert virutal_trade_repository._load_scheduler_open_signal_map({("S1", "005930")}) == {}
+
+    (scheduler_dir / "scheduler.db").write_text("not sqlite", encoding="utf-8")
+    with patch.object(virutal_trade_repository, "_get_data_root_dir", return_value=str(data_root)), \
+         patch("repositories.virtual_trade_repository.logger") as mock_logger:
+        assert virutal_trade_repository._load_scheduler_open_signal_map({("S1", "005930")}) == {}
+    mock_logger.warning.assert_called_once()
+
+
+def test_get_summary_without_reason_column_and_fix_sell_price_no_rows(virutal_trade_repository):
+    """구버전 DataFrame처럼 reason 컬럼이 없어도 요약 계산이 가능하다."""
+    legacy_df = pd.DataFrame([{
+        "strategy": "S1",
+        "code": "005930",
+        "buy_date": "2025-01-01 09:00:00",
+        "buy_price": 1000,
+        "qty": 1,
+        "sell_date": "2025-01-01 10:00:00",
+        "sell_price": 1100,
+        "return_rate": 10.0,
+        "status": "SOLD",
+    }])
+    with patch.object(virutal_trade_repository, "_read", return_value=legacy_df):
+        summary = virutal_trade_repository.get_summary()
+
+    assert summary["force_closed_count"] == 0
+    assert summary["avg_return"] == 10.0
+    virutal_trade_repository.fix_sell_price("NOPE", None, 1234)
+
+
+def test_find_prev_close_and_change_empty_edges(virutal_trade_repository):
+    """가격 캐시/스냅샷 부족 시 변화율 계열은 None을 반환한다."""
+    assert VirtualTradeRepository._find_prev_close({}, "005930", "2025-01-02") is None
+    assert VirtualTradeRepository._find_prev_close({"005930": {"2025-01-01": 70000}}, "005930", "2025-01-02") == 70000
+    assert virutal_trade_repository.get_daily_change("S1", 1.0, _data={"daily": {}}) == (None, None)
+    assert virutal_trade_repository.get_weekly_change("S1", 1.0, _data={"daily": {}}) == (None, None)
+
+
+def test_fetch_close_prices_uses_cache_and_handles_pykrx_error(virutal_trade_repository):
+    """종가 캐시가 충분하면 조회를 건너뛰고, 조회 실패 종목은 스킵한다."""
+    cached = {"005930": {"2025-01-01": 70000, "2025-01-02": 71000, "2025-01-03": 72000}}
+    with patch.object(virutal_trade_repository, "_load_price_cache", return_value=cached), \
+         patch("pykrx.stock.get_market_ohlcv_by_date") as mock_pykrx:
+        result = virutal_trade_repository._fetch_close_prices(["005930"], "2025-01-01", "2025-01-03")
+    assert result is cached
+    mock_pykrx.assert_not_called()
+
+    with patch.object(virutal_trade_repository, "_load_price_cache", return_value={}), \
+         patch("pykrx.stock.get_market_ohlcv_by_date", side_effect=RuntimeError("boom")), \
+         patch("repositories.virtual_trade_repository.logger") as mock_logger:
+        assert virutal_trade_repository._fetch_close_prices(["000660"], "2025-01-01", "2025-01-03") == {}
+    mock_logger.warning.assert_called_once()

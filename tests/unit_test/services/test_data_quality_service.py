@@ -107,6 +107,50 @@ def test_validate_api_response_failure_and_invalid_output():
     assert invalid.reason == "rest_invalid"
 
 
+def test_config_property_and_disabled_checks_return_info():
+    cfg = DataQualityConfig(enabled=False)
+    svc = DataQualityService(cfg)
+
+    assert svc.config is cfg
+    assert svc.validate_api_response(None, code="005930").reason == "disabled"
+    assert svc.validate_price_tick({}).reason == "disabled"
+    assert svc.validate_execution_report({}).reason == "disabled"
+
+
+def test_validate_api_response_rejects_none_data_and_non_dict_required_keys():
+    svc = DataQualityService()
+
+    none_data = svc.validate_api_response(
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=None),
+        code="005930",
+    )
+    non_dict = svc.validate_api_response(
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=["row"]),
+        code="005930",
+        required_data_keys=["output"],
+    )
+
+    assert none_data.reason == "rest_invalid"
+    assert non_dict.reason == "rest_invalid"
+    assert non_dict.metadata["required_data_keys"] == ["output"]
+
+
+def test_to_float_invalid_object_and_violation_history_trim():
+    class BadNumber:
+        def __str__(self):
+            raise TypeError("bad")
+
+    svc = DataQualityService()
+    svc.MAX_VIOLATION_HISTORY = 2
+
+    assert DataQualityService._to_float(BadNumber()) is None
+    for code in ("1", "2", "3"):
+        svc.validate_api_response(ResCommonResponse(rt_cd="1", msg1="fail", data=None), code=code)
+
+    history = svc.get_violation_history(count=10)
+    assert [item["code"] for item in history] == ["3", "2"]
+
+
 def test_validate_price_tick_rejects_missing_negative_and_range():
     svc = DataQualityService()
 
@@ -186,3 +230,26 @@ async def test_validate_order_reference_blocks_stale_and_outlier():
     assert stale_result.reason == "stale_price"
     assert outlier_result.ok is False
     assert outlier_result.reason == "invalid_tick"
+
+
+@pytest.mark.asyncio
+async def test_validate_order_reference_disabled_invalid_cache_failure_and_ok():
+    class FailingPriceStream:
+        def get_cached_price(self, code):
+            raise RuntimeError("cache down")
+
+    class PriceStream:
+        def get_cached_price(self, code):
+            return {"price": "70000", "received_at": time.time()}
+
+    disabled = DataQualityService(DataQualityConfig(enabled=False))
+    invalid = DataQualityService()
+    failing = DataQualityService(price_stream_service=FailingPriceStream(), logger=type("L", (), {"warning": lambda *a, **k: None})())
+    ok = DataQualityService(price_stream_service=PriceStream())
+
+    assert (await disabled.validate_order_reference(stock_code="005930", price=-1, qty=0)).reason == "disabled"
+    assert (await invalid.validate_order_reference(stock_code="005930", price=1, qty=0)).reason == "invalid_tick"
+    assert (await failing.validate_order_reference(stock_code="005930", price=70000, qty=1)).reason == "no_realtime_reference"
+    ok_result = await ok.validate_order_reference(stock_code="005930", price=70000, qty=1)
+    assert ok_result.ok is True
+    assert ok_result.reason == "ok"

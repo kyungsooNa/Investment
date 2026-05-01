@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from view.web.web_app_initializer import WebAppContext
 from pydantic import BaseModel
 import contextlib
+from types import SimpleNamespace
 
 @pytest.fixture
 def mock_deps():
@@ -845,3 +846,188 @@ async def test_shutdown_cancels_pending_refresh_tasks_and_stops_broker(mock_deps
     mock_gather.assert_awaited_once_with(pending, return_exceptions=True)
     assert ctx._pending_rest_price_refresh_tasks == {}
     ctx.broker.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_initialize_services_logs_bootstrap_service_failure(mock_deps):
+    """서비스 부트스트랩 예외는 critical 로그 후 False를 반환한다."""
+    ctx = WebAppContext(None)
+    ctx.env = MagicMock()
+    ctx._bootstrap_broker = AsyncMock(return_value=True)
+    ctx._bootstrap_services = MagicMock(side_effect=RuntimeError("service boom"))
+    ctx._bootstrap_schedulers = MagicMock()
+
+    result = await ctx.initialize_services(is_paper_trading=True)
+
+    assert result is False
+    ctx.logger.critical.assert_called_once()
+    ctx._bootstrap_schedulers.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_broker_exception_returns_false(mock_deps):
+    """브로커 초기화 중 예외가 나면 False를 반환한다."""
+    ctx = WebAppContext(None)
+    ctx.env = MagicMock()
+    ctx.env.get_access_token = AsyncMock(side_effect=RuntimeError("token boom"))
+
+    result = await ctx._bootstrap_broker(is_paper_trading=True)
+
+    assert result is False
+    ctx.logger.critical.assert_called_once()
+
+
+def test_load_config_and_env_uses_legacy_dict_method(mock_deps):
+    """Pydantic v1 스타일 dict() 설정 객체도 dict로 변환한다."""
+    class LegacyConfig:
+        def __init__(self):
+            self.called = False
+
+        def dict(self):
+            self.called = True
+            return {
+                "market_open_time": "08:30",
+                "market_close_time": "15:00",
+                "market_timezone": "Asia/Seoul",
+                "notifications": {"telegram": {"enabled": False}},
+            }
+
+    config_obj = LegacyConfig()
+    mock_deps["load_configs"].return_value = config_obj
+
+    ctx = WebAppContext(None)
+    ctx.load_config_and_env()
+
+    assert config_obj.called is True
+    mock_deps["env"].assert_called_once()
+
+
+def test_web_realtime_callback_injects_scalar_price_and_skips_without_streaming(mock_deps):
+    """가격 캐시가 scalar면 price만 주입하고, streaming_service가 없으면 dispatch를 생략한다."""
+    ctx = WebAppContext(None)
+    ctx.streaming_service = MagicMock()
+    ctx.streaming_service.get_cached_realtime_price.return_value = "70100"
+    data = {"type": "realtime_program_trading", "data": {"유가증권단축종목코드": "005930"}}
+
+    ctx._web_realtime_callback(data)
+
+    assert data["data"]["price"] == "70100"
+    ctx.streaming_service.dispatch_realtime_message.assert_called_once_with(data)
+
+    ctx.streaming_service = None
+    ctx._web_realtime_callback({"type": "realtime_program_trading", "data": {}})
+
+
+def test_emit_and_log_missing_reason_no_logger_or_price_service(mock_deps):
+    """streaming logger/service 누락 및 price stream service 누락 분기를 확인한다."""
+    ctx = WebAppContext(None)
+    ctx.streaming_event_logger = None
+    ctx._emit_missing_reason("005930", "rest_failed")
+
+    ctx.streaming_event_logger = MagicMock()
+    ctx.streaming_service = None
+    ctx._log_streaming_missing_reason("005930")
+    ctx.streaming_event_logger.log_missing_reason.assert_not_called()
+
+    ctx.streaming_service = MagicMock()
+    ctx.streaming_service.is_subscribed_realtime_price.return_value = True
+    ctx.price_stream_service = None
+    ctx._emit_missing_reason = MagicMock()
+    ctx._log_streaming_missing_reason("005930")
+    ctx._emit_missing_reason.assert_called_once_with("005930", "subscribed_no_tick")
+
+
+def test_schedule_rest_price_refresh_skips_existing_running_task(mock_deps):
+    """이미 실행 중인 REST 보강 task가 있으면 새 task를 만들지 않는다."""
+    ctx = WebAppContext(None)
+    ctx.stock_query_service = MagicMock()
+    ctx.price_stream_service = MagicMock()
+    ctx.streaming_service = MagicMock()
+    ctx.streaming_service.is_subscribed_realtime_price.return_value = True
+    ctx._refresh_price_from_rest = MagicMock()
+    existing = MagicMock()
+    existing.done.return_value = False
+    ctx._pending_rest_price_refresh_tasks["005930"] = existing
+
+    ctx._schedule_rest_price_refresh("005930")
+
+    ctx._refresh_price_from_rest.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_refresh_price_from_rest_quality_and_invalid_output_edges(mock_deps):
+    """REST 보강은 품질 실패, output 누락, 가격 누락을 각각 reason으로 기록한다."""
+    ctx = WebAppContext(None)
+    ctx.stock_query_service = MagicMock()
+    ctx.stock_query_service.get_current_price = AsyncMock()
+    ctx.price_stream_service = MagicMock()
+    ctx._emit_missing_reason = MagicMock()
+    ctx.data_quality_service = MagicMock()
+    ctx.data_quality_service.validate_api_response.return_value = SimpleNamespace(ok=False, reason="zero_price")
+
+    ctx.stock_query_service.get_current_price.return_value = SimpleNamespace(rt_cd="0", data={"output": {}})
+    await ctx._refresh_price_from_rest("005930")
+    ctx._emit_missing_reason.assert_called_with("005930", "zero_price")
+
+    ctx._emit_missing_reason.reset_mock()
+    ctx.data_quality_service = None
+    ctx.stock_query_service.get_current_price.return_value = SimpleNamespace(rt_cd="0", data={})
+    await ctx._refresh_price_from_rest("005930")
+    ctx._emit_missing_reason.assert_called_with("005930", "rest_failed")
+
+    ctx._emit_missing_reason.reset_mock()
+    ctx.stock_query_service.get_current_price.return_value = SimpleNamespace(rt_cd="0", data={"output": {}})
+    await ctx._refresh_price_from_rest("005930")
+    ctx._emit_missing_reason.assert_called_with("005930", "rest_invalid")
+
+    ctx._emit_missing_reason.reset_mock()
+    ctx.stock_query_service.get_current_price.return_value = SimpleNamespace(rt_cd="0", data={"output": {"stck_prpr": ""}})
+    await ctx._refresh_price_from_rest("005930")
+    ctx._emit_missing_reason.assert_called_with("005930", "rest_invalid")
+
+
+@pytest.mark.asyncio
+async def test_start_program_trading_connection_failure_price_only_cleanup_and_exception(mock_deps):
+    """프로그램매매 구독 시작의 연결 실패, 가격 구독만 성공, 예외 경로를 확인한다."""
+    ctx = WebAppContext(None)
+    ctx.pm = MagicMock()
+    ctx.pm.start_timer.return_value = 0.0
+    ctx.logger = MagicMock()
+    ctx.streaming_stock_repo = MagicMock()
+    ctx.streaming_stock_repo.get_desired.return_value = set()
+    ctx.streaming_service = MagicMock()
+    ctx.streaming_service.connect_websocket = AsyncMock(return_value=False)
+
+    assert await ctx.start_program_trading("005930") is False
+    ctx.logger.warning.assert_called_with("프로그램매매 구독 실패 (WebSocket 연결 불가): 005930")
+
+    ctx.streaming_service.connect_websocket = AsyncMock(return_value=True)
+    ctx.streaming_service.subscribe_program_trading = AsyncMock(return_value=False)
+    ctx.streaming_service.subscribe_unified_price = AsyncMock(return_value=True)
+    ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
+    ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
+
+    assert await ctx.start_program_trading("005930") is False
+    ctx.streaming_service.unsubscribe_unified_price.assert_awaited_once_with("005930")
+
+    ctx.streaming_service.connect_websocket = AsyncMock(side_effect=RuntimeError("boom"))
+    assert await ctx.start_program_trading("005930") is False
+    ctx.logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_stop_program_trading_no_desired_and_stop_all_without_repo(mock_deps):
+    """desired가 없거나 repo가 없으면 구독 해지 호출 없이 종료한다."""
+    ctx = WebAppContext(None)
+    ctx.streaming_service = MagicMock()
+    ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
+    ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
+    ctx.streaming_stock_repo = MagicMock()
+    ctx.streaming_stock_repo.get_desired.return_value = set()
+
+    await ctx.stop_program_trading("005930")
+    ctx.streaming_service.unsubscribe_program_trading.assert_not_awaited()
+
+    ctx.streaming_stock_repo = None
+    await ctx.stop_all_program_trading()
+    ctx.streaming_service.unsubscribe_program_trading.assert_not_awaited()
