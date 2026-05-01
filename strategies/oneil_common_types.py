@@ -249,10 +249,16 @@ class HTFConfig(BaseStrategyConfig):
     min_qty: int = 1
 
     min_candle_relative_pos: float = 0.7  # 돌파 시 현재가가 당일 변동폭 상단 70% 이상 위치해야 함
-    sm_flexible_pg_ratio : float = 7.0           # 프로그램 비중이 약간 낮아도(7%)
-    sm_flexible_execution_strength: float = 150.0 # 체결강도가 압도적(150%)이면 인정
+    sm_flexible_pg_ratio : float = 7.0           # 프로그램 비중이 약간 낮아도(7%) — 유연 판정 제거됨(사용 안 함)
+    sm_flexible_execution_strength: float = 150.0 # 체결강도가 압도적(150%)이면 인정 — 유연 판정 제거됨(사용 안 함)
     program_to_market_cap_pct: float = 0.3        # (프로그램순매수금/시총) >= 0.3%
     cooldown_days: int = 5                         # 손절 후 재진입 금지 기간 (일, HTF는 더 길게)
+
+    # 필살기: 가짜 신호 방어
+    breakout_min_buffer_pct: float = 0.5          # 돌파 진입 하한: pole_high 대비 +0.5% 안착 확인
+    breakout_max_extension_pct: float = 2.0       # 돌파 진입 상한: pole_high 대비 +2% 초과 시 과확장 거부
+    afternoon_volume_multiplier: float = 3.0      # 오후 12시 이후 거래량 허들 강화 (2.0 → 3.0)
+    afternoon_cutoff_hour: int = 12               # 오후 가중치 적용 기준 시각 (KST)
 
 @dataclass
 class HTFPositionState:

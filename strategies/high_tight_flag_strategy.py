@@ -234,10 +234,16 @@ class HighTightFlagStrategy(LiveStrategy):
             self._logger.debug({"event": "breakout_skipped", "code": code, "reason": "early_morning_guard"})
             return None
 
-        # 2. 가격 돌파: 현재가 > 40일 최고가 (옵션 A)
+        # 2. 가격 돌파: pole_high 기준 진입 밴드 확인 (옵션 A + 과확장 방어)
         pole_high = pattern["pole_high"]
-        if current <= pole_high:
-            # 너무 많은 로그를 피하기 위해 가격 미달 단계는 로그 생략
+        min_entry = pole_high * (1 + self._cfg.breakout_min_buffer_pct / 100)
+        max_entry = pole_high * (1 + self._cfg.breakout_max_extension_pct / 100)
+        if current < min_entry or current > max_entry:
+            self._logger.debug({
+                "event": "breakout_rejected", "code": code,
+                "reason": "out_of_entry_band",
+                "current": current, "band": [int(min_entry), int(max_entry)],
+            })
             return None
 
         # 🚨 [관문 2] 캔들 품질 검증 (Strict Quality!)
@@ -266,7 +272,13 @@ class HighTightFlagStrategy(LiveStrategy):
             return None
         avg_vol_50d = sum(volumes[-vol_count:]) / vol_count
 
-        vol_threshold = avg_vol_50d * self._cfg.volume_breakout_multiplier
+        now_hour = self._tm.get_current_kst_time().hour
+        multiplier = (
+            self._cfg.afternoon_volume_multiplier
+            if now_hour >= self._cfg.afternoon_cutoff_hour
+            else self._cfg.volume_breakout_multiplier
+        )
+        vol_threshold = avg_vol_50d * multiplier
         if proj_vol < vol_threshold:
             vol_ratio_pct = (proj_vol / avg_vol_50d * 100) if avg_vol_50d > 0 else 0.0
             self._logger.debug({
@@ -525,6 +537,8 @@ class HighTightFlagStrategy(LiveStrategy):
 
         ma = sum(closes[-period:]) / period
         if current_price < ma:
+            if state.pole_high > 0 and current_price >= state.pole_high * 0.99:
+                return False, ""
             return True, f"트레일링스탑({period}MA {ma:,.0f} 하향이탈)"
 
         if state.peak_price > 0:
@@ -555,24 +569,19 @@ class HighTightFlagStrategy(LiveStrategy):
         else:                              # 1조 미만 (중소형주)
             mc_threshold = self._cfg.program_to_market_cap_pct # 기본값 0.3~0.5%
 
-        # 2. 판정 로직
+        # 판정 로직 — HTF는 정석 판정만 인정 (유연화 제거)
         # 정석: 비중 10% 이상 & 시총 허들 통과
         is_standard = (pg_to_tv_pct >= 10.0 and pg_to_mc_pct >= mc_threshold)
-        
-        # 유연: 비중 7% 이상 & 체결강도가 압도적(150%↑) & 시총 허들의 70% 통과
-        is_flexible = (pg_to_tv_pct >= self._cfg.sm_flexible_pg_ratio and 
-                    cgld_val >= self._cfg.sm_flexible_execution_strength and
-                    pg_to_mc_pct >= (mc_threshold * 0.7))
 
         metrics = {
             "pg_buy_amount": pg_buy_amount,
             "pg_to_tv_pct": pg_to_tv_pct,
             "pg_to_mc_pct": pg_to_mc_pct,
             "mc_threshold": mc_threshold,
-            "pass_type": "정석" if is_standard else "유연"
+            "pass_type": "정석",
         }
 
-        return (is_standard or is_flexible), metrics
+        return is_standard, metrics
     
     def _calculate_qty(self, price: int) -> int:
         if price <= 0:
