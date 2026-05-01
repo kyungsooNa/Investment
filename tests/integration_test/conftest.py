@@ -219,6 +219,25 @@ def patch_session_post(api, mocker, payload: Dict[str, Any], status: int = 200):
         return_value=make_http_response(payload, status),
     )
 
+def patch_session_get_router(api, mocker, url_responses: Dict[str, Any]):
+    """
+    URL 엔드포인트 패턴별로 HTTP 응답을 분기 처리하는 라우팅 모킹 헬퍼.
+    url_responses: {url_substring: payload_dict}
+    """
+    async def _side_effect(url, *args, **kwargs):
+        u = str(url)
+        for pattern, payload in url_responses.items():
+            if pattern in u:
+                return make_http_response(payload)
+        return make_http_response({"rt_cd": "0", "msg1": "ok"})
+
+    return mocker.patch.object(
+        api._async_session,
+        "get",
+        new_callable=AsyncMock,
+        side_effect=_side_effect,
+    )
+
 # ---- 스파이 헬퍼 ------------------------------------------------------------
 def spy_execute_request(api, mocker):
     """
@@ -348,6 +367,7 @@ def _inject_test_helpers(ki_providers, spy_exec_and_patch_get, spy_exec_and_patc
     ctx.expected_url_for_account = expected_url_for_account
     ctx.extract_src_from_balance_payload = extract_src_from_balance_payload  # ← 추가
     ctx.patch_post_with_hash_and_order = patch_post_with_hash_and_order
+    ctx.patch_session_get_router = patch_session_get_router
     ctx.make_http_response = make_http_response
 
 
