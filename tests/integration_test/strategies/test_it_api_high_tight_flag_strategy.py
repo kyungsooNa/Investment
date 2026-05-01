@@ -33,15 +33,15 @@ async def test_htf_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
         new_callable=AsyncMock,
         return_value=ResCommonResponse(rt_cd="0", msg1="ok", data={
             "output": {
-                "stck_prpr": "220000",
-                "stck_oprc": "210000",
-                "stck_hgpr": "223000",  # 225000 -> 223000으로 수정 (품질 향상)
-                "stck_lwpr": "210000",
+                "stck_prpr": "200500",
+                "stck_oprc": "199000",
+                "stck_hgpr": "201000",
+                "stck_lwpr": "198000",
                 "prdy_vrss": "5000",
                 "prdy_vrss_sign": "2",
-                "acml_vol": "3000000",
+                "acml_vol": "5000000",
                 "pgtr_ntby_qty": "100000",
-                "acml_tr_pbmn": "500000000000",
+                "acml_tr_pbmn": "20000000000",
                 "hts_avls": "10000",
                 "stck_llam": "10000"
             }
@@ -115,7 +115,7 @@ async def test_htf_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
         code=code_a, name="테스트종목A", market="KOSPI",
         high_20d=197500, ma_20d=190000.0, ma_50d=150000.0, 
         avg_vol_20d=600000.0, bb_width_min_20d=0.03, prev_bb_width=0.04, 
-        w52_hgpr=197500, avg_trading_value_5d=50000000000, market_cap=400_000_000_000_000,
+        w52_hgpr=197500, avg_trading_value_5d=50000000000, market_cap=500_000_000_000,
         rs_return_3m=10.0, profit_growth_score=0, smart_money_score=0, rs_score=0, total_score=0
     )
     mocker.patch.object(universe_service, '_load_premium_stocks', return_value=[premium_item])
