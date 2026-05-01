@@ -1,3 +1,4 @@
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -350,3 +351,138 @@ async def test_env_none_skips_consistency_check():
     result = await svc.validate_order("005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0)
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_missing_kill_switch_and_snapshot_cache_skip_optional_checks():
+    svc = RiskGateService(
+        config=RiskGateConfig(max_total_exposure_pct=1.0),
+        kill_switch_service=None,
+        account_snapshot_cache=None,
+        logger=MagicMock(),
+    )
+
+    result = await svc.validate_order("005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result is None
+
+
+def test_record_daily_amount_prunes_stale_entries():
+    svc, _, _ = _service(config=RiskGateConfig(max_daily_order_amount_won=10_000_000))
+    stale_day = date.today() - timedelta(days=8)
+    svc._daily_total[stale_day] = 1
+
+    svc._record_daily_amount(100)
+
+    assert stale_day not in svc._daily_total
+    assert svc._daily_total[date.today()] == 100
+
+
+@pytest.mark.asyncio
+async def test_duplicate_strategy_position_async_and_error_paths():
+    async_provider = MagicMock()
+    async_provider.is_holding = AsyncMock(return_value=True)
+    async_provider.get_strategy_return_history.return_value = []
+    async_provider.get_holds_by_strategy.return_value = []
+    async_svc, _, _ = _service(strategy_provider=async_provider)
+
+    error_provider = MagicMock()
+    error_provider.is_holding.side_effect = RuntimeError("hold check down")
+    error_svc, _, _ = _service(strategy_provider=error_provider)
+
+    blocked = await async_svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0, source="strategy:모멘텀"
+    )
+    allowed = await error_svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0, source="strategy:모멘텀"
+    )
+
+    assert blocked.data["rule"] == "duplicate_strategy_position"
+    assert allowed is None
+
+
+@pytest.mark.asyncio
+async def test_strategy_loss_limit_async_empty_exception_and_non_blocking_loss():
+    cfg = RiskGateConfig(
+        strategy_limits={
+            "모멘텀": RiskGateStrategyLimitConfig(max_loss_pct=5.0),
+        },
+    )
+    empty_provider = MagicMock()
+    empty_provider.is_holding.return_value = False
+    empty_provider.get_strategy_return_history = AsyncMock(return_value=[])
+    empty_provider.get_holds_by_strategy.return_value = []
+    empty_svc, _, _ = _service(config=cfg, strategy_provider=empty_provider)
+
+    error_provider = MagicMock()
+    error_provider.is_holding.return_value = False
+    error_provider.get_strategy_return_history.side_effect = RuntimeError("history down")
+    error_svc, _, _ = _service(config=cfg, strategy_provider=error_provider)
+
+    ok_provider = MagicMock()
+    ok_provider.is_holding.return_value = False
+    ok_provider.get_strategy_return_history.return_value = [{"date": "2026-04-30", "return_rate": -1.5}]
+    ok_provider.get_holds_by_strategy.return_value = []
+    ok_svc, _, _ = _service(config=cfg, strategy_provider=ok_provider)
+
+    assert await empty_svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0, source="strategy:모멘텀"
+    ) is None
+    assert await error_svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0, source="strategy:모멘텀"
+    ) is None
+    assert await ok_svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0, source="strategy:모멘텀"
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_strategy_exposure_limit_skip_and_async_holds_paths():
+    cfg = RiskGateConfig(
+        strategy_limits={
+            "모멘텀": RiskGateStrategyLimitConfig(max_exposure_pct=10.0),
+        },
+    )
+    provider = MagicMock()
+    provider.is_holding.return_value = False
+    provider.get_strategy_return_history.return_value = []
+    provider.get_holds_by_strategy = AsyncMock(return_value=[{"current_value": "1,000,000"}])
+    svc, _, _ = _service(config=cfg, strategy_provider=provider)
+
+    result = await svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0, source="strategy:모멘텀"
+    )
+
+    assert result is None
+    assert RiskGateService._position_value({"evlu_amt": "1,234"}) == 1234
+
+
+@pytest.mark.asyncio
+async def test_strategy_exposure_limit_fails_open_on_zero_equity_and_hold_error():
+    cfg = RiskGateConfig(
+        strategy_limits={
+            "모멘텀": RiskGateStrategyLimitConfig(max_exposure_pct=10.0),
+        },
+    )
+    zero_provider = MagicMock()
+    zero_provider.is_holding.return_value = False
+    zero_provider.get_strategy_return_history.return_value = []
+    zero_provider.get_holds_by_strategy.return_value = [{"buy_price": 10_000, "qty": 1}]
+    zero_svc, _, _ = _service(
+        config=cfg,
+        snapshot=AccountSnapshot(total_equity=0, available_cash=0, positions={}),
+        strategy_provider=zero_provider,
+    )
+
+    error_provider = MagicMock()
+    error_provider.is_holding.return_value = False
+    error_provider.get_strategy_return_history.return_value = []
+    error_provider.get_holds_by_strategy.side_effect = RuntimeError("holds down")
+    error_svc, _, _ = _service(config=cfg, strategy_provider=error_provider)
+
+    assert await zero_svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0, source="strategy:모멘텀"
+    ) is None
+    assert await error_svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0, source="strategy:모멘텀"
+    ) is None

@@ -130,6 +130,24 @@ class TestOnMarketClosed:
         await task_minimal._on_market_closed("20260419")
         mock_telegram.send_strategy_log_report.assert_awaited_once()
 
+    async def test_notification_service_without_candidate_getter_returns(
+        self, mock_notification_service
+    ):
+        class ReportServiceWithoutGetter:
+            def __init__(self):
+                self.generate_report = AsyncMock(return_value="<html>report</html>")
+
+        report_service = ReportServiceWithoutGetter()
+        task = StrategyLogReportTask(
+            report_service=report_service,
+            notification_service=mock_notification_service,
+            logger=MagicMock(),
+        )
+
+        await task._on_market_closed("20260419")
+
+        mock_notification_service.emit.assert_not_awaited()
+
     async def test_no_telegram_reporter_does_not_raise(
         self, mock_report_service, mock_notification_service
     ):
@@ -194,3 +212,40 @@ class TestForceRun:
             mock_dt.now.return_value.strftime.return_value = "20260419"
             await task.force_run()
         assert task.state == TaskState.IDLE
+
+    async def test_force_run_uses_market_calendar_service_date(
+        self, mock_report_service, mock_notification_service
+    ):
+        mcs = MagicMock()
+        mcs.get_latest_trading_date = AsyncMock(return_value="20260418")
+        task = StrategyLogReportTask(
+            report_service=mock_report_service,
+            notification_service=mock_notification_service,
+            mcs=mcs,
+            logger=MagicMock(),
+        )
+
+        await task.force_run()
+
+        mock_report_service.generate_report.assert_awaited_once_with("20260418")
+
+    async def test_force_run_falls_back_to_today_when_calendar_fails(
+        self, mock_report_service, mock_notification_service
+    ):
+        mcs = MagicMock()
+        mcs.get_latest_trading_date = AsyncMock(side_effect=RuntimeError("calendar down"))
+        task = StrategyLogReportTask(
+            report_service=mock_report_service,
+            notification_service=mock_notification_service,
+            mcs=mcs,
+            logger=MagicMock(),
+        )
+
+        with patch(
+            "task.background.after_market.strategy_log_report_task.datetime"
+        ) as mock_dt:
+            mock_dt.now.return_value.strftime.return_value = "20260419"
+            await task.force_run()
+
+        mock_report_service.generate_report.assert_awaited_once_with("20260419")
+        task._logger.warning.assert_called_once()

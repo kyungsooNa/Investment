@@ -6,7 +6,7 @@ import pytest
 from common.types import ErrorCode, Exchange, OrderSide, ResCommonResponse
 from config.config_loader import OrderPolicyConfig
 from services.execution_flow_service import ExecutionFlowSnapshot
-from services.order_policy_service import OrderPolicyService
+from services.order_policy_service import OrderPolicyDecision, OrderPolicyService
 
 
 def _service(*, config=None, quote_provider=None, security_info_provider=None, trade_flow_provider=None, logger=None):
@@ -641,3 +641,312 @@ async def test_trade_flow_failure_can_fail_open():
 
     assert decision.allowed is True
     assert decision.context["trade_flow_error"] == "API error"
+
+
+def test_decision_response_includes_adjusted_price():
+    response = OrderPolicyDecision(
+        allowed=False,
+        rule="invalid_tick_size",
+        reason="호가단위 보정 필요",
+        adjusted_price=70_000,
+    ).to_response()
+
+    assert response.data["adjusted_price"] == 70_000
+
+
+@pytest.mark.asyncio
+async def test_disabled_policy_allows_without_validation():
+    svc = _service(config=OrderPolicyConfig(enabled=False))
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=-1,
+        qty=0,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.allowed is True
+    assert decision.adjusted_price == -1
+
+
+@pytest.mark.asyncio
+async def test_rejects_non_positive_qty_and_negative_price():
+    svc = _service()
+
+    qty_decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=0,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+    price_decision = await svc.validate_order(
+        stock_code="005930",
+        price=-1,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert qty_decision.rule == "non_positive_qty"
+    assert price_decision.rule == "negative_price"
+
+
+@pytest.mark.asyncio
+async def test_market_order_allowed_without_order_book_checks():
+    svc = _service(config=OrderPolicyConfig(order_book_checks_enabled=False))
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=0,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.allowed is True
+    assert decision.rule == "market_order"
+
+
+@pytest.mark.asyncio
+async def test_market_buy_and_sell_can_be_disabled():
+    buy_svc = _service(config=OrderPolicyConfig(allow_market_buy=False))
+    sell_svc = _service(config=OrderPolicyConfig(allow_market_sell=False))
+
+    buy = await buy_svc.validate_order(
+        stock_code="005930",
+        price=0,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+    sell = await sell_svc.validate_order(
+        stock_code="005930",
+        price=0,
+        qty=1,
+        side=OrderSide.SELL,
+        exchange=Exchange.KRX,
+    )
+
+    assert buy.rule == "market_buy_disabled"
+    assert sell.rule == "market_sell_disabled"
+
+
+@pytest.mark.asyncio
+async def test_order_book_missing_provider_and_exception_block():
+    missing = _service(config=OrderPolicyConfig(order_book_checks_enabled=True))
+    failing_provider = AsyncMock()
+    failing_provider.get_asking_price.side_effect = RuntimeError("quote down")
+    failing = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=True),
+        quote_provider=failing_provider,
+    )
+
+    missing_decision = await missing.validate_order(
+        stock_code="005930",
+        price=0,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+    failing_decision = await failing.validate_order(
+        stock_code="005930",
+        price=0,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert missing_decision.rule == "quote_unavailable"
+    assert missing_decision.context["quote_error"] == "quote_provider_missing"
+    assert failing_decision.rule == "quote_unavailable"
+    assert failing_decision.context["quote_error"] == "quote down"
+
+
+@pytest.mark.asyncio
+async def test_order_book_blocks_missing_trading_value_and_qty_over_book():
+    provider = AsyncMock()
+    provider.get_asking_price.return_value = _quote(trading_value=0, ask_qty=100)
+    trading_value_svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=True, min_trading_value_won=1),
+        quote_provider=provider,
+    )
+    qty_provider = AsyncMock()
+    qty_provider.get_asking_price.return_value = _quote(ask_qty=10)
+    qty_svc = _service(config=OrderPolicyConfig(order_book_checks_enabled=True), quote_provider=qty_provider)
+
+    trading_value = await trading_value_svc.validate_order(
+        stock_code="005930",
+        price=0,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+    qty = await qty_svc.validate_order(
+        stock_code="005930",
+        price=0,
+        qty=11,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert trading_value.rule == "trading_value_unavailable"
+    assert qty.rule == "top_of_book_qty_short"
+
+
+@pytest.mark.asyncio
+async def test_security_status_provider_missing_fallback_and_exception_paths():
+    missing = OrderPolicyService(
+        config=OrderPolicyConfig(order_book_checks_enabled=False, security_status_checks_enabled=True),
+    )
+
+    class LegacyProvider:
+        def get_current_price(self, stock_code):
+            return _stock_info(market_cap=0)
+
+    class FailingProvider:
+        def get_current_price(self, stock_code, exchange=Exchange.KRX):
+            raise RuntimeError("price down")
+
+    fallback = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False, min_market_cap_won=1),
+        security_info_provider=LegacyProvider(),
+    )
+    failing = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False),
+        security_info_provider=FailingProvider(),
+    )
+
+    missing_decision = await missing.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+    fallback_decision = await fallback.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+    failing_decision = await failing.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert missing_decision.context["security_status_error"] == "security_info_provider_missing"
+    assert fallback_decision.rule == "market_cap_unavailable"
+    assert failing_decision.context["security_status_error"] == "price down"
+
+
+@pytest.mark.asyncio
+async def test_trade_flow_missing_legacy_none_and_unavailable_paths():
+    missing = OrderPolicyService(
+        config=OrderPolicyConfig(
+            order_book_checks_enabled=False,
+            security_status_checks_enabled=False,
+            trade_flow_checks_enabled=True,
+        ),
+    )
+
+    class LegacyProvider:
+        def get_snapshot(self, stock_code):
+            return _flow_snapshot()
+
+    legacy = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False),
+        trade_flow_provider=LegacyProvider(),
+    )
+    none_provider = MagicMock()
+    none_provider.get_snapshot.return_value = None
+    none_svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False),
+        trade_flow_provider=none_provider,
+    )
+    unavailable_provider = AsyncMock()
+    unavailable_provider.get_snapshot.return_value = _flow_snapshot(
+        execution_strength_pct=None,
+        recent_trade_count=None,
+        quality_flags=["conclusion_unavailable", "time_concluded_unavailable"],
+    )
+    unavailable_svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False),
+        trade_flow_provider=unavailable_provider,
+    )
+
+    missing_decision = await missing.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+    legacy_decision = await legacy.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+    none_decision = await none_svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+    unavailable_decision = await unavailable_svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert missing_decision.context["trade_flow_error"] == "trade_flow_provider_missing"
+    assert legacy_decision.allowed is True
+    assert none_decision.context["trade_flow_error"] == "snapshot_missing"
+    assert unavailable_decision.context["trade_flow_error"] == "all_trade_flow_sources_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_trade_flow_blocks_conclusion_unavailable_and_low_strength():
+    conclusion_provider = AsyncMock()
+    conclusion_provider.get_snapshot.return_value = _flow_snapshot(
+        execution_strength_pct=None,
+        quality_flags=["conclusion_unavailable"],
+    )
+    low_strength_provider = AsyncMock()
+    low_strength_provider.get_snapshot.return_value = _flow_snapshot(execution_strength_pct=90.0)
+    conclusion_svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False, min_execution_strength_pct=100.0),
+        trade_flow_provider=conclusion_provider,
+    )
+    low_strength_svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False, min_execution_strength_pct=100.0),
+        trade_flow_provider=low_strength_provider,
+    )
+
+    conclusion = await conclusion_svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+    low_strength = await low_strength_svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert conclusion.context["trade_flow_error"] == "conclusion_unavailable"
+    assert low_strength.rule == "trade_flow_strength_too_low"
