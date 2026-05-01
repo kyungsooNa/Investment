@@ -186,6 +186,34 @@ def _make_ohlcv_data(days=25, base_close=70000, base_vol=1000000):
     return data
 
 
+def _make_ohlcv_api_response(ohlcv_list):
+    """OHLCV 리스트를 한국투자증권 API 일봉 조회(inquire-daily-itemchartprice) 응답 포맷으로 변환."""
+    output2 = []
+    # KIS API는 최신 데이터가 상단에 위치하므로(내림차순) 원본(오름차순)을 뒤집어준다.
+    for row in reversed(ohlcv_list):
+        output2.append({
+            "stck_bsop_date": row["date"],
+            "stck_oprc": str(row["open"]),
+            "stck_hgpr": str(row["high"]),
+            "stck_lwpr": str(row["low"]),
+            "stck_clpr": str(row["close"]),
+            "acml_vol": str(row["volume"]),
+            "date": row["date"],
+            "open": row["open"],
+            "high": row["high"],
+            "low": row["low"],
+            "close": row["close"],
+            "volume": row["volume"],
+        })
+    return {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output1": {},
+        "output2": output2
+    }
+
+
 # ============================================================================
 # 헬퍼: HTTP mock에 side_effect 패턴 적용
 # ============================================================================
@@ -393,50 +421,41 @@ class TestTraditionalVolumeBreakoutScan:
         from strategies.traditional_volume_breakout_strategy import (
             TraditionalVolumeBreakoutStrategy, TraditionalVBConfig,
         )
-        from repositories.stock_code_repository import StockCodeRepository
-        from common.types import ResCommonResponse
 
-        # 1. 기초 데이터 준비 (msg1 필드 추가)
+        quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
+        quot_api._env.is_paper_trading = False
+
+        # 1. 기초 데이터 준비 (HTTP API 응답)
         ohlcv_list = _make_ohlcv_data(days=25, base_close=70000, base_vol=1000000)
-        ohlcv_resp = ResCommonResponse(rt_cd="0", msg1="ok", data=ohlcv_list)
+        ohlcv_api_resp = _make_ohlcv_api_response(ohlcv_list)
 
-        # 2. Mock 설정
-        # 현재가 응답 (msg1 필드 추가)
-        price_handle_resp = ResCommonResponse(
-            rt_cd="0",
-            msg1="ok",
-            data={
-                "price": "75000",      # 돌파 가격
-                "acml_vol": "3000000", # 누적 거래량
-                "name": "삼성전자"
-            }
+        # 현재가 응답
+        price_resp = _make_current_price_response(
+            code="005930", price="75000", vol="3000000", high="75500"
         )
 
-        # 거래대금 상위 종목 응답 (msg1 필드 추가)
-        top_stocks_resp = ResCommonResponse(
-            rt_cd="0", 
-            msg1="ok", 
-            data=[_make_trading_value_stock("005930")]
-        )
+        # 거래대금 상위 종목 응답
+        trading_value_resp = _make_trading_value_response([
+            _make_trading_value_stock("005930")
+        ])
 
-        # 서비스 레이어 메서드 Mocking
+        # 2. HTTP 네트워크 레이어 Mocking (서비스 레이어 Mock 제거)
+        side_effect_func = _build_get_side_effect({
+            "volume-rank": trading_value_resp,
+            "ranking": trading_value_resp,
+            "inquire-daily-itemchartprice": ohlcv_api_resp,
+            "inquire-price": price_resp,
+        })
         mocker.patch.object(
-            deep_paper_ctx.stock_query_service, "get_top_trading_value_stocks",
-            new_callable=AsyncMock, 
-            return_value=top_stocks_resp
-        )
-        mocker.patch.object(
-            deep_paper_ctx.stock_query_service, "handle_get_current_stock_price",
-            new_callable=AsyncMock, return_value=price_handle_resp
-        )
-        mocker.patch.object(
-            deep_paper_ctx.stock_query_service, "get_recent_daily_ohlcv",
-            new_callable=AsyncMock, return_value=ohlcv_resp
+            quot_api._async_session, "get",
+            new_callable=AsyncMock, side_effect=side_effect_func
         )
 
         # 3. 시간 및 환경 설정
+        from repositories.stock_code_repository import StockCodeRepository
         mock_mapper = MagicMock(spec=StockCodeRepository)
         mock_mapper.get_name_by_code = MagicMock(return_value="삼성전자")
+        mock_mapper.is_kosdaq = MagicMock(return_value=True)
         
         from datetime import datetime
         from pytz import timezone
@@ -450,6 +469,9 @@ class TestTraditionalVolumeBreakoutScan:
             min_avg_trading_value_5d=0,
             near_high_pct=100.0,
         )
+
+        # DB-first 경로 차단: 실제 DB OHLCV 데이터가 HTTP mock을 우회하지 않도록
+        deep_paper_ctx.market_data_service._stock_repo = None
 
         # 4. 전략 실행
         strategy = TraditionalVolumeBreakoutStrategy(
@@ -488,24 +510,23 @@ class TestTraditionalVolumeBreakoutScan:
             high="71500", vol="3000000",
         )
 
-        async def _side_effect(url, *args, **kwargs):
-            u = str(url)
-            if "volume-rank" in u or "ranking" in u:
-                return make_http_response(trading_value_resp)
-            return make_http_response(price_resp)
+        ohlcv_api_resp = _make_ohlcv_api_response(ohlcv_data)
+
+        side_effect_func = _build_get_side_effect({
+            "volume-rank": trading_value_resp,
+            "ranking": trading_value_resp,
+            "inquire-daily-itemchartprice": ohlcv_api_resp,
+            "inquire-price": price_resp,
+        })
 
         mocker.patch.object(
             quot_api._async_session, "get",
-            new_callable=AsyncMock, side_effect=_side_effect,
+            new_callable=AsyncMock, side_effect=side_effect_func,
         )
 
         mock_mapper = MagicMock(spec=StockCodeRepository)
         mock_mapper.get_name_by_code = MagicMock(return_value="삼성전자")
-
-        mocker.patch.object(
-            deep_paper_ctx.stock_query_service, "get_recent_daily_ohlcv",
-            new_callable=AsyncMock, return_value=ohlcv_data,
-        )
+        mock_mapper.is_kosdaq = MagicMock(return_value=True)
 
         from datetime import datetime
         from pytz import timezone
@@ -555,19 +576,18 @@ class TestOneilSqueezeBreakoutScan:
         # 체결강도 135%
         conclusion_resp = _make_conclusion_response(tday_rltv="135.50")
 
-        async def _side_effect(url, *args, **kwargs):
-            u = str(url)
-            if "inquire-ccnl" in u or "conclusion" in u:
-                return make_http_response(conclusion_resp)
-            return make_http_response(price_resp)
-
+        side_effect_func = _build_get_side_effect({
+            "inquire-ccnl": conclusion_resp,
+            "conclusion": conclusion_resp,
+            "inquire-price": price_resp,
+        })
+        
         mocker.patch.object(
             quot_api._async_session, "get",
-            new_callable=AsyncMock, side_effect=_side_effect,
+            new_callable=AsyncMock, side_effect=side_effect_func,
         )
 
-        # Mock universe service
-        mock_universe = MagicMock(spec=OneilUniverseService)
+        # 실제 UniverseService를 활용하여 서비스 간 통합 검증 (HTTP만 모킹)
         watchlist_item = OSBWatchlistItem(
             code="005930", name="삼성전자", market="KOSPI",
             high_20d=74000,  # 현재가 75000 > 74000 → 돌파, max_entry=74000*1.02=75480 (within 2%)
@@ -577,8 +597,14 @@ class TestOneilSqueezeBreakoutScan:
             w52_hgpr=77000, avg_trading_value_5d=500_000_000_000,
             market_cap=400_000_000_000,  # 4000억 (대형주 동적 허들 우회)
         )
-        mock_universe.get_watchlist = AsyncMock(return_value={"005930": watchlist_item})
-        mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "get_watchlist",
+            new_callable=AsyncMock, return_value={"005930": watchlist_item}
+        )
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "is_market_timing_ok",
+            new_callable=AsyncMock, return_value=True
+        )
 
         from datetime import datetime
         from pytz import timezone
@@ -595,7 +621,7 @@ class TestOneilSqueezeBreakoutScan:
         )
         strategy = OneilSqueezeBreakoutStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            universe_service=mock_universe,
+            universe_service=deep_paper_ctx.oneil_universe_service,
             market_clock=mock_tm,
             config=config,
         )
@@ -626,18 +652,17 @@ class TestOneilSqueezeBreakoutScan:
         # 체결강도 95% → 120% 미만
         conclusion_resp = _make_conclusion_response(tday_rltv="95.00")
 
-        async def _side_effect(url, *args, **kwargs):
-            u = str(url)
-            if "inquire-ccnl" in u or "conclusion" in u:
-                return make_http_response(conclusion_resp)
-            return make_http_response(price_resp)
-
+        side_effect_func = _build_get_side_effect({
+            "inquire-ccnl": conclusion_resp,
+            "conclusion": conclusion_resp,
+            "inquire-price": price_resp,
+        })
+        
         mocker.patch.object(
             quot_api._async_session, "get",
-            new_callable=AsyncMock, side_effect=_side_effect,
+            new_callable=AsyncMock, side_effect=side_effect_func,
         )
 
-        mock_universe = MagicMock(spec=OneilUniverseService)
         watchlist_item = OSBWatchlistItem(
             code="005930", name="삼성전자", market="KOSPI",
             high_20d=72000, ma_20d=70000.0, ma_50d=68000.0,
@@ -646,8 +671,14 @@ class TestOneilSqueezeBreakoutScan:
             w52_hgpr=77000, avg_trading_value_5d=500_000_000_000,
             market_cap=400_000_000_000,  # 4000억
         )
-        mock_universe.get_watchlist = AsyncMock(return_value={"005930": watchlist_item})
-        mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "get_watchlist",
+            new_callable=AsyncMock, return_value={"005930": watchlist_item}
+        )
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "is_market_timing_ok",
+            new_callable=AsyncMock, return_value=True
+        )
 
         from datetime import datetime
         from pytz import timezone
@@ -665,7 +696,7 @@ class TestOneilSqueezeBreakoutScan:
         )
         strategy = OneilSqueezeBreakoutStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            universe_service=mock_universe,
+            universe_service=deep_paper_ctx.oneil_universe_service,
             market_clock=mock_tm,
             config=config,
         )
@@ -700,39 +731,21 @@ class TestOneilPocketPivotScan:
 
         # 60일 OHLCV (BGU 거래량 비교용)
         ohlcv_data = _make_ohlcv_data(days=60, base_close=68000, base_vol=500000)
+        ohlcv_api_resp = _make_ohlcv_api_response(ohlcv_data)
 
-        async def _side_effect(url, *args, **kwargs):
-            u = str(url)
-            if "inquire-ccnl" in u or "conclusion" in u:
-                return make_http_response(conclusion_resp)
-            return make_http_response({"rt_cd": "0", "msg1": "ok", "output": {}})
+        # HTTP 통신 계층 Mocking (서비스 레이어 Mock 제거)
+        side_effect_func = _build_get_side_effect({
+            "inquire-ccnl": conclusion_resp,
+            "conclusion": conclusion_resp,
+            "inquire-daily-itemchartprice": ohlcv_api_resp,
+            "inquire-price": {"rt_cd": "0", "msg_cd": "MCA00000", "msg1": "정상", "output": price_output},
+        })
 
         mocker.patch.object(
             quot_api._async_session, "get",
-            new_callable=AsyncMock, side_effect=_side_effect,
+            new_callable=AsyncMock, side_effect=side_effect_func,
         )
 
-        # get_current_price를 서비스 레벨에서 mock (전략이 stck_prdy_clpr를 사용하는데
-        # ResStockFullInfoApiOutput에는 해당 필드가 없어서 dict 형태로 반환)
-        mock_price_resp = MagicMock()
-        mock_price_resp.rt_cd = "0"
-        mock_price_resp.data = {"output": price_output}
-        mocker.patch.object(
-            deep_paper_ctx.stock_query_service, "get_current_price",
-            new_callable=AsyncMock, return_value=mock_price_resp,
-        )
-
-        # get_recent_daily_ohlcv를 서비스 레벨에서 mock
-        # 전략이 ohlcv_resp.rt_cd / ohlcv_resp.data 로 접근하므로 ResCommonResponse-like 객체 반환
-        mock_ohlcv_resp = MagicMock()
-        mock_ohlcv_resp.rt_cd = "0"
-        mock_ohlcv_resp.data = ohlcv_data
-        mocker.patch.object(
-            deep_paper_ctx.stock_query_service, "get_recent_daily_ohlcv",
-            new_callable=AsyncMock, return_value=mock_ohlcv_resp,
-        )
-
-        mock_universe = MagicMock(spec=OneilUniverseService)
         watchlist_item = OSBWatchlistItem(
             code="005930", name="삼성전자", market="KOSPI",
             high_20d=72000, ma_20d=70000.0, ma_50d=68000.0,
@@ -741,8 +754,14 @@ class TestOneilPocketPivotScan:
             w52_hgpr=77000, avg_trading_value_5d=500_000_000_000,
             market_cap=400_000_000_000,  # 4000억
         )
-        mock_universe.get_watchlist = AsyncMock(return_value={"005930": watchlist_item})
-        mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "get_watchlist",
+            new_callable=AsyncMock, return_value={"005930": watchlist_item}
+        )
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "is_market_timing_ok",
+            new_callable=AsyncMock, return_value=True
+        )
 
         from datetime import datetime
         from pytz import timezone
@@ -763,7 +782,7 @@ class TestOneilPocketPivotScan:
         )
         strategy = OneilPocketPivotStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            universe_service=mock_universe,
+            universe_service=deep_paper_ctx.oneil_universe_service,
             market_clock=mock_tm,
             config=config,
         )
@@ -793,7 +812,6 @@ class TestOneilPocketPivotScan:
             return_value=make_http_response({"rt_cd": "0", "msg1": "ok"}),
         )
 
-        mock_universe = MagicMock(spec=OneilUniverseService)
         watchlist_item = OSBWatchlistItem(
             code="005930", name="삼성전자", market="KOSPI",
             high_20d=72000, ma_20d=70000.0, ma_50d=68000.0,
@@ -802,9 +820,15 @@ class TestOneilPocketPivotScan:
             w52_hgpr=77000, avg_trading_value_5d=500_000_000_000,
             market_cap=400_000_000_000,  # 4000억
         )
-        mock_universe.get_watchlist = AsyncMock(return_value={"005930": watchlist_item})
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "get_watchlist",
+            new_callable=AsyncMock, return_value={"005930": watchlist_item}
+        )
         # 마켓 타이밍 불량
-        mock_universe.is_market_timing_ok = AsyncMock(return_value=False)
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "is_market_timing_ok",
+            new_callable=AsyncMock, return_value=False
+        )
 
         from datetime import datetime
         from pytz import timezone
@@ -816,7 +840,7 @@ class TestOneilPocketPivotScan:
 
         strategy = OneilPocketPivotStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            universe_service=mock_universe,
+            universe_service=deep_paper_ctx.oneil_universe_service,
             market_clock=mock_tm,
         )
 
@@ -857,27 +881,25 @@ class TestRSI2PullbackScan:
             })
         last_close = ohlcv[-1]["close"]
 
-        mock_ohlcv_resp = MagicMock()
-        mock_ohlcv_resp.rt_cd = "0"
-        mock_ohlcv_resp.data = ohlcv
-        mocker.patch.object(
-            deep_paper_ctx.stock_query_service, "get_ohlcv",
-            new_callable=AsyncMock, return_value=mock_ohlcv_resp,
-        )
-
-        mock_price_resp = MagicMock()
-        mock_price_resp.rt_cd = "0"
-        mock_price_resp.data = {"output": _make_current_price_output(
+        quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
+        
+        ohlcv_api_resp = _make_ohlcv_api_response(ohlcv)
+        price_output = _make_current_price_output(
             code="005930", price=str(last_close), open_price=str(last_close),
             high=str(last_close + 100), low=str(last_close - 100),
             prev_close=str(int(last_close / 0.97)),
-        )}
-        mocker.patch.object(
-            deep_paper_ctx.stock_query_service, "get_current_price",
-            new_callable=AsyncMock, return_value=mock_price_resp,
         )
 
-        mock_universe = MagicMock(spec=OneilUniverseService)
+        side_effect_func = _build_get_side_effect({
+            "inquire-daily-itemchartprice": ohlcv_api_resp,
+            "inquire-price": {"rt_cd": "0", "msg_cd": "MCA00000", "msg1": "정상", "output": price_output},
+        })
+
+        mocker.patch.object(
+            quot_api._async_session, "get",
+            new_callable=AsyncMock, side_effect=side_effect_func,
+        )
+
         watchlist_item = OSBWatchlistItem(
             code="005930", name="삼성전자", market="KOSPI",
             high_20d=int(last_close * 1.5), ma_20d=float(last_close * 1.05),
@@ -887,8 +909,14 @@ class TestRSI2PullbackScan:
             market_cap=400_000_000_000,
             ma_200d=float(last_close * 0.85), minervini_stage=2,
         )
-        mock_universe.get_watchlist = AsyncMock(return_value={"005930": watchlist_item})
-        mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "get_watchlist",
+            new_callable=AsyncMock, return_value={"005930": watchlist_item}
+        )
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "is_market_timing_ok",
+            new_callable=AsyncMock, return_value=True
+        )
 
         from pytz import timezone
         kst = timezone("Asia/Seoul")
@@ -900,7 +928,7 @@ class TestRSI2PullbackScan:
 
         strategy = RSI2PullbackStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            universe_service=mock_universe,
+            universe_service=deep_paper_ctx.oneil_universe_service,
             indicator_service=deep_paper_ctx.indicator_service,
             market_clock=mock_tm,
             config=RSI2PullbackConfig(),
@@ -923,9 +951,14 @@ class TestRSI2PullbackScan:
         from strategies.rsi2_pullback_types import RSI2PullbackConfig
         from services.oneil_universe_service import OneilUniverseService
 
-        mock_universe = MagicMock(spec=OneilUniverseService)
-        mock_universe.get_watchlist = AsyncMock(return_value={})
-        mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "get_watchlist",
+            new_callable=AsyncMock, return_value={}
+        )
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "is_market_timing_ok",
+            new_callable=AsyncMock, return_value=True
+        )
 
         from pytz import timezone
         kst = timezone("Asia/Seoul")
@@ -936,7 +969,7 @@ class TestRSI2PullbackScan:
 
         strategy = RSI2PullbackStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            universe_service=mock_universe,
+            universe_service=deep_paper_ctx.oneil_universe_service,
             indicator_service=deep_paper_ctx.indicator_service,
             market_clock=mock_tm,
             config=RSI2PullbackConfig(),
@@ -945,7 +978,8 @@ class TestRSI2PullbackScan:
 
         signals = await strategy.scan()
         assert signals == []
-        mock_universe.get_watchlist.assert_not_called()
+        # get_watchlist 호출이 일어나지 않았어야 함
+        deep_paper_ctx.oneil_universe_service.get_watchlist.assert_not_called()
 
 
 # ============================================================================
@@ -955,7 +989,7 @@ class TestRSI2PullbackScan:
 class TestScanChunkParallelism:
     """asyncio.gather 청크 병렬화 — 예외 격리 및 다중 종목 처리 검증."""
 
-    def _make_osb_strategy(self, deep_paper_ctx, mock_universe, mock_tm, config=None):
+    def _make_osb_strategy(self, deep_paper_ctx, mock_tm, config=None):
         """OneilSqueezeBreakoutStrategy 인스턴스 생성 헬퍼."""
         from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
         from strategies.oneil_common_types import OneilBreakoutConfig
@@ -967,7 +1001,7 @@ class TestScanChunkParallelism:
         )
         strategy = OneilSqueezeBreakoutStrategy(
             stock_query_service=deep_paper_ctx.stock_query_service,
-            universe_service=mock_universe,
+            universe_service=deep_paper_ctx.oneil_universe_service,
             market_clock=mock_tm,
             config=cfg,
         )
@@ -1001,43 +1035,50 @@ class TestScanChunkParallelism:
         mock_tm.get_market_open_time.return_value = datetime(2026, 3, 8, 9, 0, tzinfo=kst)
         mock_tm.get_market_close_time.return_value = datetime(2026, 3, 8, 15, 30, tzinfo=kst)
 
-        mock_universe = MagicMock(spec=OneilUniverseService)
         # 2개 종목: 000001은 API 예외 유발, 005930은 정상 돌파
-        mock_universe.get_watchlist = AsyncMock(return_value={
-            "000001": self._make_watchlist_item("000001", high_20d=74000),  # price=75000, max_entry=75480
-            "005930": self._make_watchlist_item("005930", high_20d=74000),  # within 2% extension
-        })
-        mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "get_watchlist",
+            new_callable=AsyncMock, return_value={
+                "000001": self._make_watchlist_item("000001", high_20d=74000),
+                "005930": self._make_watchlist_item("005930", high_20d=74000),
+            }
+        )
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "is_market_timing_ok",
+            new_callable=AsyncMock, return_value=True
+        )
 
-        strategy = self._make_osb_strategy(deep_paper_ctx, mock_universe, mock_tm)
+        strategy = self._make_osb_strategy(deep_paper_ctx, mock_tm)
 
         # 000001: 예외, 005930: 모든 관문 통과
-        from common.types import ResCommonResponse
-        price_ok = ResCommonResponse(
-            rt_cd="0", msg1="OK",
-            data={"output": {
-                "stck_prpr": "75000", "acml_vol": "3000000",
-                "pgtr_ntby_qty": "100000", "acml_tr_pbmn": "500000000000",
-                "stck_hgpr": "75500", "stck_lwpr": "73000",
-            }}
-        )
-        conclusion_ok = ResCommonResponse(
-            rt_cd="0", msg1="OK",
-            data={"output": [{"tday_rltv": "135.0"}]}
-        )
+        quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
 
-        async def price_side_effect(code, caller=None):
-            if code == "000001":
+        conclusion_resp = _make_conclusion_response(tday_rltv="135.0")
+
+        async def _side_effect(url, *args, **kwargs):
+            u = str(url)
+            params = kwargs.get("params", {})
+            param_str = str(params)
+            
+            # KIS API의 경우 종목코드가 params 딕셔너리로 전달될 수 있음
+            if "000001" in u or "000001" in param_str:
                 raise Exception("의도적 타임아웃")
-            return price_ok
+                
+            if "inquire-ccnl" in u or "conclusion" in u:
+                return make_http_response(conclusion_resp)
+            
+            req_code = "005930"
+            if params and "FID_INPUT_ISCD" in params:
+                req_code = params["FID_INPUT_ISCD"]
+            price_output = _make_current_price_output(
+                code=req_code, price="75000", vol="3000000", pgtr_ntby_qty="100000",
+                acml_tr_pbmn="500000000000", high="75500", low="73000"
+            )
+            return make_http_response({"rt_cd": "0", "msg_cd": "MCA00000", "msg1": "정상", "output": price_output})
 
         mocker.patch.object(
-            deep_paper_ctx.stock_query_service, "get_current_price",
-            new_callable=AsyncMock, side_effect=price_side_effect,
-        )
-        mocker.patch.object(
-            deep_paper_ctx.stock_query_service, "get_stock_conclusion",
-            new_callable=AsyncMock, return_value=conclusion_ok,
+            quot_api._async_session, "get",
+            new_callable=AsyncMock, side_effect=_side_effect,
         )
 
         signals = await strategy.scan()
@@ -1061,36 +1102,43 @@ class TestScanChunkParallelism:
         mock_tm.get_market_open_time.return_value = datetime(2026, 3, 8, 9, 0, tzinfo=kst)
         mock_tm.get_market_close_time.return_value = datetime(2026, 3, 8, 15, 30, tzinfo=kst)
 
-        mock_universe = MagicMock(spec=OneilUniverseService)
         codes = [f"00{i:04d}" for i in range(1, 4)]  # 3개 종목 (1 청크 내)
-        mock_universe.get_watchlist = AsyncMock(return_value={
-            code: self._make_watchlist_item(code, high_20d=74000) for code in codes  # price=75000, within 2%
-        })
-        mock_universe.is_market_timing_ok = AsyncMock(return_value=True)
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "get_watchlist",
+            new_callable=AsyncMock, return_value={
+                code: self._make_watchlist_item(code, high_20d=74000) for code in codes
+            }
+        )
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "is_market_timing_ok",
+            new_callable=AsyncMock, return_value=True
+        )
 
-        strategy = self._make_osb_strategy(deep_paper_ctx, mock_universe, mock_tm)
+        strategy = self._make_osb_strategy(deep_paper_ctx, mock_tm)
 
         # 모든 종목 돌파 성공
-        from common.types import ResCommonResponse
-        price_ok = ResCommonResponse(
-            rt_cd="0", msg1="OK",
-            data={"output": {
-                "stck_prpr": "75000", "acml_vol": "3000000",
-                "pgtr_ntby_qty": "100000", "acml_tr_pbmn": "500000000000",
-                "stck_hgpr": "75500", "stck_lwpr": "73000",
-            }}
-        )
-        conclusion_ok = ResCommonResponse(
-            rt_cd="0", msg1="OK",
-            data={"output": [{"tday_rltv": "135.0"}]}
-        )
+        quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
+
+        conclusion_resp = _make_conclusion_response(tday_rltv="135.0")
+
+        async def _side_effect(url, *args, **kwargs):
+            u = str(url)
+            params = kwargs.get("params", {})
+            if "inquire-ccnl" in u or "conclusion" in u:
+                return make_http_response(conclusion_resp)
+            
+            req_code = "005930"
+            if params and "FID_INPUT_ISCD" in params:
+                req_code = params["FID_INPUT_ISCD"]
+            price_output = _make_current_price_output(
+                code=req_code, price="75000", vol="3000000", pgtr_ntby_qty="100000",
+                acml_tr_pbmn="500000000000", high="75500", low="73000"
+            )
+            return make_http_response({"rt_cd": "0", "msg_cd": "MCA00000", "msg1": "정상", "output": price_output})
+
         mocker.patch.object(
-            deep_paper_ctx.stock_query_service, "get_current_price",
-            new_callable=AsyncMock, return_value=price_ok,
-        )
-        mocker.patch.object(
-            deep_paper_ctx.stock_query_service, "get_stock_conclusion",
-            new_callable=AsyncMock, return_value=conclusion_ok,
+            quot_api._async_session, "get",
+            new_callable=AsyncMock, side_effect=_side_effect,
         )
 
         signals = await strategy.scan()
@@ -1181,16 +1229,16 @@ class TestLarryWilliamsCBScan:
             })
         return data
 
-    def _build_strategy(self, sqs, mock_universe, mock_indicator, mock_tm, tmp_path):
+    def _build_strategy(self, deep_paper_ctx, mock_tm, tmp_path):
         from strategies.larry_williams_channel_breakout_strategy import (
             LarryWilliamsChannelBreakoutStrategy,
         )
         from strategies.larry_williams_cb_types import LarryWilliamsCBConfig
 
         return LarryWilliamsChannelBreakoutStrategy(
-            stock_query_service=sqs,
-            universe_service=mock_universe,
-            indicator_service=mock_indicator,
+            stock_query_service=deep_paper_ctx.stock_query_service,
+            universe_service=deep_paper_ctx.oneil_universe_service,
+            indicator_service=deep_paper_ctx.indicator_service,
             market_clock=mock_tm,
             config=LarryWilliamsCBConfig(cooldown_days=2),
             state_file=str(tmp_path / "lwcb_state.json"),
@@ -1214,38 +1262,39 @@ class TestLarryWilliamsCBScan:
         mock_tm = MagicMock()
         mock_tm.get_current_kst_time.return_value = datetime(2026, 4, 30, 15, 15, tzinfo=kst)
 
-        # indicator: ADX 조건 통과
-        mock_indicator = MagicMock(spec=IndicatorService)
-        mock_indicator.calc_adx_sync.return_value = {
-            "adx": 30.0, "plus_di": 25.0, "minus_di": 15.0, "adx_rising": True,
-        }
+        # indicator: ADX 조건 통과 (indicator service 실제 로직에 주입)
+        mocker.patch.object(
+            deep_paper_ctx.indicator_service, "calc_adx_sync",
+            return_value={"adx": 30.0, "plus_di": 25.0, "minus_di": 15.0, "adx_rising": True}
+        )
 
         # universe: 종목 1개, RS=85, high_20d=74_000
-        mock_universe = MagicMock(spec=OneilUniverseService)
-        mock_universe.get_watchlist = AsyncMock(return_value={
-            self._CODE: self._make_watchlist_item(self._CODE),
-        })
+        mocker.patch.object(
+            deep_paper_ctx.oneil_universe_service, "get_watchlist",
+            new_callable=AsyncMock, return_value={self._CODE: self._make_watchlist_item(self._CODE)}
+        )
 
-        sqs = deep_paper_ctx.stock_query_service
-
+        # HTTP 계층 Mocking (StockQueryService 실제 작동 보장)
+        quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
+        
         # OHLCV: 35봉, low=65_000 (채널 하단 예측 가능)
         ohlcv_data = self._make_ohlcv_data(35, 65_000)
-        mocker.patch.object(
-            sqs, "get_ohlcv",
-            new_callable=AsyncMock,
-            return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=ohlcv_data),
-        )
+        ohlcv_api_resp = _make_ohlcv_api_response(ohlcv_data)
+
         # 현재가: 75_000 > high_20d 74_000, 거래량 2_000_000 ≥ 1_000_000 × 1.5
+        price_output = _make_current_price_output(code=self._CODE, price="75000", vol="2000000")
+
+        side_effect_func = _build_get_side_effect({
+            "inquire-daily-itemchartprice": ohlcv_api_resp,
+            "inquire-price": {"rt_cd": "0", "msg_cd": "MCA00000", "msg1": "정상", "output": price_output},
+        })
+
         mocker.patch.object(
-            sqs, "get_current_price",
-            new_callable=AsyncMock,
-            return_value=ResCommonResponse(
-                rt_cd="0", msg1="ok",
-                data={"output": {"stck_prpr": "75000", "acml_vol": "2000000"}},
-            ),
+            quot_api._async_session, "get",
+            new_callable=AsyncMock, side_effect=side_effect_func,
         )
 
-        strategy = self._build_strategy(sqs, mock_universe, mock_indicator, mock_tm, tmp_path)
+        strategy = self._build_strategy(deep_paper_ctx, mock_tm, tmp_path)
         signals = await strategy.scan()
 
         assert len(signals) == 1
@@ -1270,20 +1319,21 @@ class TestLarryWilliamsCBScan:
         kst = timezone("Asia/Seoul")
         mock_tm = MagicMock()
         mock_tm.get_current_kst_time.return_value = datetime(2026, 4, 30, 15, 15, tzinfo=kst)
-        mock_indicator = MagicMock(spec=IndicatorService)
-        mock_universe = MagicMock(spec=OneilUniverseService)
 
         sqs = deep_paper_ctx.stock_query_service
+        quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
+
+        price_output = _make_current_price_output(code=self._CODE, price="69000", vol="1000000")
+        side_effect_func = _build_get_side_effect({
+            "inquire-price": {"rt_cd": "0", "msg_cd": "MCA00000", "msg1": "정상", "output": price_output},
+        })
+        
         mocker.patch.object(
-            sqs, "get_current_price",
-            new_callable=AsyncMock,
-            return_value=ResCommonResponse(
-                rt_cd="0", msg1="ok",
-                data={"output": {"stck_prpr": "69000", "acml_vol": "1000000"}},
-            ),
+            quot_api._async_session, "get",
+            new_callable=AsyncMock, side_effect=side_effect_func,
         )
 
-        strategy = self._build_strategy(sqs, mock_universe, mock_indicator, mock_tm, tmp_path)
+        strategy = self._build_strategy(deep_paper_ctx, mock_tm, tmp_path)
         strategy._position_state[self._CODE] = LarryWilliamsCBPositionState(
             entry_price=75_000, entry_date="20260429",
             hard_stop_price=69_750, channel_low_10d=65_000,
@@ -1308,14 +1358,12 @@ class TestLarryWilliamsCBScan:
         kst = timezone("Asia/Seoul")
         mock_tm = MagicMock()
         mock_tm.get_current_kst_time.return_value = datetime(2026, 4, 30, 14, 50, tzinfo=kst)
-        mock_indicator = MagicMock(spec=IndicatorService)
-        mock_universe = MagicMock(spec=OneilUniverseService)
 
-        sqs = deep_paper_ctx.stock_query_service
-        spy_ohlcv = mocker.patch.object(sqs, "get_ohlcv", new_callable=AsyncMock)
+        quot_api = _get_quotations_api_from_ctx(deep_paper_ctx)
+        spy_get = mocker.spy(quot_api._async_session, "get")
 
-        strategy = self._build_strategy(sqs, mock_universe, mock_indicator, mock_tm, tmp_path)
+        strategy = self._build_strategy(deep_paper_ctx, mock_tm, tmp_path)
         signals = await strategy.scan()
 
         assert signals == []
-        spy_ohlcv.assert_not_called()
+        spy_get.assert_not_called()
