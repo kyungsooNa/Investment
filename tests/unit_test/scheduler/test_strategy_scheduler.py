@@ -460,6 +460,69 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # max_positions 도달 → log_buy 호출 안됨
         vm.log_buy_async.assert_not_called()
 
+    async def test_run_strategy_scans_and_logs_rejections_when_position_full_option_enabled(self):
+        """옵션이 켜져 있으면 max_positions 도달 후에도 스캔하고 매수 신호를 reject 로그로 남긴다."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+
+        vm.get_holds_by_strategy.return_value = [
+            {"code": "005930", "buy_price": 70000},
+            {"code": "000660", "buy_price": 120000},
+            {"code": "035420", "buy_price": 300000},
+        ]
+
+        buy_signal = TradeSignal(
+            code="999999", name="테스트", action="BUY",
+            price=10000, qty=1, reason="스캔", strategy_name="테스트전략"
+        )
+        strategy = MockStrategy(scan_signals=[buy_signal])
+        strategy.scan = AsyncMock(return_value=[buy_signal])
+        config = StrategySchedulerConfig(
+            strategy=strategy,
+            max_positions=3,
+            scan_when_position_full=True,
+        )
+
+        await scheduler._run_strategy(config)
+
+        strategy.scan.assert_awaited_once()
+        vm.log_buy_async.assert_not_called()
+
+        rejection_logs = [
+            args[0]
+            for args, _ in scheduler._logger.info.call_args_list
+            if args and isinstance(args[0], dict) and args[0].get("event") == "signal_rejected"
+        ]
+        self.assertEqual(len(rejection_logs), 1)
+        self.assertEqual(rejection_logs[0]["reason"], "max_positions_reached")
+        self.assertEqual(rejection_logs[0]["current_holds"], 3)
+        self.assertEqual(rejection_logs[0]["max_positions"], 3)
+
+    async def test_run_strategy_logs_rejections_for_signals_beyond_remaining_slots(self):
+        """남은 슬롯을 초과한 매수 신호도 포지션 한도 reject 로그로 남긴다."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        vm.get_holds_by_strategy.return_value = [{"code": "005930", "buy_price": 70000}]
+
+        buy_signals = [
+            TradeSignal(code="000660", name="SK하이닉스", action="BUY",
+                        price=120000, qty=1, reason="테스트1", strategy_name="테스트전략"),
+            TradeSignal(code="035420", name="NAVER", action="BUY",
+                        price=300000, qty=1, reason="테스트2", strategy_name="테스트전략"),
+        ]
+        strategy = MockStrategy(scan_signals=buy_signals)
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=2)
+
+        await scheduler._run_strategy(config)
+
+        vm.log_buy_async.assert_awaited_once_with("테스트전략", "000660", 120000, 1)
+        rejection_logs = [
+            args[0]
+            for args, _ in scheduler._logger.info.call_args_list
+            if args and isinstance(args[0], dict) and args[0].get("event") == "signal_rejected"
+        ]
+        self.assertEqual(len(rejection_logs), 1)
+        self.assertEqual(rejection_logs[0]["code"], "035420")
+        self.assertEqual(rejection_logs[0]["reason"], "max_positions_reached")
+
     async def test_run_strategy_uses_strategy_position_state_for_exit_and_capacity(self):
         """전략 position_state도 현재 보유로 간주해 exit/max_positions에 반영한다."""
         scheduler, vm, _, _, _ = self._make_scheduler()
