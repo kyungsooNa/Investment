@@ -40,6 +40,12 @@
                 </div>
                 <details style="margin-top: 10px;">
                     <summary style="cursor: pointer; color: var(--text-primary); font-weight: 600;">백테스트 journal JSON</summary>
+                    <div class="form-row" style="align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+                        <select id="virtual-backtest-run-select" style="min-width: 260px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; padding: 8px;">
+                            <option value="">저장된 백테스트 없음</option>
+                        </select>
+                        <button class="btn" onclick="loadVirtualBacktestJournalRun()">선택 불러오기</button>
+                    </div>
                     <textarea id="virtual-backtest-journal-input" rows="5" spellcheck="false" style="width: 100%; margin-top: 8px; resize: vertical; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-family: Consolas, monospace;"></textarea>
                     <div class="form-row" style="justify-content: flex-end; margin-top: 8px;">
                         <button class="btn" onclick="compareVirtualDivergence()">비교 실행</button>

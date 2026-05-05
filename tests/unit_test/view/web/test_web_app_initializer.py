@@ -20,6 +20,7 @@ def mock_deps():
         ("risk_gate", patch("view.web.web_app_initializer.RiskGateService", autospec=True)),
         ("order_policy", patch("view.web.web_app_initializer.OrderPolicyService", autospec=True)),
         ("vtm", patch("view.web.web_app_initializer.VirtualTradeRepository", autospec=True)),
+        ("backtest_journal_repo", patch("view.web.web_app_initializer.BacktestJournalRepository", autospec=True)),
         ("scm", patch("view.web.web_app_initializer.StockCodeRepository", autospec=True)),
         ("sched", patch("view.web.web_app_initializer.StrategyScheduler", autospec=True)),
         ("rdm", patch("view.web.web_app_initializer.ProgramTradingStreamService", autospec=True)),
@@ -76,6 +77,7 @@ def test_load_config_and_env(mock_deps):
     mock_deps["tm"].assert_called_once()
     assert ctx.virtual_repo.tm is mock_deps["tm"].return_value
     assert ctx.virtual_trade_service.tm is mock_deps["tm"].return_value
+    assert ctx.backtest_journal_repository is mock_deps["backtest_journal_repo"].return_value
     assert ctx.full_config is not None
 
 @pytest.mark.asyncio
@@ -114,6 +116,7 @@ async def test_initialize_services_success(mock_deps):
     _, report_kwargs = mock_deps["strategy_log_report_service"].call_args
     assert report_kwargs.get("stock_code_repo") is mock_deps["scm"].return_value
     assert report_kwargs.get("virtual_trade_service") is ctx.virtual_trade_service
+    assert report_kwargs.get("backtest_journal_provider") is ctx.backtest_journal_repository.load_records_for_date
     env_instance.get_real_access_token.assert_awaited_once()
 
 @pytest.mark.asyncio

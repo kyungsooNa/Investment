@@ -48,6 +48,7 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert "모의투자(전략 검증) 결과" in response.text
             assert 'id="apply-cost-chk" onchange="loadVirtualHistory()" checked' in response.text
             assert 'id="virtual-divergence-summary"' in response.text
+            assert 'id="virtual-backtest-run-select"' in response.text
             assert 'id="virtual-backtest-journal-input"' in response.text
             assert 'id="virtual-divergence-body"' in response.text
         elif path == "/scheduler":
@@ -63,7 +64,9 @@ def test_virtual_static_js_exposes_divergence_workflow():
     script = Path("view/web/static/js/virtual.js").read_text(encoding="utf-8")
 
     assert "/api/virtual/journal" in script
+    assert "/api/virtual/backtest-journals" in script
     assert "/api/virtual/backtest-divergence" in script
+    assert "loadVirtualBacktestJournalRuns" in script
     assert "compareVirtualDivergence" in script
 
 def test_pages_show_login_page_when_unauthorized(web_client, mock_web_ctx):

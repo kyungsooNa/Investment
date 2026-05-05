@@ -953,6 +953,38 @@ def test_post_virtual_backtest_divergence_without_service(web_client, mock_web_c
     assert response.json()["unmatched_backtest"][0]["code"] == "005930"
 
 
+def test_get_virtual_backtest_journal_runs(web_client, mock_web_ctx):
+    """저장된 백테스트 journal run 목록을 반환한다."""
+    mock_web_ctx.backtest_journal_repository = MagicMock()
+    mock_web_ctx.backtest_journal_repository.list_runs.return_value = [
+        {"run_id": "run1", "strategy": "VolumeBreakout", "record_count": 1}
+    ]
+
+    response = web_client.get("/api/virtual/backtest-journals?limit=1")
+
+    assert response.status_code == 200
+    assert response.json()["runs"][0]["run_id"] == "run1"
+    mock_web_ctx.backtest_journal_repository.list_runs.assert_called_once_with(limit=1)
+
+
+def test_get_virtual_backtest_journal_records(web_client, mock_web_ctx):
+    """저장된 백테스트 journal run의 records를 반환한다."""
+    mock_web_ctx.backtest_journal_repository = MagicMock()
+    mock_web_ctx.backtest_journal_repository.load_records.return_value = [
+        {"source": "backtest", "code": "005930"}
+    ]
+
+    response = web_client.get("/api/virtual/backtest-journals/run1")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "run_id": "run1",
+        "records": [{"source": "backtest", "code": "005930"}],
+        "count": 1,
+    }
+    mock_web_ctx.backtest_journal_repository.load_records.assert_called_once_with("run1")
+
+
 @pytest.mark.asyncio
 async def test_get_stage3_alerts_paths(web_client, mock_web_ctx):
     """Stage3 alerts의 미초기화/빈보유/정상/예외 분기 검증."""

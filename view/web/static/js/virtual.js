@@ -130,6 +130,7 @@ async function loadVirtualHistory(forceCode = null) {
         });
         applyVirtualFilter();
         loadVirtualDivergence({ silent: true });
+        loadVirtualBacktestJournalRuns();
 
         const section = document.getElementById('section-virtual');
         if (section) section.querySelectorAll('table').forEach(ensureTableInCard);
@@ -302,6 +303,64 @@ async function loadVirtualDivergence(options = {}) {
 }
 
 window.loadVirtualDivergence = loadVirtualDivergence;
+
+async function loadVirtualBacktestJournalRuns() {
+    const select = document.getElementById('virtual-backtest-run-select');
+    if (!select) return;
+
+    try {
+        const response = await fetchWithTimeout('/api/virtual/backtest-journals?limit=50', {}, 15000);
+        if (!response.ok) {
+            throw new Error(`Backtest journal list API ${response.status}`);
+        }
+        const body = await response.json();
+        const runs = body.runs || [];
+        if (runs.length === 0) {
+            select.innerHTML = '<option value="">저장된 백테스트 없음</option>';
+            return;
+        }
+        select.innerHTML = [
+            '<option value="">저장된 백테스트 선택</option>',
+            ...runs.map(run => {
+                const label = [
+                    run.target_date || '날짜없음',
+                    run.strategy || '전략없음',
+                    `${run.record_count || 0}건`,
+                ].join(' / ');
+                return `<option value="${escapeVirtualHtml(run.run_id)}">${escapeVirtualHtml(label)}</option>`;
+            }),
+        ].join('');
+    } catch (error) {
+        console.error('[Virtual] backtest journal runs load failed:', error);
+        select.innerHTML = '<option value="">백테스트 목록 로드 실패</option>';
+    }
+}
+
+window.loadVirtualBacktestJournalRuns = loadVirtualBacktestJournalRuns;
+
+window.loadVirtualBacktestJournalRun = async function() {
+    const select = document.getElementById('virtual-backtest-run-select');
+    const input = document.getElementById('virtual-backtest-journal-input');
+    const summaryEl = document.getElementById('virtual-divergence-summary');
+    if (!select || !input) return;
+
+    const runId = select.value;
+    if (!runId) return;
+
+    try {
+        if (summaryEl) showLoading(summaryEl, '백테스트 journal 불러오는 중...');
+        const response = await fetchWithTimeout(`/api/virtual/backtest-journals/${encodeURIComponent(runId)}`, {}, 15000);
+        if (!response.ok) {
+            throw new Error(`Backtest journal records API ${response.status}`);
+        }
+        const body = await response.json();
+        input.value = JSON.stringify(body.records || [], null, 2);
+        await compareVirtualDivergence();
+    } catch (error) {
+        console.error('[Virtual] backtest journal run load failed:', error);
+        if (summaryEl) summaryEl.innerText = '백테스트 journal 로드 실패';
+    }
+};
 
 window.compareVirtualDivergence = async function() {
     const input = document.getElementById('virtual-backtest-journal-input');
