@@ -36,19 +36,18 @@
 
 전략 자체의 품질과 실전 운용 가능성을 검증하는 영역입니다. 백테스트 성과가 실전 성과로 이어지는지 추적해야 합니다.
 
-### 5-1. 전략별 실전 제한값 추가
+### 5-1. 전략별 Kill Switch — 정산 hook 연결
 
-- [x] 전략별 거래대금/유동성 필터를 추가한다. (`StrategyExecutor._apply_liquidity_filter` — `min_trading_value_won` / `min_avg_volume` 임계값 미달 종목 사전 제거)
-- [x] 전략별 자본 할당을 추가한다. (`capital_allocation_pct`: PositionSizing 소프트 캡 + RiskGate 하드 차단 이중 적용)
-- [x] 한 전략의 손실이 전체 계좌 주문 차단으로 번지지 않도록 격리 정책을 둔다. (전략별 Kill Switch 신설 — `max_consecutive_losses_for_kill` / `daily_loss_won_for_kill`, 계좌 KS와 독립 동작)
+- [ ] `KillSwitchService.record_strategy_trade_result(strategy_name, pnl_won)` 를 매도 정산 시점에서 호출한다.
+  - **현재 상태**: 메서드는 구현되어 있으나 호출 지점이 없어 전략 KS가 실제 손익을 인식하지 못함 (trip 로직이 동작하지 않는 상태)
+  - **연결 후보**: `OrderExecutionService` 체결 확정 콜백 또는 `VirtualTradeService` 매도 정산 시점
+  - **전제 조건**: P0 `inquire-daily-ccld` 실전 응답 확보 후 체결 확정 시점이 명확해지면 연결
 
 주요 파일:
 
-- `strategies/*.py`
-- `strategies/strategy_executor.py`
-- `services/risk_gate_service.py`
-- `services/position_sizing_service.py`
-- `config/*.yaml`
+- `services/kill_switch_service.py` — `record_strategy_trade_result()`
+- `services/order_execution_service.py` — 체결 확정 콜백
+- `services/virtual_trade_service.py` — 모의 매도 정산
 
 ### 5-2. 백테스트와 실거래 괴리 추적
 
