@@ -86,7 +86,7 @@ async def test_osb_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
     premium_item = OSBWatchlistItem(
         code=code_a, name="테스트종목A", market="KOSPI",
         high_20d=75000, ma_20d=70000.0, ma_50d=68000.0,  # current=75500, max_entry=75000*1.02=76500 (within 2%)
-        avg_vol_20d=600000.0, bb_width_min_20d=0.03, prev_bb_width=0.04,
+        avg_vol_20d=600000.0, bb_width_min_20d=0.03, prev_bb_width=0.035,  # squeeze gate: 0.035 <= 0.03*1.2
         w52_hgpr=77000, avg_trading_value_5d=50000000000, market_cap=400_000_000_000_000,
         rs_return_3m=10.0, profit_growth_score=0, smart_money_score=0, rs_score=0, total_score=0
     )
