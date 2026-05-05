@@ -62,6 +62,7 @@ class StrategySchedulerConfig:
     enabled: bool = True            # 개별 전략 활성/비활성
     allow_pyramiding: bool = False  # 불타기(추가매수) 허용 여부
     force_exit_on_close: bool = False       # 당일 청산 여부
+    scan_when_position_full: bool = False   # 포지션 한도 도달 시에도 탐색/거절 로그 기록
 
 
 class StrategyScheduler:
@@ -361,7 +362,8 @@ class StrategyScheduler:
         current_holdings = self._get_strategy_holdings(cfg)
         current_holds_count = len(current_holdings)
 
-        if current_holds_count >= cfg.max_positions:
+        position_full = current_holds_count >= cfg.max_positions
+        if position_full and not cfg.scan_when_position_full:
             self._logger.info(
                 f"[Scheduler] {name}: 최대 포지션 도달 "
                 f"({current_holds_count}/{cfg.max_positions}), 스캔 스킵"
@@ -380,8 +382,12 @@ class StrategyScheduler:
             holding_codes = {str(h.get('code')) for h in current_holdings if h.get('code')}
             valid_signals = [s for s in buy_signals if str(s.code) not in holding_codes]
 
-        remaining = cfg.max_positions - current_holds_count
+        remaining = max(cfg.max_positions - current_holds_count, 0)
         target_signals = valid_signals[:remaining]
+        rejected_signals = valid_signals[remaining:]
+
+        if rejected_signals:
+            self._log_position_limit_rejections(cfg, rejected_signals, current_holds_count)
 
         if target_signals:
             for sig in target_signals:
@@ -396,6 +402,30 @@ class StrategyScheduler:
 
         self._pm.log_timer(f"{name}.run_strategy", t_run)
         self._logger.info(f"[Scheduler] {name} 실행 완료")
+
+    def _log_position_limit_rejections(
+        self,
+        cfg: StrategySchedulerConfig,
+        signals: List[TradeSignal],
+        current_holds_count: int,
+    ):
+        """포지션 한도로 실행하지 않은 매수 신호를 구조화 로그로 남긴다."""
+        for sig in signals:
+            if sig.action != "BUY":
+                continue
+            self._logger.info({
+                "event": "signal_rejected",
+                "reason": "max_positions_reached",
+                "strategy_name": sig.strategy_name or cfg.strategy.name,
+                "code": sig.code,
+                "name": sig.name,
+                "action": sig.action,
+                "price": sig.price,
+                "qty": sig.qty,
+                "current_holds": current_holds_count,
+                "max_positions": cfg.max_positions,
+                "message": "전략 최대 보유 포지션 수 도달로 매수 신호 거절",
+            })
 
     # ── 시그널 실행 ──
 

@@ -765,6 +765,7 @@ class WebAppContext:
             enabled=False,
             force_exit_on_close=False,  # 👈 오닐 전략은 오버나잇(홀딩) 허용!
             allow_pyramiding=True,     # 👈 오버나잇 전략이므로 불타기 허용
+            scan_when_position_full=True,
         ))
         
         self.osb_strategy = osb_strategy # (웹 API 하위 호환성 유지용)
@@ -785,6 +786,7 @@ class WebAppContext:
             enabled=False,
             force_exit_on_close=False,  # 7주 홀딩 허용
             allow_pyramiding=True,      # 👈 오버나잇 전략이므로 불타기 허용
+            scan_when_position_full=True,
         ))
 
         # 하이 타이트 플래그 전략 등록
@@ -801,6 +803,7 @@ class WebAppContext:
             order_qty=1,
             enabled=False,
             force_exit_on_close=False,  # HTF는 오버나잇 홀딩 허용
+            scan_when_position_full=True,
         ))
 
         # 첫 눌림목(Holy Grail) 전략 등록
@@ -818,6 +821,7 @@ class WebAppContext:
             enabled=False,
             force_exit_on_close=False,  # 스윙 전략: 오버나잇 허용
             allow_pyramiding=False,
+            scan_when_position_full=True,
         ))
         # 래리 윌리엄스 변동성 돌파 전략 등록
         vbo_strategy = LarryWilliamsVBOStrategy(
@@ -834,6 +838,7 @@ class WebAppContext:
             enabled=False,
             force_exit_on_close=True,   # 오버나이트 금지 — 당일 장 마감 전 강제 청산
             allow_pyramiding=False,
+            scan_when_position_full=True,
         ))
         # 래리 코너스 RSI(2) 눌림목 전략 등록
         rsi2_strategy = RSI2PullbackStrategy(
@@ -851,6 +856,7 @@ class WebAppContext:
             enabled=False,
             force_exit_on_close=False,  # 평균 보유 ~2.5일 — 오버나잇 허용
             allow_pyramiding=False,     # 1종목 1회 진입 invariant
+            scan_when_position_full=True,
         ))
         # 래리 윌리엄스 / 펜볼드 돈천 채널 돌파 전략 등록
         lwcb_strategy = LarryWilliamsChannelBreakoutStrategy(
@@ -868,6 +874,7 @@ class WebAppContext:
             enabled=False,              # 수동 활성화 대기
             force_exit_on_close=False,  # 스윙 포지션 — 오버나잇 허용
             allow_pyramiding=False,     # 1종목 1포지션 invariant
+            scan_when_position_full=True,
         ))
 
         self.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
