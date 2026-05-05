@@ -173,7 +173,7 @@ def test_initialize_scheduler(mock_deps):
     
     mock_deps["sched"].assert_called_once()
     scheduler = mock_deps["sched"].return_value
-    assert scheduler.register.call_count >= 3
+    assert scheduler.register.call_count >= 7
 
     # 전략 초기화 검증
     mock_deps["osb"].assert_called()
