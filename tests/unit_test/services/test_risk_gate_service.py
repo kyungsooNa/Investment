@@ -20,6 +20,7 @@ def _service(
     if kill_switch is None:
         kill_switch = AsyncMock()
         kill_switch.check_orders_allowed = AsyncMock(return_value=(True, None))
+        kill_switch.is_strategy_tripped = MagicMock(return_value=None)  # 전략 KS 미트립
     cache = MagicMock()
     cache.get = AsyncMock(return_value=snapshot or AccountSnapshot(
         total_equity=100_000_000,

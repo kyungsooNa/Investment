@@ -91,6 +91,11 @@ class RiskGateService:
         if blocked is not None:
             return blocked
 
+        if strategy_name:
+            strategy_ks_blocked = self._check_strategy_kill_switch(strategy_name)
+            if strategy_ks_blocked is not None:
+                return strategy_ks_blocked
+
         if price < 0:
             return self._blocked(
                 "negative_price",
@@ -231,6 +236,22 @@ class RiskGateService:
 
         return None
 
+    def _check_strategy_kill_switch(self, strategy_name: str) -> Optional[ResCommonResponse]:
+        """전략별 Kill Switch 활성 상태 확인. 트립 시 차단."""
+        if self._kill_switch is None:
+            return None
+        trip_info = self._kill_switch.is_strategy_tripped(strategy_name)
+        if trip_info is None:
+            return None
+        reason = trip_info.get("trip_reason", "전략 Kill Switch 활성")
+        return self._blocked(
+            "strategy_kill_switch",
+            f"전략 Kill Switch 차단: {reason}",
+            error_code=ErrorCode.KILL_SWITCH_BLOCKED,
+            strategy_name=strategy_name,
+            trip_reason=reason,
+        )
+
     async def _check_kill_switch(self) -> Optional[ResCommonResponse]:
         if self._kill_switch is None:
             return None
@@ -311,6 +332,16 @@ class RiskGateService:
         loss_blocked = await self._check_strategy_loss_limit(strategy_name, limit)
         if loss_blocked is not None:
             return loss_blocked
+
+        cap_blocked = await self._check_strategy_capital_cap(
+            strategy_name=strategy_name,
+            stock_code=stock_code,
+            order_amount=order_amount,
+            limit=limit,
+            exchange=exchange,
+        )
+        if cap_blocked is not None:
+            return cap_blocked
 
         return await self._check_strategy_exposure_limit(
             strategy_name=strategy_name,
@@ -397,6 +428,56 @@ class RiskGateService:
                 reference_date=latest.get("date"),
             )
 
+        return None
+
+    async def _check_strategy_capital_cap(
+        self,
+        strategy_name: str,
+        stock_code: str,
+        order_amount: int,
+        limit,
+        exchange: Exchange,
+    ) -> Optional[ResCommonResponse]:
+        """capital_allocation_pct 기반 전략별 자본 할당 한도 검증.
+
+        현재 보유 평가금액 + 주문 금액이 total_equity × cap_pct 를 초과하면 차단.
+        """
+        cap_pct = getattr(limit, "capital_allocation_pct", None)
+        if cap_pct is None or self._strategy_risk_provider is None:
+            return None
+        if self._account_snapshot_cache is None:
+            self._logger.warning("[RiskGate] account snapshot cache 없음: 전략 자본 캡 검증 skip")
+            return None
+
+        snapshot = await self._account_snapshot_cache.get(exchange)
+        if snapshot.total_equity <= 0:
+            return None
+
+        try:
+            holds = self._strategy_risk_provider.get_holds_by_strategy(strategy_name) or []
+            if inspect.isawaitable(holds):
+                holds = await holds
+        except Exception as exc:
+            self._logger.warning(
+                f"[RiskGate][CHECK_ERROR] rule=capital_allocation_cap "
+                f"strategy={strategy_name} error={exc}"
+            )
+            return None
+
+        current_exposure = sum(self._position_value(hold) for hold in holds)
+        budget = snapshot.total_equity * cap_pct / 100
+        if current_exposure + order_amount > budget:
+            return self._blocked(
+                "capital_allocation_cap",
+                "전략 자본 할당 한도 초과",
+                strategy_name=strategy_name,
+                stock_code=stock_code,
+                current_exposure=current_exposure,
+                order_amount=order_amount,
+                total_equity=snapshot.total_equity,
+                budget=int(budget),
+                capital_allocation_pct=cap_pct,
+            )
         return None
 
     async def _check_strategy_exposure_limit(

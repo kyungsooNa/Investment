@@ -10,6 +10,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAIN_CONFIG_PATH = os.path.join(BASE_DIR, 'config.yaml')
 TR_IDS_CONFIG_PATH = os.path.join(BASE_DIR, 'tr_ids_config.yaml')
 KIS_CONFIG_PATH = os.path.join(BASE_DIR, 'kis_config.yaml')
+RISK_GATE_CONFIG_PATH = os.path.join(BASE_DIR, 'risk_gate_config.yaml')
 
 
 class WebConfig(BaseModel):
@@ -49,6 +50,14 @@ class RiskGateStrategyLimitConfig(BaseModel):
     max_exposure_pct: Optional[float] = None
     max_loss_pct: Optional[float] = None
     block_duplicate_position: bool = True
+    # 거래대금/유동성 필터 (StrategyExecutor 단계에서 사전 필터링)
+    min_trading_value_won: Optional[int] = None   # 최소 일중 누적 거래대금 (원)
+    min_avg_volume: Optional[int] = None          # 최소 일중 누적 거래량 (주)
+    # 전략별 자본 할당 한도
+    capital_allocation_pct: Optional[float] = None  # 총 자산 대비 이 전략 최대 투자 비율 (%)
+    # 전략별 Kill Switch
+    max_consecutive_losses_for_kill: Optional[int] = None  # 연속 손실 n회 시 전략 단독 정지
+    daily_loss_won_for_kill: Optional[int] = None          # 일일 손실 n원 초과 시 전략 단독 정지
 
     model_config = {"extra": "allow"}
 
@@ -215,6 +224,17 @@ def load_configs() -> AppConfig:
     config_data.update(main_config_data)
     config_data.update(tr_ids_data)
     config_data.update(kis_config_data)
+
+    # risk_gate_config.yaml 선택적 로드 — 없으면 스킵, 있으면 strategy_limits 딥 머지
+    if os.path.exists(RISK_GATE_CONFIG_PATH):
+        rg_file_data = load_config(RISK_GATE_CONFIG_PATH) or {}
+        rg_section = rg_file_data.get("risk_gate", {})
+        if rg_section:
+            extra_limits = rg_section.pop("strategy_limits", {})
+            base_rg = config_data.setdefault("risk_gate", {})
+            base_rg.update(rg_section)
+            base_limits = base_rg.setdefault("strategy_limits", {})
+            base_limits.update(extra_limits)
 
     try:
         return AppConfig(**config_data)

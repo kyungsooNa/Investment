@@ -2,7 +2,11 @@
 import asyncio
 import logging
 from interfaces.strategy import Strategy
-from typing import List, Dict, Optional, Tuple
+from typing import Awaitable, Callable, List, Dict, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from common.types import ResStockFullInfoApiOutput
+    from config.config_loader import RiskGateConfig
 
 
 class StrategyExecutor:
@@ -22,6 +26,8 @@ class StrategyExecutor:
         guard_timeout: float = 3.0,
         logger: Optional[logging.Logger] = None,
         max_stage_concurrency: int = 20,
+        risk_gate_config: Optional["RiskGateConfig"] = None,
+        get_current_price_fn: Optional[Callable[[str], Awaitable["ResStockFullInfoApiOutput"]]] = None,
     ):
         """
         Args:
@@ -43,10 +49,64 @@ class StrategyExecutor:
         self._guard_timeout = guard_timeout
         self._logger = logger or logging.getLogger(__name__)
         self._max_stage_concurrency = max_stage_concurrency
+        self._risk_gate_config = risk_gate_config
+        self._get_current_price_fn = get_current_price_fn
 
     async def execute(self, stock_codes: List[str]) -> Dict:
         filtered = await self._apply_stage_guard(stock_codes)
+        filtered = await self._apply_liquidity_filter(filtered)
         return await self.strategy.run(filtered)
+
+    # ── Liquidity Filter ───────────────────────────────────────────────────
+
+    async def _apply_liquidity_filter(self, stock_codes: List[str]) -> List[str]:
+        """거래대금/거래량 기준 미달 종목을 제거한다.
+
+        risk_gate_config 또는 get_current_price_fn 이 없으면 그대로 반환.
+        조회 오류 종목은 Fail-Close로 제거한다.
+        """
+        if not self._risk_gate_config or not self._get_current_price_fn:
+            return stock_codes
+
+        strategy_name = getattr(self.strategy, "name", "")
+        cfg = self._risk_gate_config
+        limit = cfg.strategy_limits.get(strategy_name) or cfg.default_strategy_limit
+        min_value = limit.min_trading_value_won
+        min_volume = limit.min_avg_volume
+
+        if min_value is None and min_volume is None:
+            return stock_codes
+
+        async def _passes(code: str) -> bool:
+            try:
+                info = await self._get_current_price_fn(code)
+                if min_value is not None:
+                    tr_pbmn = int(info.acml_tr_pbmn or "0")
+                    if tr_pbmn < min_value:
+                        self._logger.info({"event": "liquidity_blocked", "code": code,
+                                           "reason": "min_trading_value_won", "value": tr_pbmn})
+                        return False
+                if min_volume is not None:
+                    vol = int(info.acml_vol or "0")
+                    if vol < min_volume:
+                        self._logger.info({"event": "liquidity_blocked", "code": code,
+                                           "reason": "min_avg_volume", "value": vol})
+                        return False
+                return True
+            except Exception as e:
+                self._logger.warning({"event": "liquidity_fetch_error", "code": code, "error": str(e)})
+                return False  # Fail-Close
+
+        results = await asyncio.gather(*[_passes(c) for c in stock_codes])
+        allowed = [c for c, ok in zip(stock_codes, results) if ok]
+
+        blocked_count = len(stock_codes) - len(allowed)
+        if blocked_count:
+            self._logger.info(
+                f"[LiquidityFilter] {blocked_count}개 종목 필터링 "
+                f"(strategy={strategy_name}, min_value={min_value}, min_vol={min_volume})"
+            )
+        return allowed
 
     # ── Stage Guard ────────────────────────────────────────────────────────
 
