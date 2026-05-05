@@ -17,7 +17,7 @@ from core.account_snapshot import AccountSnapshotCache
 if TYPE_CHECKING:
     from services.indicator_service import IndicatorService
     from common.types import Exchange, ErrorCode
-    from config.config_loader import PositionSizingConfig
+    from config.config_loader import PositionSizingConfig, RiskGateConfig
 
 
 class PositionSizingService:
@@ -29,11 +29,13 @@ class PositionSizingService:
         indicator_service: "IndicatorService",
         config: "PositionSizingConfig",
         logger: Optional[logging.Logger] = None,
+        risk_gate_config: Optional["RiskGateConfig"] = None,
     ):
         self._cache = account_snapshot_cache
         self._indicator = indicator_service
         self._cfg = config
         self._logger = logger or logging.getLogger(__name__)
+        self._risk_gate_config = risk_gate_config
 
     # ── 공개 API ──────────────────────────────────────────────────
 
@@ -84,20 +86,27 @@ class PositionSizingService:
         # 5. cash_qty (매수 가능 현금)
         cash_qty = math.floor(available_cash / price) if price > 0 else 0
 
-        # 6. 4-way min
-        final_qty = max(0, min(signal.qty, risk_qty, cap_qty, cash_qty))
+        # 6. alloc_qty (전략별 자본 할당 캡)
+        alloc_qty = self._calc_strategy_alloc_qty(signal, price, total_equity)
 
-        # 7. 사유 결정
+        # 7. 5-way min
+        final_qty = max(0, min(signal.qty, risk_qty, cap_qty, cash_qty, alloc_qty))
+
+        # 8. 사유 결정
         if final_qty == 0:
             if risk_qty == 0:
                 reason = "risk_zero"
             elif cap_qty == 0:
                 reason = "cap_exhausted"
+            elif alloc_qty == 0:
+                reason = "strategy_capital_cap"
             else:
                 reason = "cash_short"
         elif final_qty < signal.qty:
-            limiting = min(risk_qty, cap_qty, cash_qty)
-            if limiting == cash_qty:
+            limiting = min(risk_qty, cap_qty, cash_qty, alloc_qty)
+            if limiting == alloc_qty:
+                reason = "strategy_capital_cap"
+            elif limiting == cash_qty:
                 reason = "cash_limited"
             elif limiting == cap_qty:
                 reason = "cap_limited"
@@ -109,12 +118,29 @@ class PositionSizingService:
         self._logger.info(
             f"[PositionSizing] {signal.code} price={price:,} "
             f"equity={total_equity:,} risk/share={per_share_risk:.0f} "
-            f"risk_qty={risk_qty} cap_qty={cap_qty} cash_qty={cash_qty} "
+            f"risk_qty={risk_qty} cap_qty={cap_qty} cash_qty={cash_qty} alloc_qty={alloc_qty} "
             f"signal_qty={signal.qty} → final={final_qty} ({reason})"
         )
         return final_qty, reason
 
     # ── 내부 ──────────────────────────────────────────────────────
+
+    def _calc_strategy_alloc_qty(self, signal: TradeSignal, price: int, total_equity: int) -> int:
+        """전략별 자본 할당 캡 (capital_allocation_pct) 기반 최대 수량.
+
+        캡 미설정 시 signal.qty 반환 (제약 없음).
+        """
+        if not self._risk_gate_config or not signal.strategy_name or price <= 0:
+            return signal.qty
+
+        cfg = self._risk_gate_config
+        limit = cfg.strategy_limits.get(signal.strategy_name) or cfg.default_strategy_limit
+        cap_pct = limit.capital_allocation_pct if limit else None
+        if cap_pct is None:
+            return signal.qty
+
+        alloc_budget = int(total_equity * cap_pct / 100)
+        return math.floor(alloc_budget / price)
 
     async def _get_per_share_risk_krw(self, signal: TradeSignal, price: int) -> float:
         """1주당 리스크 금액(KRW) — ATR 기반 또는 stop_loss_pct 기반."""

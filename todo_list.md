@@ -38,9 +38,9 @@
 
 ### 5-1. 전략별 실전 제한값 추가
 
-- [ ] 전략별 거래대금/유동성 필터를 추가한다.
-- [~] 전략별 자본 할당을 추가한다. (`RiskGateStrategyLimitConfig.max_exposure_pct` 기반 전략 노출 한도는 있음. 논리적 계좌/자본 장부 분리는 남음)
-- [~] 한 전략의 손실이 전체 계좌 주문 차단으로 번지지 않도록 격리 정책을 둔다. (전략별 loss/exposure block은 있음. Kill Switch와의 우선순위/운영 정책 정리는 남음)
+- [x] 전략별 거래대금/유동성 필터를 추가한다. (`StrategyExecutor._apply_liquidity_filter` — `min_trading_value_won` / `min_avg_volume` 임계값 미달 종목 사전 제거)
+- [x] 전략별 자본 할당을 추가한다. (`capital_allocation_pct`: PositionSizing 소프트 캡 + RiskGate 하드 차단 이중 적용)
+- [x] 한 전략의 손실이 전체 계좌 주문 차단으로 번지지 않도록 격리 정책을 둔다. (전략별 Kill Switch 신설 — `max_consecutive_losses_for_kill` / `daily_loss_won_for_kill`, 계좌 KS와 독립 동작)
 
 주요 파일:
 

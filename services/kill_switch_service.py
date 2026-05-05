@@ -3,12 +3,15 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
 import pytz
 
 from config.config_loader import KillSwitchConfig
 from services.notification_service import NotificationCategory, NotificationLevel, NotificationService
+
+if TYPE_CHECKING:
+    from config.config_loader import RiskGateConfig
 
 KST = pytz.timezone("Asia/Seoul")
 _ALERT_COOLDOWN_SEC = 60
@@ -30,13 +33,15 @@ class KillSwitchService:
         config: KillSwitchConfig,
         notification_service: NotificationService,
         logger: Optional[logging.Logger] = None,
+        risk_gate_config: Optional["RiskGateConfig"] = None,
     ) -> None:
         self._cfg = config
         self._notif = notification_service
         self._logger = logger or logging.getLogger(__name__)
         self._lock = asyncio.Lock()
+        self._risk_gate_config = risk_gate_config
 
-        # 영속 상태
+        # 영속 상태 (계좌 레벨)
         self._is_tripped: bool = False
         self._trip_reason: Optional[str] = None
         self._trip_timestamp: Optional[datetime] = None
@@ -44,6 +49,11 @@ class KillSwitchService:
         self._consecutive_losses: int = 0
         self._consecutive_api_errors: int = 0
         self._daily_realized_loss_won: int = 0
+
+        # 전략별 Kill Switch 상태 (in-memory + 저장)
+        self._strategy_tripped: dict[str, dict[str, Any]] = {}           # 전략명 → trip 메타
+        self._strategy_consecutive_losses: dict[str, int] = {}           # 전략명 → 연속손실횟수
+        self._strategy_daily_loss_won: dict[str, int] = {}               # 전략명 → 일손실누적(원)
 
         # in-memory only — 알림 폭주 방지
         self._last_alert_at: Optional[datetime] = None
@@ -173,6 +183,131 @@ class KillSwitchService:
                     {"code": code, "qty": qty, "order_price": order_price, "fill_price": fill_price},
                 )
 
+    # ── 전략별 Kill Switch ────────────────────────────────────────────
+
+    def is_strategy_tripped(self, strategy_name: str) -> Optional[dict[str, Any]]:
+        """해당 전략이 Kill Switch 상태이면 trip 메타 dict 반환, 아니면 None."""
+        return self._strategy_tripped.get(strategy_name)
+
+    async def trip_strategy(self, strategy_name: str, reason: str, metadata: dict | None = None) -> None:
+        """해당 전략만 단독 정지. 계좌 KS 에는 영향 없음."""
+        async with self._lock:
+            now = _now_kst()
+            meta = {
+                "strategy_name": strategy_name,
+                "trip_reason": reason,
+                "trip_timestamp": now.isoformat(),
+                **(metadata or {}),
+            }
+            self._strategy_tripped[strategy_name] = meta
+            self._save_state()
+
+        self._logger.critical(
+            "[KillSwitch][Strategy] 전략 트립! strategy=%s 사유=%s", strategy_name, reason
+        )
+        await self._notif.emit(
+            NotificationCategory.SYSTEM,
+            NotificationLevel.CRITICAL,
+            f"전략 Kill Switch 트립: {strategy_name}",
+            f"전략 '{strategy_name}'이 차단되었습니다.\n사유: {reason}",
+            {"strategy_name": strategy_name, "reason": reason},
+        )
+
+    async def reset_strategy(self, strategy_name: str, operator: str = "") -> None:
+        """해당 전략의 Kill Switch 해제 및 카운터 초기화."""
+        async with self._lock:
+            self._strategy_tripped.pop(strategy_name, None)
+            self._strategy_consecutive_losses.pop(strategy_name, None)
+            self._strategy_daily_loss_won.pop(strategy_name, None)
+            self._save_state()
+
+        self._logger.warning(
+            "[KillSwitch][Strategy] 해제됨 strategy=%s operator=%s", strategy_name, operator
+        )
+
+    async def record_strategy_trade_result(self, strategy_name: str, pnl_won: int) -> None:
+        """전략별 매도 손익 기록. 임계값 초과 시 해당 전략만 트립."""
+        if not self._cfg.enabled or not strategy_name:
+            return
+        async with self._lock:
+            if pnl_won < 0:
+                self._strategy_consecutive_losses[strategy_name] = (
+                    self._strategy_consecutive_losses.get(strategy_name, 0) + 1
+                )
+                self._strategy_daily_loss_won[strategy_name] = (
+                    self._strategy_daily_loss_won.get(strategy_name, 0) + pnl_won
+                )
+            else:
+                self._strategy_consecutive_losses[strategy_name] = 0
+
+            self._save_state()
+
+            if strategy_name in self._strategy_tripped:
+                return  # 이미 트립 중
+
+            limit = self._get_strategy_limit(strategy_name)
+            if limit is None:
+                return
+
+            consec = self._strategy_consecutive_losses.get(strategy_name, 0)
+            max_consec = limit.max_consecutive_losses_for_kill
+            if max_consec is not None and consec >= max_consec:
+                await self._trip_strategy_locked(
+                    strategy_name,
+                    f"연속 손실 {consec}회 (한도: {max_consec}회)",
+                    {"consecutive_losses": consec},
+                )
+                return
+
+            daily_loss = abs(self._strategy_daily_loss_won.get(strategy_name, 0))
+            max_daily = limit.daily_loss_won_for_kill
+            if max_daily is not None and daily_loss >= max_daily:
+                await self._trip_strategy_locked(
+                    strategy_name,
+                    f"일일 손실 {daily_loss:,}원 초과 (한도: {max_daily:,}원)",
+                    {"daily_loss_won": daily_loss},
+                )
+
+    async def reset_strategy_daily_counters(self) -> None:
+        """거래일 시작 시 전략별 일별 카운터 초기화. trip 상태는 유지."""
+        async with self._lock:
+            self._strategy_daily_loss_won.clear()
+            self._strategy_consecutive_losses.clear()
+            self._save_state()
+        self._logger.info("[KillSwitch] 전략별 일별 카운터 초기화 완료")
+
+    def _get_strategy_limit(self, strategy_name: str):
+        """risk_gate_config 에서 전략별 한도를 반환. 미주입 시 None."""
+        if self._risk_gate_config is None:
+            return None
+        cfg = self._risk_gate_config
+        return cfg.strategy_limits.get(strategy_name) or cfg.default_strategy_limit
+
+    async def _trip_strategy_locked(self, strategy_name: str, reason: str, metadata: dict) -> None:
+        """Lock 보유 중에 전략 트립 처리."""
+        now = _now_kst()
+        meta = {
+            "strategy_name": strategy_name,
+            "trip_reason": reason,
+            "trip_timestamp": now.isoformat(),
+            **metadata,
+        }
+        self._strategy_tripped[strategy_name] = meta
+        self._save_state()
+
+        # Lock 밖에서 알림을 보내야 하지만, _trip 패턴과 동일하게 lock 내 호출
+        # (notification emit 은 async 이므로 lock 유지 중 await 는 deadlock 위험 없음)
+        self._logger.critical(
+            "[KillSwitch][Strategy] 자동 트립! strategy=%s 사유=%s", strategy_name, reason
+        )
+        await self._notif.emit(
+            NotificationCategory.SYSTEM,
+            NotificationLevel.CRITICAL,
+            f"전략 Kill Switch 자동 트립: {strategy_name}",
+            f"전략 '{strategy_name}'이 자동 차단되었습니다.\n사유: {reason}",
+            {"strategy_name": strategy_name, "reason": reason, **metadata},
+        )
+
     # ── 수동 제어 ────────────────────────────────────────────────────
 
     async def manual_trip(self, reason: str, operator: str) -> None:
@@ -259,6 +394,9 @@ class KillSwitchService:
                 "consecutive_losses": self._consecutive_losses,
                 "consecutive_api_errors": self._consecutive_api_errors,
                 "daily_realized_loss_won": self._daily_realized_loss_won,
+                "strategy_tripped": self._strategy_tripped,
+                "strategy_consecutive_losses": self._strategy_consecutive_losses,
+                "strategy_daily_loss_won": self._strategy_daily_loss_won,
             }
             self._state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
@@ -278,11 +416,20 @@ class KillSwitchService:
             self._consecutive_losses = int(state.get("consecutive_losses", 0))
             self._consecutive_api_errors = int(state.get("consecutive_api_errors", 0))
             self._daily_realized_loss_won = int(state.get("daily_realized_loss_won", 0))
+            self._strategy_tripped = state.get("strategy_tripped", {})
+            self._strategy_consecutive_losses = {
+                k: int(v) for k, v in state.get("strategy_consecutive_losses", {}).items()
+            }
+            self._strategy_daily_loss_won = {
+                k: int(v) for k, v in state.get("strategy_daily_loss_won", {}).items()
+            }
             if self._is_tripped:
                 self._logger.warning(
                     "[KillSwitch] 재시작 후 트립 상태 복원. 사유: %s (트립 시각: %s)",
                     self._trip_reason,
                     self._trip_timestamp,
                 )
+            for sname in self._strategy_tripped:
+                self._logger.warning("[KillSwitch] 재시작 후 전략 트립 상태 복원: %s", sname)
         except Exception as e:
             self._logger.error("[KillSwitch] 상태 복원 실패: %s", e)

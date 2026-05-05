@@ -1,0 +1,46 @@
+# risk_gate_config.yaml — 전략별 리스크 한도 및 격리 설정
+#
+# 이 파일을 'risk_gate_config.yaml' 로 복사한 뒤 편집한다.
+# config.yaml 의 risk_gate 전역 설정과 딥 머지됨 (strategy_limits는 키 단위로 합산).
+#
+# 운영 우선순위 (높음 → 낮음):
+#   1. 계좌 Kill Switch  — 발동 시 모든 주문 차단
+#   2. 전략 Kill Switch  — 해당 전략 주문만 차단 (max_consecutive_losses_for_kill / daily_loss_won_for_kill)
+#   3. 전략 노출도 한도  — max_exposure_pct
+#   4. 전략 자본 할당 캡 — capital_allocation_pct (PositionSizing + RiskGate 이중 적용)
+#   5. 전략 손실 한도    — max_loss_pct
+#   6. 유동성 필터       — min_trading_value_won / min_avg_volume (StrategyExecutor 사전 필터)
+
+risk_gate:
+  strategy_limits:
+    # ────── 예시 전략 1: MomentumStrategy ──────────────────────────────────
+    MomentumStrategy:
+      # 거래대금/유동성 필터 (StrategyExecutor 단계 — strategy.run() 호출 전)
+      min_trading_value_won: 10_000_000_000   # 최소 일중 누적 거래대금 100억 원
+      min_avg_volume: 100_000                  # 최소 일중 누적 거래량 10만 주
+
+      # 전략별 자본 할당 한도 (PositionSizing + RiskGate 이중 적용)
+      capital_allocation_pct: 20.0             # 총 자산의 20% 까지만 이 전략에 투입
+
+      # 전략별 노출도 한도 (이미 보유한 평가금 포함)
+      max_exposure_pct: 25.0                   # 총 자산 대비 전략 보유 비중 상한 25%
+
+      # 전략별 손실 한도
+      max_loss_pct: -10.0                      # 최근 수익률 -10% 이하 시 신규 매수 차단
+
+      # 전략별 Kill Switch (해당 전략만 단독 정지)
+      max_consecutive_losses_for_kill: 3       # 연속 손실 3회 시 전략 정지
+      daily_loss_won_for_kill: 300_000         # 일일 손실 30만 원 초과 시 전략 정지
+
+      # 중복 포지션 방지
+      block_duplicate_position: true
+
+    # ────── 예시 전략 2: FirstPullbackStrategy ─────────────────────────────
+    FirstPullbackStrategy:
+      min_trading_value_won: 5_000_000_000    # 50억 원
+      min_avg_volume: 50_000
+      capital_allocation_pct: 15.0
+      max_exposure_pct: 20.0
+      max_consecutive_losses_for_kill: 5
+      daily_loss_won_for_kill: 500_000
+      block_duplicate_position: true
