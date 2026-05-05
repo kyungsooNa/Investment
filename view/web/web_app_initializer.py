@@ -47,9 +47,6 @@ from task.background.after_market.after_market_reconcile_task import AfterMarket
 from services.strategy_log_report_service import StrategyLogReportService
 from task.background.always_on.notification_queue_task import NotificationQueueTask
 from services.naver_finance_scraper_service import NaverFinanceScraperService
-from strategies.volume_breakout_live_strategy import VolumeBreakoutLiveStrategy
-from strategies.program_buy_follow_strategy import ProgramBuyFollowStrategy
-from strategies.traditional_volume_breakout_strategy import TraditionalVolumeBreakoutStrategy
 from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
 from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.high_tight_flag_strategy import HighTightFlagStrategy
@@ -752,55 +749,6 @@ class WebAppContext:
             account_snapshot_cache=self.account_snapshot_cache,
             position_sizing_service=self.position_sizing_service,
         )
-
-        # 거래량 돌파 전략 등록
-        vb_strategy = VolumeBreakoutLiveStrategy(
-            stock_query_service=self.stock_query_service,
-            market_clock=self.market_clock,
-            logger=get_strategy_logger('VolumeBreakoutLive'),
-        )
-        self.scheduler.register(StrategySchedulerConfig(
-            strategy=vb_strategy,
-            interval_minutes=5,
-            max_positions=3,
-            order_qty=1,
-            enabled=False,
-            force_exit_on_close=True,  # 👈 단타 전략이므로 장 마감 전 강제 청산
-            allow_pyramiding=False,    # 👈 단타 전략이므로 불타기 금지
-        ))
-
-        # 프로그램 매수 추종 전략 등록
-        pbf_strategy = ProgramBuyFollowStrategy(
-            stock_query_service=self.stock_query_service,
-            market_clock=self.market_clock,
-            logger=get_strategy_logger('ProgramBuyFollow'),
-        )
-        self.scheduler.register(StrategySchedulerConfig(
-            strategy=pbf_strategy,
-            interval_minutes=10,
-            max_positions=3,
-            order_qty=1,
-            enabled=False,
-            force_exit_on_close=True,  # 👈 단타 전략이므로 장 마감 전 강제 청산
-            allow_pyramiding=False,    # 👈 단타 전략이므로 불타기 금지
-        ))
-
-        # 전통적 거래량 돌파 전략 등록
-        tvb_strategy = TraditionalVolumeBreakoutStrategy(
-            stock_query_service=self.stock_query_service,
-            stock_code_repository=self.stock_code_repository,
-            market_clock=self.market_clock,
-            logger=get_strategy_logger('TraditionalVolumeBreakout'),
-        )
-        self.scheduler.register(StrategySchedulerConfig(
-            strategy=tvb_strategy,
-            interval_minutes=1,
-            max_positions=5,
-            order_qty=1,
-            enabled=False,
-            force_exit_on_close=True,  # 👈 단타 전략이므로 장 마감 전 강제 청산
-            allow_pyramiding=False,    # 👈 단타 전략이므로 불타기 금지
-        ))
 
         # 오닐 스퀴즈 돌파 전략 등록
         osb_strategy = OneilSqueezeBreakoutStrategy(
