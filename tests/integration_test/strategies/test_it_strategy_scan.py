@@ -561,7 +561,7 @@ class TestOneilSqueezeBreakoutScan:
             high_20d=74000,  # 현재가 75000 > 74000 → 돌파, max_entry=74000*1.02=75480 (within 2%)
             ma_20d=70000.0, ma_50d=68000.0,
             avg_vol_20d=1000000.0,  # 환산거래량 6M > 1M*1.5 → 통과
-            bb_width_min_20d=0.03, prev_bb_width=0.04,
+            bb_width_min_20d=0.03, prev_bb_width=0.035,  # squeeze gate: 0.035 <= 0.03*1.2
             w52_hgpr=77000, avg_trading_value_5d=500_000_000_000,
             market_cap=400_000_000_000,  # 4000억 (대형주 동적 허들 우회)
         )
@@ -967,7 +967,7 @@ class TestScanChunkParallelism:
         defaults = dict(
             name=f"종목{code}", market="KOSPI",
             high_20d=70000, ma_20d=68000.0, ma_50d=65000.0,
-            avg_vol_20d=1_000_000.0, bb_width_min_20d=0.03, prev_bb_width=0.04,
+            avg_vol_20d=1_000_000.0, bb_width_min_20d=0.03, prev_bb_width=0.035,  # squeeze gate: 0.035 <= 0.03*1.2
             w52_hgpr=77000, avg_trading_value_5d=500_000_000_000,
             market_cap=400_000_000_000,  # 4000억
         )

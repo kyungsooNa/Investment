@@ -404,6 +404,7 @@ class OneilUniverseService:
             w52_hgpr=w52_hgpr, avg_trading_value_5d=tv_5d, market_cap=stck_llam,
             rs_return_3m=rs_return,
             ma_150d=ma_150d, ma_200d=ma_200d, w52_lwpr=w52_lwpr, minervini_stage=minervini_stage,
+            source="pool_a",
         )
 
     async def _analyze_surge_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
@@ -553,7 +554,8 @@ class OneilUniverseService:
             high_20d=high_20d, ma_20d=ma_20d, ma_50d=ma_50d,
             avg_vol_20d=avg_vol_20d, bb_width_min_20d=bb_min, prev_bb_width=prev_width,
             w52_hgpr=w52_hgpr, avg_trading_value_5d=tv_5d, market_cap=stck_llam,
-            rs_return_3m=rs_return
+            rs_return_3m=rs_return,
+            source="pool_b",
         )
 
     # ── 전일 기준 우량주 생성 (배치) ─────────────────────────────────────────

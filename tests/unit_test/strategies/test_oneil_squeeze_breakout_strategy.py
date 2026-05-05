@@ -1184,3 +1184,170 @@ def test_check_time_stop_invalid_state_returns_false(mock_strategy_deps):
     strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
 
     assert strategy._check_time_stop(OSBPositionState(0, "", 0, 0), 10000, [{"date": "20250102"}]) is False
+
+
+# ── [신규] 전천후 방어막 4종 테스트 ─────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_scan_rejects_pool_a_when_not_squeezed(scan_setup):
+    """[관문 0] Pool A 종목의 prev_bb_width가 스퀴즈 허용 범위를 벗어나면 거부한다."""
+    strategy, sqs, universe, tm, logger = scan_setup
+    not_squeezed_item = OSBWatchlistItem(
+        code="005930", name="Samsung", market="KOSPI",
+        high_20d=70000, ma_20d=68000, ma_50d=65000,
+        avg_vol_20d=100000, bb_width_min_20d=1000,
+        prev_bb_width=1300,  # 1300 > 1000 * 1.2 → 스퀴즈 아님
+        w52_hgpr=80000, avg_trading_value_5d=50_000_000_000,
+        market_cap=100_000_000_000,
+        source="pool_a",
+    )
+    universe.get_watchlist.return_value = {"005930": not_squeezed_item}
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "70500", "stck_hgpr": "70600", "stck_lwpr": "70000",
+            "acml_vol": "200000", "pgtr_ntby_qty": "30000", "acml_tr_pbmn": "14200000000",
+        }}
+    )
+
+    signals = await strategy.scan()
+
+    assert signals == []
+    logger.debug.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_scan_allows_pool_b_without_squeeze_check(scan_setup):
+    """[관문 0] Pool B 종목은 squeeze 미충족이라도 다른 조건 만족 시 매수 시그널을 생성한다."""
+    strategy, sqs, universe, tm, logger = scan_setup
+    pool_b_item = OSBWatchlistItem(
+        code="005930", name="Samsung", market="KOSPI",
+        high_20d=70000, ma_20d=68000, ma_50d=65000,
+        avg_vol_20d=100000, bb_width_min_20d=1000,
+        prev_bb_width=1300,  # Pool A라면 스퀴즈 실패할 폭
+        w52_hgpr=80000, avg_trading_value_5d=50_000_000_000,
+        market_cap=100_000_000_000,
+        source="pool_b",  # Pool B → squeeze 게이트 건너뜀
+    )
+    universe.get_watchlist.return_value = {"005930": pool_b_item}
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "70500", "stck_hgpr": "70600", "stck_lwpr": "70000",
+            "acml_vol": "200000", "pgtr_ntby_qty": "30000", "acml_tr_pbmn": "14200000000",
+        }}
+    )
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "150.0"}]}
+    )
+
+    signals = await strategy.scan()
+
+    assert len(signals) == 1
+    assert signals[0].code == "005930"
+    assert signals[0].action == "BUY"
+
+
+@pytest.mark.asyncio
+async def test_scan_rejects_when_within_buffer_zone(scan_setup):
+    """[관문 1] 현재가가 20일 고가(70000) 대비 +0.5% 버퍼(70350) 미만이면 거부한다."""
+    strategy, sqs, _, _, _ = scan_setup
+    # int(70000 * 1.005) = 70350이므로 70300은 버퍼 내 → 거부
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "70300", "stck_hgpr": "70400", "stck_lwpr": "70000",
+            "acml_vol": "200000", "pgtr_ntby_qty": "30000", "acml_tr_pbmn": "14200000000",
+        }}
+    )
+
+    signals = await strategy.scan()
+
+    assert signals == []
+
+
+@pytest.mark.asyncio
+async def test_scan_rejects_morning_low_absolute_vol(scan_setup):
+    """[관문 2] 오전(10시 미만)에 실거래량이 20일 평균의 40% 미만이면 거부한다."""
+    strategy, sqs, _, tm, _ = scan_setup
+    # 오전 9:30 — early_morning_guard(15분) 이후지만 morning_min_vol_ratio(0.4) 미달
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 30, 0)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "70500", "stck_hgpr": "70600", "stck_lwpr": "70000",
+            "acml_vol": "35000",  # 35% < 40% → 오전 절대 하한 미달
+            "pgtr_ntby_qty": "10000", "acml_tr_pbmn": "2485000000",
+        }}
+    )
+
+    signals = await strategy.scan()
+
+    assert signals == []
+
+
+@pytest.mark.asyncio
+async def test_scan_afternoon_requires_higher_volume(scan_setup):
+    """[관문 2] 오후(13시 이상)에는 예상거래량 허들이 1.5배→2.5배로 강화된다."""
+    strategy, sqs, _, tm, _ = scan_setup
+    # 오후 14:00 — 예상거래량이 일반(1.5x) 통과 수준이나 가산(2.5x) 미달
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 14, 0, 0)
+    # progress = (14:00-9:00) / 6.5h = 300/390 ≈ 0.769
+    # vol=180000 → proj_vol≈234000 > 150000(normal) but < 250000(afternoon) → 거부
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "70500", "stck_hgpr": "70600", "stck_lwpr": "70000",
+            "acml_vol": "180000",
+            "pgtr_ntby_qty": "30000", "acml_tr_pbmn": "12690000000",
+        }}
+    )
+
+    signals = await strategy.scan()
+
+    assert signals == []
+
+
+@pytest.mark.asyncio
+async def test_check_exits_skips_trailing_when_peak_below_5pct(mock_strategy_deps):
+    """[트레일링 게이트] 최고가 수익이 5% 미만이면 낙폭이 -8% 이상이어도 트레일링 미발동."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    # buy=10000, peak=10400(+4%), current=9568(10400*0.92, -8%에서 drop)
+    # pnl=(9568-10000)/10000=-4.32% → 손절(-5%) 미달
+    # trailing 조건 충족(-8%)이나 peak_pnl(4%) < 5% → 게이트 차단 → 시그널 없음
+    strategy._position_state["005930"] = OSBPositionState(
+        entry_price=10000, entry_date="20250101", peak_price=10400, breakout_level=9500
+    )
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+    tm.get_market_close_time.return_value = datetime(2025, 1, 1, 15, 30, 0)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9568", "acml_vol": "50000"}}
+    )
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": "10000"}])
+
+    assert signals == []
+
+
+@pytest.mark.asyncio
+async def test_check_exits_trailing_fires_when_peak_above_5pct(mock_strategy_deps):
+    """[트레일링 게이트] 최고가 수익이 5% 이상이면 -8% 낙폭 시 트레일링스탑 발동한다."""
+    sqs, universe, tm, logger = mock_strategy_deps
+    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
+    # buy=10000, peak=11000(+10%), current=10120(11000*0.92, -8% drop)
+    # pnl=(10120-10000)/10000=+1.2% → 손절 없음, 부분익절 없음
+    # peak_pnl=10% >= 5% → 트레일링 발동
+    strategy._position_state["005930"] = OSBPositionState(
+        entry_price=10000, entry_date="20250101", peak_price=11000, breakout_level=9500
+    )
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+    tm.get_market_close_time.return_value = datetime(2025, 1, 1, 15, 30, 0)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "10120", "acml_vol": "50000"}}
+    )
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+
+    signals = await strategy.check_exits([{"code": "005930", "buy_price": "10000"}])
+
+    assert len(signals) == 1
+    assert signals[0].action == "SELL"
+    assert "트레일링스탑" in signals[0].reason

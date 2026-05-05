@@ -142,13 +142,25 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         day_high = get_val("stck_hgpr", current)
         day_low = get_val("stck_lwpr", current)
 
-        # 장 시작 직후에는 예상 거래량이 튀기 쉬우므로, 최소한 평균 거래량의 30%는 달성해야 함
-        min_absolute_vol = item.avg_vol_20d * 0.3
-        if vol < min_absolute_vol:
+        # 전 시간대 절대 하한 (baseline_min_vol_ratio, 기존 0.3 하드코딩 config화)
+        if vol < item.avg_vol_20d * self._cfg.baseline_min_vol_ratio:
             return None
-            
-        # 🚨 [관문 1] 가격 돌파 (20일 신고가)
-        if current < item.high_20d: return None
+
+        # 🚨 [관문 0] Pool A 스퀴즈 런타임 검증 (Pool B 급등주는 변동성 확장 단계라 skip)
+        if item.source == "pool_a":
+            if item.prev_bb_width > item.bb_width_min_20d * self._cfg.osb_runtime_squeeze_tolerance:
+                self._logger.debug({
+                    "event": "breakout_rejected", "code": code, "reason": "not_in_squeeze",
+                    "prev_bb_width": item.prev_bb_width,
+                    "bb_min": item.bb_width_min_20d,
+                    "tolerance": self._cfg.osb_runtime_squeeze_tolerance,
+                })
+                return None
+
+        # 🚨 [관문 1] 가격 돌파 — 안착 버퍼 적용 (int 캐스팅으로 호가 단위 미스매치 방지)
+        breakout_threshold = int(item.high_20d * (1 + self._cfg.breakout_min_buffer_pct / 100))
+        if current < breakout_threshold:
+            return None
 
         # 장 초반 15분 이내: proj_vol 뻥튀기로 인한 가짜 돌파 시그널 방지
         if progress * 390 < 15:
@@ -173,10 +185,27 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 self._logger.info({"event": "breakout_rejected", "code": code, "name": item.name, "reason": "poor_candle_quality", "pos": round(relative_pos, 2), "threshold": self._cfg.osb_min_candle_relative_pos})
                 return None
 
-        # 🚨 [관문 2] 거래량 돌파 (기존 동일)
+        # 🚨 [관문 2] 다이내믹 거래량 돌파 (시간대별 허들 차등 적용)
         effective_progress = max(progress, 0.05)
         proj_vol = vol / effective_progress
-        if proj_vol < item.avg_vol_20d * self._cfg.volume_breakout_multiplier:
+        current_hour = self._tm.get_current_kst_time().hour
+        if current_hour < self._cfg.morning_cutoff_hour:
+            # 오전장: 예상 거래량 뻥튀기 방지 — 실거래량 절대 하한 추가 적용
+            if vol < item.avg_vol_20d * self._cfg.morning_min_vol_ratio:
+                self._logger.debug({
+                    "event": "breakout_rejected", "code": code, "reason": "morning_low_vol",
+                    "vol": vol, "threshold": int(item.avg_vol_20d * self._cfg.morning_min_vol_ratio),
+                })
+                return None
+            vol_threshold = item.avg_vol_20d * self._cfg.volume_breakout_multiplier
+        elif current_hour >= self._cfg.afternoon_cutoff_hour:
+            # 오후장: 가짜 돌파 방지 — multiplier 가산
+            vol_threshold = item.avg_vol_20d * (
+                self._cfg.volume_breakout_multiplier + self._cfg.afternoon_volume_boost
+            )
+        else:
+            vol_threshold = item.avg_vol_20d * self._cfg.volume_breakout_multiplier
+        if proj_vol < vol_threshold:
             return None
 
         # 🚨 [선행 조회] 체결강도 스냅샷 (수급 판정의 재료로 사용)
@@ -439,11 +468,13 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         # 1. 손절
         if pnl <= self._cfg.stop_loss_pct:
             reason = f"손절({pnl:.1f}%)"
-        # 2. 트레일링 스탑
+        # 2. 트레일링 스탑 — 수익 게이트 적용 (peak_pnl >= trailing_min_peak_profit_pct 이후에만 발동)
         elif state.peak_price > 0:
-            drop = float((current - state.peak_price) / state.peak_price * 100)
-            if drop <= -self._cfg.trailing_stop_pct:
-                reason = f"트레일링스탑({drop:.1f}%)"
+            peak_pnl = float((state.peak_price - buy_price) / buy_price * 100)
+            if peak_pnl >= self._cfg.trailing_min_peak_profit_pct:
+                drop = float((current - state.peak_price) / state.peak_price * 100)
+                if drop <= -self._cfg.trailing_stop_pct:
+                    reason = f"트레일링스탑(고점수익 {peak_pnl:.1f}%, 낙폭 {drop:.1f}%)"
 
         # 2.5. 본절스탑: 부분익절 후 진입가 하회
         if not reason and state.breakeven_armed and current < buy_price:
