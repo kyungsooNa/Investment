@@ -757,6 +757,29 @@ def test_get_all_trades_with_cost(virutal_trade_repository):
     assert trades_cost[0]['return_rate'] < 10.0
 
 
+def test_get_standard_journal_records_returns_backtest_live_comparable_schema(virutal_trade_repository):
+    """표준 journal 조회는 기존 원장을 backtest/live 비교 가능한 공통 schema로 반환한다."""
+    virutal_trade_repository.log_buy("StrategyA", "005930", 10000, qty=10)
+    virutal_trade_repository.log_sell_by_strategy("StrategyA", "005930", 11000, qty=10, reason="target_hit")
+
+    records = virutal_trade_repository.get_standard_journal_records()
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["source"] == "virtual_trade"
+    assert record["strategy"] == "StrategyA"
+    assert record["code"] == "005930"
+    assert record["signal_time"] == "2025-01-01 12:00:00"
+    assert record["decision_reason"] == "target_hit"
+    assert record["rejected_reason"] == ""
+    assert record["order_price"] == 10000.0
+    assert record["fill_price"] == 11000.0
+    assert record["qty"] == 10
+    assert record["cost"] > 0
+    assert record["net_pnl"] < record["gross_pnl"]
+    assert record["net_return"] < record["gross_return"]
+
+
 def test_log_order_failure_records_failed_trade(virutal_trade_repository):
     """주문 실패 기록은 FAILED 상태와 사유를 저장한다."""
     virutal_trade_repository.log_order_failure("매수", "005930", 70000, 3, "잔고부족", "전략A")

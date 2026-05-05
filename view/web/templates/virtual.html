@@ -24,10 +24,50 @@
                 <label style="display: flex; align-items: center; gap: 5px; cursor: help; user-select: none; color: var(--text-primary);"
                        title="거래 비용 상세&#10; - 매수/매도 수수료: 0.0140527%&#10; - 매도 세금: 0.20%"
                 >
-                    <input type="checkbox" id="apply-cost-chk" onchange="loadVirtualHistory()">
+                    <input type="checkbox" id="apply-cost-chk" onchange="loadVirtualHistory()" checked>
                     <span>수수료/세금 포함</span>
                 </label>
                 <button class="btn" onclick="loadVirtualHistory()">새로고침</button>
+            </div>
+
+            <div style="margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px;">
+                <div class="form-row" style="justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <h3 style="margin: 0; color: var(--text-primary);">백테스트-실거래 괴리</h3>
+                    <button class="btn" onclick="loadVirtualDivergence()">비교 새로고침</button>
+                </div>
+                <div class="stats-box" id="virtual-divergence-summary" style="margin-top: 10px;">
+                    <span>로딩 중...</span>
+                </div>
+                <details style="margin-top: 10px;">
+                    <summary style="cursor: pointer; color: var(--text-primary); font-weight: 600;">백테스트 journal JSON</summary>
+                    <div class="form-row" style="align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+                        <select id="virtual-backtest-run-select" style="min-width: 260px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; padding: 8px;">
+                            <option value="">저장된 백테스트 없음</option>
+                        </select>
+                        <button class="btn" onclick="loadVirtualBacktestJournalRun()">선택 불러오기</button>
+                    </div>
+                    <textarea id="virtual-backtest-journal-input" rows="5" spellcheck="false" style="width: 100%; margin-top: 8px; resize: vertical; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-family: Consolas, monospace;"></textarea>
+                    <div class="form-row" style="justify-content: flex-end; margin-top: 8px;">
+                        <button class="btn" onclick="compareVirtualDivergence()">비교 실행</button>
+                    </div>
+                </details>
+                <div class="table-container" style="margin-top: 10px;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>상태</th>
+                                <th>전략</th>
+                                <th>종목</th>
+                                <th>거래일</th>
+                                <th>백테스트 순수익률</th>
+                                <th>실거래 순수익률</th>
+                                <th>차이</th>
+                                <th>체결가 차이</th>
+                            </tr>
+                        </thead>
+                        <tbody id="virtual-divergence-body"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
 

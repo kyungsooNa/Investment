@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timedelta
 from functools import lru_cache
 from core.market_clock import MarketClock
+from common.trade_journal_schema import normalize_virtual_trade
 from utils.transaction_cost_utils import TransactionCostUtils
 
 logger = logging.getLogger(__name__)
@@ -501,6 +502,10 @@ class VirtualTradeRepository:
                 if r.get('status') == 'SOLD' and r.get('buy_price') and r.get('sell_price'):
                     r['return_rate'] = self.calculate_return(r['buy_price'], r['sell_price'], r.get('qty', 1), True)
         return records
+
+    def get_standard_journal_records(self) -> list[dict]:
+        """백테스트/실거래 비교용 표준 journal schema로 전체 거래를 반환한다."""
+        return [normalize_virtual_trade(record) for record in self.get_all_trades()]
 
     def get_solds(self) -> list:
         """전체 SOLD 포지션 반환."""

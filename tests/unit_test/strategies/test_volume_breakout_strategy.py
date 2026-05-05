@@ -74,6 +74,10 @@ class TestVolumeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(trades[0]["outcome"], "trailing_stop")
         self.assertEqual(trades[0]["entry_px"], 11000.0)
         self.assertEqual(trades[0]["exit_px"], 11300.0)
+        self.assertEqual(len(result["journal_records"]), 1)
+        self.assertEqual(result["journal_records"][0]["source"], "backtest")
+        self.assertEqual(result["journal_records"][0]["code"], "005930")
+        self.assertEqual(result["journal_records"][0]["decision_reason"], "trailing_stop")
 
     async def test_backtest_stop_loss(self):
         """손절 테스트"""
@@ -118,6 +122,39 @@ class TestVolumeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(trades), 1)
         self.assertEqual(trades[0]["outcome"], "close_exit")
         self.assertEqual(trades[0]["exit_px"], 11500.0)
+
+    async def test_backtest_persists_standard_journal_when_repository_is_provided(self):
+        """저장소가 주입되면 백테스트 표준 journal run을 저장한다."""
+        rows = [
+            {"stck_bsop_date": "20250101", "stck_cntg_hour": "090000", "stck_oprc": "10000", "stck_prpr": "10000"},
+            {"stck_bsop_date": "20250101", "stck_cntg_hour": "090100", "stck_prpr": "11000"},
+            {"stck_bsop_date": "20250101", "stck_cntg_hour": "153000", "stck_prpr": "11500"},
+        ]
+        self.mock_sqs.get_day_intraday_minutes_list = AsyncMock(return_value=rows)
+        backtest_journal_repository = MagicMock()
+        strategy = VolumeBreakoutStrategy(
+            stock_query_service=self.mock_sqs,
+            market_clock=self.mock_tm,
+            logger=self.mock_logger,
+            backtest_journal_repository=backtest_journal_repository,
+        )
+
+        result = await strategy.backtest_open_threshold_intraday(
+            "005930",
+            date_ymd="20250101",
+            trigger_pct=10.0,
+            trailing_stop_pct=10.0,
+            sl_pct=-10.0,
+        )
+
+        self.assertTrue(result["ok"])
+        backtest_journal_repository.save_run.assert_called_once()
+        args, kwargs = backtest_journal_repository.save_run.call_args
+        self.assertEqual(args[0], result["journal_records"])
+        self.assertEqual(kwargs["run_id"], "VolumeBreakout_005930_20250101")
+        self.assertEqual(kwargs["strategy"], "VolumeBreakout")
+        self.assertEqual(kwargs["target_date"], "20250101")
+        self.assertEqual(kwargs["metadata"]["stock_code"], "005930")
 
 if __name__ == "__main__":
     unittest.main()

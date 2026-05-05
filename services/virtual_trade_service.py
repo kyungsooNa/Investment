@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 from repositories.virtual_trade_repository import VirtualTradeRepository
 from core.market_clock import MarketClock
+from common.trade_journal_comparison import compare_trade_journals
 from utils.transaction_cost_utils import TransactionCostUtils
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,13 @@ class VirtualTradeService:
         if "ALL" in strategies: strategies.remove("ALL")
         return sorted(list(strategies))
 
+    def compare_with_backtest_journal(self, backtest_records: list[dict]) -> dict:
+        """현재 원장과 백테스트 journal records 간 괴리 리포트를 생성한다."""
+        return compare_trade_journals(
+            backtest_records,
+            self.get_standard_journal_records(),
+        )
+
     # ── 데이터 영속성 위임 (Facade) ──
     # 기존 코드 호환성을 위해 순수 I/O 요청을 Repository로 그대로 전달합니다.
     def log_buy(self, *args, **kwargs): return self._repo.log_buy(*args, **kwargs)
@@ -160,6 +168,7 @@ class VirtualTradeService:
     def backfill_snapshots(self): return self._repo.backfill_snapshots()
     def save_daily_snapshot(self, strategy_returns: dict): return self._repo.save_daily_snapshot(strategy_returns)
     def sync_live_strategy_positions(self): return self._repo.sync_live_strategy_positions()
+    def get_standard_journal_records(self): return self._repo.get_standard_journal_records()
     def _load_data(self): return self._repo._load_data()
     def _save_data(self, data: dict): return self._repo._save_data(data)
 

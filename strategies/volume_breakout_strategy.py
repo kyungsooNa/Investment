@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Literal, Callable
+from common.trade_journal_schema import normalize_backtest_trade
 from strategies.base_strategy_config import BaseStrategyConfig
 
 # ===============================
@@ -37,11 +38,13 @@ class VolumeBreakoutStrategy:
         market_clock: Any,
         logger: Optional[Any] = None,
         config: Optional[VolumeBreakoutConfig] = None,
+        backtest_journal_repository: Optional[Any] = None,
     ) -> None:
         self.svc = stock_query_service   # 분봉 데이터를 가져오는 서비스
         self.market_clock = market_clock # 시간 포맷 변환 등 유틸
         self.log = logger
         self.cfg = config or VolumeBreakoutConfig()
+        self.backtest_journal_repository = backtest_journal_repository
 
     # -------------------------
     # 내부 유틸 함수
@@ -166,5 +169,33 @@ class VolumeBreakoutStrategy:
             "trailing_stop_pct": float(ts_pct),
             "sl_pct": float(sl),
         }
+        journal_record = normalize_backtest_trade(
+            trade,
+            stock_code=stock_code,
+            strategy="VolumeBreakout",
+        )
+        journal_records = [journal_record]
+        if self.backtest_journal_repository is not None:
+            self.backtest_journal_repository.save_run(
+                journal_records,
+                run_id=f"VolumeBreakout_{stock_code}_{day_label}",
+                strategy="VolumeBreakout",
+                target_date=day_label,
+                metadata={
+                    "stock_code": stock_code,
+                    "session": session,
+                    "trigger_pct": float(trigger),
+                    "trailing_stop_pct": float(ts_pct),
+                    "sl_pct": float(sl),
+                },
+            )
 
-        return {"ok": True, "message": "success", "stock_code": stock_code, "date": day_label, "equity": 1.0 + ret, "trades": [trade]}
+        return {
+            "ok": True,
+            "message": "success",
+            "stock_code": stock_code,
+            "date": day_label,
+            "equity": 1.0 + ret,
+            "trades": [trade],
+            "journal_records": journal_records,
+        }

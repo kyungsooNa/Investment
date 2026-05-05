@@ -163,5 +163,6 @@ def format_json(report: DebugReport) -> str:
             for e in report.events
         ],
         "limitations": report.limitations,
+        "journal_records": report.journal_records,
     }
     return json.dumps(data, ensure_ascii=False, indent=2, default=_serialize)

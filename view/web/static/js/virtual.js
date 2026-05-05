@@ -17,6 +17,8 @@ let selectedVirtualStrategies = new Set(['ALL']);
 let allVirtualStrategies = [];
 let currentVirtualHoldData = [];
 let currentVirtualSoldData = [];
+let virtualJournalMeta = { count: 0, total_count: 0 };
+let virtualDivergenceReport = null;
 
 // 모의투자 데이터 자동 갱신 (5분마다)
 let _virtualRefreshInterval = null;
@@ -127,6 +129,8 @@ async function loadVirtualHistory(forceCode = null) {
             }
         });
         applyVirtualFilter();
+        loadVirtualDivergence({ silent: true });
+        loadVirtualBacktestJournalRuns();
 
         const section = document.getElementById('section-virtual');
         if (section) section.querySelectorAll('table').forEach(ensureTableInCard);
@@ -139,6 +143,259 @@ async function loadVirtualHistory(forceCode = null) {
     }
     return null;
 }
+
+function escapeVirtualHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function formatVirtualPct(value, digits = 2) {
+    if (value === null || value === undefined || value === '') return '-';
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '-';
+    return `${num > 0 ? '+' : ''}${num.toFixed(digits)}%`;
+}
+
+function formatVirtualWon(value) {
+    if (value === null || value === undefined || value === '') return '-';
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '-';
+    return `${num > 0 ? '+' : ''}${Math.round(num).toLocaleString()}원`;
+}
+
+function divergenceColorClass(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '';
+    return num > 0 ? 'text-positive' : (num < 0 ? 'text-negative' : '');
+}
+
+function renderVirtualDivergence(report = virtualDivergenceReport) {
+    const summaryEl = document.getElementById('virtual-divergence-summary');
+    const bodyEl = document.getElementById('virtual-divergence-body');
+    if (!summaryEl || !bodyEl) return;
+
+    const summary = report?.summary || {};
+    const backtestCount = summary.backtest_count ?? 0;
+    const liveCount = summary.live_count ?? virtualJournalMeta.total_count ?? 0;
+    const matchedCount = summary.matched_count ?? 0;
+    const unmatchedBacktestCount = summary.unmatched_backtest_count ?? 0;
+    const unmatchedLiveCount = summary.unmatched_live_count ?? 0;
+
+    summaryEl.innerHTML = `
+        <div style="display:flex; justify-content:center; align-items:stretch; gap:10px; flex-wrap:wrap;">
+            <div style="background-color:#000; color:#fff; padding:10px 14px; border:1px solid #30363d; border-radius:8px; min-width:115px;">
+                <div style="font-size:0.8em; color:#a0a0b0; margin-bottom:4px;">실거래 journal</div>
+                <strong>${liveCount}</strong>건
+            </div>
+            <div style="background-color:#000; color:#fff; padding:10px 14px; border:1px solid #30363d; border-radius:8px; min-width:115px;">
+                <div style="font-size:0.8em; color:#a0a0b0; margin-bottom:4px;">백테스트 journal</div>
+                <strong>${backtestCount}</strong>건
+            </div>
+            <div style="background-color:#000; color:#fff; padding:10px 14px; border:1px solid #30363d; border-radius:8px; min-width:115px;">
+                <div style="font-size:0.8em; color:#a0a0b0; margin-bottom:4px;">매칭</div>
+                <strong>${matchedCount}</strong>건
+            </div>
+            <div style="background-color:#000; color:#fff; padding:10px 14px; border:1px solid #30363d; border-radius:8px; min-width:130px;">
+                <div style="font-size:0.8em; color:#a0a0b0; margin-bottom:4px;">평균 순수익률 차이</div>
+                <strong class="${divergenceColorClass(summary.avg_net_return_diff)}">${formatVirtualPct(summary.avg_net_return_diff)}</strong>
+            </div>
+            <div style="background-color:#000; color:#fff; padding:10px 14px; border:1px solid #30363d; border-radius:8px; min-width:130px;">
+                <div style="font-size:0.8em; color:#a0a0b0; margin-bottom:4px;">순손익 차이 합계</div>
+                <strong class="${divergenceColorClass(summary.total_net_pnl_diff)}">${formatVirtualWon(summary.total_net_pnl_diff)}</strong>
+            </div>
+            <div style="background-color:#000; color:#fff; padding:10px 14px; border:1px solid #30363d; border-radius:8px; min-width:120px;">
+                <div style="font-size:0.8em; color:#a0a0b0; margin-bottom:4px;">미매칭</div>
+                <strong>${unmatchedBacktestCount + unmatchedLiveCount}</strong>건
+            </div>
+        </div>
+    `;
+
+    const rows = [];
+    (report?.matches || []).forEach(row => {
+        rows.push({
+            status: 'MATCH',
+            strategy: row.strategy,
+            code: row.code,
+            tradeDate: row.trade_date,
+            backtestReturn: row.backtest_net_return,
+            liveReturn: row.live_net_return,
+            diff: row.net_return_diff,
+            fillDiff: row.fill_price_diff_pct,
+        });
+    });
+    (report?.unmatched_backtest || []).forEach(row => {
+        rows.push({
+            status: 'BACKTEST',
+            strategy: row.strategy,
+            code: row.code,
+            tradeDate: String(row.signal_time || '').slice(0, 10),
+            backtestReturn: row.net_return,
+            liveReturn: null,
+            diff: null,
+            fillDiff: null,
+        });
+    });
+    (report?.unmatched_live || []).forEach(row => {
+        rows.push({
+            status: 'LIVE',
+            strategy: row.strategy,
+            code: row.code,
+            tradeDate: String(row.signal_time || '').slice(0, 10),
+            backtestReturn: null,
+            liveReturn: row.net_return,
+            diff: null,
+            fillDiff: null,
+        });
+    });
+
+    if (rows.length === 0) {
+        bodyEl.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:15px;">비교 대기</td></tr>';
+        return;
+    }
+
+    bodyEl.innerHTML = rows.slice(0, 100).map(row => `
+        <tr>
+            <td>${escapeVirtualHtml(row.status)}</td>
+            <td>${escapeVirtualHtml(row.strategy)}</td>
+            <td>${escapeVirtualHtml(row.code)}</td>
+            <td>${escapeVirtualHtml(row.tradeDate)}</td>
+            <td>${formatVirtualPct(row.backtestReturn)}</td>
+            <td>${formatVirtualPct(row.liveReturn)}</td>
+            <td class="${divergenceColorClass(row.diff)}"><strong>${formatVirtualPct(row.diff)}</strong></td>
+            <td>${formatVirtualPct(row.fillDiff, 4)}</td>
+        </tr>
+    `).join('');
+}
+
+async function loadVirtualDivergence(options = {}) {
+    const summaryEl = document.getElementById('virtual-divergence-summary');
+    if (!summaryEl) return;
+
+    if (!options.silent) {
+        showLoading(summaryEl, '괴리 데이터 로드 중...');
+    }
+
+    try {
+        const journalRes = await fetchWithTimeout('/api/virtual/journal?limit=500', {}, 15000);
+        if (journalRes.ok) {
+            const journalBody = await journalRes.json();
+            virtualJournalMeta = {
+                count: journalBody.count || 0,
+                total_count: journalBody.total_count || 0,
+            };
+        }
+
+        const input = document.getElementById('virtual-backtest-journal-input');
+        if (input && input.value.trim()) {
+            await compareVirtualDivergence();
+        } else {
+            virtualDivergenceReport = null;
+            renderVirtualDivergence(null);
+        }
+    } catch (error) {
+        console.error('[Virtual] divergence load failed:', error);
+        summaryEl.innerText = '괴리 데이터 로드 실패';
+    }
+}
+
+window.loadVirtualDivergence = loadVirtualDivergence;
+
+async function loadVirtualBacktestJournalRuns() {
+    const select = document.getElementById('virtual-backtest-run-select');
+    if (!select) return;
+
+    try {
+        const response = await fetchWithTimeout('/api/virtual/backtest-journals?limit=50', {}, 15000);
+        if (!response.ok) {
+            throw new Error(`Backtest journal list API ${response.status}`);
+        }
+        const body = await response.json();
+        const runs = body.runs || [];
+        if (runs.length === 0) {
+            select.innerHTML = '<option value="">저장된 백테스트 없음</option>';
+            return;
+        }
+        select.innerHTML = [
+            '<option value="">저장된 백테스트 선택</option>',
+            ...runs.map(run => {
+                const label = [
+                    run.target_date || '날짜없음',
+                    run.strategy || '전략없음',
+                    `${run.record_count || 0}건`,
+                ].join(' / ');
+                return `<option value="${escapeVirtualHtml(run.run_id)}">${escapeVirtualHtml(label)}</option>`;
+            }),
+        ].join('');
+    } catch (error) {
+        console.error('[Virtual] backtest journal runs load failed:', error);
+        select.innerHTML = '<option value="">백테스트 목록 로드 실패</option>';
+    }
+}
+
+window.loadVirtualBacktestJournalRuns = loadVirtualBacktestJournalRuns;
+
+window.loadVirtualBacktestJournalRun = async function() {
+    const select = document.getElementById('virtual-backtest-run-select');
+    const input = document.getElementById('virtual-backtest-journal-input');
+    const summaryEl = document.getElementById('virtual-divergence-summary');
+    if (!select || !input) return;
+
+    const runId = select.value;
+    if (!runId) return;
+
+    try {
+        if (summaryEl) showLoading(summaryEl, '백테스트 journal 불러오는 중...');
+        const response = await fetchWithTimeout(`/api/virtual/backtest-journals/${encodeURIComponent(runId)}`, {}, 15000);
+        if (!response.ok) {
+            throw new Error(`Backtest journal records API ${response.status}`);
+        }
+        const body = await response.json();
+        input.value = JSON.stringify(body.records || [], null, 2);
+        await compareVirtualDivergence();
+    } catch (error) {
+        console.error('[Virtual] backtest journal run load failed:', error);
+        if (summaryEl) summaryEl.innerText = '백테스트 journal 로드 실패';
+    }
+};
+
+window.compareVirtualDivergence = async function() {
+    const input = document.getElementById('virtual-backtest-journal-input');
+    const summaryEl = document.getElementById('virtual-divergence-summary');
+    if (!input || !summaryEl) return;
+
+    let backtestRecords = [];
+    try {
+        const raw = input.value.trim();
+        backtestRecords = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(backtestRecords)) {
+            throw new Error('journal payload must be an array');
+        }
+    } catch (error) {
+        summaryEl.innerText = 'JSON 형식 오류';
+        return;
+    }
+
+    showLoading(summaryEl, '괴리 비교 중...');
+    try {
+        const response = await fetchWithTimeout('/api/virtual/backtest-divergence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(backtestRecords),
+        }, 30000);
+        if (!response.ok) {
+            throw new Error(`Divergence API ${response.status}`);
+        }
+        virtualDivergenceReport = await response.json();
+        renderVirtualDivergence(virtualDivergenceReport);
+    } catch (error) {
+        console.error('[Virtual] divergence compare failed:', error);
+        summaryEl.innerText = '괴리 비교 실패';
+    }
+};
 
 // 보유일 계산 유틸
 function calcDaysHeld(buyDateStr, endDateStr) {

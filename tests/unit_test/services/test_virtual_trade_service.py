@@ -298,6 +298,46 @@ async def test_facade_delegation(virtual_trade_service, mock_repo):
     mock_repo.log_sell_async.assert_awaited_with("005930", 1200)
 
 
+def test_get_standard_journal_records_delegates_to_repo(virtual_trade_service, mock_repo):
+    """표준 journal 조회는 repository로 위임한다."""
+    mock_repo.get_standard_journal_records.return_value = [{"code": "005930"}]
+
+    result = virtual_trade_service.get_standard_journal_records()
+
+    mock_repo.get_standard_journal_records.assert_called_once_with()
+    assert result == [{"code": "005930"}]
+
+
+def test_compare_with_backtest_journal_uses_standard_live_records(virtual_trade_service, mock_repo):
+    """백테스트 journal과 현재 원장을 표준 schema 기준으로 비교한다."""
+    backtest = [{
+        "schema_version": 1,
+        "source": "backtest",
+        "strategy": "S1",
+        "code": "005930",
+        "signal_time": "2026-05-05 09:10:00",
+        "net_return": 2.0,
+        "net_pnl": 2000.0,
+        "fill_price": 10200.0,
+    }]
+    mock_repo.get_standard_journal_records.return_value = [{
+        "schema_version": 1,
+        "source": "virtual_trade",
+        "strategy": "S1",
+        "code": "005930",
+        "signal_time": "2026-05-05 09:15:00",
+        "net_return": 1.0,
+        "net_pnl": 1000.0,
+        "fill_price": 10100.0,
+    }]
+
+    report = virtual_trade_service.compare_with_backtest_journal(backtest)
+
+    assert report["summary"]["matched_count"] == 1
+    assert report["matches"][0]["net_return_diff"] == -1.0
+    mock_repo.get_standard_journal_records.assert_called_once_with()
+
+
 def test_sync_live_strategy_positions_delegates_to_repo(virtual_trade_service, mock_repo):
     """live 전략 포지션 sync 요청은 repository로 위임한다."""
     mock_repo.sync_live_strategy_positions.return_value = [{"code": "489790"}]

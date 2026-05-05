@@ -896,6 +896,95 @@ async def test_get_virtual_history_non_dict_batch_item_and_na_rate(web_client, m
     assert trade["daily_change_rate"] == 0.0
 
 
+def test_get_virtual_standard_journal(web_client, mock_web_ctx):
+    """GET /api/virtual/journal 은 표준 journal records를 반환한다."""
+    mock_web_ctx.virtual_trade_service.get_standard_journal_records.return_value = [
+        {"source": "virtual_trade", "code": "005930", "net_return": 1.2},
+        {"source": "virtual_trade", "code": "000660", "net_return": -0.5},
+    ]
+
+    response = web_client.get("/api/virtual/journal?limit=1")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 1
+    assert data["total_count"] == 2
+    assert data["records"] == [{"source": "virtual_trade", "code": "000660", "net_return": -0.5}]
+    mock_web_ctx.virtual_trade_service.get_standard_journal_records.assert_called_once_with()
+
+
+def test_get_virtual_standard_journal_without_service(web_client, mock_web_ctx):
+    """VirtualTradeService 미초기화 시 빈 표준 journal을 반환한다."""
+    with patch("view.web.routes.virtual._get_ctx", return_value=mock_web_ctx):
+        mock_web_ctx.virtual_trade_service = None
+
+        response = web_client.get("/api/virtual/journal")
+
+    assert response.status_code == 200
+    assert response.json() == {"records": [], "count": 0, "total_count": 0}
+
+
+def test_post_virtual_backtest_divergence(web_client, mock_web_ctx):
+    """POST /api/virtual/backtest-divergence 는 백테스트 journal payload와 현재 원장을 비교한다."""
+    mock_web_ctx.virtual_trade_service.compare_with_backtest_journal.return_value = {
+        "summary": {"matched_count": 1, "avg_net_return_diff": -1.0},
+        "matches": [{"code": "005930"}],
+        "unmatched_backtest": [],
+        "unmatched_live": [],
+    }
+    payload = [{"source": "backtest", "code": "005930"}]
+
+    response = web_client.post("/api/virtual/backtest-divergence", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["matched_count"] == 1
+    mock_web_ctx.virtual_trade_service.compare_with_backtest_journal.assert_called_once_with(payload)
+
+
+def test_post_virtual_backtest_divergence_without_service(web_client, mock_web_ctx):
+    """VirtualTradeService 미초기화 시 빈 divergence report를 반환한다."""
+    with patch("view.web.routes.virtual._get_ctx", return_value=mock_web_ctx):
+        mock_web_ctx.virtual_trade_service = None
+
+        response = web_client.post("/api/virtual/backtest-divergence", json=[{"code": "005930"}])
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["matched_count"] == 0
+    assert response.json()["unmatched_backtest"][0]["code"] == "005930"
+
+
+def test_get_virtual_backtest_journal_runs(web_client, mock_web_ctx):
+    """저장된 백테스트 journal run 목록을 반환한다."""
+    mock_web_ctx.backtest_journal_repository = MagicMock()
+    mock_web_ctx.backtest_journal_repository.list_runs.return_value = [
+        {"run_id": "run1", "strategy": "VolumeBreakout", "record_count": 1}
+    ]
+
+    response = web_client.get("/api/virtual/backtest-journals?limit=1")
+
+    assert response.status_code == 200
+    assert response.json()["runs"][0]["run_id"] == "run1"
+    mock_web_ctx.backtest_journal_repository.list_runs.assert_called_once_with(limit=1)
+
+
+def test_get_virtual_backtest_journal_records(web_client, mock_web_ctx):
+    """저장된 백테스트 journal run의 records를 반환한다."""
+    mock_web_ctx.backtest_journal_repository = MagicMock()
+    mock_web_ctx.backtest_journal_repository.load_records.return_value = [
+        {"source": "backtest", "code": "005930"}
+    ]
+
+    response = web_client.get("/api/virtual/backtest-journals/run1")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "run_id": "run1",
+        "records": [{"source": "backtest", "code": "005930"}],
+        "count": 1,
+    }
+    mock_web_ctx.backtest_journal_repository.load_records.assert_called_once_with("run1")
+
+
 @pytest.mark.asyncio
 async def test_get_stage3_alerts_paths(web_client, mock_web_ctx):
     """Stage3 alerts의 미초기화/빈보유/정상/예외 분기 검증."""

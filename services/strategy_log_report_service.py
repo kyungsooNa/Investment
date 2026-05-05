@@ -9,7 +9,9 @@ import os
 import re
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from common.trade_journal_comparison import compare_trade_journals
 
 
 def _esc(value: Any) -> str:
@@ -254,11 +256,13 @@ class StrategyLogReportService:
         stock_code_repo: Optional[Any] = None,
         virtual_trade_service: Optional[Any] = None,
         execution_quality_config: Optional[Any] = None,
+        backtest_journal_provider: Optional[Callable[[str], List[dict]]] = None,
     ):
         self._log_dir = log_dir
         self._stock_code_repo = stock_code_repo
         self._virtual_trade_service = virtual_trade_service
         self._execution_quality_config = execution_quality_config
+        self._backtest_journal_provider = backtest_journal_provider
         self._last_execution_quality_candidates: List[dict] = []
 
     def get_last_execution_quality_candidates(self) -> List[dict]:
@@ -423,12 +427,14 @@ class StrategyLogReportService:
                 normal_solds.append(trade)
 
         if normal_solds:
-            avg_return = sum(float(t.get('return_rate') or 0.0) for t in normal_solds) / len(normal_solds)
-            lines.append(f"• 당일 청산: {len(normal_solds)}건 (평균 수익률 {avg_return:+.2f}%)")
+            uses_net_return = any(t.get('net_return') not in (None, "") for t in normal_solds)
+            avg_return = sum(self._trade_return_pct(t) for t in normal_solds) / len(normal_solds)
+            return_label = "순수익률" if uses_net_return else "수익률"
+            lines.append(f"• 당일 청산: {len(normal_solds)}건 (평균 {return_label} {avg_return:+.2f}%)")
             for t in normal_solds[:_MAX_SOLD_DETAILS_SHOWN]:
                 code = str(t.get('code', '')).strip()
                 name = self._db_resolve(code, str(t.get('name') or code))
-                rr = float(t.get('return_rate') or 0.0)
+                rr = self._trade_return_pct(t)
                 try:
                     sp = int(float(t.get('sell_price') or 0))
                     sp_str = f" @ ₩{sp:,}" if sp else ""
@@ -458,6 +464,82 @@ class StrategyLogReportService:
             lines.append(f"• 현재 보유: {len(hold_codes)}종목")
         else:
             lines.append("• 현재 보유: 없음")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _trade_return_pct(trade: dict) -> float:
+        value = trade.get('net_return')
+        if value in (None, ""):
+            value = trade.get('return_rate')
+        try:
+            return float(value or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _build_backtest_live_divergence_section(self, target_date: str) -> Optional[str]:
+        if not self._virtual_trade_service or not self._backtest_journal_provider:
+            return None
+
+        try:
+            backtest_records = self._backtest_journal_provider(target_date) or []
+        except Exception:
+            return None
+        if not backtest_records:
+            return None
+
+        try:
+            if hasattr(self._virtual_trade_service, "compare_with_backtest_journal"):
+                report = self._virtual_trade_service.compare_with_backtest_journal(backtest_records)
+            else:
+                live_records = self._virtual_trade_service.get_standard_journal_records()
+                report = compare_trade_journals(backtest_records, live_records)
+        except Exception:
+            return None
+
+        summary = report.get("summary") or {}
+        matched = int(summary.get("matched_count") or 0)
+        unmatched_backtest = int(summary.get("unmatched_backtest_count") or 0)
+        unmatched_live = int(summary.get("unmatched_live_count") or 0)
+        if matched == 0 and unmatched_backtest == 0 and unmatched_live == 0:
+            return None
+
+        lines = [
+            "<b>📊 백테스트-실거래 괴리</b>",
+            f"• 매칭: {matched}건, 백테스트만 {unmatched_backtest}건, 실거래만 {unmatched_live}건",
+        ]
+
+        avg_diff = summary.get("avg_net_return_diff")
+        avg_abs_diff = summary.get("avg_abs_net_return_diff")
+        if avg_diff is not None:
+            abs_part = f", 절대 {float(avg_abs_diff):.2f}%p" if avg_abs_diff is not None else ""
+            lines.append(f"• 평균 순수익률 괴리: {float(avg_diff):+.2f}%p{abs_part}")
+
+        fill_diff = summary.get("avg_fill_price_diff_pct")
+        if fill_diff is not None:
+            lines.append(f"• 평균 체결가 괴리: {float(fill_diff):+.4f}%")
+
+        pnl_diff = summary.get("total_net_pnl_diff")
+        if pnl_diff is not None:
+            lines.append(f"• 총 순손익 괴리: {int(round(float(pnl_diff))):+,}원")
+
+        matches = report.get("matches") or []
+        ranked = sorted(
+            [row for row in matches if row.get("net_return_diff") is not None],
+            key=lambda row: abs(float(row.get("net_return_diff") or 0.0)),
+            reverse=True,
+        )
+        for row in ranked[:3]:
+            strategy = _esc(row.get("strategy") or "")
+            code = _esc(row.get("code") or "")
+            net_part = f"순수익률 {float(row.get('net_return_diff') or 0.0):+.2f}%p"
+            fill_part = ""
+            if row.get("fill_price_diff_pct") is not None:
+                fill_part = f", 체결가 {float(row.get('fill_price_diff_pct')):+.4f}%"
+            pnl_part = ""
+            if row.get("net_pnl_diff") is not None:
+                pnl_part = f", 순손익 {int(round(float(row.get('net_pnl_diff')))):+,}원"
+            lines.append(f"  - {strategy}/{code}: {net_part}{fill_part}{pnl_part}")
 
         return "\n".join(lines)
 
@@ -1027,10 +1109,11 @@ class StrategyLogReportService:
         if system_warnings:
             warnings_section = "<b>⚠️ 시스템 경고</b>\n" + "\n".join(system_warnings)
         execution_quality_section = self._build_execution_quality_section(execution_quality_records)
+        divergence_section = self._build_backtest_live_divergence_section(target_date)
 
         if not active_sections:
             extra_sections = [
-                section for section in (warnings_section, execution_quality_section) if section
+                section for section in (warnings_section, divergence_section, execution_quality_section) if section
             ]
             extra_body = "\n\n".join(extra_sections)
             extra = f"\n\n{extra_body}" if extra_body else ""
@@ -1044,6 +1127,8 @@ class StrategyLogReportService:
         portfolio_summary = self._build_portfolio_summary(target_date, fallback_buys)
         if portfolio_summary:
             body += f"\n\n{portfolio_summary}"
+        if divergence_section:
+            body += f"\n\n{divergence_section}"
         if execution_quality_section:
             body += f"\n\n{execution_quality_section}"
 

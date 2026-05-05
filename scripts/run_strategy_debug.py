@@ -63,6 +63,7 @@ def _parse_args() -> argparse.Namespace:
 
 async def _run(args: argparse.Namespace) -> None:
     from scripts._bootstrap import bootstrap_pp_strategy, make_stdout_logger
+    from repositories.backtest_journal_repository import BacktestJournalRepository
     from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
     from strategies.debug.strategy_debug_runner import StrategyDebugRunner
     from strategies.debug.rejection_report import format_console, format_json
@@ -98,7 +99,13 @@ async def _run(args: argparse.Namespace) -> None:
             state_file=os.path.join(tmp_dir, "pp_position_state.json"),
         )
 
-        runner = StrategyDebugRunner(strategy, debug_logger)
+        target_date = market_clock.get_current_kst_time().strftime("%Y%m%d")
+        runner = StrategyDebugRunner(
+            strategy,
+            debug_logger,
+            backtest_journal_repository=BacktestJournalRepository(),
+            target_date=target_date,
+        )
         print("[INFO] 전략 스캔 실행 중...\n")
         report = await runner.run(candidate_codes)
 

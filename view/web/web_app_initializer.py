@@ -12,6 +12,7 @@ from services.stock_query_service import StockQueryService
 from services.streaming_service import StreamingService
 from services.order_execution_service import OrderExecutionService
 from repositories.virtual_trade_repository import VirtualTradeRepository
+from repositories.backtest_journal_repository import BacktestJournalRepository
 from services.virtual_trade_service import VirtualTradeService
 from repositories.stock_code_repository import StockCodeRepository
 from repositories.rs_rating_repository import RSRatingRepository
@@ -99,6 +100,7 @@ class WebAppContext:
         self.data_quality_service: DataQualityService = None
         self.indicator_service: IndicatorService = None
         self.virtual_repo = VirtualTradeRepository()
+        self.backtest_journal_repository = BacktestJournalRepository()
         self.virtual_trade_service = VirtualTradeService(repository=self.virtual_repo, market_clock=self.market_clock)
         self.virtual_trade_service.backfill_snapshots()  # 과거 CSV 기반 스냅샷 역산
         self.stock_code_repository = StockCodeRepository(logger=self.logger)
@@ -586,6 +588,7 @@ class WebAppContext:
                     log_dir=os.path.join(self.logger.log_dir, "strategies"),
                     stock_code_repo=self.stock_code_repository,
                     virtual_trade_service=self.virtual_trade_service,
+                    backtest_journal_provider=self.backtest_journal_repository.load_records_for_date,
                     execution_quality_config=getattr(self.full_config, "execution_quality_report", None),
                 ),
                 notification_service=self.notification_service,
