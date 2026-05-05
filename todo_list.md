@@ -42,8 +42,8 @@
   - 완료된 부분: 표준 필드 version 1을 정의하고 virtual trade / VolumeBreakout backtest 변환 테스트를 추가했다.
   - 진행 필요: 다른 전략과 주문 체결 로그의 누락 필드를 채운다.
 - [~] 실거래 로그와 백테스트 로그를 같은 schema로 맞춰 backtest-vs-live 괴리 리포트를 생성한다.
-  - 완료된 부분: VolumeBreakout 단일일자 백테스트 결과에 `journal_records`를 추가했다.
-  - 진행 필요: 괴리 리포트 생성 로직을 구현한다.
+  - 완료된 부분: VolumeBreakout 단일일자 백테스트 결과에 `journal_records`를 추가하고, `common.trade_journal_comparison.compare_trade_journals()`로 전략/종목/거래일 기준 괴리 리포트를 생성한다.
+  - 진행 필요: 괴리 리포트를 after-market 리포트와 운영 UI에 연결한다.
 - [~] 수수료, 거래세, 슬리피지 반영 후 순수익을 기본 성과로 사용한다.
   - 완료된 부분: 표준 journal record에 `cost`, `net_pnl`, `net_return`을 계산해 포함한다.
   - 진행 필요: 전략별 리포트/대시보드 집계의 기본값을 net 기준으로 전환한다.
