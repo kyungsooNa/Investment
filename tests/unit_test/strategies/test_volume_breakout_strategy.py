@@ -74,6 +74,10 @@ class TestVolumeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(trades[0]["outcome"], "trailing_stop")
         self.assertEqual(trades[0]["entry_px"], 11000.0)
         self.assertEqual(trades[0]["exit_px"], 11300.0)
+        self.assertEqual(len(result["journal_records"]), 1)
+        self.assertEqual(result["journal_records"][0]["source"], "backtest")
+        self.assertEqual(result["journal_records"][0]["code"], "005930")
+        self.assertEqual(result["journal_records"][0]["decision_reason"], "trailing_stop")
 
     async def test_backtest_stop_loss(self):
         """손절 테스트"""

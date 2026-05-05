@@ -35,10 +35,18 @@
 
 ### 0-2. 백테스트와 실거래 journal schema 표준화
 
-- [ ] 백테스트와 실거래/모의거래 성과를 같은 포맷으로 저장한다.
-- [ ] 전략별 trade journal 표준 필드를 확정한다: `signal_time`, `decision_reason`, `rejected_reason`, `order_price`, `fill_price`, `cost`, `net_pnl`, `net_return`, `MFE`, `MAE`.
-- [ ] 실거래 로그와 백테스트 로그를 같은 schema로 맞춰 backtest-vs-live 괴리 리포트를 생성한다.
-- [ ] 수수료, 거래세, 슬리피지 반영 후 순수익을 기본 성과로 사용한다.
+- [~] 백테스트와 실거래/모의거래 성과를 같은 포맷으로 변환한다.
+  - 완료된 부분: `common.trade_journal_schema`에 표준 journal normalizer를 추가하고, `VirtualTradeRepository` / `VirtualTradeService`에서 표준 journal 조회를 제공한다.
+  - 진행 필요: 모든 백테스트/실거래 저장 경로가 표준 schema를 직접 저장하도록 확장한다.
+- [~] 전략별 trade journal 표준 필드를 확정한다: `signal_time`, `decision_reason`, `rejected_reason`, `order_price`, `fill_price`, `cost`, `net_pnl`, `net_return`, `MFE`, `MAE`.
+  - 완료된 부분: 표준 필드 version 1을 정의하고 virtual trade / VolumeBreakout backtest 변환 테스트를 추가했다.
+  - 진행 필요: 다른 전략과 주문 체결 로그의 누락 필드를 채운다.
+- [~] 실거래 로그와 백테스트 로그를 같은 schema로 맞춰 backtest-vs-live 괴리 리포트를 생성한다.
+  - 완료된 부분: VolumeBreakout 단일일자 백테스트 결과에 `journal_records`를 추가했다.
+  - 진행 필요: 괴리 리포트 생성 로직을 구현한다.
+- [~] 수수료, 거래세, 슬리피지 반영 후 순수익을 기본 성과로 사용한다.
+  - 완료된 부분: 표준 journal record에 `cost`, `net_pnl`, `net_return`을 계산해 포함한다.
+  - 진행 필요: 전략별 리포트/대시보드 집계의 기본값을 net 기준으로 전환한다.
 
 주요 파일:
 

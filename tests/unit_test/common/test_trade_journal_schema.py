@@ -1,0 +1,106 @@
+import pytest
+
+from common.trade_journal_schema import (
+    STANDARD_TRADE_JOURNAL_FIELDS,
+    normalize_backtest_trade,
+    normalize_virtual_trade,
+)
+
+
+def test_normalize_virtual_trade_outputs_standard_schema_with_net_values():
+    trade = {
+        "strategy": "S1",
+        "code": "005930",
+        "buy_date": "2026-05-05 09:10:00",
+        "buy_price": 10000,
+        "qty": 10,
+        "sell_date": "2026-05-05 10:00:00",
+        "sell_price": 11000,
+        "return_rate": 10.0,
+        "status": "SOLD",
+        "reason": "target_hit",
+        "mfe_pct": 12.5,
+        "mae_pct": -1.2,
+    }
+
+    normalized = normalize_virtual_trade(trade)
+
+    assert tuple(normalized.keys()) == STANDARD_TRADE_JOURNAL_FIELDS
+    assert normalized["schema_version"] == 1
+    assert normalized["source"] == "virtual_trade"
+    assert normalized["strategy"] == "S1"
+    assert normalized["code"] == "005930"
+    assert normalized["signal_time"] == "2026-05-05 09:10:00"
+    assert normalized["decision_reason"] == "target_hit"
+    assert normalized["rejected_reason"] == ""
+    assert normalized["order_price"] == 10000.0
+    assert normalized["fill_price"] == 11000.0
+    assert normalized["qty"] == 10
+    assert normalized["gross_pnl"] == 10000.0
+    assert normalized["net_pnl"] < normalized["gross_pnl"]
+    assert normalized["net_return"] < normalized["gross_return"]
+    assert normalized["mfe"] == 12.5
+    assert normalized["mae"] == -1.2
+
+
+def test_normalize_failed_virtual_trade_uses_rejected_reason():
+    trade = {
+        "strategy": "S1",
+        "code": "005930",
+        "buy_date": "2026-05-05 09:10:00",
+        "buy_price": 10000,
+        "qty": 3,
+        "sell_date": None,
+        "sell_price": None,
+        "return_rate": 0.0,
+        "status": "FAILED",
+        "reason": "risk_gate_blocked",
+    }
+
+    normalized = normalize_virtual_trade(trade)
+
+    assert normalized["status"] == "FAILED"
+    assert normalized["decision_reason"] == ""
+    assert normalized["rejected_reason"] == "risk_gate_blocked"
+    assert normalized["fill_price"] is None
+    assert normalized["gross_pnl"] is None
+    assert normalized["net_pnl"] is None
+
+
+def test_normalize_backtest_trade_matches_standard_schema():
+    trade = {
+        "entry_time": "20260505 091000",
+        "entry_px": 10000,
+        "exit_time": "20260505 100000",
+        "exit_px": 9500,
+        "outcome": "stop_loss",
+        "ret_pct": -5.0,
+        "mfe_pct": 1.5,
+        "mae_pct": -6.0,
+    }
+
+    normalized = normalize_backtest_trade(
+        trade,
+        stock_code="005930",
+        strategy="VolumeBreakout",
+        qty=2,
+    )
+
+    assert tuple(normalized.keys()) == STANDARD_TRADE_JOURNAL_FIELDS
+    assert normalized["source"] == "backtest"
+    assert normalized["strategy"] == "VolumeBreakout"
+    assert normalized["code"] == "005930"
+    assert normalized["signal_time"] == "20260505 091000"
+    assert normalized["decision_reason"] == "stop_loss"
+    assert normalized["order_price"] == 10000.0
+    assert normalized["fill_price"] == 9500.0
+    assert normalized["qty"] == 2
+    assert normalized["gross_pnl"] == -1000.0
+    assert normalized["net_pnl"] < normalized["gross_pnl"]
+    assert normalized["mfe"] == 1.5
+    assert normalized["mae"] == -6.0
+
+
+def test_normalize_backtest_trade_requires_prices():
+    with pytest.raises(ValueError):
+        normalize_backtest_trade({"entry_px": 10000}, stock_code="005930")

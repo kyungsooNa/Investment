@@ -160,6 +160,7 @@ class VirtualTradeService:
     def backfill_snapshots(self): return self._repo.backfill_snapshots()
     def save_daily_snapshot(self, strategy_returns: dict): return self._repo.save_daily_snapshot(strategy_returns)
     def sync_live_strategy_positions(self): return self._repo.sync_live_strategy_positions()
+    def get_standard_journal_records(self): return self._repo.get_standard_journal_records()
     def _load_data(self): return self._repo._load_data()
     def _save_data(self, data: dict): return self._repo._save_data(data)
 

@@ -298,6 +298,16 @@ async def test_facade_delegation(virtual_trade_service, mock_repo):
     mock_repo.log_sell_async.assert_awaited_with("005930", 1200)
 
 
+def test_get_standard_journal_records_delegates_to_repo(virtual_trade_service, mock_repo):
+    """표준 journal 조회는 repository로 위임한다."""
+    mock_repo.get_standard_journal_records.return_value = [{"code": "005930"}]
+
+    result = virtual_trade_service.get_standard_journal_records()
+
+    mock_repo.get_standard_journal_records.assert_called_once_with()
+    assert result == [{"code": "005930"}]
+
+
 def test_sync_live_strategy_positions_delegates_to_repo(virtual_trade_service, mock_repo):
     """live 전략 포지션 sync 요청은 repository로 위임한다."""
     mock_repo.sync_live_strategy_positions.return_value = [{"code": "489790"}]

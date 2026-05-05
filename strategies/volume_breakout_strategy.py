@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Literal, Callable
+from common.trade_journal_schema import normalize_backtest_trade
 from strategies.base_strategy_config import BaseStrategyConfig
 
 # ===============================
@@ -166,5 +167,18 @@ class VolumeBreakoutStrategy:
             "trailing_stop_pct": float(ts_pct),
             "sl_pct": float(sl),
         }
+        journal_record = normalize_backtest_trade(
+            trade,
+            stock_code=stock_code,
+            strategy="VolumeBreakout",
+        )
 
-        return {"ok": True, "message": "success", "stock_code": stock_code, "date": day_label, "equity": 1.0 + ret, "trades": [trade]}
+        return {
+            "ok": True,
+            "message": "success",
+            "stock_code": stock_code,
+            "date": day_label,
+            "equity": 1.0 + ret,
+            "trades": [trade],
+            "journal_records": [journal_record],
+        }
