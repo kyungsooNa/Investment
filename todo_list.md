@@ -48,7 +48,8 @@
   - 완료된 부분: 모의투자 화면에 backtest-vs-live 괴리 요약/테이블과 백테스트 journal JSON 비교 실행 UI를 연결했다.
   - 완료된 부분: `BacktestJournalRepository`를 추가해 백테스트 journal run을 `data/backtest_journals`에 저장/조회하고, `/api/virtual/backtest-journals` 목록/records API와 모의투자 화면 선택 불러오기를 연결했다.
   - 완료된 부분: Web 초기화 시 `StrategyLogReportService`의 backtest journal provider를 저장소의 날짜별 records 조회로 연결했다.
-  - 진행 필요: VolumeBreakout 외 다른 백테스트 실행 경로도 표준 journal 저장소에 저장하도록 확장한다.
+  - 완료된 부분: `MomentumStrategy` backtest 모드는 성공/실패 후보를 표준 decision journal(`SIGNAL`/`REJECTED`, `decision_reason`/`rejected_reason`)로 저장소에 기록한다.
+  - 진행 필요: O'Neil/Minervini 계열 debug/backtest 경로도 `rejected_reason` 중심 decision journal로 확장한다.
 - [~] 수수료, 거래세, 슬리피지 반영 후 순수익을 기본 성과로 사용한다.
   - 완료된 부분: 표준 journal record에 `cost`, `net_pnl`, `net_return`을 계산해 포함한다.
   - 완료된 부분: after-market 포트폴리오 요약은 `net_return`이 있으면 기존 `return_rate`보다 우선 사용한다.

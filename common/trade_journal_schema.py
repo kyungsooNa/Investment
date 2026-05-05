@@ -128,6 +128,50 @@ def normalize_backtest_trade(
     )
 
 
+def normalize_backtest_decision(
+    decision: Mapping[str, Any],
+    *,
+    stock_code: str,
+    strategy: str = "",
+    accepted: bool,
+    source: str = "backtest",
+) -> dict[str, Any]:
+    """Normalize a backtest signal/rejection decision into the shared schema.
+
+    후보 검증형 백테스트는 왕복 체결이 없으므로 PnL 필드는 비워두고,
+    동일 journal schema 안에서 decision/rejected reason을 비교 가능하게 남긴다.
+    """
+    order_price = _to_float(_first_value(decision, "current", "order_price", "price"))
+    decision_reason = str(_first_value(decision, "decision_reason", "reason", default=""))
+    rejected_reason = str(_first_value(decision, "rejected_reason", default=""))
+    if accepted and not decision_reason:
+        decision_reason = "signal"
+    if not accepted and not rejected_reason:
+        rejected_reason = decision_reason or "rejected"
+
+    return _ordered_record(
+        source=source,
+        strategy=str(strategy or decision.get("strategy") or ""),
+        code=str(stock_code or decision.get("code") or decision.get("symbol") or ""),
+        signal_time=str(_first_value(decision, "signal_time", "time", "date", default="")),
+        decision_reason=decision_reason if accepted else "",
+        rejected_reason="" if accepted else rejected_reason,
+        side="BUY" if accepted else "REJECTED",
+        order_price=order_price,
+        fill_price=None,
+        qty=_to_int(_first_value(decision, "qty", default=1), default=1),
+        status="SIGNAL" if accepted else "REJECTED",
+        cost=0.0,
+        gross_pnl=None,
+        net_pnl=None,
+        gross_return=None,
+        net_return=None,
+        mfe=_first_float(decision, "mfe", "MFE", "mfe_pct", "MFE_pct"),
+        mae=_first_float(decision, "mae", "MAE", "mae_pct", "MAE_pct"),
+        metadata={k: _json_safe(v) for k, v in dict(decision).items()},
+    )
+
+
 def _ordered_record(**values: Any) -> dict[str, Any]:
     record = {"schema_version": SCHEMA_VERSION}
     record.update(values)

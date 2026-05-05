@@ -3,6 +3,7 @@ import logging
 from interfaces.strategy import Strategy
 from typing import List, Dict, Optional, Callable
 from common.types import ErrorCode, ResCommonResponse
+from common.trade_journal_schema import normalize_backtest_decision
 import inspect
 
 
@@ -15,7 +16,9 @@ class MomentumStrategy(Strategy):
         min_follow_through_time: int = 5,  # 몇 분 후 기준인지
         mode: str = "live",  # 'live' or 'backtest'
         backtest_lookup: Optional[Callable[[str, Dict, int], int]] = None,
-        logger: Optional[logging.Logger] = None
+        logger: Optional[logging.Logger] = None,
+        backtest_journal_repository=None,
+        backtest_target_date: str = "",
     ):
         self.broker = broker  # ✅ 통합 wrapper (API + CSV)
         self.min_change_rate = min_change_rate
@@ -24,6 +27,8 @@ class MomentumStrategy(Strategy):
         self.mode = mode
         self.backtest_lookup = backtest_lookup
         self.logger = logger or logging.getLogger(__name__)
+        self.backtest_journal_repository = backtest_journal_repository
+        self.backtest_target_date = backtest_target_date
 
     async def run(self, stock_codes: List[str]) -> Dict:
         results = []
@@ -67,6 +72,7 @@ class MomentumStrategy(Strategy):
 
         follow_through = []
         not_follow_through = []
+        journal_records = []
 
 
         for s in results:
@@ -95,6 +101,15 @@ class MomentumStrategy(Strategy):
             # ▲▲▲▲▲ 여기가 핵심 수정 부분입니다 ▲▲▲▲▲
             if is_success:
                 follow_through.append({"code": code, "name": name})
+                if self.mode == "backtest":
+                    journal_records.append(
+                        normalize_backtest_decision(
+                            {**s, "decision_reason": "follow_through"},
+                            stock_code=code,
+                            strategy="Momentum",
+                            accepted=True,
+                        )
+                    )
                 self.logger.info(
                     f"[성공] 종목: {display} | {log_initial_rate} | {log_follow_rate}"
                 )
@@ -107,6 +122,15 @@ class MomentumStrategy(Strategy):
 
                 reason_str = " & ".join(failure_reasons)
                 not_follow_through.append({"code": code, "name": name})
+                if self.mode == "backtest":
+                    journal_records.append(
+                        normalize_backtest_decision(
+                            {**s, "rejected_reason": reason_str},
+                            stock_code=code,
+                            strategy="Momentum",
+                            accepted=False,
+                        )
+                    )
                 self.logger.info(
                     f"[실패] 종목: {display} | 사유: {reason_str} | {log_initial_rate} | {log_follow_rate}"
                 )
@@ -121,7 +145,32 @@ class MomentumStrategy(Strategy):
             f"[결과 요약] 총 종목: {total}, 성공: {success}, 실패: {fail}, 성공률: {success_rate:.2f}%, 모드: {self.mode}"
         )
 
+        if self.mode == "backtest" and self.backtest_journal_repository is not None and journal_records:
+            target_date = self.backtest_target_date or _target_date_from_records(journal_records)
+            self.backtest_journal_repository.save_run(
+                journal_records,
+                run_id=f"Momentum_{target_date or 'unknown'}",
+                strategy="Momentum",
+                target_date=target_date,
+                metadata={
+                    "stock_codes": list(stock_codes),
+                    "min_change_rate": self.min_change_rate,
+                    "min_follow_through": self.min_follow_through,
+                    "min_follow_through_time": self.min_follow_through_time,
+                },
+            )
+
         return {
             "follow_through": follow_through,  # [{"code": "005930", "name": "삼성전자"}, ...]
-            "not_follow_through": not_follow_through
+            "not_follow_through": not_follow_through,
+            "journal_records": journal_records,
         }
+
+
+def _target_date_from_records(records: list[dict]) -> str:
+    for record in records:
+        signal_time = str(record.get("signal_time") or "")
+        digits = "".join(ch for ch in signal_time[:10] if ch.isdigit())
+        if len(digits) == 8:
+            return digits
+    return ""

@@ -2,6 +2,7 @@ import pytest
 
 from common.trade_journal_schema import (
     STANDARD_TRADE_JOURNAL_FIELDS,
+    normalize_backtest_decision,
     normalize_backtest_trade,
     normalize_virtual_trade,
 )
@@ -104,3 +105,49 @@ def test_normalize_backtest_trade_matches_standard_schema():
 def test_normalize_backtest_trade_requires_prices():
     with pytest.raises(ValueError):
         normalize_backtest_trade({"entry_px": 10000}, stock_code="005930")
+
+
+def test_normalize_backtest_decision_records_signal_without_round_trip_pnl():
+    normalized = normalize_backtest_decision(
+        {
+            "signal_time": "2026-05-05 09:10:00",
+            "current": 330000,
+            "after": 350000,
+            "decision_reason": "follow_through",
+        },
+        stock_code="035720",
+        strategy="Momentum",
+        accepted=True,
+    )
+
+    assert tuple(normalized.keys()) == STANDARD_TRADE_JOURNAL_FIELDS
+    assert normalized["source"] == "backtest"
+    assert normalized["strategy"] == "Momentum"
+    assert normalized["code"] == "035720"
+    assert normalized["status"] == "SIGNAL"
+    assert normalized["side"] == "BUY"
+    assert normalized["order_price"] == 330000.0
+    assert normalized["fill_price"] is None
+    assert normalized["decision_reason"] == "follow_through"
+    assert normalized["rejected_reason"] == ""
+    assert normalized["net_pnl"] is None
+    assert normalized["net_return"] is None
+
+
+def test_normalize_backtest_decision_records_rejected_reason():
+    normalized = normalize_backtest_decision(
+        {
+            "signal_time": "2026-05-05 09:10:00",
+            "current": 11000,
+            "rejected_reason": "추세 지속 실패",
+        },
+        stock_code="000660",
+        strategy="Momentum",
+        accepted=False,
+    )
+
+    assert normalized["status"] == "REJECTED"
+    assert normalized["side"] == "REJECTED"
+    assert normalized["decision_reason"] == ""
+    assert normalized["rejected_reason"] == "추세 지속 실패"
+    assert normalized["cost"] == 0.0

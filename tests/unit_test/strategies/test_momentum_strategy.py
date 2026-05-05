@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from strategies.momentum_strategy import MomentumStrategy
 from common.types import ResCommonResponse
 
@@ -117,6 +117,64 @@ async def test_momentum_strategy_backtest_mode():
 
     assert result["follow_through"] == [{"code": "035720", "name": "카카오"}]
     assert result["not_follow_through"] == []
+
+
+@pytest.mark.asyncio
+async def test_momentum_strategy_backtest_persists_decision_journal():
+    mock_quotations = AsyncMock()
+    summaries = {
+        "035720": {
+            "symbol": "035720",
+            "open": 300000,
+            "current": 330000,
+            "change_rate": 10.0,
+            "signal_time": "2026-05-05 09:10:00",
+        },
+        "000660": {
+            "symbol": "000660",
+            "open": 10000,
+            "current": 11000,
+            "change_rate": 10.0,
+            "signal_time": "2026-05-05 09:11:00",
+        },
+    }
+    mock_quotations.get_price_summary.side_effect = lambda code: ResCommonResponse(
+        rt_cd="0",
+        msg1="정상",
+        data=dict(summaries[code]),
+    )
+    mock_quotations.get_name_by_code.side_effect = lambda code: {
+        "035720": "카카오",
+        "000660": "SK하이닉스",
+    }[code]
+
+    async def dummy_backtest_lookup(code, summary, minutes_after):
+        return 350000 if code == "035720" else 11200
+
+    backtest_journal_repository = MagicMock()
+    strategy = MomentumStrategy(
+        broker=mock_quotations,
+        min_change_rate=10.0,
+        min_follow_through=5.0,
+        min_follow_through_time=10,
+        mode="backtest",
+        backtest_lookup=dummy_backtest_lookup,
+        backtest_journal_repository=backtest_journal_repository,
+        backtest_target_date="20260505",
+    )
+
+    result = await strategy.run(["035720", "000660"])
+
+    assert len(result["journal_records"]) == 2
+    assert result["journal_records"][0]["status"] == "SIGNAL"
+    assert result["journal_records"][1]["status"] == "REJECTED"
+    assert result["journal_records"][1]["rejected_reason"] == "추세 지속 실패"
+    backtest_journal_repository.save_run.assert_called_once()
+    args, kwargs = backtest_journal_repository.save_run.call_args
+    assert args[0] == result["journal_records"]
+    assert kwargs["run_id"] == "Momentum_20260505"
+    assert kwargs["strategy"] == "Momentum"
+    assert kwargs["target_date"] == "20260505"
 
 
 @pytest.mark.asyncio
