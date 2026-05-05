@@ -81,20 +81,34 @@ class OneilBreakoutConfig(BaseStrategyConfig):
     min_qty: int = 1
 
     # [추가] 돌파 품질: 현재가가 당일 변동폭(고가-저가)의 상단 70% 위에 있어야 함
-    osb_min_candle_relative_pos: float = 0.7 
-    
+    osb_min_candle_relative_pos: float = 0.7
+
     # [추가] 스마트 머니 유연화 기준
     sm_flexible_pg_ratio: float = 7.0           # 프로그램 비중이 약간 낮아도(7%)
     sm_flexible_execution_strength: float = 140.0 # 체결강도가 압도적(140%)이면 인정
-    
+
     # [추가] 시가총액 대비 프로그램 매수 기본 허들 (중소형주 기준)
     program_to_market_cap_pct: float = 0.3
-    
+
     execution_strength_min: float = 120.0  # 체결강도 기본 하한선
     osb_max_extension_pct: float = 2.0     # 돌파 후 최대 추격 허용 범위 (2%)
     early_partial_profit_pct: float = 7.0  # 조기 부분익절 기준 (+7%)
     early_partial_sell_ratio: float = 0.3  # 조기 부분익절 비율 (30%)
     cooldown_days: int = 3                 # 손절 후 재진입 금지 기간 (일)
+
+    # [신규] 전천후 방어막 4종
+    # 1. 스퀴즈 런타임 게이트 (Pool A 전용)
+    osb_runtime_squeeze_tolerance: float = 1.2  # prev_bb_width <= bb_width_min_20d * 1.2
+    # 2. 다이내믹 거래량 필터 (매직넘버 config화 포함)
+    baseline_min_vol_ratio: float = 0.3         # 전 시간대 절대 하한 (기존 하드코딩 0.3 승격)
+    morning_cutoff_hour: int = 10               # 오전장 종료 기준 시 (미만 = 오전장)
+    morning_min_vol_ratio: float = 0.4          # 오전 추가 절대 하한 (baseline보다 빡빡)
+    afternoon_cutoff_hour: int = 13             # 오후장 시작 기준 시 (이상 = 오후장)
+    afternoon_volume_boost: float = 1.0         # 오후장 multiplier 가산 (1.5 → 2.5)
+    # 3. 안착 버퍼 (HTF의 breakout_min_buffer_pct 차용)
+    breakout_min_buffer_pct: float = 0.5        # high_20d 대비 최소 +0.5% 돌파 요구
+    # 4. 트레일링 스탑 수익 게이트
+    trailing_min_peak_profit_pct: float = 5.0   # peak_pnl >= 5% 도달 후에만 트레일링 발동
 
 @dataclass
 class OSBWatchlistItem:
@@ -125,6 +139,9 @@ class OSBWatchlistItem:
     ma_200d: float = 0.0            # 200일 이동평균 (Trend Template)
     w52_lwpr: int = 0               # 52주 최저가 (장중 저가 기준)
     minervini_stage: int = 0        # 1~4단계 (0=미계산)
+
+    # Pool 구분 (squeeze 게이트 선택적 적용용)
+    source: str = "pool_a"          # "pool_a" (전일기준 우량주) | "pool_b" (당일 급등주)
 
 
 @dataclass
