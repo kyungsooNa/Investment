@@ -32,9 +32,6 @@ def mock_deps():
         ("premium_watchlist_task", patch("view.web.web_app_initializer.PremiumWatchlistGeneratorTask", autospec=True)),
         ("log_cleanup_task", patch("view.web.web_app_initializer.LogCleanupTask", autospec=True)),
         ("newhigh_task", patch("view.web.web_app_initializer.NewHighTask", autospec=True)),
-        ("vb", patch("view.web.web_app_initializer.VolumeBreakoutLiveStrategy", autospec=True)),
-        ("pbf", patch("view.web.web_app_initializer.ProgramBuyFollowStrategy", autospec=True)),
-        ("tvb", patch("view.web.web_app_initializer.TraditionalVolumeBreakoutStrategy", autospec=True)),
         ("osb", patch("view.web.web_app_initializer.OneilSqueezeBreakoutStrategy", autospec=True)),
         ("pp", patch("view.web.web_app_initializer.OneilPocketPivotStrategy", autospec=True)),
         ("htf", patch("view.web.web_app_initializer.HighTightFlagStrategy", autospec=True)),
@@ -176,13 +173,9 @@ def test_initialize_scheduler(mock_deps):
     
     mock_deps["sched"].assert_called_once()
     scheduler = mock_deps["sched"].return_value
-    # 최소 2개 이상의 전략이 등록되어야 함 (VolumeBreakout, ProgramBuyFollow)
-    assert scheduler.register.call_count >= 6
-    
+    assert scheduler.register.call_count >= 3
+
     # 전략 초기화 검증
-    mock_deps["vb"].assert_called()
-    mock_deps["pbf"].assert_called()
-    mock_deps["tvb"].assert_called()
     mock_deps["osb"].assert_called()
     mock_deps["pp"].assert_called()
     mock_deps["htf"].assert_called()

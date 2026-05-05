@@ -180,9 +180,12 @@
 
 ### 2-1. 후보군/구독 정책 공통 파이프라인 확장
 
-- [ ] `OneilUniverseService`의 Pool A, Pool B, Watchlist 병합 구조를 O'Neil 계열뿐 아니라 전체 전략 공통 후보군 파이프라인으로 확장할지 설계한다.
-- [ ] `SubscriptionPolicy`의 보유종목, 전략 감시종목, UI 관심종목 우선순위와 참조 카운팅을 전체 전략 구독 정책에 일관 적용한다.
-- [ ] 기존 후보 부족 관찰 항목은 Pool B 튜닝 후보로 유지하고, 신규 후보군 구축 과제로 중복 등록하지 않는다.
+- [x] `OneilUniverseService`의 Pool A, Pool B, Watchlist 병합 구조를 O'Neil 계열뿐 아니라 전체 전략 공통 후보군 파이프라인으로 확장할지 설계한다.
+  - 결정: generic `CandidateUniverseService` 및 `RankingCacheService` 미도입. 모든 활성 전략(HTF, FirstPullback, LarryWilliamsVBO, RSI2Pullback, LarryWilliamsCB, OSB, PP)이 이미 `OneilUniverseService.get_watchlist()`를 사용하며 `strategy_oneil` 카테고리로 구독 등록됨. O'Neil Pool A/B 구조는 O'Neil 전용 필드를 동반하므로 일반화 불필요.
+  - 행동: `VolumeBreakoutLiveStrategy`, `TraditionalVolumeBreakoutStrategy`, `ProgramBuyFollowStrategy` 3개 전략을 스케줄러 등록에서 제거함 (2026-05-05). 전략 클래스 파일과 테스트는 유지.
+- [x] `SubscriptionPolicy`의 보유종목, 전략 감시종목, UI 관심종목 우선순위와 참조 카운팅을 전체 전략 구독 정책에 일관 적용한다.
+  - 결과: 스케줄러에 등록된 모든 활성 전략이 `get_watchlist()` → `sync_subscriptions("strategy_oneil", MEDIUM)` 경로로 이미 일관 적용됨. `test_get_watchlist_syncs_subscriptions`로 검증됨.
+- [x] 기존 후보 부족 관찰 항목은 Pool B 튜닝 후보로 유지하고, 신규 후보군 구축 과제로 중복 등록하지 않는다.
 
 주요 파일:
 
