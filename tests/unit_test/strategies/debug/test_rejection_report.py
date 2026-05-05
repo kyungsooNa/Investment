@@ -93,6 +93,7 @@ def test_format_json_serializes_signals_events_and_datetime():
         signals=[TradeSignal(code="005930", name="삼성전자", action="BUY", price=70000, qty=1, reason="ok", strategy_name="JSON전략")],
         events=[_event("pp_rejected", reason="no_ma_proximity", closest_ma_pct=-1.0)],
         limitations=["limit"],
+        journal_records=[{"source": "backtest", "code": "005930", "status": "SIGNAL"}],
     )
 
     payload = json.loads(format_json(report))
@@ -101,3 +102,4 @@ def test_format_json_serializes_signals_events_and_datetime():
     assert payload["signals"][0]["code"] == "005930"
     assert payload["events"][0]["timestamp"] == "2026-04-30T09:00:00"
     assert payload["limitations"] == ["limit"]
+    assert payload["journal_records"] == [{"source": "backtest", "code": "005930", "status": "SIGNAL"}]

@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
+from common.trade_journal_schema import normalize_backtest_decision
 from common.types import TradeSignal
 from interfaces.live_strategy import LiveStrategy
 from strategies.debug.rejection_collector import RejectionCollector, RejectionEvent
@@ -19,6 +20,7 @@ class DebugReport:
     signals: List[TradeSignal]
     events: List[RejectionEvent]
     limitations: List[str] = field(default_factory=list)
+    journal_records: List[dict] = field(default_factory=list)
 
 
 class _UniverseFilterProxy:
@@ -75,11 +77,15 @@ class StrategyDebugRunner:
         debug_logger: logging.Logger,
         stage_service=None,
         allowed_stages: tuple = (0, 2),
+        backtest_journal_repository=None,
+        target_date: str = "",
     ) -> None:
         self._strategy = strategy
         self._debug_logger = debug_logger
         self._stage_service = stage_service
         self._allowed_stages = allowed_stages
+        self._backtest_journal_repository = backtest_journal_repository
+        self._target_date = target_date
 
     async def _apply_stage_guard(self, codes: List[str]) -> List[str]:
         """stage_service가 주입된 경우 stage 필터를 적용하고 stage_blocked 이벤트를 emit한다."""
@@ -139,7 +145,7 @@ class StrategyDebugRunner:
             if proxy is not None and original_universe is not None:
                 self._strategy._universe = original_universe
 
-        return DebugReport(
+        report = DebugReport(
             strategy_name=self._strategy.name,
             requested_codes=candidate_codes,
             scanned_codes=scanned_codes,
@@ -148,3 +154,105 @@ class StrategyDebugRunner:
             events=col.events,
             limitations=list(self.LIMITATIONS),
         )
+        report.journal_records = _build_debug_journal_records(report, target_date=self._target_date)
+
+        if self._backtest_journal_repository is not None and report.journal_records:
+            target_date = self._target_date or _target_date_from_records(report.journal_records)
+            self._backtest_journal_repository.save_run(
+                report.journal_records,
+                run_id=f"debug_{report.strategy_name}_{target_date or 'unknown'}",
+                strategy=report.strategy_name,
+                target_date=target_date,
+                metadata={
+                    "requested_codes": report.requested_codes,
+                    "scanned_codes": report.scanned_codes,
+                    "missing_codes": report.missing_codes,
+                    "event_count": len(report.events),
+                    "signal_count": len(report.signals),
+                },
+            )
+
+        return report
+
+
+def _build_debug_journal_records(report: DebugReport, *, target_date: str = "") -> List[dict]:
+    records: List[dict] = []
+    default_time = _signal_time_from_target_date(target_date)
+
+    for signal in report.signals:
+        records.append(
+            normalize_backtest_decision(
+                {
+                    "signal_time": default_time,
+                    "current": signal.price,
+                    "qty": signal.qty,
+                    "decision_reason": signal.reason or signal.action,
+                    "strategy": signal.strategy_name or report.strategy_name,
+                    "name": signal.name,
+                    "action": signal.action,
+                    "exchange": signal.exchange,
+                },
+                stock_code=signal.code,
+                strategy=signal.strategy_name or report.strategy_name,
+                accepted=True,
+            )
+        )
+
+    for event in report.events:
+        records.append(
+            normalize_backtest_decision(
+                {
+                    **event.details,
+                    "signal_time": _event_signal_time(event, target_date),
+                    "current": _event_price(event),
+                    "rejected_reason": event.reason,
+                },
+                stock_code=event.code,
+                strategy=report.strategy_name,
+                accepted=False,
+            )
+        )
+
+    for code in report.missing_codes:
+        records.append(
+            normalize_backtest_decision(
+                {
+                    "signal_time": default_time,
+                    "rejected_reason": "missing_from_universe",
+                    "event": "missing_from_universe",
+                },
+                stock_code=code,
+                strategy=report.strategy_name,
+                accepted=False,
+            )
+        )
+
+    return records
+
+
+def _event_price(event: RejectionEvent):
+    for key in ("current", "price", "order_price", "stck_prpr"):
+        if key in event.details:
+            return event.details.get(key)
+    return None
+
+
+def _event_signal_time(event: RejectionEvent, target_date: str = "") -> str:
+    if target_date:
+        return _signal_time_from_target_date(target_date)
+    return event.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _signal_time_from_target_date(target_date: str = "") -> str:
+    if len(str(target_date)) == 8:
+        return f"{target_date[:4]}-{target_date[4:6]}-{target_date[6:8]} 00:00:00"
+    return ""
+
+
+def _target_date_from_records(records: List[dict]) -> str:
+    for record in records:
+        signal_time = str(record.get("signal_time") or "")
+        digits = "".join(ch for ch in signal_time[:10] if ch.isdigit())
+        if len(digits) == 8:
+            return digits
+    return ""

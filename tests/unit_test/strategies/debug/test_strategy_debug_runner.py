@@ -230,3 +230,59 @@ class TestStrategyDebugRunner:
 
         assert report.scanned_codes == ["005930"]
         assert report.missing_codes == []
+
+    async def test_debug_runner_persists_decision_journal(self):
+        """debug 실행 결과를 표준 decision journal로 저장한다."""
+        debug_logger = _make_debug_logger()
+        signal = TradeSignal(
+            code="005930",
+            name="삼성전자",
+            action="BUY",
+            price=70000,
+            qty=3,
+            reason="pocket_pivot",
+            strategy_name="OneilPocketPivot",
+        )
+
+        async def fake_scan():
+            debug_logger.info({
+                "event": "entry_rejected",
+                "code": "000660",
+                "reason": "low_execution_strength",
+                "current": 120000,
+            })
+            return [signal]
+
+        strategy = _make_strategy(
+            watchlist={"005930": _make_watchlist_item("005930"), "000660": _make_watchlist_item("000660")},
+            signals=[signal],
+        )
+        strategy.name = "OneilPocketPivot"
+        strategy.scan = fake_scan
+        repo = MagicMock()
+        runner = StrategyDebugRunner(
+            strategy,
+            debug_logger,
+            backtest_journal_repository=repo,
+            target_date="20260505",
+        )
+
+        report = await runner.run(candidate_codes=["005930", "000660", "035720"])
+
+        assert [record["status"] for record in report.journal_records] == [
+            "SIGNAL",
+            "REJECTED",
+            "REJECTED",
+        ]
+        assert report.journal_records[0]["code"] == "005930"
+        assert report.journal_records[0]["decision_reason"] == "pocket_pivot"
+        assert report.journal_records[1]["code"] == "000660"
+        assert report.journal_records[1]["rejected_reason"] == "low_execution_strength"
+        assert report.journal_records[2]["code"] == "035720"
+        assert report.journal_records[2]["rejected_reason"] == "missing_from_universe"
+        repo.save_run.assert_called_once()
+        args, kwargs = repo.save_run.call_args
+        assert args[0] == report.journal_records
+        assert kwargs["run_id"] == "debug_OneilPocketPivot_20260505"
+        assert kwargs["strategy"] == "OneilPocketPivot"
+        assert kwargs["target_date"] == "20260505"
