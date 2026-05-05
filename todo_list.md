@@ -43,10 +43,16 @@
   - 진행 필요: 다른 전략과 주문 체결 로그의 누락 필드를 채운다.
 - [~] 실거래 로그와 백테스트 로그를 같은 schema로 맞춰 backtest-vs-live 괴리 리포트를 생성한다.
   - 완료된 부분: VolumeBreakout 단일일자 백테스트 결과에 `journal_records`를 추가하고, `common.trade_journal_comparison.compare_trade_journals()`로 전략/종목/거래일 기준 괴리 리포트를 생성한다.
-  - 진행 필요: 괴리 리포트를 after-market 리포트와 운영 UI에 연결한다.
+  - 완료된 부분: `StrategyLogReportService`에 optional backtest journal provider를 연결해 after-market 리포트에 괴리 요약을 표시할 수 있게 했다.
+  - 완료된 부분: `/api/virtual/journal`에서 현재 모의/실거래 원장을 표준 journal schema로 조회하고, `/api/virtual/backtest-divergence`에서 백테스트 journal payload와 현재 원장의 괴리를 비교한다.
+  - 완료된 부분: 모의투자 화면에 backtest-vs-live 괴리 요약/테이블과 백테스트 journal JSON 비교 실행 UI를 연결했다.
+  - 진행 필요: 백테스트 실행 결과를 수동 JSON 입력 없이 선택/불러오기할 수 있는 저장소 연동을 추가한다.
 - [~] 수수료, 거래세, 슬리피지 반영 후 순수익을 기본 성과로 사용한다.
   - 완료된 부분: 표준 journal record에 `cost`, `net_pnl`, `net_return`을 계산해 포함한다.
-  - 진행 필요: 전략별 리포트/대시보드 집계의 기본값을 net 기준으로 전환한다.
+  - 완료된 부분: after-market 포트폴리오 요약은 `net_return`이 있으면 기존 `return_rate`보다 우선 사용한다.
+  - 완료된 부분: 웹 API에서 표준 journal과 backtest-vs-live 비교 결과를 순수익 필드 포함 schema로 노출한다.
+  - 완료된 부분: 모의투자 화면은 비용 포함 성과 조회를 기본 ON으로 표시한다.
+  - 진행 필요: 전체 전략 성과 집계의 기본값을 슬리피지까지 포함한 net 기준으로 전환한다.
 
 주요 파일:
 

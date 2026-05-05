@@ -4,7 +4,8 @@
 import asyncio
 import math
 import time
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
+from common.trade_journal_comparison import compare_trade_journals
 from view.web.api_common import _get_ctx, _PRICE_CACHE
 import pandas as pd
 import numpy as np
@@ -173,6 +174,69 @@ def _sanitize_for_json(obj):
     if isinstance(obj, list):
         return [_sanitize_for_json(v) for v in obj]
     return obj
+
+
+def _empty_divergence_report(backtest_records: list[dict] | None = None) -> dict:
+    """VirtualTradeService가 없을 때도 비교 API contract를 유지한다."""
+    backtest_records = backtest_records or []
+    return {
+        "summary": {
+            "backtest_count": len(backtest_records),
+            "live_count": 0,
+            "matched_count": 0,
+            "unmatched_backtest_count": len(backtest_records),
+            "unmatched_live_count": 0,
+            "avg_net_return_diff": None,
+            "avg_abs_net_return_diff": None,
+            "avg_fill_price_diff_pct": None,
+            "total_net_pnl_diff": None,
+        },
+        "matches": [],
+        "unmatched_backtest": backtest_records,
+        "unmatched_live": [],
+    }
+
+
+@router.get("/virtual/journal")
+async def get_virtual_standard_journal(limit: int | None = 500):
+    """실거래/모의거래 원장을 백테스트 비교용 표준 schema로 반환한다."""
+    ctx = _get_ctx()
+    vm = _sync_virtual_trade_state(ctx)
+    if vm is None or not hasattr(vm, "get_standard_journal_records"):
+        return {"records": [], "count": 0, "total_count": 0}
+
+    records = vm.get_standard_journal_records()
+    total_count = len(records)
+    if limit is not None and limit > 0:
+        records = records[-limit:]
+
+    return _sanitize_for_json({
+        "records": records,
+        "count": len(records),
+        "total_count": total_count,
+    })
+
+
+@router.post("/virtual/backtest-divergence")
+async def post_virtual_backtest_divergence(
+    backtest_records: list[dict] | None = Body(default=None),
+):
+    """백테스트 journal payload와 현재 실거래/모의거래 표준 원장을 비교한다."""
+    backtest_records = backtest_records or []
+    ctx = _get_ctx()
+    vm = _sync_virtual_trade_state(ctx)
+
+    if vm is None:
+        return _sanitize_for_json(_empty_divergence_report(backtest_records))
+
+    if hasattr(vm, "compare_with_backtest_journal"):
+        return _sanitize_for_json(vm.compare_with_backtest_journal(backtest_records))
+
+    if hasattr(vm, "get_standard_journal_records"):
+        live_records = vm.get_standard_journal_records()
+        return _sanitize_for_json(compare_trade_journals(backtest_records, live_records))
+
+    return _sanitize_for_json(_empty_divergence_report(backtest_records))
 
 
 def _aggregate_virtual_data(trades, vm, apply_cost):

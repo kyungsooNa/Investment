@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 from unittest.mock import MagicMock
 
 # 페이지별 라우트와 예상되는 active_page 값 매핑
@@ -45,12 +46,25 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert "시가총액 상위 종목" in response.text
         elif path == "/virtual":
             assert "모의투자(전략 검증) 결과" in response.text
+            assert 'id="apply-cost-chk" onchange="loadVirtualHistory()" checked' in response.text
+            assert 'id="virtual-divergence-summary"' in response.text
+            assert 'id="virtual-backtest-journal-input"' in response.text
+            assert 'id="virtual-divergence-body"' in response.text
         elif path == "/scheduler":
             assert "전략 스케줄러" in response.text
         elif path == "/program":
             assert "프로그램매매 실시간 동향" in response.text
         elif path == "/system":
             assert "시스템 상태 모니터링" in response.text
+
+
+def test_virtual_static_js_exposes_divergence_workflow():
+    """virtual.js가 표준 journal / 괴리 비교 API를 호출할 수 있어야 한다."""
+    script = Path("view/web/static/js/virtual.js").read_text(encoding="utf-8")
+
+    assert "/api/virtual/journal" in script
+    assert "/api/virtual/backtest-divergence" in script
+    assert "compareVirtualDivergence" in script
 
 def test_pages_show_login_page_when_unauthorized(web_client, mock_web_ctx):
     """로그인 기능 활성화 시 토큰 없이 접근하면 로그인 페이지가 렌더링되는지 테스트"""

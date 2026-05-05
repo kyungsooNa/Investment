@@ -183,6 +183,84 @@ def test_executed_buys_and_portfolio_summary_edges():
     assert "현재 보유: 1종목" in summary
 
 
+def test_portfolio_summary_prefers_net_return_when_available():
+    """포트폴리오 요약은 표준 journal의 net_return을 return_rate보다 우선 사용한다."""
+    svc = StrategyLogReportService(log_dir=".")
+    portfolio_trades = [
+        {
+            "buy_date": "2026-04-18 09:00:00",
+            "sell_date": "2026-04-18 10:00:00",
+            "status": "SOLD",
+            "code": "A",
+            "name": "A",
+            "return_rate": 5.0,
+            "net_return": 3.25,
+            "sell_price": 1100,
+        },
+    ]
+    svc._virtual_trade_service = SimpleNamespace(
+        get_all_trades=lambda: portfolio_trades,
+        get_solds=lambda: portfolio_trades,
+        get_holds=lambda: [],
+    )
+
+    summary = svc._build_portfolio_summary("20260418", {})
+
+    assert "평균 순수익률 +3.25%" in summary
+    assert "A(A) @ ₩1,100 +3.25%" in summary
+
+
+def test_backtest_live_divergence_section_from_provider():
+    """백테스트 journal provider가 있으면 실거래 원장과 괴리 요약을 생성한다."""
+    backtest_records = [{
+        "source": "backtest",
+        "strategy": "S1",
+        "code": "005930",
+        "signal_time": "2026-04-18 09:10:00",
+        "net_return": 2.5,
+        "net_pnl": 2500.0,
+        "fill_price": 10500.0,
+    }]
+
+    class DummyVirtualTradeService:
+        def compare_with_backtest_journal(self, records):
+            assert records is backtest_records
+            return {
+                "summary": {
+                    "matched_count": 1,
+                    "unmatched_backtest_count": 0,
+                    "unmatched_live_count": 0,
+                    "avg_net_return_diff": -1.5,
+                    "avg_abs_net_return_diff": 1.5,
+                    "avg_fill_price_diff_pct": -1.9048,
+                    "total_net_pnl_diff": -1500.0,
+                },
+                "matches": [{
+                    "strategy": "S1",
+                    "code": "005930",
+                    "net_return_diff": -1.5,
+                    "fill_price_diff_pct": -1.9048,
+                    "net_pnl_diff": -1500.0,
+                }],
+                "unmatched_backtest": [],
+                "unmatched_live": [],
+            }
+
+    svc = StrategyLogReportService(
+        log_dir=".",
+        virtual_trade_service=DummyVirtualTradeService(),
+        backtest_journal_provider=lambda target_date: backtest_records if target_date == "20260418" else [],
+    )
+
+    section = svc._build_backtest_live_divergence_section("20260418")
+
+    assert "백테스트-실거래 괴리" in section
+    assert "매칭: 1건" in section
+    assert "평균 순수익률 괴리: -1.50%p" in section
+    assert "총 순손익 괴리: -1,500원" in section
+    assert "S1/005930: 순수익률 -1.50%p, 체결가 -1.9048%, 순손익 -1,500원" in section
+
+
 # ── _extract_strategy_name ────────────────────────────────────────
 
 def test_extract_strategy_name_basic():
@@ -522,6 +600,50 @@ async def test_report_includes_portfolio_summary_from_virtual_trade_service(log_
     assert "신규 매수: 2건 (삼성전자 외 1건)" in report
     assert "당일 청산: 1건 (평균 수익률 +3.20%)" in report
     assert "현재 보유: 2종목" in report
+
+
+@pytest.mark.asyncio
+async def test_report_includes_backtest_live_divergence_when_provider_exists(log_dir):
+    """provider가 있으면 리포트 하단에 백테스트-실거래 괴리 섹션을 추가한다."""
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return [{"code": "005930", "buy_date": "2026-04-18 09:10:00", "status": "SOLD"}]
+
+        def get_solds(self):
+            return [{"code": "005930", "sell_date": "2026-04-18 14:40:00", "net_return": 1.0}]
+
+        def get_holds(self):
+            return []
+
+        def compare_with_backtest_journal(self, _records):
+            return {
+                "summary": {
+                    "matched_count": 1,
+                    "unmatched_backtest_count": 0,
+                    "unmatched_live_count": 0,
+                    "avg_net_return_diff": -1.0,
+                    "avg_abs_net_return_diff": 1.0,
+                    "avg_fill_price_diff_pct": None,
+                    "total_net_pnl_diff": -1000.0,
+                },
+                "matches": [],
+                "unmatched_backtest": [],
+                "unmatched_live": [],
+            }
+
+    _write_log(os.path.join(log_dir, "20260418_093000_TestStrategy.log.json"), [
+        _make_entry("buy_signal_generated", "005930", "삼성전자", reason="돌파", price=75000),
+    ])
+
+    svc = StrategyLogReportService(
+        log_dir=log_dir,
+        virtual_trade_service=DummyVirtualTradeService(),
+        backtest_journal_provider=lambda _target_date: [{"code": "005930"}],
+    )
+    report = await svc.generate_report("20260418")
+
+    assert "백테스트-실거래 괴리" in report
+    assert "평균 순수익률 괴리: -1.00%p" in report
 
 
 @pytest.mark.asyncio
