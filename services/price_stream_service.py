@@ -89,11 +89,25 @@ class PriceStreamService:
         self._last_tick_ts[stock_code] = now_ts
         self._last_any_tick_ts = now_ts
 
+        cum_vol = realtime_data.get('누적거래량', '0')
+        try:
+            vol_int = int(cum_vol) if cum_vol and cum_vol != 'N/A' else 0
+        except (ValueError, TypeError):
+            vol_int = 0
+
+        cum_tr_pbmn = realtime_data.get('누적거래대금', '0')
+        try:
+            tr_pbmn_int = int(cum_tr_pbmn) if cum_tr_pbmn and cum_tr_pbmn != 'N/A' else 0
+        except (ValueError, TypeError):
+            tr_pbmn_int = 0
+
         self._latest_prices[stock_code] = {
             "price": current_price,
             "change": realtime_data.get('전일대비', '0'),
             "rate": realtime_data.get('전일대비율', '0.00'),
             "sign": realtime_data.get('전일대비부호', '3'),
+            "acml_vol": vol_int,
+            "acml_tr_pbmn": tr_pbmn_int,
             "received_at": now_ts,
             "latency_sec": latency_sec,
             "quality_status": quality_status,
@@ -101,8 +115,6 @@ class PriceStreamService:
         }
 
         try:
-            cum_vol = realtime_data.get('누적거래량', '0')
-            vol_int = int(cum_vol) if cum_vol and cum_vol != 'N/A' else 0
             self._stock_repo.update_realtime_data(stock_code, float(current_price), vol_int)
         except Exception as e:
             self._logger.warning(f"StockRepository 실시간 틱 캐시 갱신 실패: {e}")
@@ -143,10 +155,23 @@ class PriceStreamService:
         rate: str = '0.00',
         sign: str = '3',
         volume: str = '0',
+        acml_tr_pbmn: Optional[str] = None,
     ) -> None:
         """REST 스냅샷 현재가를 최신가 캐시에 반영한다."""
         if not code or not price:
             return
+
+        try:
+            vol_int = int(volume) if volume and volume != 'N/A' else 0
+        except (ValueError, TypeError):
+            vol_int = 0
+
+        try:
+            tr_pbmn_int = (
+                int(acml_tr_pbmn) if acml_tr_pbmn and acml_tr_pbmn != 'N/A' else 0
+            )
+        except (ValueError, TypeError):
+            tr_pbmn_int = 0
 
         now_ts = time.time()
         self._latest_prices[code] = {
@@ -154,6 +179,8 @@ class PriceStreamService:
             "change": change,
             "rate": rate,
             "sign": sign,
+            "acml_vol": vol_int,
+            "acml_tr_pbmn": tr_pbmn_int,
             "received_at": now_ts,
             "latency_sec": 0.0,
             "quality_status": "ok",
@@ -161,10 +188,26 @@ class PriceStreamService:
         }
 
         try:
-            vol_int = int(volume) if volume and volume != 'N/A' else 0
             self._stock_repo.update_realtime_data(code, float(price), vol_int)
         except Exception as e:
             self._logger.warning(f"StockRepository 현재가 스냅샷 캐시 갱신 실패: {e}")
+
+    def get_liquidity_snapshot(self, code: str) -> Optional[dict]:
+        """체결틱 스냅샷에서 거래량/거래대금/수신시각을 반환한다.
+
+        반환 dict: {'acml_vol': int, 'acml_tr_pbmn': int, 'received_at': float}
+        snapshot 이 없거나 acml 필드가 미저장(예: 옛 캐시) 인 경우 None.
+        """
+        cached = self._latest_prices.get(code)
+        if not cached:
+            return None
+        if 'acml_vol' not in cached or 'acml_tr_pbmn' not in cached:
+            return None
+        return {
+            'acml_vol': cached['acml_vol'],
+            'acml_tr_pbmn': cached['acml_tr_pbmn'],
+            'received_at': cached.get('received_at', 0.0),
+        }
 
     def mark_subscription_requested(self, code: str) -> None:
         """체결가 구독 요청 시각을 기록한다."""
