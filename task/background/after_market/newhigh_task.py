@@ -274,10 +274,40 @@ class NewHighTask(AfterMarketTask):
         valid = sum(1 for s in snapshots if (s.get("w52_high") or 0) > 0)
         return valid / len(snapshots) >= 0.2
 
+    @staticmethod
+    def _normalize_snapshot_for_newhigh(snapshot: Dict) -> Dict:
+        """신고가 판정 전 OHLC/전일대비 모순을 보정한다."""
+        current = int(snapshot.get("current_price") or 0)
+        open_price = int(snapshot.get("open_price") or 0)
+        high = int(snapshot.get("high_price") or 0)
+        low = int(snapshot.get("low_price") or 0)
+        prev_close = int(snapshot.get("prev_close") or 0)
+        change_price = int(snapshot.get("change_price") or 0)
+
+        if current > 0:
+            candidates = [p for p in (open_price, high, low, current) if p > 0]
+            if candidates:
+                snapshot["high_price"] = max(candidates)
+                snapshot["low_price"] = min(candidates)
+
+        expected_change = current - prev_close if current > 0 and prev_close > 0 else change_price
+        if current > 0 and prev_close > 0 and expected_change != change_price:
+            snapshot["change_price"] = expected_change
+            if expected_change > 0:
+                snapshot["change_sign"] = "2"
+            elif expected_change < 0:
+                snapshot["change_sign"] = "5"
+            else:
+                snapshot["change_sign"] = "3"
+            snapshot["change_rate"] = str(round(expected_change / prev_close * 100, 2))
+
+        return snapshot
+
     def _filter_newhigh(self, snapshots: List[Dict]) -> List[Dict]:
         """current_price >= w52_high 인 종목 반환 (ETF/ETN 제외, 시가총액 내림차순)."""
         result = []
         for s in snapshots:
+            s = self._normalize_snapshot_for_newhigh(s)
             name = s.get("name") or ""
             if any(name.startswith(p) for p in _ETF_PREFIXES):
                 continue

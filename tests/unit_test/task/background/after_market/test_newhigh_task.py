@@ -958,6 +958,36 @@ def test_filter_newhigh_rs_defaults_to_dash_when_no_rs_rating(task):
     assert result[0]["rs"] == "-"
 
 
+def test_filter_newhigh_normalizes_mixed_price_snapshot(task):
+    """현재가만 최신값으로 섞인 DB 스냅샷도 신고가 판정과 리포트 등락률을 보정한다."""
+    snap = _snap(
+        "006800",
+        "미래에셋증권",
+        84200,
+        77600,
+        market_cap=415_199,
+        change_rate="5.55",
+        high_price=77600,
+        volume=46_101_232,
+        trading_value=149_586_351_500,
+    )
+    snap.update({
+        "open_price": 75500,
+        "low_price": 73200,
+        "prev_close": 70300,
+        "change_price": 3900,
+        "change_sign": "2",
+    })
+
+    result = task._filter_newhigh([snap])
+
+    assert len(result) == 1
+    assert result[0]["high_price"] == 84200
+    assert result[0]["change_price"] == 13900
+    assert result[0]["change_rate"] == "19.77"
+    assert result[0]["is_newhigh"] is True
+
+
 @pytest.mark.asyncio
 async def test_get_newhigh_cache_triggers_refresh_when_empty(task):
     with patch.object(task, "trigger_refresh", return_value=True) as mock_trigger:

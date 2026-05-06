@@ -91,6 +91,35 @@ class DailyPriceCollectorTask(AfterMarketTask):
         }
         self._all_stocks_cache = None
 
+    @staticmethod
+    def _normalize_price_record(record: Dict) -> Dict:
+        """OHLC와 전일대비 필드가 섞인 응답을 DB 저장 전 일관되게 보정한다."""
+        current = int(record.get("current_price") or 0)
+        open_price = int(record.get("open_price") or 0)
+        high = int(record.get("high_price") or 0)
+        low = int(record.get("low_price") or 0)
+        prev_close = int(record.get("prev_close") or 0)
+        change_price = int(record.get("change_price") or 0)
+
+        if current > 0:
+            candidates = [p for p in (open_price, high, low, current) if p > 0]
+            if candidates:
+                record["high_price"] = max(candidates)
+                record["low_price"] = min(candidates)
+
+        expected_change = current - prev_close if current > 0 and prev_close > 0 else change_price
+        if current > 0 and prev_close > 0 and expected_change != change_price:
+            record["change_price"] = expected_change
+            if expected_change > 0:
+                record["change_sign"] = "2"
+            elif expected_change < 0:
+                record["change_sign"] = "5"
+            else:
+                record["change_sign"] = "3"
+            record["change_rate"] = str(round(expected_change / prev_close * 100, 2))
+
+        return record
+
     # ── SchedulableTask 인터페이스 구현 ────────────────────────
 
     @property
@@ -460,7 +489,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
                 else (lambda k, d=None: output.get(k, d))
             )
 
-            return {
+            record = {
                 "code": code,
                 "name": name,
                 "current_price": _safe_int(_get("stck_prpr")),
@@ -485,6 +514,7 @@ class DailyPriceCollectorTask(AfterMarketTask):
                 "mrkt_warn_cls_code": _get("mrkt_warn_cls_code"),
                 "invt_caful_yn": _get("invt_caful_yn"),
             }
+            return DailyPriceCollectorTask._normalize_price_record(record)
         except Exception:
             return None
 
