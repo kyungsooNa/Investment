@@ -563,7 +563,7 @@ def _build_deep_mock_config():
 
 
 @pytest.fixture
-async def deep_paper_ctx(test_logger, web_app, mocker):
+async def deep_paper_ctx(test_logger, web_app, mocker, tmp_path):
     """
     중간 깊이 IT용 픽스처.
     실제 WebAppContext를 생성하여 모든 서비스를 초기화하되,
@@ -574,6 +574,9 @@ async def deep_paper_ctx(test_logger, web_app, mocker):
     from view.web.web_app_initializer import WebAppContext
 
     mock_config = _build_deep_mock_config()
+    mock_config.kill_switch = mock_config.kill_switch.model_copy(
+        update={"state_file_path": str(tmp_path / "kill_switch_state.json")}
+    )
 
     class SimpleContext:
         env = None

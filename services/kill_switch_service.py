@@ -171,16 +171,32 @@ class KillSwitchService:
         fill_price: float,
         code: str,
         qty: int,
+        side: str | None = None,
     ) -> None:
-        """체결가와 주문가 편차 확인. 임계 초과 시 트립."""
+        """체결가와 주문가의 불리한 편차 확인. 임계 초과 시 트립."""
         if not self._cfg.enabled or order_price <= 0:
             return
-        deviation_pct = abs(fill_price - order_price) / order_price * 100
+
+        side_value = getattr(side, "value", side)
+        side_value = str(side_value or "").upper()
+        if side_value == "BUY":
+            deviation_pct = (fill_price - order_price) / order_price * 100
+        elif side_value == "SELL":
+            deviation_pct = (order_price - fill_price) / order_price * 100
+        else:
+            deviation_pct = abs(fill_price - order_price) / order_price * 100
+
         if deviation_pct >= self._cfg.abnormal_fill_deviation_pct:
             async with self._lock:
                 await self._trip(
                     f"비정상 체결: 편차 {deviation_pct:.2f}% (한도: {self._cfg.abnormal_fill_deviation_pct}%)",
-                    {"code": code, "qty": qty, "order_price": order_price, "fill_price": fill_price},
+                    {
+                        "code": code,
+                        "qty": qty,
+                        "side": side_value or None,
+                        "order_price": order_price,
+                        "fill_price": fill_price,
+                    },
                 )
 
     # ── 전략별 Kill Switch ────────────────────────────────────────────

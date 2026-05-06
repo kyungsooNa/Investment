@@ -480,6 +480,8 @@ class OrderExecutionService:
         source = source or ""
         if source.startswith("strategy:"):
             return source.split(":", 1)[1] or "default", True
+        if source.startswith("strategy_force_exit:"):
+            return source.split(":", 1)[1] or "default", True
         if source.startswith("manual:"):
             return source.split(":", 1)[1] or "수동매매", False
         if source in ("", "default", "manual", "web"):
@@ -503,7 +505,11 @@ class OrderExecutionService:
         record_price = report.fill_price or context.price
         if self._kill_switch and report.fill_price and context.price > 0:
             await self._kill_switch.record_fill_event(
-                context.price, report.fill_price, context.stock_code, record_qty
+                context.price,
+                report.fill_price,
+                context.stock_code,
+                record_qty,
+                side=context.side.value,
             )
         try:
             if context.side == OrderSide.BUY:

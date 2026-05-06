@@ -211,6 +211,7 @@ class OrderPolicyService:
             self._cfg.min_recent_trade_count > 0
             and snapshot.recent_trade_count is not None
             and snapshot.recent_trade_count < self._cfg.min_recent_trade_count
+            and not self._has_strong_execution_strength(snapshot)
         ):
             return self._blocked(
                 "trade_flow_velocity_too_low",
@@ -251,6 +252,13 @@ class OrderPolicyService:
             severity="pass",
             context=context,
         )
+
+    def _has_strong_execution_strength(self, snapshot: ExecutionFlowSnapshot) -> bool:
+        strength = snapshot.execution_strength_pct
+        if strength is None:
+            return False
+        threshold = self._cfg.min_execution_strength_pct if self._cfg.min_execution_strength_pct > 0 else 120.0
+        return strength >= threshold
 
     async def _check_security_status(
         self,

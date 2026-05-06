@@ -65,6 +65,25 @@ async def test_kill_switch_blocks_with_compatible_error_code():
 
 
 @pytest.mark.asyncio
+async def test_kill_switch_allows_force_exit_sell():
+    kill_switch = AsyncMock()
+    kill_switch.check_orders_allowed = AsyncMock(return_value=(False, "abnormal fill"))
+    svc, _, _ = _service(kill_switch=kill_switch)
+
+    result = await svc.validate_order(
+        "005930",
+        70_000,
+        10,
+        OrderSide.SELL,
+        Exchange.KRX,
+        0,
+        source="strategy_force_exit:래리윌리엄스VBO",
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_kill_switch_check_exception_fails_closed():
     kill_switch = AsyncMock()
     kill_switch.check_orders_allowed = AsyncMock(side_effect=RuntimeError("ks down"))
