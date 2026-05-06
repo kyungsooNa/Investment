@@ -87,11 +87,13 @@ class RiskGateService:
         if env_blocked is not None:
             return env_blocked
 
-        blocked = await self._check_kill_switch()
+        is_force_exit_sell = self._is_force_exit_sell(side=side, source=source)
+
+        blocked = await self._check_kill_switch(skip=is_force_exit_sell)
         if blocked is not None:
             return blocked
 
-        if strategy_name:
+        if strategy_name and not is_force_exit_sell:
             strategy_ks_blocked = self._check_strategy_kill_switch(strategy_name)
             if strategy_ks_blocked is not None:
                 return strategy_ks_blocked
@@ -252,8 +254,8 @@ class RiskGateService:
             trip_reason=reason,
         )
 
-    async def _check_kill_switch(self) -> Optional[ResCommonResponse]:
-        if self._kill_switch is None:
+    async def _check_kill_switch(self, *, skip: bool = False) -> Optional[ResCommonResponse]:
+        if skip or self._kill_switch is None:
             return None
 
         try:
@@ -546,7 +548,13 @@ class RiskGateService:
         source = source or ""
         if source.startswith("strategy:"):
             return source.split(":", 1)[1] or None
+        if source.startswith("strategy_force_exit:"):
+            return source.split(":", 1)[1] or None
         return None
+
+    @staticmethod
+    def _is_force_exit_sell(*, side: OrderSide, source: str) -> bool:
+        return side == OrderSide.SELL and (source or "").startswith("strategy_force_exit:")
 
     def _blocked(
         self,

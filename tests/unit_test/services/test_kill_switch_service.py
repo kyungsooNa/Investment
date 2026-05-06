@@ -174,6 +174,35 @@ async def test_fill_deviation_trips(cfg, mock_notif, logger):
     assert "비정상 체결" in ks._trip_reason
 
 
+async def test_favorable_buy_fill_deviation_does_not_trip(cfg, mock_notif, logger):
+    ks = _make_ks(cfg, mock_notif, logger)
+    # 매수 주문가보다 낮은 체결은 유리한 체결이므로 계좌 Kill Switch를 트립하지 않는다.
+    await ks.record_fill_event(
+        order_price=10_000,
+        fill_price=9_500,
+        code="005930",
+        qty=10,
+        side="BUY",
+    )
+
+    assert ks._is_tripped is False
+    mock_notif.emit.assert_not_awaited()
+
+
+async def test_adverse_sell_fill_deviation_trips(cfg, mock_notif, logger):
+    ks = _make_ks(cfg, mock_notif, logger)
+    await ks.record_fill_event(
+        order_price=10_000,
+        fill_price=9_500,
+        code="005930",
+        qty=10,
+        side="SELL",
+    )
+
+    assert ks._is_tripped is True
+    assert "비정상 체결" in ks._trip_reason
+
+
 async def test_fill_within_tolerance_does_not_trip(cfg, mock_notif, logger):
     ks = _make_ks(cfg, mock_notif, logger)
     # 10,000원 주문 → 10,200원 체결 (2% 이탈, 한도 3%)

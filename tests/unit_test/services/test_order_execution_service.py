@@ -1860,7 +1860,9 @@ async def test_manual_sell_terminal_report_uses_plain_virtual_sell_and_records_k
 
     assert filled.virtual_recorded_qty == 3
     virtual_trade_service.log_sell_async.assert_awaited_once_with("005930", 69900, 3)
-    kill_switch.record_fill_event.assert_awaited_once_with(70000, 69900, "005930", 3)
+    kill_switch.record_fill_event.assert_awaited_once_with(
+        70000, 69900, "005930", 3, side=OrderSide.SELL.value
+    )
 
 
 @pytest.mark.asyncio

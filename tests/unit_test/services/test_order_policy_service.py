@@ -550,6 +550,35 @@ async def test_trade_flow_blocks_low_recent_trade_count():
 
 
 @pytest.mark.asyncio
+async def test_trade_flow_allows_low_recent_count_when_execution_strength_is_available():
+    provider = AsyncMock()
+    provider.get_snapshot.return_value = _flow_snapshot(
+        recent_trade_count=0,
+        execution_strength_pct=141.6,
+    )
+    svc = _service(
+        config=OrderPolicyConfig(
+            order_book_checks_enabled=False,
+            min_recent_trade_count=1,
+            min_execution_strength_pct=100.0,
+        ),
+        trade_flow_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.allowed is True
+    assert decision.context["recent_trade_count"] == 0
+    assert decision.context["execution_strength_pct"] == 141.6
+
+
+@pytest.mark.asyncio
 async def test_trade_flow_blocks_when_time_concluded_unavailable_for_velocity_check():
     provider = AsyncMock()
     provider.get_snapshot.return_value = _flow_snapshot(

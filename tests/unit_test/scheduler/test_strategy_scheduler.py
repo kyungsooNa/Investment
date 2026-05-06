@@ -1244,7 +1244,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             0,
             5,
             exchange=Exchange.KRX,
-            source="strategy:TestStrategy",
+            source="strategy_force_exit:TestStrategy",
             finalize_immediately=False,
             trace_id=ANY,
         )
@@ -1279,7 +1279,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             0,
             3,
             exchange=Exchange.KRX,
-            source="strategy:TestStrategy",
+            source="strategy_force_exit:TestStrategy",
             finalize_immediately=False,
             trace_id=ANY,
         )
@@ -1835,7 +1835,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             0,
             10,
             exchange=Exchange.KRX,
-            source="strategy:S",
+            source="strategy_force_exit:S",
             finalize_immediately=False,
             trace_id=ANY,
         )
@@ -2338,6 +2338,65 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         signal = mock_exec.await_args.args[0]
         self.assertEqual(signal.price, 12345)
         self.assertEqual(signal.qty, 2)
+
+    async def test_force_liquidate_reads_nested_output1_best_bid(self):
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
+        oes.broker_api_wrapper.get_asking_price = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="OK",
+                data={"output1": {"bidp1": "8560"}},
+            )
+        )
+        vm.get_holds_by_strategy.return_value = [
+            {"code": "037030", "name": "Powernet", "qty": 1}
+        ]
+        config = StrategySchedulerConfig(strategy=MockStrategy(name="NestedBidExit"))
+
+        with patch.object(scheduler, "_execute_signal", new_callable=AsyncMock) as mock_exec:
+            await scheduler._force_liquidate_strategy(config)
+
+        signal = mock_exec.await_args.args[0]
+        self.assertEqual(signal.price, 8560)
+        self.assertIn("지정가", signal.reason)
+
+    async def test_execute_force_liquidation_signal_marks_force_exit_source(self):
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+
+        signal = TradeSignal(
+            code="037030", name="Powernet", action="SELL",
+            price=8560, qty=1,
+            reason="전략 종료 강제 청산 (지정가 8,560원)",
+            strategy_name="래리윌리엄스VBO",
+        )
+        await scheduler._execute_signal(signal)
+
+        self.assertEqual(
+            oes.handle_place_sell_order.await_args.kwargs["source"],
+            "strategy_force_exit:래리윌리엄스VBO",
+        )
+
+    async def test_run_reconciliation_clears_strategy_state_for_force_closed_codes(self):
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
+        strategy = MockStrategy(name="오닐PP/BGU")
+        strategy._position_state = {"064350": SimpleNamespace(entry_price=265500)}
+        strategy._save_state = MagicMock()
+        scheduler.register(StrategySchedulerConfig(strategy=strategy))
+        oes.broker_api_wrapper.get_account_balance = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="OK",
+                data={"output1": []},
+            )
+        )
+        vm.reconcile_with_broker = AsyncMock(
+            return_value={"force_closed": ["064350"], "unknown_in_broker": []}
+        )
+
+        await scheduler._run_reconciliation()
+
+        self.assertEqual(strategy._position_state, {})
+        strategy._save_state.assert_called_once()
 
     async def test_run_reconciliation_emits_warning_on_mismatch(self):
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)

@@ -572,7 +572,7 @@ class StrategyScheduler:
                         signal.price,
                         signal.qty,
                         exchange=signal_exchange,
-                        source=f"strategy:{signal.strategy_name}",
+                        source=self._source_for_signal(signal),
                         finalize_immediately=False,
                         trace_id=tid,
                     )
@@ -674,7 +674,7 @@ class StrategyScheduler:
             try:
                 resp = await self._oes.broker_api_wrapper.get_asking_price(code)
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
-                    best_bid = int(resp.data.get("bidp1", 0) or 0)
+                    best_bid = self._extract_best_bid(resp.data)
                     if best_bid > 0:
                         sell_price = best_bid
                         reason = f"전략 종료 강제 청산 (지정가 {best_bid:,}원)"
@@ -711,6 +711,7 @@ class StrategyScheduler:
             result = await self._virtual_trade_service.reconcile_with_broker(
                 holdings, logger=self._logger
             )
+            self._clear_reconciled_position_state(result.get("force_closed") or [])
             if result["force_closed"] or result["unknown_in_broker"]:
                 msg = (
                     f"강제종결: {result['force_closed']}, "
@@ -723,6 +724,49 @@ class StrategyScheduler:
                     )
         except Exception as e:
             self._logger.error(f"[Reconciliation] 대사 실패: {e}", exc_info=True)
+
+    @staticmethod
+    def _source_for_signal(signal: TradeSignal) -> str:
+        if signal.action == "SELL" and str(signal.reason or "").startswith("전략 종료 강제 청산"):
+            return f"strategy_force_exit:{signal.strategy_name}"
+        return f"strategy:{signal.strategy_name}"
+
+    @staticmethod
+    def _extract_best_bid(data) -> int:
+        if not isinstance(data, dict):
+            return 0
+        candidates = [
+            data,
+            data.get("output1"),
+            data.get("output"),
+        ]
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            try:
+                bid = int(item.get("bidp1", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if bid > 0:
+                return bid
+        return 0
+
+    def _clear_reconciled_position_state(self, force_closed_codes: list) -> None:
+        codes = {str(code).strip() for code in force_closed_codes if str(code).strip()}
+        if not codes:
+            return
+        for cfg in self._strategies:
+            position_state = self._get_strategy_position_state(cfg.strategy)
+            removed = [raw_code for raw_code in position_state if str(raw_code).strip() in codes]
+            if not removed:
+                continue
+            for code in removed:
+                position_state.pop(code, None)
+            self._persist_strategy_position_state(cfg.strategy)
+            self._logger.warning(
+                f"[Scheduler] reconciled position_state cleared: "
+                f"strategy={cfg.strategy.name}, codes={removed}"
+            )
 
     # ── 개별 전략 제어 ──
 
