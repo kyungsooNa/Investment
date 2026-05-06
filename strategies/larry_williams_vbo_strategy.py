@@ -174,7 +174,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                     f"=Target({round(target):,}) / 현재({current:,}) / 체결강도({cgld:.1f}%)"
                 )
                 signals.append(TradeSignal(
-                    code=code, name=name, action="BUY", price=current, qty=1,
+                    code=code, name=name, action="BUY", price=current,
                     reason=reason, strategy_name=self.name,
                     stop_loss_pct=self._cfg.stop_loss_pct,
                 ))

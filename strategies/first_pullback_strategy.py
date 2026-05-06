@@ -228,7 +228,6 @@ class FirstPullbackStrategy(LiveStrategy):
             return None
 
         # ========= 모든 관문 통과! 매수 시그널 생성 =========
-        qty = self._calculate_qty(current)
 
         self._position_state[code] = FPPositionState(
             entry_price=current,
@@ -269,7 +268,7 @@ class FirstPullbackStrategy(LiveStrategy):
         })
 
         return TradeSignal(
-            code=code, name=item.name, action="BUY", price=current, qty=qty,
+            code=code, name=item.name, action="BUY", price=current,
             reason=reason_msg, strategy_name=self.name
         )
 
@@ -557,12 +556,6 @@ class FirstPullbackStrategy(LiveStrategy):
         return signals, state_dirty
 
     # ── 헬퍼 ──────────────────────────────────────────────────────
-
-    def _calculate_qty(self, price: int) -> int:
-        if price <= 0:
-            return self._cfg.min_qty
-        budget = self._cfg.total_portfolio_krw * (self._cfg.position_size_pct / 100)
-        return max(int(budget / price), self._cfg.min_qty)
 
     def _get_market_progress_ratio(self) -> float:
         now = self._tm.get_current_kst_time()

@@ -234,7 +234,6 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             return None
 
         # ========= 모든 관문 통과! 매수 시그널 생성 =========
-        qty = self._calculate_qty(current)
         # 1. 판정 유형 및 상세 수치 재계산 (로깅용)
         # 이제 sm_metrics에서 필요한 값을 꺼내서 씁니다.
         pass_type = sm_metrics["pass_type"]
@@ -284,7 +283,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         })
 
         return TradeSignal(
-            code=code, name=item.name, action="BUY", price=current, qty=qty,
+            code=code, name=item.name, action="BUY", price=current,
             reason=reason_msg, strategy_name=self.name,
             stop_loss_pct=self._cfg.stop_loss_pct,
         )
@@ -569,11 +568,6 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             "pnl_pct": round(pnl_pct, 2)
         })
         return True
-
-    def _calculate_qty(self, price: int) -> int:
-        if price <= 0: return 1
-        budget = self._cfg.total_portfolio_krw * (self._cfg.position_size_pct / 100)
-        return max(int(budget / price), 1)
 
     def _get_market_progress_ratio(self) -> float:
         now = self._tm.get_current_kst_time()

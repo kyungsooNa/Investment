@@ -286,7 +286,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         })
 
         return TradeSignal(
-            code=code, name=item.name, action="BUY", price=current, qty=qty,
+            code=code, name=item.name, action="BUY", price=current,
             reason=reason_msg, strategy_name=self.name
         )
 

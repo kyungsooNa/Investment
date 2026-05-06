@@ -103,37 +103,17 @@
 
 전략을 더 추가하기보다 현재 전략의 기대값, MDD, 승률, 손익비, 시장 국면별 성과를 먼저 검증합니다.
 
-### 1-1. `VolumeBreakoutLiveStrategy` 보완
 
-- [ ] 현재 스킵 중인 거래량 조건을 복구한다: 현재 거래량/20일 평균 거래량, 현재 거래대금/20일 평균 거래대금 기준을 정의한다.
-- [ ] VWAP 상단 유지, 고점 돌파 후 되밀림, 체결강도, 호가잔량 불균형, 프로그램 매수 동반 여부를 필터 후보로 검증한다.
-- [ ] BUY 신호의 `qty=1` 고정이 포지션 사이징을 막지 않도록 signal contract를 재정의한다.
-- [ ] trailing stop 기준을 당일 고가가 아니라 진입 이후 최고가 기준으로 관리하도록 변경한다.
-
-주요 파일:
-
-- `strategies/volume_breakout_live_strategy.py`
-- `strategies/volume_breakout_strategy.py`
-- `services/position_sizing_service.py`
-
-### 1-2. `MomentumStrategy` follow-through 지연 검증
-
-- [ ] 1차 급등 감지 시 즉시 BUY 판단하지 않고 candidate state를 저장한다.
-- [ ] `min_follow_through_time` 경과 후 현재가/VWAP/거래량을 다시 확인한다.
-- [ ] 통과 시에만 BUY 신호를 생성하고, 실패 시 rejected reason을 남긴다.
-- [ ] live 모드와 backtest 모드가 같은 follow-through 의미를 갖도록 테스트 fixture를 보강한다.
-
-주요 파일:
-
-- `strategies/momentum_strategy.py`
-- `tests/unit_test/strategies/test_momentum_strategy.py`
 
 ### 1-3. `TradeSignal` / `PositionSizingService` 수량 contract 표준화
 
-- [ ] 전략은 매수 사유, 기준가, 손절 기준, 신뢰도만 생성하고 최종 수량은 `PositionSizingService`가 전담하는 구조로 정리한다.
-- [ ] 향후 `TradeSignal` 확장 후보를 검토한다: `stop_price`, `risk_pct`, `confidence`.
-- [ ] 확장 필드는 즉시 구현하지 않고 sizing 구조 개편 시 backward-compatible migration 계획을 함께 세운다.
-- [ ] 기존 `qty` 의미를 “전략 상한”으로 유지할지 “요청 수량 없음/무제한”을 표현할지 결정하고 테스트로 고정한다.
+- [x] 전략은 매수 사유, 기준가, 손절 기준, 신뢰도만 생성하고 최종 수량은 `PositionSizingService`가 전담하는 구조로 정리한다.
+- [x] 향후 `TradeSignal` 확장 후보를 검토한다: `stop_price`, `risk_pct`, `confidence`.
+  - 결정: 본 PR에서는 미도입. `stop_loss_pct`/`atr_multiplier`가 이미 존재해 stop 거리 계산에 충분. 후속 PR에서 `Optional[...]` 추가 시 backward-compat 유지 가능.
+- [x] 확장 필드는 즉시 구현하지 않고 sizing 구조 개편 시 backward-compatible migration 계획을 함께 세운다.
+  - 계획: 모든 신규 필드는 `Optional[...] = None`으로 추가, 기존 47개 construction site 영향 없음.
+- [x] 기존 `qty` 의미를 “전략 상한”으로 유지할지 “요청 수량 없음/무제한”을 표현할지 결정하고 테스트로 고정한다.
+  - 결정: `qty: Optional[int] = None`. `None`=sizing 단독 결정, `int`=전략의 자발적 상한. 테스트로 invariant 고정 완료.
 
 주요 파일:
 

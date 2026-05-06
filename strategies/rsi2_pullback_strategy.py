@@ -168,7 +168,7 @@ class RSI2PullbackStrategy(LiveStrategy):
             "risk_off": risk_off,
         })
         return TradeSignal(
-            code=code, name=item.name, action="BUY", price=current, qty=qty,
+            code=code, name=item.name, action="BUY", price=current,
             reason=reason_msg, strategy_name=self.name
         )
 

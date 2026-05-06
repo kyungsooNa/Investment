@@ -1,10 +1,12 @@
 """포지션 사이징 서비스 — Fixed Fractional (Penbold 식).
 
-계좌 노출 제어 3단계:
+계좌 노출 제어:
   1. risk_qty  : (총자산 × risk_pct) / 1주당 리스크(KRW)
-  2. cap_qty   : 단일 종목 10% 비중 상한 잔여분
+  2. cap_qty   : 단일 종목 비중 상한 잔여분
   3. cash_qty  : 매수 가능 현금 한도
-  final_qty = max(0, min(signal.qty, risk_qty, cap_qty, cash_qty))
+  4. alloc_qty : 전략별 자본 할당 캡 (설정된 경우)
+  5. signal.qty: 전략이 설정한 자발적 상한 (Optional — None 이면 제약 없음)
+  final_qty = max(0, min([risk_qty, cap_qty, cash_qty, (alloc_qty), (signal.qty)]))
 """
 
 import math
@@ -50,9 +52,13 @@ class PositionSizingService:
             (final_qty, reason)  — final_qty == 0 이면 주문 skip.
         """
         if not self._cfg.enabled:
+            if signal.qty is None:
+                return 0, "sizing_disabled"
             return signal.qty, "sizing_disabled"
 
-        if signal.action != "BUY" or signal.qty <= 0 or signal.price <= 0:
+        if signal.action != "BUY" or signal.price <= 0:
+            return signal.qty, "bypass"
+        if signal.qty is not None and signal.qty <= 0:
             return signal.qty, "bypass"
 
         price = signal.price
@@ -86,11 +92,16 @@ class PositionSizingService:
         # 5. cash_qty (매수 가능 현금)
         cash_qty = math.floor(available_cash / price) if price > 0 else 0
 
-        # 6. alloc_qty (전략별 자본 할당 캡)
+        # 6. alloc_qty (전략별 자본 할당 캡, None 이면 제약 없음)
         alloc_qty = self._calc_strategy_alloc_qty(signal, price, total_equity)
 
-        # 7. 5-way min
-        final_qty = max(0, min(signal.qty, risk_qty, cap_qty, cash_qty, alloc_qty))
+        # 7. 후보 목록 구성 — signal.qty / alloc_qty 는 None 이면 제외 (제약 없음)
+        candidates = [risk_qty, cap_qty, cash_qty]
+        if alloc_qty is not None:
+            candidates.append(alloc_qty)
+        if signal.qty is not None:
+            candidates.append(signal.qty)
+        final_qty = max(0, min(candidates))
 
         # 8. 사유 결정
         if final_qty == 0:
@@ -98,13 +109,16 @@ class PositionSizingService:
                 reason = "risk_zero"
             elif cap_qty == 0:
                 reason = "cap_exhausted"
-            elif alloc_qty == 0:
+            elif alloc_qty is not None and alloc_qty == 0:
                 reason = "strategy_capital_cap"
             else:
                 reason = "cash_short"
-        elif final_qty < signal.qty:
-            limiting = min(risk_qty, cap_qty, cash_qty, alloc_qty)
-            if limiting == alloc_qty:
+        elif signal.qty is not None and final_qty == signal.qty:
+            reason = "ok"
+        else:
+            # signal.qty 상한보다 작게 됐거나, qty=None 에서 sizing 이 단독 결정
+            limiting = min(risk_qty, cap_qty, cash_qty, *([alloc_qty] if alloc_qty is not None else []))
+            if alloc_qty is not None and limiting == alloc_qty:
                 reason = "strategy_capital_cap"
             elif limiting == cash_qty:
                 reason = "cash_limited"
@@ -112,8 +126,6 @@ class PositionSizingService:
                 reason = "cap_limited"
             else:
                 reason = "risk_limited"
-        else:
-            reason = "ok"
 
         self._logger.info(
             f"[PositionSizing] {signal.code} price={price:,} "
@@ -125,19 +137,19 @@ class PositionSizingService:
 
     # ── 내부 ──────────────────────────────────────────────────────
 
-    def _calc_strategy_alloc_qty(self, signal: TradeSignal, price: int, total_equity: int) -> int:
+    def _calc_strategy_alloc_qty(self, signal: TradeSignal, price: int, total_equity: int) -> Optional[int]:
         """전략별 자본 할당 캡 (capital_allocation_pct) 기반 최대 수량.
 
-        캡 미설정 시 signal.qty 반환 (제약 없음).
+        캡 미설정 시 None 반환 (제약 없음).
         """
         if not self._risk_gate_config or not signal.strategy_name or price <= 0:
-            return signal.qty
+            return None
 
         cfg = self._risk_gate_config
         limit = cfg.strategy_limits.get(signal.strategy_name) or cfg.default_strategy_limit
         cap_pct = limit.capital_allocation_pct if limit else None
         if cap_pct is None:
-            return signal.qty
+            return None
 
         alloc_budget = int(total_equity * cap_pct / 100)
         return math.floor(alloc_budget / price)

@@ -502,18 +502,6 @@ def test_state_persistence(mock_deps, tmp_path):
 
 # ── 기타 헬퍼 테스트 ─────────────────────────────────────────────────
 
-def test_calculate_qty(mock_deps):
-    """_calculate_qty: 정상 계산 및 경계값."""
-    sqs, universe, tm, logger = mock_deps
-    strategy = HighTightFlagStrategy(sqs, universe, tm, logger=logger)
-
-    # 기본: 1000만 * 5% * 0.5(HTF 비중 절반) = 25만, 25만 / 10000 = 25주
-    assert strategy._calculate_qty(10000) == 25
-    # 가격 0 → min_qty(1)
-    assert strategy._calculate_qty(0) == 1
-    assert strategy._calculate_qty(-100) == 1
-
-
 # ── Edge Cases & Error Handling ──────────────────────────────────────
 
 @pytest.mark.asyncio
