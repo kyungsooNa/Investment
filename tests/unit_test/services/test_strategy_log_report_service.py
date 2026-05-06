@@ -690,6 +690,98 @@ async def test_report_uses_virtual_trade_records_for_completed_buys_when_availab
 
 
 @pytest.mark.asyncio
+async def test_report_matches_virtual_trade_strategy_alias_to_log_section(log_dir):
+    """원장 전략명이 한글이어도 대응하는 영문 로그 섹션의 매수 완료 detail에 표시한다."""
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return [
+                {
+                    "strategy": "첫눌림목",
+                    "code": "005930",
+                    "name": "삼성전자",
+                    "buy_date": "2026-04-18 09:10:00",
+                    "buy_price": 75000,
+                    "status": "HOLD",
+                    "reason": "원장 체결",
+                },
+            ]
+
+        def get_solds(self):
+            return []
+
+        def get_holds(self):
+            return []
+
+    _write_log(os.path.join(log_dir, "20260418_093000_FirstPullback.log.json"), [
+        _make_entry("buy_signal_generated", "005930", "삼성전자", reason="로그 시그널", price=75000),
+    ])
+
+    svc = StrategyLogReportService(
+        log_dir=log_dir,
+        virtual_trade_service=DummyVirtualTradeService(),
+    )
+    report = await svc.generate_report("20260418")
+
+    assert "<b>1. FirstPullback</b>" in report
+    assert "매수 완료 (1건)" in report
+    assert "삼성전자(005930): 원장 체결 @ ₩75,000 (09:10)" in report
+
+
+@pytest.mark.asyncio
+async def test_report_filters_disabled_strategy_sections_and_execution_quality(log_dir):
+    """스케줄러에서 제외된 전략은 실행 섹션과 체결 품질 요약에서 제외한다."""
+    scan_entry = _make_entry("scan_with_watchlist", "", "", reason="")
+    scan_entry["data"]["count"] = 3
+    _write_log(os.path.join(log_dir, "20260418_093000_FirstPullback.log.json"), [scan_entry])
+    _write_log(os.path.join(log_dir, "20260418_093000_TraditionalVolumeBreakout.log.json"), [
+        _make_entry("buy_signal_generated", "005930", "삼성전자", reason="전통돌파", price=75000),
+    ])
+    _write_log(os.path.join(log_dir, "20260418_093000_ExecutionQuality.log.json"), [
+        {
+            "timestamp": "2026-04-18 10:00:00,000",
+            "level": "INFO",
+            "name": "strategy.ExecutionQuality",
+            "data": {
+                "event": "execution_quality",
+                "code": "005930",
+                "name": "삼성전자",
+                "source": "strategy:거래량돌파(전통)",
+                "side": "BUY",
+                "order_type": "limit",
+                "filled_qty": 1,
+                "slippage_pct": 2.0,
+            },
+        },
+        {
+            "timestamp": "2026-04-18 10:01:00,000",
+            "level": "INFO",
+            "name": "strategy.ExecutionQuality",
+            "data": {
+                "event": "execution_quality",
+                "code": "000660",
+                "name": "SK하이닉스",
+                "source": "strategy:첫눌림목",
+                "side": "BUY",
+                "order_type": "limit",
+                "filled_qty": 1,
+                "slippage_pct": 0.2,
+            },
+        },
+    ])
+
+    svc = StrategyLogReportService(
+        log_dir=log_dir,
+        enabled_strategy_provider=lambda: ["첫눌림목"],
+    )
+    report = await svc.generate_report("20260418")
+
+    assert "FirstPullback" in report
+    assert "TraditionalVolumeBreakout" not in report
+    assert "거래량돌파(전통)" not in report
+    assert "첫눌림목: 1건" in report
+
+
+@pytest.mark.asyncio
 async def test_report_includes_execution_quality_summary(log_dir):
     """execution_quality 로그를 전략별/종목별 체결 품질로 집계한다."""
     log_path = os.path.join(log_dir, "20260418_093000_Execution.log.json")
@@ -992,7 +1084,7 @@ async def test_htf_near_miss_shows_early_morning_guard_note(log_dir):
     report = await svc.generate_report("20260418")
 
     assert "HTF 패턴 감지" in report
-    assert "장 초반 진입 제한으로 스킵" in report
+    assert "장 초반 진입 제한, 이후 스캔 계속" in report
 
 
 @pytest.mark.asyncio

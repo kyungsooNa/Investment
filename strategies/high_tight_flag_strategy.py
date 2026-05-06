@@ -231,7 +231,13 @@ class HighTightFlagStrategy(LiveStrategy):
 
         # 장 초반 15분 이내: proj_vol 뻥튀기로 인한 가짜 돌파 시그널 방지
         if progress * 390 < 15:
-            self._logger.debug({"event": "breakout_skipped", "code": code, "reason": "early_morning_guard"})
+            self._logger.debug({
+                "event": "breakout_skipped",
+                "code": code,
+                "name": item.name,
+                "reason": "early_morning_guard",
+                "retry_after_guard": True,
+            })
             return None
 
         # 2. 가격 돌파: pole_high 기준 진입 밴드 확인 (옵션 A + 과확장 방어)

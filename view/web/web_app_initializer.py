@@ -587,6 +587,7 @@ class WebAppContext:
                     virtual_trade_service=self.virtual_trade_service,
                     backtest_journal_provider=self.backtest_journal_repository.load_records_for_date,
                     execution_quality_config=getattr(self.full_config, "execution_quality_report", None),
+                    enabled_strategy_provider=self._get_enabled_strategy_names_for_report,
                 ),
                 notification_service=self.notification_service,
                 telegram_reporter=getattr(self, 'telegram_reporter', None),
@@ -730,6 +731,17 @@ class WebAppContext:
         return {}
 
     # --- 전략 스케줄러 ---
+
+    def _get_enabled_strategy_names_for_report(self):
+        scheduler = getattr(self, "scheduler", None)
+        if not scheduler:
+            return None
+        strategies = getattr(scheduler, "_strategies", [])
+        return [
+            cfg.strategy.name
+            for cfg in strategies
+            if getattr(cfg, "enabled", False)
+        ]
 
     def initialize_scheduler(self):
         """전략 스케줄러 생성 및 전략 등록 (자동 시작하지 않음, 웹 UI에서 수동 시작)."""

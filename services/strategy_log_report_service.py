@@ -59,6 +59,37 @@ _DATA_ERROR_REASON_PATTERNS = (
     "invalid price data",
     "open or current is zero",
 )
+_HTF_EARLY_GUARD_NOTE = "장 초반 진입 제한, 이후 스캔 계속"
+
+_STRATEGY_ALIAS_TO_CANONICAL = {
+    "오닐스퀴즈돌파": "OneilSqueezeBreakout",
+    "오닐PP/BGU": "OneilPocketPivot",
+    "하이타이트플래그": "HighTightFlag",
+    "첫눌림목": "FirstPullback",
+    "래리윌리엄스VBO": "LarryWilliamsVBO",
+    "RSI2눌림목": "RSI2Pullback",
+    "래리윌리엄스CB": "LarryWilliamsCB",
+    "거래량돌파": "VolumeBreakoutLive",
+    "프로그램매수추종": "ProgramBuyFollow",
+    "거래량돌파(전통)": "TraditionalVolumeBreakout",
+}
+
+
+def _strategy_alias_key(value: Any) -> str:
+    return re.sub(r"\s+", "", str(value or "").strip()).casefold()
+
+
+_STRATEGY_CANONICAL_BY_KEY: Dict[str, str] = {}
+for _alias, _canonical in _STRATEGY_ALIAS_TO_CANONICAL.items():
+    _STRATEGY_CANONICAL_BY_KEY[_strategy_alias_key(_alias)] = _canonical
+    _STRATEGY_CANONICAL_BY_KEY[_strategy_alias_key(_canonical)] = _canonical
+
+
+def _strategy_report_key(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return _STRATEGY_CANONICAL_BY_KEY.get(_strategy_alias_key(raw), raw)
 
 
 def _is_data_error_reason(reason: str) -> bool:
@@ -257,12 +288,14 @@ class StrategyLogReportService:
         virtual_trade_service: Optional[Any] = None,
         execution_quality_config: Optional[Any] = None,
         backtest_journal_provider: Optional[Callable[[str], List[dict]]] = None,
+        enabled_strategy_provider: Optional[Callable[[], Optional[List[str]]]] = None,
     ):
         self._log_dir = log_dir
         self._stock_code_repo = stock_code_repo
         self._virtual_trade_service = virtual_trade_service
         self._execution_quality_config = execution_quality_config
         self._backtest_journal_provider = backtest_journal_provider
+        self._enabled_strategy_provider = enabled_strategy_provider
         self._last_execution_quality_candidates: List[dict] = []
 
     def get_last_execution_quality_candidates(self) -> List[dict]:
@@ -380,7 +413,7 @@ class StrategyLogReportService:
             except (TypeError, ValueError):
                 price = 0
 
-            result.setdefault(strategy, {})[code] = {
+            result.setdefault(_strategy_report_key(strategy), {})[code] = {
                 'name': str(trade.get('name') or code),
                 'price': price,
                 'reason': str(trade.get('reason') or '체결 원장 기록'),
@@ -388,6 +421,26 @@ class StrategyLogReportService:
             }
 
         return (not saw_target_date_trade) or saw_strategy_tag, result
+
+    def _get_enabled_strategy_keys(self) -> Optional[set[str]]:
+        if not self._enabled_strategy_provider:
+            return None
+        try:
+            names = self._enabled_strategy_provider()
+        except Exception:
+            return None
+        if names is None:
+            return None
+        return {
+            key for key in (_strategy_report_key(name) for name in names)
+            if key
+        }
+
+    @staticmethod
+    def _is_strategy_enabled_for_report(name: str, enabled_strategy_keys: Optional[set[str]]) -> bool:
+        if enabled_strategy_keys is None:
+            return True
+        return _strategy_report_key(name) in enabled_strategy_keys
 
     def _build_portfolio_summary(
         self,
@@ -864,6 +917,7 @@ class StrategyLogReportService:
         inactive_names: List[str] = []
         market_timing: Dict[str, Tuple[str, bool]] = {}
         has_executed_buy_source, executed_buys_by_strategy = self._executed_buys_by_strategy(target_date)
+        enabled_strategy_keys = self._get_enabled_strategy_keys()
 
         # 전략 로직과 무관한 데이터 수신/파싱 오류를 따로 집계
         data_errors_by_strategy: Dict[str, int] = {}
@@ -908,10 +962,13 @@ class StrategyLogReportService:
 
                     elif event == 'execution_quality' and code:
                         name_value = name_map.get(code) or data.get('name') or code
+                        strategy_name = _strategy_name_from_source(data.get("source") or data.get("strategy_name"))
+                        if not self._is_strategy_enabled_for_report(strategy_name, enabled_strategy_keys):
+                            continue
                         execution_quality_records.append({
                             "timestamp": ts,
                             "order_key": data.get("order_key") or f"{ts}:{code}:{len(execution_quality_records)}",
-                            "strategy": _strategy_name_from_source(data.get("source") or data.get("strategy_name")),
+                            "strategy": strategy_name,
                             "code": str(code).strip(),
                             "name": self._db_resolve(str(code).strip(), str(name_value)),
                             "side": data.get("side", ""),
@@ -949,7 +1006,7 @@ class StrategyLogReportService:
                     if event == 'breakout_skipped' and data.get('reason') == 'early_morning_guard' and code:
                         early_guard_skipped.add(code)
                         if code in near_miss:
-                            near_miss[code]['note'] = "장 초반 진입 제한으로 스킵"
+                            near_miss[code]['note'] = _HTF_EARLY_GUARD_NOTE
 
                     if event in _NEAR_MISS_EVENTS and code and code not in bought:
                         reason = data.get('reason', '')
@@ -971,12 +1028,12 @@ class StrategyLogReportService:
                                 'reason_kr': _reason_to_korean("HTF 패턴 감지" if event == "htf_pattern_detected" else reason),
                                 'metric_str': _build_metric_str(event, reason, data),
                                 'time': ts[11:16] if len(ts) >= 16 else '',
-                                'note': "장 초반 진입 제한으로 스킵" if code in early_guard_skipped else "",
+                                'note': _HTF_EARLY_GUARD_NOTE if code in early_guard_skipped else "",
                             }
 
             # StockCodeRepository로 미해결 종목명 보완
             if has_executed_buy_source:
-                bought = executed_buys_by_strategy.get(name, {})
+                bought = executed_buys_by_strategy.get(_strategy_report_key(name), {})
 
             if self._stock_code_repo:
                 for code, info in bought.items():
@@ -985,6 +1042,9 @@ class StrategyLogReportService:
                     info['name'] = self._db_resolve(code, info['name'])
                 for code, info in near_miss.items():
                     info['name'] = self._db_resolve(code, info['name'])
+
+            if not self._is_strategy_enabled_for_report(name, enabled_strategy_keys):
+                continue
 
             if data_error_count > 0:
                 data_errors_by_strategy[name] = data_error_count
