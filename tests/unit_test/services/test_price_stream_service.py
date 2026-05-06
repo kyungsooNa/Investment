@@ -114,6 +114,56 @@ def test_cache_price_snapshot_updates_cache_without_tick_tracking(price_stream_s
     mock_stock_repo.update_realtime_data.assert_called_once_with("005930", 71000.0, 3210)
 
 
+def test_on_price_tick_stores_liquidity_fields(price_stream_service):
+    """체결틱의 누적거래량/누적거래대금이 snapshot 에 보관된다."""
+    data = {
+        '유가증권단축종목코드': '005930',
+        '주식현재가': '75000',
+        '누적거래량': '1500000',
+        '누적거래대금': '112500000000',
+    }
+
+    price_stream_service.on_price_tick(data)
+
+    snap = price_stream_service.get_liquidity_snapshot('005930')
+    assert snap is not None
+    assert snap['acml_vol'] == 1500000
+    assert snap['acml_tr_pbmn'] == 112500000000
+    assert isinstance(snap['received_at'], float)
+
+
+def test_on_price_tick_handles_missing_trading_value(price_stream_service):
+    """누적거래대금 키가 없거나 N/A 인 경우 0 으로 보관된다."""
+    data = {
+        '유가증권단축종목코드': '005930',
+        '주식현재가': '75000',
+        '누적거래량': '1500000',
+        # 누적거래대금 누락
+    }
+    price_stream_service.on_price_tick(data)
+    snap = price_stream_service.get_liquidity_snapshot('005930')
+    assert snap is not None
+    assert snap['acml_tr_pbmn'] == 0
+
+
+def test_cache_price_snapshot_stores_acml_tr_pbmn(price_stream_service):
+    """REST 스냅샷의 acml_tr_pbmn 값이 snapshot 에 반영된다."""
+    price_stream_service.cache_price_snapshot(
+        "005930",
+        price="71000",
+        volume="3210",
+        acml_tr_pbmn="22791000",
+    )
+    snap = price_stream_service.get_liquidity_snapshot("005930")
+    assert snap is not None
+    assert snap['acml_vol'] == 3210
+    assert snap['acml_tr_pbmn'] == 22791000
+
+
+def test_get_liquidity_snapshot_returns_none_when_unknown(price_stream_service):
+    assert price_stream_service.get_liquidity_snapshot("999999") is None
+
+
 def test_on_price_tick_repo_exception(price_stream_service, mock_stock_repo, mock_logger):
     """레포지토리 업데이트 중 예외 발생 시 로거로 경고를 남기고 앱이 중단되지 않는지 검증"""
     data = {'유가증권단축종목코드': '005930', '주식현재가': '75000'}

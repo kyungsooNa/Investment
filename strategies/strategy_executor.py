@@ -1,12 +1,14 @@
 # strategies/strategy_executor.py
 import asyncio
 import logging
+import time
 from interfaces.strategy import Strategy
-from typing import Awaitable, Callable, List, Dict, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, List, Dict, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from common.types import ResStockFullInfoApiOutput
     from config.config_loader import RiskGateConfig
+    from services.price_stream_service import PriceStreamService
 
 
 class StrategyExecutor:
@@ -26,8 +28,11 @@ class StrategyExecutor:
         guard_timeout: float = 3.0,
         logger: Optional[logging.Logger] = None,
         max_stage_concurrency: int = 20,
+        max_liquidity_concurrency: int = 10,
         risk_gate_config: Optional["RiskGateConfig"] = None,
         get_current_price_fn: Optional[Callable[[str], Awaitable["ResStockFullInfoApiOutput"]]] = None,
+        price_stream_service: Optional["PriceStreamService"] = None,
+        snapshot_max_age_sec: float = 5.0,
     ):
         """
         Args:
@@ -49,8 +54,11 @@ class StrategyExecutor:
         self._guard_timeout = guard_timeout
         self._logger = logger or logging.getLogger(__name__)
         self._max_stage_concurrency = max_stage_concurrency
+        self._max_liquidity_concurrency = max_liquidity_concurrency
         self._risk_gate_config = risk_gate_config
         self._get_current_price_fn = get_current_price_fn
+        self._price_stream_service = price_stream_service
+        self._snapshot_max_age_sec = snapshot_max_age_sec
 
     async def execute(self, stock_codes: List[str]) -> Dict:
         filtered = await self._apply_stage_guard(stock_codes)
@@ -77,21 +85,19 @@ class StrategyExecutor:
         if min_value is None and min_volume is None:
             return stock_codes
 
+        sem = asyncio.Semaphore(self._max_liquidity_concurrency)
+
         async def _passes(code: str) -> bool:
             try:
-                info = await self._get_current_price_fn(code)
-                if min_value is not None:
-                    tr_pbmn = int(info.acml_tr_pbmn or "0")
-                    if tr_pbmn < min_value:
-                        self._logger.info({"event": "liquidity_blocked", "code": code,
-                                           "reason": "min_trading_value_won", "value": tr_pbmn})
-                        return False
-                if min_volume is not None:
-                    vol = int(info.acml_vol or "0")
-                    if vol < min_volume:
-                        self._logger.info({"event": "liquidity_blocked", "code": code,
-                                           "reason": "min_avg_volume", "value": vol})
-                        return False
+                tr_pbmn, vol = await self._lookup_liquidity(code, sem)
+                if min_value is not None and tr_pbmn < min_value:
+                    self._logger.info({"event": "liquidity_blocked", "code": code,
+                                       "reason": "min_trading_value_won", "value": tr_pbmn})
+                    return False
+                if min_volume is not None and vol < min_volume:
+                    self._logger.info({"event": "liquidity_blocked", "code": code,
+                                       "reason": "min_avg_volume", "value": vol})
+                    return False
                 return True
             except Exception as e:
                 self._logger.warning({"event": "liquidity_fetch_error", "code": code, "error": str(e)})
@@ -107,6 +113,50 @@ class StrategyExecutor:
                 f"(strategy={strategy_name}, min_value={min_value}, min_vol={min_volume})"
             )
         return allowed
+
+    async def _lookup_liquidity(
+        self, code: str, sem: asyncio.Semaphore
+    ) -> Tuple[int, int]:
+        """(acml_tr_pbmn, acml_vol) 을 반환한다.
+
+        조회 우선순위:
+          1) PriceStreamService snapshot (received_at 이 snapshot_max_age_sec 이내)
+          2) get_current_price_fn(REST). 응답을 받으면 snapshot 캐시에 보강.
+        """
+        snap = None
+        if self._price_stream_service is not None:
+            try:
+                snap = self._price_stream_service.get_liquidity_snapshot(code)
+            except Exception:
+                snap = None
+
+        if snap is not None:
+            received_at = snap.get('received_at', 0.0) or 0.0
+            if (time.time() - received_at) <= self._snapshot_max_age_sec:
+                return (
+                    int(snap.get('acml_tr_pbmn') or 0),
+                    int(snap.get('acml_vol') or 0),
+                )
+
+        async with sem:
+            info = await self._get_current_price_fn(code)
+        tr_pbmn = int(getattr(info, 'acml_tr_pbmn', None) or "0")
+        vol = int(getattr(info, 'acml_vol', None) or "0")
+
+        if self._price_stream_service is not None:
+            try:
+                self._price_stream_service.cache_price_snapshot(
+                    code,
+                    price=str(getattr(info, 'stck_prpr', '') or ''),
+                    volume=str(vol),
+                    acml_tr_pbmn=str(tr_pbmn),
+                )
+            except Exception as e:
+                self._logger.debug(
+                    {"event": "snapshot_backfill_skipped", "code": code, "error": str(e)}
+                )
+
+        return tr_pbmn, vol
 
     # ── Stage Guard ────────────────────────────────────────────────────────
 

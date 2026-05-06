@@ -151,6 +151,142 @@ async def test_price_fetch_error_blocks_code():
     assert "GOOD01" in strategy.last_run_codes
 
 
+class _StubPriceStream:
+    """PriceStreamService 스텁 — get_liquidity_snapshot / cache_price_snapshot 만 노출."""
+
+    def __init__(self, snapshots=None):
+        self._snapshots = dict(snapshots or {})
+        self.cache_calls = []
+
+    def get_liquidity_snapshot(self, code):
+        return self._snapshots.get(code)
+
+    def cache_price_snapshot(self, code, price, volume='0', acml_tr_pbmn=None, **kwargs):
+        self.cache_calls.append({
+            "code": code, "price": price, "volume": volume,
+            "acml_tr_pbmn": acml_tr_pbmn,
+        })
+
+
+async def test_snapshot_hit_skips_rest_call():
+    """fresh snapshot 이 있으면 get_current_price_fn 을 호출하지 않는다."""
+    import time as _time
+
+    strategy = _MockLiveStrategy("test_strategy")
+
+    rest_calls = []
+
+    async def _get_price(code):
+        rest_calls.append(code)
+        return _make_price_info(acml_tr_pbmn="20000000000")
+
+    stub = _StubPriceStream(snapshots={
+        "000001": {"acml_vol": 500_000, "acml_tr_pbmn": 20_000_000_000,
+                   "received_at": _time.time()},
+    })
+
+    risk_cfg = RiskGateConfig(
+        strategy_limits={
+            "test_strategy": RiskGateStrategyLimitConfig(min_trading_value_won=10_000_000_000)
+        }
+    )
+
+    executor = StrategyExecutor(
+        strategy=strategy,
+        risk_gate_config=risk_cfg,
+        get_current_price_fn=_get_price,
+        price_stream_service=stub,
+        snapshot_max_age_sec=5.0,
+    )
+
+    await executor.execute(["000001"])
+
+    assert rest_calls == [], "snapshot hit 인 경우 REST 가 호출되어선 안 된다"
+    assert "000001" in strategy.last_run_codes
+
+
+async def test_stale_snapshot_falls_back_to_rest_and_caches():
+    """오래된 snapshot 은 REST fallback + cache_price_snapshot 으로 보강된다."""
+    import time as _time
+
+    strategy = _MockLiveStrategy("test_strategy")
+
+    rest_calls = []
+
+    async def _get_price(code):
+        rest_calls.append(code)
+        return _make_price_info(acml_tr_pbmn="20000000000", acml_vol="500000")
+
+    # 100초 전 — snapshot_max_age_sec=5 보다 훨씬 오래됨
+    stale_ts = _time.time() - 100.0
+    stub = _StubPriceStream(snapshots={
+        "000001": {"acml_vol": 1, "acml_tr_pbmn": 1, "received_at": stale_ts},
+    })
+
+    risk_cfg = RiskGateConfig(
+        strategy_limits={
+            "test_strategy": RiskGateStrategyLimitConfig(min_trading_value_won=10_000_000_000)
+        }
+    )
+
+    executor = StrategyExecutor(
+        strategy=strategy,
+        risk_gate_config=risk_cfg,
+        get_current_price_fn=_get_price,
+        price_stream_service=stub,
+        snapshot_max_age_sec=5.0,
+    )
+
+    await executor.execute(["000001"])
+
+    assert rest_calls == ["000001"], "stale snapshot 은 REST fallback 을 트리거해야 한다"
+    assert len(stub.cache_calls) == 1
+    assert stub.cache_calls[0]["code"] == "000001"
+    assert "000001" in strategy.last_run_codes
+
+
+async def test_liquidity_filter_respects_concurrency_limit():
+    """max_liquidity_concurrency 가 동시 실행되는 _get_price 호출 수의 상한이다."""
+    import asyncio
+
+    strategy = _MockLiveStrategy("test_strategy")
+
+    in_flight = 0
+    peak = 0
+    lock = asyncio.Lock()
+
+    async def _get_price(code: str) -> ResStockFullInfoApiOutput:
+        nonlocal in_flight, peak
+        async with lock:
+            in_flight += 1
+            peak = max(peak, in_flight)
+        try:
+            await asyncio.sleep(0.02)  # 동시 실행 윈도우 확보
+            return _make_price_info(acml_tr_pbmn="20000000000")
+        finally:
+            async with lock:
+                in_flight -= 1
+
+    risk_cfg = RiskGateConfig(
+        strategy_limits={
+            "test_strategy": RiskGateStrategyLimitConfig(min_trading_value_won=10_000_000_000)
+        }
+    )
+
+    executor = StrategyExecutor(
+        strategy=strategy,
+        risk_gate_config=risk_cfg,
+        get_current_price_fn=_get_price,
+        max_liquidity_concurrency=2,
+    )
+
+    codes = [f"{i:06d}" for i in range(1, 11)]  # 10 종목
+    await executor.execute(codes)
+
+    assert peak <= 2, f"동시 실행 피크 {peak} 가 한도 2 를 초과했다"
+    assert strategy.last_run_codes == codes  # 모두 통과해야 한다
+
+
 async def test_both_trading_value_and_volume_must_pass():
     """min_trading_value_won과 min_avg_volume 둘 다 설정된 경우 모두 충족해야 통과."""
     strategy = _MockLiveStrategy("strict_strategy")
