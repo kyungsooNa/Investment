@@ -190,7 +190,7 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
         stop_loss_pct = (hard_stop_price - current) / current * 100.0
 
         return TradeSignal(
-            code=code, name=item.name, action="BUY", price=current, qty=qty,
+            code=code, name=item.name, action="BUY", price=current,
             reason=reason_msg, strategy_name=self.name,
             stop_loss_pct=stop_loss_pct,
         )

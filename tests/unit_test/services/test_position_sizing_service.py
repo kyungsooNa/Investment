@@ -246,3 +246,48 @@ async def test_signal_stop_loss_pct_overrides_default():
     # per_share_risk = 10000 * 2% = 200 → risk_qty = 500
     assert qty == 500
     assert reason == "risk_limited"
+
+
+# ── qty=None: PositionSizingService 단독 결정 ─────────────────────────────
+
+@pytest.mark.asyncio
+async def test_qty_none_sizing_determines_result():
+    """qty=None: signal cap 없이 risk/cap/cash 4-way min으로 qty 결정."""
+    snap = _make_snapshot(total_equity=10_000_000, available_cash=10_000_000)
+    cfg = _make_config(per_trade_risk_pct=1.0, default_stop_loss_pct=-5.0,
+                       min_stop_distance_pct=0.0, max_per_position_pct=100.0)
+    svc, _, _ = _make_service(snap, cfg=cfg)
+    signal = TradeSignal(
+        code="005930", name="삼성전자", action="BUY",
+        price=10_000, qty=None, reason="test", strategy_name="test",
+    )
+    # risk_qty=200, cap_qty/cash_qty >> 200 → sizing 단독 결정
+    qty, reason = await svc.adjust_buy_qty(signal)
+    assert qty == 200
+    assert reason == "risk_limited"
+
+
+@pytest.mark.asyncio
+async def test_qty_none_sizing_disabled_returns_zero():
+    """qty=None + sizing 비활성화 → (0, 'sizing_disabled') — 주문 skip."""
+    svc, _, _ = _make_service(_make_snapshot(), cfg=_make_config(enabled=False))
+    signal = TradeSignal(
+        code="005930", name="삼성전자", action="BUY",
+        price=10_000, qty=None, reason="test", strategy_name="test",
+    )
+    qty, reason = await svc.adjust_buy_qty(signal)
+    assert qty == 0
+    assert reason == "sizing_disabled"
+
+
+@pytest.mark.asyncio
+async def test_qty_int_acts_as_voluntary_cap():
+    """qty=int: sizing 결과(200)보다 작은 signal.qty(50) → signal.qty가 자발적 상한."""
+    snap = _make_snapshot(total_equity=10_000_000, available_cash=10_000_000)
+    cfg = _make_config(per_trade_risk_pct=1.0, default_stop_loss_pct=-5.0,
+                       min_stop_distance_pct=0.0, max_per_position_pct=100.0)
+    svc, _, _ = _make_service(snap, cfg=cfg)
+    # risk_qty=200, signal.qty=50 → signal cap 적용 → 50
+    qty, reason = await svc.adjust_buy_qty(_buy_signal(price=10_000, qty=50))
+    assert qty == 50
+    assert reason == "ok"

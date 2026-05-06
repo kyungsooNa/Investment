@@ -243,7 +243,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0].action, "BUY")
         self.assertEqual(signals[0].code, "123456")
-        self.assertGreater(signals[0].qty, 1)  # 포지션 사이징 적용
+        self.assertIsNone(signals[0].qty)  # qty는 PositionSizingService가 결정 (None=무제한)
 
     async def test_scan_no_signal_price_not_broken(self):
         """가격 미돌파 시 시그널 없음."""

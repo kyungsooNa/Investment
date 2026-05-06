@@ -156,7 +156,7 @@ class ProgramBuyFollowStrategy(LiveStrategy):
                 f"누적대금 {trade_value // 100_000_000:,}억)"
             )
             signals.append(TradeSignal(
-                code=code, name=stock_name, action="BUY", price=current, qty=1,
+                code=code, name=stock_name, action="BUY", price=current,
                 reason=reason_msg, strategy_name=self.name,
             ))
             self._bought_today.add(code)  # 매수 신호 발생 기록

@@ -1733,20 +1733,20 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         
         vm.log_buy_async.assert_not_awaited()
 
-    async def test_run_strategy_updates_qty(self):
-        """전략 실행 시 시그널 수량이 1 이하이면 설정된 주문 수량으로 업데이트하는지 테스트."""
+    async def test_run_strategy_does_not_override_signal_qty(self):
+        """override 제거 — cfg.order_qty는 qty=None dry-run 전용 fallback이며,
+        전략이 명시한 qty>0 신호는 그대로 사용한다."""
         scheduler, vm, _, _, _ = self._make_scheduler()
 
-        # 주문 수량을 10으로 설정
         strategy = MockStrategy(scan_signals=[
             TradeSignal(code="005930", name="Samsung", action="BUY", price=1000, qty=1, reason="T", strategy_name="S")
         ])
         config = StrategySchedulerConfig(strategy=strategy, order_qty=10)
-        
+
         await scheduler._run_strategy(config)
-        
-        # log_buy_async 호출 시 qty가 10이어야 함
-        vm.log_buy_async.assert_awaited_once_with("S", "005930", 1000, 10)
+
+        # qty=1 신호는 cfg.order_qty=10 으로 override 되지 않고 1 그대로 기록
+        vm.log_buy_async.assert_awaited_once_with("S", "005930", 1000, 1)
 
     def test_load_signal_history_max_limit(self):
         """시그널 히스토리 로드 시 MAX_HISTORY 제한이 store에 전달되는지 테스트."""

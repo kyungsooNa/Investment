@@ -175,3 +175,40 @@ async def test_dry_run_skips_sizer():
 
     sizer.adjust_buy_qty.assert_not_called()
     oes.handle_place_buy_order.assert_not_called()  # dry_run은 API 호출 안 함
+
+
+# ── qty=None: sizer 단독 결정, dry-run fallback ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_buy_qty_none_with_sizer_uses_sized_qty():
+    """qty=None 신호 + sizer 주입 → sizer가 단독으로 qty를 결정한다."""
+    sizer = AsyncMock()
+    sizer.adjust_buy_qty.return_value = (5, "risk_limited")
+
+    scheduler, oes = _make_scheduler(position_sizer=sizer, dry_run=False)
+    signal = TradeSignal(
+        code="005930", name="삼성전자", action="BUY",
+        price=10_000, qty=None, reason="test", strategy_name="테스트전략",
+    )
+    await scheduler._execute_signal(signal)
+
+    sizer.adjust_buy_qty.assert_called_once()
+    args, kwargs = oes.handle_place_buy_order.call_args
+    placed_qty = kwargs.get("qty", args[2] if len(args) > 2 else None)
+    assert placed_qty == 5
+
+
+@pytest.mark.asyncio
+async def test_dry_run_qty_none_uses_fallback_qty():
+    """dry_run + qty=None → log_buy_async는 fallback qty=1로 기록된다."""
+    scheduler, _ = _make_scheduler(position_sizer=None, dry_run=True)
+    signal = TradeSignal(
+        code="005930", name="삼성전자", action="BUY",
+        price=10_000, qty=None, reason="test", strategy_name="테스트전략",
+    )
+    await scheduler._execute_signal(signal)
+
+    vm = scheduler._virtual_trade_service
+    vm.log_buy_async.assert_called_once()
+    logged_qty = vm.log_buy_async.call_args[0][3]  # (strategy, code, price, qty)
+    assert logged_qty == 1

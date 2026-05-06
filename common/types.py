@@ -45,7 +45,7 @@ class TradeSignal(BaseModel):
     name: str
     action: str  # "BUY" / "SELL"
     price: int
-    qty: int = 1
+    qty: Optional[int] = None
     reason: str = ""
     strategy_name: str = ""
     exchange: str = "KRX"  # "KRX" 또는 "NXT"

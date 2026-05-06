@@ -500,13 +500,6 @@ async def test_check_exits_api_failure(mock_strategy_deps):
     signals = await strategy.check_exits(holdings)
     assert len(signals) == 0
 
-def test_calculate_qty_zero_price(mock_strategy_deps):
-    """_calculate_qty: 가격이 0 이하일 때 1 반환."""
-    sqs, universe, tm, logger = mock_strategy_deps
-    strategy = OneilSqueezeBreakoutStrategy(sqs, universe, tm, logger=logger)
-    assert strategy._calculate_qty(0) == 1
-    assert strategy._calculate_qty(-100) == 1
-
 def test_load_save_state(mock_strategy_deps, tmp_path):
     """_load_state, _save_state: 파일 입출력 동작 검증."""
     sqs, universe, tm, logger = mock_strategy_deps

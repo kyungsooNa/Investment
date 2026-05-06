@@ -1129,19 +1129,6 @@ def test_check_bullish_reversal(mock_deps):
 # 헬퍼 메서드
 # ════════════════════════════════════════════════════════════════
 
-def test_calculate_qty_min_2(mock_deps):
-    """_calculate_qty: 최소 2주 보장."""
-    sqs, universe, tm, logger = mock_deps
-    strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
-
-    assert strategy._calculate_qty(0) == 2
-    assert strategy._calculate_qty(-1) == 2
-    # budget=500,000, 가격 300,000 → 1주이지만 min_qty=2로 올림
-    assert strategy._calculate_qty(300000) == 2
-    # budget=500,000, 가격 100,000 → 5주
-    assert strategy._calculate_qty(100000) == 5
-
-
 def test_load_save_state(mock_deps, tmp_path):
     """상태 파일 저장/로드 검증."""
     sqs, universe, tm, logger = mock_deps

@@ -390,10 +390,6 @@ class StrategyScheduler:
             self._log_position_limit_rejections(cfg, rejected_signals, current_holds_count)
 
         if target_signals:
-            for sig in target_signals:
-                if sig.qty <= 1:
-                    sig.qty = cfg.order_qty
-
             # target_signals는 remaining 기준으로 이미 슬라이싱됨 → 병렬 실행 안전
             await asyncio.gather(
                 *[self._execute_signal(sig) for sig in target_signals],
@@ -490,7 +486,8 @@ class StrategyScheduler:
 
         if self._dry_run:
             if signal.action == "BUY":
-                await self._virtual_trade_service.log_buy_async(signal.strategy_name, signal.code, log_price, signal.qty)
+                dry_qty = signal.qty if signal.qty is not None else 1
+                await self._virtual_trade_service.log_buy_async(signal.strategy_name, signal.code, log_price, dry_qty)
                 if self._price_sub_svc:
                     await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key, StreamingType.UNIFIED_PRICE)
             elif signal.action == "SELL":
