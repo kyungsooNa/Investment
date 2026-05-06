@@ -638,6 +638,38 @@ def test_extract_broker_api_record_object_output_and_failure_paths(task):
     assert task._extract_broker_api_record("005930", "삼성전자", "KOSPI", resp_broken) is None
 
 
+def test_extract_broker_api_record_normalizes_mixed_price_fields(task):
+    """현재가만 최신값으로 섞인 응답은 OHLC와 등락률을 현재가 기준으로 보정한다."""
+    resp = ResCommonResponse(
+        rt_cd="0",
+        msg1="",
+        data={"output": {
+            "stck_prpr": "84200",
+            "stck_oprc": "75500",
+            "stck_hgpr": "77600",
+            "stck_lwpr": "73200",
+            "stck_sdpr": "70300",
+            "prdy_vrss": "3900",
+            "prdy_vrss_sign": "2",
+            "prdy_ctrt": "5.55",
+            "acml_vol": "46101232",
+            "acml_tr_pbmn": "149586351500",
+            "hts_avls": "415199",
+            "w52_hgpr": "77600",
+            "w52_lwpr": "11800",
+        }},
+    )
+
+    record = task._extract_broker_api_record("006800", "미래에셋증권", "KOSPI", resp)
+
+    assert record["current_price"] == 84200
+    assert record["high_price"] == 84200
+    assert record["low_price"] == 73200
+    assert record["change_price"] == 13900
+    assert record["change_rate"] == "19.77"
+    assert record["change_sign"] == "2"
+
+
 def test_get_progress_and_zero_change_record(task):
     """진행률 복사본 반환 및 보합 종목 change_sign 계산 확인"""
     progress = task.get_progress()
