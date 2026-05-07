@@ -387,3 +387,40 @@ async def test_top_of_book_participation_limits_buy_qty():
 
     assert qty == 50
     assert reason == "top_of_book_limited"
+
+
+@pytest.mark.asyncio
+async def test_order_amount_cap_when_single_share_exceeds_limit():
+    """1주 가격이 max_order_amount_won 초과 → final_qty=0, reason='order_amount_cap'."""
+    snap = _make_snapshot(total_equity=1_000_000_000, available_cash=1_000_000_000)
+    cfg = _make_config(
+        per_trade_risk_pct=100.0,
+        max_per_position_pct=100.0,
+        default_stop_loss_pct=-5.0,
+        min_stop_distance_pct=0.0,
+    )
+    risk_cfg = RiskGateConfig(max_order_amount_won=10_000_000)
+    svc, _, _ = _make_service(snap, cfg=cfg, risk_gate_config=risk_cfg)
+
+    qty, reason = await svc.adjust_buy_qty(_buy_signal(price=15_000_000, qty=1))
+
+    assert qty == 0
+    assert reason == "order_amount_cap"
+
+
+@pytest.mark.asyncio
+async def test_no_order_amount_cap_when_risk_gate_not_set():
+    """risk_gate_config=None → max_order_amount_won 제약 없음, 기존 동작 유지."""
+    snap = _make_snapshot(total_equity=1_000_000_000, available_cash=1_000_000_000)
+    cfg = _make_config(
+        per_trade_risk_pct=100.0,
+        max_per_position_pct=100.0,
+        default_stop_loss_pct=-5.0,
+        min_stop_distance_pct=0.0,
+    )
+    svc, _, _ = _make_service(snap, cfg=cfg, risk_gate_config=None)
+
+    qty, reason = await svc.adjust_buy_qty(_buy_signal(price=10_000, qty=5))
+
+    assert qty == 5
+    assert reason == "ok"

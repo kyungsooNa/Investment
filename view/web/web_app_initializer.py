@@ -205,11 +205,49 @@ class WebAppContext:
         else:
             self.logger.info("텔레그램 설정이 누락되어 알림 핸들러를 등록하지 않습니다.")
         # ---------------------------------------------------------
+        self._load_position_sizing_state()
         self.logger.info("웹 앱: 환경 설정 로드 완료.")
 
         # [신규] MarketCalendarService 초기화
         self._mcs = MarketCalendarService(self.market_clock, self.logger, performance_profiler=self.pm)
-        
+
+    _POSITION_SIZING_STATE_FILE = "data/position_sizing_state.json"
+
+    def _load_position_sizing_state(self) -> None:
+        """data/position_sizing_state.json 이 있으면 in-memory config 에 반영한다."""
+        import json as _json, os as _os
+        if not _os.path.exists(self._POSITION_SIZING_STATE_FILE):
+            return
+        try:
+            with open(self._POSITION_SIZING_STATE_FILE, "r", encoding="utf-8") as f:
+                state = _json.load(f)
+            rg = getattr(self.full_config, "risk_gate", None)
+            ps = getattr(self.full_config, "position_sizing", None)
+            if rg is not None and "max_order_amount_won" in state and state["max_order_amount_won"] is not None:
+                rg.max_order_amount_won = int(state["max_order_amount_won"])
+            if ps is not None and "max_per_position_pct" in state and state["max_per_position_pct"] is not None:
+                ps.max_per_position_pct = float(state["max_per_position_pct"])
+            self.logger.info(f"[PositionSizingState] 로드 완료: {state}")
+        except Exception as e:
+            self.logger.warning(f"[PositionSizingState] 로드 실패 (무시): {e}")
+
+    def save_position_sizing_state(self) -> None:
+        """현재 max_order_amount_won / max_per_position_pct 를 JSON 파일로 저장한다."""
+        import json as _json, os as _os
+        from datetime import datetime, timezone as _tz
+        try:
+            rg = getattr(self.full_config, "risk_gate", None)
+            ps = getattr(self.full_config, "position_sizing", None)
+            state = {
+                "max_order_amount_won": rg.max_order_amount_won if rg else None,
+                "max_per_position_pct": ps.max_per_position_pct if ps else None,
+                "updated_at": datetime.now(tz=_tz.utc).astimezone().isoformat(),
+            }
+            _os.makedirs("data", exist_ok=True)
+            with open(self._POSITION_SIZING_STATE_FILE, "w", encoding="utf-8") as f:
+                _json.dump(state, f, ensure_ascii=False)
+        except Exception as e:
+            self.logger.warning(f"[PositionSizingState] 저장 실패: {e}")
 
     async def initialize_services(self, is_paper_trading: bool = True):
         """서비스 레이어 초기화."""

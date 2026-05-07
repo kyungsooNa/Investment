@@ -706,4 +706,48 @@ document.addEventListener('pjax:ready', (e) => {
     updateCacheStatus();
     setTimeout(updateBackgroundStatus, 1500);
     setTimeout(updateSubscriptionStatus, 3000);
+    loadPositionSizingLimits();
 });
+
+/* ── 자금 한도 설정 ── */
+async function loadPositionSizingLimits() {
+    try {
+        const res = await fetch('/api/position-sizing/limits');
+        if (!res.ok) return;
+        const data = await res.json();
+        const amtEl = document.getElementById('input-max-order-amount');
+        const pctEl = document.getElementById('input-max-position-pct');
+        if (amtEl && data.max_order_amount_won != null) amtEl.value = data.max_order_amount_won;
+        if (pctEl && data.max_per_position_pct != null) pctEl.value = data.max_per_position_pct;
+    } catch (e) { /* 무시 */ }
+}
+
+async function savePositionSizingLimits() {
+    const amtEl = document.getElementById('input-max-order-amount');
+    const pctEl = document.getElementById('input-max-position-pct');
+    const msgEl = document.getElementById('position-sizing-msg');
+    const body = {};
+    if (amtEl && amtEl.value !== '') body.max_order_amount_won = parseInt(amtEl.value, 10);
+    if (pctEl && pctEl.value !== '') body.max_per_position_pct = parseFloat(pctEl.value);
+    if (Object.keys(body).length === 0) return;
+    try {
+        const res = await fetch('/api/position-sizing/limits', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            if (msgEl) {
+                msgEl.textContent = `저장 완료 — 주문 한도: ${(data.max_order_amount_won ?? 0).toLocaleString()}원 / 비중 상한: ${data.max_per_position_pct}%`;
+                msgEl.style.color = 'var(--success-color, #4caf50)';
+            }
+        } else {
+            if (msgEl) { msgEl.textContent = '저장 실패: ' + (data.detail || JSON.stringify(data)); msgEl.style.color = 'var(--danger-color, #f44336)'; }
+        }
+    } catch (e) {
+        if (msgEl) { msgEl.textContent = '오류: ' + e.message; msgEl.style.color = 'var(--danger-color, #f44336)'; }
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadPositionSizingLimits);
