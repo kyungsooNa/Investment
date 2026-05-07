@@ -11,6 +11,7 @@ function _fmtNumber(n) {
 }
 
 async function loadKillSwitchStatus() {
+    if (window.__pjaxNavigating) return;
     if (_ksStatusInFlight) return;
     _ksStatusInFlight = true;
     const controller = new AbortController();
