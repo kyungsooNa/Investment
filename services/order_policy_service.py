@@ -96,7 +96,7 @@ class OrderPolicyService:
 
         security_context: dict[str, Any] = {}
         if self._cfg.security_status_checks_enabled:
-            security_decision = await self._check_security_status(stock_code, exchange)
+            security_decision = await self._check_security_status(stock_code, exchange, side)
             security_context = security_decision.context
             if security_decision.blocked:
                 return security_decision
@@ -264,6 +264,7 @@ class OrderPolicyService:
         self,
         stock_code: str,
         exchange: Exchange,
+        side: OrderSide,
     ) -> OrderPolicyDecision:
         if self._security_info_provider is None:
             return self._security_status_failure_decision(stock_code, "security_info_provider_missing")
@@ -302,6 +303,27 @@ class OrderPolicyService:
             "market_cap_won": market_cap,
         }
 
+        sell_blocked_status_codes = {
+            str(code).strip()
+            for code in getattr(self._cfg, "blocked_sell_stock_status_codes", ["58"])
+        }
+        if side == OrderSide.SELL and iscd_stat_cls_code in sell_blocked_status_codes:
+            return self._blocked(
+                "trading_halted_stock",
+                "거래정지 상태 종목은 주문할 수 없습니다.",
+                blocked_sell_stock_status_codes=sorted(sell_blocked_status_codes),
+                **context,
+            )
+
+        if side == OrderSide.SELL:
+            return OrderPolicyDecision(
+                allowed=True,
+                rule="security_status",
+                reason="security_status_allowed_for_sell",
+                severity="pass",
+                context=context,
+            )
+
         if self._cfg.block_managed_issue and self._is_flagged_code(mang_issu_cls_code):
             return self._blocked(
                 "managed_issue_stock",
@@ -309,14 +331,23 @@ class OrderPolicyService:
                 **context,
             )
 
-        blocked_status_codes = {str(code).strip() for code in self._cfg.blocked_stock_status_codes}
+        blocked_status_codes = {
+            self._normalize_status_code(code)
+            for code in self._cfg.blocked_stock_status_codes
+        }
+        blocked_market_warning_codes = {
+            self._normalize_status_code(code)
+            for code in getattr(self._cfg, "blocked_market_warning_codes", ["2", "3"])
+        }
         if self._cfg.block_investment_warning and (
-            self._is_flagged_code(mrkt_warn_cls_code) or iscd_stat_cls_code in blocked_status_codes
+            self._normalize_status_code(mrkt_warn_cls_code) in blocked_market_warning_codes
+            or self._normalize_status_code(iscd_stat_cls_code) in blocked_status_codes
         ):
             return self._blocked(
                 "investment_warning_stock",
                 "투자경고/위험 또는 거래정지 상태 종목은 주문할 수 없습니다.",
                 blocked_stock_status_codes=sorted(blocked_status_codes),
+                blocked_market_warning_codes=sorted(blocked_market_warning_codes),
                 **context,
             )
 
@@ -650,6 +681,13 @@ class OrderPolicyService:
     def _is_flagged_code(value: str) -> bool:
         text = str(value or "").strip().upper()
         return text not in ("", "0", "00", "000", "N", "NONE", "NULL")
+
+    @staticmethod
+    def _normalize_status_code(value: str) -> str:
+        text = str(value or "").strip().upper()
+        if text.isdigit():
+            return str(int(text))
+        return text
 
     @staticmethod
     def _with_context(decision: OrderPolicyDecision, extra_context: dict[str, Any]) -> OrderPolicyDecision:

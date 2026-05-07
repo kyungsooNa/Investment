@@ -10,16 +10,25 @@
 """
 
 import math
+import inspect
 import logging
-from typing import Optional, Tuple, TYPE_CHECKING
+from typing import Any, Optional, Protocol, Tuple, TYPE_CHECKING
 
-from common.types import TradeSignal
+from common.types import ErrorCode, Exchange, ResCommonResponse, TradeSignal
 from core.account_snapshot import AccountSnapshotCache
 
 if TYPE_CHECKING:
     from services.indicator_service import IndicatorService
-    from common.types import Exchange, ErrorCode
-    from config.config_loader import PositionSizingConfig, RiskGateConfig
+    from config.config_loader import OrderPolicyConfig, PositionSizingConfig, RiskGateConfig
+
+
+class QuoteProvider(Protocol):
+    async def get_asking_price(
+        self,
+        stock_code: str,
+        exchange: Exchange = Exchange.KRX,
+    ) -> ResCommonResponse:
+        ...
 
 
 class PositionSizingService:
@@ -32,12 +41,16 @@ class PositionSizingService:
         config: "PositionSizingConfig",
         logger: Optional[logging.Logger] = None,
         risk_gate_config: Optional["RiskGateConfig"] = None,
+        quote_provider: Optional[QuoteProvider] = None,
+        order_policy_config: Optional["OrderPolicyConfig"] = None,
     ):
         self._cache = account_snapshot_cache
         self._indicator = indicator_service
         self._cfg = config
         self._logger = logger or logging.getLogger(__name__)
         self._risk_gate_config = risk_gate_config
+        self._quote_provider = quote_provider
+        self._order_policy_config = order_policy_config
 
     # ── 공개 API ──────────────────────────────────────────────────
 
@@ -95,15 +108,27 @@ class PositionSizingService:
         # 6. alloc_qty (전략별 자본 할당 캡, None 이면 제약 없음)
         alloc_qty = self._calc_strategy_alloc_qty(signal, price, total_equity)
 
-        # 7. 후보 목록 구성 — signal.qty / alloc_qty 는 None 이면 제외 (제약 없음)
-        candidates = [risk_qty, cap_qty, cash_qty]
-        if alloc_qty is not None:
-            candidates.append(alloc_qty)
-        if signal.qty is not None:
-            candidates.append(signal.qty)
-        final_qty = max(0, min(candidates))
+        # 7. 주문 직전 hard-block 정책과 같은 한도도 미리 수량에 반영
+        max_order_amount_qty = self._calc_max_order_amount_qty(price)
+        top_of_book_qty = await self._calc_top_of_book_qty(signal, price, exchange)
 
-        # 8. 사유 결정
+        # 8. 후보 목록 구성 — signal.qty / alloc_qty 는 None 이면 제외 (제약 없음)
+        candidates = {
+            "risk_limited": risk_qty,
+            "cap_limited": cap_qty,
+            "cash_limited": cash_qty,
+        }
+        if alloc_qty is not None:
+            candidates["strategy_capital_cap"] = alloc_qty
+        if max_order_amount_qty is not None:
+            candidates["max_order_amount_limited"] = max_order_amount_qty
+        if top_of_book_qty is not None:
+            candidates["top_of_book_limited"] = top_of_book_qty
+        if signal.qty is not None:
+            candidates["signal_cap"] = signal.qty
+        final_qty = max(0, min(candidates.values()))
+
+        # 9. 사유 결정
         if final_qty == 0:
             if risk_qty == 0:
                 reason = "risk_zero"
@@ -111,26 +136,34 @@ class PositionSizingService:
                 reason = "cap_exhausted"
             elif alloc_qty is not None and alloc_qty == 0:
                 reason = "strategy_capital_cap"
+            elif max_order_amount_qty is not None and max_order_amount_qty == 0:
+                reason = "max_order_amount_limited"
+            elif top_of_book_qty is not None and top_of_book_qty == 0:
+                reason = "top_of_book_limited"
             else:
                 reason = "cash_short"
         elif signal.qty is not None and final_qty == signal.qty:
             reason = "ok"
         else:
             # signal.qty 상한보다 작게 됐거나, qty=None 에서 sizing 이 단독 결정
-            limiting = min(risk_qty, cap_qty, cash_qty, *([alloc_qty] if alloc_qty is not None else []))
-            if alloc_qty is not None and limiting == alloc_qty:
-                reason = "strategy_capital_cap"
-            elif limiting == cash_qty:
-                reason = "cash_limited"
-            elif limiting == cap_qty:
-                reason = "cap_limited"
-            else:
-                reason = "risk_limited"
+            reason_priority = (
+                "strategy_capital_cap",
+                "max_order_amount_limited",
+                "top_of_book_limited",
+                "cash_limited",
+                "cap_limited",
+                "risk_limited",
+            )
+            reason = next(
+                key for key in reason_priority
+                if candidates.get(key) == final_qty
+            )
 
         self._logger.info(
             f"[PositionSizing] {signal.code} price={price:,} "
             f"equity={total_equity:,} risk/share={per_share_risk:.0f} "
             f"risk_qty={risk_qty} cap_qty={cap_qty} cash_qty={cash_qty} alloc_qty={alloc_qty} "
+            f"max_order_amount_qty={max_order_amount_qty} top_of_book_qty={top_of_book_qty} "
             f"signal_qty={signal.qty} → final={final_qty} ({reason})"
         )
         return final_qty, reason
@@ -153,6 +186,65 @@ class PositionSizingService:
 
         alloc_budget = int(total_equity * cap_pct / 100)
         return math.floor(alloc_budget / price)
+
+    def _calc_max_order_amount_qty(self, price: int) -> Optional[int]:
+        if not self._risk_gate_config or price <= 0:
+            return None
+        max_amount = int(getattr(self._risk_gate_config, "max_order_amount_won", 0) or 0)
+        if max_amount <= 0:
+            return None
+        return math.floor(max_amount / price)
+
+    async def _calc_top_of_book_qty(
+        self,
+        signal: TradeSignal,
+        price: int,
+        exchange: "Exchange | None",
+    ) -> Optional[int]:
+        if self._quote_provider is None or price <= 0:
+            return None
+        if self._order_policy_config is not None and not getattr(
+            self._order_policy_config, "order_book_checks_enabled", True
+        ):
+            return None
+
+        try:
+            resp = self._quote_provider.get_asking_price(
+                signal.code,
+                exchange=exchange or Exchange.KRX,
+            )
+            if inspect.isawaitable(resp):
+                resp = await resp
+        except TypeError:
+            try:
+                resp = self._quote_provider.get_asking_price(signal.code)
+                if inspect.isawaitable(resp):
+                    resp = await resp
+            except Exception as exc:
+                self._logger.debug(f"[PositionSizing] 호가 조회 실패 ({signal.code}): {exc}")
+                return None
+        except Exception as exc:
+            self._logger.debug(f"[PositionSizing] 호가 조회 실패 ({signal.code}): {exc}")
+            return None
+
+        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+            return None
+
+        quote = self._extract_quote_data(resp.data)
+        ask_qty = self._to_int(self._pick(quote, "askp_rsqn1", "매도호가잔량1"))
+        if ask_qty <= 0:
+            return None
+
+        max_pct = 100.0
+        if self._order_policy_config is not None:
+            max_pct = float(getattr(
+                self._order_policy_config,
+                "max_top_of_book_participation_pct",
+                100.0,
+            ) or 0.0)
+        if max_pct > 0:
+            return math.floor(ask_qty * max_pct / 100)
+        return ask_qty
 
     async def _get_per_share_risk_krw(self, signal: TradeSignal, price: int) -> float:
         """1주당 리스크 금액(KRW) — ATR 기반 또는 stop_loss_pct 기반."""
@@ -182,3 +274,27 @@ class PositionSizingService:
         except Exception as e:
             self._logger.debug(f"[PositionSizing] ATR 조회 실패 ({signal.code}): {e}")
             return 0.0
+
+    @staticmethod
+    def _extract_quote_data(data: Any) -> dict:
+        if isinstance(data, dict):
+            if isinstance(data.get("output1"), dict):
+                return data["output1"]
+            if isinstance(data.get("output"), dict):
+                return data["output"]
+            return data
+        return {}
+
+    @staticmethod
+    def _pick(data: dict, *keys: str):
+        for key in keys:
+            if key in data:
+                return data.get(key)
+        return None
+
+    @staticmethod
+    def _to_int(value) -> int:
+        try:
+            return int(float(str(value or "0").replace(",", "")))
+        except (TypeError, ValueError):
+            return 0

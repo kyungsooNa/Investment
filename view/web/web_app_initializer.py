@@ -467,6 +467,8 @@ class WebAppContext:
 
         try:
             _ps_cfg = getattr(self.full_config, "position_sizing", None) or PositionSizingConfig()
+            _rg_cfg = getattr(self.full_config, "risk_gate", None) or RiskGateConfig()
+            _op_cfg = getattr(self.full_config, "order_policy", None) or OrderPolicyConfig()
             self.account_snapshot_cache = AccountSnapshotCache(
                 broker_api_wrapper=self.broker,
                 logger=self.logger,
@@ -477,16 +479,18 @@ class WebAppContext:
                 indicator_service=self.indicator_service,
                 config=_ps_cfg,
                 logger=self.logger,
+                risk_gate_config=_rg_cfg,
+                quote_provider=self.broker,
+                order_policy_config=_op_cfg,
             )
             self.risk_gate_service = RiskGateService(
-                config=getattr(self.full_config, "risk_gate", None) or RiskGateConfig(),
+                config=_rg_cfg,
                 kill_switch_service=self.kill_switch_service,
                 account_snapshot_cache=self.account_snapshot_cache,
                 strategy_risk_provider=self.virtual_trade_service,
                 logger=self.logger,
                 env=getattr(self.broker, "env", None),
             )
-            _op_cfg = getattr(self.full_config, "order_policy", None) or OrderPolicyConfig()
             self.execution_flow_service = ExecutionFlowService(
                 data_provider=self.broker,
                 market_clock=self.market_clock,

@@ -303,6 +303,29 @@ async def test_handle_place_sell_order_trading_service_failure(handler, mock_bro
     assert result.rt_cd == "1"
     assert result.msg1 == "수량 부족"
 
+
+@pytest.mark.asyncio
+async def test_strategy_sell_failure_does_not_emit_duplicate_system_notification(
+    handler,
+    mock_broker_api_wrapper,
+    mock_notification_service,
+):
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value,
+        msg1="거래정지",
+        data=None,
+    )
+
+    result = await handler.handle_place_sell_order(
+        "005930",
+        60000,
+        5,
+        source="strategy:래리윌리엄스VBO",
+    )
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    mock_notification_service.emit.assert_not_awaited()
+
 @pytest.mark.asyncio # This test is not directly related to the market open check, but it's good to ensure it still works.
 async def test_handle_realtime_price_quote_stream_success(handler, mock_broker_api_wrapper, mock_logger, mock_market_calendar_service):
     """실시간 스트림이 성공적으로 연결, 구독, 종료되는지 테스트합니다."""

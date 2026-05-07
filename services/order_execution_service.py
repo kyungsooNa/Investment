@@ -82,6 +82,11 @@ class OrderExecutionService:
         env = getattr(self.broker_api_wrapper, "env", None)
         return getattr(env, "is_paper_trading", True)
 
+    @staticmethod
+    def _is_strategy_source(source: str) -> bool:
+        text = str(source or "")
+        return text.startswith("strategy:") or text.startswith("strategy_force_exit:")
+
     def _log_real_order_preview(
         self,
         *,
@@ -1637,7 +1642,7 @@ class OrderExecutionService:
                     f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
                 if self._virtual_trade_service:
                     await self._virtual_trade_service.log_order_failure_async("BUY", stock_code, price, qty, msg1)
-                if self._notification_service:
+                if self._notification_service and not self._is_strategy_source(source):
                     await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "매수 주문 실패",
                                         f"{stock_code} - {msg1}",
                                         metadata={"code": stock_code, "error": msg1, "trace_id": current_trace})
@@ -1696,7 +1701,7 @@ class OrderExecutionService:
                     f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
                 if self._virtual_trade_service:
                     await self._virtual_trade_service.log_order_failure_async("SELL", stock_code, price, qty, msg1)
-                if self._notification_service:
+                if self._notification_service and not self._is_strategy_source(source):
                     await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "매도 주문 실패",
                                         f"{stock_code} - {msg1}",
                                         metadata={"code": stock_code, "error": msg1, "trace_id": current_trace})

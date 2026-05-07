@@ -125,6 +125,7 @@ class StrategyScheduler:
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
         self._signal_history: List[SignalRecord] = self._load_signal_history()
         self._subscriber_queues: List[asyncio.Queue] = []
+        self._strategy_failure_alert_keys: set[tuple[str, str, str, str, str, str]] = set()
 
     # ── 전략 등록 ──
 
@@ -454,6 +455,36 @@ class StrategyScheduler:
 
         return None
 
+    def _should_emit_strategy_signal_notification(
+        self,
+        signal: TradeSignal,
+        *,
+        api_success: bool,
+        failure_msg: str,
+        now: datetime,
+    ) -> bool:
+        if api_success:
+            return True
+
+        date_key = now.strftime("%Y%m%d")
+        key = (
+            date_key,
+            str(signal.strategy_name),
+            str(signal.code),
+            str(signal.action),
+            str(signal.reason),
+            str(failure_msg or ""),
+        )
+        if key in self._strategy_failure_alert_keys:
+            self._logger.info(
+                f"[Scheduler] 중복 전략 실패 알림 suppress: "
+                f"strategy={signal.strategy_name} code={signal.code} action={signal.action}"
+            )
+            return False
+
+        self._strategy_failure_alert_keys.add(key)
+        return True
+
     async def _execute_signal_inner(self, signal: TradeSignal, tid: str):
         self._logger.info(
             f"[Scheduler] 시그널 실행: [{signal.strategy_name}] {signal.action} {signal.name}({signal.code}) "
@@ -482,6 +513,7 @@ class StrategyScheduler:
         return_rate = None
         category_key = f"scheduler_{signal.strategy_name}"
         api_success = True
+        order_error_msg = ""
         resp = None
 
         if self._dry_run:
@@ -587,12 +619,14 @@ class StrategyScheduler:
                 else:
                     api_success = False
                     msg = resp.msg1 if resp else "응답 없음"
+                    order_error_msg = msg
                     self._logger.warning(
                         f"[Scheduler] API 주문 실패: {signal.action} {signal.code} - {msg} "
                         f"(CSV는 기록됨)"
                     )
             except Exception as e:
                 api_success = False
+                order_error_msg = str(e)
                 self._logger.error(
                     f"[Scheduler] API 주문 예외: {signal.action} {signal.code} - {e} "
                     f"(CSV는 기록됨)"
@@ -633,17 +667,26 @@ class StrategyScheduler:
                    f"사유: {signal.reason}")
             if not api_success:
                 title = f"[{signal.strategy_name}] {signal.name} {action_kr} 실패"
-            await self._notification_service.emit(NotificationCategory.STRATEGY, level, title, msg, metadata={
-                "strategy_name": signal.strategy_name,
-                "code": signal.code,
-                "action": signal.action,
-                "price": log_price,
-                "qty": signal.qty,
-                "reason": signal.reason,
-                "api_success": api_success,
-                "return_rate": return_rate,
-                "trace_id": tid,
-            })
+                if order_error_msg:
+                    msg = f"{msg}\n실패: {order_error_msg}"
+            if self._should_emit_strategy_signal_notification(
+                signal,
+                api_success=api_success,
+                failure_msg=order_error_msg,
+                now=now,
+            ):
+                await self._notification_service.emit(NotificationCategory.STRATEGY, level, title, msg, metadata={
+                    "strategy_name": signal.strategy_name,
+                    "code": signal.code,
+                    "action": signal.action,
+                    "price": log_price,
+                    "qty": signal.qty,
+                    "reason": signal.reason,
+                    "order_error": order_error_msg,
+                    "api_success": api_success,
+                    "return_rate": return_rate,
+                    "trace_id": tid,
+                })
 
     async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):
         """전략 중지 시 보유 종목 강제 청산 (force_exit_on_close=True)."""

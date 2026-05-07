@@ -1661,6 +1661,33 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         args, _ = scheduler._logger.warning.call_args
         self.assertIn("응답 없음", args[0])
 
+    async def test_duplicate_strategy_failure_alert_is_suppressed_for_same_day(self):
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        notification_service = AsyncMock()
+        notification_service.emit = AsyncMock()
+        scheduler._notification_service = notification_service
+        oes.handle_place_sell_order.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.ORDER_POLICY_BLOCKED.value,
+            msg1="Order Policy 차단: 거래정지 상태 종목은 주문할 수 없습니다.",
+        )
+        signal = TradeSignal(
+            code="037030",
+            name="파워넷",
+            action="SELL",
+            price=9980,
+            qty=1,
+            reason="오버나이트방어: 매수일(20260506) ≠ 오늘(20260507)",
+            strategy_name="래리윌리엄스VBO",
+        )
+
+        await scheduler._execute_signal(signal)
+        await scheduler._execute_signal(signal)
+
+        notification_service.emit.assert_awaited_once()
+        args, _ = notification_service.emit.await_args
+        self.assertEqual(args[0], NotificationCategory.STRATEGY)
+        self.assertIn("Order Policy 차단", args[3])
+
     def test_load_signal_history_branches(self):
         """시그널 히스토리 로드 분기 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
