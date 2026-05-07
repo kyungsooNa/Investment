@@ -1687,6 +1687,8 @@ async def test_update_market_timing_emits_notifications(mock_deps):
     second_call = notification.emit.await_args_list[1].kwargs
     assert first_call["level"] == service._notification_service.emit.await_args_list[0].kwargs["level"]
     assert "[tester] 마켓 타이밍 갱신 (KOSDAQ)" == first_call["title"]
+    assert first_call["metadata"] == {"force_external": True, "event": "market_timing_updated", "market": "KOSDAQ"}
+    assert second_call["metadata"] == {"force_external": True, "event": "market_timing_updated", "market": "KOSPI"}
     assert "MA decline" in second_call["message"]
 
 

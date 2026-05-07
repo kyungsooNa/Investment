@@ -286,6 +286,36 @@ async def test_drain_loop_filters_telegram_by_category_level(ns):
 
 
 @pytest.mark.asyncio
+async def test_drain_loop_sends_force_external_event_even_when_level_filtered(ns):
+    """metadata.force_external=True 이벤트는 레벨 라우팅에서 제외돼도 외부 핸들러에 전달한다."""
+    handler = AsyncMock()
+    ns.register_external_handler(handler)
+    task = NotificationQueueTask(
+        ns,
+        poll_interval=0,
+        telegram_config=SimpleNamespace(
+            enabled=True,
+            route_levels={"STRATEGY": ["warning", "error", "critical"]},
+        ),
+        logger=MagicMock(),
+    )
+
+    event = await ns.emit(
+        NotificationCategory.STRATEGY,
+        NotificationLevel.INFO,
+        "market timing",
+        "telegram",
+        metadata={"force_external": True},
+    )
+
+    await task.start()
+    await asyncio.wait_for(ns.external_handler_queue.join(), timeout=2.0)
+    await task.stop()
+
+    handler.assert_awaited_once_with(event)
+
+
+@pytest.mark.asyncio
 async def test_drain_loop_skips_external_when_telegram_disabled(ns):
     handler = AsyncMock()
     ns.register_external_handler(handler)
