@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from services.position_sizing_service import PositionSizingService
-from config.config_loader import PositionSizingConfig
+from config.config_loader import OrderPolicyConfig, PositionSizingConfig, RiskGateConfig
 from common.types import TradeSignal, ResCommonResponse, ErrorCode
 from core.account_snapshot import AccountSnapshot
 
@@ -30,7 +30,27 @@ def _make_snapshot(total_equity=10_000_000, available_cash=5_000_000, positions=
     )
 
 
-def _make_service(snapshot, atr_value=0.0, cfg=None):
+def _quote(ask_qty=100):
+    return ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data={
+            "askp1": "10000",
+            "bidp1": "9990",
+            "askp_rsqn1": str(ask_qty),
+            "bidp_rsqn1": "100",
+        },
+    )
+
+
+def _make_service(
+    snapshot,
+    atr_value=0.0,
+    cfg=None,
+    risk_gate_config=None,
+    quote_provider=None,
+    order_policy_config=None,
+):
     cache = AsyncMock()
     cache.get.return_value = snapshot
 
@@ -47,6 +67,9 @@ def _make_service(snapshot, atr_value=0.0, cfg=None):
         account_snapshot_cache=cache,
         indicator_service=indicator,
         config=cfg or _make_config(),
+        risk_gate_config=risk_gate_config,
+        quote_provider=quote_provider,
+        order_policy_config=order_policy_config,
     )
     return svc, cache, indicator
 
@@ -291,3 +314,76 @@ async def test_qty_int_acts_as_voluntary_cap():
     qty, reason = await svc.adjust_buy_qty(_buy_signal(price=10_000, qty=50))
     assert qty == 50
     assert reason == "ok"
+
+
+@pytest.mark.asyncio
+async def test_max_order_amount_limits_qty_before_risk_gate():
+    """단일 주문 한도를 넘는 수량은 RiskGate에서 실패하기 전에 줄인다."""
+    snap = _make_snapshot(total_equity=1_000_000_000, available_cash=1_000_000_000)
+    cfg = _make_config(
+        per_trade_risk_pct=100.0,
+        max_per_position_pct=100.0,
+        default_stop_loss_pct=-5.0,
+        min_stop_distance_pct=0.0,
+    )
+    risk_cfg = RiskGateConfig(max_order_amount_won=50_000_000)
+    svc, _, _ = _make_service(snap, cfg=cfg, risk_gate_config=risk_cfg)
+
+    qty, reason = await svc.adjust_buy_qty(_buy_signal(price=135_900, qty=375))
+
+    assert qty == 367
+    assert 135_900 * qty <= 50_000_000
+    assert reason == "max_order_amount_limited"
+
+
+@pytest.mark.asyncio
+async def test_top_of_book_qty_limits_buy_qty_before_order_policy():
+    """최우선 매도호가 잔량보다 큰 매수 수량은 주문 전 줄인다."""
+    snap = _make_snapshot(total_equity=1_000_000_000, available_cash=1_000_000_000)
+    cfg = _make_config(
+        per_trade_risk_pct=100.0,
+        max_per_position_pct=100.0,
+        default_stop_loss_pct=-5.0,
+        min_stop_distance_pct=0.0,
+    )
+    provider = AsyncMock()
+    provider.get_asking_price.return_value = _quote(ask_qty=200)
+    svc, _, _ = _make_service(
+        snap,
+        cfg=cfg,
+        quote_provider=provider,
+        order_policy_config=OrderPolicyConfig(order_book_checks_enabled=True),
+    )
+
+    qty, reason = await svc.adjust_buy_qty(_buy_signal(price=51_800, qty=921))
+
+    assert qty == 200
+    assert reason == "top_of_book_limited"
+
+
+@pytest.mark.asyncio
+async def test_top_of_book_participation_limits_buy_qty():
+    """호가 잔량 참여율 제한도 포지션 사이징 단계에서 반영한다."""
+    snap = _make_snapshot(total_equity=1_000_000_000, available_cash=1_000_000_000)
+    cfg = _make_config(
+        per_trade_risk_pct=100.0,
+        max_per_position_pct=100.0,
+        default_stop_loss_pct=-5.0,
+        min_stop_distance_pct=0.0,
+    )
+    provider = AsyncMock()
+    provider.get_asking_price.return_value = _quote(ask_qty=100)
+    svc, _, _ = _make_service(
+        snap,
+        cfg=cfg,
+        quote_provider=provider,
+        order_policy_config=OrderPolicyConfig(
+            order_book_checks_enabled=True,
+            max_top_of_book_participation_pct=50.0,
+        ),
+    )
+
+    qty, reason = await svc.adjust_buy_qty(_buy_signal(price=10_000, qty=80))
+
+    assert qty == 50
+    assert reason == "top_of_book_limited"
