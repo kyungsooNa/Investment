@@ -165,6 +165,19 @@ class ExecutionQualityReportConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class OpeningPositionReconcileConfig(BaseModel):
+    enabled: bool = True
+    detect_only: bool = True
+    auto_buy_missing_local: bool = False
+    auto_sell_extra_broker: bool = False
+    allow_sell_unknown_broker: bool = False
+    check_interval_sec: int = 30
+    open_delay_sec: int = 60
+    run_window_min: int = 10
+
+    model_config = {"extra": "allow"}
+
+
 class AppConfig(BaseModel):
     # Core API keys
     api_key: Optional[str] = None
@@ -190,6 +203,7 @@ class AppConfig(BaseModel):
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
     execution_quality_report: ExecutionQualityReportConfig = Field(default_factory=ExecutionQualityReportConfig)
+    opening_position_reconcile: OpeningPositionReconcileConfig = Field(default_factory=OpeningPositionReconcileConfig)
     
     # Dynamic/Merged configs
     tr_ids: Dict[str, Any] = Field(default_factory=dict)

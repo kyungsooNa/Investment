@@ -34,6 +34,7 @@ from interfaces.schedulable_task import TaskPriority
 from task.background.intraday.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from task.background.intraday.pre_market_health_check_task import PreMarketHealthCheckTask
+from task.background.intraday.opening_position_reconcile_task import OpeningPositionReconcileTask
 from task.background.after_market.ranking_task import RankingTask
 from task.background.after_market.minervini_update_task import MinerviniUpdateTask
 from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
@@ -72,6 +73,7 @@ from services.price_stream_service import PriceStreamService
 from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from services.data_quality_service import DataQualityService
+from services.opening_position_reconcile_service import OpeningPositionReconcileService
 
 from core.cache.cache_store import CacheStore
 from services.rs_rating_service import RSRatingService
@@ -117,6 +119,7 @@ class WebAppContext:
         self.minervini_update_task: MinerviniUpdateTask = None
         self.websocket_watchdog_task: WebSocketWatchdogTask = None
         self.pre_market_health_check_task: PreMarketHealthCheckTask = None
+        self.opening_position_reconcile_task: OpeningPositionReconcileTask = None
         self.after_market_reconcile_task: AfterMarketReconcileTask = None
         self.daily_price_collector_task: DailyPriceCollectorTask = None
         self.ohlcv_update_task: OhlcvUpdateTask = None
@@ -610,6 +613,29 @@ class WebAppContext:
                 logger=self.logger,
                 worker_pool=self.worker_pool,
             )
+            reconcile_cfg = getattr(self.full_config, "opening_position_reconcile", None)
+            self.opening_position_reconcile_task = None
+            if reconcile_cfg is None or getattr(reconcile_cfg, "enabled", True):
+                opening_reconcile_service = OpeningPositionReconcileService(
+                    broker=self.broker,
+                    order_execution_service=self.order_execution_service,
+                    virtual_trade_service=self.virtual_trade_service,
+                    detect_only=getattr(reconcile_cfg, "detect_only", True),
+                    auto_buy_missing_local=getattr(reconcile_cfg, "auto_buy_missing_local", False),
+                    auto_sell_extra_broker=getattr(reconcile_cfg, "auto_sell_extra_broker", False),
+                    allow_sell_unknown_broker=getattr(reconcile_cfg, "allow_sell_unknown_broker", False),
+                    logger=self.logger,
+                )
+                self.opening_position_reconcile_task = OpeningPositionReconcileTask(
+                    reconcile_service=opening_reconcile_service,
+                    market_calendar_service=self._mcs,
+                    market_clock=self.market_clock,
+                    notification_service=self.notification_service,
+                    logger=self.logger,
+                    check_interval_sec=getattr(reconcile_cfg, "check_interval_sec", 30),
+                    open_delay_sec=getattr(reconcile_cfg, "open_delay_sec", 60),
+                    run_window_min=getattr(reconcile_cfg, "run_window_min", 10),
+                )
         except Exception as e:
             self.logger.critical(f"[ServiceBootstrap:Universe] 초기화 실패: {e}", exc_info=True)
             raise
@@ -627,6 +653,7 @@ class WebAppContext:
                 (self.newhigh_task,                      TaskPriority.LOW),
                 (self.log_cleanup_task,                  TaskPriority.MAINTENANCE),
                 (self.strategy_log_report_task,          TaskPriority.LOW),
+                (self.opening_position_reconcile_task,   TaskPriority.HIGH),
                 (self.after_market_reconcile_task,       TaskPriority.LOW),
             ]:
                 if task:
@@ -653,6 +680,7 @@ class WebAppContext:
                 self.newhigh_task,
                 self.notification_queue_task,
                 self.strategy_log_report_task,
+                self.opening_position_reconcile_task,
                 self.after_market_reconcile_task,
             ]:
                 if task:

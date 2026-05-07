@@ -488,6 +488,10 @@ class OrderExecutionService:
             return "수동매매", False
         return source, False
 
+    @staticmethod
+    def _is_reconcile_source(source: str) -> bool:
+        return (source or "").startswith("reconcile:")
+
     async def _persist_virtual_trade_for_terminal_report(
         self,
         context: OrderContext,
@@ -499,6 +503,8 @@ class OrderExecutionService:
             return context
         if context.virtual_recorded_qty >= context.filled_qty:
             return context
+        if self._is_reconcile_source(context.source):
+            return self._mark_virtual_trade_recorded(context, context.filled_qty)
 
         strategy_name, is_strategy_source = self._strategy_name_from_source(context.source)
         record_qty = context.filled_qty
