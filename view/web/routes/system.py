@@ -697,6 +697,55 @@ async def force_strategy_log_report():
     return {"success": True, "message": "전략 로그 리포트 강제 생성이 시작되었습니다."}
 
 
+# ── 자금 한도 설정 ──────────────────────────────────────────────────────
+
+from pydantic import BaseModel as _BaseModel, Field as _Field
+from typing import Optional as _Optional
+from config.config_loader import RiskGateConfig as _RiskGateConfig, PositionSizingConfig as _PositionSizingConfig
+
+
+class PositionSizingLimitsRequest(_BaseModel):
+    max_order_amount_won: _Optional[int] = _Field(None, ge=0, description="종목당 단건 주문 한도 (원, 0=무제한)")
+    max_per_position_pct: _Optional[float] = _Field(None, ge=0.0, le=100.0, description="단일 종목 비중 상한 (%)")
+
+
+@router.get("/position-sizing/limits")
+def get_position_sizing_limits():
+    """현재 설정된 자금 한도를 반환한다."""
+    ctx = _get_ctx()
+    rg = getattr(ctx.full_config, "risk_gate", None)
+    ps = getattr(ctx.full_config, "position_sizing", None)
+    return {
+        "max_order_amount_won": rg.max_order_amount_won if rg else None,
+        "max_per_position_pct": ps.max_per_position_pct if ps else None,
+        "defaults": {
+            "max_order_amount_won": _RiskGateConfig().max_order_amount_won,
+            "max_per_position_pct": _PositionSizingConfig().max_per_position_pct,
+        },
+    }
+
+
+@router.post("/position-sizing/limits")
+def update_position_sizing_limits(req: PositionSizingLimitsRequest):
+    """자금 한도를 즉시 변경하고 state 파일에 저장한다."""
+    ctx = _get_ctx()
+    rg = getattr(ctx.full_config, "risk_gate", None)
+    ps = getattr(ctx.full_config, "position_sizing", None)
+
+    if req.max_order_amount_won is not None and rg is not None:
+        rg.max_order_amount_won = req.max_order_amount_won
+    if req.max_per_position_pct is not None and ps is not None:
+        ps.max_per_position_pct = req.max_per_position_pct
+
+    ctx.save_position_sizing_state()
+
+    return {
+        "success": True,
+        "max_order_amount_won": rg.max_order_amount_won if rg else None,
+        "max_per_position_pct": ps.max_per_position_pct if ps else None,
+    }
+
+
 @router.post("/background/minervini/force-update")
 async def force_minervini_update():
     """skip 조건을 무시하고 Minervini Stage2 캐시를 강제 갱신한다."""

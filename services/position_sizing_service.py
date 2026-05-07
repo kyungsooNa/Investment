@@ -137,7 +137,7 @@ class PositionSizingService:
             elif alloc_qty is not None and alloc_qty == 0:
                 reason = "strategy_capital_cap"
             elif max_order_amount_qty is not None and max_order_amount_qty == 0:
-                reason = "max_order_amount_limited"
+                reason = "order_amount_cap"
             elif top_of_book_qty is not None and top_of_book_qty == 0:
                 reason = "top_of_book_limited"
             else:

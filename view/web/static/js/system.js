@@ -1,6 +1,61 @@
 // ── 캐시 상태 모니터링 ───────────────────────────────────────
 
 const _cacheExpanded = { price: false, ohlcv: false };
+const SYSTEM_POLL_TIMEOUT_MS = 4000;
+let _systemPageActive = location.pathname === '/system';
+let _systemPollTimers = {};
+let _cacheStatusInFlight = false;
+let _backgroundStatusInFlight = false;
+let _operationsStatusInFlight = false;
+let _subscriptionStatusInFlight = false;
+let _positionSizingInFlight = false;
+
+function _isSystemPageActive() {
+    return _systemPageActive && !!document.getElementById('background-tasks-body');
+}
+
+async function _fetchWithTimeout(url, options = {}, timeoutMs = SYSTEM_POLL_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function _clearSystemTimer(name) {
+    const timer = _systemPollTimers[name];
+    if (timer) clearTimeout(timer);
+    delete _systemPollTimers[name];
+}
+
+function _scheduleSystemPoll(name, fn, intervalMs, firstDelayMs = intervalMs) {
+    if (!_systemPageActive) return;
+    _clearSystemTimer(name);
+    _systemPollTimers[name] = setTimeout(async () => {
+        delete _systemPollTimers[name];
+        if (!_isSystemPageActive()) return;
+        await fn();
+        _scheduleSystemPoll(name, fn, intervalMs);
+    }, firstDelayMs);
+}
+
+function stopSystemPolling() {
+    _systemPageActive = false;
+    Object.values(_systemPollTimers).forEach(clearTimeout);
+    _systemPollTimers = {};
+}
+
+function startSystemPolling() {
+    _systemPageActive = true;
+    loadPositionSizingLimits();
+
+    _scheduleSystemPoll('cache', updateCacheStatus, 20000, 0);
+    _scheduleSystemPoll('operations', updateOperationsStatus, 8000, 900);
+    _scheduleSystemPoll('background', updateBackgroundStatus, 9000, 2200);
+    _scheduleSystemPoll('subscriptions', updateSubscriptionStatus, 10000, 3600);
+}
 
 function toggleCacheDetails(type) {
     _cacheExpanded[type] = !_cacheExpanded[type];
@@ -163,10 +218,12 @@ function renderOhlcvCacheDetails(stats) {
 }
 
 async function updateCacheStatus() {
+    if (!_isSystemPageActive() || _cacheStatusInFlight) return;
+    _cacheStatusInFlight = true;
     try {
         const needExpand = _cacheExpanded.price || _cacheExpanded.ohlcv;
         const url = needExpand ? '/api/cache/status?expand=true' : '/api/cache/status';
-        const response = await fetch(url);
+        const response = await _fetchWithTimeout(url);
         if (!response.ok) throw new Error('네트워크 응답이 정상이 아닙니다.');
         const result = await response.json();
         if (!result.success || !result.data) return;
@@ -177,11 +234,10 @@ async function updateCacheStatus() {
         if (_cacheExpanded.ohlcv)  renderOhlcvCacheDetails(stats.ohlcv_cache || {});
     } catch (error) {
         console.error('캐시 상태를 가져오는 중 오류 발생:', error);
+    } finally {
+        _cacheStatusInFlight = false;
     }
 }
-
-document.addEventListener('DOMContentLoaded', updateCacheStatus);
-setInterval(updateCacheStatus, 15000);  // 캐시 상태는 15초마다 갱신 (응답이 크므로 이벤트 루프 부하 분산)
 
 // ── 백그라운드 태스크 모니터링 ──────────────────────────────
 
@@ -492,8 +548,10 @@ async function forceTaskUpdate(btn, taskName) {
 }
 
 async function updateBackgroundStatus() {
+    if (!_isSystemPageActive() || _backgroundStatusInFlight) return;
+    _backgroundStatusInFlight = true;
     try {
-        const response = await fetch('/api/background/status');
+        const response = await _fetchWithTimeout('/api/background/status');
         if (!response.ok) return;
         const result = await response.json();
         if (!result.success || !result.data) return;
@@ -551,6 +609,8 @@ async function updateBackgroundStatus() {
         }).join('');
     } catch (e) {
         console.error('백그라운드 태스크 상태 조회 오류:', e);
+    } finally {
+        _backgroundStatusInFlight = false;
     }
 }
 
@@ -563,8 +623,10 @@ function renderOpsMetric(label, value, tone = 'normal') {
 }
 
 async function updateOperationsStatus() {
+    if (!_isSystemPageActive() || _operationsStatusInFlight) return;
+    _operationsStatusInFlight = true;
     try {
-        const response = await fetch('/api/system/operations/status');
+        const response = await _fetchWithTimeout('/api/system/operations/status');
         if (!response.ok) return;
         const body = await response.json();
         const data = body.data || {};
@@ -596,15 +658,10 @@ async function updateOperationsStatus() {
         ].join('');
     } catch (e) {
         console.error('운영 요약 조회 오류:', e);
+    } finally {
+        _operationsStatusInFlight = false;
     }
 }
-
-document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(updateOperationsStatus, 700);
-    setTimeout(updateBackgroundStatus, 1500);
-});  // 캐시 폴링과 시차 분산
-setInterval(updateOperationsStatus, 5000);
-setInterval(updateBackgroundStatus, 5000);
 
 // ── 실시간 현재가 구독 현황 ──────────────────────────────────
 
@@ -659,8 +716,10 @@ function renderSubTable() {
 }
 
 async function updateSubscriptionStatus() {
+    if (!_isSystemPageActive() || _subscriptionStatusInFlight) return;
+    _subscriptionStatusInFlight = true;
     try {
-        const res = await fetch('/api/subscriptions/status');
+        const res = await _fetchWithTimeout('/api/subscriptions/status');
         if (!res.ok) return;
         const result = await res.json();
         if (!result.success || !result.data) return;
@@ -694,16 +753,72 @@ async function updateSubscriptionStatus() {
         renderSubTable();
     } catch (e) {
         console.error('구독 현황 조회 오류:', e);
+    } finally {
+        _subscriptionStatusInFlight = false;
     }
 }
-
-document.addEventListener('DOMContentLoaded', () => setTimeout(updateSubscriptionStatus, 3000));  // 다른 폴링과 시차 분산
-setInterval(updateSubscriptionStatus, 5000);
 
 /* ── Pjax 재방문 시 상태 즉시 갱신 ── */
 document.addEventListener('pjax:ready', (e) => {
     if (e.detail?.path !== '/system') return;
-    updateCacheStatus();
-    setTimeout(updateBackgroundStatus, 1500);
-    setTimeout(updateSubscriptionStatus, 3000);
+    startSystemPolling();
 });
+
+document.addEventListener('pjax:before-change', (e) => {
+    if (e.detail?.from !== '/system') return;
+    stopSystemPolling();
+});
+
+/* ── 자금 한도 설정 ── */
+async function loadPositionSizingLimits() {
+    if (!_isSystemPageActive() || _positionSizingInFlight) return;
+    _positionSizingInFlight = true;
+    try {
+        const res = await _fetchWithTimeout('/api/position-sizing/limits');
+        if (!res.ok) return;
+        const data = await res.json();
+        const amtEl = document.getElementById('input-max-order-amount');
+        const pctEl = document.getElementById('input-max-position-pct');
+        if (amtEl && data.max_order_amount_won != null) amtEl.value = Number(data.max_order_amount_won).toLocaleString('ko-KR');
+        if (pctEl && data.max_per_position_pct != null) pctEl.value = data.max_per_position_pct;
+        const dAmt = document.getElementById('default-max-order-amount');
+        const dPct = document.getElementById('default-max-position-pct');
+        if (dAmt && data.defaults?.max_order_amount_won != null)
+            dAmt.textContent = `기본값: ${Number(data.defaults.max_order_amount_won).toLocaleString('ko-KR')}원`;
+        if (dPct && data.defaults?.max_per_position_pct != null)
+            dPct.textContent = `기본값: ${data.defaults.max_per_position_pct}%`;
+    } catch (e) { /* 무시 */ }
+    finally {
+        _positionSizingInFlight = false;
+    }
+}
+
+async function savePositionSizingLimits() {
+    const amtEl = document.getElementById('input-max-order-amount');
+    const pctEl = document.getElementById('input-max-position-pct');
+    const msgEl = document.getElementById('position-sizing-msg');
+    const body = {};
+    if (amtEl && amtEl.value !== '') body.max_order_amount_won = parseInt(amtEl.value.replace(/,/g, ''), 10);
+    if (pctEl && pctEl.value !== '') body.max_per_position_pct = parseFloat(pctEl.value);
+    if (Object.keys(body).length === 0) return;
+    try {
+        const res = await fetch('/api/position-sizing/limits', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            if (msgEl) {
+                msgEl.textContent = `저장 완료 — 주문 한도: ${(data.max_order_amount_won ?? 0).toLocaleString()}원 / 비중 상한: ${data.max_per_position_pct}%`;
+                msgEl.style.color = 'var(--success-color, #4caf50)';
+            }
+        } else {
+            if (msgEl) { msgEl.textContent = '저장 실패: ' + (data.detail || JSON.stringify(data)); msgEl.style.color = 'var(--danger-color, #f44336)'; }
+        }
+    } catch (e) {
+        if (msgEl) { msgEl.textContent = '오류: ' + e.message; msgEl.style.color = 'var(--danger-color, #f44336)'; }
+    }
+}
+
+document.addEventListener('DOMContentLoaded', startSystemPolling);
