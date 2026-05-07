@@ -92,6 +92,9 @@ function renderSchedulerStatus(data) {
         const enabledBadge = s.enabled
             ? '<span class="badge open">활성</span>'
             : '<span class="badge closed">비활성</span>';
+        const dayTradeBadge = s.force_exit_on_close
+            ? '<span class="badge" style="background:#f59e0b;color:#fff;font-size:0.8em;">당일청산</span>'
+            : '';
         const positionBadge = `<span class="badge ${s.current_holds >= s.max_positions ? 'closed' : 'paper'}" style="cursor:pointer;" onclick="updateMaxPositions('${s.name}', ${s.max_positions})" title="클릭하여 최대 포지션 수 변경">포지션 ${s.current_holds}/${s.max_positions} ✏️</span>`;
         const toggleBtn = s.enabled
             ? `<button class="btn btn-sell" style="padding:4px 12px;font-size:0.85em;" onclick="stopStrategy('${s.name}')">정지</button>`
@@ -115,6 +118,7 @@ function renderSchedulerStatus(data) {
                 <div style="display:flex;align-items:center;gap:8px;">
                     <h3 style="margin:0;color:var(--text-primary);">${s.name}</h3>
                     ${enabledBadge}
+                    ${dayTradeBadge}
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;">
                     ${positionBadge}

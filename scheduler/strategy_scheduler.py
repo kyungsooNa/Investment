@@ -632,6 +632,20 @@ class StrategyScheduler:
                     f"(CSV는 기록됨)"
                 )
 
+        # BUY 실패 시 전략 내부 position_state에서 즉시 제거 (stale holding 방지)
+        if not api_success and signal.action == "BUY":
+            for _cfg in self._strategies:
+                if _cfg.strategy.name == signal.strategy_name:
+                    _ps = self._get_strategy_position_state(_cfg.strategy)
+                    if signal.code in _ps:
+                        _ps.pop(signal.code, None)
+                        self._persist_strategy_position_state(_cfg.strategy)
+                        self._logger.warning(
+                            f"[Scheduler] 매수 실패 position_state 정리: "
+                            f"strategy={signal.strategy_name}, code={signal.code}"
+                        )
+                    break
+
         if signal.action == "SELL" and return_rate is None and api_success:
             return_rate = self._estimate_return_rate_from_hold(
                 signal.strategy_name, signal.code, log_price
@@ -1117,6 +1131,7 @@ class StrategyScheduler:
                 "interval_minutes": cfg.interval_minutes,
                 "max_positions": cfg.max_positions,
                 "enabled": cfg.enabled,
+                "force_exit_on_close": cfg.force_exit_on_close,
                 "current_holds": len(holdings),
                 "holdings": holdings,  # 상세 보유 내역 추가
                 "last_run": last.strftime("%H:%M:%S") if last else None,
