@@ -779,7 +779,7 @@ async function loadPositionSizingLimits() {
         const data = await res.json();
         const amtEl = document.getElementById('input-max-order-amount');
         const pctEl = document.getElementById('input-max-position-pct');
-        if (amtEl && data.max_order_amount_won != null) amtEl.value = data.max_order_amount_won;
+        if (amtEl && data.max_order_amount_won != null) amtEl.value = Number(data.max_order_amount_won).toLocaleString('ko-KR');
         if (pctEl && data.max_per_position_pct != null) pctEl.value = data.max_per_position_pct;
     } catch (e) { /* 무시 */ }
     finally {
@@ -792,7 +792,7 @@ async function savePositionSizingLimits() {
     const pctEl = document.getElementById('input-max-position-pct');
     const msgEl = document.getElementById('position-sizing-msg');
     const body = {};
-    if (amtEl && amtEl.value !== '') body.max_order_amount_won = parseInt(amtEl.value, 10);
+    if (amtEl && amtEl.value !== '') body.max_order_amount_won = parseInt(amtEl.value.replace(/,/g, ''), 10);
     if (pctEl && pctEl.value !== '') body.max_per_position_pct = parseFloat(pctEl.value);
     if (Object.keys(body).length === 0) return;
     try {
