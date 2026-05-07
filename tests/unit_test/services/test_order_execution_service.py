@@ -1041,6 +1041,45 @@ async def test_execution_confirmed_buy_persists_virtual_trade(mock_broker_api_wr
 
 
 @pytest.mark.asyncio
+async def test_reconcile_source_does_not_persist_virtual_trade(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
+    virtual_trade_service = AsyncMock()
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930", 0, 2, source="reconcile:opening", finalize_immediately=False
+    )
+
+    filled = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "2",
+        "CNTG_UNPR": "70100",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "2",
+    }, tr_id="H0STCNI0")
+
+    assert filled.state == OrderState.FILLED
+    assert filled.virtual_recorded_qty == 2
+    virtual_trade_service.log_buy_async.assert_not_awaited()
+    virtual_trade_service.log_sell_async.assert_not_awaited()
+    virtual_trade_service.log_sell_by_strategy_async.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_duplicate_execution_notice_does_not_duplicate_virtual_trade(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
     virtual_trade_service = AsyncMock()
     handler = OrderExecutionService(
