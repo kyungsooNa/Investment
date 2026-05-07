@@ -96,7 +96,7 @@ class OrderPolicyService:
 
         security_context: dict[str, Any] = {}
         if self._cfg.security_status_checks_enabled:
-            security_decision = await self._check_security_status(stock_code, exchange)
+            security_decision = await self._check_security_status(stock_code, exchange, side)
             security_context = security_decision.context
             if security_decision.blocked:
                 return security_decision
@@ -264,6 +264,7 @@ class OrderPolicyService:
         self,
         stock_code: str,
         exchange: Exchange,
+        side: OrderSide,
     ) -> OrderPolicyDecision:
         if self._security_info_provider is None:
             return self._security_status_failure_decision(stock_code, "security_info_provider_missing")
@@ -301,6 +302,27 @@ class OrderPolicyService:
             "invt_caful_yn": invt_caful_yn,
             "market_cap_won": market_cap,
         }
+
+        sell_blocked_status_codes = {
+            str(code).strip()
+            for code in getattr(self._cfg, "blocked_sell_stock_status_codes", ["58"])
+        }
+        if side == OrderSide.SELL and iscd_stat_cls_code in sell_blocked_status_codes:
+            return self._blocked(
+                "trading_halted_stock",
+                "거래정지 상태 종목은 주문할 수 없습니다.",
+                blocked_sell_stock_status_codes=sorted(sell_blocked_status_codes),
+                **context,
+            )
+
+        if side == OrderSide.SELL:
+            return OrderPolicyDecision(
+                allowed=True,
+                rule="security_status",
+                reason="security_status_allowed_for_sell",
+                severity="pass",
+                context=context,
+            )
 
         if self._cfg.block_managed_issue and self._is_flagged_code(mang_issu_cls_code):
             return self._blocked(

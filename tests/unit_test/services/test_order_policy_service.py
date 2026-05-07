@@ -380,6 +380,49 @@ async def test_security_status_blocks_configured_stock_status_code():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", ["52", "53"])
+async def test_security_status_allows_sell_for_investment_risk_or_warning(status_code):
+    provider = AsyncMock()
+    provider.get_current_price.return_value = _stock_info(iscd_stat_cls_code=status_code)
+    svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False),
+        security_info_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.SELL,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.allowed is True
+    assert decision.rule == "limit_tick_size"
+
+
+@pytest.mark.asyncio
+async def test_security_status_blocks_sell_for_trading_halt():
+    provider = AsyncMock()
+    provider.get_current_price.return_value = _stock_info(iscd_stat_cls_code="58")
+    svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=False),
+        security_info_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=1,
+        side=OrderSide.SELL,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is True
+    assert decision.rule == "trading_halted_stock"
+
+
+@pytest.mark.asyncio
 async def test_security_status_blocks_investment_caution_when_enabled():
     provider = AsyncMock()
     provider.get_current_price.return_value = _stock_info(invt_caful_yn="Y")

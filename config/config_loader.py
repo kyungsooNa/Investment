@@ -102,6 +102,7 @@ class OrderPolicyConfig(BaseModel):
     block_investment_warning: bool = True
     block_investment_caution: bool = False
     blocked_stock_status_codes: List[str] = Field(default_factory=lambda: ["51", "52", "53", "58"])
+    blocked_sell_stock_status_codes: List[str] = Field(default_factory=lambda: ["58"])
     quote_fail_policy: str = "block"        # allow | block
 
     model_config = {"extra": "allow"}
