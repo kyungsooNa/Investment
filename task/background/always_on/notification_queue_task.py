@@ -143,6 +143,9 @@ class NotificationQueueTask(SchedulableTask):
             return True
         if not getattr(cfg, "enabled", True):
             return False
+        metadata = getattr(event, "metadata", {}) or {}
+        if isinstance(metadata, dict) and metadata.get("force_external"):
+            return True
         route_levels = getattr(cfg, "route_levels", None)
         if not route_levels:
             return True

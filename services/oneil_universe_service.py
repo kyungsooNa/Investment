@@ -760,7 +760,12 @@ class OneilUniverseService:
                     category=NotificationCategory.STRATEGY,
                     level=level,
                     title=title,
-                    message=msg
+                    message=msg,
+                    metadata={
+                        "force_external": True,
+                        "event": "market_timing_updated",
+                        "market": market,
+                    },
                 )
 
     async def _check_etf_ma_rising(self, etf_code: str, logger: Optional[logging.Logger] = None) -> Tuple[bool, str, List[float]]:
