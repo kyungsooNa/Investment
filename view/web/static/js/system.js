@@ -3,7 +3,7 @@
 const _cacheExpanded = { price: false, ohlcv: false };
 const SYSTEM_POLL_TIMEOUT_MS = 4000;
 let _systemPageActive = location.pathname === '/system';
-let _systemPollTimers = [];
+let _systemPollTimers = {};
 let _cacheStatusInFlight = false;
 let _backgroundStatusInFlight = false;
 let _operationsStatusInFlight = false;
@@ -24,31 +24,37 @@ async function _fetchWithTimeout(url, options = {}, timeoutMs = SYSTEM_POLL_TIME
     }
 }
 
-function _trackSystemTimer(id) {
-    _systemPollTimers.push(id);
-    return id;
+function _clearSystemTimer(name) {
+    const timer = _systemPollTimers[name];
+    if (timer) clearTimeout(timer);
+    delete _systemPollTimers[name];
+}
+
+function _scheduleSystemPoll(name, fn, intervalMs, firstDelayMs = intervalMs) {
+    if (!_systemPageActive) return;
+    _clearSystemTimer(name);
+    _systemPollTimers[name] = setTimeout(async () => {
+        delete _systemPollTimers[name];
+        if (!_isSystemPageActive()) return;
+        await fn();
+        _scheduleSystemPoll(name, fn, intervalMs);
+    }, firstDelayMs);
 }
 
 function stopSystemPolling() {
     _systemPageActive = false;
-    _systemPollTimers.forEach(clearInterval);
-    _systemPollTimers = [];
+    Object.values(_systemPollTimers).forEach(clearTimeout);
+    _systemPollTimers = {};
 }
 
 function startSystemPolling() {
     _systemPageActive = true;
-    if (_systemPollTimers.length > 0) return;
-
-    updateCacheStatus();
-    setTimeout(updateOperationsStatus, 700);
-    setTimeout(updateBackgroundStatus, 1500);
-    setTimeout(updateSubscriptionStatus, 3000);
     loadPositionSizingLimits();
 
-    _trackSystemTimer(setInterval(updateCacheStatus, 15000));
-    _trackSystemTimer(setInterval(updateOperationsStatus, 5000));
-    _trackSystemTimer(setInterval(updateBackgroundStatus, 5000));
-    _trackSystemTimer(setInterval(updateSubscriptionStatus, 5000));
+    _scheduleSystemPoll('cache', updateCacheStatus, 20000, 0);
+    _scheduleSystemPoll('operations', updateOperationsStatus, 8000, 900);
+    _scheduleSystemPoll('background', updateBackgroundStatus, 9000, 2200);
+    _scheduleSystemPoll('subscriptions', updateSubscriptionStatus, 10000, 3600);
 }
 
 function toggleCacheDetails(type) {
