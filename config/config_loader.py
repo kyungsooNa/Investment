@@ -36,7 +36,7 @@ class KillSwitchConfig(BaseModel):
 class PositionSizingConfig(BaseModel):
     enabled: bool = True
     per_trade_risk_pct: float = 1.5        # 1주당 리스크 한도 (총자산 대비 %)
-    max_per_position_pct: float = 10.0     # 단일 종목 비중 상한 (%)
+    max_per_position_pct: float = 5.0      # 단일 종목 비중 상한 (%)
     default_stop_loss_pct: float = -5.0    # 시그널 미전달 시 폴백 손절폭 (음수)
     atr_period: int = 14
     atr_multiplier: float = 2.0

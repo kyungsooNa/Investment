@@ -701,6 +701,7 @@ async def force_strategy_log_report():
 
 from pydantic import BaseModel as _BaseModel, Field as _Field
 from typing import Optional as _Optional
+from config.config_loader import RiskGateConfig as _RiskGateConfig, PositionSizingConfig as _PositionSizingConfig
 
 
 class PositionSizingLimitsRequest(_BaseModel):
@@ -717,6 +718,10 @@ def get_position_sizing_limits():
     return {
         "max_order_amount_won": rg.max_order_amount_won if rg else None,
         "max_per_position_pct": ps.max_per_position_pct if ps else None,
+        "defaults": {
+            "max_order_amount_won": _RiskGateConfig().max_order_amount_won,
+            "max_per_position_pct": _PositionSizingConfig().max_per_position_pct,
+        },
     }
 
 

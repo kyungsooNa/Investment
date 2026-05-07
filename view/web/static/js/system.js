@@ -781,6 +781,12 @@ async function loadPositionSizingLimits() {
         const pctEl = document.getElementById('input-max-position-pct');
         if (amtEl && data.max_order_amount_won != null) amtEl.value = Number(data.max_order_amount_won).toLocaleString('ko-KR');
         if (pctEl && data.max_per_position_pct != null) pctEl.value = data.max_per_position_pct;
+        const dAmt = document.getElementById('default-max-order-amount');
+        const dPct = document.getElementById('default-max-position-pct');
+        if (dAmt && data.defaults?.max_order_amount_won != null)
+            dAmt.textContent = `기본값: ${Number(data.defaults.max_order_amount_won).toLocaleString('ko-KR')}원`;
+        if (dPct && data.defaults?.max_per_position_pct != null)
+            dPct.textContent = `기본값: ${data.defaults.max_per_position_pct}%`;
     } catch (e) { /* 무시 */ }
     finally {
         _positionSizingInFlight = false;
