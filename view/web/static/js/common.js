@@ -137,6 +137,11 @@ function updateNavActive(pathname) {
 async function navigatePjax(href) {
     const overlay = document.getElementById('page-loading-overlay');
     if (overlay) overlay.classList.add('active');
+    const targetPath = new URL(href, location.href).pathname;
+
+    document.dispatchEvent(new CustomEvent('pjax:before-change', {
+        detail: { path: targetPath, from: location.pathname }
+    }));
 
     // 페이지 이탈 전 SSE 정리 (장중 zombie 연결 방지)
     if (typeof unsubscribeRealtimePrice === 'function') { try { unsubscribeRealtimePrice(); } catch (_) {} }
@@ -162,7 +167,6 @@ async function navigatePjax(href) {
 
         await executePageScripts(pageMain);
 
-        const targetPath = new URL(href, location.href).pathname;
         window.history.pushState({path: href}, '', href);
         updateNavActive(targetPath);
 

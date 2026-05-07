@@ -1,6 +1,55 @@
 // ── 캐시 상태 모니터링 ───────────────────────────────────────
 
 const _cacheExpanded = { price: false, ohlcv: false };
+const SYSTEM_POLL_TIMEOUT_MS = 4000;
+let _systemPageActive = location.pathname === '/system';
+let _systemPollTimers = [];
+let _cacheStatusInFlight = false;
+let _backgroundStatusInFlight = false;
+let _operationsStatusInFlight = false;
+let _subscriptionStatusInFlight = false;
+let _positionSizingInFlight = false;
+
+function _isSystemPageActive() {
+    return _systemPageActive && !!document.getElementById('background-tasks-body');
+}
+
+async function _fetchWithTimeout(url, options = {}, timeoutMs = SYSTEM_POLL_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function _trackSystemTimer(id) {
+    _systemPollTimers.push(id);
+    return id;
+}
+
+function stopSystemPolling() {
+    _systemPageActive = false;
+    _systemPollTimers.forEach(clearInterval);
+    _systemPollTimers = [];
+}
+
+function startSystemPolling() {
+    _systemPageActive = true;
+    if (_systemPollTimers.length > 0) return;
+
+    updateCacheStatus();
+    setTimeout(updateOperationsStatus, 700);
+    setTimeout(updateBackgroundStatus, 1500);
+    setTimeout(updateSubscriptionStatus, 3000);
+    loadPositionSizingLimits();
+
+    _trackSystemTimer(setInterval(updateCacheStatus, 15000));
+    _trackSystemTimer(setInterval(updateOperationsStatus, 5000));
+    _trackSystemTimer(setInterval(updateBackgroundStatus, 5000));
+    _trackSystemTimer(setInterval(updateSubscriptionStatus, 5000));
+}
 
 function toggleCacheDetails(type) {
     _cacheExpanded[type] = !_cacheExpanded[type];
@@ -163,10 +212,12 @@ function renderOhlcvCacheDetails(stats) {
 }
 
 async function updateCacheStatus() {
+    if (!_isSystemPageActive() || _cacheStatusInFlight) return;
+    _cacheStatusInFlight = true;
     try {
         const needExpand = _cacheExpanded.price || _cacheExpanded.ohlcv;
         const url = needExpand ? '/api/cache/status?expand=true' : '/api/cache/status';
-        const response = await fetch(url);
+        const response = await _fetchWithTimeout(url);
         if (!response.ok) throw new Error('네트워크 응답이 정상이 아닙니다.');
         const result = await response.json();
         if (!result.success || !result.data) return;
@@ -177,11 +228,10 @@ async function updateCacheStatus() {
         if (_cacheExpanded.ohlcv)  renderOhlcvCacheDetails(stats.ohlcv_cache || {});
     } catch (error) {
         console.error('캐시 상태를 가져오는 중 오류 발생:', error);
+    } finally {
+        _cacheStatusInFlight = false;
     }
 }
-
-document.addEventListener('DOMContentLoaded', updateCacheStatus);
-setInterval(updateCacheStatus, 15000);  // 캐시 상태는 15초마다 갱신 (응답이 크므로 이벤트 루프 부하 분산)
 
 // ── 백그라운드 태스크 모니터링 ──────────────────────────────
 
@@ -492,8 +542,10 @@ async function forceTaskUpdate(btn, taskName) {
 }
 
 async function updateBackgroundStatus() {
+    if (!_isSystemPageActive() || _backgroundStatusInFlight) return;
+    _backgroundStatusInFlight = true;
     try {
-        const response = await fetch('/api/background/status');
+        const response = await _fetchWithTimeout('/api/background/status');
         if (!response.ok) return;
         const result = await response.json();
         if (!result.success || !result.data) return;
@@ -551,6 +603,8 @@ async function updateBackgroundStatus() {
         }).join('');
     } catch (e) {
         console.error('백그라운드 태스크 상태 조회 오류:', e);
+    } finally {
+        _backgroundStatusInFlight = false;
     }
 }
 
@@ -563,8 +617,10 @@ function renderOpsMetric(label, value, tone = 'normal') {
 }
 
 async function updateOperationsStatus() {
+    if (!_isSystemPageActive() || _operationsStatusInFlight) return;
+    _operationsStatusInFlight = true;
     try {
-        const response = await fetch('/api/system/operations/status');
+        const response = await _fetchWithTimeout('/api/system/operations/status');
         if (!response.ok) return;
         const body = await response.json();
         const data = body.data || {};
@@ -596,15 +652,10 @@ async function updateOperationsStatus() {
         ].join('');
     } catch (e) {
         console.error('운영 요약 조회 오류:', e);
+    } finally {
+        _operationsStatusInFlight = false;
     }
 }
-
-document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(updateOperationsStatus, 700);
-    setTimeout(updateBackgroundStatus, 1500);
-});  // 캐시 폴링과 시차 분산
-setInterval(updateOperationsStatus, 5000);
-setInterval(updateBackgroundStatus, 5000);
 
 // ── 실시간 현재가 구독 현황 ──────────────────────────────────
 
@@ -659,8 +710,10 @@ function renderSubTable() {
 }
 
 async function updateSubscriptionStatus() {
+    if (!_isSystemPageActive() || _subscriptionStatusInFlight) return;
+    _subscriptionStatusInFlight = true;
     try {
-        const res = await fetch('/api/subscriptions/status');
+        const res = await _fetchWithTimeout('/api/subscriptions/status');
         if (!res.ok) return;
         const result = await res.json();
         if (!result.success || !result.data) return;
@@ -694,25 +747,28 @@ async function updateSubscriptionStatus() {
         renderSubTable();
     } catch (e) {
         console.error('구독 현황 조회 오류:', e);
+    } finally {
+        _subscriptionStatusInFlight = false;
     }
 }
-
-document.addEventListener('DOMContentLoaded', () => setTimeout(updateSubscriptionStatus, 3000));  // 다른 폴링과 시차 분산
-setInterval(updateSubscriptionStatus, 5000);
 
 /* ── Pjax 재방문 시 상태 즉시 갱신 ── */
 document.addEventListener('pjax:ready', (e) => {
     if (e.detail?.path !== '/system') return;
-    updateCacheStatus();
-    setTimeout(updateBackgroundStatus, 1500);
-    setTimeout(updateSubscriptionStatus, 3000);
-    loadPositionSizingLimits();
+    startSystemPolling();
+});
+
+document.addEventListener('pjax:before-change', (e) => {
+    if (e.detail?.from !== '/system') return;
+    stopSystemPolling();
 });
 
 /* ── 자금 한도 설정 ── */
 async function loadPositionSizingLimits() {
+    if (!_isSystemPageActive() || _positionSizingInFlight) return;
+    _positionSizingInFlight = true;
     try {
-        const res = await fetch('/api/position-sizing/limits');
+        const res = await _fetchWithTimeout('/api/position-sizing/limits');
         if (!res.ok) return;
         const data = await res.json();
         const amtEl = document.getElementById('input-max-order-amount');
@@ -720,6 +776,9 @@ async function loadPositionSizingLimits() {
         if (amtEl && data.max_order_amount_won != null) amtEl.value = data.max_order_amount_won;
         if (pctEl && data.max_per_position_pct != null) pctEl.value = data.max_per_position_pct;
     } catch (e) { /* 무시 */ }
+    finally {
+        _positionSizingInFlight = false;
+    }
 }
 
 async function savePositionSizingLimits() {
@@ -750,4 +809,4 @@ async function savePositionSizingLimits() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', loadPositionSizingLimits);
+document.addEventListener('DOMContentLoaded', startSystemPolling);
