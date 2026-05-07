@@ -1842,6 +1842,39 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertIn("루프 오류", args[0])
         self.assertIn("Time Error", args[0])
 
+    def test_get_status_includes_force_exit_on_close(self):
+        """get_status()가 force_exit_on_close 필드를 올바르게 노출하는지 테스트."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        strategy_on = MockStrategy(name="당일청산전략")
+        strategy_off = MockStrategy(name="일반전략")
+        scheduler.register(StrategySchedulerConfig(strategy=strategy_on, force_exit_on_close=True))
+        scheduler.register(StrategySchedulerConfig(strategy=strategy_off, force_exit_on_close=False))
+
+        status = scheduler.get_status()
+        by_name = {s["name"]: s for s in status["strategies"]}
+        self.assertTrue(by_name["당일청산전략"]["force_exit_on_close"])
+        self.assertFalse(by_name["일반전략"]["force_exit_on_close"])
+
+    async def test_execute_signal_buy_failure_cleans_position_state(self):
+        """BUY API 실패 시 strategy._position_state에서 해당 종목이 제거되는지 테스트."""
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        strategy = MockStrategy(name="테스트전략")
+        strategy._position_state = {"028050": {}}
+        strategy._save_state = MagicMock()
+        scheduler.register(StrategySchedulerConfig(strategy=strategy))
+
+        oes.handle_place_buy_order.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value, msg1="매수 거부"
+        )
+        signal = TradeSignal(
+            code="028050", name="보락", action="BUY",
+            price=5000, qty=1, reason="테스트", strategy_name="테스트전략"
+        )
+        await scheduler._execute_signal(signal)
+
+        self.assertNotIn("028050", strategy._position_state)
+        strategy._save_state.assert_called_once()
+
     async def test_force_liquidate_fallback_qty(self):
         """강제 청산 시 보유 수량 정보가 없으면 설정된 주문 수량을 사용하는지 테스트."""
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
