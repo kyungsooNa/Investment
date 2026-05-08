@@ -176,16 +176,27 @@
 
 ### 2-2. API 호출 최적화
 
-- [ ] `StrategyExecutor` Liquidity Filter의 `asyncio.gather()`에 semaphore 기반 동시성 제한을 추가한다.
-- [ ] 종목별 current price REST 호출을 최소화하고 WebSocket/stream snapshot을 우선 사용한다.
-- [ ] REST API는 snapshot 누락, 검증, 보정용으로 제한한다.
-- [ ] 전략별 중복 조회를 제거하고 동일 종목 데이터는 공통 snapshot에서 읽도록 정리한다.
+- [x] `StrategyExecutor` Liquidity Filter의 `asyncio.gather()`에 semaphore 기반 동시성 제한을 추가한다.
+  - 근거: `strategies/strategy_executor.py:88` `Semaphore(self._max_liquidity_concurrency)` 적용, `:106` gather, `:141` `async with sem:` 으로 REST 호출 보호.
+  - snapshot-first chain도 동일 파일 `:127-139`에 구현됨 (PriceStreamService 신선 snapshot 우선 사용 → 없거나 stale 시 REST fallback → REST 응답을 `cache_price_snapshot()`으로 backfill).
+- [x] 종목별 current price REST 호출을 최소화하고 WebSocket/stream snapshot을 우선 사용한다.
+  - 완료: `StockQueryService.get_current_price()`에 snapshot-first 로직 추가. `price_stream_service` 주입 시 `get_cached_price()` 우선 참조 → stale/없음 시 REST fallback. `web_app_initializer.py`에서 `price_stream_service` 주입.
+  - 구독 중이나 tick 미수신(snapshot=None) 케이스: `no_tick_fallback`으로 분류해 REST fallback. `_price_lookup_stats`에 `snapshot_hit/no_tick_fallback/stale_fallback/rest_fallback` 카운터 노출.
+  - REST 성공 시 `cache_price_snapshot()`으로 backfill → 다음 호출 snapshot hit 유도.
+  - 전략들은 호출 코드 변경 없이 자동으로 WebSocket 캐시 활용.
+- [x] REST API는 snapshot 누락, 검증, 보정용으로 제한한다.
+  - 완료: snapshot 없음/stale → REST fallback. `force_fresh=True` 시 snapshot 무시(주문/리스크/수동 조회 경로에서 사용).
+  - `_price_lookup_stats` dict를 `price_lookup_stats` 이벤트 로그로 노출 가능.
+- [x] 전략별 중복 조회를 제거하고 동일 종목 데이터는 공통 snapshot에서 읽도록 정리한다.
+  - 완료: 전략들이 `StockQueryService.get_current_price()` 한 통로를 거치므로 snapshot-first 기본화로 자연 해결. REST backfill로 첫 호출 이후 동일 종목 재조회 시 캐시 hit.
 
 주요 파일:
 
 - `strategies/strategy_executor.py`
 - `services/stock_query_service.py`
 - `services/price_stream_service.py`
+- `view/web/web_app_initializer.py` (price_stream_service 주입)
+- `services/order_execution_service.py`, `services/risk_gate_service.py` (`force_fresh=True` 명시)
 
 ### 2-3. Market snapshot 표준화
 

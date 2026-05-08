@@ -439,6 +439,8 @@ class WebAppContext:
             )
             self.data_quality_service.set_price_stream_service(self.price_stream_service)
             self.streaming_service.set_price_stream_service(self.price_stream_service)
+            if self.stock_query_service:
+                self.stock_query_service.price_stream_service = self.price_stream_service
             self.streaming_stock_repo = StreamingStockRepo(logger=self.logger)
             self.streaming_stock_repo.load_pt_desired_from_db("data/program_subscribe/program_trading.db")
             self.streaming_service.set_streaming_stock_repo(self.streaming_stock_repo)

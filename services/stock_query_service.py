@@ -1,5 +1,6 @@
 # app/stock_query_service.py
 from __future__ import annotations
+import time
 from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, \
     ResStockFullInfoApiOutput, Exchange
 from config.DynamicConfig import DynamicConfig
@@ -19,7 +20,9 @@ class StockQueryService:
                  ranking_task=None, performance_profiler: Optional[PerformanceProfiler] = None,
                  notification_service: Optional[NotificationService] = None,
                  broker_api_wrapper=None,
-                 streaming_logger=None):
+                 streaming_logger=None,
+                 price_stream_service=None,
+                 snapshot_max_age_sec: float = 5.0):
         self.broker = broker_api_wrapper
         self.market_data_service = market_data_service
         self.logger = logger
@@ -29,6 +32,14 @@ class StockQueryService:
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
         self._streaming_logger = streaming_logger
+        self.price_stream_service = price_stream_service
+        self._snapshot_max_age_sec = snapshot_max_age_sec
+        self._price_lookup_stats: Dict[str, int] = {
+            "snapshot_hit": 0,
+            "no_tick_fallback": 0,
+            "stale_fallback": 0,
+            "rest_fallback": 0,
+        }
 
     def _get_sign_from_code(self, sign_code):
         """API 응답의 부호 코드(1,2,3,4,5)를 실제 부호 문자열로 변환합니다."""
@@ -39,9 +50,82 @@ class StockQueryService:
         else:  # 3:보합 (또는 기타)
             return ""
 
+    def _build_snapshot_response(self, snap: dict) -> ResCommonResponse:
+        """PriceStreamService 캐시 dict → ResCommonResponse(output=ResStockFullInfoApiOutput) 변환.
+
+        snapshot에 없는 필드는 ""로 채워진다. 호출자가 per/pbr 같은
+        REST 전용 필드가 필요하면 force_fresh=True를 사용한다.
+        """
+        fields = {name: "" for name in ResStockFullInfoApiOutput.model_fields}
+        fields.update({
+            "stck_prpr": str(snap.get("price") or "0"),
+            "prdy_vrss": str(snap.get("change") or "0"),
+            "prdy_ctrt": str(snap.get("rate") or "0.00"),
+            "prdy_vrss_sign": str(snap.get("sign") or "3"),
+            "acml_vol": str(snap.get("acml_vol") or "0"),
+            "acml_tr_pbmn": str(snap.get("acml_tr_pbmn") or "0"),
+        })
+        output = ResStockFullInfoApiOutput.model_validate(fields)
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="snapshot",
+            data={"output": output},
+        )
+
     async def get_current_price(self, stock_code: str, exchange: Exchange = Exchange.KRX, count_stats: bool = True, caller: str = "unknown", force_fresh: bool = False) -> ResCommonResponse:
-        """현재가만 빠르게 조회 (MarketDataService 래퍼)."""
-        return await self.market_data_service.get_current_price(stock_code, exchange=exchange, count_stats=count_stats, caller=caller, force_fresh=force_fresh)
+        """현재가 조회. WebSocket snapshot이 신선하면 우선 사용하고 REST는 fallback으로 제한.
+
+        우선순위:
+          1) PriceStreamService snapshot (received_at이 snapshot_max_age_sec 이내)
+          2) REST (MarketDataService → StockRepository 캐시 → broker API)
+
+        force_fresh=True 또는 price_stream_service 미주입 시 항상 REST.
+        REST 성공 시 snapshot 캐시를 backfill해 다음 호출에서 hit 가능하게 한다.
+
+        per/pbr/eps 같이 snapshot에 없는 REST 전용 필드가 필요하면 force_fresh=True를 지정한다.
+        """
+        if not force_fresh and self.price_stream_service is not None:
+            snap = self.price_stream_service.get_cached_price(stock_code)
+            if snap is None:
+                # 구독 중이나 tick 미수신 → REST fallback
+                self._price_lookup_stats["no_tick_fallback"] += 1
+                self.logger.debug({"event": "price_lookup_no_tick", "code": stock_code, "caller": caller})
+            else:
+                received_at = snap.get("received_at", 0.0) or 0.0
+                age = time.time() - received_at
+                if age <= self._snapshot_max_age_sec:
+                    self._price_lookup_stats["snapshot_hit"] += 1
+                    return self._build_snapshot_response(snap)
+                else:
+                    self._price_lookup_stats["stale_fallback"] += 1
+                    self.logger.debug({"event": "price_lookup_stale", "code": stock_code,
+                                       "age_sec": round(age, 2), "caller": caller})
+
+        self._price_lookup_stats["rest_fallback"] += 1
+        resp = await self.market_data_service.get_current_price(
+            stock_code, exchange=exchange, count_stats=count_stats, caller=caller, force_fresh=force_fresh
+        )
+
+        # REST 성공 응답을 snapshot 캐시에 backfill (다음 동일 종목 조회 hit 유도)
+        if (self.price_stream_service is not None
+                and resp is not None
+                and resp.rt_cd == ErrorCode.SUCCESS.value):
+            try:
+                output = (resp.data or {}).get("output")
+                if isinstance(output, ResStockFullInfoApiOutput):
+                    self.price_stream_service.cache_price_snapshot(
+                        stock_code,
+                        price=str(output.stck_prpr or ""),
+                        change=str(output.prdy_vrss or "0"),
+                        rate=str(output.prdy_ctrt or "0.00"),
+                        sign=str(output.prdy_vrss_sign or "3"),
+                        volume=str(output.acml_vol or "0"),
+                        acml_tr_pbmn=str(output.acml_tr_pbmn or "0"),
+                    )
+            except Exception as e:
+                self.logger.debug({"event": "snapshot_backfill_skipped", "code": stock_code, "error": str(e)})
+
+        return resp
 
     async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
         """복수종목 현재가 조회 (최대 30종목, MarketDataService 래퍼)."""
