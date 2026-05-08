@@ -596,6 +596,10 @@ class StrategyScheduler:
                         trace_id=tid,
                     )
                 else:
+                    adjusted_sell_price = await self._resolve_strategy_sell_price(signal, signal_exchange)
+                    if adjusted_sell_price != signal.price:
+                        signal.price = adjusted_sell_price
+                        log_price = adjusted_sell_price
                     resp = await self._oes.handle_place_sell_order(
                         signal.code,
                         signal.price,
@@ -784,6 +788,35 @@ class StrategyScheduler:
         if signal.action == "SELL" and str(signal.reason or "").startswith("전략 종료 강제 청산"):
             return f"strategy_force_exit:{signal.strategy_name}"
         return f"strategy:{signal.strategy_name}"
+
+    async def _resolve_strategy_sell_price(self, signal: TradeSignal, exchange: Exchange) -> int:
+        price = int(signal.price or 0)
+        if signal.action != "SELL" or price <= 0:
+            return price
+
+        broker = getattr(self._oes, "broker_api_wrapper", None)
+        if broker is None or not hasattr(broker, "get_asking_price"):
+            return price
+
+        try:
+            try:
+                resp = await broker.get_asking_price(signal.code, exchange=exchange)
+            except TypeError:
+                resp = await broker.get_asking_price(signal.code)
+            if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                return price
+            best_bid = self._extract_best_bid(resp.data)
+            if best_bid > 0 and price > best_bid:
+                self._logger.info(
+                    f"[Scheduler] 전략 SELL 가격 보정: {signal.code} {price:,} -> {best_bid:,} "
+                    f"(best_bid, strategy={signal.strategy_name})"
+                )
+                return best_bid
+        except Exception as exc:
+            self._logger.warning(
+                f"[Scheduler] 전략 SELL 가격 보정 실패: code={signal.code}, price={price}, error={exc}"
+            )
+        return price
 
     @staticmethod
     def _extract_best_bid(data) -> int:

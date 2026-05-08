@@ -75,12 +75,12 @@
 
 ### 0-4. Kill Switch 손익 hook 연결 검증
 
-- [ ] `KillSwitchService.record_trade_result(profit_won, code, strategy, account_balance_won)` 가 모든 매도 체결/정산 경로에서 호출되는지 검증한다.
-- [ ] `KillSwitchService.record_strategy_trade_result(strategy_name, pnl_won)` 를 전략 매도 정산 시점에서 호출한다.
+- [x] `KillSwitchService.record_trade_result(profit_won, code, strategy, account_balance_won)` 가 모든 매도 체결/정산 경로에서 호출되는지 검증한다.
+- [x] `KillSwitchService.record_strategy_trade_result(strategy_name, pnl_won)` 를 전략 매도 정산 시점에서 호출한다.
   - 현재 상태: 메서드는 구현되어 있으나 호출 지점이 없어 전략 KS가 실제 손익을 인식하지 못함.
   - 연결 후보: `OrderExecutionService` 체결 확정 콜백 또는 `VirtualTradeService` 매도 정산 시점.
   - 전제 조건: P0 `inquire-daily-ccld` 실전 응답 확보 후 체결 확정 시점이 명확해지면 실전 경로까지 연결.
-- [ ] 매도 체결 완료 → 실현손익 계산 → KillSwitch 기록 → 전략별 연속 손실/일손실 반영 → 한도 초과 시 전략·주문 차단 흐름을 회귀 테스트로 고정한다.
+- [x] 매도 체결 완료 → 실현손익 계산 → KillSwitch 기록 → 전략별 연속 손실/일손실 반영 → 한도 초과 시 전략·주문 차단 흐름을 회귀 테스트로 고정한다.
 
 주요 파일:
 

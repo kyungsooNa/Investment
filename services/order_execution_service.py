@@ -522,17 +522,18 @@ class OrderExecutionService:
                 record_qty,
                 side=context.side.value,
             )
+        sell_result = None
         try:
             if context.side == OrderSide.BUY:
                 await self._virtual_trade_service.log_buy_async(
                     strategy_name, context.stock_code, record_price, record_qty
                 )
             elif is_strategy_source:
-                await self._virtual_trade_service.log_sell_by_strategy_async(
+                sell_result = await self._virtual_trade_service.log_sell_by_strategy_async_with_result(
                     strategy_name, context.stock_code, record_price, record_qty
                 )
             else:
-                await self._virtual_trade_service.log_sell_async(
+                sell_result = await self._virtual_trade_service.log_sell_async_with_result(
                     context.stock_code, record_price, record_qty
                 )
         except Exception as e:
@@ -544,6 +545,27 @@ class OrderExecutionService:
         # 체결 확정 → 잔고 스냅샷 캐시 무효화 (PositionSizingService 가 다음 조회 시 refresh)
         if self._account_snapshot_cache is not None:
             self._account_snapshot_cache.invalidate()
+        # 매도 체결 확정 → KillSwitch 손익 hook
+        if (
+            self._kill_switch
+            and context.side == OrderSide.SELL
+            and sell_result is not None
+            and sell_result.net_pnl_won is not None
+            and sell_result.pnl_filled_qty > 0
+        ):
+            snapshot = self._account_snapshot_cache.peek() if self._account_snapshot_cache else None
+            account_balance_won = snapshot.total_equity if snapshot and snapshot.total_equity > 0 else None
+            await self._kill_switch.record_trade_result(
+                profit_won=sell_result.net_pnl_won,
+                code=context.stock_code,
+                strategy=strategy_name or "",
+                account_balance_won=account_balance_won,
+            )
+            if is_strategy_source and strategy_name:
+                await self._kill_switch.record_strategy_trade_result(
+                    strategy_name=strategy_name,
+                    pnl_won=sell_result.net_pnl_won,
+                )
         return self._mark_virtual_trade_recorded(context, record_qty)
 
     def _find_context_for_execution_report(self, report: OrderExecutionReport) -> Optional[OrderContext]:

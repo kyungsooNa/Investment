@@ -14,6 +14,14 @@ class TransactionCostUtils:
         return fee + tax
 
     @classmethod
+    def calculate_net_pnl_won(cls, buy_price: float, sell_price: float, qty: int) -> int:
+        """수수료/거래세 반영 후 순수익 (KRW 정수). 음수 = 손실."""
+        buy_cost = cls.calculate_cost(buy_price, qty, is_sell=False)
+        sell_cost = cls.calculate_cost(sell_price, qty, is_sell=True)
+        net = (sell_price * qty - sell_cost) - (buy_price * qty + buy_cost)
+        return int(net)
+
+    @classmethod
     def get_return_rate(cls, buy_price: float, sell_price: float, qty: float = 1, apply_cost: bool = False) -> float:
         """수익률 계산 (비용 적용 옵션)"""
         if buy_price == 0:

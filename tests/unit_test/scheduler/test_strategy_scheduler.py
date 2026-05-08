@@ -2436,6 +2436,29 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             "strategy_force_exit:래리윌리엄스VBO",
         )
 
+    async def test_execute_strategy_sell_reprices_to_best_bid_when_above_book(self):
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        oes.broker_api_wrapper = MagicMock()
+        oes.broker_api_wrapper.get_asking_price = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="OK",
+                data={"output1": {"bidp1": "7850"}},
+            )
+        )
+
+        signal = TradeSignal(
+            code="037030", name="Powernet", action="SELL",
+            price=8210, qty=58,
+            reason="하드스탑(고점대비 -17.7%)",
+            strategy_name="오닐PP/BGU",
+        )
+        await scheduler._execute_signal(signal)
+
+        oes.handle_place_sell_order.assert_awaited_once()
+        self.assertEqual(oes.handle_place_sell_order.await_args.args[1], 7850)
+        self.assertEqual(scheduler._signal_history[-1].price, 7850)
+
     async def test_run_reconciliation_clears_strategy_state_for_force_closed_codes(self):
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
         strategy = MockStrategy(name="오닐PP/BGU")
