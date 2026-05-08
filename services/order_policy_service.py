@@ -150,6 +150,7 @@ class OrderPolicyService:
             )
             if quote_decision.blocked:
                 return quote_decision
+            return self._with_context(quote_decision, common_context)
 
         return self._with_context(tick_decision, common_context)
 
@@ -473,6 +474,12 @@ class OrderPolicyService:
         bid = self._to_int(self._pick(quote, "bidp1", "매수호가1"))
         ask_qty = self._to_int(self._pick(quote, "askp_rsqn1", "매도호가잔량1"))
         bid_qty = self._to_int(self._pick(quote, "bidp_rsqn1", "매수호가잔량1"))
+        total_bid_qty = self._to_int(self._pick(quote, "total_bidp_rsqn", "총매수호가잔량"))
+        if total_bid_qty <= 0:
+            total_bid_qty = sum(
+                self._to_int(self._pick(quote, f"bidp_rsqn{i}", f"매수호가잔량{i}"))
+                for i in range(1, 11)
+            )
         current_price = self._to_int(self._pick(quote, "stck_prpr", "주식현재가", "prpr"))
 
         if self._cfg.block_empty_order_book and (ask <= 0 or bid <= 0):
@@ -535,7 +542,10 @@ class OrderPolicyService:
                     min_trading_value_won=self._cfg.min_trading_value_won,
                 )
 
-        book_qty = ask_qty if side == OrderSide.BUY else bid_qty
+        top_of_book_qty = ask_qty if side == OrderSide.BUY else bid_qty
+        book_qty = top_of_book_qty
+        if side == OrderSide.SELL and total_bid_qty > 0:
+            book_qty = total_bid_qty
         if book_qty > 0 and qty > book_qty:
             return self._blocked(
                 "top_of_book_qty_short",
@@ -543,7 +553,8 @@ class OrderPolicyService:
                 stock_code=stock_code,
                 side=side.value,
                 qty=qty,
-                top_of_book_qty=book_qty,
+                top_of_book_qty=top_of_book_qty,
+                available_book_qty=book_qty,
             )
         if book_qty > 0 and self._cfg.max_top_of_book_participation_pct > 0:
             participation_pct = qty / book_qty * 100
@@ -554,7 +565,8 @@ class OrderPolicyService:
                     stock_code=stock_code,
                     side=side.value,
                     qty=qty,
-                    top_of_book_qty=book_qty,
+                    top_of_book_qty=top_of_book_qty,
+                    available_book_qty=book_qty,
                     participation_pct=round(participation_pct, 3),
                     max_top_of_book_participation_pct=self._cfg.max_top_of_book_participation_pct,
                 )
@@ -572,7 +584,8 @@ class OrderPolicyService:
                 "bid": bid,
                 "executable_price": executable_price,
                 "reference_price": reference_price,
-                "top_of_book_qty": book_qty,
+                "top_of_book_qty": top_of_book_qty,
+                "available_book_qty": book_qty,
                 "trading_value_won": trading_value,
                 "spread_pct": round(spread_pct, 3),
                 "slippage_pct": round(slippage_pct, 3),

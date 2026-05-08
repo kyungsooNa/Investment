@@ -24,7 +24,16 @@ def _service(*, config=None, quote_provider=None, security_info_provider=None, t
     )
 
 
-def _quote(ask=70_100, bid=70_000, ask_qty=100, bid_qty=100, current=70_000, trading_value=1_000_000_000):
+def _quote(
+    ask=70_100,
+    bid=70_000,
+    ask_qty=100,
+    bid_qty=100,
+    current=70_000,
+    trading_value=1_000_000_000,
+    total_bid_qty=None,
+):
+    total_bid_qty = bid_qty if total_bid_qty is None else total_bid_qty
     return ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
         msg1="OK",
@@ -33,6 +42,7 @@ def _quote(ask=70_100, bid=70_000, ask_qty=100, bid_qty=100, current=70_000, tra
             "bidp1": str(bid),
             "askp_rsqn1": str(ask_qty),
             "bidp_rsqn1": str(bid_qty),
+            "total_bidp_rsqn": str(total_bid_qty),
             "stck_prpr": str(current),
             "acml_tr_pbmn": str(trading_value),
         },
@@ -322,6 +332,29 @@ async def test_limit_order_top_of_book_participation_blocks():
 
     assert decision.blocked is True
     assert decision.rule == "top_of_book_participation_too_high"
+
+
+@pytest.mark.asyncio
+async def test_sell_order_uses_total_bid_depth_for_liquidity_check():
+    """청산 매도는 1호가 잔량이 얇아도 총 매수잔량이 충분하면 허용한다."""
+    provider = AsyncMock()
+    provider.get_asking_price.return_value = _quote(bid_qty=1, total_bid_qty=200)
+    svc = _service(
+        config=OrderPolicyConfig(order_book_checks_enabled=True),
+        quote_provider=provider,
+    )
+
+    decision = await svc.validate_order(
+        stock_code="005930",
+        price=70_000,
+        qty=58,
+        side=OrderSide.SELL,
+        exchange=Exchange.KRX,
+    )
+
+    assert decision.blocked is False
+    assert decision.context["top_of_book_qty"] == 1
+    assert decision.context["available_book_qty"] == 200
 
 
 @pytest.mark.asyncio

@@ -58,6 +58,7 @@ def ks_service(ks_state_file, mock_notification):
         enabled=True,
         max_consecutive_losses=2,   # 낮게 설정 → 빠른 트립
         daily_loss_threshold_won=100_000,
+        abnormal_fill_deviation_pct=999.0,
         state_file_path=ks_state_file,
     )
     return KillSwitchService(config=cfg, notification_service=mock_notification)
