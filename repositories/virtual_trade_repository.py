@@ -363,10 +363,17 @@ class VirtualTradeRepository:
                     continue
 
                 signal_meta = open_signal_map.get((strategy_name, code), {})
+                if not signal_meta:
+                    logger.warning(
+                        f"[가상매매] sync SKIP strategy={strategy_name} code={code} "
+                        "reason=no_open_scheduler_buy_signal"
+                    )
+                    continue
+
                 buy_price = float(signal_meta.get("buy_price") or position["buy_price"])
                 buy_date = str(signal_meta.get("buy_date") or position["buy_date"])
                 qty = int(signal_meta.get("qty") or 1)
-                source = "scheduler_signal" if signal_meta else "state_file"
+                source = "scheduler_signal"
 
                 # 행 단위 추적 로그 — 향후 의심 데이터(자정 buy_date 등) 발생 시 즉시 추적 가능.
                 # 자정(00:00:00)은 strategy state 파일이 YYYYMMDD 만 기록해 _normalize_entry_date 가

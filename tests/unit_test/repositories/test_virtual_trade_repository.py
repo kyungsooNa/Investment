@@ -1009,20 +1009,59 @@ def test_sync_live_strategy_positions_backfills_missing_strategy_holds(virutal_t
     inserted = virutal_trade_repository.sync_live_strategy_positions()
     holds = virutal_trade_repository.get_holds_by_strategy("오닐PP/BGU")
 
-    assert len(inserted) == 2
-    assert {row["code"] for row in inserted} == {"489790", "100840"}
-    assert len(holds) == 2
+    assert len(inserted) == 1
+    assert {row["code"] for row in inserted} == {"489790"}
+    assert len(holds) == 1
 
     by_code = {row["code"]: row for row in holds}
     assert by_code["489790"]["buy_price"] == 82000
     assert by_code["489790"]["qty"] == 6
     assert by_code["489790"]["buy_date"] == "2026-04-24 13:14:18"
-    assert by_code["100840"]["buy_price"] == 57700
-    assert by_code["100840"]["qty"] == 1
-    assert by_code["100840"]["buy_date"] == "2026-04-24 00:00:00"
 
     inserted_again = virutal_trade_repository.sync_live_strategy_positions()
     assert inserted_again == []
+
+
+def test_sync_live_strategy_positions_skips_state_only_holds(virutal_trade_repository, tmp_path):
+    """scheduler상 열린 BUY 근거가 없으면 state 파일만으로 HOLD를 만들지 않는다."""
+    data_root = tmp_path / "data"
+    scheduler_dir = data_root / "StrategyScheduler"
+    scheduler_dir.mkdir(parents=True, exist_ok=True)
+
+    (data_root / "fp_position_state.json").write_text(
+        json.dumps({
+            "positions": {
+                "819550": {"entry_price": 96000, "entry_date": "20260308"},
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    with sqlite3.connect(scheduler_dir / "scheduler.db") as conn:
+        conn.execute(
+            """
+            CREATE TABLE signal_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                strategy_name TEXT NOT NULL,
+                code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                action TEXT NOT NULL,
+                price INTEGER NOT NULL,
+                qty INTEGER NOT NULL DEFAULT 1,
+                return_rate REAL,
+                reason TEXT,
+                timestamp TEXT NOT NULL,
+                api_success INTEGER NOT NULL DEFAULT 1
+            )
+            """
+        )
+
+    with patch("repositories.virtual_trade_repository.logger") as mock_logger:
+        inserted = virutal_trade_repository.sync_live_strategy_positions()
+
+    assert inserted == []
+    assert virutal_trade_repository.get_holds_by_strategy("첫눌림목") == []
+    mock_logger.warning.assert_called()
 
 
 def test_trading_dates_and_strategy_history_empty_edges():

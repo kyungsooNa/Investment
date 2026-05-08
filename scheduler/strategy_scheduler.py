@@ -1032,6 +1032,44 @@ class StrategyScheduler:
         )
         return True
 
+    def _prune_stale_position_state(
+        self,
+        cfg: StrategySchedulerConfig,
+        *,
+        repo_holdings: Optional[List[dict]] = None,
+    ) -> bool:
+        """주문/DB 근거 없는 전략 내부 보유 state를 정리한다."""
+        position_state = self._get_strategy_position_state(cfg.strategy)
+        if not position_state:
+            return False
+
+        stale_codes: List[str] = []
+        for raw_code in list(position_state.keys()):
+            norm_code = str(raw_code).strip()
+            if not norm_code or not self._is_valid_strategy_code(norm_code):
+                stale_codes.append(raw_code)
+                continue
+            if self._has_open_position_evidence(
+                cfg.strategy.name,
+                norm_code,
+                repo_holdings=repo_holdings,
+                allow_signal_history=True,
+            ):
+                continue
+            stale_codes.append(raw_code)
+
+        if not stale_codes:
+            return False
+
+        for raw_code in stale_codes:
+            position_state.pop(raw_code, None)
+
+        self._persist_strategy_position_state(cfg.strategy)
+        self._logger.warning(
+            f"[Scheduler] stale position_state cleared: strategy={cfg.strategy.name}, codes={stale_codes}"
+        )
+        return True
+
     def _clear_force_exit_position_state(self, cfg: StrategySchedulerConfig) -> bool:
         """당일청산 전략이 수동 정지되면 전략 내부 보유 state를 정리한다."""
         if not cfg.force_exit_on_close:
@@ -1110,6 +1148,7 @@ class StrategyScheduler:
                 merged[code] = dict(hold)
 
         self._prune_disabled_force_exit_state(cfg, repo_holdings=repo_holdings)
+        self._prune_stale_position_state(cfg, repo_holdings=repo_holdings)
 
         for code, state in list(self._get_strategy_position_state(cfg.strategy).items()):
             norm_code = str(code).strip()
