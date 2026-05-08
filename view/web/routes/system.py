@@ -181,6 +181,9 @@ def get_operations_status():
         except Exception:
             reconcile = None
 
+    sqs = getattr(ctx, "stock_query_service", None)
+    price_lookup = dict(getattr(sqs, "_price_lookup_stats", {})) if sqs else None
+
     return {
         "success": True,
         "data": {
@@ -193,6 +196,7 @@ def get_operations_status():
             "notification_queue_depth": queue_depth,
             "kill_switch": kill_switch,
             "after_market_reconcile": reconcile,
+            "price_lookup": price_lookup,
         },
     }
 
