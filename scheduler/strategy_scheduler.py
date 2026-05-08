@@ -389,6 +389,12 @@ class StrategyScheduler:
 
         if rejected_signals:
             self._log_position_limit_rejections(cfg, rejected_signals, current_holds_count)
+            self._rollback_rejected_buy_states(
+                cfg,
+                rejected_signals,
+                pre_existing_codes={str(h.get('code')).strip() for h in current_holdings if h.get('code')},
+                accepted_codes={str(s.code).strip() for s in target_signals if s.action == "BUY"},
+            )
 
         if target_signals:
             # target_signals는 remaining 기준으로 이미 슬라이싱됨 → 병렬 실행 안전
@@ -423,6 +429,40 @@ class StrategyScheduler:
                 "max_positions": cfg.max_positions,
                 "message": "전략 최대 보유 포지션 수 도달로 매수 신호 거절",
             })
+
+    def _rollback_rejected_buy_states(
+        self,
+        cfg: StrategySchedulerConfig,
+        signals: List[TradeSignal],
+        *,
+        pre_existing_codes: set[str],
+        accepted_codes: set[str],
+    ) -> None:
+        """scan 중 선반영된 stateful 전략의 rejected BUY state를 되돌린다."""
+        position_state = self._get_strategy_position_state(cfg.strategy)
+        if not position_state:
+            return
+
+        removed_codes: List[str] = []
+        for sig in signals:
+            if sig.action != "BUY":
+                continue
+            code = str(sig.code).strip()
+            if not code or code in pre_existing_codes or code in accepted_codes:
+                continue
+            if code in position_state:
+                position_state.pop(code, None)
+                removed_codes.append(code)
+
+        if not removed_codes:
+            return
+
+        self._persist_strategy_position_state(cfg.strategy)
+        self._logger.warning(
+            f"[Scheduler] rejected BUY position_state rollback: "
+            f"strategy={cfg.strategy.name}, codes={removed_codes}, "
+            f"max_positions={cfg.max_positions}"
+        )
 
     # ── 시그널 실행 ──
 
