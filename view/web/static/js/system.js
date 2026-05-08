@@ -643,6 +643,14 @@ async function updateOperationsStatus() {
         const day = pnl.day || {};
         const fmtWon = (value) => value == null ? '-' : `${Number(value).toLocaleString()}원`;
         const fmtPct = (value) => value == null ? '-' : `${Number(value).toFixed(2)}%`;
+        const pl = data.price_lookup || {};
+        const plHit  = pl.snapshot_hit    ?? 0;
+        const plRest = pl.rest_fallback   ?? 0;
+        const plNoTick = pl.no_tick_fallback ?? 0;
+        const plStale  = pl.stale_fallback   ?? 0;
+        const plTotal = plHit + plRest;
+        const plRate  = plTotal > 0 ? ((plHit / plTotal) * 100).toFixed(1) : null;
+        const plRateTone = plRate === null ? 'normal' : (parseFloat(plRate) >= 70 ? 'normal' : parseFloat(plRate) >= 30 ? 'warn' : 'bad');
         el.innerHTML = [
             renderOpsMetric('활성 전략', data.active_strategy_count ?? 0),
             renderOpsMetric('현재 포지션', data.position_count ?? 0),
@@ -654,7 +662,10 @@ async function updateOperationsStatus() {
             renderOpsMetric('Data Quality', dq.enabled ? (dqResult.reason || 'ok') : 'disabled', dqResult.ok === false ? 'bad' : 'normal'),
             renderOpsMetric('WebSocket', ws.receive_alive ? 'alive' : 'down', ws.receive_alive ? 'normal' : 'warn'),
             renderOpsMetric('알림 큐', data.notification_queue_depth ?? 0),
-            renderOpsMetric('Kill Switch', ks && ks.is_tripped ? 'TRIPPED' : 'normal', ks && ks.is_tripped ? 'bad' : 'normal')
+            renderOpsMetric('Kill Switch', ks && ks.is_tripped ? 'TRIPPED' : 'normal', ks && ks.is_tripped ? 'bad' : 'normal'),
+            plTotal > 0 ? renderOpsMetric('현가 Snap율', `${plRate}%`, plRateTone) : '',
+            plTotal > 0 ? renderOpsMetric('Snap Hit', plHit.toLocaleString()) : '',
+            plTotal > 0 ? renderOpsMetric('REST호출', `${plRest.toLocaleString()} (NoTick ${plNoTick} / Stale ${plStale})`, plRest > plHit && plTotal > 20 ? 'warn' : 'normal') : '',
         ].join('');
     } catch (e) {
         console.error('운영 요약 조회 오류:', e);

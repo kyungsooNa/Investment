@@ -160,6 +160,131 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, expected_response)
 
+    # --- get_current_price snapshot-first 테스트 ---
+
+    def _make_fresh_snap(self, price="75000", acml_vol=1000000, acml_tr_pbmn=5000000000, age_sec=0.0):
+        import time
+        return {
+            "price": price,
+            "change": "500",
+            "rate": "0.67",
+            "sign": "2",
+            "acml_vol": acml_vol,
+            "acml_tr_pbmn": acml_tr_pbmn,
+            "received_at": time.time() - age_sec,
+            "latency_sec": 0.01,
+            "quality_status": "ok",
+            "quality_reason": "ok",
+        }
+
+    def _setup_sqs_with_pss(self, snap=None, snapshot_max_age_sec=5.0):
+        from unittest.mock import MagicMock
+        mock_pss = MagicMock()
+        mock_pss.get_cached_price.return_value = snap
+        mock_pss.cache_price_snapshot = MagicMock()
+        self.stockQueryService.price_stream_service = mock_pss
+        self.stockQueryService._snapshot_max_age_sec = snapshot_max_age_sec
+        return mock_pss
+
+    async def test_get_current_price_snapshot_hit_skips_rest(self):
+        """신선한 snapshot → REST 호출 0회, snapshot 값 반환."""
+        from common.types import Exchange
+        snap = self._make_fresh_snap(price="75000", acml_vol=500000, acml_tr_pbmn=3000000000)
+        mock_pss = self._setup_sqs_with_pss(snap=snap)
+
+        result = await self.stockQueryService.get_current_price("005930")
+
+        self.mock_market_data_service.get_current_price.assert_not_awaited()
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        output = result.data["output"]
+        self.assertEqual(output.stck_prpr, "75000")
+        self.assertEqual(output.acml_vol, "500000")
+        self.assertEqual(output.acml_tr_pbmn, "3000000000")
+
+    async def test_get_current_price_snapshot_hit_increments_counter(self):
+        """snapshot hit 시 _price_lookup_stats['snapshot_hit'] 증가."""
+        snap = self._make_fresh_snap()
+        self._setup_sqs_with_pss(snap=snap)
+        before = self.stockQueryService._price_lookup_stats["snapshot_hit"]
+
+        await self.stockQueryService.get_current_price("005930")
+
+        self.assertEqual(self.stockQueryService._price_lookup_stats["snapshot_hit"], before + 1)
+
+    async def test_get_current_price_stale_snapshot_falls_back_to_rest(self):
+        """stale snapshot (age > threshold) → REST fallback."""
+        from common.types import Exchange
+        snap = self._make_fresh_snap(age_sec=10.0)  # 10초 경과 → stale
+        mock_pss = self._setup_sqs_with_pss(snap=snap, snapshot_max_age_sec=5.0)
+        expected = ResCommonResponse(rt_cd="0", msg1="정상", data={"output": self._create_dummy_stock_info()})
+        self.mock_market_data_service.get_current_price.return_value = expected
+
+        result = await self.stockQueryService.get_current_price("005930")
+
+        self.mock_market_data_service.get_current_price.assert_awaited_once()
+        self.assertEqual(self.stockQueryService._price_lookup_stats["stale_fallback"], 1)
+
+    async def test_get_current_price_no_tick_falls_back_to_rest(self):
+        """snapshot None (구독 중이나 tick 미수신) → REST fallback."""
+        mock_pss = self._setup_sqs_with_pss(snap=None)
+        expected = ResCommonResponse(rt_cd="0", msg1="정상", data={"output": self._create_dummy_stock_info()})
+        self.mock_market_data_service.get_current_price.return_value = expected
+
+        await self.stockQueryService.get_current_price("005930")
+
+        self.mock_market_data_service.get_current_price.assert_awaited_once()
+        self.assertEqual(self.stockQueryService._price_lookup_stats["no_tick_fallback"], 1)
+
+    async def test_get_current_price_force_fresh_bypasses_snapshot(self):
+        """force_fresh=True → 신선한 snapshot 있어도 REST 직접 호출."""
+        from common.types import Exchange
+        snap = self._make_fresh_snap()
+        mock_pss = self._setup_sqs_with_pss(snap=snap)
+        expected = ResCommonResponse(rt_cd="0", msg1="정상", data={"output": self._create_dummy_stock_info()})
+        self.mock_market_data_service.get_current_price.return_value = expected
+
+        await self.stockQueryService.get_current_price("005930", force_fresh=True)
+
+        self.mock_market_data_service.get_current_price.assert_awaited_once()
+        mock_pss.get_cached_price.assert_not_called()
+
+    async def test_get_current_price_no_pss_uses_rest(self):
+        """price_stream_service=None → 기존 REST 경로 그대로 (backward compat)."""
+        from common.types import Exchange
+        self.stockQueryService.price_stream_service = None
+        expected = ResCommonResponse(rt_cd="0", msg1="정상", data={"output": self._create_dummy_stock_info()})
+        self.mock_market_data_service.get_current_price.return_value = expected
+
+        result = await self.stockQueryService.get_current_price("005930")
+
+        self.mock_market_data_service.get_current_price.assert_awaited_once_with(
+            "005930", exchange=Exchange.KRX, count_stats=True, caller="unknown", force_fresh=False
+        )
+
+    async def test_get_current_price_rest_backfills_snapshot(self):
+        """REST fallback 성공 시 cache_price_snapshot() 호출로 캐시 backfill."""
+        snap = self._make_fresh_snap(age_sec=10.0)  # stale → REST fallback
+        mock_pss = self._setup_sqs_with_pss(snap=snap)
+        output = self._create_dummy_stock_info({
+            "stck_prpr": "80000", "prdy_vrss": "1000", "prdy_ctrt": "1.27",
+            "prdy_vrss_sign": "2", "acml_vol": "300000", "acml_tr_pbmn": "24000000000",
+        })
+        self.mock_market_data_service.get_current_price.return_value = ResCommonResponse(
+            rt_cd="0", msg1="정상", data={"output": output}
+        )
+
+        await self.stockQueryService.get_current_price("005930")
+
+        mock_pss.cache_price_snapshot.assert_called_once_with(
+            "005930",
+            price="80000",
+            change="1000",
+            rate="1.27",
+            sign="2",
+            volume="300000",
+            acml_tr_pbmn="24000000000",
+        )
+
     async def test_get_current_price_force_fresh_passed_through(self):
         """force_fresh=True가 market_data_service.get_current_price에 그대로 전달되는지 검증"""
         from common.types import Exchange
