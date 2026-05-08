@@ -145,6 +145,22 @@ async def test_remove_category_removes_all_in_category(svc, mock_streaming):
     assert svc.is_streaming("000660")  # portfolio 카테고리는 유지
 
 
+async def test_drop_unhealthy_price_subscription_removes_all_price_refs(svc, mock_streaming, mock_stock_repo):
+    """비정상 체결가 스트리밍은 모든 가격 참조와 활성 구독을 제거한다."""
+    await svc.add_subscription("005930", SubscriptionPriority.HIGH, "portfolio", StreamingType.UNIFIED_PRICE)
+    await svc.add_subscription("005930", SubscriptionPriority.MEDIUM, "strategy_oneil", StreamingType.UNIFIED_PRICE)
+    mock_streaming.reset_mock()
+    mock_stock_repo.reset_mock()
+
+    removed = await svc.drop_unhealthy_price_subscription("005930", reason="stale_snapshot")
+
+    assert removed is True
+    assert "005930" not in svc._refs
+    assert not svc.is_streaming("005930")
+    mock_streaming.unsubscribe_unified_price.assert_called_once_with("005930")
+    mock_stock_repo.unmark_streaming.assert_called_once_with("005930")
+
+
 # ── sync_subscriptions ────────────────────────────────────────────────────
 
 async def test_sync_subscriptions_atomic_replace(svc, mock_streaming):

@@ -453,6 +453,8 @@ class WebAppContext:
                 streaming_stock_repo=self.streaming_stock_repo,
                 market_calendar=self._mcs,
             )
+            if self.stock_query_service:
+                self.stock_query_service.price_subscription_service = self.price_subscription_service
             self.websocket_watchdog_task = WebSocketWatchdogTask(
                 streaming_service=self.streaming_service,
                 program_trading_stream_service=self.program_trading_stream_service,

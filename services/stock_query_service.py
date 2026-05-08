@@ -22,6 +22,7 @@ class StockQueryService:
                  broker_api_wrapper=None,
                  streaming_logger=None,
                  price_stream_service=None,
+                 price_subscription_service=None,
                  snapshot_max_age_sec: float = 5.0):
         self.broker = broker_api_wrapper
         self.market_data_service = market_data_service
@@ -33,6 +34,7 @@ class StockQueryService:
         self._notification_service = notification_service
         self._streaming_logger = streaming_logger
         self.price_stream_service = price_stream_service
+        self.price_subscription_service = price_subscription_service
         self._snapshot_max_age_sec = snapshot_max_age_sec
         self._price_lookup_stats: Dict[str, int] = {
             "snapshot_hit": 0,
@@ -84,12 +86,25 @@ class StockQueryService:
 
         per/pbr/eps 같이 snapshot에 없는 REST 전용 필드가 필요하면 force_fresh=True를 지정한다.
         """
+        fallback_force_fresh = force_fresh
+        unhealthy_stream_reason: Optional[str] = None
+
         if not force_fresh and self.price_stream_service is not None:
             snap = self.price_stream_service.get_cached_price(stock_code)
             if snap is None:
                 # 구독 중이나 tick 미수신 → REST fallback
                 self._price_lookup_stats["no_tick_fallback"] += 1
                 self.logger.debug({"event": "price_lookup_no_tick", "code": stock_code, "caller": caller})
+                fallback_force_fresh = True
+                subscription_age = 0.0
+                get_subscription_age = getattr(self.price_stream_service, "get_subscription_age", None)
+                if callable(get_subscription_age):
+                    try:
+                        subscription_age = float(get_subscription_age(stock_code) or 0.0)
+                    except (TypeError, ValueError):
+                        subscription_age = 0.0
+                if subscription_age >= self._snapshot_max_age_sec:
+                    unhealthy_stream_reason = "no_tick"
             else:
                 received_at = snap.get("received_at", 0.0) or 0.0
                 age = time.time() - received_at
@@ -100,11 +115,32 @@ class StockQueryService:
                     self._price_lookup_stats["stale_fallback"] += 1
                     self.logger.debug({"event": "price_lookup_stale", "code": stock_code,
                                        "age_sec": round(age, 2), "caller": caller})
+                    fallback_force_fresh = True
+                    unhealthy_stream_reason = "stale_snapshot"
 
         self._price_lookup_stats["rest_fallback"] += 1
         resp = await self.market_data_service.get_current_price(
-            stock_code, exchange=exchange, count_stats=count_stats, caller=caller, force_fresh=force_fresh
+            stock_code, exchange=exchange, count_stats=count_stats, caller=caller, force_fresh=fallback_force_fresh
         )
+
+        if unhealthy_stream_reason and self.price_subscription_service is not None:
+            drop_subscription = getattr(
+                self.price_subscription_service,
+                "drop_unhealthy_price_subscription",
+                None,
+            )
+            if callable(drop_subscription):
+                try:
+                    await drop_subscription(stock_code, reason=unhealthy_stream_reason)
+                except Exception as e:
+                    self.logger.warning(
+                        {
+                            "event": "price_subscription_drop_failed",
+                            "code": stock_code,
+                            "reason": unhealthy_stream_reason,
+                            "error": str(e),
+                        }
+                    )
 
         # REST 성공 응답을 snapshot 캐시에 backfill (다음 동일 종목 조회 hit 유도)
         if (self.price_stream_service is not None
