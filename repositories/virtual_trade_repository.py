@@ -9,11 +9,21 @@ import os
 import json
 import math
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import lru_cache
+from typing import Optional
 from core.market_clock import MarketClock
 from common.trade_journal_schema import normalize_virtual_trade
 from utils.transaction_cost_utils import TransactionCostUtils
+
+
+@dataclass(frozen=True)
+class SellResult:
+    """매도 기록 결과. KS hook 연결 및 PnL 노출용."""
+    return_rate: Optional[float]   # 기존 log_sell_by_strategy 반환값과 동일 의미 (%)
+    net_pnl_won: Optional[int]     # 수수료/세금 반영 순수익 KRW. 계산 불가 시 None
+    pnl_filled_qty: int            # PnL 계산에 사용한 체결 수량
 
 logger = logging.getLogger(__name__)
 
@@ -428,8 +438,36 @@ class VirtualTradeRepository:
             logger.info(f"[가상매매] {code} 매도 기록 (수익률: {return_rate:.2f}%{', 사유: '+reason if reason else ''})")
 
     async def log_sell_async(self, code: str, current_price, qty: int = 1, reason: str = ""):
-        """log_sell의 비동기 래퍼 (스레드 실행)."""
+        """log_sell의 비동기 래퍼 (스레드 실행). 반환값 없음 (None)."""
         await asyncio.to_thread(self.log_sell, code, current_price, qty, reason)
+
+    def log_sell_with_result(self, code: str, current_price, qty: int = 1, reason: str = "") -> SellResult:
+        """매도 기록 후 SellResult 반환. KS hook 연결용."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT id, buy_price FROM trades WHERE code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
+                (code,)
+            ).fetchone()
+            if row is None:
+                logger.warning(f"[가상매매] {code} 매도 실패: 보유 내역 없음")
+                return SellResult(return_rate=None, net_pnl_won=None, pnl_filled_qty=0)
+            trade_id, buy_price = row
+            return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
+            sell_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
+            with self._db:
+                self._db.execute(
+                    "UPDATE trades SET sell_date=?, sell_price=?, return_rate=?, status='SOLD', reason=? WHERE id=?",
+                    (sell_date, current_price, round(return_rate, 2), reason, trade_id)
+                )
+            logger.info(f"[가상매매] {code} 매도 기록 (수익률: {return_rate:.2f}%{', 사유: '+reason if reason else ''})")
+            net_pnl_won: Optional[int] = None
+            if buy_price and current_price and reason != _FORCE_CLOSE_REASON:
+                net_pnl_won = TransactionCostUtils.calculate_net_pnl_won(buy_price, current_price, qty)
+            return SellResult(return_rate=round(return_rate, 2), net_pnl_won=net_pnl_won, pnl_filled_qty=qty)
+
+    async def log_sell_async_with_result(self, code: str, current_price, qty: int = 1, reason: str = "") -> SellResult:
+        """log_sell_with_result의 비동기 래퍼."""
+        return await asyncio.to_thread(self.log_sell_with_result, code, current_price, qty, reason)
 
     def log_sell_by_strategy(self, strategy_name: str, code: str, current_price, qty: int = 1, reason: str = "") -> float | None:
         """전략+종목 매칭 매도. 성공 시 수익률 반환, 실패 시 None 반환."""
@@ -453,8 +491,36 @@ class VirtualTradeRepository:
             return round(return_rate, 2)
 
     async def log_sell_by_strategy_async(self, strategy_name: str, code: str, current_price, qty: int = 1, reason: str = "") -> float | None:
-        """log_sell_by_strategy의 비동기 래퍼 (스레드 실행). 성공 시 수익률 반환."""
+        """log_sell_by_strategy의 비동기 래퍼. 성공 시 수익률(%) 반환. contract 유지."""
         return await asyncio.to_thread(self.log_sell_by_strategy, strategy_name, code, current_price, qty, reason)
+
+    def log_sell_by_strategy_with_result(self, strategy_name: str, code: str, current_price, qty: int = 1, reason: str = "") -> SellResult:
+        """전략+종목 매칭 매도 후 SellResult 반환. KS hook 연결용."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT id, buy_price FROM trades WHERE strategy=? AND code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
+                (strategy_name, code)
+            ).fetchone()
+            if row is None:
+                logger.warning(f"[가상매매] {strategy_name}/{code} 매도 실패: 보유 내역 없음")
+                return SellResult(return_rate=None, net_pnl_won=None, pnl_filled_qty=0)
+            trade_id, buy_price = row
+            return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
+            sell_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
+            with self._db:
+                self._db.execute(
+                    "UPDATE trades SET sell_date=?, sell_price=?, return_rate=?, status='SOLD', reason=? WHERE id=?",
+                    (sell_date, current_price, round(return_rate, 2), reason, trade_id)
+                )
+            logger.info(f"[가상매매] {strategy_name}/{code} 매도 기록 (수익률: {round(return_rate, 2):.2f}%{', 사유: '+reason if reason else ''})")
+            net_pnl_won: Optional[int] = None
+            if buy_price and current_price and reason != _FORCE_CLOSE_REASON:
+                net_pnl_won = TransactionCostUtils.calculate_net_pnl_won(buy_price, current_price, qty)
+            return SellResult(return_rate=round(return_rate, 2), net_pnl_won=net_pnl_won, pnl_filled_qty=qty)
+
+    async def log_sell_by_strategy_async_with_result(self, strategy_name: str, code: str, current_price, qty: int = 1, reason: str = "") -> SellResult:
+        """log_sell_by_strategy_with_result의 비동기 래퍼."""
+        return await asyncio.to_thread(self.log_sell_by_strategy_with_result, strategy_name, code, current_price, qty, reason)
 
     def log_order_failure(self, action: str, code: str, price, qty: int, reason: str, strategy_name: str = ""):
         """주문 최종 실패 시 FAILED 상태로 기록."""

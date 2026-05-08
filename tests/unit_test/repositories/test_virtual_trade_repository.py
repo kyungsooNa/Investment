@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock, AsyncMock
 from repositories.virtual_trade_repository import (
     VirtualTradeRepository,
+    SellResult,
     _build_strategy_return_history,
     _get_trading_dates,
 )
@@ -1126,3 +1127,59 @@ def test_fetch_close_prices_uses_cache_and_handles_pykrx_error(virutal_trade_rep
          patch("repositories.virtual_trade_repository.logger") as mock_logger:
         assert virutal_trade_repository._fetch_close_prices(["000660"], "2025-01-01", "2025-01-03") == {}
     mock_logger.warning.assert_called_once()
+
+
+# ── SellResult / log_sell_with_result 테스트 ─────────────────────────────────
+
+def test_log_sell_with_result_returns_sell_result(virutal_trade_repository):
+    """log_sell_with_result는 SellResult(return_rate, net_pnl_won, pnl_filled_qty)를 반환한다."""
+    virutal_trade_repository.log_buy("TestStrategy", "005930", 70000, 1)
+    result = virutal_trade_repository.log_sell_with_result("005930", 77000)
+
+    assert isinstance(result, SellResult)
+    assert result.return_rate == pytest.approx(10.0, abs=0.1)
+    assert result.net_pnl_won is not None
+    assert 0 < result.net_pnl_won < 7000  # 수수료/세금 차감 후 < gross 7000
+    assert result.pnl_filled_qty == 1
+
+
+def test_log_sell_with_result_reconciled_force_close_returns_none_pnl(virutal_trade_repository):
+    """reconciled_force_close reason → net_pnl_won=None (통계 왜곡 방지)."""
+    virutal_trade_repository.log_buy("TestStrategy", "005930", 70000)
+    result = virutal_trade_repository.log_sell_with_result("005930", 0, reason="reconciled_force_close")
+
+    assert result.net_pnl_won is None
+
+
+def test_log_sell_async_returns_none_contract(virutal_trade_repository):
+    """기존 log_sell_async 반환값 contract 유지: None 반환."""
+    import asyncio
+    virutal_trade_repository.log_buy("TestStrategy", "005930", 70000)
+    ret = asyncio.get_event_loop().run_until_complete(
+        virutal_trade_repository.log_sell_async("005930", 77000)
+    )
+    assert ret is None
+
+
+def test_log_sell_by_strategy_with_result_returns_sell_result(virutal_trade_repository):
+    """log_sell_by_strategy_with_result는 SellResult를 반환한다."""
+    virutal_trade_repository.log_buy("MomentumStrategy", "005930", 70000)
+    result = virutal_trade_repository.log_sell_by_strategy_with_result(
+        "MomentumStrategy", "005930", 77000
+    )
+
+    assert isinstance(result, SellResult)
+    assert result.return_rate == pytest.approx(10.0, abs=0.1)
+    assert result.net_pnl_won is not None
+    assert result.pnl_filled_qty == 1
+
+
+def test_log_sell_by_strategy_async_contract_unchanged(virutal_trade_repository):
+    """기존 log_sell_by_strategy_async 반환값 contract 유지: float|None (return_rate %)."""
+    import asyncio
+    virutal_trade_repository.log_buy("MomentumStrategy", "005930", 70000)
+    ret = asyncio.get_event_loop().run_until_complete(
+        virutal_trade_repository.log_sell_by_strategy_async("MomentumStrategy", "005930", 77000)
+    )
+    assert isinstance(ret, float)
+    assert ret == pytest.approx(10.0, abs=0.1)

@@ -54,6 +54,10 @@ class AccountSnapshotCache:
                 return self._snapshot  # type: ignore[return-value]
             return await self._fetch(exchange)
 
+    def peek(self) -> Optional["AccountSnapshot"]:
+        """캐시가 유효하면 현재 스냅샷을 반환, 미존재/만료 시 None. broker fetch 없음."""
+        return self._snapshot if self._is_fresh() else None
+
     def invalidate(self) -> None:
         """체결 이벤트 등 잔고 변동 시 캐시 무효화."""
         self._snapshot = None

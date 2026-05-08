@@ -3074,3 +3074,226 @@ async def test_transient_api_retried_max_3(
     ctx = handler._order_states.get(order_key)
     assert ctx is not None
     assert ctx.state == OrderState.REJECTED
+
+
+# ── KillSwitch 손익 hook 연결 테스트 ─────────────────────────────────────────
+
+def _make_sell_context(
+    source="strategy:MomentumStrategy",
+    state=OrderState.FILLED,
+    filled_qty=1,
+    virtual_recorded_qty=0,
+    price=70000,
+):
+    return OrderContext(
+        order_key="sell_005930",
+        stock_code="005930",
+        side=OrderSide.SELL,
+        state=state,
+        price=price,
+        qty=filled_qty,
+        filled_qty=filled_qty,
+        virtual_recorded_qty=virtual_recorded_qty,
+        source=source,
+    )
+
+
+def _make_sell_report(fill_price=77000, state=OrderState.FILLED, fill_qty=1):
+    return OrderExecutionReport(
+        broker_order_no="ORD_KS_TEST",
+        stock_code="005930",
+        side=OrderSide.SELL,
+        event_state=state,
+        fill_qty=fill_qty,
+        fill_price=fill_price,
+        cumulative_filled_qty=fill_qty,
+        remaining_qty=0,
+        event_time="20260508120000",
+    )
+
+
+@pytest.fixture
+def mock_kill_switch():
+    ks = AsyncMock()
+    ks.record_trade_result = AsyncMock()
+    ks.record_strategy_trade_result = AsyncMock()
+    ks.record_fill_event = AsyncMock()
+    return ks
+
+
+@pytest.fixture
+def mock_virtual_trade_svc():
+    from repositories.virtual_trade_repository import SellResult
+    svc = AsyncMock()
+    default_result = SellResult(return_rate=10.0, net_pnl_won=6500, pnl_filled_qty=1)
+    svc.log_sell_by_strategy_async_with_result = AsyncMock(return_value=default_result)
+    svc.log_sell_async_with_result = AsyncMock(return_value=default_result)
+    svc.log_buy_async = AsyncMock()
+    return svc
+
+
+@pytest.fixture
+def handler_with_ks(
+    mock_broker_api_wrapper, mock_logger, mock_market_clock,
+    mock_market_calendar_service, mock_notification_service,
+    mock_kill_switch, mock_virtual_trade_svc,
+):
+    return OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        notification_service=mock_notification_service,
+        kill_switch_service=mock_kill_switch,
+        virtual_trade_service=mock_virtual_trade_svc,
+    )
+
+
+@pytest.mark.asyncio
+async def test_sell_filled_with_strategy_source_records_account_and_strategy_kill_switch(
+    handler_with_ks, mock_kill_switch,
+):
+    """SELL FILLED + strategy source → record_trade_result + record_strategy_trade_result 둘 다 호출."""
+    ctx = _make_sell_context(source="strategy:MomentumStrategy", state=OrderState.FILLED)
+    report = _make_sell_report(fill_price=77000)
+
+    await handler_with_ks._persist_virtual_trade_for_terminal_report(ctx, report)
+
+    mock_kill_switch.record_trade_result.assert_awaited_once()
+    call_kw = mock_kill_switch.record_trade_result.call_args.kwargs
+    assert call_kw["profit_won"] == 6500
+
+    mock_kill_switch.record_strategy_trade_result.assert_awaited_once()
+    strat_kw = mock_kill_switch.record_strategy_trade_result.call_args.kwargs
+    assert strat_kw["strategy_name"] == "MomentumStrategy"
+    assert strat_kw["pnl_won"] == 6500
+
+
+@pytest.mark.asyncio
+async def test_manual_sell_does_not_record_strategy_kill_switch(
+    handler_with_ks, mock_kill_switch,
+):
+    """manual source 매도 → record_trade_result 는 호출, record_strategy_trade_result 는 미호출."""
+    ctx = _make_sell_context(source="manual", state=OrderState.FILLED)
+    report = _make_sell_report(fill_price=77000)
+
+    await handler_with_ks._persist_virtual_trade_for_terminal_report(ctx, report)
+
+    mock_kill_switch.record_trade_result.assert_awaited_once()
+    mock_kill_switch.record_strategy_trade_result.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sell_partial_then_canceled_still_records_pnl_hook(
+    handler_with_ks, mock_kill_switch,
+):
+    """SELL CANCELED + pnl_filled_qty > 0 → hook 호출 (부분체결 후 취소)."""
+    ctx = _make_sell_context(source="strategy:MomentumStrategy", state=OrderState.CANCELED, filled_qty=1)
+    report = _make_sell_report(fill_price=77000, state=OrderState.CANCELED, fill_qty=1)
+
+    await handler_with_ks._persist_virtual_trade_for_terminal_report(ctx, report)
+
+    mock_kill_switch.record_trade_result.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_buy_filled_does_not_call_pnl_hooks(handler_with_ks, mock_kill_switch):
+    """BUY FILLED → KS 손익 hook 미호출."""
+    ctx = OrderContext(
+        order_key="buy_005930",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=OrderState.FILLED,
+        price=70000,
+        qty=1,
+        filled_qty=1,
+        virtual_recorded_qty=0,
+        source="strategy:MomentumStrategy",
+    )
+    report = _make_sell_report(fill_price=70000)
+
+    await handler_with_ks._persist_virtual_trade_for_terminal_report(ctx, report)
+
+    mock_kill_switch.record_trade_result.assert_not_awaited()
+    mock_kill_switch.record_strategy_trade_result.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sell_canceled_zero_fill_skips_pnl_hook(handler_with_ks, mock_kill_switch):
+    """SELL CANCELED + filled_qty == 0 → early return, hook 미호출."""
+    ctx = OrderContext(
+        order_key="sell_005930",
+        stock_code="005930",
+        side=OrderSide.SELL,
+        state=OrderState.CANCELED,
+        price=70000,
+        qty=1,
+        filled_qty=0,
+        virtual_recorded_qty=0,
+        source="strategy:MomentumStrategy",
+    )
+    report = _make_sell_report(fill_price=0, state=OrderState.CANCELED, fill_qty=0)
+
+    await handler_with_ks._persist_virtual_trade_for_terminal_report(ctx, report)
+
+    mock_kill_switch.record_trade_result.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconciled_force_close_skips_pnl_hook(
+    handler_with_ks, mock_kill_switch, mock_virtual_trade_svc,
+):
+    """reconciled_force_close → SellResult.net_pnl_won=None → hook 미호출."""
+    from repositories.virtual_trade_repository import SellResult
+    mock_virtual_trade_svc.log_sell_async_with_result.return_value = SellResult(
+        return_rate=None, net_pnl_won=None, pnl_filled_qty=1
+    )
+
+    ctx = _make_sell_context(source="manual", state=OrderState.FILLED)
+    report = _make_sell_report(fill_price=0)
+
+    await handler_with_ks._persist_virtual_trade_for_terminal_report(ctx, report)
+
+    mock_kill_switch.record_trade_result.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_source_skips_pnl_hook(handler_with_ks, mock_kill_switch):
+    """reconcile: source → early-return → 계좌 KS / 전략 KS 모두 미호출."""
+    ctx = _make_sell_context(source="reconcile:sync", state=OrderState.FILLED, filled_qty=1)
+    report = _make_sell_report(fill_price=77000)
+
+    await handler_with_ks._persist_virtual_trade_for_terminal_report(ctx, report)
+
+    mock_kill_switch.record_trade_result.assert_not_awaited()
+    mock_kill_switch.record_strategy_trade_result.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_account_snapshot_peek_miss_passes_none_balance(
+    handler_with_ks, mock_kill_switch,
+):
+    """AccountSnapshot 캐시 미존재 시 account_balance_won=None 으로 record_trade_result 호출."""
+    handler_with_ks._account_snapshot_cache = None
+
+    ctx = _make_sell_context(source="strategy:MomentumStrategy", state=OrderState.FILLED)
+    report = _make_sell_report(fill_price=77000)
+
+    await handler_with_ks._persist_virtual_trade_for_terminal_report(ctx, report)
+
+    mock_kill_switch.record_trade_result.assert_awaited_once()
+    kw = mock_kill_switch.record_trade_result.call_args.kwargs
+    assert kw["account_balance_won"] is None
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_optional_dependency_safety(handler, mock_virtual_trade_svc):
+    """_kill_switch is None 일 때 정상 동작 (예외 없음)."""
+    handler._virtual_trade_service = mock_virtual_trade_svc
+    handler._kill_switch = None
+
+    ctx = _make_sell_context(source="strategy:MomentumStrategy", state=OrderState.FILLED)
+    report = _make_sell_report(fill_price=77000)
+
+    result = await handler._persist_virtual_trade_for_terminal_report(ctx, report)
+    assert result is not None
