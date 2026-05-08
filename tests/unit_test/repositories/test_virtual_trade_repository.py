@@ -103,7 +103,7 @@ def test_get_summary_calculation(virutal_trade_repository):
     virutal_trade_repository.log_sell("002", 900)  # -10%
     virutal_trade_repository.log_buy("S1", "003", 1000) # HOLD (수익률 계산 제외)
 
-    summary = virutal_trade_repository.get_summary()
+    summary = virutal_trade_repository.get_summary(apply_cost=False)
     assert summary['total_trades'] == 3
     assert summary['win_rate'] == 50.0
     assert summary['avg_return'] == 5.0 # (20 - 10) / 2
@@ -123,7 +123,7 @@ def test_get_summary_excludes_forced_close(virutal_trade_repository):
     virutal_trade_repository.log_buy("S1", "003", 1000)
     virutal_trade_repository.log_sell("003", 0, reason="reconciled_force_close")
 
-    summary = virutal_trade_repository.get_summary()
+    summary = virutal_trade_repository.get_summary(apply_cost=False)
 
     assert summary["total_trades"] == 3
     assert summary["win_rate"] == 50.0
@@ -738,16 +738,24 @@ def test_get_summary_with_cost(virutal_trade_repository):
     virutal_trade_repository.log_buy("StrategyA", "005930", 10000, qty=10)
     virutal_trade_repository.log_sell("005930", 11000, qty=10)
 
+    summary_default = virutal_trade_repository.get_summary()
+    assert summary_default['avg_return'] < 10.0
+
     summary_no_cost = virutal_trade_repository.get_summary(apply_cost=False)
     assert summary_no_cost['avg_return'] == 10.0
 
     summary_cost = virutal_trade_repository.get_summary(apply_cost=True)
     assert summary_cost['avg_return'] < 10.0
+    assert summary_default == summary_cost
 
 def test_get_all_trades_with_cost(virutal_trade_repository):
     """get_all_trades 메서드에서 apply_cost=True일 때 개별 거래 수익률이 재계산되는지 확인"""
     virutal_trade_repository.log_buy("StrategyA", "005930", 10000, qty=10)
     virutal_trade_repository.log_sell("005930", 11000, qty=10)
+
+    trades_default = virutal_trade_repository.get_all_trades()
+    assert len(trades_default) == 1
+    assert trades_default[0]['return_rate'] < 10.0
 
     trades_no_cost = virutal_trade_repository.get_all_trades(apply_cost=False)
     assert len(trades_no_cost) == 1
@@ -756,6 +764,7 @@ def test_get_all_trades_with_cost(virutal_trade_repository):
     trades_cost = virutal_trade_repository.get_all_trades(apply_cost=True)
     assert len(trades_cost) == 1
     assert trades_cost[0]['return_rate'] < 10.0
+    assert trades_default == trades_cost
 
 
 def test_get_standard_journal_records_returns_backtest_live_comparable_schema(virutal_trade_repository):
@@ -1137,7 +1146,7 @@ def test_get_summary_without_reason_column_and_fix_sell_price_no_rows(virutal_tr
         "status": "SOLD",
     }])
     with patch.object(virutal_trade_repository, "_read", return_value=legacy_df):
-        summary = virutal_trade_repository.get_summary()
+        summary = virutal_trade_repository.get_summary(apply_cost=False)
 
     assert summary["force_closed_count"] == 0
     assert summary["avg_return"] == 10.0

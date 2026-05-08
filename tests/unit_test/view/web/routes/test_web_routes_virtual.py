@@ -34,6 +34,7 @@ async def test_virtual_endpoints(web_client, mock_web_ctx):
     response = web_client.get("/api/virtual/summary")
     assert response.status_code == 200
     assert response.json()["total_trades"] == 10
+    mock_web_ctx.virtual_trade_service.get_summary.assert_called_with(apply_cost=True)
 
     # Strategies
     mock_web_ctx.virtual_trade_service.get_all_strategies.return_value = ["StrategyA"]
@@ -65,6 +66,7 @@ async def test_virtual_endpoints(web_client, mock_web_ctx):
     assert "trades" in response.json()
     assert len(response.json()["trades"]) == 1
     assert response.json()["trades"][0]["stock_name"] == "삼성전자"
+    mock_web_ctx.virtual_trade_service.get_all_trades.assert_called_with(apply_cost=True)
     assert mock_web_ctx.virtual_trade_service.sync_live_strategy_positions.call_count >= 3
 
 
@@ -549,7 +551,7 @@ async def test_get_virtual_history_asset_weighted_calculation(web_client, mock_w
     mock_web_ctx.virtual_trade_service.get_weekly_change.return_value = (None, None)
     
     # 4. API 호출
-    response = web_client.get("/api/virtual/history")
+    response = web_client.get("/api/virtual/history?apply_cost=false")
     assert response.status_code == 200
     data = response.json()
     
@@ -686,7 +688,7 @@ async def test_get_virtual_history_profit_factor_and_expectancy(web_client, mock
         return ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
 
-    response = web_client.get("/api/virtual/history")
+    response = web_client.get("/api/virtual/history?apply_cost=false")
     assert response.status_code == 200
     data = response.json()
 
@@ -734,7 +736,7 @@ async def test_get_virtual_history_profit_factor_no_loss(web_client, mock_web_ct
         return ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
 
-    response = web_client.get("/api/virtual/history")
+    response = web_client.get("/api/virtual/history?apply_cost=false")
     assert response.status_code == 200
     data = response.json()
 
@@ -771,7 +773,7 @@ async def test_get_virtual_history_profit_factor_multi_strategy(web_client, mock
         return ResCommonResponse(rt_cd="0", msg1="OK", data=[])
     mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
 
-    response = web_client.get("/api/virtual/history")
+    response = web_client.get("/api/virtual/history?apply_cost=false")
     assert response.status_code == 200
     data = response.json()
 
@@ -813,7 +815,7 @@ async def test_get_virtual_history_pf_with_hold_trades(web_client, mock_web_ctx)
     mock_web_ctx.virtual_trade_service.get_daily_change.return_value = (None, None)
     mock_web_ctx.virtual_trade_service.get_weekly_change.return_value = (None, None)
 
-    response = web_client.get("/api/virtual/history")
+    response = web_client.get("/api/virtual/history?apply_cost=false")
     assert response.status_code == 200
     data = response.json()
 

@@ -28,7 +28,7 @@ def _sync_virtual_trade_state(ctx):
 
 
 @router.get("/virtual/summary")
-async def get_virtual_summary(apply_cost: bool = False):
+async def get_virtual_summary(apply_cost: bool = True):
     """가상 매매 요약 정보 조회"""
     ctx = _get_ctx()
     t_start = ctx.pm.start_timer()
@@ -424,7 +424,7 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
 
 
 @router.get("/virtual/history")
-async def get_virtual_history(force_code: str = None, apply_cost: bool = False):
+async def get_virtual_history(force_code: str = None, apply_cost: bool = True):
     """가상 매매 전체 기록 조회 (force_code 지정 시 해당 종목은 캐시 무시)"""
     ctx = _get_ctx()
     async with ctx.pm.profile_async("get_virtual_history"):

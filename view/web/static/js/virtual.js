@@ -63,7 +63,7 @@ async function loadVirtualHistory(forceCode = null) {
         let url = '/api/virtual/history';
         const params = [];
         if (forceCode) params.push(`force_code=${forceCode}`);
-        if (applyCost) params.push(`apply_cost=true`);
+        params.push(`apply_cost=${applyCost ? 'true' : 'false'}`);
 
         if (params.length > 0) url += '?' + params.join('&');
 
