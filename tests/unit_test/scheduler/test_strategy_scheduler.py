@@ -720,6 +720,42 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(vm.log_buy_async.call_count, 1)
         vm.log_buy_async.assert_awaited_with("테스트전략", "000660", 120000, 1)
 
+    async def test_run_strategy_rolls_back_rejected_stateful_scan_signal(self):
+        """전략 scan이 position_state를 먼저 늘려도 rejected 신호는 즉시 롤백한다."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+
+        vm.get_holds_by_strategy.return_value = [
+            {"code": "005930", "buy_price": 70000},
+            {"code": "000660", "buy_price": 120000},
+            {"code": "035420", "buy_price": 300000},
+            {"code": "068270", "buy_price": 200000},
+        ]
+
+        buy_signals = [
+            TradeSignal(code="111111", name="첫번째", action="BUY",
+                        price=1000, qty=1, reason="t1", strategy_name="오닐PP/BGU"),
+            TradeSignal(code="222222", name="두번째", action="BUY",
+                        price=2000, qty=1, reason="t2", strategy_name="오닐PP/BGU"),
+        ]
+        strategy = MockStrategy(name="오닐PP/BGU")
+        strategy._position_state = {}
+        strategy._save_state = MagicMock()
+
+        async def scan_with_state_side_effect():
+            strategy._position_state["111111"] = SimpleNamespace(entry_price=1000)
+            strategy._position_state["222222"] = SimpleNamespace(entry_price=2000)
+            return buy_signals
+
+        strategy.scan = AsyncMock(side_effect=scan_with_state_side_effect)
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=5)
+
+        await scheduler._run_strategy(config)
+
+        vm.log_buy_async.assert_awaited_once_with("오닐PP/BGU", "111111", 1000, 1)
+        self.assertIn("111111", strategy._position_state)
+        self.assertNotIn("222222", strategy._position_state)
+        strategy._save_state.assert_called_once()
+
     async def test_run_strategy_limits_buys_with_realistic_growing_holdings(self):
         """초기 보유수 기반 remaining 슬라이싱으로 정확히 남은 슬롯만큼만 매수하는지 테스트.
 
@@ -2820,6 +2856,18 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             "": SimpleNamespace(entry_price=1000),
             "005930": SimpleNamespace(entry_price=70000),
         }
+        scheduler._signal_history = [
+            SignalRecord(
+                strategy_name="BlankState",
+                code="005930",
+                name="Samsung",
+                action="BUY",
+                price=70000,
+                qty=1,
+                timestamp="2026-04-24 09:00:00",
+                api_success=True,
+            )
+        ]
         scheduler.stock_code_repository.get_name_by_code.return_value = "Samsung"
         vm.get_holds_by_strategy.return_value = []
         config = StrategySchedulerConfig(strategy=strategy)
@@ -2827,6 +2875,23 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         holdings = scheduler._get_strategy_holdings(config)
 
         self.assertEqual([h["code"] for h in holdings], ["005930"])
+
+    def test_get_strategy_holdings_prunes_state_without_open_evidence(self):
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="첫눌림목")
+        strategy._position_state = {
+            "819550": SimpleNamespace(entry_price=96000, entry_date="20260308"),
+        }
+        strategy._save_state = MagicMock()
+        vm.get_holds_by_strategy.return_value = []
+        config = StrategySchedulerConfig(strategy=strategy)
+
+        holdings = scheduler._get_strategy_holdings(config)
+
+        self.assertEqual(holdings, [])
+        self.assertEqual(strategy._position_state, {})
+        strategy._save_state.assert_called_once()
+        scheduler._logger.warning.assert_called()
 
     async def test_restore_state_price_subscription_skips_unrestored_strategy_and_empty_code(self):
         scheduler, vm, _, _, _ = self._make_scheduler()
