@@ -182,7 +182,8 @@ def get_operations_status():
             reconcile = None
 
     sqs = getattr(ctx, "stock_query_service", None)
-    price_lookup = dict(getattr(sqs, "_price_lookup_stats", {})) if sqs else None
+    _raw_stats = getattr(sqs, "_price_lookup_stats", None) if sqs else None
+    price_lookup = dict(_raw_stats) if isinstance(_raw_stats, dict) else None
 
     return {
         "success": True,
