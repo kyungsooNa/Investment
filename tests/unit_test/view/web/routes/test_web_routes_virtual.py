@@ -930,8 +930,26 @@ def test_post_virtual_backtest_divergence(web_client, mock_web_ctx):
     """POST /api/virtual/backtest-divergence 는 백테스트 journal payload와 현재 원장을 비교한다."""
     mock_web_ctx.virtual_trade_service.compare_with_backtest_journal.return_value = {
         "summary": {"matched_count": 1, "avg_net_return_diff": -1.0},
-        "matches": [{"code": "005930"}],
-        "unmatched_backtest": [],
+        "matches": [{
+            "code": "005930",
+            "backtest": {
+                "metadata": {
+                    "entry_type": "BGU",
+                    "stage": 2,
+                    "cgld": 94.5,
+                    "threshold": 100.0,
+                }
+            },
+        }],
+        "unmatched_backtest": [{
+            "code": "000660",
+            "metadata": {
+                "entry_type": "PP",
+                "stage": 4,
+                "cgld": 88.0,
+                "threshold": 100.0,
+            },
+        }],
         "unmatched_live": [],
     }
     payload = [{"source": "backtest", "code": "005930"}]
@@ -939,7 +957,14 @@ def test_post_virtual_backtest_divergence(web_client, mock_web_ctx):
     response = web_client.post("/api/virtual/backtest-divergence", json=payload)
 
     assert response.status_code == 200
-    assert response.json()["summary"]["matched_count"] == 1
+    data = response.json()
+    assert data["summary"]["matched_count"] == 1
+    assert data["matches"][0]["entry_type"] == "BGU"
+    assert data["matches"][0]["stage"] == 2
+    assert data["matches"][0]["cgld"] == 94.5
+    assert data["matches"][0]["threshold"] == 100.0
+    assert data["unmatched_backtest"][0]["entry_type"] == "PP"
+    assert data["unmatched_backtest"][0]["stage"] == 4
     mock_web_ctx.virtual_trade_service.compare_with_backtest_journal.assert_called_once_with(payload)
 
 
@@ -973,17 +998,28 @@ def test_get_virtual_backtest_journal_records(web_client, mock_web_ctx):
     """저장된 백테스트 journal run의 records를 반환한다."""
     mock_web_ctx.backtest_journal_repository = MagicMock()
     mock_web_ctx.backtest_journal_repository.load_records.return_value = [
-        {"source": "backtest", "code": "005930"}
+        {
+            "source": "backtest",
+            "code": "005930",
+            "metadata": {
+                "entry_type": "BGU",
+                "stage": 2,
+                "cgld": 94.5,
+                "threshold": 100.0,
+            },
+        }
     ]
 
     response = web_client.get("/api/virtual/backtest-journals/run1")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "run_id": "run1",
-        "records": [{"source": "backtest", "code": "005930"}],
-        "count": 1,
-    }
+    data = response.json()
+    assert data["run_id"] == "run1"
+    assert data["count"] == 1
+    assert data["records"][0]["entry_type"] == "BGU"
+    assert data["records"][0]["stage"] == 2
+    assert data["records"][0]["cgld"] == 94.5
+    assert data["records"][0]["threshold"] == 100.0
     mock_web_ctx.backtest_journal_repository.load_records.assert_called_once_with("run1")
 
 

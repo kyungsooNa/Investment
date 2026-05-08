@@ -51,6 +51,9 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert 'id="virtual-backtest-run-select"' in response.text
             assert 'id="virtual-backtest-journal-input"' in response.text
             assert 'id="virtual-divergence-body"' in response.text
+            assert "<th>진입</th>" in response.text
+            assert "<th>Stage</th>" in response.text
+            assert "<th>체결강도</th>" in response.text
         elif path == "/scheduler":
             assert "전략 스케줄러" in response.text
         elif path == "/program":

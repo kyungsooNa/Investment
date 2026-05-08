@@ -59,6 +59,10 @@
                                 <th>전략</th>
                                 <th>종목</th>
                                 <th>거래일</th>
+                                <th>진입</th>
+                                <th>Stage</th>
+                                <th>체결강도</th>
+                                <th>기준</th>
                                 <th>백테스트 순수익률</th>
                                 <th>실거래 순수익률</th>
                                 <th>차이</th>
@@ -110,7 +114,7 @@
 {% block scripts %}
 <script src="/static/js/virtual_chart.js?v=8"></script>
 <script src="/static/js/stock.js?v=1"></script>
-<script src="/static/js/virtual.js?v=2"></script>
+<script src="/static/js/virtual.js?v=3"></script>
 <script>
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => loadVirtualHistory(), { once: true });

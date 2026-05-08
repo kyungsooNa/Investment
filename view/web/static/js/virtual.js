@@ -167,10 +167,33 @@ function formatVirtualWon(value) {
     return `${num > 0 ? '+' : ''}${Math.round(num).toLocaleString()}원`;
 }
 
+function formatVirtualDetail(value, digits = null) {
+    if (value === null || value === undefined || value === '') return '-';
+    const num = Number(value);
+    if (Number.isFinite(num)) {
+        return digits === null ? String(value) : num.toFixed(digits);
+    }
+    return escapeVirtualHtml(value);
+}
+
 function divergenceColorClass(value) {
     const num = Number(value);
     if (!Number.isFinite(num)) return '';
     return num > 0 ? 'text-positive' : (num < 0 ? 'text-negative' : '');
+}
+
+function virtualJournalDetail(row, key) {
+    if (row && row[key] !== null && row[key] !== undefined && row[key] !== '') return row[key];
+    const backtest = row?.backtest || {};
+    if (backtest[key] !== null && backtest[key] !== undefined && backtest[key] !== '') return backtest[key];
+    const backtestMeta = backtest.metadata || {};
+    if (backtestMeta[key] !== null && backtestMeta[key] !== undefined && backtestMeta[key] !== '') return backtestMeta[key];
+    const live = row?.live || {};
+    if (live[key] !== null && live[key] !== undefined && live[key] !== '') return live[key];
+    const liveMeta = live.metadata || {};
+    if (liveMeta[key] !== null && liveMeta[key] !== undefined && liveMeta[key] !== '') return liveMeta[key];
+    const meta = row?.metadata || {};
+    return meta[key];
 }
 
 function renderVirtualDivergence(report = virtualDivergenceReport) {
@@ -221,6 +244,10 @@ function renderVirtualDivergence(report = virtualDivergenceReport) {
             strategy: row.strategy,
             code: row.code,
             tradeDate: row.trade_date,
+            entryType: virtualJournalDetail(row, 'entry_type'),
+            stage: virtualJournalDetail(row, 'stage'),
+            cgld: virtualJournalDetail(row, 'cgld'),
+            threshold: virtualJournalDetail(row, 'threshold'),
             backtestReturn: row.backtest_net_return,
             liveReturn: row.live_net_return,
             diff: row.net_return_diff,
@@ -233,6 +260,10 @@ function renderVirtualDivergence(report = virtualDivergenceReport) {
             strategy: row.strategy,
             code: row.code,
             tradeDate: String(row.signal_time || '').slice(0, 10),
+            entryType: virtualJournalDetail(row, 'entry_type'),
+            stage: virtualJournalDetail(row, 'stage'),
+            cgld: virtualJournalDetail(row, 'cgld'),
+            threshold: virtualJournalDetail(row, 'threshold'),
             backtestReturn: row.net_return,
             liveReturn: null,
             diff: null,
@@ -245,6 +276,10 @@ function renderVirtualDivergence(report = virtualDivergenceReport) {
             strategy: row.strategy,
             code: row.code,
             tradeDate: String(row.signal_time || '').slice(0, 10),
+            entryType: virtualJournalDetail(row, 'entry_type'),
+            stage: virtualJournalDetail(row, 'stage'),
+            cgld: virtualJournalDetail(row, 'cgld'),
+            threshold: virtualJournalDetail(row, 'threshold'),
             backtestReturn: null,
             liveReturn: row.net_return,
             diff: null,
@@ -253,7 +288,7 @@ function renderVirtualDivergence(report = virtualDivergenceReport) {
     });
 
     if (rows.length === 0) {
-        bodyEl.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:15px;">비교 대기</td></tr>';
+        bodyEl.innerHTML = '<tr><td colspan="12" style="text-align:center; padding:15px;">비교 대기</td></tr>';
         return;
     }
 
@@ -263,6 +298,10 @@ function renderVirtualDivergence(report = virtualDivergenceReport) {
             <td>${escapeVirtualHtml(row.strategy)}</td>
             <td>${escapeVirtualHtml(row.code)}</td>
             <td>${escapeVirtualHtml(row.tradeDate)}</td>
+            <td>${formatVirtualDetail(row.entryType)}</td>
+            <td>${formatVirtualDetail(row.stage)}</td>
+            <td>${formatVirtualDetail(row.cgld, 1)}</td>
+            <td>${formatVirtualDetail(row.threshold, 1)}</td>
             <td>${formatVirtualPct(row.backtestReturn)}</td>
             <td>${formatVirtualPct(row.liveReturn)}</td>
             <td class="${divergenceColorClass(row.diff)}"><strong>${formatVirtualPct(row.diff)}</strong></td>

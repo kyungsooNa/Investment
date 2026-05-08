@@ -50,7 +50,7 @@
   - 완료된 부분: Web 초기화 시 `StrategyLogReportService`의 backtest journal provider를 저장소의 날짜별 records 조회로 연결했다.
   - 완료된 부분: `MomentumStrategy` backtest 모드는 성공/실패 후보를 표준 decision journal(`SIGNAL`/`REJECTED`, `decision_reason`/`rejected_reason`)로 저장소에 기록한다.
   - 완료된 부분: `StrategyDebugRunner`가 O'Neil/Minervini 계열 debug 실행의 신호, 탈락 이벤트, watchlist 누락 종목을 표준 decision journal로 만들고 저장소에 기록한다.
-  - 진행 필요: 전략별 debug 이벤트의 세부 필드(`entry_type`, `stage`, `cgld`, `threshold`)를 운영 UI에서 더 보기 좋은 열로 분해한다.
+  - 완료된 부분: 전략별 debug 이벤트의 세부 필드(`entry_type`, `stage`, `cgld`, `threshold`)를 API 응답 top-level 필드로 보강하고, 운영 UI 괴리 테이블에서 별도 열로 표시한다.
 - [~] 수수료, 거래세, 슬리피지 반영 후 순수익을 기본 성과로 사용한다.
   - 완료된 부분: 표준 journal record에 `cost`, `net_pnl`, `net_return`을 계산해 포함한다.
   - 완료된 부분: after-market 포트폴리오 요약은 `net_return`이 있으면 기존 `return_rate`보다 우선 사용한다.
