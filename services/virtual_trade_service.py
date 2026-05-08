@@ -67,16 +67,19 @@ class VirtualTradeService:
         cost = TransactionCostUtils.calculate_cost(price, qty, is_sell)
         return base_amount - cost if is_sell else base_amount + cost
 
-    def get_all_trades(self, apply_cost: bool = False) -> list:
+    def get_all_trades(self, apply_cost: bool = True) -> list:
         df = self._repo._read()
-        records = self._repo._to_json_records(df)
+        records = [dict(r) for r in self._repo._to_json_records(df)]
         if apply_cost:
             for r in records:
                 if r.get('status') == 'SOLD' and r.get('buy_price') and r.get('sell_price'):
+                    if 'gross_return' not in r:
+                        r['gross_return'] = r.get('return_rate')
                     r['return_rate'] = self.calculate_return(r['buy_price'], r['sell_price'], r.get('qty', 1), True)
+                    r['net_return'] = r['return_rate']
         return records
 
-    def get_summary(self, apply_cost: bool = False) -> dict:
+    def get_summary(self, apply_cost: bool = True) -> dict:
         df = self._repo._read()
         total_trades = len(df)
         sold_df = df[df['status'] == 'SOLD']
@@ -161,7 +164,7 @@ class VirtualTradeService:
     async def log_sell_by_strategy_async(self, *args, **kwargs): return await self._repo.log_sell_by_strategy_async(*args, **kwargs)
     async def log_sell_by_strategy_async_with_result(self, *args, **kwargs): return await self._repo.log_sell_by_strategy_async_with_result(*args, **kwargs)
     def get_holds(self): return self._repo.get_holds()
-    def get_solds(self): return self._repo.get_solds()
+    def get_solds(self, apply_cost: bool = True): return self._repo.get_solds(apply_cost=apply_cost)
     def get_holds_by_strategy(self, strategy_name: str): return self._repo.get_holds_by_strategy(strategy_name)
     def is_holding(self, strategy_name: str, code: str): return self._repo.is_holding(strategy_name, code)
     def log_order_failure(self, *args, **kwargs): return self._repo.log_order_failure(*args, **kwargs)

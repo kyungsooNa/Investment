@@ -28,7 +28,7 @@ def _sync_virtual_trade_state(ctx):
 
 
 @router.get("/virtual/summary")
-async def get_virtual_summary(apply_cost: bool = False):
+async def get_virtual_summary(apply_cost: bool = True):
     """가상 매매 요약 정보 조회"""
     ctx = _get_ctx()
     t_start = ctx.pm.start_timer()
@@ -203,6 +203,80 @@ def _get_backtest_journal_repository(ctx):
     return repo if repo is not None else BacktestJournalRepository()
 
 
+_DEBUG_JOURNAL_DETAIL_FIELDS = ("entry_type", "stage", "cgld", "threshold")
+
+
+def _has_value(value) -> bool:
+    return value not in (None, "")
+
+
+def _expand_debug_journal_fields(record: dict) -> dict:
+    """표준 journal metadata 안의 debug 세부 필드를 운영 UI용 top-level 필드로 노출한다."""
+    if not isinstance(record, dict):
+        return record
+
+    expanded = dict(record)
+    metadata = expanded.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    for field in _DEBUG_JOURNAL_DETAIL_FIELDS:
+        if not _has_value(expanded.get(field)) and _has_value(metadata.get(field)):
+            expanded[field] = metadata.get(field)
+    return expanded
+
+
+def _first_debug_field(field: str, *records: dict):
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        value = record.get(field)
+        if _has_value(value):
+            return value
+        metadata = record.get("metadata")
+        if isinstance(metadata, dict) and _has_value(metadata.get(field)):
+            return metadata.get(field)
+    return None
+
+
+def _expand_debug_comparison_row(row: dict) -> dict:
+    if not isinstance(row, dict):
+        return row
+
+    expanded = dict(row)
+    backtest = _expand_debug_journal_fields(expanded.get("backtest") or {})
+    live = _expand_debug_journal_fields(expanded.get("live") or {})
+    if "backtest" in expanded:
+        expanded["backtest"] = backtest
+    if "live" in expanded:
+        expanded["live"] = live
+
+    for field in _DEBUG_JOURNAL_DETAIL_FIELDS:
+        if not _has_value(expanded.get(field)):
+            value = _first_debug_field(field, backtest, live)
+            if _has_value(value):
+                expanded[field] = value
+    return expanded
+
+
+def _expand_debug_divergence_report(report: dict) -> dict:
+    if not isinstance(report, dict):
+        return report
+
+    expanded = dict(report)
+    expanded["matches"] = [
+        _expand_debug_comparison_row(row)
+        for row in expanded.get("matches", [])
+    ]
+    expanded["unmatched_backtest"] = [
+        _expand_debug_journal_fields(row)
+        for row in expanded.get("unmatched_backtest", [])
+    ]
+    expanded["unmatched_live"] = [
+        _expand_debug_journal_fields(row)
+        for row in expanded.get("unmatched_live", [])
+    ]
+    return expanded
+
+
 @router.get("/virtual/journal")
 async def get_virtual_standard_journal(limit: int | None = 500):
     """실거래/모의거래 원장을 백테스트 비교용 표준 schema로 반환한다."""
@@ -211,7 +285,7 @@ async def get_virtual_standard_journal(limit: int | None = 500):
     if vm is None or not hasattr(vm, "get_standard_journal_records"):
         return {"records": [], "count": 0, "total_count": 0}
 
-    records = vm.get_standard_journal_records()
+    records = [_expand_debug_journal_fields(record) for record in vm.get_standard_journal_records()]
     total_count = len(records)
     if limit is not None and limit > 0:
         records = records[-limit:]
@@ -233,16 +307,16 @@ async def post_virtual_backtest_divergence(
     vm = _sync_virtual_trade_state(ctx)
 
     if vm is None:
-        return _sanitize_for_json(_empty_divergence_report(backtest_records))
+        return _sanitize_for_json(_expand_debug_divergence_report(_empty_divergence_report(backtest_records)))
 
     if hasattr(vm, "compare_with_backtest_journal"):
-        return _sanitize_for_json(vm.compare_with_backtest_journal(backtest_records))
+        return _sanitize_for_json(_expand_debug_divergence_report(vm.compare_with_backtest_journal(backtest_records)))
 
     if hasattr(vm, "get_standard_journal_records"):
         live_records = vm.get_standard_journal_records()
-        return _sanitize_for_json(compare_trade_journals(backtest_records, live_records))
+        return _sanitize_for_json(_expand_debug_divergence_report(compare_trade_journals(backtest_records, live_records)))
 
-    return _sanitize_for_json(_empty_divergence_report(backtest_records))
+    return _sanitize_for_json(_expand_debug_divergence_report(_empty_divergence_report(backtest_records)))
 
 
 @router.get("/virtual/backtest-journals")
@@ -259,7 +333,7 @@ async def get_virtual_backtest_journal_records(run_id: str):
     """저장된 백테스트 journal run의 records를 반환한다."""
     ctx = _get_ctx()
     repo = _get_backtest_journal_repository(ctx)
-    records = repo.load_records(run_id)
+    records = [_expand_debug_journal_fields(record) for record in repo.load_records(run_id)]
     return _sanitize_for_json({
         "run_id": run_id,
         "records": records,
@@ -424,7 +498,7 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
 
 
 @router.get("/virtual/history")
-async def get_virtual_history(force_code: str = None, apply_cost: bool = False):
+async def get_virtual_history(force_code: str = None, apply_cost: bool = True):
     """가상 매매 전체 기록 조회 (force_code 지정 시 해당 종목은 캐시 무시)"""
     ctx = _get_ctx()
     async with ctx.pm.profile_async("get_virtual_history"):

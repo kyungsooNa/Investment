@@ -50,13 +50,13 @@
   - 완료된 부분: Web 초기화 시 `StrategyLogReportService`의 backtest journal provider를 저장소의 날짜별 records 조회로 연결했다.
   - 완료된 부분: `MomentumStrategy` backtest 모드는 성공/실패 후보를 표준 decision journal(`SIGNAL`/`REJECTED`, `decision_reason`/`rejected_reason`)로 저장소에 기록한다.
   - 완료된 부분: `StrategyDebugRunner`가 O'Neil/Minervini 계열 debug 실행의 신호, 탈락 이벤트, watchlist 누락 종목을 표준 decision journal로 만들고 저장소에 기록한다.
-  - 진행 필요: 전략별 debug 이벤트의 세부 필드(`entry_type`, `stage`, `cgld`, `threshold`)를 운영 UI에서 더 보기 좋은 열로 분해한다.
+  - 완료된 부분: 전략별 debug 이벤트의 세부 필드(`entry_type`, `stage`, `cgld`, `threshold`)를 API 응답 top-level 필드로 보강하고, 운영 UI 괴리 테이블에서 별도 열로 표시한다.
 - [~] 수수료, 거래세, 슬리피지 반영 후 순수익을 기본 성과로 사용한다.
   - 완료된 부분: 표준 journal record에 `cost`, `net_pnl`, `net_return`을 계산해 포함한다.
   - 완료된 부분: after-market 포트폴리오 요약은 `net_return`이 있으면 기존 `return_rate`보다 우선 사용한다.
   - 완료된 부분: 웹 API에서 표준 journal과 backtest-vs-live 비교 결과를 순수익 필드 포함 schema로 노출한다.
   - 완료된 부분: 모의투자 화면은 비용 포함 성과 조회를 기본 ON으로 표시한다.
-  - 진행 필요: 전체 전략 성과 집계의 기본값을 슬리피지까지 포함한 net 기준으로 전환한다.
+  - 완료된 부분: 전체 전략 성과 집계의 기본값을 비용 포함 net 기준으로 전환하고, gross 기준 조회는 `apply_cost=false` 명시 경로로 유지한다.
 
 주요 파일:
 
@@ -365,7 +365,8 @@
 
 - [~] 전략 성과는 수수료, 세금, 슬리피지를 반영한 순수익 기준으로 추적된다.
   - 완료된 부분: 거래 비용 계산 유틸과 테스트가 있고, 체결 품질 로그/리포트에서 슬리피지를 추적한다.
-  - 진행 필요: 전략별 성과 지표가 수수료+세금+슬리피지를 모두 반영한 순수익(`net PnL/return`)을 기본값으로 저장·집계하도록 표준화해야 한다.
+  - 완료된 부분: 전략별 성과 지표 조회/집계 기본값이 비용 포함 순수익(`net PnL/return`) 기준으로 전환되었고, gross 기준은 `apply_cost=false` 명시 경로로 유지한다.
+  - 진행 필요: 백테스트 체결 시뮬레이터에서 명시적 슬리피지 모델을 도입해 모든 전략의 저장 단계까지 동일하게 반영해야 한다.
   - 관련 파일: `utils/transaction_cost_utils.py`, `services/order_execution_service.py`, `services/strategy_log_report_service.py`, `tests/unit_test/utils/test_transaction_cost_utils.py`
 
 - [~] 장애, 데이터 지연, websocket 끊김, reconcile 실패 시 신규 주문 차단 또는 경고 상태로 전환된다.

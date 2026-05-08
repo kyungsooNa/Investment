@@ -55,12 +55,17 @@ def test_get_all_trades(virtual_trade_service, mock_repo):
     mock_repo._read.return_value = df
     mock_repo._to_json_records.return_value = [{"status": "SOLD", "buy_price": 1000, "sell_price": 1200, "qty": 1}]
     
+    res_default = virtual_trade_service.get_all_trades()
+    assert 'return_rate' in res_default[0]
+    assert res_default[0]['return_rate'] < 20.0
+
     res = virtual_trade_service.get_all_trades(apply_cost=False)
     assert 'return_rate' not in res[0]
     
     res_cost = virtual_trade_service.get_all_trades(apply_cost=True)
     assert 'return_rate' in res_cost[0]
     assert res_cost[0]['return_rate'] < 20.0
+    assert res_default == res_cost
 
 
 def test_get_summary_empty(virtual_trade_service, mock_repo):
@@ -81,6 +86,9 @@ def test_get_summary(virtual_trade_service, mock_repo):
     ])
     mock_repo._read.return_value = df
     
+    res_default = virtual_trade_service.get_summary()
+    assert res_default['avg_return'] < 0.0
+
     res = virtual_trade_service.get_summary(apply_cost=False)
     assert res['total_trades'] == 3
     assert res['win_rate'] == 50.0  # (1 승리 / 2 SOLD) * 100
@@ -88,6 +96,7 @@ def test_get_summary(virtual_trade_service, mock_repo):
 
     res_cost = virtual_trade_service.get_summary(apply_cost=True)
     assert res_cost['avg_return'] < 0.0
+    assert res_default == res_cost
 
 
 def test_get_daily_change(virtual_trade_service, mock_repo, mock_clock):

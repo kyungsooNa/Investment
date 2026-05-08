@@ -566,28 +566,39 @@ class VirtualTradeRepository:
         cost = TransactionCostUtils.calculate_cost(price, qty, is_sell)
         return base_amount - cost if is_sell else base_amount + cost
 
-    def get_all_trades(self, apply_cost: bool = False) -> list:
+    def get_all_trades(self, apply_cost: bool = True) -> list:
         """전체 거래 기록 반환 (웹 API용). apply_cost=True 시 수익률 재계산."""
         df = self._read()
         records = self._to_json_records(df)
         if apply_cost:
             for r in records:
                 if r.get('status') == 'SOLD' and r.get('buy_price') and r.get('sell_price'):
+                    if 'gross_return' not in r:
+                        r['gross_return'] = r.get('return_rate')
                     r['return_rate'] = self.calculate_return(r['buy_price'], r['sell_price'], r.get('qty', 1), True)
+                    r['net_return'] = r['return_rate']
         return records
 
     def get_standard_journal_records(self) -> list[dict]:
         """백테스트/실거래 비교용 표준 journal schema로 전체 거래를 반환한다."""
-        return [normalize_virtual_trade(record) for record in self.get_all_trades()]
+        return [normalize_virtual_trade(record) for record in self.get_all_trades(apply_cost=False)]
 
-    def get_solds(self) -> list:
+    def get_solds(self, apply_cost: bool = True) -> list:
         """전체 SOLD 포지션 반환."""
         df = pd.read_sql_query(
             "SELECT strategy,code,buy_date,buy_price,qty,sell_date,sell_price,return_rate,status,reason "
             "FROM trades WHERE status='SOLD' ORDER BY id",
             self._db, dtype={'code': str, 'sell_date': object}
         )
-        return self._to_json_records(df)
+        records = self._to_json_records(df)
+        if apply_cost:
+            for r in records:
+                if r.get('buy_price') and r.get('sell_price'):
+                    if 'gross_return' not in r:
+                        r['gross_return'] = r.get('return_rate')
+                    r['return_rate'] = self.calculate_return(r['buy_price'], r['sell_price'], r.get('qty', 1), True)
+                    r['net_return'] = r['return_rate']
+        return records
 
     def get_holds(self) -> list:
         """전체 HOLD 포지션 반환."""
@@ -635,7 +646,7 @@ class VirtualTradeRepository:
                     )
             logger.info(f"[가상매매] {code} sell_price 보정 완료 → {correct_price}")
 
-    def get_summary(self, apply_cost: bool = False) -> dict:
+    def get_summary(self, apply_cost: bool = True) -> dict:
         """전체 매매 요약 통계 (HOLD + SOLD 모두 포함).
 
         win_rate / avg_return 은 강제종결(reason="reconciled_force_close") 매매를 제외한
