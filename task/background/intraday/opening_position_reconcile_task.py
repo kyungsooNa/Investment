@@ -121,18 +121,23 @@ class OpeningPositionReconcileTask(SchedulableTask):
         try:
             result = await self._service.reconcile_once()
             self._last_result = result
-            if self._market_clock:
+            if not result.get("error") and self._market_clock:
                 self._last_checked_date = self._market_clock.get_current_kst_time().strftime("%Y%m%d")
 
             mismatch_count = int(result.get("mismatch_count") or 0)
             if mismatch_count:
+                message = (
+                    f"force_closed={len(result.get('force_closed') or [])} "
+                    f"unknown={len(result.get('unknown_in_broker') or [])} "
+                    f"qty_mismatch={len(result.get('quantity_mismatches') or [])}"
+                )
                 self._logger.warning(f"[OpeningPositionReconcile] mismatch_count={mismatch_count} result={result}")
                 if self._ns:
                     await self._ns.emit(
                         NotificationCategory.TRADE,
                         NotificationLevel.WARNING,
                         "장 시작 원장/잔고 대사 불일치",
-                        f"{mismatch_count}건 확인",
+                        message,
                         metadata=result,
                     )
             else:

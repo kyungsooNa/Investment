@@ -169,10 +169,6 @@ class ExecutionQualityReportConfig(BaseModel):
 
 class OpeningPositionReconcileConfig(BaseModel):
     enabled: bool = True
-    detect_only: bool = True
-    auto_buy_missing_local: bool = False
-    auto_sell_extra_broker: bool = False
-    allow_sell_unknown_broker: bool = False
     check_interval_sec: int = 30
     open_delay_sec: int = 60
     run_window_min: int = 10

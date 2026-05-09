@@ -36,6 +36,31 @@ async def test_opening_position_reconcile_runs_once_in_opening_window():
 
 
 @pytest.mark.asyncio
+async def test_opening_position_reconcile_does_not_stamp_date_on_error_result():
+    clock = MagicMock()
+    open_time = datetime(2026, 4, 30, 9, 0)
+    clock.get_market_open_time.return_value = open_time
+    clock.get_current_kst_time.return_value = open_time + timedelta(seconds=61)
+    mcs = AsyncMock()
+    mcs.is_business_day.return_value = True
+    service = AsyncMock()
+    service.reconcile_once.return_value = {"mismatch_count": 0, "error": "denied"}
+    task = OpeningPositionReconcileTask(
+        reconcile_service=service,
+        market_calendar_service=mcs,
+        market_clock=clock,
+        notification_service=AsyncMock(),
+        logger=MagicMock(),
+    )
+
+    result = await task.run_once()
+
+    assert result["error"] == "denied"
+    assert task._last_checked_date is None
+    assert await task._should_run_now() is True
+
+
+@pytest.mark.asyncio
 async def test_opening_position_reconcile_skips_before_delay_and_after_window():
     clock = MagicMock()
     open_time = datetime(2026, 4, 30, 9, 0)

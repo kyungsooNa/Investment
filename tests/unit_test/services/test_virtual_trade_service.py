@@ -361,8 +361,8 @@ def test_sync_live_strategy_positions_delegates_to_repo(virtual_trade_service, m
 async def test_reconcile_with_broker_force_closes_missing_local_holds(virtual_trade_service, mock_repo):
     """로컬 HOLD인데 실제 잔고가 없으면 강제 종결한다."""
     mock_repo.get_holds.return_value = [
-        {"code": "005930", "strategy": "S1"},
-        {"code": "000660", "strategy": "S2"},
+        {"code": "005930", "strategy": "S1", "qty": 1},
+        {"code": "000660", "strategy": "S2", "qty": 3},
     ]
     mock_repo.log_sell_async = AsyncMock()
     test_logger = MagicMock()
@@ -373,14 +373,14 @@ async def test_reconcile_with_broker_force_closes_missing_local_holds(virtual_tr
     )
 
     mock_repo.log_sell_async.assert_awaited_once_with("005930", 0, reason="reconciled_force_close")
-    assert result == {"force_closed": ["005930"], "unknown_in_broker": []}
+    assert result == {"force_closed": ["005930"], "unknown_in_broker": [], "quantity_mismatches": []}
     test_logger.warning.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_reconcile_with_broker_reports_unknown_broker_holdings(virtual_trade_service, mock_repo):
     """실제 보유인데 로컬 DB가 없으면 unknown_in_broker로 보고한다."""
-    mock_repo.get_holds.return_value = [{"code": "005930", "strategy": "S1"}]
+    mock_repo.get_holds.return_value = [{"code": "005930", "strategy": "S1", "qty": 2}]
     mock_repo.log_sell_async = AsyncMock()
     test_logger = MagicMock()
 
@@ -394,5 +394,73 @@ async def test_reconcile_with_broker_reports_unknown_broker_holdings(virtual_tra
     )
 
     mock_repo.log_sell_async.assert_not_awaited()
-    assert result == {"force_closed": [], "unknown_in_broker": ["035420"]}
+    assert result == {"force_closed": [], "unknown_in_broker": ["035420"], "quantity_mismatches": []}
     assert test_logger.warning.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_with_broker_reports_quantity_mismatches(virtual_trade_service, mock_repo):
+    """양쪽에 같은 종목이 있으나 수량이 다르면 자동 종결 없이 보고한다."""
+    mock_repo.get_holds.return_value = [
+        {"code": "005930", "strategy": "S1", "qty": 1},
+        {"code": "005930", "strategy": "S2", "qty": 2},
+    ]
+    mock_repo.log_sell_async = AsyncMock()
+    test_logger = MagicMock()
+
+    result = await virtual_trade_service.reconcile_with_broker(
+        actual_holdings=[{"pdno": "005930", "hldg_qty": "1"}],
+        logger=test_logger,
+    )
+
+    mock_repo.log_sell_async.assert_not_awaited()
+    assert result == {
+        "force_closed": [],
+        "unknown_in_broker": [],
+        "quantity_mismatches": [{"code": "005930", "local_qty": 3, "broker_qty": 1}],
+    }
+    test_logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_with_broker_normalizes_broker_holding_variants(virtual_trade_service, mock_repo):
+    """브로커 잔고의 대문자 키, 콤마, float 문자열을 정규화한다."""
+    mock_repo.get_holds.return_value = [{"code": "005930", "strategy": "S1", "qty": 1000}]
+    mock_repo.log_sell_async = AsyncMock()
+    test_logger = MagicMock()
+
+    result = await virtual_trade_service.reconcile_with_broker(
+        actual_holdings=[
+            {"PDNO": "005930", "HLDG_QTY": "1,000"},
+            {"pdno": "000660", "hldg_qty": "0.0000"},
+        ],
+        logger=test_logger,
+    )
+
+    mock_repo.log_sell_async.assert_not_awaited()
+    assert result == {"force_closed": [], "unknown_in_broker": [], "quantity_mismatches": []}
+    test_logger.warning.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_with_broker_force_closes_each_missing_hold_row(virtual_trade_service, mock_repo):
+    """브로커에 없는 종목의 로컬 HOLD는 같은 code라도 row 수만큼 종결한다."""
+    mock_repo.get_holds.return_value = [
+        {"code": "005930", "strategy": "S1", "qty": 1},
+        {"code": "005930", "strategy": "S2", "qty": 2},
+    ]
+    mock_repo.log_sell_async = AsyncMock()
+    test_logger = MagicMock()
+
+    result = await virtual_trade_service.reconcile_with_broker(
+        actual_holdings=[],
+        logger=test_logger,
+    )
+
+    assert mock_repo.log_sell_async.await_count == 2
+    mock_repo.log_sell_async.assert_any_await("005930", 0, reason="reconciled_force_close")
+    assert result == {
+        "force_closed": ["005930", "005930"],
+        "unknown_in_broker": [],
+        "quantity_mismatches": [],
+    }

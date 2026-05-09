@@ -662,14 +662,21 @@ class WebAppContext:
             reconcile_cfg = getattr(self.full_config, "opening_position_reconcile", None)
             self.opening_position_reconcile_task = None
             if reconcile_cfg is None or getattr(reconcile_cfg, "enabled", True):
+                deprecated_reconcile_keys = (
+                    "detect_only",
+                    "auto_buy_missing_local",
+                    "auto_sell_extra_broker",
+                    "allow_sell_unknown_broker",
+                )
+                reconcile_extra = getattr(reconcile_cfg, "model_extra", {}) or {}
+                for key in deprecated_reconcile_keys:
+                    if key in reconcile_extra:
+                        self.logger.warning(
+                            f"opening_position_reconcile.{key} is deprecated and ignored"
+                        )
                 opening_reconcile_service = OpeningPositionReconcileService(
                     broker=self.broker,
-                    order_execution_service=self.order_execution_service,
                     virtual_trade_service=self.virtual_trade_service,
-                    detect_only=getattr(reconcile_cfg, "detect_only", True),
-                    auto_buy_missing_local=getattr(reconcile_cfg, "auto_buy_missing_local", False),
-                    auto_sell_extra_broker=getattr(reconcile_cfg, "auto_sell_extra_broker", False),
-                    allow_sell_unknown_broker=getattr(reconcile_cfg, "allow_sell_unknown_broker", False),
                     logger=self.logger,
                 )
                 self.opening_position_reconcile_task = OpeningPositionReconcileTask(
