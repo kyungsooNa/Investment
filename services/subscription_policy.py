@@ -145,6 +145,52 @@ class SubscriptionPolicy:
                     await self._streaming_stock_repo.unmark_desired(code, StreamingType.UNIFIED_PRICE)
         await self._rebalance()
 
+    async def drop_unhealthy_price_subscription(self, code: str, reason: str = "unhealthy_stream") -> bool:
+        """비정상 체결가 스트리밍 종목을 가격 구독 목록에서 제거한다.
+
+        REST fallback이 필요한 수준이면 해당 가격 구독은 신뢰하지 않고,
+        다음 조회부터 StockRepository의 streaming TTL 우회를 타지 않도록 정리한다.
+        """
+        if not code:
+            return False
+
+        removed = False
+        if code in self._refs:
+            price_categories = [
+                category_key
+                for category_key, request in self._refs[code].items()
+                if request.get("type") == StreamingType.UNIFIED_PRICE
+            ]
+            for category_key in price_categories:
+                self._refs[code].pop(category_key, None)
+                removed = True
+            if not self._refs.get(code):
+                self._refs.pop(code, None)
+
+        if self._streaming_stock_repo:
+            await self._streaming_stock_repo.unmark_desired(code, StreamingType.UNIFIED_PRICE)
+
+        unsubscribed = False
+        if code in self._active_codes_price:
+            await self._do_unsubscribe(code, StreamingType.UNIFIED_PRICE)
+            unsubscribed = True
+            removed = True
+        else:
+            self._stock_repo.unmark_streaming(code)
+            if self._streaming_stock_repo:
+                await self._streaming_stock_repo.mark_inactive(code, StreamingType.UNIFIED_PRICE)
+
+        if self._streaming_logger and not unsubscribed:
+            self._streaming_logger.log_unsubscribe(
+                code=code,
+                active_count=len(self._active_codes_price) + len(self._active_codes_pt),
+            )
+        self._logger.warning(
+            f"SubscriptionPolicy: unhealthy price subscription dropped "
+            f"code={code} reason={reason}"
+        )
+        return removed
+
     async def sync_subscriptions(
         self,
         codes: List[str],

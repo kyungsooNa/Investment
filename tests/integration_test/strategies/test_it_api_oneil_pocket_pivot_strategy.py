@@ -174,6 +174,6 @@ async def test_pocket_pivot_scan_cache_behavior_reduces_api_calls(deep_paper_ctx
     # [검증 3] 실시간 API(체결강도)는 항상 호출되어야 함
     assert mock_get_conclusion.call_count == calls_conclusion_on_miss, "캐시 대상이 아닌 체결강도 API는 항상 호출되어야 합니다."
 
-    # 저장소 내부 통계값 검증
-    stats = stock_repo.get_cache_stats()
-    assert stats["hits"] > 0, "캐시 히트 카운트가 정상적으로 누적되어야 합니다."
+    # price_stream_service backfill 검증 (broker 응답이 스냅샷 캐시에 저장되어야 함)
+    assert deep_paper_ctx.stock_query_service.price_stream_service.get_cached_price(code_a) is not None, \
+        "브로커 응답이 price_stream_service에 backfill 되어야 합니다."

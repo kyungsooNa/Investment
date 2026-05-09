@@ -1245,6 +1245,10 @@ class TestLarryWilliamsCBScan:
             "inquire-price": {"rt_cd": "0", "msg_cd": "MCA00000", "msg1": "정상", "output": price_output},
         })
 
+        # price_stream_service가 연결되면 웹소켓 스냅샷 미존재 시 force_fresh=True가 발동해
+        # _fetch_today_ohlcv가 채운 _price_cache를 우회하므로, 이 테스트에서는 비활성화한다.
+        deep_paper_ctx.stock_query_service.price_stream_service = None
+
         strategy = self._build_strategy(deep_paper_ctx, mock_tm, tmp_path)
         signals = await strategy.scan()
 

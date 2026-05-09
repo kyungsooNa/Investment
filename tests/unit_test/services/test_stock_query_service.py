@@ -181,6 +181,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         from unittest.mock import MagicMock
         mock_pss = MagicMock()
         mock_pss.get_cached_price.return_value = snap
+        mock_pss.get_subscription_age.return_value = snapshot_max_age_sec + 1.0
         mock_pss.cache_price_snapshot = MagicMock()
         self.stockQueryService.price_stream_service = mock_pss
         self.stockQueryService._snapshot_max_age_sec = snapshot_max_age_sec
@@ -221,19 +222,40 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
         result = await self.stockQueryService.get_current_price("005930")
 
-        self.mock_market_data_service.get_current_price.assert_awaited_once()
+        self.mock_market_data_service.get_current_price.assert_awaited_once_with(
+            "005930", exchange=Exchange.KRX, count_stats=True, caller="unknown", force_fresh=True
+        )
         self.assertEqual(self.stockQueryService._price_lookup_stats["stale_fallback"], 1)
 
     async def test_get_current_price_no_tick_falls_back_to_rest(self):
         """snapshot None (구독 중이나 tick 미수신) → REST fallback."""
+        from common.types import Exchange
         mock_pss = self._setup_sqs_with_pss(snap=None)
         expected = ResCommonResponse(rt_cd="0", msg1="정상", data={"output": self._create_dummy_stock_info()})
         self.mock_market_data_service.get_current_price.return_value = expected
 
         await self.stockQueryService.get_current_price("005930")
 
-        self.mock_market_data_service.get_current_price.assert_awaited_once()
+        self.mock_market_data_service.get_current_price.assert_awaited_once_with(
+            "005930", exchange=Exchange.KRX, count_stats=True, caller="unknown", force_fresh=True
+        )
         self.assertEqual(self.stockQueryService._price_lookup_stats["no_tick_fallback"], 1)
+
+    async def test_get_current_price_unhealthy_streaming_drops_price_subscription(self):
+        """stale/no-tick streaming은 REST 조회 후 가격 구독 목록에서 제거."""
+        snap = self._make_fresh_snap(age_sec=10.0)
+        self._setup_sqs_with_pss(snap=snap, snapshot_max_age_sec=5.0)
+        mock_subscription_service = AsyncMock()
+        self.stockQueryService.price_subscription_service = mock_subscription_service
+        self.mock_market_data_service.get_current_price.return_value = ResCommonResponse(
+            rt_cd="0", msg1="정상", data={"output": self._create_dummy_stock_info()}
+        )
+
+        await self.stockQueryService.get_current_price("005930")
+
+        mock_subscription_service.drop_unhealthy_price_subscription.assert_awaited_once_with(
+            "005930", reason="stale_snapshot"
+        )
 
     async def test_get_current_price_force_fresh_bypasses_snapshot(self):
         """force_fresh=True → 신선한 snapshot 있어도 REST 직접 호출."""
