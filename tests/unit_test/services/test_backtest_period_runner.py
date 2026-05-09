@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from unittest.mock import AsyncMock
 
 import pytest
 
-from common.types import TradeSignal
+from common.types import ErrorCode, ResCommonResponse, TradeSignal
 from services.backtest_execution_simulator import BacktestBar, BacktestPortfolioLedger
 from services.backtest_period_runner import BacktestPeriodRunner, BacktestPeriodRunnerConfig
 
@@ -68,6 +69,11 @@ class DatedStaticBarProvider(StaticBarProvider):
 
     def set_backtest_date(self, date_ymd: str) -> None:
         self.dates.append(date_ymd)
+
+
+class FailIfCalledBarProvider:
+    async def get_bar(self, *, signal: TradeSignal, date_ymd: str, side: str) -> BacktestBar:
+        raise AssertionError("bar provider should not be called")
 
 
 class FakeBacktestJournalRepository:
@@ -152,6 +158,77 @@ async def test_period_runner_applies_strategy_max_positions():
     assert result.execution_reports == []
     assert result.journal_records[0]["status"] == "REJECTED"
     assert result.journal_records[0]["rejected_reason"] == "max_positions"
+
+
+@pytest.mark.asyncio
+async def test_period_runner_applies_position_sizing_qty_before_execution():
+    strategy = FakeStrategy()
+    provider = StaticBarProvider({
+        ("20260501", "005930", "BUY"): BacktestBar("20260501 091000", 70_000, 70_500, 69_500, 70_200, 1_000),
+    })
+    position_sizer = AsyncMock()
+    position_sizer.adjust_buy_qty.return_value = (1, "risk_limited")
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=provider,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+        position_sizing_service=position_sizer,
+    )
+
+    result = await runner.run(["20260501"])
+
+    position_sizer.adjust_buy_qty.assert_awaited_once()
+    assert result.execution_reports[0].order.qty == 1
+    assert result.journal_records[0]["qty"] == 1
+    assert result.portfolio["positions"]["005930"]["qty"] == 1
+
+
+@pytest.mark.asyncio
+async def test_period_runner_records_position_sizing_zero_as_rejected_journal():
+    strategy = FakeStrategy()
+    position_sizer = AsyncMock()
+    position_sizer.adjust_buy_qty.return_value = (0, "risk_zero")
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=FailIfCalledBarProvider(),
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+        position_sizing_service=position_sizer,
+    )
+
+    result = await runner.run(["20260501"])
+
+    assert result.execution_reports == []
+    assert result.journal_records[0]["status"] == "REJECTED"
+    assert result.journal_records[0]["qty"] == 0
+    assert result.journal_records[0]["rejected_reason"] == "sizing_skip:risk_zero"
+
+
+@pytest.mark.asyncio
+async def test_period_runner_records_risk_gate_block_before_execution():
+    strategy = FakeStrategy()
+    risk_gate = AsyncMock()
+    risk_gate.validate_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.RISK_GATE_BLOCKED.value,
+        msg1="Risk Gate 차단: 주문 금액 초과",
+        data={"rule": "max_order_amount", "reason": "주문 금액 초과"},
+    )
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=FailIfCalledBarProvider(),
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+        risk_gate_service=risk_gate,
+    )
+
+    result = await runner.run(["20260501"])
+
+    risk_gate.validate_order.assert_awaited_once()
+    assert risk_gate.validate_order.await_args.kwargs["stock_code"] == "005930"
+    assert risk_gate.validate_order.await_args.kwargs["qty"] == 2
+    assert risk_gate.validate_order.await_args.kwargs["source"] == "strategy:OneilPocketPivot"
+    assert risk_gate.validate_order.await_args.kwargs["strategy_name"] == "OneilPocketPivot"
+    assert result.execution_reports == []
+    assert result.journal_records[0]["status"] == "REJECTED"
+    assert result.journal_records[0]["rejected_reason"] == "risk_gate:max_order_amount"
 
 
 @pytest.mark.asyncio

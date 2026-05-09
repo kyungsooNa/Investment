@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-10 (period backtest journal 운영 UI/괴리 표시 검증)
+최종 업데이트: 2026-05-10 (period backtest RiskGate/PositionSizing dry-run contract 검증)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -81,7 +81,9 @@
   - 완료된 부분: 활성 O'Neil 계열 `StrategyDebugRunner`에 선택적 portfolio ledger dry-run을 연결해 BUY 신호가 현금 부족/전략별 max positions에 걸리면 표준 journal의 `REJECTED`/`rejected_reason`으로 남기도록 했다.
   - 완료된 부분: `scripts/run_strategy_debug.py`에 `--portfolio-cash`, `--max-positions` 옵션을 추가해 운영자가 debug 실행에서 포트폴리오 예약 검증을 켤 수 있게 했다.
   - 완료된 부분: `BacktestPeriodRunner`에서 동시 BUY 신호 묶음을 ledger 예약/체결 흐름으로 통과시키고, 자금 부족/전략별 max positions 거부를 표준 journal로 남긴다.
-- [ ] 리스크 게이트와 포지션 사이징을 백테스트에서도 동일하게 호출하거나, 동일 contract의 dry-run 구현으로 검증한다.
+- [x] 리스크 게이트와 포지션 사이징을 백테스트에서도 동일하게 호출하거나, 동일 contract의 dry-run 구현으로 검증한다.
+  - 완료된 부분: `BacktestPeriodRunner`에 선택적 `position_sizing_service.adjust_buy_qty()` contract를 연결해 BUY 수량을 조정하고, 수량 0은 `sizing_skip:*` rejected journal로 남긴다.
+  - 완료된 부분: `BacktestPeriodRunner`에 선택적 `risk_gate_service.validate_order()` contract를 연결해 RiskGate 차단을 simulator/bar 조회 전에 `risk_gate:*` rejected journal로 남긴다.
 - [~] 활성 전략군용 기간 백테스트 runner를 만든다.
   - 완료된 부분: `BacktestPeriodRunner`를 추가해 `LiveStrategy.scan()` / `check_exits()` contract를 날짜 루프로 감싸고, BUY 신호 → ledger 예약 → simulator 체결 → ledger 반영, SELL 신호 → simulator 체결 → ledger 반영 흐름을 테스트로 고정했다.
   - 완료된 부분: 기간 runner가 현금 부족, 전략별 max positions 차단을 표준 rejected journal로 남긴다.
@@ -91,7 +93,8 @@
   - 완료된 부분: `scripts/run_backtest.py` CLI 진입점을 추가해 `oneil_pocket_pivot` 기간 백테스트를 replay adapter + portfolio ledger + simulator로 실행할 수 있게 했다.
   - 완료된 부분: 기간 백테스트 runner가 `BacktestExecutionReport`를 표준 journal record로 변환하고, `BacktestJournalRepository`에 period run metadata와 함께 저장한다.
   - 완료된 부분: 저장된 period backtest run의 체결 상세를 운영 UI/괴리 리포트에서 검증했다.
-  - 진행 필요: 리스크 게이트/포지션 사이징 dry-run contract를 연결한다.
+  - 완료된 부분: 기간 runner가 선택적 RiskGate/PositionSizing dry-run contract를 호출하고 거부 사유를 표준 journal로 남긴다.
+  - 진행 필요: CLI에서 실제 운영 설정 기반 RiskGate/PositionSizing 인스턴스를 자동 조립할지 결정한다.
 
 주요 파일:
 
@@ -349,7 +352,7 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - 리스크 게이트와 포지션 사이징 dry-run contract 추가
+   - `run_backtest` CLI의 실제 운영 설정 기반 RiskGate/PositionSizing 자동 조립 여부 결정
    - walk-forward, Monte Carlo 순서로 확장
 
 3. P1 전략 수익성

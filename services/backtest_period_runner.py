@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol, Sequence
 
+from common.types import Exchange, OrderSide as LiveOrderSide
 from common.trade_journal_schema import normalize_backtest_decision, normalize_backtest_execution
 from common.types import TradeSignal
 from interfaces.live_strategy import LiveStrategy
@@ -25,6 +26,16 @@ from services.backtest_execution_simulator import (
 
 class BacktestBarProvider(Protocol):
     async def get_bar(self, *, signal: TradeSignal, date_ymd: str, side: str) -> BacktestBar:
+        ...
+
+
+class BacktestPositionSizer(Protocol):
+    async def adjust_buy_qty(self, signal: TradeSignal, exchange: Exchange | None = None) -> tuple[int, str]:
+        ...
+
+
+class BacktestRiskGate(Protocol):
+    async def validate_order(self, **kwargs):
         ...
 
 
@@ -56,6 +67,8 @@ class BacktestPeriodRunner:
         backtest_journal_repository=None,
         run_id: str | None = None,
         metadata: dict | None = None,
+        position_sizing_service: BacktestPositionSizer | None = None,
+        risk_gate_service: BacktestRiskGate | None = None,
     ) -> None:
         self._strategy = strategy
         self._bar_provider = bar_provider
@@ -65,6 +78,8 @@ class BacktestPeriodRunner:
         self._backtest_journal_repository = backtest_journal_repository
         self._run_id = run_id
         self._metadata = metadata or {}
+        self._position_sizing_service = position_sizing_service
+        self._risk_gate_service = risk_gate_service
 
     async def run(self, dates: Sequence[str]) -> BacktestPeriodRunResult:
         result = BacktestPeriodRunResult(
@@ -85,7 +100,15 @@ class BacktestPeriodRunner:
         holdings = self._holdings_for_strategy()
         sell_signals = await self._strategy.check_exits(holdings)
         for signal in sell_signals:
-            report = await self._execute_signal(signal, date_ymd, side=OrderSide.SELL)
+            order = self._signal_to_order(signal, 0, side=OrderSide.SELL)
+            blocked_reason = await self._risk_gate_rejection_reason(order, signal, side=OrderSide.SELL)
+            if blocked_reason:
+                result.journal_records.append(
+                    self._rejected_signal_record(signal, date_ymd, blocked_reason, qty=order.qty)
+                )
+                continue
+
+            report = await self._execute_signal(signal, date_ymd, side=OrderSide.SELL, order=order)
             self._ledger.apply_execution(report)
             result.execution_reports.append(report)
             result.journal_records.append(normalize_backtest_execution(report))
@@ -95,17 +118,33 @@ class BacktestPeriodRunner:
             signal for signal in await self._strategy.scan()
             if signal.action == "BUY"
         ]
+        sized_signals: list[TradeSignal] = []
+        for signal in buy_signals:
+            sized_signal = await self._apply_position_sizing(signal, date_ymd, result)
+            if sized_signal is not None:
+                sized_signals.append(sized_signal)
+
         orders = [
             self._signal_to_order(signal, idx, side=OrderSide.BUY)
-            for idx, signal in enumerate(buy_signals)
+            for idx, signal in enumerate(sized_signals)
         ]
+        risk_passed: list[tuple[BacktestOrder, TradeSignal]] = []
+        for order, signal in zip(orders, sized_signals):
+            blocked_reason = await self._risk_gate_rejection_reason(order, signal, side=OrderSide.BUY)
+            if blocked_reason:
+                result.journal_records.append(
+                    self._rejected_signal_record(signal, date_ymd, blocked_reason, qty=order.qty)
+                )
+                continue
+            risk_passed.append((order, signal))
+
         decisions = self._ledger.reserve_buy_orders(
-            orders,
+            [order for order, _ in risk_passed],
             max_positions_per_strategy=self._config.max_positions_per_strategy,
         )
         signal_by_order_id = {
             order.order_id: signal
-            for order, signal in zip(orders, buy_signals)
+            for order, signal in risk_passed
         }
 
         for decision in decisions:
@@ -116,7 +155,7 @@ class BacktestPeriodRunner:
                 )
                 continue
 
-            report = await self._execute_signal(signal, date_ymd, side=OrderSide.BUY)
+            report = await self._execute_signal(signal, date_ymd, side=OrderSide.BUY, order=decision.order)
             self._ledger.apply_execution(report)
             result.execution_reports.append(report)
             result.journal_records.append(normalize_backtest_execution(report))
@@ -131,14 +170,66 @@ class BacktestPeriodRunner:
         date_ymd: str,
         *,
         side: OrderSide,
+        order: BacktestOrder | None = None,
     ) -> BacktestExecutionReport:
         bar = await self._bar_provider.get_bar(
             signal=signal,
             date_ymd=date_ymd,
             side=side.value,
         )
-        order = self._signal_to_order(signal, 0, side=side)
+        order = order or self._signal_to_order(signal, 0, side=side)
         return self._simulator.simulate(order, bar)
+
+    async def _apply_position_sizing(
+        self,
+        signal: TradeSignal,
+        date_ymd: str,
+        result: BacktestPeriodRunResult,
+    ) -> TradeSignal | None:
+        if self._position_sizing_service is None:
+            return signal
+
+        qty, reason = await self._position_sizing_service.adjust_buy_qty(
+            signal,
+            _exchange_for_signal(signal),
+        )
+        if qty == 0:
+            result.journal_records.append(
+                self._rejected_signal_record(
+                    signal,
+                    date_ymd,
+                    f"sizing_skip:{reason}",
+                    qty=0,
+                )
+            )
+            return None
+        return _signal_with_qty(signal, qty)
+
+    async def _risk_gate_rejection_reason(
+        self,
+        order: BacktestOrder,
+        signal: TradeSignal,
+        *,
+        side: OrderSide,
+    ) -> str:
+        if self._risk_gate_service is None:
+            return ""
+
+        response = await self._risk_gate_service.validate_order(
+            stock_code=order.code,
+            price=int(order.price),
+            qty=order.qty,
+            side=_live_order_side(side),
+            exchange=_exchange_for_signal(signal),
+            active_order_count=len(self._ledger.reservations),
+            source=f"strategy:{order.strategy}",
+            strategy_name=order.strategy,
+        )
+        if response is None:
+            return ""
+        data = getattr(response, "data", None)
+        rule = data.get("rule") if isinstance(data, dict) else None
+        return f"risk_gate:{rule or 'blocked'}"
 
     def _holdings_for_strategy(self) -> list[dict]:
         holdings: list[dict] = []
@@ -168,12 +259,19 @@ class BacktestPeriodRunner:
             priority=0,
         )
 
-    def _rejected_signal_record(self, signal: TradeSignal, date_ymd: str, reason: str) -> dict:
+    def _rejected_signal_record(
+        self,
+        signal: TradeSignal,
+        date_ymd: str,
+        reason: str,
+        *,
+        qty: int | None = None,
+    ) -> dict:
         return normalize_backtest_decision(
             {
                 "signal_time": _signal_time(date_ymd),
                 "current": signal.price,
-                "qty": signal.qty or self._config.default_qty,
+                "qty": self._resolved_qty(signal, qty),
                 "rejected_reason": reason,
                 "strategy": signal.strategy_name or self._strategy.name,
                 "name": signal.name,
@@ -184,6 +282,11 @@ class BacktestPeriodRunner:
             strategy=signal.strategy_name or self._strategy.name,
             accepted=False,
         )
+
+    def _resolved_qty(self, signal: TradeSignal, qty: int | None = None) -> int:
+        if qty is not None:
+            return qty
+        return signal.qty if signal.qty is not None else self._config.default_qty
 
     def _portfolio_summary(self) -> dict:
         return {
@@ -246,3 +349,18 @@ def _target_date(dates: Sequence[str]) -> str:
 def _default_run_id(strategy_name: str, dates: Sequence[str]) -> str:
     target_date = _target_date(dates) or "unknown"
     return f"period_{strategy_name}_{target_date}"
+
+
+def _signal_with_qty(signal: TradeSignal, qty: int) -> TradeSignal:
+    return signal.model_copy(update={"qty": qty})
+
+
+def _exchange_for_signal(signal: TradeSignal) -> Exchange:
+    try:
+        return Exchange(signal.exchange) if signal.exchange else Exchange.KRX
+    except ValueError:
+        return Exchange.KRX
+
+
+def _live_order_side(side: OrderSide) -> LiveOrderSide:
+    return LiveOrderSide.BUY if side == OrderSide.BUY else LiveOrderSide.SELL

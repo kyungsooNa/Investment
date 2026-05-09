@@ -98,9 +98,11 @@
 - 활성 `LiveStrategy` contract인 `scan()` / `check_exits()`를 날짜 루프로 감싼다.
 - 날짜마다 전략과 bar provider에 `set_backtest_date()`를 전달한다.
 - SELL 신호를 먼저 처리하고, 이후 BUY 신호를 처리한다.
-- BUY 신호는 ledger 예약 후 체결 시뮬레이터를 통과한다.
+- BUY 신호는 선택적 PositionSizing dry-run, 선택적 RiskGate dry-run, ledger 예약 후 체결 시뮬레이터를 통과한다.
 - SELL 신호는 체결 시뮬레이터를 통과한 뒤 장부에 반영한다.
 - 현금 부족, max positions, 미체결은 journal record로 남긴다.
+- PositionSizing 결과 수량이 0이면 `sizing_skip:*` rejected journal로 남긴다.
+- RiskGate 차단은 simulator/bar 조회 전에 `risk_gate:*` rejected journal로 남긴다.
 
 주요 파일:
 
@@ -143,26 +145,22 @@
 
 ### 1. 표준 journal 저장 경로 후속 정리
 
-기간 백테스트 결과는 이제 `BacktestJournalRepository`에 저장된다. 남은 작업은 저장된 execution journal을 운영 화면과 리포트에서 더 잘 활용하도록 정리하는 것이다.
+기간 백테스트 결과는 이제 `BacktestJournalRepository`에 저장되고 운영 UI에서 체결 상세를 볼 수 있다. 남은 작업은 리포트 활용도를 더 높이는 것이다.
 
 해야 할 일:
 
-- 저장된 period backtest run을 기존 `/api/virtual/backtest-journals` 목록/조회 UI에서 검증한다.
-- BUY/SELL execution record와 rejected decision record의 화면 표시 컬럼을 정리한다.
 - 부분체결/미체결 record가 운영자가 보기 쉬운 상태명과 reason으로 표시되는지 확인한다.
 - backtest-vs-live 비교 리포트에서 period run metadata를 함께 보여준다.
 
-### 2. RiskGate와 PositionSizing dry-run 연결
+### 2. RiskGate와 PositionSizing 운영 설정 조립
 
-현재 `BacktestPeriodRunner`는 `TradeSignal.qty` 또는 `default_qty`를 사용한다. 실거래와 더 가까워지려면 백테스트에서도 동일한 sizing/risk contract를 dry-run으로 호출해야 한다.
+`BacktestPeriodRunner`는 선택적으로 `PositionSizingService.adjust_buy_qty()`와 `RiskGateService.validate_order()` contract를 호출할 수 있다. 남은 작업은 CLI에서 실제 운영 설정 기반 인스턴스를 자동 조립할지 결정하는 것이다.
 
 해야 할 일:
 
-- `PositionSizingService`를 백테스트용 dry-run으로 호출한다.
-- `TradeSignal.qty is None`이면 sizing 결과를 사용한다.
-- 전략별 risk budget, stop distance, 계좌 현금 기준 수량을 반영한다.
-- `RiskGateService.validate_order()`와 같은 정책을 백테스트에서 재현한다.
-- RiskGate 차단을 `rejected_reason`으로 표준화한다.
+- `run_backtest` CLI에서 운영 설정 기반 RiskGate/PositionSizing 인스턴스를 자동 구성할지 결정한다.
+- 자동 구성한다면 백테스트용 account snapshot과 날짜별 risk counter를 어떻게 주입할지 정한다.
+- CLI 옵션으로 기본 수량만 쓸지, sizing/risk dry-run을 켤지 선택하게 할지 정한다.
 
 ### 3. 체결 정책 명시
 
@@ -334,7 +332,7 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 ## 현재 한계
 
 - CLI 지원 전략은 아직 `oneil_pocket_pivot` 하나다.
-- RiskGate와 PositionSizingService dry-run은 아직 연결되지 않았다.
+- `BacktestPeriodRunner`에는 RiskGate/PositionSizing dry-run contract가 연결되어 있지만, `run_backtest` CLI는 아직 실제 운영 설정 기반 인스턴스를 자동 조립하지 않는다.
 - 성과 리포트는 기본 요약 중심이다.
 - 과거 체결강도는 분봉 row에 `tday_rltv` 또는 `execution_strength` 유사 필드가 있어야 replay된다.
 - 과거 분봉 또는 프로그램매매 API가 비어 있으면 신호가 없거나 미체결/empty 결과가 나올 수 있다.
