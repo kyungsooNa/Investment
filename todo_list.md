@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-10 (run_backtest 운영 설정 기반 RiskGate/PositionSizing 옵션 연결)
+최종 업데이트: 2026-05-10 (run_backtest walk-forward 검증 옵션 연결)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -180,7 +180,9 @@
 - [ ] `--date YYYYMMDD` / `--from YYYYMMDD --to YYYYMMDD` 기반 과거 시점 재현용 market clock과 데이터 스냅샷 주입 구조를 만든다.
 - [ ] 실시간 API 응답 대신 과거 OHLCV/체결강도/프로그램매매 데이터를 공급하는 `BacktestStockQueryService` 또는 data replay adapter를 추가한다.
 - [ ] `run_strategy_debug`는 미매수 사유 진단, `run_backtest`는 기간 수익률/포트폴리오 검증으로 역할을 분리한다.
-- [ ] walk-forward 검증을 추가한다. 기간을 train/tune/test로 나누고, 파라미터 튜닝 구간과 검증 구간을 분리한다.
+- [x] walk-forward 검증을 추가한다. 기간을 train/tune/test로 나누고, 파라미터 튜닝 구간과 검증 구간을 분리한다.
+  - 완료된 부분: `BacktestWalkForwardRunner`를 추가해 날짜를 train/tune/test rolling window로 분리하고, 각 phase를 독립 `BacktestPeriodRunner`/ledger/strategy state로 실행한다.
+  - 완료된 부분: `scripts/run_backtest.py --walk-forward`와 `--wf-train-days` / `--wf-tune-days` / `--wf-test-days` / `--wf-step-days` 옵션을 추가해 CLI에서 검증 구간 요약과 JSON 출력을 지원한다.
 - [ ] 몬테카를로 시뮬레이션을 추가한다. trade 결과 순서를 섞어 최악 MDD, 연속 손실, ruin probability를 계산한다.
 - [ ] 단위 테스트 fixture를 만든다: 특정 날짜에 PP 통과, PP 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 고정 데이터로 검증한다.
 
@@ -352,7 +354,6 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - walk-forward 검증 추가
    - Monte Carlo 시뮬레이션 추가
    - 특정 날짜 fixture 기반 PP/BGU 통과·탈락 케이스 고정
 

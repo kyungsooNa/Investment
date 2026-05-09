@@ -136,11 +136,27 @@
 - console 출력과 JSON 출력을 지원한다.
 - 실행 결과를 `BacktestJournalRepository` 표준 저장 경로에 저장한다.
 - `--use-risk-sizing` 옵션으로 운영 설정 기반 `PositionSizingService`/`RiskGateService`를 백테스트용 ledger snapshot과 함께 dry-run으로 조립한다.
+- `--walk-forward` 옵션으로 기간을 train/tune/test rolling window로 나누고, 각 phase를 독립 period runner/ledger/strategy state로 실행한다.
+- `--wf-train-days`, `--wf-tune-days`, `--wf-test-days`, `--wf-step-days`로 walk-forward 창 크기와 이동 폭을 지정할 수 있다.
 
 주요 파일:
 
 - `scripts/run_backtest.py`
 - `tests/unit_test/scripts/test_run_backtest.py`
+
+### Walk-forward 검증
+
+- `BacktestWalkForwardRunner`를 추가했다.
+- 날짜 목록을 train/tune/test window로 분리한다.
+- `step_size`를 지정하지 않으면 test window 크기만큼 다음 구간으로 이동한다.
+- 마지막 구간은 train/tune 이후 test 날짜가 1일 이상 남아 있으면 부분 test window로 포함한다.
+- 각 phase는 runner factory를 통해 독립 실행되므로 포트폴리오 ledger, 전략 state, journal run을 phase별로 분리할 수 있다.
+- 요약 지표는 test phase만 집계한다: 검증 실현손익, 체결 수, rejected record 수.
+
+주요 파일:
+
+- `services/backtest_walk_forward.py`
+- `tests/unit_test/services/test_backtest_walk_forward.py`
 
 ## 남은 작업
 
@@ -179,14 +195,12 @@
 - 전략별/일자별 rejected reason 분포
 - 시장 국면별 성과
 
-### 5. Walk-forward와 Monte Carlo
+### 5. Monte Carlo
 
 단일 기간 결과만으로 전략을 판단하지 않기 위해 검증 방식을 확장해야 한다.
 
 해야 할 일:
 
-- train/tune/test 기간 분리
-- 파라미터 튜닝 구간과 검증 구간 분리
 - trade 결과 순서 shuffle 기반 Monte Carlo
 - 최악 MDD, 연속 손실, ruin probability 계산
 
@@ -256,6 +270,24 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 ```
 
 이 옵션은 실제 주문을 내지 않는다. `config.yaml` / `risk_gate_config.yaml`의 PositionSizing/RiskGate 설정을 읽고, 백테스트 포트폴리오 ledger를 계좌 snapshot처럼 사용해 수량 조정과 주문 차단을 dry-run으로 재현한다.
+
+### Walk-forward 검증 실행
+
+```powershell
+python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260630 --walk-forward --wf-train-days 20 --wf-tune-days 5 --wf-test-days 5
+```
+
+이 실행은 날짜 목록을 train 20일, tune 5일, test 5일 구간으로 나눈다. `--wf-step-days`를 생략하면 test window 크기만큼 다음 구간으로 이동한다.
+
+이 구간들은 서로 독립 실행된다. 즉, train에서 생긴 보유 종목이나 현금 상태가 tune/test로 이어지지 않고, 각 phase의 journal run도 따로 저장된다.
+
+이 옵션은 아직 자동 파라미터 탐색을 수행하지 않는다. 현재 구현은 튜닝 구간과 검증 구간을 분리해 실행하고, 검증(test) 구간 성과만 요약 집계하는 기반이다.
+
+운영 RiskGate/PositionSizing dry-run과 함께 사용할 수 있다.
+
+```powershell
+python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260630 --walk-forward --wf-train-days 20 --wf-tune-days 5 --wf-test-days 5 --use-risk-sizing
+```
 
 ### JSON으로 출력
 
@@ -332,6 +364,7 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 
 - CLI 지원 전략은 아직 `oneil_pocket_pivot` 하나다.
 - `--use-risk-sizing`은 백테스트 ledger 기반 snapshot을 사용하므로 실제 계좌 잔고나 미체결 주문 상태를 조회하지 않는다.
+- `--walk-forward`는 train/tune/test 분리 실행과 test phase 요약 집계까지 지원한다. 자동 파라미터 최적화와 Monte Carlo 검증은 아직 남아 있다.
 - 성과 리포트는 기본 요약 중심이다.
 - 과거 체결강도는 분봉 row에 `tday_rltv` 또는 `execution_strength` 유사 필드가 있어야 replay된다.
 - 과거 분봉 또는 프로그램매매 API가 비어 있으면 신호가 없거나 미체결/empty 결과가 나올 수 있다.
@@ -345,6 +378,7 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 pytest tests/unit_test/services/test_backtest_execution_simulator.py -v
 pytest tests/unit_test/services/test_backtest_period_runner.py -v
 pytest tests/unit_test/services/test_backtest_replay_adapter.py -v
+pytest tests/unit_test/services/test_backtest_walk_forward.py -v
 pytest tests/unit_test/scripts/test_run_backtest.py -v
 ```
 
@@ -357,6 +391,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `22 passed`
-- 전체 단위 테스트: `4126 passed`
+- 관련 테스트: `42 passed`
+- 전체 단위 테스트: `4149 passed`
 - 전체 통합 테스트: `208 passed`

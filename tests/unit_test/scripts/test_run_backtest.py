@@ -13,6 +13,8 @@ from scripts.run_backtest import (
     _build_dates,
     _build_risk_sizing_services,
     _format_console,
+    _format_walk_forward_console,
+    _format_walk_forward_json,
     _get_program_provider,
     _parse_args,
 )
@@ -44,6 +46,34 @@ def test_parse_args_accepts_use_risk_sizing(monkeypatch):
     assert args.use_risk_sizing is True
 
 
+def test_parse_args_accepts_walk_forward_options(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_backtest",
+            "--dates",
+            "20260501,20260502,20260503",
+            "--walk-forward",
+            "--wf-train-days",
+            "20",
+            "--wf-tune-days",
+            "5",
+            "--wf-test-days",
+            "3",
+            "--wf-step-days",
+            "2",
+        ],
+    )
+
+    args = _parse_args()
+
+    assert args.walk_forward is True
+    assert args.wf_train_days == 20
+    assert args.wf_tune_days == 5
+    assert args.wf_test_days == 3
+    assert args.wf_step_days == 2
+
+
 def test_format_console_summarizes_execution_and_portfolio():
     result = SimpleNamespace(
         strategy_name="오닐PP/BGU",
@@ -70,6 +100,59 @@ def test_format_console_summarizes_execution_and_portfolio():
     assert "거부 기록: 1" in text
     assert "실현손익(순): 90,000" in text
     assert "journal run: period_20260501_20260502" in text
+
+
+def test_format_walk_forward_console_summarizes_test_windows():
+    result = SimpleNamespace(
+        summary={
+            "segment_count": 2,
+            "train_days": 40,
+            "tune_days": 10,
+            "test_days": 6,
+            "test_realized_net_pnl": 120_000,
+            "test_execution_count": 7,
+            "test_rejected_count": 3,
+        }
+    )
+
+    text = _format_walk_forward_console(result)
+
+    assert "[WALK-FORWARD BACKTEST RESULT]" in text
+    assert "구간 수: 2" in text
+    assert "검증 실현손익(순): 120,000" in text
+    assert "검증 체결 수: 7" in text
+    assert "검증 거부 기록: 3" in text
+
+
+def test_format_walk_forward_json_includes_summary_and_segment_phase_runs():
+    phase_result = SimpleNamespace(
+        strategy_name="오닐PP/BGU",
+        dates=["20260501"],
+        execution_reports=[],
+        journal_records=[],
+        portfolio={"realized_net_pnl": 1_000},
+        saved_journal_run={"run_id": "wf_0_test"},
+    )
+    result = SimpleNamespace(
+        summary={"segment_count": 1},
+        segments=[
+            SimpleNamespace(
+                index=0,
+                train_dates=["20260501"],
+                tune_dates=["20260502"],
+                test_dates=["20260503"],
+                train_result=phase_result,
+                tune_result=phase_result,
+                test_result=phase_result,
+            )
+        ],
+    )
+
+    text = _format_walk_forward_json(result)
+
+    assert '"summary": {' in text
+    assert '"segment_count": 1' in text
+    assert '"run_id": "wf_0_test"' in text
 
 
 def test_get_program_provider_uses_market_data_broker_when_available():

@@ -44,6 +44,16 @@ def _parse_args() -> argparse.Namespace:
         help="운영 설정 기반 PositionSizing/RiskGate dry-run을 기간 백테스트에 적용",
     )
     parser.add_argument(
+        "--walk-forward",
+        action="store_true",
+        default=False,
+        help="기간을 train/tune/test 창으로 나누어 walk-forward 검증을 실행",
+    )
+    parser.add_argument("--wf-train-days", type=int, default=20, dest="wf_train_days")
+    parser.add_argument("--wf-tune-days", type=int, default=5, dest="wf_tune_days")
+    parser.add_argument("--wf-test-days", type=int, default=5, dest="wf_test_days")
+    parser.add_argument("--wf-step-days", type=int, default=None, dest="wf_step_days")
+    parser.add_argument(
         "--paper",
         action="store_true",
         default=False,
@@ -196,8 +206,8 @@ def _format_console(result) -> str:
     return "\n".join(lines)
 
 
-def _format_json(result) -> str:
-    payload = {
+def _result_to_payload(result) -> dict[str, Any]:
+    return {
         "strategy_name": result.strategy_name,
         "dates": result.dates,
         "execution_reports": [
@@ -217,6 +227,44 @@ def _format_json(result) -> str:
         "portfolio": result.portfolio,
         "saved_journal_run": getattr(result, "saved_journal_run", {}),
     }
+
+
+def _format_json(result) -> str:
+    payload = _result_to_payload(result)
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _format_walk_forward_console(result) -> str:
+    summary = result.summary or {}
+    lines = [
+        "[WALK-FORWARD BACKTEST RESULT]",
+        f"구간 수: {summary.get('segment_count', 0)}",
+        f"train 일수 합계: {summary.get('train_days', 0)}",
+        f"tune 일수 합계: {summary.get('tune_days', 0)}",
+        f"test 일수 합계: {summary.get('test_days', 0)}",
+        f"검증 실현손익(순): {summary.get('test_realized_net_pnl', 0):,.0f}",
+        f"검증 체결 수: {summary.get('test_execution_count', 0)}",
+        f"검증 거부 기록: {summary.get('test_rejected_count', 0)}",
+    ]
+    return "\n".join(lines)
+
+
+def _format_walk_forward_json(result) -> str:
+    payload = {
+        "summary": result.summary,
+        "segments": [
+            {
+                "index": segment.index,
+                "train_dates": segment.train_dates,
+                "tune_dates": segment.tune_dates,
+                "test_dates": segment.test_dates,
+                "train_result": _result_to_payload(segment.train_result),
+                "tune_result": _result_to_payload(segment.tune_result),
+                "test_result": _result_to_payload(segment.test_result),
+            }
+            for segment in result.segments
+        ],
+    }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -229,6 +277,10 @@ async def _run(args: argparse.Namespace) -> None:
     from services.backtest_replay_adapter import (
         StockQueryBacktestReplayService,
         StockQueryIntradayReplayBarProvider,
+    )
+    from services.backtest_walk_forward import (
+        BacktestWalkForwardConfig,
+        BacktestWalkForwardRunner,
     )
     from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 
@@ -250,48 +302,97 @@ async def _run(args: argparse.Namespace) -> None:
         program_provider=_get_program_provider(sqs),
     )
     bar_provider = StockQueryIntradayReplayBarProvider(replay_sqs)
-    ledger = BacktestPortfolioLedger(initial_cash=args.initial_cash)
-    risk_sizing = _build_risk_sizing_services(
-        use_risk_sizing=args.use_risk_sizing,
-        config=app_config,
-        ledger=ledger,
-        indicator_service=getattr(sqs, "indicator_service", None),
-        logger=bootstrap_logger,
-    )
-
-    max_positions = None
     with tempfile.TemporaryDirectory(prefix="period_backtest_") as tmp_dir:
-        strategy = OneilPocketPivotStrategy(
-            stock_query_service=replay_sqs,
-            universe_service=universe_service,
-            market_clock=market_clock,
-            logger=logging.getLogger("backtest.OneilPocketPivot"),
-            state_file=os.path.join(tmp_dir, "pp_position_state.json"),
-        )
-        if args.max_positions is not None:
-            max_positions = {strategy.name: args.max_positions}
-
-        runner = BacktestPeriodRunner(
-            strategy=strategy,
-            bar_provider=bar_provider,
-            ledger=ledger,
-            backtest_journal_repository=BacktestJournalRepository(),
-            run_id=f"period_{strategy.name}_{dates[0]}_{dates[-1]}",
-            metadata={
+        def make_runner(
+            *,
+            phase: str | None = None,
+            segment=None,
+            phase_dates: list[str] | None = None,
+        ) -> BacktestPeriodRunner:
+            ledger = BacktestPortfolioLedger(initial_cash=args.initial_cash)
+            risk_sizing = _build_risk_sizing_services(
+                use_risk_sizing=args.use_risk_sizing,
+                config=app_config,
+                ledger=ledger,
+                indicator_service=getattr(sqs, "indicator_service", None),
+                logger=bootstrap_logger,
+            )
+            state_suffix = f"_{segment.index}_{phase}" if segment is not None else ""
+            strategy = OneilPocketPivotStrategy(
+                stock_query_service=replay_sqs,
+                universe_service=universe_service,
+                market_clock=market_clock,
+                logger=logging.getLogger("backtest.OneilPocketPivot"),
+                state_file=os.path.join(tmp_dir, f"pp_position_state{state_suffix}.json"),
+            )
+            max_positions = (
+                {strategy.name: args.max_positions}
+                if args.max_positions is not None
+                else None
+            )
+            target_dates = phase_dates or dates
+            run_prefix = "wf" if segment is not None else "period"
+            run_parts = [run_prefix]
+            if segment is not None:
+                run_parts.extend([str(segment.index), str(phase)])
+            run_parts.extend([strategy.name, target_dates[0], target_dates[-1]])
+            metadata = {
                 "cli": "scripts.run_backtest",
                 "initial_cash": args.initial_cash,
                 "max_positions": args.max_positions,
                 "use_risk_sizing": args.use_risk_sizing,
                 "output": args.output,
-            },
-            config=BacktestPeriodRunnerConfig(max_positions_per_strategy=max_positions),
-            position_sizing_service=risk_sizing.position_sizing_service,
-            risk_gate_service=risk_sizing.risk_gate_service,
-        )
-        print("[INFO] 기간 백테스트 실행 중...\n")
-        result = await runner.run(dates)
+                "walk_forward": segment is not None,
+            }
+            if segment is not None:
+                metadata.update(
+                    {
+                        "walk_forward_phase": phase,
+                        "walk_forward_segment": segment.index,
+                        "train_dates": segment.train_dates,
+                        "tune_dates": segment.tune_dates,
+                        "test_dates": segment.test_dates,
+                    }
+                )
+            return BacktestPeriodRunner(
+                strategy=strategy,
+                bar_provider=bar_provider,
+                ledger=ledger,
+                backtest_journal_repository=BacktestJournalRepository(),
+                run_id="_".join(run_parts),
+                metadata=metadata,
+                config=BacktestPeriodRunnerConfig(max_positions_per_strategy=max_positions),
+                position_sizing_service=risk_sizing.position_sizing_service,
+                risk_gate_service=risk_sizing.risk_gate_service,
+            )
 
-    rendered = _format_json(result) if args.output == "json" else _format_console(result)
+        if args.walk_forward:
+            config = BacktestWalkForwardConfig(
+                train_size=args.wf_train_days,
+                tune_size=args.wf_tune_days,
+                test_size=args.wf_test_days,
+                step_size=args.wf_step_days,
+            )
+
+            def runner_factory(phase: str, segment):
+                phase_dates = getattr(segment, f"{phase}_dates")
+                return make_runner(phase=phase, segment=segment, phase_dates=phase_dates)
+
+            print("[INFO] walk-forward 백테스트 실행 중...\n")
+            result = await BacktestWalkForwardRunner(
+                runner_factory=runner_factory,
+                config=config,
+            ).run(dates)
+            rendered = (
+                _format_walk_forward_json(result)
+                if args.output == "json"
+                else _format_walk_forward_console(result)
+            )
+        else:
+            print("[INFO] 기간 백테스트 실행 중...\n")
+            result = await make_runner().run(dates)
+            rendered = _format_json(result) if args.output == "json" else _format_console(result)
+
     if args.output_file:
         with open(args.output_file, "w", encoding="utf-8") as fp:
             fp.write(rendered)
