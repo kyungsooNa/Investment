@@ -61,6 +61,15 @@ class StaticBarProvider:
         return self.bars[(date_ymd, signal.code, side)]
 
 
+class DatedStaticBarProvider(StaticBarProvider):
+    def __init__(self, bars: dict[tuple[str, str, str], BacktestBar]) -> None:
+        super().__init__(bars)
+        self.dates: list[str] = []
+
+    def set_backtest_date(self, date_ymd: str) -> None:
+        self.dates.append(date_ymd)
+
+
 @pytest.mark.asyncio
 async def test_period_runner_executes_buy_and_sell_through_ledger():
     strategy = FakeStrategy()
@@ -120,3 +129,21 @@ async def test_period_runner_applies_strategy_max_positions():
     assert result.execution_reports == []
     assert result.journal_records[0]["status"] == "REJECTED"
     assert result.journal_records[0]["rejected_reason"] == "max_positions"
+
+
+@pytest.mark.asyncio
+async def test_period_runner_sets_backtest_date_on_bar_provider():
+    strategy = FakeStrategy()
+    provider = DatedStaticBarProvider({
+        ("20260501", "005930", "BUY"): BacktestBar("20260501 091000", 70_000, 70_500, 69_500, 70_200, 1_000),
+    })
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=provider,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+    )
+
+    await runner.run(["20260501"])
+
+    assert strategy.scan_calls == ["20260501"]
+    assert provider.dates == ["20260501"]

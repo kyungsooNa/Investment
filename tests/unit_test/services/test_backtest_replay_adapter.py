@@ -7,7 +7,10 @@ import pytest
 from common.types import TradeSignal
 from services.backtest_period_runner import BacktestPeriodRunner
 from services.backtest_execution_simulator import BacktestPortfolioLedger
-from services.backtest_replay_adapter import StockQueryIntradayReplayBarProvider
+from services.backtest_replay_adapter import (
+    StockQueryBacktestReplayService,
+    StockQueryIntradayReplayBarProvider,
+)
 
 
 def _signal(code="005930", price=70_000, qty=1, action="BUY"):
@@ -158,3 +161,82 @@ async def test_replay_provider_raises_when_no_intraday_rows():
 
     with pytest.raises(ValueError, match="intraday rows not found"):
         await provider.get_bar(signal=_signal(price=70_000), date_ymd="20260501", side="BUY")
+
+
+@pytest.mark.asyncio
+async def test_stock_query_backtest_replay_service_synthesizes_current_price_with_program_daily():
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = [
+        {
+            "stck_bsop_date": "20260501",
+            "stck_cntg_hour": "090000",
+            "stck_oprc": "70000",
+            "stck_hgpr": "71000",
+            "stck_lwpr": "69500",
+            "stck_prpr": "70500",
+            "cntg_vol": "10",
+        },
+        {
+            "stck_bsop_date": "20260501",
+            "stck_cntg_hour": "091000",
+            "stck_oprc": "70600",
+            "stck_hgpr": "72000",
+            "stck_lwpr": "70400",
+            "stck_prpr": "71800",
+            "cntg_vol": "20",
+            "stck_sdpr": "69000",
+        },
+    ]
+    program_provider = AsyncMock()
+    program_provider.get_program_trade_by_stock_daily.return_value = {
+        "stck_bsop_date": "20260501",
+        "whol_smtn_ntby_qty": "30000",
+    }
+    replay = StockQueryBacktestReplayService(sqs, program_provider=program_provider)
+    replay.set_backtest_date("20260501")
+
+    response = await replay.get_current_price("005930")
+
+    output = response.data["output"]
+    assert response.rt_cd == "0"
+    assert output["stck_prpr"] == "71800"
+    assert output["stck_oprc"] == "70000"
+    assert output["stck_hgpr"] == "72000"
+    assert output["stck_lwpr"] == "69500"
+    assert output["acml_vol"] == "30"
+    assert output["stck_sdpr"] == "69000"
+    assert output["prdy_vrss"] == "2800"
+    assert output["prdy_vrss_sign"] == "2"
+    assert output["pgtr_ntby_qty"] == "30000"
+    sqs.get_current_price.assert_not_awaited()
+    program_provider.get_program_trade_by_stock_daily.assert_awaited_once_with("005930", "20260501")
+
+
+@pytest.mark.asyncio
+async def test_stock_query_backtest_replay_service_replays_execution_strength_from_intraday_rows():
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = [
+        {"stck_bsop_date": "20260501", "stck_cntg_hour": "090000", "stck_prpr": "70000", "tday_rltv": "121.5"},
+        {"stck_bsop_date": "20260501", "stck_cntg_hour": "091000", "stck_prpr": "71000", "execution_strength": "132.4"},
+    ]
+    replay = StockQueryBacktestReplayService(sqs)
+    replay.set_backtest_date("20260501")
+
+    response = await replay.get_stock_conclusion("005930")
+
+    assert response.rt_cd == "0"
+    assert response.data["output"] == [{"tday_rltv": "132.4"}]
+    sqs.get_stock_conclusion.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stock_query_backtest_replay_service_uses_backtest_date_for_recent_daily_ohlcv():
+    sqs = AsyncMock()
+    sqs.get_recent_daily_ohlcv.return_value = "delegated"
+    replay = StockQueryBacktestReplayService(sqs)
+    replay.set_backtest_date("20260501")
+
+    result = await replay.get_recent_daily_ohlcv("005930", limit=60)
+
+    assert result == "delegated"
+    sqs.get_recent_daily_ohlcv.assert_awaited_once_with("005930", limit=60, end_date="20260501")

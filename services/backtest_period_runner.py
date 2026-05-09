@@ -66,7 +66,7 @@ class BacktestPeriodRunner:
         )
 
         for date_ymd in result.dates:
-            self._set_strategy_date(date_ymd)
+            self._set_backtest_date(date_ymd)
             await self._run_exits(date_ymd, result)
             await self._run_entries(date_ymd, result)
 
@@ -193,10 +193,11 @@ class BacktestPeriodRunner:
             },
         }
 
-    def _set_strategy_date(self, date_ymd: str) -> None:
-        setter = getattr(self._strategy, "set_backtest_date", None)
-        if callable(setter):
-            setter(date_ymd)
+    def _set_backtest_date(self, date_ymd: str) -> None:
+        for target in (self._strategy, self._bar_provider):
+            setter = getattr(target, "set_backtest_date", None)
+            if callable(setter):
+                setter(date_ymd)
 
 
 def _signal_time(date_ymd: str) -> str:
