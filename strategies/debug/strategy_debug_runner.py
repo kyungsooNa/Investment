@@ -8,6 +8,13 @@ from common.trade_journal_schema import normalize_backtest_decision
 from common.types import TradeSignal
 from interfaces.live_strategy import LiveStrategy
 from strategies.debug.rejection_collector import RejectionCollector, RejectionEvent
+from services.backtest_execution_simulator import (
+    BacktestOrder,
+    BacktestPortfolioLedger,
+    OrderSide,
+    OrderType,
+    PortfolioDecision,
+)
 
 
 @dataclass
@@ -21,6 +28,7 @@ class DebugReport:
     events: List[RejectionEvent]
     limitations: List[str] = field(default_factory=list)
     journal_records: List[dict] = field(default_factory=list)
+    portfolio_decisions: List[PortfolioDecision] = field(default_factory=list)
 
 
 class _UniverseFilterProxy:
@@ -79,6 +87,8 @@ class StrategyDebugRunner:
         allowed_stages: tuple = (0, 2),
         backtest_journal_repository=None,
         target_date: str = "",
+        backtest_portfolio_ledger: BacktestPortfolioLedger | None = None,
+        max_positions_per_strategy: dict[str, int] | None = None,
     ) -> None:
         self._strategy = strategy
         self._debug_logger = debug_logger
@@ -86,6 +96,8 @@ class StrategyDebugRunner:
         self._allowed_stages = allowed_stages
         self._backtest_journal_repository = backtest_journal_repository
         self._target_date = target_date
+        self._backtest_portfolio_ledger = backtest_portfolio_ledger
+        self._max_positions_per_strategy = max_positions_per_strategy
 
     async def _apply_stage_guard(self, codes: List[str]) -> List[str]:
         """stage_service가 주입된 경우 stage 필터를 적용하고 stage_blocked 이벤트를 emit한다."""
@@ -154,6 +166,7 @@ class StrategyDebugRunner:
             events=col.events,
             limitations=list(self.LIMITATIONS),
         )
+        report.portfolio_decisions = self._reserve_signal_orders(signals)
         report.journal_records = _build_debug_journal_records(report, target_date=self._target_date)
 
         if self._backtest_journal_repository is not None and report.journal_records:
@@ -174,12 +187,53 @@ class StrategyDebugRunner:
 
         return report
 
+    def _reserve_signal_orders(self, signals: List[TradeSignal]) -> List[PortfolioDecision]:
+        if self._backtest_portfolio_ledger is None:
+            return []
+
+        orders = [
+            _signal_to_backtest_order(signal, idx)
+            for idx, signal in enumerate(signals)
+            if signal.action == "BUY"
+        ]
+        if not orders:
+            return []
+        return self._backtest_portfolio_ledger.reserve_buy_orders(
+            orders,
+            max_positions_per_strategy=self._max_positions_per_strategy,
+        )
+
 
 def _build_debug_journal_records(report: DebugReport, *, target_date: str = "") -> List[dict]:
     records: List[dict] = []
     default_time = _signal_time_from_target_date(target_date)
+    portfolio_decision_by_code = {
+        decision.order.code: decision
+        for decision in report.portfolio_decisions
+    }
 
     for signal in report.signals:
+        portfolio_decision = portfolio_decision_by_code.get(signal.code)
+        if portfolio_decision is not None and not portfolio_decision.accepted:
+            records.append(
+                normalize_backtest_decision(
+                    {
+                        "signal_time": default_time,
+                        "current": signal.price,
+                        "qty": signal.qty,
+                        "rejected_reason": portfolio_decision.reason,
+                        "strategy": signal.strategy_name or report.strategy_name,
+                        "name": signal.name,
+                        "action": signal.action,
+                        "exchange": signal.exchange,
+                    },
+                    stock_code=signal.code,
+                    strategy=signal.strategy_name or report.strategy_name,
+                    accepted=False,
+                )
+            )
+            continue
+
         records.append(
             normalize_backtest_decision(
                 {
@@ -228,6 +282,19 @@ def _build_debug_journal_records(report: DebugReport, *, target_date: str = "") 
         )
 
     return records
+
+
+def _signal_to_backtest_order(signal: TradeSignal, idx: int) -> BacktestOrder:
+    return BacktestOrder(
+        order_id=f"debug_{signal.strategy_name or 'strategy'}_{signal.code}_{idx}",
+        code=signal.code,
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=signal.price,
+        qty=signal.qty or 1,
+        strategy=signal.strategy_name,
+        priority=0,
+    )
 
 
 def _event_price(event: RejectionEvent):

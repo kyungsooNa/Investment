@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-09 (P0-3 체결 시뮬레이터/장부 기본 구현 및 우선순위 재정리)
+최종 업데이트: 2026-05-09 (P0-3 활성 전략 debug dry-run 연결 및 우선순위 재정리)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -10,6 +10,7 @@
 - 이미 적용된 항목은 새 기능으로 다시 넣지 않고, 검증/고도화 과제로만 남긴다.
 - 후보군 관리는 신규 구축 과제가 아니라 기존 `OneilUniverseService` / `SubscriptionPolicy` 구조의 공통 파이프라인 확장 과제로 본다.
 - 주문/브로커/스케줄러 변경은 테스트 hang 가이드와 paper/real 분기 검증을 함께 적용한다.
+- `VolumeBreakoutStrategy`, `VolumeBreakoutLiveStrategy`, `TraditionalVolumeBreakoutStrategy`, `GapUpPullbackStrategy`, `ProgramBuyFollowStrategy`는 현재 사용하지 않는 전략이므로 신규 연결/개선 우선순위에서 제외한다.
 
 ---
 
@@ -76,6 +77,8 @@
   - 진행 필요: 기존 전략별 백테스트 저장 경로가 새 체결 리포트를 사용해 표준 journal을 저장하도록 연결한다.
 - [~] 포트폴리오 단위 현금/보유/예약주문 장부를 만든다. 동시 신호 발생 시 자금 부족, 전략별 max positions, 우선순위 정렬을 재현한다.
   - 완료된 부분: `BacktestPortfolioLedger`를 추가해 현금 예약, 체결 반영, 보유 수량/평단, 실현 순손익, 우선순위 정렬, 자금 부족 차단, 전략별 max positions 제한을 테스트로 고정했다.
+  - 완료된 부분: 활성 O'Neil 계열 `StrategyDebugRunner`에 선택적 portfolio ledger dry-run을 연결해 BUY 신호가 현금 부족/전략별 max positions에 걸리면 표준 journal의 `REJECTED`/`rejected_reason`으로 남기도록 했다.
+  - 완료된 부분: `scripts/run_strategy_debug.py`에 `--portfolio-cash`, `--max-positions` 옵션을 추가해 운영자가 debug 실행에서 포트폴리오 예약 검증을 켤 수 있게 했다.
   - 진행 필요: 기간 백테스트 runner에서 동시 신호 묶음을 ledger 예약/체결 흐름으로 통과시킨다.
 - [ ] 리스크 게이트와 포지션 사이징을 백테스트에서도 동일하게 호출하거나, 동일 contract의 dry-run 구현으로 검증한다.
 
@@ -83,6 +86,9 @@
 
 - `services/backtest_execution_simulator.py`
 - `tests/unit_test/services/test_backtest_execution_simulator.py`
+- `strategies/debug/strategy_debug_runner.py`
+- `strategies/debug/rejection_report.py`
+- `scripts/run_strategy_debug.py`
 - `utils/transaction_cost_utils.py`
 - `common/trade_journal_schema.py`
 
@@ -326,9 +332,9 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - 기존 전략별 백테스트 runner가 `BacktestExecutionSimulator`와 `BacktestPortfolioLedger`를 사용하도록 연결
+   - 활성 전략군 중심으로 기간 백테스트 runner 설계 (`run_strategy_debug`는 미매수 사유/portfolio dry-run, `run_backtest`는 기간 수익률/체결/장부)
    - 체결 리포트 기반 표준 journal 저장 경로 확장
-   - 포트폴리오 cash ledger로 동시 신호, 자금 부족, 전략별 max positions, 우선순위 정렬 재현
+   - 포트폴리오 cash ledger로 동시 신호, 자금 부족, 전략별 max positions, 우선순위 정렬을 기간 백테스트에서 재현
    - 리스크 게이트와 포지션 사이징 dry-run contract 추가
    - 과거 market clock/data replay adapter, walk-forward, Monte Carlo 순서로 확장
 

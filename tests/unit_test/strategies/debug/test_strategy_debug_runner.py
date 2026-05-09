@@ -12,6 +12,7 @@ from strategies.debug.strategy_debug_runner import (
     _UniverseFilterProxy,
 )
 from strategies.oneil_common_types import OSBWatchlistItem
+from services.backtest_execution_simulator import BacktestPortfolioLedger
 
 
 # ── 헬퍼 ─────────────────────────────────────────────────────────────
@@ -286,3 +287,68 @@ class TestStrategyDebugRunner:
         assert kwargs["run_id"] == "debug_OneilPocketPivot_20260505"
         assert kwargs["strategy"] == "OneilPocketPivot"
         assert kwargs["target_date"] == "20260505"
+
+    async def test_debug_runner_marks_signal_rejected_when_portfolio_cash_is_short(self):
+        signal = TradeSignal(
+            code="005930",
+            name="삼성전자",
+            action="BUY",
+            price=70_000,
+            qty=2,
+            reason="pocket_pivot",
+            strategy_name="OneilPocketPivot",
+        )
+        strategy = _make_strategy(
+            watchlist={"005930": _make_watchlist_item("005930")},
+            signals=[signal],
+        )
+        strategy.name = "OneilPocketPivot"
+        ledger = BacktestPortfolioLedger(initial_cash=100_000)
+        runner = StrategyDebugRunner(
+            strategy,
+            _make_debug_logger(),
+            backtest_portfolio_ledger=ledger,
+            target_date="20260505",
+        )
+
+        report = await runner.run(candidate_codes=["005930"])
+
+        assert len(report.portfolio_decisions) == 1
+        assert report.portfolio_decisions[0].accepted is False
+        assert report.portfolio_decisions[0].reason == "cash_short"
+        assert report.journal_records[0]["status"] == "REJECTED"
+        assert report.journal_records[0]["side"] == "REJECTED"
+        assert report.journal_records[0]["code"] == "005930"
+        assert report.journal_records[0]["decision_reason"] == ""
+        assert report.journal_records[0]["rejected_reason"] == "cash_short"
+
+    async def test_debug_runner_keeps_signal_when_portfolio_reservation_succeeds(self):
+        signal = TradeSignal(
+            code="005930",
+            name="삼성전자",
+            action="BUY",
+            price=70_000,
+            qty=1,
+            reason="pocket_pivot",
+            strategy_name="OneilPocketPivot",
+        )
+        strategy = _make_strategy(
+            watchlist={"005930": _make_watchlist_item("005930")},
+            signals=[signal],
+        )
+        strategy.name = "OneilPocketPivot"
+        ledger = BacktestPortfolioLedger(initial_cash=1_000_000)
+        runner = StrategyDebugRunner(
+            strategy,
+            _make_debug_logger(),
+            backtest_portfolio_ledger=ledger,
+            target_date="20260505",
+        )
+
+        report = await runner.run(candidate_codes=["005930"])
+
+        assert len(report.portfolio_decisions) == 1
+        assert report.portfolio_decisions[0].accepted is True
+        assert report.journal_records[0]["status"] == "SIGNAL"
+        assert report.journal_records[0]["decision_reason"] == "pocket_pivot"
+        assert ledger.reserved_cash > 70_000
