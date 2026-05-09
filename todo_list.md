@@ -84,14 +84,17 @@
 - [~] 활성 전략군용 기간 백테스트 runner를 만든다.
   - 완료된 부분: `BacktestPeriodRunner`를 추가해 `LiveStrategy.scan()` / `check_exits()` contract를 날짜 루프로 감싸고, BUY 신호 → ledger 예약 → simulator 체결 → ledger 반영, SELL 신호 → simulator 체결 → ledger 반영 흐름을 테스트로 고정했다.
   - 완료된 부분: 기간 runner가 현금 부족, 전략별 max positions 차단을 표준 rejected journal로 남긴다.
-  - 진행 필요: 과거 OHLCV/체결강도/프로그램매매 replay adapter와 CLI `run_backtest` 진입점을 연결한다.
+  - 완료된 부분: `StockQueryIntradayReplayBarProvider`를 추가해 `StockQueryService.get_day_intraday_minutes_list()` 결과를 `BacktestBar`로 표준화하고, 신호 가격이 닿는 첫 분봉을 체결 후보 봉으로 제공한다.
+  - 진행 필요: 체결강도/프로그램매매 replay adapter와 CLI `run_backtest` 진입점을 연결한다.
 
 주요 파일:
 
 - `services/backtest_execution_simulator.py`
 - `services/backtest_period_runner.py`
+- `services/backtest_replay_adapter.py`
 - `tests/unit_test/services/test_backtest_execution_simulator.py`
 - `tests/unit_test/services/test_backtest_period_runner.py`
+- `tests/unit_test/services/test_backtest_replay_adapter.py`
 - `strategies/debug/strategy_debug_runner.py`
 - `strategies/debug/rejection_report.py`
 - `scripts/run_strategy_debug.py`
@@ -338,7 +341,7 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - 과거 OHLCV/체결강도/프로그램매매 data replay adapter 추가
+   - 과거 체결강도/프로그램매매 data replay adapter 추가
    - `BacktestPeriodRunner`에 replay adapter를 연결하고 CLI `run_backtest` 진입점 추가
    - 체결 리포트 기반 표준 journal 저장 경로 확장
    - 포트폴리오 cash ledger로 동시 신호, 자금 부족, 전략별 max positions, 우선순위 정렬을 기간 백테스트에서 재현
