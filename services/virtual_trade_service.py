@@ -1,17 +1,57 @@
 # services/virtual_trade_service.py
 import logging
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 import pandas as pd
 import bisect
 from functools import lru_cache
 from datetime import datetime, timedelta
 
-from repositories.virtual_trade_repository import VirtualTradeRepository
+from repositories.virtual_trade_repository import VirtualTradeRepository, _FORCE_CLOSE_REASON
 from core.market_clock import MarketClock
 from common.trade_journal_comparison import compare_trade_journals
 from utils.transaction_cost_utils import TransactionCostUtils
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_position_qty(value: Any) -> int:
+    try:
+        text = str(value if value is not None else "").replace(",", "").strip()
+        return int(float(text)) if text else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _first_non_empty(mapping: dict, keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = mapping.get(key)
+        if str(value if value is not None else "").strip():
+            return value
+    return None
+
+
+def _normalize_broker_holdings(holdings: list[dict]) -> dict[str, int]:
+    positions: dict[str, int] = {}
+    for holding in holdings or []:
+        code = str(_first_non_empty(holding, ("pdno", "PDNO", "code")) or "").strip()
+        if not code:
+            continue
+        qty = _parse_position_qty(_first_non_empty(holding, ("hldg_qty", "HLDG_QTY", "qty", "quantity")))
+        if qty > 0:
+            positions[code] = positions.get(code, 0) + qty
+    return positions
+
+
+def _normalize_local_holds(holds: list[dict]) -> dict[str, int]:
+    positions: dict[str, int] = {}
+    for hold in holds or []:
+        code = str(hold.get("code", "")).strip()
+        if not code:
+            continue
+        qty = _parse_position_qty(hold.get("qty")) or 1
+        if qty > 0:
+            positions[code] = positions.get(code, 0) + qty
+    return positions
 
 @lru_cache(maxsize=1024)
 def _is_weekday(date_str: str) -> bool:
@@ -180,42 +220,64 @@ class VirtualTradeService:
     async def reconcile_with_broker(self, actual_holdings: list, logger=None) -> dict:
         """실제 증권사 잔고와 로컬 DB를 비교하여 불일치를 처리한다.
 
-        - 로컬 HOLD인데 실제 잔고 없음 → log_sell_async(code, 0, reason="reconciled_force_close") 강제 종결 + 경고
+        - 로컬 HOLD인데 실제 잔고 없음 → 해당 code의 로컬 HOLD row를 강제 종결 + 경고
         - 실제 잔고 있는데 로컬 없음 → 경고 로그만 (전략명 불명확 → 자동 insert 불가)
+        - 양쪽에 있으나 수량만 다름 → 경고 로그만
+
+        수량 불일치는 partial close 시 어떤 lot/전략을 닫을지 모호하므로 자동 정정하지 않는다.
 
         Args:
             actual_holdings: broker get_account_balance() resp.data["output1"] 리스트
             logger: 선택적 logger
 
         Returns:
-            {"force_closed": [codes], "unknown_in_broker": [codes]}
+            {
+                "force_closed": [codes],
+                "unknown_in_broker": [codes],
+                "quantity_mismatches": [{"code": code, "local_qty": L, "broker_qty": B}],
+            }
         """
         _log = logger or __import__('logging').getLogger(__name__)
 
-        actual_codes = {
-            str(h.get("pdno", "")).strip()
-            for h in actual_holdings
-            if str(h.get("hldg_qty", "0") or "0").strip() not in ("0", "", "00")
-        }
-
         local_holds = self.get_holds()
-        local_codes = {str(h.get("code", "")).strip() for h in local_holds if h.get("code")}
+        broker_positions = _normalize_broker_holdings(actual_holdings)
+        local_positions = _normalize_local_holds(local_holds)
 
         force_closed = []
         for hold in local_holds:
             code = str(hold.get("code", "")).strip()
-            if code and code not in actual_codes:
+            if code and broker_positions.get(code, 0) <= 0:
                 _log.warning(
                     f"[Reconciliation] 로컬 HOLD이나 실제 잔고 없음 → 강제 종결: "
                     f"{code} (strategy={hold.get('strategy')})"
                 )
-                await self.log_sell_async(code, 0, reason="reconciled_force_close")
+                await self.log_sell_async(code, 0, reason=_FORCE_CLOSE_REASON)
                 force_closed.append(code)
 
-        unknown_in_broker = sorted(actual_codes - local_codes)
+        local_codes = set(local_positions)
+        broker_codes = set(broker_positions)
+        unknown_in_broker = sorted(broker_codes - local_codes)
         if unknown_in_broker:
             _log.warning(
                 f"[Reconciliation] 실제 보유 중이나 로컬 DB 없음 (수동 확인 필요): {unknown_in_broker}"
             )
 
-        return {"force_closed": force_closed, "unknown_in_broker": unknown_in_broker}
+        quantity_mismatches = [
+            {
+                "code": code,
+                "local_qty": local_positions[code],
+                "broker_qty": broker_positions[code],
+            }
+            for code in sorted(local_codes & broker_codes)
+            if local_positions[code] != broker_positions[code]
+        ]
+        if quantity_mismatches:
+            _log.warning(
+                f"[Reconciliation] 로컬/브로커 보유 수량 불일치 (수동 확인 필요): {quantity_mismatches}"
+            )
+
+        return {
+            "force_closed": force_closed,
+            "unknown_in_broker": unknown_in_broker,
+            "quantity_mismatches": quantity_mismatches,
+        }
