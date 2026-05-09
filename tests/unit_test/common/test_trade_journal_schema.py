@@ -3,8 +3,16 @@ import pytest
 from common.trade_journal_schema import (
     STANDARD_TRADE_JOURNAL_FIELDS,
     normalize_backtest_decision,
+    normalize_backtest_execution,
     normalize_backtest_trade,
     normalize_virtual_trade,
+)
+from services.backtest_execution_simulator import (
+    BacktestExecutionReport,
+    BacktestOrder,
+    OrderSide,
+    OrderStatus,
+    OrderType,
 )
 
 
@@ -151,3 +159,80 @@ def test_normalize_backtest_decision_records_rejected_reason():
     assert normalized["decision_reason"] == ""
     assert normalized["rejected_reason"] == "추세 지속 실패"
     assert normalized["cost"] == 0.0
+
+
+def test_normalize_backtest_execution_records_fill_report():
+    report = BacktestExecutionReport(
+        order=BacktestOrder(
+            order_id="order-1",
+            code="005930",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            price=70000,
+            qty=2,
+            strategy="OneilPocketPivot",
+        ),
+        status=OrderStatus.FILLED,
+        filled_qty=2,
+        remaining_qty=0,
+        order_price=70000,
+        fill_price=70100,
+        cost=28.04,
+        gross_amount=140200,
+        slippage_amount_won=100,
+        slippage_pct=0.1429,
+        reason="filled",
+        filled_at="20260501 091000",
+    )
+
+    normalized = normalize_backtest_execution(report)
+
+    assert tuple(normalized.keys()) == STANDARD_TRADE_JOURNAL_FIELDS
+    assert normalized["source"] == "backtest"
+    assert normalized["strategy"] == "OneilPocketPivot"
+    assert normalized["code"] == "005930"
+    assert normalized["signal_time"] == "20260501 091000"
+    assert normalized["decision_reason"] == "filled"
+    assert normalized["rejected_reason"] == ""
+    assert normalized["side"] == "BUY"
+    assert normalized["order_price"] == 70000.0
+    assert normalized["fill_price"] == 70100.0
+    assert normalized["qty"] == 2
+    assert normalized["status"] == "FILLED"
+    assert normalized["cost"] == 28.04
+    assert normalized["metadata"]["order_id"] == "order-1"
+    assert normalized["metadata"]["gross_amount"] == 140200
+
+
+def test_normalize_backtest_execution_records_unfilled_reason():
+    report = BacktestExecutionReport(
+        order=BacktestOrder(
+            order_id="order-2",
+            code="000660",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            price=120000,
+            qty=1,
+            strategy="OneilPocketPivot",
+        ),
+        status=OrderStatus.UNFILLED,
+        filled_qty=0,
+        remaining_qty=1,
+        order_price=120000,
+        fill_price=None,
+        cost=0.0,
+        gross_amount=0.0,
+        slippage_amount_won=None,
+        slippage_pct=None,
+        reason="limit_not_reached",
+        filled_at="20260501 091000",
+    )
+
+    normalized = normalize_backtest_execution(report)
+
+    assert normalized["status"] == "UNFILLED"
+    assert normalized["side"] == "BUY"
+    assert normalized["qty"] == 1
+    assert normalized["decision_reason"] == ""
+    assert normalized["rejected_reason"] == "limit_not_reached"
+    assert normalized["fill_price"] is None

@@ -88,7 +88,8 @@
   - 완료된 부분: `StockQueryBacktestReplayService`를 추가해 전략의 `get_current_price()`/`get_stock_conclusion()` 호출을 과거 분봉 기반 현재가·체결강도 replay로 바꾸고, 일별 프로그램매매 순매수 수량을 `pgtr_ntby_qty`에 보강한다.
   - 완료된 부분: `BacktestPeriodRunner`가 bar provider에도 `set_backtest_date()`를 전달하도록 해 replay context가 날짜 루프와 동기화된다.
   - 완료된 부분: `scripts/run_backtest.py` CLI 진입점을 추가해 `oneil_pocket_pivot` 기간 백테스트를 replay adapter + portfolio ledger + simulator로 실행할 수 있게 했다.
-  - 진행 필요: 체결 리포트 기반 표준 journal 저장 경로와 리스크 게이트/포지션 사이징 dry-run contract를 연결한다.
+  - 완료된 부분: 기간 백테스트 runner가 `BacktestExecutionReport`를 표준 journal record로 변환하고, `BacktestJournalRepository`에 period run metadata와 함께 저장한다.
+  - 진행 필요: 저장된 period backtest run을 운영 UI/괴리 리포트에서 검증하고, 리스크 게이트/포지션 사이징 dry-run contract를 연결한다.
 
 주요 파일:
 
@@ -346,7 +347,7 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - 체결 리포트 기반 표준 journal 저장 경로 확장
+   - 저장된 period backtest journal의 운영 UI/괴리 리포트 표시 검증
    - 리스크 게이트와 포지션 사이징 dry-run contract 추가
    - walk-forward, Monte Carlo 순서로 확장
 

@@ -4,6 +4,8 @@
 
 이 문서는 현재 프로젝트에서 백테스트와 관련해 이미 진행한 작업, 남은 작업, 실제 실행 방법을 정리한다.
 
+주의: `진행 완료`와 `남은 작업` 섹션은 백테스트 구축이 완전히 끝날 때 제거하고, 최종 문서는 사용법과 운영 기준 중심으로 정리한다.
+
 현재 신규 백테스트 연결 대상은 활성 전략 중심이다. 아래 전략들은 사용하지 않는 전략으로 분류되어 신규 백테스트 연결과 개선 우선순위에서 제외한다.
 
 - `volume_breakout_strategy`
@@ -130,6 +132,7 @@
 - 현재 지원 전략은 `oneil_pocket_pivot`이다.
 - replay adapter, portfolio ledger, execution simulator, period runner를 조립해 기간 백테스트를 실행한다.
 - console 출력과 JSON 출력을 지원한다.
+- 실행 결과를 `BacktestJournalRepository` 표준 저장 경로에 저장한다.
 
 주요 파일:
 
@@ -138,16 +141,16 @@
 
 ## 남은 작업
 
-### 1. 표준 journal 저장 경로 확장
+### 1. 표준 journal 저장 경로 후속 정리
 
-현재 runner는 체결 결과와 rejected journal record를 메모리 결과로 반환한다. 다음 단계는 이 결과를 `BacktestJournalRepository`의 표준 저장 경로에 직접 저장하는 것이다.
+기간 백테스트 결과는 이제 `BacktestJournalRepository`에 저장된다. 남은 작업은 저장된 execution journal을 운영 화면과 리포트에서 더 잘 활용하도록 정리하는 것이다.
 
 해야 할 일:
 
-- `BacktestExecutionReport`를 표준 journal record로 변환한다.
-- BUY/SELL 체결, 부분체결, 미체결, 거부를 같은 schema로 저장한다.
-- run id, 전략명, 기간, 초기 현금, 실행 옵션을 metadata로 저장한다.
-- 저장된 run을 기존 `/api/virtual/backtest-journals`에서 조회할 수 있게 연결한다.
+- 저장된 period backtest run을 기존 `/api/virtual/backtest-journals` 목록/조회 UI에서 검증한다.
+- BUY/SELL execution record와 rejected decision record의 화면 표시 컬럼을 정리한다.
+- 부분체결/미체결 record가 운영자가 보기 쉬운 상태명과 reason으로 표시되는지 확인한다.
+- backtest-vs-live 비교 리포트에서 period run metadata를 함께 보여준다.
 
 ### 2. RiskGate와 PositionSizing dry-run 연결
 
@@ -269,7 +272,7 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260510 --output json --output-file data/backtest_result.json
 ```
 
-현재 `--output-file`은 CLI 결과 파일 저장용이다. 아직 `BacktestJournalRepository` 표준 run 저장 경로와 직접 연결된 것은 아니다.
+현재 `--output-file`은 CLI 결과 파일을 별도로 저장하는 옵션이다. 이 옵션을 쓰지 않아도 백테스트 run은 `data/backtest_journals`에 표준 journal로 저장된다.
 
 ## 출력 해석
 
@@ -286,6 +289,7 @@ SELL 체결: 1
 현금: 9,500,000
 가용현금: 9,500,000
 실현손익(순): 120,000
+journal run: period_오닐PP/BGU_20260501_20260510
 ```
 
 의미:
@@ -297,6 +301,7 @@ SELL 체결: 1
 - `현금`: 체결과 비용 반영 후 현금
 - `가용현금`: 예약 현금을 제외한 현금
 - `실현손익(순)`: 매도 체결 후 수수료/세금 반영 기준 실현 손익
+- `journal run`: `data/backtest_journals`에 저장된 표준 journal run id
 
 JSON 출력에는 `execution_reports`, `journal_records`, `portfolio`가 포함된다.
 
@@ -329,7 +334,6 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 ## 현재 한계
 
 - CLI 지원 전략은 아직 `oneil_pocket_pivot` 하나다.
-- 결과는 아직 표준 `BacktestJournalRepository` run 저장과 직접 연결되지 않았다.
 - RiskGate와 PositionSizingService dry-run은 아직 연결되지 않았다.
 - 성과 리포트는 기본 요약 중심이다.
 - 과거 체결강도는 분봉 row에 `tday_rltv` 또는 `execution_strength` 유사 필드가 있어야 replay된다.

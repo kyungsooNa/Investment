@@ -70,6 +70,29 @@ class DatedStaticBarProvider(StaticBarProvider):
         self.dates.append(date_ymd)
 
 
+class FakeBacktestJournalRepository:
+    def __init__(self) -> None:
+        self.saved_runs: list[dict] = []
+
+    def save_run(self, records, *, run_id=None, strategy="", target_date="", metadata=None):
+        saved = {
+            "records": list(records),
+            "run_id": run_id,
+            "strategy": strategy,
+            "target_date": target_date,
+            "metadata": metadata or {},
+            "record_count": len(list(records)),
+        }
+        self.saved_runs.append(saved)
+        return {
+            "run_id": run_id,
+            "strategy": strategy,
+            "target_date": target_date,
+            "record_count": saved["record_count"],
+            "metadata": saved["metadata"],
+        }
+
+
 @pytest.mark.asyncio
 async def test_period_runner_executes_buy_and_sell_through_ledger():
     strategy = FakeStrategy()
@@ -147,3 +170,33 @@ async def test_period_runner_sets_backtest_date_on_bar_provider():
 
     assert strategy.scan_calls == ["20260501"]
     assert provider.dates == ["20260501"]
+
+
+@pytest.mark.asyncio
+async def test_period_runner_persists_standard_journal_run_when_repository_is_injected():
+    strategy = FakeStrategy()
+    provider = StaticBarProvider({
+        ("20260501", "005930", "BUY"): BacktestBar("20260501 091000", 70_000, 70_500, 69_500, 70_200, 1_000),
+        ("20260502", "005930", "SELL"): BacktestBar("20260502 100000", 77_000, 77_500, 76_500, 77_100, 1_000),
+    })
+    repo = FakeBacktestJournalRepository()
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=provider,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+        backtest_journal_repository=repo,
+        run_id="period_pp_20260501_20260502",
+    )
+
+    result = await runner.run(["20260501", "20260502"])
+
+    assert result.saved_journal_run["run_id"] == "period_pp_20260501_20260502"
+    assert len(repo.saved_runs) == 1
+    saved = repo.saved_runs[0]
+    assert saved["strategy"] == "OneilPocketPivot"
+    assert saved["target_date"] == "20260501_20260502"
+    assert saved["metadata"]["date_count"] == 2
+    assert saved["metadata"]["initial_cash"] == 1_000_000
+    assert [record["side"] for record in saved["records"]] == ["BUY", "SELL"]
+    assert all(record["source"] == "backtest" for record in saved["records"])
+    assert result.journal_records == saved["records"]

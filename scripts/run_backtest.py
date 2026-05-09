@@ -76,7 +76,7 @@ def _format_console(result) -> str:
     portfolio = result.portfolio or {}
     positions = portfolio.get("positions") or {}
 
-    return "\n".join([
+    lines = [
         "[BACKTEST RESULT]",
         f"전략: {result.strategy_name}",
         f"기간: {result.dates[0]} ~ {result.dates[-1]} ({len(result.dates)}일)",
@@ -87,7 +87,11 @@ def _format_console(result) -> str:
         f"현금: {portfolio.get('cash', 0):,.0f}",
         f"가용현금: {portfolio.get('available_cash', 0):,.0f}",
         f"실현손익(순): {portfolio.get('realized_net_pnl', 0):,.0f}",
-    ])
+    ]
+    saved_run = getattr(result, "saved_journal_run", None) or {}
+    if saved_run.get("run_id"):
+        lines.append(f"journal run: {saved_run['run_id']}")
+    return "\n".join(lines)
 
 
 def _format_json(result) -> str:
@@ -109,12 +113,14 @@ def _format_json(result) -> str:
         ],
         "journal_records": result.journal_records,
         "portfolio": result.portfolio,
+        "saved_journal_run": getattr(result, "saved_journal_run", {}),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 async def _run(args: argparse.Namespace) -> None:
     from scripts._bootstrap import bootstrap_pp_strategy, make_stdout_logger
+    from repositories.backtest_journal_repository import BacktestJournalRepository
     from services.backtest_execution_simulator import BacktestPortfolioLedger
     from services.backtest_period_runner import BacktestPeriodRunner, BacktestPeriodRunnerConfig
     from services.backtest_replay_adapter import (
@@ -158,6 +164,14 @@ async def _run(args: argparse.Namespace) -> None:
             strategy=strategy,
             bar_provider=bar_provider,
             ledger=ledger,
+            backtest_journal_repository=BacktestJournalRepository(),
+            run_id=f"period_{strategy.name}_{dates[0]}_{dates[-1]}",
+            metadata={
+                "cli": "scripts.run_backtest",
+                "initial_cash": args.initial_cash,
+                "max_positions": args.max_positions,
+                "output": args.output,
+            },
             config=BacktestPeriodRunnerConfig(max_positions_per_strategy=max_positions),
         )
         print("[INFO] 기간 백테스트 실행 중...\n")

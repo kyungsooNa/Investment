@@ -26,6 +26,7 @@ def test_format_console_summarizes_execution_and_portfolio():
             SimpleNamespace(order=SimpleNamespace(side=SimpleNamespace(value="SELL")), filled_qty=1),
         ],
         journal_records=[{"status": "REJECTED"}],
+        saved_journal_run={"run_id": "period_20260501_20260502"},
         portfolio={
             "cash": 1_100_000,
             "available_cash": 1_090_000,
@@ -41,6 +42,7 @@ def test_format_console_summarizes_execution_and_portfolio():
     assert "SELL 체결: 1" in text
     assert "거부 기록: 1" in text
     assert "실현손익(순): 90,000" in text
+    assert "journal run: period_20260501_20260502" in text
 
 
 def test_get_program_provider_uses_market_data_broker_when_available():
