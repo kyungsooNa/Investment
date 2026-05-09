@@ -81,11 +81,17 @@
   - 완료된 부분: `scripts/run_strategy_debug.py`에 `--portfolio-cash`, `--max-positions` 옵션을 추가해 운영자가 debug 실행에서 포트폴리오 예약 검증을 켤 수 있게 했다.
   - 진행 필요: 기간 백테스트 runner에서 동시 신호 묶음을 ledger 예약/체결 흐름으로 통과시킨다.
 - [ ] 리스크 게이트와 포지션 사이징을 백테스트에서도 동일하게 호출하거나, 동일 contract의 dry-run 구현으로 검증한다.
+- [~] 활성 전략군용 기간 백테스트 runner를 만든다.
+  - 완료된 부분: `BacktestPeriodRunner`를 추가해 `LiveStrategy.scan()` / `check_exits()` contract를 날짜 루프로 감싸고, BUY 신호 → ledger 예약 → simulator 체결 → ledger 반영, SELL 신호 → simulator 체결 → ledger 반영 흐름을 테스트로 고정했다.
+  - 완료된 부분: 기간 runner가 현금 부족, 전략별 max positions 차단을 표준 rejected journal로 남긴다.
+  - 진행 필요: 과거 OHLCV/체결강도/프로그램매매 replay adapter와 CLI `run_backtest` 진입점을 연결한다.
 
 주요 파일:
 
 - `services/backtest_execution_simulator.py`
+- `services/backtest_period_runner.py`
 - `tests/unit_test/services/test_backtest_execution_simulator.py`
+- `tests/unit_test/services/test_backtest_period_runner.py`
 - `strategies/debug/strategy_debug_runner.py`
 - `strategies/debug/rejection_report.py`
 - `scripts/run_strategy_debug.py`
@@ -332,11 +338,12 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - 활성 전략군 중심으로 기간 백테스트 runner 설계 (`run_strategy_debug`는 미매수 사유/portfolio dry-run, `run_backtest`는 기간 수익률/체결/장부)
+   - 과거 OHLCV/체결강도/프로그램매매 data replay adapter 추가
+   - `BacktestPeriodRunner`에 replay adapter를 연결하고 CLI `run_backtest` 진입점 추가
    - 체결 리포트 기반 표준 journal 저장 경로 확장
    - 포트폴리오 cash ledger로 동시 신호, 자금 부족, 전략별 max positions, 우선순위 정렬을 기간 백테스트에서 재현
    - 리스크 게이트와 포지션 사이징 dry-run contract 추가
-   - 과거 market clock/data replay adapter, walk-forward, Monte Carlo 순서로 확장
+   - walk-forward, Monte Carlo 순서로 확장
 
 3. P1 전략 수익성
    - 시장 국면별 성과 분리
