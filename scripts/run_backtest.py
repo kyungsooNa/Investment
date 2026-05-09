@@ -54,6 +54,21 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--wf-test-days", type=int, default=5, dest="wf_test_days")
     parser.add_argument("--wf-step-days", type=int, default=None, dest="wf_step_days")
     parser.add_argument(
+        "--monte-carlo",
+        action="store_true",
+        default=False,
+        help="완료 trade net_pnl 순서를 섞어 MDD/연속손실/ruin probability를 계산",
+    )
+    parser.add_argument("--mc-runs", type=int, default=1000, dest="mc_runs")
+    parser.add_argument("--mc-seed", type=int, default=None, dest="mc_seed")
+    parser.add_argument(
+        "--mc-ruin-drawdown-pct",
+        type=float,
+        default=30.0,
+        dest="mc_ruin_drawdown_pct",
+        help="MDD가 이 비율 이상이면 ruin으로 집계 (default: 30)",
+    )
+    parser.add_argument(
         "--paper",
         action="store_true",
         default=False,
@@ -203,6 +218,9 @@ def _format_console(result) -> str:
     saved_run = getattr(result, "saved_journal_run", None) or {}
     if saved_run.get("run_id"):
         lines.append(f"journal run: {saved_run['run_id']}")
+    monte_carlo = getattr(result, "monte_carlo", None)
+    if monte_carlo:
+        lines.extend(_format_monte_carlo_console_lines(monte_carlo))
     return "\n".join(lines)
 
 
@@ -226,6 +244,7 @@ def _result_to_payload(result) -> dict[str, Any]:
         "journal_records": result.journal_records,
         "portfolio": result.portfolio,
         "saved_journal_run": getattr(result, "saved_journal_run", {}),
+        "monte_carlo": getattr(result, "monte_carlo", None),
     }
 
 
@@ -246,12 +265,16 @@ def _format_walk_forward_console(result) -> str:
         f"검증 체결 수: {summary.get('test_execution_count', 0)}",
         f"검증 거부 기록: {summary.get('test_rejected_count', 0)}",
     ]
+    monte_carlo = getattr(result, "monte_carlo", None)
+    if monte_carlo:
+        lines.extend(_format_monte_carlo_console_lines(monte_carlo))
     return "\n".join(lines)
 
 
 def _format_walk_forward_json(result) -> str:
     payload = {
         "summary": result.summary,
+        "monte_carlo": getattr(result, "monte_carlo", None),
         "segments": [
             {
                 "index": segment.index,
@@ -266,6 +289,58 @@ def _format_walk_forward_json(result) -> str:
         ],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _format_monte_carlo_console_lines(summary: dict[str, Any]) -> list[str]:
+    return [
+        "",
+        "[MONTE CARLO]",
+        f"Monte Carlo 거래 수: {summary.get('trade_count', 0)}",
+        f"Monte Carlo runs: {summary.get('runs', 0)}",
+        f"최악 MDD: {summary.get('worst_max_drawdown_pct', 0):.2f}%",
+        f"최장 연속 손실: {summary.get('worst_losing_streak', 0)}",
+        f"ruin probability: {summary.get('ruin_probability', 0) * 100:.2f}%",
+    ]
+
+
+def _run_monte_carlo_for_result(result, args: argparse.Namespace) -> None:
+    from services.backtest_monte_carlo import (
+        BacktestMonteCarloConfig,
+        BacktestMonteCarloSimulator,
+        extract_net_pnls_from_journal,
+    )
+
+    trade_net_pnls = extract_net_pnls_from_journal(result.journal_records)
+    object.__setattr__(result, "monte_carlo", BacktestMonteCarloSimulator(
+        BacktestMonteCarloConfig(
+            runs=args.mc_runs,
+            seed=args.mc_seed,
+            initial_capital=args.initial_cash,
+            ruin_drawdown_pct=args.mc_ruin_drawdown_pct,
+        )
+    ).run(trade_net_pnls).to_dict())
+
+
+def _run_monte_carlo_for_walk_forward(result, args: argparse.Namespace) -> None:
+    from services.backtest_monte_carlo import (
+        BacktestMonteCarloConfig,
+        BacktestMonteCarloSimulator,
+        extract_net_pnls_from_journal,
+    )
+
+    trade_net_pnls: list[float] = []
+    for segment in result.segments:
+        trade_net_pnls.extend(
+            extract_net_pnls_from_journal(segment.test_result.journal_records)
+        )
+    object.__setattr__(result, "monte_carlo", BacktestMonteCarloSimulator(
+        BacktestMonteCarloConfig(
+            runs=args.mc_runs,
+            seed=args.mc_seed,
+            initial_capital=args.initial_cash,
+            ruin_drawdown_pct=args.mc_ruin_drawdown_pct,
+        )
+    ).run(trade_net_pnls).to_dict())
 
 
 async def _run(args: argparse.Namespace) -> None:
@@ -383,6 +458,8 @@ async def _run(args: argparse.Namespace) -> None:
                 runner_factory=runner_factory,
                 config=config,
             ).run(dates)
+            if args.monte_carlo:
+                _run_monte_carlo_for_walk_forward(result, args)
             rendered = (
                 _format_walk_forward_json(result)
                 if args.output == "json"
@@ -391,6 +468,8 @@ async def _run(args: argparse.Namespace) -> None:
         else:
             print("[INFO] 기간 백테스트 실행 중...\n")
             result = await make_runner().run(dates)
+            if args.monte_carlo:
+                _run_monte_carlo_for_result(result, args)
             rendered = _format_json(result) if args.output == "json" else _format_console(result)
 
     if args.output_file:

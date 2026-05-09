@@ -44,6 +44,7 @@ class BacktestWalkForwardSegment:
 class BacktestWalkForwardRunResult:
     segments: list[BacktestWalkForwardSegment] = field(default_factory=list)
     summary: dict[str, Any] = field(default_factory=dict)
+    monte_carlo: dict[str, Any] | None = None
 
 
 BacktestPhaseRunnerFactory = Callable[[str, BacktestWalkForwardSegment], BacktestPhaseRunner]

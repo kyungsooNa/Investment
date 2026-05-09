@@ -17,6 +17,8 @@ from scripts.run_backtest import (
     _format_walk_forward_json,
     _get_program_provider,
     _parse_args,
+    _run_monte_carlo_for_result,
+    _run_monte_carlo_for_walk_forward,
 )
 from services.backtest_execution_simulator import BacktestPortfolioLedger, PortfolioPosition
 from services.position_sizing_service import PositionSizingService
@@ -74,6 +76,31 @@ def test_parse_args_accepts_walk_forward_options(monkeypatch):
     assert args.wf_step_days == 2
 
 
+def test_parse_args_accepts_monte_carlo_options(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_backtest",
+            "--dates",
+            "20260501",
+            "--monte-carlo",
+            "--mc-runs",
+            "50",
+            "--mc-seed",
+            "123",
+            "--mc-ruin-drawdown-pct",
+            "15",
+        ],
+    )
+
+    args = _parse_args()
+
+    assert args.monte_carlo is True
+    assert args.mc_runs == 50
+    assert args.mc_seed == 123
+    assert args.mc_ruin_drawdown_pct == 15.0
+
+
 def test_format_console_summarizes_execution_and_portfolio():
     result = SimpleNamespace(
         strategy_name="오닐PP/BGU",
@@ -102,6 +129,31 @@ def test_format_console_summarizes_execution_and_portfolio():
     assert "journal run: period_20260501_20260502" in text
 
 
+def test_format_console_includes_monte_carlo_summary_when_present():
+    result = SimpleNamespace(
+        strategy_name="오닐PP/BGU",
+        dates=["20260501"],
+        execution_reports=[],
+        journal_records=[],
+        saved_journal_run={},
+        portfolio={"cash": 1_000_000, "available_cash": 1_000_000, "positions": {}},
+        monte_carlo={
+            "trade_count": 3,
+            "runs": 100,
+            "worst_max_drawdown_pct": 12.345,
+            "worst_losing_streak": 2,
+            "ruin_probability": 0.25,
+        },
+    )
+
+    text = _format_console(result)
+
+    assert "Monte Carlo 거래 수: 3" in text
+    assert "Monte Carlo runs: 100" in text
+    assert "최악 MDD: 12.35%" in text
+    assert "ruin probability: 25.00%" in text
+
+
 def test_format_walk_forward_console_summarizes_test_windows():
     result = SimpleNamespace(
         summary={
@@ -122,6 +174,32 @@ def test_format_walk_forward_console_summarizes_test_windows():
     assert "검증 실현손익(순): 120,000" in text
     assert "검증 체결 수: 7" in text
     assert "검증 거부 기록: 3" in text
+
+
+def test_format_walk_forward_console_includes_monte_carlo_summary_when_present():
+    result = SimpleNamespace(
+        summary={
+            "segment_count": 1,
+            "train_days": 20,
+            "tune_days": 5,
+            "test_days": 5,
+            "test_realized_net_pnl": 0,
+            "test_execution_count": 0,
+            "test_rejected_count": 0,
+        },
+        monte_carlo={
+            "trade_count": 2,
+            "runs": 10,
+            "worst_max_drawdown_pct": 3.21,
+            "worst_losing_streak": 1,
+            "ruin_probability": 0.1,
+        },
+    )
+
+    text = _format_walk_forward_console(result)
+
+    assert "Monte Carlo 거래 수: 2" in text
+    assert "ruin probability: 10.00%" in text
 
 
 def test_format_walk_forward_json_includes_summary_and_segment_phase_runs():
@@ -153,6 +231,56 @@ def test_format_walk_forward_json_includes_summary_and_segment_phase_runs():
     assert '"summary": {' in text
     assert '"segment_count": 1' in text
     assert '"run_id": "wf_0_test"' in text
+
+
+def test_run_monte_carlo_for_result_uses_journal_net_pnl():
+    result = SimpleNamespace(
+        journal_records=[
+            {"status": "SOLD", "net_pnl": 100},
+            {"status": "SOLD", "net_pnl": -50},
+        ],
+        monte_carlo=None,
+    )
+    args = SimpleNamespace(
+        mc_runs=5,
+        mc_seed=1,
+        initial_cash=1_000,
+        mc_ruin_drawdown_pct=10.0,
+    )
+
+    _run_monte_carlo_for_result(result, args)
+
+    assert result.monte_carlo["trade_count"] == 2
+    assert result.monte_carlo["runs"] == 5
+
+
+def test_run_monte_carlo_for_walk_forward_uses_test_phase_journals_only():
+    result = SimpleNamespace(
+        segments=[
+            SimpleNamespace(
+                train_result=SimpleNamespace(journal_records=[{"status": "SOLD", "net_pnl": 999}]),
+                tune_result=SimpleNamespace(journal_records=[{"status": "SOLD", "net_pnl": 999}]),
+                test_result=SimpleNamespace(journal_records=[{"status": "SOLD", "net_pnl": -10}]),
+            ),
+            SimpleNamespace(
+                train_result=SimpleNamespace(journal_records=[]),
+                tune_result=SimpleNamespace(journal_records=[]),
+                test_result=SimpleNamespace(journal_records=[{"status": "SOLD", "net_pnl": 20}]),
+            ),
+        ],
+        monte_carlo=None,
+    )
+    args = SimpleNamespace(
+        mc_runs=5,
+        mc_seed=1,
+        initial_cash=1_000,
+        mc_ruin_drawdown_pct=10.0,
+    )
+
+    _run_monte_carlo_for_walk_forward(result, args)
+
+    assert result.monte_carlo["trade_count"] == 2
+    assert result.monte_carlo["runs"] == 5
 
 
 def test_get_program_provider_uses_market_data_broker_when_available():

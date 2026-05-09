@@ -138,6 +138,8 @@
 - `--use-risk-sizing` 옵션으로 운영 설정 기반 `PositionSizingService`/`RiskGateService`를 백테스트용 ledger snapshot과 함께 dry-run으로 조립한다.
 - `--walk-forward` 옵션으로 기간을 train/tune/test rolling window로 나누고, 각 phase를 독립 period runner/ledger/strategy state로 실행한다.
 - `--wf-train-days`, `--wf-tune-days`, `--wf-test-days`, `--wf-step-days`로 walk-forward 창 크기와 이동 폭을 지정할 수 있다.
+- `--monte-carlo` 옵션으로 완료 trade의 `net_pnl` 순서를 섞어 최악 MDD, 최장 연속 손실, ruin probability를 계산한다.
+- `--mc-runs`, `--mc-seed`, `--mc-ruin-drawdown-pct`로 Monte Carlo 실행 횟수, 재현 seed, ruin 기준 MDD를 지정할 수 있다.
 
 주요 파일:
 
@@ -157,6 +159,21 @@
 
 - `services/backtest_walk_forward.py`
 - `tests/unit_test/services/test_backtest_walk_forward.py`
+
+### Monte Carlo 검증
+
+- `BacktestMonteCarloSimulator`를 추가했다.
+- 표준 journal record 중 완료 trade(`SOLD`, `ROUND_TRIP`, `CLOSED`)의 `net_pnl`을 입력으로 사용한다.
+- trade 결과 순서를 무작위로 섞어 equity path를 반복 계산한다.
+- 최악 MDD, 최악 MDD 비율, 최장 연속 손실, ruin probability를 계산한다.
+- 최종 equity의 평균, 5/50/95 분위수를 계산한다.
+- `--mc-seed`를 지정하면 같은 결과를 재현할 수 있다.
+- walk-forward 실행에서는 train/tune이 아니라 test phase journal만 Monte Carlo 입력으로 사용한다.
+
+주요 파일:
+
+- `services/backtest_monte_carlo.py`
+- `tests/unit_test/services/test_backtest_monte_carlo.py`
 
 ## 남은 작업
 
@@ -195,14 +212,14 @@
 - 전략별/일자별 rejected reason 분포
 - 시장 국면별 성과
 
-### 5. Monte Carlo
+### 5. 백테스트 fixture 보강
 
-단일 기간 결과만으로 전략을 판단하지 않기 위해 검증 방식을 확장해야 한다.
+단일 기간 결과만으로 전략을 판단하지 않기 위해 검증용 고정 데이터를 더 늘려야 한다.
 
 해야 할 일:
 
-- trade 결과 순서 shuffle 기반 Monte Carlo
-- 최악 MDD, 연속 손실, ruin probability 계산
+- 특정 날짜에 PP 통과, PP 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 fixture로 고정
+- fixture 기반 결과를 period runner와 strategy debug runner 양쪽에서 비교
 
 ### 6. 실전 체결 fixture 확보
 
@@ -289,6 +306,20 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260630 --walk-forward --wf-train-days 20 --wf-tune-days 5 --wf-test-days 5 --use-risk-sizing
 ```
 
+### Monte Carlo 검증 실행
+
+```powershell
+python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260630 --monte-carlo --mc-runs 1000 --mc-seed 42 --mc-ruin-drawdown-pct 30
+```
+
+이 실행은 백테스트 결과 journal에서 완료 trade의 `net_pnl`을 모아 순서를 섞고, 최악 MDD, 최장 연속 손실, ruin probability를 계산한다.
+
+walk-forward와 함께 쓰면 test phase 결과만 Monte Carlo 입력으로 사용한다.
+
+```powershell
+python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260630 --walk-forward --wf-train-days 20 --wf-tune-days 5 --wf-test-days 5 --monte-carlo --mc-runs 1000 --mc-seed 42
+```
+
 ### JSON으로 출력
 
 ```powershell
@@ -364,7 +395,8 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 
 - CLI 지원 전략은 아직 `oneil_pocket_pivot` 하나다.
 - `--use-risk-sizing`은 백테스트 ledger 기반 snapshot을 사용하므로 실제 계좌 잔고나 미체결 주문 상태를 조회하지 않는다.
-- `--walk-forward`는 train/tune/test 분리 실행과 test phase 요약 집계까지 지원한다. 자동 파라미터 최적화와 Monte Carlo 검증은 아직 남아 있다.
+- `--walk-forward`는 train/tune/test 분리 실행과 test phase 요약 집계까지 지원한다. 자동 파라미터 최적화는 아직 수행하지 않는다.
+- `--monte-carlo`는 표준 journal에 `net_pnl`이 있는 완료 trade만 입력으로 사용한다. 현재 period runner의 체결 단위 journal은 SELL별 순손익이 비어 있을 수 있어, 완료 trade `net_pnl` 저장 경로 보강 후 활용도가 커진다.
 - 성과 리포트는 기본 요약 중심이다.
 - 과거 체결강도는 분봉 row에 `tday_rltv` 또는 `execution_strength` 유사 필드가 있어야 replay된다.
 - 과거 분봉 또는 프로그램매매 API가 비어 있으면 신호가 없거나 미체결/empty 결과가 나올 수 있다.
@@ -379,6 +411,7 @@ pytest tests/unit_test/services/test_backtest_execution_simulator.py -v
 pytest tests/unit_test/services/test_backtest_period_runner.py -v
 pytest tests/unit_test/services/test_backtest_replay_adapter.py -v
 pytest tests/unit_test/services/test_backtest_walk_forward.py -v
+pytest tests/unit_test/services/test_backtest_monte_carlo.py -v
 pytest tests/unit_test/scripts/test_run_backtest.py -v
 ```
 
@@ -391,6 +424,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `42 passed`
-- 전체 단위 테스트: `4149 passed`
+- 관련 테스트: `52 passed`
+- 전체 단위 테스트: `4159 passed`
 - 전체 통합 테스트: `208 passed`
