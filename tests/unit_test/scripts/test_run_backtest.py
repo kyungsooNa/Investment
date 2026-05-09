@@ -1,8 +1,24 @@
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
-from scripts.run_backtest import _build_dates, _format_console, _get_program_provider
+import pytest
+
+from config.config_loader import OrderPolicyConfig, PositionSizingConfig, RiskGateConfig
+from core.account_snapshot import AccountSnapshot
+from scripts.run_backtest import (
+    _BacktestLedgerAccountSnapshotCache,
+    _BacktestStrategyRiskProvider,
+    _build_dates,
+    _build_risk_sizing_services,
+    _format_console,
+    _get_program_provider,
+    _parse_args,
+)
+from services.backtest_execution_simulator import BacktestPortfolioLedger, PortfolioPosition
+from services.position_sizing_service import PositionSizingService
+from services.risk_gate_service import RiskGateService
 
 
 def test_build_dates_accepts_comma_separated_dates():
@@ -15,6 +31,17 @@ def test_build_dates_accepts_inclusive_start_end_range():
     args = SimpleNamespace(dates=None, start_date="20260501", end_date="20260503")
 
     assert _build_dates(args) == ["20260501", "20260502", "20260503"]
+
+
+def test_parse_args_accepts_use_risk_sizing(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_backtest", "--dates", "20260501", "--use-risk-sizing"],
+    )
+
+    args = _parse_args()
+
+    assert args.use_risk_sizing is True
 
 
 def test_format_console_summarizes_execution_and_portfolio():
@@ -50,3 +77,77 @@ def test_get_program_provider_uses_market_data_broker_when_available():
     sqs = SimpleNamespace(market_data_service=SimpleNamespace(_broker_api_wrapper=broker))
 
     assert _get_program_provider(sqs) is broker
+
+
+@pytest.mark.asyncio
+async def test_backtest_ledger_account_snapshot_reflects_portfolio_ledger():
+    ledger = BacktestPortfolioLedger(initial_cash=1_000_000)
+    ledger.cash = 860_000
+    ledger.positions["005930"] = PortfolioPosition(
+        code="005930",
+        qty=2,
+        avg_price=70_000,
+        strategy="OneilPocketPivot",
+        total_cost=140_000,
+    )
+    cache = _BacktestLedgerAccountSnapshotCache(ledger)
+
+    snapshot = await cache.get()
+
+    assert isinstance(snapshot, AccountSnapshot)
+    assert snapshot.available_cash == 860_000
+    assert snapshot.positions == {"005930": 140_000}
+    assert snapshot.total_equity == 1_000_000
+
+
+def test_backtest_strategy_risk_provider_reads_ledger_positions():
+    ledger = BacktestPortfolioLedger(initial_cash=1_000_000)
+    ledger.positions["005930"] = PortfolioPosition(
+        code="005930",
+        qty=2,
+        avg_price=70_000,
+        strategy="OneilPocketPivot",
+        total_cost=140_000,
+    )
+    provider = _BacktestStrategyRiskProvider(ledger)
+
+    assert provider.is_holding("OneilPocketPivot", "005930") is True
+    assert provider.is_holding("OtherStrategy", "005930") is False
+    assert provider.get_holds_by_strategy("OneilPocketPivot") == [
+        {"code": "005930", "qty": 2, "avg_price": 70_000, "evlu_amt": 140_000}
+    ]
+    assert provider.get_strategy_return_history("OneilPocketPivot") == []
+
+
+def test_build_risk_sizing_services_disabled_returns_empty_contracts():
+    services = _build_risk_sizing_services(
+        use_risk_sizing=False,
+        config=SimpleNamespace(),
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+        indicator_service=object(),
+        logger=logging.getLogger("test"),
+    )
+
+    assert services.position_sizing_service is None
+    assert services.risk_gate_service is None
+
+
+def test_build_risk_sizing_services_uses_operating_configs():
+    config = SimpleNamespace(
+        position_sizing=PositionSizingConfig(per_trade_risk_pct=2.0),
+        risk_gate=RiskGateConfig(max_order_amount_won=123_456),
+        order_policy=OrderPolicyConfig(order_book_checks_enabled=False),
+    )
+
+    services = _build_risk_sizing_services(
+        use_risk_sizing=True,
+        config=config,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+        indicator_service=object(),
+        logger=logging.getLogger("test"),
+    )
+
+    assert isinstance(services.position_sizing_service, PositionSizingService)
+    assert isinstance(services.risk_gate_service, RiskGateService)
+    assert services.position_sizing_service._cfg.per_trade_risk_pct == 2.0
+    assert services.risk_gate_service._cfg.max_order_amount_won == 123_456

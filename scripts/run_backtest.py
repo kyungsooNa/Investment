@@ -13,6 +13,7 @@ import logging
 import os
 import sys
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -36,6 +37,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-positions", type=int, default=None, dest="max_positions")
     parser.add_argument("--output", default="console", choices=["console", "json"])
     parser.add_argument("--output-file", default=None, dest="output_file")
+    parser.add_argument(
+        "--use-risk-sizing",
+        action="store_true",
+        default=False,
+        help="운영 설정 기반 PositionSizing/RiskGate dry-run을 기간 백테스트에 적용",
+    )
     parser.add_argument(
         "--paper",
         action="store_true",
@@ -67,6 +74,101 @@ def _build_dates(args: argparse.Namespace) -> list[str]:
 def _get_program_provider(stock_query_service: Any) -> Any | None:
     market_data_service = getattr(stock_query_service, "market_data_service", None)
     return getattr(market_data_service, "_broker_api_wrapper", None)
+
+
+class _BacktestLedgerAccountSnapshotCache:
+    """AccountSnapshotCache contract backed by the in-memory backtest ledger."""
+
+    def __init__(self, ledger) -> None:
+        self._ledger = ledger
+
+    async def get(self, exchange=None):
+        from core.account_snapshot import AccountSnapshot
+
+        positions = {
+            code: int(position.market_value_basis)
+            for code, position in self._ledger.positions.items()
+        }
+        total_equity = int(self._ledger.cash + sum(positions.values()))
+        return AccountSnapshot(
+            total_equity=total_equity,
+            available_cash=int(self._ledger.available_cash),
+            positions=positions,
+        )
+
+
+class _BacktestStrategyRiskProvider:
+    """StrategyRiskDataProvider contract backed by the in-memory backtest ledger."""
+
+    def __init__(self, ledger) -> None:
+        self._ledger = ledger
+
+    def is_holding(self, strategy_name: str, code: str) -> bool:
+        position = self._ledger.positions.get(code)
+        return bool(position and position.strategy == strategy_name and position.qty > 0)
+
+    def get_holds_by_strategy(self, strategy_name: str) -> list[dict]:
+        holds: list[dict] = []
+        for position in self._ledger.positions.values():
+            if position.strategy != strategy_name or position.qty <= 0:
+                continue
+            holds.append({
+                "code": position.code,
+                "qty": position.qty,
+                "avg_price": position.avg_price,
+                "evlu_amt": int(position.market_value_basis),
+            })
+        return holds
+
+    def get_strategy_return_history(self, strategy_name: str) -> list[dict]:
+        return []
+
+
+@dataclass(frozen=True)
+class _RiskSizingServices:
+    position_sizing_service: Any | None = None
+    risk_gate_service: Any | None = None
+
+
+def _build_risk_sizing_services(
+    *,
+    use_risk_sizing: bool,
+    config: Any,
+    ledger,
+    indicator_service,
+    logger,
+) -> _RiskSizingServices:
+    if not use_risk_sizing:
+        return _RiskSizingServices()
+
+    from services.position_sizing_service import PositionSizingService
+    from services.risk_gate_service import RiskGateService
+
+    snapshot_cache = _BacktestLedgerAccountSnapshotCache(ledger)
+    risk_provider = _BacktestStrategyRiskProvider(ledger)
+    risk_gate_config = getattr(config, "risk_gate", None)
+    order_policy_config = getattr(config, "order_policy", None)
+
+    position_sizing_service = PositionSizingService(
+        account_snapshot_cache=snapshot_cache,
+        indicator_service=indicator_service,
+        config=getattr(config, "position_sizing"),
+        logger=logger,
+        risk_gate_config=risk_gate_config,
+        quote_provider=None,
+        order_policy_config=order_policy_config,
+    )
+    risk_gate_service = RiskGateService(
+        config=risk_gate_config,
+        kill_switch_service=None,
+        account_snapshot_cache=snapshot_cache,
+        strategy_risk_provider=risk_provider,
+        logger=logger,
+    )
+    return _RiskSizingServices(
+        position_sizing_service=position_sizing_service,
+        risk_gate_service=risk_gate_service,
+    )
 
 
 def _format_console(result) -> str:
@@ -120,6 +222,7 @@ def _format_json(result) -> str:
 
 async def _run(args: argparse.Namespace) -> None:
     from scripts._bootstrap import bootstrap_pp_strategy, make_stdout_logger
+    from config.config_loader import load_configs
     from repositories.backtest_journal_repository import BacktestJournalRepository
     from services.backtest_execution_simulator import BacktestPortfolioLedger
     from services.backtest_period_runner import BacktestPeriodRunner, BacktestPeriodRunnerConfig
@@ -130,6 +233,7 @@ async def _run(args: argparse.Namespace) -> None:
     from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 
     dates = _build_dates(args)
+    app_config = load_configs()
     bootstrap_logger = make_stdout_logger("backtest_bootstrap", level=logging.WARNING)
     print(f"[INFO] 서비스 초기화 중... (모의투자={args.paper})")
     try:
@@ -147,6 +251,13 @@ async def _run(args: argparse.Namespace) -> None:
     )
     bar_provider = StockQueryIntradayReplayBarProvider(replay_sqs)
     ledger = BacktestPortfolioLedger(initial_cash=args.initial_cash)
+    risk_sizing = _build_risk_sizing_services(
+        use_risk_sizing=args.use_risk_sizing,
+        config=app_config,
+        ledger=ledger,
+        indicator_service=getattr(sqs, "indicator_service", None),
+        logger=bootstrap_logger,
+    )
 
     max_positions = None
     with tempfile.TemporaryDirectory(prefix="period_backtest_") as tmp_dir:
@@ -170,9 +281,12 @@ async def _run(args: argparse.Namespace) -> None:
                 "cli": "scripts.run_backtest",
                 "initial_cash": args.initial_cash,
                 "max_positions": args.max_positions,
+                "use_risk_sizing": args.use_risk_sizing,
                 "output": args.output,
             },
             config=BacktestPeriodRunnerConfig(max_positions_per_strategy=max_positions),
+            position_sizing_service=risk_sizing.position_sizing_service,
+            risk_gate_service=risk_sizing.risk_gate_service,
         )
         print("[INFO] 기간 백테스트 실행 중...\n")
         result = await runner.run(dates)

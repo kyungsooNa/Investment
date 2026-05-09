@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-10 (period backtest RiskGate/PositionSizing dry-run contract 검증)
+최종 업데이트: 2026-05-10 (run_backtest 운영 설정 기반 RiskGate/PositionSizing 옵션 연결)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -94,7 +94,7 @@
   - 완료된 부분: 기간 백테스트 runner가 `BacktestExecutionReport`를 표준 journal record로 변환하고, `BacktestJournalRepository`에 period run metadata와 함께 저장한다.
   - 완료된 부분: 저장된 period backtest run의 체결 상세를 운영 UI/괴리 리포트에서 검증했다.
   - 완료된 부분: 기간 runner가 선택적 RiskGate/PositionSizing dry-run contract를 호출하고 거부 사유를 표준 journal로 남긴다.
-  - 진행 필요: CLI에서 실제 운영 설정 기반 RiskGate/PositionSizing 인스턴스를 자동 조립할지 결정한다.
+  - 완료된 부분: `scripts/run_backtest.py --use-risk-sizing` 옵션을 추가해 운영 설정 기반 `PositionSizingService`/`RiskGateService`를 백테스트용 ledger snapshot과 함께 자동 조립한다.
 
 주요 파일:
 
@@ -352,8 +352,9 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - `run_backtest` CLI의 실제 운영 설정 기반 RiskGate/PositionSizing 자동 조립 여부 결정
-   - walk-forward, Monte Carlo 순서로 확장
+   - walk-forward 검증 추가
+   - Monte Carlo 시뮬레이션 추가
+   - 특정 날짜 fixture 기반 PP/BGU 통과·탈락 케이스 고정
 
 3. P1 전략 수익성
    - 시장 국면별 성과 분리

@@ -135,6 +135,7 @@
 - replay adapter, portfolio ledger, execution simulator, period runner를 조립해 기간 백테스트를 실행한다.
 - console 출력과 JSON 출력을 지원한다.
 - 실행 결과를 `BacktestJournalRepository` 표준 저장 경로에 저장한다.
+- `--use-risk-sizing` 옵션으로 운영 설정 기반 `PositionSizingService`/`RiskGateService`를 백테스트용 ledger snapshot과 함께 dry-run으로 조립한다.
 
 주요 파일:
 
@@ -152,17 +153,7 @@
 - 부분체결/미체결 record가 운영자가 보기 쉬운 상태명과 reason으로 표시되는지 확인한다.
 - backtest-vs-live 비교 리포트에서 period run metadata를 함께 보여준다.
 
-### 2. RiskGate와 PositionSizing 운영 설정 조립
-
-`BacktestPeriodRunner`는 선택적으로 `PositionSizingService.adjust_buy_qty()`와 `RiskGateService.validate_order()` contract를 호출할 수 있다. 남은 작업은 CLI에서 실제 운영 설정 기반 인스턴스를 자동 조립할지 결정하는 것이다.
-
-해야 할 일:
-
-- `run_backtest` CLI에서 운영 설정 기반 RiskGate/PositionSizing 인스턴스를 자동 구성할지 결정한다.
-- 자동 구성한다면 백테스트용 account snapshot과 날짜별 risk counter를 어떻게 주입할지 정한다.
-- CLI 옵션으로 기본 수량만 쓸지, sizing/risk dry-run을 켤지 선택하게 할지 정한다.
-
-### 3. 체결 정책 명시
+### 2. 체결 정책 명시
 
 현재 simulator는 어떤 bar를 넣을지는 호출자가 결정한다. runner 레벨에서 체결 정책 이름을 명확히 해야 한다.
 
@@ -173,7 +164,7 @@
 - 장 마감 직전 신호를 다음 거래일로 넘길지
 - 분봉 데이터가 없는 종목을 reject할지 skip할지
 
-### 4. 성과 리포트 확장
+### 3. 성과 리포트 확장
 
 현재 console 출력은 요약 중심이다. 운영 판단에는 더 많은 지표가 필요하다.
 
@@ -258,6 +249,14 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260510 --initial-cash 10000000 --max-positions 3
 ```
 
+### 운영 RiskGate/PositionSizing 설정 적용
+
+```powershell
+python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260510 --initial-cash 10000000 --use-risk-sizing
+```
+
+이 옵션은 실제 주문을 내지 않는다. `config.yaml` / `risk_gate_config.yaml`의 PositionSizing/RiskGate 설정을 읽고, 백테스트 포트폴리오 ledger를 계좌 snapshot처럼 사용해 수량 조정과 주문 차단을 dry-run으로 재현한다.
+
 ### JSON으로 출력
 
 ```powershell
@@ -332,7 +331,7 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 ## 현재 한계
 
 - CLI 지원 전략은 아직 `oneil_pocket_pivot` 하나다.
-- `BacktestPeriodRunner`에는 RiskGate/PositionSizing dry-run contract가 연결되어 있지만, `run_backtest` CLI는 아직 실제 운영 설정 기반 인스턴스를 자동 조립하지 않는다.
+- `--use-risk-sizing`은 백테스트 ledger 기반 snapshot을 사용하므로 실제 계좌 잔고나 미체결 주문 상태를 조회하지 않는다.
 - 성과 리포트는 기본 요약 중심이다.
 - 과거 체결강도는 분봉 row에 `tday_rltv` 또는 `execution_strength` 유사 필드가 있어야 replay된다.
 - 과거 분봉 또는 프로그램매매 API가 비어 있으면 신호가 없거나 미체결/empty 결과가 나올 수 있다.
