@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-09 (P0-3 활성 전략 debug dry-run 연결 및 우선순위 재정리)
+최종 업데이트: 2026-05-10 (period backtest journal 운영 UI/괴리 표시 검증)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -52,6 +52,7 @@
   - 완료된 부분: `MomentumStrategy` backtest 모드는 성공/실패 후보를 표준 decision journal(`SIGNAL`/`REJECTED`, `decision_reason`/`rejected_reason`)로 저장소에 기록한다.
   - 완료된 부분: `StrategyDebugRunner`가 O'Neil/Minervini 계열 debug 실행의 신호, 탈락 이벤트, watchlist 누락 종목을 표준 decision journal로 만들고 저장소에 기록한다.
   - 완료된 부분: 전략별 debug 이벤트의 세부 필드(`entry_type`, `stage`, `cgld`, `threshold`)를 API 응답 top-level 필드로 보강하고, 운영 UI 괴리 테이블에서 별도 열로 표시한다.
+  - 완료된 부분: 저장된 period backtest journal의 체결 상세(`order_type`, `filled_qty`, `remaining_qty`, `slippage_pct` 등)를 API 응답 top-level 필드로 보강하고, 운영 UI 괴리 테이블에서 주문/체결/미체결/슬리피지를 표시한다.
 - [~] 수수료, 거래세, 슬리피지 반영 후 순수익을 기본 성과로 사용한다.
   - 완료된 부분: 표준 journal record에 `cost`, `net_pnl`, `net_return`을 계산해 포함한다.
   - 완료된 부분: after-market 포트폴리오 요약은 `net_return`이 있으면 기존 `return_rate`보다 우선 사용한다.
@@ -89,7 +90,8 @@
   - 완료된 부분: `BacktestPeriodRunner`가 bar provider에도 `set_backtest_date()`를 전달하도록 해 replay context가 날짜 루프와 동기화된다.
   - 완료된 부분: `scripts/run_backtest.py` CLI 진입점을 추가해 `oneil_pocket_pivot` 기간 백테스트를 replay adapter + portfolio ledger + simulator로 실행할 수 있게 했다.
   - 완료된 부분: 기간 백테스트 runner가 `BacktestExecutionReport`를 표준 journal record로 변환하고, `BacktestJournalRepository`에 period run metadata와 함께 저장한다.
-  - 진행 필요: 저장된 period backtest run을 운영 UI/괴리 리포트에서 검증하고, 리스크 게이트/포지션 사이징 dry-run contract를 연결한다.
+  - 완료된 부분: 저장된 period backtest run의 체결 상세를 운영 UI/괴리 리포트에서 검증했다.
+  - 진행 필요: 리스크 게이트/포지션 사이징 dry-run contract를 연결한다.
 
 주요 파일:
 
@@ -347,7 +349,6 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - 저장된 period backtest journal의 운영 UI/괴리 리포트 표시 검증
    - 리스크 게이트와 포지션 사이징 dry-run contract 추가
    - walk-forward, Monte Carlo 순서로 확장
 

@@ -204,6 +204,18 @@ def _get_backtest_journal_repository(ctx):
 
 
 _DEBUG_JOURNAL_DETAIL_FIELDS = ("entry_type", "stage", "cgld", "threshold")
+_EXECUTION_JOURNAL_DETAIL_FIELDS = (
+    "order_id",
+    "order_type",
+    "requested_qty",
+    "filled_qty",
+    "remaining_qty",
+    "gross_amount",
+    "slippage_amount_won",
+    "slippage_pct",
+    "priority",
+)
+_JOURNAL_DETAIL_FIELDS = _DEBUG_JOURNAL_DETAIL_FIELDS + _EXECUTION_JOURNAL_DETAIL_FIELDS
 
 
 def _has_value(value) -> bool:
@@ -211,14 +223,14 @@ def _has_value(value) -> bool:
 
 
 def _expand_debug_journal_fields(record: dict) -> dict:
-    """표준 journal metadata 안의 debug 세부 필드를 운영 UI용 top-level 필드로 노출한다."""
+    """표준 journal metadata 안의 세부 필드를 운영 UI용 top-level 필드로 노출한다."""
     if not isinstance(record, dict):
         return record
 
     expanded = dict(record)
     metadata = expanded.get("metadata")
     metadata = metadata if isinstance(metadata, dict) else {}
-    for field in _DEBUG_JOURNAL_DETAIL_FIELDS:
+    for field in _JOURNAL_DETAIL_FIELDS:
         if not _has_value(expanded.get(field)) and _has_value(metadata.get(field)):
             expanded[field] = metadata.get(field)
     return expanded
@@ -249,7 +261,7 @@ def _expand_debug_comparison_row(row: dict) -> dict:
     if "live" in expanded:
         expanded["live"] = live
 
-    for field in _DEBUG_JOURNAL_DETAIL_FIELDS:
+    for field in _JOURNAL_DETAIL_FIELDS:
         if not _has_value(expanded.get(field)):
             value = _first_debug_field(field, backtest, live)
             if _has_value(value):
