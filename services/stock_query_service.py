@@ -158,6 +158,16 @@ class StockQueryService:
                         volume=str(output.acml_vol or "0"),
                         acml_tr_pbmn=str(output.acml_tr_pbmn or "0"),
                     )
+                elif isinstance(output, dict):
+                    self.price_stream_service.cache_price_snapshot(
+                        stock_code,
+                        price=str(output.get("stck_prpr", "") or ""),
+                        change=str(output.get("prdy_vrss", "0") or "0"),
+                        rate=str(output.get("prdy_ctrt", "0.00") or "0.00"),
+                        sign=str(output.get("prdy_vrss_sign", "3") or "3"),
+                        volume=str(output.get("acml_vol", "0") or "0"),
+                        acml_tr_pbmn=str(output.get("acml_tr_pbmn", "0") or "0"),
+                    )
             except Exception as e:
                 self.logger.debug({"event": "snapshot_backfill_skipped", "code": stock_code, "error": str(e)})
 

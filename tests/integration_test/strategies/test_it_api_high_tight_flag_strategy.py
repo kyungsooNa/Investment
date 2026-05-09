@@ -153,4 +153,5 @@ async def test_htf_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
     assert mock_get_price.call_count == 0, "캐시 적중 시 현재가 API는 호출되지 않아야 함"
     assert mock_get_ohlcv.call_count == 0, "캐시 적중 시 OHLCV API는 호출되지 않아야 함"
     assert mock_get_conclusion.call_count == calls_conclusion_on_miss, "체결강도 API는 항상 호출되어야 함"
-    assert stock_repo.get_cache_stats()["hits"] > 0
+    assert deep_paper_ctx.stock_query_service.price_stream_service.get_cached_price(code_a) is not None, \
+        "브로커 응답이 price_stream_service에 backfill 되어야 함"
