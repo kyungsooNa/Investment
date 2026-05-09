@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-05 (우선순위 재정리)
+최종 업데이트: 2026-05-09 (P0-3 체결 시뮬레이터/장부 기본 구현 및 우선순위 재정리)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -68,10 +68,23 @@
 
 ### 0-3. 체결 시뮬레이터와 포트폴리오 장부
 
-- [ ] 체결 시뮬레이터를 분리한다: 지정가/시장가, 당일 고가·저가 도달 여부, 거래량 기반 부분체결, 미체결, 다음 봉 체결 정책을 명시한다.
-- [ ] 수수료, 거래세, 슬리피지, 호가 단위 반올림을 모든 백테스트 성과 계산에 기본 반영한다.
-- [ ] 포트폴리오 단위 현금/보유/예약주문 장부를 만든다. 동시 신호 발생 시 자금 부족, 전략별 max positions, 우선순위 정렬을 재현한다.
+- [~] 체결 시뮬레이터를 분리한다: 지정가/시장가, 당일 고가·저가 도달 여부, 거래량 기반 부분체결, 미체결, 다음 봉 체결 정책을 명시한다.
+  - 완료된 부분: `BacktestExecutionSimulator`를 추가해 지정가/시장가, 고가·저가 도달 여부, 거래량 참여율 기반 부분체결/미체결, 시장가 슬리피지, 호가 단위 반올림을 테스트로 고정했다.
+  - 진행 필요: "현재 봉/다음 봉 체결" 선택은 호출자가 bar를 주입하는 contract로 열어두었으므로, 각 백테스트 runner에서 정책 이름과 호출 위치를 명시해야 한다.
+- [~] 수수료, 거래세, 슬리피지, 호가 단위 반올림을 모든 백테스트 성과 계산에 기본 반영한다.
+  - 완료된 부분: 체결 리포트가 `TransactionCostUtils` 기반 매수 수수료/매도 수수료+거래세, 시장가 슬리피지, tick rounding 결과를 포함한다.
+  - 진행 필요: 기존 전략별 백테스트 저장 경로가 새 체결 리포트를 사용해 표준 journal을 저장하도록 연결한다.
+- [~] 포트폴리오 단위 현금/보유/예약주문 장부를 만든다. 동시 신호 발생 시 자금 부족, 전략별 max positions, 우선순위 정렬을 재현한다.
+  - 완료된 부분: `BacktestPortfolioLedger`를 추가해 현금 예약, 체결 반영, 보유 수량/평단, 실현 순손익, 우선순위 정렬, 자금 부족 차단, 전략별 max positions 제한을 테스트로 고정했다.
+  - 진행 필요: 기간 백테스트 runner에서 동시 신호 묶음을 ledger 예약/체결 흐름으로 통과시킨다.
 - [ ] 리스크 게이트와 포지션 사이징을 백테스트에서도 동일하게 호출하거나, 동일 contract의 dry-run 구현으로 검증한다.
+
+주요 파일:
+
+- `services/backtest_execution_simulator.py`
+- `tests/unit_test/services/test_backtest_execution_simulator.py`
+- `utils/transaction_cost_utils.py`
+- `common/trade_journal_schema.py`
 
 ### 0-4. Kill Switch 손익 hook 연결 검증
 
@@ -308,38 +321,36 @@
 
 1. P0 실전 손실 방지
    - 실전 체결 이력 fixture 확보 및 민감정보 제거
-   - trade journal schema 표준화
-   - 체결/미체결/부분체결 상태와 잔고 대사 E2E 검증
-   - KillSwitch 손익 hook 연결 검증
-   - RiskGate → broker 호출 순서 회귀 테스트 유지
+   - 실전 fixture 기반 주문번호, 종목코드, 매수/매도, 체결/미체결/취소/거부 필드 매핑 확정
+   - 주문 접수/부분체결/전체체결/미체결/취소/거부 상태 전이와 잔고 대사 E2E 검증
+   - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - 체결 시뮬레이터
-   - 수수료/세금/슬리피지/호가단위 반영
-   - portfolio cash ledger
-   - live-vs-backtest 비교 리포트
-   - walk-forward / Monte Carlo
+   - 기존 전략별 백테스트 runner가 `BacktestExecutionSimulator`와 `BacktestPortfolioLedger`를 사용하도록 연결
+   - 체결 리포트 기반 표준 journal 저장 경로 확장
+   - 포트폴리오 cash ledger로 동시 신호, 자금 부족, 전략별 max positions, 우선순위 정렬 재현
+   - 리스크 게이트와 포지션 사이징 dry-run contract 추가
+   - 과거 market clock/data replay adapter, walk-forward, Monte Carlo 순서로 확장
 
 3. P1 전략 수익성
-   - `VolumeBreakoutLiveStrategy` 거래량 조건 복구
-   - `MomentumStrategy` follow-through 지연 검증 구조로 변경
-   - 전략별 stop/target/trailing 기준 표준화
    - 시장 국면별 성과 분리
+   - 코스피/코스닥 지수 기반 전략 ON/OFF 조건 검증
+   - 변동성·장 초반/후반 필터를 성과 리포트로 먼저 검증
+   - 전략별 stop/target/trailing 기준 표준화
    - 전략별 risk budget 분리
 
 4. P2 시스템 성능
-   - Liquidity Filter 동시성 제한
    - 기존 stream snapshot 기반 공통 snapshot contract 정리
-   - WebSocket snapshot 우선 사용
-   - REST 호출 최소화
-   - 후보군/구독 정책을 전체 전략에 공통 적용
+   - WebSocket / REST / DB snapshot 입력 표준화
+   - stale/missing reason을 rejected reason으로 기록
+   - event-driven 전략 평가 목표 아키텍처 문서화
 
 5. P3/P4 유지보수와 운영 품질
+   - rejected reason 표준화 및 전략별/일자별 분포 리포트
+   - 전략별 성과 저하 감지 지표 집계
    - `WebAppContext` 분리
    - ServiceContainer / Factory 도입
    - `OrderExecutionService` 역할 분리
-   - 전략 Signal contract 표준화
-   - rejected reason / degradation 리포트 강화
 
 ---
 
@@ -366,8 +377,9 @@
 - [~] 전략 성과는 수수료, 세금, 슬리피지를 반영한 순수익 기준으로 추적된다.
   - 완료된 부분: 거래 비용 계산 유틸과 테스트가 있고, 체결 품질 로그/리포트에서 슬리피지를 추적한다.
   - 완료된 부분: 전략별 성과 지표 조회/집계 기본값이 비용 포함 순수익(`net PnL/return`) 기준으로 전환되었고, gross 기준은 `apply_cost=false` 명시 경로로 유지한다.
-  - 진행 필요: 백테스트 체결 시뮬레이터에서 명시적 슬리피지 모델을 도입해 모든 전략의 저장 단계까지 동일하게 반영해야 한다.
-  - 관련 파일: `utils/transaction_cost_utils.py`, `services/order_execution_service.py`, `services/strategy_log_report_service.py`, `tests/unit_test/utils/test_transaction_cost_utils.py`
+  - 완료된 부분: 백테스트용 `BacktestExecutionSimulator`가 명시적 시장가 슬리피지, 호가 단위 반올림, 수수료/거래세 포함 체결 리포트를 생성한다.
+  - 진행 필요: 모든 전략의 백테스트 저장 단계가 체결 리포트와 포트폴리오 장부를 사용하도록 연결해야 한다.
+  - 관련 파일: `utils/transaction_cost_utils.py`, `services/backtest_execution_simulator.py`, `services/order_execution_service.py`, `services/strategy_log_report_service.py`, `tests/unit_test/utils/test_transaction_cost_utils.py`, `tests/unit_test/services/test_backtest_execution_simulator.py`
 
 - [~] 장애, 데이터 지연, websocket 끊김, reconcile 실패 시 신규 주문 차단 또는 경고 상태로 전환된다.
   - 완료된 부분: Kill Switch/Risk Gate 주문 차단, 데이터 품질 오류 주문 차단, websocket watchdog 재연결/경고, reconcile alarm 신규 주문 차단이 구현·테스트되어 있다.
