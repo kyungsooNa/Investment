@@ -252,7 +252,10 @@ def _build_debug_journal_records(report: DebugReport, *, target_date: str = "") 
             )
         )
 
+    signal_codes = {signal.code for signal in report.signals}
     for event in report.events:
+        if event.event == "buy_signal_generated" or event.code in signal_codes:
+            continue
         records.append(
             normalize_backtest_decision(
                 {

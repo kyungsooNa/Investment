@@ -194,11 +194,17 @@
 - 특정 날짜 기반 O'Neil PP/BGU 진입 fixture를 추가했다.
 - `20260504` 기준 PP 통과, PP 거래량 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 고정했다.
 - fixture 테스트는 `OneilPocketPivotStrategy.scan()` 실제 흐름을 호출해 신호 생성 여부, `entry_type`, reason, 마켓타이밍 OFF 시 가격 조회 생략을 검증한다.
+- 같은 fixture를 period runner와 strategy debug runner에도 통과시켜 결과 parity를 검증한다.
+- period runner는 최종 BUY 체결 여부를 fixture 기대값과 비교한다.
+- strategy debug runner는 최종 `SIGNAL` / `REJECTED` decision journal이 fixture 기대값과 같은 방향인지 비교한다.
+- debug runner decision journal은 최종 BUY 신호가 있는 종목의 중간 로그(`buy_signal_generated`, PP/BGU 분기 중간 탈락)를 별도 `REJECTED`로 저장하지 않는다.
 
 주요 파일:
 
 - `tests/fixtures/backtest/oneil_pp_bgu_entry_cases.json`
 - `tests/unit_test/strategies/test_oneil_pocket_pivot_fixture_cases.py`
+- `tests/unit_test/strategies/test_oneil_pp_bgu_fixture_runner_parity.py`
+- `strategies/debug/strategy_debug_runner.py`
 
 ## 남은 작업
 
@@ -218,8 +224,7 @@
 해야 할 일:
 
 - 활성 전략별 factory가 `BacktestMarketClock`과 replay SQS를 같은 방식으로 받도록 정리
-- strategy debug runner도 fixture/replay context를 동일 contract로 사용할 수 있게 정리
-- fixture 기반 결과를 period runner와 strategy debug runner 양쪽에서 비교
+- fixture 기반 runner parity를 여러 거래일/경계 조건으로 확장
 
 ### 3. 체결 정책 후속 정리
 
@@ -473,6 +478,8 @@ pytest tests/unit_test/services/test_backtest_walk_forward.py -v
 pytest tests/unit_test/services/test_backtest_monte_carlo.py -v
 pytest tests/unit_test/scripts/test_run_backtest.py -v
 pytest tests/unit_test/strategies/test_oneil_pocket_pivot_fixture_cases.py -v
+pytest tests/unit_test/strategies/test_oneil_pp_bgu_fixture_runner_parity.py -v
+pytest tests/unit_test/strategies/debug/test_strategy_debug_runner.py -v
 ```
 
 전체 검증:
@@ -484,6 +491,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `67 passed`
-- 전체 단위 테스트: `4174 passed`
+- 관련 테스트: `88 passed`
+- 전체 단위 테스트: `4179 passed`
 - 전체 통합 테스트: `208 passed`

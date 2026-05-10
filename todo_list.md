@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-10 (backtest replay clock/snapshot 주입)
+최종 업데이트: 2026-05-10 (fixture 기반 period/debug runner 결과 비교)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -188,7 +188,9 @@
 - [x] 실시간 API 응답 대신 과거 OHLCV/체결강도/프로그램매매 데이터를 공급하는 `BacktestStockQueryService` 또는 data replay adapter를 추가한다.
   - 완료된 부분: `StockQueryBacktestReplayService`가 과거 분봉 기반 현재가/체결강도 replay와 일별 프로그램매매 보강을 제공한다.
   - 완료된 부분: `apply_backtest_snapshot_context()`로 기존 O'Neil universe의 `_sqs`/`_tm`을 replay SQS와 backtest clock으로 교체한다.
-- [ ] `run_strategy_debug`는 미매수 사유 진단, `run_backtest`는 기간 수익률/포트폴리오 검증으로 역할을 분리한다.
+- [x] `run_strategy_debug`는 미매수 사유 진단, `run_backtest`는 기간 수익률/포트폴리오 검증으로 역할을 분리한다.
+  - 완료된 부분: 같은 PP/BGU fixture를 기준으로 period runner의 BUY 체결 여부와 strategy debug runner의 SIGNAL/REJECTED journal 결과를 비교하는 parity 테스트를 추가했다.
+  - 완료된 부분: debug runner decision journal은 최종 BUY 신호가 있는 종목의 중간 로그(`buy_signal_generated`, PP/BGU 분기 중간 탈락)를 별도 `REJECTED`로 저장하지 않고 최종 `SIGNAL`만 남기도록 정리했다.
 - [x] walk-forward 검증을 추가한다. 기간을 train/tune/test로 나누고, 파라미터 튜닝 구간과 검증 구간을 분리한다.
   - 완료된 부분: `BacktestWalkForwardRunner`를 추가해 날짜를 train/tune/test rolling window로 분리하고, 각 phase를 독립 `BacktestPeriodRunner`/ledger/strategy state로 실행한다.
   - 완료된 부분: `scripts/run_backtest.py --walk-forward`와 `--wf-train-days` / `--wf-tune-days` / `--wf-test-days` / `--wf-step-days` 옵션을 추가해 CLI에서 검증 구간 요약과 JSON 출력을 지원한다.
@@ -206,6 +208,8 @@
 - `strategies/backtest_data_provider.py`
 - `strategies/strategy_executor.py`
 - `services/backtest_replay_context.py`
+- `tests/unit_test/strategies/test_oneil_pp_bgu_fixture_runner_parity.py`
+- `tests/unit_test/strategies/debug/test_strategy_debug_runner.py`
 - `tests/fixtures/backtest/oneil_pp_bgu_entry_cases.json`
 - `tests/unit_test/strategies/test_oneil_pocket_pivot_fixture_cases.py`
 
@@ -370,8 +374,8 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - fixture 기반 결과를 period runner와 strategy debug runner 양쪽에서 비교
    - 여러 활성 전략으로 backtest clock/context 주입 contract 확장
+   - fixture 기반 runner parity를 여러 거래일/경계 조건으로 확장
 
 3. P1 전략 수익성
    - 시장 국면별 성과 분리
