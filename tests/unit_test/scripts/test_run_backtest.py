@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
 from config.config_loader import OrderPolicyConfig, PositionSizingConfig, RiskGateConfig
 from core.account_snapshot import AccountSnapshot
 from scripts.run_backtest import (
+    ACTIVE_BACKTEST_STRATEGIES,
     _BacktestLedgerAccountSnapshotCache,
     _BacktestStrategyRiskProvider,
     _build_dates,
     _build_risk_sizing_services,
+    _build_backtest_strategy,
     _format_console,
     _format_walk_forward_console,
     _format_walk_forward_json,
@@ -133,6 +136,68 @@ def test_parse_args_accepts_backtest_time(monkeypatch):
     args = _parse_args()
 
     assert args.backtest_time == "09:30:00"
+
+
+@pytest.mark.parametrize("strategy_key", ACTIVE_BACKTEST_STRATEGIES)
+def test_parse_args_accepts_active_backtest_strategies(monkeypatch, strategy_key):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_backtest",
+            "--strategy",
+            strategy_key,
+            "--dates",
+            "20260501",
+        ],
+    )
+
+    args = _parse_args()
+
+    assert args.strategy == strategy_key
+
+
+@pytest.mark.parametrize("strategy_key", ACTIVE_BACKTEST_STRATEGIES)
+def test_build_backtest_strategy_injects_replay_context_for_active_strategies(
+    tmp_path,
+    strategy_key,
+):
+    replay_sqs = MagicMock(name="replay_sqs")
+    universe_service = MagicMock(name="universe_service")
+    indicator_service = MagicMock(name="indicator_service")
+    backtest_clock = MagicMock(name="backtest_clock")
+
+    strategy = _build_backtest_strategy(
+        strategy_key=strategy_key,
+        replay_sqs=replay_sqs,
+        universe_service=universe_service,
+        indicator_service=indicator_service,
+        backtest_clock=backtest_clock,
+        state_dir=str(tmp_path),
+        logger=logging.getLogger("test.backtest_strategy_factory"),
+    )
+
+    assert strategy._sqs is replay_sqs
+    assert strategy._tm is backtest_clock
+    assert getattr(strategy, "_universe", universe_service) is universe_service
+    if hasattr(strategy, "_indicator"):
+        assert strategy._indicator is indicator_service
+    if hasattr(strategy, "STATE_FILE"):
+        assert str(tmp_path) in strategy.STATE_FILE
+        assert strategy_key in strategy.STATE_FILE
+
+
+def test_build_backtest_strategy_requires_indicator_service_for_indicator_strategies(
+    tmp_path,
+):
+    with pytest.raises(ValueError, match="indicator_service"):
+        _build_backtest_strategy(
+            strategy_key="rsi2_pullback",
+            replay_sqs=MagicMock(),
+            universe_service=MagicMock(),
+            indicator_service=None,
+            backtest_clock=MagicMock(),
+            state_dir=str(tmp_path),
+        )
 
 
 def test_format_console_summarizes_execution_and_portfolio():

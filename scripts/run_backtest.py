@@ -19,6 +19,16 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+ACTIVE_BACKTEST_STRATEGIES = (
+    "oneil_pocket_pivot",
+    "oneil_squeeze_breakout",
+    "high_tight_flag",
+    "first_pullback",
+    "larry_williams_vbo",
+    "rsi2_pullback",
+    "larry_williams_channel_breakout",
+)
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -27,7 +37,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy",
         default="oneil_pocket_pivot",
-        choices=["oneil_pocket_pivot"],
+        choices=list(ACTIVE_BACKTEST_STRATEGIES),
         help="실행할 전략 (default: oneil_pocket_pivot)",
     )
     parser.add_argument("--dates", default=None, help="실행 날짜 목록 (YYYYMMDD, 쉼표 구분)")
@@ -160,6 +170,107 @@ class _BacktestStrategyRiskProvider:
 
     def get_strategy_return_history(self, strategy_name: str) -> list[dict]:
         return []
+
+
+def _state_file(state_dir: str, strategy_key: str, state_suffix: str = "") -> str:
+    return os.path.join(state_dir, f"{strategy_key}_position_state{state_suffix}.json")
+
+
+def _require_indicator_service(strategy_key: str, indicator_service: Any | None) -> Any:
+    if indicator_service is None:
+        raise ValueError(f"{strategy_key} 백테스트에는 indicator_service가 필요합니다.")
+    return indicator_service
+
+
+def _build_backtest_strategy(
+    *,
+    strategy_key: str,
+    replay_sqs: Any,
+    universe_service: Any,
+    indicator_service: Any | None,
+    backtest_clock: Any,
+    state_dir: str,
+    state_suffix: str = "",
+    logger: logging.Logger | None = None,
+):
+    """Build an active strategy with replay data and a pinned backtest clock."""
+    strategy_logger = logger or logging.getLogger(f"backtest.{strategy_key}")
+
+    if strategy_key == "oneil_pocket_pivot":
+        from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
+
+        return OneilPocketPivotStrategy(
+            stock_query_service=replay_sqs,
+            universe_service=universe_service,
+            market_clock=backtest_clock,
+            logger=strategy_logger,
+            state_file=_state_file(state_dir, strategy_key, state_suffix),
+        )
+    if strategy_key == "oneil_squeeze_breakout":
+        from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
+
+        return OneilSqueezeBreakoutStrategy(
+            stock_query_service=replay_sqs,
+            universe_service=universe_service,
+            market_clock=backtest_clock,
+            logger=strategy_logger,
+            state_file=_state_file(state_dir, strategy_key, state_suffix),
+        )
+    if strategy_key == "high_tight_flag":
+        from strategies.high_tight_flag_strategy import HighTightFlagStrategy
+
+        return HighTightFlagStrategy(
+            stock_query_service=replay_sqs,
+            universe_service=universe_service,
+            market_clock=backtest_clock,
+            logger=strategy_logger,
+            state_file=_state_file(state_dir, strategy_key, state_suffix),
+        )
+    if strategy_key == "first_pullback":
+        from strategies.first_pullback_strategy import FirstPullbackStrategy
+
+        return FirstPullbackStrategy(
+            stock_query_service=replay_sqs,
+            universe_service=universe_service,
+            market_clock=backtest_clock,
+            logger=strategy_logger,
+            state_file=_state_file(state_dir, strategy_key, state_suffix),
+        )
+    if strategy_key == "larry_williams_vbo":
+        from strategies.larry_williams_vbo_strategy import LarryWilliamsVBOStrategy
+
+        return LarryWilliamsVBOStrategy(
+            stock_query_service=replay_sqs,
+            market_clock=backtest_clock,
+            universe_service=universe_service,
+            logger=strategy_logger,
+        )
+    if strategy_key == "rsi2_pullback":
+        from strategies.rsi2_pullback_strategy import RSI2PullbackStrategy
+
+        return RSI2PullbackStrategy(
+            stock_query_service=replay_sqs,
+            universe_service=universe_service,
+            indicator_service=_require_indicator_service(strategy_key, indicator_service),
+            market_clock=backtest_clock,
+            logger=strategy_logger,
+            state_file=_state_file(state_dir, strategy_key, state_suffix),
+        )
+    if strategy_key == "larry_williams_channel_breakout":
+        from strategies.larry_williams_channel_breakout_strategy import (
+            LarryWilliamsChannelBreakoutStrategy,
+        )
+
+        return LarryWilliamsChannelBreakoutStrategy(
+            stock_query_service=replay_sqs,
+            universe_service=universe_service,
+            indicator_service=_require_indicator_service(strategy_key, indicator_service),
+            market_clock=backtest_clock,
+            logger=strategy_logger,
+            state_file=_state_file(state_dir, strategy_key, state_suffix),
+        )
+
+    raise ValueError(f"지원하지 않는 백테스트 전략입니다: {strategy_key}")
 
 
 @dataclass(frozen=True)
@@ -379,7 +490,6 @@ async def _run(args: argparse.Namespace) -> None:
         BacktestWalkForwardConfig,
         BacktestWalkForwardRunner,
     )
-    from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 
     dates = _build_dates(args)
     app_config = load_configs()
@@ -408,6 +518,7 @@ async def _run(args: argparse.Namespace) -> None:
         market_clock=backtest_clock,
     )
     bar_provider = StockQueryIntradayReplayBarProvider(replay_sqs)
+    indicator_service = getattr(sqs, "indicator_service", None)
     with tempfile.TemporaryDirectory(prefix="period_backtest_") as tmp_dir:
         def make_runner(
             *,
@@ -420,16 +531,19 @@ async def _run(args: argparse.Namespace) -> None:
                 use_risk_sizing=args.use_risk_sizing,
                 config=app_config,
                 ledger=ledger,
-                indicator_service=getattr(sqs, "indicator_service", None),
+                indicator_service=indicator_service,
                 logger=bootstrap_logger,
             )
             state_suffix = f"_{segment.index}_{phase}" if segment is not None else ""
-            strategy = OneilPocketPivotStrategy(
-                stock_query_service=replay_sqs,
+            strategy = _build_backtest_strategy(
+                strategy_key=args.strategy,
+                replay_sqs=replay_sqs,
                 universe_service=universe_service,
-                market_clock=backtest_clock,
-                logger=logging.getLogger("backtest.OneilPocketPivot"),
-                state_file=os.path.join(tmp_dir, f"pp_position_state{state_suffix}.json"),
+                indicator_service=indicator_service,
+                backtest_clock=backtest_clock,
+                state_dir=tmp_dir,
+                state_suffix=state_suffix,
+                logger=logging.getLogger(f"backtest.{args.strategy}"),
             )
             max_positions = (
                 {strategy.name: args.max_positions}
@@ -446,6 +560,7 @@ async def _run(args: argparse.Namespace) -> None:
                 "cli": "scripts.run_backtest",
                 "initial_cash": args.initial_cash,
                 "max_positions": args.max_positions,
+                "strategy_key": args.strategy,
                 "backtest_time": args.backtest_time,
                 "execution_bar_policy": args.execution_bar_policy,
                 "use_risk_sizing": args.use_risk_sizing,

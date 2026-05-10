@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-10 (fixture 기반 period/debug runner 결과 비교)
+최종 업데이트: 2026-05-10 (활성 전략 backtest clock/context contract 확장)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -93,6 +93,7 @@
   - 완료된 부분: `StockQueryBacktestReplayService`를 추가해 전략의 `get_current_price()`/`get_stock_conclusion()` 호출을 과거 분봉 기반 현재가·체결강도 replay로 바꾸고, 일별 프로그램매매 순매수 수량을 `pgtr_ntby_qty`에 보강한다.
   - 완료된 부분: `BacktestPeriodRunner`가 bar provider에도 `set_backtest_date()`를 전달하도록 해 replay context가 날짜 루프와 동기화된다.
   - 완료된 부분: `scripts/run_backtest.py` CLI 진입점을 추가해 `oneil_pocket_pivot` 기간 백테스트를 replay adapter + portfolio ledger + simulator로 실행할 수 있게 했다.
+  - 완료된 부분: `scripts/run_backtest.py`의 활성 전략 factory를 확장해 `oneil_pocket_pivot`, `oneil_squeeze_breakout`, `high_tight_flag`, `first_pullback`, `larry_williams_vbo`, `rsi2_pullback`, `larry_williams_channel_breakout`이 replay SQS와 `BacktestMarketClock`을 같은 contract로 주입받게 했다.
   - 완료된 부분: 기간 백테스트 runner가 `BacktestExecutionReport`를 표준 journal record로 변환하고, `BacktestJournalRepository`에 period run metadata와 함께 저장한다.
   - 완료된 부분: 저장된 period backtest run의 체결 상세를 운영 UI/괴리 리포트에서 검증했다.
   - 완료된 부분: 기간 runner가 선택적 RiskGate/PositionSizing dry-run contract를 호출하고 거부 사유를 표준 journal로 남긴다.
@@ -184,7 +185,7 @@
   - 완료된 부분: `BacktestMarketClock`을 추가해 runner가 순회 중인 `YYYYMMDD`와 지정 장중 시각을 전략/유니버스가 참조하도록 고정했다.
   - 완료된 부분: `BacktestPeriodRunner`가 전략/bar provider 외 추가 date context target에도 `set_backtest_date()`를 호출할 수 있게 했다.
   - 완료된 부분: `scripts/run_backtest.py`가 `--backtest-time HH:MM:SS`를 받고, replay SQS와 backtest clock을 O'Neil universe/strategy에 주입한다.
-  - 진행 필요: 여러 활성 전략으로 확장할 때 각 전략 factory가 backtest clock/context 주입을 동일 contract로 받도록 정리한다.
+  - 완료된 부분: 활성 전략 7개용 backtest strategy factory를 추가해 replay SQS, `BacktestMarketClock`, universe service, indicator service 주입 contract를 테스트로 고정했다.
 - [x] 실시간 API 응답 대신 과거 OHLCV/체결강도/프로그램매매 데이터를 공급하는 `BacktestStockQueryService` 또는 data replay adapter를 추가한다.
   - 완료된 부분: `StockQueryBacktestReplayService`가 과거 분봉 기반 현재가/체결강도 replay와 일별 프로그램매매 보강을 제공한다.
   - 완료된 부분: `apply_backtest_snapshot_context()`로 기존 O'Neil universe의 `_sqs`/`_tm`을 replay SQS와 backtest clock으로 교체한다.
@@ -374,7 +375,6 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - 여러 활성 전략으로 backtest clock/context 주입 contract 확장
    - fixture 기반 runner parity를 여러 거래일/경계 조건으로 확장
 
 3. P1 전략 수익성

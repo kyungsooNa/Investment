@@ -16,7 +16,17 @@
 
 ## 현재 범위
 
-현재 기간 백테스트 CLI는 `oneil_pocket_pivot` 전략을 지원한다.
+현재 기간 백테스트 CLI는 활성 전략 7개를 지원한다.
+
+지원 전략:
+
+- `oneil_pocket_pivot`
+- `oneil_squeeze_breakout`
+- `high_tight_flag`
+- `first_pullback`
+- `larry_williams_vbo`
+- `rsi2_pullback`
+- `larry_williams_channel_breakout`
 
 지원하는 흐름:
 
@@ -143,7 +153,9 @@
 ### CLI 진입점
 
 - `scripts/run_backtest.py`를 추가했다.
-- 현재 지원 전략은 `oneil_pocket_pivot`이다.
+- 활성 전략 7개를 `--strategy` 선택지로 지원한다.
+- 활성 전략 factory가 replay SQS, `BacktestMarketClock`, universe service, indicator service를 동일 contract로 주입한다.
+- 각 runner/phase는 strategy key 기반 임시 state file을 사용해 period/walk-forward phase 간 state를 분리한다.
 - replay adapter, portfolio ledger, execution simulator, period runner를 조립해 기간 백테스트를 실행한다.
 - console 출력과 JSON 출력을 지원한다.
 - 실행 결과를 `BacktestJournalRepository` 표준 저장 경로에 저장한다.
@@ -219,11 +231,10 @@
 
 ### 2. replay context 후속 정리
 
-현재 O'Neil PP/BGU 기간 백테스트는 replay SQS와 backtest clock을 strategy/universe에 주입한다. 남은 작업은 이 contract를 여러 활성 전략 factory로 확장하는 것이다.
+현재 활성 전략 7개는 replay SQS와 backtest clock을 같은 factory contract로 주입받는다. 남은 작업은 fixture 기반 검증 범위를 더 넓히는 것이다.
 
 해야 할 일:
 
-- 활성 전략별 factory가 `BacktestMarketClock`과 replay SQS를 같은 방식으로 받도록 정리
 - fixture 기반 runner parity를 여러 거래일/경계 조건으로 확장
 
 ### 3. 체결 정책 후속 정리
@@ -294,6 +305,20 @@ cd C:\Users\Kyungsoo\Documents\Code\Investment
 - 따라서 `scripts/run_backtest.py`는 기본적으로 실전 데이터 모드로 초기화한다.
 - 실제 주문은 발생하지 않는다. 이 CLI는 과거 데이터 조회와 백테스트 계산만 수행한다.
 - `--paper` 옵션은 서비스 그래프를 모의투자 모드로 초기화하지만, 과거 분봉/프로그램매매 API가 모의투자에서 지원되지 않을 수 있다.
+
+### 지원 전략 확인
+
+`--strategy`는 아래 값 중 하나를 사용한다.
+
+```text
+oneil_pocket_pivot
+oneil_squeeze_breakout
+high_tight_flag
+first_pullback
+larry_williams_vbo
+rsi2_pullback
+larry_williams_channel_breakout
+```
 
 ### 날짜 목록으로 실행
 
@@ -446,7 +471,7 @@ python -m scripts.run_strategy_debug --codes 005930,000660 --portfolio-cash 1000
 
 - 목적: 날짜 범위 동안 전략 신호, 체결, 포트폴리오 장부 변화를 재현
 - 기간 수익률과 보유/현금 변화를 검증하는 방향
-- 현재는 `oneil_pocket_pivot`부터 연결됨
+- 활성 전략 7개를 같은 replay clock/context contract로 실행
 
 예:
 
@@ -456,7 +481,7 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 
 ## 현재 한계
 
-- CLI 지원 전략은 아직 `oneil_pocket_pivot` 하나다.
+- 지원 전략은 활성 전략 7개로 확장됐지만, fixture 기반 parity 검증은 아직 O'Neil PP/BGU 중심이다.
 - `--use-risk-sizing`은 백테스트 ledger 기반 snapshot을 사용하므로 실제 계좌 잔고나 미체결 주문 상태를 조회하지 않는다.
 - `--walk-forward`는 train/tune/test 분리 실행과 test phase 요약 집계까지 지원한다. 자동 파라미터 최적화는 아직 수행하지 않는다.
 - `--monte-carlo`는 표준 journal에 `net_pnl`이 있는 완료 trade만 입력으로 사용한다. period runner의 SELL 체결 journal은 현재 `SOLD` 상태와 `net_pnl`을 기록한다.
@@ -491,6 +516,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `88 passed`
-- 전체 단위 테스트: `4179 passed`
+- 관련 테스트: `103 passed`
+- 전체 단위 테스트: `4194 passed`
 - 전체 통합 테스트: `208 passed`
