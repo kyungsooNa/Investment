@@ -1,0 +1,21 @@
+{
+  "description": "E2E restore_state_from_broker test fixture. inquire_unfilled_orders response data with one pending BUY order.",
+  "output1": [
+    {
+      "odno": "R001",
+      "orgn_odno": "",
+      "pdno": "005930",
+      "sll_buy_dvsn_cd": "02",
+      "excg_dvsn_cd": "KRX",
+      "ord_qty": "5",
+      "ord_unpr": "70000",
+      "tot_ccld_qty": "0",
+      "rmn_qty": "5",
+      "avg_prvs": "0",
+      "cncl_yn": "N",
+      "rjct_qty": "0",
+      "ord_dt": "20260510",
+      "ord_tmd": "090000"
+    }
+  ]
+}

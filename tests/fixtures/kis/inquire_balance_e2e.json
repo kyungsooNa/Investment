@@ -1,0 +1,52 @@
+{
+  "description": "E2E reconcile test fixtures for get_account_balance output1. Covers broker/local match, local-only, broker-only, and quantity mismatch scenarios.",
+  "scenarios": {
+    "match_only": {
+      "description": "broker holds exactly match local holds — no reconcile action needed",
+      "output1": [
+        {
+          "pdno": "005930",
+          "prdt_name": "삼성전자",
+          "hldg_qty": "10",
+          "pchs_avg_pric": "70000",
+          "prpr": "71000",
+          "evlu_pfls_rt": "1.43"
+        }
+      ]
+    },
+    "local_only": {
+      "description": "local HOLD exists for 005930 but broker shows zero qty — should force-close",
+      "output1": []
+    },
+    "broker_only": {
+      "description": "broker holds 000660 but local has no HOLD — should warn, not auto-insert",
+      "output1": [
+        {
+          "pdno": "000660",
+          "prdt_name": "SK하이닉스",
+          "hldg_qty": "5",
+          "pchs_avg_pric": "120000",
+          "prpr": "119000",
+          "evlu_pfls_rt": "-0.83"
+        }
+      ]
+    },
+    "quantity_mismatch": {
+      "description": "both sides hold 035420 but quantities differ — should warn, not auto-correct",
+      "output1": [
+        {
+          "pdno": "035420",
+          "prdt_name": "NAVER",
+          "hldg_qty": "3",
+          "pchs_avg_pric": "50000",
+          "prpr": "51000",
+          "evlu_pfls_rt": "2.00"
+        }
+      ]
+    },
+    "broker_fetch_error": {
+      "description": "placeholder — broker API returns error. Tests use rt_cd != 0 directly.",
+      "output1": null
+    }
+  }
+}

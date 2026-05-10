@@ -1,0 +1,183 @@
+{
+  "description": "E2E FSM state transition test fixtures. Each scenario has polling_rounds with sequential API responses to simulate state changes.",
+  "scenarios": {
+    "pending_to_filled": {
+      "odno": "E001",
+      "pdno": "005930",
+      "rounds": [
+        {
+          "label": "round1_submitted",
+          "row": {
+            "odno": "E001",
+            "orgn_odno": "",
+            "pdno": "005930",
+            "sll_buy_dvsn_cd": "02",
+            "excg_dvsn_cd": "KRX",
+            "ord_qty": "10",
+            "ord_unpr": "70000",
+            "tot_ccld_qty": "0",
+            "rmn_qty": "10",
+            "avg_prvs": "0",
+            "cncl_yn": "N",
+            "rjct_qty": "0",
+            "ord_dt": "20260510",
+            "ord_tmd": "090001"
+          },
+          "expected_state": "SUBMITTED",
+          "expected_filled_qty": 0,
+          "expected_remaining_qty": 10
+        },
+        {
+          "label": "round2_partial_filled",
+          "row": {
+            "odno": "E001",
+            "orgn_odno": "",
+            "pdno": "005930",
+            "sll_buy_dvsn_cd": "02",
+            "excg_dvsn_cd": "KRX",
+            "ord_qty": "10",
+            "ord_unpr": "70000",
+            "tot_ccld_qty": "4",
+            "rmn_qty": "6",
+            "avg_prvs": "70100",
+            "cncl_yn": "N",
+            "rjct_qty": "0",
+            "ord_dt": "20260510",
+            "ord_tmd": "090010"
+          },
+          "expected_state": "PARTIAL_FILLED",
+          "expected_filled_qty": 4,
+          "expected_remaining_qty": 6
+        },
+        {
+          "label": "round3_filled",
+          "row": {
+            "odno": "E001",
+            "orgn_odno": "",
+            "pdno": "005930",
+            "sll_buy_dvsn_cd": "02",
+            "excg_dvsn_cd": "KRX",
+            "ord_qty": "10",
+            "ord_unpr": "70000",
+            "tot_ccld_qty": "10",
+            "rmn_qty": "0",
+            "avg_prvs": "70050",
+            "cncl_yn": "N",
+            "rjct_qty": "0",
+            "ord_dt": "20260510",
+            "ord_tmd": "090030"
+          },
+          "expected_state": "FILLED",
+          "expected_filled_qty": 10,
+          "expected_remaining_qty": 0
+        }
+      ]
+    },
+    "pending_to_canceled": {
+      "odno": "E002",
+      "pdno": "000660",
+      "rounds": [
+        {
+          "label": "round1_canceled",
+          "row": {
+            "odno": "E002",
+            "orgn_odno": "",
+            "pdno": "000660",
+            "sll_buy_dvsn_cd": "02",
+            "excg_dvsn_cd": "KRX",
+            "ord_qty": "5",
+            "ord_unpr": "120000",
+            "tot_ccld_qty": "0",
+            "rmn_qty": "5",
+            "avg_prvs": "0",
+            "cncl_yn": "Y",
+            "rjct_qty": "0",
+            "ord_dt": "20260510",
+            "ord_tmd": "091500"
+          },
+          "expected_state": "CANCELED",
+          "expected_filled_qty": 0,
+          "expected_remaining_qty": 5
+        }
+      ]
+    },
+    "pending_to_rejected": {
+      "odno": "E003",
+      "pdno": "035420",
+      "rounds": [
+        {
+          "label": "round1_rejected",
+          "row": {
+            "odno": "E003",
+            "orgn_odno": "",
+            "pdno": "035420",
+            "sll_buy_dvsn_cd": "02",
+            "excg_dvsn_cd": "KRX",
+            "ord_qty": "3",
+            "ord_unpr": "50000",
+            "tot_ccld_qty": "0",
+            "rmn_qty": "3",
+            "avg_prvs": "0",
+            "cncl_yn": "N",
+            "rjct_qty": "3",
+            "ord_dt": "20260510",
+            "ord_tmd": "092000"
+          },
+          "expected_state": "REJECTED",
+          "expected_filled_qty": 0,
+          "expected_remaining_qty": 3
+        }
+      ]
+    },
+    "unfilled_remains_pending": {
+      "odno": "E004",
+      "pdno": "005380",
+      "rounds": [
+        {
+          "label": "round1_still_submitted",
+          "row": {
+            "odno": "E004",
+            "orgn_odno": "",
+            "pdno": "005380",
+            "sll_buy_dvsn_cd": "02",
+            "excg_dvsn_cd": "KRX",
+            "ord_qty": "2",
+            "ord_unpr": "200000",
+            "tot_ccld_qty": "0",
+            "rmn_qty": "2",
+            "avg_prvs": "0",
+            "cncl_yn": "N",
+            "rjct_qty": "0",
+            "ord_dt": "20260510",
+            "ord_tmd": "093000"
+          },
+          "expected_state": "SUBMITTED",
+          "expected_filled_qty": 0,
+          "expected_remaining_qty": 2
+        },
+        {
+          "label": "round2_still_submitted",
+          "row": {
+            "odno": "E004",
+            "orgn_odno": "",
+            "pdno": "005380",
+            "sll_buy_dvsn_cd": "02",
+            "excg_dvsn_cd": "KRX",
+            "ord_qty": "2",
+            "ord_unpr": "200000",
+            "tot_ccld_qty": "0",
+            "rmn_qty": "2",
+            "avg_prvs": "0",
+            "cncl_yn": "N",
+            "rjct_qty": "0",
+            "ord_dt": "20260510",
+            "ord_tmd": "093015"
+          },
+          "expected_state": "SUBMITTED",
+          "expected_filled_qty": 0,
+          "expected_remaining_qty": 2
+        }
+      ]
+    }
+  }
+}
