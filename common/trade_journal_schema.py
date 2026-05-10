@@ -172,6 +172,51 @@ def normalize_backtest_decision(
     )
 
 
+def normalize_backtest_execution(report: Any, *, source: str = "backtest") -> dict[str, Any]:
+    """Normalize a BacktestExecutionReport into the shared journal schema."""
+    order = report.order
+    status = str(getattr(report.status, "value", report.status) or "").upper()
+    side = str(getattr(order.side, "value", order.side) or "").upper()
+    filled_qty = _to_int(getattr(report, "filled_qty", None), default=0)
+    order_qty = _to_int(getattr(order, "qty", None), default=0)
+    qty = filled_qty if filled_qty > 0 else order_qty
+    reason = str(getattr(report, "reason", "") or "")
+    accepted = filled_qty > 0
+
+    return _ordered_record(
+        source=source,
+        strategy=str(getattr(order, "strategy", "") or ""),
+        code=str(getattr(order, "code", "") or ""),
+        signal_time=str(getattr(report, "filled_at", "") or getattr(order, "submitted_at", "") or ""),
+        decision_reason=reason if accepted else "",
+        rejected_reason="" if accepted else (reason or status.lower()),
+        side=side,
+        order_price=_to_float(getattr(report, "order_price", None)),
+        fill_price=_to_float(getattr(report, "fill_price", None)),
+        qty=qty,
+        status=status,
+        cost=_to_float(getattr(report, "cost", None)) or 0.0,
+        gross_pnl=None,
+        net_pnl=None,
+        gross_return=None,
+        net_return=None,
+        mfe=None,
+        mae=None,
+        metadata={
+            "order_id": str(getattr(order, "order_id", "") or ""),
+            "order_type": str(getattr(order.order_type, "value", order.order_type) or ""),
+            "requested_qty": order_qty,
+            "filled_qty": filled_qty,
+            "remaining_qty": _to_int(getattr(report, "remaining_qty", None), default=0),
+            "gross_amount": _to_float(getattr(report, "gross_amount", None)) or 0.0,
+            "slippage_amount_won": _to_float(getattr(report, "slippage_amount_won", None)),
+            "slippage_pct": _to_float(getattr(report, "slippage_pct", None)),
+            "priority": _to_int(getattr(order, "priority", None), default=0),
+            "execution_bar_policy": str(getattr(report, "execution_bar_policy", "") or ""),
+        },
+    )
+
+
 def _ordered_record(**values: Any) -> dict[str, Any]:
     record = {"schema_version": SCHEMA_VERSION}
     record.update(values)

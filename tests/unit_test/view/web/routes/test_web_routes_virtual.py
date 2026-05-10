@@ -1023,6 +1023,45 @@ def test_get_virtual_backtest_journal_records(web_client, mock_web_ctx):
     mock_web_ctx.backtest_journal_repository.load_records.assert_called_once_with("run1")
 
 
+def test_get_virtual_backtest_journal_records_expands_execution_details(web_client, mock_web_ctx):
+    """저장된 period backtest 체결 상세를 운영 UI용 top-level 필드로 노출한다."""
+    mock_web_ctx.backtest_journal_repository = MagicMock()
+    mock_web_ctx.backtest_journal_repository.load_records.return_value = [
+        {
+            "source": "backtest",
+            "strategy": "MomentumStrategy",
+            "code": "005930",
+            "side": "BUY",
+            "status": "FILLED",
+            "metadata": {
+                "order_id": "bt-20260101-005930-buy",
+                "order_type": "MARKET",
+                "requested_qty": 10,
+                "filled_qty": 8,
+                "remaining_qty": 2,
+                "gross_amount": 512000.0,
+                "slippage_amount_won": 160.0,
+                "slippage_pct": 0.03125,
+                "priority": 1,
+            },
+        }
+    ]
+
+    response = web_client.get("/api/virtual/backtest-journals/run-period")
+
+    assert response.status_code == 200
+    record = response.json()["records"][0]
+    assert record["order_id"] == "bt-20260101-005930-buy"
+    assert record["order_type"] == "MARKET"
+    assert record["requested_qty"] == 10
+    assert record["filled_qty"] == 8
+    assert record["remaining_qty"] == 2
+    assert record["gross_amount"] == 512000.0
+    assert record["slippage_amount_won"] == 160.0
+    assert record["slippage_pct"] == 0.03125
+    assert record["priority"] == 1
+
+
 @pytest.mark.asyncio
 async def test_get_stage3_alerts_paths(web_client, mock_web_ctx):
     """Stage3 alerts의 미초기화/빈보유/정상/예외 분기 검증."""

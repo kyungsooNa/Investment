@@ -5,6 +5,12 @@ from datetime import datetime
 import pytest
 
 from common.types import TradeSignal
+from services.backtest_execution_simulator import (
+    BacktestOrder,
+    OrderSide,
+    OrderType,
+    PortfolioDecision,
+)
 from strategies.debug.rejection_collector import RejectionEvent
 from strategies.debug.rejection_report import _event_label, format_console, format_json
 from strategies.debug.strategy_debug_runner import DebugReport
@@ -103,3 +109,40 @@ def test_format_json_serializes_signals_events_and_datetime():
     assert payload["events"][0]["timestamp"] == "2026-04-30T09:00:00"
     assert payload["limitations"] == ["limit"]
     assert payload["journal_records"] == [{"source": "backtest", "code": "005930", "status": "SIGNAL"}]
+
+
+def test_format_outputs_portfolio_dry_run_decisions():
+    order = BacktestOrder(
+        order_id="debug_1",
+        code="005930",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=70000,
+        qty=2,
+        strategy="JSON전략",
+    )
+    report = DebugReport(
+        strategy_name="JSON전략",
+        requested_codes=["005930"],
+        scanned_codes=["005930"],
+        missing_codes=[],
+        signals=[],
+        events=[],
+        limitations=[],
+        portfolio_decisions=[
+            PortfolioDecision(order=order, accepted=False, reason="cash_short")
+        ],
+    )
+
+    text = format_console(report)
+    payload = json.loads(format_json(report))
+
+    assert "[포트폴리오 dry-run]" in text
+    assert "cash_short" in text
+    assert payload["portfolio_decisions"] == [{
+        "code": "005930",
+        "strategy": "JSON전략",
+        "accepted": False,
+        "reason": "cash_short",
+        "reserved_cash": 0.0,
+    }]

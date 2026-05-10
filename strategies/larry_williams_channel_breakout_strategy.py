@@ -85,12 +85,23 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
         self._logger.info({"event": "scan_with_watchlist", "count": len(watchlist)})
 
         today_str = now.strftime("%Y%m%d")
-        candidates = [
-            (code, item) for code, item in watchlist.items()
-            if code not in self._position_state
-            and today_str >= self._cooldown.get(code, "")
-            and item.rs_rating >= self._cfg.rs_rating_min
-        ]
+        candidates = []
+        for code, item in watchlist.items():
+            if code in self._position_state:
+                continue
+            if today_str < self._cooldown.get(code, ""):
+                continue
+            if item.rs_rating < self._cfg.rs_rating_min:
+                self._logger.info({
+                    "event": "entry_rejected",
+                    "code": code,
+                    "name": item.name,
+                    "reason": "rs_rating_below_min",
+                    "rs_rating": item.rs_rating,
+                    "threshold": self._cfg.rs_rating_min,
+                })
+                continue
+            candidates.append((code, item))
 
         for i in range(0, len(candidates), 10):
             chunk = candidates[i:i + 10]
@@ -113,6 +124,12 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
         # OHLCV 한 번 조회 후 ADX/채널 계산에 공유
         ohlcv_resp = await self._sqs.get_ohlcv(code, period="D", caller=self.name)
         if not ohlcv_resp or ohlcv_resp.rt_cd != "0" or not ohlcv_resp.data:
+            self._logger.info({
+                "event": "entry_rejected",
+                "code": code,
+                "name": item.name,
+                "reason": "ohlcv_unavailable",
+            })
             return None
         ohlcv = ohlcv_resp.data
 
@@ -121,11 +138,27 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
             ohlcv, period=self._cfg.adx_period, slope_lookback=self._cfg.adx_slope_lookback
         )
         if not adx_result:
+            self._logger.info({
+                "event": "entry_rejected",
+                "code": code,
+                "name": item.name,
+                "reason": "adx_unavailable",
+            })
             return None
         if adx_result["adx"] < self._cfg.adx_threshold or not adx_result["adx_rising"]:
-            self._logger.debug({
-                "event": "entry_skip", "code": code, "reason": "ADX",
-                "adx": adx_result.get("adx"), "rising": adx_result.get("adx_rising"),
+            reason = (
+                "adx_below_threshold"
+                if adx_result["adx"] < self._cfg.adx_threshold
+                else "adx_not_rising"
+            )
+            self._logger.info({
+                "event": "entry_rejected",
+                "code": code,
+                "name": item.name,
+                "reason": reason,
+                "adx": adx_result.get("adx"),
+                "threshold": self._cfg.adx_threshold,
+                "rising": adx_result.get("adx_rising"),
             })
             return None
 
@@ -133,19 +166,37 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
         cp_resp = await self._sqs.get_current_price(code, caller=self.name)
         current = self._extract_current_price(cp_resp)
         if current <= 0:
+            self._logger.info({
+                "event": "entry_rejected",
+                "code": code,
+                "name": item.name,
+                "reason": "invalid_current_price",
+                "current": current,
+            })
             return None
 
         # Phase 2-2: 20일 채널 상단 돌파
         # item.high_20d = 어제까지의 20일 최고가 → 오늘 종가가 이를 초과하면 신고가 돌파
         if current <= item.high_20d:
+            self._logger.info({
+                "event": "entry_rejected",
+                "code": code,
+                "name": item.name,
+                "reason": "no_channel_breakout",
+                "current": current,
+                "high_20d": item.high_20d,
+            })
             return None
 
         # Phase 2-3: 거래량 확인 (누적 거래량 ≥ avg_vol_20d × multiplier)
         today_vol = self._extract_today_volume(cp_resp)
         if today_vol > 0 and item.avg_vol_20d > 0:
             if today_vol < item.avg_vol_20d * self._cfg.volume_multiplier:
-                self._logger.debug({
-                    "event": "entry_skip", "code": code, "reason": "Volume",
+                self._logger.info({
+                    "event": "entry_rejected",
+                    "code": code,
+                    "name": item.name,
+                    "reason": "insufficient_volume",
                     "today_vol": today_vol,
                     "required": int(item.avg_vol_20d * self._cfg.volume_multiplier),
                 })

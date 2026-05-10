@@ -121,6 +121,15 @@ def format_console(report: DebugReport) -> str:
         for reason, cnt in Counter(reasons).most_common(5):
             lines.append(f"  {cnt:>3}회  {reason}")
 
+    if report.portfolio_decisions:
+        lines.append("\n[포트폴리오 dry-run]")
+        for decision in report.portfolio_decisions:
+            status = "예약" if decision.accepted else "차단"
+            lines.append(
+                f"  {decision.order.code:<10} {status:<4} "
+                f"{decision.reason} reserved_cash={decision.reserved_cash:.0f}"
+            )
+
     # 추론 한계 표시
     if report.limitations:
         lines.append("\n[주의 — 추론 한계]")
@@ -164,5 +173,15 @@ def format_json(report: DebugReport) -> str:
         ],
         "limitations": report.limitations,
         "journal_records": report.journal_records,
+        "portfolio_decisions": [
+            {
+                "code": d.order.code,
+                "strategy": d.order.strategy,
+                "accepted": d.accepted,
+                "reason": d.reason,
+                "reserved_cash": d.reserved_cash,
+            }
+            for d in report.portfolio_decisions
+        ],
     }
     return json.dumps(data, ensure_ascii=False, indent=2, default=_serialize)

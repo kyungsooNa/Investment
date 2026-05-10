@@ -196,6 +196,11 @@ function virtualJournalDetail(row, key) {
     return meta[key];
 }
 
+function formatVirtualOrder(side, orderType) {
+    const parts = [side, orderType].filter(value => value !== null && value !== undefined && value !== '');
+    return parts.length ? escapeVirtualHtml(parts.join('/')) : '-';
+}
+
 function renderVirtualDivergence(report = virtualDivergenceReport) {
     const summaryEl = document.getElementById('virtual-divergence-summary');
     const bodyEl = document.getElementById('virtual-divergence-body');
@@ -248,6 +253,11 @@ function renderVirtualDivergence(report = virtualDivergenceReport) {
             stage: virtualJournalDetail(row, 'stage'),
             cgld: virtualJournalDetail(row, 'cgld'),
             threshold: virtualJournalDetail(row, 'threshold'),
+            side: virtualJournalDetail(row, 'side'),
+            orderType: virtualJournalDetail(row, 'order_type'),
+            filledQty: virtualJournalDetail(row, 'filled_qty'),
+            remainingQty: virtualJournalDetail(row, 'remaining_qty'),
+            slippagePct: virtualJournalDetail(row, 'slippage_pct'),
             backtestReturn: row.backtest_net_return,
             liveReturn: row.live_net_return,
             diff: row.net_return_diff,
@@ -264,6 +274,11 @@ function renderVirtualDivergence(report = virtualDivergenceReport) {
             stage: virtualJournalDetail(row, 'stage'),
             cgld: virtualJournalDetail(row, 'cgld'),
             threshold: virtualJournalDetail(row, 'threshold'),
+            side: virtualJournalDetail(row, 'side'),
+            orderType: virtualJournalDetail(row, 'order_type'),
+            filledQty: virtualJournalDetail(row, 'filled_qty'),
+            remainingQty: virtualJournalDetail(row, 'remaining_qty'),
+            slippagePct: virtualJournalDetail(row, 'slippage_pct'),
             backtestReturn: row.net_return,
             liveReturn: null,
             diff: null,
@@ -280,6 +295,11 @@ function renderVirtualDivergence(report = virtualDivergenceReport) {
             stage: virtualJournalDetail(row, 'stage'),
             cgld: virtualJournalDetail(row, 'cgld'),
             threshold: virtualJournalDetail(row, 'threshold'),
+            side: virtualJournalDetail(row, 'side'),
+            orderType: virtualJournalDetail(row, 'order_type'),
+            filledQty: virtualJournalDetail(row, 'filled_qty'),
+            remainingQty: virtualJournalDetail(row, 'remaining_qty'),
+            slippagePct: virtualJournalDetail(row, 'slippage_pct'),
             backtestReturn: null,
             liveReturn: row.net_return,
             diff: null,
@@ -288,7 +308,7 @@ function renderVirtualDivergence(report = virtualDivergenceReport) {
     });
 
     if (rows.length === 0) {
-        bodyEl.innerHTML = '<tr><td colspan="12" style="text-align:center; padding:15px;">비교 대기</td></tr>';
+        bodyEl.innerHTML = '<tr><td colspan="16" style="text-align:center; padding:15px;">비교 대기</td></tr>';
         return;
     }
 
@@ -302,6 +322,10 @@ function renderVirtualDivergence(report = virtualDivergenceReport) {
             <td>${formatVirtualDetail(row.stage)}</td>
             <td>${formatVirtualDetail(row.cgld, 1)}</td>
             <td>${formatVirtualDetail(row.threshold, 1)}</td>
+            <td>${formatVirtualOrder(row.side, row.orderType)}</td>
+            <td>${formatVirtualDetail(row.filledQty, null)}</td>
+            <td>${formatVirtualDetail(row.remainingQty, null)}</td>
+            <td>${formatVirtualPct(row.slippagePct, 4)}</td>
             <td>${formatVirtualPct(row.backtestReturn)}</td>
             <td>${formatVirtualPct(row.liveReturn)}</td>
             <td class="${divergenceColorClass(row.diff)}"><strong>${formatVirtualPct(row.diff)}</strong></td>

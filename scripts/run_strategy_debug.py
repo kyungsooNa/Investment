@@ -26,6 +26,7 @@ def _parse_args() -> argparse.Namespace:
 예시:
   python -m scripts.run_strategy_debug --codes 005930,000660
   python -m scripts.run_strategy_debug --codes 005930 --output json
+  python -m scripts.run_strategy_debug --codes 005930,000660 --portfolio-cash 10000000 --max-positions 3
   python -m scripts.run_strategy_debug                          # universe 전체 스캔
 """,
     )
@@ -58,12 +59,27 @@ def _parse_args() -> argparse.Namespace:
         default=True,
         help="모의투자 모드 사용 (default: True)",
     )
+    parser.add_argument(
+        "--portfolio-cash",
+        type=float,
+        default=None,
+        dest="portfolio_cash",
+        help="백테스트 포트폴리오 dry-run 초기 현금. 지정 시 신호를 현금/예약 장부로 검증",
+    )
+    parser.add_argument(
+        "--max-positions",
+        type=int,
+        default=None,
+        dest="max_positions",
+        help="전략별 최대 보유 종목 수 dry-run 제한. --portfolio-cash와 함께 사용",
+    )
     return parser.parse_args()
 
 
 async def _run(args: argparse.Namespace) -> None:
     from scripts._bootstrap import bootstrap_pp_strategy, make_stdout_logger
     from repositories.backtest_journal_repository import BacktestJournalRepository
+    from services.backtest_execution_simulator import BacktestPortfolioLedger
     from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
     from strategies.debug.strategy_debug_runner import StrategyDebugRunner
     from strategies.debug.rejection_report import format_console, format_json
@@ -100,11 +116,23 @@ async def _run(args: argparse.Namespace) -> None:
         )
 
         target_date = market_clock.get_current_kst_time().strftime("%Y%m%d")
+        portfolio_ledger = (
+            BacktestPortfolioLedger(initial_cash=args.portfolio_cash)
+            if args.portfolio_cash is not None
+            else None
+        )
+        max_positions = (
+            {strategy.name: args.max_positions}
+            if args.max_positions is not None
+            else None
+        )
         runner = StrategyDebugRunner(
             strategy,
             debug_logger,
             backtest_journal_repository=BacktestJournalRepository(),
             target_date=target_date,
+            backtest_portfolio_ledger=portfolio_ledger,
+            max_positions_per_strategy=max_positions,
         )
         print("[INFO] 전략 스캔 실행 중...\n")
         report = await runner.run(candidate_codes)

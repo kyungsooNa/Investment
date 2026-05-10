@@ -1199,13 +1199,10 @@ def test_log_sell_with_result_reconciled_force_close_returns_none_pnl(virutal_tr
     assert result.net_pnl_won is None
 
 
-def test_log_sell_async_returns_none_contract(virutal_trade_repository):
+async def test_log_sell_async_returns_none_contract(virutal_trade_repository):
     """기존 log_sell_async 반환값 contract 유지: None 반환."""
-    import asyncio
     virutal_trade_repository.log_buy("TestStrategy", "005930", 70000)
-    ret = asyncio.get_event_loop().run_until_complete(
-        virutal_trade_repository.log_sell_async("005930", 77000)
-    )
+    ret = await virutal_trade_repository.log_sell_async("005930", 77000)
     assert ret is None
 
 
@@ -1222,12 +1219,11 @@ def test_log_sell_by_strategy_with_result_returns_sell_result(virutal_trade_repo
     assert result.pnl_filled_qty == 1
 
 
-def test_log_sell_by_strategy_async_contract_unchanged(virutal_trade_repository):
+async def test_log_sell_by_strategy_async_contract_unchanged(virutal_trade_repository):
     """기존 log_sell_by_strategy_async 반환값 contract 유지: float|None (return_rate %)."""
-    import asyncio
     virutal_trade_repository.log_buy("MomentumStrategy", "005930", 70000)
-    ret = asyncio.get_event_loop().run_until_complete(
-        virutal_trade_repository.log_sell_by_strategy_async("MomentumStrategy", "005930", 77000)
+    ret = await virutal_trade_repository.log_sell_by_strategy_async(
+        "MomentumStrategy", "005930", 77000
     )
     assert isinstance(ret, float)
     assert ret == pytest.approx(10.0, abs=0.1)

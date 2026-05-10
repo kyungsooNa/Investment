@@ -54,6 +54,9 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert "<th>진입</th>" in response.text
             assert "<th>Stage</th>" in response.text
             assert "<th>체결강도</th>" in response.text
+            assert "<th>주문</th>" in response.text
+            assert "<th>체결수량</th>" in response.text
+            assert "<th>슬리피지</th>" in response.text
         elif path == "/scheduler":
             assert "전략 스케줄러" in response.text
         elif path == "/program":
@@ -71,6 +74,8 @@ def test_virtual_static_js_exposes_divergence_workflow():
     assert "/api/virtual/backtest-divergence" in script
     assert "loadVirtualBacktestJournalRuns" in script
     assert "compareVirtualDivergence" in script
+    assert "filled_qty" in script
+    assert "slippage_pct" in script
 
 def test_pages_show_login_page_when_unauthorized(web_client, mock_web_ctx):
     """로그인 기능 활성화 시 토큰 없이 접근하면 로그인 페이지가 렌더링되는지 테스트"""

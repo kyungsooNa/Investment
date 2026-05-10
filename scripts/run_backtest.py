@@ -1,0 +1,641 @@
+"""CLI: active live-strategy period backtest runner.
+
+Usage:
+    python -m scripts.run_backtest --strategy oneil_pocket_pivot --dates 20260501,20260502
+    python -m scripts.run_backtest --start-date 20260501 --end-date 20260510 --initial-cash 10000000
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import logging
+import os
+import sys
+import tempfile
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+ACTIVE_BACKTEST_STRATEGIES = (
+    "oneil_pocket_pivot",
+    "oneil_squeeze_breakout",
+    "high_tight_flag",
+    "first_pullback",
+    "larry_williams_vbo",
+    "rsi2_pullback",
+    "larry_williams_channel_breakout",
+)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="기간 백테스트 — 활성 LiveStrategy contract를 replay 데이터로 실행",
+    )
+    parser.add_argument(
+        "--strategy",
+        default="oneil_pocket_pivot",
+        choices=list(ACTIVE_BACKTEST_STRATEGIES),
+        help="실행할 전략 (default: oneil_pocket_pivot)",
+    )
+    parser.add_argument("--dates", default=None, help="실행 날짜 목록 (YYYYMMDD, 쉼표 구분)")
+    parser.add_argument("--start-date", default=None, dest="start_date", help="시작일 YYYYMMDD")
+    parser.add_argument("--end-date", default=None, dest="end_date", help="종료일 YYYYMMDD")
+    parser.add_argument("--initial-cash", type=float, default=10_000_000, dest="initial_cash")
+    parser.add_argument("--max-positions", type=int, default=None, dest="max_positions")
+    parser.add_argument(
+        "--backtest-time",
+        default="12:00:00",
+        dest="backtest_time",
+        help="전략과 유니버스가 참조할 과거 장중 시각 HH:MM:SS (default: 12:00:00)",
+    )
+    parser.add_argument(
+        "--execution-bar-policy",
+        default="current_bar",
+        choices=["current_bar", "next_bar"],
+        dest="execution_bar_policy",
+        help="체결 후보 봉 선택 정책: current_bar=가격에 닿은 첫 분봉, next_bar=가격에 닿은 신호 봉 다음 분봉",
+    )
+    parser.add_argument("--output", default="console", choices=["console", "json"])
+    parser.add_argument("--output-file", default=None, dest="output_file")
+    parser.add_argument(
+        "--use-risk-sizing",
+        action="store_true",
+        default=False,
+        help="운영 설정 기반 PositionSizing/RiskGate dry-run을 기간 백테스트에 적용",
+    )
+    parser.add_argument(
+        "--walk-forward",
+        action="store_true",
+        default=False,
+        help="기간을 train/tune/test 창으로 나누어 walk-forward 검증을 실행",
+    )
+    parser.add_argument("--wf-train-days", type=int, default=20, dest="wf_train_days")
+    parser.add_argument("--wf-tune-days", type=int, default=5, dest="wf_tune_days")
+    parser.add_argument("--wf-test-days", type=int, default=5, dest="wf_test_days")
+    parser.add_argument("--wf-step-days", type=int, default=None, dest="wf_step_days")
+    parser.add_argument(
+        "--monte-carlo",
+        action="store_true",
+        default=False,
+        help="완료 trade net_pnl 순서를 섞어 MDD/연속손실/ruin probability를 계산",
+    )
+    parser.add_argument("--mc-runs", type=int, default=1000, dest="mc_runs")
+    parser.add_argument("--mc-seed", type=int, default=None, dest="mc_seed")
+    parser.add_argument(
+        "--mc-ruin-drawdown-pct",
+        type=float,
+        default=30.0,
+        dest="mc_ruin_drawdown_pct",
+        help="MDD가 이 비율 이상이면 ruin으로 집계 (default: 30)",
+    )
+    parser.add_argument(
+        "--paper",
+        action="store_true",
+        default=False,
+        help="모의투자 모드로 서비스 그래프 초기화. 과거 분봉/프로그램매매 API는 실전 전용이라 기본은 실전 데이터 모드",
+    )
+    return parser.parse_args()
+
+
+def _build_dates(args: argparse.Namespace) -> list[str]:
+    if args.dates:
+        return [date.strip() for date in str(args.dates).split(",") if date.strip()]
+    if not args.start_date or not args.end_date:
+        raise ValueError("--dates 또는 --start-date/--end-date를 지정해야 합니다.")
+
+    start = datetime.strptime(args.start_date, "%Y%m%d").date()
+    end = datetime.strptime(args.end_date, "%Y%m%d").date()
+    if end < start:
+        raise ValueError("--end-date는 --start-date보다 빠를 수 없습니다.")
+
+    dates: list[str] = []
+    current = start
+    while current <= end:
+        dates.append(current.strftime("%Y%m%d"))
+        current += timedelta(days=1)
+    return dates
+
+
+def _get_program_provider(stock_query_service: Any) -> Any | None:
+    market_data_service = getattr(stock_query_service, "market_data_service", None)
+    return getattr(market_data_service, "_broker_api_wrapper", None)
+
+
+class _BacktestLedgerAccountSnapshotCache:
+    """AccountSnapshotCache contract backed by the in-memory backtest ledger."""
+
+    def __init__(self, ledger) -> None:
+        self._ledger = ledger
+
+    async def get(self, exchange=None):
+        from core.account_snapshot import AccountSnapshot
+
+        positions = {
+            code: int(position.market_value_basis)
+            for code, position in self._ledger.positions.items()
+        }
+        total_equity = int(self._ledger.cash + sum(positions.values()))
+        return AccountSnapshot(
+            total_equity=total_equity,
+            available_cash=int(self._ledger.available_cash),
+            positions=positions,
+        )
+
+
+class _BacktestStrategyRiskProvider:
+    """StrategyRiskDataProvider contract backed by the in-memory backtest ledger."""
+
+    def __init__(self, ledger) -> None:
+        self._ledger = ledger
+
+    def is_holding(self, strategy_name: str, code: str) -> bool:
+        position = self._ledger.positions.get(code)
+        return bool(position and position.strategy == strategy_name and position.qty > 0)
+
+    def get_holds_by_strategy(self, strategy_name: str) -> list[dict]:
+        holds: list[dict] = []
+        for position in self._ledger.positions.values():
+            if position.strategy != strategy_name or position.qty <= 0:
+                continue
+            holds.append({
+                "code": position.code,
+                "qty": position.qty,
+                "avg_price": position.avg_price,
+                "evlu_amt": int(position.market_value_basis),
+            })
+        return holds
+
+    def get_strategy_return_history(self, strategy_name: str) -> list[dict]:
+        return []
+
+
+def _state_file(state_dir: str, strategy_key: str, state_suffix: str = "") -> str:
+    return os.path.join(state_dir, f"{strategy_key}_position_state{state_suffix}.json")
+
+
+def _require_indicator_service(strategy_key: str, indicator_service: Any | None) -> Any:
+    if indicator_service is None:
+        raise ValueError(f"{strategy_key} 백테스트에는 indicator_service가 필요합니다.")
+    return indicator_service
+
+
+def _build_backtest_strategy(
+    *,
+    strategy_key: str,
+    replay_sqs: Any,
+    universe_service: Any,
+    indicator_service: Any | None,
+    backtest_clock: Any,
+    state_dir: str,
+    state_suffix: str = "",
+    logger: logging.Logger | None = None,
+):
+    """Build an active strategy with replay data and a pinned backtest clock."""
+    strategy_logger = logger or logging.getLogger(f"backtest.{strategy_key}")
+
+    if strategy_key == "oneil_pocket_pivot":
+        from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
+
+        return OneilPocketPivotStrategy(
+            stock_query_service=replay_sqs,
+            universe_service=universe_service,
+            market_clock=backtest_clock,
+            logger=strategy_logger,
+            state_file=_state_file(state_dir, strategy_key, state_suffix),
+        )
+    if strategy_key == "oneil_squeeze_breakout":
+        from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
+
+        return OneilSqueezeBreakoutStrategy(
+            stock_query_service=replay_sqs,
+            universe_service=universe_service,
+            market_clock=backtest_clock,
+            logger=strategy_logger,
+            state_file=_state_file(state_dir, strategy_key, state_suffix),
+        )
+    if strategy_key == "high_tight_flag":
+        from strategies.high_tight_flag_strategy import HighTightFlagStrategy
+
+        return HighTightFlagStrategy(
+            stock_query_service=replay_sqs,
+            universe_service=universe_service,
+            market_clock=backtest_clock,
+            logger=strategy_logger,
+            state_file=_state_file(state_dir, strategy_key, state_suffix),
+        )
+    if strategy_key == "first_pullback":
+        from strategies.first_pullback_strategy import FirstPullbackStrategy
+
+        return FirstPullbackStrategy(
+            stock_query_service=replay_sqs,
+            universe_service=universe_service,
+            market_clock=backtest_clock,
+            logger=strategy_logger,
+            state_file=_state_file(state_dir, strategy_key, state_suffix),
+        )
+    if strategy_key == "larry_williams_vbo":
+        from strategies.larry_williams_vbo_strategy import LarryWilliamsVBOStrategy
+
+        return LarryWilliamsVBOStrategy(
+            stock_query_service=replay_sqs,
+            market_clock=backtest_clock,
+            universe_service=universe_service,
+            logger=strategy_logger,
+        )
+    if strategy_key == "rsi2_pullback":
+        from strategies.rsi2_pullback_strategy import RSI2PullbackStrategy
+
+        return RSI2PullbackStrategy(
+            stock_query_service=replay_sqs,
+            universe_service=universe_service,
+            indicator_service=_require_indicator_service(strategy_key, indicator_service),
+            market_clock=backtest_clock,
+            logger=strategy_logger,
+            state_file=_state_file(state_dir, strategy_key, state_suffix),
+        )
+    if strategy_key == "larry_williams_channel_breakout":
+        from strategies.larry_williams_channel_breakout_strategy import (
+            LarryWilliamsChannelBreakoutStrategy,
+        )
+
+        return LarryWilliamsChannelBreakoutStrategy(
+            stock_query_service=replay_sqs,
+            universe_service=universe_service,
+            indicator_service=_require_indicator_service(strategy_key, indicator_service),
+            market_clock=backtest_clock,
+            logger=strategy_logger,
+            state_file=_state_file(state_dir, strategy_key, state_suffix),
+        )
+
+    raise ValueError(f"지원하지 않는 백테스트 전략입니다: {strategy_key}")
+
+
+@dataclass(frozen=True)
+class _RiskSizingServices:
+    position_sizing_service: Any | None = None
+    risk_gate_service: Any | None = None
+
+
+def _build_risk_sizing_services(
+    *,
+    use_risk_sizing: bool,
+    config: Any,
+    ledger,
+    indicator_service,
+    logger,
+) -> _RiskSizingServices:
+    if not use_risk_sizing:
+        return _RiskSizingServices()
+
+    from services.position_sizing_service import PositionSizingService
+    from services.risk_gate_service import RiskGateService
+
+    snapshot_cache = _BacktestLedgerAccountSnapshotCache(ledger)
+    risk_provider = _BacktestStrategyRiskProvider(ledger)
+    risk_gate_config = getattr(config, "risk_gate", None)
+    order_policy_config = getattr(config, "order_policy", None)
+
+    position_sizing_service = PositionSizingService(
+        account_snapshot_cache=snapshot_cache,
+        indicator_service=indicator_service,
+        config=getattr(config, "position_sizing"),
+        logger=logger,
+        risk_gate_config=risk_gate_config,
+        quote_provider=None,
+        order_policy_config=order_policy_config,
+    )
+    risk_gate_service = RiskGateService(
+        config=risk_gate_config,
+        kill_switch_service=None,
+        account_snapshot_cache=snapshot_cache,
+        strategy_risk_provider=risk_provider,
+        logger=logger,
+    )
+    return _RiskSizingServices(
+        position_sizing_service=position_sizing_service,
+        risk_gate_service=risk_gate_service,
+    )
+
+
+def _format_console(result) -> str:
+    buy_count = sum(1 for report in result.execution_reports if report.order.side.value == "BUY")
+    sell_count = sum(1 for report in result.execution_reports if report.order.side.value == "SELL")
+    rejected_count = len(result.journal_records)
+    portfolio = result.portfolio or {}
+    positions = portfolio.get("positions") or {}
+
+    lines = [
+        "[BACKTEST RESULT]",
+        f"전략: {result.strategy_name}",
+        f"기간: {result.dates[0]} ~ {result.dates[-1]} ({len(result.dates)}일)",
+        f"BUY 체결: {buy_count}",
+        f"SELL 체결: {sell_count}",
+        f"거부 기록: {rejected_count}",
+        f"보유 종목: {len(positions)}",
+        f"현금: {portfolio.get('cash', 0):,.0f}",
+        f"가용현금: {portfolio.get('available_cash', 0):,.0f}",
+        f"실현손익(순): {portfolio.get('realized_net_pnl', 0):,.0f}",
+    ]
+    execution_bar_policy = getattr(result, "execution_bar_policy", "")
+    if execution_bar_policy:
+        lines.append(f"체결 봉 정책: {execution_bar_policy}")
+    saved_run = getattr(result, "saved_journal_run", None) or {}
+    if saved_run.get("run_id"):
+        lines.append(f"journal run: {saved_run['run_id']}")
+    monte_carlo = getattr(result, "monte_carlo", None)
+    if monte_carlo:
+        lines.extend(_format_monte_carlo_console_lines(monte_carlo))
+    return "\n".join(lines)
+
+
+def _result_to_payload(result) -> dict[str, Any]:
+    return {
+        "strategy_name": result.strategy_name,
+        "dates": result.dates,
+        "execution_reports": [
+            {
+                "order_id": report.order.order_id,
+                "code": report.order.code,
+                "side": report.order.side.value,
+                "qty": report.order.qty,
+                "filled_qty": report.filled_qty,
+                "fill_price": report.fill_price,
+                "status": report.status.value,
+                "reason": report.reason,
+                "execution_bar_policy": getattr(report, "execution_bar_policy", ""),
+            }
+            for report in result.execution_reports
+        ],
+        "journal_records": result.journal_records,
+        "portfolio": result.portfolio,
+        "saved_journal_run": getattr(result, "saved_journal_run", {}),
+        "execution_bar_policy": getattr(result, "execution_bar_policy", ""),
+        "monte_carlo": getattr(result, "monte_carlo", None),
+    }
+
+
+def _format_json(result) -> str:
+    payload = _result_to_payload(result)
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _format_walk_forward_console(result) -> str:
+    summary = result.summary or {}
+    lines = [
+        "[WALK-FORWARD BACKTEST RESULT]",
+        f"구간 수: {summary.get('segment_count', 0)}",
+        f"train 일수 합계: {summary.get('train_days', 0)}",
+        f"tune 일수 합계: {summary.get('tune_days', 0)}",
+        f"test 일수 합계: {summary.get('test_days', 0)}",
+        f"검증 실현손익(순): {summary.get('test_realized_net_pnl', 0):,.0f}",
+        f"검증 체결 수: {summary.get('test_execution_count', 0)}",
+        f"검증 거부 기록: {summary.get('test_rejected_count', 0)}",
+    ]
+    monte_carlo = getattr(result, "monte_carlo", None)
+    if monte_carlo:
+        lines.extend(_format_monte_carlo_console_lines(monte_carlo))
+    return "\n".join(lines)
+
+
+def _format_walk_forward_json(result) -> str:
+    payload = {
+        "summary": result.summary,
+        "monte_carlo": getattr(result, "monte_carlo", None),
+        "segments": [
+            {
+                "index": segment.index,
+                "train_dates": segment.train_dates,
+                "tune_dates": segment.tune_dates,
+                "test_dates": segment.test_dates,
+                "train_result": _result_to_payload(segment.train_result),
+                "tune_result": _result_to_payload(segment.tune_result),
+                "test_result": _result_to_payload(segment.test_result),
+            }
+            for segment in result.segments
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _format_monte_carlo_console_lines(summary: dict[str, Any]) -> list[str]:
+    return [
+        "",
+        "[MONTE CARLO]",
+        f"Monte Carlo 거래 수: {summary.get('trade_count', 0)}",
+        f"Monte Carlo runs: {summary.get('runs', 0)}",
+        f"최악 MDD: {summary.get('worst_max_drawdown_pct', 0):.2f}%",
+        f"최장 연속 손실: {summary.get('worst_losing_streak', 0)}",
+        f"ruin probability: {summary.get('ruin_probability', 0) * 100:.2f}%",
+    ]
+
+
+def _run_monte_carlo_for_result(result, args: argparse.Namespace) -> None:
+    from services.backtest_monte_carlo import (
+        BacktestMonteCarloConfig,
+        BacktestMonteCarloSimulator,
+        extract_net_pnls_from_journal,
+    )
+
+    trade_net_pnls = extract_net_pnls_from_journal(result.journal_records)
+    object.__setattr__(result, "monte_carlo", BacktestMonteCarloSimulator(
+        BacktestMonteCarloConfig(
+            runs=args.mc_runs,
+            seed=args.mc_seed,
+            initial_capital=args.initial_cash,
+            ruin_drawdown_pct=args.mc_ruin_drawdown_pct,
+        )
+    ).run(trade_net_pnls).to_dict())
+
+
+def _run_monte_carlo_for_walk_forward(result, args: argparse.Namespace) -> None:
+    from services.backtest_monte_carlo import (
+        BacktestMonteCarloConfig,
+        BacktestMonteCarloSimulator,
+        extract_net_pnls_from_journal,
+    )
+
+    trade_net_pnls: list[float] = []
+    for segment in result.segments:
+        trade_net_pnls.extend(
+            extract_net_pnls_from_journal(segment.test_result.journal_records)
+        )
+    object.__setattr__(result, "monte_carlo", BacktestMonteCarloSimulator(
+        BacktestMonteCarloConfig(
+            runs=args.mc_runs,
+            seed=args.mc_seed,
+            initial_capital=args.initial_cash,
+            ruin_drawdown_pct=args.mc_ruin_drawdown_pct,
+        )
+    ).run(trade_net_pnls).to_dict())
+
+
+async def _run(args: argparse.Namespace) -> None:
+    from scripts._bootstrap import bootstrap_pp_strategy, make_stdout_logger
+    from config.config_loader import load_configs
+    from repositories.backtest_journal_repository import BacktestJournalRepository
+    from services.backtest_execution_simulator import BacktestPortfolioLedger
+    from services.backtest_period_runner import BacktestPeriodRunner, BacktestPeriodRunnerConfig
+    from services.backtest_replay_context import (
+        BacktestMarketClock,
+        apply_backtest_snapshot_context,
+    )
+    from services.backtest_replay_adapter import (
+        StockQueryBacktestReplayService,
+        StockQueryIntradayReplayBarProvider,
+    )
+    from services.backtest_walk_forward import (
+        BacktestWalkForwardConfig,
+        BacktestWalkForwardRunner,
+    )
+
+    dates = _build_dates(args)
+    app_config = load_configs()
+    bootstrap_logger = make_stdout_logger("backtest_bootstrap", level=logging.WARNING)
+    print(f"[INFO] 서비스 초기화 중... (모의투자={args.paper})")
+    try:
+        sqs, universe_service, market_clock = await bootstrap_pp_strategy(
+            is_paper_trading=args.paper,
+            logger=bootstrap_logger,
+        )
+    except RuntimeError as e:
+        print(f"[ERROR] {e}", file=sys.stderr)
+        sys.exit(1)
+
+    replay_sqs = StockQueryBacktestReplayService(
+        sqs,
+        program_provider=_get_program_provider(sqs),
+    )
+    backtest_clock = BacktestMarketClock.from_clock(
+        market_clock,
+        default_time=args.backtest_time,
+    )
+    apply_backtest_snapshot_context(
+        universe_service,
+        stock_query_service=replay_sqs,
+        market_clock=backtest_clock,
+    )
+    bar_provider = StockQueryIntradayReplayBarProvider(replay_sqs)
+    indicator_service = getattr(sqs, "indicator_service", None)
+    with tempfile.TemporaryDirectory(prefix="period_backtest_") as tmp_dir:
+        def make_runner(
+            *,
+            phase: str | None = None,
+            segment=None,
+            phase_dates: list[str] | None = None,
+        ) -> BacktestPeriodRunner:
+            ledger = BacktestPortfolioLedger(initial_cash=args.initial_cash)
+            risk_sizing = _build_risk_sizing_services(
+                use_risk_sizing=args.use_risk_sizing,
+                config=app_config,
+                ledger=ledger,
+                indicator_service=indicator_service,
+                logger=bootstrap_logger,
+            )
+            state_suffix = f"_{segment.index}_{phase}" if segment is not None else ""
+            strategy = _build_backtest_strategy(
+                strategy_key=args.strategy,
+                replay_sqs=replay_sqs,
+                universe_service=universe_service,
+                indicator_service=indicator_service,
+                backtest_clock=backtest_clock,
+                state_dir=tmp_dir,
+                state_suffix=state_suffix,
+                logger=logging.getLogger(f"backtest.{args.strategy}"),
+            )
+            max_positions = (
+                {strategy.name: args.max_positions}
+                if args.max_positions is not None
+                else None
+            )
+            target_dates = phase_dates or dates
+            run_prefix = "wf" if segment is not None else "period"
+            run_parts = [run_prefix]
+            if segment is not None:
+                run_parts.extend([str(segment.index), str(phase)])
+            run_parts.extend([strategy.name, target_dates[0], target_dates[-1]])
+            metadata = {
+                "cli": "scripts.run_backtest",
+                "initial_cash": args.initial_cash,
+                "max_positions": args.max_positions,
+                "strategy_key": args.strategy,
+                "backtest_time": args.backtest_time,
+                "execution_bar_policy": args.execution_bar_policy,
+                "use_risk_sizing": args.use_risk_sizing,
+                "output": args.output,
+                "walk_forward": segment is not None,
+            }
+            if segment is not None:
+                metadata.update(
+                    {
+                        "walk_forward_phase": phase,
+                        "walk_forward_segment": segment.index,
+                        "train_dates": segment.train_dates,
+                        "tune_dates": segment.tune_dates,
+                        "test_dates": segment.test_dates,
+                    }
+                )
+            return BacktestPeriodRunner(
+                strategy=strategy,
+                bar_provider=bar_provider,
+                ledger=ledger,
+                backtest_journal_repository=BacktestJournalRepository(),
+                run_id="_".join(run_parts),
+                metadata=metadata,
+                config=BacktestPeriodRunnerConfig(
+                    max_positions_per_strategy=max_positions,
+                    execution_bar_policy=args.execution_bar_policy,
+                ),
+                position_sizing_service=risk_sizing.position_sizing_service,
+                risk_gate_service=risk_sizing.risk_gate_service,
+                date_context_targets=[backtest_clock, replay_sqs],
+            )
+
+        if args.walk_forward:
+            config = BacktestWalkForwardConfig(
+                train_size=args.wf_train_days,
+                tune_size=args.wf_tune_days,
+                test_size=args.wf_test_days,
+                step_size=args.wf_step_days,
+            )
+
+            def runner_factory(phase: str, segment):
+                phase_dates = getattr(segment, f"{phase}_dates")
+                return make_runner(phase=phase, segment=segment, phase_dates=phase_dates)
+
+            print("[INFO] walk-forward 백테스트 실행 중...\n")
+            result = await BacktestWalkForwardRunner(
+                runner_factory=runner_factory,
+                config=config,
+            ).run(dates)
+            if args.monte_carlo:
+                _run_monte_carlo_for_walk_forward(result, args)
+            rendered = (
+                _format_walk_forward_json(result)
+                if args.output == "json"
+                else _format_walk_forward_console(result)
+            )
+        else:
+            print("[INFO] 기간 백테스트 실행 중...\n")
+            result = await make_runner().run(dates)
+            if args.monte_carlo:
+                _run_monte_carlo_for_result(result, args)
+            rendered = _format_json(result) if args.output == "json" else _format_console(result)
+
+    if args.output_file:
+        with open(args.output_file, "w", encoding="utf-8") as fp:
+            fp.write(rendered)
+        print(f"[INFO] 결과 저장: {args.output_file}")
+    else:
+        print(rendered)
+
+
+def main() -> None:
+    args = _parse_args()
+    asyncio.run(_run(args))
+
+
+if __name__ == "__main__":
+    main()
