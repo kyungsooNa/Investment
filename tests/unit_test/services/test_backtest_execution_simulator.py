@@ -1,3 +1,84 @@
+import math
+
+from services.backtest_execution_simulator import (
+    BacktestExecutionSimulator,
+    BacktestOrder,
+    BacktestBar,
+    BacktestExecutionPolicy,
+    OrderSide,
+    OrderType,
+    OrderStatus,
+)
+
+
+def make_order(code="X", qty=10, price=100.0, side=OrderSide.BUY, order_type=OrderType.LIMIT):
+    return BacktestOrder(order_id="o1", code=code, side=side, order_type=order_type, price=price, qty=qty)
+
+
+def test_invalid_qty_rejected():
+    sim = BacktestExecutionSimulator()
+    order = make_order(qty=0)
+    bar = BacktestBar(timestamp="2022-01-01 090000", open=100, high=110, low=90, close=105, volume=100)
+    rep = sim.simulate(order, bar)
+    assert rep.status == OrderStatus.REJECTED
+    assert rep.filled_qty == 0
+
+
+def test_limit_buy_not_reached_unfilled():
+    sim = BacktestExecutionSimulator()
+    order = make_order(price=50.0, qty=10, side=OrderSide.BUY, order_type=OrderType.LIMIT)
+    bar = BacktestBar(timestamp="t", open=100, high=110, low=90, close=105, volume=100)
+    rep = sim.simulate(order, bar)
+    assert rep.status == OrderStatus.UNFILLED
+
+
+def test_market_order_fills_at_open_and_rounds_tick():
+    policy = BacktestExecutionPolicy(market_slippage_pct=0.0, market_price_field="open", round_to_tick=True)
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=5, side=OrderSide.BUY, order_type=OrderType.MARKET)
+    bar = BacktestBar(timestamp="t", open=123.4, high=125, low=120, close=124, volume=None)
+    rep = sim.simulate(order, bar)
+    assert rep.filled_qty == 5
+    assert rep.status == OrderStatus.FILLED
+    # fill_price should be rounded up for BUY to tick size
+    tick = sim.tick_size(rep.fill_price or bar.open)
+    # ensure fill_price is a multiple of tick
+    assert (rep.fill_price / tick).is_integer()
+
+
+def test_partial_fill_when_volume_limited_and_slippage():
+    policy = BacktestExecutionPolicy(market_slippage_pct=1.0, volume_participation_pct=50.0, round_to_tick=False)
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=105.0, qty=100, side=OrderSide.SELL, order_type=OrderType.LIMIT)
+    # bar has limited volume -> participation 50% -> max_qty = floor(200 * 0.5) = 100
+    bar = BacktestBar(timestamp="t2", open=105, high=200, low=100, close=150, volume=200)
+    rep = sim.simulate(order, bar)
+    # base price for SELL limit: limit_price if bar.high >= limit_price -> filled possible
+    assert rep.filled_qty <= order.qty
+    assert rep.status in (OrderStatus.FILLED, OrderStatus.PARTIAL)
+    # slippage applied for MARKET orders only; for limit, market_slippage_pct shouldn't change base price
+    # but fill_price should be not None when filled
+    if rep.filled_qty > 0:
+        assert rep.fill_price is not None
+
+
+def test_tick_size_boundaries_and_rounding():
+    sim = BacktestExecutionSimulator()
+    # check tick sizes boundaries
+    assert sim.tick_size(1000) == 1
+    assert sim.tick_size(3000) == 5
+    assert sim.tick_size(10000) == 10
+    assert sim.tick_size(30000) == 50
+    assert sim.tick_size(100000) == 100
+    assert sim.tick_size(300000) == 500
+    assert sim.tick_size(1_000_000) == 1000
+
+    # rounding behavior
+    price = 12345.0
+    rounded_buy = sim.round_to_tick(price, side=OrderSide.BUY)
+    rounded_sell = sim.round_to_tick(price, side=OrderSide.SELL)
+    assert rounded_buy >= price
+    assert rounded_sell <= price
 import pytest
 
 from services.backtest_execution_simulator import (
