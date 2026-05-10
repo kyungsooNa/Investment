@@ -100,6 +100,7 @@
 - SELL 신호를 먼저 처리하고, 이후 BUY 신호를 처리한다.
 - BUY 신호는 선택적 PositionSizing dry-run, 선택적 RiskGate dry-run, ledger 예약 후 체결 시뮬레이터를 통과한다.
 - SELL 신호는 체결 시뮬레이터를 통과한 뒤 장부에 반영한다.
+- SELL 체결 journal은 장부 반영 전 보유 원가와 매도 비용을 기준으로 `SOLD`, `net_pnl`, `net_return`을 기록한다.
 - 현금 부족, max positions, 미체결은 journal record로 남긴다.
 - PositionSizing 결과 수량이 0이면 `sizing_skip:*` rejected journal로 남긴다.
 - RiskGate 차단은 simulator/bar 조회 전에 `risk_gate:*` rejected journal로 남긴다.
@@ -396,7 +397,7 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 - CLI 지원 전략은 아직 `oneil_pocket_pivot` 하나다.
 - `--use-risk-sizing`은 백테스트 ledger 기반 snapshot을 사용하므로 실제 계좌 잔고나 미체결 주문 상태를 조회하지 않는다.
 - `--walk-forward`는 train/tune/test 분리 실행과 test phase 요약 집계까지 지원한다. 자동 파라미터 최적화는 아직 수행하지 않는다.
-- `--monte-carlo`는 표준 journal에 `net_pnl`이 있는 완료 trade만 입력으로 사용한다. 현재 period runner의 체결 단위 journal은 SELL별 순손익이 비어 있을 수 있어, 완료 trade `net_pnl` 저장 경로 보강 후 활용도가 커진다.
+- `--monte-carlo`는 표준 journal에 `net_pnl`이 있는 완료 trade만 입력으로 사용한다. period runner의 SELL 체결 journal은 현재 `SOLD` 상태와 `net_pnl`을 기록한다.
 - 성과 리포트는 기본 요약 중심이다.
 - 과거 체결강도는 분봉 row에 `tday_rltv` 또는 `execution_strength` 유사 필드가 있어야 replay된다.
 - 과거 분봉 또는 프로그램매매 API가 비어 있으면 신호가 없거나 미체결/empty 결과가 나올 수 있다.

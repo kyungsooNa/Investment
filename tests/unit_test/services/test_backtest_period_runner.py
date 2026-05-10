@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from common.types import ErrorCode, ResCommonResponse, TradeSignal
+from services.backtest_monte_carlo import extract_net_pnls_from_journal
 from services.backtest_execution_simulator import BacktestBar, BacktestPortfolioLedger
 from services.backtest_period_runner import BacktestPeriodRunner, BacktestPeriodRunnerConfig
 
@@ -118,6 +119,14 @@ async def test_period_runner_executes_buy_and_sell_through_ledger():
     assert result.portfolio["positions"] == {}
     assert result.portfolio["cash"] > 1_000_000
     assert result.portfolio["realized_net_pnl"] > 0
+    sell_record = result.journal_records[1]
+    assert sell_record["side"] == "SELL"
+    assert sell_record["status"] == "SOLD"
+    assert sell_record["net_pnl"] == pytest.approx(result.portfolio["realized_net_pnl"])
+    assert sell_record["net_return"] > 0
+    assert extract_net_pnls_from_journal(result.journal_records) == pytest.approx([
+        result.portfolio["realized_net_pnl"]
+    ])
     assert strategy.exit_holdings[-1][0]["code"] == "005930"
     assert strategy.exit_holdings[-1][0]["qty"] == 2
 

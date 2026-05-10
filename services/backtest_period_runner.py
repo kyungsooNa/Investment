@@ -109,9 +109,12 @@ class BacktestPeriodRunner:
                 continue
 
             report = await self._execute_signal(signal, date_ymd, side=OrderSide.SELL, order=order)
+            sell_metrics = self._sell_realized_metrics(report)
             self._ledger.apply_execution(report)
             result.execution_reports.append(report)
-            result.journal_records.append(normalize_backtest_execution(report))
+            result.journal_records.append(
+                self._execution_record(report, realized_metrics=sell_metrics)
+            )
 
     async def _run_entries(self, date_ymd: str, result: BacktestPeriodRunResult) -> None:
         buy_signals = [
@@ -158,7 +161,7 @@ class BacktestPeriodRunner:
             report = await self._execute_signal(signal, date_ymd, side=OrderSide.BUY, order=decision.order)
             self._ledger.apply_execution(report)
             result.execution_reports.append(report)
-            result.journal_records.append(normalize_backtest_execution(report))
+            result.journal_records.append(self._execution_record(report))
             if report.filled_qty <= 0:
                 result.journal_records.append(
                     self._rejected_signal_record(signal, date_ymd, report.reason)
@@ -287,6 +290,45 @@ class BacktestPeriodRunner:
         if qty is not None:
             return qty
         return signal.qty if signal.qty is not None else self._config.default_qty
+
+    def _execution_record(
+        self,
+        report: BacktestExecutionReport,
+        *,
+        realized_metrics: dict | None = None,
+    ) -> dict:
+        record = normalize_backtest_execution(report)
+        if realized_metrics and report.order.side == OrderSide.SELL and report.filled_qty > 0:
+            record["status"] = "SOLD"
+            record["net_pnl"] = realized_metrics.get("net_pnl")
+            record["net_return"] = realized_metrics.get("net_return")
+            metadata = dict(record.get("metadata") or {})
+            metadata.update({
+                "realized_cost": realized_metrics.get("realized_cost"),
+                "net_proceeds": realized_metrics.get("net_proceeds"),
+            })
+            record["metadata"] = metadata
+        return record
+
+    def _sell_realized_metrics(self, report: BacktestExecutionReport) -> dict:
+        if report.order.side != OrderSide.SELL or report.filled_qty <= 0 or report.fill_price is None:
+            return {}
+        position = self._ledger.positions.get(report.order.code)
+        if position is None or position.qty <= 0:
+            return {}
+
+        sell_qty = min(report.filled_qty, position.qty)
+        avg_cost_per_share = position.total_cost / position.qty if position.qty else 0.0
+        realized_cost = avg_cost_per_share * sell_qty
+        net_proceeds = report.fill_price * sell_qty - report.cost
+        net_pnl = net_proceeds - realized_cost
+        net_return = (net_pnl / realized_cost * 100.0) if realized_cost else None
+        return {
+            "realized_cost": realized_cost,
+            "net_proceeds": net_proceeds,
+            "net_pnl": net_pnl,
+            "net_return": net_return,
+        }
 
     def _portfolio_summary(self) -> dict:
         return {

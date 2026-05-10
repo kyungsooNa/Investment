@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-10 (run_backtest Monte Carlo 검증 옵션 연결)
+최종 업데이트: 2026-05-10 (period backtest SELL journal 순손익 기록)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -95,6 +95,7 @@
   - 완료된 부분: 저장된 period backtest run의 체결 상세를 운영 UI/괴리 리포트에서 검증했다.
   - 완료된 부분: 기간 runner가 선택적 RiskGate/PositionSizing dry-run contract를 호출하고 거부 사유를 표준 journal로 남긴다.
   - 완료된 부분: `scripts/run_backtest.py --use-risk-sizing` 옵션을 추가해 운영 설정 기반 `PositionSizingService`/`RiskGateService`를 백테스트용 ledger snapshot과 함께 자동 조립한다.
+  - 완료된 부분: 기간 runner가 SELL 체결 journal을 `SOLD` 상태와 `net_pnl`/`net_return`으로 보강해 Monte Carlo 입력으로 바로 사용할 수 있게 했다.
 
 주요 파일:
 
