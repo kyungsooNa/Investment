@@ -8,7 +8,11 @@ import pytest
 from common.types import ErrorCode, ResCommonResponse, TradeSignal
 from services.backtest_monte_carlo import extract_net_pnls_from_journal
 from services.backtest_execution_simulator import BacktestBar, BacktestPortfolioLedger
-from services.backtest_period_runner import BacktestPeriodRunner, BacktestPeriodRunnerConfig
+from services.backtest_period_runner import (
+    BacktestExecutionBarPolicy,
+    BacktestPeriodRunner,
+    BacktestPeriodRunnerConfig,
+)
 
 
 class FakeStrategy:
@@ -59,7 +63,14 @@ class FakeStrategy:
 class StaticBarProvider:
     bars: dict[tuple[str, str, str], BacktestBar]
 
-    async def get_bar(self, *, signal: TradeSignal, date_ymd: str, side: str) -> BacktestBar:
+    async def get_bar(
+        self,
+        *,
+        signal: TradeSignal,
+        date_ymd: str,
+        side: str,
+        execution_policy: str = "current_bar",
+    ) -> BacktestBar:
         return self.bars[(date_ymd, signal.code, side)]
 
 
@@ -72,8 +83,37 @@ class DatedStaticBarProvider(StaticBarProvider):
         self.dates.append(date_ymd)
 
 
+class PolicyCapturingBarProvider:
+    def __init__(self, bar: BacktestBar) -> None:
+        self.bar = bar
+        self.calls: list[dict] = []
+
+    async def get_bar(
+        self,
+        *,
+        signal: TradeSignal,
+        date_ymd: str,
+        side: str,
+        execution_policy: str,
+    ) -> BacktestBar:
+        self.calls.append({
+            "code": signal.code,
+            "date_ymd": date_ymd,
+            "side": side,
+            "execution_policy": execution_policy,
+        })
+        return self.bar
+
+
 class FailIfCalledBarProvider:
-    async def get_bar(self, *, signal: TradeSignal, date_ymd: str, side: str) -> BacktestBar:
+    async def get_bar(
+        self,
+        *,
+        signal: TradeSignal,
+        date_ymd: str,
+        side: str,
+        execution_policy: str = "current_bar",
+    ) -> BacktestBar:
         raise AssertionError("bar provider should not be called")
 
 
@@ -129,6 +169,33 @@ async def test_period_runner_executes_buy_and_sell_through_ledger():
     ])
     assert strategy.exit_holdings[-1][0]["code"] == "005930"
     assert strategy.exit_holdings[-1][0]["qty"] == 2
+
+
+@pytest.mark.asyncio
+async def test_period_runner_names_execution_bar_policy_at_provider_and_journal():
+    strategy = FakeStrategy()
+    provider = PolicyCapturingBarProvider(
+        BacktestBar("20260501 091000", 70_000, 70_500, 69_500, 70_200, 1_000)
+    )
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=provider,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+        config=BacktestPeriodRunnerConfig(
+            execution_bar_policy=BacktestExecutionBarPolicy.CURRENT_BAR
+        ),
+    )
+
+    result = await runner.run(["20260501"])
+
+    assert provider.calls == [{
+        "code": "005930",
+        "date_ymd": "20260501",
+        "side": "BUY",
+        "execution_policy": "current_bar",
+    }]
+    assert result.execution_reports[0].execution_bar_policy == "current_bar"
+    assert result.journal_records[0]["metadata"]["execution_bar_policy"] == "current_bar"
 
 
 @pytest.mark.asyncio

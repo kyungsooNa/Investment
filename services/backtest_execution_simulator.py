@@ -75,6 +75,7 @@ class BacktestExecutionReport:
     slippage_pct: float | None
     reason: str
     filled_at: str
+    execution_bar_policy: str = ""
 
 
 @dataclass(frozen=True)

@@ -101,6 +101,23 @@ def test_parse_args_accepts_monte_carlo_options(monkeypatch):
     assert args.mc_ruin_drawdown_pct == 15.0
 
 
+def test_parse_args_accepts_execution_bar_policy(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_backtest",
+            "--dates",
+            "20260501",
+            "--execution-bar-policy",
+            "next_bar",
+        ],
+    )
+
+    args = _parse_args()
+
+    assert args.execution_bar_policy == "next_bar"
+
+
 def test_format_console_summarizes_execution_and_portfolio():
     result = SimpleNamespace(
         strategy_name="오닐PP/BGU",
@@ -117,6 +134,7 @@ def test_format_console_summarizes_execution_and_portfolio():
             "realized_net_pnl": 90_000,
             "positions": {"005930": {"qty": 1}},
         },
+        execution_bar_policy="current_bar",
     )
 
     text = _format_console(result)
@@ -126,6 +144,7 @@ def test_format_console_summarizes_execution_and_portfolio():
     assert "SELL 체결: 1" in text
     assert "거부 기록: 1" in text
     assert "실현손익(순): 90,000" in text
+    assert "체결 봉 정책: current_bar" in text
     assert "journal run: period_20260501_20260502" in text
 
 

@@ -97,6 +97,10 @@
 - `BacktestPeriodRunner`를 추가했다.
 - 활성 `LiveStrategy` contract인 `scan()` / `check_exits()`를 날짜 루프로 감싼다.
 - 날짜마다 전략과 bar provider에 `set_backtest_date()`를 전달한다.
+- `BacktestPeriodRunnerConfig.execution_bar_policy`로 체결 후보 봉 선택 정책을 명시한다.
+- 현재 지원 정책은 `current_bar`와 `next_bar`다.
+- `BacktestPeriodRunner._execute_signal()`에서 bar provider를 호출할 때 정책 이름을 전달한다.
+- execution report, 표준 journal metadata, 저장 run metadata, CLI 출력에 체결 봉 정책 이름을 남긴다.
 - SELL 신호를 먼저 처리하고, 이후 BUY 신호를 처리한다.
 - BUY 신호는 선택적 PositionSizing dry-run, 선택적 RiskGate dry-run, ledger 예약 후 체결 시뮬레이터를 통과한다.
 - SELL 신호는 체결 시뮬레이터를 통과한 뒤 장부에 반영한다.
@@ -114,7 +118,8 @@
 
 - `StockQueryIntradayReplayBarProvider`를 추가했다.
 - `StockQueryService.get_day_intraday_minutes_list()` 결과를 `BacktestBar`로 변환한다.
-- 신호 가격이 닿는 첫 분봉을 체결 후보 봉으로 제공한다.
+- `current_bar` 정책에서는 신호 가격이 닿는 첫 분봉을 체결 후보 봉으로 제공한다.
+- `next_bar` 정책에서는 신호 가격이 닿는 신호 봉 다음 분봉을 체결 후보 봉으로 제공한다.
 - 신호 가격이 닿지 않으면 마지막 분봉을 반환해 simulator가 미체결을 판단하게 한다.
 - 종목, 날짜, 세션 단위로 분봉을 캐시한다.
 
@@ -141,6 +146,7 @@
 - `--wf-train-days`, `--wf-tune-days`, `--wf-test-days`, `--wf-step-days`로 walk-forward 창 크기와 이동 폭을 지정할 수 있다.
 - `--monte-carlo` 옵션으로 완료 trade의 `net_pnl` 순서를 섞어 최악 MDD, 최장 연속 손실, ruin probability를 계산한다.
 - `--mc-runs`, `--mc-seed`, `--mc-ruin-drawdown-pct`로 Monte Carlo 실행 횟수, 재현 seed, ruin 기준 MDD를 지정할 수 있다.
+- `--execution-bar-policy current_bar|next_bar` 옵션으로 체결 후보 봉 선택 정책을 지정할 수 있다.
 
 주요 파일:
 
@@ -198,15 +204,14 @@
 - 부분체결/미체결 record가 운영자가 보기 쉬운 상태명과 reason으로 표시되는지 확인한다.
 - backtest-vs-live 비교 리포트에서 period run metadata를 함께 보여준다.
 
-### 2. 체결 정책 명시
+### 2. 체결 정책 후속 정리
 
-현재 simulator는 어떤 bar를 넣을지는 호출자가 결정한다. runner 레벨에서 체결 정책 이름을 명확히 해야 한다.
+현재 runner는 `current_bar`와 `next_bar` 정책 이름을 명시하고, replay provider가 정책별 체결 후보 봉을 선택한다. 남은 작업은 장 마감 직전과 데이터 공백 같은 경계 조건을 운영 정책으로 확정하는 것이다.
 
 정해야 할 정책:
 
-- 신호 발생 봉에서 체결할지
-- 다음 봉 시가/고가/저가 기준으로 체결할지
 - 장 마감 직전 신호를 다음 거래일로 넘길지
+- `next_bar` 정책에서 다음 분봉이 없는 경우 reject할지, 마지막 봉으로 검증할지
 - 분봉 데이터가 없는 종목을 reject할지 skip할지
 
 ### 3. 성과 리포트 확장
@@ -292,6 +297,20 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260510 --initial-cash 10000000 --max-positions 3
 ```
 
+### 체결 봉 정책 지정
+
+기본값은 `current_bar`다. 가격에 닿은 첫 분봉을 체결 후보 봉으로 사용한다.
+
+```powershell
+python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260510 --execution-bar-policy current_bar
+```
+
+`next_bar`는 가격에 닿은 신호 봉 다음 분봉을 체결 후보 봉으로 사용한다.
+
+```powershell
+python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260510 --execution-bar-policy next_bar
+```
+
 ### 운영 RiskGate/PositionSizing 설정 적용
 
 ```powershell
@@ -361,6 +380,7 @@ SELL 체결: 1
 현금: 9,500,000
 가용현금: 9,500,000
 실현손익(순): 120,000
+체결 봉 정책: current_bar
 journal run: period_오닐PP/BGU_20260501_20260510
 ```
 
@@ -373,6 +393,7 @@ journal run: period_오닐PP/BGU_20260501_20260510
 - `현금`: 체결과 비용 반영 후 현금
 - `가용현금`: 예약 현금을 제외한 현금
 - `실현손익(순)`: 매도 체결 후 수수료/세금 반영 기준 실현 손익
+- `체결 봉 정책`: runner가 bar provider에 전달한 체결 후보 봉 선택 정책
 - `journal run`: `data/backtest_journals`에 저장된 표준 journal run id
 
 JSON 출력에는 `execution_reports`, `journal_records`, `portfolio`가 포함된다.
@@ -437,6 +458,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `57 passed`
-- 전체 단위 테스트: `4159 passed`
+- 관련 테스트: `60 passed`
+- 전체 단위 테스트: `4167 passed`
 - 전체 통합 테스트: `208 passed`

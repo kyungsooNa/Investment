@@ -35,6 +35,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--end-date", default=None, dest="end_date", help="종료일 YYYYMMDD")
     parser.add_argument("--initial-cash", type=float, default=10_000_000, dest="initial_cash")
     parser.add_argument("--max-positions", type=int, default=None, dest="max_positions")
+    parser.add_argument(
+        "--execution-bar-policy",
+        default="current_bar",
+        choices=["current_bar", "next_bar"],
+        dest="execution_bar_policy",
+        help="체결 후보 봉 선택 정책: current_bar=가격에 닿은 첫 분봉, next_bar=가격에 닿은 신호 봉 다음 분봉",
+    )
     parser.add_argument("--output", default="console", choices=["console", "json"])
     parser.add_argument("--output-file", default=None, dest="output_file")
     parser.add_argument(
@@ -215,6 +222,9 @@ def _format_console(result) -> str:
         f"가용현금: {portfolio.get('available_cash', 0):,.0f}",
         f"실현손익(순): {portfolio.get('realized_net_pnl', 0):,.0f}",
     ]
+    execution_bar_policy = getattr(result, "execution_bar_policy", "")
+    if execution_bar_policy:
+        lines.append(f"체결 봉 정책: {execution_bar_policy}")
     saved_run = getattr(result, "saved_journal_run", None) or {}
     if saved_run.get("run_id"):
         lines.append(f"journal run: {saved_run['run_id']}")
@@ -238,12 +248,14 @@ def _result_to_payload(result) -> dict[str, Any]:
                 "fill_price": report.fill_price,
                 "status": report.status.value,
                 "reason": report.reason,
+                "execution_bar_policy": getattr(report, "execution_bar_policy", ""),
             }
             for report in result.execution_reports
         ],
         "journal_records": result.journal_records,
         "portfolio": result.portfolio,
         "saved_journal_run": getattr(result, "saved_journal_run", {}),
+        "execution_bar_policy": getattr(result, "execution_bar_policy", ""),
         "monte_carlo": getattr(result, "monte_carlo", None),
     }
 
@@ -415,6 +427,7 @@ async def _run(args: argparse.Namespace) -> None:
                 "cli": "scripts.run_backtest",
                 "initial_cash": args.initial_cash,
                 "max_positions": args.max_positions,
+                "execution_bar_policy": args.execution_bar_policy,
                 "use_risk_sizing": args.use_risk_sizing,
                 "output": args.output,
                 "walk_forward": segment is not None,
@@ -436,7 +449,10 @@ async def _run(args: argparse.Namespace) -> None:
                 backtest_journal_repository=BacktestJournalRepository(),
                 run_id="_".join(run_parts),
                 metadata=metadata,
-                config=BacktestPeriodRunnerConfig(max_positions_per_strategy=max_positions),
+                config=BacktestPeriodRunnerConfig(
+                    max_positions_per_strategy=max_positions,
+                    execution_bar_policy=args.execution_bar_policy,
+                ),
                 position_sizing_service=risk_sizing.position_sizing_service,
                 risk_gate_service=risk_sizing.risk_gate_service,
             )

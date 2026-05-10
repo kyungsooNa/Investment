@@ -6,7 +6,8 @@ contract를 기간 루프로 감싼다. 과거 데이터 replay adapter는 bar_p
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from enum import Enum
 from typing import Protocol, Sequence
 
 from common.types import Exchange, OrderSide as LiveOrderSide
@@ -25,7 +26,14 @@ from services.backtest_execution_simulator import (
 
 
 class BacktestBarProvider(Protocol):
-    async def get_bar(self, *, signal: TradeSignal, date_ymd: str, side: str) -> BacktestBar:
+    async def get_bar(
+        self,
+        *,
+        signal: TradeSignal,
+        date_ymd: str,
+        side: str,
+        execution_policy: str,
+    ) -> BacktestBar:
         ...
 
 
@@ -39,16 +47,23 @@ class BacktestRiskGate(Protocol):
         ...
 
 
+class BacktestExecutionBarPolicy(str, Enum):
+    CURRENT_BAR = "current_bar"
+    NEXT_BAR = "next_bar"
+
+
 @dataclass(frozen=True)
 class BacktestPeriodRunnerConfig:
     max_positions_per_strategy: dict[str, int] | None = None
     default_qty: int = 1
+    execution_bar_policy: BacktestExecutionBarPolicy | str = BacktestExecutionBarPolicy.CURRENT_BAR
 
 
 @dataclass
 class BacktestPeriodRunResult:
     strategy_name: str
     dates: list[str]
+    execution_bar_policy: str = ""
     execution_reports: list[BacktestExecutionReport] = field(default_factory=list)
     journal_records: list[dict] = field(default_factory=list)
     portfolio: dict = field(default_factory=dict)
@@ -85,6 +100,7 @@ class BacktestPeriodRunner:
         result = BacktestPeriodRunResult(
             strategy_name=self._strategy.name,
             dates=[str(date) for date in dates],
+            execution_bar_policy=_execution_bar_policy_value(self._config.execution_bar_policy),
         )
 
         for date_ymd in result.dates:
@@ -175,13 +191,16 @@ class BacktestPeriodRunner:
         side: OrderSide,
         order: BacktestOrder | None = None,
     ) -> BacktestExecutionReport:
+        execution_policy = _execution_bar_policy_value(self._config.execution_bar_policy)
         bar = await self._bar_provider.get_bar(
             signal=signal,
             date_ymd=date_ymd,
             side=side.value,
+            execution_policy=execution_policy,
         )
         order = order or self._signal_to_order(signal, 0, side=side)
-        return self._simulator.simulate(order, bar)
+        report = self._simulator.simulate(order, bar)
+        return replace(report, execution_bar_policy=execution_policy)
 
     async def _apply_position_sizing(
         self,
@@ -362,6 +381,7 @@ class BacktestPeriodRunner:
             "date_count": len(result.dates),
             "initial_cash": self._ledger.initial_cash,
             "execution_report_count": len(result.execution_reports),
+            "execution_bar_policy": _execution_bar_policy_value(self._config.execution_bar_policy),
             "portfolio": result.portfolio,
             **self._metadata,
         }
@@ -406,3 +426,7 @@ def _exchange_for_signal(signal: TradeSignal) -> Exchange:
 
 def _live_order_side(side: OrderSide) -> LiveOrderSide:
     return LiveOrderSide.BUY if side == OrderSide.BUY else LiveOrderSide.SELL
+
+
+def _execution_bar_policy_value(policy: BacktestExecutionBarPolicy | str) -> str:
+    return str(getattr(policy, "value", policy) or BacktestExecutionBarPolicy.CURRENT_BAR.value)

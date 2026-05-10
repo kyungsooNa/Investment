@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from common.types import TradeSignal
-from services.backtest_period_runner import BacktestPeriodRunner
+from services.backtest_period_runner import BacktestExecutionBarPolicy, BacktestPeriodRunner
 from services.backtest_execution_simulator import BacktestPortfolioLedger
 from services.backtest_replay_adapter import (
     StockQueryBacktestReplayService,
@@ -76,6 +76,42 @@ async def test_replay_provider_selects_first_reachable_buy_bar_and_normalizes_fi
     assert bar.low == 69_900
     assert bar.close == 70_000
     assert bar.volume == 20
+
+
+@pytest.mark.asyncio
+async def test_replay_provider_selects_next_bar_after_signal_bar_when_policy_requests_it():
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = [
+        {
+            "stck_bsop_date": "20260501",
+            "stck_cntg_hour": "090000",
+            "stck_oprc": "70600",
+            "stck_hgpr": "71000",
+            "stck_lwpr": "70400",
+            "stck_prpr": "70500",
+            "cntg_vol": "100",
+        },
+        {
+            "stck_bsop_date": "20260501",
+            "stck_cntg_hour": "090100",
+            "stck_oprc": "70500",
+            "stck_hgpr": "70600",
+            "stck_lwpr": "70100",
+            "stck_prpr": "70200",
+            "cntg_vol": "200",
+        },
+    ]
+    provider = StockQueryIntradayReplayBarProvider(sqs)
+
+    bar = await provider.get_bar(
+        signal=_signal(price=70_500),
+        date_ymd="20260501",
+        side="BUY",
+        execution_policy=BacktestExecutionBarPolicy.NEXT_BAR,
+    )
+
+    assert bar.timestamp == "20260501 090100"
+    assert bar.open == 70_500
 
 
 @pytest.mark.asyncio

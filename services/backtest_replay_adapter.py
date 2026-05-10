@@ -245,15 +245,24 @@ class StockQueryIntradayReplayBarProvider:
         if callable(setter):
             setter(date_ymd)
 
-    async def get_bar(self, *, signal: TradeSignal, date_ymd: str, side: str) -> BacktestBar:
+    async def get_bar(
+        self,
+        *,
+        signal: TradeSignal,
+        date_ymd: str,
+        side: str,
+        execution_policy: str = "current_bar",
+    ) -> BacktestBar:
         bars = await self._get_bars(signal.code, date_ymd)
         if not bars:
             raise ValueError(f"intraday rows not found: {signal.code} {date_ymd}")
 
         target_price = float(signal.price or 0)
         normalized_side = str(side or signal.action or "").upper()
-        for bar in bars:
+        for idx, bar in enumerate(bars):
             if self._price_reached(bar, target_price, normalized_side):
+                if _policy_value(execution_policy) == "next_bar" and idx + 1 < len(bars):
+                    return bars[idx + 1]
                 return bar
         return bars[-1]
 
@@ -333,3 +342,7 @@ class StockQueryIntradayReplayBarProvider:
     def _to_int(cls, value) -> int | None:
         result = cls._to_float(value)
         return int(result) if result is not None else None
+
+
+def _policy_value(policy) -> str:
+    return str(getattr(policy, "value", policy) or "current_bar")

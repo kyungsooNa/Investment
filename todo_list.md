@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-10 (O'Neil PP/BGU 특정 날짜 fixture 고정)
+최종 업데이트: 2026-05-10 (backtest 체결 봉 정책 명시)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -72,7 +72,9 @@
 
 - [~] 체결 시뮬레이터를 분리한다: 지정가/시장가, 당일 고가·저가 도달 여부, 거래량 기반 부분체결, 미체결, 다음 봉 체결 정책을 명시한다.
   - 완료된 부분: `BacktestExecutionSimulator`를 추가해 지정가/시장가, 고가·저가 도달 여부, 거래량 참여율 기반 부분체결/미체결, 시장가 슬리피지, 호가 단위 반올림을 테스트로 고정했다.
-  - 진행 필요: "현재 봉/다음 봉 체결" 선택은 호출자가 bar를 주입하는 contract로 열어두었으므로, 각 백테스트 runner에서 정책 이름과 호출 위치를 명시해야 한다.
+  - 완료된 부분: `BacktestExecutionBarPolicy`와 `BacktestPeriodRunnerConfig.execution_bar_policy`를 추가해 `current_bar` / `next_bar` 정책 이름을 명시했다.
+  - 완료된 부분: `BacktestPeriodRunner._execute_signal()`에서 bar provider 호출 시 정책 이름을 전달하고, execution report / 표준 journal metadata / run metadata / CLI 출력에 남긴다.
+  - 완료된 부분: `StockQueryIntradayReplayBarProvider`가 `current_bar`는 가격에 닿은 첫 분봉, `next_bar`는 가격에 닿은 신호 봉 다음 분봉을 체결 후보 봉으로 선택하도록 고정했다.
 - [~] 수수료, 거래세, 슬리피지, 호가 단위 반올림을 모든 백테스트 성과 계산에 기본 반영한다.
   - 완료된 부분: 체결 리포트가 `TransactionCostUtils` 기반 매수 수수료/매도 수수료+거래세, 시장가 슬리피지, tick rounding 결과를 포함한다.
   - 진행 필요: 기존 전략별 백테스트 저장 경로가 새 체결 리포트를 사용해 표준 journal을 저장하도록 연결한다.
@@ -361,7 +363,6 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - 현재 봉/다음 봉 체결 정책 이름과 runner 호출 위치 명시
    - 과거 시점 재현용 market clock/data snapshot 주입 구조 정리
    - fixture 기반 결과를 period runner와 strategy debug runner 양쪽에서 비교
 

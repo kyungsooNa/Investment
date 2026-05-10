@@ -212,6 +212,7 @@ def normalize_backtest_execution(report: Any, *, source: str = "backtest") -> di
             "slippage_amount_won": _to_float(getattr(report, "slippage_amount_won", None)),
             "slippage_pct": _to_float(getattr(report, "slippage_pct", None)),
             "priority": _to_int(getattr(order, "priority", None), default=0),
+            "execution_bar_policy": str(getattr(report, "execution_bar_policy", "") or ""),
         },
     )
 
