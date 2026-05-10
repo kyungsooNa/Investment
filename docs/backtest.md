@@ -176,6 +176,17 @@
 - `services/backtest_monte_carlo.py`
 - `tests/unit_test/services/test_backtest_monte_carlo.py`
 
+### O'Neil PP/BGU fixture 검증
+
+- 특정 날짜 기반 O'Neil PP/BGU 진입 fixture를 추가했다.
+- `20260504` 기준 PP 통과, PP 거래량 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 고정했다.
+- fixture 테스트는 `OneilPocketPivotStrategy.scan()` 실제 흐름을 호출해 신호 생성 여부, `entry_type`, reason, 마켓타이밍 OFF 시 가격 조회 생략을 검증한다.
+
+주요 파일:
+
+- `tests/fixtures/backtest/oneil_pp_bgu_entry_cases.json`
+- `tests/unit_test/strategies/test_oneil_pocket_pivot_fixture_cases.py`
+
 ## 남은 작업
 
 ### 1. 표준 journal 저장 경로 후속 정리
@@ -219,8 +230,8 @@
 
 해야 할 일:
 
-- 특정 날짜에 PP 통과, PP 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 fixture로 고정
 - fixture 기반 결과를 period runner와 strategy debug runner 양쪽에서 비교
+- 여러 거래일 fixture를 추가해 장 초반/장 후반, 프로그램매매 부족, MA 이격 탈락 케이스를 보강
 
 ### 6. 실전 체결 fixture 확보
 
@@ -414,6 +425,7 @@ pytest tests/unit_test/services/test_backtest_replay_adapter.py -v
 pytest tests/unit_test/services/test_backtest_walk_forward.py -v
 pytest tests/unit_test/services/test_backtest_monte_carlo.py -v
 pytest tests/unit_test/scripts/test_run_backtest.py -v
+pytest tests/unit_test/strategies/test_oneil_pocket_pivot_fixture_cases.py -v
 ```
 
 전체 검증:
@@ -425,6 +437,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `52 passed`
+- 관련 테스트: `57 passed`
 - 전체 단위 테스트: `4159 passed`
 - 전체 통합 테스트: `208 passed`

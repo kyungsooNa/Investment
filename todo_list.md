@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-10 (period backtest SELL journal 순손익 기록)
+최종 업데이트: 2026-05-10 (O'Neil PP/BGU 특정 날짜 fixture 고정)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -187,7 +187,9 @@
 - [x] 몬테카를로 시뮬레이션을 추가한다. trade 결과 순서를 섞어 최악 MDD, 연속 손실, ruin probability를 계산한다.
   - 완료된 부분: `BacktestMonteCarloSimulator`를 추가해 완료 trade `net_pnl` 순서를 shuffle하고, 최악 MDD, 최장 연속 손실, ruin probability, 최종 equity 분위수를 계산한다.
   - 완료된 부분: `scripts/run_backtest.py --monte-carlo`와 `--mc-runs` / `--mc-seed` / `--mc-ruin-drawdown-pct` 옵션을 추가해 period 결과와 walk-forward test phase 결과에 Monte Carlo 요약을 붙인다.
-- [ ] 단위 테스트 fixture를 만든다: 특정 날짜에 PP 통과, PP 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 고정 데이터로 검증한다.
+- [x] 단위 테스트 fixture를 만든다: 특정 날짜에 PP 통과, PP 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 고정 데이터로 검증한다.
+  - 완료된 부분: `20260504` 기준 PP 통과, PP 거래량 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 JSON fixture로 고정했다.
+  - 완료된 부분: `OneilPocketPivotStrategy.scan()` 실제 흐름으로 신호 생성 여부, `entry_type`, reason 포함 여부, 마켓타이밍 OFF 시 가격 조회 생략을 검증한다.
 
 주요 파일:
 
@@ -195,6 +197,8 @@
 - `scripts/run_strategy_debug.py`
 - `strategies/backtest_data_provider.py`
 - `strategies/strategy_executor.py`
+- `tests/fixtures/backtest/oneil_pp_bgu_entry_cases.json`
+- `tests/unit_test/strategies/test_oneil_pocket_pivot_fixture_cases.py`
 
 ---
 
@@ -357,7 +361,9 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - 특정 날짜 fixture 기반 PP/BGU 통과·탈락 케이스 고정
+   - 현재 봉/다음 봉 체결 정책 이름과 runner 호출 위치 명시
+   - 과거 시점 재현용 market clock/data snapshot 주입 구조 정리
+   - fixture 기반 결과를 period runner와 strategy debug runner 양쪽에서 비교
 
 3. P1 전략 수익성
    - 시장 국면별 성과 분리
