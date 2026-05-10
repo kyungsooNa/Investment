@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-10 (backtest 체결 봉 정책 명시)
+최종 업데이트: 2026-05-10 (backtest replay clock/snapshot 주입)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -180,8 +180,14 @@
 
 ### 1-5. 백테스트 검증 확장
 
-- [ ] `--date YYYYMMDD` / `--from YYYYMMDD --to YYYYMMDD` 기반 과거 시점 재현용 market clock과 데이터 스냅샷 주입 구조를 만든다.
-- [ ] 실시간 API 응답 대신 과거 OHLCV/체결강도/프로그램매매 데이터를 공급하는 `BacktestStockQueryService` 또는 data replay adapter를 추가한다.
+- [~] `--date YYYYMMDD` / `--from YYYYMMDD --to YYYYMMDD` 기반 과거 시점 재현용 market clock과 데이터 스냅샷 주입 구조를 만든다.
+  - 완료된 부분: `BacktestMarketClock`을 추가해 runner가 순회 중인 `YYYYMMDD`와 지정 장중 시각을 전략/유니버스가 참조하도록 고정했다.
+  - 완료된 부분: `BacktestPeriodRunner`가 전략/bar provider 외 추가 date context target에도 `set_backtest_date()`를 호출할 수 있게 했다.
+  - 완료된 부분: `scripts/run_backtest.py`가 `--backtest-time HH:MM:SS`를 받고, replay SQS와 backtest clock을 O'Neil universe/strategy에 주입한다.
+  - 진행 필요: 여러 활성 전략으로 확장할 때 각 전략 factory가 backtest clock/context 주입을 동일 contract로 받도록 정리한다.
+- [x] 실시간 API 응답 대신 과거 OHLCV/체결강도/프로그램매매 데이터를 공급하는 `BacktestStockQueryService` 또는 data replay adapter를 추가한다.
+  - 완료된 부분: `StockQueryBacktestReplayService`가 과거 분봉 기반 현재가/체결강도 replay와 일별 프로그램매매 보강을 제공한다.
+  - 완료된 부분: `apply_backtest_snapshot_context()`로 기존 O'Neil universe의 `_sqs`/`_tm`을 replay SQS와 backtest clock으로 교체한다.
 - [ ] `run_strategy_debug`는 미매수 사유 진단, `run_backtest`는 기간 수익률/포트폴리오 검증으로 역할을 분리한다.
 - [x] walk-forward 검증을 추가한다. 기간을 train/tune/test로 나누고, 파라미터 튜닝 구간과 검증 구간을 분리한다.
   - 완료된 부분: `BacktestWalkForwardRunner`를 추가해 날짜를 train/tune/test rolling window로 분리하고, 각 phase를 독립 `BacktestPeriodRunner`/ledger/strategy state로 실행한다.
@@ -199,6 +205,7 @@
 - `scripts/run_strategy_debug.py`
 - `strategies/backtest_data_provider.py`
 - `strategies/strategy_executor.py`
+- `services/backtest_replay_context.py`
 - `tests/fixtures/backtest/oneil_pp_bgu_entry_cases.json`
 - `tests/unit_test/strategies/test_oneil_pocket_pivot_fixture_cases.py`
 
@@ -363,8 +370,8 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - 과거 시점 재현용 market clock/data snapshot 주입 구조 정리
    - fixture 기반 결과를 period runner와 strategy debug runner 양쪽에서 비교
+   - 여러 활성 전략으로 backtest clock/context 주입 contract 확장
 
 3. P1 전략 수익성
    - 시장 국면별 성과 분리

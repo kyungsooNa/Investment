@@ -83,6 +83,14 @@ class DatedStaticBarProvider(StaticBarProvider):
         self.dates.append(date_ymd)
 
 
+class DateContextTarget:
+    def __init__(self) -> None:
+        self.dates: list[str] = []
+
+    def set_backtest_date(self, date_ymd: str) -> None:
+        self.dates.append(date_ymd)
+
+
 class PolicyCapturingBarProvider:
     def __init__(self, bar: BacktestBar) -> None:
         self.bar = bar
@@ -323,6 +331,25 @@ async def test_period_runner_sets_backtest_date_on_bar_provider():
 
     assert strategy.scan_calls == ["20260501"]
     assert provider.dates == ["20260501"]
+
+
+@pytest.mark.asyncio
+async def test_period_runner_sets_backtest_date_on_extra_context_targets():
+    strategy = FakeStrategy()
+    provider = DatedStaticBarProvider({
+        ("20260501", "005930", "BUY"): BacktestBar("20260501 091000", 70_000, 70_500, 69_500, 70_200, 1_000),
+    })
+    context_target = DateContextTarget()
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=provider,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+        date_context_targets=[context_target],
+    )
+
+    await runner.run(["20260501"])
+
+    assert context_target.dates == ["20260501"]
 
 
 @pytest.mark.asyncio

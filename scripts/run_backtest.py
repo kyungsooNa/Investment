@@ -36,6 +36,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--initial-cash", type=float, default=10_000_000, dest="initial_cash")
     parser.add_argument("--max-positions", type=int, default=None, dest="max_positions")
     parser.add_argument(
+        "--backtest-time",
+        default="12:00:00",
+        dest="backtest_time",
+        help="전략과 유니버스가 참조할 과거 장중 시각 HH:MM:SS (default: 12:00:00)",
+    )
+    parser.add_argument(
         "--execution-bar-policy",
         default="current_bar",
         choices=["current_bar", "next_bar"],
@@ -361,6 +367,10 @@ async def _run(args: argparse.Namespace) -> None:
     from repositories.backtest_journal_repository import BacktestJournalRepository
     from services.backtest_execution_simulator import BacktestPortfolioLedger
     from services.backtest_period_runner import BacktestPeriodRunner, BacktestPeriodRunnerConfig
+    from services.backtest_replay_context import (
+        BacktestMarketClock,
+        apply_backtest_snapshot_context,
+    )
     from services.backtest_replay_adapter import (
         StockQueryBacktestReplayService,
         StockQueryIntradayReplayBarProvider,
@@ -388,6 +398,15 @@ async def _run(args: argparse.Namespace) -> None:
         sqs,
         program_provider=_get_program_provider(sqs),
     )
+    backtest_clock = BacktestMarketClock.from_clock(
+        market_clock,
+        default_time=args.backtest_time,
+    )
+    apply_backtest_snapshot_context(
+        universe_service,
+        stock_query_service=replay_sqs,
+        market_clock=backtest_clock,
+    )
     bar_provider = StockQueryIntradayReplayBarProvider(replay_sqs)
     with tempfile.TemporaryDirectory(prefix="period_backtest_") as tmp_dir:
         def make_runner(
@@ -408,7 +427,7 @@ async def _run(args: argparse.Namespace) -> None:
             strategy = OneilPocketPivotStrategy(
                 stock_query_service=replay_sqs,
                 universe_service=universe_service,
-                market_clock=market_clock,
+                market_clock=backtest_clock,
                 logger=logging.getLogger("backtest.OneilPocketPivot"),
                 state_file=os.path.join(tmp_dir, f"pp_position_state{state_suffix}.json"),
             )
@@ -427,6 +446,7 @@ async def _run(args: argparse.Namespace) -> None:
                 "cli": "scripts.run_backtest",
                 "initial_cash": args.initial_cash,
                 "max_positions": args.max_positions,
+                "backtest_time": args.backtest_time,
                 "execution_bar_policy": args.execution_bar_policy,
                 "use_risk_sizing": args.use_risk_sizing,
                 "output": args.output,
@@ -455,6 +475,7 @@ async def _run(args: argparse.Namespace) -> None:
                 ),
                 position_sizing_service=risk_sizing.position_sizing_service,
                 risk_gate_service=risk_sizing.risk_gate_service,
+                date_context_targets=[backtest_clock, replay_sqs],
             )
 
         if args.walk_forward:

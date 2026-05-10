@@ -116,6 +116,10 @@
 
 ### 과거 데이터 replay adapter
 
+- `BacktestMarketClock`을 추가했다.
+- runner가 순회 중인 날짜와 `--backtest-time`으로 지정한 장중 시각을 전략/유니버스가 현재 시각으로 보도록 고정한다.
+- `apply_backtest_snapshot_context()`는 기존 O'Neil universe의 StockQueryService와 MarketClock 참조를 replay SQS와 backtest clock으로 교체한다.
+
 - `StockQueryIntradayReplayBarProvider`를 추가했다.
 - `StockQueryService.get_day_intraday_minutes_list()` 결과를 `BacktestBar`로 변환한다.
 - `current_bar` 정책에서는 신호 가격이 닿는 첫 분봉을 체결 후보 봉으로 제공한다.
@@ -131,7 +135,9 @@
 
 주요 파일:
 
+- `services/backtest_replay_context.py`
 - `services/backtest_replay_adapter.py`
+- `tests/unit_test/services/test_backtest_replay_context.py`
 - `tests/unit_test/services/test_backtest_replay_adapter.py`
 
 ### CLI 진입점
@@ -147,6 +153,7 @@
 - `--monte-carlo` 옵션으로 완료 trade의 `net_pnl` 순서를 섞어 최악 MDD, 최장 연속 손실, ruin probability를 계산한다.
 - `--mc-runs`, `--mc-seed`, `--mc-ruin-drawdown-pct`로 Monte Carlo 실행 횟수, 재현 seed, ruin 기준 MDD를 지정할 수 있다.
 - `--execution-bar-policy current_bar|next_bar` 옵션으로 체결 후보 봉 선택 정책을 지정할 수 있다.
+- `--backtest-time HH:MM:SS` 옵션으로 전략 조건 평가에 사용할 과거 장중 시각을 지정할 수 있다.
 
 주요 파일:
 
@@ -204,7 +211,17 @@
 - 부분체결/미체결 record가 운영자가 보기 쉬운 상태명과 reason으로 표시되는지 확인한다.
 - backtest-vs-live 비교 리포트에서 period run metadata를 함께 보여준다.
 
-### 2. 체결 정책 후속 정리
+### 2. replay context 후속 정리
+
+현재 O'Neil PP/BGU 기간 백테스트는 replay SQS와 backtest clock을 strategy/universe에 주입한다. 남은 작업은 이 contract를 여러 활성 전략 factory로 확장하는 것이다.
+
+해야 할 일:
+
+- 활성 전략별 factory가 `BacktestMarketClock`과 replay SQS를 같은 방식으로 받도록 정리
+- strategy debug runner도 fixture/replay context를 동일 contract로 사용할 수 있게 정리
+- fixture 기반 결과를 period runner와 strategy debug runner 양쪽에서 비교
+
+### 3. 체결 정책 후속 정리
 
 현재 runner는 `current_bar`와 `next_bar` 정책 이름을 명시하고, replay provider가 정책별 체결 후보 봉을 선택한다. 남은 작업은 장 마감 직전과 데이터 공백 같은 경계 조건을 운영 정책으로 확정하는 것이다.
 
@@ -214,7 +231,7 @@
 - `next_bar` 정책에서 다음 분봉이 없는 경우 reject할지, 마지막 봉으로 검증할지
 - 분봉 데이터가 없는 종목을 reject할지 skip할지
 
-### 3. 성과 리포트 확장
+### 4. 성과 리포트 확장
 
 현재 console 출력은 요약 중심이다. 운영 판단에는 더 많은 지표가 필요하다.
 
@@ -283,6 +300,14 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --dates 20260501,20
 
 ```powershell
 python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260510
+```
+
+### 과거 장중 시각 지정
+
+기본값은 `12:00:00`이다. 이 시각은 전략의 마켓 시간 필터, 거래량 환산, 유니버스 refresh 판단에 사용된다.
+
+```powershell
+python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260510 --backtest-time 09:30:00
 ```
 
 ### 초기 현금 지정
@@ -443,6 +468,7 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 pytest tests/unit_test/services/test_backtest_execution_simulator.py -v
 pytest tests/unit_test/services/test_backtest_period_runner.py -v
 pytest tests/unit_test/services/test_backtest_replay_adapter.py -v
+pytest tests/unit_test/services/test_backtest_replay_context.py -v
 pytest tests/unit_test/services/test_backtest_walk_forward.py -v
 pytest tests/unit_test/services/test_backtest_monte_carlo.py -v
 pytest tests/unit_test/scripts/test_run_backtest.py -v
@@ -458,6 +484,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `60 passed`
-- 전체 단위 테스트: `4167 passed`
+- 관련 테스트: `67 passed`
+- 전체 단위 테스트: `4174 passed`
 - 전체 통합 테스트: `208 passed`

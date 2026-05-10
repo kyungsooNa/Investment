@@ -118,6 +118,23 @@ def test_parse_args_accepts_execution_bar_policy(monkeypatch):
     assert args.execution_bar_policy == "next_bar"
 
 
+def test_parse_args_accepts_backtest_time(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_backtest",
+            "--dates",
+            "20260501",
+            "--backtest-time",
+            "09:30:00",
+        ],
+    )
+
+    args = _parse_args()
+
+    assert args.backtest_time == "09:30:00"
+
+
 def test_format_console_summarizes_execution_and_portfolio():
     result = SimpleNamespace(
         strategy_name="오닐PP/BGU",

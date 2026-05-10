@@ -84,6 +84,7 @@ class BacktestPeriodRunner:
         metadata: dict | None = None,
         position_sizing_service: BacktestPositionSizer | None = None,
         risk_gate_service: BacktestRiskGate | None = None,
+        date_context_targets: Sequence[object] | None = None,
     ) -> None:
         self._strategy = strategy
         self._bar_provider = bar_provider
@@ -95,6 +96,7 @@ class BacktestPeriodRunner:
         self._metadata = metadata or {}
         self._position_sizing_service = position_sizing_service
         self._risk_gate_service = risk_gate_service
+        self._date_context_targets = list(date_context_targets or [])
 
     async def run(self, dates: Sequence[str]) -> BacktestPeriodRunResult:
         result = BacktestPeriodRunResult(
@@ -368,7 +370,7 @@ class BacktestPeriodRunner:
         }
 
     def _set_backtest_date(self, date_ymd: str) -> None:
-        for target in (self._strategy, self._bar_provider):
+        for target in (self._strategy, self._bar_provider, *self._date_context_targets):
             setter = getattr(target, "set_backtest_date", None)
             if callable(setter):
                 setter(date_ymd)
