@@ -119,6 +119,102 @@
         "entry_type": null,
         "reason_contains": ""
       }
+    },
+    {
+      "id": "20260505_pp_reject_low_smart_money",
+      "description": "PP fail on another trading day: PP pattern and execution strength pass, but program buy participation is too small",
+      "date": "20260505",
+      "time": "12:00:00",
+      "market_timing_ok": true,
+      "ohlcv_profile": "pp_down_days",
+      "price": {
+        "current": 68500,
+        "volume": 200000,
+        "program_buy_qty": 100,
+        "trade_value": 14200000000,
+        "open": 68000,
+        "high": 69000,
+        "low": 67500,
+        "prev_close": 67000
+      },
+      "execution_strength": 150.0,
+      "expected": {
+        "signal": false,
+        "entry_type": null,
+        "reason_contains": ""
+      }
+    },
+    {
+      "id": "20260505_pp_reject_no_ma_proximity",
+      "description": "PP fail on another trading day: current price is too extended from 10/20/50MA and BGU gap is absent",
+      "date": "20260505",
+      "time": "12:00:00",
+      "market_timing_ok": true,
+      "ohlcv_profile": "pp_down_days",
+      "price": {
+        "current": 73000,
+        "volume": 200000,
+        "program_buy_qty": 30000,
+        "trade_value": 14200000000,
+        "open": 68000,
+        "high": 73500,
+        "low": 67500,
+        "prev_close": 67000
+      },
+      "execution_strength": 150.0,
+      "expected": {
+        "signal": false,
+        "entry_type": null,
+        "reason_contains": ""
+      }
+    },
+    {
+      "id": "20260506_bgu_reject_before_whipsaw_window",
+      "description": "BGU fail on another trading day: gap conditions pass but signal is before the 09:10 whipsaw guard",
+      "date": "20260506",
+      "time": "09:05:00",
+      "market_timing_ok": true,
+      "ohlcv_profile": "bgu_up_days",
+      "price": {
+        "current": 72900,
+        "volume": 500000,
+        "program_buy_qty": 30000,
+        "trade_value": 14200000000,
+        "open": 72800,
+        "high": 73500,
+        "low": 72000,
+        "prev_close": 70000
+      },
+      "execution_strength": 130.0,
+      "expected": {
+        "signal": false,
+        "entry_type": null,
+        "reason_contains": ""
+      }
+    },
+    {
+      "id": "20260506_bgu_reject_open_support_lost",
+      "description": "BGU fail on another trading day: gap and relative volume pass, but current price is below the open",
+      "date": "20260506",
+      "time": "09:30:00",
+      "market_timing_ok": true,
+      "ohlcv_profile": "bgu_up_days",
+      "price": {
+        "current": 72500,
+        "volume": 500000,
+        "program_buy_qty": 30000,
+        "trade_value": 14200000000,
+        "open": 72800,
+        "high": 73500,
+        "low": 72000,
+        "prev_close": 70000
+      },
+      "execution_strength": 130.0,
+      "expected": {
+        "signal": false,
+        "entry_type": null,
+        "reason_contains": ""
+      }
     }
   ]
 }

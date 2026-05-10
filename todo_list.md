@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-10 (활성 전략 backtest clock/context contract 확장)
+최종 업데이트: 2026-05-10 (PP/BGU fixture 여러 거래일·경계 조건 확장)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -191,6 +191,7 @@
   - 완료된 부분: `apply_backtest_snapshot_context()`로 기존 O'Neil universe의 `_sqs`/`_tm`을 replay SQS와 backtest clock으로 교체한다.
 - [x] `run_strategy_debug`는 미매수 사유 진단, `run_backtest`는 기간 수익률/포트폴리오 검증으로 역할을 분리한다.
   - 완료된 부분: 같은 PP/BGU fixture를 기준으로 period runner의 BUY 체결 여부와 strategy debug runner의 SIGNAL/REJECTED journal 결과를 비교하는 parity 테스트를 추가했다.
+  - 완료된 부분: PP/BGU fixture를 `20260505`, `20260506` 경계 조건까지 확장해 여러 거래일에서 period runner와 strategy debug runner의 결과 방향이 일치하는지 검증한다.
   - 완료된 부분: debug runner decision journal은 최종 BUY 신호가 있는 종목의 중간 로그(`buy_signal_generated`, PP/BGU 분기 중간 탈락)를 별도 `REJECTED`로 저장하지 않고 최종 `SIGNAL`만 남기도록 정리했다.
 - [x] walk-forward 검증을 추가한다. 기간을 train/tune/test로 나누고, 파라미터 튜닝 구간과 검증 구간을 분리한다.
   - 완료된 부분: `BacktestWalkForwardRunner`를 추가해 날짜를 train/tune/test rolling window로 분리하고, 각 phase를 독립 `BacktestPeriodRunner`/ledger/strategy state로 실행한다.
@@ -200,6 +201,8 @@
   - 완료된 부분: `scripts/run_backtest.py --monte-carlo`와 `--mc-runs` / `--mc-seed` / `--mc-ruin-drawdown-pct` 옵션을 추가해 period 결과와 walk-forward test phase 결과에 Monte Carlo 요약을 붙인다.
 - [x] 단위 테스트 fixture를 만든다: 특정 날짜에 PP 통과, PP 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 고정 데이터로 검증한다.
   - 완료된 부분: `20260504` 기준 PP 통과, PP 거래량 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 JSON fixture로 고정했다.
+  - 완료된 부분: `20260505` 기준 PP 수급 부족 탈락, MA 이격 탈락 케이스를 추가했다.
+  - 완료된 부분: `20260506` 기준 BGU 09:10 이전 휩소 guard 탈락, 시가 지지 실패 탈락 케이스를 추가했다.
   - 완료된 부분: `OneilPocketPivotStrategy.scan()` 실제 흐름으로 신호 생성 여부, `entry_type`, reason 포함 여부, 마켓타이밍 OFF 시 가격 조회 생략을 검증한다.
 
 주요 파일:
@@ -375,7 +378,8 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - fixture 기반 runner parity를 여러 거래일/경계 조건으로 확장
+   - O'Neil PP/BGU 외 활성 전략 fixture 확장 여부 결정
+   - 장 후반 종가 베팅 전략용 fixture 경계 조건 보강
 
 3. P1 전략 수익성
    - 시장 국면별 성과 분리

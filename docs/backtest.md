@@ -205,6 +205,8 @@
 
 - 특정 날짜 기반 O'Neil PP/BGU 진입 fixture를 추가했다.
 - `20260504` 기준 PP 통과, PP 거래량 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 고정했다.
+- `20260505` 기준 PP 수급 부족 탈락, MA 이격 탈락 케이스를 추가했다.
+- `20260506` 기준 BGU 09:10 이전 휩소 guard 탈락, 시가 지지 실패 탈락 케이스를 추가했다.
 - fixture 테스트는 `OneilPocketPivotStrategy.scan()` 실제 흐름을 호출해 신호 생성 여부, `entry_type`, reason, 마켓타이밍 OFF 시 가격 조회 생략을 검증한다.
 - 같은 fixture를 period runner와 strategy debug runner에도 통과시켜 결과 parity를 검증한다.
 - period runner는 최종 BUY 체결 여부를 fixture 기대값과 비교한다.
@@ -231,11 +233,11 @@
 
 ### 2. replay context 후속 정리
 
-현재 활성 전략 7개는 replay SQS와 backtest clock을 같은 factory contract로 주입받는다. 남은 작업은 fixture 기반 검증 범위를 더 넓히는 것이다.
+현재 활성 전략 7개는 replay SQS와 backtest clock을 같은 factory contract로 주입받는다. O'Neil PP/BGU fixture는 여러 거래일과 경계 조건까지 period/debug runner parity를 검증한다.
 
 해야 할 일:
 
-- fixture 기반 runner parity를 여러 거래일/경계 조건으로 확장
+- O'Neil PP/BGU 외 활성 전략에도 전략별 fixture를 추가할지 결정
 
 ### 3. 체결 정책 후속 정리
 
@@ -268,8 +270,8 @@
 
 해야 할 일:
 
-- fixture 기반 결과를 period runner와 strategy debug runner 양쪽에서 비교
-- 여러 거래일 fixture를 추가해 장 초반/장 후반, 프로그램매매 부족, MA 이격 탈락 케이스를 보강
+- O'Neil PP/BGU 외 활성 전략에도 fixture 기반 결과를 period runner와 strategy debug runner 양쪽에서 비교할지 결정
+- 장 후반 종가 베팅 전략용 fixture를 추가해 RSI2/Channel Breakout 계열 경계 조건을 보강
 
 ### 6. 실전 체결 fixture 확보
 
@@ -516,6 +518,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `103 passed`
-- 전체 단위 테스트: `4194 passed`
+- 관련 테스트: `111 passed`
+- 전체 단위 테스트: `4202 passed`
 - 전체 통합 테스트: `208 passed`
