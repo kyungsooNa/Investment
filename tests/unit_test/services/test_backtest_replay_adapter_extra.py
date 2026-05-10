@@ -238,7 +238,8 @@ async def test_price_reached_variants_and_last_bar():
     assert got3 is b2
 
 
-def test_to_float_exception_and_to_int_none_and_first_valid_int_and_sorting():
+@pytest.mark.asyncio
+async def test_to_float_exception_and_to_int_none_and_first_valid_int_and_sorting():
     sq = Mock()
     prov = StockQueryIntradayReplayBarProvider(sq)
 
@@ -263,6 +264,5 @@ def test_to_float_exception_and_to_int_none_and_first_valid_int_and_sorting():
     ]
     sq.get_day_intraday_minutes_list = AsyncMock(return_value=unsorted)
     svc.set_backtest_date("20220111")
-    import asyncio
-    rows_out = asyncio.get_event_loop().run_until_complete(svc._get_intraday_rows("X", "20220111"))
+    rows_out = await svc._get_intraday_rows("X", "20220111")
     assert rows_out[0]["stck_cntg_hour"] == "090000"
