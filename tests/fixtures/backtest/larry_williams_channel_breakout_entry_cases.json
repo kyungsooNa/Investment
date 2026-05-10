@@ -1,0 +1,99 @@
+{
+  "cases": [
+    {
+      "id": "20260509_lwcb_pass_at_cutoff",
+      "description": "LarryWilliamsCB pass exactly at 15:10 cutoff with RS, ADX, channel breakout, and volume gates all passing",
+      "date": "20260509",
+      "time": "15:10:00",
+      "rs_rating": 85,
+      "high_20d": 12000,
+      "avg_vol_20d": 100000,
+      "adx": 30.0,
+      "adx_rising": true,
+      "price": {
+        "current": 13000,
+        "volume": 200000
+      },
+      "expected": {
+        "signal": true,
+        "reason_contains": "채널 돌파"
+      }
+    },
+    {
+      "id": "20260509_lwcb_reject_low_rs_rating",
+      "description": "LarryWilliamsCB reject when RS Rating is below the configured threshold",
+      "date": "20260509",
+      "time": "15:15:00",
+      "rs_rating": 75,
+      "high_20d": 12000,
+      "avg_vol_20d": 100000,
+      "adx": 30.0,
+      "adx_rising": true,
+      "price": {
+        "current": 13000,
+        "volume": 200000
+      },
+      "expected": {
+        "signal": false,
+        "rejected_reason": "rs_rating_below_min"
+      }
+    },
+    {
+      "id": "20260510_lwcb_reject_low_adx",
+      "description": "LarryWilliamsCB reject when ADX is below the trend threshold",
+      "date": "20260510",
+      "time": "15:15:00",
+      "rs_rating": 85,
+      "high_20d": 12000,
+      "avg_vol_20d": 100000,
+      "adx": 20.0,
+      "adx_rising": true,
+      "price": {
+        "current": 13000,
+        "volume": 200000
+      },
+      "expected": {
+        "signal": false,
+        "rejected_reason": "adx_below_threshold"
+      }
+    },
+    {
+      "id": "20260510_lwcb_reject_no_channel_breakout",
+      "description": "LarryWilliamsCB reject when current price does not break the prior 20-day channel high",
+      "date": "20260510",
+      "time": "15:15:00",
+      "rs_rating": 85,
+      "high_20d": 12000,
+      "avg_vol_20d": 100000,
+      "adx": 30.0,
+      "adx_rising": true,
+      "price": {
+        "current": 12000,
+        "volume": 200000
+      },
+      "expected": {
+        "signal": false,
+        "rejected_reason": "no_channel_breakout"
+      }
+    },
+    {
+      "id": "20260510_lwcb_reject_insufficient_volume",
+      "description": "LarryWilliamsCB reject when current volume is below avg20 volume times multiplier",
+      "date": "20260510",
+      "time": "15:15:00",
+      "rs_rating": 85,
+      "high_20d": 12000,
+      "avg_vol_20d": 100000,
+      "adx": 30.0,
+      "adx_rising": true,
+      "price": {
+        "current": 13000,
+        "volume": 100000
+      },
+      "expected": {
+        "signal": false,
+        "rejected_reason": "insufficient_volume"
+      }
+    }
+  ]
+}
