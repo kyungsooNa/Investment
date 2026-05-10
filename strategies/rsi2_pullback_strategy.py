@@ -125,14 +125,36 @@ class RSI2PullbackStrategy(LiveStrategy):
         """진입 조건 검사: Stage 2 → RSI(2) ≤ 10 → 시각 → 비중 결정."""
         # Phase 1-1: Stage 2 확인 (universe가 사전 분류)
         if self._cfg.require_minervini_stage2 and item.minervini_stage != _MINERVINI_STAGE_2:
+            self._logger.info({
+                "event": "entry_rejected",
+                "code": code,
+                "name": item.name,
+                "reason": "not_stage2",
+                "minervini_stage": item.minervini_stage,
+                "threshold": _MINERVINI_STAGE_2,
+            })
             return None
 
         # Phase 1-2: 일봉 RSI(2) 조회
         rsi_resp = await self._indicator.get_rsi(code, period=self._cfg.rsi_period, candle_type="D")
         if not rsi_resp or rsi_resp.rt_cd != "0" or not rsi_resp.data:
+            self._logger.info({
+                "event": "entry_rejected",
+                "code": code,
+                "name": item.name,
+                "reason": "rsi_unavailable",
+            })
             return None
         latest_rsi = rsi_resp.data[-1].get("rsi")
         if latest_rsi is None or latest_rsi > self._cfg.rsi_threshold:
+            self._logger.info({
+                "event": "entry_rejected",
+                "code": code,
+                "name": item.name,
+                "reason": "rsi_above_threshold",
+                "rsi": latest_rsi,
+                "threshold": self._cfg.rsi_threshold,
+            })
             return None
 
         # Phase 2: 마켓 타이밍 기반 비중 결정
@@ -142,10 +164,25 @@ class RSI2PullbackStrategy(LiveStrategy):
         cp_resp = await self._sqs.get_current_price(code, caller=self.name)
         current = self._extract_current_price(cp_resp)
         if current <= 0:
+            self._logger.info({
+                "event": "entry_rejected",
+                "code": code,
+                "name": item.name,
+                "reason": "invalid_current_price",
+                "current": current,
+            })
             return None
 
         qty = self._calculate_qty(current, risk_off=risk_off)
         if qty <= 0:
+            self._logger.info({
+                "event": "entry_rejected",
+                "code": code,
+                "name": item.name,
+                "reason": "zero_qty",
+                "current": current,
+                "qty": qty,
+            })
             return None
 
         # 포지션 등록

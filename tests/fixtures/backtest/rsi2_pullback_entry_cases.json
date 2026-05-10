@@ -1,0 +1,86 @@
+{
+  "cases": [
+    {
+      "id": "20260507_rsi2_pass_at_cutoff",
+      "description": "RSI2 pass exactly at 15:10 cutoff with Stage 2, RSI <= 10, normal market timing",
+      "date": "20260507",
+      "time": "15:10:00",
+      "market_timing_ok": true,
+      "minervini_stage": 2,
+      "rsi": 8.0,
+      "price": {
+        "current": 10000
+      },
+      "expected": {
+        "signal": true,
+        "reason_contains": "정상비중",
+        "risk_off": false
+      }
+    },
+    {
+      "id": "20260507_rsi2_pass_risk_off",
+      "description": "RSI2 pass after cutoff with market timing off, producing a reduced-size risk-off signal",
+      "date": "20260507",
+      "time": "15:15:00",
+      "market_timing_ok": false,
+      "minervini_stage": 2,
+      "rsi": 8.0,
+      "price": {
+        "current": 10000
+      },
+      "expected": {
+        "signal": true,
+        "reason_contains": "축소비중",
+        "risk_off": true
+      }
+    },
+    {
+      "id": "20260507_rsi2_reject_before_cutoff",
+      "description": "RSI2 reject before 15:10 close-betting cutoff",
+      "date": "20260507",
+      "time": "15:09:00",
+      "market_timing_ok": true,
+      "minervini_stage": 2,
+      "rsi": 8.0,
+      "price": {
+        "current": 10000
+      },
+      "expected": {
+        "signal": false,
+        "rejected_reason": "Before entry cutoff"
+      }
+    },
+    {
+      "id": "20260508_rsi2_reject_not_stage2",
+      "description": "RSI2 reject when candidate is not Minervini Stage 2",
+      "date": "20260508",
+      "time": "15:15:00",
+      "market_timing_ok": true,
+      "minervini_stage": 3,
+      "rsi": 8.0,
+      "price": {
+        "current": 10000
+      },
+      "expected": {
+        "signal": false,
+        "rejected_reason": "not_stage2"
+      }
+    },
+    {
+      "id": "20260508_rsi2_reject_high_rsi",
+      "description": "RSI2 reject when RSI(2) is above the entry threshold",
+      "date": "20260508",
+      "time": "15:15:00",
+      "market_timing_ok": true,
+      "minervini_stage": 2,
+      "rsi": 12.0,
+      "price": {
+        "current": 10000
+      },
+      "expected": {
+        "signal": false,
+        "rejected_reason": "rsi_above_threshold"
+      }
+    }
+  ]
+}
