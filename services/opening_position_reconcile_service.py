@@ -16,10 +16,12 @@ class OpeningPositionReconcileService:
         *,
         broker,
         virtual_trade_service,
+        kill_switch_service=None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._broker = broker
         self._vts = virtual_trade_service
+        self._kill_switch = kill_switch_service
         self._logger = logger or logging.getLogger(__name__)
 
     async def reconcile_once(self, *, exchange: Exchange = Exchange.KRX) -> dict:
@@ -27,6 +29,8 @@ class OpeningPositionReconcileService:
         if not self._is_success_response(response):
             msg = getattr(response, "msg1", None) or "잔고 조회 실패"
             self._logger.error(f"[OpeningPositionReconcile] broker balance failed: {msg}")
+            if self._kill_switch is not None:
+                await self._kill_switch.record_api_failure(f"opening_reconcile: {msg}")
             return self._empty_result(error=msg)
 
         actual_holdings = ((response.data or {}).get("output1", []) if isinstance(response.data, dict) else [])
