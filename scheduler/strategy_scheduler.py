@@ -1316,6 +1316,10 @@ class StrategyScheduler:
 
     async def restore_state(self):
         """이전 실행 상태 복원. 활성 전략이 있으면 자동 시작."""
+        if self._running:
+            self._logger.warning("[Scheduler] 이미 실행 중 - 상태 복원으로 새 루프를 만들지 않습니다.")
+            return
+
         try:
             state = self._store.load_state()
         except Exception as e:

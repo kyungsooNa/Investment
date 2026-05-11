@@ -1079,6 +1079,28 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler.restore_state()
         self.assertFalse(scheduler._running)
 
+    async def test_restore_state_does_not_start_duplicate_loop_when_already_running(self):
+        """이미 실행 중이면 restore_state가 새 메인 루프를 만들지 않아야 한다."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        scheduler.register(StrategySchedulerConfig(strategy=MockStrategy(name="전략A")))
+        scheduler._running = True
+        existing_task = object()
+        scheduler._task = existing_task
+
+        def close_unexpected_coro(coro):
+            coro.close()
+            return object()
+
+        with patch("scheduler.strategy_scheduler.asyncio.create_task", side_effect=close_unexpected_coro) as mock_create_task:
+            await scheduler.restore_state()
+
+        scheduler._store.load_state.assert_not_called()
+        mock_create_task.assert_not_called()
+        self.assertIs(scheduler._task, existing_task)
+        scheduler._logger.warning.assert_called_with(
+            "[Scheduler] 이미 실행 중 - 상태 복원으로 새 루프를 만들지 않습니다."
+        )
+
     def test_save_state_exception(self):
         """상태 저장 중 예외 발생 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
