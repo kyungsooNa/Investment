@@ -554,6 +554,7 @@ class StrategyScheduler:
         category_key = f"scheduler_{signal.strategy_name}"
         api_success = True
         order_error_msg = ""
+        order_deferred = False
         resp = None
 
         if self._dry_run:
@@ -660,6 +661,15 @@ class StrategyScheduler:
                     self._logger.info(
                         f"[Scheduler] API 주문 성공: {signal.action} {signal.code}"
                     )
+                elif resp and resp.rt_cd == ErrorCode.ORDER_DEFERRED.value:
+                    # 동일 종목 진행 주문 → DeferredOrderQueue 자동 재시도 예정.
+                    # 실패가 아니므로 알림/position_state 정리는 하지 않는다.
+                    api_success = False
+                    order_deferred = True
+                    self._logger.info(
+                        f"[Scheduler] 주문 보류 (자동 재시도 예정): "
+                        f"{signal.action} {signal.code} - {resp.msg1}"
+                    )
                 else:
                     api_success = False
                     msg = resp.msg1 if resp else "응답 없음"
@@ -677,7 +687,8 @@ class StrategyScheduler:
                 )
 
         # BUY 실패 시 전략 내부 position_state에서 즉시 제거 (stale holding 방지)
-        if not api_success and signal.action == "BUY":
+        # 단, deferred(자동 재시도 대기)는 실패가 아니므로 정리하지 않는다.
+        if not api_success and not order_deferred and signal.action == "BUY":
             for _cfg in self._strategies:
                 if _cfg.strategy.name == signal.strategy_name:
                     _ps = self._get_strategy_position_state(_cfg.strategy)
@@ -716,7 +727,7 @@ class StrategyScheduler:
         await self._append_signal_db(record)
         await self._notify_subscribers(record)
 
-        if self._notification_service:
+        if self._notification_service and not order_deferred:
             action_kr = "매수" if signal.action == "BUY" else "매도"
             level = NotificationLevel.CRITICAL if api_success else NotificationLevel.ERROR
             title = f"[{signal.strategy_name}] {signal.name} {action_kr} {'성공' if api_success else '실패'}"
@@ -1316,6 +1327,10 @@ class StrategyScheduler:
 
     async def restore_state(self):
         """이전 실행 상태 복원. 활성 전략이 있으면 자동 시작."""
+        if self._running:
+            self._logger.warning("[Scheduler] 이미 실행 중 - 상태 복원으로 새 루프를 만들지 않습니다.")
+            return
+
         try:
             state = self._store.load_state()
         except Exception as e:

@@ -150,7 +150,9 @@ def test_web_main_lifespan_initializes_and_shutdowns_context(fake_web_ctx, mocke
         fake_web_ctx.load_config_and_env.assert_called_once_with()
         fake_web_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=True)
         fake_web_ctx.initialize_scheduler.assert_called_once_with()
-        fake_web_ctx.scheduler.restore_state.assert_awaited_once_with()
+        # restore_state 는 BackgroundScheduler 어댑터에서 단일 진입.
+        # lifespan 에서 직접 await 하지 않음.
+        fake_web_ctx.scheduler.restore_state.assert_not_awaited()
         fake_web_ctx.order_execution_service.restore_state_from_broker.assert_awaited_once_with()
         fake_web_ctx.order_execution_service.reconcile_orders_with_broker.assert_awaited_once_with()
         fake_web_ctx.start_background_tasks.assert_called_once_with()

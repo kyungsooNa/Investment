@@ -30,6 +30,7 @@ class ErrorCode(Enum):
     RISK_GATE_BLOCKED = "110"  # Risk Gate 정책으로 주문 차단
     ORDER_POLICY_BLOCKED = "111"  # Order Policy 정책으로 주문 차단
     PAPER_NOT_SUPPORTED = "112"  # 모의투자 모드에서 지원하지 않는 API
+    ORDER_DEFERRED = "113"  # 동일 종목 진행 주문으로 보류 큐 등록됨 (자동 재시도 예정)
     UNKNOWN_ERROR = "999"  # 기타 오류
 
     @property

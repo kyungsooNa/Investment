@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 import logging
+import tempfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -172,6 +174,7 @@ async def test_force_close_does_not_trip_kill_switch():
         daily_loss_threshold_won=5_000_000,
         max_consecutive_losses=5,
         max_consecutive_api_errors=5,
+        state_file_path=str(Path(tempfile.gettempdir()) / f"kill_switch_test_{uuid.uuid4().hex}.json"),
     )
     ks = KillSwitchService(config=cfg, notification_service=AsyncMock(), logger=logging.getLogger("ks"))
     # kill_switch_state.json 저장을 방지

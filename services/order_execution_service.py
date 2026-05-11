@@ -47,7 +47,8 @@ class OrderExecutionService:
                  risk_gate_service: Optional[RiskGateService] = None,
                  order_policy_service: Optional[OrderPolicyService] = None,
                  data_quality_service=None,
-                 execution_quality_config: Optional[ExecutionQualityReportConfig] = None):
+                 execution_quality_config: Optional[ExecutionQualityReportConfig] = None,
+                 deferred_order_queue=None):
         self.broker_api_wrapper = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
@@ -64,6 +65,7 @@ class OrderExecutionService:
         self._execution_quality_config = execution_quality_config or ExecutionQualityReportConfig()
         self._execution_quality_alerted: set[tuple[str, str]] = set()
         self._notification_tasks: set[asyncio.Task] = set()
+        self._deferred_queue = deferred_order_queue
         self._order_states: Dict[str, OrderContext] = {}
         self._order_locks: Dict[str, asyncio.Lock] = {}
         self._order_no_index: Dict[str, str] = {}
@@ -451,7 +453,24 @@ class OrderExecutionService:
             self._order_no_index[next_context.broker_order_no] = order_key
         if next_context.state.is_terminal and next_context.intent_id:
             self._intent_index.pop(next_context.intent_id, None)
+        if next_context.state.is_terminal:
+            self._schedule_deferred_release(next_context.stock_code)
         return next_context
+
+    def _schedule_deferred_release(self, stock_code: str) -> None:
+        """terminal state 도달 시 deferred order queue 해제를 비동기로 트리거.
+
+        symbol lock 점유 중에 호출될 수 있으므로 create_task 로 분리한다 (deadlock 방지).
+        """
+        if self._deferred_queue is None or not stock_code:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._deferred_queue.notify_terminal(stock_code))
+        self._notification_tasks.add(task)
+        task.add_done_callback(self._notification_tasks.discard)
 
     def _safe_transition_order_context(self, order_key: str, new_state: OrderState, **kwargs) -> Optional[OrderContext]:
         """외부 이벤트(broker 응답, reconcile, WebSocket) 로 트리거된 상태 전이에 사용.
@@ -1436,6 +1455,55 @@ class OrderExecutionService:
                 await self._kill_switch.record_api_failure(str(e))
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"{action_str} 주문 처리 중 예외 발생: {str(e)}", data=None)
 
+    async def _enqueue_deferred_order(
+        self,
+        *,
+        stock_code,
+        price,
+        qty,
+        exchange: Exchange,
+        side: OrderSide,
+        source: str,
+        existing,
+    ) -> Optional[ResCommonResponse]:
+        """진행 중 주문이 있을 때 신규 주문을 deferred queue 에 enqueue.
+
+        QUEUED → ORDER_DEFERRED 응답 반환.
+        DUPLICATE_DROPPED → None 반환 (호출자가 기본 차단 응답으로 fallback).
+        """
+        from services.deferred_order_queue import EnqueueResult
+
+        async def _retry():
+            handler = (
+                self.handle_place_buy_order
+                if side == OrderSide.BUY
+                else self.handle_place_sell_order
+            )
+            return await handler(
+                stock_code,
+                price,
+                qty,
+                exchange=exchange,
+                source=source,
+            )
+
+        result = await self._deferred_queue.enqueue(
+            stock_code=str(stock_code),
+            side=side.value,
+            submit_callable=_retry,
+            description=f"source={source} qty={qty} price={price} blocked_by={existing.order_key}",
+        )
+        if result == EnqueueResult.QUEUED:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.ORDER_DEFERRED.value,
+                msg1=(
+                    f"동일 종목 진행 주문으로 보류 큐 등록: "
+                    f"code={stock_code} side={side.value} blocked_by={existing.order_key}"
+                ),
+                data=existing.to_dict(),
+            )
+        return None
+
     async def _submit_order_with_fsm(
         self,
         *,
@@ -1486,6 +1554,18 @@ class OrderExecutionService:
                         f"{action_kr} 주문 차단: 진행 중인 주문이 있습니다. "
                         f"종목={stock_code}, 기존상태={existing.state.value}, 기존주문={existing.order_key}"
                     )
+                    if self._deferred_queue is not None:
+                        deferred_resp = await self._enqueue_deferred_order(
+                            stock_code=stock_code,
+                            price=price,
+                            qty=qty,
+                            exchange=exchange,
+                            side=side,
+                            source=source,
+                            existing=existing,
+                        )
+                        if deferred_resp is not None:
+                            return deferred_resp
                     return ResCommonResponse(
                         rt_cd=ErrorCode.RETRY_LIMIT.value,
                         msg1=f"진행 중인 주문이 있어 {action_kr} 주문을 차단했습니다. 상태={existing.state.value}",

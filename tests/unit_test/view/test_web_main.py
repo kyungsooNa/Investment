@@ -57,7 +57,9 @@ async def test_lifespan_startup_shutdown(mock_web_app_context_cls, mock_web_api_
         mock_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=True)
         mock_web_api_module.set_ctx.assert_called_once_with(mock_ctx)
         mock_ctx.initialize_scheduler.assert_called_once()
-        mock_ctx.scheduler.restore_state.assert_awaited_once()
+        # restore_state 는 BackgroundScheduler 어댑터에서 단일 진입하므로
+        # lifespan 에서 직접 await 하지 않는다.
+        mock_ctx.scheduler.restore_state.assert_not_awaited()
         mock_ctx.start_background_tasks.assert_called_once()
     
     # Shutdown checks

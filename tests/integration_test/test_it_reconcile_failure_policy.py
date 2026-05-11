@@ -16,7 +16,10 @@ Background tasks are NOT started — run_once() / reconcile_once() are called di
 from __future__ import annotations
 
 import logging
+import tempfile
+import uuid
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -45,6 +48,7 @@ def _make_ks(max_consecutive_api_errors: int = 3) -> KillSwitchService:
         daily_loss_threshold_won=5_000_000,
         max_consecutive_losses=10,
         max_consecutive_api_errors=max_consecutive_api_errors,
+        state_file_path=str(Path(tempfile.gettempdir()) / f"kill_switch_test_{uuid.uuid4().hex}.json"),
     )
     ks = KillSwitchService(
         config=cfg,

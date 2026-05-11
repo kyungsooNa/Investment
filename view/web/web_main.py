@@ -113,16 +113,15 @@ async def lifespan(app: FastAPI):
     # 3. web_api에 완성된 ctx 연결 (이게 없어서 503 에러가 났던 것임)
     web_api.set_ctx(ctx)
 
-    # 4. 전략 스케줄러 초기화 + 이전 상태 복원
+    # 4. 전략 스케줄러 초기화 (상태 복원은 BackgroundScheduler 어댑터에서 단일 진입)
     ctx.initialize_scheduler()
-    await ctx.scheduler.restore_state()
 
     # 5. 실전 주문 상태 복원 및 reconcile (WebSocket 구독 전, 전략 스케줄러 전)
     if ctx.order_execution_service:
         await ctx.order_execution_service.restore_state_from_broker()
         await ctx.order_execution_service.reconcile_orders_with_broker()
 
-    # 백그라운드 태스크 시작 (데이터 Flush 등)
+    # 백그라운드 태스크 시작 — StrategySchedulerTaskAdapter 가 restore_state() 호출
     ctx.start_background_tasks()
 
     print("=== 웹 서비스 초기화 완료 ===")
