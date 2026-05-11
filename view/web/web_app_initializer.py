@@ -11,6 +11,7 @@ from brokers.broker_api_wrapper import BrokerAPIWrapper
 from services.stock_query_service import StockQueryService
 from services.streaming_service import StreamingService
 from services.order_execution_service import OrderExecutionService
+from services.deferred_order_queue import DeferredOrderQueue
 from repositories.virtual_trade_repository import VirtualTradeRepository
 from repositories.backtest_journal_repository import BacktestJournalRepository
 from services.virtual_trade_service import VirtualTradeService
@@ -547,6 +548,7 @@ class WebAppContext:
                 trade_flow_provider=self.execution_flow_service,
                 logger=self.logger,
             )
+            self.deferred_order_queue = DeferredOrderQueue(self.logger)
             self.order_execution_service = OrderExecutionService(
                 broker_api_wrapper=self.broker,
                 logger=self.logger, market_clock=self.market_clock,
@@ -561,6 +563,7 @@ class WebAppContext:
                 order_policy_service=self.order_policy_service,
                 data_quality_service=self.data_quality_service,
                 execution_quality_config=getattr(self.full_config, "execution_quality_report", None),
+                deferred_order_queue=self.deferred_order_queue,
             )
             self.streaming_service.register_handler(
                 "signing_notice",
