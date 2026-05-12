@@ -5,7 +5,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState, OrderExecutionReport
-from core.retry_queue.retry_classifier import classify, RequestOutcome
+from core.retry_queue.retry_classifier import classify, is_non_retriable_business_error, RequestOutcome
 from core.loggers.trace_context import trace_scope, get_trace_id, new_trace_id
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
@@ -1445,6 +1445,10 @@ class OrderExecutionService:
             if self._kill_switch:
                 if result and result.rt_cd == ErrorCode.SUCCESS.value:
                     await self._kill_switch.record_api_success()
+                elif result and is_non_retriable_business_error(result):
+                    self.logger.warning(
+                        f"KillSwitch API 오류 카운트 제외: {action_str} 비즈니스 거부 - {result.msg1}"
+                    )
                 else:
                     rt = result.rt_cd if result else "no_response"
                     await self._kill_switch.record_api_failure(rt)

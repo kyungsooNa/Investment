@@ -13,7 +13,7 @@ class RequestOutcome(Enum):
 _NON_RETRIABLE_MSG_PATTERNS = [
     "잔고부족", "주문가능금액", "거래정지", "주문불가", "상장폐지",
     "매도가능수량", "이미처리", "접수불가", "매매불가능종목",
-    "종목코드 오류", "유효하지 않은", "입력값 오류",
+    "종목코드 오류", "유효하지 않은", "입력값 오류", "주문이 불가",
 ]
 
 # KIS API msg1에 포함될 경우 일시적 과부하로 재시도 가능한 키워드
@@ -75,3 +75,21 @@ def _classify_by_msg(msg: str | None) -> RequestOutcome:
 
     # 알 수 없는 오류 → 안전하게 FAIL (재시도해도 같은 결과일 가능성 높음)
     return RequestOutcome.FAIL
+
+
+def is_non_retriable_business_error(result: ResCommonResponse | None) -> bool:
+    """계좌/잔고/종목 상태처럼 재시도해도 성공 가능성이 낮은 주문 거부인지 판정."""
+    if result is None or result.rt_cd == ErrorCode.SUCCESS.value:
+        return False
+
+    msg = result.msg1 or ""
+    if "Business Error" in msg:
+        return True
+    if any(kw in msg for kw in _NON_RETRIABLE_MSG_PATTERNS):
+        return True
+
+    try:
+        code = ErrorCode(result.rt_cd)
+    except ValueError:
+        return False
+    return code in _NON_RETRIABLE_CODES
