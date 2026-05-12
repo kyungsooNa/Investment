@@ -1,6 +1,8 @@
 import pytest
 import importlib
+from pathlib import Path
 from unittest.mock import MagicMock, patch
+import core.logger
 
 # 테스트할 전략 클래스와 예상되는 로거 이름 매핑
 STRATEGIES = [
@@ -58,3 +60,16 @@ def test_strategies_init_logger(module_path, class_name, expected_logger_name):
         # 전략 인스턴스에 로거가 할당되었는지 확인
         logger_attr = getattr(strategy, '_logger', getattr(strategy, 'logger', None))
         assert logger_attr == mock_get_logger.return_value
+
+
+def test_default_strategy_logger_uses_test_log_dir_env(monkeypatch, tmp_path):
+    """테스트 환경에서는 기본 전략 로그가 실제 logs/strategies에 쓰이지 않는다."""
+    redirected_log_dir = tmp_path / "isolated_logs"
+    monkeypatch.setenv("INVESTMENT_LOG_DIR", str(redirected_log_dir))
+
+    logger = core.logger.get_strategy_logger("EnvIsolationCheck")
+    logger.info({"event": "test_log_isolation"})
+    core.logger.shutdown_logging()
+
+    assert list((redirected_log_dir / "strategies").glob("*EnvIsolationCheck*.log.json*"))
+    assert not list(Path("logs/strategies").glob("*EnvIsolationCheck*.log.json*"))

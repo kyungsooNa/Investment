@@ -690,6 +690,45 @@ async def test_report_uses_virtual_trade_records_for_completed_buys_when_availab
 
 
 @pytest.mark.asyncio
+async def test_report_does_not_treat_log_buy_as_completed_when_journal_has_untagged_trade(log_dir):
+    """원장에 당일 거래가 있으면 전략 태그가 없어도 로그 시그널을 실매수로 보지 않는다."""
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return [
+                {
+                    "code": "000660",
+                    "name": "SK하이닉스",
+                    "buy_date": "2026-04-18 09:10:00",
+                    "buy_price": 120000,
+                    "status": "HOLD",
+                },
+            ]
+
+        def get_solds(self):
+            return []
+
+        def get_holds(self):
+            return [{"code": "000660"}]
+
+    _write_log(os.path.join(log_dir, "20260418_093000_OneilSqueezeBreakout.log.json"), [
+        {**_make_entry("scan_with_watchlist", "", ""), "data": {"event": "scan_with_watchlist", "count": 1}},
+        _make_entry("buy_signal_generated", "000001", "종목000001", reason="테스트 로그", price=75000),
+    ])
+
+    svc = StrategyLogReportService(
+        log_dir=log_dir,
+        virtual_trade_service=DummyVirtualTradeService(),
+    )
+    report = await svc.generate_report("20260418")
+
+    osb_section = report.split("<b>1. OneilSqueezeBreakout</b>", 1)[1].split("<b>💰 오늘의 포트폴리오 요약</b>", 1)[0]
+    assert "시그널 없음" in osb_section
+    assert "매수 완료" not in osb_section
+    assert "종목000001" not in osb_section
+    assert "신규 매수: 1건 (SK하이닉스)" in report
+
+
+@pytest.mark.asyncio
 async def test_report_matches_virtual_trade_strategy_alias_to_log_section(log_dir):
     """원장 전략명이 한글이어도 대응하는 영문 로그 섹션의 매수 완료 detail에 표시한다."""
     class DummyVirtualTradeService:

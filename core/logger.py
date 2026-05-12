@@ -22,6 +22,12 @@ from core.loggers.async_handler import DictPreservingQueueHandler
 
 _active_listeners = []
 
+def _resolve_log_dir(log_dir: str) -> str:
+    """테스트 실행 시 기본 로그 경로를 격리된 임시 경로로 우회한다."""
+    if log_dir == "logs":
+        return os.getenv("INVESTMENT_LOG_DIR", log_dir)
+    return log_dir
+
 def setup_async_logger(logger: logging.Logger, file_handler: logging.Handler):
     """파일 I/O를 백그라운드 스레드로 위임하는 비동기 큐 세팅"""
     log_queue = queue.Queue(-1)
@@ -56,6 +62,7 @@ def get_streaming_logger(log_dir: str = "logs") -> "StreamingEventLogger":
                 "price_subscribe" | "price_unsubscribe" (현재 체결가 H0STCNT0)
       + action별 세부 필드 (code, categories, reason, trigger, ...)
     """
+    log_dir = _resolve_log_dir(log_dir)
     streaming_log_dir = os.path.join(log_dir, "streaming")
     os.makedirs(streaming_log_dir, exist_ok=True)
 
@@ -89,6 +96,7 @@ def get_cache_event_logger(log_dir: str = "logs") -> "CacheEventLogger":
       - action: 아래 CacheEventLogger 참조
       + action별 세부 필드 (code, caller, before_price, after_price, ohlcv_count, ...)
     """
+    log_dir = _resolve_log_dir(log_dir)
     cache_log_dir = os.path.join(log_dir, "cache")
     os.makedirs(cache_log_dir, exist_ok=True)
 
@@ -122,6 +130,7 @@ def get_strategy_logger(strategy_name: str, log_dir="logs", sub_dir: str = None)
       (핸들러 중복 생성으로 인한 신규 _N 파일 누적 방지).
     - 활성 파일이 maxBytes 를 넘으면 SizeTimeRotatingFileHandler 가 자동으로 _N+1 로 롤오버한다.
     """
+    log_dir = _resolve_log_dir(log_dir)
     logger_key = f"strategy.{strategy_name}"
     if sub_dir:
         logger_key = f"{logger_key}.{sub_dir}"
@@ -168,6 +177,7 @@ def get_performance_logger(log_dir="logs"):
     성능 측정 전용 로거를 생성하고 반환합니다.
     경로: logs/performance/{timestamp}_perf.log
     """
+    log_dir = _resolve_log_dir(log_dir)
     logger = logging.getLogger("performance")
     
     if logger.handlers:
