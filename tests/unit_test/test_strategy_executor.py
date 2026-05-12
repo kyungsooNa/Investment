@@ -152,14 +152,18 @@ async def test_price_fetch_error_blocks_code():
 
 
 class _StubPriceStream:
-    """PriceStreamService 스텁 — get_liquidity_snapshot / cache_price_snapshot 만 노출."""
+    """PriceStreamService 스텁 — get_market_snapshot / cache_price_snapshot 만 노출."""
 
     def __init__(self, snapshots=None):
         self._snapshots = dict(snapshots or {})
         self.cache_calls = []
 
-    def get_liquidity_snapshot(self, code):
-        return self._snapshots.get(code)
+    def get_market_snapshot(self, code):
+        from common.market_snapshot import MarketSnapshot
+        d = self._snapshots.get(code)
+        if d is None:
+            return None
+        return MarketSnapshot.from_legacy_dict(code, d)
 
     def cache_price_snapshot(self, code, price, volume='0', acml_tr_pbmn=None, **kwargs):
         self.cache_calls.append({

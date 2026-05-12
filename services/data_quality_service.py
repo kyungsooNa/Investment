@@ -34,6 +34,10 @@ class DataQualityService:
     REASON_STALE_PRICE = "stale_price"
     REASON_INVALID_TICK = "invalid_tick"
     REASON_LATENCY_EXCEEDED = "latency_exceeded"
+    REASON_SNAPSHOT_MISSING = "snapshot_missing"
+    REASON_SNAPSHOT_STALE = "snapshot_stale"
+    REASON_CONCLUSION_MISSING = "conclusion_missing"
+    REASON_CONCLUSION_STALE = "conclusion_stale"
 
     def __init__(
         self,

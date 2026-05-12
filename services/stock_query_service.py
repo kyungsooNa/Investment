@@ -1,11 +1,13 @@
 # app/stock_query_service.py
 from __future__ import annotations
 import time
+from common.market_snapshot import ConclusionSnapshot, MarketSnapshot
 from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, \
     ResStockFullInfoApiOutput, Exchange
 from config.DynamicConfig import DynamicConfig
-from typing import List, Dict, Optional, Literal
+from typing import List, Dict, Optional, Tuple, Literal
 from core.performance_profiler import PerformanceProfiler
+from services.data_quality_service import DataQualityService
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 from services.market_data_service import MarketDataService
 
@@ -41,6 +43,9 @@ class StockQueryService:
             "no_tick_fallback": 0,
             "stale_fallback": 0,
             "rest_fallback": 0,
+            "conclusion_hit": 0,
+            "conclusion_stale_fallback": 0,
+            "conclusion_missing_fallback": 0,
         }
 
     def _get_sign_from_code(self, sign_code):
@@ -148,6 +153,11 @@ class StockQueryService:
                 and resp.rt_cd == ErrorCode.SUCCESS.value):
             try:
                 output = (resp.data or {}).get("output")
+
+                def _opt(v) -> Optional[str]:
+                    s = str(v) if v is not None else ""
+                    return s if s and s not in ("0", "N/A") else None
+
                 if isinstance(output, ResStockFullInfoApiOutput):
                     self.price_stream_service.cache_price_snapshot(
                         stock_code,
@@ -157,6 +167,9 @@ class StockQueryService:
                         sign=str(output.prdy_vrss_sign or "3"),
                         volume=str(output.acml_vol or "0"),
                         acml_tr_pbmn=str(output.acml_tr_pbmn or "0"),
+                        high=_opt(output.stck_hgpr),
+                        low=_opt(output.stck_lwpr),
+                        open_price=_opt(output.stck_oprc),
                     )
                 elif isinstance(output, dict):
                     self.price_stream_service.cache_price_snapshot(
@@ -167,6 +180,9 @@ class StockQueryService:
                         sign=str(output.get("prdy_vrss_sign", "3") or "3"),
                         volume=str(output.get("acml_vol", "0") or "0"),
                         acml_tr_pbmn=str(output.get("acml_tr_pbmn", "0") or "0"),
+                        high=_opt(output.get("stck_hgpr")),
+                        low=_opt(output.get("stck_lwpr")),
+                        open_price=_opt(output.get("stck_oprc")),
                     )
             except Exception as e:
                 self.logger.debug({"event": "snapshot_backfill_skipped", "code": stock_code, "error": str(e)})
@@ -196,6 +212,83 @@ class StockQueryService:
     async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
         """체결 정보 조회 (MarketDataService 래퍼)."""
         return await self.market_data_service.get_stock_conclusion(stock_code)
+
+    def get_market_snapshot(
+        self,
+        code: str,
+        max_age_sec: Optional[float] = None,
+        force_fresh: bool = False,
+    ) -> Tuple[Optional[MarketSnapshot], Optional[str]]:
+        """PriceStreamService 캐시에서 MarketSnapshot 을 반환한다.
+
+        반환값: (snapshot, reason)
+          - snapshot: MarketSnapshot 또는 None
+          - reason: None(신선) / REASON_SNAPSHOT_MISSING / REASON_SNAPSHOT_STALE
+        stale 인 경우에도 snapshot 자체는 반환한다(호출자가 fallback 여부 판단).
+        force_fresh=True 이면 항상 (None, REASON_SNAPSHOT_STALE) 반환.
+        """
+        if self.price_stream_service is None:
+            return None, DataQualityService.REASON_SNAPSHOT_MISSING
+
+        if force_fresh:
+            return None, DataQualityService.REASON_SNAPSHOT_STALE
+
+        snap = self.price_stream_service.get_market_snapshot(code)
+        if snap is None:
+            return None, DataQualityService.REASON_SNAPSHOT_MISSING
+
+        effective_max_age = max_age_sec if max_age_sec is not None else self._snapshot_max_age_sec
+        age = time.time() - snap.received_at
+        if age > effective_max_age:
+            return snap, DataQualityService.REASON_SNAPSHOT_STALE
+
+        return snap, None
+
+    async def get_conclusion_snapshot(
+        self,
+        code: str,
+        max_age_sec: float = 10.0,
+        force_fresh: bool = False,
+    ) -> Tuple[Optional[ConclusionSnapshot], Optional[str]]:
+        """체결강도 snapshot 을 캐시 우선으로 반환한다. cache miss/stale 시 REST fallback 후 backfill.
+
+        반환값: (snapshot, reason)
+          - reason: None(신선) / REASON_CONCLUSION_MISSING / REASON_CONCLUSION_STALE
+        """
+        if self.price_stream_service is None:
+            self._price_lookup_stats["conclusion_missing_fallback"] += 1
+            return None, DataQualityService.REASON_CONCLUSION_MISSING
+
+        if not force_fresh:
+            cached = self.price_stream_service.get_conclusion_snapshot(code)
+            if cached is not None:
+                age = time.time() - cached.received_at
+                if age <= max_age_sec:
+                    self._price_lookup_stats["conclusion_hit"] += 1
+                    return cached, None
+                self._price_lookup_stats["conclusion_stale_fallback"] += 1
+            else:
+                self._price_lookup_stats["conclusion_missing_fallback"] += 1
+
+        resp = await self.market_data_service.get_stock_conclusion(code)
+        if resp is None or resp.rt_cd != ErrorCode.SUCCESS.value:
+            return None, DataQualityService.REASON_CONCLUSION_MISSING
+
+        try:
+            output = (resp.data or {}).get("output")
+            if isinstance(output, list) and output:
+                output = output[0]
+            if isinstance(output, dict):
+                strength_raw = output.get("tday_rltv") or output.get("cgld") or "0"
+            else:
+                strength_raw = getattr(output, "tday_rltv", None) or getattr(output, "cgld", None) or "0"
+            strength = float(strength_raw) if strength_raw and strength_raw != "N/A" else 0.0
+        except (ValueError, TypeError, AttributeError):
+            strength = 0.0
+
+        self.price_stream_service.cache_conclusion_snapshot(code, strength)
+        snap = self.price_stream_service.get_conclusion_snapshot(code)
+        return snap, None
 
     async def handle_get_current_stock_price(self, stock_code, caller: str = "unknown", exchange: Exchange = Exchange.KRX, force_fresh: bool = False):
         """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""

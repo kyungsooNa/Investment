@@ -10,6 +10,8 @@ if TYPE_CHECKING:
     from config.config_loader import RiskGateConfig
     from services.price_stream_service import PriceStreamService
 
+from services.data_quality_service import DataQualityService
+
 
 class StrategyExecutor:
     """Strategy 실행기.
@@ -123,20 +125,28 @@ class StrategyExecutor:
           1) PriceStreamService snapshot (received_at 이 snapshot_max_age_sec 이내)
           2) get_current_price_fn(REST). 응답을 받으면 snapshot 캐시에 보강.
         """
-        snap = None
         if self._price_stream_service is not None:
             try:
-                snap = self._price_stream_service.get_liquidity_snapshot(code)
+                snap = self._price_stream_service.get_market_snapshot(code)
             except Exception:
                 snap = None
 
-        if snap is not None:
-            received_at = snap.get('received_at', 0.0) or 0.0
-            if (time.time() - received_at) <= self._snapshot_max_age_sec:
-                return (
-                    int(snap.get('acml_tr_pbmn') or 0),
-                    int(snap.get('acml_vol') or 0),
-                )
+            if snap is not None:
+                age = time.time() - snap.received_at
+                if age <= self._snapshot_max_age_sec:
+                    return snap.acml_tr_pbmn, snap.acml_vol
+                self._logger.debug({
+                    "event": "liquidity_snapshot_stale",
+                    "code": code,
+                    "reason": DataQualityService.REASON_SNAPSHOT_STALE,
+                    "age_sec": round(age, 2),
+                })
+            else:
+                self._logger.debug({
+                    "event": "liquidity_snapshot_missing",
+                    "code": code,
+                    "reason": DataQualityService.REASON_SNAPSHOT_MISSING,
+                })
 
         async with sem:
             info = await self._get_current_price_fn(code)

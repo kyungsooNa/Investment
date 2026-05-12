@@ -273,9 +273,9 @@
 
 ### 2-3. Market snapshot 표준화
 
-- [ ] 기존 `PriceStreamService`의 `get_cached_price()` / `cache_price_snapshot()` 구조를 중복 구현하지 않고, 전략 공통 snapshot contract로 승격할 방법을 설계한다.
-- [ ] WebSocket / REST / DB snapshot 입력을 한곳에서 표준화해 현재가, 거래량, 거래대금, 고가, 저가, 체결강도, 데이터 시각을 같은 형태로 제공한다.
-- [ ] 전략은 REST 직접 조회보다 snapshot provider를 우선 참조하고, stale/missing reason을 rejected reason으로 남긴다.
+- [x] 기존 `PriceStreamService`의 `get_cached_price()` / `cache_price_snapshot()` 구조를 중복 구현하지 않고, 전략 공통 snapshot contract로 승격할 방법을 설계한다.
+- [x] WebSocket / REST / DB snapshot 입력을 한곳에서 표준화해 현재가, 거래량, 거래대금, 고가, 저가, 체결강도, 데이터 시각을 같은 형태로 제공한다.
+- [x] 전략은 REST 직접 조회보다 snapshot provider를 우선 참조하고, stale/missing reason을 rejected reason으로 남긴다.
 
 주요 파일:
 

@@ -21,6 +21,7 @@ import logging
 import time
 from typing import Dict, List, Optional
 
+from common.market_snapshot import ConclusionSnapshot, MarketSnapshot
 from repositories.stock_repository import StockRepository
 from services.notification_service import NotificationCategory, NotificationLevel
 
@@ -40,6 +41,7 @@ class PriceStreamService:
         self._data_quality_service = data_quality_service
         self._notification_service = notification_service
         self._latest_prices: Dict[str, dict] = {}
+        self._latest_conclusions: Dict[str, dict] = {}  # code → conclusion snapshot dict
         self._sse_queues: Dict[str, List[asyncio.Queue]] = {}  # code → SSE 구독 큐 목록
         self._last_tick_ts: Dict[str, float] = {}
         self._last_any_tick_ts: float = 0.0
@@ -101,6 +103,12 @@ class PriceStreamService:
         except (ValueError, TypeError):
             tr_pbmn_int = 0
 
+        def _sf(val: str, default: float = 0.0) -> Optional[float]:
+            try:
+                return float(val) if val and val != 'N/A' else None
+            except (ValueError, TypeError):
+                return None
+
         self._latest_prices[stock_code] = {
             "price": current_price,
             "change": realtime_data.get('전일대비', '0'),
@@ -108,10 +116,13 @@ class PriceStreamService:
             "sign": realtime_data.get('전일대비부호', '3'),
             "acml_vol": vol_int,
             "acml_tr_pbmn": tr_pbmn_int,
+            "high": _sf(realtime_data.get('주식최고가', '')),
+            "low": _sf(realtime_data.get('주식최저가', '')),
+            "open": _sf(realtime_data.get('주식시가', '')),
             "received_at": now_ts,
             "latency_sec": latency_sec,
             "quality_status": quality_status,
-            "quality_reason": quality_reason,
+            "quality_reason": "websocket",
         }
 
         try:
@@ -120,12 +131,6 @@ class PriceStreamService:
             self._logger.warning(f"StockRepository 실시간 틱 캐시 갱신 실패: {e}")
 
         if stock_code in self._sse_queues:
-            def _sf(val: str, default: float = 0.0) -> float:
-                try:
-                    return float(val) if val and val != 'N/A' else default
-                except (ValueError, TypeError):
-                    return default
-
             tick = {
                 "code": stock_code,
                 "price": float(current_price),
@@ -133,15 +138,47 @@ class PriceStreamService:
                 "change": realtime_data.get('전일대비', '0'),
                 "rate": realtime_data.get('전일대비율', '0.00'),
                 "sign": realtime_data.get('전일대비부호', '3'),
-                "open": _sf(realtime_data.get('주식시가')),
-                "high": _sf(realtime_data.get('주식최고가')),
-                "low": _sf(realtime_data.get('주식최저가')),
+                "open": _sf(realtime_data.get('주식시가', '')) or 0.0,
+                "high": _sf(realtime_data.get('주식최고가', '')) or 0.0,
+                "low": _sf(realtime_data.get('주식최저가', '')) or 0.0,
             }
             for q in self._sse_queues[stock_code]:
                 try:
                     q.put_nowait(tick)
                 except asyncio.QueueFull:
                     pass
+
+    def get_market_snapshot(self, code: str) -> Optional[MarketSnapshot]:
+        """메모리 캐시에서 MarketSnapshot 을 반환한다.
+
+        snapshot 이 없으면 None. 타입 정보가 필요 없는 기존 경로는 get_cached_price() 사용.
+        """
+        cached = self._latest_prices.get(code)
+        if cached is None:
+            return None
+        source = "websocket" if cached.get("quality_reason") == "websocket" else "rest"
+        return MarketSnapshot.from_legacy_dict(code, cached, source=source)
+
+    def cache_conclusion_snapshot(self, code: str, execution_strength_pct: float) -> None:
+        """체결강도 REST 응답을 캐시에 저장한다."""
+        if not code:
+            return
+        self._latest_conclusions[code] = {
+            "execution_strength_pct": execution_strength_pct,
+            "received_at": time.time(),
+        }
+
+    def get_conclusion_snapshot(self, code: str) -> Optional[ConclusionSnapshot]:
+        """캐시에서 ConclusionSnapshot 을 반환한다. 없으면 None."""
+        cached = self._latest_conclusions.get(code)
+        if cached is None:
+            return None
+        return ConclusionSnapshot(
+            code=code,
+            execution_strength_pct=cached["execution_strength_pct"],
+            received_at=cached["received_at"],
+            source="rest",
+        )
 
     def get_cached_price(self, code: str) -> Optional[dict]:
         """메모리 캐시에서 최신가 정보를 반환한다."""
@@ -156,6 +193,9 @@ class PriceStreamService:
         sign: str = '3',
         volume: str = '0',
         acml_tr_pbmn: Optional[str] = None,
+        high: Optional[str] = None,
+        low: Optional[str] = None,
+        open_price: Optional[str] = None,
     ) -> None:
         """REST 스냅샷 현재가를 최신가 캐시에 반영한다."""
         if not code or not price:
@@ -173,6 +213,14 @@ class PriceStreamService:
         except (ValueError, TypeError):
             tr_pbmn_int = 0
 
+        def _parse_opt(v: Optional[str]) -> Optional[float]:
+            if not v or v == 'N/A':
+                return None
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return None
+
         now_ts = time.time()
         self._latest_prices[code] = {
             "price": price,
@@ -181,6 +229,9 @@ class PriceStreamService:
             "sign": sign,
             "acml_vol": vol_int,
             "acml_tr_pbmn": tr_pbmn_int,
+            "high": _parse_opt(high),
+            "low": _parse_opt(low),
+            "open": _parse_opt(open_price),
             "received_at": now_ts,
             "latency_sec": 0.0,
             "quality_status": "ok",
@@ -219,6 +270,7 @@ class PriceStreamService:
         self._subscription_requested_ts.pop(code, None)
         self._last_tick_ts.pop(code, None)
         self._latest_prices.pop(code, None)
+        self._latest_conclusions.pop(code, None)
 
     def get_last_tick_ts(self, code: str) -> float:
         """종목별 마지막 틱 수신 시각(epoch)을 반환한다."""
