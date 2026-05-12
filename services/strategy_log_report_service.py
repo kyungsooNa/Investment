@@ -393,12 +393,9 @@ class StrategyLogReportService:
         except Exception:
             return False, result
 
-        saw_target_date_trade = False
-        saw_strategy_tag = False
         for trade in all_trades:
             if not str(trade.get('buy_date', '')).startswith(date_prefix):
                 continue
-            saw_target_date_trade = True
             if trade.get('status') not in {"HOLD", "SOLD"}:
                 continue
 
@@ -406,7 +403,6 @@ class StrategyLogReportService:
             code = str(trade.get('code') or '').strip()
             if not strategy or not code:
                 continue
-            saw_strategy_tag = True
 
             try:
                 price = int(float(trade.get('buy_price') or 0))
@@ -420,7 +416,9 @@ class StrategyLogReportService:
                 'time': str(trade.get('buy_date', ''))[11:16],
             }
 
-        return (not saw_target_date_trade) or saw_strategy_tag, result
+        # 원장을 읽을 수 있으면 buy_signal_generated 로그보다 원장을 신뢰한다.
+        # 전략 태그가 없는 당일 거래가 있어도 테스트/드라이런 로그를 실매수로 오인하지 않는다.
+        return True, result
 
     def _get_enabled_strategy_keys(self) -> Optional[set[str]]:
         if not self._enabled_strategy_provider:
@@ -1172,8 +1170,11 @@ class StrategyLogReportService:
         divergence_section = self._build_backtest_live_divergence_section(target_date)
 
         if not active_sections:
+            portfolio_summary = self._build_portfolio_summary(target_date, fallback_buys)
             extra_sections = [
-                section for section in (warnings_section, divergence_section, execution_quality_section) if section
+                section
+                for section in (warnings_section, portfolio_summary, divergence_section, execution_quality_section)
+                if section
             ]
             extra_body = "\n\n".join(extra_sections)
             extra = f"\n\n{extra_body}" if extra_body else ""
