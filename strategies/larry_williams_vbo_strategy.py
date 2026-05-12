@@ -129,39 +129,46 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 # 5) 현재가/시가 조회
                 price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
-                    log_data["reason"] = "현재가 조회 실패"
-                    self._logger.info({"event": "candidate_rejected", **log_data})
+                    self._log_entry_rejected(log_data, "price_unavailable", "현재가 조회 실패")
                     continue
 
                 data = price_resp.data or {}
                 current = int(data.get("price", "0") or "0")
                 open_price = int(data.get("open", "0") or "0")
                 if current <= 0 or open_price <= 0:
-                    log_data["reason"] = "시가/현재가 0"
-                    self._logger.info({"event": "candidate_rejected", **log_data})
+                    self._log_entry_rejected(log_data, "invalid_price", "시가/현재가 0")
                     continue
 
                 # 6) Target = Open + Range × K
                 rng = self._range_cache.ranges.get(code, 0.0)
                 if rng <= 0:
-                    log_data["reason"] = "Range 미확보 (전일 일봉 조회 실패)"
-                    self._logger.info({"event": "candidate_rejected", **log_data})
+                    self._log_entry_rejected(
+                        log_data,
+                        "range_unavailable",
+                        "Range 미확보 (전일 일봉 조회 실패)",
+                    )
                     continue
 
                 target = open_price + rng * self._cfg.k_value
                 log_data.update({"open": open_price, "range": rng, "target": round(target), "current": current})
 
                 if current < target:
-                    log_data["reason"] = f"현재가({current}) < Target({round(target)})"
-                    self._logger.info({"event": "candidate_rejected", **log_data})
+                    self._log_entry_rejected(
+                        log_data,
+                        "below_target",
+                        f"현재가({current}) < Target({round(target)})",
+                    )
                     continue
 
                 # 7) 스냅샷 체결강도 >= 120%
                 cgld = await self._get_execution_strength(code)
                 log_data["execution_strength"] = cgld
                 if cgld < self._cfg.confidence_threshold:
-                    log_data["reason"] = f"체결강도({cgld:.1f}%) < {self._cfg.confidence_threshold}%"
-                    self._logger.info({"event": "candidate_rejected", **log_data})
+                    self._log_entry_rejected(
+                        log_data,
+                        "low_execution_strength",
+                        f"체결강도({cgld:.1f}%) < {self._cfg.confidence_threshold}%",
+                    )
                     continue
 
                 # 8) 프로그램 순매수 >= 거래대금 × 10% AND 양수(+)
@@ -359,13 +366,19 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         avg_5d_tv = stock.get("avg_5d_tv", 0) or 0
 
         if market_cap > 0 and market_cap < self._cfg.min_market_cap:
-            log_data["reason"] = f"시총({market_cap:,}) < {self._cfg.min_market_cap:,}"
-            self._logger.info({"event": "candidate_rejected", **log_data})
+            self._log_entry_rejected(
+                log_data,
+                "market_cap_below_min",
+                f"시총({market_cap:,}) < {self._cfg.min_market_cap:,}",
+            )
             return False
 
         if avg_5d_tv > 0 and avg_5d_tv < self._cfg.min_5d_trading_value:
-            log_data["reason"] = f"5일평균거래대금({avg_5d_tv:,.0f}) < {self._cfg.min_5d_trading_value:,}"
-            self._logger.info({"event": "candidate_rejected", **log_data})
+            self._log_entry_rejected(
+                log_data,
+                "avg_trading_value_below_min",
+                f"5일평균거래대금({avg_5d_tv:,.0f}) < {self._cfg.min_5d_trading_value:,}",
+            )
             return False
 
         return True
@@ -400,8 +413,11 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             acml_tv = int(data.get("acml_tr_pbmn") or "0")
 
             if acml_tv <= 0 or prpr <= 0:
-                log_data["reason"] = "프로그램 순매수 계산 불가 (거래대금/현재가 0)"
-                self._logger.info({"event": "candidate_rejected", **log_data})
+                self._log_entry_rejected(
+                    log_data,
+                    "program_buy_unavailable",
+                    "프로그램 순매수 계산 불가 (거래대금/현재가 0)",
+                )
                 return False
 
             ntby_amt = ntby_qty * prpr  # 순매수 금액 (부호 유지)
@@ -410,13 +426,19 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             log_data.update({"program_ntby_qty": ntby_qty, "program_ratio": round(ratio * 100, 2)})
 
             if ntby_amt <= 0:
-                log_data["reason"] = f"프로그램 순매수 음수 ({ntby_amt:,}원)"
-                self._logger.info({"event": "candidate_rejected", **log_data})
+                self._log_entry_rejected(
+                    log_data,
+                    "negative_program_buy",
+                    f"프로그램 순매수 음수 ({ntby_amt:,}원)",
+                )
                 return False
 
             if ratio < self._cfg.program_buy_ratio:
-                log_data["reason"] = f"프로그램비율({ratio*100:.1f}%) < {self._cfg.program_buy_ratio*100:.0f}%"
-                self._logger.info({"event": "candidate_rejected", **log_data})
+                self._log_entry_rejected(
+                    log_data,
+                    "low_program_buy_ratio",
+                    f"프로그램비율({ratio*100:.1f}%) < {self._cfg.program_buy_ratio*100:.0f}%",
+                )
                 return False
 
         except Exception as e:
@@ -424,3 +446,8 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             return False
 
         return True
+
+    def _log_entry_rejected(self, log_data: dict, reason: str, message: str) -> None:
+        payload = {**log_data, "reason": reason, "message": message}
+        self._logger.info({"event": "candidate_rejected", **payload})
+        self._logger.info({"event": "entry_rejected", **payload})

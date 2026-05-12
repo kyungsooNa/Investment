@@ -262,6 +262,20 @@
 - `tests/unit_test/strategies/test_oneil_squeeze_breakout_fixture_runner_parity.py`
 - `strategies/oneil_squeeze_breakout_strategy.py`
 
+### Larry Williams VBO fixture 검증
+
+- 장중 변동성 돌파 전략인 `LarryWilliamsVBOStrategy` fixture를 추가했다.
+- `20260513` 기준 VBO 정석 돌파 통과, target 미달, 체결강도 미달 탈락 케이스를 고정했다.
+- `20260514` 기준 프로그램 순매수 음수, 프로그램 순매수 비율 미달 탈락 케이스를 고정했다.
+- 같은 fixture를 period runner와 strategy debug runner에 통과시켜 BUY 체결 여부와 SIGNAL/REJECTED decision journal 방향을 비교한다.
+- VBO 전략은 유동성/시총, 현재가, range, target, 체결강도, 프로그램 순매수 탈락을 `entry_rejected` 로그로 남겨 debug runner가 표준 rejected journal을 만들 수 있게 했다.
+
+주요 파일:
+
+- `tests/fixtures/backtest/larry_williams_vbo_entry_cases.json`
+- `tests/unit_test/strategies/test_larry_williams_vbo_fixture_runner_parity.py`
+- `strategies/larry_williams_vbo_strategy.py`
+
 ## 남은 작업
 
 ### 1. 표준 journal 저장 경로 후속 정리
@@ -275,11 +289,11 @@
 
 ### 2. replay context 후속 정리
 
-현재 활성 전략 7개는 replay SQS와 backtest clock을 같은 factory contract로 주입받는다. O'Neil PP/BGU, RSI2, LarryWilliams Channel Breakout, O'Neil Squeeze Breakout fixture는 여러 거래일과 경계 조건까지 period/debug runner parity를 검증한다.
+현재 활성 전략 7개는 replay SQS와 backtest clock을 같은 factory contract로 주입받는다. O'Neil PP/BGU, RSI2, LarryWilliams Channel Breakout, O'Neil Squeeze Breakout, Larry Williams VBO fixture는 여러 거래일과 경계 조건까지 period/debug runner parity를 검증한다.
 
 해야 할 일:
 
-- 다른 활성 전략(HTF, First Pullback, Larry Williams VBO)에도 fixture를 추가할지 결정
+- 다른 활성 전략(HTF, First Pullback)에도 fixture를 추가할지 결정
 
 ### 3. 체결 정책 후속 정리
 
@@ -312,7 +326,7 @@
 
 해야 할 일:
 
-- HTF, First Pullback, Larry Williams VBO 중 우선 검증 전략을 정하고 fixture를 추가
+- HTF, First Pullback 중 우선 검증 전략을 정하고 fixture를 추가
 
 ### 6. 실전 체결 fixture 확보
 
@@ -524,7 +538,7 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 
 ## 현재 한계
 
-- 지원 전략은 활성 전략 7개로 확장됐지만, fixture 기반 parity 검증은 아직 O'Neil PP/BGU, RSI2, LarryWilliamsCB, OSB 중심이다.
+- 지원 전략은 활성 전략 7개로 확장됐지만, fixture 기반 parity 검증은 아직 O'Neil PP/BGU, RSI2, LarryWilliamsCB, OSB, LarryWilliamsVBO 중심이다.
 - `--use-risk-sizing`은 백테스트 ledger 기반 snapshot을 사용하므로 실제 계좌 잔고나 미체결 주문 상태를 조회하지 않는다.
 - `--walk-forward`는 train/tune/test 분리 실행과 test phase 요약 집계까지 지원한다. 자동 파라미터 최적화는 아직 수행하지 않는다.
 - `--monte-carlo`는 표준 journal에 `net_pnl`이 있는 완료 trade만 입력으로 사용한다. period runner의 SELL 체결 journal은 현재 `SOLD` 상태와 `net_pnl`을 기록한다.
@@ -550,6 +564,7 @@ pytest tests/unit_test/strategies/test_oneil_pp_bgu_fixture_runner_parity.py -v
 pytest tests/unit_test/strategies/test_rsi2_pullback_fixture_runner_parity.py -v
 pytest tests/unit_test/strategies/test_larry_williams_channel_breakout_fixture_runner_parity.py -v
 pytest tests/unit_test/strategies/test_oneil_squeeze_breakout_fixture_runner_parity.py -v
+pytest tests/unit_test/strategies/test_larry_williams_vbo_fixture_runner_parity.py -v
 pytest tests/unit_test/strategies/debug/test_strategy_debug_runner.py -v
 ```
 
@@ -562,6 +577,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `131 passed`
-- 전체 단위 테스트: `4293 passed`
+- 관련 테스트: `136 passed`
+- 전체 단위 테스트: `4300 passed`
 - 전체 통합 테스트: `224 passed`
