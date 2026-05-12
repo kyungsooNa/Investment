@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-10 (LarryWilliamsCB fixture parity 추가)
+최종 업데이트: 2026-05-12 (OSB fixture parity 추가)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -194,6 +194,7 @@
   - 완료된 부분: PP/BGU fixture를 `20260505`, `20260506` 경계 조건까지 확장해 여러 거래일에서 period runner와 strategy debug runner의 결과 방향이 일치하는지 검증한다.
   - 완료된 부분: RSI2 fixture를 추가해 15:10 cutoff, 마켓타이밍 OFF 축소비중, Stage2 탈락, RSI 임계값 탈락을 period runner와 strategy debug runner 양쪽에서 비교한다.
   - 완료된 부분: LarryWilliamsCB fixture를 추가해 15:10 cutoff, RS Rating, ADX, 20일 채널 돌파, 거래량 경계 조건을 period runner와 strategy debug runner 양쪽에서 비교한다.
+  - 완료된 부분: OSB fixture를 추가해 정석 돌파 통과, Pool A 스퀴즈 미충족, 돌파 버퍼 미충족, 캔들 품질 미달, 체결강도 미달을 period runner와 strategy debug runner 양쪽에서 비교한다.
   - 완료된 부분: debug runner decision journal은 최종 BUY 신호가 있는 종목의 중간 로그(`buy_signal_generated`, PP/BGU 분기 중간 탈락)를 별도 `REJECTED`로 저장하지 않고 최종 `SIGNAL`만 남기도록 정리했다.
 - [x] walk-forward 검증을 추가한다. 기간을 train/tune/test로 나누고, 파라미터 튜닝 구간과 검증 구간을 분리한다.
   - 완료된 부분: `BacktestWalkForwardRunner`를 추가해 날짜를 train/tune/test rolling window로 분리하고, 각 phase를 독립 `BacktestPeriodRunner`/ledger/strategy state로 실행한다.
@@ -207,6 +208,7 @@
   - 완료된 부분: `20260506` 기준 BGU 09:10 이전 휩소 guard 탈락, 시가 지지 실패 탈락 케이스를 추가했다.
   - 완료된 부분: `20260507`/`20260508` 기준 RSI2 장 후반 진입/탈락 fixture를 추가했다.
   - 완료된 부분: `20260509`/`20260510` 기준 LarryWilliamsCB 장 후반 진입/탈락 fixture를 추가했다.
+  - 완료된 부분: `20260511`/`20260512` 기준 OSB 진입/탈락 fixture를 추가했다.
   - 완료된 부분: `OneilPocketPivotStrategy.scan()` 실제 흐름으로 신호 생성 여부, `entry_type`, reason 포함 여부, 마켓타이밍 OFF 시 가격 조회 생략을 검증한다.
 
 주요 파일:
@@ -224,6 +226,8 @@
 - `tests/unit_test/strategies/test_rsi2_pullback_fixture_runner_parity.py`
 - `tests/fixtures/backtest/larry_williams_channel_breakout_entry_cases.json`
 - `tests/unit_test/strategies/test_larry_williams_channel_breakout_fixture_runner_parity.py`
+- `tests/fixtures/backtest/oneil_squeeze_breakout_entry_cases.json`
+- `tests/unit_test/strategies/test_oneil_squeeze_breakout_fixture_runner_parity.py`
 
 ---
 
@@ -386,7 +390,7 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - HTF, First Pullback, Larry Williams VBO, OSB 중 다음 fixture 확장 대상 결정
+   - HTF, First Pullback, Larry Williams VBO 중 다음 fixture 확장 대상 결정
    - 선택 전략의 핵심 진입/탈락 경계 조건을 period/debug runner parity로 고정
 
 3. P1 전략 수익성

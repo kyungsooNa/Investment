@@ -155,11 +155,26 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                     "bb_min": item.bb_width_min_20d,
                     "tolerance": self._cfg.osb_runtime_squeeze_tolerance,
                 })
+                self._logger.info({
+                    "event": "entry_rejected", "code": code, "name": item.name, "reason": "not_in_squeeze",
+                    "prev_bb_width": item.prev_bb_width,
+                    "bb_min": item.bb_width_min_20d,
+                    "tolerance": self._cfg.osb_runtime_squeeze_tolerance,
+                })
                 return None
 
         # 🚨 [관문 1] 가격 돌파 — 안착 버퍼 적용 (int 캐스팅으로 호가 단위 미스매치 방지)
         breakout_threshold = int(item.high_20d * (1 + self._cfg.breakout_min_buffer_pct / 100))
         if current < breakout_threshold:
+            self._logger.info({
+                "event": "entry_rejected",
+                "code": code,
+                "name": item.name,
+                "reason": "below_breakout_buffer",
+                "current": current,
+                "threshold": breakout_threshold,
+                "high_20d": item.high_20d,
+            })
             return None
 
         # 장 초반 15분 이내: proj_vol 뻥튀기로 인한 가짜 돌파 시그널 방지
@@ -174,6 +189,10 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 "event": "breakout_rejected", "code": code, "reason": "over_extended",
                 "current": current, "max_entry": int(max_entry),
             })
+            self._logger.info({
+                "event": "entry_rejected", "code": code, "name": item.name, "reason": "over_extended",
+                "current": current, "max_entry": int(max_entry),
+            })
             return None
 
         # 🚨 [신규 관문] 캔들 품질: 윗꼬리가 너무 길면 가짜 돌파 (상단 70% 유지 필수)
@@ -182,7 +201,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         if day_range > 0:
             relative_pos = (current - day_low) / day_range
             if relative_pos < self._cfg.osb_min_candle_relative_pos: # 0.7 권장
-                self._logger.info({"event": "breakout_rejected", "code": code, "name": item.name, "reason": "poor_candle_quality", "pos": round(relative_pos, 2), "threshold": self._cfg.osb_min_candle_relative_pos})
+                self._logger.info({"event": "entry_rejected", "code": code, "name": item.name, "reason": "poor_candle_quality", "pos": round(relative_pos, 2), "threshold": self._cfg.osb_min_candle_relative_pos})
                 return None
 
         # 🚨 [관문 2] 다이내믹 거래량 돌파 (시간대별 허들 차등 적용)
@@ -221,7 +240,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
 
         if cgld_val < self._cfg.execution_strength_min:
             self._logger.info({
-                "event": "breakout_rejected", "code": code, "name": item.name,
+                "event": "entry_rejected", "code": code, "name": item.name,
                 "reason": "low_execution_strength",
                 "cgld": cgld_val, "threshold": self._cfg.execution_strength_min
             })

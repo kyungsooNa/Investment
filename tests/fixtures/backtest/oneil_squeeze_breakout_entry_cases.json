@@ -1,0 +1,124 @@
+{
+  "cases": [
+    {
+      "id": "20260511_osb_pass_standard",
+      "date": "20260511",
+      "time": "12:00:00",
+      "source": "pool_a",
+      "high_20d": 70000,
+      "avg_vol_20d": 100000,
+      "bb_width_min_20d": 1000,
+      "prev_bb_width": 1100,
+      "market_timing_ok": true,
+      "execution_strength": 150.0,
+      "price": {
+        "current": 71000,
+        "high": 71100,
+        "low": 70500,
+        "volume": 200000,
+        "program_buy_qty": 30000,
+        "trade_value": 14200000000
+      },
+      "expected": {
+        "signal": true,
+        "reason_contains": "OSB돌파"
+      }
+    },
+    {
+      "id": "20260511_osb_reject_not_in_squeeze",
+      "date": "20260511",
+      "time": "12:00:00",
+      "source": "pool_a",
+      "high_20d": 70000,
+      "avg_vol_20d": 100000,
+      "bb_width_min_20d": 1000,
+      "prev_bb_width": 1300,
+      "market_timing_ok": true,
+      "execution_strength": 150.0,
+      "price": {
+        "current": 71000,
+        "high": 71100,
+        "low": 70500,
+        "volume": 200000,
+        "program_buy_qty": 30000,
+        "trade_value": 14200000000
+      },
+      "expected": {
+        "signal": false,
+        "rejected_reason": "not_in_squeeze"
+      }
+    },
+    {
+      "id": "20260511_osb_reject_below_breakout_buffer",
+      "date": "20260511",
+      "time": "12:00:00",
+      "source": "pool_b",
+      "high_20d": 70000,
+      "avg_vol_20d": 100000,
+      "bb_width_min_20d": 1000,
+      "prev_bb_width": 1300,
+      "market_timing_ok": true,
+      "execution_strength": 150.0,
+      "price": {
+        "current": 70300,
+        "high": 70400,
+        "low": 70000,
+        "volume": 200000,
+        "program_buy_qty": 30000,
+        "trade_value": 14060000000
+      },
+      "expected": {
+        "signal": false,
+        "rejected_reason": "below_breakout_buffer"
+      }
+    },
+    {
+      "id": "20260512_osb_reject_poor_candle_quality",
+      "date": "20260512",
+      "time": "12:00:00",
+      "source": "pool_b",
+      "high_20d": 70000,
+      "avg_vol_20d": 100000,
+      "bb_width_min_20d": 1000,
+      "prev_bb_width": 1300,
+      "market_timing_ok": true,
+      "execution_strength": 150.0,
+      "price": {
+        "current": 71000,
+        "high": 75000,
+        "low": 65000,
+        "volume": 200000,
+        "program_buy_qty": 30000,
+        "trade_value": 14200000000
+      },
+      "expected": {
+        "signal": false,
+        "rejected_reason": "poor_candle_quality"
+      }
+    },
+    {
+      "id": "20260512_osb_reject_low_execution_strength",
+      "date": "20260512",
+      "time": "12:00:00",
+      "source": "pool_b",
+      "high_20d": 70000,
+      "avg_vol_20d": 100000,
+      "bb_width_min_20d": 1000,
+      "prev_bb_width": 1300,
+      "market_timing_ok": true,
+      "execution_strength": 110.0,
+      "price": {
+        "current": 71000,
+        "high": 71100,
+        "low": 70500,
+        "volume": 200000,
+        "program_buy_qty": 30000,
+        "trade_value": 14200000000
+      },
+      "expected": {
+        "signal": false,
+        "rejected_reason": "low_execution_strength"
+      }
+    }
+  ]
+}
