@@ -59,6 +59,16 @@ class HighTightFlagStrategy(LiveStrategy):
     def name(self) -> str:
         return "하이타이트플래그"
 
+    def _log_entry_rejected(self, code: str, item, reason: str, **metrics) -> None:
+        payload = {
+            "event": "entry_rejected",
+            "code": code,
+            "name": getattr(item, "name", code),
+            "reason": reason,
+        }
+        payload.update(metrics)
+        self._logger.info(payload)
+
     # ── scan ──────────────────────────────────────────────────────────
 
     async def scan(self) -> List[TradeSignal]:
@@ -114,11 +124,19 @@ class HighTightFlagStrategy(LiveStrategy):
         ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=65)
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
         if not ohlcv or len(ohlcv) < self._cfg.pole_lookback_days:
+            self._log_entry_rejected(
+                code,
+                item,
+                "ohlcv_unavailable",
+                ohlcv_count=len(ohlcv) if ohlcv else 0,
+                threshold=self._cfg.pole_lookback_days,
+            )
             return None
 
         # 2. Phase 1+2: 깃대·깃발 패턴 감지 (순수 계산)
         pattern = self._detect_pole_and_flag(ohlcv)
         if not pattern:
+            self._log_entry_rejected(code, item, "pattern_not_detected")
             return None
 
         self._logger.info({
@@ -205,10 +223,12 @@ class HighTightFlagStrategy(LiveStrategy):
         # 1. 현재가 조회
         resp = await self._sqs.get_current_price(code, caller=self.name)
         if not resp or resp.rt_cd != "0":
+            self._log_entry_rejected(code, item, "price_unavailable")
             return None
 
         out = resp.data.get("output") if isinstance(resp.data, dict) else None
         if not out:
+            self._log_entry_rejected(code, item, "price_unavailable")
             return None
 
         if isinstance(out, dict):
@@ -227,6 +247,7 @@ class HighTightFlagStrategy(LiveStrategy):
             day_low = int(getattr(out, "stck_lwpr", 0) or 0)
 
         if current <= 0:
+            self._log_entry_rejected(code, item, "invalid_current_price", current=current)
             return None
 
         # 장 초반 15분 이내: proj_vol 뻥튀기로 인한 가짜 돌파 시그널 방지
@@ -238,6 +259,7 @@ class HighTightFlagStrategy(LiveStrategy):
                 "reason": "early_morning_guard",
                 "retry_after_guard": True,
             })
+            self._log_entry_rejected(code, item, "early_morning_guard")
             return None
 
         # 2. 가격 돌파: pole_high 기준 진입 밴드 확인 (옵션 A + 과확장 방어)
@@ -250,6 +272,13 @@ class HighTightFlagStrategy(LiveStrategy):
                 "reason": "out_of_entry_band",
                 "current": current, "band": [int(min_entry), int(max_entry)],
             })
+            self._log_entry_rejected(
+                code,
+                item,
+                "out_of_entry_band",
+                current=current,
+                band=[int(min_entry), int(max_entry)],
+            )
             return None
 
         # 🚨 [관문 2] 캔들 품질 검증 (Strict Quality!)
@@ -265,6 +294,13 @@ class HighTightFlagStrategy(LiveStrategy):
                 "pos": round(relative_pos, 2),
                 "threshold": self._cfg.min_candle_relative_pos
             })
+            self._log_entry_rejected(
+                code,
+                item,
+                "poor_candle_quality",
+                pos=round(relative_pos, 2),
+                threshold=self._cfg.min_candle_relative_pos,
+            )
             return None
         
         # 3. 거래량 돌파: 예상거래량 >= 50일 평균 * 200%
@@ -275,6 +311,7 @@ class HighTightFlagStrategy(LiveStrategy):
         vol_count = min(50, len(volumes))
         if vol_count < 20:
             self._logger.debug({"event": "breakout_rejected", "code": code, "reason": "insufficient_volume_data"})
+            self._log_entry_rejected(code, item, "insufficient_volume_data", vol_count=vol_count)
             return None
         avg_vol_50d = sum(volumes[-vol_count:]) / vol_count
 
@@ -293,6 +330,14 @@ class HighTightFlagStrategy(LiveStrategy):
                 "proj_vol": int(proj_vol), "threshold": int(vol_threshold),
                 "vol_ratio_pct": round(vol_ratio_pct, 1),
             })
+            self._log_entry_rejected(
+                code,
+                item,
+                "insufficient_projected_volume",
+                proj_vol=int(proj_vol),
+                threshold=int(vol_threshold),
+                vol_ratio_pct=round(vol_ratio_pct, 1),
+            )
             return None
 
         # 4. 체결강도 >= 120%
@@ -306,6 +351,7 @@ class HighTightFlagStrategy(LiveStrategy):
                     cgld_val = float(val) if val else 0.0
         except Exception as e:
             self._logger.warning({"event": "cgld_check_failed", "code": code, "error": str(e)})
+            self._log_entry_rejected(code, item, "cgld_check_failed", error=str(e))
             return None
 
         if cgld_val < self._cfg.execution_strength_min:
@@ -314,6 +360,13 @@ class HighTightFlagStrategy(LiveStrategy):
                 "reason": "low_execution_strength",
                 "cgld": cgld_val, "threshold": self._cfg.execution_strength_min
             })
+            self._log_entry_rejected(
+                code,
+                item,
+                "low_execution_strength",
+                cgld=cgld_val,
+                threshold=self._cfg.execution_strength_min,
+            )
             return None
 
         # ✅ [신규 관문] 스마트 머니 유연 판정 (수급은 유연하게!)
@@ -321,6 +374,7 @@ class HighTightFlagStrategy(LiveStrategy):
         sm_ok, sm_metrics = self._is_smart_money_ok(code, current, pg_buy, trade_value, item.market_cap, cgld_val)
         if not sm_ok:
             self._logger.info({"event": "breakout_rejected", "code": code, "name": item.name, "reason": "smart_money_filter_failed"})
+            self._log_entry_rejected(code, item, "smart_money_filter_failed", **sm_metrics)
             return None
         
         # ========= 모든 관문 통과! 매수 시그널 생성 =========

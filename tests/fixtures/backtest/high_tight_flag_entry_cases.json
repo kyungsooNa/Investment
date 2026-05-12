@@ -1,0 +1,138 @@
+{
+  "strategy": "HighTightFlagStrategy",
+  "description": "Synthetic HTF entry fixture cases shared by period runner and strategy debug runner parity tests.",
+  "cases": [
+    {
+      "id": "20260515_htf_pass_standard",
+      "date": "20260515",
+      "time": "11:00:00",
+      "candidate": {
+        "market_cap": 500000000000,
+        "avg_trading_value_5d": 50000000000
+      },
+      "price": {
+        "current": 101500,
+        "day_high": 101600,
+        "day_low": 100500,
+        "volume": 220000,
+        "program_buy_qty": 30000,
+        "trade_value": 12000000000
+      },
+      "execution_strength": 151.0,
+      "expected": {
+        "signal": true,
+        "reason_contains": "HTF돌파"
+      }
+    },
+    {
+      "id": "20260515_htf_reject_out_of_entry_band",
+      "date": "20260515",
+      "time": "11:00:00",
+      "candidate": {
+        "market_cap": 500000000000,
+        "avg_trading_value_5d": 50000000000
+      },
+      "price": {
+        "current": 99500,
+        "day_high": 100000,
+        "day_low": 99000,
+        "volume": 220000,
+        "program_buy_qty": 30000,
+        "trade_value": 12000000000
+      },
+      "execution_strength": 151.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "out_of_entry_band"
+      }
+    },
+    {
+      "id": "20260515_htf_reject_poor_candle_quality",
+      "date": "20260515",
+      "time": "11:00:00",
+      "candidate": {
+        "market_cap": 500000000000,
+        "avg_trading_value_5d": 50000000000
+      },
+      "price": {
+        "current": 101500,
+        "day_high": 103000,
+        "day_low": 101000,
+        "volume": 220000,
+        "program_buy_qty": 30000,
+        "trade_value": 12000000000
+      },
+      "execution_strength": 151.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "poor_candle_quality"
+      }
+    },
+    {
+      "id": "20260515_htf_reject_insufficient_projected_volume",
+      "date": "20260515",
+      "time": "11:00:00",
+      "candidate": {
+        "market_cap": 500000000000,
+        "avg_trading_value_5d": 50000000000
+      },
+      "price": {
+        "current": 101500,
+        "day_high": 101600,
+        "day_low": 100500,
+        "volume": 50000,
+        "program_buy_qty": 30000,
+        "trade_value": 12000000000
+      },
+      "execution_strength": 151.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "insufficient_projected_volume"
+      }
+    },
+    {
+      "id": "20260515_htf_reject_low_execution_strength",
+      "date": "20260515",
+      "time": "11:00:00",
+      "candidate": {
+        "market_cap": 500000000000,
+        "avg_trading_value_5d": 50000000000
+      },
+      "price": {
+        "current": 101500,
+        "day_high": 101600,
+        "day_low": 100500,
+        "volume": 220000,
+        "program_buy_qty": 30000,
+        "trade_value": 12000000000
+      },
+      "execution_strength": 110.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "low_execution_strength"
+      }
+    },
+    {
+      "id": "20260515_htf_reject_smart_money_filter_failed",
+      "date": "20260515",
+      "time": "11:00:00",
+      "candidate": {
+        "market_cap": 500000000000,
+        "avg_trading_value_5d": 50000000000
+      },
+      "price": {
+        "current": 101500,
+        "day_high": 101600,
+        "day_low": 100500,
+        "volume": 220000,
+        "program_buy_qty": 0,
+        "trade_value": 12000000000
+      },
+      "execution_strength": 151.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "smart_money_filter_failed"
+      }
+    }
+  ]
+}
