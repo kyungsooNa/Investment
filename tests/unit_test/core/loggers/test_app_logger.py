@@ -98,6 +98,21 @@ def test_logger_critical_with_exc_info(clean_logger_instance):
         assert "RuntimeError: Critical error occurred" in content
         assert "Traceback" in content
 
+
+def test_logger_critical_accepts_logging_format_args(clean_logger_instance):
+    logger, common_log_dir = clean_logger_instance
+
+    logger.critical("[KillSwitch] 트립! 사유: %s | 메타: %s", "연속 API 오류", {"last_reason": "HTTP 500"})
+    logger.flush()
+
+    log_files = list(common_log_dir.glob("*.log"))
+    assert len(log_files) == 2
+
+    for f in log_files:
+        content = f.read_text(encoding='utf-8')
+        assert "[KillSwitch] 트립! 사유: 연속 API 오류 | 메타: {'last_reason': 'HTTP 500'}" in content
+
+
 def test_logger_creates_log_dir_if_not_exists(tmp_path):
     non_existent_log_dir = tmp_path / "non_existent_logs_dir"
 

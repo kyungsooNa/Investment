@@ -836,6 +836,51 @@ async def test_place_stock_order_failure_increments_cb(broker_wrapper_instance):
     await wrapper.place_stock_order("005930", 70000, 10, is_buy=True)
 
     assert wrapper._cb_consecutive_failures == 1
+
+
+@pytest.mark.asyncio
+async def test_place_stock_order_business_reject_does_not_increment_cb(broker_wrapper_instance):
+    """재시도 불가 비즈니스 거부는 API 장애 서킷 브레이커 카운트에서 제외합니다."""
+    wrapper, mock_client, _, _ = broker_wrapper_instance
+    wrapper._cb_open_until = None
+    wrapper._cb_consecutive_failures = 0
+
+    from common.types import ErrorCode, ResCommonResponse
+    mock_client.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value,
+        msg1="API 오류: Business Error: 모의투자 주문이 불가한 계좌입니다.",
+        data=None,
+    )
+
+    result = await wrapper.place_stock_order("139130", 18370, 108, is_buy=True)
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert wrapper._cb_consecutive_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_place_stock_order_paper_account_reject_does_not_open_circuit_breaker(broker_wrapper_instance):
+    """'모의투자 주문이 불가한 계좌입니다.' 응답은 서킷 브레이커를 열지 않습니다."""
+    wrapper, mock_client, _, mock_logger = broker_wrapper_instance
+    wrapper._cb_open_until = None
+    wrapper._cb_consecutive_failures = wrapper._cb_threshold - 1
+
+    from common.types import ErrorCode, ResCommonResponse
+    mock_client.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value,
+        msg1="API 오류: Business Error: 모의투자 주문이 불가한 계좌입니다.",
+        data=None,
+    )
+
+    result = await wrapper.place_stock_order("139130", 18370, 108, is_buy=True)
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert wrapper._cb_consecutive_failures == wrapper._cb_threshold - 1
+    assert wrapper._cb_open_until is None
+    assert any(
+        "비즈니스 거부는 실패 카운트 제외" in str(call.args[0])
+        for call in mock_logger.warning.call_args_list
+    )
 @pytest.mark.asyncio
 async def test_cancel_stock_order_delegation(mock_env, mock_logger, mock_market_clock):
     with patch(f"{wrapper_module.__name__}.StockCodeRepository"), \

@@ -5,6 +5,7 @@ from repositories.stock_code_repository import StockCodeRepository
 from typing import Any, List, Optional, TYPE_CHECKING
 from common.types import ResCommonResponse, Exchange, ErrorCode
 from core.cache.cache_wrapper import cache_wrap_client
+from core.retry_queue.retry_classifier import is_non_retriable_business_error
 from core.retry_queue.api_request_queue import ApiRequestQueue
 from core.retry_queue.client_with_retry_queue import retry_queue_wrap_client
 from datetime import datetime, timedelta
@@ -289,6 +290,11 @@ class BrokerAPIWrapper:
         rt_cd = getattr(resp, 'rt_cd', None) if resp else None
         if rt_cd == ErrorCode.SUCCESS.value:
             self._cb_record_success()
+        elif is_non_retriable_business_error(resp):
+            if self._logger:
+                self._logger.warning(
+                    f"[CircuitBreaker] 비즈니스 거부는 실패 카운트 제외: {stock_code}"
+                )
         else:
             self._cb_record_failure()
         return resp

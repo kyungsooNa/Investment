@@ -112,24 +112,24 @@ class Logger:
 
         return logger
 
-    def info(self, message):
-        self.operational_logger.info(message, stacklevel=2)
-        self.debug_logger.info(message, stacklevel=2)
+    def info(self, message, *args):
+        self.operational_logger.info(message, *args, stacklevel=2)
+        self.debug_logger.info(message, *args, stacklevel=2)
 
-    def debug(self, message):
-        self.debug_logger.debug(message, stacklevel=2)
+    def debug(self, message, *args):
+        self.debug_logger.debug(message, *args, stacklevel=2)
 
-    def warning(self, message, exc_info=False):
-        self.operational_logger.warning(message, exc_info=exc_info, stacklevel=2)
-        self.debug_logger.warning(message, exc_info=exc_info, stacklevel=2)
+    def warning(self, message, *args, exc_info=False):
+        self.operational_logger.warning(message, *args, exc_info=exc_info, stacklevel=2)
+        self.debug_logger.warning(message, *args, exc_info=exc_info, stacklevel=2)
 
-    def error(self, message, exc_info=False):
-        self.operational_logger.error(message, exc_info=exc_info, stacklevel=2)
-        self.debug_logger.error(message, exc_info=exc_info, stacklevel=2)
+    def error(self, message, *args, exc_info=False):
+        self.operational_logger.error(message, *args, exc_info=exc_info, stacklevel=2)
+        self.debug_logger.error(message, *args, exc_info=exc_info, stacklevel=2)
 
-    def critical(self, message, exc_info=False):
-        self.operational_logger.critical(message, exc_info=exc_info, stacklevel=2)
-        self.debug_logger.critical(message, exc_info=exc_info, stacklevel=2)
+    def critical(self, message, *args, exc_info=False):
+        self.operational_logger.critical(message, *args, exc_info=exc_info, stacklevel=2)
+        self.debug_logger.critical(message, *args, exc_info=exc_info, stacklevel=2)
 
     def exception(self, message):
         """

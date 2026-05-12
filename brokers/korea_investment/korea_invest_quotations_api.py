@@ -114,6 +114,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         try:
             response_data_dict = response.data['output']
+            if isinstance(response_data_dict, list):
+                response_data_dict = response_data_dict[0] if response_data_dict else {}
             # Pydantic 모델 필수 필드 누락 방지 (API 응답에 없을 경우 기본값 설정)
             if "new_hgpr_lwpr_cls_code" not in response_data_dict:
                 response_data_dict["new_hgpr_lwpr_cls_code"] = "-"

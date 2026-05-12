@@ -166,6 +166,27 @@ async def test_get_price_summary(mock_quotations):
 
 
 @pytest.mark.asyncio
+async def test_get_current_price_accepts_single_item_output_list(mock_quotations):
+    output = _BASE_DUMMY_DATA.copy()
+    output.update({
+        "stck_prpr": "432000",
+        "stck_oprc": "467500",
+        "prdy_ctrt": "-7.50",
+    })
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상 처리",
+        data={"output": [output]},
+    ))
+
+    result = await mock_quotations.get_current_price("357780")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert isinstance(result.data["output"], ResStockFullInfoApiOutput)
+    assert result.data["output"].stck_prpr == "432000"
+
+
+@pytest.mark.asyncio
 async def test_get_price_summary_open_price_zero(mock_quotations):
     # Mock 반환 값을 ResCommonResponse 형식으로 변경
     mock_output = _create_dummy_output({

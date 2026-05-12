@@ -2,7 +2,12 @@
 
 import pytest
 from common.types import ResCommonResponse, ErrorCode
-from core.retry_queue.retry_classifier import classify, RequestOutcome, _classify_by_msg
+from core.retry_queue.retry_classifier import (
+    classify,
+    is_non_retriable_business_error,
+    RequestOutcome,
+    _classify_by_msg,
+)
 
 
 def resp(rt_cd: str, msg1: str = "") -> ResCommonResponse:
@@ -86,6 +91,16 @@ class TestClassifyByMsgKeyword:
     def test_unknown_msg_defaults_to_fail(self):
         """어떤 키워드에도 매칭되지 않으면 안전하게 FAIL (재시도해도 같은 결과 가능성 높음)"""
         assert classify(resp(ErrorCode.API_ERROR.value, "알 수 없는 오류 발생")) == RequestOutcome.FAIL
+
+    def test_paper_account_reject_returns_fail(self):
+        """KIS 모의투자 계좌 주문 불가 응답은 재시도 불가 비즈니스 거부로 고정합니다."""
+        result = resp(
+            ErrorCode.API_ERROR.value,
+            "API 오류: Business Error: 모의투자 주문이 불가한 계좌입니다.",
+        )
+
+        assert classify(result) == RequestOutcome.FAIL
+        assert is_non_retriable_business_error(result) is True
 
 
 class TestClassifyUnknownErrorCode:

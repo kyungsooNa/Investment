@@ -3065,6 +3065,52 @@ async def test_business_reject_no_retry_marks_rejected(
 
 
 @pytest.mark.asyncio
+async def test_business_reject_does_not_record_kill_switch_api_failure(
+    handler, mock_broker_api_wrapper
+):
+    """계좌/잔고 등 재시도 불가 주문 거부는 KillSwitch API 장애 카운터에서 제외합니다."""
+    kill_switch = AsyncMock()
+    handler._kill_switch = kill_switch
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value,
+        msg1="API 오류: Business Error: 모의투자 주문이 불가한 계좌입니다.",
+        data=None,
+    )
+
+    result = await handler.handle_place_buy_order("139130", 18370, 108)
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    kill_switch.record_api_failure.assert_not_awaited()
+    kill_switch.record_api_success.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_paper_account_reject_no_retry_no_kill_switch_failure_marks_rejected(
+    handler, mock_broker_api_wrapper, mock_market_clock
+):
+    """'모의투자 주문이 불가한 계좌입니다.' 응답은 재시도/KillSwitch 장애 카운트 없이 REJECTED 처리합니다."""
+    kill_switch = AsyncMock()
+    handler._kill_switch = kill_switch
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value,
+        msg1="API 오류: Business Error: 모의투자 주문이 불가한 계좌입니다.",
+        data=None,
+    )
+
+    result = await handler.handle_place_buy_order("139130", 18370, 108)
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    mock_broker_api_wrapper.place_stock_order.assert_awaited_once()
+    mock_market_clock.async_sleep.assert_not_awaited()
+    kill_switch.record_api_failure.assert_not_awaited()
+    kill_switch.record_api_success.assert_not_awaited()
+    order_key = handler._make_order_key("139130", OrderSide.BUY, Exchange.KRX)
+    ctx = handler._order_states.get(order_key)
+    assert ctx is not None
+    assert ctx.state == OrderState.REJECTED
+
+
+@pytest.mark.asyncio
 async def test_transient_api_retried_max_3(
     handler, mock_broker_api_wrapper, mock_market_clock, mock_market_calendar_service
 ):
