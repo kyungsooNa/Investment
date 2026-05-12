@@ -1,10 +1,13 @@
 """Replay adapters for period backtests."""
 from __future__ import annotations
 
-from typing import Any, Sequence
+import time
+from typing import Any, Optional, Sequence, Tuple
 
+from common.market_snapshot import ConclusionSnapshot, MarketSnapshot
 from common.types import ErrorCode, ResCommonResponse, TradeSignal
 from services.backtest_execution_simulator import BacktestBar
+from services.data_quality_service import DataQualityService
 
 
 class StockQueryBacktestReplayService:
@@ -92,6 +95,104 @@ class StockQueryBacktestReplayService:
         if "session" not in kwargs:
             kwargs["session"] = self._session
         return await self._stock_query_service.get_day_intraday_minutes_list(stock_code, **kwargs)
+
+    def get_market_snapshot(
+        self,
+        code: str,
+        max_age_sec: Optional[float] = None,
+        force_fresh: bool = False,
+    ) -> Tuple[Optional[MarketSnapshot], Optional[str]]:
+        """Replay row cache → MarketSnapshot (sync, cache-only).
+
+        live PriceStreamService 캐시 대신 이미 조회된 row_cache 에서 빌드.
+        캐시 미스 시 REASON_SNAPSHOT_MISSING 반환.
+        """
+        if force_fresh or not self._backtest_date:
+            return None, DataQualityService.REASON_SNAPSHOT_MISSING
+
+        key = (code, self._backtest_date, self._session)
+        rows = self._row_cache.get(key)
+        if not rows:
+            return None, DataQualityService.REASON_SNAPSHOT_MISSING
+
+        latest = rows[-1]
+        closes = [value for value in (self._to_int(self._first(row, "stck_prpr", "prpr", "close", "price")) for row in rows) if value is not None]
+        latest_close = closes[-1] if closes else 0
+        highs = [value for value in (self._to_int(self._first(row, "stck_hgpr", "hgpr", "high")) for row in rows) if value is not None]
+        lows = [value for value in (self._to_int(self._first(row, "stck_lwpr", "lwpr", "low")) for row in rows) if value is not None]
+        volume = self._to_int(self._first(latest, "acml_vol")) or sum(
+            self._to_int(self._first(row, "cntg_vol", "volume")) or 0 for row in rows
+        )
+        trade_value = self._to_int(self._first(latest, "acml_tr_pbmn")) or 0
+
+        snap = MarketSnapshot(
+            code=code,
+            price=float(latest_close),
+            change=0.0,
+            rate=0.0,
+            sign="3",
+            acml_vol=volume or 0,
+            acml_tr_pbmn=trade_value or 0,
+            high=float(max(highs)) if highs else None,
+            low=float(min(lows)) if lows else None,
+            open=None,
+            received_at=time.time(),
+            latency_sec=0.0,
+            quality_status="ok",
+            quality_reason="backtest_replay",
+            source="backtest_replay",
+        )
+        return snap, None
+
+    async def get_conclusion_snapshot(
+        self,
+        code: str,
+        max_age_sec: float = 10.0,
+        force_fresh: bool = False,
+    ) -> Tuple[Optional[ConclusionSnapshot], Optional[str]]:
+        """Replay row cache → ConclusionSnapshot (async, uses get_stock_conclusion)."""
+        if not self._backtest_date:
+            return None, DataQualityService.REASON_CONCLUSION_MISSING
+
+        key = (code, self._backtest_date, self._session)
+        rows = self._row_cache.get(key)
+        if rows:
+            latest = rows[-1]
+            strength_raw = self._first(latest, "tday_rltv", "execution_strength", "cnqn", "체결강도")
+            if strength_raw is not None:
+                try:
+                    strength = float(strength_raw)
+                except (ValueError, TypeError):
+                    strength = 0.0
+                return ConclusionSnapshot(
+                    code=code,
+                    execution_strength_pct=strength,
+                    received_at=time.time(),
+                    source="backtest_replay",
+                ), None
+
+        resp = await self.get_stock_conclusion(code)
+        if resp is None or resp.rt_cd != ErrorCode.SUCCESS.value:
+            return None, DataQualityService.REASON_CONCLUSION_MISSING
+
+        try:
+            output = (resp.data or {}).get("output")
+            if isinstance(output, list) and output:
+                output = output[0]
+            if isinstance(output, dict):
+                strength_raw = output.get("tday_rltv") or "0"
+            else:
+                strength_raw = "0"
+            strength = float(strength_raw)
+        except (ValueError, TypeError, AttributeError):
+            strength = 0.0
+
+        return ConclusionSnapshot(
+            code=code,
+            execution_strength_pct=strength,
+            received_at=time.time(),
+            source="backtest_replay",
+        ), None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stock_query_service, name)

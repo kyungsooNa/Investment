@@ -63,6 +63,8 @@ class ExecutionFlowService:
         logger: Optional[logging.Logger] = None,
         cache_ttl_sec: float = 3.0,
         sample_window_sec: int = 60,
+        stock_query_service=None,
+        conclusion_max_age_sec: float = 10.0,
     ):
         self._data_provider = data_provider
         self._market_clock = market_clock
@@ -70,6 +72,8 @@ class ExecutionFlowService:
         self._cache_ttl_sec = max(0.0, float(cache_ttl_sec))
         self._sample_window_sec = max(1, int(sample_window_sec))
         self._cache: dict[tuple[str, str], tuple[float, ExecutionFlowSnapshot]] = {}
+        self._stock_query_service = stock_query_service
+        self._conclusion_max_age_sec = conclusion_max_age_sec
 
     async def get_snapshot(
         self,
@@ -85,25 +89,42 @@ class ExecutionFlowService:
             return cached[1]
 
         measured_at = self._now()
-        conclusion_resp = await self._safe_call("get_stock_conclusion", stock_code, exchange)
-        time_resp = await self._safe_call("get_time_concluded_prices", stock_code, exchange)
-
         quality_flags: list[str] = []
-        if not self._is_success(conclusion_resp):
-            quality_flags.append("conclusion_unavailable")
+
+        # 체결강도: ConclusionSnapshot 캐시 우선, 없으면 REST fallback
+        execution_strength: Optional[float] = None
+        conclusion_row: dict = {}
+        if self._stock_query_service is not None and not force_refresh:
+            try:
+                cs, cs_reason = await self._stock_query_service.get_conclusion_snapshot(
+                    stock_code, max_age_sec=self._conclusion_max_age_sec
+                )
+                if cs is not None:
+                    execution_strength = cs.execution_strength_pct
+                    quality_flags.append("conclusion_from_cache")
+                elif cs_reason:
+                    quality_flags.append(f"conclusion_snapshot:{cs_reason}")
+            except Exception as e:
+                self._logger.debug({"event": "conclusion_snapshot_error", "code": stock_code, "error": str(e)})
+
+        if execution_strength is None:
+            conclusion_resp = await self._safe_call("get_stock_conclusion", stock_code, exchange)
+            if not self._is_success(conclusion_resp):
+                quality_flags.append("conclusion_unavailable")
+            conclusion_row = self._first_row(conclusion_resp.data if self._is_success(conclusion_resp) else None)
+            execution_strength = self._to_float(self._pick(
+                conclusion_row,
+                "tday_rltv",
+                "cgld",
+                "execution_strength",
+                "체결강도",
+            ))
+
+        time_resp = await self._safe_call("get_time_concluded_prices", stock_code, exchange)
         if not self._is_success(time_resp):
             quality_flags.append("time_concluded_unavailable")
 
-        conclusion_row = self._first_row(conclusion_resp.data if self._is_success(conclusion_resp) else None)
         time_rows = self._rows(time_resp.data if self._is_success(time_resp) else None)
-
-        execution_strength = self._to_float(self._pick(
-            conclusion_row,
-            "tday_rltv",
-            "cgld",
-            "execution_strength",
-            "체결강도",
-        ))
 
         recent_rows = self._recent_rows(time_rows, measured_at)
         recent_trade_count = len(recent_rows) if time_rows else None

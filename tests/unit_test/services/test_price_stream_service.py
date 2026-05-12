@@ -339,7 +339,7 @@ def test_on_price_tick_quality_metadata_saved(mock_stock_repo, mock_logger):
 
     cached = svc.get_cached_price("005930")
     assert cached["quality_status"] == "ok"
-    assert cached["quality_reason"] == "ok"
+    assert cached["quality_reason"] == "websocket"
     assert cached["latency_sec"] == 0.25
 
 

@@ -540,6 +540,7 @@ class WebAppContext:
                 logger=self.logger,
                 cache_ttl_sec=_op_cfg.trade_flow_cache_ttl_sec,
                 sample_window_sec=_op_cfg.trade_flow_sample_window_sec,
+                stock_query_service=self.stock_query_service,
             )
             self.order_policy_service = OrderPolicyService(
                 config=_op_cfg,

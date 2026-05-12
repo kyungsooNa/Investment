@@ -305,6 +305,9 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             sign="2",
             volume="300000",
             acml_tr_pbmn="24000000000",
+            high=None,
+            low=None,
+            open_price=None,
         )
 
     async def test_get_current_price_force_fresh_passed_through(self):
