@@ -18,6 +18,7 @@ _STAGE_LABELS = {
     "scan_skipped": "스캔 스킵",
     "buy_signal_generated": "매수 신호 발생",
     "stage_blocked": "StageGuard",
+    "liquidity_blocked": "유동성 필터",
 }
 
 
@@ -25,6 +26,11 @@ def _event_label(event: RejectionEvent) -> str:
     label = _STAGE_LABELS.get(event.event, event.event)
     reason = event.details.get("reason", "")
     d = event.details
+
+    if event.event == "liquidity_blocked":
+        value = d.get("value")
+        value_str = f"{value:,}" if isinstance(value, (int, float)) else str(value or "?")
+        return f"{label} 탈락 — {reason} (value={value_str})"
 
     if event.event == "entry_rejected" and reason == "low_execution_strength":
         entry_type = d.get("entry_type", "?")

@@ -109,6 +109,14 @@ _REASON_KR: Dict[str, str] = {
     "poor_candle_quality":           "캔들 위치 미달",
     "low_pg_metrics":                "프로그램 수급 미달",
     "low_pg_ratio":                  "프로그램 비중 미달",
+    # ── 유동성 / 시장 타이밍 / RiskGate / 포트폴리오 ────────────
+    "insufficient_trading_value":    "거래대금 부족",
+    "rs_rating_low":                 "RS Rating 부족",
+    "market_timing_off":             "시장 타이밍 OFF",
+    "risk_gate_blocked":             "RiskGate 차단",
+    "insufficient_cash":             "현금 부족",
+    "duplicate_entry_blocked":       "동일 종목 재진입 차단",
+    "stage_blocked":                 "StageGuard 탈락",
     # ── OneilPocketPivot / FirstPullback ────────────────────────
     "no_ma_proximity":               "MA 거리 초과",
     "no_bullish_reversal":           "반등 미확인",

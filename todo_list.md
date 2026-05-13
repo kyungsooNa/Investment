@@ -305,9 +305,19 @@
 
 ### 4-2. Rejected reason 리포트
 
-- [ ] 거래량 부족, 거래대금 부족, Stage Guard 탈락, RS Rating 부족, 시장 타이밍 OFF, RiskGate 차단, 현금 부족, 동일 종목 재진입 차단, 호가/체결강도 불량을 rejected reason으로 표준화한다.
-- [ ] 전략별/일자별 rejected reason 분포를 리포트한다.
-- [ ] `run_strategy_debug`와 운영 대시보드에서 rejected reason을 같은 필드명으로 표시한다.
+- [x] 거래량 부족, 거래대금 부족, Stage Guard 탈락, RS Rating 부족, 시장 타이밍 OFF, RiskGate 차단, 현금 부족, 동일 종목 재진입 차단, 호가/체결강도 불량을 rejected reason으로 표준화한다.
+  - `services/strategy_log_report_service.py` `_REASON_KR`에 `insufficient_trading_value`, `rs_rating_low`, `market_timing_off`, `risk_gate_blocked`, `insufficient_cash`, `duplicate_entry_blocked`, `stage_blocked` 추가
+  - `strategies/debug/rejection_collector.py` `CAPTURED_EVENTS`에 `liquidity_blocked` 추가
+  - `strategies/debug/rejection_report.py` `_STAGE_LABELS`·`_event_label()` 업데이트
+  - `strategies/strategy_executor.py` reason 문자열 → canonical code 교체 (`min_trading_value_won` → `insufficient_trading_value`, `min_avg_volume` → `insufficient_volume`)
+- [x] 전략별/일자별 rejected reason 분포를 리포트한다.
+  - `services/rejection_distribution_service.py` 신규: `record()` / `get_distribution()` / `flush_to_file()` / `attach_to_strategy_logger()`
+  - `task/background/after_market/strategy_log_report_task.py`: 장 마감 후 `flush_to_file()` 호출
+  - `view/web/web_app_initializer.py`: 서비스 초기화 및 `attach_to_strategy_logger()` 연결
+  - 저장 경로: `logs/strategies/rejections/YYYYMMDD.jsonl`
+- [x] `run_strategy_debug`와 운영 대시보드에서 rejected reason을 같은 필드명으로 표시한다.
+  - `view/web/routes/strategy_report.py` 신규: `GET /api/strategies/rejected-reasons?strategy=&date=YYYYMMDD`
+  - 필드명 `reason_code`, `count`, `label_kr`, `strategy`로 `format_json()` 규약과 통일
 
 ### 4-3. 운영 대시보드와 알림
 

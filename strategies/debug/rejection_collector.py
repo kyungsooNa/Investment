@@ -30,6 +30,7 @@ class RejectionLogHandler(logging.Handler):
         "scan_skipped",
         "cgld_check_failed",
         "stage_blocked",
+        "liquidity_blocked",
     }
 
     def __init__(self) -> None:

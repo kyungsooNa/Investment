@@ -94,11 +94,11 @@ class StrategyExecutor:
                 tr_pbmn, vol = await self._lookup_liquidity(code, sem)
                 if min_value is not None and tr_pbmn < min_value:
                     self._logger.info({"event": "liquidity_blocked", "code": code,
-                                       "reason": "min_trading_value_won", "value": tr_pbmn})
+                                       "reason": "insufficient_trading_value", "value": tr_pbmn})
                     return False
                 if min_volume is not None and vol < min_volume:
                     self._logger.info({"event": "liquidity_blocked", "code": code,
-                                       "reason": "min_avg_volume", "value": vol})
+                                       "reason": "insufficient_volume", "value": vol})
                     return False
                 return True
             except Exception as e:

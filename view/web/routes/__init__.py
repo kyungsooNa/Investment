@@ -18,6 +18,7 @@ from view.web.routes.ohlcv import router as ohlcv_router
 from view.web.routes.streaming import router as streaming_router
 from view.web.routes.favorite import router as favorite_router
 from view.web.routes.kill_switch import router as kill_switch_router
+from view.web.routes.strategy_report import router as strategy_report_router
 
 router = APIRouter(prefix="/api")
 
@@ -35,3 +36,4 @@ router.include_router(ohlcv_router)
 router.include_router(streaming_router)
 router.include_router(favorite_router)
 router.include_router(kill_switch_router)
+router.include_router(strategy_report_router)
