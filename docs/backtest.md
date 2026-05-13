@@ -219,10 +219,13 @@
 - period runner는 최종 BUY 체결 여부를 fixture 기대값과 비교한다.
 - strategy debug runner는 최종 `SIGNAL` / `REJECTED` decision journal이 fixture 기대값과 같은 방향인지 비교한다.
 - debug runner decision journal은 최종 BUY 신호가 있는 종목의 중간 로그(`buy_signal_generated`, PP/BGU 분기 중간 탈락)를 별도 `REJECTED`로 저장하지 않는다.
+- `20260512` 실제 replay fixture를 같은 parity 테스트에 연결해 synthetic fixture의 통과/탈락 방향과 같은 runner 레이어에서 비교할 수 있게 했다.
+- 현재 실제 replay fixture는 daily snapshot/OHLCV/RS만 포함하므로 체결강도와 분봉 프로그램매매가 필요한 통과 케이스가 아니라, runner 간 no-signal 방향 일치 검증으로 사용한다.
 
 주요 파일:
 
 - `tests/fixtures/backtest/oneil_pp_bgu_entry_cases.json`
+- `tests/fixtures/backtest/replay_20260512_sample.json`
 - `tests/unit_test/strategies/test_oneil_pocket_pivot_fixture_cases.py`
 - `tests/unit_test/strategies/test_oneil_pp_bgu_fixture_runner_parity.py`
 - `strategies/debug/strategy_debug_runner.py`
@@ -361,7 +364,8 @@
 
 - `20260512` 표본 일자의 실제 replay fixture를 `tests/fixtures/backtest/replay_20260512_sample.json`로 고정했다.
 - 남은 후보 일자(`20260506`, `20260511`, `20260504`, `20260416`) 중 추가 표본이 필요하면 같은 방식으로 fixture를 만든다.
-- 표본 일자별 period runner 결과와 strategy debug runner 결과 방향을 저장 fixture로 고정한다.
+- `20260512` 실제 replay fixture의 period runner 결과와 strategy debug runner 결과 방향을 PP/BGU parity 테스트로 고정했다.
+- 표본 일자별 통과 케이스까지 만들려면 체결강도와 분봉 프로그램매매 replay fixture를 추가로 확보해야 한다.
 
 ### 6. 실전 체결 fixture 확보
 
@@ -654,6 +658,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `172 passed`
-- 전체 단위 테스트: `4324 passed`
+- 관련 테스트: `173 passed`
+- 전체 단위 테스트: `4325 passed`
 - 전체 통합 테스트: `224 passed`
