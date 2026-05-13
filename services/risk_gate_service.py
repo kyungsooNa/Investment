@@ -1,14 +1,19 @@
+import asyncio
 import inspect
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, Optional, Protocol
+from typing import Any, Optional, Protocol, TYPE_CHECKING
 
+from common.operator_alert_types import AlertSource
 from common.types import ErrorCode, Exchange, OrderSide, ResCommonResponse
 from config.config_loader import RiskGateConfig
 from core.account_snapshot import AccountSnapshotCache
 from services.kill_switch_service import KillSwitchService
+
+if TYPE_CHECKING:
+    from services.operator_alert_service import OperatorAlertService
 
 
 class StrategyRiskDataProvider(Protocol):
@@ -57,6 +62,7 @@ class RiskGateService:
         strategy_risk_provider: Optional[StrategyRiskDataProvider] = None,
         logger: Optional[logging.Logger] = None,
         env: Optional[Any] = None,
+        operator_alert_service: Optional["OperatorAlertService"] = None,
     ):
         self._cfg = config
         self._kill_switch = kill_switch_service
@@ -64,6 +70,7 @@ class RiskGateService:
         self._strategy_risk_provider = strategy_risk_provider
         self._logger = logger or logging.getLogger(__name__)
         self._env = env
+        self._operator_alert: Optional["OperatorAlertService"] = operator_alert_service
         self._daily_total: dict[date, int] = defaultdict(int)
 
     async def validate_order(
@@ -573,4 +580,18 @@ class RiskGateService:
         self._logger.warning(
             f"[RiskGate][BLOCK] rule={rule} reason={reason} context={context}"
         )
+        if self._operator_alert:
+            strategy = str(context.get("strategy_name") or "")
+            code = str(context.get("stock_code") or "")
+            dedup_key = f"risk_gate:{rule}:{strategy}:{code}"
+            asyncio.create_task(
+                self._operator_alert.report(
+                    AlertSource.RISK_GATE,
+                    dedup_key,
+                    "block",
+                    f"RiskGate 차단: {rule}",
+                    reason,
+                    {"rule": rule, **context},
+                )
+            )
         return decision.to_response()

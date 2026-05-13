@@ -240,6 +240,9 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 # 3. API 라우터 등록
 app.include_router(web_api.router)
 
+from view.web.routes.operator_dashboard import router as operator_dashboard_router
+app.include_router(operator_dashboard_router, prefix="/api")
+
 # 페이지 라우터 생성
 page_router = APIRouter()
 
@@ -331,6 +334,10 @@ async def system(request: Request):
 @page_router.get("/favorite")
 async def favorite(request: Request):
     return await render_page(request, "favorite.html", "favorite")
+
+@page_router.get("/operator")
+async def operator_dashboard(request: Request):
+    return await render_page(request, "operator_dashboard.html", "operator")
 
 # 5. 로그아웃
 @page_router.get("/logout")
