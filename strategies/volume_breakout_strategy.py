@@ -2,8 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Literal, Callable
-from common.trade_journal_schema import normalize_backtest_trade
+from common.trade_journal_schema import normalize_backtest_execution
+from services.backtest_execution_simulator import (
+    BacktestExecutionReport,
+    BacktestOrder,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+)
 from strategies.base_strategy_config import BaseStrategyConfig
+from utils.transaction_cost_utils import TransactionCostUtils
 
 # ===============================
 # 거래량 돌파 전략 설정 클래스
@@ -169,12 +177,16 @@ class VolumeBreakoutStrategy:
             "trailing_stop_pct": float(ts_pct),
             "sl_pct": float(sl),
         }
-        journal_record = normalize_backtest_trade(
-            trade,
+        journal_records = self._build_execution_journal_records(
             stock_code=stock_code,
-            strategy="VolumeBreakout",
+            day_label=day_label,
+            trade=trade,
+            trigger_pct=trigger,
+            rows=rows,
+            entry_idx=entry_idx,
+            exit_idx=exit_idx,
+            price_getter=pg,
         )
-        journal_records = [journal_record]
         if self.backtest_journal_repository is not None:
             self.backtest_journal_repository.save_run(
                 journal_records,
@@ -199,3 +211,113 @@ class VolumeBreakoutStrategy:
             "trades": [trade],
             "journal_records": journal_records,
         }
+
+    def _build_execution_journal_records(
+        self,
+        *,
+        stock_code: str,
+        day_label: str,
+        trade: Dict[str, Any],
+        trigger_pct: float,
+        rows: List[Dict[str, Any]],
+        entry_idx: int,
+        exit_idx: int,
+        price_getter: Callable[[Dict[str, Any]], Optional[float]],
+    ) -> List[dict]:
+        qty = 1
+        entry_px = float(trade["entry_px"])
+        exit_px = float(trade["exit_px"])
+        buy_order = BacktestOrder(
+            order_id=f"VolumeBreakout_{stock_code}_{day_label}_BUY",
+            code=stock_code,
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            price=entry_px,
+            qty=qty,
+            strategy="VolumeBreakout",
+            submitted_at=str(trade.get("entry_time") or ""),
+            decision_reason=f"trigger_{float(trigger_pct):.1f}pct",
+        )
+        sell_order = BacktestOrder(
+            order_id=f"VolumeBreakout_{stock_code}_{day_label}_SELL",
+            code=stock_code,
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            price=exit_px,
+            qty=qty,
+            strategy="VolumeBreakout",
+            submitted_at=str(trade.get("exit_time") or ""),
+            decision_reason=str(trade.get("outcome") or "exit"),
+        )
+        mfe, mae = self._holding_excursion(
+            rows=rows[entry_idx:exit_idx + 1],
+            entry_px=entry_px,
+            price_getter=price_getter,
+        )
+        buy_cost = TransactionCostUtils.calculate_cost(entry_px, qty, is_sell=False)
+        sell_cost = TransactionCostUtils.calculate_cost(exit_px, qty, is_sell=True)
+        buy_report = BacktestExecutionReport(
+            order=buy_order,
+            status=OrderStatus.FILLED,
+            filled_qty=qty,
+            remaining_qty=0,
+            order_price=entry_px,
+            fill_price=entry_px,
+            cost=buy_cost,
+            gross_amount=entry_px * qty,
+            slippage_amount_won=0.0,
+            slippage_pct=0.0,
+            reason="filled",
+            filled_at=str(trade.get("entry_time") or ""),
+            mfe=mfe,
+            mae=mae,
+        )
+        sell_report = BacktestExecutionReport(
+            order=sell_order,
+            status=OrderStatus.FILLED,
+            filled_qty=qty,
+            remaining_qty=0,
+            order_price=exit_px,
+            fill_price=exit_px,
+            cost=sell_cost,
+            gross_amount=exit_px * qty,
+            slippage_amount_won=0.0,
+            slippage_pct=0.0,
+            reason="filled",
+            filled_at=str(trade.get("exit_time") or ""),
+            mfe=mfe,
+            mae=mae,
+        )
+        buy_record = normalize_backtest_execution(buy_report)
+        sell_record = normalize_backtest_execution(sell_report)
+        net_pnl = TransactionCostUtils.calculate_net_pnl_won(entry_px, exit_px, qty)
+        sell_record["status"] = "SOLD"
+        sell_record["net_pnl"] = net_pnl
+        sell_record["net_return"] = TransactionCostUtils.get_return_rate(
+            entry_px,
+            exit_px,
+            qty,
+            apply_cost=True,
+        )
+        sell_record["gross_pnl"] = (exit_px - entry_px) * qty
+        sell_record["gross_return"] = (exit_px / entry_px - 1.0) * 100.0 if entry_px else None
+        return [buy_record, sell_record]
+
+    def _holding_excursion(
+        self,
+        *,
+        rows: List[Dict[str, Any]],
+        entry_px: float,
+        price_getter: Callable[[Dict[str, Any]], Optional[float]],
+    ) -> tuple[float | None, float | None]:
+        prices = [
+            float(price)
+            for row in rows
+            if (price := price_getter(row)) is not None
+        ]
+        if entry_px <= 0 or not prices:
+            return None, None
+        return (
+            (max(prices) / entry_px - 1.0) * 100.0,
+            (min(prices) / entry_px - 1.0) * 100.0,
+        )

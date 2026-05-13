@@ -74,10 +74,15 @@ class TestVolumeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(trades[0]["outcome"], "trailing_stop")
         self.assertEqual(trades[0]["entry_px"], 11000.0)
         self.assertEqual(trades[0]["exit_px"], 11300.0)
-        self.assertEqual(len(result["journal_records"]), 1)
+        self.assertEqual(len(result["journal_records"]), 2)
+        self.assertEqual([r["status"] for r in result["journal_records"]], ["FILLED", "SOLD"])
         self.assertEqual(result["journal_records"][0]["source"], "backtest")
         self.assertEqual(result["journal_records"][0]["code"], "005930")
-        self.assertEqual(result["journal_records"][0]["decision_reason"], "trailing_stop")
+        self.assertEqual(result["journal_records"][0]["decision_reason"], "trigger_10.0pct")
+        self.assertEqual(result["journal_records"][1]["decision_reason"], "trailing_stop")
+        self.assertIsNotNone(result["journal_records"][1]["net_pnl"])
+        self.assertGreater(result["journal_records"][0]["mfe"], 0)
+        self.assertLessEqual(result["journal_records"][0]["mae"], 0)
 
     async def test_backtest_stop_loss(self):
         """손절 테스트"""
@@ -151,6 +156,7 @@ class TestVolumeBreakoutStrategy(unittest.IsolatedAsyncioTestCase):
         backtest_journal_repository.save_run.assert_called_once()
         args, kwargs = backtest_journal_repository.save_run.call_args
         self.assertEqual(args[0], result["journal_records"])
+        self.assertEqual([r["status"] for r in args[0]], ["FILLED", "SOLD"])
         self.assertEqual(kwargs["run_id"], "VolumeBreakout_005930_20250101")
         self.assertEqual(kwargs["strategy"], "VolumeBreakout")
         self.assertEqual(kwargs["target_date"], "20250101")
