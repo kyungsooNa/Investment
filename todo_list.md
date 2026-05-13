@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-13 (실제 replay fixture 후보 일자 선정 도구 추가)
+최종 업데이트: 2026-05-13 (20260512 실제 replay fixture 생성)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -400,8 +400,9 @@
 
 2. P0/P1 백테스트 신뢰도
    - 실제 과거 replay 데이터 기반 fixture 후보 일자 선정 완료: `20260512`, `20260506`, `20260511`, `20260504`, `20260416`
-   - 선정된 일자 중 우선순위를 정해 실제 replay fixture를 생성
+   - `20260512` 실제 replay fixture 생성 완료: `tests/fixtures/backtest/replay_20260512_sample.json`
    - synthetic fixture와 실제 replay fixture의 결과 방향 비교
+   - 필요 시 `20260506`, `20260511`, `20260504`, `20260416` 표본 fixture 추가 생성
 
 3. P1 전략 수익성
    - 시장 국면별 성과 분리

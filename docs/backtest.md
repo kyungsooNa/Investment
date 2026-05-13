@@ -168,13 +168,16 @@
 - `--backtest-time HH:MM:SS` 옵션으로 전략 조건 평가에 사용할 과거 장중 시각을 지정할 수 있다.
 - `scripts/select_backtest_replay_fixtures.py`를 추가해 로컬 `data/stocks.db`의 실제 과거 데이터에서 replay fixture 후보 일자를 선정할 수 있게 했다.
 - 선정 기준은 daily snapshot 수, 거래대금 기준 통과 종목 수, OHLCV warmup 충족 종목 수, RS rating coverage, 표본 종목 거래대금 순위다.
+- `scripts/export_backtest_replay_fixture.py`를 추가해 선정된 일자의 daily snapshot, OHLCV warmup, RS rating을 재현 가능한 JSON fixture로 저장할 수 있게 했다.
 
 주요 파일:
 
 - `scripts/run_backtest.py`
 - `scripts/select_backtest_replay_fixtures.py`
+- `scripts/export_backtest_replay_fixture.py`
 - `tests/unit_test/scripts/test_run_backtest.py`
 - `tests/unit_test/scripts/test_select_backtest_replay_fixtures.py`
+- `tests/unit_test/scripts/test_export_backtest_replay_fixture.py`
 
 ### Walk-forward 검증
 
@@ -356,7 +359,8 @@
 
 해야 할 일:
 
-- 선정된 실제 과거 replay 표본 일자(`20260512`, `20260506`, `20260511`, `20260504`, `20260416`) 중 우선순위를 정해 fixture를 만든다.
+- `20260512` 표본 일자의 실제 replay fixture를 `tests/fixtures/backtest/replay_20260512_sample.json`로 고정했다.
+- 남은 후보 일자(`20260506`, `20260511`, `20260504`, `20260416`) 중 추가 표본이 필요하면 같은 방식으로 fixture를 만든다.
 - 표본 일자별 period runner 결과와 strategy debug runner 결과 방향을 저장 fixture로 고정한다.
 
 ### 6. 실전 체결 fixture 확보
@@ -522,6 +526,20 @@ JSON 출력은 fixture 후보를 파일로 남길 때 사용한다.
 python -m scripts.select_backtest_replay_fixtures --limit 5 --output json --output-file data/replay_fixture_candidates.json
 ```
 
+### 실제 replay fixture 파일 생성
+
+선정된 표본 일자와 종목을 daily snapshot, OHLCV, RS rating 묶음으로 고정한다.
+
+```powershell
+python -m scripts.export_backtest_replay_fixture --date 20260512 --sample-codes 5 --ohlcv-lookback-days 60 --output-file tests/fixtures/backtest/replay_20260512_sample.json
+```
+
+명시 종목만 저장하려면 쉼표 구분 `--codes`를 사용한다.
+
+```powershell
+python -m scripts.export_backtest_replay_fixture --date 20260512 --codes 000660,005930 --ohlcv-lookback-days 60 --output-file tests/fixtures/backtest/replay_20260512_sample.json
+```
+
 ### 파일로 저장
 
 ```powershell
@@ -612,8 +630,10 @@ pytest tests/unit_test/services/test_backtest_replay_context.py -v
 pytest tests/unit_test/services/test_backtest_walk_forward.py -v
 pytest tests/unit_test/services/test_backtest_monte_carlo.py -v
 pytest tests/unit_test/services/test_backtest_replay_fixture_selector.py -v
+pytest tests/unit_test/services/test_backtest_replay_fixture_exporter.py -v
 pytest tests/unit_test/scripts/test_run_backtest.py -v
 pytest tests/unit_test/scripts/test_select_backtest_replay_fixtures.py -v
+pytest tests/unit_test/scripts/test_export_backtest_replay_fixture.py -v
 pytest tests/unit_test/strategies/test_oneil_pocket_pivot_fixture_cases.py -v
 pytest tests/unit_test/strategies/test_oneil_pp_bgu_fixture_runner_parity.py -v
 pytest tests/unit_test/strategies/test_rsi2_pullback_fixture_runner_parity.py -v
@@ -634,6 +654,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `167 passed`
-- 전체 단위 테스트: `4319 passed`
+- 관련 테스트: `172 passed`
+- 전체 단위 테스트: `4324 passed`
 - 전체 통합 테스트: `224 passed`
