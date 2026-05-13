@@ -170,13 +170,38 @@ async def test_period_runner_executes_buy_and_sell_through_ledger():
     sell_record = result.journal_records[1]
     assert sell_record["side"] == "SELL"
     assert sell_record["status"] == "SOLD"
+    assert result.journal_records[0]["decision_reason"] == "pocket_pivot"
+    assert sell_record["decision_reason"] == "target_hit"
     assert sell_record["net_pnl"] == pytest.approx(result.portfolio["realized_net_pnl"])
     assert sell_record["net_return"] > 0
+    assert result.journal_records[0]["mfe"] == pytest.approx((70_500 / 70_000 - 1) * 100)
+    assert result.journal_records[0]["mae"] == pytest.approx((69_500 / 70_000 - 1) * 100)
     assert extract_net_pnls_from_journal(result.journal_records) == pytest.approx([
         result.portfolio["realized_net_pnl"]
     ])
     assert strategy.exit_holdings[-1][0]["code"] == "005930"
     assert strategy.exit_holdings[-1][0]["qty"] == 2
+
+
+@pytest.mark.asyncio
+async def test_period_runner_sell_journal_uses_holding_period_mfe_mae():
+    strategy = FakeStrategy()
+    provider = StaticBarProvider({
+        ("20260501", "005930", "BUY"): BacktestBar("20260501 091000", 70_000, 70_500, 69_500, 70_200, 1_000),
+        ("20260502", "005930", "SELL"): BacktestBar("20260502 100000", 77_000, 84_000, 68_000, 77_100, 1_000),
+    })
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=provider,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+    )
+
+    result = await runner.run(["20260501", "20260502"])
+
+    sell_record = result.journal_records[1]
+    assert sell_record["status"] == "SOLD"
+    assert sell_record["mfe"] == pytest.approx((84_000 / 70_000 - 1) * 100)
+    assert sell_record["mae"] == pytest.approx((68_000 / 70_000 - 1) * 100)
 
 
 @pytest.mark.asyncio

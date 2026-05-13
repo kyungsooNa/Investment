@@ -51,6 +51,7 @@ class BacktestOrder:
     strategy: str = ""
     submitted_at: str = ""
     priority: int = 0
+    decision_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,8 @@ class BacktestExecutionReport:
     reason: str
     filled_at: str
     execution_bar_policy: str = ""
+    mfe: float | None = None
+    mae: float | None = None
 
 
 @dataclass(frozen=True)
@@ -137,6 +140,7 @@ class BacktestExecutionSimulator:
         cost = TransactionCostUtils.calculate_cost(fill_price, filled_qty, is_sell=is_sell)
         slippage_amount = fill_price - base_price
         slippage_pct = (slippage_amount / base_price * 100) if base_price else None
+        mfe, mae = self._bar_excursion(order, fill_price, bar)
 
         return BacktestExecutionReport(
             order=order,
@@ -151,6 +155,8 @@ class BacktestExecutionSimulator:
             slippage_pct=slippage_pct,
             reason="filled" if status == OrderStatus.FILLED else "partial_fill",
             filled_at=bar.timestamp,
+            mfe=mfe,
+            mae=mae,
         )
 
     def _base_fill_price(self, order: BacktestOrder, bar: BacktestBar) -> float | None:
@@ -176,6 +182,22 @@ class BacktestExecutionSimulator:
         if order.side == OrderSide.BUY:
             return base_price * (1.0 + ratio)
         return base_price * (1.0 - ratio)
+
+    def _bar_excursion(
+        self,
+        order: BacktestOrder,
+        fill_price: float,
+        bar: BacktestBar,
+    ) -> tuple[float | None, float | None]:
+        if fill_price <= 0:
+            return None, None
+        if order.side == OrderSide.BUY:
+            mfe = (bar.high / fill_price - 1.0) * 100.0
+            mae = (bar.low / fill_price - 1.0) * 100.0
+        else:
+            mfe = (fill_price / bar.low - 1.0) * 100.0 if bar.low > 0 else None
+            mae = (fill_price / bar.high - 1.0) * 100.0 if bar.high > 0 else None
+        return mfe, mae
 
     def _empty_report(
         self,
