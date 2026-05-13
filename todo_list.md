@@ -37,8 +37,9 @@
 ### 0-2. 백테스트와 실거래 journal schema 표준화
 
 - [~] 모든 저장 경로가 표준 journal schema를 직접 저장하도록 정리한다.
+  - 완료된 부분: `BacktestExecutionReport` 기반 기간 백테스트 journal이 전략 신호 사유(`decision_reason`)와 체결 봉 기준 `MFE`/`MAE`를 표준 schema로 보존한다.
   - 남은 작업: 기존/레거시 백테스트 저장 경로가 `BacktestExecutionReport` 기반 표준 journal을 직접 쓰도록 연결한다.
-  - 남은 작업: `MFE`, `MAE`, 일부 주문/결정 사유 필드처럼 아직 선택적으로 비어 있는 필드를 보강한다.
+  - 남은 작업: 레거시 단일 전략 백테스트 및 보유기간 전체 기준 `MFE`, `MAE`처럼 아직 선택적으로 비어 있는 필드를 보강한다.
 - [~] backtest-vs-live 괴리 리포트를 운영 판단 지표로 승격한다.
   - 남은 작업: 전략별 기대값 대비 실거래 괴리를 after-market 성과 악화 감지와 연결한다.
 - [x] 비용 포함 순수익(`cost`, `net_pnl`, `net_return`)을 기본 성과 기준으로 사용한다.

@@ -181,6 +181,7 @@ def normalize_backtest_execution(report: Any, *, source: str = "backtest") -> di
     order_qty = _to_int(getattr(order, "qty", None), default=0)
     qty = filled_qty if filled_qty > 0 else order_qty
     reason = str(getattr(report, "reason", "") or "")
+    decision_reason = str(getattr(order, "decision_reason", "") or reason)
     accepted = filled_qty > 0
 
     return _ordered_record(
@@ -188,7 +189,7 @@ def normalize_backtest_execution(report: Any, *, source: str = "backtest") -> di
         strategy=str(getattr(order, "strategy", "") or ""),
         code=str(getattr(order, "code", "") or ""),
         signal_time=str(getattr(report, "filled_at", "") or getattr(order, "submitted_at", "") or ""),
-        decision_reason=reason if accepted else "",
+        decision_reason=decision_reason if accepted else "",
         rejected_reason="" if accepted else (reason or status.lower()),
         side=side,
         order_price=_to_float(getattr(report, "order_price", None)),
@@ -200,8 +201,8 @@ def normalize_backtest_execution(report: Any, *, source: str = "backtest") -> di
         net_pnl=None,
         gross_return=None,
         net_return=None,
-        mfe=None,
-        mae=None,
+        mfe=_to_float(getattr(report, "mfe", None)),
+        mae=_to_float(getattr(report, "mae", None)),
         metadata={
             "order_id": str(getattr(order, "order_id", "") or ""),
             "order_type": str(getattr(order.order_type, "value", order.order_type) or ""),
@@ -209,6 +210,7 @@ def normalize_backtest_execution(report: Any, *, source: str = "backtest") -> di
             "filled_qty": filled_qty,
             "remaining_qty": _to_int(getattr(report, "remaining_qty", None), default=0),
             "gross_amount": _to_float(getattr(report, "gross_amount", None)) or 0.0,
+            "execution_reason": reason,
             "slippage_amount_won": _to_float(getattr(report, "slippage_amount_won", None)),
             "slippage_pct": _to_float(getattr(report, "slippage_pct", None)),
             "priority": _to_int(getattr(order, "priority", None), default=0),

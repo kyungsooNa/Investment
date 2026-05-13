@@ -170,8 +170,12 @@ async def test_period_runner_executes_buy_and_sell_through_ledger():
     sell_record = result.journal_records[1]
     assert sell_record["side"] == "SELL"
     assert sell_record["status"] == "SOLD"
+    assert result.journal_records[0]["decision_reason"] == "pocket_pivot"
+    assert sell_record["decision_reason"] == "target_hit"
     assert sell_record["net_pnl"] == pytest.approx(result.portfolio["realized_net_pnl"])
     assert sell_record["net_return"] > 0
+    assert result.journal_records[0]["mfe"] == pytest.approx((70_500 / 70_000 - 1) * 100)
+    assert result.journal_records[0]["mae"] == pytest.approx((69_500 / 70_000 - 1) * 100)
     assert extract_net_pnls_from_journal(result.journal_records) == pytest.approx([
         result.portfolio["realized_net_pnl"]
     ])

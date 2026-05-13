@@ -281,6 +281,7 @@ class BacktestPeriodRunner:
             strategy=signal.strategy_name or self._strategy.name,
             submitted_at="",
             priority=0,
+            decision_reason=signal.reason,
         )
 
     def _rejected_signal_record(

@@ -171,6 +171,7 @@ def test_normalize_backtest_execution_records_fill_report():
             price=70000,
             qty=2,
             strategy="OneilPocketPivot",
+            decision_reason="pocket_pivot",
         ),
         status=OrderStatus.FILLED,
         filled_qty=2,
@@ -183,6 +184,8 @@ def test_normalize_backtest_execution_records_fill_report():
         slippage_pct=0.1429,
         reason="filled",
         filled_at="20260501 091000",
+        mfe=1.25,
+        mae=-0.75,
     )
 
     normalized = normalize_backtest_execution(report)
@@ -192,7 +195,7 @@ def test_normalize_backtest_execution_records_fill_report():
     assert normalized["strategy"] == "OneilPocketPivot"
     assert normalized["code"] == "005930"
     assert normalized["signal_time"] == "20260501 091000"
-    assert normalized["decision_reason"] == "filled"
+    assert normalized["decision_reason"] == "pocket_pivot"
     assert normalized["rejected_reason"] == ""
     assert normalized["side"] == "BUY"
     assert normalized["order_price"] == 70000.0
@@ -200,8 +203,11 @@ def test_normalize_backtest_execution_records_fill_report():
     assert normalized["qty"] == 2
     assert normalized["status"] == "FILLED"
     assert normalized["cost"] == 28.04
+    assert normalized["mfe"] == 1.25
+    assert normalized["mae"] == -0.75
     assert normalized["metadata"]["order_id"] == "order-1"
     assert normalized["metadata"]["gross_amount"] == 140200
+    assert normalized["metadata"]["execution_reason"] == "filled"
 
 
 def test_normalize_backtest_execution_records_unfilled_reason():
