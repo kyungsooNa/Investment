@@ -46,7 +46,8 @@ from task.background.after_market.log_cleanup_task import LogCleanupTask
 from task.background.after_market.newhigh_task import NewHighTask
 from task.background.after_market.strategy_log_report_task import StrategyLogReportTask
 from task.background.after_market.after_market_reconcile_task import AfterMarketReconcileTask
-from services.strategy_log_report_service import StrategyLogReportService
+from services.strategy_log_report_service import StrategyLogReportService, _REASON_KR
+from services.rejection_distribution_service import RejectionDistributionService
 from task.background.always_on.notification_queue_task import NotificationQueueTask
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
@@ -97,6 +98,7 @@ class WebAppContext:
         self.streaming_service: StreamingService = None
         self.order_execution_service: OrderExecutionService = None
         self.kill_switch_service: KillSwitchService = None
+        self.rejection_distribution_service: RejectionDistributionService = None
         self.data_quality_service: DataQualityService = None
         self.indicator_service: IndicatorService = None
         self.virtual_repo = VirtualTradeRepository()
@@ -177,6 +179,10 @@ class WebAppContext:
             notification_service=self.notification_service,
             logger=self.logger,
         )
+        self.rejection_distribution_service = RejectionDistributionService(
+            reason_labels=_REASON_KR,
+        )
+        self.rejection_distribution_service.attach_to_strategy_logger()
         # ---------------------------------------------------------
         # [추가] Telegram Notifier 초기화 및 핸들러 등록
         telegram_backlog_bot_token = config_dict.get("telegram_backlog_bot_token")
@@ -648,6 +654,7 @@ class WebAppContext:
                 market_clock=self.market_clock,
                 logger=self.logger,
                 worker_pool=self.worker_pool,
+                rejection_distribution_service=self.rejection_distribution_service,
             )
             self.notification_queue_task = NotificationQueueTask(
                 notification_service=self.notification_service,

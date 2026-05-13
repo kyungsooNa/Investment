@@ -10,6 +10,7 @@ from services.notification_service import NotificationCategory, NotificationLeve
 
 if TYPE_CHECKING:
     from services.strategy_log_report_service import StrategyLogReportService
+    from services.rejection_distribution_service import RejectionDistributionService
     from core.market_clock import MarketClock
     from services.market_calendar_service import MarketCalendarService
     from scheduler.worker.worker_pool import WorkerPool
@@ -27,6 +28,7 @@ class StrategyLogReportTask(AfterMarketTask):
         market_clock: Optional["MarketClock"] = None,
         logger=None,
         worker_pool: Optional["WorkerPool"] = None,
+        rejection_distribution_service: Optional["RejectionDistributionService"] = None,
     ) -> None:
         super().__init__(
             mcs=mcs,
@@ -37,6 +39,7 @@ class StrategyLogReportTask(AfterMarketTask):
         self._report_service = report_service
         self._notification_service = notification_service
         self._telegram_reporter = telegram_reporter
+        self._rejection_distribution_service = rejection_distribution_service
 
     @property
     def task_name(self) -> str:
@@ -55,6 +58,12 @@ class StrategyLogReportTask(AfterMarketTask):
             return
 
         await self._emit_execution_quality_candidate_alert(latest_trading_date)
+
+        if self._rejection_distribution_service:
+            try:
+                self._rejection_distribution_service.flush_to_file(latest_trading_date)
+            except Exception as e:
+                self._logger.warning(f"거절 사유 분포 파일 저장 실패: {e}")
 
         if self._telegram_reporter:
             try:
