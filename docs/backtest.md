@@ -1,6 +1,6 @@
 # 백테스트 진행 현황과 사용법
 
-최종 업데이트: 2026-05-10
+최종 업데이트: 2026-05-13
 
 이 문서는 현재 프로젝트에서 백테스트와 관련해 이미 진행한 작업, 남은 작업, 실제 실행 방법을 정리한다.
 
@@ -166,11 +166,15 @@
 - `--mc-runs`, `--mc-seed`, `--mc-ruin-drawdown-pct`로 Monte Carlo 실행 횟수, 재현 seed, ruin 기준 MDD를 지정할 수 있다.
 - `--execution-bar-policy current_bar|next_bar` 옵션으로 체결 후보 봉 선택 정책을 지정할 수 있다.
 - `--backtest-time HH:MM:SS` 옵션으로 전략 조건 평가에 사용할 과거 장중 시각을 지정할 수 있다.
+- `scripts/select_backtest_replay_fixtures.py`를 추가해 로컬 `data/stocks.db`의 실제 과거 데이터에서 replay fixture 후보 일자를 선정할 수 있게 했다.
+- 선정 기준은 daily snapshot 수, 거래대금 기준 통과 종목 수, OHLCV warmup 충족 종목 수, RS rating coverage, 표본 종목 거래대금 순위다.
 
 주요 파일:
 
 - `scripts/run_backtest.py`
+- `scripts/select_backtest_replay_fixtures.py`
 - `tests/unit_test/scripts/test_run_backtest.py`
+- `tests/unit_test/scripts/test_select_backtest_replay_fixtures.py`
 
 ### Walk-forward 검증
 
@@ -352,7 +356,8 @@
 
 해야 할 일:
 
-- 실제 과거 replay 데이터 기반 fixture를 추가할 표본 일자를 선정
+- 선정된 실제 과거 replay 표본 일자(`20260512`, `20260506`, `20260511`, `20260504`, `20260416`) 중 우선순위를 정해 fixture를 만든다.
+- 표본 일자별 period runner 결과와 strategy debug runner 결과 방향을 저장 fixture로 고정한다.
 
 ### 6. 실전 체결 fixture 확보
 
@@ -495,6 +500,28 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260510 --output json
 ```
 
+### 실제 replay fixture 후보 일자 선정
+
+로컬 `data/stocks.db`에 저장된 실제 과거 daily snapshot, OHLCV, RS rating coverage를 기준으로 fixture 후보 일자를 뽑는다.
+
+```powershell
+python -m scripts.select_backtest_replay_fixtures --limit 5 --sample-codes 5
+```
+
+현재 로컬 DB 기준 추천 후보:
+
+- `20260512`: replay-ready 542종목, sample codes `000660,005930,005380,010170,009150`
+- `20260506`: replay-ready 503종목, sample codes `005930,000660,402340,009150,005380`
+- `20260511`: replay-ready 499종목, sample codes `000660,005930,010170,005380,402340`
+- `20260504`: replay-ready 494종목, sample codes `000660,005930,001440,010170,402340`
+- `20260416`: replay-ready 474종목, sample codes `005930,000660,047040,010170,032820`
+
+JSON 출력은 fixture 후보를 파일로 남길 때 사용한다.
+
+```powershell
+python -m scripts.select_backtest_replay_fixtures --limit 5 --output json --output-file data/replay_fixture_candidates.json
+```
+
 ### 파일로 저장
 
 ```powershell
@@ -584,7 +611,9 @@ pytest tests/unit_test/services/test_backtest_replay_adapter.py -v
 pytest tests/unit_test/services/test_backtest_replay_context.py -v
 pytest tests/unit_test/services/test_backtest_walk_forward.py -v
 pytest tests/unit_test/services/test_backtest_monte_carlo.py -v
+pytest tests/unit_test/services/test_backtest_replay_fixture_selector.py -v
 pytest tests/unit_test/scripts/test_run_backtest.py -v
+pytest tests/unit_test/scripts/test_select_backtest_replay_fixtures.py -v
 pytest tests/unit_test/strategies/test_oneil_pocket_pivot_fixture_cases.py -v
 pytest tests/unit_test/strategies/test_oneil_pp_bgu_fixture_runner_parity.py -v
 pytest tests/unit_test/strategies/test_rsi2_pullback_fixture_runner_parity.py -v
@@ -605,6 +634,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `161 passed`
-- 전체 단위 테스트: `4313 passed`
+- 관련 테스트: `167 passed`
+- 전체 단위 테스트: `4319 passed`
 - 전체 통합 테스트: `224 passed`
