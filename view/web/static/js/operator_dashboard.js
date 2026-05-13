@@ -94,6 +94,32 @@ function renderSubsystemCards(data) {
         rgBadge.innerHTML = '<span class="badge-ok">정상</span>';
         document.getElementById('card-risk-gate').style.borderLeft = '';
     }
+
+    // Reconcile 카드
+    const rcBadge = document.getElementById('rc-badge');
+    const hasRc = (data.active_alerts || []).some(a => a.source === 'RECONCILE');
+    if (rcBadge) {
+        if (hasRc) {
+            rcBadge.innerHTML = '<span class="badge-warn">불일치</span>';
+            document.getElementById('card-reconcile').style.borderLeft = '4px solid #fb8c00';
+        } else {
+            rcBadge.innerHTML = '<span class="badge-ok">정상</span>';
+            document.getElementById('card-reconcile').style.borderLeft = '';
+        }
+    }
+
+    // WebSocket Watchdog 카드
+    const wdBadge = document.getElementById('wd-badge');
+    const hasWD = (data.active_alerts || []).some(a => a.source === 'WEBSOCKET_WATCHDOG');
+    if (wdBadge) {
+        if (hasWD) {
+            wdBadge.innerHTML = '<span class="badge-warn">재연결 중</span>';
+            document.getElementById('card-ws-watchdog').style.borderLeft = '4px solid #fb8c00';
+        } else {
+            wdBadge.innerHTML = '<span class="badge-ok">정상</span>';
+            document.getElementById('card-ws-watchdog').style.borderLeft = '';
+        }
+    }
 }
 
 function renderHistory(alerts) {

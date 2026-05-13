@@ -476,6 +476,7 @@ class WebAppContext:
                 market_calendar_service=self._mcs,
                 performance_profiler=self.pm,
                 notification_service=self.notification_service,
+                operator_alert_service=self.operator_alert_service,
                 logger=self.logger,
                 streaming_logger=self.streaming_event_logger,
                 streaming_stock_repo=self.streaming_stock_repo,
@@ -674,6 +675,7 @@ class WebAppContext:
             self.after_market_reconcile_task = AfterMarketReconcileTask(
                 order_execution_service=self.order_execution_service,
                 notification_service=self.notification_service,
+                operator_alert_service=self.operator_alert_service,
                 market_calendar_service=self._mcs,
                 market_clock=self.market_clock,
                 logger=self.logger,
@@ -704,6 +706,7 @@ class WebAppContext:
                     market_calendar_service=self._mcs,
                     market_clock=self.market_clock,
                     notification_service=self.notification_service,
+                    operator_alert_service=self.operator_alert_service,
                     logger=self.logger,
                     check_interval_sec=getattr(reconcile_cfg, "check_interval_sec", 30),
                     open_delay_sec=getattr(reconcile_cfg, "open_delay_sec", 60),

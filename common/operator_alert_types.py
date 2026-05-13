@@ -22,6 +22,9 @@ class AlertSource(str, Enum):
     """알림 발생 소스."""
     KILL_SWITCH = "KILL_SWITCH"
     RISK_GATE = "RISK_GATE"
+    RECONCILE = "RECONCILE"
+    WEBSOCKET_WATCHDOG = "WEBSOCKET_WATCHDOG"
+    DATA_QUALITY = "DATA_QUALITY"
 
 
 # severity 순서 (낮을수록 심각)

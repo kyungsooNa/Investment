@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from core.performance_profiler import PerformanceProfiler
 from services.notification_service import NotificationService
+from common.operator_alert_types import AlertSource
 
 if TYPE_CHECKING:
     from services.streaming_service import StreamingService
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
     from services.price_stream_service import PriceStreamService
     from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
     from core.logger import StreamingEventLogger
+    from services.operator_alert_service import OperatorAlertService
 
 class WebSocketWatchdogTask(SchedulableTask):
     """프로그램매매 WebSocket 연결을 감시·복원하는 백그라운드 태스크."""
@@ -40,6 +42,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         market_calendar_service: Optional["MarketCalendarService"] = None,
         performance_profiler: Optional[PerformanceProfiler] = None,
         notification_service: Optional[NotificationService] = None,
+        operator_alert_service: Optional["OperatorAlertService"] = None,
         logger=None,
         streaming_logger: Optional["StreamingEventLogger"] = None,
         streaming_stock_repo: Optional["StreamingStockRepo"] = None,
@@ -51,6 +54,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         self.mcs = market_calendar_service
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._ns = notification_service
+        self._oas = operator_alert_service
         self._logger = logger or logging.getLogger(__name__)
         self._streaming_logger = streaming_logger
         self._streaming_stock_repo = streaming_stock_repo
@@ -272,6 +276,12 @@ class WebSocketWatchdogTask(SchedulableTask):
 
                 if reconnect_trigger:
                     self._intentionally_disconnected = False
+                    if self._oas and reconnect_trigger != "market_open":
+                        await self._oas.report(
+                            AlertSource.WEBSOCKET_WATCHDOG, "websocket_watchdog:reconnect",
+                            "error", "WebSocket 재연결 트리거",
+                            f"trigger={reconnect_trigger}",
+                        )
                     await self.force_reconnect(trigger=reconnect_trigger)
 
             except asyncio.CancelledError:
@@ -467,6 +477,12 @@ class WebSocketWatchdogTask(SchedulableTask):
                 self._streaming_logger.log_force_reconnect_disconnect_error(str(e))
 
         await self._restore_all_subscriptions()
+
+        if self._oas and trigger != "market_open":
+            await self._oas.resolve(
+                AlertSource.WEBSOCKET_WATCHDOG, "websocket_watchdog:reconnect",
+                f"재연결 완료 trigger={trigger}",
+            )
 
         if self._streaming_logger:
             from repositories.streaming_stock_repo import StreamingType

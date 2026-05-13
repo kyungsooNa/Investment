@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
 from task.background.after_market.after_market_task_base import AfterMarketTask
 from services.notification_service import NotificationCategory, NotificationLevel
+from common.operator_alert_types import AlertSource
+
+if TYPE_CHECKING:
+    from services.operator_alert_service import OperatorAlertService
 
 
 class AfterMarketReconcileTask(AfterMarketTask):
@@ -16,6 +20,7 @@ class AfterMarketReconcileTask(AfterMarketTask):
         *,
         order_execution_service,
         notification_service=None,
+        operator_alert_service: Optional["OperatorAlertService"] = None,
         market_calendar_service=None,
         market_clock=None,
         logger: Optional[logging.Logger] = None,
@@ -29,6 +34,7 @@ class AfterMarketReconcileTask(AfterMarketTask):
         )
         self._oes = order_execution_service
         self._ns = notification_service
+        self._oas = operator_alert_service
         self._last_result: Dict = {"mismatch_count": None, "error": None}
         self._history: list[Dict] = []
 
@@ -73,14 +79,23 @@ class AfterMarketReconcileTask(AfterMarketTask):
                         msg,
                         metadata=self._last_result,
                     )
-            elif self._ns:
-                await self._ns.emit(
-                    NotificationCategory.TRADE,
-                    NotificationLevel.INFO,
-                    "장 종료 후 미체결/주문 검증 완료",
-                    "불일치 없음",
-                    metadata=self._last_result,
-                )
+                if self._oas:
+                    await self._oas.report(
+                        AlertSource.RECONCILE, "reconcile:after_market",
+                        "error", "장 종료 후 미체결/주문 검증 불일치", msg,
+                        metadata=self._last_result,
+                    )
+            else:
+                if self._ns:
+                    await self._ns.emit(
+                        NotificationCategory.TRADE,
+                        NotificationLevel.INFO,
+                        "장 종료 후 미체결/주문 검증 완료",
+                        "불일치 없음",
+                        metadata=self._last_result,
+                    )
+                if self._oas:
+                    await self._oas.resolve(AlertSource.RECONCILE, "reconcile:after_market", "검증 완료")
             return self._last_result
         except Exception as exc:
             self._last_result = {
@@ -97,6 +112,11 @@ class AfterMarketReconcileTask(AfterMarketTask):
                     "장 종료 후 미체결/주문 검증 실패",
                     str(exc),
                     metadata=self._last_result,
+                )
+            if self._oas:
+                await self._oas.report(
+                    AlertSource.RECONCILE, "reconcile:after_market",
+                    "error", "장 종료 후 미체결/주문 검증 실패", str(exc),
                 )
             return self._last_result
 

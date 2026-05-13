@@ -4,10 +4,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import timedelta
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from services.notification_service import NotificationCategory, NotificationLevel
+from common.operator_alert_types import AlertSource
+
+if TYPE_CHECKING:
+    from services.operator_alert_service import OperatorAlertService
 
 
 class OpeningPositionReconcileTask(SchedulableTask):
@@ -22,6 +26,7 @@ class OpeningPositionReconcileTask(SchedulableTask):
         market_calendar_service=None,
         market_clock=None,
         notification_service=None,
+        operator_alert_service: Optional["OperatorAlertService"] = None,
         logger: Optional[logging.Logger] = None,
         check_interval_sec: Optional[int] = None,
         open_delay_sec: Optional[int] = None,
@@ -31,6 +36,7 @@ class OpeningPositionReconcileTask(SchedulableTask):
         self._mcs = market_calendar_service
         self._market_clock = market_clock
         self._ns = notification_service
+        self._oas = operator_alert_service
         self._logger = logger or logging.getLogger(__name__)
         self._check_interval_sec = check_interval_sec or self.CHECK_INTERVAL_SEC
         self._open_delay_sec = open_delay_sec if open_delay_sec is not None else self.OPEN_DELAY_SEC
@@ -140,8 +146,15 @@ class OpeningPositionReconcileTask(SchedulableTask):
                         message,
                         metadata=result,
                     )
+                if self._oas:
+                    await self._oas.report(
+                        AlertSource.RECONCILE, "reconcile:opening",
+                        "warning", "장 시작 원장/잔고 대사 불일치", message, metadata=result,
+                    )
             else:
                 self._logger.info("[OpeningPositionReconcile] OK")
+                if self._oas:
+                    await self._oas.resolve(AlertSource.RECONCILE, "reconcile:opening", "대사 일치")
             return result
         except Exception as exc:
             self._last_result = {"mismatch_count": None, "error": str(exc)}
@@ -153,5 +166,10 @@ class OpeningPositionReconcileTask(SchedulableTask):
                     "장 시작 원장/잔고 대사 실패",
                     str(exc),
                     metadata=self._last_result,
+                )
+            if self._oas:
+                await self._oas.report(
+                    AlertSource.RECONCILE, "reconcile:opening",
+                    "error", "장 시작 원장/잔고 대사 실패", str(exc),
                 )
             return self._last_result
