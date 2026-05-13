@@ -55,6 +55,7 @@ class NotificationService:
 
     MAX_HISTORY = 200
     MAX_EXTERNAL_QUEUE_SIZE = 500
+    _EXT_DEDUP_WINDOW_SEC = 5  # 외부 핸들러 2차 dedup 윈도우 (초)
 
     def __init__(self, market_clock: MarketClock):
         self._market_clock = market_clock
@@ -62,6 +63,8 @@ class NotificationService:
         self._subscriber_queues: List[asyncio.Queue] = []
         self._external_handlers: List[Callable[..., Coroutine[Any, Any, None]]] = []
         self._external_handler_queue: asyncio.Queue = asyncio.Queue(maxsize=self.MAX_EXTERNAL_QUEUE_SIZE)
+        # 외부 핸들러 2차 dedup: (dedup_key, severity) → 마지막 emit 단조 시각
+        self._ext_dedup_seen: Dict[tuple, float] = {}
 
     # ── 이벤트 발행 ──
 
@@ -99,7 +102,7 @@ class NotificationService:
                 except Exception:
                     pass
 
-        if self._external_handlers:
+        if self._external_handlers and not self._ext_dedup_blocked(event):
             try:
                 self._external_handler_queue.put_nowait(event)
             except asyncio.QueueFull:
@@ -110,6 +113,30 @@ class NotificationService:
                     pass
 
         return event
+
+    def _ext_dedup_blocked(self, event: "NotificationEvent") -> bool:
+        """외부 핸들러 2차 dedup: OperatorAlertService 경유 이벤트의 중복 전파를 차단.
+
+        metadata에 dedup_key와 transition이 모두 없으면 통과(기존 이벤트 영향 없음).
+        dedup_key가 있고 같은 severity가 윈도우 내 이미 전파됐으면 차단.
+        """
+        import time as _time
+        meta = event.metadata or {}
+        dedup_key = meta.get("dedup_key")
+        if not dedup_key:
+            return False  # OperatorAlertService 경유 이벤트가 아님 → 통과
+        severity = event.level.value
+        cache_key = (dedup_key, severity)
+        now = _time.monotonic()
+        last = self._ext_dedup_seen.get(cache_key, 0.0)
+        if (now - last) < self._EXT_DEDUP_WINDOW_SEC:
+            return True  # 차단
+        self._ext_dedup_seen[cache_key] = now
+        # 오래된 항목 정리 (메모리 leak 방지)
+        stale = [k for k, v in self._ext_dedup_seen.items() if (now - v) > 3600]
+        for k in stale:
+            self._ext_dedup_seen.pop(k, None)
+        return False
 
     # ── SSE 구독자 관리 ──
 

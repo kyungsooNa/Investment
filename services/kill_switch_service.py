@@ -7,14 +7,15 @@ from typing import Any, Optional, TYPE_CHECKING
 
 import pytz
 
+from common.operator_alert_types import AlertSource
 from config.config_loader import KillSwitchConfig
 from services.notification_service import NotificationCategory, NotificationLevel, NotificationService
 
 if TYPE_CHECKING:
     from config.config_loader import RiskGateConfig
+    from services.operator_alert_service import OperatorAlertService
 
 KST = pytz.timezone("Asia/Seoul")
-_ALERT_COOLDOWN_SEC = 60
 
 
 def _now_kst() -> datetime:
@@ -34,12 +35,14 @@ class KillSwitchService:
         notification_service: NotificationService,
         logger: Optional[logging.Logger] = None,
         risk_gate_config: Optional["RiskGateConfig"] = None,
+        operator_alert_service: Optional["OperatorAlertService"] = None,
     ) -> None:
         self._cfg = config
         self._notif = notification_service
         self._logger = logger or logging.getLogger(__name__)
         self._lock = asyncio.Lock()
         self._risk_gate_config = risk_gate_config
+        self._operator_alert: Optional["OperatorAlertService"] = operator_alert_service
 
         # 영속 상태 (계좌 레벨)
         self._is_tripped: bool = False
@@ -54,9 +57,6 @@ class KillSwitchService:
         self._strategy_tripped: dict[str, dict[str, Any]] = {}           # 전략명 → trip 메타
         self._strategy_consecutive_losses: dict[str, int] = {}           # 전략명 → 연속손실횟수
         self._strategy_daily_loss_won: dict[str, int] = {}               # 전략명 → 일손실누적(원)
-
-        # in-memory only — 알림 폭주 방지
-        self._last_alert_at: Optional[datetime] = None
 
         self._state_path = Path(self._cfg.state_file_path)
         self._load_state()
@@ -221,13 +221,24 @@ class KillSwitchService:
         self._logger.critical(
             "[KillSwitch][Strategy] 전략 트립! strategy=%s 사유=%s", strategy_name, reason
         )
-        await self._notif.emit(
-            NotificationCategory.SYSTEM,
-            NotificationLevel.CRITICAL,
-            f"전략 Kill Switch 트립: {strategy_name}",
-            f"전략 '{strategy_name}'이 차단되었습니다.\n사유: {reason}",
-            {"strategy_name": strategy_name, "reason": reason},
-        )
+        dedup_key = f"kill_switch:strategy:{strategy_name}"
+        if self._operator_alert:
+            await self._operator_alert.report(
+                AlertSource.KILL_SWITCH,
+                dedup_key,
+                "critical",
+                f"전략 Kill Switch 트립: {strategy_name}",
+                f"전략 '{strategy_name}'이 차단되었습니다.\n사유: {reason}",
+                {"strategy_name": strategy_name, "reason": reason, **(metadata or {})},
+            )
+        else:
+            await self._notif.emit(
+                NotificationCategory.SYSTEM,
+                NotificationLevel.CRITICAL,
+                f"전략 Kill Switch 트립: {strategy_name}",
+                f"전략 '{strategy_name}'이 차단되었습니다.\n사유: {reason}",
+                {"strategy_name": strategy_name, "reason": reason},
+            )
 
     async def reset_strategy(self, strategy_name: str, operator: str = "") -> None:
         """해당 전략의 Kill Switch 해제 및 카운터 초기화."""
@@ -240,6 +251,12 @@ class KillSwitchService:
         self._logger.warning(
             "[KillSwitch][Strategy] 해제됨 strategy=%s operator=%s", strategy_name, operator
         )
+        if self._operator_alert:
+            await self._operator_alert.resolve(
+                AlertSource.KILL_SWITCH,
+                f"kill_switch:strategy:{strategy_name}",
+                f"전략 Kill Switch 해제: {strategy_name}" + (f" by {operator}" if operator else ""),
+            )
 
     async def record_strategy_trade_result(self, strategy_name: str, pnl_won: int) -> None:
         """전략별 매도 손익 기록. 임계값 초과 시 해당 전략만 트립."""
@@ -316,13 +333,24 @@ class KillSwitchService:
         self._logger.critical(
             "[KillSwitch][Strategy] 자동 트립! strategy=%s 사유=%s", strategy_name, reason
         )
-        await self._notif.emit(
-            NotificationCategory.SYSTEM,
-            NotificationLevel.CRITICAL,
-            f"전략 Kill Switch 자동 트립: {strategy_name}",
-            f"전략 '{strategy_name}'이 자동 차단되었습니다.\n사유: {reason}",
-            {"strategy_name": strategy_name, "reason": reason, **metadata},
-        )
+        dedup_key = f"kill_switch:strategy:{strategy_name}"
+        if self._operator_alert:
+            await self._operator_alert.report(
+                AlertSource.KILL_SWITCH,
+                dedup_key,
+                "critical",
+                f"전략 Kill Switch 자동 트립: {strategy_name}",
+                f"전략 '{strategy_name}'이 자동 차단되었습니다.\n사유: {reason}",
+                {"strategy_name": strategy_name, "reason": reason, **metadata},
+            )
+        else:
+            await self._notif.emit(
+                NotificationCategory.SYSTEM,
+                NotificationLevel.CRITICAL,
+                f"전략 Kill Switch 자동 트립: {strategy_name}",
+                f"전략 '{strategy_name}'이 자동 차단되었습니다.\n사유: {reason}",
+                {"strategy_name": strategy_name, "reason": reason, **metadata},
+            )
 
     # ── 수동 제어 ────────────────────────────────────────────────────
 
@@ -346,13 +374,20 @@ class KillSwitchService:
         self._logger.warning(
             "[KillSwitch] 해제됨 (operator=%s, 이전 사유: %s)", operator, prev_reason
         )
-        await self._notif.emit(
-            NotificationCategory.SYSTEM,
-            NotificationLevel.WARNING,
-            "Kill Switch 해제",
-            f"운영자 {operator}가 Kill Switch를 해제했습니다. (이전 사유: {prev_reason})",
-            {"operator": operator},
-        )
+        if self._operator_alert:
+            await self._operator_alert.resolve(
+                AlertSource.KILL_SWITCH,
+                "kill_switch:global",
+                f"운영자 {operator} 수동 해제 (이전 사유: {prev_reason})",
+            )
+        else:
+            await self._notif.emit(
+                NotificationCategory.SYSTEM,
+                NotificationLevel.WARNING,
+                "Kill Switch 해제",
+                f"운영자 {operator}가 Kill Switch를 해제했습니다. (이전 사유: {prev_reason})",
+                {"operator": operator},
+            )
 
     async def reset_daily_counters(self) -> None:
         """거래일 시작 시 일별 카운터 초기화. is_tripped 상태는 유지."""
@@ -365,38 +400,35 @@ class KillSwitchService:
     # ── 내부 ─────────────────────────────────────────────────────────
 
     async def _trip(self, reason: str, metadata: dict[str, Any]) -> None:
-        """트립 상태로 전환. 이미 트립 중이면 알림 쿨다운만 적용. Lock 보유 중에 호출."""
+        """트립 상태로 전환. dedup 서비스 경유로 중복 알림 방지. Lock 보유 중에 호출."""
         now = _now_kst()
 
-        if self._is_tripped:
-            # 알림 폭주 방지 — 1분 내 중복 알림 억제
-            if self._last_alert_at and (now - self._last_alert_at).total_seconds() < _ALERT_COOLDOWN_SEC:
-                return
-            self._last_alert_at = now
+        if not self._is_tripped:
+            self._is_tripped = True
+            self._trip_reason = reason
+            self._trip_timestamp = now
+            self._trip_metadata = metadata
+            self._save_state()
+
+        self._logger.critical("[KillSwitch] 트립! 사유: %s | 메타: %s", reason, metadata)
+
+        if self._operator_alert:
+            await self._operator_alert.report(
+                AlertSource.KILL_SWITCH,
+                "kill_switch:global",
+                "critical",
+                "Kill Switch 트립",
+                f"모든 주문·전략이 차단되었습니다.\n사유: {reason}",
+                metadata,
+            )
+        else:
             await self._notif.emit(
                 NotificationCategory.SYSTEM,
                 NotificationLevel.CRITICAL,
-                "Kill Switch 유지 중",
-                f"[{reason}] (이전 사유: {self._trip_reason})",
+                "Kill Switch 트립",
+                f"모든 주문·전략이 차단되었습니다.\n사유: {reason}",
                 metadata,
             )
-            return
-
-        self._is_tripped = True
-        self._trip_reason = reason
-        self._trip_timestamp = now
-        self._trip_metadata = metadata
-        self._last_alert_at = now
-        self._save_state()
-
-        self._logger.critical("[KillSwitch] 트립! 사유: %s | 메타: %s", reason, metadata)
-        await self._notif.emit(
-            NotificationCategory.SYSTEM,
-            NotificationLevel.CRITICAL,
-            "Kill Switch 트립",
-            f"모든 주문·전략이 차단되었습니다.\n사유: {reason}",
-            metadata,
-        )
 
     def _save_state(self) -> None:
         """현재 상태를 JSON 파일에 저장. Lock 보유 중에 호출."""

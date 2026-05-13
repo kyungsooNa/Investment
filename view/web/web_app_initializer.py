@@ -64,6 +64,7 @@ from services.market_data_service import MarketDataService
 from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService, NotificationCategory
 from services.kill_switch_service import KillSwitchService
+from services.operator_alert_service import OperatorAlertService
 from core.account_snapshot import AccountSnapshotCache
 from services.position_sizing_service import PositionSizingService
 from services.risk_gate_service import RiskGateService
@@ -98,6 +99,7 @@ class WebAppContext:
         self.streaming_service: StreamingService = None
         self.order_execution_service: OrderExecutionService = None
         self.kill_switch_service: KillSwitchService = None
+        self.operator_alert_service: OperatorAlertService = None
         self.rejection_distribution_service: RejectionDistributionService = None
         self.data_quality_service: DataQualityService = None
         self.indicator_service: IndicatorService = None
@@ -174,10 +176,16 @@ class WebAppContext:
         self.virtual_repo.tm = self.market_clock
         self.virtual_trade_service.tm = self.market_clock
         self.notification_service = NotificationService(self.market_clock)
+        self.operator_alert_service = OperatorAlertService(
+            notification_service=self.notification_service,
+            market_clock=self.market_clock,
+            logger=self.logger,
+        )
         self.kill_switch_service = KillSwitchService(
             config=getattr(self.full_config, "kill_switch", None) or KillSwitchConfig(),
             notification_service=self.notification_service,
             logger=self.logger,
+            operator_alert_service=self.operator_alert_service,
         )
         self.rejection_distribution_service = RejectionDistributionService(
             reason_labels=_REASON_KR,
@@ -468,6 +476,7 @@ class WebAppContext:
                 market_calendar_service=self._mcs,
                 performance_profiler=self.pm,
                 notification_service=self.notification_service,
+                operator_alert_service=self.operator_alert_service,
                 logger=self.logger,
                 streaming_logger=self.streaming_event_logger,
                 streaming_stock_repo=self.streaming_stock_repo,
@@ -539,6 +548,7 @@ class WebAppContext:
                 strategy_risk_provider=self.virtual_trade_service,
                 logger=self.logger,
                 env=getattr(self.broker, "env", None),
+                operator_alert_service=self.operator_alert_service,
             )
             self.execution_flow_service = ExecutionFlowService(
                 data_provider=self.broker,
@@ -665,6 +675,7 @@ class WebAppContext:
             self.after_market_reconcile_task = AfterMarketReconcileTask(
                 order_execution_service=self.order_execution_service,
                 notification_service=self.notification_service,
+                operator_alert_service=self.operator_alert_service,
                 market_calendar_service=self._mcs,
                 market_clock=self.market_clock,
                 logger=self.logger,
@@ -695,6 +706,7 @@ class WebAppContext:
                     market_calendar_service=self._mcs,
                     market_clock=self.market_clock,
                     notification_service=self.notification_service,
+                    operator_alert_service=self.operator_alert_service,
                     logger=self.logger,
                     check_interval_sec=getattr(reconcile_cfg, "check_interval_sec", 30),
                     open_delay_sec=getattr(reconcile_cfg, "open_delay_sec", 60),

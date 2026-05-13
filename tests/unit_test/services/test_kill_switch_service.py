@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,7 +8,7 @@ import pytest
 import pytz
 
 from config.config_loader import KillSwitchConfig
-from services.kill_switch_service import KillSwitchService, _ALERT_COOLDOWN_SEC
+from services.kill_switch_service import KillSwitchService
 
 KST = pytz.timezone("Asia/Seoul")
 
@@ -291,31 +291,25 @@ async def test_get_status_shape(cfg, mock_notif, logger):
     assert status["thresholds"]["max_consecutive_losses"] == cfg.max_consecutive_losses
 
 
-# ── 알림 쿨다운 ───────────────────────────────────────────────────────
+# ── 알림 동작 (operator_alert_service 미주입 시 직접 emit) ──────────────
 
 
-async def test_alert_cooldown_suppresses_duplicate(cfg, mock_notif, logger):
+async def test_trip_emits_directly_when_no_operator_alert_service(cfg, mock_notif, logger):
+    """operator_alert_service가 없으면 trip 시 notification_service.emit 직접 호출."""
     ks = _make_ks(cfg, mock_notif, logger)
-    await ks.manual_trip("첫 트립", "op")
-    mock_notif.emit.reset_mock()
-
-    # last_alert_at을 바로 직전으로 설정 (쿨다운 내)
-    ks._last_alert_at = datetime.now(tz=KST)
-    await ks.manual_trip("두 번째 같은 사유", "op")
-
-    mock_notif.emit.assert_not_awaited()
-
-
-async def test_alert_cooldown_allows_after_interval(cfg, mock_notif, logger):
-    ks = _make_ks(cfg, mock_notif, logger)
-    await ks.manual_trip("첫 트립", "op")
-    mock_notif.emit.reset_mock()
-
-    # last_alert_at을 쿨다운 이전으로 설정
-    ks._last_alert_at = datetime.now(tz=KST) - timedelta(seconds=_ALERT_COOLDOWN_SEC + 1)
-    await ks.manual_trip("새 사유", "op")
-
+    await ks._trip("첫 트립", {})
     mock_notif.emit.assert_awaited_once()
+
+
+async def test_second_trip_also_emits_when_no_operator_alert_service(cfg, mock_notif, logger):
+    """operator_alert_service 미주입 시 dedup 없음 — 두 번 trip 모두 emit.
+
+    dedup 로직은 OperatorAlertService에 위임(test_operator_alert_service.py 참조).
+    """
+    ks = _make_ks(cfg, mock_notif, logger)
+    await ks._trip("첫 트립", {})
+    await ks._trip("두 번째 트립", {})
+    assert mock_notif.emit.await_count == 2
 
 
 # ── JSON 상태 영속 ────────────────────────────────────────────────────

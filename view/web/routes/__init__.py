@@ -19,6 +19,7 @@ from view.web.routes.streaming import router as streaming_router
 from view.web.routes.favorite import router as favorite_router
 from view.web.routes.kill_switch import router as kill_switch_router
 from view.web.routes.strategy_report import router as strategy_report_router
+from view.web.routes.operator_dashboard import router as operator_dashboard_router
 
 router = APIRouter(prefix="/api")
 
@@ -37,3 +38,4 @@ router.include_router(streaming_router)
 router.include_router(favorite_router)
 router.include_router(kill_switch_router)
 router.include_router(strategy_report_router)
+router.include_router(operator_dashboard_router)

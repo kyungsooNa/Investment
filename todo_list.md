@@ -321,8 +321,10 @@
 
 ### 4-3. 운영 대시보드와 알림
 
-- [ ] 전략별 성과 저하, reconcile alarm, websocket watchdog 경고, 데이터 품질 차단, 주문 정책 차단을 운영자 대시보드에서 한눈에 볼 수 있게 정리한다.
-- [ ] 알림은 신규 차단, 위험도 상승, 자동 해제/복구를 구분해 중복 발송을 줄인다.
+- [x] OperatorAlertService(dedup·전이 이벤트), 운영자 대시보드 페이지(/operator), Kill Switch·Risk Gate·Reconcile·WebSocket Watchdog를 operator_alert_service에 연결
+- [x] 알림은 신규 차단, 위험도 상승, 자동 해제/복구를 구분해 중복 발송을 줄인다.
+- [ ] 전략별 성과 저하 알림 — 4-1(전략 성과 감지 임계값) 완료 후 `AlertSource.STRATEGY_PERF`로 연결
+- [ ] 데이터 품질 차단 알림 — DataQualityService 위반율 집계(N건/M초) 후 임계값 초과 시 report(); 현재는 per-tick 동기 호출이라 직접 연결 불가
 
 ---
 
