@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-10 (LarryWilliamsCB fixture parity 추가)
+최종 업데이트: 2026-05-13 (백테스트 To-Do 압축 정리)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -36,29 +36,12 @@
 
 ### 0-2. 백테스트와 실거래 journal schema 표준화
 
-- [~] 백테스트와 실거래/모의거래 성과를 같은 포맷으로 변환한다.
-  - 완료된 부분: `common.trade_journal_schema`에 표준 journal normalizer를 추가하고, `VirtualTradeRepository` / `VirtualTradeService`에서 표준 journal 조회를 제공한다.
-  - 진행 필요: 모든 백테스트/실거래 저장 경로가 표준 schema를 직접 저장하도록 확장한다.
-- [~] 전략별 trade journal 표준 필드를 확정한다: `signal_time`, `decision_reason`, `rejected_reason`, `order_price`, `fill_price`, `cost`, `net_pnl`, `net_return`, `MFE`, `MAE`.
-  - 완료된 부분: 표준 필드 version 1을 정의하고 virtual trade / VolumeBreakout backtest 변환 테스트를 추가했다.
-  - 진행 필요: 다른 전략과 주문 체결 로그의 누락 필드를 채운다.
-- [~] 실거래 로그와 백테스트 로그를 같은 schema로 맞춰 backtest-vs-live 괴리 리포트를 생성한다.
-  - 완료된 부분: VolumeBreakout 단일일자 백테스트 결과에 `journal_records`를 추가하고, `common.trade_journal_comparison.compare_trade_journals()`로 전략/종목/거래일 기준 괴리 리포트를 생성한다.
-  - 완료된 부분: `StrategyLogReportService`에 optional backtest journal provider를 연결해 after-market 리포트에 괴리 요약을 표시할 수 있게 했다.
-  - 완료된 부분: `/api/virtual/journal`에서 현재 모의/실거래 원장을 표준 journal schema로 조회하고, `/api/virtual/backtest-divergence`에서 백테스트 journal payload와 현재 원장의 괴리를 비교한다.
-  - 완료된 부분: 모의투자 화면에 backtest-vs-live 괴리 요약/테이블과 백테스트 journal JSON 비교 실행 UI를 연결했다.
-  - 완료된 부분: `BacktestJournalRepository`를 추가해 백테스트 journal run을 `data/backtest_journals`에 저장/조회하고, `/api/virtual/backtest-journals` 목록/records API와 모의투자 화면 선택 불러오기를 연결했다.
-  - 완료된 부분: Web 초기화 시 `StrategyLogReportService`의 backtest journal provider를 저장소의 날짜별 records 조회로 연결했다.
-  - 완료된 부분: `MomentumStrategy` backtest 모드는 성공/실패 후보를 표준 decision journal(`SIGNAL`/`REJECTED`, `decision_reason`/`rejected_reason`)로 저장소에 기록한다.
-  - 완료된 부분: `StrategyDebugRunner`가 O'Neil/Minervini 계열 debug 실행의 신호, 탈락 이벤트, watchlist 누락 종목을 표준 decision journal로 만들고 저장소에 기록한다.
-  - 완료된 부분: 전략별 debug 이벤트의 세부 필드(`entry_type`, `stage`, `cgld`, `threshold`)를 API 응답 top-level 필드로 보강하고, 운영 UI 괴리 테이블에서 별도 열로 표시한다.
-  - 완료된 부분: 저장된 period backtest journal의 체결 상세(`order_type`, `filled_qty`, `remaining_qty`, `slippage_pct` 등)를 API 응답 top-level 필드로 보강하고, 운영 UI 괴리 테이블에서 주문/체결/미체결/슬리피지를 표시한다.
-- [~] 수수료, 거래세, 슬리피지 반영 후 순수익을 기본 성과로 사용한다.
-  - 완료된 부분: 표준 journal record에 `cost`, `net_pnl`, `net_return`을 계산해 포함한다.
-  - 완료된 부분: after-market 포트폴리오 요약은 `net_return`이 있으면 기존 `return_rate`보다 우선 사용한다.
-  - 완료된 부분: 웹 API에서 표준 journal과 backtest-vs-live 비교 결과를 순수익 필드 포함 schema로 노출한다.
-  - 완료된 부분: 모의투자 화면은 비용 포함 성과 조회를 기본 ON으로 표시한다.
-  - 완료된 부분: 전체 전략 성과 집계의 기본값을 비용 포함 net 기준으로 전환하고, gross 기준 조회는 `apply_cost=false` 명시 경로로 유지한다.
+- [~] 모든 저장 경로가 표준 journal schema를 직접 저장하도록 정리한다.
+  - 남은 작업: 기존/레거시 백테스트 저장 경로가 `BacktestExecutionReport` 기반 표준 journal을 직접 쓰도록 연결한다.
+  - 남은 작업: `MFE`, `MAE`, 일부 주문/결정 사유 필드처럼 아직 선택적으로 비어 있는 필드를 보강한다.
+- [~] backtest-vs-live 괴리 리포트를 운영 판단 지표로 승격한다.
+  - 남은 작업: 전략별 기대값 대비 실거래 괴리를 after-market 성과 악화 감지와 연결한다.
+- [x] 비용 포함 순수익(`cost`, `net_pnl`, `net_return`)을 기본 성과 기준으로 사용한다.
 
 주요 파일:
 
@@ -70,35 +53,10 @@
 
 ### 0-3. 체결 시뮬레이터와 포트폴리오 장부
 
-- [~] 체결 시뮬레이터를 분리한다: 지정가/시장가, 당일 고가·저가 도달 여부, 거래량 기반 부분체결, 미체결, 다음 봉 체결 정책을 명시한다.
-  - 완료된 부분: `BacktestExecutionSimulator`를 추가해 지정가/시장가, 고가·저가 도달 여부, 거래량 참여율 기반 부분체결/미체결, 시장가 슬리피지, 호가 단위 반올림을 테스트로 고정했다.
-  - 완료된 부분: `BacktestExecutionBarPolicy`와 `BacktestPeriodRunnerConfig.execution_bar_policy`를 추가해 `current_bar` / `next_bar` 정책 이름을 명시했다.
-  - 완료된 부분: `BacktestPeriodRunner._execute_signal()`에서 bar provider 호출 시 정책 이름을 전달하고, execution report / 표준 journal metadata / run metadata / CLI 출력에 남긴다.
-  - 완료된 부분: `StockQueryIntradayReplayBarProvider`가 `current_bar`는 가격에 닿은 첫 분봉, `next_bar`는 가격에 닿은 신호 봉 다음 분봉을 체결 후보 봉으로 선택하도록 고정했다.
-- [~] 수수료, 거래세, 슬리피지, 호가 단위 반올림을 모든 백테스트 성과 계산에 기본 반영한다.
-  - 완료된 부분: 체결 리포트가 `TransactionCostUtils` 기반 매수 수수료/매도 수수료+거래세, 시장가 슬리피지, tick rounding 결과를 포함한다.
-  - 진행 필요: 기존 전략별 백테스트 저장 경로가 새 체결 리포트를 사용해 표준 journal을 저장하도록 연결한다.
-- [~] 포트폴리오 단위 현금/보유/예약주문 장부를 만든다. 동시 신호 발생 시 자금 부족, 전략별 max positions, 우선순위 정렬을 재현한다.
-  - 완료된 부분: `BacktestPortfolioLedger`를 추가해 현금 예약, 체결 반영, 보유 수량/평단, 실현 순손익, 우선순위 정렬, 자금 부족 차단, 전략별 max positions 제한을 테스트로 고정했다.
-  - 완료된 부분: 활성 O'Neil 계열 `StrategyDebugRunner`에 선택적 portfolio ledger dry-run을 연결해 BUY 신호가 현금 부족/전략별 max positions에 걸리면 표준 journal의 `REJECTED`/`rejected_reason`으로 남기도록 했다.
-  - 완료된 부분: `scripts/run_strategy_debug.py`에 `--portfolio-cash`, `--max-positions` 옵션을 추가해 운영자가 debug 실행에서 포트폴리오 예약 검증을 켤 수 있게 했다.
-  - 완료된 부분: `BacktestPeriodRunner`에서 동시 BUY 신호 묶음을 ledger 예약/체결 흐름으로 통과시키고, 자금 부족/전략별 max positions 거부를 표준 journal로 남긴다.
+- [x] 체결 시뮬레이터를 분리한다: 지정가/시장가, 당일 고가·저가 도달 여부, 거래량 기반 부분체결, 미체결, current/next bar 정책을 명시한다.
+- [x] 포트폴리오 단위 현금/보유/예약주문 장부를 만든다. 동시 신호 발생 시 자금 부족, 전략별 max positions, 우선순위 정렬을 재현한다.
 - [x] 리스크 게이트와 포지션 사이징을 백테스트에서도 동일하게 호출하거나, 동일 contract의 dry-run 구현으로 검증한다.
-  - 완료된 부분: `BacktestPeriodRunner`에 선택적 `position_sizing_service.adjust_buy_qty()` contract를 연결해 BUY 수량을 조정하고, 수량 0은 `sizing_skip:*` rejected journal로 남긴다.
-  - 완료된 부분: `BacktestPeriodRunner`에 선택적 `risk_gate_service.validate_order()` contract를 연결해 RiskGate 차단을 simulator/bar 조회 전에 `risk_gate:*` rejected journal로 남긴다.
-- [~] 활성 전략군용 기간 백테스트 runner를 만든다.
-  - 완료된 부분: `BacktestPeriodRunner`를 추가해 `LiveStrategy.scan()` / `check_exits()` contract를 날짜 루프로 감싸고, BUY 신호 → ledger 예약 → simulator 체결 → ledger 반영, SELL 신호 → simulator 체결 → ledger 반영 흐름을 테스트로 고정했다.
-  - 완료된 부분: 기간 runner가 현금 부족, 전략별 max positions 차단을 표준 rejected journal로 남긴다.
-  - 완료된 부분: `StockQueryIntradayReplayBarProvider`를 추가해 `StockQueryService.get_day_intraday_minutes_list()` 결과를 `BacktestBar`로 표준화하고, 신호 가격이 닿는 첫 분봉을 체결 후보 봉으로 제공한다.
-  - 완료된 부분: `StockQueryBacktestReplayService`를 추가해 전략의 `get_current_price()`/`get_stock_conclusion()` 호출을 과거 분봉 기반 현재가·체결강도 replay로 바꾸고, 일별 프로그램매매 순매수 수량을 `pgtr_ntby_qty`에 보강한다.
-  - 완료된 부분: `BacktestPeriodRunner`가 bar provider에도 `set_backtest_date()`를 전달하도록 해 replay context가 날짜 루프와 동기화된다.
-  - 완료된 부분: `scripts/run_backtest.py` CLI 진입점을 추가해 `oneil_pocket_pivot` 기간 백테스트를 replay adapter + portfolio ledger + simulator로 실행할 수 있게 했다.
-  - 완료된 부분: `scripts/run_backtest.py`의 활성 전략 factory를 확장해 `oneil_pocket_pivot`, `oneil_squeeze_breakout`, `high_tight_flag`, `first_pullback`, `larry_williams_vbo`, `rsi2_pullback`, `larry_williams_channel_breakout`이 replay SQS와 `BacktestMarketClock`을 같은 contract로 주입받게 했다.
-  - 완료된 부분: 기간 백테스트 runner가 `BacktestExecutionReport`를 표준 journal record로 변환하고, `BacktestJournalRepository`에 period run metadata와 함께 저장한다.
-  - 완료된 부분: 저장된 period backtest run의 체결 상세를 운영 UI/괴리 리포트에서 검증했다.
-  - 완료된 부분: 기간 runner가 선택적 RiskGate/PositionSizing dry-run contract를 호출하고 거부 사유를 표준 journal로 남긴다.
-  - 완료된 부분: `scripts/run_backtest.py --use-risk-sizing` 옵션을 추가해 운영 설정 기반 `PositionSizingService`/`RiskGateService`를 백테스트용 ledger snapshot과 함께 자동 조립한다.
-  - 완료된 부분: 기간 runner가 SELL 체결 journal을 `SOLD` 상태와 `net_pnl`/`net_return`으로 보강해 Monte Carlo 입력으로 바로 사용할 수 있게 했다.
+- [x] 활성 전략군용 기간 백테스트 runner를 만든다.
 
 주요 파일:
 
@@ -181,33 +139,15 @@
 
 ### 1-5. 백테스트 검증 확장
 
-- [~] `--date YYYYMMDD` / `--from YYYYMMDD --to YYYYMMDD` 기반 과거 시점 재현용 market clock과 데이터 스냅샷 주입 구조를 만든다.
-  - 완료된 부분: `BacktestMarketClock`을 추가해 runner가 순회 중인 `YYYYMMDD`와 지정 장중 시각을 전략/유니버스가 참조하도록 고정했다.
-  - 완료된 부분: `BacktestPeriodRunner`가 전략/bar provider 외 추가 date context target에도 `set_backtest_date()`를 호출할 수 있게 했다.
-  - 완료된 부분: `scripts/run_backtest.py`가 `--backtest-time HH:MM:SS`를 받고, replay SQS와 backtest clock을 O'Neil universe/strategy에 주입한다.
-  - 완료된 부분: 활성 전략 7개용 backtest strategy factory를 추가해 replay SQS, `BacktestMarketClock`, universe service, indicator service 주입 contract를 테스트로 고정했다.
+- [x] `--date YYYYMMDD` / 기간 기반 과거 시점 재현용 market clock과 replay 데이터 주입 구조를 만든다.
 - [x] 실시간 API 응답 대신 과거 OHLCV/체결강도/프로그램매매 데이터를 공급하는 `BacktestStockQueryService` 또는 data replay adapter를 추가한다.
-  - 완료된 부분: `StockQueryBacktestReplayService`가 과거 분봉 기반 현재가/체결강도 replay와 일별 프로그램매매 보강을 제공한다.
-  - 완료된 부분: `apply_backtest_snapshot_context()`로 기존 O'Neil universe의 `_sqs`/`_tm`을 replay SQS와 backtest clock으로 교체한다.
 - [x] `run_strategy_debug`는 미매수 사유 진단, `run_backtest`는 기간 수익률/포트폴리오 검증으로 역할을 분리한다.
-  - 완료된 부분: 같은 PP/BGU fixture를 기준으로 period runner의 BUY 체결 여부와 strategy debug runner의 SIGNAL/REJECTED journal 결과를 비교하는 parity 테스트를 추가했다.
-  - 완료된 부분: PP/BGU fixture를 `20260505`, `20260506` 경계 조건까지 확장해 여러 거래일에서 period runner와 strategy debug runner의 결과 방향이 일치하는지 검증한다.
-  - 완료된 부분: RSI2 fixture를 추가해 15:10 cutoff, 마켓타이밍 OFF 축소비중, Stage2 탈락, RSI 임계값 탈락을 period runner와 strategy debug runner 양쪽에서 비교한다.
-  - 완료된 부분: LarryWilliamsCB fixture를 추가해 15:10 cutoff, RS Rating, ADX, 20일 채널 돌파, 거래량 경계 조건을 period runner와 strategy debug runner 양쪽에서 비교한다.
-  - 완료된 부분: debug runner decision journal은 최종 BUY 신호가 있는 종목의 중간 로그(`buy_signal_generated`, PP/BGU 분기 중간 탈락)를 별도 `REJECTED`로 저장하지 않고 최종 `SIGNAL`만 남기도록 정리했다.
 - [x] walk-forward 검증을 추가한다. 기간을 train/tune/test로 나누고, 파라미터 튜닝 구간과 검증 구간을 분리한다.
-  - 완료된 부분: `BacktestWalkForwardRunner`를 추가해 날짜를 train/tune/test rolling window로 분리하고, 각 phase를 독립 `BacktestPeriodRunner`/ledger/strategy state로 실행한다.
-  - 완료된 부분: `scripts/run_backtest.py --walk-forward`와 `--wf-train-days` / `--wf-tune-days` / `--wf-test-days` / `--wf-step-days` 옵션을 추가해 CLI에서 검증 구간 요약과 JSON 출력을 지원한다.
 - [x] 몬테카를로 시뮬레이션을 추가한다. trade 결과 순서를 섞어 최악 MDD, 연속 손실, ruin probability를 계산한다.
-  - 완료된 부분: `BacktestMonteCarloSimulator`를 추가해 완료 trade `net_pnl` 순서를 shuffle하고, 최악 MDD, 최장 연속 손실, ruin probability, 최종 equity 분위수를 계산한다.
-  - 완료된 부분: `scripts/run_backtest.py --monte-carlo`와 `--mc-runs` / `--mc-seed` / `--mc-ruin-drawdown-pct` 옵션을 추가해 period 결과와 walk-forward test phase 결과에 Monte Carlo 요약을 붙인다.
-- [x] 단위 테스트 fixture를 만든다: 특정 날짜에 PP 통과, PP 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 고정 데이터로 검증한다.
-  - 완료된 부분: `20260504` 기준 PP 통과, PP 거래량 탈락, BGU 통과, 체결강도 탈락, 마켓타이밍 탈락 케이스를 JSON fixture로 고정했다.
-  - 완료된 부분: `20260505` 기준 PP 수급 부족 탈락, MA 이격 탈락 케이스를 추가했다.
-  - 완료된 부분: `20260506` 기준 BGU 09:10 이전 휩소 guard 탈락, 시가 지지 실패 탈락 케이스를 추가했다.
-  - 완료된 부분: `20260507`/`20260508` 기준 RSI2 장 후반 진입/탈락 fixture를 추가했다.
-  - 완료된 부분: `20260509`/`20260510` 기준 LarryWilliamsCB 장 후반 진입/탈락 fixture를 추가했다.
-  - 완료된 부분: `OneilPocketPivotStrategy.scan()` 실제 흐름으로 신호 생성 여부, `entry_type`, reason 포함 여부, 마켓타이밍 OFF 시 가격 조회 생략을 검증한다.
+- [x] 활성 전략별 fixture parity를 period runner와 strategy debug runner 양쪽에서 검증한다.
+- [~] 실제 replay fixture를 통과 케이스까지 확장한다.
+  - 남은 작업: 장중 후보 종목의 프로그램매매 WebSocket 샘플을 확보하고, `scripts.capture_backtest_microstructure` 결과를 replay fixture overlay로 결합한다.
+  - 선택 작업: 필요 시 `20260506`, `20260511`, `20260504`, `20260416` 표본 fixture를 추가 생성한다.
 
 주요 파일:
 
@@ -224,6 +164,12 @@
 - `tests/unit_test/strategies/test_rsi2_pullback_fixture_runner_parity.py`
 - `tests/fixtures/backtest/larry_williams_channel_breakout_entry_cases.json`
 - `tests/unit_test/strategies/test_larry_williams_channel_breakout_fixture_runner_parity.py`
+- `tests/fixtures/backtest/oneil_squeeze_breakout_entry_cases.json`
+- `tests/unit_test/strategies/test_oneil_squeeze_breakout_fixture_runner_parity.py`
+- `tests/fixtures/backtest/larry_williams_vbo_entry_cases.json`
+- `tests/unit_test/strategies/test_larry_williams_vbo_fixture_runner_parity.py`
+- `tests/fixtures/backtest/high_tight_flag_entry_cases.json`
+- `tests/unit_test/strategies/test_high_tight_flag_fixture_runner_parity.py`
 
 ---
 
@@ -386,8 +332,9 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - HTF, First Pullback, Larry Williams VBO, OSB 중 다음 fixture 확장 대상 결정
-   - 선택 전략의 핵심 진입/탈락 경계 조건을 period/debug runner parity로 고정
+   - 장중 후보 종목의 프로그램매매 WebSocket 캡처 샘플 확보
+   - 실제 replay fixture에 캡처 overlay를 결합해 통과 케이스 고정
+   - 레거시 백테스트 저장 경로를 표준 journal / `BacktestExecutionReport` 경로로 정리
 
 3. P1 전략 수익성
    - 시장 국면별 성과 분리
@@ -435,7 +382,7 @@
   - 완료된 부분: 거래 비용 계산 유틸과 테스트가 있고, 체결 품질 로그/리포트에서 슬리피지를 추적한다.
   - 완료된 부분: 전략별 성과 지표 조회/집계 기본값이 비용 포함 순수익(`net PnL/return`) 기준으로 전환되었고, gross 기준은 `apply_cost=false` 명시 경로로 유지한다.
   - 완료된 부분: 백테스트용 `BacktestExecutionSimulator`가 명시적 시장가 슬리피지, 호가 단위 반올림, 수수료/거래세 포함 체결 리포트를 생성한다.
-  - 진행 필요: 모든 전략의 백테스트 저장 단계가 체결 리포트와 포트폴리오 장부를 사용하도록 연결해야 한다.
+  - 진행 필요: 레거시 백테스트 저장 단계가 체결 리포트와 포트폴리오 장부를 사용하도록 연결해야 한다.
   - 관련 파일: `utils/transaction_cost_utils.py`, `services/backtest_execution_simulator.py`, `services/order_execution_service.py`, `services/strategy_log_report_service.py`, `tests/unit_test/utils/test_transaction_cost_utils.py`, `tests/unit_test/services/test_backtest_execution_simulator.py`
 
 - [~] 장애, 데이터 지연, websocket 끊김, reconcile 실패 시 신규 주문 차단 또는 경고 상태로 전환된다.

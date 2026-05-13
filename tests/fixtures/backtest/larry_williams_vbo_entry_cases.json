@@ -1,0 +1,124 @@
+{
+  "cases": [
+    {
+      "id": "20260513_vbo_pass_standard",
+      "date": "20260513",
+      "time": "10:00:00",
+      "range": {
+        "high": 72000,
+        "low": 70000
+      },
+      "candidate": {
+        "market_cap": 300000000000,
+        "avg_trading_value_5d": 50000000000
+      },
+      "price": {
+        "current": 72000,
+        "open": 70000,
+        "program_buy_qty": 700000,
+        "trade_value": 50000000000
+      },
+      "execution_strength": 130.0,
+      "expected": {
+        "signal": true,
+        "reason_contains": "VBO돌파"
+      }
+    },
+    {
+      "id": "20260513_vbo_reject_below_target",
+      "date": "20260513",
+      "time": "10:00:00",
+      "range": {
+        "high": 72000,
+        "low": 70000
+      },
+      "candidate": {
+        "market_cap": 300000000000,
+        "avg_trading_value_5d": 50000000000
+      },
+      "price": {
+        "current": 70500,
+        "open": 70000,
+        "program_buy_qty": 700000,
+        "trade_value": 50000000000
+      },
+      "execution_strength": 130.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "below_target"
+      }
+    },
+    {
+      "id": "20260513_vbo_reject_low_execution_strength",
+      "date": "20260513",
+      "time": "10:00:00",
+      "range": {
+        "high": 72000,
+        "low": 70000
+      },
+      "candidate": {
+        "market_cap": 300000000000,
+        "avg_trading_value_5d": 50000000000
+      },
+      "price": {
+        "current": 72000,
+        "open": 70000,
+        "program_buy_qty": 700000,
+        "trade_value": 50000000000
+      },
+      "execution_strength": 110.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "low_execution_strength"
+      }
+    },
+    {
+      "id": "20260514_vbo_reject_negative_program_buy",
+      "date": "20260514",
+      "time": "10:00:00",
+      "range": {
+        "high": 72000,
+        "low": 70000
+      },
+      "candidate": {
+        "market_cap": 300000000000,
+        "avg_trading_value_5d": 50000000000
+      },
+      "price": {
+        "current": 72000,
+        "open": 70000,
+        "program_buy_qty": -100000,
+        "trade_value": 50000000000
+      },
+      "execution_strength": 130.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "negative_program_buy"
+      }
+    },
+    {
+      "id": "20260514_vbo_reject_low_program_buy_ratio",
+      "date": "20260514",
+      "time": "10:00:00",
+      "range": {
+        "high": 72000,
+        "low": 70000
+      },
+      "candidate": {
+        "market_cap": 300000000000,
+        "avg_trading_value_5d": 50000000000
+      },
+      "price": {
+        "current": 72000,
+        "open": 70000,
+        "program_buy_qty": 50000,
+        "trade_value": 50000000000
+      },
+      "execution_strength": 130.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "low_program_buy_ratio"
+      }
+    }
+  ]
+}

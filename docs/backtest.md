@@ -1,6 +1,6 @@
 # 백테스트 진행 현황과 사용법
 
-최종 업데이트: 2026-05-10
+최종 업데이트: 2026-05-13
 
 이 문서는 현재 프로젝트에서 백테스트와 관련해 이미 진행한 작업, 남은 작업, 실제 실행 방법을 정리한다.
 
@@ -166,11 +166,19 @@
 - `--mc-runs`, `--mc-seed`, `--mc-ruin-drawdown-pct`로 Monte Carlo 실행 횟수, 재현 seed, ruin 기준 MDD를 지정할 수 있다.
 - `--execution-bar-policy current_bar|next_bar` 옵션으로 체결 후보 봉 선택 정책을 지정할 수 있다.
 - `--backtest-time HH:MM:SS` 옵션으로 전략 조건 평가에 사용할 과거 장중 시각을 지정할 수 있다.
+- `scripts/select_backtest_replay_fixtures.py`를 추가해 로컬 `data/stocks.db`의 실제 과거 데이터에서 replay fixture 후보 일자를 선정할 수 있게 했다.
+- 선정 기준은 daily snapshot 수, 거래대금 기준 통과 종목 수, OHLCV warmup 충족 종목 수, RS rating coverage, 표본 종목 거래대금 순위다.
+- `scripts/export_backtest_replay_fixture.py`를 추가해 선정된 일자의 daily snapshot, OHLCV warmup, RS rating을 재현 가능한 JSON fixture로 저장할 수 있게 했다.
+- replay fixture schema v2는 `execution_strength`와 `program_trades` overlay를 포함한다. 현재 로컬 DB에 없는 체결강도/프로그램매매 캡처를 별도 JSON으로 받아 같은 fixture에 합칠 수 있다.
 
 주요 파일:
 
 - `scripts/run_backtest.py`
+- `scripts/select_backtest_replay_fixtures.py`
+- `scripts/export_backtest_replay_fixture.py`
 - `tests/unit_test/scripts/test_run_backtest.py`
+- `tests/unit_test/scripts/test_select_backtest_replay_fixtures.py`
+- `tests/unit_test/scripts/test_export_backtest_replay_fixture.py`
 
 ### Walk-forward 검증
 
@@ -212,10 +220,13 @@
 - period runner는 최종 BUY 체결 여부를 fixture 기대값과 비교한다.
 - strategy debug runner는 최종 `SIGNAL` / `REJECTED` decision journal이 fixture 기대값과 같은 방향인지 비교한다.
 - debug runner decision journal은 최종 BUY 신호가 있는 종목의 중간 로그(`buy_signal_generated`, PP/BGU 분기 중간 탈락)를 별도 `REJECTED`로 저장하지 않는다.
+- `20260512` 실제 replay fixture를 같은 parity 테스트에 연결해 synthetic fixture의 통과/탈락 방향과 같은 runner 레이어에서 비교할 수 있게 했다.
+- 현재 실제 replay fixture는 daily snapshot/OHLCV/RS만 포함하므로 체결강도와 분봉 프로그램매매가 필요한 통과 케이스가 아니라, runner 간 no-signal 방향 일치 검증으로 사용한다.
 
 주요 파일:
 
 - `tests/fixtures/backtest/oneil_pp_bgu_entry_cases.json`
+- `tests/fixtures/backtest/replay_20260512_sample.json`
 - `tests/unit_test/strategies/test_oneil_pocket_pivot_fixture_cases.py`
 - `tests/unit_test/strategies/test_oneil_pp_bgu_fixture_runner_parity.py`
 - `strategies/debug/strategy_debug_runner.py`
@@ -248,6 +259,60 @@
 - `tests/unit_test/strategies/test_larry_williams_channel_breakout_fixture_runner_parity.py`
 - `strategies/larry_williams_channel_breakout_strategy.py`
 
+### O'Neil Squeeze Breakout fixture 검증
+
+- O'Neil 스퀴즈 돌파 전략인 `OneilSqueezeBreakoutStrategy` fixture를 추가했다.
+- `20260511` 기준 정석 돌파 통과, Pool A 스퀴즈 미충족 탈락, 돌파 버퍼 미충족 탈락 케이스를 고정했다.
+- `20260512` 기준 캔들 품질 미달, 체결강도 미달 탈락 케이스를 고정했다.
+- 같은 fixture를 period runner와 strategy debug runner에 통과시켜 BUY 체결 여부와 SIGNAL/REJECTED decision journal 방향을 비교한다.
+- OSB 전략은 스퀴즈, 돌파 버퍼, 과확장, 캔들 품질, 체결강도 탈락을 `entry_rejected` 로그로 남겨 debug runner가 표준 rejected journal을 만들 수 있게 했다.
+
+주요 파일:
+
+- `tests/fixtures/backtest/oneil_squeeze_breakout_entry_cases.json`
+- `tests/unit_test/strategies/test_oneil_squeeze_breakout_fixture_runner_parity.py`
+- `strategies/oneil_squeeze_breakout_strategy.py`
+
+### Larry Williams VBO fixture 검증
+
+- 장중 변동성 돌파 전략인 `LarryWilliamsVBOStrategy` fixture를 추가했다.
+- `20260513` 기준 VBO 정석 돌파 통과, target 미달, 체결강도 미달 탈락 케이스를 고정했다.
+- `20260514` 기준 프로그램 순매수 음수, 프로그램 순매수 비율 미달 탈락 케이스를 고정했다.
+- 같은 fixture를 period runner와 strategy debug runner에 통과시켜 BUY 체결 여부와 SIGNAL/REJECTED decision journal 방향을 비교한다.
+- VBO 전략은 유동성/시총, 현재가, range, target, 체결강도, 프로그램 순매수 탈락을 `entry_rejected` 로그로 남겨 debug runner가 표준 rejected journal을 만들 수 있게 했다.
+
+주요 파일:
+
+- `tests/fixtures/backtest/larry_williams_vbo_entry_cases.json`
+- `tests/unit_test/strategies/test_larry_williams_vbo_fixture_runner_parity.py`
+- `strategies/larry_williams_vbo_strategy.py`
+
+### HTF fixture 검증
+
+- 하이 타이트 플래그 전략인 `HighTightFlagStrategy` fixture를 추가했다.
+- `20260515` 기준 HTF 정석 돌파 통과, 진입 밴드 이탈, 캔들 품질 미달, 예상 거래량 미달, 체결강도 미달, 스마트머니 필터 탈락 케이스를 고정했다.
+- 같은 fixture를 period runner와 strategy debug runner에 통과시켜 BUY 체결 여부와 SIGNAL/REJECTED decision journal 방향을 비교한다.
+- HTF 전략은 OHLCV, 패턴, 현재가, 진입 밴드, 캔들 품질, 거래량, 체결강도, 스마트머니 탈락을 `entry_rejected` 로그로 남겨 debug runner가 표준 rejected journal을 만들 수 있게 했다.
+
+주요 파일:
+
+- `tests/fixtures/backtest/high_tight_flag_entry_cases.json`
+- `tests/unit_test/strategies/test_high_tight_flag_fixture_runner_parity.py`
+- `strategies/high_tight_flag_strategy.py`
+
+### First Pullback fixture 검증
+
+- 첫 눌림목 전략인 `FirstPullbackStrategy` fixture를 추가했다.
+- `20260516` 기준 첫 눌림목 정석 통과, 급등 이력 없음, 20MA 우상향 실패, 눌림 범위 이탈, 거래량 고갈 미충족, 반등 트리거 실패, 체결강도 미달 케이스를 고정했다.
+- 같은 fixture를 period runner와 strategy debug runner에 통과시켜 BUY 체결 여부와 SIGNAL/REJECTED decision journal 방향을 비교한다.
+- First Pullback 전략의 기존 `entry_rejected` 로그 계약으로 핵심 진입 탈락 사유가 debug runner 표준 rejected journal에 기록되는 것을 검증한다.
+
+주요 파일:
+
+- `tests/fixtures/backtest/first_pullback_entry_cases.json`
+- `tests/unit_test/strategies/test_first_pullback_fixture_runner_parity.py`
+- `strategies/first_pullback_strategy.py`
+
 ## 남은 작업
 
 ### 1. 표준 journal 저장 경로 후속 정리
@@ -261,11 +326,11 @@
 
 ### 2. replay context 후속 정리
 
-현재 활성 전략 7개는 replay SQS와 backtest clock을 같은 factory contract로 주입받는다. O'Neil PP/BGU, RSI2, LarryWilliams Channel Breakout fixture는 여러 거래일과 경계 조건까지 period/debug runner parity를 검증한다.
+현재 활성 전략 7개는 replay SQS와 backtest clock을 같은 factory contract로 주입받는다. O'Neil PP/BGU, RSI2, LarryWilliams Channel Breakout, O'Neil Squeeze Breakout, Larry Williams VBO, HTF, First Pullback fixture는 핵심 진입/탈락 경계 조건까지 period/debug runner parity를 검증한다.
 
 해야 할 일:
 
-- 다른 활성 전략(HTF, First Pullback, Larry Williams VBO, OSB)에도 fixture를 추가할지 결정
+- 전략 fixture가 실제 과거 replay 데이터와도 같은 방향으로 동작하는지 표본 일자를 늘린다.
 
 ### 3. 체결 정책 후속 정리
 
@@ -298,7 +363,10 @@
 
 해야 할 일:
 
-- HTF, First Pullback, Larry Williams VBO, OSB 중 우선 검증 전략을 정하고 fixture를 추가
+- `20260512` 표본 일자의 실제 replay fixture를 `tests/fixtures/backtest/replay_20260512_sample.json`로 고정했다.
+- 남은 후보 일자(`20260506`, `20260511`, `20260504`, `20260416`) 중 추가 표본이 필요하면 같은 방식으로 fixture를 만든다.
+- `20260512` 실제 replay fixture의 period runner 결과와 strategy debug runner 결과 방향을 PP/BGU parity 테스트로 고정했다.
+- 표본 일자별 통과 케이스까지 만들려면 체결강도와 분봉 프로그램매매 replay fixture를 추가로 확보해야 한다.
 
 ### 6. 실전 체결 fixture 확보
 
@@ -441,6 +509,85 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260510 --output json
 ```
 
+### 실제 replay fixture 후보 일자 선정
+
+로컬 `data/stocks.db`에 저장된 실제 과거 daily snapshot, OHLCV, RS rating coverage를 기준으로 fixture 후보 일자를 뽑는다.
+
+```powershell
+python -m scripts.select_backtest_replay_fixtures --limit 5 --sample-codes 5
+```
+
+현재 로컬 DB 기준 추천 후보:
+
+- `20260512`: replay-ready 542종목, sample codes `000660,005930,005380,010170,009150`
+- `20260506`: replay-ready 503종목, sample codes `005930,000660,402340,009150,005380`
+- `20260511`: replay-ready 499종목, sample codes `000660,005930,010170,005380,402340`
+- `20260504`: replay-ready 494종목, sample codes `000660,005930,001440,010170,402340`
+- `20260416`: replay-ready 474종목, sample codes `005930,000660,047040,010170,032820`
+
+JSON 출력은 fixture 후보를 파일로 남길 때 사용한다.
+
+```powershell
+python -m scripts.select_backtest_replay_fixtures --limit 5 --output json --output-file data/replay_fixture_candidates.json
+```
+
+### 실제 replay fixture 파일 생성
+
+선정된 표본 일자와 종목을 daily snapshot, OHLCV, RS rating 묶음으로 고정한다. schema v2부터는 체결강도와 프로그램매매 overlay placeholder도 함께 저장한다.
+
+```powershell
+python -m scripts.export_backtest_replay_fixture --date 20260512 --sample-codes 5 --ohlcv-lookback-days 60 --output-file tests/fixtures/backtest/replay_20260512_sample.json
+```
+
+명시 종목만 저장하려면 쉼표 구분 `--codes`를 사용한다.
+
+```powershell
+python -m scripts.export_backtest_replay_fixture --date 20260512 --codes 000660,005930 --ohlcv-lookback-days 60 --output-file tests/fixtures/backtest/replay_20260512_sample.json
+```
+
+체결강도와 프로그램매매 캡처가 있으면 코드별 JSON object로 붙인다.
+
+```powershell
+python -m scripts.export_backtest_replay_fixture --date 20260512 --codes 000660,005930 --execution-strength-file data/replay_execution_strength_20260512.json --program-trades-file data/replay_program_trades_20260512.json --output-file tests/fixtures/backtest/replay_20260512_sample.json
+```
+
+### 분봉/체결강도/프로그램 overlay 캡처
+
+`scripts.capture_backtest_microstructure`는 replay fixture에 붙일 overlay 파일을 만든다.
+
+```powershell
+python -m scripts.capture_backtest_microstructure --date 20260512 --codes 000660,005930 --start-hhmmss 090000 --end-hhmmss 153000 --output-dir data/backtest_microstructure
+```
+
+생성 파일:
+
+- `replay_microstructure_YYYYMMDD.json`: 전체 캡처 묶음
+- `replay_intraday_minutes_YYYYMMDD.json`: 종목별 분봉
+- `replay_execution_strength_YYYYMMDD.json`: exporter에 바로 넘길 체결강도 overlay
+- `replay_program_trades_YYYYMMDD.json`: exporter에 바로 넘길 프로그램 순매수 수량 overlay
+
+기본 `--program-source daily_rest`는 과거 일별 프로그램매매 REST 응답에서 `whol_smtn_ntby_qty`를 사용한다. 장중 WebSocket 프로그램매매를 이미 구독해 `data/program_subscribe/program_trading.db`에 쌓아둔 경우에는 아래처럼 DB의 마지막 `net_vol`을 overlay로 사용할 수 있다.
+
+```powershell
+python -m scripts.capture_backtest_microstructure --date 20260512 --codes 000660,005930 --program-source program_db --program-db-path data/program_subscribe/program_trading.db --output-dir data/backtest_microstructure
+```
+
+캡처 파일을 실제 replay fixture에 결합한다.
+
+```powershell
+python -m scripts.export_backtest_replay_fixture --date 20260512 --codes 000660,005930 --execution-strength-file data/backtest_microstructure/replay_execution_strength_20260512.json --program-trades-file data/backtest_microstructure/replay_program_trades_20260512.json --output-file tests/fixtures/backtest/replay_20260512_sample.json
+```
+
+overlay 파일 예:
+
+```json
+{"000660": 145.5, "005930": 132.0}
+```
+
+```json
+{"000660": 30000, "005930": 12000}
+```
+
 ### 파일로 저장
 
 ```powershell
@@ -510,7 +657,7 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 
 ## 현재 한계
 
-- 지원 전략은 활성 전략 7개로 확장됐지만, fixture 기반 parity 검증은 아직 O'Neil PP/BGU, RSI2, LarryWilliamsCB 중심이다.
+- 활성 전략 7개의 핵심 진입 fixture parity는 추가됐지만, synthetic fixture 중심이라 실제 과거 replay 데이터 표본은 더 필요하다.
 - `--use-risk-sizing`은 백테스트 ledger 기반 snapshot을 사용하므로 실제 계좌 잔고나 미체결 주문 상태를 조회하지 않는다.
 - `--walk-forward`는 train/tune/test 분리 실행과 test phase 요약 집계까지 지원한다. 자동 파라미터 최적화는 아직 수행하지 않는다.
 - `--monte-carlo`는 표준 journal에 `net_pnl`이 있는 완료 trade만 입력으로 사용한다. period runner의 SELL 체결 journal은 현재 `SOLD` 상태와 `net_pnl`을 기록한다.
@@ -530,11 +677,19 @@ pytest tests/unit_test/services/test_backtest_replay_adapter.py -v
 pytest tests/unit_test/services/test_backtest_replay_context.py -v
 pytest tests/unit_test/services/test_backtest_walk_forward.py -v
 pytest tests/unit_test/services/test_backtest_monte_carlo.py -v
+pytest tests/unit_test/services/test_backtest_replay_fixture_selector.py -v
+pytest tests/unit_test/services/test_backtest_replay_fixture_exporter.py -v
 pytest tests/unit_test/scripts/test_run_backtest.py -v
+pytest tests/unit_test/scripts/test_select_backtest_replay_fixtures.py -v
+pytest tests/unit_test/scripts/test_export_backtest_replay_fixture.py -v
 pytest tests/unit_test/strategies/test_oneil_pocket_pivot_fixture_cases.py -v
 pytest tests/unit_test/strategies/test_oneil_pp_bgu_fixture_runner_parity.py -v
 pytest tests/unit_test/strategies/test_rsi2_pullback_fixture_runner_parity.py -v
 pytest tests/unit_test/strategies/test_larry_williams_channel_breakout_fixture_runner_parity.py -v
+pytest tests/unit_test/strategies/test_oneil_squeeze_breakout_fixture_runner_parity.py -v
+pytest tests/unit_test/strategies/test_larry_williams_vbo_fixture_runner_parity.py -v
+pytest tests/unit_test/strategies/test_high_tight_flag_fixture_runner_parity.py -v
+pytest tests/unit_test/strategies/test_first_pullback_fixture_runner_parity.py -v
 pytest tests/unit_test/strategies/debug/test_strategy_debug_runner.py -v
 ```
 
@@ -547,6 +702,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `121 passed`
-- 전체 단위 테스트: `4212 passed`
-- 전체 통합 테스트: `208 passed`
+- 관련 테스트: `177 passed`
+- 전체 단위 테스트: `4329 passed`
+- 전체 통합 테스트: `224 passed`

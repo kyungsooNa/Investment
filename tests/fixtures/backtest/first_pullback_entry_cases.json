@@ -1,0 +1,139 @@
+{
+  "strategy": "FirstPullbackStrategy",
+  "description": "Synthetic First Pullback entry fixture cases shared by period runner and strategy debug runner parity tests.",
+  "cases": [
+    {
+      "id": "20260516_fp_pass_standard",
+      "date": "20260516",
+      "time": "12:00:00",
+      "ohlcv_variant": "upper_limit",
+      "price": {
+        "current": 13001,
+        "today_open": 12809,
+        "today_high": 13100,
+        "today_low": 12873,
+        "previous_diff": 0,
+        "previous_diff_sign": "3"
+      },
+      "execution_strength": 105.0,
+      "expected": {
+        "signal": true,
+        "reason_contains": "첫눌림목"
+      }
+    },
+    {
+      "id": "20260516_fp_reject_no_surge_history",
+      "date": "20260516",
+      "time": "12:00:00",
+      "ohlcv_variant": "none",
+      "price": {
+        "current": 10618,
+        "today_open": 10462,
+        "today_high": 10700,
+        "today_low": 10514,
+        "previous_diff": 0,
+        "previous_diff_sign": "3"
+      },
+      "execution_strength": 105.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "no_surge_history"
+      }
+    },
+    {
+      "id": "20260516_fp_reject_ma_not_uptrending",
+      "date": "20260516",
+      "time": "12:00:00",
+      "ohlcv_variant": "declining",
+      "price": {
+        "current": 10268,
+        "today_open": 10116,
+        "today_high": 10400,
+        "today_low": 10167,
+        "previous_diff": 0,
+        "previous_diff_sign": "3"
+      },
+      "execution_strength": 105.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "ma_not_uptrending"
+      }
+    },
+    {
+      "id": "20260516_fp_reject_pullback_out_of_range",
+      "date": "20260516",
+      "time": "12:00:00",
+      "ohlcv_variant": "upper_limit",
+      "price": {
+        "current": 13001,
+        "today_open": 12809,
+        "today_high": 13100,
+        "today_low": 12363,
+        "previous_diff": 0,
+        "previous_diff_sign": "3"
+      },
+      "execution_strength": 105.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "pullback_out_of_range"
+      }
+    },
+    {
+      "id": "20260516_fp_reject_volume_not_dry",
+      "date": "20260516",
+      "time": "12:00:00",
+      "ohlcv_variant": "upper_limit_high_recent_volume",
+      "price": {
+        "current": 13001,
+        "today_open": 12809,
+        "today_high": 13100,
+        "today_low": 12873,
+        "previous_diff": 0,
+        "previous_diff_sign": "3"
+      },
+      "execution_strength": 105.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "volume_not_dry"
+      }
+    },
+    {
+      "id": "20260516_fp_reject_no_bullish_reversal",
+      "date": "20260516",
+      "time": "12:00:00",
+      "ohlcv_variant": "upper_limit",
+      "price": {
+        "current": 12880,
+        "today_open": 13000,
+        "today_high": 13200,
+        "today_low": 12873,
+        "previous_diff": 0,
+        "previous_diff_sign": "3"
+      },
+      "execution_strength": 105.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "no_bullish_reversal"
+      }
+    },
+    {
+      "id": "20260516_fp_reject_low_execution_strength",
+      "date": "20260516",
+      "time": "12:00:00",
+      "ohlcv_variant": "upper_limit",
+      "price": {
+        "current": 13001,
+        "today_open": 12809,
+        "today_high": 13100,
+        "today_low": 12873,
+        "previous_diff": 0,
+        "previous_diff_sign": "3"
+      },
+      "execution_strength": 85.0,
+      "expected": {
+        "signal": false,
+        "rejected_reason": "low_execution_strength"
+      }
+    }
+  ]
+}
