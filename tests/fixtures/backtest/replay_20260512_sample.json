@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "schema_version": 1,
+    "schema_version": 2,
     "fixture_type": "historical_replay_snapshot",
     "trade_date": "20260512",
     "codes": [
@@ -14,7 +14,9 @@
     "row_counts": {
       "daily_prices": 5,
       "ohlcv": 300,
-      "rs_ratings": 5
+      "rs_ratings": 5,
+      "execution_strength": 0,
+      "program_trades": 0
     }
   },
   "daily_prices": [
@@ -2922,5 +2924,19 @@
       "rs_rating": 98,
       "weighted_rs": 107.82229735740616
     }
-  ]
+  ],
+  "execution_strength": {
+    "000660": null,
+    "005930": null,
+    "005380": null,
+    "010170": null,
+    "009150": null
+  },
+  "program_trades": {
+    "000660": null,
+    "005930": null,
+    "005380": null,
+    "010170": null,
+    "009150": null
+  }
 }

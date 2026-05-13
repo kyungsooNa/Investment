@@ -47,7 +47,11 @@ def _create_db(path):
 def test_main_writes_replay_fixture_json(tmp_path, capsys):
     db_path = tmp_path / "stocks.db"
     output_path = tmp_path / "fixture.json"
+    execution_strength_path = tmp_path / "execution_strength.json"
+    program_trades_path = tmp_path / "program_trades.json"
     _create_db(db_path)
+    execution_strength_path.write_text('{"000001": 141.2}', encoding="utf-8")
+    program_trades_path.write_text('{"000001": 30000}', encoding="utf-8")
 
     exit_code = main([
         "--db-path",
@@ -58,6 +62,10 @@ def test_main_writes_replay_fixture_json(tmp_path, capsys):
         "000001",
         "--ohlcv-lookback-days",
         "3",
+        "--execution-strength-file",
+        str(execution_strength_path),
+        "--program-trades-file",
+        str(program_trades_path),
         "--output-file",
         str(output_path),
     ])
@@ -67,4 +75,6 @@ def test_main_writes_replay_fixture_json(tmp_path, capsys):
     assert payload["metadata"]["trade_date"] == "20260512"
     assert payload["metadata"]["codes"] == ["000001"]
     assert len(payload["ohlcv"]["000001"]) == 3
+    assert payload["execution_strength"] == {"000001": 141.2}
+    assert payload["program_trades"] == {"000001": {"program_net_buy_qty": 30000}}
     assert str(output_path) in capsys.readouterr().out

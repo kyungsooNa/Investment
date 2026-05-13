@@ -92,6 +92,8 @@ def test_export_fixture_includes_daily_rs_and_bounded_ohlcv(tmp_path):
         "daily_prices": 2,
         "ohlcv": 6,
         "rs_ratings": 1,
+        "execution_strength": 0,
+        "program_trades": 0,
     }
     assert [row["code"] for row in payload["daily_prices"]] == ["000002", "000001"]
     assert [row["code"] for row in payload["rs_ratings"]] == ["000001"]
@@ -100,6 +102,32 @@ def test_export_fixture_includes_daily_rs_and_bounded_ohlcv(tmp_path):
         "20260511",
         "20260512",
     ]
+
+
+def test_export_fixture_can_include_microstructure_overlays(tmp_path):
+    db_path = tmp_path / "stocks.db"
+    _create_db(db_path)
+
+    exporter = BacktestReplayFixtureExporter(db_path)
+    payload = exporter.export_fixture(
+        trade_date="20260512",
+        codes=["000002", "000001"],
+        ohlcv_lookback_days=3,
+        execution_strength_by_code={"000001": 145.5},
+        program_net_buy_qty_by_code={"000002": 12345},
+    )
+
+    assert payload["metadata"]["schema_version"] == 2
+    assert payload["metadata"]["row_counts"]["execution_strength"] == 1
+    assert payload["metadata"]["row_counts"]["program_trades"] == 1
+    assert payload["execution_strength"] == {
+        "000002": None,
+        "000001": 145.5,
+    }
+    assert payload["program_trades"] == {
+        "000002": {"program_net_buy_qty": 12345},
+        "000001": None,
+    }
 
 
 def test_export_fixture_uses_sample_codes_when_codes_are_omitted(tmp_path):
@@ -144,6 +172,16 @@ def test_committed_20260512_replay_fixture_shape_is_stable():
         "daily_prices": 5,
         "ohlcv": 300,
         "rs_ratings": 5,
+        "execution_strength": 0,
+        "program_trades": 0,
+    }
+    assert payload["execution_strength"] == {
+        code: None
+        for code in payload["metadata"]["codes"]
+    }
+    assert payload["program_trades"] == {
+        code: None
+        for code in payload["metadata"]["codes"]
     }
     assert {row["code"] for row in payload["daily_prices"]} == set(payload["metadata"]["codes"])
     assert {row["code"] for row in payload["rs_ratings"]} == set(payload["metadata"]["codes"])

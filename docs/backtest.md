@@ -169,6 +169,7 @@
 - `scripts/select_backtest_replay_fixtures.py`를 추가해 로컬 `data/stocks.db`의 실제 과거 데이터에서 replay fixture 후보 일자를 선정할 수 있게 했다.
 - 선정 기준은 daily snapshot 수, 거래대금 기준 통과 종목 수, OHLCV warmup 충족 종목 수, RS rating coverage, 표본 종목 거래대금 순위다.
 - `scripts/export_backtest_replay_fixture.py`를 추가해 선정된 일자의 daily snapshot, OHLCV warmup, RS rating을 재현 가능한 JSON fixture로 저장할 수 있게 했다.
+- replay fixture schema v2는 `execution_strength`와 `program_trades` overlay를 포함한다. 현재 로컬 DB에 없는 체결강도/프로그램매매 캡처를 별도 JSON으로 받아 같은 fixture에 합칠 수 있다.
 
 주요 파일:
 
@@ -532,7 +533,7 @@ python -m scripts.select_backtest_replay_fixtures --limit 5 --output json --outp
 
 ### 실제 replay fixture 파일 생성
 
-선정된 표본 일자와 종목을 daily snapshot, OHLCV, RS rating 묶음으로 고정한다.
+선정된 표본 일자와 종목을 daily snapshot, OHLCV, RS rating 묶음으로 고정한다. schema v2부터는 체결강도와 프로그램매매 overlay placeholder도 함께 저장한다.
 
 ```powershell
 python -m scripts.export_backtest_replay_fixture --date 20260512 --sample-codes 5 --ohlcv-lookback-days 60 --output-file tests/fixtures/backtest/replay_20260512_sample.json
@@ -542,6 +543,49 @@ python -m scripts.export_backtest_replay_fixture --date 20260512 --sample-codes 
 
 ```powershell
 python -m scripts.export_backtest_replay_fixture --date 20260512 --codes 000660,005930 --ohlcv-lookback-days 60 --output-file tests/fixtures/backtest/replay_20260512_sample.json
+```
+
+체결강도와 프로그램매매 캡처가 있으면 코드별 JSON object로 붙인다.
+
+```powershell
+python -m scripts.export_backtest_replay_fixture --date 20260512 --codes 000660,005930 --execution-strength-file data/replay_execution_strength_20260512.json --program-trades-file data/replay_program_trades_20260512.json --output-file tests/fixtures/backtest/replay_20260512_sample.json
+```
+
+### 분봉/체결강도/프로그램 overlay 캡처
+
+`scripts.capture_backtest_microstructure`는 replay fixture에 붙일 overlay 파일을 만든다.
+
+```powershell
+python -m scripts.capture_backtest_microstructure --date 20260512 --codes 000660,005930 --start-hhmmss 090000 --end-hhmmss 153000 --output-dir data/backtest_microstructure
+```
+
+생성 파일:
+
+- `replay_microstructure_YYYYMMDD.json`: 전체 캡처 묶음
+- `replay_intraday_minutes_YYYYMMDD.json`: 종목별 분봉
+- `replay_execution_strength_YYYYMMDD.json`: exporter에 바로 넘길 체결강도 overlay
+- `replay_program_trades_YYYYMMDD.json`: exporter에 바로 넘길 프로그램 순매수 수량 overlay
+
+기본 `--program-source daily_rest`는 과거 일별 프로그램매매 REST 응답에서 `whol_smtn_ntby_qty`를 사용한다. 장중 WebSocket 프로그램매매를 이미 구독해 `data/program_subscribe/program_trading.db`에 쌓아둔 경우에는 아래처럼 DB의 마지막 `net_vol`을 overlay로 사용할 수 있다.
+
+```powershell
+python -m scripts.capture_backtest_microstructure --date 20260512 --codes 000660,005930 --program-source program_db --program-db-path data/program_subscribe/program_trading.db --output-dir data/backtest_microstructure
+```
+
+캡처 파일을 실제 replay fixture에 결합한다.
+
+```powershell
+python -m scripts.export_backtest_replay_fixture --date 20260512 --codes 000660,005930 --execution-strength-file data/backtest_microstructure/replay_execution_strength_20260512.json --program-trades-file data/backtest_microstructure/replay_program_trades_20260512.json --output-file tests/fixtures/backtest/replay_20260512_sample.json
+```
+
+overlay 파일 예:
+
+```json
+{"000660": 145.5, "005930": 132.0}
+```
+
+```json
+{"000660": 30000, "005930": 12000}
 ```
 
 ### 파일로 저장
@@ -658,6 +702,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `173 passed`
-- 전체 단위 테스트: `4325 passed`
+- 관련 테스트: `177 passed`
+- 전체 단위 테스트: `4329 passed`
 - 전체 통합 테스트: `224 passed`

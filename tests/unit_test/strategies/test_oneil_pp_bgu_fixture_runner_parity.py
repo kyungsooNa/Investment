@@ -133,7 +133,7 @@ def _price_response_from_replay(row: dict) -> ResCommonResponse:
             "output": {
                 "stck_prpr": str(current),
                 "acml_vol": str(row["volume"]),
-                "pgtr_ntby_qty": "0",
+                "pgtr_ntby_qty": str(row.get("program_net_buy_qty", 0) or 0),
                 "acml_tr_pbmn": str(row["trading_value"]),
                 "stck_oprc": str(row["open_price"]),
                 "stck_hgpr": str(row["high_price"]),
@@ -229,9 +229,15 @@ def _strategy_for_replay_fixture(payload: dict, tmp_path, logger: logging.Logger
     trade_date = payload["metadata"]["trade_date"]
     daily_by_code = {row["code"]: row for row in payload["daily_prices"]}
     rs_by_code = {row["code"]: row["rs_rating"] for row in payload["rs_ratings"]}
+    execution_strength = payload.get("execution_strength") or {}
+    program_trades = payload.get("program_trades") or {}
 
     async def get_current_price(code, *args, **kwargs):
-        return _price_response_from_replay(daily_by_code[code])
+        row = dict(daily_by_code[code])
+        program_row = program_trades.get(code)
+        if isinstance(program_row, dict):
+            row["program_net_buy_qty"] = program_row.get("program_net_buy_qty")
+        return _price_response_from_replay(row)
 
     async def get_recent_daily_ohlcv(code, limit=60, end_date=None):
         rows = [
@@ -243,7 +249,9 @@ def _strategy_for_replay_fixture(payload: dict, tmp_path, logger: logging.Logger
     sqs = MagicMock()
     sqs.get_current_price = AsyncMock(side_effect=get_current_price)
     sqs.get_recent_daily_ohlcv = AsyncMock(side_effect=get_recent_daily_ohlcv)
-    sqs.get_stock_conclusion = AsyncMock(return_value=_conclusion_response(0.0))
+    sqs.get_stock_conclusion = AsyncMock(
+        side_effect=lambda code: _conclusion_response(execution_strength.get(code) or 0.0)
+    )
 
     universe = MagicMock()
     universe.get_watchlist = AsyncMock(

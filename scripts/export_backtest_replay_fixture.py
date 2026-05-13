@@ -19,6 +19,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-trading-value", type=int, default=10_000_000_000)
     parser.add_argument("--min-ohlcv-days", type=int, default=60)
     parser.add_argument("--ohlcv-lookback-days", type=int, default=60)
+    parser.add_argument("--execution-strength-file")
+    parser.add_argument("--program-trades-file")
     parser.add_argument("--output-file", required=True)
     return parser
 
@@ -36,6 +38,8 @@ def main(argv: list[str] | None = None) -> int:
         trade_date=args.date,
         codes=codes,
         ohlcv_lookback_days=args.ohlcv_lookback_days,
+        execution_strength_by_code=_load_overlay_file(args.execution_strength_file),
+        program_net_buy_qty_by_code=_load_overlay_file(args.program_trades_file),
     )
 
     output_path = Path(args.output_file)
@@ -52,6 +56,15 @@ def _parse_codes(raw: str | None) -> list[str] | None:
     if raw is None:
         return None
     return [code.strip() for code in raw.split(",") if code.strip()]
+
+
+def _load_overlay_file(path: str | None) -> dict:
+    if not path:
+        return {}
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"overlay file must contain a JSON object: {path}")
+    return payload
 
 
 if __name__ == "__main__":

@@ -30,6 +30,8 @@ class BacktestReplayFixtureExporter:
         trade_date: str,
         codes: Iterable[str] | None = None,
         ohlcv_lookback_days: int = 60,
+        execution_strength_by_code: dict[str, float] | None = None,
+        program_net_buy_qty_by_code: dict[str, int] | None = None,
     ) -> dict:
         if not self._db_path.exists():
             raise FileNotFoundError(f"backtest replay DB not found: {self._db_path}")
@@ -55,9 +57,17 @@ class BacktestReplayFixtureExporter:
 
             rs_rows = self._rs_rows(conn, trade_date, selected_codes)
 
+        execution_strength = _execution_strength_payload(
+            selected_codes,
+            execution_strength_by_code or {},
+        )
+        program_trades = _program_trades_payload(
+            selected_codes,
+            program_net_buy_qty_by_code or {},
+        )
         return {
             "metadata": {
-                "schema_version": 1,
+                "schema_version": 2,
                 "fixture_type": "historical_replay_snapshot",
                 "trade_date": str(trade_date),
                 "codes": selected_codes,
@@ -66,11 +76,21 @@ class BacktestReplayFixtureExporter:
                     "daily_prices": len(daily_rows),
                     "ohlcv": sum(len(rows) for rows in ohlcv_by_code.values()),
                     "rs_ratings": len(rs_rows),
+                    "execution_strength": sum(
+                        1 for value in execution_strength.values()
+                        if value is not None
+                    ),
+                    "program_trades": sum(
+                        1 for value in program_trades.values()
+                        if value is not None
+                    ),
                 },
             },
             "daily_prices": daily_rows,
             "ohlcv": ohlcv_by_code,
             "rs_ratings": rs_rows,
+            "execution_strength": execution_strength,
+            "program_trades": program_trades,
         }
 
     def _sample_codes(self, trade_date: str) -> list[str]:
@@ -142,3 +162,36 @@ def _in_clause_sql(template: str, values: list[str]) -> str:
     if not values:
         raise ValueError("IN clause values must not be empty")
     return template.format(",".join("?" for _ in values))
+
+
+def _execution_strength_payload(
+    codes: list[str],
+    values_by_code: dict[str, float],
+) -> dict[str, float | None]:
+    return {
+        code: _to_float(values_by_code.get(code))
+        for code in codes
+    }
+
+
+def _program_trades_payload(
+    codes: list[str],
+    values_by_code: dict[str, int],
+) -> dict[str, dict | None]:
+    payload: dict[str, dict | None] = {}
+    for code in codes:
+        value = _to_int(values_by_code.get(code))
+        payload[code] = {"program_net_buy_qty": value} if value is not None else None
+    return payload
+
+
+def _to_float(value) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
+def _to_int(value) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(value)
