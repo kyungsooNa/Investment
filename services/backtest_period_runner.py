@@ -97,6 +97,7 @@ class BacktestPeriodRunner:
         self._position_sizing_service = position_sizing_service
         self._risk_gate_service = risk_gate_service
         self._date_context_targets = list(date_context_targets or [])
+        self._position_excursions: dict[str, dict[str, float | None]] = {}
 
     async def run(self, dates: Sequence[str]) -> BacktestPeriodRunResult:
         result = BacktestPeriodRunResult(
@@ -129,6 +130,7 @@ class BacktestPeriodRunner:
             report = await self._execute_signal(signal, date_ymd, side=OrderSide.SELL, order=order)
             sell_metrics = self._sell_realized_metrics(report)
             self._ledger.apply_execution(report)
+            self._forget_position_excursion_if_closed(report)
             result.execution_reports.append(report)
             result.journal_records.append(
                 self._execution_record(report, realized_metrics=sell_metrics)
@@ -178,6 +180,7 @@ class BacktestPeriodRunner:
 
             report = await self._execute_signal(signal, date_ymd, side=OrderSide.BUY, order=decision.order)
             self._ledger.apply_execution(report)
+            self._remember_position_excursion(report)
             result.execution_reports.append(report)
             result.journal_records.append(self._execution_record(report))
             if report.filled_qty <= 0:
@@ -202,6 +205,8 @@ class BacktestPeriodRunner:
         )
         order = order or self._signal_to_order(signal, 0, side=side)
         report = self._simulator.simulate(order, bar)
+        if side == OrderSide.SELL:
+            report = self._with_holding_period_excursion(report, bar)
         return replace(report, execution_bar_policy=execution_policy)
 
     async def _apply_position_sizing(
@@ -332,6 +337,38 @@ class BacktestPeriodRunner:
             record["metadata"] = metadata
         return record
 
+    def _remember_position_excursion(self, report: BacktestExecutionReport) -> None:
+        if report.order.side != OrderSide.BUY or report.filled_qty <= 0:
+            return
+        current = self._position_excursions.get(report.order.code, {})
+        self._position_excursions[report.order.code] = {
+            "mfe": _max_optional(current.get("mfe"), report.mfe),
+            "mae": _min_optional(current.get("mae"), report.mae),
+        }
+
+    def _forget_position_excursion_if_closed(self, report: BacktestExecutionReport) -> None:
+        position = self._ledger.positions.get(report.order.code)
+        if position is None or position.qty <= 0:
+            self._position_excursions.pop(report.order.code, None)
+
+    def _with_holding_period_excursion(
+        self,
+        report: BacktestExecutionReport,
+        bar: BacktestBar,
+    ) -> BacktestExecutionReport:
+        position = self._ledger.positions.get(report.order.code)
+        if position is None or position.avg_price <= 0 or report.filled_qty <= 0:
+            return report
+
+        bar_mfe = (bar.high / position.avg_price - 1.0) * 100.0
+        bar_mae = (bar.low / position.avg_price - 1.0) * 100.0
+        current = self._position_excursions.get(report.order.code, {})
+        return replace(
+            report,
+            mfe=_max_optional(current.get("mfe"), bar_mfe),
+            mae=_min_optional(current.get("mae"), bar_mae),
+        )
+
     def _sell_realized_metrics(self, report: BacktestExecutionReport) -> dict:
         if report.order.side != OrderSide.SELL or report.filled_qty <= 0 or report.fill_price is None:
             return {}
@@ -429,6 +466,16 @@ def _exchange_for_signal(signal: TradeSignal) -> Exchange:
 
 def _live_order_side(side: OrderSide) -> LiveOrderSide:
     return LiveOrderSide.BUY if side == OrderSide.BUY else LiveOrderSide.SELL
+
+
+def _max_optional(left: float | None, right: float | None) -> float | None:
+    values = [value for value in (left, right) if value is not None]
+    return max(values) if values else None
+
+
+def _min_optional(left: float | None, right: float | None) -> float | None:
+    values = [value for value in (left, right) if value is not None]
+    return min(values) if values else None
 
 
 def _execution_bar_policy_value(policy: BacktestExecutionBarPolicy | str) -> str:

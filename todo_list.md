@@ -39,7 +39,8 @@
 - [~] 모든 저장 경로가 표준 journal schema를 직접 저장하도록 정리한다.
   - 완료된 부분: `BacktestExecutionReport` 기반 기간 백테스트 journal이 전략 신호 사유(`decision_reason`)와 체결 봉 기준 `MFE`/`MAE`를 표준 schema로 보존한다.
   - 완료된 부분: 레거시 `VolumeBreakoutStrategy.backtest_open_threshold_intraday()` 저장 경로가 왕복 1행(`ROUND_TRIP`) 대신 `BacktestExecutionReport` 기반 `BUY FILLED` + `SELL SOLD` 표준 journal을 저장한다.
-  - 남은 작업: 보유기간 전체 기준 `MFE`, `MAE`가 필요한 활성 전략 period runner의 multi-day 보유 케이스를 보강한다.
+  - 완료된 부분: 활성 전략 period runner의 매도 journal이 매수 체결 봉과 매도 체결 봉을 합산한 보유기간 기준 `MFE`, `MAE`를 기록한다.
+  - 남은 작업: 체결이 발생하지 않은 중간 보유일의 일중 high/low까지 포함하려면 별도 mark-to-market bar provider contract를 추가한다.
 - [~] backtest-vs-live 괴리 리포트를 운영 판단 지표로 승격한다.
   - 남은 작업: 전략별 기대값 대비 실거래 괴리를 after-market 성과 악화 감지와 연결한다.
 - [x] 비용 포함 순수익(`cost`, `net_pnl`, `net_return`)을 기본 성과 기준으로 사용한다.

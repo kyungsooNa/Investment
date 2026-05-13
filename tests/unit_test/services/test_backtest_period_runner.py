@@ -184,6 +184,27 @@ async def test_period_runner_executes_buy_and_sell_through_ledger():
 
 
 @pytest.mark.asyncio
+async def test_period_runner_sell_journal_uses_holding_period_mfe_mae():
+    strategy = FakeStrategy()
+    provider = StaticBarProvider({
+        ("20260501", "005930", "BUY"): BacktestBar("20260501 091000", 70_000, 70_500, 69_500, 70_200, 1_000),
+        ("20260502", "005930", "SELL"): BacktestBar("20260502 100000", 77_000, 84_000, 68_000, 77_100, 1_000),
+    })
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=provider,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+    )
+
+    result = await runner.run(["20260501", "20260502"])
+
+    sell_record = result.journal_records[1]
+    assert sell_record["status"] == "SOLD"
+    assert sell_record["mfe"] == pytest.approx((84_000 / 70_000 - 1) * 100)
+    assert sell_record["mae"] == pytest.approx((68_000 / 70_000 - 1) * 100)
+
+
+@pytest.mark.asyncio
 async def test_period_runner_names_execution_bar_policy_at_provider_and_journal():
     strategy = FakeStrategy()
     provider = PolicyCapturingBarProvider(
