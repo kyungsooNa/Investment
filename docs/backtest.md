@@ -289,6 +289,19 @@
 - `tests/unit_test/strategies/test_high_tight_flag_fixture_runner_parity.py`
 - `strategies/high_tight_flag_strategy.py`
 
+### First Pullback fixture 검증
+
+- 첫 눌림목 전략인 `FirstPullbackStrategy` fixture를 추가했다.
+- `20260516` 기준 첫 눌림목 정석 통과, 급등 이력 없음, 20MA 우상향 실패, 눌림 범위 이탈, 거래량 고갈 미충족, 반등 트리거 실패, 체결강도 미달 케이스를 고정했다.
+- 같은 fixture를 period runner와 strategy debug runner에 통과시켜 BUY 체결 여부와 SIGNAL/REJECTED decision journal 방향을 비교한다.
+- First Pullback 전략의 기존 `entry_rejected` 로그 계약으로 핵심 진입 탈락 사유가 debug runner 표준 rejected journal에 기록되는 것을 검증한다.
+
+주요 파일:
+
+- `tests/fixtures/backtest/first_pullback_entry_cases.json`
+- `tests/unit_test/strategies/test_first_pullback_fixture_runner_parity.py`
+- `strategies/first_pullback_strategy.py`
+
 ## 남은 작업
 
 ### 1. 표준 journal 저장 경로 후속 정리
@@ -302,11 +315,11 @@
 
 ### 2. replay context 후속 정리
 
-현재 활성 전략 7개는 replay SQS와 backtest clock을 같은 factory contract로 주입받는다. O'Neil PP/BGU, RSI2, LarryWilliams Channel Breakout, O'Neil Squeeze Breakout, Larry Williams VBO, HTF fixture는 여러 거래일과 경계 조건까지 period/debug runner parity를 검증한다.
+현재 활성 전략 7개는 replay SQS와 backtest clock을 같은 factory contract로 주입받는다. O'Neil PP/BGU, RSI2, LarryWilliams Channel Breakout, O'Neil Squeeze Breakout, Larry Williams VBO, HTF, First Pullback fixture는 핵심 진입/탈락 경계 조건까지 period/debug runner parity를 검증한다.
 
 해야 할 일:
 
-- First Pullback에도 fixture를 추가할지 결정
+- 전략 fixture가 실제 과거 replay 데이터와도 같은 방향으로 동작하는지 표본 일자를 늘린다.
 
 ### 3. 체결 정책 후속 정리
 
@@ -339,7 +352,7 @@
 
 해야 할 일:
 
-- First Pullback fixture를 추가
+- 실제 과거 replay 데이터 기반 fixture를 추가할 표본 일자를 선정
 
 ### 6. 실전 체결 fixture 확보
 
@@ -551,7 +564,7 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 
 ## 현재 한계
 
-- 지원 전략은 활성 전략 7개로 확장됐지만, fixture 기반 parity 검증은 아직 O'Neil PP/BGU, RSI2, LarryWilliamsCB, OSB, LarryWilliamsVBO, HTF 중심이다.
+- 활성 전략 7개의 핵심 진입 fixture parity는 추가됐지만, synthetic fixture 중심이라 실제 과거 replay 데이터 표본은 더 필요하다.
 - `--use-risk-sizing`은 백테스트 ledger 기반 snapshot을 사용하므로 실제 계좌 잔고나 미체결 주문 상태를 조회하지 않는다.
 - `--walk-forward`는 train/tune/test 분리 실행과 test phase 요약 집계까지 지원한다. 자동 파라미터 최적화는 아직 수행하지 않는다.
 - `--monte-carlo`는 표준 journal에 `net_pnl`이 있는 완료 trade만 입력으로 사용한다. period runner의 SELL 체결 journal은 현재 `SOLD` 상태와 `net_pnl`을 기록한다.
@@ -579,6 +592,7 @@ pytest tests/unit_test/strategies/test_larry_williams_channel_breakout_fixture_r
 pytest tests/unit_test/strategies/test_oneil_squeeze_breakout_fixture_runner_parity.py -v
 pytest tests/unit_test/strategies/test_larry_williams_vbo_fixture_runner_parity.py -v
 pytest tests/unit_test/strategies/test_high_tight_flag_fixture_runner_parity.py -v
+pytest tests/unit_test/strategies/test_first_pullback_fixture_runner_parity.py -v
 pytest tests/unit_test/strategies/debug/test_strategy_debug_runner.py -v
 ```
 
@@ -591,6 +605,6 @@ pytest tests/integration_test -v
 
 최근 확인 결과:
 
-- 관련 테스트: `136 passed`
-- 전체 단위 테스트: `4300 passed`
+- 관련 테스트: `161 passed`
+- 전체 단위 테스트: `4313 passed`
 - 전체 통합 테스트: `224 passed`

@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-13 (HTF fixture parity 추가)
+최종 업데이트: 2026-05-13 (First Pullback fixture parity 추가)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -197,6 +197,7 @@
   - 완료된 부분: OSB fixture를 추가해 정석 돌파 통과, Pool A 스퀴즈 미충족, 돌파 버퍼 미충족, 캔들 품질 미달, 체결강도 미달을 period runner와 strategy debug runner 양쪽에서 비교한다.
   - 완료된 부분: LarryWilliamsVBO fixture를 추가해 VBO target 돌파 통과, target 미달, 체결강도 미달, 프로그램 순매수 음수, 프로그램 비율 미달을 period runner와 strategy debug runner 양쪽에서 비교한다.
   - 완료된 부분: HTF fixture를 추가해 HTF 정석 돌파 통과, 진입 밴드 이탈, 캔들 품질 미달, 예상 거래량 미달, 체결강도 미달, 스마트머니 필터 탈락을 period runner와 strategy debug runner 양쪽에서 비교한다.
+  - 완료된 부분: First Pullback fixture를 추가해 첫 눌림목 정석 통과, 급등 이력 없음, 20MA 우상향 실패, 눌림 범위 이탈, 거래량 고갈 미충족, 반등 트리거 실패, 체결강도 미달을 period runner와 strategy debug runner 양쪽에서 비교한다.
   - 완료된 부분: debug runner decision journal은 최종 BUY 신호가 있는 종목의 중간 로그(`buy_signal_generated`, PP/BGU 분기 중간 탈락)를 별도 `REJECTED`로 저장하지 않고 최종 `SIGNAL`만 남기도록 정리했다.
 - [x] walk-forward 검증을 추가한다. 기간을 train/tune/test로 나누고, 파라미터 튜닝 구간과 검증 구간을 분리한다.
   - 완료된 부분: `BacktestWalkForwardRunner`를 추가해 날짜를 train/tune/test rolling window로 분리하고, 각 phase를 독립 `BacktestPeriodRunner`/ledger/strategy state로 실행한다.
@@ -398,8 +399,8 @@
    - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
 2. P0/P1 백테스트 신뢰도
-   - First Pullback fixture 확장 진행
-   - 선택 전략의 핵심 진입/탈락 경계 조건을 period/debug runner parity로 고정
+   - 실제 과거 replay 데이터 기반 fixture 표본 일자 선정
+   - synthetic fixture와 실제 replay fixture의 결과 방향 비교
 
 3. P1 전략 수익성
    - 시장 국면별 성과 분리
