@@ -14,7 +14,7 @@ except ImportError:
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from interfaces.live_strategy import LiveStrategy
@@ -63,6 +63,9 @@ class StrategySchedulerConfig:
     allow_pyramiding: bool = False  # 불타기(추가매수) 허용 여부
     force_exit_on_close: bool = False       # 당일 청산 여부
     scan_when_position_full: bool = False   # 포지션 한도 도달 시에도 탐색/거절 로그 기록
+    # 장 초반/후반 신규 진입 차단 (분 단위). check_exits 및 force_exit 경로는 영향 없음.
+    skip_minutes_after_open: int = 0
+    skip_minutes_before_close: int = 0
 
 
 class StrategyScheduler:
@@ -339,6 +342,48 @@ class StrategyScheduler:
             self._logger.warning(f"[Scheduler] 활성 주문 polling 실패: {e}", exc_info=True)
             return 0
 
+    def _is_scan_time_window_blocked(self, cfg: StrategySchedulerConfig) -> bool:
+        """장 초반/후반 신규 진입 차단 시간대 검사.
+
+        skip_minutes_after_open / skip_minutes_before_close 설정이 모두 0이면 우회.
+        차단 시 scheduler_skip 이벤트 로그 (reason=time_window_blocked) 를 남긴다.
+        """
+        if cfg.skip_minutes_after_open <= 0 and cfg.skip_minutes_before_close <= 0:
+            return False
+
+        now = self._tm.get_current_kst_time()
+        try:
+            open_time = self._tm.get_market_open_time()
+            close_time = self._tm.get_market_close_time()
+        except Exception:
+            return False
+
+        if cfg.skip_minutes_after_open > 0:
+            block_until = open_time + timedelta(minutes=cfg.skip_minutes_after_open)
+            if now < block_until:
+                self._logger.info({
+                    "event": "scheduler_skip",
+                    "strategy_name": cfg.strategy.name,
+                    "reason": "time_window_blocked",
+                    "phase": "after_open",
+                    "skip_minutes": cfg.skip_minutes_after_open,
+                })
+                return True
+
+        if cfg.skip_minutes_before_close > 0:
+            block_from = close_time - timedelta(minutes=cfg.skip_minutes_before_close)
+            if now >= block_from:
+                self._logger.info({
+                    "event": "scheduler_skip",
+                    "strategy_name": cfg.strategy.name,
+                    "reason": "time_window_blocked",
+                    "phase": "before_close",
+                    "skip_minutes": cfg.skip_minutes_before_close,
+                })
+                return True
+
+        return False
+
     async def _run_strategy(self, cfg: StrategySchedulerConfig, force_exit_only: bool = False):
         name = cfg.strategy.name
         t_run = self._pm.start_timer()
@@ -371,6 +416,11 @@ class StrategyScheduler:
                 f"[Scheduler] {name}: 최대 포지션 도달 "
                 f"({current_holds_count}/{cfg.max_positions}), 스캔 스킵"
             )
+            self._pm.log_timer(f"{name}.run_strategy", t_run)
+            return
+
+        # 장 초반/후반 신규 진입 차단 시간대 가드 — scan() 만 skip, check_exits/force_exit 영향 없음
+        if self._is_scan_time_window_blocked(cfg):
             self._pm.log_timer(f"{name}.run_strategy", t_run)
             return
 

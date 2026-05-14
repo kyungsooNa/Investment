@@ -19,6 +19,7 @@ from core.logger import get_strategy_logger
 from core.performance_profiler import PerformanceProfiler
 from services.price_subscription_service import SubscriptionPriority
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
+from services.market_regime_service import MarketRegimeService, MarketRegimeConfig
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -54,6 +55,7 @@ class OneilUniverseService:
         rs_rating_service: Optional["RSRatingService"] = None,
         minervini_service: Optional["MinerviniStageService"] = None,
         notification_service: Optional[NotificationService] = None,
+        market_regime_service: Optional[MarketRegimeService] = None,
     ):
         self._sqs = stock_query_service
         self._indicator = indicator_service
@@ -67,6 +69,24 @@ class OneilUniverseService:
         self._rs_rating_service = rs_rating_service
         self._minervini_svc = minervini_service
         self._notification_service = notification_service
+        # 시장 국면 분류기 — 외부 주입이 우선이고, 없으면 기존 OneilUniverseConfig 값 기준으로 자체 생성
+        if market_regime_service is None:
+            regime_cfg = MarketRegimeConfig(
+                kospi_etf_code=self._cfg.kospi_etf_code,
+                kosdaq_etf_code=self._cfg.kosdaq_etf_code,
+                ma_period=self._cfg.market_ma_period,
+                rising_days=self._cfg.market_ma_rising_days,
+                min_net_change_pct=self._cfg.market_ma_min_net_change_pct,
+                daily_dip_tolerance_pct=self._cfg.market_ma_daily_dip_tolerance_pct,
+                hard_decline_pct=self._cfg.market_ma_hard_decline_pct,
+            )
+            market_regime_service = MarketRegimeService(
+                stock_query_service=stock_query_service,
+                market_clock=market_clock,
+                config=regime_cfg,
+                logger=self._logger,
+            )
+        self._regime_svc = market_regime_service
 
         # 상태 관리
         self._watchlist: Dict[str, OSBWatchlistItem] = {}
@@ -125,13 +145,16 @@ class OneilUniverseService:
         return self._watchlist
 
     async def is_market_timing_ok(self, market: str, caller: str = "", logger: Optional[logging.Logger] = None) -> bool:
-        """해당 시장(KOSPI/KOSDAQ)의 마켓 타이밍이 매수 적합한지 확인."""
+        """해당 시장(KOSPI/KOSDAQ)의 마켓 타이밍이 매수 적합한지 확인.
+
+        MarketRegimeService 위임 + 일일 1회 알림 emit (기존 동작 보존).
+        """
         logger = logger or self._logger
         today = self._tm.get_current_kst_time().strftime("%Y%m%d")
         if self._market_timing_date != today:
             await self._update_market_timing(caller=caller, logger=logger)
             self._market_timing_date = today
-        
+
         return self._market_timing_cache.get(market, False)
 
     # ── 워치리스트 빌드 ────────────────────────────────────────────
@@ -732,30 +755,31 @@ class OneilUniverseService:
     async def _update_market_timing(self, caller: str = "", logger: Optional[logging.Logger] = None):
         logger = logger or self._logger
         for market, code in [("KOSDAQ", self._cfg.kosdaq_etf_code), ("KOSPI", self._cfg.kospi_etf_code)]:
-            is_rising, fail_detail, ma_values = await self._check_etf_ma_rising(code, logger=logger)
+            snap = await self._regime_svc.classify(market, logger=logger)
+            is_rising = snap.is_rising
             self._market_timing_cache[market] = is_rising
 
             logger.info({
                 "event": "market_timing_updated",
                 "market": market,
                 "ok": is_rising,
-                "fail_reason": fail_detail if not is_rising else "",
+                "fail_reason": snap.fail_detail if not is_rising else "",
             })
 
             if self._notification_service:
                 status_text = "🟢 매수 적합 (우상향)" if is_rising else "🔴 매수 부적합 (추세 꺾임)"
                 level = NotificationLevel.INFO if is_rising else NotificationLevel.WARNING
-                
-                ma_str = " ➔ ".join([f"{v:.2f}" for v in ma_values])
+
+                ma_str = " ➔ ".join([f"{v:.2f}" for v in snap.ma_values])
                 msg = f"• 지수: {market} ({code})\n• 상태: {status_text}\n"
-                if not is_rising and fail_detail:
-                    msg += f"• 사유: {fail_detail}\n"
-                msg += f"• 최근 MA(20) 추이: {ma_str}"
-                
+                if not is_rising and snap.fail_detail:
+                    msg += f"• 사유: {snap.fail_detail}\n"
+                msg += f"• 최근 MA({self._cfg.market_ma_period}) 추이: {ma_str}"
+
                 title = f"마켓 타이밍 갱신 ({market})"
                 if caller:
                     title = f"[{caller}] {title}"
-                
+
                 await self._notification_service.emit(
                     category=NotificationCategory.STRATEGY,
                     level=level,
@@ -767,85 +791,6 @@ class OneilUniverseService:
                         "market": market,
                     },
                 )
-
-    async def _check_etf_ma_rising(self, etf_code: str, logger: Optional[logging.Logger] = None) -> Tuple[bool, str, List[float]]:
-        logger = logger or self._logger
-        period = self._cfg.market_ma_period
-        days = self._cfg.market_ma_rising_days
-        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(etf_code, limit=period + days + 5)
-        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
-
-        if not ohlcv or len(ohlcv) < period + days:
-            return False, "insufficient data", []
-
-        closes = [r.get("close", 0) for r in ohlcv]
-        if len(closes) < period + days:
-            return False, "insufficient close data", []
-
-        ma_values = []
-        for i in range(days + 1):
-            end = len(closes) - days + i
-            ma_values.append(sum(closes[end-period:end]) / period)
-
-        daily_changes_pct = []
-        for j in range(1, len(ma_values)):
-            prev = ma_values[j - 1]
-            curr = ma_values[j]
-            daily_changes_pct.append(((curr - prev) / prev * 100) if prev else 0.0)
-
-        first_ma = ma_values[0]
-        last_ma = ma_values[-1]
-        net_change_pct = ((last_ma - first_ma) / first_ma * 100) if first_ma else 0.0
-        max_daily_drop_pct = min(daily_changes_pct) if daily_changes_pct else 0.0
-        worst_drop_idx = daily_changes_pct.index(max_daily_drop_pct) + 1 if daily_changes_pct else 0
-
-        min_net_change_pct = getattr(self._cfg, "market_ma_min_net_change_pct", -0.10)
-        daily_dip_tolerance_pct = getattr(self._cfg, "market_ma_daily_dip_tolerance_pct", -0.20)
-        hard_decline_pct = getattr(self._cfg, "market_ma_hard_decline_pct", -0.50)
-
-        is_rising = True
-        fail_detail = ""
-        trend_status = "rising"
-        if max_daily_drop_pct < hard_decline_pct:
-            is_rising = False
-            fail_detail = (
-                f"MA hard decline: {max_daily_drop_pct:.2f}% < {hard_decline_pct:.2f}% "
-                f"(idx {worst_drop_idx}, {ma_values[worst_drop_idx-1]:.2f} -> {ma_values[worst_drop_idx]:.2f})"
-            )
-            trend_status = "hard_decline"
-        elif net_change_pct < min_net_change_pct:
-            is_rising = False
-            fail_detail = (
-                f"MA trend weak: net {net_change_pct:.2f}% < {min_net_change_pct:.2f}% "
-                f"({first_ma:.2f} -> {last_ma:.2f})"
-            )
-            trend_status = "weak_trend"
-        elif max_daily_drop_pct < daily_dip_tolerance_pct:
-            trend_status = "uptrend_under_pressure"
-
-        log_data = {
-            "event": "market_timing_check",
-            "etf_code": etf_code,
-            "is_rising": is_rising,
-            "trend_status": trend_status,
-            "ma_period": period,
-            "lookback_days": days,
-            "ma_values": [round(v, 2) for v in ma_values],
-            "daily_changes_pct": [round(v, 3) for v in daily_changes_pct],
-            "net_change_pct": round(net_change_pct, 3),
-            "max_daily_drop_pct": round(max_daily_drop_pct, 3),
-            "thresholds": {
-                "min_net_change_pct": min_net_change_pct,
-                "daily_dip_tolerance_pct": daily_dip_tolerance_pct,
-                "hard_decline_pct": hard_decline_pct,
-            },
-        }
-        if not is_rising:
-            log_data["fail_detail"] = fail_detail
-
-        logger.debug(log_data)
-
-        return is_rising, fail_detail, ma_values
 
     def _compute_rs_scores(
         self,

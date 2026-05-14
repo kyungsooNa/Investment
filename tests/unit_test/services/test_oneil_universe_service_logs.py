@@ -34,37 +34,8 @@ def service(mock_components):
     # 테스트 편의를 위해 설정값 일부 조정 가능
     return OneilUniverseService(sqs, indicator, mapper, tm, scraper_service=mock_scraper, config=config, logger=logger)
 
-@pytest.mark.asyncio
-async def test_check_etf_ma_rising_logs(service, mock_components):
-    """_check_etf_ma_rising 메서드의 마켓 타이밍 체크 로그 검증"""
-    _, sqs, _, _, _, logger = mock_components
-    
-    # Mock OHLCV data: 가격이 상승하여 MA가 상승하는 시나리오
-    # MA Period(20) + Rising Days(3) + Buffer
-    closes = [100 + i for i in range(30)] 
-    ohlcv = [{"close": c} for c in closes]
-    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
-    
-    is_rising, fail_detail, ma_values = await service._check_etf_ma_rising("TEST_ETF")
-    
-    assert is_rising is True
-    
-    # 로그 확인
-    found_log = False
-    for call_args in logger.debug.call_args_list:
-        arg = call_args[0][0]
-        if isinstance(arg, dict) and arg.get("event") == "market_timing_check":
-            assert arg["etf_code"] == "TEST_ETF"
-            assert arg["is_rising"] is True
-            assert "ma_values" in arg
-            assert arg["trend_status"] == "rising"
-            assert "daily_changes_pct" in arg
-            assert "net_change_pct" in arg
-            assert "max_daily_drop_pct" in arg
-            assert arg["thresholds"]["min_net_change_pct"] == service._cfg.market_ma_min_net_change_pct
-            found_log = True
-            break
-    assert found_log, "market_timing_check 이벤트 로그가 기록되지 않았습니다."
+# NOTE: ETF MA 로그 검증은 services/market_regime_service.py 로 이관됨.
+# MarketRegimeService._compute() 가 동일한 디버그 이벤트("market_regime_check")를 남긴다.
 
 def test_compute_rs_scores_logs(service, mock_components):
     """_compute_rs_scores 메서드의 스코어링 로그 검증"""

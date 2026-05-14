@@ -612,107 +612,9 @@ async def test_compute_profit_growth_scores_exception(mock_deps):
     # 검증: 점수가 0이어야 함 (예외가 발생해도 크래시되지 않고 0점 처리)
     assert item.profit_growth_score == 0.0
 
-async def test_check_etf_ma_rising_logic(mock_deps):
-    """_check_etf_ma_rising: ETF 이동평균 상승 여부 판단 로직 검증."""
-    _, sqs, indicator, mapper, tm, logger = mock_deps
-    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
-    
-    # Case 1: 데이터 부족
-    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=[{"close": 100}] * 10)
-    is_rising, fail_detail, _ = await service._check_etf_ma_rising("000000")
-    assert is_rising is False
-    
-    # Case 2: 상승 추세 (MA가 3일 연속 상승)
-    # period=20, days=3. 총 23일치 데이터 필요.
-    # 간단히 close 가격이 계속 상승한다고 가정하면 MA도 상승함.
-    data = [{"close": 100 + i} for i in range(30)]
-    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=data)
-    is_rising, fail_detail, _ = await service._check_etf_ma_rising("000000")
-    assert is_rising is True
-    
-    # Case 3: 하락 추세
-    data = [{"close": 100 - i} for i in range(30)]
-    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=data)
-    is_rising, fail_detail, _ = await service._check_etf_ma_rising("000000")
-    assert is_rising is False
-
-async def test_check_etf_ma_rising_exact_calculation(mock_deps):
-    """_check_etf_ma_rising: MA 값의 연속 상승/하락을 정확히 계산하고 로그를 남기는지 검증."""
-    _, sqs, indicator, mapper, tm, logger = mock_deps
-    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
-
-    # 설정: 5일 MA, 2일 연속 상승 필요 (총 3일간 MA값 비교)
-    service._cfg.market_ma_period = 5
-    service._cfg.market_ma_rising_days = 2
-
-    # Case 1: 2일 연속 상승 (성공)
-    logger.debug.reset_mock()
-    # MA 값: (30, 40, 50) -> 상승
-    closes_rising = [{"close": c} for c in [10, 20, 30, 40, 50, 60, 70]]
-    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=closes_rising)
-    is_rising, fail_detail, _ = await service._check_etf_ma_rising("RISING")
-    assert is_rising is True
-
-    # 로그 확인 (성공)
-    log_call = logger.debug.call_args[0][0]
-    assert log_call["event"] == "market_timing_check"
-    assert log_call["is_rising"] is True
-    assert "fail_detail" not in log_call
-
-    # Case 2: 마지막 날 MA 하락 (실패)
-    logger.debug.reset_mock()
-    # MA 값: (30, 40, 36) -> 실패
-    closes_falling = [{"close": c} for c in [10, 20, 30, 40, 50, 60, 0]]
-    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=closes_falling)
-    is_rising, fail_detail, _ = await service._check_etf_ma_rising("FALLING")
-    assert is_rising is False
-
-    # 로그 확인 (실패)
-    log_call = logger.debug.call_args[0][0]
-    assert log_call["event"] == "market_timing_check"
-    assert log_call["is_rising"] is False
-    assert "fail_detail" in log_call
-    assert "MA hard decline" in log_call["fail_detail"]
-
-    # Case 3: 중간에 MA 하락 (실패)
-    logger.debug.reset_mock()
-    # MA 값: (30, 28, 38) -> 실패
-    closes_dip = [{"close": c} for c in [10, 20, 30, 40, 50, 0, 70]]
-    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=closes_dip)
-    is_rising, fail_detail, _ = await service._check_etf_ma_rising("DIP")
-    assert is_rising is False
-
-    # 로그 확인 (실패)
-    log_call = logger.debug.call_args[0][0]
-    assert log_call["event"] == "market_timing_check"
-    assert log_call["is_rising"] is False
-    assert "fail_detail" in log_call
-    assert "MA hard decline" in log_call["fail_detail"]
-
-
-async def test_check_etf_ma_rising_tolerates_small_ma_noise(mock_deps):
-    """_check_etf_ma_rising: small MA dips are tolerated when the net trend is intact."""
-    _, sqs, indicator, mapper, tm, logger = mock_deps
-    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
-    service._cfg.market_ma_period = 1
-    service._cfg.market_ma_rising_days = 3
-
-    closes = [18928.25, 18952.75, 18941.25, 18939.50]
-    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data=[{"close": c} for c in closes]
-    )
-
-    is_rising, fail_detail, ma_values = await service._check_etf_ma_rising("229200")
-
-    assert is_rising is True
-    assert fail_detail == ""
-    assert ma_values == closes
-
-    log_call = logger.debug.call_args[0][0]
-    assert log_call["event"] == "market_timing_check"
-    assert log_call["trend_status"] == "rising"
-    assert log_call["net_change_pct"] > 0
-    assert log_call["max_daily_drop_pct"] > service._cfg.market_ma_daily_dip_tolerance_pct
+# NOTE: _check_etf_ma_rising 로직은 services/market_regime_service.py 로 이관됨.
+# 4-state 추세 분류 (rising / hard_decline / weak_trend / uptrend_under_pressure)
+# 단위 테스트는 tests/unit_test/services/test_market_regime_service.py 참조.
 
 
 async def test_build_daily_surge_pool_logic(mock_deps):
@@ -814,27 +716,32 @@ async def test_analyze_premium_candidate_insufficient_data(mock_deps):
     assert item is None
 
 async def test_update_market_timing_updates_cache(mock_deps):
-    """_update_market_timing: KOSPI/KOSDAQ 각각에 대해 ETF MA 확인 후 캐시 업데이트 검증."""
+    """_update_market_timing: MarketRegimeService 위임 후 KOSPI/KOSDAQ 캐시 업데이트 검증."""
+    from services.market_regime_service import RegimeSnapshot
+
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
-    
-    # _check_etf_ma_rising 모킹
-    with patch.object(service, '_check_etf_ma_rising', new_callable=AsyncMock) as mock_check:
-        # KOSDAQ(True), KOSPI(False) 반환 설정
-        mock_check.side_effect = [(True, "", []), (False, "fail", [])]
-        
-        await service._update_market_timing()
-        
-        # 캐시 확인
-        assert service._market_timing_cache["KOSDAQ"] is True
-        assert service._market_timing_cache["KOSPI"] is False
-        
-        # 호출 확인
-        expected_calls = [
-            call(service._cfg.kosdaq_etf_code, logger=logger),
-            call(service._cfg.kospi_etf_code, logger=logger)
-        ]
-        mock_check.assert_has_awaits(expected_calls, any_order=True)
+
+    def _snap(market, is_rising, fail=""):
+        return RegimeSnapshot(
+            market=market, trend_status="rising" if is_rising else "hard_decline",
+            regime_label="bull" if is_rising else "bear", snapshot_date="20260514",
+            is_rising=is_rising, net_change_pct=0.0, max_daily_drop_pct=0.0,
+            ma_values=[], fail_detail=fail,
+        )
+
+    # 첫 호출: KOSDAQ, 두 번째: KOSPI (구현 순서와 동일)
+    service._regime_svc.classify = AsyncMock(side_effect=[
+        _snap("KOSDAQ", True),
+        _snap("KOSPI", False, fail="fail"),
+    ])
+
+    await service._update_market_timing()
+
+    assert service._market_timing_cache["KOSDAQ"] is True
+    assert service._market_timing_cache["KOSPI"] is False
+    expected = [call("KOSDAQ", logger=logger), call("KOSPI", logger=logger)]
+    service._regime_svc.classify.assert_has_awaits(expected, any_order=False)
 
 async def test_analyze_premium_candidate_trend_filter_fail(mock_deps):
     """_analyze_premium_candidate: 정배열 조건(Close > MA20 > MA50) 불만족 시 탈락 검증."""
@@ -1420,15 +1327,8 @@ def test_load_premium_stocks_malformed_date(mock_deps):
         result = service._load_premium_stocks()
         assert result == []
 
-async def test_check_etf_ma_rising_ohlcv_none(mock_deps):
-    """_check_etf_ma_rising: OHLCV 데이터가 None일 때 False 반환 검증."""
-    _, sqs, indicator, mapper, tm, logger = mock_deps
-    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
-    
-    sqs.get_recent_daily_ohlcv.return_value = None
-    
-    is_rising, fail_detail, _ = await service._check_etf_ma_rising("000000")
-    assert is_rising is False
+# NOTE: ETF OHLCV None 케이스는 MarketRegimeService.classify() 단위 테스트
+# (test_insufficient_data_returns_bear) 에서 검증됨.
 
 async def test_analyze_surge_candidate_slices_today_candle(mock_deps):
     """_analyze_surge_candidate: 당일 캔들 슬라이싱 로직 검증."""
@@ -1676,11 +1576,21 @@ async def test_update_market_timing_emits_notifications(mock_deps):
     notification = AsyncMock()
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger, notification_service=notification)
 
-    with patch.object(service, "_check_etf_ma_rising", new_callable=AsyncMock, side_effect=[
-        (True, "", [1.0, 2.0, 3.0]),
-        (False, "MA decline", [3.0, 2.0, 1.0]),
-    ]):
-        await service._update_market_timing(caller="tester", logger=logger)
+    from services.market_regime_service import RegimeSnapshot
+
+    def _snap(market, is_rising, ma_values, fail=""):
+        return RegimeSnapshot(
+            market=market, trend_status="rising" if is_rising else "hard_decline",
+            regime_label="bull" if is_rising else "bear", snapshot_date="20260514",
+            is_rising=is_rising, net_change_pct=0.0, max_daily_drop_pct=0.0,
+            ma_values=ma_values, fail_detail=fail,
+        )
+
+    service._regime_svc.classify = AsyncMock(side_effect=[
+        _snap("KOSDAQ", True, [1.0, 2.0, 3.0]),
+        _snap("KOSPI", False, [3.0, 2.0, 1.0], fail="MA decline"),
+    ])
+    await service._update_market_timing(caller="tester", logger=logger)
 
     assert notification.emit.await_count == 2
     first_call = notification.emit.await_args_list[0].kwargs

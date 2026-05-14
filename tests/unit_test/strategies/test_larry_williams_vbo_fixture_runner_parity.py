@@ -129,6 +129,7 @@ def _strategy_for_case(case: dict, logger: logging.Logger):
 
     universe = MagicMock()
     universe.get_watchlist = AsyncMock(return_value={"005930": _watchlist_item(case)})
+    universe.is_market_timing_ok = AsyncMock(return_value=True)
 
     return LarryWilliamsVBOStrategy(
         stock_query_service=sqs,
