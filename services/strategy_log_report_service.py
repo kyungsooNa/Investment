@@ -12,6 +12,10 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from common.trade_journal_comparison import compare_trade_journals
+from services.strategy_performance_degradation_service import (
+    StrategyPerformanceDegradationConfig,
+    analyze_strategy_performance_degradation,
+)
 
 
 def _esc(value: Any) -> str:
@@ -297,6 +301,7 @@ class StrategyLogReportService:
         execution_quality_config: Optional[Any] = None,
         backtest_journal_provider: Optional[Callable[[str], List[dict]]] = None,
         enabled_strategy_provider: Optional[Callable[[], Optional[List[str]]]] = None,
+        strategy_degradation_config: Optional[Any] = None,
     ):
         self._log_dir = log_dir
         self._stock_code_repo = stock_code_repo
@@ -304,11 +309,17 @@ class StrategyLogReportService:
         self._execution_quality_config = execution_quality_config
         self._backtest_journal_provider = backtest_journal_provider
         self._enabled_strategy_provider = enabled_strategy_provider
+        self._strategy_degradation_config = strategy_degradation_config
         self._last_execution_quality_candidates: List[dict] = []
+        self._last_strategy_degradation_candidates: List[dict] = []
 
     def get_last_execution_quality_candidates(self) -> List[dict]:
         """최근 generate_report 실행에서 산출된 체결 품질 비활성화 후보 목록."""
         return list(self._last_execution_quality_candidates)
+
+    def get_last_strategy_degradation_candidates(self) -> List[dict]:
+        """최근 generate_report 실행에서 산출된 전략 성과 저하 후보 목록."""
+        return list(self._last_strategy_degradation_candidates)
 
     # ── 파일 탐색 ────────────────────────────────────────────────
 
@@ -600,6 +611,67 @@ class StrategyLogReportService:
                 pnl_part = f", 순손익 {int(round(float(row.get('net_pnl_diff')))):+,}원"
             lines.append(f"  - {strategy}/{code}: {net_part}{fill_part}{pnl_part}")
 
+        return "\n".join(lines)
+
+    def _strategy_degradation_cfg(self) -> StrategyPerformanceDegradationConfig:
+        cfg = self._strategy_degradation_config
+        if isinstance(cfg, StrategyPerformanceDegradationConfig):
+            return cfg
+        values = {}
+        if cfg is not None:
+            for field in StrategyPerformanceDegradationConfig.__dataclass_fields__:
+                if hasattr(cfg, field):
+                    values[field] = getattr(cfg, field)
+        return StrategyPerformanceDegradationConfig(**values)
+
+    def _build_strategy_degradation_section(self, target_date: str) -> Optional[str]:
+        self._last_strategy_degradation_candidates = []
+        if not self._virtual_trade_service or not self._backtest_journal_provider:
+            return None
+
+        try:
+            live_records = self._virtual_trade_service.get_standard_journal_records() or []
+            backtest_records = self._backtest_journal_provider(target_date) or []
+        except Exception:
+            return None
+
+        try:
+            result = analyze_strategy_performance_degradation(
+                live_records,
+                backtest_records,
+                self._strategy_degradation_cfg(),
+            )
+        except Exception:
+            return None
+
+        candidates = result.get("candidates") or []
+        self._last_strategy_degradation_candidates = [dict(item) for item in candidates]
+        if not candidates:
+            return None
+
+        lines = ["<b>📉 전략별 성과 저하 후보</b>"]
+        for item in candidates[:5]:
+            strategy = _esc(item.get("strategy") or "")
+            status = _esc(item.get("status") or "")
+            live = item.get("live_metrics") or {}
+            reasons = ", ".join(str(reason) for reason in item.get("reasons") or [])
+            actions = ", ".join(str(action) for action in item.get("recommended_actions") or [])
+            pf = live.get("profit_factor")
+            pf_text = f", PF {float(pf):.2f}" if pf is not None else ""
+            lines.append(
+                f"• {strategy}: {status} — 최근 {int(live.get('trade_count') or 0)}거래, "
+                f"승률 {float(live.get('win_rate') or 0) * 100:.1f}%, "
+                f"평균 {float(live.get('avg_net_return') or 0):+.2f}%{pf_text}, "
+                f"MDD {int(round(float(live.get('mdd_amount') or 0))):,}원, "
+                f"연속손실 {int(live.get('max_consecutive_losses') or 0)}"
+            )
+            if reasons:
+                lines.append(f"  - 사유: {_esc(reasons)}")
+            if actions:
+                lines.append(f"  - 권고: {_esc(actions)}")
+        rest_count = len(candidates) - 5
+        if rest_count > 0:
+            lines.append(f"  …외 {rest_count}개 전략")
         return "\n".join(lines)
 
     def _build_execution_quality_section(self, records: List[dict]) -> Optional[str]:
@@ -911,6 +983,7 @@ class StrategyLogReportService:
         """
         date_prefix = f"{target_date[:4]}-{target_date[4:6]}-{target_date[6:8]}"
         self._last_execution_quality_candidates = []
+        self._last_strategy_degradation_candidates = []
         strategy_files = self._find_strategy_files()
 
         if not strategy_files:
@@ -1176,12 +1249,19 @@ class StrategyLogReportService:
             warnings_section = "<b>⚠️ 시스템 경고</b>\n" + "\n".join(system_warnings)
         execution_quality_section = self._build_execution_quality_section(execution_quality_records)
         divergence_section = self._build_backtest_live_divergence_section(target_date)
+        degradation_section = self._build_strategy_degradation_section(target_date)
 
         if not active_sections:
             portfolio_summary = self._build_portfolio_summary(target_date, fallback_buys)
             extra_sections = [
                 section
-                for section in (warnings_section, portfolio_summary, divergence_section, execution_quality_section)
+                for section in (
+                    warnings_section,
+                    portfolio_summary,
+                    divergence_section,
+                    degradation_section,
+                    execution_quality_section,
+                )
                 if section
             ]
             extra_body = "\n\n".join(extra_sections)
@@ -1198,6 +1278,8 @@ class StrategyLogReportService:
             body += f"\n\n{portfolio_summary}"
         if divergence_section:
             body += f"\n\n{divergence_section}"
+        if degradation_section:
+            body += f"\n\n{degradation_section}"
         if execution_quality_section:
             body += f"\n\n{execution_quality_section}"
 

@@ -656,9 +656,14 @@ class WebAppContext:
                     virtual_trade_service=self.virtual_trade_service,
                     backtest_journal_provider=self.backtest_journal_repository.load_records_for_date,
                     execution_quality_config=getattr(self.full_config, "execution_quality_report", None),
+                    strategy_degradation_config=getattr(
+                        self.full_config, "strategy_performance_degradation", None
+                    ),
                     enabled_strategy_provider=self._get_enabled_strategy_names_for_report,
                 ),
                 notification_service=self.notification_service,
+                operator_alert_service=self.operator_alert_service,
+                kill_switch_service=self.kill_switch_service,
                 telegram_reporter=getattr(self, 'telegram_reporter', None),
                 mcs=self._mcs,
                 market_clock=self.market_clock,

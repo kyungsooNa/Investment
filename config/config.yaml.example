@@ -119,6 +119,18 @@ execution_quality_report:
   candidate_avg_order_age_sec: 300.0
   auto_disable_enabled: false
 
+# 전략별 최근 거래 성과 저하 감지 (사후 평가용, 1차는 soft alert만)
+strategy_performance_degradation:
+  window_size: 20
+  min_live_trades: 10
+  min_baseline_trades: 10
+  capital_base_won: null          # live/backtest가 같은 분모 정의를 쓸 때만 설정
+  warn_win_rate_drop_pctp: 15.0
+  warn_avg_return_drop_pctp: 1.0
+  warn_profit_factor_below: 1.0
+  critical_consecutive_losses: 5
+  critical_mdd_ratio_multiplier: 2.0
+
 # 포지션 사이징 (Fixed Fractional / Penbold 식)
 position_sizing:
   enabled: true

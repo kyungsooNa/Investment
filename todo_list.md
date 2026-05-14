@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-15 (1-4 시장 국면 분해 구현)
+최종 업데이트: 2026-05-15 (4-1 전략별 성과 저하 감지 계획 보강)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -306,17 +306,47 @@
 
 ### 4-1. 전략별 성과 저하 감지
 
-- [ ] 전략별 최근 20거래 손익, 최근 20거래 승률, 평균 손익비, MDD, 연속 손실, MFE/MAE를 집계한다.
-- [ ] 백테스트 기대값 대비 실거래 괴리를 전략별로 계산한다.
-- [ ] 성과 악화 시 신규 진입 중단, 수량 축소, paper mode 전환, 관리자 알림 후보로 표시한다.
-- [ ] 자동 차단 기준은 KillSwitch/RiskGate와 충돌하지 않도록 정책 우선순위를 정의한다.
+- [x] `services/regime_performance_service.py` 와 같은 pure function 패턴으로 standard journal record 기반 분석 모듈을 추가한다.
+  - 입력은 `get_standard_journal_records()` 와 동일한 record shape를 사용한다.
+  - SOLD 거래만 대상으로 하며, 최근 N거래 기본값은 20건이다.
+- [x] "최근 N거래" 정렬 기준을 확정한다.
+  - 청산 시각 우선: `metadata.sell_date` → `metadata.exit_time` → `metadata.closed_at` → fallback `signal_time`.
+  - 성과 저하는 결과 확정 시점 기준이므로 진입 시각보다 청산 시각을 우선한다.
+- [x] 전략별 최근 20거래 손익, 승률, payoff ratio, profit factor, MDD, 연속 손실, MFE/MAE를 집계한다.
+  - `payoff_ratio = avg_win_return / abs(avg_loss_return)`.
+  - `profit_factor = sum_win_pnl / abs(sum_loss_pnl)` 이며 판정 기준은 profit factor를 우선한다.
+  - MDD는 `mdd_amount`(누적 net_pnl peak-to-trough)와 `mdd_ratio`를 함께 산출한다.
+  - `mdd_ratio`는 live/backtest가 같은 `capital_base_won` 분모 정의를 공유할 때만 baseline 비교에 사용한다.
+- [x] 백테스트 기대값 대비 실거래 괴리를 전략별로 계산한다.
+  - live sample 부족은 `insufficient_live`, baseline sample 부족은 `insufficient_baseline`으로 분리한다.
+  - 표본 부족 시 hard 후보 판정은 하지 않고 리포트/metadata에만 표시한다.
+- [~] 성과 악화 시 신규 진입 중단, 수량 축소, paper mode 전환, 관리자 알림 후보로 표시한다.
+  - 1차 구현은 soft signal만 산출하며 실제 자동 차단, 수량 변경, paper 전환은 실행하지 않는다.
+  - 후보 metadata에 recommended_actions를 포함한다.
+- [x] 운영자 알림은 `OperatorAlertService.report(AlertSource.STRATEGY_PERF, ...)` 경로를 우선 사용한다.
+  - `AlertSource.STRATEGY_PERF = "STRATEGY_PERF"` 를 추가한다.
+  - `operator_alert_service is not None` 이면 OperatorAlertService만 사용한다.
+  - `operator_alert_service is None` 이고 `notification_service is not None` 일 때만 NotificationService fallback을 사용한다.
+  - 둘을 동시에 호출하지 않는다.
+- [x] 자동 차단 기준은 KillSwitch/RiskGate와 충돌하지 않도록 정책 우선순위를 정의한다.
+  - 우선순위: `KillSwitch` hard stop > `RiskGate` 주문 직전 hard block > `StrategyPerf` soft alert.
+  - `KillSwitchService.is_strategy_tripped(strategy_name)` 가 truthy이면 추가 차단 없이 `already_blocked_by_kill_switch=True`, `kill_switch_trip=<trip meta>` metadata로 알림만 보낸다.
+- [x] 테스트 fixture를 `tests/fixtures/strategy_degradation/` 아래에 추가한다.
+  - `recent_trades_live.json`
+  - `recent_trades_backtest.json`
+  - 필요 시 `expected_metrics.json`
 
 주요 파일:
 
+- `common/operator_alert_types.py`
+- `services/strategy_performance_degradation_service.py`
 - `services/strategy_log_report_service.py`
 - `task/background/after_market/strategy_log_report_task.py`
 - `services/kill_switch_service.py`
 - `services/risk_gate_service.py`
+- `tests/fixtures/strategy_degradation/`
+- `tests/unit_test/services/test_strategy_performance_degradation_service.py`
+- `tests/unit_test/task/background/after_market/test_strategy_log_report_task.py`
 
 ### 4-2. Rejected reason 리포트
 
@@ -379,8 +409,8 @@
    - event-driven 전략 평가 목표 아키텍처 문서화
 
 5. P3/P4 유지보수와 운영 품질
-   - rejected reason 표준화 및 전략별/일자별 분포 리포트
    - 전략별 성과 저하 감지 지표 집계
+   - `AlertSource.STRATEGY_PERF` 기반 운영자 알림 연결
    - `WebAppContext` 분리
    - ServiceContainer / Factory 도입
    - `OrderExecutionService` 역할 분리
