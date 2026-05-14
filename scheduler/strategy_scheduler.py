@@ -212,7 +212,9 @@ class StrategyScheduler:
 
                     self._logger.info("현재는 휴장일이거나 장 운영 시간이 아닙니다.")
                     self._force_exit_done.clear()
-                    await self._mcs.wait_until_next_open()
+                    await self._mcs.wait_until_next_open(
+                        max_sleep_seconds=self.MARKET_CLOSED_SLEEP_SEC
+                    )
                     continue
 
                 # 장중: 시간 계산
