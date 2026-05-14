@@ -1026,7 +1026,7 @@ class StrategyScheduler:
         repo_holdings: Optional[List[dict]] = None,
         allow_signal_history: bool = True,
     ) -> bool:
-        """가상매매 DB 또는 시그널 이력에 현재 포지션 근거가 남아 있는지 확인한다."""
+        """가상매매 원장 DB에 현재 포지션 근거가 남아 있는지 확인한다."""
         target_code = str(code).strip()
         holdings = repo_holdings
         if holdings is None:
@@ -1036,13 +1036,7 @@ class StrategyScheduler:
             if str(hold.get("code", "")).strip() == target_code:
                 return True
 
-        if not allow_signal_history:
-            return False
-
-        return (
-            self._get_signal_net_qty(strategy_name, target_code, only_success=True) > 0
-            or self._get_signal_net_qty(strategy_name, target_code, only_success=False) > 0
-        )
+        return False
 
     def _prune_disabled_force_exit_state(
         self,
@@ -1190,7 +1184,7 @@ class StrategyScheduler:
         return holding
 
     def _get_strategy_holdings(self, cfg: StrategySchedulerConfig) -> List[dict]:
-        """가상매매 DB와 전략 내부 position_state를 병합한 보유 목록."""
+        """가상매매 DB를 기준으로 한 보유 목록."""
         strategy_name = cfg.strategy.name
         merged: Dict[str, dict] = {}
 
@@ -1198,41 +1192,13 @@ class StrategyScheduler:
         for hold in repo_holdings:
             code = str(hold.get("code", "")).strip()
             if code:
-                merged[code] = dict(hold)
+                normalized_hold = dict(hold)
+                if not normalized_hold.get("name"):
+                    normalized_hold["name"] = self.stock_code_repository.get_name_by_code(code) or code
+                merged[code] = normalized_hold
 
         self._prune_disabled_force_exit_state(cfg, repo_holdings=repo_holdings)
         self._prune_stale_position_state(cfg, repo_holdings=repo_holdings)
-
-        for code, state in list(self._get_strategy_position_state(cfg.strategy).items()):
-            norm_code = str(code).strip()
-            if not norm_code:
-                continue
-            if not self._is_valid_strategy_code(norm_code):
-                self._logger.warning(
-                    f"[Scheduler] invalid position_state code ignored: strategy={strategy_name}, code={norm_code}"
-                )
-                continue
-            merged[norm_code] = self._build_strategy_state_holding(
-                strategy_name,
-                norm_code,
-                state,
-                existing=merged.get(norm_code),
-            )
-
-        if cfg.enabled or not cfg.force_exit_on_close:
-            for record in reversed(self._signal_history):
-                if record.strategy_name != strategy_name or record.action != "BUY":
-                    continue
-                code = str(record.code).strip()
-                if not code or code in merged or not self._is_valid_strategy_code(code):
-                    continue
-                if self._get_signal_net_qty(strategy_name, code, only_success=True) <= 0:
-                    continue
-                merged[code] = self._build_strategy_state_holding(
-                    strategy_name,
-                    code,
-                    object(),
-                )
 
         return list(merged.values())
 
