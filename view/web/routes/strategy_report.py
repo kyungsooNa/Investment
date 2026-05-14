@@ -1,4 +1,4 @@
-"""전략 거절 사유 분포 리포트 API."""
+"""전략 거절 사유 분포 리포트 API + 시장 국면별 성과 분해 API."""
 from __future__ import annotations
 
 import json
@@ -8,6 +8,11 @@ from typing import List
 
 from fastapi import APIRouter
 
+from common.trade_journal_schema import normalize_virtual_trade
+from services.regime_performance_service import (
+    BUCKET_KEYS,
+    compute_performance_by_regime,
+)
 from view.web.api_common import _get_ctx
 
 router = APIRouter()
@@ -89,4 +94,57 @@ async def get_rejected_reasons(strategy: str = "", date: str = ""):
         "strategy": strategy,
         "date": target_date,
         "distribution": distribution,
+    }
+
+
+@router.get("/strategies/performance-by-regime")
+async def get_performance_by_regime(
+    strategy: str = "",
+    from_date: str = "",
+    to_date: str = "",
+):
+    """시장 국면별 전략 성과 분해.
+
+    Args:
+        strategy:  전략명 필터. 빈 문자열이면 전체.
+        from_date: YYYYMMDD. 빈 문자열이면 전체 기간 시작.
+        to_date:   YYYYMMDD. 빈 문자열이면 오늘.
+
+    Returns:
+        {
+          "strategy": <strategy or "">,
+          "from_date": <YYYYMMDD or "">,
+          "to_date": <YYYYMMDD>,
+          "buckets": {
+            "KOSPI_BULL": {trade_count, win_count, win_rate, avg_net_return, total_net_pnl, mdd},
+            "KOSDAQ_BULL": {...},
+            "SIDEWAYS": {...},
+            "BEAR": {...},
+            "TRADING_VALUE_SURGE": {...}  # 1차: 항상 0 (overlay)
+          }
+        }
+    """
+    target_to = to_date or datetime.now().strftime("%Y%m%d")
+    ctx = _get_ctx()
+    vts = getattr(ctx, "virtual_trade_service", None)
+
+    normalized: List[dict] = []
+    if vts is not None:
+        trades = vts.get_all_trades(apply_cost=True)
+        for t in trades:
+            if strategy and str(t.get("strategy") or "") != strategy:
+                continue
+            signal_time = str(t.get("buy_date") or "").replace("-", "")[:8]
+            if from_date and signal_time < from_date:
+                continue
+            if signal_time > target_to:
+                continue
+            normalized.append(normalize_virtual_trade(t))
+
+    buckets = compute_performance_by_regime(normalized)
+    return {
+        "strategy": strategy,
+        "from_date": from_date,
+        "to_date": target_to,
+        "buckets": {k: buckets[k] for k in BUCKET_KEYS},
     }

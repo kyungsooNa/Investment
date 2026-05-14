@@ -1,6 +1,7 @@
 import pytest
 
 from common.trade_journal_schema import (
+    SCHEMA_VERSION,
     STANDARD_TRADE_JOURNAL_FIELDS,
     normalize_backtest_decision,
     normalize_backtest_execution,
@@ -35,7 +36,7 @@ def test_normalize_virtual_trade_outputs_standard_schema_with_net_values():
     normalized = normalize_virtual_trade(trade)
 
     assert tuple(normalized.keys()) == STANDARD_TRADE_JOURNAL_FIELDS
-    assert normalized["schema_version"] == 1
+    assert normalized["schema_version"] == SCHEMA_VERSION
     assert normalized["source"] == "virtual_trade"
     assert normalized["strategy"] == "S1"
     assert normalized["code"] == "005930"

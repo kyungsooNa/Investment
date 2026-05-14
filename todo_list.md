@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-13 (백테스트 To-Do 압축 정리)
+최종 업데이트: 2026-05-15 (1-4 시장 국면 분해 구현)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -126,18 +126,33 @@
 
 ### 1-4. 시장 국면별 전략 성과 분해
 
-- [ ] 시장 상태를 상승/하락/횡보로 분류하는 기준을 정의한다.
-- [ ] 코스피/코스닥 지수 기반 전략 ON/OFF 조건을 추가한다.
-- [ ] 변동성 기반 진입 제한을 검토한다.
-- [ ] 장 초반/후반 타임 필터를 전략 실행 전에 적용한다.
-- [ ] O'Neil/Minervini 계열 전략 성과를 KOSPI 상승장, KOSDAQ 상승장, 지수 횡보장, 지수 하락장, 거래대금 증가 장세로 분리해 리포트한다.
+- [x] 시장 상태를 상승/하락/횡보로 분류하는 기준을 정의한다.
+  - 신규 `MarketRegimeService` (KOSPI/KOSDAQ ETF 단기 MA 추세 기반 4-state → bull/bear/sideways 3-state 매핑).
+  - 기존 `OneilUniverseService._check_etf_ma_rising` 로직을 추출, `is_market_timing_ok` 시그니처 보존.
+- [x] 코스피/코스닥 지수 기반 전략 ON/OFF 조건을 추가한다.
+  - 기존 5개 전략(FirstPullback, HighTightFlag, OneilPocketPivot, OneilSqueezeBreakout, RSI2Pullback)이 이미 `is_market_timing_ok` 게이트 사용 — `MarketRegimeService` 위임으로 자동 반영.
+  - 누락된 LarryWilliamsVBO, LarryWilliamsCB에 동일 hard gate 추가 (`_position_state` 변경 전 위치, `reason=market_timing_off` 로깅).
+- [~] 변동성 기반 진입 제한을 검토한다.
+  - 1차 PR에서는 hard gate 미도입 — 리포트 컬럼으로 먼저 검증 후 도입 결정. 후속 PR에서 `RiskGateConfig.max_volatility_pct` 추가 검토.
+- [x] 장 초반/후반 타임 필터를 전략 실행 전에 적용한다.
+  - `StrategySchedulerConfig.skip_minutes_after_open` / `skip_minutes_before_close` 필드 추가.
+  - `_is_scan_time_window_blocked()` 가 `cfg.strategy.scan()` 만 skip (force_exit/check_exits 영향 없음).
+- [~] O'Neil/Minervini 계열 전략 성과를 KOSPI 상승장, KOSDAQ 상승장, 지수 횡보장, 지수 하락장, 거래대금 증가 장세로 분리해 리포트한다.
+  - `common/trade_journal_schema.py` 에 `market_regime` 필드 + `SCHEMA_VERSION = 2`. 정규화 함수에 `market_regime` 파라미터(service 호출 금지, record/metadata fallback).
+  - `services/regime_performance_service.py` 신규 (순수 함수): KOSPI Bull / KOSDAQ Bull / SIDEWAYS / BEAR / TRADING_VALUE_SURGE 5개 버킷 + MDD(signal_time 정렬 누적 net_pnl).
+  - `GET /api/strategies/performance-by-regime?strategy=&from_date=&to_date=` 엔드포인트 추가.
+  - 거래대금 급증 장세 버킷은 market-wide aggregate contract 미준비로 1차에서 정의만 유지 — 항상 빈 결과. 후속 PR에서 데이터 소스 확정 후 활성화.
 
 주요 파일:
 
-- `services/market_data_service.py`
-- `services/indicator_service.py`
-- `strategies/strategy_executor.py`
+- `services/market_regime_service.py` (신규)
+- `services/regime_performance_service.py` (신규)
+- `services/oneil_universe_service.py` (`MarketRegimeService` 위임)
+- `strategies/larry_williams_vbo_strategy.py`
+- `strategies/larry_williams_channel_breakout_strategy.py`
 - `scheduler/strategy_scheduler.py`
+- `common/trade_journal_schema.py`
+- `view/web/routes/strategy_report.py`
 
 ### 1-5. 백테스트 검증 확장
 

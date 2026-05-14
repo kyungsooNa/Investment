@@ -7,7 +7,7 @@ from typing import Any, Mapping
 from utils.transaction_cost_utils import TransactionCostUtils
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 STANDARD_TRADE_JOURNAL_FIELDS = (
     "schema_version",
@@ -29,11 +29,38 @@ STANDARD_TRADE_JOURNAL_FIELDS = (
     "net_return",
     "mfe",
     "mae",
+    "market_regime",
     "metadata",
 )
 
 
-def normalize_virtual_trade(trade: Mapping[str, Any], *, source: str = "virtual_trade") -> dict[str, Any]:
+def _resolve_market_regime(
+    record: Mapping[str, Any],
+    explicit: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """우선순위: 명시 인자 > record.market_regime > record.metadata.market_regime > None.
+
+    Normalizer 는 service 를 호출하지 않는다 — 호출 측이 regime snapshot 을 책임진다.
+    """
+    if explicit is not None:
+        return dict(explicit)
+    direct = record.get("market_regime") if isinstance(record, Mapping) else None
+    if isinstance(direct, Mapping):
+        return dict(direct)
+    metadata = record.get("metadata") if isinstance(record, Mapping) else None
+    if isinstance(metadata, Mapping):
+        meta_regime = metadata.get("market_regime")
+        if isinstance(meta_regime, Mapping):
+            return dict(meta_regime)
+    return None
+
+
+def normalize_virtual_trade(
+    trade: Mapping[str, Any],
+    *,
+    source: str = "virtual_trade",
+    market_regime: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Normalize a VirtualTradeRepository row into the shared journal schema.
 
     Existing repository rows represent one position lifecycle. The standard
@@ -82,6 +109,7 @@ def normalize_virtual_trade(trade: Mapping[str, Any], *, source: str = "virtual_
         net_return=net_return,
         mfe=_first_float(trade, "mfe", "MFE", "mfe_pct", "MFE_pct"),
         mae=_first_float(trade, "mae", "MAE", "mae_pct", "MAE_pct"),
+        market_regime=_resolve_market_regime(trade, market_regime),
         metadata={k: _json_safe(v) for k, v in dict(trade).items()},
     )
 
@@ -93,6 +121,7 @@ def normalize_backtest_trade(
     strategy: str = "",
     qty: int = 1,
     source: str = "backtest",
+    market_regime: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Normalize a backtest trade dict into the shared journal schema."""
     order_price = _to_float(_first_value(trade, "entry_px", "entry_price", "order_price"))
@@ -124,6 +153,7 @@ def normalize_backtest_trade(
         net_return=TransactionCostUtils.get_return_rate(order_price, fill_price, normalized_qty, apply_cost=True),
         mfe=_first_float(trade, "mfe", "MFE", "mfe_pct", "MFE_pct"),
         mae=_first_float(trade, "mae", "MAE", "mae_pct", "MAE_pct"),
+        market_regime=_resolve_market_regime(trade, market_regime),
         metadata={k: _json_safe(v) for k, v in dict(trade).items()},
     )
 
@@ -135,6 +165,7 @@ def normalize_backtest_decision(
     strategy: str = "",
     accepted: bool,
     source: str = "backtest",
+    market_regime: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Normalize a backtest signal/rejection decision into the shared schema.
 
@@ -168,11 +199,17 @@ def normalize_backtest_decision(
         net_return=None,
         mfe=_first_float(decision, "mfe", "MFE", "mfe_pct", "MFE_pct"),
         mae=_first_float(decision, "mae", "MAE", "mae_pct", "MAE_pct"),
+        market_regime=_resolve_market_regime(decision, market_regime),
         metadata={k: _json_safe(v) for k, v in dict(decision).items()},
     )
 
 
-def normalize_backtest_execution(report: Any, *, source: str = "backtest") -> dict[str, Any]:
+def normalize_backtest_execution(
+    report: Any,
+    *,
+    source: str = "backtest",
+    market_regime: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Normalize a BacktestExecutionReport into the shared journal schema."""
     order = report.order
     status = str(getattr(report.status, "value", report.status) or "").upper()
@@ -203,6 +240,7 @@ def normalize_backtest_execution(report: Any, *, source: str = "backtest") -> di
         net_return=None,
         mfe=_to_float(getattr(report, "mfe", None)),
         mae=_to_float(getattr(report, "mae", None)),
+        market_regime=dict(market_regime) if market_regime is not None else None,
         metadata={
             "order_id": str(getattr(order, "order_id", "") or ""),
             "order_type": str(getattr(order.order_type, "value", order.order_type) or ""),

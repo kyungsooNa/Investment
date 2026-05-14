@@ -84,12 +84,30 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
 
         self._logger.info({"event": "scan_with_watchlist", "count": len(watchlist)})
 
+        # 시장 국면 게이트 — state 변경 전 차단
+        market_timing = {
+            "KOSPI": await self._universe.is_market_timing_ok("KOSPI", caller=self.name, logger=self._logger),
+            "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", caller=self.name, logger=self._logger),
+        }
+        if not any(market_timing.values()):
+            self._logger.info({"event": "scan_skipped", "reason": "market_timing_off_both"})
+            return signals
+
         today_str = now.strftime("%Y%m%d")
         candidates = []
         for code, item in watchlist.items():
             if code in self._position_state:
                 continue
             if today_str < self._cooldown.get(code, ""):
+                continue
+            if not market_timing.get(item.market, False):
+                self._logger.info({
+                    "event": "entry_rejected",
+                    "code": code,
+                    "name": item.name,
+                    "reason": "market_timing_off",
+                    "market": item.market,
+                })
                 continue
             if item.rs_rating < self._cfg.rs_rating_min:
                 self._logger.info({

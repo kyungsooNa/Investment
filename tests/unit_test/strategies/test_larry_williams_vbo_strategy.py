@@ -369,11 +369,13 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         item = MagicMock()
         item.code = "005930"
         item.name = "삼성전자"
+        item.market = "KOSPI"
         item.market_cap = 300_000_000_000   # 3,000억 → 필터 통과
         item.avg_trading_value_5d = 200_000_000_000  # 2,000억 → 필터 통과
 
         universe = MagicMock()
         universe.get_watchlist = AsyncMock(return_value={"005930": item})
+        universe.is_market_timing_ok = AsyncMock(return_value=True)
 
         config = LarryWilliamsVBOConfig(
             k_value=0.5,

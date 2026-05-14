@@ -108,6 +108,17 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             return signals
         self._logger.info({"event": "pool_b_loaded", "count": len(candidates)})
 
+        # 2-1) 시장 국면 게이트 — universe 가 있을 때만 수행 (state 변경 전)
+        market_timing: Dict[str, bool] = {}
+        if self._universe is not None:
+            market_timing = {
+                "KOSPI": await self._universe.is_market_timing_ok("KOSPI", caller=self.name, logger=self._logger),
+                "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", caller=self.name, logger=self._logger),
+            }
+            if not any(market_timing.values()):
+                self._logger.info({"event": "scan_skipped", "reason": "market_timing_off_both"})
+                return signals
+
         # 3) 전일 Range 캐시 갱신 (당일 1회)
         await self._refresh_range_cache(today, [c["code"] for c in candidates if c.get("code")])
 
@@ -120,6 +131,13 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 continue
             if not self._cfg.allow_reentry and code in self._bought_today:
                 continue
+
+            # 시장 국면 게이트 (종목별) — bear regime 이면 state/주문 영향 없이 skip
+            if market_timing:
+                stock_market = stock.get("market", "")
+                if stock_market and not market_timing.get(stock_market, False):
+                    self._log_entry_rejected(log_data, "market_timing_off", f"{stock_market} 마켓 타이밍 차단")
+                    continue
 
             try:
                 # 4) 유동성·규모 필터 (OSBWatchlistItem 내장값 우선 사용)
@@ -301,6 +319,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                     result.append({
                         "code": item.code,
                         "name": item.name,
+                        "market": getattr(item, "market", ""),
                         "market_cap": item.market_cap,          # 원 단위
                         "avg_5d_tv": item.avg_trading_value_5d, # 원 단위
                     })
