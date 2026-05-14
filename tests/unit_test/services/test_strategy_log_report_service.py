@@ -18,6 +18,7 @@ from services.strategy_log_report_service import (
     _strategy_name_from_source,
     _to_float,
 )
+from services.strategy_performance_degradation_service import StrategyPerformanceDegradationConfig
 
 
 # ── 헬퍼 ─────────────────────────────────────────────────────────
@@ -259,6 +260,54 @@ def test_backtest_live_divergence_section_from_provider():
     assert "평균 순수익률 괴리: -1.50%p" in section
     assert "총 순손익 괴리: -1,500원" in section
     assert "S1/005930: 순수익률 -1.50%p, 체결가 -1.9048%, 순손익 -1,500원" in section
+
+
+@pytest.mark.asyncio
+async def test_report_includes_strategy_degradation_candidates(log_dir):
+    """표준 journal 기반 성과 저하 후보를 리포트에 포함하고 getter로 노출한다."""
+    fixture_dir = os.path.join("tests", "fixtures", "strategy_degradation")
+    with open(os.path.join(fixture_dir, "recent_trades_live.json"), encoding="utf-8") as f:
+        live_records = json.load(f)
+    with open(os.path.join(fixture_dir, "recent_trades_backtest.json"), encoding="utf-8") as f:
+        backtest_records = json.load(f)
+
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return []
+
+        def get_solds(self):
+            return []
+
+        def get_holds(self):
+            return []
+
+        def get_standard_journal_records(self):
+            return live_records
+
+    _write_log(os.path.join(log_dir, "20260418_093000_S1.log.json"), [
+        _make_entry("scan_with_watchlist", "", "", reason=""),
+    ])
+
+    svc = StrategyLogReportService(
+        log_dir=log_dir,
+        virtual_trade_service=DummyVirtualTradeService(),
+        backtest_journal_provider=lambda _target_date: backtest_records,
+        strategy_degradation_config=StrategyPerformanceDegradationConfig(
+            window_size=5,
+            min_live_trades=5,
+            min_baseline_trades=5,
+            capital_base_won=100_000,
+            critical_consecutive_losses=3,
+        ),
+    )
+
+    report = await svc.generate_report("20260418")
+    candidates = svc.get_last_strategy_degradation_candidates()
+
+    assert "전략별 성과 저하 후보" in report
+    assert "S1: critical_candidate" in report
+    assert "연속손실 3" in report
+    assert candidates[0]["strategy"] == "S1"
 
 
 # ── _extract_strategy_name ────────────────────────────────────────

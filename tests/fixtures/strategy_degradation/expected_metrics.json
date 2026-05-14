@@ -1,0 +1,16 @@
+{
+  "S1_window_5": {
+    "trade_count": 5,
+    "win_rate": 0.4,
+    "avg_net_return": -0.2,
+    "total_net_pnl": -1000.0,
+    "payoff_ratio": 1.0,
+    "profit_factor": 0.6667,
+    "mdd_amount": 3000.0,
+    "max_consecutive_losses": 3,
+    "avg_mfe": 1.25,
+    "avg_mae": -1.25,
+    "missing_mfe_count": 1,
+    "missing_mae_count": 1
+  }
+}

@@ -226,3 +226,8 @@ async def test_emit_metadata_contains_transition_and_key(svc, notification_servi
     assert meta["dedup_key"] == "kill_switch:global"
     assert meta["source"] == AlertSource.KILL_SWITCH.value
     assert meta["foo"] == "bar"
+
+
+def test_strategy_perf_alert_source_value_is_stable():
+    """전략 성과 저하 알림의 dedup source 값은 대문자 enum 컨벤션을 따른다."""
+    assert AlertSource.STRATEGY_PERF.value == "STRATEGY_PERF"

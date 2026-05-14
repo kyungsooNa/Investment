@@ -4,6 +4,7 @@ StockOhlcvRepository 단위 테스트.
 import pytest
 import pytest_asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 from repositories.stock_ohlcv_repository import StockOhlcvRepository
@@ -536,11 +537,12 @@ class TestCleanupOldData:
     @pytest.mark.asyncio
     async def test_deletes_old_records_keeps_recent(self, repo):
         """keep_days보다 오래된 데이터는 삭제되고 최근 데이터는 보존된다."""
+        recent_date = datetime.now().strftime("%Y%m%d")
         await repo.upsert_daily_snapshot("20200101", [_make_snapshot("A001")])
-        await repo.upsert_daily_snapshot("20260414", [_make_snapshot("A002")])
+        await repo.upsert_daily_snapshot(recent_date, [_make_snapshot("A002")])
         await repo.cleanup_old_data(keep_days=30)
         assert await repo.get_count_by_date("20200101") == 0
-        assert await repo.get_count_by_date("20260414") == 1
+        assert await repo.get_count_by_date(recent_date) == 1
 
     @pytest.mark.asyncio
     async def test_no_error_when_nothing_to_delete(self, repo):

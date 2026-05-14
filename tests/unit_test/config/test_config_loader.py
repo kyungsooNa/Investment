@@ -99,6 +99,8 @@ def test_app_config_defaults_to_paper_trading_when_omitted():
     )
 
     assert config.is_paper_trading is True
+    assert config.strategy_performance_degradation.window_size == 20
+    assert config.strategy_performance_degradation.warn_profit_factor_below == 1.0
 
 def test_app_config_validation_invalid_url():
     """AppConfig base_url 유효성 검사 실패 테스트"""

@@ -25,6 +25,7 @@ class AlertSource(str, Enum):
     RECONCILE = "RECONCILE"
     WEBSOCKET_WATCHDOG = "WEBSOCKET_WATCHDOG"
     DATA_QUALITY = "DATA_QUALITY"
+    STRATEGY_PERF = "STRATEGY_PERF"
 
 
 # severity 순서 (낮을수록 심각)

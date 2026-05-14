@@ -1,0 +1,57 @@
+[
+  {
+    "strategy": "S1",
+    "code": "100001",
+    "status": "SOLD",
+    "signal_time": "2026-04-01 09:00:00",
+    "net_pnl": 2000,
+    "net_return": 2.0,
+    "mfe": 3.0,
+    "mae": -0.5,
+    "metadata": {"sell_date": "2026-04-01 14:50:00"}
+  },
+  {
+    "strategy": "S1",
+    "code": "100002",
+    "status": "SOLD",
+    "signal_time": "2026-04-02 09:00:00",
+    "net_pnl": 2000,
+    "net_return": 2.0,
+    "mfe": 3.0,
+    "mae": -0.5,
+    "metadata": {"sell_date": "2026-04-02 14:50:00"}
+  },
+  {
+    "strategy": "S1",
+    "code": "100003",
+    "status": "SOLD",
+    "signal_time": "2026-04-03 09:00:00",
+    "net_pnl": 2000,
+    "net_return": 2.0,
+    "mfe": 3.0,
+    "mae": -0.5,
+    "metadata": {"sell_date": "2026-04-03 14:50:00"}
+  },
+  {
+    "strategy": "S1",
+    "code": "100004",
+    "status": "SOLD",
+    "signal_time": "2026-04-04 09:00:00",
+    "net_pnl": 2000,
+    "net_return": 2.0,
+    "mfe": 3.0,
+    "mae": -0.5,
+    "metadata": {"sell_date": "2026-04-04 14:50:00"}
+  },
+  {
+    "strategy": "S1",
+    "code": "100005",
+    "status": "SOLD",
+    "signal_time": "2026-04-05 09:00:00",
+    "net_pnl": -1000,
+    "net_return": -1.0,
+    "mfe": 1.0,
+    "mae": -1.5,
+    "metadata": {"sell_date": "2026-04-05 14:50:00"}
+  }
+]

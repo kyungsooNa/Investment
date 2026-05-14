@@ -1,0 +1,84 @@
+[
+  {
+    "strategy": "S1",
+    "code": "000001",
+    "status": "SOLD",
+    "signal_time": "2026-05-01 09:00:00",
+    "net_pnl": 1000,
+    "net_return": 1.0,
+    "mfe": 2.0,
+    "mae": -0.5,
+    "metadata": {"sell_date": "2026-05-01 14:50:00"}
+  },
+  {
+    "strategy": "S1",
+    "code": "000002",
+    "status": "SOLD",
+    "signal_time": "2026-05-02 09:00:00",
+    "net_pnl": 1000,
+    "net_return": 1.0,
+    "mfe": 2.0,
+    "mae": -0.5,
+    "metadata": {"sell_date": "2026-05-02 14:50:00"}
+  },
+  {
+    "strategy": "S1",
+    "code": "000003",
+    "status": "SOLD",
+    "signal_time": "2026-05-03 09:00:00",
+    "net_pnl": 1000,
+    "net_return": 1.0,
+    "mfe": 2.0,
+    "mae": -0.5,
+    "metadata": {"sell_date": "2026-05-03 14:50:00"}
+  },
+  {
+    "strategy": "S1",
+    "code": "000004",
+    "status": "SOLD",
+    "signal_time": "2026-05-04 09:00:00",
+    "net_pnl": -1000,
+    "net_return": -1.0,
+    "mfe": 0.5,
+    "mae": -2.0,
+    "metadata": {"sell_date": "2026-05-04 14:50:00"}
+  },
+  {
+    "strategy": "S1",
+    "code": "000005",
+    "status": "SOLD",
+    "signal_time": "2026-05-05 09:00:00",
+    "net_pnl": -1000,
+    "net_return": -1.0,
+    "mfe": 0.5,
+    "mae": -2.0,
+    "metadata": {"exit_time": "2026-05-05 14:50:00"}
+  },
+  {
+    "strategy": "S1",
+    "code": "000006",
+    "status": "SOLD",
+    "signal_time": "2026-05-06 09:00:00",
+    "net_pnl": -1000,
+    "net_return": -1.0,
+    "metadata": {"closed_at": "2026-05-06 14:50:00"}
+  },
+  {
+    "strategy": "S2",
+    "code": "000101",
+    "status": "SOLD",
+    "signal_time": "2026-05-01 09:00:00",
+    "net_pnl": 500,
+    "net_return": 0.5,
+    "metadata": {"sell_date": "2026-05-01 14:50:00"}
+  },
+  {
+    "strategy": "S2",
+    "code": "000102",
+    "status": "HOLD",
+    "signal_time": "2026-05-02 09:00:00",
+    "net_pnl": 9999,
+    "net_return": 9.9,
+    "metadata": {"sell_date": "2026-05-02 14:50:00"}
+  }
+]

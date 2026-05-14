@@ -15,6 +15,7 @@ def mock_report_service():
     svc = MagicMock()
     svc.generate_report = AsyncMock(return_value="<html>report</html>")
     svc.get_last_execution_quality_candidates.return_value = []
+    svc.get_last_strategy_degradation_candidates.return_value = []
     return svc
 
 
@@ -22,6 +23,13 @@ def mock_report_service():
 def mock_notification_service():
     svc = MagicMock()
     svc.emit = AsyncMock()
+    return svc
+
+
+@pytest.fixture
+def mock_operator_alert_service():
+    svc = MagicMock()
+    svc.report = AsyncMock()
     return svc
 
 
@@ -108,6 +116,63 @@ class TestOnMarketClosed:
         assert args[2] == "체결 품질 비활성화 후보"
         assert "잔량전략" in args[3]
         assert kwargs["metadata"]["alert_type"] == "execution_quality_candidate"
+
+    async def test_strategy_degradation_candidates_use_operator_alert_only(
+        self, mock_report_service, mock_notification_service, mock_operator_alert_service
+    ):
+        mock_report_service.get_last_strategy_degradation_candidates.return_value = [{
+            "strategy": "S1",
+            "status": "critical_candidate",
+            "reasons": ["consecutive_losses"],
+            "recommended_actions": ["pause_new_entries_candidate"],
+        }]
+        kill_switch = MagicMock()
+        kill_switch.is_strategy_tripped.return_value = {
+            "trip_reason": "연속 손실 5회",
+            "trip_timestamp": "2026-05-15T15:10:00+09:00",
+        }
+        task = StrategyLogReportTask(
+            report_service=mock_report_service,
+            notification_service=mock_notification_service,
+            operator_alert_service=mock_operator_alert_service,
+            kill_switch_service=kill_switch,
+            logger=MagicMock(),
+        )
+
+        await task._on_market_closed("20260419")
+
+        mock_operator_alert_service.report.assert_awaited_once()
+        mock_notification_service.emit.assert_not_awaited()
+        args, kwargs = mock_operator_alert_service.report.await_args
+        assert args[0].value == "STRATEGY_PERF"
+        assert args[1] == "strategy_perf:S1"
+        assert args[2] == "critical"
+        assert kwargs["metadata"]["already_blocked_by_kill_switch"] is True
+        assert kwargs["metadata"]["kill_switch_trip"]["trip_reason"] == "연속 손실 5회"
+
+    async def test_strategy_degradation_candidates_fallback_to_notification(
+        self, mock_report_service, mock_notification_service
+    ):
+        mock_report_service.get_last_strategy_degradation_candidates.return_value = [{
+            "strategy": "S1",
+            "status": "degraded",
+            "reasons": ["profit_factor_low"],
+            "recommended_actions": ["reduce_position_size_candidate"],
+        }]
+        task = StrategyLogReportTask(
+            report_service=mock_report_service,
+            notification_service=mock_notification_service,
+            logger=MagicMock(),
+        )
+
+        await task._on_market_closed("20260419")
+
+        mock_notification_service.emit.assert_awaited_once()
+        args, kwargs = mock_notification_service.emit.await_args
+        assert args[0].value == "STRATEGY"
+        assert args[1].value == "warning"
+        assert args[2] == "전략 성과 저하 후보"
+        assert kwargs["metadata"]["alert_type"] == "strategy_degradation_candidate"
 
     async def test_telegram_send_called(self, task, mock_telegram):
         await task._on_market_closed("20260419")

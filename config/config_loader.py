@@ -167,6 +167,20 @@ class ExecutionQualityReportConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class StrategyPerformanceDegradationConfig(BaseModel):
+    window_size: int = 20
+    min_live_trades: int = 10
+    min_baseline_trades: int = 10
+    capital_base_won: Optional[float] = None
+    warn_win_rate_drop_pctp: float = 15.0
+    warn_avg_return_drop_pctp: float = 1.0
+    warn_profit_factor_below: Optional[float] = 1.0
+    critical_consecutive_losses: Optional[int] = 5
+    critical_mdd_ratio_multiplier: Optional[float] = 2.0
+
+    model_config = {"extra": "allow"}
+
+
 class OpeningPositionReconcileConfig(BaseModel):
     enabled: bool = True
     check_interval_sec: int = 30
@@ -201,6 +215,9 @@ class AppConfig(BaseModel):
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
     execution_quality_report: ExecutionQualityReportConfig = Field(default_factory=ExecutionQualityReportConfig)
+    strategy_performance_degradation: StrategyPerformanceDegradationConfig = Field(
+        default_factory=StrategyPerformanceDegradationConfig
+    )
     opening_position_reconcile: OpeningPositionReconcileConfig = Field(default_factory=OpeningPositionReconcileConfig)
     
     # Dynamic/Merged configs
