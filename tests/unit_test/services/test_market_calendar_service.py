@@ -243,6 +243,37 @@ async def test_is_market_open_now(manager, mock_deps):
     tm.is_market_operating_hours = MagicMock(return_value=True) # 시계는 장중이라고 판단
     assert await manager.is_market_open_now() is False # 달력이 컷트!
 
+@pytest.mark.asyncio
+async def test_is_market_open_now_falls_back_to_latest_trading_date(manager, mock_deps, mock_broker):
+    """휴장일 캐시가 False여도 최신 거래일이 오늘이면 장중으로 복구한다."""
+    tm, logger = mock_deps
+    broker, _ = mock_broker
+    manager.set_broker(broker)
+
+    tm.get_current_kst_time.return_value = tm.market_timezone.localize(datetime(2026, 5, 14, 9, 5, 0))
+    tm.is_market_operating_hours = MagicMock(return_value=True)
+    manager.is_business_day = AsyncMock(return_value=False)
+    manager.get_latest_trading_date = AsyncMock(return_value="20260514")
+
+    assert await manager.is_market_open_now() is True
+    manager.get_latest_trading_date.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_is_market_open_now_keeps_holiday_closed_when_latest_trading_date_is_previous_day(manager, mock_deps, mock_broker):
+    """실제 휴장일이면 최신 거래일 fallback으로도 장중 처리하지 않는다."""
+    tm, logger = mock_deps
+    broker, _ = mock_broker
+    manager.set_broker(broker)
+
+    tm.get_current_kst_time.return_value = tm.market_timezone.localize(datetime(2026, 5, 14, 9, 5, 0))
+    tm.is_market_operating_hours = MagicMock(return_value=True)
+    manager.is_business_day = AsyncMock(return_value=False)
+    manager.get_latest_trading_date = AsyncMock(return_value="20260513")
+
+    assert await manager.is_market_open_now() is False
+    manager.get_latest_trading_date.assert_awaited_once()
+
 # ── get_next_open_time Tests ──────────────────────────────────────────
 
 def _is_weekday_side_effect(date_str):
@@ -534,3 +565,18 @@ async def test_wait_until_next_open_no_sleep(mock_sleep, manager, mock_deps):
     manager.get_next_open_time = AsyncMock(return_value=tm.get_current_kst_time.return_value)
     await manager.wait_until_next_open()
     mock_sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@patch("asyncio.sleep", new_callable=AsyncMock)
+async def test_wait_until_next_open_caps_sleep_for_recheck(mock_sleep, manager, mock_deps):
+    """긴 대기 시간이 계산되어도 호출자가 지정한 주기로 재확인할 수 있게 sleep을 제한한다."""
+    tm, logger = mock_deps
+    now = tm.market_timezone.localize(datetime(2026, 5, 14, 9, 0, 0))
+    next_open = tm.market_timezone.localize(datetime(2026, 5, 15, 9, 0, 0))
+    tm.get_current_kst_time.return_value = now
+    manager.get_next_open_time = AsyncMock(return_value=next_open)
+
+    await manager.wait_until_next_open(max_sleep_seconds=60)
+
+    mock_sleep.assert_awaited_once_with(60)

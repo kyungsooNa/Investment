@@ -158,7 +158,23 @@ class MarketCalendarService:
         # 장 운영 시간이 아니면 달력(API/캐시)을 확인할 필요도 없이 바로 False 반환 (성능 최적화)
         if not self._market_clock.is_market_operating_hours():
             return False
-        return await self.is_business_day()
+
+        if await self.is_business_day():
+            return True
+
+        if not self._broker:
+            return False
+
+        today_str = self._market_clock.get_current_kst_time().strftime("%Y%m%d")
+        latest_trading_date = await self.get_latest_trading_date()
+        if latest_trading_date == today_str:
+            self._logger.warning(
+                "휴장일 API는 오늘을 비영업일로 판단했지만 최신 거래일이 오늘이므로 장중으로 처리합니다. "
+                f"(date={today_str})"
+            )
+            return True
+
+        return False
 
     async def get_next_open_day(self, current_date_str: str = None) -> str:
         """기준일의 '다음 영업일(YYYYMMDD)'을 반환합니다 (연휴 완벽 스킵)."""
@@ -204,15 +220,21 @@ class MarketCalendarService:
             datetime(next_open_date.year, next_open_date.month, next_open_date.day, open_hour, open_minute)
         )
 
-    async def wait_until_next_open(self):
+    async def wait_until_next_open(self, max_sleep_seconds: Optional[float] = None):
         """다음 개장 시간까지 스케줄러를 비동기적으로 대기시킵니다."""
         now = self._market_clock.get_current_kst_time()
         next_open = await self.get_next_open_time()
         
         seconds_left = max(0.0, (next_open - now).total_seconds())
         if seconds_left > 0:
-            self._logger.info(f"다음 개장시간({next_open.strftime('%Y-%m-%d %H:%M:%S')})까지 {seconds_left:.1f}초 대기합니다. 💤")
-            await asyncio.sleep(seconds_left)
+            sleep_seconds = seconds_left
+            if max_sleep_seconds is not None:
+                sleep_seconds = min(seconds_left, max(0.0, max_sleep_seconds))
+            self._logger.info(
+                f"다음 개장시간({next_open.strftime('%Y-%m-%d %H:%M:%S')})까지 "
+                f"{seconds_left:.1f}초 남았습니다. {sleep_seconds:.1f}초 후 재확인합니다. 💤"
+            )
+            await asyncio.sleep(sleep_seconds)
 
     async def get_latest_market_close_time(self) -> Optional[datetime]:
         """
