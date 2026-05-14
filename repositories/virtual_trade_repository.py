@@ -347,64 +347,11 @@ class VirtualTradeRepository:
         if not positions:
             return []
 
-        target_pairs = {(p["strategy"], p["code"]) for p in positions}
-        open_signal_map = self._load_scheduler_open_signal_map(target_pairs)
-        inserted: list[dict] = []
-
-        with self._lock:
-            for position in positions:
-                strategy_name = position["strategy"]
-                code = position["code"]
-                row = self._db.execute(
-                    "SELECT 1 FROM trades WHERE strategy=? AND code=? AND status='HOLD' LIMIT 1",
-                    (strategy_name, code)
-                ).fetchone()
-                if row is not None:
-                    continue
-
-                signal_meta = open_signal_map.get((strategy_name, code), {})
-                if not signal_meta:
-                    logger.warning(
-                        f"[가상매매] sync SKIP strategy={strategy_name} code={code} "
-                        "reason=no_open_scheduler_buy_signal"
-                    )
-                    continue
-
-                buy_price = float(signal_meta.get("buy_price") or position["buy_price"])
-                buy_date = str(signal_meta.get("buy_date") or position["buy_date"])
-                qty = int(signal_meta.get("qty") or 1)
-                source = "scheduler_signal"
-
-                # 행 단위 추적 로그 — 향후 의심 데이터(자정 buy_date 등) 발생 시 즉시 추적 가능.
-                # 자정(00:00:00)은 strategy state 파일이 YYYYMMDD 만 기록해 _normalize_entry_date 가
-                # 자정으로 정규화한 흔적이며, 정상 매매 흐름에서는 나오지 않는 패턴이다.
-                is_midnight = buy_date.endswith("00:00:00")
-                log_fn = logger.warning if is_midnight else logger.info
-                log_fn(
-                    f"[가상매매] sync INSERT strategy={strategy_name} code={code} "
-                    f"buy_date={buy_date} buy_price={buy_price} qty={qty} source={source}"
-                    + (" [의심: 자정 buy_date — state 파일 entry_date 가 시간 없는 형식]" if is_midnight else "")
-                )
-
-                with self._db:
-                    self._db.execute(
-                        _INSERT_TRADE,
-                        (strategy_name, code, buy_date, buy_price, qty, None, None, 0.0, "HOLD", "")
-                    )
-
-                inserted.append({
-                    "strategy": strategy_name,
-                    "code": code,
-                    "buy_date": buy_date,
-                    "buy_price": buy_price,
-                    "qty": qty,
-                    "source": source,
-                })
-
-        if inserted:
-            logger.info(f"[가상매매] live 전략 포지션 동기화: {inserted}")
-
-        return inserted
+        logger.warning(
+            "[가상매매] live 전략 상태파일 기반 HOLD 자동 복구 비활성화: "
+            f"{[(p['strategy'], p['code']) for p in positions]}"
+        )
+        return []
 
     # ---- 매수/매도 ----
 

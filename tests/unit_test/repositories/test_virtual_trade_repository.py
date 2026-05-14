@@ -969,8 +969,8 @@ def test_migrate_legacy_data_handles_failures(tmp_path):
     assert mock_logger.warning.call_count >= 2
 
 
-def test_sync_live_strategy_positions_backfills_missing_strategy_holds(virutal_trade_repository, tmp_path):
-    """전략 상태 파일 + scheduler signal_history를 기준으로 누락 HOLD를 복구한다."""
+def test_sync_live_strategy_positions_does_not_backfill_from_strategy_state(virutal_trade_repository, tmp_path):
+    """전략 state/scheduler 이력은 virtual_trade.db의 HOLD를 새로 만들 수 없다."""
     data_root = tmp_path / "data"
     scheduler_dir = data_root / "StrategyScheduler"
     scheduler_dir.mkdir(parents=True, exist_ok=True)
@@ -1015,20 +1015,13 @@ def test_sync_live_strategy_positions_backfills_missing_strategy_holds(virutal_t
             ],
         )
 
-    inserted = virutal_trade_repository.sync_live_strategy_positions()
+    with patch("repositories.virtual_trade_repository.logger") as mock_logger:
+        inserted = virutal_trade_repository.sync_live_strategy_positions()
     holds = virutal_trade_repository.get_holds_by_strategy("오닐PP/BGU")
 
-    assert len(inserted) == 1
-    assert {row["code"] for row in inserted} == {"489790"}
-    assert len(holds) == 1
-
-    by_code = {row["code"]: row for row in holds}
-    assert by_code["489790"]["buy_price"] == 82000
-    assert by_code["489790"]["qty"] == 6
-    assert by_code["489790"]["buy_date"] == "2026-04-24 13:14:18"
-
-    inserted_again = virutal_trade_repository.sync_live_strategy_positions()
-    assert inserted_again == []
+    assert inserted == []
+    assert holds == []
+    mock_logger.warning.assert_called()
 
 
 def test_sync_live_strategy_positions_skips_state_only_holds(virutal_trade_repository, tmp_path):
