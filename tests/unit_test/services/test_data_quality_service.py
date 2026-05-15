@@ -1,7 +1,9 @@
 import time
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from common.operator_alert_types import AlertSource
 from common.types import ErrorCode, ResCommonResponse
 from config.config_loader import DataQualityConfig
 from services.data_quality_service import DataQualityService
@@ -75,6 +77,53 @@ def test_violation_history_records_and_filters_failures():
     assert by_code[0]["code"] == "005930"
     assert by_reason[0]["code"] == "000660"
     assert health["violation_count"] == 2
+
+
+def test_repeated_violations_report_operator_alert_once_per_cooldown(monkeypatch):
+    class ScheduledTask:
+        def add_done_callback(self, callback):
+            return None
+
+    class FakeLoop:
+        def __init__(self):
+            self.created = []
+
+        def create_task(self, coroutine):
+            self.created.append(coroutine)
+            coroutine.close()
+            return ScheduledTask()
+
+    fake_loop = FakeLoop()
+    monkeypatch.setattr(
+        "services.data_quality_service.asyncio.get_running_loop",
+        lambda: fake_loop,
+    )
+    operator_alert = MagicMock()
+    operator_alert.report = AsyncMock()
+    svc = DataQualityService(
+        DataQualityConfig(
+            violation_alert_threshold=2,
+            violation_alert_window_sec=10.0,
+            alert_cooldown_sec=60.0,
+        ),
+        operator_alert_service=operator_alert,
+    )
+
+    svc.validate_price_tick({"유가증권단축종목코드": "005930", "주식현재가": "-1", "누적거래량": "1"})
+    svc.validate_price_tick({"유가증권단축종목코드": "000660", "주식현재가": "-1", "누적거래량": "1"})
+
+    assert operator_alert.report.call_count == 1
+    assert len(fake_loop.created) == 1
+    args, kwargs = operator_alert.report.call_args
+    assert args[0] == AlertSource.DATA_QUALITY
+    assert args[1] == "data_quality:invalid_tick"
+    assert args[2] == "error"
+    assert kwargs["metadata"]["reason"] == "invalid_tick"
+    assert kwargs["metadata"]["violation_count"] == 2
+
+    svc.validate_price_tick({"유가증권단축종목코드": "035420", "주식현재가": "-1", "누적거래량": "1"})
+
+    assert operator_alert.report.call_count == 1
 
 
 def test_validate_api_response_required_data_keys():
