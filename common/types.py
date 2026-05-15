@@ -52,6 +52,7 @@ class TradeSignal(BaseModel):
     exchange: str = "KRX"  # "KRX" 또는 "NXT"
     stop_loss_pct: float | None = None   # 손절폭 비율 (음수, 예: -5.0). None 이면 PositionSizingService 기본값 사용
     atr_multiplier: float | None = None  # ATR 기반 손절선 배수. None 이면 config 기본값 사용
+    volatility_20d_annualized: float | None = None  # 신호 생성 직전 20거래일 종가 수익률 std × √252. 리포트 집계용
 
     def to_dict(self):
         return self.model_dump()

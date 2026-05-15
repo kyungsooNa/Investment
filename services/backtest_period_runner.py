@@ -133,7 +133,7 @@ class BacktestPeriodRunner:
             self._forget_position_excursion_if_closed(report)
             result.execution_reports.append(report)
             result.journal_records.append(
-                self._execution_record(report, realized_metrics=sell_metrics)
+                self._execution_record(report, realized_metrics=sell_metrics, signal=signal)
             )
 
     async def _run_entries(self, date_ymd: str, result: BacktestPeriodRunResult) -> None:
@@ -182,7 +182,7 @@ class BacktestPeriodRunner:
             self._ledger.apply_execution(report)
             self._remember_position_excursion(report)
             result.execution_reports.append(report)
-            result.journal_records.append(self._execution_record(report))
+            result.journal_records.append(self._execution_record(report, signal=signal))
             if report.filled_qty <= 0:
                 result.journal_records.append(
                     self._rejected_signal_record(signal, date_ymd, report.reason)
@@ -311,6 +311,7 @@ class BacktestPeriodRunner:
             stock_code=signal.code,
             strategy=signal.strategy_name or self._strategy.name,
             accepted=False,
+            volatility_20d_annualized=signal.volatility_20d_annualized,
         )
 
     def _resolved_qty(self, signal: TradeSignal, qty: int | None = None) -> int:
@@ -323,8 +324,14 @@ class BacktestPeriodRunner:
         report: BacktestExecutionReport,
         *,
         realized_metrics: dict | None = None,
+        signal: TradeSignal | None = None,
     ) -> dict:
-        record = normalize_backtest_execution(report)
+        record = normalize_backtest_execution(
+            report,
+            volatility_20d_annualized=(
+                signal.volatility_20d_annualized if signal is not None else None
+            ),
+        )
         if realized_metrics and report.order.side == OrderSide.SELL and report.filled_qty > 0:
             record["status"] = "SOLD"
             record["net_pnl"] = realized_metrics.get("net_pnl")
