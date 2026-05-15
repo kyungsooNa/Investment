@@ -41,13 +41,15 @@ LIVE_STRATEGY_STATE_FILES = {
 }
 
 _SELECT_TRADES = (
-    "SELECT strategy, code, buy_date, buy_price, qty, sell_date, sell_price, return_rate, status, reason "
+    "SELECT strategy, code, buy_date, buy_price, qty, sell_date, sell_price, return_rate, status, reason, "
+    "volatility_20d_annualized "
     "FROM trades ORDER BY id"
 )
 _INSERT_TRADE = (
     "INSERT INTO trades "
-    "(strategy, code, buy_date, buy_price, qty, sell_date, sell_price, return_rate, status, reason) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "(strategy, code, buy_date, buy_price, qty, sell_date, sell_price, return_rate, status, reason, "
+    "volatility_20d_annualized) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 _DDL = """
 CREATE TABLE IF NOT EXISTS trades (
@@ -61,7 +63,8 @@ CREATE TABLE IF NOT EXISTS trades (
     sell_price  REAL,
     return_rate REAL    NOT NULL DEFAULT 0.0,
     status      TEXT    NOT NULL,
-    reason      TEXT    NOT NULL DEFAULT ''
+    reason      TEXT    NOT NULL DEFAULT '',
+    volatility_20d_annualized REAL
 );
 CREATE INDEX IF NOT EXISTS idx_trades_strategy_code_status ON trades(strategy, code, status);
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -136,7 +139,15 @@ class VirtualTradeRepository:
         self._db = sqlite3.connect(self.db_path, check_same_thread=False)
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(_DDL)
+        self._ensure_trade_columns()
         self._migrate_legacy_data()
+
+    def _ensure_trade_columns(self):
+        """기존 DB에 신규 컬럼이 없으면 ALTER TABLE 로 추가 (idempotent)."""
+        existing = {row[1] for row in self._db.execute("PRAGMA table_info(trades)").fetchall()}
+        if "volatility_20d_annualized" not in existing:
+            with self._db:
+                self._db.execute("ALTER TABLE trades ADD COLUMN volatility_20d_annualized REAL")
 
     # ---- 레거시 데이터 마이그레이션 (CSV/JSON → SQLite, 최초 1회) ----
 
@@ -215,10 +226,13 @@ class VirtualTradeRepository:
             qty = int(qty_raw) if (qty_raw is not None and not (isinstance(qty_raw, float) and math.isnan(qty_raw))) else 1
             rr_raw = getattr(row, 'return_rate', 0.0)
             return_rate = float(rr_raw) if (rr_raw is not None and not (isinstance(rr_raw, float) and math.isnan(rr_raw))) else 0.0
+            vol_raw = getattr(row, 'volatility_20d_annualized', None)
+            volatility = None if (vol_raw is None or (isinstance(vol_raw, float) and math.isnan(vol_raw))) else float(vol_raw)
             rows.append((
                 row.strategy, row.code, str(row.buy_date), float(row.buy_price), qty,
                 sell_date, sell_price, return_rate, row.status,
-                getattr(row, 'reason', '') or ''
+                getattr(row, 'reason', '') or '',
+                volatility,
             ))
         with self._db:
             self._db.execute("DELETE FROM trades")
@@ -355,8 +369,12 @@ class VirtualTradeRepository:
 
     # ---- 매수/매도 ----
 
-    def log_buy(self, strategy_name: str, code: str, current_price, qty: int = 1):
-        """가상 매수 기록. 동일 전략+종목 중복 매수 방지."""
+    def log_buy(self, strategy_name: str, code: str, current_price, qty: int = 1,
+                volatility_20d_annualized: float | None = None):
+        """가상 매수 기록. 동일 전략+종목 중복 매수 방지.
+
+        volatility_20d_annualized: 신호 생성 직전 20거래일 수익률 std × √252. 리포트 집계용.
+        """
         with self._lock:
             if self.is_holding(strategy_name, code):
                 logger.info(f"[가상매매] {strategy_name}/{code} 이미 보유 중 — 매수 스킵")
@@ -364,12 +382,16 @@ class VirtualTradeRepository:
             buy_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
             with self._db:
                 self._db.execute(_INSERT_TRADE,
-                    (strategy_name, code, buy_date, current_price, qty, None, None, 0.0, "HOLD", ""))
+                    (strategy_name, code, buy_date, current_price, qty, None, None, 0.0, "HOLD", "",
+                     volatility_20d_annualized))
             logger.info(f"[가상매매] {strategy_name}/{code} 매수 기록 (가격: {current_price}, 수량: {qty})")
 
-    async def log_buy_async(self, strategy_name: str, code: str, current_price, qty: int = 1):
+    async def log_buy_async(self, strategy_name: str, code: str, current_price, qty: int = 1,
+                            volatility_20d_annualized: float | None = None):
         """log_buy의 비동기 래퍼 (스레드 실행)."""
-        await asyncio.to_thread(self.log_buy, strategy_name, code, current_price, qty)
+        await asyncio.to_thread(
+            self.log_buy, strategy_name, code, current_price, qty, volatility_20d_annualized
+        )
 
     def log_sell(self, code: str, current_price, qty: int = 1, reason: str = ""):
         """가상 매도 — 해당 종목 가장 최근 HOLD 건."""

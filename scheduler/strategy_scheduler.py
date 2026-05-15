@@ -618,7 +618,10 @@ class StrategyScheduler:
         if self._dry_run:
             if signal.action == "BUY":
                 dry_qty = signal.qty if signal.qty is not None else 1
-                await self._virtual_trade_service.log_buy_async(signal.strategy_name, signal.code, log_price, dry_qty)
+                await self._virtual_trade_service.log_buy_async(
+                    signal.strategy_name, signal.code, log_price, dry_qty,
+                    volatility_20d_annualized=signal.volatility_20d_annualized,
+                )
                 if self._price_sub_svc:
                     await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key, StreamingType.UNIFIED_PRICE)
             elif signal.action == "SELL":
