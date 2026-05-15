@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-15 (4-3 데이터 품질 집계 알림 연결)
+최종 업데이트: 2026-05-15 (P1 1-4 변동성 컬럼 리포트 1차 도입)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -134,6 +134,8 @@
   - 누락된 LarryWilliamsVBO, LarryWilliamsCB에 동일 hard gate 추가 (`_position_state` 변경 전 위치, `reason=market_timing_off` 로깅).
 - [~] 변동성 기반 진입 제한을 검토한다.
   - 1차 PR에서는 hard gate 미도입 — 리포트 컬럼으로 먼저 검증 후 도입 결정. 후속 PR에서 `RiskGateConfig.max_volatility_pct` 추가 검토.
+  - 완료된 부분: 20일 종가 수익률 표준편차(annualized) 유틸 `utils/volatility_utils.py` 추가, `STANDARD_TRADE_JOURNAL_FIELDS`에 `volatility_20d_annualized` 필드 + `SCHEMA_VERSION = 3` 승격, `normalize_virtual_trade`/`normalize_backtest_trade`/`normalize_backtest_decision`/`normalize_backtest_execution` 4개 모두 Optional 인자 + record/metadata fallback 지원. `compute_performance_by_regime`가 버킷별 `volatility_sample_count`, `avg_volatility_20d_annualized`, `median_volatility_20d_annualized`를 산출해 `GET /api/strategies/performance-by-regime` JSON에 자동 노출.
+  - 남은 작업: 전략 실행 시점(`StrategyExecutor`)에서 사전 계산한 변동성을 journal record metadata로 주입하는 hook 연결. HTML 일일 리포트(`strategy_log_report_service`)에 변동성 섹션 추가 검토.
 - [x] 장 초반/후반 타임 필터를 전략 실행 전에 적용한다.
   - `StrategySchedulerConfig.skip_minutes_after_open` / `skip_minutes_before_close` 필드 추가.
   - `_is_scan_time_window_blocked()` 가 `cfg.strategy.scan()` 만 skip (force_exit/check_exits 영향 없음).

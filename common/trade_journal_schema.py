@@ -7,7 +7,7 @@ from typing import Any, Mapping
 from utils.transaction_cost_utils import TransactionCostUtils
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 STANDARD_TRADE_JOURNAL_FIELDS = (
     "schema_version",
@@ -30,6 +30,7 @@ STANDARD_TRADE_JOURNAL_FIELDS = (
     "mfe",
     "mae",
     "market_regime",
+    "volatility_20d_annualized",
     "metadata",
 )
 
@@ -55,11 +56,32 @@ def _resolve_market_regime(
     return None
 
 
+def _resolve_volatility(
+    record: Mapping[str, Any],
+    explicit: float | None,
+) -> float | None:
+    """우선순위: 명시 인자 > record.volatility_20d_annualized > record.metadata.volatility_20d_annualized > None.
+
+    Normalizer 는 OHLCV 계산을 수행하지 않는다 — 호출 측이 사전 계산된 값을 책임진다.
+    """
+    if explicit is not None:
+        return _to_float(explicit)
+    if isinstance(record, Mapping):
+        direct = record.get("volatility_20d_annualized")
+        if direct is not None:
+            return _to_float(direct)
+        metadata = record.get("metadata")
+        if isinstance(metadata, Mapping):
+            return _to_float(metadata.get("volatility_20d_annualized"))
+    return None
+
+
 def normalize_virtual_trade(
     trade: Mapping[str, Any],
     *,
     source: str = "virtual_trade",
     market_regime: Mapping[str, Any] | None = None,
+    volatility_20d_annualized: float | None = None,
 ) -> dict[str, Any]:
     """Normalize a VirtualTradeRepository row into the shared journal schema.
 
@@ -110,6 +132,7 @@ def normalize_virtual_trade(
         mfe=_first_float(trade, "mfe", "MFE", "mfe_pct", "MFE_pct"),
         mae=_first_float(trade, "mae", "MAE", "mae_pct", "MAE_pct"),
         market_regime=_resolve_market_regime(trade, market_regime),
+        volatility_20d_annualized=_resolve_volatility(trade, volatility_20d_annualized),
         metadata={k: _json_safe(v) for k, v in dict(trade).items()},
     )
 
@@ -122,6 +145,7 @@ def normalize_backtest_trade(
     qty: int = 1,
     source: str = "backtest",
     market_regime: Mapping[str, Any] | None = None,
+    volatility_20d_annualized: float | None = None,
 ) -> dict[str, Any]:
     """Normalize a backtest trade dict into the shared journal schema."""
     order_price = _to_float(_first_value(trade, "entry_px", "entry_price", "order_price"))
@@ -154,6 +178,7 @@ def normalize_backtest_trade(
         mfe=_first_float(trade, "mfe", "MFE", "mfe_pct", "MFE_pct"),
         mae=_first_float(trade, "mae", "MAE", "mae_pct", "MAE_pct"),
         market_regime=_resolve_market_regime(trade, market_regime),
+        volatility_20d_annualized=_resolve_volatility(trade, volatility_20d_annualized),
         metadata={k: _json_safe(v) for k, v in dict(trade).items()},
     )
 
@@ -166,6 +191,7 @@ def normalize_backtest_decision(
     accepted: bool,
     source: str = "backtest",
     market_regime: Mapping[str, Any] | None = None,
+    volatility_20d_annualized: float | None = None,
 ) -> dict[str, Any]:
     """Normalize a backtest signal/rejection decision into the shared schema.
 
@@ -200,6 +226,7 @@ def normalize_backtest_decision(
         mfe=_first_float(decision, "mfe", "MFE", "mfe_pct", "MFE_pct"),
         mae=_first_float(decision, "mae", "MAE", "mae_pct", "MAE_pct"),
         market_regime=_resolve_market_regime(decision, market_regime),
+        volatility_20d_annualized=_resolve_volatility(decision, volatility_20d_annualized),
         metadata={k: _json_safe(v) for k, v in dict(decision).items()},
     )
 
@@ -209,6 +236,7 @@ def normalize_backtest_execution(
     *,
     source: str = "backtest",
     market_regime: Mapping[str, Any] | None = None,
+    volatility_20d_annualized: float | None = None,
 ) -> dict[str, Any]:
     """Normalize a BacktestExecutionReport into the shared journal schema."""
     order = report.order
@@ -241,6 +269,7 @@ def normalize_backtest_execution(
         mfe=_to_float(getattr(report, "mfe", None)),
         mae=_to_float(getattr(report, "mae", None)),
         market_regime=dict(market_regime) if market_regime is not None else None,
+        volatility_20d_annualized=_to_float(volatility_20d_annualized),
         metadata={
             "order_id": str(getattr(order, "order_id", "") or ""),
             "order_type": str(getattr(order.order_type, "value", order.order_type) or ""),
