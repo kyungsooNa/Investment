@@ -145,7 +145,10 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                     continue
 
                 # 5) 현재가/시가 조회
-                price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
+                price_resp = await self._sqs.handle_get_current_stock_price(
+                    code,
+                    caller=self.name,
+                )
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
                     self._log_entry_rejected(log_data, "price_unavailable", "현재가 조회 실패")
                     continue

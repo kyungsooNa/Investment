@@ -79,7 +79,15 @@ class StockQueryService:
             data={"output": output},
         )
 
-    async def get_current_price(self, stock_code: str, exchange: Exchange = Exchange.KRX, count_stats: bool = True, caller: str = "unknown", force_fresh: bool = False) -> ResCommonResponse:
+    async def get_current_price(
+        self,
+        stock_code: str,
+        exchange: Exchange = Exchange.KRX,
+        count_stats: bool = True,
+        caller: str = "unknown",
+        force_fresh: bool = False,
+        allow_snapshot: bool = True,
+    ) -> ResCommonResponse:
         """현재가 조회. WebSocket snapshot이 신선하면 우선 사용하고 REST는 fallback으로 제한.
 
         우선순위:
@@ -89,7 +97,7 @@ class StockQueryService:
         force_fresh=True 또는 price_stream_service 미주입 시 항상 REST.
         REST 성공 시 snapshot 캐시를 backfill해 다음 호출에서 hit 가능하게 한다.
 
-        per/pbr/eps 같이 snapshot에 없는 REST 전용 필드가 필요하면 force_fresh=True를 지정한다.
+        per/pbr/eps 같이 snapshot에 없는 REST 전용 필드가 필요하면 allow_snapshot=False를 지정한다.
         """
         fallback_force_fresh = force_fresh
         unhealthy_stream_reason: Optional[str] = None
@@ -113,15 +121,23 @@ class StockQueryService:
             else:
                 received_at = snap.get("received_at", 0.0) or 0.0
                 age = time.time() - received_at
-                if age <= self._snapshot_max_age_sec:
+                if age <= self._snapshot_max_age_sec and allow_snapshot:
                     self._price_lookup_stats["snapshot_hit"] += 1
                     return self._build_snapshot_response(snap)
                 else:
-                    self._price_lookup_stats["stale_fallback"] += 1
-                    self.logger.debug({"event": "price_lookup_stale", "code": stock_code,
-                                       "age_sec": round(age, 2), "caller": caller})
-                    fallback_force_fresh = True
-                    unhealthy_stream_reason = "stale_snapshot"
+                    if age > self._snapshot_max_age_sec:
+                        self._price_lookup_stats["stale_fallback"] += 1
+                        self.logger.debug({"event": "price_lookup_stale", "code": stock_code,
+                                           "age_sec": round(age, 2), "caller": caller})
+                        fallback_force_fresh = True
+                        unhealthy_stream_reason = "stale_snapshot"
+                    else:
+                        self.logger.debug({
+                            "event": "price_lookup_snapshot_skipped",
+                            "code": stock_code,
+                            "caller": caller,
+                            "reason": "full_output_required",
+                        })
 
         self._price_lookup_stats["rest_fallback"] += 1
         resp = await self.market_data_service.get_current_price(
@@ -293,7 +309,22 @@ class StockQueryService:
     async def handle_get_current_stock_price(self, stock_code, caller: str = "unknown", exchange: Exchange = Exchange.KRX, force_fresh: bool = False):
         """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""
         self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")
-        resp: ResCommonResponse = await self.market_data_service.get_current_price(stock_code, exchange=exchange, caller=caller, force_fresh=force_fresh)
+        if force_fresh:
+            resp: ResCommonResponse = await self.get_current_price(
+                stock_code,
+                exchange=exchange,
+                caller=caller,
+                force_fresh=True,
+                allow_snapshot=False,
+            )
+        else:
+            resp: ResCommonResponse = await self.get_current_price(
+                stock_code,
+                exchange=exchange,
+                caller=caller,
+                force_fresh=False,
+                allow_snapshot=False,
+            )
 
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             msg = resp.msg1 if resp else "응답 없음"

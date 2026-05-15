@@ -1930,10 +1930,11 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(by_name["일반전략"]["force_exit_on_close"])
 
     async def test_execute_signal_buy_failure_cleans_position_state(self):
-        """BUY API 실패 시 strategy._position_state에서 해당 종목이 제거되는지 테스트."""
+        """BUY API 실패 시 strategy의 선반영 매수 상태가 제거되는지 테스트."""
         scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
         strategy = MockStrategy(name="테스트전략")
         strategy._position_state = {"028050": {}}
+        strategy._bought_today = {"028050"}
         strategy._save_state = MagicMock()
         scheduler.register(StrategySchedulerConfig(strategy=strategy))
 
@@ -1947,6 +1948,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler._execute_signal(signal)
 
         self.assertNotIn("028050", strategy._position_state)
+        self.assertNotIn("028050", strategy._bought_today)
         strategy._save_state.assert_called_once()
 
     async def test_force_liquidate_fallback_qty(self):

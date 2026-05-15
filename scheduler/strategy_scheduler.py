@@ -744,6 +744,9 @@ class StrategyScheduler:
             for _cfg in self._strategies:
                 if _cfg.strategy.name == signal.strategy_name:
                     _ps = self._get_strategy_position_state(_cfg.strategy)
+                    bought_today = getattr(_cfg.strategy, "_bought_today", None)
+                    if isinstance(bought_today, set):
+                        bought_today.discard(signal.code)
                     if signal.code in _ps:
                         _ps.pop(signal.code, None)
                         self._persist_strategy_position_state(_cfg.strategy)

@@ -327,6 +327,7 @@ class DataQualityService:
         received_at = self._to_float(cached.get("received_at"))
         now_ts = time.time()
         latency = max(now_ts - received_at, 0.0) if received_at else None
+        reference_price = self._to_float(cached.get("price"))
         if latency is None or latency > self._cfg.max_tick_age_sec:
             ok = not self._cfg.block_on_stale_price
             return self._result(
@@ -335,10 +336,16 @@ class DataQualityService:
                 "error" if not ok else "warning",
                 code=stock_code,
                 latency_sec=latency,
-                metadata={"max_tick_age_sec": self._cfg.max_tick_age_sec},
+                metadata={
+                    "max_tick_age_sec": self._cfg.max_tick_age_sec,
+                    "age_sec": latency,
+                    "order_price": price,
+                    "reference_price": reference_price,
+                    "reference_received_at": received_at,
+                    "reference_source": cached.get("quality_reason") or "unknown",
+                },
             )
 
-        reference_price = self._to_float(cached.get("price"))
         if price > 0 and reference_price and reference_price > 0:
             jump_pct = abs(float(price) - reference_price) / reference_price * 100
             if jump_pct > self._cfg.max_price_jump_pct:
