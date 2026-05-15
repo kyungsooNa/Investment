@@ -1,12 +1,17 @@
 """Common data quality checks for realtime trading inputs."""
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field, asdict
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
+from common.operator_alert_types import AlertSource
 from common.types import ErrorCode, ResCommonResponse
 from config.config_loader import DataQualityConfig
+
+if TYPE_CHECKING:
+    from services.operator_alert_service import OperatorAlertService
 
 
 @dataclass
@@ -46,15 +51,18 @@ class DataQualityService:
         price_stream_service=None,
         market_clock=None,
         logger=None,
+        operator_alert_service: Optional["OperatorAlertService"] = None,
     ) -> None:
         self._cfg = config or DataQualityConfig()
         self._price_stream_service = price_stream_service
         self._market_clock = market_clock
         self._logger = logger
+        self._operator_alert_service = operator_alert_service
         self._last_good_price: dict[str, float] = {}
         self._last_result: DataQualityResult = DataQualityResult(ok=True, reason="not_checked")
         self._profile = "base"
         self._violation_history: list[dict[str, Any]] = []
+        self._last_operator_alert_ts: dict[str, float] = {}
 
     @property
     def config(self) -> DataQualityConfig:
@@ -99,13 +107,78 @@ class DataQualityService:
         result = DataQualityResult(ok=ok, reason=reason, severity=severity, **kwargs)
         self._last_result = result
         if not ok:
+            timestamp = time.time()
             self._violation_history.append({
-                "timestamp": time.time(),
+                "timestamp": timestamp,
                 **result.to_dict(),
             })
             if len(self._violation_history) > self.MAX_VIOLATION_HISTORY:
                 self._violation_history = self._violation_history[-self.MAX_VIOLATION_HISTORY:]
+            self._maybe_report_operator_alert(result, timestamp)
         return result
+
+    def _maybe_report_operator_alert(self, result: DataQualityResult, timestamp: float) -> None:
+        if self._operator_alert_service is None:
+            return
+        threshold = int(getattr(self._cfg, "violation_alert_threshold", 0) or 0)
+        if threshold <= 0:
+            return
+        window_sec = float(getattr(self._cfg, "violation_alert_window_sec", 60.0) or 60.0)
+        cooldown_sec = float(getattr(self._cfg, "alert_cooldown_sec", 60.0) or 60.0)
+        reason = result.reason or "unknown"
+        alert_key = f"data_quality:{reason}"
+        last_alert_ts = self._last_operator_alert_ts.get(alert_key)
+        if last_alert_ts is not None and timestamp - last_alert_ts < cooldown_sec:
+            return
+
+        window_start = timestamp - window_sec
+        recent = [
+            item for item in self._violation_history
+            if item.get("reason") == reason and float(item.get("timestamp", 0.0)) >= window_start
+        ]
+        if len(recent) < threshold:
+            return
+
+        self._last_operator_alert_ts[alert_key] = timestamp
+        sample_codes = []
+        for item in recent[-5:]:
+            code = item.get("code")
+            if code and code not in sample_codes:
+                sample_codes.append(code)
+        metadata = {
+            "alert_type": "data_quality_violation_threshold",
+            "reason": reason,
+            "severity": result.severity,
+            "violation_count": len(recent),
+            "window_sec": window_sec,
+            "sample_codes": sample_codes,
+            "latest": result.to_dict(),
+        }
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        task = loop.create_task(
+            self._operator_alert_service.report(
+                AlertSource.DATA_QUALITY,
+                alert_key,
+                result.severity or "error",
+                "데이터 품질 위반 증가",
+                f"{reason}: 최근 {int(window_sec)}초 {len(recent)}건",
+                metadata=metadata,
+            )
+        )
+
+        def _log_failure(done: asyncio.Task) -> None:
+            try:
+                exc = done.exception()
+            except asyncio.CancelledError:
+                return
+            if exc and self._logger:
+                self._logger.warning(f"DataQuality 운영자 알림 전송 실패: {exc}")
+
+        task.add_done_callback(_log_failure)
 
     def get_violation_history(
         self,

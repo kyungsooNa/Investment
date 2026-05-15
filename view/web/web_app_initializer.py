@@ -362,6 +362,7 @@ class WebAppContext:
                 config=getattr(self.full_config, "data_quality", None) or DataQualityConfig(),
                 market_clock=self.market_clock,
                 logger=self.logger,
+                operator_alert_service=self.operator_alert_service,
             )
             self.data_quality_service.apply_trading_mode(bool(getattr(self.env, "is_paper_trading", True)))
             self.market_data_service._data_quality_service = self.data_quality_service

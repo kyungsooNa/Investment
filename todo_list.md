@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-15 (4-1 전략별 성과 저하 감지 계획 보강)
+최종 업데이트: 2026-05-15 (4-3 데이터 품질 집계 알림 연결)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -368,8 +368,10 @@
 
 - [x] OperatorAlertService(dedup·전이 이벤트), 운영자 대시보드 페이지(/operator), Kill Switch·Risk Gate·Reconcile·WebSocket Watchdog를 operator_alert_service에 연결
 - [x] 알림은 신규 차단, 위험도 상승, 자동 해제/복구를 구분해 중복 발송을 줄인다.
-- [ ] 전략별 성과 저하 알림 — 4-1(전략 성과 감지 임계값) 완료 후 `AlertSource.STRATEGY_PERF`로 연결
-- [ ] 데이터 품질 차단 알림 — DataQualityService 위반율 집계(N건/M초) 후 임계값 초과 시 report(); 현재는 per-tick 동기 호출이라 직접 연결 불가
+- [x] 전략별 성과 저하 알림 — `StrategyLogReportTask`에서 `AlertSource.STRATEGY_PERF`로 연결
+- [x] 데이터 품질 차단 알림 — `DataQualityService` 위반율 집계(N건/M초) 후 임계값 초과 시 `AlertSource.DATA_QUALITY`로 연결
+  - 기본값: 동일 reason 위반 60초 내 5건 이상, 동일 reason 알림 cooldown 60초.
+  - `WebAppContext`에서 `DataQualityService`에 `operator_alert_service`를 주입한다.
 
 ---
 
@@ -410,7 +412,6 @@
 
 5. P3/P4 유지보수와 운영 품질
    - 전략별 성과 저하 감지 지표 집계
-   - `AlertSource.STRATEGY_PERF` 기반 운영자 알림 연결
    - `WebAppContext` 분리
    - ServiceContainer / Factory 도입
    - `OrderExecutionService` 역할 분리

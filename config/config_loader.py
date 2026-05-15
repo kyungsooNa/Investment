@@ -123,6 +123,8 @@ class DataQualityConfig(BaseModel):
     block_on_stale_price: bool = True
     block_on_invalid_api_response: bool = True
     alert_cooldown_sec: float = 60.0
+    violation_alert_threshold: int = 5
+    violation_alert_window_sec: float = 60.0
 
     model_config = {"extra": "allow"}
 
