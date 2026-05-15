@@ -182,6 +182,62 @@ async def test_analyze_premium_candidate_filter_market_cap(mock_deps):
     item = await service._analyze_premium_candidate("005930", "Samsung", logger=logger)
     assert item is not None
 
+async def test_analyze_premium_candidate_rejects_blocked_security_status(mock_deps):
+    """Pool A 후보가 투자경고/거래정지 상태이면 와치리스트 후보에서 제외한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+
+    ohlcv = [{"close": 1000 + i, "high": 1100 + i, "low": 900 + i, "volume": 100000000} for i in range(100)]
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data={"output": create_mock_stock_info({
+            "w52_hgpr": "1200",
+            "hts_avls": "5000",
+            "iscd_stat_cls_code": "58",
+        })},
+    )
+
+    item = await service._analyze_premium_candidate("033640", "네패스", logger=logger)
+
+    assert item is None
+    assert any(
+        call.args
+        and isinstance(call.args[0], dict)
+        and call.args[0].get("reason") == "blocked_security_status"
+        for call in logger.debug.call_args_list
+    )
+
+async def test_get_watchlist_filters_loaded_premium_blocked_security_status(mock_deps):
+    """저장된 Pool A 종목도 당일 종목 상태가 차단이면 반환 전 제거한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 10, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+
+    blocked_item = OSBWatchlistItem(
+        code="033640", name="네패스", market="KOSDAQ",
+        high_20d=1000, ma_20d=900, ma_50d=800, avg_vol_20d=10000,
+        bb_width_min_20d=10, prev_bb_width=11, w52_hgpr=1200,
+        avg_trading_value_5d=20_000_000_000, market_cap=500_000_000_000,
+    )
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data={"output": create_mock_stock_info({
+            "iscd_stat_cls_code": "53",
+            "mrkt_warn_cls_code": "3",
+        })},
+    )
+
+    with patch.object(service, "_load_premium_stocks", return_value=[blocked_item]), \
+         patch.object(service, "_build_daily_surge_pool", new_callable=AsyncMock, return_value={}):
+        watchlist = await service.get_watchlist(logger=logger)
+
+    assert watchlist == {}
+    assert service._watchlist == {}
+
 async def test_analyze_premium_candidate_filter_trading_value(mock_deps):
     """_analyze_premium_candidate: 거래대금 부족 시 None 반환 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps

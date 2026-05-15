@@ -80,6 +80,12 @@ class StrategyScheduler:
     FORCE_EXIT_MINUTES_BEFORE = 30  # 장 마감 N분 전 강제 청산
     STAGGER_INTERVAL_SEC = 60       # 전략 간 실행 시차 (초)
     ORDER_POLL_INTERVAL_SEC = 15    # 활성 주문 체결조회 보정 주기 (초)
+    WATCHLIST_EXCLUDE_POLICY_RULES = {
+        "investment_warning_stock",
+        "managed_issue_stock",
+        "investment_caution_stock",
+        "trading_halted_stock",
+    }
 
     def __init__(
         self,
@@ -741,6 +747,7 @@ class StrategyScheduler:
         # BUY 실패 시 전략 내부 position_state에서 즉시 제거 (stale holding 방지)
         # 단, deferred(자동 재시도 대기)는 실패가 아니므로 정리하지 않는다.
         if not api_success and not order_deferred and signal.action == "BUY":
+            self._exclude_order_policy_blocked_code(signal, resp)
             for _cfg in self._strategies:
                 if _cfg.strategy.name == signal.strategy_name:
                     _ps = self._get_strategy_position_state(_cfg.strategy)
@@ -811,6 +818,37 @@ class StrategyScheduler:
                     "return_rate": return_rate,
                     "trace_id": tid,
                 })
+
+    def _exclude_order_policy_blocked_code(self, signal: TradeSignal, resp) -> None:
+        if not resp or resp.rt_cd != ErrorCode.ORDER_POLICY_BLOCKED.value:
+            return
+        data = resp.data if isinstance(resp.data, dict) else {}
+        if data.get("gate") != "order_policy":
+            return
+        rule = str(data.get("rule") or "")
+        if rule not in self.WATCHLIST_EXCLUDE_POLICY_RULES:
+            return
+
+        for cfg in self._strategies:
+            if cfg.strategy.name != signal.strategy_name:
+                continue
+            universe = getattr(cfg.strategy, "_universe", None)
+            exclude = getattr(universe, "exclude_code_for_today", None)
+            if callable(exclude):
+                exclude(
+                    signal.code,
+                    reason=rule,
+                    metadata={
+                        "strategy_name": signal.strategy_name,
+                        "order_msg": resp.msg1,
+                        "order_policy": data,
+                    },
+                )
+                self._logger.warning(
+                    f"[Scheduler] 주문 정책 차단 종목 당일 제외: "
+                    f"strategy={signal.strategy_name}, code={signal.code}, rule={rule}"
+                )
+            return
 
     async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):
         """전략 중지 시 보유 종목 강제 청산 (force_exit_on_close=True)."""

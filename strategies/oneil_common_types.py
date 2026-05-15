@@ -50,6 +50,14 @@ class OneilUniverseConfig(BaseStrategyConfig):
 
     max_watchlist: int = premium_stocks_kospi_size + premium_stocks_kosdaq_size + daily_surge_size # 최대 감시 종목 수
 
+    # 종목 상태 필터 (주문 정책과 동일 계열의 위험 종목을 유니버스 단계에서 제외)
+    security_status_filter_enabled: bool = True
+    block_managed_issue: bool = True
+    block_investment_warning: bool = True
+    block_investment_caution: bool = False
+    blocked_stock_status_codes: tuple = ("51", "52", "53", "58")
+    blocked_market_warning_codes: tuple = ("2", "3")
+
     # 돌파 기준 기간 (데이터 수집용)
     high_breakout_period: int = 20
 
