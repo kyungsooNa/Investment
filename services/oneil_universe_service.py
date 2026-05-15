@@ -1,5 +1,6 @@
 # strategies/oneil/universe_service.py
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -94,6 +95,8 @@ class OneilUniverseService:
         self._watchlist_refresh_done: set = set()
         self._pool_a_loaded: bool = False
         self._pool_a_items: Dict[str, OSBWatchlistItem] = {}
+        self._excluded_codes_today: Dict[str, Dict] = {}
+        self._excluded_codes_date: str = ""
         
         # 마켓 타이밍 캐시
         self._market_timing_cache: Dict[str, bool] = {}
@@ -119,6 +122,7 @@ class OneilUniverseService:
         """현재 유효한 워치리스트를 반환 (캐싱 + 자동 갱신)."""
         logger = logger or self._logger
         today = self._tm.get_current_kst_time().strftime("%Y%m%d")
+        self._reset_daily_exclusions(today)
         
         # 날짜 변경 시 초기화
         if self._watchlist_date != today:
@@ -135,6 +139,12 @@ class OneilUniverseService:
         # 장중 갱신 주기 체크
         elif self._should_refresh_watchlist():
             await self._build_watchlist(logger=logger)
+
+        if self._excluded_codes_today:
+            self._watchlist = {
+                code: item for code, item in self._watchlist.items()
+                if code not in self._excluded_codes_today
+            }
 
         if self._price_sub_svc and self._watchlist:
             asyncio.create_task(self._price_sub_svc.sync_subscriptions(
@@ -181,6 +191,7 @@ class OneilUniverseService:
                 merged[code] = item
 
         # 4) 정렬 및 절삭
+        merged = await self._filter_blocked_security_status(merged, logger=logger)
         sorted_items = sorted(
             merged.values(),
             key=lambda x: (x.total_score, self._calc_turnover_ratio(x)),
@@ -353,6 +364,15 @@ class OneilUniverseService:
         if not output:
             if logger: logger.debug({"event": "drop", "code": code, "reason": "no_price_output"})
             return None
+
+        block = self._get_security_status_block(output)
+        if block:
+            rule, status = block
+            if logger: logger.debug({
+                "event": "drop", "code": code, "reason": "blocked_security_status",
+                "rule": rule, **status,
+            })
+            return None
         
         if isinstance(output, dict):
             w52_hgpr = int(output.get("w52_hgpr") or 0)
@@ -454,6 +474,15 @@ class OneilUniverseService:
             return None
         output = full_resp.data.get("output")
         if not output:
+            return None
+
+        block = self._get_security_status_block(output)
+        if block:
+            rule, status = block
+            if logger: logger.debug({
+                "event": "drop", "code": code, "reason": "blocked_security_status",
+                "rule": rule, **status,
+            })
             return None
         
         # 데이터 추출 (전략 패턴과 동일하게 안전하게 추출)
@@ -636,6 +665,19 @@ class OneilUniverseService:
                     continue
                 out = resp.data.get("output") if resp.data else None
                 if not out: continue
+
+                block = self._get_security_status_block(out)
+                if block:
+                    rule, status = block
+                    pool_a_logger.debug({
+                        "event": "drop_1st",
+                        "code": code,
+                        "name": name,
+                        "reason": "blocked_security_status",
+                        "rule": rule,
+                        **status,
+                    })
+                    continue
                 
                 if isinstance(out, dict):
                     val_avls = out.get("hts_avls")
@@ -739,6 +781,152 @@ class OneilUniverseService:
         }
 
     # ── 헬퍼 메서드 ───────────────────────────────────────────────
+
+    def _reset_daily_exclusions(self, today: Optional[str] = None) -> None:
+        if not today:
+            today = self._tm.get_current_kst_time().strftime("%Y%m%d")
+        if self._excluded_codes_date != today:
+            self._excluded_codes_today = {}
+            self._excluded_codes_date = today
+
+    def exclude_code_for_today(
+        self,
+        code: str,
+        *,
+        reason: str = "",
+        metadata: Optional[Dict] = None,
+    ) -> None:
+        """주문 정책 차단 등으로 확인된 종목을 당일 워치리스트에서 제외한다."""
+        if not code:
+            return
+        today = self._tm.get_current_kst_time().strftime("%Y%m%d")
+        self._reset_daily_exclusions(today)
+        self._excluded_codes_today[code] = {
+            "reason": reason,
+            "metadata": metadata or {},
+            "date": today,
+        }
+        self._watchlist.pop(code, None)
+        self._pool_a_items.pop(code, None)
+        self._logger.info({
+            "event": "exclude_code_for_today",
+            "code": code,
+            "reason": reason,
+            "date": today,
+        })
+
+    async def _filter_blocked_security_status(
+        self,
+        items: Dict[str, OSBWatchlistItem],
+        logger: Optional[logging.Logger] = None,
+    ) -> Dict[str, OSBWatchlistItem]:
+        if not items:
+            return {}
+        logger = logger or self._logger
+        kept: Dict[str, OSBWatchlistItem] = {}
+        for chunk in _chunked(list(items.items()), self._cfg.api_chunk_size):
+            calls = [
+                self._sqs.get_current_price(code, caller="OneilUniverseService")
+                for code, _ in chunk
+            ]
+            if all(inspect.isawaitable(call) for call in calls):
+                results = await asyncio.gather(*calls, return_exceptions=True)
+            else:
+                results = []
+                for call in calls:
+                    if inspect.isawaitable(call):
+                        try:
+                            results.append(await call)
+                        except Exception as exc:
+                            results.append(exc)
+                    else:
+                        results.append(call)
+            for (code, item), resp in zip(chunk, results):
+                if code in self._excluded_codes_today:
+                    logger.debug({
+                        "event": "drop",
+                        "code": code,
+                        "reason": "excluded_for_today",
+                        **self._excluded_codes_today.get(code, {}),
+                    })
+                    continue
+                if isinstance(resp, Exception) or not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                    kept[code] = item
+                    continue
+                output = resp.data.get("output") if resp.data else None
+                block = self._get_security_status_block(output) if output else None
+                if block:
+                    rule, status = block
+                    logger.debug({
+                        "event": "drop",
+                        "code": code,
+                        "reason": "blocked_security_status",
+                        "rule": rule,
+                        **status,
+                    })
+                    continue
+                kept[code] = item
+        return kept
+
+    @staticmethod
+    def _output_get(output, key: str, default=""):
+        if isinstance(output, dict):
+            return output.get(key, default)
+        return getattr(output, key, default)
+
+    @staticmethod
+    def _normalize_status_code(value) -> str:
+        text = str(value or "").strip().upper()
+        if text.isdigit():
+            return str(int(text))
+        return text
+
+    @staticmethod
+    def _is_flagged_status(value) -> bool:
+        text = str(value or "").strip().upper()
+        return text not in ("", "0", "00", "000", "N", "NONE", "NULL")
+
+    def _get_security_status_block(self, output) -> Optional[Tuple[str, Dict[str, str]]]:
+        if not self._cfg.security_status_filter_enabled or not output:
+            return None
+
+        stock_status = str(self._output_get(output, "iscd_stat_cls_code", "") or "").strip()
+        managed_issue = str(self._output_get(output, "mang_issu_cls_code", "") or "").strip()
+        market_warning = str(self._output_get(output, "mrkt_warn_cls_code", "") or "").strip()
+        caution = str(self._output_get(output, "invt_caful_yn", "") or "").strip().upper()
+        status = {
+            "iscd_stat_cls_code": stock_status,
+            "mang_issu_cls_code": managed_issue,
+            "mrkt_warn_cls_code": market_warning,
+            "invt_caful_yn": caution,
+        }
+
+        if self._cfg.block_managed_issue and self._is_flagged_status(managed_issue):
+            return "managed_issue_stock", status
+
+        stock_status_norm = self._normalize_status_code(stock_status)
+        market_warning_norm = self._normalize_status_code(market_warning)
+        blocked_stock_status = {
+            self._normalize_status_code(code)
+            for code in self._cfg.blocked_stock_status_codes
+        }
+        blocked_market_warning = {
+            self._normalize_status_code(code)
+            for code in self._cfg.blocked_market_warning_codes
+        }
+        if (
+            self._cfg.block_investment_warning
+            and (
+                stock_status_norm in blocked_stock_status
+                or market_warning_norm in blocked_market_warning
+            )
+        ):
+            return "investment_warning_stock", status
+
+        if self._cfg.block_investment_caution and caution == "Y":
+            return "investment_caution_stock", status
+
+        return None
 
     def _should_refresh_watchlist(self) -> bool:
         now = self._tm.get_current_kst_time()

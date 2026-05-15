@@ -277,6 +277,10 @@ async def test_validate_order_reference_blocks_stale_and_outlier():
 
     assert stale_result.ok is False
     assert stale_result.reason == "stale_price"
+    assert stale_result.metadata["reference_price"] == 70000.0
+    assert stale_result.metadata["order_price"] == 70000
+    assert stale_result.metadata["age_sec"] >= 5.0
+    assert stale_result.metadata["reference_source"] == "unknown"
     assert outlier_result.ok is False
     assert outlier_result.reason == "invalid_tick"
 

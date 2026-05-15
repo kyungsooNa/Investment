@@ -337,6 +337,61 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         call_kwargs = self.mock_market_data_service.get_current_price.call_args
         self.assertTrue(call_kwargs.kwargs.get("force_fresh", False))
 
+    async def test_handle_get_current_stock_price_force_fresh_backfills_snapshot(self):
+        """상세 현재가 REST 조회도 PriceStreamService snapshot을 갱신해 주문 품질 게이트와 기준을 맞춘다."""
+        snap = self._make_fresh_snap(age_sec=40.0)
+        mock_pss = self._setup_sqs_with_pss(snap=snap, snapshot_max_age_sec=5.0)
+        mock_output = self._create_dummy_stock_info({
+            "stck_prpr": "80000",
+            "stck_shrn_iscd": "005930",
+            "prdy_vrss": "1000",
+            "prdy_ctrt": "1.27",
+            "prdy_vrss_sign": "2",
+            "acml_vol": "300000",
+            "acml_tr_pbmn": "24000000000",
+            "stck_hgpr": "81000",
+            "stck_lwpr": "79000",
+            "stck_oprc": "79500",
+        })
+        self.mock_market_data_service.get_current_price.return_value = ResCommonResponse(
+            rt_cd="0", msg1="정상", data={"output": mock_output}
+        )
+
+        await self.stockQueryService.handle_get_current_stock_price("005930", force_fresh=True)
+
+        mock_pss.cache_price_snapshot.assert_called_once_with(
+            "005930",
+            price="80000",
+            change="1000",
+            rate="1.27",
+            sign="2",
+            volume="300000",
+            acml_tr_pbmn="24000000000",
+            high="81000",
+            low="79000",
+            open_price="79500",
+        )
+
+    async def test_handle_get_current_stock_price_stale_snapshot_refreshes_reference(self):
+        """상세 현재가 조회 중 stale snapshot이 있으면 REST fresh fallback으로 주문 참조 가격을 갱신한다."""
+        from common.types import Exchange
+
+        self._setup_sqs_with_pss(snap=self._make_fresh_snap(age_sec=40.0), snapshot_max_age_sec=5.0)
+        mock_output = self._create_dummy_stock_info({"stck_prpr": "81000", "stck_shrn_iscd": "005930"})
+        self.mock_market_data_service.get_current_price.return_value = ResCommonResponse(
+            rt_cd="0", msg1="정상", data={"output": mock_output}
+        )
+
+        await self.stockQueryService.handle_get_current_stock_price("005930", caller="래리윌리엄스VBO")
+
+        self.mock_market_data_service.get_current_price.assert_awaited_with(
+            "005930",
+            exchange=Exchange.KRX,
+            count_stats=True,
+            caller="래리윌리엄스VBO",
+            force_fresh=True,
+        )
+
     # --- New Wrapper Methods Tests ---
     async def test_get_top_trading_value_stocks(self):
         """get_top_trading_value_stocks 위임 테스트"""

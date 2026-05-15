@@ -139,6 +139,9 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(signals[0].code, "005930")
         self.assertEqual(signals[0].action, "BUY")
         self.assertIn("VBO돌파", signals[0].reason)
+        sqs.handle_get_current_stock_price.assert_awaited_once_with(
+            "005930", caller=strategy.name
+        )
 
     # ── Target 미달 → 거절 ────────────────────────────────────────────
 

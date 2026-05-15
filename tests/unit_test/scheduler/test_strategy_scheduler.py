@@ -1930,10 +1930,11 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(by_name["일반전략"]["force_exit_on_close"])
 
     async def test_execute_signal_buy_failure_cleans_position_state(self):
-        """BUY API 실패 시 strategy._position_state에서 해당 종목이 제거되는지 테스트."""
+        """BUY API 실패 시 strategy의 선반영 매수 상태가 제거되는지 테스트."""
         scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
         strategy = MockStrategy(name="테스트전략")
         strategy._position_state = {"028050": {}}
+        strategy._bought_today = {"028050"}
         strategy._save_state = MagicMock()
         scheduler.register(StrategySchedulerConfig(strategy=strategy))
 
@@ -1947,7 +1948,37 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler._execute_signal(signal)
 
         self.assertNotIn("028050", strategy._position_state)
+        self.assertNotIn("028050", strategy._bought_today)
         strategy._save_state.assert_called_once()
+
+    async def test_order_policy_buy_block_excludes_code_from_universe_for_day(self):
+        """정책 차단 BUY 실패는 universe 당일 제외 목록에 등록해 반복 주문을 막는다."""
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        strategy = MockStrategy(name="첫눌림목")
+        strategy._universe = MagicMock()
+        strategy._universe.exclude_code_for_today = MagicMock()
+        scheduler.register(StrategySchedulerConfig(strategy=strategy))
+
+        oes.handle_place_buy_order.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.ORDER_POLICY_BLOCKED.value,
+            msg1="Order Policy 차단: 투자경고/위험 또는 거래정지 상태 종목은 주문할 수 없습니다.",
+            data={
+                "gate": "order_policy",
+                "rule": "investment_warning_stock",
+                "reason": "투자경고/위험 또는 거래정지 상태 종목은 주문할 수 없습니다.",
+            },
+        )
+        signal = TradeSignal(
+            code="033640", name="네패스", action="BUY",
+            price=32050, qty=62, reason="첫눌림목", strategy_name="첫눌림목",
+        )
+
+        await scheduler._execute_signal(signal)
+
+        strategy._universe.exclude_code_for_today.assert_called_once()
+        args, kwargs = strategy._universe.exclude_code_for_today.call_args
+        self.assertEqual(args[0], "033640")
+        self.assertEqual(kwargs["reason"], "investment_warning_stock")
 
     async def test_force_liquidate_fallback_qty(self):
         """강제 청산 시 보유 수량 정보가 없으면 설정된 주문 수량을 사용하는지 테스트."""
