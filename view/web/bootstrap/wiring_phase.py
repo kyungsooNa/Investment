@@ -26,7 +26,7 @@ class WiringPhase:
         ctx = self._ctx
 
         # MarketDataService ← DataQualityService (CoreServices 단계 backfill)
-        ctx.market_data_service._data_quality_service = ctx.data_quality_service
+        ctx.market_data_service.set_data_quality_service(ctx.data_quality_service)
 
         # IndicatorService ↔ StockQueryService (순환 참조 해결)
         ctx.indicator_service.stock_query_service = ctx.stock_query_service
@@ -41,11 +41,11 @@ class WiringPhase:
 
         # MinerviniStage ↔ MinerviniUpdate (양방향, 둘 다 존재할 때만)
         if ctx.minervini_stage_service and ctx.minervini_update_task:
-            ctx.minervini_stage_service._minervini_update_task = ctx.minervini_update_task
+            ctx.minervini_stage_service.set_minervini_update_task(ctx.minervini_update_task)
 
         # MinerviniUpdate ← DailyPriceCollector (생성 순서 backfill)
         if ctx.minervini_update_task and ctx.daily_price_collector_task:
-            ctx.minervini_update_task._daily_price_collector_task = ctx.daily_price_collector_task
+            ctx.minervini_update_task.set_daily_price_collector_task(ctx.daily_price_collector_task)
 
         # DataQuality ↔ PriceStream (진성 순환)
         ctx.data_quality_service.set_price_stream_service(ctx.price_stream_service)

@@ -263,16 +263,19 @@
 
 ### 3-1. `WebAppContext` / `web_app_initializer` 분리
 
-- [~] 환경 로드, 브로커 생성, 서비스 조립, 전략/태스크 등록, 알림 설정, 스케줄러 초기화를 단계별 bootstrap으로 분리한다.
-  - 완료된 부분: `ConfigBootstrap`, `BrokerBootstrap`, `ServiceContainer`, `SchedulerBootstrap`, `StrategyFactory` 추출 (`view/web/bootstrap/`). `WebAppContext.load_config_and_env()`, `_bootstrap_broker()`, `_bootstrap_services()`, `_bootstrap_schedulers()`, `initialize_scheduler()` 모두 신규 모듈에 위임만 한다. `web_app_initializer.py` 1238라인 → 약 530라인.
-  - 남은 작업: `WebBootstrap` (전체 orchestrator) 후속 PR — 현재 `initialize_services()` 가 이미 oneliner orchestrator 역할이라 우선순위 낮음.
-- [~] `BrokerFactory`, `ServiceContainer`, `StrategyFactory`, `SchedulerBootstrap`, `WebBootstrap`, `ConfigBootstrap` 분리 후보를 검토한다.
-  - 완료된 부분: `ConfigBootstrap`, `BrokerBootstrap`, `ServiceContainer`, `SchedulerBootstrap`, `StrategyFactory` 도입 (5/6).
-  - 남은 작업: `WebBootstrap` — 후속 PR.
-- [~] 후주입 방식 서비스 연결을 줄이고, 누락 시 테스트에서 빨리 드러나도록 생성 contract를 명확히 한다.
-  - 완료된 부분: `WiringPhase` 추출 (`view/web/bootstrap/wiring_phase.py`) — 모든 후주입 (MarketDataService↔DQS, IndicatorService↔SQS, FavoriteService 4종, MinerviniStage↔Update 순환, DQS↔PriceStream, StreamingService 3종, StockQueryService 2종, signing_notice 콜백 등 14개 wire) 을 한곳에 모았다. `WebAppContext._bootstrap_services()` 가 `ServiceContainer.run()` → `WiringPhase.run()` 순서로 위임한다.
-  - 완료된 부분: 14개 wire 마다 단위 테스트 추가 (`tests/unit_test/view/web/bootstrap/test_wiring_phase.py`) — 누락 시 즉시 실패한다.
-  - 남은 작업: 직접 속성 변경 3곳 (`_data_quality_service`, `_minervini_update_task`, `_daily_price_collector_task`) 을 setter 메서드로 교체. 진성 순환 의존 자체의 생성자 주입 전환은 별도 PR (consumer API 변경 필요).
+- [x] 환경 로드, 브로커 생성, 서비스 조립, 전략/태스크 등록, 알림 설정, 스케줄러 초기화를 단계별 bootstrap으로 분리한다.
+  - `ConfigBootstrap`, `BrokerBootstrap`, `ServiceContainer`, `SchedulerBootstrap`, `StrategyFactory`, `WiringPhase` 추출 완료 (`view/web/bootstrap/`).
+  - `WebAppContext` 의 5개 초기화 메서드 (`load_config_and_env`, `_bootstrap_broker`, `_bootstrap_services`, `_bootstrap_schedulers`, `initialize_scheduler`) 모두 신규 모듈에 위임만 한다.
+  - `web_app_initializer.py` 1238라인 → 약 530라인 (57% 감소).
+  - `WebBootstrap` (전체 orchestrator) 는 도입하지 않음 — `initialize_services()` 가 이미 14줄 thin orchestrator 라 추가 모듈마트 분리 시 의미있는 커플링 감소 없음.
+- [x] `BrokerFactory`, `ServiceContainer`, `StrategyFactory`, `SchedulerBootstrap`, `WebBootstrap`, `ConfigBootstrap` 분리 후보를 검토한다.
+  - `ConfigBootstrap`, `BrokerBootstrap` (`BrokerFactory` 역할), `ServiceContainer`, `SchedulerBootstrap`, `StrategyFactory` 5개 도입.
+  - `WebBootstrap` 은 비용 대비 효익이 낮아 won't fix.
+- [x] 후주입 방식 서비스 연결을 줄이고, 누락 시 테스트에서 빨리 드러나도록 생성 contract를 명확히 한다.
+  - `WiringPhase` 추출 (`view/web/bootstrap/wiring_phase.py`) — 후주입 14개 wire 를 한곳에 모음. `ServiceContainer.run()` → `WiringPhase.run()` 순서로 위임.
+  - 직접 속성 변경 3곳을 setter 로 교체: `MarketDataService.set_data_quality_service`, `MinerviniStageService.set_minervini_update_task`, `MinerviniUpdateTask.set_daily_price_collector_task`.
+  - 14개 wire 마다 단위 테스트 추가 (`tests/unit_test/view/web/bootstrap/test_wiring_phase.py`) — 누락 시 즉시 실패한다.
+  - 진성 순환 의존 자체의 생성자 주입 전환은 consumer API 변경을 수반하므로 별도 PR 로 분리한다 (이번 영역 외).
 
 주요 파일:
 

@@ -38,7 +38,7 @@ def test_wiring_phase_back_injects_data_quality_into_market_data():
     ctx = _make_fake_context()
     WiringPhase(ctx).run()
 
-    assert ctx.market_data_service._data_quality_service is ctx.data_quality_service
+    ctx.market_data_service.set_data_quality_service.assert_called_once_with(ctx.data_quality_service)
 
 
 def test_wiring_phase_wires_indicator_and_favorite_collaborators():
@@ -60,22 +60,20 @@ def test_wiring_phase_links_minervini_circular_pair():
     ctx = _make_fake_context()
     WiringPhase(ctx).run()
 
-    assert ctx.minervini_stage_service._minervini_update_task is ctx.minervini_update_task
-    assert ctx.minervini_update_task._daily_price_collector_task is ctx.daily_price_collector_task
+    ctx.minervini_stage_service.set_minervini_update_task.assert_called_once_with(ctx.minervini_update_task)
+    ctx.minervini_update_task.set_daily_price_collector_task.assert_called_once_with(ctx.daily_price_collector_task)
 
 
 def test_wiring_phase_skips_minervini_when_either_missing():
-    """순환 페어 한쪽이 None 이면 wire 를 건너뛴다."""
+    """순환 페어 한쪽이 None 이면 setter 가 호출되지 않는다."""
     from view.web.bootstrap.wiring_phase import WiringPhase
 
     ctx = _make_fake_context()
+    saved_stage = ctx.minervini_stage_service
     ctx.minervini_update_task = None
     WiringPhase(ctx).run()
 
-    # stage._minervini_update_task 가 mutation 되지 않아야 한다 — 기본 spec 없으므로 None setter 없음
-    # (setattr 가 호출되지 않았는지를 직접 확인하긴 어려우므로 conditional 분기 검증으로 대체)
-    # daily_price_collector wire 도 건너뛴다 (update_task 가 None)
-    assert ctx.daily_price_collector_task._daily_price_collector_task is not None  # MagicMock 자동 속성
+    saved_stage.set_minervini_update_task.assert_not_called()
 
 
 def test_wiring_phase_wires_streaming_chain():

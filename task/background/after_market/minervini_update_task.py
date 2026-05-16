@@ -73,6 +73,10 @@ class MinerviniUpdateTask(AfterMarketTask):
             "status": "",
         }
 
+    def set_daily_price_collector_task(self, daily_price_collector_task) -> None:
+        """DailyPriceCollectorTask 후주입 — 생성 순서 의존 해소용 (WiringPhase 에서 호출)."""
+        self._daily_price_collector_task = daily_price_collector_task
+
     @property
     def task_name(self) -> str:
         return "minervini_update"

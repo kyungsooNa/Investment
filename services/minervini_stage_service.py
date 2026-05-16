@@ -62,6 +62,10 @@ class MinerviniStageService:
         self._vol_threshold = volatility_threshold
         self._logger = logger or logging.getLogger(__name__)
 
+    def set_minervini_update_task(self, minervini_update_task) -> None:
+        """MinerviniUpdateTask 후주입 — 순환 의존 해소용 (WiringPhase 에서 호출)."""
+        self._minervini_update_task = minervini_update_task
+
     # ── 공개 비동기 메서드 ─────────────────────────────────────────────────
 
     async def get_stage2_list(self):
