@@ -433,6 +433,7 @@ class StrategyLogReportService:
                 'price': price,
                 'reason': str(trade.get('reason') or '체결 원장 기록'),
                 'time': str(trade.get('buy_date', ''))[11:16],
+                'volatility_20d_annualized': _to_float(trade.get('volatility_20d_annualized')),
             }
 
         # 원장을 읽을 수 있으면 buy_signal_generated 로그보다 원장을 신뢰한다.
@@ -611,6 +612,38 @@ class StrategyLogReportService:
                 pnl_part = f", 순손익 {int(round(float(row.get('net_pnl_diff')))):+,}원"
             lines.append(f"  - {strategy}/{code}: {net_part}{fill_part}{pnl_part}")
 
+        return "\n".join(lines)
+
+    def _build_volatility_section(self, strategy_summaries: List[dict]) -> Optional[str]:
+        """전략별 매수 종목의 20일 연환산 변동성 분포 (평균/중앙값/표본수) 요약."""
+        rows: List[Tuple[str, int, float, float]] = []
+        for summary in strategy_summaries:
+            samples: List[float] = []
+            for info in summary.get('bought', {}).values():
+                vol = info.get('volatility_20d_annualized')
+                if isinstance(vol, (int, float)) and vol == vol:  # NaN guard
+                    samples.append(float(vol))
+            if not samples:
+                continue
+            samples_sorted = sorted(samples)
+            n = len(samples_sorted)
+            avg = sum(samples_sorted) / n
+            median = (
+                samples_sorted[n // 2]
+                if n % 2 == 1
+                else (samples_sorted[n // 2 - 1] + samples_sorted[n // 2]) / 2
+            )
+            rows.append((summary['name'], n, avg, median))
+
+        if not rows:
+            return None
+
+        rows.sort(key=lambda r: -r[2])  # 평균 변동성 내림차순
+        lines = ["<b>📈 매수 종목 변동성 (20일 연환산)</b>"]
+        for name, n, avg, median in rows:
+            lines.append(
+                f"• {_esc(name)} — {n}건 | 평균 {avg*100:.1f}% | 중앙값 {median*100:.1f}%"
+            )
         return "\n".join(lines)
 
     def _strategy_degradation_cfg(self) -> StrategyPerformanceDegradationConfig:
@@ -1035,6 +1068,7 @@ class StrategyLogReportService:
                             'price': price,
                             'reason': data.get('reason', ''),
                             'time': ts[11:16] if len(ts) >= 16 else '',
+                            'volatility_20d_annualized': _to_float(metrics.get('volatility_20d_annualized')),
                         }
                         rejected.pop(code, None)
                         near_miss.pop(code, None)
@@ -1250,6 +1284,7 @@ class StrategyLogReportService:
         execution_quality_section = self._build_execution_quality_section(execution_quality_records)
         divergence_section = self._build_backtest_live_divergence_section(target_date)
         degradation_section = self._build_strategy_degradation_section(target_date)
+        volatility_section = self._build_volatility_section(strategy_summaries)
 
         if not active_sections:
             portfolio_summary = self._build_portfolio_summary(target_date, fallback_buys)
@@ -1261,6 +1296,7 @@ class StrategyLogReportService:
                     divergence_section,
                     degradation_section,
                     execution_quality_section,
+                    volatility_section,
                 )
                 if section
             ]
@@ -1282,6 +1318,8 @@ class StrategyLogReportService:
             body += f"\n\n{degradation_section}"
         if execution_quality_section:
             body += f"\n\n{execution_quality_section}"
+        if volatility_section:
+            body += f"\n\n{volatility_section}"
 
         if inactive_names:
             inactive_summary = f"\n\n💤 <i>활동 없음: {_esc(', '.join(inactive_names[:3]))}"

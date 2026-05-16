@@ -16,6 +16,7 @@ from repositories.stock_code_repository import StockCodeRepository
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from core.market_clock import MarketClock
 from strategies.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
+from utils.volatility_utils import annualized_return_std
 from core.logger import get_strategy_logger
 from core.performance_profiler import PerformanceProfiler
 from services.price_subscription_service import SubscriptionPriority
@@ -448,6 +449,7 @@ class OneilUniverseService:
             rs_return_3m=rs_return,
             ma_150d=ma_150d, ma_200d=ma_200d, w52_lwpr=w52_lwpr, minervini_stage=minervini_stage,
             source="pool_a",
+            volatility_20d_annualized=annualized_return_std(closes),
         )
 
     async def _analyze_surge_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
@@ -608,6 +610,7 @@ class OneilUniverseService:
             w52_hgpr=w52_hgpr, avg_trading_value_5d=tv_5d, market_cap=stck_llam,
             rs_return_3m=rs_return,
             source="pool_b",
+            volatility_20d_annualized=annualized_return_std(closes),
         )
 
     # ── 전일 기준 우량주 생성 (배치) ─────────────────────────────────────────

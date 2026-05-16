@@ -408,7 +408,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler._execute_signal(signal)
 
-        vm.log_buy_async.assert_awaited_once_with("테스트전략", "005930", 70000, 1)
+        vm.log_buy_async.assert_awaited_once_with("테스트전략", "005930", 70000, 1, volatility_20d_annualized=None)
         oes.handle_place_buy_order.assert_not_called()
 
     async def test_execute_sell_signal_dry_run(self):
@@ -443,6 +443,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             source="strategy:테스트전략",
             finalize_immediately=False,
             trace_id=ANY,
+            volatility_20d_annualized=None,
         )
 
     async def test_run_strategy_scan_respects_max_positions(self):
@@ -522,7 +523,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         await scheduler._run_strategy(config)
 
-        vm.log_buy_async.assert_awaited_once_with("테스트전략", "000660", 120000, 1)
+        vm.log_buy_async.assert_awaited_once_with("테스트전략", "000660", 120000, 1, volatility_20d_annualized=None)
         rejection_logs = [
             args[0]
             for args, _ in scheduler._logger.info.call_args_list
@@ -635,8 +636,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         # remaining=2 → target_signals=[A,B] → 2건만 실행
         self.assertEqual(vm.log_buy_async.call_count, 2)
-        vm.log_buy_async.assert_any_await("테스트전략", "A", 1000, 1)
-        vm.log_buy_async.assert_any_await("테스트전략", "B", 2000, 1)
+        vm.log_buy_async.assert_any_await("테스트전략", "A", 1000, 1, volatility_20d_annualized=None)
+        vm.log_buy_async.assert_any_await("테스트전략", "B", 2000, 1, volatility_20d_annualized=None)
 
     async def test_run_strategy_processes_exit_signals(self):
         """보유 종목의 청산 시그널이 실행되는지 테스트."""
@@ -734,7 +735,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         # remaining=1이므로 첫 번째만 매수
         self.assertEqual(vm.log_buy_async.call_count, 1)
-        vm.log_buy_async.assert_awaited_with("테스트전략", "000660", 120000, 1)
+        vm.log_buy_async.assert_awaited_with("테스트전략", "000660", 120000, 1, volatility_20d_annualized=None)
 
     async def test_run_strategy_rolls_back_rejected_stateful_scan_signal(self):
         """전략 scan이 position_state를 먼저 늘려도 rejected 신호는 즉시 롤백한다."""
@@ -767,7 +768,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         await scheduler._run_strategy(config)
 
-        vm.log_buy_async.assert_awaited_once_with("오닐PP/BGU", "111111", 1000, 1)
+        vm.log_buy_async.assert_awaited_once_with("오닐PP/BGU", "111111", 1000, 1, volatility_20d_annualized=None)
         self.assertIn("111111", strategy._position_state)
         self.assertNotIn("222222", strategy._position_state)
         strategy._save_state.assert_called_once()
@@ -800,8 +801,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         # remaining=2 → target_signals=[000660, 035420] → 2건만 실행
         self.assertEqual(vm.log_buy_async.call_count, 2)
-        vm.log_buy_async.assert_any_await("테스트전략", "000660", 120000, 1)
-        vm.log_buy_async.assert_any_await("테스트전략", "035420", 300000, 1)
+        vm.log_buy_async.assert_any_await("테스트전략", "000660", 120000, 1, volatility_20d_annualized=None)
+        vm.log_buy_async.assert_any_await("테스트전략", "035420", 300000, 1, volatility_20d_annualized=None)
         # 세 번째(셀트리온)은 슬라이스에서 제외되어 매수 안 됨
 
     async def test_run_strategy_prevents_pyramiding(self):
@@ -824,7 +825,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # 005930은 이미 보유 중이므로 매수 실행 안 됨 (호출 횟수 1회)
         # 000660만 매수 실행됨
         self.assertEqual(vm.log_buy_async.call_count, 1)
-        vm.log_buy_async.assert_awaited_with("테스트전략", "000660", 120000, 1)
+        vm.log_buy_async.assert_awaited_with("테스트전략", "000660", 120000, 1, volatility_20d_annualized=None)
 
     async def test_run_strategy_recheck_blocks_excess_buys(self):
         """in-memory 카운터로 remaining 슬롯을 소진하면 추가 매수를 차단하는지 테스트."""
@@ -846,8 +847,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # remaining=2 → target_signals=[A,B]. in-memory 카운터 0→1→2로 추적.
         # C는 슬라이스 초과로 target_signals에 포함되지 않아 A,B 2건만 실행
         self.assertEqual(vm.log_buy_async.call_count, 2)
-        vm.log_buy_async.assert_any_await("테스트전략", "A", 1000, 1)
-        vm.log_buy_async.assert_any_await("테스트전략", "B", 2000, 1)
+        vm.log_buy_async.assert_any_await("테스트전략", "A", 1000, 1, volatility_20d_annualized=None)
+        vm.log_buy_async.assert_any_await("테스트전략", "B", 2000, 1, volatility_20d_annualized=None)
 
     async def test_run_strategy_allows_pyramiding_if_enabled(self):
         """allow_pyramiding=True일 때 보유 종목 추가 매수 허용 테스트."""
@@ -868,8 +869,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         # allow_pyramiding=True이므로 두 종목 모두 매수 실행되어야 함
         self.assertEqual(vm.log_buy_async.call_count, 2)
-        vm.log_buy_async.assert_any_await("테스트전략", "005930", 71000, 1)
-        vm.log_buy_async.assert_any_await("테스트전략", "000660", 120000, 1)
+        vm.log_buy_async.assert_any_await("테스트전략", "005930", 71000, 1, volatility_20d_annualized=None)
+        vm.log_buy_async.assert_any_await("테스트전략", "000660", 120000, 1, volatility_20d_annualized=None)
 
     async def test_start_and_stop(self):
         """스케줄러 start/stop 생명주기 테스트."""
@@ -1847,7 +1848,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler._run_strategy(config)
 
         # qty=1 신호는 cfg.order_qty=10 으로 override 되지 않고 1 그대로 기록
-        vm.log_buy_async.assert_awaited_once_with("S", "005930", 1000, 1)
+        vm.log_buy_async.assert_awaited_once_with("S", "005930", 1000, 1, volatility_20d_annualized=None)
 
     def test_load_signal_history_max_limit(self):
         """시그널 히스토리 로드 시 MAX_HISTORY 제한이 store에 전달되는지 테스트."""
@@ -2332,6 +2333,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             source="strategy:S1",
             finalize_immediately=False,
             trace_id=ANY,
+            volatility_20d_annualized=None,
         )
 
     async def test_restore_state_with_price_subscription(self):

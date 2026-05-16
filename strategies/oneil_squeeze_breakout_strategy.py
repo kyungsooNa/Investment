@@ -16,6 +16,7 @@ from core.market_clock import MarketClock
 from strategies.oneil_common_types import OneilBreakoutConfig, OSBPositionState
 from services.oneil_universe_service import OneilUniverseService
 from core.logger import get_strategy_logger
+from utils.volatility_utils import annualized_return_std
 
 
 class OneilSqueezeBreakoutStrategy(LiveStrategy):
@@ -297,6 +298,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 "rs_rating": item.rs_rating,
                 "total_score": item.total_score,
                 "market_timing": market_timing_cache.get(item.market) if market_timing_cache else None,
+                "volatility_20d_annualized": item.volatility_20d_annualized,
             },
             "reason": reason_msg,
         })
@@ -305,6 +307,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             code=code, name=item.name, action="BUY", price=current,
             reason=reason_msg, strategy_name=self.name,
             stop_loss_pct=self._cfg.stop_loss_pct,
+            volatility_20d_annualized=item.volatility_20d_annualized,
         )
 
     def _is_smart_money_ok(self, code: str, current: int, pg_buy: int, trade_value: int, market_cap: int, cgld_val: float) -> Tuple[bool, dict]:
@@ -455,6 +458,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             state_dirty = True
 
         reason = ""
+        exit_volatility: float | None = None  # OHLCV 조회 경로에서만 채워짐 (시간손절/추세이탈)
 
         # 0. 조기 부분익절: ref_price 대비 +7% 도달 시 30% 매도
         ref_price = float(state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price)
@@ -503,6 +507,11 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=ohlcv_limit)
             ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
 
+            if ohlcv:
+                exit_volatility = annualized_return_std(
+                    [r.get("close") for r in ohlcv]
+                )
+
             if self._check_time_stop(state, current, ohlcv):
                 reason = f"시간손절({self._cfg.time_stop_days}일 횡보)"
             elif ohlcv:
@@ -529,7 +538,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             state_dirty = True
             signals.append(TradeSignal(
                 code=code, name=hold.get("name", code), action="SELL",
-                price=current, qty=holding_qty, reason=reason, strategy_name=self.name
+                price=current, qty=holding_qty, reason=reason, strategy_name=self.name,
+                volatility_20d_annualized=exit_volatility,
             ))
 
         return signals, state_dirty

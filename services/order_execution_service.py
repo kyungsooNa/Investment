@@ -545,7 +545,8 @@ class OrderExecutionService:
         try:
             if context.side == OrderSide.BUY:
                 await self._virtual_trade_service.log_buy_async(
-                    strategy_name, context.stock_code, record_price, record_qty
+                    strategy_name, context.stock_code, record_price, record_qty,
+                    volatility_20d_annualized=context.volatility_20d_annualized,
                 )
             elif is_strategy_source:
                 sell_result = await self._virtual_trade_service.log_sell_by_strategy_async_with_result(
@@ -1520,6 +1521,7 @@ class OrderExecutionService:
         finalize_immediately: bool,
         trace_id: Optional[str] = None,
         intent_id: Optional[str] = None,
+        volatility_20d_annualized: Optional[float] = None,
     ) -> ResCommonResponse:
         order_key = self._make_order_key(stock_code, side, exchange)
         action_kr = "매수" if side == OrderSide.BUY else "매도"
@@ -1653,6 +1655,7 @@ class OrderExecutionService:
                 expected_fill_price=self._resolve_expected_fill_price(price, policy_decision),
                 order_type=self._resolve_order_type(price, policy_decision),
                 spread_pct=self._resolve_spread_pct(policy_decision),
+                volatility_20d_annualized=volatility_20d_annualized,
             )
             self._set_order_context(context)
             self._intent_index[resolved_intent_id] = order_key
@@ -1707,6 +1710,7 @@ class OrderExecutionService:
         *,
         trace_id: Optional[str] = None,
         intent_id: Optional[str] = None,
+        volatility_20d_annualized: Optional[float] = None,
     ):
         """주식 매수 주문 요청 및 결과 출력."""
         current_trace = trace_id or get_trace_id() or new_trace_id("MANUAL")
@@ -1729,6 +1733,7 @@ class OrderExecutionService:
                 finalize_immediately=finalize_immediately,
                 trace_id=current_trace,
                 intent_id=intent_id,
+                volatility_20d_annualized=volatility_20d_annualized,
             )
             if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
                 self.logger.info(

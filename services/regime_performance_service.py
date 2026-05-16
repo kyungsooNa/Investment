@@ -28,7 +28,37 @@ def _empty_bucket() -> dict[str, Any]:
         "avg_net_return": 0.0,
         "total_net_pnl": 0.0,
         "mdd": 0.0,
+        "volatility_sample_count": 0,
+        "avg_volatility_20d_annualized": None,
+        "median_volatility_20d_annualized": None,
     }
+
+
+def _volatility_stats(records: Iterable[Mapping[str, Any]]) -> tuple[int, float | None, float | None]:
+    values: list[float] = []
+    for rec in records:
+        raw = rec.get("volatility_20d_annualized")
+        if raw is None:
+            metadata = rec.get("metadata")
+            if isinstance(metadata, Mapping):
+                raw = metadata.get("volatility_20d_annualized")
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        values.append(value)
+    if not values:
+        return 0, None, None
+    avg = sum(values) / len(values)
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        median = ordered[mid]
+    else:
+        median = (ordered[mid - 1] + ordered[mid]) / 2
+    return len(values), avg, median
 
 
 def _classify_bucket(regime: Mapping[str, Any]) -> str | None:
@@ -86,6 +116,8 @@ def compute_performance_by_regime(records: Iterable[Mapping[str, Any]]) -> dict[
             if drawdown > mdd:
                 mdd = drawdown
 
+        vol_count, vol_avg, vol_median = _volatility_stats(ordered)
+
         result[bucket_name] = {
             "trade_count": len(trades),
             "win_count": win_count,
@@ -93,6 +125,9 @@ def compute_performance_by_regime(records: Iterable[Mapping[str, Any]]) -> dict[
             "avg_net_return": sum(net_returns) / len(net_returns),
             "total_net_pnl": total_pnl,
             "mdd": mdd,
+            "volatility_sample_count": vol_count,
+            "avg_volatility_20d_annualized": vol_avg,
+            "median_volatility_20d_annualized": vol_median,
         }
 
     return result

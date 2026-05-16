@@ -151,6 +151,9 @@ class OSBWatchlistItem:
     # Pool 구분 (squeeze 게이트 선택적 적용용)
     source: str = "pool_a"          # "pool_a" (전일기준 우량주) | "pool_b" (당일 급등주)
 
+    # 리포트 집계용: 신호 생성 직전 20거래일 종가 로그수익률 std × √252
+    volatility_20d_annualized: float | None = None
+
 
 @dataclass
 class OSBPositionState:
