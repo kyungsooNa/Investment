@@ -263,15 +263,24 @@
 
 ### 3-1. `WebAppContext` / `web_app_initializer` 분리
 
-- [ ] 환경 로드, 브로커 생성, 서비스 조립, 전략/태스크 등록, 알림 설정, 스케줄러 초기화를 단계별 bootstrap으로 분리한다.
-- [ ] `BrokerFactory`, `ServiceContainer`, `StrategyFactory`, `SchedulerBootstrap`, `WebBootstrap`, `ConfigBootstrap` 분리 후보를 검토한다.
+- [~] 환경 로드, 브로커 생성, 서비스 조립, 전략/태스크 등록, 알림 설정, 스케줄러 초기화를 단계별 bootstrap으로 분리한다.
+  - 완료된 부분: `ConfigBootstrap` / `BrokerBootstrap` 추출 (`view/web/bootstrap/`). `WebAppContext.load_config_and_env()` 와 `_bootstrap_broker()` 는 신규 모듈에 위임만 한다.
+  - 남은 작업: `_bootstrap_services()` (~420라인) 와 `_bootstrap_schedulers()` 분리 — `ServiceContainer`, `StrategyFactory`, `SchedulerBootstrap` 별도 PR.
+- [~] `BrokerFactory`, `ServiceContainer`, `StrategyFactory`, `SchedulerBootstrap`, `WebBootstrap`, `ConfigBootstrap` 분리 후보를 검토한다.
+  - 완료된 부분: `ConfigBootstrap`, `BrokerBootstrap` 도입.
+  - 남은 작업: 나머지 4개 후보 — 후속 PR에서 단계 도입.
 - [ ] 후주입 방식 서비스 연결을 줄이고, 누락 시 테스트에서 빨리 드러나도록 생성 contract를 명확히 한다.
+  - 현재 상태: 후주입 3곳 (`DataQualityService`, `StreamingStockRepo`, `MinerviniStageService`) 그대로 유지. `_bootstrap_services()` 분리 PR 에서 함께 정리.
 
 주요 파일:
 
 - `view/web/web_app_initializer.py`
 - `view/web/web_main.py`
+- `view/web/bootstrap/config_bootstrap.py` (신규)
+- `view/web/bootstrap/broker_bootstrap.py` (신규)
 - `tests/unit_test/view/web/test_web_app_initializer.py`
+- `tests/unit_test/view/web/bootstrap/test_config_bootstrap.py` (신규)
+- `tests/unit_test/view/web/bootstrap/test_broker_bootstrap.py` (신규)
 
 ### 3-2. 웹 / 운영 / 전략 runtime 경계 분리
 

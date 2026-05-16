@@ -581,11 +581,11 @@ async def deep_paper_ctx(test_logger, web_app, mocker, tmp_path):
     class SimpleContext:
         env = None
 
-    with patch("view.web.web_app_initializer.load_configs", return_value=mock_config), \
+    with patch("view.web.bootstrap.config_bootstrap.load_configs", return_value=mock_config), \
          patch("view.web.web_app_initializer.VirtualTradeRepository") as MockVTM, \
          patch("view.web.web_app_initializer.StockCodeRepository"), \
          patch("brokers.broker_api_wrapper.StockCodeRepository"), \
-         patch("view.web.web_app_initializer.MarketCalendarService") as Mockmcs:
+         patch("view.web.bootstrap.config_bootstrap.MarketCalendarService") as Mockmcs:
 
         # MarketCalendarService Mock 설정 (_sync_calendar_if_needed 누락 방지)
         mock_mcs_instance = Mockmcs.return_value

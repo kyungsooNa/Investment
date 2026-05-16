@@ -10,10 +10,10 @@ from types import SimpleNamespace
 def mock_deps():
     """WebAppContext가 의존하는 모든 외부 모듈을 Mocking합니다."""
     patch_targets = [
-        ("load_configs", patch("view.web.web_app_initializer.load_configs")),
-        ("env", patch("view.web.web_app_initializer.KoreaInvestApiEnv", autospec=True)),
-        ("tm", patch("view.web.web_app_initializer.MarketClock", autospec=True)),
-        ("broker", patch("view.web.web_app_initializer.BrokerAPIWrapper", autospec=True)),
+        ("load_configs", patch("view.web.bootstrap.config_bootstrap.load_configs")),
+        ("env", patch("view.web.bootstrap.config_bootstrap.KoreaInvestApiEnv", autospec=True)),
+        ("tm", patch("view.web.bootstrap.config_bootstrap.MarketClock", autospec=True)),
+        ("broker", patch("view.web.bootstrap.broker_bootstrap.BrokerAPIWrapper", autospec=True)),
         ("mds", patch("view.web.web_app_initializer.MarketDataService", autospec=True)),
         ("sqs", patch("view.web.web_app_initializer.StockQueryService", autospec=True)),
         ("oes", patch("view.web.web_app_initializer.OrderExecutionService", autospec=True)),
@@ -37,8 +37,8 @@ def mock_deps():
         ("htf", patch("view.web.web_app_initializer.HighTightFlagStrategy", autospec=True)),
         ("cm", patch("view.web.web_app_initializer.CacheStore", autospec=True)),
         ("logger", patch("view.web.web_app_initializer.Logger", autospec=True)),
-        ("tn", patch("view.web.web_app_initializer.TelegramNotifier", autospec=True)),
-        ("tr", patch("view.web.web_app_initializer.TelegramReporter", autospec=True)),
+        ("tn", patch("view.web.bootstrap.config_bootstrap.TelegramNotifier", autospec=True)),
+        ("tr", patch("view.web.bootstrap.config_bootstrap.TelegramReporter", autospec=True)),
         ("strategy_log_report_task", patch("view.web.web_app_initializer.StrategyLogReportTask", autospec=True)),
         ("strategy_log_report_service", patch("view.web.web_app_initializer.StrategyLogReportService", autospec=True)),
     ]

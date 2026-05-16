@@ -155,76 +155,9 @@ class WebAppContext:
         self.streaming_event_logger = get_streaming_logger()
 
     def load_config_and_env(self):
-        """설정 파일 로드 및 환경 초기화."""
-        config_data = load_configs()
-        self.full_config = config_data  # 전체 설정 저장
-
-        # Pydantic 모델(AppConfig)을 dict로 변환
-        config_dict = config_data
-        if hasattr(config_data, "model_dump"):
-            config_dict = config_data.model_dump()
-        elif hasattr(config_data, "dict"):
-            config_dict = config_data.dict()
-
-        self.env = KoreaInvestApiEnv(config_dict, self.logger)
-        self.market_clock = MarketClock(
-            market_open_time=config_dict.get('market_open_time', "09:00"),
-            market_close_time=config_dict.get('market_close_time', "15:40"),
-            timezone=config_dict.get('market_timezone', "Asia/Seoul"),
-            logger=self.logger
-        )
-        self.virtual_repo.tm = self.market_clock
-        self.virtual_trade_service.tm = self.market_clock
-        self.notification_service = NotificationService(self.market_clock)
-        self.operator_alert_service = OperatorAlertService(
-            notification_service=self.notification_service,
-            market_clock=self.market_clock,
-            logger=self.logger,
-        )
-        self.kill_switch_service = KillSwitchService(
-            config=getattr(self.full_config, "kill_switch", None) or KillSwitchConfig(),
-            notification_service=self.notification_service,
-            logger=self.logger,
-            operator_alert_service=self.operator_alert_service,
-        )
-        self.rejection_distribution_service = RejectionDistributionService(
-            reason_labels=_REASON_KR,
-        )
-        self.rejection_distribution_service.attach_to_strategy_logger()
-        # ---------------------------------------------------------
-        # [추가] Telegram Notifier 초기화 및 핸들러 등록
-        telegram_backlog_bot_token = config_dict.get("telegram_backlog_bot_token")
-        telegram_strategy_bot_token = config_dict.get("telegram_strategy_bot_token")
-        telegram_report_bot_token = config_dict.get("telegram_report_bot_token")
-        telegram_chat_id = config_dict.get("telegram_chat_id")
-        
-        notifications_cfg = config_dict.get("notifications") or {}
-        telegram_cfg = notifications_cfg.get("telegram", {}) if isinstance(notifications_cfg, dict) else {}
-        telegram_enabled = telegram_cfg.get("enabled", True) if isinstance(telegram_cfg, dict) else True
-
-        if telegram_enabled and telegram_backlog_bot_token and telegram_strategy_bot_token and telegram_report_bot_token and telegram_chat_id:
-            # WebAppContext 인스턴스 변수로 유지하여 생명주기 관리
-            self.telegram_notifier = TelegramNotifier(
-                backlog_bot_token=telegram_backlog_bot_token,
-                strategy_bot_token=telegram_strategy_bot_token,
-                chat_id=telegram_chat_id
-            )
-            self.notification_service.register_external_handler(
-                self.telegram_notifier.handle_event
-            )
-            self.logger.info("텔레그램 외부 알림 핸들러가 성공적으로 등록되었습니다.")
-            
-            # [추가] Telegram Reporter 초기화 (RankingTask 주입용)
-            self.telegram_reporter = TelegramReporter(report_bot_token=telegram_report_bot_token, chat_id=telegram_chat_id)
-            self.logger.info("텔레그램 리포터가 초기화되었습니다.")
-        else:
-            self.logger.info("텔레그램 설정이 누락되어 알림 핸들러를 등록하지 않습니다.")
-        # ---------------------------------------------------------
-        self._load_position_sizing_state()
-        self.logger.info("웹 앱: 환경 설정 로드 완료.")
-
-        # [신규] MarketCalendarService 초기화
-        self._mcs = MarketCalendarService(self.market_clock, self.logger, performance_profiler=self.pm)
+        """설정 파일 로드 및 환경 초기화. ConfigBootstrap 에 위임."""
+        from view.web.bootstrap.config_bootstrap import ConfigBootstrap
+        ConfigBootstrap(self).run()
 
     _POSITION_SIZING_STATE_FILE = "data/position_sizing_state.json"
 
@@ -281,27 +214,9 @@ class WebAppContext:
         return True
 
     async def _bootstrap_broker(self, is_paper_trading: bool) -> bool:
-        """토큰 발급 및 BrokerAPIWrapper 초기화."""
-        try:
-            token_acquired = await self.env.get_access_token()
-            if not token_acquired:
-                self.logger.critical("[BrokerBootstrap] 토큰 발급 실패.")
-                return False
-            # 모의투자 모드에서도 실전 토큰 사전 발급 (조회 API는 항상 실전 인증 사용)
-            if is_paper_trading:
-                await self.env.get_real_access_token()
-            self.broker = BrokerAPIWrapper(
-                env=self.env, logger=self.logger, market_clock=self.market_clock,
-                market_calendar_service=self._mcs,
-                streaming_logger=self.streaming_event_logger,
-                stock_code_repository=self.stock_code_repository,
-            )
-            self._mcs.set_broker(self.broker)
-            await self._mcs._sync_calendar_if_needed()
-        except Exception as e:
-            self.logger.critical(f"[BrokerBootstrap] 초기화 실패: {e}", exc_info=True)
-            return False
-        return True
+        """토큰 발급 및 BrokerAPIWrapper 초기화. BrokerBootstrap 에 위임."""
+        from view.web.bootstrap.broker_bootstrap import BrokerBootstrap
+        return await BrokerBootstrap(self).run(is_paper_trading)
 
     def _bootstrap_services(self):
         """서비스 레이어 초기화 — 실패 시 컴포넌트명과 함께 예외를 전파한다."""
