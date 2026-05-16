@@ -14,33 +14,34 @@ def mock_deps():
         ("env", patch("view.web.bootstrap.config_bootstrap.KoreaInvestApiEnv", autospec=True)),
         ("tm", patch("view.web.bootstrap.config_bootstrap.MarketClock", autospec=True)),
         ("broker", patch("view.web.bootstrap.broker_bootstrap.BrokerAPIWrapper", autospec=True)),
-        ("mds", patch("view.web.web_app_initializer.MarketDataService", autospec=True)),
-        ("sqs", patch("view.web.web_app_initializer.StockQueryService", autospec=True)),
-        ("oes", patch("view.web.web_app_initializer.OrderExecutionService", autospec=True)),
-        ("risk_gate", patch("view.web.web_app_initializer.RiskGateService", autospec=True)),
-        ("order_policy", patch("view.web.web_app_initializer.OrderPolicyService", autospec=True)),
+        ("mds", patch("view.web.bootstrap.service_container.MarketDataService", autospec=True)),
+        ("sqs", patch("view.web.bootstrap.service_container.StockQueryService", autospec=True)),
+        ("oes", patch("view.web.bootstrap.service_container.OrderExecutionService", autospec=True)),
+        ("risk_gate", patch("view.web.bootstrap.service_container.RiskGateService", autospec=True)),
+        ("order_policy", patch("view.web.bootstrap.service_container.OrderPolicyService", autospec=True)),
         ("vtm", patch("view.web.web_app_initializer.VirtualTradeRepository", autospec=True)),
         ("backtest_journal_repo", patch("view.web.web_app_initializer.BacktestJournalRepository", autospec=True)),
         ("scm", patch("view.web.web_app_initializer.StockCodeRepository", autospec=True)),
         ("sched", patch("view.web.web_app_initializer.StrategyScheduler", autospec=True)),
         ("rdm", patch("view.web.web_app_initializer.ProgramTradingStreamService", autospec=True)),
-        ("ind", patch("view.web.web_app_initializer.IndicatorService", autospec=True)),
+        ("ind", patch("view.web.bootstrap.service_container.IndicatorService", autospec=True)),
 
-        ("ous", patch("view.web.web_app_initializer.OneilUniverseService", autospec=True)),
-        ("ranking_task", patch("view.web.web_app_initializer.RankingTask", autospec=True)),
-        ("watchdog_task", patch("view.web.web_app_initializer.WebSocketWatchdogTask", autospec=True)),
-        ("premium_watchlist_task", patch("view.web.web_app_initializer.PremiumWatchlistGeneratorTask", autospec=True)),
-        ("log_cleanup_task", patch("view.web.web_app_initializer.LogCleanupTask", autospec=True)),
-        ("newhigh_task", patch("view.web.web_app_initializer.NewHighTask", autospec=True)),
+        ("ous", patch("view.web.bootstrap.service_container.OneilUniverseService", autospec=True)),
+        ("ranking_task", patch("view.web.bootstrap.service_container.RankingTask", autospec=True)),
+        ("watchdog_task", patch("view.web.bootstrap.service_container.WebSocketWatchdogTask", autospec=True)),
+        ("watchdog_task_in_main", patch("view.web.web_app_initializer.WebSocketWatchdogTask", autospec=True)),
+        ("premium_watchlist_task", patch("view.web.bootstrap.service_container.PremiumWatchlistGeneratorTask", autospec=True)),
+        ("log_cleanup_task", patch("view.web.bootstrap.service_container.LogCleanupTask", autospec=True)),
+        ("newhigh_task", patch("view.web.bootstrap.service_container.NewHighTask", autospec=True)),
         ("osb", patch("view.web.web_app_initializer.OneilSqueezeBreakoutStrategy", autospec=True)),
         ("pp", patch("view.web.web_app_initializer.OneilPocketPivotStrategy", autospec=True)),
         ("htf", patch("view.web.web_app_initializer.HighTightFlagStrategy", autospec=True)),
-        ("cm", patch("view.web.web_app_initializer.CacheStore", autospec=True)),
+        ("cm", patch("view.web.bootstrap.service_container.CacheStore", autospec=True)),
         ("logger", patch("view.web.web_app_initializer.Logger", autospec=True)),
         ("tn", patch("view.web.bootstrap.config_bootstrap.TelegramNotifier", autospec=True)),
         ("tr", patch("view.web.bootstrap.config_bootstrap.TelegramReporter", autospec=True)),
-        ("strategy_log_report_task", patch("view.web.web_app_initializer.StrategyLogReportTask", autospec=True)),
-        ("strategy_log_report_service", patch("view.web.web_app_initializer.StrategyLogReportService", autospec=True)),
+        ("strategy_log_report_task", patch("view.web.bootstrap.service_container.StrategyLogReportTask", autospec=True)),
+        ("strategy_log_report_service", patch("view.web.bootstrap.service_container.StrategyLogReportService", autospec=True)),
     ]
 
     with contextlib.ExitStack() as stack:
@@ -708,12 +709,12 @@ def test_log_streaming_missing_reason_branches(mock_deps):
     ctx._emit_missing_reason.reset_mock()
     ctx.streaming_service.is_subscribed_realtime_price.return_value = True
     ctx.price_stream_service.get_subscription_age.return_value = 1
-    with patch.object(mock_deps["watchdog_task"], "PRICE_SUBSCRIPTION_GRACE_SEC", 5, create=True):
+    with patch.object(mock_deps["watchdog_task_in_main"], "PRICE_SUBSCRIPTION_GRACE_SEC", 5, create=True):
         ctx._log_streaming_missing_reason("005930")
     ctx._emit_missing_reason.assert_not_called()
 
     ctx.price_stream_service.get_subscription_age.return_value = 10
-    with patch.object(mock_deps["watchdog_task"], "PRICE_SUBSCRIPTION_GRACE_SEC", 5, create=True):
+    with patch.object(mock_deps["watchdog_task_in_main"], "PRICE_SUBSCRIPTION_GRACE_SEC", 5, create=True):
         ctx._log_streaming_missing_reason("005930")
     ctx._emit_missing_reason.assert_called_once_with("005930", "subscribed_no_tick")
 
