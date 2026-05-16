@@ -264,13 +264,13 @@
 ### 3-1. `WebAppContext` / `web_app_initializer` 분리
 
 - [~] 환경 로드, 브로커 생성, 서비스 조립, 전략/태스크 등록, 알림 설정, 스케줄러 초기화를 단계별 bootstrap으로 분리한다.
-  - 완료된 부분: `ConfigBootstrap`, `BrokerBootstrap`, `ServiceContainer` 추출 (`view/web/bootstrap/`). `WebAppContext.load_config_and_env()`, `_bootstrap_broker()`, `_bootstrap_services()` 는 신규 모듈에 위임만 한다. `web_app_initializer.py` 1238라인 → 약 780라인.
-  - 남은 작업: `_bootstrap_schedulers()` 분리 — `SchedulerBootstrap`/`StrategyFactory` 별도 PR.
+  - 완료된 부분: `ConfigBootstrap`, `BrokerBootstrap`, `ServiceContainer`, `SchedulerBootstrap`, `StrategyFactory` 추출 (`view/web/bootstrap/`). `WebAppContext.load_config_and_env()`, `_bootstrap_broker()`, `_bootstrap_services()`, `_bootstrap_schedulers()`, `initialize_scheduler()` 모두 신규 모듈에 위임만 한다. `web_app_initializer.py` 1238라인 → 약 530라인.
+  - 남은 작업: `WebBootstrap` (전체 orchestrator) 후속 PR — 현재 `initialize_services()` 가 이미 oneliner orchestrator 역할이라 우선순위 낮음.
 - [~] `BrokerFactory`, `ServiceContainer`, `StrategyFactory`, `SchedulerBootstrap`, `WebBootstrap`, `ConfigBootstrap` 분리 후보를 검토한다.
-  - 완료된 부분: `ConfigBootstrap`, `BrokerBootstrap`, `ServiceContainer` 도입.
-  - 남은 작업: 나머지 3개 후보 (`StrategyFactory`, `SchedulerBootstrap`, `WebBootstrap`) — 후속 PR.
+  - 완료된 부분: `ConfigBootstrap`, `BrokerBootstrap`, `ServiceContainer`, `SchedulerBootstrap`, `StrategyFactory` 도입 (5/6).
+  - 남은 작업: `WebBootstrap` — 후속 PR.
 - [ ] 후주입 방식 서비스 연결을 줄이고, 누락 시 테스트에서 빨리 드러나도록 생성 contract를 명확히 한다.
-  - 현재 상태: 후주입 3곳 (`DataQualityService`, `StreamingStockRepo`, `MinerviniStageService`) 그대로 유지. 생성자 주입 전환은 별도 PR.
+  - 현재 상태: 후주입 5곳 (`DataQualityService.set_price_stream_service`, `StreamingService.set_streaming_stock_repo`, `ProgramTradingStreamService.wire_streaming_stock_repo`, `MinerviniStageService._minervini_update_task`, `MinerviniUpdateTask._daily_price_collector_task`) 그대로 유지. 모두 진성 양방향 의존이라 단순 생성자 주입 불가 — `WiringPhase` 추출 또는 lazy lookup 패턴 도입 별도 PR.
 
 주요 파일:
 
@@ -279,10 +279,14 @@
 - `view/web/bootstrap/config_bootstrap.py` (신규)
 - `view/web/bootstrap/broker_bootstrap.py` (신규)
 - `view/web/bootstrap/service_container.py` (신규)
+- `view/web/bootstrap/scheduler_bootstrap.py` (신규)
+- `view/web/bootstrap/strategy_factory.py` (신규)
 - `tests/unit_test/view/web/test_web_app_initializer.py`
 - `tests/unit_test/view/web/bootstrap/test_config_bootstrap.py` (신규)
 - `tests/unit_test/view/web/bootstrap/test_broker_bootstrap.py` (신규)
 - `tests/unit_test/view/web/bootstrap/test_service_container.py` (신규)
+- `tests/unit_test/view/web/bootstrap/test_scheduler_bootstrap.py` (신규)
+- `tests/unit_test/view/web/bootstrap/test_strategy_factory.py` (신규)
 
 ### 3-2. 웹 / 운영 / 전략 runtime 경계 분리
 
