@@ -696,6 +696,7 @@ class StrategyScheduler:
                         source=f"strategy:{signal.strategy_name}",
                         finalize_immediately=False,
                         trace_id=tid,
+                        volatility_20d_annualized=signal.volatility_20d_annualized,
                     )
                 else:
                     adjusted_sell_price = await self._resolve_strategy_sell_price(signal, signal_exchange)

@@ -505,7 +505,7 @@ class VirtualTradeRepository:
             strategy_label = strategy_name if strategy_name else f"{action}실패"
             with self._db:
                 self._db.execute(_INSERT_TRADE,
-                    (strategy_label, code, fail_date, price, qty, None, None, 0.0, "FAILED", reason))
+                    (strategy_label, code, fail_date, price, qty, None, None, 0.0, "FAILED", reason, None))
             logger.warning(f"[가상매매] {action} 주문 실패 기록: {code} @ {price}원 x {qty}주 — {reason}")
 
     async def log_order_failure_async(self, action: str, code: str, price, qty: int, reason: str, strategy_name: str = ""):

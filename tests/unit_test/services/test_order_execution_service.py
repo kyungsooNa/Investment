@@ -1060,7 +1060,7 @@ async def test_execution_confirmed_buy_persists_virtual_trade(mock_broker_api_wr
 
     assert filled.state == OrderState.FILLED
     assert filled.virtual_recorded_qty == 10
-    virtual_trade_service.log_buy_async.assert_awaited_once_with("모멘텀", "005930", 70100, 10)
+    virtual_trade_service.log_buy_async.assert_awaited_once_with("모멘텀", "005930", 70100, 10, volatility_20d_annualized=None)
 
 
 @pytest.mark.asyncio
@@ -1136,7 +1136,7 @@ async def test_duplicate_execution_notice_does_not_duplicate_virtual_trade(mock_
     await handler.handle_signing_notice(notice, tr_id="H0STCNI0")
     await handler.handle_signing_notice(notice, tr_id="H0STCNI0")
 
-    virtual_trade_service.log_buy_async.assert_awaited_once_with("모멘텀", "005930", 70100, 10)
+    virtual_trade_service.log_buy_async.assert_awaited_once_with("모멘텀", "005930", 70100, 10, volatility_20d_annualized=None)
 
 
 @pytest.mark.asyncio
@@ -1228,7 +1228,7 @@ async def test_partial_fill_then_cancel_persists_confirmed_partial_qty(mock_brok
 
     assert canceled.state == OrderState.CANCELED
     assert canceled.virtual_recorded_qty == 4
-    virtual_trade_service.log_buy_async.assert_awaited_once_with("수동매매", "005930", 70200, 4)
+    virtual_trade_service.log_buy_async.assert_awaited_once_with("수동매매", "005930", 70200, 4, volatility_20d_annualized=None)
 
 
 def _seed_order_context(
