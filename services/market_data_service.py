@@ -46,6 +46,10 @@ class MarketDataService:
             "VITA", "TREX", "MASTER", "WOORI", "KINDEX",
         )
 
+    def set_data_quality_service(self, data_quality_service) -> None:
+        """DataQualityService 후주입 — 순환 의존 해소용 (WiringPhase 에서 호출)."""
+        self._data_quality_service = data_quality_service
+
     def _validate_rest_response(
         self,
         resp: Optional[ResCommonResponse],
