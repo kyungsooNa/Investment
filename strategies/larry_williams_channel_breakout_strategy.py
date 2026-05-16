@@ -262,6 +262,7 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
             code=code, name=item.name, action="BUY", price=current,
             reason=reason_msg, strategy_name=self.name,
             stop_loss_pct=stop_loss_pct,
+            volatility_20d_annualized=getattr(item, "volatility_20d_annualized", None),
         )
 
     # ── check_exits ─────────────────────────────────────────────────
