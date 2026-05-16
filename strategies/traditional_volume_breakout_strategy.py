@@ -19,6 +19,7 @@ from repositories.stock_code_repository import StockCodeRepository
 from core.market_clock import MarketClock
 from strategies.base_strategy_config import BaseStrategyConfig
 from core.logger import get_strategy_logger
+from utils.volatility_utils import annualized_return_std
 
 
 @dataclass
@@ -53,6 +54,7 @@ class WatchlistItem:
     ma_20d: float          # 20일 이동평균
     avg_vol_20d: float     # 20일 평균 거래량
     avg_trading_value_5d: float  # 5일 평균 거래대금
+    volatility_20d_annualized: float | None = None  # 신호 직전 변동성 (리포트용)
 
 
 @dataclass
@@ -205,11 +207,13 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
                 "event": "buy_signal_generated",
                 "code": code, "name": item.name, "price": current, "qty": qty,
                 "reason": reason_msg, "data": log_data,
+                "metrics": {"volatility_20d_annualized": item.volatility_20d_annualized},
             })
             return TradeSignal(
                 code=code, name=item.name, action="BUY", price=current,
                 reason=reason_msg, strategy_name=self.name,
                 stop_loss_pct=self._cfg.stop_loss_pct,
+                volatility_20d_annualized=item.volatility_20d_annualized,
             )
         except Exception as e:
             self._logger.error({"event": "scan_error", "code": code, "error": str(e)}, exc_info=True)
@@ -349,7 +353,8 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
             stock_name = stock.get("hts_kor_isnm", "") or self.stock_code_repository.get_name_by_code(code) or code
 
             try:
-                ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.high_period)
+                # 변동성(20일 std × √252) 계산에 21개 종가가 필요하므로 max(high_period, 21)
+                ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=max(self._cfg.high_period, 21))
                 ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
                 if not ohlcv or len(ohlcv) < self._cfg.ma_period:
                     continue
@@ -416,9 +421,11 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
                 return None
         
         self._logger.debug({"event": "ohlcv_filter_passed", **log_data})
+        volatility = annualized_return_std([r.get("close") for r in ohlcv])
         return WatchlistItem(
             code=code, name=name, high_20d=high_20d, ma_20d=ma_20d,
             avg_vol_20d=avg_vol_20d, avg_trading_value_5d=avg_trading_value_5d,
+            volatility_20d_annualized=volatility,
         )
 
     # ── 상태 저장/복원 ──

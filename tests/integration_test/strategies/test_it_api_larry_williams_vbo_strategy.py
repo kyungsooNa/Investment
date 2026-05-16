@@ -153,7 +153,9 @@ async def test_vbo_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
     await strategy.scan()
 
     assert mock_get_price.call_count == 0,    "캐시 적중 시 현재가 API는 호출되지 않아야 함"
-    assert mock_get_ohlcv.call_count == 0,    "당일 Range 캐시 적중 시 일봉 API는 재호출되지 않아야 함"
+    # Range 캐시 적중과 별개로 BUY 신호 발화 시 변동성(21일 OHLCV) 1회 호출은 허용
+    assert mock_get_ohlcv.call_count <= 1, \
+        "Range 캐시 적중 시 일봉 API는 변동성 fetch 1회 외 재호출되지 않아야 함"
     assert mock_get_conclusion.call_count == calls_conclusion_on_miss, \
         "체결강도 실시간 API는 캐시와 무관하게 항상 호출되어야 함"
     assert stock_repo.get_cache_stats()["hits"] > 0

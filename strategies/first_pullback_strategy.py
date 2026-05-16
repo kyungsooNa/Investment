@@ -263,13 +263,15 @@ class FirstPullbackStrategy(LiveStrategy):
                 "rs_rating": getattr(item, "rs_rating", 0),
                 "total_score": getattr(item, "total_score", 0.0),
                 "market_timing": market_timing_cache.get(item.market) if market_timing_cache else None,
+                "volatility_20d_annualized": getattr(item, "volatility_20d_annualized", None),
             },
             "reason": reason_msg,
         })
 
         return TradeSignal(
             code=code, name=item.name, action="BUY", price=current,
-            reason=reason_msg, strategy_name=self.name
+            reason=reason_msg, strategy_name=self.name,
+            volatility_20d_annualized=getattr(item, "volatility_20d_annualized", None),
         )
 
     # ── Phase 1 검사 메서드 ────────────────────────────────────────

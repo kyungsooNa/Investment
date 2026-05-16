@@ -12,9 +12,21 @@ from core.market_clock import MarketClock
 from interfaces.live_strategy import LiveStrategy
 from services.stock_query_service import StockQueryService
 from strategies.base_strategy_config import BaseStrategyConfig
+from utils.volatility_utils import annualized_return_std
 
 if TYPE_CHECKING:
     from services.oneil_universe_service import OneilUniverseService
+
+
+async def _fetch_volatility_for_signal(sqs: StockQueryService, code: str) -> Optional[float]:
+    """매수 신호 발화 직전 1회 호출: 21일 종가로 연환산 변동성 계산."""
+    try:
+        resp = await sqs.get_recent_daily_ohlcv(code, limit=21)
+        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
+            return None
+        return annualized_return_std([r.get("close") for r in resp.data])
+    except Exception:
+        return None
 
 _ENTRY_START = time(9, 10)
 _ENTRY_CUTOFF = time(14, 0)
@@ -201,15 +213,18 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                     f"VBO돌파: Open({open_price:,})+Range({rng:.0f})×K{self._cfg.k_value}"
                     f"=Target({round(target):,}) / 현재({current:,}) / 체결강도({cgld:.1f}%)"
                 )
+                volatility = await _fetch_volatility_for_signal(self._sqs, code)
                 signals.append(TradeSignal(
                     code=code, name=name, action="BUY", price=current,
                     reason=reason, strategy_name=self.name,
                     stop_loss_pct=self._cfg.stop_loss_pct,
+                    volatility_20d_annualized=volatility,
                 ))
                 self._bought_today.add(code)
                 self._logger.info({
                     "event": "buy_signal_generated", "strategy_name": self.name,
                     "code": code, "name": name, "price": current, "reason": reason,
+                    "metrics": {"volatility_20d_annualized": volatility},
                 })
 
             except Exception as e:

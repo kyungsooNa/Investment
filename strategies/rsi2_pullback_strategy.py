@@ -206,7 +206,8 @@ class RSI2PullbackStrategy(LiveStrategy):
         })
         return TradeSignal(
             code=code, name=item.name, action="BUY", price=current,
-            reason=reason_msg, strategy_name=self.name
+            reason=reason_msg, strategy_name=self.name,
+            volatility_20d_annualized=getattr(item, "volatility_20d_annualized", None),
         )
 
     # ── check_exits ─────────────────────────────────────────────────

@@ -10,6 +10,18 @@ from services.stock_query_service import StockQueryService
 from strategies.volume_breakout_strategy import VolumeBreakoutConfig
 from core.market_clock import MarketClock
 from core.logger import get_strategy_logger
+from utils.volatility_utils import annualized_return_std
+
+
+async def _fetch_volatility_for_signal(sqs: StockQueryService, code: str) -> Optional[float]:
+    """매수 신호 발화 직전 1회 호출: 21일 종가로 연환산 변동성 계산."""
+    try:
+        resp = await sqs.get_recent_daily_ohlcv(code, limit=21)
+        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
+            return None
+        return annualized_return_std([r.get("close") for r in resp.data])
+    except Exception:
+        return None
 
 
 class VolumeBreakoutLiveStrategy(LiveStrategy):
@@ -128,9 +140,11 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                     f"상승확인 {open_price:,}->{current:,}, "
                     f"누적거래량 {current_vol:,})"
                 )
+                volatility = await _fetch_volatility_for_signal(self._sqs, code)
                 signals.append(TradeSignal(
                     code=code, name=stock_name, action="BUY", price=current,
                     reason=reason_msg, strategy_name=self.name,
+                    volatility_20d_annualized=volatility,
                 ))
                 self._bought_today.add(code)  # 매수 신호 발생 기록
                 self._logger.info({
@@ -141,6 +155,7 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
                     "price": current,
                     "reason": reason_msg,
                     "data": log_data,
+                    "metrics": {"volatility_20d_annualized": volatility},
                 })
 
             except Exception as e:
