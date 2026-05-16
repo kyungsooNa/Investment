@@ -298,6 +298,7 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 "rs_rating": item.rs_rating,
                 "total_score": item.total_score,
                 "market_timing": market_timing_cache.get(item.market) if market_timing_cache else None,
+                "volatility_20d_annualized": item.volatility_20d_annualized,
             },
             "reason": reason_msg,
         })
