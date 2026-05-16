@@ -269,8 +269,10 @@
 - [~] `BrokerFactory`, `ServiceContainer`, `StrategyFactory`, `SchedulerBootstrap`, `WebBootstrap`, `ConfigBootstrap` 분리 후보를 검토한다.
   - 완료된 부분: `ConfigBootstrap`, `BrokerBootstrap`, `ServiceContainer`, `SchedulerBootstrap`, `StrategyFactory` 도입 (5/6).
   - 남은 작업: `WebBootstrap` — 후속 PR.
-- [ ] 후주입 방식 서비스 연결을 줄이고, 누락 시 테스트에서 빨리 드러나도록 생성 contract를 명확히 한다.
-  - 현재 상태: 후주입 5곳 (`DataQualityService.set_price_stream_service`, `StreamingService.set_streaming_stock_repo`, `ProgramTradingStreamService.wire_streaming_stock_repo`, `MinerviniStageService._minervini_update_task`, `MinerviniUpdateTask._daily_price_collector_task`) 그대로 유지. 모두 진성 양방향 의존이라 단순 생성자 주입 불가 — `WiringPhase` 추출 또는 lazy lookup 패턴 도입 별도 PR.
+- [~] 후주입 방식 서비스 연결을 줄이고, 누락 시 테스트에서 빨리 드러나도록 생성 contract를 명확히 한다.
+  - 완료된 부분: `WiringPhase` 추출 (`view/web/bootstrap/wiring_phase.py`) — 모든 후주입 (MarketDataService↔DQS, IndicatorService↔SQS, FavoriteService 4종, MinerviniStage↔Update 순환, DQS↔PriceStream, StreamingService 3종, StockQueryService 2종, signing_notice 콜백 등 14개 wire) 을 한곳에 모았다. `WebAppContext._bootstrap_services()` 가 `ServiceContainer.run()` → `WiringPhase.run()` 순서로 위임한다.
+  - 완료된 부분: 14개 wire 마다 단위 테스트 추가 (`tests/unit_test/view/web/bootstrap/test_wiring_phase.py`) — 누락 시 즉시 실패한다.
+  - 남은 작업: 직접 속성 변경 3곳 (`_data_quality_service`, `_minervini_update_task`, `_daily_price_collector_task`) 을 setter 메서드로 교체. 진성 순환 의존 자체의 생성자 주입 전환은 별도 PR (consumer API 변경 필요).
 
 주요 파일:
 
@@ -281,12 +283,14 @@
 - `view/web/bootstrap/service_container.py` (신규)
 - `view/web/bootstrap/scheduler_bootstrap.py` (신규)
 - `view/web/bootstrap/strategy_factory.py` (신규)
+- `view/web/bootstrap/wiring_phase.py` (신규)
 - `tests/unit_test/view/web/test_web_app_initializer.py`
 - `tests/unit_test/view/web/bootstrap/test_config_bootstrap.py` (신규)
 - `tests/unit_test/view/web/bootstrap/test_broker_bootstrap.py` (신규)
 - `tests/unit_test/view/web/bootstrap/test_service_container.py` (신규)
 - `tests/unit_test/view/web/bootstrap/test_scheduler_bootstrap.py` (신규)
 - `tests/unit_test/view/web/bootstrap/test_strategy_factory.py` (신규)
+- `tests/unit_test/view/web/bootstrap/test_wiring_phase.py` (신규)
 
 ### 3-2. 웹 / 운영 / 전략 runtime 경계 분리
 

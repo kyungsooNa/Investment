@@ -4,6 +4,7 @@ from view.web.bootstrap.config_bootstrap import ConfigBootstrap
 from view.web.bootstrap.scheduler_bootstrap import SchedulerBootstrap
 from view.web.bootstrap.service_container import ServiceContainer
 from view.web.bootstrap.strategy_factory import StrategyFactory
+from view.web.bootstrap.wiring_phase import WiringPhase
 
 __all__ = [
     "BrokerBootstrap",
@@ -11,4 +12,5 @@ __all__ = [
     "SchedulerBootstrap",
     "ServiceContainer",
     "StrategyFactory",
+    "WiringPhase",
 ]

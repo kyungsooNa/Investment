@@ -97,7 +97,11 @@ def test_service_container_creates_query_and_order_services(patched_service_cont
 
 
 def test_service_container_creates_streaming_chain(patched_service_container_deps):
-    """StreamingService, PriceStreamService, PriceSubscriptionService 가 연결된다."""
+    """StreamingService, PriceStreamService, PriceSubscriptionService 인스턴스가 생성된다.
+
+    streaming_service.set_* / set_streaming_stock_repo 등의 wiring 은 WiringPhase 가 담당하므로
+    여기서는 ServiceContainer 가 wiring 을 호출하지 않는다는 invariant 도 함께 검증한다.
+    """
     from view.web.bootstrap.service_container import ServiceContainer
 
     ctx = _make_fake_context()
@@ -106,8 +110,8 @@ def test_service_container_creates_streaming_chain(patched_service_container_dep
     assert ctx.streaming_service is patched_service_container_deps["StreamingService"].return_value
     assert ctx.price_stream_service is patched_service_container_deps["PriceStreamService"].return_value
     assert ctx.price_subscription_service is patched_service_container_deps["PriceSubscriptionService"].return_value
-    ctx.streaming_service.set_price_stream_service.assert_called_once()
-    ctx.streaming_service.set_streaming_stock_repo.assert_called_once()
+    ctx.streaming_service.set_price_stream_service.assert_not_called()
+    ctx.streaming_service.set_streaming_stock_repo.assert_not_called()
 
 
 def test_service_container_creates_universe_and_tasks(patched_service_container_deps):
@@ -122,8 +126,8 @@ def test_service_container_creates_universe_and_tasks(patched_service_container_
     assert ctx.strategy_log_report_task is patched_service_container_deps["StrategyLogReportTask"].return_value
 
 
-def test_service_container_attaches_minervini_update_task_to_stage_service(patched_service_container_deps):
-    """MinerviniStageService 에 MinerviniUpdateTask 가 사후 주입된다."""
+def test_service_container_does_not_wire_minervini_circular_pair(patched_service_container_deps):
+    """MinerviniStage ↔ MinerviniUpdate 후주입은 WiringPhase 책임 — ServiceContainer 는 인스턴스만 만든다."""
     from view.web.bootstrap.service_container import ServiceContainer
 
     ctx = _make_fake_context()
@@ -131,4 +135,5 @@ def test_service_container_attaches_minervini_update_task_to_stage_service(patch
 
     stage_instance = patched_service_container_deps["MinerviniStageService"].return_value
     update_instance = patched_service_container_deps["MinerviniUpdateTask"].return_value
-    assert stage_instance._minervini_update_task is update_instance
+    assert ctx.minervini_stage_service is stage_instance
+    assert ctx.minervini_update_task is update_instance

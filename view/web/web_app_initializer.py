@@ -219,9 +219,11 @@ class WebAppContext:
         return await BrokerBootstrap(self).run(is_paper_trading)
 
     def _bootstrap_services(self):
-        """서비스 레이어 초기화. ServiceContainer 에 위임."""
+        """서비스 레이어 초기화. ServiceContainer → WiringPhase 순서로 위임."""
         from view.web.bootstrap.service_container import ServiceContainer
+        from view.web.bootstrap.wiring_phase import WiringPhase
         ServiceContainer(self).run()
+        WiringPhase(self).run()
 
     def _bootstrap_schedulers(self):
         """스케줄러 인프라 초기화. SchedulerBootstrap 에 위임."""

@@ -135,7 +135,7 @@ class ServiceContainer:
                 operator_alert_service=ctx.operator_alert_service,
             )
             ctx.data_quality_service.apply_trading_mode(bool(getattr(ctx.env, "is_paper_trading", True)))
-            ctx.market_data_service._data_quality_service = ctx.data_quality_service
+            # NOTE: market_data_service._data_quality_service back-injection is performed by WiringPhase.
         except Exception as e:
             ctx.logger.critical(f"[ServiceBootstrap:CoreServices] 초기화 실패: {e}", exc_info=True)
             raise
@@ -163,11 +163,7 @@ class ServiceContainer:
                 broker_api_wrapper=ctx.broker,
                 streaming_logger=ctx.streaming_event_logger,
             )
-            # IndicatorService에 StockQueryService 주입 (순환 참조 해결)
-            ctx.indicator_service.stock_query_service = ctx.stock_query_service
-            ctx.favorite_service.stock_query_service = ctx.stock_query_service
-            ctx.favorite_service.stock_repository = ctx.stock_repository
-            ctx.favorite_service.rs_rating_service = getattr(ctx, "rs_rating_service", None)
+            # NOTE: indicator_service / favorite_service collaborator wiring is performed by WiringPhase.
         except Exception as e:
             ctx.logger.critical(f"[ServiceBootstrap:QueryServices] 초기화 실패: {e}", exc_info=True)
             raise
@@ -179,7 +175,7 @@ class ServiceContainer:
                 stock_repository=ctx.stock_repository,
                 logger=ctx.logger,
             )
-            ctx.favorite_service.minervini_stage_service = ctx.minervini_stage_service
+            # NOTE: favorite_service.minervini_stage_service wiring is performed by WiringPhase.
         except Exception as e:
             ctx.logger.warning(f"[ServiceBootstrap:MinerviniStage] 초기화 실패: {e}")
             ctx.minervini_stage_service = None
@@ -204,9 +200,7 @@ class ServiceContainer:
             ctx.logger.warning(f"[ServiceBootstrap:MinerviniUpdate] 초기화 실패: {e}")
             ctx.minervini_update_task = None
 
-        # MinerviniStageService에 MinerviniUpdateTask 연결 (생성 순서 때문에 사후 주입)
-        if ctx.minervini_stage_service and ctx.minervini_update_task:
-            ctx.minervini_stage_service._minervini_update_task = ctx.minervini_update_task
+        # NOTE: minervini_stage_service ↔ minervini_update_task circular wiring is performed by WiringPhase.
 
         try:
             ctx.streaming_service = StreamingService(
@@ -223,14 +217,9 @@ class ServiceContainer:
                 data_quality_service=ctx.data_quality_service,
                 notification_service=ctx.notification_service,
             )
-            ctx.data_quality_service.set_price_stream_service(ctx.price_stream_service)
-            ctx.streaming_service.set_price_stream_service(ctx.price_stream_service)
-            if ctx.stock_query_service:
-                ctx.stock_query_service.price_stream_service = ctx.price_stream_service
+            # NOTE: data_quality / streaming / stock_query <-> price_stream wiring is performed by WiringPhase.
             ctx.streaming_stock_repo = StreamingStockRepo(logger=ctx.logger)
             ctx.streaming_stock_repo.load_pt_desired_from_db("data/program_subscribe/program_trading.db")
-            ctx.streaming_service.set_streaming_stock_repo(ctx.streaming_stock_repo)
-            ctx.program_trading_stream_service.wire_streaming_stock_repo(ctx.streaming_stock_repo)
             ctx.price_subscription_service = PriceSubscriptionService(
                 streaming_service=ctx.streaming_service,
                 stock_repo=ctx.stock_repository,
@@ -239,8 +228,8 @@ class ServiceContainer:
                 streaming_stock_repo=ctx.streaming_stock_repo,
                 market_calendar=ctx._mcs,
             )
-            if ctx.stock_query_service:
-                ctx.stock_query_service.price_subscription_service = ctx.price_subscription_service
+            # NOTE: streaming.set_streaming_stock_repo, program_trading.wire_streaming_stock_repo,
+            # and stock_query.price_subscription_service wiring is performed by WiringPhase.
             ctx.websocket_watchdog_task = WebSocketWatchdogTask(
                 streaming_service=ctx.streaming_service,
                 program_trading_stream_service=ctx.program_trading_stream_service,
@@ -276,9 +265,7 @@ class ServiceContainer:
                 rs_rating_service=getattr(ctx, "rs_rating_service", None),
                 worker_pool=ctx.worker_pool,
             )
-            # NOTE: MinerviniUpdateTask._daily_price_collector_task는 DailyPriceCollectorTask 생성 후 사후 주입
-            if ctx.minervini_update_task and ctx.daily_price_collector_task:
-                ctx.minervini_update_task._daily_price_collector_task = ctx.daily_price_collector_task
+            # NOTE: minervini_update_task._daily_price_collector_task wiring is performed by WiringPhase.
             ctx.ohlcv_update_task = OhlcvUpdateTask(
                 stock_query_service=ctx.stock_query_service,
                 stock_code_repository=ctx.stock_code_repository,
@@ -353,10 +340,7 @@ class ServiceContainer:
                 execution_quality_config=getattr(ctx.full_config, "execution_quality_report", None),
                 deferred_order_queue=ctx.deferred_order_queue,
             )
-            ctx.streaming_service.register_handler(
-                "signing_notice",
-                ctx.order_execution_service.handle_signing_notice,
-            )
+            # NOTE: streaming_service.register_handler("signing_notice", ...) is performed by WiringPhase.
         except Exception as e:
             ctx.logger.critical(f"[ServiceBootstrap:OrderServices] 초기화 실패: {e}", exc_info=True)
             raise
