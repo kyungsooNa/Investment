@@ -19,6 +19,7 @@ from core.account_snapshot import AccountSnapshotCache
 from config.config_loader import ExecutionQualityReportConfig
 from services.execution_quality_reporter import ExecutionQualityReporter
 from services.broker_order_submitter import BrokerOrderSubmitter
+from services.order_state_machine import OrderStateMachine
 
 
 class OrderExecutionService:
@@ -70,29 +71,72 @@ class OrderExecutionService:
             notification_service=notification_service,
             now_provider=self._get_now,
         )
+        self._deferred_queue = deferred_order_queue
+        self._notification_tasks: set[asyncio.Task] = set()
+        self._fsm = OrderStateMachine(
+            logger=logger,
+            now_provider=self._get_now,
+            deferred_queue=self._deferred_queue,
+            notification_tasks=self._notification_tasks,
+            processed_execution_event_limit=self._PROCESSED_EXECUTION_EVENT_LIMIT,
+            post_submit_fast_poll_window_sec=self._POST_SUBMIT_FAST_POLL_WINDOW_SEC,
+            fast_poll_interval_sec=self._FAST_POLL_INTERVAL_SEC,
+            default_active_poll_interval_sec=self._DEFAULT_ACTIVE_ORDER_POLL_INTERVAL_SEC,
+        )
         self._broker_submitter = BrokerOrderSubmitter(
             broker_api_wrapper=broker_api_wrapper,
             logger=logger,
             kill_switch=kill_switch_service,
             market_clock=market_clock,
-            state_provider=lambda: self._order_states,
-            transition_fn=self._transition_order_context,
-            extract_broker_order_no_fn=self._extract_broker_order_no,
+            state_provider=lambda: self._fsm._order_states,
+            transition_fn=self._fsm.transition,
+            extract_broker_order_no_fn=OrderStateMachine.extract_broker_order_no,
             max_retries=self._ORDER_MAX_RETRIES,
             retry_delay_sec=self._ORDER_RETRY_DELAY_SEC,
         )
-        self._notification_tasks: set[asyncio.Task] = set()
-        self._deferred_queue = deferred_order_queue
-        self._order_states: Dict[str, OrderContext] = {}
-        self._order_locks: Dict[str, asyncio.Lock] = {}
-        self._order_no_index: Dict[str, str] = {}
-        self._processed_execution_events: OrderedDict[str, None] = OrderedDict()
-        self._processed_execution_event_limit = self._PROCESSED_EXECUTION_EVENT_LIMIT
-        self._post_submit_fast_poll_until: Dict[str, datetime] = {}
-        self._reconcile_mismatch_count: int = 0
         self._reconcile_alarm: bool = False
         self._reconcile_consecutive_mismatch_by_key: Dict[str, int] = {}
-        self._intent_index: Dict[str, str] = {}  # intent_id → order_key
+
+    # ── FSM state property delegations (Phase 3 백워드 호환) ────────────
+    @property
+    def _order_states(self):
+        return self._fsm._order_states
+
+    @property
+    def _order_locks(self):
+        return self._fsm._order_locks
+
+    @property
+    def _order_no_index(self):
+        return self._fsm._order_no_index
+
+    @property
+    def _intent_index(self):
+        return self._fsm._intent_index
+
+    @property
+    def _processed_execution_events(self):
+        return self._fsm._processed_execution_events
+
+    @property
+    def _processed_execution_event_limit(self):
+        return self._fsm._processed_execution_event_limit
+
+    @_processed_execution_event_limit.setter
+    def _processed_execution_event_limit(self, value):
+        self._fsm._processed_execution_event_limit = value
+
+    @property
+    def _post_submit_fast_poll_until(self):
+        return self._fsm._post_submit_fast_poll_until
+
+    @property
+    def _reconcile_mismatch_count(self):
+        return self._fsm._reconcile_mismatch_count
+
+    @_reconcile_mismatch_count.setter
+    def _reconcile_mismatch_count(self, value):
+        self._fsm._reconcile_mismatch_count = value
 
     def _get_now(self) -> datetime:
         return self.market_clock.get_current_kst_time() if self.market_clock else datetime.now()
@@ -156,20 +200,13 @@ class OrderExecutionService:
         return False
 
     def _make_order_key(self, stock_code: str, side: OrderSide, exchange: Exchange) -> str:
-        return f"{exchange.value}:{stock_code}:{side.value}"
+        return OrderStateMachine.make_order_key(stock_code, side, exchange)
 
     def _make_symbol_lock_key(self, stock_code: str, exchange: Exchange) -> str:
-        return f"{exchange.value}:{stock_code}"
+        return OrderStateMachine.make_symbol_lock_key(stock_code, exchange)
 
     def _get_symbol_lock(self, stock_code: str, exchange: Exchange) -> asyncio.Lock:
-        lock_key = self._make_symbol_lock_key(stock_code, exchange)
-        current_loop = asyncio.get_running_loop()
-        lock = self._order_locks.get(lock_key)
-        lock_loop = getattr(lock, "_loop", None) if lock else None
-        if lock is None or (lock_loop is not None and lock_loop is not current_loop):
-            lock = asyncio.Lock()
-            self._order_locks[lock_key] = lock
-        return lock
+        return self._fsm.symbol_lock(stock_code, exchange)
 
     def _get_order_context_by_side(
         self,
@@ -177,97 +214,31 @@ class OrderExecutionService:
         side: OrderSide,
         exchange: Exchange = Exchange.KRX,
     ) -> Optional[OrderContext]:
-        return self._order_states.get(self._make_order_key(stock_code, side, exchange))
+        return self._fsm.lookup_by_side(stock_code, side, exchange)
 
     def get_order_context(self, stock_code, is_buy: bool, exchange: Exchange = Exchange.KRX) -> Optional[OrderContext]:
-        side = OrderSide.BUY if is_buy else OrderSide.SELL
-        return self._get_order_context_by_side(stock_code, side, exchange)
+        return self._fsm.lookup_by_buy_flag(stock_code, is_buy, exchange)
 
     def has_active_order(self, stock_code, exchange: Exchange = Exchange.KRX) -> bool:
-        for side in (OrderSide.BUY, OrderSide.SELL):
-            context = self._get_order_context_by_side(stock_code, side, exchange)
-            if context and not context.state.is_terminal:
-                return True
-        return False
+        return self._fsm.has_active(stock_code, exchange)
 
     def _extract_broker_order_no(self, result: ResCommonResponse) -> Optional[str]:
-        if not result or not result.data:
-            return None
-        if hasattr(result.data, "ordno"):
-            return result.data.ordno
-        if isinstance(result.data, dict):
-            return result.data.get("ordno") or result.data.get("order_no") or result.data.get("odno")
-        return None
+        return OrderStateMachine.extract_broker_order_no(result)
 
     def _set_order_context(self, context: OrderContext) -> OrderContext:
-        now = self._get_now()
-        if context.created_at is None or context.state_entered_at is None:
-            context = context.model_copy(update={
-                "created_at": context.created_at or now,
-                "state_entered_at": context.state_entered_at or now,
-            })
-        self._order_states[context.order_key] = context
-        if context.broker_order_no:
-            self._order_no_index[context.broker_order_no] = context.order_key
-        return context
+        return self._fsm.register(context)
 
     def _transition_order_context(self, order_key: str, new_state: OrderState, **kwargs) -> OrderContext:
-        context = self._order_states[order_key]
-        next_context = context.transition(
-            new_state,
-            transition_time=self._get_now(),
-            **kwargs,
-        )
-        self._order_states[order_key] = next_context
-        if next_context.broker_order_no:
-            self._order_no_index[next_context.broker_order_no] = order_key
-        if next_context.state.is_terminal and next_context.intent_id:
-            self._intent_index.pop(next_context.intent_id, None)
-        if next_context.state.is_terminal:
-            self._schedule_deferred_release(next_context.stock_code)
-        return next_context
+        return self._fsm.transition(order_key, new_state, **kwargs)
 
     def _schedule_deferred_release(self, stock_code: str) -> None:
-        """terminal state 도달 시 deferred order queue 해제를 비동기로 트리거.
-
-        symbol lock 점유 중에 호출될 수 있으므로 create_task 로 분리한다 (deadlock 방지).
-        """
-        if self._deferred_queue is None or not stock_code:
-            return
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        task = loop.create_task(self._deferred_queue.notify_terminal(stock_code))
-        self._notification_tasks.add(task)
-        task.add_done_callback(self._notification_tasks.discard)
+        self._fsm._schedule_deferred_release(stock_code)
 
     def _safe_transition_order_context(self, order_key: str, new_state: OrderState, **kwargs) -> Optional[OrderContext]:
-        """외부 이벤트(broker 응답, reconcile, WebSocket) 로 트리거된 상태 전이에 사용.
-        invalid transition 은 raise 하지 않고 WARNING + no-op 으로 처리한다.
-        내부 개발 오류성 전이는 _transition_order_context 를 직접 사용해 ValueError 를 유지한다.
-        """
-        try:
-            return self._transition_order_context(order_key, new_state, **kwargs)
-        except (ValueError, KeyError) as e:
-            context = self._order_states.get(order_key)
-            current_state = context.state.value if context else "unknown"
-            self._reconcile_mismatch_count += 1
-            self.logger.warning(
-                f"외부 이벤트 상태 전이 실패(no-op): order_key={order_key}, "
-                f"current={current_state}, requested={new_state.value}, error={e}, "
-                f"mismatch_count={self._reconcile_mismatch_count}"
-            )
-            return context
+        return self._fsm.safe_transition(order_key, new_state, **kwargs)
 
     def _mark_virtual_trade_recorded(self, context: OrderContext, recorded_qty: int) -> OrderContext:
-        next_context = context.model_copy(update={
-            "virtual_recorded_qty": min(max(recorded_qty, 0), context.filled_qty),
-        })
-        self._order_states[context.order_key] = next_context
-        if next_context.broker_order_no:
-            self._order_no_index[next_context.broker_order_no] = context.order_key
-        return next_context
+        return self._fsm.mark_virtual_trade_recorded(context, recorded_qty)
 
     @staticmethod
     def _strategy_name_from_source(source: str) -> tuple[str, bool]:
@@ -359,32 +330,10 @@ class OrderExecutionService:
         return self._mark_virtual_trade_recorded(context, record_qty)
 
     def _find_context_for_execution_report(self, report: OrderExecutionReport) -> Optional[OrderContext]:
-        order_key = self._order_no_index.get(report.broker_order_no)
-        if order_key:
-            return self._order_states.get(order_key)
-        if report.side:
-            return self._get_order_context_by_side(report.stock_code, report.side, report.exchange)
-        for side in (OrderSide.BUY, OrderSide.SELL):
-            context = self._get_order_context_by_side(report.stock_code, side, report.exchange)
-            if context and context.broker_order_no == report.broker_order_no:
-                return context
-        return None
+        return self._fsm.find_context_for_execution_report(report)
 
     def _mark_execution_event_seen(self, event_key: str) -> bool:
-        """Return True only for an event key that has not been processed recently."""
-        if event_key in self._processed_execution_events:
-            self._processed_execution_events.move_to_end(event_key)
-            return False
-
-        limit = self._processed_execution_event_limit
-        if limit <= 0:
-            self._processed_execution_events.clear()
-            return True
-
-        self._processed_execution_events[event_key] = None
-        while len(self._processed_execution_events) > limit:
-            self._processed_execution_events.popitem(last=False)
-        return True
+        return self._fsm.mark_execution_event_seen(event_key)
 
     async def apply_execution_report(self, report: OrderExecutionReport) -> Optional[OrderContext]:
         """체결통보/polling 이벤트를 주문 FSM에 적용합니다."""
@@ -469,52 +418,18 @@ class OrderExecutionService:
         )
 
     def _active_order_contexts(self) -> list[OrderContext]:
-        return [
-            context
-            for context in self._order_states.values()
-            if not context.state.is_terminal
-        ]
+        return self._fsm.active_contexts()
 
     def get_active_order_summary(self) -> dict:
-        contexts = self._active_order_contexts()
-        return {
-            "active_order_count": len(contexts),
-            "unfilled_order_count": sum(1 for c in contexts if c.remaining_qty > 0),
-            "orders": [
-                {
-                    "order_key": c.order_key,
-                    "stock_code": c.stock_code,
-                    "side": c.side.value,
-                    "state": c.state.value,
-                    "qty": c.qty,
-                    "filled_qty": c.filled_qty,
-                    "remaining_qty": c.remaining_qty,
-                    "broker_order_no": c.broker_order_no,
-                }
-                for c in contexts
-            ],
-            "reconcile_alarm": self._reconcile_alarm,
-            "reconcile_mismatch_count": self._reconcile_mismatch_count,
-        }
+        summary = self._fsm.active_summary()
+        summary["reconcile_alarm"] = self._reconcile_alarm
+        return summary
 
     def _register_post_submit_fast_poll(self, order_key: str, now: Optional[datetime] = None) -> None:
-        now = now or (self.market_clock.get_current_kst_time() if self.market_clock else datetime.now())
-        self._post_submit_fast_poll_until[order_key] = now + timedelta(seconds=self._POST_SUBMIT_FAST_POLL_WINDOW_SEC)
+        self._fsm.register_post_submit_fast_poll(order_key, now)
 
     def _prune_post_submit_fast_poll(self, now: Optional[datetime] = None) -> None:
-        now = now or (self.market_clock.get_current_kst_time() if self.market_clock else datetime.now())
-        active_order_keys = {
-            context.order_key
-            for context in self._order_states.values()
-            if not context.state.is_terminal
-        }
-        stale_keys = [
-            order_key
-            for order_key, until in self._post_submit_fast_poll_until.items()
-            if order_key not in active_order_keys or until <= now
-        ]
-        for order_key in stale_keys:
-            self._post_submit_fast_poll_until.pop(order_key, None)
+        self._fsm.prune_post_submit_fast_poll(now)
 
     def get_active_order_poll_interval_sec(
         self,
@@ -522,17 +437,9 @@ class OrderExecutionService:
         *,
         default_interval_sec: int = _DEFAULT_ACTIVE_ORDER_POLL_INTERVAL_SEC,
     ) -> Optional[int]:
-        now = now or (self.market_clock.get_current_kst_time() if self.market_clock else datetime.now())
-        contexts = self._active_order_contexts()
-        if not contexts:
-            self._prune_post_submit_fast_poll(now)
-            return None
-
-        self._prune_post_submit_fast_poll(now)
-        active_order_keys = {context.order_key for context in contexts}
-        if any(order_key in self._post_submit_fast_poll_until for order_key in active_order_keys):
-            return min(default_interval_sec, self._FAST_POLL_INTERVAL_SEC)
-        return default_interval_sec
+        return self._fsm.get_active_order_poll_interval_sec(
+            now, default_interval_sec=default_interval_sec
+        )
 
     def _get_stuck_order_alert_level(
         self,
