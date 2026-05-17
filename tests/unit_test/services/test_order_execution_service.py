@@ -500,8 +500,8 @@ async def test_retry_order_success_on_first_attempt(handler, mock_broker_api_wra
     mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="주문 성공", data=None
     )
-    result = await handler._retry_order(
-        lambda c, p, q: handler._execute_order_via_broker(c, p, q, is_buy=True), "005930", 70000, 10
+    result = await handler._broker_submitter.submit_with_retry(
+        "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX
     )
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert mock_broker_api_wrapper.place_stock_order.await_count == 1
@@ -514,8 +514,8 @@ async def test_retry_order_retriable_error_then_success(handler, mock_broker_api
         ResCommonResponse(rt_cd=ErrorCode.NETWORK_ERROR.value, msg1="네트워크 오류", data=None),
         ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="주문 성공", data=None),
     ]
-    result = await handler._retry_order(
-        lambda c, p, q: handler._execute_order_via_broker(c, p, q, is_buy=True), "005930", 70000, 10
+    result = await handler._broker_submitter.submit_with_retry(
+        "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX
     )
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert mock_broker_api_wrapper.place_stock_order.await_count == 2
@@ -528,8 +528,8 @@ async def test_retry_order_retriable_error_exhausted(handler, mock_broker_api_wr
     mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
         rt_cd=ErrorCode.RETRY_LIMIT.value, msg1="재시도 한도 초과", data=None
     )
-    result = await handler._retry_order(
-        lambda c, p, q: handler._execute_order_via_broker(c, p, q, is_buy=True), "005930", 70000, 10
+    result = await handler._broker_submitter.submit_with_retry(
+        "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX
     )
     assert result.rt_cd == ErrorCode.RETRY_LIMIT.value
     assert mock_broker_api_wrapper.place_stock_order.await_count == 3  # _ORDER_MAX_RETRIES=3
@@ -541,8 +541,8 @@ async def test_retry_order_non_retriable_error_no_retry(handler, mock_broker_api
     mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
         rt_cd=ErrorCode.API_ERROR.value, msg1="잔고 부족", data=None
     )
-    result = await handler._retry_order(
-        lambda c, p, q: handler._execute_order_via_broker(c, p, q, is_buy=True), "005930", 70000, 10
+    result = await handler._broker_submitter.submit_with_retry(
+        "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX
     )
     assert result.rt_cd == ErrorCode.API_ERROR.value
     assert mock_broker_api_wrapper.place_stock_order.await_count == 1
@@ -2131,14 +2131,14 @@ async def test_execute_order_via_broker_records_kill_switch_failure_and_exceptio
         rt_cd=ErrorCode.API_ERROR.value, msg1="API error", data=None
     )
 
-    result = await handler_with_ks._execute_order_via_broker("005930", 70000, 10, is_buy=True)
+    result = await handler_with_ks._broker_submitter._execute_via_broker("005930", 70000, 10, is_buy=True)
 
     assert result.rt_cd == ErrorCode.API_ERROR.value
     mock_kill_switch.record_api_failure.assert_awaited_with(ErrorCode.API_ERROR.value)
 
     mock_broker_api_wrapper.place_stock_order.side_effect = RuntimeError("network down")
 
-    exception_result = await handler_with_ks._execute_order_via_broker("005930", 70000, 10, is_buy=True)
+    exception_result = await handler_with_ks._broker_submitter._execute_via_broker("005930", 70000, 10, is_buy=True)
 
     assert exception_result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
     mock_kill_switch.record_api_failure.assert_awaited_with("network down")

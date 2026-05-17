@@ -5,7 +5,6 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState, OrderExecutionReport
-from core.retry_queue.retry_classifier import classify, is_non_retriable_business_error, RequestOutcome
 from core.loggers.trace_context import trace_scope, get_trace_id, new_trace_id
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
@@ -19,6 +18,7 @@ from services.order_policy_service import OrderPolicyDecision, OrderPolicyServic
 from core.account_snapshot import AccountSnapshotCache
 from config.config_loader import ExecutionQualityReportConfig
 from services.execution_quality_reporter import ExecutionQualityReporter
+from services.broker_order_submitter import BrokerOrderSubmitter
 
 
 class OrderExecutionService:
@@ -69,6 +69,17 @@ class OrderExecutionService:
             config=self._execution_quality_config,
             notification_service=notification_service,
             now_provider=self._get_now,
+        )
+        self._broker_submitter = BrokerOrderSubmitter(
+            broker_api_wrapper=broker_api_wrapper,
+            logger=logger,
+            kill_switch=kill_switch_service,
+            market_clock=market_clock,
+            state_provider=lambda: self._order_states,
+            transition_fn=self._transition_order_context,
+            extract_broker_order_no_fn=self._extract_broker_order_no,
+            max_retries=self._ORDER_MAX_RETRIES,
+            retry_delay_sec=self._ORDER_RETRY_DELAY_SEC,
         )
         self._notification_tasks: set[asyncio.Task] = set()
         self._deferred_queue = deferred_order_queue
@@ -1139,86 +1150,6 @@ class OrderExecutionService:
             error_message=error_message,
         )
 
-    async def _retry_order(self, order_fn, stock_code, price, qty, order_key: Optional[str] = None) -> ResCommonResponse:
-        """재시도 가능한 오류에 대해 주문 API를 재시도.
-        - FAIL (비즈니스 거부): 즉시 REJECTED, 재시도 없음.
-        - RETRY (일시적 오류): 지수 백오프, 최대 _ORDER_MAX_RETRIES 회.
-        """
-        last_result = None
-        for attempt in range(1, self._ORDER_MAX_RETRIES + 1):
-            result: ResCommonResponse = await order_fn(stock_code, price, qty)
-            if result and result.rt_cd == ErrorCode.SUCCESS.value:
-                if order_key and order_key in self._order_states:
-                    self._transition_order_context(
-                        order_key,
-                        OrderState.SUBMITTED,
-                        attempt_count=attempt,
-                        broker_order_no=self._extract_broker_order_no(result),
-                    )
-                return result
-            last_result = result
-
-            outcome = classify(result)
-
-            if outcome == RequestOutcome.FAIL:
-                # 비즈니스 거부(잔고부족, 종목코드오류 등) → 즉시 REJECTED, 재시도 없음
-                self.logger.warning(
-                    f"주문 비즈니스 거부 (재시도 없음) — {stock_code}, "
-                    f"사유: {result.msg1 if result else '응답 없음'}"
-                )
-                if order_key and order_key in self._order_states:
-                    self._transition_order_context(
-                        order_key,
-                        OrderState.REJECTED,
-                        attempt_count=attempt,
-                        error_code=result.rt_cd if result else None,
-                        error_message=result.msg1 if result else "응답 없음",
-                    )
-                break
-
-            # RETRY (일시적 오류)
-            if order_key and order_key in self._order_states:
-                current_state = OrderState.PENDING_SUBMIT if attempt < self._ORDER_MAX_RETRIES else OrderState.REJECTED
-                self._transition_order_context(
-                    order_key,
-                    current_state,
-                    attempt_count=attempt,
-                    error_code=result.rt_cd if result else None,
-                    error_message=result.msg1 if result else "응답 없음",
-                )
-
-            if attempt < self._ORDER_MAX_RETRIES:
-                self.logger.warning(
-                    f"주문 재시도 {attempt}/{self._ORDER_MAX_RETRIES}: "
-                    f"{stock_code}, 사유: {result.msg1 if result else '응답 없음'}"
-                )
-                await self.market_clock.async_sleep(self._ORDER_RETRY_DELAY_SEC * attempt)
-                continue
-            break
-        return last_result
-
-    async def _execute_order_via_broker(self, stock_code, price, qty, is_buy: bool, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
-        action_str = "매수" if is_buy else "매도"
-        self.logger.info(f"OrderExecutionService - 주식 {action_str} 주문 요청 - 종목: {stock_code}, 수량: {qty}, 가격: {price}")
-        try:
-            result = await self.broker_api_wrapper.place_stock_order(stock_code, price, qty, is_buy=is_buy, exchange=exchange)
-            if self._kill_switch:
-                if result and result.rt_cd == ErrorCode.SUCCESS.value:
-                    await self._kill_switch.record_api_success()
-                elif result and is_non_retriable_business_error(result):
-                    self.logger.warning(
-                        f"KillSwitch API 오류 카운트 제외: {action_str} 비즈니스 거부 - {result.msg1}"
-                    )
-                else:
-                    rt = result.rt_cd if result else "no_response"
-                    await self._kill_switch.record_api_failure(rt)
-            return result
-        except Exception as e:
-            self.logger.exception(f"{action_str} 주문 중 오류 발생: {str(e)}")
-            if self._kill_switch:
-                await self._kill_switch.record_api_failure(str(e))
-            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=f"{action_str} 주문 처리 중 예외 발생: {str(e)}", data=None)
-
     async def _enqueue_deferred_order(
         self,
         *,
@@ -1431,13 +1362,12 @@ class OrderExecutionService:
                 order_key=order_key,
             )
 
-            result = await self._retry_order(
-                lambda c, p, q: self._execute_order_via_broker(
-                    c, p, q, is_buy=(side == OrderSide.BUY), exchange=exchange
-                ),
+            result = await self._broker_submitter.submit_with_retry(
                 stock_code,
                 price,
                 qty,
+                is_buy=(side == OrderSide.BUY),
+                exchange=exchange,
                 order_key=order_key,
             )
 
