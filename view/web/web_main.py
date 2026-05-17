@@ -103,21 +103,28 @@ async def lifespan(app: FastAPI):
     _install_asyncio_exception_filter()
 
     # 1. 초기화 객체 생성 (app_context 대용으로 빈 객체 전달)
+    from view.web.bootstrap.runtime_mode import RuntimeMode
+    runtime_mode = RuntimeMode.from_env()
     class SimpleContext: env = None
-    ctx = WebAppContext(SimpleContext())
-    
+    ctx = WebAppContext(SimpleContext(), runtime_mode=runtime_mode)
+
     # 2. 환경 설정 로드 및 서비스 초기화
     ctx.load_config_and_env()
     await ctx.initialize_services(is_paper_trading=True) # 기본 모의투자 설정
-    
+
     # 3. web_api에 완성된 ctx 연결 (이게 없어서 503 에러가 났던 것임)
     web_api.set_ctx(ctx)
 
-    # 4. 전략 스케줄러 초기화 (상태 복원은 BackgroundScheduler 어댑터에서 단일 진입)
+    # 4. 전략 스케줄러 초기화 (상태 복원은 BackgroundScheduler 어댑터에서 단일 진입).
+    # TRADING 비활성이면 StrategyFactory 가 내부에서 no-op.
     ctx.initialize_scheduler()
 
-    # 5. 실전 주문 상태 복원 및 reconcile (WebSocket 구독 전, 전략 스케줄러 전)
-    if ctx.order_execution_service:
+    # 5. 실전 주문 상태 복원 및 reconcile (WebSocket 구독 전, 전략 스케줄러 전).
+    # WEB / TRADING 어느 한쪽이라도 켜져 있으면 수행 — /api/order 가 살아 있는 한
+    # broker 와 동기화 안 된 상태로 신규 주문이 나가는 위험을 차단해야 한다.
+    if ctx.order_execution_service and (
+        ctx.runtime_mode & (RuntimeMode.WEB | RuntimeMode.TRADING)
+    ):
         await ctx.order_execution_service.restore_state_from_broker()
         await ctx.order_execution_service.reconcile_orders_with_broker()
 

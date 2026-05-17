@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from view.web.bootstrap.runtime_mode import RuntimeMode
+
 
 STRATEGY_CLASS_NAMES = [
     "OneilSqueezeBreakoutStrategy",
@@ -38,8 +40,9 @@ def patched_factory_deps():
         yield mocks
 
 
-def _make_fake_context():
+def _make_fake_context(runtime_mode: RuntimeMode = RuntimeMode.ALL):
     ctx = SimpleNamespace()
+    ctx.runtime_mode = runtime_mode
     ctx.logger = MagicMock()
     ctx.pm = None
     ctx.virtual_trade_service = MagicMock()
@@ -111,3 +114,43 @@ def test_strategy_factory_skips_adapter_when_background_scheduler_missing(patche
     StrategyFactory(ctx).build()
 
     patched_factory_deps["StrategySchedulerTaskAdapter"].assert_not_called()
+
+
+# ---------- runtime_mode TRADING gating ----------
+
+def test_strategy_factory_noop_when_trading_disabled_batch_only(patched_factory_deps):
+    """mode=BATCH (TRADING 비포함) 이면 StrategyScheduler / 전략 / adapter 모두 미생성."""
+    from view.web.bootstrap.strategy_factory import StrategyFactory
+
+    ctx = _make_fake_context(RuntimeMode.BATCH)
+    StrategyFactory(ctx).build()
+
+    patched_factory_deps["StrategyScheduler"].assert_not_called()
+    patched_factory_deps["StrategySchedulerTaskAdapter"].assert_not_called()
+    assert not hasattr(ctx, "scheduler") or ctx.scheduler is None or isinstance(ctx.scheduler, MagicMock) is False
+    ctx.background_scheduler.register.assert_not_called()
+
+
+def test_strategy_factory_noop_when_trading_disabled_web_only(patched_factory_deps):
+    """mode=WEB (TRADING 비포함) 이면 StrategyScheduler / 전략 / adapter 모두 미생성."""
+    from view.web.bootstrap.strategy_factory import StrategyFactory
+
+    ctx = _make_fake_context(RuntimeMode.WEB)
+    StrategyFactory(ctx).build()
+
+    patched_factory_deps["StrategyScheduler"].assert_not_called()
+    patched_factory_deps["StrategySchedulerTaskAdapter"].assert_not_called()
+    for cls_name in STRATEGY_CLASS_NAMES:
+        patched_factory_deps[cls_name].assert_not_called()
+
+
+def test_strategy_factory_builds_when_trading_enabled_via_combination(patched_factory_deps):
+    """mode=WEB|TRADING 이면 StrategyScheduler + 전략 + adapter 모두 생성."""
+    from view.web.bootstrap.strategy_factory import StrategyFactory
+
+    ctx = _make_fake_context(RuntimeMode.WEB | RuntimeMode.TRADING)
+    StrategyFactory(ctx).build()
+
+    assert ctx.scheduler is patched_factory_deps["StrategyScheduler"].return_value
+    assert ctx.scheduler.register.call_count == 7
+    patched_factory_deps["StrategySchedulerTaskAdapter"].assert_called_once()
