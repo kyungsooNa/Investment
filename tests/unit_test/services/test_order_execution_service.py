@@ -1875,7 +1875,7 @@ async def test_execution_quality_threshold_breach_emits_notification_once(
     assert "slippage_pct" in breach_metrics
     assert "first_fill_latency_sec" in breach_metrics
 
-    handler._log_execution_quality(updated)
+    handler._exec_quality_reporter.log(updated)
     await asyncio.sleep(0.01)
     assert mock_notification_service.emit.call_count == 1
 
