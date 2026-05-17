@@ -737,6 +737,53 @@ async def test_handle_place_buy_order_blocks_duplicate_while_submitted(handler, 
 
 
 @pytest.mark.asyncio
+async def test_handle_place_sell_order_blocked_by_active_buy_order(handler, mock_broker_api_wrapper):
+    """양방향 차단: 동일 종목 buy 진행 중이면 sell 신규 주문도 거절된다."""
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+
+    buy_result = await handler.handle_place_buy_order(
+        "005930", 70000, 10, finalize_immediately=False, source="strategy:buy_first"
+    )
+    sell_result = await handler.handle_place_sell_order(
+        "005930", 70000, 5, finalize_immediately=False, source="strategy:sell_attempt"
+    )
+
+    assert buy_result.rt_cd == ErrorCode.SUCCESS.value
+    assert sell_result.rt_cd == ErrorCode.RETRY_LIMIT.value
+    assert "진행 중인 주문" in sell_result.msg1
+    assert mock_broker_api_wrapper.place_stock_order.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_buy_orders_serialized_by_symbol_lock(handler, mock_broker_api_wrapper):
+    """재진입 lock: 동일 종목 동시 호출도 symbol lock으로 직렬화되어 broker는 한 번만 호출된다."""
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+
+    results = await asyncio.gather(
+        handler.handle_place_buy_order(
+            "005930", 70000, 10, finalize_immediately=False, source="strategy:a"
+        ),
+        handler.handle_place_buy_order(
+            "005930", 70000, 10, finalize_immediately=False, source="strategy:b"
+        ),
+    )
+
+    success_count = sum(1 for r in results if r.rt_cd == ErrorCode.SUCCESS.value)
+    blocked_count = sum(1 for r in results if r.rt_cd != ErrorCode.SUCCESS.value)
+    assert success_count == 1
+    assert blocked_count == 1
+    assert mock_broker_api_wrapper.place_stock_order.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_handle_place_buy_order_rejects_after_retry_exhaustion(handler, mock_broker_api_wrapper):
     mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
         rt_cd=ErrorCode.RETRY_LIMIT.value,
