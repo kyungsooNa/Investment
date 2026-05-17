@@ -3,12 +3,18 @@
 `WebAppContext._bootstrap_schedulers()` 본문에서 추출된 SchedulerBootstrap이
 TimeDispatcher 태스크 등록, BackgroundScheduler / ForegroundScheduler 생성을
 정상 수행하는지 검증한다.
+
+또한 `WebAppContext.runtime_mode` 별로 task 등록이 그룹 단위로 분기되는지
+검증한다. StrategySchedulerTaskAdapter 는 StrategyFactory 책임이라 여기서
+다루지 않는다 (총 14개 = SchedulerBootstrap 등록 분, 15번째 adapter 는 별도).
 """
 import contextlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from view.web.bootstrap.runtime_mode import RuntimeMode
 
 
 @pytest.fixture
@@ -27,8 +33,9 @@ def patched_scheduler_deps():
         yield mocks
 
 
-def _make_fake_context():
+def _make_fake_context(runtime_mode: RuntimeMode = RuntimeMode.ALL):
     ctx = SimpleNamespace()
+    ctx.runtime_mode = runtime_mode
     ctx.logger = MagicMock()
     ctx.pm = None
     ctx.worker_pool = MagicMock()
@@ -50,50 +57,123 @@ def _make_fake_context():
     return ctx
 
 
-def test_scheduler_bootstrap_creates_background_and_foreground(patched_scheduler_deps):
+def _run(ctx):
     from view.web.bootstrap.scheduler_bootstrap import SchedulerBootstrap
-
-    ctx = _make_fake_context()
-    with patch("view.web.bootstrap.scheduler_bootstrap.asyncio.create_task"):
+    with patch("view.web.bootstrap.scheduler_bootstrap.asyncio.create_task") as create_task:
         SchedulerBootstrap(ctx).run()
+    return create_task
 
+
+# ---------- 인프라 생성 (mode 무관) ----------
+
+def test_creates_background_and_foreground_in_all_mode(patched_scheduler_deps):
+    ctx = _make_fake_context()
+    _run(ctx)
     assert ctx.background_scheduler is patched_scheduler_deps["BackgroundScheduler"].return_value
     assert ctx.foreground_scheduler is patched_scheduler_deps["ForegroundScheduler"].return_value
 
 
-def test_scheduler_bootstrap_registers_time_dispatcher_tasks(patched_scheduler_deps):
-    """TimeDispatcher.register_task 가 활성 태스크 수만큼 호출된다."""
-    from view.web.bootstrap.scheduler_bootstrap import SchedulerBootstrap
-
-    ctx = _make_fake_context()
-    with patch("view.web.bootstrap.scheduler_bootstrap.asyncio.create_task"):
-        SchedulerBootstrap(ctx).run()
-
-    # 10개 태스크가 TimeDispatcher 에 등록된다 (`_bootstrap_schedulers` 의 첫번째 리스트).
-    assert ctx.time_dispatcher.register_task.call_count == 10
+def test_creates_foreground_even_in_web_only_mode(patched_scheduler_deps):
+    """WEB 단독에서도 ForegroundScheduler 가 생성되어야 한다 (rate-limit middleware 의존)."""
+    ctx = _make_fake_context(RuntimeMode.WEB)
+    _run(ctx)
+    assert ctx.foreground_scheduler is patched_scheduler_deps["ForegroundScheduler"].return_value
 
 
-def test_scheduler_bootstrap_registers_background_scheduler_tasks(patched_scheduler_deps):
-    """BackgroundScheduler.register 가 14개 태스크에 대해 호출된다."""
-    from view.web.bootstrap.scheduler_bootstrap import SchedulerBootstrap
+def test_creates_foreground_even_in_batch_only_mode(patched_scheduler_deps):
+    ctx = _make_fake_context(RuntimeMode.BATCH)
+    _run(ctx)
+    assert ctx.foreground_scheduler is patched_scheduler_deps["ForegroundScheduler"].return_value
 
-    ctx = _make_fake_context()
-    with patch("view.web.bootstrap.scheduler_bootstrap.asyncio.create_task"):
-        SchedulerBootstrap(ctx).run()
 
+# ---------- mode=ALL 회귀 (현행 동작 100% 유지) ----------
+
+def test_all_mode_registers_14_tasks_to_background(patched_scheduler_deps):
+    ctx = _make_fake_context(RuntimeMode.ALL)
+    _run(ctx)
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
     assert bg.register.call_count == 14
 
 
-def test_scheduler_bootstrap_skips_none_tasks(patched_scheduler_deps):
-    """opening_position_reconcile_task 가 None 이면 등록되지 않는다."""
-    from view.web.bootstrap.scheduler_bootstrap import SchedulerBootstrap
+def test_all_mode_registers_10_tasks_to_time_dispatcher(patched_scheduler_deps):
+    ctx = _make_fake_context(RuntimeMode.ALL)
+    _run(ctx)
+    assert ctx.time_dispatcher.register_task.call_count == 10
 
+
+# ---------- mode 별 task 등록 ----------
+
+def _registered_bg_task_names(patched_scheduler_deps) -> set:
+    bg = patched_scheduler_deps["BackgroundScheduler"].return_value
+    return {call.args[0].task_name for call in bg.register.call_args_list}
+
+
+def test_web_only_registers_notification_and_watchdog(patched_scheduler_deps):
+    ctx = _make_fake_context(RuntimeMode.WEB)
+    _run(ctx)
+    names = _registered_bg_task_names(patched_scheduler_deps)
+    assert names == {"notification_queue_task", "websocket_watchdog_task"}
+
+
+def test_trading_only_registers_intraday_and_watchdog(patched_scheduler_deps):
+    ctx = _make_fake_context(RuntimeMode.TRADING)
+    _run(ctx)
+    names = _registered_bg_task_names(patched_scheduler_deps)
+    assert names == {
+        "pre_market_health_check_task",
+        "opening_position_reconcile_task",
+        "cache_warmup_task",
+        "websocket_watchdog_task",
+    }
+
+
+def test_batch_only_registers_after_market_tasks_no_watchdog(patched_scheduler_deps):
+    ctx = _make_fake_context(RuntimeMode.BATCH)
+    _run(ctx)
+    names = _registered_bg_task_names(patched_scheduler_deps)
+    expected = {
+        "ranking_task", "minervini_update_task", "daily_price_collector_task",
+        "ohlcv_update_task", "premium_watchlist_generator_task", "newhigh_task",
+        "log_cleanup_task", "strategy_log_report_task", "after_market_reconcile_task",
+    }
+    assert names == expected
+    assert "websocket_watchdog_task" not in names
+
+
+def test_web_and_trading_registers_watchdog_exactly_once(patched_scheduler_deps):
+    """websocket_watchdog 가 WEB|TRADING 양쪽 mode 에서 중복 등록되지 않는다."""
+    ctx = _make_fake_context(RuntimeMode.WEB | RuntimeMode.TRADING)
+    _run(ctx)
+    bg = patched_scheduler_deps["BackgroundScheduler"].return_value
+    watchdog_calls = [
+        c for c in bg.register.call_args_list if c.args[0].task_name == "websocket_watchdog_task"
+    ]
+    assert len(watchdog_calls) == 1
+
+
+# ---------- _initialize_price_subscriptions gating ----------
+
+def test_price_subscriptions_called_in_web_or_trading(patched_scheduler_deps):
+    for mode in [RuntimeMode.WEB, RuntimeMode.TRADING, RuntimeMode.WEB | RuntimeMode.TRADING, RuntimeMode.ALL]:
+        ctx = _make_fake_context(mode)
+        create_task = _run(ctx)
+        assert create_task.call_count == 1, f"mode={mode}"
+
+
+def test_price_subscriptions_skipped_in_batch_only(patched_scheduler_deps):
+    ctx = _make_fake_context(RuntimeMode.BATCH)
+    create_task = _run(ctx)
+    assert create_task.call_count == 0
+
+
+# ---------- None task skip ----------
+
+def test_skips_none_tasks(patched_scheduler_deps):
     ctx = _make_fake_context()
     ctx.opening_position_reconcile_task = None
-    with patch("view.web.bootstrap.scheduler_bootstrap.asyncio.create_task"):
-        SchedulerBootstrap(ctx).run()
-
+    _run(ctx)
+    # opening_position_reconcile_task 는 TRADING 그룹 + TimeDispatcher 등록 대상이었으므로
+    # 둘 다 -1 감소한다.
     assert ctx.time_dispatcher.register_task.call_count == 9
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
     assert bg.register.call_count == 13

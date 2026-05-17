@@ -58,12 +58,45 @@ def test_initialization(mock_deps):
     """WebAppContext 객체 생성 시 초기 상태 검증"""
     # Arrange
     mock_app_ctx = MagicMock()
-    
+
     # Act
     ctx = WebAppContext(mock_app_ctx)
-    
+
     # Assert
     assert ctx.initialized is False
+
+
+def test_runtime_mode_defaults_to_all(mock_deps):
+    """runtime_mode 미지정 시 default = ALL (현행 동작 회귀 방지)."""
+    from view.web.bootstrap.runtime_mode import RuntimeMode
+
+    ctx = WebAppContext(None)
+    assert ctx.runtime_mode is RuntimeMode.ALL
+
+
+def test_runtime_mode_injection(mock_deps):
+    """runtime_mode 주입 시 ctx 에 보존된다."""
+    from view.web.bootstrap.runtime_mode import RuntimeMode
+
+    ctx = WebAppContext(None, runtime_mode=RuntimeMode.WEB)
+    assert ctx.runtime_mode is RuntimeMode.WEB
+
+    ctx2 = WebAppContext(None, runtime_mode=RuntimeMode.WEB | RuntimeMode.TRADING)
+    assert ctx2.runtime_mode == (RuntimeMode.WEB | RuntimeMode.TRADING)
+
+
+def test_initialize_scheduler_noop_when_trading_disabled(mock_deps):
+    """runtime_mode=WEB 일 때 initialize_scheduler() 가 StrategyScheduler 를 생성하지 않는다."""
+    from view.web.bootstrap.runtime_mode import RuntimeMode
+
+    ctx = WebAppContext(None, runtime_mode=RuntimeMode.WEB)
+    ctx.background_scheduler = MagicMock()
+    ctx.initialize_scheduler()
+
+    # StrategyScheduler 는 호출되지 않아야 한다.
+    mock_deps["sched"].assert_not_called()
+    assert ctx.scheduler is None
+
 
 def test_load_config_and_env(mock_deps):
     """설정 로드 및 환경 객체 초기화 검증"""

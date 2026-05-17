@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-15 (P1 1-4 변동성 컬럼 리포트 1차 도입)
+최종 업데이트: 2026-05-17 (P3 3-2 1차 PR 완료 — RuntimeMode 도입 + scheduler/task 등록 경계 분리)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -132,11 +132,14 @@
 - [x] 코스피/코스닥 지수 기반 전략 ON/OFF 조건을 추가한다.
   - 기존 5개 전략(FirstPullback, HighTightFlag, OneilPocketPivot, OneilSqueezeBreakout, RSI2Pullback)이 이미 `is_market_timing_ok` 게이트 사용 — `MarketRegimeService` 위임으로 자동 반영.
   - 누락된 LarryWilliamsVBO, LarryWilliamsCB에 동일 hard gate 추가 (`_position_state` 변경 전 위치, `reason=market_timing_off` 로깅).
-- [~] 변동성 기반 진입 제한을 검토한다.
+- [x] 변동성 기반 진입 제한을 검토한다.
   - 1차 PR에서는 hard gate 미도입 — 리포트 컬럼으로 먼저 검증 후 도입 결정. 후속 PR에서 `RiskGateConfig.max_volatility_pct` 추가 검토.
   - 완료된 부분: 20일 종가 수익률 표준편차(annualized) 유틸 `utils/volatility_utils.py` 추가, `STANDARD_TRADE_JOURNAL_FIELDS`에 `volatility_20d_annualized` 필드 + `SCHEMA_VERSION = 3` 승격, `normalize_virtual_trade`/`normalize_backtest_trade`/`normalize_backtest_decision`/`normalize_backtest_execution` 4개 모두 Optional 인자 + record/metadata fallback 지원. `compute_performance_by_regime`가 버킷별 `volatility_sample_count`, `avg_volatility_20d_annualized`, `median_volatility_20d_annualized`를 산출해 `GET /api/strategies/performance-by-regime` JSON에 자동 노출.
   - 완료된 부분: `TradeSignal.volatility_20d_annualized` Optional 필드 추가. `BacktestPeriodRunner._rejected_signal_record` / `_execution_record` 양쪽이 signal의 변동성을 journal record로 전파(BUY 체결, SELL 정산, risk gate 차단, position sizing skip 4개 경로 단위 테스트 검증).
-  - 남은 작업: 각 전략(`OneilSqueezeBreakoutStrategy` 등)에서 `utils.volatility_utils.annualized_return_std`로 OHLCV → 변동성을 계산해 `TradeSignal.volatility_20d_annualized`에 채우는 hook. live 경로(`VirtualTradeRepository`)의 변동성 컬럼 도입. HTML 일일 리포트(`strategy_log_report_service`)에 변동성 섹션 추가 검토.
+  - 완료된 부분: 활성 7개 전략(`FirstPullbackStrategy`, `HighTightFlagStrategy`, `LarryWilliamsChannelBreakoutStrategy`, `LarryWilliamsVBOStrategy`, `OneilPocketPivotStrategy`, `OneilSqueezeBreakoutStrategy`, `Rsi2PullbackStrategy`)이 `utils.volatility_utils.annualized_return_std`로 OHLCV → 변동성을 계산해 `TradeSignal.volatility_20d_annualized`에 채운다. 비활성 3개 전략(`ProgramBuyFollow`, `TraditionalVolumeBreakout`, `VolumeBreakoutLive`)에도 동일 hook 적용.
+  - 완료된 부분: `VirtualTradeRepository`에 `volatility_20d_annualized REAL` 컬럼 + ALTER TABLE migration, `log_buy()` 인자 추가, INSERT/SELECT 매핑 완료 (`test_virtual_trade_repository_volatility.py` 검증).
+  - 완료된 부분: `strategy_log_report_service._build_volatility_section()` 추가, HTML 일일 리포트 body에 변동성 섹션 통합 (`test_strategy_log_report_volatility.py` 검증).
+  - 후속 검토(P1 별도 항목): 리포트 누적 후 hard gate(`RiskGateConfig.max_volatility_pct`) 도입 여부 결정.
 - [x] 장 초반/후반 타임 필터를 전략 실행 전에 적용한다.
   - `StrategySchedulerConfig.skip_minutes_after_open` / `skip_minutes_before_close` 필드 추가.
   - `_is_scan_time_window_blocked()` 가 `cfg.strategy.scan()` 만 skip (force_exit/check_exits 영향 없음).
@@ -165,9 +168,10 @@
 - [x] walk-forward 검증을 추가한다. 기간을 train/tune/test로 나누고, 파라미터 튜닝 구간과 검증 구간을 분리한다.
 - [x] 몬테카를로 시뮬레이션을 추가한다. trade 결과 순서를 섞어 최악 MDD, 연속 손실, ruin probability를 계산한다.
 - [x] 활성 전략별 fixture parity를 period runner와 strategy debug runner 양쪽에서 검증한다.
-- [~] 실제 replay fixture를 통과 케이스까지 확장한다.
-  - 남은 작업: 장중 후보 종목의 프로그램매매 WebSocket 샘플을 확보하고, `scripts.capture_backtest_microstructure` 결과를 replay fixture overlay로 결합한다.
-  - 선택 작업: 필요 시 `20260506`, `20260511`, `20260504`, `20260416` 표본 fixture를 추가 생성한다.
+- [blocked] 실제 replay fixture를 통과 케이스까지 확장한다. (장중 프로그램매매 WebSocket 샘플 미확보)
+  - 차단 사유: 장중 후보 종목의 프로그램매매 WebSocket 샘플을 실시간으로 캡처해야 하며, 장 마감 후에는 재생성 불가.
+  - 차단 해제 조건: 장중에 `scripts.capture_backtest_microstructure`로 후보 종목 WebSocket 샘플 확보 → replay fixture overlay로 결합.
+  - 선택 작업(차단 해제 후): 필요 시 `20260506`, `20260511`, `20260504`, `20260416` 표본 fixture를 추가 생성한다.
 
 주요 파일:
 
@@ -297,10 +301,19 @@
 
 ### 3-2. 웹 / 운영 / 전략 runtime 경계 분리
 
-- [ ] 웹 화면/API, 장중 전략/주문 실행, 장마감 데이터 수집/리포트, 수동 운영 점검 runtime 경계를 명확히 한다.
-- [ ] 웹 서버 초기화가 모든 after-market task와 장중 scheduler를 직접 끌어안지 않도록 분리한다.
+- [~] 웹 화면/API, 장중 전략/주문 실행, 장마감 데이터 수집/리포트, 수동 운영 점검 runtime 경계를 명확히 한다.
+  - 1차 완료: `view/web/bootstrap/runtime_mode.py` 의 `RuntimeMode` enum (WEB / TRADING / BATCH / ALL) 로 15 개 task (`SchedulerBootstrap` 등록 14 + `StrategyFactory` 등록 1) 의 runtime 소유권 명시.
+  - 1차 완료: `SchedulerBootstrap.run()` 을 `_register_web_tasks`/`_register_trading_tasks`/`_register_batch_tasks`/`_register_websocket_watchdog` 4 개 그룹 메서드로 분리. websocket_watchdog 은 WEB | TRADING 양쪽 mode 에서 1 회만 등록.
+  - 1차 완료: `StrategyFactory.build()` 가 TRADING 비활성 시 즉시 return (StrategyScheduler / 7 개 전략 / Adapter 모두 미생성).
+  - 후속: `ServiceContainer` 의 service 객체 생성 단계 분할 (현재 모든 service 와 task 객체는 mode 와 무관하게 항상 생성됨), 별도 진입점 (`web_app.py` / `trading_runtime.py` / `batch_runtime.py` / `admin_runtime.py`) 파일, admin runtime 정의.
+- [~] 웹 서버 초기화가 모든 after-market task와 장중 scheduler를 직접 끌어안지 않도록 분리한다.
+  - 1차 완료: `web_main.py` lifespan 이 `RUNTIME_MODE` env (default `ALL` = 현행 동작 100% 유지) 를 읽어 `WebAppContext(runtime_mode=...)` 로 주입. mode 별로 task 등록과 StrategyScheduler 생성을 분기.
+  - 1차 완료: `BackgroundScheduler` / `ForegroundScheduler` 객체 생성은 mode 와 무관하게 항상 수행 (foreground middleware 가 rate-limit 경합 제어에 의존).
+  - 1차 완료: 가격 구독 초기화 (`_initialize_price_subscriptions`) 는 WEB | TRADING 에서만 호출. BATCH 단독에서는 생략.
+  - 안전성 정책: `restore_state_from_broker` / `reconcile_orders_with_broker` 는 WEB | TRADING 어느 한쪽이라도 켜져 있으면 항상 호출 (`/api/order` 가 WEB 에서 살아 있는 한 stale 주문 상태 위험 차단). "WEB_ONLY = read-only" 정책 확정 시에만 TRADING 단독 gate 로 좁힐 수 있음.
+  - 후속: 별도 프로세스 배포, cross-runtime IPC, event bus.
 
-분리 후보:
+분리 후보 (후속 PR):
 
 - `web_app.py` — 화면/API
 - `trading_runtime.py` — 장중 전략/주문 실행

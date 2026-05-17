@@ -17,6 +17,7 @@ from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
 from strategies.rsi2_pullback_strategy import RSI2PullbackStrategy
 from task.background.intraday.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
+from view.web.bootstrap.runtime_mode import RuntimeMode
 
 if TYPE_CHECKING:  # pragma: no cover
     from view.web.web_app_initializer import WebAppContext
@@ -30,6 +31,12 @@ class StrategyFactory:
 
     def build(self) -> None:
         ctx = self._ctx
+        if not (ctx.runtime_mode & RuntimeMode.TRADING):
+            ctx.logger.info(
+                "[StrategyFactory] runtime_mode=%s — TRADING 비활성, StrategyScheduler 미생성.",
+                ctx.runtime_mode,
+            )
+            return
         ctx.scheduler = StrategyScheduler(
             virtual_trade_service=ctx.virtual_trade_service,
             order_execution_service=ctx.order_execution_service,
