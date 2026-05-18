@@ -295,6 +295,24 @@ async def test_tripped_blocks_strategies(cfg, mock_notif, logger):
     assert reason is not None
 
 
+async def test_notify_only_trip_does_not_block_orders_or_strategies(cfg, mock_notif, logger):
+    """notify_only=True이면 트립 상태/알림은 유지하되 주문과 전략 실행은 차단하지 않는다."""
+    cfg = cfg.model_copy(update={"notify_only": True})
+    ks = _make_ks(cfg, mock_notif, logger)
+
+    await ks.manual_trip("테스트", "op")
+
+    order_allowed, order_reason = await ks.check_orders_allowed()
+    strategy_allowed, strategy_reason = await ks.check_strategies_allowed()
+
+    assert ks._is_tripped is True
+    assert order_allowed is True
+    assert order_reason is None
+    assert strategy_allowed is True
+    assert strategy_reason is None
+    mock_notif.emit.assert_awaited_once()
+
+
 # ── get_status ────────────────────────────────────────────────────────
 
 

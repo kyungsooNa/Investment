@@ -68,6 +68,8 @@ class KillSwitchService:
         if not self._cfg.enabled:
             return True, None
         if self._is_tripped:
+            if self._cfg.notify_only:
+                return True, None
             return False, self._trip_reason
         return True, None
 
@@ -76,6 +78,8 @@ class KillSwitchService:
         if not self._cfg.enabled:
             return True, None
         if self._is_tripped:
+            if self._cfg.notify_only:
+                return True, None
             return False, self._trip_reason
         return True, None
 
@@ -89,6 +93,7 @@ class KillSwitchService:
             "daily_realized_loss_won": self._daily_realized_loss_won,
             "consecutive_losses": self._consecutive_losses,
             "consecutive_api_errors": self._consecutive_api_errors,
+            "notify_only": self._cfg.notify_only,
             "thresholds": {
                 "daily_loss_threshold_won": self._cfg.daily_loss_threshold_won,
                 "daily_loss_threshold_pct": self._cfg.daily_loss_threshold_pct,
