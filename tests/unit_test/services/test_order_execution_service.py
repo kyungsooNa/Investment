@@ -3273,6 +3273,30 @@ async def test_sell_filled_with_strategy_source_records_account_and_strategy_kil
 
 
 @pytest.mark.asyncio
+async def test_overnight_sell_result_is_excluded_from_global_consecutive_loss_counter(
+    handler_ks_pnl, mock_ks_pnl, mock_virtual_trade_svc,
+):
+    """전일 보유분 매도 손익은 계좌 KS에 전달하되 전역 연속손실 카운트에서는 제외한다."""
+    from repositories.virtual_trade_repository import SellResult
+
+    mock_virtual_trade_svc.log_sell_by_strategy_async_with_result.return_value = SellResult(
+        return_rate=-5.0,
+        net_pnl_won=-10_000,
+        pnl_filled_qty=1,
+        is_intraday_trade=False,
+    )
+    ctx = _make_sell_context(source="strategy:MomentumStrategy", state=OrderState.FILLED)
+    report = _make_sell_report(fill_price=66500)
+
+    await handler_ks_pnl._persist_virtual_trade_for_terminal_report(ctx, report)
+
+    mock_ks_pnl.record_trade_result.assert_awaited_once()
+    call_kw = mock_ks_pnl.record_trade_result.call_args.kwargs
+    assert call_kw["profit_won"] == -10_000
+    assert call_kw["count_for_consecutive_loss"] is False
+
+
+@pytest.mark.asyncio
 async def test_manual_sell_does_not_record_strategy_kill_switch(
     handler_ks_pnl, mock_ks_pnl,
 ):

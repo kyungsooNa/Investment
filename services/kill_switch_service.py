@@ -68,6 +68,8 @@ class KillSwitchService:
         if not self._cfg.enabled:
             return True, None
         if self._is_tripped:
+            if self._cfg.notify_only:
+                return True, None
             return False, self._trip_reason
         return True, None
 
@@ -76,6 +78,8 @@ class KillSwitchService:
         if not self._cfg.enabled:
             return True, None
         if self._is_tripped:
+            if self._cfg.notify_only:
+                return True, None
             return False, self._trip_reason
         return True, None
 
@@ -89,6 +93,7 @@ class KillSwitchService:
             "daily_realized_loss_won": self._daily_realized_loss_won,
             "consecutive_losses": self._consecutive_losses,
             "consecutive_api_errors": self._consecutive_api_errors,
+            "notify_only": self._cfg.notify_only,
             "thresholds": {
                 "daily_loss_threshold_won": self._cfg.daily_loss_threshold_won,
                 "daily_loss_threshold_pct": self._cfg.daily_loss_threshold_pct,
@@ -106,15 +111,17 @@ class KillSwitchService:
         code: str,
         strategy: str,
         account_balance_won: Optional[int] = None,
+        count_for_consecutive_loss: bool = True,
     ) -> None:
         """매도 체결 후 손익 기록. 임계 초과 시 트립."""
         if not self._cfg.enabled:
             return
         async with self._lock:
             if profit_won < 0:
-                self._consecutive_losses += 1
+                if count_for_consecutive_loss:
+                    self._consecutive_losses += 1
                 self._daily_realized_loss_won += profit_won  # 음수 누적
-            else:
+            elif count_for_consecutive_loss:
                 self._consecutive_losses = 0
 
             self._save_state()

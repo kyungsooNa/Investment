@@ -26,6 +26,7 @@ class CacheConfig(BaseModel):
 
 class KillSwitchConfig(BaseModel):
     enabled: bool = True
+    notify_only: bool = False
     daily_loss_threshold_won: int = 1_000_000
     daily_loss_threshold_pct: float = 5.0
     max_consecutive_losses: int = 3

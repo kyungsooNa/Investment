@@ -1212,6 +1212,41 @@ def test_log_sell_by_strategy_with_result_returns_sell_result(virutal_trade_repo
     assert result.pnl_filled_qty == 1
 
 
+def test_log_sell_with_result_marks_intraday_trade(virutal_trade_repository):
+    """매수일과 매도일이 같으면 SellResult.is_intraday_trade=True."""
+    virutal_trade_repository.tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 10, 0, 0)
+    virutal_trade_repository.log_buy("TestStrategy", "005930", 70000, 1)
+
+    virutal_trade_repository.tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 14, 0, 0)
+    result = virutal_trade_repository.log_sell_with_result("005930", 69000)
+
+    assert result.is_intraday_trade is True
+
+
+def test_log_sell_with_result_marks_overnight_trade(virutal_trade_repository):
+    """매수일과 매도일이 다르면 SellResult.is_intraday_trade=False."""
+    virutal_trade_repository.tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 10, 0, 0)
+    virutal_trade_repository.log_buy("TestStrategy", "005930", 70000, 1)
+
+    virutal_trade_repository.tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 9, 30, 0)
+    result = virutal_trade_repository.log_sell_with_result("005930", 69000)
+
+    assert result.is_intraday_trade is False
+
+
+def test_log_sell_by_strategy_with_result_marks_overnight_trade(virutal_trade_repository):
+    """전략 매도 결과도 전일 보유분 여부를 반환한다."""
+    virutal_trade_repository.tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 10, 0, 0)
+    virutal_trade_repository.log_buy("MomentumStrategy", "005930", 70000, 1)
+
+    virutal_trade_repository.tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 9, 30, 0)
+    result = virutal_trade_repository.log_sell_by_strategy_with_result(
+        "MomentumStrategy", "005930", 69000
+    )
+
+    assert result.is_intraday_trade is False
+
+
 async def test_log_sell_by_strategy_async_contract_unchanged(virutal_trade_repository):
     """기존 log_sell_by_strategy_async 반환값 contract 유지: float|None (return_rate %)."""
     virutal_trade_repository.log_buy("MomentumStrategy", "005930", 70000)
