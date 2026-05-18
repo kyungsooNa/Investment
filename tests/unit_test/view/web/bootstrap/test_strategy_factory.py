@@ -80,6 +80,21 @@ def test_strategy_factory_registers_seven_strategies(patched_factory_deps):
     assert ctx.scheduler.register.call_count == 7
 
 
+def test_strategy_factory_enables_vbo_event_shadow_without_live_trading(patched_factory_deps):
+    """VBO는 event-driven shadow 관찰 대상이지만 전략 주문 실행은 여전히 수동 활성화 대기."""
+    from view.web.bootstrap.strategy_factory import StrategyFactory
+
+    ctx = _make_fake_context()
+    StrategyFactory(ctx).build()
+
+    vbo_strategy = patched_factory_deps["LarryWilliamsVBOStrategy"].return_value
+    registered_configs = [call.args[0] for call in ctx.scheduler.register.call_args_list]
+    vbo_config = next(cfg for cfg in registered_configs if cfg.strategy is vbo_strategy)
+
+    assert vbo_config.event_driven_shadow is True
+    assert vbo_config.enabled is False
+
+
 def test_strategy_factory_sets_legacy_osb_reference(patched_factory_deps):
     """웹 API 하위 호환용 osb_strategy / oneil_universe_service_ref 속성이 주입된다."""
     from view.web.bootstrap.strategy_factory import StrategyFactory

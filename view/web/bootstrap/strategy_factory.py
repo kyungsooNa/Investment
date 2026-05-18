@@ -145,6 +145,7 @@ class StrategyFactory:
             force_exit_on_close=True,   # 오버나이트 금지 — 당일 장 마감 전 강제 청산
             allow_pyramiding=False,
             scan_when_position_full=True,
+            event_driven_shadow=True,
         ))
         # 래리 코너스 RSI(2) 눌림목 전략 등록
         rsi2_strategy = RSI2PullbackStrategy(
