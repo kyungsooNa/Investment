@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-18 (P2 2-4 PR-1 완료 — `StrategyEventRouter` 인프라 + `PriceStreamService` hook + 20 신규 단위 테스트. PoC 전략 미연결)
+최종 업데이트: 2026-05-19 (P2 2-4 PR-2 완료 — VBO `evaluate_single` shadow + `EventShadowJournalService` + scheduler 구독 라이프사이클 + ServiceContainer/StrategyFactory 와이어업. `event_driven_shadow=False` default 라 프로덕션 동작 영향 없음)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -269,7 +269,15 @@
   - 신규 단위 테스트 20개 (`test_strategy_event_router.py` 15 + `test_price_stream_service_event_router.py` 5).
   - PoC 전략 미연결. `LiveStrategy.evaluate_single` 기본 구현은 PR-2 에서 첫 전략 도입 시 함께 추가 (현재 base 인터페이스 변경 0).
   - 검증: 단위 4635 GREEN (이전 4615 → +20), 통합 233 GREEN.
-- [ ] PR-2: VBO shadow mode (`event_driven_shadow` 플래그, `metadata.signal_source=event_shadow` journal).
+- [x] PR-2: VBO shadow mode (2026-05-19 완료).
+  - `interfaces/live_strategy.py`: `evaluate_single(code, snapshot) -> Optional[TradeSignal]` 기본 구현(None) + `current_candidate_codes() -> List[str]` 기본 구현([]) 추가.
+  - `strategies/larry_williams_vbo_strategy.py`: 두 메서드 오버라이드. evaluate_single 은 시간/후보/range/bought_today/snapshot.open·price 게이트만 적용 — execution_strength·program_buy 는 폴링 안전망에 위임.
+  - `services/event_shadow_journal_service.py`: `record()` + `flush_to_file()` (`logs/strategies/event_shadow/YYYYMMDD.jsonl`).
+  - `scheduler/strategy_scheduler.py`: `StrategySchedulerConfig.event_driven_shadow: bool = False` + `event_router`/`event_shadow_journal` 생성자 인자 + `_refresh_event_shadow_subscriptions(cfg)` (scan 직후 호출, 후보 집합 diff 로 router 구독 갱신). subscribe evaluator wrapper 는 항상 None 반환 (실 주문 차단 보장).
+  - 와이어업: `view/web/bootstrap/service_container.py` 가 `StrategyEventRouter` + `EventShadowJournalService` 인스턴스화 후 `PriceStreamService(event_router=...)` 생성자 주입. `view/web/bootstrap/strategy_factory.py` 가 `StrategyScheduler(event_router=..., event_shadow_journal=...)` 주입.
+  - 신규 단위 테스트 21개: shadow journal 5 + VBO evaluate_single 10 + scheduler 구독 6.
+  - 검증: 단위 4662 GREEN (이전 4635 → +27), 통합 233 GREEN.
+  - 운영 활성화 절차: `StrategyFactory` 에서 VBO `StrategySchedulerConfig(..., event_driven_shadow=True)` 로 설정만 변경하면 즉시 shadow 모드 동작. 1주 운영 후 `logs/strategies/event_shadow/YYYYMMDD.jsonl` 와 폴링 신호 비교로 PR-3 진입 판단.
 - [ ] PR-3: PR-2 결과 양호 시 VBO 실 적용 + OSB shadow 진입.
 - [ ] PR-4+: 단계적 확장.
 

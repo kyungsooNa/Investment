@@ -88,6 +88,8 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         self._bought_today: set[str] = set()
         self._last_date: str = ""
         self._range_cache = _RangeCache()
+        # P2 2-4: event-driven shadow 평가용 — scan() 직후 후보 종목 집합을 보존
+        self._current_candidate_codes_set: set[str] = set()
 
     @property
     def name(self) -> str:
@@ -133,6 +135,10 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
 
         # 3) 전일 Range 캐시 갱신 (당일 1회)
         await self._refresh_range_cache(today, [c["code"] for c in candidates if c.get("code")])
+
+        # P2 2-4: event-driven shadow 구독 대상 — 본 scan 의 pool B 멤버십 = 구독 후보.
+        # evaluate_single 내부에서 range/time/bought_today 등 세부 게이트를 다시 확인한다.
+        self._current_candidate_codes_set = {c["code"] for c in candidates if c.get("code")}
 
         for stock in candidates:
             code: str = stock.get("code", "")
@@ -235,6 +241,69 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
 
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
         return signals
+
+    # ------------------------------------------------------------------
+    # evaluate_single — event-driven shadow fast-path (P2 2-4)
+    # ------------------------------------------------------------------
+
+    async def evaluate_single(self, code: str, snapshot: dict) -> Optional[TradeSignal]:
+        """단일 종목 fast-path 평가. 게이트:
+
+        1. 진입 시간대 (09:10–14:00)
+        2. code 가 본 scan 의 pool B 후보에 포함
+        3. _bought_today 미포함
+        4. _range_cache 에 range 존재
+        5. snapshot.open / snapshot.price 둘 다 양수
+        6. current >= open + range × K  →  BUY signal
+
+        execution_strength / program_buy 필터는 shadow 한정으로 생략한다. 폴링
+        경로가 동일 시점에 안전망으로 재검증한다.
+        """
+        if not code or code not in self._current_candidate_codes_set:
+            return None
+
+        now = self._tm.get_current_kst_time()
+        current_time = now.time()
+        if not (_ENTRY_START <= current_time <= _ENTRY_CUTOFF):
+            return None
+
+        if code in self._bought_today:
+            return None
+
+        rng = self._range_cache.ranges.get(code, 0.0)
+        if rng <= 0:
+            return None
+
+        try:
+            open_price = float(snapshot.get("open") or 0)
+            price_raw = snapshot.get("price")
+            current = int(price_raw) if price_raw not in (None, "", "0") else 0
+        except (TypeError, ValueError):
+            return None
+
+        if open_price <= 0 or current <= 0:
+            return None
+
+        target = open_price + rng * self._cfg.k_value
+        if current < target:
+            return None
+
+        reason = (
+            f"VBO돌파(shadow): Open({int(open_price):,})+Range({rng:.0f})×K{self._cfg.k_value}"
+            f"=Target({round(target):,}) / 현재({current:,})"
+        )
+        return TradeSignal(
+            code=code,
+            name=code,
+            action="BUY",
+            price=current,
+            reason=reason,
+            strategy_name=self.name,
+            stop_loss_pct=self._cfg.stop_loss_pct,
+        )
+
+    def current_candidate_codes(self) -> List[str]:
+        return list(self._current_candidate_codes_set)
 
     # ------------------------------------------------------------------
     # check_exits
