@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-17 (P3 3-2 1차 PR 완료 — RuntimeMode 도입 + scheduler/task 등록 경계 분리)
+최종 업데이트: 2026-05-18 (P2 2-4 PR-1 완료 — `StrategyEventRouter` 인프라 + `PriceStreamService` hook + 20 신규 단위 테스트. PoC 전략 미연결)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -256,8 +256,29 @@
 
 ### 2-4. Polling에서 event-driven으로 점진 전환
 
-- [ ] 체결 이벤트 수신 → snapshot 업데이트 → 후보군 상태 갱신 → 전략 조건 평가 → RiskGate → 주문 → 체결/잔고/손익 대사 흐름을 목표 아키텍처로 문서화한다.
-- [ ] 우선순위 높은 전략부터 polling loop를 event-triggered 평가로 옮길 수 있는지 검토한다.
+- [x] 체결 이벤트 수신 → snapshot 업데이트 → 후보군 상태 갱신 → 전략 조건 평가 → RiskGate → 주문 → 체결/잔고/손익 대사 흐름을 목표 아키텍처로 문서화한다.
+  - 산출물: `docs/event_driven_architecture.md` (2026-05-17). hybrid 모델(폴링 안전망 유지 + HIGH 우선순위 종목 event-trigger 추가) 전체 흐름·컴포넌트·검증·리스크 정리됨.
+- [x] 우선순위 높은 전략부터 polling loop를 event-triggered 평가로 옮길 수 있는지 검토한다.
+  - `docs/event_driven_architecture.md` §4-4 단계적 적용 표: 0단계(인프라) → 1단계 `LarryWilliamsVBOStrategy` shadow → 2단계 `OneilSqueezeBreakoutStrategy` shadow → 3단계 `HighTightFlagStrategy`는 OHLCV 별도 조회 필요로 보류 → 4단계 재평가.
+
+구현 PR (별도 항목):
+
+- [x] PR-1: Event router 인프라 도입 (2026-05-18 완료).
+  - 신규: `services/strategy_event_router.py` (`StrategyEventRouter` — subscribe/unsubscribe/on_price_tick + throttle/stale/market_open/kill_switch 게이트)
+  - `services/price_stream_service.py`: `event_router` 생성자 인자 + `set_event_router()` setter + `on_price_tick` 끝에서 `asyncio.create_task(router.on_price_tick(code, snapshot, snapshot_ts=...))` 디스패치 (running loop 없으면 silently skip).
+  - 신규 단위 테스트 20개 (`test_strategy_event_router.py` 15 + `test_price_stream_service_event_router.py` 5).
+  - PoC 전략 미연결. `LiveStrategy.evaluate_single` 기본 구현은 PR-2 에서 첫 전략 도입 시 함께 추가 (현재 base 인터페이스 변경 0).
+  - 검증: 단위 4635 GREEN (이전 4615 → +20), 통합 233 GREEN.
+- [ ] PR-2: VBO shadow mode (`event_driven_shadow` 플래그, `metadata.signal_source=event_shadow` journal).
+- [ ] PR-3: PR-2 결과 양호 시 VBO 실 적용 + OSB shadow 진입.
+- [ ] PR-4+: 단계적 확장.
+
+구현 결정 사항 (`docs/event_driven_architecture.md` §9, 2026-05-18 확정):
+
+- [x] (Q1) `(strategy, code)` event throttle = 0.5초 (`StrategyEventRouter(throttle_sec=...)`).
+- [x] (Q2) Stale snapshot 임계 = 5초 (`StrategyEventRouter(stale_snapshot_sec=...)`).
+- [x] (Q3) Shadow mode 운영 기간 = VBO 1주 (5 거래일).
+- [x] (Q4) `signal_source` 저장 = `metadata` JSON 키 (DB schema 변경 없음).
 
 ---
 
@@ -322,19 +343,22 @@
 
 ### 3-3. 주문 서비스 역할 분리
 
-- [ ] `OrderExecutionService`에서 validator, risk, sizing, submit, state machine, fill reconciliation, execution quality reporting 책임을 단계적으로 분리한다.
-- [ ] 주문 수량 상한, 중복 주문 방지 키, 같은 전략/같은 종목 동시 재진입 방지, 체결 확인/잔고 반영 분리 기준을 명확히 한다.
-- [ ] 분리 전후로 기존 주문 안전장치 테스트가 그대로 통과하도록 단위 테스트를 먼저 보강한다.
+- [x] `OrderExecutionService`에서 validator, risk, sizing, submit, state machine, fill reconciliation, execution quality reporting 책임을 단계적으로 분리한다.
+  - PR #412 (5 phase) 완료. `OrderExecutionService` 2006 → 697줄 (-1309, 65% 축소). facade 패턴 유지로 view/web/routes/, scheduler/, web_app_initializer.py 변경 0줄.
+- [x] 주문 수량 상한, 중복 주문 방지 키, 같은 전략/같은 종목 동시 재진입 방지, 체결 확인/잔고 반영 분리 기준을 명확히 한다.
+  - 양방향 차단 (buy 진행 중 sell, sell 진행 중 buy) 은 `OrderStateMachine.lookup_by_side` 로 분리.
+  - intent 중복은 `OrderStateMachine.intent_to_order_key` / `register_intent`.
+  - 체결 확인/잔고 반영은 `FillReconciliationService.apply_execution_report` / `handle_signing_notice` 로 분리.
+- [x] 분리 전후로 기존 주문 안전장치 테스트가 그대로 통과하도록 단위 테스트를 먼저 보강한다.
+  - Phase 0 에서 양방향 차단 + 동시 호출 직렬화 2개 테스트 선보강. 모든 Phase 종료 후 단위 4615 + 통합 233 GREEN.
 
-분리 후보:
+도입된 서비스 (분리 후보 vs 실제):
 
-- `OrderValidator`
-- `RiskGateAdapter`
-- `PositionSizingAdapter`
-- `OrderSubmitter`
-- `OrderStateMachine`
-- `FillReconciliationService`
-- `ExecutionQualityReporter`
+- `ExecutionQualityReporter` ✅ (`services/execution_quality_reporter.py`, 281줄)
+- `BrokerOrderSubmitter` ✅ (`services/broker_order_submitter.py`, 170줄) — 원안의 `OrderSubmitter`
+- `OrderStateMachine` ✅ (`services/order_state_machine.py`, 311줄)
+- `FillReconciliationService` ✅ (`services/fill_reconciliation_service.py`, 860줄)
+- `OrderSubmissionCoordinator` ✅ (`services/order_submission_coordinator.py`, 350줄) — 원안에는 없던 코디네이터. validator(`OrderValidator`)·`RiskGateAdapter`·`PositionSizingAdapter` 별도 클래스 추출 없이 Coordinator 가 `data_quality_service`, `order_policy_service`, `risk_gate_service`, `position_sizing_service` 를 직접 호출하는 방식으로 흐름만 분리. 별도 어댑터 도입 비용 대비 효익이 낮아 won't fix.
 
 ---
 
@@ -449,10 +473,11 @@
    - event-driven 전략 평가 목표 아키텍처 문서화
 
 5. P3/P4 유지보수와 운영 품질
-   - 전략별 성과 저하 감지 지표 집계
-   - `WebAppContext` 분리
-   - ServiceContainer / Factory 도입
-   - `OrderExecutionService` 역할 분리
+   - 전략별 성과 저하 감지 지표 집계 (완료)
+   - `WebAppContext` 분리 (완료)
+   - ServiceContainer / Factory 도입 (완료)
+   - `OrderExecutionService` 역할 분리 (완료 — PR #412)
+   - 남은 항목: P2 2-4 event-driven 전환, P3 3-2 후속 (별도 진입점 파일, admin runtime, service mode-aware 생성)
 
 ---
 

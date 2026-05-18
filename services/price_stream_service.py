@@ -35,17 +35,23 @@ class PriceStreamService:
         logger=None,
         data_quality_service=None,
         notification_service=None,
+        event_router=None,
     ):
         self._stock_repo = stock_repo
         self._logger = logger or logging.getLogger(__name__)
         self._data_quality_service = data_quality_service
         self._notification_service = notification_service
+        self._event_router = event_router
         self._latest_prices: Dict[str, dict] = {}
         self._latest_conclusions: Dict[str, dict] = {}  # code → conclusion snapshot dict
         self._sse_queues: Dict[str, List[asyncio.Queue]] = {}  # code → SSE 구독 큐 목록
         self._last_tick_ts: Dict[str, float] = {}
         self._last_any_tick_ts: float = 0.0
         self._subscription_requested_ts: Dict[str, float] = {}
+
+    def set_event_router(self, event_router) -> None:
+        """Late injection 용. WebAppContext 조립 순서 문제로 생성자에 주입 못한 경우 사용."""
+        self._event_router = event_router
 
     def on_price_tick(self, realtime_data: dict) -> None:
         """
@@ -147,6 +153,22 @@ class PriceStreamService:
                     q.put_nowait(tick)
                 except asyncio.QueueFull:
                     pass
+
+        if self._event_router is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                snapshot = dict(self._latest_prices[stock_code])
+                snapshot["code"] = stock_code
+                snapshot["snapshot_ts"] = now_ts
+                loop.create_task(
+                    self._event_router.on_price_tick(
+                        stock_code, snapshot, snapshot_ts=now_ts
+                    )
+                )
+            except RuntimeError:
+                pass
+            except Exception as e:
+                self._logger.warning(f"StrategyEventRouter dispatch 실패: {e}")
 
     def get_market_snapshot(self, code: str) -> Optional[MarketSnapshot]:
         """메모리 캐시에서 MarketSnapshot 을 반환한다.
