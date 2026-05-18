@@ -2586,7 +2586,7 @@ async def test_stuck_order_critical_triggers_polling(handler_real, mock_logger):
     _seed_order_context(handler_real, state=OrderState.SUBMITTED, broker_order_no="C0001",
                         remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
 
-    with patch.object(handler_real, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
+    with patch.object(handler_real._fill_reconciliation, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
         mock_poll.return_value = 0
         await handler_real.check_stuck_orders_once(now=now)
 
@@ -2611,7 +2611,7 @@ async def test_stuck_order_polling_clear_response_transitions_state(handler_real
         )
         return 1
 
-    with patch.object(handler_real, "_poll_single_order_context", side_effect=fake_poll):
+    with patch.object(handler_real._fill_reconciliation, "_poll_single_order_context", side_effect=fake_poll):
         count = await handler_real.check_stuck_orders_once(now=now)
 
     assert count == 1
@@ -2629,7 +2629,7 @@ async def test_stuck_order_polling_ambiguous_response_no_transition(handler_real
     ctx = _seed_order_context(handler_real, state=OrderState.SUBMITTED, broker_order_no="C0003",
                               remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
 
-    with patch.object(handler_real, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
+    with patch.object(handler_real._fill_reconciliation, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
         mock_poll.return_value = 0
         count = await handler_real.check_stuck_orders_once(now=now)
 
@@ -2649,7 +2649,7 @@ async def test_stuck_order_warning_level_does_not_trigger_polling(handler_real, 
     _seed_order_context(handler_real, state=OrderState.SUBMITTED, broker_order_no="W0001",
                         remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
 
-    with patch.object(handler_real, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
+    with patch.object(handler_real._fill_reconciliation, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
         await handler_real.check_stuck_orders_once(now=now)
 
     mock_poll.assert_not_awaited()
@@ -2663,7 +2663,7 @@ async def test_stuck_order_paper_mode_no_polling(handler, mock_logger):
     _seed_order_context(handler, state=OrderState.SUBMITTED, broker_order_no="P0001",
                         remaining_qty=10, state_entered_at=entered_at, created_at=entered_at)
 
-    with patch.object(handler, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
+    with patch.object(handler._fill_reconciliation, "_poll_single_order_context", new_callable=AsyncMock) as mock_poll:
         await handler.check_stuck_orders_once(now=now)
 
     mock_poll.assert_not_awaited()
