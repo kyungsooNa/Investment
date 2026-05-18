@@ -63,6 +63,7 @@ from task.background.always_on.notification_queue_task import NotificationQueueT
 from task.background.intraday.opening_position_reconcile_task import OpeningPositionReconcileTask
 from task.background.intraday.pre_market_health_check_task import PreMarketHealthCheckTask
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
+from view.web.bootstrap.runtime_mode import RuntimeMode
 
 if TYPE_CHECKING:  # pragma: no cover
     from view.web.web_app_initializer import WebAppContext
@@ -76,6 +77,11 @@ class ServiceContainer:
 
     def run(self) -> None:
         ctx = self._ctx
+        mode = getattr(ctx, "runtime_mode", RuntimeMode.ALL)
+        needs_web = bool(mode & RuntimeMode.WEB)
+        needs_trading = bool(mode & RuntimeMode.TRADING)
+        needs_batch = bool(mode & RuntimeMode.BATCH)
+        needs_realtime = bool(mode & (RuntimeMode.WEB | RuntimeMode.TRADING))
 
         config_dict = ctx.full_config
         if hasattr(config_dict, "model_dump"):
@@ -183,21 +189,23 @@ class ServiceContainer:
             ctx.minervini_stage_service = None
 
         try:
-            ctx.minervini_update_task = MinerviniUpdateTask(
-                minervini_service=getattr(ctx, 'minervini_stage_service', None),
-                stock_code_repository=ctx.stock_code_repository,
-                stock_repository=ctx.stock_repository,
-                stock_query_service=ctx.stock_query_service,
-                broker_api_wrapper=ctx.broker,
-                rs_rating_service=getattr(ctx, 'rs_rating_service', None),
-                market_clock=ctx.market_clock,
-                logger=ctx.logger,
-                performance_profiler=ctx.pm,
-                notification_service=ctx.notification_service,
-                telegram_reporter=getattr(ctx, 'telegram_reporter', None),
-                market_calendar_service=ctx._mcs,
-                worker_pool=ctx.worker_pool,
-            )
+            ctx.minervini_update_task = None
+            if needs_batch:
+                ctx.minervini_update_task = MinerviniUpdateTask(
+                    minervini_service=getattr(ctx, 'minervini_stage_service', None),
+                    stock_code_repository=ctx.stock_code_repository,
+                    stock_repository=ctx.stock_repository,
+                    stock_query_service=ctx.stock_query_service,
+                    broker_api_wrapper=ctx.broker,
+                    rs_rating_service=getattr(ctx, 'rs_rating_service', None),
+                    market_clock=ctx.market_clock,
+                    logger=ctx.logger,
+                    performance_profiler=ctx.pm,
+                    notification_service=ctx.notification_service,
+                    telegram_reporter=getattr(ctx, 'telegram_reporter', None),
+                    market_calendar_service=ctx._mcs,
+                    worker_pool=ctx.worker_pool,
+                )
         except Exception as e:
             ctx.logger.warning(f"[ServiceBootstrap:MinerviniUpdate] 초기화 실패: {e}")
             ctx.minervini_update_task = None
@@ -205,91 +213,111 @@ class ServiceContainer:
         # NOTE: minervini_stage_service ↔ minervini_update_task circular wiring is performed by WiringPhase.
 
         try:
-            ctx.streaming_service = StreamingService(
-                broker_api_wrapper=ctx.broker,
-                logger=ctx.logger,
-                market_clock=ctx.market_clock,
-                market_data_service=ctx.market_data_service,
-                streaming_logger=ctx.streaming_event_logger,
-                data_quality_service=ctx.data_quality_service,
-            )
-            # P2 2-4: event-driven shadow 인프라. event_driven_shadow=False default 라 dead code.
-            ctx.event_shadow_journal_service = EventShadowJournalService(
-                log_root="logs/strategies",
-                logger=ctx.logger,
-            )
-            ctx.strategy_event_router = StrategyEventRouter(
-                market_clock=ctx.market_clock,
-                kill_switch_service=ctx.kill_switch_service,
-                logger=ctx.logger,
-            )
-            ctx.price_stream_service = PriceStreamService(
-                stock_repo=ctx.stock_repository,
-                logger=ctx.logger,
-                data_quality_service=ctx.data_quality_service,
-                notification_service=ctx.notification_service,
-                event_router=ctx.strategy_event_router,
-            )
-            # NOTE: data_quality / streaming / stock_query <-> price_stream wiring is performed by WiringPhase.
-            ctx.streaming_stock_repo = StreamingStockRepo(logger=ctx.logger)
-            ctx.streaming_stock_repo.load_pt_desired_from_db("data/program_subscribe/program_trading.db")
-            ctx.price_subscription_service = PriceSubscriptionService(
-                streaming_service=ctx.streaming_service,
-                stock_repo=ctx.stock_repository,
-                logger=ctx.logger,
-                streaming_logger=ctx.streaming_event_logger,
-                streaming_stock_repo=ctx.streaming_stock_repo,
-                market_calendar=ctx._mcs,
-            )
-            # NOTE: streaming.set_streaming_stock_repo, program_trading.wire_streaming_stock_repo,
-            # and stock_query.price_subscription_service wiring is performed by WiringPhase.
-            ctx.websocket_watchdog_task = WebSocketWatchdogTask(
-                streaming_service=ctx.streaming_service,
-                program_trading_stream_service=ctx.program_trading_stream_service,
-                market_calendar_service=ctx._mcs,
-                performance_profiler=ctx.pm,
-                notification_service=ctx.notification_service,
-                operator_alert_service=ctx.operator_alert_service,
-                logger=ctx.logger,
-                streaming_logger=ctx.streaming_event_logger,
-                streaming_stock_repo=ctx.streaming_stock_repo,
-                price_subscription_service=ctx.price_subscription_service,
-                price_stream_service=ctx.price_stream_service,
-            )
-            ctx.pre_market_health_check_task = PreMarketHealthCheckTask(
-                broker=ctx.broker,
-                env=ctx.env,
-                market_calendar_service=ctx._mcs,
-                market_clock=ctx.market_clock,
-                streaming_stock_repo=ctx.streaming_stock_repo,
-                data_quality_service=ctx.data_quality_service,
-                notification_service=ctx.notification_service,
-                logger=ctx.logger,
-            )
-            ctx.daily_price_collector_task = DailyPriceCollectorTask(
-                stock_query_service=ctx.stock_query_service,
-                stock_code_repository=ctx.stock_code_repository,
-                stock_repo=ctx.stock_repository,
-                market_calendar_service=ctx._mcs,
-                market_clock=ctx.market_clock,
-                performance_profiler=ctx.pm,
-                notification_service=ctx.notification_service,
-                logger=ctx.logger,
-                rs_rating_service=getattr(ctx, "rs_rating_service", None),
-                worker_pool=ctx.worker_pool,
-            )
+            if needs_realtime:
+                ctx.streaming_service = StreamingService(
+                    broker_api_wrapper=ctx.broker,
+                    logger=ctx.logger,
+                    market_clock=ctx.market_clock,
+                    market_data_service=ctx.market_data_service,
+                    streaming_logger=ctx.streaming_event_logger,
+                    data_quality_service=ctx.data_quality_service,
+                )
+                # P2 2-4: event-driven shadow 인프라. shadow 활성 전략이 있을 때만 로그가 생성된다.
+                ctx.event_shadow_journal_service = EventShadowJournalService(
+                    log_root="logs/strategies",
+                    logger=ctx.logger,
+                )
+                ctx.strategy_event_router = StrategyEventRouter(
+                    market_clock=ctx.market_clock,
+                    kill_switch_service=ctx.kill_switch_service,
+                    logger=ctx.logger,
+                )
+                ctx.price_stream_service = PriceStreamService(
+                    stock_repo=ctx.stock_repository,
+                    logger=ctx.logger,
+                    data_quality_service=ctx.data_quality_service,
+                    notification_service=ctx.notification_service,
+                    event_router=ctx.strategy_event_router,
+                )
+                # NOTE: data_quality / streaming / stock_query <-> price_stream wiring is performed by WiringPhase.
+                ctx.streaming_stock_repo = StreamingStockRepo(logger=ctx.logger)
+                ctx.streaming_stock_repo.load_pt_desired_from_db("data/program_subscribe/program_trading.db")
+                ctx.price_subscription_service = PriceSubscriptionService(
+                    streaming_service=ctx.streaming_service,
+                    stock_repo=ctx.stock_repository,
+                    logger=ctx.logger,
+                    streaming_logger=ctx.streaming_event_logger,
+                    streaming_stock_repo=ctx.streaming_stock_repo,
+                    market_calendar=ctx._mcs,
+                )
+                # NOTE: streaming.set_streaming_stock_repo, program_trading.wire_streaming_stock_repo,
+                # and stock_query.price_subscription_service wiring is performed by WiringPhase.
+                ctx.websocket_watchdog_task = WebSocketWatchdogTask(
+                    streaming_service=ctx.streaming_service,
+                    program_trading_stream_service=ctx.program_trading_stream_service,
+                    market_calendar_service=ctx._mcs,
+                    performance_profiler=ctx.pm,
+                    notification_service=ctx.notification_service,
+                    operator_alert_service=ctx.operator_alert_service,
+                    logger=ctx.logger,
+                    streaming_logger=ctx.streaming_event_logger,
+                    streaming_stock_repo=ctx.streaming_stock_repo,
+                    price_subscription_service=ctx.price_subscription_service,
+                    price_stream_service=ctx.price_stream_service,
+                )
+            else:
+                ctx.streaming_service = None
+                ctx.event_shadow_journal_service = None
+                ctx.strategy_event_router = None
+                ctx.price_stream_service = None
+                ctx.streaming_stock_repo = None
+                ctx.price_subscription_service = None
+                ctx.websocket_watchdog_task = None
+
+            if needs_trading:
+                ctx.pre_market_health_check_task = PreMarketHealthCheckTask(
+                    broker=ctx.broker,
+                    env=ctx.env,
+                    market_calendar_service=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    streaming_stock_repo=ctx.streaming_stock_repo,
+                    data_quality_service=ctx.data_quality_service,
+                    notification_service=ctx.notification_service,
+                    logger=ctx.logger,
+                )
+            else:
+                ctx.pre_market_health_check_task = None
+
+            if needs_batch:
+                ctx.daily_price_collector_task = DailyPriceCollectorTask(
+                    stock_query_service=ctx.stock_query_service,
+                    stock_code_repository=ctx.stock_code_repository,
+                    stock_repo=ctx.stock_repository,
+                    market_calendar_service=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    performance_profiler=ctx.pm,
+                    notification_service=ctx.notification_service,
+                    logger=ctx.logger,
+                    rs_rating_service=getattr(ctx, "rs_rating_service", None),
+                    worker_pool=ctx.worker_pool,
+                )
+            else:
+                ctx.daily_price_collector_task = None
             # NOTE: minervini_update_task._daily_price_collector_task wiring is performed by WiringPhase.
-            ctx.ohlcv_update_task = OhlcvUpdateTask(
-                stock_query_service=ctx.stock_query_service,
-                stock_code_repository=ctx.stock_code_repository,
-                stock_repo=ctx.stock_repository,
-                market_calendar_service=ctx._mcs,
-                market_clock=ctx.market_clock,
-                performance_profiler=ctx.pm,
-                notification_service=ctx.notification_service,
-                logger=ctx.logger,
-                worker_pool=ctx.worker_pool,
-            )
+            if needs_batch:
+                ctx.ohlcv_update_task = OhlcvUpdateTask(
+                    stock_query_service=ctx.stock_query_service,
+                    stock_code_repository=ctx.stock_code_repository,
+                    stock_repo=ctx.stock_repository,
+                    market_calendar_service=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    performance_profiler=ctx.pm,
+                    notification_service=ctx.notification_service,
+                    logger=ctx.logger,
+                    worker_pool=ctx.worker_pool,
+                )
+            else:
+                ctx.ohlcv_update_task = None
         except Exception as e:
             ctx.logger.critical(f"[ServiceBootstrap:Streaming] 초기화 실패: {e}", exc_info=True)
             raise
@@ -343,7 +371,7 @@ class ServiceContainer:
                 performance_profiler=ctx.pm,
                 notification_service=ctx.notification_service,
                 market_calendar_service=ctx._mcs,
-                price_subscription_service=ctx.price_subscription_service,
+                price_subscription_service=getattr(ctx, "price_subscription_service", None),
                 virtual_trade_service=ctx.virtual_trade_service,
                 kill_switch_service=ctx.kill_switch_service,
                 account_snapshot_cache=ctx.account_snapshot_cache,
@@ -367,96 +395,116 @@ class ServiceContainer:
                 scraper_service=NaverFinanceScraperService(logger=ctx.logger),
                 logger=ctx.logger,
                 performance_profiler=ctx.pm,
-                price_subscription_service=ctx.price_subscription_service,
+                price_subscription_service=getattr(ctx, "price_subscription_service", None),
                 rs_rating_service=getattr(ctx, "rs_rating_service", None),
                 minervini_service=getattr(ctx, "minervini_stage_service", None),
                 notification_service=getattr(ctx, "notification_service", None),
             )
-            ctx.premium_watchlist_generator_task = PremiumWatchlistGeneratorTask(
-                universe_service=ctx.oneil_universe_service,
-                market_calendar_service=ctx._mcs,
-                market_clock=ctx.market_clock,
-                notification_service=ctx.notification_service,
-                logger=ctx.logger,
-                worker_pool=ctx.worker_pool,
-                telegram_reporter=getattr(ctx, 'telegram_reporter', None),
-            )
-            ctx.cache_warmup_task = CacheWarmupTask(
-                market_data_service=ctx.market_data_service,
-                stock_query_service=ctx.stock_query_service,
-                universe_service=ctx.oneil_universe_service,
-                market_calendar_service=ctx._mcs,
-                market_clock=ctx.market_clock,
-                notification_service=ctx.notification_service,
-                logger=ctx.logger,
-                worker_pool=ctx.worker_pool,
-            )
-            ctx.log_cleanup_task = LogCleanupTask(
-                log_dir=ctx.logger.log_dir,
-                delete_days=30,
-                compress_days=7,
-                market_calendar_service=ctx._mcs,
-                market_clock=ctx.market_clock,
-                logger=ctx.logger,
-                worker_pool=ctx.worker_pool,
-            )
-            ctx.newhigh_task = NewHighTask(
-                stock_repo=ctx.stock_repository,
-                market_calendar_service=ctx._mcs,
-                market_clock=ctx.market_clock,
-                logger=ctx.logger,
-                telegram_reporter=getattr(ctx, 'telegram_reporter', None),
-                notification_service=ctx.notification_service,
-                daily_price_collector_task=ctx.daily_price_collector_task,
-                stock_query_service=ctx.stock_query_service,
-                rs_rating_service=getattr(ctx, 'rs_rating_service', None),
-                worker_pool=ctx.worker_pool,
-            )
-            ctx.newhigh_service = NewHighService(
-                stock_repository=ctx.stock_repository,
-                newhigh_task=ctx.newhigh_task,
-                logger=ctx.logger,
-            )
-            ctx.strategy_log_report_task = StrategyLogReportTask(
-                report_service=StrategyLogReportService(
-                    log_dir=os.path.join(ctx.logger.log_dir, "strategies"),
-                    stock_code_repo=ctx.stock_code_repository,
-                    virtual_trade_service=ctx.virtual_trade_service,
-                    backtest_journal_provider=ctx.backtest_journal_repository.load_records_for_date,
-                    execution_quality_config=getattr(ctx.full_config, "execution_quality_report", None),
-                    strategy_degradation_config=getattr(
-                        ctx.full_config, "strategy_performance_degradation", None
+            if needs_batch:
+                ctx.premium_watchlist_generator_task = PremiumWatchlistGeneratorTask(
+                    universe_service=ctx.oneil_universe_service,
+                    market_calendar_service=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    notification_service=ctx.notification_service,
+                    logger=ctx.logger,
+                    worker_pool=ctx.worker_pool,
+                    telegram_reporter=getattr(ctx, 'telegram_reporter', None),
+                )
+            else:
+                ctx.premium_watchlist_generator_task = None
+
+            if needs_trading:
+                ctx.cache_warmup_task = CacheWarmupTask(
+                    market_data_service=ctx.market_data_service,
+                    stock_query_service=ctx.stock_query_service,
+                    universe_service=ctx.oneil_universe_service,
+                    market_calendar_service=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    notification_service=ctx.notification_service,
+                    logger=ctx.logger,
+                    worker_pool=ctx.worker_pool,
+                )
+            else:
+                ctx.cache_warmup_task = None
+
+            if needs_batch:
+                ctx.log_cleanup_task = LogCleanupTask(
+                    log_dir=ctx.logger.log_dir,
+                    delete_days=30,
+                    compress_days=7,
+                    market_calendar_service=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    logger=ctx.logger,
+                    worker_pool=ctx.worker_pool,
+                )
+                ctx.newhigh_task = NewHighTask(
+                    stock_repo=ctx.stock_repository,
+                    market_calendar_service=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    logger=ctx.logger,
+                    telegram_reporter=getattr(ctx, 'telegram_reporter', None),
+                    notification_service=ctx.notification_service,
+                    daily_price_collector_task=ctx.daily_price_collector_task,
+                    stock_query_service=ctx.stock_query_service,
+                    rs_rating_service=getattr(ctx, 'rs_rating_service', None),
+                    worker_pool=ctx.worker_pool,
+                )
+                ctx.newhigh_service = NewHighService(
+                    stock_repository=ctx.stock_repository,
+                    newhigh_task=ctx.newhigh_task,
+                    logger=ctx.logger,
+                )
+                ctx.strategy_log_report_task = StrategyLogReportTask(
+                    report_service=StrategyLogReportService(
+                        log_dir=os.path.join(ctx.logger.log_dir, "strategies"),
+                        stock_code_repo=ctx.stock_code_repository,
+                        virtual_trade_service=ctx.virtual_trade_service,
+                        backtest_journal_provider=ctx.backtest_journal_repository.load_records_for_date,
+                        execution_quality_config=getattr(ctx.full_config, "execution_quality_report", None),
+                        strategy_degradation_config=getattr(
+                            ctx.full_config, "strategy_performance_degradation", None
+                        ),
+                        enabled_strategy_provider=ctx._get_enabled_strategy_names_for_report,
                     ),
-                    enabled_strategy_provider=ctx._get_enabled_strategy_names_for_report,
-                ),
-                notification_service=ctx.notification_service,
-                operator_alert_service=ctx.operator_alert_service,
-                kill_switch_service=ctx.kill_switch_service,
-                telegram_reporter=getattr(ctx, 'telegram_reporter', None),
-                mcs=ctx._mcs,
-                market_clock=ctx.market_clock,
-                logger=ctx.logger,
-                worker_pool=ctx.worker_pool,
-                rejection_distribution_service=ctx.rejection_distribution_service,
-            )
-            ctx.notification_queue_task = NotificationQueueTask(
-                notification_service=ctx.notification_service,
-                poll_interval=config_dict.get("notification_queue_poll_interval", 1.0),
-                telegram_config=getattr(getattr(ctx.full_config, "notifications", None), "telegram", None),
-                logger=ctx.logger,
-            )
-            ctx.after_market_reconcile_task = AfterMarketReconcileTask(
-                order_execution_service=ctx.order_execution_service,
-                notification_service=ctx.notification_service,
-                operator_alert_service=ctx.operator_alert_service,
-                market_calendar_service=ctx._mcs,
-                market_clock=ctx.market_clock,
-                logger=ctx.logger,
-                worker_pool=ctx.worker_pool,
-            )
+                    notification_service=ctx.notification_service,
+                    operator_alert_service=ctx.operator_alert_service,
+                    kill_switch_service=ctx.kill_switch_service,
+                    telegram_reporter=getattr(ctx, 'telegram_reporter', None),
+                    mcs=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    logger=ctx.logger,
+                    worker_pool=ctx.worker_pool,
+                    rejection_distribution_service=ctx.rejection_distribution_service,
+                )
+                ctx.after_market_reconcile_task = AfterMarketReconcileTask(
+                    order_execution_service=ctx.order_execution_service,
+                    notification_service=ctx.notification_service,
+                    operator_alert_service=ctx.operator_alert_service,
+                    market_calendar_service=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    logger=ctx.logger,
+                    worker_pool=ctx.worker_pool,
+                )
+            else:
+                ctx.log_cleanup_task = None
+                ctx.newhigh_task = None
+                ctx.newhigh_service = None
+                ctx.strategy_log_report_task = None
+                ctx.after_market_reconcile_task = None
+
+            if needs_web:
+                ctx.notification_queue_task = NotificationQueueTask(
+                    notification_service=ctx.notification_service,
+                    poll_interval=config_dict.get("notification_queue_poll_interval", 1.0),
+                    telegram_config=getattr(getattr(ctx.full_config, "notifications", None), "telegram", None),
+                    logger=ctx.logger,
+                )
+            else:
+                ctx.notification_queue_task = None
+
             reconcile_cfg = getattr(ctx.full_config, "opening_position_reconcile", None)
             ctx.opening_position_reconcile_task = None
-            if reconcile_cfg is None or getattr(reconcile_cfg, "enabled", True):
+            if needs_trading and (reconcile_cfg is None or getattr(reconcile_cfg, "enabled", True)):
                 deprecated_reconcile_keys = (
                     "detect_only",
                     "auto_buy_missing_local",

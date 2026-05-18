@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-19 (P2 2-4 PR-2 완료 — VBO `evaluate_single` shadow + `EventShadowJournalService` + scheduler 구독 라이프사이클 + ServiceContainer/StrategyFactory 와이어업. `event_driven_shadow=False` default 라 프로덕션 동작 영향 없음)
+최종 업데이트: 2026-05-19 (P3 3-2 후속 착수 — `ServiceContainer` 의 runtime mode-aware task 생성 분기 일부 반영. WEB/BATCH 단독 실행에서 불필요한 realtime/장중/장마감 task 생성 축소)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -334,7 +334,8 @@
   - 1차 완료: `view/web/bootstrap/runtime_mode.py` 의 `RuntimeMode` enum (WEB / TRADING / BATCH / ALL) 로 15 개 task (`SchedulerBootstrap` 등록 14 + `StrategyFactory` 등록 1) 의 runtime 소유권 명시.
   - 1차 완료: `SchedulerBootstrap.run()` 을 `_register_web_tasks`/`_register_trading_tasks`/`_register_batch_tasks`/`_register_websocket_watchdog` 4 개 그룹 메서드로 분리. websocket_watchdog 은 WEB | TRADING 양쪽 mode 에서 1 회만 등록.
   - 1차 완료: `StrategyFactory.build()` 가 TRADING 비활성 시 즉시 return (StrategyScheduler / 7 개 전략 / Adapter 모두 미생성).
-  - 후속: `ServiceContainer` 의 service 객체 생성 단계 분할 (현재 모든 service 와 task 객체는 mode 와 무관하게 항상 생성됨), 별도 진입점 (`web_app.py` / `trading_runtime.py` / `batch_runtime.py` / `admin_runtime.py`) 파일, admin runtime 정의.
+  - 2차 완료: `ServiceContainer` 가 runtime mode 에 따라 task 생성을 일부 분기한다. BATCH 단독은 realtime chain(`StreamingService`, `PriceStreamService`, `PriceSubscriptionService`, `WebSocketWatchdogTask`)과 WEB/TRADING task를 만들지 않고, WEB 단독은 realtime chain + `NotificationQueueTask`만 유지하며 장중/장마감 task를 만들지 않는다. `WiringPhase` 는 realtime chain 이 없는 BATCH 단독 컨텍스트를 no-op 으로 통과한다.
+  - 후속: `TRADING` 단독 생성 contract를 더 촘촘히 테스트하고, service 객체 자체(`OrderExecutionService`, `OneilUniverseService`, `RankingTask` 등)를 mode-aware 로 더 줄일지 결정한다. 별도 진입점 (`web_app.py` / `trading_runtime.py` / `batch_runtime.py` / `admin_runtime.py`) 파일, admin runtime 정의는 아직 남아 있다.
 - [~] 웹 서버 초기화가 모든 after-market task와 장중 scheduler를 직접 끌어안지 않도록 분리한다.
   - 1차 완료: `web_main.py` lifespan 이 `RUNTIME_MODE` env (default `ALL` = 현행 동작 100% 유지) 를 읽어 `WebAppContext(runtime_mode=...)` 로 주입. mode 별로 task 등록과 StrategyScheduler 생성을 분기.
   - 1차 완료: `BackgroundScheduler` / `ForegroundScheduler` 객체 생성은 mode 와 무관하게 항상 수행 (foreground middleware 가 rate-limit 경합 제어에 의존).

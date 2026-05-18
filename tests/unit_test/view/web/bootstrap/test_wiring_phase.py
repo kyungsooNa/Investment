@@ -90,6 +90,24 @@ def test_wiring_phase_wires_streaming_chain():
     assert ctx.stock_query_service.price_subscription_service is ctx.price_subscription_service
 
 
+def test_wiring_phase_skips_streaming_chain_when_runtime_does_not_create_it():
+    """BATCH 단독처럼 streaming chain 이 None 이어도 공통 wiring 은 수행하고 통과한다."""
+    from view.web.bootstrap.wiring_phase import WiringPhase
+
+    ctx = _make_fake_context()
+    ctx.price_stream_service = None
+    ctx.price_subscription_service = None
+    ctx.streaming_service = None
+    ctx.streaming_stock_repo = None
+
+    WiringPhase(ctx).run()
+
+    ctx.data_quality_service.set_price_stream_service.assert_not_called()
+    ctx.program_trading_stream_service.wire_streaming_stock_repo.assert_not_called()
+    assert ctx.stock_query_service.price_stream_service is None
+    assert ctx.stock_query_service.price_subscription_service is None
+
+
 def test_wiring_phase_registers_signing_notice_handler():
     from view.web.bootstrap.wiring_phase import WiringPhase
 
