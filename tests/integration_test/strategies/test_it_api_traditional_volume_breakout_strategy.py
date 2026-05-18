@@ -94,9 +94,10 @@ async def test_tvb_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
     await strategy.scan()
     assert mock_get_price.call_count >= 1
 
-    # [상황 B] 연속 실행 (Memory Cache Hit)
+    # [상황 B] 연속 실행 (PriceStream snapshot hit)
     mock_get_price.reset_mock()
     strategy._position_state.clear()
+    snapshot_hits_before = mock_sqs._price_lookup_stats["snapshot_hit"]
     await strategy.scan()
     assert mock_get_price.call_count == 0, "캐시 적중 시 현재가 API는 호출되지 않아야 함"
-    assert stock_repo.get_cache_stats()["hits"] > 0
+    assert mock_sqs._price_lookup_stats["snapshot_hit"] > snapshot_hits_before

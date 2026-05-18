@@ -43,10 +43,19 @@ class StockQueryService:
             "no_tick_fallback": 0,
             "stale_fallback": 0,
             "rest_fallback": 0,
+            "force_fresh_bypass": 0,
+            "full_output_required": 0,
+            "stream_unavailable_fallback": 0,
             "conclusion_hit": 0,
             "conclusion_stale_fallback": 0,
             "conclusion_missing_fallback": 0,
         }
+
+    def _count_price_lookup(self, key: str, enabled: bool = True) -> None:
+        """운영 현재가 조회 통계를 선택적으로 증가시킨다."""
+        if not enabled:
+            return
+        self._price_lookup_stats[key] = self._price_lookup_stats.get(key, 0) + 1
 
     def _get_sign_from_code(self, sign_code):
         """API 응답의 부호 코드(1,2,3,4,5)를 실제 부호 문자열로 변환합니다."""
@@ -63,14 +72,24 @@ class StockQueryService:
         snapshot에 없는 필드는 ""로 채워진다. 호출자가 per/pbr 같은
         REST 전용 필드가 필요하면 force_fresh=True를 사용한다.
         """
+        def _snapshot_value(value, default: str = "0") -> str:
+            if value in (None, "", "N/A"):
+                return default
+            if isinstance(value, float) and value.is_integer():
+                return str(int(value))
+            return str(value)
+
         fields = {name: "" for name in ResStockFullInfoApiOutput.model_fields}
         fields.update({
-            "stck_prpr": str(snap.get("price") or "0"),
-            "prdy_vrss": str(snap.get("change") or "0"),
-            "prdy_ctrt": str(snap.get("rate") or "0.00"),
-            "prdy_vrss_sign": str(snap.get("sign") or "3"),
-            "acml_vol": str(snap.get("acml_vol") or "0"),
-            "acml_tr_pbmn": str(snap.get("acml_tr_pbmn") or "0"),
+            "stck_prpr": _snapshot_value(snap.get("price")),
+            "prdy_vrss": _snapshot_value(snap.get("change")),
+            "prdy_ctrt": _snapshot_value(snap.get("rate"), "0.00"),
+            "prdy_vrss_sign": _snapshot_value(snap.get("sign"), "3"),
+            "acml_vol": _snapshot_value(snap.get("acml_vol")),
+            "acml_tr_pbmn": _snapshot_value(snap.get("acml_tr_pbmn")),
+            "stck_hgpr": _snapshot_value(snap.get("high")),
+            "stck_lwpr": _snapshot_value(snap.get("low")),
+            "stck_oprc": _snapshot_value(snap.get("open")),
         })
         output = ResStockFullInfoApiOutput.model_validate(fields)
         return ResCommonResponse(
@@ -102,11 +121,14 @@ class StockQueryService:
         fallback_force_fresh = force_fresh
         unhealthy_stream_reason: Optional[str] = None
 
+        if force_fresh:
+            self._count_price_lookup("force_fresh_bypass", count_stats)
+
         if not force_fresh and self.price_stream_service is not None:
             snap = self.price_stream_service.get_cached_price(stock_code)
             if snap is None:
                 # 구독 중이나 tick 미수신 → REST fallback
-                self._price_lookup_stats["no_tick_fallback"] += 1
+                self._count_price_lookup("no_tick_fallback", count_stats)
                 self.logger.debug({"event": "price_lookup_no_tick", "code": stock_code, "caller": caller})
                 fallback_force_fresh = True
                 subscription_age = 0.0
@@ -122,24 +144,27 @@ class StockQueryService:
                 received_at = snap.get("received_at", 0.0) or 0.0
                 age = time.time() - received_at
                 if age <= self._snapshot_max_age_sec and allow_snapshot:
-                    self._price_lookup_stats["snapshot_hit"] += 1
+                    self._count_price_lookup("snapshot_hit", count_stats)
                     return self._build_snapshot_response(snap)
                 else:
                     if age > self._snapshot_max_age_sec:
-                        self._price_lookup_stats["stale_fallback"] += 1
+                        self._count_price_lookup("stale_fallback", count_stats)
                         self.logger.debug({"event": "price_lookup_stale", "code": stock_code,
                                            "age_sec": round(age, 2), "caller": caller})
                         fallback_force_fresh = True
                         unhealthy_stream_reason = "stale_snapshot"
                     else:
+                        self._count_price_lookup("full_output_required", count_stats)
                         self.logger.debug({
                             "event": "price_lookup_snapshot_skipped",
                             "code": stock_code,
                             "caller": caller,
                             "reason": "full_output_required",
                         })
+        elif not force_fresh:
+            self._count_price_lookup("stream_unavailable_fallback", count_stats)
 
-        self._price_lookup_stats["rest_fallback"] += 1
+        self._count_price_lookup("rest_fallback", count_stats)
         resp = await self.market_data_service.get_current_price(
             stock_code, exchange=exchange, count_stats=count_stats, caller=caller, force_fresh=fallback_force_fresh
         )
@@ -306,25 +331,23 @@ class StockQueryService:
         snap = self.price_stream_service.get_conclusion_snapshot(code)
         return snap, None
 
-    async def handle_get_current_stock_price(self, stock_code, caller: str = "unknown", exchange: Exchange = Exchange.KRX, force_fresh: bool = False):
+    async def handle_get_current_stock_price(
+        self,
+        stock_code,
+        caller: str = "unknown",
+        exchange: Exchange = Exchange.KRX,
+        force_fresh: bool = False,
+        allow_snapshot: bool = False,
+    ):
         """주식 현재가 및 상세 정보 조회 요청 및 결과 출력."""
         self.logger.info(f"Stock_Query_Service - {stock_code} 현재가 및 상세 정보 조회 요청")
-        if force_fresh:
-            resp: ResCommonResponse = await self.get_current_price(
-                stock_code,
-                exchange=exchange,
-                caller=caller,
-                force_fresh=True,
-                allow_snapshot=False,
-            )
-        else:
-            resp: ResCommonResponse = await self.get_current_price(
-                stock_code,
-                exchange=exchange,
-                caller=caller,
-                force_fresh=False,
-                allow_snapshot=False,
-            )
+        resp: ResCommonResponse = await self.get_current_price(
+            stock_code,
+            exchange=exchange,
+            caller=caller,
+            force_fresh=force_fresh,
+            allow_snapshot=allow_snapshot and not force_fresh,
+        )
 
         if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
             msg = resp.msg1 if resp else "응답 없음"

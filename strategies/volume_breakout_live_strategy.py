@@ -101,7 +101,11 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
 
             try:
                 # 2) 현재가/시가 조회
-                price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
+                price_resp = await self._sqs.handle_get_current_stock_price(
+                    code,
+                    caller=self.name,
+                    allow_snapshot=True,
+                )
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
                     log_data.update({"reason": "Failed to get current price"})
                     self._logger.info({"event": "candidate_rejected", **log_data})
@@ -189,7 +193,11 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
             log_data = {"code": code, "name": stock_name, "buy_price": buy_price}
 
             try:
-                price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
+                price_resp = await self._sqs.handle_get_current_stock_price(
+                    code,
+                    caller=self.name,
+                    allow_snapshot=True,
+                )
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
                     self._logger.warning({
                         "event": "check_exits_failed",

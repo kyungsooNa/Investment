@@ -889,7 +889,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         }
         strategy._watchlist_date = "20260225"
 
-        async def price_side_effect(code, caller=None):
+        async def price_side_effect(code, caller=None, **kwargs):
             if code == "A":
                 raise Exception("네트워크 오류")
             # B: 돌파 성공 (price 12000 > high_20d 10500, vol 충분)

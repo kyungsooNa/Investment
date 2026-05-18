@@ -162,7 +162,11 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
         """단일 종목의 가격·거래량 돌파 조건을 검사하고 매수 시그널을 반환한다."""
         log_data = {"code": code, "name": item.name, "watchlist_item": asdict(item)}
         try:
-            price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
+            price_resp = await self._sqs.handle_get_current_stock_price(
+                code,
+                caller=self.name,
+                allow_snapshot=True,
+            )
             if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
                 return None
 
@@ -238,7 +242,11 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
             log_data = {"code": code, "name": stock_name, "buy_price": buy_price}
 
             try:
-                price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
+                price_resp = await self._sqs.handle_get_current_stock_price(
+                    code,
+                    caller=self.name,
+                    allow_snapshot=True,
+                )
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
                     continue
 
