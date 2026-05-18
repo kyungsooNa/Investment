@@ -1,6 +1,6 @@
 # interfaces/live_strategy.py
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
 from common.types import TradeSignal
 
 
@@ -31,3 +31,22 @@ class LiveStrategy(ABC):
                       각 dict는 strategy, code, buy_date, buy_price, status 키를 포함.
         """
         ...
+
+    async def evaluate_single(self, code: str, snapshot: dict) -> Optional[TradeSignal]:
+        """이벤트 기반 단일 종목 fast-path 평가 (P2 2-4).
+
+        StrategyEventRouter 가 실시간 체결 tick 도착 시 호출한다. 기본 구현은 None
+        (= 이벤트 평가 미지원). 적용 전략에서만 오버라이드한다.
+
+        호출자(라우터)는 None 결과는 무시한다. 결과로 TradeSignal 을 돌려주면
+        호출자 정책(shadow 기록 / 실 주문)에 따라 처리된다.
+        """
+        return None
+
+    def current_candidate_codes(self) -> List[str]:
+        """이벤트 라우터 구독 대상 종목 목록 (P2 2-4).
+
+        StrategyScheduler 가 scan() 직후 호출하여 라우터 구독을 갱신한다.
+        기본 구현은 빈 리스트 (= 라우터 구독 비활성). 적용 전략에서만 오버라이드한다.
+        """
+        return []

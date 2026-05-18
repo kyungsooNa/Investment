@@ -52,6 +52,8 @@ class StrategyFactory:
             kill_switch_service=ctx.kill_switch_service,
             account_snapshot_cache=ctx.account_snapshot_cache,
             position_sizing_service=ctx.position_sizing_service,
+            event_router=getattr(ctx, "strategy_event_router", None),
+            event_shadow_journal=getattr(ctx, "event_shadow_journal_service", None),
         )
 
         # 오닐 스퀴즈 돌파 전략 등록

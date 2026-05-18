@@ -216,11 +216,9 @@ PriceStreamService.on_price_tick
 
 4. **PR-4 이후**: 단계적 확장 (4-4 표 참고)
 
-## 9. 결정이 필요한 사항
+## 9. 결정 사항 (2026-05-18 확정)
 
-구현 PR 진입 전 사용자 확인 필요:
-
-- **(Q1) 이벤트 throttle 기본값**: 같은 `(strategy, code)` 최소 간격. 기본 `0.5초` 제안 — 너무 짧으면 평가 폭주, 너무 길면 반응성 손실.
-- **(Q2) Stale snapshot 임계**: 마지막 tick으로부터 몇 초까지 dispatch 허용? `5초` 제안.
-- **(Q3) Shadow mode 운영 기간**: VBO 1주 제안 — 거래일 부족 시 연장 여부.
-- **(Q4) signal_source 컬럼**: `VirtualTradeRepository`에 `signal_source TEXT` 컬럼 추가 (schema migration 필요). 또는 기존 `metadata` JSON에 포함만 할지.
+- **(Q1) 이벤트 throttle 기본값**: 같은 `(strategy, code)` 최소 간격 **0.5초**. 변경은 `StrategyEventRouter(throttle_sec=...)` 생성자 인자.
+- **(Q2) Stale snapshot 임계**: 마지막 tick으로부터 **5초**까지 dispatch 허용. 변경은 `StrategyEventRouter(stale_snapshot_sec=...)` 생성자 인자.
+- **(Q3) Shadow mode 운영 기간**: VBO **1주** (거래일 기준 5일). 거래일 부족 시 연장은 별도 결정.
+- **(Q4) `signal_source`**: 기존 `metadata` JSON에 `signal_source` 키로 포함. `VirtualTradeRepository` schema 변경 없음. 값: `"polling" | "event_shadow" | "event_live"`.

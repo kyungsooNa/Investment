@@ -46,6 +46,8 @@ from services.risk_gate_service import RiskGateService
 from services.rs_rating_service import RSRatingService
 from services.stock_query_service import StockQueryService
 from services.streaming_service import StreamingService
+from services.strategy_event_router import StrategyEventRouter
+from services.event_shadow_journal_service import EventShadowJournalService
 from services.strategy_log_report_service import StrategyLogReportService
 from task.background.after_market.after_market_reconcile_task import AfterMarketReconcileTask
 from task.background.after_market.cache_warmup_task import CacheWarmupTask
@@ -211,11 +213,22 @@ class ServiceContainer:
                 streaming_logger=ctx.streaming_event_logger,
                 data_quality_service=ctx.data_quality_service,
             )
+            # P2 2-4: event-driven shadow 인프라. event_driven_shadow=False default 라 dead code.
+            ctx.event_shadow_journal_service = EventShadowJournalService(
+                log_root="logs/strategies",
+                logger=ctx.logger,
+            )
+            ctx.strategy_event_router = StrategyEventRouter(
+                market_clock=ctx.market_clock,
+                kill_switch_service=ctx.kill_switch_service,
+                logger=ctx.logger,
+            )
             ctx.price_stream_service = PriceStreamService(
                 stock_repo=ctx.stock_repository,
                 logger=ctx.logger,
                 data_quality_service=ctx.data_quality_service,
                 notification_service=ctx.notification_service,
+                event_router=ctx.strategy_event_router,
             )
             # NOTE: data_quality / streaming / stock_query <-> price_stream wiring is performed by WiringPhase.
             ctx.streaming_stock_repo = StreamingStockRepo(logger=ctx.logger)

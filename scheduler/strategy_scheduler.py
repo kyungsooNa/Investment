@@ -66,6 +66,9 @@ class StrategySchedulerConfig:
     # 장 초반/후반 신규 진입 차단 (분 단위). check_exits 및 force_exit 경로는 영향 없음.
     skip_minutes_after_open: int = 0
     skip_minutes_before_close: int = 0
+    # P2 2-4: 활성 시 scan() 이후 매번 router 구독을 갱신하고 evaluate_single 결과를
+    # EventShadowJournalService 에 기록 (실 주문 미발생). 기본 False — 안전한 dead code.
+    event_driven_shadow: bool = False
 
 
 class StrategyScheduler:
@@ -104,6 +107,8 @@ class StrategyScheduler:
         kill_switch_service: Optional[KillSwitchService] = None,
         account_snapshot_cache: Optional[AccountSnapshotCache] = None,
         position_sizing_service: Optional[PositionSizingService] = None,
+        event_router=None,
+        event_shadow_journal=None,
     ):
         self._virtual_trade_service = virtual_trade_service
         self._oes = order_execution_service
@@ -121,6 +126,10 @@ class StrategyScheduler:
         self._kill_switch = kill_switch_service
         self._account_snapshot_cache = account_snapshot_cache
         self._position_sizer = position_sizing_service
+        self._event_router = event_router
+        self._event_shadow_journal = event_shadow_journal
+        # strategy_name → 현재 router 에 구독된 종목 set
+        self._event_shadow_subscriptions: Dict[str, set[str]] = {}
 
         self._strategies: List[StrategySchedulerConfig] = []
         self._running = False
@@ -433,6 +442,9 @@ class StrategyScheduler:
         t_scan = self._pm.start_timer()
         buy_signals = await cfg.strategy.scan()
         self._pm.log_timer(f"{name}.scan()", t_scan)
+
+        # P2 2-4: event-driven shadow 구독 갱신 (scan 직후 후보군 변화 반영)
+        self._refresh_event_shadow_subscriptions(cfg)
 
         # 이미 보유 중인 종목은 추가 매수(불타기) 방지
         if cfg.allow_pyramiding:
@@ -853,6 +865,92 @@ class StrategyScheduler:
                     f"strategy={signal.strategy_name}, code={signal.code}, rule={rule}"
                 )
             return
+
+    def _refresh_event_shadow_subscriptions(self, cfg: StrategySchedulerConfig) -> None:
+        """P2 2-4: cfg.event_driven_shadow=True 인 전략의 router 구독을 scan 후 갱신.
+
+        - cfg.event_driven_shadow=False / router 미주입 / shadow journal 미주입 시 no-op.
+        - 새 후보 집합 vs 이전 구독 집합을 diff 해 unsubscribe/subscribe.
+        - subscribe evaluator wrapper 는 evaluate_single 결과를 shadow journal 에 기록하고
+          항상 None 을 반환 (실 주문 미발생 보장).
+        """
+        if not cfg.event_driven_shadow:
+            return
+        if self._event_router is None or self._event_shadow_journal is None:
+            return
+
+        strategy = cfg.strategy
+        name = strategy.name
+        try:
+            new_codes = set(strategy.current_candidate_codes() or [])
+        except Exception as e:
+            self._logger.warning(
+                f"[Scheduler] {name} current_candidate_codes() 호출 오류: {e}"
+            )
+            return
+
+        old_codes = self._event_shadow_subscriptions.get(name, set())
+        to_remove = old_codes - new_codes
+        to_add = new_codes - old_codes
+
+        for code in to_remove:
+            try:
+                self._event_router.unsubscribe(code, name)
+            except Exception as e:
+                self._logger.warning(
+                    f"[Scheduler] {name} router.unsubscribe({code}) 실패: {e}"
+                )
+
+        if to_add:
+            evaluator = self._build_shadow_evaluator(strategy)
+            for code in to_add:
+                try:
+                    self._event_router.subscribe(
+                        code, strategy_name=name, evaluator=evaluator
+                    )
+                except Exception as e:
+                    self._logger.warning(
+                        f"[Scheduler] {name} router.subscribe({code}) 실패: {e}"
+                    )
+
+        self._event_shadow_subscriptions[name] = new_codes
+
+    def _build_shadow_evaluator(self, strategy):
+        """evaluate_single → shadow journal 기록 → None 반환을 수행하는 wrapper.
+
+        매번 새 wrapper 를 만드는 게 정상이다 (strategy reference 가 closure 에 포함).
+        """
+        journal = self._event_shadow_journal
+        logger = self._logger
+
+        async def _evaluator(code: str, snapshot: dict):
+            try:
+                signal = await strategy.evaluate_single(code, snapshot)
+            except Exception as e:
+                logger.warning(
+                    f"[EventShadow] evaluate_single 예외 strategy={strategy.name} code={code} err={e}"
+                )
+                return None
+            if signal is None:
+                return None
+            try:
+                payload = signal.model_dump() if hasattr(signal, "model_dump") else dict(signal.__dict__)
+            except Exception:
+                payload = {"action": getattr(signal, "action", ""), "code": getattr(signal, "code", code)}
+            try:
+                journal.record(
+                    strategy_name=strategy.name,
+                    code=code,
+                    signal=payload,
+                    snapshot=snapshot,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[EventShadow] journal.record 실패 strategy={strategy.name} code={code} err={e}"
+                )
+            return None  # shadow 는 router 결과로 전파되지 않음 (실 주문 차단)
+
+        return _evaluator
 
     async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):
         """전략 중지 시 보유 종목 강제 청산 (force_exit_on_close=True)."""

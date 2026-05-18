@@ -149,6 +149,9 @@ class WebAppContext:
         self.price_subscription_service: PriceSubscriptionService = None
         self.price_stream_service: PriceStreamService = None
         self.streaming_stock_repo: StreamingStockRepo = None
+        # P2 2-4: event-driven shadow 인프라 (default: 비활성, event_driven_shadow=False)
+        self.strategy_event_router = None
+        self.event_shadow_journal_service = None
         self._last_missing_reason_log_ts: dict[tuple[str, str], float] = {}
         self._last_rest_price_refresh_ts: dict[str, float] = {}
         self._pending_rest_price_refresh_tasks: dict[str, asyncio.Task] = {}
