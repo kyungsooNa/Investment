@@ -57,6 +57,51 @@ class StockQueryService:
             return
         self._price_lookup_stats[key] = self._price_lookup_stats.get(key, 0) + 1
 
+    async def sync_price_subscriptions(
+        self,
+        codes: List[str],
+        category_key: str,
+        priority=None,
+    ) -> bool:
+        """전략 후보군을 실시간 현재가 구독 대상으로 동기화한다.
+
+        구독 서비스가 없거나 실패해도 전략 스캔 자체는 계속 진행한다.
+        """
+        sub_svc = self.price_subscription_service
+        if sub_svc is None:
+            return False
+
+        unique_codes: List[str] = []
+        seen = set()
+        for code in codes or []:
+            code_str = str(code or "").strip()
+            if not code_str or code_str in seen:
+                continue
+            seen.add(code_str)
+            unique_codes.append(code_str)
+        if not unique_codes:
+            return False
+
+        if priority is None:
+            from services.price_subscription_service import SubscriptionPriority
+            priority = SubscriptionPriority.MEDIUM
+
+        sync_subscriptions = getattr(sub_svc, "sync_subscriptions", None)
+        if not callable(sync_subscriptions):
+            return False
+
+        try:
+            await sync_subscriptions(unique_codes, category_key, priority)
+            return True
+        except Exception as e:
+            self.logger.warning({
+                "event": "price_subscription_sync_failed",
+                "category_key": category_key,
+                "count": len(unique_codes),
+                "error": str(e),
+            })
+            return False
+
     def _get_sign_from_code(self, sign_code):
         """API 응답의 부호 코드(1,2,3,4,5)를 실제 부호 문자열로 변환합니다."""
         if sign_code == '1' or sign_code == '2':  # 1:상한, 2:상승

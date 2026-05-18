@@ -326,6 +326,37 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             "005930", exchange=Exchange.KRX, count_stats=True, caller="unknown", force_fresh=False
         )
 
+    async def test_sync_price_subscriptions_no_service_returns_false(self):
+        """구독 서비스가 없으면 전략 선구독 요청은 조용히 no-op."""
+        self.stockQueryService.price_subscription_service = None
+
+        result = await self.stockQueryService.sync_price_subscriptions(
+            ["005930"],
+            category_key="strategy_test",
+        )
+
+        self.assertFalse(result)
+
+    async def test_sync_price_subscriptions_delegates_unique_codes(self):
+        """전략 선구독 요청은 중복/빈 코드를 정리해 구독 정책에 위임."""
+        from services.price_subscription_service import SubscriptionPriority
+
+        sub_svc = MagicMock()
+        sub_svc.sync_subscriptions = AsyncMock()
+        self.stockQueryService.price_subscription_service = sub_svc
+
+        result = await self.stockQueryService.sync_price_subscriptions(
+            ["005930", "", "005930", "000660"],
+            category_key="strategy_test",
+        )
+
+        self.assertTrue(result)
+        sub_svc.sync_subscriptions.assert_awaited_once_with(
+            ["005930", "000660"],
+            "strategy_test",
+            SubscriptionPriority.MEDIUM,
+        )
+
     async def test_get_current_price_rest_backfills_snapshot(self):
         """REST fallback 성공 시 cache_price_snapshot() 호출로 캐시 backfill."""
         snap = self._make_fresh_snap(age_sec=10.0)  # stale → REST fallback

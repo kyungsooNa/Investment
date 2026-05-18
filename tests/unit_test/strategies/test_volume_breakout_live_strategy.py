@@ -13,6 +13,7 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
         sqs = MagicMock(spec=StockQueryService)
         sqs.handle_get_current_stock_price = AsyncMock(spec=StockQueryService.handle_get_current_stock_price)
         sqs.get_top_trading_value_stocks = AsyncMock(spec=StockQueryService.get_top_trading_value_stocks)
+        sqs.sync_price_subscriptions = AsyncMock()
         tm = MagicMock()
         logger = MagicMock()
 
@@ -68,6 +69,31 @@ class TestVolumeBreakoutLiveStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(signals[0].code, "005930")
         self.assertEqual(signals[0].action, "BUY")
         self.assertIn("+12.0%", signals[0].reason)
+
+    async def test_scan_prefetches_candidate_price_subscriptions(self):
+        """거래대금 후보를 받은 직후 실시간 현재가 구독 대상으로 동기화."""
+        strategy, sqs, _ = self._make_strategy(trigger_pct=10.0)
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="OK",
+            data=[
+                {"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "acml_vol": "5000000"},
+                {"mksc_shrn_iscd": "", "hts_kor_isnm": "코드없음", "acml_vol": "1000"},
+                {"mksc_shrn_iscd": "000660", "hts_kor_isnm": "SK하이닉스", "acml_vol": "3000000"},
+            ],
+        )
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="OK",
+            data={"price": "9000", "open": "10000"},
+        )
+
+        await strategy.scan()
+
+        sqs.sync_price_subscriptions.assert_awaited_once_with(
+            ["005930", "000660"],
+            category_key="strategy_volume_breakout_live",
+        )
 
     async def test_scan_returns_empty_on_api_failure(self):
         """거래대금 API 실패 시 빈 리스트 반환 테스트."""

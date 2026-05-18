@@ -86,6 +86,14 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
             "event": "scan_candidates_fetched",
             "count": len(candidates),
         })
+        await self._sqs.sync_price_subscriptions(
+            [
+                stock.get("mksc_shrn_iscd") or stock.get("stck_shrn_iscd") or ""
+                for stock in candidates
+                if stock.get("mksc_shrn_iscd") or stock.get("stck_shrn_iscd")
+            ],
+            category_key="strategy_volume_breakout_live",
+        )
 
         for stock in candidates:
             code = stock.get("mksc_shrn_iscd") or stock.get("stck_shrn_iscd") or ""

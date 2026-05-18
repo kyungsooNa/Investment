@@ -141,6 +141,10 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
             (code, item) for code, item in self._watchlist.items()
             if code not in self._position_state
         ]
+        await self._sqs.sync_price_subscriptions(
+            [code for code, _ in candidates],
+            category_key="strategy_traditional_volume_breakout",
+        )
         for i in range(0, len(candidates), 10):
             chunk = candidates[i:i + 10]
             results = await asyncio.gather(
