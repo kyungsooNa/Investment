@@ -648,8 +648,12 @@ async function updateOperationsStatus() {
         const plRest = pl.rest_fallback   ?? 0;
         const plNoTick = pl.no_tick_fallback ?? 0;
         const plStale  = pl.stale_fallback   ?? 0;
-        const plTotal = plHit + plRest;
-        const plRate  = plTotal > 0 ? ((plHit / plTotal) * 100).toFixed(1) : null;
+        const plForceFresh = pl.force_fresh_bypass ?? 0;
+        const plFullOutput = pl.full_output_required ?? 0;
+        const plStreamUnavailable = pl.stream_unavailable_fallback ?? 0;
+        const plEligibleTotal = plHit + plNoTick + plStale;
+        const plMeasuredTotal = plEligibleTotal + plForceFresh + plFullOutput + plStreamUnavailable;
+        const plRate  = plEligibleTotal > 0 ? ((plHit / plEligibleTotal) * 100).toFixed(1) : null;
         const plRateTone = plRate === null ? 'normal' : (parseFloat(plRate) >= 70 ? 'normal' : parseFloat(plRate) >= 30 ? 'warn' : 'bad');
         el.innerHTML = [
             renderOpsMetric('활성 전략', data.active_strategy_count ?? 0),
@@ -663,9 +667,10 @@ async function updateOperationsStatus() {
             renderOpsMetric('WebSocket', ws.receive_alive ? 'alive' : 'down', ws.receive_alive ? 'normal' : 'warn'),
             renderOpsMetric('알림 큐', data.notification_queue_depth ?? 0),
             renderOpsMetric('Kill Switch', ks && ks.is_tripped ? 'TRIPPED' : 'normal', ks && ks.is_tripped ? 'bad' : 'normal'),
-            plTotal > 0 ? renderOpsMetric('현가 Snap율', `${plRate}%`, plRateTone) : '',
-            plTotal > 0 ? renderOpsMetric('Snap Hit', plHit.toLocaleString()) : '',
-            plTotal > 0 ? renderOpsMetric('REST호출', `${plRest.toLocaleString()} (NoTick ${plNoTick} / Stale ${plStale})`, plRest > plHit && plTotal > 20 ? 'warn' : 'normal') : '',
+            plEligibleTotal > 0 ? renderOpsMetric('현가 Snap율', `${plRate}%`, plRateTone) : '',
+            plMeasuredTotal > 0 ? renderOpsMetric('Snap Hit', plHit.toLocaleString()) : '',
+            plMeasuredTotal > 0 ? renderOpsMetric('Fallback', `${plRest.toLocaleString()} (NoTick ${plNoTick} / Stale ${plStale})`, (plNoTick + plStale) > plHit && plEligibleTotal > 20 ? 'warn' : 'normal') : '',
+            plMeasuredTotal > 0 ? renderOpsMetric('Snap 우회', `Fresh ${plForceFresh} / 상세 ${plFullOutput} / 연결 ${plStreamUnavailable}`) : '',
         ].join('');
     } catch (e) {
         console.error('운영 요약 조회 오류:', e);

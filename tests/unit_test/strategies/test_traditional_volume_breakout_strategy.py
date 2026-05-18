@@ -27,6 +27,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         sqs.handle_get_current_stock_price = AsyncMock(spec=StockQueryService.handle_get_current_stock_price)
         sqs.get_top_trading_value_stocks = AsyncMock(spec=StockQueryService.get_top_trading_value_stocks)
         sqs.get_recent_daily_ohlcv = AsyncMock(spec=StockQueryService.get_recent_daily_ohlcv)
+        sqs.sync_price_subscriptions = AsyncMock()
 
         mapper = MagicMock(spec=StockCodeRepository)
         mapper.is_kosdaq.return_value = True
@@ -889,7 +890,7 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         }
         strategy._watchlist_date = "20260225"
 
-        async def price_side_effect(code, caller=None):
+        async def price_side_effect(code, caller=None, **kwargs):
             if code == "A":
                 raise Exception("네트워크 오류")
             # B: 돌파 성공 (price 12000 > high_20d 10500, vol 충분)
@@ -907,6 +908,29 @@ class TestTraditionalVolumeBreakout(unittest.IsolatedAsyncioTestCase):
         # B 시그널 생성
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0].code, "B")
+
+    async def test_scan_prefetches_watchlist_price_subscriptions(self):
+        """돌파 조건 조회 전에 워치리스트 종목을 실시간 현재가 구독 대상으로 동기화."""
+        strategy, sqs, _, _, _ = self._make_strategy()
+        strategy._watchlist = {
+            "A": WatchlistItem("A", "StockA", high_20d=10500, ma_20d=9000,
+                               avg_vol_20d=1000000, avg_trading_value_5d=50_000_000_000),
+            "B": WatchlistItem("B", "StockB", high_20d=10500, ma_20d=9000,
+                               avg_vol_20d=1000000, avg_trading_value_5d=50_000_000_000),
+        }
+        strategy._watchlist_date = "20260225"
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="OK",
+            data={"price": "9000", "acml_vol": "1000"},
+        )
+
+        await strategy.scan()
+
+        sqs.sync_price_subscriptions.assert_awaited_once_with(
+            ["A", "B"],
+            category_key="strategy_traditional_volume_breakout",
+        )
 
 
 if __name__ == "__main__":

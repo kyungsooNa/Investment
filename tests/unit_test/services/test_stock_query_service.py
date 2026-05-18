@@ -241,6 +241,49 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.stockQueryService._price_lookup_stats["no_tick_fallback"], 1)
 
+    async def test_get_current_price_count_stats_false_does_not_affect_lookup_stats(self):
+        """배치/백그라운드 조회(count_stats=False)는 운영 Snap율 통계에서 제외."""
+        from common.types import Exchange
+        snap = self._make_fresh_snap(age_sec=10.0)
+        self._setup_sqs_with_pss(snap=snap, snapshot_max_age_sec=5.0)
+        expected = ResCommonResponse(rt_cd="0", msg1="정상", data={"output": self._create_dummy_stock_info()})
+        self.mock_market_data_service.get_current_price.return_value = expected
+        before = dict(self.stockQueryService._price_lookup_stats)
+
+        await self.stockQueryService.get_current_price("005930", count_stats=False)
+
+        self.mock_market_data_service.get_current_price.assert_awaited_once_with(
+            "005930", exchange=Exchange.KRX, count_stats=False, caller="unknown", force_fresh=True
+        )
+        self.assertEqual(self.stockQueryService._price_lookup_stats, before)
+
+    async def test_get_current_price_full_output_required_gets_separate_counter(self):
+        """신선한 snapshot이 있어도 상세 필드 필요 시 full_output_required로 별도 집계."""
+        snap = self._make_fresh_snap()
+        self._setup_sqs_with_pss(snap=snap)
+        expected = ResCommonResponse(rt_cd="0", msg1="정상", data={"output": self._create_dummy_stock_info()})
+        self.mock_market_data_service.get_current_price.return_value = expected
+
+        await self.stockQueryService.get_current_price("005930", allow_snapshot=False)
+
+        stats = self.stockQueryService._price_lookup_stats
+        self.assertEqual(stats["snapshot_hit"], 0)
+        self.assertEqual(stats["stale_fallback"], 0)
+        self.assertEqual(stats["no_tick_fallback"], 0)
+        self.assertEqual(stats["full_output_required"], 1)
+        self.assertEqual(stats["rest_fallback"], 1)
+
+    async def test_get_current_price_force_fresh_gets_separate_counter(self):
+        """강제 최신 조회는 snapshot 실패가 아니라 의도적 우회로 집계."""
+        expected = ResCommonResponse(rt_cd="0", msg1="정상", data={"output": self._create_dummy_stock_info()})
+        self.mock_market_data_service.get_current_price.return_value = expected
+
+        await self.stockQueryService.get_current_price("005930", force_fresh=True)
+
+        stats = self.stockQueryService._price_lookup_stats
+        self.assertEqual(stats["force_fresh_bypass"], 1)
+        self.assertEqual(stats["rest_fallback"], 1)
+
     async def test_get_current_price_unhealthy_streaming_drops_price_subscription(self):
         """stale/no-tick streaming은 REST 조회 후 가격 구독 목록에서 제거."""
         snap = self._make_fresh_snap(age_sec=10.0)
@@ -281,6 +324,37 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
         self.mock_market_data_service.get_current_price.assert_awaited_once_with(
             "005930", exchange=Exchange.KRX, count_stats=True, caller="unknown", force_fresh=False
+        )
+
+    async def test_sync_price_subscriptions_no_service_returns_false(self):
+        """구독 서비스가 없으면 전략 선구독 요청은 조용히 no-op."""
+        self.stockQueryService.price_subscription_service = None
+
+        result = await self.stockQueryService.sync_price_subscriptions(
+            ["005930"],
+            category_key="strategy_test",
+        )
+
+        self.assertFalse(result)
+
+    async def test_sync_price_subscriptions_delegates_unique_codes(self):
+        """전략 선구독 요청은 중복/빈 코드를 정리해 구독 정책에 위임."""
+        from services.price_subscription_service import SubscriptionPriority
+
+        sub_svc = MagicMock()
+        sub_svc.sync_subscriptions = AsyncMock()
+        self.stockQueryService.price_subscription_service = sub_svc
+
+        result = await self.stockQueryService.sync_price_subscriptions(
+            ["005930", "", "005930", "000660"],
+            category_key="strategy_test",
+        )
+
+        self.assertTrue(result)
+        sub_svc.sync_subscriptions.assert_awaited_once_with(
+            ["005930", "000660"],
+            "strategy_test",
+            SubscriptionPriority.MEDIUM,
         )
 
     async def test_get_current_price_rest_backfills_snapshot(self):
@@ -371,6 +445,26 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             low="79000",
             open_price="79500",
         )
+
+    async def test_handle_get_current_stock_price_allow_snapshot_uses_basic_fields(self):
+        """기본 가격 필드만 필요한 호출은 신선한 snapshot으로 view를 만들 수 있다."""
+        snap = self._make_fresh_snap(price="75000", acml_vol=500000, acml_tr_pbmn=3000000000)
+        snap.update({"open": 73000.0, "high": 76000.0, "low": 72000.0})
+        self._setup_sqs_with_pss(snap=snap, snapshot_max_age_sec=5.0)
+        self.mock_market_data_service.get_name_by_code.return_value = "삼성전자"
+
+        result = await self.stockQueryService.handle_get_current_stock_price(
+            "005930",
+            allow_snapshot=True,
+        )
+
+        self.mock_market_data_service.get_current_price.assert_not_awaited()
+        self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
+        self.assertEqual(result.data["price"], "75000")
+        self.assertEqual(result.data["open"], "73000")
+        self.assertEqual(result.data["high"], "76000")
+        self.assertEqual(result.data["low"], "72000")
+        self.assertEqual(self.stockQueryService._price_lookup_stats["snapshot_hit"], 1)
 
     async def test_handle_get_current_stock_price_stale_snapshot_refreshes_reference(self):
         """상세 현재가 조회 중 stale snapshot이 있으면 REST fresh fallback으로 주문 참조 가격을 갱신한다."""
