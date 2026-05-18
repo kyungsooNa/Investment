@@ -24,6 +24,7 @@ class SellResult:
     return_rate: Optional[float]   # 기존 log_sell_by_strategy 반환값과 동일 의미 (%)
     net_pnl_won: Optional[int]     # 수수료/세금 반영 순수익 KRW. 계산 불가 시 None
     pnl_filled_qty: int            # PnL 계산에 사용한 체결 수량
+    is_intraday_trade: Optional[bool] = None  # 매수일과 매도일이 같으면 True
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,14 @@ COLUMNS = ["strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sel
 # 강제종결 reason 마커 — reconcile 시 로컬 HOLD 인데 브로커 잔고 없음 판정 시 sell_price=0 으로 처리되며,
 # 이를 통계에서 제외해 승률/평균수익률 왜곡을 방지한다. (services/strategy_log_report_service.py 와 동일 값)
 _FORCE_CLOSE_REASON = "reconciled_force_close"
+
+
+def _date_key(value) -> str:
+    """원장 날짜 문자열/타임스탬프에서 YYYY-MM-DD 키를 추출한다."""
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return ""
+    return parsed.strftime("%Y-%m-%d")
 
 LIVE_STRATEGY_STATE_FILES = {
     "오닐PP/BGU": "pp_position_state.json",
@@ -421,13 +430,13 @@ class VirtualTradeRepository:
         """매도 기록 후 SellResult 반환. KS hook 연결용."""
         with self._lock:
             row = self._db.execute(
-                "SELECT id, buy_price FROM trades WHERE code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
+                "SELECT id, buy_price, buy_date FROM trades WHERE code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
                 (code,)
             ).fetchone()
             if row is None:
                 logger.warning(f"[가상매매] {code} 매도 실패: 보유 내역 없음")
                 return SellResult(return_rate=None, net_pnl_won=None, pnl_filled_qty=0)
-            trade_id, buy_price = row
+            trade_id, buy_price, buy_date = row
             return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
             sell_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
             with self._db:
@@ -439,7 +448,13 @@ class VirtualTradeRepository:
             net_pnl_won: Optional[int] = None
             if buy_price and current_price and reason != _FORCE_CLOSE_REASON:
                 net_pnl_won = TransactionCostUtils.calculate_net_pnl_won(buy_price, current_price, qty)
-            return SellResult(return_rate=round(return_rate, 2), net_pnl_won=net_pnl_won, pnl_filled_qty=qty)
+            is_intraday_trade = _date_key(buy_date) == _date_key(sell_date)
+            return SellResult(
+                return_rate=round(return_rate, 2),
+                net_pnl_won=net_pnl_won,
+                pnl_filled_qty=qty,
+                is_intraday_trade=is_intraday_trade,
+            )
 
     async def log_sell_async_with_result(self, code: str, current_price, qty: int = 1, reason: str = "") -> SellResult:
         """log_sell_with_result의 비동기 래퍼."""
@@ -474,13 +489,13 @@ class VirtualTradeRepository:
         """전략+종목 매칭 매도 후 SellResult 반환. KS hook 연결용."""
         with self._lock:
             row = self._db.execute(
-                "SELECT id, buy_price FROM trades WHERE strategy=? AND code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
+                "SELECT id, buy_price, buy_date FROM trades WHERE strategy=? AND code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
                 (strategy_name, code)
             ).fetchone()
             if row is None:
                 logger.warning(f"[가상매매] {strategy_name}/{code} 매도 실패: 보유 내역 없음")
                 return SellResult(return_rate=None, net_pnl_won=None, pnl_filled_qty=0)
-            trade_id, buy_price = row
+            trade_id, buy_price, buy_date = row
             return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
             sell_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
             with self._db:
@@ -492,7 +507,13 @@ class VirtualTradeRepository:
             net_pnl_won: Optional[int] = None
             if buy_price and current_price and reason != _FORCE_CLOSE_REASON:
                 net_pnl_won = TransactionCostUtils.calculate_net_pnl_won(buy_price, current_price, qty)
-            return SellResult(return_rate=round(return_rate, 2), net_pnl_won=net_pnl_won, pnl_filled_qty=qty)
+            is_intraday_trade = _date_key(buy_date) == _date_key(sell_date)
+            return SellResult(
+                return_rate=round(return_rate, 2),
+                net_pnl_won=net_pnl_won,
+                pnl_filled_qty=qty,
+                is_intraday_trade=is_intraday_trade,
+            )
 
     async def log_sell_by_strategy_async_with_result(self, strategy_name: str, code: str, current_price, qty: int = 1, reason: str = "") -> SellResult:
         """log_sell_by_strategy_with_result의 비동기 래퍼."""

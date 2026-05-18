@@ -106,15 +106,17 @@ class KillSwitchService:
         code: str,
         strategy: str,
         account_balance_won: Optional[int] = None,
+        count_for_consecutive_loss: bool = True,
     ) -> None:
         """매도 체결 후 손익 기록. 임계 초과 시 트립."""
         if not self._cfg.enabled:
             return
         async with self._lock:
             if profit_won < 0:
-                self._consecutive_losses += 1
+                if count_for_consecutive_loss:
+                    self._consecutive_losses += 1
                 self._daily_realized_loss_won += profit_won  # 음수 누적
-            else:
+            elif count_for_consecutive_loss:
                 self._consecutive_losses = 0
 
             self._save_state()

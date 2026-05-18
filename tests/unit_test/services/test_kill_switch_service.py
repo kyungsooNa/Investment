@@ -114,6 +114,23 @@ async def test_profit_resets_consecutive_counter(cfg, mock_notif, logger):
     assert ks._is_tripped is False
 
 
+async def test_overnight_loss_does_not_increment_consecutive_counter_but_counts_daily_loss(cfg, mock_notif, logger):
+    """전일 보유분 청산 손실은 일손실에는 반영하되 전역 연속손실 카운터에서는 제외한다."""
+    ks = _make_ks(cfg, mock_notif, logger)
+
+    for _ in range(cfg.max_consecutive_losses):
+        await ks.record_trade_result(
+            -10_000,
+            "005930",
+            "momentum",
+            count_for_consecutive_loss=False,
+        )
+
+    assert ks._consecutive_losses == 0
+    assert ks._daily_realized_loss_won == -30_000
+    assert ks._is_tripped is False
+
+
 # ── 일손실 한도 트립 ──────────────────────────────────────────────────
 
 

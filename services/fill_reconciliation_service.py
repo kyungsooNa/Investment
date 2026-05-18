@@ -150,6 +150,7 @@ class FillReconciliationService:
                 code=context.stock_code,
                 strategy=strategy_name or "",
                 account_balance_won=account_balance_won,
+                count_for_consecutive_loss=(getattr(sell_result, "is_intraday_trade", None) is not False),
             )
             if is_strategy_source and strategy_name:
                 await self._kill_switch.record_strategy_trade_result(
