@@ -175,6 +175,39 @@ def test_service_container_web_mode_keeps_realtime_and_skips_trading_batch_tasks
     assert ctx.order_execution_service is patched_service_container_deps["OrderExecutionService"].return_value
 
 
+def test_service_container_trading_mode_keeps_realtime_intraday_and_skips_web_batch_tasks(patched_service_container_deps):
+    """TRADING 단독은 realtime chain 과 장중 task만 만들고 웹 알림/장마감 task는 건너뛴다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.runtime_mode = RuntimeMode.TRADING
+    ServiceContainer(ctx).run()
+
+    assert ctx.streaming_service is patched_service_container_deps["StreamingService"].return_value
+    assert ctx.price_stream_service is patched_service_container_deps["PriceStreamService"].return_value
+    assert ctx.price_subscription_service is patched_service_container_deps["PriceSubscriptionService"].return_value
+    assert ctx.websocket_watchdog_task is patched_service_container_deps["WebSocketWatchdogTask"].return_value
+    assert ctx.pre_market_health_check_task is patched_service_container_deps["PreMarketHealthCheckTask"].return_value
+    assert ctx.opening_position_reconcile_task is patched_service_container_deps["OpeningPositionReconcileTask"].return_value
+    assert ctx.cache_warmup_task is patched_service_container_deps["CacheWarmupTask"].return_value
+
+    patched_service_container_deps["NotificationQueueTask"].assert_not_called()
+    patched_service_container_deps["MinerviniUpdateTask"].assert_not_called()
+    patched_service_container_deps["DailyPriceCollectorTask"].assert_not_called()
+    patched_service_container_deps["OhlcvUpdateTask"].assert_not_called()
+    patched_service_container_deps["AfterMarketReconcileTask"].assert_not_called()
+    patched_service_container_deps["StrategyLogReportTask"].assert_not_called()
+
+    assert ctx.notification_queue_task is None
+    assert ctx.minervini_update_task is None
+    assert ctx.daily_price_collector_task is None
+    assert ctx.ohlcv_update_task is None
+    assert ctx.after_market_reconcile_task is None
+    assert ctx.strategy_log_report_task is None
+    assert ctx.order_execution_service is patched_service_container_deps["OrderExecutionService"].return_value
+    assert ctx.oneil_universe_service is patched_service_container_deps["OneilUniverseService"].return_value
+
+
 def test_service_container_creates_universe_and_tasks(patched_service_container_deps):
     """OneilUniverseService, RankingTask, StrategyLogReportTask 가 생성된다."""
     from view.web.bootstrap.service_container import ServiceContainer
