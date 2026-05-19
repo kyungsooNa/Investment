@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-19 (시스템트레이더 리뷰 반영 — 수익성 통과 기준, 과최적화 방지, 운영 canary/runbook 보강)
+최종 업데이트: 2026-05-19 (실전 모드 RiskGate fail-close 전환 완료)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -33,10 +33,11 @@
   - 개선 방향: `market_clock.async_sleep()`이 없으면 `asyncio.sleep(delay)`로 fallback.
   - 테스트: `market_clock=None`, `market_clock` 주입, retryable/non-retryable error를 각각 검증.
   - 완료 내용: `services/broker_order_submitter.py`에 `import asyncio` 추가 및 재시도 backoff 분기에 `market_clock is None` → `await asyncio.sleep(delay)` fallback 적용. 기존 `market_clock` 주입 경로/지수 backoff 동작은 불변. 단위 테스트 3건 추가 (`test_submit_retries_with_asyncio_sleep_when_market_clock_is_none`, `test_submit_uses_exponential_backoff_via_asyncio_sleep_when_market_clock_is_none`, `test_submit_business_reject_does_not_sleep_when_market_clock_is_none`). 단위 4706건 + 통합 233건 통과.
-- [ ] 실전 모드 RiskGate를 fail-close로 전환한다.
+- [x] 실전 모드 RiskGate를 fail-close로 전환한다. (2026-05-19 완료)
   - 검토 결과: 타당. `account_snapshot_cache is None`, `total_equity <= 0`, 전략 risk provider 예외에서 일부 노출/전략 검증이 skip 또는 fail-open 된다. 기존 테스트도 `test_strategy_exposure_limit_fails_open_on_zero_equity_and_hold_error`로 현재 동작을 고정하고 있다.
   - 개선 방향: paper/backtest는 fail-open 허용, real은 신규 BUY 차단. 예: `risk_gate.fail_open_allowed.paper=true`, `risk_gate.fail_open_allowed.real=false`.
   - 테스트: real mode에서 snapshot/provider 오류, total_equity<=0, strategy holds 조회 실패가 BUY를 차단하고, paper mode 기존 동작은 명시적으로 유지되는지 검증.
+  - 완료 내용: `config/config_loader.py`에 `RiskGateFailOpenConfig(paper=True, real=False)` 추가, `RiskGateConfig.fail_open_allowed` 필드로 연결. `RiskGateService._should_fail_close()` 헬퍼 도입 후 6개 fail-open 지점을 real 모드 BUY 시 차단으로 전환: `_check_buy_exposure`(snapshot cache None, equity<=0), `_check_duplicate_strategy_position`(provider 예외), `_check_strategy_loss_limit`(history provider 예외), `_check_strategy_capital_cap`(snapshot None / equity<=0 / holds 예외), `_check_strategy_exposure_limit`(snapshot None / equity<=0 / holds 예외). SELL 경로는 `validate_order`의 `if side == BUY` 가드로 변경 없음 → 강제 청산 보존. env=None 및 paper 모드는 기본 `fail_open_allowed.paper=True`로 기존 fail-open 동작 유지. opt-out 위해 `fail_open_allowed.real=True` 설정 가능. 신규 테스트 9건 추가 (snapshot 부재, zero equity BUY, SELL 비차단, paper/env=None 회귀, strategy exposure/capital/loss/duplicate provider 예외, config opt-out). 단위 4716건 + 통합 233건 통과.
 - [ ] `get_current_price`를 일반 300초 캐시 대상에서 제거하거나 메서드별 짧은 TTL로 분리한다.
   - 검토 결과: 타당. `config/cache_config.yaml`의 `enabled_methods`에 `get_current_price`가 남아 있고 기본 TTL은 300초다. `StockQueryService`/`MarketDataService` 내부 단기 snapshot·repository 캐시는 별도로 3~5초 범위로 관리되므로 전역 캐시 대상과 충돌한다.
   - 개선 방향: `enabled_methods`에서 `get_current_price` 제거. 캐시가 꼭 필요하면 `method_ttl.get_current_price <= 1~2초`와 주문/손절/리스크 경로 `force_fresh=True`를 테스트로 고정.

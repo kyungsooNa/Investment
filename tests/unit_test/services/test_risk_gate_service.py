@@ -623,3 +623,182 @@ async def test_market_buy_uses_reference_price_for_daily_cap_check():
 
     assert result is not None
     assert result.data["rule"] == "max_daily_order_amount"
+
+
+# --- 실전 모드 fail-close 정책 ---
+
+
+@pytest.mark.asyncio
+async def test_real_mode_fail_closes_when_snapshot_cache_missing():
+    """실전 모드 BUY: account snapshot cache 미주입 시 차단."""
+    svc = RiskGateService(
+        config=RiskGateConfig(),
+        kill_switch_service=None,
+        account_snapshot_cache=None,
+        strategy_risk_provider=None,
+        logger=MagicMock(),
+        env=_RealEnv(),
+    )
+
+    result = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0
+    )
+
+    assert result is not None
+    assert result.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
+    assert result.data["rule"] == "fail_close_no_snapshot_cache"
+
+
+@pytest.mark.asyncio
+async def test_real_mode_fail_closes_on_zero_equity_buy_exposure():
+    """실전 모드 BUY: total_equity<=0 시 노출 검증 차단."""
+    snapshot = AccountSnapshot(total_equity=0, available_cash=0, positions={})
+    svc, _, _ = _service(env=_RealEnv(), snapshot=snapshot)
+
+    result = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0
+    )
+
+    assert result is not None
+    assert result.data["rule"] == "fail_close_zero_equity"
+
+
+@pytest.mark.asyncio
+async def test_real_mode_sell_not_blocked_by_fail_close_on_zero_equity():
+    """실전 모드 SELL: total_equity<=0 이어도 차단되지 않는다 (강제 청산 보존)."""
+    snapshot = AccountSnapshot(total_equity=0, available_cash=0, positions={})
+    svc, _, _ = _service(env=_RealEnv(), snapshot=snapshot)
+
+    result = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.SELL, Exchange.KRX, 0
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_paper_mode_preserves_fail_open_on_zero_equity():
+    """paper 모드: total_equity<=0 시 기존 fail-open 동작 유지."""
+    snapshot = AccountSnapshot(total_equity=0, available_cash=0, positions={})
+    svc, _, _ = _service(env=_PaperEnv(), snapshot=snapshot)
+
+    result = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_env_none_preserves_fail_open_on_zero_equity():
+    """env=None: 기존 fail-open 동작 유지 (회귀 방지)."""
+    snapshot = AccountSnapshot(total_equity=0, available_cash=0, positions={})
+    svc, _, _ = _service(snapshot=snapshot)
+
+    result = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_real_mode_fail_closes_on_strategy_exposure_provider_error():
+    """실전 모드 BUY: strategy_risk_provider holds 조회 예외 시 차단."""
+    cfg = RiskGateConfig(
+        strategy_limits={
+            "모멘텀": RiskGateStrategyLimitConfig(max_exposure_pct=10.0),
+        },
+    )
+    provider = MagicMock()
+    provider.is_holding.return_value = False
+    provider.get_strategy_return_history.return_value = []
+    provider.get_holds_by_strategy.side_effect = RuntimeError("holds down")
+    svc, _, _ = _service(env=_RealEnv(), config=cfg, strategy_provider=provider)
+
+    result = await svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0, source="strategy:모멘텀"
+    )
+
+    assert result is not None
+    assert result.data["rule"] == "fail_close_strategy_exposure_provider_error"
+
+
+@pytest.mark.asyncio
+async def test_real_mode_fail_closes_on_strategy_capital_cap_provider_error():
+    """실전 모드 BUY: capital_allocation_pct 검증 시 holds 예외 → 차단."""
+    cfg = RiskGateConfig(
+        strategy_limits={
+            "모멘텀": RiskGateStrategyLimitConfig(capital_allocation_pct=20.0),
+        },
+    )
+    provider = MagicMock()
+    provider.is_holding.return_value = False
+    provider.get_strategy_return_history.return_value = []
+    provider.get_holds_by_strategy.side_effect = RuntimeError("holds down")
+    svc, _, _ = _service(env=_RealEnv(), config=cfg, strategy_provider=provider)
+
+    result = await svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0, source="strategy:모멘텀"
+    )
+
+    assert result is not None
+    assert result.data["rule"] == "fail_close_strategy_capital_cap_provider_error"
+
+
+@pytest.mark.asyncio
+async def test_real_mode_fail_closes_on_strategy_loss_limit_provider_error():
+    """실전 모드 BUY: max_loss_pct 검증 시 history 예외 → 차단."""
+    cfg = RiskGateConfig(
+        strategy_limits={
+            "모멘텀": RiskGateStrategyLimitConfig(max_loss_pct=5.0),
+        },
+    )
+    provider = MagicMock()
+    provider.is_holding.return_value = False
+    provider.get_strategy_return_history.side_effect = RuntimeError("history down")
+    provider.get_holds_by_strategy.return_value = []
+    svc, _, _ = _service(env=_RealEnv(), config=cfg, strategy_provider=provider)
+
+    result = await svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0, source="strategy:모멘텀"
+    )
+
+    assert result is not None
+    assert result.data["rule"] == "fail_close_strategy_loss_provider_error"
+
+
+@pytest.mark.asyncio
+async def test_real_mode_fail_closes_on_duplicate_strategy_provider_error():
+    """실전 모드 BUY: is_holding 예외 → 차단."""
+    cfg = RiskGateConfig()
+    provider = MagicMock()
+    provider.is_holding.side_effect = RuntimeError("dup down")
+    provider.get_strategy_return_history.return_value = []
+    provider.get_holds_by_strategy.return_value = []
+    svc, _, _ = _service(env=_RealEnv(), config=cfg, strategy_provider=provider)
+
+    result = await svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0, source="strategy:모멘텀"
+    )
+
+    assert result is not None
+    assert result.data["rule"] == "fail_close_duplicate_strategy_provider_error"
+
+
+@pytest.mark.asyncio
+async def test_real_mode_fail_close_can_be_opted_out_via_config():
+    """fail_open_allowed.real=True 로 설정하면 실전 모드도 기존 fail-open 유지."""
+    from config.config_loader import RiskGateFailOpenConfig
+
+    cfg = RiskGateConfig(
+        fail_open_allowed=RiskGateFailOpenConfig(paper=True, real=True),
+    )
+    snapshot = AccountSnapshot(total_equity=0, available_cash=0, positions={})
+    svc, _, _ = _service(env=_RealEnv(), config=cfg, snapshot=snapshot)
+
+    result = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0
+    )
+
+    assert result is None

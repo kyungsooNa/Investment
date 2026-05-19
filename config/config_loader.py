@@ -63,6 +63,14 @@ class RiskGateStrategyLimitConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class RiskGateFailOpenConfig(BaseModel):
+    """RiskGate fail-open 허용 정책. real=False 이면 실전 모드 BUY 는 fail-close 된다."""
+    paper: bool = True
+    real: bool = False
+
+    model_config = {"extra": "allow"}
+
+
 class RiskGateConfig(BaseModel):
     enabled: bool = True
     max_order_amount_won: int = 2_000_000
@@ -72,6 +80,7 @@ class RiskGateConfig(BaseModel):
     block_duplicate_strategy_position: bool = True
     default_strategy_limit: RiskGateStrategyLimitConfig = Field(default_factory=RiskGateStrategyLimitConfig)
     strategy_limits: Dict[str, RiskGateStrategyLimitConfig] = Field(default_factory=dict)
+    fail_open_allowed: RiskGateFailOpenConfig = Field(default_factory=RiskGateFailOpenConfig)
 
     model_config = {"extra": "allow"}
 

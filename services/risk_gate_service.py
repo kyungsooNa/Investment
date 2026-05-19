@@ -275,6 +275,17 @@ class RiskGateService:
             return False
         return not bool(getattr(env, "is_paper_trading", True))
 
+    def _should_fail_close(self) -> bool:
+        """현재 모드에서 fail-open 경로가 허용되는지 판단.
+
+        반환값 True 면 해당 fail-open 경로를 차단(fail-close)으로 전환해야 한다.
+        BUY 경로에서만 호출되도록 호출부에서 보장한다 (SELL/force-exit 보존).
+        """
+        fail_open_cfg = getattr(self._cfg, "fail_open_allowed", None)
+        if self._is_real_mode():
+            return not bool(getattr(fail_open_cfg, "real", False))
+        return not bool(getattr(fail_open_cfg, "paper", True))
+
     async def _resolve_market_buy_reference_price(
         self,
         stock_code: str,
@@ -341,11 +352,25 @@ class RiskGateService:
         exchange: Exchange,
     ) -> Optional[ResCommonResponse]:
         if self._account_snapshot_cache is None:
+            if self._should_fail_close():
+                return self._blocked(
+                    "fail_close_no_snapshot_cache",
+                    "실전 모드: account snapshot cache 부재로 노출 검증 불가",
+                    stock_code=stock_code,
+                    order_amount=order_amount,
+                )
             self._logger.warning("[RiskGate] account snapshot cache 없음: 노출 검증 skip")
             return None
 
         snapshot = await self._account_snapshot_cache.get(exchange)
         if snapshot.total_equity <= 0:
+            if self._should_fail_close():
+                return self._blocked(
+                    "fail_close_zero_equity",
+                    "실전 모드: total_equity<=0 으로 노출 검증 불가",
+                    stock_code=stock_code,
+                    total_equity=snapshot.total_equity,
+                )
             self._logger.warning(
                 f"[RiskGate] total_equity<=0: 노출 검증 fail-open. "
                 f"code={stock_code} equity={snapshot.total_equity}"
@@ -433,6 +458,14 @@ class RiskGateService:
                 f"[RiskGate][CHECK_ERROR] rule=duplicate_strategy_position "
                 f"strategy={strategy_name} code={stock_code} error={exc}"
             )
+            if self._should_fail_close():
+                return self._blocked(
+                    "fail_close_duplicate_strategy_provider_error",
+                    "실전 모드: 중복 보유 검증 provider 오류",
+                    strategy_name=strategy_name,
+                    stock_code=stock_code,
+                    error=str(exc),
+                )
             return None
 
         if not holding:
@@ -467,6 +500,13 @@ class RiskGateService:
                 f"[RiskGate][CHECK_ERROR] rule=strategy_loss_limit "
                 f"strategy={strategy_name} error={exc}"
             )
+            if self._should_fail_close():
+                return self._blocked(
+                    "fail_close_strategy_loss_provider_error",
+                    "실전 모드: 전략 손실 한도 검증 provider 오류",
+                    strategy_name=strategy_name,
+                    error=str(exc),
+                )
             return None
 
         if not history:
@@ -506,11 +546,26 @@ class RiskGateService:
         if cap_pct is None or self._strategy_risk_provider is None:
             return None
         if self._account_snapshot_cache is None:
+            if self._should_fail_close():
+                return self._blocked(
+                    "fail_close_strategy_capital_cap_no_snapshot_cache",
+                    "실전 모드: account snapshot cache 부재로 전략 자본 캡 검증 불가",
+                    strategy_name=strategy_name,
+                    stock_code=stock_code,
+                )
             self._logger.warning("[RiskGate] account snapshot cache 없음: 전략 자본 캡 검증 skip")
             return None
 
         snapshot = await self._account_snapshot_cache.get(exchange)
         if snapshot.total_equity <= 0:
+            if self._should_fail_close():
+                return self._blocked(
+                    "fail_close_strategy_capital_cap_zero_equity",
+                    "실전 모드: total_equity<=0 으로 전략 자본 캡 검증 불가",
+                    strategy_name=strategy_name,
+                    stock_code=stock_code,
+                    total_equity=snapshot.total_equity,
+                )
             return None
 
         try:
@@ -522,6 +577,14 @@ class RiskGateService:
                 f"[RiskGate][CHECK_ERROR] rule=capital_allocation_cap "
                 f"strategy={strategy_name} error={exc}"
             )
+            if self._should_fail_close():
+                return self._blocked(
+                    "fail_close_strategy_capital_cap_provider_error",
+                    "실전 모드: 전략 자본 캡 검증 provider 오류",
+                    strategy_name=strategy_name,
+                    stock_code=stock_code,
+                    error=str(exc),
+                )
             return None
 
         current_exposure = sum(self._position_value(hold) for hold in holds)
@@ -551,11 +614,26 @@ class RiskGateService:
         if limit.max_exposure_pct is None or self._strategy_risk_provider is None:
             return None
         if self._account_snapshot_cache is None:
+            if self._should_fail_close():
+                return self._blocked(
+                    "fail_close_strategy_exposure_no_snapshot_cache",
+                    "실전 모드: account snapshot cache 부재로 전략 노출 검증 불가",
+                    strategy_name=strategy_name,
+                    stock_code=stock_code,
+                )
             self._logger.warning("[RiskGate] account snapshot cache 없음: 전략 노출 검증 skip")
             return None
 
         snapshot = await self._account_snapshot_cache.get(exchange)
         if snapshot.total_equity <= 0:
+            if self._should_fail_close():
+                return self._blocked(
+                    "fail_close_strategy_exposure_zero_equity",
+                    "실전 모드: total_equity<=0 으로 전략 노출 검증 불가",
+                    strategy_name=strategy_name,
+                    stock_code=stock_code,
+                    total_equity=snapshot.total_equity,
+                )
             self._logger.warning(
                 f"[RiskGate] total_equity<=0: 전략 노출 검증 fail-open. "
                 f"strategy={strategy_name} code={stock_code} equity={snapshot.total_equity}"
@@ -571,6 +649,14 @@ class RiskGateService:
                 f"[RiskGate][CHECK_ERROR] rule=strategy_exposure_limit "
                 f"strategy={strategy_name} error={exc}"
             )
+            if self._should_fail_close():
+                return self._blocked(
+                    "fail_close_strategy_exposure_provider_error",
+                    "실전 모드: 전략 노출 검증 provider 오류",
+                    strategy_name=strategy_name,
+                    stock_code=stock_code,
+                    error=str(exc),
+                )
             return None
 
         current_strategy_exposure = sum(self._position_value(hold) for hold in holds)
