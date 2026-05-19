@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-19 (P3 3-2 완료 — RuntimeMode 기반 task/service 조립 경계, WEB/TRADING/BATCH/Admin 진입점, ServiceContainer mode contract 테스트 반영)
+최종 업데이트: 2026-05-19 (시스템트레이더 리뷰 반영 — 수익성 통과 기준, 과최적화 방지, 운영 canary/runbook 보강)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -18,12 +18,55 @@
 
 백테스트에서 이긴 전략이 실거래에서도 같은 방식으로 기록, 체결, 정산, 차단되는지 검증하는 영역입니다. 실전 투입 전 최우선입니다.
 
+### 0-0. 정적 리뷰 기반 주문 안전성 재점검
+
+2026-05-19 외부 정적 리뷰 내용을 실제 main 코드와 대조한 결과, 아래 항목은 타당하거나 부분 타당합니다. 코드 변경 시 TDD 순서로 실패 테스트를 먼저 추가합니다.
+
+- [ ] 시장가 매수(`price == 0`)가 RiskGate 주문금액/일일금액/노출도 검증을 우회하지 못하게 막는다.
+  - 검토 결과: 타당. `RiskGateService.validate_order()`가 `price > 0`일 때만 `order_amount = price * qty`를 계산하므로 `price == 0` 시장가 주문은 금액 한도, 일일 주문금액, 전략 리스크, 계좌 노출 검증을 통과할 수 있다.
+  - 개선 방향: 실전 모드 시장가 매수 금지 또는 `force_fresh=True` 기준가격/최우선매도호가 산정 후 RiskGate에 `reference_price * qty`로 검증.
+  - 테스트: 시장가 BUY가 기준가격 없이 차단되는지, 기준가격 산정 성공 시 한도 초과가 차단되는지, SELL/force_exit 예외 정책이 유지되는지 검증.
+- [ ] `BrokerOrderSubmitter.submit_with_retry()`가 `market_clock=None`이어도 정상 backoff 후 재시도하도록 수정한다.
+  - 검토 결과: 타당. 현재 재시도 루프는 돌지만 `market_clock`이 없으면 sleep 없이 즉시 다음 시도로 넘어간다.
+  - 개선 방향: `market_clock.async_sleep()`이 없으면 `asyncio.sleep(delay)`로 fallback.
+  - 테스트: `market_clock=None`, `market_clock` 주입, retryable/non-retryable error를 각각 검증.
+- [ ] 실전 모드 RiskGate를 fail-close로 전환한다.
+  - 검토 결과: 타당. `account_snapshot_cache is None`, `total_equity <= 0`, 전략 risk provider 예외에서 일부 노출/전략 검증이 skip 또는 fail-open 된다. 기존 테스트도 `test_strategy_exposure_limit_fails_open_on_zero_equity_and_hold_error`로 현재 동작을 고정하고 있다.
+  - 개선 방향: paper/backtest는 fail-open 허용, real은 신규 BUY 차단. 예: `risk_gate.fail_open_allowed.paper=true`, `risk_gate.fail_open_allowed.real=false`.
+  - 테스트: real mode에서 snapshot/provider 오류, total_equity<=0, strategy holds 조회 실패가 BUY를 차단하고, paper mode 기존 동작은 명시적으로 유지되는지 검증.
+- [ ] `get_current_price`를 일반 300초 캐시 대상에서 제거하거나 메서드별 짧은 TTL로 분리한다.
+  - 검토 결과: 타당. `config/cache_config.yaml`의 `enabled_methods`에 `get_current_price`가 남아 있고 기본 TTL은 300초다. `StockQueryService`/`MarketDataService` 내부 단기 snapshot·repository 캐시는 별도로 3~5초 범위로 관리되므로 전역 캐시 대상과 충돌한다.
+  - 개선 방향: `enabled_methods`에서 `get_current_price` 제거. 캐시가 꼭 필요하면 `method_ttl.get_current_price <= 1~2초`와 주문/손절/리스크 경로 `force_fresh=True`를 테스트로 고정.
+- [ ] 전략 state load/save를 명시적 await + atomic write + lock 구조로 정리한다.
+  - 검토 결과: 타당. `OneilPocketPivotStrategy`, `HighTightFlagStrategy`, `FirstPullbackStrategy`, `OneilSqueezeBreakoutStrategy`가 이벤트 루프 존재 시 `_load_state_async()` / `_save_state_async()`를 background task로 실행하고, 파일 저장은 직접 overwrite다.
+  - 개선 방향: scheduler/strategy factory 초기화 단계에서 `await strategy.load_state()`를 보장하고, 저장은 per-strategy lock + temp file + `os.replace()`로 원자화한다. 종료 시 pending save flush도 추가한다.
+  - 테스트: 생성 직후 scan 전에 state 로드 완료, 저장 task 경합 시 최신 상태 보존, 저장 중 장애 시 기존 파일 보존.
+
+주요 파일:
+
+- `services/risk_gate_service.py`
+- `services/broker_order_submitter.py`
+- `services/order_submission_coordinator.py`
+- `services/order_policy_service.py`
+- `config/cache_config.yaml`
+- `strategies/oneil_pocket_pivot_strategy.py`
+- `strategies/high_tight_flag_strategy.py`
+- `strategies/first_pullback_strategy.py`
+- `strategies/oneil_squeeze_breakout_strategy.py`
+- `tests/unit_test/services/test_risk_gate_service.py`
+- `tests/unit_test/services/test_broker_order_submitter.py`
+- `tests/unit_test/services/test_stock_query_service.py`
+- `tests/unit_test/strategies/`
+
 ### 0-1. 실전 KIS `inquire-daily-ccld` 응답 필드 검증
 
 - [blocked] 실제 체결 이력이 있는 실전 계좌 응답을 캡처한다. (현재 실전 계좌 체결 이력 부재)
 - [blocked] 민감정보를 제거한 fixture를 추가한다. (실전 응답 확보 후 진행)
 - [blocked] paper fixture와 real fixture의 필드 차이를 회귀 테스트에 반영한다. (실전 응답 확보 후 진행)
 - [blocked] 주문번호, 종목코드, 매수/매도 구분, 주문수량, 누적체결수량, 미체결수량, 평균체결가, 취소/거부 필드 매핑을 확정한다. (실전 응답 확보 후 진행)
+- [ ] 주문 접수 응답의 broker order number mapper를 실전/모의 fixture 기반으로 확장한다.
+  - 검토 결과: 부분 타당. 현재 `OrderStateMachine.extract_broker_order_no()`는 `ordno`, `order_no`, `odno`만 확인한다. `inquire-daily-ccld`/미체결 조회 복원 쪽은 `ODNO`/`주문번호`도 일부 처리하지만, 최초 주문 응답 mapper는 더 좁다.
+  - 개선 방향: raw broker response payload를 journal/diagnostic에 보존하고, 주문번호 추출 실패 시 reconcile alarm 또는 운영자 알림으로 승격한다.
 
 주요 파일:
 
@@ -99,6 +142,9 @@
 - [x] 주문 접수만으로 보유/체결을 확정하지 않는 기존 FSM 동작을 실전 응답 fixture로 재검증한다.
 - [x] 재시작 후 미체결 주문과 잔고 restore/reconcile 결과가 신규 주문 차단 또는 경고 상태로 이어지는지 end-to-end 검증을 보강한다.
 - [x] reconcile task 실패 자체가 주문 차단 또는 명시 경고 상태로 이어지는 정책을 운영 매트릭스로 확정한다.
+- [ ] `OrderStateMachine.safe_transition()` mismatch escalation을 정책화한다.
+  - 검토 결과: 부분 타당. `safe_transition()`은 invalid transition/key error를 warning + mismatch count 증가 + no-op으로 처리한다. `FillReconciliationService`에는 mismatch alarm과 2회 연속 mismatch 처리 일부가 있으나, safe transition 실패 자체의 주문별 escalation 정책은 명확하지 않다.
+  - 개선 방향: 같은 주문 1회 warning, 2회 reconcile 강제, 3회 신규 주문 차단/운영자 알림을 테스트로 고정한다.
 
 ---
 
@@ -107,6 +153,34 @@
 전략을 더 추가하기보다 현재 전략의 기대값, MDD, 승률, 손익비, 시장 국면별 성과를 먼저 검증합니다.
 
 
+
+### 1-0. 실거래 투입 전 전략별 수익성 통과 기준
+
+- [ ] 전략별 “돈 버는 기준선”을 명시하고, 기준 미달 전략은 실계좌 자동주문 대상에서 제외한다.
+  - 검토 결과: 타당. 현재 P1에 walk-forward, Monte Carlo, 국면별 성과 검증은 있으나 “통과/탈락 기준”이 약하다. 실전 투입 판단에는 절대 수익보다 비용·슬리피지·미체결 반영 후에도 기대값이 남는지가 핵심이다.
+  - 최소 기준 후보: 전략별 충분한 표본 수, out-of-sample Profit Factor, 평균 손익비, MDD, 비용 반영 후 기대값, 슬리피지 2배 스트레스, KOSPI/KOSDAQ 대비 초과수익, 하락장 손실 제한.
+  - 산출물: 전략별 `거래 수 / CAGR 또는 기간수익률 / MDD / PF / 승률 / 평균손익비 / 비용·슬리피지 후 성과 / 시장 국면별 성과` 표.
+- [ ] P1 수익성 검증을 실전 확대 gate로 승격한다.
+  - 정책: P0 주문 안정성 완료 후에도, P1 수익성 기준을 통과하지 못하면 full-auto/자금 확대 금지. 허용 범위는 backtest, paper/shadow, 제한적 소액 canary까지로 둔다.
+
+### 1-1. 과최적화 방지 검증
+
+- [ ] 전략별 ablation test를 추가한다.
+  - 예: O'Neil PP/BGU의 smart money, execution strength, market timing, BGU/PP 조건을 하나씩 제거해 실제 기여도를 확인한다.
+- [ ] parameter stability surface를 리포트한다.
+  - 특정 임계값 하나에서만 성과가 튀는 전략은 실전 후보에서 제외하거나 canary로만 둔다.
+- [ ] purged/embargo cross-validation 또는 종목·기간 누수 방지 규칙을 walk-forward 검증에 추가할지 검토한다.
+- [ ] Deflated Sharpe / PBO 같은 다중 전략 실험 착시 방지 지표를 도입할지 검토한다.
+- [ ] regime-balanced validation을 추가한다.
+  - 상승장 데이터에만 최적화된 전략이 횡보/하락장에서 손실을 키우지 않는지 분리 검증한다.
+
+### 1-2. 포트폴리오 단위 리스크 확장
+
+- [ ] 총 노출 한도 외에 포트폴리오 집중도 리스크를 추가한다.
+  - 후보: 섹터/테마 집중도, KOSPI/KOSDAQ 비중, 전략 간 상관관계, 시장 베타, 당일 신규 진입 횟수, 연속 손절 후 쿨다운, 장초반/장마감 별도 리스크.
+  - 검토 결과: 타당. HTF, VBO, Pocket Pivot이 모두 강한 모멘텀 종목군을 고르면 전략은 여러 개여도 포트폴리오 관점에서는 같은 베팅이 될 수 있다.
+- [ ] 전략 간 중복 신호/동일 종목/동일 테마 진입을 포트폴리오 의사결정 단계에서 리포트한다.
+  - 1차는 hard block보다 “동시 노출 경고 + journal metadata”로 시작한다.
 
 ### 1-3. `TradeSignal` / `PositionSizingService` 수량 contract 표준화
 
@@ -172,6 +246,11 @@
   - 차단 사유: 장중 후보 종목의 프로그램매매 WebSocket 샘플을 실시간으로 캡처해야 하며, 장 마감 후에는 재생성 불가.
   - 차단 해제 조건: 장중에 `scripts.capture_backtest_microstructure`로 후보 종목 WebSocket 샘플 확보 → replay fixture overlay로 결합.
   - 선택 작업(차단 해제 후): 필요 시 `20260506`, `20260511`, `20260504`, `20260416` 표본 fixture를 추가 생성한다.
+- [ ] 실전 체결 품질과 괴리가 큰 백테스트 가정을 별도 고도화 과제로 분리한다.
+  - 검토 결과: 부분 타당. `BacktestExecutionSimulator`는 지정가/시장가, current/next bar, 슬리피지, 거래량 기반 부분체결, 비용을 이미 다루지만, bid/ask spread, 호가잔량, market impact, VI/상하한가/거래정지, 미체결 후 취소 정책은 아직 명시 contract가 아니다.
+  - 개선 방향: 실전 성과 판단용 runner에서는 next-bar 기본값, 호가/spread/부분체결/취소 fixture를 우선 추가한다.
+- [ ] 체결 모델을 한국 주식 실전 제약 기준으로 더 보수화한다.
+  - 후보: 호가단위, 부분체결, 미체결 후 취소, 거래대금 bucket별 슬리피지, 9:00~9:10 장초반 체결 악화, VI/상하한가/거래정지, 시장가/지정가/최유리 주문 차이, 매도 체결 실패.
 
 주요 파일:
 
@@ -222,6 +301,7 @@
 - [x] `StrategyExecutor` Liquidity Filter의 `asyncio.gather()`에 semaphore 기반 동시성 제한을 추가한다.
   - 근거: `strategies/strategy_executor.py:88` `Semaphore(self._max_liquidity_concurrency)` 적용, `:106` gather, `:141` `async with sem:` 으로 REST 호출 보호.
   - snapshot-first chain도 동일 파일 `:127-139`에 구현됨 (PriceStreamService 신선 snapshot 우선 사용 → 없거나 stale 시 REST fallback → REST 응답을 `cache_price_snapshot()`으로 backfill).
+  - 2026-05-19 재검토: 리뷰에서 “liquidity filter semaphore 불일치”를 지적했으나 현재 main 기준 REST fallback 구간은 `_lookup_liquidity()` 내부 semaphore로 제한되고, `test_liquidity_filter_respects_concurrency_limit`가 동시 실행 상한을 검증한다. 이 항목은 완료 유지.
 - [x] 종목별 current price REST 호출을 최소화하고 WebSocket/stream snapshot을 우선 사용한다.
   - 완료: `StockQueryService.get_current_price()`에 snapshot-first 로직 추가. `price_stream_service` 주입 시 `get_cached_price()` 우선 참조 → stale/없음 시 REST fallback. `web_app_initializer.py`에서 `price_stream_service` 주입.
   - 구독 중이나 tick 미수신(snapshot=None) 케이스: `no_tick_fallback`으로 분류해 REST fallback. `_price_lookup_stats`에 `snapshot_hit/no_tick_fallback/stale_fallback/rest_fallback` 카운터 노출.
@@ -232,6 +312,25 @@
   - `_price_lookup_stats` dict를 `price_lookup_stats` 이벤트 로그로 노출 가능.
 - [x] 전략별 중복 조회를 제거하고 동일 종목 데이터는 공통 snapshot에서 읽도록 정리한다.
   - 완료: 전략들이 `StockQueryService.get_current_price()` 한 통로를 거치므로 snapshot-first 기본화로 자연 해결. REST backfill로 첫 호출 이후 동일 종목 재조회 시 캐시 hit.
+- [ ] 전략/서비스 전역 API budget limiter를 도입한다.
+  - 검토 결과: 타당. 개별 전략의 chunk size/semaphore와 `ForegroundScheduler`는 존재하지만, current price/OHLCV/account/order API 전체를 전략 간 공유하는 전역 rate limiter는 없다. 여러 전략이 동시에 scan/check_exits를 수행하면 순간 호출량이 합산된다.
+  - 개선 방향: `ApiBudget` 또는 broker wrapper 레벨 limiter를 shared dependency로 주입하고, 조회/계좌/주문 카테고리별 rate를 분리한다.
+  - 테스트: 여러 전략이 동시에 호출해도 카테고리별 limiter가 적용되고 주문 API 우선순위가 보존되는지 검증.
+- [ ] 활성 전략의 exit check도 bounded gather 또는 순차/우선순위 정책으로 통일한다.
+  - 검토 결과: 타당. `FirstPullbackStrategy`, `HighTightFlagStrategy`, `LarryWilliamsChannelBreakoutStrategy` 등 일부 전략은 holdings 전체에 대해 `asyncio.gather()`를 수행한다. VBO/레거시 일부는 순차 처리다.
+  - 개선 방향: 공통 `bounded_gather(limit=...)`를 사용하고, 손절/청산 쪽은 entry보다 높은 우선순위를 부여한다.
+- [ ] VBO range cache 갱신을 bounded concurrency로 바꾸고 precompute 경로를 검토한다.
+  - 검토 결과: 타당. `LarryWilliamsVBOStrategy._refresh_range_cache()`가 후보 코드를 순차 순회하며 `get_recent_daily_ohlcv()`를 호출한다.
+  - 개선 방향: semaphore 기반 bounded gather 또는 장 시작 전/Watchlist 생성 시 range precompute.
+- [ ] VBO fallback 후보의 unknown liquidity를 통과시키지 않는다.
+  - 검토 결과: 타당. universe 미주입 fallback에서 `avg_5d_tv=0`을 넣고, validity filter는 `avg_5d_tv > 0 and avg_5d_tv < min`일 때만 탈락시킨다.
+  - 개선 방향: fallback에서도 5일 평균 거래대금을 계산하거나, `avg_5d_tv <= 0`은 `avg_trading_value_unknown`으로 reject.
+- [ ] scan cycle 단위 데이터 공유와 성능 계측을 강화한다.
+  - 후보: 동일 종목 current price/OHLCV/conclusion/program trading memoization, strategy scan latency, candidate count, API calls per scan, cache hit ratio, REST fallback ratio, rejected reason distribution, signal-to-order latency, order-to-fill latency.
+  - 목표: 성능 개선을 감이 아니라 병목 지표 기반으로 진행한다.
+- [ ] 전략별 universe 적합성을 비교한다.
+  - 검토 결과: 타당. 활성 전략 다수가 `OneilUniverseService` watchlist를 공유하는 것은 운영상 단순하지만, RSI2 같은 mean-reversion 성격이나 VBO 단기 변동성 전략에 O'Neil universe가 항상 맞는지는 별도 검증이 필요하다.
+  - 산출물: Oneil universe vs generic liquidity universe vs strategy-specific prefilter 성과 비교, universe exclusion report.
 
 주요 파일:
 
@@ -240,6 +339,10 @@
 - `services/price_stream_service.py`
 - `view/web/web_app_initializer.py` (price_stream_service 주입)
 - `services/order_execution_service.py`, `services/risk_gate_service.py` (`force_fresh=True` 명시)
+- `strategies/larry_williams_vbo_strategy.py`
+- `strategies/first_pullback_strategy.py`
+- `strategies/high_tight_flag_strategy.py`
+- `strategies/larry_williams_channel_breakout_strategy.py`
 
 ### 2-3. Market snapshot 표준화
 
@@ -283,7 +386,15 @@
   - 완료된 부분: `StrategyFactory` 의 VBO `StrategySchedulerConfig(..., event_driven_shadow=True)` 를 활성화했다. `enabled=False` 는 유지되어 실주문은 발생하지 않는다.
   - 남은 작업: 5거래일 동안 `logs/strategies/event_shadow/YYYYMMDD.jsonl` 을 수집한다.
   - 검증 기준: shadow 신호와 기존 polling 신호의 시간/종목/가격 괴리를 비교해 실주문 전환 가능 여부를 판정한다.
+  - 추가 기준: polling 대비 신호 선행 시간, fast path false positive, false negative, full gate parity, missed trade PnL, duplicate signal rate.
+  - VBO 특이점: `evaluate_single()` shadow fast path는 execution strength/program-buy를 의도적으로 생략하므로, fast path 통과와 full gate 최종 통과를 분리 기록해야 한다.
 - [blocked] PR-3: PR-2.5 관찰 결과 양호 시 VBO 실 적용 + OSB shadow 진입.
+- [ ] PR-3 선행: event-driven signal sink를 명확히 한다.
+  - 검토 결과: 타당. `PriceStreamService.on_price_tick()`은 `loop.create_task(router.on_price_tick(...))`로 호출하고 반환된 signal list를 소비하지 않는다. 현재 PR-2 shadow mode는 의도적으로 실주문을 막기 때문에 문제 없지만, live 전환 전에는 signal queue/order intent bus 같은 명시 sink가 필요하다.
+  - 개선 방향: `StrategyEventRouter`가 list 반환에 의존하지 않고 `await signal_sink.publish(signal)` 또는 `await signal_queue.put(signal)`로 전달하도록 contract를 정한다.
+- [ ] PR-3 선행: EventRouter throttle을 threshold crossing 또는 signal debounce 정책으로 보강한다.
+  - 검토 결과: 부분 타당. 현재 throttle은 evaluator 실행 전 `(strategy, code)` 단위 0.5초 차단이다. 돌파 조건 crossing tick이 throttle window 안에 들어오면 평가 자체가 지연될 수 있다.
+  - 개선 방향: trigger price crossing은 evaluator 실행을 허용하고, 중복 signal 발행만 debounce하는 방향을 검토한다.
 - [ ] PR-4+: 단계적 확장.
 
 구현 결정 사항 (`docs/event_driven_architecture.md` §9, 2026-05-18 확정):
@@ -376,6 +487,27 @@
 - `FillReconciliationService` ✅ (`services/fill_reconciliation_service.py`, 860줄)
 - `OrderSubmissionCoordinator` ✅ (`services/order_submission_coordinator.py`, 350줄) — 원안에는 없던 코디네이터. validator(`OrderValidator`)·`RiskGateAdapter`·`PositionSizingAdapter` 별도 클래스 추출 없이 Coordinator 가 `data_quality_service`, `order_policy_service`, `risk_gate_service`, `position_sizing_service` 를 직접 호출하는 방식으로 흐름만 분리. 별도 어댑터 도입 비용 대비 효익이 낮아 won't fix.
 
+### 3-4. 전략 공통 lifecycle/state contract
+
+- [ ] 활성 전략의 공통 scan/check_exits/state save/load 패턴을 base class 또는 helper로 추출할지 설계한다.
+  - 검토 결과: 타당. O'Neil/HTF/First Pullback/RSI2/Larry Williams 계열에 watchlist 조회, market timing, candidate filtering, chunked entry, unbounded exit, state save/load 패턴이 반복된다.
+  - 개선 방향: 바로 대형 리팩토링하지 말고 `bounded_gather`, `ensure_state_loaded`, `save_state_atomic` 같은 작은 공통 helper부터 도입한다.
+- [ ] `strategy_id`와 `display_name`을 분리한다.
+  - 검토 결과: 타당. `strategy.name` 값이 한국어 display name(`오닐PP/BGU`, `오닐스퀴즈돌파` 등) 또는 영문 display name(`Larry Williams VBO`)으로 TradeSignal/RiskGate/log/config key에 사용된다.
+  - 개선 방향: 설정·DB·journal·risk limit은 stable `strategy_id`, UI/로그 문구는 `display_name`을 사용하도록 backward-compatible migration을 설계한다.
+- [ ] 직전 거래일 계산을 `MarketCalendarService` 기준으로 통일한다.
+  - 검토 결과: 타당. `OneilUniverseService`, `OneilPocketPivotStrategy`, `FirstPullbackStrategy`, `MarketDataService` 일부 경로에서 `now - timedelta(days=1)`을 전일 기준으로 사용한다.
+  - 개선 방향: `previous_trading_day()` 또는 `get_latest_trading_date()` 기반 helper를 만들고 주말/공휴일 테스트를 추가한다.
+- [ ] `TradeSignal` contract를 분석/운영 기준으로 확장한다.
+  - 후보 필드: `signal_id`, `strategy_id`, `entry_reason`, `invalidation_price`, `stop_loss`, `target` 또는 trailing rule, `expected_holding_period`, `confidence`, `required_data`.
+  - 검토 결과: 타당. 현재 `TradeSignal`은 `reason`, `strategy_name`, `stop_loss_pct`, `atr_multiplier`, `volatility_20d_annualized`를 갖지만, 중복 신호 식별과 사후 분석에 필요한 표준 필드는 아직 부족하다.
+- [ ] 활성/실험/레거시 전략의 디렉터리 또는 registry 경계를 명확히 한다.
+  - 후보 구조: `strategies/active`, `strategies/experimental`, `strategies/deprecated`, `strategies/legacy`.
+  - 1차 대안: 파일 이동 없이 strategy registry metadata로 active/experimental/deprecated 상태를 명시하고, 실행 가능한 전략은 config에서 명시적으로만 로드한다.
+- [ ] 설정 변경 통제를 도입한다.
+  - 후보: config version, trade journal 내 config hash, 장 시작 전 config diff log, production config lock, dry-run config validation.
+  - 목표: 어떤 설정으로 어떤 주문이 나갔는지 사후 재현 가능하게 만든다.
+
 ---
 
 ## P4. 운영 품질
@@ -451,6 +583,16 @@
   - 기본값: 동일 reason 위반 60초 내 5건 이상, 동일 reason 알림 cooldown 60초.
   - `WebAppContext`에서 `DataQualityService`에 `operator_alert_service`를 주입한다.
 
+### 4-4. 실전 운영 Runbook / Canary 절차
+
+- [ ] 실전 운영 runbook을 작성한다.
+  - 포함: 장 시작 전 체크리스트(토큰, 잔고, 포지션, 데이터 연결, WebSocket), 장중 장애 대응(API 오류, 주문 지연, 미체결, stale data), Kill Switch 발동 후 절차, 재개 조건, 배포 체크리스트, 사고 리포트 템플릿.
+- [ ] 실계좌 canary 절차를 문서화한다.
+  - 정책: P0 완료 + P1 기준선 통과 전 full-auto 금지. 소액 canary는 종목 수/주문금액/일손실/연속 손실/미체결 시간 한도를 별도로 낮게 둔다.
+  - 산출물: canary 진입 조건, 중단 조건, 관찰 기간, 승격 조건.
+- [ ] 배포 전 dry-run 운영 점검을 자동화한다.
+  - 후보: config validation, broker token/account/env consistency, WebSocket subscription health, latest trading date, account snapshot freshness, event shadow status.
+
 ---
 
 ## Strategy Log 남은 작업
@@ -465,35 +607,40 @@
 ## 바로 착수 추천 순서
 
 1. P0 실전 손실 방지
-   - 실전 체결 이력 fixture 확보 및 민감정보 제거
-   - 실전 fixture 기반 주문번호, 종목코드, 매수/매도, 체결/미체결/취소/거부 필드 매핑 확정
-   - 주문 접수/부분체결/전체체결/미체결/취소/거부 상태 전이와 잔고 대사 E2E 검증
-   - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
+   - 시장가 매수(`price == 0`) RiskGate 우회 차단
+   - `BrokerOrderSubmitter` retry backoff fallback 수정
+   - 실전 RiskGate fail-close 정책 도입
+   - `get_current_price` 300초 전역 캐시 제거 또는 TTL 분리
+   - 전략 state load/save atomic/await 보장
 
 2. P0/P1 백테스트 신뢰도
+   - 실전 체결 이력 fixture 확보 및 민감정보 제거
+   - 실전 fixture 기반 주문번호, 종목코드, 매수/매도, 체결/미체결/취소/거부 필드 매핑 확정
    - 장중 후보 종목의 프로그램매매 WebSocket 캡처 샘플 확보
    - 실제 replay fixture에 캡처 overlay를 결합해 통과 케이스 고정
    - 레거시 백테스트 저장 경로를 표준 journal / `BacktestExecutionReport` 경로로 정리
 
 3. P1 전략 수익성
-   - 시장 국면별 성과 분리
-   - 코스피/코스닥 지수 기반 전략 ON/OFF 조건 검증
-   - 변동성·장 초반/후반 필터를 성과 리포트로 먼저 검증
-   - 전략별 stop/target/trailing 기준 표준화
-   - 전략별 risk budget 분리
+   - 전략별 수익성 통과 기준선 정의
+   - 비용·세금·슬리피지·미체결 반영 후 성과표 작성
+   - 과최적화 방지(ablation, parameter stability, regime-balanced validation)
+   - 포트폴리오 집중도/전략 상관 리스크 리포트
+   - 전략별 universe 적합성 비교
 
 4. P2 시스템 성능
-   - 기존 stream snapshot 기반 공통 snapshot contract 정리
-   - WebSocket / REST / DB snapshot 입력 표준화
-   - stale/missing reason을 rejected reason으로 기록
-   - event-driven 전략 평가 목표 아키텍처 문서화
+   - 전역 API budget limiter 도입
+   - VBO range cache bounded parallel 처리
+   - exit check bounded gather 통일
+   - event-driven shadow parity/false positive/full gate 차이 로그화
+   - scan/API/cache/fallback/latency metric 정리
 
 5. P3/P4 유지보수와 운영 품질
    - 전략별 성과 저하 감지 지표 집계 (완료)
    - `WebAppContext` 분리 (완료)
    - ServiceContainer / Factory 도입 (완료)
    - `OrderExecutionService` 역할 분리 (완료 — PR #412)
-   - 남은 항목: P2 2-4 event-driven 전환
+   - 남은 항목: 전략 state/lifecycle contract, `strategy_id`/`display_name` 분리, 직전 거래일 계산 통일
+   - TradeSignal contract, config hash/version, 운영 runbook/canary 절차
 
 ---
 
