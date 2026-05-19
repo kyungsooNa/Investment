@@ -81,6 +81,7 @@ class StrategyScheduler:
     LOOP_INTERVAL_SEC = 1           # 메인 루프 깨어나는 주기
     MARKET_CLOSED_SLEEP_SEC = 60    # 장 외 시간 sleep
     FORCE_EXIT_MINUTES_BEFORE = 30  # 장 마감 N분 전 강제 청산
+    ORDER_CUTOFF_MINUTES_BEFORE_CLOSE = 20  # 15:40 설정 기준 15:20 이후 전략 주문 중단
     STAGGER_INTERVAL_SEC = 60       # 전략 간 실행 시차 (초)
     ORDER_POLL_INTERVAL_SEC = 15    # 활성 주문 체결조회 보정 주기 (초)
     WATCHLIST_EXCLUDE_POLICY_RULES = {
@@ -139,6 +140,7 @@ class StrategyScheduler:
         self._last_execution_time: Optional[datetime] = None  # 전략 간 실행 쿨다운용
         self._last_order_poll_time: Optional[datetime] = None
         self._force_exit_done: set = set()  # 당일 강제 청산 완료된 전략
+        self._force_exit_done_date: Optional[str] = None
         self._reconciled_dates: set = set()  # 원장 대사 완료된 날짜 (YYYY-MM-DD)
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
         self._signal_history: List[SignalRecord] = self._load_signal_history()
@@ -211,25 +213,7 @@ class StrategyScheduler:
                 market_open = await self._mcs.is_market_open_now()
 
                 if not market_open:
-                    # 장이 닫힌 직후(15:40~) 아직 강제 청산 미완료된 전략이 있으면 실행
-                    if self._force_exit_done is not None:
-                        for cfg in self._strategies:
-                            if (cfg.enabled and cfg.force_exit_on_close
-                                    and cfg.strategy.name not in self._force_exit_done):
-                                name = cfg.strategy.name
-                                self._force_exit_done.add(name)
-                                self._logger.info(
-                                    f"[Scheduler] {name}: 장 마감 후 미처리 강제 청산 실행"
-                                )
-                                try:
-                                    await self._run_strategy(cfg, force_exit_only=True)
-                                except Exception as e:
-                                    self._logger.error(
-                                        f"[Scheduler] {name} 강제 청산 오류: {e}", exc_info=True
-                                    )
-
                     self._logger.info("현재는 휴장일이거나 장 운영 시간이 아닙니다.")
-                    self._force_exit_done.clear()
                     await self._mcs.wait_until_next_open(
                         max_sleep_seconds=self.MARKET_CLOSED_SLEEP_SEC
                     )
@@ -240,6 +224,16 @@ class StrategyScheduler:
                 close_time = self._tm.get_market_close_time()
                 minutes_to_close = (close_time - now).total_seconds() / 60
                 await self._poll_active_orders_if_due(now)
+                self._sync_force_exit_done_date(now)
+
+                if self._is_after_order_cutoff(now, close_time):
+                    self._logger.info(
+                        f"[Scheduler] 주문 컷오프 이후 전략 실행 스킵 "
+                        f"(now={now.strftime('%H:%M:%S')}, cutoff="
+                        f"{self._get_order_cutoff_time(close_time).strftime('%H:%M:%S')})"
+                    )
+                    await asyncio.sleep(self.LOOP_INTERVAL_SEC)
+                    continue
 
                 # 원장 대사: 당일 첫 장 진입 시 1회 실행
                 today_str = now.strftime("%Y-%m-%d")
@@ -323,6 +317,19 @@ class StrategyScheduler:
                 await asyncio.sleep(self.LOOP_INTERVAL_SEC)
 
     # ── 전략 실행 ──
+
+    def _sync_force_exit_done_date(self, now: datetime) -> None:
+        today = now.strftime("%Y-%m-%d")
+        if self._force_exit_done_date == today:
+            return
+        self._force_exit_done.clear()
+        self._force_exit_done_date = today
+
+    def _get_order_cutoff_time(self, close_time: datetime) -> datetime:
+        return close_time - timedelta(minutes=self.ORDER_CUTOFF_MINUTES_BEFORE_CLOSE)
+
+    def _is_after_order_cutoff(self, now: datetime, close_time: datetime) -> bool:
+        return now >= self._get_order_cutoff_time(close_time)
 
     async def _poll_active_orders_if_due(self, now: Optional[datetime] = None) -> int:
         """기존 스케줄러 루프에서 활성 주문 상태를 주기적으로 보정합니다."""
