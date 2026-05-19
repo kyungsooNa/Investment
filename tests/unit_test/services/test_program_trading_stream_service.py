@@ -4,8 +4,10 @@ import json
 import os
 import sqlite3
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
+from core.market_clock import MarketClock
+from repositories.streaming_stock_repo import StreamingType
 from services.program_trading_stream_service import ProgramTradingStreamService
 
 
@@ -483,3 +485,94 @@ def test_wire_streaming_stock_repo(manager):
     manager.wire_streaming_stock_repo(mock_ssr)
 
     assert manager._repo._streaming_stock_repo is mock_ssr
+
+
+# --- 텔레그램 운영 알림 ---
+
+@pytest.mark.asyncio
+async def test_send_subscribed_last_tick_alert_sends_last_tick_for_desired_codes(manager):
+    """구독 중인 PT 종목의 마지막 수신 tick을 텔레그램으로 전송한다."""
+    mock_ssr = MagicMock()
+    mock_ssr.get_desired.return_value = {"005930", "000660"}
+    mock_reporter = MagicMock()
+    mock_reporter._send_message = AsyncMock(return_value=True)
+
+    manager.wire_streaming_stock_repo(mock_ssr)
+    manager.wire_alert_dependencies(telegram_reporter=mock_reporter)
+    manager.on_data_received({
+        "유가증권단축종목코드": "005930",
+        "주식체결시간": "101530",
+        "price": "72000",
+        "rate": "1.25",
+        "순매수거래대금": "123456",
+    })
+
+    sent = await manager.send_subscribed_last_tick_alert()
+
+    assert sent is True
+    mock_ssr.get_desired.assert_called_once_with(StreamingType.PROGRAM_TRADING)
+    mock_reporter._send_message.assert_awaited_once()
+    message = mock_reporter._send_message.call_args[0][0]
+    assert "프로그램매매 구독 Tick" in message
+    assert "005930" in message
+    assert "72,000" in message
+    assert "101530" in message
+    assert "000660" in message
+    assert "수신 없음" in message
+
+
+def test_build_db_minute_persistence_status_reports_missing_minutes(manager):
+    """장중 1분 단위 저장 여부를 종목별로 계산한다."""
+    clock = MarketClock(market_open_time="09:00", market_close_time="09:02")
+    manager.wire_alert_dependencies(market_clock=clock)
+
+    day = clock.market_timezone.localize(datetime(2026, 5, 19, 9, 0, 0))
+    with manager._get_connection() as conn:
+        conn.executemany(
+            "INSERT INTO pt_history (code, created_at) VALUES (?, ?)",
+            [
+                ("005930", day.timestamp()),
+                ("005930", (day.timestamp() + 120)),
+                ("000660", day.timestamp()),
+                ("000660", (day.timestamp() + 60)),
+                ("000660", (day.timestamp() + 120)),
+            ],
+        )
+
+    status = manager.build_db_minute_persistence_status(["005930", "000660"], "20260519")
+
+    assert status["expected_minute_count"] == 3
+    assert status["codes"]["005930"]["saved_minute_count"] == 2
+    assert status["codes"]["005930"]["missing_minutes"] == ["09:01"]
+    assert status["codes"]["005930"]["ok"] is False
+    assert status["codes"]["000660"]["saved_minute_count"] == 3
+    assert status["codes"]["000660"]["missing_minutes"] == []
+    assert status["codes"]["000660"]["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_send_db_persistence_report_sends_summary(manager):
+    """장마감 DB 저장 점검 결과를 텔레그램으로 전송한다."""
+    clock = MarketClock(market_open_time="09:00", market_close_time="09:00")
+    mock_ssr = MagicMock()
+    mock_ssr.get_desired.return_value = {"005930"}
+    mock_reporter = MagicMock()
+    mock_reporter._send_message = AsyncMock(return_value=True)
+
+    manager.wire_streaming_stock_repo(mock_ssr)
+    manager.wire_alert_dependencies(telegram_reporter=mock_reporter, market_clock=clock)
+    day = clock.market_timezone.localize(datetime(2026, 5, 19, 9, 0, 0))
+    with manager._get_connection() as conn:
+        conn.execute(
+            "INSERT INTO pt_history (code, created_at) VALUES (?, ?)",
+            ("005930", day.timestamp()),
+        )
+
+    sent = await manager.send_db_persistence_report("20260519")
+
+    assert sent is True
+    mock_reporter._send_message.assert_awaited_once()
+    message = mock_reporter._send_message.call_args[0][0]
+    assert "프로그램매매 DB 저장 점검" in message
+    assert "005930" in message
+    assert "OK" in message

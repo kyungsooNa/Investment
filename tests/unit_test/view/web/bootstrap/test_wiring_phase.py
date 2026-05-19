@@ -28,6 +28,9 @@ def _make_fake_context():
     ctx.streaming_service = MagicMock()
     ctx.streaming_stock_repo = MagicMock()
     ctx.program_trading_stream_service = MagicMock()
+    ctx.telegram_reporter = MagicMock()
+    ctx._mcs = MagicMock()
+    ctx.market_clock = MagicMock()
     ctx.order_execution_service = MagicMock()
     return ctx
 
@@ -86,6 +89,11 @@ def test_wiring_phase_wires_streaming_chain():
     ctx.streaming_service.set_price_stream_service.assert_called_once_with(ctx.price_stream_service)
     ctx.streaming_service.set_streaming_stock_repo.assert_called_once_with(ctx.streaming_stock_repo)
     ctx.program_trading_stream_service.wire_streaming_stock_repo.assert_called_once_with(ctx.streaming_stock_repo)
+    ctx.program_trading_stream_service.wire_alert_dependencies.assert_called_once_with(
+        telegram_reporter=ctx.telegram_reporter,
+        market_calendar_service=ctx._mcs,
+        market_clock=ctx.market_clock,
+    )
     assert ctx.stock_query_service.price_stream_service is ctx.price_stream_service
     assert ctx.stock_query_service.price_subscription_service is ctx.price_subscription_service
 
@@ -104,6 +112,11 @@ def test_wiring_phase_skips_streaming_chain_when_runtime_does_not_create_it():
 
     ctx.data_quality_service.set_price_stream_service.assert_not_called()
     ctx.program_trading_stream_service.wire_streaming_stock_repo.assert_not_called()
+    ctx.program_trading_stream_service.wire_alert_dependencies.assert_called_once_with(
+        telegram_reporter=ctx.telegram_reporter,
+        market_calendar_service=ctx._mcs,
+        market_clock=ctx.market_clock,
+    )
     assert ctx.stock_query_service.price_stream_service is None
     assert ctx.stock_query_service.price_subscription_service is None
 

@@ -368,6 +368,38 @@ class ProgramTradingRepo:
             status["error"] = str(e)
         return status
 
+    def get_history_timestamps_by_code(
+        self,
+        codes: list[str],
+        start_ts: float,
+        end_ts: float,
+    ) -> dict[str, list[float]]:
+        """지정 종목들의 저장 timestamp를 기간 내에서 조회한다."""
+        result = {code: [] for code in codes}
+        if not codes:
+            return result
+
+        placeholders = ",".join("?" for _ in codes)
+        params = [*codes, start_ts, end_ts]
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute(
+                    f"""
+                    SELECT code, created_at
+                    FROM pt_history
+                    WHERE code IN ({placeholders})
+                      AND created_at >= ?
+                      AND created_at <= ?
+                    ORDER BY code, created_at
+                    """,
+                    params,
+                )
+                for code, created_at in cursor.fetchall():
+                    result.setdefault(code, []).append(created_at)
+        except Exception as e:
+            self._logger.error(f"히스토리 timestamp 조회 중 오류: {e}")
+        return result
+
     # ── 생명주기 ─────────────────────────────────────────────────────
 
     def start_flush_loop(self):
