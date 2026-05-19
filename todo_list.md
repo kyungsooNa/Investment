@@ -28,10 +28,11 @@
   - 테스트: 시장가 BUY가 기준가격 없이 차단되는지, 기준가격 산정 성공 시 한도 초과가 차단되는지, SELL/force_exit 예외 정책이 유지되는지 검증.
   - 완료 내용: `RiskGateService.__init__()`에 `market_buy_reference_price_provider` 주입 옵션 추가, `validate_order()`에 real mode + `price==0` + BUY 분기 추가. provider 미주입 또는 None 반환 시 `market_buy_no_reference_price` 룰로 차단, 가격 반환 시 `effective_price`로 amount/daily/strategy/exposure 검증. paper/`env=None`/SELL/`force_exit`는 기존 동작 유지. 테스트 8건 추가 (`tests/unit_test/services/test_risk_gate_service.py`).
   - 후속 완료: `view/web/bootstrap/service_container.py`에 `_resolve_market_buy_reference_price()` 헬퍼 추가 (최우선매도호가 `askp1` → 현재가 `stck_prpr` fallback). `RiskGateService` 인스턴스화 시 `market_buy_reference_price_provider`로 lambda 주입. 헬퍼 단위 테스트 13건 + ServiceContainer 주입 검증 1건 추가 (`tests/unit_test/view/web/bootstrap/test_market_buy_reference_price_resolver.py`, `test_service_container.py`). 단위 + 통합 4936건 통과.
-- [ ] `BrokerOrderSubmitter.submit_with_retry()`가 `market_clock=None`이어도 정상 backoff 후 재시도하도록 수정한다.
+- [x] `BrokerOrderSubmitter.submit_with_retry()`가 `market_clock=None`이어도 정상 backoff 후 재시도하도록 수정한다. (2026-05-19 완료)
   - 검토 결과: 타당. 현재 재시도 루프는 돌지만 `market_clock`이 없으면 sleep 없이 즉시 다음 시도로 넘어간다.
   - 개선 방향: `market_clock.async_sleep()`이 없으면 `asyncio.sleep(delay)`로 fallback.
   - 테스트: `market_clock=None`, `market_clock` 주입, retryable/non-retryable error를 각각 검증.
+  - 완료 내용: `services/broker_order_submitter.py`에 `import asyncio` 추가 및 재시도 backoff 분기에 `market_clock is None` → `await asyncio.sleep(delay)` fallback 적용. 기존 `market_clock` 주입 경로/지수 backoff 동작은 불변. 단위 테스트 3건 추가 (`test_submit_retries_with_asyncio_sleep_when_market_clock_is_none`, `test_submit_uses_exponential_backoff_via_asyncio_sleep_when_market_clock_is_none`, `test_submit_business_reject_does_not_sleep_when_market_clock_is_none`). 단위 4706건 + 통합 233건 통과.
 - [ ] 실전 모드 RiskGate를 fail-close로 전환한다.
   - 검토 결과: 타당. `account_snapshot_cache is None`, `total_equity <= 0`, 전략 risk provider 예외에서 일부 노출/전략 검증이 skip 또는 fail-open 된다. 기존 테스트도 `test_strategy_exposure_limit_fails_open_on_zero_equity_and_hold_error`로 현재 동작을 고정하고 있다.
   - 개선 방향: paper/backtest는 fail-open 허용, real은 신규 BUY 차단. 예: `risk_gate.fail_open_allowed.paper=true`, `risk_gate.fail_open_allowed.real=false`.
