@@ -1,3 +1,4 @@
+import asyncio
 from typing import Callable, Optional
 
 from common.types import ErrorCode, Exchange, OrderState, ResCommonResponse
@@ -118,8 +119,11 @@ class BrokerOrderSubmitter:
                     f"주문 재시도 {attempt}/{self._max_retries}: "
                     f"{stock_code}, 사유: {result.msg1 if result else '응답 없음'}"
                 )
+                delay = self._retry_delay_sec * attempt
                 if self._market_clock is not None:
-                    await self._market_clock.async_sleep(self._retry_delay_sec * attempt)
+                    await self._market_clock.async_sleep(delay)
+                else:
+                    await asyncio.sleep(delay)
                 continue
             break
         return last_result

@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -149,6 +149,64 @@ async def test_submit_uses_exponential_backoff_for_retry_sleep(mock_broker, mock
     # attempt 1 → sleep(3*1=3), attempt 2 → sleep(3*2=6)
     assert mock_market_clock.async_sleep.await_args_list[0].args == (3,)
     assert mock_market_clock.async_sleep.await_args_list[1].args == (6,)
+
+
+# ── submit_with_retry: market_clock=None fallback (asyncio.sleep) ─────────
+
+@pytest.mark.asyncio
+async def test_submit_retries_with_asyncio_sleep_when_market_clock_is_none(mock_broker):
+    """market_clock 미주입 시에도 asyncio.sleep 으로 backoff 후 재시도한다."""
+    mock_broker.place_stock_order.side_effect = [
+        ResCommonResponse(rt_cd=ErrorCode.NETWORK_ERROR.value, msg1="네트워크 오류", data=None),
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="주문 성공", data={"ordno": "B0003"}),
+    ]
+    submitter = _make_submitter(broker=mock_broker, market_clock=None)
+
+    with patch("services.broker_order_submitter.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+        result = await submitter.submit_with_retry(
+            "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX
+        )
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert mock_broker.place_stock_order.await_count == 2
+    mock_sleep.assert_awaited_once_with(3)
+
+
+@pytest.mark.asyncio
+async def test_submit_uses_exponential_backoff_via_asyncio_sleep_when_market_clock_is_none(mock_broker):
+    """market_clock=None 일 때도 attempt 별 지수 backoff 가 적용된다."""
+    mock_broker.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.NETWORK_ERROR.value, msg1="네트워크", data=None
+    )
+    submitter = _make_submitter(broker=mock_broker, market_clock=None)
+
+    with patch("services.broker_order_submitter.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+        await submitter.submit_with_retry(
+            "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX
+        )
+
+    # attempt 1 → sleep(3), attempt 2 → sleep(6), 마지막 시도 직후엔 sleep 하지 않음
+    assert mock_sleep.await_count == 2
+    assert mock_sleep.await_args_list[0].args == (3,)
+    assert mock_sleep.await_args_list[1].args == (6,)
+
+
+@pytest.mark.asyncio
+async def test_submit_business_reject_does_not_sleep_when_market_clock_is_none(mock_broker):
+    """market_clock=None 이어도 비즈니스 거부 시 sleep 호출 없이 즉시 종료한다."""
+    mock_broker.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="잔고 부족", data=None
+    )
+    submitter = _make_submitter(broker=mock_broker, market_clock=None)
+
+    with patch("services.broker_order_submitter.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+        result = await submitter.submit_with_retry(
+            "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX
+        )
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert mock_broker.place_stock_order.await_count == 1
+    mock_sleep.assert_not_awaited()
 
 
 # ── submit_with_retry: 비즈니스 거부 (FAIL) ─────────────────────────────────
