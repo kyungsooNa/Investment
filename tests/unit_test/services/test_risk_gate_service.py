@@ -16,6 +16,8 @@ def _service(
     snapshot: AccountSnapshot | None = None,
     strategy_provider=None,
     logger=None,
+    env=None,
+    market_buy_reference_price_provider=None,
 ):
     if kill_switch is None:
         kill_switch = AsyncMock()
@@ -33,7 +35,25 @@ def _service(
         account_snapshot_cache=cache,
         strategy_risk_provider=strategy_provider,
         logger=logger or MagicMock(),
+        env=env,
+        market_buy_reference_price_provider=market_buy_reference_price_provider,
     ), kill_switch, cache
+
+
+class _RealEnv:
+    is_paper_trading = False
+    _base_url = "https://openapi.koreainvestment.com:9443"
+    active_config = {"stock_account_number": "12345678"}
+    stock_account_number = "12345678"
+    paper_stock_account_number = None
+
+
+class _PaperEnv:
+    is_paper_trading = True
+    _base_url = "https://openapivts.koreainvestment.com:29443"
+    active_config = {"stock_account_number": "98765432"}
+    stock_account_number = None
+    paper_stock_account_number = "98765432"
 
 
 @pytest.mark.asyncio
@@ -506,3 +526,100 @@ async def test_strategy_exposure_limit_fails_open_on_zero_equity_and_hold_error(
     assert await error_svc.validate_order(
         "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0, source="strategy:모멘텀"
     ) is None
+
+
+# --- 시장가 매수(price==0) RiskGate 우회 차단 ---
+
+@pytest.mark.asyncio
+async def test_market_buy_blocked_in_real_mode_without_reference_price_provider():
+    """실전 모드 + price=0 + BUY: reference_price provider 미주입 시 차단."""
+    svc, _, _ = _service(env=_RealEnv())
+
+    result = await svc.validate_order("005930", 0, 10, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result is not None
+    assert result.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
+    assert result.data["rule"] == "market_buy_no_reference_price"
+
+
+@pytest.mark.asyncio
+async def test_market_buy_blocked_in_real_mode_when_reference_price_returns_none():
+    """실전 모드 + price=0 + BUY: provider가 None 반환 시 차단."""
+    provider = AsyncMock(return_value=None)
+    svc, _, _ = _service(env=_RealEnv(), market_buy_reference_price_provider=provider)
+
+    result = await svc.validate_order("005930", 0, 10, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result is not None
+    assert result.data["rule"] == "market_buy_no_reference_price"
+
+
+@pytest.mark.asyncio
+async def test_market_buy_in_real_mode_amount_limit_enforced_via_reference_price():
+    """실전 모드 + price=0 + BUY: reference_price * qty가 한도 초과면 차단."""
+    provider = AsyncMock(return_value=1_000_000)  # 1M * 10 = 10M > 2M default
+    svc, _, _ = _service(env=_RealEnv(), market_buy_reference_price_provider=provider)
+
+    result = await svc.validate_order("005930", 0, 10, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result is not None
+    assert result.data["rule"] == "max_order_amount"
+
+
+@pytest.mark.asyncio
+async def test_market_buy_allowed_in_real_mode_when_reference_price_within_limits():
+    """실전 모드 + price=0 + BUY: 한도 내면 통과."""
+    provider = AsyncMock(return_value=70_000)
+    svc, _, _ = _service(env=_RealEnv(), market_buy_reference_price_provider=provider)
+
+    result = await svc.validate_order("005930", 0, 10, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_market_buy_allowed_in_paper_mode_without_reference_price():
+    """Paper 모드: 기존 fail-open 동작 유지 (price=0 BUY 통과)."""
+    svc, _, _ = _service(env=_PaperEnv())
+
+    result = await svc.validate_order("005930", 0, 10, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_market_buy_allowed_when_env_not_injected():
+    """env=None: 기존 fail-open 유지 (회귀 방지)."""
+    svc, _, _ = _service()  # env=None
+
+    result = await svc.validate_order("005930", 0, 10, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_market_sell_in_real_mode_still_passes_without_reference_price():
+    """SELL 시장가는 청산 우선 정책으로 기존대로 통과."""
+    svc, _, _ = _service(env=_RealEnv())
+
+    result = await svc.validate_order("005930", 0, 10, OrderSide.SELL, Exchange.KRX, 0)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_market_buy_uses_reference_price_for_daily_cap_check():
+    """실전 모드 + price=0 + BUY: 일일 누적 한도 검증에도 reference_price가 사용된다."""
+    provider = AsyncMock(return_value=50_000)
+    cfg = RiskGateConfig(
+        max_order_amount_won=10_000_000,
+        max_daily_order_amount_won=400_000,  # 50_000 * 10 = 500_000 > 400_000
+    )
+    svc, _, _ = _service(
+        config=cfg, env=_RealEnv(), market_buy_reference_price_provider=provider
+    )
+
+    result = await svc.validate_order("005930", 0, 10, OrderSide.BUY, Exchange.KRX, 0)
+
+    assert result is not None
+    assert result.data["rule"] == "max_daily_order_amount"
