@@ -278,7 +278,12 @@
   - 신규 단위 테스트 21개: shadow journal 5 + VBO evaluate_single 10 + scheduler 구독 6.
   - 검증: 단위 4662 GREEN (이전 4635 → +27), 통합 233 GREEN.
   - 운영 활성화 절차: `StrategyFactory` 에서 VBO `StrategySchedulerConfig(..., event_driven_shadow=True)` 로 설정만 변경하면 즉시 shadow 모드 동작. 1주 운영 후 `logs/strategies/event_shadow/YYYYMMDD.jsonl` 와 폴링 신호 비교로 PR-3 진입 판단.
-- [ ] PR-3: PR-2 결과 양호 시 VBO 실 적용 + OSB shadow 진입.
+- [~] PR-2.5: VBO shadow 운영 관찰 시작.
+  - 코드 대조 결과: `StrategyEventRouter`, `EventShadowJournalService`, `LarryWilliamsVBOStrategy.evaluate_single()`, scheduler 구독 lifecycle, ServiceContainer/StrategyFactory 주입은 존재한다.
+  - 완료된 부분: `StrategyFactory` 의 VBO `StrategySchedulerConfig(..., event_driven_shadow=True)` 를 활성화했다. `enabled=False` 는 유지되어 실주문은 발생하지 않는다.
+  - 남은 작업: 5거래일 동안 `logs/strategies/event_shadow/YYYYMMDD.jsonl` 을 수집한다.
+  - 검증 기준: shadow 신호와 기존 polling 신호의 시간/종목/가격 괴리를 비교해 실주문 전환 가능 여부를 판정한다.
+- [blocked] PR-3: PR-2.5 관찰 결과 양호 시 VBO 실 적용 + OSB shadow 진입.
 - [ ] PR-4+: 단계적 확장.
 
 구현 결정 사항 (`docs/event_driven_architecture.md` §9, 2026-05-18 확정):
@@ -516,13 +521,15 @@
   - 완료된 부분: 거래 비용 계산 유틸과 테스트가 있고, 체결 품질 로그/리포트에서 슬리피지를 추적한다.
   - 완료된 부분: 전략별 성과 지표 조회/집계 기본값이 비용 포함 순수익(`net PnL/return`) 기준으로 전환되었고, gross 기준은 `apply_cost=false` 명시 경로로 유지한다.
   - 완료된 부분: 백테스트용 `BacktestExecutionSimulator`가 명시적 시장가 슬리피지, 호가 단위 반올림, 수수료/거래세 포함 체결 리포트를 생성한다.
-  - 진행 필요: 레거시 백테스트 저장 단계가 체결 리포트와 포트폴리오 장부를 사용하도록 연결해야 한다.
+  - 완료된 부분: 활성 period runner와 레거시 `VolumeBreakoutStrategy.backtest_open_threshold_intraday()` 저장 경로는 `BacktestExecutionReport` 기반 표준 journal을 사용한다.
+  - 진행 필요: `MomentumStrategy` 등 비활성/레거시 독립 백테스트 경로까지 동일 체결 리포트/포트폴리오 장부로 통합할지 결정한다. 또한 체결 없는 중간 보유일의 MFE/MAE를 포함하려면 mark-to-market bar provider contract가 필요하다.
   - 관련 파일: `utils/transaction_cost_utils.py`, `services/backtest_execution_simulator.py`, `services/order_execution_service.py`, `services/strategy_log_report_service.py`, `tests/unit_test/utils/test_transaction_cost_utils.py`, `tests/unit_test/services/test_backtest_execution_simulator.py`
 
-- [~] 장애, 데이터 지연, websocket 끊김, reconcile 실패 시 신규 주문 차단 또는 경고 상태로 전환된다.
+- [x] 장애, 데이터 지연, websocket 끊김, reconcile 실패 시 신규 주문 차단 또는 경고 상태로 전환된다.
   - 완료된 부분: Kill Switch/Risk Gate 주문 차단, 데이터 품질 오류 주문 차단, websocket watchdog 재연결/경고, reconcile alarm 신규 주문 차단이 구현·테스트되어 있다.
-  - 진행 필요: 장애 유형별 정책이 모두 동일한 수준으로 연결되었는지 운영 매트릭스를 확정하고, reconcile task 실패 자체가 주문 차단 또는 명시 경고 상태로 이어지는지 end-to-end 검증을 보강해야 한다.
-  - 관련 파일: `services/kill_switch_service.py`, `services/data_quality_service.py`, `services/risk_gate_service.py`, `services/order_execution_service.py`, `task/background/intraday/websocket_watchdog_task.py`, `task/background/after_market/after_market_reconcile_task.py`
+  - 완료된 부분: reconcile 실패 운영 매트릭스가 `docs/reconcile_failure_policy.md` 에 정리되어 있고, `tests/integration_test/test_it_reconcile_failure_policy.py` 가 매트릭스 행을 1:1로 검증한다.
+  - 완료된 부분: after-market reconcile task 오류/불일치 알림 경로는 `tests/unit_test/task/background/after_market/test_after_market_reconcile_task.py` 로 검증된다.
+  - 관련 파일: `services/kill_switch_service.py`, `services/data_quality_service.py`, `services/risk_gate_service.py`, `services/order_execution_service.py`, `task/background/intraday/websocket_watchdog_task.py`, `task/background/after_market/after_market_reconcile_task.py`, `docs/reconcile_failure_policy.md`
 
 ## HTF 전략 추가 개선 (차후 검토)
 
