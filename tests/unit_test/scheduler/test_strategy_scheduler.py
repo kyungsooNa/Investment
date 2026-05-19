@@ -1226,6 +1226,30 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # 달력 매니저의 대기 메서드가 호출되었는지 완벽하게 확인됨!
         mcs.wait_until_next_open.assert_awaited_once()
 
+    async def test_loop_market_closed_does_not_force_exit(self):
+        """장 종료 후에는 force_exit 시그널을 새로 만들지 않는다."""
+        scheduler, _, _, _, mcs = self._make_scheduler()
+        mcs.is_market_open_now.return_value = False
+        mcs.wait_until_next_open.side_effect = asyncio.CancelledError()
+
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(
+            strategy=strategy,
+            force_exit_on_close=True,
+            enabled=True,
+        )
+        scheduler.register(config)
+        scheduler._running = True
+
+        with patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as mock_run:
+            try:
+                await scheduler._loop()
+            except asyncio.CancelledError:
+                pass
+
+        mock_run.assert_not_awaited()
+        mcs.wait_until_next_open.assert_awaited_once()
+
     async def test_loop_force_exit(self):
         """장 마감 임박 시 강제 청산 로직 테스트 (전략별 설정 구분 확인)."""
         scheduler, vm, _, tm, _ = self._make_scheduler()
@@ -1240,13 +1264,13 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         config_b = StrategySchedulerConfig(strategy=strategy_b, force_exit_on_close=False, interval_minutes=0)
         scheduler.register(config_b)
 
-        # 현재 시간: 15:20, 마감 시간: 15:40 (10분 남음 -> FORCE_EXIT_MINUTES_BEFORE(15) 이내)
+        # 현재 시간: 15:05, 마감 시간: 15:30 (25분 남음 -> 강제청산 윈도우 이내, 컷오프 이전)
         import pytz
         from datetime import datetime
         kst = pytz.timezone("Asia/Seoul")
-        now = kst.localize(datetime(2023, 1, 1, 15, 20))
+        now = kst.localize(datetime(2023, 1, 1, 15, 5))
         # 두 번째 루프에서는 쿨다운(60초) 이후 시점
-        now_after_cooldown = kst.localize(datetime(2023, 1, 1, 15, 21, 1))
+        now_after_cooldown = kst.localize(datetime(2023, 1, 1, 15, 6, 1))
         close_time = kst.localize(datetime(2023, 1, 1, 15, 30))
 
         tm.get_current_kst_time.side_effect = [now, now_after_cooldown]
@@ -1268,6 +1292,34 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
             # 전략 B는 일반 모드(False)로 실행되어야 함 (쿨다운 이후 두 번째 루프에서 실행)
             mock_run.assert_any_call(config_b, force_exit_only=False)
+
+    async def test_loop_skips_strategy_after_order_cutoff(self):
+        """주문 컷오프 이후에는 일반 실행과 강제청산 모두 시그널을 만들지 않는다."""
+        from datetime import datetime
+
+        scheduler, _, _, tm, mcs = self._make_scheduler()
+        now_dt = datetime(2026, 5, 19, 15, 20, 0)
+        close_dt = datetime(2026, 5, 19, 15, 40, 0)
+        tm.get_current_kst_time.return_value = now_dt
+        tm.get_market_close_time.return_value = close_dt
+
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(
+            strategy=strategy,
+            force_exit_on_close=True,
+            interval_minutes=0,
+        )
+        scheduler.register(config)
+        scheduler._running = True
+        mcs.is_market_open_now.side_effect = [True, asyncio.CancelledError()]
+
+        with patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as mock_run:
+            try:
+                await scheduler._loop()
+            except asyncio.CancelledError:
+                pass
+
+        mock_run.assert_not_awaited()
 
     async def test_loop_exception_handling(self):
         """루프 내 예외 발생 시 계속 실행되는지 테스트."""
@@ -2374,10 +2426,10 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         
         mock_price_sub.remove_category.assert_awaited_once_with("scheduler_전략A")
 
-    async def test_loop_force_exit_exception(self):
-        """루프 중 장 마감 직후 강제 청산 시 예외가 발생해도 루프가 죽지 않는지 테스트."""
+    async def test_loop_market_closed_does_not_run_force_exit_exception_path(self):
+        """장 마감 후에는 강제 청산을 시도하지 않아 예외 경로도 타지 않는다."""
         scheduler, vm, _, tm, mcs = self._make_scheduler()
-        
+
         mcs.is_market_open_now.return_value = False
         mcs.wait_until_next_open.side_effect = asyncio.CancelledError() # 루프 탈출용
         
@@ -2388,13 +2440,14 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler._force_exit_done = set() 
         scheduler._running = True
         
-        with patch.object(scheduler, '_run_strategy', side_effect=Exception("Liquidate Error")):
+        with patch.object(scheduler, '_run_strategy', side_effect=Exception("Liquidate Error")) as mock_run:
             try:
                 await scheduler._loop()
             except asyncio.CancelledError:
                 pass
-            
-            scheduler._logger.error.assert_called()
+
+        mock_run.assert_not_called()
+        scheduler._logger.error.assert_not_called()
 
     # ── Kill Switch 테스트 ───────────────────────────────────────────────────
 
