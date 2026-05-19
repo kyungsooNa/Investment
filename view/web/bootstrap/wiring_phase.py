@@ -47,11 +47,13 @@ class WiringPhase:
         if ctx.minervini_update_task and ctx.daily_price_collector_task:
             ctx.minervini_update_task.set_daily_price_collector_task(ctx.daily_price_collector_task)
 
-        # DataQuality ↔ PriceStream (진성 순환)
-        ctx.data_quality_service.set_price_stream_service(ctx.price_stream_service)
+        # DataQuality ↔ PriceStream (진성 순환). BATCH 단독은 realtime chain 을 만들지 않는다.
+        if ctx.price_stream_service:
+            ctx.data_quality_service.set_price_stream_service(ctx.price_stream_service)
 
         # Streaming ← PriceStream (생성 순서 backfill)
-        ctx.streaming_service.set_price_stream_service(ctx.price_stream_service)
+        if ctx.streaming_service and ctx.price_stream_service:
+            ctx.streaming_service.set_price_stream_service(ctx.price_stream_service)
 
         # StockQuery ← PriceStream / PriceSubscription (snapshot-first 경로)
         if ctx.stock_query_service:
@@ -59,13 +61,16 @@ class WiringPhase:
             ctx.stock_query_service.price_subscription_service = ctx.price_subscription_service
 
         # Streaming ← StreamingStockRepo
-        ctx.streaming_service.set_streaming_stock_repo(ctx.streaming_stock_repo)
+        if ctx.streaming_service and ctx.streaming_stock_repo:
+            ctx.streaming_service.set_streaming_stock_repo(ctx.streaming_stock_repo)
 
         # ProgramTrading ← StreamingStockRepo
-        ctx.program_trading_stream_service.wire_streaming_stock_repo(ctx.streaming_stock_repo)
+        if ctx.streaming_stock_repo:
+            ctx.program_trading_stream_service.wire_streaming_stock_repo(ctx.streaming_stock_repo)
 
         # Streaming signing_notice callback ← OrderExecution
-        ctx.streaming_service.register_handler(
-            "signing_notice",
-            ctx.order_execution_service.handle_signing_notice,
-        )
+        if ctx.streaming_service and ctx.order_execution_service:
+            ctx.streaming_service.register_handler(
+                "signing_notice",
+                ctx.order_execution_service.handle_signing_notice,
+            )

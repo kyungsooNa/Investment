@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-19 (P2 2-4 PR-2.5 착수 — `StrategyFactory` 의 VBO 등록에 `event_driven_shadow=True` 반영. 전략 `enabled=False` 는 유지되어 실주문 없이 shadow 로그만 수집)
+최종 업데이트: 2026-05-19 (P3 3-2 완료 — RuntimeMode 기반 task/service 조립 경계, WEB/TRADING/BATCH/Admin 진입점, ServiceContainer mode contract 테스트 반영)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -335,24 +335,27 @@
 
 ### 3-2. 웹 / 운영 / 전략 runtime 경계 분리
 
-- [~] 웹 화면/API, 장중 전략/주문 실행, 장마감 데이터 수집/리포트, 수동 운영 점검 runtime 경계를 명확히 한다.
+- [x] 웹 화면/API, 장중 전략/주문 실행, 장마감 데이터 수집/리포트, 수동 운영 점검 runtime 경계를 명확히 한다.
   - 1차 완료: `view/web/bootstrap/runtime_mode.py` 의 `RuntimeMode` enum (WEB / TRADING / BATCH / ALL) 로 15 개 task (`SchedulerBootstrap` 등록 14 + `StrategyFactory` 등록 1) 의 runtime 소유권 명시.
   - 1차 완료: `SchedulerBootstrap.run()` 을 `_register_web_tasks`/`_register_trading_tasks`/`_register_batch_tasks`/`_register_websocket_watchdog` 4 개 그룹 메서드로 분리. websocket_watchdog 은 WEB | TRADING 양쪽 mode 에서 1 회만 등록.
   - 1차 완료: `StrategyFactory.build()` 가 TRADING 비활성 시 즉시 return (StrategyScheduler / 7 개 전략 / Adapter 모두 미생성).
-  - 후속: `ServiceContainer` 의 service 객체 생성 단계 분할 (현재 모든 service 와 task 객체는 mode 와 무관하게 항상 생성됨), 별도 진입점 (`web_app.py` / `trading_runtime.py` / `batch_runtime.py` / `admin_runtime.py`) 파일, admin runtime 정의.
-- [~] 웹 서버 초기화가 모든 after-market task와 장중 scheduler를 직접 끌어안지 않도록 분리한다.
+  - 2차 완료: `ServiceContainer` 가 runtime mode 에 따라 task 생성을 일부 분기한다. BATCH 단독은 realtime chain(`StreamingService`, `PriceStreamService`, `PriceSubscriptionService`, `WebSocketWatchdogTask`)과 WEB/TRADING task를 만들지 않고, WEB 단독은 realtime chain + `NotificationQueueTask`만 유지하며 장중/장마감 task를 만들지 않는다. `WiringPhase` 는 realtime chain 이 없는 BATCH 단독 컨텍스트를 no-op 으로 통과한다.
+  - 완료: `TRADING` 단독 `ServiceContainer` contract 테스트 추가. TRADING 은 realtime chain + 장중 task(`PreMarketHealthCheckTask`, `OpeningPositionReconcileTask`, `CacheWarmupTask`)를 만들고, WEB 알림 task와 장마감 task는 만들지 않는다.
+  - 완료: `web_app.py`, `trading_runtime.py`, `batch_runtime.py`, `admin_runtime.py` 진입점 추가. 각 진입점은 `runtime_entrypoint.py` 를 통해 `RUNTIME_MODE` 를 명시하고 기존 FastAPI bootstrap 으로 위임한다. admin runtime 은 현재 WEB surface 를 사용하되 TRADING/BATCH scheduler 를 비활성화한 운영 점검 모드로 정의한다.
+  - 결정: `OrderExecutionService`, `StockQueryService`, `OneilUniverseService`, `RankingTask` 같은 도메인/조회 서비스는 mode 별 task 등록과 별개인 공통 조립 계층으로 유지한다. API surface, 전략 생성, background task 등록이 mode boundary 를 담당한다.
+- [x] 웹 서버 초기화가 모든 after-market task와 장중 scheduler를 직접 끌어안지 않도록 분리한다.
   - 1차 완료: `web_main.py` lifespan 이 `RUNTIME_MODE` env (default `ALL` = 현행 동작 100% 유지) 를 읽어 `WebAppContext(runtime_mode=...)` 로 주입. mode 별로 task 등록과 StrategyScheduler 생성을 분기.
   - 1차 완료: `BackgroundScheduler` / `ForegroundScheduler` 객체 생성은 mode 와 무관하게 항상 수행 (foreground middleware 가 rate-limit 경합 제어에 의존).
   - 1차 완료: 가격 구독 초기화 (`_initialize_price_subscriptions`) 는 WEB | TRADING 에서만 호출. BATCH 단독에서는 생략.
   - 안전성 정책: `restore_state_from_broker` / `reconcile_orders_with_broker` 는 WEB | TRADING 어느 한쪽이라도 켜져 있으면 항상 호출 (`/api/order` 가 WEB 에서 살아 있는 한 stale 주문 상태 위험 차단). "WEB_ONLY = read-only" 정책 확정 시에만 TRADING 단독 gate 로 좁힐 수 있음.
-  - 후속: 별도 프로세스 배포, cross-runtime IPC, event bus.
+  - 완료: 별도 runtime 진입점 파일을 제공해 프로세스 매니저가 WEB/TRADING/BATCH/Admin 을 분리 실행할 수 있게 했다. cross-runtime IPC/event bus 는 현재 단일 DB/log 기반 운영에 불필요하므로 3-2 완료 범위에서 제외하고, 다중 프로세스 간 실시간 상태 공유가 필요해질 때 별도 P3/P4 항목으로 승격한다.
 
-분리 후보 (후속 PR):
+분리된 진입점:
 
 - `web_app.py` — 화면/API
 - `trading_runtime.py` — 장중 전략/주문 실행
 - `batch_runtime.py` — 장마감/데이터 수집/리포트
-- `admin_runtime.py` — 수동 조작/점검
+- `admin_runtime.py` — 수동 조작/점검 (현재 WEB surface + TRADING/BATCH 비활성)
 
 ### 3-3. 주문 서비스 역할 분리
 
@@ -461,32 +464,36 @@
 
 ## 바로 착수 추천 순서
 
-1. P2 2-4 event-driven shadow 운영 관찰
-   - 현재 코드상 PR-1/PR-2 인프라와 테스트가 들어와 있고, VBO `event_driven_shadow=True` 가 활성화되어 있다.
-   - 다음 착수: 5거래일 로그 수집 → polling 신호와 shadow 신호 비교 리포트 작성.
-   - PR-3(VBO 실 적용 + OSB shadow)는 shadow 관찰 결과가 있어야 진행 가능하므로 현재는 차단 상태로 둔다.
+1. P0 실전 손실 방지
+   - 실전 체결 이력 fixture 확보 및 민감정보 제거
+   - 실전 fixture 기반 주문번호, 종목코드, 매수/매도, 체결/미체결/취소/거부 필드 매핑 확정
+   - 주문 접수/부분체결/전체체결/미체결/취소/거부 상태 전이와 잔고 대사 E2E 검증
+   - reconcile task 실패가 주문 차단 또는 명시 경고로 이어지는 정책 매트릭스 확정
 
-2. P0 실전 손실 방지 — 외부 실전 응답 확보 시 즉시 진행
-   - 실전 체결 이력이 있는 KIS `inquire-daily-ccld` 응답 fixture 확보 및 민감정보 제거.
-   - 실전 fixture 기반 주문번호, 종목코드, 매수/매도, 체결/미체결/취소/거부 필드 매핑 확정.
-   - 현재 차단 사유는 코드 부재가 아니라 실제 체결 이력 응답 부재다.
+2. P0/P1 백테스트 신뢰도
+   - 장중 후보 종목의 프로그램매매 WebSocket 캡처 샘플 확보
+   - 실제 replay fixture에 캡처 overlay를 결합해 통과 케이스 고정
+   - 레거시 백테스트 저장 경로를 표준 journal / `BacktestExecutionReport` 경로로 정리
 
-3. P1 백테스트 신뢰도 — 장중 WebSocket 샘플 확보 시 진행
-   - 장중 후보 종목의 프로그램매매 WebSocket 캡처 샘플 확보.
-   - 실제 replay fixture에 캡처 overlay를 결합해 통과 케이스 고정.
-   - 현재 차단 사유는 장 마감 후 재생성할 수 없는 microstructure 샘플 부재다.
+3. P1 전략 수익성
+   - 시장 국면별 성과 분리
+   - 코스피/코스닥 지수 기반 전략 ON/OFF 조건 검증
+   - 변동성·장 초반/후반 필터를 성과 리포트로 먼저 검증
+   - 전략별 stop/target/trailing 기준 표준화
+   - 전략별 risk budget 분리
 
-4. P3 3-2 runtime 경계 분리 후속
-   - `RuntimeMode`, task 그룹 등록, StrategyFactory TRADING gate는 구현되어 있다.
-   - 다음 착수: `ServiceContainer` 의 service/task 객체 생성 단계를 mode-aware 로 분할하거나, 별도 진입점(`web_app.py`, `trading_runtime.py`, `batch_runtime.py`, `admin_runtime.py`)을 도입할지 결정한다.
+4. P2 시스템 성능
+   - 기존 stream snapshot 기반 공통 snapshot contract 정리
+   - WebSocket / REST / DB snapshot 입력 표준화
+   - stale/missing reason을 rejected reason으로 기록
+   - event-driven 전략 평가 목표 아키텍처 문서화
 
-5. P0/P1 journal 정밀도 후속
-   - 활성 period runner와 VBO 레거시 저장 경로는 `BacktestExecutionReport`/표준 journal 기반으로 정리되어 있다.
-   - 남은 작업: 체결 없는 중간 보유일의 일중 high/low까지 MFE/MAE에 포함하려면 mark-to-market bar provider contract를 추가한다.
-
-6. P4 성과 저하 soft signal 후속
-   - 전략별 성과 저하 감지와 operator alert 연결은 구현되어 있다.
-   - 남은 작업: 신규 진입 중단, 수량 축소, paper mode 전환을 실제 자동 액션으로 승격할지 정책을 확정한다.
+5. P3/P4 유지보수와 운영 품질
+   - 전략별 성과 저하 감지 지표 집계 (완료)
+   - `WebAppContext` 분리 (완료)
+   - ServiceContainer / Factory 도입 (완료)
+   - `OrderExecutionService` 역할 분리 (완료 — PR #412)
+   - 남은 항목: P2 2-4 event-driven 전환
 
 ---
 
