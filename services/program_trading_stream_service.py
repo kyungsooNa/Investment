@@ -1,8 +1,10 @@
 import asyncio
+import html
+import inspect
 import json
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 from repositories.program_trading_repo import ProgramTradingRepo
@@ -24,16 +26,24 @@ class ProgramTradingStreamService:
     RETENTION_DAYS = 7
     FLUSH_INTERVAL_SEC = 1.0
     FLUSH_BATCH_SIZE = 100
+    HOURLY_TICK_ALERT_INTERVAL_SEC = 60 * 60
 
     def __init__(self, logger=None):
         self.logger = logger if logger else logging.getLogger(__name__)
 
         # 메모리 캐시 (성능 최적화)
         self._pt_history: dict = {}
+        self._last_tick_ts_by_code: dict[str, float] = {}
         self.last_data_ts = 0.0
 
         # 클라이언트 스트리밍 큐
         self._pt_queues: list = []
+        self._alert_tasks: list[asyncio.Task] = []
+        self._last_db_check_report_date: str | None = None
+        self._streaming_stock_repo = None
+        self._telegram_reporter = None
+        self._market_calendar_service = None
+        self._market_clock = None
 
         # SQLite 레이어는 ProgramTradingRepo에 위임
         self._repo = ProgramTradingRepo(
@@ -143,6 +153,7 @@ class ProgramTradingStreamService:
             self.logger.info(f"실시간 데이터 수신 재개 (Gap: {now - self.last_data_ts:.1f}초)")
 
         self.last_data_ts = now
+        self._last_tick_ts_by_code[code] = now
 
         # 1. 메모리 저장 (기존 프론트엔드/백엔드 호환용 원본 유지)
         self._pt_history.setdefault(code, []).append(data)
@@ -217,16 +228,255 @@ class ProgramTradingStreamService:
 
     def wire_streaming_stock_repo(self, streaming_stock_repo) -> None:
         """StreamingStockRepo를 사후 주입하여 desired flush를 repo의 flush_loop에 통합한다."""
+        self._streaming_stock_repo = streaming_stock_repo
         self._repo._streaming_stock_repo = streaming_stock_repo
+
+    def wire_alert_dependencies(
+        self,
+        telegram_reporter=None,
+        market_calendar_service=None,
+        market_clock=None,
+    ) -> None:
+        """운영 알림에 필요한 외부 의존성을 사후 주입한다."""
+        self._telegram_reporter = telegram_reporter
+        self._market_calendar_service = market_calendar_service
+        self._market_clock = market_clock
+
+    # ── 운영 알림 ──────────────────────────────────────────────────
+
+    def _get_subscribed_program_codes(self) -> list[str]:
+        if not self._streaming_stock_repo:
+            return []
+        try:
+            from repositories.streaming_stock_repo import StreamingType
+
+            return sorted(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING))
+        except Exception as e:
+            self.logger.warning(f"프로그램매매 구독 목록 조회 실패: {e}")
+            return []
+
+    @staticmethod
+    def _format_int(value) -> str:
+        try:
+            return f"{int(str(value).replace(',', '')):,}"
+        except (TypeError, ValueError):
+            return "0"
+
+    @staticmethod
+    def _format_rate(value) -> str:
+        try:
+            return f"{float(value):+.2f}%"
+        except (TypeError, ValueError):
+            return "0.00%"
+
+    def _format_last_tick_report(self, codes: list[str]) -> str:
+        lines = [
+            "<b>프로그램매매 구독 Tick 상태</b>",
+            f"생성: {html.escape(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}",
+            f"구독 종목: {len(codes)}개",
+            "",
+        ]
+        for code in codes:
+            history = self._pt_history.get(code) or []
+            if not history:
+                lines.append(f"{html.escape(code)}: 수신 없음")
+                continue
+
+            tick = history[-1]
+            received_ts = self._last_tick_ts_by_code.get(code)
+            received_at = (
+                datetime.fromtimestamp(received_ts).strftime("%H:%M:%S")
+                if received_ts else "-"
+            )
+            trade_time = str(tick.get("주식체결시간", "") or "-")
+            price = self._format_int(tick.get("price", 0))
+            rate = self._format_rate(tick.get("rate", 0.0))
+            net_amt = self._format_int(tick.get("순매수거래대금", 0))
+            lines.append(
+                f"{html.escape(code)}: {price}원 ({rate}) "
+                f"체결:{html.escape(trade_time)} 수신:{received_at} 순매수대금:{net_amt}"
+            )
+        return "\n".join(lines)
+
+    async def _send_telegram_message(self, message: str) -> bool:
+        if not self._telegram_reporter:
+            return False
+        sender = getattr(self._telegram_reporter, "_send_message", None)
+        if sender is None:
+            self.logger.warning("TelegramReporter에 _send_message가 없어 PT 알림을 전송할 수 없습니다.")
+            return False
+        try:
+            result = sender(message)
+            if inspect.isawaitable(result):
+                result = await result
+            return bool(result)
+        except Exception as e:
+            self.logger.error(f"프로그램매매 텔레그램 알림 전송 실패: {e}", exc_info=True)
+            return False
+
+    async def send_subscribed_last_tick_alert(self) -> bool:
+        """구독 중인 PT 종목들의 마지막 수신 tick을 텔레그램으로 전송한다."""
+        codes = self._get_subscribed_program_codes()
+        if not codes:
+            return False
+        message = self._format_last_tick_report(codes)
+        return await self._send_telegram_message(message)
+
+    def _build_trading_window(self, trading_date: str):
+        digits = "".join(ch for ch in str(trading_date) if ch.isdigit())
+        if len(digits) < 8:
+            digits = datetime.now().strftime("%Y%m%d")
+        digits = digits[:8]
+        day = datetime.strptime(digits, "%Y%m%d")
+
+        open_time = getattr(self._market_clock, "market_open_time_str", "09:00")
+        close_time = getattr(self._market_clock, "market_close_time_str", "15:40")
+        open_hour, open_minute = map(int, open_time.split(":"))
+        close_hour, close_minute = map(int, close_time.split(":"))
+        start_dt = datetime(day.year, day.month, day.day, open_hour, open_minute)
+        end_dt = datetime(day.year, day.month, day.day, close_hour, close_minute)
+
+        timezone = getattr(self._market_clock, "market_timezone", None)
+        if timezone is not None:
+            start_dt = timezone.localize(start_dt)
+            end_dt = timezone.localize(end_dt)
+
+        expected_minutes = []
+        cursor = start_dt.replace(second=0, microsecond=0)
+        end_cursor = end_dt.replace(second=0, microsecond=0)
+        while cursor <= end_cursor:
+            expected_minutes.append(cursor.strftime("%H:%M"))
+            cursor += timedelta(minutes=1)
+
+        return start_dt, end_dt, expected_minutes, timezone
+
+    def build_db_minute_persistence_status(self, codes: list[str], trading_date: str) -> dict:
+        """구독 종목별로 장중 DB 저장이 1분 단위로 존재하는지 계산한다."""
+        start_dt, end_dt, expected_minutes, timezone = self._build_trading_window(trading_date)
+        timestamps = self._repo.get_history_timestamps_by_code(
+            codes,
+            start_dt.timestamp(),
+            end_dt.timestamp(),
+        )
+        expected_set = set(expected_minutes)
+
+        status = {
+            "date": trading_date,
+            "window": {
+                "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "end": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            "expected_minute_count": len(expected_minutes),
+            "codes": {},
+        }
+        for code in codes:
+            saved_minutes = set()
+            for created_at in timestamps.get(code, []):
+                dt = datetime.fromtimestamp(created_at, tz=timezone) if timezone else datetime.fromtimestamp(created_at)
+                saved_minutes.add(dt.strftime("%H:%M"))
+            missing = [minute for minute in expected_minutes if minute not in saved_minutes]
+            status["codes"][code] = {
+                "ok": not missing,
+                "saved_minute_count": len(saved_minutes & expected_set),
+                "missing_minute_count": len(missing),
+                "missing_minutes": missing,
+            }
+        return status
+
+    def _format_db_persistence_report(self, status: dict) -> str:
+        lines = [
+            f"<b>프로그램매매 DB 저장 점검 ({html.escape(str(status.get('date', '')))}일)</b>",
+            f"구간: {html.escape(status['window']['start'])} ~ {html.escape(status['window']['end'])}",
+            f"기대 분봉: {status['expected_minute_count']}분",
+            "",
+        ]
+        for code, item in status["codes"].items():
+            saved = item["saved_minute_count"]
+            expected = status["expected_minute_count"]
+            if item["ok"]:
+                lines.append(f"{html.escape(code)}: OK ({saved}/{expected})")
+            else:
+                sample = ", ".join(item["missing_minutes"][:10])
+                extra = "" if item["missing_minute_count"] <= 10 else f" 외 {item['missing_minute_count'] - 10}분"
+                lines.append(
+                    f"{html.escape(code)}: 누락 {item['missing_minute_count']}분 "
+                    f"({saved}/{expected}) 예: {html.escape(sample)}{extra}"
+                )
+        return "\n".join(lines)
+
+    async def send_db_persistence_report(self, trading_date: str) -> bool:
+        """장마감 후 구독 종목의 1분 단위 DB 저장 여부를 텔레그램으로 전송한다."""
+        codes = self._get_subscribed_program_codes()
+        if not codes:
+            return False
+        await self._flush_write_buffer()
+        status = self.build_db_minute_persistence_status(codes, trading_date)
+        message = self._format_db_persistence_report(status)
+        return await self._send_telegram_message(message)
+
+    async def _hourly_tick_alert_loop(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(self.HOURLY_TICK_ALERT_INTERVAL_SEC)
+                await self.send_subscribed_last_tick_alert()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self.logger.error(f"프로그램매매 시간별 tick 알림 루프 종료: {e}", exc_info=True)
+
+    async def _after_market_db_check_loop(self) -> None:
+        from scheduler.after_market_loop import run_after_market_loop
+
+        async def _on_market_closed(latest_trading_date: str) -> None:
+            if self._last_db_check_report_date == latest_trading_date:
+                return
+            sent = await self.send_db_persistence_report(latest_trading_date)
+            if sent:
+                self._last_db_check_report_date = latest_trading_date
+
+        await run_after_market_loop(
+            mcs=self._market_calendar_service,
+            market_clock=self._market_clock,
+            logger=self.logger,
+            on_market_closed=_on_market_closed,
+            label="ProgramTradingDbCheck",
+        )
+
+    def _start_alert_tasks(self) -> None:
+        self._alert_tasks = [task for task in self._alert_tasks if not task.done()]
+        if not self._telegram_reporter:
+            return
+
+        hourly_running = any(
+            getattr(task.get_coro(), "__name__", "") == "_hourly_tick_alert_loop"
+            for task in self._alert_tasks
+        )
+        if not hourly_running:
+            self._alert_tasks.append(asyncio.create_task(self._hourly_tick_alert_loop()))
+
+        if self._market_calendar_service and self._market_clock:
+            db_check_running = any(
+                getattr(task.get_coro(), "__name__", "") == "_after_market_db_check_loop"
+                for task in self._alert_tasks
+            )
+            if not db_check_running:
+                self._alert_tasks.append(asyncio.create_task(self._after_market_db_check_loop()))
 
     # ── 생명주기 관리 ────────────────────────────────────────────────
 
     def start_background_tasks(self):
         """백그라운드 태스크 시작 (데이터 정리 + 버퍼 플러시 루프)."""
         self._repo.start_flush_loop()
+        self._start_alert_tasks()
         self.logger.info("ProgramTradingStreamService: 초기화 완료 (버퍼 기반 일괄 저장 모드)")
 
     async def shutdown(self):
         """서비스 종료 처리."""
+        for task in self._alert_tasks:
+            if not task.done():
+                task.cancel()
+        if self._alert_tasks:
+            await asyncio.gather(*self._alert_tasks, return_exceptions=True)
+        self._alert_tasks.clear()
         await self._repo.shutdown()
         self.logger.info("ProgramTradingStreamService: 종료 완료")

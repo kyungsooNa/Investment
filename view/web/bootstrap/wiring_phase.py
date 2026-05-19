@@ -68,6 +68,14 @@ class WiringPhase:
         if ctx.streaming_stock_repo:
             ctx.program_trading_stream_service.wire_streaming_stock_repo(ctx.streaming_stock_repo)
 
+        # ProgramTrading 운영 알림 ← TelegramReporter / MarketCalendar / MarketClock
+        if ctx.program_trading_stream_service:
+            ctx.program_trading_stream_service.wire_alert_dependencies(
+                telegram_reporter=getattr(ctx, "telegram_reporter", None),
+                market_calendar_service=getattr(ctx, "_mcs", None),
+                market_clock=getattr(ctx, "market_clock", None),
+            )
+
         # Streaming signing_notice callback ← OrderExecution
         if ctx.streaming_service and ctx.order_execution_service:
             ctx.streaming_service.register_handler(
