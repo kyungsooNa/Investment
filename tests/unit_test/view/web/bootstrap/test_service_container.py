@@ -99,6 +99,19 @@ def test_service_container_creates_query_and_order_services(patched_service_cont
     assert ctx.risk_gate_service is patched_service_container_deps["RiskGateService"].return_value
 
 
+def test_service_container_injects_market_buy_reference_price_provider(patched_service_container_deps):
+    """RiskGateService가 시장가 매수 기준가격 provider와 함께 인스턴스화된다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ServiceContainer(ctx).run()
+
+    kwargs = patched_service_container_deps["RiskGateService"].call_args.kwargs
+    provider = kwargs.get("market_buy_reference_price_provider")
+    assert provider is not None
+    assert callable(provider)
+
+
 def test_service_container_creates_streaming_chain(patched_service_container_deps):
     """StreamingService, PriceStreamService, PriceSubscriptionService 인스턴스가 생성된다.
 

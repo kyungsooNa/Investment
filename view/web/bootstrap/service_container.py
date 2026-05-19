@@ -9,8 +9,9 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 
+from common.types import ErrorCode, Exchange
 from config.config_loader import (
     DataQualityConfig,
     OrderPolicyConfig,
@@ -67,6 +68,79 @@ from view.web.bootstrap.runtime_mode import RuntimeMode
 
 if TYPE_CHECKING:  # pragma: no cover
     from view.web.web_app_initializer import WebAppContext
+
+
+def _extract_int_field(data: Any, *keys: str) -> Optional[int]:
+    """API 응답 dict/list/dataclass에서 첫 양수 정수 필드를 추출. 실패 시 None."""
+    if data is None:
+        return None
+    candidates: list = []
+    if isinstance(data, dict):
+        candidates.append(data)
+        for sub_key in ("output", "output1"):
+            sub = data.get(sub_key)
+            if isinstance(sub, dict):
+                candidates.append(sub)
+    elif isinstance(data, list):
+        candidates.extend(item for item in data if isinstance(item, dict))
+    else:
+        candidates.append(data)
+    for item in candidates:
+        for key in keys:
+            try:
+                if isinstance(item, dict):
+                    val = item.get(key)
+                else:
+                    val = getattr(item, key, None)
+            except Exception:
+                continue
+            if val is None or val == "":
+                continue
+            try:
+                v = int(str(val).replace(",", ""))
+            except (TypeError, ValueError):
+                continue
+            if v > 0:
+                return v
+    return None
+
+
+async def _resolve_market_buy_reference_price(
+    broker: Any,
+    logger: Any,
+    stock_code: str,
+    exchange: Exchange,
+) -> Optional[int]:
+    """시장가 매수 RiskGate 검증용 기준가격.
+
+    최우선매도호가(시장가 매수 체결 추정가) → 현재가 순으로 fallback. 둘 다 실패 시 None.
+    """
+    if broker is None:
+        return None
+    success = ErrorCode.SUCCESS.value
+    try:
+        resp = await broker.get_asking_price(stock_code, exchange=exchange)
+        if resp is not None and getattr(resp, "rt_cd", None) == success:
+            ask = _extract_int_field(resp.data, "askp1", "매도호가1")
+            if ask and ask > 0:
+                return ask
+    except Exception as exc:
+        if logger is not None:
+            logger.warning(
+                "[RiskGate] asking_price provider failed for %s: %s", stock_code, exc
+            )
+    try:
+        resp = await broker.get_current_price(stock_code, exchange=exchange)
+        if resp is not None and getattr(resp, "rt_cd", None) == success:
+            cur = _extract_int_field(resp.data, "stck_prpr")
+            if cur and cur > 0:
+                return cur
+    except Exception as exc:
+        if logger is not None:
+            logger.warning(
+                "[RiskGate] current_price provider failed for %s: %s", stock_code, exc
+            )
+    return None
 
 
 class ServiceContainer:
@@ -348,6 +422,9 @@ class ServiceContainer:
                 logger=ctx.logger,
                 env=getattr(ctx.broker, "env", None),
                 operator_alert_service=ctx.operator_alert_service,
+                market_buy_reference_price_provider=lambda code, exchange: _resolve_market_buy_reference_price(
+                    ctx.broker, ctx.logger, code, exchange
+                ),
             )
             ctx.execution_flow_service = ExecutionFlowService(
                 data_provider=ctx.broker,

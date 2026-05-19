@@ -22,10 +22,12 @@
 
 2026-05-19 외부 정적 리뷰 내용을 실제 main 코드와 대조한 결과, 아래 항목은 타당하거나 부분 타당합니다. 코드 변경 시 TDD 순서로 실패 테스트를 먼저 추가합니다.
 
-- [ ] 시장가 매수(`price == 0`)가 RiskGate 주문금액/일일금액/노출도 검증을 우회하지 못하게 막는다.
+- [x] 시장가 매수(`price == 0`)가 RiskGate 주문금액/일일금액/노출도 검증을 우회하지 못하게 막는다. (2026-05-19 완료)
   - 검토 결과: 타당. `RiskGateService.validate_order()`가 `price > 0`일 때만 `order_amount = price * qty`를 계산하므로 `price == 0` 시장가 주문은 금액 한도, 일일 주문금액, 전략 리스크, 계좌 노출 검증을 통과할 수 있다.
   - 개선 방향: 실전 모드 시장가 매수 금지 또는 `force_fresh=True` 기준가격/최우선매도호가 산정 후 RiskGate에 `reference_price * qty`로 검증.
   - 테스트: 시장가 BUY가 기준가격 없이 차단되는지, 기준가격 산정 성공 시 한도 초과가 차단되는지, SELL/force_exit 예외 정책이 유지되는지 검증.
+  - 완료 내용: `RiskGateService.__init__()`에 `market_buy_reference_price_provider` 주입 옵션 추가, `validate_order()`에 real mode + `price==0` + BUY 분기 추가. provider 미주입 또는 None 반환 시 `market_buy_no_reference_price` 룰로 차단, 가격 반환 시 `effective_price`로 amount/daily/strategy/exposure 검증. paper/`env=None`/SELL/`force_exit`는 기존 동작 유지. 테스트 8건 추가 (`tests/unit_test/services/test_risk_gate_service.py`).
+  - 후속 완료: `view/web/bootstrap/service_container.py`에 `_resolve_market_buy_reference_price()` 헬퍼 추가 (최우선매도호가 `askp1` → 현재가 `stck_prpr` fallback). `RiskGateService` 인스턴스화 시 `market_buy_reference_price_provider`로 lambda 주입. 헬퍼 단위 테스트 13건 + ServiceContainer 주입 검증 1건 추가 (`tests/unit_test/view/web/bootstrap/test_market_buy_reference_price_resolver.py`, `test_service_container.py`). 단위 + 통합 4936건 통과.
 - [ ] `BrokerOrderSubmitter.submit_with_retry()`가 `market_clock=None`이어도 정상 backoff 후 재시도하도록 수정한다.
   - 검토 결과: 타당. 현재 재시도 루프는 돌지만 `market_clock`이 없으면 sleep 없이 즉시 다음 시도로 넘어간다.
   - 개선 방향: `market_clock.async_sleep()`이 없으면 `asyncio.sleep(delay)`로 fallback.

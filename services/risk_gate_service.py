@@ -4,7 +4,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, Optional, Protocol, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, Optional, Protocol, TYPE_CHECKING, Union
 
 from common.operator_alert_types import AlertSource
 from common.types import ErrorCode, Exchange, OrderSide, ResCommonResponse
@@ -63,6 +63,9 @@ class RiskGateService:
         logger: Optional[logging.Logger] = None,
         env: Optional[Any] = None,
         operator_alert_service: Optional["OperatorAlertService"] = None,
+        market_buy_reference_price_provider: Optional[
+            Callable[[str, Exchange], Union[Optional[int], Awaitable[Optional[int]]]]
+        ] = None,
     ):
         self._cfg = config
         self._kill_switch = kill_switch_service
@@ -71,6 +74,7 @@ class RiskGateService:
         self._logger = logger or logging.getLogger(__name__)
         self._env = env
         self._operator_alert: Optional["OperatorAlertService"] = operator_alert_service
+        self._market_buy_reference_price_provider = market_buy_reference_price_provider
         self._daily_total: dict[date, int] = defaultdict(int)
 
     async def validate_order(
@@ -122,8 +126,28 @@ class RiskGateService:
                 max_pending_orders=self._cfg.max_pending_orders,
             )
 
-        if price > 0:
-            order_amount = price * qty
+        effective_price = price
+        if (
+            price == 0
+            and side == OrderSide.BUY
+            and not is_force_exit_sell
+            and self._is_real_mode()
+        ):
+            reference_price = await self._resolve_market_buy_reference_price(
+                stock_code, exchange
+            )
+            if reference_price is None or reference_price <= 0:
+                return self._blocked(
+                    "market_buy_no_reference_price",
+                    "실전 모드 시장가 매수: 기준가격 산정 실패로 차단",
+                    stock_code=stock_code,
+                    side=side.value,
+                    qty=qty,
+                )
+            effective_price = reference_price
+
+        if effective_price > 0:
+            order_amount = effective_price * qty
             if order_amount > self._cfg.max_order_amount_won:
                 return self._blocked(
                     "max_order_amount",
@@ -244,6 +268,33 @@ class RiskGateService:
                 )
 
         return None
+
+    def _is_real_mode(self) -> bool:
+        env = self._env
+        if env is None:
+            return False
+        return not bool(getattr(env, "is_paper_trading", True))
+
+    async def _resolve_market_buy_reference_price(
+        self,
+        stock_code: str,
+        exchange: Exchange,
+    ) -> Optional[int]:
+        provider = self._market_buy_reference_price_provider
+        if provider is None:
+            return None
+        try:
+            result = provider(stock_code, exchange)
+            if inspect.isawaitable(result):
+                result = await result
+            if result is None:
+                return None
+            return int(result)
+        except Exception as exc:
+            self._logger.warning(
+                "[RiskGate] market buy reference price provider failed: %s", exc
+            )
+            return None
 
     def _check_strategy_kill_switch(self, strategy_name: str) -> Optional[ResCommonResponse]:
         """전략별 Kill Switch 활성 상태 확인. 트립 시 차단."""
