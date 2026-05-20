@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-20 (get_current_price 전역 캐시 제거 + 전략 state atomic write/lock + 명시적 load_state await)
+최종 업데이트: 2026-05-20 (P0 0-0 정적 리뷰 5건 완료 후 항목 정리, 추천 순서 #1 제거)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -20,33 +20,13 @@
 
 ### 0-0. 정적 리뷰 기반 주문 안전성 재점검
 
-2026-05-19 외부 정적 리뷰 내용을 실제 main 코드와 대조한 결과, 아래 항목은 타당하거나 부분 타당합니다. 코드 변경 시 TDD 순서로 실패 테스트를 먼저 추가합니다.
+2026-05-19 ~ 05-20 외부 정적 리뷰 항목 5건을 모두 적용. 상세는 PR #419 ~ #423 본문과 git log 참조.
 
-- [x] 시장가 매수(`price == 0`)가 RiskGate 주문금액/일일금액/노출도 검증을 우회하지 못하게 막는다. (2026-05-19 완료)
-  - 검토 결과: 타당. `RiskGateService.validate_order()`가 `price > 0`일 때만 `order_amount = price * qty`를 계산하므로 `price == 0` 시장가 주문은 금액 한도, 일일 주문금액, 전략 리스크, 계좌 노출 검증을 통과할 수 있다.
-  - 개선 방향: 실전 모드 시장가 매수 금지 또는 `force_fresh=True` 기준가격/최우선매도호가 산정 후 RiskGate에 `reference_price * qty`로 검증.
-  - 테스트: 시장가 BUY가 기준가격 없이 차단되는지, 기준가격 산정 성공 시 한도 초과가 차단되는지, SELL/force_exit 예외 정책이 유지되는지 검증.
-  - 완료 내용: `RiskGateService.__init__()`에 `market_buy_reference_price_provider` 주입 옵션 추가, `validate_order()`에 real mode + `price==0` + BUY 분기 추가. provider 미주입 또는 None 반환 시 `market_buy_no_reference_price` 룰로 차단, 가격 반환 시 `effective_price`로 amount/daily/strategy/exposure 검증. paper/`env=None`/SELL/`force_exit`는 기존 동작 유지. 테스트 8건 추가 (`tests/unit_test/services/test_risk_gate_service.py`).
-  - 후속 완료: `view/web/bootstrap/service_container.py`에 `_resolve_market_buy_reference_price()` 헬퍼 추가 (최우선매도호가 `askp1` → 현재가 `stck_prpr` fallback). `RiskGateService` 인스턴스화 시 `market_buy_reference_price_provider`로 lambda 주입. 헬퍼 단위 테스트 13건 + ServiceContainer 주입 검증 1건 추가 (`tests/unit_test/view/web/bootstrap/test_market_buy_reference_price_resolver.py`, `test_service_container.py`). 단위 + 통합 4936건 통과.
-- [x] `BrokerOrderSubmitter.submit_with_retry()`가 `market_clock=None`이어도 정상 backoff 후 재시도하도록 수정한다. (2026-05-19 완료)
-  - 검토 결과: 타당. 현재 재시도 루프는 돌지만 `market_clock`이 없으면 sleep 없이 즉시 다음 시도로 넘어간다.
-  - 개선 방향: `market_clock.async_sleep()`이 없으면 `asyncio.sleep(delay)`로 fallback.
-  - 테스트: `market_clock=None`, `market_clock` 주입, retryable/non-retryable error를 각각 검증.
-  - 완료 내용: `services/broker_order_submitter.py`에 `import asyncio` 추가 및 재시도 backoff 분기에 `market_clock is None` → `await asyncio.sleep(delay)` fallback 적용. 기존 `market_clock` 주입 경로/지수 backoff 동작은 불변. 단위 테스트 3건 추가 (`test_submit_retries_with_asyncio_sleep_when_market_clock_is_none`, `test_submit_uses_exponential_backoff_via_asyncio_sleep_when_market_clock_is_none`, `test_submit_business_reject_does_not_sleep_when_market_clock_is_none`). 단위 4706건 + 통합 233건 통과.
-- [x] 실전 모드 RiskGate를 fail-close로 전환한다. (2026-05-19 완료)
-  - 검토 결과: 타당. `account_snapshot_cache is None`, `total_equity <= 0`, 전략 risk provider 예외에서 일부 노출/전략 검증이 skip 또는 fail-open 된다. 기존 테스트도 `test_strategy_exposure_limit_fails_open_on_zero_equity_and_hold_error`로 현재 동작을 고정하고 있다.
-  - 개선 방향: paper/backtest는 fail-open 허용, real은 신규 BUY 차단. 예: `risk_gate.fail_open_allowed.paper=true`, `risk_gate.fail_open_allowed.real=false`.
-  - 테스트: real mode에서 snapshot/provider 오류, total_equity<=0, strategy holds 조회 실패가 BUY를 차단하고, paper mode 기존 동작은 명시적으로 유지되는지 검증.
-  - 완료 내용: `config/config_loader.py`에 `RiskGateFailOpenConfig(paper=True, real=False)` 추가, `RiskGateConfig.fail_open_allowed` 필드로 연결. `RiskGateService._should_fail_close()` 헬퍼 도입 후 6개 fail-open 지점을 real 모드 BUY 시 차단으로 전환: `_check_buy_exposure`(snapshot cache None, equity<=0), `_check_duplicate_strategy_position`(provider 예외), `_check_strategy_loss_limit`(history provider 예외), `_check_strategy_capital_cap`(snapshot None / equity<=0 / holds 예외), `_check_strategy_exposure_limit`(snapshot None / equity<=0 / holds 예외). SELL 경로는 `validate_order`의 `if side == BUY` 가드로 변경 없음 → 강제 청산 보존. env=None 및 paper 모드는 기본 `fail_open_allowed.paper=True`로 기존 fail-open 동작 유지. opt-out 위해 `fail_open_allowed.real=True` 설정 가능. 신규 테스트 9건 추가 (snapshot 부재, zero equity BUY, SELL 비차단, paper/env=None 회귀, strategy exposure/capital/loss/duplicate provider 예외, config opt-out). 단위 4716건 + 통합 233건 통과.
-- [x] `get_current_price`를 일반 300초 캐시 대상에서 제거하거나 메서드별 짧은 TTL로 분리한다. (2026-05-20 완료)
-  - 검토 결과: 타당. `config/cache_config.yaml`의 `enabled_methods`에 `get_current_price`가 남아 있고 기본 TTL은 300초다. `StockQueryService`/`MarketDataService` 내부 단기 snapshot·repository 캐시는 별도로 3~5초 범위로 관리되므로 전역 캐시 대상과 충돌한다.
-  - 개선 방향: `enabled_methods`에서 `get_current_price` 제거. 캐시가 꼭 필요하면 `method_ttl.get_current_price <= 1~2초`와 주문/손절/리스크 경로 `force_fresh=True`를 테스트로 고정.
-  - 완료 내용: `config/cache_config.yaml`의 `enabled_methods`에서 `get_current_price`를 제거하고 제거 이유 주석 추가. `MarketDataService`는 이미 `_stock_repo.get_current_price(max_age_sec=3.0)` 단기 캐시 + 장 마감 후 `_stock_repo.get_latest_daily_snapshot()` DB 폴백 + REST 응답 캐시 갱신을 운영하므로 ClientWithCache 계층 제거 후에도 캐싱 책임은 유지된다. ClientWithCache는 장 중 캐시 우회, 장 마감 후 cached payload를 다음 거래일 개장 전까지 유지하므로 주문/손절/리스크의 `force_fresh=True` 의도가 broker wrapper로 전파되지 않는 충돌이 있었다. 정책 invariant를 회귀 테스트 1건으로 고정(`tests/unit_test/config/test_cache_config_yaml.py::test_get_current_price_is_not_globally_cached`). 단위 4720건 + 통합 233건 통과.
-- [x] 전략 state load/save를 명시적 await + atomic write + lock 구조로 정리한다. (2026-05-20 완료)
-  - 검토 결과: 타당. `OneilPocketPivotStrategy`, `HighTightFlagStrategy`, `FirstPullbackStrategy`, `OneilSqueezeBreakoutStrategy`가 이벤트 루프 존재 시 `_load_state_async()` / `_save_state_async()`를 background task로 실행하고, 파일 저장은 직접 overwrite다.
-  - 개선 방향: scheduler/strategy factory 초기화 단계에서 `await strategy.load_state()`를 보장하고, 저장은 per-strategy lock + temp file + `os.replace()`로 원자화한다. 종료 시 pending save flush도 추가한다.
-  - 테스트: 생성 직후 scan 전에 state 로드 완료, 저장 task 경합 시 최신 상태 보존, 저장 중 장애 시 기존 파일 보존.
-  - 완료 내용: 신규 `utils/strategy_state_io.py` (`StrategyStateIO`) — `save_atomic()` 은 `tempfile.mkstemp` → `fsync` → `os.replace()` 로 원자 교체 + 파일 경로별 `asyncio.Lock` 으로 동시 save 직렬화. `load()` 는 단순 async 로드, `schedule_save()` + `flush_pending()` 으로 graceful shutdown 시 in-flight save 완료 대기. 4개 전략의 `_load_state_async()` / `_save_state_async()` 본문을 헬퍼 위임으로 교체, 신규 public `async def load_state(self)` 추가 (`_load_state_async` 의 `if k not in self._position_state` 가드로 idempotent). `WebAppContext.ensure_strategy_states_loaded()` 신설하여 등록된 모든 전략의 `load_state` 를 명시적으로 await; `view/web/web_main.py::lifespan` 에서 `initialize_scheduler()` 직후 호출 + 종료 시 `await StrategyStateIO.flush_pending(timeout=5.0)`. 기존 `_load_state()` / `_save_state()` sync 폴백 및 fire-and-forget create_task 는 보존하여 standalone 호환. 테스트 15건 신규 추가 (`tests/unit_test/utils/test_strategy_state_io.py` 9건: atomic write/preserve-on-failure/concurrent serialization/load missing & roundtrip/flush_pending; `tests/unit_test/strategies/test_strategy_load_state_await.py` 6건: 4개 전략 await 로드 + idempotent + missing file). 기존 `tests/unit_test/view/test_web_main.py` 와 `tests/integration_test/test_it_web_app_e2e_smoke.py` 에 `ensure_strategy_states_loaded` AsyncMock 추가. 단위 4735건 + 통합 233건 통과.
+- [x] 시장가 매수(`price == 0`) RiskGate 우회 차단 — `market_buy_reference_price_provider` 주입 (2026-05-19, PR #419)
+- [x] `BrokerOrderSubmitter.submit_with_retry()` `market_clock=None` 시 `asyncio.sleep` backoff fallback (2026-05-19)
+- [x] 실전 모드 RiskGate fail-close 전환 — `RiskGateFailOpenConfig(paper=True, real=False)` (2026-05-19, PR #421)
+- [x] `get_current_price` 전역 캐시 제거 — `cache_config.yaml::enabled_methods`에서 제외 (2026-05-20)
+- [x] 전략 state load/save atomic write + per-path lock + 명시적 `load_state` await — `utils/strategy_state_io.py` (2026-05-20)
 
 주요 파일:
 
@@ -85,13 +65,15 @@
 
 ### 0-2. 백테스트와 실거래 journal schema 표준화
 
-- [~] 모든 저장 경로가 표준 journal schema를 직접 저장하도록 정리한다.
+- [x] 모든 저장 경로가 표준 journal schema를 직접 저장하도록 정리한다.
   - 완료된 부분: `BacktestExecutionReport` 기반 기간 백테스트 journal이 전략 신호 사유(`decision_reason`)와 체결 봉 기준 `MFE`/`MAE`를 표준 schema로 보존한다.
   - 완료된 부분: 레거시 `VolumeBreakoutStrategy.backtest_open_threshold_intraday()` 저장 경로가 왕복 1행(`ROUND_TRIP`) 대신 `BacktestExecutionReport` 기반 `BUY FILLED` + `SELL SOLD` 표준 journal을 저장한다.
   - 완료된 부분: 활성 전략 period runner의 매도 journal이 매수 체결 봉과 매도 체결 봉을 합산한 보유기간 기준 `MFE`, `MAE`를 기록한다.
-  - 남은 작업: 체결이 발생하지 않은 중간 보유일의 일중 high/low까지 포함하려면 별도 mark-to-market bar provider contract를 추가한다.
-- [~] backtest-vs-live 괴리 리포트를 운영 판단 지표로 승격한다.
-  - 남은 작업: 전략별 기대값 대비 실거래 괴리를 after-market 성과 악화 감지와 연결한다.
+  - 완료된 부분: `MarkToMarketBarProvider` contract(`services/backtest_period_runner.py`)와 `BacktestPeriodRunner` 통합으로, 주입 시 중간 보유일 일중 high/low를 MFE/MAE에 합산한다(미주입 시 기존 동작 유지).
+  - 완료된 부분: `StockQueryDailyMtmBarProvider`가 `StockQueryService.get_recent_daily_ohlcv` 기반 일봉 high/low를 `MarkToMarketBarProvider` contract로 제공하고, `scripts/run_backtest.py` 운영 백테스트에 wiring한다.
+- [x] backtest-vs-live 괴리 리포트를 운영 판단 지표로 승격한다.
+  - 완료된 부분: `StrategyLogReportService`가 live/backtest 표준 journal을 `analyze_strategy_performance_degradation()`에 넣고, `StrategyLogReportTask`가 after-market 성과 저하 후보를 `AlertSource.STRATEGY_PERF`로 알림한다.
+  - 완료된 부분: `compare_trade_journals()`의 매칭/미매칭/체결가 괴리 신호를 성과 저하 후보 `backtest_live_divergence` metadata와 `backtest_live_divergence` reason에 추가 연결한다.
 - [x] 비용 포함 순수익(`cost`, `net_pnl`, `net_return`)을 기본 성과 기준으로 사용한다.
 
 주요 파일:
@@ -612,35 +594,27 @@
 
 ## 바로 착수 추천 순서
 
-1. P0 실전 손실 방지
-   - 시장가 매수(`price == 0`) RiskGate 우회 차단
-   - `BrokerOrderSubmitter` retry backoff fallback 수정
-   - 실전 RiskGate fail-close 정책 도입
-   - `get_current_price` 300초 전역 캐시 제거 또는 TTL 분리
-   - 전략 state load/save atomic/await 보장
+1. P0/P1 백테스트 신뢰도 (대부분 `[blocked]` — 실전 fixture 미확보)
+   - 실전 체결 이력 fixture 확보 및 민감정보 제거 (blocked)
+   - 실전 fixture 기반 주문번호, 종목코드, 매수/매도, 체결/미체결/취소/거부 필드 매핑 확정 (blocked)
+   - 장중 후보 종목의 프로그램매매 WebSocket 캡처 샘플 확보 (blocked)
+   - 실제 replay fixture에 캡처 overlay를 결합해 통과 케이스 고정 (blocked)
 
-2. P0/P1 백테스트 신뢰도
-   - 실전 체결 이력 fixture 확보 및 민감정보 제거
-   - 실전 fixture 기반 주문번호, 종목코드, 매수/매도, 체결/미체결/취소/거부 필드 매핑 확정
-   - 장중 후보 종목의 프로그램매매 WebSocket 캡처 샘플 확보
-   - 실제 replay fixture에 캡처 overlay를 결합해 통과 케이스 고정
-   - 레거시 백테스트 저장 경로를 표준 journal / `BacktestExecutionReport` 경로로 정리
-
-3. P1 전략 수익성
+2. P1 전략 수익성
    - 전략별 수익성 통과 기준선 정의
    - 비용·세금·슬리피지·미체결 반영 후 성과표 작성
    - 과최적화 방지(ablation, parameter stability, regime-balanced validation)
    - 포트폴리오 집중도/전략 상관 리스크 리포트
    - 전략별 universe 적합성 비교
 
-4. P2 시스템 성능
+3. P2 시스템 성능
    - 전역 API budget limiter 도입
    - VBO range cache bounded parallel 처리
    - exit check bounded gather 통일
    - event-driven shadow parity/false positive/full gate 차이 로그화
    - scan/API/cache/fallback/latency metric 정리
 
-5. P3/P4 유지보수와 운영 품질
+4. P3/P4 유지보수와 운영 품질
    - 전략별 성과 저하 감지 지표 집계 (완료)
    - `WebAppContext` 분리 (완료)
    - ServiceContainer / Factory 도입 (완료)
@@ -675,7 +649,8 @@
   - 완료된 부분: 전략별 성과 지표 조회/집계 기본값이 비용 포함 순수익(`net PnL/return`) 기준으로 전환되었고, gross 기준은 `apply_cost=false` 명시 경로로 유지한다.
   - 완료된 부분: 백테스트용 `BacktestExecutionSimulator`가 명시적 시장가 슬리피지, 호가 단위 반올림, 수수료/거래세 포함 체결 리포트를 생성한다.
   - 완료된 부분: 활성 period runner와 레거시 `VolumeBreakoutStrategy.backtest_open_threshold_intraday()` 저장 경로는 `BacktestExecutionReport` 기반 표준 journal을 사용한다.
-  - 진행 필요: `MomentumStrategy` 등 비활성/레거시 독립 백테스트 경로까지 동일 체결 리포트/포트폴리오 장부로 통합할지 결정한다. 또한 체결 없는 중간 보유일의 MFE/MAE를 포함하려면 mark-to-market bar provider contract가 필요하다.
+  - 완료된 부분: 활성 period runner는 `MarkToMarketBarProvider` contract 주입 시 중간 보유일 일중 high/low를 MFE/MAE에 합산한다(미주입 시 기존 동작 유지).
+  - 진행 필요: `MomentumStrategy` 등 비활성/레거시 독립 백테스트 경로까지 동일 체결 리포트/포트폴리오 장부로 통합할지 결정한다.
   - 관련 파일: `utils/transaction_cost_utils.py`, `services/backtest_execution_simulator.py`, `services/order_execution_service.py`, `services/strategy_log_report_service.py`, `tests/unit_test/utils/test_transaction_cost_utils.py`, `tests/unit_test/services/test_backtest_execution_simulator.py`
 
 - [x] 장애, 데이터 지연, websocket 끊김, reconcile 실패 시 신규 주문 차단 또는 경고 상태로 전환된다.

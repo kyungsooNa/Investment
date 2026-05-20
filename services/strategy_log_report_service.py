@@ -23,6 +23,32 @@ def _esc(value: Any) -> str:
     Telegram HTML 파서에서 unsupported tag 로 인식되는 것을 방지한다."""
     return html.escape(str(value), quote=False) if value is not None else ""
 
+
+def _numeric_values(values: List[Any]) -> List[float]:
+    result: List[float] = []
+    for value in values:
+        try:
+            if value in (None, ""):
+                continue
+            result.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def _avg_numeric(values: List[Any]) -> Optional[float]:
+    numeric = _numeric_values(values)
+    if not numeric:
+        return None
+    return round(sum(numeric) / len(numeric), 4)
+
+
+def _sum_numeric(values: List[Any]) -> Optional[float]:
+    numeric = _numeric_values(values)
+    if not numeric:
+        return None
+    return round(sum(numeric), 4)
+
 try:
     import orjson
 
@@ -668,6 +694,15 @@ class StrategyLogReportService:
         except Exception:
             return None
 
+        divergence_by_strategy: Dict[str, dict] = {}
+        try:
+            divergence_by_strategy = self._backtest_live_divergence_by_strategy(
+                backtest_records,
+                live_records,
+            )
+        except Exception:
+            divergence_by_strategy = {}
+
         try:
             result = analyze_strategy_performance_degradation(
                 live_records,
@@ -677,7 +712,10 @@ class StrategyLogReportService:
         except Exception:
             return None
 
-        candidates = result.get("candidates") or []
+        candidates = [
+            self._candidate_with_backtest_live_divergence(item, divergence_by_strategy)
+            for item in (result.get("candidates") or [])
+        ]
         self._last_strategy_degradation_candidates = [dict(item) for item in candidates]
         if not candidates:
             return None
@@ -702,10 +740,108 @@ class StrategyLogReportService:
                 lines.append(f"  - 사유: {_esc(reasons)}")
             if actions:
                 lines.append(f"  - 권고: {_esc(actions)}")
+            divergence = item.get("backtest_live_divergence") or {}
+            if divergence:
+                lines.append(
+                    "  - 백테스트 괴리: "
+                    f"매칭 {int(divergence.get('matched_count') or 0)}건, "
+                    f"백테스트만 {int(divergence.get('unmatched_backtest_count') or 0)}건, "
+                    f"실거래만 {int(divergence.get('unmatched_live_count') or 0)}건"
+                )
         rest_count = len(candidates) - 5
         if rest_count > 0:
             lines.append(f"  …외 {rest_count}개 전략")
         return "\n".join(lines)
+
+    def _candidate_with_backtest_live_divergence(
+        self,
+        candidate: dict,
+        divergence_by_strategy: Dict[str, dict],
+    ) -> dict:
+        strategy = str(candidate.get("strategy") or "")
+        divergence = divergence_by_strategy.get(strategy)
+        if not divergence:
+            return candidate
+
+        enriched = dict(candidate)
+        reasons = list(enriched.get("reasons") or [])
+        if "backtest_live_divergence" not in reasons:
+            reasons.append("backtest_live_divergence")
+        enriched["reasons"] = reasons
+        enriched["backtest_live_divergence"] = divergence
+        return enriched
+
+    def _backtest_live_divergence_by_strategy(
+        self,
+        backtest_records: List[dict],
+        live_records: List[dict],
+    ) -> Dict[str, dict]:
+        report = compare_trade_journals(backtest_records, live_records)
+        grouped: Dict[str, dict] = {}
+
+        for row in report.get("matches") or []:
+            strategy = str(row.get("strategy") or "")
+            if not strategy:
+                continue
+            item = grouped.setdefault(strategy, self._empty_strategy_divergence())
+            item["matched_count"] += 1
+            item["_net_return_diffs"].append(row.get("net_return_diff"))
+            item["_fill_price_diffs"].append(row.get("fill_price_diff_pct"))
+            item["_net_pnl_diffs"].append(row.get("net_pnl_diff"))
+            item["top_matches"].append({
+                "code": row.get("code"),
+                "trade_date": row.get("trade_date"),
+                "net_return_diff": row.get("net_return_diff"),
+                "fill_price_diff_pct": row.get("fill_price_diff_pct"),
+                "net_pnl_diff": row.get("net_pnl_diff"),
+            })
+
+        for key, field in (
+            ("unmatched_backtest", "unmatched_backtest_count"),
+            ("unmatched_live", "unmatched_live_count"),
+        ):
+            for record in report.get(key) or []:
+                strategy = str(record.get("strategy") or "")
+                if not strategy:
+                    continue
+                grouped.setdefault(strategy, self._empty_strategy_divergence())[field] += 1
+
+        return {
+            strategy: self._finalize_strategy_divergence(item)
+            for strategy, item in grouped.items()
+        }
+
+    @staticmethod
+    def _empty_strategy_divergence() -> dict:
+        return {
+            "matched_count": 0,
+            "unmatched_backtest_count": 0,
+            "unmatched_live_count": 0,
+            "top_matches": [],
+            "_net_return_diffs": [],
+            "_fill_price_diffs": [],
+            "_net_pnl_diffs": [],
+        }
+
+    @staticmethod
+    def _finalize_strategy_divergence(item: dict) -> dict:
+        top_matches = sorted(
+            item.get("top_matches") or [],
+            key=lambda row: abs(float(row.get("net_return_diff") or 0.0)),
+            reverse=True,
+        )[:3]
+        return {
+            "matched_count": item.get("matched_count", 0),
+            "unmatched_backtest_count": item.get("unmatched_backtest_count", 0),
+            "unmatched_live_count": item.get("unmatched_live_count", 0),
+            "avg_net_return_diff": _avg_numeric(item.get("_net_return_diffs") or []),
+            "avg_abs_net_return_diff": _avg_numeric(
+                [abs(value) for value in _numeric_values(item.get("_net_return_diffs") or [])]
+            ),
+            "avg_fill_price_diff_pct": _avg_numeric(item.get("_fill_price_diffs") or []),
+            "total_net_pnl_diff": _sum_numeric(item.get("_net_pnl_diffs") or []),
+            "top_matches": top_matches,
+        }
 
     def _build_execution_quality_section(self, records: List[dict]) -> Optional[str]:
         if not records:

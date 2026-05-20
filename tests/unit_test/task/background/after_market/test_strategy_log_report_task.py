@@ -125,6 +125,7 @@ class TestOnMarketClosed:
             "status": "critical_candidate",
             "reasons": ["consecutive_losses"],
             "recommended_actions": ["pause_new_entries_candidate"],
+            "backtest_live_divergence": {"matched_count": 1, "avg_net_return_diff": -4.0},
         }]
         kill_switch = MagicMock()
         kill_switch.is_strategy_tripped.return_value = {
@@ -149,6 +150,7 @@ class TestOnMarketClosed:
         assert args[2] == "critical"
         assert kwargs["metadata"]["already_blocked_by_kill_switch"] is True
         assert kwargs["metadata"]["kill_switch_trip"]["trip_reason"] == "연속 손실 5회"
+        assert kwargs["metadata"]["candidate"]["backtest_live_divergence"]["matched_count"] == 1
 
     async def test_strategy_degradation_candidates_fallback_to_notification(
         self, mock_report_service, mock_notification_service

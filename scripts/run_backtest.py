@@ -124,6 +124,18 @@ def _get_program_provider(stock_query_service: Any) -> Any | None:
     return getattr(market_data_service, "_broker_api_wrapper", None)
 
 
+def _build_replay_bar_providers(replay_sqs: Any) -> tuple[Any, Any]:
+    from services.backtest_replay_adapter import (
+        StockQueryDailyMtmBarProvider,
+        StockQueryIntradayReplayBarProvider,
+    )
+
+    return (
+        StockQueryIntradayReplayBarProvider(replay_sqs),
+        StockQueryDailyMtmBarProvider(replay_sqs),
+    )
+
+
 class _BacktestLedgerAccountSnapshotCache:
     """AccountSnapshotCache contract backed by the in-memory backtest ledger."""
 
@@ -484,7 +496,6 @@ async def _run(args: argparse.Namespace) -> None:
     )
     from services.backtest_replay_adapter import (
         StockQueryBacktestReplayService,
-        StockQueryIntradayReplayBarProvider,
     )
     from services.backtest_walk_forward import (
         BacktestWalkForwardConfig,
@@ -517,7 +528,7 @@ async def _run(args: argparse.Namespace) -> None:
         stock_query_service=replay_sqs,
         market_clock=backtest_clock,
     )
-    bar_provider = StockQueryIntradayReplayBarProvider(replay_sqs)
+    bar_provider, mtm_bar_provider = _build_replay_bar_providers(replay_sqs)
     indicator_service = getattr(sqs, "indicator_service", None)
     with tempfile.TemporaryDirectory(prefix="period_backtest_") as tmp_dir:
         def make_runner(
@@ -591,6 +602,7 @@ async def _run(args: argparse.Namespace) -> None:
                 position_sizing_service=risk_sizing.position_sizing_service,
                 risk_gate_service=risk_sizing.risk_gate_service,
                 date_context_targets=[backtest_clock, replay_sqs],
+                mtm_bar_provider=mtm_bar_provider,
             )
 
         if args.walk_forward:

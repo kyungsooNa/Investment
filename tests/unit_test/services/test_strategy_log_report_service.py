@@ -310,6 +310,74 @@ async def test_report_includes_strategy_degradation_candidates(log_dir):
     assert candidates[0]["strategy"] == "S1"
 
 
+@pytest.mark.asyncio
+async def test_strategy_degradation_candidates_include_backtest_live_divergence(log_dir):
+    """성과 저하 후보 metadata에 trade-level 백테스트/실거래 괴리 신호를 연결한다."""
+    live_records = [{
+        "source": "live",
+        "strategy": "S1",
+        "code": "005930",
+        "status": "SOLD",
+        "signal_time": "2026-04-18 09:10:00",
+        "net_return": -2.0,
+        "net_pnl": -2_000.0,
+        "fill_price": 10_800.0,
+        "metadata": {"sell_date": "2026-04-18 14:50:00"},
+    }]
+    backtest_records = [{
+        "source": "backtest",
+        "strategy": "S1",
+        "code": "005930",
+        "status": "SOLD",
+        "signal_time": "2026-04-18 09:10:00",
+        "net_return": 2.0,
+        "net_pnl": 2_000.0,
+        "fill_price": 10_000.0,
+        "metadata": {"sell_date": "2026-04-18 14:50:00"},
+    }]
+
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return []
+
+        def get_solds(self):
+            return []
+
+        def get_holds(self):
+            return []
+
+        def get_standard_journal_records(self):
+            return live_records
+
+    _write_log(os.path.join(log_dir, "20260418_093000_S1.log.json"), [
+        _make_entry("scan_with_watchlist", "", "", reason=""),
+    ])
+    svc = StrategyLogReportService(
+        log_dir=log_dir,
+        virtual_trade_service=DummyVirtualTradeService(),
+        backtest_journal_provider=lambda _target_date: backtest_records,
+        strategy_degradation_config=StrategyPerformanceDegradationConfig(
+            window_size=1,
+            min_live_trades=1,
+            min_baseline_trades=1,
+            warn_avg_return_drop_pctp=1.0,
+            warn_win_rate_drop_pctp=100.0,
+            warn_profit_factor_below=None,
+            critical_consecutive_losses=None,
+        ),
+    )
+
+    report = await svc.generate_report("20260418")
+    candidate = svc.get_last_strategy_degradation_candidates()[0]
+
+    assert "backtest_live_divergence" in candidate["reasons"]
+    assert candidate["backtest_live_divergence"]["matched_count"] == 1
+    assert candidate["backtest_live_divergence"]["avg_net_return_diff"] == -4.0
+    assert candidate["backtest_live_divergence"]["avg_fill_price_diff_pct"] == 8.0
+    assert candidate["backtest_live_divergence"]["top_matches"][0]["code"] == "005930"
+    assert "백테스트 괴리: 매칭 1건" in report
+
+
 # ── _extract_strategy_name ────────────────────────────────────────
 
 def test_extract_strategy_name_basic():

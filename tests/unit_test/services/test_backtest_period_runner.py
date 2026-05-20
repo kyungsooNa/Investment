@@ -74,6 +74,25 @@ class StaticBarProvider:
         return self.bars[(date_ymd, signal.code, side)]
 
 
+class StaticMarkToMarketProvider:
+    def __init__(self, bars: dict[tuple[str, str], BacktestBar]) -> None:
+        self.bars = bars
+        self.calls: list[dict] = []
+
+    async def get_holding_bars(
+        self,
+        *,
+        code: str,
+        start_ymd: str,
+        end_ymd: str,
+    ) -> list[BacktestBar]:
+        self.calls.append({"code": code, "start_ymd": start_ymd, "end_ymd": end_ymd})
+        return [
+            bar for (c, ymd), bar in self.bars.items()
+            if c == code and start_ymd < ymd < end_ymd
+        ]
+
+
 class DatedStaticBarProvider(StaticBarProvider):
     def __init__(self, bars: dict[tuple[str, str, str], BacktestBar]) -> None:
         super().__init__(bars)
@@ -405,3 +424,121 @@ async def test_period_runner_persists_standard_journal_run_when_repository_is_in
     assert [record["side"] for record in saved["records"]] == ["BUY", "SELL"]
     assert all(record["source"] == "backtest" for record in saved["records"])
     assert result.journal_records == saved["records"]
+
+
+class _ConfigurableStrategy:
+    name = "OneilPocketPivot"
+
+    def __init__(self, *, buy_ymd: str, sell_ymd: str) -> None:
+        self.current_date = ""
+        self._buy_ymd = buy_ymd
+        self._sell_ymd = sell_ymd
+
+    def set_backtest_date(self, date_ymd: str) -> None:
+        self.current_date = date_ymd
+
+    async def scan(self):
+        if self.current_date == self._buy_ymd:
+            return [
+                TradeSignal(
+                    code="005930",
+                    name="삼성전자",
+                    action="BUY",
+                    price=70_000,
+                    qty=2,
+                    reason="pocket_pivot",
+                    strategy_name=self.name,
+                )
+            ]
+        return []
+
+    async def check_exits(self, holdings):
+        if self.current_date == self._sell_ymd and holdings:
+            return [
+                TradeSignal(
+                    code="005930",
+                    name="삼성전자",
+                    action="SELL",
+                    price=71_500,
+                    qty=2,
+                    reason="target_hit",
+                    strategy_name=self.name,
+                )
+            ]
+        return []
+
+
+@pytest.mark.asyncio
+async def test_period_runner_sell_journal_includes_mid_holding_excursion_when_mtm_provider_injected():
+    strategy = _ConfigurableStrategy(buy_ymd="20260501", sell_ymd="20260503")
+    bar_provider = StaticBarProvider({
+        ("20260501", "005930", "BUY"): BacktestBar("20260501 091000", 70_000, 70_500, 69_500, 70_200, 1_000),
+        ("20260503", "005930", "SELL"): BacktestBar("20260503 100000", 72_000, 72_000, 71_000, 71_500, 1_000),
+    })
+    mtm_provider = StaticMarkToMarketProvider({
+        ("005930", "20260502"): BacktestBar("20260502 153000", 71_000, 84_000, 66_500, 70_000, 5_000),
+    })
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=bar_provider,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+        mtm_bar_provider=mtm_provider,
+    )
+
+    result = await runner.run(["20260501", "20260502", "20260503"])
+
+    sell_record = result.journal_records[-1]
+    assert sell_record["side"] == "SELL"
+    assert sell_record["status"] == "SOLD"
+    assert sell_record["mfe"] == pytest.approx((84_000 / 70_000 - 1) * 100)
+    assert sell_record["mae"] == pytest.approx((66_500 / 70_000 - 1) * 100)
+    assert mtm_provider.calls == [
+        {"code": "005930", "start_ymd": "20260501", "end_ymd": "20260503"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_period_runner_without_mtm_provider_preserves_legacy_excursion():
+    strategy = _ConfigurableStrategy(buy_ymd="20260501", sell_ymd="20260503")
+    bar_provider = StaticBarProvider({
+        ("20260501", "005930", "BUY"): BacktestBar("20260501 091000", 70_000, 70_500, 69_500, 70_200, 1_000),
+        ("20260503", "005930", "SELL"): BacktestBar("20260503 100000", 72_000, 72_000, 71_000, 71_500, 1_000),
+    })
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=bar_provider,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+    )
+
+    result = await runner.run(["20260501", "20260502", "20260503"])
+
+    sell_record = result.journal_records[-1]
+    assert sell_record["status"] == "SOLD"
+    assert sell_record["mfe"] == pytest.approx((72_000 / 70_000 - 1) * 100)
+    assert sell_record["mae"] == pytest.approx((69_500 / 70_000 - 1) * 100)
+
+
+@pytest.mark.asyncio
+async def test_period_runner_consecutive_day_buy_sell_invokes_mtm_provider_but_uses_only_fill_bars():
+    strategy = _ConfigurableStrategy(buy_ymd="20260501", sell_ymd="20260502")
+    bar_provider = StaticBarProvider({
+        ("20260501", "005930", "BUY"): BacktestBar("20260501 091000", 70_000, 70_500, 69_500, 70_200, 1_000),
+        ("20260502", "005930", "SELL"): BacktestBar("20260502 100000", 77_000, 84_000, 68_000, 77_100, 1_000),
+    })
+    mtm_provider = StaticMarkToMarketProvider({})
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=bar_provider,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+        mtm_bar_provider=mtm_provider,
+    )
+
+    result = await runner.run(["20260501", "20260502"])
+
+    sell_record = result.journal_records[-1]
+    assert sell_record["status"] == "SOLD"
+    assert sell_record["mfe"] == pytest.approx((84_000 / 70_000 - 1) * 100)
+    assert sell_record["mae"] == pytest.approx((68_000 / 70_000 - 1) * 100)
+    assert mtm_provider.calls == [
+        {"code": "005930", "start_ymd": "20260501", "end_ymd": "20260502"},
+    ]
