@@ -52,6 +52,13 @@ def _make_ks(cfg, mock_notif, logger, tmp_path=None):
 # ── enabled=False 바이패스 ────────────────────────────────────────────
 
 
+def test_kill_switch_config_defaults_to_disabled():
+    """개발 중 안전 기본값은 Kill Switch 비활성화."""
+    cfg = KillSwitchConfig()
+
+    assert cfg.enabled is False
+
+
 async def test_disabled_orders_always_allowed(cfg, mock_notif, logger):
     cfg = cfg.model_copy(update={"enabled": False})
     ks = _make_ks(cfg, mock_notif, logger)
@@ -380,6 +387,27 @@ async def test_state_load_restores_trip(cfg, mock_notif, logger, tmp_path):
     assert ks._trip_reason == "복원 테스트"
     assert ks._consecutive_losses == 2
     assert ks._daily_realized_loss_won == -200_000
+
+
+async def test_state_load_skips_persisted_trip_when_disabled(cfg, mock_notif, logger, tmp_path):
+    state_file = tmp_path / "ks_state.json"
+    state_file.write_text(json.dumps({
+        "is_tripped": True,
+        "trip_reason": "비활성화 시 복원하지 않음",
+        "trip_timestamp": "2026-01-01T10:00:00+09:00",
+        "trip_metadata": {},
+        "consecutive_losses": 2,
+        "consecutive_api_errors": 3,
+        "daily_realized_loss_won": -200_000,
+    }))
+
+    cfg2 = cfg.model_copy(update={"enabled": False, "state_file_path": str(state_file)})
+    ks = KillSwitchService(cfg2, mock_notif, logger)
+
+    assert ks._is_tripped is False
+    assert ks._trip_reason is None
+    assert ks._consecutive_losses == 0
+    assert ks._daily_realized_loss_won == 0
 
 
 async def test_state_load_missing_file_is_noop(cfg, mock_notif, logger, tmp_path):

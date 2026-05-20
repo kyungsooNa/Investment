@@ -25,7 +25,7 @@ class CacheConfig(BaseModel):
     file_cache_enabled: bool = True
 
 class KillSwitchConfig(BaseModel):
-    enabled: bool = True
+    enabled: bool = False
     notify_only: bool = False
     daily_loss_threshold_won: int = 1_000_000
     daily_loss_threshold_pct: float = 5.0
