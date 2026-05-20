@@ -85,18 +85,16 @@ async def test_get_status(repo):
 async def test_pt_persistence_flow(tmp_path, mock_logger):
     """SQLite DB를 활용한 PROGRAM_TRADING 영속화 흐름 통합 검증"""
     db_path = str(tmp_path / "test_pt.db")
-    
-    # 1. 초기 테이블 구성 (앱에서는 ProgramTradingStreamService가 테이블을 생성함)
-    conn = sqlite3.connect(db_path)
-    conn.execute("CREATE TABLE pt_subscriptions (code TEXT PRIMARY KEY)")
-    conn.commit()
-    conn.close()
 
-    # 2. repo 설정 및 DB 연결
+    # 1. repo 설정 및 DB 연결 — 테이블이 없으면 직접 생성한다.
     repo1 = StreamingStockRepo(logger=mock_logger)
     repo1.load_pt_desired_from_db(db_path)
+    conn = sqlite3.connect(db_path)
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    conn.close()
+    assert "pt_subscriptions" in tables
     
-    # 3. 구독 대상 추가 — flush 전에는 in-memory만 반영, DB는 미반영
+    # 2. 구독 대상 추가 — flush 전에는 in-memory만 반영, DB는 미반영
     await repo1.mark_desired("005930", StreamingType.PROGRAM_TRADING)
     await repo1.mark_desired("000660", StreamingType.PROGRAM_TRADING)
 
@@ -115,14 +113,14 @@ async def test_pt_persistence_flow(tmp_path, mock_logger):
     assert "005930" in rows
     assert "000660" in rows
 
-    # 4. 새로운 repo 객체로 DB에서 복원 검증
+    # 3. 새로운 repo 객체로 DB에서 복원 검증
     repo2 = StreamingStockRepo(logger=mock_logger)
     repo2.load_pt_desired_from_db(db_path)
     desired2 = repo2.get_desired(StreamingType.PROGRAM_TRADING)
     assert "005930" in desired2
     assert "000660" in desired2
 
-    # 5. 구독 대상 제거 검증 — flush 후 DB 반영
+    # 4. 구독 대상 제거 검증 — flush 후 DB 반영
     await repo1.unmark_desired("005930", StreamingType.PROGRAM_TRADING)
     repo1.flush_pt_desired_sync()
 
@@ -131,6 +129,37 @@ async def test_pt_persistence_flow(tmp_path, mock_logger):
     desired3 = repo3.get_desired(StreamingType.PROGRAM_TRADING)
     assert "005930" not in desired3
     assert "000660" in desired3
+
+
+def test_load_pt_desired_from_db_uses_snapshot_fallback_when_db_empty(tmp_path, mock_logger):
+    """기존 스냅샷 구독 종목을 빈 pt_subscriptions 테이블로 1회 이관한다."""
+    db_path = str(tmp_path / "test_pt.db")
+    repo = StreamingStockRepo(logger=mock_logger)
+
+    repo.load_pt_desired_from_db(db_path, fallback_codes=["005930", "000660", "005930", ""])
+
+    desired = repo.get_desired(StreamingType.PROGRAM_TRADING)
+    assert desired == {"005930", "000660"}
+
+    conn = sqlite3.connect(db_path)
+    rows = {row[0] for row in conn.execute("SELECT code FROM pt_subscriptions").fetchall()}
+    conn.close()
+    assert rows == {"005930", "000660"}
+
+
+def test_load_pt_desired_from_db_prefers_existing_db_over_snapshot_fallback(tmp_path, mock_logger):
+    """DB에 저장된 구독 상태가 있으면 오래된 스냅샷 구독 코드는 섞지 않는다."""
+    db_path = str(tmp_path / "test_pt.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE pt_subscriptions (code TEXT PRIMARY KEY)")
+    conn.execute("INSERT INTO pt_subscriptions (code) VALUES ('080220')")
+    conn.commit()
+    conn.close()
+
+    repo = StreamingStockRepo(logger=mock_logger)
+    repo.load_pt_desired_from_db(db_path, fallback_codes=["005930", "000660"])
+
+    assert repo.get_desired(StreamingType.PROGRAM_TRADING) == {"080220"}
 
 
 def test_load_pt_desired_from_db_failure(mock_logger):

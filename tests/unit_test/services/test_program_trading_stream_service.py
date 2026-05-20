@@ -51,8 +51,9 @@ def test_init_creates_db(manager, tmp_db_dir):
 
     assert 'pt_history' in tables
     assert 'pt_snapshot' in tables
-    # pt_subscriptions는 StreamingStockRepo가 SSOT로 관리 — ProgramTradingRepo에서 생성하지 않음
-    assert 'pt_subscriptions' not in tables
+    # 구독 상태의 읽기/쓰기는 StreamingStockRepo가 SSOT로 담당하지만,
+    # 같은 DB를 공유하므로 ProgramTradingRepo가 테이블 스키마를 보장한다.
+    assert 'pt_subscriptions' in tables
 
 
 def test_init_db_failure():

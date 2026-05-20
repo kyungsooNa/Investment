@@ -109,6 +109,12 @@ class ProgramTradingRepo:
                         updated_at REAL NOT NULL
                     )
                 """)
+
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS pt_subscriptions (
+                        code TEXT PRIMARY KEY
+                    )
+                """)
             self._logger.info("ProgramTradingRepo: SQLite DB 초기화 완료")
         except Exception as e:
             self._logger.error(f"SQLite DB 초기화 실패: {e}")
