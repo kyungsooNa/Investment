@@ -193,6 +193,23 @@ class StrategyPerformanceDegradationConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class StrategyProfitabilityGateConfig(BaseModel):
+    min_trades: int = 30
+    min_profit_factor: Optional[float] = 1.2
+    min_payoff_ratio: Optional[float] = 1.0
+    min_win_rate: Optional[float] = 0.35
+    min_avg_net_return: Optional[float] = 0.0
+    require_positive_total_net_pnl: bool = True
+    max_mdd_pct: Optional[float] = 20.0
+    capital_base_won: Optional[float] = None
+    max_monte_carlo_ruin_probability: Optional[float] = 0.05
+    max_monte_carlo_worst_mdd_pct: Optional[float] = 30.0
+    min_regime_trade_count: int = 5
+    require_non_negative_regime_pnl: bool = True
+
+    model_config = {"extra": "allow"}
+
+
 class OpeningPositionReconcileConfig(BaseModel):
     enabled: bool = True
     check_interval_sec: int = 30
@@ -229,6 +246,9 @@ class AppConfig(BaseModel):
     execution_quality_report: ExecutionQualityReportConfig = Field(default_factory=ExecutionQualityReportConfig)
     strategy_performance_degradation: StrategyPerformanceDegradationConfig = Field(
         default_factory=StrategyPerformanceDegradationConfig
+    )
+    strategy_profitability_gate: StrategyProfitabilityGateConfig = Field(
+        default_factory=StrategyProfitabilityGateConfig
     )
     opening_position_reconcile: OpeningPositionReconcileConfig = Field(default_factory=OpeningPositionReconcileConfig)
     
