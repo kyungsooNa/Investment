@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from typing import Any, Optional, Sequence, Tuple
 
 from common.market_snapshot import ConclusionSnapshot, MarketSnapshot
@@ -445,5 +446,118 @@ class StockQueryIntradayReplayBarProvider:
         return int(result) if result is not None else None
 
 
+class StockQueryDailyMtmBarProvider:
+    """Convert StockQueryService daily OHLCV rows into holding-period MTM bars."""
+
+    def __init__(
+        self,
+        stock_query_service: Any,
+        *,
+        lookback_padding_days: int = 10,
+    ) -> None:
+        self._stock_query_service = stock_query_service
+        self._lookback_padding_days = max(int(lookback_padding_days), 0)
+        self._cache: dict[tuple[str, str, int], list[BacktestBar]] = {}
+
+    async def get_holding_bars(
+        self,
+        *,
+        code: str,
+        start_ymd: str,
+        end_ymd: str,
+    ) -> list[BacktestBar]:
+        if str(start_ymd) >= str(end_ymd):
+            return []
+
+        limit = self._lookup_limit(str(start_ymd), str(end_ymd))
+        bars = await self._get_daily_bars(code, str(end_ymd), limit)
+        return [
+            bar for bar in bars
+            if str(start_ymd) < _bar_date(bar.timestamp) < str(end_ymd)
+        ]
+
+    async def _get_daily_bars(self, code: str, end_ymd: str, limit: int) -> list[BacktestBar]:
+        key = (code, end_ymd, limit)
+        if key in self._cache:
+            return self._cache[key]
+
+        response = await self._stock_query_service.get_recent_daily_ohlcv(
+            code,
+            limit=limit,
+            end_date=end_ymd,
+        )
+        rows = response.data if isinstance(response, ResCommonResponse) else response
+        if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+            rows = []
+
+        bars = [
+            bar for bar in (self._row_to_bar(row) for row in rows)
+            if bar is not None
+        ]
+        bars.sort(key=lambda bar: bar.timestamp)
+        self._cache[key] = bars
+        return bars
+
+    def _lookup_limit(self, start_ymd: str, end_ymd: str) -> int:
+        try:
+            start = datetime.strptime(start_ymd, "%Y%m%d").date()
+            end = datetime.strptime(end_ymd, "%Y%m%d").date()
+            return max((end - start).days + 1 + self._lookback_padding_days, 1)
+        except ValueError:
+            return 60 + self._lookback_padding_days
+
+    def _row_to_bar(self, row: Any) -> BacktestBar | None:
+        if not isinstance(row, dict):
+            return None
+
+        close = self._to_float(self._first(row, "close", "stck_clpr", "stck_prpr", "prpr"))
+        if close is None:
+            return None
+
+        date = str(self._first(row, "date", "stck_bsop_date", "bsop_date") or "")
+        if not date:
+            return None
+
+        open_price = self._to_float(self._first(row, "open", "stck_oprc", "oprc")) or close
+        high = self._to_float(self._first(row, "high", "stck_hgpr", "hgpr")) or max(open_price, close)
+        low = self._to_float(self._first(row, "low", "stck_lwpr", "lwpr")) or min(open_price, close)
+        volume = self._to_int(self._first(row, "volume", "acml_vol", "cntg_vol"))
+
+        return BacktestBar(
+            timestamp=date,
+            open=open_price,
+            high=high,
+            low=low,
+            close=close,
+            volume=volume,
+        )
+
+    @staticmethod
+    def _first(row: dict, *keys: str):
+        for key in keys:
+            value = row.get(key)
+            if value not in (None, "", "-"):
+                return value
+        return None
+
+    @staticmethod
+    def _to_float(value) -> float | None:
+        try:
+            if value in (None, "", "-"):
+                return None
+            return float(str(value).replace(",", ""))
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _to_int(cls, value) -> int | None:
+        result = cls._to_float(value)
+        return int(result) if result is not None else None
+
+
 def _policy_value(policy) -> str:
     return str(getattr(policy, "value", policy) or "current_bar")
+
+
+def _bar_date(timestamp: str) -> str:
+    return str(timestamp).split(" ", 1)[0]

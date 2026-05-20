@@ -65,14 +65,15 @@
 
 ### 0-2. 백테스트와 실거래 journal schema 표준화
 
-- [~] 모든 저장 경로가 표준 journal schema를 직접 저장하도록 정리한다.
+- [x] 모든 저장 경로가 표준 journal schema를 직접 저장하도록 정리한다.
   - 완료된 부분: `BacktestExecutionReport` 기반 기간 백테스트 journal이 전략 신호 사유(`decision_reason`)와 체결 봉 기준 `MFE`/`MAE`를 표준 schema로 보존한다.
   - 완료된 부분: 레거시 `VolumeBreakoutStrategy.backtest_open_threshold_intraday()` 저장 경로가 왕복 1행(`ROUND_TRIP`) 대신 `BacktestExecutionReport` 기반 `BUY FILLED` + `SELL SOLD` 표준 journal을 저장한다.
   - 완료된 부분: 활성 전략 period runner의 매도 journal이 매수 체결 봉과 매도 체결 봉을 합산한 보유기간 기준 `MFE`, `MAE`를 기록한다.
   - 완료된 부분: `MarkToMarketBarProvider` contract(`services/backtest_period_runner.py`)와 `BacktestPeriodRunner` 통합으로, 주입 시 중간 보유일 일중 high/low를 MFE/MAE에 합산한다(미주입 시 기존 동작 유지).
-  - 남은 작업: 실데이터 MTM 어댑터(`BacktestReplayAdapter` 또는 `StockQueryService.get_daily_chart` 기반) 구현 및 운영 백테스트 wiring.
+  - 완료된 부분: `StockQueryDailyMtmBarProvider`가 `StockQueryService.get_recent_daily_ohlcv` 기반 일봉 high/low를 `MarkToMarketBarProvider` contract로 제공하고, `scripts/run_backtest.py` 운영 백테스트에 wiring한다.
 - [~] backtest-vs-live 괴리 리포트를 운영 판단 지표로 승격한다.
-  - 남은 작업: 전략별 기대값 대비 실거래 괴리를 after-market 성과 악화 감지와 연결한다.
+  - 완료된 부분: `StrategyLogReportService`가 live/backtest 표준 journal을 `analyze_strategy_performance_degradation()`에 넣고, `StrategyLogReportTask`가 after-market 성과 저하 후보를 `AlertSource.STRATEGY_PERF`로 알림한다.
+  - 남은 작업: `compare_trade_journals()`의 매칭/미매칭/체결가 괴리 신호를 성과 저하 후보 metadata/reason에 추가 연결한다.
 - [x] 비용 포함 순수익(`cost`, `net_pnl`, `net_return`)을 기본 성과 기준으로 사용한다.
 
 주요 파일:
@@ -594,7 +595,6 @@
 ## 바로 착수 추천 순서
 
 1. P0/P1 백테스트 신뢰도 (대부분 `[blocked]` — 실전 fixture 미확보)
-   - MTM 실데이터 어댑터(`BacktestReplayAdapter`/`StockQueryService.get_daily_chart` 기반) 구현 → `MarkToMarketBarProvider` contract는 완료, 운영 백테스트 wiring 필요 (0-2 잔여, 진행 가능)
    - backtest-vs-live 괴리 리포트를 4-1 성과 악화 감지와 연결 (0-2 잔여, 진행 가능)
    - 실전 체결 이력 fixture 확보 및 민감정보 제거 (blocked)
    - 실전 fixture 기반 주문번호, 종목코드, 매수/매도, 체결/미체결/취소/거부 필드 매핑 확정 (blocked)
@@ -651,7 +651,7 @@
   - 완료된 부분: 백테스트용 `BacktestExecutionSimulator`가 명시적 시장가 슬리피지, 호가 단위 반올림, 수수료/거래세 포함 체결 리포트를 생성한다.
   - 완료된 부분: 활성 period runner와 레거시 `VolumeBreakoutStrategy.backtest_open_threshold_intraday()` 저장 경로는 `BacktestExecutionReport` 기반 표준 journal을 사용한다.
   - 완료된 부분: 활성 period runner는 `MarkToMarketBarProvider` contract 주입 시 중간 보유일 일중 high/low를 MFE/MAE에 합산한다(미주입 시 기존 동작 유지).
-  - 진행 필요: `MomentumStrategy` 등 비활성/레거시 독립 백테스트 경로까지 동일 체결 리포트/포트폴리오 장부로 통합할지 결정한다. 또한 MTM contract용 실데이터 어댑터(`BacktestReplayAdapter`/`StockQueryService.get_daily_chart` 기반)를 추가해 운영 백테스트에 wiring한다.
+  - 진행 필요: `MomentumStrategy` 등 비활성/레거시 독립 백테스트 경로까지 동일 체결 리포트/포트폴리오 장부로 통합할지 결정한다.
   - 관련 파일: `utils/transaction_cost_utils.py`, `services/backtest_execution_simulator.py`, `services/order_execution_service.py`, `services/strategy_log_report_service.py`, `tests/unit_test/utils/test_transaction_cost_utils.py`, `tests/unit_test/services/test_backtest_execution_simulator.py`
 
 - [x] 장애, 데이터 지연, websocket 끊김, reconcile 실패 시 신규 주문 차단 또는 경고 상태로 전환된다.

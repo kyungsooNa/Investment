@@ -4,11 +4,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from common.types import TradeSignal
+from common.types import ResCommonResponse, TradeSignal
 from services.backtest_period_runner import BacktestExecutionBarPolicy, BacktestPeriodRunner
 from services.backtest_execution_simulator import BacktestPortfolioLedger
 from services.backtest_replay_adapter import (
     StockQueryBacktestReplayService,
+    StockQueryDailyMtmBarProvider,
     StockQueryIntradayReplayBarProvider,
 )
 
@@ -276,3 +277,37 @@ async def test_stock_query_backtest_replay_service_uses_backtest_date_for_recent
 
     assert result == "delegated"
     sqs.get_recent_daily_ohlcv.assert_awaited_once_with("005930", limit=60, end_date="20260501")
+
+
+@pytest.mark.asyncio
+async def test_daily_mtm_provider_returns_only_intermediate_holding_daily_bars():
+    sqs = AsyncMock()
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data=[
+            {"date": "20260501", "open": "10000", "high": "11000", "low": "9900", "close": "10500", "volume": "10"},
+            {"date": "20260502", "open": "10600", "high": "12000", "low": "10100", "close": "11800", "volume": "20"},
+            {"date": "20260503", "open": "11700", "high": "11900", "low": "9700", "close": "9800", "volume": "30"},
+            {"date": "20260504", "open": "9900", "high": "10000", "low": "9500", "close": "9600", "volume": "40"},
+        ],
+    )
+    provider = StockQueryDailyMtmBarProvider(sqs)
+
+    bars = await provider.get_holding_bars(
+        code="005930",
+        start_ymd="20260501",
+        end_ymd="20260504",
+    )
+
+    assert [bar.timestamp for bar in bars] == ["20260502", "20260503"]
+    assert bars[0].open == 10_600
+    assert bars[0].high == 12_000
+    assert bars[1].low == 9_700
+    assert bars[1].close == 9_800
+    assert bars[1].volume == 30
+    sqs.get_recent_daily_ohlcv.assert_awaited_once_with(
+        "005930",
+        limit=14,
+        end_date="20260504",
+    )

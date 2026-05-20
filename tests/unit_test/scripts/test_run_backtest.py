@@ -12,6 +12,7 @@ from scripts.run_backtest import (
     ACTIVE_BACKTEST_STRATEGIES,
     _BacktestLedgerAccountSnapshotCache,
     _BacktestStrategyRiskProvider,
+    _build_replay_bar_providers,
     _build_dates,
     _build_risk_sizing_services,
     _build_backtest_strategy,
@@ -24,6 +25,10 @@ from scripts.run_backtest import (
     _run_monte_carlo_for_walk_forward,
 )
 from services.backtest_execution_simulator import BacktestPortfolioLedger, PortfolioPosition
+from services.backtest_replay_adapter import (
+    StockQueryDailyMtmBarProvider,
+    StockQueryIntradayReplayBarProvider,
+)
 from services.position_sizing_service import PositionSizingService
 from services.risk_gate_service import RiskGateService
 
@@ -389,6 +394,15 @@ def test_get_program_provider_uses_market_data_broker_when_available():
     sqs = SimpleNamespace(market_data_service=SimpleNamespace(_broker_api_wrapper=broker))
 
     assert _get_program_provider(sqs) is broker
+
+
+def test_build_replay_bar_providers_wires_intraday_and_daily_mtm_providers():
+    replay_sqs = MagicMock(name="replay_sqs")
+
+    bar_provider, mtm_bar_provider = _build_replay_bar_providers(replay_sqs)
+
+    assert isinstance(bar_provider, StockQueryIntradayReplayBarProvider)
+    assert isinstance(mtm_bar_provider, StockQueryDailyMtmBarProvider)
 
 
 @pytest.mark.asyncio
