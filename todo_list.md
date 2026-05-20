@@ -71,9 +71,9 @@
   - 완료된 부분: 활성 전략 period runner의 매도 journal이 매수 체결 봉과 매도 체결 봉을 합산한 보유기간 기준 `MFE`, `MAE`를 기록한다.
   - 완료된 부분: `MarkToMarketBarProvider` contract(`services/backtest_period_runner.py`)와 `BacktestPeriodRunner` 통합으로, 주입 시 중간 보유일 일중 high/low를 MFE/MAE에 합산한다(미주입 시 기존 동작 유지).
   - 완료된 부분: `StockQueryDailyMtmBarProvider`가 `StockQueryService.get_recent_daily_ohlcv` 기반 일봉 high/low를 `MarkToMarketBarProvider` contract로 제공하고, `scripts/run_backtest.py` 운영 백테스트에 wiring한다.
-- [~] backtest-vs-live 괴리 리포트를 운영 판단 지표로 승격한다.
+- [x] backtest-vs-live 괴리 리포트를 운영 판단 지표로 승격한다.
   - 완료된 부분: `StrategyLogReportService`가 live/backtest 표준 journal을 `analyze_strategy_performance_degradation()`에 넣고, `StrategyLogReportTask`가 after-market 성과 저하 후보를 `AlertSource.STRATEGY_PERF`로 알림한다.
-  - 남은 작업: `compare_trade_journals()`의 매칭/미매칭/체결가 괴리 신호를 성과 저하 후보 metadata/reason에 추가 연결한다.
+  - 완료된 부분: `compare_trade_journals()`의 매칭/미매칭/체결가 괴리 신호를 성과 저하 후보 `backtest_live_divergence` metadata와 `backtest_live_divergence` reason에 추가 연결한다.
 - [x] 비용 포함 순수익(`cost`, `net_pnl`, `net_return`)을 기본 성과 기준으로 사용한다.
 
 주요 파일:
@@ -595,7 +595,6 @@
 ## 바로 착수 추천 순서
 
 1. P0/P1 백테스트 신뢰도 (대부분 `[blocked]` — 실전 fixture 미확보)
-   - backtest-vs-live 괴리 리포트를 4-1 성과 악화 감지와 연결 (0-2 잔여, 진행 가능)
    - 실전 체결 이력 fixture 확보 및 민감정보 제거 (blocked)
    - 실전 fixture 기반 주문번호, 종목코드, 매수/매도, 체결/미체결/취소/거부 필드 매핑 확정 (blocked)
    - 장중 후보 종목의 프로그램매매 WebSocket 캡처 샘플 확보 (blocked)
