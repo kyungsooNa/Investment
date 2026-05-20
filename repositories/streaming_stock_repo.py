@@ -23,7 +23,7 @@ import logging
 import sqlite3
 import threading
 from enum import Enum
-from typing import Dict, Optional, Set
+from typing import Dict, Iterable, Optional, Set
 
 
 class StreamingType(str, Enum):
@@ -59,14 +59,50 @@ class StreamingStockRepo:
 
     # ── 초기화 / 영속성 ──────────────────────────────────────────────
 
-    def load_pt_desired_from_db(self, db_path: str) -> None:
-        """앱 시작 시 SQLite pt_subscriptions 테이블에서 PT desired 상태를 복원."""
+    def _ensure_pt_subscription_table_locked(self) -> None:
+        """pt_subscriptions 테이블을 보장한다. 호출자는 _db_lock을 보유해야 한다."""
+        self._db_conn.execute(
+            "CREATE TABLE IF NOT EXISTS pt_subscriptions (code TEXT PRIMARY KEY)"
+        )
+
+    @staticmethod
+    def _normalize_codes(codes: Optional[Iterable[str]]) -> Set[str]:
+        if not codes:
+            return set()
+        normalized = set()
+        for code in codes:
+            if code is None:
+                continue
+            text = str(code).strip()
+            if text:
+                normalized.add(text)
+        return normalized
+
+    def load_pt_desired_from_db(
+        self,
+        db_path: str,
+        fallback_codes: Optional[Iterable[str]] = None,
+    ) -> None:
+        """앱 시작 시 SQLite pt_subscriptions 테이블에서 PT desired 상태를 복원.
+
+        구버전 DB처럼 테이블이 없으면 생성한다. DB에 저장된 desired가 아직 없고
+        스냅샷에 구독 코드가 남아 있으면 1회 이관해 UI 상태와 실제 구독 SSOT를 맞춘다.
+        """
         self._db_path = db_path
         try:
             self._db_conn = sqlite3.connect(db_path, check_same_thread=False)
             with self._db_lock:
+                self._ensure_pt_subscription_table_locked()
                 cursor = self._db_conn.execute("SELECT code FROM pt_subscriptions")
                 codes = {row[0] for row in cursor.fetchall()}
+                if not codes:
+                    codes = self._normalize_codes(fallback_codes)
+                    if codes:
+                        self._db_conn.executemany(
+                            "INSERT OR IGNORE INTO pt_subscriptions (code) VALUES (?)",
+                            [(code,) for code in sorted(codes)],
+                        )
+                self._db_conn.commit()
             # desired 초기화 (lock 불필요 — 앱 시작 단계, 단일 스레드)
             self._desired[StreamingType.PROGRAM_TRADING] = codes
             if codes:
@@ -92,6 +128,7 @@ class StreamingStockRepo:
             self._pending_desired_ops.clear()
         try:
             with self._db_lock:
+                self._ensure_pt_subscription_table_locked()
                 for code, add in ops:
                     if add:
                         self._db_conn.execute(

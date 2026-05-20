@@ -130,6 +130,23 @@ def test_service_container_creates_streaming_chain(patched_service_container_dep
     ctx.streaming_service.set_streaming_stock_repo.assert_not_called()
 
 
+def test_service_container_restores_pt_desired_from_snapshot_fallback(patched_service_container_deps):
+    """부팅 시 저장 스냅샷의 PT 구독 종목을 StreamingStockRepo 복원 fallback으로 전달한다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.program_trading_stream_service.load_snapshot.return_value = {
+        "subscribedCodes": ["005930", "000660"],
+    }
+    ServiceContainer(ctx).run()
+
+    repo = patched_service_container_deps["StreamingStockRepo"].return_value
+    repo.load_pt_desired_from_db.assert_called_once_with(
+        "data/program_subscribe/program_trading.db",
+        fallback_codes=["005930", "000660"],
+    )
+
+
 def test_service_container_batch_mode_skips_streaming_and_intraday_web_tasks(patched_service_container_deps):
     """BATCH 단독은 장마감 작업에 불필요한 실시간/장중/웹 task 생성을 건너뛴다."""
     from view.web.bootstrap.service_container import ServiceContainer

@@ -315,7 +315,16 @@ class ServiceContainer:
                 )
                 # NOTE: data_quality / streaming / stock_query <-> price_stream wiring is performed by WiringPhase.
                 ctx.streaming_stock_repo = StreamingStockRepo(logger=ctx.logger)
-                ctx.streaming_stock_repo.load_pt_desired_from_db("data/program_subscribe/program_trading.db")
+                pt_snapshot = ctx.program_trading_stream_service.load_snapshot()
+                fallback_pt_codes = []
+                if isinstance(pt_snapshot, dict):
+                    raw_codes = pt_snapshot.get("subscribedCodes", [])
+                    if isinstance(raw_codes, list):
+                        fallback_pt_codes = raw_codes
+                ctx.streaming_stock_repo.load_pt_desired_from_db(
+                    "data/program_subscribe/program_trading.db",
+                    fallback_codes=fallback_pt_codes,
+                )
                 ctx.price_subscription_service = PriceSubscriptionService(
                     streaming_service=ctx.streaming_service,
                     stock_repo=ctx.stock_repository,
