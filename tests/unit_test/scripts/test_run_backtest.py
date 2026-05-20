@@ -21,6 +21,8 @@ from scripts.run_backtest import (
     _format_walk_forward_json,
     _get_program_provider,
     _parse_args,
+    _run_profitability_gate_for_result,
+    _run_profitability_gate_for_walk_forward,
     _run_monte_carlo_for_result,
     _run_monte_carlo_for_walk_forward,
 )
@@ -107,6 +109,22 @@ def test_parse_args_accepts_monte_carlo_options(monkeypatch):
     assert args.mc_runs == 50
     assert args.mc_seed == 123
     assert args.mc_ruin_drawdown_pct == 15.0
+
+
+def test_parse_args_accepts_profitability_gate(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_backtest",
+            "--dates",
+            "20260501",
+            "--profitability-gate",
+        ],
+    )
+
+    args = _parse_args()
+
+    assert args.profitability_gate is True
 
 
 def test_parse_args_accepts_execution_bar_policy(monkeypatch):
@@ -260,6 +278,32 @@ def test_format_console_includes_monte_carlo_summary_when_present():
     assert "ruin probability: 25.00%" in text
 
 
+def test_format_console_includes_profitability_gate_when_present():
+    result = SimpleNamespace(
+        strategy_name="오닐PP/BGU",
+        dates=["20260501"],
+        execution_reports=[],
+        journal_records=[],
+        saved_journal_run={},
+        portfolio={"cash": 1_000_000, "available_cash": 1_000_000, "positions": {}},
+        profitability_gate={
+            "summary": {"pass_count": 1, "fail_count": 0, "insufficient_sample_count": 0},
+            "strategies": {
+                "오닐PP/BGU": {
+                    "status": "pass",
+                    "blocking_reasons": [],
+                    "warnings": [],
+                }
+            },
+        },
+    )
+
+    text = _format_console(result)
+
+    assert "[PROFITABILITY GATE]" in text
+    assert "오닐PP/BGU: pass" in text
+
+
 def test_format_walk_forward_console_summarizes_test_windows():
     result = SimpleNamespace(
         summary={
@@ -306,6 +350,36 @@ def test_format_walk_forward_console_includes_monte_carlo_summary_when_present()
 
     assert "Monte Carlo 거래 수: 2" in text
     assert "ruin probability: 10.00%" in text
+
+
+def test_format_walk_forward_console_includes_profitability_gate_when_present():
+    result = SimpleNamespace(
+        summary={
+            "segment_count": 1,
+            "train_days": 20,
+            "tune_days": 5,
+            "test_days": 5,
+            "test_realized_net_pnl": 0,
+            "test_execution_count": 0,
+            "test_rejected_count": 0,
+        },
+        profitability_gate={
+            "summary": {"pass_count": 0, "fail_count": 1, "insufficient_sample_count": 0},
+            "strategies": {
+                "오닐PP/BGU": {
+                    "status": "fail",
+                    "blocking_reasons": ["profit_factor_below"],
+                    "warnings": [],
+                }
+            },
+        },
+    )
+
+    text = _format_walk_forward_console(result)
+
+    assert "[PROFITABILITY GATE]" in text
+    assert "오닐PP/BGU: fail" in text
+    assert "profit_factor_below" in text
 
 
 def test_format_walk_forward_json_includes_summary_and_segment_phase_runs():
@@ -387,6 +461,74 @@ def test_run_monte_carlo_for_walk_forward_uses_test_phase_journals_only():
 
     assert result.monte_carlo["trade_count"] == 2
     assert result.monte_carlo["runs"] == 5
+
+
+def test_run_profitability_gate_for_result_uses_result_journal_records():
+    result = SimpleNamespace(
+        journal_records=[
+            {"status": "SOLD", "strategy": "S1", "net_pnl": 100, "net_return": 1.0},
+            {"status": "SOLD", "strategy": "S1", "net_pnl": -10, "net_return": -0.1},
+        ],
+        monte_carlo={"ruin_probability": 0.0, "worst_max_drawdown_pct": 1.0},
+        profitability_gate=None,
+    )
+    config = SimpleNamespace(
+        strategy_profitability_gate=SimpleNamespace(
+            min_trades=2,
+            min_profit_factor=1.0,
+            min_payoff_ratio=1.0,
+            min_win_rate=0.5,
+            min_avg_net_return=0.0,
+            max_mdd_pct=10.0,
+            capital_base_won=1_000,
+            max_monte_carlo_ruin_probability=0.1,
+            max_monte_carlo_worst_mdd_pct=10.0,
+        )
+    )
+
+    _run_profitability_gate_for_result(result, config, initial_cash=1_000)
+
+    assert result.profitability_gate["strategies"]["S1"]["status"] == "pass"
+
+
+def test_run_profitability_gate_for_walk_forward_uses_test_phase_journals_only():
+    result = SimpleNamespace(
+        segments=[
+            SimpleNamespace(
+                train_result=SimpleNamespace(
+                    journal_records=[{"status": "SOLD", "strategy": "S1", "net_pnl": -999, "net_return": -9.0}]
+                ),
+                tune_result=SimpleNamespace(journal_records=[]),
+                test_result=SimpleNamespace(
+                    journal_records=[{"status": "SOLD", "strategy": "S1", "net_pnl": 100, "net_return": 1.0}]
+                ),
+            ),
+            SimpleNamespace(
+                train_result=SimpleNamespace(journal_records=[]),
+                tune_result=SimpleNamespace(journal_records=[]),
+                test_result=SimpleNamespace(
+                    journal_records=[{"status": "SOLD", "strategy": "S1", "net_pnl": -10, "net_return": -0.1}]
+                ),
+            ),
+        ],
+        monte_carlo={"ruin_probability": 0.0, "worst_max_drawdown_pct": 1.0},
+        profitability_gate=None,
+    )
+    config = SimpleNamespace(
+        strategy_profitability_gate=SimpleNamespace(
+            min_trades=2,
+            min_profit_factor=1.0,
+            min_payoff_ratio=1.0,
+            min_win_rate=0.5,
+            min_avg_net_return=0.0,
+            max_mdd_pct=10.0,
+            capital_base_won=1_000,
+        )
+    )
+
+    _run_profitability_gate_for_walk_forward(result, config, initial_cash=1_000)
+
+    assert result.profitability_gate["strategies"]["S1"]["status"] == "pass"
 
 
 def test_get_program_provider_uses_market_data_broker_when_available():

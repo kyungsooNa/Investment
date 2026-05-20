@@ -92,6 +92,13 @@ def _parse_args() -> argparse.Namespace:
         help="MDD가 이 비율 이상이면 ruin으로 집계 (default: 30)",
     )
     parser.add_argument(
+        "--profitability-gate",
+        action="store_true",
+        default=False,
+        dest="profitability_gate",
+        help="전략별 실전 투입 수익성 기준선 통과 여부를 산출",
+    )
+    parser.add_argument(
         "--paper",
         action="store_true",
         default=False,
@@ -360,6 +367,9 @@ def _format_console(result) -> str:
     monte_carlo = getattr(result, "monte_carlo", None)
     if monte_carlo:
         lines.extend(_format_monte_carlo_console_lines(monte_carlo))
+    profitability_gate = getattr(result, "profitability_gate", None)
+    if profitability_gate:
+        lines.extend(_format_profitability_gate_console_lines(profitability_gate))
     return "\n".join(lines)
 
 
@@ -386,6 +396,7 @@ def _result_to_payload(result) -> dict[str, Any]:
         "saved_journal_run": getattr(result, "saved_journal_run", {}),
         "execution_bar_policy": getattr(result, "execution_bar_policy", ""),
         "monte_carlo": getattr(result, "monte_carlo", None),
+        "profitability_gate": getattr(result, "profitability_gate", None),
     }
 
 
@@ -409,6 +420,9 @@ def _format_walk_forward_console(result) -> str:
     monte_carlo = getattr(result, "monte_carlo", None)
     if monte_carlo:
         lines.extend(_format_monte_carlo_console_lines(monte_carlo))
+    profitability_gate = getattr(result, "profitability_gate", None)
+    if profitability_gate:
+        lines.extend(_format_profitability_gate_console_lines(profitability_gate))
     return "\n".join(lines)
 
 
@@ -416,6 +430,7 @@ def _format_walk_forward_json(result) -> str:
     payload = {
         "summary": result.summary,
         "monte_carlo": getattr(result, "monte_carlo", None),
+        "profitability_gate": getattr(result, "profitability_gate", None),
         "segments": [
             {
                 "index": segment.index,
@@ -430,6 +445,23 @@ def _format_walk_forward_json(result) -> str:
         ],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _format_profitability_gate_console_lines(result: dict[str, Any]) -> list[str]:
+    lines = ["", "[PROFITABILITY GATE]"]
+    summary = result.get("summary") or {}
+    lines.append(
+        "통과 {pass_count}, 실패 {fail_count}, 표본부족 {insufficient}".format(
+            pass_count=summary.get("pass_count", 0),
+            fail_count=summary.get("fail_count", 0),
+            insufficient=summary.get("insufficient_sample_count", 0),
+        )
+    )
+    for strategy, item in sorted((result.get("strategies") or {}).items()):
+        reasons = item.get("blocking_reasons") or []
+        suffix = f" ({', '.join(reasons)})" if reasons else ""
+        lines.append(f"{strategy}: {item.get('status')}{suffix}")
+    return lines
 
 
 def _format_monte_carlo_console_lines(summary: dict[str, Any]) -> list[str]:
@@ -482,6 +514,67 @@ def _run_monte_carlo_for_walk_forward(result, args: argparse.Namespace) -> None:
             ruin_drawdown_pct=args.mc_ruin_drawdown_pct,
         )
     ).run(trade_net_pnls).to_dict())
+
+
+def _run_profitability_gate_for_result(result, app_config: Any, *, initial_cash: float) -> None:
+    from services.strategy_profitability_gate_service import evaluate_strategy_profitability_gate
+
+    gate_config = _build_profitability_gate_config(app_config, initial_cash=initial_cash)
+    object.__setattr__(
+        result,
+        "profitability_gate",
+        evaluate_strategy_profitability_gate(
+            getattr(result, "journal_records", []) or [],
+            gate_config,
+            monte_carlo=getattr(result, "monte_carlo", None),
+        ),
+    )
+
+
+def _run_profitability_gate_for_walk_forward(result, app_config: Any, *, initial_cash: float) -> None:
+    from services.strategy_profitability_gate_service import evaluate_strategy_profitability_gate
+
+    records: list[dict] = []
+    for segment in getattr(result, "segments", []) or []:
+        records.extend(getattr(segment.test_result, "journal_records", []) or [])
+    gate_config = _build_profitability_gate_config(app_config, initial_cash=initial_cash)
+    object.__setattr__(
+        result,
+        "profitability_gate",
+        evaluate_strategy_profitability_gate(
+            records,
+            gate_config,
+            monte_carlo=getattr(result, "monte_carlo", None),
+        ),
+    )
+
+
+def _build_profitability_gate_config(app_config: Any, *, initial_cash: float):
+    from services.strategy_profitability_gate_service import StrategyProfitabilityGateConfig
+
+    raw = getattr(app_config, "strategy_profitability_gate", None)
+    if isinstance(raw, StrategyProfitabilityGateConfig):
+        values = {
+            field: getattr(raw, field)
+            for field in StrategyProfitabilityGateConfig.__dataclass_fields__
+        }
+    elif hasattr(raw, "model_dump"):
+        values = raw.model_dump()
+    elif isinstance(raw, dict):
+        values = dict(raw)
+    elif raw is not None:
+        values = {
+            field: getattr(raw, field)
+            for field in StrategyProfitabilityGateConfig.__dataclass_fields__
+            if hasattr(raw, field)
+        }
+    else:
+        values = {}
+
+    if values.get("capital_base_won") is None:
+        values["capital_base_won"] = initial_cash
+    allowed = StrategyProfitabilityGateConfig.__dataclass_fields__
+    return StrategyProfitabilityGateConfig(**{k: v for k, v in values.items() if k in allowed})
 
 
 async def _run(args: argparse.Namespace) -> None:
@@ -624,6 +717,8 @@ async def _run(args: argparse.Namespace) -> None:
             ).run(dates)
             if args.monte_carlo:
                 _run_monte_carlo_for_walk_forward(result, args)
+            if args.profitability_gate:
+                _run_profitability_gate_for_walk_forward(result, app_config, initial_cash=args.initial_cash)
             rendered = (
                 _format_walk_forward_json(result)
                 if args.output == "json"
@@ -634,6 +729,8 @@ async def _run(args: argparse.Namespace) -> None:
             result = await make_runner().run(dates)
             if args.monte_carlo:
                 _run_monte_carlo_for_result(result, args)
+            if args.profitability_gate:
+                _run_profitability_gate_for_result(result, app_config, initial_cash=args.initial_cash)
             rendered = _format_json(result) if args.output == "json" else _format_console(result)
 
     if args.output_file:
