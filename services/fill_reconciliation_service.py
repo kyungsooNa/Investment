@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from typing import Callable, Dict, Optional
 
@@ -61,11 +62,56 @@ class FillReconciliationService:
 
         # ── 소유 상태 ────────────────────────────────────────────────
         self._reconcile_alarm: bool = False
+        self._critical_alarm_manual_required: bool = False
         self._reconcile_consecutive_mismatch_by_key: Dict[str, int] = {}
+        self._notification_tasks: set[asyncio.Task] = set()
 
     # ── reconcile_alarm read API (Coordinator용) ────────────────────
     def is_reconcile_alarm_active(self) -> bool:
         return self._reconcile_alarm
+
+    def reset_reconcile_alarm(self) -> None:
+        self._reconcile_alarm = False
+        self._critical_alarm_manual_required = False
+
+    def on_safe_transition_critical(self, order_key: str, context: OrderContext) -> None:
+        self._reconcile_alarm = True
+        self._critical_alarm_manual_required = True
+        message = (
+            f"safe_transition mismatch 3회로 신규 주문 차단: "
+            f"order_key={order_key}, stock_code={context.stock_code}, "
+            f"side={context.side.value}, state={context.state.value}, "
+            f"broker_order_no={context.broker_order_no or ''}"
+        )
+        self.logger.error(message)
+        if self._notification_service is None:
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.logger.warning(
+                "safe_transition critical notification skipped: running event loop 없음"
+            )
+            return
+
+        task = loop.create_task(self._notification_service.emit(
+            NotificationCategory.TRADE,
+            NotificationLevel.CRITICAL,
+            "Order Block: Safe Transition Mismatch",
+            message,
+            metadata={
+                "alert_type": "safe_transition_mismatch_critical",
+                "order_key": order_key,
+                "stock_code": context.stock_code,
+                "side": context.side.value,
+                "state": context.state.value,
+                "broker_order_no": context.broker_order_no or "",
+                "trace_id": context.trace_id or "",
+            },
+        ))
+        self._notification_tasks.add(task)
+        task.add_done_callback(self._notification_tasks.discard)
 
     # ── source 분류 헬퍼 (OES._strategy_name_from_source 와 중복 — 결합 회피 목적의 의도된 사본) ──
     @staticmethod
@@ -559,6 +605,11 @@ class FillReconciliationService:
             self.logger.info("reconcile_orders_with_broker: 모의투자 모드 — 스킵")
             return 0
 
+        if self._fsm.consume_force_reconcile_request():
+            self.logger.warning(
+                "safe_transition 2회 mismatch → force reconcile 1회 실행"
+            )
+
         now = self._now()
         today = now.strftime("%Y%m%d")
         mismatch_count = 0
@@ -705,8 +756,13 @@ class FillReconciliationService:
 
         # 이번 실행에서 알람 트리거 없음: alarm 자동 해제 (일시적 오류 복구)
         if not alarm_triggered_this_run and self._reconcile_alarm:
-            self._reconcile_alarm = False
-            self.logger.info("reconcile: 이상 없음 → _reconcile_alarm=False 해제")
+            if self._critical_alarm_manual_required:
+                self.logger.info(
+                    "reconcile: alarm 활성이나 critical(수동 해제 필요) → auto-reset 보류"
+                )
+            else:
+                self._reconcile_alarm = False
+                self.logger.info("reconcile: 이상 없음 → _reconcile_alarm=False 해제")
 
         return mismatch_count
 

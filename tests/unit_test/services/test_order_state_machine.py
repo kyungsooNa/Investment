@@ -173,6 +173,65 @@ def test_safe_transition_returns_none_for_unknown_key():
     assert fsm._reconcile_mismatch_count == 1
 
 
+def test_safe_transition_per_key_count_increments():
+    fsm = _make_fsm(now=datetime(2026, 5, 17, 9, 0, 0))
+    fsm.register(_make_context())
+
+    fsm.safe_transition("KRX:005930:BUY", OrderState.FILLED, filled_qty=10)
+    assert fsm.get_safe_transition_mismatch_count("KRX:005930:BUY") == 1
+    fsm.safe_transition("KRX:005930:BUY", OrderState.FILLED, filled_qty=10)
+    assert fsm.get_safe_transition_mismatch_count("KRX:005930:BUY") == 2
+    fsm.safe_transition("KRX:005930:BUY", OrderState.FILLED, filled_qty=10)
+    assert fsm.get_safe_transition_mismatch_count("KRX:005930:BUY") == 3
+
+
+def test_safe_transition_2nd_sets_force_reconcile_flag():
+    fsm = _make_fsm(now=datetime(2026, 5, 17, 9, 0, 0))
+    fsm.register(_make_context())
+
+    fsm.safe_transition("KRX:005930:BUY", OrderState.FILLED, filled_qty=10)
+    assert fsm.consume_force_reconcile_request() is False
+    fsm.safe_transition("KRX:005930:BUY", OrderState.FILLED, filled_qty=10)
+    assert fsm.consume_force_reconcile_request() is True
+    assert fsm.consume_force_reconcile_request() is False
+
+
+def test_safe_transition_3rd_invokes_critical_callback_once():
+    fsm = _make_fsm(now=datetime(2026, 5, 17, 9, 0, 0))
+    ctx = fsm.register(_make_context())
+    callback = MagicMock()
+    fsm.set_on_critical_mismatch(callback)
+
+    for _ in range(4):
+        fsm.safe_transition(ctx.order_key, OrderState.FILLED, filled_qty=10)
+
+    callback.assert_called_once()
+    assert callback.call_args.args == (ctx.order_key, ctx)
+
+
+def test_safe_transition_terminal_state_pops_count():
+    fsm = _make_fsm(now=datetime(2026, 5, 17, 9, 0, 0))
+    ctx = fsm.register(_make_context())
+    fsm.safe_transition(ctx.order_key, OrderState.FILLED, filled_qty=10)
+    fsm.safe_transition(ctx.order_key, OrderState.FILLED, filled_qty=10)
+
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED)
+    fsm.transition(ctx.order_key, OrderState.FILLED, filled_qty=10)
+
+    assert fsm.get_safe_transition_mismatch_count(ctx.order_key) == 0
+
+
+def test_clear_safe_transition_mismatch_manual_reset():
+    fsm = _make_fsm(now=datetime(2026, 5, 17, 9, 0, 0))
+    ctx = fsm.register(_make_context())
+    fsm.safe_transition(ctx.order_key, OrderState.FILLED, filled_qty=10)
+    assert fsm.get_safe_transition_mismatch_count(ctx.order_key) == 1
+
+    fsm.clear_safe_transition_mismatch(ctx.order_key)
+
+    assert fsm.get_safe_transition_mismatch_count(ctx.order_key) == 0
+
+
 # ── deferred queue release ────────────────────────────────────────────────
 
 @pytest.mark.asyncio

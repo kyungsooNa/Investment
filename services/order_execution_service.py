@@ -111,6 +111,9 @@ class OrderExecutionService:
             stuck_order_warning_sec=self._STUCK_ORDER_WARNING_SEC,
             stuck_order_critical_sec=self._STUCK_ORDER_CRITICAL_SEC,
         )
+        self._fsm.set_on_critical_mismatch(
+            self._fill_reconciliation.on_safe_transition_critical
+        )
         self._submission_coordinator = OrderSubmissionCoordinator(
             logger=logger,
             broker_api_wrapper=broker_api_wrapper,

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,6 +13,7 @@ from common.types import (
     OrderState,
     ResCommonResponse,
 )
+from services.notification_service import NotificationCategory, NotificationLevel
 from services.fill_reconciliation_service import FillReconciliationService
 from services.order_state_machine import OrderStateMachine
 from services.execution_quality_reporter import ExecutionQualityReporter
@@ -164,6 +166,87 @@ async def test_reconcile_releases_alarm_when_no_mismatch(broker, fsm, reporter, 
     mismatch = await svc.reconcile_orders_with_broker()
     assert mismatch == 0
     assert svc.is_reconcile_alarm_active() is False
+
+
+@pytest.mark.asyncio
+async def test_consume_force_reconcile_logs_and_continues_full_scan(broker, fsm, reporter, fixed_now):
+    logger = _Logger()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        paper=False,
+        logger=logger,
+    )
+    fsm._force_reconcile_requested = True
+
+    mismatch = await svc.reconcile_orders_with_broker()
+
+    assert mismatch == 0
+    broker.inquire_unfilled_orders.assert_awaited_once()
+    assert fsm.consume_force_reconcile_request() is False
+    assert any("safe_transition" in str(call) for call in logger.warning.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_on_safe_transition_critical_sets_alarm_and_emits(broker, fsm, reporter, fixed_now):
+    notification = AsyncMock()
+    logger = _Logger()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        notification_service=notification,
+        logger=logger,
+    )
+    context = fsm.register(_make_context(broker_order_no="O0001"))
+
+    svc.on_safe_transition_critical(context.order_key, context)
+    await asyncio.gather(*list(svc._notification_tasks))
+
+    assert svc.is_reconcile_alarm_active() is True
+    assert svc._critical_alarm_manual_required is True
+    notification.emit.assert_awaited_once()
+    args, kwargs = notification.emit.await_args
+    assert args[0] == NotificationCategory.TRADE
+    assert args[1] == NotificationLevel.CRITICAL
+    assert args[2] == "Order Block: Safe Transition Mismatch"
+    assert kwargs["metadata"]["order_key"] == context.order_key
+    logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_critical_alarm_skips_auto_reset(broker, fsm, reporter, fixed_now):
+    logger = _Logger()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        paper=False,
+        logger=logger,
+    )
+    svc._reconcile_alarm = True
+    svc._critical_alarm_manual_required = True
+
+    mismatch = await svc.reconcile_orders_with_broker()
+
+    assert mismatch == 0
+    assert svc.is_reconcile_alarm_active() is True
+    assert any("auto-reset 보류" in str(call) for call in logger.info.call_args_list)
+
+
+def test_reset_reconcile_alarm_clears_critical(broker, fsm, reporter, fixed_now):
+    svc = _make_service(broker=broker, fsm=fsm, reporter=reporter, fixed_now=fixed_now)
+    svc._reconcile_alarm = True
+    svc._critical_alarm_manual_required = True
+
+    svc.reset_reconcile_alarm()
+
+    assert svc.is_reconcile_alarm_active() is False
+    assert svc._critical_alarm_manual_required is False
 
 
 @pytest.mark.asyncio

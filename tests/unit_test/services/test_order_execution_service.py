@@ -2569,6 +2569,16 @@ def test_safe_transition_noop_on_missing_order_key(handler):
     assert handler._reconcile_mismatch_count == 1
 
 
+def test_safe_transition_three_mismatches_activate_reconcile_alarm(handler):
+    ctx = _seed_order_context(handler, state=OrderState.FILLED, broker_order_no="A0001", remaining_qty=0)
+
+    for _ in range(3):
+        handler._safe_transition_order_context(ctx.order_key, OrderState.SUBMITTED)
+
+    assert handler._reconcile_alarm is True
+    assert handler._fill_reconciliation._critical_alarm_manual_required is True
+
+
 def test_internal_transition_raises_on_invalid(handler):
     ctx = _seed_order_context(handler, state=OrderState.FILLED, broker_order_no="A0001", remaining_qty=0)
 

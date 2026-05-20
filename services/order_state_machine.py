@@ -65,6 +65,9 @@ class OrderStateMachine:
         # OES와 deferred-release task 추적 set을 공유 (테스트가 handler._notification_tasks로 await 가능)
         self._notification_tasks: set[asyncio.Task] = notification_tasks if notification_tasks is not None else set()
         self._reconcile_mismatch_count: int = 0
+        self._safe_transition_mismatch_by_key: Dict[str, int] = {}
+        self._force_reconcile_requested: bool = False
+        self._on_critical_mismatch: Optional[Callable[[str, OrderContext], None]] = None
 
     # ── key / lock helpers ────────────────────────────────────────────
     @staticmethod
@@ -149,8 +152,26 @@ class OrderStateMachine:
         if next_context.state.is_terminal and next_context.intent_id:
             self._intent_index.pop(next_context.intent_id, None)
         if next_context.state.is_terminal:
+            self._safe_transition_mismatch_by_key.pop(order_key, None)
             self._schedule_deferred_release(next_context.stock_code)
         return next_context
+
+    def set_on_critical_mismatch(
+        self,
+        callback: Optional[Callable[[str, OrderContext], None]],
+    ) -> None:
+        self._on_critical_mismatch = callback
+
+    def get_safe_transition_mismatch_count(self, order_key: str) -> int:
+        return self._safe_transition_mismatch_by_key.get(order_key, 0)
+
+    def consume_force_reconcile_request(self) -> bool:
+        requested = self._force_reconcile_requested
+        self._force_reconcile_requested = False
+        return requested
+
+    def clear_safe_transition_mismatch(self, order_key: str) -> None:
+        self._safe_transition_mismatch_by_key.pop(order_key, None)
 
     def safe_transition(
         self, order_key: str, new_state: OrderState, **kwargs
@@ -165,11 +186,27 @@ class OrderStateMachine:
             context = self._order_states.get(order_key)
             current_state = context.state.value if context else "unknown"
             self._reconcile_mismatch_count += 1
+            count = self._safe_transition_mismatch_by_key.get(order_key, 0) + 1
+            self._safe_transition_mismatch_by_key[order_key] = count
             self.logger.warning(
                 f"외부 이벤트 상태 전이 실패(no-op): order_key={order_key}, "
                 f"current={current_state}, requested={new_state.value}, error={e}, "
-                f"mismatch_count={self._reconcile_mismatch_count}"
+                f"mismatch_count={self._reconcile_mismatch_count}, "
+                f"order_mismatch_count={count}"
             )
+            if count == 2:
+                self._force_reconcile_requested = True
+                self.logger.warning(
+                    f"safe_transition mismatch 2회 감지 → 다음 reconcile 강제 요청: "
+                    f"order_key={order_key}"
+                )
+            elif count == 3:
+                self.logger.error(
+                    f"safe_transition mismatch 3회 감지 → critical escalation: "
+                    f"order_key={order_key}, current={current_state}, requested={new_state.value}"
+                )
+                if context is not None and self._on_critical_mismatch is not None:
+                    self._on_critical_mismatch(order_key, context)
             return context
 
     def _schedule_deferred_release(self, stock_code: str) -> None:

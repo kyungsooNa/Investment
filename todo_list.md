@@ -130,9 +130,10 @@
 - [x] 주문 접수만으로 보유/체결을 확정하지 않는 기존 FSM 동작을 실전 응답 fixture로 재검증한다.
 - [x] 재시작 후 미체결 주문과 잔고 restore/reconcile 결과가 신규 주문 차단 또는 경고 상태로 이어지는지 end-to-end 검증을 보강한다.
 - [x] reconcile task 실패 자체가 주문 차단 또는 명시 경고 상태로 이어지는 정책을 운영 매트릭스로 확정한다.
-- [ ] `OrderStateMachine.safe_transition()` mismatch escalation을 정책화한다.
+- [x] `OrderStateMachine.safe_transition()` mismatch escalation을 정책화한다.
   - 검토 결과: 부분 타당. `safe_transition()`은 invalid transition/key error를 warning + mismatch count 증가 + no-op으로 처리한다. `FillReconciliationService`에는 mismatch alarm과 2회 연속 mismatch 처리 일부가 있으나, safe transition 실패 자체의 주문별 escalation 정책은 명확하지 않다.
-  - 개선 방향: 같은 주문 1회 warning, 2회 reconcile 강제, 3회 신규 주문 차단/운영자 알림을 테스트로 고정한다.
+  - 완료된 부분: 같은 주문 1회 warning, 2회 force reconcile flag, 3회 critical 알림 + 수동 해제 필요 reconcile alarm으로 신규 주문 차단을 테스트로 고정한다.
+  - 후속 검토: 운영 reset API/CLI가 `reset_reconcile_alarm()`과 `OrderStateMachine.clear_safe_transition_mismatch(order_key)`를 함께 호출하도록 노출한다.
 
 ---
 
