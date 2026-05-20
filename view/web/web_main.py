@@ -119,6 +119,10 @@ async def lifespan(app: FastAPI):
     # TRADING 비활성이면 StrategyFactory 가 내부에서 no-op.
     ctx.initialize_scheduler()
 
+    # 4-1. 전략 state(positions/cooldown) 를 명시적으로 await 로드.
+    # __init__ 의 fire-and-forget create_task 만으로는 scan 전에 로드 완료가 보장되지 않는다.
+    await ctx.ensure_strategy_states_loaded()
+
     # 5. 실전 주문 상태 복원 및 reconcile (WebSocket 구독 전, 전략 스케줄러 전).
     # WEB / TRADING 어느 한쪽이라도 켜져 있으면 수행 — /api/order 가 살아 있는 한
     # broker 와 동기화 안 된 상태로 신규 주문이 나가는 위험을 차단해야 한다.
@@ -140,6 +144,10 @@ async def lifespan(app: FastAPI):
     # 종료 시 스케줄러 상태 저장 후 정지
     if ctx.scheduler and ctx.scheduler._running:
         await ctx.scheduler.stop(save_state=True)
+
+    # StrategyStateIO 백그라운드 save task 가 남아 있으면 flush.
+    from utils.strategy_state_io import StrategyStateIO
+    await StrategyStateIO.flush_pending(timeout=5.0)
 
 # 1. FastAPI 앱 인스턴스 생성 (lifespan 추가)
 app = FastAPI(title="Trading App", lifespan=lifespan)

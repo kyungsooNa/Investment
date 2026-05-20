@@ -24,6 +24,7 @@ def mock_web_app_context_cls():
         mock_instance.load_config_and_env = MagicMock()
         mock_instance.initialize_services = AsyncMock(return_value=True)
         mock_instance.initialize_scheduler = MagicMock()
+        mock_instance.ensure_strategy_states_loaded = AsyncMock()
         mock_instance.scheduler = MagicMock()
         mock_instance.scheduler.restore_state = AsyncMock()
         mock_instance.scheduler._running = True

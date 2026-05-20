@@ -315,6 +315,27 @@ class WebAppContext:
         from view.web.bootstrap.strategy_factory import StrategyFactory
         StrategyFactory(self).build()
 
+    async def ensure_strategy_states_loaded(self):
+        """등록된 전략 중 `load_state()` 를 가진 전략의 state 를 명시적으로 await 로드한다.
+
+        StrategyFactory.build() 직후 + scheduler.start() 전에 호출. 기존 `__init__` 의
+        fire-and-forget `_load_state()` 가 scan 보다 늦게 끝나는 race 를 제거한다.
+        """
+        if self.scheduler is None:
+            return
+        for cfg in getattr(self.scheduler, "_strategies", []):
+            strategy = getattr(cfg, "strategy", None)
+            load_fn = getattr(strategy, "load_state", None)
+            if load_fn is None:
+                continue
+            try:
+                await load_fn()
+            except Exception as exc:
+                if self.logger:
+                    self.logger.error(
+                        f"[WebAppContext] strategy.load_state() 실패 ({getattr(strategy, 'name', '?')}): {exc}"
+                    )
+
     def start_background_tasks(self):
         """백그라운드 태스크 시작 — BackgroundScheduler에 위임."""
         # StreamingService에 콜백 등록 (내부 저장 → 재연결 시에도 자동 유지됨)

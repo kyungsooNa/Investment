@@ -15,6 +15,7 @@ from core.market_clock import MarketClock
 from strategies.oneil_common_types import HTFConfig, HTFPositionState
 from services.oneil_universe_service import OneilUniverseService
 from core.logger import get_strategy_logger
+from utils.strategy_state_io import StrategyStateIO
 
 
 class HighTightFlagStrategy(LiveStrategy):
@@ -673,21 +674,25 @@ class HighTightFlagStrategy(LiveStrategy):
         loop.create_task(self._load_state_async())
 
     async def _load_state_async(self):
-        if not os.path.exists(self.STATE_FILE):
-            return
         try:
-            def _read_file():
-                with open(self.STATE_FILE, "r") as f:
-                    return json.load(f)
-
-            data = await asyncio.to_thread(_read_file)
-            positions = data.get("positions", data) if isinstance(data, dict) else {}
-            self._cooldown = data.get("cooldown", {}) if isinstance(data, dict) and "positions" in data else {}
-            for k, v in positions.items():
-                if k not in self._position_state:
-                    self._position_state[k] = HTFPositionState(**v)
+            data = await StrategyStateIO.load(self.STATE_FILE)
         except Exception as e:
             self._logger.error(f"Failed to load state async for {self.name}: {e}")
+            return
+        if data is None:
+            return
+        positions = data.get("positions", data) if isinstance(data, dict) else {}
+        self._cooldown = data.get("cooldown", {}) if isinstance(data, dict) and "positions" in data else {}
+        for k, v in positions.items():
+            if k not in self._position_state:
+                self._position_state[k] = HTFPositionState(**v)
+
+    async def load_state(self):
+        """초기화 직후 scan 전에 호출. _load_state_async() 를 명시적으로 await.
+
+        Idempotent: `if k not in self._position_state` 가드로 중복 호출 안전.
+        """
+        await self._load_state_async()
 
     def _save_state(self):
         """백워드 호환성 있는 동기-스케줄러 래퍼."""
@@ -707,14 +712,9 @@ class HighTightFlagStrategy(LiveStrategy):
         loop.create_task(self._save_state_async())
 
     async def _save_state_async(self):
-        """비동기 방식으로 상태 파일을 저장합니다 (파일 I/O는 스레드로 오프로드)."""
+        """StrategyStateIO 로 atomic write + per-file lock 저장."""
+        data = {"positions": {k: asdict(v) for k, v in self._position_state.items()}, "cooldown": self._cooldown}
         try:
-            def _write_file(data):
-                os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
-                with open(self.STATE_FILE, "w") as f:
-                    json.dump(data, f, indent=2)
-
-            data = {"positions": {k: asdict(v) for k, v in self._position_state.items()}, "cooldown": self._cooldown}
-            await asyncio.to_thread(_write_file, data)
+            await StrategyStateIO.save_atomic(self.STATE_FILE, data)
         except Exception as e:
             self._logger.error(f"Failed to save state async for {self.name}: {e}")

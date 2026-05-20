@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-19 (실전 모드 RiskGate fail-close 전환 완료)
+최종 업데이트: 2026-05-20 (get_current_price 전역 캐시 제거 + 전략 state atomic write/lock + 명시적 load_state await)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -38,13 +38,15 @@
   - 개선 방향: paper/backtest는 fail-open 허용, real은 신규 BUY 차단. 예: `risk_gate.fail_open_allowed.paper=true`, `risk_gate.fail_open_allowed.real=false`.
   - 테스트: real mode에서 snapshot/provider 오류, total_equity<=0, strategy holds 조회 실패가 BUY를 차단하고, paper mode 기존 동작은 명시적으로 유지되는지 검증.
   - 완료 내용: `config/config_loader.py`에 `RiskGateFailOpenConfig(paper=True, real=False)` 추가, `RiskGateConfig.fail_open_allowed` 필드로 연결. `RiskGateService._should_fail_close()` 헬퍼 도입 후 6개 fail-open 지점을 real 모드 BUY 시 차단으로 전환: `_check_buy_exposure`(snapshot cache None, equity<=0), `_check_duplicate_strategy_position`(provider 예외), `_check_strategy_loss_limit`(history provider 예외), `_check_strategy_capital_cap`(snapshot None / equity<=0 / holds 예외), `_check_strategy_exposure_limit`(snapshot None / equity<=0 / holds 예외). SELL 경로는 `validate_order`의 `if side == BUY` 가드로 변경 없음 → 강제 청산 보존. env=None 및 paper 모드는 기본 `fail_open_allowed.paper=True`로 기존 fail-open 동작 유지. opt-out 위해 `fail_open_allowed.real=True` 설정 가능. 신규 테스트 9건 추가 (snapshot 부재, zero equity BUY, SELL 비차단, paper/env=None 회귀, strategy exposure/capital/loss/duplicate provider 예외, config opt-out). 단위 4716건 + 통합 233건 통과.
-- [ ] `get_current_price`를 일반 300초 캐시 대상에서 제거하거나 메서드별 짧은 TTL로 분리한다.
+- [x] `get_current_price`를 일반 300초 캐시 대상에서 제거하거나 메서드별 짧은 TTL로 분리한다. (2026-05-20 완료)
   - 검토 결과: 타당. `config/cache_config.yaml`의 `enabled_methods`에 `get_current_price`가 남아 있고 기본 TTL은 300초다. `StockQueryService`/`MarketDataService` 내부 단기 snapshot·repository 캐시는 별도로 3~5초 범위로 관리되므로 전역 캐시 대상과 충돌한다.
   - 개선 방향: `enabled_methods`에서 `get_current_price` 제거. 캐시가 꼭 필요하면 `method_ttl.get_current_price <= 1~2초`와 주문/손절/리스크 경로 `force_fresh=True`를 테스트로 고정.
-- [ ] 전략 state load/save를 명시적 await + atomic write + lock 구조로 정리한다.
+  - 완료 내용: `config/cache_config.yaml`의 `enabled_methods`에서 `get_current_price`를 제거하고 제거 이유 주석 추가. `MarketDataService`는 이미 `_stock_repo.get_current_price(max_age_sec=3.0)` 단기 캐시 + 장 마감 후 `_stock_repo.get_latest_daily_snapshot()` DB 폴백 + REST 응답 캐시 갱신을 운영하므로 ClientWithCache 계층 제거 후에도 캐싱 책임은 유지된다. ClientWithCache는 장 중 캐시 우회, 장 마감 후 cached payload를 다음 거래일 개장 전까지 유지하므로 주문/손절/리스크의 `force_fresh=True` 의도가 broker wrapper로 전파되지 않는 충돌이 있었다. 정책 invariant를 회귀 테스트 1건으로 고정(`tests/unit_test/config/test_cache_config_yaml.py::test_get_current_price_is_not_globally_cached`). 단위 4720건 + 통합 233건 통과.
+- [x] 전략 state load/save를 명시적 await + atomic write + lock 구조로 정리한다. (2026-05-20 완료)
   - 검토 결과: 타당. `OneilPocketPivotStrategy`, `HighTightFlagStrategy`, `FirstPullbackStrategy`, `OneilSqueezeBreakoutStrategy`가 이벤트 루프 존재 시 `_load_state_async()` / `_save_state_async()`를 background task로 실행하고, 파일 저장은 직접 overwrite다.
   - 개선 방향: scheduler/strategy factory 초기화 단계에서 `await strategy.load_state()`를 보장하고, 저장은 per-strategy lock + temp file + `os.replace()`로 원자화한다. 종료 시 pending save flush도 추가한다.
   - 테스트: 생성 직후 scan 전에 state 로드 완료, 저장 task 경합 시 최신 상태 보존, 저장 중 장애 시 기존 파일 보존.
+  - 완료 내용: 신규 `utils/strategy_state_io.py` (`StrategyStateIO`) — `save_atomic()` 은 `tempfile.mkstemp` → `fsync` → `os.replace()` 로 원자 교체 + 파일 경로별 `asyncio.Lock` 으로 동시 save 직렬화. `load()` 는 단순 async 로드, `schedule_save()` + `flush_pending()` 으로 graceful shutdown 시 in-flight save 완료 대기. 4개 전략의 `_load_state_async()` / `_save_state_async()` 본문을 헬퍼 위임으로 교체, 신규 public `async def load_state(self)` 추가 (`_load_state_async` 의 `if k not in self._position_state` 가드로 idempotent). `WebAppContext.ensure_strategy_states_loaded()` 신설하여 등록된 모든 전략의 `load_state` 를 명시적으로 await; `view/web/web_main.py::lifespan` 에서 `initialize_scheduler()` 직후 호출 + 종료 시 `await StrategyStateIO.flush_pending(timeout=5.0)`. 기존 `_load_state()` / `_save_state()` sync 폴백 및 fire-and-forget create_task 는 보존하여 standalone 호환. 테스트 15건 신규 추가 (`tests/unit_test/utils/test_strategy_state_io.py` 9건: atomic write/preserve-on-failure/concurrent serialization/load missing & roundtrip/flush_pending; `tests/unit_test/strategies/test_strategy_load_state_await.py` 6건: 4개 전략 await 로드 + idempotent + missing file). 기존 `tests/unit_test/view/test_web_main.py` 와 `tests/integration_test/test_it_web_app_e2e_smoke.py` 에 `ensure_strategy_states_loaded` AsyncMock 추가. 단위 4735건 + 통합 233건 통과.
 
 주요 파일:
 
