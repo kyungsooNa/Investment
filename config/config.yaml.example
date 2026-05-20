@@ -28,7 +28,7 @@ market_timezone: "Asia/Seoul"
 
 # 계좌 보호용 Kill Switch
 kill_switch:
-  enabled: true
+  enabled: false
   notify_only: false                       # true이면 트립/알림/상태 기록만 수행하고 주문·전략은 차단하지 않음.
   daily_loss_threshold_won: 1000000      # 일손실 한도 (원). 초과 시 트립.
   daily_loss_threshold_pct: 5.0          # 일손실 한도 (%). 원화/% 중 하나라도 초과하면 트립.

@@ -459,6 +459,8 @@ class KillSwitchService:
 
     def _load_state(self) -> None:
         """재시작 시 JSON 파일에서 상태 복원."""
+        if not self._cfg.enabled:
+            return
         if not self._state_path.exists():
             return
         try:
