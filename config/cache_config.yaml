@@ -4,9 +4,12 @@ cache:
   memory_cache_enabled: 1
   use_db_cache: 1
   enabled_methods: # 실시간성 필요 없는 함수 list
+    # NOTE: get_current_price는 MarketDataService 내부의 3초 단기 캐시 +
+    # 장 마감 후 DB 스냅샷 폴백이 이미 캐싱을 담당하므로 전역 캐시에서 제외한다.
+    # ClientWithCache의 after-hours 캐시는 다음 거래일 개장까지 유지되어
+    # 주문/손절/리스크 경로의 신선도 요구(force_fresh=True)와 충돌한다.
     - get_stock_info_by_code
     - get_top_market_cap_stocks_code
-    - get_current_price
     - get_price_summary
     - get_market_cap
     - get_filtered_stocks_by_momentum

@@ -70,6 +70,7 @@ def fake_web_ctx():
     ctx.load_config_and_env = MagicMock()
     ctx.initialize_services = AsyncMock(return_value=True)
     ctx.initialize_scheduler = MagicMock()
+    ctx.ensure_strategy_states_loaded = AsyncMock()
     ctx.start_background_tasks = MagicMock()
     ctx.shutdown = AsyncMock()
 
