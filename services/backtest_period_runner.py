@@ -37,6 +37,17 @@ class BacktestBarProvider(Protocol):
         ...
 
 
+class MarkToMarketBarProvider(Protocol):
+    async def get_holding_bars(
+        self,
+        *,
+        code: str,
+        start_ymd: str,
+        end_ymd: str,
+    ) -> list[BacktestBar]:
+        ...
+
+
 class BacktestPositionSizer(Protocol):
     async def adjust_buy_qty(self, signal: TradeSignal, exchange: Exchange | None = None) -> tuple[int, str]:
         ...
@@ -85,6 +96,7 @@ class BacktestPeriodRunner:
         position_sizing_service: BacktestPositionSizer | None = None,
         risk_gate_service: BacktestRiskGate | None = None,
         date_context_targets: Sequence[object] | None = None,
+        mtm_bar_provider: MarkToMarketBarProvider | None = None,
     ) -> None:
         self._strategy = strategy
         self._bar_provider = bar_provider
@@ -97,7 +109,8 @@ class BacktestPeriodRunner:
         self._position_sizing_service = position_sizing_service
         self._risk_gate_service = risk_gate_service
         self._date_context_targets = list(date_context_targets or [])
-        self._position_excursions: dict[str, dict[str, float | None]] = {}
+        self._mtm_bar_provider = mtm_bar_provider
+        self._position_excursions: dict[str, dict[str, object]] = {}
 
     async def run(self, dates: Sequence[str]) -> BacktestPeriodRunResult:
         result = BacktestPeriodRunResult(
@@ -180,7 +193,7 @@ class BacktestPeriodRunner:
 
             report = await self._execute_signal(signal, date_ymd, side=OrderSide.BUY, order=decision.order)
             self._ledger.apply_execution(report)
-            self._remember_position_excursion(report)
+            self._remember_position_excursion(report, date_ymd)
             result.execution_reports.append(report)
             result.journal_records.append(self._execution_record(report, signal=signal))
             if report.filled_qty <= 0:
@@ -206,7 +219,7 @@ class BacktestPeriodRunner:
         order = order or self._signal_to_order(signal, 0, side=side)
         report = self._simulator.simulate(order, bar)
         if side == OrderSide.SELL:
-            report = self._with_holding_period_excursion(report, bar)
+            report = await self._with_holding_period_excursion(report, bar, sell_ymd=date_ymd)
         return replace(report, execution_bar_policy=execution_policy)
 
     async def _apply_position_sizing(
@@ -344,13 +357,18 @@ class BacktestPeriodRunner:
             record["metadata"] = metadata
         return record
 
-    def _remember_position_excursion(self, report: BacktestExecutionReport) -> None:
+    def _remember_position_excursion(
+        self,
+        report: BacktestExecutionReport,
+        buy_ymd: str,
+    ) -> None:
         if report.order.side != OrderSide.BUY or report.filled_qty <= 0:
             return
         current = self._position_excursions.get(report.order.code, {})
         self._position_excursions[report.order.code] = {
             "mfe": _max_optional(current.get("mfe"), report.mfe),
             "mae": _min_optional(current.get("mae"), report.mae),
+            "buy_ymd": current.get("buy_ymd", buy_ymd),
         }
 
     def _forget_position_excursion_if_closed(self, report: BacktestExecutionReport) -> None:
@@ -358,22 +376,39 @@ class BacktestPeriodRunner:
         if position is None or position.qty <= 0:
             self._position_excursions.pop(report.order.code, None)
 
-    def _with_holding_period_excursion(
+    async def _with_holding_period_excursion(
         self,
         report: BacktestExecutionReport,
         bar: BacktestBar,
+        *,
+        sell_ymd: str,
     ) -> BacktestExecutionReport:
         position = self._ledger.positions.get(report.order.code)
         if position is None or position.avg_price <= 0 or report.filled_qty <= 0:
             return report
 
-        bar_mfe = (bar.high / position.avg_price - 1.0) * 100.0
-        bar_mae = (bar.low / position.avg_price - 1.0) * 100.0
+        entry = position.avg_price
         current = self._position_excursions.get(report.order.code, {})
+        mfe = current.get("mfe")
+        mae = current.get("mae")
+        buy_ymd = current.get("buy_ymd")
+
+        if self._mtm_bar_provider is not None and isinstance(buy_ymd, str) and buy_ymd < sell_ymd:
+            mid_bars = await self._mtm_bar_provider.get_holding_bars(
+                code=report.order.code,
+                start_ymd=buy_ymd,
+                end_ymd=sell_ymd,
+            )
+            for mb in mid_bars:
+                mfe = _max_optional(mfe, (mb.high / entry - 1.0) * 100.0)
+                mae = _min_optional(mae, (mb.low / entry - 1.0) * 100.0)
+
+        bar_mfe = (bar.high / entry - 1.0) * 100.0
+        bar_mae = (bar.low / entry - 1.0) * 100.0
         return replace(
             report,
-            mfe=_max_optional(current.get("mfe"), bar_mfe),
-            mae=_min_optional(current.get("mae"), bar_mae),
+            mfe=_max_optional(mfe, bar_mfe),
+            mae=_min_optional(mae, bar_mae),
         )
 
     def _sell_realized_metrics(self, report: BacktestExecutionReport) -> dict:
