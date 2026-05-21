@@ -548,6 +548,60 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(strategy._range_cache.ranges, {})
         self.assertEqual(sqs.get_recent_daily_ohlcv.call_count, 2)
 
+    async def test_refresh_range_cache_respects_concurrency_limit(self):
+        """일봉 조회는 _RANGE_CACHE_CONCURRENCY를 초과해 동시에 in-flight 되지 않는다."""
+        import asyncio
+
+        from strategies import larry_williams_vbo_strategy as vbo_mod
+
+        strategy, sqs, _ = self._make_strategy()
+
+        concurrency_limit = vbo_mod._RANGE_CACHE_CONCURRENCY
+        in_flight = 0
+        peak = 0
+        gate = asyncio.Event()
+        call_count = 0
+
+        async def _tracked(code: str, limit: int = 2) -> ResCommonResponse:
+            nonlocal in_flight, peak, call_count
+            call_count += 1
+            in_flight += 1
+            peak = max(peak, in_flight)
+            if in_flight >= concurrency_limit:
+                gate.set()
+            try:
+                await gate.wait()
+                return _ohlcv_resp(high=72000, low=70000)
+            finally:
+                in_flight -= 1
+
+        sqs.get_recent_daily_ohlcv = _tracked
+
+        codes = [f"C{i:04d}" for i in range(concurrency_limit * 3)]
+        await strategy._refresh_range_cache("20260115", codes)
+
+        self.assertEqual(peak, concurrency_limit)
+        self.assertEqual(call_count, len(codes))
+        self.assertEqual(len(strategy._range_cache.ranges), len(codes))
+
+    async def test_refresh_range_cache_parallel_preserves_per_code_isolation(self):
+        """일부 코드가 예외/실패 응답이어도 나머지 코드의 range는 정상 저장된다 (zip 순서 매핑)."""
+        strategy, sqs, _ = self._make_strategy()
+
+        good = _ohlcv_resp(high=72000, low=70000)  # range = 2000
+        bad = ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="err", data=None)
+        sqs.get_recent_daily_ohlcv.side_effect = [
+            good,
+            RuntimeError("ohlcv down"),
+            bad,
+            good,
+        ]
+
+        codes = ["OK1", "RAISE", "FAIL", "OK2"]
+        await strategy._refresh_range_cache("20260115", codes)
+
+        self.assertEqual(strategy._range_cache.ranges, {"OK1": 2000.0, "OK2": 2000.0})
+
     async def test_get_execution_strength_returns_zero_on_exception(self):
         strategy, sqs, _ = self._make_strategy()
         sqs.get_stock_conclusion.side_effect = RuntimeError("conclusion down")
