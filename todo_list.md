@@ -305,10 +305,13 @@
   - `_price_lookup_stats` dict를 `price_lookup_stats` 이벤트 로그로 노출 가능.
 - [x] 전략별 중복 조회를 제거하고 동일 종목 데이터는 공통 snapshot에서 읽도록 정리한다.
   - 완료: 전략들이 `StockQueryService.get_current_price()` 한 통로를 거치므로 snapshot-first 기본화로 자연 해결. REST backfill로 첫 호출 이후 동일 종목 재조회 시 캐시 hit.
-- [ ] 전략/서비스 전역 API budget limiter를 도입한다.
+- [x] 전략/서비스 전역 API budget limiter를 도입한다.
   - 검토 결과: 타당. 개별 전략의 chunk size/semaphore와 `ForegroundScheduler`는 존재하지만, current price/OHLCV/account/order API 전체를 전략 간 공유하는 전역 rate limiter는 없다. 여러 전략이 동시에 scan/check_exits를 수행하면 순간 호출량이 합산된다.
   - 개선 방향: `ApiBudget` 또는 broker wrapper 레벨 limiter를 shared dependency로 주입하고, 조회/계좌/주문 카테고리별 rate를 분리한다.
   - 테스트: 여러 전략이 동시에 호출해도 카테고리별 limiter가 적용되고 주문 API 우선순위가 보존되는지 검증.
+  - 완료된 부분: `core.retry_queue.api_budget_limiter.ApiBudgetLimiter` 추가. `BrokerAPIWrapper`가 shared limiter를 생성해 `ClientWithRetryQueue`에 주입하고, retry queue의 최초 호출/재시도 호출이 모두 limiter를 거치도록 연결했다.
+  - 1차 정책: 조회성 API는 `quotation` 기본 동시성 8, 계좌 조회 API는 `account` 기본 동시성 2로 분리. 주문/WebSocket 메서드는 기존 제외 목록을 유지해 budget limiter와 retry queue를 우회한다.
+  - 검증: retry queue 단위 88개, retry queue 통합 22개, broker wrapper 단위 33개, 전체 단위 4798개, 전체 통합 233개 통과.
 - [x] 활성 전략의 exit check도 bounded gather 또는 순차/우선순위 정책으로 통일한다.
   - 검토 결과: 타당. `FirstPullbackStrategy`, `HighTightFlagStrategy`, `LarryWilliamsChannelBreakoutStrategy` 등 일부 전략은 holdings 전체에 대해 `asyncio.gather()`를 수행한다. VBO/레거시 일부는 순차 처리다.
   - 완료된 부분: `utils/async_concurrency.py::bounded_gather()` 헬퍼 신규 + 단위 테스트 7개. 활성 6개 전략(`FirstPullback`, `HighTightFlag`, `LarryWilliamsChannelBreakout`, `OneilPocketPivot`, `OneilSqueezeBreakout`, `Rsi2Pullback`)의 holdings exit gather를 `bounded_gather(..., limit=_EXIT_CONCURRENCY=15, return_exceptions=True)`로 교체했다. entry chunk_size(10)보다 높여 청산 경로에 우선순위를 부여한다.

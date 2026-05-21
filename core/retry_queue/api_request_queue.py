@@ -15,6 +15,8 @@ class QueuedRequest:
     future: asyncio.Future     # 호출자에게 최종 결과를 전달하는 Future
     attempt: int = 0
     request_id: str = ""
+    request_category: str = "quotation"
+    budget_limiter: Any = None
 
 
 class ApiRequestQueue:
@@ -32,8 +34,10 @@ class ApiRequestQueue:
     BASE_DELAY  = 1.0   # 초 (지수 백오프: BASE_DELAY * 2^(attempt-1))
     MAX_DELAY   = 30.0  # 최대 지연
 
-    def __init__(self, logger):
+    def __init__(self, logger, budget_limiter=None, default_request_category: str = "quotation"):
         self._logger = logger
+        self._budget_limiter = budget_limiter
+        self._default_request_category = default_request_category
         self._done_q: asyncio.Queue[tuple[QueuedRequest, Any]] = asyncio.Queue()
         self._fail_q: asyncio.Queue[tuple[QueuedRequest, Any]] = asyncio.Queue()
         self._pending_tasks: set[asyncio.Task] = set()
@@ -42,14 +46,31 @@ class ApiRequestQueue:
     # 공개 인터페이스
     # ------------------------------------------------------------------
 
-    async def submit(self, fn: Callable, *args, request_id: str = "", **kwargs) -> asyncio.Future:
+    async def submit(
+        self,
+        fn: Callable,
+        *args,
+        request_id: str = "",
+        request_category: str | None = None,
+        budget_limiter=None,
+        **kwargs,
+    ) -> asyncio.Future:
         """
         요청을 즉시 실행합니다.
         실패 시 백그라운드에서 자동 재시도하며, 최종 결과를 Future로 반환합니다.
         """
         loop = asyncio.get_event_loop()
         future = loop.create_future()
-        req = QueuedRequest(fn, args, kwargs, future, attempt=0, request_id=request_id)
+        req = QueuedRequest(
+            fn,
+            args,
+            kwargs,
+            future,
+            attempt=0,
+            request_id=request_id,
+            request_category=request_category or self._default_request_category,
+            budget_limiter=budget_limiter,
+        )
         self._spawn(self._execute(req))
         return future
 
@@ -74,7 +95,12 @@ class ApiRequestQueue:
 
     async def _execute(self, req: QueuedRequest):
         try:
-            result = await req.fn(*req.args, **req.kwargs)
+            limiter = req.budget_limiter or self._budget_limiter
+            if limiter is None:
+                result = await req.fn(*req.args, **req.kwargs)
+            else:
+                async with limiter.acquire(req.request_category):
+                    result = await req.fn(*req.args, **req.kwargs)
         except Exception as e:
             self._logger.warning(
                 f"[RetryQueue] 예외 발생 (id={req.request_id}, attempt={req.attempt}): {e}"

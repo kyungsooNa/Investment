@@ -1,6 +1,7 @@
 # tests/unit_test/test_api_request_queue.py
 
 import asyncio
+from contextlib import asynccontextmanager
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
@@ -147,6 +148,31 @@ class TestSubmitRetry:
         await future
 
         logger.warning.assert_called()
+
+    async def test_each_retry_attempt_acquires_api_budget(self, logger):
+        categories = []
+
+        class RecordingLimiter:
+            @asynccontextmanager
+            async def acquire(self, category):
+                categories.append(category)
+                yield
+
+        limited_queue = ApiRequestQueue(
+            logger=logger,
+            budget_limiter=RecordingLimiter(),
+        )
+        fn = AsyncMock(side_effect=[network_fail_resp(), success_resp()])
+
+        future = await limited_queue.submit(
+            fn,
+            request_id="test_budget",
+            request_category="quotation",
+        )
+        result = await future
+
+        assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert categories == ["quotation", "quotation"]
 
 
 class TestExceptionHandling:
