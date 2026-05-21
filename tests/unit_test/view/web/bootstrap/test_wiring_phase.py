@@ -127,7 +127,20 @@ def test_wiring_phase_registers_signing_notice_handler():
     ctx = _make_fake_context()
     WiringPhase(ctx).run()
 
-    ctx.streaming_service.register_handler.assert_called_once_with(
+    ctx.streaming_service.register_handler.assert_any_call(
         "signing_notice",
         ctx.order_execution_service.handle_signing_notice,
+    )
+
+
+def test_wiring_phase_registers_program_trading_handler():
+    """PT WebSocket 수신 데이터가 ProgramTradingStreamService까지 전달되도록 연결한다."""
+    from view.web.bootstrap.wiring_phase import WiringPhase
+
+    ctx = _make_fake_context()
+    WiringPhase(ctx).run()
+
+    ctx.streaming_service.register_handler.assert_any_call(
+        "realtime_program_trading",
+        ctx.program_trading_stream_service.on_data_received,
     )

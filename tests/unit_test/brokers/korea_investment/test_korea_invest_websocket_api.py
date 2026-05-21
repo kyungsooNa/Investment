@@ -2350,6 +2350,22 @@ def test_handle_websocket_message_program_trading_success(websocket_api_instance
     assert result["data"]["순매수체결량"] == "10"
 
 
+def test_handle_websocket_message_nxt_program_trading_success(websocket_api_instance):
+    api = websocket_api_instance
+    api._env.active_config["tr_ids"]["websocket"]["nxt_realtime_program_trading"] = "H0NXPGM0"
+    api.on_realtime_message_callback = MagicMock()
+    data_str = "005930^120000^10^10000^20^20000^10^10000^100^200^300"
+    message = f"0|H0NXPGM0|dummy|{data_str}"
+
+    api._handle_websocket_message(message)
+
+    api.on_realtime_message_callback.assert_called_once()
+    result = api.on_realtime_message_callback.call_args[0][0]
+    assert result["type"] == "realtime_program_trading"
+    assert result["tr_id"] == "H0NXPGM0"
+    assert result["data"]["순매수체결량"] == "10"
+
+
 @pytest.mark.asyncio
 async def test_receive_messages_appkey_collision_retry_logs(websocket_api_instance):
     api = websocket_api_instance

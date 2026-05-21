@@ -347,7 +347,7 @@ class KoreaInvestWebSocketAPI:
                     self._logger.warning(f"체결통보 암호화 해제 실패: AES 키/IV 없음. TR_ID: {tr_id}, 메시지: {message[:50]}...")
                     return
 
-            elif tr_id == self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0STPGM0'):
+            elif tr_id in self._get_program_trading_tr_ids():
                 parsed_data = self._parse_program_trading_data(data_body)
                 message_type = 'realtime_program_trading'
 
@@ -652,6 +652,13 @@ class KoreaInvestWebSocketAPI:
         keys = menulist.split('|')
         values = data_str.split('^')
         return dict(zip(keys, values[:len(keys)]))
+
+    def _get_program_trading_tr_ids(self) -> set[str]:
+        websocket_config = self._env.active_config.get('tr_ids', {}).get('websocket', {})
+        return {
+            websocket_config.get('realtime_program_trading', 'H0STPGM0'),
+            websocket_config.get('nxt_realtime_program_trading', 'H0NXPGM0'),
+        }
 
     async def subscribe_program_trading(self, stock_code: str):
         """국내주식 실시간 프로그램매매 동향 (H0STPGM0) 구독."""

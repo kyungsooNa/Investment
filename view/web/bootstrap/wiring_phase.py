@@ -76,6 +76,13 @@ class WiringPhase:
                 market_clock=getattr(ctx, "market_clock", None),
             )
 
+        # Streaming realtime_program_trading callback ← ProgramTradingStreamService
+        if ctx.streaming_service and ctx.program_trading_stream_service:
+            ctx.streaming_service.register_handler(
+                "realtime_program_trading",
+                ctx.program_trading_stream_service.on_data_received,
+            )
+
         # Streaming signing_notice callback ← OrderExecution
         if ctx.streaming_service and ctx.order_execution_service:
             ctx.streaming_service.register_handler(
