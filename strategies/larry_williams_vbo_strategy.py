@@ -428,7 +428,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                     "code": code,
                     "name": item.get("hts_kor_isnm", code),
                     "market_cap": int(item.get("stck_avls", "0") or "0"),
-                    "avg_5d_tv": 0,  # fallback 시 미제공 → 필터 스킵
+                    "avg_5d_tv": 0,  # fallback 시 미제공 → validity filter에서 fail-closed reject
                 })
         return result
 
@@ -466,7 +466,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         """시가총액 / 5일 평균 거래대금 필터.
 
         OSBWatchlistItem 기반(universe_service 사용 시): market_cap, avg_5d_tv 직접 사용.
-        fallback 시: market_cap만 체크 (avg_5d_tv=0이면 스킵).
+        fallback 시: avg_5d_tv 미제공이면 fail-closed로 차단한다.
         """
         market_cap = stock.get("market_cap", 0) or 0
         avg_5d_tv = stock.get("avg_5d_tv", 0) or 0
@@ -479,7 +479,15 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             )
             return False
 
-        if avg_5d_tv > 0 and avg_5d_tv < self._cfg.min_5d_trading_value:
+        if avg_5d_tv <= 0:
+            self._log_entry_rejected(
+                log_data,
+                "avg_trading_value_unknown",
+                "5일평균거래대금 미제공 (fallback 경로)",
+            )
+            return False
+
+        if avg_5d_tv < self._cfg.min_5d_trading_value:
             self._log_entry_rejected(
                 log_data,
                 "avg_trading_value_below_min",

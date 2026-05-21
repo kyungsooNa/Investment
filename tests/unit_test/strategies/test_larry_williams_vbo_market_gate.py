@@ -121,11 +121,15 @@ async def test_bull_regime_passes_gate_and_evaluates_filters():
 async def test_universe_none_bypasses_market_gate():
     """universe_service 미주입 시 게이트 우회 (fallback 호환)."""
     strategy, sqs = _make_strategy(universe=None)
-    # fallback 경로 — 거래대금 상위 API 결과로 진행
+    # fallback 경로 — universe 미주입이지만 dict 직접 주입으로 validity filter 통과까지 검증
     sqs.get_top_trading_value_stocks = AsyncMock(return_value=ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
         data=[{"mksc_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "stck_avls": "500000000000"}],
     ))
+    strategy._load_pool_b = AsyncMock(return_value=[{
+        "code": "005930", "name": "삼성전자", "market": "",
+        "market_cap": 500_000_000_000, "avg_5d_tv": 50_000_000_000,
+    }])
     sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
         data={"price": "70000", "open": "69000", "pgtr_ntby_qty": "0", "acml_tr_pbmn": "0"},

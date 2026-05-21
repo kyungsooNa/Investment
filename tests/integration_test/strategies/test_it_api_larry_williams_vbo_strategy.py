@@ -52,13 +52,18 @@ async def test_vbo_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
     stock_repo = md_service._stock_repo
     mock_sqs = deep_paper_ctx.stock_query_service
 
-    # 2. Pool B 로드 (universe_service=None fallback 경로 → sqs.get_top_trading_value_stocks)
+    # 2. Pool B 로드 — universe_service 미주입이지만 validity filter 통과를 위해
+    #    _load_pool_b 가 avg_5d_tv 포함 dict 를 직접 반환하도록 patch.
     mocker.patch.object(
         mock_sqs, "get_top_trading_value_stocks", new_callable=AsyncMock,
         return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[
             {"mksc_shrn_iscd": code_a, "hts_kor_isnm": "테스트종목A", "stck_avls": "500000000000"},
         ])
     )
+    _pool_b_dict = [{
+        "code": code_a, "name": "테스트종목A", "market": "",
+        "market_cap": 500_000_000_000, "avg_5d_tv": 50_000_000_000,
+    }]
 
     # 3. 현재가 API 모킹 (Broker 레벨 — 캐시 계층 통과)
     # Range = 72000 - 70000 = 2000, K=0.5 → Target = 70000 + 1000 = 71000
@@ -126,6 +131,7 @@ async def test_vbo_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
             stop_loss_pct=-3.0,
         ),
     )
+    strategy._load_pool_b = AsyncMock(return_value=_pool_b_dict)
 
     # ── [상황 A] 초기 스캔 (Cache Miss) ─────────────────────────────────
     stock_repo._price_repo._price_cache.clear()

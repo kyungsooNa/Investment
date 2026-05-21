@@ -123,6 +123,10 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         """Target 돌파 + 체결강도 120%+ + 프로그램 순매수 10%+ → BUY 신호."""
         strategy, sqs, _ = self._make_strategy(k_value=0.5)
         sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        strategy._load_pool_b = AsyncMock(return_value=[{
+            "code": "005930", "name": "삼성전자", "market": "",
+            "market_cap": 500_000_000_000, "avg_5d_tv": 50_000_000_000,
+        }])
         # Range=2000, K=0.5 → Target = 70000 + 1000 = 71000
         # current=72000 > target=71000 → 돌파
         sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
@@ -228,6 +232,10 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         """allow_reentry=False: 당일 동일 종목 두 번째 신호 차단."""
         strategy, sqs, _ = self._make_strategy(k_value=0.5)
         sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        strategy._load_pool_b = AsyncMock(return_value=[{
+            "code": "005930", "name": "삼성전자", "market": "",
+            "market_cap": 500_000_000_000, "avg_5d_tv": 50_000_000_000,
+        }])
         sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
         sqs.handle_get_current_stock_price.return_value = _price_resp(
             current=72000, open_price=70000,
@@ -490,6 +498,31 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(strategy._passes_validity_filter(
             {"market_cap": 300_000_000_000, "avg_5d_tv": 1_000_000_000},
             {"code": "LOW_TV"},
+        ))
+
+    async def test_validity_filter_rejects_unknown_trading_value(self):
+        """fallback 경로에서 avg_5d_tv 가 0 또는 누락이면 fail-closed reject."""
+        strategy, _, _ = self._make_strategy(
+            min_market_cap=200_000_000_000,
+            min_5d_trading_value=10_000_000_000,
+        )
+
+        # avg_5d_tv == 0 (fallback 기본값)
+        self.assertFalse(strategy._passes_validity_filter(
+            {"market_cap": 300_000_000_000, "avg_5d_tv": 0},
+            {"code": "UNKNOWN_TV_ZERO"},
+        ))
+
+        # avg_5d_tv 누락
+        self.assertFalse(strategy._passes_validity_filter(
+            {"market_cap": 300_000_000_000},
+            {"code": "UNKNOWN_TV_MISSING"},
+        ))
+
+        # avg_5d_tv == None
+        self.assertFalse(strategy._passes_validity_filter(
+            {"market_cap": 300_000_000_000, "avg_5d_tv": None},
+            {"code": "UNKNOWN_TV_NONE"},
         ))
 
     async def test_load_pool_b_returns_empty_when_universe_raises(self):
