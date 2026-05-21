@@ -12,6 +12,7 @@ from core.market_clock import MarketClock
 from interfaces.live_strategy import LiveStrategy
 from services.stock_query_service import StockQueryService
 from strategies.base_strategy_config import BaseStrategyConfig
+from utils.async_concurrency import bounded_gather
 from utils.volatility_utils import annualized_return_std
 
 if TYPE_CHECKING:
@@ -31,6 +32,8 @@ async def _fetch_volatility_for_signal(sqs: StockQueryService, code: str) -> Opt
 _ENTRY_START = time(9, 10)
 _ENTRY_CUTOFF = time(14, 0)
 _EOD_FLATTEN = time(15, 20)
+
+_RANGE_CACHE_CONCURRENCY = 10
 
 
 @dataclass
@@ -444,23 +447,30 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         self._range_cache.date = today
         self._range_cache.ranges.clear()
 
-        for code in codes:
-            try:
-                resp = await self._sqs.get_recent_daily_ohlcv(code, limit=2)
-                if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
-                    continue
-                rows: list = resp.data or []
-                if not rows:
-                    continue
+        if not codes:
+            return
 
-                yesterday = rows[0]  # 가장 최근 완성된 일봉
-                high = int(yesterday.get("high", 0) or 0)
-                low = int(yesterday.get("low", 0) or 0)
-                if high > low > 0:
-                    self._range_cache.ranges[code] = float(high - low)
+        results = await bounded_gather(
+            [self._sqs.get_recent_daily_ohlcv(code, limit=2) for code in codes],
+            limit=_RANGE_CACHE_CONCURRENCY,
+            return_exceptions=True,
+        )
 
-            except Exception as e:
-                self._logger.warning({"event": "range_cache_error", "code": code, "error": str(e)})
+        for code, resp in zip(codes, results):
+            if isinstance(resp, Exception):
+                self._logger.warning({"event": "range_cache_error", "code": code, "error": str(resp)})
+                continue
+            if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                continue
+            rows: list = resp.data or []
+            if not rows:
+                continue
+
+            yesterday = rows[0]  # 가장 최근 완성된 일봉
+            high = int(yesterday.get("high", 0) or 0)
+            low = int(yesterday.get("low", 0) or 0)
+            if high > low > 0:
+                self._range_cache.ranges[code] = float(high - low)
 
     def _passes_validity_filter(self, stock: dict, log_data: dict) -> bool:
         """시가총액 / 5일 평균 거래대금 필터.
