@@ -16,6 +16,7 @@ from strategies.larry_williams_vbo_strategy import LarryWilliamsVBOStrategy
 from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
 from strategies.rsi2_pullback_strategy import RSI2PullbackStrategy
+from services.strategy_live_expansion_gate_service import StrategyLiveExpansionGateService
 from task.background.intraday.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
 from view.web.bootstrap.runtime_mode import RuntimeMode
 
@@ -54,6 +55,16 @@ class StrategyFactory:
             position_sizing_service=ctx.position_sizing_service,
             event_router=getattr(ctx, "strategy_event_router", None),
             event_shadow_journal=getattr(ctx, "event_shadow_journal_service", None),
+            live_expansion_gate_service=StrategyLiveExpansionGateService(
+                journal_records_provider=ctx.virtual_trade_service.get_standard_journal_records,
+                is_paper_trading_fn=lambda: bool(getattr(ctx.env, "is_paper_trading", True)),
+                profitability_gate_config=getattr(
+                    getattr(ctx, "full_config", None),
+                    "strategy_profitability_gate",
+                    None,
+                ),
+                logger=ctx.logger,
+            ),
         )
 
         # 오닐 스퀴즈 돌파 전략 등록

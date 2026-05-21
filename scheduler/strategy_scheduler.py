@@ -71,6 +71,13 @@ class StrategySchedulerConfig:
     event_driven_shadow: bool = False
 
 
+@dataclass(frozen=True)
+class _LiveExpansionGateDecision:
+    allowed: bool
+    reason: str
+    details: dict
+
+
 class StrategyScheduler:
     """asyncio 기반 단일 스레드 전략 스케줄러.
 
@@ -110,6 +117,7 @@ class StrategyScheduler:
         position_sizing_service: Optional[PositionSizingService] = None,
         event_router=None,
         event_shadow_journal=None,
+        live_expansion_gate_service=None,
     ):
         self._virtual_trade_service = virtual_trade_service
         self._oes = order_execution_service
@@ -129,6 +137,7 @@ class StrategyScheduler:
         self._position_sizer = position_sizing_service
         self._event_router = event_router
         self._event_shadow_journal = event_shadow_journal
+        self._live_expansion_gate = live_expansion_gate_service
         # strategy_name → 현재 router 에 구독된 종목 set
         self._event_shadow_subscriptions: Dict[str, set[str]] = {}
 
@@ -429,6 +438,18 @@ class StrategyScheduler:
                     await f
 
         # 2) 새 매수 스캔
+        entry_gate = self._check_live_expansion_gate(name)
+        if not entry_gate.allowed:
+            self._logger.warning({
+                "event": "scheduler_skip",
+                "strategy_name": name,
+                "reason": "profitability_gate_blocked",
+                "gate_reason": entry_gate.reason,
+                "gate_details": entry_gate.details,
+            })
+            self._pm.log_timer(f"{name}.run_strategy", t_run)
+            return
+
         current_holdings = self._get_strategy_holdings(cfg)
         current_holds_count = len(current_holdings)
 
@@ -543,6 +564,18 @@ class StrategyScheduler:
 
     # ── 시그널 실행 ──
 
+    def _check_live_expansion_gate(self, strategy_name: str):
+        if self._dry_run or self._live_expansion_gate is None:
+            return _LiveExpansionGateDecision(True, "not_applicable", {})
+        check = getattr(self._live_expansion_gate, "check_strategy", None)
+        if not callable(check):
+            return _LiveExpansionGateDecision(True, "not_applicable", {})
+        decision = check(strategy_name)
+        allowed = bool(getattr(decision, "allowed", False))
+        reason = str(getattr(decision, "reason", "") or "unknown")
+        details = getattr(decision, "details", {}) or {}
+        return _LiveExpansionGateDecision(allowed, reason, details)
+
     async def _execute_signal(self, signal: TradeSignal):
         tid = get_trace_id() or new_trace_id(signal.strategy_name)
         with trace_scope(tid):
@@ -654,69 +687,88 @@ class StrategyScheduler:
                 except ValueError:
                     signal_exchange = Exchange.KRX
                 if signal.action == "BUY":
-                    # 포지션 사이징 보정
-                    buy_qty = signal.qty
-                    if self._position_sizer is not None:
-                        buy_qty, sizing_reason = await self._position_sizer.adjust_buy_qty(
-                            signal, signal_exchange
+                    entry_gate = self._check_live_expansion_gate(signal.strategy_name)
+                    if not entry_gate.allowed:
+                        api_success = False
+                        order_error_msg = f"profitability gate blocked: {entry_gate.reason}"
+                        signal.reason = (
+                            f"{signal.reason}|profitability_gate_blocked:{entry_gate.reason}"
+                            if signal.reason else
+                            f"profitability_gate_blocked:{entry_gate.reason}"
                         )
-                        if buy_qty == 0:
-                            self._logger.warning(
-                                f"[Scheduler] 포지션 사이징 결과 qty=0, 주문 skip: "
-                                f"{signal.code} reason={sizing_reason}"
+                        self._logger.warning({
+                            "event": "signal_rejected",
+                            "strategy_name": signal.strategy_name,
+                            "code": signal.code,
+                            "action": signal.action,
+                            "reason": "profitability_gate_blocked",
+                            "gate_reason": entry_gate.reason,
+                            "gate_details": entry_gate.details,
+                        })
+                    else:
+                    # 포지션 사이징 보정
+                        buy_qty = signal.qty
+                        if self._position_sizer is not None:
+                            buy_qty, sizing_reason = await self._position_sizer.adjust_buy_qty(
+                                signal, signal_exchange
                             )
-                            _skip_now = self._tm.get_current_kst_time()
-                            _skip_record = SignalRecord(
-                                strategy_name=signal.strategy_name,
-                                code=signal.code,
-                                name=signal.name,
-                                action=signal.action,
-                                price=signal.price,
-                                qty=0,
-                                reason=f"sizing_skip:{sizing_reason}",
-                                timestamp=_skip_now.strftime("%Y-%m-%d %H:%M:%S"),
-                                api_success=False,
-                                trace_id=tid,
-                            )
-                            self._signal_history.append(_skip_record)
-                            if len(self._signal_history) > self.MAX_HISTORY:
-                                self._signal_history = self._signal_history[-self.MAX_HISTORY:]
-                            await self._append_signal_db(_skip_record)
-                            await self._notify_subscribers(_skip_record)
-                            if self._notification_service:
-                                await self._notification_service.emit(
-                                    NotificationCategory.STRATEGY,
-                                    NotificationLevel.ERROR,
-                                    f"[{signal.strategy_name}] {signal.name} 매수 실패",
-                                    (
-                                        f"종목: {signal.name}({signal.code})\n"
-                                        f"주문 스킵: 포지션 사이징 결과 수량 0\n"
-                                        f"사유: {sizing_reason}"
-                                    ),
-                                    metadata={
-                                        "strategy_name": signal.strategy_name,
-                                        "code": signal.code,
-                                        "action": signal.action,
-                                        "price": signal.price,
-                                        "qty": 0,
-                                        "reason": f"sizing_skip:{sizing_reason}",
-                                        "api_success": False,
-                                        "trace_id": tid,
-                                    },
+                            if buy_qty == 0:
+                                self._logger.warning(
+                                    f"[Scheduler] 포지션 사이징 결과 qty=0, 주문 skip: "
+                                    f"{signal.code} reason={sizing_reason}"
                                 )
-                            return
-                        signal.qty = buy_qty
+                                _skip_now = self._tm.get_current_kst_time()
+                                _skip_record = SignalRecord(
+                                    strategy_name=signal.strategy_name,
+                                    code=signal.code,
+                                    name=signal.name,
+                                    action=signal.action,
+                                    price=signal.price,
+                                    qty=0,
+                                    reason=f"sizing_skip:{sizing_reason}",
+                                    timestamp=_skip_now.strftime("%Y-%m-%d %H:%M:%S"),
+                                    api_success=False,
+                                    trace_id=tid,
+                                )
+                                self._signal_history.append(_skip_record)
+                                if len(self._signal_history) > self.MAX_HISTORY:
+                                    self._signal_history = self._signal_history[-self.MAX_HISTORY:]
+                                await self._append_signal_db(_skip_record)
+                                await self._notify_subscribers(_skip_record)
+                                if self._notification_service:
+                                    await self._notification_service.emit(
+                                        NotificationCategory.STRATEGY,
+                                        NotificationLevel.ERROR,
+                                        f"[{signal.strategy_name}] {signal.name} 매수 실패",
+                                        (
+                                            f"종목: {signal.name}({signal.code})\n"
+                                            f"주문 스킵: 포지션 사이징 결과 수량 0\n"
+                                            f"사유: {sizing_reason}"
+                                        ),
+                                        metadata={
+                                            "strategy_name": signal.strategy_name,
+                                            "code": signal.code,
+                                            "action": signal.action,
+                                            "price": signal.price,
+                                            "qty": 0,
+                                            "reason": f"sizing_skip:{sizing_reason}",
+                                            "api_success": False,
+                                            "trace_id": tid,
+                                        },
+                                    )
+                                return
+                            signal.qty = buy_qty
 
-                    resp = await self._oes.handle_place_buy_order(
-                        signal.code,
-                        signal.price,
-                        buy_qty,
-                        exchange=signal_exchange,
-                        source=f"strategy:{signal.strategy_name}",
-                        finalize_immediately=False,
-                        trace_id=tid,
-                        volatility_20d_annualized=signal.volatility_20d_annualized,
-                    )
+                        resp = await self._oes.handle_place_buy_order(
+                            signal.code,
+                            signal.price,
+                            buy_qty,
+                            exchange=signal_exchange,
+                            source=f"strategy:{signal.strategy_name}",
+                            finalize_immediately=False,
+                            trace_id=tid,
+                            volatility_20d_annualized=signal.volatility_20d_annualized,
+                        )
                 else:
                     adjusted_sell_price = await self._resolve_strategy_sell_price(signal, signal_exchange)
                     if adjusted_sell_price != signal.price:
