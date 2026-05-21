@@ -148,18 +148,22 @@ class RiskGateService:
 
         if effective_price > 0:
             order_amount = effective_price * qty
-            if order_amount > self._cfg.max_order_amount_won:
-                return self._blocked(
-                    "max_order_amount",
-                    "주문 금액 초과",
-                    stock_code=stock_code,
-                    order_amount=order_amount,
-                    max_order_amount_won=self._cfg.max_order_amount_won,
-                )
+            if not is_force_exit_sell:
+                if order_amount > self._cfg.max_order_amount_won:
+                    return self._blocked(
+                        "max_order_amount",
+                        "주문 금액 초과",
+                        stock_code=stock_code,
+                        side=side.value,
+                        source=source,
+                        strategy_name=strategy_name,
+                        order_amount=order_amount,
+                        max_order_amount_won=self._cfg.max_order_amount_won,
+                    )
 
-            daily_blocked = self._check_daily_cap(stock_code=stock_code, order_amount=order_amount, side=side)
-            if daily_blocked is not None:
-                return daily_blocked
+                daily_blocked = self._check_daily_cap(stock_code=stock_code, order_amount=order_amount, side=side)
+                if daily_blocked is not None:
+                    return daily_blocked
 
             if side == OrderSide.BUY:
                 strategy_blocked = await self._check_strategy_risk(
@@ -176,7 +180,8 @@ class RiskGateService:
                 if exposure_blocked is not None:
                     return exposure_blocked
 
-            self._record_daily_amount(order_amount)
+            if not is_force_exit_sell:
+                self._record_daily_amount(order_amount)
 
         return None
 

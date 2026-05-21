@@ -126,6 +126,23 @@ async def test_order_amount_over_limit_blocks_buy():
 
 
 @pytest.mark.asyncio
+async def test_force_exit_sell_bypasses_order_amount_cap():
+    svc, _, _ = _service(config=RiskGateConfig(max_order_amount_won=2_000_000))
+
+    result = await svc.validate_order(
+        "053610",
+        96_500,
+        21,
+        OrderSide.SELL,
+        Exchange.KRX,
+        0,
+        source="strategy_force_exit:래리윌리엄스VBO",
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_negative_price_blocks():
     svc, _, _ = _service()
 
@@ -367,6 +384,27 @@ async def test_daily_cap_blocks_when_accumulated_amount_exceeds_limit():
     r3 = await svc.validate_order("005930", 1, 1, OrderSide.SELL, Exchange.KRX, 0)
     assert r3 is not None
     assert r3.data["rule"] == "max_daily_order_amount"
+
+
+@pytest.mark.asyncio
+async def test_force_exit_sell_bypasses_daily_order_amount_cap():
+    cfg = RiskGateConfig(
+        max_order_amount_won=100_000_000,
+        max_daily_order_amount_won=1_000_000,
+    )
+    svc, _, _ = _service(config=cfg)
+
+    result = await svc.validate_order(
+        "053610",
+        96_500,
+        21,
+        OrderSide.SELL,
+        Exchange.KRX,
+        0,
+        source="strategy_force_exit:래리윌리엄스VBO",
+    )
+
+    assert result is None
 
 
 @pytest.mark.asyncio
