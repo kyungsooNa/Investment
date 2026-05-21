@@ -101,12 +101,12 @@ async def test_fp_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker):
     mocker.patch.object(mock_sqs, 'get_top_rise_fall_stocks', new_callable=AsyncMock, return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[]))
     mocker.patch.object(mock_sqs, 'get_top_volume_stocks', new_callable=AsyncMock, return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=[]))
 
-    # 4. 시간 및 환경 모킹
+    # 4. 시간 및 환경 모킹 (평일 — previous_trading_day_str(now) 이 안정적으로 동작)
     kst = timezone("Asia/Seoul")
     mock_tm = MagicMock()
-    mock_tm.get_current_kst_time.return_value = datetime(2026, 3, 8, 10, 0, tzinfo=kst)
-    mock_tm.get_market_open_time.return_value = datetime(2026, 3, 8, 9, 0, tzinfo=kst)
-    mock_tm.get_market_close_time.return_value = datetime(2026, 3, 8, 15, 30, tzinfo=kst)
+    mock_tm.get_current_kst_time.return_value = datetime(2026, 3, 10, 10, 0, tzinfo=kst)
+    mock_tm.get_market_open_time.return_value = datetime(2026, 3, 10, 9, 0, tzinfo=kst)
+    mock_tm.get_market_close_time.return_value = datetime(2026, 3, 10, 15, 30, tzinfo=kst)
 
     indicator_service = IndicatorService()
     stock_code_repo = MagicMock(spec=StockCodeRepository)

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Tuple
 
 from interfaces.live_strategy import LiveStrategy
+from common.date_utils import previous_trading_day_str
 from common.types import TradeSignal
 from services.stock_query_service import StockQueryService
 from core.market_clock import MarketClock
@@ -152,7 +153,7 @@ class FirstPullbackStrategy(LiveStrategy):
 
         # ── Phase 1: Setup (로켓 발사) ── 어제까지 확정 OHLCV(캐시)
         now = self._tm.get_current_kst_time()
-        yesterday_str = (now - timedelta(days=1)).strftime("%Y%m%d")
+        yesterday_str = previous_trading_day_str(now)
         ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=30, end_date=yesterday_str)
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
         if not ohlcv or len(ohlcv) < 25:

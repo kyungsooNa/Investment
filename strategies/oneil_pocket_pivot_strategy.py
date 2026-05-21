@@ -10,7 +10,7 @@ from datetime import timedelta
 from typing import List, Optional, Dict, Tuple
 
 from interfaces.live_strategy import LiveStrategy
-from common.date_utils import normalize_yyyymmdd
+from common.date_utils import normalize_yyyymmdd, previous_trading_day_str
 from common.types import TradeSignal, ErrorCode
 from services.stock_query_service import StockQueryService
 from core.market_clock import MarketClock
@@ -161,7 +161,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
         # 2. OHLCV: 어제까지 확정 데이터(캐시) + 오늘 캔들(현재가로 합성)
         now = self._tm.get_current_kst_time()
-        yesterday_str = (now - timedelta(days=1)).strftime("%Y%m%d")
+        yesterday_str = previous_trading_day_str(now)
         ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=60, end_date=yesterday_str)
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
 

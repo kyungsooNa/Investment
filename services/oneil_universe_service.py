@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from dataclasses import asdict
 from typing import Dict, List, Optional, Tuple
 
+from common.date_utils import previous_trading_day_str
 from common.types import ErrorCode
 from services.stock_query_service import StockQueryService
 from services.indicator_service import IndicatorService
@@ -459,7 +460,7 @@ class OneilUniverseService:
 
         # 1. 어제 날짜 계산 (전략의 _check_entry 패턴 적용)
         now = self._tm.get_current_kst_time()
-        yesterday_str = (now - timedelta(days=1)).strftime("%Y%m%d")
+        yesterday_str = previous_trading_day_str(now)
         today_str = now.strftime("%Y%m%d")
         
         # 2. 어제까지의 OHLCV 조회 (end_date 지정 시 DB/캐시 히트율 상승)
