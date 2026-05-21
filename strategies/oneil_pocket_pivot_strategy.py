@@ -17,7 +17,13 @@ from core.market_clock import MarketClock
 from strategies.oneil_common_types import OneilPocketPivotConfig, PPPositionState
 from services.oneil_universe_service import OneilUniverseService
 from core.logger import get_strategy_logger
+from utils.async_concurrency import bounded_gather
 from utils.strategy_state_io import StrategyStateIO
+
+
+# 청산/exit 동시성 상한. entry chunk_size(10)보다 높게 두어 손절/청산이 entry scan 보다
+# 빠르게 마무리되도록 우선순위를 부여한다.
+_EXIT_CONCURRENCY = 15
 
 
 class OneilPocketPivotStrategy(LiveStrategy):
@@ -496,8 +502,9 @@ class OneilPocketPivotStrategy(LiveStrategy):
             "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", caller=self.name, logger=self._logger),
         }
 
-        results = await asyncio.gather(
-            *[self._check_single_exit(hold, market_timing_cache) for hold in holdings],
+        results = await bounded_gather(
+            [self._check_single_exit(hold, market_timing_cache) for hold in holdings],
+            limit=_EXIT_CONCURRENCY,
             return_exceptions=True,
         )
 
