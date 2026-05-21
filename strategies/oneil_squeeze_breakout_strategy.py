@@ -18,6 +18,12 @@ from services.oneil_universe_service import OneilUniverseService
 from core.logger import get_strategy_logger
 from utils.volatility_utils import annualized_return_std
 from utils.strategy_state_io import StrategyStateIO
+from utils.async_concurrency import bounded_gather
+
+
+# 청산/exit 동시성 상한. entry chunk_size(10)보다 높게 두어 손절/청산이 entry scan 보다
+# 빠르게 마무리되도록 우선순위를 부여한다.
+_EXIT_CONCURRENCY = 15
 
 
 class OneilSqueezeBreakoutStrategy(LiveStrategy):
@@ -384,8 +390,9 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         if not holdings:
             return []
 
-        results = await asyncio.gather(
-            *[self._check_single_exit(hold) for hold in holdings],
+        results = await bounded_gather(
+            [self._check_single_exit(hold) for hold in holdings],
+            limit=_EXIT_CONCURRENCY,
             return_exceptions=True,
         )
 

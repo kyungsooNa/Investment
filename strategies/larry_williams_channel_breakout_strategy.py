@@ -17,6 +17,12 @@ from services.oneil_universe_service import OneilUniverseService
 from core.market_clock import MarketClock
 from core.logger import get_strategy_logger
 from strategies.larry_williams_cb_types import LarryWilliamsCBConfig, LarryWilliamsCBPositionState
+from utils.async_concurrency import bounded_gather
+
+
+# 청산/exit 동시성 상한. entry chunk_size(10)보다 높게 두어 손절/청산이 entry scan 보다
+# 빠르게 마무리되도록 우선순위를 부여한다.
+_EXIT_CONCURRENCY = 15
 
 
 class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
@@ -272,8 +278,9 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
         if not holdings:
             return signals
 
-        results = await asyncio.gather(
-            *[self._check_single_exit(hold) for hold in holdings],
+        results = await bounded_gather(
+            [self._check_single_exit(hold) for hold in holdings],
+            limit=_EXIT_CONCURRENCY,
             return_exceptions=True,
         )
         state_dirty = False

@@ -309,9 +309,10 @@
   - 검토 결과: 타당. 개별 전략의 chunk size/semaphore와 `ForegroundScheduler`는 존재하지만, current price/OHLCV/account/order API 전체를 전략 간 공유하는 전역 rate limiter는 없다. 여러 전략이 동시에 scan/check_exits를 수행하면 순간 호출량이 합산된다.
   - 개선 방향: `ApiBudget` 또는 broker wrapper 레벨 limiter를 shared dependency로 주입하고, 조회/계좌/주문 카테고리별 rate를 분리한다.
   - 테스트: 여러 전략이 동시에 호출해도 카테고리별 limiter가 적용되고 주문 API 우선순위가 보존되는지 검증.
-- [ ] 활성 전략의 exit check도 bounded gather 또는 순차/우선순위 정책으로 통일한다.
+- [x] 활성 전략의 exit check도 bounded gather 또는 순차/우선순위 정책으로 통일한다.
   - 검토 결과: 타당. `FirstPullbackStrategy`, `HighTightFlagStrategy`, `LarryWilliamsChannelBreakoutStrategy` 등 일부 전략은 holdings 전체에 대해 `asyncio.gather()`를 수행한다. VBO/레거시 일부는 순차 처리다.
-  - 개선 방향: 공통 `bounded_gather(limit=...)`를 사용하고, 손절/청산 쪽은 entry보다 높은 우선순위를 부여한다.
+  - 완료된 부분: `utils/async_concurrency.py::bounded_gather()` 헬퍼 신규 + 단위 테스트 7개. 활성 6개 전략(`FirstPullback`, `HighTightFlag`, `LarryWilliamsChannelBreakout`, `OneilPocketPivot`, `OneilSqueezeBreakout`, `Rsi2Pullback`)의 holdings exit gather를 `bounded_gather(..., limit=_EXIT_CONCURRENCY=15, return_exceptions=True)`로 교체했다. entry chunk_size(10)보다 높여 청산 경로에 우선순위를 부여한다.
+  - 미적용: VBO는 이미 sequential `for hold in holdings`로 더 보수적이므로 외과수술적 변경 원칙에 따라 유지.
 - [ ] VBO range cache 갱신을 bounded concurrency로 바꾸고 precompute 경로를 검토한다.
   - 검토 결과: 타당. `LarryWilliamsVBOStrategy._refresh_range_cache()`가 후보 코드를 순차 순회하며 `get_recent_daily_ohlcv()`를 호출한다.
   - 개선 방향: semaphore 기반 bounded gather 또는 장 시작 전/Watchlist 생성 시 range precompute.
