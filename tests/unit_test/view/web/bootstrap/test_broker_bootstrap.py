@@ -20,6 +20,7 @@ def _make_fake_context():
     ctx.market_clock = MagicMock()
     ctx.streaming_event_logger = MagicMock()
     ctx.stock_code_repository = MagicMock()
+    ctx.api_budget_limiter = MagicMock()
     ctx._mcs = MagicMock()
     ctx._mcs._sync_calendar_if_needed = AsyncMock()
     ctx.broker = None
@@ -37,6 +38,7 @@ async def test_broker_bootstrap_returns_true_and_assigns_broker():
     assert success is True
     broker_cls.assert_called_once()
     assert ctx.broker is broker_cls.return_value
+    assert broker_cls.call_args.kwargs["api_budget_limiter"] is ctx.api_budget_limiter
     ctx._mcs.set_broker.assert_called_once_with(broker_cls.return_value)
     ctx._mcs._sync_calendar_if_needed.assert_awaited_once()
 

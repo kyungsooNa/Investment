@@ -37,6 +37,7 @@ class BrokerBootstrap:
                 market_calendar_service=ctx._mcs,
                 streaming_logger=ctx.streaming_event_logger,
                 stock_code_repository=ctx.stock_code_repository,
+                api_budget_limiter=getattr(ctx, "api_budget_limiter", None),
             )
             ctx._mcs.set_broker(ctx.broker)
             await ctx._mcs._sync_calendar_if_needed()

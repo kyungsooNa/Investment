@@ -40,3 +40,20 @@ def test_limiter_snapshot_exposes_configured_limits():
 
     assert snapshot["quotation"]["limit"] == 3
     assert snapshot["account"]["limit"] == 1
+
+
+def test_default_category_is_explicitly_configured():
+    limiter = ApiBudgetLimiter()
+
+    snapshot = limiter.snapshot()
+
+    assert snapshot["default"]["limit"] == 8
+
+
+async def test_none_category_uses_default_budget():
+    limiter = ApiBudgetLimiter()
+
+    async with limiter.acquire(None):
+        snapshot = limiter.snapshot()
+
+    assert snapshot["default"]["acquired_total"] == 1

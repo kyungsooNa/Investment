@@ -7,6 +7,7 @@ from typing import AsyncIterator, Mapping
 DEFAULT_API_BUDGET_LIMITS = {
     "quotation": 8,
     "account": 2,
+    "default": 8,
 }
 
 
@@ -37,7 +38,8 @@ class ApiBudgetLimiter:
 
     @asynccontextmanager
     async def acquire(self, category: str | None) -> AsyncIterator[None]:
-        budget = self._budget_for(category or "default")
+        actual_category = category if category is not None else "default"
+        budget = self._budget_for(actual_category)
         await budget.semaphore.acquire()
         budget.active += 1
         budget.acquired_total += 1
