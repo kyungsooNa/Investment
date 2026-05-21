@@ -66,6 +66,7 @@ from services.notification_service import NotificationService, NotificationCateg
 from services.kill_switch_service import KillSwitchService
 from services.operator_alert_service import OperatorAlertService
 from core.account_snapshot import AccountSnapshotCache
+from core.retry_queue.api_budget_limiter import ApiBudgetLimiter
 from services.position_sizing_service import PositionSizingService
 from services.risk_gate_service import RiskGateService
 from services.order_policy_service import OrderPolicyService
@@ -116,6 +117,7 @@ class WebAppContext:
             stock_code_repository=self.stock_code_repository,
         )
         self.account_snapshot_cache: AccountSnapshotCache = None
+        self.api_budget_limiter = ApiBudgetLimiter()
         self.risk_gate_service: RiskGateService = None
         self.order_policy_service: OrderPolicyService = None
         self.execution_flow_service: ExecutionFlowService = None

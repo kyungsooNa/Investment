@@ -1,5 +1,7 @@
 # tests/unit_test/test_client_with_retry_queue.py
 
+from contextlib import asynccontextmanager
+
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
@@ -105,6 +107,44 @@ class TestAsyncMethodThroughQueue:
 
         assert req.request_id == "get_current_price"
 
+    async def test_quotation_method_uses_quotation_budget_category(self, fake_client, queue):
+        categories = []
+
+        class RecordingLimiter:
+            @asynccontextmanager
+            async def acquire(self, category):
+                categories.append(category)
+                yield
+
+        wrapped = ClientWithRetryQueue(
+            fake_client,
+            queue,
+            budget_limiter=RecordingLimiter(),
+        )
+
+        await wrapped.get_current_price("005930")
+
+        assert categories == ["quotation"]
+
+    async def test_account_method_uses_account_budget_category(self, fake_client, queue):
+        categories = []
+
+        class RecordingLimiter:
+            @asynccontextmanager
+            async def acquire(self, category):
+                categories.append(category)
+                yield
+
+        wrapped = ClientWithRetryQueue(
+            fake_client,
+            queue,
+            budget_limiter=RecordingLimiter(),
+        )
+
+        await wrapped.get_account_balance()
+
+        assert categories == ["account"]
+
 
 class TestExcludedMethodsBypassQueue:
     async def test_place_stock_order_bypasses_queue(self, wrapped, queue):
@@ -113,6 +153,26 @@ class TestExcludedMethodsBypassQueue:
 
         assert result.rt_cd == ErrorCode.SUCCESS.value
         assert queue.done_queue.empty()
+
+    async def test_place_stock_order_bypasses_budget_limiter(self, fake_client, queue):
+        calls = []
+
+        class RecordingLimiter:
+            @asynccontextmanager
+            async def acquire(self, category):
+                calls.append(category)
+                yield
+
+        wrapped = ClientWithRetryQueue(
+            fake_client,
+            queue,
+            budget_limiter=RecordingLimiter(),
+        )
+
+        result = await wrapped.place_stock_order("005930", 70000, 1, True)
+
+        assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert calls == []
 
     async def test_connect_websocket_bypasses_queue(self, wrapped, queue):
         result = await wrapped.connect_websocket()
@@ -218,6 +278,11 @@ class TestFactoryFunction:
     def test_wrapped_client_has_correct_queue(self, fake_client, queue):
         client = retry_queue_wrap_client(fake_client, queue)
         assert client._queue is queue
+
+    def test_retry_queue_wrap_client_accepts_budget_limiter(self, fake_client, queue):
+        limiter = MagicMock()
+        client = retry_queue_wrap_client(fake_client, queue, budget_limiter=limiter)
+        assert client._budget_limiter is limiter
 
 
 class TestExcludedMethodsSet:

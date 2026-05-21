@@ -24,6 +24,13 @@ _EXCLUDED_METHODS = frozenset({
     "is_websocket_receive_alive",
 })
 
+_ACCOUNT_METHODS = frozenset({
+    "get_account_balance",
+    "inquire_daily_ccld",
+    "inquire_unfilled_orders",
+    "inquire_filled_history",
+})
+
 
 class ClientWithRetryQueue:
     """
@@ -33,9 +40,10 @@ class ClientWithRetryQueue:
     - 주문/WebSocket API: 큐 우회, 직접 위임 (기존 동작 유지)
     """
 
-    def __init__(self, client, queue: ApiRequestQueue):
+    def __init__(self, client, queue: ApiRequestQueue, budget_limiter=None):
         self._client = client
         self._queue = queue
+        self._budget_limiter = budget_limiter
         # 캐시된 래퍼 함수 저장: 동적 함수 객체 생성을 방지
         self._method_cache: dict = {}
 
@@ -52,7 +60,14 @@ class ClientWithRetryQueue:
 
         # 비동기 조회 메서드 → 큐를 통해 실행
         async def queued(*args, **kwargs):
-            future = await self._queue.submit(attr, *args, request_id=name, **kwargs)
+            future = await self._queue.submit(
+                attr,
+                *args,
+                request_id=name,
+                request_category=_budget_category_for_method(name),
+                budget_limiter=self._budget_limiter,
+                **kwargs,
+            )
             return await future
 
         # 캐싱 후 반환
@@ -60,6 +75,12 @@ class ClientWithRetryQueue:
         return queued
 
 
-def retry_queue_wrap_client(client, queue: ApiRequestQueue) -> ClientWithRetryQueue:
+def _budget_category_for_method(name: str) -> str:
+    if name in _ACCOUNT_METHODS:
+        return "account"
+    return "quotation"
+
+
+def retry_queue_wrap_client(client, queue: ApiRequestQueue, budget_limiter=None) -> ClientWithRetryQueue:
     """BrokerAPIWrapper.__init__ 에서 호출하는 팩토리 함수."""
-    return ClientWithRetryQueue(client, queue)
+    return ClientWithRetryQueue(client, queue, budget_limiter=budget_limiter)

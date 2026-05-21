@@ -7,6 +7,7 @@ from common.types import ResCommonResponse, Exchange, ErrorCode
 from core.cache.cache_wrapper import cache_wrap_client
 from core.retry_queue.retry_classifier import is_non_retriable_business_error
 from core.retry_queue.api_request_queue import ApiRequestQueue
+from core.retry_queue.api_budget_limiter import ApiBudgetLimiter
 from core.retry_queue.client_with_retry_queue import retry_queue_wrap_client
 from datetime import datetime, timedelta
 
@@ -29,13 +30,15 @@ class BrokerAPIWrapper:
                  streaming_logger: Optional["StreamingEventLogger"] = None,
                  stock_code_repository=None,
                  circuit_breaker_threshold: int = _CB_THRESHOLD,
-                 circuit_breaker_timeout_min: int = _CB_TIMEOUT_MIN):
+                 circuit_breaker_timeout_min: int = _CB_TIMEOUT_MIN,
+                 api_budget_limiter=None):
         self._broker = broker
         self._logger = logger
         self._client = None
         self._stock_mapper = stock_code_repository if stock_code_repository is not None else StockCodeRepository(logger=logger)
         self.env = env
         self._retry_queue: ApiRequestQueue | None = None
+        self._api_budget_limiter = api_budget_limiter
 
         # 서킷 브레이커 상태
         self._cb_threshold = circuit_breaker_threshold
@@ -53,8 +56,13 @@ class BrokerAPIWrapper:
             )
             # RetryQueue는 Cache 안쪽에 위치: 캐시 히트 시 Queue를 거치지 않고,
             # 캐시 miss 후 실제 API 호출 실패 시에만 KoreaInvestApiClient를 직접 재시도
+            self._api_budget_limiter = self._api_budget_limiter or ApiBudgetLimiter()
             self._retry_queue = ApiRequestQueue(logger=logger)
-            self._client = retry_queue_wrap_client(self._client, self._retry_queue)
+            self._client = retry_queue_wrap_client(
+                self._client,
+                self._retry_queue,
+                budget_limiter=self._api_budget_limiter,
+            )
             self._client = cache_wrap_client(
 
                 self._client, logger, market_clock,
