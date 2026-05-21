@@ -315,9 +315,9 @@
 - [ ] VBO range cache 갱신을 bounded concurrency로 바꾸고 precompute 경로를 검토한다.
   - 검토 결과: 타당. `LarryWilliamsVBOStrategy._refresh_range_cache()`가 후보 코드를 순차 순회하며 `get_recent_daily_ohlcv()`를 호출한다.
   - 개선 방향: semaphore 기반 bounded gather 또는 장 시작 전/Watchlist 생성 시 range precompute.
-- [ ] VBO fallback 후보의 unknown liquidity를 통과시키지 않는다.
+- [x] VBO fallback 후보의 unknown liquidity를 통과시키지 않는다.
   - 검토 결과: 타당. universe 미주입 fallback에서 `avg_5d_tv=0`을 넣고, validity filter는 `avg_5d_tv > 0 and avg_5d_tv < min`일 때만 탈락시킨다.
-  - 개선 방향: fallback에서도 5일 평균 거래대금을 계산하거나, `avg_5d_tv <= 0`은 `avg_trading_value_unknown`으로 reject.
+  - 완료된 부분: fail-closed reject로 전환. `_passes_validity_filter`에서 `avg_5d_tv <= 0`이면 `avg_trading_value_unknown` reason으로 차단. fallback 경로(`_load_pool_b` API 응답 기반)는 거래대금 검증 없이는 매수 신호를 만들 수 없다. 단위/통합 테스트로 회귀 고정.
 - [ ] scan cycle 단위 데이터 공유와 성능 계측을 강화한다.
   - 후보: 동일 종목 current price/OHLCV/conclusion/program trading memoization, strategy scan latency, candidate count, API calls per scan, cache hit ratio, REST fallback ratio, rejected reason distribution, signal-to-order latency, order-to-fill latency.
   - 목표: 성능 개선을 감이 아니라 병목 지표 기반으로 진행한다.
