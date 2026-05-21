@@ -16,6 +16,7 @@ from common.types import (
 )
 from core.cache.cache_store import CacheStore
 from core.performance_profiler import PerformanceProfiler
+from common.date_utils import previous_trading_day_str
 from services.market_calendar_service import MarketCalendarService
 
 if TYPE_CHECKING:
@@ -460,7 +461,7 @@ class MarketDataService:
         if (period or "D").upper() == "D":
             now_dt = self._market_clock.get_current_kst_time()
             today_str = now_dt.strftime("%Y%m%d")
-            yesterday_str = (now_dt - timedelta(days=1)).strftime("%Y%m%d")
+            yesterday_str = previous_trading_day_str(now_dt)
             past_rows = []
 
             # 1. 과거 데이터 가져오기 (StockRepository 캐시/DB 활용)
