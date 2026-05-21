@@ -44,7 +44,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             self._scheduler = None
         shutil.rmtree(self.test_dir)
 
-    def _make_scheduler(self, dry_run=True):
+    def _make_scheduler(self, dry_run=True, live_expansion_gate_service=None):
         vm = MagicMock()
         vm.get_holds_by_strategy.return_value = []
         vm.log_buy_async = AsyncMock(return_value=True)
@@ -96,6 +96,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             logger=mock_logger,
             dry_run=dry_run,
             store=mock_store,
+            live_expansion_gate_service=live_expansion_gate_service,
         )
         self._scheduler = scheduler
         return scheduler, vm, oes, tm, mcs
@@ -469,6 +470,90 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         # max_positions 도달 → log_buy 호출 안됨
         vm.log_buy_async.assert_not_called()
+
+    async def test_run_strategy_allows_exits_but_skips_scan_when_live_gate_blocks_entries(self):
+        """실전 확대 gate 차단은 기존 포지션 청산을 유지하고 신규 scan만 막는다."""
+        gate = MagicMock()
+        gate.check_strategy.return_value = SimpleNamespace(
+            allowed=False,
+            reason="profitability_gate_missing",
+            details={},
+        )
+        scheduler, vm, _, _, _ = self._make_scheduler(
+            dry_run=False,
+            live_expansion_gate_service=gate,
+        )
+        vm.get_holds_by_strategy.return_value = [
+            {"code": "005930", "name": "삼성전자", "buy_price": 70000, "qty": 1},
+        ]
+        sell_signal = TradeSignal(
+            code="005930", name="삼성전자", action="SELL",
+            price=72000, qty=1, reason="익절", strategy_name="테스트전략"
+        )
+        strategy = MockStrategy(
+            scan_signals=[
+                TradeSignal(
+                    code="000660", name="SK하이닉스", action="BUY",
+                    price=120000, qty=1, reason="스캔", strategy_name="테스트전략"
+                )
+            ],
+            exit_signals=[sell_signal],
+        )
+        strategy.scan = AsyncMock(return_value=strategy._scan_signals)
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=3)
+        scheduler.register(config)
+
+        with patch.object(scheduler, "_execute_signal", new_callable=AsyncMock) as mock_execute:
+            await scheduler._run_strategy(config)
+
+        mock_execute.assert_awaited_once_with(sell_signal)
+        strategy.scan.assert_not_awaited()
+        scheduler._logger.warning.assert_called()
+
+    async def test_execute_buy_signal_blocks_order_when_live_gate_blocks_entries(self):
+        """방어선: scan 밖에서 들어온 BUY도 실전 확대 gate 미통과면 주문하지 않는다."""
+        gate = MagicMock()
+        gate.check_strategy.return_value = SimpleNamespace(
+            allowed=False,
+            reason="profitability_gate_fail",
+            details={"blocking_reasons": ["profit_factor_below"]},
+        )
+        scheduler, _, oes, _, _ = self._make_scheduler(
+            dry_run=False,
+            live_expansion_gate_service=gate,
+        )
+
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY",
+            price=70000, qty=1, reason="테스트", strategy_name="테스트전략"
+        )
+        await scheduler._execute_signal(signal)
+
+        oes.handle_place_buy_order.assert_not_called()
+        self.assertEqual(scheduler._signal_history[-1].api_success, False)
+        self.assertIn("profitability_gate_blocked", scheduler._signal_history[-1].reason)
+
+    async def test_execute_sell_signal_ignores_live_gate(self):
+        """실전 확대 gate는 청산 주문을 막지 않는다."""
+        gate = MagicMock()
+        gate.check_strategy.return_value = SimpleNamespace(
+            allowed=False,
+            reason="profitability_gate_fail",
+            details={},
+        )
+        scheduler, _, oes, _, _ = self._make_scheduler(
+            dry_run=False,
+            live_expansion_gate_service=gate,
+        )
+
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="SELL",
+            price=72000, qty=1, reason="익절", strategy_name="테스트전략"
+        )
+        await scheduler._execute_signal(signal)
+
+        gate.check_strategy.assert_not_called()
+        oes.handle_place_sell_order.assert_awaited_once()
 
     async def test_run_strategy_scans_and_logs_rejections_when_position_full_option_enabled(self):
         """옵션이 켜져 있으면 max_positions 도달 후에도 스캔하고 매수 신호를 reject 로그로 남긴다."""

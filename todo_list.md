@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-20 (P0 0-0 정적 리뷰 5건 완료 후 항목 정리, 추천 순서 #1 제거)
+최종 업데이트: 2026-05-21 (P1 실전 확대 gate 런타임 연결)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -145,15 +145,16 @@
 
 ### 1-0. 실거래 투입 전 전략별 수익성 통과 기준
 
-- [~] 전략별 “돈 버는 기준선”을 명시하고, 기준 미달 전략은 실계좌 자동주문 대상에서 제외한다.
+- [x] 전략별 “돈 버는 기준선”을 명시하고, 기준 미달 전략은 실계좌 자동주문 대상에서 제외한다.
   - 검토 결과: 타당. 현재 P1에 walk-forward, Monte Carlo, 국면별 성과 검증은 있으나 “통과/탈락 기준”이 약하다. 실전 투입 판단에는 절대 수익보다 비용·슬리피지·미체결 반영 후에도 기대값이 남는지가 핵심이다.
   - 최소 기준 후보: 전략별 충분한 표본 수, out-of-sample Profit Factor, 평균 손익비, MDD, 비용 반영 후 기대값, 슬리피지 2배 스트레스, KOSPI/KOSDAQ 대비 초과수익, 하락장 손실 제한.
   - 산출물: 전략별 `거래 수 / CAGR 또는 기간수익률 / MDD / PF / 승률 / 평균손익비 / 비용·슬리피지 후 성과 / 시장 국면별 성과` 표.
   - 1차 완료: `services/strategy_profitability_gate_service.py` 추가. 표준 journal의 SOLD 기록 기준으로 `min_trades`, Profit Factor, payoff ratio, win rate, 평균 net return, total net PnL, MDD, Monte Carlo ruin probability/worst MDD, regime별 손익 기준을 평가해 `pass` / `fail` / `insufficient_sample`을 반환한다.
   - 1차 완료: `scripts/run_backtest.py --profitability-gate` 옵션 추가. 일반 기간 백테스트는 전체 journal, walk-forward는 test phase journal만 기준선 판정에 사용하고 console/json 출력에 `profitability_gate`를 포함한다.
-  - 진행 필요: 기준 미달 전략을 실계좌 자동주문 대상에서 제외하는 운영 gate 연결은 아직 미적용. P1 기준값 안정화와 P0 안전 경로 확인 후 별도 적용.
-- [ ] P1 수익성 검증을 실전 확대 gate로 승격한다.
+  - 완료된 부분: `StrategyLiveExpansionGateService`를 추가하고 `StrategyScheduler`에 연결했다. paper/dry-run은 허용하고, real 모드에서는 수익성 gate 결과가 없거나 미통과인 전략의 신규 scan/BUY 주문을 fail-closed로 차단한다. 기존 보유 청산/force-exit 경로는 차단하지 않는다.
+- [x] P1 수익성 검증을 실전 확대 gate로 승격한다.
   - 정책: P0 주문 안정성 완료 후에도, P1 수익성 기준을 통과하지 못하면 full-auto/자금 확대 금지. 허용 범위는 backtest, paper/shadow, 제한적 소액 canary까지로 둔다.
+  - 완료된 부분: `StrategyFactory`가 표준 journal provider(`VirtualTradeService.get_standard_journal_records`)와 `strategy_profitability_gate` 설정을 사용해 live expansion gate를 scheduler에 주입한다. 향후 backtest gate 결과 저장소가 별도 구축되면 provider만 교체한다.
 
 ### 1-1. 과최적화 방지 검증
 
