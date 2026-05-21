@@ -414,11 +414,23 @@ class ProgramTradingStreamService:
         message = self._format_db_persistence_report(status)
         return await self._send_telegram_message(message)
 
+    async def _is_market_open_for_tick_alert(self) -> bool:
+        if not self._market_calendar_service:
+            return True
+        try:
+            return bool(await self._market_calendar_service.is_market_open_now())
+        except Exception as e:
+            self.logger.warning(f"프로그램매매 tick 알림 장중 여부 확인 실패: {e}")
+            return False
+
     async def _hourly_tick_alert_loop(self) -> None:
         try:
             while True:
                 await asyncio.sleep(self.HOURLY_TICK_ALERT_INTERVAL_SEC)
-                await self.send_subscribed_last_tick_alert()
+                if await self._is_market_open_for_tick_alert():
+                    await self.send_subscribed_last_tick_alert()
+                else:
+                    self.logger.debug("장중이 아니므로 프로그램매매 tick 상태 알림을 생략합니다.")
         except asyncio.CancelledError:
             raise
         except Exception as e:

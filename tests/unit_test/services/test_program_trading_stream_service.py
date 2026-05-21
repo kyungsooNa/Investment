@@ -577,3 +577,22 @@ async def test_send_db_persistence_report_sends_summary(manager):
     assert "프로그램매매 DB 저장 점검" in message
     assert "005930" in message
     assert "OK" in message
+
+
+@pytest.mark.asyncio
+async def test_hourly_tick_alert_loop_skips_when_market_closed(manager):
+    """장마감 후에는 시간별 tick 상태 알림을 보내지 않는다."""
+    manager.send_subscribed_last_tick_alert = AsyncMock(return_value=True)
+    mock_mcs = MagicMock()
+    mock_mcs.is_market_open_now = AsyncMock(return_value=False)
+    manager.wire_alert_dependencies(market_calendar_service=mock_mcs)
+
+    with patch(
+        "services.program_trading_stream_service.asyncio.sleep",
+        new_callable=AsyncMock,
+        side_effect=[None, asyncio.CancelledError],
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await manager._hourly_tick_alert_loop()
+
+    manager.send_subscribed_last_tick_alert.assert_not_awaited()
