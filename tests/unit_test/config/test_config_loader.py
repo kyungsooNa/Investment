@@ -103,6 +103,11 @@ def test_app_config_defaults_to_paper_trading_when_omitted():
     assert config.strategy_performance_degradation.warn_profit_factor_below == 1.0
     assert config.strategy_profitability_gate.min_trades == 30
     assert config.strategy_profitability_gate.min_profit_factor == 1.2
+    assert config.strategy_profitability_gate.block_parameter_stability_flags == [
+        "spike",
+        "cliff",
+    ]
+    assert config.strategy_profitability_gate.require_parameter_stability is False
     assert config.data_quality.violation_alert_threshold == 5
     assert config.data_quality.violation_alert_window_sec == 60.0
 

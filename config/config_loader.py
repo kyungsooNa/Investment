@@ -206,6 +206,10 @@ class StrategyProfitabilityGateConfig(BaseModel):
     max_monte_carlo_worst_mdd_pct: Optional[float] = 30.0
     min_regime_trade_count: int = 5
     require_non_negative_regime_pnl: bool = True
+    block_parameter_stability_flags: List[str] = Field(
+        default_factory=lambda: ["spike", "cliff"]
+    )
+    require_parameter_stability: bool = False
 
     model_config = {"extra": "allow"}
 

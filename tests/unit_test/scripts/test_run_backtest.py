@@ -491,6 +491,45 @@ def test_run_profitability_gate_for_result_uses_result_journal_records():
     assert result.profitability_gate["strategies"]["S1"]["status"] == "pass"
 
 
+def test_run_profitability_gate_for_result_uses_attached_parameter_stability():
+    result = SimpleNamespace(
+        journal_records=[
+            {"status": "SOLD", "strategy": "S1", "net_pnl": 100, "net_return": 1.0},
+            {"status": "SOLD", "strategy": "S1", "net_pnl": -10, "net_return": -0.1},
+        ],
+        monte_carlo=None,
+        profitability_gate=None,
+        parameter_stability={
+            "summary": {
+                "dimensions": {
+                    "pp_ma_proximity_upper_pct": {"stability": {"flag": "cliff"}}
+                }
+            }
+        },
+    )
+    config = SimpleNamespace(
+        strategy_profitability_gate=SimpleNamespace(
+            min_trades=2,
+            min_profit_factor=1.0,
+            min_payoff_ratio=1.0,
+            min_win_rate=0.5,
+            min_avg_net_return=0.0,
+            max_mdd_pct=10.0,
+            capital_base_won=1_000,
+            max_monte_carlo_ruin_probability=None,
+            max_monte_carlo_worst_mdd_pct=None,
+            require_non_negative_regime_pnl=False,
+            block_parameter_stability_flags=["spike", "cliff"],
+        )
+    )
+
+    _run_profitability_gate_for_result(result, config, initial_cash=1_000)
+
+    s1 = result.profitability_gate["strategies"]["S1"]
+    assert s1["status"] == "fail"
+    assert "parameter_stability_cliff:pp_ma_proximity_upper_pct" in s1["blocking_reasons"]
+
+
 def test_run_profitability_gate_for_walk_forward_uses_test_phase_journals_only():
     result = SimpleNamespace(
         segments=[

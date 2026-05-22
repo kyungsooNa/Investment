@@ -113,6 +113,21 @@ def _parse_args() -> argparse.Namespace:
         help="실행할 variant 이름 (쉼표 구분). 미지정 시 preset 의 모든 variant 실행.",
     )
     parser.add_argument(
+        "--parameter-stability",
+        default=None,
+        dest="parameter_stability",
+        help=(
+            "Parameter stability sweep 대상 전략 키 (예: oneil_pocket_pivot). 지정하면 "
+            "baseline 실행 후 preset 의 각 dimension·sweep 점을 재실행해 metric surface 출력."
+        ),
+    )
+    parser.add_argument(
+        "--parameter-stability-dimensions",
+        default=None,
+        dest="parameter_stability_dimensions",
+        help="실행할 dimension 이름 (쉼표 구분). 미지정 시 preset 의 모든 dimension 실행.",
+    )
+    parser.add_argument(
         "--paper",
         action="store_true",
         default=False,
@@ -402,6 +417,13 @@ def _format_console(result) -> str:
         lines.extend(
             _format_ablation_console_lines(ablation["strategy_key"], ablation["summary"])
         )
+    parameter_stability = getattr(result, "parameter_stability", None)
+    if parameter_stability:
+        lines.extend(
+            _format_parameter_stability_console_lines(
+                parameter_stability["strategy_key"], parameter_stability["summary"]
+            )
+        )
     return "\n".join(lines)
 
 
@@ -430,6 +452,7 @@ def _result_to_payload(result) -> dict[str, Any]:
         "monte_carlo": getattr(result, "monte_carlo", None),
         "profitability_gate": getattr(result, "profitability_gate", None),
         "ablation": getattr(result, "ablation", None),
+        "parameter_stability": getattr(result, "parameter_stability", None),
     }
 
 
@@ -560,6 +583,7 @@ def _run_profitability_gate_for_result(result, app_config: Any, *, initial_cash:
             getattr(result, "journal_records", []) or [],
             gate_config,
             monte_carlo=getattr(result, "monte_carlo", None),
+            parameter_stability=getattr(result, "parameter_stability", None),
         ),
     )
 
@@ -811,6 +835,168 @@ def _format_ablation_row(
     return base + f"  Δtrades={trade_diff:+d} Δnet_pnl={pnl_diff:+,.0f}"
 
 
+def _resolve_parameter_stability_preset(strategy_key: str):
+    if strategy_key == "oneil_pocket_pivot":
+        from strategies.oneil_pocket_pivot_parameter_stability import (
+            ONEIL_POCKET_PIVOT_PARAMETER_STABILITY_PRESET,
+        )
+        return ONEIL_POCKET_PIVOT_PARAMETER_STABILITY_PRESET
+    if strategy_key == "oneil_squeeze_breakout":
+        from strategies.oneil_squeeze_breakout_parameter_stability import (
+            ONEIL_SQUEEZE_BREAKOUT_PARAMETER_STABILITY_PRESET,
+        )
+        return ONEIL_SQUEEZE_BREAKOUT_PARAMETER_STABILITY_PRESET
+    if strategy_key == "high_tight_flag":
+        from strategies.high_tight_flag_parameter_stability import (
+            HIGH_TIGHT_FLAG_PARAMETER_STABILITY_PRESET,
+        )
+        return HIGH_TIGHT_FLAG_PARAMETER_STABILITY_PRESET
+    if strategy_key == "first_pullback":
+        from strategies.first_pullback_parameter_stability import (
+            FIRST_PULLBACK_PARAMETER_STABILITY_PRESET,
+        )
+        return FIRST_PULLBACK_PARAMETER_STABILITY_PRESET
+    if strategy_key == "larry_williams_vbo":
+        from strategies.larry_williams_vbo_parameter_stability import (
+            LARRY_WILLIAMS_VBO_PARAMETER_STABILITY_PRESET,
+        )
+        return LARRY_WILLIAMS_VBO_PARAMETER_STABILITY_PRESET
+    if strategy_key == "rsi2_pullback":
+        from strategies.rsi2_pullback_parameter_stability import (
+            RSI2_PULLBACK_PARAMETER_STABILITY_PRESET,
+        )
+        return RSI2_PULLBACK_PARAMETER_STABILITY_PRESET
+    if strategy_key == "larry_williams_channel_breakout":
+        from strategies.larry_williams_channel_breakout_parameter_stability import (
+            LARRY_WILLIAMS_CHANNEL_BREAKOUT_PARAMETER_STABILITY_PRESET,
+        )
+        return LARRY_WILLIAMS_CHANNEL_BREAKOUT_PARAMETER_STABILITY_PRESET
+    raise ValueError(
+        f"Parameter stability preset 이 정의되지 않은 전략입니다: '{strategy_key}'."
+    )
+
+
+def _filter_parameter_stability_dimensions(preset, names: Optional[str]):
+    if not names:
+        return preset.dimensions
+    name_set = {n.strip() for n in str(names).split(",") if n.strip()}
+    known = {d.name for d in preset.dimensions}
+    unknown = name_set - known
+    if unknown:
+        raise ValueError(
+            f"{preset.strategy_key} 에 정의되지 않은 parameter stability dimension: "
+            f"{sorted(unknown)}. 사용 가능: {sorted(known)}"
+        )
+    return tuple(d for d in preset.dimensions if d.name in name_set)
+
+
+async def _run_parameter_stability_for_result(
+    result,
+    args: argparse.Namespace,
+    *,
+    run_variant_fn: Callable[[Any], Awaitable[Any]],
+) -> None:
+    """Sweep each dimension's values via ``run_variant_fn`` and attach the
+    parameter-stability summary to ``result``.
+
+    Each sweep point is sent through ``run_variant_fn`` as a synthesized
+    ``AblationVariant(name=f"{dim.name}={value}", config_overrides={dim.parameter: value})``
+    so the existing variant runner (which already accepts an ``AblationVariant``
+    with ``config_overrides``) handles the per-point config replace and state
+    suffix without further changes.
+    """
+    if not getattr(args, "parameter_stability", None):
+        return
+    from services.parameter_stability_service import compute_stability_summary
+    from services.strategy_ablation_service import AblationVariant
+
+    preset = _resolve_parameter_stability_preset(args.parameter_stability)
+    dimensions = _filter_parameter_stability_dimensions(
+        preset, getattr(args, "parameter_stability_dimensions", None)
+    )
+
+    sweep_records_by_dim: dict[str, dict[Any, list[dict]]] = {}
+    for dim in dimensions:
+        per_value: dict[Any, list[dict]] = {}
+        for value in dim.values:
+            variant = AblationVariant(
+                name=f"{dim.name}={value}",
+                description=f"Parameter stability sweep: {dim.parameter}={value}",
+                config_overrides={dim.parameter: value},
+            )
+            variant_result = await run_variant_fn(variant)
+            per_value[value] = list(
+                getattr(variant_result, "journal_records", []) or []
+            )
+        sweep_records_by_dim[dim.name] = per_value
+
+    summary = compute_stability_summary(
+        baseline_records=list(getattr(result, "journal_records", []) or []),
+        dimensions=dimensions,
+        sweep_records_by_dim=sweep_records_by_dim,
+        capital_base_won=float(getattr(args, "initial_cash", 0.0)) or None,
+    )
+    object.__setattr__(
+        result,
+        "parameter_stability",
+        {"strategy_key": preset.strategy_key, "summary": summary},
+    )
+
+
+def _format_parameter_stability_console_lines(
+    strategy_key: str, summary: dict[str, Any]
+) -> list[str]:
+    lines: list[str] = [f"[PARAMETER_STABILITY] strategy={strategy_key}"]
+    baseline_metrics = summary.get("baseline", {}).get("metrics", {})
+    lines.append(_format_parameter_stability_row("baseline", baseline_metrics, delta=None))
+    for dim_name, payload in summary.get("dimensions", {}).items():
+        baseline_value = payload.get("baseline_value")
+        lines.append(f"  dim={dim_name} (baseline={baseline_value})")
+        for point in payload.get("points", []):
+            label = f"{point['value']}"
+            if point.get("is_baseline"):
+                label = f"* {label}"
+            lines.append(
+                _format_parameter_stability_row(
+                    label, point.get("metrics", {}), delta=point.get("delta")
+                )
+            )
+        stability = payload.get("stability", {})
+        flag = stability.get("flag", "?")
+        ratio = stability.get("ratio_vs_neighbors_avg")
+        drop = stability.get("neighbor_drop_pct")
+        reason = stability.get("reason", "")
+        ratio_str = f"{ratio:.2f}" if isinstance(ratio, (int, float)) else "n/a"
+        drop_str = f"{drop:.1f}%" if isinstance(drop, (int, float)) else "n/a"
+        lines.append(
+            f"    -> stability={flag} ratio={ratio_str} max_neighbor_drop={drop_str} ({reason})"
+        )
+    return lines
+
+
+def _format_parameter_stability_row(
+    label: str,
+    metrics: dict[str, Any],
+    delta: Optional[dict[str, Any]],
+) -> str:
+    pf = metrics.get("profit_factor")
+    payoff = metrics.get("payoff_ratio")
+    pf_str = f"{pf:.2f}" if isinstance(pf, (int, float)) else "n/a"
+    payoff_str = f"{payoff:.2f}" if isinstance(payoff, (int, float)) else "n/a"
+    base = (
+        f"    {label:<22} trades={int(metrics.get('trade_count', 0)):>3} "
+        f"win_rate={float(metrics.get('win_rate', 0.0)):.2%} "
+        f"avg_ret={float(metrics.get('avg_net_return', 0.0)):.3f} "
+        f"net_pnl={float(metrics.get('total_net_pnl', 0.0)):>12,.0f} "
+        f"pf={pf_str} payoff={payoff_str}"
+    )
+    if not delta:
+        return base
+    pnl_diff = float(delta.get("total_net_pnl_diff", 0.0))
+    trade_diff = int(delta.get("trade_count_diff", 0))
+    return base + f"  Δtrades={trade_diff:+d} Δnet_pnl={pnl_diff:+,.0f}"
+
+
 async def _run(args: argparse.Namespace) -> None:
     from scripts._bootstrap import bootstrap_pp_strategy, make_stdout_logger
     from config.config_loader import load_configs
@@ -972,8 +1158,6 @@ async def _run(args: argparse.Namespace) -> None:
             result = await make_runner().run(dates)
             if args.monte_carlo:
                 _run_monte_carlo_for_result(result, args)
-            if args.profitability_gate:
-                _run_profitability_gate_for_result(result, app_config, initial_cash=args.initial_cash)
             if args.ablation:
                 if args.strategy != args.ablation:
                     raise ValueError(
@@ -988,6 +1172,23 @@ async def _run(args: argparse.Namespace) -> None:
                 await _run_ablation_for_result(
                     result, args, run_variant_fn=_variant_runner
                 )
+            if args.parameter_stability:
+                if args.strategy != args.parameter_stability:
+                    raise ValueError(
+                        f"--parameter-stability({args.parameter_stability}) 과 "
+                        f"--strategy({args.strategy}) 가 다릅니다. parameter stability 는 "
+                        "baseline 과 같은 전략에 대해서만 의미가 있습니다."
+                    )
+
+                async def _stability_variant_runner(variant):
+                    print(f"[INFO] parameter-stability sweep 실행: {variant.name}")
+                    return await make_runner(variant=variant).run(dates)
+
+                await _run_parameter_stability_for_result(
+                    result, args, run_variant_fn=_stability_variant_runner
+                )
+            if args.profitability_gate:
+                _run_profitability_gate_for_result(result, app_config, initial_cash=args.initial_cash)
             rendered = _format_json(result) if args.output == "json" else _format_console(result)
 
     if args.output_file:
