@@ -551,6 +551,33 @@ def _format_profitability_gate_console_lines(result: dict[str, Any]) -> list[str
                 overlap=max_pair.get("overlap", 0),
             )
         )
+    market_beta = result.get("market_beta") or {}
+    if market_beta and (
+        market_beta.get("warnings")
+        or "portfolio_market_beta_high" in warnings
+        or "strategy_market_beta_high" in warnings
+    ):
+        threshold = market_beta.get("warning_threshold")
+        threshold_str = f"{threshold:.2f}" if isinstance(threshold, (int, float)) else "n/a"
+        portfolio_beta = (market_beta.get("portfolio") or {}).get("beta")
+        if portfolio_beta is not None:
+            lines.append(
+                "market-beta portfolio beta={beta} overlap={overlap} threshold={threshold}".format(
+                    beta=f"{portfolio_beta:.2f}" if isinstance(portfolio_beta, (int, float)) else "n/a",
+                    overlap=(market_beta.get("portfolio") or {}).get("overlap", 0),
+                    threshold=threshold_str,
+                )
+            )
+        for item in market_beta.get("high_beta_strategies") or []:
+            beta = item.get("beta")
+            lines.append(
+                "market-beta strategy={strategy} beta={beta} overlap={overlap} threshold={threshold}".format(
+                    strategy=item.get("strategy") or "n/a",
+                    beta=f"{beta:.2f}" if isinstance(beta, (int, float)) else "n/a",
+                    overlap=item.get("overlap", 0),
+                    threshold=threshold_str,
+                )
+            )
     entry_pressure = result.get("entry_pressure") or {}
     if entry_pressure and (
         entry_pressure.get("warnings")

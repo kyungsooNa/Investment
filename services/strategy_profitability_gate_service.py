@@ -13,6 +13,7 @@ from services.regime_performance_service import (
     compute_performance_by_regime,
     compute_regime_balance_summary,
 )
+from services.market_beta_service import compute_market_beta_summary
 from services.strategy_performance_degradation_service import compute_strategy_window_metrics
 from services.multiple_testing_bias_service import compute_multiple_testing_bias_summary
 from services.portfolio_cooldown_service import compute_portfolio_cooldown_summary
@@ -49,6 +50,10 @@ class StrategyProfitabilityGateConfig:
     strategy_correlation_min_overlap: int = 5
     strategy_correlation_warning_threshold: float = 0.8
     strategy_correlation_metric: str = "net_return"
+    market_beta_min_overlap: int = 5
+    market_beta_warning_threshold: float = 1.5
+    market_beta_metric: str = "net_return"
+    market_beta_benchmark_metric: str = "market_return"
     daily_entry_warning_threshold: int = 5
     opening_entry_warning_threshold: int = 3
     closing_entry_warning_threshold: int = 3
@@ -103,6 +108,13 @@ def evaluate_strategy_profitability_gate(
         warning_threshold=cfg.strategy_correlation_warning_threshold,
         metric=cfg.strategy_correlation_metric,
     )
+    market_beta = compute_market_beta_summary(
+        sold_records,
+        min_overlap=cfg.market_beta_min_overlap,
+        warning_threshold=cfg.market_beta_warning_threshold,
+        metric=cfg.market_beta_metric,
+        benchmark_metric=cfg.market_beta_benchmark_metric,
+    )
     entry_pressure = compute_portfolio_entry_pressure_summary(
         all_records,
         daily_entry_warning_threshold=cfg.daily_entry_warning_threshold,
@@ -117,6 +129,7 @@ def evaluate_strategy_profitability_gate(
     if multiple_testing_bias.get("bias_warning"):
         warnings.append("multiple_testing_bias_warning")
     warnings.extend(strategy_correlation.get("warnings") or [])
+    warnings.extend(market_beta.get("warnings") or [])
     warnings.extend(entry_pressure.get("warnings") or [])
     warnings.extend(cooldown.get("warnings") or [])
     return {
@@ -130,6 +143,7 @@ def evaluate_strategy_profitability_gate(
         "warnings": warnings,
         "multiple_testing_bias": multiple_testing_bias,
         "strategy_correlation": strategy_correlation,
+        "market_beta": market_beta,
         "entry_pressure": entry_pressure,
         "cooldown": cooldown,
         "strategies": by_strategy,

@@ -119,6 +119,10 @@ def test_app_config_defaults_to_paper_trading_when_omitted():
     assert config.strategy_profitability_gate.multiple_testing_top_to_median_warning_ratio == 3.0
     assert config.strategy_profitability_gate.strategy_correlation_min_overlap == 5
     assert config.strategy_profitability_gate.strategy_correlation_warning_threshold == 0.8
+    assert config.strategy_profitability_gate.market_beta_min_overlap == 5
+    assert config.strategy_profitability_gate.market_beta_warning_threshold == 1.5
+    assert config.strategy_profitability_gate.market_beta_metric == "net_return"
+    assert config.strategy_profitability_gate.market_beta_benchmark_metric == "market_return"
     assert config.strategy_profitability_gate.daily_entry_warning_threshold == 5
     assert config.strategy_profitability_gate.opening_entry_warning_threshold == 3
     assert config.strategy_profitability_gate.closing_entry_warning_threshold == 3

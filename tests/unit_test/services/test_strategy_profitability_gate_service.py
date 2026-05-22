@@ -304,6 +304,57 @@ def test_profitability_gate_reports_strategy_correlation_warning():
     assert result["strategy_correlation"]["max_positive_pair"]["right"] == "S2"
 
 
+def test_profitability_gate_reports_market_beta_warning():
+    records = [
+        {
+            "status": "SOLD",
+            "strategy": "S1",
+            "signal_time": "2026-05-01",
+            "net_pnl": 100,
+            "net_return": 2.0,
+            "market_return": 1.0,
+        },
+        {
+            "status": "SOLD",
+            "strategy": "S1",
+            "signal_time": "2026-05-02",
+            "net_pnl": 200,
+            "net_return": 4.0,
+            "market_return": 2.0,
+        },
+        {
+            "status": "SOLD",
+            "strategy": "S1",
+            "signal_time": "2026-05-03",
+            "net_pnl": 300,
+            "net_return": 6.0,
+            "market_return": 3.0,
+        },
+    ]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=3,
+        min_profit_factor=None,
+        min_payoff_ratio=None,
+        min_win_rate=None,
+        min_avg_net_return=None,
+        require_positive_total_net_pnl=False,
+        max_mdd_pct=None,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+        market_beta_min_overlap=3,
+        market_beta_warning_threshold=1.5,
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    assert "portfolio_market_beta_high" in result["warnings"]
+    assert "strategy_market_beta_high" in result["warnings"]
+    assert result["market_beta"]["portfolio"]["beta"] == pytest.approx(2.0)
+    assert result["market_beta"]["high_beta_strategies"][0]["strategy"] == "S1"
+
+
 def test_profitability_gate_reports_daily_entry_pressure_warning():
     records = [
         {"status": "FILLED", "side": "BUY", "strategy": "S1", "signal_time": "2026-05-01 09:00:00"},

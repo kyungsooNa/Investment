@@ -394,6 +394,37 @@ def test_format_console_includes_strategy_correlation_warning_detail():
     assert "strategy-correlation max=S1/S2 corr=0.96 overlap=12" in text
 
 
+def test_format_console_includes_market_beta_warning_detail():
+    result = SimpleNamespace(
+        strategy_name="오닐PP/BGU",
+        dates=["20260501"],
+        execution_reports=[],
+        journal_records=[],
+        saved_journal_run={},
+        portfolio={"cash": 1_000_000, "available_cash": 1_000_000, "positions": {}},
+        profitability_gate={
+            "summary": {"pass_count": 1, "fail_count": 0, "insufficient_sample_count": 0},
+            "warnings": ["portfolio_market_beta_high", "strategy_market_beta_high"],
+            "market_beta": {
+                "warning_threshold": 1.5,
+                "portfolio": {"status": "ok", "beta": 1.8, "overlap": 9},
+                "high_beta_strategies": [
+                    {"strategy": "S1", "beta": 2.1, "overlap": 7}
+                ],
+            },
+            "strategies": {
+                "S1": {"status": "pass", "blocking_reasons": [], "warnings": []},
+            },
+        },
+    )
+
+    text = _format_console(result)
+
+    assert "warnings: portfolio_market_beta_high, strategy_market_beta_high" in text
+    assert "market-beta portfolio beta=1.80 overlap=9 threshold=1.50" in text
+    assert "market-beta strategy=S1 beta=2.10 overlap=7 threshold=1.50" in text
+
+
 def test_format_console_includes_entry_pressure_warning_detail():
     result = SimpleNamespace(
         strategy_name="오닐PP/BGU",

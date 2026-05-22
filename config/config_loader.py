@@ -220,6 +220,10 @@ class StrategyProfitabilityGateConfig(BaseModel):
     strategy_correlation_min_overlap: int = 5
     strategy_correlation_warning_threshold: float = 0.8
     strategy_correlation_metric: str = "net_return"
+    market_beta_min_overlap: int = 5
+    market_beta_warning_threshold: float = 1.5
+    market_beta_metric: str = "net_return"
+    market_beta_benchmark_metric: str = "market_return"
     daily_entry_warning_threshold: int = 5
     opening_entry_warning_threshold: int = 3
     closing_entry_warning_threshold: int = 3
