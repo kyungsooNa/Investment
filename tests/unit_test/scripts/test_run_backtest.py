@@ -394,6 +394,34 @@ def test_format_console_includes_strategy_correlation_warning_detail():
     assert "strategy-correlation max=S1/S2 corr=0.96 overlap=12" in text
 
 
+def test_format_console_includes_entry_pressure_warning_detail():
+    result = SimpleNamespace(
+        strategy_name="오닐PP/BGU",
+        dates=["20260501"],
+        execution_reports=[],
+        journal_records=[],
+        saved_journal_run={},
+        portfolio={"cash": 1_000_000, "available_cash": 1_000_000, "positions": {}},
+        profitability_gate={
+            "summary": {"pass_count": 1, "fail_count": 0, "insufficient_sample_count": 0},
+            "warnings": ["portfolio_daily_entry_pressure_high"],
+            "entry_pressure": {
+                "max_daily_entry_date": "2026-05-01",
+                "max_daily_entry_count": 7,
+                "daily_entry_warning_threshold": 5,
+            },
+            "strategies": {
+                "S1": {"status": "pass", "blocking_reasons": [], "warnings": []},
+            },
+        },
+    )
+
+    text = _format_console(result)
+
+    assert "warnings: portfolio_daily_entry_pressure_high" in text
+    assert "entry-pressure max_date=2026-05-01 entries=7 threshold=5" in text
+
+
 def test_format_walk_forward_console_summarizes_test_windows():
     result = SimpleNamespace(
         summary={

@@ -302,3 +302,32 @@ def test_profitability_gate_reports_strategy_correlation_warning():
     assert "strategy_correlation_high" in result["warnings"]
     assert result["strategy_correlation"]["max_positive_pair"]["left"] == "S1"
     assert result["strategy_correlation"]["max_positive_pair"]["right"] == "S2"
+
+
+def test_profitability_gate_reports_daily_entry_pressure_warning():
+    records = [
+        {"status": "FILLED", "side": "BUY", "strategy": "S1", "signal_time": "2026-05-01 09:00:00"},
+        {"status": "FILLED", "side": "BUY", "strategy": "S2", "signal_time": "2026-05-01 09:01:00"},
+        {"status": "FILLED", "side": "BUY", "strategy": "S3", "signal_time": "2026-05-01 09:02:00"},
+        _sold(100, 1.0, strategy="S1", signal_time="2026-05-02"),
+    ]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=1,
+        min_profit_factor=None,
+        min_payoff_ratio=None,
+        min_win_rate=0.0,
+        min_avg_net_return=None,
+        require_positive_total_net_pnl=False,
+        max_mdd_pct=None,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+        daily_entry_warning_threshold=3,
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    assert "portfolio_daily_entry_pressure_high" in result["warnings"]
+    assert result["entry_pressure"]["max_daily_entry_date"] == "2026-05-01"
+    assert result["entry_pressure"]["max_daily_entry_count"] == 3

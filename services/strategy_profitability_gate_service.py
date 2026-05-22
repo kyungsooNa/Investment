@@ -15,6 +15,7 @@ from services.regime_performance_service import (
 )
 from services.strategy_performance_degradation_service import compute_strategy_window_metrics
 from services.multiple_testing_bias_service import compute_multiple_testing_bias_summary
+from services.portfolio_entry_pressure_service import compute_portfolio_entry_pressure_summary
 from services.strategy_correlation_service import compute_strategy_correlation_summary
 
 
@@ -47,6 +48,7 @@ class StrategyProfitabilityGateConfig:
     strategy_correlation_min_overlap: int = 5
     strategy_correlation_warning_threshold: float = 0.8
     strategy_correlation_metric: str = "net_return"
+    daily_entry_warning_threshold: int = 5
 
 
 def evaluate_strategy_profitability_gate(
@@ -58,8 +60,9 @@ def evaluate_strategy_profitability_gate(
 ) -> dict[str, Any]:
     """Evaluate whether each strategy clears the live-expansion baseline."""
     cfg = config or StrategyProfitabilityGateConfig()
+    all_records = list(records)
     sold_records = [
-        record for record in records
+        record for record in all_records
         if str(record.get("status") or "").upper() == "SOLD"
         and str(record.get("strategy") or "").strip()
     ]
@@ -96,10 +99,15 @@ def evaluate_strategy_profitability_gate(
         warning_threshold=cfg.strategy_correlation_warning_threshold,
         metric=cfg.strategy_correlation_metric,
     )
+    entry_pressure = compute_portfolio_entry_pressure_summary(
+        all_records,
+        daily_entry_warning_threshold=cfg.daily_entry_warning_threshold,
+    )
     warnings = []
     if multiple_testing_bias.get("bias_warning"):
         warnings.append("multiple_testing_bias_warning")
     warnings.extend(strategy_correlation.get("warnings") or [])
+    warnings.extend(entry_pressure.get("warnings") or [])
     return {
         "config": _config_to_dict(cfg),
         "summary": {
@@ -111,6 +119,7 @@ def evaluate_strategy_profitability_gate(
         "warnings": warnings,
         "multiple_testing_bias": multiple_testing_bias,
         "strategy_correlation": strategy_correlation,
+        "entry_pressure": entry_pressure,
         "strategies": by_strategy,
     }
 

@@ -551,6 +551,18 @@ def _format_profitability_gate_console_lines(result: dict[str, Any]) -> list[str
                 overlap=max_pair.get("overlap", 0),
             )
         )
+    entry_pressure = result.get("entry_pressure") or {}
+    if entry_pressure and (
+        entry_pressure.get("warnings")
+        or "portfolio_daily_entry_pressure_high" in warnings
+    ):
+        lines.append(
+            "entry-pressure max_date={date} entries={count} threshold={threshold}".format(
+                date=entry_pressure.get("max_daily_entry_date") or "n/a",
+                count=entry_pressure.get("max_daily_entry_count", 0),
+                threshold=entry_pressure.get("daily_entry_warning_threshold", 0),
+            )
+        )
     for strategy, item in sorted((result.get("strategies") or {}).items()):
         reasons = item.get("blocking_reasons") or []
         warnings = item.get("warnings") or []

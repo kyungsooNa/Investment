@@ -220,6 +220,7 @@ class StrategyProfitabilityGateConfig(BaseModel):
     strategy_correlation_min_overlap: int = 5
     strategy_correlation_warning_threshold: float = 0.8
     strategy_correlation_metric: str = "net_return"
+    daily_entry_warning_threshold: int = 5
 
     model_config = {"extra": "allow"}
 
