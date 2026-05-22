@@ -327,6 +327,48 @@ def test_emit_alert_includes_incomplete_fill_only_for_terminal_canceled_or_rejec
     assert "incomplete_fill_ratio_pct" in metrics
 
 
+def test_emit_alert_ignores_unfilled_ratio_for_active_partial_fill():
+    """부분체결 중 잔량은 아직 대기 중인 수량이므로 미체결 품질 알람 대상이 아니다."""
+    cfg = ExecutionQualityReportConfig(
+        warn_avg_unfilled_ratio_pct=20.0,
+        candidate_avg_unfilled_ratio_pct=40.0,
+        warn_incomplete_fill_ratio_pct=20.0,
+    )
+    notif = AsyncMock()
+    reporter, _logger, _ = _make_reporter(config=cfg, notification=notif)
+    event = {
+        "slippage_pct": 0.0,
+        "first_fill_latency_sec": 2.17,
+        "unfilled_ratio_pct": 75.47,
+        "state": OrderState.PARTIAL_FILLED.value,
+    }
+
+    breaches = reporter._find_breaches(event)
+
+    assert breaches == []
+
+
+def test_emit_alert_uses_incomplete_metric_for_terminal_remaining_qty():
+    cfg = ExecutionQualityReportConfig(
+        warn_avg_unfilled_ratio_pct=20.0,
+        candidate_avg_unfilled_ratio_pct=40.0,
+        warn_incomplete_fill_ratio_pct=20.0,
+    )
+    notif = AsyncMock()
+    reporter, _logger, _ = _make_reporter(config=cfg, notification=notif)
+    event = {
+        "slippage_pct": None,
+        "first_fill_latency_sec": None,
+        "unfilled_ratio_pct": 75.47,
+        "state": OrderState.CANCELED.value,
+    }
+
+    breaches = reporter._find_breaches(event)
+    metrics = {b["metric"] for b in breaches}
+
+    assert metrics == {"incomplete_fill_ratio_pct"}
+
+
 # ── _fmt_optional ───────────────────────────────────────────────────────────
 
 def test_fmt_optional_handles_none_and_numbers_and_garbage():
