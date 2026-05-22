@@ -521,6 +521,20 @@ def _format_profitability_gate_console_lines(result: dict[str, Any]) -> list[str
             insufficient=summary.get("insufficient_sample_count", 0),
         )
     )
+    warnings = result.get("warnings") or []
+    if warnings:
+        lines.append(f"warnings: {', '.join(warnings)}")
+    bias = result.get("multiple_testing_bias") or {}
+    if bias.get("bias_warning"):
+        ratio = bias.get("top_to_median_ratio")
+        ratio_str = f"{ratio:.2f}" if isinstance(ratio, (int, float)) else "n/a"
+        lines.append(
+            "multiple-testing trials={trial_count} best={best} top/median={ratio}".format(
+                trial_count=bias.get("trial_count", 0),
+                best=bias.get("best_strategy") or "n/a",
+                ratio=ratio_str,
+            )
+        )
     for strategy, item in sorted((result.get("strategies") or {}).items()):
         reasons = item.get("blocking_reasons") or []
         warnings = item.get("warnings") or []
