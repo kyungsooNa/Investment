@@ -131,3 +131,38 @@ def compute_performance_by_regime(records: Iterable[Mapping[str, Any]]) -> dict[
         }
 
     return result
+
+
+def compute_regime_balance_summary(
+    regime_performance: Mapping[str, Mapping[str, Any]],
+    *,
+    required_buckets: Iterable[str],
+    min_trades_per_bucket: int,
+) -> dict[str, Any]:
+    """Report whether validation covers required market-regime buckets."""
+    required = [str(bucket).strip().upper() for bucket in required_buckets if str(bucket).strip()]
+    min_trades = max(int(min_trades_per_bucket or 0), 1)
+    missing: list[str] = []
+    weak: list[dict[str, Any]] = []
+
+    for bucket in required:
+        metrics = regime_performance.get(bucket) or {}
+        trade_count = int(metrics.get("trade_count") or 0)
+        if trade_count <= 0:
+            missing.append(bucket)
+        elif trade_count < min_trades:
+            weak.append(
+                {
+                    "bucket": bucket,
+                    "trade_count": trade_count,
+                    "required": min_trades,
+                }
+            )
+
+    return {
+        "required_regimes": required,
+        "min_trades_per_regime": min_trades,
+        "missing_regimes": missing,
+        "weak_regimes": weak,
+        "balanced_pass": not missing and not weak,
+    }

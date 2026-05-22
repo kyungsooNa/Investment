@@ -192,3 +192,46 @@ def test_profitability_gate_can_leave_parameter_stability_as_report_only():
     )
 
     assert result["strategies"]["S1"]["status"] == "pass"
+
+
+def test_profitability_gate_warns_on_regime_balance_gaps_without_blocking():
+    records = [
+        _sold(
+            120,
+            2.0,
+            signal_time="2026-05-01",
+            regime={"kospi": "bull", "kosdaq": "bull", "stock_market": "KOSPI"},
+        ),
+        _sold(
+            -20,
+            -0.2,
+            signal_time="2026-05-02",
+            regime={"kospi": "bull", "kosdaq": "bull", "stock_market": "KOSPI"},
+        ),
+    ]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=2,
+        min_profit_factor=1.0,
+        min_payoff_ratio=1.0,
+        min_win_rate=0.5,
+        min_avg_net_return=0.0,
+        max_mdd_pct=10.0,
+        capital_base_won=1_000,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=("KOSPI_BULL", "KOSDAQ_BULL", "SIDEWAYS", "BEAR"),
+        regime_balance_min_trades=2,
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    s1 = result["strategies"]["S1"]
+    assert s1["status"] == "pass"
+    assert "regime_balance_incomplete" in s1["warnings"]
+    assert s1["regime_balance"]["balanced_pass"] is False
+    assert s1["regime_balance"]["missing_regimes"] == [
+        "KOSDAQ_BULL",
+        "SIDEWAYS",
+        "BEAR",
+    ]

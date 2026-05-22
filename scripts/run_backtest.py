@@ -523,8 +523,10 @@ def _format_profitability_gate_console_lines(result: dict[str, Any]) -> list[str
     )
     for strategy, item in sorted((result.get("strategies") or {}).items()):
         reasons = item.get("blocking_reasons") or []
+        warnings = item.get("warnings") or []
         suffix = f" ({', '.join(reasons)})" if reasons else ""
-        lines.append(f"{strategy}: {item.get('status')}{suffix}")
+        warning_suffix = f" [warn: {', '.join(warnings)}]" if warnings else ""
+        lines.append(f"{strategy}: {item.get('status')}{suffix}{warning_suffix}")
     return lines
 
 

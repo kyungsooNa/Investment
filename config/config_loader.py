@@ -210,6 +210,10 @@ class StrategyProfitabilityGateConfig(BaseModel):
         default_factory=lambda: ["spike", "cliff"]
     )
     require_parameter_stability: bool = False
+    regime_balance_required_buckets: List[str] = Field(
+        default_factory=lambda: ["KOSPI_BULL", "KOSDAQ_BULL", "SIDEWAYS", "BEAR"]
+    )
+    regime_balance_min_trades: int = 5
 
     model_config = {"extra": "allow"}
 

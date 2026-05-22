@@ -11,7 +11,10 @@
 """
 import pytest
 
-from services.regime_performance_service import compute_performance_by_regime
+from services.regime_performance_service import (
+    compute_performance_by_regime,
+    compute_regime_balance_summary,
+)
 
 
 def _trade(net_pnl, net_return, signal_time, kospi="bull", kosdaq="bull",
@@ -120,3 +123,42 @@ def test_non_sold_records_are_excluded():
     ]
     res = compute_performance_by_regime(records)
     assert res["KOSPI_BULL"]["trade_count"] == 1
+
+
+def test_regime_balance_summary_reports_missing_and_weak_buckets():
+    regime_performance = compute_performance_by_regime([
+        _trade(net_pnl=100.0, net_return=1.0, signal_time="20260514", stock_market="KOSPI"),
+        _trade(net_pnl=50.0, net_return=0.5, signal_time="20260515", stock_market="KOSDAQ"),
+    ])
+
+    summary = compute_regime_balance_summary(
+        regime_performance,
+        required_buckets=("KOSPI_BULL", "KOSDAQ_BULL", "SIDEWAYS", "BEAR"),
+        min_trades_per_bucket=2,
+    )
+
+    assert summary["balanced_pass"] is False
+    assert summary["missing_regimes"] == ["SIDEWAYS", "BEAR"]
+    assert summary["weak_regimes"] == [
+        {"bucket": "KOSPI_BULL", "trade_count": 1, "required": 2},
+        {"bucket": "KOSDAQ_BULL", "trade_count": 1, "required": 2},
+    ]
+
+
+def test_regime_balance_summary_passes_when_required_buckets_have_enough_trades():
+    regime_performance = {
+        "KOSPI_BULL": {"trade_count": 2},
+        "KOSDAQ_BULL": {"trade_count": 2},
+        "SIDEWAYS": {"trade_count": 2},
+        "BEAR": {"trade_count": 2},
+    }
+
+    summary = compute_regime_balance_summary(
+        regime_performance,
+        required_buckets=("KOSPI_BULL", "KOSDAQ_BULL", "SIDEWAYS", "BEAR"),
+        min_trades_per_bucket=2,
+    )
+
+    assert summary["balanced_pass"] is True
+    assert summary["missing_regimes"] == []
+    assert summary["weak_regimes"] == []

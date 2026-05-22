@@ -171,7 +171,8 @@
 - [x] purged/embargo cross-validation 또는 종목·기간 누수 방지 규칙을 walk-forward 검증에 추가할지 검토한다.
   - 완료된 부분: `BacktestWalkForwardConfig.embargo_days`와 `scripts/run_backtest.py --wf-embargo-days` 옵션을 추가했다. 1차 정책은 tune/test 경계 사이의 N거래일을 test에서 제외해 contiguous 검증 누수를 줄이는 방식이며, 기본값 0은 기존 동작을 유지한다.
 - [ ] Deflated Sharpe / PBO 같은 다중 전략 실험 착시 방지 지표를 도입할지 검토한다.
-- [ ] regime-balanced validation을 추가한다.
+- [x] regime-balanced validation을 추가한다.
+  - 완료된 부분: `compute_regime_balance_summary()`를 추가해 필수 국면별 최소 표본 충족 여부(`balanced_pass`, `missing_regimes`, `weak_regimes`)를 산출한다. `strategy_profitability_gate`는 기본 필수 국면(`KOSPI_BULL`, `KOSDAQ_BULL`, `SIDEWAYS`, `BEAR`)과 `regime_balance_min_trades=5` 기준으로 report warning(`regime_balance_incomplete`)을 노출하되, 1차에서는 hard block으로 쓰지 않는다.
   - 상승장 데이터에만 최적화된 전략이 횡보/하락장에서 손실을 키우지 않는지 분리 검증한다.
 
 ### 1-2. 포트폴리오 단위 리스크 확장
