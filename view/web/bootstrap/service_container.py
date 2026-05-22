@@ -305,6 +305,8 @@ class ServiceContainer:
                     market_clock=ctx.market_clock,
                     kill_switch_service=ctx.kill_switch_service,
                     logger=ctx.logger,
+                    throttle_sec=0.1,  # Q5: evaluator burst 흡수만, trigger crossing 보장.
+                    signal_debounce_sec=0.5,  # Q5: 같은 (strategy, code) 중복 publish 차단.
                     signal_sink=None,  # PR-3 본 작업에서 live consumer 주입 예정. shadow 운영은 None 유지.
                 )
                 ctx.price_stream_service = PriceStreamService(

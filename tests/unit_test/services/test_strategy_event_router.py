@@ -303,3 +303,104 @@ async def test_signal_sink_not_called_for_none_signals():
 
     assert results == []
     sink.publish.assert_not_awaited()
+
+
+# === PR-3 선행: signal debounce (Q5) ===
+
+
+@pytest.mark.asyncio
+async def test_signal_debounce_blocks_duplicate_within_window():
+    """signal_debounce_sec 활성 시 같은 (strategy, code) 두 번째 신호는 window 안에서 차단."""
+    sink = MagicMock()
+    sink.publish = AsyncMock(return_value=None)
+    sig = _signal("005930", "VBO")
+
+    router = StrategyEventRouter(
+        market_clock=_market_clock(),
+        signal_sink=sink,
+        throttle_sec=0.0,  # evaluator throttle 비활성 (debounce 단독 검증)
+        signal_debounce_sec=1.0,
+    )
+    router.subscribe(
+        "005930", strategy_name="VBO", evaluator=AsyncMock(return_value=sig)
+    )
+
+    first = await router.on_price_tick("005930", {"price": "10000"}, now_ts=100.0)
+    second = await router.on_price_tick("005930", {"price": "10000"}, now_ts=100.5)
+
+    assert first == [sig]
+    assert second == []
+    sink.publish.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_signal_debounce_allows_after_window():
+    """debounce window 경과 후에는 같은 (strategy, code) 신호 재발행 허용."""
+    sink = MagicMock()
+    sink.publish = AsyncMock(return_value=None)
+    sig = _signal("005930", "VBO")
+
+    router = StrategyEventRouter(
+        market_clock=_market_clock(),
+        signal_sink=sink,
+        throttle_sec=0.0,
+        signal_debounce_sec=0.5,
+    )
+    router.subscribe(
+        "005930", strategy_name="VBO", evaluator=AsyncMock(return_value=sig)
+    )
+
+    first = await router.on_price_tick("005930", {"price": "10000"}, now_ts=100.0)
+    second = await router.on_price_tick("005930", {"price": "10000"}, now_ts=100.6)
+
+    assert first == [sig]
+    assert second == [sig]
+    assert sink.publish.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_signal_debounce_disabled_when_none():
+    """signal_debounce_sec=None(기본) 이면 모든 신호 통과 — backward compat 검증."""
+    sink = MagicMock()
+    sink.publish = AsyncMock(return_value=None)
+    sig = _signal("005930", "VBO")
+
+    router = StrategyEventRouter(
+        market_clock=_market_clock(),
+        signal_sink=sink,
+        throttle_sec=0.0,
+        signal_debounce_sec=None,
+    )
+    router.subscribe(
+        "005930", strategy_name="VBO", evaluator=AsyncMock(return_value=sig)
+    )
+
+    first = await router.on_price_tick("005930", {"price": "10000"}, now_ts=100.0)
+    second = await router.on_price_tick("005930", {"price": "10000"}, now_ts=100.001)
+
+    assert first == [sig]
+    assert second == [sig]
+    assert sink.publish.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_clears_debounce_state():
+    """unsubscribe 후 재구독 시 debounce 상태가 초기화돼 즉시 발행 허용."""
+    sig = _signal("005930", "VBO")
+    evaluator = AsyncMock(return_value=sig)
+
+    router = StrategyEventRouter(
+        market_clock=_market_clock(),
+        throttle_sec=0.0,
+        signal_debounce_sec=10.0,
+    )
+    router.subscribe("005930", strategy_name="VBO", evaluator=evaluator)
+
+    first = await router.on_price_tick("005930", {"price": "10000"}, now_ts=100.0)
+    assert first == [sig]
+
+    router.unsubscribe("005930", "VBO")
+    router.subscribe("005930", strategy_name="VBO", evaluator=evaluator)
+
+    second = await router.on_price_tick("005930", {"price": "10000"}, now_ts=100.1)
+    assert second == [sig]

@@ -22,6 +22,12 @@ PR-3 선행 (signal sink):
   - signal_sink 가 주입되면 non-None 평가 신호마다 await sink.publish(signal, context=...) 호출.
   - context 표준 키: signal_source="event", strategy_name, code, snapshot_ts.
   - sink 미주입(shadow 운영) 또는 publish 예외는 흡수 → 기존 동작 유지.
+
+PR-3 선행 (throttle/debounce 정책, 2026-05-22 Q5):
+  - throttle_sec 은 evaluator 호출 burst 흡수 목적 (default 0.5 유지, 운영은 0.1로 단축).
+  - signal_debounce_sec 신규 — 같은 (strategy, code) 의 non-None 신호 publish/return 직전 단계에서
+    debounce window 안의 중복 발행을 차단한다. default None=비활성, 운영은 0.5초.
+  - trigger price crossing tick 이 evaluator throttle window 에 막히지 않게 두 단계 분리.
 """
 from __future__ import annotations
 
@@ -47,6 +53,7 @@ class StrategyEventRouter:
         throttle_sec: float = 0.5,
         stale_snapshot_sec: float = 5.0,
         signal_sink: Optional[SignalSink] = None,
+        signal_debounce_sec: Optional[float] = None,
     ):
         self._mc = market_clock
         self._ks = kill_switch_service
@@ -54,10 +61,15 @@ class StrategyEventRouter:
         self._throttle_sec = float(throttle_sec)
         self._stale_snapshot_sec = float(stale_snapshot_sec)
         self._signal_sink = signal_sink
+        self._signal_debounce_sec = (
+            float(signal_debounce_sec) if signal_debounce_sec is not None else None
+        )
         # code → [(strategy_name, evaluator), ...]
         self._subscribers: Dict[str, List[Tuple[str, EvaluatorFn]]] = {}
-        # (strategy_name, code) → last dispatched epoch seconds
+        # (strategy_name, code) → last evaluator-dispatch epoch seconds
         self._last_dispatched: Dict[Tuple[str, str], float] = {}
+        # (strategy_name, code) → last non-None signal publish epoch seconds
+        self._last_signal_dispatched: Dict[Tuple[str, str], float] = {}
 
     def subscribe(self, code: str, *, strategy_name: str, evaluator: EvaluatorFn) -> None:
         if not code or not strategy_name or evaluator is None:
@@ -79,6 +91,7 @@ class StrategyEventRouter:
         else:
             self._subscribers.pop(code, None)
         self._last_dispatched.pop((strategy_name, code), None)
+        self._last_signal_dispatched.pop((strategy_name, code), None)
 
     def subscribers_for(self, code: str) -> List[str]:
         return [name for (name, _fn) in self._subscribers.get(code, [])]
@@ -147,6 +160,16 @@ class StrategyEventRouter:
         for (name, _fn), signal in zip(dispatchable, results):
             if signal is None:
                 continue
+            key = (name, code)
+            if self._signal_debounce_sec is not None:
+                last_pub = self._last_signal_dispatched.get(key)
+                if last_pub is not None and (now - last_pub) < self._signal_debounce_sec:
+                    self._logger.debug(
+                        f"[EventRouter] signal debounce: strategy={name}, code={code}, "
+                        f"age={now - last_pub:.3f}s < {self._signal_debounce_sec}s"
+                    )
+                    continue
+                self._last_signal_dispatched[key] = now
             signals.append(signal)
             if self._signal_sink is None:
                 continue
