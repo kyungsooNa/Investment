@@ -409,6 +409,18 @@ def test_format_console_includes_entry_pressure_warning_detail():
                 "max_daily_entry_date": "2026-05-01",
                 "max_daily_entry_count": 7,
                 "daily_entry_warning_threshold": 5,
+                "intraday_windows": {
+                    "opening": {
+                        "max_entry_date": "2026-05-01",
+                        "max_entry_count": 4,
+                        "entry_warning_threshold": 3,
+                    },
+                    "closing": {
+                        "max_entry_date": None,
+                        "max_entry_count": 0,
+                        "entry_warning_threshold": 3,
+                    },
+                },
             },
             "strategies": {
                 "S1": {"status": "pass", "blocking_reasons": [], "warnings": []},
@@ -420,6 +432,7 @@ def test_format_console_includes_entry_pressure_warning_detail():
 
     assert "warnings: portfolio_daily_entry_pressure_high" in text
     assert "entry-pressure max_date=2026-05-01 entries=7 threshold=5" in text
+    assert "entry-pressure opening max_date=2026-05-01 entries=4 threshold=3" in text
 
 
 def test_format_console_includes_cooldown_warning_detail():

@@ -138,6 +138,8 @@ strategy_profitability_gate:
   strategy_correlation_warning_threshold: 0.8
   strategy_correlation_metric: "net_return"
   daily_entry_warning_threshold: 5
+  opening_entry_warning_threshold: 3
+  closing_entry_warning_threshold: 3
   consecutive_loss_warning_threshold: 3
 
 # 포지션 사이징 (Fixed Fractional / Penbold 식)

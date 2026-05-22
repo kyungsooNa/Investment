@@ -563,6 +563,21 @@ def _format_profitability_gate_console_lines(result: dict[str, Any]) -> list[str
                 threshold=entry_pressure.get("daily_entry_warning_threshold", 0),
             )
         )
+        intraday_windows = entry_pressure.get("intraday_windows") or {}
+        for window_name in ("opening", "closing"):
+            window = intraday_windows.get(window_name) or {}
+            threshold = int(window.get("entry_warning_threshold") or 0)
+            count = int(window.get("max_entry_count") or 0)
+            if threshold > 0 and count >= threshold:
+                lines.append(
+                    "entry-pressure {window} max_date={date} entries={count} "
+                    "threshold={threshold}".format(
+                        window=window_name,
+                        date=window.get("max_entry_date") or "n/a",
+                        count=count,
+                        threshold=threshold,
+                    )
+                )
     cooldown = result.get("cooldown") or {}
     if cooldown and (
         cooldown.get("warnings")

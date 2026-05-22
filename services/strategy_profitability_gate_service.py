@@ -50,6 +50,8 @@ class StrategyProfitabilityGateConfig:
     strategy_correlation_warning_threshold: float = 0.8
     strategy_correlation_metric: str = "net_return"
     daily_entry_warning_threshold: int = 5
+    opening_entry_warning_threshold: int = 3
+    closing_entry_warning_threshold: int = 3
     consecutive_loss_warning_threshold: int = 3
 
 
@@ -104,6 +106,8 @@ def evaluate_strategy_profitability_gate(
     entry_pressure = compute_portfolio_entry_pressure_summary(
         all_records,
         daily_entry_warning_threshold=cfg.daily_entry_warning_threshold,
+        opening_entry_warning_threshold=cfg.opening_entry_warning_threshold,
+        closing_entry_warning_threshold=cfg.closing_entry_warning_threshold,
     )
     cooldown = compute_portfolio_cooldown_summary(
         sold_records,
