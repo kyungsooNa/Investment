@@ -357,6 +357,8 @@ async def test_period_runner_applies_position_sizing_qty_before_execution():
     assert result.execution_reports[0].order.qty == 1
     assert result.journal_records[0]["qty"] == 1
     assert result.portfolio["positions"]["005930"]["qty"] == 1
+    assert result.portfolio["concentration"]["max_position"]["code"] == "005930"
+    assert result.portfolio["concentration"]["total_exposure_pct"] > 0
 
 
 @pytest.mark.asyncio

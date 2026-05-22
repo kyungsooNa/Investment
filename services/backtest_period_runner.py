@@ -23,6 +23,7 @@ from services.backtest_execution_simulator import (
     OrderSide,
     OrderType,
 )
+from services.portfolio_concentration_service import compute_portfolio_concentration_summary
 
 
 class BacktestBarProvider(Protocol):
@@ -68,6 +69,9 @@ class BacktestPeriodRunnerConfig:
     max_positions_per_strategy: dict[str, int] | None = None
     default_qty: int = 1
     execution_bar_policy: BacktestExecutionBarPolicy | str = BacktestExecutionBarPolicy.CURRENT_BAR
+    warn_total_exposure_pct: float | None = 80.0
+    warn_position_concentration_pct: float | None = 20.0
+    warn_strategy_concentration_pct: float | None = 40.0
 
 
 @dataclass
@@ -453,21 +457,29 @@ class BacktestPeriodRunner:
         }
 
     def _portfolio_summary(self) -> dict:
+        positions = {
+            code: {
+                "qty": position.qty,
+                "avg_price": position.avg_price,
+                "strategy": position.strategy,
+                "total_cost": position.total_cost,
+            }
+            for code, position in self._ledger.positions.items()
+        }
         return {
             "initial_cash": self._ledger.initial_cash,
             "cash": self._ledger.cash,
             "reserved_cash": self._ledger.reserved_cash,
             "available_cash": self._ledger.available_cash,
             "realized_net_pnl": self._ledger.realized_net_pnl,
-            "positions": {
-                code: {
-                    "qty": position.qty,
-                    "avg_price": position.avg_price,
-                    "strategy": position.strategy,
-                    "total_cost": position.total_cost,
-                }
-                for code, position in self._ledger.positions.items()
-            },
+            "positions": positions,
+            "concentration": compute_portfolio_concentration_summary(
+                positions,
+                capital_basis=self._ledger.initial_cash,
+                warn_total_exposure_pct=self._config.warn_total_exposure_pct,
+                warn_position_concentration_pct=self._config.warn_position_concentration_pct,
+                warn_strategy_concentration_pct=self._config.warn_strategy_concentration_pct,
+            ),
         }
 
     def _set_backtest_date(self, date_ymd: str) -> None:
