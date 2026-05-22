@@ -256,12 +256,6 @@ class ExecutionQualityReporter:
             cfg.warn_avg_first_fill_latency_sec,
             cfg.candidate_avg_first_fill_latency_sec,
         )
-        _add(
-            "unfilled_ratio_pct",
-            event.get("unfilled_ratio_pct"),
-            cfg.warn_avg_unfilled_ratio_pct,
-            cfg.candidate_avg_unfilled_ratio_pct,
-        )
         if event.get("state") in {OrderState.CANCELED.value, OrderState.REJECTED.value}:
             _add(
                 "incomplete_fill_ratio_pct",
