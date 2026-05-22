@@ -109,3 +109,86 @@ def test_profitability_gate_fails_on_profitability_drawdown_monte_carlo_and_regi
     assert "monte_carlo_worst_mdd_pct_above" in s1["blocking_reasons"]
     assert "regime_BEAR_negative_pnl" in s1["blocking_reasons"]
     assert result["summary"]["fail_count"] == 1
+
+
+def test_profitability_gate_blocks_on_parameter_stability_cliff():
+    records = [
+        _sold(120, 2.0, signal_time="2026-05-01"),
+        _sold(-20, -0.2, signal_time="2026-05-02"),
+    ]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=2,
+        min_profit_factor=1.0,
+        min_payoff_ratio=1.0,
+        min_win_rate=0.5,
+        min_avg_net_return=0.0,
+        max_mdd_pct=10.0,
+        capital_base_won=1_000,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+    )
+    parameter_stability = {
+        "summary": {
+            "dimensions": {
+                "pp_ma_proximity_upper_pct": {
+                    "stability": {
+                        "flag": "cliff",
+                        "reason": "neighbor_sign_flip_or_steep_drop",
+                    }
+                }
+            }
+        }
+    }
+
+    result = evaluate_strategy_profitability_gate(
+        records,
+        cfg,
+        parameter_stability=parameter_stability,
+    )
+
+    s1 = result["strategies"]["S1"]
+    assert s1["status"] == "fail"
+    assert "parameter_stability_cliff:pp_ma_proximity_upper_pct" in s1["blocking_reasons"]
+    assert s1["parameter_stability"]["blocked_flags"] == ["cliff", "spike"]
+    assert s1["parameter_stability"]["issues"] == [
+        {
+            "dimension": "pp_ma_proximity_upper_pct",
+            "flag": "cliff",
+            "reason": "neighbor_sign_flip_or_steep_drop",
+        }
+    ]
+
+
+def test_profitability_gate_can_leave_parameter_stability_as_report_only():
+    records = [
+        _sold(120, 2.0, signal_time="2026-05-01"),
+        _sold(-20, -0.2, signal_time="2026-05-02"),
+    ]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=2,
+        min_profit_factor=1.0,
+        min_payoff_ratio=1.0,
+        min_win_rate=0.5,
+        min_avg_net_return=0.0,
+        max_mdd_pct=10.0,
+        capital_base_won=1_000,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        block_parameter_stability_flags=(),
+    )
+
+    result = evaluate_strategy_profitability_gate(
+        records,
+        cfg,
+        parameter_stability={
+            "summary": {
+                "dimensions": {
+                    "pp_ma_proximity_upper_pct": {"stability": {"flag": "cliff"}}
+                }
+            }
+        },
+    )
+
+    assert result["strategies"]["S1"]["status"] == "pass"

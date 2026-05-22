@@ -583,6 +583,7 @@ def _run_profitability_gate_for_result(result, app_config: Any, *, initial_cash:
             getattr(result, "journal_records", []) or [],
             gate_config,
             monte_carlo=getattr(result, "monte_carlo", None),
+            parameter_stability=getattr(result, "parameter_stability", None),
         ),
     )
 
@@ -1157,8 +1158,6 @@ async def _run(args: argparse.Namespace) -> None:
             result = await make_runner().run(dates)
             if args.monte_carlo:
                 _run_monte_carlo_for_result(result, args)
-            if args.profitability_gate:
-                _run_profitability_gate_for_result(result, app_config, initial_cash=args.initial_cash)
             if args.ablation:
                 if args.strategy != args.ablation:
                     raise ValueError(
@@ -1188,6 +1187,8 @@ async def _run(args: argparse.Namespace) -> None:
                 await _run_parameter_stability_for_result(
                     result, args, run_variant_fn=_stability_variant_runner
                 )
+            if args.profitability_gate:
+                _run_profitability_gate_for_result(result, app_config, initial_cash=args.initial_cash)
             rendered = _format_json(result) if args.output == "json" else _format_console(result)
 
     if args.output_file:
