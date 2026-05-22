@@ -158,8 +158,10 @@
 
 ### 1-1. 과최적화 방지 검증
 
-- [ ] 전략별 ablation test를 추가한다.
+- [~] 전략별 ablation test를 추가한다.
   - 예: O'Neil PP/BGU의 smart money, execution strength, market timing, BGU/PP 조건을 하나씩 제거해 실제 기여도를 확인한다.
+  - 완료된 부분: `services/strategy_ablation_service.py`(`AblationVariant`/`AblationPreset`/`apply_config_overrides`/`ForceMarketTimingOkUniverseWrapper`/`compute_ablation_summary`)와 `strategies/oneil_pocket_pivot_ablation.py` preset(5 variant: `disable_smart_money`, `disable_execution_strength`, `disable_market_timing`, `pp_only`, `bgu_only`) 추가. `scripts/run_backtest.py`에 `--ablation`/`--ablation-variants` 옵션과 baseline 대비 metric delta 출력(console/JSON) 연결.
+  - 남은 작업: 나머지 6개 활성 전략(OSB, HTF, FirstPullback, RSI2, LarryVBO, LarryCB)의 preset 추가.
 - [ ] parameter stability surface를 리포트한다.
   - 특정 임계값 하나에서만 성과가 튀는 전략은 실전 후보에서 제외하거나 canary로만 둔다.
 - [ ] purged/embargo cross-validation 또는 종목·기간 누수 방지 규칙을 walk-forward 검증에 추가할지 검토한다.
