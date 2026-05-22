@@ -217,6 +217,17 @@ class StrategyProfitabilityGateConfig(BaseModel):
     multiple_testing_min_trials: int = 5
     multiple_testing_top_to_median_warning_ratio: float = 3.0
     multiple_testing_primary_metric: str = "total_net_pnl"
+    strategy_correlation_min_overlap: int = 5
+    strategy_correlation_warning_threshold: float = 0.8
+    strategy_correlation_metric: str = "net_return"
+    market_beta_min_overlap: int = 5
+    market_beta_warning_threshold: float = 1.5
+    market_beta_metric: str = "net_return"
+    market_beta_benchmark_metric: str = "market_return"
+    daily_entry_warning_threshold: int = 5
+    opening_entry_warning_threshold: int = 3
+    closing_entry_warning_threshold: int = 3
+    consecutive_loss_warning_threshold: int = 3
 
     model_config = {"extra": "allow"}
 

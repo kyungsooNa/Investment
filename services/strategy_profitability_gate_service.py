@@ -13,8 +13,12 @@ from services.regime_performance_service import (
     compute_performance_by_regime,
     compute_regime_balance_summary,
 )
+from services.market_beta_service import compute_market_beta_summary
 from services.strategy_performance_degradation_service import compute_strategy_window_metrics
 from services.multiple_testing_bias_service import compute_multiple_testing_bias_summary
+from services.portfolio_cooldown_service import compute_portfolio_cooldown_summary
+from services.portfolio_entry_pressure_service import compute_portfolio_entry_pressure_summary
+from services.strategy_correlation_service import compute_strategy_correlation_summary
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,17 @@ class StrategyProfitabilityGateConfig:
     multiple_testing_min_trials: int = 5
     multiple_testing_top_to_median_warning_ratio: float = 3.0
     multiple_testing_primary_metric: str = "total_net_pnl"
+    strategy_correlation_min_overlap: int = 5
+    strategy_correlation_warning_threshold: float = 0.8
+    strategy_correlation_metric: str = "net_return"
+    market_beta_min_overlap: int = 5
+    market_beta_warning_threshold: float = 1.5
+    market_beta_metric: str = "net_return"
+    market_beta_benchmark_metric: str = "market_return"
+    daily_entry_warning_threshold: int = 5
+    opening_entry_warning_threshold: int = 3
+    closing_entry_warning_threshold: int = 3
+    consecutive_loss_warning_threshold: int = 3
 
 
 def evaluate_strategy_profitability_gate(
@@ -54,8 +69,9 @@ def evaluate_strategy_profitability_gate(
 ) -> dict[str, Any]:
     """Evaluate whether each strategy clears the live-expansion baseline."""
     cfg = config or StrategyProfitabilityGateConfig()
+    all_records = list(records)
     sold_records = [
-        record for record in records
+        record for record in all_records
         if str(record.get("status") or "").upper() == "SOLD"
         and str(record.get("strategy") or "").strip()
     ]
@@ -86,11 +102,36 @@ def evaluate_strategy_profitability_gate(
         top_to_median_warning_ratio=cfg.multiple_testing_top_to_median_warning_ratio,
         primary_metric=cfg.multiple_testing_primary_metric,
     )
-    warnings = (
-        ["multiple_testing_bias_warning"]
-        if multiple_testing_bias.get("bias_warning")
-        else []
+    strategy_correlation = compute_strategy_correlation_summary(
+        sold_records,
+        min_overlap=cfg.strategy_correlation_min_overlap,
+        warning_threshold=cfg.strategy_correlation_warning_threshold,
+        metric=cfg.strategy_correlation_metric,
     )
+    market_beta = compute_market_beta_summary(
+        sold_records,
+        min_overlap=cfg.market_beta_min_overlap,
+        warning_threshold=cfg.market_beta_warning_threshold,
+        metric=cfg.market_beta_metric,
+        benchmark_metric=cfg.market_beta_benchmark_metric,
+    )
+    entry_pressure = compute_portfolio_entry_pressure_summary(
+        all_records,
+        daily_entry_warning_threshold=cfg.daily_entry_warning_threshold,
+        opening_entry_warning_threshold=cfg.opening_entry_warning_threshold,
+        closing_entry_warning_threshold=cfg.closing_entry_warning_threshold,
+    )
+    cooldown = compute_portfolio_cooldown_summary(
+        sold_records,
+        consecutive_loss_warning_threshold=cfg.consecutive_loss_warning_threshold,
+    )
+    warnings = []
+    if multiple_testing_bias.get("bias_warning"):
+        warnings.append("multiple_testing_bias_warning")
+    warnings.extend(strategy_correlation.get("warnings") or [])
+    warnings.extend(market_beta.get("warnings") or [])
+    warnings.extend(entry_pressure.get("warnings") or [])
+    warnings.extend(cooldown.get("warnings") or [])
     return {
         "config": _config_to_dict(cfg),
         "summary": {
@@ -101,6 +142,10 @@ def evaluate_strategy_profitability_gate(
         },
         "warnings": warnings,
         "multiple_testing_bias": multiple_testing_bias,
+        "strategy_correlation": strategy_correlation,
+        "market_beta": market_beta,
+        "entry_pressure": entry_pressure,
+        "cooldown": cooldown,
         "strategies": by_strategy,
     }
 

@@ -269,3 +269,174 @@ def test_profitability_gate_reports_multiple_testing_bias_warning():
     assert "multiple_testing_bias_warning" in result["warnings"]
     assert result["multiple_testing_bias"]["bias_warning"] is True
     assert result["multiple_testing_bias"]["best_strategy"] == "S1"
+
+
+def test_profitability_gate_reports_strategy_correlation_warning():
+    records = []
+    for day, s1_ret, s2_ret in [
+        ("2026-05-01", 1.0, 2.0),
+        ("2026-05-02", 2.0, 4.0),
+        ("2026-05-03", 3.0, 6.0),
+    ]:
+        records.append(_sold(100, s1_ret, strategy="S1", signal_time=day))
+        records.append(_sold(100, s2_ret, strategy="S2", signal_time=day))
+
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=3,
+        min_profit_factor=None,
+        min_payoff_ratio=None,
+        min_win_rate=0.0,
+        min_avg_net_return=None,
+        require_positive_total_net_pnl=False,
+        max_mdd_pct=None,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+        strategy_correlation_min_overlap=3,
+        strategy_correlation_warning_threshold=0.9,
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    assert "strategy_correlation_high" in result["warnings"]
+    assert result["strategy_correlation"]["max_positive_pair"]["left"] == "S1"
+    assert result["strategy_correlation"]["max_positive_pair"]["right"] == "S2"
+
+
+def test_profitability_gate_reports_market_beta_warning():
+    records = [
+        {
+            "status": "SOLD",
+            "strategy": "S1",
+            "signal_time": "2026-05-01",
+            "net_pnl": 100,
+            "net_return": 2.0,
+            "market_return": 1.0,
+        },
+        {
+            "status": "SOLD",
+            "strategy": "S1",
+            "signal_time": "2026-05-02",
+            "net_pnl": 200,
+            "net_return": 4.0,
+            "market_return": 2.0,
+        },
+        {
+            "status": "SOLD",
+            "strategy": "S1",
+            "signal_time": "2026-05-03",
+            "net_pnl": 300,
+            "net_return": 6.0,
+            "market_return": 3.0,
+        },
+    ]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=3,
+        min_profit_factor=None,
+        min_payoff_ratio=None,
+        min_win_rate=None,
+        min_avg_net_return=None,
+        require_positive_total_net_pnl=False,
+        max_mdd_pct=None,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+        market_beta_min_overlap=3,
+        market_beta_warning_threshold=1.5,
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    assert "portfolio_market_beta_high" in result["warnings"]
+    assert "strategy_market_beta_high" in result["warnings"]
+    assert result["market_beta"]["portfolio"]["beta"] == pytest.approx(2.0)
+    assert result["market_beta"]["high_beta_strategies"][0]["strategy"] == "S1"
+
+
+def test_profitability_gate_reports_daily_entry_pressure_warning():
+    records = [
+        {"status": "FILLED", "side": "BUY", "strategy": "S1", "signal_time": "2026-05-01 09:00:00"},
+        {"status": "FILLED", "side": "BUY", "strategy": "S2", "signal_time": "2026-05-01 09:01:00"},
+        {"status": "FILLED", "side": "BUY", "strategy": "S3", "signal_time": "2026-05-01 09:02:00"},
+        _sold(100, 1.0, strategy="S1", signal_time="2026-05-02"),
+    ]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=1,
+        min_profit_factor=None,
+        min_payoff_ratio=None,
+        min_win_rate=0.0,
+        min_avg_net_return=None,
+        require_positive_total_net_pnl=False,
+        max_mdd_pct=None,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+        daily_entry_warning_threshold=3,
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    assert "portfolio_daily_entry_pressure_high" in result["warnings"]
+    assert result["entry_pressure"]["max_daily_entry_date"] == "2026-05-01"
+    assert result["entry_pressure"]["max_daily_entry_count"] == 3
+
+
+def test_profitability_gate_reports_intraday_entry_pressure_warning():
+    records = [
+        {"status": "FILLED", "side": "BUY", "strategy": "S1", "signal_time": "2026-05-01 14:30:00"},
+        {"status": "FILLED", "side": "BUY", "strategy": "S2", "signal_time": "2026-05-01 15:00:00"},
+        _sold(100, 1.0, strategy="S1", signal_time="2026-05-02"),
+    ]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=1,
+        min_profit_factor=None,
+        min_payoff_ratio=None,
+        min_win_rate=0.0,
+        min_avg_net_return=None,
+        require_positive_total_net_pnl=False,
+        max_mdd_pct=None,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+        daily_entry_warning_threshold=5,
+        opening_entry_warning_threshold=3,
+        closing_entry_warning_threshold=2,
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    assert "portfolio_closing_entry_pressure_high" in result["warnings"]
+    assert result["entry_pressure"]["intraday_windows"]["closing"]["max_entry_count"] == 2
+    assert result["entry_pressure"]["intraday_windows"]["closing"]["max_entry_date"] == "2026-05-01"
+
+
+def test_profitability_gate_reports_consecutive_loss_cooldown_candidate():
+    records = [
+        _sold(-100, -1.0, strategy="S1", signal_time="2026-05-01"),
+        _sold(-50, -0.5, strategy="S1", signal_time="2026-05-02"),
+        _sold(-30, -0.3, strategy="S1", signal_time="2026-05-03"),
+    ]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=3,
+        min_profit_factor=None,
+        min_payoff_ratio=None,
+        min_win_rate=0.0,
+        min_avg_net_return=None,
+        require_positive_total_net_pnl=False,
+        max_mdd_pct=None,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+        consecutive_loss_warning_threshold=3,
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    assert "portfolio_consecutive_loss_cooldown_candidate" in result["warnings"]
+    assert result["cooldown"]["candidates"][0]["strategy"] == "S1"
+    assert result["cooldown"]["candidates"][0]["max_consecutive_losses"] == 3

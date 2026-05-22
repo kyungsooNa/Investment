@@ -352,3 +352,46 @@ class TestStrategyDebugRunner:
         assert report.journal_records[0]["status"] == "SIGNAL"
         assert report.journal_records[0]["decision_reason"] == "pocket_pivot"
         assert ledger.reserved_cash > 70_000
+
+    async def test_debug_runner_records_portfolio_overlap_warnings_in_journal_metadata(self):
+        signals = [
+            TradeSignal(
+                code="005930",
+                name="삼성전자",
+                action="BUY",
+                price=70_000,
+                qty=1,
+                reason="pocket_pivot",
+                strategy_name="OneilPocketPivot",
+            ),
+            TradeSignal(
+                code="005930",
+                name="삼성전자",
+                action="BUY",
+                price=71_000,
+                qty=1,
+                reason="bgu",
+                strategy_name="OneilPocketPivot",
+            ),
+        ]
+        strategy = _make_strategy(
+            watchlist={"005930": _make_watchlist_item("005930")},
+            signals=signals,
+        )
+        strategy.name = "OneilPocketPivot"
+        ledger = BacktestPortfolioLedger(initial_cash=1_000_000)
+        runner = StrategyDebugRunner(
+            strategy,
+            _make_debug_logger(),
+            backtest_portfolio_ledger=ledger,
+            target_date="20260505",
+        )
+
+        report = await runner.run(candidate_codes=["005930"])
+
+        assert [decision.warnings for decision in report.portfolio_decisions] == [
+            ("same_code_batch_signal",),
+            ("same_code_batch_signal",),
+        ]
+        assert report.journal_records[0]["metadata"]["portfolio_warnings"] == ["same_code_batch_signal"]
+        assert report.journal_records[1]["metadata"]["portfolio_warnings"] == ["same_code_batch_signal"]

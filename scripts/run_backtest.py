@@ -535,6 +535,93 @@ def _format_profitability_gate_console_lines(result: dict[str, Any]) -> list[str
                 ratio=ratio_str,
             )
         )
+    correlation = result.get("strategy_correlation") or {}
+    max_pair = correlation.get("max_positive_pair") or {}
+    if max_pair and (
+        correlation.get("warnings")
+        or "strategy_correlation_high" in warnings
+    ):
+        corr = max_pair.get("correlation")
+        corr_str = f"{corr:.2f}" if isinstance(corr, (int, float)) else "n/a"
+        lines.append(
+            "strategy-correlation max={left}/{right} corr={corr} overlap={overlap}".format(
+                left=max_pair.get("left") or "n/a",
+                right=max_pair.get("right") or "n/a",
+                corr=corr_str,
+                overlap=max_pair.get("overlap", 0),
+            )
+        )
+    market_beta = result.get("market_beta") or {}
+    if market_beta and (
+        market_beta.get("warnings")
+        or "portfolio_market_beta_high" in warnings
+        or "strategy_market_beta_high" in warnings
+    ):
+        threshold = market_beta.get("warning_threshold")
+        threshold_str = f"{threshold:.2f}" if isinstance(threshold, (int, float)) else "n/a"
+        portfolio_beta = (market_beta.get("portfolio") or {}).get("beta")
+        if portfolio_beta is not None:
+            lines.append(
+                "market-beta portfolio beta={beta} overlap={overlap} threshold={threshold}".format(
+                    beta=f"{portfolio_beta:.2f}" if isinstance(portfolio_beta, (int, float)) else "n/a",
+                    overlap=(market_beta.get("portfolio") or {}).get("overlap", 0),
+                    threshold=threshold_str,
+                )
+            )
+        for item in market_beta.get("high_beta_strategies") or []:
+            beta = item.get("beta")
+            lines.append(
+                "market-beta strategy={strategy} beta={beta} overlap={overlap} threshold={threshold}".format(
+                    strategy=item.get("strategy") or "n/a",
+                    beta=f"{beta:.2f}" if isinstance(beta, (int, float)) else "n/a",
+                    overlap=item.get("overlap", 0),
+                    threshold=threshold_str,
+                )
+            )
+    entry_pressure = result.get("entry_pressure") or {}
+    if entry_pressure and (
+        entry_pressure.get("warnings")
+        or "portfolio_daily_entry_pressure_high" in warnings
+    ):
+        lines.append(
+            "entry-pressure max_date={date} entries={count} threshold={threshold}".format(
+                date=entry_pressure.get("max_daily_entry_date") or "n/a",
+                count=entry_pressure.get("max_daily_entry_count", 0),
+                threshold=entry_pressure.get("daily_entry_warning_threshold", 0),
+            )
+        )
+        intraday_windows = entry_pressure.get("intraday_windows") or {}
+        for window_name in ("opening", "closing"):
+            window = intraday_windows.get(window_name) or {}
+            threshold = int(window.get("entry_warning_threshold") or 0)
+            count = int(window.get("max_entry_count") or 0)
+            if threshold > 0 and count >= threshold:
+                lines.append(
+                    "entry-pressure {window} max_date={date} entries={count} "
+                    "threshold={threshold}".format(
+                        window=window_name,
+                        date=window.get("max_entry_date") or "n/a",
+                        count=count,
+                        threshold=threshold,
+                    )
+                )
+    cooldown = result.get("cooldown") or {}
+    if cooldown and (
+        cooldown.get("warnings")
+        or "portfolio_consecutive_loss_cooldown_candidate" in warnings
+    ):
+        threshold = cooldown.get("consecutive_loss_warning_threshold", 0)
+        for candidate in cooldown.get("candidates") or []:
+            lines.append(
+                "cooldown-candidate strategy={strategy} losses={losses} "
+                "current={current} threshold={threshold} latest={latest}".format(
+                    strategy=candidate.get("strategy") or "n/a",
+                    losses=candidate.get("max_consecutive_losses", 0),
+                    current=candidate.get("current_consecutive_losses", 0),
+                    threshold=threshold,
+                    latest=candidate.get("latest_loss_date") or "n/a",
+                )
+            )
     for strategy, item in sorted((result.get("strategies") or {}).items()):
         reasons = item.get("blocking_reasons") or []
         warnings = item.get("warnings") or []
