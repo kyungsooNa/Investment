@@ -16,6 +16,7 @@ class BacktestWalkForwardConfig:
     tune_size: int
     test_size: int
     step_size: int | None = None
+    embargo_days: int = 0
 
     def __post_init__(self) -> None:
         for field_name in ("train_size", "tune_size", "test_size"):
@@ -23,6 +24,8 @@ class BacktestWalkForwardConfig:
                 raise ValueError(f"{field_name} must be positive")
         if self.step_size is not None and self.step_size <= 0:
             raise ValueError("step_size must be positive")
+        if self.embargo_days < 0:
+            raise ValueError("embargo_days must be zero or positive")
 
     @property
     def normalized_step_size(self) -> int:
@@ -59,11 +62,12 @@ def build_walk_forward_segments(
     start = 0
     min_train_tune_end = config.train_size + config.tune_size
 
-    while start + min_train_tune_end < len(ordered_dates):
+    while start + min_train_tune_end + config.embargo_days < len(ordered_dates):
         train_end = start + config.train_size
         tune_end = train_end + config.tune_size
-        test_end = min(tune_end + config.test_size, len(ordered_dates))
-        test_dates = ordered_dates[tune_end:test_end]
+        test_start = tune_end + config.embargo_days
+        test_end = min(test_start + config.test_size, len(ordered_dates))
+        test_dates = ordered_dates[test_start:test_end]
         if not test_dates:
             break
 
@@ -131,6 +135,7 @@ class BacktestWalkForwardRunner:
 
         return {
             "segment_count": len(segments),
+            "embargo_days": self._config.embargo_days,
             "train_days": sum(len(segment.train_dates) for segment in segments),
             "tune_days": sum(len(segment.tune_dates) for segment in segments),
             "test_days": sum(len(segment.test_dates) for segment in segments),

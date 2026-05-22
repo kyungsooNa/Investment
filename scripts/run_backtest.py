@@ -77,6 +77,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--wf-test-days", type=int, default=5, dest="wf_test_days")
     parser.add_argument("--wf-step-days", type=int, default=None, dest="wf_step_days")
     parser.add_argument(
+        "--wf-embargo-days",
+        type=int,
+        default=0,
+        dest="wf_embargo_days",
+        help="walk-forward tune/test 경계 사이에 제외할 거래일 수 (default: 0)",
+    )
+    parser.add_argument(
         "--monte-carlo",
         action="store_true",
         default=False,
@@ -466,6 +473,7 @@ def _format_walk_forward_console(result) -> str:
     lines = [
         "[WALK-FORWARD BACKTEST RESULT]",
         f"구간 수: {summary.get('segment_count', 0)}",
+        f"embargo 일수: {summary.get('embargo_days', 0)}",
         f"train 일수 합계: {summary.get('train_days', 0)}",
         f"tune 일수 합계: {summary.get('tune_days', 0)}",
         f"test 일수 합계: {summary.get('test_days', 0)}",
@@ -1133,6 +1141,7 @@ async def _run(args: argparse.Namespace) -> None:
                 tune_size=args.wf_tune_days,
                 test_size=args.wf_test_days,
                 step_size=args.wf_step_days,
+                embargo_days=args.wf_embargo_days,
             )
 
             def runner_factory(phase: str, segment):

@@ -168,7 +168,8 @@
   - 완료된 부분: 활성 7개 전략 전부에 `strategies/<key>_parameter_stability.py` preset(각 3 dimension × 5 sweep 점) 추가 — `oneil_pocket_pivot`(pp_ma_proximity_upper_pct/bgu_gap_pct/execution_strength_min), `oneil_squeeze_breakout`(volume_breakout_multiplier/execution_strength_min/osb_max_extension_pct), `high_tight_flag`(pole_min_surge_ratio/flag_max_drawdown_pct/volume_breakout_multiplier), `first_pullback`(pullback_upper_pct/rapid_surge_pct/execution_strength_min), `larry_williams_vbo`(k_value/confidence_threshold/program_buy_ratio), `rsi2_pullback`(rsi_threshold/hard_stop_pct/take_profit_ma_period), `larry_williams_channel_breakout`(adx_threshold/volume_multiplier/rs_rating_min).
   - 완료된 부분: `scripts/run_backtest.py` 에 `--parameter-stability`/`--parameter-stability-dimensions` 옵션, sweep 점마다 `AblationVariant(config_overrides={dim.parameter: value})` 를 합성해 기존 `make_runner(variant=...)` 재사용. console/JSON 출력에 baseline 대비 dimension 별 metric 표 + stability flag 노출.
   - 완료된 부분: hard gate 통합 — `strategy_profitability_gate` 가 parameter stability summary의 `spike`/`cliff` dimension을 차단 사유(`parameter_stability_<flag>:<dimension>`)로 반영한다. 기본값은 report 결과가 있을 때만 적용하며, `block_parameter_stability_flags=[]` 로 report-only 운용도 가능하다.
-- [ ] purged/embargo cross-validation 또는 종목·기간 누수 방지 규칙을 walk-forward 검증에 추가할지 검토한다.
+- [x] purged/embargo cross-validation 또는 종목·기간 누수 방지 규칙을 walk-forward 검증에 추가할지 검토한다.
+  - 완료된 부분: `BacktestWalkForwardConfig.embargo_days`와 `scripts/run_backtest.py --wf-embargo-days` 옵션을 추가했다. 1차 정책은 tune/test 경계 사이의 N거래일을 test에서 제외해 contiguous 검증 누수를 줄이는 방식이며, 기본값 0은 기존 동작을 유지한다.
 - [ ] Deflated Sharpe / PBO 같은 다중 전략 실험 착시 방지 지표를 도입할지 검토한다.
 - [ ] regime-balanced validation을 추가한다.
   - 상승장 데이터에만 최적화된 전략이 횡보/하락장에서 손실을 키우지 않는지 분리 검증한다.
