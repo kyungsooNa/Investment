@@ -126,6 +126,37 @@ async def test_order_amount_over_limit_blocks_buy():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stock_code", "price", "qty", "strategy_name"),
+    [
+        ("033160", 33_200, 69, "오닐PP/BGU"),
+        ("382800", 8_970, 236, "RSI2눌림목"),
+    ],
+)
+async def test_strategy_sell_over_order_amount_limit_is_allowed(
+    stock_code,
+    price,
+    qty,
+    strategy_name,
+):
+    """전략 손절/익절 SELL 은 포지션 축소이므로 1회 주문 금액 한도에 막히면 안 된다."""
+    svc, _, _ = _service(config=RiskGateConfig(max_order_amount_won=2_000_000))
+
+    result = await svc.validate_order(
+        stock_code,
+        price,
+        qty,
+        OrderSide.SELL,
+        Exchange.KRX,
+        0,
+        source=f"strategy:{strategy_name}",
+        strategy_name=strategy_name,
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_force_exit_sell_bypasses_order_amount_cap():
     svc, _, _ = _service(config=RiskGateConfig(max_order_amount_won=2_000_000))
 

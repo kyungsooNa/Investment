@@ -149,7 +149,9 @@ class RiskGateService:
         if effective_price > 0:
             order_amount = effective_price * qty
             if not is_force_exit_sell:
-                if order_amount > self._cfg.max_order_amount_won:
+                # 1회 주문 금액 한도는 신규 노출을 늘리는 BUY에만 적용한다.
+                # SELL은 손절/익절 청산 경로라 금액 한도로 막으면 리스크가 더 커질 수 있다.
+                if side == OrderSide.BUY and order_amount > self._cfg.max_order_amount_won:
                     return self._blocked(
                         "max_order_amount",
                         "주문 금액 초과",
