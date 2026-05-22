@@ -108,6 +108,13 @@ def test_app_config_defaults_to_paper_trading_when_omitted():
         "cliff",
     ]
     assert config.strategy_profitability_gate.require_parameter_stability is False
+    assert config.strategy_profitability_gate.regime_balance_required_buckets == [
+        "KOSPI_BULL",
+        "KOSDAQ_BULL",
+        "SIDEWAYS",
+        "BEAR",
+    ]
+    assert config.strategy_profitability_gate.regime_balance_min_trades == 5
     assert config.data_quality.violation_alert_threshold == 5
     assert config.data_quality.violation_alert_window_sec == 60.0
 

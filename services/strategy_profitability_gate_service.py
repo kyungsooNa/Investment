@@ -9,7 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
-from services.regime_performance_service import compute_performance_by_regime
+from services.regime_performance_service import (
+    compute_performance_by_regime,
+    compute_regime_balance_summary,
+)
 from services.strategy_performance_degradation_service import compute_strategy_window_metrics
 
 
@@ -29,6 +32,13 @@ class StrategyProfitabilityGateConfig:
     require_non_negative_regime_pnl: bool = True
     block_parameter_stability_flags: Sequence[str] = ("spike", "cliff")
     require_parameter_stability: bool = False
+    regime_balance_required_buckets: Sequence[str] = (
+        "KOSPI_BULL",
+        "KOSDAQ_BULL",
+        "SIDEWAYS",
+        "BEAR",
+    )
+    regime_balance_min_trades: int = 5
 
 
 def evaluate_strategy_profitability_gate(
@@ -111,6 +121,8 @@ def _evaluate_one_strategy(
     _append_monte_carlo_failures(monte_carlo, cfg, blocking_reasons, warnings)
     regime_performance = compute_performance_by_regime(records)
     _append_regime_failures(regime_performance, cfg, blocking_reasons)
+    regime_balance = _compute_regime_balance_gate(regime_performance, cfg)
+    warnings.extend(regime_balance["warnings"])
     stability_gate = _extract_parameter_stability_gate(parameter_stability, cfg)
     blocking_reasons.extend(stability_gate["blocking_reasons"])
     warnings.extend(stability_gate["warnings"])
@@ -122,6 +134,7 @@ def _evaluate_one_strategy(
         blocking_reasons=blocking_reasons,
         warnings=warnings,
         regime_performance=regime_performance,
+        regime_balance=regime_balance,
         parameter_stability=stability_gate,
     )
 
@@ -209,6 +222,31 @@ def _append_regime_failures(
             blocking_reasons.append(f"regime_{bucket}_negative_pnl")
 
 
+def _compute_regime_balance_gate(
+    regime_performance: Mapping[str, Mapping[str, Any]],
+    cfg: StrategyProfitabilityGateConfig,
+) -> dict[str, Any]:
+    required = tuple(cfg.regime_balance_required_buckets or ())
+    if not required:
+        return {
+            "enabled": False,
+            "balanced_pass": True,
+            "warnings": [],
+        }
+
+    summary = compute_regime_balance_summary(
+        regime_performance,
+        required_buckets=required,
+        min_trades_per_bucket=cfg.regime_balance_min_trades,
+    )
+    warnings = [] if summary["balanced_pass"] else ["regime_balance_incomplete"]
+    return {
+        "enabled": True,
+        **summary,
+        "warnings": warnings,
+    }
+
+
 def _extract_parameter_stability_gate(
     parameter_stability: Mapping[str, Any] | None,
     cfg: StrategyProfitabilityGateConfig,
@@ -280,6 +318,7 @@ def _decision(
     blocking_reasons: list[str],
     warnings: list[str],
     regime_performance: Mapping[str, Mapping[str, Any]],
+    regime_balance: Mapping[str, Any] | None = None,
     parameter_stability: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
@@ -290,6 +329,7 @@ def _decision(
         "warnings": warnings,
         "metrics": dict(metrics),
         "regime_performance": dict(regime_performance),
+        "regime_balance": dict(regime_balance or {}),
         "parameter_stability": dict(parameter_stability or {}),
     }
 

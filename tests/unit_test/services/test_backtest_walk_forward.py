@@ -55,6 +55,39 @@ def test_build_walk_forward_segments_defaults_step_to_test_size():
     assert segments[1].test_dates == ["20260106"]
 
 
+def test_build_walk_forward_segments_applies_embargo_between_tune_and_test():
+    dates = [
+        "20260101",
+        "20260102",
+        "20260103",
+        "20260104",
+        "20260105",
+        "20260106",
+        "20260107",
+        "20260108",
+    ]
+
+    segments = build_walk_forward_segments(
+        dates,
+        BacktestWalkForwardConfig(
+            train_size=2,
+            tune_size=1,
+            test_size=1,
+            step_size=1,
+            embargo_days=1,
+        ),
+    )
+
+    assert len(segments) == 4
+    assert segments[0].train_dates == ["20260101", "20260102"]
+    assert segments[0].tune_dates == ["20260103"]
+    # 20260104 is embargoed, so test starts at 20260105.
+    assert segments[0].test_dates == ["20260105"]
+    assert segments[1].train_dates == ["20260102", "20260103"]
+    assert segments[1].tune_dates == ["20260104"]
+    assert segments[1].test_dates == ["20260106"]
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -62,6 +95,7 @@ def test_build_walk_forward_segments_defaults_step_to_test_size():
         {"train_size": 1, "tune_size": 0, "test_size": 1},
         {"train_size": 1, "tune_size": 1, "test_size": 0},
         {"train_size": 1, "tune_size": 1, "test_size": 1, "step_size": 0},
+        {"train_size": 1, "tune_size": 1, "test_size": 1, "embargo_days": -1},
     ],
 )
 def test_walk_forward_config_rejects_non_positive_sizes(kwargs):
@@ -134,6 +168,7 @@ async def test_walk_forward_summary_aggregates_test_phase_only():
 
     assert result.summary == {
         "segment_count": 2,
+        "embargo_days": 0,
         "train_days": 4,
         "tune_days": 2,
         "test_days": 2,
