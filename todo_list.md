@@ -162,8 +162,12 @@
   - 예: O'Neil PP/BGU의 smart money, execution strength, market timing, BGU/PP 조건을 하나씩 제거해 실제 기여도를 확인한다.
   - 완료된 부분: `services/strategy_ablation_service.py`(`AblationVariant`/`AblationPreset`/`apply_config_overrides`/`ForceMarketTimingOkUniverseWrapper`/`compute_ablation_summary`) 추가. `scripts/run_backtest.py`에 `--ablation`/`--ablation-variants` 옵션과 baseline 대비 metric delta 출력(console/JSON) 연결.
   - 완료된 부분: 활성 7개 전략 전부에 preset 추가 — `oneil_pocket_pivot`(5 variants), `oneil_squeeze_breakout`(4), `high_tight_flag`(5), `first_pullback`(5), `larry_williams_vbo`(4), `rsi2_pullback`(3), `larry_williams_channel_breakout`(4). 각 preset 은 가능하면 `disable_smart_money`/`disable_execution_strength`/`disable_market_timing`/`disable_volume_filter` 패턴을 따르고, 전략 고유 게이트(예: HTF `relax_pattern_check`, FirstPullback `widen_pullback_range`, RSI2 `disable_minervini_stage2`/`disable_rsi_oversold`, CB `disable_adx_filter`/`disable_rs_rating`)는 별도 variant 로 둔다.
-- [ ] parameter stability surface를 리포트한다.
+- [x] parameter stability surface를 리포트한다.
   - 특정 임계값 하나에서만 성과가 튀는 전략은 실전 후보에서 제외하거나 canary로만 둔다.
+  - 완료된 부분: `services/parameter_stability_service.py`(`StabilitySweepDimension`/`StabilitySweepPreset`/`compute_stability_summary`) 추가. baseline 주변 5-point sweep 의 `total_net_pnl` 기준 raw surface 와 `stable`/`spike`/`cliff`/`edge` 분류(가벼운 정책: 인접점 sign-flip 또는 ≥80% 하락 시 cliff, 양쪽 ≥50% 하락 + baseline/이웃평균 ≥2.0 시 spike) 를 출력.
+  - 완료된 부분: 활성 7개 전략 전부에 `strategies/<key>_parameter_stability.py` preset(각 3 dimension × 5 sweep 점) 추가 — `oneil_pocket_pivot`(pp_ma_proximity_upper_pct/bgu_gap_pct/execution_strength_min), `oneil_squeeze_breakout`(volume_breakout_multiplier/execution_strength_min/osb_max_extension_pct), `high_tight_flag`(pole_min_surge_ratio/flag_max_drawdown_pct/volume_breakout_multiplier), `first_pullback`(pullback_upper_pct/rapid_surge_pct/execution_strength_min), `larry_williams_vbo`(k_value/confidence_threshold/program_buy_ratio), `rsi2_pullback`(rsi_threshold/hard_stop_pct/take_profit_ma_period), `larry_williams_channel_breakout`(adx_threshold/volume_multiplier/rs_rating_min).
+  - 완료된 부분: `scripts/run_backtest.py` 에 `--parameter-stability`/`--parameter-stability-dimensions` 옵션, sweep 점마다 `AblationVariant(config_overrides={dim.parameter: value})` 를 합성해 기존 `make_runner(variant=...)` 재사용. console/JSON 출력에 baseline 대비 dimension 별 metric 표 + stability flag 노출.
+  - 후속(별도 PR): hard gate 통합 — `strategy_profitability_gate` 에서 `spike`/`cliff` dimension 이 있는 전략을 실전 확대 차단 입력으로 사용할지 검토.
 - [ ] purged/embargo cross-validation 또는 종목·기간 누수 방지 규칙을 walk-forward 검증에 추가할지 검토한다.
 - [ ] Deflated Sharpe / PBO 같은 다중 전략 실험 착시 방지 지표를 도입할지 검토한다.
 - [ ] regime-balanced validation을 추가한다.
