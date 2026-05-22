@@ -331,3 +331,31 @@ def test_profitability_gate_reports_daily_entry_pressure_warning():
     assert "portfolio_daily_entry_pressure_high" in result["warnings"]
     assert result["entry_pressure"]["max_daily_entry_date"] == "2026-05-01"
     assert result["entry_pressure"]["max_daily_entry_count"] == 3
+
+
+def test_profitability_gate_reports_consecutive_loss_cooldown_candidate():
+    records = [
+        _sold(-100, -1.0, strategy="S1", signal_time="2026-05-01"),
+        _sold(-50, -0.5, strategy="S1", signal_time="2026-05-02"),
+        _sold(-30, -0.3, strategy="S1", signal_time="2026-05-03"),
+    ]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=3,
+        min_profit_factor=None,
+        min_payoff_ratio=None,
+        min_win_rate=0.0,
+        min_avg_net_return=None,
+        require_positive_total_net_pnl=False,
+        max_mdd_pct=None,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+        consecutive_loss_warning_threshold=3,
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    assert "portfolio_consecutive_loss_cooldown_candidate" in result["warnings"]
+    assert result["cooldown"]["candidates"][0]["strategy"] == "S1"
+    assert result["cooldown"]["candidates"][0]["max_consecutive_losses"] == 3

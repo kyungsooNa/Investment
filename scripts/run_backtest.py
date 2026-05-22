@@ -563,6 +563,23 @@ def _format_profitability_gate_console_lines(result: dict[str, Any]) -> list[str
                 threshold=entry_pressure.get("daily_entry_warning_threshold", 0),
             )
         )
+    cooldown = result.get("cooldown") or {}
+    if cooldown and (
+        cooldown.get("warnings")
+        or "portfolio_consecutive_loss_cooldown_candidate" in warnings
+    ):
+        threshold = cooldown.get("consecutive_loss_warning_threshold", 0)
+        for candidate in cooldown.get("candidates") or []:
+            lines.append(
+                "cooldown-candidate strategy={strategy} losses={losses} "
+                "current={current} threshold={threshold} latest={latest}".format(
+                    strategy=candidate.get("strategy") or "n/a",
+                    losses=candidate.get("max_consecutive_losses", 0),
+                    current=candidate.get("current_consecutive_losses", 0),
+                    threshold=threshold,
+                    latest=candidate.get("latest_loss_date") or "n/a",
+                )
+            )
     for strategy, item in sorted((result.get("strategies") or {}).items()):
         reasons = item.get("blocking_reasons") or []
         warnings = item.get("warnings") or []
