@@ -14,6 +14,7 @@ from services.regime_performance_service import (
     compute_regime_balance_summary,
 )
 from services.strategy_performance_degradation_service import compute_strategy_window_metrics
+from services.multiple_testing_bias_service import compute_multiple_testing_bias_summary
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,9 @@ class StrategyProfitabilityGateConfig:
         "BEAR",
     )
     regime_balance_min_trades: int = 5
+    multiple_testing_min_trials: int = 5
+    multiple_testing_top_to_median_warning_ratio: float = 3.0
+    multiple_testing_primary_metric: str = "total_net_pnl"
 
 
 def evaluate_strategy_profitability_gate(
@@ -72,6 +76,21 @@ def evaluate_strategy_profitability_gate(
         )
 
     statuses = [item["status"] for item in by_strategy.values()]
+    metrics_by_strategy = {
+        strategy: item.get("metrics", {})
+        for strategy, item in by_strategy.items()
+    }
+    multiple_testing_bias = compute_multiple_testing_bias_summary(
+        metrics_by_strategy,
+        min_trials=cfg.multiple_testing_min_trials,
+        top_to_median_warning_ratio=cfg.multiple_testing_top_to_median_warning_ratio,
+        primary_metric=cfg.multiple_testing_primary_metric,
+    )
+    warnings = (
+        ["multiple_testing_bias_warning"]
+        if multiple_testing_bias.get("bias_warning")
+        else []
+    )
     return {
         "config": _config_to_dict(cfg),
         "summary": {
@@ -80,6 +99,8 @@ def evaluate_strategy_profitability_gate(
             "fail_count": statuses.count("fail"),
             "insufficient_sample_count": statuses.count("insufficient_sample"),
         },
+        "warnings": warnings,
+        "multiple_testing_bias": multiple_testing_bias,
         "strategies": by_strategy,
     }
 

@@ -214,6 +214,9 @@ class StrategyProfitabilityGateConfig(BaseModel):
         default_factory=lambda: ["KOSPI_BULL", "KOSDAQ_BULL", "SIDEWAYS", "BEAR"]
     )
     regime_balance_min_trades: int = 5
+    multiple_testing_min_trials: int = 5
+    multiple_testing_top_to_median_warning_ratio: float = 3.0
+    multiple_testing_primary_metric: str = "total_net_pnl"
 
     model_config = {"extra": "allow"}
 

@@ -235,3 +235,37 @@ def test_profitability_gate_warns_on_regime_balance_gaps_without_blocking():
         "SIDEWAYS",
         "BEAR",
     ]
+
+
+def test_profitability_gate_reports_multiple_testing_bias_warning():
+    records = []
+    for strategy, pnl in [
+        ("S1", 1_000),
+        ("S2", 100),
+        ("S3", 80),
+        ("S4", 60),
+        ("S5", 40),
+    ]:
+        records.append(_sold(pnl, 1.0, strategy=strategy, signal_time="2026-05-01"))
+
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=1,
+        min_profit_factor=None,
+        min_payoff_ratio=None,
+        min_win_rate=0.0,
+        min_avg_net_return=None,
+        require_positive_total_net_pnl=False,
+        max_mdd_pct=None,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+        multiple_testing_min_trials=5,
+        multiple_testing_top_to_median_warning_ratio=3.0,
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    assert "multiple_testing_bias_warning" in result["warnings"]
+    assert result["multiple_testing_bias"]["bias_warning"] is True
+    assert result["multiple_testing_bias"]["best_strategy"] == "S1"

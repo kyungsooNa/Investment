@@ -332,6 +332,36 @@ def test_format_console_includes_profitability_gate_warnings():
     assert "오닐PP/BGU: pass [warn: regime_balance_incomplete]" in text
 
 
+def test_format_console_includes_profitability_gate_top_level_warnings():
+    result = SimpleNamespace(
+        strategy_name="오닐PP/BGU",
+        dates=["20260501"],
+        execution_reports=[],
+        journal_records=[],
+        saved_journal_run={},
+        portfolio={"cash": 1_000_000, "available_cash": 1_000_000, "positions": {}},
+        profitability_gate={
+            "summary": {"pass_count": 2, "fail_count": 0, "insufficient_sample_count": 0},
+            "warnings": ["multiple_testing_bias_warning"],
+            "multiple_testing_bias": {
+                "bias_warning": True,
+                "trial_count": 5,
+                "best_strategy": "S1",
+                "top_to_median_ratio": 12.5,
+            },
+            "strategies": {
+                "S1": {"status": "pass", "blocking_reasons": [], "warnings": []},
+                "S2": {"status": "pass", "blocking_reasons": [], "warnings": []},
+            },
+        },
+    )
+
+    text = _format_console(result)
+
+    assert "warnings: multiple_testing_bias_warning" in text
+    assert "multiple-testing trials=5 best=S1 top/median=12.50" in text
+
+
 def test_format_walk_forward_console_summarizes_test_windows():
     result = SimpleNamespace(
         summary={
