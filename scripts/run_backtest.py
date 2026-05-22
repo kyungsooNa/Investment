@@ -15,7 +15,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Awaitable, Callable, Iterable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -97,6 +97,20 @@ def _parse_args() -> argparse.Namespace:
         default=False,
         dest="profitability_gate",
         help="전략별 실전 투입 수익성 기준선 통과 여부를 산출",
+    )
+    parser.add_argument(
+        "--ablation",
+        default=None,
+        help=(
+            "Ablation 백테스트 대상 전략 키 (예: oneil_pocket_pivot). 지정하면 baseline "
+            "실행 후 preset 의 각 variant 를 동일 기간/데이터로 재실행해 metric 차이를 출력."
+        ),
+    )
+    parser.add_argument(
+        "--ablation-variants",
+        default=None,
+        dest="ablation_variants",
+        help="실행할 variant 이름 (쉼표 구분). 미지정 시 preset 의 모든 variant 실행.",
     )
     parser.add_argument(
         "--paper",
@@ -211,8 +225,14 @@ def _build_backtest_strategy(
     state_dir: str,
     state_suffix: str = "",
     logger: logging.Logger | None = None,
+    config: Any = None,
 ):
-    """Build an active strategy with replay data and a pinned backtest clock."""
+    """Build an active strategy with replay data and a pinned backtest clock.
+
+    ``config`` is an optional strategy-specific config instance (e.g.
+    ``OneilPocketPivotConfig``). When None, the strategy's default config is
+    used. Ablation runs supply a config built from preset overrides.
+    """
     strategy_logger = logger or logging.getLogger(f"backtest.{strategy_key}")
 
     if strategy_key == "oneil_pocket_pivot":
@@ -224,6 +244,7 @@ def _build_backtest_strategy(
             market_clock=backtest_clock,
             logger=strategy_logger,
             state_file=_state_file(state_dir, strategy_key, state_suffix),
+            config=config,
         )
     if strategy_key == "oneil_squeeze_breakout":
         from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
@@ -370,6 +391,11 @@ def _format_console(result) -> str:
     profitability_gate = getattr(result, "profitability_gate", None)
     if profitability_gate:
         lines.extend(_format_profitability_gate_console_lines(profitability_gate))
+    ablation = getattr(result, "ablation", None)
+    if ablation:
+        lines.extend(
+            _format_ablation_console_lines(ablation["strategy_key"], ablation["summary"])
+        )
     return "\n".join(lines)
 
 
@@ -397,6 +423,7 @@ def _result_to_payload(result) -> dict[str, Any]:
         "execution_bar_policy": getattr(result, "execution_bar_policy", ""),
         "monte_carlo": getattr(result, "monte_carlo", None),
         "profitability_gate": getattr(result, "profitability_gate", None),
+        "ablation": getattr(result, "ablation", None),
     }
 
 
@@ -577,6 +604,152 @@ def _build_profitability_gate_config(app_config: Any, *, initial_cash: float):
     return StrategyProfitabilityGateConfig(**{k: v for k, v in values.items() if k in allowed})
 
 
+def _build_ablation_overrides(
+    *,
+    strategy_key: str,
+    base_universe: Any,
+    variant: Any,
+) -> tuple[Any, Any]:
+    """Return ``(universe, config)`` for the given variant, or pass-throughs.
+
+    When ``variant`` is None, returns ``(base_universe, None)`` so the baseline
+    path is unchanged. When the variant has ``force_market_timing_ok=True``,
+    the universe is wrapped. When the variant has ``config_overrides``, a
+    fresh strategy-specific default config is built and overrides are applied.
+    """
+    if variant is None:
+        return base_universe, None
+    from services.strategy_ablation_service import (
+        ForceMarketTimingOkUniverseWrapper,
+        apply_config_overrides,
+    )
+
+    universe = base_universe
+    if variant.universe_overrides.get("force_market_timing_ok"):
+        universe = ForceMarketTimingOkUniverseWrapper(base_universe)
+
+    config = None
+    if variant.config_overrides:
+        if strategy_key == "oneil_pocket_pivot":
+            from strategies.oneil_common_types import OneilPocketPivotConfig
+
+            config = apply_config_overrides(
+                OneilPocketPivotConfig(), variant.config_overrides
+            )
+        else:
+            raise ValueError(
+                f"Ablation default config not defined for strategy '{strategy_key}'."
+            )
+    return universe, config
+
+
+def _resolve_ablation_preset(strategy_key: str):
+    from services.strategy_ablation_service import AblationPreset
+
+    if strategy_key == "oneil_pocket_pivot":
+        from strategies.oneil_pocket_pivot_ablation import (
+            ONEIL_POCKET_PIVOT_ABLATION_PRESET,
+        )
+        return ONEIL_POCKET_PIVOT_ABLATION_PRESET
+    raise ValueError(
+        f"Ablation preset 이 정의되지 않은 전략입니다: '{strategy_key}'. "
+        f"현재 지원: oneil_pocket_pivot"
+    )
+
+
+def _filter_ablation_variants(preset, names: Optional[str]):
+    if not names:
+        return preset.variants
+    name_set = {n.strip() for n in str(names).split(",") if n.strip()}
+    known = {v.name for v in preset.variants}
+    unknown = name_set - known
+    if unknown:
+        raise ValueError(
+            f"{preset.strategy_key} 에 정의되지 않은 ablation variant: {sorted(unknown)}. "
+            f"사용 가능: {sorted(known)}"
+        )
+    # Preserve preset variant order (deterministic)
+    return tuple(v for v in preset.variants if v.name in name_set)
+
+
+async def _run_ablation_for_result(
+    result,
+    args: argparse.Namespace,
+    *,
+    run_variant_fn: Callable[[Any], Awaitable[Any]],
+) -> None:
+    """Run each variant via ``run_variant_fn`` and attach summary to ``result``.
+
+    ``run_variant_fn`` is supplied by the script's ``_run`` so the variant runner
+    can reuse the same dates, ledger, simulator, and replay context. Tests stub
+    it with an async function returning a ``BacktestPeriodRunResult``.
+    """
+    if not getattr(args, "ablation", None):
+        return
+    from services.strategy_ablation_service import compute_ablation_summary
+
+    preset = _resolve_ablation_preset(args.ablation)
+    variants = _filter_ablation_variants(preset, getattr(args, "ablation_variants", None))
+
+    variant_records: dict[str, list[dict]] = {}
+    for variant in variants:
+        variant_result = await run_variant_fn(variant)
+        variant_records[variant.name] = list(
+            getattr(variant_result, "journal_records", []) or []
+        )
+
+    summary = compute_ablation_summary(
+        baseline_records=list(getattr(result, "journal_records", []) or []),
+        variant_records=variant_records,
+        capital_base_won=float(getattr(args, "initial_cash", 0.0)) or None,
+    )
+    object.__setattr__(
+        result,
+        "ablation",
+        {"strategy_key": preset.strategy_key, "summary": summary},
+    )
+
+
+def _format_ablation_console_lines(strategy_key: str, summary: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    lines.append(f"[ABLATION] strategy={strategy_key}")
+    baseline_metrics = summary.get("baseline", {}).get("metrics", {})
+    lines.append(_format_ablation_row("baseline", baseline_metrics, delta=None))
+    for variant_name, payload in summary.get("variants", {}).items():
+        lines.append(
+            _format_ablation_row(
+                variant_name,
+                payload.get("metrics", {}),
+                delta=payload.get("delta"),
+            )
+        )
+    return lines
+
+
+def _format_ablation_row(
+    name: str,
+    metrics: dict[str, Any],
+    delta: Optional[dict[str, Any]],
+) -> str:
+    pf = metrics.get("profit_factor")
+    payoff = metrics.get("payoff_ratio")
+    pf_str = f"{pf:.2f}" if isinstance(pf, (int, float)) else "n/a"
+    payoff_str = f"{payoff:.2f}" if isinstance(payoff, (int, float)) else "n/a"
+    base = (
+        f"  {name:<28} trades={int(metrics.get('trade_count', 0)):>3} "
+        f"win_rate={float(metrics.get('win_rate', 0.0)):.2%} "
+        f"avg_ret={float(metrics.get('avg_net_return', 0.0)):.3f} "
+        f"net_pnl={float(metrics.get('total_net_pnl', 0.0)):>12,.0f} "
+        f"pf={pf_str} payoff={payoff_str} "
+        f"mdd={float(metrics.get('mdd_amount', 0.0)):>12,.0f}"
+    )
+    if not delta:
+        return base
+    pnl_diff = float(delta.get("total_net_pnl_diff", 0.0))
+    trade_diff = int(delta.get("trade_count_diff", 0))
+    return base + f"  Δtrades={trade_diff:+d} Δnet_pnl={pnl_diff:+,.0f}"
+
+
 async def _run(args: argparse.Namespace) -> None:
     from scripts._bootstrap import bootstrap_pp_strategy, make_stdout_logger
     from config.config_loader import load_configs
@@ -629,6 +802,7 @@ async def _run(args: argparse.Namespace) -> None:
             phase: str | None = None,
             segment=None,
             phase_dates: list[str] | None = None,
+            variant=None,
         ) -> BacktestPeriodRunner:
             ledger = BacktestPortfolioLedger(initial_cash=args.initial_cash)
             risk_sizing = _build_risk_sizing_services(
@@ -639,15 +813,23 @@ async def _run(args: argparse.Namespace) -> None:
                 logger=bootstrap_logger,
             )
             state_suffix = f"_{segment.index}_{phase}" if segment is not None else ""
+            if variant is not None:
+                state_suffix = f"{state_suffix}_ablation_{variant.name}"
+            variant_universe, variant_config = _build_ablation_overrides(
+                strategy_key=args.strategy,
+                base_universe=universe_service,
+                variant=variant,
+            )
             strategy = _build_backtest_strategy(
                 strategy_key=args.strategy,
                 replay_sqs=replay_sqs,
-                universe_service=universe_service,
+                universe_service=variant_universe,
                 indicator_service=indicator_service,
                 backtest_clock=backtest_clock,
                 state_dir=tmp_dir,
                 state_suffix=state_suffix,
                 logger=logging.getLogger(f"backtest.{args.strategy}"),
+                config=variant_config,
             )
             max_positions = (
                 {strategy.name: args.max_positions}
@@ -731,6 +913,20 @@ async def _run(args: argparse.Namespace) -> None:
                 _run_monte_carlo_for_result(result, args)
             if args.profitability_gate:
                 _run_profitability_gate_for_result(result, app_config, initial_cash=args.initial_cash)
+            if args.ablation:
+                if args.strategy != args.ablation:
+                    raise ValueError(
+                        f"--ablation({args.ablation}) 과 --strategy({args.strategy}) 가 다릅니다. "
+                        "ablation 은 baseline 과 같은 전략에 대해서만 의미가 있습니다."
+                    )
+
+                async def _variant_runner(variant):
+                    print(f"[INFO] ablation variant 실행: {variant.name}")
+                    return await make_runner(variant=variant).run(dates)
+
+                await _run_ablation_for_result(
+                    result, args, run_variant_fn=_variant_runner
+                )
             rendered = _format_json(result) if args.output == "json" else _format_console(result)
 
     if args.output_file:
