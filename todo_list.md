@@ -617,13 +617,16 @@
 
 ### 4-4. 실전 운영 Runbook / Canary 절차
 
-- [ ] 실전 운영 runbook을 작성한다.
+- [x] 실전 운영 runbook을 작성한다.
   - 포함: 장 시작 전 체크리스트(토큰, 잔고, 포지션, 데이터 연결, WebSocket), 장중 장애 대응(API 오류, 주문 지연, 미체결, stale data), Kill Switch 발동 후 절차, 재개 조건, 배포 체크리스트, 사고 리포트 템플릿.
-- [ ] 실계좌 canary 절차를 문서화한다.
+  - 산출물(2026-05-22): `docs/operations_runbook.md` — Runtime 진입점 표, 장 시작 전 체크리스트 8항목, 장중 장애 대응 매트릭스 10행, Kill Switch 발동 5단계 절차, 재개 조건 체크리스트, 배포 체크리스트 10항목, 사고 리포트 템플릿.
+- [x] 실계좌 canary 절차를 문서화한다.
   - 정책: P0 완료 + P1 기준선 통과 전 full-auto 금지. 소액 canary는 종목 수/주문금액/일손실/연속 손실/미체결 시간 한도를 별도로 낮게 둔다.
   - 산출물: canary 진입 조건, 중단 조건, 관찰 기간, 승격 조건.
+  - 산출물(2026-05-22): `docs/canary_procedure.md` — 진입 조건, 운영 한도표(canary vs full), 관찰 기간 단계, 중단 조건 매트릭스, 승격 조건 체크리스트.
 - [ ] 배포 전 dry-run 운영 점검을 자동화한다.
   - 후보: config validation, broker token/account/env consistency, WebSocket subscription health, latest trading date, account snapshot freshness, event shadow status.
+  - 현황(2026-05-22): runbook *배포 체크리스트* 의 1~10번 수동 항목으로 우선 문서화함. 자동화는 별도 PR (코드 작업).
 
 ---
 
