@@ -305,6 +305,7 @@ class ServiceContainer:
                     market_clock=ctx.market_clock,
                     kill_switch_service=ctx.kill_switch_service,
                     logger=ctx.logger,
+                    signal_sink=None,  # PR-3 본 작업에서 live consumer 주입 예정. shadow 운영은 None 유지.
                 )
                 ctx.price_stream_service = PriceStreamService(
                     stock_repo=ctx.stock_repository,

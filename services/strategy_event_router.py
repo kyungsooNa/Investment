@@ -17,6 +17,11 @@ PR-1 (P2 2-4): WebSocket 체결 tick 수신 시 해당 종목을 구독한 전�
 설계 결정 (Q1-Q4, 2026-05-18 docs/event_driven_architecture.md §9):
   - throttle_sec=0.5
   - stale_snapshot_sec=5.0
+
+PR-3 선행 (signal sink):
+  - signal_sink 가 주입되면 non-None 평가 신호마다 await sink.publish(signal, context=...) 호출.
+  - context 표준 키: signal_source="event", strategy_name, code, snapshot_ts.
+  - sink 미주입(shadow 운영) 또는 publish 예외는 흡수 → 기존 동작 유지.
 """
 from __future__ import annotations
 
@@ -27,6 +32,7 @@ import time
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from common.types import TradeSignal
+from services.strategy_signal_sink import SignalSink
 
 EvaluatorFn = Callable[[str, dict], Awaitable[Optional[TradeSignal]]]
 
@@ -40,12 +46,14 @@ class StrategyEventRouter:
         *,
         throttle_sec: float = 0.5,
         stale_snapshot_sec: float = 5.0,
+        signal_sink: Optional[SignalSink] = None,
     ):
         self._mc = market_clock
         self._ks = kill_switch_service
         self._logger = logger or logging.getLogger(__name__)
         self._throttle_sec = float(throttle_sec)
         self._stale_snapshot_sec = float(stale_snapshot_sec)
+        self._signal_sink = signal_sink
         # code → [(strategy_name, evaluator), ...]
         self._subscribers: Dict[str, List[Tuple[str, EvaluatorFn]]] = {}
         # (strategy_name, code) → last dispatched epoch seconds
@@ -134,7 +142,29 @@ class StrategyEventRouter:
                 return None
 
         results = await asyncio.gather(*(_run(n, fn) for (n, fn) in dispatchable))
-        return [r for r in results if r is not None]
+
+        signals: List[TradeSignal] = []
+        for (name, _fn), signal in zip(dispatchable, results):
+            if signal is None:
+                continue
+            signals.append(signal)
+            if self._signal_sink is None:
+                continue
+            try:
+                await self._signal_sink.publish(
+                    signal,
+                    context={
+                        "signal_source": "event",
+                        "strategy_name": name,
+                        "code": code,
+                        "snapshot_ts": snapshot_ts,
+                    },
+                )
+            except Exception as e:
+                self._logger.warning(
+                    f"[EventRouter] signal_sink.publish 예외: strategy={name}, code={code}, error={e}"
+                )
+        return signals
 
 
 async def _maybe_await(value):

@@ -242,3 +242,64 @@ async def test_router_without_market_clock_dispatches():
 
     evaluator.assert_awaited_once()
     assert len(results) == 1
+
+
+# === PR-3 선행: signal sink contract ===
+
+
+@pytest.mark.asyncio
+async def test_signal_sink_publishes_each_non_none_signal():
+    """signal_sink 주입 시 non-None 평가 신호마다 publish 호출 + context 표준 키 검증."""
+    sink = MagicMock()
+    sink.publish = AsyncMock(return_value=None)
+
+    router = StrategyEventRouter(market_clock=_market_clock(), signal_sink=sink)
+    sig_a = _signal("005930", "VBO")
+    sig_b = _signal("005930", "OSB")
+    router.subscribe("005930", strategy_name="VBO", evaluator=AsyncMock(return_value=sig_a))
+    router.subscribe("005930", strategy_name="OSB", evaluator=AsyncMock(return_value=sig_b))
+
+    results = await router.on_price_tick(
+        "005930", {"price": "10000"}, snapshot_ts=12345.0, now_ts=12345.0
+    )
+
+    assert len(results) == 2
+    assert sink.publish.await_count == 2
+    published_contexts = [kwargs["context"] for (_args, kwargs) in sink.publish.await_args_list]
+    for ctx in published_contexts:
+        assert ctx["signal_source"] == "event"
+        assert ctx["code"] == "005930"
+        assert ctx["snapshot_ts"] == 12345.0
+        assert ctx["strategy_name"] in {"VBO", "OSB"}
+    assert {c["strategy_name"] for c in published_contexts} == {"VBO", "OSB"}
+
+
+@pytest.mark.asyncio
+async def test_signal_sink_publish_exception_is_absorbed():
+    """sink.publish 예외 시 다른 evaluator 흐름 보존 + 반환 List 정상."""
+    sink = MagicMock()
+    sink.publish = AsyncMock(side_effect=RuntimeError("sink boom"))
+
+    router = StrategyEventRouter(market_clock=_market_clock(), signal_sink=sink)
+    sig = _signal("005930", "VBO")
+    router.subscribe("005930", strategy_name="VBO", evaluator=AsyncMock(return_value=sig))
+
+    results = await router.on_price_tick("005930", {"price": "10000"})
+
+    assert results == [sig]
+    sink.publish.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_signal_sink_not_called_for_none_signals():
+    """evaluator 가 None 반환하면 publish 호출되지 않는다."""
+    sink = MagicMock()
+    sink.publish = AsyncMock(return_value=None)
+
+    router = StrategyEventRouter(market_clock=_market_clock(), signal_sink=sink)
+    router.subscribe("005930", strategy_name="VBO", evaluator=AsyncMock(return_value=None))
+
+    results = await router.on_price_tick("005930", {"price": "10000"})
+
+    assert results == []
+    sink.publish.assert_not_awaited()
