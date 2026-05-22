@@ -1,13 +1,10 @@
 # CLAUDE.md — Investment Project Context
 
-> **작업 전 필수**: 모든 작업 시작 전 아래 두 파일을 반드시 `Read` 도구로 읽고 규칙을 준수한다.
+> **작업 전 필수**: 모든 작업 시작 전 아래 파일들을 반드시 `Read` 도구로 읽고 규칙을 준수한다.
 >
 > 1. `Read("SKILL.md")` — Claude 작업 패턴 규칙 (Edit/Read/Write 방식)
 > 2. `Read("CODEBASE_SUMMARY.md")` — 프로젝트 운영 지식, 수정 난이도 지도, 작업 경로
-
-## 파일 읽기 규칙
-파일을 **탐색·분석** 목적으로 읽을 때는 `mcp__plugin_context-mode_context-mode__ctx_execute` (shell/python) 도구를 사용한다.
-`Read` 도구는 **Edit를 위해 파일 내용을 컨텍스트에 올려야 할 때만** 사용한다.
+> 3. 존재할 경우: `Read("CLAUDE.local.md")`, `Read("SKILL.local.md")` — 개인 환경/도구 설정 (gitignore 대상)
 
 ## 작업 행동 원칙 (Karpathy Guidelines 적용)
 LLM 코딩 시 자주 발생하는 실수를 줄이기 위한 원칙. 사소한 작업은 판단에 맡긴다.
@@ -78,9 +75,6 @@ pytest tests/integration_test -v    # 통합 테스트
 .\2.integration_test_with_coverage.bat  # 통합 테스트 + 커버리지
 ```
 - pytest 설정: `asyncio_mode=auto`, `pytest-xdist -n auto` 병렬 실행
-
-## Pytest 실행 방법 예시
-cd /c/Users/Kyungsoo/Documents/Code/Investment && /c/Users/Kyungsoo/anaconda3/envs/py310/python.exe -m pytest tests/unit_test/test_korea_invest_websocket_api.py::test_disconnect_with_receive_task_exception -v 2>&1 | tail -50
 
 ## 디렉토리 구조
 ```
