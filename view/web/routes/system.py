@@ -482,6 +482,12 @@ def get_subscription_status():
         return {"success": True, "data": None}
 
     status = svc.get_status()
+
+    def _code_set(value):
+        if not isinstance(value, (set, frozenset, list, tuple)):
+            return None
+        return {str(code) for code in value if code is not None and str(code)}
+
     pending_by_priority = {
         "CRITICAL": set(status.get("pending_by_priority", {}).get("CRITICAL", [])),
         "HIGH": set(status.get("pending_by_priority", {}).get("HIGH", [])),
@@ -489,24 +495,31 @@ def get_subscription_status():
         "LOW": set(status.get("pending_by_priority", {}).get("LOW", [])),
     }
 
-    # 수정 포인트: active_codes_price와 active_codes_pt를 병합하여 active_set 구성
     streaming_svc = getattr(ctx, "streaming_service", None)
-    active_set = set(status.get("active_codes_price", [])) | set(status.get("active_codes_pt", []))
-    pt_codes = set(status.get("active_codes_pt", []))
+    active_codes_price = set(status.get("active_codes_price", []))
+    active_codes_pt = set(status.get("active_codes_pt", []))
 
     repo = getattr(ctx, "streaming_stock_repo", None)
     if repo is not None:
         try:
             desired_pt = repo.get_desired(StreamingType.PROGRAM_TRADING)
-            if isinstance(desired_pt, (set, frozenset, list, tuple)):
-                pt_codes.update(str(code) for code in desired_pt)
+            desired_pt_set = _code_set(desired_pt)
+            if desired_pt_set is not None:
+                pending_by_priority["CRITICAL"] = desired_pt_set
+
+            active_pt_set = _code_set(repo.get_active(StreamingType.PROGRAM_TRADING))
+            if active_pt_set is not None:
+                active_codes_pt.update(active_pt_set)
+
+            active_price_set = _code_set(repo.get_active(StreamingType.UNIFIED_PRICE))
+            if active_price_set is not None:
+                active_codes_price.update(active_price_set)
         except Exception:
             pass
 
-    if pt_codes:
-        pending_by_priority["CRITICAL"].update(pt_codes)
-
     pending_count = len(set().union(*pending_by_priority.values()))
+    active_set = active_codes_price | active_codes_pt
+    active_count = len(active_codes_price) + len(active_codes_pt)
 
     def _enrich(codes: list) -> list:
         result = []
@@ -531,10 +544,10 @@ def get_subscription_status():
     return {
         "success": True,
         "data": {
-            "active_count": status.get("active_count", 0),
+            "active_count": active_count,
             "max_subscriptions": status.get("max_subscriptions", 40),
-            "active_codes_price": status.get("active_codes_price", []),
-            "active_codes_pt": status.get("active_codes_pt", []),
+            "active_codes_price": sorted(active_codes_price),
+            "active_codes_pt": sorted(active_codes_pt),
             "pending_count": pending_count,
             "pending_by_priority": {
                 "CRITICAL": _enrich(sorted(pending_by_priority["CRITICAL"])),
