@@ -73,6 +73,8 @@ class BacktestPeriodRunnerConfig:
     warn_position_concentration_pct: float | None = 20.0
     warn_strategy_concentration_pct: float | None = 40.0
     warn_market_concentration_pct: float | None = 70.0
+    warn_sector_concentration_pct: float | None = 50.0
+    warn_theme_concentration_pct: float | None = 50.0
 
 
 @dataclass
@@ -481,6 +483,8 @@ class BacktestPeriodRunner:
                 warn_position_concentration_pct=self._config.warn_position_concentration_pct,
                 warn_strategy_concentration_pct=self._config.warn_strategy_concentration_pct,
                 warn_market_concentration_pct=self._config.warn_market_concentration_pct,
+                warn_sector_concentration_pct=self._config.warn_sector_concentration_pct,
+                warn_theme_concentration_pct=self._config.warn_theme_concentration_pct,
             ),
         }
 

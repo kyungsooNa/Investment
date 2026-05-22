@@ -11,20 +11,28 @@ def compute_portfolio_concentration_summary(
     warn_position_concentration_pct: float | None = 20.0,
     warn_strategy_concentration_pct: float | None = 40.0,
     warn_market_concentration_pct: float | None = 70.0,
+    warn_sector_concentration_pct: float | None = 50.0,
+    warn_theme_concentration_pct: float | None = 50.0,
 ) -> dict[str, Any]:
     position_exposures: dict[str, dict[str, Any]] = {}
     strategy_amounts: dict[str, float] = {}
     market_amounts: dict[str, dict[str, Any]] = {}
+    sector_amounts: dict[str, dict[str, Any]] = {}
+    theme_amounts: dict[str, dict[str, Any]] = {}
 
     for code, position in positions.items():
         total_cost = _position_value(position, "total_cost")
         strategy = str(_position_attr(position, "strategy") or "")
         market = _position_market(position)
+        sector = _position_sector(position)
+        themes = _position_themes(position)
         position_exposures[str(code)] = {
             "exposure_won": total_cost,
             "exposure_pct": _pct(total_cost, capital_basis),
             "strategy": strategy,
             "market": market,
+            "sector": sector,
+            "themes": themes,
         }
         if strategy:
             strategy_amounts[strategy] = strategy_amounts.get(strategy, 0.0) + total_cost
@@ -34,6 +42,9 @@ def compute_portfolio_concentration_summary(
         )
         market_payload["exposure_won"] += total_cost
         market_payload["position_count"] += 1
+        _add_exposure(sector_amounts, sector, total_cost)
+        for theme in themes:
+            _add_exposure(theme_amounts, theme, total_cost)
 
     strategy_exposures = {
         strategy: {
@@ -51,19 +62,27 @@ def compute_portfolio_concentration_summary(
         }
         for market, payload in market_amounts.items()
     }
+    sector_exposures = _exposure_summary(sector_amounts, capital_basis)
+    theme_exposures = _exposure_summary(theme_amounts, capital_basis)
     max_position = _max_position(position_exposures)
     max_strategy = _max_strategy(strategy_exposures)
     max_market = _max_market(market_exposures)
+    max_sector = _max_named_exposure("sector", sector_exposures)
+    max_theme = _max_named_exposure("theme", theme_exposures)
     warnings = _warnings(
         capital_basis=capital_basis,
         total_exposure_pct=_pct(total_exposure, capital_basis),
         max_position=max_position,
         max_strategy=max_strategy,
         max_market=max_market,
+        max_sector=max_sector,
+        max_theme=max_theme,
         warn_total_exposure_pct=warn_total_exposure_pct,
         warn_position_concentration_pct=warn_position_concentration_pct,
         warn_strategy_concentration_pct=warn_strategy_concentration_pct,
         warn_market_concentration_pct=warn_market_concentration_pct,
+        warn_sector_concentration_pct=warn_sector_concentration_pct,
+        warn_theme_concentration_pct=warn_theme_concentration_pct,
     )
 
     return {
@@ -73,9 +92,13 @@ def compute_portfolio_concentration_summary(
         "position_exposures": position_exposures,
         "strategy_exposures": strategy_exposures,
         "market_exposures": market_exposures,
+        "sector_exposures": sector_exposures,
+        "theme_exposures": theme_exposures,
         "max_position": max_position,
         "max_strategy": max_strategy,
         "max_market": max_market,
+        "max_sector": max_sector,
+        "max_theme": max_theme,
         "warnings": warnings,
     }
 
@@ -100,6 +123,58 @@ def _position_market(position: Any) -> str:
         if value in {"KOSPI", "KOSDAQ"}:
             return value
     return "UNKNOWN"
+
+
+def _position_sector(position: Any) -> str:
+    for key in ("sector", "sector_name", "industry", "industry_name", "업종"):
+        value = str(_position_attr(position, key) or "").strip()
+        if value:
+            return value
+    return "UNKNOWN"
+
+
+def _position_themes(position: Any) -> list[str]:
+    for key in ("themes", "theme", "theme_name", "테마"):
+        value = _position_attr(position, key)
+        themes = _normalize_theme_values(value)
+        if themes:
+            return themes
+    return ["UNKNOWN"]
+
+
+def _normalize_theme_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return []
+        for delimiter in ("|", ";", "/"):
+            raw = raw.replace(delimiter, ",")
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _add_exposure(amounts: dict[str, dict[str, Any]], group: str, amount: float) -> None:
+    payload = amounts.setdefault(group, {"exposure_won": 0.0, "position_count": 0})
+    payload["exposure_won"] += amount
+    payload["position_count"] += 1
+
+
+def _exposure_summary(
+    amounts: Mapping[str, Mapping[str, Any]],
+    capital_basis: float,
+) -> dict[str, dict[str, Any]]:
+    return {
+        group: {
+            "exposure_won": payload["exposure_won"],
+            "exposure_pct": _pct(payload["exposure_won"], capital_basis),
+            "position_count": payload["position_count"],
+        }
+        for group, payload in amounts.items()
+    }
 
 
 def _pct(amount: float, capital_basis: float) -> float | None:
@@ -151,6 +226,24 @@ def _max_market(market_exposures: Mapping[str, Mapping[str, Any]]) -> dict[str, 
     }
 
 
+def _max_named_exposure(
+    name_key: str,
+    exposures: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    if not exposures:
+        return None
+    name, exposure = max(
+        exposures.items(),
+        key=lambda item: item[1].get("exposure_won") or 0.0,
+    )
+    return {
+        name_key: name,
+        "exposure_won": exposure.get("exposure_won") or 0.0,
+        "exposure_pct": exposure.get("exposure_pct"),
+        "position_count": exposure.get("position_count", 0),
+    }
+
+
 def _warnings(
     *,
     capital_basis: float,
@@ -158,10 +251,14 @@ def _warnings(
     max_position: Mapping[str, Any] | None,
     max_strategy: Mapping[str, Any] | None,
     max_market: Mapping[str, Any] | None,
+    max_sector: Mapping[str, Any] | None,
+    max_theme: Mapping[str, Any] | None,
     warn_total_exposure_pct: float | None,
     warn_position_concentration_pct: float | None,
     warn_strategy_concentration_pct: float | None,
     warn_market_concentration_pct: float | None,
+    warn_sector_concentration_pct: float | None,
+    warn_theme_concentration_pct: float | None,
 ) -> list[str]:
     if capital_basis <= 0:
         return ["portfolio_concentration_unknown_capital"]
@@ -178,6 +275,16 @@ def _warnings(
         and _exceeds((max_market or {}).get("exposure_pct"), warn_market_concentration_pct)
     ):
         warnings.append("market_concentration_high")
+    if (
+        (max_sector or {}).get("sector") != "UNKNOWN"
+        and _exceeds((max_sector or {}).get("exposure_pct"), warn_sector_concentration_pct)
+    ):
+        warnings.append("sector_concentration_high")
+    if (
+        (max_theme or {}).get("theme") != "UNKNOWN"
+        and _exceeds((max_theme or {}).get("exposure_pct"), warn_theme_concentration_pct)
+    ):
+        warnings.append("theme_concentration_high")
     return warnings
 
 

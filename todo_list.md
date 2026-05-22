@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-22 (P1-2 장초반/장마감 진입 압력 report-only)
+최종 업데이트: 2026-05-22 (P1-2 섹터/테마 집중도 report-only)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -188,6 +188,7 @@
   - 5차 완료: `compute_portfolio_cooldown_summary()`를 추가해 profitability gate top-level report에 전략별 연속 손실 streak을 포함한다. 연속 손실이 threshold 이상이면 `portfolio_consecutive_loss_cooldown_candidate` warning을 노출한다.
   - 6차 완료: `compute_portfolio_concentration_summary()`를 확장해 portfolio concentration report에 KOSPI/KOSDAQ/UNKNOWN 시장별 비중을 포함한다. 분류된 시장 비중이 threshold 이상이면 `market_concentration_high` warning을 노출한다.
   - 7차 완료: `compute_portfolio_entry_pressure_summary()`를 확장해 장초반(09:00~10:00)과 장마감(14:30 이후) 신규 BUY 진입 압력을 report-only로 포함한다. 시간대별 threshold 이상이면 `portfolio_opening_entry_pressure_high` / `portfolio_closing_entry_pressure_high` warning을 노출한다.
+  - 8차 완료: `compute_portfolio_concentration_summary()`를 확장해 포지션 metadata 기반 섹터/테마별 노출 비중을 report-only로 포함한다. 분류된 섹터/테마 비중이 threshold 이상이면 `sector_concentration_high` / `theme_concentration_high` warning을 노출하고, 미분류(`UNKNOWN`)만 높은 경우는 경고하지 않는다.
 - [x] 전략 간 중복 신호/동일 종목/동일 테마 진입을 포트폴리오 의사결정 단계에서 리포트한다.
   - 1차는 hard block보다 “동시 노출 경고 + journal metadata”로 시작한다.
   - 완료된 부분: 기간 백테스트 runner와 strategy debug runner가 `same_code_batch_signal` / `same_code_existing_position` / `same_code_pending_order`를 표준 journal `metadata.portfolio_warnings`에 남긴다. 동일 테마/섹터 리포트는 테마 매핑 데이터 확보 후 확장한다.

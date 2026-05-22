@@ -96,3 +96,82 @@ def test_compute_portfolio_concentration_summary_groups_unclassified_market_as_u
     assert summary["market_exposures"]["UNKNOWN"]["exposure_pct"] == 10.0
     assert summary["max_market"]["market"] == "UNKNOWN"
     assert "market_concentration_high" not in summary["warnings"]
+
+
+def test_compute_portfolio_concentration_summary_reports_sector_and_theme_exposure():
+    positions = {
+        "005930": {
+            "total_cost": 300_000,
+            "strategy": "S1",
+            "sector": "Semiconductor",
+            "theme": "AI",
+        },
+        "000660": {
+            "total_cost": 250_000,
+            "strategy": "S2",
+            "industry": "Semiconductor",
+            "themes": ["AI", "Memory"],
+        },
+        "035720": {
+            "total_cost": 100_000,
+            "strategy": "S3",
+            "sector_name": "Internet",
+            "theme": "Platform",
+        },
+    }
+
+    summary = compute_portfolio_concentration_summary(
+        positions,
+        capital_basis=1_000_000,
+        warn_total_exposure_pct=None,
+        warn_position_concentration_pct=None,
+        warn_strategy_concentration_pct=None,
+        warn_market_concentration_pct=None,
+        warn_sector_concentration_pct=50.0,
+        warn_theme_concentration_pct=50.0,
+    )
+
+    assert summary["position_exposures"]["005930"]["sector"] == "Semiconductor"
+    assert summary["position_exposures"]["000660"]["themes"] == ["AI", "Memory"]
+    assert summary["sector_exposures"]["Semiconductor"] == {
+        "exposure_won": 550_000,
+        "exposure_pct": 55.0,
+        "position_count": 2,
+    }
+    assert summary["theme_exposures"]["AI"] == {
+        "exposure_won": 550_000,
+        "exposure_pct": 55.0,
+        "position_count": 2,
+    }
+    assert summary["max_sector"] == {
+        "sector": "Semiconductor",
+        "exposure_won": 550_000,
+        "exposure_pct": 55.0,
+        "position_count": 2,
+    }
+    assert summary["max_theme"] == {
+        "theme": "AI",
+        "exposure_won": 550_000,
+        "exposure_pct": 55.0,
+        "position_count": 2,
+    }
+    assert summary["warnings"] == [
+        "sector_concentration_high",
+        "theme_concentration_high",
+    ]
+
+
+def test_compute_portfolio_concentration_summary_does_not_warn_for_unknown_sector_or_theme():
+    summary = compute_portfolio_concentration_summary(
+        {"005930": {"total_cost": 100_000, "strategy": "S1"}},
+        capital_basis=1_000_000,
+        warn_sector_concentration_pct=5.0,
+        warn_theme_concentration_pct=5.0,
+    )
+
+    assert summary["sector_exposures"]["UNKNOWN"]["exposure_pct"] == 10.0
+    assert summary["theme_exposures"]["UNKNOWN"]["exposure_pct"] == 10.0
+    assert summary["max_sector"]["sector"] == "UNKNOWN"
+    assert summary["max_theme"]["theme"] == "UNKNOWN"
+    assert "sector_concentration_high" not in summary["warnings"]
+    assert "theme_concentration_high" not in summary["warnings"]

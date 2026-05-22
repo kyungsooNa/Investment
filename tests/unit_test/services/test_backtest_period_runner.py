@@ -360,6 +360,8 @@ async def test_period_runner_applies_position_sizing_qty_before_execution():
     assert result.portfolio["concentration"]["max_position"]["code"] == "005930"
     assert result.portfolio["concentration"]["total_exposure_pct"] > 0
     assert result.portfolio["concentration"]["market_exposures"]["UNKNOWN"]["position_count"] == 1
+    assert result.portfolio["concentration"]["sector_exposures"]["UNKNOWN"]["position_count"] == 1
+    assert result.portfolio["concentration"]["theme_exposures"]["UNKNOWN"]["position_count"] == 1
 
 
 @pytest.mark.asyncio
