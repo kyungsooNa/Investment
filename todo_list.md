@@ -348,8 +348,9 @@
   - 목표: 성능 개선을 감이 아니라 병목 지표 기반으로 진행한다.
   - 1차 완료(2026-05-22): 4종 메트릭(latency_ms / candidate_count / signal_count / rejected_reasons) structured log event 발행. `core/scan_rejection_counter.py::EntryRejectionCounter` (logging.Handler 상속) 신규 — `scheduler/strategy_scheduler.py:_run_strategy()`가 scan 직전 strategy logger 에 attach 하고, 직후 detach 해 한 cycle 동안의 entry_rejected reason 분포를 누적. 예외 시에도 detach 보장. `scan_metrics` event 가 4종 필드를 포함해 발행된다.
   - 1차 한계: `LOG_LEVEL=INFO`(prod) 환경에서 `_logger.debug({...})` 로 emit 되는 entry_rejected (예: FirstPullback) 는 logger 단계에서 필터링돼 카운트되지 않는다. 전 전략을 INFO 로 표준화하는 보강은 후속 PR.
-  - 후속: 동일 종목 current price/OHLCV memoization, API calls per scan, cache hit ratio / REST fallback ratio, signal-to-order / order-to-fill latency 항목.
-  - 검증: 새 단위 11개(scan_rejection_counter 8 + scheduler scan_metrics 3), 전체 단위 4997 + 통합 233 통과.
+  - 2차 완료(2026-05-22): API/캐시 cycle delta 추가. `services/stock_query_service.py`에 `price_lookup_stats_snapshot() -> Dict[str, int]` public 메서드 추가, `scheduler/strategy_scheduler.py`가 scan 직전/직후 snapshot 캡처 → cycle 단위 변동 키만 추려 `scan_metrics.lookup_stats_delta` 필드로 노출. 10종 카운터(snapshot_hit / no_tick_fallback / stale_fallback / rest_fallback / force_fresh_bypass / full_output_required / stream_unavailable_fallback / conclusion_hit / conclusion_stale_fallback / conclusion_missing_fallback) 변동이 자동 포함된다. sqs 미주입 또는 메서드 부재 시 빈 dict.
+  - 후속: 동일 종목 current price/OHLCV memoization, signal-to-order / order-to-fill latency, in-memory aggregator + web API 노출 (dashboard 도입 시).
+  - 검증(2차): 새 단위 5개(stock_query_service_stats_snapshot 3 + scheduler scan_metrics 2). 전체 단위 5002 + 통합 233 통과.
 - [ ] 전략별 universe 적합성을 비교한다.
   - 검토 결과: 타당. 활성 전략 다수가 `OneilUniverseService` watchlist를 공유하는 것은 운영상 단순하지만, RSI2 같은 mean-reversion 성격이나 VBO 단기 변동성 전략에 O'Neil universe가 항상 맞는지는 별도 검증이 필요하다.
   - 산출물: Oneil universe vs generic liquidity universe vs strategy-specific prefilter 성과 비교, universe exclusion report.

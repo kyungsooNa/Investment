@@ -476,6 +476,14 @@ class StrategyScheduler:
         rejection_counter = EntryRejectionCounter() if strategy_logger is not None else None
         if rejection_counter is not None:
             strategy_logger.addHandler(rejection_counter)
+        # P2 2-2 2차: scan cycle 동안의 현재가/캐시 조회 지표 delta 산출
+        sqs_snapshot_before = {}
+        sqs_snapshot_fn = getattr(self._sqs, "price_lookup_stats_snapshot", None) if self._sqs is not None else None
+        if callable(sqs_snapshot_fn):
+            try:
+                sqs_snapshot_before = sqs_snapshot_fn() or {}
+            except Exception:
+                sqs_snapshot_before = {}
         t_scan_metric = time.monotonic()
         try:
             buy_signals = await cfg.strategy.scan()
@@ -488,6 +496,16 @@ class StrategyScheduler:
             candidate_count = len(cfg.strategy.current_candidate_codes() or [])
         except Exception:
             candidate_count = 0
+        lookup_stats_delta: Dict[str, int] = {}
+        if callable(sqs_snapshot_fn):
+            try:
+                sqs_snapshot_after = sqs_snapshot_fn() or {}
+            except Exception:
+                sqs_snapshot_after = {}
+            for k, v_after in sqs_snapshot_after.items():
+                delta = int(v_after) - int(sqs_snapshot_before.get(k, 0))
+                if delta != 0:
+                    lookup_stats_delta[k] = delta
         self._logger.info({
             "event": "scan_metrics",
             "strategy_name": name,
@@ -495,6 +513,7 @@ class StrategyScheduler:
             "candidate_count": candidate_count,
             "signal_count": len(buy_signals),
             "rejected_reasons": rejection_counter.snapshot() if rejection_counter is not None else {},
+            "lookup_stats_delta": lookup_stats_delta,
         })
 
         # P2 2-4: event-driven shadow 구독 갱신 (scan 직후 후보군 변화 반영)

@@ -179,6 +179,44 @@ class TestStrategySchedulerScanMetrics(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(records[0]["candidate_count"], 0)
         self.assertEqual(records[0]["signal_count"], 0)
         self.assertEqual(records[0]["rejected_reasons"], {})
+        # sqs MagicMock 이므로 price_lookup_stats_snapshot 미연동 → 빈 dict
+        self.assertEqual(records[0]["lookup_stats_delta"], {})
+
+    async def test_scan_metrics_includes_lookup_stats_delta(self):
+        scheduler, mock_logger = self._make_scheduler()
+        # sqs.price_lookup_stats_snapshot 이 scan 전/후 다른 값 반환하도록 stub
+        before = {"snapshot_hit": 5, "rest_fallback": 2, "no_tick_fallback": 0}
+        after = {"snapshot_hit": 8, "rest_fallback": 2, "no_tick_fallback": 1}
+        scheduler._sqs.price_lookup_stats_snapshot = MagicMock(side_effect=[before, after])
+
+        strategy = _StubStrategy(name="delta전략", candidates=["005930"])
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=10)
+        scheduler.register(config)
+
+        await scheduler._run_strategy(config)
+
+        records = self._scan_metrics_records(mock_logger)
+        self.assertEqual(len(records), 1)
+        delta = records[0]["lookup_stats_delta"]
+        # 변동이 있는 키만 포함 (0인 키 제거)
+        self.assertEqual(delta, {"snapshot_hit": 3, "no_tick_fallback": 1})
+        self.assertNotIn("rest_fallback", delta)
+
+    async def test_scan_metrics_lookup_stats_delta_empty_when_method_absent(self):
+        scheduler, mock_logger = self._make_scheduler()
+        # method 자체가 없는 경우: sqs를 spec 객체로 교체
+        plain_sqs = object()
+        scheduler._sqs = plain_sqs
+
+        strategy = _StubStrategy(name="no_sqs_method", candidates=[])
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=10)
+        scheduler.register(config)
+
+        await scheduler._run_strategy(config)
+
+        records = self._scan_metrics_records(mock_logger)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["lookup_stats_delta"], {})
 
 
 if __name__ == "__main__":

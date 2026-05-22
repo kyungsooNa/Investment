@@ -57,6 +57,14 @@ class StockQueryService:
             return
         self._price_lookup_stats[key] = self._price_lookup_stats.get(key, 0) + 1
 
+    def price_lookup_stats_snapshot(self) -> Dict[str, int]:
+        """현재가 조회/캐시 지표 카운터 사본을 반환한다 (P2 2-2 2차).
+
+        호출자(예: StrategyScheduler)가 cycle 진입/완료 시점의 snapshot 을 비교해
+        cycle 단위 delta 를 산출하는 데 사용한다. 반환 dict 변형은 내부 상태에 영향 없음.
+        """
+        return dict(self._price_lookup_stats)
+
     async def sync_price_subscriptions(
         self,
         codes: List[str],
