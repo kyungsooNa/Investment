@@ -1145,41 +1145,47 @@ def test_get_subscription_status_no_streaming_service(web_client, mock_web_ctx):
     assert data["pending_by_priority"]["HIGH"][0]["received_at"] is None
 
 
-def test_get_subscription_status_adds_program_trading_to_critical(web_client, mock_web_ctx):
-    """PT active/desired 상태는 기존 bucket과 별개로 CRITICAL에도 노출된다."""
+def test_get_subscription_status_uses_program_trading_repo_as_critical_source(web_client, mock_web_ctx):
+    """CRITICAL은 PT 저장소의 현재 desired와 active 상태를 기준으로 노출된다."""
     mock_svc = MagicMock()
     mock_svc.get_status.return_value = {
         "active_count": 2,
         "max_subscriptions": 40,
-        "active_codes_price": ["005930"],
-        "active_codes_pt": ["035720"],
-        "pending_count": 2,
+        "active_codes_price": ["000660"],
+        "active_codes_pt": [],
+        "pending_count": 3,
         "pending_by_priority": {
-            "CRITICAL": [],
-            "HIGH": ["005930"],
-            "MEDIUM": ["035720"],
+            "CRITICAL": ["000660"],  # 정책 refs에 남은 오래된 PT 종목
+            "HIGH": [],
+            "MEDIUM": [],
             "LOW": [],
         },
     }
     mock_web_ctx.price_subscription_service = mock_svc
     mock_web_ctx.streaming_stock_repo = MagicMock()
-    mock_web_ctx.streaming_stock_repo.get_desired.side_effect = (
-        lambda stream_type: {"035720"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    mock_web_ctx.streaming_stock_repo.get_desired.side_effect = lambda stream_type: (
+        {"005930", "080220"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    mock_web_ctx.streaming_stock_repo.get_active.side_effect = lambda stream_type: (
+        {"005930", "080220"} if stream_type == StreamingType.PROGRAM_TRADING else set()
     )
     mock_web_ctx.streaming_service.get_cached_realtime_price.return_value = None
     mock_web_ctx.stock_code_repository.get_name_by_code.side_effect = lambda c: {
-        "005930": "005930",
-        "035720": "035720",
+        "000660": "SK하이닉스",
+        "005930": "삼성전자",
+        "080220": "제주반도체",
     }.get(c, c)
 
     response = web_client.get("/api/subscriptions/status")
 
     assert response.status_code == 200
     data = response.json()["data"]
+    assert data["active_count"] == 3
+    assert data["active_codes_pt"] == ["005930", "080220"]
     assert data["pending_count"] == 2
-    assert data["pending_by_priority"]["CRITICAL"][0]["code"] == "035720"
-    assert data["pending_by_priority"]["CRITICAL"][0]["active"] is True
-    assert data["pending_by_priority"]["MEDIUM"][0]["code"] == "035720"
+    critical = data["pending_by_priority"]["CRITICAL"]
+    assert [row["code"] for row in critical] == ["005930", "080220"]
+    assert [row["active"] for row in critical] == [True, True]
 
 
 def test_get_subscription_status_ignores_repo_error(web_client, mock_web_ctx):
