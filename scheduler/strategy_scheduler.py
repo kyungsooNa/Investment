@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 from repositories.streaming_stock_repo import StreamingType
 try:
@@ -27,6 +28,7 @@ from repositories.stock_code_repository import StockCodeRepository
 from services.stock_query_service import StockQueryService
 from core.market_clock import MarketClock
 from core.performance_profiler import PerformanceProfiler
+from core.scan_rejection_counter import EntryRejectionCounter
 
 from scheduler.strategy_scheduler_store import StrategySchedulerStore, SCHEDULER_DB_FILE
 from services.price_subscription_service import SubscriptionPriority
@@ -432,6 +434,11 @@ class StrategyScheduler:
             t_exit = self._pm.start_timer()
             sell_signals = await cfg.strategy.check_exits(holdings)
             self._pm.log_timer(f"{name}.check_exits({len(holdings)}건)", t_exit)
+            # P2 2-2 후속: signal-to-order latency 측정용 — 미stamp 신호에만 현재 시각 부여.
+            _exit_stamp = time.time()
+            for _sig in sell_signals or []:
+                if _sig.created_at is None:
+                    _sig.created_at = _exit_stamp
             if sell_signals:
                 tasks = [self._execute_signal(sig) for sig in sell_signals]
                 for f in asyncio.as_completed(tasks):
@@ -468,8 +475,56 @@ class StrategyScheduler:
             return
 
         t_scan = self._pm.start_timer()
-        buy_signals = await cfg.strategy.scan()
+        # P2 2-2 1차: scan cycle 성능 계측. entry_rejected 로그를 카운트하기 위해
+        # strategy logger 에 EntryRejectionCounter 를 일시 attach. 예외에도 detach 보장.
+        strategy_logger = getattr(cfg.strategy, "_logger", None)
+        rejection_counter = EntryRejectionCounter() if strategy_logger is not None else None
+        if rejection_counter is not None:
+            strategy_logger.addHandler(rejection_counter)
+        # P2 2-2 2차: scan cycle 동안의 현재가/캐시 조회 지표 delta 산출
+        sqs_snapshot_before = {}
+        sqs_snapshot_fn = getattr(self._sqs, "price_lookup_stats_snapshot", None) if self._sqs is not None else None
+        if callable(sqs_snapshot_fn):
+            try:
+                sqs_snapshot_before = sqs_snapshot_fn() or {}
+            except Exception:
+                sqs_snapshot_before = {}
+        t_scan_metric = time.monotonic()
+        try:
+            buy_signals = await cfg.strategy.scan()
+        finally:
+            if rejection_counter is not None:
+                strategy_logger.removeHandler(rejection_counter)
+        # P2 2-2 후속: signal-to-order latency 측정용 — scan 직후 stamp.
+        _scan_stamp = time.time()
+        for _sig in buy_signals or []:
+            if _sig.created_at is None:
+                _sig.created_at = _scan_stamp
         self._pm.log_timer(f"{name}.scan()", t_scan)
+
+        try:
+            candidate_count = len(cfg.strategy.current_candidate_codes() or [])
+        except Exception:
+            candidate_count = 0
+        lookup_stats_delta: Dict[str, int] = {}
+        if callable(sqs_snapshot_fn):
+            try:
+                sqs_snapshot_after = sqs_snapshot_fn() or {}
+            except Exception:
+                sqs_snapshot_after = {}
+            for k, v_after in sqs_snapshot_after.items():
+                delta = int(v_after) - int(sqs_snapshot_before.get(k, 0))
+                if delta != 0:
+                    lookup_stats_delta[k] = delta
+        self._logger.info({
+            "event": "scan_metrics",
+            "strategy_name": name,
+            "latency_ms": round((time.monotonic() - t_scan_metric) * 1000.0, 3),
+            "candidate_count": candidate_count,
+            "signal_count": len(buy_signals),
+            "rejected_reasons": rejection_counter.snapshot() if rejection_counter is not None else {},
+            "lookup_stats_delta": lookup_stats_delta,
+        })
 
         # P2 2-4: event-driven shadow 구독 갱신 (scan 직후 후보군 변화 반영)
         self._refresh_event_shadow_subscriptions(cfg)
@@ -581,6 +636,25 @@ class StrategyScheduler:
         with trace_scope(tid):
             await self._execute_signal_inner(signal, tid)
 
+    def _log_signal_to_order_latency(self, signal: TradeSignal, tid: str) -> None:
+        """P2 2-2 후속: signal-to-order latency log 발행.
+
+        signal.created_at(scheduler 가 scan/check_exits 직후 stamp) 와 order 호출 직전 시각의
+        차이를 ms 단위로 측정한다. created_at 미설정 시(전략이 명시적으로 None 으로 만든 경우)
+        skip 한다.
+        """
+        if signal.created_at is None:
+            return
+        latency_ms = round((time.time() - signal.created_at) * 1000.0, 3)
+        self._logger.info({
+            "event": "signal_to_order_latency",
+            "strategy_name": signal.strategy_name,
+            "code": signal.code,
+            "action": signal.action,
+            "latency_ms": latency_ms,
+            "trace_id": tid,
+        })
+
     def _estimate_return_rate_from_hold(self, strategy_name: str, code: str, sell_price: int) -> Optional[float]:
         if not self._virtual_trade_service or sell_price <= 0:
             return None
@@ -670,6 +744,7 @@ class StrategyScheduler:
         if self._dry_run:
             if signal.action == "BUY":
                 dry_qty = signal.qty if signal.qty is not None else 1
+                self._log_signal_to_order_latency(signal, tid)
                 await self._virtual_trade_service.log_buy_async(
                     signal.strategy_name, signal.code, log_price, dry_qty,
                     volatility_20d_annualized=signal.volatility_20d_annualized,
@@ -677,6 +752,7 @@ class StrategyScheduler:
                 if self._price_sub_svc:
                     await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key, StreamingType.UNIFIED_PRICE)
             elif signal.action == "SELL":
+                self._log_signal_to_order_latency(signal, tid)
                 return_rate = await self._virtual_trade_service.log_sell_by_strategy_async(signal.strategy_name, signal.code, log_price, signal.qty)
                 if self._price_sub_svc:
                     await self._price_sub_svc.remove_subscription(signal.code, category_key)
@@ -759,6 +835,7 @@ class StrategyScheduler:
                                 return
                             signal.qty = buy_qty
 
+                        self._log_signal_to_order_latency(signal, tid)
                         resp = await self._oes.handle_place_buy_order(
                             signal.code,
                             signal.price,
@@ -774,6 +851,7 @@ class StrategyScheduler:
                     if adjusted_sell_price != signal.price:
                         signal.price = adjusted_sell_price
                         log_price = adjusted_sell_price
+                    self._log_signal_to_order_latency(signal, tid)
                     resp = await self._oes.handle_place_sell_order(
                         signal.code,
                         signal.price,

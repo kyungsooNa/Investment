@@ -167,13 +167,13 @@ class FirstPullbackStrategy(LiveStrategy):
 
         surge_result = self._check_surge_history(ohlcv)
         if not surge_result:
-            self._logger.debug({"event": "entry_rejected", "code": code, "reason": "no_surge_history"})
+            self._logger.info({"event": "entry_rejected", "code": code, "reason": "no_surge_history"})
             return None
 
         surge_volume, surge_day_high = surge_result
 
         if not self._check_ma_uptrend(ohlcv):
-            self._logger.debug({"event": "entry_rejected", "code": code, "reason": "ma_not_uptrending"})
+            self._logger.info({"event": "entry_rejected", "code": code, "reason": "ma_not_uptrending"})
             return None
 
         # ── Phase 2: Pullback (건전한 숨 고르기) ──
@@ -185,7 +185,7 @@ class FirstPullbackStrategy(LiveStrategy):
 
         if not self._check_pullback_to_ma(today_low, ma_20d):
             pullback_pct = (today_low - ma_20d) / ma_20d * 100 if ma_20d > 0 else 0.0
-            self._logger.debug({
+            self._logger.info({
                 "event": "entry_rejected", "code": code, "reason": "pullback_out_of_range",
                 "pullback_pct": round(pullback_pct, 2),
                 "allowed_range": f"{self._cfg.pullback_lower_pct}% ~ {self._cfg.pullback_upper_pct}%",
@@ -198,7 +198,7 @@ class FirstPullbackStrategy(LiveStrategy):
             recent_vols = [r.get("volume", 0) for r in ohlcv[-days:]]
             avg_vol = sum(recent_vols) / len(recent_vols) if recent_vols else 0
             vol_dryup_pct = (avg_vol / surge_volume * 100) if surge_volume > 0 else 0.0
-            self._logger.debug({
+            self._logger.info({
                 "event": "entry_rejected", "code": code, "reason": "volume_not_dry",
                 "vol_dryup_pct": round(vol_dryup_pct, 2), "threshold_pct": self._cfg.volume_dryup_ratio * 100,
                 "avg_vol": int(avg_vol), "surge_volume": surge_volume,

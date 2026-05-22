@@ -222,3 +222,6 @@ PriceStreamService.on_price_tick
 - **(Q2) Stale snapshot 임계**: 마지막 tick으로부터 **5초**까지 dispatch 허용. 변경은 `StrategyEventRouter(stale_snapshot_sec=...)` 생성자 인자.
 - **(Q3) Shadow mode 운영 기간**: VBO **1주** (거래일 기준 5일). 거래일 부족 시 연장은 별도 결정.
 - **(Q4) `signal_source`**: 기존 `metadata` JSON에 `signal_source` 키로 포함. `VirtualTradeRepository` schema 변경 없음. 값: `"polling" | "event_shadow" | "event_live"`.
+- **(Q5) Throttle/debounce 분리 (2026-05-22, PR-3 선행)**: trigger price crossing tick 이 evaluator throttle 에 막혀 신호를 놓치지 않도록 두 단계 분리.
+  - **Evaluator throttle (`throttle_sec`)**: 같은 `(strategy, code)` 의 evaluator 호출 burst 흡수 목적. 코드 기본값은 0.5초로 backward compat 유지하되, **운영(`service_container.py`)에서는 0.1초로 단축**한다. Q1 결정의 운영 적용 갱신.
+  - **Signal debounce (`signal_debounce_sec`)**: 신규 인자. publish/return 직전 단계에서 같은 `(strategy, code)` non-None 신호 중복 발행을 막는다. 코드 기본값은 None=비활성, **운영에서는 0.5초**.

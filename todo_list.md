@@ -335,15 +335,24 @@
   - 검토 결과: 타당. `FirstPullbackStrategy`, `HighTightFlagStrategy`, `LarryWilliamsChannelBreakoutStrategy` 등 일부 전략은 holdings 전체에 대해 `asyncio.gather()`를 수행한다. VBO/레거시 일부는 순차 처리다.
   - 완료된 부분: `utils/async_concurrency.py::bounded_gather()` 헬퍼 신규 + 단위 테스트 7개. 활성 6개 전략(`FirstPullback`, `HighTightFlag`, `LarryWilliamsChannelBreakout`, `OneilPocketPivot`, `OneilSqueezeBreakout`, `Rsi2Pullback`)의 holdings exit gather를 `bounded_gather(..., limit=_EXIT_CONCURRENCY=15, return_exceptions=True)`로 교체했다. entry chunk_size(10)보다 높여 청산 경로에 우선순위를 부여한다.
   - 미적용: VBO는 이미 sequential `for hold in holdings`로 더 보수적이므로 외과수술적 변경 원칙에 따라 유지.
-- [ ] VBO range cache 갱신을 bounded concurrency로 바꾸고 precompute 경로를 검토한다.
+- [x] VBO range cache 갱신을 bounded concurrency로 바꾸고 precompute 경로를 검토한다.
   - 검토 결과: 타당. `LarryWilliamsVBOStrategy._refresh_range_cache()`가 후보 코드를 순차 순회하며 `get_recent_daily_ohlcv()`를 호출한다.
   - 개선 방향: semaphore 기반 bounded gather 또는 장 시작 전/Watchlist 생성 시 range precompute.
+  - 완료된 부분: PR #435에서 `_refresh_range_cache()`를 `bounded_gather(..., limit=_RANGE_CACHE_CONCURRENCY=10, return_exceptions=True)` 패턴으로 교체했다 (`strategies/larry_williams_vbo_strategy.py:438-457`).
+  - 후속 검토(미진행): 장 시작 전/Watchlist 생성 시 range precompute. universe 빌드 경로에 hook을 끼우는 방식이 필요하며, scan 시점의 캐시 hit 보장 정책이 별도 결정 사항이라 본 항목에서는 분리.
 - [x] VBO fallback 후보의 unknown liquidity를 통과시키지 않는다.
   - 검토 결과: 타당. universe 미주입 fallback에서 `avg_5d_tv=0`을 넣고, validity filter는 `avg_5d_tv > 0 and avg_5d_tv < min`일 때만 탈락시킨다.
   - 완료된 부분: fail-closed reject로 전환. `_passes_validity_filter`에서 `avg_5d_tv <= 0`이면 `avg_trading_value_unknown` reason으로 차단. fallback 경로(`_load_pool_b` API 응답 기반)는 거래대금 검증 없이는 매수 신호를 만들 수 없다. 단위/통합 테스트로 회귀 고정.
-- [ ] scan cycle 단위 데이터 공유와 성능 계측을 강화한다.
+- [~] scan cycle 단위 데이터 공유와 성능 계측을 강화한다.
   - 후보: 동일 종목 current price/OHLCV/conclusion/program trading memoization, strategy scan latency, candidate count, API calls per scan, cache hit ratio, REST fallback ratio, rejected reason distribution, signal-to-order latency, order-to-fill latency.
   - 목표: 성능 개선을 감이 아니라 병목 지표 기반으로 진행한다.
+  - 1차 완료(2026-05-22): 4종 메트릭(latency_ms / candidate_count / signal_count / rejected_reasons) structured log event 발행. `core/scan_rejection_counter.py::EntryRejectionCounter` (logging.Handler 상속) 신규 — `scheduler/strategy_scheduler.py:_run_strategy()`가 scan 직전 strategy logger 에 attach 하고, 직후 detach 해 한 cycle 동안의 entry_rejected reason 분포를 누적. 예외 시에도 detach 보장. `scan_metrics` event 가 4종 필드를 포함해 발행된다.
+  - 1차 한계: `LOG_LEVEL=INFO`(prod) 환경에서 `_logger.debug({...})` 로 emit 되는 entry_rejected (예: FirstPullback) 는 logger 단계에서 필터링돼 카운트되지 않는다. 전 전략을 INFO 로 표준화하는 보강은 후속 PR.
+  - 한계 해소(2026-05-22): `strategies/first_pullback_strategy.py` 4건 (L170 `no_surge_history`, L176 `ma_not_uptrending`, L188 `pullback_out_of_range`, L201 `volume_not_dry`) 의 `_logger.debug({"event": "entry_rejected", ...})` 호출을 `info` 로 표준화. 다른 전략은 이미 `info` (직접 호출 또는 helper) 사용 중이라 변동 없음. 회귀 방지로 `tests/unit_test/strategies/test_entry_rejected_logging_level_audit.py` 신규 — ast 기반 `strategies/*.py` 전역 audit 으로 `_logger.debug({"event": "entry_rejected", ...})` 0건 유지.
+  - 2차 완료(2026-05-22): API/캐시 cycle delta 추가. `services/stock_query_service.py`에 `price_lookup_stats_snapshot() -> Dict[str, int]` public 메서드 추가, `scheduler/strategy_scheduler.py`가 scan 직전/직후 snapshot 캡처 → cycle 단위 변동 키만 추려 `scan_metrics.lookup_stats_delta` 필드로 노출. 10종 카운터(snapshot_hit / no_tick_fallback / stale_fallback / rest_fallback / force_fresh_bypass / full_output_required / stream_unavailable_fallback / conclusion_hit / conclusion_stale_fallback / conclusion_missing_fallback) 변동이 자동 포함된다. sqs 미주입 또는 메서드 부재 시 빈 dict.
+  - 후속(2026-05-22, signal-to-order latency): `common/types.py::TradeSignal`에 `created_at: float | None = None` 필드 추가(후방호환). `scheduler/strategy_scheduler.py`가 `scan()`/`check_exits()` 직후 미stamp 신호에 현재 시각을 부여(이미 값이 있으면 보존), `_log_signal_to_order_latency(signal, tid)` helper 가 dry_run/실모드 양쪽에서 order placement 직전 `{"event": "signal_to_order_latency", "strategy_name", "code", "action", "latency_ms", "trace_id"}` log event 발행. `created_at` 미설정 신호는 skip(방어). 새 단위 9개(trade_signal_created_at 4 + scheduler signal_to_order_latency 5).
+  - 잔여 후속: order-to-fill latency, 동일 종목 current price/OHLCV memoization, in-memory aggregator + web API 노출 (dashboard 도입 시).
+  - 검증(2차): 새 단위 5개(stock_query_service_stats_snapshot 3 + scheduler scan_metrics 2). 전체 단위 5002 + 통합 233 통과.
 - [ ] 전략별 universe 적합성을 비교한다.
   - 검토 결과: 타당. 활성 전략 다수가 `OneilUniverseService` watchlist를 공유하는 것은 운영상 단순하지만, RSI2 같은 mean-reversion 성격이나 VBO 단기 변동성 전략에 O'Neil universe가 항상 맞는지는 별도 검증이 필요하다.
   - 산출물: Oneil universe vs generic liquidity universe vs strategy-specific prefilter 성과 비교, universe exclusion report.
@@ -405,12 +414,19 @@
   - 추가 기준: polling 대비 신호 선행 시간, fast path false positive, false negative, full gate parity, missed trade PnL, duplicate signal rate.
   - VBO 특이점: `evaluate_single()` shadow fast path는 execution strength/program-buy를 의도적으로 생략하므로, fast path 통과와 full gate 최종 통과를 분리 기록해야 한다.
 - [blocked] PR-3: PR-2.5 관찰 결과 양호 시 VBO 실 적용 + OSB shadow 진입.
-- [ ] PR-3 선행: event-driven signal sink를 명확히 한다.
+- [x] PR-3 선행: event-driven signal sink를 명확히 한다.
   - 검토 결과: 타당. `PriceStreamService.on_price_tick()`은 `loop.create_task(router.on_price_tick(...))`로 호출하고 반환된 signal list를 소비하지 않는다. 현재 PR-2 shadow mode는 의도적으로 실주문을 막기 때문에 문제 없지만, live 전환 전에는 signal queue/order intent bus 같은 명시 sink가 필요하다.
   - 개선 방향: `StrategyEventRouter`가 list 반환에 의존하지 않고 `await signal_sink.publish(signal)` 또는 `await signal_queue.put(signal)`로 전달하도록 contract를 정한다.
-- [ ] PR-3 선행: EventRouter throttle을 threshold crossing 또는 signal debounce 정책으로 보강한다.
+  - 완료된 부분: `services/strategy_signal_sink.py` 신규 — `SignalSink` Protocol + `NullSignalSink` 기본 no-op 구현. context dict 표준 키(`signal_source="event"`, `strategy_name`, `code`, `snapshot_ts`)를 모듈 docstring에 정의했다.
+  - 완료된 부분: `services/strategy_event_router.py`에 `signal_sink: Optional[SignalSink] = None` 생성자 인자 추가. `on_price_tick()`이 non-None 평가 신호마다 `await sink.publish(signal, context=...)`를 호출하고, publish 예외는 흡수해 다른 evaluator 흐름을 보존한다. `List[TradeSignal]` 반환은 호환 유지.
+  - 완료된 부분: `view/web/bootstrap/service_container.py`에서 `StrategyEventRouter(..., signal_sink=None)` 명시. live consumer 주입은 PR-3 본 작업에서 진행하며 shadow 운영은 변동 없음.
+  - 검증: `test_strategy_signal_sink.py` 신규 2 + `test_strategy_event_router.py` 추가 3 (publish/예외 흡수/None 신호 미호출). 전체 단위 4982 + 통합 233 통과.
+- [x] PR-3 선행: EventRouter throttle을 threshold crossing 또는 signal debounce 정책으로 보강한다.
   - 검토 결과: 부분 타당. 현재 throttle은 evaluator 실행 전 `(strategy, code)` 단위 0.5초 차단이다. 돌파 조건 crossing tick이 throttle window 안에 들어오면 평가 자체가 지연될 수 있다.
   - 개선 방향: trigger price crossing은 evaluator 실행을 허용하고, 중복 signal 발행만 debounce하는 방향을 검토한다.
+  - 완료된 부분: 두 단계로 분리(`docs/event_driven_architecture.md` §9 Q5, 2026-05-22 결정). `StrategyEventRouter`에 `signal_debounce_sec: Optional[float] = None` 신규 인자 추가, `_last_signal_dispatched` 상태와 `on_price_tick()` 결과 루프의 debounce 체크 통합. `unsubscribe()`도 debounce 상태 cleanup. 코드 기본값은 backward compat 유지 (`throttle_sec=0.5`, `signal_debounce_sec=None`).
+  - 완료된 부분: 운영(`view/web/bootstrap/service_container.py`)에서 `throttle_sec=0.1, signal_debounce_sec=0.5`로 활성화. evaluator는 같은 tick burst만 흡수해 trigger crossing 보장, 같은 (strategy, code) 중복 publish/return은 0.5초 debounce.
+  - 검증: `test_strategy_event_router.py` 추가 4개 (within-window 차단 / after-window 재발행 / None 비활성 backward compat / unsubscribe cleanup). 전체 단위 4986 + 통합 233 통과.
 - [ ] PR-4+: 단계적 확장.
 
 구현 결정 사항 (`docs/event_driven_architecture.md` §9, 2026-05-18 확정):
