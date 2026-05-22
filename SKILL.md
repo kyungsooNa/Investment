@@ -2,6 +2,7 @@
 
 > 이 문서는 Claude의 `Read`, `Edit`, `Write` 도구 사용 규칙이다.
 > Codex는 작업 시작 시 이 문서를 읽지 않고, [AGENTS.md](AGENTS.md)의 Codex 작업 규칙을 따른다.
+> 개인 도구 사용 패턴은 [SKILL.local.md](SKILL.local.md) (존재 시, gitignore 대상) 참고.
 
 ---
 
@@ -110,30 +111,6 @@ Read(file_path)  # 전체 읽기
 
 ---
 
-## 규칙 6. JSONL 로그 시간 분석
-
-JSONL 로그에서 성능을 분석할 때 턴 유형에 따라 시간 구분을 다르게 해석한다.
-
-| 구간 | 직전 턴 유형 | 의미 |
-|------|-------------|------|
-| 타임스탬프 차이 | `assistant` 턴 직전 | **LLM 대기 시간** (모델 응답 생성) |
-| 타임스탬프 차이 | `user` 턴 직전 | **Tool 실행 시간** (도구 호출·결과 반환) |
-
-```python
-# 분석 예시
-for i, entry in enumerate(log):
-    if i == 0: continue
-    delta = entry.timestamp - log[i-1].timestamp
-    if entry.role == "assistant":
-        print(f"LLM 대기: {delta}s")   # 이전 user(tool_result) → assistant
-    elif entry.role == "user":
-        print(f"Tool 실행: {delta}s")  # 이전 assistant(tool_use) → user
-```
-
-**Why:** LLM 지연과 Tool 지연을 혼동하면 병목 분석이 틀린다. 역할 기준으로 명확히 구분해야 한다.
-
----
-
 ## 체크리스트
 
 작업 시작 전 다음을 확인한다:
@@ -147,4 +124,3 @@ for i, entry in enumerate(log):
   - [ ] Changes Specification
   - [ ] Test Update Specification
   - [ ] Execution Notes
-- [ ] JSONL 로그 분석 시 assistant/user 턴 기준으로 LLM 대기·Tool 실행을 구분하는가?
