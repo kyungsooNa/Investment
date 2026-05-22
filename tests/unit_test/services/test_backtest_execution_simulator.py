@@ -221,6 +221,96 @@ def test_portfolio_ledger_reserves_cash_and_rejects_cash_short_orders():
     )
 
 
+def test_portfolio_ledger_reports_same_code_batch_overlap_without_blocking():
+    ledger = BacktestPortfolioLedger(initial_cash=1_000_000)
+    first = BacktestOrder(
+        order_id="o1",
+        code="005930",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=70_000,
+        qty=1,
+        strategy="S1",
+    )
+    second = BacktestOrder(
+        order_id="o2",
+        code="005930",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=71_000,
+        qty=1,
+        strategy="S2",
+    )
+
+    decisions = ledger.reserve_buy_orders([first, second])
+
+    assert [decision.accepted for decision in decisions] == [True, True]
+    assert decisions[0].warnings == ("same_code_batch_signal",)
+    assert decisions[1].warnings == ("same_code_batch_signal",)
+
+
+def test_portfolio_ledger_reports_same_code_existing_position_overlap():
+    ledger = BacktestPortfolioLedger(initial_cash=1_000_000)
+    existing = BacktestOrder(
+        order_id="buy1",
+        code="005930",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=70_000,
+        qty=1,
+        strategy="S1",
+    )
+    report = BacktestExecutionSimulator().simulate(
+        existing,
+        BacktestBar("20260509 091000", 70_000, 70_500, 69_500, 70_200, 1_000),
+    )
+    ledger.apply_execution(report)
+
+    add_order = BacktestOrder(
+        order_id="o2",
+        code="005930",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=71_000,
+        qty=1,
+        strategy="S2",
+    )
+
+    decisions = ledger.reserve_buy_orders([add_order])
+
+    assert decisions[0].accepted is True
+    assert decisions[0].warnings == ("same_code_existing_position",)
+
+
+def test_portfolio_ledger_reports_same_code_pending_order_overlap():
+    ledger = BacktestPortfolioLedger(initial_cash=1_000_000)
+    first = BacktestOrder(
+        order_id="o1",
+        code="005930",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=70_000,
+        qty=1,
+        strategy="S1",
+    )
+    ledger.reserve_buy_orders([first])
+
+    second = BacktestOrder(
+        order_id="o2",
+        code="005930",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=71_000,
+        qty=1,
+        strategy="S2",
+    )
+
+    decisions = ledger.reserve_buy_orders([second])
+
+    assert decisions[0].accepted is True
+    assert decisions[0].warnings == ("same_code_pending_order",)
+
+
 def test_portfolio_ledger_applies_buy_and_sell_fills_with_net_cash():
     ledger = BacktestPortfolioLedger(initial_cash=1_000_000)
     buy = BacktestOrder(

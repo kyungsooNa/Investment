@@ -207,26 +207,30 @@ class StrategyDebugRunner:
 def _build_debug_journal_records(report: DebugReport, *, target_date: str = "") -> List[dict]:
     records: List[dict] = []
     default_time = _signal_time_from_target_date(target_date)
-    portfolio_decision_by_code = {
-        decision.order.code: decision
-        for decision in report.portfolio_decisions
-    }
+    portfolio_decisions_by_code: dict[str, List[PortfolioDecision]] = {}
+    for decision in report.portfolio_decisions:
+        portfolio_decisions_by_code.setdefault(decision.order.code, []).append(decision)
 
     for signal in report.signals:
-        portfolio_decision = portfolio_decision_by_code.get(signal.code)
+        code_decisions = portfolio_decisions_by_code.get(signal.code) or []
+        portfolio_decision = code_decisions.pop(0) if code_decisions else None
+        portfolio_warnings = list(portfolio_decision.warnings) if portfolio_decision else []
         if portfolio_decision is not None and not portfolio_decision.accepted:
+            decision = {
+                "signal_time": default_time,
+                "current": signal.price,
+                "qty": signal.qty,
+                "rejected_reason": portfolio_decision.reason,
+                "strategy": signal.strategy_name or report.strategy_name,
+                "name": signal.name,
+                "action": signal.action,
+                "exchange": signal.exchange,
+            }
+            if portfolio_warnings:
+                decision["portfolio_warnings"] = portfolio_warnings
             records.append(
                 normalize_backtest_decision(
-                    {
-                        "signal_time": default_time,
-                        "current": signal.price,
-                        "qty": signal.qty,
-                        "rejected_reason": portfolio_decision.reason,
-                        "strategy": signal.strategy_name or report.strategy_name,
-                        "name": signal.name,
-                        "action": signal.action,
-                        "exchange": signal.exchange,
-                    },
+                    decision,
                     stock_code=signal.code,
                     strategy=signal.strategy_name or report.strategy_name,
                     accepted=False,
@@ -234,18 +238,21 @@ def _build_debug_journal_records(report: DebugReport, *, target_date: str = "") 
             )
             continue
 
+        decision = {
+            "signal_time": default_time,
+            "current": signal.price,
+            "qty": signal.qty,
+            "decision_reason": signal.reason or signal.action,
+            "strategy": signal.strategy_name or report.strategy_name,
+            "name": signal.name,
+            "action": signal.action,
+            "exchange": signal.exchange,
+        }
+        if portfolio_warnings:
+            decision["portfolio_warnings"] = portfolio_warnings
         records.append(
             normalize_backtest_decision(
-                {
-                    "signal_time": default_time,
-                    "current": signal.price,
-                    "qty": signal.qty,
-                    "decision_reason": signal.reason or signal.action,
-                    "strategy": signal.strategy_name or report.strategy_name,
-                    "name": signal.name,
-                    "action": signal.action,
-                    "exchange": signal.exchange,
-                },
+                decision,
                 stock_code=signal.code,
                 strategy=signal.strategy_name or report.strategy_name,
                 accepted=True,

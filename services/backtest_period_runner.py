@@ -187,7 +187,12 @@ class BacktestPeriodRunner:
             signal = signal_by_order_id[decision.order.order_id]
             if not decision.accepted:
                 result.journal_records.append(
-                    self._rejected_signal_record(signal, date_ymd, decision.reason)
+                    self._rejected_signal_record(
+                        signal,
+                        date_ymd,
+                        decision.reason,
+                        portfolio_warnings=decision.warnings,
+                    )
                 )
                 continue
 
@@ -195,10 +200,17 @@ class BacktestPeriodRunner:
             self._ledger.apply_execution(report)
             self._remember_position_excursion(report, date_ymd)
             result.execution_reports.append(report)
-            result.journal_records.append(self._execution_record(report, signal=signal))
+            result.journal_records.append(
+                self._execution_record(report, signal=signal, portfolio_warnings=decision.warnings)
+            )
             if report.filled_qty <= 0:
                 result.journal_records.append(
-                    self._rejected_signal_record(signal, date_ymd, report.reason)
+                    self._rejected_signal_record(
+                        signal,
+                        date_ymd,
+                        report.reason,
+                        portfolio_warnings=decision.warnings,
+                    )
                 )
 
     async def _execute_signal(
@@ -309,18 +321,22 @@ class BacktestPeriodRunner:
         reason: str,
         *,
         qty: int | None = None,
+        portfolio_warnings: Sequence[str] = (),
     ) -> dict:
+        decision = {
+            "signal_time": _signal_time(date_ymd),
+            "current": signal.price,
+            "qty": self._resolved_qty(signal, qty),
+            "rejected_reason": reason,
+            "strategy": signal.strategy_name or self._strategy.name,
+            "name": signal.name,
+            "action": signal.action,
+            "exchange": signal.exchange,
+        }
+        if portfolio_warnings:
+            decision["portfolio_warnings"] = list(portfolio_warnings)
         return normalize_backtest_decision(
-            {
-                "signal_time": _signal_time(date_ymd),
-                "current": signal.price,
-                "qty": self._resolved_qty(signal, qty),
-                "rejected_reason": reason,
-                "strategy": signal.strategy_name or self._strategy.name,
-                "name": signal.name,
-                "action": signal.action,
-                "exchange": signal.exchange,
-            },
+            decision,
             stock_code=signal.code,
             strategy=signal.strategy_name or self._strategy.name,
             accepted=False,
@@ -338,6 +354,7 @@ class BacktestPeriodRunner:
         *,
         realized_metrics: dict | None = None,
         signal: TradeSignal | None = None,
+        portfolio_warnings: Sequence[str] = (),
     ) -> dict:
         record = normalize_backtest_execution(
             report,
@@ -345,6 +362,10 @@ class BacktestPeriodRunner:
                 signal.volatility_20d_annualized if signal is not None else None
             ),
         )
+        if portfolio_warnings:
+            metadata = dict(record.get("metadata") or {})
+            metadata["portfolio_warnings"] = list(portfolio_warnings)
+            record["metadata"] = metadata
         if realized_metrics and report.order.side == OrderSide.SELL and report.filled_qty > 0:
             record["status"] = "SOLD"
             record["net_pnl"] = realized_metrics.get("net_pnl")

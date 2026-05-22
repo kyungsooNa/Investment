@@ -59,6 +59,35 @@ class FakeStrategy:
         return []
 
 
+class DuplicateCodeSignalStrategy:
+    name = "OneilPocketPivot"
+
+    async def scan(self):
+        return [
+            TradeSignal(
+                code="005930",
+                name="삼성전자",
+                action="BUY",
+                price=70_000,
+                qty=1,
+                reason="pocket_pivot",
+                strategy_name=self.name,
+            ),
+            TradeSignal(
+                code="005930",
+                name="삼성전자",
+                action="BUY",
+                price=71_000,
+                qty=1,
+                reason="bgu",
+                strategy_name=self.name,
+            ),
+        ]
+
+    async def check_exits(self, holdings):
+        return []
+
+
 @dataclass
 class StaticBarProvider:
     bars: dict[tuple[str, str, str], BacktestBar]
@@ -286,6 +315,25 @@ async def test_period_runner_applies_strategy_max_positions():
     assert result.execution_reports == []
     assert result.journal_records[0]["status"] == "REJECTED"
     assert result.journal_records[0]["rejected_reason"] == "max_positions"
+
+
+@pytest.mark.asyncio
+async def test_period_runner_records_portfolio_overlap_warnings_in_journal_metadata():
+    strategy = DuplicateCodeSignalStrategy()
+    provider = StaticBarProvider({
+        ("20260501", "005930", "BUY"): BacktestBar("20260501 091000", 70_000, 71_500, 69_500, 70_200, 1_000),
+    })
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=provider,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+    )
+
+    result = await runner.run(["20260501"])
+
+    assert [record["status"] for record in result.journal_records] == ["FILLED", "FILLED"]
+    assert result.journal_records[0]["metadata"]["portfolio_warnings"] == ["same_code_batch_signal"]
+    assert result.journal_records[1]["metadata"]["portfolio_warnings"] == ["same_code_batch_signal"]
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from utils.transaction_cost_utils import TransactionCostUtils
 
@@ -93,6 +93,7 @@ class PortfolioDecision:
     accepted: bool
     reason: str
     reserved_cash: float = 0.0
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass
@@ -273,24 +274,44 @@ class BacktestPortfolioLedger:
         decisions: list[PortfolioDecision] = []
         strategy_counts = self._strategy_position_counts()
         accepted_new_codes: set[str] = set()
+        batch_code_counts = _code_counts(
+            order for order in orders
+            if order.side == OrderSide.BUY
+        )
+        existing_reservation_codes = {
+            reservation.order.code for reservation in self.reservations.values()
+        }
 
         for order in sorted(orders, key=lambda item: item.priority, reverse=True):
+            warnings = self._portfolio_warnings(
+                order,
+                batch_code_counts=batch_code_counts,
+                existing_reservation_codes=existing_reservation_codes,
+            )
             if order.side != OrderSide.BUY:
-                decisions.append(PortfolioDecision(order, accepted=False, reason="not_buy_order"))
+                decisions.append(
+                    PortfolioDecision(order, accepted=False, reason="not_buy_order", warnings=warnings)
+                )
                 continue
 
             limit = (max_positions_per_strategy or {}).get(order.strategy)
             is_new_position = order.code not in self.positions and order.code not in accepted_new_codes
             if limit is not None and is_new_position and strategy_counts.get(order.strategy, 0) >= limit:
-                decisions.append(PortfolioDecision(order, accepted=False, reason="max_positions"))
+                decisions.append(
+                    PortfolioDecision(order, accepted=False, reason="max_positions", warnings=warnings)
+                )
                 continue
 
             required_cash = self._required_buy_cash(order, estimated_prices=estimated_prices)
             if required_cash <= 0:
-                decisions.append(PortfolioDecision(order, accepted=False, reason="invalid_price"))
+                decisions.append(
+                    PortfolioDecision(order, accepted=False, reason="invalid_price", warnings=warnings)
+                )
                 continue
             if self.available_cash < required_cash:
-                decisions.append(PortfolioDecision(order, accepted=False, reason="cash_short"))
+                decisions.append(
+                    PortfolioDecision(order, accepted=False, reason="cash_short", warnings=warnings)
+                )
                 continue
 
             self.reservations[order.order_id] = PortfolioReservation(order, required_cash)
@@ -298,7 +319,13 @@ class BacktestPortfolioLedger:
                 accepted_new_codes.add(order.code)
                 strategy_counts[order.strategy] = strategy_counts.get(order.strategy, 0) + 1
             decisions.append(
-                PortfolioDecision(order, accepted=True, reason="reserved", reserved_cash=required_cash)
+                PortfolioDecision(
+                    order,
+                    accepted=True,
+                    reason="reserved",
+                    reserved_cash=required_cash,
+                    warnings=warnings,
+                )
             )
 
         return decisions
@@ -374,3 +401,29 @@ class BacktestPortfolioLedger:
         for position in self.positions.values():
             counts[position.strategy] = counts.get(position.strategy, 0) + 1
         return counts
+
+    def _portfolio_warnings(
+        self,
+        order: BacktestOrder,
+        *,
+        batch_code_counts: Mapping[str, int],
+        existing_reservation_codes: set[str],
+    ) -> tuple[str, ...]:
+        if order.side != OrderSide.BUY:
+            return ()
+
+        warnings: list[str] = []
+        if order.code in self.positions:
+            warnings.append("same_code_existing_position")
+        if order.code in existing_reservation_codes:
+            warnings.append("same_code_pending_order")
+        if batch_code_counts.get(order.code, 0) > 1:
+            warnings.append("same_code_batch_signal")
+        return tuple(warnings)
+
+
+def _code_counts(orders: Iterable[BacktestOrder]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for order in orders:
+        counts[order.code] = counts.get(order.code, 0) + 1
+    return counts
