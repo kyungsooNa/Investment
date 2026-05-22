@@ -217,6 +217,9 @@ class StrategyProfitabilityGateConfig(BaseModel):
     multiple_testing_min_trials: int = 5
     multiple_testing_top_to_median_warning_ratio: float = 3.0
     multiple_testing_primary_metric: str = "total_net_pnl"
+    strategy_correlation_min_overlap: int = 5
+    strategy_correlation_warning_threshold: float = 0.8
+    strategy_correlation_metric: str = "net_return"
 
     model_config = {"extra": "allow"}
 

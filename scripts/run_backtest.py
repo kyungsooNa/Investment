@@ -535,6 +535,22 @@ def _format_profitability_gate_console_lines(result: dict[str, Any]) -> list[str
                 ratio=ratio_str,
             )
         )
+    correlation = result.get("strategy_correlation") or {}
+    max_pair = correlation.get("max_positive_pair") or {}
+    if max_pair and (
+        correlation.get("warnings")
+        or "strategy_correlation_high" in warnings
+    ):
+        corr = max_pair.get("correlation")
+        corr_str = f"{corr:.2f}" if isinstance(corr, (int, float)) else "n/a"
+        lines.append(
+            "strategy-correlation max={left}/{right} corr={corr} overlap={overlap}".format(
+                left=max_pair.get("left") or "n/a",
+                right=max_pair.get("right") or "n/a",
+                corr=corr_str,
+                overlap=max_pair.get("overlap", 0),
+            )
+        )
     for strategy, item in sorted((result.get("strategies") or {}).items()):
         reasons = item.get("blocking_reasons") or []
         warnings = item.get("warnings") or []

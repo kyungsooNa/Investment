@@ -15,6 +15,7 @@ from services.regime_performance_service import (
 )
 from services.strategy_performance_degradation_service import compute_strategy_window_metrics
 from services.multiple_testing_bias_service import compute_multiple_testing_bias_summary
+from services.strategy_correlation_service import compute_strategy_correlation_summary
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,9 @@ class StrategyProfitabilityGateConfig:
     multiple_testing_min_trials: int = 5
     multiple_testing_top_to_median_warning_ratio: float = 3.0
     multiple_testing_primary_metric: str = "total_net_pnl"
+    strategy_correlation_min_overlap: int = 5
+    strategy_correlation_warning_threshold: float = 0.8
+    strategy_correlation_metric: str = "net_return"
 
 
 def evaluate_strategy_profitability_gate(
@@ -86,11 +90,16 @@ def evaluate_strategy_profitability_gate(
         top_to_median_warning_ratio=cfg.multiple_testing_top_to_median_warning_ratio,
         primary_metric=cfg.multiple_testing_primary_metric,
     )
-    warnings = (
-        ["multiple_testing_bias_warning"]
-        if multiple_testing_bias.get("bias_warning")
-        else []
+    strategy_correlation = compute_strategy_correlation_summary(
+        sold_records,
+        min_overlap=cfg.strategy_correlation_min_overlap,
+        warning_threshold=cfg.strategy_correlation_warning_threshold,
+        metric=cfg.strategy_correlation_metric,
     )
+    warnings = []
+    if multiple_testing_bias.get("bias_warning"):
+        warnings.append("multiple_testing_bias_warning")
+    warnings.extend(strategy_correlation.get("warnings") or [])
     return {
         "config": _config_to_dict(cfg),
         "summary": {
@@ -101,6 +110,7 @@ def evaluate_strategy_profitability_gate(
         },
         "warnings": warnings,
         "multiple_testing_bias": multiple_testing_bias,
+        "strategy_correlation": strategy_correlation,
         "strategies": by_strategy,
     }
 

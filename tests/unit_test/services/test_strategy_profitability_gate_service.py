@@ -269,3 +269,36 @@ def test_profitability_gate_reports_multiple_testing_bias_warning():
     assert "multiple_testing_bias_warning" in result["warnings"]
     assert result["multiple_testing_bias"]["bias_warning"] is True
     assert result["multiple_testing_bias"]["best_strategy"] == "S1"
+
+
+def test_profitability_gate_reports_strategy_correlation_warning():
+    records = []
+    for day, s1_ret, s2_ret in [
+        ("2026-05-01", 1.0, 2.0),
+        ("2026-05-02", 2.0, 4.0),
+        ("2026-05-03", 3.0, 6.0),
+    ]:
+        records.append(_sold(100, s1_ret, strategy="S1", signal_time=day))
+        records.append(_sold(100, s2_ret, strategy="S2", signal_time=day))
+
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=3,
+        min_profit_factor=None,
+        min_payoff_ratio=None,
+        min_win_rate=0.0,
+        min_avg_net_return=None,
+        require_positive_total_net_pnl=False,
+        max_mdd_pct=None,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+        strategy_correlation_min_overlap=3,
+        strategy_correlation_warning_threshold=0.9,
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    assert "strategy_correlation_high" in result["warnings"]
+    assert result["strategy_correlation"]["max_positive_pair"]["left"] == "S1"
+    assert result["strategy_correlation"]["max_positive_pair"]["right"] == "S2"

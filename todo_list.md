@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-22 (P1-2 포트폴리오 집중도 report-only)
+최종 업데이트: 2026-05-22 (P1-2 전략 상관 리스크 report-only)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -183,6 +183,7 @@
   - 검토 결과: 타당. HTF, VBO, Pocket Pivot이 모두 강한 모멘텀 종목군을 고르면 전략은 여러 개여도 포트폴리오 관점에서는 같은 베팅이 될 수 있다.
   - 1차 완료: `BacktestPortfolioLedger.reserve_buy_orders()`가 동일 종목 배치 신호, 기존 보유 종목 추가 진입, 기존 예약 주문과의 중복을 `PortfolioDecision.warnings`로 report-only 기록한다. hard block은 하지 않는다.
   - 2차 완료: `compute_portfolio_concentration_summary()`를 추가해 백테스트 portfolio summary에 cost-basis 기준 총 노출, 단일 포지션 최대 비중, 전략별 최대 비중, threshold warning을 report-only로 포함한다.
+  - 3차 완료: `compute_strategy_correlation_summary()`를 추가해 profitability gate top-level report에 전략 간 일자별 `net_return` 상관을 포함한다. overlap 표본이 충분하고 양의 상관이 threshold 이상이면 `strategy_correlation_high` warning을 노출한다.
 - [x] 전략 간 중복 신호/동일 종목/동일 테마 진입을 포트폴리오 의사결정 단계에서 리포트한다.
   - 1차는 hard block보다 “동시 노출 경고 + journal metadata”로 시작한다.
   - 완료된 부분: 기간 백테스트 runner와 strategy debug runner가 `same_code_batch_signal` / `same_code_existing_position` / `same_code_pending_order`를 표준 journal `metadata.portfolio_warnings`에 남긴다. 동일 테마/섹터 리포트는 테마 매핑 데이터 확보 후 확장한다.
