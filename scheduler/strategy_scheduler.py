@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 from repositories.streaming_stock_repo import StreamingType
 try:
@@ -27,6 +28,7 @@ from repositories.stock_code_repository import StockCodeRepository
 from services.stock_query_service import StockQueryService
 from core.market_clock import MarketClock
 from core.performance_profiler import PerformanceProfiler
+from core.scan_rejection_counter import EntryRejectionCounter
 
 from scheduler.strategy_scheduler_store import StrategySchedulerStore, SCHEDULER_DB_FILE
 from services.price_subscription_service import SubscriptionPriority
@@ -468,8 +470,32 @@ class StrategyScheduler:
             return
 
         t_scan = self._pm.start_timer()
-        buy_signals = await cfg.strategy.scan()
+        # P2 2-2 1차: scan cycle 성능 계측. entry_rejected 로그를 카운트하기 위해
+        # strategy logger 에 EntryRejectionCounter 를 일시 attach. 예외에도 detach 보장.
+        strategy_logger = getattr(cfg.strategy, "_logger", None)
+        rejection_counter = EntryRejectionCounter() if strategy_logger is not None else None
+        if rejection_counter is not None:
+            strategy_logger.addHandler(rejection_counter)
+        t_scan_metric = time.monotonic()
+        try:
+            buy_signals = await cfg.strategy.scan()
+        finally:
+            if rejection_counter is not None:
+                strategy_logger.removeHandler(rejection_counter)
         self._pm.log_timer(f"{name}.scan()", t_scan)
+
+        try:
+            candidate_count = len(cfg.strategy.current_candidate_codes() or [])
+        except Exception:
+            candidate_count = 0
+        self._logger.info({
+            "event": "scan_metrics",
+            "strategy_name": name,
+            "latency_ms": round((time.monotonic() - t_scan_metric) * 1000.0, 3),
+            "candidate_count": candidate_count,
+            "signal_count": len(buy_signals),
+            "rejected_reasons": rejection_counter.snapshot() if rejection_counter is not None else {},
+        })
 
         # P2 2-4: event-driven shadow 구독 갱신 (scan 직후 후보군 변화 반영)
         self._refresh_event_shadow_subscriptions(cfg)

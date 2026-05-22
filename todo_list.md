@@ -343,9 +343,13 @@
 - [x] VBO fallback 후보의 unknown liquidity를 통과시키지 않는다.
   - 검토 결과: 타당. universe 미주입 fallback에서 `avg_5d_tv=0`을 넣고, validity filter는 `avg_5d_tv > 0 and avg_5d_tv < min`일 때만 탈락시킨다.
   - 완료된 부분: fail-closed reject로 전환. `_passes_validity_filter`에서 `avg_5d_tv <= 0`이면 `avg_trading_value_unknown` reason으로 차단. fallback 경로(`_load_pool_b` API 응답 기반)는 거래대금 검증 없이는 매수 신호를 만들 수 없다. 단위/통합 테스트로 회귀 고정.
-- [ ] scan cycle 단위 데이터 공유와 성능 계측을 강화한다.
+- [~] scan cycle 단위 데이터 공유와 성능 계측을 강화한다.
   - 후보: 동일 종목 current price/OHLCV/conclusion/program trading memoization, strategy scan latency, candidate count, API calls per scan, cache hit ratio, REST fallback ratio, rejected reason distribution, signal-to-order latency, order-to-fill latency.
   - 목표: 성능 개선을 감이 아니라 병목 지표 기반으로 진행한다.
+  - 1차 완료(2026-05-22): 4종 메트릭(latency_ms / candidate_count / signal_count / rejected_reasons) structured log event 발행. `core/scan_rejection_counter.py::EntryRejectionCounter` (logging.Handler 상속) 신규 — `scheduler/strategy_scheduler.py:_run_strategy()`가 scan 직전 strategy logger 에 attach 하고, 직후 detach 해 한 cycle 동안의 entry_rejected reason 분포를 누적. 예외 시에도 detach 보장. `scan_metrics` event 가 4종 필드를 포함해 발행된다.
+  - 1차 한계: `LOG_LEVEL=INFO`(prod) 환경에서 `_logger.debug({...})` 로 emit 되는 entry_rejected (예: FirstPullback) 는 logger 단계에서 필터링돼 카운트되지 않는다. 전 전략을 INFO 로 표준화하는 보강은 후속 PR.
+  - 후속: 동일 종목 current price/OHLCV memoization, API calls per scan, cache hit ratio / REST fallback ratio, signal-to-order / order-to-fill latency 항목.
+  - 검증: 새 단위 11개(scan_rejection_counter 8 + scheduler scan_metrics 3), 전체 단위 4997 + 통합 233 통과.
 - [ ] 전략별 universe 적합성을 비교한다.
   - 검토 결과: 타당. 활성 전략 다수가 `OneilUniverseService` watchlist를 공유하는 것은 운영상 단순하지만, RSI2 같은 mean-reversion 성격이나 VBO 단기 변동성 전략에 O'Neil universe가 항상 맞는지는 별도 검증이 필요하다.
   - 산출물: Oneil universe vs generic liquidity universe vs strategy-specific prefilter 성과 비교, universe exclusion report.
