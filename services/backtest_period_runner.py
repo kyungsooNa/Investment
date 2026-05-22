@@ -72,6 +72,7 @@ class BacktestPeriodRunnerConfig:
     warn_total_exposure_pct: float | None = 80.0
     warn_position_concentration_pct: float | None = 20.0
     warn_strategy_concentration_pct: float | None = 40.0
+    warn_market_concentration_pct: float | None = 70.0
 
 
 @dataclass
@@ -479,6 +480,7 @@ class BacktestPeriodRunner:
                 warn_total_exposure_pct=self._config.warn_total_exposure_pct,
                 warn_position_concentration_pct=self._config.warn_position_concentration_pct,
                 warn_strategy_concentration_pct=self._config.warn_strategy_concentration_pct,
+                warn_market_concentration_pct=self._config.warn_market_concentration_pct,
             ),
         }
 
