@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from scripts.run_backtest import (
+    ACTIVE_BACKTEST_STRATEGIES,
+    _build_default_strategy_config,
     _filter_ablation_variants,
     _format_ablation_console_lines,
     _parse_args,
@@ -13,7 +15,7 @@ from scripts.run_backtest import (
     _run_ablation_for_result,
 )
 from services.backtest_period_runner import BacktestPeriodRunResult
-from services.strategy_ablation_service import AblationVariant
+from services.strategy_ablation_service import AblationPreset, AblationVariant
 from strategies.oneil_pocket_pivot_ablation import (
     ONEIL_POCKET_PIVOT_ABLATION_PRESET,
 )
@@ -55,8 +57,28 @@ def test_resolve_ablation_preset_returns_known_preset():
 
 
 def test_resolve_ablation_preset_raises_on_unknown_strategy():
-    with pytest.raises(ValueError, match="oneil_squeeze_breakout"):
-        _resolve_ablation_preset("oneil_squeeze_breakout")
+    with pytest.raises(ValueError, match="not_a_real_strategy"):
+        _resolve_ablation_preset("not_a_real_strategy")
+
+
+@pytest.mark.parametrize("strategy_key", list(ACTIVE_BACKTEST_STRATEGIES))
+def test_resolve_ablation_preset_covers_every_active_strategy(strategy_key):
+    preset = _resolve_ablation_preset(strategy_key)
+
+    assert isinstance(preset, AblationPreset)
+    assert preset.strategy_key == strategy_key
+    assert len(preset.variants) >= 3
+
+
+@pytest.mark.parametrize("strategy_key", list(ACTIVE_BACKTEST_STRATEGIES))
+def test_build_default_strategy_config_returns_dataclass_instance(strategy_key):
+    import dataclasses
+
+    config = _build_default_strategy_config(strategy_key)
+
+    assert dataclasses.is_dataclass(config), (
+        f"_build_default_strategy_config('{strategy_key}') must return a dataclass instance"
+    )
 
 
 def test_filter_ablation_variants_returns_all_when_none():

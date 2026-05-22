@@ -255,6 +255,7 @@ def _build_backtest_strategy(
             market_clock=backtest_clock,
             logger=strategy_logger,
             state_file=_state_file(state_dir, strategy_key, state_suffix),
+            config=config,
         )
     if strategy_key == "high_tight_flag":
         from strategies.high_tight_flag_strategy import HighTightFlagStrategy
@@ -265,6 +266,7 @@ def _build_backtest_strategy(
             market_clock=backtest_clock,
             logger=strategy_logger,
             state_file=_state_file(state_dir, strategy_key, state_suffix),
+            config=config,
         )
     if strategy_key == "first_pullback":
         from strategies.first_pullback_strategy import FirstPullbackStrategy
@@ -275,6 +277,7 @@ def _build_backtest_strategy(
             market_clock=backtest_clock,
             logger=strategy_logger,
             state_file=_state_file(state_dir, strategy_key, state_suffix),
+            config=config,
         )
     if strategy_key == "larry_williams_vbo":
         from strategies.larry_williams_vbo_strategy import LarryWilliamsVBOStrategy
@@ -284,6 +287,7 @@ def _build_backtest_strategy(
             market_clock=backtest_clock,
             universe_service=universe_service,
             logger=strategy_logger,
+            config=config,
         )
     if strategy_key == "rsi2_pullback":
         from strategies.rsi2_pullback_strategy import RSI2PullbackStrategy
@@ -295,6 +299,7 @@ def _build_backtest_strategy(
             market_clock=backtest_clock,
             logger=strategy_logger,
             state_file=_state_file(state_dir, strategy_key, state_suffix),
+            config=config,
         )
     if strategy_key == "larry_williams_channel_breakout":
         from strategies.larry_williams_channel_breakout_strategy import (
@@ -308,6 +313,7 @@ def _build_backtest_strategy(
             market_clock=backtest_clock,
             logger=strategy_logger,
             state_file=_state_file(state_dir, strategy_key, state_suffix),
+            config=config,
         )
 
     raise ValueError(f"지원하지 않는 백테스트 전략입니다: {strategy_key}")
@@ -604,6 +610,41 @@ def _build_profitability_gate_config(app_config: Any, *, initial_cash: float):
     return StrategyProfitabilityGateConfig(**{k: v for k, v in values.items() if k in allowed})
 
 
+def _build_default_strategy_config(strategy_key: str) -> Any:
+    """Return a fresh strategy-specific default config instance."""
+    if strategy_key == "oneil_pocket_pivot":
+        from strategies.oneil_common_types import OneilPocketPivotConfig
+
+        return OneilPocketPivotConfig()
+    if strategy_key == "oneil_squeeze_breakout":
+        from strategies.oneil_common_types import OneilBreakoutConfig
+
+        return OneilBreakoutConfig()
+    if strategy_key == "high_tight_flag":
+        from strategies.oneil_common_types import HTFConfig
+
+        return HTFConfig()
+    if strategy_key == "first_pullback":
+        from strategies.first_pullback_types import FirstPullbackConfig
+
+        return FirstPullbackConfig()
+    if strategy_key == "larry_williams_vbo":
+        from strategies.larry_williams_vbo_strategy import LarryWilliamsVBOConfig
+
+        return LarryWilliamsVBOConfig()
+    if strategy_key == "rsi2_pullback":
+        from strategies.rsi2_pullback_types import RSI2PullbackConfig
+
+        return RSI2PullbackConfig()
+    if strategy_key == "larry_williams_channel_breakout":
+        from strategies.larry_williams_cb_types import LarryWilliamsCBConfig
+
+        return LarryWilliamsCBConfig()
+    raise ValueError(
+        f"Ablation default config not defined for strategy '{strategy_key}'."
+    )
+
+
 def _build_ablation_overrides(
     *,
     strategy_key: str,
@@ -630,30 +671,50 @@ def _build_ablation_overrides(
 
     config = None
     if variant.config_overrides:
-        if strategy_key == "oneil_pocket_pivot":
-            from strategies.oneil_common_types import OneilPocketPivotConfig
-
-            config = apply_config_overrides(
-                OneilPocketPivotConfig(), variant.config_overrides
-            )
-        else:
-            raise ValueError(
-                f"Ablation default config not defined for strategy '{strategy_key}'."
-            )
+        config = apply_config_overrides(
+            _build_default_strategy_config(strategy_key), variant.config_overrides
+        )
     return universe, config
 
 
 def _resolve_ablation_preset(strategy_key: str):
-    from services.strategy_ablation_service import AblationPreset
-
     if strategy_key == "oneil_pocket_pivot":
         from strategies.oneil_pocket_pivot_ablation import (
             ONEIL_POCKET_PIVOT_ABLATION_PRESET,
         )
         return ONEIL_POCKET_PIVOT_ABLATION_PRESET
+    if strategy_key == "oneil_squeeze_breakout":
+        from strategies.oneil_squeeze_breakout_ablation import (
+            ONEIL_SQUEEZE_BREAKOUT_ABLATION_PRESET,
+        )
+        return ONEIL_SQUEEZE_BREAKOUT_ABLATION_PRESET
+    if strategy_key == "high_tight_flag":
+        from strategies.high_tight_flag_ablation import (
+            HIGH_TIGHT_FLAG_ABLATION_PRESET,
+        )
+        return HIGH_TIGHT_FLAG_ABLATION_PRESET
+    if strategy_key == "first_pullback":
+        from strategies.first_pullback_ablation import (
+            FIRST_PULLBACK_ABLATION_PRESET,
+        )
+        return FIRST_PULLBACK_ABLATION_PRESET
+    if strategy_key == "larry_williams_vbo":
+        from strategies.larry_williams_vbo_ablation import (
+            LARRY_WILLIAMS_VBO_ABLATION_PRESET,
+        )
+        return LARRY_WILLIAMS_VBO_ABLATION_PRESET
+    if strategy_key == "rsi2_pullback":
+        from strategies.rsi2_pullback_ablation import (
+            RSI2_PULLBACK_ABLATION_PRESET,
+        )
+        return RSI2_PULLBACK_ABLATION_PRESET
+    if strategy_key == "larry_williams_channel_breakout":
+        from strategies.larry_williams_channel_breakout_ablation import (
+            LARRY_WILLIAMS_CHANNEL_BREAKOUT_ABLATION_PRESET,
+        )
+        return LARRY_WILLIAMS_CHANNEL_BREAKOUT_ABLATION_PRESET
     raise ValueError(
-        f"Ablation preset 이 정의되지 않은 전략입니다: '{strategy_key}'. "
-        f"현재 지원: oneil_pocket_pivot"
+        f"Ablation preset 이 정의되지 않은 전략입니다: '{strategy_key}'."
     )
 
 
