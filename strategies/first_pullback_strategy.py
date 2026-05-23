@@ -71,6 +71,10 @@ class FirstPullbackStrategy(LiveStrategy):
     def name(self) -> str:
         return "첫눌림목"
 
+    @property
+    def strategy_id(self) -> str:
+        return "first_pullback"
+
     # ── scan ────────────────────────────────────────────────────────
 
     async def scan(self) -> List[TradeSignal]:

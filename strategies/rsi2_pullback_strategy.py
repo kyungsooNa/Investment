@@ -77,6 +77,10 @@ class RSI2PullbackStrategy(LiveStrategy):
     def name(self) -> str:
         return "RSI2눌림목"
 
+    @property
+    def strategy_id(self) -> str:
+        return "rsi2_pullback"
+
     # ── scan ────────────────────────────────────────────────────────
 
     async def scan(self) -> List[TradeSignal]:

@@ -527,6 +527,9 @@
 - [ ] `strategy_id`와 `display_name`을 분리한다.
   - 검토 결과: 타당. `strategy.name` 값이 한국어 display name(`오닐PP/BGU`, `오닐스퀴즈돌파` 등) 또는 영문 display name(`Larry Williams VBO`)으로 TradeSignal/RiskGate/log/config key에 사용된다.
   - 개선 방향: 설정·DB·journal·risk limit은 stable `strategy_id`, UI/로그 문구는 `display_name`을 사용하도록 backward-compatible migration을 설계한다.
+  - Phase 1 완료(2026-05-23): `LiveStrategy` base class 에 `strategy_id` property 도입 (default = `self.name` fallback). 10개 활성 전략 (`first_pullback`, `high_tight_flag`, `larry_williams_cb`, `larry_williams_vbo`, `oneil_pocket_pivot`, `oneil_squeeze_breakout`, `program_buy_follow`, `rsi2_pullback`, `traditional_volume_breakout`, `volume_breakout_live`) 에 안정 영문 ID 지정. consumer 변경 없는 additive 변경. 단위 테스트 13건 (parametrize 10 + snake_case + unique + base fallback) 추가로 ID 잠금.
+  - Phase 2 (별도): risk_gate, kill_switch, virtual_trade journal key, config key 사용처를 `strategy.name` → `strategy.strategy_id` 로 마이그레이션. journal CSV 호환 layer 필요.
+  - Phase 3 (cosmetic, 별도): UI/log 의 `name` 표기를 `display_name` 으로 rename.
 - [x] 직전 거래일 계산을 `MarketCalendarService` 기준으로 통일한다.
   - 검토 결과: 타당. `OneilUniverseService`, `OneilPocketPivotStrategy`, `FirstPullbackStrategy`, `MarketDataService` 일부 경로에서 `now - timedelta(days=1)`을 전일 기준으로 사용한다.
   - 완료된 부분: `common.date_utils.previous_trading_day_str(now, holidays=None)` sync helper 추가. 4개 사용처(`OneilUniverseService._analyze_surge_candidate`, `OneilPocketPivotStrategy._check_entry`, `FirstPullbackStrategy._check_entry`, `MarketDataService.get_ohlcv`)를 helper로 통일. 주말(토/일) 우회 + optional `holidays` set 지원. 단위 테스트로 weekday/주말/공휴일/시각 무관/`date` 입력 회귀 고정. `MarketCalendarService` async 메서드 추가는 의존성 주입 부담이 커서 보류 — 호출자가 휴장일을 인지할 때 `holidays` 인자로 전달하도록 했다.

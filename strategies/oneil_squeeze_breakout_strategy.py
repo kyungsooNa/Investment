@@ -82,6 +82,10 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
     def name(self) -> str:
         return "오닐스퀴즈돌파"
 
+    @property
+    def strategy_id(self) -> str:
+        return "oneil_squeeze_breakout"
+
     async def scan(self) -> List[TradeSignal]:
         signals: List[TradeSignal] = []
         self._logger.info({"event": "scan_started", "strategy_name": self.name})

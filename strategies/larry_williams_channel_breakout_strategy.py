@@ -71,6 +71,10 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
     def name(self) -> str:
         return "LarryWilliamsCB"
 
+    @property
+    def strategy_id(self) -> str:
+        return "larry_williams_cb"
+
     # ── scan ────────────────────────────────────────────────────────
 
     async def scan(self) -> List[TradeSignal]:

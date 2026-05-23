@@ -72,6 +72,10 @@ class ProgramBuyFollowStrategy(LiveStrategy):
     def name(self) -> str:
         return "프로그램매수추종"
 
+    @property
+    def strategy_id(self) -> str:
+        return "program_buy_follow"
+
     async def scan(self) -> List[TradeSignal]:
         signals: List[TradeSignal] = []
         self._logger.info({"event": "scan_started", "strategy_name": self.name})

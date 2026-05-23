@@ -14,8 +14,24 @@ class LiveStrategy(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """전략 고유 이름 (VirtualTradeRepository strategy 컬럼 값)."""
+        """전략 표시명 (현재 VirtualTradeRepository strategy 컬럼 값, UI/로그용).
+
+        한국어/표시 친화적인 문자열이 들어간다. 저장·식별 목적으로는
+        `strategy_id` 를 사용하라. 두 값이 분리되기 전 단계라 기본
+        구현은 `strategy_id` 가 `name` 으로 fallback 한다 (Phase 1).
+        """
         ...
+
+    @property
+    def strategy_id(self) -> str:
+        """안정적인 영문 식별자 (storage / config key / risk limit 용).
+
+        외부 표면(저널 CSV, 설정 key, 알림 소스, risk_gate limit 키)에서
+        `name` 을 식별자로 쓰던 코드를 점진적으로 이 값으로 옮긴다.
+        오버라이드하지 않은 전략은 `name` 으로 fallback 한다 (Phase 1
+        backward-compat). 활성 전략은 모두 명시적으로 override 해야 한다.
+        """
+        return self.name
 
     @abstractmethod
     async def scan(self) -> List[TradeSignal]:

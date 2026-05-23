@@ -73,6 +73,10 @@ class OneilPocketPivotStrategy(LiveStrategy):
     def name(self) -> str:
         return "오닐PP/BGU"
 
+    @property
+    def strategy_id(self) -> str:
+        return "oneil_pocket_pivot"
+
     # ── scan ────────────────────────────────────────────────────────
 
     async def scan(self) -> List[TradeSignal]:
