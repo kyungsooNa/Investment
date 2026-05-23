@@ -39,6 +39,7 @@ from core.loggers.trace_context import trace_scope, get_trace_id, new_trace_id
 from services.kill_switch_service import KillSwitchService
 from core.account_snapshot import AccountSnapshotCache
 from services.position_sizing_service import PositionSizingService
+from utils.strategy_state_io import StrategyStateIO
 
 
 @dataclass
@@ -213,6 +214,7 @@ class StrategyScheduler:
         for cfg in self._strategies:
             await self.stop_strategy(cfg.strategy.name, perform_force_exit=perform_exit)
 
+        await StrategyStateIO.flush_pending()
         self.close()
         self._logger.info("[Scheduler] 정지 (전체 전략 비활성화)")
         if self._notification_service:
@@ -782,7 +784,7 @@ class StrategyScheduler:
                 self._log_signal_to_order_latency(signal, tid)
                 await self._virtual_trade_service.log_buy_async(
                     signal.strategy_name, signal.code, log_price, dry_qty,
-                    volatility_20d_annualized=signal.volatility_20d_annualized,
+                    **self._virtual_trade_log_kwargs(signal),
                 )
                 if self._price_sub_svc:
                     await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key, StreamingType.UNIFIED_PRICE)
@@ -871,15 +873,19 @@ class StrategyScheduler:
                             signal.qty = buy_qty
 
                         self._log_signal_to_order_latency(signal, tid)
+                        buy_order_kwargs = {
+                            "exchange": signal_exchange,
+                            "source": f"strategy:{signal.strategy_name}",
+                            "finalize_immediately": False,
+                            "trace_id": tid,
+                            "volatility_20d_annualized": signal.volatility_20d_annualized,
+                        }
+                        buy_order_kwargs.update(self._signal_price_policy_kwargs(signal))
                         resp = await self._oes.handle_place_buy_order(
                             signal.code,
                             signal.price,
                             buy_qty,
-                            exchange=signal_exchange,
-                            source=f"strategy:{signal.strategy_name}",
-                            finalize_immediately=False,
-                            trace_id=tid,
-                            volatility_20d_annualized=signal.volatility_20d_annualized,
+                            **buy_order_kwargs,
                         )
                 else:
                     adjusted_sell_price = await self._resolve_strategy_sell_price(signal, signal_exchange)
@@ -887,14 +893,18 @@ class StrategyScheduler:
                         signal.price = adjusted_sell_price
                         log_price = adjusted_sell_price
                     self._log_signal_to_order_latency(signal, tid)
+                    sell_order_kwargs = {
+                        "exchange": signal_exchange,
+                        "source": self._source_for_signal(signal),
+                        "finalize_immediately": False,
+                        "trace_id": tid,
+                    }
+                    sell_order_kwargs.update(self._signal_price_policy_kwargs(signal))
                     resp = await self._oes.handle_place_sell_order(
                         signal.code,
                         signal.price,
                         signal.qty,
-                        exchange=signal_exchange,
-                        source=self._source_for_signal(signal),
-                        finalize_immediately=False,
-                        trace_id=tid,
+                        **sell_order_kwargs,
                     )
 
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
@@ -1006,6 +1016,22 @@ class StrategyScheduler:
                     "return_rate": return_rate,
                     "trace_id": tid,
                 })
+
+    @staticmethod
+    def _virtual_trade_log_kwargs(signal: TradeSignal) -> dict:
+        kwargs = {"volatility_20d_annualized": signal.volatility_20d_annualized}
+        if signal.config_hash:
+            kwargs["config_hash"] = signal.config_hash
+        return kwargs
+
+    @staticmethod
+    def _signal_price_policy_kwargs(signal: TradeSignal) -> dict:
+        kwargs = {}
+        if signal.invalidation_price is not None:
+            kwargs["invalidation_price"] = signal.invalidation_price
+        if signal.stop_loss_price is not None:
+            kwargs["stop_loss_price"] = signal.stop_loss_price
+        return kwargs
 
     def _exclude_order_policy_blocked_code(self, signal: TradeSignal, resp) -> None:
         if not resp or resp.rt_cd != ErrorCode.ORDER_POLICY_BLOCKED.value:
@@ -1580,10 +1606,14 @@ class StrategyScheduler:
         strategies = []
         for cfg in self._strategies:
             name = cfg.strategy.name
+            strategy_id = getattr(cfg.strategy, "strategy_id", name)
+            display_name = getattr(cfg.strategy, "display_name", name)
             last = self._last_run.get(name)
             holdings = self._get_strategy_holdings(cfg)
             strategies.append({
                 "name": name,
+                "strategy_id": strategy_id,
+                "display_name": display_name,
                 "interval_minutes": cfg.interval_minutes,
                 "max_positions": cfg.max_positions,
                 "enabled": cfg.enabled,

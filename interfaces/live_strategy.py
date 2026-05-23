@@ -33,6 +33,15 @@ class LiveStrategy(ABC):
         """
         return self.name
 
+    @property
+    def display_name(self) -> str:
+        """UI / log 에 노출할 표시명.
+
+        기존 전략은 `name` 이 표시명 역할을 해 왔으므로 기본값은 `name` 이다.
+        저장·정책 key 는 `strategy_id` 를 사용한다.
+        """
+        return self.name
+
     @abstractmethod
     async def scan(self) -> List[TradeSignal]:
         """시장을 스캔하여 매수 후보를 찾고 BUY TradeSignal 리스트를 반환한다."""
@@ -66,3 +75,11 @@ class LiveStrategy(ABC):
         기본 구현은 빈 리스트 (= 라우터 구독 비활성). 적용 전략에서만 오버라이드한다.
         """
         return []
+
+    async def load_state(self) -> None:
+        """전략 state 명시 로드 hook.
+
+        state 파일이 없는 전략은 기본 no-op 이다. state 를 가진 전략은 오버라이드해
+        scheduler 시작 전 호출자가 await 할 수 있게 한다.
+        """
+        return None

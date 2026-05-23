@@ -73,6 +73,46 @@ async def test_validate_order_returns_none_when_allowed():
 
 
 @pytest.mark.asyncio
+async def test_buy_order_blocks_when_price_is_below_invalidation_price():
+    svc, _, _ = _service()
+
+    result = await svc.validate_order(
+        stock_code="005930",
+        price=9_900,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+        active_order_count=0,
+        source="strategy:모멘텀",
+        invalidation_price=10_000,
+    )
+
+    assert result is not None
+    assert result.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
+    assert result.data["rule"] == "signal_invalidated"
+
+
+@pytest.mark.asyncio
+async def test_buy_order_blocks_when_stop_loss_price_is_not_below_entry_price():
+    svc, _, _ = _service()
+
+    result = await svc.validate_order(
+        stock_code="005930",
+        price=10_000,
+        qty=1,
+        side=OrderSide.BUY,
+        exchange=Exchange.KRX,
+        active_order_count=0,
+        source="strategy:모멘텀",
+        stop_loss_price=10_100,
+    )
+
+    assert result is not None
+    assert result.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
+    assert result.data["rule"] == "invalid_stop_loss_price"
+
+
+@pytest.mark.asyncio
 async def test_kill_switch_blocks_with_compatible_error_code():
     kill_switch = AsyncMock()
     kill_switch.check_orders_allowed = AsyncMock(return_value=(False, "daily loss"))

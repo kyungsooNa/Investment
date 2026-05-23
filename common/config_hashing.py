@@ -50,6 +50,11 @@ def _normalize(value: Any) -> Any:
             return _normalize(dataclasses.asdict(value))
         except Exception:
             return None
+    if hasattr(value, "__dict__") and not isinstance(value, type):
+        try:
+            return _normalize(vars(value))
+        except Exception:
+            return None
     return None
 
 

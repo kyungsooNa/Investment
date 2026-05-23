@@ -89,6 +89,8 @@ class RiskGateService:
         active_order_count: int,
         source: str = "",
         strategy_name: Optional[str] = None,
+        invalidation_price: Optional[float] = None,
+        stop_loss_price: Optional[float] = None,
     ) -> Optional[ResCommonResponse]:
         """Return None when allowed, otherwise a blocking response."""
         if not self._cfg.enabled:
@@ -152,6 +154,18 @@ class RiskGateService:
                 )
             effective_price = reference_price
 
+        signal_policy_blocked = self._check_signal_price_policy(
+            stock_code=stock_code,
+            side=side,
+            source=source,
+            strategy_name=strategy_name,
+            effective_price=effective_price,
+            invalidation_price=invalidation_price,
+            stop_loss_price=stop_loss_price,
+        )
+        if signal_policy_blocked is not None:
+            return signal_policy_blocked
+
         if effective_price > 0:
             order_amount = effective_price * qty
             if not is_force_exit_sell:
@@ -190,6 +204,61 @@ class RiskGateService:
 
             if not is_force_exit_sell:
                 self._record_daily_amount(order_amount)
+
+        return None
+
+    def _check_signal_price_policy(
+        self,
+        *,
+        stock_code: str,
+        side: OrderSide,
+        source: str,
+        strategy_name: Optional[str],
+        effective_price: int,
+        invalidation_price: Optional[float],
+        stop_loss_price: Optional[float],
+    ) -> Optional[ResCommonResponse]:
+        if effective_price <= 0:
+            return None
+
+        if invalidation_price is not None:
+            invalidation = float(invalidation_price)
+            if side == OrderSide.BUY and float(effective_price) <= invalidation:
+                return self._blocked(
+                    "signal_invalidated",
+                    "매수 신호 무효화 가격 이하라 주문을 차단했습니다.",
+                    stock_code=stock_code,
+                    side=side.value,
+                    source=source,
+                    strategy_name=strategy_name,
+                    effective_price=effective_price,
+                    invalidation_price=invalidation,
+                )
+            if side == OrderSide.SELL and float(effective_price) >= invalidation:
+                return self._blocked(
+                    "signal_invalidated",
+                    "매도 신호 무효화 가격 이상이라 주문을 차단했습니다.",
+                    stock_code=stock_code,
+                    side=side.value,
+                    source=source,
+                    strategy_name=strategy_name,
+                    effective_price=effective_price,
+                    invalidation_price=invalidation,
+                )
+
+        if stop_loss_price is not None and side == OrderSide.BUY:
+            stop_price = float(stop_loss_price)
+            if stop_price <= 0 or stop_price >= float(effective_price):
+                return self._blocked(
+                    "invalid_stop_loss_price",
+                    "매수 주문의 손절가는 주문 기준가보다 낮은 양수여야 합니다.",
+                    stock_code=stock_code,
+                    side=side.value,
+                    source=source,
+                    strategy_name=strategy_name,
+                    effective_price=effective_price,
+                    stop_loss_price=stop_price,
+                )
 
         return None
 

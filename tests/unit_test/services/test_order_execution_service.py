@@ -2269,6 +2269,37 @@ async def test_risk_gate_receives_strategy_context(
 
 
 @pytest.mark.asyncio
+async def test_order_execution_passes_signal_price_policy_to_risk_gate(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    risk_gate = AsyncMock()
+    risk_gate.validate_order.return_value = None
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        risk_gate_service=risk_gate,
+    )
+
+    result = await handler.handle_place_buy_order(
+        "005930",
+        70_000,
+        10,
+        source="strategy:모멘텀",
+        invalidation_price=68_000,
+        stop_loss_price=66_000,
+    )
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert risk_gate.validate_order.await_args.kwargs["invalidation_price"] == 68_000
+    assert risk_gate.validate_order.await_args.kwargs["stop_loss_price"] == 66_000
+
+
+@pytest.mark.asyncio
 async def test_order_policy_blocks_before_broker_submit(
     mock_broker_api_wrapper,
     mock_logger,

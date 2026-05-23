@@ -52,14 +52,14 @@ LIVE_STRATEGY_STATE_FILES = {
 
 _SELECT_TRADES = (
     "SELECT strategy, code, buy_date, buy_price, qty, sell_date, sell_price, return_rate, status, reason, "
-    "volatility_20d_annualized "
+    "volatility_20d_annualized, config_hash "
     "FROM trades ORDER BY id"
 )
 _INSERT_TRADE = (
     "INSERT INTO trades "
     "(strategy, code, buy_date, buy_price, qty, sell_date, sell_price, return_rate, status, reason, "
-    "volatility_20d_annualized) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "volatility_20d_annualized, config_hash) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 _DDL = """
 CREATE TABLE IF NOT EXISTS trades (
@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS trades (
     return_rate REAL    NOT NULL DEFAULT 0.0,
     status      TEXT    NOT NULL,
     reason      TEXT    NOT NULL DEFAULT '',
-    volatility_20d_annualized REAL
+    volatility_20d_annualized REAL,
+    config_hash TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_trades_strategy_code_status ON trades(strategy, code, status);
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -159,6 +160,9 @@ class VirtualTradeRepository:
         if "volatility_20d_annualized" not in existing:
             with self._db:
                 self._db.execute("ALTER TABLE trades ADD COLUMN volatility_20d_annualized REAL")
+        if "config_hash" not in existing:
+            with self._db:
+                self._db.execute("ALTER TABLE trades ADD COLUMN config_hash TEXT")
 
     # ---- 레거시 데이터 마이그레이션 (CSV/JSON → SQLite, 최초 1회) ----
 
@@ -239,11 +243,16 @@ class VirtualTradeRepository:
             return_rate = float(rr_raw) if (rr_raw is not None and not (isinstance(rr_raw, float) and math.isnan(rr_raw))) else 0.0
             vol_raw = getattr(row, 'volatility_20d_annualized', None)
             volatility = None if (vol_raw is None or (isinstance(vol_raw, float) and math.isnan(vol_raw))) else float(vol_raw)
+            config_hash_raw = getattr(row, 'config_hash', None)
+            config_hash = None if (
+                config_hash_raw is None
+                or (isinstance(config_hash_raw, float) and math.isnan(config_hash_raw))
+            ) else str(config_hash_raw)
             rows.append((
                 row.strategy, row.code, str(row.buy_date), float(row.buy_price), qty,
                 sell_date, sell_price, return_rate, row.status,
                 getattr(row, 'reason', '') or '',
-                volatility,
+                volatility, config_hash,
             ))
         with self._db:
             self._db.execute("DELETE FROM trades")
@@ -396,7 +405,8 @@ class VirtualTradeRepository:
     # ---- 매수/매도 ----
 
     def log_buy(self, strategy_name: str, code: str, current_price, qty: int = 1,
-                volatility_20d_annualized: float | None = None):
+                volatility_20d_annualized: float | None = None,
+                config_hash: str | None = None):
         """가상 매수 기록. 동일 전략+종목 중복 매수 방지.
 
         volatility_20d_annualized: 신호 생성 직전 20거래일 수익률 std × √252. 리포트 집계용.
@@ -410,14 +420,15 @@ class VirtualTradeRepository:
             with self._db:
                 self._db.execute(_INSERT_TRADE,
                     (strategy_id, code, buy_date, current_price, qty, None, None, 0.0, "HOLD", "",
-                     volatility_20d_annualized))
+                     volatility_20d_annualized, config_hash))
             logger.info(f"[가상매매] {strategy_id}/{code} 매수 기록 (가격: {current_price}, 수량: {qty})")
 
     async def log_buy_async(self, strategy_name: str, code: str, current_price, qty: int = 1,
-                            volatility_20d_annualized: float | None = None):
+                            volatility_20d_annualized: float | None = None,
+                            config_hash: str | None = None):
         """log_buy의 비동기 래퍼 (스레드 실행)."""
         await asyncio.to_thread(
-            self.log_buy, strategy_name, code, current_price, qty, volatility_20d_annualized
+            self.log_buy, strategy_name, code, current_price, qty, volatility_20d_annualized, config_hash
         )
 
     def log_sell(self, code: str, current_price, qty: int = 1, reason: str = ""):
@@ -546,7 +557,7 @@ class VirtualTradeRepository:
             strategy_label = self._resolver.to_id(strategy_name) if strategy_name else f"{action}실패"
             with self._db:
                 self._db.execute(_INSERT_TRADE,
-                    (strategy_label, code, fail_date, price, qty, None, None, 0.0, "FAILED", reason, None))
+                    (strategy_label, code, fail_date, price, qty, None, None, 0.0, "FAILED", reason, None, None))
             logger.warning(f"[가상매매] {action} 주문 실패 기록: {code} @ {price}원 x {qty}주 — {reason}")
 
     async def log_order_failure_async(self, action: str, code: str, price, qty: int, reason: str, strategy_name: str = ""):

@@ -271,6 +271,27 @@ async def test_signal_stop_loss_pct_overrides_default():
     assert reason == "risk_limited"
 
 
+@pytest.mark.asyncio
+async def test_signal_stop_loss_price_overrides_stop_loss_pct_for_per_share_risk():
+    """stop_loss_price 명시 시 절대가 기준 1주 리스크를 우선 사용한다."""
+    snap = _make_snapshot(total_equity=10_000_000, available_cash=10_000_000)
+    cfg = _make_config(
+        per_trade_risk_pct=1.0,
+        default_stop_loss_pct=-5.0,
+        min_stop_distance_pct=0.0,
+        max_per_position_pct=100.0,
+    )
+    svc, _, _ = _make_service(snap, cfg=cfg)
+    signal = _buy_signal(price=10_000, qty=1000, stop_loss_pct=-2.0)
+    signal.stop_loss_price = 9_500
+
+    qty, reason = await svc.adjust_buy_qty(signal)
+
+    # per_share_risk = 10000 - 9500 = 500 → risk_qty = 200
+    assert qty == 200
+    assert reason == "risk_limited"
+
+
 # ── qty=None: PositionSizingService 단독 결정 ─────────────────────────────
 
 @pytest.mark.asyncio

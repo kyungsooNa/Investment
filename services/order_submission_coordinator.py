@@ -123,6 +123,8 @@ class OrderSubmissionCoordinator:
         side: OrderSide,
         source: str,
         existing,
+        invalidation_price: Optional[float] = None,
+        stop_loss_price: Optional[float] = None,
     ) -> Optional[ResCommonResponse]:
         """진행 중 주문이 있을 때 신규 주문을 deferred queue 에 enqueue.
 
@@ -140,6 +142,8 @@ class OrderSubmissionCoordinator:
                 side=side,
                 source=source,
                 finalize_immediately=False,
+                invalidation_price=invalidation_price,
+                stop_loss_price=stop_loss_price,
             )
 
         result = await self._deferred_queue.enqueue(
@@ -173,6 +177,8 @@ class OrderSubmissionCoordinator:
         trace_id: Optional[str] = None,
         intent_id: Optional[str] = None,
         volatility_20d_annualized: Optional[float] = None,
+        invalidation_price: Optional[float] = None,
+        stop_loss_price: Optional[float] = None,
     ) -> ResCommonResponse:
         order_key = self._fsm.make_order_key(stock_code, side, exchange)
         action_kr = "매수" if side == OrderSide.BUY else "매도"
@@ -220,6 +226,8 @@ class OrderSubmissionCoordinator:
                             side=side,
                             source=source,
                             existing=existing,
+                            invalidation_price=invalidation_price,
+                            stop_loss_price=stop_loss_price,
                         )
                         if deferred_resp is not None:
                             return deferred_resp
@@ -288,6 +296,8 @@ class OrderSubmissionCoordinator:
                     active_order_count=len(self._fsm.active_contexts()),
                     source=source,
                     strategy_name=strategy_name if is_strategy_source else None,
+                    invalidation_price=invalidation_price,
+                    stop_loss_price=stop_loss_price,
                 )
                 if blocked is not None:
                     return blocked
