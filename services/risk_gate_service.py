@@ -7,6 +7,7 @@ from datetime import date, datetime
 from typing import Any, Awaitable, Callable, Optional, Protocol, TYPE_CHECKING, Union
 
 from common.operator_alert_types import AlertSource
+from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER
 from common.types import ErrorCode, Exchange, OrderSide, ResCommonResponse
 from config.config_loader import RiskGateConfig
 from core.account_snapshot import AccountSnapshotCache
@@ -76,6 +77,7 @@ class RiskGateService:
         self._operator_alert: Optional["OperatorAlertService"] = operator_alert_service
         self._market_buy_reference_price_provider = market_buy_reference_price_provider
         self._daily_total: dict[date, int] = defaultdict(int)
+        self._strategy_resolver = STRATEGY_IDENTITY_RESOLVER
 
     async def validate_order(
         self,
@@ -93,6 +95,10 @@ class RiskGateService:
             return None
 
         strategy_name = strategy_name or self._strategy_name_from_source(source)
+        # downstream consumer (kill_switch, virtual_trade_provider, config lookup)
+        # 전체에서 strategy_id 로 일관되게 사용하도록 진입 시 한 번 정규화.
+        if strategy_name:
+            strategy_name = self._strategy_resolver.to_id(strategy_name)
 
         env_blocked = self._check_env_consistency(stock_code=stock_code, side=side)
         if env_blocked is not None:
@@ -487,7 +493,10 @@ class RiskGateService:
         )
 
     def _get_strategy_limit(self, strategy_name: str):
-        specific = self._cfg.strategy_limits.get(strategy_name)
+        """전략별 한도를 dual-key (한국어/strategy_id) 로 조회."""
+        sid = self._strategy_resolver.to_id(strategy_name)
+        display = self._strategy_resolver.to_display(sid)
+        specific = self._cfg.strategy_limits.get(sid) or self._cfg.strategy_limits.get(display)
         return specific or self._cfg.default_strategy_limit
 
     async def _check_strategy_loss_limit(
