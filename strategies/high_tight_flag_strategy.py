@@ -66,6 +66,10 @@ class HighTightFlagStrategy(LiveStrategy):
     def name(self) -> str:
         return "하이타이트플래그"
 
+    @property
+    def strategy_id(self) -> str:
+        return "high_tight_flag"
+
     def _log_entry_rejected(self, code: str, item, reason: str, **metrics) -> None:
         payload = {
             "event": "entry_rejected",

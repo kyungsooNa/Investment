@@ -61,6 +61,10 @@ class VolumeBreakoutLiveStrategy(LiveStrategy):
     def name(self) -> str:
         return "거래량돌파"
 
+    @property
+    def strategy_id(self) -> str:
+        return "volume_breakout_live"
+
     async def scan(self) -> List[TradeSignal]:
         signals: List[TradeSignal] = []
         self._logger.info({"event": "scan_started", "strategy_name": self.name})

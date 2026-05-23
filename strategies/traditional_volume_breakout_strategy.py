@@ -113,6 +113,10 @@ class TraditionalVolumeBreakoutStrategy(LiveStrategy):
     def name(self) -> str:
         return "거래량돌파(전통)"
 
+    @property
+    def strategy_id(self) -> str:
+        return "traditional_volume_breakout"
+
     # ── 매수 스캔 ──
 
     async def scan(self) -> List[TradeSignal]:

@@ -527,12 +527,18 @@
 - [ ] `strategy_id`와 `display_name`을 분리한다.
   - 검토 결과: 타당. `strategy.name` 값이 한국어 display name(`오닐PP/BGU`, `오닐스퀴즈돌파` 등) 또는 영문 display name(`Larry Williams VBO`)으로 TradeSignal/RiskGate/log/config key에 사용된다.
   - 개선 방향: 설정·DB·journal·risk limit은 stable `strategy_id`, UI/로그 문구는 `display_name`을 사용하도록 backward-compatible migration을 설계한다.
+  - Phase 1 완료(2026-05-23): `LiveStrategy` base class 에 `strategy_id` property 도입 (default = `self.name` fallback). 10개 활성 전략 (`first_pullback`, `high_tight_flag`, `larry_williams_cb`, `larry_williams_vbo`, `oneil_pocket_pivot`, `oneil_squeeze_breakout`, `program_buy_follow`, `rsi2_pullback`, `traditional_volume_breakout`, `volume_breakout_live`) 에 안정 영문 ID 지정. consumer 변경 없는 additive 변경. 단위 테스트 13건 (parametrize 10 + snake_case + unique + base fallback) 추가로 ID 잠금.
+  - Phase 2 (별도): risk_gate, kill_switch, virtual_trade journal key, config key 사용처를 `strategy.name` → `strategy.strategy_id` 로 마이그레이션. journal CSV 호환 layer 필요.
+  - Phase 3 (cosmetic, 별도): UI/log 의 `name` 표기를 `display_name` 으로 rename.
 - [x] 직전 거래일 계산을 `MarketCalendarService` 기준으로 통일한다.
   - 검토 결과: 타당. `OneilUniverseService`, `OneilPocketPivotStrategy`, `FirstPullbackStrategy`, `MarketDataService` 일부 경로에서 `now - timedelta(days=1)`을 전일 기준으로 사용한다.
   - 완료된 부분: `common.date_utils.previous_trading_day_str(now, holidays=None)` sync helper 추가. 4개 사용처(`OneilUniverseService._analyze_surge_candidate`, `OneilPocketPivotStrategy._check_entry`, `FirstPullbackStrategy._check_entry`, `MarketDataService.get_ohlcv`)를 helper로 통일. 주말(토/일) 우회 + optional `holidays` set 지원. 단위 테스트로 weekday/주말/공휴일/시각 무관/`date` 입력 회귀 고정. `MarketCalendarService` async 메서드 추가는 의존성 주입 부담이 커서 보류 — 호출자가 휴장일을 인지할 때 `holidays` 인자로 전달하도록 했다.
 - [ ] `TradeSignal` contract를 분석/운영 기준으로 확장한다.
   - 후보 필드: `signal_id`, `strategy_id`, `entry_reason`, `invalidation_price`, `stop_loss`, `target` 또는 trailing rule, `expected_holding_period`, `confidence`, `required_data`.
   - 검토 결과: 타당. 현재 `TradeSignal`은 `reason`, `strategy_name`, `stop_loss_pct`, `atr_multiplier`, `volatility_20d_annualized`를 갖지만, 중복 신호 식별과 사후 분석에 필요한 표준 필드는 아직 부족하다.
+  - Phase 1 완료(2026-05-23): `TradeSignal` 에 10개 Optional 필드 추가 — `signal_id`, `strategy_id`, `entry_reason`, `invalidation_price`, `stop_loss_price`, `target_price`, `trailing_rule`, `expected_holding_period_days`, `confidence`, `required_data`. 모두 default None 이라 기존 호출자/소비자 변경 없음. `tests/unit_test/common/test_trade_signal_contract.py` 16건으로 contract 잠금 (minimal 호환, default None, to_dict 포함, 명시 할당, 기존 stop_loss_pct 와 stop_loss_price 공존).
+  - Phase 2 (별도): scheduler 가 `signal_id` 자동 발급 + 전략의 scan/check_exits 결과에 `strategy_id` 자동 stamp. 이후 dedup, event_shadow join, fill reconcile 로 signal_id 전파.
+  - Phase 3 (별도, consumer): risk_gate/order_execution 가 `invalidation_price`/`stop_loss_price` 를 실제 정책 입력으로 사용. backtest replay 가 `required_data` 로 fixture 재현.
 - [ ] 활성/실험/레거시 전략의 디렉터리 또는 registry 경계를 명확히 한다.
   - 후보 구조: `strategies/active`, `strategies/experimental`, `strategies/deprecated`, `strategies/legacy`.
   - 1차 대안: 파일 이동 없이 strategy registry metadata로 active/experimental/deprecated 상태를 명시하고, 실행 가능한 전략은 config에서 명시적으로만 로드한다.
@@ -617,13 +623,18 @@
 
 ### 4-4. 실전 운영 Runbook / Canary 절차
 
-- [ ] 실전 운영 runbook을 작성한다.
+- [x] 실전 운영 runbook을 작성한다.
   - 포함: 장 시작 전 체크리스트(토큰, 잔고, 포지션, 데이터 연결, WebSocket), 장중 장애 대응(API 오류, 주문 지연, 미체결, stale data), Kill Switch 발동 후 절차, 재개 조건, 배포 체크리스트, 사고 리포트 템플릿.
-- [ ] 실계좌 canary 절차를 문서화한다.
+  - 산출물(2026-05-22): `docs/operations_runbook.md` — Runtime 진입점 표, 장 시작 전 체크리스트 8항목, 장중 장애 대응 매트릭스 10행, Kill Switch 발동 5단계 절차, 재개 조건 체크리스트, 배포 체크리스트 10항목, 사고 리포트 템플릿.
+- [x] 실계좌 canary 절차를 문서화한다.
   - 정책: P0 완료 + P1 기준선 통과 전 full-auto 금지. 소액 canary는 종목 수/주문금액/일손실/연속 손실/미체결 시간 한도를 별도로 낮게 둔다.
   - 산출물: canary 진입 조건, 중단 조건, 관찰 기간, 승격 조건.
-- [ ] 배포 전 dry-run 운영 점검을 자동화한다.
+  - 산출물(2026-05-22): `docs/canary_procedure.md` — 진입 조건, 운영 한도표(canary vs full), 관찰 기간 단계, 중단 조건 매트릭스, 승격 조건 체크리스트.
+- [x] 배포 전 dry-run 운영 점검을 자동화한다.
   - 후보: config validation, broker token/account/env consistency, WebSocket subscription health, latest trading date, account snapshot freshness, event shadow status.
+  - 현황(2026-05-22): runbook *배포 체크리스트* 의 1~10번 수동 항목으로 우선 문서화함. 자동화는 별도 PR (코드 작업).
+  - 산출물(2026-05-23): `services/predeploy_check_service.py` + `scripts/run_predeploy_check.py` 추가. `--offline`/`--paper`/`--json` 옵션, FAIL 시 exit 1. config_validation / broker_env_consistency / latest_trading_date / event_shadow_status / websocket_subscription_health / account_snapshot_freshness 6개 점검을 끝까지 실행 후 표 출력. 단위 테스트 32건 + 통합 테스트 2건 추가. runbook *배포 체크리스트* 에 자동 점검 사용법 반영.
+  - 후속(보류): WebSocket subscription health 자동 점검은 streaming watchdog 의 probe 어댑터 도입 시 SKIPPED → PASS 로 활성화. event shadow ≥ 95% 일치율 비교는 폴링/shadow 신호 join 로직 필요 — 별도 작업으로 분리.
 
 ---
 

@@ -98,6 +98,10 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
     def name(self) -> str:
         return "래리윌리엄스VBO"
 
+    @property
+    def strategy_id(self) -> str:
+        return "larry_williams_vbo"
+
     # ------------------------------------------------------------------
     # scan
     # ------------------------------------------------------------------
