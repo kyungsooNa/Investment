@@ -536,6 +536,9 @@
 - [ ] `TradeSignal` contract를 분석/운영 기준으로 확장한다.
   - 후보 필드: `signal_id`, `strategy_id`, `entry_reason`, `invalidation_price`, `stop_loss`, `target` 또는 trailing rule, `expected_holding_period`, `confidence`, `required_data`.
   - 검토 결과: 타당. 현재 `TradeSignal`은 `reason`, `strategy_name`, `stop_loss_pct`, `atr_multiplier`, `volatility_20d_annualized`를 갖지만, 중복 신호 식별과 사후 분석에 필요한 표준 필드는 아직 부족하다.
+  - Phase 1 완료(2026-05-23): `TradeSignal` 에 10개 Optional 필드 추가 — `signal_id`, `strategy_id`, `entry_reason`, `invalidation_price`, `stop_loss_price`, `target_price`, `trailing_rule`, `expected_holding_period_days`, `confidence`, `required_data`. 모두 default None 이라 기존 호출자/소비자 변경 없음. `tests/unit_test/common/test_trade_signal_contract.py` 16건으로 contract 잠금 (minimal 호환, default None, to_dict 포함, 명시 할당, 기존 stop_loss_pct 와 stop_loss_price 공존).
+  - Phase 2 (별도): scheduler 가 `signal_id` 자동 발급 + 전략의 scan/check_exits 결과에 `strategy_id` 자동 stamp. 이후 dedup, event_shadow join, fill reconcile 로 signal_id 전파.
+  - Phase 3 (별도, consumer): risk_gate/order_execution 가 `invalidation_price`/`stop_loss_price` 를 실제 정책 입력으로 사용. backtest replay 가 `required_data` 로 fixture 재현.
 - [ ] 활성/실험/레거시 전략의 디렉터리 또는 registry 경계를 명확히 한다.
   - 후보 구조: `strategies/active`, `strategies/experimental`, `strategies/deprecated`, `strategies/legacy`.
   - 1차 대안: 파일 이동 없이 strategy registry metadata로 active/experimental/deprecated 상태를 명시하고, 실행 가능한 전략은 config에서 명시적으로만 로드한다.

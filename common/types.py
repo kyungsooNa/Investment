@@ -41,7 +41,12 @@ class ErrorCode(Enum):
 
 # --- 전략 신호 ---
 class TradeSignal(BaseModel):
-    """전략에서 생성하는 표준 매수/매도 신호."""
+    """전략에서 생성하는 표준 매수/매도 신호.
+
+    아래 P3-4 확장 필드들은 모두 Optional · default None 이라 기존 호출자·소비자
+    변경 없이 점진적으로 채워 나갈 수 있다. 자동 채움(scheduler 가 `signal_id` 발급
+    등) 과 consumer 활용 (dedup, risk-aware 주문) 은 별도 PR 로 분리한다.
+    """
     code: str
     name: str
     action: str  # "BUY" / "SELL"
@@ -54,6 +59,18 @@ class TradeSignal(BaseModel):
     atr_multiplier: float | None = None  # ATR 기반 손절선 배수. None 이면 config 기본값 사용
     volatility_20d_annualized: float | None = None  # 신호 생성 직전 20거래일 종가 수익률 std × √252. 리포트 집계용
     created_at: float | None = None  # 신호 생성 epoch seconds. scheduler 가 scan/check_exits 직후 stamp. signal-to-order latency 측정용 (P2 2-2 후속).
+
+    # ── P3-4 TradeSignal contract 확장 (Phase 1, additive) ──────────────
+    signal_id: str | None = None  # 명시적 신호 식별자. 중복 신호 dedup·추적용.
+    strategy_id: str | None = None  # 안정 영문 식별자 (P3-4 Phase 1). `strategy_name` 은 표시명.
+    entry_reason: str | None = None  # 구조화된 entry 코드 (예: "pocket_pivot_breakout"). 자유텍스트 `reason` 과 공존.
+    invalidation_price: float | None = None  # 신호 무효화 가격선 (BUY 의 하한, SELL 의 상한).
+    stop_loss_price: float | None = None  # 절대가 손절선. `stop_loss_pct` 와 별개로 명시 가능.
+    target_price: float | None = None  # 절대가 목표가.
+    trailing_rule: str | None = None  # trailing stop 정책 식별자 또는 JSON 문자열.
+    expected_holding_period_days: int | None = None  # 기대 보유 기간(일). 사후 분석용.
+    confidence: float | None = None  # 신호 confidence (0.0 ~ 1.0). 정의는 전략별 자유.
+    required_data: list[str] | None = None  # 신호 평가에 사용된 필수 데이터 키 목록 (재현/감사용).
 
     def to_dict(self):
         return self.model_dump()
