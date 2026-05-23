@@ -188,3 +188,117 @@ def _optional_diff(left: Any, right: Any) -> Optional[float]:
     if left is None or right is None:
         return None
     return float(left) - float(right)
+
+
+def compute_universe_exclusion_summary(
+    *,
+    baseline_records: Iterable[Mapping[str, Any]],
+    variant_records: Mapping[str, Iterable[Mapping[str, Any]]],
+) -> dict[str, Any]:
+    """Compute baseline-vs-variant traded-code set difference per variant.
+
+    SOLD records 만 대상이며, ``code`` 필드가 없는 레코드는 무시한다. universe
+    ablation 비교 시 baseline universe 외부에서 variant universe 가 잡은 종목과
+    그 PnL 합을 한눈에 보기 위한 리포트.
+    """
+    baseline_sold = _filter_sold_with_code(baseline_records)
+    baseline_codes = sorted({r["code"] for r in baseline_sold})
+    baseline_set = set(baseline_codes)
+
+    variants_report: dict[str, dict[str, Any]] = {}
+    for variant_name, records in variant_records.items():
+        variant_sold = _filter_sold_with_code(records)
+        variant_codes = {r["code"] for r in variant_sold}
+
+        variant_only = sorted(variant_codes - baseline_set)
+        baseline_only = sorted(baseline_set - variant_codes)
+        shared = sorted(baseline_set & variant_codes)
+
+        variant_only_summary = _summarize_variant_only_records(
+            variant_sold, variant_only_codes=set(variant_only)
+        )
+
+        variants_report[variant_name] = {
+            "variant_only_codes": variant_only,
+            "baseline_only_codes": baseline_only,
+            "shared_codes": shared,
+            "variant_only_summary": variant_only_summary,
+        }
+
+    return {
+        "baseline_codes": baseline_codes,
+        "variants": variants_report,
+    }
+
+
+def _filter_sold_with_code(
+    records: Iterable[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    result: list[Mapping[str, Any]] = []
+    for record in records:
+        if str(record.get("status") or "").upper() != "SOLD":
+            continue
+        code = record.get("code")
+        if not code:
+            continue
+        result.append(record)
+    return result
+
+
+def _summarize_variant_only_records(
+    sold_records: Iterable[Mapping[str, Any]],
+    *,
+    variant_only_codes: set[str],
+) -> dict[str, Any]:
+    if not variant_only_codes:
+        return {
+            "trade_count": 0,
+            "total_net_pnl": 0.0,
+            "win_count": 0,
+            "loss_count": 0,
+            "per_code": {},
+        }
+
+    per_code: dict[str, dict[str, Any]] = {}
+    trade_count = 0
+    total_pnl = 0.0
+    win_count = 0
+    loss_count = 0
+
+    for record in sold_records:
+        code = record["code"]
+        if code not in variant_only_codes:
+            continue
+        net_pnl = float(record.get("net_pnl") or 0.0)
+        signal_time = str(record.get("signal_time") or "")
+
+        trade_count += 1
+        total_pnl += net_pnl
+        if net_pnl > 0:
+            win_count += 1
+        elif net_pnl < 0:
+            loss_count += 1
+
+        bucket = per_code.setdefault(
+            code,
+            {
+                "trade_count": 0,
+                "total_net_pnl": 0.0,
+                "first_signal_time": signal_time,
+                "last_signal_time": signal_time,
+            },
+        )
+        bucket["trade_count"] += 1
+        bucket["total_net_pnl"] += net_pnl
+        if signal_time and signal_time < bucket["first_signal_time"]:
+            bucket["first_signal_time"] = signal_time
+        if signal_time and signal_time > bucket["last_signal_time"]:
+            bucket["last_signal_time"] = signal_time
+
+    return {
+        "trade_count": trade_count,
+        "total_net_pnl": total_pnl,
+        "win_count": win_count,
+        "loss_count": loss_count,
+        "per_code": per_code,
+    }

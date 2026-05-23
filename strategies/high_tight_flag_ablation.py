@@ -13,6 +13,7 @@ HTF_VARIANT_NAMES: tuple[str, ...] = (
     "disable_market_timing",
     "disable_volume_filter",
     "relax_pattern_check",
+    "universe_generic_liquidity",
 )
 
 
@@ -65,6 +66,16 @@ HIGH_TIGHT_FLAG_ABLATION_PRESET = AblationPreset(
                 "pole_min_surge_ratio": 0.0,
                 "flag_max_drawdown_pct": 999.0,
             },
+        ),
+        AblationVariant(
+            name="universe_generic_liquidity",
+            description=(
+                "Swap the Oneil universe for a generic liquidity-only universe "
+                "(5d avg trading value + market-cap floors only; no Pool A "
+                "premium analysis, no RS Rating, no Minervini stage, no 52w-high "
+                "proximity)."
+            ),
+            universe_overrides={"universe_type": "generic_liquidity"},
         ),
     ),
 )
