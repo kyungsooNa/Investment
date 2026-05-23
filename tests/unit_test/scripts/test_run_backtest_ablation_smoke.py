@@ -320,6 +320,162 @@ def test_vbo_ablation_preset_contains_universe_generic_liquidity_variant():
     assert variant.universe_overrides.get("universe_type") == "generic_liquidity"
 
 
+def test_build_ablation_overrides_rsi2_mean_reversion_swaps_universe():
+    from services.rsi2_mean_reversion_universe_service import (
+        Rsi2MeanReversionUniverseService,
+    )
+
+    base = SimpleNamespace(_sqs=object(), _tm=object(), _regime_svc=object())
+    variant = AblationVariant(
+        name="universe_rsi2_mean_reversion",
+        universe_overrides={"universe_type": "rsi2_mean_reversion"},
+    )
+
+    universe, _ = _build_ablation_overrides(
+        strategy_key="rsi2_pullback",
+        base_universe=base,
+        variant=variant,
+    )
+
+    assert isinstance(universe, Rsi2MeanReversionUniverseService)
+    assert universe._sqs is base._sqs
+    assert universe._tm is base._tm
+    assert universe._regime_svc is base._regime_svc
+    # 기본 변동성 floor 가 적용된다.
+    assert universe.min_volatility_20d_annualized == pytest.approx(0.30)
+
+
+def test_build_ablation_overrides_rsi2_mean_reversion_passes_volatility_override():
+    from services.rsi2_mean_reversion_universe_service import (
+        Rsi2MeanReversionUniverseService,
+    )
+
+    base = SimpleNamespace(_sqs=object(), _tm=object(), _regime_svc=None)
+    variant = AblationVariant(
+        name="universe_rsi2_mean_reversion_strict",
+        universe_overrides={
+            "universe_type": "rsi2_mean_reversion",
+            "min_volatility_20d_annualized": 0.45,
+            "min_avg_trading_value_5d": 3_000_000_000,
+        },
+    )
+
+    universe, _ = _build_ablation_overrides(
+        strategy_key="rsi2_pullback",
+        base_universe=base,
+        variant=variant,
+    )
+
+    assert isinstance(universe, Rsi2MeanReversionUniverseService)
+    assert universe.min_volatility_20d_annualized == pytest.approx(0.45)
+    assert universe._min_tv_5d == 3_000_000_000
+
+
+def test_build_ablation_overrides_vbo_volatility_swaps_universe():
+    from services.vbo_volatility_universe_service import (
+        VboVolatilityUniverseService,
+    )
+
+    base = SimpleNamespace(_sqs=object(), _tm=object(), _regime_svc=object())
+    variant = AblationVariant(
+        name="universe_vbo_volatility",
+        universe_overrides={"universe_type": "vbo_volatility"},
+    )
+
+    universe, _ = _build_ablation_overrides(
+        strategy_key="larry_williams_vbo",
+        base_universe=base,
+        variant=variant,
+    )
+
+    assert isinstance(universe, VboVolatilityUniverseService)
+    assert universe._sqs is base._sqs
+    assert universe._tm is base._tm
+    assert universe._regime_svc is base._regime_svc
+    assert universe.min_volatility_20d_annualized == pytest.approx(0.35)
+
+
+def test_build_ablation_overrides_vbo_volatility_passes_volatility_override():
+    from services.vbo_volatility_universe_service import (
+        VboVolatilityUniverseService,
+    )
+
+    base = SimpleNamespace(_sqs=object(), _tm=object(), _regime_svc=None)
+    variant = AblationVariant(
+        name="universe_vbo_volatility_strict",
+        universe_overrides={
+            "universe_type": "vbo_volatility",
+            "min_volatility_20d_annualized": 0.50,
+            "min_market_cap": 50_000_000_000,
+            "max_watchlist": 40,
+        },
+    )
+
+    universe, _ = _build_ablation_overrides(
+        strategy_key="larry_williams_vbo",
+        base_universe=base,
+        variant=variant,
+    )
+
+    assert isinstance(universe, VboVolatilityUniverseService)
+    assert universe.min_volatility_20d_annualized == pytest.approx(0.50)
+    assert universe._min_cap == 50_000_000_000
+    assert universe._max_watchlist == 40
+
+
+def test_build_ablation_overrides_combines_vbo_volatility_with_force_market_timing():
+    from services.vbo_volatility_universe_service import (
+        VboVolatilityUniverseService,
+    )
+    from services.strategy_ablation_service import (
+        ForceMarketTimingOkUniverseWrapper,
+    )
+
+    base = SimpleNamespace(_sqs=object(), _tm=object(), _regime_svc=None)
+    variant = AblationVariant(
+        name="universe_vbo_volatility_force_mt",
+        universe_overrides={
+            "universe_type": "vbo_volatility",
+            "force_market_timing_ok": True,
+        },
+    )
+
+    universe, _ = _build_ablation_overrides(
+        strategy_key="larry_williams_vbo",
+        base_universe=base,
+        variant=variant,
+    )
+
+    assert isinstance(universe, ForceMarketTimingOkUniverseWrapper)
+    assert isinstance(universe._inner, VboVolatilityUniverseService)
+
+
+def test_rsi2_ablation_preset_contains_universe_rsi2_mean_reversion_variant():
+    from strategies.rsi2_pullback_ablation import (
+        RSI2_PULLBACK_ABLATION_PRESET,
+        RSI2_VARIANT_NAMES,
+    )
+
+    assert "universe_rsi2_mean_reversion" in RSI2_VARIANT_NAMES
+    by_name = {v.name: v for v in RSI2_PULLBACK_ABLATION_PRESET.variants}
+    variant = by_name.get("universe_rsi2_mean_reversion")
+    assert variant is not None
+    assert variant.universe_overrides.get("universe_type") == "rsi2_mean_reversion"
+
+
+def test_vbo_ablation_preset_contains_universe_vbo_volatility_variant():
+    from strategies.larry_williams_vbo_ablation import (
+        LARRY_WILLIAMS_VBO_ABLATION_PRESET,
+        VBO_VARIANT_NAMES,
+    )
+
+    assert "universe_vbo_volatility" in VBO_VARIANT_NAMES
+    by_name = {v.name: v for v in LARRY_WILLIAMS_VBO_ABLATION_PRESET.variants}
+    variant = by_name.get("universe_vbo_volatility")
+    assert variant is not None
+    assert variant.universe_overrides.get("universe_type") == "vbo_volatility"
+
+
 @pytest.mark.parametrize("strategy_key", list(ACTIVE_BACKTEST_STRATEGIES))
 def test_every_active_strategy_ablation_preset_has_universe_generic_liquidity_variant(
     strategy_key,

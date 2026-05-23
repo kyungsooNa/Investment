@@ -12,6 +12,7 @@ RSI2_VARIANT_NAMES: tuple[str, ...] = (
     "disable_market_timing",
     "disable_rsi_oversold",
     "universe_generic_liquidity",
+    "universe_rsi2_mean_reversion",
 )
 
 
@@ -50,6 +51,17 @@ RSI2_PULLBACK_ABLATION_PRESET = AblationPreset(
                 "수 있는지 측정한다."
             ),
             universe_overrides={"universe_type": "generic_liquidity"},
+        ),
+        AblationVariant(
+            name="universe_rsi2_mean_reversion",
+            description=(
+                "Swap the Oneil universe for an RSI2 mean-reversion specific "
+                "universe (5d avg trading value + market-cap floors + 20-day "
+                "annualized volatility ≥ 0.30). 변동성 floor 가 RSI(2) oversold "
+                "도달 빈도가 충분한 후보를 사전 선별해 mean-reversion edge 가 "
+                "있는 종목만 남기는지 측정한다."
+            ),
+            universe_overrides={"universe_type": "rsi2_mean_reversion"},
         ),
     ),
 )

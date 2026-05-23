@@ -13,6 +13,7 @@ VBO_VARIANT_NAMES: tuple[str, ...] = (
     "disable_market_timing",
     "disable_liquidity_filter",
     "universe_generic_liquidity",
+    "universe_vbo_volatility",
 )
 
 
@@ -62,6 +63,17 @@ LARRY_WILLIAMS_VBO_ABLATION_PRESET = AblationPreset(
                 "O'Neil universe vs a broad liquidity-only candidate set."
             ),
             universe_overrides={"universe_type": "generic_liquidity"},
+        ),
+        AblationVariant(
+            name="universe_vbo_volatility",
+            description=(
+                "Swap the Oneil universe for a VBO short-term-volatility "
+                "specific universe (5d avg trading value + market-cap floors + "
+                "20-day annualized volatility ≥ 0.35). 변동성 floor 가 VBO 의 "
+                "(open + range × k) 돌파 신호 빈도와 edge 가 충분한 후보로 "
+                "사전 선별하는지 측정한다."
+            ),
+            universe_overrides={"universe_type": "vbo_volatility"},
         ),
     ),
 )

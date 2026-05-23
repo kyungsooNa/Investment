@@ -807,7 +807,8 @@ def _build_ablation_overrides(
     )
 
     universe = base_universe
-    if variant.universe_overrides.get("universe_type") == "generic_liquidity":
+    universe_type = variant.universe_overrides.get("universe_type")
+    if universe_type == "generic_liquidity":
         from services.generic_liquidity_universe_service import (
             GenericLiquidityUniverseService,
         )
@@ -825,6 +826,44 @@ def _build_ablation_overrides(
             if key in variant.universe_overrides:
                 kwargs[key] = variant.universe_overrides[key]
         universe = GenericLiquidityUniverseService(**kwargs)
+    elif universe_type == "rsi2_mean_reversion":
+        from services.rsi2_mean_reversion_universe_service import (
+            Rsi2MeanReversionUniverseService,
+        )
+
+        kwargs = {
+            "sqs": base_universe._sqs,
+            "time_manager": base_universe._tm,
+            "market_regime_service": getattr(base_universe, "_regime_svc", None),
+        }
+        for key in (
+            "min_avg_trading_value_5d",
+            "min_market_cap",
+            "min_volatility_20d_annualized",
+            "max_watchlist",
+        ):
+            if key in variant.universe_overrides:
+                kwargs[key] = variant.universe_overrides[key]
+        universe = Rsi2MeanReversionUniverseService(**kwargs)
+    elif universe_type == "vbo_volatility":
+        from services.vbo_volatility_universe_service import (
+            VboVolatilityUniverseService,
+        )
+
+        kwargs = {
+            "sqs": base_universe._sqs,
+            "time_manager": base_universe._tm,
+            "market_regime_service": getattr(base_universe, "_regime_svc", None),
+        }
+        for key in (
+            "min_avg_trading_value_5d",
+            "min_market_cap",
+            "min_volatility_20d_annualized",
+            "max_watchlist",
+        ):
+            if key in variant.universe_overrides:
+                kwargs[key] = variant.universe_overrides[key]
+        universe = VboVolatilityUniverseService(**kwargs)
     if variant.universe_overrides.get("force_market_timing_ok"):
         universe = ForceMarketTimingOkUniverseWrapper(universe)
 
