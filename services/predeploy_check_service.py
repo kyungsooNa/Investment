@@ -15,6 +15,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Awaitable, Callable, List, Optional
 
+from common.config_hashing import compute_config_hash
+
 
 class CheckStatus(str, Enum):
     PASS = "PASS"
@@ -79,6 +81,7 @@ class PreDeployCheckService:
         websocket_probe: Optional[Callable[[], Awaitable[dict]]] = None,
         event_shadow_dir: str = "logs/strategies/event_shadow",
         event_shadow_max_age_days: int = 3,
+        expected_config_hash: str | None = None,
         time_provider: Callable[[], float] = time.time,
         now_provider: Callable[[], datetime] = datetime.now,
     ) -> None:
@@ -89,6 +92,7 @@ class PreDeployCheckService:
         self._websocket_probe = websocket_probe
         self._event_shadow_dir = event_shadow_dir
         self._event_shadow_max_age_days = event_shadow_max_age_days
+        self._expected_config_hash = expected_config_hash
         self._time_provider = time_provider
         self._now_provider = now_provider
         self._cached_config: Any = None
@@ -112,10 +116,20 @@ class PreDeployCheckService:
             cfg = self._config_loader()
             self._cached_config = cfg
             mode = "paper" if getattr(cfg, "is_paper_trading", True) else "real"
+            current_hash = compute_config_hash(cfg)
+            if self._expected_config_hash and current_hash != self._expected_config_hash:
+                return CheckResult(
+                    name="",
+                    status=CheckStatus.WARN,
+                    detail=(
+                        f"config_hash diff: expected={self._expected_config_hash} "
+                        f"current={current_hash or '<empty>'} (is_paper_trading={mode})"
+                    ),
+                )
             return CheckResult(
                 name="",
                 status=CheckStatus.PASS,
-                detail=f"config 로드 성공 (is_paper_trading={mode})",
+                detail=f"config 로드 성공 (is_paper_trading={mode}, config_hash={current_hash or '<empty>'})",
             )
 
         return await self._measured("config_validation", run)

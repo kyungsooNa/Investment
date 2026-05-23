@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-22 (P1-2 시장 베타 report-only)
+최종 업데이트: 2026-05-23 (P3-4 남은 항목 완료)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -521,30 +521,36 @@
 
 ### 3-4. 전략 공통 lifecycle/state contract
 
-- [ ] 활성 전략의 공통 scan/check_exits/state save/load 패턴을 base class 또는 helper로 추출할지 설계한다.
+- [x] 활성 전략의 공통 scan/check_exits/state save/load 패턴을 base class 또는 helper로 추출할지 설계한다.
   - 검토 결과: 타당. O'Neil/HTF/First Pullback/RSI2/Larry Williams 계열에 watchlist 조회, market timing, candidate filtering, chunked entry, unbounded exit, state save/load 패턴이 반복된다.
-  - 개선 방향: 바로 대형 리팩토링하지 말고 `bounded_gather`, `ensure_state_loaded`, `save_state_atomic` 같은 작은 공통 helper부터 도입한다.
-- [ ] `strategy_id`와 `display_name`을 분리한다.
+  - 완료된 부분(2026-05-23): `larry_williams_cb` state 패턴을 `StrategyStateIO`로 통일했다.
+  - 완료된 부분(2026-05-23): 4개 전략의 `schedule_save` 패턴을 통일하고, `rsi2` state migration 및 `StrategyStateIO` loop-aware 개선을 적용했다.
+  - 완료된 부분(2026-05-23): `LiveStrategy.load_state()` 기본 no-op contract를 추가하고, scheduler stop 시 `StrategyStateIO.flush_pending()`으로 지연 저장을 정리한다.
+  - 결정: scan/check_exits 대형 base class 추출은 현재 반복 제거 대비 리스크가 커서 보류한다. 공통 흐름이 더 쌓이면 별도 설계 항목으로 재승격한다. `larry_williams_vbo`는 state 파일이 없어 마이그레이션 대상이 아니다.
+- [x] `strategy_id`와 `display_name`을 분리한다.
   - 검토 결과: 타당. `strategy.name` 값이 한국어 display name(`오닐PP/BGU`, `오닐스퀴즈돌파` 등) 또는 영문 display name(`Larry Williams VBO`)으로 TradeSignal/RiskGate/log/config key에 사용된다.
   - 개선 방향: 설정·DB·journal·risk limit은 stable `strategy_id`, UI/로그 문구는 `display_name`을 사용하도록 backward-compatible migration을 설계한다.
   - Phase 1 완료(2026-05-23): `LiveStrategy` base class 에 `strategy_id` property 도입 (default = `self.name` fallback). 10개 활성 전략 (`first_pullback`, `high_tight_flag`, `larry_williams_cb`, `larry_williams_vbo`, `oneil_pocket_pivot`, `oneil_squeeze_breakout`, `program_buy_follow`, `rsi2_pullback`, `traditional_volume_breakout`, `volume_breakout_live`) 에 안정 영문 ID 지정. consumer 변경 없는 additive 변경. 단위 테스트 13건 (parametrize 10 + snake_case + unique + base fallback) 추가로 ID 잠금.
-  - Phase 2 (별도): risk_gate, kill_switch, virtual_trade journal key, config key 사용처를 `strategy.name` → `strategy.strategy_id` 로 마이그레이션. journal CSV 호환 layer 필요.
-  - Phase 3 (cosmetic, 별도): UI/log 의 `name` 표기를 `display_name` 으로 rename.
+  - Phase 2 완료(2026-05-23): `StrategyIdentityResolver`와 virtual trade repository compat layer를 추가하고, KillSwitch JSON state/RiskGate consumer/scheduler signal stamping을 `strategy_id` 기준으로 전환했다.
+  - Phase 3 완료(2026-05-23): `LiveStrategy.display_name` property를 추가하고, scheduler status API가 `strategy_id`/`display_name`을 함께 노출한다. 웹 scheduler UI는 표시명에 `display_name`을 사용하되 기존 filter key는 `name`으로 유지해 호환성을 보존한다.
 - [x] 직전 거래일 계산을 `MarketCalendarService` 기준으로 통일한다.
   - 검토 결과: 타당. `OneilUniverseService`, `OneilPocketPivotStrategy`, `FirstPullbackStrategy`, `MarketDataService` 일부 경로에서 `now - timedelta(days=1)`을 전일 기준으로 사용한다.
   - 완료된 부분: `common.date_utils.previous_trading_day_str(now, holidays=None)` sync helper 추가. 4개 사용처(`OneilUniverseService._analyze_surge_candidate`, `OneilPocketPivotStrategy._check_entry`, `FirstPullbackStrategy._check_entry`, `MarketDataService.get_ohlcv`)를 helper로 통일. 주말(토/일) 우회 + optional `holidays` set 지원. 단위 테스트로 weekday/주말/공휴일/시각 무관/`date` 입력 회귀 고정. `MarketCalendarService` async 메서드 추가는 의존성 주입 부담이 커서 보류 — 호출자가 휴장일을 인지할 때 `holidays` 인자로 전달하도록 했다.
-- [ ] `TradeSignal` contract를 분석/운영 기준으로 확장한다.
+- [x] `TradeSignal` contract를 분석/운영 기준으로 확장한다.
   - 후보 필드: `signal_id`, `strategy_id`, `entry_reason`, `invalidation_price`, `stop_loss`, `target` 또는 trailing rule, `expected_holding_period`, `confidence`, `required_data`.
   - 검토 결과: 타당. 현재 `TradeSignal`은 `reason`, `strategy_name`, `stop_loss_pct`, `atr_multiplier`, `volatility_20d_annualized`를 갖지만, 중복 신호 식별과 사후 분석에 필요한 표준 필드는 아직 부족하다.
   - Phase 1 완료(2026-05-23): `TradeSignal` 에 10개 Optional 필드 추가 — `signal_id`, `strategy_id`, `entry_reason`, `invalidation_price`, `stop_loss_price`, `target_price`, `trailing_rule`, `expected_holding_period_days`, `confidence`, `required_data`. 모두 default None 이라 기존 호출자/소비자 변경 없음. `tests/unit_test/common/test_trade_signal_contract.py` 16건으로 contract 잠금 (minimal 호환, default None, to_dict 포함, 명시 할당, 기존 stop_loss_pct 와 stop_loss_price 공존).
-  - Phase 2 (별도): scheduler 가 `signal_id` 자동 발급 + 전략의 scan/check_exits 결과에 `strategy_id` 자동 stamp. 이후 dedup, event_shadow join, fill reconcile 로 signal_id 전파.
-  - Phase 3 (별도, consumer): risk_gate/order_execution 가 `invalidation_price`/`stop_loss_price` 를 실제 정책 입력으로 사용. backtest replay 가 `required_data` 로 fixture 재현.
-- [ ] 활성/실험/레거시 전략의 디렉터리 또는 registry 경계를 명확히 한다.
+  - Phase 2 완료(2026-05-23): scheduler 가 scan/check_exits 직후 `signal_id`를 자동 발급하고 `strategy_id`를 stamp 한다.
+  - 완료된 부분(2026-05-23): scheduler 가 `config_hash`도 함께 stamp 한다.
+  - 완료된 부분(2026-05-23): scheduler/order execution/risk gate가 `invalidation_price`/`stop_loss_price`를 주문 정책 입력으로 전달·검증한다. `PositionSizingService`는 `stop_loss_price`를 절대 손절가 기반 per-share risk로 반영한다. backtest replay는 `required_data` 누락 fixture를 차단한다.
+- [x] 활성/실험/레거시 전략의 디렉터리 또는 registry 경계를 명확히 한다.
   - 후보 구조: `strategies/active`, `strategies/experimental`, `strategies/deprecated`, `strategies/legacy`.
-  - 1차 대안: 파일 이동 없이 strategy registry metadata로 active/experimental/deprecated 상태를 명시하고, 실행 가능한 전략은 config에서 명시적으로만 로드한다.
-- [ ] 설정 변경 통제를 도입한다.
+  - 완료된 부분(2026-05-23): 파일 이동 없이 `STRATEGY_STATUS_MAP` registry metadata로 7 active / 3 experimental 상태를 명시하고, resolver `get_status()`로 조회하도록 했다.
+- [x] 설정 변경 통제를 도입한다.
   - 후보: config version, trade journal 내 config hash, 장 시작 전 config diff log, production config lock, dry-run config validation.
   - 목표: 어떤 설정으로 어떤 주문이 나갔는지 사후 재현 가능하게 만든다.
+  - 완료된 부분(2026-05-23): `common/config_hashing.py` 추가 및 scheduler `config_hash` stamping 1차 적용.
+  - 완료된 부분(2026-05-23): `virtual_trade_repository` DB schema/legacy migration/standard journal에 `config_hash`를 추가했다. `PreDeployCheckService`와 `scripts/run_predeploy_check.py --expected-config-hash`가 config 변경 후 hash diff를 WARN으로 보고한다.
 
 ---
 
@@ -674,8 +680,7 @@
    - `WebAppContext` 분리 (완료)
    - ServiceContainer / Factory 도입 (완료)
    - `OrderExecutionService` 역할 분리 (완료 — PR #412)
-   - 남은 항목: 전략 state/lifecycle contract, `strategy_id`/`display_name` 분리, 직전 거래일 계산 통일
-   - TradeSignal contract, config hash/version, 운영 runbook/canary 절차
+   - P3-4 남은 항목 완료: lifecycle/state contract, `display_name` 표시, TradeSignal consumer 정책, config hash DB/dry-run validation
 
 ---
 

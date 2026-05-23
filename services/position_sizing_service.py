@@ -247,9 +247,13 @@ class PositionSizingService:
         return ask_qty
 
     async def _get_per_share_risk_krw(self, signal: TradeSignal, price: int) -> float:
-        """1주당 리스크 금액(KRW) — ATR 기반 또는 stop_loss_pct 기반."""
+        """1주당 리스크 금액(KRW) — 절대가 stop, ATR, stop_loss_pct 기반."""
         stop_pct = abs(signal.stop_loss_pct or self._cfg.default_stop_loss_pct)
         stop_from_pct = price * stop_pct / 100  # KRW
+
+        stop_from_price = 0.0
+        if signal.stop_loss_price is not None:
+            stop_from_price = max(float(price) - float(signal.stop_loss_price), 0.0)
 
         atr_krw = await self._get_atr_krw(signal)
         atr_mult = signal.atr_multiplier or self._cfg.atr_multiplier
@@ -257,7 +261,7 @@ class PositionSizingService:
 
         min_stop = price * self._cfg.min_stop_distance_pct / 100  # 하한 보호
 
-        return max(stop_from_pct, stop_from_atr, min_stop)
+        return max(stop_from_price, stop_from_pct, stop_from_atr, min_stop)
 
     async def _get_atr_krw(self, signal: TradeSignal) -> float:
         """ATR 마지막 값을 KRW 로 반환. 실패 시 0.0."""

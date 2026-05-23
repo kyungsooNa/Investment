@@ -7,6 +7,7 @@ from datetime import date, datetime
 from typing import Any, Awaitable, Callable, Optional, Protocol, TYPE_CHECKING, Union
 
 from common.operator_alert_types import AlertSource
+from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER
 from common.types import ErrorCode, Exchange, OrderSide, ResCommonResponse
 from config.config_loader import RiskGateConfig
 from core.account_snapshot import AccountSnapshotCache
@@ -76,6 +77,7 @@ class RiskGateService:
         self._operator_alert: Optional["OperatorAlertService"] = operator_alert_service
         self._market_buy_reference_price_provider = market_buy_reference_price_provider
         self._daily_total: dict[date, int] = defaultdict(int)
+        self._strategy_resolver = STRATEGY_IDENTITY_RESOLVER
 
     async def validate_order(
         self,
@@ -87,12 +89,18 @@ class RiskGateService:
         active_order_count: int,
         source: str = "",
         strategy_name: Optional[str] = None,
+        invalidation_price: Optional[float] = None,
+        stop_loss_price: Optional[float] = None,
     ) -> Optional[ResCommonResponse]:
         """Return None when allowed, otherwise a blocking response."""
         if not self._cfg.enabled:
             return None
 
         strategy_name = strategy_name or self._strategy_name_from_source(source)
+        # downstream consumer (kill_switch, virtual_trade_provider, config lookup)
+        # 전체에서 strategy_id 로 일관되게 사용하도록 진입 시 한 번 정규화.
+        if strategy_name:
+            strategy_name = self._strategy_resolver.to_id(strategy_name)
 
         env_blocked = self._check_env_consistency(stock_code=stock_code, side=side)
         if env_blocked is not None:
@@ -146,6 +154,18 @@ class RiskGateService:
                 )
             effective_price = reference_price
 
+        signal_policy_blocked = self._check_signal_price_policy(
+            stock_code=stock_code,
+            side=side,
+            source=source,
+            strategy_name=strategy_name,
+            effective_price=effective_price,
+            invalidation_price=invalidation_price,
+            stop_loss_price=stop_loss_price,
+        )
+        if signal_policy_blocked is not None:
+            return signal_policy_blocked
+
         if effective_price > 0:
             order_amount = effective_price * qty
             if not is_force_exit_sell:
@@ -184,6 +204,61 @@ class RiskGateService:
 
             if not is_force_exit_sell:
                 self._record_daily_amount(order_amount)
+
+        return None
+
+    def _check_signal_price_policy(
+        self,
+        *,
+        stock_code: str,
+        side: OrderSide,
+        source: str,
+        strategy_name: Optional[str],
+        effective_price: int,
+        invalidation_price: Optional[float],
+        stop_loss_price: Optional[float],
+    ) -> Optional[ResCommonResponse]:
+        if effective_price <= 0:
+            return None
+
+        if invalidation_price is not None:
+            invalidation = float(invalidation_price)
+            if side == OrderSide.BUY and float(effective_price) <= invalidation:
+                return self._blocked(
+                    "signal_invalidated",
+                    "매수 신호 무효화 가격 이하라 주문을 차단했습니다.",
+                    stock_code=stock_code,
+                    side=side.value,
+                    source=source,
+                    strategy_name=strategy_name,
+                    effective_price=effective_price,
+                    invalidation_price=invalidation,
+                )
+            if side == OrderSide.SELL and float(effective_price) >= invalidation:
+                return self._blocked(
+                    "signal_invalidated",
+                    "매도 신호 무효화 가격 이상이라 주문을 차단했습니다.",
+                    stock_code=stock_code,
+                    side=side.value,
+                    source=source,
+                    strategy_name=strategy_name,
+                    effective_price=effective_price,
+                    invalidation_price=invalidation,
+                )
+
+        if stop_loss_price is not None and side == OrderSide.BUY:
+            stop_price = float(stop_loss_price)
+            if stop_price <= 0 or stop_price >= float(effective_price):
+                return self._blocked(
+                    "invalid_stop_loss_price",
+                    "매수 주문의 손절가는 주문 기준가보다 낮은 양수여야 합니다.",
+                    stock_code=stock_code,
+                    side=side.value,
+                    source=source,
+                    strategy_name=strategy_name,
+                    effective_price=effective_price,
+                    stop_loss_price=stop_price,
+                )
 
         return None
 
@@ -487,7 +562,10 @@ class RiskGateService:
         )
 
     def _get_strategy_limit(self, strategy_name: str):
-        specific = self._cfg.strategy_limits.get(strategy_name)
+        """전략별 한도를 dual-key (한국어/strategy_id) 로 조회."""
+        sid = self._strategy_resolver.to_id(strategy_name)
+        display = self._strategy_resolver.to_display(sid)
+        specific = self._cfg.strategy_limits.get(sid) or self._cfg.strategy_limits.get(display)
         return specific or self._cfg.default_strategy_limit
 
     async def _check_strategy_loss_limit(

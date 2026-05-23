@@ -89,6 +89,7 @@ function renderSchedulerStatus(data) {
     }
 
     strategiesDiv.innerHTML = data.strategies.map(s => {
+        const displayName = s.display_name || s.name;
         const enabledBadge = s.enabled
             ? '<span class="badge open">활성</span>'
             : '<span class="badge closed">비활성</span>';
@@ -116,7 +117,7 @@ function renderSchedulerStatus(data) {
         <div class="card" style="margin-bottom:8px;">
             <div style="display:flex;justify-content:space-between;align-items:center;">
                 <div style="display:flex;align-items:center;gap:8px;">
-                    <h3 style="margin:0;color:var(--text-primary);">${s.name}</h3>
+                    <h3 style="margin:0;color:var(--text-primary);">${displayName}</h3>
                     ${enabledBadge}
                     ${dayTradeBadge}
                 </div>
@@ -206,9 +207,12 @@ function buildSchedulerHistoryTabs(strategies) {
     const tabContainer = document.getElementById('scheduler-history-tabs');
     if (!tabContainer) return;
 
-    const names = ['전체', ...strategies.map(s => s.name)];
-    tabContainer.innerHTML = names.map(name =>
-        `<button class="sub-tab-btn${name === currentSchedulerFilter ? ' active' : ''}" onclick="filterSchedulerHistory('${name}', this)">${name}</button>`
+    const items = [
+        { key: '전체', label: '전체' },
+        ...strategies.map(s => ({ key: s.name, label: s.display_name || s.name })),
+    ];
+    tabContainer.innerHTML = items.map(item =>
+        `<button class="sub-tab-btn${item.key === currentSchedulerFilter ? ' active' : ''}" onclick="filterSchedulerHistory('${item.key}', this)">${item.label}</button>`
     ).join('');
 }
 
@@ -221,7 +225,9 @@ function filterSchedulerHistory(strategyName, btnElement) {
         if (btnElement) {
             btnElement.classList.add('active');
         } else {
-            const match = Array.from(tabContainer.querySelectorAll('.sub-tab-btn')).find(b => b.textContent === strategyName);
+            const match = Array.from(tabContainer.querySelectorAll('.sub-tab-btn')).find(
+                b => b.getAttribute('onclick') && b.getAttribute('onclick').includes(`'${strategyName}'`)
+            );
             if (match) match.classList.add('active');
         }
     }

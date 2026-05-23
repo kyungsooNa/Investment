@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 
 from repositories.streaming_stock_repo import StreamingType
 try:
@@ -19,6 +20,8 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from interfaces.live_strategy import LiveStrategy
+from common.config_hashing import compute_config_hash
+from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER
 from common.types import TradeSignal, ErrorCode, Exchange
 from services.market_calendar_service import MarketCalendarService
 from services.virtual_trade_service import VirtualTradeService
@@ -36,6 +39,7 @@ from core.loggers.trace_context import trace_scope, get_trace_id, new_trace_id
 from services.kill_switch_service import KillSwitchService
 from core.account_snapshot import AccountSnapshotCache
 from services.position_sizing_service import PositionSizingService
+from utils.strategy_state_io import StrategyStateIO
 
 
 @dataclass
@@ -210,6 +214,7 @@ class StrategyScheduler:
         for cfg in self._strategies:
             await self.stop_strategy(cfg.strategy.name, perform_force_exit=perform_exit)
 
+        await StrategyStateIO.flush_pending()
         self.close()
         self._logger.info("[Scheduler] 정지 (전체 전략 비활성화)")
         if self._notification_service:
@@ -435,10 +440,26 @@ class StrategyScheduler:
             sell_signals = await cfg.strategy.check_exits(holdings)
             self._pm.log_timer(f"{name}.check_exits({len(holdings)}건)", t_exit)
             # P2 2-2 후속: signal-to-order latency 측정용 — 미stamp 신호에만 현재 시각 부여.
+            # P3-4 Phase 2c: signal_id / strategy_id 도 동일 시점에 자동 stamp.
             _exit_stamp = time.time()
+            # LiveStrategy.strategy_id default 는 self.name (한국어) fallback 이라
+            # 어떤 경로로 오든 resolver 한 번 더 통과시켜 strategy_id 표준화 보장.
+            _exit_strategy_id = STRATEGY_IDENTITY_RESOLVER.to_id(
+                getattr(cfg.strategy, "strategy_id", None) or name
+            )
+            # P3-4 설정 변경 통제: 신호 생성 시점의 전략 config hash 도 stamp.
+            _exit_config_hash = compute_config_hash(
+                getattr(cfg.strategy, "_cfg", None) or getattr(cfg.strategy, "config", None)
+            )
             for _sig in sell_signals or []:
                 if _sig.created_at is None:
                     _sig.created_at = _exit_stamp
+                if not _sig.signal_id:
+                    _sig.signal_id = str(uuid.uuid4())
+                if not _sig.strategy_id:
+                    _sig.strategy_id = _exit_strategy_id
+                if not _sig.config_hash and _exit_config_hash:
+                    _sig.config_hash = _exit_config_hash
             if sell_signals:
                 tasks = [self._execute_signal(sig) for sig in sell_signals]
                 for f in asyncio.as_completed(tasks):
@@ -496,10 +517,26 @@ class StrategyScheduler:
             if rejection_counter is not None:
                 strategy_logger.removeHandler(rejection_counter)
         # P2 2-2 후속: signal-to-order latency 측정용 — scan 직후 stamp.
+        # P3-4 Phase 2c: signal_id / strategy_id 도 동일 시점에 자동 stamp.
         _scan_stamp = time.time()
+        # LiveStrategy.strategy_id default 는 self.name (한국어) fallback 이라
+        # 어떤 경로로 오든 resolver 한 번 더 통과시켜 strategy_id 표준화 보장.
+        _scan_strategy_id = STRATEGY_IDENTITY_RESOLVER.to_id(
+            getattr(cfg.strategy, "strategy_id", None) or name
+        )
+        # P3-4 설정 변경 통제: 신호 생성 시점의 전략 config hash 도 stamp.
+        _scan_config_hash = compute_config_hash(
+            getattr(cfg.strategy, "_cfg", None) or getattr(cfg.strategy, "config", None)
+        )
         for _sig in buy_signals or []:
             if _sig.created_at is None:
                 _sig.created_at = _scan_stamp
+            if not _sig.signal_id:
+                _sig.signal_id = str(uuid.uuid4())
+            if not _sig.strategy_id:
+                _sig.strategy_id = _scan_strategy_id
+            if not _sig.config_hash and _scan_config_hash:
+                _sig.config_hash = _scan_config_hash
         self._pm.log_timer(f"{name}.scan()", t_scan)
 
         try:
@@ -747,7 +784,7 @@ class StrategyScheduler:
                 self._log_signal_to_order_latency(signal, tid)
                 await self._virtual_trade_service.log_buy_async(
                     signal.strategy_name, signal.code, log_price, dry_qty,
-                    volatility_20d_annualized=signal.volatility_20d_annualized,
+                    **self._virtual_trade_log_kwargs(signal),
                 )
                 if self._price_sub_svc:
                     await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key, StreamingType.UNIFIED_PRICE)
@@ -836,15 +873,19 @@ class StrategyScheduler:
                             signal.qty = buy_qty
 
                         self._log_signal_to_order_latency(signal, tid)
+                        buy_order_kwargs = {
+                            "exchange": signal_exchange,
+                            "source": f"strategy:{signal.strategy_name}",
+                            "finalize_immediately": False,
+                            "trace_id": tid,
+                            "volatility_20d_annualized": signal.volatility_20d_annualized,
+                        }
+                        buy_order_kwargs.update(self._signal_price_policy_kwargs(signal))
                         resp = await self._oes.handle_place_buy_order(
                             signal.code,
                             signal.price,
                             buy_qty,
-                            exchange=signal_exchange,
-                            source=f"strategy:{signal.strategy_name}",
-                            finalize_immediately=False,
-                            trace_id=tid,
-                            volatility_20d_annualized=signal.volatility_20d_annualized,
+                            **buy_order_kwargs,
                         )
                 else:
                     adjusted_sell_price = await self._resolve_strategy_sell_price(signal, signal_exchange)
@@ -852,14 +893,18 @@ class StrategyScheduler:
                         signal.price = adjusted_sell_price
                         log_price = adjusted_sell_price
                     self._log_signal_to_order_latency(signal, tid)
+                    sell_order_kwargs = {
+                        "exchange": signal_exchange,
+                        "source": self._source_for_signal(signal),
+                        "finalize_immediately": False,
+                        "trace_id": tid,
+                    }
+                    sell_order_kwargs.update(self._signal_price_policy_kwargs(signal))
                     resp = await self._oes.handle_place_sell_order(
                         signal.code,
                         signal.price,
                         signal.qty,
-                        exchange=signal_exchange,
-                        source=self._source_for_signal(signal),
-                        finalize_immediately=False,
-                        trace_id=tid,
+                        **sell_order_kwargs,
                     )
 
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
@@ -971,6 +1016,22 @@ class StrategyScheduler:
                     "return_rate": return_rate,
                     "trace_id": tid,
                 })
+
+    @staticmethod
+    def _virtual_trade_log_kwargs(signal: TradeSignal) -> dict:
+        kwargs = {"volatility_20d_annualized": signal.volatility_20d_annualized}
+        if signal.config_hash:
+            kwargs["config_hash"] = signal.config_hash
+        return kwargs
+
+    @staticmethod
+    def _signal_price_policy_kwargs(signal: TradeSignal) -> dict:
+        kwargs = {}
+        if signal.invalidation_price is not None:
+            kwargs["invalidation_price"] = signal.invalidation_price
+        if signal.stop_loss_price is not None:
+            kwargs["stop_loss_price"] = signal.stop_loss_price
+        return kwargs
 
     def _exclude_order_policy_blocked_code(self, signal: TradeSignal, resp) -> None:
         if not resp or resp.rt_cd != ErrorCode.ORDER_POLICY_BLOCKED.value:
@@ -1545,10 +1606,14 @@ class StrategyScheduler:
         strategies = []
         for cfg in self._strategies:
             name = cfg.strategy.name
+            strategy_id = getattr(cfg.strategy, "strategy_id", name)
+            display_name = getattr(cfg.strategy, "display_name", name)
             last = self._last_run.get(name)
             holdings = self._get_strategy_holdings(cfg)
             strategies.append({
                 "name": name,
+                "strategy_id": strategy_id,
+                "display_name": display_name,
                 "interval_minutes": cfg.interval_minutes,
                 "max_positions": cfg.max_positions,
                 "enabled": cfg.enabled,

@@ -38,6 +38,19 @@ def test_log_buy_persists_volatility(repo):
     assert df.iloc[0]["volatility_20d_annualized"] == pytest.approx(0.3217)
 
 
+def test_log_buy_persists_config_hash(repo):
+    repo.log_buy("OSB", "005930", 70_000, qty=10, config_hash="abc123def456")
+    df = repo._read()
+    assert len(df) == 1
+    assert df.iloc[0]["config_hash"] == "abc123def456"
+
+
+def test_standard_journal_includes_config_hash(repo):
+    repo.log_buy("OSB", "005930", 70_000, qty=10, config_hash="abc123def456")
+    records = repo.get_standard_journal_records()
+    assert records[0]["config_hash"] == "abc123def456"
+
+
 def test_log_buy_without_volatility_stores_none(repo):
     repo.log_buy("Manual", "005930", 70_000)
     df = repo._read()
@@ -62,6 +75,7 @@ def test_ddl_includes_volatility_column(temp_db, mock_market_clock):
     cols = {row[1] for row in conn.execute("PRAGMA table_info(trades)").fetchall()}
     conn.close()
     assert "volatility_20d_annualized" in cols
+    assert "config_hash" in cols
 
 
 def test_alter_table_migrates_legacy_db_without_column(tmp_path, mock_market_clock):
@@ -70,7 +84,7 @@ def test_alter_table_migrates_legacy_db_without_column(tmp_path, mock_market_clo
     db_dir.mkdir(parents=True)
     db_path = str(db_dir / "virtual_trade.db")
 
-    # 레거시 schema 로 직접 trades 테이블 생성 (volatility 컬럼 없음)
+    # 레거시 schema 로 직접 trades 테이블 생성 (volatility/config_hash 컬럼 없음)
     conn = sqlite3.connect(db_path)
     conn.execute("""
         CREATE TABLE trades (
@@ -99,6 +113,7 @@ def test_alter_table_migrates_legacy_db_without_column(tmp_path, mock_market_clo
     repo = VirtualTradeRepository(db_path=db_path, market_clock=mock_market_clock)
     cols = {row[1] for row in repo._db.execute("PRAGMA table_info(trades)").fetchall()}
     assert "volatility_20d_annualized" in cols
+    assert "config_hash" in cols
 
     df = repo._read()
     assert len(df) == 1
@@ -106,6 +121,8 @@ def test_alter_table_migrates_legacy_db_without_column(tmp_path, mock_market_clo
     val = df.iloc[0]["volatility_20d_annualized"]
     # 기존 row 는 NULL/NaN
     assert val is None or (isinstance(val, float) and val != val)
+    config_hash = df.iloc[0]["config_hash"]
+    assert config_hash is None or (isinstance(config_hash, float) and config_hash != config_hash)
 
 
 @pytest.mark.asyncio
@@ -114,3 +131,11 @@ async def test_log_buy_async_propagates_volatility(repo):
     df = repo._read()
     assert len(df) == 1
     assert df.iloc[0]["volatility_20d_annualized"] == pytest.approx(0.21)
+
+
+@pytest.mark.asyncio
+async def test_log_buy_async_propagates_config_hash(repo):
+    await repo.log_buy_async("OSB", "005930", 70_000, qty=1, config_hash="abc123def456")
+    df = repo._read()
+    assert len(df) == 1
+    assert df.iloc[0]["config_hash"] == "abc123def456"

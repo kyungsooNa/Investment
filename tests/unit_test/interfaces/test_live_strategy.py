@@ -41,8 +41,39 @@ async def test_live_strategy_can_instantiate_complete_subclass():
     strategy = ConcreteStrategy()
     assert isinstance(strategy, LiveStrategy)
     assert strategy.name == "ConcreteTestStrategy"
+    assert strategy.display_name == "ConcreteTestStrategy"
+    assert await strategy.load_state() is None
     assert await strategy.scan() == []
     assert await strategy.check_exits([]) == []
+
+
+@pytest.mark.asyncio
+async def test_live_strategy_display_name_can_be_overridden():
+    """
+    TC: storage/config 용 strategy_id 와 UI/log 용 display_name 을 분리할 수 있어야 한다.
+    """
+    class ConcreteStrategy(LiveStrategy):
+        @property
+        def name(self) -> str:
+            return "legacy-display"
+
+        @property
+        def strategy_id(self) -> str:
+            return "stable_id"
+
+        @property
+        def display_name(self) -> str:
+            return "표시명"
+
+        async def scan(self) -> List[TradeSignal]:
+            return []
+
+        async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
+            return []
+
+    strategy = ConcreteStrategy()
+    assert strategy.strategy_id == "stable_id"
+    assert strategy.display_name == "표시명"
 
 @pytest.mark.asyncio
 async def test_live_strategy_abstract_methods_execution():

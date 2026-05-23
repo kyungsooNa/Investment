@@ -71,6 +71,25 @@ async def test_check_config_pass():
     assert result.name == "config_validation"
 
 
+async def test_check_config_warns_when_expected_hash_differs():
+    svc = _service(expected_config_hash="expected123")
+    result = await svc.check_config()
+    assert result.status == CheckStatus.WARN
+    assert "config_hash diff" in result.detail
+
+
+async def test_check_config_passes_when_expected_hash_matches():
+    cfg = _paper_cfg()
+    from common.config_hashing import compute_config_hash
+
+    svc = _service(
+        config_loader=lambda: cfg,
+        expected_config_hash=compute_config_hash(cfg),
+    )
+    result = await svc.check_config()
+    assert result.status == CheckStatus.PASS
+
+
 async def test_check_config_fail_on_loader_exception():
     def boom():
         raise ValueError("설정 파일 유효성 검사 실패: ...")

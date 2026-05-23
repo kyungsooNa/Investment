@@ -405,11 +405,28 @@ async def test_check_exits_no_position_state_no_exit(strategy, mock_sqs):
 
 # ─── state persistence ────────────────────────────────────────────────────────
 
+@pytest.fixture(autouse=True)
+def _reset_strategy_state_io():
+    """StrategyStateIO class-level lock/pending 상태는 event loop 사이 leak 발생.
+    각 테스트 전후 reset 으로 분리.
+    """
+    from utils.strategy_state_io import StrategyStateIO
+    StrategyStateIO._reset_for_test()
+    yield
+    StrategyStateIO._reset_for_test()
+
+
 @pytest.mark.asyncio
 async def test_state_saved_and_loaded_across_instances(
     mock_sqs, mock_universe, mock_indicator, mock_tm, tmp_state
 ):
-    """scan() 후 상태 파일이 저장되고, 새 인스턴스에서 포지션이 복원된다."""
+    """scan() 후 상태 파일이 저장되고, 새 인스턴스에서 포지션이 복원된다.
+
+    P3-4: 비동기 컨텍스트에서는 _save_state/_load_state 가 background task 로
+    위임되므로, save 완료 대기 + 명시적 load_state() await 필요.
+    """
+    from utils.strategy_state_io import StrategyStateIO
+
     s1 = LarryWilliamsChannelBreakoutStrategy(
         stock_query_service=mock_sqs, universe_service=mock_universe,
         indicator_service=mock_indicator, market_clock=mock_tm,
@@ -418,11 +435,14 @@ async def test_state_saved_and_loaded_across_instances(
     signals = await s1.scan()
     assert len(signals) == 1
 
+    await StrategyStateIO.flush_pending()
+
     s2 = LarryWilliamsChannelBreakoutStrategy(
         stock_query_service=mock_sqs, universe_service=mock_universe,
         indicator_service=mock_indicator, market_clock=mock_tm,
         config=LarryWilliamsCBConfig(), state_file=tmp_state,
     )
+    await s2.load_state()
     assert _CODE in s2._position_state
     assert s2._position_state[_CODE].entry_price == 75_000
 
@@ -431,7 +451,13 @@ async def test_state_saved_and_loaded_across_instances(
 async def test_cooldown_persisted_after_hard_stop_exit(
     mock_sqs, mock_universe, mock_indicator, mock_tm, tmp_state
 ):
-    """칼손절 SELL 후 쿨다운이 파일에 저장되어 재시작 후에도 유지된다."""
+    """칼손절 SELL 후 쿨다운이 파일에 저장되어 재시작 후에도 유지된다.
+
+    P3-4: 비동기 컨텍스트에서는 _save_state/_load_state 가 background task 로
+    위임되므로, save 완료 대기 + 명시적 load_state() await 필요.
+    """
+    from utils.strategy_state_io import StrategyStateIO
+
     s1 = LarryWilliamsChannelBreakoutStrategy(
         stock_query_service=mock_sqs, universe_service=mock_universe,
         indicator_service=mock_indicator, market_clock=mock_tm,
@@ -444,10 +470,13 @@ async def test_cooldown_persisted_after_hard_stop_exit(
     mock_sqs.get_current_price.return_value = _make_price_resp(69_000)
     await s1.check_exits([{"code": _CODE, "name": "삼성전자", "buy_price": 75_000, "qty": 1}])
 
+    await StrategyStateIO.flush_pending()
+
     s2 = LarryWilliamsChannelBreakoutStrategy(
         stock_query_service=mock_sqs, universe_service=mock_universe,
         indicator_service=mock_indicator, market_clock=mock_tm,
         config=LarryWilliamsCBConfig(cooldown_days=2), state_file=tmp_state,
     )
+    await s2.load_state()
     assert _CODE in s2._cooldown
     assert s2._cooldown[_CODE] >= "20260502"

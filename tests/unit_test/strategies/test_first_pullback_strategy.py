@@ -591,14 +591,19 @@ async def test_check_single_exit_breakeven_stop(mock_deps):
 
 @pytest.mark.asyncio
 async def test_save_state_inside_running_loop_schedules_async_save(mock_deps):
+    """P3-4: _save_state 가 running loop 안에서는 StrategyStateIO.schedule_save 로 위임."""
     sqs, universe, tm, logger = mock_deps
     strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
-    strategy._save_state_async = AsyncMock()
 
-    strategy._save_state()
-    await asyncio.sleep(0)
+    with patch("strategies.first_pullback_strategy.StrategyStateIO.schedule_save") as mock_schedule:
+        strategy._save_state()
+        await asyncio.sleep(0)
 
-    strategy._save_state_async.assert_called()
+    mock_schedule.assert_called()
+    call_args = mock_schedule.call_args
+    assert call_args.args[0] == strategy.STATE_FILE
+    assert isinstance(call_args.args[1], dict)
+    assert "positions" in call_args.args[1]
 
 
 @pytest.mark.asyncio

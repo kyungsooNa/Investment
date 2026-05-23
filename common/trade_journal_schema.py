@@ -31,6 +31,7 @@ STANDARD_TRADE_JOURNAL_FIELDS = (
     "mae",
     "market_regime",
     "volatility_20d_annualized",
+    "config_hash",
     "metadata",
 )
 
@@ -133,6 +134,7 @@ def normalize_virtual_trade(
         mae=_first_float(trade, "mae", "MAE", "mae_pct", "MAE_pct"),
         market_regime=_resolve_market_regime(trade, market_regime),
         volatility_20d_annualized=_resolve_volatility(trade, volatility_20d_annualized),
+        config_hash=trade.get("config_hash"),
         metadata={k: _json_safe(v) for k, v in dict(trade).items()},
     )
 

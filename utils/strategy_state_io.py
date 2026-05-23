@@ -36,7 +36,25 @@ class StrategyStateIO:
 
     @classmethod
     def _lock_for(cls, file_path: str) -> asyncio.Lock:
+        """현재 running event loop 에 묶인 Lock 반환.
+
+        클래스 변수 dict 는 프로세스 lifetime 동안 유지되므로, 테스트 환경의
+        다중 event loop 에서 닫힌 loop 에 묶인 Lock 을 재사용하면
+        `ValueError: future belongs to a different loop` 가 발생한다.
+        loop 가 다르면 stale Lock 을 폐기하고 새로 생성한다.
+        """
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
         lock = cls._locks.get(file_path)
+        if lock is not None and current is not None:
+            try:
+                lock_loop = lock._get_loop()
+            except Exception:
+                lock_loop = getattr(lock, "_loop", None)
+            if lock_loop is not None and lock_loop is not current:
+                lock = None
         if lock is None:
             lock = asyncio.Lock()
             cls._locks[file_path] = lock
@@ -93,10 +111,20 @@ class StrategyStateIO:
 
     @classmethod
     async def flush_pending(cls, timeout: Optional[float] = None) -> None:
-        """등록된 모든 save task 완료까지 대기. timeout=None 이면 무한 대기."""
+        """등록된 모든 save task 완료까지 대기. timeout=None 이면 무한 대기.
+
+        현재 running loop 에 묶인 task 만 await — 다른 loop 의 stale task 는
+        skip (테스트 환경 다중 loop 안전성).
+        """
         if not cls._pending:
             return
-        tasks = list(cls._pending)
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        tasks = [t for t in cls._pending if t.get_loop() is current]
+        if not tasks:
+            return
         if timeout is None:
             await asyncio.gather(*tasks, return_exceptions=True)
         else:

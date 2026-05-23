@@ -16,14 +16,24 @@ from services.notification_service import NotificationCategory, NotificationLeve
 class MockStrategy(LiveStrategy):
     """테스트용 전략 구현."""
 
-    def __init__(self, name="테스트전략", scan_signals=None, exit_signals=None):
+    def __init__(self, name="테스트전략", scan_signals=None, exit_signals=None, strategy_id=None, display_name=None):
         self._name = name
+        self._strategy_id = strategy_id
+        self._display_name = display_name
         self._scan_signals = scan_signals or []
         self._exit_signals = exit_signals or []
 
     @property
     def name(self) -> str:
         return self._name
+
+    @property
+    def strategy_id(self) -> str:
+        return self._strategy_id or self._name
+
+    @property
+    def display_name(self) -> str:
+        return self._display_name or self._name
 
     async def scan(self):
         return self._scan_signals
@@ -203,6 +213,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(status["strategies"]), 1)
         strat_status = status["strategies"][0]
         self.assertEqual(strat_status["name"], "전략A")
+        self.assertEqual(strat_status["display_name"], "전략A")
         self.assertEqual(strat_status["current_holds"], 1)
         self.assertEqual(strat_status["holdings"], [holding_item])
         self.assertEqual(strat_status["max_positions"], 5)
@@ -388,6 +399,15 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(status["running"])
         self.assertEqual(len(status["strategies"]), 0)
 
+    async def test_stop_flushes_pending_strategy_state_saves(self):
+        """스케줄러 종료 시 background state save task 완료를 기다린다."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+
+        with patch("scheduler.strategy_scheduler.StrategyStateIO.flush_pending", new=AsyncMock()) as flush:
+            await scheduler.stop(save_state=True)
+
+        flush.assert_awaited_once()
+
     def test_get_status_with_strategy(self):
         """전략 등록 후 get_status 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
@@ -397,7 +417,47 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         status = scheduler.get_status()
         self.assertEqual(len(status["strategies"]), 1)
         self.assertEqual(status["strategies"][0]["name"], "테스트전략")
+        self.assertEqual(status["strategies"][0]["display_name"], "테스트전략")
         self.assertEqual(status["strategies"][0]["max_positions"], 3)
+
+    def test_get_status_exposes_strategy_id_and_display_name(self):
+        """상태 API는 storage key와 표시명을 분리해 노출한다."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(
+            name="legacy-display",
+            strategy_id="stable_strategy_id",
+            display_name="표시 전략명",
+        )
+        scheduler.register(StrategySchedulerConfig(strategy=strategy, max_positions=3))
+
+        status = scheduler.get_status()
+
+        strategy_status = status["strategies"][0]
+        self.assertEqual(strategy_status["name"], "legacy-display")
+        self.assertEqual(strategy_status["strategy_id"], "stable_strategy_id")
+        self.assertEqual(strategy_status["display_name"], "표시 전략명")
+
+    async def test_execute_buy_signal_passes_signal_price_policy_to_order_execution(self):
+        """TradeSignal 가격 정책 필드를 주문 실행 계층으로 전달한다."""
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        signal = TradeSignal(
+            code="005930",
+            name="삼성전자",
+            action="BUY",
+            price=70_000,
+            qty=1,
+            reason="테스트",
+            strategy_name="테스트전략",
+            invalidation_price=68_000,
+            stop_loss_price=66_000,
+        )
+
+        await scheduler._execute_signal(signal)
+
+        oes.handle_place_buy_order.assert_awaited_once()
+        kwargs = oes.handle_place_buy_order.await_args.kwargs
+        self.assertEqual(kwargs["invalidation_price"], 68_000)
+        self.assertEqual(kwargs["stop_loss_price"], 66_000)
 
     async def test_execute_buy_signal_dry_run(self):
         """dry_run 모드에서 BUY 시그널 실행: CSV만 기록, API 미호출."""
@@ -411,6 +471,26 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         vm.log_buy_async.assert_awaited_once_with("테스트전략", "005930", 70000, 1, volatility_20d_annualized=None)
         oes.handle_place_buy_order.assert_not_called()
+
+    async def test_execute_buy_signal_dry_run_passes_config_hash_when_present(self):
+        """dry-run journal 기록 시 signal.config_hash 를 보존한다."""
+        scheduler, vm, _, _, _ = self._make_scheduler(dry_run=True)
+
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY",
+            price=70000, qty=1, reason="테스트", strategy_name="테스트전략",
+            config_hash="abc123def456",
+        )
+        await scheduler._execute_signal(signal)
+
+        vm.log_buy_async.assert_awaited_once_with(
+            "테스트전략",
+            "005930",
+            70000,
+            1,
+            volatility_20d_annualized=None,
+            config_hash="abc123def456",
+        )
 
     async def test_execute_sell_signal_dry_run(self):
         """dry_run 모드에서 SELL 시그널 실행: CSV만 기록."""

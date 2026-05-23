@@ -8,6 +8,7 @@ from typing import Any, Optional, TYPE_CHECKING
 import pytz
 
 from common.operator_alert_types import AlertSource
+from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER
 from config.config_loader import KillSwitchConfig
 from services.notification_service import NotificationCategory, NotificationLevel, NotificationService
 
@@ -43,6 +44,7 @@ class KillSwitchService:
         self._lock = asyncio.Lock()
         self._risk_gate_config = risk_gate_config
         self._operator_alert: Optional["OperatorAlertService"] = operator_alert_service
+        self._strategy_resolver = STRATEGY_IDENTITY_RESOLVER
 
         # 영속 상태 (계좌 레벨)
         self._is_tripped: bool = False
@@ -209,21 +211,30 @@ class KillSwitchService:
     # ── 전략별 Kill Switch ────────────────────────────────────────────
 
     def is_strategy_tripped(self, strategy_name: str) -> Optional[dict[str, Any]]:
-        """해당 전략이 Kill Switch 상태이면 trip 메타 dict 반환, 아니면 None."""
-        return self._strategy_tripped.get(strategy_name)
+        """해당 전략이 Kill Switch 상태이면 trip 메타 dict 반환, 아니면 None.
+
+        입력 strategy_name 은 strategy_id 로 정규화된 뒤 lookup 한다.
+        """
+        return self._strategy_tripped.get(self._strategy_resolver.to_id(strategy_name))
 
     async def trip_strategy(self, strategy_name: str, reason: str, metadata: dict | None = None) -> None:
-        """해당 전략만 단독 정지. 계좌 KS 에는 영향 없음."""
+        """해당 전략만 단독 정지. 계좌 KS 에는 영향 없음.
+
+        입력 strategy_name 은 strategy_id 로 정규화 후 state 에 기록된다.
+        """
+        strategy_id = self._strategy_resolver.to_id(strategy_name)
         async with self._lock:
             now = _now_kst()
             meta = {
-                "strategy_name": strategy_name,
+                "strategy_name": strategy_id,
                 "trip_reason": reason,
                 "trip_timestamp": now.isoformat(),
                 **(metadata or {}),
             }
-            self._strategy_tripped[strategy_name] = meta
+            self._strategy_tripped[strategy_id] = meta
             self._save_state()
+        # 알림 메시지 / dedup key 는 정규화된 strategy_id 사용
+        strategy_name = strategy_id
 
         self._logger.critical(
             "[KillSwitch][Strategy] 전략 트립! strategy=%s 사유=%s", strategy_name, reason
@@ -249,11 +260,13 @@ class KillSwitchService:
 
     async def reset_strategy(self, strategy_name: str, operator: str = "") -> None:
         """해당 전략의 Kill Switch 해제 및 카운터 초기화."""
+        strategy_id = self._strategy_resolver.to_id(strategy_name)
         async with self._lock:
-            self._strategy_tripped.pop(strategy_name, None)
-            self._strategy_consecutive_losses.pop(strategy_name, None)
-            self._strategy_daily_loss_won.pop(strategy_name, None)
+            self._strategy_tripped.pop(strategy_id, None)
+            self._strategy_consecutive_losses.pop(strategy_id, None)
+            self._strategy_daily_loss_won.pop(strategy_id, None)
             self._save_state()
+        strategy_name = strategy_id
 
         self._logger.warning(
             "[KillSwitch][Strategy] 해제됨 strategy=%s operator=%s", strategy_name, operator
@@ -266,9 +279,13 @@ class KillSwitchService:
             )
 
     async def record_strategy_trade_result(self, strategy_name: str, pnl_won: int) -> None:
-        """전략별 매도 손익 기록. 임계값 초과 시 해당 전략만 트립."""
+        """전략별 매도 손익 기록. 임계값 초과 시 해당 전략만 트립.
+
+        입력 strategy_name 은 strategy_id 로 정규화 후 모든 dict 키로 사용된다.
+        """
         if not self._cfg.enabled or not strategy_name:
             return
+        strategy_name = self._strategy_resolver.to_id(strategy_name)
         async with self._lock:
             if pnl_won < 0:
                 self._strategy_consecutive_losses[strategy_name] = (
@@ -317,11 +334,18 @@ class KillSwitchService:
         self._logger.info("[KillSwitch] 전략별 일별 카운터 초기화 완료")
 
     def _get_strategy_limit(self, strategy_name: str):
-        """risk_gate_config 에서 전략별 한도를 반환. 미주입 시 None."""
+        """risk_gate_config 에서 전략별 한도를 반환. 미주입 시 None.
+
+        config 의 strategy_limits 키가 한국어든 strategy_id 든 양쪽 모두 lookup
+        한다 (legacy YAML 호환).
+        """
         if self._risk_gate_config is None:
             return None
         cfg = self._risk_gate_config
-        return cfg.strategy_limits.get(strategy_name) or cfg.default_strategy_limit
+        sid = self._strategy_resolver.to_id(strategy_name)
+        display = self._strategy_resolver.to_display(sid)
+        specific = cfg.strategy_limits.get(sid) or cfg.strategy_limits.get(display)
+        return specific or cfg.default_strategy_limit
 
     async def _trip_strategy_locked(self, strategy_name: str, reason: str, metadata: dict) -> None:
         """Lock 보유 중에 전략 트립 처리."""
@@ -473,12 +497,18 @@ class KillSwitchService:
             self._consecutive_losses = int(state.get("consecutive_losses", 0))
             self._consecutive_api_errors = int(state.get("consecutive_api_errors", 0))
             self._daily_realized_loss_won = int(state.get("daily_realized_loss_won", 0))
-            self._strategy_tripped = state.get("strategy_tripped", {})
+            # legacy 한국어 키를 strategy_id 로 정규화 (one-time migration on load).
+            # 미지 strategy 는 passthrough.
+            def _norm(k):
+                return self._strategy_resolver.to_id(k) if k else k
+            self._strategy_tripped = {
+                _norm(k): v for k, v in state.get("strategy_tripped", {}).items()
+            }
             self._strategy_consecutive_losses = {
-                k: int(v) for k, v in state.get("strategy_consecutive_losses", {}).items()
+                _norm(k): int(v) for k, v in state.get("strategy_consecutive_losses", {}).items()
             }
             self._strategy_daily_loss_won = {
-                k: int(v) for k, v in state.get("strategy_daily_loss_won", {}).items()
+                _norm(k): int(v) for k, v in state.get("strategy_daily_loss_won", {}).items()
             }
             if self._is_tripped:
                 self._logger.warning(

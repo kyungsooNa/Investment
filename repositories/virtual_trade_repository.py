@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from functools import lru_cache
 from typing import Optional
 from core.market_clock import MarketClock
+from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER
 from common.trade_journal_schema import normalize_virtual_trade
 from utils.transaction_cost_utils import TransactionCostUtils
 
@@ -51,14 +52,14 @@ LIVE_STRATEGY_STATE_FILES = {
 
 _SELECT_TRADES = (
     "SELECT strategy, code, buy_date, buy_price, qty, sell_date, sell_price, return_rate, status, reason, "
-    "volatility_20d_annualized "
+    "volatility_20d_annualized, config_hash "
     "FROM trades ORDER BY id"
 )
 _INSERT_TRADE = (
     "INSERT INTO trades "
     "(strategy, code, buy_date, buy_price, qty, sell_date, sell_price, return_rate, status, reason, "
-    "volatility_20d_annualized) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "volatility_20d_annualized, config_hash) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 _DDL = """
 CREATE TABLE IF NOT EXISTS trades (
@@ -73,7 +74,8 @@ CREATE TABLE IF NOT EXISTS trades (
     return_rate REAL    NOT NULL DEFAULT 0.0,
     status      TEXT    NOT NULL,
     reason      TEXT    NOT NULL DEFAULT '',
-    volatility_20d_annualized REAL
+    volatility_20d_annualized REAL,
+    config_hash TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_trades_strategy_code_status ON trades(strategy, code, status);
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -142,6 +144,7 @@ class VirtualTradeRepository:
         self.db_path = db_path
         self.tm = market_clock if market_clock else MarketClock()
         self._lock = threading.Lock()
+        self._resolver = STRATEGY_IDENTITY_RESOLVER
         dir_path = os.path.dirname(self.db_path)
         if dir_path:
             os.makedirs(dir_path, exist_ok=True)
@@ -157,6 +160,9 @@ class VirtualTradeRepository:
         if "volatility_20d_annualized" not in existing:
             with self._db:
                 self._db.execute("ALTER TABLE trades ADD COLUMN volatility_20d_annualized REAL")
+        if "config_hash" not in existing:
+            with self._db:
+                self._db.execute("ALTER TABLE trades ADD COLUMN config_hash TEXT")
 
     # ---- 레거시 데이터 마이그레이션 (CSV/JSON → SQLite, 최초 1회) ----
 
@@ -237,11 +243,16 @@ class VirtualTradeRepository:
             return_rate = float(rr_raw) if (rr_raw is not None and not (isinstance(rr_raw, float) and math.isnan(rr_raw))) else 0.0
             vol_raw = getattr(row, 'volatility_20d_annualized', None)
             volatility = None if (vol_raw is None or (isinstance(vol_raw, float) and math.isnan(vol_raw))) else float(vol_raw)
+            config_hash_raw = getattr(row, 'config_hash', None)
+            config_hash = None if (
+                config_hash_raw is None
+                or (isinstance(config_hash_raw, float) and math.isnan(config_hash_raw))
+            ) else str(config_hash_raw)
             rows.append((
                 row.strategy, row.code, str(row.buy_date), float(row.buy_price), qty,
                 sell_date, sell_price, return_rate, row.status,
                 getattr(row, 'reason', '') or '',
-                volatility,
+                volatility, config_hash,
             ))
         with self._db:
             self._db.execute("DELETE FROM trades")
@@ -376,30 +387,48 @@ class VirtualTradeRepository:
         )
         return []
 
+    # ---- strategy_id compat (P3-4 Phase 2 PR 2a) ----
+
+    def _strategy_filter(self, strategy: str) -> tuple[str, tuple]:
+        """strategy_id ↔ display 양쪽 hit 하는 WHERE clause + 파라미터 반환.
+
+        새로 저장하는 행은 strategy_id 로 쓰지만, DB 에 남아 있는 legacy
+        한국어 행도 동시 검색하기 위해 IN-clause 를 사용한다. 매핑되지 않은
+        값(미지 strategy)은 단일 키 매칭으로 fallback.
+        """
+        sid = self._resolver.to_id(strategy)
+        display = self._resolver.to_display(sid)
+        if sid == display:
+            return "strategy = ?", (sid,)
+        return "strategy IN (?, ?)", (sid, display)
+
     # ---- 매수/매도 ----
 
     def log_buy(self, strategy_name: str, code: str, current_price, qty: int = 1,
-                volatility_20d_annualized: float | None = None):
+                volatility_20d_annualized: float | None = None,
+                config_hash: str | None = None):
         """가상 매수 기록. 동일 전략+종목 중복 매수 방지.
 
         volatility_20d_annualized: 신호 생성 직전 20거래일 수익률 std × √252. 리포트 집계용.
         """
+        strategy_id = self._resolver.to_id(strategy_name)
         with self._lock:
-            if self.is_holding(strategy_name, code):
-                logger.info(f"[가상매매] {strategy_name}/{code} 이미 보유 중 — 매수 스킵")
+            if self.is_holding(strategy_id, code):
+                logger.info(f"[가상매매] {strategy_id}/{code} 이미 보유 중 — 매수 스킵")
                 return
             buy_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
             with self._db:
                 self._db.execute(_INSERT_TRADE,
-                    (strategy_name, code, buy_date, current_price, qty, None, None, 0.0, "HOLD", "",
-                     volatility_20d_annualized))
-            logger.info(f"[가상매매] {strategy_name}/{code} 매수 기록 (가격: {current_price}, 수량: {qty})")
+                    (strategy_id, code, buy_date, current_price, qty, None, None, 0.0, "HOLD", "",
+                     volatility_20d_annualized, config_hash))
+            logger.info(f"[가상매매] {strategy_id}/{code} 매수 기록 (가격: {current_price}, 수량: {qty})")
 
     async def log_buy_async(self, strategy_name: str, code: str, current_price, qty: int = 1,
-                            volatility_20d_annualized: float | None = None):
+                            volatility_20d_annualized: float | None = None,
+                            config_hash: str | None = None):
         """log_buy의 비동기 래퍼 (스레드 실행)."""
         await asyncio.to_thread(
-            self.log_buy, strategy_name, code, current_price, qty, volatility_20d_annualized
+            self.log_buy, strategy_name, code, current_price, qty, volatility_20d_annualized, config_hash
         )
 
     def log_sell(self, code: str, current_price, qty: int = 1, reason: str = ""):
@@ -463,9 +492,10 @@ class VirtualTradeRepository:
     def log_sell_by_strategy(self, strategy_name: str, code: str, current_price, qty: int = 1, reason: str = "") -> float | None:
         """전략+종목 매칭 매도. 성공 시 수익률 반환, 실패 시 None 반환."""
         with self._lock:
+            where, params = self._strategy_filter(strategy_name)
             row = self._db.execute(
-                "SELECT id, buy_price FROM trades WHERE strategy=? AND code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
-                (strategy_name, code)
+                f"SELECT id, buy_price FROM trades WHERE {where} AND code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
+                (*params, code)
             ).fetchone()
             if row is None:
                 logger.warning(f"[가상매매] {strategy_name}/{code} 매도 실패: 보유 내역 없음")
@@ -488,9 +518,10 @@ class VirtualTradeRepository:
     def log_sell_by_strategy_with_result(self, strategy_name: str, code: str, current_price, qty: int = 1, reason: str = "") -> SellResult:
         """전략+종목 매칭 매도 후 SellResult 반환. KS hook 연결용."""
         with self._lock:
+            where, params = self._strategy_filter(strategy_name)
             row = self._db.execute(
-                "SELECT id, buy_price, buy_date FROM trades WHERE strategy=? AND code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
-                (strategy_name, code)
+                f"SELECT id, buy_price, buy_date FROM trades WHERE {where} AND code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
+                (*params, code)
             ).fetchone()
             if row is None:
                 logger.warning(f"[가상매매] {strategy_name}/{code} 매도 실패: 보유 내역 없음")
@@ -523,10 +554,10 @@ class VirtualTradeRepository:
         """주문 최종 실패 시 FAILED 상태로 기록."""
         with self._lock:
             fail_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
-            strategy_label = strategy_name if strategy_name else f"{action}실패"
+            strategy_label = self._resolver.to_id(strategy_name) if strategy_name else f"{action}실패"
             with self._db:
                 self._db.execute(_INSERT_TRADE,
-                    (strategy_label, code, fail_date, price, qty, None, None, 0.0, "FAILED", reason, None))
+                    (strategy_label, code, fail_date, price, qty, None, None, 0.0, "FAILED", reason, None, None))
             logger.warning(f"[가상매매] {action} 주문 실패 기록: {code} @ {price}원 x {qty}주 — {reason}")
 
     async def log_order_failure_async(self, action: str, code: str, price, qty: int, reason: str, strategy_name: str = ""):
@@ -600,19 +631,21 @@ class VirtualTradeRepository:
         return self._to_json_records(df)
 
     def get_holds_by_strategy(self, strategy_name: str) -> list:
-        """전략별 HOLD 포지션 반환."""
+        """전략별 HOLD 포지션 반환. legacy 한국어 행과 strategy_id 행 모두 매칭."""
+        where, params = self._strategy_filter(strategy_name)
         df = pd.read_sql_query(
-            "SELECT strategy,code,buy_date,buy_price,qty,sell_date,sell_price,return_rate,status,reason "
-            "FROM trades WHERE strategy=? AND status='HOLD' ORDER BY id",
-            self._db, params=(strategy_name,), dtype={'code': str, 'sell_date': object}
+            f"SELECT strategy,code,buy_date,buy_price,qty,sell_date,sell_price,return_rate,status,reason "
+            f"FROM trades WHERE {where} AND status='HOLD' ORDER BY id",
+            self._db, params=params, dtype={'code': str, 'sell_date': object}
         )
         return self._to_json_records(df)
 
     def is_holding(self, strategy_name: str, code: str) -> bool:
-        """해당 전략에서 종목 보유 중인지 확인."""
+        """해당 전략에서 종목 보유 중인지 확인. legacy 한국어 행도 함께 매칭."""
+        where, params = self._strategy_filter(strategy_name)
         row = self._db.execute(
-            "SELECT 1 FROM trades WHERE strategy=? AND code=? AND status='HOLD' LIMIT 1",
-            (strategy_name, code)
+            f"SELECT 1 FROM trades WHERE {where} AND code=? AND status='HOLD' LIMIT 1",
+            (*params, code)
         ).fetchone()
         return row is not None
 
@@ -951,7 +984,7 @@ class VirtualTradeRepository:
     # { "daily": {"2026-02-13": {"ALL": 2.5, "수동매매": 2.5}, ...}, "prev_values": {} }
 
     def _load_data(self) -> dict:
-        """메모리 캐시 우선, 없으면 SQLite에서 로드."""
+        """메모리 캐시 우선, 없으면 SQLite에서 로드. snapshot 의 strategy 키는 strategy_id 로 정규화."""
         if self._cached_data is not None:
             return self._cached_data
 
@@ -962,7 +995,8 @@ class VirtualTradeRepository:
         for date, strategy, return_rate in rows:
             if date not in daily:
                 daily[date] = {}
-            daily[date][strategy] = return_rate
+            key = self._resolver.to_id(strategy) if strategy else strategy
+            daily[date][key] = return_rate
 
         self._cached_data = {"daily": daily, "prev_values": {}}
         return self._cached_data
@@ -985,12 +1019,17 @@ class VirtualTradeRepository:
             logger.error(f"Failed to save snapshot: {e}")
 
     def save_daily_snapshot(self, strategy_returns: dict):
-        """오늘 스냅샷 저장. 성능 최적화 버전."""
+        """오늘 스냅샷 저장. 성능 최적화 버전. input dict 의 키는 strategy_id 로 정규화."""
         now = self.tm.get_current_kst_time()
         if now.weekday() >= 5:  # 주말 제외
             return
 
         today = now.strftime("%Y-%m-%d")
+
+        normalized_returns: dict = {}
+        for raw_key, rr in (strategy_returns or {}).items():
+            key = self._resolver.to_id(raw_key) if raw_key else raw_key
+            normalized_returns[key] = rr
 
         data = self._load_data()
         daily = data.get("daily", {})
@@ -1001,10 +1040,10 @@ class VirtualTradeRepository:
                 last_date = max(prev_dates)
                 if _is_weekday(last_date):
                     last_snapshot = daily[last_date]
-                    if _strategy_values(last_snapshot) == _strategy_values(strategy_returns):
+                    if _strategy_values(last_snapshot) == _strategy_values(normalized_returns):
                         return
 
-        daily[today] = strategy_returns
+        daily[today] = normalized_returns
 
         cutoff_dt = now - timedelta(days=30)
         cutoff_str = cutoff_dt.strftime("%Y-%m-%d")
@@ -1061,7 +1100,7 @@ class VirtualTradeRepository:
     def get_strategy_return_history(self, strategy_name: str) -> list[dict]:
         data = self._load_data()
         daily = data.get("daily", {})
-        return _build_strategy_return_history(daily, strategy_name)
+        return _build_strategy_return_history(daily, self._resolver.to_id(strategy_name))
 
     def get_all_strategies(self) -> list[str]:
         data = self._load_data()

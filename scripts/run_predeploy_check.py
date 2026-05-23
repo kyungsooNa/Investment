@@ -168,6 +168,11 @@ def _parse_args() -> argparse.Namespace:
         help="event shadow 로그 디렉터리 (default: logs/strategies/event_shadow)",
     )
     parser.add_argument(
+        "--expected-config-hash",
+        default=None,
+        help="기대 config hash 와 현재 설정 hash 를 비교해 diff 를 WARN 으로 표시",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         dest="as_json",
@@ -193,6 +198,7 @@ async def _run(args: argparse.Namespace) -> int:
         broker=broker,
         websocket_probe=websocket_probe,
         event_shadow_dir=args.event_shadow_dir,
+        expected_config_hash=args.expected_config_hash,
     )
 
     summary = await service.run_all(offline=args.offline)

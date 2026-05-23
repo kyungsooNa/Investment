@@ -405,6 +405,8 @@ class OrderExecutionService:
         trace_id: Optional[str] = None,
         intent_id: Optional[str] = None,
         volatility_20d_annualized: Optional[float] = None,
+        invalidation_price: Optional[float] = None,
+        stop_loss_price: Optional[float] = None,
     ):
         """주식 매수 주문 요청 및 결과 출력."""
         current_trace = trace_id or get_trace_id() or new_trace_id("MANUAL")
@@ -428,6 +430,8 @@ class OrderExecutionService:
                 trace_id=current_trace,
                 intent_id=intent_id,
                 volatility_20d_annualized=volatility_20d_annualized,
+                invalidation_price=invalidation_price,
+                stop_loss_price=stop_loss_price,
             )
             if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
                 self.logger.info(
@@ -465,6 +469,8 @@ class OrderExecutionService:
         *,
         trace_id: Optional[str] = None,
         intent_id: Optional[str] = None,
+        invalidation_price: Optional[float] = None,
+        stop_loss_price: Optional[float] = None,
     ):
         """주식 매도 주문 요청 및 결과 출력."""
         current_trace = trace_id or get_trace_id() or new_trace_id("MANUAL")
@@ -487,6 +493,8 @@ class OrderExecutionService:
                 finalize_immediately=finalize_immediately,
                 trace_id=current_trace,
                 intent_id=intent_id,
+                invalidation_price=invalidation_price,
+                stop_loss_price=stop_loss_price,
             )
             if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
                 self.logger.info(

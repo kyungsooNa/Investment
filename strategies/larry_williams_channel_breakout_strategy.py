@@ -18,6 +18,7 @@ from core.market_clock import MarketClock
 from core.logger import get_strategy_logger
 from strategies.larry_williams_cb_types import LarryWilliamsCBConfig, LarryWilliamsCBPositionState
 from utils.async_concurrency import bounded_gather
+from utils.strategy_state_io import StrategyStateIO
 
 
 # 청산/exit 동시성 상한. entry chunk_size(10)보다 높게 두어 손절/청산이 entry scan 보다
@@ -408,28 +409,75 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
 
     # ── state persistence ───────────────────────────────────────────
 
-    def _load_state(self):
-        if not os.path.exists(self.STATE_FILE):
+    def _apply_loaded_state(self, data) -> None:
+        if not isinstance(data, dict):
             return
+        positions = data.get("positions", {}) or {}
+        cooldown = data.get("cooldown", {}) or {}
+        for k, v in positions.items():
+            self._position_state[k] = LarryWilliamsCBPositionState(**v)
+        self._cooldown = dict(cooldown)
+
+    def _load_state(self):
+        """sync entry. 이벤트 루프 안이면 async 태스크로, 밖이면 동기 경로."""
         try:
-            with open(self.STATE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            positions = data.get("positions", {}) if isinstance(data, dict) else {}
-            cooldown = data.get("cooldown", {}) if isinstance(data, dict) else {}
-            for k, v in positions.items():
-                self._position_state[k] = LarryWilliamsCBPositionState(**v)
-            self._cooldown = dict(cooldown)
+            asyncio.get_running_loop()
+        except RuntimeError:
+            if not os.path.exists(self.STATE_FILE):
+                return
+            try:
+                with open(self.STATE_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self._apply_loaded_state(data)
+            except Exception as e:
+                self._logger.error(f"Failed to load state for {self.name}: {e}")
+            return
+        asyncio.create_task(self._load_state_async())
+
+    async def _load_state_async(self):
+        try:
+            data = await StrategyStateIO.load(self.STATE_FILE)
         except Exception as e:
-            self._logger.error(f"Failed to load state for {self.name}: {e}")
+            self._logger.error(f"Failed to load state async for {self.name}: {e}")
+            return
+        if data is None:
+            return
+        self._apply_loaded_state(data)
+
+    async def load_state(self):
+        """초기화 직후 scan 전에 호출. _load_state_async() 를 명시적으로 await."""
+        await self._load_state_async()
 
     def _save_state(self):
+        """sync entry. 이벤트 루프 안이면 StrategyStateIO.schedule_save 로
+        background task 등록(flush_pending 추적 대상), 밖이면 동기 경로."""
         try:
-            os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
-            payload = {
-                "positions": {k: asdict(v) for k, v in self._position_state.items()},
-                "cooldown": dict(self._cooldown),
-            }
-            with open(self.STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
+            asyncio.get_running_loop()
+        except RuntimeError:
+            try:
+                os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+                payload = {
+                    "positions": {k: asdict(v) for k, v in self._position_state.items()},
+                    "cooldown": dict(self._cooldown),
+                }
+                with open(self.STATE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                self._logger.error(f"Failed to save state for {self.name}: {e}")
+            return
+        payload = {
+            "positions": {k: asdict(v) for k, v in self._position_state.items()},
+            "cooldown": dict(self._cooldown),
+        }
+        StrategyStateIO.schedule_save(self.STATE_FILE, payload)
+
+    async def _save_state_async(self):
+        """StrategyStateIO 로 atomic write + per-file lock 저장."""
+        payload = {
+            "positions": {k: asdict(v) for k, v in self._position_state.items()},
+            "cooldown": dict(self._cooldown),
+        }
+        try:
+            await StrategyStateIO.save_atomic(self.STATE_FILE, payload)
         except Exception as e:
-            self._logger.error(f"Failed to save state for {self.name}: {e}")
+            self._logger.error(f"Failed to save state async for {self.name}: {e}")
