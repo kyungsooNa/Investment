@@ -7,6 +7,7 @@ import pytest
 
 from scripts.run_backtest import (
     ACTIVE_BACKTEST_STRATEGIES,
+    _build_ablation_overrides,
     _build_default_strategy_config,
     _filter_ablation_variants,
     _format_ablation_console_lines,
@@ -211,3 +212,108 @@ def test_format_ablation_console_lines_produces_header_and_rows():
     assert "pp_only" in rendered
     # Variant metrics should appear
     assert any("trade" in line.lower() for line in lines)
+
+
+def test_build_ablation_overrides_passthrough_when_variant_none():
+    base = SimpleNamespace(_sqs=object(), _tm=object(), _regime_svc=None)
+
+    universe, config = _build_ablation_overrides(
+        strategy_key="larry_williams_vbo",
+        base_universe=base,
+        variant=None,
+    )
+
+    assert universe is base
+    assert config is None
+
+
+def test_build_ablation_overrides_generic_liquidity_swaps_universe():
+    from services.generic_liquidity_universe_service import (
+        GenericLiquidityUniverseService,
+    )
+
+    base = SimpleNamespace(_sqs=object(), _tm=object(), _regime_svc=object())
+    variant = AblationVariant(
+        name="universe_generic_liquidity",
+        universe_overrides={"universe_type": "generic_liquidity"},
+    )
+
+    universe, _ = _build_ablation_overrides(
+        strategy_key="larry_williams_vbo",
+        base_universe=base,
+        variant=variant,
+    )
+
+    assert isinstance(universe, GenericLiquidityUniverseService)
+    assert universe._sqs is base._sqs
+    assert universe._tm is base._tm
+    assert universe._regime_svc is base._regime_svc
+
+
+def test_build_ablation_overrides_generic_liquidity_passes_threshold_overrides():
+    from services.generic_liquidity_universe_service import (
+        GenericLiquidityUniverseService,
+    )
+
+    base = SimpleNamespace(_sqs=object(), _tm=object(), _regime_svc=None)
+    variant = AblationVariant(
+        name="universe_generic_relaxed",
+        universe_overrides={
+            "universe_type": "generic_liquidity",
+            "min_avg_trading_value_5d": 1_000_000_000,
+            "min_market_cap": 50_000_000_000,
+            "max_watchlist": 50,
+        },
+    )
+
+    universe, _ = _build_ablation_overrides(
+        strategy_key="larry_williams_vbo",
+        base_universe=base,
+        variant=variant,
+    )
+
+    assert isinstance(universe, GenericLiquidityUniverseService)
+    assert universe._min_tv_5d == 1_000_000_000
+    assert universe._min_cap == 50_000_000_000
+    assert universe._max_watchlist == 50
+
+
+def test_build_ablation_overrides_combines_generic_liquidity_with_force_market_timing():
+    from services.generic_liquidity_universe_service import (
+        GenericLiquidityUniverseService,
+    )
+    from services.strategy_ablation_service import (
+        ForceMarketTimingOkUniverseWrapper,
+    )
+
+    base = SimpleNamespace(_sqs=object(), _tm=object(), _regime_svc=None)
+    variant = AblationVariant(
+        name="universe_generic_force_mt",
+        universe_overrides={
+            "universe_type": "generic_liquidity",
+            "force_market_timing_ok": True,
+        },
+    )
+
+    universe, _ = _build_ablation_overrides(
+        strategy_key="larry_williams_vbo",
+        base_universe=base,
+        variant=variant,
+    )
+
+    # 외부는 force-market-timing 래퍼, 내부는 generic liquidity universe 여야 한다.
+    assert isinstance(universe, ForceMarketTimingOkUniverseWrapper)
+    assert isinstance(universe._inner, GenericLiquidityUniverseService)
+
+
+def test_vbo_ablation_preset_contains_universe_generic_liquidity_variant():
+    from strategies.larry_williams_vbo_ablation import (
+        LARRY_WILLIAMS_VBO_ABLATION_PRESET,
+        VBO_VARIANT_NAMES,
+    )
+
+    assert "universe_generic_liquidity" in VBO_VARIANT_NAMES
+    by_name = {v.name: v for v in LARRY_WILLIAMS_VBO_ABLATION_PRESET.variants}
+    variant = by_name.get("universe_generic_liquidity")
+    assert variant is not None
+    assert variant.universe_overrides.get("universe_type") == "generic_liquidity"

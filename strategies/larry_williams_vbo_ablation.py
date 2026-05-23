@@ -12,6 +12,7 @@ VBO_VARIANT_NAMES: tuple[str, ...] = (
     "disable_confidence_threshold",
     "disable_market_timing",
     "disable_liquidity_filter",
+    "universe_generic_liquidity",
 )
 
 
@@ -50,6 +51,17 @@ LARRY_WILLIAMS_VBO_ABLATION_PRESET = AblationPreset(
                 "min_market_cap": 0,
                 "min_5d_trading_value": 0,
             },
+        ),
+        AblationVariant(
+            name="universe_generic_liquidity",
+            description=(
+                "Swap the Oneil universe for a generic liquidity-only universe "
+                "(5d avg trading value + market-cap floors only; no Pool A "
+                "premium analysis, no RS Rating, no Minervini stage, no 52w-high "
+                "proximity). Measures how much VBO performance depends on the "
+                "O'Neil universe vs a broad liquidity-only candidate set."
+            ),
+            universe_overrides={"universe_type": "generic_liquidity"},
         ),
     ),
 )
