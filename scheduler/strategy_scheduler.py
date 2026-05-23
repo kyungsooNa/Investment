@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 
 from repositories.streaming_stock_repo import StreamingType
 try:
@@ -19,6 +20,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from interfaces.live_strategy import LiveStrategy
+from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER
 from common.types import TradeSignal, ErrorCode, Exchange
 from services.market_calendar_service import MarketCalendarService
 from services.virtual_trade_service import VirtualTradeService
@@ -435,10 +437,20 @@ class StrategyScheduler:
             sell_signals = await cfg.strategy.check_exits(holdings)
             self._pm.log_timer(f"{name}.check_exits({len(holdings)}건)", t_exit)
             # P2 2-2 후속: signal-to-order latency 측정용 — 미stamp 신호에만 현재 시각 부여.
+            # P3-4 Phase 2c: signal_id / strategy_id 도 동일 시점에 자동 stamp.
             _exit_stamp = time.time()
+            # LiveStrategy.strategy_id default 는 self.name (한국어) fallback 이라
+            # 어떤 경로로 오든 resolver 한 번 더 통과시켜 strategy_id 표준화 보장.
+            _exit_strategy_id = STRATEGY_IDENTITY_RESOLVER.to_id(
+                getattr(cfg.strategy, "strategy_id", None) or name
+            )
             for _sig in sell_signals or []:
                 if _sig.created_at is None:
                     _sig.created_at = _exit_stamp
+                if not _sig.signal_id:
+                    _sig.signal_id = str(uuid.uuid4())
+                if not _sig.strategy_id:
+                    _sig.strategy_id = _exit_strategy_id
             if sell_signals:
                 tasks = [self._execute_signal(sig) for sig in sell_signals]
                 for f in asyncio.as_completed(tasks):
@@ -496,10 +508,20 @@ class StrategyScheduler:
             if rejection_counter is not None:
                 strategy_logger.removeHandler(rejection_counter)
         # P2 2-2 후속: signal-to-order latency 측정용 — scan 직후 stamp.
+        # P3-4 Phase 2c: signal_id / strategy_id 도 동일 시점에 자동 stamp.
         _scan_stamp = time.time()
+        # LiveStrategy.strategy_id default 는 self.name (한국어) fallback 이라
+        # 어떤 경로로 오든 resolver 한 번 더 통과시켜 strategy_id 표준화 보장.
+        _scan_strategy_id = STRATEGY_IDENTITY_RESOLVER.to_id(
+            getattr(cfg.strategy, "strategy_id", None) or name
+        )
         for _sig in buy_signals or []:
             if _sig.created_at is None:
                 _sig.created_at = _scan_stamp
+            if not _sig.signal_id:
+                _sig.signal_id = str(uuid.uuid4())
+            if not _sig.strategy_id:
+                _sig.strategy_id = _scan_strategy_id
         self._pm.log_timer(f"{name}.scan()", t_scan)
 
         try:
