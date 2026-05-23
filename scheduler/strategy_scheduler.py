@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from interfaces.live_strategy import LiveStrategy
+from common.config_hashing import compute_config_hash
 from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER
 from common.types import TradeSignal, ErrorCode, Exchange
 from services.market_calendar_service import MarketCalendarService
@@ -444,6 +445,10 @@ class StrategyScheduler:
             _exit_strategy_id = STRATEGY_IDENTITY_RESOLVER.to_id(
                 getattr(cfg.strategy, "strategy_id", None) or name
             )
+            # P3-4 설정 변경 통제: 신호 생성 시점의 전략 config hash 도 stamp.
+            _exit_config_hash = compute_config_hash(
+                getattr(cfg.strategy, "_cfg", None) or getattr(cfg.strategy, "config", None)
+            )
             for _sig in sell_signals or []:
                 if _sig.created_at is None:
                     _sig.created_at = _exit_stamp
@@ -451,6 +456,8 @@ class StrategyScheduler:
                     _sig.signal_id = str(uuid.uuid4())
                 if not _sig.strategy_id:
                     _sig.strategy_id = _exit_strategy_id
+                if not _sig.config_hash and _exit_config_hash:
+                    _sig.config_hash = _exit_config_hash
             if sell_signals:
                 tasks = [self._execute_signal(sig) for sig in sell_signals]
                 for f in asyncio.as_completed(tasks):
@@ -515,6 +522,10 @@ class StrategyScheduler:
         _scan_strategy_id = STRATEGY_IDENTITY_RESOLVER.to_id(
             getattr(cfg.strategy, "strategy_id", None) or name
         )
+        # P3-4 설정 변경 통제: 신호 생성 시점의 전략 config hash 도 stamp.
+        _scan_config_hash = compute_config_hash(
+            getattr(cfg.strategy, "_cfg", None) or getattr(cfg.strategy, "config", None)
+        )
         for _sig in buy_signals or []:
             if _sig.created_at is None:
                 _sig.created_at = _scan_stamp
@@ -522,6 +533,8 @@ class StrategyScheduler:
                 _sig.signal_id = str(uuid.uuid4())
             if not _sig.strategy_id:
                 _sig.strategy_id = _scan_strategy_id
+            if not _sig.config_hash and _scan_config_hash:
+                _sig.config_hash = _scan_config_hash
         self._pm.log_timer(f"{name}.scan()", t_scan)
 
         try:

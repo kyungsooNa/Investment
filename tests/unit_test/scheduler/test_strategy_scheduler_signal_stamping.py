@@ -45,11 +45,13 @@ class _StubStrategy(LiveStrategy):
         display_name: str = "STAMP_TEST_DISPLAY",
         scan_signals: List[TradeSignal] | None = None,
         exit_signals: List[TradeSignal] | None = None,
+        cfg=None,
     ):
         self._display = display_name
         self._sid = strategy_id_value
         self._scan_signals = scan_signals or []
         self._exit_signals = exit_signals or []
+        self._cfg = cfg  # config hash stamping 대상
 
     @property
     def name(self) -> str:
@@ -188,6 +190,42 @@ class TestSchedulerSignalStamping(unittest.IsolatedAsyncioTestCase):
         await scheduler._run_strategy(cfg)
         self.assertEqual(exit_sigs[0].strategy_id, "exit_stamp_test")
         self.assertIsNotNone(exit_sigs[0].signal_id)
+
+    async def test_scan_signals_get_config_hash_stamped(self):
+        """P3-4: 전략 _cfg 가 있으면 config_hash 도 stamp."""
+        scheduler = self._make_scheduler()
+        scan_sigs = [_signal("BUY")]
+        strategy = _StubStrategy(
+            strategy_id_value="stamp_test",
+            scan_signals=scan_sigs,
+            cfg={"threshold": 0.05, "lookback": 20},
+        )
+        cfg = self._cfg_for(strategy)
+        await scheduler._run_strategy(cfg)
+        self.assertIsNotNone(scan_sigs[0].config_hash)
+        self.assertEqual(len(scan_sigs[0].config_hash), 12)
+
+    async def test_scan_signals_no_config_hash_when_strategy_has_no_cfg(self):
+        """전략 _cfg/config 가 None 이면 config_hash 는 stamp 안 됨."""
+        scheduler = self._make_scheduler()
+        scan_sigs = [_signal("BUY")]
+        strategy = _StubStrategy(
+            strategy_id_value="stamp_test",
+            scan_signals=scan_sigs,
+            cfg=None,
+        )
+        cfg = self._cfg_for(strategy)
+        await scheduler._run_strategy(cfg)
+        self.assertIsNone(scan_sigs[0].config_hash)
+
+    async def test_scan_preserves_pre_existing_config_hash(self):
+        scheduler = self._make_scheduler()
+        sig = _signal("BUY")
+        sig.config_hash = "custom_hash"
+        strategy = _StubStrategy(scan_signals=[sig], cfg={"a": 1})
+        cfg = self._cfg_for(strategy)
+        await scheduler._run_strategy(cfg)
+        self.assertEqual(sig.config_hash, "custom_hash")
 
     async def test_stamping_fallback_to_strategy_name_when_no_strategy_id(self):
         """strategy_id property 가 없거나 빈 경우 strategy.name 을 strategy_id 로 정규화하여 fallback."""
