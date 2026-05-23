@@ -317,3 +317,18 @@ def test_vbo_ablation_preset_contains_universe_generic_liquidity_variant():
     variant = by_name.get("universe_generic_liquidity")
     assert variant is not None
     assert variant.universe_overrides.get("universe_type") == "generic_liquidity"
+
+
+@pytest.mark.parametrize("strategy_key", list(ACTIVE_BACKTEST_STRATEGIES))
+def test_every_active_strategy_ablation_preset_has_universe_generic_liquidity_variant(
+    strategy_key,
+):
+    """Phase 1: 7개 활성 전략 모두에 universe_generic_liquidity variant 가 정의되어 있어야 한다."""
+    preset = _resolve_ablation_preset(strategy_key)
+    by_name = {v.name: v for v in preset.variants}
+    variant = by_name.get("universe_generic_liquidity")
+    assert variant is not None, (
+        f"strategy '{strategy_key}' 의 ablation preset 에 "
+        f"'universe_generic_liquidity' variant 가 없습니다."
+    )
+    assert variant.universe_overrides.get("universe_type") == "generic_liquidity"

@@ -11,6 +11,7 @@ RSI2_VARIANT_NAMES: tuple[str, ...] = (
     "disable_minervini_stage2",
     "disable_market_timing",
     "disable_rsi_oversold",
+    "universe_generic_liquidity",
 )
 
 
@@ -38,6 +39,17 @@ RSI2_PULLBACK_ABLATION_PRESET = AblationPreset(
                 "Raise rsi_threshold to 100 so any RSI value qualifies as oversold."
             ),
             config_overrides={"rsi_threshold": 100.0},
+        ),
+        AblationVariant(
+            name="universe_generic_liquidity",
+            description=(
+                "Swap the Oneil universe for a generic liquidity-only universe "
+                "(5d avg trading value + market-cap floors only; no Pool A "
+                "premium analysis, no RS Rating, no Minervini stage, no 52w-high "
+                "proximity). RSI2 가 O'Neil 우량주 외 mean-reversion 후보를 잡을 "
+                "수 있는지 측정한다."
+            ),
+            universe_overrides={"universe_type": "generic_liquidity"},
         ),
     ),
 )

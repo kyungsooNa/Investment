@@ -12,6 +12,7 @@ CB_VARIANT_NAMES: tuple[str, ...] = (
     "disable_adx_filter",
     "disable_volume_filter",
     "disable_market_timing",
+    "universe_generic_liquidity",
 )
 
 
@@ -46,6 +47,16 @@ LARRY_WILLIAMS_CHANNEL_BREAKOUT_ABLATION_PRESET = AblationPreset(
                 "Force is_market_timing_ok to True via a universe-service wrapper."
             ),
             universe_overrides={"force_market_timing_ok": True},
+        ),
+        AblationVariant(
+            name="universe_generic_liquidity",
+            description=(
+                "Swap the Oneil universe for a generic liquidity-only universe "
+                "(5d avg trading value + market-cap floors only; no Pool A "
+                "premium analysis, no RS Rating, no Minervini stage, no 52w-high "
+                "proximity)."
+            ),
+            universe_overrides={"universe_type": "generic_liquidity"},
         ),
     ),
 )

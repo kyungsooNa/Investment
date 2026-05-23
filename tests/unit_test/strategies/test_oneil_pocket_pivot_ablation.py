@@ -22,6 +22,7 @@ def test_preset_exposes_all_expected_variants():
         "disable_market_timing",
         "pp_only",
         "bgu_only",
+        "universe_generic_liquidity",
     )
 
 

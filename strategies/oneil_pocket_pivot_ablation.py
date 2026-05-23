@@ -19,6 +19,7 @@ PP_BGU_VARIANT_NAMES: tuple[str, ...] = (
     "disable_market_timing",
     "pp_only",
     "bgu_only",
+    "universe_generic_liquidity",
 )
 
 
@@ -70,6 +71,16 @@ ONEIL_POCKET_PIVOT_ABLATION_PRESET = AblationPreset(
                 "check never matches and only BGU entries fire."
             ),
             config_overrides={"pp_ma_proximity_upper_pct": -99.0},
+        ),
+        AblationVariant(
+            name="universe_generic_liquidity",
+            description=(
+                "Swap the Oneil universe for a generic liquidity-only universe "
+                "(5d avg trading value + market-cap floors only; no Pool A "
+                "premium analysis, no RS Rating, no Minervini stage, no 52w-high "
+                "proximity)."
+            ),
+            universe_overrides={"universe_type": "generic_liquidity"},
         ),
     ),
 )

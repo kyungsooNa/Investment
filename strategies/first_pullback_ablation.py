@@ -13,6 +13,7 @@ FIRST_PULLBACK_VARIANT_NAMES: tuple[str, ...] = (
     "disable_rapid_surge",
     "disable_ma_rising",
     "widen_pullback_range",
+    "universe_generic_liquidity",
 )
 
 
@@ -57,6 +58,16 @@ FIRST_PULLBACK_ABLATION_PRESET = AblationPreset(
                 "pullback_lower_pct": -99.0,
                 "pullback_upper_pct": 99.0,
             },
+        ),
+        AblationVariant(
+            name="universe_generic_liquidity",
+            description=(
+                "Swap the Oneil universe for a generic liquidity-only universe "
+                "(5d avg trading value + market-cap floors only; no Pool A "
+                "premium analysis, no RS Rating, no Minervini stage, no 52w-high "
+                "proximity)."
+            ),
+            universe_overrides={"universe_type": "generic_liquidity"},
         ),
     ),
 )
