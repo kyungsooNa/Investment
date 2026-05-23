@@ -272,6 +272,7 @@ class FillReconciliationService:
             filled_qty = max(filled_qty, context.qty)
         next_state = OrderState.FILLED if is_filled else OrderState.PARTIAL_FILLED
         quality_update = self._exec_quality_reporter.build_update(context, report, filled_qty)
+        was_not_filled_before = context.state != OrderState.FILLED
         transitioned = self._fsm.transition(
             context.order_key,
             next_state,
@@ -279,6 +280,22 @@ class FillReconciliationService:
             broker_order_no=report.broker_order_no,
             **quality_update,
         )
+        if (
+            was_not_filled_before
+            and transitioned.state == OrderState.FILLED
+            and context.created_at is not None
+        ):
+            latency_ms = round(
+                (self._now() - context.created_at).total_seconds() * 1000.0, 3
+            )
+            self.logger.info({
+                "event": "order_to_fill_latency",
+                "order_key": context.order_key,
+                "code": context.stock_code,
+                "side": context.side.value,
+                "latency_ms": latency_ms,
+                "trace_id": context.trace_id or "",
+            })
         self._exec_quality_reporter.log(transitioned)
         return await self._persist_virtual_trade_for_terminal_report(transitioned, report)
 

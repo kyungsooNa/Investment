@@ -131,6 +131,93 @@ async def test_apply_execution_report_filled_transitions_state(broker, fsm, repo
     assert after.filled_qty == 10
 
 
+# ── order_to_fill_latency event (P2-2 L354 잔여 후속) ─────────────────────
+
+
+def _extract_logger_events(logger_mock, event_name: str) -> list[dict]:
+    """logger.info call_args 중 dict 인자에서 매칭되는 event 만 추린다."""
+    matches: list[dict] = []
+    for call in logger_mock.info.call_args_list:
+        if not call.args:
+            continue
+        arg = call.args[0]
+        if isinstance(arg, dict) and arg.get("event") == event_name:
+            matches.append(arg)
+    return matches
+
+
+@pytest.mark.asyncio
+async def test_apply_execution_report_emits_order_to_fill_latency_event_on_filled(
+    broker, fsm, reporter, fixed_now
+):
+    """FILLED 전이 시 order_to_fill_latency log event 발행."""
+    svc = _make_service(broker=broker, fsm=fsm, reporter=reporter, fixed_now=fixed_now)
+    # created_at 을 5초 전으로 미리 stamp 해 측정 가능한 latency 생성
+    ctx = fsm.register(_make_context(created_at=fixed_now - timedelta(seconds=5)))
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED, broker_order_no="B0001")
+
+    report = OrderExecutionReport(
+        broker_order_no="B0001", stock_code="005930", side=OrderSide.BUY,
+        fill_qty=10, fill_price=70500, cumulative_filled_qty=10, remaining_qty=0,
+    )
+    after = await svc.apply_execution_report(report)
+
+    assert after is not None
+    assert after.state == OrderState.FILLED
+
+    events = _extract_logger_events(svc.logger, "order_to_fill_latency")
+    assert len(events) == 1
+    payload = events[0]
+    assert payload["order_key"] == ctx.order_key
+    assert payload["code"] == "005930"
+    assert payload["side"] == "BUY"
+    assert payload["latency_ms"] == pytest.approx(5000.0)
+
+
+@pytest.mark.asyncio
+async def test_apply_execution_report_does_not_emit_latency_for_partial_fill(
+    broker, fsm, reporter, fixed_now
+):
+    """PARTIAL_FILLED 전이 시 order_to_fill_latency 미발행."""
+    svc = _make_service(broker=broker, fsm=fsm, reporter=reporter, fixed_now=fixed_now)
+    ctx = fsm.register(_make_context(created_at=fixed_now - timedelta(seconds=5)))
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED, broker_order_no="B0001")
+
+    report = OrderExecutionReport(
+        broker_order_no="B0001", stock_code="005930", side=OrderSide.BUY,
+        fill_qty=4, fill_price=70500, cumulative_filled_qty=4, remaining_qty=6,
+    )
+    after = await svc.apply_execution_report(report)
+
+    assert after is not None
+    assert after.state == OrderState.PARTIAL_FILLED
+
+    events = _extract_logger_events(svc.logger, "order_to_fill_latency")
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_apply_execution_report_does_not_emit_latency_twice_on_already_filled(
+    broker, fsm, reporter, fixed_now
+):
+    """이미 FILLED 인 주문에 대한 후속 webhook 에서는 중복 emission 없음."""
+    svc = _make_service(broker=broker, fsm=fsm, reporter=reporter, fixed_now=fixed_now)
+    ctx = fsm.register(_make_context(created_at=fixed_now - timedelta(seconds=5)))
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED, broker_order_no="B0001")
+    # 사전에 FILLED 로 전이된 상태를 가정
+    fsm.transition(ctx.order_key, OrderState.FILLED, filled_qty=10)
+    svc.logger.info.reset_mock()  # 사전 전이로 인한 잡음 제거
+
+    report = OrderExecutionReport(
+        broker_order_no="B0001", stock_code="005930", side=OrderSide.BUY,
+        fill_qty=10, fill_price=70500, cumulative_filled_qty=10, remaining_qty=0,
+    )
+    await svc.apply_execution_report(report)
+
+    events = _extract_logger_events(svc.logger, "order_to_fill_latency")
+    assert events == []
+
+
 # ── reconcile_orders_with_broker: paper mode skip ─────────────────────────
 
 @pytest.mark.asyncio
