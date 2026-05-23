@@ -853,7 +853,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         루프가 없으면 동기적으로 파일에 저장합니다.
         """
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             # 이벤트 루프 없음 → 동기 저장
             try:
@@ -865,8 +865,10 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 self._logger.error(f"Failed to save state for {self.name}: {e}")
             return
 
-        # 이벤트 루프가 존재하면 백그라운드에서 비동기 저장
-        loop.create_task(self._save_state_async())
+        # 이벤트 루프가 존재하면 StrategyStateIO.schedule_save 로 background task
+        # 등록(_pending 추적). flush_pending() 으로 graceful shutdown 시 await 가능.
+        data = {"positions": {k: asdict(v) for k, v in self._position_state.items()}, "cooldown": self._cooldown}
+        StrategyStateIO.schedule_save(self.STATE_FILE, data)
 
     async def _save_state_async(self):
         """StrategyStateIO 로 atomic write + per-file lock 저장."""

@@ -421,7 +421,7 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
     def _load_state(self):
         """sync entry. 이벤트 루프 안이면 async 태스크로, 밖이면 동기 경로."""
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             if not os.path.exists(self.STATE_FILE):
                 return
@@ -432,7 +432,7 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
             except Exception as e:
                 self._logger.error(f"Failed to load state for {self.name}: {e}")
             return
-        loop.create_task(self._load_state_async())
+        asyncio.create_task(self._load_state_async())
 
     async def _load_state_async(self):
         try:
