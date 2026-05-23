@@ -11,6 +11,7 @@ from scripts.run_backtest import (
     _build_default_strategy_config,
     _filter_ablation_variants,
     _format_ablation_console_lines,
+    _format_universe_exclusion_console_lines,
     _parse_args,
     _resolve_ablation_preset,
     _run_ablation_for_result,
@@ -332,3 +333,110 @@ def test_every_active_strategy_ablation_preset_has_universe_generic_liquidity_va
         f"'universe_generic_liquidity' variant 가 없습니다."
     )
     assert variant.universe_overrides.get("universe_type") == "generic_liquidity"
+
+
+# --- Phase 2: universe exclusion summary wiring & console formatter ---------
+
+
+@pytest.mark.asyncio
+async def test_run_ablation_for_result_attaches_universe_exclusion_summary():
+    """Phase 2: _run_ablation_for_result 가 universe_exclusion 키를 같이 첨부한다."""
+    baseline = BacktestPeriodRunResult(
+        strategy_name="VBO",
+        dates=["20260501"],
+        journal_records=[
+            {
+                "status": "SOLD",
+                "strategy": "S",
+                "code": "AAA",
+                "net_pnl": 100,
+                "net_return": 0.1,
+                "signal_time": "2026-05-01",
+            },
+        ],
+    )
+
+    async def fake_run_variant(variant: AblationVariant) -> BacktestPeriodRunResult:
+        return BacktestPeriodRunResult(
+            strategy_name="VBO",
+            dates=["20260501"],
+            journal_records=[
+                {
+                    "status": "SOLD",
+                    "strategy": "S",
+                    "code": "CCC",
+                    "net_pnl": 70,
+                    "net_return": 0.07,
+                    "signal_time": "2026-05-01",
+                },
+            ],
+        )
+
+    args = SimpleNamespace(
+        ablation="larry_williams_vbo",
+        ablation_variants="universe_generic_liquidity",
+        initial_cash=1_000_000.0,
+    )
+
+    await _run_ablation_for_result(baseline, args, run_variant_fn=fake_run_variant)
+
+    payload = getattr(baseline, "ablation")
+    assert "universe_exclusion" in payload
+    exclusion = payload["universe_exclusion"]
+    assert exclusion["baseline_codes"] == ["AAA"]
+    v_report = exclusion["variants"]["universe_generic_liquidity"]
+    assert v_report["variant_only_codes"] == ["CCC"]
+    assert v_report["baseline_only_codes"] == ["AAA"]
+    assert v_report["variant_only_summary"]["trade_count"] == 1
+    assert v_report["variant_only_summary"]["total_net_pnl"] == pytest.approx(70.0)
+
+
+def test_format_universe_exclusion_console_lines_produces_header_and_rows():
+    exclusion = {
+        "baseline_codes": ["AAA", "BBB"],
+        "variants": {
+            "universe_generic_liquidity": {
+                "variant_only_codes": ["CCC", "DDD"],
+                "baseline_only_codes": ["BBB"],
+                "shared_codes": ["AAA"],
+                "variant_only_summary": {
+                    "trade_count": 3,
+                    "total_net_pnl": 120.0,
+                    "win_count": 2,
+                    "loss_count": 1,
+                    "per_code": {
+                        "CCC": {
+                            "trade_count": 2,
+                            "total_net_pnl": 80.0,
+                            "first_signal_time": "2026-05-01",
+                            "last_signal_time": "2026-05-03",
+                        },
+                        "DDD": {
+                            "trade_count": 1,
+                            "total_net_pnl": 40.0,
+                            "first_signal_time": "2026-05-02",
+                            "last_signal_time": "2026-05-02",
+                        },
+                    },
+                },
+            }
+        },
+    }
+
+    lines = _format_universe_exclusion_console_lines("larry_williams_vbo", exclusion)
+
+    rendered = "\n".join(lines)
+    assert "UNIVERSE_EXCLUSION" in rendered
+    assert "larry_williams_vbo" in rendered
+    assert "universe_generic_liquidity" in rendered
+    assert "variant_only=  2" in rendered or "variant_only=2" in rendered
+    # Aggregate net pnl 가 어딘가 표시되어야 한다 (천 단위 콤마 또는 단순 숫자)
+    assert any("120" in line for line in lines)
+
+
+def test_format_universe_exclusion_console_lines_returns_empty_when_no_variants():
+    """variants 가 비어있으면 헤더도 출력하지 않는다."""
+    lines = _format_universe_exclusion_console_lines(
+        "larry_williams_vbo", {"baseline_codes": [], "variants": {}}
+    )
+    assert lines == []

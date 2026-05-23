@@ -424,6 +424,12 @@ def _format_console(result) -> str:
         lines.extend(
             _format_ablation_console_lines(ablation["strategy_key"], ablation["summary"])
         )
+        if ablation.get("universe_exclusion"):
+            lines.extend(
+                _format_universe_exclusion_console_lines(
+                    ablation["strategy_key"], ablation["universe_exclusion"]
+                )
+            )
     parameter_stability = getattr(result, "parameter_stability", None)
     if parameter_stability:
         lines.extend(
@@ -900,7 +906,10 @@ async def _run_ablation_for_result(
     """
     if not getattr(args, "ablation", None):
         return
-    from services.strategy_ablation_service import compute_ablation_summary
+    from services.strategy_ablation_service import (
+        compute_ablation_summary,
+        compute_universe_exclusion_summary,
+    )
 
     preset = _resolve_ablation_preset(args.ablation)
     variants = _filter_ablation_variants(preset, getattr(args, "ablation_variants", None))
@@ -912,15 +921,24 @@ async def _run_ablation_for_result(
             getattr(variant_result, "journal_records", []) or []
         )
 
+    baseline_records = list(getattr(result, "journal_records", []) or [])
     summary = compute_ablation_summary(
-        baseline_records=list(getattr(result, "journal_records", []) or []),
+        baseline_records=baseline_records,
         variant_records=variant_records,
         capital_base_won=float(getattr(args, "initial_cash", 0.0)) or None,
+    )
+    exclusion = compute_universe_exclusion_summary(
+        baseline_records=baseline_records,
+        variant_records=variant_records,
     )
     object.__setattr__(
         result,
         "ablation",
-        {"strategy_key": preset.strategy_key, "summary": summary},
+        {
+            "strategy_key": preset.strategy_key,
+            "summary": summary,
+            "universe_exclusion": exclusion,
+        },
     )
 
 
@@ -936,6 +954,44 @@ def _format_ablation_console_lines(strategy_key: str, summary: dict[str, Any]) -
                 payload.get("metrics", {}),
                 delta=payload.get("delta"),
             )
+        )
+    return lines
+
+
+def _format_universe_exclusion_console_lines(
+    strategy_key: str, exclusion: dict[str, Any]
+) -> list[str]:
+    """Render the universe-exclusion summary attached by ``_run_ablation_for_result``.
+
+    Shows, per variant, how many codes were captured outside the baseline traded
+    set and the aggregate net_pnl on those codes. Useful when comparing universes
+    (e.g. Oneil vs generic liquidity) to see what the baseline universe missed.
+    """
+    lines: list[str] = []
+    variants = exclusion.get("variants") or {}
+    if not variants:
+        return lines
+    lines.append(f"[UNIVERSE_EXCLUSION] strategy={strategy_key}")
+    lines.append(
+        f"  baseline_traded_codes={len(exclusion.get('baseline_codes') or [])}"
+    )
+    for variant_name, payload in variants.items():
+        variant_only = payload.get("variant_only_codes") or []
+        baseline_only = payload.get("baseline_only_codes") or []
+        shared = payload.get("shared_codes") or []
+        agg = payload.get("variant_only_summary") or {}
+        trade_count = int(agg.get("trade_count", 0))
+        total_pnl = float(agg.get("total_net_pnl", 0.0))
+        win = int(agg.get("win_count", 0))
+        loss = int(agg.get("loss_count", 0))
+        lines.append(
+            f"  {variant_name:<28} "
+            f"variant_only={len(variant_only):>3} "
+            f"baseline_only={len(baseline_only):>3} "
+            f"shared={len(shared):>3} "
+            f"variant_only_trades={trade_count:>3} "
+            f"variant_only_net_pnl={total_pnl:>12,.0f} "
+            f"W/L={win}/{loss}"
         )
     return lines
 

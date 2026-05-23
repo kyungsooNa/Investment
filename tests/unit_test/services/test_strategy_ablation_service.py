@@ -10,6 +10,7 @@ from services.strategy_ablation_service import (
     ForceMarketTimingOkUniverseWrapper,
     apply_config_overrides,
     compute_ablation_summary,
+    compute_universe_exclusion_summary,
 )
 
 
@@ -25,6 +26,17 @@ def _sold(pnl: float, ret: float, *, signal_time: str = "2026-05-01") -> dict:
         "strategy": "S",
         "net_pnl": pnl,
         "net_return": ret,
+        "signal_time": signal_time,
+    }
+
+
+def _sold_code(code: str, pnl: float, *, signal_time: str = "2026-05-01") -> dict:
+    return {
+        "status": "SOLD",
+        "strategy": "S",
+        "code": code,
+        "net_pnl": pnl,
+        "net_return": pnl / 1000.0,
         "signal_time": signal_time,
     }
 
@@ -154,6 +166,131 @@ def test_ablation_preset_collects_variants():
 
     assert preset.strategy_key == "oneil_pocket_pivot"
     assert preset.variant_names() == ("v1", "v2")
+
+
+# --- compute_universe_exclusion_summary (P2-2 Phase 2) -----------------------
+
+
+def test_universe_exclusion_partitions_codes_into_shared_baseline_only_variant_only():
+    baseline = [_sold_code("AAA", 100), _sold_code("BBB", -50)]
+    variants = {
+        "v": [_sold_code("AAA", 80), _sold_code("CCC", 40)],
+    }
+
+    summary = compute_universe_exclusion_summary(
+        baseline_records=baseline, variant_records=variants
+    )
+
+    assert set(summary["baseline_codes"]) == {"AAA", "BBB"}
+    v_report = summary["variants"]["v"]
+    assert set(v_report["shared_codes"]) == {"AAA"}
+    assert set(v_report["baseline_only_codes"]) == {"BBB"}
+    assert set(v_report["variant_only_codes"]) == {"CCC"}
+
+
+def test_universe_exclusion_aggregates_variant_only_pnl():
+    baseline = [_sold_code("AAA", 100)]
+    variants = {
+        "v": [
+            _sold_code("CCC", 40, signal_time="2026-05-01"),
+            _sold_code("CCC", -10, signal_time="2026-05-03"),
+            _sold_code("DDD", 70, signal_time="2026-05-02"),
+        ],
+    }
+
+    summary = compute_universe_exclusion_summary(
+        baseline_records=baseline, variant_records=variants
+    )
+
+    v_report = summary["variants"]["v"]
+    agg = v_report["variant_only_summary"]
+    assert agg["trade_count"] == 3
+    assert agg["total_net_pnl"] == pytest.approx(100.0)
+    assert agg["win_count"] == 2
+    assert agg["loss_count"] == 1
+
+    per_code = agg["per_code"]
+    assert per_code["CCC"]["trade_count"] == 2
+    assert per_code["CCC"]["total_net_pnl"] == pytest.approx(30.0)
+    assert per_code["CCC"]["first_signal_time"] == "2026-05-01"
+    assert per_code["CCC"]["last_signal_time"] == "2026-05-03"
+    assert per_code["DDD"]["trade_count"] == 1
+    assert per_code["DDD"]["total_net_pnl"] == pytest.approx(70.0)
+
+
+def test_universe_exclusion_filters_non_sold_records():
+    baseline = [
+        _sold_code("AAA", 100),
+        {"status": "REJECTED", "code": "ZZZ", "strategy": "S"},
+    ]
+    variants = {
+        "v": [
+            _sold_code("CCC", 40),
+            {"status": "BUY", "code": "DDD", "strategy": "S"},
+            {"status": "REJECTED", "code": "EEE", "strategy": "S"},
+        ],
+    }
+
+    summary = compute_universe_exclusion_summary(
+        baseline_records=baseline, variant_records=variants
+    )
+
+    assert set(summary["baseline_codes"]) == {"AAA"}
+    v_report = summary["variants"]["v"]
+    assert set(v_report["variant_only_codes"]) == {"CCC"}
+    assert "DDD" not in v_report["variant_only_codes"]
+    assert "EEE" not in v_report["variant_only_codes"]
+
+
+def test_universe_exclusion_handles_empty_baseline_or_variant():
+    baseline = [_sold_code("AAA", 100)]
+    variants = {"empty": []}
+
+    summary = compute_universe_exclusion_summary(
+        baseline_records=baseline, variant_records=variants
+    )
+
+    empty = summary["variants"]["empty"]
+    assert empty["variant_only_codes"] == []
+    assert empty["shared_codes"] == []
+    assert set(empty["baseline_only_codes"]) == {"AAA"}
+    assert empty["variant_only_summary"]["trade_count"] == 0
+    assert empty["variant_only_summary"]["total_net_pnl"] == 0.0
+
+
+def test_universe_exclusion_skips_records_without_code():
+    baseline = [_sold_code("AAA", 100)]
+    variants = {
+        "v": [
+            {"status": "SOLD", "strategy": "S", "net_pnl": 50, "net_return": 0.05},  # no code
+            _sold_code("CCC", 40),
+        ],
+    }
+
+    summary = compute_universe_exclusion_summary(
+        baseline_records=baseline, variant_records=variants
+    )
+
+    v_report = summary["variants"]["v"]
+    assert set(v_report["variant_only_codes"]) == {"CCC"}
+
+
+def test_universe_exclusion_codes_are_sorted_deterministically():
+    baseline = [_sold_code("BBB", 0)]
+    variants = {
+        "v": [
+            _sold_code("ZZZ", 0),
+            _sold_code("AAA", 0),
+            _sold_code("MMM", 0),
+        ],
+    }
+
+    summary = compute_universe_exclusion_summary(
+        baseline_records=baseline, variant_records=variants
+    )
+
+    v_report = summary["variants"]["v"]
+    assert v_report["variant_only_codes"] == ["AAA", "MMM", "ZZZ"]
 
 
 def test_ablation_preset_rejects_duplicate_variant_names():

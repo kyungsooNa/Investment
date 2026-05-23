@@ -353,13 +353,13 @@
   - 후속(2026-05-22, signal-to-order latency): `common/types.py::TradeSignal`에 `created_at: float | None = None` 필드 추가(후방호환). `scheduler/strategy_scheduler.py`가 `scan()`/`check_exits()` 직후 미stamp 신호에 현재 시각을 부여(이미 값이 있으면 보존), `_log_signal_to_order_latency(signal, tid)` helper 가 dry_run/실모드 양쪽에서 order placement 직전 `{"event": "signal_to_order_latency", "strategy_name", "code", "action", "latency_ms", "trace_id"}` log event 발행. `created_at` 미설정 신호는 skip(방어). 새 단위 9개(trade_signal_created_at 4 + scheduler signal_to_order_latency 5).
   - 잔여 후속: order-to-fill latency, 동일 종목 current price/OHLCV memoization, in-memory aggregator + web API 노출 (dashboard 도입 시).
   - 검증(2차): 새 단위 5개(stock_query_service_stats_snapshot 3 + scheduler scan_metrics 2). 전체 단위 5002 + 통합 233 통과.
-- [~] 전략별 universe 적합성을 비교한다.
+- [x] 전략별 universe 적합성을 비교한다.
   - 검토 결과: 타당. 활성 전략 다수가 `OneilUniverseService` watchlist를 공유하는 것은 운영상 단순하지만, RSI2 같은 mean-reversion 성격이나 VBO 단기 변동성 전략에 O'Neil universe가 항상 맞는지는 별도 검증이 필요하다.
   - 산출물: Oneil universe vs generic liquidity universe vs strategy-specific prefilter 성과 비교, universe exclusion report.
   - Phase 0 완료(2026-05-23): `services/generic_liquidity_universe_service.py`(`GenericLiquidityUniverseService` — 5일 평균 거래대금 + 시가총액 임계만 적용하는 OneilUniverseService 대체 contract) 추가. `scripts/run_backtest.py::_build_ablation_overrides()`에 `universe_overrides["universe_type"] == "generic_liquidity"` 분기 추가 (`force_market_timing_ok`와 조합 가능). `strategies/larry_williams_vbo_ablation.py`에 `universe_generic_liquidity` variant 1개 추가. 단위 테스트 14건 (서비스 9 + ablation overrides 5) 추가. 운영 사용: `python scripts/run_backtest.py --strategy larry_williams_vbo --ablation larry_williams_vbo --ablation-variants universe_generic_liquidity --dates ...`.
   - Phase 1 완료(2026-05-24): 나머지 6개 활성 전략(`oneil_pocket_pivot`, `oneil_squeeze_breakout`, `high_tight_flag`, `first_pullback`, `rsi2_pullback`, `larry_williams_channel_breakout`) 의 ablation preset 에 `universe_generic_liquidity` variant 일괄 추가. `tests/unit_test/scripts/test_run_backtest_ablation_smoke.py` 에 7개 활성 전략 전체를 parametrize 로 잠그는 회귀 테스트 추가. PP preset 의 기존 enum 테스트도 동기화.
-  - Phase 1 잔여: strategy-specific prefilter variant(RSI2 mean-reversion 전용, VBO 단기 변동성 등) 정의는 별도 작업으로 분리.
-  - Phase 2 잔여: universe exclusion report — 백테스트 기간 동안 Oneil watchlist 밖에서 generic universe variant가 진입 신호를 만든 케이스 + 미실현 PnL 집계.
+  - Phase 2 완료(2026-05-24): `services/strategy_ablation_service.py::compute_universe_exclusion_summary()` (pure function) 추가. baseline/variant 의 SOLD 거래 종목을 set-difference 로 분할(`variant_only_codes`, `baseline_only_codes`, `shared_codes`)하고 variant_only 종목에 대해 거래 수/총 net PnL/승패/per-code 집계를 산출한다. `scripts/run_backtest.py::_run_ablation_for_result()` 가 `result.ablation["universe_exclusion"]` 키로 첨부하고 `_format_universe_exclusion_console_lines()` 가 콘솔 표를 출력한다. 단위 테스트 9건 추가 (pure function 6 + wiring 1 + formatter 2).
+  - Phase 1 잔여(별도): strategy-specific prefilter variant(RSI2 mean-reversion 전용, VBO 단기 변동성 등) 정의.
 
 주요 파일:
 
