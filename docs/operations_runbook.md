@@ -89,18 +89,38 @@ Kill Switch 가 트립되면 신규 주문은 즉시 차단된다 (`check_orders
 
 ## 배포 체크리스트
 
-코드 변경을 운영 환경에 반영할 때 사용한다. canary 단계에서는 *모든* 항목을 수동 점검한다. todo `4-4` item 3 의 dry-run 자동화가 도입되면 1\~6번을 자동화로 대체한다.
+코드 변경을 운영 환경에 반영할 때 사용한다. canary 단계에서는 *모든* 항목을 수동 점검한다. 3\~8번은 `scripts/run_predeploy_check.py` 로 자동화되어 있다.
+
+### 자동 점검 (권장)
+
+```powershell
+# live 점검: broker 호출 포함. 실전/모의 환경의 토큰·base URL·계좌 조회까지 확인
+python -m scripts.run_predeploy_check
+
+# 모의투자 broker 로 점검
+python -m scripts.run_predeploy_check --paper
+
+# CI 또는 broker 호출이 불가능한 환경: 정적 점검만 수행
+python -m scripts.run_predeploy_check --offline
+
+# 결과를 JSON 으로 받아 후속 자동화에 연결
+python -m scripts.run_predeploy_check --json
+```
+
+- 동작: 모든 점검을 끝까지 실행한 뒤 PASS/FAIL/WARN/SKIPPED 표를 출력한다. FAIL 이 1건이라도 있으면 exit 1.
+- 점검 항목은 아래 표의 # 3\~8 과 동일하다. WebSocket subscription health 는 streaming watchdog 도입 전까지 SKIPPED 로 노출된다 (todo `4-4` item 3 후속).
+- 자세한 구현은 [services/predeploy_check_service.py](../services/predeploy_check_service.py) 및 [scripts/run_predeploy_check.py](../scripts/run_predeploy_check.py).
 
 | # | 항목 | 점검 방법 | 합격 조건 |
 | --- | --- | --- | --- |
 | 1 | 단위 테스트 | `pytest tests/unit_test -v` | 전부 통과 |
 | 2 | 통합 테스트 | `pytest tests/integration_test -v` | 전부 통과 |
-| 3 | config validation | `python -m config.config_loader` 또는 `load_configs()` 호출 | pydantic 검증 통과 |
-| 4 | broker token/account/env consistency | `is_paper_trading` 플래그와 base URL, TR ID 가 의도한 환경 (canary=real / paper) 와 일치 | 운영자 대시보드 `env` 위젯 확인 |
-| 5 | WebSocket subscription health | dry-run 1분 후 `streaming_logger` 마지막 수신 시각 < 5s | 합격 |
-| 6 | latest trading date | `MarketCalendarService.get_latest_trading_date()` 결과가 직전 영업일과 일치 | 합격 |
-| 7 | 계좌 스냅샷 freshness | `/api/balance` 응답 timestamp < 30s | 합격 |
-| 8 | Event shadow status | 활성 전략의 shadow log 가 직전 거래일 기준 ≥ 95% 일치 | 합격 |
+| 3 | config validation | 자동: `run_predeploy_check` `config_validation` | pydantic 검증 통과 |
+| 4 | broker token/account/env consistency | 자동: `run_predeploy_check` `broker_env_consistency` | `is_paper_trading` 와 base URL, websocket URL 호스트가 일관 |
+| 5 | WebSocket subscription health | 자동(예정): `run_predeploy_check` `websocket_subscription_health` — watchdog 도입 전까지 dry-run 1분 후 `streaming_logger` 수동 확인 | 마지막 수신 시각 < 5s |
+| 6 | latest trading date | 자동: `run_predeploy_check` `latest_trading_date` | 직전 영업일과 일치 (`--offline` 시 SKIPPED) |
+| 7 | 계좌 스냅샷 freshness | 자동: `run_predeploy_check` `account_snapshot_freshness` | `/api/balance` 응답 < 30s (`--offline` 시 SKIPPED) |
+| 8 | Event shadow status | 자동: `run_predeploy_check` `event_shadow_status` | 최신 shadow 로그가 3일 이내. ≥ 95% 일치율 검증은 manual (후속 자동화 대상) |
 | 9 | Kill Switch state file 보존 | `data/kill_switch_state.json` 백업 또는 미존재 (정상 출발) | 합격 |
 | 10 | 사후 모니터링 30분 | 배포 후 30분간 에러 로그 0건, 신규 주문 정상 흐름 | 합격 |
 

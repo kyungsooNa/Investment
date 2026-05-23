@@ -624,9 +624,11 @@
   - 정책: P0 완료 + P1 기준선 통과 전 full-auto 금지. 소액 canary는 종목 수/주문금액/일손실/연속 손실/미체결 시간 한도를 별도로 낮게 둔다.
   - 산출물: canary 진입 조건, 중단 조건, 관찰 기간, 승격 조건.
   - 산출물(2026-05-22): `docs/canary_procedure.md` — 진입 조건, 운영 한도표(canary vs full), 관찰 기간 단계, 중단 조건 매트릭스, 승격 조건 체크리스트.
-- [ ] 배포 전 dry-run 운영 점검을 자동화한다.
+- [x] 배포 전 dry-run 운영 점검을 자동화한다.
   - 후보: config validation, broker token/account/env consistency, WebSocket subscription health, latest trading date, account snapshot freshness, event shadow status.
   - 현황(2026-05-22): runbook *배포 체크리스트* 의 1~10번 수동 항목으로 우선 문서화함. 자동화는 별도 PR (코드 작업).
+  - 산출물(2026-05-23): `services/predeploy_check_service.py` + `scripts/run_predeploy_check.py` 추가. `--offline`/`--paper`/`--json` 옵션, FAIL 시 exit 1. config_validation / broker_env_consistency / latest_trading_date / event_shadow_status / websocket_subscription_health / account_snapshot_freshness 6개 점검을 끝까지 실행 후 표 출력. 단위 테스트 32건 + 통합 테스트 2건 추가. runbook *배포 체크리스트* 에 자동 점검 사용법 반영.
+  - 후속(보류): WebSocket subscription health 자동 점검은 streaming watchdog 의 probe 어댑터 도입 시 SKIPPED → PASS 로 활성화. event shadow ≥ 95% 일치율 비교는 폴링/shadow 신호 join 로직 필요 — 별도 작업으로 분리.
 
 ---
 
