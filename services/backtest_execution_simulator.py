@@ -21,6 +21,7 @@ class OrderSide(str, Enum):
 class OrderType(str, Enum):
     LIMIT = "LIMIT"
     MARKET = "MARKET"
+    BEST_LIMIT = "BEST_LIMIT"
 
 
 class OrderStatus(str, Enum):
@@ -38,6 +39,13 @@ class BacktestBar:
     low: float
     close: float
     volume: int | None = None
+    trading_value: float | None = None
+    is_halted: bool = False
+    vi_triggered: bool = False
+    upper_limit_price: float | None = None
+    lower_limit_price: float | None = None
+    bid: float | None = None
+    ask: float | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +68,10 @@ class BacktestExecutionPolicy:
     volume_participation_pct: float = 100.0
     market_price_field: str = "open"
     round_to_tick: bool = True
+    opening_market_slippage_bonus_pct: float = 0.0
+    liquidity_slippage_buckets: tuple[tuple[float, float], ...] = ()
+    best_limit_slippage_pct: float = 0.0
+    spread_pct: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -115,6 +127,9 @@ class BacktestExecutionSimulator:
     호출자는 "현재 봉 체결" 또는 "다음 봉 체결" 정책에 맞는 bar를 선택해
     넘긴다. 이 클래스는 해당 bar 안에서 가격 도달, 거래량 한도, 비용,
     슬리피지, 호가 단위 반올림만 책임진다.
+
+    UNFILLED와 PARTIAL의 잔여 수량은 이월하지 않는다(day order 자동 취소).
+    다음 봉 재시도가 필요하면 호출자가 별도 주문을 다시 만들어야 한다.
     """
 
     def __init__(self, policy: BacktestExecutionPolicy | None = None) -> None:
@@ -123,6 +138,10 @@ class BacktestExecutionSimulator:
     def simulate(self, order: BacktestOrder, bar: BacktestBar) -> BacktestExecutionReport:
         if order.qty <= 0:
             return self._empty_report(order, bar, OrderStatus.REJECTED, "invalid_qty")
+
+        blocked_reason = self._market_microstructure_block(order, bar)
+        if blocked_reason is not None:
+            return self._empty_report(order, bar, OrderStatus.UNFILLED, blocked_reason)
 
         base_price = self._base_fill_price(order, bar)
         if base_price is None:
@@ -133,7 +152,11 @@ class BacktestExecutionSimulator:
             return self._empty_report(order, bar, OrderStatus.UNFILLED, "no_volume")
 
         status = OrderStatus.FILLED if filled_qty == order.qty else OrderStatus.PARTIAL
-        fill_price = self._apply_market_slippage(order, base_price)
+        liquidity_bonus = self._liquidity_slippage_bonus_pct(bar)
+        fill_price = self._apply_market_slippage(
+            order, base_price, liquidity_bonus_pct=liquidity_bonus
+        )
+        fill_price = self._apply_bid_ask_spread(order, fill_price, bar)
         if self.policy.round_to_tick:
             fill_price = self.round_to_tick(fill_price, side=order.side)
 
@@ -160,8 +183,27 @@ class BacktestExecutionSimulator:
             mae=mae,
         )
 
+    def _market_microstructure_block(self, order: BacktestOrder, bar: BacktestBar) -> str | None:
+        if bar.is_halted:
+            return "halted"
+        if bar.vi_triggered:
+            return "vi_triggered"
+        if (
+            order.side == OrderSide.BUY
+            and bar.upper_limit_price is not None
+            and bar.close >= bar.upper_limit_price
+        ):
+            return "upper_limit_blocked"
+        if (
+            order.side == OrderSide.SELL
+            and bar.lower_limit_price is not None
+            and bar.close <= bar.lower_limit_price
+        ):
+            return "lower_limit_blocked"
+        return None
+
     def _base_fill_price(self, order: BacktestOrder, bar: BacktestBar) -> float | None:
-        if order.order_type == OrderType.MARKET:
+        if order.order_type in (OrderType.MARKET, OrderType.BEST_LIMIT):
             return float(getattr(bar, self.policy.market_price_field, bar.open))
 
         limit_price = float(order.price)
@@ -176,13 +218,63 @@ class BacktestExecutionSimulator:
         max_qty = math.floor(bar_volume * participation)
         return min(requested_qty, max_qty)
 
-    def _apply_market_slippage(self, order: BacktestOrder, base_price: float) -> float:
-        if order.order_type != OrderType.MARKET or self.policy.market_slippage_pct <= 0:
+    def _apply_market_slippage(
+        self,
+        order: BacktestOrder,
+        base_price: float,
+        *,
+        liquidity_bonus_pct: float = 0.0,
+    ) -> float:
+        if order.order_type == OrderType.BEST_LIMIT:
+            slip_pct = self.policy.best_limit_slippage_pct
+        elif order.order_type == OrderType.MARKET:
+            slip_pct = self.policy.market_slippage_pct
+            if (
+                self.policy.opening_market_slippage_bonus_pct > 0
+                and self.policy.market_price_field == "open"
+            ):
+                slip_pct += self.policy.opening_market_slippage_bonus_pct
+            slip_pct += liquidity_bonus_pct
+        else:
             return base_price
-        ratio = self.policy.market_slippage_pct / 100.0
+        if slip_pct <= 0:
+            return base_price
+        ratio = slip_pct / 100.0
         if order.side == OrderSide.BUY:
             return base_price * (1.0 + ratio)
         return base_price * (1.0 - ratio)
+
+    def _liquidity_slippage_bonus_pct(self, bar: BacktestBar) -> float:
+        buckets = self.policy.liquidity_slippage_buckets
+        if not buckets:
+            return 0.0
+        trading_value = bar.trading_value
+        if trading_value is None and bar.volume is not None and bar.close > 0:
+            trading_value = bar.volume * bar.close
+        if trading_value is None or trading_value <= 0:
+            return 0.0
+        matching = [bonus for threshold, bonus in buckets if trading_value < threshold]
+        return max(matching) if matching else 0.0
+
+    def _apply_bid_ask_spread(
+        self, order: BacktestOrder, fill_price: float, bar: BacktestBar
+    ) -> float:
+        if order.order_type == OrderType.LIMIT:
+            return fill_price
+        spread_pct = self._effective_spread_pct(bar)
+        if spread_pct <= 0 or fill_price <= 0:
+            return fill_price
+        half_spread = fill_price * spread_pct / 200.0
+        if order.side == OrderSide.BUY:
+            return fill_price + half_spread
+        return fill_price - half_spread
+
+    def _effective_spread_pct(self, bar: BacktestBar) -> float:
+        if bar.bid is not None and bar.ask is not None and bar.bid > 0 and bar.ask > 0:
+            mid = (bar.bid + bar.ask) / 2.0
+            if mid > 0:
+                return (bar.ask - bar.bid) / mid * 100.0
+        return self.policy.spread_pct
 
     def _bar_excursion(
         self,
