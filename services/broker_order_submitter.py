@@ -27,6 +27,7 @@ class BrokerOrderSubmitter:
         state_provider: Optional[Callable[[], dict]] = None,
         transition_fn: Optional[Callable[..., object]] = None,
         extract_broker_order_no_fn: Optional[Callable[[ResCommonResponse], Optional[str]]] = None,
+        on_missing_broker_order_no_fn: Optional[Callable[[ResCommonResponse, str, str], None]] = None,
         max_retries: int = 3,
         retry_delay_sec: int = 3,
     ) -> None:
@@ -37,6 +38,7 @@ class BrokerOrderSubmitter:
         self._state_provider = state_provider
         self._transition_fn = transition_fn
         self._extract_broker_order_no_fn = extract_broker_order_no_fn
+        self._on_missing_broker_order_no_fn = on_missing_broker_order_no_fn
         self._max_retries = max_retries
         self._retry_delay_sec = retry_delay_sec
 
@@ -74,6 +76,17 @@ class BrokerOrderSubmitter:
                         if self._extract_broker_order_no_fn
                         else None
                     )
+                    if broker_no is None and self._on_missing_broker_order_no_fn is not None:
+                        self.logger.warning(
+                            f"주문번호 추출 실패 — stock_code={stock_code}, order_key={order_key}, "
+                            f"rt_cd={result.rt_cd}, msg1={result.msg1}, raw_data={result.data!r}"
+                        )
+                        try:
+                            self._on_missing_broker_order_no_fn(result, stock_code, order_key)
+                        except Exception as cb_exc:  # noqa: BLE001 — 콜백 실패가 주문 흐름 차단하지 않도록 흡수
+                            self.logger.exception(
+                                f"on_missing_broker_order_no_fn 콜백 실행 중 예외: {cb_exc}"
+                            )
                     self._transition_fn(
                         order_key,
                         OrderState.SUBMITTED,

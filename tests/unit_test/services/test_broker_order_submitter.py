@@ -47,6 +47,7 @@ def _make_submitter(
     states: dict | None = None,
     transition: MagicMock | None = None,
     extract_no_fn=None,
+    on_missing_fn=None,
 ) -> BrokerOrderSubmitter:
     states = states if states is not None else {}
     return BrokerOrderSubmitter(
@@ -57,6 +58,7 @@ def _make_submitter(
         state_provider=(lambda: states),
         transition_fn=transition,
         extract_broker_order_no_fn=extract_no_fn or (lambda r: (r.data or {}).get("ordno") if r else None),
+        on_missing_broker_order_no_fn=on_missing_fn,
         max_retries=3,
         retry_delay_sec=3,
     )
@@ -97,6 +99,110 @@ async def test_submit_transitions_to_submitted_on_success_with_order_key(mock_br
     assert args[1] == OrderState.SUBMITTED
     assert kwargs["attempt_count"] == 1
     assert kwargs["broker_order_no"] == "B0001"
+
+
+# ── submit_with_retry: broker order no 추출 실패 콜백 ─────────────────────
+
+@pytest.mark.asyncio
+async def test_submit_invokes_missing_broker_no_callback_when_extraction_returns_none(
+    mock_market_clock,
+):
+    broker = AsyncMock()
+    broker.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="정상처리", data={"unexpected_key": "VAL"}
+    )
+    transition = MagicMock()
+    on_missing = MagicMock()
+    submitter = _make_submitter(
+        broker=broker,
+        market_clock=mock_market_clock,
+        states={"K1": object()},
+        transition=transition,
+        extract_no_fn=lambda r: None,
+        on_missing_fn=on_missing,
+    )
+
+    await submitter.submit_with_retry(
+        "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX, order_key="K1",
+    )
+
+    on_missing.assert_called_once()
+    args, _ = on_missing.call_args
+    assert args[0].rt_cd == ErrorCode.SUCCESS.value
+    assert args[0].data == {"unexpected_key": "VAL"}
+    assert args[1] == "005930"
+    assert args[2] == "K1"
+    # transition_fn 은 broker_order_no=None 으로 호출되어야 한다 (기존 동작 유지)
+    transition.assert_called_once()
+    _, kwargs = transition.call_args
+    assert kwargs["broker_order_no"] is None
+
+
+@pytest.mark.asyncio
+async def test_submit_skips_callback_when_broker_no_extracted(mock_broker, mock_market_clock):
+    on_missing = MagicMock()
+    submitter = _make_submitter(
+        broker=mock_broker,
+        market_clock=mock_market_clock,
+        states={"K1": object()},
+        transition=MagicMock(),
+        on_missing_fn=on_missing,
+    )
+
+    await submitter.submit_with_retry(
+        "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX, order_key="K1",
+    )
+
+    on_missing.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_submit_skips_callback_when_response_not_success(mock_market_clock):
+    broker = AsyncMock()
+    broker.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="잔고 부족", data=None
+    )
+    on_missing = MagicMock()
+    submitter = _make_submitter(
+        broker=broker,
+        market_clock=mock_market_clock,
+        states={"K1": object()},
+        transition=MagicMock(),
+        on_missing_fn=on_missing,
+    )
+
+    await submitter.submit_with_retry(
+        "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX, order_key="K1",
+    )
+
+    on_missing.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_submit_no_callback_provided_does_not_raise(mock_market_clock):
+    """on_missing_broker_order_no_fn 미주입 + 추출 실패 시 silently SUBMITTED 전이 유지."""
+    broker = AsyncMock()
+    broker.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"unexpected_key": "X"}
+    )
+    transition = MagicMock()
+    submitter = _make_submitter(
+        broker=broker,
+        market_clock=mock_market_clock,
+        states={"K1": object()},
+        transition=transition,
+        extract_no_fn=lambda r: None,
+        on_missing_fn=None,
+    )
+
+    result = await submitter.submit_with_retry(
+        "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX, order_key="K1",
+    )
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    transition.assert_called_once()
+    _, kwargs = transition.call_args
+    assert kwargs["broker_order_no"] is None
 
 
 # ── submit_with_retry: 재시도 케이스 ───────────────────────────────────────

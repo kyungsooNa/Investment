@@ -50,9 +50,11 @@
 - [blocked] 민감정보를 제거한 fixture를 추가한다. (실전 응답 확보 후 진행)
 - [blocked] paper fixture와 real fixture의 필드 차이를 회귀 테스트에 반영한다. (실전 응답 확보 후 진행)
 - [blocked] 주문번호, 종목코드, 매수/매도 구분, 주문수량, 누적체결수량, 미체결수량, 평균체결가, 취소/거부 필드 매핑을 확정한다. (실전 응답 확보 후 진행)
-- [ ] 주문 접수 응답의 broker order number mapper를 실전/모의 fixture 기반으로 확장한다.
+- [x] 주문 접수 응답의 broker order number mapper를 실전/모의 fixture 기반으로 확장한다.
   - 검토 결과: 부분 타당. 현재 `OrderStateMachine.extract_broker_order_no()`는 `ordno`, `order_no`, `odno`만 확인한다. `inquire-daily-ccld`/미체결 조회 복원 쪽은 `ODNO`/`주문번호`도 일부 처리하지만, 최초 주문 응답 mapper는 더 좁다.
   - 개선 방향: raw broker response payload를 journal/diagnostic에 보존하고, 주문번호 추출 실패 시 reconcile alarm 또는 운영자 알림으로 승격한다.
+  - 완료된 부분(2026-05-24): `FillReconciliationService.on_broker_order_no_missing(result, stock_code, order_key)` 신규 메서드 추가 — `_reconcile_alarm = True` + `_critical_alarm_manual_required = True` 설정, `logger.error` 에 raw payload(`result.data` repr) 포함, `NotificationCategory.TRADE` + `NotificationLevel.CRITICAL` 운영자 알림 emit(`alert_type=broker_order_no_missing`, metadata 에 stock_code/order_key/rt_cd/msg1/raw_data 보존). `BrokerOrderSubmitter` 에 `on_missing_broker_order_no_fn` 콜백 파라미터 추가, success 응답에서 broker_no 추출 실패 시 raw payload 로그 + 콜백 호출(콜백 예외는 흡수해 주문 흐름 차단 방지). `OrderExecutionService` 가 `_fill_reconciliation` 을 `_broker_submitter` 보다 먼저 생성하고 콜백 wire. 다음 reconcile 사이클까지 신규 주문이 차단되며 운영자가 raw payload 로 누락 필드 진단 가능. 단위 5333, 통합 235 통과.
+  - 후속(blocked): 실전/모의 fixture 확보 후 mapper 에 `ODNO`(대문자), `주문번호`(한글) 등 추가 키 확장 — fixture 의존 항목.
 
 주요 파일:
 

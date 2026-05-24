@@ -619,7 +619,7 @@ async def test_sell_all_stocks_success(handler, mock_broker_api_wrapper, mock_lo
     )
     # 삼성전자는 성공, SK하이닉스는 API 실패 반환을 시뮬레이션
     mock_broker_api_wrapper.place_stock_order.side_effect = [
-        ResCommonResponse(rt_cd="0", msg1="매도 성공", data=None),
+        ResCommonResponse(rt_cd="0", msg1="매도 성공", data={"ordno": "O0001"}),
         ResCommonResponse(rt_cd="1", msg1="매도 실패", data=None)
     ]
 
