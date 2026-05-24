@@ -142,10 +142,12 @@
 
 ### 0-6. Emergency 전체청산 모드
 
-- [ ] `sell_all_stocks()`에 운영 목적별 청산 모드를 분리한다.
+- [~] `sell_all_stocks()`에 운영 목적별 청산 모드를 분리한다.
   - 검토 결과: 미반영. 현재 `services/order_execution_service.py::sell_all_stocks()`는 `sell_tasks` 리스트를 만들지만 `for stock_code, task in sell_tasks: result = await task` 형태로 사실상 순차 처리한다.
   - 목표 모드: `safe_sequential`(일반 수동 전체매도), `bounded_parallel`(제한 병렬 청산), `emergency`(킬스위치/장애 시 빠른 위험 축소).
   - 검증: 장중/장마감 분기, 일부 주문 실패 시 집계, 주문 API budget 및 RiskGate/kill switch 청산 예외 정책, paper/real 분기 테스트를 함께 고정한다.
+  - 완료된 부분(2026-05-24): `services/order_execution_service.py`에 `ClearanceMode(str, Enum)` enum(`SAFE_SEQUENTIAL`/`BOUNDED_PARALLEL`/`EMERGENCY`) 추가. `sell_all_stocks(exchange, *, mode=ClearanceMode.SAFE_SEQUENTIAL, bounded_concurrency=3)` 시그니처로 확장(mode/bounded_concurrency keyword-only → 기존 positional 호출 보호). default가 기존 순차 동작이라 [view/web/routes/balance.py:77](view/web/routes/balance.py#L77) 호출부와 기존 단위 테스트 6건 무변동. 신규 helper `_dispatch_clearance()`는 모드별 분기(순차 / `asyncio.Semaphore(N)` / `asyncio.gather`), `_submit_one_sell()`은 종목별 매도 후 success/실패 dict로 정규화하며 예외 흡수 포함. 신규 단위 테스트 6건: `test_sell_all_stocks_default_mode_is_sequential`, `test_sell_all_stocks_safe_sequential_explicit`, `test_sell_all_stocks_bounded_parallel_respects_concurrency`, `test_sell_all_stocks_emergency_runs_concurrently`, `test_sell_all_stocks_emergency_aggregates_partial_failures`, `test_sell_all_stocks_market_closed_blocks_all_modes`(parametrize 3 모드). `conftest.fast_sleep` autouse가 `asyncio.sleep`을 mock해 yield되지 않으므로 `_make_concurrency_tracker()`는 `asyncio.Event` 기반 결정적 동시성 검증으로 작성. 단위 5346(이전 5338 → +8), 통합 235 통과.
+  - 후속(blocked): 매도 청산 경로의 RiskGate 우회 정책, KillSwitch 청산 예외, API budget 우선순위(emergency 우선 처리), KillSwitchService auto-trigger 등 신규 호출처 추가는 별도 PR에서 정책 합의 후 진행.
 
 ---
 
