@@ -1061,3 +1061,132 @@ async def test_stop_program_trading_no_desired_and_stop_all_without_repo(mock_de
     ctx.streaming_stock_repo = None
     await ctx.stop_all_program_trading()
     ctx.streaming_service.unsubscribe_program_trading.assert_not_awaited()
+
+
+# --- ensure_strategy_states_loaded() barrier 실패 정책 테스트 ---
+
+def _make_cfg(name: str, load_state_fn=None):
+    """scheduler._strategies 가 보는 cfg 형태."""
+    strategy = MagicMock()
+    strategy.name = name
+    if load_state_fn is None:
+        strategy.load_state = AsyncMock()
+    else:
+        strategy.load_state = load_state_fn
+    cfg = SimpleNamespace(strategy=strategy)
+    return cfg
+
+
+def _make_ctx_with_strategies(strategies, is_paper_trading: bool):
+    """scheduler 와 env.is_paper_trading 만 설정한 최소 WebAppContext."""
+    ctx = WebAppContext(None)
+    ctx.scheduler = MagicMock()
+    ctx.scheduler._strategies = strategies
+    ctx.env = MagicMock()
+    ctx.env.is_paper_trading = is_paper_trading
+    ctx.logger = MagicMock()
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_ensure_strategy_states_loaded_no_scheduler_noop():
+    """scheduler=None 이면 조용히 통과."""
+    ctx = WebAppContext(None)
+    ctx.scheduler = None
+    await ctx.ensure_strategy_states_loaded()  # 예외 없음
+
+
+@pytest.mark.asyncio
+async def test_ensure_strategy_states_loaded_all_success_paper():
+    """paper 모드에서 모든 전략 load 성공 → 정상 진행."""
+    cfgs = [_make_cfg("StratA"), _make_cfg("StratB")]
+    ctx = _make_ctx_with_strategies(cfgs, is_paper_trading=True)
+
+    await ctx.ensure_strategy_states_loaded()
+
+    cfgs[0].strategy.load_state.assert_awaited_once()
+    cfgs[1].strategy.load_state.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ensure_strategy_states_loaded_all_success_real():
+    """real 모드에서 모든 전략 load 성공 → 정상 진행 (raise 없음)."""
+    cfgs = [_make_cfg("StratA"), _make_cfg("StratB")]
+    ctx = _make_ctx_with_strategies(cfgs, is_paper_trading=False)
+
+    await ctx.ensure_strategy_states_loaded()  # raise 없어야 함
+
+    cfgs[0].strategy.load_state.assert_awaited_once()
+    cfgs[1].strategy.load_state.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ensure_strategy_states_loaded_skips_strategies_without_load_state():
+    """load_state 메서드가 없는 전략은 paper/real 모두에서 skip."""
+    cfg_with = _make_cfg("HasLoad")
+    cfg_without = SimpleNamespace(strategy=SimpleNamespace(name="NoLoad"))
+    ctx = _make_ctx_with_strategies([cfg_with, cfg_without], is_paper_trading=False)
+
+    await ctx.ensure_strategy_states_loaded()  # raise 없어야 함
+
+    cfg_with.strategy.load_state.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ensure_strategy_states_loaded_paper_fails_open_on_load_error():
+    """paper 모드: 일부 전략 load 실패해도 raise 없이 계속 진행 + error log."""
+    failing = AsyncMock(side_effect=RuntimeError("load boom"))
+    cfg_ok = _make_cfg("StratOK")
+    cfg_fail = _make_cfg("StratFail", load_state_fn=failing)
+    ctx = _make_ctx_with_strategies([cfg_ok, cfg_fail], is_paper_trading=True)
+
+    await ctx.ensure_strategy_states_loaded()  # raise 없어야 함
+
+    cfg_ok.strategy.load_state.assert_awaited_once()
+    failing.assert_awaited_once()
+    ctx.logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_ensure_strategy_states_loaded_real_fails_close_on_load_error():
+    """real 모드: 한 전략이라도 load 실패하면 RuntimeError raise (fail-close)."""
+    failing = AsyncMock(side_effect=RuntimeError("load boom"))
+    cfg_ok = _make_cfg("StratOK")
+    cfg_fail = _make_cfg("StratFail", load_state_fn=failing)
+    ctx = _make_ctx_with_strategies([cfg_ok, cfg_fail], is_paper_trading=False)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await ctx.ensure_strategy_states_loaded()
+
+    assert "StratFail" in str(exc_info.value)
+    failing.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ensure_strategy_states_loaded_real_multiple_failures_in_error():
+    """real 모드 + 다중 실패: 모든 실패 전략 이름이 RuntimeError 메시지에 포함."""
+    cfg_fail_a = _make_cfg("StratA", load_state_fn=AsyncMock(side_effect=RuntimeError("boom A")))
+    cfg_fail_b = _make_cfg("StratB", load_state_fn=AsyncMock(side_effect=ValueError("boom B")))
+    ctx = _make_ctx_with_strategies([cfg_fail_a, cfg_fail_b], is_paper_trading=False)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await ctx.ensure_strategy_states_loaded()
+
+    msg = str(exc_info.value)
+    assert "StratA" in msg
+    assert "StratB" in msg
+
+
+@pytest.mark.asyncio
+async def test_ensure_strategy_states_loaded_no_env_defaults_to_fail_open():
+    """env=None 이면 모드 결정 불가 → 보수적으로 fail-OPEN (paper 동작)."""
+    failing = AsyncMock(side_effect=RuntimeError("load boom"))
+    cfg_fail = _make_cfg("StratFail", load_state_fn=failing)
+    ctx = WebAppContext(None)
+    ctx.scheduler = MagicMock()
+    ctx.scheduler._strategies = [cfg_fail]
+    ctx.env = None  # 환경 정보 없음
+    ctx.logger = MagicMock()
+
+    await ctx.ensure_strategy_states_loaded()  # raise 없어야 함
+    failing.assert_awaited_once()
