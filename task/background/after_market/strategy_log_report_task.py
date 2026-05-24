@@ -34,6 +34,7 @@ class StrategyLogReportTask(AfterMarketTask):
         rejection_distribution_service: Optional["RejectionDistributionService"] = None,
         operator_alert_service: Optional["OperatorAlertService"] = None,
         kill_switch_service: Optional["KillSwitchService"] = None,
+        auto_block_on_critical: bool = False,
     ) -> None:
         super().__init__(
             mcs=mcs,
@@ -47,6 +48,7 @@ class StrategyLogReportTask(AfterMarketTask):
         self._rejection_distribution_service = rejection_distribution_service
         self._operator_alert_service = operator_alert_service
         self._kill_switch_service = kill_switch_service
+        self._auto_block_on_critical = bool(auto_block_on_critical)
 
     @property
     def task_name(self) -> str:
@@ -130,13 +132,44 @@ class StrategyLogReportTask(AfterMarketTask):
                         ks_trip = self._kill_switch_service.is_strategy_tripped(strategy)
                     except Exception:
                         ks_trip = None
-                reasons = ", ".join(str(reason) for reason in item.get("reasons") or [])
+                reasons_list = [str(reason) for reason in item.get("reasons") or []]
+                reasons = ", ".join(reasons_list)
+
+                auto_blocked = False
+                if (
+                    self._auto_block_on_critical
+                    and status == "critical_candidate"
+                    and self._kill_switch_service is not None
+                    and strategy
+                    and strategy != "미분류"
+                    and not ks_trip
+                ):
+                    try:
+                        await self._kill_switch_service.trip_strategy(
+                            strategy,
+                            reason=f"strategy_perf:{','.join(reasons_list) or 'critical_candidate'}",
+                            metadata={
+                                "alert_type": "strategy_degradation_candidate",
+                                "report_date": report_date,
+                                "candidate": item,
+                                "auto_blocked": True,
+                            },
+                            block_side="buy",
+                        )
+                        auto_blocked = True
+                        ks_trip = self._kill_switch_service.is_strategy_tripped(strategy)
+                    except Exception as e:
+                        self._logger.warning(
+                            f"성과 저하 자동 차단 실패: strategy={strategy}, error={e}"
+                        )
+
                 metadata = {
                     "alert_type": "strategy_degradation_candidate",
                     "report_date": report_date,
                     "strategy": strategy,
                     "candidate": item,
-                    "already_blocked_by_kill_switch": bool(ks_trip),
+                    "already_blocked_by_kill_switch": bool(ks_trip) and not auto_blocked,
+                    "auto_blocked_by_strategy_perf": auto_blocked,
                     "kill_switch_trip": ks_trip,
                 }
                 await self._operator_alert_service.report(

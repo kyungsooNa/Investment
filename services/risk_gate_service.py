@@ -113,7 +113,7 @@ class RiskGateService:
             return blocked
 
         if strategy_name and not is_force_exit_sell:
-            strategy_ks_blocked = self._check_strategy_kill_switch(strategy_name)
+            strategy_ks_blocked = self._check_strategy_kill_switch(strategy_name, side)
             if strategy_ks_blocked is not None:
                 return strategy_ks_blocked
 
@@ -389,12 +389,21 @@ class RiskGateService:
             )
             return None
 
-    def _check_strategy_kill_switch(self, strategy_name: str) -> Optional[ResCommonResponse]:
-        """전략별 Kill Switch 활성 상태 확인. 트립 시 차단."""
+    def _check_strategy_kill_switch(
+        self, strategy_name: str, side: OrderSide
+    ) -> Optional[ResCommonResponse]:
+        """전략별 Kill Switch 활성 상태 확인. 트립 시 차단.
+
+        trip metadata 의 block_side 가 "buy" 면 SELL 은 통과시켜 graceful 청산을 허용한다.
+        ("all" 또는 미지정인 기존 트립은 backward-compat 으로 BUY/SELL 모두 차단.)
+        """
         if self._kill_switch is None:
             return None
         trip_info = self._kill_switch.is_strategy_tripped(strategy_name)
         if trip_info is None:
+            return None
+        block_side = str(trip_info.get("block_side", "all"))
+        if block_side == "buy" and side == OrderSide.SELL:
             return None
         reason = trip_info.get("trip_reason", "전략 Kill Switch 활성")
         return self._blocked(
@@ -403,6 +412,7 @@ class RiskGateService:
             error_code=ErrorCode.KILL_SWITCH_BLOCKED,
             strategy_name=strategy_name,
             trip_reason=reason,
+            block_side=block_side,
         )
 
     async def _check_kill_switch(self, *, skip: bool = False) -> Optional[ResCommonResponse]:

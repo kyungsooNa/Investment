@@ -45,3 +45,17 @@ async def reset_kill_switch(request: Request):
     operator = request.cookies.get("access_token", "unknown")
     await ctx.kill_switch_service.manual_reset(operator)
     return {"ok": True, "message": "Kill Switch 해제 완료"}
+
+
+@router.post("/kill-switch/reset-strategy/{strategy_id}")
+async def reset_strategy_kill_switch(strategy_id: str, request: Request):
+    """단일 전략의 Kill Switch 해제. 성과 저하 자동 차단도 동일 경로로 해제된다."""
+    check_auth(request)
+    ctx = _get_ctx()
+    if not ctx.kill_switch_service:
+        raise HTTPException(status_code=503, detail="Kill Switch 서비스가 초기화되지 않았습니다.")
+    if not strategy_id:
+        raise HTTPException(status_code=400, detail="strategy_id 가 필요합니다.")
+    operator = request.cookies.get("access_token", "unknown")
+    await ctx.kill_switch_service.reset_strategy(strategy_id, operator)
+    return {"ok": True, "message": f"전략 Kill Switch 해제 완료: {strategy_id}"}

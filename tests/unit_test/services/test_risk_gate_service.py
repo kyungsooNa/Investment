@@ -155,6 +155,100 @@ async def test_kill_switch_check_exception_fails_closed():
     assert "Kill Switch 확인 실패" in result.msg1
 
 
+# === 전략 Kill Switch side-aware: 성과 저하 자동 차단 (block_side="buy") ===
+
+
+def _ks_with_strategy_trip(*, block_side: str = "all", reason: str = "strategy_perf:test"):
+    """전략 트립 mock 헬퍼 — block_side metadata 포함."""
+    kill_switch = AsyncMock()
+    kill_switch.check_orders_allowed = AsyncMock(return_value=(True, None))
+    kill_switch.is_strategy_tripped = MagicMock(
+        return_value={"trip_reason": reason, "block_side": block_side}
+    )
+    return kill_switch
+
+
+@pytest.mark.asyncio
+async def test_strategy_kill_switch_block_side_all_blocks_buy():
+    """block_side='all' (기존 동작) — BUY 차단."""
+    svc, _, _ = _service(kill_switch=_ks_with_strategy_trip(block_side="all"))
+
+    result = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0, strategy_name="my_strategy"
+    )
+
+    assert result is not None
+    assert result.rt_cd == ErrorCode.KILL_SWITCH_BLOCKED.value
+    assert "전략 Kill Switch 차단" in result.msg1
+
+
+@pytest.mark.asyncio
+async def test_strategy_kill_switch_block_side_all_blocks_sell():
+    """block_side='all' — normal SELL 도 차단 (force-exit 가 아닌 경우)."""
+    svc, _, _ = _service(kill_switch=_ks_with_strategy_trip(block_side="all"))
+
+    result = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.SELL, Exchange.KRX, 0, strategy_name="my_strategy"
+    )
+
+    assert result is not None
+    assert result.rt_cd == ErrorCode.KILL_SWITCH_BLOCKED.value
+
+
+@pytest.mark.asyncio
+async def test_strategy_kill_switch_block_side_buy_blocks_buy_only():
+    """block_side='buy' — BUY 만 차단, normal SELL 은 통과시켜 graceful 청산 허용."""
+    svc, _, _ = _service(kill_switch=_ks_with_strategy_trip(block_side="buy"))
+
+    buy_result = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.BUY, Exchange.KRX, 0, strategy_name="my_strategy"
+    )
+    sell_result = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.SELL, Exchange.KRX, 0, strategy_name="my_strategy"
+    )
+
+    assert buy_result is not None
+    assert buy_result.rt_cd == ErrorCode.KILL_SWITCH_BLOCKED.value
+    assert sell_result is None  # SELL 통과
+
+
+@pytest.mark.asyncio
+async def test_strategy_kill_switch_missing_block_side_defaults_to_all():
+    """legacy trip metadata 에 block_side 가 없으면 'all' 로 동작 (backward compat)."""
+    kill_switch = AsyncMock()
+    kill_switch.check_orders_allowed = AsyncMock(return_value=(True, None))
+    kill_switch.is_strategy_tripped = MagicMock(
+        return_value={"trip_reason": "legacy"}  # block_side 키 누락
+    )
+    svc, _, _ = _service(kill_switch=kill_switch)
+
+    sell_result = await svc.validate_order(
+        "005930", 70_000, 10, OrderSide.SELL, Exchange.KRX, 0, strategy_name="my_strategy"
+    )
+
+    assert sell_result is not None
+    assert sell_result.rt_cd == ErrorCode.KILL_SWITCH_BLOCKED.value
+
+
+@pytest.mark.asyncio
+async def test_strategy_kill_switch_force_exit_sell_bypasses_block_all():
+    """force-exit SELL 은 strategy KS 체크 자체를 건너뛴다 (block_side 무관)."""
+    svc, _, _ = _service(kill_switch=_ks_with_strategy_trip(block_side="all"))
+
+    result = await svc.validate_order(
+        "005930",
+        70_000,
+        10,
+        OrderSide.SELL,
+        Exchange.KRX,
+        0,
+        strategy_name="my_strategy",
+        source="strategy_force_exit:my_strategy",
+    )
+
+    assert result is None
+
+
 @pytest.mark.asyncio
 async def test_order_amount_over_limit_blocks_buy():
     svc, _, _ = _service(config=RiskGateConfig(max_order_amount_won=100_000))
