@@ -11,6 +11,7 @@ from core.retry_queue.client_with_retry_queue import (
     ClientWithRetryQueue,
     retry_queue_wrap_client,
     _EXCLUDED_METHODS,
+    _budget_category_for_method,
 )
 
 
@@ -25,6 +26,24 @@ class FakeClient:
         return success_resp()
 
     async def get_account_balance(self) -> ResCommonResponse:
+        return success_resp()
+
+    async def inquire_daily_ccld(self) -> ResCommonResponse:
+        return success_resp()
+
+    async def inquire_unfilled_orders(self) -> ResCommonResponse:
+        return success_resp()
+
+    async def inquire_daily_itemchartprice(self, stock_code: str) -> ResCommonResponse:
+        return success_resp()
+
+    async def inquire_time_itemchartprice(self, stock_code: str) -> ResCommonResponse:
+        return success_resp()
+
+    async def inquire_time_dailychartprice(self, stock_code: str) -> ResCommonResponse:
+        return success_resp()
+
+    async def get_current_conclusion(self, stock_code: str) -> ResCommonResponse:
         return success_resp()
 
     async def place_stock_order(self, code, price, qty, is_buy) -> ResCommonResponse:
@@ -107,7 +126,7 @@ class TestAsyncMethodThroughQueue:
 
         assert req.request_id == "get_current_price"
 
-    async def test_quotation_method_uses_quotation_budget_category(self, fake_client, queue):
+    async def test_quotation_method_uses_price_budget_category(self, fake_client, queue):
         categories = []
 
         class RecordingLimiter:
@@ -124,9 +143,9 @@ class TestAsyncMethodThroughQueue:
 
         await wrapped.get_current_price("005930")
 
-        assert categories == ["quotation"]
+        assert categories == ["quotation_price"]
 
-    async def test_account_method_uses_account_budget_category(self, fake_client, queue):
+    async def test_account_method_uses_balance_budget_category(self, fake_client, queue):
         categories = []
 
         class RecordingLimiter:
@@ -143,7 +162,24 @@ class TestAsyncMethodThroughQueue:
 
         await wrapped.get_account_balance()
 
-        assert categories == ["account"]
+        assert categories == ["account_balance"]
+
+    @pytest.mark.parametrize(
+        ("method_name", "expected_category"),
+        [
+            ("get_current_price", "quotation_price"),
+            ("get_current_conclusion", "quotation_conclusion"),
+            ("inquire_daily_itemchartprice", "quotation_ohlcv"),
+            ("inquire_time_itemchartprice", "quotation_ohlcv"),
+            ("inquire_time_dailychartprice", "quotation_ohlcv"),
+            ("get_account_balance", "account_balance"),
+            ("inquire_daily_ccld", "account_reconciliation"),
+            ("inquire_unfilled_orders", "account_reconciliation"),
+            ("unknown_lookup", "quotation"),
+        ],
+    )
+    def test_budget_category_for_method_uses_endpoint_specific_policy(self, method_name, expected_category):
+        assert _budget_category_for_method(method_name) == expected_category
 
 
 class TestExcludedMethodsBypassQueue:

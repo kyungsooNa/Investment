@@ -31,6 +31,18 @@ _ACCOUNT_METHODS = frozenset({
     "inquire_filled_history",
 })
 
+_METHOD_BUDGET_CATEGORIES = {
+    "get_current_price": "quotation_price",
+    "get_current_conclusion": "quotation_conclusion",
+    "inquire_daily_itemchartprice": "quotation_ohlcv",
+    "inquire_time_itemchartprice": "quotation_ohlcv",
+    "inquire_time_dailychartprice": "quotation_ohlcv",
+    "get_account_balance": "account_balance",
+    "inquire_daily_ccld": "account_reconciliation",
+    "inquire_unfilled_orders": "account_reconciliation",
+    "inquire_filled_history": "account_reconciliation",
+}
+
 
 class ClientWithRetryQueue:
     """
@@ -76,6 +88,9 @@ class ClientWithRetryQueue:
 
 
 def _budget_category_for_method(name: str) -> str:
+    category = _METHOD_BUDGET_CATEGORIES.get(name)
+    if category is not None:
+        return category
     if name in _ACCOUNT_METHODS:
         return "account"
     return "quotation"

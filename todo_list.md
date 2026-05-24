@@ -358,9 +358,10 @@
   - 완료된 부분: `core.retry_queue.api_budget_limiter.ApiBudgetLimiter` 추가. `BrokerAPIWrapper`가 shared limiter를 생성해 `ClientWithRetryQueue`에 주입하고, retry queue의 최초 호출/재시도 호출이 모두 limiter를 거치도록 연결했다.
   - 1차 정책: 조회성 API는 `quotation` 기본 동시성 8, 계좌 조회 API는 `account` 기본 동시성 2로 분리. 주문/WebSocket 메서드는 기존 제외 목록을 유지해 budget limiter와 retry queue를 우회한다.
   - 검증: retry queue 단위 88개, retry queue 통합 22개, broker wrapper 단위 33개, 전체 단위 4798개, 전체 통합 233개 통과.
-- [ ] API budget limiter 운영 정책을 실전 한도 기준으로 보정한다.
+- [x] API budget limiter 운영 정책을 실전 한도 기준으로 보정한다.
   - 2026-05-24 최신 main 리뷰 반영: 중앙 limiter 구조는 생겼지만, 실제 KIS endpoint별 제한과 운영 우선순위까지 확정된 것은 아니다.
-  - 남은 것: `quotation`/`account` 외에 OHLCV, current price, 주문, 체결조회, 잔고조회별 rate budget을 명시하고, 주문/청산/대사 경로가 조회성 scan 폭주에 밀리지 않는지 부하 테스트로 확인한다.
+  - 목표: `quotation`/`account` 외에 OHLCV, current price, 주문, 체결조회, 잔고조회별 rate budget을 명시하고, 주문/청산/대사 경로가 조회성 scan 폭주에 밀리지 않는지 부하 테스트로 확인한다.
+  - 완료된 부분(2026-05-25): `ApiBudgetLimiter` 기본 정책을 endpoint 성격별 category로 세분화했다. 동시성 budget은 `quotation_price=4`, `quotation_ohlcv=2`, `quotation_conclusion=3`, `quotation=4`, `account_balance=1`, `account_reconciliation=1`, `account=1`, `default=4`로 보수화하고, category별 초당 rate 예약 throttle(`rate_limit_per_sec`)을 추가했다. `ClientWithRetryQueue._budget_category_for_method()`가 current price / OHLCV / 체결강도 / 잔고 / 체결·미체결 대사 조회를 각각 분류한다. 주문/WebSocket은 기존처럼 retry queue와 budget limiter를 우회해 scan 조회 budget에 막히지 않는다. 회귀 테스트: endpoint 분류, rate snapshot, busy-loop 없는 rate 예약, quotation scan budget과 account reconciliation budget 독립성을 추가 검증. 공식 포털에는 2026-04-20 기준 REST/WebSocket 유량 공지가 노출되지만 상세 수치는 운영 전 재확인이 필요하므로, 기본값은 한도 단정이 아니라 실전 보호용 보수 운영값으로 둔다.
 - [x] 활성 전략의 exit check도 bounded gather 또는 순차/우선순위 정책으로 통일한다.
   - 검토 결과: 타당. `FirstPullbackStrategy`, `HighTightFlagStrategy`, `LarryWilliamsChannelBreakoutStrategy` 등 일부 전략은 holdings 전체에 대해 `asyncio.gather()`를 수행한다. VBO/레거시 일부는 순차 처리다.
   - 완료된 부분: `utils/async_concurrency.py::bounded_gather()` 헬퍼 신규 + 단위 테스트 7개. 활성 6개 전략(`FirstPullback`, `HighTightFlag`, `LarryWilliamsChannelBreakout`, `OneilPocketPivot`, `OneilSqueezeBreakout`, `Rsi2Pullback`)의 holdings exit gather를 `bounded_gather(..., limit=_EXIT_CONCURRENCY=15, return_exceptions=True)`로 교체했다. entry chunk_size(10)보다 높여 청산 경로에 우선순위를 부여한다.
