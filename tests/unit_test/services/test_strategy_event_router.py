@@ -404,3 +404,105 @@ async def test_unsubscribe_clears_debounce_state():
 
     second = await router.on_price_tick("005930", {"price": "10000"}, now_ts=100.1)
     assert second == [sig]
+
+
+# === PR-3 선행: trigger crossing tick — throttle/debounce 분리 회귀 (Q5) ===
+#
+# 운영 정책: throttle_sec=0.1 (evaluator burst 흡수), signal_debounce_sec=0.5
+# (중복 신호 publish 차단). crossing tick (prev_price < trigger <= current_price)
+# 이 evaluator throttle window 에 막히지 않아야 한다는 설계 결정을
+# 시나리오 단위로 잠근다. (todo_list.md P2 2-4 PR-3 선행 남은 확인)
+
+
+def _make_threshold_evaluator(trigger: int, signal: TradeSignal):
+    """price >= trigger 일 때만 signal 을 반환하는 evaluator + 호출 카운터."""
+    state = {"calls": 0}
+
+    async def _evaluator(code: str, snapshot: dict):
+        state["calls"] += 1
+        return signal if int(snapshot["price"]) >= trigger else None
+
+    return _evaluator, state
+
+
+@pytest.mark.asyncio
+async def test_crossing_tick_evaluated_under_operational_throttle_split():
+    """운영 정책(throttle=0.1, debounce=0.5)에서 throttle 경과 후 도착한
+    crossing tick 이 evaluator 평가까지 진행되어 신호를 발행한다."""
+    sink = MagicMock()
+    sink.publish = AsyncMock(return_value=None)
+    sig = _signal("005930", "VBO")
+    evaluator, state = _make_threshold_evaluator(trigger=10000, signal=sig)
+
+    router = StrategyEventRouter(
+        market_clock=_market_clock(),
+        signal_sink=sink,
+        throttle_sec=0.1,
+        signal_debounce_sec=0.5,
+    )
+    router.subscribe("005930", strategy_name="VBO", evaluator=evaluator)
+
+    # t=100.00: trigger 미달 — evaluator 평가만, 신호 없음
+    r1 = await router.on_price_tick("005930", {"price": "9999"}, now_ts=100.00)
+    # t=100.15: throttle 0.1 경과 후 crossing tick — 평가되어 신호 발행
+    r2 = await router.on_price_tick("005930", {"price": "10001"}, now_ts=100.15)
+
+    assert state["calls"] == 2, "throttle 경과 후 crossing tick 도 evaluator 평가 대상"
+    assert r1 == []
+    assert r2 == [sig]
+    sink.publish.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_crossing_tick_blocked_when_legacy_single_throttle_covers_window():
+    """레거시 단일 throttle(0.5)에서는 0.2초 뒤의 crossing tick 이 throttle 에
+    막혀 evaluator 가 평가되지 않는다 — throttle/debounce 분리 결정의 근거 회귀."""
+    sig = _signal("005930", "VBO")
+    evaluator, state = _make_threshold_evaluator(trigger=10000, signal=sig)
+
+    router = StrategyEventRouter(
+        market_clock=_market_clock(),
+        throttle_sec=0.5,
+        signal_debounce_sec=None,
+    )
+    router.subscribe("005930", strategy_name="VBO", evaluator=evaluator)
+
+    r1 = await router.on_price_tick("005930", {"price": "9999"}, now_ts=100.00)
+    # throttle window(0.5) 내 crossing tick — evaluator 자체가 차단됨
+    r2 = await router.on_price_tick("005930", {"price": "10001"}, now_ts=100.20)
+
+    assert state["calls"] == 1, "throttle window 안의 crossing tick 은 평가되지 않음"
+    assert r1 == []
+    assert r2 == []
+
+
+@pytest.mark.asyncio
+async def test_continuous_crossing_ticks_evaluated_but_signal_publish_debounced():
+    """crossing 이후 trigger 위에서 연속 tick 이 도착해도 evaluator 는 throttle 만
+    통과하면 매번 평가되며, signal_debounce_sec 가 중복 신호 publish 만 차단한다."""
+    sink = MagicMock()
+    sink.publish = AsyncMock(return_value=None)
+    sig = _signal("005930", "VBO")
+    evaluator, state = _make_threshold_evaluator(trigger=10000, signal=sig)
+
+    router = StrategyEventRouter(
+        market_clock=_market_clock(),
+        signal_sink=sink,
+        throttle_sec=0.1,
+        signal_debounce_sec=0.5,
+    )
+    router.subscribe("005930", strategy_name="VBO", evaluator=evaluator)
+
+    # 5 ticks @ 0.15s 간격: throttle(0.1) 매번 통과, debounce(0.5) 는 첫·마지막만 publish
+    timestamps = [100.00, 100.15, 100.30, 100.45, 100.60]
+    results: List[List[TradeSignal]] = []
+    for ts in timestamps:
+        results.append(
+            await router.on_price_tick("005930", {"price": "10001"}, now_ts=ts)
+        )
+
+    assert state["calls"] == 5, "throttle 간격(0.15s)이 throttle_sec(0.1) 초과 → 매번 평가"
+    published = [r for r in results if r]
+    # t=100.00 (init publish) + t=100.60 (gap 0.60 >= debounce 0.5 → 재발행)
+    assert len(published) == 2
+    assert sink.publish.await_count == 2

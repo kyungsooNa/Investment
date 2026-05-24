@@ -459,13 +459,13 @@
   - 완료된 부분: `services/strategy_event_router.py`에 `signal_sink: Optional[SignalSink] = None` 생성자 인자 추가. `on_price_tick()`이 non-None 평가 신호마다 `await sink.publish(signal, context=...)`를 호출하고, publish 예외는 흡수해 다른 evaluator 흐름을 보존한다. `List[TradeSignal]` 반환은 호환 유지.
   - 완료된 부분: `view/web/bootstrap/service_container.py`에서 `StrategyEventRouter(..., signal_sink=None)` 명시. live consumer 주입은 PR-3 본 작업에서 진행하며 shadow 운영은 변동 없음.
   - 검증: `test_strategy_signal_sink.py` 신규 2 + `test_strategy_event_router.py` 추가 3 (publish/예외 흡수/None 신호 미호출). 전체 단위 4982 + 통합 233 통과.
-- [~] PR-3 선행: EventRouter throttle을 threshold crossing 또는 signal debounce 정책으로 보강한다.
+- [x] PR-3 선행: EventRouter throttle을 threshold crossing 또는 signal debounce 정책으로 보강한다.
   - 검토 결과: 부분 타당. 현재 throttle은 evaluator 실행 전 `(strategy, code)` 단위 0.5초 차단이다. 돌파 조건 crossing tick이 throttle window 안에 들어오면 평가 자체가 지연될 수 있다.
   - 개선 방향: trigger price crossing은 evaluator 실행을 허용하고, 중복 signal 발행만 debounce하는 방향을 검토한다.
   - 완료된 부분: 두 단계로 분리(`docs/event_driven_architecture.md` §9 Q5, 2026-05-22 결정). `StrategyEventRouter`에 `signal_debounce_sec: Optional[float] = None` 신규 인자 추가, `_last_signal_dispatched` 상태와 `on_price_tick()` 결과 루프의 debounce 체크 통합. `unsubscribe()`도 debounce 상태 cleanup. 코드 기본값은 backward compat 유지 (`throttle_sec=0.5`, `signal_debounce_sec=None`).
   - 완료된 부분: 운영(`view/web/bootstrap/service_container.py`)에서 `throttle_sec=0.1, signal_debounce_sec=0.5`로 활성화. evaluator는 같은 tick burst만 흡수해 trigger crossing 보장, 같은 (strategy, code) 중복 publish/return은 0.5초 debounce.
   - 검증: `test_strategy_event_router.py` 추가 4개 (within-window 차단 / after-window 재발행 / None 비활성 backward compat / unsubscribe cleanup). 전체 단위 4986 + 통합 233 통과.
-  - 남은 확인: `prev_price < trigger <= current_price` 같은 crossing tick이 evaluator throttle 때문에 지연되지 않는지 명시 테스트를 추가한다. 현재 테스트는 debounce/window 동작 중심이라 crossing-aware bypass를 직접 고정하지 않는다.
+  - 완료된 부분(2026-05-25): crossing-aware bypass 시나리오 테스트 3건 추가 ([tests/unit_test/services/test_strategy_event_router.py](tests/unit_test/services/test_strategy_event_router.py)) — ① `test_crossing_tick_evaluated_under_operational_throttle_split` 운영 정책(throttle=0.1, debounce=0.5)에서 throttle 경과 후 도착한 crossing tick(`prev=9999, curr=10001`)이 evaluator 평가 + 신호 발행 진입을 잠근다, ② `test_crossing_tick_blocked_when_legacy_single_throttle_covers_window` 레거시 단일 throttle(0.5)에서 0.2초 뒤 crossing tick이 평가 자체 차단됨을 회귀로 고정해 throttle/debounce 분리 결정 근거를 명시한다, ③ `test_continuous_crossing_ticks_evaluated_but_signal_publish_debounced` trigger 위 연속 tick 5건(0.15s 간격)에서 evaluator는 매번 평가되고 publish만 debounce(첫·마지막 2건)되는 분리 contract를 잠근다. `_make_threshold_evaluator()` helper로 price-based evaluator 패턴 표준화. 단위 25(이전 22 → +3), 전체 5671 통과.
 - [ ] PR-4+: 단계적 확장.
 
 구현 결정 사항 (`docs/event_driven_architecture.md` §9, 2026-05-18 확정):
