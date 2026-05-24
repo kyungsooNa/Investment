@@ -566,9 +566,11 @@
   - 완료된 부분(2026-05-23): `LiveStrategy.load_state()` 기본 no-op contract를 추가하고, scheduler stop 시 `StrategyStateIO.flush_pending()`으로 지연 저장을 정리한다.
   - 결정: scan/check_exits 대형 base class 추출은 현재 반복 제거 대비 리스크가 커서 보류한다. 공통 흐름이 더 쌓이면 별도 설계 항목으로 재승격한다. `larry_williams_vbo`는 state 파일이 없어 마이그레이션 대상이 아니다.
   - 2026-05-24 최신 main 리뷰 반영: 전략 실행 lifecycle 자체가 강하게 표준화된 상태는 아니므로 완료가 아니라 부분 반영으로 둔다.
-- [ ] active strategy lifecycle contract를 최소 공통 단계로 강제할지 재설계한다.
+- [~] active strategy lifecycle contract를 최소 공통 단계로 강제할지 재설계한다.
   - 후보 단계: `load_state` → `get_watchlist` → `filter_candidates` → `evaluate_entries_bounded` → `evaluate_exits_bounded` → `save_state` → `emit_metrics`.
   - 목표: 대형 base class가 부담되면 helper/protocol/checklist 테스트로라도 active strategy별 누락을 탐지한다.
+  - 완료된 부분(2026-05-25): 7단계 분해 base class 도입은 보류(외과수술적 변경 원칙 — `scan`/`check_exits` 내부에 단계가 묻혀 있어 분해 리스크 > 표면화 가치). 대신 **checklist 테스트** 방식으로 활성 7개 전략의 최소 contract 누락을 자동 탐지한다. [interfaces/live_strategy.py](interfaces/live_strategy.py)에 `save_state()` default no-op hook 추가(load_state와 대칭, 호출자 await 표면 제공). 신규 [tests/unit_test/strategies/test_live_strategy_lifecycle_contract.py](tests/unit_test/strategies/test_live_strategy_lifecycle_contract.py)는 활성 7개 전략(`oneil_pocket_pivot`, `high_tight_flag`, `first_pullback`, `oneil_squeeze_breakout`, `rsi2_pullback`, `larry_williams_channel_breakout`, `larry_williams_vbo`)에 대해 다음을 parametrize 검증: ① `LiveStrategy` 상속, ② `name`/`strategy_id`/`display_name` non-empty str, ③ `scan`/`check_exits` async callable, ④ `load_state`/`save_state` async callable, ⑤ `evaluate_single` async callable, ⑥ `current_candidate_codes()` 동기 호출 + list 반환, ⑦ `load_state()` mock 환경 idempotent await. 전역 invariant 2건: `strategy_id`/`name` 충돌 없음. 65 case 통과(9 contract × 7 + 2 unique). 신규 전략 추가 시 contract 누락 자동 탐지 안전망 확립. 단위 5419(이전 5354 → +65), 통합 235 통과.
+  - 후속(blocked): 7단계 분해(`get_watchlist`/`filter_candidates`/`evaluate_entries_bounded`/`evaluate_exits_bounded`/`emit_metrics`)는 별도 PR. 현재는 `scan`/`check_exits` 안에 묻혀 있어 분해 자체가 대형 리팩토링.
 - [x] 운영 bootstrap에서 strategy state load/save barrier를 검증한다.
   - 시작 전: 모든 active strategy의 `load_state()` 완료 후 scan/scheduler 시작.
   - 종료 전: `StrategyStateIO.flush_pending()` 완료 후 프로세스 종료.
