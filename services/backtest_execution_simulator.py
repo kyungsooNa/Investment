@@ -60,6 +60,7 @@ class BacktestExecutionPolicy:
     volume_participation_pct: float = 100.0
     market_price_field: str = "open"
     round_to_tick: bool = True
+    opening_market_slippage_bonus_pct: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -115,6 +116,9 @@ class BacktestExecutionSimulator:
     호출자는 "현재 봉 체결" 또는 "다음 봉 체결" 정책에 맞는 bar를 선택해
     넘긴다. 이 클래스는 해당 bar 안에서 가격 도달, 거래량 한도, 비용,
     슬리피지, 호가 단위 반올림만 책임진다.
+
+    UNFILLED와 PARTIAL의 잔여 수량은 이월하지 않는다(day order 자동 취소).
+    다음 봉 재시도가 필요하면 호출자가 별도 주문을 다시 만들어야 한다.
     """
 
     def __init__(self, policy: BacktestExecutionPolicy | None = None) -> None:
@@ -177,9 +181,17 @@ class BacktestExecutionSimulator:
         return min(requested_qty, max_qty)
 
     def _apply_market_slippage(self, order: BacktestOrder, base_price: float) -> float:
-        if order.order_type != OrderType.MARKET or self.policy.market_slippage_pct <= 0:
+        if order.order_type != OrderType.MARKET:
             return base_price
-        ratio = self.policy.market_slippage_pct / 100.0
+        slip_pct = self.policy.market_slippage_pct
+        if (
+            self.policy.opening_market_slippage_bonus_pct > 0
+            and self.policy.market_price_field == "open"
+        ):
+            slip_pct += self.policy.opening_market_slippage_bonus_pct
+        if slip_pct <= 0:
+            return base_price
+        ratio = slip_pct / 100.0
         if order.side == OrderSide.BUY:
             return base_price * (1.0 + ratio)
         return base_price * (1.0 - ratio)
