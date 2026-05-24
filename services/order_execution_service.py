@@ -85,17 +85,6 @@ class OrderExecutionService:
             fast_poll_interval_sec=self._FAST_POLL_INTERVAL_SEC,
             default_active_poll_interval_sec=self._DEFAULT_ACTIVE_ORDER_POLL_INTERVAL_SEC,
         )
-        self._broker_submitter = BrokerOrderSubmitter(
-            broker_api_wrapper=broker_api_wrapper,
-            logger=logger,
-            kill_switch=kill_switch_service,
-            market_clock=market_clock,
-            state_provider=lambda: self._fsm._order_states,
-            transition_fn=self._fsm.transition,
-            extract_broker_order_no_fn=OrderStateMachine.extract_broker_order_no,
-            max_retries=self._ORDER_MAX_RETRIES,
-            retry_delay_sec=self._ORDER_RETRY_DELAY_SEC,
-        )
         self._fill_reconciliation = FillReconciliationService(
             broker_api_wrapper=broker_api_wrapper,
             logger=logger,
@@ -110,6 +99,18 @@ class OrderExecutionService:
             is_paper_trading_fn=self._is_paper_trading_mode,
             stuck_order_warning_sec=self._STUCK_ORDER_WARNING_SEC,
             stuck_order_critical_sec=self._STUCK_ORDER_CRITICAL_SEC,
+        )
+        self._broker_submitter = BrokerOrderSubmitter(
+            broker_api_wrapper=broker_api_wrapper,
+            logger=logger,
+            kill_switch=kill_switch_service,
+            market_clock=market_clock,
+            state_provider=lambda: self._fsm._order_states,
+            transition_fn=self._fsm.transition,
+            extract_broker_order_no_fn=OrderStateMachine.extract_broker_order_no,
+            on_missing_broker_order_no_fn=self._fill_reconciliation.on_broker_order_no_missing,
+            max_retries=self._ORDER_MAX_RETRIES,
+            retry_delay_sec=self._ORDER_RETRY_DELAY_SEC,
         )
         self._fsm.set_on_critical_mismatch(
             self._fill_reconciliation.on_safe_transition_critical

@@ -305,6 +305,63 @@ async def test_on_safe_transition_critical_sets_alarm_and_emits(broker, fsm, rep
 
 
 @pytest.mark.asyncio
+async def test_on_broker_order_no_missing_sets_alarm_and_emits_notification(
+    broker, fsm, reporter, fixed_now
+):
+    notification = AsyncMock()
+    logger = _Logger()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        notification_service=notification,
+        logger=logger,
+    )
+    raw_payload = {"KRX_FWDG_ORD_ORGNO": "00950", "unexpected_key": "VAL1"}
+    result = ResCommonResponse(rt_cd="0", msg1="정상처리 되었습니다.", data=raw_payload)
+
+    svc.on_broker_order_no_missing(result, "005930", "KRX:005930:BUY")
+    await asyncio.gather(*list(svc._notification_tasks))
+
+    assert svc.is_reconcile_alarm_active() is True
+    assert svc._critical_alarm_manual_required is True
+    notification.emit.assert_awaited_once()
+    args, kwargs = notification.emit.await_args
+    assert args[0] == NotificationCategory.TRADE
+    assert args[1] == NotificationLevel.CRITICAL
+    metadata = kwargs["metadata"]
+    assert metadata["alert_type"] == "broker_order_no_missing"
+    assert metadata["stock_code"] == "005930"
+    assert metadata["order_key"] == "KRX:005930:BUY"
+    assert metadata["rt_cd"] == "0"
+    assert metadata["msg1"] == "정상처리 되었습니다."
+    assert "KRX_FWDG_ORD_ORGNO" in metadata["raw_data"]
+    logger.error.assert_called()
+
+
+def test_on_broker_order_no_missing_without_notification_service_only_sets_alarm(
+    broker, fsm, reporter, fixed_now
+):
+    logger = _Logger()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        notification_service=None,
+        logger=logger,
+    )
+    result = ResCommonResponse(rt_cd="0", msg1="OK", data={"foo": "bar"})
+
+    svc.on_broker_order_no_missing(result, "005930", "KRX:005930:BUY")
+
+    assert svc.is_reconcile_alarm_active() is True
+    assert svc._critical_alarm_manual_required is True
+    logger.error.assert_called()
+
+
+@pytest.mark.asyncio
 async def test_critical_alarm_skips_auto_reset(broker, fsm, reporter, fixed_now):
     logger = _Logger()
     svc = _make_service(

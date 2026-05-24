@@ -113,6 +113,57 @@ class FillReconciliationService:
         self._notification_tasks.add(task)
         task.add_done_callback(self._notification_tasks.discard)
 
+    def on_broker_order_no_missing(
+        self,
+        result: ResCommonResponse,
+        stock_code: str,
+        order_key: str,
+    ) -> None:
+        """주문 응답에서 broker_order_no 를 추출하지 못했을 때 신규 주문 차단 + 알림 승격.
+
+        FSM 컨텍스트는 broker_order_no=None 으로 SUBMITTED 전이가 이미 수행되어 있으며,
+        이후 reconcile/체결 매칭에서 누락될 위험이 있으므로 reconcile_alarm 으로 즉시
+        신규 주문을 차단하고, raw payload 를 운영자 알림 metadata 에 보존한다.
+        """
+        self._reconcile_alarm = True
+        self._critical_alarm_manual_required = True
+        raw_data_repr = repr(result.data) if result is not None else ""
+        rt_cd = result.rt_cd if result is not None else ""
+        msg1 = result.msg1 if result is not None else ""
+        message = (
+            f"주문 응답에서 broker_order_no 추출 실패로 신규 주문 차단: "
+            f"stock_code={stock_code}, order_key={order_key}, "
+            f"rt_cd={rt_cd}, msg1={msg1}, raw_data={raw_data_repr}"
+        )
+        self.logger.error(message)
+        if self._notification_service is None:
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.logger.warning(
+                "broker_order_no_missing notification skipped: running event loop 없음"
+            )
+            return
+
+        task = loop.create_task(self._notification_service.emit(
+            NotificationCategory.TRADE,
+            NotificationLevel.CRITICAL,
+            "Order Block: Broker Order No Missing",
+            message,
+            metadata={
+                "alert_type": "broker_order_no_missing",
+                "stock_code": stock_code,
+                "order_key": order_key,
+                "rt_cd": rt_cd,
+                "msg1": msg1,
+                "raw_data": raw_data_repr,
+            },
+        ))
+        self._notification_tasks.add(task)
+        task.add_done_callback(self._notification_tasks.discard)
+
     # ── source 분류 헬퍼 (OES._strategy_name_from_source 와 중복 — 결합 회피 목적의 의도된 사본) ──
     @staticmethod
     def _strategy_name_from_source(source: str) -> tuple[str, bool]:
