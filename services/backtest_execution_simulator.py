@@ -44,6 +44,8 @@ class BacktestBar:
     vi_triggered: bool = False
     upper_limit_price: float | None = None
     lower_limit_price: float | None = None
+    bid: float | None = None
+    ask: float | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,7 @@ class BacktestExecutionPolicy:
     opening_market_slippage_bonus_pct: float = 0.0
     liquidity_slippage_buckets: tuple[tuple[float, float], ...] = ()
     best_limit_slippage_pct: float = 0.0
+    spread_pct: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -153,6 +156,7 @@ class BacktestExecutionSimulator:
         fill_price = self._apply_market_slippage(
             order, base_price, liquidity_bonus_pct=liquidity_bonus
         )
+        fill_price = self._apply_bid_ask_spread(order, fill_price, bar)
         if self.policy.round_to_tick:
             fill_price = self.round_to_tick(fill_price, side=order.side)
 
@@ -251,6 +255,26 @@ class BacktestExecutionSimulator:
             return 0.0
         matching = [bonus for threshold, bonus in buckets if trading_value < threshold]
         return max(matching) if matching else 0.0
+
+    def _apply_bid_ask_spread(
+        self, order: BacktestOrder, fill_price: float, bar: BacktestBar
+    ) -> float:
+        if order.order_type == OrderType.LIMIT:
+            return fill_price
+        spread_pct = self._effective_spread_pct(bar)
+        if spread_pct <= 0 or fill_price <= 0:
+            return fill_price
+        half_spread = fill_price * spread_pct / 200.0
+        if order.side == OrderSide.BUY:
+            return fill_price + half_spread
+        return fill_price - half_spread
+
+    def _effective_spread_pct(self, bar: BacktestBar) -> float:
+        if bar.bid is not None and bar.ask is not None and bar.bid > 0 and bar.ask > 0:
+            mid = (bar.bid + bar.ask) / 2.0
+            if mid > 0:
+                return (bar.ask - bar.bid) / mid * 100.0
+        return self.policy.spread_pct
 
     def _bar_excursion(
         self,

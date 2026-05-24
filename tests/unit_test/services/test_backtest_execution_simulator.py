@@ -679,3 +679,69 @@ def test_best_limit_blocked_by_upper_limit_price_for_buy():
     rep = sim.simulate(order, bar)
     assert rep.status == OrderStatus.UNFILLED
     assert rep.reason == "upper_limit_blocked"
+
+
+def test_market_buy_adds_half_spread_from_policy():
+    policy = BacktestExecutionPolicy(spread_pct=0.2, round_to_tick=False)
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.BUY, order_type=OrderType.MARKET)
+    bar = BacktestBar(timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200, volume=1_000)
+    rep = sim.simulate(order, bar)
+    # base 10_000 + half_spread (0.1%) = 10_010
+    assert rep.fill_price == pytest.approx(10_010.0)
+
+
+def test_market_sell_subtracts_half_spread_from_policy():
+    policy = BacktestExecutionPolicy(spread_pct=0.2, round_to_tick=False)
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.SELL, order_type=OrderType.MARKET)
+    bar = BacktestBar(timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200, volume=1_000)
+    rep = sim.simulate(order, bar)
+    assert rep.fill_price == pytest.approx(9_990.0)
+
+
+def test_best_limit_applies_policy_spread():
+    policy = BacktestExecutionPolicy(spread_pct=0.2, round_to_tick=False)
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.BUY, order_type=OrderType.BEST_LIMIT)
+    bar = BacktestBar(timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200, volume=1_000)
+    rep = sim.simulate(order, bar)
+    assert rep.fill_price == pytest.approx(10_010.0)
+
+
+def test_limit_order_unaffected_by_policy_spread():
+    policy = BacktestExecutionPolicy(spread_pct=1.0, round_to_tick=False)
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=10_000.0, qty=10, side=OrderSide.BUY, order_type=OrderType.LIMIT)
+    bar = BacktestBar(timestamp="t", open=10_000, high=10_500, low=9_500, close=10_200, volume=1_000)
+    rep = sim.simulate(order, bar)
+    assert rep.fill_price == pytest.approx(10_000.0)
+
+
+def test_bar_bid_ask_overrides_policy_spread():
+    policy = BacktestExecutionPolicy(spread_pct=2.0, round_to_tick=False)
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.BUY, order_type=OrderType.MARKET)
+    # bid=9_990, ask=10_010 → mid=10_000, spread=20/10_000=0.2%
+    # policy.spread_pct=2.0%는 무시됨
+    bar = BacktestBar(
+        timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200,
+        volume=1_000, bid=9_990, ask=10_010,
+    )
+    rep = sim.simulate(order, bar)
+    # bar 기반 spread 0.2% → half=0.1% → fill = 10_000 * 1.001 = 10_010
+    assert rep.fill_price == pytest.approx(10_010.0)
+
+
+def test_market_slippage_and_spread_combine():
+    policy = BacktestExecutionPolicy(
+        market_slippage_pct=0.5,
+        spread_pct=0.2,
+        round_to_tick=False,
+    )
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.BUY, order_type=OrderType.MARKET)
+    bar = BacktestBar(timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200, volume=1_000)
+    rep = sim.simulate(order, bar)
+    # slip 0.5% 적용 → 10_050, half_spread 0.1% (base 10_050 기준) → 10_050 + 10.05 = 10_060.05
+    assert rep.fill_price == pytest.approx(10_060.05)
