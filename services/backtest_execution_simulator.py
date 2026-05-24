@@ -21,6 +21,7 @@ class OrderSide(str, Enum):
 class OrderType(str, Enum):
     LIMIT = "LIMIT"
     MARKET = "MARKET"
+    BEST_LIMIT = "BEST_LIMIT"
 
 
 class OrderStatus(str, Enum):
@@ -67,6 +68,7 @@ class BacktestExecutionPolicy:
     round_to_tick: bool = True
     opening_market_slippage_bonus_pct: float = 0.0
     liquidity_slippage_buckets: tuple[tuple[float, float], ...] = ()
+    best_limit_slippage_pct: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -197,7 +199,7 @@ class BacktestExecutionSimulator:
         return None
 
     def _base_fill_price(self, order: BacktestOrder, bar: BacktestBar) -> float | None:
-        if order.order_type == OrderType.MARKET:
+        if order.order_type in (OrderType.MARKET, OrderType.BEST_LIMIT):
             return float(getattr(bar, self.policy.market_price_field, bar.open))
 
         limit_price = float(order.price)
@@ -219,15 +221,18 @@ class BacktestExecutionSimulator:
         *,
         liquidity_bonus_pct: float = 0.0,
     ) -> float:
-        if order.order_type != OrderType.MARKET:
+        if order.order_type == OrderType.BEST_LIMIT:
+            slip_pct = self.policy.best_limit_slippage_pct
+        elif order.order_type == OrderType.MARKET:
+            slip_pct = self.policy.market_slippage_pct
+            if (
+                self.policy.opening_market_slippage_bonus_pct > 0
+                and self.policy.market_price_field == "open"
+            ):
+                slip_pct += self.policy.opening_market_slippage_bonus_pct
+            slip_pct += liquidity_bonus_pct
+        else:
             return base_price
-        slip_pct = self.policy.market_slippage_pct
-        if (
-            self.policy.opening_market_slippage_bonus_pct > 0
-            and self.policy.market_price_field == "open"
-        ):
-            slip_pct += self.policy.opening_market_slippage_bonus_pct
-        slip_pct += liquidity_bonus_pct
         if slip_pct <= 0:
             return base_price
         ratio = slip_pct / 100.0

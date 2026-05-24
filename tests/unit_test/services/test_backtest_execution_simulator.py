@@ -612,3 +612,70 @@ def test_default_microstructure_fields_do_not_change_existing_behavior():
     assert bar.vi_triggered is False
     assert bar.upper_limit_price is None
     assert bar.lower_limit_price is None
+
+
+def test_best_limit_buy_fills_at_market_price_field_without_slippage_by_default():
+    policy = BacktestExecutionPolicy(market_price_field="open", round_to_tick=False)
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.BUY, order_type=OrderType.BEST_LIMIT)
+    bar = BacktestBar(timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200, volume=1_000)
+    rep = sim.simulate(order, bar)
+    assert rep.status == OrderStatus.FILLED
+    assert rep.fill_price == pytest.approx(10_000.0)
+
+
+def test_best_limit_sell_fills_at_market_price_field_without_slippage_by_default():
+    policy = BacktestExecutionPolicy(market_price_field="open", round_to_tick=False)
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.SELL, order_type=OrderType.BEST_LIMIT)
+    bar = BacktestBar(timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200, volume=1_000)
+    rep = sim.simulate(order, bar)
+    assert rep.status == OrderStatus.FILLED
+    assert rep.fill_price == pytest.approx(10_000.0)
+
+
+def test_best_limit_buy_applies_best_limit_slippage_only():
+    policy = BacktestExecutionPolicy(
+        market_slippage_pct=1.0,
+        best_limit_slippage_pct=0.2,
+        opening_market_slippage_bonus_pct=0.5,
+        liquidity_slippage_buckets=((1_000_000_000, 0.5),),
+        market_price_field="open",
+        round_to_tick=False,
+    )
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.BUY, order_type=OrderType.BEST_LIMIT)
+    bar = BacktestBar(
+        timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200,
+        volume=None, trading_value=500_000_000,
+    )
+    rep = sim.simulate(order, bar)
+    # BEST_LIMIT은 best_limit_slippage_pct만 적용: 10_000 * 1.002 = 10_020
+    # MARKET 정책(market_slippage + opening + liquidity)은 무시
+    assert rep.fill_price == pytest.approx(10_020.0)
+
+
+def test_best_limit_sell_applies_best_limit_slippage_only_inverse():
+    policy = BacktestExecutionPolicy(
+        best_limit_slippage_pct=0.2,
+        market_price_field="open",
+        round_to_tick=False,
+    )
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.SELL, order_type=OrderType.BEST_LIMIT)
+    bar = BacktestBar(timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200, volume=1_000)
+    rep = sim.simulate(order, bar)
+    # SELL은 base * (1 - slip) = 10_000 * 0.998 = 9_980
+    assert rep.fill_price == pytest.approx(9_980.0)
+
+
+def test_best_limit_blocked_by_upper_limit_price_for_buy():
+    sim = BacktestExecutionSimulator(BacktestExecutionPolicy(round_to_tick=False))
+    bar = BacktestBar(
+        timestamp="t", open=12_900, high=13_000, low=12_900, close=13_000,
+        volume=1_000, upper_limit_price=13_000,
+    )
+    order = make_order(price=0.0, qty=10, side=OrderSide.BUY, order_type=OrderType.BEST_LIMIT)
+    rep = sim.simulate(order, bar)
+    assert rep.status == OrderStatus.UNFILLED
+    assert rep.reason == "upper_limit_blocked"
