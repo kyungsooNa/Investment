@@ -1,8 +1,8 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-24 (최신 main 정적 리뷰 반영)
+최종 업데이트: 2026-05-25 (완전 종료 섹션 일괄 제거)
 
-이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
+이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다. 100% 종료된 섹션(`[x]` only, follow-up 없음)은 git history 로 추적하고 본 문서에서 삭제합니다.
 
 정리 원칙:
 
@@ -17,35 +17,6 @@
 ## P0. 실전 손실 방지
 
 백테스트에서 이긴 전략이 실거래에서도 같은 방식으로 기록, 체결, 정산, 차단되는지 검증하는 영역입니다. 실전 투입 전 최우선입니다.
-
-### 0-0. 정적 리뷰 기반 주문 안전성 재점검
-
-2026-05-19 ~ 05-20 외부 정적 리뷰 항목 5건 중 주문 안전성 핵심 방어는 적용 완료. 2026-05-24 최신 main 재리뷰 기준으로 `반영 완료 9 / 부분 반영 7 / 미반영 또는 약함 3` 상태이며, 남은 상위 리스크는 전역 API budget 운용 보정, broker order number mapper fixture 확장, emergency 전체청산 모드, 한국장 microstructure 체결 검증이다.
-
-- [x] 시장가 매수(`price == 0`) RiskGate 우회 차단 — `market_buy_reference_price_provider` 주입 (2026-05-19, PR #419)
-  - 남은 정책 검토: 실전 자동매매에서는 `allow_market_buy=False` 기본값을 더 보수적인 운영값으로 둘지 결정한다.
-- [x] `BrokerOrderSubmitter.submit_with_retry()` `market_clock=None` 시 `asyncio.sleep` backoff fallback (2026-05-19)
-- [x] 실전 모드 RiskGate fail-close 전환 — `RiskGateFailOpenConfig(paper=True, real=False)` (2026-05-19, PR #421)
-- [x] `get_current_price` 전역 캐시 제거 — `cache_config.yaml::enabled_methods`에서 제외 (2026-05-20)
-- [x] 전략 state load/save atomic write + per-path lock + 명시적 `load_state` await — `utils/strategy_state_io.py` (2026-05-20)
-  - 완료된 부분: `StrategyStateIO`의 atomic write, per-path lock, pending flush 구조는 반영.
-  - 완료된 부분(2026-05-25, P3 3-4 ② 검증): bootstrap에서 `await ctx.ensure_strategy_states_loaded()` barrier가 모든 active strategy의 `load_state()`를 await로 진행하고, 종료 hook에서 `await StrategyStateIO.flush_pending(timeout=5.0)`가 보장된다. paper=fail-OPEN / real=fail-CLOSE 정책으로 단위 테스트 고정.
-
-주요 파일:
-
-- `services/risk_gate_service.py`
-- `services/broker_order_submitter.py`
-- `services/order_submission_coordinator.py`
-- `services/order_policy_service.py`
-- `config/cache_config.yaml`
-- `strategies/oneil_pocket_pivot_strategy.py`
-- `strategies/high_tight_flag_strategy.py`
-- `strategies/first_pullback_strategy.py`
-- `strategies/oneil_squeeze_breakout_strategy.py`
-- `tests/unit_test/services/test_risk_gate_service.py`
-- `tests/unit_test/services/test_broker_order_submitter.py`
-- `tests/unit_test/services/test_stock_query_service.py`
-- `tests/unit_test/strategies/`
 
 ### 0-1. 실전 KIS `inquire-daily-ccld` 응답 필드 검증
 
@@ -68,78 +39,6 @@
 - `tests/unit_test/`
 - `tests/integration_test/`
 
-### 0-2. 백테스트와 실거래 journal schema 표준화
-
-- [x] 모든 저장 경로가 표준 journal schema를 직접 저장하도록 정리한다.
-  - 완료된 부분: `BacktestExecutionReport` 기반 기간 백테스트 journal이 전략 신호 사유(`decision_reason`)와 체결 봉 기준 `MFE`/`MAE`를 표준 schema로 보존한다.
-  - 완료된 부분: 레거시 `VolumeBreakoutStrategy.backtest_open_threshold_intraday()` 저장 경로가 왕복 1행(`ROUND_TRIP`) 대신 `BacktestExecutionReport` 기반 `BUY FILLED` + `SELL SOLD` 표준 journal을 저장한다.
-  - 완료된 부분: 활성 전략 period runner의 매도 journal이 매수 체결 봉과 매도 체결 봉을 합산한 보유기간 기준 `MFE`, `MAE`를 기록한다.
-  - 완료된 부분: `MarkToMarketBarProvider` contract(`services/backtest_period_runner.py`)와 `BacktestPeriodRunner` 통합으로, 주입 시 중간 보유일 일중 high/low를 MFE/MAE에 합산한다(미주입 시 기존 동작 유지).
-  - 완료된 부분: `StockQueryDailyMtmBarProvider`가 `StockQueryService.get_recent_daily_ohlcv` 기반 일봉 high/low를 `MarkToMarketBarProvider` contract로 제공하고, `scripts/run_backtest.py` 운영 백테스트에 wiring한다.
-- [x] backtest-vs-live 괴리 리포트를 운영 판단 지표로 승격한다.
-  - 완료된 부분: `StrategyLogReportService`가 live/backtest 표준 journal을 `analyze_strategy_performance_degradation()`에 넣고, `StrategyLogReportTask`가 after-market 성과 저하 후보를 `AlertSource.STRATEGY_PERF`로 알림한다.
-  - 완료된 부분: `compare_trade_journals()`의 매칭/미매칭/체결가 괴리 신호를 성과 저하 후보 `backtest_live_divergence` metadata와 `backtest_live_divergence` reason에 추가 연결한다.
-- [x] 비용 포함 순수익(`cost`, `net_pnl`, `net_return`)을 기본 성과 기준으로 사용한다.
-
-주요 파일:
-
-- `strategies/backtest_data_provider.py`
-- `services/strategy_log_report_service.py`
-- `task/background/after_market/strategy_log_report_task.py`
-- `repositories/*`
-- `utils/transaction_cost_utils.py`
-
-### 0-3. 체결 시뮬레이터와 포트폴리오 장부
-
-- [x] 체결 시뮬레이터를 분리한다: 지정가/시장가, 당일 고가·저가 도달 여부, 거래량 기반 부분체결, 미체결, current/next bar 정책을 명시한다.
-- [x] 포트폴리오 단위 현금/보유/예약주문 장부를 만든다. 동시 신호 발생 시 자금 부족, 전략별 max positions, 우선순위 정렬을 재현한다.
-- [x] 리스크 게이트와 포지션 사이징을 백테스트에서도 동일하게 호출하거나, 동일 contract의 dry-run 구현으로 검증한다.
-- [x] 활성 전략군용 기간 백테스트 runner를 만든다.
-
-주요 파일:
-
-- `services/backtest_execution_simulator.py`
-- `services/backtest_period_runner.py`
-- `services/backtest_replay_adapter.py`
-- `scripts/run_backtest.py`
-- `tests/unit_test/services/test_backtest_execution_simulator.py`
-- `tests/unit_test/services/test_backtest_period_runner.py`
-- `tests/unit_test/services/test_backtest_replay_adapter.py`
-- `tests/unit_test/scripts/test_run_backtest.py`
-- `strategies/debug/strategy_debug_runner.py`
-- `strategies/debug/rejection_report.py`
-- `scripts/run_strategy_debug.py`
-- `utils/transaction_cost_utils.py`
-- `common/trade_journal_schema.py`
-
-### 0-4. Kill Switch 손익 hook 연결 검증
-
-- [x] `KillSwitchService.record_trade_result(profit_won, code, strategy, account_balance_won)` 가 모든 매도 체결/정산 경로에서 호출되는지 검증한다.
-- [x] `KillSwitchService.record_strategy_trade_result(strategy_name, pnl_won)` 를 전략 매도 정산 시점에서 호출한다.
-  - 현재 상태: 메서드는 구현되어 있으나 호출 지점이 없어 전략 KS가 실제 손익을 인식하지 못함.
-  - 연결 후보: `OrderExecutionService` 체결 확정 콜백 또는 `VirtualTradeService` 매도 정산 시점.
-  - 전제 조건: P0 `inquire-daily-ccld` 실전 응답 확보 후 체결 확정 시점이 명확해지면 실전 경로까지 연결.
-- [x] 매도 체결 완료 → 실현손익 계산 → KillSwitch 기록 → 전략별 연속 손실/일손실 반영 → 한도 초과 시 전략·주문 차단 흐름을 회귀 테스트로 고정한다.
-
-주요 파일:
-
-- `services/kill_switch_service.py`
-- `services/order_execution_service.py`
-- `services/virtual_trade_service.py`
-- `tests/unit_test/services/test_kill_switch_service.py`
-- `tests/unit_test/services/test_order_execution_service.py`
-
-### 0-5. 주문 상태와 잔고 대사 E2E 검증
-
-- [x] 실전 fixture 기반으로 주문 접수, 부분체결, 전체체결, 미체결, 취소/거부 상태 전이를 검증한다.
-- [x] 주문 접수만으로 보유/체결을 확정하지 않는 기존 FSM 동작을 실전 응답 fixture로 재검증한다.
-- [x] 재시작 후 미체결 주문과 잔고 restore/reconcile 결과가 신규 주문 차단 또는 경고 상태로 이어지는지 end-to-end 검증을 보강한다.
-- [x] reconcile task 실패 자체가 주문 차단 또는 명시 경고 상태로 이어지는 정책을 운영 매트릭스로 확정한다.
-- [x] `OrderStateMachine.safe_transition()` mismatch escalation을 정책화한다.
-  - 검토 결과: 부분 타당. `safe_transition()`은 invalid transition/key error를 warning + mismatch count 증가 + no-op으로 처리한다. `FillReconciliationService`에는 mismatch alarm과 2회 연속 mismatch 처리 일부가 있으나, safe transition 실패 자체의 주문별 escalation 정책은 명확하지 않다.
-  - 완료된 부분: 같은 주문 1회 warning, 2회 force reconcile flag, 3회 critical 알림 + 수동 해제 필요 reconcile alarm으로 신규 주문 차단을 테스트로 고정한다.
-  - 후속 검토: 운영 reset API/CLI가 `reset_reconcile_alarm()`과 `OrderStateMachine.clear_safe_transition_mismatch(order_key)`를 함께 호출하도록 노출한다.
-
 ### 0-6. Emergency 전체청산 모드
 
 - [~] `sell_all_stocks()`에 운영 목적별 청산 모드를 분리한다.
@@ -156,73 +55,6 @@
 전략을 더 추가하기보다 현재 전략의 기대값, MDD, 승률, 손익비, 시장 국면별 성과를 먼저 검증합니다.
 
 
-
-### 1-0. 실거래 투입 전 전략별 수익성 통과 기준
-
-- [x] 전략별 “돈 버는 기준선”을 명시하고, 기준 미달 전략은 실계좌 자동주문 대상에서 제외한다.
-  - 검토 결과: 타당. 현재 P1에 walk-forward, Monte Carlo, 국면별 성과 검증은 있으나 “통과/탈락 기준”이 약하다. 실전 투입 판단에는 절대 수익보다 비용·슬리피지·미체결 반영 후에도 기대값이 남는지가 핵심이다.
-  - 최소 기준 후보: 전략별 충분한 표본 수, out-of-sample Profit Factor, 평균 손익비, MDD, 비용 반영 후 기대값, 슬리피지 2배 스트레스, KOSPI/KOSDAQ 대비 초과수익, 하락장 손실 제한.
-  - 산출물: 전략별 `거래 수 / CAGR 또는 기간수익률 / MDD / PF / 승률 / 평균손익비 / 비용·슬리피지 후 성과 / 시장 국면별 성과` 표.
-  - 1차 완료: `services/strategy_profitability_gate_service.py` 추가. 표준 journal의 SOLD 기록 기준으로 `min_trades`, Profit Factor, payoff ratio, win rate, 평균 net return, total net PnL, MDD, Monte Carlo ruin probability/worst MDD, regime별 손익 기준을 평가해 `pass` / `fail` / `insufficient_sample`을 반환한다.
-  - 1차 완료: `scripts/run_backtest.py --profitability-gate` 옵션 추가. 일반 기간 백테스트는 전체 journal, walk-forward는 test phase journal만 기준선 판정에 사용하고 console/json 출력에 `profitability_gate`를 포함한다.
-  - 완료된 부분: `StrategyLiveExpansionGateService`를 추가하고 `StrategyScheduler`에 연결했다. paper/dry-run은 허용하고, real 모드에서는 수익성 gate 결과가 없거나 미통과인 전략의 신규 scan/BUY 주문을 fail-closed로 차단한다. 기존 보유 청산/force-exit 경로는 차단하지 않는다.
-- [x] P1 수익성 검증을 실전 확대 gate로 승격한다.
-  - 정책: P0 주문 안정성 완료 후에도, P1 수익성 기준을 통과하지 못하면 full-auto/자금 확대 금지. 허용 범위는 backtest, paper/shadow, 제한적 소액 canary까지로 둔다.
-  - 완료된 부분: `StrategyFactory`가 표준 journal provider(`VirtualTradeService.get_standard_journal_records`)와 `strategy_profitability_gate` 설정을 사용해 live expansion gate를 scheduler에 주입한다. 향후 backtest gate 결과 저장소가 별도 구축되면 provider만 교체한다.
-
-### 1-1. 과최적화 방지 검증
-
-- [x] 전략별 ablation test를 추가한다.
-  - 예: O'Neil PP/BGU의 smart money, execution strength, market timing, BGU/PP 조건을 하나씩 제거해 실제 기여도를 확인한다.
-  - 완료된 부분: `services/strategy_ablation_service.py`(`AblationVariant`/`AblationPreset`/`apply_config_overrides`/`ForceMarketTimingOkUniverseWrapper`/`compute_ablation_summary`) 추가. `scripts/run_backtest.py`에 `--ablation`/`--ablation-variants` 옵션과 baseline 대비 metric delta 출력(console/JSON) 연결.
-  - 완료된 부분: 활성 7개 전략 전부에 preset 추가 — `oneil_pocket_pivot`(5 variants), `oneil_squeeze_breakout`(4), `high_tight_flag`(5), `first_pullback`(5), `larry_williams_vbo`(4), `rsi2_pullback`(3), `larry_williams_channel_breakout`(4). 각 preset 은 가능하면 `disable_smart_money`/`disable_execution_strength`/`disable_market_timing`/`disable_volume_filter` 패턴을 따르고, 전략 고유 게이트(예: HTF `relax_pattern_check`, FirstPullback `widen_pullback_range`, RSI2 `disable_minervini_stage2`/`disable_rsi_oversold`, CB `disable_adx_filter`/`disable_rs_rating`)는 별도 variant 로 둔다.
-- [x] parameter stability surface를 리포트한다.
-  - 특정 임계값 하나에서만 성과가 튀는 전략은 실전 후보에서 제외하거나 canary로만 둔다.
-  - 완료된 부분: `services/parameter_stability_service.py`(`StabilitySweepDimension`/`StabilitySweepPreset`/`compute_stability_summary`) 추가. baseline 주변 5-point sweep 의 `total_net_pnl` 기준 raw surface 와 `stable`/`spike`/`cliff`/`edge` 분류(가벼운 정책: 인접점 sign-flip 또는 ≥80% 하락 시 cliff, 양쪽 ≥50% 하락 + baseline/이웃평균 ≥2.0 시 spike) 를 출력.
-  - 완료된 부분: 활성 7개 전략 전부에 `strategies/<key>_parameter_stability.py` preset(각 3 dimension × 5 sweep 점) 추가 — `oneil_pocket_pivot`(pp_ma_proximity_upper_pct/bgu_gap_pct/execution_strength_min), `oneil_squeeze_breakout`(volume_breakout_multiplier/execution_strength_min/osb_max_extension_pct), `high_tight_flag`(pole_min_surge_ratio/flag_max_drawdown_pct/volume_breakout_multiplier), `first_pullback`(pullback_upper_pct/rapid_surge_pct/execution_strength_min), `larry_williams_vbo`(k_value/confidence_threshold/program_buy_ratio), `rsi2_pullback`(rsi_threshold/hard_stop_pct/take_profit_ma_period), `larry_williams_channel_breakout`(adx_threshold/volume_multiplier/rs_rating_min).
-  - 완료된 부분: `scripts/run_backtest.py` 에 `--parameter-stability`/`--parameter-stability-dimensions` 옵션, sweep 점마다 `AblationVariant(config_overrides={dim.parameter: value})` 를 합성해 기존 `make_runner(variant=...)` 재사용. console/JSON 출력에 baseline 대비 dimension 별 metric 표 + stability flag 노출.
-  - 완료된 부분: hard gate 통합 — `strategy_profitability_gate` 가 parameter stability summary의 `spike`/`cliff` dimension을 차단 사유(`parameter_stability_<flag>:<dimension>`)로 반영한다. 기본값은 report 결과가 있을 때만 적용하며, `block_parameter_stability_flags=[]` 로 report-only 운용도 가능하다.
-- [x] purged/embargo cross-validation 또는 종목·기간 누수 방지 규칙을 walk-forward 검증에 추가할지 검토한다.
-  - 완료된 부분: `BacktestWalkForwardConfig.embargo_days`와 `scripts/run_backtest.py --wf-embargo-days` 옵션을 추가했다. 1차 정책은 tune/test 경계 사이의 N거래일을 test에서 제외해 contiguous 검증 누수를 줄이는 방식이며, 기본값 0은 기존 동작을 유지한다.
-- [x] Deflated Sharpe / PBO 같은 다중 전략 실험 착시 방지 지표를 도입할지 검토한다.
-  - 완료된 부분: 1차 report-only proxy로 `compute_multiple_testing_bias_summary()`를 추가했다. 여러 전략 trial 중 best `total_net_pnl`이 median 대비 과도하게 크거나 median이 비양수인데 best만 양수인 경우 `multiple_testing_bias_warning`을 profitability gate top-level warning으로 노출한다. 정식 Deflated Sharpe/PBO hard gate는 표본·실험 로그 축적 후 별도 검토한다.
-- [x] regime-balanced validation을 추가한다.
-  - 완료된 부분: `compute_regime_balance_summary()`를 추가해 필수 국면별 최소 표본 충족 여부(`balanced_pass`, `missing_regimes`, `weak_regimes`)를 산출한다. `strategy_profitability_gate`는 기본 필수 국면(`KOSPI_BULL`, `KOSDAQ_BULL`, `SIDEWAYS`, `BEAR`)과 `regime_balance_min_trades=5` 기준으로 report warning(`regime_balance_incomplete`)을 노출하되, 1차에서는 hard block으로 쓰지 않는다.
-  - 상승장 데이터에만 최적화된 전략이 횡보/하락장에서 손실을 키우지 않는지 분리 검증한다.
-
-### 1-2. 포트폴리오 단위 리스크 확장
-
-- [x] 총 노출 한도 외에 포트폴리오 집중도 리스크를 추가한다.
-  - 후보: 섹터/테마 집중도, KOSPI/KOSDAQ 비중, 전략 간 상관관계, 시장 베타, 당일 신규 진입 횟수, 연속 손절 후 쿨다운, 장초반/장마감 별도 리스크.
-  - 검토 결과: 타당. HTF, VBO, Pocket Pivot이 모두 강한 모멘텀 종목군을 고르면 전략은 여러 개여도 포트폴리오 관점에서는 같은 베팅이 될 수 있다.
-  - 1차 완료: `BacktestPortfolioLedger.reserve_buy_orders()`가 동일 종목 배치 신호, 기존 보유 종목 추가 진입, 기존 예약 주문과의 중복을 `PortfolioDecision.warnings`로 report-only 기록한다. hard block은 하지 않는다.
-  - 2차 완료: `compute_portfolio_concentration_summary()`를 추가해 백테스트 portfolio summary에 cost-basis 기준 총 노출, 단일 포지션 최대 비중, 전략별 최대 비중, threshold warning을 report-only로 포함한다.
-  - 3차 완료: `compute_strategy_correlation_summary()`를 추가해 profitability gate top-level report에 전략 간 일자별 `net_return` 상관을 포함한다. overlap 표본이 충분하고 양의 상관이 threshold 이상이면 `strategy_correlation_high` warning을 노출한다.
-  - 4차 완료: `compute_portfolio_entry_pressure_summary()`를 추가해 profitability gate top-level report에 일자별 신규 BUY 진입 수를 포함한다. 하루 신규 진입이 threshold 이상이면 `portfolio_daily_entry_pressure_high` warning을 노출한다.
-  - 5차 완료: `compute_portfolio_cooldown_summary()`를 추가해 profitability gate top-level report에 전략별 연속 손실 streak을 포함한다. 연속 손실이 threshold 이상이면 `portfolio_consecutive_loss_cooldown_candidate` warning을 노출한다.
-  - 6차 완료: `compute_portfolio_concentration_summary()`를 확장해 portfolio concentration report에 KOSPI/KOSDAQ/UNKNOWN 시장별 비중을 포함한다. 분류된 시장 비중이 threshold 이상이면 `market_concentration_high` warning을 노출한다.
-  - 7차 완료: `compute_portfolio_entry_pressure_summary()`를 확장해 장초반(09:00~10:00)과 장마감(14:30 이후) 신규 BUY 진입 압력을 report-only로 포함한다. 시간대별 threshold 이상이면 `portfolio_opening_entry_pressure_high` / `portfolio_closing_entry_pressure_high` warning을 노출한다.
-  - 8차 완료: `compute_portfolio_concentration_summary()`를 확장해 포지션 metadata 기반 섹터/테마별 노출 비중을 report-only로 포함한다. 분류된 섹터/테마 비중이 threshold 이상이면 `sector_concentration_high` / `theme_concentration_high` warning을 노출하고, 미분류(`UNKNOWN`)만 높은 경우는 경고하지 않는다.
-  - 9차 완료: `compute_market_beta_summary()`를 추가해 표준 SOLD journal의 `market_return`/`benchmark_return` metadata가 있을 때 포트폴리오 및 전략별 시장 베타를 report-only로 계산한다. threshold 이상이면 `portfolio_market_beta_high` / `strategy_market_beta_high` warning을 노출하고, 기준시장 수익률 표본 부족 또는 분산 0인 경우는 경고 없이 상태만 보고한다.
-- [x] 전략 간 중복 신호/동일 종목/동일 테마 진입을 포트폴리오 의사결정 단계에서 리포트한다.
-  - 1차는 hard block보다 “동시 노출 경고 + journal metadata”로 시작한다.
-  - 완료된 부분: 기간 백테스트 runner와 strategy debug runner가 `same_code_batch_signal` / `same_code_existing_position` / `same_code_pending_order`를 표준 journal `metadata.portfolio_warnings`에 남긴다. 동일 테마/섹터 리포트는 테마 매핑 데이터 확보 후 확장한다.
-
-### 1-3. `TradeSignal` / `PositionSizingService` 수량 contract 표준화
-
-- [x] 전략은 매수 사유, 기준가, 손절 기준, 신뢰도만 생성하고 최종 수량은 `PositionSizingService`가 전담하는 구조로 정리한다.
-- [x] 향후 `TradeSignal` 확장 후보를 검토한다: `stop_price`, `risk_pct`, `confidence`.
-  - 결정: 본 PR에서는 미도입. `stop_loss_pct`/`atr_multiplier`가 이미 존재해 stop 거리 계산에 충분. 후속 PR에서 `Optional[...]` 추가 시 backward-compat 유지 가능.
-- [x] 확장 필드는 즉시 구현하지 않고 sizing 구조 개편 시 backward-compatible migration 계획을 함께 세운다.
-  - 계획: 모든 신규 필드는 `Optional[...] = None`으로 추가, 기존 47개 construction site 영향 없음.
-- [x] 기존 `qty` 의미를 “전략 상한”으로 유지할지 “요청 수량 없음/무제한”을 표현할지 결정하고 테스트로 고정한다.
-  - 결정: `qty: Optional[int] = None`. `None`=sizing 단독 결정, `int`=전략의 자발적 상한. 테스트로 invariant 고정 완료.
-
-주요 파일:
-
-- `common/types.py`
-- `services/position_sizing_service.py`
-- `scheduler/strategy_scheduler.py`
 
 ### 1-4. 시장 국면별 전략 성과 분해
 
@@ -317,23 +149,7 @@
 
 ## P2. 시스템 성능
 
-성능 개선의 핵심은 후보군 관리 신규 구축이 아니라, 이미 있는 후보군/구독 정책을 전체 전략과 실시간 snapshot 구조에 연결하는 것입니다.
-
-### 2-1. 후보군/구독 정책 공통 파이프라인 확장
-
-- [x] `OneilUniverseService`의 Pool A, Pool B, Watchlist 병합 구조를 O'Neil 계열뿐 아니라 전체 전략 공통 후보군 파이프라인으로 확장할지 설계한다.
-  - 결정: generic `CandidateUniverseService` 및 `RankingCacheService` 미도입. 모든 활성 전략(HTF, FirstPullback, LarryWilliamsVBO, RSI2Pullback, LarryWilliamsCB, OSB, PP)이 이미 `OneilUniverseService.get_watchlist()`를 사용하며 `strategy_oneil` 카테고리로 구독 등록됨. O'Neil Pool A/B 구조는 O'Neil 전용 필드를 동반하므로 일반화 불필요.
-  - 행동: `VolumeBreakoutLiveStrategy`, `TraditionalVolumeBreakoutStrategy`, `ProgramBuyFollowStrategy` 3개 전략을 스케줄러 등록에서 제거함 (2026-05-05). 전략 클래스 파일과 테스트는 유지.
-- [x] `SubscriptionPolicy`의 보유종목, 전략 감시종목, UI 관심종목 우선순위와 참조 카운팅을 전체 전략 구독 정책에 일관 적용한다.
-  - 결과: 스케줄러에 등록된 모든 활성 전략이 `get_watchlist()` → `sync_subscriptions("strategy_oneil", MEDIUM)` 경로로 이미 일관 적용됨. `test_get_watchlist_syncs_subscriptions`로 검증됨.
-- [x] 기존 후보 부족 관찰 항목은 Pool B 튜닝 후보로 유지하고, 신규 후보군 구축 과제로 중복 등록하지 않는다.
-
-주요 파일:
-
-- `services/oneil_universe_service.py`
-- `services/subscription_policy.py`
-- `services/price_subscription_service.py`
-- `repositories/streaming_stock_repo.py`
+API 호출 최적화와 polling → event-driven 전환을 통해 운영 안정성과 처리량을 개선합니다.
 
 ### 2-2. API 호출 최적화
 
@@ -407,19 +223,6 @@
 - `strategies/high_tight_flag_strategy.py`
 - `strategies/larry_williams_channel_breakout_strategy.py`
 
-### 2-3. Market snapshot 표준화
-
-- [x] 기존 `PriceStreamService`의 `get_cached_price()` / `cache_price_snapshot()` 구조를 중복 구현하지 않고, 전략 공통 snapshot contract로 승격할 방법을 설계한다.
-- [x] WebSocket / REST / DB snapshot 입력을 한곳에서 표준화해 현재가, 거래량, 거래대금, 고가, 저가, 체결강도, 데이터 시각을 같은 형태로 제공한다.
-- [x] 전략은 REST 직접 조회보다 snapshot provider를 우선 참조하고, stale/missing reason을 rejected reason으로 남긴다.
-
-주요 파일:
-
-- `services/price_stream_service.py`
-- `services/execution_flow_service.py`
-- `services/data_quality_service.py`
-- `view/web/web_app_initializer.py`
-
 ### 2-4. Polling에서 event-driven으로 점진 전환
 
 - [x] 체결 이벤트 수신 → snapshot 업데이트 → 후보군 상태 갱신 → 전략 조건 평가 → RiskGate → 주문 → 체결/잔고/손익 대사 흐름을 목표 아키텍처로 문서화한다.
@@ -479,84 +282,7 @@
 
 ## P3. 유지보수성
 
-기능이 늘어난 만큼 초기화 조립부와 주문 실행부의 책임을 줄여 테스트와 리팩토링 누락 위험을 낮춥니다.
-
-### 3-1. `WebAppContext` / `web_app_initializer` 분리
-
-- [x] 환경 로드, 브로커 생성, 서비스 조립, 전략/태스크 등록, 알림 설정, 스케줄러 초기화를 단계별 bootstrap으로 분리한다.
-  - `ConfigBootstrap`, `BrokerBootstrap`, `ServiceContainer`, `SchedulerBootstrap`, `StrategyFactory`, `WiringPhase` 추출 완료 (`view/web/bootstrap/`).
-  - `WebAppContext` 의 5개 초기화 메서드 (`load_config_and_env`, `_bootstrap_broker`, `_bootstrap_services`, `_bootstrap_schedulers`, `initialize_scheduler`) 모두 신규 모듈에 위임만 한다.
-  - `web_app_initializer.py` 1238라인 → 약 530라인 (57% 감소).
-  - `WebBootstrap` (전체 orchestrator) 는 도입하지 않음 — `initialize_services()` 가 이미 14줄 thin orchestrator 라 추가 모듈마트 분리 시 의미있는 커플링 감소 없음.
-- [x] `BrokerFactory`, `ServiceContainer`, `StrategyFactory`, `SchedulerBootstrap`, `WebBootstrap`, `ConfigBootstrap` 분리 후보를 검토한다.
-  - `ConfigBootstrap`, `BrokerBootstrap` (`BrokerFactory` 역할), `ServiceContainer`, `SchedulerBootstrap`, `StrategyFactory` 5개 도입.
-  - `WebBootstrap` 은 비용 대비 효익이 낮아 won't fix.
-- [x] 후주입 방식 서비스 연결을 줄이고, 누락 시 테스트에서 빨리 드러나도록 생성 contract를 명확히 한다.
-  - `WiringPhase` 추출 (`view/web/bootstrap/wiring_phase.py`) — 후주입 14개 wire 를 한곳에 모음. `ServiceContainer.run()` → `WiringPhase.run()` 순서로 위임.
-  - 직접 속성 변경 3곳을 setter 로 교체: `MarketDataService.set_data_quality_service`, `MinerviniStageService.set_minervini_update_task`, `MinerviniUpdateTask.set_daily_price_collector_task`.
-  - 14개 wire 마다 단위 테스트 추가 (`tests/unit_test/view/web/bootstrap/test_wiring_phase.py`) — 누락 시 즉시 실패한다.
-  - 진성 순환 의존 자체의 생성자 주입 전환은 consumer API 변경을 수반하므로 별도 PR 로 분리한다 (이번 영역 외).
-
-주요 파일:
-
-- `view/web/web_app_initializer.py`
-- `view/web/web_main.py`
-- `view/web/bootstrap/config_bootstrap.py` (신규)
-- `view/web/bootstrap/broker_bootstrap.py` (신규)
-- `view/web/bootstrap/service_container.py` (신규)
-- `view/web/bootstrap/scheduler_bootstrap.py` (신규)
-- `view/web/bootstrap/strategy_factory.py` (신규)
-- `view/web/bootstrap/wiring_phase.py` (신규)
-- `tests/unit_test/view/web/test_web_app_initializer.py`
-- `tests/unit_test/view/web/bootstrap/test_config_bootstrap.py` (신규)
-- `tests/unit_test/view/web/bootstrap/test_broker_bootstrap.py` (신규)
-- `tests/unit_test/view/web/bootstrap/test_service_container.py` (신규)
-- `tests/unit_test/view/web/bootstrap/test_scheduler_bootstrap.py` (신규)
-- `tests/unit_test/view/web/bootstrap/test_strategy_factory.py` (신규)
-- `tests/unit_test/view/web/bootstrap/test_wiring_phase.py` (신규)
-
-### 3-2. 웹 / 운영 / 전략 runtime 경계 분리
-
-- [x] 웹 화면/API, 장중 전략/주문 실행, 장마감 데이터 수집/리포트, 수동 운영 점검 runtime 경계를 명확히 한다.
-  - 1차 완료: `view/web/bootstrap/runtime_mode.py` 의 `RuntimeMode` enum (WEB / TRADING / BATCH / ALL) 로 15 개 task (`SchedulerBootstrap` 등록 14 + `StrategyFactory` 등록 1) 의 runtime 소유권 명시.
-  - 1차 완료: `SchedulerBootstrap.run()` 을 `_register_web_tasks`/`_register_trading_tasks`/`_register_batch_tasks`/`_register_websocket_watchdog` 4 개 그룹 메서드로 분리. websocket_watchdog 은 WEB | TRADING 양쪽 mode 에서 1 회만 등록.
-  - 1차 완료: `StrategyFactory.build()` 가 TRADING 비활성 시 즉시 return (StrategyScheduler / 7 개 전략 / Adapter 모두 미생성).
-  - 2차 완료: `ServiceContainer` 가 runtime mode 에 따라 task 생성을 일부 분기한다. BATCH 단독은 realtime chain(`StreamingService`, `PriceStreamService`, `PriceSubscriptionService`, `WebSocketWatchdogTask`)과 WEB/TRADING task를 만들지 않고, WEB 단독은 realtime chain + `NotificationQueueTask`만 유지하며 장중/장마감 task를 만들지 않는다. `WiringPhase` 는 realtime chain 이 없는 BATCH 단독 컨텍스트를 no-op 으로 통과한다.
-  - 완료: `TRADING` 단독 `ServiceContainer` contract 테스트 추가. TRADING 은 realtime chain + 장중 task(`PreMarketHealthCheckTask`, `OpeningPositionReconcileTask`, `CacheWarmupTask`)를 만들고, WEB 알림 task와 장마감 task는 만들지 않는다.
-  - 완료: `web_app.py`, `trading_runtime.py`, `batch_runtime.py`, `admin_runtime.py` 진입점 추가. 각 진입점은 `runtime_entrypoint.py` 를 통해 `RUNTIME_MODE` 를 명시하고 기존 FastAPI bootstrap 으로 위임한다. admin runtime 은 현재 WEB surface 를 사용하되 TRADING/BATCH scheduler 를 비활성화한 운영 점검 모드로 정의한다.
-  - 결정: `OrderExecutionService`, `StockQueryService`, `OneilUniverseService`, `RankingTask` 같은 도메인/조회 서비스는 mode 별 task 등록과 별개인 공통 조립 계층으로 유지한다. API surface, 전략 생성, background task 등록이 mode boundary 를 담당한다.
-- [x] 웹 서버 초기화가 모든 after-market task와 장중 scheduler를 직접 끌어안지 않도록 분리한다.
-  - 1차 완료: `web_main.py` lifespan 이 `RUNTIME_MODE` env (default `ALL` = 현행 동작 100% 유지) 를 읽어 `WebAppContext(runtime_mode=...)` 로 주입. mode 별로 task 등록과 StrategyScheduler 생성을 분기.
-  - 1차 완료: `BackgroundScheduler` / `ForegroundScheduler` 객체 생성은 mode 와 무관하게 항상 수행 (foreground middleware 가 rate-limit 경합 제어에 의존).
-  - 1차 완료: 가격 구독 초기화 (`_initialize_price_subscriptions`) 는 WEB | TRADING 에서만 호출. BATCH 단독에서는 생략.
-  - 안전성 정책: `restore_state_from_broker` / `reconcile_orders_with_broker` 는 WEB | TRADING 어느 한쪽이라도 켜져 있으면 항상 호출 (`/api/order` 가 WEB 에서 살아 있는 한 stale 주문 상태 위험 차단). "WEB_ONLY = read-only" 정책 확정 시에만 TRADING 단독 gate 로 좁힐 수 있음.
-  - 완료: 별도 runtime 진입점 파일을 제공해 프로세스 매니저가 WEB/TRADING/BATCH/Admin 을 분리 실행할 수 있게 했다. cross-runtime IPC/event bus 는 현재 단일 DB/log 기반 운영에 불필요하므로 3-2 완료 범위에서 제외하고, 다중 프로세스 간 실시간 상태 공유가 필요해질 때 별도 P3/P4 항목으로 승격한다.
-
-분리된 진입점:
-
-- `web_app.py` — 화면/API
-- `trading_runtime.py` — 장중 전략/주문 실행
-- `batch_runtime.py` — 장마감/데이터 수집/리포트
-- `admin_runtime.py` — 수동 조작/점검 (현재 WEB surface + TRADING/BATCH 비활성)
-
-### 3-3. 주문 서비스 역할 분리
-
-- [x] `OrderExecutionService`에서 validator, risk, sizing, submit, state machine, fill reconciliation, execution quality reporting 책임을 단계적으로 분리한다.
-  - PR #412 (5 phase) 완료. `OrderExecutionService` 2006 → 697줄 (-1309, 65% 축소). facade 패턴 유지로 view/web/routes/, scheduler/, web_app_initializer.py 변경 0줄.
-- [x] 주문 수량 상한, 중복 주문 방지 키, 같은 전략/같은 종목 동시 재진입 방지, 체결 확인/잔고 반영 분리 기준을 명확히 한다.
-  - 양방향 차단 (buy 진행 중 sell, sell 진행 중 buy) 은 `OrderStateMachine.lookup_by_side` 로 분리.
-  - intent 중복은 `OrderStateMachine.intent_to_order_key` / `register_intent`.
-  - 체결 확인/잔고 반영은 `FillReconciliationService.apply_execution_report` / `handle_signing_notice` 로 분리.
-- [x] 분리 전후로 기존 주문 안전장치 테스트가 그대로 통과하도록 단위 테스트를 먼저 보강한다.
-  - Phase 0 에서 양방향 차단 + 동시 호출 직렬화 2개 테스트 선보강. 모든 Phase 종료 후 단위 4615 + 통합 233 GREEN.
-
-도입된 서비스 (분리 후보 vs 실제):
-
-- `ExecutionQualityReporter` ✅ (`services/execution_quality_reporter.py`, 281줄)
-- `BrokerOrderSubmitter` ✅ (`services/broker_order_submitter.py`, 170줄) — 원안의 `OrderSubmitter`
-- `OrderStateMachine` ✅ (`services/order_state_machine.py`, 311줄)
-- `FillReconciliationService` ✅ (`services/fill_reconciliation_service.py`, 860줄)
-- `OrderSubmissionCoordinator` ✅ (`services/order_submission_coordinator.py`, 350줄) — 원안에는 없던 코디네이터. validator(`OrderValidator`)·`RiskGateAdapter`·`PositionSizingAdapter` 별도 클래스 추출 없이 Coordinator 가 `data_quality_service`, `order_policy_service`, `risk_gate_service`, `position_sizing_service` 를 직접 호출하는 방식으로 흐름만 분리. 별도 어댑터 도입 비용 대비 효익이 낮아 won't fix.
+활성 전략의 공통 실행 contract 표준화 — 신규 전략 추가 시 누락 위험을 낮춥니다.
 
 ### 3-4. 전략 공통 lifecycle/state contract
 
@@ -655,31 +381,6 @@
 - `tests/unit_test/services/test_strategy_performance_degradation_service.py`
 - `tests/unit_test/task/background/after_market/test_strategy_log_report_task.py`
 
-### 4-2. Rejected reason 리포트
-
-- [x] 거래량 부족, 거래대금 부족, Stage Guard 탈락, RS Rating 부족, 시장 타이밍 OFF, RiskGate 차단, 현금 부족, 동일 종목 재진입 차단, 호가/체결강도 불량을 rejected reason으로 표준화한다.
-  - `services/strategy_log_report_service.py` `_REASON_KR`에 `insufficient_trading_value`, `rs_rating_low`, `market_timing_off`, `risk_gate_blocked`, `insufficient_cash`, `duplicate_entry_blocked`, `stage_blocked` 추가
-  - `strategies/debug/rejection_collector.py` `CAPTURED_EVENTS`에 `liquidity_blocked` 추가
-  - `strategies/debug/rejection_report.py` `_STAGE_LABELS`·`_event_label()` 업데이트
-  - `strategies/strategy_executor.py` reason 문자열 → canonical code 교체 (`min_trading_value_won` → `insufficient_trading_value`, `min_avg_volume` → `insufficient_volume`)
-- [x] 전략별/일자별 rejected reason 분포를 리포트한다.
-  - `services/rejection_distribution_service.py` 신규: `record()` / `get_distribution()` / `flush_to_file()` / `attach_to_strategy_logger()`
-  - `task/background/after_market/strategy_log_report_task.py`: 장 마감 후 `flush_to_file()` 호출
-  - `view/web/web_app_initializer.py`: 서비스 초기화 및 `attach_to_strategy_logger()` 연결
-  - 저장 경로: `logs/strategies/rejections/YYYYMMDD.jsonl`
-- [x] `run_strategy_debug`와 운영 대시보드에서 rejected reason을 같은 필드명으로 표시한다.
-  - `view/web/routes/strategy_report.py` 신규: `GET /api/strategies/rejected-reasons?strategy=&date=YYYYMMDD`
-  - 필드명 `reason_code`, `count`, `label_kr`, `strategy`로 `format_json()` 규약과 통일
-
-### 4-3. 운영 대시보드와 알림
-
-- [x] OperatorAlertService(dedup·전이 이벤트), 운영자 대시보드 페이지(/operator), Kill Switch·Risk Gate·Reconcile·WebSocket Watchdog를 operator_alert_service에 연결
-- [x] 알림은 신규 차단, 위험도 상승, 자동 해제/복구를 구분해 중복 발송을 줄인다.
-- [x] 전략별 성과 저하 알림 — `StrategyLogReportTask`에서 `AlertSource.STRATEGY_PERF`로 연결
-- [x] 데이터 품질 차단 알림 — `DataQualityService` 위반율 집계(N건/M초) 후 임계값 초과 시 `AlertSource.DATA_QUALITY`로 연결
-  - 기본값: 동일 reason 위반 60초 내 5건 이상, 동일 reason 알림 cooldown 60초.
-  - `WebAppContext`에서 `DataQualityService`에 `operator_alert_service`를 주입한다.
-
 ### 4-4. 실전 운영 Runbook / Canary 절차
 
 - [x] 실전 운영 runbook을 작성한다.
@@ -708,31 +409,29 @@
 
 ## 바로 착수 추천 순서
 
-1. P0 체결 추적/청산 안전성
-   - 실전 체결 이력 fixture 확보 및 민감정보 제거 (blocked)
-   - 실전 fixture 기반 주문번호, 종목코드, 매수/매도, 체결/미체결/취소/거부 필드 매핑 확정 (blocked)
-   - broker order number mapper를 별도 mapper 클래스로 분리하고 응답 key 변형을 fixture 테스트로 고정
-   - `sell_all_stocks()`에 `safe_sequential` / `bounded_parallel` / `emergency` 모드 분리
+차단되지 않은 즉시 가능 작업이 거의 소진된 상태입니다. 남은 작업은 대부분 외부 데이터/운영 시간/조건부 트리거 대기입니다.
 
-2. P1 백테스트 신뢰도와 한국장 체결 모델
-   - 장중 후보 종목의 프로그램매매 WebSocket 캡처 샘플 확보 (blocked)
-   - 실제 replay fixture에 캡처 overlay를 결합해 통과 케이스 고정 (blocked)
-   - bid/ask book, 호가잔량, VI/상하한가/거래정지, 장초반 market impact fixture로 보정
-   - live/backtest fill quality divergence 리포트로 체결 모델 보수성 확인
+1. **운영 데이터 축적 대기 (코드 작업 없음)**
+   - VBO shadow 5거래일 jsonl 수집 → polling 신호와 parity 비교 (P2 2-4 PR-2.5)
+   - 실전 KIS `inquire-daily-ccld` 체결 이력 응답 캡처 (P0 0-1)
+   - 장중 후보 종목 프로그램매매 WebSocket 샘플 캡처 (P1 1-5)
 
-3. P2 시스템 성능
-   - API budget limiter를 실제 KIS endpoint별 한도와 주문 우선순위 기준으로 보정
-   - EventRouter crossing tick throttle bypass 테스트 추가
-   - event-driven shadow parity/false positive/full gate 차이 로그화
-   - scan/API/cache/fallback/latency metric 운영 관측으로 rate budget 재조정
+2. **외부 데이터 확보 후 즉시 진행 가능**
+   - broker order number mapper 별도 클래스 분리 + fixture 테스트 (P0 0-1)
+   - 실제 replay fixture overlay 결합 → 통과 케이스 고정 (P1 1-5)
+   - 한국장 microstructure fixture 로 체결 모델 보수성 검증 (P1 1-5)
+   - VBO 실 적용 + OSB shadow 진입 (PR-3, P2 2-4)
 
-4. P3/P4 유지보수와 운영 품질
-   - 전략별 성과 저하 감지 지표 집계 (완료)
-   - `WebAppContext` 분리 (완료)
-   - ServiceContainer / Factory 도입 (완료)
-   - `OrderExecutionService` 역할 분리 (완료 — PR #412)
-   - active strategy lifecycle contract 강제 여부 재설계
-   - 운영 bootstrap의 strategy state load barrier / shutdown flush 보장 검증
+3. **조건부 트리거 — 재발 시 진행**
+   - Pool B 거래대금 50→30억 완화 검토
+   - Pool B 정배열 조건을 `current > ma_20d` 중심 완화 검토
+
+4. **코드 작업 가능하나 보류 결정된 항목 (필요 시 재승격)**
+   - active strategy lifecycle 7단계 base class 분해 (외과수술적 변경 원칙으로 보류)
+   - 성과 저하 자동 해제 정책 (P4 4-1, 현재 수동 reset 만)
+   - 성과 저하 시 수량 축소 / paper mode 자동 전환 (P4 4-1)
+   - 거래대금 급증 시장 국면 버킷 활성화 (P1 1-4, market-wide aggregate data contract 정의 필요)
+   - `MomentumStrategy` 등 비활성/레거시 백테스트 통합 여부 결정 (완료 기준)
 
 ---
 
@@ -771,14 +470,3 @@
   - 완료된 부분: after-market reconcile task 오류/불일치 알림 경로는 `tests/unit_test/task/background/after_market/test_after_market_reconcile_task.py` 로 검증된다.
   - 관련 파일: `services/kill_switch_service.py`, `services/data_quality_service.py`, `services/risk_gate_service.py`, `services/order_execution_service.py`, `task/background/intraday/websocket_watchdog_task.py`, `task/background/after_market/after_market_reconcile_task.py`, `docs/reconcile_failure_policy.md`
 
-## HTF 전략 추가 개선 (차후 검토)
-
-- [x] **VCP 타이트함 검증**: 깃발 최근 3~5일 일변동폭(고가-저가) 평균이 깃대 구간 변동폭 대비 현저히 축소되었는지 `_detect_pole_and_flag`에 추가
-  - 완료(2026-05-24): `HTFConfig`에 `vcp_tightness_check_enabled: bool = False`(default off), `vcp_recent_flag_days: int = 5`, `vcp_max_tightness_ratio: float = 0.7` 추가. `_detect_pole_and_flag()`가 깃대 평균 변동폭과 깃발 최근 N일 평균 변동폭을 계산하고 ratio가 임계값 초과 시 None 반환. pattern dict에 `pole_range_avg`, `recent_flag_range_avg`, `vcp_tightness_ratio` 노출. 단위 테스트 2건 추가 (`test_pattern_dict_exposes_vcp_and_ma20_metrics`, `test_vcp_tightness_check_rejects_wide_flag`).
-- [x] **돌파 확인 지연**: pole_high 돌파 후 3~5분간 가격 유지 확인 로직 (현재는 +0.5% 버퍼로 대체)
-  - 완료(2026-05-24): `HTFConfig`에 `breakout_hold_check_enabled: bool = False`(default off), `breakout_hold_minutes: int = 3`, `breakout_hold_min_pct: float = 0.0` 추가. `_check_breakout()`에서 가격 돌파 밴드 통과 직후 `_sqs.get_day_intraday_minutes_list()`로 분봉 조회, 최근 N개 분봉 종가 중 하나라도 `pole_high * (1 + min_pct/100)` 미만이면 `breakout_hold_failed`로 차단. 데이터 부족 시 `breakout_hold_insufficient_data`. 단위 테스트 2건 추가 (`test_scan_breakout_hold_check_rejects_when_below_threshold`, `test_scan_breakout_hold_check_passes_when_all_above_threshold`).
-- [x] **깃발 기간 20MA 지지**: 횡보 구간 최저점이 20일선을 심각하게 훼손하지 않았는지 확인
-  - 완료(2026-05-24): `HTFConfig`에 `ma20_support_check_enabled: bool = False`(default off), `ma20_support_min_pct: float = -2.0` 추가. `_detect_pole_and_flag()`가 깃발 각 일의 그 시점 20일 MA를 계산하고 종가가 ma20 대비 `min_pct` 이하로 떨어진 적이 있으면 None 반환. 데이터 부족 일(window_start < 0)은 skip. pattern dict에 `ma20_min_deviation_pct` 노출. 단위 테스트 1건 추가 (`test_ma20_support_check_rejects_deep_drop`).
-- [x] **이격도 모니터링**: 매수 시그널 발생 시 `(current/pole_high - 1) * 100`을 metrics 로그·대시보드에 노출
-  - 완료(2026-05-24): `_check_breakout()` 매수 시그널 생성 직전 `deviation_from_pole_high_pct = (current / pole_high - 1) * 100`을 계산해 `buy_signal_generated` 이벤트의 `metrics` dict에 추가. `vcp_tightness_ratio`, `ma20_min_deviation_pct`도 함께 노출. 기존 `test_scan_buy_signal`에 metric assertion 추가.
-  - 검증: 단위 5338(이전 5333 → +5 신규), 통합 235 통과.
