@@ -38,6 +38,7 @@ class BacktestBar:
     low: float
     close: float
     volume: int | None = None
+    trading_value: float | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,7 @@ class BacktestExecutionPolicy:
     market_price_field: str = "open"
     round_to_tick: bool = True
     opening_market_slippage_bonus_pct: float = 0.0
+    liquidity_slippage_buckets: tuple[tuple[float, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -137,7 +139,10 @@ class BacktestExecutionSimulator:
             return self._empty_report(order, bar, OrderStatus.UNFILLED, "no_volume")
 
         status = OrderStatus.FILLED if filled_qty == order.qty else OrderStatus.PARTIAL
-        fill_price = self._apply_market_slippage(order, base_price)
+        liquidity_bonus = self._liquidity_slippage_bonus_pct(bar)
+        fill_price = self._apply_market_slippage(
+            order, base_price, liquidity_bonus_pct=liquidity_bonus
+        )
         if self.policy.round_to_tick:
             fill_price = self.round_to_tick(fill_price, side=order.side)
 
@@ -180,7 +185,13 @@ class BacktestExecutionSimulator:
         max_qty = math.floor(bar_volume * participation)
         return min(requested_qty, max_qty)
 
-    def _apply_market_slippage(self, order: BacktestOrder, base_price: float) -> float:
+    def _apply_market_slippage(
+        self,
+        order: BacktestOrder,
+        base_price: float,
+        *,
+        liquidity_bonus_pct: float = 0.0,
+    ) -> float:
         if order.order_type != OrderType.MARKET:
             return base_price
         slip_pct = self.policy.market_slippage_pct
@@ -189,12 +200,25 @@ class BacktestExecutionSimulator:
             and self.policy.market_price_field == "open"
         ):
             slip_pct += self.policy.opening_market_slippage_bonus_pct
+        slip_pct += liquidity_bonus_pct
         if slip_pct <= 0:
             return base_price
         ratio = slip_pct / 100.0
         if order.side == OrderSide.BUY:
             return base_price * (1.0 + ratio)
         return base_price * (1.0 - ratio)
+
+    def _liquidity_slippage_bonus_pct(self, bar: BacktestBar) -> float:
+        buckets = self.policy.liquidity_slippage_buckets
+        if not buckets:
+            return 0.0
+        trading_value = bar.trading_value
+        if trading_value is None and bar.volume is not None and bar.close > 0:
+            trading_value = bar.volume * bar.close
+        if trading_value is None or trading_value <= 0:
+            return 0.0
+        matching = [bonus for threshold, bonus in buckets if trading_value < threshold]
+        return max(matching) if matching else 0.0
 
     def _bar_excursion(
         self,

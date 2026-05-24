@@ -412,3 +412,105 @@ def test_opening_market_slippage_bonus_skipped_when_market_price_field_is_close(
     bar = BacktestBar(timestamp="t", open=10_000, high=10_500, low=9_800, close=12_000, volume=None)
     rep = sim.simulate(order, bar)
     assert rep.fill_price == pytest.approx(12_060.0)
+
+
+def test_liquidity_slippage_bucket_buy_low_trading_value_adds_bonus():
+    policy = BacktestExecutionPolicy(
+        market_slippage_pct=0.0,
+        liquidity_slippage_buckets=((1_000_000_000, 0.5), (5_000_000_000, 0.2)),
+        round_to_tick=False,
+    )
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.BUY, order_type=OrderType.MARKET)
+    bar = BacktestBar(
+        timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200,
+        volume=None, trading_value=500_000_000,
+    )
+    rep = sim.simulate(order, bar)
+    # trading_value 5e8 < 1e9 and < 5e9 → max(0.5, 0.2) = 0.5%
+    assert rep.fill_price == pytest.approx(10_050.0)
+
+
+def test_liquidity_slippage_bucket_no_bonus_above_max_threshold():
+    policy = BacktestExecutionPolicy(
+        market_slippage_pct=0.0,
+        liquidity_slippage_buckets=((1_000_000_000, 0.5), (5_000_000_000, 0.2)),
+        round_to_tick=False,
+    )
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.SELL, order_type=OrderType.MARKET)
+    bar = BacktestBar(
+        timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200,
+        volume=None, trading_value=10_000_000_000,
+    )
+    rep = sim.simulate(order, bar)
+    # trading_value 1e10 >= all thresholds → bonus 0
+    assert rep.fill_price == pytest.approx(10_000.0)
+
+
+def test_liquidity_slippage_bucket_skipped_for_limit_order():
+    policy = BacktestExecutionPolicy(
+        market_slippage_pct=0.0,
+        liquidity_slippage_buckets=((1_000_000_000, 1.0),),
+        round_to_tick=False,
+    )
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=10_000.0, qty=10, side=OrderSide.BUY, order_type=OrderType.LIMIT)
+    bar = BacktestBar(
+        timestamp="t", open=10_000, high=10_500, low=9_500, close=10_200,
+        volume=None, trading_value=100_000_000,
+    )
+    rep = sim.simulate(order, bar)
+    assert rep.fill_price == pytest.approx(10_000.0)
+
+
+def test_liquidity_slippage_falls_back_to_volume_times_close_when_trading_value_missing():
+    policy = BacktestExecutionPolicy(
+        market_slippage_pct=0.0,
+        liquidity_slippage_buckets=((1_000_000_000, 0.5),),
+        round_to_tick=False,
+    )
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.BUY, order_type=OrderType.MARKET)
+    # volume * close = 50_000 * 10_000 = 5e8 < 1e9 → 0.5% bonus
+    bar = BacktestBar(
+        timestamp="t", open=10_000, high=10_500, low=9_800, close=10_000,
+        volume=50_000, trading_value=None,
+    )
+    rep = sim.simulate(order, bar)
+    assert rep.fill_price == pytest.approx(10_050.0)
+
+
+def test_liquidity_slippage_combines_with_base_and_opening_bonus():
+    policy = BacktestExecutionPolicy(
+        market_slippage_pct=0.3,
+        opening_market_slippage_bonus_pct=0.2,
+        liquidity_slippage_buckets=((1_000_000_000, 0.5),),
+        market_price_field="open",
+        round_to_tick=False,
+    )
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.BUY, order_type=OrderType.MARKET)
+    bar = BacktestBar(
+        timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200,
+        volume=None, trading_value=500_000_000,
+    )
+    rep = sim.simulate(order, bar)
+    # base 0.3 + opening 0.2 + liquidity 0.5 = 1.0% → 10_000 * 1.01 = 10_100
+    assert rep.fill_price == pytest.approx(10_100.0)
+
+
+def test_liquidity_slippage_zero_when_bar_has_no_volume_and_no_trading_value():
+    policy = BacktestExecutionPolicy(
+        market_slippage_pct=0.0,
+        liquidity_slippage_buckets=((1_000_000_000, 0.5),),
+        round_to_tick=False,
+    )
+    sim = BacktestExecutionSimulator(policy=policy)
+    order = make_order(price=0.0, qty=10, side=OrderSide.BUY, order_type=OrderType.MARKET)
+    bar = BacktestBar(
+        timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200,
+        volume=None, trading_value=None,
+    )
+    rep = sim.simulate(order, bar)
+    assert rep.fill_price == pytest.approx(10_000.0)
