@@ -219,6 +219,46 @@ class HighTightFlagStrategy(LiveStrategy):
         if flag_avg_vol > avg_vol_50d * self._cfg.flag_volume_shrink_ratio:
             return None
 
+        # VCP 타이트함: 깃발 최근 N일 평균 변동폭이 깃대 평균 변동폭 대비 충분히 축소되었는지
+        pole_highs = highs[pole_start:peak_idx + 1]
+        pole_range_avg = (
+            sum(h - l for h, l in zip(pole_highs, pole_lows)) / len(pole_lows)
+            if pole_lows else 0.0
+        )
+        recent_n = min(self._cfg.vcp_recent_flag_days, flag_days)
+        flag_highs = highs[peak_idx + 1:]
+        flag_lows = lows[peak_idx + 1:]
+        recent_flag_range_avg = (
+            sum(h - l for h, l in zip(flag_highs[-recent_n:], flag_lows[-recent_n:])) / recent_n
+            if recent_n > 0 else 0.0
+        )
+        vcp_tightness_ratio = (
+            recent_flag_range_avg / pole_range_avg if pole_range_avg > 0 else 0.0
+        )
+        if (
+            self._cfg.vcp_tightness_check_enabled
+            and pole_range_avg > 0
+            and vcp_tightness_ratio > self._cfg.vcp_max_tightness_ratio
+        ):
+            return None
+
+        # 깃발 기간 20MA 지지: 깃발 각 일의 종가가 그 시점 20MA 대비 min_pct 이하로 떨어진 적이 없는지
+        ma20_min_deviation_pct = 0.0
+        if self._cfg.ma20_support_check_enabled:
+            for flag_idx in range(peak_idx + 1, n):
+                window_start = flag_idx - 19
+                if window_start < 0:
+                    continue
+                window = closes[window_start:flag_idx + 1]
+                ma20 = sum(window) / len(window)
+                if ma20 <= 0:
+                    continue
+                deviation_pct = (closes[flag_idx] - ma20) / ma20 * 100
+                if deviation_pct < ma20_min_deviation_pct:
+                    ma20_min_deviation_pct = deviation_pct
+                if deviation_pct < self._cfg.ma20_support_min_pct:
+                    return None
+
         return {
             "pole_high": peak_high,
             "pole_low": pole_low,
@@ -227,6 +267,10 @@ class HighTightFlagStrategy(LiveStrategy):
             "drawdown_pct": drawdown_pct,
             "avg_vol_50d": avg_vol_50d,
             "flag_avg_vol": flag_avg_vol,
+            "pole_range_avg": pole_range_avg,
+            "recent_flag_range_avg": recent_flag_range_avg,
+            "vcp_tightness_ratio": vcp_tightness_ratio,
+            "ma20_min_deviation_pct": ma20_min_deviation_pct,
         }
 
     async def _check_breakout(self, code, item, pattern, ohlcv, progress, market_timing_cache=None) -> Optional[TradeSignal]:
@@ -291,6 +335,29 @@ class HighTightFlagStrategy(LiveStrategy):
                 band=[int(min_entry), int(max_entry)],
             )
             return None
+
+        # 2-1. 돌파 확인 지연: pole_high 위 임계가에 분봉 종가가 N분 연속 유지되는지
+        if self._cfg.breakout_hold_check_enabled:
+            minutes = await self._sqs.get_day_intraday_minutes_list(code, session="REGULAR")
+            n_check = self._cfg.breakout_hold_minutes
+            if not minutes or len(minutes) < n_check:
+                self._log_entry_rejected(
+                    code, item, "breakout_hold_insufficient_data",
+                    minute_count=len(minutes) if minutes else 0,
+                    required=n_check,
+                )
+                return None
+            hold_threshold = pole_high * (1 + self._cfg.breakout_hold_min_pct / 100)
+            recent_prices = [int(m.get("stck_prpr", 0) or 0) for m in minutes[-n_check:]]
+            min_recent = min(recent_prices) if recent_prices else 0
+            if min_recent < hold_threshold:
+                self._log_entry_rejected(
+                    code, item, "breakout_hold_failed",
+                    threshold=int(hold_threshold),
+                    min_recent_price=min_recent,
+                    window_minutes=n_check,
+                )
+                return None
 
         # 🚨 [관문 2] 캔들 품질 검증 (Strict Quality!)
         day_range = day_high - day_low
@@ -396,6 +463,9 @@ class HighTightFlagStrategy(LiveStrategy):
         pg_mc_ratio = sm_metrics.get("pg_to_mc_pct", 0.0)
         pg_buy_amount = sm_metrics.get("pg_buy_amount", 0)
 
+        # 이격도: 매수 시점 가격이 pole_high 대비 몇 % 이격되었는지 (과확장 사후 분석용)
+        deviation_from_pole_high_pct = (current / pole_high - 1.0) * 100 if pole_high > 0 else 0.0
+
         # 2. 포지션 상태 저장
         self._position_state[code] = HTFPositionState(
             entry_price=current,
@@ -432,6 +502,9 @@ class HighTightFlagStrategy(LiveStrategy):
                 "pg_market_cap_pct": round(pg_mc_ratio, 3),
                 "execution_strength": cgld_val,
                 "candle_relative_pos": round(relative_pos, 2),
+                "deviation_from_pole_high_pct": round(deviation_from_pole_high_pct, 2),
+                "vcp_tightness_ratio": round(pattern.get("vcp_tightness_ratio", 0.0), 3),
+                "ma20_min_deviation_pct": round(pattern.get("ma20_min_deviation_pct", 0.0), 2),
                 "surge_ratio": round(pattern["surge_ratio"], 2),
                 "flag_days": pattern["flag_days"],
                 "drawdown_pct": round(pattern["drawdown_pct"], 1),

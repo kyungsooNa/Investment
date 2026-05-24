@@ -207,6 +207,58 @@ class TestDetectPoleAndFlag:
         result = strategy._detect_pole_and_flag(ohlcv)
         assert result is None
 
+    def test_pattern_dict_exposes_vcp_and_ma20_metrics(self, mock_deps):
+        """default off 상태에서도 pattern dict에 신규 metric 키가 포함되어 패턴은 감지된다."""
+        strategy = self._make_strategy(mock_deps)
+        ohlcv = _make_ohlcv_pole_and_flag(
+            pole_days=25, pole_start_price=5000, pole_end_price=10000,
+            flag_days=18, flag_drawdown_pct=10.0,
+            pole_volume=500000, flag_volume=100000,
+        )
+
+        result = strategy._detect_pole_and_flag(ohlcv)
+
+        assert result is not None
+        assert "vcp_tightness_ratio" in result
+        assert "ma20_min_deviation_pct" in result
+        assert result["pole_range_avg"] > 0
+        assert result["recent_flag_range_avg"] >= 0
+
+    def test_vcp_tightness_check_rejects_wide_flag(self, mock_deps):
+        """vcp_tightness_check_enabled=True + 매우 타이트한 임계값 → 깃발 변동폭이 임계 초과 → None."""
+        strategy = self._make_strategy(
+            mock_deps,
+            vcp_tightness_check_enabled=True,
+            vcp_recent_flag_days=5,
+            vcp_max_tightness_ratio=0.01,  # 깃발 변동폭이 깃대의 1% 이하여야 — 합성 데이터는 통과 불가
+        )
+        ohlcv = _make_ohlcv_pole_and_flag(
+            pole_days=25, pole_start_price=5000, pole_end_price=10000,
+            flag_days=18, flag_drawdown_pct=10.0,
+            pole_volume=500000, flag_volume=100000,
+        )
+
+        result = strategy._detect_pole_and_flag(ohlcv)
+        assert result is None
+
+    def test_ma20_support_check_rejects_deep_drop(self, mock_deps):
+        """ma20_support_check_enabled=True + 깃발 종가가 20MA 대비 -10% → None."""
+        strategy = self._make_strategy(
+            mock_deps,
+            ma20_support_check_enabled=True,
+            ma20_support_min_pct=-2.0,
+        )
+        ohlcv = _make_ohlcv_pole_and_flag(
+            pole_days=25, pole_start_price=5000, pole_end_price=10000,
+            flag_days=18, flag_drawdown_pct=10.0,
+            pole_volume=500000, flag_volume=100000,
+        )
+        # 깃발 중간에 종가 폭락 한 점 주입 (20MA 대비 약 -15%)
+        ohlcv[35]["close"] = int(ohlcv[35]["close"] * 0.85)
+
+        result = strategy._detect_pole_and_flag(ohlcv)
+        assert result is None
+
 
 # ── scan() 통합 테스트 ───────────────────────────────────────────────
 
@@ -248,6 +300,90 @@ async def test_scan_buy_signal(htf_scan_setup):
     assert "HTF돌파" in signals[0].reason
     assert "강도 151.0%" in signals[0].reason
     assert "정석" in signals[0].reason
+
+    # 이격도 메트릭이 buy_signal_generated 이벤트에 포함되는지 검증 (#4)
+    buy_events = [
+        call.args[0] for call in strategy._logger.info.call_args_list
+        if isinstance(call.args[0], dict) and call.args[0].get("event") == "buy_signal_generated"
+    ]
+    assert len(buy_events) == 1
+    metrics = buy_events[0]["metrics"]
+    assert "deviation_from_pole_high_pct" in metrics
+    # 현재가 10150 / pole_high 10000 → 1.50%
+    assert metrics["deviation_from_pole_high_pct"] == pytest.approx(1.5, abs=0.01)
+    assert "vcp_tightness_ratio" in metrics
+    assert "ma20_min_deviation_pct" in metrics
+
+
+@pytest.mark.asyncio
+async def test_scan_breakout_hold_check_rejects_when_below_threshold(htf_scan_setup):
+    """breakout_hold_check_enabled=True + 최근 분봉 종가가 pole_high 미만 → 시그널 없음 (#2)."""
+    strategy, sqs, _, _, _ = htf_scan_setup
+    strategy._cfg.breakout_hold_check_enabled = True
+    strategy._cfg.breakout_hold_minutes = 3
+    strategy._cfg.breakout_hold_min_pct = 0.0
+
+    ohlcv = _make_ohlcv_pole_and_flag(
+        pole_days=25, pole_start_price=5000, pole_end_price=10000,
+        flag_days=18, flag_drawdown_pct=10.0,
+        pole_volume=500000, flag_volume=100000,
+    )
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "10150", "stck_hgpr": "10160", "stck_lwpr": "10050",
+            "acml_vol": "700000", "pgtr_ntby_qty": "200000",
+            "acml_tr_pbmn": "6000000000",
+        }}
+    )
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "151.0"}]}
+    )
+    # 최근 3분 중 하나가 pole_high(10000) 미만 → reject
+    sqs.get_day_intraday_minutes_list = AsyncMock(return_value=[
+        {"stck_cntg_hour": "115700", "stck_prpr": "10100"},
+        {"stck_cntg_hour": "115800", "stck_prpr": "9980"},
+        {"stck_cntg_hour": "115900", "stck_prpr": "10150"},
+    ])
+
+    signals = await strategy.scan()
+    assert signals == []
+    sqs.get_day_intraday_minutes_list.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scan_breakout_hold_check_passes_when_all_above_threshold(htf_scan_setup):
+    """breakout_hold_check_enabled=True + 모든 최근 분봉이 임계가 이상 → 시그널 정상 발생 (#2)."""
+    strategy, sqs, _, _, _ = htf_scan_setup
+    strategy._cfg.breakout_hold_check_enabled = True
+    strategy._cfg.breakout_hold_minutes = 3
+    strategy._cfg.breakout_hold_min_pct = 0.0
+
+    ohlcv = _make_ohlcv_pole_and_flag(
+        pole_days=25, pole_start_price=5000, pole_end_price=10000,
+        flag_days=18, flag_drawdown_pct=10.0,
+        pole_volume=500000, flag_volume=100000,
+    )
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {
+            "stck_prpr": "10150", "stck_hgpr": "10160", "stck_lwpr": "10050",
+            "acml_vol": "700000", "pgtr_ntby_qty": "200000",
+            "acml_tr_pbmn": "6000000000",
+        }}
+    )
+    sqs.get_stock_conclusion.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": [{"tday_rltv": "151.0"}]}
+    )
+    sqs.get_day_intraday_minutes_list = AsyncMock(return_value=[
+        {"stck_cntg_hour": "115700", "stck_prpr": "10100"},
+        {"stck_cntg_hour": "115800", "stck_prpr": "10120"},
+        {"stck_cntg_hour": "115900", "stck_prpr": "10150"},
+    ])
+
+    signals = await strategy.scan()
+    assert len(signals) == 1
+    assert signals[0].action == "BUY"
 
 
 @pytest.mark.asyncio

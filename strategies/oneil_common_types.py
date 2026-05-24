@@ -288,6 +288,20 @@ class HTFConfig(BaseStrategyConfig):
     afternoon_volume_multiplier: float = 3.0      # 오후 12시 이후 거래량 허들 강화 (2.0 → 3.0)
     afternoon_cutoff_hour: int = 12               # 오후 가중치 적용 기준 시각 (KST)
 
+    # VCP 타이트함: 깃발 최근 N일 일변동폭(고가-저가) 평균이 깃대 변동폭 평균 대비 충분히 축소되었는지
+    vcp_tightness_check_enabled: bool = False    # default off — 관찰 누적 후 hard gate 도입 결정
+    vcp_recent_flag_days: int = 5                # 깃발 마지막 N일 평균
+    vcp_max_tightness_ratio: float = 0.7         # flag_recent_range_avg / pole_range_avg <= 0.7
+
+    # 깃발 기간 20MA 지지: 깃발 종가가 그 시점 20일 MA 대비 일정 % 이상 하락한 적이 없는지
+    ma20_support_check_enabled: bool = False     # default off — 관찰 누적 후 hard gate 도입 결정
+    ma20_support_min_pct: float = -2.0           # 20MA 대비 -2% 이하 종가가 한 번이라도 있으면 거절
+
+    # 돌파 확인 지연: pole_high 돌파 후 N분간 분봉 종가가 임계가 위에 유지되는지 확인
+    breakout_hold_check_enabled: bool = False    # default off — 분봉 API 호출 비용 누적 후 도입 결정
+    breakout_hold_minutes: int = 3               # 최근 N개 분봉 검사
+    breakout_hold_min_pct: float = 0.0           # pole_high * (1 + min_pct/100) 임계가
+
 @dataclass
 class HTFPositionState:
     """HTF 포지션 추적 상태."""
