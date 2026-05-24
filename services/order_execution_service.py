@@ -3,6 +3,7 @@ import asyncio
 import uuid
 from collections import OrderedDict
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Dict, Optional
 from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState, OrderExecutionReport
 from core.loggers.trace_context import trace_scope, get_trace_id, new_trace_id
@@ -22,6 +23,19 @@ from services.broker_order_submitter import BrokerOrderSubmitter
 from services.order_state_machine import OrderStateMachine
 from services.fill_reconciliation_service import FillReconciliationService
 from services.order_submission_coordinator import OrderSubmissionCoordinator
+
+
+class ClearanceMode(str, Enum):
+    """sell_all_stocks 운영 목적별 청산 모드.
+
+    - SAFE_SEQUENTIAL: 기본값. 순차 매도 (수동 전체매도 등 일반 경로).
+    - BOUNDED_PARALLEL: Semaphore 기반 제한 병렬 청산.
+    - EMERGENCY: 전체 동시 청산 (킬스위치/장애 등 빠른 위험 축소).
+    """
+
+    SAFE_SEQUENTIAL = "safe_sequential"
+    BOUNDED_PARALLEL = "bounded_parallel"
+    EMERGENCY = "emergency"
 
 
 class OrderExecutionService:
@@ -585,9 +599,21 @@ class OrderExecutionService:
             finalize_immediately=finalize_immediately,
         )
 
-    async def sell_all_stocks(self, exchange: Exchange = Exchange.KRX):
-        """보유하고 있는 모든 주식을 시장가로 매도합니다."""
-        self.logger.info("모든 보유 주식의 일괄 매도를 시작합니다.")
+    async def sell_all_stocks(
+        self,
+        exchange: Exchange = Exchange.KRX,
+        *,
+        mode: ClearanceMode = ClearanceMode.SAFE_SEQUENTIAL,
+        bounded_concurrency: int = 3,
+    ):
+        """보유하고 있는 모든 주식을 시장가로 매도합니다.
+
+        mode:
+          - SAFE_SEQUENTIAL: 순차 청산 (default, 기존 동작 보존).
+          - BOUNDED_PARALLEL: Semaphore(bounded_concurrency) 기반 제한 병렬.
+          - EMERGENCY: 전체 동시 청산 (asyncio.gather).
+        """
+        self.logger.info(f"모든 보유 주식의 일괄 매도를 시작합니다. (mode={mode.value})")
         t_start = self.pm.start_timer()
         if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
             self.logger.warning("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
@@ -608,44 +634,68 @@ class OrderExecutionService:
                 self.logger.info("매도할 보유 주식이 없습니다.")
                 return {"message": "보유 중인 주식이 없습니다.", "results": []}
 
-            # 2. 각 주식에 대해 매도 주문 실행
-            sell_tasks = []
+            # 2. 매도 대상 정리
+            targets: list[tuple[str, int]] = []
             for stock in holdings:
                 stock_code = stock.get('pdno')
                 quantity = int(stock.get('hldg_qty', 0))
-                
                 if stock_code and quantity > 0:
-                    # 시장가 주문을 위해 가격을 0으로 설정
-                    task = self.handle_place_sell_order(stock_code, 0, quantity, exchange=exchange)
-                    sell_tasks.append((stock_code, task))
+                    targets.append((stock_code, quantity))
 
-            if not sell_tasks:
+            if not targets:
                 self.logger.info("매도할 유효한 주식이 없습니다.")
                 return {"message": "매도할 유효한 주식이 없습니다.", "results": []}
 
-            # 3. 매도 주문 결과 집계
-            results = []
-            for stock_code, task in sell_tasks:
-                try:
-                    result = await task
-                    if result and result.rt_cd == ErrorCode.SUCCESS.value:
-                        self.logger.info(f"매도 주문 성공: {stock_code}")
-                        results.append({"stock_code": stock_code, "success": True, "message": result.msg1})
-                    else:
-                        msg = result.msg1 if result else "알 수 없는 오류"
-                        self.logger.error(f"매도 주문 실패: {stock_code}, 이유: {msg}")
-                        results.append({"stock_code": stock_code, "success": False, "message": msg})
-                except Exception as e:
-                    self.logger.error(f"매도 주문 중 예외 발생: {stock_code}, 오류: {str(e)}")
-                    results.append({"stock_code": stock_code, "success": False, "message": str(e)})
+            # 3. 모드별 매도 실행
+            results = await self._dispatch_clearance(targets, exchange, mode, bounded_concurrency)
 
-            self.logger.info("일괄 매도 절차가 완료되었습니다.")
-            self.pm.log_timer(f"OrderExecutionService.sell_all_stocks({stock_code})", t_start)
+            self.logger.info(f"일괄 매도 절차가 완료되었습니다. (mode={mode.value}, n={len(results)})")
+            self.pm.log_timer(f"OrderExecutionService.sell_all_stocks({mode.value})", t_start)
             return {"message": "일괄 매도가 완료되었습니다.", "results": results}
 
         except Exception as e:
             self.logger.critical(f"일괄 매도 중 심각한 오류 발생: {e}", exc_info=True)
             return {"error": f"일괄 매도 중 심각한 오류가 발생했습니다: {str(e)}"}
+
+    async def _dispatch_clearance(
+        self,
+        targets: list[tuple[str, int]],
+        exchange: Exchange,
+        mode: ClearanceMode,
+        bounded_concurrency: int,
+    ) -> list[dict]:
+        """모드별 매도 실행 후 종목별 결과를 동일 형식으로 집계한다."""
+        if mode == ClearanceMode.SAFE_SEQUENTIAL:
+            results: list[dict] = []
+            for stock_code, quantity in targets:
+                results.append(await self._submit_one_sell(stock_code, quantity, exchange))
+            return results
+
+        if mode == ClearanceMode.BOUNDED_PARALLEL:
+            sem = asyncio.Semaphore(max(1, bounded_concurrency))
+
+            async def _bounded(code: str, qty: int) -> dict:
+                async with sem:
+                    return await self._submit_one_sell(code, qty, exchange)
+
+            return await asyncio.gather(*[_bounded(c, q) for c, q in targets])
+
+        # EMERGENCY: 전체 동시 청산
+        return await asyncio.gather(*[self._submit_one_sell(c, q, exchange) for c, q in targets])
+
+    async def _submit_one_sell(self, stock_code: str, quantity: int, exchange: Exchange) -> dict:
+        """한 종목에 대해 시장가 매도 후 success/실패 dict로 정규화한다."""
+        try:
+            result = await self.handle_place_sell_order(stock_code, 0, quantity, exchange=exchange)
+            if result and result.rt_cd == ErrorCode.SUCCESS.value:
+                self.logger.info(f"매도 주문 성공: {stock_code}")
+                return {"stock_code": stock_code, "success": True, "message": result.msg1}
+            msg = result.msg1 if result else "알 수 없는 오류"
+            self.logger.error(f"매도 주문 실패: {stock_code}, 이유: {msg}")
+            return {"stock_code": stock_code, "success": False, "message": msg}
+        except Exception as e:
+            self.logger.error(f"매도 주문 중 예외 발생: {stock_code}, 오류: {str(e)}")
+            return {"stock_code": stock_code, "success": False, "message": str(e)}
 
     async def handle_realtime_price_quote_stream(self, stock_code):
         """

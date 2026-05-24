@@ -322,9 +322,20 @@ class WebAppContext:
 
         StrategyFactory.build() 직후 + scheduler.start() 전에 호출. 기존 `__init__` 의
         fire-and-forget `_load_state()` 가 scan 보다 늦게 끝나는 race 를 제거한다.
+
+        실패 정책 (P0 0-1 의 RiskGateFailOpenConfig 패턴과 동일):
+        - paper: fail-OPEN — load 실패해도 error log 만 남기고 계속 진행한다.
+          모의 환경에서는 stale state 위험보다 개발 흐름 유지가 우선.
+        - real: fail-CLOSE — 한 전략이라도 실패하면 RuntimeError 를 raise 한다.
+          실전에서는 stale/유실 state 로 신규 주문이 나가는 위험이 더 크다.
+        - env 미설정: 보수적으로 fail-OPEN 동작.
         """
         if self.scheduler is None:
             return
+        is_paper = True
+        if self.env is not None:
+            is_paper = bool(getattr(self.env, "is_paper_trading", True))
+        failed: list[tuple[str, BaseException]] = []
         for cfg in getattr(self.scheduler, "_strategies", []):
             strategy = getattr(cfg, "strategy", None)
             load_fn = getattr(strategy, "load_state", None)
@@ -333,10 +344,17 @@ class WebAppContext:
             try:
                 await load_fn()
             except Exception as exc:
+                name = getattr(strategy, "name", "?")
                 if self.logger:
                     self.logger.error(
-                        f"[WebAppContext] strategy.load_state() 실패 ({getattr(strategy, 'name', '?')}): {exc}"
+                        f"[WebAppContext] strategy.load_state() 실패 ({name}): {exc}"
                     )
+                failed.append((name, exc))
+        if failed and not is_paper:
+            names = ", ".join(name for name, _ in failed)
+            raise RuntimeError(
+                f"실전 모드 bootstrap 차단: 전략 state load 실패 — {names}"
+            )
 
     def start_background_tasks(self):
         """백그라운드 태스크 시작 — BackgroundScheduler에 위임."""

@@ -3465,3 +3465,151 @@ async def test_kill_switch_optional_dependency_safety(handler, mock_virtual_trad
 
     result = await handler._persist_virtual_trade_for_terminal_report(ctx, report)
     assert result is not None
+
+
+# --- ClearanceMode (sell_all_stocks 운영 목적별 청산 모드) 테스트 ---
+
+from services.order_execution_service import ClearanceMode
+
+
+def _holdings_with(n: int) -> dict:
+    return {
+        "output1": [
+            {"pdno": f"00592{i}", "hldg_qty": "10"} for i in range(n)
+        ]
+    }
+
+
+def _make_concurrency_tracker(target_concurrency: int):
+    """handle_place_sell_order 모킹: Event 기반 결정적 동시성 추적.
+
+    `target_concurrency` 개가 모두 동시 진입할 때까지 대기 → 그 시점에서 max_active
+    측정 → release event set → 모두 완료. asyncio.sleep을 쓰지 않으므로 conftest의
+    fast_sleep 자동 mock 영향을 받지 않는다.
+    """
+    state = {"active": 0, "max_active": 0, "completed": 0, "target": target_concurrency}
+    release = asyncio.Event()
+
+    async def slow_sell(stock_code, price, qty, exchange=Exchange.KRX):
+        state["active"] += 1
+        state["max_active"] = max(state["max_active"], state["active"])
+        if state["active"] >= state["target"]:
+            release.set()
+        await release.wait()
+        state["active"] -= 1
+        state["completed"] += 1
+        return ResCommonResponse(rt_cd="0", msg1="매도 성공", data={"ordno": f"O{stock_code}"})
+
+    return state, slow_sell
+
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_default_mode_is_sequential(handler, mock_broker_api_wrapper):
+    """default 모드는 SAFE_SEQUENTIAL — 최대 동시 실행 1 (backward compat)."""
+    mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=_holdings_with(4)
+    )
+    # target=1: 첫 호출이 진입 즉시 release event set → 순차 진행 보장
+    state, slow_sell = _make_concurrency_tracker(target_concurrency=1)
+
+    with patch.object(handler, "handle_place_sell_order", new=slow_sell):
+        result = await handler.sell_all_stocks()
+
+    assert state["max_active"] == 1, f"sequential 모드에서 동시 실행 1이어야 하지만 {state['max_active']}였다"
+    assert state["completed"] == 4
+    assert len(result["results"]) == 4
+
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_safe_sequential_explicit(handler, mock_broker_api_wrapper):
+    """SAFE_SEQUENTIAL 명시 호출도 동일하게 순차 실행."""
+    mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=_holdings_with(3)
+    )
+    state, slow_sell = _make_concurrency_tracker(target_concurrency=1)
+
+    with patch.object(handler, "handle_place_sell_order", new=slow_sell):
+        result = await handler.sell_all_stocks(mode=ClearanceMode.SAFE_SEQUENTIAL)
+
+    assert state["max_active"] == 1
+    assert state["completed"] == 3
+    assert all(r["success"] for r in result["results"])
+
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_bounded_parallel_respects_concurrency(handler, mock_broker_api_wrapper):
+    """BOUNDED_PARALLEL: Semaphore가 동시 실행 수를 bounded_concurrency 이하로 제한한다."""
+    mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=_holdings_with(8)
+    )
+    # target=3: Semaphore가 3개를 동시 허용한 시점에 release → 정확히 3까지 도달함을 검증
+    state, slow_sell = _make_concurrency_tracker(target_concurrency=3)
+
+    with patch.object(handler, "handle_place_sell_order", new=slow_sell):
+        result = await handler.sell_all_stocks(
+            mode=ClearanceMode.BOUNDED_PARALLEL, bounded_concurrency=3
+        )
+
+    assert state["max_active"] == 3, f"bounded_parallel는 정확히 3 동시 실행이어야 하지만 {state['max_active']}였다"
+    assert state["completed"] == 8
+    assert len(result["results"]) == 8
+
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_emergency_runs_concurrently(handler, mock_broker_api_wrapper):
+    """EMERGENCY: 전체 보유 종목이 동시에 청산된다 (gather)."""
+    mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=_holdings_with(6)
+    )
+    state, slow_sell = _make_concurrency_tracker(target_concurrency=6)
+
+    with patch.object(handler, "handle_place_sell_order", new=slow_sell):
+        result = await handler.sell_all_stocks(mode=ClearanceMode.EMERGENCY)
+
+    assert state["max_active"] == 6, f"emergency는 전체 동시 실행이어야 하지만 {state['max_active']}였다"
+    assert state["completed"] == 6
+    assert all(r["success"] for r in result["results"])
+
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_emergency_aggregates_partial_failures(handler, mock_broker_api_wrapper):
+    """EMERGENCY 모드에서도 일부 실패가 results에 집계되고 전체 흐름이 차단되지 않는다."""
+    mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=_holdings_with(3)
+    )
+
+    side_effects = [
+        ResCommonResponse(rt_cd="0", msg1="OK", data={"ordno": "O1"}),
+        RuntimeError("broker boom"),
+        ResCommonResponse(rt_cd="1", msg1="reject", data=None),
+    ]
+
+    with patch.object(handler, "handle_place_sell_order", new=AsyncMock(side_effect=side_effects)):
+        result = await handler.sell_all_stocks(mode=ClearanceMode.EMERGENCY)
+
+    assert len(result["results"]) == 3
+    successes = [r for r in result["results"] if r["success"]]
+    failures = [r for r in result["results"] if not r["success"]]
+    assert len(successes) == 1
+    assert len(failures) == 2
+    failure_msgs = {r["message"] for r in failures}
+    assert "broker boom" in failure_msgs
+    assert "reject" in failure_msgs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [
+    ClearanceMode.SAFE_SEQUENTIAL,
+    ClearanceMode.BOUNDED_PARALLEL,
+    ClearanceMode.EMERGENCY,
+])
+async def test_sell_all_stocks_market_closed_blocks_all_modes(
+    handler, mock_market_calendar_service, mock_broker_api_wrapper, mode
+):
+    """모든 청산 모드에서 시장 마감은 동일하게 차단된다."""
+    mock_market_calendar_service.is_market_open_now.return_value = False
+
+    result = await handler.sell_all_stocks(mode=mode)
+
+    assert result.rt_cd == ErrorCode.MARKET_CLOSED.value
+    mock_broker_api_wrapper.get_account_balance.assert_not_awaited()

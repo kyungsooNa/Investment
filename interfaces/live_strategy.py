@@ -83,3 +83,13 @@ class LiveStrategy(ABC):
         scheduler 시작 전 호출자가 await 할 수 있게 한다.
         """
         return None
+
+    async def save_state(self) -> None:
+        """전략 state 명시 저장 hook (load_state 와 대칭).
+
+        state 파일이 없는 전략은 기본 no-op 이다. state 를 가진 전략은 오버라이드해
+        scheduler 종료/스냅샷 시 호출자가 await 할 수 있게 한다. 백그라운드 schedule_save
+        는 `StrategyStateIO.schedule_save()` 로 별도 처리되며, 본 hook 은 호출자가
+        명시적으로 await 가능한 표면을 제공한다.
+        """
+        return None

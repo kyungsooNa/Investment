@@ -27,9 +27,9 @@
 - [x] `BrokerOrderSubmitter.submit_with_retry()` `market_clock=None` 시 `asyncio.sleep` backoff fallback (2026-05-19)
 - [x] 실전 모드 RiskGate fail-close 전환 — `RiskGateFailOpenConfig(paper=True, real=False)` (2026-05-19, PR #421)
 - [x] `get_current_price` 전역 캐시 제거 — `cache_config.yaml::enabled_methods`에서 제외 (2026-05-20)
-- [~] 전략 state load/save atomic write + per-path lock + 명시적 `load_state` await — `utils/strategy_state_io.py` (2026-05-20)
+- [x] 전략 state load/save atomic write + per-path lock + 명시적 `load_state` await — `utils/strategy_state_io.py` (2026-05-20)
   - 완료된 부분: `StrategyStateIO`의 atomic write, per-path lock, pending flush 구조는 반영.
-  - 남은 확인: 운영 bootstrap에서 모든 active strategy에 대해 시작 전 `await load_state()` barrier와 종료 전 `flush_pending()`이 보장되는지 P3-4에서 검증한다.
+  - 완료된 부분(2026-05-25, P3 3-4 ② 검증): bootstrap에서 `await ctx.ensure_strategy_states_loaded()` barrier가 모든 active strategy의 `load_state()`를 await로 진행하고, 종료 hook에서 `await StrategyStateIO.flush_pending(timeout=5.0)`가 보장된다. paper=fail-OPEN / real=fail-CLOSE 정책으로 단위 테스트 고정.
 
 주요 파일:
 
@@ -142,10 +142,12 @@
 
 ### 0-6. Emergency 전체청산 모드
 
-- [ ] `sell_all_stocks()`에 운영 목적별 청산 모드를 분리한다.
+- [~] `sell_all_stocks()`에 운영 목적별 청산 모드를 분리한다.
   - 검토 결과: 미반영. 현재 `services/order_execution_service.py::sell_all_stocks()`는 `sell_tasks` 리스트를 만들지만 `for stock_code, task in sell_tasks: result = await task` 형태로 사실상 순차 처리한다.
   - 목표 모드: `safe_sequential`(일반 수동 전체매도), `bounded_parallel`(제한 병렬 청산), `emergency`(킬스위치/장애 시 빠른 위험 축소).
   - 검증: 장중/장마감 분기, 일부 주문 실패 시 집계, 주문 API budget 및 RiskGate/kill switch 청산 예외 정책, paper/real 분기 테스트를 함께 고정한다.
+  - 완료된 부분(2026-05-24): `services/order_execution_service.py`에 `ClearanceMode(str, Enum)` enum(`SAFE_SEQUENTIAL`/`BOUNDED_PARALLEL`/`EMERGENCY`) 추가. `sell_all_stocks(exchange, *, mode=ClearanceMode.SAFE_SEQUENTIAL, bounded_concurrency=3)` 시그니처로 확장(mode/bounded_concurrency keyword-only → 기존 positional 호출 보호). default가 기존 순차 동작이라 [view/web/routes/balance.py:77](view/web/routes/balance.py#L77) 호출부와 기존 단위 테스트 6건 무변동. 신규 helper `_dispatch_clearance()`는 모드별 분기(순차 / `asyncio.Semaphore(N)` / `asyncio.gather`), `_submit_one_sell()`은 종목별 매도 후 success/실패 dict로 정규화하며 예외 흡수 포함. 신규 단위 테스트 6건: `test_sell_all_stocks_default_mode_is_sequential`, `test_sell_all_stocks_safe_sequential_explicit`, `test_sell_all_stocks_bounded_parallel_respects_concurrency`, `test_sell_all_stocks_emergency_runs_concurrently`, `test_sell_all_stocks_emergency_aggregates_partial_failures`, `test_sell_all_stocks_market_closed_blocks_all_modes`(parametrize 3 모드). `conftest.fast_sleep` autouse가 `asyncio.sleep`을 mock해 yield되지 않으므로 `_make_concurrency_tracker()`는 `asyncio.Event` 기반 결정적 동시성 검증으로 작성. 단위 5346(이전 5338 → +8), 통합 235 통과.
+  - 후속(blocked): 매도 청산 경로의 RiskGate 우회 정책, KillSwitch 청산 예외, API budget 우선순위(emergency 우선 처리), KillSwitchService auto-trigger 등 신규 호출처 추가는 별도 PR에서 정책 합의 후 진행.
 
 ---
 
@@ -564,13 +566,16 @@
   - 완료된 부분(2026-05-23): `LiveStrategy.load_state()` 기본 no-op contract를 추가하고, scheduler stop 시 `StrategyStateIO.flush_pending()`으로 지연 저장을 정리한다.
   - 결정: scan/check_exits 대형 base class 추출은 현재 반복 제거 대비 리스크가 커서 보류한다. 공통 흐름이 더 쌓이면 별도 설계 항목으로 재승격한다. `larry_williams_vbo`는 state 파일이 없어 마이그레이션 대상이 아니다.
   - 2026-05-24 최신 main 리뷰 반영: 전략 실행 lifecycle 자체가 강하게 표준화된 상태는 아니므로 완료가 아니라 부분 반영으로 둔다.
-- [ ] active strategy lifecycle contract를 최소 공통 단계로 강제할지 재설계한다.
+- [~] active strategy lifecycle contract를 최소 공통 단계로 강제할지 재설계한다.
   - 후보 단계: `load_state` → `get_watchlist` → `filter_candidates` → `evaluate_entries_bounded` → `evaluate_exits_bounded` → `save_state` → `emit_metrics`.
   - 목표: 대형 base class가 부담되면 helper/protocol/checklist 테스트로라도 active strategy별 누락을 탐지한다.
-- [ ] 운영 bootstrap에서 strategy state load/save barrier를 검증한다.
+  - 완료된 부분(2026-05-25): 7단계 분해 base class 도입은 보류(외과수술적 변경 원칙 — `scan`/`check_exits` 내부에 단계가 묻혀 있어 분해 리스크 > 표면화 가치). 대신 **checklist 테스트** 방식으로 활성 7개 전략의 최소 contract 누락을 자동 탐지한다. [interfaces/live_strategy.py](interfaces/live_strategy.py)에 `save_state()` default no-op hook 추가(load_state와 대칭, 호출자 await 표면 제공). 신규 [tests/unit_test/strategies/test_live_strategy_lifecycle_contract.py](tests/unit_test/strategies/test_live_strategy_lifecycle_contract.py)는 활성 7개 전략(`oneil_pocket_pivot`, `high_tight_flag`, `first_pullback`, `oneil_squeeze_breakout`, `rsi2_pullback`, `larry_williams_channel_breakout`, `larry_williams_vbo`)에 대해 다음을 parametrize 검증: ① `LiveStrategy` 상속, ② `name`/`strategy_id`/`display_name` non-empty str, ③ `scan`/`check_exits` async callable, ④ `load_state`/`save_state` async callable, ⑤ `evaluate_single` async callable, ⑥ `current_candidate_codes()` 동기 호출 + list 반환, ⑦ `load_state()` mock 환경 idempotent await. 전역 invariant 2건: `strategy_id`/`name` 충돌 없음. 65 case 통과(9 contract × 7 + 2 unique). 신규 전략 추가 시 contract 누락 자동 탐지 안전망 확립. 단위 5419(이전 5354 → +65), 통합 235 통과.
+  - 후속(blocked): 7단계 분해(`get_watchlist`/`filter_candidates`/`evaluate_entries_bounded`/`evaluate_exits_bounded`/`emit_metrics`)는 별도 PR. 현재는 `scan`/`check_exits` 안에 묻혀 있어 분해 자체가 대형 리팩토링.
+- [x] 운영 bootstrap에서 strategy state load/save barrier를 검증한다.
   - 시작 전: 모든 active strategy의 `load_state()` 완료 후 scan/scheduler 시작.
   - 종료 전: `StrategyStateIO.flush_pending()` 완료 후 프로세스 종료.
   - 실패 정책: state load 실패 시 paper/real별 fail-open/fail-close 정책을 문서화하고 테스트로 고정한다.
+  - 완료된 부분(2026-05-25): bootstrap barrier 자체는 이미 [view/web/web_main.py:124](view/web/web_main.py#L124) `await ctx.ensure_strategy_states_loaded()`(initialize_scheduler 직후 + start_background_tasks 전)와 [view/web/web_main.py:150](view/web/web_main.py#L150) `await StrategyStateIO.flush_pending(timeout=5.0)`(종료 hook), [scheduler/strategy_scheduler.py:217](scheduler/strategy_scheduler.py#L217) `await StrategyStateIO.flush_pending()`(scheduler.stop()) 으로 wiring 되어 있었다. 이번 작업은 실패 정책을 추가했다. `WebAppContext.ensure_strategy_states_loaded()`가 `self.env.is_paper_trading`을 읽어 paper=fail-OPEN(기존 동작, error log 후 계속) / real=fail-CLOSE(`RuntimeError("실전 모드 bootstrap 차단: 전략 state load 실패 — {failed_names}")`)로 분기한다. `env=None`은 보수적으로 fail-OPEN. 정책 근거: P0 0-1의 `RiskGateFailOpenConfig(paper=True, real=False)`와 동일 패턴 — 실전에서 stale state로 신규 주문 위험이 모의 개발 흐름 차단 비용보다 크다. 모든 실패 전략은 한 번씩 await 시도된 뒤 마지막에 raise(다중 실패 전략 이름이 message에 모두 포함됨). 신규 단위 테스트 8건: `test_ensure_strategy_states_loaded_{no_scheduler_noop, all_success_paper, all_success_real, skips_strategies_without_load_state, paper_fails_open_on_load_error, real_fails_close_on_load_error, real_multiple_failures_in_error, no_env_defaults_to_fail_open}`. 단위 5354(이전 5346 → +8), 통합 235 통과.
 - [x] `strategy_id`와 `display_name`을 분리한다.
   - 검토 결과: 타당. `strategy.name` 값이 한국어 display name(`오닐PP/BGU`, `오닐스퀴즈돌파` 등) 또는 영문 display name(`Larry Williams VBO`)으로 TradeSignal/RiskGate/log/config key에 사용된다.
   - 개선 방향: 설정·DB·journal·risk limit은 stable `strategy_id`, UI/로그 문구는 `display_name`을 사용하도록 backward-compatible migration을 설계한다.
