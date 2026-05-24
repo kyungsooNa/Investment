@@ -740,7 +740,12 @@
 
 ## HTF 전략 추가 개선 (차후 검토)
 
-- [ ] **VCP 타이트함 검증**: 깃발 최근 3~5일 일변동폭(고가-저가) 평균이 깃대 구간 변동폭 대비 현저히 축소되었는지 `_detect_pole_and_flag`에 추가
-- [ ] **돌파 확인 지연**: pole_high 돌파 후 3~5분간 가격 유지 확인 로직 (현재는 +0.5% 버퍼로 대체)
-- [ ] **깃발 기간 20MA 지지**: 횡보 구간 최저점이 20일선을 심각하게 훼손하지 않았는지 확인
-- [ ] **이격도 모니터링**: 매수 시그널 발생 시 `(current/pole_high - 1) * 100`을 metrics 로그·대시보드에 노출
+- [x] **VCP 타이트함 검증**: 깃발 최근 3~5일 일변동폭(고가-저가) 평균이 깃대 구간 변동폭 대비 현저히 축소되었는지 `_detect_pole_and_flag`에 추가
+  - 완료(2026-05-24): `HTFConfig`에 `vcp_tightness_check_enabled: bool = False`(default off), `vcp_recent_flag_days: int = 5`, `vcp_max_tightness_ratio: float = 0.7` 추가. `_detect_pole_and_flag()`가 깃대 평균 변동폭과 깃발 최근 N일 평균 변동폭을 계산하고 ratio가 임계값 초과 시 None 반환. pattern dict에 `pole_range_avg`, `recent_flag_range_avg`, `vcp_tightness_ratio` 노출. 단위 테스트 2건 추가 (`test_pattern_dict_exposes_vcp_and_ma20_metrics`, `test_vcp_tightness_check_rejects_wide_flag`).
+- [x] **돌파 확인 지연**: pole_high 돌파 후 3~5분간 가격 유지 확인 로직 (현재는 +0.5% 버퍼로 대체)
+  - 완료(2026-05-24): `HTFConfig`에 `breakout_hold_check_enabled: bool = False`(default off), `breakout_hold_minutes: int = 3`, `breakout_hold_min_pct: float = 0.0` 추가. `_check_breakout()`에서 가격 돌파 밴드 통과 직후 `_sqs.get_day_intraday_minutes_list()`로 분봉 조회, 최근 N개 분봉 종가 중 하나라도 `pole_high * (1 + min_pct/100)` 미만이면 `breakout_hold_failed`로 차단. 데이터 부족 시 `breakout_hold_insufficient_data`. 단위 테스트 2건 추가 (`test_scan_breakout_hold_check_rejects_when_below_threshold`, `test_scan_breakout_hold_check_passes_when_all_above_threshold`).
+- [x] **깃발 기간 20MA 지지**: 횡보 구간 최저점이 20일선을 심각하게 훼손하지 않았는지 확인
+  - 완료(2026-05-24): `HTFConfig`에 `ma20_support_check_enabled: bool = False`(default off), `ma20_support_min_pct: float = -2.0` 추가. `_detect_pole_and_flag()`가 깃발 각 일의 그 시점 20일 MA를 계산하고 종가가 ma20 대비 `min_pct` 이하로 떨어진 적이 있으면 None 반환. 데이터 부족 일(window_start < 0)은 skip. pattern dict에 `ma20_min_deviation_pct` 노출. 단위 테스트 1건 추가 (`test_ma20_support_check_rejects_deep_drop`).
+- [x] **이격도 모니터링**: 매수 시그널 발생 시 `(current/pole_high - 1) * 100`을 metrics 로그·대시보드에 노출
+  - 완료(2026-05-24): `_check_breakout()` 매수 시그널 생성 직전 `deviation_from_pole_high_pct = (current / pole_high - 1) * 100`을 계산해 `buy_signal_generated` 이벤트의 `metrics` dict에 추가. `vcp_tightness_ratio`, `ma20_min_deviation_pct`도 함께 노출. 기존 `test_scan_buy_signal`에 metric assertion 추가.
+  - 검증: 단위 5338(이전 5333 → +5 신규), 통합 235 통과.
