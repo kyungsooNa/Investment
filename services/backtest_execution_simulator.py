@@ -39,6 +39,10 @@ class BacktestBar:
     close: float
     volume: int | None = None
     trading_value: float | None = None
+    is_halted: bool = False
+    vi_triggered: bool = False
+    upper_limit_price: float | None = None
+    lower_limit_price: float | None = None
 
 
 @dataclass(frozen=True)
@@ -130,6 +134,10 @@ class BacktestExecutionSimulator:
         if order.qty <= 0:
             return self._empty_report(order, bar, OrderStatus.REJECTED, "invalid_qty")
 
+        blocked_reason = self._market_microstructure_block(order, bar)
+        if blocked_reason is not None:
+            return self._empty_report(order, bar, OrderStatus.UNFILLED, blocked_reason)
+
         base_price = self._base_fill_price(order, bar)
         if base_price is None:
             return self._empty_report(order, bar, OrderStatus.UNFILLED, "limit_not_reached")
@@ -168,6 +176,25 @@ class BacktestExecutionSimulator:
             mfe=mfe,
             mae=mae,
         )
+
+    def _market_microstructure_block(self, order: BacktestOrder, bar: BacktestBar) -> str | None:
+        if bar.is_halted:
+            return "halted"
+        if bar.vi_triggered:
+            return "vi_triggered"
+        if (
+            order.side == OrderSide.BUY
+            and bar.upper_limit_price is not None
+            and bar.close >= bar.upper_limit_price
+        ):
+            return "upper_limit_blocked"
+        if (
+            order.side == OrderSide.SELL
+            and bar.lower_limit_price is not None
+            and bar.close <= bar.lower_limit_price
+        ):
+            return "lower_limit_blocked"
+        return None
 
     def _base_fill_price(self, order: BacktestOrder, bar: BacktestBar) -> float | None:
         if order.order_type == OrderType.MARKET:

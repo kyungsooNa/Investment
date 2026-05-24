@@ -514,3 +514,101 @@ def test_liquidity_slippage_zero_when_bar_has_no_volume_and_no_trading_value():
     )
     rep = sim.simulate(order, bar)
     assert rep.fill_price == pytest.approx(10_000.0)
+
+
+def test_halted_bar_blocks_buy_order():
+    sim = BacktestExecutionSimulator()
+    order = make_order(price=10_000.0, qty=10, side=OrderSide.BUY, order_type=OrderType.LIMIT)
+    bar = BacktestBar(
+        timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200,
+        volume=1_000, is_halted=True,
+    )
+    rep = sim.simulate(order, bar)
+    assert rep.status == OrderStatus.UNFILLED
+    assert rep.reason == "halted"
+    assert rep.filled_qty == 0
+
+
+def test_halted_bar_blocks_sell_order():
+    sim = BacktestExecutionSimulator()
+    order = make_order(price=10_000.0, qty=10, side=OrderSide.SELL, order_type=OrderType.LIMIT)
+    bar = BacktestBar(
+        timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200,
+        volume=1_000, is_halted=True,
+    )
+    rep = sim.simulate(order, bar)
+    assert rep.status == OrderStatus.UNFILLED
+    assert rep.reason == "halted"
+
+
+def test_vi_triggered_bar_blocks_market_order():
+    sim = BacktestExecutionSimulator()
+    order = make_order(price=0.0, qty=10, side=OrderSide.BUY, order_type=OrderType.MARKET)
+    bar = BacktestBar(
+        timestamp="t", open=10_000, high=10_500, low=9_800, close=10_200,
+        volume=1_000, vi_triggered=True,
+    )
+    rep = sim.simulate(order, bar)
+    assert rep.status == OrderStatus.UNFILLED
+    assert rep.reason == "vi_triggered"
+
+
+def test_upper_limit_locked_blocks_buy_but_allows_sell():
+    sim = BacktestExecutionSimulator(BacktestExecutionPolicy(round_to_tick=False))
+    bar = BacktestBar(
+        timestamp="t", open=12_900, high=13_000, low=12_900, close=13_000,
+        volume=1_000, upper_limit_price=13_000,
+    )
+
+    buy_order = make_order(price=13_000.0, qty=10, side=OrderSide.BUY, order_type=OrderType.LIMIT)
+    buy_rep = sim.simulate(buy_order, bar)
+    assert buy_rep.status == OrderStatus.UNFILLED
+    assert buy_rep.reason == "upper_limit_blocked"
+
+    sell_order = make_order(price=12_950.0, qty=10, side=OrderSide.SELL, order_type=OrderType.LIMIT)
+    sell_rep = sim.simulate(sell_order, bar)
+    assert sell_rep.status == OrderStatus.FILLED
+    assert sell_rep.fill_price == pytest.approx(12_950.0)
+
+
+def test_lower_limit_locked_blocks_sell_but_allows_buy():
+    sim = BacktestExecutionSimulator(BacktestExecutionPolicy(round_to_tick=False))
+    bar = BacktestBar(
+        timestamp="t", open=7_100, high=7_100, low=7_000, close=7_000,
+        volume=1_000, lower_limit_price=7_000,
+    )
+
+    sell_order = make_order(price=7_000.0, qty=10, side=OrderSide.SELL, order_type=OrderType.LIMIT)
+    sell_rep = sim.simulate(sell_order, bar)
+    assert sell_rep.status == OrderStatus.UNFILLED
+    assert sell_rep.reason == "lower_limit_blocked"
+
+    buy_order = make_order(price=7_050.0, qty=10, side=OrderSide.BUY, order_type=OrderType.LIMIT)
+    buy_rep = sim.simulate(buy_order, bar)
+    assert buy_rep.status == OrderStatus.FILLED
+    assert buy_rep.fill_price == pytest.approx(7_050.0)
+
+
+def test_upper_limit_not_locked_allows_buy_when_close_below_limit():
+    sim = BacktestExecutionSimulator(BacktestExecutionPolicy(round_to_tick=False))
+    bar = BacktestBar(
+        timestamp="t", open=12_500, high=13_000, low=12_400, close=12_900,
+        volume=1_000, upper_limit_price=13_000,
+    )
+    buy_order = make_order(price=12_900.0, qty=10, side=OrderSide.BUY, order_type=OrderType.LIMIT)
+    rep = sim.simulate(buy_order, bar)
+    assert rep.status == OrderStatus.FILLED
+    assert rep.fill_price == pytest.approx(12_900.0)
+
+
+def test_default_microstructure_fields_do_not_change_existing_behavior():
+    sim = BacktestExecutionSimulator(BacktestExecutionPolicy(round_to_tick=False))
+    order = make_order(price=10_000.0, qty=5, side=OrderSide.BUY, order_type=OrderType.LIMIT)
+    bar = BacktestBar(timestamp="t", open=10_000, high=10_500, low=9_500, close=10_200, volume=1_000)
+    rep = sim.simulate(order, bar)
+    assert rep.status == OrderStatus.FILLED
+    assert rep.fill_price == pytest.approx(10_000.0)
+    assert bar.is_halted is False
+    assert bar.vi_triggered is False
+    assert bar.upper_limit_price is None
+    assert bar.lower_limit_price is None

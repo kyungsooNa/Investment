@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-24 (P1-5 체결 모델 보수화 Phase 2 완료)
+최종 업데이트: 2026-05-24 (P1-5 체결 모델 보수화 Phase 3 완료)
 
 이 문서는 현재 남은 실행 항목만 추린 목록입니다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거했습니다.
 
@@ -263,12 +263,14 @@
   - 개선 방향: 실전 성과 판단용 runner에서는 next-bar 기본값, 호가/spread/부분체결/취소 fixture를 우선 추가한다.
   - Phase 1 완료(2026-05-24): `BacktestExecutionSimulator` docstring에 "UNFILLED/PARTIAL 잔여 = day order 자동 취소(이월 없음)" contract 명시. 호출자가 다음 봉 재시도하려면 별도 주문을 새로 만들어야 한다. 코드 동작 변경 없음(기존 `BacktestPeriodRunner._execute_signal` 흐름이 이미 단봉 단위 시뮬레이션).
   - Phase 2 완료(2026-05-24): `BacktestBar.trading_value: float | None = None` Optional 필드 추가로 거래대금 입력 contract 제공(누락 시 `volume * close` fallback). 호출자/bar_provider 무변동.
-  - 남은 후속(Phase 3~5): VI/상하한가/거래정지 차단(3), `OrderType.BEST_LIMIT` 추가(4), bid/ask spread 모델(5).
+  - Phase 3 완료(2026-05-24): `BacktestBar`에 `is_halted`, `vi_triggered`, `upper_limit_price`, `lower_limit_price` Optional 4개 필드 추가로 한국 주식 미시구조 차단 contract 제공. 호출자/bar_provider 무변동.
+  - 남은 후속(Phase 4~5): `OrderType.BEST_LIMIT` 추가(4), bid/ask spread 모델(5).
 - [~] 체결 모델을 한국 주식 실전 제약 기준으로 더 보수화한다.
   - 후보: 호가단위, 부분체결, 미체결 후 취소, 거래대금 bucket별 슬리피지, 9:00~9:10 장초반 체결 악화, VI/상하한가/거래정지, 시장가/지정가/최유리 주문 차이, 매도 체결 실패.
   - Phase 1 완료(2026-05-24): `BacktestExecutionPolicy.opening_market_slippage_bonus_pct: float = 0.0` 추가. 시장가 주문 + `market_price_field == "open"` 조합일 때 base `market_slippage_pct` 위에 가산해 한국 주식 시가(동시호가 직후) 변동을 stylized fact로 반영. default 0 이라 기존 백테스트 결과 무영향. 지정가 주문과 `market_price_field != "open"` 케이스는 bonus 비적용. 단위 4건 추가(`test_opening_market_slippage_bonus_*`) 검증 단위 5303(이전 5299 → +4), 통합 235.
   - Phase 2 완료(2026-05-24): `BacktestExecutionPolicy.liquidity_slippage_buckets: tuple[tuple[float, float], ...] = ()` 추가. `((threshold, bonus_pct), ...)` 형식으로 거래대금이 threshold 미만인 모든 bucket bonus 중 최댓값을 시장가 슬리피지에 가산. `BacktestBar.trading_value` 누락 시 `volume * close` fallback, 둘 다 없으면 bonus 0. base/opening bonus와 합산. 지정가 주문은 비적용. default `()` 이라 기존 백테스트 결과 무영향. 단위 6건 추가(`test_liquidity_slippage_*`) 검증 단위 5309(이전 5303 → +6), 통합 235.
-  - 남은 후속(Phase 3~5): VI/상하한가/거래정지, `OrderType.BEST_LIMIT`, bid/ask spread 모델.
+  - Phase 3 완료(2026-05-24): `BacktestBar`에 `is_halted: bool = False`, `vi_triggered: bool = False`, `upper_limit_price: float | None = None`, `lower_limit_price: float | None = None` 추가. `BacktestExecutionSimulator._market_microstructure_block()` helper가 `invalid_qty` 직후/가격 평가 이전에 차단을 결정한다. 정책: 거래정지/VI 발동 = 매수·매도 모두 UNFILLED, `close >= upper_limit_price` = BUY만 차단(상한가 잠금 시 매도 가능), `close <= lower_limit_price` = SELL만 차단(하한가 잠금 시 매수 가능). reason 코드 `"halted"`/`"vi_triggered"`/`"upper_limit_blocked"`/`"lower_limit_blocked"`. default 값으로 기존 백테스트 결과 무영향. 단위 7건 추가 검증 단위 5316(이전 5309 → +7), 통합 235.
+  - 남은 후속(Phase 4~5): `OrderType.BEST_LIMIT`, bid/ask spread 모델.
 
 주요 파일:
 
