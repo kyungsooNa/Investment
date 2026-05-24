@@ -151,6 +151,155 @@ class TestOnMarketClosed:
         assert kwargs["metadata"]["already_blocked_by_kill_switch"] is True
         assert kwargs["metadata"]["kill_switch_trip"]["trip_reason"] == "연속 손실 5회"
         assert kwargs["metadata"]["candidate"]["backtest_live_divergence"]["matched_count"] == 1
+        assert kwargs["metadata"]["auto_blocked_by_strategy_perf"] is False
+
+    # === auto_block_on_critical: 성과 저하 자동 차단 (P4 4-1) ===
+
+    async def test_auto_block_disabled_by_default_does_not_trip(
+        self, mock_report_service, mock_operator_alert_service
+    ):
+        """default auto_block_on_critical=False — critical 후보여도 trip 호출 없음."""
+        mock_report_service.get_last_strategy_degradation_candidates.return_value = [{
+            "strategy": "S1",
+            "status": "critical_candidate",
+            "reasons": ["consecutive_losses"],
+        }]
+        kill_switch = MagicMock()
+        kill_switch.is_strategy_tripped.return_value = None
+        kill_switch.trip_strategy = AsyncMock()
+        task = StrategyLogReportTask(
+            report_service=mock_report_service,
+            operator_alert_service=mock_operator_alert_service,
+            kill_switch_service=kill_switch,
+            logger=MagicMock(),
+        )
+
+        await task._on_market_closed("20260419")
+
+        kill_switch.trip_strategy.assert_not_awaited()
+        _args, kwargs = mock_operator_alert_service.report.await_args
+        assert kwargs["metadata"]["auto_blocked_by_strategy_perf"] is False
+
+    async def test_auto_block_on_critical_trips_with_block_side_buy(
+        self, mock_report_service, mock_operator_alert_service
+    ):
+        """auto_block_on_critical=True + critical_candidate → trip_strategy(block_side='buy') 호출."""
+        candidate = {
+            "strategy": "S1",
+            "status": "critical_candidate",
+            "reasons": ["consecutive_losses", "mdd_ratio_worse"],
+        }
+        mock_report_service.get_last_strategy_degradation_candidates.return_value = [candidate]
+        kill_switch = MagicMock()
+        # 첫 호출(trip 전): None, 두 번째 호출(trip 후): trip_info
+        kill_switch.is_strategy_tripped.side_effect = [
+            None,
+            {"trip_reason": "strategy_perf:consecutive_losses,mdd_ratio_worse", "block_side": "buy"},
+        ]
+        kill_switch.trip_strategy = AsyncMock()
+        task = StrategyLogReportTask(
+            report_service=mock_report_service,
+            operator_alert_service=mock_operator_alert_service,
+            kill_switch_service=kill_switch,
+            logger=MagicMock(),
+            auto_block_on_critical=True,
+        )
+
+        await task._on_market_closed("20260419")
+
+        kill_switch.trip_strategy.assert_awaited_once()
+        call_args = kill_switch.trip_strategy.await_args
+        assert call_args.args[0] == "S1"
+        assert "strategy_perf:" in call_args.kwargs["reason"]
+        assert "consecutive_losses" in call_args.kwargs["reason"]
+        assert call_args.kwargs["block_side"] == "buy"
+        assert call_args.kwargs["metadata"]["auto_blocked"] is True
+        assert call_args.kwargs["metadata"]["candidate"] == candidate
+
+        _args, kwargs = mock_operator_alert_service.report.await_args
+        assert kwargs["metadata"]["auto_blocked_by_strategy_perf"] is True
+        assert kwargs["metadata"]["already_blocked_by_kill_switch"] is False
+
+    async def test_auto_block_does_not_trip_for_degraded_status(
+        self, mock_report_service, mock_operator_alert_service
+    ):
+        """status='degraded' (soft warning) 는 auto-trip 대상이 아니다."""
+        mock_report_service.get_last_strategy_degradation_candidates.return_value = [{
+            "strategy": "S1",
+            "status": "degraded",
+            "reasons": ["profit_factor_low"],
+        }]
+        kill_switch = MagicMock()
+        kill_switch.is_strategy_tripped.return_value = None
+        kill_switch.trip_strategy = AsyncMock()
+        task = StrategyLogReportTask(
+            report_service=mock_report_service,
+            operator_alert_service=mock_operator_alert_service,
+            kill_switch_service=kill_switch,
+            logger=MagicMock(),
+            auto_block_on_critical=True,
+        )
+
+        await task._on_market_closed("20260419")
+
+        kill_switch.trip_strategy.assert_not_awaited()
+
+    async def test_auto_block_skipped_when_strategy_already_tripped(
+        self, mock_report_service, mock_operator_alert_service
+    ):
+        """이미 트립 상태인 전략은 자동 차단 재시도 없음 (no double-trip)."""
+        mock_report_service.get_last_strategy_degradation_candidates.return_value = [{
+            "strategy": "S1",
+            "status": "critical_candidate",
+            "reasons": ["consecutive_losses"],
+        }]
+        kill_switch = MagicMock()
+        kill_switch.is_strategy_tripped.return_value = {
+            "trip_reason": "이미 트립됨",
+            "block_side": "all",
+        }
+        kill_switch.trip_strategy = AsyncMock()
+        task = StrategyLogReportTask(
+            report_service=mock_report_service,
+            operator_alert_service=mock_operator_alert_service,
+            kill_switch_service=kill_switch,
+            logger=MagicMock(),
+            auto_block_on_critical=True,
+        )
+
+        await task._on_market_closed("20260419")
+
+        kill_switch.trip_strategy.assert_not_awaited()
+        _args, kwargs = mock_operator_alert_service.report.await_args
+        assert kwargs["metadata"]["already_blocked_by_kill_switch"] is True
+        assert kwargs["metadata"]["auto_blocked_by_strategy_perf"] is False
+
+    async def test_auto_block_trip_exception_does_not_break_alert(
+        self, mock_report_service, mock_operator_alert_service
+    ):
+        """trip_strategy() 예외는 흡수되어 운영자 알림은 계속 발송된다."""
+        mock_report_service.get_last_strategy_degradation_candidates.return_value = [{
+            "strategy": "S1",
+            "status": "critical_candidate",
+            "reasons": ["consecutive_losses"],
+        }]
+        kill_switch = MagicMock()
+        kill_switch.is_strategy_tripped.return_value = None
+        kill_switch.trip_strategy = AsyncMock(side_effect=RuntimeError("ks down"))
+        task = StrategyLogReportTask(
+            report_service=mock_report_service,
+            operator_alert_service=mock_operator_alert_service,
+            kill_switch_service=kill_switch,
+            logger=MagicMock(),
+            auto_block_on_critical=True,
+        )
+
+        await task._on_market_closed("20260419")
+
+        mock_operator_alert_service.report.assert_awaited_once()
+        _args, kwargs = mock_operator_alert_service.report.await_args
+        assert kwargs["metadata"]["auto_blocked_by_strategy_perf"] is False
+        task._logger.warning.assert_called_once()
 
     async def test_strategy_degradation_candidates_fallback_to_notification(
         self, mock_report_service, mock_notification_service

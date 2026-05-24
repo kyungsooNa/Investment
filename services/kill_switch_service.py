@@ -217,11 +217,26 @@ class KillSwitchService:
         """
         return self._strategy_tripped.get(self._strategy_resolver.to_id(strategy_name))
 
-    async def trip_strategy(self, strategy_name: str, reason: str, metadata: dict | None = None) -> None:
+    async def trip_strategy(
+        self,
+        strategy_name: str,
+        reason: str,
+        metadata: dict | None = None,
+        *,
+        block_side: str = "all",
+    ) -> None:
         """해당 전략만 단독 정지. 계좌 KS 에는 영향 없음.
 
         입력 strategy_name 은 strategy_id 로 정규화 후 state 에 기록된다.
+
+        block_side:
+          - "all" (default): BUY/SELL 모두 차단 — 기존 emergency cutoff 동작.
+          - "buy": 신규 진입(BUY)만 차단, 보유 종목 normal SELL 은 허용 — 성과 저하
+            자동 차단 등 graceful 청산이 필요한 경우 사용.
+          force-exit SELL 은 RiskGate 진입 단계에서 이미 분기되어 항상 허용된다.
         """
+        if block_side not in ("all", "buy"):
+            block_side = "all"
         strategy_id = self._strategy_resolver.to_id(strategy_name)
         async with self._lock:
             now = _now_kst()
@@ -229,6 +244,7 @@ class KillSwitchService:
                 "strategy_name": strategy_id,
                 "trip_reason": reason,
                 "trip_timestamp": now.isoformat(),
+                "block_side": block_side,
                 **(metadata or {}),
             }
             self._strategy_tripped[strategy_id] = meta

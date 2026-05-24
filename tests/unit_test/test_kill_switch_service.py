@@ -78,6 +78,45 @@ async def test_reset_strategy_clears_trip(tmp_path):
     assert ks.is_strategy_tripped("bad_strategy") is None
 
 
+# ── 전략 트립 side awareness (성과 저하 자동 차단 지원) ──────────────────────
+
+
+async def test_trip_strategy_default_block_side_is_all(tmp_path):
+    """block_side 미지정 시 기본값 'all' 이 metadata 에 저장된다 (backward compat)."""
+    ks = _make_ks(tmp_path)
+    await ks.trip_strategy("s", "사유")
+
+    info = ks.is_strategy_tripped("s")
+    assert info is not None
+    assert info.get("block_side") == "all"
+
+
+async def test_trip_strategy_block_side_buy_recorded(tmp_path):
+    """block_side='buy' 가 trip metadata 에 보존된다."""
+    ks = _make_ks(tmp_path)
+    await ks.trip_strategy(
+        "s",
+        "strategy_perf:consecutive_losses",
+        metadata={"alert_type": "strategy_degradation_candidate"},
+        block_side="buy",
+    )
+
+    info = ks.is_strategy_tripped("s")
+    assert info is not None
+    assert info.get("block_side") == "buy"
+    assert info.get("alert_type") == "strategy_degradation_candidate"
+
+
+async def test_trip_strategy_invalid_block_side_falls_back_to_all(tmp_path):
+    """알 수 없는 block_side 값은 'all' 로 보수 fallback."""
+    ks = _make_ks(tmp_path)
+    await ks.trip_strategy("s", "사유", block_side="invalid")  # type: ignore[arg-type]
+
+    info = ks.is_strategy_tripped("s")
+    assert info is not None
+    assert info.get("block_side") == "all"
+
+
 # ── 연속 손실 기반 자동 트립 ──────────────────────────────────────────────────
 
 
