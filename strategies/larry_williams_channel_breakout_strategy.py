@@ -273,6 +273,20 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
             code=code, name=item.name, action="BUY", price=current,
             reason=reason_msg, strategy_name=self.name,
             stop_loss_pct=stop_loss_pct,
+            entry_reason="larry_williams_channel_breakout",
+            invalidation_price=float(hard_stop_price),
+            stop_loss_price=float(hard_stop_price),
+            trailing_rule=f"channel_low_{self._cfg.channel_low_period}d",
+            expected_holding_period_days=self._cfg.channel_high_period,
+            confidence=min(1.0, max(0.0, float(adx_result["adx"]) / max(self._cfg.adx_threshold, 1.0))),
+            required_data=[
+                "daily_ohlcv",
+                "adx",
+                "current_price",
+                "channel_high",
+                "channel_low",
+                "volume",
+            ],
             volatility_20d_annualized=getattr(item, "volatility_20d_annualized", None),
         )
 

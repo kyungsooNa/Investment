@@ -279,6 +279,14 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 f"{entry_type}진입(체결강도 {cgld_val:.1f}%, "
                 f"PG매수 {pg_buy_amount // 100_000_000:,}억({pg_ratio:.1f}%))"
             )
+        support_ma_value = float(extra_info.get("support_ma_value") or 0.0)
+        pp_stop_price = (
+            support_ma_value * (1 + self._cfg.pp_stop_loss_below_ma_pct / 100)
+            if support_ma_value > 0
+            else current * (1 + self._cfg.pp_stop_loss_below_ma_pct / 100)
+        )
+        stop_loss_price = float(gap_day_low if entry_type == "BGU" and gap_day_low > 0 else pp_stop_price)
+        target_price = current * (1 + self._cfg.partial_profit_trigger_pct / 100)
 
         self._logger.info({
             "event": "buy_signal_generated",
@@ -300,6 +308,21 @@ class OneilPocketPivotStrategy(LiveStrategy):
         return TradeSignal(
             code=code, name=item.name, action="BUY", price=current,
             reason=reason_msg, strategy_name=self.name,
+            entry_reason=f"oneil_pocket_pivot_{entry_type.lower()}",
+            invalidation_price=round(stop_loss_price, 2),
+            stop_loss_price=round(stop_loss_price, 2),
+            target_price=round(target_price, 2),
+            trailing_rule=f"{self._cfg.holding_rule_ma_period}ma_after_profit_anchor",
+            expected_holding_period_days=self._cfg.holding_rule_days,
+            confidence=min(1.0, max(0.0, cgld_val / max(self._cfg.execution_strength_min, 1.0))),
+            required_data=[
+                "current_price",
+                "daily_ohlcv",
+                "pocket_pivot_or_bgu",
+                "program_buy",
+                "execution_strength",
+                "market_timing",
+            ],
             volatility_20d_annualized=getattr(item, "volatility_20d_annualized", None),
         )
 
@@ -317,6 +340,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
         ma_10d = sum(closes[-10:]) / 10
         ma_candidates = [(ma_10d, "10"), (item.ma_20d, "20"), (item.ma_50d, "50")]
         supporting_ma = ""
+        support_ma_value = 0.0
         ma_proximity_debug = {}
         for ma_val, ma_name in ma_candidates:
             if ma_val <= 0: continue
@@ -324,6 +348,7 @@ class OneilPocketPivotStrategy(LiveStrategy):
             ma_proximity_debug[f"ma{ma_name}_pct"] = round(pct_from_ma, 2)
             if ma_val * (1 + self._cfg.pp_ma_proximity_lower_pct/100) <= current <= ma_val * (1 + self._cfg.pp_ma_proximity_upper_pct/100):
                 supporting_ma = ma_name
+                support_ma_value = ma_val
                 break
         if not supporting_ma:
             closest_ma_pct = min(ma_proximity_debug.values(), key=abs) if ma_proximity_debug else None
@@ -372,7 +397,16 @@ class OneilPocketPivotStrategy(LiveStrategy):
             })
             return None
 
-        return ("PP", supporting_ma, 0, {"proj_vol": proj_vol, "max_down_vol": max_down_vol})
+        return (
+            "PP",
+            supporting_ma,
+            0,
+            {
+                "proj_vol": proj_vol,
+                "max_down_vol": max_down_vol,
+                "support_ma_value": support_ma_value,
+            },
+        )
 
     # ── 조건 B: BGU ───────────────────────────────────────────────
 

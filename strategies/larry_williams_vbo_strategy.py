@@ -231,6 +231,20 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                     code=code, name=name, action="BUY", price=current,
                     reason=reason, strategy_name=self.name,
                     stop_loss_pct=self._cfg.stop_loss_pct,
+                    entry_reason="larry_williams_vbo_breakout",
+                    invalidation_price=round(current * (1 + self._cfg.stop_loss_pct / 100), 2),
+                    stop_loss_price=round(current * (1 + self._cfg.stop_loss_pct / 100), 2),
+                    trailing_rule="same_day_eod_or_stop",
+                    expected_holding_period_days=1,
+                    confidence=min(1.0, max(0.0, cgld / max(self._cfg.confidence_threshold, 1.0))),
+                    required_data=[
+                        "pool_b_candidate",
+                        "current_price",
+                        "previous_day_range",
+                        "execution_strength",
+                        "program_buy",
+                        "liquidity_filter",
+                    ],
                     volatility_20d_annualized=volatility,
                 ))
                 self._bought_today.add(code)
@@ -307,6 +321,17 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             reason=reason,
             strategy_name=self.name,
             stop_loss_pct=self._cfg.stop_loss_pct,
+            entry_reason="larry_williams_vbo_shadow_breakout",
+            invalidation_price=round(current * (1 + self._cfg.stop_loss_pct / 100), 2),
+            stop_loss_price=round(current * (1 + self._cfg.stop_loss_pct / 100), 2),
+            trailing_rule="same_day_eod_or_stop",
+            expected_holding_period_days=1,
+            confidence=0.5,
+            required_data=[
+                "event_snapshot",
+                "previous_day_range",
+                "current_candidate_codes",
+            ],
         )
 
     def current_candidate_codes(self) -> List[str]:
