@@ -75,6 +75,25 @@ def handler(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market
     return handler_instance
 
 
+def test_order_execution_service_uses_configured_submit_retry_policy(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    handler_instance = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        order_max_retries=5,
+        order_retry_delay_sec=7,
+    )
+
+    assert handler_instance._broker_submitter.max_retries == 5
+    assert handler_instance._broker_submitter.retry_delay_sec == 7
+
+
 @pytest.mark.asyncio
 async def test_data_quality_blocks_order_before_broker_call(
     mock_broker_api_wrapper,

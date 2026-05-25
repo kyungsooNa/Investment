@@ -129,6 +129,35 @@ def test_app_config_defaults_to_paper_trading_when_omitted():
     assert config.strategy_profitability_gate.consecutive_loss_warning_threshold == 3
     assert config.data_quality.violation_alert_threshold == 5
     assert config.data_quality.violation_alert_window_sec == 60.0
+    assert config.order_execution.order_max_retries == 3
+    assert config.order_execution.order_retry_delay_sec == 3
+
+
+def test_app_config_accepts_order_execution_retry_policy():
+    config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        order_execution={
+            "order_max_retries": 5,
+            "order_retry_delay_sec": 1,
+        },
+    )
+
+    assert config.order_execution.order_max_retries == 5
+    assert config.order_execution.order_retry_delay_sec == 1
+
+
+def test_app_config_rejects_invalid_order_execution_retry_policy():
+    with pytest.raises(ValidationError) as excinfo:
+        AppConfig(
+            web={"host": "localhost", "port": 8080},
+            order_execution={
+                "order_max_retries": 0,
+                "order_retry_delay_sec": -1,
+            },
+        )
+
+    assert "order_max_retries" in str(excinfo.value)
+    assert "order_retry_delay_sec" in str(excinfo.value)
 
 def test_app_config_validation_invalid_url():
     """AppConfig base_url 유효성 검사 실패 테스트"""
