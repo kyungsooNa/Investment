@@ -44,7 +44,7 @@
 | --- | --- | --- | --- |
 | API 일시 오류 (1회) | `record_api_failure` 카운터 +1 | 카운터 누적, 다음 주문 허용 | 모니터링만 |
 | API 연속 오류 (≥ `max_consecutive_api_errors`) | `[KillSwitch] trip — 연속 API 오류 N회` | Kill Switch 트립, 신규 주문 차단 | 아래 *Kill Switch 발동 시 절차* |
-| 주문 지연 (개별 종목) | `OrderExecutionService` 재시도 로그 (`max_retries=10`) | 재시도 정책 내 자동 재시도 | 재시도 모두 실패 시 해당 종목 거래 일시 중단. broker 응답 코드 확인 |
+| 주문 지연 (개별 종목) | `OrderExecutionService` 재시도 로그 (`max_retries=3`) | 재시도 정책 내 자동 재시도 | 재시도 모두 실패 시 해당 종목 거래 일시 중단. broker 응답 코드 확인 |
 | 미체결 시간 한도 초과 | `FillReconciliationService.reconcile_orders_with_broker()` 결과 | 미체결 주문 식별, journal 갱신 | canary 한도(`canary_procedure.md`) 초과면 자동매매 일시 정지 |
 | Stale data (price gap) | `WebSocketWatchdogTask` `price_data_gap_*` trigger | `force_reconnect()` | 재연결 후에도 gap 지속 시 종목 구독 재등록 |
 | WebSocket receive task 사망 | `reconnect_trigger = "receive_task_dead"` | watchdog 자동 재연결 + `AlertSource.WEBSOCKET_WATCHDOG` 알림 | 5분 내 재연결 실패 시 manual `force_reconnect` |
