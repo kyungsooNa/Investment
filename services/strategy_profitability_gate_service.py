@@ -49,6 +49,12 @@ class StrategyProfitabilityGateConfig:
     multiple_testing_min_trials: int = 5
     multiple_testing_top_to_median_warning_ratio: float = 3.0
     multiple_testing_primary_metric: str = "total_net_pnl"
+    require_multiple_testing_adjustment: bool = False
+    multiple_testing_min_adjusted_sharpe: Optional[float] = None
+    multiple_testing_max_pbo_probability: Optional[float] = None
+    multiple_testing_sharpe_metric: str = "sharpe_ratio"
+    multiple_testing_in_sample_metric: str = "in_sample_net_pnl"
+    multiple_testing_out_of_sample_metric: str = "out_of_sample_net_pnl"
     strategy_correlation_min_overlap: int = 5
     strategy_correlation_warning_threshold: float = 0.8
     strategy_correlation_metric: str = "net_return"
@@ -93,7 +99,6 @@ def evaluate_strategy_profitability_gate(
             parameter_stability=parameter_stability,
         )
 
-    statuses = [item["status"] for item in by_strategy.values()]
     metrics_by_strategy = {
         strategy: item.get("metrics", {})
         for strategy, item in by_strategy.items()
@@ -103,7 +108,14 @@ def evaluate_strategy_profitability_gate(
         min_trials=cfg.multiple_testing_min_trials,
         top_to_median_warning_ratio=cfg.multiple_testing_top_to_median_warning_ratio,
         primary_metric=cfg.multiple_testing_primary_metric,
+        min_adjusted_sharpe=cfg.multiple_testing_min_adjusted_sharpe,
+        max_pbo_probability=cfg.multiple_testing_max_pbo_probability,
+        sharpe_metric=cfg.multiple_testing_sharpe_metric,
+        in_sample_metric=cfg.multiple_testing_in_sample_metric,
+        out_of_sample_metric=cfg.multiple_testing_out_of_sample_metric,
     )
+    _apply_multiple_testing_block(by_strategy, cfg, multiple_testing_bias)
+    statuses = [item["status"] for item in by_strategy.values()]
     strategy_correlation = compute_strategy_correlation_summary(
         sold_records,
         min_overlap=cfg.strategy_correlation_min_overlap,
@@ -150,6 +162,29 @@ def evaluate_strategy_profitability_gate(
         "cooldown": cooldown,
         "strategies": by_strategy,
     }
+
+
+def _apply_multiple_testing_block(
+    by_strategy: dict[str, dict[str, Any]],
+    cfg: StrategyProfitabilityGateConfig,
+    multiple_testing_bias: Mapping[str, Any],
+) -> None:
+    if not cfg.require_multiple_testing_adjustment:
+        return
+    if not multiple_testing_bias.get("bias_warning"):
+        return
+
+    best_strategy = multiple_testing_bias.get("best_strategy")
+    if best_strategy not in by_strategy:
+        return
+
+    decision = by_strategy[str(best_strategy)]
+    blocking_reasons = decision.setdefault("blocking_reasons", [])
+    if "multiple_testing_bias_warning" not in blocking_reasons:
+        blocking_reasons.append("multiple_testing_bias_warning")
+    if decision.get("status") == "pass":
+        decision["status"] = "fail"
+        decision["passed"] = False
 
 
 def _evaluate_one_strategy(
