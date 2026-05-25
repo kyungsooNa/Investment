@@ -719,6 +719,9 @@ def _run_profitability_gate_for_walk_forward(result, app_config: Any, *, initial
             records,
             gate_config,
             monte_carlo=getattr(result, "monte_carlo", None),
+            validation_metrics_by_strategy=(getattr(result, "summary", {}) or {}).get(
+                "validation_metrics_by_strategy"
+            ),
         ),
     )
 

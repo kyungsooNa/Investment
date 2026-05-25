@@ -142,4 +142,73 @@ class BacktestWalkForwardRunner:
             "test_realized_net_pnl": test_realized_net_pnl,
             "test_execution_count": test_execution_count,
             "test_rejected_count": test_rejected_count,
+            "validation_metrics_by_strategy": build_walk_forward_validation_metrics(segments),
         }
+
+
+def build_walk_forward_validation_metrics(
+    segments: Sequence[BacktestWalkForwardSegment],
+) -> dict[str, dict[str, Any]]:
+    by_strategy: dict[str, dict[str, Any]] = {}
+
+    for segment in segments:
+        segment_test_pnl: dict[str, float] = {}
+        for phase in ("train", "tune", "test"):
+            result = getattr(segment, f"{phase}_result", None)
+            for record in getattr(result, "journal_records", []) or []:
+                if str(record.get("status") or "").upper() != "SOLD":
+                    continue
+                strategy = str(record.get("strategy") or "").strip()
+                if not strategy:
+                    continue
+                net_pnl = _to_float(record.get("net_pnl"))
+                if net_pnl is None:
+                    continue
+
+                metrics = by_strategy.setdefault(
+                    strategy,
+                    {
+                        "walk_forward_segment_count": 0,
+                        "train_net_pnl": 0.0,
+                        "tune_net_pnl": 0.0,
+                        "test_net_pnl": 0.0,
+                        "in_sample_net_pnl": 0.0,
+                        "out_of_sample_net_pnl": 0.0,
+                        "in_sample_trade_count": 0,
+                        "out_of_sample_trade_count": 0,
+                        "out_of_sample_positive_segment_count": 0,
+                    },
+                )
+                metrics[f"{phase}_net_pnl"] += net_pnl
+                if phase in {"train", "tune"}:
+                    metrics["in_sample_net_pnl"] += net_pnl
+                    metrics["in_sample_trade_count"] += 1
+                else:
+                    metrics["out_of_sample_net_pnl"] += net_pnl
+                    metrics["out_of_sample_trade_count"] += 1
+                    segment_test_pnl[strategy] = segment_test_pnl.get(strategy, 0.0) + net_pnl
+
+        for strategy, test_pnl in segment_test_pnl.items():
+            metrics = by_strategy[strategy]
+            metrics["walk_forward_segment_count"] += 1
+            if test_pnl > 0:
+                metrics["out_of_sample_positive_segment_count"] += 1
+
+    for metrics in by_strategy.values():
+        segment_count = int(metrics.get("walk_forward_segment_count") or 0)
+        metrics["out_of_sample_positive_segment_ratio"] = (
+            metrics["out_of_sample_positive_segment_count"] / segment_count
+            if segment_count
+            else None
+        )
+
+    return by_strategy
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None

@@ -74,6 +74,7 @@ def evaluate_strategy_profitability_gate(
     *,
     monte_carlo: Mapping[str, Any] | None = None,
     parameter_stability: Mapping[str, Any] | None = None,
+    validation_metrics_by_strategy: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Evaluate whether each strategy clears the live-expansion baseline."""
     cfg = config or StrategyProfitabilityGateConfig()
@@ -99,6 +100,7 @@ def evaluate_strategy_profitability_gate(
             parameter_stability=parameter_stability,
         )
 
+    _merge_validation_metrics(by_strategy, validation_metrics_by_strategy)
     metrics_by_strategy = {
         strategy: item.get("metrics", {})
         for strategy, item in by_strategy.items()
@@ -185,6 +187,21 @@ def _apply_multiple_testing_block(
     if decision.get("status") == "pass":
         decision["status"] = "fail"
         decision["passed"] = False
+
+
+def _merge_validation_metrics(
+    by_strategy: dict[str, dict[str, Any]],
+    validation_metrics_by_strategy: Mapping[str, Mapping[str, Any]] | None,
+) -> None:
+    if not validation_metrics_by_strategy:
+        return
+
+    for strategy, validation_metrics in validation_metrics_by_strategy.items():
+        strategy_key = str(strategy)
+        if strategy_key not in by_strategy:
+            continue
+        metrics = by_strategy[strategy_key].setdefault("metrics", {})
+        metrics.update(dict(validation_metrics))
 
 
 def _evaluate_one_strategy(

@@ -7,6 +7,7 @@ import pytest
 from services.backtest_walk_forward import (
     BacktestWalkForwardConfig,
     BacktestWalkForwardRunner,
+    build_walk_forward_validation_metrics,
     build_walk_forward_segments,
 )
 
@@ -175,4 +176,60 @@ async def test_walk_forward_summary_aggregates_test_phase_only():
         "test_realized_net_pnl": -60,
         "test_execution_count": 2,
         "test_rejected_count": 2,
+        "validation_metrics_by_strategy": {},
     }
+
+
+def test_build_walk_forward_validation_metrics_aggregates_in_and_out_of_sample_by_strategy():
+    segments = [
+        SimpleNamespace(
+            train_result=SimpleNamespace(
+                journal_records=[
+                    {"status": "SOLD", "strategy": "S1", "net_pnl": 100},
+                    {"status": "SOLD", "strategy": "S2", "net_pnl": 50},
+                ]
+            ),
+            tune_result=SimpleNamespace(
+                journal_records=[
+                    {"status": "SOLD", "strategy": "S1", "net_pnl": 40},
+                    {"status": "REJECTED", "strategy": "S1", "net_pnl": -999},
+                ]
+            ),
+            test_result=SimpleNamespace(
+                journal_records=[
+                    {"status": "SOLD", "strategy": "S1", "net_pnl": -20},
+                    {"status": "SOLD", "strategy": "S2", "net_pnl": 30},
+                ]
+            ),
+        ),
+        SimpleNamespace(
+            train_result=SimpleNamespace(
+                journal_records=[
+                    {"status": "SOLD", "strategy": "S1", "net_pnl": 200},
+                ]
+            ),
+            tune_result=SimpleNamespace(journal_records=[]),
+            test_result=SimpleNamespace(
+                journal_records=[
+                    {"status": "SOLD", "strategy": "S1", "net_pnl": 10},
+                ]
+            ),
+        ),
+    ]
+
+    metrics = build_walk_forward_validation_metrics(segments)
+
+    assert metrics["S1"] == {
+        "walk_forward_segment_count": 2,
+        "train_net_pnl": 300.0,
+        "tune_net_pnl": 40.0,
+        "test_net_pnl": -10.0,
+        "in_sample_net_pnl": 340.0,
+        "out_of_sample_net_pnl": -10.0,
+        "in_sample_trade_count": 3,
+        "out_of_sample_trade_count": 2,
+        "out_of_sample_positive_segment_count": 1,
+        "out_of_sample_positive_segment_ratio": 0.5,
+    }
+    assert metrics["S2"]["in_sample_net_pnl"] == 50.0
+    assert metrics["S2"]["out_of_sample_net_pnl"] == 30.0
