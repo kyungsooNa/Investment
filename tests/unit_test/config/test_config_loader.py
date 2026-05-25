@@ -201,11 +201,15 @@ def test_strategy_profitability_gate_real_mode_overrides_defaults_are_canary_fri
     assert overrides.require_parameter_stability is True
     assert overrides.require_monte_carlo is True
     assert overrides.require_regime_balance is True
+    assert overrides.require_multiple_testing_adjustment is True
+    assert overrides.multiple_testing_min_adjusted_sharpe == 0.0
+    assert overrides.multiple_testing_max_pbo_probability == 0.5
     # paper 기본값(top-level)은 보존
     assert config.strategy_profitability_gate.min_trades == 30
     assert config.strategy_profitability_gate.require_parameter_stability is False
     assert config.strategy_profitability_gate.require_monte_carlo is False
     assert config.strategy_profitability_gate.require_regime_balance is False
+    assert config.strategy_profitability_gate.require_multiple_testing_adjustment is False
 
 
 def test_strategy_profitability_gate_real_mode_overrides_accept_user_yaml_values():
@@ -227,6 +231,7 @@ def test_strategy_profitability_gate_real_mode_overrides_accept_user_yaml_values
     # 명시되지 않은 필드는 canary 기본값 유지
     assert overrides.require_parameter_stability is True
     assert overrides.require_regime_balance is True
+    assert overrides.require_multiple_testing_adjustment is True
 
 
 def test_app_config_accepts_order_execution_retry_policy():

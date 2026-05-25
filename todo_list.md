@@ -114,9 +114,13 @@
 
 ### 1-2. Multiple testing / overfitting 방어 강화
 
-- [ ] 현재 `MultipleTestingBiasService`의 lightweight report-only 성격을 실전 승격 기준으로 충분한지 재평가한다.
-- [ ] 전략/필터/파라미터를 여러 개 실험한 뒤 상위 성과만 고르는 착시를 줄이기 위해 Deflated Sharpe 또는 PBO 유사 지표를 추가한다.
-- [ ] walk-forward 결과를 전략 승격 gate에 연결한다. 단순 리포트가 아니라 기간별 안정성 미달 시 real mode 신규 진입을 막는 정책을 검토한다.
+- [x] 현재 `MultipleTestingBiasService`의 lightweight report-only 성격을 실전 승격 기준으로 충분한지 재평가한다.
+  - 완료된 부분(2026-05-25): report-only로는 실전 승격 기준이 부족하다고 보고, `StrategyProfitabilityGateConfig.require_multiple_testing_adjustment`를 추가했다. paper/backtest 기본값은 False로 유지하고, real-mode canary overlay는 True로 설정해 multiple-testing bias warning을 best strategy의 `blocking_reasons=["multiple_testing_bias_warning"]`로 승격한다.
+- [x] 전략/필터/파라미터를 여러 개 실험한 뒤 상위 성과만 고르는 착시를 줄이기 위해 Deflated Sharpe 또는 PBO 유사 지표를 추가한다.
+  - 완료된 부분(2026-05-25): `compute_multiple_testing_bias_summary()`에 `deflated_sharpe_proxy`와 `pbo_proxy`를 추가했다. Deflated Sharpe proxy는 `sharpe_ratio` 분산 기반 selection haircut으로 `adjusted_sharpe`를 산출하고, PBO proxy는 `in_sample_net_pnl` 상위 절반의 `out_of_sample_net_pnl` 부진 확률을 산출한다. `min_adjusted_sharpe`/`max_pbo_probability` 임계 위반 시 warning reason을 추가한다.
+- [~] walk-forward 결과를 전략 승격 gate에 연결한다. 단순 리포트가 아니라 기간별 안정성 미달 시 real mode 신규 진입을 막는 정책을 검토한다.
+  - 1차 완료(2026-05-25): gate가 `multiple_testing_min_adjusted_sharpe`, `multiple_testing_max_pbo_probability`, `multiple_testing_in_sample_metric`, `multiple_testing_out_of_sample_metric`을 받아 bias summary에 전달하고, real-mode overlay 기본값(`0.0` / `0.5`)을 제공한다. out-of-sample metric이 공급되면 PBO proxy 실패가 real 신규 BUY 차단으로 이어진다.
+  - 진행 필요: 실제 walk-forward runner/리포트 산출물이 `in_sample_net_pnl`/`out_of_sample_net_pnl` 등 gate 입력 metric을 안정적으로 채우도록 연결한다.
 - [ ] purged/embargo split 또는 같은 종목·인접 기간 누수 방지용 validation contract를 정의한다.
 - [ ] ablation 결과를 승격 기준에 반영한다. 필터 제거/완화 시 성과가 크게 무너지지 않거나, 특정 필터가 실제로 기여하는지 확인한다.
 

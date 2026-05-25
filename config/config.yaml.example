@@ -175,6 +175,9 @@ strategy_profitability_gate:
   #   require_parameter_stability: true
   #   require_monte_carlo: true
   #   require_regime_balance: true
+  #   require_multiple_testing_adjustment: true
+  #   multiple_testing_min_adjusted_sharpe: 0.0
+  #   multiple_testing_max_pbo_probability: 0.5
 
 # 포지션 사이징 (Fixed Fractional / Penbold 식)
 position_sizing:

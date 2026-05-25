@@ -271,6 +271,43 @@ def test_profitability_gate_reports_multiple_testing_bias_warning():
     assert result["multiple_testing_bias"]["best_strategy"] == "S1"
 
 
+def test_profitability_gate_blocks_best_strategy_when_multiple_testing_required():
+    records = []
+    for strategy, pnl in [
+        ("S1", 1_000),
+        ("S2", 100),
+        ("S3", 80),
+        ("S4", 60),
+        ("S5", 40),
+    ]:
+        records.append(_sold(pnl, 1.0, strategy=strategy, signal_time="2026-05-01"))
+
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=1,
+        min_profit_factor=None,
+        min_payoff_ratio=None,
+        min_win_rate=0.0,
+        min_avg_net_return=None,
+        require_positive_total_net_pnl=False,
+        max_mdd_pct=None,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+        multiple_testing_min_trials=5,
+        multiple_testing_top_to_median_warning_ratio=3.0,
+        require_multiple_testing_adjustment=True,
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    assert "multiple_testing_bias_warning" in result["warnings"]
+    assert result["strategies"]["S1"]["status"] == "fail"
+    assert result["strategies"]["S1"]["passed"] is False
+    assert "multiple_testing_bias_warning" in result["strategies"]["S1"]["blocking_reasons"]
+    assert result["strategies"]["S2"]["status"] == "pass"
+
+
 def test_profitability_gate_reports_strategy_correlation_warning():
     records = []
     for day, s1_ret, s2_ret in [

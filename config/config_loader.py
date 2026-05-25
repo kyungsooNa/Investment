@@ -255,6 +255,9 @@ class StrategyProfitabilityGateRealOverrides(BaseModel):
     require_parameter_stability: bool = True
     require_monte_carlo: bool = True
     require_regime_balance: bool = True
+    require_multiple_testing_adjustment: bool = True
+    multiple_testing_min_adjusted_sharpe: Optional[float] = 0.0
+    multiple_testing_max_pbo_probability: Optional[float] = 0.5
 
     model_config = {"extra": "allow"}
 
@@ -285,6 +288,12 @@ class StrategyProfitabilityGateConfig(BaseModel):
     multiple_testing_min_trials: int = 5
     multiple_testing_top_to_median_warning_ratio: float = 3.0
     multiple_testing_primary_metric: str = "total_net_pnl"
+    require_multiple_testing_adjustment: bool = False
+    multiple_testing_min_adjusted_sharpe: Optional[float] = None
+    multiple_testing_max_pbo_probability: Optional[float] = None
+    multiple_testing_sharpe_metric: str = "sharpe_ratio"
+    multiple_testing_in_sample_metric: str = "in_sample_net_pnl"
+    multiple_testing_out_of_sample_metric: str = "out_of_sample_net_pnl"
     strategy_correlation_min_overlap: int = 5
     strategy_correlation_warning_threshold: float = 0.8
     strategy_correlation_metric: str = "net_return"
