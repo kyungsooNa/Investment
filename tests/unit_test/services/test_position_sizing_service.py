@@ -445,3 +445,97 @@ async def test_no_order_amount_cap_when_risk_gate_not_set():
 
     assert qty == 5
     assert reason == "ok"
+
+
+# ── P0 0-2: real_mode_overrides 분기 ──────────────────────────────────
+
+def _env(is_paper_trading: bool):
+    env = MagicMock()
+    env.is_paper_trading = is_paper_trading
+    return env
+
+
+def _make_service_with_env(env, cfg=None):
+    cache = AsyncMock()
+    cache.get.return_value = _make_snapshot(
+        total_equity=10_000_000,
+        available_cash=10_000_000,
+    )
+    indicator = AsyncMock()
+    indicator.calculate_atr.return_value = None
+    svc = PositionSizingService(
+        account_snapshot_cache=cache,
+        indicator_service=indicator,
+        config=cfg or _make_config(),
+        env=env,
+    )
+    return svc
+
+
+def test_position_sizing_is_real_mode_default_false_when_env_missing():
+    svc = _make_service_with_env(env=None)
+    assert svc._is_real_mode() is False
+
+
+def test_position_sizing_is_real_mode_false_for_paper_env():
+    svc = _make_service_with_env(env=_env(is_paper_trading=True))
+    assert svc._is_real_mode() is False
+
+
+def test_position_sizing_is_real_mode_true_for_real_env():
+    svc = _make_service_with_env(env=_env(is_paper_trading=False))
+    assert svc._is_real_mode() is True
+
+
+def test_position_sizing_paper_uses_top_level_values():
+    cfg = _make_config(per_trade_risk_pct=1.5, max_per_position_pct=5.0)
+    svc = _make_service_with_env(env=_env(is_paper_trading=True), cfg=cfg)
+    assert svc._effective_per_trade_risk_pct() == 1.5
+    assert svc._effective_max_per_position_pct() == 5.0
+
+
+def test_position_sizing_real_uses_overrides():
+    cfg = _make_config(per_trade_risk_pct=1.5, max_per_position_pct=5.0)
+    svc = _make_service_with_env(env=_env(is_paper_trading=False), cfg=cfg)
+    # overrides default canary 값 적용
+    assert svc._effective_per_trade_risk_pct() == 0.5
+    assert svc._effective_max_per_position_pct() == 3.0
+
+
+def test_position_sizing_real_uses_overrides_user_yaml():
+    cfg = PositionSizingConfig(
+        per_trade_risk_pct=1.5,
+        max_per_position_pct=5.0,
+        real_mode_overrides={"per_trade_risk_pct": 0.25, "max_per_position_pct": 2.0},
+    )
+    svc = _make_service_with_env(env=_env(is_paper_trading=False), cfg=cfg)
+    assert svc._effective_per_trade_risk_pct() == 0.25
+    assert svc._effective_max_per_position_pct() == 2.0
+
+
+@pytest.mark.asyncio
+async def test_position_sizing_real_mode_shrinks_risk_qty():
+    """동일 paper/real 설정에서 real 은 canary overrides 로 인해 qty 가 더 작아야 한다."""
+    snap = _make_snapshot(total_equity=10_000_000, available_cash=10_000_000)
+    cfg = _make_config(per_trade_risk_pct=1.0, default_stop_loss_pct=-5.0, min_stop_distance_pct=0.0)
+    cache = AsyncMock()
+    cache.get.return_value = snap
+    indicator = AsyncMock()
+    indicator.calculate_atr.return_value = None
+
+    paper_svc = PositionSizingService(
+        account_snapshot_cache=cache, indicator_service=indicator,
+        config=cfg, env=_env(is_paper_trading=True),
+    )
+    real_svc = PositionSizingService(
+        account_snapshot_cache=cache, indicator_service=indicator,
+        config=cfg, env=_env(is_paper_trading=False),
+    )
+    sig = _buy_signal(price=10_000, qty=10_000, stop_loss_pct=-5.0)
+
+    paper_qty, _ = await paper_svc.adjust_buy_qty(sig)
+    real_qty, _ = await real_svc.adjust_buy_qty(sig)
+
+    # paper: per_trade_risk_pct=1.0 / max_per_position_pct=10.0
+    # real overlay: per_trade_risk_pct=0.5 / max_per_position_pct=3.0 → 둘 다 빠듯해진다
+    assert paper_qty > real_qty > 0

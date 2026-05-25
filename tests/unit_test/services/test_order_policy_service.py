@@ -9,7 +9,7 @@ from services.execution_flow_service import ExecutionFlowSnapshot
 from services.order_policy_service import OrderPolicyDecision, OrderPolicyService
 
 
-def _service(*, config=None, quote_provider=None, security_info_provider=None, trade_flow_provider=None, logger=None):
+def _service(*, config=None, quote_provider=None, security_info_provider=None, trade_flow_provider=None, logger=None, env=None):
     cfg = config or OrderPolicyConfig()
     if security_info_provider is None:
         cfg = cfg.model_copy(update={"security_status_checks_enabled": False})
@@ -21,6 +21,7 @@ def _service(*, config=None, quote_provider=None, security_info_provider=None, t
         security_info_provider=security_info_provider,
         trade_flow_provider=trade_flow_provider,
         logger=logger or MagicMock(),
+        env=env,
     )
 
 
@@ -1100,3 +1101,66 @@ async def test_trade_flow_blocks_conclusion_unavailable_and_low_strength():
 
     assert conclusion.context["trade_flow_error"] == "conclusion_unavailable"
     assert low_strength.rule == "trade_flow_strength_too_low"
+
+
+# ── P0 0-2: OrderPolicy real_mode_overrides 분기 ──────────────────────
+
+class _PaperEnv:
+    is_paper_trading = True
+
+
+class _RealEnv:
+    is_paper_trading = False
+
+
+def test_order_policy_paper_uses_top_level():
+    cfg = OrderPolicyConfig(allow_market_buy=True, max_spread_pct=1.0, max_market_slippage_pct=1.0, max_top_of_book_participation_pct=100.0)
+    svc = _service(config=cfg, env=_PaperEnv())
+    assert svc._effective_allow_market_buy() is True
+    assert svc._effective_max_spread_pct() == 1.0
+    assert svc._effective_max_market_slippage_pct() == 1.0
+    assert svc._effective_max_top_of_book_participation_pct() == 100.0
+
+
+def test_order_policy_real_uses_override_defaults():
+    cfg = OrderPolicyConfig(allow_market_buy=True, max_spread_pct=1.0, max_market_slippage_pct=1.0, max_top_of_book_participation_pct=100.0)
+    svc = _service(config=cfg, env=_RealEnv())
+    # canary 기본값
+    assert svc._effective_allow_market_buy() is False
+    assert svc._effective_max_spread_pct() == 0.5
+    assert svc._effective_max_market_slippage_pct() == 0.5
+    assert svc._effective_max_top_of_book_participation_pct() == 10.0
+
+
+def test_order_policy_real_user_yaml_overrides():
+    cfg = OrderPolicyConfig(
+        allow_market_buy=True,
+        max_spread_pct=1.0,
+        max_market_slippage_pct=1.0,
+        max_top_of_book_participation_pct=100.0,
+        real_mode_overrides={
+            "allow_market_buy": True,
+            "max_spread_pct": 0.3,
+            "max_market_slippage_pct": 0.3,
+            "max_top_of_book_participation_pct": 5.0,
+        },
+    )
+    svc = _service(config=cfg, env=_RealEnv())
+    assert svc._effective_allow_market_buy() is True
+    assert svc._effective_max_spread_pct() == 0.3
+    assert svc._effective_max_market_slippage_pct() == 0.3
+    assert svc._effective_max_top_of_book_participation_pct() == 5.0
+
+
+def test_order_policy_real_mode_blocks_market_buy():
+    """paper 에서 통과하던 시장가 매수가 real canary overlay 에서 차단되어야 한다."""
+    cfg = OrderPolicyConfig(allow_market_buy=True)
+    paper_svc = _service(config=cfg, env=_PaperEnv())
+    real_svc = _service(config=cfg, env=_RealEnv())
+
+    paper_decision = paper_svc._check_market_order_type(side=OrderSide.BUY, exchange=Exchange.KRX)
+    real_decision = real_svc._check_market_order_type(side=OrderSide.BUY, exchange=Exchange.KRX)
+
+    assert paper_decision is None
+    assert real_decision is not None
+    assert real_decision.rule == "market_buy_disabled"

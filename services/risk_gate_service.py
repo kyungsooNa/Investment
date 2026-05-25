@@ -126,12 +126,13 @@ class RiskGateService:
                 side=side.value,
             )
 
-        if active_order_count >= self._cfg.max_pending_orders:
+        effective_max_pending = self._effective_max_pending_orders()
+        if active_order_count >= effective_max_pending:
             return self._blocked(
                 "max_pending_orders",
                 "진행 중 주문 수 초과",
                 active_order_count=active_order_count,
-                max_pending_orders=self._cfg.max_pending_orders,
+                max_pending_orders=effective_max_pending,
             )
 
         effective_price = price
@@ -368,6 +369,16 @@ class RiskGateService:
             return not bool(getattr(fail_open_cfg, "real", False))
         return not bool(getattr(fail_open_cfg, "paper", True))
 
+    def _effective_max_total_exposure_pct(self) -> float:
+        if self._is_real_mode():
+            return self._cfg.real_mode_overrides.max_total_exposure_pct
+        return self._cfg.max_total_exposure_pct
+
+    def _effective_max_pending_orders(self) -> int:
+        if self._is_real_mode():
+            return self._cfg.real_mode_overrides.max_pending_orders
+        return self._cfg.max_pending_orders
+
     async def _resolve_market_buy_reference_price(
         self,
         stock_code: str,
@@ -471,7 +482,8 @@ class RiskGateService:
 
         current_exposure = sum(max(value, 0) for value in snapshot.positions.values())
         next_exposure_pct = (current_exposure + order_amount) / snapshot.total_equity * 100
-        if next_exposure_pct > self._cfg.max_total_exposure_pct:
+        effective_max_exposure_pct = self._effective_max_total_exposure_pct()
+        if next_exposure_pct > effective_max_exposure_pct:
             return self._blocked(
                 "max_total_exposure",
                 "계좌 노출 한도 초과",
@@ -480,7 +492,7 @@ class RiskGateService:
                 order_amount=order_amount,
                 total_equity=snapshot.total_equity,
                 next_exposure_pct=round(next_exposure_pct, 2),
-                max_total_exposure_pct=self._cfg.max_total_exposure_pct,
+                max_total_exposure_pct=effective_max_exposure_pct,
             )
 
         return None

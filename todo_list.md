@@ -48,14 +48,19 @@
 
 ### 0-2. Canary 기본 리스크/주문 정책 보수화
 
-- [ ] 실전 canary 전용 config/profile을 분리하거나 기본 운영값을 낮춘다.
+- [x] 실전 canary 전용 config/profile을 분리하거나 기본 운영값을 낮춘다.
   - 리뷰 기준: 현재 `PositionSizingConfig.per_trade_risk_pct=1.5`, `max_per_position_pct=5.0`, `RiskGateConfig.max_total_exposure_pct=95.0`, `max_pending_orders=10`은 검증 전 자동매매 canary에는 공격적이다.
   - canary 목표값: `per_trade_risk_pct=0.25~0.5`, `max_per_position_pct=2.0~3.0`, `max_total_exposure_pct=20.0~35.0`, `max_pending_orders=3~5`.
-- [ ] 실전 BUY 주문 정책을 canary 기준으로 fail-close에 가깝게 보수화한다.
+  - 완료된 부분(2026-05-25): nested overlay 패턴 채택(`RiskGateFailOpenConfig`/`DataQualityConfig` 선례 일관). 신규 BaseModel 3종: `PositionSizingRealOverrides{per_trade_risk_pct=0.5, max_per_position_pct=3.0}`, `RiskGateRealOverrides{max_total_exposure_pct=30.0, max_pending_orders=5}`. 각 부모 config에 `real_mode_overrides: <Type>RealOverrides = Field(default_factory=...)` 필드 추가. paper 동작 보존(top-level 필드 그대로), real 모드에서만 자동 적용. yaml 명시값이 우선해 production 등급 운영자는 overlay 풀 수 있음. `config/config.yaml.example`에 commented overlay 블록 포함.
+- [x] 실전 BUY 주문 정책을 canary 기준으로 fail-close에 가깝게 보수화한다.
   - 리뷰 기준: 현재 `OrderPolicyConfig.allow_market_buy=True`, `min_trading_value_won=0`, `min_market_cap_won=0`, `max_top_of_book_participation_pct=100.0`은 초기 실전 운용 기준으로 느슨하다.
   - canary 목표값: `allow_market_buy=false`, `max_market_slippage_pct=0.3~0.5`, `max_spread_pct=0.3~0.5`, `min_trading_value_won`/`min_market_cap_won` 전략별 하한 설정, `max_top_of_book_participation_pct=5~15`.
-- [ ] `PreDeployCheckService`가 real mode에서 canary profile 또는 production profile의 리스크/주문 정책이 과도하게 느슨하면 WARN/FAIL을 내도록 검증한다.
-- [ ] config 변경 후 `RiskGateService`, `PositionSizingService`, `OrderPolicyService`, web order path, scheduler order path의 paper/real 분기 회귀 테스트를 추가한다.
+  - 완료된 부분(2026-05-25): `OrderPolicyRealOverrides{allow_market_buy=False, max_market_slippage_pct=0.5, max_spread_pct=0.5, max_top_of_book_participation_pct=10.0}` 추가. real 모드에서 시장가 매수 fail-close, 슬리피지/스프레드 0.5% 제한, 1호가 잔량 대비 최대 10% 참여. `min_trading_value_won`/`min_market_cap_won`은 todo 명시대로 전략별 하한이라 overlay 미포함(`RiskGateStrategyLimitConfig` 경로 유지).
+  - 후속(blocked → 정책 합의 후): 전략별 `min_trading_value_won`/`min_market_cap_won` 하한 설정은 별도 PR에서 진행.
+- [x] `PreDeployCheckService`가 real mode에서 canary profile 또는 production profile의 리스크/주문 정책이 과도하게 느슨하면 WARN/FAIL을 내도록 검증한다.
+  - 완료된 부분(2026-05-25): `check_real_mode_policy_strictness()` 신규 등록. paper 모드 → SKIPPED. real 모드에서는 effective override 값을 canary 임계값(각 RealOverrides의 default)과 비교: `value > canary*1.5` → FAIL, `canary < value ≤ canary*1.5` → WARN. `allow_market_buy=True`는 real 모드에서 즉시 FAIL. `run_all()`에 등록되어 배포 전 자동 점검. 6건 단위 테스트(skipped/pass/warn/fail/market_buy_fail/fail_priority_over_warn) + 통합 테스트 8 checks expectation 갱신.
+- [x] config 변경 후 `RiskGateService`, `PositionSizingService`, `OrderPolicyService`, web order path, scheduler order path의 paper/real 분기 회귀 테스트를 추가한다.
+  - 완료된 부분(2026-05-25): 서비스 분기 로직 일관 패턴 적용. `RiskGateService`는 기존 `env` + `_is_real_mode()` 보유 → `_effective_max_total_exposure_pct()` / `_effective_max_pending_orders()` 헬퍼 추가. `PositionSizingService` / `OrderPolicyService` 생성자에 `env: Optional[Any] = None` keyword-only 인자 추가(기존 호출자 무변동) + `_is_real_mode()` + `_effective_*()` 헬퍼. 직접 `self._cfg.X` 읽기를 effective 헬퍼 호출로 교체. `view/web/bootstrap/service_container.py` 두 서비스 호출부에 `env=getattr(ctx.broker, "env", None)` 전달. 단위 테스트 추가: PositionSizing 8건(real_mode 분기 5 + risk_qty shrinks 1 + 기타), RiskGate 7건(effective_max 2종 paper/real 각 1 + user yaml + exposure/pending 차단 회귀 2 + 기타), OrderPolicy 4건(paper/real defaults + user yaml + market_buy 차단). 단위 5520 + 통합 235 통과.
 
 주요 파일:
 

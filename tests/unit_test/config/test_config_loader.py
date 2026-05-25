@@ -133,6 +133,59 @@ def test_app_config_defaults_to_paper_trading_when_omitted():
     assert config.order_execution.order_retry_delay_sec == 3
 
 
+def test_position_sizing_real_mode_overrides_defaults_are_canary_friendly():
+    """P0 0-2: 실전 모드 기본 overlay 가 canary 임계 안에 있는지 회귀."""
+    config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+    )
+    overrides = config.position_sizing.real_mode_overrides
+    assert overrides.per_trade_risk_pct == 0.5
+    assert overrides.max_per_position_pct == 3.0
+
+
+def test_risk_gate_real_mode_overrides_defaults_are_canary_friendly():
+    config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+    )
+    overrides = config.risk_gate.real_mode_overrides
+    assert overrides.max_total_exposure_pct == 30.0
+    assert overrides.max_pending_orders == 5
+
+
+def test_order_policy_real_mode_overrides_defaults_are_canary_friendly():
+    config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+    )
+    overrides = config.order_policy.real_mode_overrides
+    assert overrides.allow_market_buy is False
+    assert overrides.max_market_slippage_pct == 0.5
+    assert overrides.max_spread_pct == 0.5
+    assert overrides.max_top_of_book_participation_pct == 10.0
+
+
+def test_real_mode_overrides_accept_user_yaml_values():
+    """운영자가 production 등급으로 overlay 값을 풀고 싶을 때 yaml 로드가 동작하는지."""
+    config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        position_sizing={"real_mode_overrides": {"per_trade_risk_pct": 0.25, "max_per_position_pct": 2.0}},
+        risk_gate={"real_mode_overrides": {"max_total_exposure_pct": 20.0, "max_pending_orders": 3}},
+        order_policy={
+            "real_mode_overrides": {
+                "allow_market_buy": True,
+                "max_market_slippage_pct": 0.3,
+                "max_spread_pct": 0.3,
+                "max_top_of_book_participation_pct": 5.0,
+            }
+        },
+    )
+    assert config.position_sizing.real_mode_overrides.per_trade_risk_pct == 0.25
+    assert config.position_sizing.real_mode_overrides.max_per_position_pct == 2.0
+    assert config.risk_gate.real_mode_overrides.max_total_exposure_pct == 20.0
+    assert config.risk_gate.real_mode_overrides.max_pending_orders == 3
+    assert config.order_policy.real_mode_overrides.allow_market_buy is True
+    assert config.order_policy.real_mode_overrides.max_market_slippage_pct == 0.3
+
+
 def test_app_config_accepts_order_execution_retry_policy():
     config = AppConfig(
         web={"host": "localhost", "port": 8080},

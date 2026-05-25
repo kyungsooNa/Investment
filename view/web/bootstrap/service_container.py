@@ -431,6 +431,7 @@ class ServiceContainer:
                 risk_gate_config=_rg_cfg,
                 quote_provider=ctx.broker,
                 order_policy_config=_op_cfg,
+                env=getattr(ctx.broker, "env", None),
             )
             ctx.risk_gate_service = RiskGateService(
                 config=_rg_cfg,
@@ -458,6 +459,7 @@ class ServiceContainer:
                 security_info_provider=ctx.broker,
                 trade_flow_provider=ctx.execution_flow_service,
                 logger=ctx.logger,
+                env=getattr(ctx.broker, "env", None),
             )
             ctx.deferred_order_queue = DeferredOrderQueue(ctx.logger)
             _oe_cfg = _config_value(config_dict, "order_execution", {})

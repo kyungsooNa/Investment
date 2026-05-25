@@ -361,6 +361,71 @@ class PreDeployCheckService:
 
         return await self._measured("api_budget_limiter", run)
 
+    async def check_real_mode_policy_strictness(self) -> CheckResult:
+        """real 모드일 때 effective PositionSizing / RiskGate / OrderPolicy 값이
+        canary 임계보다 느슨하면 WARN 또는 FAIL 을 낸다.
+
+        canary 임계는 각 RealOverrides 클래스의 default 값 (P0 0-2 정책 합의값).
+        loose factor 1.5× 까지는 WARN, 그 이상은 FAIL.
+        OrderPolicy.allow_market_buy=True 는 real 모드에서 즉시 FAIL.
+        paper 모드면 SKIPPED.
+        """
+        async def run() -> CheckResult:
+            cfg = self._cached_config or self._config_loader()
+            self._cached_config = cfg
+            is_paper = bool(getattr(cfg, "is_paper_trading", True))
+            if is_paper:
+                return CheckResult(name="", status=CheckStatus.SKIPPED, detail="paper 모드 — strictness check skip")
+
+            warns: List[str] = []
+            fails: List[str] = []
+
+            ps_cfg = getattr(cfg, "position_sizing", None)
+            rg_cfg = getattr(cfg, "risk_gate", None)
+            op_cfg = getattr(cfg, "order_policy", None)
+
+            def _grade(name: str, effective: float, canary: float, *, lower_is_safer: bool = True) -> None:
+                """effective 가 canary 임계보다 얼마나 느슨한지 평가."""
+                if lower_is_safer:
+                    if effective > canary * 1.5:
+                        fails.append(f"{name}={effective} (canary={canary}, loose>1.5x)")
+                    elif effective > canary:
+                        warns.append(f"{name}={effective} (canary={canary})")
+                else:
+                    if effective < canary / 1.5:
+                        fails.append(f"{name}={effective} (canary={canary}, tight<0.67x)")
+                    elif effective < canary:
+                        warns.append(f"{name}={effective} (canary={canary})")
+
+            if ps_cfg is not None:
+                ov = ps_cfg.real_mode_overrides
+                _grade("position_sizing.per_trade_risk_pct", ov.per_trade_risk_pct, 0.5)
+                _grade("position_sizing.max_per_position_pct", ov.max_per_position_pct, 3.0)
+
+            if rg_cfg is not None:
+                ov = rg_cfg.real_mode_overrides
+                _grade("risk_gate.max_total_exposure_pct", ov.max_total_exposure_pct, 30.0)
+                _grade("risk_gate.max_pending_orders", ov.max_pending_orders, 5)
+
+            if op_cfg is not None:
+                ov = op_cfg.real_mode_overrides
+                if ov.allow_market_buy:
+                    fails.append("order_policy.allow_market_buy=True (real 모드 fail-close 위반)")
+                _grade("order_policy.max_market_slippage_pct", ov.max_market_slippage_pct, 0.5)
+                _grade("order_policy.max_spread_pct", ov.max_spread_pct, 0.5)
+                _grade("order_policy.max_top_of_book_participation_pct", ov.max_top_of_book_participation_pct, 10.0)
+
+            if fails:
+                detail = "FAIL: " + "; ".join(fails)
+                if warns:
+                    detail += " | WARN: " + "; ".join(warns)
+                return CheckResult(name="", status=CheckStatus.FAIL, detail=detail)
+            if warns:
+                return CheckResult(name="", status=CheckStatus.WARN, detail="WARN: " + "; ".join(warns))
+            return CheckResult(name="", status=CheckStatus.PASS, detail="real 모드 정책이 canary 임계 안에 있음")
+
+        return await self._measured("real_mode_policy_strictness", run)
+
     # -- runner -------------------------------------------------------------
 
     async def run_all(self, *, offline: bool = False) -> PreDeployCheckSummary:
@@ -372,4 +437,5 @@ class PreDeployCheckService:
         results.append(await self.check_websocket_subscription(offline=offline))
         results.append(await self.check_account_snapshot(offline=offline))
         results.append(await self.check_api_budget_limiter())
+        results.append(await self.check_real_mode_policy_strictness())
         return PreDeployCheckSummary(results=results)
