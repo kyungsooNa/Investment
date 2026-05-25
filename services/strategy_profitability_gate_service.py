@@ -18,6 +18,7 @@ from services.strategy_performance_degradation_service import compute_strategy_w
 from services.multiple_testing_bias_service import compute_multiple_testing_bias_summary
 from services.portfolio_cooldown_service import compute_portfolio_cooldown_summary
 from services.portfolio_entry_pressure_service import compute_portfolio_entry_pressure_summary
+from services.strategy_ablation_service import compute_ablation_gate_summary
 from services.strategy_correlation_service import compute_strategy_correlation_summary
 
 
@@ -66,6 +67,7 @@ class StrategyProfitabilityGateConfig:
     opening_entry_warning_threshold: int = 3
     closing_entry_warning_threshold: int = 3
     consecutive_loss_warning_threshold: int = 3
+    ablation_max_variant_outperformance_pct: Optional[float] = None
 
 
 def evaluate_strategy_profitability_gate(
@@ -74,6 +76,8 @@ def evaluate_strategy_profitability_gate(
     *,
     monte_carlo: Mapping[str, Any] | None = None,
     parameter_stability: Mapping[str, Any] | None = None,
+    validation_metrics_by_strategy: Mapping[str, Mapping[str, Any]] | None = None,
+    ablation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate whether each strategy clears the live-expansion baseline."""
     cfg = config or StrategyProfitabilityGateConfig()
@@ -97,8 +101,10 @@ def evaluate_strategy_profitability_gate(
             cfg,
             monte_carlo=monte_carlo,
             parameter_stability=parameter_stability,
+            ablation=ablation,
         )
 
+    _merge_validation_metrics(by_strategy, validation_metrics_by_strategy)
     metrics_by_strategy = {
         strategy: item.get("metrics", {})
         for strategy, item in by_strategy.items()
@@ -187,6 +193,21 @@ def _apply_multiple_testing_block(
         decision["passed"] = False
 
 
+def _merge_validation_metrics(
+    by_strategy: dict[str, dict[str, Any]],
+    validation_metrics_by_strategy: Mapping[str, Mapping[str, Any]] | None,
+) -> None:
+    if not validation_metrics_by_strategy:
+        return
+
+    for strategy, validation_metrics in validation_metrics_by_strategy.items():
+        strategy_key = str(strategy)
+        if strategy_key not in by_strategy:
+            continue
+        metrics = by_strategy[strategy_key].setdefault("metrics", {})
+        metrics.update(dict(validation_metrics))
+
+
 def _evaluate_one_strategy(
     strategy: str,
     records: list[Mapping[str, Any]],
@@ -194,6 +215,7 @@ def _evaluate_one_strategy(
     *,
     monte_carlo: Mapping[str, Any] | None,
     parameter_stability: Mapping[str, Any] | None,
+    ablation: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     metrics = compute_strategy_window_metrics(
         records,
@@ -230,6 +252,8 @@ def _evaluate_one_strategy(
     stability_gate = _extract_parameter_stability_gate(parameter_stability, cfg)
     blocking_reasons.extend(stability_gate["blocking_reasons"])
     warnings.extend(stability_gate["warnings"])
+    ablation_gate = _extract_ablation_gate(ablation, cfg)
+    blocking_reasons.extend(ablation_gate["blocking_reasons"])
 
     return _decision(
         strategy=strategy,
@@ -240,6 +264,7 @@ def _evaluate_one_strategy(
         regime_performance=regime_performance,
         regime_balance=regime_balance,
         parameter_stability=stability_gate,
+        ablation=ablation_gate,
     )
 
 
@@ -424,6 +449,26 @@ def _unwrap_parameter_stability_summary(
     return parameter_stability
 
 
+def _extract_ablation_gate(
+    ablation: Mapping[str, Any] | None,
+    cfg: StrategyProfitabilityGateConfig,
+) -> dict[str, Any]:
+    if not ablation:
+        return {
+            "available": False,
+            "blocking_reasons": [],
+            "warnings": [],
+        }
+    summary = ablation.get("summary") if "summary" in ablation else ablation
+    gate = compute_ablation_gate_summary(
+        summary or {},
+        max_variant_outperformance_pct=cfg.ablation_max_variant_outperformance_pct,
+    )
+    gate["available"] = True
+    gate["warnings"] = []
+    return gate
+
+
 def _decision(
     *,
     strategy: str,
@@ -434,6 +479,7 @@ def _decision(
     regime_performance: Mapping[str, Mapping[str, Any]],
     regime_balance: Mapping[str, Any] | None = None,
     parameter_stability: Mapping[str, Any] | None = None,
+    ablation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "strategy": strategy,
@@ -445,6 +491,7 @@ def _decision(
         "regime_performance": dict(regime_performance),
         "regime_balance": dict(regime_balance or {}),
         "parameter_stability": dict(parameter_stability or {}),
+        "ablation": dict(ablation or {}),
     }
 
 

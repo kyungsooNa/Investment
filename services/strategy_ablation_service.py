@@ -122,6 +122,56 @@ def compute_ablation_summary(
     }
 
 
+def compute_ablation_gate_summary(
+    summary: Mapping[str, Any],
+    *,
+    max_variant_outperformance_pct: Optional[float] = None,
+) -> dict[str, Any]:
+    baseline_metrics = (summary.get("baseline") or {}).get("metrics") or {}
+    baseline_pnl = _to_float(baseline_metrics.get("total_net_pnl")) or 0.0
+    threshold = (
+        None
+        if max_variant_outperformance_pct is None
+        else float(max_variant_outperformance_pct)
+    )
+    violations: list[dict[str, Any]] = []
+
+    for variant_name, payload in (summary.get("variants") or {}).items():
+        delta = payload.get("delta") or {}
+        pnl_diff = _to_float(delta.get("total_net_pnl_diff"))
+        if pnl_diff is None:
+            variant_metrics = payload.get("metrics") or {}
+            variant_pnl = _to_float(variant_metrics.get("total_net_pnl")) or 0.0
+            pnl_diff = variant_pnl - baseline_pnl
+        outperformance_pct = _outperformance_pct(pnl_diff, baseline_pnl)
+        if threshold is not None and pnl_diff > 0 and outperformance_pct > threshold:
+            violations.append(
+                {
+                    "variant": str(variant_name),
+                    "total_net_pnl_diff": pnl_diff,
+                    "outperformance_pct": outperformance_pct,
+                    "threshold_pct": threshold,
+                }
+            )
+
+    violations.sort(
+        key=lambda item: (
+            float(item.get("outperformance_pct") or 0.0),
+            float(item.get("total_net_pnl_diff") or 0.0),
+        ),
+        reverse=True,
+    )
+    return {
+        "passed": not violations,
+        "blocking_reasons": (
+            ["ablation_variant_outperforms_baseline"] if violations else []
+        ),
+        "max_variant_outperformance_pct": threshold,
+        "worst_variant": violations[0] if violations else None,
+        "violations": violations,
+    }
+
+
 def _compute_metrics(
     records: Iterable[Mapping[str, Any]],
     capital_base_won: Optional[float],
@@ -188,6 +238,22 @@ def _optional_diff(left: Any, right: Any) -> Optional[float]:
     if left is None or right is None:
         return None
     return float(left) - float(right)
+
+
+def _outperformance_pct(pnl_diff: float, baseline_pnl: float) -> float:
+    denominator = abs(baseline_pnl)
+    if denominator == 0:
+        return float("inf") if pnl_diff > 0 else 0.0
+    return (pnl_diff / denominator) * 100.0
+
+
+def _to_float(value: Any) -> Optional[float]:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def compute_universe_exclusion_summary(

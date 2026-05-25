@@ -750,6 +750,11 @@ def test_run_profitability_gate_for_walk_forward_uses_test_phase_journals_only()
         ],
         monte_carlo={"ruin_probability": 0.0, "worst_max_drawdown_pct": 1.0},
         profitability_gate=None,
+        summary={
+            "validation_metrics_by_strategy": {
+                "S1": {"in_sample_net_pnl": -999, "out_of_sample_net_pnl": 90}
+            }
+        },
     )
     config = SimpleNamespace(
         strategy_profitability_gate=SimpleNamespace(
@@ -766,6 +771,7 @@ def test_run_profitability_gate_for_walk_forward_uses_test_phase_journals_only()
     _run_profitability_gate_for_walk_forward(result, config, initial_cash=1_000)
 
     assert result.profitability_gate["strategies"]["S1"]["status"] == "pass"
+    assert result.profitability_gate["strategies"]["S1"]["metrics"]["out_of_sample_net_pnl"] == 90
 
 
 def test_get_program_provider_uses_market_data_broker_when_available():

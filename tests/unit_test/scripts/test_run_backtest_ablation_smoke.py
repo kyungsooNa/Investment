@@ -148,6 +148,7 @@ async def test_run_ablation_for_result_runs_each_variant_and_attaches_summary():
     assert set(summary["variants"].keys()) == {"pp_only", "bgu_only"}
     assert summary["variants"]["pp_only"]["metrics"]["trade_count"] == 1
     assert summary["baseline"]["metrics"]["trade_count"] == 2
+    assert payload["gate"]["passed"] is True
 
 
 @pytest.mark.asyncio
