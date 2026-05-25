@@ -9,6 +9,7 @@ from services.strategy_ablation_service import (
     AblationVariant,
     ForceMarketTimingOkUniverseWrapper,
     apply_config_overrides,
+    compute_ablation_gate_summary,
     compute_ablation_summary,
     compute_universe_exclusion_summary,
 )
@@ -125,6 +126,52 @@ def test_compute_ablation_summary_filters_non_sold_records():
 
     assert summary["baseline"]["metrics"]["trade_count"] == 1
     assert summary["variant_count"] == 0
+
+
+def test_compute_ablation_gate_summary_flags_variant_outperformance():
+    summary = {
+        "baseline": {"metrics": {"total_net_pnl": 100.0}},
+        "variants": {
+            "disable_filter": {
+                "metrics": {"total_net_pnl": 140.0},
+                "delta": {"total_net_pnl_diff": 40.0},
+            },
+            "strict_filter": {
+                "metrics": {"total_net_pnl": 80.0},
+                "delta": {"total_net_pnl_diff": -20.0},
+            },
+        },
+    }
+
+    gate = compute_ablation_gate_summary(
+        summary,
+        max_variant_outperformance_pct=20.0,
+    )
+
+    assert gate["passed"] is False
+    assert gate["blocking_reasons"] == ["ablation_variant_outperforms_baseline"]
+    assert gate["worst_variant"]["variant"] == "disable_filter"
+    assert gate["worst_variant"]["outperformance_pct"] == 40.0
+
+
+def test_compute_ablation_gate_summary_passes_when_threshold_not_exceeded():
+    summary = {
+        "baseline": {"metrics": {"total_net_pnl": 100.0}},
+        "variants": {
+            "disable_filter": {
+                "metrics": {"total_net_pnl": 105.0},
+                "delta": {"total_net_pnl_diff": 5.0},
+            },
+        },
+    }
+
+    gate = compute_ablation_gate_summary(
+        summary,
+        max_variant_outperformance_pct=20.0,
+    )
+
+    assert gate["passed"] is True
+    assert gate["blocking_reasons"] == []
 
 
 def test_compute_ablation_summary_orders_variants_deterministically():

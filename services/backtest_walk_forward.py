@@ -38,6 +38,7 @@ class BacktestWalkForwardSegment:
     train_dates: list[str]
     tune_dates: list[str]
     test_dates: list[str]
+    embargo_dates: list[str] = field(default_factory=list)
     train_result: Any | None = None
     tune_result: Any | None = None
     test_result: Any | None = None
@@ -76,6 +77,7 @@ def build_walk_forward_segments(
                 index=len(segments),
                 train_dates=ordered_dates[start:train_end],
                 tune_dates=ordered_dates[train_end:tune_end],
+                embargo_dates=ordered_dates[tune_end:test_start],
                 test_dates=test_dates,
             )
         )
@@ -105,6 +107,7 @@ class BacktestWalkForwardRunner:
                     index=segment.index,
                     train_dates=segment.train_dates,
                     tune_dates=segment.tune_dates,
+                    embargo_dates=segment.embargo_dates,
                     test_dates=segment.test_dates,
                     train_result=train_result,
                     tune_result=tune_result,
@@ -143,7 +146,76 @@ class BacktestWalkForwardRunner:
             "test_execution_count": test_execution_count,
             "test_rejected_count": test_rejected_count,
             "validation_metrics_by_strategy": build_walk_forward_validation_metrics(segments),
+            "split_contract": build_walk_forward_split_contract(
+                segments,
+                required_embargo_days=self._config.embargo_days,
+            ),
         }
+
+
+def build_walk_forward_split_contract(
+    segments: Sequence[BacktestWalkForwardSegment],
+    *,
+    required_embargo_days: int = 0,
+) -> dict[str, Any]:
+    violations: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+
+    for segment in segments:
+        phase_dates = {
+            "train": set(getattr(segment, "train_dates", []) or []),
+            "tune": set(getattr(segment, "tune_dates", []) or []),
+            "embargo": set(getattr(segment, "embargo_dates", []) or []),
+            "test": set(getattr(segment, "test_dates", []) or []),
+        }
+        phases = list(phase_dates)
+        for left_index, left in enumerate(phases):
+            for right in phases[left_index + 1:]:
+                overlap = sorted(phase_dates[left] & phase_dates[right])
+                if overlap:
+                    violations.append(
+                        {
+                            "segment": getattr(segment, "index", None),
+                            "reason": "phase_date_overlap",
+                            "left": left,
+                            "right": right,
+                            "dates": overlap,
+                        }
+                    )
+
+        embargo_dates = list(getattr(segment, "embargo_dates", []) or [])
+        if len(embargo_dates) < int(required_embargo_days or 0):
+            violations.append(
+                {
+                    "segment": getattr(segment, "index", None),
+                    "reason": "embargo_gap_below_required",
+                    "required_embargo_days": int(required_embargo_days or 0),
+                    "actual_embargo_days": len(embargo_dates),
+                }
+            )
+
+        in_sample_codes = _sold_codes_from_results(
+            getattr(segment, "train_result", None),
+            getattr(segment, "tune_result", None),
+        )
+        test_codes = _sold_codes_from_results(getattr(segment, "test_result", None))
+        code_overlap = sorted(in_sample_codes & test_codes)
+        if code_overlap and not embargo_dates:
+            warnings.append(
+                {
+                    "segment": getattr(segment, "index", None),
+                    "reason": "same_code_in_sample_and_test",
+                    "codes": code_overlap,
+                }
+            )
+
+    return {
+        "passed": not violations,
+        "segment_count": len(segments),
+        "required_embargo_days": int(required_embargo_days or 0),
+        "violations": violations,
+        "warnings": warnings,
+    }
 
 
 def build_walk_forward_validation_metrics(
@@ -203,6 +275,18 @@ def build_walk_forward_validation_metrics(
         )
 
     return by_strategy
+
+
+def _sold_codes_from_results(*results: Any) -> set[str]:
+    codes: set[str] = set()
+    for result in results:
+        for record in getattr(result, "journal_records", []) or []:
+            if str(record.get("status") or "").upper() != "SOLD":
+                continue
+            code = str(record.get("code") or "").strip()
+            if code:
+                codes.add(code)
+    return codes
 
 
 def _to_float(value: Any) -> float | None:

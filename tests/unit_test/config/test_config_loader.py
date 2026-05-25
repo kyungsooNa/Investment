@@ -127,6 +127,7 @@ def test_app_config_defaults_to_paper_trading_when_omitted():
     assert config.strategy_profitability_gate.opening_entry_warning_threshold == 3
     assert config.strategy_profitability_gate.closing_entry_warning_threshold == 3
     assert config.strategy_profitability_gate.consecutive_loss_warning_threshold == 3
+    assert config.strategy_profitability_gate.ablation_max_variant_outperformance_pct is None
     assert config.data_quality.violation_alert_threshold == 5
     assert config.data_quality.violation_alert_window_sec == 60.0
     assert config.order_execution.order_max_retries == 3
@@ -204,6 +205,7 @@ def test_strategy_profitability_gate_real_mode_overrides_defaults_are_canary_fri
     assert overrides.require_multiple_testing_adjustment is True
     assert overrides.multiple_testing_min_adjusted_sharpe == 0.0
     assert overrides.multiple_testing_max_pbo_probability == 0.5
+    assert overrides.ablation_max_variant_outperformance_pct == 10.0
     # paper 기본값(top-level)은 보존
     assert config.strategy_profitability_gate.min_trades == 30
     assert config.strategy_profitability_gate.require_parameter_stability is False

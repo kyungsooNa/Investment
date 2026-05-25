@@ -701,6 +701,7 @@ def _run_profitability_gate_for_result(result, app_config: Any, *, initial_cash:
             gate_config,
             monte_carlo=getattr(result, "monte_carlo", None),
             parameter_stability=getattr(result, "parameter_stability", None),
+            ablation=getattr(result, "ablation", None),
         ),
     )
 
@@ -949,6 +950,7 @@ async def _run_ablation_for_result(
     if not getattr(args, "ablation", None):
         return
     from services.strategy_ablation_service import (
+        compute_ablation_gate_summary,
         compute_ablation_summary,
         compute_universe_exclusion_summary,
     )
@@ -969,6 +971,7 @@ async def _run_ablation_for_result(
         variant_records=variant_records,
         capital_base_won=float(getattr(args, "initial_cash", 0.0)) or None,
     )
+    gate = compute_ablation_gate_summary(summary)
     exclusion = compute_universe_exclusion_summary(
         baseline_records=baseline_records,
         variant_records=variant_records,
@@ -979,6 +982,7 @@ async def _run_ablation_for_result(
         {
             "strategy_key": preset.strategy_key,
             "summary": summary,
+            "gate": gate,
             "universe_exclusion": exclusion,
         },
     )

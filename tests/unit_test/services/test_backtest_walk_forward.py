@@ -7,6 +7,7 @@ import pytest
 from services.backtest_walk_forward import (
     BacktestWalkForwardConfig,
     BacktestWalkForwardRunner,
+    build_walk_forward_split_contract,
     build_walk_forward_validation_metrics,
     build_walk_forward_segments,
 )
@@ -83,9 +84,11 @@ def test_build_walk_forward_segments_applies_embargo_between_tune_and_test():
     assert segments[0].train_dates == ["20260101", "20260102"]
     assert segments[0].tune_dates == ["20260103"]
     # 20260104 is embargoed, so test starts at 20260105.
+    assert segments[0].embargo_dates == ["20260104"]
     assert segments[0].test_dates == ["20260105"]
     assert segments[1].train_dates == ["20260102", "20260103"]
     assert segments[1].tune_dates == ["20260104"]
+    assert segments[1].embargo_dates == ["20260105"]
     assert segments[1].test_dates == ["20260106"]
 
 
@@ -177,6 +180,13 @@ async def test_walk_forward_summary_aggregates_test_phase_only():
         "test_execution_count": 2,
         "test_rejected_count": 2,
         "validation_metrics_by_strategy": {},
+        "split_contract": {
+            "passed": True,
+            "segment_count": 2,
+            "required_embargo_days": 0,
+            "violations": [],
+            "warnings": [],
+        },
     }
 
 
@@ -233,3 +243,58 @@ def test_build_walk_forward_validation_metrics_aggregates_in_and_out_of_sample_b
     }
     assert metrics["S2"]["in_sample_net_pnl"] == 50.0
     assert metrics["S2"]["out_of_sample_net_pnl"] == 30.0
+
+
+def test_build_walk_forward_split_contract_reports_clean_embargoed_segments():
+    dates = [
+        "20260101",
+        "20260102",
+        "20260103",
+        "20260104",
+        "20260105",
+    ]
+    segments = build_walk_forward_segments(
+        dates,
+        BacktestWalkForwardConfig(
+            train_size=1,
+            tune_size=1,
+            test_size=1,
+            embargo_days=1,
+        ),
+    )
+
+    contract = build_walk_forward_split_contract(segments, required_embargo_days=1)
+
+    assert contract["passed"] is True
+    assert contract["violations"] == []
+    assert contract["segment_count"] == 2
+    assert contract["required_embargo_days"] == 1
+
+
+def test_build_walk_forward_split_contract_flags_date_overlap_and_missing_embargo():
+    segment = SimpleNamespace(
+        index=0,
+        train_dates=["20260101", "20260102"],
+        tune_dates=["20260103"],
+        embargo_dates=[],
+        test_dates=["20260103", "20260104"],
+        train_result=SimpleNamespace(journal_records=[]),
+        tune_result=SimpleNamespace(
+            journal_records=[
+                {"status": "SOLD", "strategy": "S1", "code": "005930", "net_pnl": 10}
+            ]
+        ),
+        test_result=SimpleNamespace(
+            journal_records=[
+                {"status": "SOLD", "strategy": "S1", "code": "005930", "net_pnl": 20}
+            ]
+        ),
+    )
+
+    contract = build_walk_forward_split_contract([segment], required_embargo_days=1)
+
+    assert contract["passed"] is False
+    reasons = {item["reason"] for item in contract["violations"]}
+    assert "phase_date_overlap" in reasons
+    assert "embargo_gap_below_required" in reasons
+    assert contract["warnings"][0]["reason"] == "same_code_in_sample_and_test"

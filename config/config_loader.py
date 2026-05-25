@@ -258,6 +258,7 @@ class StrategyProfitabilityGateRealOverrides(BaseModel):
     require_multiple_testing_adjustment: bool = True
     multiple_testing_min_adjusted_sharpe: Optional[float] = 0.0
     multiple_testing_max_pbo_probability: Optional[float] = 0.5
+    ablation_max_variant_outperformance_pct: Optional[float] = 10.0
 
     model_config = {"extra": "allow"}
 
@@ -305,6 +306,7 @@ class StrategyProfitabilityGateConfig(BaseModel):
     opening_entry_warning_threshold: int = 3
     closing_entry_warning_threshold: int = 3
     consecutive_loss_warning_threshold: int = 3
+    ablation_max_variant_outperformance_pct: Optional[float] = None
     real_mode_overrides: StrategyProfitabilityGateRealOverrides = Field(
         default_factory=StrategyProfitabilityGateRealOverrides
     )
