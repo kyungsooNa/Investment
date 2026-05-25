@@ -7,6 +7,7 @@ from core.retry_queue.api_request_queue import ApiRequestQueue
 _EXCLUDED_METHODS = frozenset({
     # --- Trading (멱등성 보장 불가) ---
     "place_stock_order",
+    "cancel_stock_order",
 
     # --- WebSocket (상태 기반, 재시도 의미 없음) ---
     "connect_websocket",
@@ -23,6 +24,23 @@ _EXCLUDED_METHODS = frozenset({
     "unsubscribe_order_notice",
     "is_websocket_receive_alive",
 })
+
+_BUDGET_ONLY_METHOD_CATEGORIES = {
+    "place_stock_order": "order_submit",
+    "cancel_stock_order": "order_cancel",
+    "connect_websocket": "websocket_connect",
+    "disconnect_websocket": "websocket_connect",
+    "subscribe_realtime_price": "websocket_subscribe",
+    "unsubscribe_realtime_price": "websocket_subscribe",
+    "subscribe_realtime_quote": "websocket_subscribe",
+    "unsubscribe_realtime_quote": "websocket_subscribe",
+    "subscribe_program_trading": "websocket_subscribe",
+    "unsubscribe_program_trading": "websocket_subscribe",
+    "subscribe_unified_price": "websocket_subscribe",
+    "unsubscribe_unified_price": "websocket_subscribe",
+    "subscribe_order_notice": "websocket_subscribe",
+    "unsubscribe_order_notice": "websocket_subscribe",
+}
 
 _ACCOUNT_METHODS = frozenset({
     "get_account_balance",
@@ -49,7 +67,7 @@ class ClientWithRetryQueue:
     BrokerAPIWrapper._client 를 감싸는 retry-queue 프록시.
 
     - 조회/계좌 API: submit() 을 통해 실패 시 자동 재시도
-    - 주문/WebSocket API: 큐 우회, 직접 위임 (기존 동작 유지)
+    - 주문/WebSocket API: retry queue 우회, global budget 만 적용 후 직접 위임
     """
 
     def __init__(self, client, queue: ApiRequestQueue, budget_limiter=None):
@@ -66,9 +84,20 @@ class ClientWithRetryQueue:
 
         attr = getattr(self._client, name)
 
-        # 동기 메서드 또는 제외 목록 → 그대로 반환
-        if name in _EXCLUDED_METHODS or not asyncio.iscoroutinefunction(attr):
+        # 동기 메서드 또는 budget 적용 대상이 아닌 제외 목록 → 그대로 반환
+        if not asyncio.iscoroutinefunction(attr):
             return attr
+        if name in _EXCLUDED_METHODS:
+            category = _BUDGET_ONLY_METHOD_CATEGORIES.get(name)
+            if self._budget_limiter is None or category is None:
+                return attr
+
+            async def budgeted_direct(*args, **kwargs):
+                async with self._budget_limiter.acquire(category):
+                    return await attr(*args, **kwargs)
+
+            self._method_cache[name] = budgeted_direct
+            return budgeted_direct
 
         # 비동기 조회 메서드 → 큐를 통해 실행
         async def queued(*args, **kwargs):

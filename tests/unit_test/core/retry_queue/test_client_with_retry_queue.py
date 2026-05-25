@@ -49,6 +49,9 @@ class FakeClient:
     async def place_stock_order(self, code, price, qty, is_buy) -> ResCommonResponse:
         return success_resp()
 
+    async def cancel_stock_order(self, **kwargs) -> ResCommonResponse:
+        return success_resp()
+
     async def connect_websocket(self, on_message_callback=None) -> bool:
         return True
 
@@ -190,7 +193,7 @@ class TestExcludedMethodsBypassQueue:
         assert result.rt_cd == ErrorCode.SUCCESS.value
         assert queue.done_queue.empty()
 
-    async def test_place_stock_order_bypasses_budget_limiter(self, fake_client, queue):
+    async def test_place_stock_order_uses_order_submit_budget_without_retry_queue(self, fake_client, queue):
         calls = []
 
         class RecordingLimiter:
@@ -208,7 +211,29 @@ class TestExcludedMethodsBypassQueue:
         result = await wrapped.place_stock_order("005930", 70000, 1, True)
 
         assert result.rt_cd == ErrorCode.SUCCESS.value
-        assert calls == []
+        assert queue.done_queue.empty()
+        assert calls == ["order_submit"]
+
+    async def test_cancel_stock_order_uses_order_cancel_budget_without_retry_queue(self, fake_client, queue):
+        calls = []
+
+        class RecordingLimiter:
+            @asynccontextmanager
+            async def acquire(self, category):
+                calls.append(category)
+                yield
+
+        wrapped = ClientWithRetryQueue(
+            fake_client,
+            queue,
+            budget_limiter=RecordingLimiter(),
+        )
+
+        result = await wrapped.cancel_stock_order(broker_order_no="123", order_qty=1)
+
+        assert result.rt_cd == ErrorCode.SUCCESS.value
+        assert queue.done_queue.empty()
+        assert calls == ["order_cancel"]
 
     async def test_connect_websocket_bypasses_queue(self, wrapped, queue):
         result = await wrapped.connect_websocket()
@@ -223,6 +248,26 @@ class TestExcludedMethodsBypassQueue:
     async def test_subscribe_realtime_price_bypasses_queue(self, wrapped, queue):
         await wrapped.subscribe_realtime_price("005930")
         assert queue.done_queue.empty()
+
+    async def test_subscribe_realtime_price_uses_websocket_subscribe_budget_without_retry_queue(self, fake_client, queue):
+        calls = []
+
+        class RecordingLimiter:
+            @asynccontextmanager
+            async def acquire(self, category):
+                calls.append(category)
+                yield
+
+        wrapped = ClientWithRetryQueue(
+            fake_client,
+            queue,
+            budget_limiter=RecordingLimiter(),
+        )
+
+        await wrapped.subscribe_realtime_price("005930")
+
+        assert queue.done_queue.empty()
+        assert calls == ["websocket_subscribe"]
 
     async def test_unsubscribe_realtime_price_bypasses_queue(self, wrapped, queue):
         await wrapped.unsubscribe_realtime_price("005930")
@@ -324,6 +369,7 @@ class TestFactoryFunction:
 class TestExcludedMethodsSet:
     def test_place_stock_order_is_excluded(self):
         assert "place_stock_order" in _EXCLUDED_METHODS
+        assert "cancel_stock_order" in _EXCLUDED_METHODS
 
     def test_all_websocket_methods_are_excluded(self):
         expected = {

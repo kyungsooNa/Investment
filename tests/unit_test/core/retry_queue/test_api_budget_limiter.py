@@ -63,6 +63,10 @@ def test_default_limits_include_endpoint_specific_real_operation_categories():
         "account_balance": 1,
         "account_reconciliation": 1,
         "account": 1,
+        "order_submit": 1,
+        "order_cancel": 1,
+        "websocket_connect": 1,
+        "websocket_subscribe": 1,
         "default": 4,
     }
 
@@ -76,6 +80,10 @@ def test_default_rate_limits_use_conservative_operation_defaults():
         "account_balance": 2.0,
         "account_reconciliation": 2.0,
         "account": 2.0,
+        "order_submit": 2.0,
+        "order_cancel": 2.0,
+        "websocket_connect": 1.0,
+        "websocket_subscribe": 5.0,
         "default": 8.0,
     }
 

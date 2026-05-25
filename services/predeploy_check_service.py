@@ -333,6 +333,10 @@ class PreDeployCheckService:
                 "quotation_ohlcv",
                 "account_balance",
                 "account_reconciliation",
+                "order_submit",
+                "order_cancel",
+                "websocket_connect",
+                "websocket_subscribe",
             }
             missing = sorted(required - set(snapshot.keys()))
             if missing:

@@ -48,7 +48,7 @@
 | 미체결 시간 한도 초과 | `FillReconciliationService.reconcile_orders_with_broker()` 결과 | 미체결 주문 식별, journal 갱신 | canary 한도(`canary_procedure.md`) 초과면 자동매매 일시 정지 |
 | Stale data (price gap) | `WebSocketWatchdogTask` `price_data_gap_*` trigger | `force_reconnect()` | 재연결 후에도 gap 지속 시 종목 구독 재등록 |
 | WebSocket receive task 사망 | `reconnect_trigger = "receive_task_dead"` | watchdog 자동 재연결 + `AlertSource.WEBSOCKET_WATCHDOG` 알림 | 5분 내 재연결 실패 시 manual `force_reconnect` |
-| API budget 포화 | `/api/system/operations/status` `api_budget.*.active`, `max_observed_active` | 조회/계좌 API category별 limiter 적용 | 특정 category가 계속 포화되면 전략 scan 간격/후보 수/해당 category rate 설정 점검 |
+| API budget 포화 | `/api/system/operations/status` `api_budget.*.active`, `max_observed_active` | 조회/계좌/주문/WebSocket category별 limiter 적용. 주문/WebSocket은 retry queue 제외 유지 | 특정 category가 계속 포화되면 전략 scan 간격/후보 수/해당 category rate 설정 점검 |
 | 시장 시간 외 주문 시도 | `is_market_open_now()` 또는 `is_market_operating_hours()` False | 주문 거부, 로그 경고 | 정상 — 모의 환경/배포 직후 검증 외에는 발생 안 함 |
 | 장 마감 강제 청산 발동 | 마감 30분 전 (`FORCE_EXIT_MINUTES_BEFORE = 30`) | `force_exit_on_close=True` 전략의 보유 포지션 청산 | 청산 완료 확인 후 `_force_exit_done` 누락 종목 점검 |
 | 원장 대사 실패 | `OpeningPositionReconcileService` error | 다음 윈도우 재시도 | 매트릭스 [docs/reconcile_failure_policy.md](reconcile_failure_policy.md) 행 단위 절차 적용 |
