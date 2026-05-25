@@ -34,6 +34,17 @@ class KillSwitchConfig(BaseModel):
     abnormal_fill_deviation_pct: float = 3.0
     state_file_path: str = "data/kill_switch_state.json"
 
+class PositionSizingRealOverrides(BaseModel):
+    """실전(real) 모드 전용 PositionSizing overlay. paper 동작은 영향 없음.
+
+    canary 임계로 default 값을 잡았다. 운영 검증 후 더 느슨한 값을 쓰려면 yaml 에서 명시.
+    """
+    per_trade_risk_pct: float = 0.5        # canary: 0.25~0.5 권장 중 보수값
+    max_per_position_pct: float = 3.0      # canary: 2.0~3.0 권장 중 보수값
+
+    model_config = {"extra": "allow"}
+
+
 class PositionSizingConfig(BaseModel):
     enabled: bool = True
     per_trade_risk_pct: float = 1.5        # 1주당 리스크 한도 (총자산 대비 %)
@@ -43,6 +54,7 @@ class PositionSizingConfig(BaseModel):
     atr_multiplier: float = 2.0
     min_stop_distance_pct: float = 1.0     # 분모 보호용 최소 손절 거리 (%)
     snapshot_ttl_sec: int = 60             # 잔고 스냅샷 TTL (초)
+    real_mode_overrides: PositionSizingRealOverrides = Field(default_factory=PositionSizingRealOverrides)
 
     model_config = {"extra": "allow"}
 
@@ -71,6 +83,14 @@ class RiskGateFailOpenConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class RiskGateRealOverrides(BaseModel):
+    """실전(real) 모드 전용 RiskGate overlay. paper 동작은 영향 없음."""
+    max_total_exposure_pct: float = 30.0   # canary: 20.0~35.0 권장 중 중앙값
+    max_pending_orders: int = 5            # canary: 3~5 권장 중 보수값
+
+    model_config = {"extra": "allow"}
+
+
 class RiskGateConfig(BaseModel):
     enabled: bool = True
     max_order_amount_won: int = 2_000_000
@@ -81,6 +101,23 @@ class RiskGateConfig(BaseModel):
     default_strategy_limit: RiskGateStrategyLimitConfig = Field(default_factory=RiskGateStrategyLimitConfig)
     strategy_limits: Dict[str, RiskGateStrategyLimitConfig] = Field(default_factory=dict)
     fail_open_allowed: RiskGateFailOpenConfig = Field(default_factory=RiskGateFailOpenConfig)
+    real_mode_overrides: RiskGateRealOverrides = Field(default_factory=RiskGateRealOverrides)
+
+    model_config = {"extra": "allow"}
+
+
+class OrderPolicyRealOverrides(BaseModel):
+    """실전(real) 모드 전용 OrderPolicy overlay. paper 동작은 영향 없음.
+
+    fail-close 지향 canary 기본값:
+    - 시장가 매수 차단 (시장 변동성에 대한 과다 노출 방지)
+    - 슬리피지/스프레드 0.5% 제한
+    - 1호가 잔량 대비 최대 10% 참여
+    """
+    allow_market_buy: bool = False
+    max_market_slippage_pct: float = 0.5
+    max_spread_pct: float = 0.5
+    max_top_of_book_participation_pct: float = 10.0
 
     model_config = {"extra": "allow"}
 
@@ -115,6 +152,7 @@ class OrderPolicyConfig(BaseModel):
     blocked_market_warning_codes: List[str] = Field(default_factory=lambda: ["2", "3"])
     blocked_sell_stock_status_codes: List[str] = Field(default_factory=lambda: ["58"])
     quote_fail_policy: str = "block"        # allow | block
+    real_mode_overrides: OrderPolicyRealOverrides = Field(default_factory=OrderPolicyRealOverrides)
 
     model_config = {"extra": "allow"}
 

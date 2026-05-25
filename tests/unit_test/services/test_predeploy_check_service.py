@@ -394,7 +394,7 @@ async def test_run_all_offline_skips_live_checks():
 
     summary = await svc.run_all(offline=True)
     assert isinstance(summary, PreDeployCheckSummary)
-    assert len(summary.results) == 7
+    assert len(summary.results) == 8
     probe.assert_not_awaited()
     broker.get_account_balance.assert_not_awaited()
 
@@ -407,6 +407,7 @@ async def test_run_all_offline_skips_live_checks():
         "websocket_subscription_health",
         "account_snapshot_freshness",
         "api_budget_limiter",
+        "real_mode_policy_strictness",
     ]
 
 
@@ -441,3 +442,100 @@ async def test_summary_no_failure():
         ]
     )
     assert summary.has_failure is False
+
+
+# ── check_real_mode_policy_strictness ─────────────────────────────────
+
+
+def _policy_cfg(
+    *,
+    is_paper_trading: bool,
+    ps_overrides: dict | None = None,
+    rg_overrides: dict | None = None,
+    op_overrides: dict | None = None,
+):
+    """real_mode_overrides 만 다르게 채워서 cfg 생성."""
+    from config.config_loader import (
+        OrderPolicyConfig,
+        OrderPolicyRealOverrides,
+        PositionSizingConfig,
+        PositionSizingRealOverrides,
+        RiskGateConfig,
+        RiskGateRealOverrides,
+    )
+
+    ps = PositionSizingConfig(real_mode_overrides=PositionSizingRealOverrides(**(ps_overrides or {})))
+    rg = RiskGateConfig(real_mode_overrides=RiskGateRealOverrides(**(rg_overrides or {})))
+    op = OrderPolicyConfig(real_mode_overrides=OrderPolicyRealOverrides(**(op_overrides or {})))
+    return SimpleNamespace(
+        is_paper_trading=is_paper_trading,
+        position_sizing=ps,
+        risk_gate=rg,
+        order_policy=op,
+    )
+
+
+async def test_real_mode_policy_strictness_skipped_in_paper():
+    svc = _service(config_loader=lambda: _policy_cfg(is_paper_trading=True))
+    result = await svc.check_real_mode_policy_strictness()
+    assert result.status == CheckStatus.SKIPPED
+    assert result.name == "real_mode_policy_strictness"
+
+
+async def test_real_mode_policy_strictness_passes_with_canary_defaults():
+    svc = _service(config_loader=lambda: _policy_cfg(is_paper_trading=False))
+    result = await svc.check_real_mode_policy_strictness()
+    assert result.status == CheckStatus.PASS, result.detail
+
+
+async def test_real_mode_policy_strictness_warns_when_slightly_loose():
+    """canary(0.5) < value <= 1.5x(0.75) → WARN."""
+    svc = _service(
+        config_loader=lambda: _policy_cfg(
+            is_paper_trading=False,
+            ps_overrides={"per_trade_risk_pct": 0.7},
+        )
+    )
+    result = await svc.check_real_mode_policy_strictness()
+    assert result.status == CheckStatus.WARN
+    assert "per_trade_risk_pct" in result.detail
+
+
+async def test_real_mode_policy_strictness_fails_when_more_than_1_5x_loose():
+    """canary(0.5) 의 1.5x 초과(0.76 이상) → FAIL."""
+    svc = _service(
+        config_loader=lambda: _policy_cfg(
+            is_paper_trading=False,
+            ps_overrides={"per_trade_risk_pct": 1.5},
+        )
+    )
+    result = await svc.check_real_mode_policy_strictness()
+    assert result.status == CheckStatus.FAIL
+    assert "per_trade_risk_pct" in result.detail
+
+
+async def test_real_mode_policy_strictness_fails_on_allow_market_buy_true():
+    svc = _service(
+        config_loader=lambda: _policy_cfg(
+            is_paper_trading=False,
+            op_overrides={"allow_market_buy": True},
+        )
+    )
+    result = await svc.check_real_mode_policy_strictness()
+    assert result.status == CheckStatus.FAIL
+    assert "allow_market_buy" in result.detail
+
+
+async def test_real_mode_policy_strictness_fail_takes_priority_over_warn():
+    """FAIL 과 WARN 이 동시에 있으면 FAIL 로 보고하되 둘 다 detail 에 노출."""
+    svc = _service(
+        config_loader=lambda: _policy_cfg(
+            is_paper_trading=False,
+            ps_overrides={"per_trade_risk_pct": 0.7},  # WARN
+            op_overrides={"allow_market_buy": True},   # FAIL
+        )
+    )
+    result = await svc.check_real_mode_policy_strictness()
+    assert result.status == CheckStatus.FAIL
+    assert "allow_market_buy" in result.detail
+    assert "per_trade_risk_pct" in result.detail

@@ -1005,3 +1005,98 @@ async def test_real_mode_fail_close_can_be_opted_out_via_config():
     )
 
     assert result is None
+
+
+# ── P0 0-2: RiskGate real_mode_overrides 분기 ─────────────────────────
+
+class _PaperEnv:
+    is_paper_trading = True
+    _base_url = "https://openapivts.koreainvestment.com:29443"
+    active_config = {"stock_account_number": "98765432"}
+    stock_account_number = None
+    paper_stock_account_number = "98765432"
+
+
+def test_risk_gate_effective_max_pending_orders_paper_uses_top_level():
+    cfg = RiskGateConfig(max_pending_orders=10)
+    svc, _, _ = _service(config=cfg, env=_PaperEnv())
+    assert svc._effective_max_pending_orders() == 10
+
+
+def test_risk_gate_effective_max_pending_orders_real_uses_override_default():
+    cfg = RiskGateConfig(max_pending_orders=10)  # paper top-level
+    svc, _, _ = _service(config=cfg, env=_RealEnv())
+    # default canary overlay = 5
+    assert svc._effective_max_pending_orders() == 5
+
+
+def test_risk_gate_effective_max_total_exposure_paper_uses_top_level():
+    cfg = RiskGateConfig(max_total_exposure_pct=95.0)
+    svc, _, _ = _service(config=cfg, env=_PaperEnv())
+    assert svc._effective_max_total_exposure_pct() == 95.0
+
+
+def test_risk_gate_effective_max_total_exposure_real_uses_override_default():
+    cfg = RiskGateConfig(max_total_exposure_pct=95.0)
+    svc, _, _ = _service(config=cfg, env=_RealEnv())
+    assert svc._effective_max_total_exposure_pct() == 30.0
+
+
+def test_risk_gate_real_mode_overrides_user_yaml():
+    cfg = RiskGateConfig(
+        max_pending_orders=10,
+        max_total_exposure_pct=95.0,
+        real_mode_overrides={"max_total_exposure_pct": 20.0, "max_pending_orders": 3},
+    )
+    svc, _, _ = _service(config=cfg, env=_RealEnv())
+    assert svc._effective_max_pending_orders() == 3
+    assert svc._effective_max_total_exposure_pct() == 20.0
+
+
+@pytest.mark.asyncio
+async def test_risk_gate_real_mode_blocks_exposure_under_canary_threshold():
+    """paper 에서 통과하던 50% 노출이 real canary overlay 30% 에서는 차단되어야 한다."""
+    cfg = RiskGateConfig(max_total_exposure_pct=95.0)
+    # 50M positions on 100M equity → 50% exposure
+    snapshot = AccountSnapshot(
+        total_equity=100_000_000,
+        available_cash=50_000_000,
+        positions={"000660": 50_000_000},
+    )
+    # paper: passes (50% < 95%)
+    paper_svc, _, _ = _service(config=cfg, env=_PaperEnv(), snapshot=snapshot)
+    paper_result = await paper_svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0
+    )
+    assert paper_result is None  # not blocked
+
+    # real: blocked (50%+ > 30% canary overlay)
+    real_svc, _, _ = _service(config=cfg, env=_RealEnv(), snapshot=snapshot)
+    real_result = await real_svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, 0
+    )
+    assert real_result is not None
+    assert real_result.data["rule"] == "max_total_exposure"
+    assert real_result.data["max_total_exposure_pct"] == 30.0
+
+
+@pytest.mark.asyncio
+async def test_risk_gate_real_mode_blocks_pending_orders_under_canary_threshold():
+    """paper 에서 통과하던 7개 pending 이 real canary overlay 5 에서는 차단되어야 한다."""
+    cfg = RiskGateConfig(max_pending_orders=10)
+    # paper: 7 pending < 10 → max_pending_orders rule 로는 차단되지 않아야 함
+    paper_svc, _, _ = _service(config=cfg, env=_PaperEnv())
+    paper_result = await paper_svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, active_order_count=7
+    )
+    if paper_result is not None:
+        assert paper_result.data.get("rule") != "max_pending_orders"
+
+    # real: 7 pending >= 5 (canary overlay) → 차단
+    real_svc, _, _ = _service(config=cfg, env=_RealEnv())
+    real_result = await real_svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, active_order_count=7
+    )
+    assert real_result is not None
+    assert real_result.data["rule"] == "max_pending_orders"
+    assert real_result.data["max_pending_orders"] == 5

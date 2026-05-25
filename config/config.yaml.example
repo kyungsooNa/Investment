@@ -44,6 +44,12 @@ risk_gate:
   max_daily_order_amount_won: 50000000
   max_pending_orders: 10
   max_total_exposure_pct: 95.0
+  # is_paper_trading=false (실전) 일 때 자동 적용되는 canary overlay.
+  # 검증 전 운영을 보호하기 위해 더 보수적인 한도를 강제한다. paper 동작은 영향 없음.
+  # production 등급으로 풀고 싶을 때만 명시값을 주면 yaml 값이 우선한다.
+  real_mode_overrides:
+    max_total_exposure_pct: 30.0
+    max_pending_orders: 5
 
 # Order policy / liquidity guard before order submit
 order_policy:
@@ -69,6 +75,12 @@ order_policy:
   block_investment_caution: false
   blocked_stock_status_codes: ["51", "52", "53", "58"]
   quote_fail_policy: "block"
+  # 실전 모드에서 fail-close 지향 canary overlay.
+  real_mode_overrides:
+    allow_market_buy: false
+    max_market_slippage_pct: 0.5
+    max_spread_pct: 0.5
+    max_top_of_book_participation_pct: 10.0
 
 # 주문 제출 재시도 정책
 order_execution:
@@ -161,3 +173,7 @@ position_sizing:
   atr_multiplier: 2.0
   min_stop_distance_pct: 1.0       # 산식 보호용 최소 손절 거리 (%)
   snapshot_ttl_sec: 60             # 잔고 스냅샷 안전망 TTL (초)
+  # 실전 모드에서 자동 적용되는 canary overlay.
+  real_mode_overrides:
+    per_trade_risk_pct: 0.5
+    max_per_position_pct: 3.0

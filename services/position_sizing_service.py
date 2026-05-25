@@ -43,6 +43,7 @@ class PositionSizingService:
         risk_gate_config: Optional["RiskGateConfig"] = None,
         quote_provider: Optional[QuoteProvider] = None,
         order_policy_config: Optional["OrderPolicyConfig"] = None,
+        env: Optional[Any] = None,
     ):
         self._cache = account_snapshot_cache
         self._indicator = indicator_service
@@ -51,6 +52,24 @@ class PositionSizingService:
         self._risk_gate_config = risk_gate_config
         self._quote_provider = quote_provider
         self._order_policy_config = order_policy_config
+        self._env = env
+
+    def _is_real_mode(self) -> bool:
+        """env 미주입이면 paper 로 간주 (보수적 default)."""
+        env = self._env
+        if env is None:
+            return False
+        return not bool(getattr(env, "is_paper_trading", True))
+
+    def _effective_per_trade_risk_pct(self) -> float:
+        if self._is_real_mode():
+            return self._cfg.real_mode_overrides.per_trade_risk_pct
+        return self._cfg.per_trade_risk_pct
+
+    def _effective_max_per_position_pct(self) -> float:
+        if self._is_real_mode():
+            return self._cfg.real_mode_overrides.max_per_position_pct
+        return self._cfg.max_per_position_pct
 
     # ── 공개 API ──────────────────────────────────────────────────
 
@@ -92,12 +111,12 @@ class PositionSizingService:
         per_share_risk = await self._get_per_share_risk_krw(signal, price)
 
         # 3. risk_qty (Penbold Fixed Fractional)
-        total_risk_krw = total_equity * self._cfg.per_trade_risk_pct / 100
+        total_risk_krw = total_equity * self._effective_per_trade_risk_pct() / 100
         risk_qty = math.floor(total_risk_krw / per_share_risk) if per_share_risk > 0 else 0
 
         # 4. cap_qty (단일 종목 비중 상한 — 기존 보유분 차감)
         weight_budget = max(
-            total_equity * self._cfg.max_per_position_pct / 100 - current_position_value,
+            total_equity * self._effective_max_per_position_pct() / 100 - current_position_value,
             0,
         )
         cap_qty = math.floor(weight_budget / price) if price > 0 else 0

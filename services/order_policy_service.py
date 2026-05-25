@@ -70,12 +70,40 @@ class OrderPolicyService:
         security_info_provider: Optional[SecurityInfoProvider] = None,
         trade_flow_provider: Optional[TradeFlowProvider] = None,
         logger: Optional[logging.Logger] = None,
+        env: Optional[Any] = None,
     ):
         self._cfg = config
         self._quote_provider = quote_provider
         self._security_info_provider = security_info_provider
         self._trade_flow_provider = trade_flow_provider
         self._logger = logger or logging.getLogger(__name__)
+        self._env = env
+
+    def _is_real_mode(self) -> bool:
+        env = self._env
+        if env is None:
+            return False
+        return not bool(getattr(env, "is_paper_trading", True))
+
+    def _effective_allow_market_buy(self) -> bool:
+        if self._is_real_mode():
+            return self._cfg.real_mode_overrides.allow_market_buy
+        return self._cfg.allow_market_buy
+
+    def _effective_max_market_slippage_pct(self) -> float:
+        if self._is_real_mode():
+            return self._cfg.real_mode_overrides.max_market_slippage_pct
+        return self._cfg.max_market_slippage_pct
+
+    def _effective_max_spread_pct(self) -> float:
+        if self._is_real_mode():
+            return self._cfg.real_mode_overrides.max_spread_pct
+        return self._cfg.max_spread_pct
+
+    def _effective_max_top_of_book_participation_pct(self) -> float:
+        if self._is_real_mode():
+            return self._cfg.real_mode_overrides.max_top_of_book_participation_pct
+        return self._cfg.max_top_of_book_participation_pct
 
     async def validate_order(
         self,
@@ -394,7 +422,7 @@ class OrderPolicyService:
                 "NXT 거래소에서는 시장가 주문을 허용하지 않습니다.",
                 exchange=exchange.value,
             )
-        if side == OrderSide.BUY and not self._cfg.allow_market_buy:
+        if side == OrderSide.BUY and not self._effective_allow_market_buy():
             return self._blocked("market_buy_disabled", "시장가 매수 주문이 비활성화되어 있습니다.")
         if side == OrderSide.SELL and not self._cfg.allow_market_sell:
             return self._blocked("market_sell_disabled", "시장가 매도 주문이 비활성화되어 있습니다.")
@@ -493,7 +521,8 @@ class OrderPolicyService:
 
         mid = (ask + bid) / 2 if ask > 0 and bid > 0 else current_price
         spread_pct = ((ask - bid) / mid * 100) if mid and ask > 0 and bid > 0 else 0.0
-        if spread_pct > self._cfg.max_spread_pct:
+        effective_max_spread_pct = self._effective_max_spread_pct()
+        if spread_pct > effective_max_spread_pct:
             return self._blocked(
                 "spread_too_wide",
                 "스프레드가 허용 범위를 초과했습니다.",
@@ -501,7 +530,7 @@ class OrderPolicyService:
                 ask=ask,
                 bid=bid,
                 spread_pct=round(spread_pct, 3),
-                max_spread_pct=self._cfg.max_spread_pct,
+                max_spread_pct=effective_max_spread_pct,
             )
 
         executable_price = ask if side == OrderSide.BUY else bid
@@ -513,7 +542,8 @@ class OrderPolicyService:
                 if reference_price and executable_price
                 else 0.0
             )
-        if order_type == "market" and slippage_pct > self._cfg.max_market_slippage_pct:
+        effective_max_market_slippage_pct = self._effective_max_market_slippage_pct()
+        if order_type == "market" and slippage_pct > effective_max_market_slippage_pct:
             return self._blocked(
                 "market_slippage_too_high",
                 "시장가 예상 슬리피지가 허용 범위를 초과했습니다.",
@@ -522,7 +552,7 @@ class OrderPolicyService:
                 executable_price=executable_price,
                 reference_price=reference_price,
                 slippage_pct=round(slippage_pct, 3),
-                max_market_slippage_pct=self._cfg.max_market_slippage_pct,
+                max_market_slippage_pct=effective_max_market_slippage_pct,
             )
 
         if self._cfg.min_trading_value_won > 0:
@@ -556,9 +586,10 @@ class OrderPolicyService:
                 top_of_book_qty=top_of_book_qty,
                 available_book_qty=book_qty,
             )
-        if book_qty > 0 and self._cfg.max_top_of_book_participation_pct > 0:
+        effective_max_top_participation_pct = self._effective_max_top_of_book_participation_pct()
+        if book_qty > 0 and effective_max_top_participation_pct > 0:
             participation_pct = qty / book_qty * 100
-            if participation_pct > self._cfg.max_top_of_book_participation_pct:
+            if participation_pct > effective_max_top_participation_pct:
                 return self._blocked(
                     "top_of_book_participation_too_high",
                     "주문 수량이 최우선 호가 잔량 대비 허용 비율을 초과합니다.",
@@ -568,7 +599,7 @@ class OrderPolicyService:
                     top_of_book_qty=top_of_book_qty,
                     available_book_qty=book_qty,
                     participation_pct=round(participation_pct, 3),
-                    max_top_of_book_participation_pct=self._cfg.max_top_of_book_participation_pct,
+                    max_top_of_book_participation_pct=effective_max_top_participation_pct,
                 )
 
         return OrderPolicyDecision(
