@@ -2,7 +2,9 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import time
-from typing import AsyncIterator, Awaitable, Callable, Mapping
+from typing import AsyncIterator, Awaitable, Callable, Mapping, Optional
+
+from core.api_priority import PRIORITY_EMERGENCY, PRIORITY_NORMAL
 
 
 DEFAULT_API_BUDGET_LIMITS = {
@@ -35,9 +37,23 @@ DEFAULT_API_RATE_LIMITS_PER_SEC = {
     "default": 8.0,
 }
 
+# 청산/킬스위치 등 긴급 경로 전용 lane.
+# 일반 lane 과 semaphore/rate bucket 이 독립이므로, normal lane 이 점유된 상태에서도
+# emergency 호출이 별도 슬롯으로 진입할 수 있다.
+# emergency lane 이 정의되지 않은 카테고리는 normal lane 을 그대로 사용한다.
+DEFAULT_API_EMERGENCY_LIMITS = {
+    "order_submit": 1,
+    "order_cancel": 1,
+}
+
+DEFAULT_API_EMERGENCY_RATE_LIMITS_PER_SEC = {
+    "order_submit": 2.0,
+    "order_cancel": 2.0,
+}
+
 
 @dataclass
-class _CategoryBudget:
+class _LaneState:
     limit: int
     rate_limit_per_sec: float
     semaphore: asyncio.Semaphore
@@ -48,14 +64,27 @@ class _CategoryBudget:
     max_observed_active: int = 0
 
 
+@dataclass
+class _CategoryBudget:
+    normal: _LaneState
+    emergency: Optional[_LaneState] = None
+
+
 class ApiBudgetLimiter:
-    """전략/서비스가 공유하는 broker API 동시성/rate budget limiter."""
+    """전략/서비스가 공유하는 broker API 동시성/rate budget limiter.
+
+    카테고리별로 normal lane(기본) 과 선택적 emergency lane 을 갖는다.
+    emergency lane 은 청산/킬스위치 경로가 일반 traffic 과 분리된 별도 슬롯을
+    확보하도록 한다. lane 간 semaphore 와 rate bucket 은 독립.
+    """
 
     def __init__(
         self,
         limits: Mapping[str, int] | None = None,
         *,
         rate_limits_per_sec: Mapping[str, float] | None = None,
+        emergency_limits: Mapping[str, int] | None = None,
+        emergency_rate_limits_per_sec: Mapping[str, float] | None = None,
         default_limit: int = 4,
         default_rate_limit_per_sec: float = 8.0,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -71,8 +100,17 @@ class ApiBudgetLimiter:
             if rate_limits_per_sec is None
             else rate_limits_per_sec
         )
+        self._emergency_limits = dict(
+            DEFAULT_API_EMERGENCY_LIMITS if emergency_limits is None else emergency_limits
+        )
+        self._emergency_rate_limits = dict(
+            DEFAULT_API_EMERGENCY_RATE_LIMITS_PER_SEC
+            if emergency_rate_limits_per_sec is None
+            else emergency_rate_limits_per_sec
+        )
         self._budgets: dict[str, _CategoryBudget] = {
             category: self._new_budget(
+                category,
                 limit,
                 configured_rates.get(category, self._default_rate_limit_per_sec),
             )
@@ -80,46 +118,82 @@ class ApiBudgetLimiter:
         }
 
     @asynccontextmanager
-    async def acquire(self, category: str | None) -> AsyncIterator[None]:
+    async def acquire(
+        self,
+        category: str | None,
+        *,
+        priority: str = PRIORITY_NORMAL,
+    ) -> AsyncIterator[None]:
         actual_category = category if category is not None else "default"
         budget = self._budget_for(actual_category)
-        await self._wait_for_rate_slot(budget)
-        await budget.semaphore.acquire()
-        budget.active += 1
-        budget.acquired_total += 1
-        budget.max_observed_active = max(budget.max_observed_active, budget.active)
+        lane = self._lane_for(budget, priority)
+        await self._wait_for_rate_slot(lane)
+        await lane.semaphore.acquire()
+        lane.active += 1
+        lane.acquired_total += 1
+        lane.max_observed_active = max(lane.max_observed_active, lane.active)
         try:
             yield
         finally:
-            budget.active -= 1
-            budget.semaphore.release()
+            lane.active -= 1
+            lane.semaphore.release()
 
-    def snapshot(self) -> dict[str, dict[str, int]]:
-        return {
-            category: {
-                "limit": budget.limit,
-                "rate_limit_per_sec": budget.rate_limit_per_sec,
-                "active": budget.active,
-                "acquired_total": budget.acquired_total,
-                "max_observed_active": budget.max_observed_active,
+    def snapshot(self) -> dict[str, dict]:
+        result: dict[str, dict] = {}
+        for category, budget in self._budgets.items():
+            entry: dict = {
+                "limit": budget.normal.limit,
+                "rate_limit_per_sec": budget.normal.rate_limit_per_sec,
+                "active": budget.normal.active,
+                "acquired_total": budget.normal.acquired_total,
+                "max_observed_active": budget.normal.max_observed_active,
             }
-            for category, budget in self._budgets.items()
-        }
+            if budget.emergency is not None:
+                entry["emergency"] = {
+                    "limit": budget.emergency.limit,
+                    "rate_limit_per_sec": budget.emergency.rate_limit_per_sec,
+                    "active": budget.emergency.active,
+                    "acquired_total": budget.emergency.acquired_total,
+                    "max_observed_active": budget.emergency.max_observed_active,
+                }
+            result[category] = entry
+        return result
 
     def _budget_for(self, category: str) -> _CategoryBudget:
         budget = self._budgets.get(category)
         if budget is None:
             budget = self._new_budget(
+                category,
                 self._default_limit,
                 self._default_rate_limit_per_sec,
             )
             self._budgets[category] = budget
         return budget
 
-    def _new_budget(self, limit: int, rate_limit_per_sec: float) -> _CategoryBudget:
+    def _lane_for(self, budget: _CategoryBudget, priority: str) -> _LaneState:
+        if priority == PRIORITY_EMERGENCY and budget.emergency is not None:
+            return budget.emergency
+        return budget.normal
+
+    def _new_budget(
+        self,
+        category: str,
+        limit: int,
+        rate_limit_per_sec: float,
+    ) -> _CategoryBudget:
+        normal = self._new_lane(limit, rate_limit_per_sec)
+        emergency_limit = self._emergency_limits.get(category)
+        emergency_rate = self._emergency_rate_limits.get(category)
+        emergency: Optional[_LaneState] = None
+        if emergency_limit is not None:
+            rate = emergency_rate if emergency_rate is not None else rate_limit_per_sec
+            emergency = self._new_lane(emergency_limit, rate)
+        return _CategoryBudget(normal=normal, emergency=emergency)
+
+    def _new_lane(self, limit: int, rate_limit_per_sec: float) -> _LaneState:
         validated = self._validate_limit(limit)
         validated_rate = self._validate_rate_limit(rate_limit_per_sec)
-        return _CategoryBudget(
+        return _LaneState(
             limit=validated,
             rate_limit_per_sec=validated_rate,
             semaphore=asyncio.Semaphore(validated),
@@ -140,12 +214,12 @@ class ApiBudgetLimiter:
             raise ValueError("API rate limit must be > 0")
         return value
 
-    async def _wait_for_rate_slot(self, budget: _CategoryBudget) -> None:
-        interval_sec = 1.0 / budget.rate_limit_per_sec
-        async with budget.rate_lock:
+    async def _wait_for_rate_slot(self, lane: _LaneState) -> None:
+        interval_sec = 1.0 / lane.rate_limit_per_sec
+        async with lane.rate_lock:
             now = self._monotonic()
-            wait_sec = max(0.0, budget.next_available_at - now)
-            scheduled_at = max(now, budget.next_available_at)
-            budget.next_available_at = scheduled_at + interval_sec
+            wait_sec = max(0.0, lane.next_available_at - now)
+            scheduled_at = max(now, lane.next_available_at)
+            lane.next_available_at = scheduled_at + interval_sec
         if wait_sec > 0:
             await self._sleep(wait_sec)

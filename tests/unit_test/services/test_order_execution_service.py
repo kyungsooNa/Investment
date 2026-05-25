@@ -3591,6 +3591,79 @@ async def test_sell_all_stocks_emergency_runs_concurrently(handler, mock_broker_
 
 
 @pytest.mark.asyncio
+async def test_sell_all_stocks_emergency_dispatch_runs_inside_emergency_priority_scope(
+    handler, mock_broker_api_wrapper
+):
+    """EMERGENCY 모드는 _dispatch_clearance 호출 동안 emergency_scope 가 활성화된다."""
+    from core.api_priority import PRIORITY_EMERGENCY, PRIORITY_NORMAL, current_priority
+
+    mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=_holdings_with(3)
+    )
+
+    captured: list[str] = []
+
+    async def capture_priority_sell(stock_code, price, qty, exchange=Exchange.KRX):
+        captured.append(current_priority())
+        return ResCommonResponse(rt_cd="0", msg1="OK", data={"ordno": f"O{stock_code}"})
+
+    with patch.object(handler, "handle_place_sell_order", new=capture_priority_sell):
+        await handler.sell_all_stocks(mode=ClearanceMode.EMERGENCY)
+
+    assert captured == [PRIORITY_EMERGENCY, PRIORITY_EMERGENCY, PRIORITY_EMERGENCY]
+    # 디스패치 종료 후에는 priority 가 normal 로 복귀
+    assert current_priority() == PRIORITY_NORMAL
+
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_safe_sequential_uses_normal_priority(
+    handler, mock_broker_api_wrapper
+):
+    """SAFE_SEQUENTIAL 은 emergency_scope 를 켜지 않고 normal priority 로 실행된다."""
+    from core.api_priority import PRIORITY_NORMAL, current_priority
+
+    mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=_holdings_with(2)
+    )
+
+    captured: list[str] = []
+
+    async def capture_priority_sell(stock_code, price, qty, exchange=Exchange.KRX):
+        captured.append(current_priority())
+        return ResCommonResponse(rt_cd="0", msg1="OK", data={"ordno": f"O{stock_code}"})
+
+    with patch.object(handler, "handle_place_sell_order", new=capture_priority_sell):
+        await handler.sell_all_stocks(mode=ClearanceMode.SAFE_SEQUENTIAL)
+
+    assert captured == [PRIORITY_NORMAL, PRIORITY_NORMAL]
+
+
+@pytest.mark.asyncio
+async def test_sell_all_stocks_bounded_parallel_uses_normal_priority(
+    handler, mock_broker_api_wrapper
+):
+    """BOUNDED_PARALLEL 도 emergency_scope 적용 대상이 아니다."""
+    from core.api_priority import PRIORITY_NORMAL, current_priority
+
+    mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=_holdings_with(3)
+    )
+
+    captured: list[str] = []
+
+    async def capture_priority_sell(stock_code, price, qty, exchange=Exchange.KRX):
+        captured.append(current_priority())
+        return ResCommonResponse(rt_cd="0", msg1="OK", data={"ordno": f"O{stock_code}"})
+
+    with patch.object(handler, "handle_place_sell_order", new=capture_priority_sell):
+        await handler.sell_all_stocks(
+            mode=ClearanceMode.BOUNDED_PARALLEL, bounded_concurrency=2
+        )
+
+    assert captured == [PRIORITY_NORMAL, PRIORITY_NORMAL, PRIORITY_NORMAL]
+
+
+@pytest.mark.asyncio
 async def test_sell_all_stocks_emergency_aggregates_partial_failures(handler, mock_broker_api_wrapper):
     """EMERGENCY 모드에서도 일부 실패가 results에 집계되고 전체 흐름이 차단되지 않는다."""
     mock_broker_api_wrapper.get_account_balance.return_value = ResCommonResponse(

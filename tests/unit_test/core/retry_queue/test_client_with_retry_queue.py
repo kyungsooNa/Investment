@@ -134,7 +134,7 @@ class TestAsyncMethodThroughQueue:
 
         class RecordingLimiter:
             @asynccontextmanager
-            async def acquire(self, category):
+            async def acquire(self, category, **kwargs):
                 categories.append(category)
                 yield
 
@@ -153,7 +153,7 @@ class TestAsyncMethodThroughQueue:
 
         class RecordingLimiter:
             @asynccontextmanager
-            async def acquire(self, category):
+            async def acquire(self, category, **kwargs):
                 categories.append(category)
                 yield
 
@@ -198,7 +198,7 @@ class TestExcludedMethodsBypassQueue:
 
         class RecordingLimiter:
             @asynccontextmanager
-            async def acquire(self, category):
+            async def acquire(self, category, **kwargs):
                 calls.append(category)
                 yield
 
@@ -219,7 +219,7 @@ class TestExcludedMethodsBypassQueue:
 
         class RecordingLimiter:
             @asynccontextmanager
-            async def acquire(self, category):
+            async def acquire(self, category, **kwargs):
                 calls.append(category)
                 yield
 
@@ -254,7 +254,7 @@ class TestExcludedMethodsBypassQueue:
 
         class RecordingLimiter:
             @asynccontextmanager
-            async def acquire(self, category):
+            async def acquire(self, category, **kwargs):
                 calls.append(category)
                 yield
 
@@ -388,3 +388,101 @@ class TestExcludedMethodsSet:
             "is_websocket_receive_alive",
         }
         assert expected.issubset(_EXCLUDED_METHODS)
+
+
+class TestEmergencyPriorityPropagation:
+    """ContextVar priority 가 budgeted_direct 경로로 전파되는지 검증."""
+
+    async def test_place_stock_order_passes_normal_priority_by_default(self, fake_client, queue):
+        from core.api_priority import PRIORITY_NORMAL
+
+        recorded: list[str] = []
+
+        class RecordingLimiter:
+            @asynccontextmanager
+            async def acquire(self, category, *, priority="normal"):
+                recorded.append(priority)
+                yield
+
+        wrapped = ClientWithRetryQueue(
+            fake_client,
+            queue,
+            budget_limiter=RecordingLimiter(),
+        )
+
+        await wrapped.place_stock_order("005930", 70000, 1, True)
+
+        assert recorded == [PRIORITY_NORMAL]
+
+    async def test_place_stock_order_inside_emergency_scope_passes_emergency_priority(
+        self, fake_client, queue
+    ):
+        from core.api_priority import PRIORITY_EMERGENCY, emergency_scope
+
+        recorded: list[str] = []
+
+        class RecordingLimiter:
+            @asynccontextmanager
+            async def acquire(self, category, *, priority="normal"):
+                recorded.append(priority)
+                yield
+
+        wrapped = ClientWithRetryQueue(
+            fake_client,
+            queue,
+            budget_limiter=RecordingLimiter(),
+        )
+
+        with emergency_scope():
+            await wrapped.place_stock_order("005930", 70000, 1, True)
+
+        assert recorded == [PRIORITY_EMERGENCY]
+
+    async def test_cancel_stock_order_inside_emergency_scope_passes_emergency_priority(
+        self, fake_client, queue
+    ):
+        from core.api_priority import PRIORITY_EMERGENCY, emergency_scope
+
+        recorded: list[tuple[str, str]] = []
+
+        class RecordingLimiter:
+            @asynccontextmanager
+            async def acquire(self, category, *, priority="normal"):
+                recorded.append((category, priority))
+                yield
+
+        wrapped = ClientWithRetryQueue(
+            fake_client,
+            queue,
+            budget_limiter=RecordingLimiter(),
+        )
+
+        with emergency_scope():
+            await wrapped.cancel_stock_order(broker_order_no="123", order_qty=1)
+
+        assert recorded == [("order_cancel", PRIORITY_EMERGENCY)]
+
+    async def test_priority_does_not_leak_after_emergency_scope_exits(
+        self, fake_client, queue
+    ):
+        from core.api_priority import PRIORITY_EMERGENCY, PRIORITY_NORMAL, emergency_scope
+
+        recorded: list[str] = []
+
+        class RecordingLimiter:
+            @asynccontextmanager
+            async def acquire(self, category, *, priority="normal"):
+                recorded.append(priority)
+                yield
+
+        wrapped = ClientWithRetryQueue(
+            fake_client,
+            queue,
+            budget_limiter=RecordingLimiter(),
+        )
+
+        with emergency_scope():
+            await wrapped.place_stock_order("005930", 70000, 1, True)
+        await wrapped.place_stock_order("005930", 70000, 1, True)
+
+        assert recorded == [PRIORITY_EMERGENCY, PRIORITY_NORMAL]

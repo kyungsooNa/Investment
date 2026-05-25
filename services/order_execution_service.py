@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Dict, Optional
 from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState, OrderExecutionReport
+from core.api_priority import emergency_scope
 from core.loggers.trace_context import trace_scope, get_trace_id, new_trace_id
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
@@ -699,7 +700,12 @@ class OrderExecutionService:
             return await asyncio.gather(*[_bounded(c, q) for c, q in targets])
 
         # EMERGENCY: 전체 동시 청산
-        return await asyncio.gather(*[self._submit_one_sell(c, q, exchange) for c, q in targets])
+        # API budget limiter 의 emergency lane 을 사용해 normal 주문/조회 traffic 과
+        # 분리된 슬롯으로 진입한다.
+        with emergency_scope():
+            return await asyncio.gather(
+                *[self._submit_one_sell(c, q, exchange) for c, q in targets]
+            )
 
     async def _submit_one_sell(self, stock_code: str, quantity: int, exchange: Exchange) -> dict:
         """한 종목에 대해 시장가 매도 후 success/실패 dict로 정규화한다."""
