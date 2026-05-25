@@ -98,6 +98,8 @@ def test_limiter_snapshot_exposes_rate_limits():
 
     assert snapshot["quotation_price"]["rate_limit_per_sec"] == 8.0
     assert snapshot["account_reconciliation"]["rate_limit_per_sec"] == 2.0
+    assert snapshot["quotation_price"]["rate_wait_total"] == 0
+    assert snapshot["quotation_price"]["rate_wait_seconds_total"] == 0.0
 
 
 async def test_none_category_uses_default_budget():
@@ -131,6 +133,33 @@ async def test_rate_limiter_reserves_future_slots_without_busy_loop():
         pass
 
     assert sleeps == [0.5, 1.0]
+
+
+async def test_rate_limiter_snapshot_tracks_preemptive_throttle_waits():
+    sleeps = []
+    now = 100.0
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    limiter = ApiBudgetLimiter(
+        {"order_submit": 2},
+        rate_limits_per_sec={"order_submit": 2.0},
+        monotonic=lambda: now,
+        sleep=fake_sleep,
+    )
+
+    async with limiter.acquire("order_submit"):
+        pass
+    async with limiter.acquire("order_submit"):
+        pass
+    async with limiter.acquire("order_submit"):
+        pass
+
+    snapshot = limiter.snapshot()
+    assert sleeps == [0.5, 1.0]
+    assert snapshot["order_submit"]["rate_wait_total"] == 2
+    assert snapshot["order_submit"]["rate_wait_seconds_total"] == 1.5
 
 
 @pytest.mark.real_sleep
@@ -207,6 +236,80 @@ async def test_account_reconciliation_starts_during_quotation_burst_load():
 
     release_quote.set()
     await asyncio.gather(first_task, *quote_tasks, reconcile_task)
+
+
+@pytest.mark.real_sleep
+async def test_opening_burst_load_keeps_order_reconcile_and_emergency_lanes_available():
+    """장초반 조회 burst 중에도 reconcile/order/emergency lane 은 서로 독립적으로 진입한다."""
+    limiter = ApiBudgetLimiter(
+        {
+            "quotation_price": 1,
+            "quotation_conclusion": 1,
+            "account_reconciliation": 1,
+            "order_submit": 1,
+        },
+        rate_limits_per_sec={
+            "quotation_price": 100.0,
+            "quotation_conclusion": 100.0,
+            "account_reconciliation": 100.0,
+            "order_submit": 100.0,
+        },
+        emergency_limits={"order_submit": 1},
+        emergency_rate_limits_per_sec={"order_submit": 100.0},
+    )
+    release_quote = asyncio.Event()
+    release_order = asyncio.Event()
+    quote_started = asyncio.Event()
+    order_started = asyncio.Event()
+    blocked_quote_started = asyncio.Event()
+    blocked_order_started = asyncio.Event()
+    conclusion_started = asyncio.Event()
+    reconcile_started = asyncio.Event()
+    emergency_started = asyncio.Event()
+
+    async def hold(category, started, release, *, priority=None):
+        kwargs = {"priority": priority} if priority is not None else {}
+        async with limiter.acquire(category, **kwargs):
+            started.set()
+            await release.wait()
+
+    async def quick(category, started, *, priority=None):
+        kwargs = {"priority": priority} if priority is not None else {}
+        async with limiter.acquire(category, **kwargs):
+            started.set()
+
+    quote_task = asyncio.create_task(hold("quotation_price", quote_started, release_quote))
+    order_task = asyncio.create_task(hold("order_submit", order_started, release_order))
+    await asyncio.wait_for(quote_started.wait(), timeout=1)
+    await asyncio.wait_for(order_started.wait(), timeout=1)
+
+    blocked_quote_task = asyncio.create_task(quick("quotation_price", blocked_quote_started))
+    blocked_order_task = asyncio.create_task(quick("order_submit", blocked_order_started))
+    conclusion_task = asyncio.create_task(quick("quotation_conclusion", conclusion_started))
+    reconcile_task = asyncio.create_task(quick("account_reconciliation", reconcile_started))
+    emergency_task = asyncio.create_task(
+        quick("order_submit", emergency_started, priority=PRIORITY_EMERGENCY)
+    )
+
+    await asyncio.wait_for(conclusion_started.wait(), timeout=1)
+    await asyncio.wait_for(reconcile_started.wait(), timeout=1)
+    await asyncio.wait_for(emergency_started.wait(), timeout=1)
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(blocked_quote_started.wait(), timeout=0.05)
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(blocked_order_started.wait(), timeout=0.05)
+
+    release_quote.set()
+    release_order.set()
+    await asyncio.gather(
+        quote_task,
+        order_task,
+        blocked_quote_task,
+        blocked_order_task,
+        conclusion_task,
+        reconcile_task,
+        emergency_task,
+    )
 
 
 # --- Emergency priority lane 테스트 ---

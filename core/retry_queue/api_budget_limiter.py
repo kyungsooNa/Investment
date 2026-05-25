@@ -62,6 +62,8 @@ class _LaneState:
     active: int = 0
     acquired_total: int = 0
     max_observed_active: int = 0
+    rate_wait_total: int = 0
+    rate_wait_seconds_total: float = 0.0
 
 
 @dataclass
@@ -147,6 +149,8 @@ class ApiBudgetLimiter:
                 "active": budget.normal.active,
                 "acquired_total": budget.normal.acquired_total,
                 "max_observed_active": budget.normal.max_observed_active,
+                "rate_wait_total": budget.normal.rate_wait_total,
+                "rate_wait_seconds_total": budget.normal.rate_wait_seconds_total,
             }
             if budget.emergency is not None:
                 entry["emergency"] = {
@@ -155,6 +159,8 @@ class ApiBudgetLimiter:
                     "active": budget.emergency.active,
                     "acquired_total": budget.emergency.acquired_total,
                     "max_observed_active": budget.emergency.max_observed_active,
+                    "rate_wait_total": budget.emergency.rate_wait_total,
+                    "rate_wait_seconds_total": budget.emergency.rate_wait_seconds_total,
                 }
             result[category] = entry
         return result
@@ -222,4 +228,6 @@ class ApiBudgetLimiter:
             scheduled_at = max(now, lane.next_available_at)
             lane.next_available_at = scheduled_at + interval_sec
         if wait_sec > 0:
+            lane.rate_wait_total += 1
+            lane.rate_wait_seconds_total += wait_sec
             await self._sleep(wait_sec)
