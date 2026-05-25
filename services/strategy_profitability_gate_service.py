@@ -37,6 +37,8 @@ class StrategyProfitabilityGateConfig:
     require_non_negative_regime_pnl: bool = True
     block_parameter_stability_flags: Sequence[str] = ("spike", "cliff")
     require_parameter_stability: bool = False
+    require_monte_carlo: bool = False
+    require_regime_balance: bool = False
     regime_balance_required_buckets: Sequence[str] = (
         "KOSPI_BULL",
         "KOSDAQ_BULL",
@@ -188,6 +190,7 @@ def _evaluate_one_strategy(
     regime_performance = compute_performance_by_regime(records)
     _append_regime_failures(regime_performance, cfg, blocking_reasons)
     regime_balance = _compute_regime_balance_gate(regime_performance, cfg)
+    blocking_reasons.extend(regime_balance.get("blocking_reasons", []))
     warnings.extend(regime_balance["warnings"])
     stability_gate = _extract_parameter_stability_gate(parameter_stability, cfg)
     blocking_reasons.extend(stability_gate["blocking_reasons"])
@@ -253,7 +256,10 @@ def _append_monte_carlo_failures(
             cfg.max_monte_carlo_ruin_probability is not None
             or cfg.max_monte_carlo_worst_mdd_pct is not None
         ):
-            warnings.append("monte_carlo_unavailable")
+            if cfg.require_monte_carlo:
+                blocking_reasons.append("monte_carlo_unavailable")
+            else:
+                warnings.append("monte_carlo_unavailable")
         return
 
     ruin_probability = _to_float(monte_carlo.get("ruin_probability"))
@@ -305,10 +311,17 @@ def _compute_regime_balance_gate(
         required_buckets=required,
         min_trades_per_bucket=cfg.regime_balance_min_trades,
     )
-    warnings = [] if summary["balanced_pass"] else ["regime_balance_incomplete"]
+    blocking_reasons: list[str] = []
+    warnings: list[str] = []
+    if not summary["balanced_pass"]:
+        if cfg.require_regime_balance:
+            blocking_reasons.append("regime_balance_incomplete")
+        else:
+            warnings.append("regime_balance_incomplete")
     return {
         "enabled": True,
         **summary,
+        "blocking_reasons": blocking_reasons,
         "warnings": warnings,
     }
 
