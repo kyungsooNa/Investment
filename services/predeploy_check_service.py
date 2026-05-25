@@ -79,6 +79,7 @@ class PreDeployCheckService:
         market_calendar_service: Optional[Any] = None,
         broker: Optional[Any] = None,
         websocket_probe: Optional[Callable[[], Awaitable[dict]]] = None,
+        api_budget_limiter: Optional[Any] = None,
         event_shadow_dir: str = "logs/strategies/event_shadow",
         event_shadow_max_age_days: int = 3,
         expected_config_hash: str | None = None,
@@ -90,6 +91,7 @@ class PreDeployCheckService:
         self._mcs = market_calendar_service
         self._broker = broker
         self._websocket_probe = websocket_probe
+        self._api_budget_limiter = api_budget_limiter
         self._event_shadow_dir = event_shadow_dir
         self._event_shadow_max_age_days = event_shadow_max_age_days
         self._expected_config_hash = expected_config_hash
@@ -315,6 +317,46 @@ class PreDeployCheckService:
 
         return await self._measured("account_snapshot_freshness", run)
 
+    async def check_api_budget_limiter(self) -> CheckResult:
+        async def run() -> CheckResult:
+            if self._api_budget_limiter is None:
+                return CheckResult(name="", status=CheckStatus.SKIPPED, detail="ApiBudgetLimiter 미주입")
+            if not hasattr(self._api_budget_limiter, "snapshot"):
+                return CheckResult(name="", status=CheckStatus.FAIL, detail="snapshot() 미지원 limiter")
+
+            snapshot = self._api_budget_limiter.snapshot()
+            if not isinstance(snapshot, dict):
+                return CheckResult(name="", status=CheckStatus.FAIL, detail="snapshot() 결과가 dict 아님")
+
+            required = {
+                "quotation_price",
+                "quotation_ohlcv",
+                "account_balance",
+                "account_reconciliation",
+            }
+            missing = sorted(required - set(snapshot.keys()))
+            if missing:
+                return CheckResult(
+                    name="",
+                    status=CheckStatus.WARN,
+                    detail=f"missing categories: {', '.join(missing)}",
+                )
+
+            summary = []
+            for category in sorted(required):
+                data = snapshot.get(category) or {}
+                summary.append(
+                    f"{category}(limit={data.get('limit')}, "
+                    f"rate={data.get('rate_limit_per_sec')}, active={data.get('active')})"
+                )
+            return CheckResult(
+                name="",
+                status=CheckStatus.PASS,
+                detail="; ".join(summary),
+            )
+
+        return await self._measured("api_budget_limiter", run)
+
     # -- runner -------------------------------------------------------------
 
     async def run_all(self, *, offline: bool = False) -> PreDeployCheckSummary:
@@ -325,4 +367,5 @@ class PreDeployCheckService:
         results.append(await self.check_event_shadow())
         results.append(await self.check_websocket_subscription(offline=offline))
         results.append(await self.check_account_snapshot(offline=offline))
+        results.append(await self.check_api_budget_limiter())
         return PreDeployCheckSummary(results=results)

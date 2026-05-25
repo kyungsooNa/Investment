@@ -171,6 +171,36 @@ def test_get_operations_status_partial_services(web_client, mock_web_ctx):
     assert data["after_market_reconcile"] is None
     assert data["pnl"]["realized"]["realized_pnl_won"] is None
     assert data["pnl"]["evaluation"]["estimated_unrealized_pnl_won"] is None
+    assert data["api_budget"] is None
+
+
+def test_get_operations_status_includes_api_budget_snapshot(web_client, mock_web_ctx):
+    limiter = MagicMock()
+    limiter.snapshot.return_value = {
+        "quotation_price": {
+            "limit": 4,
+            "rate_limit_per_sec": 8.0,
+            "active": 2,
+            "acquired_total": 10,
+            "max_observed_active": 3,
+        },
+        "account_reconciliation": {
+            "limit": 1,
+            "rate_limit_per_sec": 2.0,
+            "active": 0,
+            "acquired_total": 2,
+            "max_observed_active": 1,
+        },
+    }
+    mock_web_ctx.api_budget_limiter = limiter
+
+    response = web_client.get("/api/system/operations/status")
+
+    assert response.status_code == 200
+    api_budget = response.json()["data"]["api_budget"]
+    assert api_budget["quotation_price"]["active"] == 2
+    assert api_budget["account_reconciliation"]["rate_limit_per_sec"] == 2.0
+    limiter.snapshot.assert_called_once()
 
 
 def test_get_operations_status_pnl_breakdown(web_client, mock_web_ctx):

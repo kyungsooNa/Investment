@@ -336,6 +336,40 @@ async def test_account_snapshot_slow_warn():
     assert result.status == CheckStatus.WARN
 
 
+# ── check_api_budget_limiter ──────────────────────────────────────────
+
+
+async def test_api_budget_limiter_skipped_without_limiter():
+    svc = _service(api_budget_limiter=None)
+    result = await svc.check_api_budget_limiter()
+    assert result.status == CheckStatus.SKIPPED
+
+
+async def test_api_budget_limiter_passes_with_required_categories():
+    limiter = MagicMock()
+    limiter.snapshot.return_value = {
+        "quotation_price": {"limit": 4, "rate_limit_per_sec": 8.0, "active": 0},
+        "quotation_ohlcv": {"limit": 2, "rate_limit_per_sec": 3.0, "active": 0},
+        "account_balance": {"limit": 1, "rate_limit_per_sec": 2.0, "active": 0},
+        "account_reconciliation": {"limit": 1, "rate_limit_per_sec": 2.0, "active": 0},
+    }
+    svc = _service(api_budget_limiter=limiter)
+    result = await svc.check_api_budget_limiter()
+    assert result.status == CheckStatus.PASS
+    assert "quotation_price" in result.detail
+
+
+async def test_api_budget_limiter_warns_when_required_category_missing():
+    limiter = MagicMock()
+    limiter.snapshot.return_value = {
+        "quotation_price": {"limit": 4, "rate_limit_per_sec": 8.0, "active": 0},
+    }
+    svc = _service(api_budget_limiter=limiter)
+    result = await svc.check_api_budget_limiter()
+    assert result.status == CheckStatus.WARN
+    assert "missing" in result.detail
+
+
 # ── run_all + summary ─────────────────────────────────────────────────
 
 
@@ -354,7 +388,7 @@ async def test_run_all_offline_skips_live_checks():
 
     summary = await svc.run_all(offline=True)
     assert isinstance(summary, PreDeployCheckSummary)
-    assert len(summary.results) == 6
+    assert len(summary.results) == 7
     probe.assert_not_awaited()
     broker.get_account_balance.assert_not_awaited()
 
@@ -366,6 +400,7 @@ async def test_run_all_offline_skips_live_checks():
         "event_shadow_status",
         "websocket_subscription_health",
         "account_snapshot_freshness",
+        "api_budget_limiter",
     ]
 
 
