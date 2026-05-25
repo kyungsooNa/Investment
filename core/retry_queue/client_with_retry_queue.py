@@ -1,5 +1,6 @@
 # core/retry_queue/client_with_retry_queue.py
 import asyncio
+from core.api_priority import current_priority
 from core.retry_queue.api_request_queue import ApiRequestQueue
 
 
@@ -93,7 +94,7 @@ class ClientWithRetryQueue:
                 return attr
 
             async def budgeted_direct(*args, **kwargs):
-                async with self._budget_limiter.acquire(category):
+                async with self._budget_limiter.acquire(category, priority=current_priority()):
                     return await attr(*args, **kwargs)
 
             self._method_cache[name] = budgeted_direct

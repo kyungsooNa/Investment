@@ -2,8 +2,11 @@ import asyncio
 
 import pytest
 
+from core.api_priority import PRIORITY_EMERGENCY
 from core.retry_queue.api_budget_limiter import (
     DEFAULT_API_BUDGET_LIMITS,
+    DEFAULT_API_EMERGENCY_LIMITS,
+    DEFAULT_API_EMERGENCY_RATE_LIMITS_PER_SEC,
     DEFAULT_API_RATE_LIMITS_PER_SEC,
     ApiBudgetLimiter,
 )
@@ -204,3 +207,154 @@ async def test_account_reconciliation_starts_during_quotation_burst_load():
 
     release_quote.set()
     await asyncio.gather(first_task, *quote_tasks, reconcile_task)
+
+
+# --- Emergency priority lane 테스트 ---
+
+
+def test_default_emergency_lane_covers_order_categories_only():
+    """emergency lane 기본 적용 대상은 주문/취소 카테고리로 한정한다."""
+    assert DEFAULT_API_EMERGENCY_LIMITS == {
+        "order_submit": 1,
+        "order_cancel": 1,
+    }
+    assert DEFAULT_API_EMERGENCY_RATE_LIMITS_PER_SEC == {
+        "order_submit": 2.0,
+        "order_cancel": 2.0,
+    }
+
+
+def test_snapshot_includes_emergency_lane_when_configured():
+    limiter = ApiBudgetLimiter()
+
+    snapshot = limiter.snapshot()
+
+    assert "emergency" in snapshot["order_submit"]
+    assert snapshot["order_submit"]["emergency"]["limit"] == 1
+    assert snapshot["order_submit"]["emergency"]["rate_limit_per_sec"] == 2.0
+
+
+def test_snapshot_omits_emergency_lane_when_not_configured():
+    limiter = ApiBudgetLimiter()
+
+    snapshot = limiter.snapshot()
+
+    # quotation 계열은 emergency lane 미정의 → snapshot 에 키 없음
+    assert "emergency" not in snapshot["quotation_price"]
+    assert "emergency" not in snapshot["account_balance"]
+
+
+@pytest.mark.real_sleep
+async def test_emergency_priority_uses_separate_lane_when_normal_lane_is_busy():
+    """normal lane 이 점유돼도 emergency priority 호출은 별도 lane 으로 진입한다."""
+    limiter = ApiBudgetLimiter(
+        {"order_submit": 1},
+        rate_limits_per_sec={"order_submit": 100.0},
+        emergency_limits={"order_submit": 1},
+        emergency_rate_limits_per_sec={"order_submit": 100.0},
+    )
+    normal_started = asyncio.Event()
+    release_normal = asyncio.Event()
+    emergency_started = asyncio.Event()
+
+    async def hold_normal():
+        async with limiter.acquire("order_submit"):
+            normal_started.set()
+            await release_normal.wait()
+
+    async def emergency_call():
+        async with limiter.acquire("order_submit", priority=PRIORITY_EMERGENCY):
+            emergency_started.set()
+
+    normal_task = asyncio.create_task(hold_normal())
+    await asyncio.wait_for(normal_started.wait(), timeout=1)
+
+    emergency_task = asyncio.create_task(emergency_call())
+    # emergency lane 이 독립이므로 즉시 진입 가능해야 한다
+    await asyncio.wait_for(emergency_started.wait(), timeout=1)
+
+    release_normal.set()
+    await asyncio.gather(normal_task, emergency_task)
+
+
+@pytest.mark.real_sleep
+async def test_emergency_priority_falls_back_to_normal_lane_when_emergency_undefined():
+    """emergency lane 이 정의되지 않은 카테고리에서는 normal lane 으로 fallback."""
+    limiter = ApiBudgetLimiter(
+        {"quotation_price": 1},
+        rate_limits_per_sec={"quotation_price": 100.0},
+        emergency_limits={},  # emergency lane 없음
+    )
+    normal_started = asyncio.Event()
+    release_normal = asyncio.Event()
+    emergency_started = asyncio.Event()
+
+    async def hold_normal():
+        async with limiter.acquire("quotation_price"):
+            normal_started.set()
+            await release_normal.wait()
+
+    async def emergency_call():
+        async with limiter.acquire("quotation_price", priority=PRIORITY_EMERGENCY):
+            emergency_started.set()
+
+    normal_task = asyncio.create_task(hold_normal())
+    await asyncio.wait_for(normal_started.wait(), timeout=1)
+
+    emergency_task = asyncio.create_task(emergency_call())
+    # emergency lane 미정의 → normal lane 점유로 차단되어야 한다
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(emergency_started.wait(), timeout=0.05)
+
+    release_normal.set()
+    await asyncio.wait_for(emergency_started.wait(), timeout=1)
+    await asyncio.gather(normal_task, emergency_task)
+
+
+@pytest.mark.real_sleep
+async def test_emergency_lane_acquired_total_tracked_separately_in_snapshot():
+    limiter = ApiBudgetLimiter()
+
+    async with limiter.acquire("order_submit"):
+        pass
+    async with limiter.acquire("order_submit", priority=PRIORITY_EMERGENCY):
+        pass
+    async with limiter.acquire("order_submit", priority=PRIORITY_EMERGENCY):
+        pass
+
+    snapshot = limiter.snapshot()
+    assert snapshot["order_submit"]["acquired_total"] == 1
+    assert snapshot["order_submit"]["emergency"]["acquired_total"] == 2
+
+
+async def test_emergency_rate_bucket_is_independent_of_normal_rate_bucket():
+    """emergency lane 의 rate bucket 은 normal lane 과 독립적으로 스케줄된다."""
+    sleeps: list[float] = []
+    now = 100.0
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    limiter = ApiBudgetLimiter(
+        {"order_submit": 4},
+        rate_limits_per_sec={"order_submit": 2.0},
+        emergency_limits={"order_submit": 4},
+        emergency_rate_limits_per_sec={"order_submit": 2.0},
+        monotonic=lambda: now,
+        sleep=fake_sleep,
+    )
+
+    # normal lane 1회 → 다음 normal 호출은 0.5초 대기
+    async with limiter.acquire("order_submit"):
+        pass
+    async with limiter.acquire("order_submit"):
+        pass
+
+    # 직후 emergency 호출 — emergency rate bucket 은 별도라 대기 없이 통과
+    async with limiter.acquire("order_submit", priority=PRIORITY_EMERGENCY):
+        pass
+    async with limiter.acquire("order_submit", priority=PRIORITY_EMERGENCY):
+        pass
+
+    # 첫 호출 대기 0 + normal 두번째 0.5 + emergency 첫 0 + emergency 두번째 0.5
+    assert sleeps == [0.5, 0.5]
