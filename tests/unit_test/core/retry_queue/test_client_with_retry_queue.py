@@ -6,10 +6,16 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock
 
 from common.types import ResCommonResponse, ErrorCode
+from core.retry_queue.api_budget_limiter import (
+    DEFAULT_API_BUDGET_LIMITS,
+    DEFAULT_API_EMERGENCY_LIMITS,
+)
 from core.retry_queue.api_request_queue import ApiRequestQueue
 from core.retry_queue.client_with_retry_queue import (
+    API_BUDGET_COVERAGE_MATRIX,
     ClientWithRetryQueue,
     retry_queue_wrap_client,
+    _BUDGET_ONLY_METHOD_CATEGORIES,
     _EXCLUDED_METHODS,
     _budget_category_for_method,
 )
@@ -32,6 +38,9 @@ class FakeClient:
         return success_resp()
 
     async def inquire_unfilled_orders(self) -> ResCommonResponse:
+        return success_resp()
+
+    async def inquire_filled_history(self) -> ResCommonResponse:
         return success_resp()
 
     async def inquire_daily_itemchartprice(self, stock_code: str) -> ResCommonResponse:
@@ -183,6 +192,66 @@ class TestAsyncMethodThroughQueue:
     )
     def test_budget_category_for_method_uses_endpoint_specific_policy(self, method_name, expected_category):
         assert _budget_category_for_method(method_name) == expected_category
+
+
+class TestApiBudgetCoverageMatrix:
+    def test_coverage_matrix_includes_live_operation_paths(self):
+        operations = {entry["operation"] for entry in API_BUDGET_COVERAGE_MATRIX}
+
+        assert {
+            "current_price_rest",
+            "ohlcv_daily_rest",
+            "ohlcv_intraday_rest",
+            "conclusion_rest",
+            "account_balance_rest",
+            "daily_ccld_reconciliation_rest",
+            "unfilled_reconciliation_rest",
+            "filled_history_reconciliation_rest",
+            "order_submit_rest",
+            "order_cancel_rest",
+            "websocket_connect",
+            "websocket_disconnect",
+            "websocket_price_subscribe",
+            "websocket_price_unsubscribe",
+            "websocket_quote_subscribe",
+            "websocket_quote_unsubscribe",
+            "websocket_program_subscribe",
+            "websocket_program_unsubscribe",
+            "websocket_unified_price_subscribe",
+            "websocket_unified_price_unsubscribe",
+            "websocket_order_notice_subscribe",
+            "websocket_order_notice_unsubscribe",
+            "emergency_sell_order_submit",
+            "emergency_sell_order_cancel",
+        }.issubset(operations)
+
+    @pytest.mark.parametrize("entry", API_BUDGET_COVERAGE_MATRIX)
+    def test_coverage_matrix_matches_runtime_method_routing(self, entry):
+        method_name = entry["method_name"]
+        if entry["execution_path"] == "retry_queue":
+            assert _budget_category_for_method(method_name) == entry["category"]
+            assert method_name not in _EXCLUDED_METHODS
+        else:
+            assert method_name in _EXCLUDED_METHODS
+            assert _BUDGET_ONLY_METHOD_CATEGORIES[method_name] == entry["category"]
+
+    def test_coverage_matrix_marks_emergency_sell_as_emergency_lane(self):
+        emergency_entries = {
+            entry["operation"]: entry
+            for entry in API_BUDGET_COVERAGE_MATRIX
+            if entry["operation"].startswith("emergency_sell_")
+        }
+
+        assert emergency_entries["emergency_sell_order_submit"]["lane"] == "emergency"
+        assert emergency_entries["emergency_sell_order_submit"]["category"] == "order_submit"
+        assert emergency_entries["emergency_sell_order_cancel"]["lane"] == "emergency"
+        assert emergency_entries["emergency_sell_order_cancel"]["category"] == "order_cancel"
+
+    @pytest.mark.parametrize("entry", API_BUDGET_COVERAGE_MATRIX)
+    def test_coverage_matrix_categories_are_configured_in_default_limiter(self, entry):
+        assert entry["category"] in DEFAULT_API_BUDGET_LIMITS
+        if entry["lane"] == "emergency":
+            assert entry["category"] in DEFAULT_API_EMERGENCY_LIMITS
 
 
 class TestExcludedMethodsBypassQueue:
