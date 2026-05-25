@@ -261,6 +261,8 @@ class FirstPullbackStrategy(LiveStrategy):
             f"반등확인 {today_open:,}->{current:,}, "
             f"체결강도 {cgld_val:.1f}%)"
         )
+        stop_loss_price = ma_20d * (1 + self._cfg.stop_loss_below_ma_pct / 100)
+        target_price = current * (1 + self._cfg.take_profit_lower_pct / 100)
 
         self._logger.info({
             "event": "buy_signal_generated",
@@ -283,6 +285,21 @@ class FirstPullbackStrategy(LiveStrategy):
         return TradeSignal(
             code=code, name=item.name, action="BUY", price=current,
             reason=reason_msg, strategy_name=self.name,
+            entry_reason="first_pullback_bullish_reversal",
+            invalidation_price=round(stop_loss_price, 2),
+            stop_loss_price=round(stop_loss_price, 2),
+            target_price=round(target_price, 2),
+            trailing_rule=f"{self._cfg.ma_period}ma_break_with_grace",
+            expected_holding_period_days=self._cfg.ma_period,
+            confidence=min(1.0, max(0.0, cgld_val / max(self._cfg.execution_strength_min, 1.0))),
+            required_data=[
+                "current_price",
+                "daily_ohlcv",
+                "moving_average_20d",
+                "surge_history",
+                "volume_dryup",
+                "execution_strength",
+            ],
             volatility_20d_annualized=getattr(item, "volatility_20d_annualized", None),
         )
 

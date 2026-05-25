@@ -291,6 +291,8 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             f"강도 {cgld_val:.1f}%, "
             f"위치 {relative_pos:.2f})"
         )
+        stop_loss_price = current * (1 + self._cfg.stop_loss_pct / 100)
+        target_price = current * (1 + self._cfg.early_partial_profit_pct / 100)
 
         # 4. 정보성 로그 출력 (metrics 확장)
         self._logger.info({
@@ -318,6 +320,21 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             code=code, name=item.name, action="BUY", price=current,
             reason=reason_msg, strategy_name=self.name,
             stop_loss_pct=self._cfg.stop_loss_pct,
+            entry_reason="oneil_squeeze_breakout",
+            invalidation_price=round(stop_loss_price, 2),
+            stop_loss_price=round(stop_loss_price, 2),
+            target_price=round(target_price, 2),
+            trailing_rule=f"peak_drop_after_{self._cfg.trailing_min_peak_profit_pct:g}pct",
+            expected_holding_period_days=self._cfg.time_stop_days,
+            confidence=min(1.0, max(0.0, cgld_val / max(self._cfg.execution_strength_min, 1.0))),
+            required_data=[
+                "current_price",
+                "watchlist_item",
+                "projected_volume",
+                "program_buy",
+                "execution_strength",
+                "market_timing",
+            ],
             volatility_20d_annualized=item.volatility_20d_annualized,
         )
 

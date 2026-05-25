@@ -207,6 +207,12 @@ class RSI2PullbackStrategy(LiveStrategy):
             f"RSI({self._cfg.rsi_period})={latest_rsi:.2f} ≤ {self._cfg.rsi_threshold}, "
             f"Stage 2, {'축소비중' if risk_off else '정상비중'} 진입"
         )
+        stop_loss_price = current * (1 + self._cfg.hard_stop_pct / 100)
+        confidence = (
+            max(0.0, min(1.0, (self._cfg.rsi_threshold - float(latest_rsi)) / max(self._cfg.rsi_threshold, 1.0)))
+            if latest_rsi is not None
+            else 0.0
+        )
         self._logger.info({
             "event": "entry_signal_generated",
             "code": code, "name": item.name,
@@ -217,6 +223,19 @@ class RSI2PullbackStrategy(LiveStrategy):
         return TradeSignal(
             code=code, name=item.name, action="BUY", price=current,
             reason=reason_msg, strategy_name=self.name,
+            entry_reason="rsi2_stage2_pullback",
+            invalidation_price=round(stop_loss_price, 2),
+            stop_loss_price=round(stop_loss_price, 2),
+            trailing_rule=f"take_profit_ma_{self._cfg.take_profit_ma_period}",
+            expected_holding_period_days=self._cfg.take_profit_ma_period,
+            confidence=confidence,
+            required_data=[
+                "watchlist_item",
+                "rsi",
+                "current_price",
+                "market_timing",
+                "minervini_stage",
+            ],
             volatility_20d_annualized=getattr(item, "volatility_20d_annualized", None),
         )
 

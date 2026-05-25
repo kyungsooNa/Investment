@@ -488,6 +488,8 @@ class HighTightFlagStrategy(LiveStrategy):
             f"폭등 {pattern['surge_ratio']:.1f}x, "
             f"깃발 {pattern['flag_days']}일)"
         )
+        stop_loss_price = current * (1 + self._cfg.stop_loss_pct / 100)
+        target_price = current * (1 + self._cfg.partial_profit_trigger_pct / 100)
 
         # 4. 정보성 로그 출력 (구조화된 metrics 데이터)
         self._logger.info({
@@ -521,6 +523,21 @@ class HighTightFlagStrategy(LiveStrategy):
             code=code, name=item.name, action="BUY", price=current,
             reason=reason_msg, strategy_name=self.name,
             stop_loss_pct=self._cfg.stop_loss_pct,
+            entry_reason="high_tight_flag_breakout",
+            invalidation_price=round(stop_loss_price, 2),
+            stop_loss_price=round(stop_loss_price, 2),
+            target_price=round(target_price, 2),
+            trailing_rule=f"{self._cfg.trailing_ma_period}ma_or_peak_drop",
+            expected_holding_period_days=max(self._cfg.flag_min_days, self._cfg.trailing_ma_period),
+            confidence=min(1.0, max(0.0, cgld_val / max(self._cfg.execution_strength_min, 1.0))),
+            required_data=[
+                "current_price",
+                "daily_ohlcv",
+                "pole_and_flag_pattern",
+                "projected_volume",
+                "program_buy",
+                "execution_strength",
+            ],
             volatility_20d_annualized=getattr(item, "volatility_20d_annualized", None),
         )
 
