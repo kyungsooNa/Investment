@@ -105,6 +105,12 @@ def _extract_int_field(data: Any, *keys: str) -> Optional[int]:
     return None
 
 
+def _config_value(section: Any, key: str, default: Any) -> Any:
+    if isinstance(section, dict):
+        return section.get(key, default)
+    return getattr(section, key, default)
+
+
 async def _resolve_market_buy_reference_price(
     broker: Any,
     logger: Any,
@@ -454,6 +460,7 @@ class ServiceContainer:
                 logger=ctx.logger,
             )
             ctx.deferred_order_queue = DeferredOrderQueue(ctx.logger)
+            _oe_cfg = _config_value(config_dict, "order_execution", {})
             ctx.order_execution_service = OrderExecutionService(
                 broker_api_wrapper=ctx.broker,
                 logger=ctx.logger, market_clock=ctx.market_clock,
@@ -469,6 +476,16 @@ class ServiceContainer:
                 data_quality_service=ctx.data_quality_service,
                 execution_quality_config=getattr(ctx.full_config, "execution_quality_report", None),
                 deferred_order_queue=ctx.deferred_order_queue,
+                order_max_retries=_config_value(
+                    _oe_cfg,
+                    "order_max_retries",
+                    OrderExecutionService._ORDER_MAX_RETRIES,
+                ),
+                order_retry_delay_sec=_config_value(
+                    _oe_cfg,
+                    "order_retry_delay_sec",
+                    OrderExecutionService._ORDER_RETRY_DELAY_SEC,
+                ),
             )
             # NOTE: streaming_service.register_handler("signing_notice", ...) is performed by WiringPhase.
         except Exception as e:

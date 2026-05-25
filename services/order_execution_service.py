@@ -66,7 +66,9 @@ class OrderExecutionService:
                  order_policy_service: Optional[OrderPolicyService] = None,
                  data_quality_service=None,
                  execution_quality_config: Optional[ExecutionQualityReportConfig] = None,
-                 deferred_order_queue=None):
+                 deferred_order_queue=None,
+                 order_max_retries: int = _ORDER_MAX_RETRIES,
+                 order_retry_delay_sec: int = _ORDER_RETRY_DELAY_SEC):
         self.broker_api_wrapper = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
@@ -81,6 +83,8 @@ class OrderExecutionService:
         self._order_policy = order_policy_service
         self._data_quality = data_quality_service
         self._execution_quality_config = execution_quality_config or ExecutionQualityReportConfig()
+        self._order_max_retries = self._validate_order_max_retries(order_max_retries)
+        self._order_retry_delay_sec = self._validate_order_retry_delay_sec(order_retry_delay_sec)
         self._exec_quality_reporter = ExecutionQualityReporter(
             logger=logger,
             config=self._execution_quality_config,
@@ -123,8 +127,8 @@ class OrderExecutionService:
             transition_fn=self._fsm.transition,
             extract_broker_order_no_fn=OrderStateMachine.extract_broker_order_no,
             on_missing_broker_order_no_fn=self._fill_reconciliation.on_broker_order_no_missing,
-            max_retries=self._ORDER_MAX_RETRIES,
-            retry_delay_sec=self._ORDER_RETRY_DELAY_SEC,
+            max_retries=self._order_max_retries,
+            retry_delay_sec=self._order_retry_delay_sec,
         )
         self._fsm.set_on_critical_mismatch(
             self._fill_reconciliation.on_safe_transition_critical
@@ -143,6 +147,20 @@ class OrderExecutionService:
             notification_service=notification_service,
             is_paper_trading_fn=self._is_paper_trading_mode,
         )
+
+    @staticmethod
+    def _validate_order_max_retries(value: int) -> int:
+        retries = int(value)
+        if retries < 1:
+            raise ValueError("order_max_retries must be >= 1")
+        return retries
+
+    @staticmethod
+    def _validate_order_retry_delay_sec(value: int) -> int:
+        delay = int(value)
+        if delay < 0:
+            raise ValueError("order_retry_delay_sec must be >= 0")
+        return delay
 
     # ── FSM state property delegations (Phase 3 백워드 호환) ────────────
     @property

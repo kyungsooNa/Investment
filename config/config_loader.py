@@ -119,6 +119,13 @@ class OrderPolicyConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class OrderExecutionConfig(BaseModel):
+    order_max_retries: int = Field(3, ge=1)
+    order_retry_delay_sec: int = Field(3, ge=0)
+
+    model_config = {"extra": "allow"}
+
+
 class DataQualityConfig(BaseModel):
     enabled: bool = True
     max_tick_age_sec: float = 30.0
@@ -262,6 +269,7 @@ class AppConfig(BaseModel):
     kill_switch: KillSwitchConfig = Field(default_factory=KillSwitchConfig)
     risk_gate: RiskGateConfig = Field(default_factory=RiskGateConfig)
     order_policy: OrderPolicyConfig = Field(default_factory=OrderPolicyConfig)
+    order_execution: OrderExecutionConfig = Field(default_factory=OrderExecutionConfig)
     data_quality: DataQualityConfig = Field(default_factory=DataQualityConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)

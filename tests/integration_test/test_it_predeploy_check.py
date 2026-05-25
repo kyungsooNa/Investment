@@ -30,7 +30,7 @@ async def test_offline_predeploy_check_runs_to_completion(tmp_path):
     summary = await service.run_all(offline=True)
 
     # 모든 점검이 끝까지 실행되어야 한다
-    assert len(summary.results) == 6
+    assert len(summary.results) == 7
     names = {r.name for r in summary.results}
     assert names == {
         "config_validation",
@@ -39,6 +39,7 @@ async def test_offline_predeploy_check_runs_to_completion(tmp_path):
         "event_shadow_status",
         "websocket_subscription_health",
         "account_snapshot_freshness",
+        "api_budget_limiter",
     }
 
     # offline 모드에서 broker 의존 점검은 SKIPPED

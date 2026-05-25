@@ -70,6 +70,11 @@ order_policy:
   blocked_stock_status_codes: ["51", "52", "53", "58"]
   quote_fail_policy: "block"
 
+# 주문 제출 재시도 정책
+order_execution:
+  order_max_retries: 3
+  order_retry_delay_sec: 3
+
 # 데이터 품질 게이트 (주문 전 차단 + 실시간/REST sanity check)
 data_quality:
   enabled: true

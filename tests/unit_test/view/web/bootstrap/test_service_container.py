@@ -99,6 +99,25 @@ def test_service_container_creates_query_and_order_services(patched_service_cont
     assert ctx.risk_gate_service is patched_service_container_deps["RiskGateService"].return_value
 
 
+def test_service_container_passes_order_execution_retry_config(patched_service_container_deps):
+    """config.order_execution 값이 OrderExecutionService submit retry 정책으로 주입된다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {
+        "order_execution": {
+            "order_max_retries": 5,
+            "order_retry_delay_sec": 1,
+        },
+        "execution_quality_report": None,
+    }
+    ServiceContainer(ctx).run()
+
+    kwargs = patched_service_container_deps["OrderExecutionService"].call_args.kwargs
+    assert kwargs["order_max_retries"] == 5
+    assert kwargs["order_retry_delay_sec"] == 1
+
+
 def test_service_container_injects_market_buy_reference_price_provider(patched_service_container_deps):
     """RiskGateService가 시장가 매수 기준가격 provider와 함께 인스턴스화된다."""
     from view.web.bootstrap.service_container import ServiceContainer

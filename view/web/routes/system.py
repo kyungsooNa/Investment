@@ -184,6 +184,14 @@ def get_operations_status():
     sqs = getattr(ctx, "stock_query_service", None)
     _raw_stats = getattr(sqs, "_price_lookup_stats", None) if sqs else None
     price_lookup = dict(_raw_stats) if isinstance(_raw_stats, dict) else None
+    api_budget = None
+    limiter = getattr(ctx, "api_budget_limiter", None)
+    if limiter is not None and hasattr(limiter, "snapshot"):
+        try:
+            snapshot = limiter.snapshot()
+            api_budget = snapshot if isinstance(snapshot, dict) else None
+        except Exception:
+            api_budget = None
 
     return {
         "success": True,
@@ -198,6 +206,7 @@ def get_operations_status():
             "kill_switch": kill_switch,
             "after_market_reconcile": reconcile,
             "price_lookup": price_lookup,
+            "api_budget": api_budget,
         },
     }
 
