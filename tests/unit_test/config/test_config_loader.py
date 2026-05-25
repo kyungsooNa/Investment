@@ -186,6 +186,49 @@ def test_real_mode_overrides_accept_user_yaml_values():
     assert config.order_policy.real_mode_overrides.max_market_slippage_pct == 0.3
 
 
+def test_strategy_profitability_gate_real_mode_overrides_defaults_are_canary_friendly():
+    """P1 1-1: 실전 모드 ProfitabilityGate overlay 가 canary 임계 안에 있는지 회귀."""
+    config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+    )
+    overrides = config.strategy_profitability_gate.real_mode_overrides
+    assert overrides.min_trades == 100
+    assert overrides.min_profit_factor == 1.3
+    assert overrides.min_payoff_ratio == 1.2
+    assert overrides.min_win_rate == 0.4
+    assert overrides.max_mdd_pct == 12.0
+    assert overrides.min_regime_trade_count == 30
+    assert overrides.require_parameter_stability is True
+    assert overrides.require_monte_carlo is True
+    assert overrides.require_regime_balance is True
+    # paper 기본값(top-level)은 보존
+    assert config.strategy_profitability_gate.min_trades == 30
+    assert config.strategy_profitability_gate.require_parameter_stability is False
+    assert config.strategy_profitability_gate.require_monte_carlo is False
+    assert config.strategy_profitability_gate.require_regime_balance is False
+
+
+def test_strategy_profitability_gate_real_mode_overrides_accept_user_yaml_values():
+    """운영자가 production 등급으로 ProfitabilityGate overlay 값을 풀고 싶을 때 yaml 로드가 동작."""
+    config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        strategy_profitability_gate={
+            "real_mode_overrides": {
+                "min_trades": 300,
+                "min_profit_factor": 1.5,
+                "require_monte_carlo": False,
+            }
+        },
+    )
+    overrides = config.strategy_profitability_gate.real_mode_overrides
+    assert overrides.min_trades == 300
+    assert overrides.min_profit_factor == 1.5
+    assert overrides.require_monte_carlo is False
+    # 명시되지 않은 필드는 canary 기본값 유지
+    assert overrides.require_parameter_stability is True
+    assert overrides.require_regime_balance is True
+
+
 def test_app_config_accepts_order_execution_retry_policy():
     config = AppConfig(
         web={"host": "localhost", "port": 8080},

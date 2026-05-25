@@ -6,7 +6,7 @@ open new real-money positions.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 from typing import Any, Callable, Iterable, Mapping
 
 from services.strategy_profitability_gate_service import (
@@ -36,7 +36,11 @@ class StrategyLiveExpansionGateService:
     ) -> None:
         self._journal_records_provider = journal_records_provider
         self._is_paper_trading_fn = is_paper_trading_fn
-        self._config = _coerce_config(profitability_gate_config)
+        base_config = _coerce_config(profitability_gate_config)
+        real_overrides = getattr(profitability_gate_config, "real_mode_overrides", None)
+        # real 모드는 paper 모드 early-return 이후에만 도달하므로 effective config 를
+        # real overlay 적용본으로 한 번만 계산해 둔다.
+        self._config = _apply_real_overrides(base_config, real_overrides)
         self._enabled = enabled
         self._logger = logger
 
@@ -106,3 +110,23 @@ def _coerce_config(config: StrategyProfitabilityGateConfig | Any | None) -> Stra
         if hasattr(config, field_name):
             values[field_name] = getattr(config, field_name)
     return StrategyProfitabilityGateConfig(**values)
+
+
+def _apply_real_overrides(
+    base: StrategyProfitabilityGateConfig,
+    overrides: Any | None,
+) -> StrategyProfitabilityGateConfig:
+    """real 모드 전용 overlay 를 base config 위에 덮어쓴다.
+
+    overrides 가 None 이면 base 를 그대로 반환한다. paper 모드는 check_strategy 의
+    early-return 으로 처리되므로 호출자가 모드 분기를 신경쓰지 않아도 된다.
+    """
+    if overrides is None:
+        return base
+    overlay: dict[str, Any] = {}
+    for f in fields(StrategyProfitabilityGateConfig):
+        if hasattr(overrides, f.name):
+            overlay[f.name] = getattr(overrides, f.name)
+    if not overlay:
+        return base
+    return replace(base, **overlay)

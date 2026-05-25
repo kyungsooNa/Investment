@@ -440,3 +440,122 @@ def test_profitability_gate_reports_consecutive_loss_cooldown_candidate():
     assert "portfolio_consecutive_loss_cooldown_candidate" in result["warnings"]
     assert result["cooldown"]["candidates"][0]["strategy"] == "S1"
     assert result["cooldown"]["candidates"][0]["max_consecutive_losses"] == 3
+
+
+def test_profitability_gate_warns_when_monte_carlo_unavailable_by_default():
+    records = [_sold(100, 1.0, signal_time="2026-05-01"), _sold(80, 0.5, signal_time="2026-05-02")]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=2,
+        min_profit_factor=1.0,
+        min_payoff_ratio=1.0,
+        min_win_rate=0.5,
+        min_avg_net_return=0.0,
+        max_mdd_pct=None,
+        capital_base_won=1_000,
+        max_monte_carlo_ruin_probability=0.05,
+        max_monte_carlo_worst_mdd_pct=30.0,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    s1 = result["strategies"]["S1"]
+    assert s1["status"] == "pass"
+    assert "monte_carlo_unavailable" in s1["warnings"]
+    assert "monte_carlo_unavailable" not in s1["blocking_reasons"]
+
+
+def test_profitability_gate_blocks_when_monte_carlo_required_and_missing():
+    records = [_sold(100, 1.0, signal_time="2026-05-01"), _sold(80, 0.5, signal_time="2026-05-02")]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=2,
+        min_profit_factor=1.0,
+        min_payoff_ratio=1.0,
+        min_win_rate=0.5,
+        min_avg_net_return=0.0,
+        max_mdd_pct=None,
+        capital_base_won=1_000,
+        max_monte_carlo_ruin_probability=0.05,
+        max_monte_carlo_worst_mdd_pct=30.0,
+        require_monte_carlo=True,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    s1 = result["strategies"]["S1"]
+    assert s1["status"] == "fail"
+    assert s1["passed"] is False
+    assert "monte_carlo_unavailable" in s1["blocking_reasons"]
+    assert "monte_carlo_unavailable" not in s1["warnings"]
+
+
+def test_profitability_gate_require_monte_carlo_passes_when_evidence_provided():
+    records = [_sold(100, 1.0, signal_time="2026-05-01"), _sold(80, 0.5, signal_time="2026-05-02")]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=2,
+        min_profit_factor=1.0,
+        min_payoff_ratio=1.0,
+        min_win_rate=0.5,
+        min_avg_net_return=0.0,
+        max_mdd_pct=None,
+        capital_base_won=1_000,
+        max_monte_carlo_ruin_probability=0.05,
+        max_monte_carlo_worst_mdd_pct=30.0,
+        require_monte_carlo=True,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=(),
+    )
+
+    result = evaluate_strategy_profitability_gate(
+        records,
+        cfg,
+        monte_carlo={"ruin_probability": 0.01, "worst_max_drawdown_pct": 5.0},
+    )
+
+    s1 = result["strategies"]["S1"]
+    assert s1["status"] == "pass"
+    assert "monte_carlo_unavailable" not in s1["blocking_reasons"]
+    assert "monte_carlo_unavailable" not in s1["warnings"]
+
+
+def test_profitability_gate_blocks_when_regime_balance_required_and_incomplete():
+    records = [
+        _sold(
+            120,
+            2.0,
+            signal_time="2026-05-01",
+            regime={"kospi": "bull", "kosdaq": "bull", "stock_market": "KOSPI"},
+        ),
+        _sold(
+            -20,
+            -0.2,
+            signal_time="2026-05-02",
+            regime={"kospi": "bull", "kosdaq": "bull", "stock_market": "KOSPI"},
+        ),
+    ]
+    cfg = StrategyProfitabilityGateConfig(
+        min_trades=2,
+        min_profit_factor=1.0,
+        min_payoff_ratio=1.0,
+        min_win_rate=0.5,
+        min_avg_net_return=0.0,
+        max_mdd_pct=10.0,
+        capital_base_won=1_000,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+        regime_balance_required_buckets=("KOSPI_BULL", "KOSDAQ_BULL", "SIDEWAYS", "BEAR"),
+        regime_balance_min_trades=2,
+        require_regime_balance=True,
+    )
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    s1 = result["strategies"]["S1"]
+    assert s1["status"] == "fail"
+    assert s1["passed"] is False
+    assert "regime_balance_incomplete" in s1["blocking_reasons"]
+    assert "regime_balance_incomplete" not in s1["warnings"]

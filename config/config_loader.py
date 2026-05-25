@@ -238,6 +238,27 @@ class StrategyPerformanceDegradationConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class StrategyProfitabilityGateRealOverrides(BaseModel):
+    """실전(real) 모드 전용 ProfitabilityGate overlay. paper/backtest 동작은 영향 없음.
+
+    canary 임계로 default 값을 잡았다. 운영 검증 후 더 느슨한 값을 쓰려면 yaml 에서 명시.
+
+    fail-close 지향: missing evidence(monte carlo / regime balance / parameter stability) 도
+    real 모드에서는 block 으로 승격한다. 데이터가 갖춰지지 않은 신규 전략은 자동 차단된다.
+    """
+    min_trades: int = 100
+    min_profit_factor: Optional[float] = 1.3
+    min_payoff_ratio: Optional[float] = 1.2
+    min_win_rate: Optional[float] = 0.4
+    max_mdd_pct: Optional[float] = 12.0
+    min_regime_trade_count: int = 30
+    require_parameter_stability: bool = True
+    require_monte_carlo: bool = True
+    require_regime_balance: bool = True
+
+    model_config = {"extra": "allow"}
+
+
 class StrategyProfitabilityGateConfig(BaseModel):
     min_trades: int = 30
     min_profit_factor: Optional[float] = 1.2
@@ -255,6 +276,8 @@ class StrategyProfitabilityGateConfig(BaseModel):
         default_factory=lambda: ["spike", "cliff"]
     )
     require_parameter_stability: bool = False
+    require_monte_carlo: bool = False
+    require_regime_balance: bool = False
     regime_balance_required_buckets: List[str] = Field(
         default_factory=lambda: ["KOSPI_BULL", "KOSDAQ_BULL", "SIDEWAYS", "BEAR"]
     )
@@ -273,6 +296,9 @@ class StrategyProfitabilityGateConfig(BaseModel):
     opening_entry_warning_threshold: int = 3
     closing_entry_warning_threshold: int = 3
     consecutive_loss_warning_threshold: int = 3
+    real_mode_overrides: StrategyProfitabilityGateRealOverrides = Field(
+        default_factory=StrategyProfitabilityGateRealOverrides
+    )
 
     model_config = {"extra": "allow"}
 
