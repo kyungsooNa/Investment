@@ -402,6 +402,23 @@ function _renderProgressBody(progress, taskName) {
         return html;
     }
 
+    // ── 장전 헬스 체크 ──
+    if (taskName === 'pre_market_health_check') {
+        if (progress.running) {
+            return '<span style="background:var(--primary-color,#2196F3); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">점검 중</span>';
+        }
+        const result = progress.last_result || {};
+        const issues = result.issues || [];
+        if (progress.last_checked_date) {
+            if (result.ok === false || issues.length > 0) {
+                const detail = issues.length ? ` · ${issues.join(', ')}` : '';
+                return `<span style="background:var(--danger-color,#f44336); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">점검 실패</span> <span style="font-size:0.85em; color:#888;">${progress.last_checked_date}${detail}</span>`;
+            }
+            return `<span style="background:var(--success-color,#4CAF50); color:#fff; padding:1px 7px; border-radius:8px; font-size:0.82em;">완료</span> <span style="font-size:0.85em; color:#888;">${progress.last_checked_date} · 이상 없음</span>`;
+        }
+        return '<span style="color:#888; font-size:0.88em;">대기 중</span>';
+    }
+
     // ── 전일 기준 우량주 생성 ──
     if (taskName === '전일기준주도주_생성') {
         if (progress.running) {

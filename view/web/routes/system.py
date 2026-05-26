@@ -419,7 +419,11 @@ async def get_background_status():
         if task:
             if state_str == "idle" and name != "strategy_scheduler":
                 # If the task exposes an internal progress or running flag, call get_progress()
-                if getattr(task, "_is_refreshing", False) or hasattr(task, "_progress"):
+                if (
+                    name == "pre_market_health_check"
+                    or getattr(task, "_is_refreshing", False)
+                    or hasattr(task, "_progress")
+                ):
                     try:
                         progress = task.get_progress()
                     except Exception as e:
