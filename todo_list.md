@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-26 (완료 섹션 정리 — 0-2 / 0-6 / 1-1 / 1-2 / 1-4 / 4-1 / 4-4 git history 이관)
+최종 업데이트: 2026-05-26 (main 최신 코드 리뷰 반영 — canary/profile/API budget/broker mapper/event-driven 잔여 리스크 재정리)
 
 이 문서는 현재 남은 실행 항목만 추린 목록이다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거한다. 100% 종료된 섹션(`[x]` only, follow-up 없음)은 git history 로 추적하고 본 문서에서 삭제한다.
 
@@ -15,9 +15,12 @@
 남은 실행 영역 요약:
 
 - P0 0-1: 실전 체결 이력 확보 후 broker order mapper 분리 + fixture 회귀 잠금.
+- P0 0-7: canary 5% 노출 제한을 코드/config profile로 분리하고 real 기본 30%와 운영 혼동을 제거.
 - P1 1-5: 한국장 microstructure fixture 로 체결 모델 보수성 검증.
+- P1 1-6: 실전 journal/shadow/paper/live 성과 데이터로 profitability gate의 실제 통과 근거 확보.
+- P1 1-7: multiple testing proxy를 formal walk-forward / purged validation / PBO·Deflated Sharpe급 검증으로 확장할지 결정.
 - P2 2-2: 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 후 budget 기본값 보정.
-- P2 2-4: VBO shadow 5거래일 jsonl 수집 → polling parity 비교 → PR-3(VBO 실 적용 + OSB shadow) 진입.
+- P2 2-4: VBO shadow 5거래일 jsonl 수집 → polling parity 비교. event-driven live order는 별도 승인 전 No-Go.
 - P3 3-4: active strategy lifecycle contract 최소 공통 단계 강제 여부 재설계(현재 보류).
 - Pool B 튜닝: 후보 부족 재발 시 거래대금/정배열 조건 완화 검토.
 - 완료 기준의 전략 성과 `[~]`: `MomentumStrategy` 등 비활성 백테스트 경로의 표준 journal 통합 여부 결정.
@@ -34,7 +37,9 @@
 - [blocked] 주문번호, 종목코드, 매수/매도 구분, 주문수량, 누적체결수량, 미체결수량, 평균체결가, 취소/거부 필드 매핑을 확정한다. (실전 응답 확보 후 진행)
 - [~] 주문 접수 응답의 broker order number mapper를 실전/모의 fixture 기반으로 확장한다.
   - 적용 완료: 주문번호 추출 실패 시 raw payload 보존 + `FillReconciliationService.on_broker_order_no_missing` → 운영자 CRITICAL 알림 + 다음 reconcile 사이클까지 신규 주문 차단.
-  - 후속(blocked): 실전/모의 fixture 확보 후 별도 broker response mapper 클래스로 분리하고 `ODNO`(대문자), `주문번호`(한글), 중첩 payload, 체결통보 payload 키를 주문번호 추출 테스트로 고정한다.
+  - 후속(blocked): 실전/모의 fixture 확보 후 별도 `BrokerOrderResponseMapper` 클래스로 분리하고 submit response / order query / signing notice / real response / paper response를 각각 normalize한다.
+  - 테스트 고정 대상: `ordno`, `order_no`, `odno`, `ORDNO`, `ORDER_NO`, `ODNO`, `ODER_NO`, `주문번호`, 중첩 `output` payload, 체결통보 payload 키.
+  - 리뷰 판단: 현재 구조는 추출 실패 시 신규 주문을 막는 방어는 충분하지만, submit response mapper가 `OrderStateMachine` 내부 helper에 가까워 독립 mapper와 raw fixture 회귀 테스트가 아직 필요하다.
 
 주요 파일:
 
@@ -43,6 +48,26 @@
 - `brokers/broker_api_wrapper.py`
 - `services/order_execution_service.py`
 - `services/fill_reconciliation_service.py`
+
+---
+
+### 0-7. Canary profile과 real exposure 한도 분리
+
+- [ ] canary 운영용 profile을 코드/config에 명시적으로 추가한다.
+  - 배경: `docs/canary_procedure.md`는 canary 총 노출 5%를 전제로 하지만, 실전 override config는 총 노출 30%를 허용한다. 운영자가 30% 노출 상태를 canary로 오해하지 않도록 profile을 분리한다.
+  - canary 기본값 후보: `max_total_exposure_pct=5`, `max_positions=2`, `max_pending_orders=2`, `max_order_amount=1_000_000`, active strategy 1~2개.
+  - position sizing 후보: `max_per_position_pct=1~2`, `per_trade_risk_pct=0.25~0.5`.
+- [ ] predeploy / pre-market health check / runbook에서 현재 profile이 `canary`인지 표시하고, canary 단계에서 `real_limited` 또는 `real_full` 설정이면 경고 또는 차단한다.
+- [ ] `real_limited`(예: 총 노출 30%)와 `real_full`은 canary 성과 데이터와 별도 승인 후에만 사용할 수 있도록 운영 문서에 명시한다.
+
+주요 파일:
+
+- `config/config.yaml`
+- `config/config.yaml.example`
+- `services/risk_gate_service.py`
+- `services/position_sizing_service.py`
+- `docs/canary_procedure.md`
+- `docs/predeploy_checklist.md`
 
 ---
 
@@ -74,13 +99,54 @@
 
 ---
 
+### 1-6. 실전 수익성 데이터 확보와 profitability gate 운영
+
+- [ ] shadow / paper / 소액 canary journal을 표준 포맷으로 누적하고, 전략별 profitability gate 통과 근거를 리포트한다.
+  - 최소 유지 기준: 실전 override의 `min_trades=100`, `profit_factor>=1.3`, `payoff_ratio>=1.2`, `win_rate>=40%`, `max_drawdown<=12%`, regime별 최소 거래 수 30.
+  - 필수 조건: parameter stability, Monte Carlo, regime balance, multiple testing adjustment를 운영 편의상 낮추지 않는다.
+- [ ] gate 미통과 또는 journal provider 부재 시 신규 진입이 fail-close 되는지 predeploy/checklist 테스트로 다시 고정한다.
+- [ ] 전략별 `entry_reason`, `invalidation_price`, `stop_loss_price`, `target_price`, `trailing_rule`, `expected_holding_period_days`, `confidence`, `required_data`, `config_hash`가 journal 분석까지 이어지는지 샘플 리포트로 검증한다.
+
+판단:
+
+- 코드 구조는 수익성 검증 준비 단계까지 왔지만, 실제 수익 가능성은 아직 실전 journal과 shadow/paper/live 성과 데이터로 증명해야 한다.
+
+주요 파일:
+
+- `services/strategy_live_expansion_gate_service.py`
+- `services/strategy_profitability_gate_service.py`
+- `scheduler/strategy_scheduler.py`
+- `common/types.py`
+- `services/strategy_log_report_service.py`
+
+### 1-7. Multiple testing / 과최적화 방어 고도화
+
+- [ ] 현재 proxy 기반 multiple testing 방어를 자금 확대 전 formal 검증으로 확장할지 결정한다.
+  - 현재 판단: adjusted Sharpe proxy와 PBO-like proxy는 canary 전 검토에는 유용하지만 formal Deflated Sharpe 또는 formal PBO 구현은 아니다.
+  - 후보: walk-forward validation, purged validation, formal PBO, Deflated Sharpe, 전략/필터 조합별 ablation 결과 자동 리포트.
+- [ ] 전략 수와 필터 조합이 늘어나는 경우, canary 통과와 자금 확대 기준을 분리한다.
+  - canary: 현재 proxy + 보수적 risk limit + live journal 관찰.
+  - 자금 확대: formal 검증 + 실전 성과 데이터 + regime별 일관성 확인.
+
+주요 파일:
+
+- `services/multiple_testing_bias_service.py`
+- `services/strategy_ablation_service.py`
+- `services/strategy_profitability_gate_service.py`
+- `docs/`
+
+---
+
 ## P2. 시스템 성능
 
 ### 2-2. API 호출 최적화
 
 - [~] API budget limiter 운영 정책을 실전 한도 기준으로 보정한다.
   - 적용 완료: endpoint별 category(`quotation_price`/`quotation_ohlcv`/`quotation_conclusion`/`account_balance`/`account_reconciliation`/`order_submit`/`order_cancel`/`websocket_*`) 동시성/rate 분리, emergency overlay lane, coverage matrix 코드/문서/테스트 고정, 장초반 부하 invariant 테스트, `rate_wait_total`/`rate_wait_seconds_total` 관측성.
+  - 리뷰 재확인: `bounded_gather()` 같은 호출 묶음 단위 제한은 전역 API budget limiter를 대체하지 못한다. budget limiter가 `KoreaInvestApiBase.call_api()` 또는 그보다 아래 공통 HTTP 경로에 강제 주입되어 있는지 확인한다.
   - 남은 작업: 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 후 기본값 보정.
+  - 남은 작업: current price, OHLCV, account/balance, order submit, order status/reconcile, websocket subscribe, emergency liquidation priority lane이 시스템 전체 합산 기준으로 제한되는지 테스트한다.
+  - 운영 기준: 429 또는 "초당 거래건수를 초과하였습니다" 응답 후 retry하는 사후 대응만으로는 부족하므로, 장초반 다전략 동시 실행 전에 사전 제한이 동작해야 한다.
 
 주요 파일:
 
@@ -97,6 +163,9 @@
   - 검증 기준: shadow 신호와 기존 polling 신호의 시간/종목/가격 괴리를 비교해 실주문 전환 가능 여부를 판정한다.
   - 추가 기준: polling 대비 신호 선행 시간, fast path false positive, false negative, full gate parity, missed trade PnL, duplicate signal rate.
   - VBO 특이점: `evaluate_single()` shadow fast path는 execution strength/program-buy를 의도적으로 생략하므로, fast path 통과와 full gate 최종 통과를 분리 기록해야 한다.
+- [ ] event-driven signal은 별도 승인 전 shadow/latency 측정용으로만 운영한다.
+  - 운영 원칙: 실주문은 polling scheduler + full gate 통과 경로만 허용한다.
+  - No-Go 사유: `StrategySignalSink`는 protocol 수준이고, VBO fast path는 일부 full safeguard를 생략한다.
 - [blocked] PR-3: PR-2.5 관찰 결과 양호 시 VBO 실 적용 + OSB shadow 진입.
 - [ ] PR-4+: 단계적 확장. (HighTightFlag 등 OHLCV 별도 조회 필요 전략에 적용할지 재평가)
 
@@ -155,11 +224,13 @@
 남은 즉시 착수 항목 대부분은 외부 데이터(실전 체결 이력, 장중 microstructure 샘플) 또는 운영 관찰(VBO shadow 5거래일) 대기 상태다. 도구·정책 작업으로 대기 시간을 줄일 수 있다.
 
 1. **외부 운영 확인 후 즉시 진행**
-   - 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 → API budget 기본값 보정 (P2 2-2)
+   - canary profile 5% 노출 제한을 코드/config로 분리하고 predeploy에서 현재 profile을 표시/검증 (P0 0-7)
+   - 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 → API budget 기본값 보정 및 공통 HTTP 경로 강제 여부 확인 (P2 2-2)
 
 2. **운영 관찰 진행 중**
    - VBO shadow 5거래일 jsonl 수집 → polling 신호 parity 비교 → PR-3 진입 판정 (P2 2-4 PR-2.5)
      - 대기 시간 활용 가능: shadow jsonl ↔ polling 신호 비교 스크립트/리포트 선행 구현 가능.
+   - profitability gate는 우회하지 않고 shadow/paper/canary journal로 전략별 실전 근거를 축적 (P1 1-6)
 
 3. **외부 데이터 확보 후 진행 가능 (blocked)**
    - 실전 KIS `inquire-daily-ccld` 체결 이력 응답 캡처 → fixture 회귀 (P0 0-1)
@@ -173,6 +244,7 @@
    - Pool B 정배열 조건을 `current > ma_20d` 중심 완화 검토
 
 5. **정책 합의 후 재승격 후보 (보류)**
+   - formal walk-forward / purged validation / PBO / Deflated Sharpe 검증 도입 여부 결정 (P1 1-7)
    - active strategy lifecycle 7단계 base class 분해 (P3 3-4, 외과수술적 변경 원칙으로 보류)
    - 전략별 `min_trading_value_won` / `min_market_cap_won` 하한 설정 (P0 0-2 후속)
    - 매도 청산 경로의 RiskGate 우회 정책, KillSwitch 청산 예외, KillSwitchService auto-trigger 호출처 추가 (P0 0-6 후속)
