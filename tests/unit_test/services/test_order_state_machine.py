@@ -122,6 +122,13 @@ def test_extract_broker_order_no_from_dict_variants():
     assert OrderStateMachine.extract_broker_order_no(
         ResCommonResponse(rt_cd="0", msg1="", data={"odno": "Z"})
     ) == "Z"
+    assert OrderStateMachine.extract_broker_order_no(
+        ResCommonResponse(
+            rt_cd="0",
+            msg1="",
+            data={"output": {"KRX_FWDG_ORD_ORGNO": "00950", "ODNO": "0000003900"}},
+        )
+    ) == "0000003900"
 
 
 # ── transition ────────────────────────────────────────────────────────────

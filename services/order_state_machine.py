@@ -123,7 +123,18 @@ class OrderStateMachine:
         if hasattr(result.data, "ordno"):
             return result.data.ordno
         if isinstance(result.data, dict):
-            return result.data.get("ordno") or result.data.get("order_no") or result.data.get("odno")
+            return OrderStateMachine._extract_broker_order_no_from_dict(result.data)
+        return None
+
+    @staticmethod
+    def _extract_broker_order_no_from_dict(data: dict) -> Optional[str]:
+        for key in ("ordno", "order_no", "odno", "ORDNO", "ORDER_NO", "ODNO"):
+            value = data.get(key)
+            if value:
+                return str(value).strip()
+        output = data.get("output")
+        if isinstance(output, dict):
+            return OrderStateMachine._extract_broker_order_no_from_dict(output)
         return None
 
     # ── register / transition ─────────────────────────────────────────
