@@ -5,6 +5,7 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -13,6 +14,7 @@ from scripts.analyze_event_shadow_parity import (
     compute_parity_report,
     format_markdown_report,
     load_polling_records,
+    load_polling_sells,
     load_shadow_records,
     main,
 )
@@ -167,25 +169,33 @@ def test_load_polling_records_filters_by_strategy_action_success(tmp_path):
 
 # ── compute_parity_report ──────────────────────────────────────────────────
 
-def _polling_rec(code: str, ts_epoch: float, strategy: str = "래리윌리엄스VBO"):
+def _polling_rec(code: str, ts_epoch: float, strategy: str = "래리윌리엄스VBO",
+                 price: Optional[float] = None):
     from scripts.analyze_event_shadow_parity import ParityRecord
     kst_dt = datetime.fromtimestamp(ts_epoch, tz=_KST)
+    raw: dict = {}
+    if price is not None:
+        raw["price"] = price
     return ParityRecord(
         source="polling", strategy=strategy, code=code, action="BUY",
         ts_epoch=ts_epoch, ts_iso=kst_dt.isoformat(),
         trade_date=kst_dt.strftime("%Y%m%d"),
-        raw={},
+        raw=raw,
     )
 
 
-def _shadow_rec(code: str, ts_epoch: float, strategy: str = "래리윌리엄스VBO"):
+def _shadow_rec(code: str, ts_epoch: float, strategy: str = "래리윌리엄스VBO",
+                price: Optional[float] = None):
     from scripts.analyze_event_shadow_parity import ParityRecord
     kst_dt = datetime.fromtimestamp(ts_epoch, tz=_KST)
+    raw: dict = {}
+    if price is not None:
+        raw["signal"] = {"price": price}
     return ParityRecord(
         source="event_shadow", strategy=strategy, code=code, action="BUY",
         ts_epoch=ts_epoch, ts_iso=kst_dt.isoformat(),
         trade_date=kst_dt.strftime("%Y%m%d"),
-        raw={},
+        raw=raw,
     )
 
 
@@ -292,6 +302,135 @@ def test_compute_parity_report_per_date_breakdown():
     assert by_date["20260520"]["matched"] == 1
     assert by_date["20260520"]["polling_only"] == 0
     assert by_date["20260521"]["polling_only"] == 1
+
+
+# ── price divergence ───────────────────────────────────────────────────────
+
+def test_price_divergence_for_matched_pairs_uses_raw_prices():
+    # shadow 10100 vs polling 10000 → diff +100, diff_pct +1.0
+    base = _kst_epoch("20260520", 9, 15, 30)
+    shadow = [_shadow_rec("000001", base, price=10100)]
+    polling = [_polling_rec("000001", base + 1, price=10000)]
+
+    report = compute_parity_report(shadow, polling, match_window_sec=60.0)
+
+    div = report["price_divergence"]
+    assert div["count"] == 1
+    assert div["avg_diff"] == pytest.approx(100.0)
+    assert div["avg_diff_pct"] == pytest.approx(1.0)
+    assert div["min_diff_pct"] == pytest.approx(1.0)
+    assert div["max_diff_pct"] == pytest.approx(1.0)
+
+
+def test_price_divergence_empty_when_no_matched_pairs():
+    base = _kst_epoch("20260520", 9, 15, 30)
+    shadow = [_shadow_rec("000001", base, price=10100)]
+    polling: list = []
+
+    report = compute_parity_report(shadow, polling, match_window_sec=60.0)
+
+    div = report["price_divergence"]
+    assert div["count"] == 0
+    assert div["avg_diff"] is None
+    assert div["avg_diff_pct"] is None
+
+
+def test_price_divergence_skips_pairs_without_price():
+    base = _kst_epoch("20260520", 9, 15, 30)
+    # shadow has price, polling doesn't
+    shadow = [_shadow_rec("000001", base, price=10100)]
+    polling = [_polling_rec("000001", base + 1, price=None)]
+
+    report = compute_parity_report(shadow, polling, match_window_sec=60.0)
+
+    assert report["totals"]["matched"] == 1
+    # 가격 누락 → 괴리 통계에서 제외
+    assert report["price_divergence"]["count"] == 0
+
+
+# ── missed trade PnL ───────────────────────────────────────────────────────
+
+def test_load_polling_sells_returns_return_rates_grouped_by_key(tmp_path):
+    db_path = tmp_path / "scheduler.db"
+    _create_scheduler_db(db_path, [
+        {"code": "000001", "timestamp": _kst_ts_str("20260520", 9, 15),
+         "strategy_name": "래리윌리엄스VBO", "action": "BUY", "api_success": True},
+        {"code": "000001", "timestamp": _kst_ts_str("20260520", 14, 30),
+         "strategy_name": "래리윌리엄스VBO", "action": "SELL", "api_success": True,
+         "return_rate": 2.5},
+        # 다른 날
+        {"code": "000002", "timestamp": _kst_ts_str("20260521", 13, 0),
+         "strategy_name": "래리윌리엄스VBO", "action": "SELL", "api_success": True,
+         "return_rate": -1.2},
+        # return_rate NULL → 제외
+        {"code": "000003", "timestamp": _kst_ts_str("20260520", 14, 0),
+         "strategy_name": "래리윌리엄스VBO", "action": "SELL", "api_success": True,
+         "return_rate": None},
+    ])
+
+    sells = load_polling_sells(
+        db_path=db_path,
+        date_from="20260520",
+        date_to="20260521",
+        strategy_filter="래리윌리엄스VBO",
+    )
+
+    assert ("래리윌리엄스VBO", "000001", "20260520") in sells
+    assert sells[("래리윌리엄스VBO", "000001", "20260520")] == [2.5]
+    assert sells[("래리윌리엄스VBO", "000002", "20260521")] == [-1.2]
+    assert ("래리윌리엄스VBO", "000003", "20260520") not in sells
+
+
+def test_missed_pnl_uses_sell_return_rate_for_polling_only():
+    p_ts = _kst_epoch("20260520", 9, 15, 30)
+    polling = [_polling_rec("000001", p_ts)]
+    shadow: list = []
+    sells = {("래리윌리엄스VBO", "000001", "20260520"): [3.0]}
+
+    report = compute_parity_report(
+        shadow, polling, match_window_sec=60.0,
+        polling_sells_by_key=sells,
+    )
+
+    mp = report["missed_pnl"]
+    assert mp["known_count"] == 1
+    assert mp["unknown_count"] == 0
+    assert mp["avg_return_rate"] == pytest.approx(3.0)
+    assert mp["sum_return_rate"] == pytest.approx(3.0)
+
+
+def test_missed_pnl_marks_unknown_when_no_matching_sell():
+    p_ts = _kst_epoch("20260520", 9, 15, 30)
+    polling = [_polling_rec("000001", p_ts)]
+    shadow: list = []
+
+    report = compute_parity_report(
+        shadow, polling, match_window_sec=60.0,
+        polling_sells_by_key={},
+    )
+
+    mp = report["missed_pnl"]
+    assert mp["known_count"] == 0
+    assert mp["unknown_count"] == 1
+    assert mp["avg_return_rate"] is None
+
+
+def test_missed_pnl_only_counts_polling_only_not_matched():
+    # matched 는 fast path 도 잡았으니 missed 아님
+    p_ts = _kst_epoch("20260520", 9, 15, 30)
+    s_ts = _kst_epoch("20260520", 9, 15, 31)
+    polling = [_polling_rec("000001", p_ts)]
+    shadow = [_shadow_rec("000001", s_ts)]
+    sells = {("래리윌리엄스VBO", "000001", "20260520"): [5.0]}
+
+    report = compute_parity_report(
+        shadow, polling, match_window_sec=60.0,
+        polling_sells_by_key=sells,
+    )
+
+    assert report["totals"]["matched"] == 1
+    assert report["missed_pnl"]["known_count"] == 0
+    assert report["missed_pnl"]["unknown_count"] == 0
 
 
 # ── main / CLI ─────────────────────────────────────────────────────────────

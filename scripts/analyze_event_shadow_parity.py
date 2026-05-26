@@ -116,6 +116,50 @@ def load_shadow_records(
     return out
 
 
+def load_polling_sells(
+    db_path: Path,
+    date_from: str,
+    date_to: str,
+    strategy_filter: Optional[str] = None,
+) -> Dict[Tuple[str, str, str], List[float]]:
+    """SELL signal_history 의 `return_rate` 를 (strategy, code, trade_date) 키로 묶어 반환.
+
+    polling_only(=fast path miss) 케이스의 "missed PnL" 산출에 사용한다. 같은
+    BUY 와 짝지을 SELL 의 return_rate 가 fast path 단독 운영 시 잃었을 PnL 의
+    근사치다.
+    """
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return {}
+
+    from_iso = f"{date_from[:4]}-{date_from[4:6]}-{date_from[6:8]}"
+    to_iso = f"{date_to[:4]}-{date_to[4:6]}-{date_to[6:8]}"
+
+    sql = (
+        "SELECT strategy_name, code, return_rate, timestamp "
+        "FROM signal_history "
+        "WHERE substr(timestamp, 1, 10) BETWEEN ? AND ? "
+        "  AND action = 'SELL' "
+        "  AND return_rate IS NOT NULL"
+    )
+    params: list = [from_iso, to_iso]
+    if strategy_filter:
+        sql += " AND strategy_name = ?"
+        params.append(strategy_filter)
+    sql += " ORDER BY timestamp ASC"
+
+    out: Dict[Tuple[str, str, str], List[float]] = {}
+    with sqlite3.connect(db_path) as conn:
+        for strategy_name, code, return_rate, timestamp in conn.execute(sql, params):
+            try:
+                ts_epoch = _kst_str_to_epoch(timestamp)
+            except ValueError:
+                continue
+            trade_date, _ = _epoch_to_kst(ts_epoch)
+            out.setdefault((strategy_name, code, trade_date), []).append(float(return_rate))
+    return out
+
+
 def load_polling_records(
     db_path: Path,
     date_from: str,
@@ -191,10 +235,90 @@ def _record_to_brief(rec: ParityRecord) -> Dict[str, Any]:
     }
 
 
+def _extract_shadow_price(rec: ParityRecord) -> Optional[float]:
+    sig = rec.raw.get("signal") or {}
+    p = sig.get("price")
+    try:
+        return float(p) if p is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_polling_price(rec: ParityRecord) -> Optional[float]:
+    p = rec.raw.get("price")
+    try:
+        return float(p) if p is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _price_divergence_stats(
+    matched_pairs: List[Tuple[ParityRecord, ParityRecord]],
+) -> Dict[str, Any]:
+    diffs: List[float] = []
+    diffs_pct: List[float] = []
+    for s, p in matched_pairs:
+        sp = _extract_shadow_price(s)
+        pp = _extract_polling_price(p)
+        if sp is None or pp is None or pp == 0:
+            continue
+        diffs.append(sp - pp)
+        diffs_pct.append((sp - pp) / pp * 100.0)
+    if not diffs:
+        return {
+            "count": 0,
+            "avg_diff": None, "avg_diff_pct": None,
+            "median_diff_pct": None,
+            "min_diff_pct": None, "max_diff_pct": None,
+        }
+    return {
+        "count": len(diffs),
+        "avg_diff": sum(diffs) / len(diffs),
+        "avg_diff_pct": sum(diffs_pct) / len(diffs_pct),
+        "median_diff_pct": statistics.median(diffs_pct),
+        "min_diff_pct": min(diffs_pct),
+        "max_diff_pct": max(diffs_pct),
+    }
+
+
+def _missed_pnl_stats(
+    polling_only: List[ParityRecord],
+    polling_sells_by_key: Optional[Dict[Tuple[str, str, str], List[float]]],
+) -> Dict[str, Any]:
+    """polling_only(fast path miss) 의 missed PnL.
+
+    matching SELL 의 return_rate 를 그 trade 의 실현 PnL 근사치로 사용한다.
+    shadow_only 는 실제 체결이 없어 PnL 산출 불가 — 여기서 다루지 않는다.
+    """
+    sells = polling_sells_by_key or {}
+    known: List[float] = []
+    unknown = 0
+    for r in polling_only:
+        rates = sells.get((r.strategy, r.code, r.trade_date))
+        if rates:
+            known.append(rates[0])
+        else:
+            unknown += 1
+    if not known:
+        return {
+            "known_count": 0, "unknown_count": unknown,
+            "avg_return_rate": None, "sum_return_rate": None,
+            "median_return_rate": None,
+        }
+    return {
+        "known_count": len(known),
+        "unknown_count": unknown,
+        "avg_return_rate": sum(known) / len(known),
+        "sum_return_rate": sum(known),
+        "median_return_rate": statistics.median(known),
+    }
+
+
 def compute_parity_report(
     shadow: List[ParityRecord],
     polling: List[ParityRecord],
     match_window_sec: float,
+    polling_sells_by_key: Optional[Dict[Tuple[str, str, str], List[float]]] = None,
 ) -> Dict[str, Any]:
     groups: Dict[Tuple[str, str, str], Dict[str, List[ParityRecord]]] = {}
     for r in shadow:
@@ -249,6 +373,9 @@ def compute_parity_report(
     denom = total_matched + total_shadow_only + total_polling_only
     match_rate = (total_matched / denom) if denom else 0.0
 
+    price_div = _price_divergence_stats(matched_pairs)
+    missed_pnl = _missed_pnl_stats(polling_only, polling_sells_by_key)
+
     return {
         "totals": {
             "matched": total_matched,
@@ -259,6 +386,8 @@ def compute_parity_report(
             "match_rate": match_rate,
         },
         "lead_time_seconds": lead_stats,
+        "price_divergence": price_div,
+        "missed_pnl": missed_pnl,
         "per_date": dict(sorted(per_date.items())),
         "details": {
             "matched": [
@@ -334,6 +463,35 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
         lines.append("- (no matched pairs)")
     lines.append("")
 
+    div = report.get("price_divergence") or {}
+    lines.append("## Price divergence (shadow_price − polling_price, matched pairs)")
+    lines.append("")
+    if div.get("count"):
+        lines.append(f"- count: {div['count']}")
+        lines.append(f"- avg_diff: {div['avg_diff']:.3f}")
+        lines.append(f"- avg_diff_pct: {div['avg_diff_pct']:.3f}%")
+        lines.append(f"- median_diff_pct: {div['median_diff_pct']:.3f}%")
+        lines.append(f"- min_diff_pct: {div['min_diff_pct']:.3f}%")
+        lines.append(f"- max_diff_pct: {div['max_diff_pct']:.3f}%")
+    else:
+        lines.append("- (no matched pairs with price data)")
+    lines.append("")
+
+    mp = report.get("missed_pnl") or {}
+    lines.append("## Missed trade PnL (polling_only, fast path miss)")
+    lines.append("")
+    if mp.get("known_count"):
+        lines.append(f"- known_count: {mp['known_count']}")
+        lines.append(f"- unknown_count: {mp['unknown_count']}")
+        lines.append(f"- avg_return_rate: {mp['avg_return_rate']:.3f}%")
+        lines.append(f"- median_return_rate: {mp['median_return_rate']:.3f}%")
+        lines.append(f"- sum_return_rate: {mp['sum_return_rate']:.3f}%")
+    else:
+        lines.append(f"- known_count: 0")
+        lines.append(f"- unknown_count: {mp.get('unknown_count', 0)}")
+        lines.append("- (no matching SELL records — PnL 미산정)")
+    lines.append("")
+
     if per_date:
         lines.append("## 거래일별")
         lines.append("")
@@ -384,11 +542,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="BUY",
         require_api_success=True,
     )
+    polling_sells = load_polling_sells(
+        db_path=Path(args.scheduler_db),
+        date_from=args.date_from,
+        date_to=args.date_to,
+        strategy_filter=args.strategy or None,
+    )
 
     report = compute_parity_report(
         shadow=shadow,
         polling=polling,
         match_window_sec=args.match_window_sec,
+        polling_sells_by_key=polling_sells,
     )
     report["config"] = {
         "strategy": args.strategy,
