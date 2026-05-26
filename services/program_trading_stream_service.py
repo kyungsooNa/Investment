@@ -44,6 +44,7 @@ class ProgramTradingStreamService:
         self._telegram_reporter = None
         self._market_calendar_service = None
         self._market_clock = None
+        self._stock_code_repository = None
 
         # SQLite 레이어는 ProgramTradingRepo에 위임
         self._repo = ProgramTradingRepo(
@@ -236,11 +237,14 @@ class ProgramTradingStreamService:
         telegram_reporter=None,
         market_calendar_service=None,
         market_clock=None,
+        stock_code_repository=None,
     ) -> None:
         """운영 알림에 필요한 외부 의존성을 사후 주입한다."""
         self._telegram_reporter = telegram_reporter
         self._market_calendar_service = market_calendar_service
         self._market_clock = market_clock
+        if stock_code_repository is not None:
+            self._stock_code_repository = stock_code_repository
 
     # ── 운영 알림 ──────────────────────────────────────────────────
 
@@ -269,6 +273,16 @@ class ProgramTradingStreamService:
         except (TypeError, ValueError):
             return "0.00%"
 
+    def _format_stock_label(self, code: str) -> str:
+        if self._stock_code_repository is None:
+            return code
+        try:
+            name = self._stock_code_repository.get_name_by_code(code)
+            return name if name and name != code else code
+        except Exception as e:
+            self.logger.warning(f"프로그램매매 종목명 조회 실패: code={code}, error={e}")
+            return code
+
     def _format_last_tick_report(self, codes: list[str]) -> str:
         lines = [
             "<b>프로그램매매 구독 Tick 상태</b>",
@@ -277,9 +291,10 @@ class ProgramTradingStreamService:
             "",
         ]
         for code in codes:
+            label = self._format_stock_label(code)
             history = self._pt_history.get(code) or []
             if not history:
-                lines.append(f"{html.escape(code)}: 수신 없음")
+                lines.append(f"{html.escape(label)}: 수신 없음")
                 continue
 
             tick = history[-1]
@@ -293,7 +308,7 @@ class ProgramTradingStreamService:
             rate = self._format_rate(tick.get("rate", 0.0))
             net_amt = self._format_int(tick.get("순매수거래대금", 0))
             lines.append(
-                f"{html.escape(code)}: {price}원 ({rate}) "
+                f"{html.escape(label)}: {price}원 ({rate}) "
                 f"체결:{html.escape(trade_time)} 수신:{received_at} 순매수대금:{net_amt}"
             )
         return "\n".join(lines)
@@ -350,10 +365,29 @@ class ProgramTradingStreamService:
 
         return start_dt, end_dt, expected_minutes, timezone
 
+    @staticmethod
+    def _minute_from_trade_time(trade_time) -> str | None:
+        digits = "".join(ch for ch in str(trade_time or "") if ch.isdigit())
+        if len(digits) < 4:
+            return None
+        hour = int(digits[:2])
+        minute = int(digits[2:4])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return None
+        return f"{hour:02d}:{minute:02d}"
+
+    def _history_minutes_from_memory(self, code: str, expected_set: set[str]) -> set[str]:
+        minutes: set[str] = set()
+        for tick in self._pt_history.get(code) or []:
+            minute = self._minute_from_trade_time(tick.get("주식체결시간"))
+            if minute in expected_set:
+                minutes.add(minute)
+        return minutes
+
     def build_db_minute_persistence_status(self, codes: list[str], trading_date: str) -> dict:
-        """구독 종목별로 장중 DB 저장이 1분 단위로 존재하는지 계산한다."""
+        """구독 종목별로 수신 분봉과 DB 저장 분봉을 분리해 계산한다."""
         start_dt, end_dt, expected_minutes, timezone = self._build_trading_window(trading_date)
-        timestamps = self._repo.get_history_timestamps_by_code(
+        records = self._repo.get_history_records_for_persistence_by_code(
             codes,
             start_dt.timestamp(),
             end_dt.timestamp(),
@@ -371,15 +405,36 @@ class ProgramTradingStreamService:
         }
         for code in codes:
             saved_minutes = set()
-            for created_at in timestamps.get(code, []):
-                dt = datetime.fromtimestamp(created_at, tz=timezone) if timezone else datetime.fromtimestamp(created_at)
-                saved_minutes.add(dt.strftime("%H:%M"))
+            for record in records.get(code, []):
+                minute = self._minute_from_trade_time(record.get("trade_time"))
+                if minute is None:
+                    created_at = record.get("created_at")
+                    dt = datetime.fromtimestamp(created_at, tz=timezone) if timezone else datetime.fromtimestamp(created_at)
+                    minute = dt.strftime("%H:%M")
+                if minute in expected_set:
+                    saved_minutes.add(minute)
+            received_minutes = self._history_minutes_from_memory(code, expected_set)
+            if not received_minutes:
+                received_minutes = set(saved_minutes)
             missing = [minute for minute in expected_minutes if minute not in saved_minutes]
+            unsaved_received = [
+                minute for minute in expected_minutes
+                if minute in received_minutes and minute not in saved_minutes
+            ]
+            no_tick = [
+                minute for minute in expected_minutes
+                if minute not in received_minutes
+            ]
             status["codes"][code] = {
                 "ok": not missing,
                 "saved_minute_count": len(saved_minutes & expected_set),
+                "received_minute_count": len(received_minutes & expected_set),
                 "missing_minute_count": len(missing),
                 "missing_minutes": missing,
+                "unsaved_received_minute_count": len(unsaved_received),
+                "unsaved_received_minutes": unsaved_received,
+                "no_tick_minute_count": len(no_tick),
+                "no_tick_minutes": no_tick,
             }
         return status
 
@@ -388,21 +443,48 @@ class ProgramTradingStreamService:
             f"<b>프로그램매매 DB 저장 점검 ({html.escape(str(status.get('date', '')))}일)</b>",
             f"구간: {html.escape(status['window']['start'])} ~ {html.escape(status['window']['end'])}",
             f"기대 분봉: {status['expected_minute_count']}분",
+            "기준: 체결시간 기준, 수신 분봉 대비 DB 저장 여부",
             "",
         ]
         for code, item in status["codes"].items():
+            label = self._format_stock_label(code)
             saved = item["saved_minute_count"]
             expected = status["expected_minute_count"]
             if item["ok"]:
-                lines.append(f"{html.escape(code)}: OK ({saved}/{expected})")
+                lines.append(f"{html.escape(label)}: OK ({saved}/{expected})")
             else:
                 sample = ", ".join(item["missing_minutes"][:10])
                 extra = "" if item["missing_minute_count"] <= 10 else f" 외 {item['missing_minute_count'] - 10}분"
+                unsaved = item.get("unsaved_received_minute_count", 0)
+                no_tick = item.get("no_tick_minute_count", item["missing_minute_count"])
                 lines.append(
-                    f"{html.escape(code)}: 누락 {item['missing_minute_count']}분 "
-                    f"({saved}/{expected}) 예: {html.escape(sample)}{extra}"
+                    f"{html.escape(label)}: 누락 {item['missing_minute_count']}분 "
+                    f"(DB 미저장 {unsaved}분, 수신없음 {no_tick}분, 저장 {saved}/{expected}) "
+                    f"예: {html.escape(sample)}{extra}"
                 )
         return "\n".join(lines)
+
+    def get_background_task_status(self) -> dict:
+        """system.py에서 서비스 내부 백그라운드 루프 상태를 노출하기 위한 요약."""
+        flush_task = self._flush_task
+        alert_tasks = [task for task in self._alert_tasks if not task.done()]
+
+        def _is_coro_running(name: str) -> bool:
+            return any(getattr(task.get_coro(), "__name__", "") == name for task in alert_tasks)
+
+        last_received_at = None
+        if self.last_data_ts > 0:
+            last_received_at = datetime.fromtimestamp(self.last_data_ts).strftime("%Y-%m-%d %H:%M:%S")
+
+        return {
+            "running": bool((flush_task and not flush_task.done()) or alert_tasks),
+            "flush_loop_alive": bool(flush_task and not flush_task.done()),
+            "alert_task_count": len(alert_tasks),
+            "hourly_tick_alert_alive": _is_coro_running("_hourly_tick_alert_loop"),
+            "db_check_alive": _is_coro_running("_after_market_db_check_loop"),
+            "last_db_check_report_date": self._last_db_check_report_date,
+            "last_received_at": last_received_at,
+        }
 
     async def send_db_persistence_report(self, trading_date: str) -> bool:
         """장마감 후 구독 종목의 1분 단위 DB 저장 여부를 텔레그램으로 전송한다."""

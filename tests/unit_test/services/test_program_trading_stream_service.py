@@ -497,9 +497,17 @@ async def test_send_subscribed_last_tick_alert_sends_last_tick_for_desired_codes
     mock_ssr.get_desired.return_value = {"005930", "000660"}
     mock_reporter = MagicMock()
     mock_reporter._send_message = AsyncMock(return_value=True)
+    mock_stock_repo = MagicMock()
+    mock_stock_repo.get_name_by_code.side_effect = lambda code: {
+        "005930": "삼성전자",
+        "000660": "SK하이닉스",
+    }.get(code, code)
 
     manager.wire_streaming_stock_repo(mock_ssr)
-    manager.wire_alert_dependencies(telegram_reporter=mock_reporter)
+    manager.wire_alert_dependencies(
+        telegram_reporter=mock_reporter,
+        stock_code_repository=mock_stock_repo,
+    )
     manager.on_data_received({
         "유가증권단축종목코드": "005930",
         "주식체결시간": "101530",
@@ -515,10 +523,11 @@ async def test_send_subscribed_last_tick_alert_sends_last_tick_for_desired_codes
     mock_reporter._send_message.assert_awaited_once()
     message = mock_reporter._send_message.call_args[0][0]
     assert "프로그램매매 구독 Tick" in message
-    assert "005930" in message
+    assert "삼성전자" in message
+    assert "005930" not in message
     assert "72,000" in message
     assert "101530" in message
-    assert "000660" in message
+    assert "SK하이닉스" in message
     assert "수신 없음" in message
 
 
@@ -551,6 +560,31 @@ def test_build_db_minute_persistence_status_reports_missing_minutes(manager):
     assert status["codes"]["000660"]["ok"] is True
 
 
+def test_build_db_minute_persistence_status_splits_unsaved_and_no_tick_minutes(manager):
+    """수신된 분의 DB 미저장과 수신 자체가 없는 분을 분리한다."""
+    clock = MarketClock(market_open_time="09:00", market_close_time="09:02")
+    manager.wire_alert_dependencies(market_clock=clock)
+
+    day = clock.market_timezone.localize(datetime(2026, 5, 19, 9, 0, 0))
+    manager._pt_history["005930"] = [
+        {"주식체결시간": "090000"},
+        {"주식체결시간": "090100"},
+    ]
+    with manager._get_connection() as conn:
+        conn.execute(
+            "INSERT INTO pt_history (code, trade_time, created_at) VALUES (?, ?, ?)",
+            ("005930", "090000", day.timestamp()),
+        )
+
+    status = manager.build_db_minute_persistence_status(["005930"], "20260519")
+    item = status["codes"]["005930"]
+
+    assert item["saved_minute_count"] == 1
+    assert item["received_minute_count"] == 2
+    assert item["unsaved_received_minutes"] == ["09:01"]
+    assert item["no_tick_minutes"] == ["09:02"]
+
+
 @pytest.mark.asyncio
 async def test_send_db_persistence_report_sends_summary(manager):
     """장마감 DB 저장 점검 결과를 텔레그램으로 전송한다."""
@@ -559,9 +593,15 @@ async def test_send_db_persistence_report_sends_summary(manager):
     mock_ssr.get_desired.return_value = {"005930"}
     mock_reporter = MagicMock()
     mock_reporter._send_message = AsyncMock(return_value=True)
+    mock_stock_repo = MagicMock()
+    mock_stock_repo.get_name_by_code.return_value = "삼성전자"
 
     manager.wire_streaming_stock_repo(mock_ssr)
-    manager.wire_alert_dependencies(telegram_reporter=mock_reporter, market_clock=clock)
+    manager.wire_alert_dependencies(
+        telegram_reporter=mock_reporter,
+        market_clock=clock,
+        stock_code_repository=mock_stock_repo,
+    )
     day = clock.market_timezone.localize(datetime(2026, 5, 19, 9, 0, 0))
     with manager._get_connection() as conn:
         conn.execute(
@@ -575,8 +615,47 @@ async def test_send_db_persistence_report_sends_summary(manager):
     mock_reporter._send_message.assert_awaited_once()
     message = mock_reporter._send_message.call_args[0][0]
     assert "프로그램매매 DB 저장 점검" in message
-    assert "005930" in message
+    assert "삼성전자" in message
     assert "OK" in message
+
+
+def test_format_db_persistence_report_explains_no_tick_cause(manager):
+    """DB 누락 리포트가 수신없음과 실제 DB 미저장을 함께 보여준다."""
+    mock_stock_repo = MagicMock()
+    mock_stock_repo.get_name_by_code.return_value = "삼성전자"
+    manager.wire_alert_dependencies(stock_code_repository=mock_stock_repo)
+
+    message = manager._format_db_persistence_report({
+        "date": "20260526",
+        "window": {"start": "2026-05-26 09:00:00", "end": "2026-05-26 09:02:00"},
+        "expected_minute_count": 3,
+        "codes": {
+            "005930": {
+                "ok": False,
+                "saved_minute_count": 1,
+                "missing_minute_count": 2,
+                "missing_minutes": ["09:01", "09:02"],
+                "unsaved_received_minute_count": 1,
+                "no_tick_minute_count": 1,
+            }
+        },
+    })
+
+    assert "삼성전자: 누락 2분" in message
+    assert "DB 미저장 1분" in message
+    assert "수신없음 1분" in message
+
+
+def test_get_background_task_status_reports_internal_loops(manager):
+    """서비스 내부 루프 상태를 system.py에서 읽을 수 있는 형태로 반환한다."""
+    manager._flush_task = MagicMock()
+    manager._flush_task.done.return_value = False
+
+    status = manager.get_background_task_status()
+
+    assert status["running"] is True
+    assert status["flush_loop_alive"] is True
+    assert status["alert_task_count"] == 0
 
 
 @pytest.mark.asyncio

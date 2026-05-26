@@ -74,6 +74,7 @@ class WiringPhase:
                 telegram_reporter=getattr(ctx, "telegram_reporter", None),
                 market_calendar_service=getattr(ctx, "_mcs", None),
                 market_clock=getattr(ctx, "market_clock", None),
+                stock_code_repository=getattr(ctx, "stock_code_repository", None),
             )
 
         # Streaming realtime_program_trading callback ← ProgramTradingStreamService
