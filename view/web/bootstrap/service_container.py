@@ -423,6 +423,7 @@ class ServiceContainer:
                 logger=ctx.logger,
                 ttl_sec=_ps_cfg.snapshot_ttl_sec if _ps_cfg else 60,
             )
+            _operating_profile = str(getattr(ctx.full_config, "operating_profile", "canary"))
             ctx.position_sizing_service = PositionSizingService(
                 account_snapshot_cache=ctx.account_snapshot_cache,
                 indicator_service=ctx.indicator_service,
@@ -432,6 +433,7 @@ class ServiceContainer:
                 quote_provider=ctx.broker,
                 order_policy_config=_op_cfg,
                 env=getattr(ctx.broker, "env", None),
+                operating_profile=_operating_profile,
             )
             ctx.risk_gate_service = RiskGateService(
                 config=_rg_cfg,
@@ -444,6 +446,7 @@ class ServiceContainer:
                 market_buy_reference_price_provider=lambda code, exchange: _resolve_market_buy_reference_price(
                     ctx.broker, ctx.logger, code, exchange
                 ),
+                operating_profile=_operating_profile,
             )
             ctx.execution_flow_service = ExecutionFlowService(
                 data_provider=ctx.broker,

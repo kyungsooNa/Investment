@@ -331,3 +331,64 @@ def test_load_configs_missing_optional_field_defaults():
         # cache가 없어도 기본값으로 생성되어야 함
         assert config.cache.base_dir == ".cache"
         assert config.cache.memory_cache_enabled is True
+
+
+# ── P0 0-7: operating_profile + profile-specific overrides ──────────────────
+
+
+def _minimal_app_config(**overrides):
+    base = {"web": {"host": "127.0.0.1", "port": 8000}}
+    base.update(overrides)
+    return AppConfig(**base)
+
+
+def test_app_config_default_operating_profile_is_canary():
+    cfg = _minimal_app_config()
+    assert cfg.operating_profile == "canary"
+
+
+def test_app_config_accepts_real_limited_profile():
+    cfg = _minimal_app_config(operating_profile="real_limited")
+    assert cfg.operating_profile == "real_limited"
+
+
+def test_app_config_accepts_real_full_profile():
+    cfg = _minimal_app_config(operating_profile="real_full")
+    assert cfg.operating_profile == "real_full"
+
+
+def test_app_config_rejects_invalid_profile():
+    with pytest.raises(ValidationError):
+        _minimal_app_config(operating_profile="canary_full")
+
+
+def test_risk_gate_canary_overrides_defaults_match_canary_procedure():
+    """canary profile 기본값: docs/canary_procedure.md 운영 한도와 일치."""
+    from config.config_loader import RiskGateConfig
+    cfg = RiskGateConfig()
+    assert cfg.canary_overrides.max_total_exposure_pct == 5.0
+    assert cfg.canary_overrides.max_pending_orders == 2
+    assert cfg.canary_overrides.max_order_amount_won == 1_000_000
+
+
+def test_position_sizing_canary_overrides_defaults_match_canary_procedure():
+    """canary profile 기본값: 1주당 리스크 0.25%, 단일 포지션 1.5%."""
+    from config.config_loader import PositionSizingConfig
+    cfg = PositionSizingConfig()
+    assert cfg.canary_overrides.per_trade_risk_pct == 0.25
+    assert cfg.canary_overrides.max_per_position_pct == 1.5
+
+
+def test_risk_gate_real_mode_overrides_still_default_real_limited():
+    """real_mode_overrides 의 기본값은 그대로 (real_limited overlay) — backward compat."""
+    from config.config_loader import RiskGateConfig
+    cfg = RiskGateConfig()
+    assert cfg.real_mode_overrides.max_total_exposure_pct == 30.0
+    assert cfg.real_mode_overrides.max_pending_orders == 5
+
+
+def test_position_sizing_real_mode_overrides_still_default_real_limited():
+    from config.config_loader import PositionSizingConfig
+    cfg = PositionSizingConfig()
+    assert cfg.real_mode_overrides.per_trade_risk_pct == 0.5
+    assert cfg.real_mode_overrides.max_per_position_pct == 3.0

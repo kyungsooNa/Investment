@@ -394,7 +394,7 @@ async def test_run_all_offline_skips_live_checks():
 
     summary = await svc.run_all(offline=True)
     assert isinstance(summary, PreDeployCheckSummary)
-    assert len(summary.results) == 8
+    assert len(summary.results) == 9
     probe.assert_not_awaited()
     broker.get_account_balance.assert_not_awaited()
 
@@ -402,6 +402,7 @@ async def test_run_all_offline_skips_live_checks():
     assert names == [
         "config_validation",
         "broker_env_consistency",
+        "operating_profile",
         "latest_trading_date",
         "event_shadow_status",
         "websocket_subscription_health",
@@ -453,22 +454,40 @@ def _policy_cfg(
     ps_overrides: dict | None = None,
     rg_overrides: dict | None = None,
     op_overrides: dict | None = None,
+    operating_profile: str = "real_limited",
+    canary_ps_overrides: dict | None = None,
+    canary_rg_overrides: dict | None = None,
 ):
-    """real_mode_overrides 만 다르게 채워서 cfg 생성."""
+    """real_mode_overrides 또는 canary_overrides 를 채워서 cfg 생성.
+
+    operating_profile 기본값은 "real_limited" — 기존 테스트가 real_mode_overrides 를 통해
+    검증하는 동작을 유지한다. profile=canary 테스트는 canary_*_overrides 를 사용한다.
+    """
     from config.config_loader import (
         OrderPolicyConfig,
         OrderPolicyRealOverrides,
         PositionSizingConfig,
-        PositionSizingRealOverrides,
         RiskGateConfig,
-        RiskGateRealOverrides,
     )
 
-    ps = PositionSizingConfig(real_mode_overrides=PositionSizingRealOverrides(**(ps_overrides or {})))
-    rg = RiskGateConfig(real_mode_overrides=RiskGateRealOverrides(**(rg_overrides or {})))
+    ps_kwargs: dict = {}
+    if ps_overrides:
+        ps_kwargs["real_mode_overrides"] = ps_overrides
+    if canary_ps_overrides:
+        ps_kwargs["canary_overrides"] = canary_ps_overrides
+
+    rg_kwargs: dict = {}
+    if rg_overrides:
+        rg_kwargs["real_mode_overrides"] = rg_overrides
+    if canary_rg_overrides:
+        rg_kwargs["canary_overrides"] = canary_rg_overrides
+
+    ps = PositionSizingConfig(**ps_kwargs)
+    rg = RiskGateConfig(**rg_kwargs)
     op = OrderPolicyConfig(real_mode_overrides=OrderPolicyRealOverrides(**(op_overrides or {})))
     return SimpleNamespace(
         is_paper_trading=is_paper_trading,
+        operating_profile=operating_profile,
         position_sizing=ps,
         risk_gate=rg,
         order_policy=op,
@@ -539,3 +558,81 @@ async def test_real_mode_policy_strictness_fail_takes_priority_over_warn():
     assert result.status == CheckStatus.FAIL
     assert "allow_market_buy" in result.detail
     assert "per_trade_risk_pct" in result.detail
+
+
+# ── P0 0-7: check_operating_profile + profile-aware strictness ───────────
+
+
+async def test_check_operating_profile_pass_canary_real():
+    """real + canary profile → PASS."""
+    svc = _service(config_loader=lambda: _policy_cfg(
+        is_paper_trading=False, operating_profile="canary"
+    ))
+    result = await svc.check_operating_profile()
+    assert result.status == CheckStatus.PASS
+    assert "canary" in result.detail
+    assert result.name == "operating_profile"
+
+
+async def test_check_operating_profile_warn_real_limited_real():
+    """real + real_limited profile → WARN (운영자 ack 필요)."""
+    svc = _service(config_loader=lambda: _policy_cfg(
+        is_paper_trading=False, operating_profile="real_limited"
+    ))
+    result = await svc.check_operating_profile()
+    assert result.status == CheckStatus.WARN
+    assert "real_limited" in result.detail
+
+
+async def test_check_operating_profile_warn_real_full_real():
+    """real + real_full profile → WARN."""
+    svc = _service(config_loader=lambda: _policy_cfg(
+        is_paper_trading=False, operating_profile="real_full"
+    ))
+    result = await svc.check_operating_profile()
+    assert result.status == CheckStatus.WARN
+    assert "real_full" in result.detail
+
+
+async def test_check_operating_profile_pass_canary_paper():
+    """paper + canary → PASS (canary 가 paper 에서도 안전한 기본값)."""
+    svc = _service(config_loader=lambda: _policy_cfg(
+        is_paper_trading=True, operating_profile="canary"
+    ))
+    result = await svc.check_operating_profile()
+    assert result.status == CheckStatus.PASS
+
+
+async def test_check_operating_profile_warn_non_canary_paper():
+    """paper + non-canary profile → WARN (운영자 의도 불명확)."""
+    svc = _service(config_loader=lambda: _policy_cfg(
+        is_paper_trading=True, operating_profile="real_limited"
+    ))
+    result = await svc.check_operating_profile()
+    assert result.status == CheckStatus.WARN
+
+
+async def test_real_mode_policy_strictness_uses_canary_thresholds_when_profile_canary():
+    """profile=canary 일 때 strictness 임계 = canary_overrides 기본값 (5%/2/0.25/1.5)."""
+    # canary_overrides default: per_trade_risk_pct=0.25, max_per_position_pct=1.5,
+    #                          max_total_exposure_pct=5.0, max_pending_orders=2
+    svc = _service(config_loader=lambda: _policy_cfg(
+        is_paper_trading=False, operating_profile="canary",
+        # canary 임계 동등 → PASS
+    ))
+    result = await svc.check_real_mode_policy_strictness()
+    assert result.status == CheckStatus.PASS, result.detail
+
+
+async def test_real_mode_policy_strictness_canary_fails_with_real_limited_values():
+    """profile=canary + canary_overrides 가 real_limited 수준이면 FAIL."""
+    svc = _service(config_loader=lambda: _policy_cfg(
+        is_paper_trading=False, operating_profile="canary",
+        # canary_overrides 를 의도적으로 느슨하게(real_limited 수준) → FAIL
+        canary_rg_overrides={"max_total_exposure_pct": 30.0, "max_pending_orders": 5},
+        canary_ps_overrides={"per_trade_risk_pct": 0.5, "max_per_position_pct": 3.0},
+    ))
+    result = await svc.check_real_mode_policy_strictness()
+    assert result.status == CheckStatus.FAIL
+    # 30% > 5% * 1.5 = 7.5 → FAIL
+    assert "max_total_exposure_pct" in result.detail

@@ -24,18 +24,28 @@
 
 ## 운영 한도 (Canary 단계)
 
-canary 단계는 full-auto 대비 한도를 별도로 낮게 둔다. 아래 값은 *초기 권장 기본값* 이며 운영 첫 주 결과를 바탕으로 재조정한다. 변경 시 본 문서와 `config/config.yaml` 의 `risk_gate.*` 를 동시에 갱신한다.
+운영 단계는 `config/config.yaml` 의 `operating_profile` 로 구분한다 (P0 0-7):
 
-| 항목 | Canary 한도 | Full 한도(참고) | 적용 위치 |
-| --- | --- | --- | --- |
-| 동시 보유 종목 수 | 2종 | 전략 별 capital 한도 내 무제한 | 전략 capital 설정 + `max_pending_orders` |
-| 단일 주문 금액 | 1,000,000 KRW | 전략 자본의 1포지션 비중 | `risk_gate.max_order_amount` |
-| 전략 1일 손실 한도 | -1.0% | -3.0% | `risk_gate.strategy_loss_limit` |
-| 전략 연속 손실 한도 | 3회 | 5회 | 전략 별 cooldown 정책 |
-| 미체결 허용 시간 | 5분 | 30분 | `FillReconciliationService` reconcile 윈도우 |
-| 계좌 총 노출 한도 | 총자산의 5% | 총자산의 30% | `risk_gate.max_total_exposure` |
-| Kill Switch 연속 API 오류 한도 | 3회 | `KillSwitchConfig.max_consecutive_api_errors` 운영 기본값 | `config/config.yaml` `kill_switch.max_consecutive_api_errors` |
-| 활성 전략 수 | 검증된 1\~2개 전략만 | 전체 활성 전략 | `StrategyFactory` 등록 |
+- `canary` — 실계좌 소액 검증 단계. 본 문서의 표가 기본값이다.
+- `real_limited` — canary 통과 후 별도 ack 거쳐 진입하는 중간 단계 (총 노출 30%).
+- `real_full` — formal 검증 + 자금 확대 승인 후에만 사용. overlay 미적용, base 값 사용.
+
+`predeploy` / `pre-market health check` 는 현재 profile 을 표시하며, canary 외 profile 은 WARN 으로 보고된다. 변경 시 본 문서와 `config/config.yaml` 의 `risk_gate.*`, `position_sizing.*`, `operating_profile` 을 함께 갱신한다.
+
+canary 단계는 full-auto 대비 한도를 별도로 낮게 둔다. 아래 값은 *초기 권장 기본값* 이며 운영 첫 주 결과를 바탕으로 재조정한다.
+
+| 항목 | Canary 한도 | real_limited 한도 | real_full 한도 | 적용 위치 |
+| --- | --- | --- | --- | --- |
+| 동시 보유 종목 수 | 2종 | 5종 | 전략 자본 한도 내 무제한 | `risk_gate.{canary,real_mode}_overrides.max_pending_orders` |
+| 단일 주문 금액 | 1,000,000 KRW | base 값 사용 | 전략 자본의 1포지션 비중 | `risk_gate.canary_overrides.max_order_amount_won` |
+| 전략 1일 손실 한도 | -1.0% | -2.0% | -3.0% | `risk_gate.strategy_loss_limit` |
+| 전략 연속 손실 한도 | 3회 | 4회 | 5회 | 전략 별 cooldown 정책 |
+| 미체결 허용 시간 | 5분 | 15분 | 30분 | `FillReconciliationService` reconcile 윈도우 |
+| 계좌 총 노출 한도 | 총자산의 5% | 총자산의 30% | 총자산의 95% (base) | `risk_gate.{canary,real_mode}_overrides.max_total_exposure_pct` |
+| 1주당 리스크 한도 | 0.25% | 0.5% | base 값 (1.5%) | `position_sizing.{canary,real_mode}_overrides.per_trade_risk_pct` |
+| 단일 종목 비중 상한 | 1.5% | 3.0% | base 값 (5.0%) | `position_sizing.{canary,real_mode}_overrides.max_per_position_pct` |
+| Kill Switch 연속 API 오류 한도 | 3회 | 5회 | `KillSwitchConfig.max_consecutive_api_errors` 운영 기본값 | `config/config.yaml` `kill_switch.max_consecutive_api_errors` |
+| 활성 전략 수 | 검증된 1\~2개 전략만 | 검증된 3~4개 | 전체 활성 전략 | `StrategyFactory` 등록 |
 
 ## 관찰 기간
 

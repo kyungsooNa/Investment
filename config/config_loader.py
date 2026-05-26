@@ -2,7 +2,7 @@
 import yaml
 import os
 import json
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Literal, Optional, List
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 # config.yaml 및 tr_ids_config.yaml 파일 경로 설정
@@ -35,12 +35,24 @@ class KillSwitchConfig(BaseModel):
     state_file_path: str = "data/kill_switch_state.json"
 
 class PositionSizingRealOverrides(BaseModel):
-    """실전(real) 모드 전용 PositionSizing overlay. paper 동작은 영향 없음.
+    """real_limited overlay (실전 제한 운영). paper 동작은 영향 없음.
 
-    canary 임계로 default 값을 잡았다. 운영 검증 후 더 느슨한 값을 쓰려면 yaml 에서 명시.
+    operating_profile=real_limited 시 적용. canary 와 별도로 운영 검증 단계의
+    중간 한도(0.5%/3.0%)를 표현한다.
     """
-    per_trade_risk_pct: float = 0.5        # canary: 0.25~0.5 권장 중 보수값
-    max_per_position_pct: float = 3.0      # canary: 2.0~3.0 권장 중 보수값
+    per_trade_risk_pct: float = 0.5
+    max_per_position_pct: float = 3.0
+
+    model_config = {"extra": "allow"}
+
+
+class PositionSizingCanaryOverrides(BaseModel):
+    """canary overlay (실전 소액 검증). operating_profile=canary 시 적용.
+
+    docs/canary_procedure.md 표 기준 보수 운영값.
+    """
+    per_trade_risk_pct: float = 0.25       # 1주당 리스크 0.25%
+    max_per_position_pct: float = 1.5      # 단일 포지션 1.5%
 
     model_config = {"extra": "allow"}
 
@@ -55,6 +67,7 @@ class PositionSizingConfig(BaseModel):
     min_stop_distance_pct: float = 1.0     # 분모 보호용 최소 손절 거리 (%)
     snapshot_ttl_sec: int = 60             # 잔고 스냅샷 TTL (초)
     real_mode_overrides: PositionSizingRealOverrides = Field(default_factory=PositionSizingRealOverrides)
+    canary_overrides: PositionSizingCanaryOverrides = Field(default_factory=PositionSizingCanaryOverrides)
 
     model_config = {"extra": "allow"}
 
@@ -84,9 +97,24 @@ class RiskGateFailOpenConfig(BaseModel):
 
 
 class RiskGateRealOverrides(BaseModel):
-    """실전(real) 모드 전용 RiskGate overlay. paper 동작은 영향 없음."""
-    max_total_exposure_pct: float = 30.0   # canary: 20.0~35.0 권장 중 중앙값
-    max_pending_orders: int = 5            # canary: 3~5 권장 중 보수값
+    """real_limited overlay (실전 제한 운영). operating_profile=real_limited 시 적용.
+
+    paper 동작은 영향 없음. canary 와 full 사이의 중간 검증 단계 한도.
+    """
+    max_total_exposure_pct: float = 30.0
+    max_pending_orders: int = 5
+
+    model_config = {"extra": "allow"}
+
+
+class RiskGateCanaryOverrides(BaseModel):
+    """canary overlay (실전 소액 검증). operating_profile=canary 시 적용.
+
+    docs/canary_procedure.md 표 기준: 총 노출 5%, 동시 보유 2종, 1주문 1M.
+    """
+    max_total_exposure_pct: float = 5.0
+    max_pending_orders: int = 2
+    max_order_amount_won: int = 1_000_000
 
     model_config = {"extra": "allow"}
 
@@ -102,6 +130,7 @@ class RiskGateConfig(BaseModel):
     strategy_limits: Dict[str, RiskGateStrategyLimitConfig] = Field(default_factory=dict)
     fail_open_allowed: RiskGateFailOpenConfig = Field(default_factory=RiskGateFailOpenConfig)
     real_mode_overrides: RiskGateRealOverrides = Field(default_factory=RiskGateRealOverrides)
+    canary_overrides: RiskGateCanaryOverrides = Field(default_factory=RiskGateCanaryOverrides)
 
     model_config = {"extra": "allow"}
 
@@ -337,7 +366,11 @@ class AppConfig(BaseModel):
     
     # Flags
     is_paper_trading: bool = True
-    
+
+    # Operating profile (P0 0-7): canary 5% 노출 vs real_limited 30% vs real_full 95% 운영 한도 분리.
+    # paper 모드에서는 base 값을 사용하므로 profile 무관. real 모드에서 overlay 선택.
+    operating_profile: Literal["canary", "real_limited", "real_full"] = "canary"
+
     # Sub-configs
     web: WebConfig
     cache: CacheConfig = Field(default_factory=CacheConfig)

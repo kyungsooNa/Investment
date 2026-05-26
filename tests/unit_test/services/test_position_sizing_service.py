@@ -456,6 +456,9 @@ def _env(is_paper_trading: bool):
 
 
 def _make_service_with_env(env, cfg=None):
+    # NOTE: P0 0-7 — 기존 real_mode_overrides 동작 검증 테스트가 의존하므로
+    # helper default 는 "real_limited" overlay 를 사용. canary 분기 테스트는
+    # 별도 `_make_service_with_profile` 또는 명시적 operating_profile 인자를 사용한다.
     cache = AsyncMock()
     cache.get.return_value = _make_snapshot(
         total_equity=10_000_000,
@@ -468,6 +471,7 @@ def _make_service_with_env(env, cfg=None):
         indicator_service=indicator,
         config=cfg or _make_config(),
         env=env,
+        operating_profile="real_limited",
     )
     return svc
 
@@ -539,3 +543,86 @@ async def test_position_sizing_real_mode_shrinks_risk_qty():
     # paper: per_trade_risk_pct=1.0 / max_per_position_pct=10.0
     # real overlay: per_trade_risk_pct=0.5 / max_per_position_pct=3.0 → 둘 다 빠듯해진다
     assert paper_qty > real_qty > 0
+
+
+# ── P0 0-7: operating_profile 분기 ────────────────────────────────────
+
+
+def _make_service_with_profile(env, cfg=None, operating_profile="canary"):
+    cache = AsyncMock()
+    cache.get.return_value = _make_snapshot(
+        total_equity=10_000_000,
+        available_cash=10_000_000,
+    )
+    indicator = AsyncMock()
+    indicator.calculate_atr.return_value = None
+    svc = PositionSizingService(
+        account_snapshot_cache=cache,
+        indicator_service=indicator,
+        config=cfg or _make_config(),
+        env=env,
+        operating_profile=operating_profile,
+    )
+    return svc
+
+
+def test_position_sizing_canary_profile_uses_canary_overrides():
+    """real 모드 + profile=canary → canary_overrides 적용 (0.25%, 1.5%)."""
+    cfg = _make_config(per_trade_risk_pct=1.5, max_per_position_pct=5.0)
+    svc = _make_service_with_profile(
+        env=_env(is_paper_trading=False), cfg=cfg, operating_profile="canary"
+    )
+    assert svc._effective_per_trade_risk_pct() == 0.25
+    assert svc._effective_max_per_position_pct() == 1.5
+
+
+def test_position_sizing_real_limited_profile_uses_real_mode_overrides():
+    """real 모드 + profile=real_limited → real_mode_overrides 적용 (0.5%, 3.0%)."""
+    cfg = _make_config(per_trade_risk_pct=1.5, max_per_position_pct=5.0)
+    svc = _make_service_with_profile(
+        env=_env(is_paper_trading=False), cfg=cfg, operating_profile="real_limited"
+    )
+    assert svc._effective_per_trade_risk_pct() == 0.5
+    assert svc._effective_max_per_position_pct() == 3.0
+
+
+def test_position_sizing_real_full_profile_uses_base_values():
+    """real 모드 + profile=real_full → overlay 미적용, base 사용."""
+    cfg = _make_config(per_trade_risk_pct=1.5, max_per_position_pct=5.0)
+    svc = _make_service_with_profile(
+        env=_env(is_paper_trading=False), cfg=cfg, operating_profile="real_full"
+    )
+    assert svc._effective_per_trade_risk_pct() == 1.5
+    assert svc._effective_max_per_position_pct() == 5.0
+
+
+def test_position_sizing_paper_mode_ignores_profile():
+    """paper 모드: profile 무시, base 사용."""
+    cfg = _make_config(per_trade_risk_pct=1.5, max_per_position_pct=5.0)
+    svc = _make_service_with_profile(
+        env=_env(is_paper_trading=True), cfg=cfg, operating_profile="canary"
+    )
+    assert svc._effective_per_trade_risk_pct() == 1.5
+    assert svc._effective_max_per_position_pct() == 5.0
+
+
+def test_position_sizing_default_profile_is_canary():
+    """operating_profile 미지정 시 canary 기본값."""
+    cfg = _make_config(per_trade_risk_pct=1.5, max_per_position_pct=5.0)
+    svc = _make_service_with_profile(env=_env(is_paper_trading=False), cfg=cfg)
+    assert svc._effective_per_trade_risk_pct() == 0.25
+    assert svc._effective_max_per_position_pct() == 1.5
+
+
+def test_position_sizing_canary_overrides_user_yaml():
+    """yaml 에서 canary_overrides 명시 시 default 보다 우선."""
+    cfg = PositionSizingConfig(
+        per_trade_risk_pct=1.5,
+        max_per_position_pct=5.0,
+        canary_overrides={"per_trade_risk_pct": 0.1, "max_per_position_pct": 0.5},
+    )
+    svc = _make_service_with_profile(
+        env=_env(is_paper_trading=False), cfg=cfg, operating_profile="canary"
+    )
+    assert svc._effective_per_trade_risk_pct() == 0.1
+    assert svc._effective_max_per_position_pct() == 0.5

@@ -19,6 +19,14 @@ paper_websocket_url: "ws://ops.koreainvestment.com:31000"
 # 실전/모의 선택 (true: 모의, false: 실전)
 is_paper_trading: true
 
+# 운영 profile (P0 0-7): 실전 모드에서 어떤 overlay 를 적용할지 결정.
+#   canary       : 총 노출 5%, 동시 보유 2종, 1주문 1M — 실계좌 소액 검증 단계 (docs/canary_procedure.md 기준)
+#   real_limited : 총 노출 30%, 동시 보유 5종 — canary 통과 후 별도 ack 거쳐 진입하는 중간 단계
+#   real_full    : overlay 미적용, base 값 사용 — formal 검증 + 자금 확대 승인 후에만 사용
+# paper 모드에서는 profile 무시. predeploy/pre-market health check 에 현재 profile 이 표시되며,
+# canary 외 profile 은 WARN 으로 보고된다.
+operating_profile: "canary"
+
 # 선택
 htsid: ""
 custtype: "P"
@@ -44,9 +52,14 @@ risk_gate:
   max_daily_order_amount_won: 50000000
   max_pending_orders: 10
   max_total_exposure_pct: 95.0
-  # is_paper_trading=false (실전) 일 때 자동 적용되는 canary overlay.
-  # 검증 전 운영을 보호하기 위해 더 보수적인 한도를 강제한다. paper 동작은 영향 없음.
-  # production 등급으로 풀고 싶을 때만 명시값을 주면 yaml 값이 우선한다.
+  # operating_profile=canary 시 적용되는 overlay (실계좌 소액 검증).
+  # docs/canary_procedure.md 표 기준 — 총 노출 5%, 동시 보유 2종, 1주문 1M.
+  canary_overrides:
+    max_total_exposure_pct: 5.0
+    max_pending_orders: 2
+    max_order_amount_won: 1000000
+  # operating_profile=real_limited 시 적용되는 overlay (canary 통과 후 중간 단계).
+  # canary 보다 느슨, real_full 보다는 보수. 별도 ack 후에만 진입.
   real_mode_overrides:
     max_total_exposure_pct: 30.0
     max_pending_orders: 5
@@ -190,7 +203,12 @@ position_sizing:
   atr_multiplier: 2.0
   min_stop_distance_pct: 1.0       # 산식 보호용 최소 손절 거리 (%)
   snapshot_ttl_sec: 60             # 잔고 스냅샷 안전망 TTL (초)
-  # 실전 모드에서 자동 적용되는 canary overlay.
+  # operating_profile=canary 시 적용되는 overlay (실계좌 소액 검증).
+  # docs/canary_procedure.md 표 기준 — 1주당 리스크 0.25%, 단일 포지션 1.5%.
+  canary_overrides:
+    per_trade_risk_pct: 0.25
+    max_per_position_pct: 1.5
+  # operating_profile=real_limited 시 적용되는 overlay (canary 통과 후 중간 단계).
   real_mode_overrides:
     per_trade_risk_pct: 0.5
     max_per_position_pct: 3.0
