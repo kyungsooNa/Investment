@@ -18,7 +18,11 @@ def _service(
     logger=None,
     env=None,
     market_buy_reference_price_provider=None,
+    operating_profile: str = "real_limited",
 ):
+    # NOTE: P0 0-7 — 기존 테스트 대다수가 real_mode_overrides (real_limited overlay)
+    # 동작을 검증하므로 helper default 를 "real_limited" 로 둔다. canary 분기 테스트는
+    # 별도 헬퍼 `_profile_service` 또는 명시적 operating_profile 인자를 사용한다.
     if kill_switch is None:
         kill_switch = AsyncMock()
         kill_switch.check_orders_allowed = AsyncMock(return_value=(True, None))
@@ -37,6 +41,7 @@ def _service(
         logger=logger or MagicMock(),
         env=env,
         market_buy_reference_price_provider=market_buy_reference_price_provider,
+        operating_profile=operating_profile,
     ), kill_switch, cache
 
 
@@ -1100,3 +1105,109 @@ async def test_risk_gate_real_mode_blocks_pending_orders_under_canary_threshold(
     assert real_result is not None
     assert real_result.data["rule"] == "max_pending_orders"
     assert real_result.data["max_pending_orders"] == 5
+
+
+# ── P0 0-7: operating_profile 분기 ────────────────────────────────────
+
+
+def _profile_service(*, config=None, env=None, operating_profile="canary"):
+    """operating_profile 키워드를 받는 RiskGateService 헬퍼."""
+    kill_switch = AsyncMock()
+    kill_switch.check_orders_allowed = AsyncMock(return_value=(True, None))
+    kill_switch.is_strategy_tripped = MagicMock(return_value=None)
+    cache = MagicMock()
+    cache.get = AsyncMock(return_value=AccountSnapshot(
+        total_equity=100_000_000,
+        available_cash=50_000_000,
+        positions={"000660": 10_000_000},
+    ))
+    return RiskGateService(
+        config=config or RiskGateConfig(),
+        kill_switch_service=kill_switch,
+        account_snapshot_cache=cache,
+        strategy_risk_provider=None,
+        logger=MagicMock(),
+        env=env,
+        operating_profile=operating_profile,
+    )
+
+
+def test_risk_gate_canary_profile_uses_canary_overrides():
+    """real + profile=canary → canary_overrides 적용 (5%, 2 pending)."""
+    cfg = RiskGateConfig(max_total_exposure_pct=95.0, max_pending_orders=10)
+    svc = _profile_service(config=cfg, env=_RealEnv(), operating_profile="canary")
+    assert svc._effective_max_total_exposure_pct() == 5.0
+    assert svc._effective_max_pending_orders() == 2
+
+
+def test_risk_gate_real_limited_profile_uses_real_mode_overrides():
+    """real + profile=real_limited → real_mode_overrides 적용 (30%, 5 pending)."""
+    cfg = RiskGateConfig(max_total_exposure_pct=95.0, max_pending_orders=10)
+    svc = _profile_service(config=cfg, env=_RealEnv(), operating_profile="real_limited")
+    assert svc._effective_max_total_exposure_pct() == 30.0
+    assert svc._effective_max_pending_orders() == 5
+
+
+def test_risk_gate_real_full_profile_uses_base_values():
+    """real + profile=real_full → overlay 미적용, base 사용."""
+    cfg = RiskGateConfig(max_total_exposure_pct=95.0, max_pending_orders=10)
+    svc = _profile_service(config=cfg, env=_RealEnv(), operating_profile="real_full")
+    assert svc._effective_max_total_exposure_pct() == 95.0
+    assert svc._effective_max_pending_orders() == 10
+
+
+def test_risk_gate_paper_mode_ignores_profile():
+    """paper 모드: profile 무시, base 사용."""
+    cfg = RiskGateConfig(max_total_exposure_pct=95.0, max_pending_orders=10)
+    svc = _profile_service(config=cfg, env=_PaperEnv(), operating_profile="canary")
+    assert svc._effective_max_total_exposure_pct() == 95.0
+    assert svc._effective_max_pending_orders() == 10
+
+
+def test_risk_gate_default_profile_is_canary():
+    """operating_profile 미지정 시 canary 기본값."""
+    cfg = RiskGateConfig(max_total_exposure_pct=95.0, max_pending_orders=10)
+    svc = _profile_service(config=cfg, env=_RealEnv())
+    assert svc._effective_max_total_exposure_pct() == 5.0
+    assert svc._effective_max_pending_orders() == 2
+
+
+def test_risk_gate_canary_overrides_user_yaml():
+    """yaml 에서 canary_overrides 명시 시 default 보다 우선."""
+    cfg = RiskGateConfig(
+        max_total_exposure_pct=95.0,
+        max_pending_orders=10,
+        canary_overrides={"max_total_exposure_pct": 3.0, "max_pending_orders": 1},
+    )
+    svc = _profile_service(config=cfg, env=_RealEnv(), operating_profile="canary")
+    assert svc._effective_max_total_exposure_pct() == 3.0
+    assert svc._effective_max_pending_orders() == 1
+
+
+@pytest.mark.asyncio
+async def test_risk_gate_canary_profile_blocks_exposure_above_5pct():
+    """canary profile: 10% 노출 시도 → 5% 한도로 차단."""
+    cfg = RiskGateConfig(max_total_exposure_pct=95.0)
+    # 10M positions on 100M equity → 10% exposure
+    snapshot = AccountSnapshot(
+        total_equity=100_000_000,
+        available_cash=80_000_000,
+        positions={"000660": 10_000_000},
+    )
+    kill_switch = AsyncMock()
+    kill_switch.check_orders_allowed = AsyncMock(return_value=(True, None))
+    kill_switch.is_strategy_tripped = MagicMock(return_value=None)
+    cache = MagicMock()
+    cache.get = AsyncMock(return_value=snapshot)
+    svc = RiskGateService(
+        config=cfg, kill_switch_service=kill_switch,
+        account_snapshot_cache=cache, strategy_risk_provider=None,
+        logger=MagicMock(), env=_RealEnv(),
+        operating_profile="canary",
+    )
+    result = await svc.validate_order(
+        "005930", 70_000, 1, OrderSide.BUY, Exchange.KRX, active_order_count=0
+    )
+    assert result is not None
+    assert result.data["rule"] == "max_total_exposure"
+    assert result.data["max_total_exposure_pct"] == 5.0

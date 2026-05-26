@@ -361,11 +361,39 @@ class PreDeployCheckService:
 
         return await self._measured("api_budget_limiter", run)
 
+    async def check_operating_profile(self) -> CheckResult:
+        """현재 operating_profile 을 표시하고 canary 외 profile 에는 경고를 낸다.
+
+        - paper + canary: PASS (안전한 기본값)
+        - paper + non-canary: WARN (운영자 의도 불명확)
+        - real + canary: PASS (P0 0-7 정책 기본)
+        - real + real_limited/real_full: WARN (canary 성과 검증 후 별도 ack 필요)
+        """
+        async def run() -> CheckResult:
+            cfg = self._cached_config or self._config_loader()
+            self._cached_config = cfg
+            is_paper = bool(getattr(cfg, "is_paper_trading", True))
+            profile = str(getattr(cfg, "operating_profile", "canary"))
+            mode = "paper" if is_paper else "real"
+            detail = f"operating_profile={profile}, mode={mode}"
+            if profile == "canary":
+                return CheckResult(name="", status=CheckStatus.PASS, detail=detail)
+            return CheckResult(
+                name="",
+                status=CheckStatus.WARN,
+                detail=detail + " — canary 외 profile 은 별도 ack/검증 후에만 사용 (docs/canary_procedure.md)",
+            )
+
+        return await self._measured("operating_profile", run)
+
     async def check_real_mode_policy_strictness(self) -> CheckResult:
         """real 모드일 때 effective PositionSizing / RiskGate / OrderPolicy 값이
-        canary 임계보다 느슨하면 WARN 또는 FAIL 을 낸다.
+        profile 임계보다 느슨하면 WARN 또는 FAIL 을 낸다.
 
-        canary 임계는 각 RealOverrides 클래스의 default 값 (P0 0-2 정책 합의값).
+        profile 임계는 operating_profile 에 따라 결정:
+          - canary: canary_overrides default (5%/2/0.25%/1.5% 등 가장 보수)
+          - real_limited: real_mode_overrides default (30%/5/0.5%/3.0% 등 중간)
+          - real_full: strictness check 자체를 SKIP (운영자 ack 전제)
         loose factor 1.5× 까지는 WARN, 그 이상은 FAIL.
         OrderPolicy.allow_market_buy=True 는 real 모드에서 즉시 FAIL.
         paper 모드면 SKIPPED.
@@ -377,6 +405,14 @@ class PreDeployCheckService:
             if is_paper:
                 return CheckResult(name="", status=CheckStatus.SKIPPED, detail="paper 모드 — strictness check skip")
 
+            profile = str(getattr(cfg, "operating_profile", "canary"))
+            if profile == "real_full":
+                return CheckResult(
+                    name="",
+                    status=CheckStatus.SKIPPED,
+                    detail="real_full profile — strictness 기대값 미정 (operating_profile 별도 ack)",
+                )
+
             warns: List[str] = []
             fails: List[str] = []
 
@@ -384,28 +420,38 @@ class PreDeployCheckService:
             rg_cfg = getattr(cfg, "risk_gate", None)
             op_cfg = getattr(cfg, "order_policy", None)
 
-            def _grade(name: str, effective: float, canary: float, *, lower_is_safer: bool = True) -> None:
-                """effective 가 canary 임계보다 얼마나 느슨한지 평가."""
+            def _grade(name: str, effective: float, threshold: float, *, lower_is_safer: bool = True) -> None:
+                """effective 가 profile 임계보다 얼마나 느슨한지 평가."""
                 if lower_is_safer:
-                    if effective > canary * 1.5:
-                        fails.append(f"{name}={effective} (canary={canary}, loose>1.5x)")
-                    elif effective > canary:
-                        warns.append(f"{name}={effective} (canary={canary})")
+                    if effective > threshold * 1.5:
+                        fails.append(f"{name}={effective} ({profile}={threshold}, loose>1.5x)")
+                    elif effective > threshold:
+                        warns.append(f"{name}={effective} ({profile}={threshold})")
                 else:
-                    if effective < canary / 1.5:
-                        fails.append(f"{name}={effective} (canary={canary}, tight<0.67x)")
-                    elif effective < canary:
-                        warns.append(f"{name}={effective} (canary={canary})")
+                    if effective < threshold / 1.5:
+                        fails.append(f"{name}={effective} ({profile}={threshold}, tight<0.67x)")
+                    elif effective < threshold:
+                        warns.append(f"{name}={effective} ({profile}={threshold})")
 
             if ps_cfg is not None:
-                ov = ps_cfg.real_mode_overrides
-                _grade("position_sizing.per_trade_risk_pct", ov.per_trade_risk_pct, 0.5)
-                _grade("position_sizing.max_per_position_pct", ov.max_per_position_pct, 3.0)
+                if profile == "canary":
+                    ov = ps_cfg.canary_overrides
+                    _grade("position_sizing.per_trade_risk_pct", ov.per_trade_risk_pct, 0.25)
+                    _grade("position_sizing.max_per_position_pct", ov.max_per_position_pct, 1.5)
+                else:  # real_limited
+                    ov = ps_cfg.real_mode_overrides
+                    _grade("position_sizing.per_trade_risk_pct", ov.per_trade_risk_pct, 0.5)
+                    _grade("position_sizing.max_per_position_pct", ov.max_per_position_pct, 3.0)
 
             if rg_cfg is not None:
-                ov = rg_cfg.real_mode_overrides
-                _grade("risk_gate.max_total_exposure_pct", ov.max_total_exposure_pct, 30.0)
-                _grade("risk_gate.max_pending_orders", ov.max_pending_orders, 5)
+                if profile == "canary":
+                    ov = rg_cfg.canary_overrides
+                    _grade("risk_gate.max_total_exposure_pct", ov.max_total_exposure_pct, 5.0)
+                    _grade("risk_gate.max_pending_orders", ov.max_pending_orders, 2)
+                else:  # real_limited
+                    ov = rg_cfg.real_mode_overrides
+                    _grade("risk_gate.max_total_exposure_pct", ov.max_total_exposure_pct, 30.0)
+                    _grade("risk_gate.max_pending_orders", ov.max_pending_orders, 5)
 
             if op_cfg is not None:
                 ov = op_cfg.real_mode_overrides
@@ -422,7 +468,7 @@ class PreDeployCheckService:
                 return CheckResult(name="", status=CheckStatus.FAIL, detail=detail)
             if warns:
                 return CheckResult(name="", status=CheckStatus.WARN, detail="WARN: " + "; ".join(warns))
-            return CheckResult(name="", status=CheckStatus.PASS, detail="real 모드 정책이 canary 임계 안에 있음")
+            return CheckResult(name="", status=CheckStatus.PASS, detail=f"real 모드 정책이 {profile} 임계 안에 있음")
 
         return await self._measured("real_mode_policy_strictness", run)
 
@@ -432,6 +478,7 @@ class PreDeployCheckService:
         results: List[CheckResult] = []
         results.append(await self.check_config())
         results.append(await self.check_token_env_consistency())
+        results.append(await self.check_operating_profile())
         results.append(await self.check_latest_trading_date())
         results.append(await self.check_event_shadow())
         results.append(await self.check_websocket_subscription(offline=offline))

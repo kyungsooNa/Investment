@@ -67,6 +67,7 @@ class RiskGateService:
         market_buy_reference_price_provider: Optional[
             Callable[[str, Exchange], Union[Optional[int], Awaitable[Optional[int]]]]
         ] = None,
+        operating_profile: str = "canary",
     ):
         self._cfg = config
         self._kill_switch = kill_switch_service
@@ -78,6 +79,7 @@ class RiskGateService:
         self._market_buy_reference_price_provider = market_buy_reference_price_provider
         self._daily_total: dict[date, int] = defaultdict(int)
         self._strategy_resolver = STRATEGY_IDENTITY_RESOLVER
+        self._operating_profile = operating_profile
 
     async def validate_order(
         self,
@@ -172,7 +174,8 @@ class RiskGateService:
             if not is_force_exit_sell:
                 # 1회 주문 금액 한도는 신규 노출을 늘리는 BUY에만 적용한다.
                 # SELL은 손절/익절 청산 경로라 금액 한도로 막으면 리스크가 더 커질 수 있다.
-                if side == OrderSide.BUY and order_amount > self._cfg.max_order_amount_won:
+                effective_max_order_amount = self._effective_max_order_amount_won()
+                if side == OrderSide.BUY and order_amount > effective_max_order_amount:
                     return self._blocked(
                         "max_order_amount",
                         "주문 금액 초과",
@@ -181,7 +184,7 @@ class RiskGateService:
                         source=source,
                         strategy_name=strategy_name,
                         order_amount=order_amount,
-                        max_order_amount_won=self._cfg.max_order_amount_won,
+                        max_order_amount_won=effective_max_order_amount,
                     )
 
                 daily_blocked = self._check_daily_cap(stock_code=stock_code, order_amount=order_amount, side=side)
@@ -370,14 +373,32 @@ class RiskGateService:
         return not bool(getattr(fail_open_cfg, "paper", True))
 
     def _effective_max_total_exposure_pct(self) -> float:
-        if self._is_real_mode():
-            return self._cfg.real_mode_overrides.max_total_exposure_pct
-        return self._cfg.max_total_exposure_pct
+        if not self._is_real_mode():
+            return self._cfg.max_total_exposure_pct
+        if self._operating_profile == "canary":
+            return self._cfg.canary_overrides.max_total_exposure_pct
+        if self._operating_profile == "real_full":
+            return self._cfg.max_total_exposure_pct
+        # real_limited (default fallback)
+        return self._cfg.real_mode_overrides.max_total_exposure_pct
 
     def _effective_max_pending_orders(self) -> int:
-        if self._is_real_mode():
-            return self._cfg.real_mode_overrides.max_pending_orders
-        return self._cfg.max_pending_orders
+        if not self._is_real_mode():
+            return self._cfg.max_pending_orders
+        if self._operating_profile == "canary":
+            return self._cfg.canary_overrides.max_pending_orders
+        if self._operating_profile == "real_full":
+            return self._cfg.max_pending_orders
+        return self._cfg.real_mode_overrides.max_pending_orders
+
+    def _effective_max_order_amount_won(self) -> int:
+        """canary profile 시 1회 주문 금액 한도를 더 보수적으로 적용.
+
+        real_limited/real_full 은 base 사용 (real_mode_overrides 에는 이 필드 없음).
+        """
+        if self._is_real_mode() and self._operating_profile == "canary":
+            return self._cfg.canary_overrides.max_order_amount_won
+        return self._cfg.max_order_amount_won
 
     async def _resolve_market_buy_reference_price(
         self,

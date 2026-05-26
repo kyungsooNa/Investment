@@ -15,7 +15,7 @@
 남은 실행 영역 요약:
 
 - P0 0-1: 실전 체결 이력 확보 후 broker order mapper 분리 + fixture 회귀 잠금.
-- P0 0-7: canary 5% 노출 제한을 코드/config profile로 분리하고 real 기본 30%와 운영 혼동을 제거.
+- P0 0-7: ~~canary 5% 노출 제한을 코드/config profile로 분리하고 real 기본 30%와 운영 혼동을 제거.~~ ✅ 완료 (2026-05-27).
 - P1 1-5: 한국장 microstructure fixture 로 체결 모델 보수성 검증.
 - P1 1-6: 실전 journal/shadow/paper/live 성과 데이터로 profitability gate의 실제 통과 근거 확보.
 - P1 1-7: multiple testing proxy를 formal walk-forward / purged validation / PBO·Deflated Sharpe급 검증으로 확장할지 결정.
@@ -53,12 +53,13 @@
 
 ### 0-7. Canary profile과 real exposure 한도 분리
 
-- [ ] canary 운영용 profile을 코드/config에 명시적으로 추가한다.
-  - 배경: `docs/canary_procedure.md`는 canary 총 노출 5%를 전제로 하지만, 실전 override config는 총 노출 30%를 허용한다. 운영자가 30% 노출 상태를 canary로 오해하지 않도록 profile을 분리한다.
-  - canary 기본값 후보: `max_total_exposure_pct=5`, `max_positions=2`, `max_pending_orders=2`, `max_order_amount=1_000_000`, active strategy 1~2개.
-  - position sizing 후보: `max_per_position_pct=1~2`, `per_trade_risk_pct=0.25~0.5`.
-- [ ] predeploy / pre-market health check / runbook에서 현재 profile이 `canary`인지 표시하고, canary 단계에서 `real_limited` 또는 `real_full` 설정이면 경고 또는 차단한다.
-- [ ] `real_limited`(예: 총 노출 30%)와 `real_full`은 canary 성과 데이터와 별도 승인 후에만 사용할 수 있도록 운영 문서에 명시한다.
+- [x] canary 운영용 profile을 코드/config에 명시적으로 추가한다.
+  - 적용 완료: `AppConfig.operating_profile` (`canary` | `real_limited` | `real_full`, default `canary`). `RiskGateCanaryOverrides`(5% / 2 pending / 1M order), `PositionSizingCanaryOverrides`(0.25% / 1.5%) 신규 dataclass. 기존 `real_mode_overrides`는 의미상 `real_limited` overlay로 재정의 (값/동작 변경 없음).
+- [x] predeploy / pre-market health check / runbook에서 현재 profile이 `canary`인지 표시하고, canary 단계에서 `real_limited` 또는 `real_full` 설정이면 경고 또는 차단한다.
+  - 적용 완료: `PreDeployCheckService.check_operating_profile` 신규 (canary=PASS, 그 외=WARN). `check_real_mode_policy_strictness`는 profile 별 임계 분기 (canary=5%/2/0.25%/1.5%, real_limited=30%/5/0.5%/3.0%, real_full=SKIPPED).
+  - 후속 (선택): `pre_market_health_check_task` 별도 surfacing은 미반영. 현재 PredeployCheckService 경로로만 표시.
+- [x] `real_limited`(예: 총 노출 30%)와 `real_full`은 canary 성과 데이터와 별도 승인 후에만 사용할 수 있도록 운영 문서에 명시한다.
+  - 적용 완료: `docs/canary_procedure.md` 운영 한도 표를 3-tier (canary/real_limited/real_full) 로 확장. `config/config.yaml.example` 에 `operating_profile`, `risk_gate.canary_overrides`, `position_sizing.canary_overrides` 명시.
 
 주요 파일:
 
