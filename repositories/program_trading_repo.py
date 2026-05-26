@@ -406,6 +406,41 @@ class ProgramTradingRepo:
             self._logger.error(f"히스토리 timestamp 조회 중 오류: {e}")
         return result
 
+    def get_history_records_for_persistence_by_code(
+        self,
+        codes: list[str],
+        start_ts: float,
+        end_ts: float,
+    ) -> dict[str, list[dict]]:
+        """지정 종목들의 저장 점검용 체결시간/저장시간을 조회한다."""
+        result = {code: [] for code in codes}
+        if not codes:
+            return result
+
+        placeholders = ",".join("?" for _ in codes)
+        params = [*codes, start_ts, end_ts]
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute(
+                    f"""
+                    SELECT code, trade_time, created_at
+                    FROM pt_history
+                    WHERE code IN ({placeholders})
+                      AND created_at >= ?
+                      AND created_at <= ?
+                    ORDER BY code, created_at
+                    """,
+                    params,
+                )
+                for code, trade_time, created_at in cursor.fetchall():
+                    result.setdefault(code, []).append({
+                        "trade_time": trade_time,
+                        "created_at": created_at,
+                    })
+        except Exception as e:
+            self._logger.error(f"히스토리 저장 점검 레코드 조회 중 오류: {e}")
+        return result
+
     # ── 생명주기 ─────────────────────────────────────────────────────
 
     def start_flush_loop(self):

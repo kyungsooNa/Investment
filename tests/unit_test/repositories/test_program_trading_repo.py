@@ -294,6 +294,32 @@ def test_inspect_db_status_sets_error_on_failure(repo):
     repo._logger.error.assert_called_once()
 
 
+def test_get_history_records_for_persistence_by_code_returns_trade_time_and_created_at(repo):
+    now = time.time()
+    with repo._get_connection() as conn:
+        conn.executemany(
+            """
+            INSERT INTO pt_history (code, trade_time, created_at)
+            VALUES (?, ?, ?)
+            """,
+            [
+                ("005930", "090000", now),
+                ("000660", "090100", now + 60),
+                ("035720", "090200", now + 120),
+            ],
+        )
+
+    records = repo.get_history_records_for_persistence_by_code(
+        ["005930", "000660"],
+        now - 1,
+        now + 61,
+    )
+
+    assert records["005930"] == [{"trade_time": "090000", "created_at": now}]
+    assert records["000660"] == [{"trade_time": "090100", "created_at": now + 60}]
+    assert "035720" not in records
+
+
 @pytest.mark.asyncio
 async def test_start_flush_loop_runs_cleanup_and_creates_task(repo):
     fake_task = MagicMock()

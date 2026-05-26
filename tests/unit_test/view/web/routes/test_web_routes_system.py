@@ -9,6 +9,7 @@ from datetime import datetime
 from unittest.mock import MagicMock, AsyncMock
 from core.account_snapshot import AccountSnapshot
 from repositories.streaming_stock_repo import StreamingType
+from services.program_trading_stream_service import ProgramTradingStreamService
 from view.web import api_common
 
 
@@ -322,6 +323,37 @@ def test_get_background_status_empty_scheduler(web_client, mock_web_ctx):
 
     assert response.status_code == 200
     assert response.json()["data"] == []
+
+
+def test_get_background_status_includes_program_trading_monitor(web_client, mock_web_ctx, tmp_path):
+    """ProgramTradingStreamService 내부 루프도 운영 task 목록에 노출한다."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            ProgramTradingStreamService,
+            "_get_base_dir",
+            lambda self: str(tmp_path / "program_subscribe"),
+        )
+        svc = ProgramTradingStreamService(logger=MagicMock())
+
+    try:
+        svc._flush_task = MagicMock()
+        svc._flush_task.done.return_value = False
+        mock_web_ctx.program_trading_stream_service = svc
+        mock_web_ctx.background_scheduler = MagicMock()
+        mock_web_ctx.background_scheduler.get_all_status.return_value = []
+
+        response = web_client.get("/api/background/status")
+    finally:
+        if svc._conn:
+            svc._conn.close()
+        svc._executor.shutdown(wait=False)
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data[0]["name"] == "program_trading_monitor"
+    assert data[0]["schedule_type"] == "always_on"
+    assert data[0]["state"] == "running"
+    assert data[0]["progress"]["flush_loop_alive"] is True
 
 
 def test_get_background_status_returns_task_info(web_client, mock_web_ctx):

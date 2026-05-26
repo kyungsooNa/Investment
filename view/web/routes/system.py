@@ -28,6 +28,7 @@ _SCHEDULE_TYPES = {
     "전일기준주도주_생성":  "after_market",
     "newhigh":             "after_market",
     "notification_queue_task":  "always_on",
+    "program_trading_monitor":  "always_on",
 }
 
 _SCHEDULE_ORDER = {
@@ -383,7 +384,9 @@ async def get_background_status():
             pass
 
     if not ctx.background_scheduler:
-        return {"success": True, "foreground": foreground_info, "time_dispatcher": time_dispatcher_info, "data": []}
+        result = []
+        _append_program_trading_monitor_status(ctx, result)
+        return {"success": True, "foreground": foreground_info, "time_dispatcher": time_dispatcher_info, "data": result}
 
     delays = load_after_market_delays()  # {task_name: delay_sec}
 
@@ -447,9 +450,40 @@ async def get_background_status():
             "progress": progress,
         })
 
+    _append_program_trading_monitor_status(ctx, result)
+
     # 스케줄 유형(실시간 -> 장중 -> 장마감) 순서로 정렬, 같은 유형 내에서는 실행 순서(delay_sec) 기준
     result.sort(key=lambda x: (x["schedule_order"], x["delay_sec"]))
     return {"success": True, "foreground": foreground_info, "time_dispatcher": time_dispatcher_info, "data": result}
+
+
+def _append_program_trading_monitor_status(ctx, result: list) -> None:
+    """ProgramTradingStreamService 내부 루프를 background/status에 노출한다.
+
+    이 루프는 SchedulableTask가 아니라 WebSocketWatchdogTask.start()에서 시작되므로
+    BackgroundScheduler.get_all_status()에는 나타나지 않는다.
+    """
+    if any(item.get("name") == "program_trading_monitor" for item in result):
+        return
+    svc = getattr(ctx, "program_trading_stream_service", None)
+    status_getter = getattr(type(svc), "get_background_task_status", None)
+    if svc is None or not callable(status_getter):
+        return
+    try:
+        progress = svc.get_background_task_status()
+    except Exception as e:
+        progress = {"running": False, "error": str(e)}
+    running = bool(isinstance(progress, dict) and progress.get("running"))
+    schedule_type = _SCHEDULE_TYPES["program_trading_monitor"]
+    result.append({
+        "name": "program_trading_monitor",
+        "state": "running" if running else "idle",
+        "priority": 50,
+        "schedule_type": schedule_type,
+        "schedule_order": _SCHEDULE_ORDER.get(schedule_type, 99),
+        "delay_sec": 0,
+        "progress": progress,
+    })
 
 
 # ── 장 마감 후 태스크 강제 수집 엔드포인트 ─────────────────────────────
