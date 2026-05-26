@@ -490,13 +490,19 @@ def test_get_background_status_module_names(web_client, mock_web_ctx):
 
 
 def test_get_background_status_pre_market_health_check_schedule_type(web_client, mock_web_ctx):
-    """pre_market_health_check는 일반 장중 태스크가 아니라 장전 점검으로 분류한다."""
+    """pre_market_health_check는 IDLE이어도 실제 점검 progress를 반환한다."""
     class PreMarketTask:
         pass
 
     PreMarketTask.__module__ = "task.background.intraday.pre_market_health_check_task"
     mock_task = PreMarketTask()
-    mock_task.get_progress = MagicMock(return_value={"running": False, "last_checked_date": None})
+    mock_task.get_progress = MagicMock(
+        return_value={
+            "running": False,
+            "last_checked_date": "20260526",
+            "last_result": {"ok": True, "issues": []},
+        }
+    )
 
     mock_web_ctx.background_scheduler = MagicMock()
     mock_web_ctx.background_scheduler.get_all_status.return_value = [
@@ -510,7 +516,12 @@ def test_get_background_status_pre_market_health_check_schedule_type(web_client,
     data = response.json()["data"]
     assert data[0]["name"] == "pre_market_health_check"
     assert data[0]["schedule_type"] == "pre_market"
-    assert data[0]["progress"] == {"running": False, "status": "Waiting to start"}
+    assert data[0]["progress"] == {
+        "running": False,
+        "last_checked_date": "20260526",
+        "last_result": {"ok": True, "issues": []},
+    }
+    mock_task.get_progress.assert_called_once()
 
 
 def test_get_background_status_cache_warmup_schedule_type(web_client, mock_web_ctx):
