@@ -329,6 +329,7 @@ class PreDeployCheckService:
                 return CheckResult(name="", status=CheckStatus.FAIL, detail="snapshot() 결과가 dict 아님")
 
             required = {
+                "_global",
                 "quotation_price",
                 "quotation_ohlcv",
                 "account_balance",
@@ -344,6 +345,13 @@ class PreDeployCheckService:
                     name="",
                     status=CheckStatus.WARN,
                     detail=f"missing categories: {', '.join(missing)}",
+                )
+            global_budget = snapshot.get("_global") or {}
+            if not isinstance(global_budget.get("emergency"), dict):
+                return CheckResult(
+                    name="",
+                    status=CheckStatus.WARN,
+                    detail="missing categories: _global.emergency",
                 )
 
             summary = []

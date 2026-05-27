@@ -51,6 +51,11 @@ DEFAULT_API_EMERGENCY_RATE_LIMITS_PER_SEC = {
     "order_cancel": 2.0,
 }
 
+# KIS 공개/운영 문서의 호출 한도는 계정/환경별로 차이가 있어 운영 전 재확인이 필요하다.
+# 기본값은 개인 실전 10/s 가능성을 기준으로 normal 8/s + emergency 2/s 를 분리한 보수값.
+DEFAULT_API_GLOBAL_RATE_LIMIT_PER_SEC = 8.0
+DEFAULT_API_EMERGENCY_GLOBAL_RATE_LIMIT_PER_SEC = 2.0
+
 
 @dataclass
 class _LaneState:
@@ -87,6 +92,8 @@ class ApiBudgetLimiter:
         rate_limits_per_sec: Mapping[str, float] | None = None,
         emergency_limits: Mapping[str, int] | None = None,
         emergency_rate_limits_per_sec: Mapping[str, float] | None = None,
+        global_rate_limit_per_sec: float = DEFAULT_API_GLOBAL_RATE_LIMIT_PER_SEC,
+        emergency_global_rate_limit_per_sec: float = DEFAULT_API_EMERGENCY_GLOBAL_RATE_LIMIT_PER_SEC,
         default_limit: int = 4,
         default_rate_limit_per_sec: float = 8.0,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -96,6 +103,8 @@ class ApiBudgetLimiter:
         self._default_rate_limit_per_sec = self._validate_rate_limit(default_rate_limit_per_sec)
         self._sleep = sleep
         self._monotonic = monotonic
+        self._global_lane = self._new_lane(1, global_rate_limit_per_sec)
+        self._emergency_global_lane = self._new_lane(1, emergency_global_rate_limit_per_sec)
         configured = dict(DEFAULT_API_BUDGET_LIMITS if limits is None else limits)
         configured_rates = dict(
             DEFAULT_API_RATE_LIMITS_PER_SEC
@@ -129,6 +138,7 @@ class ApiBudgetLimiter:
         actual_category = category if category is not None else "default"
         budget = self._budget_for(actual_category)
         lane = self._lane_for(budget, priority)
+        await self._wait_for_rate_slot(self._global_lane_for(priority))
         await self._wait_for_rate_slot(lane)
         await lane.semaphore.acquire()
         lane.active += 1
@@ -141,29 +151,27 @@ class ApiBudgetLimiter:
             lane.semaphore.release()
 
     def snapshot(self) -> dict[str, dict]:
-        result: dict[str, dict] = {}
+        result: dict[str, dict] = {
+            "_global": self._lane_snapshot(self._global_lane),
+        }
+        result["_global"]["emergency"] = self._lane_snapshot(self._emergency_global_lane)
         for category, budget in self._budgets.items():
-            entry: dict = {
-                "limit": budget.normal.limit,
-                "rate_limit_per_sec": budget.normal.rate_limit_per_sec,
-                "active": budget.normal.active,
-                "acquired_total": budget.normal.acquired_total,
-                "max_observed_active": budget.normal.max_observed_active,
-                "rate_wait_total": budget.normal.rate_wait_total,
-                "rate_wait_seconds_total": budget.normal.rate_wait_seconds_total,
-            }
+            entry: dict = self._lane_snapshot(budget.normal)
             if budget.emergency is not None:
-                entry["emergency"] = {
-                    "limit": budget.emergency.limit,
-                    "rate_limit_per_sec": budget.emergency.rate_limit_per_sec,
-                    "active": budget.emergency.active,
-                    "acquired_total": budget.emergency.acquired_total,
-                    "max_observed_active": budget.emergency.max_observed_active,
-                    "rate_wait_total": budget.emergency.rate_wait_total,
-                    "rate_wait_seconds_total": budget.emergency.rate_wait_seconds_total,
-                }
+                entry["emergency"] = self._lane_snapshot(budget.emergency)
             result[category] = entry
         return result
+
+    def _lane_snapshot(self, lane: _LaneState) -> dict:
+        return {
+            "limit": lane.limit,
+            "rate_limit_per_sec": lane.rate_limit_per_sec,
+            "active": lane.active,
+            "acquired_total": lane.acquired_total,
+            "max_observed_active": lane.max_observed_active,
+            "rate_wait_total": lane.rate_wait_total,
+            "rate_wait_seconds_total": lane.rate_wait_seconds_total,
+        }
 
     def _budget_for(self, category: str) -> _CategoryBudget:
         budget = self._budgets.get(category)
@@ -180,6 +188,11 @@ class ApiBudgetLimiter:
         if priority == PRIORITY_EMERGENCY and budget.emergency is not None:
             return budget.emergency
         return budget.normal
+
+    def _global_lane_for(self, priority: str) -> _LaneState:
+        if priority == PRIORITY_EMERGENCY:
+            return self._emergency_global_lane
+        return self._global_lane
 
     def _new_budget(
         self,
