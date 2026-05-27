@@ -53,19 +53,20 @@ class IndicatorService:
         return resp.data, None
 
     async def _get_with_incremental_cache(
-        self, 
-        stock_code: str, 
-        candle_type: str, 
-        indicator_name: str, 
-        data: List[Dict], 
-        lookback_period: int, 
-        calc_func: callable, 
-        *calc_args
+        self,
+        stock_code: str,
+        candle_type: str,
+        indicator_name: str,
+        data: List[Dict],
+        lookback_period: int,
+        calc_func: callable,
+        *calc_args,
+        exclude_today: bool = False,
     ) -> ResCommonResponse:
         """
         [공통 지표 캐싱 & 병합 파이프라인]
         과거 확정 데이터는 캐싱하고, 당일(미확정) 데이터만 증분 계산하여 O(1)로 병합합니다.
-        
+
         :param stock_code: 종목코드
         :param candle_type: 캔들 타입 ("D", "W", "M" 등)
         :param indicator_name: 캐시 키 생성을 위한 지표명 (예: "rsi_14", "bb_20_2.0")
@@ -73,17 +74,44 @@ class IndicatorService:
         :param lookback_period: 증분 계산 시 필요한 최소 과거 데이터 개수 (예: RSI 14면 14)
         :param calc_func: 실제 지표 계산을 수행하고 List[Dict]를 반환하는 콜백 함수
         :param calc_args: calc_func에 전달할 추가 인자들
+        :param exclude_today: True 면 마지막 봉(=장중 미확정 봉) 을 결과에서 제외 (P0 0-8).
+                              라이브 신호 계산이 인트라데이 변동에 흔들리지 않게 한다.
         """
+        # P0 0-8: 라이브 호출은 마지막 봉(당일 미확정) 을 제외한다.
+        # MarketDataService.get_ohlcv 가 장중에 today row 를 병합하므로, 이 옵션이
+        # 켜진 호출은 confirmed 영역까지만 본다.
+        if exclude_today and len(data) >= 1:
+            effective_data = data[:-1]
+        else:
+            effective_data = data
+
         # 1. 예외 처리 및 캐시 미적용 조건 (데이터가 너무 적거나, 일봉이 아니거나, 캐시가 꺼진 경우)
-        if not self.cache_store or candle_type != "D" or len(data) <= lookback_period:
-            resp = calc_func(stock_code, data, *calc_args)
+        if not self.cache_store or candle_type != "D" or len(effective_data) <= lookback_period:
+            resp = calc_func(stock_code, effective_data, *calc_args)
             # [수정포인트 1] 이미 ResCommonResponse 객체라면 이중 래핑 방지
             return resp if isinstance(resp, ResCommonResponse) else ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(NoCache)", data=resp)
-        
+
+        # exclude_today=True 면 effective_data 전체가 confirmed → partial merge 없이 캐시 결과만 반환.
+        # cache_key 는 effective_data 마지막 행 날짜 기준 (include 경로와 같은 confirmed 일자) → cache 공유.
+        if exclude_today:
+            confirmed_last_date = str(effective_data[-1]['date'])
+            cache_key = f"{indicator_name}_{stock_code}_{confirmed_last_date}"
+            cached_result = self.cache_store.get(cache_key)
+            if not cached_result:
+                calc_resp = calc_func(stock_code, effective_data, *calc_args)
+                if isinstance(calc_resp, ResCommonResponse):
+                    if calc_resp.rt_cd != ErrorCode.SUCCESS.value:
+                        return calc_resp
+                    cached_result = calc_resp.data
+                else:
+                    cached_result = calc_resp
+                self.cache_store.set(cache_key, cached_result)
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공(ExcludeToday)", data=cached_result)
+
         # 2. 확정 데이터(어제까지)와 당일 데이터 분리
         confirmed_data = data[:-1]
         confirmed_last_date = str(confirmed_data[-1]['date'])
-        
+
         # 캐시 키 생성 (지표명_종목코드_마지막확정일자)
         cache_key = f"{indicator_name}_{stock_code}_{confirmed_last_date}"
 
@@ -100,15 +128,15 @@ class IndicatorService:
                 cached_result = calc_resp.data
             else:
                 cached_result = calc_resp
-                
+
             self.cache_store.set(cache_key, cached_result)
 
         # 5. 당일 증분 계산
         slice_size = lookback_period + 5
         partial_data = data[-slice_size:]
-        
+
         partial_resp = calc_func(stock_code, partial_data, *calc_args)
-        
+
         # [수정포인트 3] 반환값이 ResCommonResponse면 내부 data만 추출해서 병합 준비
         if isinstance(partial_resp, ResCommonResponse):
             if partial_resp.rt_cd != ErrorCode.SUCCESS.value:
@@ -116,14 +144,14 @@ class IndicatorService:
             partial_result = partial_resp.data
         else:
             partial_result = partial_resp
-            
+
         if not partial_result:
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1="부분 지표 계산 실패", data=None)
-            
+
         latest_indicator = partial_result[-1]
         # 6. O(1) 속도로 병합 (리스트 '+' 연산자 제거 최적화)
         final_data = cached_result.copy() # 얕은 복사로 원본 캐시 리스트 보호
-        
+
         if final_data and final_data[-1]['date'] == latest_indicator['date']:
             final_data[-1] = latest_indicator # 덮어쓰기
         else:
@@ -149,8 +177,13 @@ class IndicatorService:
         )
 
     async def get_rsi(self, stock_code: str, period: int = 14, candle_type: str = "D",
-                                 ohlcv_data: Optional[List[Dict]] = None) -> ResCommonResponse:
-        """RSI (상대강도지수) 조회"""
+                                 ohlcv_data: Optional[List[Dict]] = None,
+                                 exclude_today: bool = False) -> ResCommonResponse:
+        """RSI (상대강도지수) 조회.
+
+        exclude_today (P0 0-8): True 면 결과에서 당일(장중 미확정) 봉을 제외한다. 라이브 전략은
+        인트라데이 변동에 트리거가 흔들리지 않도록 True 로 호출한다.
+        """
         # 1. OHLCV 데이터 가져오기
         data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data=ohlcv_data)
         if err_resp: return err_resp
@@ -163,7 +196,8 @@ class IndicatorService:
             data,
             period,
             self._calculate_rsi_series, # DataFrame 변환 및 순수 계산 로직만 있는 내부 함수
-            period  # <-- calc_func에 전달될 *calc_args (정상 작동!)
+            period,  # <-- calc_func에 전달될 *calc_args (정상 작동!)
+            exclude_today=exclude_today,
         )
 
     async def calculate_atr(
@@ -172,9 +206,13 @@ class IndicatorService:
         period: int = 14,
         candle_type: str = "D",
         ohlcv_data: Optional[List[Dict]] = None,
+        exclude_today: bool = False,
     ) -> ResCommonResponse:
         """ATR(Average True Range) 조회 — 포지션 사이징용.
         응답 data: List[{"code", "date", "close", "atr"}] (마지막 항목의 atr 이 현재 ATR)
+
+        exclude_today (P0 0-8): True 면 결과에서 당일(장중 미확정) 봉을 제외한다. 포지션 사이징은
+        인트라데이 high/low 흔들림이 size 에 반영되지 않도록 True 로 호출한다.
         """
         data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data=ohlcv_data)
         if err_resp:
@@ -188,17 +226,23 @@ class IndicatorService:
             period,
             self._calculate_atr_full,
             period,
+            exclude_today=exclude_today,
         )
 
     async def get_moving_average(
-        self, 
-        stock_code: str, 
-        period: int = 20, 
-        method: str = "sma", 
-        candle_type: str = "D", 
-        ohlcv_data: Optional[List[Dict]] = None
+        self,
+        stock_code: str,
+        period: int = 20,
+        method: str = "sma",
+        candle_type: str = "D",
+        ohlcv_data: Optional[List[Dict]] = None,
+        exclude_today: bool = False,
     ) -> ResCommonResponse:
-        """이동평균선 조회"""
+        """이동평균선 조회.
+
+        exclude_today (P0 0-8): True 면 결과에서 당일(장중 미확정) 봉을 제외한다. MA 기반
+        손절/지지선 판정이 인트라데이 변동으로 깜빡이지 않게 한다.
+        """
         # 1. OHLCV 데이터 로드 및 에러 처리
         data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data=ohlcv_data)
 
@@ -214,7 +258,8 @@ class IndicatorService:
             period,
             self._calculate_moving_average_full,  # 기존 이동평균선 전체 계산 함수
             period,                               # *calc_args 첫 번째 인자
-            method                                # [수정됨] *calc_args 두 번째 인자로 method 전달
+            method,                               # [수정됨] *calc_args 두 번째 인자로 method 전달
+            exclude_today=exclude_today,
         )
 
     async def get_relative_strength(

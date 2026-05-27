@@ -1773,3 +1773,117 @@ def test_calc_adx_sync_missing_high_low_returns_empty(indicator_service):
             for i in range(50)]
     result = service.calc_adx_sync(data, period=14)
     assert result == {}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# P0 0-8: exclude_today 옵션 — 라이브 지표가 당일 미완성 봉을 제외
+# ─────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_rsi_exclude_today_drops_last_bar(indicator_service):
+    """exclude_today=True 일 때 마지막 행(=당일 미확정 봉) 이 결과에서 제외된다."""
+    service, mock_sqs = indicator_service
+
+    # 20일치 + 당일 1봉 = 21봉. 당일 close 는 의도적으로 큰 점프 → RSI 변동 유발.
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 100} for i in range(20)]
+    data.append({"date": "20250121", "close": 20000})  # 당일 미확정 (큰 점프)
+
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+
+    incl = await service.get_rsi("005930", period=14, exclude_today=False)
+    excl = await service.get_rsi("005930", period=14, exclude_today=True)
+
+    assert incl.rt_cd == ErrorCode.SUCCESS.value
+    assert excl.rt_cd == ErrorCode.SUCCESS.value
+    # exclude_today=True 면 마지막 행이 빠진 20개여야 한다
+    assert len(excl.data) == len(incl.data) - 1
+    assert excl.data[-1]["date"] == "20250120"
+    assert incl.data[-1]["date"] == "20250121"
+    # 동일 confirmed 구간의 RSI 값은 동일해야 한다 (마지막 confirmed bar 기준)
+    assert excl.data[-1]["rsi"] == pytest.approx(incl.data[-2]["rsi"])
+
+
+@pytest.mark.asyncio
+async def test_get_moving_average_exclude_today_drops_last_bar(indicator_service):
+    """MA: exclude_today=True 면 결과에서 당일 봉 제외, 마지막 MA 는 전일 확정값."""
+    service, mock_sqs = indicator_service
+
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 100} for i in range(25)]
+    data.append({"date": "20250126", "close": 30000})  # 당일 점프
+
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+
+    incl = await service.get_moving_average("005930", period=20, exclude_today=False)
+    excl = await service.get_moving_average("005930", period=20, exclude_today=True)
+
+    assert incl.rt_cd == ErrorCode.SUCCESS.value
+    assert excl.rt_cd == ErrorCode.SUCCESS.value
+    assert len(excl.data) == len(incl.data) - 1
+    assert excl.data[-1]["date"] == "20250125"
+    # 당일 점프된 close 가 빠졌으므로 마지막 MA 값은 include 보다 작아야 한다
+    assert excl.data[-1]["ma"] < incl.data[-1]["ma"]
+
+
+@pytest.mark.asyncio
+async def test_calculate_atr_exclude_today_drops_last_bar(indicator_service):
+    """ATR: exclude_today=True 면 당일 high/low 점프가 ATR 에 반영되지 않는다."""
+    service, mock_sqs = indicator_service
+
+    data = []
+    for i in range(20):
+        c = 10000 + i * 100
+        data.append({"date": f"202501{i+1:02d}", "open": c, "high": c + 50, "low": c - 50, "close": c, "volume": 1000})
+    # 당일 미확정 봉: 큰 high/low 변동 → ATR 인플레이션
+    data.append({"date": "20250121", "open": 12000, "high": 15000, "low": 11000, "close": 14000, "volume": 1000})
+
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+
+    incl = await service.calculate_atr("005930", period=14, exclude_today=False)
+    excl = await service.calculate_atr("005930", period=14, exclude_today=True)
+
+    assert incl.rt_cd == ErrorCode.SUCCESS.value
+    assert excl.rt_cd == ErrorCode.SUCCESS.value
+    assert len(excl.data) == len(incl.data) - 1
+    assert excl.data[-1]["date"] == "20250120"
+    # 당일 큰 변동이 빠졌으므로 ATR 은 include 보다 작아야 한다
+    assert excl.data[-1]["atr"] < incl.data[-1]["atr"]
+
+
+@pytest.mark.asyncio
+async def test_get_rsi_exclude_today_default_is_false(indicator_service):
+    """기본값 (exclude_today 미지정) 은 기존 동작과 동일해야 한다 (회귀 방지)."""
+    service, mock_sqs = indicator_service
+
+    data = [{"date": f"202501{i+1:02d}", "close": 10000 + i * 100} for i in range(20)]
+    data.append({"date": "20250121", "close": 20000})
+
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+
+    default_resp = await service.get_rsi("005930", period=14)
+    explicit_incl = await service.get_rsi("005930", period=14, exclude_today=False)
+
+    assert len(default_resp.data) == len(explicit_incl.data) == 21
+    assert default_resp.data[-1]["date"] == "20250121"
+    assert default_resp.data[-1]["rsi"] == pytest.approx(explicit_incl.data[-1]["rsi"])
+
+
+@pytest.mark.asyncio
+async def test_get_rsi_exclude_today_with_empty_data_safe(indicator_service):
+    """OHLCV 가 비어있어도 exclude_today=True 가 예외를 던지지 않는다."""
+    service, mock_sqs = indicator_service
+
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[]
+    )
+
+    result = await service.get_rsi("005930", period=14, exclude_today=True)
+    # _get_ohlcv_data 에서 빈 데이터는 API_ERROR 응답으로 반환됨 (기존 동작)
+    assert result.rt_cd != ErrorCode.SUCCESS.value or not result.data

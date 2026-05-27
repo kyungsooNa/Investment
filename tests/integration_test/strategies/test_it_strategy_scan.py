@@ -821,17 +821,24 @@ class TestRSI2PullbackScan:
         from strategies.oneil_common_types import OSBWatchlistItem
         from services.indicator_service import IndicatorService
 
-        # 마지막 2영업일에 큰 음봉을 배치하여 IndicatorService가 RSI(2) ≤ 10 을 산출하도록 구성
-        base_dt = datetime(2026, 3, 7)
+        # P0 0-8: 어제까지 confirmed RSI(2) ≤ 10 + 오늘(마지막 봉) 미확정 양봉 반등 시나리오.
+        # exclude_today=True 인 production 라이브 코드는 어제 confirmed RSI 로 trigger.
+        # base_dt 를 mock_tm.today (2026-03-09) 와 동기화하여 마지막 봉이 "오늘 미확정" 을 모방.
+        base_dt = datetime(2026, 3, 9)
         ohlcv = []
-        for i in range(30):
-            dt = base_dt - timedelta(days=29 - i)
+        for i in range(31):
+            dt = base_dt - timedelta(days=30 - i)
             date_str = dt.strftime("%Y%m%d")
             if i < 28:
                 price = int(10000 * (1.0 + 0.005 * i))
-            else:
+            elif i < 30:
+                # 어제까지 confirmed 2영업일 큰 음봉 (-3%)
                 prev = ohlcv[-1]["close"]
                 price = int(prev * 0.97)
+            else:
+                # 오늘 (미확정) — 강한 양봉 +5% 반등 (인트라데이 노이즈)
+                prev = ohlcv[-1]["close"]
+                price = int(prev * 1.05)
             ohlcv.append({
                 "date": date_str,
                 "open": price - 50, "high": price + 100,

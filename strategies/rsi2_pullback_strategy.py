@@ -145,8 +145,8 @@ class RSI2PullbackStrategy(LiveStrategy):
             })
             return None
 
-        # Phase 1-2: 일봉 RSI(2) 조회
-        rsi_resp = await self._indicator.get_rsi(code, period=self._cfg.rsi_period, candle_type="D")
+        # Phase 1-2: 일봉 RSI(2) 조회 — P0 0-8: 당일 미확정 봉 제외 (인트라데이 RSI 깜빡임 방지)
+        rsi_resp = await self._indicator.get_rsi(code, period=self._cfg.rsi_period, candle_type="D", exclude_today=True)
         if not rsi_resp or rsi_resp.rt_cd != "0" or not rsi_resp.data:
             self._logger.info({
                 "event": "entry_rejected",
@@ -283,10 +283,10 @@ class RSI2PullbackStrategy(LiveStrategy):
         if buy_price <= 0:
             buy_price = current
 
-        # 200MA / 5MA 조회 (병렬)
+        # 200MA / 5MA 조회 (병렬) — P0 0-8: 당일 미확정 봉 제외 (MA exit 트리거 인트라데이 흔들림 방지)
         ma_resps = await asyncio.gather(
-            self._indicator.get_moving_average(code, period=self._cfg.trend_break_ma_period, candle_type="D"),
-            self._indicator.get_moving_average(code, period=self._cfg.take_profit_ma_period, candle_type="D"),
+            self._indicator.get_moving_average(code, period=self._cfg.trend_break_ma_period, candle_type="D", exclude_today=True),
+            self._indicator.get_moving_average(code, period=self._cfg.take_profit_ma_period, candle_type="D", exclude_today=True),
             return_exceptions=True,
         )
         ma200 = self._latest_ma(ma_resps[0])

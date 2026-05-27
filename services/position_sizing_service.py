@@ -294,10 +294,13 @@ class PositionSizingService:
         return max(stop_from_price, stop_from_pct, stop_from_atr, min_stop)
 
     async def _get_atr_krw(self, signal: TradeSignal) -> float:
-        """ATR 마지막 값을 KRW 로 반환. 실패 시 0.0."""
+        """ATR 마지막 값을 KRW 로 반환. 실패 시 0.0.
+
+        P0 0-8: 사이징은 당일 미확정 봉의 high/low 흔들림을 ATR 에 반영하지 않도록 exclude_today=True.
+        """
         try:
             resp = await self._indicator.calculate_atr(
-                signal.code, period=self._cfg.atr_period
+                signal.code, period=self._cfg.atr_period, exclude_today=True,
             )
             from common.types import ErrorCode
             if resp is None or resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:

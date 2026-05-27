@@ -11,26 +11,35 @@ from services.oneil_universe_service import OneilUniverseService
 from common.types import ResCommonResponse
 
 
-def _make_rsi2_oversold_ohlcv(code, days=30, base_close=10000):
-    """RSI(2) ≤ 10 이 되도록 마지막 2일을 강한 음봉으로 만든 30일 OHLCV.
+def _make_rsi2_oversold_ohlcv(code, days=31, base_close=10000):
+    """어제 confirmed RSI(2) ≤ 10 + 오늘 미확정 양봉 반등 시나리오.
+
+    P0 0-8: exclude_today=True 인 production 라이브 코드는 어제 confirmed RSI 로 trigger.
+    오늘 인트라데이 양봉이 RSI 를 흔들어도 신호 안정성이 유지된다.
 
     IndicatorService._to_dataframe 가 plain dict (date/open/high/low/close/volume)을
     기대하므로 그 포맷으로 반환한다.
     """
-    base_dt = datetime(2026, 3, 7)
+    # base_dt 는 mock_tm.get_current_kst_time 의 KST today (2026-03-09) 와 동기화 — 마지막 봉이 "오늘"
+    base_dt = datetime(2026, 3, 9)
     rows = []
     for i in range(days):
         dt = base_dt - timedelta(days=days - 1 - i)
         date_str = dt.strftime("%Y%m%d")
-        if i < days - 2:
+        if i < days - 3:
             # 강한 우상향 (Stage 2)
             price = int(base_close * (1.0 + 0.005 * i))
             vol = 500000
-        else:
-            # 마지막 2영업일 큰 음봉 (-3%) → RSI(2)가 한 자릿수까지 하락
+        elif i < days - 1:
+            # 어제까지 confirmed 2영업일 큰 음봉 (-3%) → confirmed RSI(2) 한 자릿수
             prev = rows[-1]["close"]
             price = int(prev * 0.97)
             vol = 900000
+        else:
+            # 오늘 (미확정) — 강한 양봉 +5% 반등 (인트라데이 노이즈로 RSI 반등)
+            prev = rows[-1]["close"]
+            price = int(prev * 1.05)
+            vol = 700000
         rows.append({
             "date": date_str,
             "open": price - 50, "high": price + 100,
