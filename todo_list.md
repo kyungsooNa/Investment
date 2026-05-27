@@ -16,12 +16,19 @@
 
 - P0 0-1: 실전 체결 이력 확보 후 broker order mapper 분리 + fixture 회귀 잠금.
 - P0 0-7: ~~canary 5% 노출 제한을 코드/config profile로 분리하고 real 기본 30%와 운영 혼동을 제거.~~ ✅ 완료 (2026-05-27).
+- P0 0-8: 라이브 전략 일봉 지표에서 당일 미완성 봉 제외 옵션을 도입한다.
+- P0 0-9: 라이브 손절/익절 판단을 gross PnL이 아닌 비용 반영 net PnL 기준으로 통일한다.
+- P0 0-10: 같은 사이클의 신규 BUY에 대해 pending/reserved cash 및 종목별 전 전략 합산 노출을 반영한다.
+- P0 0-11: kill switch 및 sync fallback state 저장을 atomic write로 통일한다.
 - P1 1-5: 한국장 microstructure fixture 로 체결 모델 보수성 검증.
 - P1 1-6: 실전 journal/shadow/paper/live 성과 데이터로 profitability gate의 실제 통과 근거 확보.
 - P1 1-7: multiple testing proxy를 formal walk-forward / purged validation / PBO·Deflated Sharpe급 검증으로 확장할지 결정.
 - P2 2-2: ~~실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 후 budget 기본값 보정.~~ 전역 normal 8/s + emergency 2/s 기본값 보정 완료. 계정별 공식 한도 재확인은 운영 전 외부 확인으로 유지.
 - P2 2-4: VBO shadow 5거래일 jsonl 수집 → polling parity 비교. event-driven live order는 별도 승인 전 No-Go.
+- P2 2-5: 전략 scan의 종목별 현재가 REST 호출을 batch quote / WebSocket snapshot 중심으로 줄인다.
 - P3 3-4: active strategy lifecycle contract 최소 공통 단계 강제 여부 재설계(현재 보류).
+- P3 3-5: backtest/live 호가단위 tick-size 로직을 단일 utility로 통일한다.
+- P3 3-6: 지표/전략 경로의 광범위 `except Exception` silent skip에 alert/metric hook을 붙인다.
 - Pool B 튜닝: 후보 부족 재발 시 거래대금/정배열 조건 완화 검토.
 - 완료 기준의 전략 성과 `[~]`: `MomentumStrategy` 등 비활성 백테스트 경로의 표준 journal 통합 여부 결정.
 
@@ -69,6 +76,97 @@
 - `services/position_sizing_service.py`
 - `docs/canary_procedure.md`
 - `docs/predeploy_checklist.md`
+
+---
+
+### 0-8. 라이브 일봉 지표에서 당일 미완성 봉 제외
+
+- [ ] `IndicatorService.get_rsi()`, `get_moving_average()`, `calculate_atr()`에 `exclude_today: bool = False` 또는 동등 옵션을 추가한다.
+- [ ] 라이브 전략 호출 경로는 기본적으로 당일 미완성 봉을 제외하도록 변경한다. 특히 RSI(2), 5MA/200MA exit, ATR 기반 sizing 경로를 우선 고정한다.
+- [ ] 차트/리포트 UI처럼 장중 현재 봉 표시가 필요한 경로는 기존 동작을 유지하거나 명시적으로 `exclude_today=False`를 사용한다.
+- [ ] 테스트: 장중 `MarketDataService.get_ohlcv("D")`가 today row를 병합해도 라이브 지표 호출은 전일 확정 봉까지만 사용함을 검증한다.
+
+판단:
+
+- 코드 검토 결과, `MarketDataService.get_ohlcv()`는 장중 `_fetch_today_ohlcv()`로 today row를 붙인다. `get_chart_indicators()`는 마지막 row를 제외하지만 RSI/MA/ATR 개별 지표는 최신 row를 다시 병합해 반환하므로 미완성 봉 노이즈가 라이브 신호에 들어갈 수 있다.
+- 이는 미래 데이터 lookahead라기보다 장중 미확정 캔들 기반 false-positive/false-negative 리스크로 본다.
+
+주요 파일:
+
+- `services/market_data_service.py`
+- `services/indicator_service.py`
+- `strategies/rsi2_pullback_strategy.py`
+- `services/position_sizing_service.py`
+- `tests/unit_test/services/test_indicator_service.py`
+
+---
+
+### 0-9. 라이브 exit 판단을 net PnL 기준으로 통일
+
+- [ ] 활성 라이브 전략의 손절/익절 판단에서 `pnl_pct = (current - buy_price) / buy_price * 100` gross 비교를 비용 반영 net return 비교로 전환한다.
+- [ ] `TransactionCostUtils`의 수수료/세금 기본값을 라이브 exit 판단에서도 공통 사용하되, 설정값으로 override 가능한지 검토한다.
+- [ ] `TradeSignal.reason`, strategy log, notification에는 gross/net 중 무엇을 표시하는지 명확히 남긴다.
+- [ ] 테스트: 동일 가격 경로에서 gross 기준으로는 미발동이지만 net 기준으로는 손절/익절 임계에 도달하는 케이스를 전략별 최소 1개 고정한다.
+
+판단:
+
+- backtest/virtual 성과 경로에는 비용 반영 유틸이 있으나, 라이브 `check_exits()`의 손절/익절 트리거는 대부분 gross PnL을 직접 계산한다. 비용만큼 백테스트 trigger와 라이브 trigger의 기준이 어긋날 수 있다.
+
+주요 파일:
+
+- `utils/transaction_cost_utils.py`
+- `strategies/first_pullback_strategy.py`
+- `strategies/high_tight_flag_strategy.py`
+- `strategies/oneil_squeeze_breakout_strategy.py`
+- `strategies/oneil_pocket_pivot_strategy.py`
+- `strategies/rsi2_pullback_strategy.py`
+- `strategies/larry_williams_vbo_strategy.py`
+- `strategies/larry_williams_channel_breakout_strategy.py`
+
+---
+
+### 0-10. pending/reserved cash와 cross-strategy same-symbol 노출 반영
+
+- [ ] `PositionSizingService.adjust_buy_qty()` 또는 상위 scheduler/order layer에 같은 사이클 내 accepted BUY의 reserved cash 누적기를 도입한다.
+- [ ] 종목별 보유 금액 계산에 broker snapshot의 현재 보유뿐 아니라 active/pending BUY 주문과 같은 배치의 accepted BUY를 합산한다.
+- [ ] 동일 전략 중복 보유 차단은 유지하되, 전 전략 합산 동일 종목 노출 상한을 별도 hard-block 또는 qty cap으로 추가할지 결정한다.
+- [ ] 테스트: 같은 종목이 여러 전략에서 동시에 BUY 신호로 들어올 때, snapshot 기준 한도를 초과하지 않도록 두 번째 이후 주문 수량이 줄거나 차단되는지 검증한다.
+
+판단:
+
+- 현재 `PositionSizingService`는 `snapshot.available_cash`와 `snapshot.positions[code]`를 기준으로 수량을 줄인다. 하지만 같은 scheduler batch에서 아직 broker/account snapshot에 반영되지 않은 pending 주문 reservation은 차감하지 않는다.
+- 리뷰의 “7전략 7배 노출” 표현은 과장 소지가 있다. broker snapshot에 이미 잡힌 보유는 차감된다. 실제 남은 리스크는 동시/미체결 BUY와 전 전략 same-symbol 합산 노출이다.
+
+주요 파일:
+
+- `services/position_sizing_service.py`
+- `services/risk_gate_service.py`
+- `scheduler/strategy_scheduler.py`
+- `services/order_submission_coordinator.py`
+- `services/backtest_execution_simulator.py`
+
+---
+
+### 0-11. 상태 파일 저장 atomic write 통일
+
+- [ ] `StrategyStateIO._write_atomic()` 또는 공통 `AtomicJsonFile` 유틸을 추출해 kill switch 상태 저장에 적용한다.
+- [ ] 전략 `_save_state()`의 sync fallback 경로(`open(..., "w")`, `json.dump`)도 같은 atomic utility를 사용하도록 바꾼다.
+- [ ] 테스트: 저장 중 예외가 발생해도 기존 JSON 파일이 truncate 되지 않는 회귀 테스트를 추가한다.
+
+판단:
+
+- async 전략 저장 경로는 `StrategyStateIO.save_atomic()`으로 보호된다. 반면 `KillSwitchService._save_state()`와 일부 전략 sync fallback 경로는 truncate-write라 프로세스 강제 종료 시 상태 파일 손상 가능성이 남아 있다.
+
+주요 파일:
+
+- `utils/strategy_state_io.py`
+- `services/kill_switch_service.py`
+- `strategies/first_pullback_strategy.py`
+- `strategies/high_tight_flag_strategy.py`
+- `strategies/oneil_squeeze_breakout_strategy.py`
+- `strategies/oneil_pocket_pivot_strategy.py`
+- `strategies/rsi2_pullback_strategy.py`
+- `strategies/larry_williams_channel_breakout_strategy.py`
 
 ---
 
@@ -170,6 +268,9 @@
 - [ ] event-driven signal은 별도 승인 전 shadow/latency 측정용으로만 운영한다.
   - 운영 원칙: 실주문은 polling scheduler + full gate 통과 경로만 허용한다.
   - No-Go 사유: `StrategySignalSink`는 protocol 수준이고, VBO fast path는 일부 full safeguard를 생략한다.
+- [ ] exit fast-path는 entry event-driven 전환보다 별도 우선순위로 검토한다.
+  - 목표: 손절 조건만이라도 WebSocket price snapshot 기반 shadow 판정으로 latency와 false-positive를 먼저 측정한다.
+  - 실주문 전환 조건: 5거래일 이상 shadow journal에서 기존 polling exit과 괴리, 선행 시간, 중복률, 누락률을 리포트한 뒤 별도 승인.
 - [blocked] PR-3: PR-2.5 관찰 결과 양호 시 VBO 실 적용 + OSB shadow 진입.
 - [ ] PR-4+: 단계적 확장. (HighTightFlag 등 OHLCV 별도 조회 필요 전략에 적용할지 재평가)
 
@@ -194,6 +295,27 @@
 
 ---
 
+### 2-5. 전략 scan 현재가 조회 batch/snapshot 최적화
+
+- [ ] 활성 전략 scan에서 종목별 `get_current_price()` REST fallback이 많이 발생하는 경로를 측정하고, `price_lookup_stats_delta`를 전략별 리포트에 포함한다.
+- [ ] 후보군 현재가는 우선 WebSocket snapshot을 사용하고, snapshot 누락분은 `get_multi_price()` 30종목 batch로 보강하는 helper를 설계한다.
+- [ ] 전략별로 개별 REST 호출이 필요한 전체 필드(`per`, `pbr`, `stck_llam` 등)와 단순 현재가만 필요한 경로를 분리한다.
+- [ ] 테스트: 60개 후보 scan에서 REST current price 호출이 60회가 아니라 batch 2회 이하로 떨어지는 경로를 mock으로 검증한다.
+
+판단:
+
+- 리뷰의 “평균 87초 stale” 수치는 현재 `StockQueryService`의 5초 WebSocket snapshot TTL과 맞지 않아 그대로 채택하지 않는다. 다만 전략 scan이 batch quote를 적극 사용하지 않고 종목별 현재가 조회로 쉽게 fallback되는 구조는 성능/latency 리스크다.
+
+주요 파일:
+
+- `services/stock_query_service.py`
+- `services/market_data_service.py`
+- `brokers/korea_investment/korea_invest_quotations_api.py`
+- `strategies/`
+- `scheduler/strategy_scheduler.py`
+
+---
+
 ## P3. 유지보수성
 
 ### 3-4. 전략 공통 lifecycle/state contract
@@ -214,6 +336,46 @@
 
 ---
 
+### 3-5. tick-size 로직 단일화
+
+- [ ] `BacktestExecutionSimulator.tick_size()`를 `utils.korea_invest_price_utils.get_tick_size()`로 대체하거나 공통 utility를 broker-neutral 이름으로 승격한다.
+- [ ] backtest BUY/SELL tick rounding과 live 주문 가격 보정의 방향성 차이(매수 올림/매도 내림 vs live 지정가 내림)를 의도적으로 문서화한다.
+- [ ] 테스트: tick boundary fixture를 단일 테스트 데이터로 backtest/live utility 양쪽에 적용한다.
+
+판단:
+
+- 현재 backtest와 live에 동일한 호가단위 표가 중복되어 있다. 지금 값은 일치하지만, KRX/NXT 또는 호가단위 변경 시 한쪽만 바뀌면 replay와 live가 벌어진다.
+
+주요 파일:
+
+- `services/backtest_execution_simulator.py`
+- `utils/korea_invest_price_utils.py`
+- `brokers/korea_investment/korea_invest_trading_api.py`
+- `tests/unit_test/services/test_backtest_execution_simulator.py`
+- `tests/unit_test/utils/test_korea_invest_price_utils.py`
+
+---
+
+### 3-6. 광범위 예외 처리의 silent skip 방지
+
+- [ ] `IndicatorService`의 계산/캐시 경로에서 `except Exception`으로 `UNKNOWN_ERROR` 또는 `None`만 반환하는 지점을 분류한다.
+- [ ] 데이터 schema/type 오류는 최소 ERROR log + metric counter로 집계하고, 반복 발생 시 `OperatorAlertService`로 알림을 올린다.
+- [ ] 전략 scan/check_exits의 per-code 예외는 전체 전략 중단을 막되, 전략별 fail-rate metric에 반영한다.
+- [ ] 테스트: 지표 계산 중 schema 오류가 발생하면 전략이 조용히 skip만 하지 않고 alert/metric hook이 호출되는지 검증한다.
+
+판단:
+
+- per-code 장애를 흡수하는 운영 안정성은 유지해야 한다. 다만 지표/전략 계산 실패가 단순 “데이터 없음 → 진입 skip”으로만 보이면 신호 손실이 장기간 누적될 수 있다.
+
+주요 파일:
+
+- `services/indicator_service.py`
+- `services/operator_alert_service.py`
+- `strategies/`
+- `services/strategy_log_report_service.py`
+
+---
+
 ## Strategy Log 남은 작업
 
 ### Pool B 튜닝 관찰
@@ -225,30 +387,38 @@
 
 ## 바로 착수 추천 순서
 
-남은 즉시 착수 항목 대부분은 외부 데이터(실전 체결 이력, 장중 microstructure 샘플) 또는 운영 관찰(VBO shadow 5거래일) 대기 상태다. 도구·정책 작업으로 대기 시간을 줄일 수 있다.
+남은 항목은 외부 데이터/운영 관찰 대기 작업과 코드 수정으로 바로 진행 가능한 작업으로 나뉜다. 실전 자본 보호에 직접 닿는 코드 수정 항목을 우선 정리한다.
 
 1. **외부 운영 확인 후 즉시 진행**
-   - canary profile 5% 노출 제한을 코드/config로 분리하고 predeploy에서 현재 profile을 표시/검증 (P0 0-7)
    - 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 → 필요 시 `_global` 8/s + `_global.emergency` 2/s 운영값 조정 (P2 2-2; 공통 HTTP 경로 강제 주입과 보수 기본값은 적용 완료)
 
-2. **운영 관찰 진행 중**
+2. **코드 수정으로 바로 진행 가능**
+   - 라이브 일봉 지표에서 당일 미완성 봉 제외 옵션 추가 (P0 0-8)
+   - 라이브 exit 판단을 net PnL 기준으로 통일 (P0 0-9)
+   - pending/reserved cash와 전 전략 same-symbol 노출 반영 (P0 0-10)
+   - kill switch/state sync fallback atomic write 통일 (P0 0-11)
+
+3. **운영 관찰 진행 중**
    - VBO shadow 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py` 로 parity 리포트 생성 → PR-3 진입 판정 (P2 2-4 PR-2.5)
+   - 손절 전용 exit fast-path shadow/latency 측정 설계 (P2 2-4 후속)
    - profitability gate는 우회하지 않고 shadow/paper/canary journal로 전략별 실전 근거를 축적 (P1 1-6)
 
-3. **외부 데이터 확보 후 진행 가능 (blocked)**
+4. **외부 데이터 확보 후 진행 가능 (blocked)**
    - 실전 KIS `inquire-daily-ccld` 체결 이력 응답 캡처 → fixture 회귀 (P0 0-1)
    - broker order number mapper 별도 클래스 분리 + fixture 테스트 (P0 0-1)
    - 장중 후보 종목 프로그램매매 WebSocket 샘플 캡처 → replay fixture overlay (P1 1-5)
    - 한국장 microstructure fixture 로 체결 모델 보수성 검증 (P1 1-5)
    - VBO 실 적용 + OSB shadow 진입 (PR-3, P2 2-4 — PR-2.5 결과 양호 조건)
 
-4. **조건부 트리거 — 재발 시 진행**
+5. **조건부 트리거 — 재발 시 진행**
    - Pool B 거래대금 50→30억 완화 검토
    - Pool B 정배열 조건을 `current > ma_20d` 중심 완화 검토
 
-5. **정책 합의 후 재승격 후보 (보류)**
+6. **정책 합의 후 재승격 후보 (보류)**
    - formal walk-forward / purged validation / PBO / Deflated Sharpe 검증 도입 여부 결정 (P1 1-7)
    - active strategy lifecycle 7단계 base class 분해 (P3 3-4, 외과수술적 변경 원칙으로 보류)
+   - tiered force-exit window(거래대금별 30/45/60분) 도입 여부 결정. 현재 `force_exit_on_close=True` 기본 등록은 VBO 중심이므로 전 전략 리스크로 일반화하지 않는다.
+   - RiskGate daily cap은 broker retry마다 중복 증가하지 않는다. 다만 현재 구조상 broker 성공 전 `validate_order()`에서 일일 주문금액을 기록하므로, 실패 주문도 cap을 소모하는 정책이 의도인지 별도 결정한다.
    - 전략별 `min_trading_value_won` / `min_market_cap_won` 하한 설정 (P0 0-2 후속)
    - 매도 청산 경로의 RiskGate 우회 정책, KillSwitch 청산 예외, KillSwitchService auto-trigger 호출처 추가 (P0 0-6 후속)
    - market beta / strategy correlation missing evidence를 block reason으로 승격할지 결정 (P1 1-1 후속)
