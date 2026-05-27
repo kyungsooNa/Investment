@@ -65,5 +65,6 @@ category별 rate limit은 endpoint군 간 burst를 나누기 위한 상한이며
 - `tests/unit_test/core/retry_queue/test_api_budget_limiter.py::test_opening_burst_load_keeps_order_reconcile_and_emergency_lanes_available`가 장초반 조회 burst 중에도 `account_reconciliation`, normal `order_submit`, emergency `order_submit` lane이 독립적으로 진입하는지 검증한다.
 - `tests/unit_test/core/retry_queue/test_api_budget_limiter.py::test_global_rate_limiter_caps_total_rps_across_categories`가 서로 다른 category 호출도 `_global` bucket으로 전체 합산 제한되는지 검증한다.
 - `tests/unit_test/core/retry_queue/test_api_budget_limiter.py::test_emergency_global_rate_bucket_is_independent_from_normal_global_bucket`가 emergency global bucket이 normal global bucket과 분리되는지 검증한다.
+- `tests/integration_test/test_it_api_budget_limiter.py`가 `ClientWithRetryQueue → ApiRequestQueue → ApiBudgetLimiter → fake client` 전체 경로에서 current price/OHLCV/account/reconcile/order/WebSocket/emergency 호출이 shared global budget을 지나는지 검증한다.
 - `services.predeploy_check_service.PreDeployCheckService.check_api_budget_limiter()`는 `_global` 및 `_global.emergency` bucket 누락을 WARN으로 보고한다.
 - `ApiBudgetLimiter.snapshot()`은 `rate_wait_total`과 `rate_wait_seconds_total`을 노출해 사전 throttle이 실제로 작동했는지 운영 상태 API에서 관측할 수 있다.
