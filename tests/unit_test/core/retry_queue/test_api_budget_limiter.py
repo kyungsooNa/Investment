@@ -7,6 +7,8 @@ from core.retry_queue.api_budget_limiter import (
     DEFAULT_API_BUDGET_LIMITS,
     DEFAULT_API_EMERGENCY_LIMITS,
     DEFAULT_API_EMERGENCY_RATE_LIMITS_PER_SEC,
+    DEFAULT_API_EMERGENCY_GLOBAL_RATE_LIMIT_PER_SEC,
+    DEFAULT_API_GLOBAL_RATE_LIMIT_PER_SEC,
     DEFAULT_API_RATE_LIMITS_PER_SEC,
     ApiBudgetLimiter,
 )
@@ -89,6 +91,8 @@ def test_default_rate_limits_use_conservative_operation_defaults():
         "websocket_subscribe": 5.0,
         "default": 8.0,
     }
+    assert DEFAULT_API_GLOBAL_RATE_LIMIT_PER_SEC == 8.0
+    assert DEFAULT_API_EMERGENCY_GLOBAL_RATE_LIMIT_PER_SEC == 2.0
 
 
 def test_limiter_snapshot_exposes_rate_limits():
@@ -96,6 +100,8 @@ def test_limiter_snapshot_exposes_rate_limits():
 
     snapshot = limiter.snapshot()
 
+    assert snapshot["_global"]["rate_limit_per_sec"] == 8.0
+    assert snapshot["_global"]["emergency"]["rate_limit_per_sec"] == 2.0
     assert snapshot["quotation_price"]["rate_limit_per_sec"] == 8.0
     assert snapshot["account_reconciliation"]["rate_limit_per_sec"] == 2.0
     assert snapshot["quotation_price"]["rate_wait_total"] == 0
@@ -121,6 +127,8 @@ async def test_rate_limiter_reserves_future_slots_without_busy_loop():
     limiter = ApiBudgetLimiter(
         {"quotation_price": 4},
         rate_limits_per_sec={"quotation_price": 2.0},
+        global_rate_limit_per_sec=float("inf"),
+        emergency_global_rate_limit_per_sec=float("inf"),
         monotonic=lambda: now,
         sleep=fake_sleep,
     )
@@ -145,6 +153,8 @@ async def test_rate_limiter_snapshot_tracks_preemptive_throttle_waits():
     limiter = ApiBudgetLimiter(
         {"order_submit": 2},
         rate_limits_per_sec={"order_submit": 2.0},
+        global_rate_limit_per_sec=float("inf"),
+        emergency_global_rate_limit_per_sec=float("inf"),
         monotonic=lambda: now,
         sleep=fake_sleep,
     )
@@ -160,6 +170,77 @@ async def test_rate_limiter_snapshot_tracks_preemptive_throttle_waits():
     assert sleeps == [0.5, 1.0]
     assert snapshot["order_submit"]["rate_wait_total"] == 2
     assert snapshot["order_submit"]["rate_wait_seconds_total"] == 1.5
+
+
+async def test_global_rate_limiter_caps_total_rps_across_categories():
+    """카테고리가 달라도 normal lane 전체 합산 RPS 는 global bucket 으로 제한한다."""
+    sleeps: list[float] = []
+    now = 100.0
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    limiter = ApiBudgetLimiter(
+        {
+            "quotation_price": 4,
+            "quotation_ohlcv": 4,
+            "account_balance": 4,
+        },
+        rate_limits_per_sec={
+            "quotation_price": 100.0,
+            "quotation_ohlcv": 100.0,
+            "account_balance": 100.0,
+        },
+        global_rate_limit_per_sec=2.0,
+        monotonic=lambda: now,
+        sleep=fake_sleep,
+    )
+
+    async with limiter.acquire("quotation_price"):
+        pass
+    async with limiter.acquire("quotation_ohlcv"):
+        pass
+    async with limiter.acquire("account_balance"):
+        pass
+
+    snapshot = limiter.snapshot()
+    assert sleeps == [0.5, 1.0]
+    assert snapshot["_global"]["rate_wait_total"] == 2
+    assert snapshot["_global"]["rate_wait_seconds_total"] == 1.5
+
+
+async def test_emergency_global_rate_bucket_is_independent_from_normal_global_bucket():
+    """긴급 주문은 category lane 뿐 아니라 global rate bucket 도 normal 과 분리한다."""
+    sleeps: list[float] = []
+    now = 100.0
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    limiter = ApiBudgetLimiter(
+        {"order_submit": 4},
+        rate_limits_per_sec={"order_submit": float("inf")},
+        emergency_limits={"order_submit": 4},
+        emergency_rate_limits_per_sec={"order_submit": float("inf")},
+        global_rate_limit_per_sec=2.0,
+        emergency_global_rate_limit_per_sec=2.0,
+        monotonic=lambda: now,
+        sleep=fake_sleep,
+    )
+
+    async with limiter.acquire("order_submit"):
+        pass
+    async with limiter.acquire("order_submit"):
+        pass
+    async with limiter.acquire("order_submit", priority=PRIORITY_EMERGENCY):
+        pass
+    async with limiter.acquire("order_submit", priority=PRIORITY_EMERGENCY):
+        pass
+
+    snapshot = limiter.snapshot()
+    assert sleeps == [0.5, 0.5]
+    assert snapshot["_global"]["rate_wait_total"] == 1
+    assert snapshot["_global"]["emergency"]["rate_wait_total"] == 1
 
 
 @pytest.mark.real_sleep
@@ -443,6 +524,8 @@ async def test_emergency_rate_bucket_is_independent_of_normal_rate_bucket():
         rate_limits_per_sec={"order_submit": 2.0},
         emergency_limits={"order_submit": 4},
         emergency_rate_limits_per_sec={"order_submit": 2.0},
+        global_rate_limit_per_sec=float("inf"),
+        emergency_global_rate_limit_per_sec=float("inf"),
         monotonic=lambda: now,
         sleep=fake_sleep,
     )

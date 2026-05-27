@@ -348,6 +348,12 @@ async def test_api_budget_limiter_skipped_without_limiter():
 async def test_api_budget_limiter_passes_with_required_categories():
     limiter = MagicMock()
     limiter.snapshot.return_value = {
+        "_global": {
+            "limit": 1,
+            "rate_limit_per_sec": 8.0,
+            "active": 0,
+            "emergency": {"limit": 1, "rate_limit_per_sec": 2.0, "active": 0},
+        },
         "quotation_price": {"limit": 4, "rate_limit_per_sec": 8.0, "active": 0},
         "quotation_ohlcv": {"limit": 2, "rate_limit_per_sec": 3.0, "active": 0},
         "account_balance": {"limit": 1, "rate_limit_per_sec": 2.0, "active": 0},
@@ -360,6 +366,7 @@ async def test_api_budget_limiter_passes_with_required_categories():
     svc = _service(api_budget_limiter=limiter)
     result = await svc.check_api_budget_limiter()
     assert result.status == CheckStatus.PASS
+    assert "_global" in result.detail
     assert "quotation_price" in result.detail
     assert "order_submit" in result.detail
     assert "websocket_subscribe" in result.detail
@@ -374,6 +381,24 @@ async def test_api_budget_limiter_warns_when_required_category_missing():
     result = await svc.check_api_budget_limiter()
     assert result.status == CheckStatus.WARN
     assert "missing" in result.detail
+
+
+async def test_api_budget_limiter_warns_when_global_budget_missing():
+    limiter = MagicMock()
+    limiter.snapshot.return_value = {
+        "quotation_price": {"limit": 4, "rate_limit_per_sec": 8.0, "active": 0},
+        "quotation_ohlcv": {"limit": 2, "rate_limit_per_sec": 3.0, "active": 0},
+        "account_balance": {"limit": 1, "rate_limit_per_sec": 2.0, "active": 0},
+        "account_reconciliation": {"limit": 1, "rate_limit_per_sec": 2.0, "active": 0},
+        "order_submit": {"limit": 1, "rate_limit_per_sec": 2.0, "active": 0},
+        "order_cancel": {"limit": 1, "rate_limit_per_sec": 2.0, "active": 0},
+        "websocket_connect": {"limit": 1, "rate_limit_per_sec": 1.0, "active": 0},
+        "websocket_subscribe": {"limit": 1, "rate_limit_per_sec": 5.0, "active": 0},
+    }
+    svc = _service(api_budget_limiter=limiter)
+    result = await svc.check_api_budget_limiter()
+    assert result.status == CheckStatus.WARN
+    assert "_global" in result.detail
 
 
 # ── run_all + summary ─────────────────────────────────────────────────
