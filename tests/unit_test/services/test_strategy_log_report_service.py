@@ -262,6 +262,52 @@ def test_backtest_live_divergence_section_from_provider():
     assert "S1/005930: 순수익률 -1.50%p, 체결가 -1.9048%, 순손익 -1,500원" in section
 
 
+def test_backtest_live_divergence_section_includes_replay_audit_summary():
+    backtest_records = [
+        {
+            "source": "backtest",
+            "strategy": "S1",
+            "code": "005930",
+            "signal_time": "2026-04-18 09:03:00",
+            "status": "SIGNAL",
+            "metadata": {"audit_status": "missed_by_scheduler"},
+        },
+        {
+            "source": "backtest",
+            "strategy": "S1",
+            "code": "000660",
+            "signal_time": "2026-04-18 09:03:00",
+            "status": "REJECTED",
+            "rejected_reason": "missing_from_universe",
+            "metadata": {"audit_status": "missing_from_universe"},
+        },
+    ]
+
+    class DummyVirtualTradeService:
+        def compare_with_backtest_journal(self, _records):
+            return {
+                "summary": {
+                    "matched_count": 0,
+                    "unmatched_backtest_count": 2,
+                    "unmatched_live_count": 0,
+                },
+                "matches": [],
+                "unmatched_backtest": backtest_records,
+                "unmatched_live": [],
+            }
+
+    svc = StrategyLogReportService(
+        log_dir=".",
+        virtual_trade_service=DummyVirtualTradeService(),
+        backtest_journal_provider=lambda _target_date: backtest_records,
+    )
+
+    section = svc._build_backtest_live_divergence_section("20260418")
+
+    assert "Replay audit: missed 1건, universe 누락 1건" in section
+    assert "S1/005930: missed_by_scheduler" in section
+
+
 @pytest.mark.asyncio
 async def test_report_includes_strategy_degradation_candidates(log_dir):
     """표준 journal 기반 성과 저하 후보를 리포트에 포함하고 getter로 노출한다."""

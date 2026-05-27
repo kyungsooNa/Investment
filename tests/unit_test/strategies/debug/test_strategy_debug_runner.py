@@ -288,6 +288,32 @@ class TestStrategyDebugRunner:
         assert kwargs["strategy"] == "OneilPocketPivot"
         assert kwargs["target_date"] == "20260505"
 
+    async def test_debug_runner_uses_target_signal_time_in_journal(self):
+        signal = TradeSignal(
+            code="005930",
+            name="삼성전자",
+            action="BUY",
+            price=70_000,
+            qty=1,
+            reason="pocket_pivot",
+            strategy_name="OneilPocketPivot",
+        )
+        strategy = _make_strategy(
+            watchlist={"005930": _make_watchlist_item("005930")},
+            signals=[signal],
+        )
+        strategy.name = "OneilPocketPivot"
+        runner = StrategyDebugRunner(
+            strategy,
+            _make_debug_logger(),
+            target_date="20260505",
+            target_signal_time="2026-05-05 09:03:00",
+        )
+
+        report = await runner.run(candidate_codes=["005930"])
+
+        assert report.journal_records[0]["signal_time"] == "2026-05-05 09:03:00"
+
     async def test_debug_runner_marks_signal_rejected_when_portfolio_cash_is_short(self):
         signal = TradeSignal(
             code="005930",

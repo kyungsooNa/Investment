@@ -115,6 +115,32 @@ class StrategySchedulerStore:
             for r in reversed(rows)
         ]
 
+    def load_signal_history_for_date(self, target_date: str) -> list:
+        """target_date(YYYYMMDD)의 시그널 이력을 오래된 순 dict list 로 반환."""
+        digits = "".join(ch for ch in str(target_date or "") if ch.isdigit())
+        if len(digits) < 8:
+            return []
+        date_prefix = f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT strategy_name, code, name, action, price, qty,
+                          return_rate, reason, timestamp, api_success
+                   FROM signal_history
+                   WHERE timestamp LIKE ?
+                   ORDER BY timestamp ASC, id ASC""",
+                (f"{date_prefix}%",),
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "strategy_name": r[0], "code": r[1], "name": r[2],
+                "action": r[3], "price": r[4], "qty": r[5],
+                "return_rate": r[6], "reason": r[7],
+                "timestamp": r[8], "api_success": bool(r[9]),
+            }
+            for r in rows
+        ]
+
     # ── Scheduler State ──
 
     def save_state(self, state: dict) -> None:

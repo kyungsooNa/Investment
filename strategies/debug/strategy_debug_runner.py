@@ -87,6 +87,7 @@ class StrategyDebugRunner:
         allowed_stages: tuple = (0, 2),
         backtest_journal_repository=None,
         target_date: str = "",
+        target_signal_time: str = "",
         backtest_portfolio_ledger: BacktestPortfolioLedger | None = None,
         max_positions_per_strategy: dict[str, int] | None = None,
     ) -> None:
@@ -96,6 +97,7 @@ class StrategyDebugRunner:
         self._allowed_stages = allowed_stages
         self._backtest_journal_repository = backtest_journal_repository
         self._target_date = target_date
+        self._target_signal_time = target_signal_time
         self._backtest_portfolio_ledger = backtest_portfolio_ledger
         self._max_positions_per_strategy = max_positions_per_strategy
 
@@ -167,7 +169,11 @@ class StrategyDebugRunner:
             limitations=list(self.LIMITATIONS),
         )
         report.portfolio_decisions = self._reserve_signal_orders(signals)
-        report.journal_records = _build_debug_journal_records(report, target_date=self._target_date)
+        report.journal_records = _build_debug_journal_records(
+            report,
+            target_date=self._target_date,
+            target_signal_time=self._target_signal_time,
+        )
 
         if self._backtest_journal_repository is not None and report.journal_records:
             target_date = self._target_date or _target_date_from_records(report.journal_records)
@@ -204,9 +210,14 @@ class StrategyDebugRunner:
         )
 
 
-def _build_debug_journal_records(report: DebugReport, *, target_date: str = "") -> List[dict]:
+def _build_debug_journal_records(
+    report: DebugReport,
+    *,
+    target_date: str = "",
+    target_signal_time: str = "",
+) -> List[dict]:
     records: List[dict] = []
-    default_time = _signal_time_from_target_date(target_date)
+    default_time = target_signal_time or _signal_time_from_target_date(target_date)
     portfolio_decisions_by_code: dict[str, List[PortfolioDecision]] = {}
     for decision in report.portfolio_decisions:
         portfolio_decisions_by_code.setdefault(decision.order.code, []).append(decision)
@@ -267,7 +278,7 @@ def _build_debug_journal_records(report: DebugReport, *, target_date: str = "") 
             normalize_backtest_decision(
                 {
                     **event.details,
-                    "signal_time": _event_signal_time(event, target_date),
+                    "signal_time": target_signal_time or _event_signal_time(event, target_date),
                     "current": _event_price(event),
                     "rejected_reason": event.reason,
                 },

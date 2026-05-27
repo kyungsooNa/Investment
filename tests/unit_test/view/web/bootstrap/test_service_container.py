@@ -32,6 +32,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "StrategyLogReportService", "NotificationQueueTask",
     "AfterMarketReconcileTask", "OpeningPositionReconcileTask",
     "OpeningPositionReconcileService", "PerformanceProfiler",
+    "PostMarketReplayAuditService", "PostMarketReplayAuditTask",
 ]
 
 
@@ -190,6 +191,7 @@ def test_service_container_batch_mode_skips_streaming_and_intraday_web_tasks(pat
     assert ctx.opening_position_reconcile_task is None
     assert ctx.notification_queue_task is None
     assert ctx.after_market_reconcile_task is patched_service_container_deps["AfterMarketReconcileTask"].return_value
+    assert ctx.post_market_replay_audit_task is patched_service_container_deps["PostMarketReplayAuditTask"].return_value
     assert ctx.daily_price_collector_task is patched_service_container_deps["DailyPriceCollectorTask"].return_value
     assert ctx.order_execution_service is patched_service_container_deps["OrderExecutionService"].return_value
 
@@ -214,6 +216,7 @@ def test_service_container_web_mode_keeps_realtime_and_skips_trading_batch_tasks
     patched_service_container_deps["DailyPriceCollectorTask"].assert_not_called()
     patched_service_container_deps["OhlcvUpdateTask"].assert_not_called()
     patched_service_container_deps["AfterMarketReconcileTask"].assert_not_called()
+    patched_service_container_deps["PostMarketReplayAuditTask"].assert_not_called()
 
     assert ctx.pre_market_health_check_task is None
     assert ctx.opening_position_reconcile_task is None
@@ -246,6 +249,7 @@ def test_service_container_trading_mode_keeps_realtime_intraday_and_skips_web_ba
     patched_service_container_deps["OhlcvUpdateTask"].assert_not_called()
     patched_service_container_deps["AfterMarketReconcileTask"].assert_not_called()
     patched_service_container_deps["StrategyLogReportTask"].assert_not_called()
+    patched_service_container_deps["PostMarketReplayAuditTask"].assert_not_called()
 
     assert ctx.notification_queue_task is None
     assert ctx.minervini_update_task is None
@@ -253,6 +257,7 @@ def test_service_container_trading_mode_keeps_realtime_intraday_and_skips_web_ba
     assert ctx.ohlcv_update_task is None
     assert ctx.after_market_reconcile_task is None
     assert ctx.strategy_log_report_task is None
+    assert ctx.post_market_replay_audit_task is None
     assert ctx.order_execution_service is patched_service_container_deps["OrderExecutionService"].return_value
     assert ctx.oneil_universe_service is patched_service_container_deps["OneilUniverseService"].return_value
 

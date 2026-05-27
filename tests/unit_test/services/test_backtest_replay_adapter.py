@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
+from datetime import datetime
 
 import pytest
 
 from common.types import ResCommonResponse, TradeSignal
+from services.backtest_replay_context import BacktestMarketClock
 from services.backtest_period_runner import BacktestExecutionBarPolicy, BacktestPeriodRunner
 from services.backtest_execution_simulator import BacktestPortfolioLedger
 from services.backtest_replay_adapter import (
@@ -278,6 +280,28 @@ async def test_stock_query_backtest_replay_service_replays_execution_strength_fr
     assert response.rt_cd == "0"
     assert response.data["output"] == [{"tday_rltv": "132.4"}]
     sqs.get_stock_conclusion.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stock_query_backtest_replay_service_cuts_rows_at_replay_clock_time():
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = [
+        {"stck_bsop_date": "20260501", "stck_cntg_hour": "090000", "stck_prpr": "70000"},
+        {"stck_bsop_date": "20260501", "stck_cntg_hour": "090300", "stck_prpr": "70300", "tday_rltv": "110.0"},
+        {"stck_bsop_date": "20260501", "stck_cntg_hour": "090400", "stck_prpr": "70400", "tday_rltv": "150.0"},
+    ]
+    clock = BacktestMarketClock()
+    clock.set_backtest_datetime(datetime(2026, 5, 1, 9, 3, 0))
+    replay = StockQueryBacktestReplayService(sqs, market_clock=clock)
+    replay.set_backtest_date("20260501")
+
+    price_resp = await replay.get_current_price("005930")
+    conclusion_resp = await replay.get_stock_conclusion("005930")
+    rows = await replay.get_day_intraday_minutes_list("005930", date_ymd="20260501")
+
+    assert price_resp.data["output"]["stck_prpr"] == "70300"
+    assert conclusion_resp.data["output"] == [{"tday_rltv": "110.0"}]
+    assert [row["stck_cntg_hour"] for row in rows] == ["090000", "090300"]
 
 
 @pytest.mark.asyncio
