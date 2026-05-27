@@ -144,9 +144,9 @@
 
 - [~] API budget limiter 운영 정책을 실전 한도 기준으로 보정한다.
   - 적용 완료: endpoint별 category(`quotation_price`/`quotation_ohlcv`/`quotation_conclusion`/`account_balance`/`account_reconciliation`/`order_submit`/`order_cancel`/`websocket_*`) 동시성/rate 분리, emergency overlay lane, coverage matrix 코드/문서/테스트 고정, 장초반 부하 invariant 테스트, `rate_wait_total`/`rate_wait_seconds_total` 관측성.
-  - 리뷰 재확인: `bounded_gather()` 같은 호출 묶음 단위 제한은 전역 API budget limiter를 대체하지 못한다. budget limiter가 `KoreaInvestApiBase.call_api()` 또는 그보다 아래 공통 HTTP 경로에 강제 주입되어 있는지 확인한다.
-  - 남은 작업: 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 후 기본값 보정.
-  - 남은 작업: current price, OHLCV, account/balance, order submit, order status/reconcile, websocket subscribe, emergency liquidation priority lane이 시스템 전체 합산 기준으로 제한되는지 테스트한다.
+  - 강제 주입 검증 완료: 모든 REST 호출은 `BrokerAPIWrapper → ClientWithRetryQueue(proxy) → call_api()` 경로를 거치며, services/scheduler/task에서 raw `httpx.AsyncClient` 직접 사용 없음. `KoreaInvestApiBase`는 Account/Quotations/Trading API의 부모 클래스로만 import되어 외부 직접 호출 경로 없음. `_BUDGET_ONLY_METHOD_CATEGORIES` 우회 가능성은 `test_coverage_matrix_includes_live_operation_paths` / `test_coverage_matrix_matches_runtime_method_routing` / `test_coverage_matrix_marks_emergency_sell_as_emergency_lane` / `test_coverage_matrix_categories_are_configured_in_default_limiter` 4종 테스트로 잠금. `bounded_gather()` 같은 호출 묶음 단위 제한은 전역 limiter를 대체하지 못한다는 원칙은 유효.
+  - 남은 작업(외부): 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 후 기본값 보정.
+  - 남은 작업: 전체 합산 기준(시스템 전역 RPS) 제한이 current price/OHLCV/account/balance/order submit/order status/reconcile/websocket subscribe/emergency liquidation priority lane 동시 호출 시 실제로 작동하는지 통합 시나리오 테스트. (현재는 endpoint별 category 분리 + 장초반 invariant 테스트로 부분 잠금.)
   - 운영 기준: 429 또는 "초당 거래건수를 초과하였습니다" 응답 후 retry하는 사후 대응만으로는 부족하므로, 장초반 다전략 동시 실행 전에 사전 제한이 동작해야 한다.
 
 주요 파일:
@@ -227,7 +227,7 @@
 
 1. **외부 운영 확인 후 즉시 진행**
    - canary profile 5% 노출 제한을 코드/config로 분리하고 predeploy에서 현재 profile을 표시/검증 (P0 0-7)
-   - 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 → API budget 기본값 보정 및 공통 HTTP 경로 강제 여부 확인 (P2 2-2)
+   - 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 → API budget 기본값 보정 (P2 2-2; 공통 HTTP 경로 강제 주입은 검증 완료)
 
 2. **운영 관찰 진행 중**
    - VBO shadow 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py` 로 parity 리포트 생성 → PR-3 진입 판정 (P2 2-4 PR-2.5)
