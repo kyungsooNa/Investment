@@ -49,6 +49,7 @@ from services.stock_query_service import StockQueryService
 from services.streaming_service import StreamingService
 from services.strategy_event_router import StrategyEventRouter
 from services.event_shadow_journal_service import EventShadowJournalService
+from services.post_market_replay_audit_service import PostMarketReplayAuditService
 from services.strategy_log_report_service import StrategyLogReportService
 from task.background.after_market.after_market_reconcile_task import AfterMarketReconcileTask
 from task.background.after_market.cache_warmup_task import CacheWarmupTask
@@ -60,6 +61,7 @@ from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
 from task.background.after_market.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
 from task.background.after_market.ranking_task import RankingTask
 from task.background.after_market.strategy_log_report_task import StrategyLogReportTask
+from task.background.after_market.post_market_replay_audit_task import PostMarketReplayAuditTask
 from task.background.always_on.notification_queue_task import NotificationQueueTask
 from task.background.intraday.opening_position_reconcile_task import OpeningPositionReconcileTask
 from task.background.intraday.pre_market_health_check_task import PreMarketHealthCheckTask
@@ -587,6 +589,24 @@ class ServiceContainer:
                     worker_pool=ctx.worker_pool,
                     rejection_distribution_service=ctx.rejection_distribution_service,
                 )
+                ctx.post_market_replay_audit_task = PostMarketReplayAuditTask(
+                    audit_service=PostMarketReplayAuditService(
+                        stock_query_service=ctx.stock_query_service,
+                        universe_service=ctx.oneil_universe_service,
+                        indicator_service=ctx.indicator_service,
+                        market_clock=ctx.market_clock,
+                        backtest_journal_repository=ctx.backtest_journal_repository,
+                        virtual_trade_service=ctx.virtual_trade_service,
+                        log_dir=os.path.join(ctx.logger.log_dir, "strategies"),
+                        program_provider=getattr(ctx.broker, "_client", ctx.broker),
+                        env=ctx.env,
+                        logger=ctx.logger,
+                    ),
+                    mcs=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    logger=ctx.logger,
+                    worker_pool=ctx.worker_pool,
+                )
                 ctx.after_market_reconcile_task = AfterMarketReconcileTask(
                     order_execution_service=ctx.order_execution_service,
                     notification_service=ctx.notification_service,
@@ -601,6 +621,7 @@ class ServiceContainer:
                 ctx.newhigh_task = None
                 ctx.newhigh_service = None
                 ctx.strategy_log_report_task = None
+                ctx.post_market_replay_audit_task = None
                 ctx.after_market_reconcile_task = None
 
             if needs_web:

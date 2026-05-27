@@ -13,10 +13,11 @@ always_on_tasks:
 after_market_tasks:
   after_market_delay_min:
     after_market_reconcile: 0       # AfterMarketReconcileTask — 장 마감 직후 주문/브로커 상태 검증
-    strategy_log_report: 3          # strategy_log_report — 장 마감 3분 후
+    strategy_log_report: 40         # strategy_log_report — replay audit 이후 리포트 생성
     ranking_refresh: 5          # RankingTask — 장 마감 5분 후
     daily_price_collector: 10      # DailyPriceCollectorTask — 장 마감 10분 후
     ohlcv_update: 20             # OhlcvUpdateTask — 장 마감 20분 후
+    post_market_replay_audit: 30  # PostMarketReplayAuditTask — live 후보군 missed-signal 감사
     newhigh: 21                  # NewHighTask — daily_price_collector 완료(21분) + 여유
     minervini_update: 21        # MinerviniUpdateTask — 장 마감 21분 후
     전일기준주도주_생성: 50        # PremiumWatchlistGeneratorTask — 장 마감 50분 후

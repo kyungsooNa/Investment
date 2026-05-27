@@ -25,13 +25,15 @@ class StockQueryBacktestReplayService:
         stock_query_service: Any,
         *,
         program_provider: Any | None = None,
+        market_clock: Any | None = None,
         session: str = "REGULAR",
     ) -> None:
         self._stock_query_service = stock_query_service
         self._program_provider = program_provider
+        self._market_clock = market_clock
         self._session = session
         self._backtest_date: str | None = None
-        self._row_cache: dict[tuple[str, str, str], list[dict]] = {}
+        self._row_cache: dict[tuple[str, str, str, str], list[dict]] = {}
         self._program_cache: dict[tuple[str, str], dict] = {}
 
     def set_backtest_date(self, date_ymd: str) -> None:
@@ -95,7 +97,14 @@ class StockQueryBacktestReplayService:
             kwargs["date_ymd"] = self._backtest_date
         if "session" not in kwargs:
             kwargs["session"] = self._session
-        return await self._stock_query_service.get_day_intraday_minutes_list(stock_code, **kwargs)
+        rows = await self._stock_query_service.get_day_intraday_minutes_list(stock_code, **kwargs)
+        if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+            return []
+        date_ymd = str(kwargs.get("date_ymd") or self._backtest_date or "")
+        return self._normalize_and_cutoff_rows(
+            [dict(row) for row in rows if isinstance(row, dict)],
+            date_ymd=date_ymd,
+        )
 
     def get_market_snapshot(
         self,
@@ -111,7 +120,7 @@ class StockQueryBacktestReplayService:
         if force_fresh or not self._backtest_date:
             return None, DataQualityService.REASON_SNAPSHOT_MISSING
 
-        key = (code, self._backtest_date, self._session)
+        key = (code, self._backtest_date, self._session, self._cutoff_hhmmss())
         rows = self._row_cache.get(key)
         if not rows:
             return None, DataQualityService.REASON_SNAPSHOT_MISSING
@@ -155,7 +164,7 @@ class StockQueryBacktestReplayService:
         if not self._backtest_date:
             return None, DataQualityService.REASON_CONCLUSION_MISSING
 
-        key = (code, self._backtest_date, self._session)
+        key = (code, self._backtest_date, self._session, self._cutoff_hhmmss())
         rows = self._row_cache.get(key)
         if rows:
             latest = rows[-1]
@@ -258,7 +267,7 @@ class StockQueryBacktestReplayService:
         }
 
     async def _get_intraday_rows(self, stock_code: str, date_ymd: str) -> list[dict]:
-        key = (stock_code, date_ymd, self._session)
+        key = (stock_code, date_ymd, self._session, self._cutoff_hhmmss())
         if key in self._row_cache:
             return self._row_cache[key]
 
@@ -269,10 +278,33 @@ class StockQueryBacktestReplayService:
         )
         if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
             rows = []
-        normalized = [dict(row) for row in rows if isinstance(row, dict)]
+        normalized = self._normalize_and_cutoff_rows(
+            [dict(row) for row in rows if isinstance(row, dict)],
+            date_ymd=date_ymd,
+        )
         normalized.sort(key=lambda row: str(self._first(row, "stck_bsop_date", "date") or date_ymd) + str(self._first(row, "stck_cntg_hour", "time") or ""))
         self._row_cache[key] = normalized
         return normalized
+
+    def _normalize_and_cutoff_rows(self, rows: list[dict], *, date_ymd: str) -> list[dict]:
+        cutoff = self._cutoff_hhmmss()
+        if not cutoff:
+            return rows
+        result: list[dict] = []
+        for row in rows:
+            row_time = str(self._first(row, "stck_cntg_hour", "cntg_hour", "time") or "").zfill(6)
+            if not row_time or row_time > cutoff:
+                continue
+            result.append(row)
+        return result
+
+    def _cutoff_hhmmss(self) -> str:
+        if self._market_clock is None:
+            return ""
+        try:
+            return self._market_clock.get_current_kst_time().strftime("%H%M%S")
+        except Exception:
+            return ""
 
     async def _get_program_net_buy_qty(self, stock_code: str, date_ymd: str) -> int | None:
         if self._program_provider is None:

@@ -606,6 +606,10 @@ class StrategyLogReportService:
             f"• 매칭: {matched}건, 백테스트만 {unmatched_backtest}건, 실거래만 {unmatched_live}건",
         ]
 
+        audit_lines = self._build_replay_audit_lines(backtest_records)
+        if audit_lines:
+            lines.extend(audit_lines)
+
         avg_diff = summary.get("avg_net_return_diff")
         avg_abs_diff = summary.get("avg_abs_net_return_diff")
         if avg_diff is not None:
@@ -752,6 +756,45 @@ class StrategyLogReportService:
         if rest_count > 0:
             lines.append(f"  …외 {rest_count}개 전략")
         return "\n".join(lines)
+
+    def _build_replay_audit_lines(self, backtest_records: List[dict]) -> List[str]:
+        counts = Counter()
+        examples: List[dict] = []
+        for record in backtest_records:
+            metadata = record.get("metadata") if isinstance(record, dict) else None
+            if not isinstance(metadata, dict):
+                continue
+            status = str(metadata.get("audit_status") or "")
+            if not status:
+                continue
+            counts[status] += 1
+            if status in {"missed_by_scheduler", "late_signal"} and len(examples) < 3:
+                examples.append(record)
+        if not counts:
+            return []
+
+        labels = [
+            ("missed_by_scheduler", "missed"),
+            ("late_signal", "late"),
+            ("missing_from_universe", "universe 누락"),
+            ("replayed_rejected", "replay 거절"),
+            ("data_unavailable", "데이터 부족"),
+        ]
+        parts = [
+            f"{label} {counts[key]}건"
+            for key, label in labels
+            if counts.get(key)
+        ]
+        lines = [f"• Replay audit: {', '.join(parts)}"]
+        for record in examples:
+            metadata = record.get("metadata") or {}
+            strategy = _esc(record.get("strategy") or "")
+            code = _esc(record.get("code") or "")
+            status = _esc(metadata.get("audit_status") or "")
+            live_time = metadata.get("live_signal_time")
+            suffix = f" (live {live_time[11:16]})" if isinstance(live_time, str) and len(live_time) >= 16 else ""
+            lines.append(f"  - {strategy}/{code}: {status}{suffix}")
+        return lines
 
     def _candidate_with_backtest_live_divergence(
         self,
