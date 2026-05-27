@@ -160,10 +160,11 @@
 
 - [~] PR-2.5: VBO shadow 운영 관찰 시작.
   - 적용 완료: `StrategyFactory`에서 VBO `StrategySchedulerConfig(..., event_driven_shadow=True)` 활성화 (실주문은 `enabled=False`로 차단).
-  - 남은 작업: 5거래일 동안 `logs/strategies/event_shadow/YYYYMMDD.jsonl` 을 수집한다.
+  - 적용 완료: parity 분석 도구 `scripts/analyze_event_shadow_parity.py` (matched / shadow_only / polling_only / duplicates / lead_time_seconds / price_divergence / missed_pnl / per_date) + `tests/unit_test/scripts/test_analyze_event_shadow_parity.py` 회귀 잠금.
+  - 남은 작업: 5거래일 동안 `logs/strategies/event_shadow/YYYYMMDD.jsonl` 을 수집한 뒤 위 도구로 리포트 생성.
   - 검증 기준: shadow 신호와 기존 polling 신호의 시간/종목/가격 괴리를 비교해 실주문 전환 가능 여부를 판정한다.
-  - 추가 기준: polling 대비 신호 선행 시간, fast path false positive, false negative, full gate parity, missed trade PnL, duplicate signal rate.
-  - VBO 특이점: `evaluate_single()` shadow fast path는 execution strength/program-buy를 의도적으로 생략하므로, fast path 통과와 full gate 최종 통과를 분리 기록해야 한다.
+  - 추가 기준: polling 대비 신호 선행 시간, fast path false positive, false negative, full gate parity, missed trade PnL, duplicate signal rate. (모두 위 스크립트 출력에 포함)
+  - VBO 특이점: `evaluate_single()` shadow fast path는 execution strength/program-buy를 의도적으로 생략하므로, fast path 통과(=`shadow_only` + `matched`)와 full gate 최종 통과(=`matched` + `polling_only`)의 분리는 현재 스크립트의 `shadow_only` / `matched` / `polling_only` 분류로 간접 표현된다.
 - [ ] event-driven signal은 별도 승인 전 shadow/latency 측정용으로만 운영한다.
   - 운영 원칙: 실주문은 polling scheduler + full gate 통과 경로만 허용한다.
   - No-Go 사유: `StrategySignalSink`는 protocol 수준이고, VBO fast path는 일부 full safeguard를 생략한다.
@@ -229,8 +230,7 @@
    - 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 → API budget 기본값 보정 및 공통 HTTP 경로 강제 여부 확인 (P2 2-2)
 
 2. **운영 관찰 진행 중**
-   - VBO shadow 5거래일 jsonl 수집 → polling 신호 parity 비교 → PR-3 진입 판정 (P2 2-4 PR-2.5)
-     - 대기 시간 활용 가능: shadow jsonl ↔ polling 신호 비교 스크립트/리포트 선행 구현 가능.
+   - VBO shadow 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py` 로 parity 리포트 생성 → PR-3 진입 판정 (P2 2-4 PR-2.5)
    - profitability gate는 우회하지 않고 shadow/paper/canary journal로 전략별 실전 근거를 축적 (P1 1-6)
 
 3. **외부 데이터 확보 후 진행 가능 (blocked)**
