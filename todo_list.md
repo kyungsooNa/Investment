@@ -148,7 +148,7 @@
   - 적용 완료(2026-05-27): `ApiBudgetLimiter`에 `_global` normal bucket(8/s)과 `_global.emergency` bucket(2/s)을 추가해 category가 달라도 전체 합산 RPS를 제한한다. 개인 실전 10/s 가능성에도 맞는 보수 기본값이며, emergency liquidation은 normal traffic과 분리된 2/s bucket을 사용한다.
   - 적용 완료(2026-05-27): predeploy 점검에서 `_global` 및 `_global.emergency` bucket 누락을 WARN으로 보고한다.
   - 남은 작업(외부): 실제 KIS 계정별 REST/WebSocket 유량 한도 숫자는 공식 포털/계정 공지로 운영 직전 재확인한다. 공개 자료는 실전 20/s, 모의 1~2/s, 과거 개인 10/s 등으로 갈리므로 코드 기본값은 보수값 유지.
-  - 남은 작업: current price/OHLCV/account/balance/order submit/order status/reconcile/websocket subscribe/emergency liquidation priority lane을 모두 섞은 end-to-end 통합 시나리오 테스트를 추가한다. (현재는 limiter 단위 전역 RPS 테스트 + endpoint별 category 분리 + 장초반 invariant 테스트로 잠금.)
+  - 적용 완료(2026-05-27): current price/OHLCV/account/balance/order submit/order status/reconcile/websocket subscribe/emergency liquidation priority lane을 모두 섞은 end-to-end 통합 시나리오 테스트 추가. `ClientWithRetryQueue → ApiRequestQueue → ApiBudgetLimiter → fake client` 전체 경로에서 shared `_global` bucket과 `_global.emergency` bucket 동작을 검증한다.
   - 운영 기준: 429 또는 "초당 거래건수를 초과하였습니다" 응답 후 retry하는 사후 대응만으로는 부족하므로, 장초반 다전략 동시 실행 전에 사전 제한이 동작해야 한다.
 
 주요 파일:
