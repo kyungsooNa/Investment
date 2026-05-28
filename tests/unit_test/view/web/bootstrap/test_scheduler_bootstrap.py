@@ -60,9 +60,7 @@ def _make_fake_context(runtime_mode: RuntimeMode = RuntimeMode.ALL):
 
 def _run(ctx):
     from view.web.bootstrap.scheduler_bootstrap import SchedulerBootstrap
-    with patch("view.web.bootstrap.scheduler_bootstrap.asyncio.create_task") as create_task:
-        SchedulerBootstrap(ctx).run()
-    return create_task
+    SchedulerBootstrap(ctx).run()
 
 
 # ---------- 인프라 생성 (mode 무관) ----------
@@ -153,19 +151,20 @@ def test_web_and_trading_registers_watchdog_exactly_once(patched_scheduler_deps)
     assert len(watchdog_calls) == 1
 
 
-# ---------- _initialize_price_subscriptions gating ----------
+# ---------- _initialize_price_subscriptions lifecycle ----------
 
-def test_price_subscriptions_called_in_web_or_trading(patched_scheduler_deps):
+def test_price_subscriptions_not_started_during_scheduler_bootstrap(patched_scheduler_deps):
+    """초기 가격 구독 task는 bootstrap이 아니라 start_background_tasks에서 시작한다."""
     for mode in [RuntimeMode.WEB, RuntimeMode.TRADING, RuntimeMode.WEB | RuntimeMode.TRADING, RuntimeMode.ALL]:
         ctx = _make_fake_context(mode)
-        create_task = _run(ctx)
-        assert create_task.call_count == 1, f"mode={mode}"
+        _run(ctx)
+        assert not hasattr(ctx, "_price_subscription_init_task"), f"mode={mode}"
 
 
 def test_price_subscriptions_skipped_in_batch_only(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.BATCH)
-    create_task = _run(ctx)
-    assert create_task.call_count == 0
+    _run(ctx)
+    assert not hasattr(ctx, "_price_subscription_init_task")
 
 
 # ---------- None task skip ----------

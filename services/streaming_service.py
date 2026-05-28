@@ -60,6 +60,7 @@ class StreamingService:
         self._last_console_print_time: float = 0.0
         self._PRINT_THROTTLE_SEC: float = 0.5
         self._callback = None  # 재연결 시 콜백 유실 방지용 저장
+        self._connect_lock = asyncio.Lock()
 
         # Observer 레지스트리: data_type → [handler, ...]
         self._handlers: Dict[str, List[Callable[[dict], None]]] = {}
@@ -111,15 +112,28 @@ class StreamingService:
         """
         if callback is not None:
             self._callback = callback
-        result = await self.broker.connect_websocket(self._callback)
-        if result and self._streaming_logger:
-            self._streaming_logger.log_connect()
-        if result:
-            try:
-                await self.subscribe_order_notice()
-            except Exception as e:
-                self.logger.warning(f"체결통보 구독 실패: {e}")
-        return result
+        async with self._connect_lock:
+            if self._is_websocket_receive_alive():
+                return True
+
+            result = await self.broker.connect_websocket(self._callback)
+            if result and self._streaming_logger:
+                self._streaming_logger.log_connect()
+            if result:
+                try:
+                    await self.subscribe_order_notice()
+                except Exception as e:
+                    self.logger.warning(f"체결통보 구독 실패: {e}")
+            return result
+
+    def _is_websocket_receive_alive(self) -> bool:
+        checker = getattr(self.broker, "is_websocket_receive_alive", None)
+        if not callable(checker):
+            return False
+        try:
+            return bool(checker())
+        except Exception:
+            return False
 
     async def disconnect_websocket(self):
         """WebSocket 연결 해제 (BrokerAPIWrapper 위임)."""

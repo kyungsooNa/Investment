@@ -159,6 +159,7 @@ class WebAppContext:
         self._last_missing_reason_log_ts: dict[tuple[str, str], float] = {}
         self._last_rest_price_refresh_ts: dict[str, float] = {}
         self._pending_rest_price_refresh_tasks: dict[str, asyncio.Task] = {}
+        self._price_subscription_init_task: asyncio.Task | None = None
 
         # 실시간 스트리밍 전용 이벤트 로거 (logs/streaming/)
         self.streaming_event_logger = get_streaming_logger()
@@ -367,14 +368,32 @@ class WebAppContext:
         if self.background_scheduler:
             asyncio.create_task(self.background_scheduler.start_all())
 
+        self._schedule_price_subscription_initialization()
+
+    def _schedule_price_subscription_initialization(self):
+        """초기 가격 구독 task를 background lifecycle에 맞춰 시작한다."""
+        from view.web.bootstrap.runtime_mode import RuntimeMode
+
+        if not self.price_subscription_service:
+            return
+        if not (self.runtime_mode & (RuntimeMode.WEB | RuntimeMode.TRADING)):
+            return
+        if self._price_subscription_init_task and not self._price_subscription_init_task.done():
+            return
+
+        self._price_subscription_init_task = asyncio.create_task(self._initialize_price_subscriptions())
+
     async def shutdown(self):
         """서비스 종료 처리 — BackgroundScheduler에 위임."""
         pending_tasks = list(self._pending_rest_price_refresh_tasks.values())
+        if self._price_subscription_init_task and not self._price_subscription_init_task.done():
+            pending_tasks.append(self._price_subscription_init_task)
         for task in pending_tasks:
             task.cancel()
         if pending_tasks:
             await asyncio.gather(*pending_tasks, return_exceptions=True)
         self._pending_rest_price_refresh_tasks.clear()
+        self._price_subscription_init_task = None
         if self.background_scheduler:
             await self.background_scheduler.shutdown()
         if self.broker:

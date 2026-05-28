@@ -21,6 +21,7 @@ def mock_broker():
     broker.subscribe_unified_price = AsyncMock()
     broker.unsubscribe_unified_price = AsyncMock()
     broker.get_program_trade_by_stock_daily = AsyncMock()
+    broker.is_websocket_receive_alive = MagicMock(return_value=False)
     return broker
 
 @pytest.fixture
@@ -138,6 +139,38 @@ async def test_connect_websocket_no_callback(streaming_service, mock_broker):
     """connect_websocket: 콜백 없이 호출 시 None이 전달됨"""
     await streaming_service.connect_websocket()
     mock_broker.connect_websocket.assert_awaited_with(None)
+
+
+@pytest.mark.asyncio
+async def test_connect_websocket_skips_duplicate_when_receive_alive(streaming_service, mock_broker):
+    """이미 수신 task가 살아있으면 중복 connect를 보내지 않는다."""
+    mock_broker.is_websocket_receive_alive.return_value = True
+
+    assert await streaming_service.connect_websocket() is True
+
+    mock_broker.connect_websocket.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_connect_websocket_serializes_concurrent_calls(streaming_service, mock_broker):
+    """동시 connect 요청은 하나만 브로커에 전달하고 후속 요청은 살아있는 연결을 재사용한다."""
+    release = asyncio.Event()
+    mock_broker.is_websocket_receive_alive.side_effect = [False, True]
+
+    async def slow_connect(callback):
+        await release.wait()
+        return True
+
+    mock_broker.connect_websocket.side_effect = slow_connect
+
+    first = asyncio.create_task(streaming_service.connect_websocket())
+    await asyncio.sleep(0)
+    second = asyncio.create_task(streaming_service.connect_websocket())
+    await asyncio.sleep(0)
+    release.set()
+
+    assert await asyncio.gather(first, second) == [True, True]
+    mock_broker.connect_websocket.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_subscribe_unsubscribe_program_trading(streaming_service, mock_broker):
