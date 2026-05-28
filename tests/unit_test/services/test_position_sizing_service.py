@@ -50,6 +50,7 @@ def _make_service(
     risk_gate_config=None,
     quote_provider=None,
     order_policy_config=None,
+    enable_intracycle_reservations=False,
 ):
     cache = AsyncMock()
     cache.get.return_value = snapshot
@@ -70,6 +71,7 @@ def _make_service(
         risk_gate_config=risk_gate_config,
         quote_provider=quote_provider,
         order_policy_config=order_policy_config,
+        enable_intracycle_reservations=enable_intracycle_reservations,
     )
     return svc, cache, indicator
 
@@ -626,3 +628,120 @@ def test_position_sizing_canary_overrides_user_yaml():
     )
     assert svc._effective_per_trade_risk_pct() == 0.1
     assert svc._effective_max_per_position_pct() == 0.5
+
+
+# ─────────────────────────────────────────────────────────────────────
+# P0 0-10: intra-cycle reservation overlay (reserved cash + same-symbol)
+# ─────────────────────────────────────────────────────────────────────
+
+def _no_constraint_cfg():
+    """risk/cap 이 binding 되지 않게 큰 값 — cash/cap overlay 만 격리 검증."""
+    return _make_config(per_trade_risk_pct=100.0, max_per_position_pct=100.0)
+
+
+@pytest.mark.asyncio
+async def test_reservation_reduces_cash_for_second_buy_different_code():
+    """같은 사이클: 첫 BUY 가 예약한 현금이 두 번째 BUY 의 cash_qty 에서 차감된다."""
+    snap = _make_snapshot(total_equity=100_000_000, available_cash=500_000)
+    svc, _, _ = _make_service(
+        snap, cfg=_no_constraint_cfg(), enable_intracycle_reservations=True
+    )
+    # 첫 매수: 코드 A, price 100k → cash 500k / 100k = 5주, 500k 예약
+    qty_a, _ = await svc.adjust_buy_qty(
+        TradeSignal(code="AAAAAA", name="A", action="BUY", price=100_000, qty=None,
+                    reason="r", strategy_name="s1")
+    )
+    assert qty_a == 5
+    # 두 번째 매수: 코드 B (다른 종목) → 가용현금 500k-500k=0 → 0주
+    qty_b, reason_b = await svc.adjust_buy_qty(
+        TradeSignal(code="BBBBBB", name="B", action="BUY", price=100_000, qty=None,
+                    reason="r", strategy_name="s2")
+    )
+    assert qty_b == 0
+    assert reason_b == "cash_short"
+
+
+@pytest.mark.asyncio
+async def test_reservation_same_symbol_reduces_position_cap():
+    """같은 사이클: 같은 종목을 여러 전략이 사면 종목별 비중 cap 이 누적 반영된다."""
+    # total_equity=10M, max_per_position_pct=10% → 종목당 1M cap. cash 는 충분.
+    snap = _make_snapshot(total_equity=10_000_000, available_cash=100_000_000)
+    cfg = _make_config(per_trade_risk_pct=100.0, max_per_position_pct=10.0)
+    svc, _, _ = _make_service(snap, cfg=cfg, enable_intracycle_reservations=True)
+    # 첫 매수: 코드 X, price 100k → cap 1M / 100k = 10주, 1M 예약
+    qty1, _ = await svc.adjust_buy_qty(
+        TradeSignal(code="XXXXXX", name="X", action="BUY", price=100_000, qty=None,
+                    reason="r", strategy_name="s1")
+    )
+    assert qty1 == 10
+    # 두 번째 매수: 같은 코드 X (다른 전략) → 종목 cap 소진 → 0주
+    qty2, reason2 = await svc.adjust_buy_qty(
+        TradeSignal(code="XXXXXX", name="X", action="BUY", price=100_000, qty=None,
+                    reason="r", strategy_name="s2")
+    )
+    assert qty2 == 0
+    assert reason2 == "cap_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_reservation_resets_on_new_snapshot():
+    """새 snapshot(fetched_at 변경) 도착 시 예약이 초기화된다 (fill→invalidate 모방)."""
+    from datetime import datetime, timedelta
+    snap1 = _make_snapshot(total_equity=100_000_000, available_cash=500_000)
+    svc, cache, _ = _make_service(
+        snap1, cfg=_no_constraint_cfg(), enable_intracycle_reservations=True
+    )
+    qty1, _ = await svc.adjust_buy_qty(
+        TradeSignal(code="AAAAAA", name="A", action="BUY", price=100_000, qty=None,
+                    reason="r", strategy_name="s1")
+    )
+    assert qty1 == 5  # 500k 예약됨
+
+    # 체결 → 캐시 invalidate → 다음 사이클 새 snapshot (fetched_at 다름)
+    snap2 = AccountSnapshot(
+        total_equity=100_000_000, available_cash=500_000, positions={},
+        fetched_at=datetime.now() + timedelta(seconds=120),
+    )
+    cache.get.return_value = snap2
+    qty2, _ = await svc.adjust_buy_qty(
+        TradeSignal(code="BBBBBB", name="B", action="BUY", price=100_000, qty=None,
+                    reason="r", strategy_name="s2")
+    )
+    # 예약 초기화되어 새 snapshot 의 500k 전부 사용 가능 → 다시 5주
+    assert qty2 == 5
+
+
+@pytest.mark.asyncio
+async def test_no_reservation_overlay_when_flag_disabled():
+    """flag=False(기본, backtest) 면 overlay 미적용 — 두 번째 BUY 도 동일 수량."""
+    snap = _make_snapshot(total_equity=100_000_000, available_cash=500_000)
+    svc, _, _ = _make_service(
+        snap, cfg=_no_constraint_cfg(), enable_intracycle_reservations=False
+    )
+    qty_a, _ = await svc.adjust_buy_qty(
+        TradeSignal(code="AAAAAA", name="A", action="BUY", price=100_000, qty=None,
+                    reason="r", strategy_name="s1")
+    )
+    qty_b, _ = await svc.adjust_buy_qty(
+        TradeSignal(code="BBBBBB", name="B", action="BUY", price=100_000, qty=None,
+                    reason="r", strategy_name="s2")
+    )
+    # overlay 없으므로 같은 stale snapshot 으로 둘 다 5주 (= 기존 over-allocation 동작)
+    assert qty_a == 5
+    assert qty_b == 5
+
+
+@pytest.mark.asyncio
+async def test_reservation_default_is_disabled():
+    """enable_intracycle_reservations 미지정 시 기본 False (backtest 안전)."""
+    snap = _make_snapshot(total_equity=100_000_000, available_cash=500_000)
+    svc, _, _ = _make_service(snap, cfg=_no_constraint_cfg())
+    qty_a, _ = await svc.adjust_buy_qty(
+        TradeSignal(code="AAAAAA", name="A", action="BUY", price=100_000, qty=None,
+                    reason="r", strategy_name="s1")
+    )
+    qty_b, _ = await svc.adjust_buy_qty(
+        TradeSignal(code="BBBBBB", name="B", action="BUY", price=100_000, qty=None,
+                    reason="r", strategy_name="s2")
+    )
+    assert qty_a == 5 and qty_b == 5

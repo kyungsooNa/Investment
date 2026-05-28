@@ -9,10 +9,12 @@
   final_qty = max(0, min([risk_qty, cap_qty, cash_qty, (alloc_qty), (signal.qty)]))
 """
 
+import asyncio
 import math
 import inspect
 import logging
-from typing import Any, Optional, Protocol, Tuple, TYPE_CHECKING
+from datetime import datetime
+from typing import Any, Dict, Optional, Protocol, Tuple, TYPE_CHECKING
 
 from common.types import ErrorCode, Exchange, ResCommonResponse, TradeSignal
 from core.account_snapshot import AccountSnapshotCache
@@ -45,6 +47,7 @@ class PositionSizingService:
         order_policy_config: Optional["OrderPolicyConfig"] = None,
         env: Optional[Any] = None,
         operating_profile: str = "canary",
+        enable_intracycle_reservations: bool = False,
     ):
         self._cache = account_snapshot_cache
         self._indicator = indicator_service
@@ -55,6 +58,16 @@ class PositionSizingService:
         self._order_policy_config = order_policy_config
         self._env = env
         self._operating_profile = operating_profile
+
+        # P0 0-10: 같은 scheduler 사이클의 미체결 BUY 를 현금/종목 노출에 선반영하는 overlay.
+        # live 에서만 활성화한다. backtest 는 BacktestPortfolioLedger 가 예약을 처리하므로
+        # 기본 False (이중 차감 방지). 예약은 snapshot.fetched_at 이 바뀌면 자동 초기화한다
+        # (체결 → 캐시 invalidate → 새 snapshot, 또는 TTL 만료). 주문 실패 시 별도 release 는
+        # 하지 않으며, 다음 snapshot 까지 보수적으로 유지된다.
+        self._enable_intracycle_reservations = enable_intracycle_reservations
+        self._reservations: Dict[str, int] = {}      # {code: 예약 현금(KRW)}
+        self._reservation_baseline_ts: Optional[datetime] = None
+        self._reservation_lock = asyncio.Lock()
 
     def _is_real_mode(self) -> bool:
         """env 미주입이면 paper 로 간주 (보수적 default)."""
@@ -104,6 +117,18 @@ class PositionSizingService:
         if signal.qty is not None and signal.qty <= 0:
             return signal.qty, "bypass"
 
+        # P0 0-10: 예약 overlay 활성 시, snapshot 읽기~예약 기록을 직렬화해
+        # 병렬 BUY 간 cash/종목 cap 이중 사용을 막는다.
+        if self._enable_intracycle_reservations:
+            async with self._reservation_lock:
+                return await self._compute_buy_qty(signal, exchange)
+        return await self._compute_buy_qty(signal, exchange)
+
+    async def _compute_buy_qty(
+        self,
+        signal: TradeSignal,
+        exchange: "Exchange | None",
+    ) -> Tuple[int, str]:
         price = signal.price
 
         # 1. 잔고 스냅샷 (API 비호출, 캐시에서 읽기)
@@ -111,6 +136,16 @@ class PositionSizingService:
         total_equity = snapshot.total_equity
         available_cash = snapshot.available_cash
         current_position_value = snapshot.positions.get(signal.code, 0)
+
+        # P0 0-10: 같은 사이클 미체결 BUY 예약을 현금/종목 노출에 선반영.
+        # snapshot.fetched_at 이 바뀌면(체결 invalidate/TTL) 예약 초기화 → 새 baseline.
+        if self._enable_intracycle_reservations:
+            if self._reservation_baseline_ts != snapshot.fetched_at:
+                self._reservations.clear()
+                self._reservation_baseline_ts = snapshot.fetched_at
+            reserved_total = sum(self._reservations.values())
+            available_cash = max(available_cash - reserved_total, 0)
+            current_position_value = current_position_value + self._reservations.get(signal.code, 0)
 
         if total_equity <= 0:
             self._logger.warning(
@@ -187,6 +222,12 @@ class PositionSizingService:
             reason = next(
                 key for key in reason_priority
                 if candidates.get(key) == final_qty
+            )
+
+        # P0 0-10: 매수 확정분을 예약에 누적 → 같은 사이클 후속 BUY 가 차감된 현금/cap 을 본다.
+        if self._enable_intracycle_reservations and final_qty > 0:
+            self._reservations[signal.code] = (
+                self._reservations.get(signal.code, 0) + final_qty * price
             )
 
         self._logger.info(

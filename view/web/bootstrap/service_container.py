@@ -436,6 +436,9 @@ class ServiceContainer:
                 order_policy_config=_op_cfg,
                 env=getattr(ctx.broker, "env", None),
                 operating_profile=_operating_profile,
+                # P0 0-10: live 는 같은 사이클 미체결 BUY 예약 overlay 활성화.
+                # backtest 는 BacktestPortfolioLedger 가 예약을 처리하므로 wiring 하지 않는다.
+                enable_intracycle_reservations=True,
             )
             ctx.risk_gate_service = RiskGateService(
                 config=_rg_cfg,
