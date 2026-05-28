@@ -2350,6 +2350,22 @@ def test_handle_websocket_message_program_trading_success(websocket_api_instance
     assert result["data"]["순매수체결량"] == "10"
 
 
+def test_handle_websocket_message_callback_exception_is_isolated(websocket_api_instance):
+    api = websocket_api_instance
+
+    def faulty_callback(_data):
+        raise RuntimeError("callback boom")
+
+    api.on_realtime_message_callback = faulty_callback
+    data_str = "005930^120000^10^10000^20^20000^10^10000^100^200^300"
+    message = f"0|H0STPGM0|dummy|{data_str}"
+
+    api._handle_websocket_message(message)
+
+    api._logger.error.assert_called()
+    assert "실시간 콜백 처리 중 오류" in api._logger.error.call_args[0][0]
+
+
 def test_handle_websocket_message_nxt_program_trading_success(websocket_api_instance):
     api = websocket_api_instance
     api._env.active_config["tr_ids"]["websocket"]["nxt_realtime_program_trading"] = "H0NXPGM0"

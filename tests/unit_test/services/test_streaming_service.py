@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from services.streaming_service import StreamingService
@@ -549,6 +550,30 @@ def test_dispatch_realtime_message_program_trading(streaming_service):
     debug_calls_str = str(streaming_service.logger.debug.call_args_list)
     assert "[프로그램매매 - 100000]" in debug_calls_str
     assert "순매수거래대금: 5000" in debug_calls_str
+
+
+def test_dispatch_program_trading_with_standard_logger_does_not_raise(
+    mock_broker, mock_market_clock, mock_market_data_service
+):
+    """logging.Logger는 print의 end 인자를 받지 않으므로 표준 로거에서도 예외가 없어야 한다."""
+    logger = logging.getLogger("test.streaming.standard")
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(logging.NullHandler())
+    service = StreamingService(
+        broker_api_wrapper=mock_broker,
+        logger=logger,
+        market_clock=mock_market_clock,
+        market_data_service=mock_market_data_service,
+    )
+    service._last_console_print_time = 0.0
+
+    service.dispatch_realtime_message({
+        'type': 'realtime_program_trading',
+        'data': {
+            '주식체결시간': '100000',
+            '순매수거래대금': '5000',
+        },
+    })
 
 
 def test_dispatch_realtime_message_signing_notice(streaming_service):

@@ -344,7 +344,7 @@ class StreamingService:
                 t = inner.get('주식체결시간', 'N/A')
                 ntby = inner.get('순매수거래대금', '0')
                 msg = f"[프로그램매매 - {t}] 순매수거래대금: {ntby}"
-                self.logger.debug(f"\r{msg}{' ' * max(0, 80 - len(msg))}", end="")
+                self.logger.debug(f"\r{msg}{' ' * max(0, 80 - len(msg))}")
 
         else:
             self.logger.debug(
