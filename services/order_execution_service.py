@@ -746,7 +746,7 @@ class OrderExecutionService:
                         f"\r[실시간 체결 - {trade_time}] 종목: {stock_code}: 현재가 {current_price}원, "
                         f"전일대비: {change_sign}{change_val} ({change_rate}%), 누적량: {acml_vol}"
                     )
-                    self.logger.debug(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
+                    self.logger.debug(f"\r{display_message}{' ' * (80 - len(display_message))}")
                 elif data_type == 'realtime_quote':  # 주식 호가
                     askp1 = output.get('매도호가1', 'N/A')
                     bidp1 = output.get('매수호가1', 'N/A')
@@ -754,7 +754,7 @@ class OrderExecutionService:
                     display_message = (
                         f"\r[실시간 호가 - {trade_time}] 종목: {stock_code}: 매도1: {askp1}, 매수1: {bidp1}{' ' * 20}"
                     )
-                    self.logger.debug(f"\r{display_message}{' ' * (80 - len(display_message))}", end="")
+                    self.logger.debug(f"\r{display_message}{' ' * (80 - len(display_message))}")
                 elif data_type == 'signing_notice':  # 체결 통보
                     order_num = output.get('주문번호', 'N/A')
                     trade_qty = output.get('체결수량', 'N/A')

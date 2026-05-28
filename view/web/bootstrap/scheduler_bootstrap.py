@@ -10,7 +10,6 @@ BackgroundScheduler / ForegroundScheduler 생성 자체는 mode 와 무관하게
 """
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 
 from config.task_config_loader import load_after_market_delays
@@ -50,9 +49,6 @@ class SchedulerBootstrap:
 
             self._create_foreground_scheduler()
 
-            # 가격 구독 초기화: 웹 화면 + 장중 전략 양쪽이 의존. BATCH 단독에서는 불필요.
-            if mode & (RuntimeMode.WEB | RuntimeMode.TRADING):
-                asyncio.create_task(ctx._initialize_price_subscriptions())
         except Exception as e:
             ctx.logger.critical(f"[SchedulerBootstrap] 초기화 실패: {e}", exc_info=True)
             raise

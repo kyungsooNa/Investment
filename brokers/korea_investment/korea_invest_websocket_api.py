@@ -356,7 +356,10 @@ class KoreaInvestWebSocketAPI:
 
             # 외부 콜백 함수로 파싱된 데이터 전달
             if self.on_realtime_message_callback:
-                self.on_realtime_message_callback({'type': message_type, 'tr_id': tr_id, 'data': parsed_data})
+                try:
+                    self.on_realtime_message_callback({'type': message_type, 'tr_id': tr_id, 'data': parsed_data})
+                except Exception as exc:
+                    self._logger.error(f"실시간 콜백 처리 중 오류: {exc}", exc_info=True)
 
         else:  # 제어 메시지 (응답, PINGPONG 등)
             try:

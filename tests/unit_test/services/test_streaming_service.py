@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from services.streaming_service import StreamingService
@@ -20,6 +21,7 @@ def mock_broker():
     broker.subscribe_unified_price = AsyncMock()
     broker.unsubscribe_unified_price = AsyncMock()
     broker.get_program_trade_by_stock_daily = AsyncMock()
+    broker.is_websocket_receive_alive = MagicMock(return_value=False)
     return broker
 
 @pytest.fixture
@@ -137,6 +139,38 @@ async def test_connect_websocket_no_callback(streaming_service, mock_broker):
     """connect_websocket: 콜백 없이 호출 시 None이 전달됨"""
     await streaming_service.connect_websocket()
     mock_broker.connect_websocket.assert_awaited_with(None)
+
+
+@pytest.mark.asyncio
+async def test_connect_websocket_skips_duplicate_when_receive_alive(streaming_service, mock_broker):
+    """이미 수신 task가 살아있으면 중복 connect를 보내지 않는다."""
+    mock_broker.is_websocket_receive_alive.return_value = True
+
+    assert await streaming_service.connect_websocket() is True
+
+    mock_broker.connect_websocket.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_connect_websocket_serializes_concurrent_calls(streaming_service, mock_broker):
+    """동시 connect 요청은 하나만 브로커에 전달하고 후속 요청은 살아있는 연결을 재사용한다."""
+    release = asyncio.Event()
+    mock_broker.is_websocket_receive_alive.side_effect = [False, True]
+
+    async def slow_connect(callback):
+        await release.wait()
+        return True
+
+    mock_broker.connect_websocket.side_effect = slow_connect
+
+    first = asyncio.create_task(streaming_service.connect_websocket())
+    await asyncio.sleep(0)
+    second = asyncio.create_task(streaming_service.connect_websocket())
+    await asyncio.sleep(0)
+    release.set()
+
+    assert await asyncio.gather(first, second) == [True, True]
+    mock_broker.connect_websocket.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_subscribe_unsubscribe_program_trading(streaming_service, mock_broker):
@@ -549,6 +583,30 @@ def test_dispatch_realtime_message_program_trading(streaming_service):
     debug_calls_str = str(streaming_service.logger.debug.call_args_list)
     assert "[프로그램매매 - 100000]" in debug_calls_str
     assert "순매수거래대금: 5000" in debug_calls_str
+
+
+def test_dispatch_program_trading_with_standard_logger_does_not_raise(
+    mock_broker, mock_market_clock, mock_market_data_service
+):
+    """logging.Logger는 print의 end 인자를 받지 않으므로 표준 로거에서도 예외가 없어야 한다."""
+    logger = logging.getLogger("test.streaming.standard")
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(logging.NullHandler())
+    service = StreamingService(
+        broker_api_wrapper=mock_broker,
+        logger=logger,
+        market_clock=mock_market_clock,
+        market_data_service=mock_market_data_service,
+    )
+    service._last_console_print_time = 0.0
+
+    service.dispatch_realtime_message({
+        'type': 'realtime_program_trading',
+        'data': {
+            '주식체결시간': '100000',
+            '순매수거래대금': '5000',
+        },
+    })
 
 
 def test_dispatch_realtime_message_signing_notice(streaming_service):

@@ -298,6 +298,42 @@ async def test_lifecycle_methods(mock_deps):
     await ctx.shutdown()
     ctx.background_scheduler.shutdown.assert_awaited_once()
 
+
+def test_start_background_tasks_schedules_price_subscription_init(mock_deps):
+    """가격 구독 초기화는 background start 시점에 task로 시작하고 context에 보관한다."""
+    ctx = WebAppContext(None)
+    ctx.background_scheduler = None
+    ctx.price_subscription_service = MagicMock()
+    ctx._initialize_price_subscriptions = AsyncMock()
+
+    created = MagicMock()
+
+    def fake_create_task(coro):
+        coro.close()
+        return created
+
+    with patch("view.web.web_app_initializer.asyncio.create_task", side_effect=fake_create_task) as mock_create_task:
+        ctx.start_background_tasks()
+
+    mock_create_task.assert_called_once()
+    assert ctx._price_subscription_init_task is created
+
+
+def test_start_background_tasks_does_not_duplicate_price_subscription_init(mock_deps):
+    """이미 초기 가격 구독 task가 실행 중이면 중복 생성하지 않는다."""
+    ctx = WebAppContext(None)
+    ctx.background_scheduler = None
+    ctx.price_subscription_service = MagicMock()
+    running = MagicMock()
+    running.done.return_value = False
+    ctx._price_subscription_init_task = running
+
+    with patch("view.web.web_app_initializer.asyncio.create_task") as mock_create_task:
+        ctx.start_background_tasks()
+
+    mock_create_task.assert_not_called()
+
+
 def test_web_realtime_callback(mock_deps):
     """웹소켓 콜백 처리 테스트"""
     ctx = WebAppContext(None)
@@ -876,6 +912,25 @@ async def test_shutdown_cancels_pending_refresh_tasks_and_stops_broker(mock_deps
     mock_gather.assert_awaited_once_with(pending, return_exceptions=True)
     assert ctx._pending_rest_price_refresh_tasks == {}
     ctx.broker.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_price_subscription_init_task(mock_deps):
+    """shutdown은 초기 가격 구독 task도 취소해 pending task를 남기지 않는다."""
+    ctx = WebAppContext(None)
+    init_task = MagicMock()
+    init_task.done.return_value = False
+    init_task.cancel = MagicMock()
+    ctx._price_subscription_init_task = init_task
+    ctx.background_scheduler = None
+    ctx.broker = None
+
+    with patch("view.web.web_app_initializer.asyncio.gather", new=AsyncMock()) as mock_gather:
+        await ctx.shutdown()
+
+    init_task.cancel.assert_called_once()
+    mock_gather.assert_awaited_once_with(init_task, return_exceptions=True)
+    assert ctx._price_subscription_init_task is None
 
 
 @pytest.mark.asyncio
