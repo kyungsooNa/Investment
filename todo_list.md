@@ -338,13 +338,16 @@
 
 ### 3-5. tick-size 로직 단일화
 
-- [ ] `BacktestExecutionSimulator.tick_size()`를 `utils.korea_invest_price_utils.get_tick_size()`로 대체하거나 공통 utility를 broker-neutral 이름으로 승격한다.
-- [ ] backtest BUY/SELL tick rounding과 live 주문 가격 보정의 방향성 차이(매수 올림/매도 내림 vs live 지정가 내림)를 의도적으로 문서화한다.
-- [ ] 테스트: tick boundary fixture를 단일 테스트 데이터로 backtest/live utility 양쪽에 적용한다.
+- [x] `BacktestExecutionSimulator.tick_size()`를 `utils.korea_invest_price_utils.get_tick_size()`로 대체하거나 공통 utility를 broker-neutral 이름으로 승격한다.
+  - 적용 완료: `BacktestExecutionSimulator.tick_size()`의 중복 호가단위 표를 제거하고 `get_tick_size()` 단일 소스로 위임. 메서드 시그니처는 기존 테스트/`round_to_tick` 호환을 위해 유지.
+- [x] backtest BUY/SELL tick rounding과 live 주문 가격 보정의 방향성 차이(매수 올림/매도 내림 vs live 지정가 내림)를 의도적으로 문서화한다.
+  - 적용 완료: `round_to_tick()`에 주석으로 명시(backtest=보수적 체결가 매수 올림/매도 내림, live `adjust_price`=항상 내림).
+- [x] 테스트: tick boundary fixture를 단일 테스트 데이터로 backtest/live utility 양쪽에 적용한다.
+  - 적용 완료: `TICK_SIZE_FIXTURE` 단일 경계 데이터로 `sim.tick_size()`와 `get_tick_size()` parity 검증 (`test_backtest_and_live_share_single_tick_size_table`).
 
 판단:
 
-- 현재 backtest와 live에 동일한 호가단위 표가 중복되어 있다. 지금 값은 일치하지만, KRX/NXT 또는 호가단위 변경 시 한쪽만 바뀌면 replay와 live가 벌어진다.
+- (해소) backtest와 live의 호가단위 표 중복을 단일 소스로 통일했다. 향후 KRX/NXT 변경 시 `get_tick_size()` 한 곳만 바꾸면 되고, parity 테스트가 재중복을 차단한다.
 
 주요 파일:
 
