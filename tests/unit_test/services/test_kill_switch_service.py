@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -414,3 +415,22 @@ async def test_state_load_missing_file_is_noop(cfg, mock_notif, logger, tmp_path
     cfg2 = cfg.model_copy(update={"state_file_path": str(tmp_path / "nonexistent.json")})
     ks = KillSwitchService(cfg2, mock_notif, logger)
     assert ks._is_tripped is False
+
+
+async def test_save_state_atomic_preserves_file_on_write_failure(cfg, mock_notif, logger, tmp_path):
+    """P0 0-11: 저장 중 예외가 나도 기존 상태 파일이 truncate 되지 않고 temp 도 남지 않는다."""
+    state_file = tmp_path / "ks_state.json"
+    cfg2 = cfg.model_copy(update={"state_file_path": str(state_file)})
+    ks = KillSwitchService(cfg2, mock_notif, logger)
+
+    ks._save_state()  # 정상 저장 1회 → 파일 생성
+    original = state_file.read_text(encoding="utf-8")
+    assert original.strip()
+
+    # 실제 atomic util 의 json.dump 단계에서 예외 강제 → temp 생성 후 실패 → 정리 + 원본 보존
+    with patch("utils.atomic_json.json.dump", side_effect=RuntimeError("boom")):
+        ks._save_state()  # _save_state 가 예외를 흡수(log)
+
+    assert state_file.read_text(encoding="utf-8") == original
+    leftover = [p for p in os.listdir(tmp_path) if p.endswith(".tmp")]
+    assert leftover == []
