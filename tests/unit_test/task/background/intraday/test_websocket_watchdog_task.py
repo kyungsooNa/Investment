@@ -398,6 +398,82 @@ async def test_force_reconnect_calls_connect_without_callback(watchdog_task, moc
 
 
 @pytest.mark.asyncio
+async def test_force_reconnect_skips_concurrent_request(watchdog_task):
+    """이미 재연결 중이면 중복 disconnect/restore를 실행하지 않는다."""
+    svc = watchdog_task
+    svc._streaming_stock_repo.get_desired.return_value = {"005930"}
+
+    release = asyncio.Event()
+
+    async def slow_restore():
+        await release.wait()
+
+    svc._restore_all_subscriptions = AsyncMock(side_effect=slow_restore)
+
+    first = asyncio.create_task(svc.force_reconnect(trigger="receive_task_dead"))
+    await asyncio.sleep(0)
+    second = asyncio.create_task(svc.force_reconnect(trigger="price_data_gap_181s"))
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(first, second)
+
+    svc._streaming_service.disconnect_websocket.assert_awaited_once()
+    svc._restore_all_subscriptions.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_force_reconnect_cooldown_skips_immediate_repeat(watchdog_task):
+    """재연결 직후 cooldown 안의 반복 요청은 중복 실행하지 않는다."""
+    svc = watchdog_task
+    svc._streaming_stock_repo.get_desired.return_value = {"005930"}
+    svc._restore_all_subscriptions = AsyncMock()
+
+    await svc.force_reconnect(trigger="receive_task_dead")
+    await svc.force_reconnect(trigger="receive_task_dead")
+
+    svc._streaming_service.disconnect_websocket.assert_awaited_once()
+    svc._restore_all_subscriptions.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_force_reconnect_resolves_operator_alert_only_when_all_subs_restored(watchdog_task):
+    """재연결 알림은 desired 구독이 모두 active로 복원된 경우에만 해제한다."""
+    svc = watchdog_task
+    svc._oas = MagicMock()
+    svc._oas.resolve = AsyncMock()
+    svc._oas.report = AsyncMock()
+    svc._streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    svc._streaming_stock_repo.get_active.return_value = {"005930"}
+    svc._restore_all_subscriptions = AsyncMock()
+
+    await svc.force_reconnect(trigger="receive_task_dead")
+
+    svc._oas.resolve.assert_awaited_once()
+    svc._oas.report.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_force_reconnect_keeps_operator_alert_open_when_restore_incomplete(watchdog_task):
+    """복원이 미완료이면 완료 알림을 보내지 않고 장애 알림을 유지한다."""
+    svc = watchdog_task
+    svc._oas = MagicMock()
+    svc._oas.resolve = AsyncMock()
+    svc._oas.report = AsyncMock()
+    svc._streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    svc._streaming_stock_repo.get_active.return_value = set()
+    svc._restore_all_subscriptions = AsyncMock()
+
+    await svc.force_reconnect(trigger="receive_task_dead")
+
+    svc._oas.resolve.assert_not_awaited()
+    svc._oas.report.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_stop_cancels_all_tasks(watchdog_task):
     """stop이 모든 추적 중인 태스크를 취소하는지 검증."""
     svc = watchdog_task
@@ -767,6 +843,50 @@ async def test_streaming_watchdog_receive_task_dead(watchdog_task):
             pass
 
     svc.force_reconnect.assert_called_once_with(trigger="receive_task_dead")
+
+
+@pytest.mark.asyncio
+async def test_streaming_watchdog_does_not_alert_on_first_reconnect_trigger(watchdog_task):
+    """일시적인 첫 재연결 트리거는 operator alert를 열지 않는다."""
+    svc = watchdog_task
+    svc._oas = MagicMock()
+    svc._oas.report = AsyncMock()
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.return_value = {"005930"}
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = False
+    svc._intentionally_disconnected = False
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._streaming_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc.force_reconnect.assert_called_once_with(trigger="receive_task_dead")
+    svc._oas.report.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_streaming_watchdog_alerts_on_repeated_reconnect_trigger(watchdog_task):
+    """같은 재연결 트리거가 연속 감지되면 operator alert를 연다."""
+    svc = watchdog_task
+    svc._oas = MagicMock()
+    svc._oas.report = AsyncMock()
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.return_value = {"005930"}
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = False
+    svc._intentionally_disconnected = False
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(2)):
+        try:
+            await svc._streaming_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    assert svc.force_reconnect.call_count == 2
+    svc._oas.report.assert_awaited_once()
 
 
 @pytest.mark.asyncio

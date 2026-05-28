@@ -34,6 +34,8 @@ class WebSocketWatchdogTask(SchedulableTask):
     PRICE_DATA_GAP_THRESHOLD_SEC = 180
     PRICE_SUBSCRIPTION_GRACE_SEC = 30
     SUBSCRIBED_NO_TICK_REFRESH_COOLDOWN_SEC = 300
+    RECONNECT_COOLDOWN_SEC = 10.0
+    RECONNECT_ALERT_CONFIRMATION_COUNT = 2
 
     def __init__(
         self,
@@ -67,6 +69,9 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._market_open: Optional[bool] = None  # 가장 최근 시장 개장 여부 (워치독 루프에서 갱신)
         self._intentionally_disconnected: bool = False  # 장 마감으로 인한 의도적 연결 종료 여부
         self._last_subscribed_no_tick_refresh_ts: Dict[str, float] = {}
+        self._reconnect_lock = asyncio.Lock()
+        self._last_reconnect_started_ts: float = 0.0
+        self._reconnect_trigger_counts: Dict[str, int] = {}
 
     # ── SchedulableTask 인터페이스 구현 ────────────────────────
 
@@ -276,19 +281,40 @@ class WebSocketWatchdogTask(SchedulableTask):
 
                 if reconnect_trigger:
                     self._intentionally_disconnected = False
-                    if self._oas and reconnect_trigger != "market_open":
+                    should_report_reconnect = self._should_report_reconnect_trigger(reconnect_trigger)
+                    if self._oas and reconnect_trigger != "market_open" and should_report_reconnect:
                         await self._oas.report(
                             AlertSource.WEBSOCKET_WATCHDOG, "websocket_watchdog:reconnect",
                             "error", "WebSocket 재연결 트리거",
                             f"trigger={reconnect_trigger}",
                         )
                     await self.force_reconnect(trigger=reconnect_trigger)
+                else:
+                    self._reconnect_trigger_counts.clear()
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 if self._streaming_logger:
                     self._streaming_logger.log_watchdog_error(str(e))
+
+    def _should_report_reconnect_trigger(self, trigger: str) -> bool:
+        """일시적 흔들림 알림을 줄이기 위해 같은 재연결 원인이 연속 감지될 때만 알린다."""
+        if trigger == "market_open":
+            return False
+
+        key = self._normalize_reconnect_trigger(trigger)
+        count = self._reconnect_trigger_counts.get(key, 0) + 1
+        self._reconnect_trigger_counts = {key: count}
+        return count >= self.RECONNECT_ALERT_CONFIRMATION_COUNT
+
+    @staticmethod
+    def _normalize_reconnect_trigger(trigger: str) -> str:
+        if trigger.startswith("pt_data_gap_"):
+            return "pt_data_gap"
+        if trigger.startswith("price_data_gap_"):
+            return "price_data_gap"
+        return trigger
 
     async def _refresh_subscribed_no_tick_codes(self, codes: List[str]) -> None:
         """첫 틱이 오지 않는 가격 구독을 개별 재요청한다."""
@@ -466,37 +492,80 @@ class WebSocketWatchdogTask(SchedulableTask):
         if not pt_codes and not has_price_subs:
             return
 
-        t_start = self.pm.start_timer()
-        if self._streaming_logger:
-            self._streaming_logger.log_force_reconnect_start(trigger, pt_codes)
+        if self._reconnect_lock.locked():
+            self._logger.info(f"[WebSocketWatchdog] 재연결 진행 중 — 중복 요청 생략 trigger={trigger}")
+            return
 
-        try:
-            await self._streaming_service.disconnect_websocket()
-        except Exception as e:
+        now = time.monotonic()
+        if self._last_reconnect_started_ts > 0 and (now - self._last_reconnect_started_ts) < self.RECONNECT_COOLDOWN_SEC:
+            self._logger.info(f"[WebSocketWatchdog] 재연결 cooldown 중 — 요청 생략 trigger={trigger}")
+            return
+
+        async with self._reconnect_lock:
+            now = time.monotonic()
+            if self._last_reconnect_started_ts > 0 and (now - self._last_reconnect_started_ts) < self.RECONNECT_COOLDOWN_SEC:
+                self._logger.info(f"[WebSocketWatchdog] 재연결 cooldown 중 — 요청 생략 trigger={trigger}")
+                return
+            self._last_reconnect_started_ts = now
+
+            t_start = self.pm.start_timer()
             if self._streaming_logger:
-                self._streaming_logger.log_force_reconnect_disconnect_error(str(e))
+                self._streaming_logger.log_force_reconnect_start(trigger, pt_codes)
 
-        await self._restore_all_subscriptions()
+            try:
+                await self._streaming_service.disconnect_websocket()
+            except Exception as e:
+                if self._streaming_logger:
+                    self._streaming_logger.log_force_reconnect_disconnect_error(str(e))
 
-        if self._oas and trigger != "market_open":
-            await self._oas.resolve(
-                AlertSource.WEBSOCKET_WATCHDOG, "websocket_watchdog:reconnect",
-                f"재연결 완료 trigger={trigger}",
-            )
+            await self._restore_all_subscriptions()
 
-        if self._streaming_logger:
-            from repositories.streaming_stock_repo import StreamingType
-            active_pt = len(self._streaming_stock_repo.get_active(StreamingType.PROGRAM_TRADING)) \
-                if self._streaming_stock_repo else 0
-            self._streaming_logger.log_reconnect(
-                trigger=trigger,
-                codes=pt_codes,
-                success=active_pt,
-                total=len(pt_codes),
-            )
-        self.pm.log_timer(f"WebSocketWatchdogTask.force_reconnect({trigger})", t_start)
-        if self._streaming_logger:
-            self._streaming_logger.log_force_reconnect_done(trigger)
+            restored_count, desired_count = self._get_reconnect_restore_counts(pt_codes)
+            if self._oas and trigger != "market_open":
+                if restored_count >= desired_count:
+                    await self._oas.resolve(
+                        AlertSource.WEBSOCKET_WATCHDOG, "websocket_watchdog:reconnect",
+                        f"재연결 완료 trigger={trigger}",
+                    )
+                else:
+                    await self._oas.report(
+                        AlertSource.WEBSOCKET_WATCHDOG, "websocket_watchdog:reconnect",
+                        "error", "WebSocket 재연결 미완료",
+                        f"trigger={trigger} restored={restored_count}/{desired_count}",
+                    )
+
+            if self._streaming_logger:
+                from repositories.streaming_stock_repo import StreamingType
+                active_pt = len(self._streaming_stock_repo.get_active(StreamingType.PROGRAM_TRADING)) \
+                    if self._streaming_stock_repo else 0
+                self._streaming_logger.log_reconnect(
+                    trigger=trigger,
+                    codes=pt_codes,
+                    success=active_pt,
+                    total=len(pt_codes),
+                )
+            self.pm.log_timer(f"WebSocketWatchdogTask.force_reconnect({trigger})", t_start)
+            if self._streaming_logger:
+                self._streaming_logger.log_force_reconnect_done(trigger)
+
+    def _get_reconnect_restore_counts(self, pt_codes: List[str]) -> tuple[int, int]:
+        """재연결 후 desired 구독 대비 active 복원 개수를 계산한다."""
+        from repositories.streaming_stock_repo import StreamingType
+
+        desired_pt_codes = set(pt_codes)
+        active_pt_codes = set()
+        if self._streaming_stock_repo:
+            active_pt_codes = set(self._streaming_stock_repo.get_active(StreamingType.PROGRAM_TRADING))
+
+        desired_price_codes = set()
+        active_price_codes = set()
+        if self._price_subscription_service:
+            desired_price_codes = set(getattr(self._price_subscription_service, "_refs", {}).keys())
+            active_price_codes = set(getattr(self._price_subscription_service, "_active_codes_price", set()))
+
+        desired_count = len(desired_pt_codes) + len(desired_price_codes)
+        restored_count = len(desired_pt_codes & active_pt_codes) + len(desired_price_codes & active_price_codes)
+        return restored_count, desired_count
 
     async def force_reconnect_program_trading(self, trigger: str = "manual") -> None:
         """하위호환 alias — force_reconnect()로 위임한다."""
