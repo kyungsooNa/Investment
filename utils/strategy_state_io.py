@@ -20,8 +20,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import tempfile
 from typing import Any, Dict, Optional, Set
+
+from utils.atomic_json import write_json_atomic
 
 
 class StrategyStateIO:
@@ -69,25 +70,8 @@ class StrategyStateIO:
 
     @staticmethod
     def _write_atomic(file_path: str, data: Any) -> None:
-        directory = os.path.dirname(file_path) or "."
-        os.makedirs(directory, exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(
-            prefix=os.path.basename(file_path) + ".",
-            suffix=".tmp",
-            dir=directory,
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, file_path)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        # P0 0-11: 공통 atomic util 에 위임 (tempfile → fsync → os.replace).
+        write_json_atomic(file_path, data, indent=2, ensure_ascii=False)
 
     @classmethod
     async def load(cls, file_path: str) -> Optional[Any]:

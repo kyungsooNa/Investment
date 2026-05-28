@@ -20,6 +20,7 @@ from core.logger import get_strategy_logger
 from utils.async_concurrency import bounded_gather
 from utils.strategy_state_io import StrategyStateIO
 from utils.transaction_cost_utils import TransactionCostUtils
+from utils.atomic_json import write_json_atomic
 
 
 # 청산/exit 동시성 상한. entry chunk_size(10)보다 높게 두어 손절/청산이 entry scan 보다
@@ -651,10 +652,9 @@ class FirstPullbackStrategy(LiveStrategy):
         except RuntimeError:
             # 이벤트 루프 없음 → 동기 저장
             try:
-                os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
                 data = {"positions": {k: asdict(v) for k, v in self._position_state.items()}, "cooldown": self._cooldown}
-                with open(self.STATE_FILE, "w") as f:
-                    json.dump(data, f, indent=2)
+                # P0 0-11: atomic write (truncate-write 대체)
+                write_json_atomic(self.STATE_FILE, data, indent=2, ensure_ascii=False)
             except Exception as e:
                 self._logger.error(f"Failed to save state for {self.name}: {e}")
             return

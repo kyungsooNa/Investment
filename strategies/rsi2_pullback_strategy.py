@@ -20,6 +20,7 @@ from strategies.rsi2_pullback_types import RSI2PullbackConfig, RSI2PositionState
 from utils.async_concurrency import bounded_gather
 from utils.strategy_state_io import StrategyStateIO
 from utils.transaction_cost_utils import TransactionCostUtils
+from utils.atomic_json import write_json_atomic
 
 
 _MINERVINI_STAGE_2 = 2  # services.minervini_stage_service.MinerviniStageService.STAGE_2_ADVANCING
@@ -426,13 +427,12 @@ class RSI2PullbackStrategy(LiveStrategy):
             asyncio.get_running_loop()
         except RuntimeError:
             try:
-                os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
                 payload = {
                     "positions": {k: asdict(v) for k, v in self._position_state.items()},
                     "cooldown": dict(self._cooldown),
                 }
-                with open(self.STATE_FILE, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, ensure_ascii=False, indent=2)
+                # P0 0-11: atomic write (truncate-write 대체)
+                write_json_atomic(self.STATE_FILE, payload, indent=2, ensure_ascii=False)
             except Exception as e:
                 self._logger.error(f"Failed to save state for {self.name}: {e}")
             return

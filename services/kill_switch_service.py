@@ -11,6 +11,7 @@ from common.operator_alert_types import AlertSource
 from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER
 from config.config_loader import KillSwitchConfig
 from services.notification_service import NotificationCategory, NotificationLevel, NotificationService
+from utils.atomic_json import write_json_atomic
 
 if TYPE_CHECKING:
     from config.config_loader import RiskGateConfig
@@ -493,7 +494,9 @@ class KillSwitchService:
                 "strategy_consecutive_losses": self._strategy_consecutive_losses,
                 "strategy_daily_loss_won": self._strategy_daily_loss_won,
             }
-            self._state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+            # P0 0-11: atomic write (tempfile → fsync → os.replace) — 강제 종료/쓰기 실패 시
+            # 기존 상태 파일 truncate 방지. 기존 truncate-write(write_text) 대체.
+            write_json_atomic(str(self._state_path), state, indent=2, ensure_ascii=False)
         except Exception as e:
             self._logger.error("[KillSwitch] 상태 저장 실패: %s", e)
 

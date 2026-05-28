@@ -18,6 +18,7 @@ from services.oneil_universe_service import OneilUniverseService
 from core.logger import get_strategy_logger
 from utils.volatility_utils import annualized_return_std
 from utils.strategy_state_io import StrategyStateIO
+from utils.atomic_json import write_json_atomic
 from utils.async_concurrency import bounded_gather
 from utils.transaction_cost_utils import TransactionCostUtils
 
@@ -690,10 +691,9 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         except RuntimeError:
             # 이벤트 루프 없음 → 동기 저장
             try:
-                os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
                 data = {"positions": {k: asdict(v) for k, v in self._position_state.items()}, "cooldown": self._cooldown}
-                with open(self.STATE_FILE, "w") as f:
-                    json.dump(data, f, indent=2)
+                # P0 0-11: atomic write (truncate-write 대체)
+                write_json_atomic(self.STATE_FILE, data, indent=2, ensure_ascii=False)
             except Exception as e:
                 self._logger.error(f"Failed to save state for {self.name}: {e}")
             return
