@@ -13,6 +13,7 @@ from interfaces.live_strategy import LiveStrategy
 from services.stock_query_service import StockQueryService
 from strategies.base_strategy_config import BaseStrategyConfig
 from utils.async_concurrency import bounded_gather
+from utils.transaction_cost_utils import TransactionCostUtils
 from utils.volatility_utils import annualized_return_std
 
 if TYPE_CHECKING:
@@ -384,15 +385,16 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 if current <= 0:
                     continue
 
-                pnl_pct = (current - buy_price) / buy_price * 100
-                log_data.update({"current": current, "pnl_pct": round(pnl_pct, 2)})
+                # P0 0-9: 비용 반영 net 수익률 — backtest 와 동일 기준으로 stop trigger.
+                pnl_pct = TransactionCostUtils.net_return_pct(buy_price, current)
+                log_data.update({"current": current, "pnl_pct": round(pnl_pct, 2), "pnl_basis": "net"})
 
                 reason = ""
                 should_sell = False
 
-                # 칼손절: 진입가 대비 -3%
+                # 칼손절: 진입가 대비 -3% (net, P0 0-9)
                 if pnl_pct <= self._cfg.stop_loss_pct:
-                    reason = f"칼손절: 매수가대비 {pnl_pct:.1f}%"
+                    reason = f"칼손절(net): 매수가대비 {pnl_pct:.1f}%"
                     should_sell = True
 
                 # EOD 강제청산: 15:20

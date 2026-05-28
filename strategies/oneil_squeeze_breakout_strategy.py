@@ -19,6 +19,7 @@ from core.logger import get_strategy_logger
 from utils.volatility_utils import annualized_return_std
 from utils.strategy_state_io import StrategyStateIO
 from utils.async_concurrency import bounded_gather
+from utils.transaction_cost_utils import TransactionCostUtils
 
 
 # 청산/exit 동시성 상한. entry chunk_size(10)보다 높게 두어 손절/청산이 entry scan 보다
@@ -476,9 +477,12 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             state.peak_price = current
             state_dirty = True
 
+        # 가격 변동 비율 (gross) — MFE/MAE/log/peak 추적용. backtest 의 _bar_excursion 과 동일.
         pnl = float((current - buy_price) / buy_price * 100)
+        # P0 0-9: stop/익절 trigger 비교는 비용 반영 net 기준 — backtest 와 동일.
+        pnl_net = TransactionCostUtils.net_return_pct(buy_price, current)
 
-        # MFE / MAE 갱신
+        # MFE / MAE 갱신 (가격 변동 = gross)
         if pnl > state.mfe_pct:
             state.mfe_pct = round(pnl, 2)
             state_dirty = True
@@ -489,9 +493,9 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         reason = ""
         exit_volatility: float | None = None  # OHLCV 조회 경로에서만 채워짐 (시간손절/추세이탈)
 
-        # 0. 조기 부분익절: ref_price 대비 +7% 도달 시 30% 매도
+        # 0. 조기 부분익절: ref_price 대비 +7% 도달 시 30% 매도 (net, P0 0-9)
         ref_price = float(state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price)
-        pnl_from_ref = float((current - ref_price) / ref_price * 100)
+        pnl_from_ref = TransactionCostUtils.net_return_pct(ref_price, current)
         if pnl_from_ref >= self._cfg.early_partial_profit_pct:
             holding_qty = int(hold.get("qty", 1))
             sell_qty = max(1, int(holding_qty * self._cfg.early_partial_sell_ratio))
@@ -516,20 +520,21 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
             ))
             return signals, state_dirty
 
-        # 1. 손절
-        if pnl <= self._cfg.stop_loss_pct:
-            reason = f"손절({pnl:.1f}%)"
-        # 2. 트레일링 스탑 — 수익 게이트 적용 (peak_pnl >= trailing_min_peak_profit_pct 이후에만 발동)
+        # 1. 손절 (net, P0 0-9)
+        if pnl_net <= self._cfg.stop_loss_pct:
+            reason = f"손절(net {pnl_net:.1f}%)"
+        # 2. 트레일링 스탑 — peak/drop 은 가격 변동 자체 (gross 유지). 수익 게이트는 net 으로 검증.
         elif state.peak_price > 0:
             peak_pnl = float((state.peak_price - buy_price) / buy_price * 100)
-            if peak_pnl >= self._cfg.trailing_min_peak_profit_pct:
+            peak_pnl_net = TransactionCostUtils.net_return_pct(buy_price, state.peak_price)
+            if peak_pnl_net >= self._cfg.trailing_min_peak_profit_pct:
                 drop = float((current - state.peak_price) / state.peak_price * 100)
                 if drop <= -self._cfg.trailing_stop_pct:
-                    reason = f"트레일링스탑(고점수익 {peak_pnl:.1f}%, 낙폭 {drop:.1f}%)"
+                    reason = f"트레일링스탑(고점수익(net) {peak_pnl_net:.1f}%, 낙폭 {drop:.1f}%)"
 
-        # 2.5. 본절스탑: 부분익절 후 진입가 하회
+        # 2.5. 본절스탑: 부분익절 후 진입가 하회 (가격 기준 trigger, log 는 net 표시)
         if not reason and state.breakeven_armed and current < buy_price:
-            reason = f"본절스탑(부분익절 후 진입가 {buy_price:,} 하회 {pnl:.1f}%)"
+            reason = f"본절스탑(부분익절 후 진입가 {buy_price:,} 하회, net {pnl_net:.1f}%)"
 
         # 3·4. 시간손절 + 추세이탈 — OHLCV 1회 조회 후 양쪽에 전달
         if not reason:
@@ -555,7 +560,9 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
                 "event": "exit_signal_generated",
                 "code": code, "name": hold.get("name", code),
                 "reason": reason,
-                "pnl_pct": round(pnl, 2),
+                "pnl_pct": round(pnl, 2),       # gross (가격 변동) — backtest MFE/MAE 와 동일 기준
+                "pnl_net_pct": round(pnl_net, 2),  # P0 0-9: net (비용 반영) — trigger 비교 기준
+                "pnl_basis": "net_trigger_gross_log",
                 "mfe_pct": state.mfe_pct,
                 "mae_pct": state.mae_pct,
             })

@@ -19,6 +19,7 @@ from core.logger import get_strategy_logger
 from strategies.larry_williams_cb_types import LarryWilliamsCBConfig, LarryWilliamsCBPositionState
 from utils.async_concurrency import bounded_gather
 from utils.strategy_state_io import StrategyStateIO
+from utils.transaction_cost_utils import TransactionCostUtils
 
 
 # 청산/exit 동시성 상한. entry chunk_size(10)보다 높게 두어 손절/청산이 entry scan 보다
@@ -344,13 +345,14 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
         elif state and current < state.channel_low_10d:
             reason = f"트레일링 스탑: {current} < channel_low_10d {state.channel_low_10d}"
 
-        pnl_pct = (current - buy_price) / buy_price * 100.0 if buy_price > 0 else 0.0
+        # P0 0-9: log 의 pnl 표시도 net 기준 (trigger 자체는 가격 기반이라 net 무관).
+        pnl_pct = TransactionCostUtils.net_return_pct(buy_price, current) if buy_price > 0 else 0.0
 
         if reason:
             self._logger.info({
                 "event": "exit_signal_generated",
                 "code": code, "name": hold.get("name", code),
-                "reason": reason, "pnl_pct": round(pnl_pct, 2),
+                "reason": reason, "pnl_pct": round(pnl_pct, 2), "pnl_basis": "net",
             })
             self._position_state.pop(code, None)
             unblock = (self._tm.get_current_kst_time().date() + timedelta(days=self._cfg.cooldown_days)).strftime("%Y%m%d")

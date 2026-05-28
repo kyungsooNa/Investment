@@ -19,6 +19,7 @@ from core.logger import get_strategy_logger
 from strategies.rsi2_pullback_types import RSI2PullbackConfig, RSI2PositionState
 from utils.async_concurrency import bounded_gather
 from utils.strategy_state_io import StrategyStateIO
+from utils.transaction_cost_utils import TransactionCostUtils
 
 
 _MINERVINI_STAGE_2 = 2  # services.minervini_stage_service.MinerviniStageService.STAGE_2_ADVANCING
@@ -292,15 +293,16 @@ class RSI2PullbackStrategy(LiveStrategy):
         ma200 = self._latest_ma(ma_resps[0])
         ma5 = self._latest_ma(ma_resps[1])
 
-        pnl_pct = (current - buy_price) / buy_price * 100.0
+        # P0 0-9: 비용 반영 net 수익률 — backtest 와 동일 기준으로 stop trigger.
+        pnl_pct = TransactionCostUtils.net_return_pct(buy_price, current)
         reason: Optional[str] = None
 
         # 1) 추세 붕괴: 종가 < 200MA → 손절 (Stage 2 가정 무너짐)
         if ma200 is not None and current < ma200:
             reason = f"추세 붕괴 손절: 현재가 {current} < 200MA {ma200:.0f}"
-        # 2) 하드 스탑: 진입가 대비 -5%
+        # 2) 하드 스탑: 진입가 대비 -5% (net, P0 0-9)
         elif pnl_pct <= self._cfg.hard_stop_pct:
-            reason = f"하드 스탑 손절: PnL {pnl_pct:.2f}% ≤ {self._cfg.hard_stop_pct}%"
+            reason = f"하드 스탑 손절: PnL(net) {pnl_pct:.2f}% ≤ {self._cfg.hard_stop_pct}%"
         # 3) 빠른 복귀 익절: 종가가 5MA 터치
         elif ma5 is not None and current >= ma5:
             reason = f"5MA 터치 익절: 현재가 {current} ≥ 5MA {ma5:.0f}"
@@ -314,6 +316,7 @@ class RSI2PullbackStrategy(LiveStrategy):
             "code": code, "name": hold.get("name", code),
             "reason": reason,
             "pnl_pct": round(pnl_pct, 2),
+            "pnl_basis": "net",  # P0 0-9: pnl_pct 가 net (비용 반영) 임을 명시
         })
 
         # 손절성 청산은 쿨다운 등록
