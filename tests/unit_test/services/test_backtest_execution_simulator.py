@@ -9,6 +9,25 @@ from services.backtest_execution_simulator import (
     OrderType,
     OrderStatus,
 )
+from utils.korea_invest_price_utils import get_tick_size
+
+# 호가단위 경계 fixture (price, expected_tick). backtest/live utility 양쪽에 같은 데이터로 적용.
+TICK_SIZE_FIXTURE = [
+    (1, 1),
+    (1_999, 1),
+    (2_000, 5),
+    (4_999, 5),
+    (5_000, 10),
+    (19_999, 10),
+    (20_000, 50),
+    (49_999, 50),
+    (50_000, 100),
+    (199_999, 100),
+    (200_000, 500),
+    (499_999, 500),
+    (500_000, 1_000),
+    (1_000_000, 1_000),
+]
 
 
 def make_order(code="X", qty=10, price=100.0, side=OrderSide.BUY, order_type=OrderType.LIMIT):
@@ -79,6 +98,15 @@ def test_tick_size_boundaries_and_rounding():
     rounded_sell = sim.round_to_tick(price, side=OrderSide.SELL)
     assert rounded_buy >= price
     assert rounded_sell <= price
+
+
+def test_backtest_and_live_share_single_tick_size_table():
+    sim = BacktestExecutionSimulator()
+    for price, expected_tick in TICK_SIZE_FIXTURE:
+        assert sim.tick_size(price) == expected_tick
+        assert get_tick_size(price) == expected_tick
+        # 동일 fixture에서 backtest와 live utility가 같은 호가단위를 내야 한다.
+        assert sim.tick_size(price) == get_tick_size(price)
 import pytest
 
 from services.backtest_execution_simulator import (

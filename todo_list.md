@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-26 (main 최신 코드 리뷰 반영 — canary/profile/API budget/broker mapper/event-driven 잔여 리스크 재정리)
+최종 업데이트: 2026-05-28 (P0 0-8~0-11 완료 반영 + P3 3-5 tick-size 단일화 완료)
 
 이 문서는 현재 남은 실행 항목만 추린 목록이다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거한다. 100% 종료된 섹션(`[x]` only, follow-up 없음)은 git history 로 추적하고 본 문서에서 삭제한다.
 
@@ -16,10 +16,10 @@
 
 - P0 0-1: 실전 체결 이력 확보 후 broker order mapper 분리 + fixture 회귀 잠금.
 - P0 0-7: ~~canary 5% 노출 제한을 코드/config profile로 분리하고 real 기본 30%와 운영 혼동을 제거.~~ ✅ 완료 (2026-05-27).
-- P0 0-8: 라이브 전략 일봉 지표에서 당일 미완성 봉 제외 옵션을 도입한다.
-- P0 0-9: 라이브 손절/익절 판단을 gross PnL이 아닌 비용 반영 net PnL 기준으로 통일한다.
-- P0 0-10: 같은 사이클의 신규 BUY에 대해 pending/reserved cash 및 종목별 전 전략 합산 노출을 반영한다.
-- P0 0-11: kill switch 및 sync fallback state 저장을 atomic write로 통일한다.
+- P0 0-8: ~~라이브 전략 일봉 지표에서 당일 미완성 봉 제외 옵션을 도입한다.~~ ✅ 완료 (2026-05-28, #478). 지표 API + RSI2 + ATR sizing 적용. 나머지 전략 MA/RSI 라이브 호출 rollout은 후속.
+- P0 0-9: ~~라이브 손절/익절 판단을 gross PnL이 아닌 비용 반영 net PnL 기준으로 통일한다.~~ ✅ 완료 (2026-05-28, #479).
+- P0 0-10: ~~같은 사이클의 신규 BUY에 대해 pending/reserved cash를 반영한다.~~ ✅ 완료 (2026-05-28, #480). 종목별 전 전략 합산 노출 상한(hard-block/qty cap)은 후속 결정.
+- P0 0-11: ~~kill switch 및 sync fallback state 저장을 atomic write로 통일한다.~~ ✅ 완료 (2026-05-28, #481).
 - P1 1-5: 한국장 microstructure fixture 로 체결 모델 보수성 검증.
 - P1 1-6: 실전 journal/shadow/paper/live 성과 데이터로 profitability gate의 실제 통과 근거 확보.
 - P1 1-7: multiple testing proxy를 formal walk-forward / purged validation / PBO·Deflated Sharpe급 검증으로 확장할지 결정.
@@ -79,12 +79,14 @@
 
 ---
 
-### 0-8. 라이브 일봉 지표에서 당일 미완성 봉 제외
+### 0-8. 라이브 일봉 지표에서 당일 미완성 봉 제외 — ✅ 완료 (#478, 2026-05-28)
 
-- [ ] `IndicatorService.get_rsi()`, `get_moving_average()`, `calculate_atr()`에 `exclude_today: bool = False` 또는 동등 옵션을 추가한다.
-- [ ] 라이브 전략 호출 경로는 기본적으로 당일 미완성 봉을 제외하도록 변경한다. 특히 RSI(2), 5MA/200MA exit, ATR 기반 sizing 경로를 우선 고정한다.
-- [ ] 차트/리포트 UI처럼 장중 현재 봉 표시가 필요한 경로는 기존 동작을 유지하거나 명시적으로 `exclude_today=False`를 사용한다.
-- [ ] 테스트: 장중 `MarketDataService.get_ohlcv("D")`가 today row를 병합해도 라이브 지표 호출은 전일 확정 봉까지만 사용함을 검증한다.
+- [x] `IndicatorService.get_rsi()`, `get_moving_average()`, `calculate_atr()`에 `exclude_today: bool = False` 옵션을 추가했다.
+- [~] 라이브 전략 호출 경로는 기본적으로 당일 미완성 봉을 제외하도록 변경한다.
+  - 적용 완료: RSI(2) 경로(`RSI2PullbackStrategy`)와 ATR 기반 sizing(`PositionSizingService` `exclude_today=True`).
+  - 후속: 그 외 활성 전략의 MA/RSI 라이브 호출은 아직 `exclude_today`를 전달하지 않는다. 해당 전략이 일봉 지표로 라이브 신호를 내는 경로만 선별 적용 필요.
+- [x] 차트/리포트 UI 등 장중 현재 봉 표시가 필요한 경로는 기본값 `exclude_today=False`로 기존 동작을 유지한다.
+- [x] 테스트: 장중 today row 병합 시에도 라이브 지표 호출이 전일 확정 봉까지만 사용함을 `test_indicator_service.py`에 고정했다.
 
 판단:
 
@@ -101,12 +103,12 @@
 
 ---
 
-### 0-9. 라이브 exit 판단을 net PnL 기준으로 통일
+### 0-9. 라이브 exit 판단을 net PnL 기준으로 통일 — ✅ 완료 (#479, 2026-05-28)
 
-- [ ] 활성 라이브 전략의 손절/익절 판단에서 `pnl_pct = (current - buy_price) / buy_price * 100` gross 비교를 비용 반영 net return 비교로 전환한다.
-- [ ] `TransactionCostUtils`의 수수료/세금 기본값을 라이브 exit 판단에서도 공통 사용하되, 설정값으로 override 가능한지 검토한다.
-- [ ] `TradeSignal.reason`, strategy log, notification에는 gross/net 중 무엇을 표시하는지 명확히 남긴다.
-- [ ] 테스트: 동일 가격 경로에서 gross 기준으로는 미발동이지만 net 기준으로는 손절/익절 임계에 도달하는 케이스를 전략별 최소 1개 고정한다.
+- [x] 활성 전략의 손절/익절 판단을 gross 비교에서 `TransactionCostUtils.net_return_pct()` 기반 net return 비교로 전환했다.
+- [x] `TransactionCostUtils`의 수수료/세금 기본값을 라이브 exit 판단에서도 공통 사용한다 (`net_return_pct`/`calculate_net_pnl_won`).
+- [x] gross/net 표시 구분을 strategy exit 경로/reason에 반영했다.
+- [x] 테스트: gross 미발동·net 발동 경계 케이스를 전략 테스트에 고정했다 (`test_rsi2_pullback_strategy.py` 등).
 
 판단:
 
@@ -125,12 +127,12 @@
 
 ---
 
-### 0-10. pending/reserved cash와 cross-strategy same-symbol 노출 반영
+### 0-10. pending/reserved cash와 cross-strategy same-symbol 노출 반영 — ✅ 부분 완료 (#480, 2026-05-28)
 
-- [ ] `PositionSizingService.adjust_buy_qty()` 또는 상위 scheduler/order layer에 같은 사이클 내 accepted BUY의 reserved cash 누적기를 도입한다.
-- [ ] 종목별 보유 금액 계산에 broker snapshot의 현재 보유뿐 아니라 active/pending BUY 주문과 같은 배치의 accepted BUY를 합산한다.
-- [ ] 동일 전략 중복 보유 차단은 유지하되, 전 전략 합산 동일 종목 노출 상한을 별도 hard-block 또는 qty cap으로 추가할지 결정한다.
-- [ ] 테스트: 같은 종목이 여러 전략에서 동시에 BUY 신호로 들어올 때, snapshot 기준 한도를 초과하지 않도록 두 번째 이후 주문 수량이 줄거나 차단되는지 검증한다.
+- [x] `PositionSizingService`에 같은 사이클 내 accepted BUY의 reserved cash 누적기(`_reservations`)를 도입하고 `available_cash`에서 차감한다.
+- [x] 가용 현금 계산에서 broker snapshot 보유 + 같은 배치 accepted BUY reservation을 합산 차감한다.
+- [ ] 전 전략 합산 동일 종목 노출 상한(hard-block/qty cap) 추가 여부는 미결정. reserved cash 차감으로 현금 측 과다 노출은 막지만, 종목 단위 cross-strategy 상한은 아직 없다.
+- [x] 테스트: 동시 BUY 시 reserved cash 차감으로 후속 주문 수량이 줄거나 차단되는 경로를 `test_position_sizing_service.py`에 고정했다.
 
 판단:
 
@@ -147,15 +149,11 @@
 
 ---
 
-### 0-11. 상태 파일 저장 atomic write 통일
+### 0-11. 상태 파일 저장 atomic write 통일 — ✅ 완료 (#481, 2026-05-28)
 
-- [ ] `StrategyStateIO._write_atomic()` 또는 공통 `AtomicJsonFile` 유틸을 추출해 kill switch 상태 저장에 적용한다.
-- [ ] 전략 `_save_state()`의 sync fallback 경로(`open(..., "w")`, `json.dump`)도 같은 atomic utility를 사용하도록 바꾼다.
-- [ ] 테스트: 저장 중 예외가 발생해도 기존 JSON 파일이 truncate 되지 않는 회귀 테스트를 추가한다.
-
-판단:
-
-- async 전략 저장 경로는 `StrategyStateIO.save_atomic()`으로 보호된다. 반면 `KillSwitchService._save_state()`와 일부 전략 sync fallback 경로는 truncate-write라 프로세스 강제 종료 시 상태 파일 손상 가능성이 남아 있다.
+- [x] 공통 `utils/atomic_json.py`(`write_json_atomic`)를 추출해 `StrategyStateIO`와 `KillSwitchService`에 적용했다.
+- [x] 활성 6개 전략의 sync fallback `_save_state()` 경로도 `write_json_atomic`을 사용하도록 바꿨다.
+- [x] 테스트: 저장 중 예외 발생 시 기존 JSON이 truncate 되지 않음을 `test_atomic_json.py` / `test_kill_switch_service.py`에 고정했다.
 
 주요 파일:
 
@@ -338,13 +336,16 @@
 
 ### 3-5. tick-size 로직 단일화
 
-- [ ] `BacktestExecutionSimulator.tick_size()`를 `utils.korea_invest_price_utils.get_tick_size()`로 대체하거나 공통 utility를 broker-neutral 이름으로 승격한다.
-- [ ] backtest BUY/SELL tick rounding과 live 주문 가격 보정의 방향성 차이(매수 올림/매도 내림 vs live 지정가 내림)를 의도적으로 문서화한다.
-- [ ] 테스트: tick boundary fixture를 단일 테스트 데이터로 backtest/live utility 양쪽에 적용한다.
+- [x] `BacktestExecutionSimulator.tick_size()`를 `utils.korea_invest_price_utils.get_tick_size()`로 대체하거나 공통 utility를 broker-neutral 이름으로 승격한다.
+  - 적용 완료: `BacktestExecutionSimulator.tick_size()`의 중복 호가단위 표를 제거하고 `get_tick_size()` 단일 소스로 위임. 메서드 시그니처는 기존 테스트/`round_to_tick` 호환을 위해 유지.
+- [x] backtest BUY/SELL tick rounding과 live 주문 가격 보정의 방향성 차이(매수 올림/매도 내림 vs live 지정가 내림)를 의도적으로 문서화한다.
+  - 적용 완료: `round_to_tick()`에 주석으로 명시(backtest=보수적 체결가 매수 올림/매도 내림, live `adjust_price`=항상 내림).
+- [x] 테스트: tick boundary fixture를 단일 테스트 데이터로 backtest/live utility 양쪽에 적용한다.
+  - 적용 완료: `TICK_SIZE_FIXTURE` 단일 경계 데이터로 `sim.tick_size()`와 `get_tick_size()` parity 검증 (`test_backtest_and_live_share_single_tick_size_table`).
 
 판단:
 
-- 현재 backtest와 live에 동일한 호가단위 표가 중복되어 있다. 지금 값은 일치하지만, KRX/NXT 또는 호가단위 변경 시 한쪽만 바뀌면 replay와 live가 벌어진다.
+- (해소) backtest와 live의 호가단위 표 중복을 단일 소스로 통일했다. 향후 KRX/NXT 변경 시 `get_tick_size()` 한 곳만 바꾸면 되고, parity 테스트가 재중복을 차단한다.
 
 주요 파일:
 
@@ -393,10 +394,13 @@
    - 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 → 필요 시 `_global` 8/s + `_global.emergency` 2/s 운영값 조정 (P2 2-2; 공통 HTTP 경로 강제 주입과 보수 기본값은 적용 완료)
 
 2. **코드 수정으로 바로 진행 가능**
-   - 라이브 일봉 지표에서 당일 미완성 봉 제외 옵션 추가 (P0 0-8)
-   - 라이브 exit 판단을 net PnL 기준으로 통일 (P0 0-9)
-   - pending/reserved cash와 전 전략 same-symbol 노출 반영 (P0 0-10)
-   - kill switch/state sync fallback atomic write 통일 (P0 0-11)
+   - ~~라이브 일봉 지표 당일 미완성 봉 제외 (P0 0-8)~~ ✅ #478 — 나머지 전략 MA/RSI rollout 후속
+   - ~~라이브 exit net PnL 통일 (P0 0-9)~~ ✅ #479
+   - ~~pending/reserved cash 반영 (P0 0-10)~~ ✅ #480 — 전 전략 same-symbol 상한 미결정
+   - ~~kill switch/state sync fallback atomic write 통일 (P0 0-11)~~ ✅ #481
+   - ~~backtest/live tick-size 단일화 (P3 3-5)~~ ✅ 완료
+   - 전략 scan 현재가 batch/snapshot 최적화 (P2 2-5) — 남은 코드 작업
+   - 지표/전략 경로 silent skip에 alert/metric hook (P3 3-6) — 남은 코드 작업
 
 3. **운영 관찰 진행 중**
    - VBO shadow 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py` 로 parity 리포트 생성 → PR-3 진입 판정 (P2 2-4 PR-2.5)

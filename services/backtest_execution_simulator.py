@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Iterable, Mapping, Sequence
 
+from utils.korea_invest_price_utils import get_tick_size
 from utils.transaction_cost_utils import TransactionCostUtils
 
 
@@ -316,22 +317,14 @@ class BacktestExecutionSimulator:
 
     @staticmethod
     def tick_size(price: float) -> int:
-        if price < 2_000:
-            return 1
-        if price < 5_000:
-            return 5
-        if price < 20_000:
-            return 10
-        if price < 50_000:
-            return 50
-        if price < 200_000:
-            return 100
-        if price < 500_000:
-            return 500
-        return 1_000
+        # KRX 호가단위 표는 utils.get_tick_size() 단일 소스를 공유한다.
+        # 표를 한쪽만 바꾸면 replay와 live 주문 보정이 벌어지므로 중복 정의 금지.
+        return get_tick_size(price)
 
     @classmethod
     def round_to_tick(cls, price: float, *, side: OrderSide) -> float:
+        # 백테스트 체결가는 보수적으로 가정한다: 매수 올림 / 매도 내림.
+        # live 지정가 보정(utils.adjust_price)은 항상 내림이라 방향성이 의도적으로 다르다.
         tick = cls.tick_size(price)
         if side == OrderSide.BUY:
             return float(math.ceil(price / tick) * tick)
