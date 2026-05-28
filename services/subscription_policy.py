@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import time
+import inspect
 from enum import IntEnum
 from typing import Dict, Set, List, Optional, TYPE_CHECKING
 
@@ -305,7 +306,10 @@ class SubscriptionPolicy:
             await self._do_unsubscribe(code, StreamingType.UNIFIED_PRICE)
         for code in to_unsubscribe_pt:
             await self._do_unsubscribe(code, StreamingType.PROGRAM_TRADING)
-            
+
+        if not await self._ensure_websocket_connected_for_subscribe(to_subscribe_price | to_subscribe_pt):
+            return
+
         for code in to_subscribe_price:
             await self._do_subscribe(code, StreamingType.UNIFIED_PRICE)
         for code in to_subscribe_pt:
@@ -343,6 +347,36 @@ class SubscriptionPolicy:
                     active_codes=combined_active_codes,  # 병합된 리스트 전달
                     pending_by_priority=status.get("pending_by_priority", {}),
                 )
+
+    async def _ensure_websocket_connected_for_subscribe(self, codes: Set[str]) -> bool:
+        if not codes:
+            return True
+        if self._market_calendar and not await self._market_calendar.is_market_open_now():
+            return True
+
+        connector = getattr(self._streaming, "connect_websocket", None)
+        if not callable(connector):
+            return True
+
+        try:
+            result = connector()
+            if inspect.isawaitable(result):
+                result = await result
+            if result is False:
+                if self._streaming_logger:
+                    self._streaming_logger.log_subscribe_failure(
+                        ",".join(sorted(codes)),
+                        "SubscriptionPolicy: WebSocket 연결 실패 — 구독 보류",
+                    )
+                return False
+            return True
+        except Exception as e:
+            if self._streaming_logger:
+                self._streaming_logger.log_subscribe_failure(
+                    ",".join(sorted(codes)),
+                    f"SubscriptionPolicy: WebSocket 연결 실패 — {e}",
+                )
+            return False
 
     async def _do_subscribe(self, code: str, stream_type: StreamingType) -> None:
         if self._market_calendar and not await self._market_calendar.is_market_open_now():

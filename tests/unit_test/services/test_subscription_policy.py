@@ -1,12 +1,13 @@
 import pytest
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 from services.subscription_policy import SubscriptionPolicy, SubscriptionPriority
 from repositories.streaming_stock_repo import StreamingType
 
 @pytest.fixture
 def mock_streaming():
     svc = MagicMock()
+    svc.connect_websocket = AsyncMock(return_value=True)
     svc.subscribe_unified_price = AsyncMock(return_value=True)
     svc.unsubscribe_unified_price = AsyncMock(return_value=True)
     svc.subscribe_program_trading = AsyncMock(return_value=True)
@@ -193,6 +194,39 @@ async def test_rebalance_slot_allocation(policy, mock_streaming_logger):
     assert "PRICE_1" in policy._active_codes_price
     assert "PRICE_2" not in policy._active_codes_price
     mock_streaming_logger.log_dropped_subscriptions.assert_called() # Dropped 경고 로깅
+
+
+@pytest.mark.asyncio
+async def test_rebalance_connects_websocket_before_subscribe(policy, mock_streaming):
+    """장중 신규 구독은 WebSocket 연결을 먼저 보장한 뒤 subscribe를 보낸다."""
+    policy._refs = {
+        "005930": {"portfolio": {"priority": SubscriptionPriority.HIGH, "type": StreamingType.UNIFIED_PRICE}}
+    }
+
+    await policy._rebalance()
+
+    mock_streaming.connect_websocket.assert_awaited_once()
+    assert mock_streaming.mock_calls.index(call.connect_websocket()) < mock_streaming.mock_calls.index(
+        call.subscribe_unified_price("005930")
+    )
+
+
+@pytest.mark.asyncio
+async def test_rebalance_skips_subscribe_when_websocket_connect_fails(
+    policy, mock_streaming, mock_streaming_logger
+):
+    """장중 연결 보장 실패 시 subscribe를 보내지 않고 desired 상태로 남겨 다음 rebalance에서 재시도한다."""
+    mock_streaming.connect_websocket.return_value = False
+    policy._refs = {
+        "005930": {"portfolio": {"priority": SubscriptionPriority.HIGH, "type": StreamingType.UNIFIED_PRICE}}
+    }
+
+    await policy._rebalance()
+
+    mock_streaming.subscribe_unified_price.assert_not_awaited()
+    assert "005930" not in policy._active_codes_price
+    mock_streaming_logger.log_subscribe_failure.assert_called()
+
 
 @pytest.mark.asyncio
 async def test_do_subscribe_success_and_fail(policy, mock_streaming, mock_stock_repo, mock_streaming_stock_repo, mock_streaming_logger):
