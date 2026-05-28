@@ -32,8 +32,20 @@ class TransactionCostUtils:
 
         buy_cost = cls.calculate_cost(buy_price, qty, is_sell=False)
         sell_cost = cls.calculate_cost(sell_price, qty, is_sell=True)
-        
+
         total_invest = (buy_price * qty) + buy_cost
         total_retrieve = (sell_price * qty) - sell_cost
-        
+
         return ((total_retrieve - total_invest) / total_invest) * 100
+
+    @classmethod
+    def net_return_pct(cls, buy_price: float, sell_price: float) -> float:
+        """수수료/세금 반영 후 net 수익률 (%).
+
+        P0 0-9: 라이브 stop/take_profit trigger 가 backtest 와 동일하게 net 기준으로
+        평가되도록 한다. qty 와 무관 (비율은 1주 기준과 동일).
+
+        Returns:
+            buy_price == 0 이면 0.0 (분모 보호).
+        """
+        return cls.get_return_rate(buy_price, sell_price, qty=1, apply_cost=True)

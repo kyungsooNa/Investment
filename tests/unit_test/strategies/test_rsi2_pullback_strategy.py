@@ -238,6 +238,28 @@ async def test_check_exits_hard_stop_at_minus5pct(exit_setup):
 
 
 @pytest.mark.asyncio
+async def test_check_exits_hard_stop_net_triggers_at_gross_below_threshold(exit_setup):
+    """P0 0-9: gross -4.8% 는 hard_stop_pct=-5% 미달이지만 net 은 -5.02% → 손절 발동.
+
+    backtest 와 동일하게 net 기준으로 trigger 가 평가됨을 회귀 방지로 고정.
+    """
+    strategy, sqs, indicator = exit_setup
+    # buy=10000, sell=9520 → gross -4.80%, net ≈ -5.02% (수수료+세금 ≈ 0.22% drag)
+    sqs.get_current_price.return_value = _price_resp("9520")
+    indicator.get_moving_average.side_effect = [
+        _ma_resp(9000.0),   # 200MA OK (9520 > 9000 → 추세 붕괴 트리거 아님)
+        _ma_resp(11000.0),  # 5MA 미도달
+    ]
+    holdings = [{"code": "005930", "name": "삼성전자", "buy_price": 10000, "qty": 5}]
+    signals = await strategy.check_exits(holdings)
+    # net 기준 -5.02% ≤ -5 → 하드 스탑 발동. gross 기준이었다면 -4.8% > -5 로 미발동.
+    assert len(signals) == 1
+    assert signals[0].action == "SELL"
+    assert "하드 스탑" in signals[0].reason
+    assert "net" in signals[0].reason.lower()
+
+
+@pytest.mark.asyncio
 async def test_check_exits_trend_break_below_200ma(exit_setup):
     """현재가 < 200MA → 추세 붕괴 손절 SELL (하드 스탑보다 우선)."""
     strategy, sqs, indicator = exit_setup

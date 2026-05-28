@@ -718,8 +718,9 @@ async def test_exits_repeated_partial_profit(mock_deps):
     universe.is_market_timing_ok.return_value = True
 
     # 1차 익절(11500원)이 이미 된 상태 → last_partial_sell_price=11500
+    # P0 0-9: trigger 가 net 기준이므로 13280 으로 조정 (net_return_pct(11500, 13280) ≈ +15.2%).
     strategy._position_state["005930"] = PPPositionState(
-        "PP", 10000, "20250101", 13225, "20", 0, False, "20250105",
+        "PP", 10000, "20250101", 13280, "20", 0, False, "20250105",
         last_partial_sell_price=11500
     )
 
@@ -727,9 +728,9 @@ async def test_exits_repeated_partial_profit(mock_deps):
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
     tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 12, 0, 0)
 
-    # 현재가 13225 → 11500 대비 +15% (2차 부분 익절 조건 충족)
+    # 현재가 13280 → 11500 대비 net +15.2% (2차 부분 익절 조건 충족, P0 0-9)
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "13225"}}
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "13280"}}
     )
 
     signals = await strategy.check_exits([
@@ -739,7 +740,7 @@ async def test_exits_repeated_partial_profit(mock_deps):
     assert len(signals) == 1
     assert "부분익절" in signals[0].reason
     assert signals[0].qty == 2  # 4주의 50%
-    assert strategy._position_state["005930"].last_partial_sell_price == 13225
+    assert strategy._position_state["005930"].last_partial_sell_price == 13280
 
 
 # ════════════════════════════════════════════════════════════════

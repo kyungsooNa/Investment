@@ -19,6 +19,7 @@ from services.oneil_universe_service import OneilUniverseService
 from core.logger import get_strategy_logger
 from utils.async_concurrency import bounded_gather
 from utils.strategy_state_io import StrategyStateIO
+from utils.transaction_cost_utils import TransactionCostUtils
 
 
 # 청산/exit 동시성 상한. entry chunk_size(10)보다 높게 두어 손절/청산이 entry scan 보다
@@ -613,10 +614,13 @@ class OneilPocketPivotStrategy(LiveStrategy):
             state.peak_price = current
             state_dirty = True
 
+        # 가격 변동 비율 (gross) — MFE/MAE/log/anchor 추적용. backtest 와 동일 기준.
         pnl = float((current - buy_price) / buy_price * 100)
+        # P0 0-9: stop/익절 trigger 비교는 비용 반영 net 기준.
+        pnl_net = TransactionCostUtils.net_return_pct(buy_price, current)
         today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
 
-        # MFE / MAE 갱신
+        # MFE / MAE 갱신 (가격 변동 = gross)
         if pnl > state.mfe_pct:
             state.mfe_pct = round(pnl, 2)
             state_dirty = True
@@ -624,8 +628,8 @@ class OneilPocketPivotStrategy(LiveStrategy):
             state.mae_pct = round(pnl, 2)
             state_dirty = True
 
-        # 수익 안착 추적 (+5% 돌파 시 1회만 기록)
-        if pnl >= self._cfg.holding_profit_anchor_pct and state.holding_start_date == "":
+        # 수익 안착 추적 (+5% 돌파 시 1회만 기록 — net 기준, P0 0-9)
+        if pnl_net >= self._cfg.holding_profit_anchor_pct and state.holding_start_date == "":
             state.holding_start_date = today_str
             state_dirty = True
 
@@ -680,9 +684,9 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 state_dirty = True
                 return signals, state_dirty  # 부분 매도 후 전량 청산하지 않음
 
-        # 🛡️ 우선순위 3.5: 본절스탑 (부분익절 후 진입가 하회)
+        # 🛡️ 우선순위 3.5: 본절스탑 (부분익절 후 진입가 하회 — 가격 기준, log 는 net 표시)
         if not reason and state.breakeven_armed and current < buy_price:
-            reason = f"본절스탑(부분익절 후 진입가 {buy_price:,} 하회 {pnl:.1f}%)"
+            reason = f"본절스탑(부분익절 후 진입가 {buy_price:,} 하회, net {pnl_net:.1f}%)"
 
         # 🌟 우선순위 4: 7주 룰 만료 (수익 안착 후 35거래일 & 50MA 이탈)
         if not reason and state.holding_start_date:
@@ -697,7 +701,9 @@ class OneilPocketPivotStrategy(LiveStrategy):
                 "event": "exit_signal_generated",
                 "code": code, "name": hold.get("name", code),
                 "reason": reason,
-                "pnl_pct": round(pnl, 2),
+                "pnl_pct": round(pnl, 2),       # gross (가격 변동) — backtest MFE/MAE 와 동일 기준
+                "pnl_net_pct": round(pnl_net, 2),  # P0 0-9: net (비용 반영) — trigger 비교 기준
+                "pnl_basis": "net_trigger_gross_log",
                 "mfe_pct": state.mfe_pct,
                 "mae_pct": state.mae_pct,
             })
@@ -763,9 +769,12 @@ class OneilPocketPivotStrategy(LiveStrategy):
     def _check_partial_profit(
         self, code: str, state: PPPositionState, current: int, buy_price: int, hold: dict
     ) -> Optional[TradeSignal]:
-        """부분 익절: +15% 시 50% 매도. 잔고 1주면 전량."""
-        pnl = float((current - buy_price) / buy_price * 100)
-        if pnl < self._cfg.partial_profit_trigger_pct:
+        """부분 익절: +15% 시 50% 매도. 잔고 1주면 전량.
+
+        P0 0-9: trigger 비교는 net (비용 반영) — backtest 와 동일 기준.
+        """
+        pnl_net = TransactionCostUtils.net_return_pct(buy_price, current)
+        if pnl_net < self._cfg.partial_profit_trigger_pct:
             return None
 
         holding_qty = int(hold.get("qty", 1))
@@ -773,13 +782,14 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
         if sell_qty >= holding_qty:
             sell_qty = holding_qty
-            reason = f"전량익절({pnl:.1f}%, 잔고 {holding_qty}주)"
+            reason = f"전량익절(net {pnl_net:.1f}%, 잔고 {holding_qty}주)"
         else:
-            reason = f"부분익절({pnl:.1f}%, {sell_qty}주/{holding_qty}주)"
+            reason = f"부분익절(net {pnl_net:.1f}%, {sell_qty}주/{holding_qty}주)"
 
         self._logger.info({
             "event": "partial_profit_signal",
-            "code": code, "pnl": round(pnl, 2),
+            "code": code, "pnl": round(pnl_net, 2),
+            "pnl_basis": "net",
             "sell_qty": sell_qty, "holding_qty": holding_qty,
         })
 

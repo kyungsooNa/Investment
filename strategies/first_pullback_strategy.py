@@ -19,6 +19,7 @@ from services.oneil_universe_service import OneilUniverseService
 from core.logger import get_strategy_logger
 from utils.async_concurrency import bounded_gather
 from utils.strategy_state_io import StrategyStateIO
+from utils.transaction_cost_utils import TransactionCostUtils
 
 
 # 청산/exit 동시성 상한. entry chunk_size(10)보다 높게 두어 손절/청산이 entry scan 보다
@@ -487,7 +488,10 @@ class FirstPullbackStrategy(LiveStrategy):
 
         pnl = float((current - buy_price) / buy_price * 100)
 
-        # MFE / MAE 갱신
+        # P0 0-9: stop/익절 trigger 비교는 비용 반영 net 기준 — backtest 와 동일.
+        pnl_net = TransactionCostUtils.net_return_pct(buy_price, current)
+
+        # MFE / MAE 갱신 (가격 변동 = gross — backtest 의 _bar_excursion 과 동일 기준)
         if pnl > state.mfe_pct:
             state.mfe_pct = round(pnl, 2)
             state_dirty = True
@@ -502,7 +506,7 @@ class FirstPullbackStrategy(LiveStrategy):
 
         reason = ""
 
-        # 🚨 손절: 20MA -2% 이탈 → 10분 유예 후 확정 (14:50 이후는 즉시)
+        # 🚨 손절: 20MA -2% 이탈 → 10분 유예 후 확정 (14:50 이후는 즉시) — 가격 기준 trigger, log 는 net 표시
         if len(closes) >= self._cfg.ma_period:
             ma_20d = float(sum(closes[-self._cfg.ma_period:]) / self._cfg.ma_period)
             threshold = ma_20d * (1 + self._cfg.stop_loss_below_ma_pct / 100)
@@ -514,23 +518,23 @@ class FirstPullbackStrategy(LiveStrategy):
                     second=0, microsecond=0,
                 )
                 if now >= eod:
-                    reason = f"손절(20MA {ma_20d:,.0f} 장마감전 이탈 {pnl:.1f}%)"
+                    reason = f"손절(20MA {ma_20d:,.0f} 장마감전 이탈, net {pnl_net:.1f}%)"
                 elif not state.ma_break_since_ts:
                     state.ma_break_since_ts = now.strftime("%Y%m%d%H%M%S")
                     state_dirty = True
                 else:
                     break_dt = datetime.strptime(state.ma_break_since_ts, "%Y%m%d%H%M%S").replace(tzinfo=now.tzinfo)
                     if (now - break_dt).total_seconds() / 60 >= self._cfg.ma_break_grace_minutes:
-                        reason = f"손절(20MA {ma_20d:,.0f} {self._cfg.ma_break_grace_minutes}분 이탈유지 {pnl:.1f}%)"
+                        reason = f"손절(20MA {ma_20d:,.0f} {self._cfg.ma_break_grace_minutes}분 이탈유지, net {pnl_net:.1f}%)"
             else:
                 if state.ma_break_since_ts:
                     state.ma_break_since_ts = None
                     state_dirty = True
 
-        # 🌟 부분 익절: 직전 익절가(또는 진입가) 대비 +10% 도달 시 반복 실행
+        # 🌟 부분 익절: 직전 익절가(또는 진입가) 대비 +10% 도달 시 반복 실행 (net, P0 0-9)
         if not reason:
             ref_price = float(state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price)
-            pnl_from_ref = float((current - ref_price) / ref_price * 100)
+            pnl_from_ref = TransactionCostUtils.net_return_pct(ref_price, current)
             if pnl_from_ref >= self._cfg.take_profit_lower_pct:
                 holding_qty = int(hold.get("qty", 1))
                 sell_qty = max(1, int(holding_qty * self._cfg.partial_sell_ratio))
@@ -559,9 +563,9 @@ class FirstPullbackStrategy(LiveStrategy):
                 ))
                 return signals, state_dirty  # 부분 매도 후 손절 체크하지 않음
 
-        # 🛡️ 본절스탑: 부분익절 후 진입가 하회 시 잔량 전량 청산
+        # 🛡️ 본절스탑: 부분익절 후 진입가 하회 시 잔량 전량 청산 (가격 기준, log 는 net 표시)
         if not reason and state.breakeven_armed and current < buy_price:
-            reason = f"본절스탑(부분익절 후 진입가 {buy_price:,} 하회 {pnl:.1f}%)"
+            reason = f"본절스탑(부분익절 후 진입가 {buy_price:,} 하회, net {pnl_net:.1f}%)"
 
         # 매도 시그널 생성 (손절)
         if reason:
@@ -570,7 +574,9 @@ class FirstPullbackStrategy(LiveStrategy):
                 "event": "exit_signal_generated",
                 "code": code, "name": hold.get("name", code),
                 "reason": reason,
-                "pnl_pct": round(pnl, 2),
+                "pnl_pct": round(pnl, 2),       # gross (가격 변동) — backtest MFE/MAE 와 동일 기준
+                "pnl_net_pct": round(pnl_net, 2),  # P0 0-9: net (비용 반영) — trigger 비교 기준
+                "pnl_basis": "net_trigger_gross_log",
                 "mfe_pct": state.mfe_pct,
                 "mae_pct": state.mae_pct,
             })

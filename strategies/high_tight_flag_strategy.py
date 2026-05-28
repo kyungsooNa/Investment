@@ -17,6 +17,7 @@ from services.oneil_universe_service import OneilUniverseService
 from core.logger import get_strategy_logger
 from utils.async_concurrency import bounded_gather
 from utils.strategy_state_io import StrategyStateIO
+from utils.transaction_cost_utils import TransactionCostUtils
 
 
 # 청산/exit 동시성 상한. entry chunk_size(10)보다 높게 두어 손절/청산이 entry scan 보다
@@ -609,9 +610,12 @@ class HighTightFlagStrategy(LiveStrategy):
             state.peak_price = current
             state_dirty = True
 
+        # 가격 변동 비율 (gross) — MFE/MAE/log 추적용. backtest 의 _bar_excursion 과 동일 기준.
         pnl = float((current - buy_price) / buy_price * 100)
+        # P0 0-9: stop/익절 trigger 비교는 비용 반영 net 기준 — backtest 와 동일.
+        pnl_net = TransactionCostUtils.net_return_pct(buy_price, current)
 
-        # MFE / MAE 갱신
+        # MFE / MAE 갱신 (가격 변동 = gross)
         if pnl > state.mfe_pct:
             state.mfe_pct = round(pnl, 2)
             state_dirty = True
@@ -621,14 +625,14 @@ class HighTightFlagStrategy(LiveStrategy):
 
         reason = ""
 
-        # 1. 칼손절
-        if pnl <= self._cfg.stop_loss_pct:
-            reason = f"칼손절({pnl:.1f}%)"
+        # 1. 칼손절 (net, P0 0-9)
+        if pnl_net <= self._cfg.stop_loss_pct:
+            reason = f"칼손절(net {pnl_net:.1f}%)"
 
-        # 2. 부분 익절: ref_price 대비 +20% 도달 시 반복 실행
+        # 2. 부분 익절: ref_price 대비 +20% 도달 시 반복 실행 (net, P0 0-9)
         if not reason:
             ref_price = float(state.last_partial_sell_price if state.last_partial_sell_price > 0 else buy_price)
-            pnl_from_ref = float((current - ref_price) / ref_price * 100)
+            pnl_from_ref = TransactionCostUtils.net_return_pct(ref_price, current)
             if pnl_from_ref >= self._cfg.partial_profit_trigger_pct:
                 holding_qty = int(hold.get("qty", 1))
                 sell_qty = max(1, int(holding_qty * self._cfg.partial_sell_ratio))
@@ -652,9 +656,9 @@ class HighTightFlagStrategy(LiveStrategy):
                 ))
                 return signals, state_dirty
 
-        # 3. 본절스탑: 부분익절 후 진입가 하회 시 잔량 전량 청산
+        # 3. 본절스탑: 부분익절 후 진입가 하회 시 잔량 전량 청산 (가격 기준 trigger, log 는 net 표시)
         if not reason and state.breakeven_armed and current < buy_price:
-            reason = f"본절스탑(부분익절 후 진입가 {buy_price:,} 하회 {pnl:.1f}%)"
+            reason = f"본절스탑(부분익절 후 진입가 {buy_price:,} 하회, net {pnl_net:.1f}%)"
 
         # 4. 5일 MA 트레일링스탑 + 고점 낙폭 -8%
         if not reason:
@@ -669,7 +673,9 @@ class HighTightFlagStrategy(LiveStrategy):
                 "event": "exit_signal_generated",
                 "code": code, "name": hold.get("name", code),
                 "reason": reason,
-                "pnl_pct": round(pnl, 2),
+                "pnl_pct": round(pnl, 2),       # gross (가격 변동) — backtest MFE/MAE 와 동일 기준
+                "pnl_net_pct": round(pnl_net, 2),  # P0 0-9: net (비용 반영) — trigger 비교 기준
+                "pnl_basis": "net_trigger_gross_log",
                 "mfe_pct": state.mfe_pct,
                 "mae_pct": state.mae_pct,
             })

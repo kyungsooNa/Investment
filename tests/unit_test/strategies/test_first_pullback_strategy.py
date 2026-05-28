@@ -907,16 +907,17 @@ async def test_exits_repeated_partial_profit(mock_deps):
     strategy._save_state = MagicMock()
 
     # 1차 익절(11000원)이 이미 된 상태 → last_partial_sell_price=11000
+    # P0 0-9: trigger 가 net 기준이므로 12150 으로 조정 (net_return_pct(11000, 12150) ≈ +10.2%).
     strategy._position_state["005930"] = FPPositionState(
-        10000, "20250101", 12100, 12000, last_partial_sell_price=11000
+        10000, "20250101", 12150, 12000, last_partial_sell_price=11000
     )
 
     ohlcv = _make_ohlcv(20, close=11500)
     sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
 
-    # 현재가 12100 → 11000 대비 +10% (2차 부분 익절 조건 충족)
+    # 현재가 12150 → 11000 대비 net +10.2% (2차 부분 익절 조건 충족, P0 0-9)
     sqs.get_current_price.return_value = ResCommonResponse(
-        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "12100"}}
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "12150"}}
     )
 
     signals = await strategy.check_exits([
@@ -926,7 +927,7 @@ async def test_exits_repeated_partial_profit(mock_deps):
     assert len(signals) == 1
     assert "부분익절" in signals[0].reason
     assert signals[0].qty == 2  # 4주의 50%
-    assert strategy._position_state["005930"].last_partial_sell_price == 12100
+    assert strategy._position_state["005930"].last_partial_sell_price == 12150
 
 
 # ════════════════════════════════════════════════════════════════
