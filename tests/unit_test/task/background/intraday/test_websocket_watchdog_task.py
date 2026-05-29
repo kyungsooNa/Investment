@@ -220,6 +220,54 @@ async def test_streaming_watchdog_data_gap(watchdog_task, mock_deps):
 
 
 @pytest.mark.asyncio
+async def test_streaming_watchdog_restores_desired_pt_when_not_active(watchdog_task):
+    """desired PT가 있는데 active가 비어 있으면 장중 즉시 PT 복원을 시도한다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    svc._streaming_stock_repo.get_active.return_value = set()
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
+    svc._restore_all_subscriptions = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._streaming_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc._streaming_logger.log_missing_reason.assert_called_once_with("005930", "pt_not_active")
+    svc._restore_all_subscriptions.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_streaming_watchdog_reconnects_when_active_pt_never_receives_data(watchdog_task):
+    """active PT 구독 후에도 첫 데이터가 계속 없으면 재연결한다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    svc._streaming_stock_repo.get_active.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    svc._program_trading_stream_service.last_data_ts = 0.0
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(2)), \
+         patch("task.background.intraday.websocket_watchdog_task.time.time", side_effect=[1000.0, 1301.0]):
+        try:
+            await svc._streaming_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc.force_reconnect.assert_called_once()
+    assert svc.force_reconnect.call_args.kwargs["trigger"] == "pt_no_initial_data_301s"
+
+
+@pytest.mark.asyncio
 async def test_streaming_watchdog_price_data_gap_triggers_reconnect(watchdog_task):
     """체결가 전역 수신 갭이 임계값을 넘으면 price_data_gap trigger로 재연결한다."""
     svc = watchdog_task

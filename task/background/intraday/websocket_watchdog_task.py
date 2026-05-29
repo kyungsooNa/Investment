@@ -72,6 +72,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._reconnect_lock = asyncio.Lock()
         self._last_reconnect_started_ts: float = 0.0
         self._reconnect_trigger_counts: Dict[str, int] = {}
+        self._pt_no_initial_data_started_ts: Optional[float] = None
 
     # ── SchedulableTask 인터페이스 구현 ────────────────────────
 
@@ -208,9 +209,22 @@ class WebSocketWatchdogTask(SchedulableTask):
 
                 # 조건 2: PT 데이터 수신 갭 확인 (PT 종목이 있을 때만 — last_data_ts가 PT 기준)
                 data_gap = 0.0
+                pt_no_initial_data_gap = None
                 if pt_codes and self._program_trading_stream_service:
                     last_ts = self._program_trading_stream_service.last_data_ts
-                    data_gap = (time.time() - last_ts) if last_ts > 0 else 0.0
+                    if last_ts > 0:
+                        data_gap = time.time() - last_ts
+                        self._pt_no_initial_data_started_ts = None
+                    elif active_pt_codes:
+                        now_ts = time.time()
+                        if self._pt_no_initial_data_started_ts is None:
+                            self._pt_no_initial_data_started_ts = now_ts
+                        pt_no_initial_data_gap = now_ts - self._pt_no_initial_data_started_ts
+                        data_gap = pt_no_initial_data_gap
+                    else:
+                        self._pt_no_initial_data_started_ts = None
+                else:
+                    self._pt_no_initial_data_started_ts = None
 
                 price_gap = None
                 stale_price_codes = []
@@ -269,6 +283,17 @@ class WebSocketWatchdogTask(SchedulableTask):
                         if self._streaming_logger:
                             self._streaming_logger.log_receive_task_dead()
                         reconnect_trigger = "receive_task_dead"
+                elif (
+                    pt_codes
+                    and pt_no_initial_data_gap is not None
+                    and pt_no_initial_data_gap > self.PT_DATA_GAP_THRESHOLD_SEC
+                ):
+                    if self._streaming_logger:
+                        self._streaming_logger.log_pt_data_gap(
+                            pt_no_initial_data_gap,
+                            self.PT_DATA_GAP_THRESHOLD_SEC,
+                        )
+                    reconnect_trigger = f"pt_no_initial_data_{pt_no_initial_data_gap:.0f}s"
                 elif pt_codes and data_gap > self.PT_DATA_GAP_THRESHOLD_SEC:
                     # 수신 태스크는 살아있지만 PT 데이터가 임계값 이상 안 오는 경우
                     if self._streaming_logger:
@@ -290,6 +315,16 @@ class WebSocketWatchdogTask(SchedulableTask):
                         )
                     await self.force_reconnect(trigger=reconnect_trigger)
                 else:
+                    pending_pt_codes = [
+                        code for code in pt_codes
+                        if code not in active_pt_codes
+                    ]
+                    if pending_pt_codes:
+                        for code in pending_pt_codes:
+                            if self._streaming_logger:
+                                self._streaming_logger.log_missing_reason(code, "pt_not_active")
+                        await self._restore_all_subscriptions()
+                        continue
                     self._reconnect_trigger_counts.clear()
 
             except asyncio.CancelledError:
