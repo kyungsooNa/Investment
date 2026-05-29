@@ -1887,3 +1887,64 @@ async def test_get_rsi_exclude_today_with_empty_data_safe(indicator_service):
     result = await service.get_rsi("005930", period=14, exclude_today=True)
     # _get_ohlcv_data 에서 빈 데이터는 API_ERROR 응답으로 반환됨 (기존 동작)
     assert result.rt_cd != ErrorCode.SUCCESS.value or not result.data
+
+
+# ════════════════════════════════════════════════════════════════
+# P3 3-6: 지표 계산 silent skip 방지 (ERROR log + metric + operator alert)
+# ════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_calc_error_logs_counts_and_alerts(caplog):
+    """지표 계산 중 예상치 못한 예외가 발생하면 조용히 skip 하지 않고
+    ERROR 로그 + metric 카운터 집계 + threshold 초과 시 운영자 알림을 올린다 (P3 3-6)."""
+    import asyncio as _asyncio
+    import logging as _logging
+    from common.operator_alert_types import AlertSource
+
+    mock_sqs = AsyncMock()
+    data = [{"date": "20250101", "close": 10000}] * 30
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+    mock_alert = AsyncMock()
+    service = IndicatorService(
+        mock_sqs,
+        operator_alert_service=mock_alert,
+        calc_error_alert_threshold=2,
+    )
+
+    with patch.object(service, "_to_dataframe", side_effect=ValueError("bad schema")):
+        with caplog.at_level(_logging.ERROR):
+            r1 = await service.get_rsi("005930", period=14)   # 1번째 오류
+            r2 = await service.get_rsi("005930", period=14)   # 2번째 오류 → threshold 도달
+        await _asyncio.sleep(0)  # create_task 로 예약된 alert 를 flush
+
+    # 1) 기존 동작 보존: 예외는 밖으로 새지 않고 UNKNOWN_ERROR 응답을 반환
+    assert r1.rt_cd == ErrorCode.UNKNOWN_ERROR.value
+    assert r2.rt_cd == ErrorCode.UNKNOWN_ERROR.value
+    # 2) silent skip 아님: ERROR 로그가 남는다
+    assert any("IndicatorCalcError" in rec.getMessage() for rec in caplog.records)
+    # 3) metric 카운터로 집계된다
+    delta = service.get_calc_error_stats_delta()
+    assert delta.get("rsi:ValueError") == 2
+    # 4) threshold 초과 시 운영자 알림이 INDICATOR 소스로 호출된다
+    assert mock_alert.report.call_count == 1
+    args, kwargs = mock_alert.report.call_args
+    assert args[0] == AlertSource.INDICATOR
+
+
+@pytest.mark.asyncio
+async def test_calc_error_without_alert_service_still_counts():
+    """operator_alert_service 가 없어도 ERROR 집계는 동작하고 예외로 죽지 않는다."""
+    mock_sqs = AsyncMock()
+    data = [{"date": "20250101", "close": 10000}] * 30
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+    service = IndicatorService(mock_sqs)  # operator_alert_service 미주입
+
+    with patch.object(service, "_to_dataframe", side_effect=ValueError("bad schema")):
+        result = await service.get_rsi("005930", period=14)
+
+    assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
+    assert service.get_calc_error_stats_delta().get("rsi:ValueError") == 1

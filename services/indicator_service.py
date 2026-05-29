@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import pandas as pd
 import numpy as np
@@ -6,23 +7,108 @@ import time
 from datetime import datetime
 from typing import List, Dict, Optional, TYPE_CHECKING, Union
 from common.types import ResCommonResponse, ErrorCode, ResBollingerBand, ResRSI, ResMovingAverage, ResRelativeStrength
+from common.operator_alert_types import AlertSource
 from core.cache.cache_store import CacheStore
 from core.performance_profiler import PerformanceProfiler
 
 if TYPE_CHECKING:
     from services.stock_query_service import StockQueryService
+    from services.operator_alert_service import OperatorAlertService
 
 class IndicatorService:
     """
     기술적 지표 계산을 담당하는 서비스.
     StockQueryService를 통해 데이터를 조회하고 가공하여 지표 값을 반환합니다.
     """
-    def __init__(self, stock_query_service: Optional['StockQueryService'] = None, 
-                 cache_store: Optional[CacheStore] = None, 
-                 performance_profiler: Optional[PerformanceProfiler] = None):
+    def __init__(self, stock_query_service: Optional['StockQueryService'] = None,
+                 cache_store: Optional[CacheStore] = None,
+                 performance_profiler: Optional[PerformanceProfiler] = None,
+                 operator_alert_service: Optional['OperatorAlertService'] = None,
+                 calc_error_alert_threshold: int = 10,
+                 calc_error_alert_window_sec: float = 60.0,
+                 calc_error_alert_cooldown_sec: float = 300.0):
         self.stock_query_service = stock_query_service
         self.cache_store = cache_store
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
+        self._logger = logging.getLogger(__name__)
+
+        # P3 3-6: 지표 계산 silent skip 방지용 운영자 알림 + metric 카운터.
+        self._operator_alert_service = operator_alert_service
+        self._calc_error_threshold = calc_error_alert_threshold
+        self._calc_error_window_sec = calc_error_alert_window_sec
+        self._calc_error_cooldown_sec = calc_error_alert_cooldown_sec
+        self._calc_error_counts: Dict[str, int] = {}        # 누적 카운터 (지표:예외타입)
+        self._calc_error_reported: Dict[str, int] = {}      # stats delta 계산용 직전 스냅샷
+        self._calc_error_window: List[tuple] = []           # (timestamp, indicator, exc_type) 알림 임계 판정용
+        self._last_calc_error_alert_ts: Dict[str, float] = {}
+
+    def _record_calc_error(self, indicator_name: str, exc: Exception, stock_code: str = "") -> None:
+        """지표 계산 중 예상치 못한 예외를 ERROR 로그 + metric 카운터로 집계하고,
+        window 내 임계 초과 시 운영자 알림을 올린다. (silent skip 방지, P3 3-6)
+
+        주의: 정상적인 '데이터 없음'은 _get_ohlcv_data 단계에서 에러 응답으로 걸러지므로,
+        이 경로에 도달하는 예외는 schema/type 등 비정상 계산 실패로 본다.
+        """
+        exc_type = type(exc).__name__
+        key = f"{indicator_name}:{exc_type}"
+        self._calc_error_counts[key] = self._calc_error_counts.get(key, 0) + 1
+        self._logger.error(
+            f"[IndicatorCalcError] {indicator_name} 계산 실패 ({exc_type}) "
+            f"code={stock_code or 'N/A'}: {exc}",
+            exc_info=True,
+        )
+        self._maybe_alert_calc_error(indicator_name, exc_type, stock_code)
+
+    def _maybe_alert_calc_error(self, indicator_name: str, exc_type: str, stock_code: str) -> None:
+        if self._operator_alert_service is None or self._calc_error_threshold <= 0:
+            return
+        now = time.time()
+        window_start = now - self._calc_error_window_sec
+        self._calc_error_window.append((now, indicator_name, exc_type))
+        self._calc_error_window = [w for w in self._calc_error_window if w[0] >= window_start]
+
+        recent = [w for w in self._calc_error_window if w[1] == indicator_name and w[2] == exc_type]
+        if len(recent) < self._calc_error_threshold:
+            return
+
+        alert_key = f"indicator_calc:{indicator_name}:{exc_type}"
+        last_ts = self._last_calc_error_alert_ts.get(alert_key)
+        if last_ts is not None and now - last_ts < self._calc_error_cooldown_sec:
+            return
+        self._last_calc_error_alert_ts[alert_key] = now
+
+        metadata = {
+            "alert_type": "indicator_calc_error_threshold",
+            "indicator": indicator_name,
+            "exc_type": exc_type,
+            "error_count": len(recent),
+            "window_sec": self._calc_error_window_sec,
+            "sample_code": stock_code,
+        }
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(
+            self._operator_alert_service.report(
+                AlertSource.INDICATOR,
+                alert_key,
+                "error",
+                "지표 계산 반복 실패",
+                f"{indicator_name} 계산 {exc_type} {len(recent)}회/{int(self._calc_error_window_sec)}초",
+                metadata=metadata,
+            )
+        )
+
+    def get_calc_error_stats_delta(self) -> Dict[str, int]:
+        """직전 호출 이후 새로 누적된 지표 계산 오류 카운트를 반환한다 (전략 리포트용)."""
+        delta: Dict[str, int] = {}
+        for key, total in self._calc_error_counts.items():
+            diff = total - self._calc_error_reported.get(key, 0)
+            if diff > 0:
+                delta[key] = diff
+        self._calc_error_reported = dict(self._calc_error_counts)
+        return delta
 
     @staticmethod
     def _safe_float(val):
@@ -547,7 +633,8 @@ class IndicatorService:
             if recent_close is None or past_close is None or past_close <= 0:
                 return 0.0
             return round(((recent_close - past_close) / past_close) * 100, 2)
-        except Exception:
+        except Exception as e:
+            self._record_calc_error("rs_sync", e)
             return 0.0
 
     def calc_adx_sync(
@@ -575,7 +662,8 @@ class IndicatorService:
                 "minus_di":  round(float(df["minus_di"].dropna().iloc[-1]), 2),
                 "adx_rising": bool(adx_series.iloc[-1] > adx_series.iloc[-(slope_lookback + 1)]),
             }
-        except Exception:
+        except Exception as e:
+            self._record_calc_error("adx_sync", e)
             return {}
 
     def _calculate_bollinger_bands_full(self, stock_code, data, period, std_dev) -> ResCommonResponse:
@@ -600,6 +688,7 @@ class IndicatorService:
             ]
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=results)
         except Exception as e:
+            self._record_calc_error("bollinger_bands", e, stock_code)
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
 
     def _calculate_rsi_series(self, stock_code, data, period) -> ResCommonResponse:
@@ -620,6 +709,7 @@ class IndicatorService:
             ]
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=results)
         except Exception as e:
+            self._record_calc_error("rsi", e, stock_code)
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
 
     def _calculate_atr_full(self, stock_code, data, period) -> ResCommonResponse:
@@ -641,6 +731,7 @@ class IndicatorService:
             ]
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=results)
         except Exception as e:
+            self._record_calc_error("atr", e, stock_code)
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
 
     def _calculate_moving_average_full(self, stock_code, data, period, method) -> ResCommonResponse:
@@ -661,6 +752,7 @@ class IndicatorService:
             ]
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=results)
         except Exception as e:
+            self._record_calc_error("moving_average", e, stock_code)
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
 
     def _calculate_indicators_full(self, stock_code: str, ohlcv_data: List[Dict]) -> ResCommonResponse:

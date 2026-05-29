@@ -203,7 +203,11 @@ class ServiceContainer:
                 stock_repository=ctx.stock_repository,
                 data_quality_service=getattr(ctx, "data_quality_service", None),
             )
-            ctx.indicator_service = IndicatorService(cache_store=cache_store, performance_profiler=ctx.pm)
+            ctx.indicator_service = IndicatorService(
+                cache_store=cache_store,
+                performance_profiler=ctx.pm,
+                operator_alert_service=getattr(ctx, "operator_alert_service", None),
+            )
             ctx.message_broker = MessageBroker()
             ctx.dlq_manager = DlqManager(logger=ctx.logger)
             ctx.worker_pool = WorkerPool(
