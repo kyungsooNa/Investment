@@ -27,6 +27,18 @@ def make_sleep_side_effect(cancel_after_calls=1):
     side_effect.counter = 0
     return side_effect
 
+def make_time_side_effect(*values):
+    """time.time() 모킹용 side_effect — 주어진 값을 순서대로 반환하고,
+    값이 소진되면 마지막 값을 계속 반환한다.
+
+    호출 횟수에 의존하던 list 기반 side_effect와 달리, 구현이 time.time()을
+    한 번 더 호출하더라도 StopIteration으로 깨지지 않는다.
+    """
+    seq = list(values)
+    def side_effect(*args, **kwargs):
+        return seq.pop(0) if len(seq) > 1 else seq[0]
+    return side_effect
+
 def _make_streaming_stock_repo(pt_desired=None):
     """StreamingStockRepo mock 생성 헬퍼."""
     repo = MagicMock()
@@ -257,7 +269,7 @@ async def test_streaming_watchdog_reconnects_when_active_pt_never_receives_data(
     svc.force_reconnect = AsyncMock()
 
     with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(2)), \
-         patch("task.background.intraday.websocket_watchdog_task.time.time", side_effect=[1000.0, 1301.0]):
+         patch("task.background.intraday.websocket_watchdog_task.time.time", side_effect=make_time_side_effect(1000.0, 1301.0)):
         try:
             await svc._streaming_watchdog()
         except asyncio.CancelledError:
@@ -265,6 +277,37 @@ async def test_streaming_watchdog_reconnects_when_active_pt_never_receives_data(
 
     svc.force_reconnect.assert_called_once()
     assert svc.force_reconnect.call_args.kwargs["trigger"] == "pt_no_initial_data_301s"
+
+
+@pytest.mark.asyncio
+async def test_streaming_watchdog_resets_pt_no_initial_timer_when_data_arrives(watchdog_task):
+    """첫 데이터가 도착하면(last_data_ts>0) PT 최초 수신 대기 타이머가 리셋되고
+    재연결/복원을 하지 않는다 — 복구 후 오탐 재연결 방지."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    svc._streaming_stock_repo.get_active.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    # 이전 tick에서 누적 중이던 "최초 수신 대기" 타이머가 있었다고 가정
+    svc._pt_no_initial_data_started_ts = 1000.0
+    svc._program_trading_stream_service.last_data_ts = time.time()  # 데이터 도착
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
+
+    svc.force_reconnect = AsyncMock()
+    svc._restore_all_subscriptions = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._streaming_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    assert svc._pt_no_initial_data_started_ts is None
+    svc.force_reconnect.assert_not_called()
+    svc._restore_all_subscriptions.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -379,14 +422,21 @@ async def test_streaming_watchdog_refreshes_subscribed_no_tick_codes(watchdog_ta
 
 @pytest.mark.asyncio
 async def test_streaming_watchdog_no_reconnect_when_never_received(watchdog_task, mock_deps):
-    """_streaming_watchdog: 데이터를 한 번도 받지 않았을 때(last_data_ts=0) 재연결하지 않음."""
+    """_streaming_watchdog: active 구독이 있고 첫 데이터 전(last_data_ts=0)이라도
+    임계값(5분) 이내면 재연결도 복원도 하지 않는다."""
     svc = watchdog_task
     svc.mcs.is_market_open_now.return_value = True
-    svc._streaming_stock_repo.get_desired.return_value = {"005930"}
+    svc._streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    svc._streaming_stock_repo.get_active.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
     svc._program_trading_stream_service.last_data_ts = 0.0
     svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
 
     svc.force_reconnect = AsyncMock()
+    svc._restore_all_subscriptions = AsyncMock()
 
     with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
         try:
@@ -395,6 +445,7 @@ async def test_streaming_watchdog_no_reconnect_when_never_received(watchdog_task
             pass
 
     svc.force_reconnect.assert_not_called()
+    svc._restore_all_subscriptions.assert_not_awaited()
 
 
 @pytest.mark.asyncio
