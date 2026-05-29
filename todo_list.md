@@ -28,7 +28,7 @@
 - P2 2-5: 전략 scan의 종목별 현재가 REST 호출을 batch quote / WebSocket snapshot 중심으로 줄인다.
 - P3 3-4: active strategy lifecycle contract 최소 공통 단계 강제 여부 재설계(현재 보류).
 - P3 3-5: backtest/live 호가단위 tick-size 로직을 단일 utility로 통일한다.
-- P3 3-6: 지표/전략 경로의 광범위 `except Exception` silent skip에 alert/metric hook을 붙인다.
+- P3 3-6: ~~IndicatorService 계산 경로의 광범위 `except Exception` silent skip에 ERROR log/metric/alert hook을 붙인다.~~ ✅ 부분 완료. 전략 레이어 per-code fail-rate metric은 후속.
 - Pool B 튜닝: 후보 부족 재발 시 거래대금/정배열 조건 완화 검토.
 - 완료 기준의 전략 성과 `[~]`: `MomentumStrategy` 등 비활성 백테스트 경로의 표준 journal 통합 여부 결정.
 
@@ -357,16 +357,19 @@
 
 ---
 
-### 3-6. 광범위 예외 처리의 silent skip 방지
+### 3-6. 광범위 예외 처리의 silent skip 방지 — ✅ 부분 완료 (IndicatorService)
 
-- [ ] `IndicatorService`의 계산/캐시 경로에서 `except Exception`으로 `UNKNOWN_ERROR` 또는 `None`만 반환하는 지점을 분류한다.
-- [ ] 데이터 schema/type 오류는 최소 ERROR log + metric counter로 집계하고, 반복 발생 시 `OperatorAlertService`로 알림을 올린다.
-- [ ] 전략 scan/check_exits의 per-code 예외는 전체 전략 중단을 막되, 전략별 fail-rate metric에 반영한다.
-- [ ] 테스트: 지표 계산 중 schema 오류가 발생하면 전략이 조용히 skip만 하지 않고 alert/metric hook이 호출되는지 검증한다.
+- [x] `IndicatorService`의 계산 경로에서 `except Exception`으로 `UNKNOWN_ERROR`/`0.0`/`{}`만 반환하던 silent 지점 6개를 분류했다.
+  - 대상: `_calculate_bollinger_bands_full` / `_calculate_rsi_series` / `_calculate_atr_full` / `_calculate_moving_average_full` / `calc_rs_sync` / `calc_adx_sync`. (이미 로깅하던 `get_relative_strength`/`_calculate_indicators_full`, 안전 재계산 fallback인 cache 경로, re-raise 경로는 제외)
+  - 정상 "데이터 없음"은 `_get_ohlcv_data`에서 에러 응답으로 걸러지므로, 위 except에 도달하는 예외는 schema/type 등 비정상 계산 실패로 본다.
+- [x] 데이터 schema/type 오류를 ERROR log + metric counter(`_record_calc_error` → `_calc_error_counts`)로 집계하고, window 내 반복(threshold/cooldown) 초과 시 `OperatorAlertService.report(AlertSource.INDICATOR, ...)`로 알림을 올린다. `get_calc_error_stats_delta()` accessor 추가. `service_container`에서 `operator_alert_service` 주입.
+- [ ] 전략 scan/check_exits의 per-code 예외는 전체 전략 중단을 막되, 전략별 fail-rate metric에 반영한다. (별도 PR — 활성 7개 전략 전부 수정 필요, 이번 scope에서 제외)
+- [x] 테스트: 지표 계산 중 schema 오류 시 조용히 skip하지 않고 ERROR 로그 + 카운터 집계 + threshold 초과 alert hook 호출을 `test_indicator_service.py`에 고정했다.
 
 판단:
 
 - per-code 장애를 흡수하는 운영 안정성은 유지해야 한다. 다만 지표/전략 계산 실패가 단순 “데이터 없음 → 진입 skip”으로만 보이면 신호 손실이 장기간 누적될 수 있다.
+- IndicatorService 쪽은 silent skip을 해소했다. 남은 것은 전략 레이어 per-code fail-rate metric.
 
 주요 파일:
 
@@ -400,7 +403,7 @@
    - ~~kill switch/state sync fallback atomic write 통일 (P0 0-11)~~ ✅ #481
    - ~~backtest/live tick-size 단일화 (P3 3-5)~~ ✅ 완료
    - 전략 scan 현재가 batch/snapshot 최적화 (P2 2-5) — 남은 코드 작업
-   - 지표/전략 경로 silent skip에 alert/metric hook (P3 3-6) — 남은 코드 작업
+   - ~~IndicatorService silent skip에 alert/metric hook (P3 3-6)~~ ✅ 부분 완료 — 전략 레이어 per-code fail-rate metric 후속
 
 3. **운영 관찰 진행 중**
    - VBO shadow 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py` 로 parity 리포트 생성 → PR-3 진입 판정 (P2 2-4 PR-2.5)
