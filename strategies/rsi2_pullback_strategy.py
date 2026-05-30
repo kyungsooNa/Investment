@@ -117,6 +117,10 @@ class RSI2PullbackStrategy(LiveStrategy):
             and today_str >= self._cooldown.get(code, "")
         ]
 
+        # P2 2-5: 후보군 현재가를 batch 로 미리 snapshot 캐시에 채워
+        # _check_entry 의 종목당 개별 REST(get_current_price fallback) 호출을 제거한다.
+        await self._sqs.prefetch_prices([code for code, _ in candidates])
+
         for i in range(0, len(candidates), 10):
             chunk = candidates[i:i + 10]
             results = await asyncio.gather(

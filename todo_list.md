@@ -25,7 +25,7 @@
 - P1 1-7: multiple testing proxy를 formal walk-forward / purged validation / PBO·Deflated Sharpe급 검증으로 확장할지 결정.
 - P2 2-2: ~~실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 후 budget 기본값 보정.~~ 전역 normal 8/s + emergency 2/s 기본값 보정 완료. 계정별 공식 한도 재확인은 운영 전 외부 확인으로 유지.
 - P2 2-4: VBO shadow 5거래일 jsonl 수집 → polling parity 비교. event-driven live order는 별도 승인 전 No-Go.
-- P2 2-5: 전략 scan의 종목별 현재가 REST 호출을 batch quote / WebSocket snapshot 중심으로 줄인다.
+- P2 2-5: ~~전략 scan의 종목별 현재가 REST 호출을 batch quote / WebSocket snapshot 중심으로 줄인다.~~ helper(`StockQueryService.prefetch_prices`) + rsi2 배선 + 테스트 완료. 나머지 6개 활성 전략 배선은 후속.
 - P3 3-4: active strategy lifecycle contract 최소 공통 단계 강제 여부 재설계(현재 보류).
 - P3 3-5: backtest/live 호가단위 tick-size 로직을 단일 utility로 통일한다.
 - P3 3-6: ~~IndicatorService 계산 경로의 광범위 `except Exception` silent skip에 ERROR log/metric/alert hook을 붙인다.~~ ✅ 부분 완료. 전략 레이어 per-code fail-rate metric은 후속.
@@ -295,10 +295,15 @@
 
 ### 2-5. 전략 scan 현재가 조회 batch/snapshot 최적화
 
-- [ ] 활성 전략 scan에서 종목별 `get_current_price()` REST fallback이 많이 발생하는 경로를 측정하고, `price_lookup_stats_delta`를 전략별 리포트에 포함한다.
-- [ ] 후보군 현재가는 우선 WebSocket snapshot을 사용하고, snapshot 누락분은 `get_multi_price()` 30종목 batch로 보강하는 helper를 설계한다.
-- [ ] 전략별로 개별 REST 호출이 필요한 전체 필드(`per`, `pbr`, `stck_llam` 등)와 단순 현재가만 필요한 경로를 분리한다.
-- [ ] 테스트: 60개 후보 scan에서 REST current price 호출이 60회가 아니라 batch 2회 이하로 떨어지는 경로를 mock으로 검증한다.
+- [x] 활성 전략 scan에서 종목별 `get_current_price()` REST fallback이 많이 발생하는 경로를 측정하고, `price_lookup_stats_delta`를 전략별 리포트에 포함한다.
+  - 적용 완료(기존): `StrategyScheduler._run_strategy()`가 scan 전후 `StockQueryService.price_lookup_stats_snapshot()` delta를 산출해 `scan_metrics` 로그에 `lookup_stats_delta`(전략별)로 포함한다.
+- [x] 후보군 현재가는 우선 WebSocket snapshot을 사용하고, snapshot 누락분은 `get_multi_price()` 30종목 batch로 보강하는 helper를 설계한다.
+  - 적용 완료: `StockQueryService.prefetch_prices(codes)` 신규. 신선 snapshot 보유 종목은 skip, 누락/stale만 `get_multi_price` ≤30종목 chunk로 보강 후 `cache_price_snapshot` backfill. `get_multi_price`는 실전 전용 TR이라 모의/실패 시 best-effort 무시(개별 `get_current_price` REST fallback 유지 → 모의투자 안전). 신규 stat 키 `batch_prefetch_call`/`batch_prefetch_backfill`/`batch_prefetch_skip_fresh`로 delta 리포트에 노출.
+- [~] 전략별로 개별 REST 호출이 필요한 전체 필드(`per`, `pbr`, `stck_llam` 등)와 단순 현재가만 필요한 경로를 분리한다.
+  - 기존: `get_current_price(allow_snapshot=...)` 파라미터로 snapshot에 없는 REST 전용 필드(per/pbr/eps) 요구 시 snapshot 우회 경로가 이미 분리되어 있다. 전략별로 어느 경로를 쓰는지 체계적 분류는 후속.
+- [x] 테스트: 60개 후보 scan에서 REST current price 호출이 60회가 아니라 batch 2회 이하로 떨어지는 경로를 mock으로 검증한다.
+  - 적용 완료: `test_stock_query_service_prefetch.py::test_prefetch_then_lookups_hit_snapshot_no_per_code_rest` (60종목 prefetch → batch 2회 + 60 get_current_price 전부 snapshot_hit + 개별 REST 0회), chunk[30,30]/신선 skip/best-effort/price_stream 미주입 no-op 케이스 고정.
+- [ ] 나머지 활성 전략 scan 배선 (후속): `rsi2_pullback`만 `scan()` 진입 직후 `prefetch_prices` 배선 완료(proof). `first_pullback`/`high_tight_flag`/`oneil_squeeze_breakout`/`oneil_pocket_pivot`/`larry_williams_channel_breakout` 등 종목당 `get_current_price` 호출 전략에 동일 1줄 배선 확장 필요.
 
 판단:
 
@@ -402,7 +407,7 @@
    - ~~pending/reserved cash 반영 (P0 0-10)~~ ✅ #480 — 전 전략 same-symbol 상한 미결정
    - ~~kill switch/state sync fallback atomic write 통일 (P0 0-11)~~ ✅ #481
    - ~~backtest/live tick-size 단일화 (P3 3-5)~~ ✅ 완료
-   - 전략 scan 현재가 batch/snapshot 최적화 (P2 2-5) — 남은 코드 작업
+   - ~~전략 scan 현재가 batch/snapshot 최적화 (P2 2-5)~~ ✅ helper + rsi2 배선 + 테스트 완료 — 나머지 6개 활성 전략 배선 후속
    - ~~IndicatorService silent skip에 alert/metric hook (P3 3-6)~~ ✅ 부분 완료 — 전략 레이어 per-code fail-rate metric 후속
 
 3. **운영 관찰 진행 중**

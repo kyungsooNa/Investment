@@ -106,6 +106,14 @@ async def test_scan_emits_buy_signal_when_all_conditions_met(scan_setup):
 
 
 @pytest.mark.asyncio
+async def test_scan_prefetches_candidate_prices_in_batch(scan_setup):
+    """P2 2-5: scan 은 종목당 개별 현재가 조회 전에 후보군을 batch prefetch 한다."""
+    strategy, sqs, _, _, _, _ = scan_setup
+    await strategy.scan()
+    sqs.prefetch_prices.assert_awaited_once_with(["005930"])
+
+
+@pytest.mark.asyncio
 async def test_scan_skips_before_cutoff_time(scan_setup):
     """15:10 이전이면 종가 베팅 스캔을 건너뛴다."""
     strategy, _, _, _, tm, _ = scan_setup
