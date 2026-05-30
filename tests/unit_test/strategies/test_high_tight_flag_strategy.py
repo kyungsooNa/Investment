@@ -83,6 +83,7 @@ def mock_deps():
     logger = MagicMock()
 
     sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)
+    sqs.prefetch_prices = AsyncMock(return_value=0)
     sqs.get_stock_conclusion = AsyncMock(spec=StockQueryService.get_stock_conclusion)
     sqs.get_recent_daily_ohlcv = AsyncMock(spec=StockQueryService.get_recent_daily_ohlcv)
     universe.get_watchlist = AsyncMock(spec=OneilUniverseService.get_watchlist)
@@ -300,6 +301,7 @@ async def test_scan_buy_signal(htf_scan_setup):
     assert "HTF돌파" in signals[0].reason
     assert "강도 151.0%" in signals[0].reason
     assert "정석" in signals[0].reason
+    sqs.prefetch_prices.assert_awaited_once_with(["005930"])
 
     # 이격도 메트릭이 buy_signal_generated 이벤트에 포함되는지 검증 (#4)
     buy_events = [

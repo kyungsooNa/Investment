@@ -59,6 +59,7 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         sqs.get_top_trading_value_stocks = AsyncMock()
         sqs.get_recent_daily_ohlcv = AsyncMock()
         sqs.handle_get_current_stock_price = AsyncMock()
+        sqs.prefetch_prices = AsyncMock(return_value=0)
         sqs.get_stock_conclusion = AsyncMock()
 
         tm = MagicMock()
@@ -143,6 +144,7 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(signals[0].code, "005930")
         self.assertEqual(signals[0].action, "BUY")
         self.assertIn("VBO돌파", signals[0].reason)
+        sqs.prefetch_prices.assert_awaited_once_with(["005930"])
         sqs.handle_get_current_stock_price.assert_awaited_once_with(
             "005930", caller=strategy.name
         )
@@ -371,6 +373,7 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         sqs.get_top_trading_value_stocks = AsyncMock()
         sqs.get_recent_daily_ohlcv = AsyncMock()
         sqs.handle_get_current_stock_price = AsyncMock()
+        sqs.prefetch_prices = AsyncMock(return_value=0)
         sqs.get_stock_conclusion = AsyncMock()
 
         tm = MagicMock()

@@ -134,6 +134,7 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
                 continue
             candidates.append((code, item))
 
+        await self._sqs.prefetch_prices([code for code, _ in candidates])
         for i in range(0, len(candidates), 10):
             chunk = candidates[i:i + 10]
             results = await asyncio.gather(

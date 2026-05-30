@@ -1485,6 +1485,42 @@ async def test_get_multi_price_success(mock_quotations):
 
 
 @pytest.mark.asyncio
+async def test_get_multi_price_normalizes_inter_fields(mock_quotations):
+    """get_multi_price: inter/inter2 응답 필드를 현재가 캐시용 표준 키로 정규화."""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK",
+        data={"output": [{
+            "inter_shrn_iscd": "005930",
+            "inter_kor_isnm": "삼성전자",
+            "inter2_prpr": "70000",
+            "inter2_oprc": "69000",
+            "inter2_hgpr": "71000",
+            "inter2_lwpr": "68000",
+            "inter2_prdy_vrss": "1000",
+            "inter2_prdy_clpr": "69000",
+            "prdy_vrss_sign": "2",
+            "prdy_ctrt": "1.45",
+            "acml_vol": "100",
+            "acml_tr_pbmn": "7000000",
+        }]}
+    ))
+
+    result = await api.get_multi_price(["005930"])
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    item = result.data[0]
+    assert item["stck_shrn_iscd"] == "005930"
+    assert item["hts_kor_isnm"] == "삼성전자"
+    assert item["stck_prpr"] == "70000"
+    assert item["stck_oprc"] == "69000"
+    assert item["stck_hgpr"] == "71000"
+    assert item["stck_lwpr"] == "68000"
+    assert item["prdy_vrss"] == "1000"
+    assert item["stck_prdy_clpr"] == "69000"
+
+
+@pytest.mark.asyncio
 async def test_get_multi_price_empty_codes(mock_quotations):
     """get_multi_price: 빈 종목코드 리스트"""
     result = await mock_quotations.get_multi_price([])

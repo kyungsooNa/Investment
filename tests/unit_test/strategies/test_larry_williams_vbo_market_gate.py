@@ -48,6 +48,7 @@ def _make_universe(timing_by_market: dict):
 def _make_strategy(universe, now_time=None):
     sqs = MagicMock()
     sqs.handle_get_current_stock_price = AsyncMock()
+    sqs.prefetch_prices = AsyncMock(return_value=0)
     sqs.get_recent_daily_ohlcv = AsyncMock()
 
     tm = MagicMock()

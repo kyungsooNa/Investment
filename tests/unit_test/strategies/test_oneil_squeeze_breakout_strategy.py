@@ -17,6 +17,7 @@ def mock_strategy_deps():
     logger = MagicMock()
     
     sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)
+    sqs.prefetch_prices = AsyncMock(return_value=0)
     sqs.get_stock_conclusion = AsyncMock(spec=StockQueryService.get_stock_conclusion)
     sqs.get_recent_daily_ohlcv = AsyncMock(spec=StockQueryService.get_recent_daily_ohlcv)
     universe.get_watchlist = AsyncMock(spec=OneilUniverseService.get_watchlist)
@@ -109,6 +110,7 @@ async def test_scan_buy_signal(scan_setup):
     assert signals[0].action == "BUY"
     assert "강도 150.0%" in signals[0].reason
     assert signals[0].price == 71000
+    sqs.prefetch_prices.assert_awaited_once_with(["005930"])
     # 내부 상태에 포지션 기록되었는지 확인
     assert "005930" in strategy._position_state
 

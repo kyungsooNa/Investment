@@ -153,6 +153,7 @@ def _debug_logger(case_id: str) -> logging.Logger:
 def _strategy_for_case(case: dict, logger: logging.Logger, tmp_path: Path):
     sqs = MagicMock()
     sqs.get_current_price = AsyncMock(return_value=_price_response(case["price"]))
+    sqs.prefetch_prices = AsyncMock(return_value=0)
     sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv_response())
     sqs.get_stock_conclusion = AsyncMock(
         return_value=_conclusion_response(case["execution_strength"])

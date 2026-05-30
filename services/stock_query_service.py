@@ -49,13 +49,45 @@ class StockQueryService:
             "conclusion_hit": 0,
             "conclusion_stale_fallback": 0,
             "conclusion_missing_fallback": 0,
+            "batch_prefetch_call": 0,
+            "batch_prefetch_backfill": 0,
+            "batch_prefetch_skip_fresh": 0,
+            "batch_prefetch_failure": 0,
+            "batch_prefetch_circuit_open": 0,
         }
+        self._multi_price_prefetch_failure_threshold = 3
+        self._multi_price_prefetch_cooldown_sec = 300.0
+        self._multi_price_prefetch_consecutive_failures = 0
+        self._multi_price_prefetch_disabled_until = 0.0
 
     def _count_price_lookup(self, key: str, enabled: bool = True) -> None:
         """운영 현재가 조회 통계를 선택적으로 증가시킨다."""
         if not enabled:
             return
         self._price_lookup_stats[key] = self._price_lookup_stats.get(key, 0) + 1
+
+    def _is_multi_price_prefetch_circuit_open(self, now: Optional[float] = None) -> bool:
+        now = time.time() if now is None else now
+        return now < self._multi_price_prefetch_disabled_until
+
+    def _record_multi_price_prefetch_success(self) -> None:
+        self._multi_price_prefetch_consecutive_failures = 0
+        self._multi_price_prefetch_disabled_until = 0.0
+
+    def _record_multi_price_prefetch_failure(self, *, count_stats: bool = True) -> None:
+        self._count_price_lookup("batch_prefetch_failure", count_stats)
+        self._multi_price_prefetch_consecutive_failures += 1
+        if self._multi_price_prefetch_consecutive_failures < self._multi_price_prefetch_failure_threshold:
+            return
+
+        self._multi_price_prefetch_disabled_until = time.time() + self._multi_price_prefetch_cooldown_sec
+        self.logger.info(
+            {
+                "event": "batch_prefetch_circuit_opened",
+                "failures": self._multi_price_prefetch_consecutive_failures,
+                "cooldown_sec": self._multi_price_prefetch_cooldown_sec,
+            }
+        )
 
     def price_lookup_stats_snapshot(self) -> Dict[str, int]:
         """현재가 조회/캐시 지표 카운터 사본을 반환한다 (P2 2-2 2차).
@@ -286,6 +318,99 @@ class StockQueryService:
     async def get_multi_price(self, stock_codes: list[str]) -> ResCommonResponse:
         """복수종목 현재가 조회 (최대 30종목, MarketDataService 래퍼)."""
         return await self.market_data_service.get_multi_price(stock_codes)
+
+    async def prefetch_prices(self, codes: List[str], *, count_stats: bool = True) -> int:
+        """후보군 현재가를 batch(get_multi_price)로 미리 snapshot 캐시에 채운다 (P2 2-5).
+
+        전략 scan 진입 직전에 호출하면, 신선한 WebSocket snapshot 이 없는 후보를
+        종목당 개별 REST(get_current_price fallback) 대신 30종목 batch 로 한 번에 보강한다.
+        이미 신선한 snapshot 이 있는 종목은 건너뛴다.
+
+        get_multi_price 실패가 반복되면 batch prefetch 만 잠시 쉬고,
+        개별 get_current_price 가 기존처럼 REST fallback 으로 동작한다.
+
+        반환: snapshot 캐시에 backfill 된 종목 수.
+        """
+        if self.price_stream_service is None:
+            return 0
+
+        # 중복/공백 제거하며 입력 순서 보존
+        seen: set = set()
+        unique_codes: List[str] = []
+        for c in codes or []:
+            c = str(c).strip() if c is not None else ""
+            if c and c not in seen:
+                seen.add(c)
+                unique_codes.append(c)
+        if not unique_codes:
+            return 0
+
+        # 신선 snapshot 보유 종목은 batch 대상에서 제외
+        now = time.time()
+        stale_codes: List[str] = []
+        for code in unique_codes:
+            snap = self.price_stream_service.get_cached_price(code)
+            if snap is not None:
+                received_at = snap.get("received_at", 0.0) or 0.0
+                if now - received_at <= self._snapshot_max_age_sec:
+                    self._count_price_lookup("batch_prefetch_skip_fresh", count_stats)
+                    continue
+            stale_codes.append(code)
+        if not stale_codes:
+            return 0
+        if self._is_multi_price_prefetch_circuit_open(now):
+            self._count_price_lookup("batch_prefetch_circuit_open", count_stats)
+            return 0
+
+        def _opt(v) -> Optional[str]:
+            s = str(v) if v is not None else ""
+            return s if s and s not in ("0", "N/A") else None
+
+        backfilled = 0
+        for i in range(0, len(stale_codes), 30):
+            if self._is_multi_price_prefetch_circuit_open():
+                self._count_price_lookup("batch_prefetch_circuit_open", count_stats)
+                break
+            chunk = stale_codes[i:i + 30]
+            self._count_price_lookup("batch_prefetch_call", count_stats)
+            try:
+                resp = await self.get_multi_price(chunk)
+            except Exception as e:
+                self.logger.debug({"event": "batch_prefetch_failed", "error": str(e), "count": len(chunk)})
+                self._record_multi_price_prefetch_failure(count_stats=count_stats)
+                continue
+            if resp is None or resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
+                self._record_multi_price_prefetch_failure(count_stats=count_stats)
+                continue
+            self._record_multi_price_prefetch_success()
+            items = resp.data if isinstance(resp.data, list) else []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                code = str(item.get("stck_shrn_iscd") or item.get("mksc_shrn_iscd") or "").strip()
+                price = item.get("stck_prpr")
+                if not code or price in (None, "", "0"):
+                    continue
+                try:
+                    self.price_stream_service.cache_price_snapshot(
+                        code,
+                        price=str(price),
+                        change=str(item.get("prdy_vrss", "0") or "0"),
+                        rate=str(item.get("prdy_ctrt", "0.00") or "0.00"),
+                        sign=str(item.get("prdy_vrss_sign", "3") or "3"),
+                        volume=str(item.get("acml_vol", "0") or "0"),
+                        acml_tr_pbmn=_opt(item.get("acml_tr_pbmn")),
+                        high=_opt(item.get("stck_hgpr")),
+                        low=_opt(item.get("stck_lwpr")),
+                        open_price=_opt(item.get("stck_oprc")),
+                    )
+                    self._count_price_lookup("batch_prefetch_backfill", count_stats)
+                    backfilled += 1
+                except Exception as e:
+                    self.logger.debug(
+                        {"event": "batch_prefetch_backfill_skipped", "code": code, "error": str(e)}
+                    )
+        return backfilled
 
     async def get_top_trading_value_stocks(self) -> ResCommonResponse:
         """거래대금 상위 종목 조회 (MarketDataService 래퍼)."""

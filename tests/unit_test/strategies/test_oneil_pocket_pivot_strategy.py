@@ -57,6 +57,7 @@ def mock_deps():
     logger = MagicMock()
 
     sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)
+    sqs.prefetch_prices = AsyncMock(return_value=0)
     sqs.get_stock_conclusion = AsyncMock(spec=StockQueryService.get_stock_conclusion)
     sqs.get_recent_daily_ohlcv = AsyncMock(spec=StockQueryService.get_recent_daily_ohlcv)
     universe.get_watchlist = AsyncMock(spec=OneilUniverseService.get_watchlist)
@@ -165,6 +166,7 @@ async def test_scan_pp_buy_signal(pp_scan_setup):
     assert signals[0].action == "BUY"
     assert "PP진입" in signals[0].reason
     assert "MA지지" in signals[0].reason
+    sqs.prefetch_prices.assert_awaited_once_with(["005930"])
     assert "005930" in strategy._position_state
     assert strategy._position_state["005930"].entry_type == "PP"
     assert strategy._position_state["005930"].supporting_ma in ("10", "20", "50")

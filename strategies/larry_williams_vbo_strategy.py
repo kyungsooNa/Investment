@@ -141,12 +141,15 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 self._logger.info({"event": "scan_skipped", "reason": "market_timing_off_both"})
                 return signals
 
+        candidate_codes = [c["code"] for c in candidates if c.get("code")]
+        await self._sqs.prefetch_prices(candidate_codes)
+
         # 3) 전일 Range 캐시 갱신 (당일 1회)
-        await self._refresh_range_cache(today, [c["code"] for c in candidates if c.get("code")])
+        await self._refresh_range_cache(today, candidate_codes)
 
         # P2 2-4: event-driven shadow 구독 대상 — 본 scan 의 pool B 멤버십 = 구독 후보.
         # evaluate_single 내부에서 range/time/bought_today 등 세부 게이트를 다시 확인한다.
-        self._current_candidate_codes_set = {c["code"] for c in candidates if c.get("code")}
+        self._current_candidate_codes_set = set(candidate_codes)
 
         for stock in candidates:
             code: str = stock.get("code", "")
