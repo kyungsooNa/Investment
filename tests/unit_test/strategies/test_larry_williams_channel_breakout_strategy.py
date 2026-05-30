@@ -58,6 +58,7 @@ def mock_deps():
     logger = MagicMock()
 
     sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)
+    sqs.prefetch_prices = AsyncMock(return_value=0)
     sqs.get_ohlcv = AsyncMock(spec=StockQueryService.get_ohlcv)
     universe.get_watchlist = AsyncMock(spec=OneilUniverseService.get_watchlist)
     # calc_adx_sync은 동기 메서드
@@ -97,7 +98,7 @@ def scan_setup(mock_deps):
 @pytest.mark.asyncio
 async def test_scan_emits_buy_signal_when_all_conditions_met(scan_setup):
     """RS≥80 + ADX≥25 우상향 + 채널 상단 돌파 + 거래량 충족 + 15:10 이후 → BUY 1건."""
-    strategy, *_ = scan_setup
+    strategy, sqs, *_ = scan_setup
     signals = await strategy.scan()
     assert len(signals) == 1
     sig = signals[0]
@@ -111,6 +112,7 @@ async def test_scan_emits_buy_signal_when_all_conditions_met(scan_setup):
     state = strategy._position_state["005930"]
     assert state.hard_stop_price > 0
     assert state.channel_low_10d > 0
+    sqs.prefetch_prices.assert_awaited_once_with(["005930"])
 
 
 @pytest.mark.asyncio

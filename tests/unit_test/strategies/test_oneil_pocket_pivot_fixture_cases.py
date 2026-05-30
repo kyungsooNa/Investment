@@ -116,6 +116,7 @@ async def test_oneil_pp_bgu_entry_fixture_cases(case, tmp_path, monkeypatch):
 
     sqs = MagicMock()
     sqs.get_current_price = AsyncMock(return_value=_price_response(case["price"]))
+    sqs.prefetch_prices = AsyncMock(return_value=0)
     sqs.get_recent_daily_ohlcv = AsyncMock(
         return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=_ohlcv_for_case(case))
     )

@@ -116,6 +116,7 @@ class HighTightFlagStrategy(LiveStrategy):
             and market_timing.get(item.market, False)
             and today_str >= self._cooldown.get(code, "")
         ]
+        await self._sqs.prefetch_prices([code for code, _ in candidates])
         for i in range(0, len(candidates), 10):
             chunk = candidates[i:i + 10]
             results = await asyncio.gather(

@@ -99,6 +99,7 @@ def mock_deps():
     logger = MagicMock()
 
     sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)
+    sqs.prefetch_prices = AsyncMock(return_value=0)
     sqs.get_stock_conclusion = AsyncMock(spec=StockQueryService.get_stock_conclusion)
     sqs.get_recent_daily_ohlcv = AsyncMock(spec=StockQueryService.get_recent_daily_ohlcv)
     universe.get_watchlist = AsyncMock(spec=OneilUniverseService.get_watchlist)
@@ -190,6 +191,7 @@ async def test_scan_surge_upper_limit_passes(fp_scan_setup):
     assert len(signals) == 1
     assert signals[0].action == "BUY"
     assert "첫눌림목" in signals[0].reason
+    sqs.prefetch_prices.assert_awaited_once_with(["005930"])
 
 
 @pytest.mark.asyncio

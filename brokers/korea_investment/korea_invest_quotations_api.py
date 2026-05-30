@@ -919,10 +919,16 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         if not isinstance(output_list, list):
             output_list = [output_list] if output_list else []
 
-        # 필드명 정규화: inter_shrn_iscd → stck_shrn_iscd, inter2_prpr → stck_prpr
+        # 필드명 정규화: multi_price 응답(inter/inter2)을 current_price 표준 키와 맞춘다.
         FIELD_MAP = {
             "inter_shrn_iscd": "stck_shrn_iscd",
+            "inter_kor_isnm": "hts_kor_isnm",
             "inter2_prpr": "stck_prpr",
+            "inter2_prdy_vrss": "prdy_vrss",
+            "inter2_oprc": "stck_oprc",
+            "inter2_hgpr": "stck_hgpr",
+            "inter2_lwpr": "stck_lwpr",
+            "inter2_prdy_clpr": "stck_prdy_clpr",
         }
         normalized = []
         for item in output_list:

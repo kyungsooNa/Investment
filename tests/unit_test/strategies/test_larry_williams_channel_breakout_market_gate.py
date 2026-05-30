@@ -50,6 +50,7 @@ def _make_strategy(universe, now_time=None, state_file=None):
     sqs = MagicMock()
     sqs.get_ohlcv = AsyncMock()
     sqs.get_current_price = AsyncMock()
+    sqs.prefetch_prices = AsyncMock(return_value=0)
     indicator = MagicMock()
     indicator.calc_adx_sync = MagicMock(return_value=None)
 

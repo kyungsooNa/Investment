@@ -205,6 +205,7 @@ def _debug_logger(case_id: str) -> logging.Logger:
 def _strategy_for_case(case: dict, tmp_path, logger: logging.Logger):
     sqs = MagicMock()
     sqs.get_current_price = AsyncMock(return_value=_price_response(case["price"]))
+    sqs.prefetch_prices = AsyncMock(return_value=0)
     sqs.get_recent_daily_ohlcv = AsyncMock(
         return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=_ohlcv_for_case(case))
     )
@@ -248,6 +249,7 @@ def _strategy_for_replay_fixture(payload: dict, tmp_path, logger: logging.Logger
 
     sqs = MagicMock()
     sqs.get_current_price = AsyncMock(side_effect=get_current_price)
+    sqs.prefetch_prices = AsyncMock(return_value=0)
     sqs.get_recent_daily_ohlcv = AsyncMock(side_effect=get_recent_daily_ohlcv)
     sqs.get_stock_conclusion = AsyncMock(
         side_effect=lambda code: _conclusion_response(execution_strength.get(code) or 0.0)
