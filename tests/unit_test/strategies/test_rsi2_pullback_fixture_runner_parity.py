@@ -101,6 +101,7 @@ def _debug_logger(case_id: str) -> logging.Logger:
 def _strategy_for_case(case: dict, tmp_path, logger: logging.Logger):
     sqs = MagicMock()
     sqs.get_current_price = AsyncMock(return_value=_price_response(case["price"]))
+    sqs.prefetch_prices = AsyncMock(return_value=0)
 
     universe = MagicMock()
     universe.get_watchlist = AsyncMock(return_value={"005930": _watchlist_item(case)})

@@ -107,12 +107,32 @@ async def test_prefetch_skips_fresh_snapshots():
 async def test_prefetch_best_effort_on_multi_price_exception():
     pss = _FakePriceStream()
     mds = MagicMock()
-    mds.get_multi_price = AsyncMock(side_effect=RuntimeError("real-only TR"))
+    mds.get_multi_price = AsyncMock(side_effect=RuntimeError("temporary API failure"))
     sqs = _make_sqs(pss, mds)
 
-    # 예외가 전파되지 않고 best-effort 로 무시되어야 한다 (모의투자/실패 안전)
+    # 예외가 전파되지 않고 best-effort 로 무시되어야 한다.
     backfilled = await sqs.prefetch_prices(["005930", "000660"])
     assert backfilled == 0
+
+
+@pytest.mark.asyncio
+async def test_prefetch_circuit_breaker_skips_after_repeated_failures():
+    pss = _FakePriceStream()
+    mds = MagicMock()
+    mds.get_multi_price = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="fail", data=[])
+    )
+    sqs = _make_sqs(pss, mds)
+
+    for _ in range(3):
+        backfilled = await sqs.prefetch_prices(["005930"])
+        assert backfilled == 0
+
+    backfilled = await sqs.prefetch_prices(["005930"])
+
+    assert backfilled == 0
+    assert mds.get_multi_price.await_count == 3
+    assert sqs.price_lookup_stats_snapshot()["batch_prefetch_circuit_open"] == 1
 
 
 @pytest.mark.asyncio

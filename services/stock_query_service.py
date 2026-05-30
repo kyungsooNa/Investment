@@ -52,13 +52,42 @@ class StockQueryService:
             "batch_prefetch_call": 0,
             "batch_prefetch_backfill": 0,
             "batch_prefetch_skip_fresh": 0,
+            "batch_prefetch_failure": 0,
+            "batch_prefetch_circuit_open": 0,
         }
+        self._multi_price_prefetch_failure_threshold = 3
+        self._multi_price_prefetch_cooldown_sec = 300.0
+        self._multi_price_prefetch_consecutive_failures = 0
+        self._multi_price_prefetch_disabled_until = 0.0
 
     def _count_price_lookup(self, key: str, enabled: bool = True) -> None:
         """운영 현재가 조회 통계를 선택적으로 증가시킨다."""
         if not enabled:
             return
         self._price_lookup_stats[key] = self._price_lookup_stats.get(key, 0) + 1
+
+    def _is_multi_price_prefetch_circuit_open(self, now: Optional[float] = None) -> bool:
+        now = time.time() if now is None else now
+        return now < self._multi_price_prefetch_disabled_until
+
+    def _record_multi_price_prefetch_success(self) -> None:
+        self._multi_price_prefetch_consecutive_failures = 0
+        self._multi_price_prefetch_disabled_until = 0.0
+
+    def _record_multi_price_prefetch_failure(self, *, count_stats: bool = True) -> None:
+        self._count_price_lookup("batch_prefetch_failure", count_stats)
+        self._multi_price_prefetch_consecutive_failures += 1
+        if self._multi_price_prefetch_consecutive_failures < self._multi_price_prefetch_failure_threshold:
+            return
+
+        self._multi_price_prefetch_disabled_until = time.time() + self._multi_price_prefetch_cooldown_sec
+        self.logger.info(
+            {
+                "event": "batch_prefetch_circuit_opened",
+                "failures": self._multi_price_prefetch_consecutive_failures,
+                "cooldown_sec": self._multi_price_prefetch_cooldown_sec,
+            }
+        )
 
     def price_lookup_stats_snapshot(self) -> Dict[str, int]:
         """현재가 조회/캐시 지표 카운터 사본을 반환한다 (P2 2-2 2차).
@@ -297,8 +326,8 @@ class StockQueryService:
         종목당 개별 REST(get_current_price fallback) 대신 30종목 batch 로 한 번에 보강한다.
         이미 신선한 snapshot 이 있는 종목은 건너뛴다.
 
-        get_multi_price 는 실전 전용 TR 이므로 모의투자/실패 시 best-effort 로 무시한다.
-        (개별 get_current_price 가 기존처럼 REST fallback 으로 동작한다.)
+        get_multi_price 실패가 반복되면 batch prefetch 만 잠시 쉬고,
+        개별 get_current_price 가 기존처럼 REST fallback 으로 동작한다.
 
         반환: snapshot 캐시에 backfill 된 종목 수.
         """
@@ -329,6 +358,9 @@ class StockQueryService:
             stale_codes.append(code)
         if not stale_codes:
             return 0
+        if self._is_multi_price_prefetch_circuit_open(now):
+            self._count_price_lookup("batch_prefetch_circuit_open", count_stats)
+            return 0
 
         def _opt(v) -> Optional[str]:
             s = str(v) if v is not None else ""
@@ -336,15 +368,21 @@ class StockQueryService:
 
         backfilled = 0
         for i in range(0, len(stale_codes), 30):
+            if self._is_multi_price_prefetch_circuit_open():
+                self._count_price_lookup("batch_prefetch_circuit_open", count_stats)
+                break
             chunk = stale_codes[i:i + 30]
             self._count_price_lookup("batch_prefetch_call", count_stats)
             try:
                 resp = await self.get_multi_price(chunk)
             except Exception as e:
                 self.logger.debug({"event": "batch_prefetch_failed", "error": str(e), "count": len(chunk)})
+                self._record_multi_price_prefetch_failure(count_stats=count_stats)
                 continue
             if resp is None or resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
+                self._record_multi_price_prefetch_failure(count_stats=count_stats)
                 continue
+            self._record_multi_price_prefetch_success()
             items = resp.data if isinstance(resp.data, list) else []
             for item in items:
                 if not isinstance(item, dict):

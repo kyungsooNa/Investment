@@ -879,7 +879,7 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
         """
         복수종목 현재가 조회 (최대 30종목)
         URL: /uapi/domestic-stock/v1/quotations/intstock-multprice
-        TR:  FHKST11300006 (실전 전용)
+        TR:  FHKST11300006
         """
         if not stock_codes:
             return ResCommonResponse(
