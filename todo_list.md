@@ -298,11 +298,13 @@
 - [x] 활성 전략 scan에서 종목별 `get_current_price()` REST fallback이 많이 발생하는 경로를 측정하고, `price_lookup_stats_delta`를 전략별 리포트에 포함한다.
   - 적용 완료(기존): `StrategyScheduler._run_strategy()`가 scan 전후 `StockQueryService.price_lookup_stats_snapshot()` delta를 산출해 `scan_metrics` 로그에 `lookup_stats_delta`(전략별)로 포함한다.
 - [x] 후보군 현재가는 우선 WebSocket snapshot을 사용하고, snapshot 누락분은 `get_multi_price()` 30종목 batch로 보강하는 helper를 설계한다.
-  - 적용 완료: `StockQueryService.prefetch_prices(codes)` 신규. 신선 snapshot 보유 종목은 skip, 누락/stale만 `get_multi_price` ≤30종목 chunk로 보강 후 `cache_price_snapshot` backfill. `get_multi_price`는 실전 전용 TR이라 모의/실패 시 best-effort 무시(개별 `get_current_price` REST fallback 유지 → 모의투자 안전). 신규 stat 키 `batch_prefetch_call`/`batch_prefetch_backfill`/`batch_prefetch_skip_fresh`로 delta 리포트에 노출.
+  - 적용 완료: `StockQueryService.prefetch_prices(codes)` 신규. 신선 snapshot 보유 종목은 skip, 누락/stale만 `get_multi_price` ≤30종목 chunk로 보강 후 `cache_price_snapshot` backfill. 신규 stat 키 `batch_prefetch_call`/`batch_prefetch_backfill`/`batch_prefetch_skip_fresh`로 delta 리포트에 노출.
+  - `get_multi_price`(FHKST11300006) 모의 지원 여부 미확정 → `korea_invest_quotations_api.py`의 "(실전 전용)" 단정 주석 제거. multi_price는 계속 사용하되, **연속 3회 실패 시 5분간 batch prefetch만 일시 중단하는 circuit-breaker**를 추가해 실전 전용이라도 매 scan 실패 호출이 누적되지 않게 했다. circuit open 동안에도 개별 `get_current_price` REST fallback은 정상 동작한다.
 - [~] 전략별로 개별 REST 호출이 필요한 전체 필드(`per`, `pbr`, `stck_llam` 등)와 단순 현재가만 필요한 경로를 분리한다.
   - 기존: `get_current_price(allow_snapshot=...)` 파라미터로 snapshot에 없는 REST 전용 필드(per/pbr/eps) 요구 시 snapshot 우회 경로가 이미 분리되어 있다. 전략별로 어느 경로를 쓰는지 체계적 분류는 후속.
 - [x] 테스트: 60개 후보 scan에서 REST current price 호출이 60회가 아니라 batch 2회 이하로 떨어지는 경로를 mock으로 검증한다.
-  - 적용 완료: `test_stock_query_service_prefetch.py::test_prefetch_then_lookups_hit_snapshot_no_per_code_rest` (60종목 prefetch → batch 2회 + 60 get_current_price 전부 snapshot_hit + 개별 REST 0회), chunk[30,30]/신선 skip/best-effort/price_stream 미주입 no-op 케이스 고정.
+  - 적용 완료: `test_stock_query_service_prefetch.py::test_prefetch_then_lookups_hit_snapshot_no_per_code_rest` (60종목 prefetch → batch 2회 + 60 get_current_price 전부 snapshot_hit + 개별 REST 0회), chunk[30,30]/신선 skip/best-effort/price_stream 미주입 no-op + **연속 실패 후 circuit open** 케이스 고정. `test_rsi2_pullback_fixture_runner_parity.py`의 async `prefetch_prices` mock 보정.
+  - 검증: 단위 5713 passed / 통합 240 passed (통합 종료 시 pending task 경고 1건, 결과는 통과).
 - [ ] 나머지 활성 전략 scan 배선 (후속): `rsi2_pullback`만 `scan()` 진입 직후 `prefetch_prices` 배선 완료(proof). `first_pullback`/`high_tight_flag`/`oneil_squeeze_breakout`/`oneil_pocket_pivot`/`larry_williams_channel_breakout` 등 종목당 `get_current_price` 호출 전략에 동일 1줄 배선 확장 필요.
 
 판단:
