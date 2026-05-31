@@ -327,10 +327,10 @@
 
 ### 2-6. 라이브 핫패스 성능 리뷰 follow-up
 
-- [ ] WebSocket 수신 루프의 틱당 고정 비용을 줄인다.
-  - 확인된 병목: `KoreaInvestWebSocketApi._parse_message()`가 매 틱마다 TR_ID debug f-string을 즉시 평가하고, `active_config['tr_ids']['websocket']` 깊은 조회를 반복한다.
-  - 개선 방향: `realtime_price` / `unified_realtime_price` / `realtime_quote` / program trading TR_ID를 연결 또는 초기화 시 인스턴스 속성으로 캐싱한다. debug 로그는 `%s` lazy formatting 또는 `isEnabledFor(DEBUG)` guard를 사용한다.
-  - 검증 기준: 동일 메시지 입력에서 기존 `message_type`/parsed payload/콜백 contract가 유지되고, debug disabled 상태에서 불필요한 문자열 생성이 사라진다.
+- [x] WebSocket 수신 루프의 틱당 고정 비용을 줄인다. (2026-05-31 완료)
+  - 적용 완료: `_handle_websocket_message()`에서 (1) 미사용 REST 속성(`_websocket_url`/`_base_rest_url`/`_rest_api_key`/`_rest_api_secret`) 틱당 재대입 제거, (2) `realtime_price`/`unified_realtime_price`/`realtime_quote`/program trading TR_ID를 `_cache_realtime_tr_ids()`로 1회 캐싱(첫 메시지 lazy + 재연결 시 무효화→재해석), (3) debug 로그를 `%s` 파라미터화로 전환해 매 틱 `parsed_data` repr/깊은 dict 조회 제거.
+  - 보존: `realtime_price`/`realtime_quote` 필수 키 누락 시 KeyError fail-fast 그대로 유지(상위 재연결 경로). 캐시 속성 bracket 접근으로 회귀 테스트 통과.
+  - 테스트 고정: `test_handle_message_does_not_reassign_rest_attrs_per_tick`, `test_handle_message_caches_realtime_tr_ids`, `test_handle_message_uses_cached_tr_ids_after_config_mutation`, `test_cache_realtime_tr_ids_refreshes_on_reconnect`, `test_handle_message_debug_logging_is_lazy`. 단위 5729 passed / 통합 240 passed.
 - [ ] 활성 라이브 전략의 `scan()` 후보 처리 중 남은 순차 REST/보강 호출을 전략별로 재분류하고, 필요한 곳만 `bounded_gather`로 전환한다.
   - 우선 대상: `LarryWilliamsVBOStrategy.scan()` 후보 루프. 이미 `prefetch_prices()`와 range cache `bounded_gather()`는 적용되어 있지만, 후보별 현재가/체결강도/변동성 보강 호출은 순차 흐름이 남아 있다.
   - 주의: `MomentumStrategy.run()`과 `GapUpPullbackStrategy.run()`도 순차 N+1이 맞지만 현재 웹 라이브 스케줄러 등록 대상이 아니므로, 라이브 핫패스 최우선 항목으로 일반화하지 않는다.
@@ -456,7 +456,7 @@
    - 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 → 필요 시 `_global` 8/s + `_global.emergency` 2/s 운영값 조정 (P2 2-2; 공통 HTTP 경로 강제 주입과 보수 기본값은 적용 완료)
 
 2. **코드 수정으로 바로 진행 가능**
-   - WebSocket 틱 루프 TR_ID 캐싱 + debug lazy logging 적용 (P2 2-6)
+   - ~~WebSocket 틱 루프 TR_ID 캐싱 + debug lazy logging 적용 (P2 2-6)~~ ✅ 완료 (2026-05-31)
    - `LarryWilliamsVBOStrategy.scan()` 잔여 순차 후보 처리 bounded 전환 여부 검증 후 적용 (P2 2-6)
    - 활성 전략 `check_exits()` 순차 holdings 루프를 bounded 처리로 통일할지 전략별 적용 (P2 2-6)
    - 장마감 배치 `iterrows()` 중 전체 종목 필터링 경로부터 벡터화/`itertuples()` 전환 (P2 2-6)
