@@ -319,6 +319,62 @@ async def test_check_single_exit_skips_missing_code_and_bad_price(exit_setup):
     assert await strategy._check_single_exit({"code": "005930"}) is None
 
 
+# ── P0 0-8: 당일 미확정 봉 제외 ───────────────────────────────────
+
+def _ohlcv_with_today(today_str, n_confirmed=34, confirmed_low=12500, today_low=50):
+    """확정봉 n개(date < today) + 마지막에 당일(미확정) 봉 1개.
+    get_ohlcv가 장중 붙이는 today 행을 모사한다. today_low는 채널/ADX를 오염시키는 극단값."""
+    data = []
+    for i in range(n_confirmed):
+        data.append({
+            "date": f"2024{(i // 28) + 1:02d}{(i % 28) + 1:02d}",
+            "open": 13000, "high": 13100,
+            "low": confirmed_low, "close": 13000, "volume": 150000,
+        })
+    data.append({
+        "date": today_str,
+        "open": 13000, "high": 14000,
+        "low": today_low, "close": 13500, "volume": 90000,
+    })
+    return ResCommonResponse(rt_cd="0", msg1="OK", data=data)
+
+
+@pytest.mark.asyncio
+async def test_check_entry_excludes_today_bar_from_adx_and_channel(scan_setup):
+    """라이브 진입: get_ohlcv가 붙인 당일 미확정 봉을 ADX/채널 하단 계산에서 제외한다."""
+    strategy, sqs, _, indicator, tm = scan_setup
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 15, 15, 0)  # today=20250102
+    sqs.get_ohlcv.return_value = _ohlcv_with_today("20250102", confirmed_low=12500, today_low=50)
+
+    sig = await strategy._check_entry("005930", _watchlist_item())
+
+    assert sig is not None and sig.action == "BUY"
+    # calc_adx_sync에는 당일 봉이 빠진 확정봉만 전달되어야 한다
+    passed_ohlcv = indicator.calc_adx_sync.call_args.args[0]
+    assert all(row["date"] != "20250102" for row in passed_ohlcv)
+    # 채널 하단/칼손절이 당일 극단 저가(50)에 오염되지 않고 확정봉(12500) 기준으로 계산
+    state = strategy._position_state["005930"]
+    assert state.channel_low_10d == 12500
+    assert state.hard_stop_price >= 12500
+
+
+@pytest.mark.asyncio
+async def test_check_exits_trailing_update_excludes_today_bar(exit_setup):
+    """라이브 청산: trailing stop 상향 갱신도 당일 미확정 봉 저가를 제외한 확정봉 기준."""
+    strategy, sqs = exit_setup
+    strategy._tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 15, 15, 0)
+    sqs.get_current_price.return_value = _price_resp(current="13500")  # 청산 미발동
+    # 확정봉 최근 10일 저가=12500, 당일 봉 저가=12000(오염값)
+    sqs.get_ohlcv.return_value = _ohlcv_with_today("20250102", confirmed_low=12500, today_low=12000)
+
+    holdings = [{"code": "005930", "name": "삼성전자", "buy_price": 12500, "qty": 3}]
+    signals = await strategy.check_exits(holdings)
+
+    assert signals == []
+    # 당일 저가(12000)가 아니라 확정봉 저가(12500)로 상향되어야 한다
+    assert strategy._position_state["005930"].channel_low_10d == 12500
+
+
 # ── 헬퍼 / 인터페이스 ────────────────────────────────────────────
 
 def test_name_property(mock_deps):

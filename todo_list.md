@@ -16,7 +16,7 @@
 
 - P0 0-1: 실전 체결 이력 확보 후 broker order mapper 분리 + fixture 회귀 잠금.
 - P0 0-7: ~~canary 5% 노출 제한을 코드/config profile로 분리하고 real 기본 30%와 운영 혼동을 제거.~~ ✅ 완료 (2026-05-27).
-- P0 0-8: ~~라이브 전략 일봉 지표에서 당일 미완성 봉 제외 옵션을 도입한다.~~ ✅ 완료 (2026-05-28, #478). 지표 API + RSI2 + ATR sizing 적용. 나머지 전략 MA/RSI 라이브 호출 rollout은 후속.
+- P0 0-8: ~~라이브 전략 일봉 지표에서 당일 미완성 봉 제외 옵션을 도입한다.~~ ✅ 완료 (2026-05-28, #478 + rollout 조사). 지표 API + RSI2 + ATR sizing 적용. rollout 전수 조사 결과 추가 오염 경로는 `LarryWilliamsChannelBreakout`(ADX/채널)뿐이라 `_confirmed_bars()`로 마감.
 - P0 0-9: ~~라이브 손절/익절 판단을 gross PnL이 아닌 비용 반영 net PnL 기준으로 통일한다.~~ ✅ 완료 (2026-05-28, #479).
 - P0 0-10: ~~같은 사이클/이전 사이클의 신규 BUY에 대해 pending/reserved cash와 동일 종목 전 전략 합산 노출을 qty cap에 반영한다.~~ ✅ 완료.
 - P0 0-11: ~~kill switch 및 sync fallback state 저장을 atomic write로 통일한다.~~ ✅ 완료 (2026-05-28, #481).
@@ -83,9 +83,11 @@
 ### 0-8. 라이브 일봉 지표에서 당일 미완성 봉 제외 — ✅ 완료 (#478, 2026-05-28)
 
 - [x] `IndicatorService.get_rsi()`, `get_moving_average()`, `calculate_atr()`에 `exclude_today: bool = False` 옵션을 추가했다.
-- [~] 라이브 전략 호출 경로는 기본적으로 당일 미완성 봉을 제외하도록 변경한다.
+- [x] 라이브 전략 호출 경로는 기본적으로 당일 미완성 봉을 제외하도록 변경한다.
   - 적용 완료: RSI(2) 경로(`RSI2PullbackStrategy`)와 ATR 기반 sizing(`PositionSizingService` `exclude_today=True`).
-  - 후속: 그 외 활성 전략의 MA/RSI 라이브 호출은 아직 `exclude_today`를 전달하지 않는다. 해당 전략이 일봉 지표로 라이브 신호를 내는 경로만 선별 적용 필요.
+  - 적용 완료(rollout 조사 후): 나머지 활성 전략을 전수 조사한 결과, 당일 미확정 봉이 라이브 신호를 오염시키는 곳은 `LarryWilliamsChannelBreakoutStrategy` 하나뿐이었다. 유일하게 `get_ohlcv(period="D")`(장중 당일봉 병합)를 ADX(`calc_adx_sync`)/채널 하단(`_calc_channel_low`) 계산에 그대로 넘기던 경로를 `_confirmed_bars()`(마지막 행 date==오늘이면 제외)로 차단했다. 진입(`_check_entry`)·청산 trailing 갱신(`check_exits`) 양쪽 적용. 돌파 트리거(`current > item.high_20d`, 확정 watchlist 값)는 불변.
+  - 조사 결과(미적용 사유): `RSI2Pullback`=이미 처리, `FirstPullback`=진입 `end_date=어제`/exit `get_recent_daily_ohlcv` DB-first 확정봉, `OneilSqueezeBreakout`=exit DB-first 확정봉, `OneilPocketPivot`=`today_candle` 의도적 병합, `HighTightFlag`=`get_recent_daily_ohlcv` DB-first 확정봉, `LarryWilliamsVBO`=전일 range only. 핵심: `get_recent_daily_ohlcv`는 장중 DB-first라 확정봉만 반환하고, `get_ohlcv`만 당일 미확정 봉을 붙인다.
+  - 테스트 고정: `test_larry_williams_channel_breakout_strategy.py`의 `test_check_entry_excludes_today_bar_from_adx_and_channel`, `test_check_exits_trailing_update_excludes_today_bar`. 단위 5737 passed / 통합 240 passed.
 - [x] 차트/리포트 UI 등 장중 현재 봉 표시가 필요한 경로는 기본값 `exclude_today=False`로 기존 동작을 유지한다.
 - [x] 테스트: 장중 today row 병합 시에도 라이브 지표 호출이 전일 확정 봉까지만 사용함을 `test_indicator_service.py`에 고정했다.
 
@@ -465,7 +467,7 @@
    - 활성 전략 `check_exits()` 순차 holdings 루프 bounded 통일 (P2 2-6) — 실전 청산 경로라 별도 승인 후 진행.
    - ~~장마감 배치 `iterrows()` 중 전체 종목 필터링 경로부터 벡터화/`itertuples()` 전환 (P2 2-6)~~ ✅ 완료 (2026-05-31, zip 순회). FDR/RS line 변환 경로는 영향 작아 보류.
    - ~~`KoreaInvestApiBase` fallback client Limits/Timeout + retry jitter + `TokenProvider` singleflight 정합성 개선 (P2 2-6)~~ ✅ 완료 (2026-05-31). JSON 이중 파싱 제거는 MagicMock 충돌/이득 미미로 보류.
-   - ~~라이브 일봉 지표 당일 미완성 봉 제외 (P0 0-8)~~ ✅ #478 — 나머지 전략 MA/RSI rollout 후속
+   - ~~라이브 일봉 지표 당일 미완성 봉 제외 (P0 0-8)~~ ✅ #478 + rollout 조사 완료 (추가 오염은 `LarryWilliamsChannelBreakout` ADX/채널뿐 → `_confirmed_bars()`로 마감)
    - ~~라이브 exit net PnL 통일 (P0 0-9)~~ ✅ #479
    - ~~pending/reserved cash + 전 전략 same-symbol qty cap 반영 (P0 0-10)~~ ✅ 완료
    - ~~kill switch/state sync fallback atomic write 통일 (P0 0-11)~~ ✅ #481

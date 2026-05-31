@@ -163,7 +163,8 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
                 "reason": "ohlcv_unavailable",
             })
             return None
-        ohlcv = ohlcv_resp.data
+        # P0 0-8: get_ohlcv는 장중 당일 미확정 봉을 붙이므로 ADX/채널 baseline에서 제외한다.
+        ohlcv = self._confirmed_bars(ohlcv_resp.data)
 
         # Phase 1-1: ADX(14) ≥ threshold + 우상향
         adx_result = self._indicator.calc_adx_sync(
@@ -371,7 +372,8 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
         if state:
             ohlcv_resp = await self._sqs.get_ohlcv(code, period="D", caller=self.name)
             if ohlcv_resp and ohlcv_resp.rt_cd == "0" and ohlcv_resp.data:
-                new_low = self._calc_channel_low(ohlcv_resp.data, period=self._cfg.channel_low_period)
+                # P0 0-8: 당일 미확정 봉 저가가 trailing stop 갱신을 막지 않도록 확정봉만 사용.
+                new_low = self._calc_channel_low(self._confirmed_bars(ohlcv_resp.data), period=self._cfg.channel_low_period)
                 if new_low > state.channel_low_10d:
                     state.channel_low_10d = new_low
                     self._logger.debug({
@@ -383,6 +385,16 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
         return (None, False)
 
     # ── helpers ─────────────────────────────────────────────────────
+
+    def _confirmed_bars(self, ohlcv: list) -> list:
+        """P0 0-8: 라이브 호출 시 get_ohlcv가 장중 붙이는 당일 미확정 봉을 제외한다.
+        마지막 행 date가 오늘(KST)이면 그 행을 떼고 확정봉만 반환한다."""
+        if not ohlcv:
+            return ohlcv
+        today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
+        if str(ohlcv[-1].get("date", "")) == today_str:
+            return ohlcv[:-1]
+        return ohlcv
 
     @staticmethod
     def _extract_current_price(resp) -> int:
