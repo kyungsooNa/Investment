@@ -634,13 +634,18 @@ class OneilUniverseService:
         start_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time))
         
         # 1. 전체 종목 로드
-        all_stocks = []
-        for _, row in self.stock_code_repository.df.iterrows():
-            code = row.get("종목코드", "")
-            name = row.get("종목명", "")
-            market = row.get("시장구분", "")
-            if code and market in ("KOSPI", "KOSDAQ"):
-                all_stocks.append((code, name, market))
+        # 성능: iterrows()는 행마다 Series를 생성해 느리다. 컬럼을 리스트로 한 번 추출해
+        # zip 순회한다. row.get(col, "") 시맨틱(컬럼 부재 시 "") 보존.
+        df = self.stock_code_repository.df
+        n = len(df)
+        codes = df["종목코드"].tolist() if "종목코드" in df.columns else [""] * n
+        names = df["종목명"].tolist() if "종목명" in df.columns else [""] * n
+        markets = df["시장구분"].tolist() if "시장구분" in df.columns else [""] * n
+        all_stocks = [
+            (code, name, market)
+            for code, name, market in zip(codes, names, markets)
+            if code and market in ("KOSPI", "KOSDAQ")
+        ]
 
         total_stocks = len(all_stocks)
         print(f"[전일 기준 우량주 생성] 시작시간: {start_time_str} | 전체 종목 수: {total_stocks}개. 1차 필터링(시총) 시작...")

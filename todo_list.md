@@ -26,7 +26,7 @@
 - P2 2-2: ~~실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 후 budget 기본값 보정.~~ 전역 normal 8/s + emergency 2/s 기본값 보정 완료. 계정별 공식 한도 재확인은 운영 전 외부 확인으로 유지.
 - P2 2-4: VBO shadow 5거래일 jsonl 수집 → polling parity 비교. event-driven live order는 별도 승인 전 No-Go.
 - P2 2-5: ~~전략 scan의 종목별 현재가 REST 호출을 batch quote / WebSocket snapshot 중심으로 줄인다.~~ helper(`StockQueryService.prefetch_prices`) + rsi2 포함 활성 전략 7개 scan 배선 + 테스트 완료.
-- P2 2-6: 라이브 핫패스 성능 follow-up. WebSocket 틱 루프 상수 캐싱/로그 lazy 처리, 활성 전략 scan/check_exits 순차 후보 처리 개선, 장마감 배치 `iterrows()` 축소, HTTP/token 미세 정합성 개선.
+- P2 2-6: 라이브 핫패스 성능 follow-up. ~~WebSocket 틱 루프 상수 캐싱/로그 lazy 처리~~ ✅, ~~장마감 배치 `iterrows()` 축소~~ ✅, ~~HTTP/token 미세 정합성 개선(fallback Limits·Timeout / token singleflight / retry jitter)~~ ✅ (2026-05-31). 남은 것: 활성 전략 `scan()`/`check_exits()` 순차 후보 처리 bounded 전환 — 실전 진입/청산 경로라 별도 승인 후 진행(VBO scan은 실익 marginal로 보류 결정).
 - P3 3-4: active strategy lifecycle contract 최소 공통 단계 강제 여부 재설계(현재 보류).
 - P3 3-5: backtest/live 호가단위 tick-size 로직을 단일 utility로 통일한다.
 - P3 3-6: ~~IndicatorService 계산 경로의 광범위 `except Exception` silent skip에 ERROR log/metric/alert hook을 붙인다.~~ ✅ 완료. 전략 레이어 per-code fail-rate metric도 `scan_metrics`/`exit_metrics`에 반영 완료.
@@ -327,26 +327,30 @@
 
 ### 2-6. 라이브 핫패스 성능 리뷰 follow-up
 
-- [ ] WebSocket 수신 루프의 틱당 고정 비용을 줄인다.
-  - 확인된 병목: `KoreaInvestWebSocketApi._parse_message()`가 매 틱마다 TR_ID debug f-string을 즉시 평가하고, `active_config['tr_ids']['websocket']` 깊은 조회를 반복한다.
-  - 개선 방향: `realtime_price` / `unified_realtime_price` / `realtime_quote` / program trading TR_ID를 연결 또는 초기화 시 인스턴스 속성으로 캐싱한다. debug 로그는 `%s` lazy formatting 또는 `isEnabledFor(DEBUG)` guard를 사용한다.
-  - 검증 기준: 동일 메시지 입력에서 기존 `message_type`/parsed payload/콜백 contract가 유지되고, debug disabled 상태에서 불필요한 문자열 생성이 사라진다.
-- [ ] 활성 라이브 전략의 `scan()` 후보 처리 중 남은 순차 REST/보강 호출을 전략별로 재분류하고, 필요한 곳만 `bounded_gather`로 전환한다.
+- [x] WebSocket 수신 루프의 틱당 고정 비용을 줄인다. (2026-05-31 완료)
+  - 적용 완료: `_handle_websocket_message()`에서 (1) 미사용 REST 속성(`_websocket_url`/`_base_rest_url`/`_rest_api_key`/`_rest_api_secret`) 틱당 재대입 제거, (2) `realtime_price`/`unified_realtime_price`/`realtime_quote`/program trading TR_ID를 `_cache_realtime_tr_ids()`로 1회 캐싱(첫 메시지 lazy + 재연결 시 무효화→재해석), (3) debug 로그를 `%s` 파라미터화로 전환해 매 틱 `parsed_data` repr/깊은 dict 조회 제거.
+  - 보존: `realtime_price`/`realtime_quote` 필수 키 누락 시 KeyError fail-fast 그대로 유지(상위 재연결 경로). 캐시 속성 bracket 접근으로 회귀 테스트 통과.
+  - 테스트 고정: `test_handle_message_does_not_reassign_rest_attrs_per_tick`, `test_handle_message_caches_realtime_tr_ids`, `test_handle_message_uses_cached_tr_ids_after_config_mutation`, `test_cache_realtime_tr_ids_refreshes_on_reconnect`, `test_handle_message_debug_logging_is_lazy`. 단위 5729 passed / 통합 240 passed.
+- [~] 활성 라이브 전략의 `scan()` 후보 처리 중 남은 순차 REST/보강 호출을 전략별로 재분류하고, 필요한 곳만 `bounded_gather`로 전환한다.
   - 우선 대상: `LarryWilliamsVBOStrategy.scan()` 후보 루프. 이미 `prefetch_prices()`와 range cache `bounded_gather()`는 적용되어 있지만, 후보별 현재가/체결강도/변동성 보강 호출은 순차 흐름이 남아 있다.
+  - 검토 결과(2026-05-31, 보류): 저비용 단계(현재가는 `prefetch_prices` 덕에 대부분 snapshot hit)에서 대다수 후보가 탈락하고, 고비용 REST(`_get_execution_strength`)는 가격 게이트 통과한 돌파 후보(소수)에만 발생. 게다가 전역 `ApiBudgetLimiter`가 모든 REST를 8/s로 직렬화하므로 bounded 전환의 실익은 "동시 돌파 후보 多"일 때의 직렬 RTT 누적 감소뿐(marginal). 실전 진입 경로 동등성(순서/시그널 수/`_bought_today`) 검증 부담 대비 이득이 작아 보류. 재개 시 2-pass(돌파 후보만 `execution_strength` bounded)가 가장 외과적.
   - 주의: `MomentumStrategy.run()`과 `GapUpPullbackStrategy.run()`도 순차 N+1이 맞지만 현재 웹 라이브 스케줄러 등록 대상이 아니므로, 라이브 핫패스 최우선 항목으로 일반화하지 않는다.
   - 검증 기준: 결과 순서/시그널 수/거절 사유/`_bought_today` state 변화가 기존과 동등하고, 동시성 limit은 KIS budget limiter 기본값과 충돌하지 않는다.
 - [ ] 활성 전략 `check_exits()` 순차 루프를 계산 경로별로 점검하고, 보유 종목 수가 늘어나는 경로는 bounded 처리로 통일한다.
   - 확인: `sell_all_stocks()`에는 이미 `SAFE_SEQUENTIAL` / `BOUNDED_PARALLEL` / `EMERGENCY` 모드가 있으며, `EMERGENCY` unbounded gather는 `emergency_scope()`를 사용하는 의도적 경로다. 리뷰의 "exit unbounded gather"는 이 경로보다 전략별 `check_exits()` 순차 계산 개선으로 재정의한다.
   - 우선 대상: `LarryWilliamsVBOStrategy`, `ProgramBuyFollowStrategy`, `VolumeBreakoutLiveStrategy`, `TraditionalVolumeBreakoutStrategy`의 순차 holdings 루프. 단, 현재 웹 등록 활성 전략은 VBO 중심으로 먼저 적용한다.
   - 검증 기준: 손절/익절/시간청산 신호 생성 결과가 기존과 동등하고, per-code 예외가 다른 보유 종목 exit 판단을 막지 않는다.
-- [ ] 장마감 배치의 `iterrows()` 사용처를 API 호출 전처리와 단순 포맷 변환으로 나눠 낮은 위험부터 개선한다.
-  - 우선 대상: `OneilUniverseService._generate_premium_watchlist()`, `RankingTask._load_all_stocks()`, `MinerviniUpdateTask._load_all_stocks()`의 전체 종목 필터링 루프.
-  - 낮은 우선순위: FDR OHLCV 포맷 변환(`DailyPriceCollectorTask`, `OhlcvUpdateTask`)과 RS line 결과 변환(`RSRatingService`)은 장마감/소규모 변환 경로라 성능 영향이 작다.
-  - 검증 기준: 필터링 결과 tuple 목록이 기존과 동일하고 ETF/우선주/스팩 제외 조건이 유지된다.
-- [ ] HTTP/token 미세 정합성 개선은 별도 작은 PR로 묶는다.
-  - 대상: `KoreaInvestApiBase._execute_request()` / `_handle_response()`의 JSON 이중 파싱 제거, fallback `httpx.AsyncClient`에 shared client와 같은 `Limits`/`Timeout` 적용, `TokenProvider.get_access_token()` double-checked `asyncio.Lock` 추가, retry jitter 추가.
+- [~] 장마감 배치의 `iterrows()` 사용처를 API 호출 전처리와 단순 포맷 변환으로 나눠 낮은 위험부터 개선한다.
+  - 적용 완료(2026-05-31): 전체 종목 필터링 루프 3곳(`OneilUniverseService._generate_premium_watchlist()`, `RankingTask._load_all_stocks()`, `MinerviniUpdateTask._load_all_stocks()`)의 `iterrows()`를 컬럼 리스트 추출 후 `zip` 순회로 전환. 행마다 Series 생성하던 비용 제거. `row.get(col, "")` 시맨틱(컬럼 부재→"") 보존, 필터 순서/조건 불변.
+  - 테스트 고정: ranking `test_load_all_stocks_preserves_df_order_after_filtering`/`test_load_all_stocks_empty_df_returns_empty`, minervini `test_load_all_stocks_preserves_order_and_all_markets`. 기존 ETF/우선주/스팩/빈코드/비대상시장 테스트 회귀 통과. 단위 5732 passed / 통합 240 passed.
+  - 낮은 우선순위(미적용): FDR OHLCV 포맷 변환(`DailyPriceCollectorTask`, `OhlcvUpdateTask`)과 RS line 결과 변환(`RSRatingService`)은 장마감/소규모 변환 경로라 성능 영향이 작아 보류.
+  - 검증 기준: 필터링 결과 tuple 목록이 기존과 동일하고 ETF/우선주/스팩 제외 조건이 유지된다. (충족)
+- [~] HTTP/token 미세 정합성 개선은 별도 작은 PR로 묶는다.
+  - 적용 완료(2026-05-31): (a) fallback `httpx.AsyncClient`에 shared client(`korea_invest_client`)와 동일한 `Limits(max_keepalive=50, max_conn=100, keepalive_expiry=30)`/`Timeout(10.0, connect=5.0)` 적용. (b) `TokenProvider.get_access_token()` double-checked `asyncio.Lock`(`_issue_lock`) singleflight — 동시 호출 중복 발급(EGW00133) 방지. (c) `call_api` 지수 백오프에 bounded jitter(`_RETRY_JITTER_FRACTION=0.25`) 추가 — 명시 delay(`e.delay>0`) 경로는 불변.
+  - 보류(근거): JSON 이중 파싱(`_execute_request` + `_handle_response`의 `response.json()` 2회) 제거는 MagicMock 응답 테스트와 충돌(MagicMock이 임의 속성 자동 생성 → 응답 객체 속성 캐싱 불가)하고, 이중 EGW00123 처리 경로를 건드릴 위험 대비 이득이 미미(작은 JSON 2회 파싱=마이크로초)해 단순성 원칙상 보류. weakref 캐시 도입은 과한 복잡도.
+  - 테스트 고정: `test_fallback_async_client_uses_shared_limits_and_timeout`, `test_get_access_token_singleflight_under_concurrency`(conftest의 `asyncio.sleep` 패치를 우회하는 raw yield로 실제 동시성 검증), `test_call_api_retry_backoff_applies_bounded_jitter`(`random.uniform` 고정 patch). 기존 429/500 retry 테스트는 jitter 범위 단언으로 갱신. 단위 5735 passed / 통합 240 passed.
   - 주의: `http2=True`는 KIS 지원 여부가 불확실하므로 측정/공식 확인 전 적용하지 않는다.
-  - 검증 기준: token refresh, EGW00123 재시도, 429 retry, JSON parsing error 테스트가 기존 contract를 유지한다.
+  - 검증 기준: token refresh, EGW00123 재시도, 429 retry, JSON parsing error 테스트가 기존 contract를 유지한다. (충족)
 
 판단:
 
@@ -456,11 +460,11 @@
    - 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 → 필요 시 `_global` 8/s + `_global.emergency` 2/s 운영값 조정 (P2 2-2; 공통 HTTP 경로 강제 주입과 보수 기본값은 적용 완료)
 
 2. **코드 수정으로 바로 진행 가능**
-   - WebSocket 틱 루프 TR_ID 캐싱 + debug lazy logging 적용 (P2 2-6)
-   - `LarryWilliamsVBOStrategy.scan()` 잔여 순차 후보 처리 bounded 전환 여부 검증 후 적용 (P2 2-6)
-   - 활성 전략 `check_exits()` 순차 holdings 루프를 bounded 처리로 통일할지 전략별 적용 (P2 2-6)
-   - 장마감 배치 `iterrows()` 중 전체 종목 필터링 경로부터 벡터화/`itertuples()` 전환 (P2 2-6)
-   - `KoreaInvestApiBase` JSON 파싱/fallback client/retry jitter + `TokenProvider` singleflight 정합성 개선 (P2 2-6)
+   - ~~WebSocket 틱 루프 TR_ID 캐싱 + debug lazy logging 적용 (P2 2-6)~~ ✅ 완료 (2026-05-31)
+   - `LarryWilliamsVBOStrategy.scan()` 잔여 순차 후보 처리 bounded 전환 (P2 2-6) — 2026-05-31 검토 후 **보류**(실익 marginal·실전 진입 경로). 재개 시 2-pass 권장.
+   - 활성 전략 `check_exits()` 순차 holdings 루프 bounded 통일 (P2 2-6) — 실전 청산 경로라 별도 승인 후 진행.
+   - ~~장마감 배치 `iterrows()` 중 전체 종목 필터링 경로부터 벡터화/`itertuples()` 전환 (P2 2-6)~~ ✅ 완료 (2026-05-31, zip 순회). FDR/RS line 변환 경로는 영향 작아 보류.
+   - ~~`KoreaInvestApiBase` fallback client Limits/Timeout + retry jitter + `TokenProvider` singleflight 정합성 개선 (P2 2-6)~~ ✅ 완료 (2026-05-31). JSON 이중 파싱 제거는 MagicMock 충돌/이득 미미로 보류.
    - ~~라이브 일봉 지표 당일 미완성 봉 제외 (P0 0-8)~~ ✅ #478 — 나머지 전략 MA/RSI rollout 후속
    - ~~라이브 exit net PnL 통일 (P0 0-9)~~ ✅ #479
    - ~~pending/reserved cash + 전 전략 same-symbol qty cap 반영 (P0 0-10)~~ ✅ 완료

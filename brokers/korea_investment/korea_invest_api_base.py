@@ -11,6 +11,7 @@ except ImportError:
 import certifi
 import logging
 import asyncio  # 비동기 처리를 위해 추가
+import random  # 재시도 백오프 jitter
 import httpx  # 비동기 처리를 위해 requests 대신 httpx 사용
 import ssl
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenProvider를 import
@@ -34,6 +35,9 @@ class ApiFatalError(Exception):
     def __init__(self, message, rt_cd=None):
         super().__init__(message)
         self.rt_cd = rt_cd
+
+# 재시도 지수 백오프에 더하는 bounded jitter 비율 (base 대비 0~25%)
+_RETRY_JITTER_FRACTION = 0.25
 
 class KoreaInvestApiBase:
     """
@@ -61,7 +65,11 @@ class KoreaInvestApiBase:
             self._async_session = async_client
         else:
             ssl_context = ssl.create_default_context(cafile=certifi.where())
-            self._async_session = httpx.AsyncClient(verify=ssl_context)
+            # shared client(korea_invest_client)와 동일한 Limits/Timeout 적용 —
+            # fallback 경로에서 연결 풀/타임아웃이 무제한이 되는 것을 방지.
+            limits = httpx.Limits(max_keepalive_connections=50, max_connections=100, keepalive_expiry=30.0)
+            timeout = httpx.Timeout(10.0, connect=5.0)  # connect 5s, read/write/pool 10s
+            self._async_session = httpx.AsyncClient(verify=ssl_context, limits=limits, timeout=timeout)
 
         # urllib3 로거의 DEBUG 레벨을 비활성화하여 call_api의 DEBUG 로그와 분리
         logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
@@ -111,9 +119,12 @@ class KoreaInvestApiBase:
             except ApiRetryError as e:
                 # 지수 백오프 적용: 기본 delay * 2^(attempt-1)
                 if e.delay > 0:
+                    # 명시 delay(예: 토큰 Rate Limit)는 그대로 사용 — jitter 미적용
                     wait_time = e.delay
                 else:
-                    wait_time = delay * (2 ** (attempt - 1))
+                    base = delay * (2 ** (attempt - 1))
+                    # bounded jitter — 다전략 동시 재시도(thundering herd) 분산
+                    wait_time = base + random.uniform(0, base * _RETRY_JITTER_FRACTION)
                 self._logger.warning(f"재시도 필요: {attempt}/{retry_count}, 사유: {e}, 지연 {wait_time}초")
                 await self.market_clock.async_sleep(wait_time)
                 continue

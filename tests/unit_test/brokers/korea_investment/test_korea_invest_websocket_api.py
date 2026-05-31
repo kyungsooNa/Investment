@@ -439,6 +439,87 @@ def test_handle_websocket_message_realtime_price_success(websocket_api_instance)
     assert called_args['data']["주식현재가"] == '10000'
 
 
+def _make_realtime_price_message(tr_id="H0STCNT0"):
+    data_parts = [''] * 60
+    data_parts[0] = '0001'
+    data_parts[2] = '10000'
+    return f"0|{tr_id}|some_key|{'^'.join(data_parts)}"
+
+
+def test_handle_message_does_not_reassign_rest_attrs_per_tick(websocket_api_instance):
+    """핫패스 최적화: 메시지 핸들러는 더 이상 매 틱 URL/api key/secret을 재대입하지 않는다.
+    이 값들은 연결 수립 경로(_get_approval_key/_establish_connection)에서만 설정된다."""
+    api = websocket_api_instance
+    api.on_realtime_message_callback = MagicMock()
+
+    api._handle_websocket_message(_make_realtime_price_message())
+
+    assert api._websocket_url is None
+    assert api._base_rest_url is None
+    assert api._rest_api_key is None
+    assert api._rest_api_secret is None
+
+
+def test_handle_message_caches_realtime_tr_ids(websocket_api_instance):
+    """핫패스 최적화: 실시간 TR_ID를 1회 캐싱해 매 틱 깊은 dict 조회를 제거한다."""
+    api = websocket_api_instance
+    api.on_realtime_message_callback = MagicMock()
+
+    api._handle_websocket_message(_make_realtime_price_message())
+
+    assert api._rt_tr_realtime_price == "H0STCNT0"
+    assert api._rt_tr_realtime_quote == "H0STASP0"
+    assert api._rt_tr_unified_realtime_price == "H0UNCNT0"
+    assert "H0STPGM0" in api._rt_program_trading_tr_ids
+
+
+def test_handle_message_uses_cached_tr_ids_after_config_mutation(websocket_api_instance):
+    """캐시 이후 active_config가 바뀌어도 같은 연결에서는 재조회하지 않는다(깊은 조회 제거 증거)."""
+    api = websocket_api_instance
+    api.on_realtime_message_callback = MagicMock()
+
+    api._handle_websocket_message(_make_realtime_price_message())
+    # 같은 연결 중 config가 바뀌어도 캐시는 유지된다
+    api._env.active_config['tr_ids']['websocket']['realtime_price'] = "H0XXXXX0"
+
+    api._handle_websocket_message(_make_realtime_price_message("H0STCNT0"))
+
+    # 여전히 캐시된 H0STCNT0 으로 realtime_price 분기를 탄다
+    assert api.on_realtime_message_callback.call_args[0][0]['type'] == 'realtime_price'
+    assert api._rt_tr_realtime_price == "H0STCNT0"
+
+
+def test_cache_realtime_tr_ids_refreshes_on_reconnect(websocket_api_instance):
+    """연결 재수립 시 환경 전환을 반영하도록 캐시를 강제 갱신한다."""
+    api = websocket_api_instance
+    api._cache_realtime_tr_ids()
+    assert api._rt_tr_realtime_quote == "H0STASP0"
+
+    api._env.active_config['tr_ids']['websocket']['realtime_quote'] = "H0NEWASP0"
+    api._cache_realtime_tr_ids()
+
+    assert api._rt_tr_realtime_quote == "H0NEWASP0"
+
+
+def test_handle_message_debug_logging_is_lazy(websocket_api_instance):
+    """debug 로그는 %s 파라미터화로 지연 포맷팅한다(큰 parsed_data repr을 매 틱 만들지 않는다)."""
+    api = websocket_api_instance
+    api.on_realtime_message_callback = MagicMock()
+
+    api._handle_websocket_message(_make_realtime_price_message())
+
+    parse_log_calls = [
+        c for c in api._logger.debug.call_args_list
+        if c.args and isinstance(c.args[0], str) and "WS 수신 데이터 파싱" in c.args[0]
+    ]
+    assert parse_log_calls, "파싱 debug 로그가 호출되어야 한다"
+    call = parse_log_calls[0]
+    # f-string(단일 인자)이 아니라 %s 파라미터 형태여야 한다
+    assert "%s" in call.args[0]
+    assert len(call.args) > 1
+    assert any(isinstance(a, dict) for a in call.args[1:])
+
+
 # _handle_websocket_message: 성공적인 주식 호가(H0STASP0) 파싱 테스트
 def test_handle_websocket_message_realtime_quote_success(websocket_api_instance):
     api = websocket_api_instance

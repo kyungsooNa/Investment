@@ -310,6 +310,28 @@ def get_api():
 
     return DummyAPI(mock_env, mock_logger, mock_market_clock, trid_provider=mock_trid_provider)
 
+
+@pytest.mark.asyncio
+async def test_fallback_async_client_uses_shared_limits_and_timeout():
+    """async_client 미주입 시 fallback httpx.AsyncClient가 shared client(korea_invest_client)와
+    동일한 Limits/Timeout을 사용해 연결 풀/타임아웃이 무제한이 되지 않도록 한다."""
+    with patch("brokers.korea_investment.korea_invest_api_base.httpx.AsyncClient") as mock_client_cls:
+        get_api()  # DummyAPI → super().__init__ (async_client 미주입) → fallback 경로
+
+        mock_client_cls.assert_called_once()
+        _, kwargs = mock_client_cls.call_args
+        assert "limits" in kwargs, "fallback client에 limits가 지정되어야 한다"
+        assert "timeout" in kwargs, "fallback client에 timeout이 지정되어야 한다"
+
+        limits = kwargs["limits"]
+        assert limits.max_connections == 100
+        assert limits.max_keepalive_connections == 50
+
+        timeout = kwargs["timeout"]
+        assert timeout.connect == 5.0
+        assert timeout.read == 10.0
+
+
 @pytest.mark.asyncio
 async def testcall_api_retry_exceed_failure(caplog):
     logger = get_test_logger()
@@ -486,8 +508,10 @@ async def testcall_api_retry_on_429(caplog):
     # asyncio.sleep이 호출되었는지, 적절한 인자로 호출되었는지 확인
     # 429 에러가 2번 발생했으므로, 2번의 sleep 호출 예상 (첫 실패 후, 두 번째 실패 후)
     assert api.market_clock.async_sleep.await_count == 2
-    # 지수 백오프 적용: 1회차 0.01, 2회차 0.02
-    api.market_clock.async_sleep.assert_has_awaits([call(0.01), call(0.02)])
+    # 지수 백오프 + bounded jitter: base ≤ wait ≤ base*(1+0.25), 1회차 base 0.01 / 2회차 base 0.02
+    _sleeps = [c.args[0] for c in api.market_clock.async_sleep.await_args_list]
+    assert 0.01 <= _sleeps[0] <= 0.01 * 1.25
+    assert 0.02 <= _sleeps[1] <= 0.02 * 1.25
 
 
 @pytest.mark.asyncio
@@ -536,8 +560,10 @@ async def testcall_api_retry_on_500_rate_limit(mock_sleep):
     assert len(responses_list) == 3
     assert api._async_session.get.call_count == 3
     assert api.market_clock.async_sleep.await_count == 2
-    # 지수 백오프 적용: 1회차 0.01, 2회차 0.02
-    api.market_clock.async_sleep.assert_has_awaits([call(0.01), call(0.02)])
+    # 지수 백오프 + bounded jitter: base ≤ wait ≤ base*(1+0.25), 1회차 base 0.01 / 2회차 base 0.02
+    _sleeps = [c.args[0] for c in api.market_clock.async_sleep.await_args_list]
+    assert 0.01 <= _sleeps[0] <= 0.01 * 1.25
+    assert 0.02 <= _sleeps[1] <= 0.02 * 1.25
 
 
     # _log_request_exception은 예외가 call_api에서 잡힐 때만 호출됩니다.
@@ -553,6 +579,45 @@ async def testcall_api_retry_on_500_rate_limit(mock_sleep):
 
     # 디버그 로그는 성공 응답 시에만 호출되어야 합니다.
     api._logger.debug.assert_any_call(f"API 응답 성공: {responses_list[2].text}")
+
+
+@pytest.mark.asyncio
+async def test_call_api_retry_backoff_applies_bounded_jitter():
+    """지수 백오프(e.delay 미지정 ApiRetryError)에 bounded jitter가 더해진다.
+
+    random.uniform을 고정 patch해 wait_time = base + jitter 임을 결정적으로 검증한다.
+    명시 delay(e.delay>0) 경로에는 jitter를 적용하지 않는다.
+    """
+    api = get_api()
+
+    responses = []
+
+    async def mock_get(*a, **k):
+        resp = MagicMock(spec=httpx.Response)
+        if len(responses) < 2:
+            resp.status_code = 500
+            resp.text = '{"msg1":"초당 거래건수를 초과하였습니다."}'
+            resp.json.return_value = {"msg1": "초당 거래건수를 초과하였습니다."}
+        else:
+            resp.status_code = 200
+            resp.text = '{"rt_cd":"0","msg1":"정상","output":{}}'
+            resp.json.return_value = {"rt_cd": "0", "msg1": "정상", "output": {}}
+        resp.raise_for_status.return_value = None
+        resp.raise_for_status.side_effect = None
+        responses.append(resp)
+        return resp
+
+    api._async_session.get.side_effect = mock_get
+
+    with patch("brokers.korea_investment.korea_invest_api_base.random.uniform", return_value=0.001):
+        result = await api.call_api('GET', '/jitter', retry_count=5, delay=0.01)
+
+    assert result.rt_cd == "0"
+    sleeps = [c.args[0] for c in api.market_clock.async_sleep.await_args_list]
+    assert len(sleeps) == 2
+    # base(0.01, 0.02) + 고정 jitter(0.001)
+    assert sleeps[0] == pytest.approx(0.011)
+    assert sleeps[1] == pytest.approx(0.021)
 
 
 @pytest.mark.asyncio

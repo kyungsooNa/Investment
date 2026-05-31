@@ -657,6 +657,32 @@ def test_load_all_stocks_skips_blank_and_non_target_market(bg_service, mock_deps
     assert bg_service._load_all_stocks() == [("000660", "SK하이닉스", "KOSPI")]
 
 
+def test_load_all_stocks_preserves_df_order_after_filtering(bg_service, mock_deps):
+    """벡터화(zip) 후에도 결과 tuple 목록이 df 순서를 보존하고 모든 제외 조건이 유지된다."""
+    _, mapper, _, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([
+        ("000660", "SK하이닉스", "KOSPI"),
+        ("005935", "삼성전자우", "KOSPI"),   # 우선주(끝자리 0 아님) 제외
+        ("069500", "KODEX 200", "KOSPI"),    # ETF 접두사 제외
+        ("035420", "NAVER", "KOSPI"),
+        ("123456", "케이스팩", "KOSDAQ"),    # 스팩 제외
+        ("005930", "삼성전자", "KONEX"),     # 비대상 시장 제외
+        ("000270", "기아", "KOSDAQ"),
+    ])
+    assert bg_service._load_all_stocks() == [
+        ("000660", "SK하이닉스", "KOSPI"),
+        ("035420", "NAVER", "KOSPI"),
+        ("000270", "기아", "KOSDAQ"),
+    ]
+
+
+def test_load_all_stocks_empty_df_returns_empty(bg_service, mock_deps):
+    """행이 없는 df(컬럼만 존재)에서도 안전하게 빈 목록을 반환한다."""
+    _, mapper, _, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([])
+    assert bg_service._load_all_stocks() == []
+
+
 @pytest.mark.asyncio
 async def test_on_start_hook_and_suspend_resume_noop_states(bg_service):
     """시작 hook은 suspend event를 세팅하고, 상태가 맞지 않으면 suspend/resume은 no-op이다."""

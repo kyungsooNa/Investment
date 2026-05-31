@@ -74,6 +74,14 @@ class KoreaInvestWebSocketAPI:
         # 서버가 appkey 중복 사용을 거부한 경우 True → 다음 재연결 시 긴 대기 적용
         self._appkey_collision = False
 
+        # 실시간 수신 핫패스 TR_ID 캐시 (연결 수립/첫 메시지 시 active_config에서 1회 해석).
+        # 매 틱 active_config 깊은 dict 조회를 피한다. 환경 전환은 연결 재수립에서 갱신.
+        self._rt_tr_cached = False
+        self._rt_tr_realtime_price = None
+        self._rt_tr_unified_realtime_price = None
+        self._rt_tr_realtime_quote = None
+        self._rt_program_trading_tr_ids = set()
+
     def _aes_cbc_base64_dec(self, key, iv, cipher_text):
         """
         AES256 DECODE (Base64 인코딩된 암호문을 복호화)
@@ -140,6 +148,8 @@ class KoreaInvestWebSocketAPI:
     async def _establish_connection(self):
         """웹소켓 연결을 수립하는 내부 메서드 (재연결 로직에서 재사용)."""
         self._websocket_url = self._env.get_websocket_url()
+        # 환경 전환(paper/real) 후 재연결 시 핫패스 TR_ID 캐시를 무효화 → 다음 메시지에서 새 active_config로 재해석
+        self._rt_tr_cached = False
         
         # 1. approval_key 발급 (없으면 발급)
         if not self.approval_key:
@@ -266,10 +276,9 @@ class KoreaInvestWebSocketAPI:
 
     def _handle_websocket_message(self, message: str):
         """수신된 웹소켓 메시지를 파싱하고 등록된 콜백으로 전달."""
-        self._websocket_url = self._env.active_config['websocket_url']
-        self._base_rest_url = self._env.active_config['base_url']
-        self._rest_api_key= self._env.active_config['api_key']
-        self._rest_api_secret= self._env.active_config['api_secret_key']
+        # 핫패스 TR_ID 캐시 (첫 메시지 시 1회 해석; 환경 전환 시 연결 재수립에서 갱신).
+        if not self._rt_tr_cached:
+            self._cache_realtime_tr_ids()
 
         # 한국투자증권 실시간 데이터는 '|'로 구분된 문자열 또는 JSON 객체로 수신됨
         if message and (message.startswith('0|') or message.startswith('1|')):  # 실시간 데이터 (0: 일반, 1: 체결통보)
@@ -277,20 +286,20 @@ class KoreaInvestWebSocketAPI:
             tr_id = recvstr[1]  # 두 번째 요소가 TR_ID
             data_body = recvstr[3]  # 네 번째 요소가 실제 데이터 본문
 
-            self._logger.debug(f"받은 TR_ID: {tr_id}")
-            self._logger.debug(f"비교 대상: {self._env.active_config['tr_ids']['websocket']['realtime_price']}")
+            self._logger.debug("받은 TR_ID: %s", tr_id)
+            self._logger.debug("비교 대상: %s", self._rt_tr_realtime_price)
 
             parsed_data = {}
             message_type = 'unknown'
 
             # --- 주식 관련 실시간 데이터 파싱 ---
-            if tr_id == self._env.active_config['tr_ids']['websocket']['realtime_price']:  # H0STCNT0 (주식 체결)
+            if tr_id == self._rt_tr_realtime_price:  # H0STCNT0 (주식 체결)
                 parsed_data = self._parse_stock_contract_data(data_body)
                 message_type = 'realtime_price'
-            elif tr_id == self._env.active_config['tr_ids']['websocket'].get('unified_realtime_price', 'H0UNCNT0'):  # H0UNCNT0 (KRX+NXT 통합 체결)
+            elif tr_id == self._rt_tr_unified_realtime_price:  # H0UNCNT0 (KRX+NXT 통합 체결)
                 parsed_data = self._parse_stock_contract_data(data_body)  # H0STCNT0와 동일 포맷
                 message_type = 'realtime_price'
-            elif tr_id == self._env.active_config['tr_ids']['websocket']['realtime_quote']:  # H0STASP0 (주식 호가)
+            elif tr_id == self._rt_tr_realtime_quote:  # H0STASP0 (주식 호가)
                 parsed_data = self._parse_stock_quote_data(data_body)
                 message_type = 'realtime_quote'
 
@@ -347,12 +356,12 @@ class KoreaInvestWebSocketAPI:
                     self._logger.warning(f"체결통보 암호화 해제 실패: AES 키/IV 없음. TR_ID: {tr_id}, 메시지: {message[:50]}...")
                     return
 
-            elif tr_id in self._get_program_trading_tr_ids():
+            elif tr_id in self._rt_program_trading_tr_ids:
                 parsed_data = self._parse_program_trading_data(data_body)
                 message_type = 'realtime_program_trading'
 
-            # [추가] 파싱된 데이터 디버그 로그 (데이터 내용 확인용)
-            self._logger.debug(f"WS 수신 데이터 파싱: Type={message_type}, TR_ID={tr_id}, Data={parsed_data}")
+            # [추가] 파싱된 데이터 디버그 로그 (데이터 내용 확인용) — lazy 포맷팅으로 매 틱 repr 생성 방지
+            self._logger.debug("WS 수신 데이터 파싱: Type=%s, TR_ID=%s, Data=%s", message_type, tr_id, parsed_data)
 
             # 외부 콜백 함수로 파싱된 데이터 전달
             if self.on_realtime_message_callback:
@@ -662,6 +671,17 @@ class KoreaInvestWebSocketAPI:
             websocket_config.get('realtime_program_trading', 'H0STPGM0'),
             websocket_config.get('nxt_realtime_program_trading', 'H0NXPGM0'),
         }
+
+    def _cache_realtime_tr_ids(self) -> None:
+        """실시간 수신 핫패스에서 매 틱 깊은 dict 조회를 피하기 위해 TR_ID를 1회 캐싱한다.
+        첫 메시지 수신 시 호출된다. realtime_price/realtime_quote는 필수 키이므로 bracket 접근으로
+        누락 시 KeyError를 그대로 전파한다(상위 _receive_messages에서 잡아 재연결)."""
+        ws_cfg = self._env.active_config['tr_ids']['websocket']
+        self._rt_tr_realtime_price = ws_cfg['realtime_price']
+        self._rt_tr_unified_realtime_price = ws_cfg.get('unified_realtime_price', 'H0UNCNT0')
+        self._rt_tr_realtime_quote = ws_cfg['realtime_quote']
+        self._rt_program_trading_tr_ids = self._get_program_trading_tr_ids()
+        self._rt_tr_cached = True
 
     async def subscribe_program_trading(self, stock_code: str):
         """국내주식 실시간 프로그램매매 동향 (H0STPGM0) 구독."""
