@@ -447,6 +447,27 @@ async def test_load_all_stocks_skips_empty_code():
 
 
 @pytest.mark.asyncio
+async def test_load_all_stocks_preserves_order_and_all_markets():
+    """벡터화(zip) 후에도 df 순서를 보존하고 시장 구분에 무관하게 빈 코드만 제외한다."""
+    rows = [
+        {"종목코드": "0001", "종목명": "A", "시장구분": "KOSPI"},
+        {"종목코드": "", "종목명": "빈코드", "시장구분": "KOSDAQ"},
+        {"종목코드": "0003", "종목명": "C", "시장구분": "KONEX"},
+        {"종목코드": "0002", "종목명": "B", "시장구분": "KOSDAQ"},
+    ]
+    task = MinerviniUpdateTask(
+        minervini_service=DummyMinerviniSvc({}),
+        stock_code_repository=DummyStockCodeRepo(rows),
+    )
+    # KONEX도 포함(_load_all_stocks는 시장 필터링하지 않음), 빈 코드만 제외, 순서 보존
+    assert task._load_all_stocks() == [
+        ("0001", "A", "KOSPI"),
+        ("0003", "C", "KONEX"),
+        ("0002", "B", "KOSDAQ"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_refresh_skips_when_already_refreshing():
     """_is_refreshing=True 이면 refresh 즉시 리턴 (L130-L131)"""
     task = MinerviniUpdateTask(

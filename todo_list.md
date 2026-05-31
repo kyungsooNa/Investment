@@ -339,10 +339,11 @@
   - 확인: `sell_all_stocks()`에는 이미 `SAFE_SEQUENTIAL` / `BOUNDED_PARALLEL` / `EMERGENCY` 모드가 있으며, `EMERGENCY` unbounded gather는 `emergency_scope()`를 사용하는 의도적 경로다. 리뷰의 "exit unbounded gather"는 이 경로보다 전략별 `check_exits()` 순차 계산 개선으로 재정의한다.
   - 우선 대상: `LarryWilliamsVBOStrategy`, `ProgramBuyFollowStrategy`, `VolumeBreakoutLiveStrategy`, `TraditionalVolumeBreakoutStrategy`의 순차 holdings 루프. 단, 현재 웹 등록 활성 전략은 VBO 중심으로 먼저 적용한다.
   - 검증 기준: 손절/익절/시간청산 신호 생성 결과가 기존과 동등하고, per-code 예외가 다른 보유 종목 exit 판단을 막지 않는다.
-- [ ] 장마감 배치의 `iterrows()` 사용처를 API 호출 전처리와 단순 포맷 변환으로 나눠 낮은 위험부터 개선한다.
-  - 우선 대상: `OneilUniverseService._generate_premium_watchlist()`, `RankingTask._load_all_stocks()`, `MinerviniUpdateTask._load_all_stocks()`의 전체 종목 필터링 루프.
-  - 낮은 우선순위: FDR OHLCV 포맷 변환(`DailyPriceCollectorTask`, `OhlcvUpdateTask`)과 RS line 결과 변환(`RSRatingService`)은 장마감/소규모 변환 경로라 성능 영향이 작다.
-  - 검증 기준: 필터링 결과 tuple 목록이 기존과 동일하고 ETF/우선주/스팩 제외 조건이 유지된다.
+- [~] 장마감 배치의 `iterrows()` 사용처를 API 호출 전처리와 단순 포맷 변환으로 나눠 낮은 위험부터 개선한다.
+  - 적용 완료(2026-05-31): 전체 종목 필터링 루프 3곳(`OneilUniverseService._generate_premium_watchlist()`, `RankingTask._load_all_stocks()`, `MinerviniUpdateTask._load_all_stocks()`)의 `iterrows()`를 컬럼 리스트 추출 후 `zip` 순회로 전환. 행마다 Series 생성하던 비용 제거. `row.get(col, "")` 시맨틱(컬럼 부재→"") 보존, 필터 순서/조건 불변.
+  - 테스트 고정: ranking `test_load_all_stocks_preserves_df_order_after_filtering`/`test_load_all_stocks_empty_df_returns_empty`, minervini `test_load_all_stocks_preserves_order_and_all_markets`. 기존 ETF/우선주/스팩/빈코드/비대상시장 테스트 회귀 통과. 단위 5732 passed / 통합 240 passed.
+  - 낮은 우선순위(미적용): FDR OHLCV 포맷 변환(`DailyPriceCollectorTask`, `OhlcvUpdateTask`)과 RS line 결과 변환(`RSRatingService`)은 장마감/소규모 변환 경로라 성능 영향이 작아 보류.
+  - 검증 기준: 필터링 결과 tuple 목록이 기존과 동일하고 ETF/우선주/스팩 제외 조건이 유지된다. (충족)
 - [ ] HTTP/token 미세 정합성 개선은 별도 작은 PR로 묶는다.
   - 대상: `KoreaInvestApiBase._execute_request()` / `_handle_response()`의 JSON 이중 파싱 제거, fallback `httpx.AsyncClient`에 shared client와 같은 `Limits`/`Timeout` 적용, `TokenProvider.get_access_token()` double-checked `asyncio.Lock` 추가, retry jitter 추가.
   - 주의: `http2=True`는 KIS 지원 여부가 불확실하므로 측정/공식 확인 전 적용하지 않는다.
@@ -459,7 +460,7 @@
    - ~~WebSocket 틱 루프 TR_ID 캐싱 + debug lazy logging 적용 (P2 2-6)~~ ✅ 완료 (2026-05-31)
    - `LarryWilliamsVBOStrategy.scan()` 잔여 순차 후보 처리 bounded 전환 여부 검증 후 적용 (P2 2-6)
    - 활성 전략 `check_exits()` 순차 holdings 루프를 bounded 처리로 통일할지 전략별 적용 (P2 2-6)
-   - 장마감 배치 `iterrows()` 중 전체 종목 필터링 경로부터 벡터화/`itertuples()` 전환 (P2 2-6)
+   - ~~장마감 배치 `iterrows()` 중 전체 종목 필터링 경로부터 벡터화/`itertuples()` 전환 (P2 2-6)~~ ✅ 완료 (2026-05-31, zip 순회). FDR/RS line 변환 경로는 영향 작아 보류.
    - `KoreaInvestApiBase` JSON 파싱/fallback client/retry jitter + `TokenProvider` singleflight 정합성 개선 (P2 2-6)
    - ~~라이브 일봉 지표 당일 미완성 봉 제외 (P0 0-8)~~ ✅ #478 — 나머지 전략 MA/RSI rollout 후속
    - ~~라이브 exit net PnL 통일 (P0 0-9)~~ ✅ #479

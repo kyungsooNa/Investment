@@ -107,11 +107,16 @@ class MinerviniUpdateTask(AfterMarketTask):
             await self.refresh_minervini_stage2()
 
     def _load_all_stocks(self) -> List[tuple]:
+        # 성능: iterrows()는 행마다 Series를 생성해 느리다. 컬럼을 리스트로 한 번 추출해
+        # zip 순회한다. row.get(col, "") 시맨틱(컬럼 부재 시 "") 보존.
+        df = self.stock_code_repository.df
+        n = len(df)
+        codes = df["종목코드"].tolist() if "종목코드" in df.columns else [""] * n
+        names = df["종목명"].tolist() if "종목명" in df.columns else [""] * n
+        markets = df["시장구분"].tolist() if "시장구분" in df.columns else [""] * n
+
         all_stocks = []
-        for _, row in self.stock_code_repository.df.iterrows():
-            code = row.get("종목코드", "")
-            name = row.get("종목명", "")
-            market = row.get("시장구분", "")
+        for code, name, market in zip(codes, names, markets):
             if not code:
                 continue
             all_stocks.append((code, name, market))
