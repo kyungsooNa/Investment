@@ -344,10 +344,12 @@
   - 테스트 고정: ranking `test_load_all_stocks_preserves_df_order_after_filtering`/`test_load_all_stocks_empty_df_returns_empty`, minervini `test_load_all_stocks_preserves_order_and_all_markets`. 기존 ETF/우선주/스팩/빈코드/비대상시장 테스트 회귀 통과. 단위 5732 passed / 통합 240 passed.
   - 낮은 우선순위(미적용): FDR OHLCV 포맷 변환(`DailyPriceCollectorTask`, `OhlcvUpdateTask`)과 RS line 결과 변환(`RSRatingService`)은 장마감/소규모 변환 경로라 성능 영향이 작아 보류.
   - 검증 기준: 필터링 결과 tuple 목록이 기존과 동일하고 ETF/우선주/스팩 제외 조건이 유지된다. (충족)
-- [ ] HTTP/token 미세 정합성 개선은 별도 작은 PR로 묶는다.
-  - 대상: `KoreaInvestApiBase._execute_request()` / `_handle_response()`의 JSON 이중 파싱 제거, fallback `httpx.AsyncClient`에 shared client와 같은 `Limits`/`Timeout` 적용, `TokenProvider.get_access_token()` double-checked `asyncio.Lock` 추가, retry jitter 추가.
+- [~] HTTP/token 미세 정합성 개선은 별도 작은 PR로 묶는다.
+  - 적용 완료(2026-05-31): (a) fallback `httpx.AsyncClient`에 shared client(`korea_invest_client`)와 동일한 `Limits(max_keepalive=50, max_conn=100, keepalive_expiry=30)`/`Timeout(10.0, connect=5.0)` 적용. (b) `TokenProvider.get_access_token()` double-checked `asyncio.Lock`(`_issue_lock`) singleflight — 동시 호출 중복 발급(EGW00133) 방지. (c) `call_api` 지수 백오프에 bounded jitter(`_RETRY_JITTER_FRACTION=0.25`) 추가 — 명시 delay(`e.delay>0`) 경로는 불변.
+  - 보류(근거): JSON 이중 파싱(`_execute_request` + `_handle_response`의 `response.json()` 2회) 제거는 MagicMock 응답 테스트와 충돌(MagicMock이 임의 속성 자동 생성 → 응답 객체 속성 캐싱 불가)하고, 이중 EGW00123 처리 경로를 건드릴 위험 대비 이득이 미미(작은 JSON 2회 파싱=마이크로초)해 단순성 원칙상 보류. weakref 캐시 도입은 과한 복잡도.
+  - 테스트 고정: `test_fallback_async_client_uses_shared_limits_and_timeout`, `test_get_access_token_singleflight_under_concurrency`(conftest의 `asyncio.sleep` 패치를 우회하는 raw yield로 실제 동시성 검증), `test_call_api_retry_backoff_applies_bounded_jitter`(`random.uniform` 고정 patch). 기존 429/500 retry 테스트는 jitter 범위 단언으로 갱신. 단위 5735 passed / 통합 240 passed.
   - 주의: `http2=True`는 KIS 지원 여부가 불확실하므로 측정/공식 확인 전 적용하지 않는다.
-  - 검증 기준: token refresh, EGW00123 재시도, 429 retry, JSON parsing error 테스트가 기존 contract를 유지한다.
+  - 검증 기준: token refresh, EGW00123 재시도, 429 retry, JSON parsing error 테스트가 기존 contract를 유지한다. (충족)
 
 판단:
 
@@ -461,7 +463,7 @@
    - `LarryWilliamsVBOStrategy.scan()` 잔여 순차 후보 처리 bounded 전환 여부 검증 후 적용 (P2 2-6)
    - 활성 전략 `check_exits()` 순차 holdings 루프를 bounded 처리로 통일할지 전략별 적용 (P2 2-6)
    - ~~장마감 배치 `iterrows()` 중 전체 종목 필터링 경로부터 벡터화/`itertuples()` 전환 (P2 2-6)~~ ✅ 완료 (2026-05-31, zip 순회). FDR/RS line 변환 경로는 영향 작아 보류.
-   - `KoreaInvestApiBase` JSON 파싱/fallback client/retry jitter + `TokenProvider` singleflight 정합성 개선 (P2 2-6)
+   - ~~`KoreaInvestApiBase` fallback client Limits/Timeout + retry jitter + `TokenProvider` singleflight 정합성 개선 (P2 2-6)~~ ✅ 완료 (2026-05-31). JSON 이중 파싱 제거는 MagicMock 충돌/이득 미미로 보류.
    - ~~라이브 일봉 지표 당일 미완성 봉 제외 (P0 0-8)~~ ✅ #478 — 나머지 전략 MA/RSI rollout 후속
    - ~~라이브 exit net PnL 통일 (P0 0-9)~~ ✅ #479
    - ~~pending/reserved cash + 전 전략 same-symbol qty cap 반영 (P0 0-10)~~ ✅ 완료

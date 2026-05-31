@@ -1,5 +1,6 @@
 import os
 import json
+import asyncio
 import httpx  # 비동기 HTTP 클라이언트
 from datetime import datetime, timedelta
 import logging
@@ -33,31 +34,39 @@ class TokenProvider:
         self._access_token = None
         self._token_expired_at = None
         self._logger = logger if logger else logging.getLogger(__name__)
+        # 동시 토큰 요청 singleflight — 발급 경로를 직렬화해 중복 발급(EGW00133 유발)을 막는다.
+        self._issue_lock = asyncio.Lock()
 
     async def get_access_token(self, base_url: str, app_key: str, app_secret: str) -> str: # env 인자 대신 필요한 정보만 받음
         """유효한 액세스 토큰을 반환합니다. 필요 시 파일에서 로드하거나 새로 발급합니다."""
-        # 1. 메모리에 토큰이 있고 유효한지 먼저 확인
+        # 1. 메모리에 토큰이 있고 유효하면 락 없이 즉시 반환 (fast path)
         if self._access_token and self._is_token_valid():
             return self._access_token
 
-        # 2. 파일에서 토큰을 로드하고 유효한지 확인
-        self._load_token_from_file()
-        if self._access_token and self._is_token_valid():
-            # 파일에서 로드한 토큰이 현재 환경의 base_url과 일치하는지 확인
-            loaded_token_base_url = self._get_token_base_url_from_file()
-            if loaded_token_base_url == base_url: # 전달받은 base_url과 비교
-                self._logger.info("파일에서 유효한 토큰을 로드했습니다.")
+        # 2. 발급/로드 경로는 singleflight 락으로 직렬화 — 동시 호출이 중복 발급하지 않도록.
+        async with self._issue_lock:
+            # double-check: 락 대기 중 다른 코루틴이 이미 유효 토큰을 확보했을 수 있음
+            if self._access_token and self._is_token_valid():
                 return self._access_token
-            else:
-                self._logger.warning(f"파일에서 로드한 토큰의 base_url이 현재 환경과 다릅니다. 저장된: {loaded_token_base_url}, 현재: {base_url}. 새 토큰 발급 필요.")
-                self._access_token = None # base_url이 다르면 토큰 무효화
-                self._token_expired_at = None
 
-        # 3. 위 모든 경우에 해당하지 않으면 새로 발급
-        self._logger.info("새로운 액세스 토큰을 발급합니다.")
-        await self._issue_new_token(base_url, app_key, app_secret) # 필요한 정보 전달
+            # 3. 파일에서 토큰을 로드하고 유효한지 확인
+            self._load_token_from_file()
+            if self._access_token and self._is_token_valid():
+                # 파일에서 로드한 토큰이 현재 환경의 base_url과 일치하는지 확인
+                loaded_token_base_url = self._get_token_base_url_from_file()
+                if loaded_token_base_url == base_url: # 전달받은 base_url과 비교
+                    self._logger.info("파일에서 유효한 토큰을 로드했습니다.")
+                    return self._access_token
+                else:
+                    self._logger.warning(f"파일에서 로드한 토큰의 base_url이 현재 환경과 다릅니다. 저장된: {loaded_token_base_url}, 현재: {base_url}. 새 토큰 발급 필요.")
+                    self._access_token = None # base_url이 다르면 토큰 무효화
+                    self._token_expired_at = None
 
-        return self._access_token
+            # 4. 위 모든 경우에 해당하지 않으면 새로 발급
+            self._logger.info("새로운 액세스 토큰을 발급합니다.")
+            await self._issue_new_token(base_url, app_key, app_secret) # 필요한 정보 전달
+
+            return self._access_token
 
     def _is_token_valid(self):
         """토큰이 존재하고, 만료되지 않았는지 확인합니다. (5분 여유시간)"""

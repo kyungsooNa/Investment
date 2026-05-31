@@ -499,3 +499,48 @@ async def test_refresh_token_success(monkeypatch, tmp_path):
             assert data["access_token"] == mock_access_token
             assert data["base_url"] == mock_base_url
 
+
+class _RealYield:
+    """이벤트 루프에 실제로 1회 양보하는 awaitable.
+
+    conftest가 asyncio.sleep을 AsyncMock으로 패치해 await 시 yield가 일어나지 않으므로,
+    동시성 테스트에서 실제 suspension을 만들기 위해 패치되지 않은 raw yield를 사용한다.
+    """
+    def __await__(self):
+        yield
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_singleflight_under_concurrency(tmp_path):
+    """동시에 여러 코루틴이 토큰을 요청해도 _issue_new_token은 1회만 호출된다(singleflight).
+
+    double-checked asyncio.Lock 이 없으면 동시 호출이 모두 발급 경로로 진입해
+    토큰 발급 API를 N회 호출하고 EGW00133(1분 Rate Limit)을 유발할 수 있다.
+    """
+    import asyncio
+
+    token_file = tmp_path / "sf_token.json"
+    token_provider = TokenProvider(token_file_path=str(token_file))
+
+    call_count = 0
+
+    async def fake_issue(base_url, app_key, app_secret):
+        nonlocal call_count
+        call_count += 1
+        # 실제 suspension — 락이 없으면 이 사이에 다른 코루틴이 발급 경로로 진입한다
+        await _RealYield()
+        await _RealYield()
+        token_provider._access_token = "ISSUED"
+        token_provider._token_expired_at = (
+            datetime.now(pytz.timezone("Asia/Seoul")) + timedelta(hours=10)
+        )
+
+    token_provider._issue_new_token = fake_issue
+
+    results = await asyncio.gather(*[
+        token_provider.get_access_token("https://x", "k", "s") for _ in range(10)
+    ])
+
+    assert call_count == 1
+    assert all(r == "ISSUED" for r in results)
+
