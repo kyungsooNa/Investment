@@ -314,6 +314,31 @@ class OrderExecutionService:
     def _active_order_contexts(self) -> list[OrderContext]:
         return self._fsm.active_contexts()
 
+    def get_pending_buy_exposure(
+        self,
+        stock_code: str,
+        exchange: Optional[Exchange] = Exchange.KRX,
+    ) -> int:
+        code = str(stock_code or "").strip()
+        target_exchange = exchange or Exchange.KRX
+        total = 0
+        for context in self._active_order_contexts():
+            if context.side != OrderSide.BUY:
+                continue
+            if str(context.stock_code or "").strip() != code:
+                continue
+            if context.exchange != target_exchange:
+                continue
+
+            remaining_qty = int(context.remaining_qty or 0)
+            if remaining_qty <= 0:
+                remaining_qty = max(int(context.qty or 0) - int(context.filled_qty or 0), 0)
+            price = int(context.expected_fill_price or context.price or 0)
+            if remaining_qty <= 0 or price <= 0:
+                continue
+            total += remaining_qty * price
+        return total
+
     def get_active_order_summary(self) -> dict:
         summary = self._fsm.active_summary()
         summary["reconcile_alarm"] = self._reconcile_alarm

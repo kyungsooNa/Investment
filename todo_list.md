@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-28 (P0 0-8~0-11 완료 반영 + P3 3-5 tick-size 단일화 완료)
+최종 업데이트: 2026-05-31 (P0 0-10 same-symbol pending BUY qty cap 완료 반영)
 
 이 문서는 현재 남은 실행 항목만 추린 목록이다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거한다. 100% 종료된 섹션(`[x]` only, follow-up 없음)은 git history 로 추적하고 본 문서에서 삭제한다.
 
@@ -18,7 +18,7 @@
 - P0 0-7: ~~canary 5% 노출 제한을 코드/config profile로 분리하고 real 기본 30%와 운영 혼동을 제거.~~ ✅ 완료 (2026-05-27).
 - P0 0-8: ~~라이브 전략 일봉 지표에서 당일 미완성 봉 제외 옵션을 도입한다.~~ ✅ 완료 (2026-05-28, #478). 지표 API + RSI2 + ATR sizing 적용. 나머지 전략 MA/RSI 라이브 호출 rollout은 후속.
 - P0 0-9: ~~라이브 손절/익절 판단을 gross PnL이 아닌 비용 반영 net PnL 기준으로 통일한다.~~ ✅ 완료 (2026-05-28, #479).
-- P0 0-10: ~~같은 사이클의 신규 BUY에 대해 pending/reserved cash를 반영한다.~~ ✅ 완료 (2026-05-28, #480). 종목별 전 전략 합산 노출 상한(hard-block/qty cap)은 후속 결정.
+- P0 0-10: ~~같은 사이클/이전 사이클의 신규 BUY에 대해 pending/reserved cash와 동일 종목 전 전략 합산 노출을 qty cap에 반영한다.~~ ✅ 완료.
 - P0 0-11: ~~kill switch 및 sync fallback state 저장을 atomic write로 통일한다.~~ ✅ 완료 (2026-05-28, #481).
 - P1 1-5: 한국장 microstructure fixture 로 체결 모델 보수성 검증.
 - P1 1-6: 실전 journal/shadow/paper/live 성과 데이터로 profitability gate의 실제 통과 근거 확보.
@@ -28,7 +28,7 @@
 - P2 2-5: ~~전략 scan의 종목별 현재가 REST 호출을 batch quote / WebSocket snapshot 중심으로 줄인다.~~ helper(`StockQueryService.prefetch_prices`) + rsi2 포함 활성 전략 7개 scan 배선 + 테스트 완료.
 - P3 3-4: active strategy lifecycle contract 최소 공통 단계 강제 여부 재설계(현재 보류).
 - P3 3-5: backtest/live 호가단위 tick-size 로직을 단일 utility로 통일한다.
-- P3 3-6: ~~IndicatorService 계산 경로의 광범위 `except Exception` silent skip에 ERROR log/metric/alert hook을 붙인다.~~ ✅ 부분 완료. 전략 레이어 per-code fail-rate metric은 후속.
+- P3 3-6: ~~IndicatorService 계산 경로의 광범위 `except Exception` silent skip에 ERROR log/metric/alert hook을 붙인다.~~ ✅ 완료. 전략 레이어 per-code fail-rate metric도 `scan_metrics`/`exit_metrics`에 반영 완료.
 - Pool B 튜닝: 후보 부족 재발 시 거래대금/정배열 조건 완화 검토.
 - 완료 기준의 전략 성과 `[~]`: `MomentumStrategy` 등 비활성 백테스트 경로의 표준 journal 통합 여부 결정.
 
@@ -127,12 +127,13 @@
 
 ---
 
-### 0-10. pending/reserved cash와 cross-strategy same-symbol 노출 반영 — ✅ 부분 완료 (#480, 2026-05-28)
+### 0-10. pending/reserved cash와 cross-strategy same-symbol 노출 반영 — ✅ 완료
 
 - [x] `PositionSizingService`에 같은 사이클 내 accepted BUY의 reserved cash 누적기(`_reservations`)를 도입하고 `available_cash`에서 차감한다.
 - [x] 가용 현금 계산에서 broker snapshot 보유 + 같은 배치 accepted BUY reservation을 합산 차감한다.
-- [ ] 전 전략 합산 동일 종목 노출 상한(hard-block/qty cap) 추가 여부는 미결정. reserved cash 차감으로 현금 측 과다 노출은 막지만, 종목 단위 cross-strategy 상한은 아직 없다.
+- [x] 전 전략 합산 동일 종목 노출 상한은 qty cap으로 반영한다. `OrderExecutionService.get_pending_buy_exposure()`가 활성 BUY 미체결 잔량 노출을 계산하고, `PositionSizingService`가 이를 기존 보유분에 더해 `cap_qty`를 산정한다.
 - [x] 테스트: 동시 BUY 시 reserved cash 차감으로 후속 주문 수량이 줄거나 차단되는 경로를 `test_position_sizing_service.py`에 고정했다.
+- [x] 테스트: 이전 사이클 활성 BUY가 같은 종목 cap을 줄이거나 소진하는 경로와, terminal/sell/order exchange mismatch 제외 경로를 고정했다.
 
 판단:
 
@@ -364,26 +365,31 @@
 
 ---
 
-### 3-6. 광범위 예외 처리의 silent skip 방지 — ✅ 부분 완료 (IndicatorService)
+### 3-6. 광범위 예외 처리의 silent skip 방지 — ✅ 완료 (IndicatorService + StrategyScheduler)
 
 - [x] `IndicatorService`의 계산 경로에서 `except Exception`으로 `UNKNOWN_ERROR`/`0.0`/`{}`만 반환하던 silent 지점 6개를 분류했다.
   - 대상: `_calculate_bollinger_bands_full` / `_calculate_rsi_series` / `_calculate_atr_full` / `_calculate_moving_average_full` / `calc_rs_sync` / `calc_adx_sync`. (이미 로깅하던 `get_relative_strength`/`_calculate_indicators_full`, 안전 재계산 fallback인 cache 경로, re-raise 경로는 제외)
   - 정상 "데이터 없음"은 `_get_ohlcv_data`에서 에러 응답으로 걸러지므로, 위 except에 도달하는 예외는 schema/type 등 비정상 계산 실패로 본다.
 - [x] 데이터 schema/type 오류를 ERROR log + metric counter(`_record_calc_error` → `_calc_error_counts`)로 집계하고, window 내 반복(threshold/cooldown) 초과 시 `OperatorAlertService.report(AlertSource.INDICATOR, ...)`로 알림을 올린다. `get_calc_error_stats_delta()` accessor 추가. `service_container`에서 `operator_alert_service` 주입.
-- [ ] 전략 scan/check_exits의 per-code 예외는 전체 전략 중단을 막되, 전략별 fail-rate metric에 반영한다. (별도 PR — 활성 7개 전략 전부 수정 필요, 이번 scope에서 제외)
+- [x] 전략 scan/check_exits의 per-code 예외는 전체 전략 중단을 막되, 전략별 fail-rate metric에 반영한다.
+  - 적용 완료: `StrategyCalcFailureCounter`가 구조화 로그 중 `event` 이름에 `error`/`failed`/`exception`이 포함되고 `code`가 있는 per-code 실패만 집계한다.
+  - `StrategyScheduler.scan_metrics`와 신규 `exit_metrics`에 `calc_failures`, `calc_failure_count`, `calc_failure_code_count`, `calc_failure_rate_pct`를 기록한다.
+  - 전략 단위 장애나 state load/save처럼 `code`가 없는 이벤트는 실패율 분모와 맞지 않아 제외한다.
 - [x] 테스트: 지표 계산 중 schema 오류 시 조용히 skip하지 않고 ERROR 로그 + 카운터 집계 + threshold 초과 alert hook 호출을 `test_indicator_service.py`에 고정했다.
 
 판단:
 
 - per-code 장애를 흡수하는 운영 안정성은 유지해야 한다. 다만 지표/전략 계산 실패가 단순 “데이터 없음 → 진입 skip”으로만 보이면 신호 손실이 장기간 누적될 수 있다.
-- IndicatorService 쪽은 silent skip을 해소했다. 남은 것은 전략 레이어 per-code fail-rate metric.
+- IndicatorService 쪽 silent skip과 전략 레이어 per-code fail-rate metric을 모두 해소했다. 남은 후속은 필요 시 `StrategyLogReportService`에서 일일 리포트로 surfacing 하는 정도다.
 
 주요 파일:
 
 - `services/indicator_service.py`
 - `services/operator_alert_service.py`
-- `strategies/`
-- `services/strategy_log_report_service.py`
+- `core/scan_rejection_counter.py`
+- `scheduler/strategy_scheduler.py`
+- `tests/unit_test/core/test_scan_rejection_counter.py`
+- `tests/unit_test/scheduler/test_strategy_scheduler_scan_metrics.py`
 
 ---
 
@@ -406,11 +412,11 @@
 2. **코드 수정으로 바로 진행 가능**
    - ~~라이브 일봉 지표 당일 미완성 봉 제외 (P0 0-8)~~ ✅ #478 — 나머지 전략 MA/RSI rollout 후속
    - ~~라이브 exit net PnL 통일 (P0 0-9)~~ ✅ #479
-   - ~~pending/reserved cash 반영 (P0 0-10)~~ ✅ #480 — 전 전략 same-symbol 상한 미결정
+   - ~~pending/reserved cash + 전 전략 same-symbol qty cap 반영 (P0 0-10)~~ ✅ 완료
    - ~~kill switch/state sync fallback atomic write 통일 (P0 0-11)~~ ✅ #481
    - ~~backtest/live tick-size 단일화 (P3 3-5)~~ ✅ 완료
    - ~~전략 scan 현재가 batch/snapshot 최적화 (P2 2-5)~~ ✅ helper + 활성 전략 7개 scan 배선 + 테스트 완료
-   - ~~IndicatorService silent skip에 alert/metric hook (P3 3-6)~~ ✅ 부분 완료 — 전략 레이어 per-code fail-rate metric 후속
+   - ~~IndicatorService silent skip에 alert/metric hook + 전략 레이어 per-code fail-rate metric (P3 3-6)~~ ✅ 완료
 
 3. **운영 관찰 진행 중**
    - VBO shadow 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py` 로 parity 리포트 생성 → PR-3 진입 판정 (P2 2-4 PR-2.5)
