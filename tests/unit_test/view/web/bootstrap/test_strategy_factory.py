@@ -71,6 +71,24 @@ def test_strategy_factory_creates_scheduler(patched_factory_deps):
     assert ctx.scheduler is patched_factory_deps["StrategyScheduler"].return_value
 
 
+def test_strategy_factory_wires_live_expansion_gate_with_journal_provider(patched_factory_deps):
+    """P1 1-6 fail-open 가드: 실전 scheduler에는 실제 expansion gate가 journal provider와
+    함께 배선되어야 한다. 이 배선이 빠지면 scheduler._check_live_expansion_gate 가
+    not_applicable=allowed 로 fail-OPEN 하므로, 배선 자체를 회귀 테스트로 고정한다."""
+    from view.web.bootstrap.strategy_factory import StrategyFactory
+    from services.strategy_live_expansion_gate_service import StrategyLiveExpansionGateService
+
+    ctx = _make_fake_context()
+    StrategyFactory(ctx).build()
+
+    kwargs = patched_factory_deps["StrategyScheduler"].call_args.kwargs
+    assert kwargs["dry_run"] is False  # 실전 모드: gate 누락 시 fail-open 위험
+    gate = kwargs["live_expansion_gate_service"]
+    assert isinstance(gate, StrategyLiveExpansionGateService)
+    assert gate._journal_records_provider is ctx.virtual_trade_service.get_standard_journal_records
+    assert gate._enabled is True
+
+
 def test_strategy_factory_registers_seven_strategies(patched_factory_deps):
     from view.web.bootstrap.strategy_factory import StrategyFactory
 
