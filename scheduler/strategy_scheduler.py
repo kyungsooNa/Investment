@@ -1057,6 +1057,13 @@ class StrategyScheduler:
         kwargs = {"volatility_20d_annualized": signal.volatility_20d_annualized}
         if signal.config_hash:
             kwargs["config_hash"] = signal.config_hash
+        # P1 1-6 (b): 신호 price-policy 를 journal 에도 남겨 사후 분석으로 잇는다.
+        if signal.invalidation_price is not None:
+            kwargs["invalidation_price"] = signal.invalidation_price
+        if signal.stop_loss_price is not None:
+            kwargs["stop_loss_price"] = signal.stop_loss_price
+        if signal.target_price is not None:
+            kwargs["target_price"] = signal.target_price
         return kwargs
 
     @staticmethod

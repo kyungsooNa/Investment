@@ -139,3 +139,100 @@ async def test_log_buy_async_propagates_config_hash(repo):
     df = repo._read()
     assert len(df) == 1
     assert df.iloc[0]["config_hash"] == "abc123def456"
+
+
+# ── P1 1-6 (b): price-policy 3필드 (invalidation/stop_loss/target) journal persist ──
+
+def test_log_buy_persists_price_policy_fields(repo):
+    repo.log_buy(
+        "OSB", "005930", 70_000, qty=10,
+        invalidation_price=68_000.0, stop_loss_price=66_500.0, target_price=80_000.0,
+    )
+    df = repo._read()
+    assert len(df) == 1
+    assert df.iloc[0]["invalidation_price"] == pytest.approx(68_000.0)
+    assert df.iloc[0]["stop_loss_price"] == pytest.approx(66_500.0)
+    assert df.iloc[0]["target_price"] == pytest.approx(80_000.0)
+
+
+def test_standard_journal_includes_price_policy_fields(repo):
+    repo.log_buy(
+        "OSB", "005930", 70_000, qty=10,
+        invalidation_price=68_000.0, stop_loss_price=66_500.0, target_price=80_000.0,
+    )
+    records = repo.get_standard_journal_records()
+    meta = records[0]["metadata"]
+    assert meta["invalidation_price"] == pytest.approx(68_000.0)
+    assert meta["stop_loss_price"] == pytest.approx(66_500.0)
+    assert meta["target_price"] == pytest.approx(80_000.0)
+
+
+def test_log_buy_without_price_policy_stores_none(repo):
+    repo.log_buy("Manual", "005930", 70_000)
+    df = repo._read()
+    assert len(df) == 1
+    for col in ("invalidation_price", "stop_loss_price", "target_price"):
+        val = df.iloc[0][col]
+        assert val is None or (isinstance(val, float) and val != val)  # NaN
+
+
+def test_ddl_includes_price_policy_columns(temp_db, mock_market_clock):
+    VirtualTradeRepository(db_path=temp_db, market_clock=mock_market_clock)
+    conn = sqlite3.connect(temp_db)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(trades)").fetchall()}
+    conn.close()
+    assert {"invalidation_price", "stop_loss_price", "target_price"} <= cols
+
+
+def test_alter_table_migrates_legacy_db_without_price_policy_columns(tmp_path, mock_market_clock):
+    """price-policy 컬럼 없는 레거시 DB → 재초기화 시 ALTER TABLE 추가 + 기존 row 보존."""
+    db_dir = tmp_path / "data" / "VirtualTradeRepository"
+    db_dir.mkdir(parents=True)
+    db_path = str(db_dir / "virtual_trade.db")
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("""
+        CREATE TABLE trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy TEXT NOT NULL,
+            code TEXT NOT NULL,
+            buy_date TEXT NOT NULL,
+            buy_price REAL NOT NULL,
+            qty INTEGER NOT NULL DEFAULT 1,
+            sell_date TEXT,
+            sell_price REAL,
+            return_rate REAL NOT NULL DEFAULT 0.0,
+            status TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT ''
+        )
+    """)
+    conn.execute(
+        "INSERT INTO trades (strategy, code, buy_date, buy_price, qty, status, reason) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("Legacy", "005930", "2024-12-01 10:00:00", 50_000, 5, "HOLD", "")
+    )
+    conn.commit()
+    conn.close()
+
+    repo = VirtualTradeRepository(db_path=db_path, market_clock=mock_market_clock)
+    cols = {row[1] for row in repo._db.execute("PRAGMA table_info(trades)").fetchall()}
+    assert {"invalidation_price", "stop_loss_price", "target_price"} <= cols
+
+    df = repo._read()
+    assert len(df) == 1
+    assert df.iloc[0]["strategy"] == "Legacy"
+    val = df.iloc[0]["stop_loss_price"]
+    assert val is None or (isinstance(val, float) and val != val)
+
+
+@pytest.mark.asyncio
+async def test_log_buy_async_propagates_price_policy_fields(repo):
+    await repo.log_buy_async(
+        "OSB", "005930", 70_000, qty=1,
+        invalidation_price=68_000.0, stop_loss_price=66_500.0, target_price=80_000.0,
+    )
+    df = repo._read()
+    assert len(df) == 1
+    assert df.iloc[0]["invalidation_price"] == pytest.approx(68_000.0)
+    assert df.iloc[0]["stop_loss_price"] == pytest.approx(66_500.0)
+    assert df.iloc[0]["target_price"] == pytest.approx(80_000.0)

@@ -396,7 +396,7 @@ async def test_log_buy_async_thread_execution(virutal_trade_repository):
     """log_buy_async가 asyncio.to_thread를 사용하여 log_buy를 실행하는지 테스트."""
     with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
         await virutal_trade_repository.log_buy_async("S1", "005930", 1000, 10)
-        mock_to_thread.assert_awaited_once_with(virutal_trade_repository.log_buy, "S1", "005930", 1000, 10, None, None)
+        mock_to_thread.assert_awaited_once_with(virutal_trade_repository.log_buy, "S1", "005930", 1000, 10, None, None, None, None, None)
 
 @pytest.mark.asyncio
 async def test_log_sell_async_thread_execution(virutal_trade_repository):

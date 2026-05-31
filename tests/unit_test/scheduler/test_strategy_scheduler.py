@@ -11,6 +11,7 @@ from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerCon
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
 from interfaces.live_strategy import LiveStrategy
 from services.notification_service import NotificationCategory, NotificationLevel
+from services.strategy_live_expansion_gate_service import StrategyLiveExpansionGateService
 
 
 class MockStrategy(LiveStrategy):
@@ -634,6 +635,85 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         gate.check_strategy.assert_not_called()
         oes.handle_place_sell_order.assert_awaited_once()
+
+    # ── P1 1-6: 실제 gate 서비스로 fail-close end-to-end 잠금 ───────────
+    # 위 테스트들은 mock 결정에 대한 scheduler 반응만 검증한다. 아래는 실제
+    # StrategyLiveExpansionGateService 를 주입해, journal provider 부재/실적
+    # 부재라는 *실전 fail-close 조건* 자체가 BUY 를 막는지 end-to-end 로 고정한다.
+
+    async def test_real_gate_fail_closes_buy_when_journal_provider_absent(self):
+        """실전 모드 + journal provider 부재 → 실제 gate가 BUY를 fail-close 한다."""
+        gate = StrategyLiveExpansionGateService(
+            journal_records_provider=None,
+            is_paper_trading_fn=lambda: False,
+        )
+        scheduler, _, oes, _, _ = self._make_scheduler(
+            dry_run=False, live_expansion_gate_service=gate,
+        )
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY",
+            price=70000, qty=1, reason="테스트", strategy_name="테스트전략",
+        )
+        await scheduler._execute_signal(signal)
+
+        oes.handle_place_buy_order.assert_not_called()
+        self.assertFalse(scheduler._signal_history[-1].api_success)
+        self.assertIn("profitability_gate_unavailable", scheduler._signal_history[-1].reason)
+
+    async def test_real_gate_fail_closes_buy_when_strategy_missing_from_journal(self):
+        """실전 모드 + journal에 해당 전략 실적 없음 → profitability_gate_missing 으로 fail-close."""
+        gate = StrategyLiveExpansionGateService(
+            journal_records_provider=lambda: [],  # 기록 없음 → 전략 결과 부재
+            is_paper_trading_fn=lambda: False,
+        )
+        scheduler, _, oes, _, _ = self._make_scheduler(
+            dry_run=False, live_expansion_gate_service=gate,
+        )
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY",
+            price=70000, qty=1, reason="테스트", strategy_name="테스트전략",
+        )
+        await scheduler._execute_signal(signal)
+
+        oes.handle_place_buy_order.assert_not_called()
+        self.assertFalse(scheduler._signal_history[-1].api_success)
+        self.assertIn("profitability_gate_missing", scheduler._signal_history[-1].reason)
+
+    async def test_real_gate_allows_buy_in_paper_mode_without_journal(self):
+        """모의 모드에서는 실제 gate가 provider 부재여도 진입을 막지 않는다 (paper_mode bypass)."""
+        gate = StrategyLiveExpansionGateService(
+            journal_records_provider=None,
+            is_paper_trading_fn=lambda: True,
+        )
+        scheduler, _, _, _, _ = self._make_scheduler(
+            dry_run=False, live_expansion_gate_service=gate,
+        )
+        decision = scheduler._check_live_expansion_gate("테스트전략")
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.reason, "paper_mode")
+
+    def test_virtual_trade_log_kwargs_includes_price_policy_fields(self):
+        """P1 1-6 (b): signal의 price-policy 3필드가 journal log kwargs로 전달된다."""
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY",
+            price=70000, qty=1, reason="테스트", strategy_name="테스트전략",
+            invalidation_price=68000.0, stop_loss_price=66500.0, target_price=80000.0,
+        )
+        kwargs = StrategyScheduler._virtual_trade_log_kwargs(signal)
+        self.assertEqual(kwargs["invalidation_price"], 68000.0)
+        self.assertEqual(kwargs["stop_loss_price"], 66500.0)
+        self.assertEqual(kwargs["target_price"], 80000.0)
+
+    def test_virtual_trade_log_kwargs_omits_absent_price_policy_fields(self):
+        """price-policy 미지정(None) 필드는 kwargs에 넣지 않는다 (log_buy 기본 None 유지)."""
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY",
+            price=70000, qty=1, reason="테스트", strategy_name="테스트전략",
+        )
+        kwargs = StrategyScheduler._virtual_trade_log_kwargs(signal)
+        self.assertNotIn("invalidation_price", kwargs)
+        self.assertNotIn("stop_loss_price", kwargs)
+        self.assertNotIn("target_price", kwargs)
 
     async def test_run_strategy_scans_and_logs_rejections_when_position_full_option_enabled(self):
         """옵션이 켜져 있으면 max_positions 도달 후에도 스캔하고 매수 신호를 reject 로그로 남긴다."""

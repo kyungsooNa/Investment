@@ -205,8 +205,14 @@
 - [ ] shadow / paper / 소액 canary journal을 표준 포맷으로 누적하고, 전략별 profitability gate 통과 근거를 리포트한다.
   - 최소 유지 기준: 실전 override의 `min_trades=100`, `profit_factor>=1.3`, `payoff_ratio>=1.2`, `win_rate>=40%`, `max_drawdown<=12%`, regime별 최소 거래 수 30.
   - 필수 조건: parameter stability, Monte Carlo, regime balance, multiple testing adjustment를 운영 편의상 낮추지 않는다.
-- [ ] gate 미통과 또는 journal provider 부재 시 신규 진입이 fail-close 되는지 predeploy/checklist 테스트로 다시 고정한다.
-- [ ] 전략별 `entry_reason`, `invalidation_price`, `stop_loss_price`, `target_price`, `trailing_rule`, `expected_holding_period_days`, `confidence`, `required_data`, `config_hash`가 journal 분석까지 이어지는지 샘플 리포트로 검증한다.
+- [~] gate 미통과 또는 journal provider 부재 시 신규 진입이 fail-close 되는지 predeploy/checklist 테스트로 다시 고정한다.
+  - 적용 완료(checklist 테스트): 실제 `StrategyLiveExpansionGateService`를 scheduler에 주입한 end-to-end fail-close 잠금 추가. real 모드 + provider 부재 → `profitability_gate_unavailable`, real 모드 + journal 실적 부재 → `profitability_gate_missing` 둘 다 BUY 차단, paper 모드는 bypass. `test_strategy_scheduler.py`의 `test_real_gate_fail_closes_buy_when_journal_provider_absent`/`_when_strategy_missing_from_journal`/`test_real_gate_allows_buy_in_paper_mode_without_journal`. 기존 mock-gate 반응 테스트(스캔 skip/BUY reject/SELL 무영향)와 별개로 *실전 fail-close 조건 자체*를 고정. (테스트 전용, production 무변경)
+  - 적용 완료(예방적 fail-open 가드): real 모드인데 scheduler에 gate가 미주입이면 `_check_live_expansion_gate`가 `not_applicable`=allowed로 fail-OPEN 하므로, `StrategyFactory.build()`가 실제 `StrategyLiveExpansionGateService`를 journal provider(`get_standard_journal_records`)와 함께 `dry_run=False`로 배선하는지 `test_strategy_factory.py::test_strategy_factory_wires_live_expansion_gate_with_journal_provider`로 고정. 배선 누락 시 회귀로 탐지. (테스트 전용, production 무변경)
+  - 검토 후 미채택(대안): scheduler에서 real+gate=None을 fail-close로 바꾸는 안은 `dry_run=False`+gate 미주입 기존 테스트 수십 개가 BUY 진행을 전제하므로 비외과적. `PreDeployCheckService` 런타임 점검 안은 predeploy가 scheduler/gate 핸들을 갖고 있지 않아(현재 config/env/broker만 주입) 새 의존성 필요. 정적 배선 lock 테스트가 더 외과적이라 그쪽으로 마감.
+- [~] 전략별 `entry_reason`, `invalidation_price`, `stop_loss_price`, `target_price`, `trailing_rule`, `expected_holding_period_days`, `confidence`, `required_data`, `config_hash`가 journal 분석까지 이어지는지 샘플 리포트로 검증한다.
+  - 조사 결과(2026-05-31): 9개 필드 중 처음엔 **`config_hash`만** journal(`VirtualTradeRepository`)에 컬럼으로 persist되어 `get_standard_journal_records`/리포트까지 이어졌다. `invalidation_price`/`stop_loss_price`는 scheduler `_signal_price_policy_kwargs`로 **order 경로**(`OrderExecutionService`)에만, 나머지는 `log_buy` 시그니처/스키마에 없어 드롭됐다.
+  - 적용 완료(price-policy 3필드, 2026-05-31): 사용자 결정에 따라 `invalidation_price`/`stop_loss_price`/`target_price`를 journal에 persist. `VirtualTradeRepository` trades 스키마 3 컬럼(REAL) + `_ensure_trade_columns` ALTER 마이그레이션 + `_SELECT`/`_INSERT`(12→15)/`_write`/`log_buy`·`log_buy_async` 파라미터, `log_order_failure` INSERT 튜플 정합. `_to_json_records`(df.to_dict 전 컬럼)→`normalize_virtual_trade` metadata 로 자동 surfacing. `StrategyScheduler._virtual_trade_log_kwargs`가 signal의 3필드를 journal 경로로 전달. 테스트: `test_virtual_trade_repository_volatility.py`(persist/standard-record metadata/DDL/migration/async), `test_strategy_scheduler.py::test_virtual_trade_log_kwargs_*`. 단위 5749 / 통합 240 passed.
+  - 보류(별도 결정): `entry_reason`/`trailing_rule`/`expected_holding_period_days`/`confidence`/`required_data` 5필드는 드롭 유지. 필요 시 동일 패턴으로 컬럼 추가.
 
 판단:
 
