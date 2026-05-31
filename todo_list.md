@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-31 (P0 0-10 same-symbol pending BUY qty cap 완료 반영)
+최종 업데이트: 2026-05-31 (VBO event-shadow 가격 구독 배선 수정 반영)
 
 이 문서는 현재 남은 실행 항목만 추린 목록이다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거한다. 100% 종료된 섹션(`[x]` only, follow-up 없음)은 git history 로 추적하고 본 문서에서 삭제한다.
 
@@ -260,7 +260,9 @@
 - [~] PR-2.5: VBO shadow 운영 관찰 시작.
   - 적용 완료: `StrategyFactory`에서 VBO `StrategySchedulerConfig(..., event_driven_shadow=True)` 활성화 (실주문은 `enabled=False`로 차단).
   - 적용 완료: parity 분석 도구 `scripts/analyze_event_shadow_parity.py` (matched / shadow_only / polling_only / duplicates / lead_time_seconds / price_divergence / missed_pnl / per_date) + `tests/unit_test/scripts/test_analyze_event_shadow_parity.py` 회귀 잠금.
+  - 적용 완료(2026-05-31): event shadow 후보가 `StrategyEventRouter` 내부 구독만 갱신하고 실제 가격 WebSocket 구독을 요청하지 않던 배선 누락을 수정했다. `StrategyScheduler`가 `event_shadow_<strategy>` 카테고리로 `PriceSubscriptionService.sync_subscriptions()`를 호출해 후보 종목 tick을 실제 수신하도록 한다.
   - 남은 작업: 5거래일 동안 `logs/strategies/event_shadow/YYYYMMDD.jsonl` 을 수집한 뒤 위 도구로 리포트 생성.
+  - 수집 현황(2026-05-31 확인): `logs/strategies/event_shadow/` 디렉터리 없음. 기존 기간은 유효 수집일로 계산하지 않고, 배선 수정 후 장중 운영일부터 5거래일을 다시 센다.
   - 검증 기준: shadow 신호와 기존 polling 신호의 시간/종목/가격 괴리를 비교해 실주문 전환 가능 여부를 판정한다.
   - 추가 기준: polling 대비 신호 선행 시간, fast path false positive, false negative, full gate parity, missed trade PnL, duplicate signal rate. (모두 위 스크립트 출력에 포함)
   - VBO 특이점: `evaluate_single()` shadow fast path는 execution strength/program-buy를 의도적으로 생략하므로, fast path 통과(=`shadow_only` + `matched`)와 full gate 최종 통과(=`matched` + `polling_only`)의 분리는 현재 스크립트의 `shadow_only` / `matched` / `polling_only` 분류로 간접 표현된다.
@@ -420,6 +422,7 @@
 
 3. **운영 관찰 진행 중**
    - VBO shadow 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py` 로 parity 리포트 생성 → PR-3 진입 판정 (P2 2-4 PR-2.5)
+     - 2026-05-31 배선 수정 후 장중 운영일부터 수집일 카운트 재시작.
    - 손절 전용 exit fast-path shadow/latency 측정 설계 (P2 2-4 후속)
    - profitability gate는 우회하지 않고 shadow/paper/canary journal로 전략별 실전 근거를 축적 (P1 1-6)
 

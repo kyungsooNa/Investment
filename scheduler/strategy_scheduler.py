@@ -599,7 +599,7 @@ class StrategyScheduler:
         })
 
         # P2 2-4: event-driven shadow 구독 갱신 (scan 직후 후보군 변화 반영)
-        self._refresh_event_shadow_subscriptions(cfg)
+        await self._refresh_event_shadow_subscriptions(cfg)
 
         # 이미 보유 중인 종목은 추가 매수(불타기) 방지
         if cfg.allow_pyramiding:
@@ -1099,7 +1099,7 @@ class StrategyScheduler:
                 )
             return
 
-    def _refresh_event_shadow_subscriptions(self, cfg: StrategySchedulerConfig) -> None:
+    async def _refresh_event_shadow_subscriptions(self, cfg: StrategySchedulerConfig) -> None:
         """P2 2-4: cfg.event_driven_shadow=True 인 전략의 router 구독을 scan 후 갱신.
 
         - cfg.event_driven_shadow=False / router 미주입 / shadow journal 미주입 시 no-op.
@@ -1147,6 +1147,44 @@ class StrategyScheduler:
                     )
 
         self._event_shadow_subscriptions[name] = new_codes
+        await self._sync_event_shadow_price_subscriptions(name, new_codes)
+
+    async def _sync_event_shadow_price_subscriptions(self, strategy_name: str, codes: set[str]) -> None:
+        if self._price_sub_svc is None:
+            return
+        sync_fn = getattr(self._price_sub_svc, "sync_subscriptions", None)
+        if not callable(sync_fn):
+            return
+        try:
+            result = sync_fn(
+                sorted(codes),
+                self._event_shadow_category_key(strategy_name),
+                SubscriptionPriority.MEDIUM,
+                StreamingType.UNIFIED_PRICE,
+            )
+            if asyncio.iscoroutine(result):
+                await result
+        except TypeError:
+            try:
+                result = sync_fn(
+                    sorted(codes),
+                    self._event_shadow_category_key(strategy_name),
+                    SubscriptionPriority.MEDIUM,
+                )
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception as e:
+                self._logger.warning(
+                    f"[Scheduler] {strategy_name} event shadow 가격 구독 갱신 실패: {e}"
+                )
+        except Exception as e:
+            self._logger.warning(
+                f"[Scheduler] {strategy_name} event shadow 가격 구독 갱신 실패: {e}"
+            )
+
+    @staticmethod
+    def _event_shadow_category_key(strategy_name: str) -> str:
+        return f"event_shadow_{strategy_name}"
 
     def _build_shadow_evaluator(self, strategy):
         """evaluate_single → shadow journal 기록 → None 반환을 수행하는 wrapper.
@@ -1365,6 +1403,10 @@ class StrategyScheduler:
 
                 if self._price_sub_svc:
                     await self._price_sub_svc.remove_category(f"scheduler_{name}")
+                    if cfg.event_driven_shadow:
+                        await self._price_sub_svc.remove_category(
+                            self._event_shadow_category_key(name)
+                        )
 
                 return True
         return False
