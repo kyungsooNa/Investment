@@ -1717,6 +1717,59 @@ def test_order_query_row_helpers_cover_non_dict_and_mismatch(handler):
     assert OrderExecutionService._query_row_matches_context({"odno": "A0001", "pdno": "000660"}, context) is False
 
 
+def test_pending_buy_exposure_sums_active_buy_remaining_not_terminal_or_sell(handler):
+    buy_submitted = OrderContext(
+        order_key=handler._make_order_key("005930", OrderSide.BUY, Exchange.KRX),
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=OrderState.SUBMITTED,
+        exchange=Exchange.KRX,
+        price=70_000,
+        qty=10,
+        filled_qty=3,
+        remaining_qty=7,
+    )
+    buy_pending = OrderContext(
+        order_key=handler._make_order_key("005930", OrderSide.BUY, Exchange.NXT),
+        stock_code="005930",
+        side=OrderSide.BUY,
+        state=OrderState.PENDING_SUBMIT,
+        exchange=Exchange.NXT,
+        price=71_000,
+        qty=2,
+        filled_qty=0,
+        remaining_qty=0,
+    )
+    sell_submitted = OrderContext(
+        order_key=handler._make_order_key("005930", OrderSide.SELL, Exchange.KRX),
+        stock_code="005930",
+        side=OrderSide.SELL,
+        state=OrderState.SUBMITTED,
+        exchange=Exchange.KRX,
+        price=72_000,
+        qty=5,
+        remaining_qty=5,
+    )
+    buy_filled = OrderContext(
+        order_key=handler._make_order_key("000660", OrderSide.BUY, Exchange.KRX),
+        stock_code="000660",
+        side=OrderSide.BUY,
+        state=OrderState.FILLED,
+        exchange=Exchange.KRX,
+        price=120_000,
+        qty=1,
+        remaining_qty=0,
+    )
+    handler._set_order_context(buy_submitted)
+    handler._set_order_context(buy_pending)
+    handler._set_order_context(sell_submitted)
+    handler._set_order_context(buy_filled)
+
+    assert handler.get_pending_buy_exposure("005930", Exchange.KRX) == 490_000
+    assert handler.get_pending_buy_exposure("005930", Exchange.NXT) == 142_000
+    assert handler.get_pending_buy_exposure("000660", Exchange.KRX) == 0
+
+
 @pytest.mark.asyncio
 async def test_apply_execution_report_ignores_invalid_or_unknown_report(handler, mock_logger):
     missing_identifiers = OrderExecutionReport(

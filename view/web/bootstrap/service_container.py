@@ -443,6 +443,10 @@ class ServiceContainer:
                 # P0 0-10: live 는 같은 사이클 미체결 BUY 예약 overlay 활성화.
                 # backtest 는 BacktestPortfolioLedger 가 예약을 처리하므로 wiring 하지 않는다.
                 enable_intracycle_reservations=True,
+                pending_buy_exposure_provider=lambda code, exchange=Exchange.KRX: (
+                    ctx.order_execution_service.get_pending_buy_exposure(code, exchange)
+                    if getattr(ctx, "order_execution_service", None) is not None else 0
+                ),
             )
             ctx.risk_gate_service = RiskGateService(
                 config=_rg_cfg,

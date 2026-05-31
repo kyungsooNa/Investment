@@ -33,6 +33,11 @@ class QuoteProvider(Protocol):
         ...
 
 
+class PendingBuyExposureProvider(Protocol):
+    def __call__(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> Any:
+        ...
+
+
 class PositionSizingService:
     """장중 전략 시그널의 BUY qty 를 변동성/계좌 한도에 맞게 보정한다."""
 
@@ -48,6 +53,7 @@ class PositionSizingService:
         env: Optional[Any] = None,
         operating_profile: str = "canary",
         enable_intracycle_reservations: bool = False,
+        pending_buy_exposure_provider: Optional[PendingBuyExposureProvider] = None,
     ):
         self._cache = account_snapshot_cache
         self._indicator = indicator_service
@@ -58,6 +64,7 @@ class PositionSizingService:
         self._order_policy_config = order_policy_config
         self._env = env
         self._operating_profile = operating_profile
+        self._pending_buy_exposure_provider = pending_buy_exposure_provider
 
         # P0 0-10: 같은 scheduler 사이클의 미체결 BUY 를 현금/종목 노출에 선반영하는 overlay.
         # live 에서만 활성화한다. backtest 는 BacktestPortfolioLedger 가 예약을 처리하므로
@@ -147,6 +154,9 @@ class PositionSizingService:
             available_cash = max(available_cash - reserved_total, 0)
             current_position_value = current_position_value + self._reservations.get(signal.code, 0)
 
+        pending_buy_exposure = await self._get_pending_buy_exposure_won(signal, exchange)
+        current_position_value += pending_buy_exposure
+
         if total_equity <= 0:
             self._logger.warning(
                 f"[PositionSizing] {signal.code}: total_equity=0, 주문 skip"
@@ -234,6 +244,7 @@ class PositionSizingService:
             f"[PositionSizing] {signal.code} price={price:,} "
             f"equity={total_equity:,} risk/share={per_share_risk:.0f} "
             f"risk_qty={risk_qty} cap_qty={cap_qty} cash_qty={cash_qty} alloc_qty={alloc_qty} "
+            f"pending_buy_exposure={pending_buy_exposure:,} "
             f"max_order_amount_qty={max_order_amount_qty} top_of_book_qty={top_of_book_qty} "
             f"signal_qty={signal.qty} → final={final_qty} ({reason})"
         )
@@ -265,6 +276,35 @@ class PositionSizingService:
         if max_amount <= 0:
             return None
         return math.floor(max_amount / price)
+
+    async def _get_pending_buy_exposure_won(
+        self,
+        signal: TradeSignal,
+        exchange: "Exchange | None",
+    ) -> int:
+        provider = self._pending_buy_exposure_provider
+        if provider is None:
+            return 0
+
+        try:
+            exposure = provider(signal.code, exchange=exchange or Exchange.KRX)
+        except TypeError:
+            try:
+                exposure = provider(signal.code)
+            except Exception as exc:
+                self._logger.debug(f"[PositionSizing] 미체결 BUY 노출 조회 실패 ({signal.code}): {exc}")
+                return 0
+        except Exception as exc:
+            self._logger.debug(f"[PositionSizing] 미체결 BUY 노출 조회 실패 ({signal.code}): {exc}")
+            return 0
+
+        try:
+            if inspect.isawaitable(exposure):
+                exposure = await exposure
+            return max(self._to_int(exposure), 0)
+        except Exception as exc:
+            self._logger.debug(f"[PositionSizing] 미체결 BUY 노출 변환 실패 ({signal.code}): {exc}")
+            return 0
 
     async def _calc_top_of_book_qty(
         self,

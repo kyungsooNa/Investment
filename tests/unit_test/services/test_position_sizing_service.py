@@ -50,6 +50,7 @@ def _make_service(
     risk_gate_config=None,
     quote_provider=None,
     order_policy_config=None,
+    pending_buy_exposure_provider=None,
     enable_intracycle_reservations=False,
 ):
     cache = AsyncMock()
@@ -71,6 +72,7 @@ def _make_service(
         risk_gate_config=risk_gate_config,
         quote_provider=quote_provider,
         order_policy_config=order_policy_config,
+        pending_buy_exposure_provider=pending_buy_exposure_provider,
         enable_intracycle_reservations=enable_intracycle_reservations,
     )
     return svc, cache, indicator
@@ -681,6 +683,54 @@ async def test_reservation_same_symbol_reduces_position_cap():
     )
     assert qty2 == 0
     assert reason2 == "cap_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_pending_buy_exposure_reduces_same_symbol_position_cap():
+    """이전 사이클 미체결 BUY도 같은 종목 전 전략 합산 cap에 반영한다."""
+    snap = _make_snapshot(total_equity=10_000_000, available_cash=100_000_000)
+    cfg = _make_config(per_trade_risk_pct=100.0, max_per_position_pct=10.0)
+
+    def pending_provider(code, exchange=None):
+        assert code == "XXXXXX"
+        return 700_000
+
+    svc, _, _ = _make_service(
+        snap,
+        cfg=cfg,
+        pending_buy_exposure_provider=pending_provider,
+    )
+
+    qty, reason = await svc.adjust_buy_qty(
+        TradeSignal(code="XXXXXX", name="X", action="BUY", price=100_000, qty=None,
+                    reason="r", strategy_name="s2")
+    )
+
+    # total cap=1M, pending BUY=700k → 신규 허용 300k = 3주
+    assert qty == 3
+    assert reason == "cap_limited"
+
+
+@pytest.mark.asyncio
+async def test_pending_buy_exposure_can_exhaust_same_symbol_position_cap():
+    """미체결 BUY가 종목 cap을 이미 채웠으면 신규 BUY는 qty=0으로 차단한다."""
+    snap = _make_snapshot(total_equity=10_000_000, available_cash=100_000_000)
+    cfg = _make_config(per_trade_risk_pct=100.0, max_per_position_pct=10.0)
+    provider = AsyncMock(return_value=1_000_000)
+    svc, _, _ = _make_service(
+        snap,
+        cfg=cfg,
+        pending_buy_exposure_provider=provider,
+    )
+
+    qty, reason = await svc.adjust_buy_qty(
+        TradeSignal(code="XXXXXX", name="X", action="BUY", price=100_000, qty=None,
+                    reason="r", strategy_name="s2")
+    )
+
+    assert qty == 0
+    assert reason == "cap_exhausted"
+    provider.assert_awaited_once()
 
 
 @pytest.mark.asyncio
