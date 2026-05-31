@@ -692,6 +692,29 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(decision.allowed)
         self.assertEqual(decision.reason, "paper_mode")
 
+    def test_virtual_trade_log_kwargs_includes_price_policy_fields(self):
+        """P1 1-6 (b): signal의 price-policy 3필드가 journal log kwargs로 전달된다."""
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY",
+            price=70000, qty=1, reason="테스트", strategy_name="테스트전략",
+            invalidation_price=68000.0, stop_loss_price=66500.0, target_price=80000.0,
+        )
+        kwargs = StrategyScheduler._virtual_trade_log_kwargs(signal)
+        self.assertEqual(kwargs["invalidation_price"], 68000.0)
+        self.assertEqual(kwargs["stop_loss_price"], 66500.0)
+        self.assertEqual(kwargs["target_price"], 80000.0)
+
+    def test_virtual_trade_log_kwargs_omits_absent_price_policy_fields(self):
+        """price-policy 미지정(None) 필드는 kwargs에 넣지 않는다 (log_buy 기본 None 유지)."""
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY",
+            price=70000, qty=1, reason="테스트", strategy_name="테스트전략",
+        )
+        kwargs = StrategyScheduler._virtual_trade_log_kwargs(signal)
+        self.assertNotIn("invalidation_price", kwargs)
+        self.assertNotIn("stop_loss_price", kwargs)
+        self.assertNotIn("target_price", kwargs)
+
     async def test_run_strategy_scans_and_logs_rejections_when_position_full_option_enabled(self):
         """옵션이 켜져 있으면 max_positions 도달 후에도 스캔하고 매수 신호를 reject 로그로 남긴다."""
         scheduler, vm, _, _, _ = self._make_scheduler()
