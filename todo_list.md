@@ -205,7 +205,9 @@
 - [ ] shadow / paper / 소액 canary journal을 표준 포맷으로 누적하고, 전략별 profitability gate 통과 근거를 리포트한다.
   - 최소 유지 기준: 실전 override의 `min_trades=100`, `profit_factor>=1.3`, `payoff_ratio>=1.2`, `win_rate>=40%`, `max_drawdown<=12%`, regime별 최소 거래 수 30.
   - 필수 조건: parameter stability, Monte Carlo, regime balance, multiple testing adjustment를 운영 편의상 낮추지 않는다.
-- [ ] gate 미통과 또는 journal provider 부재 시 신규 진입이 fail-close 되는지 predeploy/checklist 테스트로 다시 고정한다.
+- [~] gate 미통과 또는 journal provider 부재 시 신규 진입이 fail-close 되는지 predeploy/checklist 테스트로 다시 고정한다.
+  - 적용 완료(checklist 테스트): 실제 `StrategyLiveExpansionGateService`를 scheduler에 주입한 end-to-end fail-close 잠금 추가. real 모드 + provider 부재 → `profitability_gate_unavailable`, real 모드 + journal 실적 부재 → `profitability_gate_missing` 둘 다 BUY 차단, paper 모드는 bypass. `test_strategy_scheduler.py`의 `test_real_gate_fail_closes_buy_when_journal_provider_absent`/`_when_strategy_missing_from_journal`/`test_real_gate_allows_buy_in_paper_mode_without_journal`. 기존 mock-gate 반응 테스트(스캔 skip/BUY reject/SELL 무영향)와 별개로 *실전 fail-close 조건 자체*를 고정. (테스트 전용, production 무변경)
+  - 미적용(예방적 fail-open 가드, 보류): real 모드인데 scheduler에 gate가 아예 미주입이면 `_check_live_expansion_gate`가 `not_applicable`=allowed로 fail-OPEN 한다. (1) scheduler에서 real+gate=None을 fail-close로 바꾸는 안은 `dry_run=False`+gate 미주입 기존 테스트 수십 개가 BUY 진행을 전제하므로 비외과적. (2) `PreDeployCheckService`에 gate 배선 점검을 추가하는 안은 predeploy가 scheduler/gate 핸들을 갖고 있지 않아(현재 config/env/broker만 주입) 새 의존성 + gate 내부 상태 introspection이 필요. production factory(`strategy_factory.py:58-60`)는 이미 real gate+provider를 배선하므로 fail-open은 회귀/오설정 시에만 발생. 별도 결정 후 진행.
 - [ ] 전략별 `entry_reason`, `invalidation_price`, `stop_loss_price`, `target_price`, `trailing_rule`, `expected_holding_period_days`, `confidence`, `required_data`, `config_hash`가 journal 분석까지 이어지는지 샘플 리포트로 검증한다.
 
 판단:
