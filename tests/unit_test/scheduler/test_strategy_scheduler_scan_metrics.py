@@ -25,12 +25,16 @@ class _StubStrategy(LiveStrategy):
         self,
         name: str = "테스트전략",
         rejections=None,  # List[str] of reason values
+        failures=None,  # List[dict] of per-code failure log payloads
+        exit_failures=None,  # List[dict] of per-code failure log payloads
         signals: List[TradeSignal] = None,
         candidates: List[str] = None,
         raise_in_scan: bool = False,
     ):
         self._name = name
         self._rejections = rejections or []
+        self._failures = failures or []
+        self._exit_failures = exit_failures or []
         self._signals = signals or []
         self._candidates = candidates or []
         self._raise_in_scan = raise_in_scan
@@ -46,11 +50,15 @@ class _StubStrategy(LiveStrategy):
     async def scan(self):
         for reason in self._rejections:
             self._logger.info({"event": "entry_rejected", "code": "X", "reason": reason})
+        for payload in self._failures:
+            self._logger.warning(payload)
         if self._raise_in_scan:
             raise RuntimeError("scan boom")
         return list(self._signals)
 
     async def check_exits(self, holdings):
+        for payload in self._exit_failures:
+            self._logger.error(payload)
         return []
 
     def current_candidate_codes(self):
@@ -120,6 +128,17 @@ class TestStrategySchedulerScanMetrics(unittest.IsolatedAsyncioTestCase):
                 events.append(arg)
         return events
 
+    @staticmethod
+    def _exit_metrics_records(mock_logger):
+        events = []
+        for call in mock_logger.info.call_args_list:
+            if not call.args:
+                continue
+            arg = call.args[0]
+            if isinstance(arg, dict) and arg.get("event") == "exit_metrics":
+                events.append(arg)
+        return events
+
     async def test_scan_metrics_logged_after_scan(self):
         scheduler, mock_logger = self._make_scheduler()
         sig = TradeSignal(
@@ -181,6 +200,70 @@ class TestStrategySchedulerScanMetrics(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(records[0]["rejected_reasons"], {})
         # sqs MagicMock 이므로 price_lookup_stats_snapshot 미연동 → 빈 dict
         self.assertEqual(records[0]["lookup_stats_delta"], {})
+
+    async def test_scan_metrics_includes_per_code_calc_failure_rate(self):
+        scheduler, mock_logger = self._make_scheduler()
+        strategy = _StubStrategy(
+            name="failure전략",
+            candidates=["005930", "000660", "035720", "051910"],
+            failures=[
+                {"event": "scan_error", "code": "005930", "error": "ohlcv timeout"},
+                {"event": "cgld_check_failed", "code": "005930", "error": "conclusion timeout"},
+                {"event": "program_filter_error", "code": "000660", "error": "bad payload"},
+                {"event": "scan_error", "error": "strategy-wide without code"},
+            ],
+        )
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=10)
+        scheduler.register(config)
+
+        await scheduler._run_strategy(config)
+
+        records = self._scan_metrics_records(mock_logger)
+        self.assertEqual(len(records), 1)
+        rec = records[0]
+        self.assertEqual(rec["calc_failures"], {
+            "scan_error": 1,
+            "cgld_check_failed": 1,
+            "program_filter_error": 1,
+        })
+        self.assertEqual(rec["calc_failure_count"], 3)
+        self.assertEqual(rec["calc_failure_code_count"], 2)
+        self.assertEqual(rec["calc_failure_rate_pct"], 50.0)
+
+    async def test_exit_metrics_includes_per_code_calc_failure_rate(self):
+        scheduler, mock_logger = self._make_scheduler()
+        vm = scheduler._virtual_trade_service
+        vm.get_holds_by_strategy.return_value = [
+            {"code": "005930", "buy_price": 70000},
+            {"code": "000660", "buy_price": 120000},
+            {"code": "035720", "buy_price": 50000},
+        ]
+        strategy = _StubStrategy(
+            name="exitFailure전략",
+            exit_failures=[
+                {"event": "exit_check_error", "code": "005930", "error": "price timeout"},
+                {"event": "check_exits_error", "code": "000660", "error": "state error"},
+                {"event": "exit_check_error", "error": "missing code"},
+            ],
+        )
+        config = StrategySchedulerConfig(strategy=strategy, max_positions=10)
+        scheduler.register(config)
+
+        await scheduler._run_strategy(config)
+
+        records = self._exit_metrics_records(mock_logger)
+        self.assertEqual(len(records), 1)
+        rec = records[0]
+        self.assertEqual(rec["strategy_name"], "exitFailure전략")
+        self.assertEqual(rec["holding_count"], 3)
+        self.assertEqual(rec["signal_count"], 0)
+        self.assertEqual(rec["calc_failures"], {
+            "exit_check_error": 1,
+            "check_exits_error": 1,
+        })
+        self.assertEqual(rec["calc_failure_count"], 2)
+        self.assertEqual(rec["calc_failure_code_count"], 2)
+        self.assertEqual(rec["calc_failure_rate_pct"], 66.6667)
 
     async def test_scan_metrics_includes_lookup_stats_delta(self):
         scheduler, mock_logger = self._make_scheduler()

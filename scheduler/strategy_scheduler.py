@@ -31,7 +31,7 @@ from repositories.stock_code_repository import StockCodeRepository
 from services.stock_query_service import StockQueryService
 from core.market_clock import MarketClock
 from core.performance_profiler import PerformanceProfiler
-from core.scan_rejection_counter import EntryRejectionCounter
+from core.scan_rejection_counter import EntryRejectionCounter, StrategyCalcFailureCounter
 
 from scheduler.strategy_scheduler_store import StrategySchedulerStore, SCHEDULER_DB_FILE
 from services.price_subscription_service import SubscriptionPriority
@@ -437,8 +437,31 @@ class StrategyScheduler:
         holdings = self._get_strategy_holdings(cfg)
         if holdings:
             t_exit = self._pm.start_timer()
-            sell_signals = await cfg.strategy.check_exits(holdings)
+            strategy_logger = getattr(cfg.strategy, "_logger", None)
+            exit_failure_counter = StrategyCalcFailureCounter() if strategy_logger is not None else None
+            if exit_failure_counter is not None:
+                strategy_logger.addHandler(exit_failure_counter)
+            t_exit_metric = time.monotonic()
+            try:
+                sell_signals = await cfg.strategy.check_exits(holdings)
+            finally:
+                if exit_failure_counter is not None:
+                    strategy_logger.removeHandler(exit_failure_counter)
             self._pm.log_timer(f"{name}.check_exits({len(holdings)}건)", t_exit)
+            self._logger.info({
+                "event": "exit_metrics",
+                "strategy_name": name,
+                "latency_ms": round((time.monotonic() - t_exit_metric) * 1000.0, 3),
+                "holding_count": len(holdings),
+                "signal_count": len(sell_signals or []),
+                "calc_failures": exit_failure_counter.snapshot() if exit_failure_counter is not None else {},
+                "calc_failure_count": exit_failure_counter.total_count() if exit_failure_counter is not None else 0,
+                "calc_failure_code_count": exit_failure_counter.failed_code_count() if exit_failure_counter is not None else 0,
+                "calc_failure_rate_pct": (
+                    exit_failure_counter.failure_rate_pct(len(holdings))
+                    if exit_failure_counter is not None else 0.0
+                ),
+            })
             # P2 2-2 후속: signal-to-order latency 측정용 — 미stamp 신호에만 현재 시각 부여.
             # P3-4 Phase 2c: signal_id / strategy_id 도 동일 시점에 자동 stamp.
             _exit_stamp = time.time()
@@ -500,8 +523,11 @@ class StrategyScheduler:
         # strategy logger 에 EntryRejectionCounter 를 일시 attach. 예외에도 detach 보장.
         strategy_logger = getattr(cfg.strategy, "_logger", None)
         rejection_counter = EntryRejectionCounter() if strategy_logger is not None else None
+        scan_failure_counter = StrategyCalcFailureCounter() if strategy_logger is not None else None
         if rejection_counter is not None:
             strategy_logger.addHandler(rejection_counter)
+        if scan_failure_counter is not None:
+            strategy_logger.addHandler(scan_failure_counter)
         # P2 2-2 2차: scan cycle 동안의 현재가/캐시 조회 지표 delta 산출
         sqs_snapshot_before = {}
         sqs_snapshot_fn = getattr(self._sqs, "price_lookup_stats_snapshot", None) if self._sqs is not None else None
@@ -516,6 +542,8 @@ class StrategyScheduler:
         finally:
             if rejection_counter is not None:
                 strategy_logger.removeHandler(rejection_counter)
+            if scan_failure_counter is not None:
+                strategy_logger.removeHandler(scan_failure_counter)
         # P2 2-2 후속: signal-to-order latency 측정용 — scan 직후 stamp.
         # P3-4 Phase 2c: signal_id / strategy_id 도 동일 시점에 자동 stamp.
         _scan_stamp = time.time()
@@ -560,6 +588,13 @@ class StrategyScheduler:
             "candidate_count": candidate_count,
             "signal_count": len(buy_signals),
             "rejected_reasons": rejection_counter.snapshot() if rejection_counter is not None else {},
+            "calc_failures": scan_failure_counter.snapshot() if scan_failure_counter is not None else {},
+            "calc_failure_count": scan_failure_counter.total_count() if scan_failure_counter is not None else 0,
+            "calc_failure_code_count": scan_failure_counter.failed_code_count() if scan_failure_counter is not None else 0,
+            "calc_failure_rate_pct": (
+                scan_failure_counter.failure_rate_pct(candidate_count)
+                if scan_failure_counter is not None else 0.0
+            ),
             "lookup_stats_delta": lookup_stats_delta,
         })
 
