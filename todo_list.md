@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-31 (VBO event-shadow 가격 구독 배선 수정 반영)
+최종 업데이트: 2026-05-31 (성능 리뷰 follow-up 반영)
 
 이 문서는 현재 남은 실행 항목만 추린 목록이다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거한다. 100% 종료된 섹션(`[x]` only, follow-up 없음)은 git history 로 추적하고 본 문서에서 삭제한다.
 
@@ -26,6 +26,7 @@
 - P2 2-2: ~~실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 후 budget 기본값 보정.~~ 전역 normal 8/s + emergency 2/s 기본값 보정 완료. 계정별 공식 한도 재확인은 운영 전 외부 확인으로 유지.
 - P2 2-4: VBO shadow 5거래일 jsonl 수집 → polling parity 비교. event-driven live order는 별도 승인 전 No-Go.
 - P2 2-5: ~~전략 scan의 종목별 현재가 REST 호출을 batch quote / WebSocket snapshot 중심으로 줄인다.~~ helper(`StockQueryService.prefetch_prices`) + rsi2 포함 활성 전략 7개 scan 배선 + 테스트 완료.
+- P2 2-6: 라이브 핫패스 성능 follow-up. WebSocket 틱 루프 상수 캐싱/로그 lazy 처리, 활성 전략 scan/check_exits 순차 후보 처리 개선, 장마감 배치 `iterrows()` 축소, HTTP/token 미세 정합성 개선.
 - P3 3-4: active strategy lifecycle contract 최소 공통 단계 강제 여부 재설계(현재 보류).
 - P3 3-5: backtest/live 호가단위 tick-size 로직을 단일 utility로 통일한다.
 - P3 3-6: ~~IndicatorService 계산 경로의 광범위 `except Exception` silent skip에 ERROR log/metric/alert hook을 붙인다.~~ ✅ 완료. 전략 레이어 per-code fail-rate metric도 `scan_metrics`/`exit_metrics`에 반영 완료.
@@ -324,6 +325,49 @@
 
 ---
 
+### 2-6. 라이브 핫패스 성능 리뷰 follow-up
+
+- [ ] WebSocket 수신 루프의 틱당 고정 비용을 줄인다.
+  - 확인된 병목: `KoreaInvestWebSocketApi._parse_message()`가 매 틱마다 TR_ID debug f-string을 즉시 평가하고, `active_config['tr_ids']['websocket']` 깊은 조회를 반복한다.
+  - 개선 방향: `realtime_price` / `unified_realtime_price` / `realtime_quote` / program trading TR_ID를 연결 또는 초기화 시 인스턴스 속성으로 캐싱한다. debug 로그는 `%s` lazy formatting 또는 `isEnabledFor(DEBUG)` guard를 사용한다.
+  - 검증 기준: 동일 메시지 입력에서 기존 `message_type`/parsed payload/콜백 contract가 유지되고, debug disabled 상태에서 불필요한 문자열 생성이 사라진다.
+- [ ] 활성 라이브 전략의 `scan()` 후보 처리 중 남은 순차 REST/보강 호출을 전략별로 재분류하고, 필요한 곳만 `bounded_gather`로 전환한다.
+  - 우선 대상: `LarryWilliamsVBOStrategy.scan()` 후보 루프. 이미 `prefetch_prices()`와 range cache `bounded_gather()`는 적용되어 있지만, 후보별 현재가/체결강도/변동성 보강 호출은 순차 흐름이 남아 있다.
+  - 주의: `MomentumStrategy.run()`과 `GapUpPullbackStrategy.run()`도 순차 N+1이 맞지만 현재 웹 라이브 스케줄러 등록 대상이 아니므로, 라이브 핫패스 최우선 항목으로 일반화하지 않는다.
+  - 검증 기준: 결과 순서/시그널 수/거절 사유/`_bought_today` state 변화가 기존과 동등하고, 동시성 limit은 KIS budget limiter 기본값과 충돌하지 않는다.
+- [ ] 활성 전략 `check_exits()` 순차 루프를 계산 경로별로 점검하고, 보유 종목 수가 늘어나는 경로는 bounded 처리로 통일한다.
+  - 확인: `sell_all_stocks()`에는 이미 `SAFE_SEQUENTIAL` / `BOUNDED_PARALLEL` / `EMERGENCY` 모드가 있으며, `EMERGENCY` unbounded gather는 `emergency_scope()`를 사용하는 의도적 경로다. 리뷰의 "exit unbounded gather"는 이 경로보다 전략별 `check_exits()` 순차 계산 개선으로 재정의한다.
+  - 우선 대상: `LarryWilliamsVBOStrategy`, `ProgramBuyFollowStrategy`, `VolumeBreakoutLiveStrategy`, `TraditionalVolumeBreakoutStrategy`의 순차 holdings 루프. 단, 현재 웹 등록 활성 전략은 VBO 중심으로 먼저 적용한다.
+  - 검증 기준: 손절/익절/시간청산 신호 생성 결과가 기존과 동등하고, per-code 예외가 다른 보유 종목 exit 판단을 막지 않는다.
+- [ ] 장마감 배치의 `iterrows()` 사용처를 API 호출 전처리와 단순 포맷 변환으로 나눠 낮은 위험부터 개선한다.
+  - 우선 대상: `OneilUniverseService._generate_premium_watchlist()`, `RankingTask._load_all_stocks()`, `MinerviniUpdateTask._load_all_stocks()`의 전체 종목 필터링 루프.
+  - 낮은 우선순위: FDR OHLCV 포맷 변환(`DailyPriceCollectorTask`, `OhlcvUpdateTask`)과 RS line 결과 변환(`RSRatingService`)은 장마감/소규모 변환 경로라 성능 영향이 작다.
+  - 검증 기준: 필터링 결과 tuple 목록이 기존과 동일하고 ETF/우선주/스팩 제외 조건이 유지된다.
+- [ ] HTTP/token 미세 정합성 개선은 별도 작은 PR로 묶는다.
+  - 대상: `KoreaInvestApiBase._execute_request()` / `_handle_response()`의 JSON 이중 파싱 제거, fallback `httpx.AsyncClient`에 shared client와 같은 `Limits`/`Timeout` 적용, `TokenProvider.get_access_token()` double-checked `asyncio.Lock` 추가, retry jitter 추가.
+  - 주의: `http2=True`는 KIS 지원 여부가 불확실하므로 측정/공식 확인 전 적용하지 않는다.
+  - 검증 기준: token refresh, EGW00123 재시도, 429 retry, JSON parsing error 테스트가 기존 contract를 유지한다.
+
+판단:
+
+- 이번 성능 리뷰의 큰 방향은 맞지만, `MomentumStrategy`/`GapUpPullbackStrategy` 같은 레거시 전략을 현재 라이브 P1로 올리면 우선순위가 흐려진다.
+- 라이브 등록 기준으로는 WebSocket 틱 루프와 VBO scan/check_exits 잔여 순차 처리부터 외과적으로 줄이는 것이 가장 비용 대비 효과가 크다.
+
+주요 파일:
+
+- `brokers/korea_investment/korea_invest_websocket_api.py`
+- `strategies/larry_williams_vbo_strategy.py`
+- `strategies/program_buy_follow_strategy.py`
+- `strategies/volume_breakout_live_strategy.py`
+- `strategies/traditional_volume_breakout_strategy.py`
+- `task/background/after_market/ranking_task.py`
+- `task/background/after_market/minervini_update_task.py`
+- `services/oneil_universe_service.py`
+- `brokers/korea_investment/korea_invest_api_base.py`
+- `brokers/korea_investment/korea_invest_token_provider.py`
+
+---
+
 ## P3. 유지보수성
 
 ### 3-4. 전략 공통 lifecycle/state contract
@@ -412,6 +456,11 @@
    - 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 → 필요 시 `_global` 8/s + `_global.emergency` 2/s 운영값 조정 (P2 2-2; 공통 HTTP 경로 강제 주입과 보수 기본값은 적용 완료)
 
 2. **코드 수정으로 바로 진행 가능**
+   - WebSocket 틱 루프 TR_ID 캐싱 + debug lazy logging 적용 (P2 2-6)
+   - `LarryWilliamsVBOStrategy.scan()` 잔여 순차 후보 처리 bounded 전환 여부 검증 후 적용 (P2 2-6)
+   - 활성 전략 `check_exits()` 순차 holdings 루프를 bounded 처리로 통일할지 전략별 적용 (P2 2-6)
+   - 장마감 배치 `iterrows()` 중 전체 종목 필터링 경로부터 벡터화/`itertuples()` 전환 (P2 2-6)
+   - `KoreaInvestApiBase` JSON 파싱/fallback client/retry jitter + `TokenProvider` singleflight 정합성 개선 (P2 2-6)
    - ~~라이브 일봉 지표 당일 미완성 봉 제외 (P0 0-8)~~ ✅ #478 — 나머지 전략 MA/RSI rollout 후속
    - ~~라이브 exit net PnL 통일 (P0 0-9)~~ ✅ #479
    - ~~pending/reserved cash + 전 전략 same-symbol qty cap 반영 (P0 0-10)~~ ✅ 완료
