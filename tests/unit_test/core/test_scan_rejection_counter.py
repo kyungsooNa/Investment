@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from core.scan_rejection_counter import EntryRejectionCounter
+from core.scan_rejection_counter import EntryRejectionCounter, StrategyCalcFailureCounter
 
 
 def _record(msg) -> logging.LogRecord:
@@ -86,3 +86,39 @@ def test_record_helper_ignores_empty_reason():
     counter.record("")
 
     assert counter.snapshot() == {}
+
+
+def test_calc_failure_counter_counts_per_code_failure_events():
+    counter = StrategyCalcFailureCounter()
+    counter.emit(_record({"event": "scan_error", "code": "005930", "error": "boom"}))
+    counter.emit(_record({"event": "cgld_check_failed", "code": "005930", "error": "timeout"}))
+    counter.emit(_record({"event": "program_filter_error", "code": "000660", "error": "bad data"}))
+
+    assert counter.snapshot() == {
+        "scan_error": 1,
+        "cgld_check_failed": 1,
+        "program_filter_error": 1,
+    }
+    assert counter.total_count() == 3
+    assert counter.failed_code_count() == 2
+    assert counter.failure_rate_pct(denominator=4) == 50.0
+
+
+def test_calc_failure_counter_ignores_non_failure_or_code_less_events():
+    counter = StrategyCalcFailureCounter()
+    counter.emit(_record({"event": "entry_rejected", "code": "005930", "reason": "low_volume"}))
+    counter.emit(_record({"event": "scan_error", "error": "strategy wide"}))
+    counter.emit(_record({"event": "pool_b_load_failed"}))
+    counter.emit(_record("plain log"))
+
+    assert counter.snapshot() == {}
+    assert counter.total_count() == 0
+    assert counter.failed_code_count() == 0
+    assert counter.failure_rate_pct(denominator=10) == 0.0
+
+
+def test_calc_failure_counter_zero_denominator_rate_is_zero():
+    counter = StrategyCalcFailureCounter()
+    counter.emit(_record({"event": "scan_error", "code": "005930", "error": "boom"}))
+
+    assert counter.failure_rate_pct(denominator=0) == 0.0

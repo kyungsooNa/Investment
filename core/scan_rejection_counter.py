@@ -20,7 +20,7 @@ counter 에 도달하지 않는다. INFO 이상으로 emit 되는 entry_rejected
 from __future__ import annotations
 
 import logging
-from typing import Dict
+from typing import Dict, Set
 
 
 class EntryRejectionCounter(logging.Handler):
@@ -53,3 +53,61 @@ class EntryRejectionCounter(logging.Handler):
 
     def reset(self) -> None:
         self._counts.clear()
+
+
+class StrategyCalcFailureCounter(logging.Handler):
+    """전략 scan/check_exits 동안 per-code 계산 실패 이벤트를 누적한다.
+
+    `event` 이름에 error/failed/exception 이 포함되고 `code` 가 있는 구조화 로그만
+    카운트한다. 전략 단위 장애나 state load/save 같은 code-less 이벤트는 실패율
+    분모와 맞지 않으므로 제외한다.
+    """
+
+    _FAILURE_MARKERS = ("error", "failed", "exception")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._counts: Dict[str, int] = {}
+        self._failed_codes: Set[str] = set()
+
+    def record(self, event: str, code: str) -> None:
+        if not event or not code:
+            return
+        self._counts[event] = self._counts.get(event, 0) + 1
+        self._failed_codes.add(code)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = record.msg
+        if not isinstance(msg, dict):
+            return
+        event = msg.get("event")
+        if not isinstance(event, str) or not event:
+            return
+        event_key = event.casefold()
+        if not any(marker in event_key for marker in self._FAILURE_MARKERS):
+            return
+        code = msg.get("code")
+        if not isinstance(code, str):
+            return
+        code = code.strip()
+        if not code:
+            return
+        self.record(event, code)
+
+    def snapshot(self) -> Dict[str, int]:
+        return dict(self._counts)
+
+    def total_count(self) -> int:
+        return sum(self._counts.values())
+
+    def failed_code_count(self) -> int:
+        return len(self._failed_codes)
+
+    def failure_rate_pct(self, denominator: int) -> float:
+        if denominator <= 0:
+            return 0.0
+        return round(self.failed_code_count() / denominator * 100.0, 4)
+
+    def reset(self) -> None:
+        self._counts.clear()
+        self._failed_codes.clear()
