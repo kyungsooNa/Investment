@@ -278,8 +278,10 @@
 - [ ] event-driven signal은 별도 승인 전 shadow/latency 측정용으로만 운영한다.
   - 운영 원칙: 실주문은 polling scheduler + full gate 통과 경로만 허용한다.
   - No-Go 사유: `StrategySignalSink`는 protocol 수준이고, VBO fast path는 일부 full safeguard를 생략한다.
-- [ ] exit fast-path는 entry event-driven 전환보다 별도 우선순위로 검토한다.
+- [~] exit fast-path는 entry event-driven 전환보다 별도 우선순위로 검토한다.
   - 목표: 손절 조건만이라도 WebSocket price snapshot 기반 shadow 판정으로 latency와 false-positive를 먼저 측정한다.
+  - 적용 완료(측정 경로, 2026-06-01): 손절 전용 exit shadow 구현. `LiveStrategy.evaluate_exit_single(code, snapshot, holding)` 인터페이스(default None) + VBO 구현(net 손절 트리거만 복제, 오버나이트/EOD 제외). `StrategyScheduler._refresh_exit_shadow_subscriptions`가 `event_driven_shadow=True` 전략의 보유 종목을 `{name}__exit` subscriber로 router 구독 → `evaluate_exit_single` 결과를 `EventShadowJournalService.record(signal_source="event_shadow_exit")`로 기록(실 주문 미발생), entry gate 무관하게 매 사이클 갱신. 가격 구독은 `event_shadow_exit_<strategy>` 카테고리. VBO가 entry+exit shadow pilot(기존 flag 공유). 단위 5760 / 통합 240 passed.
+  - 남은 작업: 장중 운영으로 `event_shadow_exit` 레코드 수집. `analyze_event_shadow_parity.py`는 현재 entry(BUY) 기준이라 exit(`signal_source="event_shadow_exit"`) 분류 확장이 후속 필요.
   - 실주문 전환 조건: 5거래일 이상 shadow journal에서 기존 polling exit과 괴리, 선행 시간, 중복률, 누락률을 리포트한 뒤 별도 승인.
 - [blocked] PR-3: PR-2.5 관찰 결과 양호 시 VBO 실 적용 + OSB shadow 진입.
 - [ ] PR-4+: 단계적 확장. (HighTightFlag 등 OHLCV 별도 조회 필요 전략에 적용할지 재평가)
