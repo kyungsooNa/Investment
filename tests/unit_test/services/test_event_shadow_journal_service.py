@@ -39,6 +39,28 @@ def test_record_appends_to_buffer(tmp_path, logger):
     assert "recorded_at" in rec
 
 
+def test_record_default_signal_source_unchanged_when_none(tmp_path, logger):
+    """P2 2-4 exit: signal_source 미지정 시 기존 entry 기본값 유지 (회귀 방어)."""
+    svc = EventShadowJournalService(log_root=tmp_path, logger=logger)
+    svc.record(strategy_name="VBO", code="005930", signal={"action": "BUY"}, snapshot={})
+    assert svc.get_records()[0]["signal_source"] == "event_shadow"
+
+
+def test_record_exit_signal_source_override(tmp_path, logger):
+    """P2 2-4 exit: signal_source 를 지정하면 exit shadow 로 구분 기록한다."""
+    svc = EventShadowJournalService(log_root=tmp_path, logger=logger)
+    svc.record(
+        strategy_name="래리윌리엄스VBO",
+        code="005930",
+        signal={"action": "SELL", "price": 68000, "reason": "손절(shadow)"},
+        snapshot={"price": "68000"},
+        signal_source="event_shadow_exit",
+    )
+    rec = svc.get_records()[0]
+    assert rec["signal_source"] == "event_shadow_exit"
+    assert rec["signal"]["action"] == "SELL"
+
+
 def test_flush_writes_jsonl_and_clears_buffer(tmp_path, logger):
     svc = EventShadowJournalService(log_root=tmp_path, logger=logger)
     svc.record(strategy_name="VBO", code="005930", signal={"a": 1}, snapshot={})

@@ -68,6 +68,20 @@ class LiveStrategy(ABC):
         """
         return None
 
+    async def evaluate_exit_single(self, code: str, snapshot: dict, holding: dict) -> Optional[TradeSignal]:
+        """이벤트 기반 단일 보유 종목 청산 fast-path 평가 (P2 2-4 exit shadow).
+
+        StrategyEventRouter 가 보유 종목의 실시간 tick 도착 시 호출한다. 기본 구현은
+        None (= 이벤트 청산 평가 미지원). 손절 등 latency 민감 청산을 snapshot 기반으로
+        먼저 측정하려는 전략에서만 오버라이드한다.
+
+        Args:
+            code: 종목코드.
+            snapshot: 라우터가 전달한 실시간 가격 snapshot (evaluate_single 과 동일 형식).
+            holding: 해당 종목 보유 정보 (buy_price, qty, name 등; check_exits holdings 항목과 동일).
+        """
+        return None
+
     def current_candidate_codes(self) -> List[str]:
         """이벤트 라우터 구독 대상 종목 목록 (P2 2-4).
 

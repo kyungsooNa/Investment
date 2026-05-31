@@ -146,6 +146,8 @@ class StrategyScheduler:
         self._live_expansion_gate = live_expansion_gate_service
         # strategy_name → 현재 router 에 구독된 종목 set
         self._event_shadow_subscriptions: Dict[str, set[str]] = {}
+        # strategy_name → 현재 exit shadow 로 구독된 보유 종목 set (P2 2-4 exit)
+        self._exit_shadow_subscriptions: Dict[str, set[str]] = {}
 
         self._strategies: List[StrategySchedulerConfig] = []
         self._running = False
@@ -487,6 +489,9 @@ class StrategyScheduler:
                 tasks = [self._execute_signal(sig) for sig in sell_signals]
                 for f in asyncio.as_completed(tasks):
                     await f
+
+        # P2 2-4 exit: 보유 종목 손절 shadow 구독 갱신 (entry gate 와 무관하게 매 사이클 실행).
+        await self._refresh_exit_shadow_subscriptions(cfg)
 
         # 2) 새 매수 스캔
         entry_gate = self._check_live_expansion_gate(name)
@@ -1156,7 +1161,8 @@ class StrategyScheduler:
         self._event_shadow_subscriptions[name] = new_codes
         await self._sync_event_shadow_price_subscriptions(name, new_codes)
 
-    async def _sync_event_shadow_price_subscriptions(self, strategy_name: str, codes: set[str]) -> None:
+    async def _sync_event_shadow_price_subscriptions(self, strategy_name: str, codes: set[str],
+                                                      category_key: Optional[str] = None) -> None:
         if self._price_sub_svc is None:
             return
         sync_fn = getattr(self._price_sub_svc, "sync_subscriptions", None)
@@ -1165,7 +1171,7 @@ class StrategyScheduler:
         try:
             result = sync_fn(
                 sorted(codes),
-                self._event_shadow_category_key(strategy_name),
+                (category_key or self._event_shadow_category_key(strategy_name)),
                 SubscriptionPriority.MEDIUM,
                 StreamingType.UNIFIED_PRICE,
             )
@@ -1175,7 +1181,7 @@ class StrategyScheduler:
             try:
                 result = sync_fn(
                     sorted(codes),
-                    self._event_shadow_category_key(strategy_name),
+                    (category_key or self._event_shadow_category_key(strategy_name)),
                     SubscriptionPriority.MEDIUM,
                 )
                 if asyncio.iscoroutine(result):
@@ -1225,6 +1231,106 @@ class StrategyScheduler:
             except Exception as e:
                 logger.warning(
                     f"[EventShadow] journal.record 실패 strategy={strategy.name} code={code} err={e}"
+                )
+            return None  # shadow 는 router 결과로 전파되지 않음 (실 주문 차단)
+
+        return _evaluator
+
+    @staticmethod
+    def _exit_shadow_category_key(strategy_name: str) -> str:
+        return f"event_shadow_exit_{strategy_name}"
+
+    @staticmethod
+    def _exit_shadow_subscriber_name(strategy_name: str) -> str:
+        # entry shadow 와 같은 종목을 구독해도 router 키가 겹치지 않도록 접미사를 붙인다.
+        return f"{strategy_name}__exit"
+
+    async def _refresh_exit_shadow_subscriptions(self, cfg: StrategySchedulerConfig) -> None:
+        """P2 2-4 exit: event_driven_shadow 전략의 보유 종목을 손절 shadow 로 router 구독.
+
+        - flag False / router·journal 미주입 시 no-op.
+        - 보유 종목 set 변화를 diff 해 unsubscribe. evaluator 는 evaluate_exit_single 결과를
+          journal(signal_source="event_shadow_exit")에 기록하고 항상 None 반환(실 주문 미발생).
+        - entry shadow 와 구분되는 subscriber name 을 써서 같은 종목 구독이 겹치지 않게 한다.
+        - entry gate 와 무관하게 매 사이클 호출되어 보유 종목 변화를 반영한다.
+        """
+        if not cfg.event_driven_shadow:
+            return
+        if self._event_router is None or self._event_shadow_journal is None:
+            return
+
+        strategy = cfg.strategy
+        name = strategy.name
+        try:
+            holdings = self._get_strategy_holdings(cfg) or []
+        except Exception as e:
+            self._logger.warning(f"[Scheduler] {name} exit shadow 보유 조회 오류: {e}")
+            return
+
+        holdings_by_code: Dict[str, dict] = {}
+        for hold in holdings:
+            code = str(hold.get("code", "")).strip()
+            if code:
+                holdings_by_code[code] = hold
+        new_codes = set(holdings_by_code)
+
+        sub_name = self._exit_shadow_subscriber_name(name)
+        old_codes = self._exit_shadow_subscriptions.get(name, set())
+
+        for code in (old_codes - new_codes):
+            try:
+                self._event_router.unsubscribe(code, sub_name)
+            except Exception as e:
+                self._logger.warning(f"[Scheduler] {name} exit shadow unsubscribe({code}) 실패: {e}")
+
+        if new_codes:
+            # router.subscribe 는 (code, sub_name) 중복을 evaluator 교체로 처리하므로,
+            # 보유 정보를 최신으로 유지하도록 매 사이클 새 evaluator 로 재구독한다.
+            evaluator = self._build_exit_shadow_evaluator(strategy, holdings_by_code)
+            for code in new_codes:
+                try:
+                    self._event_router.subscribe(code, strategy_name=sub_name, evaluator=evaluator)
+                except Exception as e:
+                    self._logger.warning(f"[Scheduler] {name} exit shadow subscribe({code}) 실패: {e}")
+
+        self._exit_shadow_subscriptions[name] = new_codes
+        await self._sync_event_shadow_price_subscriptions(
+            name, new_codes, category_key=self._exit_shadow_category_key(name)
+        )
+
+    def _build_exit_shadow_evaluator(self, strategy, holdings_by_code: Dict[str, dict]):
+        """evaluate_exit_single → exit shadow journal 기록 → None 반환 wrapper."""
+        journal = self._event_shadow_journal
+        logger = self._logger
+
+        async def _evaluator(code: str, snapshot: dict):
+            holding = holdings_by_code.get(code)
+            if not holding:
+                return None
+            try:
+                signal = await strategy.evaluate_exit_single(code, snapshot, holding)
+            except Exception as e:
+                logger.warning(
+                    f"[EventShadow] evaluate_exit_single 예외 strategy={strategy.name} code={code} err={e}"
+                )
+                return None
+            if signal is None:
+                return None
+            try:
+                payload = signal.model_dump() if hasattr(signal, "model_dump") else dict(signal.__dict__)
+            except Exception:
+                payload = {"action": getattr(signal, "action", ""), "code": getattr(signal, "code", code)}
+            try:
+                journal.record(
+                    strategy_name=strategy.name,
+                    code=code,
+                    signal=payload,
+                    snapshot=snapshot,
+                    signal_source="event_shadow_exit",
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[EventShadow] exit journal.record 실패 strategy={strategy.name} code={code} err={e}"
                 )
             return None  # shadow 는 router 결과로 전파되지 않음 (실 주문 차단)
 
@@ -1413,6 +1519,9 @@ class StrategyScheduler:
                     if cfg.event_driven_shadow:
                         await self._price_sub_svc.remove_category(
                             self._event_shadow_category_key(name)
+                        )
+                        await self._price_sub_svc.remove_category(
+                            self._exit_shadow_category_key(name)
                         )
 
                 return True
