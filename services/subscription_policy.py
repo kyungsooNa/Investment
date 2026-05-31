@@ -197,6 +197,7 @@ class SubscriptionPolicy:
         codes: List[str],
         category_key: str,
         priority: SubscriptionPriority,
+        stream_type: StreamingType = StreamingType.UNIFIED_PRICE,
     ) -> None:
         """
         카테고리 전체를 새 코드 목록으로 원자적으로 교체합니다.
@@ -216,15 +217,15 @@ class SubscriptionPolicy:
         for code in new_codes:
             self._refs.setdefault(code, {})[category_key] = {
                 "priority": priority,
-                "type": StreamingType.UNIFIED_PRICE  # 전략 워치리스트 동기화이므로 Price로 고정
+                "type": stream_type,
             }
 
         if self._streaming_stock_repo:
             for code in removed_codes:
                 if code not in self._refs:
-                    await self._streaming_stock_repo.unmark_desired(code, StreamingType.UNIFIED_PRICE)
+                    await self._streaming_stock_repo.unmark_desired(code, stream_type)
             for code in added_codes:
-                await self._streaming_stock_repo.mark_desired(code, StreamingType.UNIFIED_PRICE)
+                await self._streaming_stock_repo.mark_desired(code, stream_type)
 
         await self._rebalance()
 
