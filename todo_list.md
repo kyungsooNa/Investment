@@ -486,7 +486,7 @@
 3. **운영 관찰 진행 중**
    - VBO shadow 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py` 로 parity 리포트 생성 → PR-3 진입 판정 (P2 2-4 PR-2.5)
      - 2026-05-31 배선 수정 후 장중 운영일부터 수집일 카운트 재시작.
-   - 손절 전용 exit fast-path shadow/latency 측정 설계 (P2 2-4 후속)
+   - ~~손절 전용 exit fast-path shadow/latency 측정 설계 (P2 2-4 후속)~~ ✅ 측정 경로 구현 완료 (2026-06-01). 남은 것: 장중 `event_shadow_exit` 수집 + parity 스크립트 exit 분류 확장.
    - profitability gate는 우회하지 않고 shadow/paper/canary journal로 전략별 실전 근거를 축적 (P1 1-6)
 
 4. **외부 데이터 확보 후 진행 가능 (blocked)**
