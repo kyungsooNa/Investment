@@ -11,6 +11,7 @@ from common.types import (
     OrderState,
     ResCommonResponse,
 )
+from common.broker_order_response_mapper import BrokerOrderResponseMapper
 
 
 class OrderStateMachine:
@@ -118,24 +119,11 @@ class OrderStateMachine:
 
     @staticmethod
     def extract_broker_order_no(result: ResCommonResponse) -> Optional[str]:
-        if not result or not result.data:
-            return None
-        if hasattr(result.data, "ordno"):
-            return result.data.ordno
-        if isinstance(result.data, dict):
-            return OrderStateMachine._extract_broker_order_no_from_dict(result.data)
-        return None
+        return BrokerOrderResponseMapper.extract_broker_order_no(result)
 
     @staticmethod
     def _extract_broker_order_no_from_dict(data: dict) -> Optional[str]:
-        for key in ("ordno", "order_no", "odno", "ORDNO", "ORDER_NO", "ODNO"):
-            value = data.get(key)
-            if value:
-                return str(value).strip()
-        output = data.get("output")
-        if isinstance(output, dict):
-            return OrderStateMachine._extract_broker_order_no_from_dict(output)
-        return None
+        return BrokerOrderResponseMapper.extract_broker_order_no_from_dict(data)
 
     # ── register / transition ─────────────────────────────────────────
     def register(self, context: OrderContext) -> OrderContext:
