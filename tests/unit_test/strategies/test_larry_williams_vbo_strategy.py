@@ -314,6 +314,43 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(signals[0].action, "SELL")
         self.assertIn("칼손절", signals[0].reason)
 
+    # ── evaluate_exit_single: 손절 전용 snapshot 기반 shadow 판정 (P2 2-4) ──
+
+    async def test_evaluate_exit_single_stop_loss_triggers_sell(self):
+        """보유 종목 snapshot 가격이 net 손절선 이하 → shadow SELL 반환 (check_exits와 동일 트리거)."""
+        strategy, _, _ = self._make_strategy(now_time=_kst(11, 0), stop_loss_pct=-3.0)
+        holding = {"code": "005930", "name": "삼성전자", "buy_price": 70000, "qty": 3}
+        # 현재가 67800 → net -3.14% ≤ -3% 손절
+        sig = await strategy.evaluate_exit_single("005930", {"price": "67800"}, holding)
+        self.assertIsNotNone(sig)
+        self.assertEqual(sig.action, "SELL")
+        self.assertEqual(sig.code, "005930")
+        self.assertEqual(sig.qty, 3)
+        self.assertEqual(sig.price, 67800)
+        self.assertEqual(sig.strategy_name, strategy.name)
+        self.assertIn("손절", sig.reason)
+
+    async def test_evaluate_exit_single_above_stop_returns_none(self):
+        """손절선 위(약 -0.7%) → None (청산 미발동)."""
+        strategy, _, _ = self._make_strategy(now_time=_kst(11, 0), stop_loss_pct=-3.0)
+        holding = {"code": "005930", "name": "삼성전자", "buy_price": 70000, "qty": 1}
+        sig = await strategy.evaluate_exit_single("005930", {"price": "69500"}, holding)
+        self.assertIsNone(sig)
+
+    async def test_evaluate_exit_single_invalid_snapshot_price_returns_none(self):
+        """snapshot price 누락/0 → None (가드)."""
+        strategy, _, _ = self._make_strategy(now_time=_kst(11, 0), stop_loss_pct=-3.0)
+        holding = {"code": "005930", "name": "삼성전자", "buy_price": 70000, "qty": 1}
+        self.assertIsNone(await strategy.evaluate_exit_single("005930", {"price": "0"}, holding))
+        self.assertIsNone(await strategy.evaluate_exit_single("005930", {}, holding))
+
+    async def test_evaluate_exit_single_missing_buy_price_returns_none(self):
+        """holding buy_price 누락/0 → None (가드)."""
+        strategy, _, _ = self._make_strategy(now_time=_kst(11, 0), stop_loss_pct=-3.0)
+        self.assertIsNone(
+            await strategy.evaluate_exit_single("005930", {"price": "50000"}, {"code": "005930", "qty": 1})
+        )
+
     # ── check_exits: EOD 강제 청산 ────────────────────────────────────
 
     async def test_check_exits_eod_flatten(self):

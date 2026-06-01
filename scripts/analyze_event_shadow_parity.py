@@ -68,8 +68,14 @@ def load_shadow_records(
     date_from: str,
     date_to: str,
     strategy_filter: Optional[str] = None,
+    signal_source: Optional[str] = None,
 ) -> List[ParityRecord]:
-    """`<shadow_dir>/YYYYMMDD.jsonl` 파일들을 스캔해 ParityRecord 로 반환."""
+    """`<shadow_dir>/YYYYMMDD.jsonl` 파일들을 스캔해 ParityRecord 로 반환.
+
+    signal_source 가 주어지면 해당 source 의 레코드만 반환한다. entry shadow 와 exit
+    shadow(`event_shadow_exit`)가 같은 jsonl 에 섞여 있으므로, 분석 시 한쪽만 골라야
+    entry/exit 가 교차 매칭되지 않는다. signal_source 필드가 없는 레거시 레코드는
+    entry(`event_shadow`)로 간주한다 (P2 2-4 exit)."""
     shadow_dir = Path(shadow_dir)
     if not shadow_dir.exists():
         return []
@@ -92,6 +98,9 @@ def load_shadow_records(
                     continue
                 strategy = raw.get("strategy") or ""
                 if strategy_filter and strategy != strategy_filter:
+                    continue
+                rec_source = raw.get("signal_source") or "event_shadow"
+                if signal_source is not None and rec_source != signal_source:
                     continue
                 code = raw.get("code") or ""
                 signal = raw.get("signal") or {}
@@ -519,6 +528,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--date-from", required=True, help="YYYYMMDD")
     parser.add_argument("--date-to", required=True, help="YYYYMMDD")
     parser.add_argument("--strategy", default=_DEFAULT_STRATEGY)
+    # entry shadow(event_shadow / BUY) vs exit shadow(event_shadow_exit / SELL) 분리 분석.
+    parser.add_argument("--signal-source", default="event_shadow",
+                        choices=["event_shadow", "event_shadow_exit"])
+    parser.add_argument("--polling-action", default="BUY", choices=["BUY", "SELL"])
     parser.add_argument("--match-window-sec", type=float, default=300.0)
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-markdown", default=None)
@@ -533,13 +546,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         date_from=args.date_from,
         date_to=args.date_to,
         strategy_filter=args.strategy or None,
+        signal_source=args.signal_source,
     )
     polling = load_polling_records(
         db_path=Path(args.scheduler_db),
         date_from=args.date_from,
         date_to=args.date_to,
         strategy_filter=args.strategy or None,
-        action="BUY",
+        action=args.polling_action,
         require_api_success=True,
     )
     polling_sells = load_polling_sells(
@@ -560,6 +574,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "date_from": args.date_from,
         "date_to": args.date_to,
         "match_window_sec": args.match_window_sec,
+        "signal_source": args.signal_source,
+        "polling_action": args.polling_action,
         "shadow_dir": str(args.shadow_dir),
         "scheduler_db": str(args.scheduler_db),
     }

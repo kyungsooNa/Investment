@@ -338,6 +338,37 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             ],
         )
 
+    async def evaluate_exit_single(self, code: str, snapshot: dict, holding: dict) -> Optional[TradeSignal]:
+        """보유 종목 손절(net) 조건을 snapshot 기반으로 평가 (P2 2-4 exit shadow).
+
+        check_exits 의 손절 트리거(net_return_pct ≤ stop_loss_pct)만 복제한다. 오버나이트/EOD
+        같은 시간 기반 청산은 latency 무관이라 제외한다. 결과는 shadow 기록 전용 (실 주문 미발생).
+        """
+        try:
+            buy_price = float(holding.get("buy_price", 0) or 0)
+            price_raw = snapshot.get("price")
+            current = int(price_raw) if price_raw not in (None, "", "0") else 0
+        except (TypeError, ValueError):
+            return None
+
+        if buy_price <= 0 or current <= 0:
+            return None
+
+        # P0 0-9: check_exits 와 동일하게 net 수익률 기준 손절.
+        pnl_pct = TransactionCostUtils.net_return_pct(buy_price, current)
+        if pnl_pct > self._cfg.stop_loss_pct:
+            return None
+
+        return TradeSignal(
+            code=code,
+            name=holding.get("name", code),
+            action="SELL",
+            price=current,
+            qty=int(holding.get("qty", 1) or 1),
+            reason=f"칼손절(net,shadow): 매수가대비 {pnl_pct:.1f}%",
+            strategy_name=self.name,
+        )
+
     def current_candidate_codes(self) -> List[str]:
         return list(self._current_candidate_codes_set)
 

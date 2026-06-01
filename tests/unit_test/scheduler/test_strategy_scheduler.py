@@ -715,6 +715,91 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("stop_loss_price", kwargs)
         self.assertNotIn("target_price", kwargs)
 
+    # ── P2 2-4 exit fast-path shadow: 보유 종목 손절 shadow 구독/기록 ──────
+
+    def _make_shadow_scheduler(self):
+        """event_router + event_shadow_journal 주입된 scheduler (price_sub_svc 없음 → sync no-op)."""
+        scheduler, vm, oes, tm, mcs = self._make_scheduler(dry_run=True)
+        scheduler._event_router = MagicMock()
+        scheduler._event_router.subscribe = MagicMock()
+        scheduler._event_router.unsubscribe = MagicMock()
+        scheduler._event_shadow_journal = MagicMock()
+        return scheduler, vm
+
+    async def test_refresh_exit_shadow_subscribes_held_codes_with_exit_subscriber_name(self):
+        """event_driven_shadow 전략의 보유 종목을 exit subscriber name 으로 router 구독한다."""
+        scheduler, vm = self._make_shadow_scheduler()
+        vm.get_holds_by_strategy.return_value = [
+            {"code": "005930", "name": "삼성전자", "buy_price": 70000, "qty": 1},
+        ]
+        cfg = StrategySchedulerConfig(strategy=MockStrategy(name="VBO"), event_driven_shadow=True)
+
+        await scheduler._refresh_exit_shadow_subscriptions(cfg)
+
+        scheduler._event_router.subscribe.assert_called_once()
+        _, kwargs = scheduler._event_router.subscribe.call_args
+        self.assertEqual(scheduler._event_router.subscribe.call_args.args[0], "005930")
+        self.assertTrue(kwargs["strategy_name"].endswith("__exit"))
+        self.assertTrue(callable(kwargs["evaluator"]))
+
+    async def test_refresh_exit_shadow_noop_when_flag_off(self):
+        """event_driven_shadow=False 면 보유 종목이 있어도 구독하지 않는다."""
+        scheduler, vm = self._make_shadow_scheduler()
+        vm.get_holds_by_strategy.return_value = [{"code": "005930", "buy_price": 70000, "qty": 1}]
+        cfg = StrategySchedulerConfig(strategy=MockStrategy(name="VBO"), event_driven_shadow=False)
+
+        await scheduler._refresh_exit_shadow_subscriptions(cfg)
+
+        scheduler._event_router.subscribe.assert_not_called()
+
+    async def test_refresh_exit_shadow_unsubscribes_sold_codes(self):
+        """이전 사이클 보유 종목이 청산되면 다음 refresh 에서 unsubscribe 한다."""
+        scheduler, vm = self._make_shadow_scheduler()
+        cfg = StrategySchedulerConfig(strategy=MockStrategy(name="VBO"), event_driven_shadow=True)
+
+        vm.get_holds_by_strategy.return_value = [{"code": "005930", "buy_price": 70000, "qty": 1}]
+        await scheduler._refresh_exit_shadow_subscriptions(cfg)
+
+        vm.get_holds_by_strategy.return_value = []
+        await scheduler._refresh_exit_shadow_subscriptions(cfg)
+
+        scheduler._event_router.unsubscribe.assert_called_once()
+        self.assertEqual(scheduler._event_router.unsubscribe.call_args.args[0], "005930")
+        self.assertTrue(scheduler._event_router.unsubscribe.call_args.args[1].endswith("__exit"))
+
+    async def test_exit_shadow_evaluator_records_signal_source_exit_and_returns_none(self):
+        """exit shadow evaluator: evaluate_exit_single → journal(signal_source=event_shadow_exit) → None."""
+        scheduler, _ = self._make_shadow_scheduler()
+        sell = TradeSignal(code="005930", name="삼성전자", action="SELL",
+                           price=67800, qty=1, reason="칼손절(net,shadow)", strategy_name="VBO")
+        strategy = MagicMock()
+        strategy.name = "VBO"
+        strategy.evaluate_exit_single = AsyncMock(return_value=sell)
+        holdings_by_code = {"005930": {"code": "005930", "buy_price": 70000, "qty": 1}}
+
+        evaluator = scheduler._build_exit_shadow_evaluator(strategy, holdings_by_code)
+        result = await evaluator("005930", {"price": "67800"})
+
+        self.assertIsNone(result)  # 실 주문 미발생
+        scheduler._event_shadow_journal.record.assert_called_once()
+        _, rkwargs = scheduler._event_shadow_journal.record.call_args
+        self.assertEqual(rkwargs["signal_source"], "event_shadow_exit")
+        self.assertEqual(rkwargs["code"], "005930")
+        self.assertEqual(rkwargs["strategy_name"], "VBO")
+
+    async def test_exit_shadow_evaluator_no_signal_does_not_record(self):
+        """evaluate_exit_single 가 None 이면 journal 기록하지 않는다."""
+        scheduler, _ = self._make_shadow_scheduler()
+        strategy = MagicMock()
+        strategy.name = "VBO"
+        strategy.evaluate_exit_single = AsyncMock(return_value=None)
+
+        evaluator = scheduler._build_exit_shadow_evaluator(strategy, {"005930": {"buy_price": 70000}})
+        result = await evaluator("005930", {"price": "70000"})
+
+        self.assertIsNone(result)
+        scheduler._event_shadow_journal.record.assert_not_called()
+
     async def test_run_strategy_scans_and_logs_rejections_when_position_full_option_enabled(self):
         """옵션이 켜져 있으면 max_positions 도달 후에도 스캔하고 매수 신호를 reject 로그로 남긴다."""
         scheduler, vm, _, _, _ = self._make_scheduler()

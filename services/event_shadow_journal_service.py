@@ -49,6 +49,7 @@ class EventShadowJournalService:
         code: str,
         signal: Dict,
         snapshot: Dict,
+        signal_source: Optional[str] = None,
     ) -> None:
         if not strategy_name or not code:
             return
@@ -56,7 +57,9 @@ class EventShadowJournalService:
             "recorded_at": time.time(),
             "strategy": strategy_name,
             "code": code,
-            "signal_source": self.SIGNAL_SOURCE,
+            # signal_source 미지정 시 기존 entry shadow 기본값 유지. exit shadow 는
+            # "event_shadow_exit" 를 전달해 동일 jsonl 내에서 구분한다 (P2 2-4 exit).
+            "signal_source": signal_source or self.SIGNAL_SOURCE,
             "signal": signal or {},
             "snapshot": snapshot or {},
         })
