@@ -103,7 +103,7 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             ord_dvsn=order_dvsn,
             ord_qty=order_qty,
             ord_unpr=order_price,
-            excg_id_dvsn_cd=exchange.value if exchange != Exchange.KRX else "",
+            excg_id_dvsn_cd=exchange.value,  # KRX/NXT 모두 거래소ID구분코드 필수
         )
 
         calculated_hashkey = await self._get_hashkey(data)
@@ -144,7 +144,7 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             ord_qty=order_qty,
             ord_unpr=order_price,
             qty_all_ord_yn=qty_all_ord_yn,
-            excg_id_dvsn_cd=exchange.value if exchange != Exchange.KRX else "",
+            excg_id_dvsn_cd=exchange.value,  # KRX/NXT 모두 거래소ID구분코드 필수
         )
 
         calculated_hashkey = await self._get_hashkey(data)

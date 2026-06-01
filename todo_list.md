@@ -14,7 +14,7 @@
 
 남은 실행 영역 요약:
 
-- P0 0-1: 실전 체결 이력 확보 후 broker order mapper 분리 + fixture 회귀 잠금.
+- P0 0-1: 실전 체결 이력 fixture 회귀 잠금 완료, broker order mapper 분리 후속.
 - P0 0-7: ~~canary 5% 노출 제한을 코드/config profile로 분리하고 real 기본 30%와 운영 혼동을 제거.~~ ✅ 완료 (2026-05-27).
 - P0 0-8: ~~라이브 전략 일봉 지표에서 당일 미완성 봉 제외 옵션을 도입한다.~~ ✅ 완료 (2026-05-28, #478 + rollout 조사). 지표 API + RSI2 + ATR sizing 적용. rollout 전수 조사 결과 추가 오염 경로는 `LarryWilliamsChannelBreakout`(ADX/채널)뿐이라 `_confirmed_bars()`로 마감.
 - P0 0-9: ~~라이브 손절/익절 판단을 gross PnL이 아닌 비용 반영 net PnL 기준으로 통일한다.~~ ✅ 완료 (2026-05-28, #479).
@@ -39,13 +39,14 @@
 
 ### 0-1. 실전 KIS `inquire-daily-ccld` 응답 필드 검증
 
-- [blocked] 실제 체결 이력이 있는 실전 계좌 응답을 캡처한다. (현재 실전 계좌 체결 이력 부재)
-- [blocked] 민감정보를 제거한 fixture를 추가한다. (실전 응답 확보 후 진행)
-- [blocked] paper fixture와 real fixture의 필드 차이를 회귀 테스트에 반영한다. (실전 응답 확보 후 진행)
-- [blocked] 주문번호, 종목코드, 매수/매도 구분, 주문수량, 누적체결수량, 미체결수량, 평균체결가, 취소/거부 필드 매핑을 확정한다. (실전 응답 확보 후 진행)
+- [x] 실제 체결 이력이 있는 실전 계좌 응답을 캡처한다. (2026-06-01, `001510`, KRX, 매수/매도 체결 2건)
+- [x] 민감정보를 제거한 fixture를 추가한다. (`tests/fixtures/kis/inquire_daily_ccld_output1_real_20260601_001510.json`; 주문번호/지점/직원/IP/연락처 마스킹)
+- [x] paper fixture와 real fixture의 필드 차이를 회귀 테스트에 반영한다. (`test_order_query_report_from_kis_inquire_daily_ccld_fixture`가 실전 fixture를 자동 discovery)
+- [~] 주문번호, 종목코드, 매수/매도 구분, 주문수량, 누적체결수량, 미체결수량, 평균체결가 매핑을 실전 체결 fixture로 고정했다. 취소/거부 실전 row는 아직 미확보라 synthetic fixture 보강 상태를 유지한다.
+- [x] 실전 KRX 조회에서 `EXCG_ID_DVSN_CD=KRX`를 보내도록 계좌 체결/미체결 조회 파라미터를 고정한다.
 - [~] 주문 접수 응답의 broker order number mapper를 실전/모의 fixture 기반으로 확장한다.
   - 적용 완료: 주문번호 추출 실패 시 raw payload 보존 + `FillReconciliationService.on_broker_order_no_missing` → 운영자 CRITICAL 알림 + 다음 reconcile 사이클까지 신규 주문 차단.
-  - 후속(blocked): 실전/모의 fixture 확보 후 별도 `BrokerOrderResponseMapper` 클래스로 분리하고 submit response / order query / signing notice / real response / paper response를 각각 normalize한다.
+  - 후속: 별도 `BrokerOrderResponseMapper` 클래스로 분리하고 submit response / order query / signing notice / real response / paper response를 각각 normalize한다. 실전 order query fixture는 확보 완료, 실전 submit response/signing notice fixture는 추가 확보 필요.
   - 테스트 고정 대상: `ordno`, `order_no`, `odno`, `ORDNO`, `ORDER_NO`, `ODNO`, `ODER_NO`, `주문번호`, 중첩 `output` payload, 체결통보 payload 키.
   - 리뷰 판단: 현재 구조는 추출 실패 시 신규 주문을 막는 방어는 충분하지만, submit response mapper가 `OrderStateMachine` 내부 helper에 가까워 독립 mapper와 raw fixture 회귀 테스트가 아직 필요하다.
 
@@ -56,6 +57,8 @@
 - `brokers/broker_api_wrapper.py`
 - `services/order_execution_service.py`
 - `services/fill_reconciliation_service.py`
+- `utils/kis_inquire_daily_ccld_fixture_utils.py`
+- `tests/fixtures/kis/inquire_daily_ccld_output1_real_20260601_001510.json`
 
 ---
 
@@ -491,7 +494,7 @@
    - profitability gate는 우회하지 않고 shadow/paper/canary journal로 전략별 실전 근거를 축적 (P1 1-6)
 
 4. **외부 데이터 확보 후 진행 가능 (blocked)**
-   - 실전 KIS `inquire-daily-ccld` 체결 이력 응답 캡처 → fixture 회귀 (P0 0-1)
+   - ~~실전 KIS `inquire-daily-ccld` 체결 이력 응답 캡처 → fixture 회귀 (P0 0-1)~~ ✅ 완료 (2026-06-01, `001510`)
    - broker order number mapper 별도 클래스 분리 + fixture 테스트 (P0 0-1)
    - 장중 후보 종목 프로그램매매 WebSocket 샘플 캡처 → replay fixture overlay (P1 1-5)
    - 한국장 microstructure fixture 로 체결 모델 보수성 검증 (P1 1-5)
