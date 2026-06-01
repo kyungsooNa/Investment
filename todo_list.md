@@ -46,9 +46,10 @@
 - [x] 실전 KRX 조회에서 `EXCG_ID_DVSN_CD=KRX`를 보내도록 계좌 체결/미체결 조회 파라미터를 고정한다.
 - [~] 주문 접수 응답의 broker order number mapper를 실전/모의 fixture 기반으로 확장한다.
   - 적용 완료: 주문번호 추출 실패 시 raw payload 보존 + `FillReconciliationService.on_broker_order_no_missing` → 운영자 CRITICAL 알림 + 다음 reconcile 사이클까지 신규 주문 차단.
-  - 후속: 별도 `BrokerOrderResponseMapper` 클래스로 분리하고 submit response / order query / signing notice / real response / paper response를 각각 normalize한다. 실전 order query fixture는 확보 완료, 실전 submit response/signing notice fixture는 추가 확보 필요.
-  - 테스트 고정 대상: `ordno`, `order_no`, `odno`, `ORDNO`, `ORDER_NO`, `ODNO`, `ODER_NO`, `주문번호`, 중첩 `output` payload, 체결통보 payload 키.
-  - 리뷰 판단: 현재 구조는 추출 실패 시 신규 주문을 막는 방어는 충분하지만, submit response mapper가 `OrderStateMachine` 내부 helper에 가까워 독립 mapper와 raw fixture 회귀 테스트가 아직 필요하다.
+  - 적용 완료: `BrokerOrderResponseMapper` 별도 클래스로 분리하고 submit response / order query / signing notice normalize 경로를 이 클래스로 통일했다. 기존 `OrderExecutionReport.from_order_query()` / `from_signing_notice()`와 `OrderStateMachine.extract_broker_order_no()`는 호환 wrapper로 유지한다.
+  - 테스트 고정: `ordno`, `order_no`, `odno`, `ORDNO`, `ORDER_NO`, `ODNO`, `ODER_NO`, `주문번호`, 중첩 `output` payload, 실전 `inquire-daily-ccld` fixture row, 체결통보 payload 키.
+  - 후속: 실전 submit response/signing notice raw fixture는 추가 확보 필요. 현재 submit/signing normalize는 대표 KIS shape 단위 테스트와 실전 order query fixture로 고정했다.
+  - 리뷰 판단: 추출 실패 시 신규 주문을 막는 방어와 독립 mapper 구조는 확보했다. 남은 리스크는 실전 submit/signing payload 원본 표본 부족이다.
 
 주요 파일:
 
@@ -57,6 +58,7 @@
 - `brokers/broker_api_wrapper.py`
 - `services/order_execution_service.py`
 - `services/fill_reconciliation_service.py`
+- `common/broker_order_response_mapper.py`
 - `utils/kis_inquire_daily_ccld_fixture_utils.py`
 - `tests/fixtures/kis/inquire_daily_ccld_output1_real_20260601_001510.json`
 

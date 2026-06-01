@@ -19,6 +19,7 @@ from services.risk_gate_service import RiskGateService
 from services.order_policy_service import OrderPolicyDecision, OrderPolicyService
 from core.account_snapshot import AccountSnapshotCache
 from config.config_loader import ExecutionQualityReportConfig
+from common.broker_order_response_mapper import BrokerOrderResponseMapper
 from services.execution_quality_reporter import ExecutionQualityReporter
 from services.broker_order_submitter import BrokerOrderSubmitter
 from services.order_state_machine import OrderStateMachine
@@ -126,7 +127,7 @@ class OrderExecutionService:
             market_clock=market_clock,
             state_provider=lambda: self._fsm._order_states,
             transition_fn=self._fsm.transition,
-            extract_broker_order_no_fn=OrderStateMachine.extract_broker_order_no,
+            extract_broker_order_no_fn=BrokerOrderResponseMapper.extract_broker_order_no,
             on_missing_broker_order_no_fn=self._fill_reconciliation.on_broker_order_no_missing,
             max_retries=self._order_max_retries,
             retry_delay_sec=self._order_retry_delay_sec,
@@ -259,7 +260,7 @@ class OrderExecutionService:
         return self._fsm.has_active(stock_code, exchange)
 
     def _extract_broker_order_no(self, result: ResCommonResponse) -> Optional[str]:
-        return OrderStateMachine.extract_broker_order_no(result)
+        return BrokerOrderResponseMapper.extract_broker_order_no(result)
 
     def _set_order_context(self, context: OrderContext) -> OrderContext:
         return self._fsm.register(context)
