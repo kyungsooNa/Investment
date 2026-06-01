@@ -177,6 +177,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 price_resp = await self._sqs.handle_get_current_stock_price(
                     code,
                     caller=self.name,
+                    allow_snapshot=False,
                 )
                 if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
                     self._log_entry_rejected(log_data, "price_unavailable", "현재가 조회 실패")
@@ -185,7 +186,12 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 data = price_resp.data or {}
                 current = int(data.get("price", "0") or "0")
                 open_price = int(data.get("open", "0") or "0")
+                if current > 0 and open_price <= 0:
+                    open_price = await self._fetch_intraday_open_price(code, now)
+                    if open_price > 0:
+                        log_data["open_price_source"] = "intraday_minutes"
                 if current <= 0 or open_price <= 0:
+                    log_data.update({"current": current, "open": open_price})
                     self._log_entry_rejected(log_data, "invalid_price", "시가/현재가 0")
                     continue
 
@@ -571,6 +577,31 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             return False
 
         return True
+
+    async def _fetch_intraday_open_price(self, code: str, now) -> int:
+        """상세 현재가 시가가 비어 있을 때 당일 첫 분봉 시가로 보강한다."""
+        try:
+            rows = await self._sqs.get_day_intraday_minutes_list(
+                code,
+                session="REGULAR",
+                start_hhmmss="090000",
+                end_hhmmss=now.strftime("%H%M%S"),
+            )
+        except Exception as e:
+            self._logger.debug({"event": "intraday_open_fallback_failed", "code": code, "error": str(e)})
+            return 0
+
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            for key in ("stck_oprc", "open", "oprc", "stck_prpr", "price"):
+                try:
+                    value = int(float(row.get(key) or 0))
+                except (TypeError, ValueError):
+                    value = 0
+                if value > 0:
+                    return value
+        return 0
 
     async def _get_execution_strength(self, code: str) -> float:
         """체결강도(%) 스냅샷 1회 조회.

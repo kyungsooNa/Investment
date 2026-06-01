@@ -1513,6 +1513,10 @@ async def test_analyze_surge_candidate_success_with_dict_output(mock_deps):
     item = await service._analyze_surge_candidate("005930", "Samsung", logger=logger)
 
     assert item is not None
+    assert sqs.get_current_price.await_args_list == [
+        call("005930", caller="OneilUniverseService", allow_snapshot=False),
+        call("005930", caller="OneilUniverseService", allow_snapshot=False),
+    ]
     assert item.market == "KOSPI"
     assert item.market_cap == 80000000000000
     assert item.w52_hgpr == 1500

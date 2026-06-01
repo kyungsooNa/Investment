@@ -358,7 +358,11 @@ class OneilUniverseService:
         if logger: logger.debug({"event": "pass_trend", "code": code, "reason": "uptrend_and_volume_ok"})
 
         # 필터: 52주 고가 근접
-        full_resp = await self._sqs.get_current_price(code, caller="OneilUniverseService")
+        full_resp = await self._sqs.get_current_price(
+            code,
+            caller="OneilUniverseService",
+            allow_snapshot=False,
+        )
         if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
             if logger: logger.debug({"event": "drop", "code": code, "reason": "current_price_api_fail"})
             return None
@@ -472,7 +476,11 @@ class OneilUniverseService:
             return None
 
         # 3. 실시간 현재가/거래량 조회 (어차피 스캔 시 필요한 데이터)
-        full_resp = await self._sqs.get_current_price(code, caller="OneilUniverseService")
+        full_resp = await self._sqs.get_current_price(
+            code,
+            caller="OneilUniverseService",
+            allow_snapshot=False,
+        )
         if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
             return None
         output = full_resp.data.get("output")
@@ -559,7 +567,11 @@ class OneilUniverseService:
             return None
 
         # 필터: 52주 고가 근접
-        full_resp = await self._sqs.get_current_price(code, caller="OneilUniverseService")
+        full_resp = await self._sqs.get_current_price(
+            code,
+            caller="OneilUniverseService",
+            allow_snapshot=False,
+        )
         if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
             if logger: logger.debug({"event": "drop", "code": code, "reason": "current_price_api_fail"})
             return None
@@ -660,7 +672,14 @@ class OneilUniverseService:
         passed_first = []
         processed_count = 0
         for chunk in _chunked(all_stocks, self._cfg.api_chunk_size):
-            tasks = [self._sqs.get_current_price(c, caller="OneilUniverseService") for c, _, _ in chunk]
+            tasks = [
+                self._sqs.get_current_price(
+                    c,
+                    caller="OneilUniverseService",
+                    allow_snapshot=False,
+                )
+                for c, _, _ in chunk
+            ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for (code, name, market), resp in zip(chunk, results):
                 if isinstance(resp, Exception) or not resp or resp.rt_cd != ErrorCode.SUCCESS.value:

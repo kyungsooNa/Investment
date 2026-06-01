@@ -61,6 +61,7 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         sqs.handle_get_current_stock_price = AsyncMock()
         sqs.prefetch_prices = AsyncMock(return_value=0)
         sqs.get_stock_conclusion = AsyncMock()
+        sqs.get_day_intraday_minutes_list = AsyncMock(return_value=[])
 
         tm = MagicMock()
         tm.get_current_kst_time.return_value = now_time or _kst(10, 0)
@@ -146,7 +147,7 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertIn("VBO돌파", signals[0].reason)
         sqs.prefetch_prices.assert_awaited_once_with(["005930"])
         sqs.handle_get_current_stock_price.assert_awaited_once_with(
-            "005930", caller=strategy.name
+            "005930", caller=strategy.name, allow_snapshot=False
         )
 
     # ── Target 미달 → 거절 ────────────────────────────────────────────
@@ -163,6 +164,36 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
 
         signals = await strategy.scan()
         self.assertEqual(signals, [])
+
+    async def test_scan_uses_intraday_open_fallback_when_current_price_open_is_zero(self):
+        """상세 현재가의 시가가 0이면 당일 첫 분봉 시가로 VBO 타깃을 계산한다."""
+        strategy, sqs, _ = self._make_strategy(now_time=_kst(10, 0), k_value=0.5)
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        strategy._load_pool_b = AsyncMock(return_value=[{
+            "code": "005930", "name": "삼성전자", "market": "",
+            "market_cap": 500_000_000_000, "avg_5d_tv": 50_000_000_000,
+        }])
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=72000, open_price=0,
+            pgtr_ntby_qty=700_000, acml_tr_pbmn=50_000_000_000,
+        )
+        sqs.get_day_intraday_minutes_list.return_value = [
+            {"stck_cntg_hour": "090000", "stck_oprc": "70000", "stck_prpr": "70100"},
+            {"stck_cntg_hour": "090100", "stck_oprc": "70100", "stck_prpr": "70200"},
+        ]
+        sqs.get_stock_conclusion.return_value = _conclusion_resp(130.0)
+
+        signals = await strategy.scan()
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].code, "005930")
+        sqs.get_day_intraday_minutes_list.assert_awaited_once_with(
+            "005930",
+            session="REGULAR",
+            start_hhmmss="090000",
+            end_hhmmss="100000",
+        )
 
     # ── 체결강도 필터 ────────────────────────────────────────────────
 
