@@ -46,16 +46,20 @@ def _write_shadow_jsonl(shadow_dir: Path, yyyymmdd: str, lines: list[dict]) -> P
 
 
 def _shadow_record(*, strategy: str, code: str, recorded_at: float,
-                   price: int = 10000, action: str = "BUY") -> dict:
-    return {
+                   price: int = 10000, action: str = "BUY",
+                   signal_source: str = "event_shadow",
+                   include_signal_source: bool = True) -> dict:
+    rec = {
         "recorded_at": recorded_at,
         "strategy": strategy,
         "code": code,
-        "signal_source": "event_shadow",
         "signal": {"code": code, "name": code, "action": action, "price": price,
                    "strategy_name": strategy, "reason": "test"},
         "snapshot": {"price": price, "open": price - 100},
     }
+    if include_signal_source:
+        rec["signal_source"] = signal_source
+    return rec
 
 
 def _create_scheduler_db(db_path: Path, rows: list[dict]) -> None:
@@ -130,6 +134,44 @@ def test_load_shadow_records_filters_by_date_range_and_strategy(tmp_path):
     assert all(r.source == "event_shadow" for r in recs)
     assert all(r.action == "BUY" for r in recs)
     assert all(r.strategy == "래리윌리엄스VBO" for r in recs)
+
+
+def test_load_shadow_records_filters_by_signal_source(tmp_path):
+    """P2 2-4 exit: signal_source 로 entry/exit shadow 레코드를 분리한다."""
+    shadow_dir = tmp_path / "shadow"
+    _write_shadow_jsonl(shadow_dir, "20260520", [
+        _shadow_record(strategy="VBO", code="000001",
+                       recorded_at=_kst_epoch("20260520", 9, 15),
+                       action="BUY", signal_source="event_shadow"),
+        _shadow_record(strategy="VBO", code="000001",
+                       recorded_at=_kst_epoch("20260520", 13, 0),
+                       action="SELL", signal_source="event_shadow_exit"),
+    ])
+    common = dict(shadow_dir=shadow_dir, date_from="20260520", date_to="20260520",
+                  strategy_filter="VBO")
+
+    entry = load_shadow_records(**common, signal_source="event_shadow")
+    assert [r.action for r in entry] == ["BUY"]
+
+    exit_recs = load_shadow_records(**common, signal_source="event_shadow_exit")
+    assert [r.action for r in exit_recs] == ["SELL"]
+
+    both = load_shadow_records(**common)  # 필터 없음 → 둘 다
+    assert len(both) == 2
+
+
+def test_load_shadow_records_treats_missing_signal_source_as_entry(tmp_path):
+    """signal_source 필드가 없는 레거시 레코드는 entry(event_shadow)로 간주한다."""
+    shadow_dir = tmp_path / "shadow"
+    _write_shadow_jsonl(shadow_dir, "20260520", [
+        _shadow_record(strategy="VBO", code="000001",
+                       recorded_at=_kst_epoch("20260520", 9, 15),
+                       include_signal_source=False),
+    ])
+    recs = load_shadow_records(shadow_dir=shadow_dir, date_from="20260520",
+                               date_to="20260520", strategy_filter="VBO",
+                               signal_source="event_shadow")
+    assert [r.code for r in recs] == ["000001"]
 
 
 # ── load_polling_records ───────────────────────────────────────────────────
@@ -468,6 +510,71 @@ def test_main_writes_json_and_markdown_outputs(tmp_path, capsys):
     # stdout 에 output 경로가 적어도 노출되어야 함
     out = capsys.readouterr().out
     assert str(json_out) in out
+
+
+def test_main_entry_default_excludes_exit_shadow_records(tmp_path):
+    """기본(entry) 실행은 같은 jsonl 의 exit shadow(SELL) 레코드에 오염되지 않는다."""
+    shadow_dir = tmp_path / "shadow"
+    db_path = tmp_path / "scheduler.db"
+    s_ts = _kst_epoch("20260520", 9, 15, 30)
+    _write_shadow_jsonl(shadow_dir, "20260520", [
+        _shadow_record(strategy="래리윌리엄스VBO", code="000001", recorded_at=s_ts),
+        # 같은 종목/날짜의 exit shadow → entry 분석에서 제외되어야 함
+        _shadow_record(strategy="래리윌리엄스VBO", code="000001",
+                       recorded_at=_kst_epoch("20260520", 13, 0),
+                       action="SELL", signal_source="event_shadow_exit"),
+    ])
+    _create_scheduler_db(db_path, [
+        {"code": "000001", "timestamp": _kst_ts_str("20260520", 9, 15, 30),
+         "strategy_name": "래리윌리엄스VBO", "action": "BUY", "api_success": True},
+    ])
+    json_out = tmp_path / "report.json"
+    exit_code = main([
+        "--shadow-dir", str(shadow_dir), "--scheduler-db", str(db_path),
+        "--date-from", "20260520", "--date-to", "20260520",
+        "--strategy", "래리윌리엄스VBO", "--match-window-sec", "60",
+        "--output-json", str(json_out),
+    ])
+    assert exit_code == 0
+    payload = json.loads(json_out.read_text(encoding="utf-8"))
+    assert payload["totals"]["matched"] == 1
+    # exit SELL 레코드가 섞였다면 shadow_only=1 로 오염됐을 것
+    assert payload["totals"]["shadow_only"] == 0
+    assert payload["config"]["signal_source"] == "event_shadow"
+
+
+def test_main_exit_mode_matches_sell_shadow_with_polling_sell(tmp_path):
+    """exit 모드: exit shadow(SELL) ↔ polling SELL 매칭."""
+    shadow_dir = tmp_path / "shadow"
+    db_path = tmp_path / "scheduler.db"
+    s_ts = _kst_epoch("20260520", 13, 0, 5)
+    _write_shadow_jsonl(shadow_dir, "20260520", [
+        _shadow_record(strategy="래리윌리엄스VBO", code="000001", recorded_at=s_ts,
+                       action="SELL", signal_source="event_shadow_exit"),
+        # entry 레코드는 exit 분석에서 제외
+        _shadow_record(strategy="래리윌리엄스VBO", code="000001",
+                       recorded_at=_kst_epoch("20260520", 9, 15)),
+    ])
+    _create_scheduler_db(db_path, [
+        {"code": "000001", "timestamp": _kst_ts_str("20260520", 13, 0, 0),
+         "strategy_name": "래리윌리엄스VBO", "action": "SELL", "api_success": True,
+         "return_rate": -3.1},
+    ])
+    json_out = tmp_path / "report.json"
+    exit_code = main([
+        "--shadow-dir", str(shadow_dir), "--scheduler-db", str(db_path),
+        "--date-from", "20260520", "--date-to", "20260520",
+        "--strategy", "래리윌리엄스VBO", "--match-window-sec", "60",
+        "--signal-source", "event_shadow_exit", "--polling-action", "SELL",
+        "--output-json", str(json_out),
+    ])
+    assert exit_code == 0
+    payload = json.loads(json_out.read_text(encoding="utf-8"))
+    assert payload["totals"]["matched"] == 1
+    assert payload["totals"]["shadow_only"] == 0
+    assert payload["totals"]["polling_only"] == 0
+    assert payload["config"]["signal_source"] == "event_shadow_exit"
+    assert payload["config"]["polling_action"] == "SELL"
 
 
 def test_format_markdown_report_basic_structure():
