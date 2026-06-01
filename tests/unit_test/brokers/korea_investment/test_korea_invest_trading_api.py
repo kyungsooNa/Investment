@@ -418,7 +418,7 @@ async def test_get_hashkey_api_failure_response():
 
 @pytest.mark.asyncio
 async def test_place_stock_order_krx_market_order():
-    """KRX 시장가 주문(order_price=0): order_dvsn='01', excg_id_dvsn_cd="" 검증."""
+    """KRX 시장가 주문(order_price=0): order_dvsn='01', excg_id_dvsn_cd="KRX" 검증."""
     api = make_api()
     api._env.active_config.update({
         "custtype": "P",
@@ -444,13 +444,13 @@ async def test_place_stock_order_krx_market_order():
     body = api._get_hashkey.await_args.args[0]
     assert body["ORD_DVSN"] == "01"
     assert body["ORD_UNPR"] == "0"
-    assert body["EXCG_ID_DVSN_CD"] == ""
+    assert body["EXCG_ID_DVSN_CD"] == "KRX"
     # 시장가이므로 호가단위 보정 로그가 없어야 함
     assert not any("호가단위 보정" in str(call) for call in api._logger.info.call_args_list)
 
 @pytest.mark.asyncio
 async def test_place_stock_order_krx_limit_order_excg_empty():
-    """KRX 지정가 주문: excg_id_dvsn_cd="" (빈 문자열) 검증."""
+    """KRX 지정가 주문: excg_id_dvsn_cd="KRX" 검증."""
     api = make_api()
     api._env.active_config.update({
         "custtype": "P",
@@ -474,4 +474,4 @@ async def test_place_stock_order_krx_limit_order_excg_empty():
 
     body = api._get_hashkey.await_args.args[0]
     assert body["ORD_DVSN"] == "00"
-    assert body["EXCG_ID_DVSN_CD"] == ""
+    assert body["EXCG_ID_DVSN_CD"] == "KRX"
