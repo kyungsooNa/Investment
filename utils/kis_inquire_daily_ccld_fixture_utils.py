@@ -18,6 +18,10 @@ DEFAULT_DESCRIPTION = (
 )
 _ORDER_NO_FIELDS = {"odno", "orgn_odno", "ODNO", "ORGN_ODNO"}
 _STOCK_CODE_FIELDS = {"pdno", "PDNO"}
+_PHONE_FIELDS = {"ctac_tlno", "CTAC_TLNO"}
+_IP_FIELDS = {"inqr_ip_addr", "INQR_IP_ADDR"}
+_BRANCH_FIELDS = {"ord_gno_brno", "ORD_GNO_BRNO"}
+_EMPLOYEE_FIELDS = {"ordr_empno", "ORDR_EMPNO"}
 
 
 def extract_inquire_daily_ccld_output1_rows(payload: Any) -> list[dict]:
@@ -59,6 +63,14 @@ def sanitize_inquire_daily_ccld_row(
             sanitized[key] = f"{row_index:010d}"
         elif key in _STOCK_CODE_FIELDS and mask_stock_code:
             sanitized[key] = f"{900000 + row_index:06d}"
+        elif key in _PHONE_FIELDS:
+            sanitized[key] = "01000000000"
+        elif key in _IP_FIELDS:
+            sanitized[key] = "000.000.000.000"
+        elif key in _BRANCH_FIELDS:
+            sanitized[key] = "00000"
+        elif key in _EMPLOYEE_FIELDS:
+            sanitized[key] = "MASKED"
     return sanitized
 
 

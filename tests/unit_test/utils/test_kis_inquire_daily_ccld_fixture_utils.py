@@ -97,6 +97,25 @@ def test_sanitize_inquire_daily_ccld_row_masks_uppercase_fields_and_skips_blank_
     }
 
 
+def test_sanitize_inquire_daily_ccld_row_masks_real_account_sensitive_fields():
+    sanitized = sanitize_inquire_daily_ccld_row(
+        {
+            "ord_gno_brno": "91257",
+            "inqr_ip_addr": "221.168.217.068",
+            "ctac_tlno": "01012345678",
+            "ordr_empno": "OpnAPI",
+        },
+        row_index=1,
+    )
+
+    assert sanitized == {
+        "ord_gno_brno": "00000",
+        "inqr_ip_addr": "000.000.000.000",
+        "ctac_tlno": "01000000000",
+        "ordr_empno": "MASKED",
+    }
+
+
 def test_build_inquire_daily_ccld_fixture_document_builds_expected_cases():
     document = build_inquire_daily_ccld_fixture_document(
         {

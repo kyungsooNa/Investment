@@ -88,6 +88,22 @@ async def test_inquire_daily_ccld_builds_order_query_params():
 
 
 @pytest.mark.asyncio
+async def test_inquire_daily_ccld_sets_krx_exchange_code():
+    api = get_api()
+    api._env.active_config = {
+        "custtype": "P",
+        "stock_account_number": "12345678-01",
+    }
+    api._trid_provider.account_inquire_daily_ccld.return_value = "TTTC0081R"
+    api.call_api = AsyncMock(return_value={"result": "success"})
+
+    await api.inquire_daily_ccld(exchange=Exchange.KRX)
+
+    _, kwargs = api.call_api.await_args
+    assert kwargs["params"]["EXCG_ID_DVSN_CD"] == "KRX"
+
+
+@pytest.mark.asyncio
 async def test_get_account_balance_without_product_code_defaults_to_01_and_nxt_flag():
     api = get_api()
     api._env.is_paper_trading = False
@@ -136,6 +152,22 @@ async def test_inquire_unfilled_orders_builds_params_for_plain_account_and_nxt()
     assert kwargs["params"]["INQR_DVSN_1"] == "1"
     assert kwargs["params"]["INQR_DVSN_2"] == "2"
     assert kwargs["params"]["EXCG_ID_DVSN_CD"] == "NX"
+
+
+@pytest.mark.asyncio
+async def test_inquire_unfilled_orders_sets_krx_exchange_code():
+    api = get_api()
+    api._env.active_config = {
+        "custtype": "P",
+        "stock_account_number": "12345678",
+    }
+    api._trid_provider.account_inquire_psbl_rvsecncl.return_value = "TTTC8036R"
+    api.call_api = AsyncMock(return_value={"result": "unfilled"})
+
+    await api.inquire_unfilled_orders(exchange=Exchange.KRX)
+
+    _, kwargs = api.call_api.await_args
+    assert kwargs["params"]["EXCG_ID_DVSN_CD"] == "KRX"
 
 
 @pytest.mark.asyncio

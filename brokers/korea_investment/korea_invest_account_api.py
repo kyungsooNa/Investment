@@ -14,6 +14,14 @@ from typing import Optional
 from common.types import ResCommonResponse, Exchange
 
 
+def _account_exchange_code(exchange: Exchange) -> str:
+    if exchange == Exchange.NXT:
+        return "NX"
+    if exchange == Exchange.KRX:
+        return "KRX"
+    return exchange.value
+
+
 class KoreaInvestApiAccount(KoreaInvestApiBase):
     def __init__(self,
                  env: KoreaInvestApiEnv,
@@ -89,7 +97,7 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
             cano = full_account_number
             acnt_prdt_cd = "01"
 
-        exchange_code = "NX" if exchange == Exchange.NXT else ""
+        exchange_code = _account_exchange_code(exchange)
         params = Params.inquire_daily_ccld(
             cano=cano,
             acnt_prdt_cd=acnt_prdt_cd,
@@ -124,7 +132,7 @@ class KoreaInvestApiAccount(KoreaInvestApiBase):
             cano = full_account_number
             acnt_prdt_cd = "01"
 
-        exchange_code = "NX" if exchange == Exchange.NXT else ""
+        exchange_code = _account_exchange_code(exchange)
         params = Params.inquire_psbl_rvsecncl(
             cano=cano,
             acnt_prdt_cd=acnt_prdt_cd,
