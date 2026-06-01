@@ -281,7 +281,8 @@
 - [~] exit fast-path는 entry event-driven 전환보다 별도 우선순위로 검토한다.
   - 목표: 손절 조건만이라도 WebSocket price snapshot 기반 shadow 판정으로 latency와 false-positive를 먼저 측정한다.
   - 적용 완료(측정 경로, 2026-06-01): 손절 전용 exit shadow 구현. `LiveStrategy.evaluate_exit_single(code, snapshot, holding)` 인터페이스(default None) + VBO 구현(net 손절 트리거만 복제, 오버나이트/EOD 제외). `StrategyScheduler._refresh_exit_shadow_subscriptions`가 `event_driven_shadow=True` 전략의 보유 종목을 `{name}__exit` subscriber로 router 구독 → `evaluate_exit_single` 결과를 `EventShadowJournalService.record(signal_source="event_shadow_exit")`로 기록(실 주문 미발생), entry gate 무관하게 매 사이클 갱신. 가격 구독은 `event_shadow_exit_<strategy>` 카테고리. VBO가 entry+exit shadow pilot(기존 flag 공유). 단위 5760 / 통합 240 passed.
-  - 남은 작업: 장중 운영으로 `event_shadow_exit` 레코드 수집. `analyze_event_shadow_parity.py`는 현재 entry(BUY) 기준이라 exit(`signal_source="event_shadow_exit"`) 분류 확장이 후속 필요.
+  - 적용 완료(parity exit 확장, 2026-06-01): `analyze_event_shadow_parity.py`에 `load_shadow_records(signal_source=...)` 필터 + CLI `--signal-source`(default `event_shadow`)/`--polling-action`(default `BUY`) 추가. 기본 실행은 entry 만 분석해 같은 jsonl 의 exit 레코드 교차 오염을 막고, exit 분석은 `--signal-source event_shadow_exit --polling-action SELL`. `compute_parity_report`는 action-agnostic 이라 불변. (분석 스크립트 한정, 실자본 경로 없음)
+  - 남은 작업: 장중 운영으로 `event_shadow_exit` 레코드 5거래일 수집 → entry/exit 각각 parity 리포트 생성.
   - 실주문 전환 조건: 5거래일 이상 shadow journal에서 기존 polling exit과 괴리, 선행 시간, 중복률, 누락률을 리포트한 뒤 별도 승인.
 - [blocked] PR-3: PR-2.5 관찰 결과 양호 시 VBO 실 적용 + OSB shadow 진입.
 - [ ] PR-4+: 단계적 확장. (HighTightFlag 등 OHLCV 별도 조회 필요 전략에 적용할지 재평가)
@@ -486,7 +487,7 @@
 3. **운영 관찰 진행 중**
    - VBO shadow 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py` 로 parity 리포트 생성 → PR-3 진입 판정 (P2 2-4 PR-2.5)
      - 2026-05-31 배선 수정 후 장중 운영일부터 수집일 카운트 재시작.
-   - ~~손절 전용 exit fast-path shadow/latency 측정 설계 (P2 2-4 후속)~~ ✅ 측정 경로 구현 완료 (2026-06-01). 남은 것: 장중 `event_shadow_exit` 수집 + parity 스크립트 exit 분류 확장.
+   - ~~손절 전용 exit fast-path shadow/latency 측정 설계 (P2 2-4 후속)~~ ✅ 측정 경로 + parity exit 분류 구현 완료 (2026-06-01). 남은 것: 장중 `event_shadow_exit` 5거래일 수집 → 리포트.
    - profitability gate는 우회하지 않고 shadow/paper/canary journal로 전략별 실전 근거를 축적 (P1 1-6)
 
 4. **외부 데이터 확보 후 진행 가능 (blocked)**
