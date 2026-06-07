@@ -45,6 +45,35 @@ def test_compute_strategy_window_metrics_uses_recent_closed_trades_only():
     assert metrics["S2"]["trade_count"] == 1
 
 
+def test_compute_window_metrics_emits_return_distribution_moments():
+    """net_return 시계열에서 Sharpe / skew / (비초과)kurtosis를 산출한다 (P1 1-7 DSR 입력)."""
+    records = [
+        {"strategy": "S1", "status": "SOLD", "net_return": r, "net_pnl": r * 1000.0}
+        for r in (1.0, 2.0, 3.0, 4.0, 5.0)
+    ]
+
+    metrics = compute_strategy_window_metrics(records, window_size=5)["S1"]
+
+    assert metrics["sharpe_ratio"] == pytest.approx(1.897367, abs=1e-5)
+    assert metrics["return_skew"] == pytest.approx(0.0, abs=1e-9)
+    # non-excess kurtosis: normal == 3.0, this platykurtic ramp == 1.7.
+    assert metrics["return_kurtosis"] == pytest.approx(1.7, abs=1e-9)
+
+
+def test_compute_window_metrics_moments_none_for_tiny_samples():
+    """표본이 너무 작으면 고차 모멘트는 None (skew>=3, kurtosis>=4)."""
+    records = [
+        {"strategy": "S1", "status": "SOLD", "net_return": 1.0, "net_pnl": 1000.0},
+        {"strategy": "S1", "status": "SOLD", "net_return": 2.0, "net_pnl": 2000.0},
+    ]
+
+    metrics = compute_strategy_window_metrics(records, window_size=5)["S1"]
+
+    assert metrics["sharpe_ratio"] is not None
+    assert metrics["return_skew"] is None
+    assert metrics["return_kurtosis"] is None
+
+
 def test_analyze_marks_degraded_candidate_against_baseline():
     live = _load("recent_trades_live.json")
     backtest = _load("recent_trades_backtest.json")

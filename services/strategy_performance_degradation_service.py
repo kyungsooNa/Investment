@@ -6,6 +6,7 @@ and receive metrics/candidates without any service or filesystem dependency.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from statistics import stdev
 from typing import Any, Iterable, Mapping, Optional
 
 
@@ -131,6 +132,9 @@ def _compute_window_metrics(
         "total_net_pnl": sum(net_pnls),
         "payoff_ratio": _payoff_ratio(win_returns, loss_returns),
         "profit_factor": _profit_factor(wins_pnl, losses_pnl),
+        "sharpe_ratio": _sharpe_ratio(valid_returns),
+        "return_skew": _return_skew(valid_returns),
+        "return_kurtosis": _return_kurtosis(valid_returns),
         "mdd_amount": mdd_amount,
         "mdd_ratio": _safe_div(mdd_amount, capital_base) if capital_base else None,
         "max_consecutive_losses": _max_consecutive_losses(net_pnls),
@@ -279,6 +283,41 @@ def _profit_factor(wins_pnl: list[float], losses_pnl: list[float]) -> Optional[f
     return sum(wins_pnl) / total_loss
 
 
+def _sharpe_ratio(returns: list[float]) -> Optional[float]:
+    """Per-trade Sharpe (mean / sample stdev of net returns). Feeds the DSR gate."""
+    if len(returns) < 2:
+        return None
+    spread = stdev(returns)
+    if spread == 0:
+        return None
+    return (sum(returns) / len(returns)) / spread
+
+
+def _central_moment(returns: list[float], order: int, mean_value: float) -> float:
+    return sum((value - mean_value) ** order for value in returns) / len(returns)
+
+
+def _return_skew(returns: list[float]) -> Optional[float]:
+    if len(returns) < 3:
+        return None
+    mean_value = sum(returns) / len(returns)
+    m2 = _central_moment(returns, 2, mean_value)
+    if m2 <= 0:
+        return None
+    return _central_moment(returns, 3, mean_value) / (m2 ** 1.5)
+
+
+def _return_kurtosis(returns: list[float]) -> Optional[float]:
+    """Non-excess kurtosis (normal == 3.0), matching the DSR PSR convention."""
+    if len(returns) < 4:
+        return None
+    mean_value = sum(returns) / len(returns)
+    m2 = _central_moment(returns, 2, mean_value)
+    if m2 <= 0:
+        return None
+    return _central_moment(returns, 4, mean_value) / (m2 ** 2)
+
+
 def _resolve_capital_base(
     records: list[Mapping[str, Any]],
     capital_base_won: Optional[float],
@@ -306,6 +345,9 @@ def _empty_metrics() -> dict[str, Any]:
         "total_net_pnl": 0.0,
         "payoff_ratio": None,
         "profit_factor": None,
+        "sharpe_ratio": None,
+        "return_skew": None,
+        "return_kurtosis": None,
         "mdd_amount": 0.0,
         "mdd_ratio": None,
         "max_consecutive_losses": 0,
