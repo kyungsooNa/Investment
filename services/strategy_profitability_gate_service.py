@@ -56,6 +56,10 @@ class StrategyProfitabilityGateConfig:
     multiple_testing_sharpe_metric: str = "sharpe_ratio"
     multiple_testing_in_sample_metric: str = "in_sample_net_pnl"
     multiple_testing_out_of_sample_metric: str = "out_of_sample_net_pnl"
+    multiple_testing_min_deflated_sharpe_probability: Optional[float] = None
+    multiple_testing_sample_size_metric: str = "trade_count"
+    multiple_testing_skew_metric: str = "return_skew"
+    multiple_testing_kurtosis_metric: str = "return_kurtosis"
     strategy_correlation_min_overlap: int = 5
     strategy_correlation_warning_threshold: float = 0.8
     strategy_correlation_metric: str = "net_return"
@@ -119,6 +123,10 @@ def evaluate_strategy_profitability_gate(
         sharpe_metric=cfg.multiple_testing_sharpe_metric,
         in_sample_metric=cfg.multiple_testing_in_sample_metric,
         out_of_sample_metric=cfg.multiple_testing_out_of_sample_metric,
+        min_deflated_sharpe_probability=cfg.multiple_testing_min_deflated_sharpe_probability,
+        sample_size_metric=cfg.multiple_testing_sample_size_metric,
+        skew_metric=cfg.multiple_testing_skew_metric,
+        kurtosis_metric=cfg.multiple_testing_kurtosis_metric,
     )
     _apply_multiple_testing_block(by_strategy, cfg, multiple_testing_bias)
     statuses = [item["status"] for item in by_strategy.values()]
