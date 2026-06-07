@@ -36,6 +36,8 @@ class WebSocketWatchdogTask(SchedulableTask):
     SUBSCRIBED_NO_TICK_REFRESH_COOLDOWN_SEC = 300
     RECONNECT_COOLDOWN_SEC = 10.0
     RECONNECT_ALERT_CONFIRMATION_COUNT = 2
+    REALTIME_HEALTH_CHECK_END_HOUR = 15
+    REALTIME_HEALTH_CHECK_END_MINUTE = 30
 
     def __init__(
         self,
@@ -201,6 +203,11 @@ class WebSocketWatchdogTask(SchedulableTask):
                         self._intentionally_disconnected = True
                     continue
 
+                if not self._is_realtime_health_check_window():
+                    self._pt_no_initial_data_started_ts = None
+                    self._reconnect_trigger_counts.clear()
+                    continue
+
                 # 조건 1: 수신 태스크가 죽었는지 확인 (PT/체결가 공통)
                 receive_alive = (
                     self._streaming_service is not None
@@ -350,6 +357,17 @@ class WebSocketWatchdogTask(SchedulableTask):
         if trigger.startswith("price_data_gap_"):
             return "price_data_gap"
         return trigger
+
+    def _is_realtime_health_check_window(self) -> bool:
+        """정규장 실시간 tick이 기대되는 시간대에만 데이터 gap 감시를 수행한다."""
+        now = time.localtime()
+        return (
+            now.tm_hour,
+            now.tm_min,
+        ) < (
+            self.REALTIME_HEALTH_CHECK_END_HOUR,
+            self.REALTIME_HEALTH_CHECK_END_MINUTE,
+        )
 
     async def _refresh_subscribed_no_tick_codes(self, codes: List[str]) -> None:
         """첫 틱이 오지 않는 가격 구독을 개별 재요청한다."""
