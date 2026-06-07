@@ -1069,6 +1069,17 @@ class StrategyScheduler:
             kwargs["stop_loss_price"] = signal.stop_loss_price
         if signal.target_price is not None:
             kwargs["target_price"] = signal.target_price
+        # P1 1-6: 신호 metadata 5필드도 journal 로 잇는다 (setup별 성과/감사 분석용).
+        if signal.entry_reason is not None:
+            kwargs["entry_reason"] = signal.entry_reason
+        if signal.trailing_rule is not None:
+            kwargs["trailing_rule"] = signal.trailing_rule
+        if signal.expected_holding_period_days is not None:
+            kwargs["expected_holding_period_days"] = signal.expected_holding_period_days
+        if signal.confidence is not None:
+            kwargs["confidence"] = signal.confidence
+        if signal.required_data is not None:
+            kwargs["required_data"] = signal.required_data
         return kwargs
 
     @staticmethod
