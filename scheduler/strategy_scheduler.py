@@ -1204,7 +1204,6 @@ class StrategyScheduler:
 
         매번 새 wrapper 를 만드는 게 정상이다 (strategy reference 가 closure 에 포함).
         """
-        journal = self._event_shadow_journal
         logger = self._logger
 
         async def _evaluator(code: str, snapshot: dict):
@@ -1222,7 +1221,7 @@ class StrategyScheduler:
             except Exception:
                 payload = {"action": getattr(signal, "action", ""), "code": getattr(signal, "code", code)}
             try:
-                journal.record(
+                self._record_event_shadow_signal(
                     strategy_name=strategy.name,
                     code=code,
                     signal=payload,
@@ -1235,6 +1234,36 @@ class StrategyScheduler:
             return None  # shadow 는 router 결과로 전파되지 않음 (실 주문 차단)
 
         return _evaluator
+
+    def _event_shadow_date_str(self) -> str:
+        try:
+            now = self._tm.get_current_kst_time()
+            return now.strftime("%Y%m%d")
+        except Exception:
+            return time.strftime("%Y%m%d")
+
+    def _record_event_shadow_signal(
+        self,
+        *,
+        strategy_name: str,
+        code: str,
+        signal: dict,
+        snapshot: dict,
+        signal_source: Optional[str] = None,
+    ) -> None:
+        journal = self._event_shadow_journal
+        if journal is None:
+            return
+        journal.record(
+            strategy_name=strategy_name,
+            code=code,
+            signal=signal,
+            snapshot=snapshot,
+            signal_source=signal_source,
+        )
+        flush_fn = getattr(journal, "flush_to_file", None)
+        if callable(flush_fn):
+            flush_fn(self._event_shadow_date_str())
 
     @staticmethod
     def _exit_shadow_category_key(strategy_name: str) -> str:
@@ -1300,7 +1329,6 @@ class StrategyScheduler:
 
     def _build_exit_shadow_evaluator(self, strategy, holdings_by_code: Dict[str, dict]):
         """evaluate_exit_single → exit shadow journal 기록 → None 반환 wrapper."""
-        journal = self._event_shadow_journal
         logger = self._logger
 
         async def _evaluator(code: str, snapshot: dict):
@@ -1321,7 +1349,7 @@ class StrategyScheduler:
             except Exception:
                 payload = {"action": getattr(signal, "action", ""), "code": getattr(signal, "code", code)}
             try:
-                journal.record(
+                self._record_event_shadow_signal(
                     strategy_name=strategy.name,
                     code=code,
                     signal=payload,

@@ -8,6 +8,7 @@ scheduler 가 cfg.event_driven_shadow=True 인 전략에 대해:
 """
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,16 +16,19 @@ import pytest
 from repositories.streaming_stock_repo import StreamingType
 from common.types import TradeSignal
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
+from services.event_shadow_journal_service import EventShadowJournalService
 from services.price_subscription_service import SubscriptionPriority
 
 
 def _make_scheduler(event_router=None, event_shadow_journal=None, price_subscription_service=None):
+    market_clock = MagicMock()
+    market_clock.get_current_kst_time.return_value = datetime(2026, 5, 20, 10, 30, 0)
     return StrategyScheduler(
         virtual_trade_service=MagicMock(),
         order_execution_service=MagicMock(),
         stock_query_service=MagicMock(),
         stock_code_repository=MagicMock(),
-        market_clock=MagicMock(),
+        market_clock=market_clock,
         market_calendar_service=MagicMock(),
         logger=MagicMock(),
         dry_run=True,
@@ -158,6 +162,7 @@ async def test_shadow_evaluator_records_signal_and_returns_none():
     assert call_kwargs["code"] == "005930"
     assert call_kwargs["signal"]["action"] == "BUY"
     assert call_kwargs["snapshot"] == snapshot
+    journal.flush_to_file.assert_called_once_with("20260520")
 
 
 @pytest.mark.asyncio
@@ -178,6 +183,57 @@ async def test_shadow_evaluator_does_not_record_when_no_signal():
 
     assert result is None
     journal.record.assert_not_called()
+    journal.flush_to_file.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_shadow_evaluator_persists_signal_to_event_shadow_jsonl(tmp_path):
+    router = MagicMock()
+    router.subscribe = MagicMock()
+    journal = EventShadowJournalService(log_root=tmp_path)
+    scheduler = _make_scheduler(event_router=router, event_shadow_journal=journal)
+
+    sig = TradeSignal(
+        code="005930", name="삼성전자", action="BUY", price=75000,
+        qty=1, reason="test", strategy_name="VBO",
+    )
+    cfg = _make_strategy_cfg("VBO", event_driven_shadow=True, codes=["005930"])
+    cfg.strategy.evaluate_single = AsyncMock(return_value=sig)
+
+    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    evaluator = router.subscribe.call_args.kwargs["evaluator"]
+    await evaluator("005930", {"price": "75000", "open": 74000.0})
+
+    path = tmp_path / "event_shadow" / "20260520.jsonl"
+    assert path.exists()
+    assert '"signal_source": "event_shadow"' in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_exit_shadow_evaluator_flushes_record_to_daily_jsonl():
+    journal = MagicMock()
+    journal.record = MagicMock()
+    scheduler = _make_scheduler(event_router=MagicMock(), event_shadow_journal=journal)
+
+    sell = TradeSignal(
+        code="005930", name="삼성전자", action="SELL", price=69000,
+        qty=1, reason="stop", strategy_name="VBO",
+    )
+    strategy = MagicMock()
+    strategy.name = "VBO"
+    strategy.evaluate_exit_single = AsyncMock(return_value=sell)
+
+    evaluator = scheduler._build_exit_shadow_evaluator(
+        strategy,
+        {"005930": {"code": "005930", "buy_price": 71000, "qty": 1}},
+    )
+
+    result = await evaluator("005930", {"price": "69000"})
+
+    assert result is None
+    journal.record.assert_called_once()
+    assert journal.record.call_args.kwargs["signal_source"] == "event_shadow_exit"
+    journal.flush_to_file.assert_called_once_with("20260520")
 
 
 @pytest.mark.asyncio
