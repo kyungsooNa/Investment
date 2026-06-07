@@ -460,6 +460,10 @@ class StrategyLogReportService:
                 'reason': str(trade.get('reason') or '체결 원장 기록'),
                 'time': str(trade.get('buy_date', ''))[11:16],
                 'volatility_20d_annualized': _to_float(trade.get('volatility_20d_annualized')),
+                # P1 1-6: 신호 metadata (진입사유/confidence/기대보유) — journal → 리포트 분석 연결.
+                'entry_reason': (str(trade.get('entry_reason')) if trade.get('entry_reason') else None),
+                'confidence': _to_float(trade.get('confidence')),
+                'expected_holding_period_days': _to_float(trade.get('expected_holding_period_days')),
             }
 
         # 원장을 읽을 수 있으면 buy_signal_generated 로그보다 원장을 신뢰한다.
@@ -674,6 +678,49 @@ class StrategyLogReportService:
             lines.append(
                 f"• {_esc(name)} — {n}건 | 평균 {avg*100:.1f}% | 중앙값 {median*100:.1f}%"
             )
+        return "\n".join(lines)
+
+    def _build_signal_metadata_section(self, strategy_summaries: List[dict]) -> Optional[str]:
+        """전략별 매수 신호 metadata 요약 (P1 1-6).
+
+        진입사유(entry_reason) 분포 / 평균 confidence / 평균 기대 보유기간을 원장(bought)
+        기준으로 집계한다. trailing_rule / required_data 는 journal metadata 로 보존되며
+        일일 headline 에는 surfacing 하지 않는다.
+        """
+        rows: List[Tuple[str, int, str]] = []
+        for summary in strategy_summaries:
+            infos = list(summary.get('bought', {}).values())
+            reasons = [str(info['entry_reason']) for info in infos if info.get('entry_reason')]
+            confs = [
+                float(info['confidence']) for info in infos
+                if isinstance(info.get('confidence'), (int, float)) and info['confidence'] == info['confidence']
+            ]
+            holds = [
+                float(info['expected_holding_period_days']) for info in infos
+                if isinstance(info.get('expected_holding_period_days'), (int, float))
+                and info['expected_holding_period_days'] == info['expected_holding_period_days']
+            ]
+            if not reasons and not confs and not holds:
+                continue
+
+            parts: List[str] = []
+            if reasons:
+                dist = Counter(reasons).most_common()
+                parts.append("진입 " + ", ".join(f"{_esc(reason)}×{count}" for reason, count in dist))
+            if confs:
+                parts.append(f"평균 conf {sum(confs) / len(confs):.2f}")
+            if holds:
+                parts.append(f"기대보유 {sum(holds) / len(holds):.1f}일")
+
+            n = max(len(reasons), len(confs), len(holds))
+            rows.append((summary['name'], n, " | ".join(parts)))
+
+        if not rows:
+            return None
+
+        lines = ["<b>🏷 매수 신호 메타데이터</b>"]
+        for name, n, body in rows:
+            lines.append(f"• {_esc(name)} — {n}건 | {body}")
         return "\n".join(lines)
 
     def _strategy_degradation_cfg(self) -> StrategyPerformanceDegradationConfig:
@@ -1248,6 +1295,10 @@ class StrategyLogReportService:
                             'reason': data.get('reason', ''),
                             'time': ts[11:16] if len(ts) >= 16 else '',
                             'volatility_20d_annualized': _to_float(metrics.get('volatility_20d_annualized')),
+                            # P1 1-6: 신호 metadata fallback (전략이 metrics 에 실어 보낼 때만 채워짐).
+                            'entry_reason': (str(metrics.get('entry_reason')) if metrics.get('entry_reason') else None),
+                            'confidence': _to_float(metrics.get('confidence')),
+                            'expected_holding_period_days': _to_float(metrics.get('expected_holding_period_days')),
                         }
                         rejected.pop(code, None)
                         near_miss.pop(code, None)
@@ -1464,6 +1515,7 @@ class StrategyLogReportService:
         divergence_section = self._build_backtest_live_divergence_section(target_date)
         degradation_section = self._build_strategy_degradation_section(target_date)
         volatility_section = self._build_volatility_section(strategy_summaries)
+        signal_metadata_section = self._build_signal_metadata_section(strategy_summaries)
 
         if not active_sections:
             portfolio_summary = self._build_portfolio_summary(target_date, fallback_buys)
@@ -1476,6 +1528,7 @@ class StrategyLogReportService:
                     degradation_section,
                     execution_quality_section,
                     volatility_section,
+                    signal_metadata_section,
                 )
                 if section
             ]
@@ -1499,6 +1552,8 @@ class StrategyLogReportService:
             body += f"\n\n{execution_quality_section}"
         if volatility_section:
             body += f"\n\n{volatility_section}"
+        if signal_metadata_section:
+            body += f"\n\n{signal_metadata_section}"
 
         if inactive_names:
             inactive_summary = f"\n\n💤 <i>활동 없음: {_esc(', '.join(inactive_names[:3]))}"
