@@ -715,6 +715,35 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("stop_loss_price", kwargs)
         self.assertNotIn("target_price", kwargs)
 
+    def test_virtual_trade_log_kwargs_includes_signal_metadata_fields(self):
+        """P1 1-6: signal의 metadata 5필드가 journal log kwargs로 전달된다."""
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY",
+            price=70000, qty=1, reason="테스트", strategy_name="테스트전략",
+            entry_reason="pocket_pivot_breakout", trailing_rule="atr_2x",
+            expected_holding_period_days=5, confidence=0.75,
+            required_data=["ohlcv", "volume_profile"],
+        )
+        kwargs = StrategyScheduler._virtual_trade_log_kwargs(signal)
+        self.assertEqual(kwargs["entry_reason"], "pocket_pivot_breakout")
+        self.assertEqual(kwargs["trailing_rule"], "atr_2x")
+        self.assertEqual(kwargs["expected_holding_period_days"], 5)
+        self.assertEqual(kwargs["confidence"], 0.75)
+        self.assertEqual(kwargs["required_data"], ["ohlcv", "volume_profile"])
+
+    def test_virtual_trade_log_kwargs_omits_absent_signal_metadata_fields(self):
+        """metadata 미지정(None) 필드는 kwargs에 넣지 않는다 (log_buy 기본 None 유지)."""
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY",
+            price=70000, qty=1, reason="테스트", strategy_name="테스트전략",
+        )
+        kwargs = StrategyScheduler._virtual_trade_log_kwargs(signal)
+        self.assertNotIn("entry_reason", kwargs)
+        self.assertNotIn("trailing_rule", kwargs)
+        self.assertNotIn("expected_holding_period_days", kwargs)
+        self.assertNotIn("confidence", kwargs)
+        self.assertNotIn("required_data", kwargs)
+
     # ── P2 2-4 exit fast-path shadow: 보유 종목 손절 shadow 구독/기록 ──────
 
     def _make_shadow_scheduler(self):
