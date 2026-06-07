@@ -127,6 +127,14 @@ def mock_streaming_logger():
     return logger
 
 
+@pytest.fixture(autouse=True)
+def realtime_health_check_clock():
+    """watchdog 데이터 갭 테스트가 실행 시각에 의존하지 않도록 장중으로 고정한다."""
+    market_time = time.struct_time((2026, 6, 4, 10, 0, 0, 3, 156, -1))
+    with patch("task.background.intraday.websocket_watchdog_task.time.localtime", return_value=market_time):
+        yield
+
+
 # ── _restore_all_subscriptions 테스트 ────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -229,6 +237,33 @@ async def test_streaming_watchdog_data_gap(watchdog_task, mock_deps):
     svc._streaming_logger.log_pt_data_gap.assert_called_once()
     data_gap_arg = svc._streaming_logger.log_pt_data_gap.call_args[0][0]
     assert data_gap_arg > 300
+
+
+@pytest.mark.asyncio
+async def test_streaming_watchdog_skips_data_gap_after_realtime_health_window(watchdog_task):
+    """15:30 이후에는 tick 중단을 장 종료 구간으로 보고 data gap 재연결을 하지 않는다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    svc._streaming_stock_repo.get_active.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    svc._program_trading_stream_service.last_data_ts = time.time() - 600
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
+    svc.force_reconnect = AsyncMock()
+    after_realtime = time.struct_time((2026, 6, 4, 15, 31, 0, 3, 156, -1))
+
+    with patch("task.background.intraday.websocket_watchdog_task.time.localtime", return_value=after_realtime), \
+         patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._streaming_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc.force_reconnect.assert_not_called()
+    svc._streaming_logger.log_pt_data_gap.assert_not_called()
 
 
 @pytest.mark.asyncio
