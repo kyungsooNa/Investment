@@ -22,7 +22,7 @@
 - P0 0-11: ~~kill switch 및 sync fallback state 저장을 atomic write로 통일한다.~~ ✅ 완료 (2026-05-28, #481).
 - P1 1-5: 한국장 microstructure fixture 로 체결 모델 보수성 검증.
 - P1 1-6: 실전 journal/shadow/paper/live 성과 데이터로 profitability gate의 실제 통과 근거 확보.
-- P1 1-7: multiple testing proxy를 formal walk-forward / purged validation / PBO·Deflated Sharpe급 검증으로 확장할지 결정.
+- P1 1-7: formal Deflated Sharpe Ratio 구현 완료(2026-06-08, proxy 병행). 남은 것은 formal PBO(CSCV)·walk-forward/purged·ablation 자동 리포트 + 수익률 모멘트 metric.
 - P2 2-2: ~~실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 후 budget 기본값 보정.~~ 전역 normal 8/s + emergency 2/s 기본값 보정 완료. 계정별 공식 한도 재확인은 운영 전 외부 확인으로 유지.
 - P2 2-4: VBO shadow 5거래일 jsonl 수집 → polling parity 비교. event-driven live order는 별도 승인 전 No-Go.
 - P2 2-5: ~~전략 scan의 종목별 현재가 REST 호출을 batch quote / WebSocket snapshot 중심으로 줄인다.~~ helper(`StockQueryService.prefetch_prices`) + rsi2 포함 활성 전략 7개 scan 배선 + 테스트 완료.
@@ -233,9 +233,12 @@
 
 ### 1-7. Multiple testing / 과최적화 방어 고도화
 
-- [ ] 현재 proxy 기반 multiple testing 방어를 자금 확대 전 formal 검증으로 확장할지 결정한다.
+- [~] 현재 proxy 기반 multiple testing 방어를 자금 확대 전 formal 검증으로 확장할지 결정한다.
   - 현재 판단: adjusted Sharpe proxy와 PBO-like proxy는 canary 전 검토에는 유용하지만 formal Deflated Sharpe 또는 formal PBO 구현은 아니다.
   - 후보: walk-forward validation, purged validation, formal PBO, Deflated Sharpe, 전략/필터 조합별 ablation 결과 자동 리포트.
+  - 적용 완료(formal DSR, 2026-06-08): 사용자 결정에 따라 formal Deflated Sharpe Ratio(Bailey & López de Prado 2014)를 우선 구현. `multiple_testing_bias_service.py`에 `_compute_deflated_sharpe`(기존 `_compute_deflated_sharpe_proxy`는 불변 병행) 추가 — SR₀=trials 기반 기대 최대 Sharpe(across-strategy sharpe 분산 + Euler-Mascheroni 가중 E[max]) 대비 best Sharpe를 PSR 확률로 deflate. skew/kurtosis metric 부재 시 정규(0/3) fallback, sample 수는 `trade_count`(<2면 unavailable). `statistics.NormalDist`로 cdf/inv_cdf 처리. 신규 summary 키 `deflated_sharpe` + warning reason `deflated_sharpe_probability_below_threshold`. gate(`StrategyProfitabilityGateConfig`)에 `multiple_testing_min_deflated_sharpe_probability`/`_sample_size_metric`/`_skew_metric`/`_kurtosis_metric` opt-in 배선(기본 None → 동작 무변경). 테스트: `test_multiple_testing_bias_service.py` 4종(formal report/threshold warn/sample 부재 unavailable/skew·kurtosis 반영). 단위 5797 / 통합 240 passed.
+  - 적용 완료(수익률 모멘트 metric, 2026-06-08): DSR 입력을 정규 가정 fallback에서 벗어나게 하기 위해 중앙 metrics 빌더 `compute_strategy_window_metrics`(`strategy_performance_degradation_service.py`)가 per-trade `net_return` 시계열에서 `sharpe_ratio`(mean/sample-stdev) + `return_skew`(표준화 3차 모멘트) + `return_kurtosis`(비초과, 정규=3.0)를 산출하도록 additive 키 3개 추가. 표본 부족 시 None(sharpe≥2/skew≥3/kurtosis≥4), 키 이름은 DSR 기본 metric 이름과 일치. `_empty_metrics`에도 None 기본값 추가. 기존 consumer(ablation/parameter_stability/gate)는 additive라 무영향. 테스트: `test_strategy_performance_degradation_service.py` 2종(모멘트 산출/소표본 None). 단위 5799 / 통합 240 passed.
+  - 후속(미구현): formal PBO(CSCV — config별 T×N period 수익률 행렬 필요, 데이터 파이프라인 선행), walk-forward / purged validation(백테스트 러너 변경), ablation 자동 리포트.
 - [ ] 전략 수와 필터 조합이 늘어나는 경우, canary 통과와 자금 확대 기준을 분리한다.
   - canary: 현재 proxy + 보수적 risk limit + live journal 관찰.
   - 자금 확대: formal 검증 + 실전 성과 데이터 + regime별 일관성 확인.
@@ -507,7 +510,7 @@
    - Pool B 정배열 조건을 `current > ma_20d` 중심 완화 검토
 
 6. **정책 합의 후 재승격 후보 (보류)**
-   - formal walk-forward / purged validation / PBO / Deflated Sharpe 검증 도입 여부 결정 (P1 1-7)
+   - ~~Deflated Sharpe formal 검증 도입~~ ✅ 완료 (2026-06-08, formal DSR). 남은 것: formal PBO(CSCV) / walk-forward / purged validation 도입 여부 결정 (P1 1-7)
    - active strategy lifecycle 7단계 base class 분해 (P3 3-4, 외과수술적 변경 원칙으로 보류)
    - tiered force-exit window(거래대금별 30/45/60분) 도입 여부 결정. 현재 `force_exit_on_close=True` 기본 등록은 VBO 중심이므로 전 전략 리스크로 일반화하지 않는다.
    - RiskGate daily cap은 broker retry마다 중복 증가하지 않는다. 다만 현재 구조상 broker 성공 전 `validate_order()`에서 일일 주문금액을 기록하므로, 실패 주문도 cap을 소모하는 정책이 의도인지 별도 결정한다.

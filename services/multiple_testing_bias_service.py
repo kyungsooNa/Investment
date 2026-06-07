@@ -1,13 +1,14 @@
 """Lightweight multiple-testing bias report helpers.
 
-This module exposes conservative proxies, not formal Deflated Sharpe or PBO
-implementations. They are intended to turn strategy-selection red flags into a
-stable gate contract without requiring a full walk-forward research stack.
+This module exposes conservative proxies (PBO, adjusted-Sharpe haircut) plus a
+formal Deflated Sharpe Ratio (Bailey & Lopez de Prado, 2014). They are intended
+to turn strategy-selection red flags into a stable gate contract without
+requiring a full walk-forward research stack.
 """
 from __future__ import annotations
 
 import math
-from statistics import median, pstdev
+from statistics import NormalDist, median, pstdev, variance
 from typing import Any, Mapping
 
 
@@ -22,6 +23,10 @@ def compute_multiple_testing_bias_summary(
     sharpe_metric: str = "sharpe_ratio",
     in_sample_metric: str = "in_sample_net_pnl",
     out_of_sample_metric: str = "out_of_sample_net_pnl",
+    min_deflated_sharpe_probability: float | None = None,
+    sample_size_metric: str = "trade_count",
+    skew_metric: str = "return_skew",
+    kurtosis_metric: str = "return_kurtosis",
 ) -> dict[str, Any]:
     rows: list[tuple[str, float]] = []
     for strategy, metrics in metrics_by_strategy.items():
@@ -67,6 +72,19 @@ def compute_multiple_testing_bias_summary(
     if pbo.get("available") and pbo.get("passed") is False:
         warning_reasons.append("pbo_probability_above_threshold")
 
+    deflated_sharpe_formal = _compute_deflated_sharpe(
+        metrics_by_strategy,
+        trial_count=trial_count,
+        min_trials=min_trials,
+        threshold=min_deflated_sharpe_probability,
+        metric=sharpe_metric,
+        sample_size_metric=sample_size_metric,
+        skew_metric=skew_metric,
+        kurtosis_metric=kurtosis_metric,
+    )
+    if deflated_sharpe_formal.get("available") and deflated_sharpe_formal.get("passed") is False:
+        warning_reasons.append("deflated_sharpe_probability_below_threshold")
+
     return {
         "trial_count": trial_count,
         "primary_metric": primary_metric,
@@ -81,6 +99,7 @@ def compute_multiple_testing_bias_summary(
             for strategy, value in rows
         ],
         "deflated_sharpe_proxy": deflated_sharpe,
+        "deflated_sharpe": deflated_sharpe_formal,
         "pbo_proxy": pbo,
     }
 
@@ -176,6 +195,99 @@ def _compute_pbo_proxy(
         "top_in_sample_strategies": [strategy for strategy, _, _ in top_rows],
         "out_of_sample_median": round(out_of_sample_median, 6),
         "pbo_probability": round(pbo_probability, 6),
+        "threshold": threshold,
+        "passed": passed,
+    }
+
+
+def _compute_deflated_sharpe(
+    metrics_by_strategy: Mapping[str, Mapping[str, Any]],
+    *,
+    trial_count: int,
+    min_trials: int,
+    threshold: float | None,
+    metric: str,
+    sample_size_metric: str,
+    skew_metric: str,
+    kurtosis_metric: str,
+) -> dict[str, Any]:
+    """Formal Deflated Sharpe Ratio (Bailey & Lopez de Prado, 2014).
+
+    Unlike ``_compute_deflated_sharpe_proxy`` (a sqrt(2 ln N) dispersion haircut),
+    this deflates the best Sharpe against the *expected maximum* Sharpe under the
+    null of zero skill across ``N`` trials, then maps it to a probability via the
+    Probabilistic Sharpe Ratio. Returns are assumed normal (skew=0, kurtosis=3)
+    unless ``skew_metric`` / ``kurtosis_metric`` are supplied per strategy.
+    """
+    rows: list[tuple[str, float, Mapping[str, Any]]] = []
+    for strategy, metrics in metrics_by_strategy.items():
+        value = _to_float(metrics.get(metric))
+        if value is not None:
+            rows.append((str(strategy), value, metrics))
+
+    rows.sort(key=lambda item: item[1], reverse=True)
+    unavailable = {
+        "available": False,
+        "metric": metric,
+        "sample_count": len(rows),
+        "trial_count": trial_count,
+        "threshold": threshold,
+        "passed": True,
+    }
+    if len(rows) < max(int(min_trials or 0), 1):
+        return unavailable
+
+    best_strategy, best_sharpe, best_metrics = rows[0]
+    sharpe_values = [value for _, value, _ in rows]
+    n_trials = len(sharpe_values)
+    if n_trials < 2:
+        return unavailable
+
+    sample_size = _to_float(best_metrics.get(sample_size_metric))
+    if sample_size is None or sample_size < 2:
+        return unavailable
+
+    # Variance of the trial Sharpe estimates (selection dispersion).
+    sharpe_variance = variance(sharpe_values)
+
+    # Expected maximum Sharpe under the null of zero true skill across N trials.
+    euler_mascheroni = 0.5772156649015329
+    normal = NormalDist()
+    expected_max_sharpe = math.sqrt(sharpe_variance) * (
+        (1.0 - euler_mascheroni) * normal.inv_cdf(1.0 - 1.0 / n_trials)
+        + euler_mascheroni * normal.inv_cdf(1.0 - 1.0 / (n_trials * math.e))
+    )
+
+    skew = _to_float(best_metrics.get(skew_metric)) or 0.0
+    kurtosis = _to_float(best_metrics.get(kurtosis_metric))
+    if kurtosis is None:
+        kurtosis = 3.0  # non-excess (normal) kurtosis
+
+    # PSR variance radicand; guard against extreme moments driving it non-positive.
+    denom_sq = 1.0 - skew * best_sharpe + ((kurtosis - 1.0) / 4.0) * best_sharpe ** 2
+    if denom_sq <= 0.0:
+        return unavailable
+
+    deflated = normal.cdf(
+        (best_sharpe - expected_max_sharpe)
+        * math.sqrt(sample_size - 1.0)
+        / math.sqrt(denom_sq)
+    )
+    passed = True if threshold is None else deflated >= float(threshold)
+
+    return {
+        "available": True,
+        "metric": metric,
+        "sample_count": n_trials,
+        "trial_count": trial_count,
+        "best_strategy": best_strategy,
+        "best_sharpe": round(best_sharpe, 6),
+        "sample_size": int(sample_size),
+        "sharpe_variance": round(sharpe_variance, 6),
+        "expected_max_sharpe": round(expected_max_sharpe, 6),
+        "skew": round(skew, 6),
+        "kurtosis": round(kurtosis, 6),
+        "deflated_sharpe_ratio": round(deflated, 6),
         "threshold": threshold,
         "passed": passed,
     }
