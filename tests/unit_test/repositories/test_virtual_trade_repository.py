@@ -400,6 +400,7 @@ async def test_log_buy_async_thread_execution(virutal_trade_repository):
             virutal_trade_repository.log_buy, "S1", "005930", 1000, 10,
             None, None, None, None, None,  # volatility, config_hash, invalidation, stop_loss, target
             None, None, None, None, None,  # entry_reason, trailing_rule, expected_holding, confidence, required_data
+            None,  # market_regime (R-2)
         )
 
 @pytest.mark.asyncio
