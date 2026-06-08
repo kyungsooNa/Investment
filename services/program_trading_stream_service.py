@@ -273,6 +273,14 @@ class ProgramTradingStreamService:
         except (TypeError, ValueError):
             return "0.00%"
 
+    @staticmethod
+    def _format_eok(value) -> str:
+        try:
+            amount = int(str(value).replace(',', ''))
+        except (TypeError, ValueError):
+            amount = 0
+        return f"{amount / 100_000_000:,.1f}억"
+
     def _format_stock_label(self, code: str) -> str:
         if self._stock_code_repository is None:
             return code
@@ -306,10 +314,10 @@ class ProgramTradingStreamService:
             trade_time = str(tick.get("주식체결시간", "") or "-")
             price = self._format_int(tick.get("price", 0))
             rate = self._format_rate(tick.get("rate", 0.0))
-            net_amt = self._format_int(tick.get("순매수거래대금", 0))
+            net_amt = self._format_eok(tick.get("순매수거래대금", 0))
             lines.append(
                 f"{html.escape(label)}: {price}원 ({rate}) "
-                f"체결:{html.escape(trade_time)} 수신:{received_at} 순매수대금:{net_amt}"
+                f"체결:{html.escape(trade_time)} 수신:{received_at} 누적 순매수대금:{net_amt}"
             )
         return "\n".join(lines)
 

@@ -513,7 +513,7 @@ async def test_send_subscribed_last_tick_alert_sends_last_tick_for_desired_codes
         "주식체결시간": "101530",
         "price": "72000",
         "rate": "1.25",
-        "순매수거래대금": "123456",
+        "순매수거래대금": "12345600000",
     })
 
     sent = await manager.send_subscribed_last_tick_alert()
@@ -527,6 +527,8 @@ async def test_send_subscribed_last_tick_alert_sends_last_tick_for_desired_codes
     assert "005930" not in message
     assert "72,000" in message
     assert "101530" in message
+    assert "누적 순매수대금:123.5억" in message
+    assert "순매수대금:12,345,600,000" not in message
     assert "SK하이닉스" in message
     assert "수신 없음" in message
 
