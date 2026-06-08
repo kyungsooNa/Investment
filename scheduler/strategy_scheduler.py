@@ -1132,7 +1132,14 @@ class StrategyScheduler:
         """
         if not cfg.event_driven_shadow:
             return
-        if self._event_router is None or self._event_shadow_journal is None:
+        if self._event_shadow_journal is None:
+            return
+        if self._event_router is None:
+            self._record_event_shadow_status(
+                strategy_name=getattr(cfg.strategy, "name", ""),
+                event="subscriptions_skipped",
+                details={"reason": "event_router_missing"},
+            )
             return
 
         strategy = cfg.strategy
@@ -1142,6 +1149,11 @@ class StrategyScheduler:
         except Exception as e:
             self._logger.warning(
                 f"[Scheduler] {name} current_candidate_codes() 호출 오류: {e}"
+            )
+            self._record_event_shadow_status(
+                strategy_name=name,
+                event="subscriptions_skipped",
+                details={"reason": "candidate_codes_error", "error": str(e)},
             )
             return
 
@@ -1171,6 +1183,18 @@ class StrategyScheduler:
 
         self._event_shadow_subscriptions[name] = new_codes
         await self._sync_event_shadow_price_subscriptions(name, new_codes)
+        self._record_event_shadow_status(
+            strategy_name=name,
+            event="subscriptions_refreshed",
+            details={
+                "candidate_count": len(new_codes),
+                "added_count": len(to_add),
+                "removed_count": len(to_remove),
+                "candidate_codes": sorted(new_codes),
+                "added_codes": sorted(to_add),
+                "removed_codes": sorted(to_remove),
+            },
+        )
 
     async def _sync_event_shadow_price_subscriptions(self, strategy_name: str, codes: set[str],
                                                       category_key: Optional[str] = None) -> None:
@@ -1271,6 +1295,28 @@ class StrategyScheduler:
             signal=signal,
             snapshot=snapshot,
             signal_source=signal_source,
+        )
+        flush_fn = getattr(journal, "flush_to_file", None)
+        if callable(flush_fn):
+            flush_fn(self._event_shadow_date_str())
+
+    def _record_event_shadow_status(
+        self,
+        *,
+        strategy_name: str,
+        event: str,
+        details: Optional[dict] = None,
+    ) -> None:
+        journal = self._event_shadow_journal
+        if journal is None:
+            return
+        record_status_fn = getattr(journal, "record_status", None)
+        if not callable(record_status_fn):
+            return
+        record_status_fn(
+            strategy_name=strategy_name,
+            event=event,
+            details=details or {},
         )
         flush_fn = getattr(journal, "flush_to_file", None)
         if callable(flush_fn):

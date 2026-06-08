@@ -138,9 +138,10 @@ async def test_live_tick_flows_to_entry_shadow_jsonl(tmp_path):
 
     path = tmp_path / "event_shadow" / "20260520.jsonl"
     assert path.exists(), "라이브 틱이 event_shadow jsonl 까지 도달하지 못했다"
-    lines = path.read_text(encoding="utf-8").strip().splitlines()
-    assert len(lines) == 1
-    rec = json.loads(lines[0])
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").strip().splitlines()]
+    signal_records = [r for r in records if r.get("signal_source") == "event_shadow"]
+    assert len(signal_records) == 1
+    rec = signal_records[0]
     assert rec["signal_source"] == "event_shadow"
     assert rec["code"] == "005930"
     assert rec["strategy"] == "래리윌리엄스VBO"
@@ -174,7 +175,9 @@ async def test_below_target_tick_writes_no_entry_record(tmp_path):
     await _drain_pending()
 
     path = tmp_path / "event_shadow" / "20260520.jsonl"
-    assert not path.exists()
+    assert path.exists()
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [r for r in records if r.get("signal_source") == "event_shadow"] == []
     assert journal.get_records() == []
 
 
