@@ -481,9 +481,13 @@
 
 - 증거: 백테스트/유니버스가 현재 상장 종목 리스트(`data/stock_code_list.csv`, 2026-02 시점 단일 스냅샷)에서 파생되고, 코드베이스 전체에서 상장폐지 종목을 편입/처리하는 경로(point-in-time universe, 상폐 OHLCV)가 없다(`delist`/`survivor`/`as_of` grep → 유니버스 파이프라인에 부재). `OneilUniverseService`/`generic_liquidity_universe_service`도 현재 리스트 기반 필터.
 - 왜 치명적인가: 한국 중소형 모멘텀/돌파(KOSDAQ 다수)에서 **상장폐지(감사의견 거절·부실·횡령·합병)된 종목이 백테스트에서 통째로 제외**된다. 정확히 돌파 후 -100%로 가는 종목들이 표본에서 빠져 수익률·승률·profit factor가 **체계적으로 과대평가**된다. profitability gate가 통과해도 그 근거 자체가 오염될 수 있다.
-- [ ] point-in-time 유니버스(일자별 실제 상장 종목) + 상장폐지 종목 OHLCV(상폐 직전까지)를 백테스트 데이터에 편입한다. pykrx 상장폐지 목록/일자 확보 → 일자별 유니버스 스냅샷 구축.
+- [ ] point-in-time 유니버스(일자별 실제 상장 종목) + 상장폐지 종목 OHLCV(상폐 직전까지)를 백테스트 데이터에 편입한다. 일자별 유니버스 스냅샷(상장/상폐일 기반) 구축.
 - [ ] 상폐 종목 편입 전/후 백테스트 성과 격차를 리포트해 기존 결과의 과대평가 폭을 정량화한다.
-- 관련: `services/oneil_universe_service.py`, `services/generic_liquidity_universe_service.py`, `data/stock_code_list.csv`, `data/ohlcv_extracted.csv`, `scripts/run_backtest.py`
+- 데이터 소스 검증(2026-06-08, FDR 0.9.110): 현재 코드는 pykrx가 아닌 **FinanceDataReader**를 씀(`services/stock_sync_service.py`, `task/.../daily_price_collector_task.py`, `ohlcv_update_task.py`). 네트워크 프로브 결과:
+  - `fdr.DataReader(code, start, end)` OHLCV 조회 **정상**(005930 41행, 장기 이력 1233행). → 상폐 코드 목록만 있으면 OHLCV 백필은 FDR로 가능.
+  - `fdr.StockListing('KRX')` **HTTP 404**, `StockListing('KRX-DELISTING')` **0행** → 일자별 상장 구성·상폐 목록을 FDR로 못 가져옴(스크레이퍼 깨짐). pykrx도 불안정.
+  - **진짜 병목**: "어느 종목이 언제 상장/상폐됐는가" 신뢰 소스 부재. 이게 없으면 백필 대상 코드도, 편향 정량화도 불가. → 1순위 sub-task = **상폐 종목+상폐일+일자별 구성 신뢰 소스 확보**(예: KRX data.krx.co.kr 상장폐지 목록 수동 export, 또는 대체 소스). 외부 데이터 의사결정 필요.
+- 관련: `services/oneil_universe_service.py`, `services/generic_liquidity_universe_service.py`, `services/stock_sync_service.py`, `task/background/after_market/daily_price_collector_task.py`, `task/background/after_market/ohlcv_update_task.py`, `data/stock_code_list.csv`, `data/ohlcv_extracted.csv`, `scripts/run_backtest.py`
 
 ### R-2. 전략 상관 / 단일 regime 집중 — "7전략 분산"의 착시 [심각]
 
