@@ -86,6 +86,36 @@ async def test_save_atomic_serializes_concurrent_writes(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_save_atomic_swallows_closed_loop_release_error(tmp_path: Path):
+    """teardown 시 닫힌 event loop 에서 lock.release() 가
+    RuntimeError('Event loop is closed') 를 던져도 save_atomic 은 이를 전파하지
+    않고 파일 기록은 정상 완료한다.
+
+    flush 되지 않은 background save task 가 loop 종료 후 GC 될 때 발생하던
+    PytestUnraisableExceptionWarning 회귀 방지.
+    """
+    target = tmp_path / "state.json"
+    payload = {"v": 1}
+
+    lock = StrategyStateIO._lock_for(str(target))
+    orig_release = lock.release
+
+    def release_then_raise():
+        orig_release()
+        raise RuntimeError("Event loop is closed")
+
+    # 동일 loop 에 묶인 cached lock 의 release 만 교체.
+    lock.release = release_then_raise
+
+    # RuntimeError 가 전파되지 않아야 한다.
+    await StrategyStateIO.save_atomic(str(target), payload)
+
+    lock.release = orig_release
+    # 파일은 정상 기록됨.
+    assert await StrategyStateIO.load(str(target)) == payload
+
+
+@pytest.mark.asyncio
 async def test_load_returns_none_when_missing(tmp_path: Path):
     """파일이 없으면 None 반환."""
     missing = tmp_path / "no_such_state.json"

@@ -65,8 +65,19 @@ class StrategyStateIO:
     async def save_atomic(cls, file_path: str, data: Any) -> None:
         """data 를 file_path 에 atomic 하게 저장한다. 동일 경로 동시 호출은 직렬화된다."""
         lock = cls._lock_for(file_path)
-        async with lock:
+        await lock.acquire()
+        try:
             await asyncio.to_thread(cls._write_atomic, file_path, data)
+        finally:
+            try:
+                lock.release()
+            except RuntimeError as e:
+                # flush 되지 않은 background save task 가 event loop 종료 후 GC 될 때,
+                # release() 가 닫힌 loop 에서 waiter 를 깨우려다 'Event loop is closed'
+                # 를 던진다. teardown 경로이므로 무시 — 그대로 두면
+                # PytestUnraisableExceptionWarning 으로 노출된다.
+                if "Event loop is closed" not in str(e):
+                    raise
 
     @staticmethod
     def _write_atomic(file_path: str, data: Any) -> None:
