@@ -494,7 +494,10 @@
 - 증거: 활성 등록 7개 전략(`first_pullback`/`high_tight_flag`/`larry_williams_channel_breakout`/`larry_williams_vbo`/`oneil_pocket_pivot`/`oneil_squeeze_breakout`/`rsi2_pullback`)이 **전부 long-only 모멘텀/돌파/눌림목 계열**(RSI2 mean-reversion도 long). 숏·헤지·마켓뉴트럴·비상관 자산 없음.
 - 왜 위험한가: 사실상 **단일 "상승/추세 regime 베팅"**이다. 강세장에서 동시 수익, 약세·횡보장에서 **동시 손실**. 전략 수가 분산처럼 보이지만 실제 포트폴리오 상관이 높아 drawdown이 합산된다. multiple testing(1-7)으로 과최적화는 방어해도 regime 집중 자체는 별개 리스크.
 - [x] 전략 간 실현수익률 상관행렬을 journal로 산출해 리포트(1-7 DSR 섹션 옆)에 노출하고, 고상관 클러스터를 명시한다. (2026-06-09) 계산은 기존 `services/strategy_correlation_service.py::compute_strategy_correlation_summary`(이미 gate에서 사용 중)가 있어 재구축 없이 **리포트 노출만** 추가. `StrategyLogReportService._build_strategy_correlation_section`이 live journal 일별 net_return으로 최고 상관쌍 + 고상관(≥0.8) 클러스터 + 경고를 노출. active/inactive 양쪽 배선. **부수 수정**: DSR `multiple_testing_section`이 active(정상) 리포트 경로 body append에서 누락돼 inactive 경로에만 나오던 #505 버그를 함께 바로잡음. 테스트: `test_strategy_log_report_correlation.py` 4종. 단위 5810 / 통합 240 passed.
-- [ ] regime별(상승/하락/횡보) 전략군 성과를 분해해 "전 전략이 같은 regime에서만 작동"하는지 정량 확인한다. (`market_regime_service` 활용)
+- [~] regime별(상승/하락/횡보) 전략군 성과를 분해해 "전 전략이 같은 regime에서만 작동"하는지 정량 확인한다. (`market_regime_service` 활용)
+  - 적용 완료(journal-time 캡처, 2026-06-09): 사용자 결정에 따라 매수 시점 `market_regime`({kospi,kosdaq,stock_market})을 journal에 persist. 조사 결과 계산(`regime_performance_service.compute_performance_by_regime`)과 전략별 웹 엔드포인트(`GET /strategies/performance-by-regime?strategy=`)는 **이미 존재**했으나 trade에 `market_regime`을 채우는 곳이 없어 dark 상태였다. (1) `VirtualTradeRepository`에 `market_regime` JSON 컬럼+migration+log_buy 파라미터+읽기 dict 역직렬화(1-6 `required_data` 패턴), (2) `StrategyScheduler._market_regime_log_kwargs`가 scan-warm된 cached snapshot+`is_kosdaq`로 dict 구성→매수 log에 stamp, (3) `OneilUniverseService.market_regime_service` property로 공유 instance를 scheduler에 주입(`strategy_factory`). 이제 기존 엔드포인트가 populated 버킷을 받는다. 테스트: repo 6종 + scheduler 5종. 단위 5821 / 통합 240 passed.
+  - 특성(prospective): journal-time 캡처라 **배선 후 매수분부터** regime이 채워진다. 과거 trade 소급 분류는 별도(retroactive) 작업.
+  - 후속(선택): 일일 리포트에 per-strategy regime 분해 섹션 추가(상관/DSR 섹션과 동일 패턴). 현재는 웹 엔드포인트로만 노출.
 - [ ] 자금 확대 전 비상관 엣지(역추세/숏 가능 시점/저변동 등) 1개 이상 도입 여부를 정책 결정한다.
 - 관련: `services/market_regime_service.py`, `services/strategy_log_report_service.py`, P1 1-1 상관 follow-up과 통합
 
