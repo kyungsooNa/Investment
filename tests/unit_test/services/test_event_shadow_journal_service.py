@@ -61,6 +61,24 @@ def test_record_exit_signal_source_override(tmp_path, logger):
     assert rec["signal"]["action"] == "SELL"
 
 
+def test_record_status_appends_diagnostic_record(tmp_path, logger):
+    svc = EventShadowJournalService(log_root=tmp_path, logger=logger)
+    svc.record_status(
+        strategy_name="래리윌리엄스VBO",
+        event="subscriptions_refreshed",
+        details={"candidate_count": 2, "added_count": 1},
+    )
+
+    records = svc.get_records()
+    assert len(records) == 1
+    rec = records[0]
+    assert rec["strategy"] == "래리윌리엄스VBO"
+    assert rec["signal_source"] == "event_shadow_status"
+    assert rec["event"] == "subscriptions_refreshed"
+    assert rec["details"] == {"candidate_count": 2, "added_count": 1}
+    assert "recorded_at" in rec
+
+
 def test_flush_writes_jsonl_and_clears_buffer(tmp_path, logger):
     svc = EventShadowJournalService(log_root=tmp_path, logger=logger)
     svc.record(strategy_name="VBO", code="005930", signal={"a": 1}, snapshot={})

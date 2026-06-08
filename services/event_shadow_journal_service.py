@@ -27,7 +27,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class EventShadowJournalService:
@@ -66,6 +66,24 @@ class EventShadowJournalService:
 
     def get_records(self) -> List[Dict]:
         return list(self._buffer)
+
+    def record_status(
+        self,
+        *,
+        strategy_name: str,
+        event: str,
+        details: Optional[Dict[str, Any]] = None,
+        signal_source: str = "event_shadow_status",
+    ) -> None:
+        if not strategy_name or not event:
+            return
+        self._buffer.append({
+            "recorded_at": time.time(),
+            "strategy": strategy_name,
+            "signal_source": signal_source,
+            "event": event,
+            "details": details or {},
+        })
 
     def flush_to_file(self, date_str: str) -> Optional[Path]:
         if not self._buffer:

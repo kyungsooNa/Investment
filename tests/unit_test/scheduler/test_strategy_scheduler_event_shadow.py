@@ -8,6 +8,7 @@ scheduler 가 cfg.event_driven_shadow=True 인 전략에 대해:
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -135,6 +136,28 @@ async def test_refresh_subscriptions_syncs_price_subscription_category():
 
 
 @pytest.mark.asyncio
+async def test_refresh_subscriptions_writes_status_record_to_daily_jsonl(tmp_path):
+    router = MagicMock()
+    router.subscribe = MagicMock()
+    router.unsubscribe = MagicMock()
+    journal = EventShadowJournalService(log_root=tmp_path)
+    scheduler = _make_scheduler(event_router=router, event_shadow_journal=journal)
+
+    cfg = _make_strategy_cfg("래리윌리엄스VBO", event_driven_shadow=True, codes=["005930", "000660"])
+    await scheduler._refresh_event_shadow_subscriptions(cfg)
+
+    path = tmp_path / "event_shadow" / "20260520.jsonl"
+    assert path.exists()
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert records[-1]["signal_source"] == "event_shadow_status"
+    assert records[-1]["event"] == "subscriptions_refreshed"
+    assert records[-1]["strategy"] == "래리윌리엄스VBO"
+    assert records[-1]["details"]["candidate_count"] == 2
+    assert records[-1]["details"]["added_count"] == 2
+    assert sorted(records[-1]["details"]["candidate_codes"]) == ["000660", "005930"]
+
+
+@pytest.mark.asyncio
 async def test_shadow_evaluator_records_signal_and_returns_none():
     router = MagicMock()
     router.subscribe = MagicMock()
@@ -150,6 +173,8 @@ async def test_shadow_evaluator_records_signal_and_returns_none():
     cfg.strategy.evaluate_single = AsyncMock(return_value=sig)
 
     await scheduler._refresh_event_shadow_subscriptions(cfg)
+    journal.record.reset_mock()
+    journal.flush_to_file.reset_mock()
     evaluator = router.subscribe.call_args.kwargs["evaluator"]
 
     snapshot = {"price": "75000", "open": 74000.0}
@@ -177,6 +202,8 @@ async def test_shadow_evaluator_does_not_record_when_no_signal():
     cfg.strategy.evaluate_single = AsyncMock(return_value=None)
 
     await scheduler._refresh_event_shadow_subscriptions(cfg)
+    journal.record.reset_mock()
+    journal.flush_to_file.reset_mock()
     evaluator = router.subscribe.call_args.kwargs["evaluator"]
 
     result = await evaluator("005930", {"price": "70000"})
