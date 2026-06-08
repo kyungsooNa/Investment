@@ -116,6 +116,11 @@ class OneilUniverseService:
         }
 
     @property
+    def market_regime_service(self) -> MarketRegimeService:
+        """scan 중 warm 되는 regime 분류 서비스 (R-2: scheduler 가 매수 시점 snapshot 공유)."""
+        return self._regime_svc
+
+    @property
     def generation_progress(self) -> Dict:
         """전일 기준 우량주 생성 진행률 스냅샷 반환."""
         return dict(self._generation_progress)

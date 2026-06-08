@@ -124,11 +124,13 @@ class StrategyScheduler:
         event_router=None,
         event_shadow_journal=None,
         live_expansion_gate_service=None,
+        market_regime_service=None,
     ):
         self._virtual_trade_service = virtual_trade_service
         self._oes = order_execution_service
         self._sqs = stock_query_service
         self.stock_code_repository = stock_code_repository
+        self._market_regime_service = market_regime_service
         self._tm = market_clock
         self._logger = logger or logging.getLogger(__name__)
         self._dry_run = dry_run
@@ -825,6 +827,9 @@ class StrategyScheduler:
                 await self._virtual_trade_service.log_buy_async(
                     signal.strategy_name, signal.code, log_price, dry_qty,
                     **self._virtual_trade_log_kwargs(signal),
+                    **self._market_regime_log_kwargs(
+                        self._market_regime_service, self.stock_code_repository, signal.code
+                    ),
                 )
                 if self._price_sub_svc:
                     await self._price_sub_svc.add_subscription(signal.code, SubscriptionPriority.HIGH, category_key, StreamingType.UNIFIED_PRICE)
@@ -1081,6 +1086,34 @@ class StrategyScheduler:
         if signal.required_data is not None:
             kwargs["required_data"] = signal.required_data
         return kwargs
+
+    @staticmethod
+    def _market_regime_log_kwargs(market_regime_service, stock_code_repository, code: str) -> dict:
+        """매수 시점 시장 regime snapshot 을 journal log kwargs 로 만든다 (R-2).
+
+        scan 이 warm 시킨 cached snapshot({kospi, kosdaq} bull/bear/sideways)을 사용한다.
+        미분류 시장은 label None. regime service 가 없거나 양 시장 모두 미분류면 빈 dict
+        (market_regime 미기록 → 기존 동작 유지). stock_market 은 regime별 bull 버킷 구분용.
+        """
+        if market_regime_service is None:
+            return {}
+        kospi = market_regime_service.get_cached_snapshot("KOSPI")
+        kosdaq = market_regime_service.get_cached_snapshot("KOSDAQ")
+        if kospi is None and kosdaq is None:
+            return {}
+        stock_market = None
+        if stock_code_repository is not None:
+            try:
+                stock_market = "KOSDAQ" if stock_code_repository.is_kosdaq(code) else "KOSPI"
+            except Exception:
+                stock_market = None
+        return {
+            "market_regime": {
+                "kospi": kospi.regime_label if kospi is not None else None,
+                "kosdaq": kosdaq.regime_label if kosdaq is not None else None,
+                "stock_market": stock_market,
+            }
+        }
 
     @staticmethod
     def _signal_price_policy_kwargs(signal: TradeSignal) -> dict:

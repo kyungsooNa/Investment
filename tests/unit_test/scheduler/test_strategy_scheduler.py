@@ -744,6 +744,52 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("confidence", kwargs)
         self.assertNotIn("required_data", kwargs)
 
+    # ── R-2: 매수 시점 market_regime snapshot 캡처 ──────────────────────
+
+    @staticmethod
+    def _regime_svc_with(kospi=None, kosdaq=None):
+        svc = MagicMock()
+        snaps = {}
+        if kospi is not None:
+            s = MagicMock(); s.regime_label = kospi; snaps["KOSPI"] = s
+        if kosdaq is not None:
+            s = MagicMock(); s.regime_label = kosdaq; snaps["KOSDAQ"] = s
+        svc.get_cached_snapshot.side_effect = lambda m: snaps.get(m)
+        return svc
+
+    def test_market_regime_log_kwargs_builds_dict_from_cached_snapshots(self):
+        svc = self._regime_svc_with(kospi="bull", kosdaq="sideways")
+        repo = MagicMock(); repo.is_kosdaq.return_value = False
+        kwargs = StrategyScheduler._market_regime_log_kwargs(svc, repo, "005930")
+        self.assertEqual(kwargs["market_regime"], {
+            "kospi": "bull", "kosdaq": "sideways", "stock_market": "KOSPI",
+        })
+
+    def test_market_regime_log_kwargs_marks_kosdaq_stock(self):
+        svc = self._regime_svc_with(kospi="bear", kosdaq="bear")
+        repo = MagicMock(); repo.is_kosdaq.return_value = True
+        kwargs = StrategyScheduler._market_regime_log_kwargs(svc, repo, "035720")
+        self.assertEqual(kwargs["market_regime"]["stock_market"], "KOSDAQ")
+        self.assertEqual(kwargs["market_regime"]["kosdaq"], "bear")
+
+    def test_market_regime_log_kwargs_omitted_without_service(self):
+        self.assertEqual(
+            StrategyScheduler._market_regime_log_kwargs(None, MagicMock(), "005930"), {}
+        )
+
+    def test_market_regime_log_kwargs_omitted_when_no_snapshot(self):
+        svc = MagicMock(); svc.get_cached_snapshot.return_value = None
+        self.assertEqual(
+            StrategyScheduler._market_regime_log_kwargs(svc, MagicMock(), "005930"), {}
+        )
+
+    def test_market_regime_log_kwargs_partial_snapshot_keeps_none_label(self):
+        svc = self._regime_svc_with(kospi="bull")  # KOSDAQ 미분류
+        repo = MagicMock(); repo.is_kosdaq.return_value = False
+        kwargs = StrategyScheduler._market_regime_log_kwargs(svc, repo, "005930")
+        self.assertEqual(kwargs["market_regime"]["kospi"], "bull")
+        self.assertIsNone(kwargs["market_regime"]["kosdaq"])
+
     # ── P2 2-4 exit fast-path shadow: 보유 종목 손절 shadow 구독/기록 ──────
 
     def _make_shadow_scheduler(self):
