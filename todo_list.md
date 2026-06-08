@@ -32,6 +32,7 @@
 - P3 3-6: ~~IndicatorService 계산 경로의 광범위 `except Exception` silent skip에 ERROR log/metric/alert hook을 붙인다.~~ ✅ 완료. 전략 레이어 per-code fail-rate metric도 `scan_metrics`/`exit_metrics`에 반영 완료.
 - Pool B 튜닝: 후보 부족 재발 시 거래대금/정배열 조건 완화 검토.
 - 완료 기준의 전략 성과 `[~]`: `MomentumStrategy` 등 비활성 백테스트 경로의 표준 journal 통합 여부 결정.
+- 시스템 트레이더 관점 리뷰(R-1~R-6, 2026-06-08): 생존편향·전략 상관/regime 집중·총위험 미집계·갭 체결·거래세율 stale 등 백테스트 신뢰도/실전 리스크 신규 발견. 자금 확대 전 R-1~R-3 우선 해소 권장. (하단 "시스템 트레이더 관점 리뷰" 섹션)
 
 ---
 
@@ -469,6 +470,64 @@
 
 - [ ] 후보 부족 현상이 재발하면 거래대금 기준을 50억에서 30억으로 추가 완화할지 검토한다.
 - [ ] 후보 부족 현상이 재발하면 정배열 조건을 Pool B 전용으로 `current > ma_20d` 중심으로 완화할지 검토한다.
+
+---
+
+## 시스템 트레이더 관점 리뷰 (2026-06-08 추가, 코드 기반)
+
+20년차 시스템 트레이더 관점에서 "이 시스템이 돈을 벌 수 있는가 / 실전 자본을 지키는가 / 유지보수 가능한가"를 실제 코드로 검토한 결과. 기존 todo 항목과 중복되지 않는 신규 발견만 추린다. 우선순위는 **수익성 신뢰도 > 실전 리스크 > 성능/유지보수** 순.
+
+### R-1. 생존편향(Survivorship bias) — 백테스트 신뢰도 최우선 [심각]
+
+- 증거: 백테스트/유니버스가 현재 상장 종목 리스트(`data/stock_code_list.csv`, 2026-02 시점 단일 스냅샷)에서 파생되고, 코드베이스 전체에서 상장폐지 종목을 편입/처리하는 경로(point-in-time universe, 상폐 OHLCV)가 없다(`delist`/`survivor`/`as_of` grep → 유니버스 파이프라인에 부재). `OneilUniverseService`/`generic_liquidity_universe_service`도 현재 리스트 기반 필터.
+- 왜 치명적인가: 한국 중소형 모멘텀/돌파(KOSDAQ 다수)에서 **상장폐지(감사의견 거절·부실·횡령·합병)된 종목이 백테스트에서 통째로 제외**된다. 정확히 돌파 후 -100%로 가는 종목들이 표본에서 빠져 수익률·승률·profit factor가 **체계적으로 과대평가**된다. profitability gate가 통과해도 그 근거 자체가 오염될 수 있다.
+- [ ] point-in-time 유니버스(일자별 실제 상장 종목) + 상장폐지 종목 OHLCV(상폐 직전까지)를 백테스트 데이터에 편입한다. pykrx 상장폐지 목록/일자 확보 → 일자별 유니버스 스냅샷 구축.
+- [ ] 상폐 종목 편입 전/후 백테스트 성과 격차를 리포트해 기존 결과의 과대평가 폭을 정량화한다.
+- 관련: `services/oneil_universe_service.py`, `services/generic_liquidity_universe_service.py`, `data/stock_code_list.csv`, `data/ohlcv_extracted.csv`, `scripts/run_backtest.py`
+
+### R-2. 전략 상관 / 단일 regime 집중 — "7전략 분산"의 착시 [심각]
+
+- 증거: 활성 등록 7개 전략(`first_pullback`/`high_tight_flag`/`larry_williams_channel_breakout`/`larry_williams_vbo`/`oneil_pocket_pivot`/`oneil_squeeze_breakout`/`rsi2_pullback`)이 **전부 long-only 모멘텀/돌파/눌림목 계열**(RSI2 mean-reversion도 long). 숏·헤지·마켓뉴트럴·비상관 자산 없음.
+- 왜 위험한가: 사실상 **단일 "상승/추세 regime 베팅"**이다. 강세장에서 동시 수익, 약세·횡보장에서 **동시 손실**. 전략 수가 분산처럼 보이지만 실제 포트폴리오 상관이 높아 drawdown이 합산된다. multiple testing(1-7)으로 과최적화는 방어해도 regime 집중 자체는 별개 리스크.
+- [ ] 전략 간 실현수익률 상관행렬을 journal로 산출해 리포트(1-7 DSR 섹션 옆)에 노출하고, 고상관 클러스터를 명시한다.
+- [ ] regime별(상승/하락/횡보) 전략군 성과를 분해해 "전 전략이 같은 regime에서만 작동"하는지 정량 확인한다. (`market_regime_service` 활용)
+- [ ] 자금 확대 전 비상관 엣지(역추세/숏 가능 시점/저변동 등) 1개 이상 도입 여부를 정책 결정한다.
+- 관련: `services/market_regime_service.py`, `services/strategy_log_report_service.py`, P1 1-1 상관 follow-up과 통합
+
+### R-3. 포트폴리오 총위험(heat) 집계 부재 — 사이징의 구멍 [중대]
+
+- 증거: `PositionSizingService`는 per-trade `risk_qty = total_equity × per_trade_risk_pct / 주당리스크`로 종목별 사이징하지만(L170), **전 전략·전 포지션 합산 open-risk(heat) 한도가 없다**. RiskGate의 `max_total_exposure_pct`는 notional(노출금액) cap이지 risk cap이 아니다(L504-505, positions 합산은 금액 기준).
+- 왜 위험한가: R-2의 고상관 7전략이 각자 per-trade risk를 소진하면, 상관 drawdown 시 **합산 open-risk가 per-trade의 배수**로 누적된다. 개별 종목은 "1% 리스크"여도 동시 10포지션이 같이 무너지면 포트폴리오는 10% 리스크. notional cap만으로는 이 위험을 막지 못한다.
+- [ ] 전 포지션 합산 open-risk(Σ 진입가–stop 거리 × 수량 / total_equity) 한도를 RiskGate 또는 PositionSizing에 도입하고, 초과 시 신규 진입 차단/축소한다.
+- [ ] 상관 가중 heat(고상관 클러스터는 위험 합산)을 검토한다. (R-2 상관행렬과 연계)
+- 관련: `services/position_sizing_service.py`, `services/risk_gate_service.py`
+
+### R-4. 오버나이트 갭 + 스톱 gap-through 가정 [중대]
+
+- 증거: `force_exit_on_close` 기본 False(`StrategySchedulerConfig`) → VBO 외 대부분 전략이 **멀티데이 보유**(오버나이트). 한국장 일일 ±30% 가격제한에서 갭다운은 stop_loss를 관통할 수 있다.
+- 왜 위험한가: 백테스트 체결 모델이 갭다운 시에도 stop 가격에 체결됐다고 가정하면 **실제 손실을 과소평가**한다(실전은 시가 갭 체결 → 손실 확대). 0-9 net PnL 통일/1-5 microstructure와 직접 연결되는 체결 현실성 문제.
+- [ ] 백테스트에서 stop_loss가 전일 종가→당일 시가 갭을 관통하면 stop 가격이 아닌 **시가(또는 더 보수적 값) 체결**로 모델링한다.
+- [ ] 전략별 오버나이트 노출 한도/익일 갭 리스크 지표를 리포트에 노출할지 검토한다.
+- 관련: `services/backtest_execution_simulator.py`, `scheduler/strategy_scheduler.py`, P1 1-5와 통합
+
+### R-5. 증권거래세율 stale (0.20% → 0.15%) [경미, 즉시 수정 가능]
+
+- 증거: `utils/transaction_cost_utils.py` `TAX_RATE = 0.002`(주석 "증권거래세 + 농어촌특별세 0.20%"). 이는 2023년 요율이며, 단계 인하로 **2025년부터 KOSPI/KOSDAQ 매도 0.15%**다(env 기준 오늘 2026-06-08).
+- 영향: 비용을 과대 계상(보수적이라 실전 위험은 아님)하나, backtest 성과·net-PnL 기반 exit 트리거(0-9)가 실제보다 약간 늦게 발동/낮게 평가된다. 정확도 저하.
+- [ ] 현행 요율(0.15%) 확인 후 `TAX_RATE` 보정. 향후 요율 변경 추적이 필요하면 config화 검토(단발성이면 상수 유지).
+- 관련: `utils/transaction_cost_utils.py`
+
+### R-6. 비용 모델 단순성 — 최소수수료/유동성 비용 부재 [경미, 관찰]
+
+- 증거: `TransactionCostUtils.calculate_cost`는 정률 수수료+세금만 계산(50줄). 슬리피지/스프레드/시장충격은 백테스트 시뮬레이터에만 있고 live net-PnL 회계 util에는 없다.
+- 판단: 회계용 util로는 적정하나, 저유동성 중소형주를 다루는 전략 특성상 **capacity(체결 가능 규모)와 시장충격**이 실전 수익을 깎는 핵심 변수다. 2-5/1-5에서 다루는 체결 현실성과 함께, 전략별 평균 거래대금 대비 주문비중(이미 `max_top_of_book_participation_pct` 존재)을 capacity 리포트로 surfacing할지 검토.
+- [ ] (관찰) 전략별 후보 종목 평균 거래대금 분포와 주문 규모 대비 충격 추정을 리포트에 노출할지 검토.
+- 관련: `utils/transaction_cost_utils.py`, `services/position_sizing_service.py`(`_calc_top_of_book_qty`), P2 1-5
+
+판단 요약:
+
+- 코드 엔지니어링(리스크 게이트·사이징·reconcile·atomic write·체결 시뮬)은 개인 시스템치고 상당히 견고하다.
+- 그러나 "돈을 버는가"의 핵심 근거인 **백테스트 신뢰도는 R-1(생존편향)·R-4(갭 체결)로 과대평가 가능성**이 있고, **R-2(regime 집중)·R-3(총위험 미집계)는 실전 drawdown을 백테스트보다 키울 수 있다.** 자금 확대 전 R-1~R-3을 우선 해소하지 않으면 1-6/1-7 gate 통과도 "오염된 표본 위의 통과"가 될 위험이 있다.
 
 ---
 
