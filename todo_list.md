@@ -493,7 +493,7 @@
 
 - 증거: 활성 등록 7개 전략(`first_pullback`/`high_tight_flag`/`larry_williams_channel_breakout`/`larry_williams_vbo`/`oneil_pocket_pivot`/`oneil_squeeze_breakout`/`rsi2_pullback`)이 **전부 long-only 모멘텀/돌파/눌림목 계열**(RSI2 mean-reversion도 long). 숏·헤지·마켓뉴트럴·비상관 자산 없음.
 - 왜 위험한가: 사실상 **단일 "상승/추세 regime 베팅"**이다. 강세장에서 동시 수익, 약세·횡보장에서 **동시 손실**. 전략 수가 분산처럼 보이지만 실제 포트폴리오 상관이 높아 drawdown이 합산된다. multiple testing(1-7)으로 과최적화는 방어해도 regime 집중 자체는 별개 리스크.
-- [ ] 전략 간 실현수익률 상관행렬을 journal로 산출해 리포트(1-7 DSR 섹션 옆)에 노출하고, 고상관 클러스터를 명시한다.
+- [x] 전략 간 실현수익률 상관행렬을 journal로 산출해 리포트(1-7 DSR 섹션 옆)에 노출하고, 고상관 클러스터를 명시한다. (2026-06-09) 계산은 기존 `services/strategy_correlation_service.py::compute_strategy_correlation_summary`(이미 gate에서 사용 중)가 있어 재구축 없이 **리포트 노출만** 추가. `StrategyLogReportService._build_strategy_correlation_section`이 live journal 일별 net_return으로 최고 상관쌍 + 고상관(≥0.8) 클러스터 + 경고를 노출. active/inactive 양쪽 배선. **부수 수정**: DSR `multiple_testing_section`이 active(정상) 리포트 경로 body append에서 누락돼 inactive 경로에만 나오던 #505 버그를 함께 바로잡음. 테스트: `test_strategy_log_report_correlation.py` 4종. 단위 5810 / 통합 240 passed.
 - [ ] regime별(상승/하락/횡보) 전략군 성과를 분해해 "전 전략이 같은 regime에서만 작동"하는지 정량 확인한다. (`market_regime_service` 활용)
 - [ ] 자금 확대 전 비상관 엣지(역추세/숏 가능 시점/저변동 등) 1개 이상 도입 여부를 정책 결정한다.
 - 관련: `services/market_regime_service.py`, `services/strategy_log_report_service.py`, P1 1-1 상관 follow-up과 통합
