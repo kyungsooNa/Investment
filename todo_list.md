@@ -32,7 +32,7 @@
 - P3 3-6: ~~IndicatorService 계산 경로의 광범위 `except Exception` silent skip에 ERROR log/metric/alert hook을 붙인다.~~ ✅ 완료. 전략 레이어 per-code fail-rate metric도 `scan_metrics`/`exit_metrics`에 반영 완료.
 - Pool B 튜닝: 후보 부족 재발 시 거래대금/정배열 조건 완화 검토.
 - 완료 기준의 전략 성과 `[~]`: `MomentumStrategy` 등 비활성 백테스트 경로의 표준 journal 통합 여부 결정.
-- 시스템 트레이더 관점 리뷰(R-1~R-6, 2026-06-08): 생존편향·전략 상관/regime 집중·총위험 미집계·갭 체결·거래세율 stale 등 백테스트 신뢰도/실전 리스크 신규 발견. 자금 확대 전 R-1~R-3 우선 해소 권장. (하단 "시스템 트레이더 관점 리뷰" 섹션)
+- 시스템 트레이더 관점 리뷰(R-1~R-6, 2026-06-08): 생존편향·전략 상관/regime 집중·총위험 미집계·갭 체결 등 백테스트 신뢰도/실전 리스크 신규 발견. 자금 확대 전 R-1~R-3 우선 해소 권장. (R-5 거래세율은 검토 결과 0.20% 정확 → 해소, 변경 없음. 하단 "시스템 트레이더 관점 리뷰" 섹션)
 
 ---
 
@@ -481,15 +481,19 @@
 
 - 증거: 백테스트/유니버스가 현재 상장 종목 리스트(`data/stock_code_list.csv`, 2026-02 시점 단일 스냅샷)에서 파생되고, 코드베이스 전체에서 상장폐지 종목을 편입/처리하는 경로(point-in-time universe, 상폐 OHLCV)가 없다(`delist`/`survivor`/`as_of` grep → 유니버스 파이프라인에 부재). `OneilUniverseService`/`generic_liquidity_universe_service`도 현재 리스트 기반 필터.
 - 왜 치명적인가: 한국 중소형 모멘텀/돌파(KOSDAQ 다수)에서 **상장폐지(감사의견 거절·부실·횡령·합병)된 종목이 백테스트에서 통째로 제외**된다. 정확히 돌파 후 -100%로 가는 종목들이 표본에서 빠져 수익률·승률·profit factor가 **체계적으로 과대평가**된다. profitability gate가 통과해도 그 근거 자체가 오염될 수 있다.
-- [ ] point-in-time 유니버스(일자별 실제 상장 종목) + 상장폐지 종목 OHLCV(상폐 직전까지)를 백테스트 데이터에 편입한다. pykrx 상장폐지 목록/일자 확보 → 일자별 유니버스 스냅샷 구축.
+- [ ] point-in-time 유니버스(일자별 실제 상장 종목) + 상장폐지 종목 OHLCV(상폐 직전까지)를 백테스트 데이터에 편입한다. 일자별 유니버스 스냅샷(상장/상폐일 기반) 구축.
 - [ ] 상폐 종목 편입 전/후 백테스트 성과 격차를 리포트해 기존 결과의 과대평가 폭을 정량화한다.
-- 관련: `services/oneil_universe_service.py`, `services/generic_liquidity_universe_service.py`, `data/stock_code_list.csv`, `data/ohlcv_extracted.csv`, `scripts/run_backtest.py`
+- 데이터 소스 검증(2026-06-08, FDR 0.9.110): 현재 코드는 pykrx가 아닌 **FinanceDataReader**를 씀(`services/stock_sync_service.py`, `task/.../daily_price_collector_task.py`, `ohlcv_update_task.py`). 네트워크 프로브 결과:
+  - `fdr.DataReader(code, start, end)` OHLCV 조회 **정상**(005930 41행, 장기 이력 1233행). → 상폐 코드 목록만 있으면 OHLCV 백필은 FDR로 가능.
+  - `fdr.StockListing('KRX')` **HTTP 404**, `StockListing('KRX-DELISTING')` **0행** → 일자별 상장 구성·상폐 목록을 FDR로 못 가져옴(스크레이퍼 깨짐). pykrx도 불안정.
+  - **진짜 병목**: "어느 종목이 언제 상장/상폐됐는가" 신뢰 소스 부재. 이게 없으면 백필 대상 코드도, 편향 정량화도 불가. → 1순위 sub-task = **상폐 종목+상폐일+일자별 구성 신뢰 소스 확보**(예: KRX data.krx.co.kr 상장폐지 목록 수동 export, 또는 대체 소스). 외부 데이터 의사결정 필요.
+- 관련: `services/oneil_universe_service.py`, `services/generic_liquidity_universe_service.py`, `services/stock_sync_service.py`, `task/background/after_market/daily_price_collector_task.py`, `task/background/after_market/ohlcv_update_task.py`, `data/stock_code_list.csv`, `data/ohlcv_extracted.csv`, `scripts/run_backtest.py`
 
 ### R-2. 전략 상관 / 단일 regime 집중 — "7전략 분산"의 착시 [심각]
 
 - 증거: 활성 등록 7개 전략(`first_pullback`/`high_tight_flag`/`larry_williams_channel_breakout`/`larry_williams_vbo`/`oneil_pocket_pivot`/`oneil_squeeze_breakout`/`rsi2_pullback`)이 **전부 long-only 모멘텀/돌파/눌림목 계열**(RSI2 mean-reversion도 long). 숏·헤지·마켓뉴트럴·비상관 자산 없음.
 - 왜 위험한가: 사실상 **단일 "상승/추세 regime 베팅"**이다. 강세장에서 동시 수익, 약세·횡보장에서 **동시 손실**. 전략 수가 분산처럼 보이지만 실제 포트폴리오 상관이 높아 drawdown이 합산된다. multiple testing(1-7)으로 과최적화는 방어해도 regime 집중 자체는 별개 리스크.
-- [ ] 전략 간 실현수익률 상관행렬을 journal로 산출해 리포트(1-7 DSR 섹션 옆)에 노출하고, 고상관 클러스터를 명시한다.
+- [x] 전략 간 실현수익률 상관행렬을 journal로 산출해 리포트(1-7 DSR 섹션 옆)에 노출하고, 고상관 클러스터를 명시한다. (2026-06-09) 계산은 기존 `services/strategy_correlation_service.py::compute_strategy_correlation_summary`(이미 gate에서 사용 중)가 있어 재구축 없이 **리포트 노출만** 추가. `StrategyLogReportService._build_strategy_correlation_section`이 live journal 일별 net_return으로 최고 상관쌍 + 고상관(≥0.8) 클러스터 + 경고를 노출. active/inactive 양쪽 배선. **부수 수정**: DSR `multiple_testing_section`이 active(정상) 리포트 경로 body append에서 누락돼 inactive 경로에만 나오던 #505 버그를 함께 바로잡음. 테스트: `test_strategy_log_report_correlation.py` 4종. 단위 5810 / 통합 240 passed.
 - [ ] regime별(상승/하락/횡보) 전략군 성과를 분해해 "전 전략이 같은 regime에서만 작동"하는지 정량 확인한다. (`market_regime_service` 활용)
 - [ ] 자금 확대 전 비상관 엣지(역추세/숏 가능 시점/저변동 등) 1개 이상 도입 여부를 정책 결정한다.
 - 관련: `services/market_regime_service.py`, `services/strategy_log_report_service.py`, P1 1-1 상관 follow-up과 통합
@@ -510,11 +514,11 @@
 - [ ] 전략별 오버나이트 노출 한도/익일 갭 리스크 지표를 리포트에 노출할지 검토한다.
 - 관련: `services/backtest_execution_simulator.py`, `scheduler/strategy_scheduler.py`, P1 1-5와 통합
 
-### R-5. 증권거래세율 stale (0.20% → 0.15%) [경미, 즉시 수정 가능]
+### R-5. 증권거래세율 — 검토 결과 0.20% 현행 정확값, 변경 없음 [해소]
 
-- 증거: `utils/transaction_cost_utils.py` `TAX_RATE = 0.002`(주석 "증권거래세 + 농어촌특별세 0.20%"). 이는 2023년 요율이며, 단계 인하로 **2025년부터 KOSPI/KOSDAQ 매도 0.15%**다(env 기준 오늘 2026-06-08).
-- 영향: 비용을 과대 계상(보수적이라 실전 위험은 아님)하나, backtest 성과·net-PnL 기반 exit 트리거(0-9)가 실제보다 약간 늦게 발동/낮게 평가된다. 정확도 저하.
-- [ ] 현행 요율(0.15%) 확인 후 `TAX_RATE` 보정. 향후 요율 변경 추적이 필요하면 config화 검토(단발성이면 상수 유지).
+- 당초 리뷰 가정(2025~ 0.15% 인하 → `TAX_RATE=0.002` stale)은 **오류였다.** 사용자 확인 결과 매도 거래세는 **0.20%(0.002)가 현행 정확값**이다(2024년 금투세 폐지 등으로 당초 예정된 인하가 그대로 적용되지 않음). 따라서 `TAX_RATE` 변경하지 않는다.
+- 조치: 2026-06-09 0.0015로 바꿨던 변경을 원복(브랜치 폐기, main 미반영). `utils/transaction_cost_utils.py`는 `TAX_RATE=0.002` 유지.
+- [x] 세율 정확성 확인 — 0.20% 유지로 종결.
 - 관련: `utils/transaction_cost_utils.py`
 
 ### R-6. 비용 모델 단순성 — 최소수수료/유동성 비용 부재 [경미, 관찰]

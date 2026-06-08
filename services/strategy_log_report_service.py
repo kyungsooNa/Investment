@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from common.trade_journal_comparison import compare_trade_journals
 from services.multiple_testing_bias_service import compute_multiple_testing_bias_summary
+from services.strategy_correlation_service import compute_strategy_correlation_summary
 from services.strategy_performance_degradation_service import (
     StrategyPerformanceDegradationConfig,
     analyze_strategy_performance_degradation,
@@ -874,6 +875,55 @@ class StrategyLogReportService:
         ]
         return "\n".join(header + detail_lines + ([warn_line] if warn_line else []))
 
+    def _build_strategy_correlation_section(self, target_date: str) -> Optional[str]:
+        """전략 간 일별 net_return 상관 요약 (R-2).
+
+        live journal 로 compute_strategy_correlation_summary 를 돌려 최고 상관쌍과
+        고상관(≥threshold) 클러스터를 노출한다. "7전략 분산" 착시(전 전략 long 모멘텀
+        동시 손실)를 운영 중 조기에 드러내기 위함. 비교 가능한 쌍이 없으면 생략한다.
+        """
+        if not self._virtual_trade_service:
+            return None
+        try:
+            live_records = self._virtual_trade_service.get_standard_journal_records() or []
+        except Exception:
+            return None
+        if not live_records:
+            return None
+
+        try:
+            summary = compute_strategy_correlation_summary(live_records)
+        except Exception:
+            return None
+
+        if int(summary.get("pair_count") or 0) < 1:
+            return None
+
+        lines = [
+            "<b>🔗 전략 상관 (일별 net_return)</b>",
+            f"• 전략 {int(summary.get('strategy_count') or 0)}개, 비교쌍 {int(summary.get('pair_count') or 0)}개",
+        ]
+        mx = summary.get("max_positive_pair") or {}
+        if mx:
+            lines.append(
+                f"• 최고 상관: {_esc(mx.get('left'))}↔{_esc(mx.get('right'))} "
+                f"{float(mx.get('correlation') or 0):+.2f} (overlap {int(mx.get('overlap') or 0)})"
+            )
+
+        high = summary.get("high_correlation_pairs") or []
+        if high:
+            threshold = float(summary.get("warning_threshold") or 0.8)
+            lines.append(f"  - ⚠️ 고상관(≥{threshold:.2f}) {len(high)}쌍:")
+            for pair in high[:3]:
+                lines.append(
+                    f"    · {_esc(pair.get('left'))}↔{_esc(pair.get('right'))} "
+                    f"{float(pair.get('correlation') or 0):+.2f}"
+                )
+            if len(high) > 3:
+                lines.append(f"    · …외 {len(high) - 3}쌍")
+
+        return "\n".join(lines)
+
     def _build_replay_audit_lines(self, backtest_records: List[dict]) -> List[str]:
         counts = Counter()
         examples: List[dict] = []
@@ -1587,6 +1637,7 @@ class StrategyLogReportService:
         volatility_section = self._build_volatility_section(strategy_summaries)
         signal_metadata_section = self._build_signal_metadata_section(strategy_summaries)
         multiple_testing_section = self._build_multiple_testing_section(target_date)
+        strategy_correlation_section = self._build_strategy_correlation_section(target_date)
 
         if not active_sections:
             portfolio_summary = self._build_portfolio_summary(target_date, fallback_buys)
@@ -1601,6 +1652,7 @@ class StrategyLogReportService:
                     volatility_section,
                     signal_metadata_section,
                     multiple_testing_section,
+                    strategy_correlation_section,
                 )
                 if section
             ]
@@ -1626,6 +1678,10 @@ class StrategyLogReportService:
             body += f"\n\n{volatility_section}"
         if signal_metadata_section:
             body += f"\n\n{signal_metadata_section}"
+        if multiple_testing_section:
+            body += f"\n\n{multiple_testing_section}"
+        if strategy_correlation_section:
+            body += f"\n\n{strategy_correlation_section}"
 
         if inactive_names:
             inactive_summary = f"\n\n💤 <i>활동 없음: {_esc(', '.join(inactive_names[:3]))}"
