@@ -12,9 +12,11 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from common.trade_journal_comparison import compare_trade_journals
+from services.multiple_testing_bias_service import compute_multiple_testing_bias_summary
 from services.strategy_performance_degradation_service import (
     StrategyPerformanceDegradationConfig,
     analyze_strategy_performance_degradation,
+    compute_strategy_window_metrics,
 )
 
 
@@ -804,6 +806,74 @@ class StrategyLogReportService:
             lines.append(f"  …외 {rest_count}개 전략")
         return "\n".join(lines)
 
+    def _build_multiple_testing_section(self, target_date: str) -> Optional[str]:
+        """다중검정 편향 / Deflated Sharpe 요약 (P1 1-7).
+
+        live journal 의 전략별 window metric(sharpe_ratio/total_net_pnl/trade_count)을
+        compute_multiple_testing_bias_summary 로 집계해 formal Deflated Sharpe, proxy,
+        편향 경고를 노출한다. DSR/proxy 어느 것도 산출되지 않고 경고도 없으면 생략한다.
+        """
+        if not self._virtual_trade_service:
+            return None
+        try:
+            live_records = self._virtual_trade_service.get_standard_journal_records() or []
+        except Exception:
+            return None
+        if not live_records:
+            return None
+
+        try:
+            cfg = self._strategy_degradation_cfg()
+            metrics_by_strategy = compute_strategy_window_metrics(
+                live_records,
+                window_size=max(int(cfg.window_size or 20), 1),
+                capital_base_won=cfg.capital_base_won,
+            )
+            summary = compute_multiple_testing_bias_summary(metrics_by_strategy)
+        except Exception:
+            return None
+
+        if int(summary.get("trial_count") or 0) < 2:
+            return None
+
+        dsr = summary.get("deflated_sharpe") or {}
+        proxy = summary.get("deflated_sharpe_proxy") or {}
+        pbo = summary.get("pbo_proxy") or {}
+
+        detail_lines: List[str] = []
+        if dsr.get("available"):
+            detail_lines.append(
+                f"• Deflated Sharpe(확률) {float(dsr.get('deflated_sharpe_ratio') or 0):.3f} "
+                f"— best SR {float(dsr.get('best_sharpe') or 0):.2f}, "
+                f"기대최대 {float(dsr.get('expected_max_sharpe') or 0):.2f}, "
+                f"표본 {int(dsr.get('sample_size') or 0)}건"
+            )
+        if proxy.get("available"):
+            detail_lines.append(
+                f"• adjusted Sharpe(proxy) {float(proxy.get('adjusted_sharpe') or 0):.2f} "
+                f"(haircut {float(proxy.get('selection_haircut') or 0):.2f})"
+            )
+        if pbo.get("available"):
+            detail_lines.append(
+                f"• PBO(proxy) {float(pbo.get('pbo_probability') or 0):.2f}"
+            )
+
+        warn_line = None
+        if summary.get("bias_warning"):
+            reasons = ", ".join(str(reason) for reason in summary.get("warning_reasons") or [])
+            warn_line = f"  - ⚠️ 편향 경고: {_esc(reasons)}"
+
+        if not detail_lines and not warn_line:
+            return None
+
+        best = summary.get("best_strategy")
+        header = [
+            "<b>🧪 다중검정 / Deflated Sharpe</b>",
+            f"• 전략 {int(summary.get('trial_count') or 0)}개"
+            + (f", 최고 {_esc(best)}" if best else ""),
+        ]
+        return "\n".join(header + detail_lines + ([warn_line] if warn_line else []))
+
     def _build_replay_audit_lines(self, backtest_records: List[dict]) -> List[str]:
         counts = Counter()
         examples: List[dict] = []
@@ -1516,6 +1586,7 @@ class StrategyLogReportService:
         degradation_section = self._build_strategy_degradation_section(target_date)
         volatility_section = self._build_volatility_section(strategy_summaries)
         signal_metadata_section = self._build_signal_metadata_section(strategy_summaries)
+        multiple_testing_section = self._build_multiple_testing_section(target_date)
 
         if not active_sections:
             portfolio_summary = self._build_portfolio_summary(target_date, fallback_buys)
@@ -1529,6 +1600,7 @@ class StrategyLogReportService:
                     execution_quality_section,
                     volatility_section,
                     signal_metadata_section,
+                    multiple_testing_section,
                 )
                 if section
             ]
