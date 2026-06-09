@@ -102,6 +102,17 @@ class PositionSizingService:
             return self._cfg.max_per_position_pct
         return self._cfg.real_mode_overrides.max_per_position_pct
 
+    def _effective_max_portfolio_open_risk_pct(self) -> float:
+        """R-3: 전 포지션 합산 open-risk(heat) 한도 (%). 0 이면 비활성."""
+        base = getattr(self._cfg, "max_portfolio_open_risk_pct", 0.0)
+        if not self._is_real_mode():
+            return base
+        if self._operating_profile == "canary":
+            return getattr(self._cfg.canary_overrides, "max_portfolio_open_risk_pct", base)
+        if self._operating_profile == "real_full":
+            return base
+        return getattr(self._cfg.real_mode_overrides, "max_portfolio_open_risk_pct", base)
+
     # ── 공개 API ──────────────────────────────────────────────────
 
     async def adjust_buy_qty(
@@ -187,12 +198,21 @@ class PositionSizingService:
         max_order_amount_qty = self._calc_max_order_amount_qty(price)
         top_of_book_qty = await self._calc_top_of_book_qty(signal, price, exchange)
 
+        # 7-1. R-3: 포트폴리오 총위험(heat) 한도. 스냅샷에 종목별 stop 이 없으므로
+        # 기존 보유 open-risk 를 Σ(평가금 × |default_stop|) proxy 로 추정하고(보수적),
+        # 신규 후보는 정확한 per_share_risk×qty 로 잔여 budget 에 맞춰 축소한다.
+        heat_qty = self._calc_portfolio_heat_qty(
+            snapshot=snapshot, total_equity=total_equity, per_share_risk=per_share_risk
+        )
+
         # 8. 후보 목록 구성 — signal.qty / alloc_qty 는 None 이면 제외 (제약 없음)
         candidates = {
             "risk_limited": risk_qty,
             "cap_limited": cap_qty,
             "cash_limited": cash_qty,
         }
+        if heat_qty is not None:
+            candidates["heat_limited"] = heat_qty
         if alloc_qty is not None:
             candidates["strategy_capital_cap"] = alloc_qty
         if max_order_amount_qty is not None:
@@ -215,6 +235,8 @@ class PositionSizingService:
                 reason = "order_amount_cap"
             elif top_of_book_qty is not None and top_of_book_qty == 0:
                 reason = "top_of_book_limited"
+            elif heat_qty is not None and heat_qty == 0:
+                reason = "portfolio_heat_exhausted"
             else:
                 reason = "cash_short"
         elif signal.qty is not None and final_qty == signal.qty:
@@ -225,6 +247,7 @@ class PositionSizingService:
                 "strategy_capital_cap",
                 "max_order_amount_limited",
                 "top_of_book_limited",
+                "heat_limited",
                 "cash_limited",
                 "cap_limited",
                 "risk_limited",
@@ -244,7 +267,7 @@ class PositionSizingService:
             f"[PositionSizing] {signal.code} price={price:,} "
             f"equity={total_equity:,} risk/share={per_share_risk:.0f} "
             f"risk_qty={risk_qty} cap_qty={cap_qty} cash_qty={cash_qty} alloc_qty={alloc_qty} "
-            f"pending_buy_exposure={pending_buy_exposure:,} "
+            f"pending_buy_exposure={pending_buy_exposure:,} heat_qty={heat_qty} "
             f"max_order_amount_qty={max_order_amount_qty} top_of_book_qty={top_of_book_qty} "
             f"signal_qty={signal.qty} → final={final_qty} ({reason})"
         )
@@ -276,6 +299,32 @@ class PositionSizingService:
         if max_amount <= 0:
             return None
         return math.floor(max_amount / price)
+
+    def _calc_portfolio_heat_qty(
+        self,
+        snapshot: Any,
+        total_equity: int,
+        per_share_risk: float,
+    ) -> Optional[int]:
+        """R-3: 전 포지션 합산 open-risk(heat) budget 잔여분에 맞춘 신규 BUY 최대 수량.
+
+        한도 미설정(<=0)이거나 per_share_risk<=0 이면 None(제약 없음).
+        기존 보유 open-risk 는 종목별 stop 부재로 Σ(평가금 × |default_stop|) proxy 로 추정한다.
+        reservation overlay 활성 시 같은 사이클 accepted BUY 예약도 합산한다.
+        """
+        max_heat_pct = self._effective_max_portfolio_open_risk_pct()
+        if max_heat_pct <= 0 or per_share_risk <= 0 or total_equity <= 0:
+            return None
+
+        assumed_stop = abs(self._cfg.default_stop_loss_pct) / 100
+        existing_notional = sum(max(value, 0) for value in snapshot.positions.values())
+        if self._enable_intracycle_reservations:
+            existing_notional += sum(max(value, 0) for value in self._reservations.values())
+        existing_open_risk = existing_notional * assumed_stop
+
+        heat_budget = total_equity * max_heat_pct / 100
+        remaining_heat = max(heat_budget - existing_open_risk, 0)
+        return math.floor(remaining_heat / per_share_risk)
 
     async def _get_pending_buy_exposure_won(
         self,

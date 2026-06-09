@@ -795,3 +795,132 @@ async def test_reservation_default_is_disabled():
                     reason="r", strategy_name="s2")
     )
     assert qty_a == 5 and qty_b == 5
+
+
+# ─────────────────────────────────────────────────────────────────────
+# R-3: 포트폴리오 총위험(heat) 한도 — Σ(평가금 × |default_stop|) proxy
+# ─────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_portfolio_heat_scales_down_qty():
+    """기존 보유 open-risk proxy 가 budget 대부분을 소진하면 신규 BUY 가 잔여 budget 으로 축소된다.
+
+    대상 종목(005930)의 기존 보유분도 heat proxy 에 포함된다(모델 A 가정).
+    """
+    # equity 100M, heat 1% → budget 1,000,000.
+    # 기존 보유 10M(005930 5M + AAAAAA 5M) × stop 5% = 500,000 open-risk.
+    # 잔여 budget 500,000 / per_share_risk 500 = heat_qty 1000.
+    snap = _make_snapshot(
+        total_equity=100_000_000,
+        available_cash=100_000_000,
+        positions={"005930": 5_000_000, "AAAAAA": 5_000_000},
+    )
+    cfg = _make_config(
+        per_trade_risk_pct=100.0,
+        max_per_position_pct=100.0,
+        default_stop_loss_pct=-5.0,
+        min_stop_distance_pct=0.0,
+        max_portfolio_open_risk_pct=1.0,
+    )
+    svc, _, _ = _make_service(snap, cfg=cfg)
+    qty, reason = await svc.adjust_buy_qty(_buy_signal(price=10_000, qty=10_000))
+    assert qty == 1000
+    assert reason == "heat_limited"
+
+
+@pytest.mark.asyncio
+async def test_portfolio_heat_exhausted_blocks():
+    """기존 보유 open-risk proxy 가 budget 을 초과하면 신규 BUY 가 0 으로 차단된다."""
+    # equity 100M, heat 1% → budget 1,000,000.
+    # 기존 보유 30M × stop 5% = 1,500,000 > budget → 잔여 0 → heat_qty 0.
+    snap = _make_snapshot(
+        total_equity=100_000_000,
+        available_cash=100_000_000,
+        positions={"AAAAAA": 30_000_000},
+    )
+    cfg = _make_config(
+        per_trade_risk_pct=100.0,
+        max_per_position_pct=100.0,
+        default_stop_loss_pct=-5.0,
+        min_stop_distance_pct=0.0,
+        max_portfolio_open_risk_pct=1.0,
+    )
+    svc, _, _ = _make_service(snap, cfg=cfg)
+    qty, reason = await svc.adjust_buy_qty(_buy_signal(price=10_000, qty=10_000))
+    assert qty == 0
+    assert reason == "portfolio_heat_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_portfolio_heat_disabled_when_zero():
+    """max_portfolio_open_risk_pct=0 이면 heat 한도 비활성 → 기존 동작 유지."""
+    snap = _make_snapshot(
+        total_equity=100_000_000,
+        available_cash=100_000_000,
+        positions={"AAAAAA": 30_000_000},
+    )
+    cfg = _make_config(
+        per_trade_risk_pct=100.0,
+        max_per_position_pct=100.0,
+        default_stop_loss_pct=-5.0,
+        min_stop_distance_pct=0.0,
+        max_portfolio_open_risk_pct=0.0,
+    )
+    svc, _, _ = _make_service(snap, cfg=cfg)
+    # heat 비활성 → risk/cap/cash 모두 여유, signal.qty=100 가 자발적 상한
+    qty, reason = await svc.adjust_buy_qty(_buy_signal(price=10_000, qty=100))
+    assert qty == 100
+    assert reason == "ok"
+
+
+@pytest.mark.asyncio
+async def test_portfolio_heat_includes_reservations():
+    """reservation overlay 활성 시 같은 사이클 예약이 heat proxy 에 합산되어 후속 BUY 를 축소한다."""
+    # equity 100M, heat 1% → budget 1,000,000. per_share_risk 500.
+    snap = _make_snapshot(
+        total_equity=100_000_000,
+        available_cash=100_000_000,
+        positions={},
+    )
+    cfg = _make_config(
+        per_trade_risk_pct=100.0,
+        max_per_position_pct=100.0,
+        default_stop_loss_pct=-5.0,
+        min_stop_distance_pct=0.0,
+        max_portfolio_open_risk_pct=1.0,
+    )
+    svc, _, _ = _make_service(snap, cfg=cfg, enable_intracycle_reservations=True)
+    # 첫 BUY: signal.qty=50 자발적 상한 → 50주, 예약 50×10,000 = 500,000.
+    qty1, _ = await svc.adjust_buy_qty(
+        TradeSignal(code="AAAAAA", name="A", action="BUY", price=10_000, qty=50,
+                    reason="r", strategy_name="s1")
+    )
+    assert qty1 == 50
+    # 두 번째 BUY(다른 종목): 예약 500,000 × stop 5% = 25,000 open-risk.
+    # 잔여 budget 975,000 / 500 = heat_qty 1950 (예약 없으면 2000).
+    qty2, reason2 = await svc.adjust_buy_qty(
+        TradeSignal(code="BBBBBB", name="B", action="BUY", price=10_000, qty=None,
+                    reason="r", strategy_name="s2")
+    )
+    assert qty2 == 1950
+    assert reason2 == "heat_limited"
+
+
+def test_effective_max_portfolio_open_risk_pct_profile_branches():
+    """profile 별 heat 한도: paper/real_full=base(6.0), canary=1.0, real_limited=3.0."""
+    cfg = _make_config()  # base 6.0, canary 1.0, real 3.0 (config 기본값)
+    paper = _make_service_with_profile(env=_env(is_paper_trading=True), cfg=cfg)
+    canary = _make_service_with_profile(
+        env=_env(is_paper_trading=False), cfg=cfg, operating_profile="canary"
+    )
+    real_limited = _make_service_with_profile(
+        env=_env(is_paper_trading=False), cfg=cfg, operating_profile="real_limited"
+    )
+    real_full = _make_service_with_profile(
+        env=_env(is_paper_trading=False), cfg=cfg, operating_profile="real_full"
+    )
+    assert paper._effective_max_portfolio_open_risk_pct() == 6.0
+    assert canary._effective_max_portfolio_open_risk_pct() == 1.0
+    assert real_limited._effective_max_portfolio_open_risk_pct() == 3.0
+    assert real_full._effective_max_portfolio_open_risk_pct() == 6.0

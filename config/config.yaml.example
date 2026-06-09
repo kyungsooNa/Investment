@@ -198,6 +198,10 @@ position_sizing:
   enabled: true
   per_trade_risk_pct: 1.5          # 1주당 리스크 한도 (총자산 대비 %)
   max_per_position_pct: 10.0       # 단일 종목 비중 상한 (%)
+  # R-3: 전 포지션 합산 open-risk(heat) 한도 (%). 0 이면 비활성.
+  # 종목별 stop 부재로 기존 보유 risk 는 Σ(평가금 × |default_stop_loss_pct|) proxy 로 추정.
+  # 초과 시 신규 BUY 수량을 잔여 budget 에 맞춰 축소(소진 시 차단)한다.
+  max_portfolio_open_risk_pct: 6.0
   default_stop_loss_pct: -5.0      # 시그널 미전달 시 폴백 손절폭 (음수)
   atr_period: 14
   atr_multiplier: 2.0
@@ -208,7 +212,9 @@ position_sizing:
   canary_overrides:
     per_trade_risk_pct: 0.25
     max_per_position_pct: 1.5
+    max_portfolio_open_risk_pct: 1.0
   # operating_profile=real_limited 시 적용되는 overlay (canary 통과 후 중간 단계).
   real_mode_overrides:
     per_trade_risk_pct: 0.5
     max_per_position_pct: 3.0
+    max_portfolio_open_risk_pct: 3.0

@@ -505,7 +505,7 @@
 
 - 증거: `PositionSizingService`는 per-trade `risk_qty = total_equity × per_trade_risk_pct / 주당리스크`로 종목별 사이징하지만(L170), **전 전략·전 포지션 합산 open-risk(heat) 한도가 없다**. RiskGate의 `max_total_exposure_pct`는 notional(노출금액) cap이지 risk cap이 아니다(L504-505, positions 합산은 금액 기준).
 - 왜 위험한가: R-2의 고상관 7전략이 각자 per-trade risk를 소진하면, 상관 drawdown 시 **합산 open-risk가 per-trade의 배수**로 누적된다. 개별 종목은 "1% 리스크"여도 동시 10포지션이 같이 무너지면 포트폴리오는 10% 리스크. notional cap만으로는 이 위험을 막지 못한다.
-- [ ] 전 포지션 합산 open-risk(Σ 진입가–stop 거리 × 수량 / total_equity) 한도를 RiskGate 또는 PositionSizing에 도입하고, 초과 시 신규 진입 차단/축소한다.
+- [x] 전 포지션 합산 open-risk(Σ 진입가–stop 거리 × 수량 / total_equity) 한도를 RiskGate 또는 PositionSizing에 도입하고, 초과 시 신규 진입 차단/축소한다. (2026-06-09) `PositionSizingService`에 도입(수량 축소 우선, 소진 시 차단). 스냅샷에 종목별 stop이 없어 기존 보유 open-risk를 `Σ(평가금 × |default_stop_loss_pct|)` proxy로 추정(모델 A), 신규 후보는 정확한 `per_share_risk×qty`. reservation overlay 활성 시 같은 사이클 예약도 합산. `_calc_portfolio_heat_qty`가 `heat_limited` 후보로 기존 `min()` 사이징에 합류, budget 소진 시 reason `portfolio_heat_exhausted`. profile별 한도 `max_portfolio_open_risk_pct`(canary 1% / real_limited 3% / paper·real_full 6%, 0이면 비활성). 테스트: `test_position_sizing_service.py` 5종(scale-down/exhausted/disabled/reservation 합산/profile 분기). 단위 5839 / 통합 240 passed.
 - [ ] 상관 가중 heat(고상관 클러스터는 위험 합산)을 검토한다. (R-2 상관행렬과 연계)
 - 관련: `services/position_sizing_service.py`, `services/risk_gate_service.py`
 
