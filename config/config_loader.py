@@ -42,6 +42,7 @@ class PositionSizingRealOverrides(BaseModel):
     """
     per_trade_risk_pct: float = 0.5
     max_per_position_pct: float = 3.0
+    max_portfolio_open_risk_pct: float = 3.0   # R-3: 전 포지션 합산 open-risk(heat) 한도 (%)
 
     model_config = {"extra": "allow"}
 
@@ -53,6 +54,7 @@ class PositionSizingCanaryOverrides(BaseModel):
     """
     per_trade_risk_pct: float = 0.25       # 1주당 리스크 0.25%
     max_per_position_pct: float = 1.5      # 단일 포지션 1.5%
+    max_portfolio_open_risk_pct: float = 1.0   # R-3: heat 한도 1.0%
 
     model_config = {"extra": "allow"}
 
@@ -61,6 +63,7 @@ class PositionSizingConfig(BaseModel):
     enabled: bool = True
     per_trade_risk_pct: float = 1.5        # 1주당 리스크 한도 (총자산 대비 %)
     max_per_position_pct: float = 5.0      # 단일 종목 비중 상한 (%)
+    max_portfolio_open_risk_pct: float = 6.0   # R-3: 전 포지션 합산 open-risk(heat) 한도 (%, 0 이면 비활성)
     default_stop_loss_pct: float = -5.0    # 시그널 미전달 시 폴백 손절폭 (음수)
     atr_period: int = 14
     atr_multiplier: float = 2.0
