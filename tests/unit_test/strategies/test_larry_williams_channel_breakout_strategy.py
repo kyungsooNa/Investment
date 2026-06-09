@@ -268,6 +268,51 @@ async def test_check_exits_trailing_stop_triggered(exit_setup):
 
 
 @pytest.mark.asyncio
+async def test_check_exits_recovers_missing_state_from_holding_policy(exit_setup):
+    """DB HOLD는 있으나 position_state가 유실된 경우 journal의 stop 메타로 복구 후 청산."""
+    strategy, sqs = exit_setup
+    strategy._position_state = {}
+    sqs.get_current_price.return_value = _price_resp(current="70000")
+    sqs.get_ohlcv.return_value = _ohlcv_resp(n=30, base=65000, spread=300)
+
+    holdings = [{
+        "code": "005930",
+        "name": "삼성전자",
+        "buy_price": 75000,
+        "buy_date": "2026-05-22 15:17:01",
+        "qty": 3,
+        "stop_loss_price": 70401,
+        "invalidation_price": 70401,
+    }]
+
+    signals = await strategy.check_exits(holdings)
+
+    assert len(signals) == 1
+    assert signals[0].action == "SELL"
+    assert "칼손절" in signals[0].reason
+    assert "005930" not in strategy._position_state
+    assert "005930" in strategy._cooldown
+
+
+@pytest.mark.asyncio
+async def test_check_exits_warns_when_state_missing_without_policy(exit_setup):
+    """복구 재료가 없는 legacy HOLD는 조용히 통과하지 않고 경고 로그를 남긴다."""
+    strategy, sqs = exit_setup
+    strategy._position_state = {}
+    sqs.get_current_price.return_value = _price_resp(current="70000")
+
+    signals = await strategy.check_exits([{
+        "code": "005930",
+        "name": "삼성전자",
+        "buy_price": 75000,
+        "qty": 3,
+    }])
+
+    assert signals == []
+    strategy._logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
 async def test_check_exits_no_signal_updates_channel_low(exit_setup):
     """청산 조건 미충족 + 신규 10일 저가 > 현재 channel_low_10d → 상향 갱신."""
     strategy, sqs = exit_setup

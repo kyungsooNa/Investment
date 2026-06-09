@@ -423,6 +423,29 @@ async def test_reconcile_with_broker_reports_quantity_mismatches(virtual_trade_s
 
 
 @pytest.mark.asyncio
+async def test_reconcile_with_broker_syncs_single_hold_quantity(virtual_trade_service, mock_repo):
+    """단일 로컬 HOLD의 수량만 다르면 실제 잔고 수량으로 원장을 동기화한다."""
+    mock_repo.get_holds.return_value = [{"code": "005930", "strategy": "S1", "qty": 1}]
+    mock_repo.log_sell_async = AsyncMock()
+    mock_repo.update_hold_qty.return_value = 1
+    test_logger = MagicMock()
+
+    result = await virtual_trade_service.reconcile_with_broker(
+        actual_holdings=[{"pdno": "005930", "hldg_qty": "3"}],
+        logger=test_logger,
+    )
+
+    mock_repo.log_sell_async.assert_not_awaited()
+    mock_repo.update_hold_qty.assert_called_once_with("S1", "005930", 3)
+    assert result == {
+        "force_closed": [],
+        "unknown_in_broker": [],
+        "quantity_mismatches": [{"code": "005930", "local_qty": 1, "broker_qty": 3}],
+        "quantity_synced": [{"code": "005930", "strategy": "S1", "old_qty": 1, "new_qty": 3}],
+    }
+
+
+@pytest.mark.asyncio
 async def test_reconcile_with_broker_normalizes_broker_holding_variants(virtual_trade_service, mock_repo):
     """브로커 잔고의 대문자 키, 콤마, float 문자열을 정규화한다."""
     mock_repo.get_holds.return_value = [{"code": "005930", "strategy": "S1", "qty": 1000}]

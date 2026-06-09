@@ -330,11 +330,24 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
             return None
 
         state = self._position_state.get(code)
+        recovered_dirty = False
 
         cp_resp = await self._sqs.get_current_price(code, caller=self.name)
         current = self._extract_current_price(cp_resp)
         if current <= 0:
             return None
+
+        if state is None:
+            state = await self._recover_missing_position_state(code, hold)
+            if state is None:
+                self._logger.warning({
+                    "event": "position_state_missing",
+                    "code": code,
+                    "name": hold.get("name", code),
+                    "reason": "missing_state_and_policy_metadata",
+                })
+                return None
+            recovered_dirty = True
 
         buy_price = int(hold.get("buy_price", 0) or 0) or (state.entry_price if state else current)
         holding_qty = int(hold.get("qty", 1) or 1)
@@ -382,7 +395,7 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
                     })
                     return (None, True)
 
-        return (None, False)
+        return (None, recovered_dirty)
 
     # ── helpers ─────────────────────────────────────────────────────
 
@@ -436,6 +449,67 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
             return min(lows) if lows else 0
         except Exception:
             return 0
+
+    async def _recover_missing_position_state(
+        self,
+        code: str,
+        hold: dict,
+    ) -> Optional[LarryWilliamsCBPositionState]:
+        """DB HOLD는 있으나 전략 state가 유실된 경우 journal 메타로 복구한다."""
+        hard_stop_price = self._extract_positive_int(
+            hold,
+            "stop_loss_price",
+            "invalidation_price",
+        )
+        if hard_stop_price <= 0:
+            return None
+
+        buy_price = self._extract_positive_int(hold, "buy_price") or hard_stop_price
+        channel_low_10d = 0
+        ohlcv_resp = await self._sqs.get_ohlcv(code, period="D", caller=self.name)
+        if ohlcv_resp and ohlcv_resp.rt_cd == "0" and ohlcv_resp.data:
+            channel_low_10d = self._calc_channel_low(
+                self._confirmed_bars(ohlcv_resp.data),
+                period=self._cfg.channel_low_period,
+            )
+        if channel_low_10d <= 0:
+            channel_low_10d = hard_stop_price
+
+        state = LarryWilliamsCBPositionState(
+            entry_price=buy_price,
+            entry_date=self._normalize_entry_date(hold.get("buy_date")),
+            hard_stop_price=hard_stop_price,
+            channel_low_10d=channel_low_10d,
+        )
+        self._position_state[code] = state
+        self._logger.warning({
+            "event": "position_state_recovered",
+            "code": code,
+            "name": hold.get("name", code),
+            "hard_stop_price": hard_stop_price,
+            "channel_low_10d": channel_low_10d,
+            "source": "journal_policy_metadata",
+        })
+        return state
+
+    @staticmethod
+    def _extract_positive_int(mapping: dict, *keys: str) -> int:
+        for key in keys:
+            try:
+                value = int(float(mapping.get(key) or 0))
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                return value
+        return 0
+
+    @staticmethod
+    def _normalize_entry_date(value) -> str:
+        raw = str(value or "").strip()
+        digits = "".join(ch for ch in raw[:10] if ch.isdigit())
+        if len(digits) >= 8:
+            return digits[:8]
+        return raw
 
     # ── state persistence ───────────────────────────────────────────
 

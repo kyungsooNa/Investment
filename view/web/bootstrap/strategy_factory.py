@@ -55,6 +55,7 @@ class StrategyFactory:
             position_sizing_service=ctx.position_sizing_service,
             event_router=getattr(ctx, "strategy_event_router", None),
             event_shadow_journal=getattr(ctx, "event_shadow_journal_service", None),
+            market_regime_service=getattr(ctx.oneil_universe_service, "market_regime_service", None),
             live_expansion_gate_service=StrategyLiveExpansionGateService(
                 journal_records_provider=ctx.virtual_trade_service.get_standard_journal_records,
                 is_paper_trading_fn=lambda: bool(getattr(ctx.env, "is_paper_trading", True)),

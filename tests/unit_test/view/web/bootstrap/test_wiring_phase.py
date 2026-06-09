@@ -32,6 +32,7 @@ def _make_fake_context():
     ctx._mcs = MagicMock()
     ctx.market_clock = MagicMock()
     ctx.stock_code_repository = MagicMock()
+    ctx.broker = MagicMock()
     ctx.order_execution_service = MagicMock()
     return ctx
 
@@ -95,6 +96,7 @@ def test_wiring_phase_wires_streaming_chain():
         market_calendar_service=ctx._mcs,
         market_clock=ctx.market_clock,
         stock_code_repository=ctx.stock_code_repository,
+        program_trade_provider=ctx.broker,
     )
     assert ctx.stock_query_service.price_stream_service is ctx.price_stream_service
     assert ctx.stock_query_service.price_subscription_service is ctx.price_subscription_service
@@ -119,6 +121,7 @@ def test_wiring_phase_skips_streaming_chain_when_runtime_does_not_create_it():
         market_calendar_service=ctx._mcs,
         market_clock=ctx.market_clock,
         stock_code_repository=ctx.stock_code_repository,
+        program_trade_provider=ctx.broker,
     )
     assert ctx.stock_query_service.price_stream_service is None
     assert ctx.stock_query_service.price_subscription_service is None

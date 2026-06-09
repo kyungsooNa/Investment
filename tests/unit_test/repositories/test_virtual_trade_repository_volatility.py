@@ -350,3 +350,92 @@ async def test_log_buy_async_propagates_signal_metadata_fields(repo):
     assert int(df.iloc[0]["expected_holding_period_days"]) == 5
     assert df.iloc[0]["confidence"] == pytest.approx(0.75)
     assert json.loads(df.iloc[0]["required_data"]) == ["ohlcv"]
+
+
+# ── R-2: market_regime (regime별 전략 성과 분해용) journal persist ──
+
+_REGIME = {"kospi": "bull", "kosdaq": "sideways", "stock_market": "KOSPI"}
+
+
+def test_log_buy_persists_market_regime(repo):
+    repo.log_buy("OSB", "005930", 70_000, qty=10, market_regime=_REGIME)
+    df = repo._read()
+    assert len(df) == 1
+    # market_regime 은 SQLite TEXT 로 JSON 직렬화 저장된다.
+    assert json.loads(df.iloc[0]["market_regime"]) == _REGIME
+
+
+def test_standard_journal_surfaces_market_regime_as_dict(repo):
+    """normalize_virtual_trade 가 market_regime 을 dict 로 surfacing —
+    compute_performance_by_regime 입력 계약(isinstance Mapping)을 만족해야 한다."""
+    repo.log_buy("OSB", "005930", 70_000, qty=10, market_regime=_REGIME)
+    records = repo.get_standard_journal_records()
+    regime = records[0]["market_regime"]
+    assert isinstance(regime, dict)
+    assert regime == _REGIME
+
+
+def test_log_buy_without_market_regime_stores_none(repo):
+    repo.log_buy("Manual", "005930", 70_000)
+    df = repo._read()
+    val = df.iloc[0]["market_regime"]
+    assert val is None or (isinstance(val, float) and val != val)  # NaN
+
+
+def test_ddl_includes_market_regime_column(temp_db, mock_market_clock):
+    VirtualTradeRepository(db_path=temp_db, market_clock=mock_market_clock)
+    conn = sqlite3.connect(temp_db)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(trades)").fetchall()}
+    conn.close()
+    assert "market_regime" in cols
+
+
+def test_alter_table_migrates_legacy_db_without_market_regime_column(tmp_path, mock_market_clock):
+    """market_regime 컬럼 없는 레거시 DB → 재초기화 시 ALTER TABLE 추가 + 기존 row 보존."""
+    db_dir = tmp_path / "data" / "VirtualTradeRepository"
+    db_dir.mkdir(parents=True)
+    db_path = str(db_dir / "virtual_trade.db")
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("""
+        CREATE TABLE trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy TEXT NOT NULL,
+            code TEXT NOT NULL,
+            buy_date TEXT NOT NULL,
+            buy_price REAL NOT NULL,
+            qty INTEGER NOT NULL DEFAULT 1,
+            sell_date TEXT,
+            sell_price REAL,
+            return_rate REAL NOT NULL DEFAULT 0.0,
+            status TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT ''
+        )
+    """)
+    conn.execute(
+        "INSERT INTO trades (strategy, code, buy_date, buy_price, qty, status, reason) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("Legacy", "005930", "2024-12-01 10:00:00", 50_000, 5, "HOLD", "")
+    )
+    conn.commit()
+    conn.close()
+
+    repo = VirtualTradeRepository(db_path=db_path, market_clock=mock_market_clock)
+    cols = {row[1] for row in repo._db.execute("PRAGMA table_info(trades)").fetchall()}
+    assert "market_regime" in cols
+
+    df = repo._read()
+    assert len(df) == 1
+    assert df.iloc[0]["strategy"] == "Legacy"
+
+
+@pytest.mark.asyncio
+async def test_log_buy_async_propagates_market_regime(repo):
+    await repo.log_buy_async(
+        "OSB", "005930", 70_000, qty=1,
+        market_regime={"kospi": "bear", "kosdaq": "bear", "stock_market": "KOSDAQ"},
+    )
+    records = repo.get_standard_journal_records()
+    assert records[0]["market_regime"] == {
+        "kospi": "bear", "kosdaq": "bear", "stock_market": "KOSDAQ"
+    }

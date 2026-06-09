@@ -45,6 +45,7 @@ class ProgramTradingStreamService:
         self._market_calendar_service = None
         self._market_clock = None
         self._stock_code_repository = None
+        self._program_trade_provider = None
 
         # SQLite 레이어는 ProgramTradingRepo에 위임
         self._repo = ProgramTradingRepo(
@@ -238,6 +239,7 @@ class ProgramTradingStreamService:
         market_calendar_service=None,
         market_clock=None,
         stock_code_repository=None,
+        program_trade_provider=None,
     ) -> None:
         """운영 알림에 필요한 외부 의존성을 사후 주입한다."""
         self._telegram_reporter = telegram_reporter
@@ -245,6 +247,8 @@ class ProgramTradingStreamService:
         self._market_clock = market_clock
         if stock_code_repository is not None:
             self._stock_code_repository = stock_code_repository
+        if program_trade_provider is not None:
+            self._program_trade_provider = program_trade_provider
 
     # ── 운영 알림 ──────────────────────────────────────────────────
 
@@ -291,7 +295,84 @@ class ProgramTradingStreamService:
             self.logger.warning(f"프로그램매매 종목명 조회 실패: code={code}, error={e}")
             return code
 
+    def _extract_latest_program_snapshot(self, data: dict) -> dict | None:
+        if not isinstance(data, dict):
+            return None
+
+        net_amount = self._safe_int(
+            data.get("whol_smtn_ntby_tr_pbmn")
+            or data.get("pgtr_ntby_tr_pbmn")
+            or data.get("순매수거래대금")
+        )
+        if net_amount == 0:
+            return None
+
+        snapshot = {"순매수거래대금": str(net_amount)}
+        price = self._safe_int(data.get("stck_clpr") or data.get("price"))
+        if price > 0:
+            snapshot["price"] = str(price)
+        if data.get("prdy_ctrt") is not None:
+            snapshot["rate"] = data.get("prdy_ctrt")
+        return snapshot
+
+    async def _get_latest_program_snapshot(self, code: str) -> dict | None:
+        provider = self._program_trade_provider
+        if provider is None:
+            return None
+
+        getter = getattr(provider, "get_program_trade_by_stock_daily", None)
+        if getter is None:
+            return None
+
+        try:
+            resp = getter(code)
+            if inspect.isawaitable(resp):
+                resp = await resp
+            if getattr(resp, "rt_cd", None) != "0":
+                return None
+            return self._extract_latest_program_snapshot(getattr(resp, "data", None))
+        except Exception as e:
+            self.logger.warning(f"프로그램매매 REST 최신값 조회 실패: code={code}, error={e}")
+            return None
+
+    async def _format_last_tick_report_async(self, codes: list[str]) -> str:
+        lines = [
+            "<b>프로그램매매 구독 Tick 상태</b>",
+            f"생성: {html.escape(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}",
+            f"구독 종목: {len(codes)}개",
+            "",
+        ]
+        for code in codes:
+            label = self._format_stock_label(code)
+            history = self._pt_history.get(code) or []
+            if not history:
+                lines.append(f"{html.escape(label)}: 수신 없음")
+                continue
+
+            tick = dict(history[-1])
+            refreshed = False
+            latest_snapshot = await self._get_latest_program_snapshot(code)
+            if latest_snapshot:
+                tick.update(latest_snapshot)
+                refreshed = True
+            received_ts = self._last_tick_ts_by_code.get(code)
+            received_at = (
+                datetime.fromtimestamp(received_ts).strftime("%H:%M:%S")
+                if received_ts else "-"
+            )
+            trade_time = str(tick.get("주식체결시간", "") or "-")
+            price = self._format_int(tick.get("price", 0))
+            rate = self._format_rate(tick.get("rate", 0.0))
+            net_amt = self._format_eok(tick.get("순매수거래대금", 0))
+            source = " REST보정" if refreshed else ""
+            lines.append(
+                f"{html.escape(label)}: {price}원 ({rate}) "
+                f"체결:{html.escape(trade_time)} 수신:{received_at}{source} 누적 순매수대금:{net_amt}"
+            )
+        return "\n".join(lines)
+
     def _format_last_tick_report(self, codes: list[str]) -> str:
+        """하위 호환용 동기 포맷터. 운영 전송은 REST 보정 가능한 async 경로를 사용한다."""
         lines = [
             "<b>프로그램매매 구독 Tick 상태</b>",
             f"생성: {html.escape(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}",
@@ -342,7 +423,7 @@ class ProgramTradingStreamService:
         codes = self._get_subscribed_program_codes()
         if not codes:
             return False
-        message = self._format_last_tick_report(codes)
+        message = await self._format_last_tick_report_async(codes)
         return await self._send_telegram_message(message)
 
     def _build_trading_window(self, trading_date: str):

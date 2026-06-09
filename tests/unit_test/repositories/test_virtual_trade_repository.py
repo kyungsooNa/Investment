@@ -70,6 +70,21 @@ def test_log_buy_with_qty(virutal_trade_repository):
     assert len(df) == 1
     assert df.iloc[0]['qty'] == 10
 
+
+def test_update_hold_qty_updates_matching_open_position_only(virutal_trade_repository):
+    """전략/종목이 일치하는 HOLD row의 qty만 갱신한다."""
+    virutal_trade_repository.log_buy("S1", "005930", 70000, qty=10)
+    virutal_trade_repository.log_buy("S2", "005930", 71000, qty=5)
+    virutal_trade_repository.log_sell_by_strategy("S2", "005930", 72000)
+
+    updated = virutal_trade_repository.update_hold_qty("S1", "005930", 3)
+
+    df = virutal_trade_repository._read()
+    assert updated == 1
+    assert df[(df["strategy"] == "S1") & (df["code"] == "005930")].iloc[0]["qty"] == 3
+    assert df[(df["strategy"] == "S2") & (df["code"] == "005930")].iloc[0]["qty"] == 5
+
+
 def test_log_sell_success(virutal_trade_repository):
     """매도 기록 및 수익률 계산 확인"""
     virutal_trade_repository.log_buy("StrategyA", "005930", 10000)
@@ -400,6 +415,7 @@ async def test_log_buy_async_thread_execution(virutal_trade_repository):
             virutal_trade_repository.log_buy, "S1", "005930", 1000, 10,
             None, None, None, None, None,  # volatility, config_hash, invalidation, stop_loss, target
             None, None, None, None, None,  # entry_reason, trailing_rule, expected_holding, confidence, required_data
+            None,  # market_regime (R-2)
         )
 
 @pytest.mark.asyncio
@@ -622,6 +638,28 @@ def test_get_holds_by_strategy(virutal_trade_repository):
     assert len(holds) == 1
     assert holds[0]['code'] == "005930"
     assert holds[0]['qty'] == 3
+
+
+def test_get_holds_by_strategy_includes_signal_policy_metadata(virutal_trade_repository):
+    """전략이 state 유실 시 journal의 stop 메타로 청산 판단을 복구할 수 있어야 한다."""
+    virutal_trade_repository.log_buy(
+        "StrategyA",
+        "005930",
+        1000,
+        qty=3,
+        invalidation_price=930,
+        stop_loss_price=930,
+        trailing_rule="channel_low_10d",
+        entry_reason="larry_williams_channel_breakout",
+    )
+
+    holds = virutal_trade_repository.get_holds_by_strategy("StrategyA")
+
+    assert holds[0]["invalidation_price"] == 930
+    assert holds[0]["stop_loss_price"] == 930
+    assert holds[0]["trailing_rule"] == "channel_low_10d"
+    assert holds[0]["entry_reason"] == "larry_williams_channel_breakout"
+
 
 def test_backfill_snapshots_asset_weighted_logic(virutal_trade_repository):
     """백필 시 자산 가중 평균으로 수익률이 계산되는지 확인"""

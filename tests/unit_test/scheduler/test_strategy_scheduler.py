@@ -744,6 +744,52 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("confidence", kwargs)
         self.assertNotIn("required_data", kwargs)
 
+    # ── R-2: 매수 시점 market_regime snapshot 캡처 ──────────────────────
+
+    @staticmethod
+    def _regime_svc_with(kospi=None, kosdaq=None):
+        svc = MagicMock()
+        snaps = {}
+        if kospi is not None:
+            s = MagicMock(); s.regime_label = kospi; snaps["KOSPI"] = s
+        if kosdaq is not None:
+            s = MagicMock(); s.regime_label = kosdaq; snaps["KOSDAQ"] = s
+        svc.get_cached_snapshot.side_effect = lambda m: snaps.get(m)
+        return svc
+
+    def test_market_regime_log_kwargs_builds_dict_from_cached_snapshots(self):
+        svc = self._regime_svc_with(kospi="bull", kosdaq="sideways")
+        repo = MagicMock(); repo.is_kosdaq.return_value = False
+        kwargs = StrategyScheduler._market_regime_log_kwargs(svc, repo, "005930")
+        self.assertEqual(kwargs["market_regime"], {
+            "kospi": "bull", "kosdaq": "sideways", "stock_market": "KOSPI",
+        })
+
+    def test_market_regime_log_kwargs_marks_kosdaq_stock(self):
+        svc = self._regime_svc_with(kospi="bear", kosdaq="bear")
+        repo = MagicMock(); repo.is_kosdaq.return_value = True
+        kwargs = StrategyScheduler._market_regime_log_kwargs(svc, repo, "035720")
+        self.assertEqual(kwargs["market_regime"]["stock_market"], "KOSDAQ")
+        self.assertEqual(kwargs["market_regime"]["kosdaq"], "bear")
+
+    def test_market_regime_log_kwargs_omitted_without_service(self):
+        self.assertEqual(
+            StrategyScheduler._market_regime_log_kwargs(None, MagicMock(), "005930"), {}
+        )
+
+    def test_market_regime_log_kwargs_omitted_when_no_snapshot(self):
+        svc = MagicMock(); svc.get_cached_snapshot.return_value = None
+        self.assertEqual(
+            StrategyScheduler._market_regime_log_kwargs(svc, MagicMock(), "005930"), {}
+        )
+
+    def test_market_regime_log_kwargs_partial_snapshot_keeps_none_label(self):
+        svc = self._regime_svc_with(kospi="bull")  # KOSDAQ 미분류
+        repo = MagicMock(); repo.is_kosdaq.return_value = False
+        kwargs = StrategyScheduler._market_regime_log_kwargs(svc, repo, "005930")
+        self.assertEqual(kwargs["market_regime"]["kospi"], "bull")
+        self.assertIsNone(kwargs["market_regime"]["kosdaq"])
+
     # ── P2 2-4 exit fast-path shadow: 보유 종목 손절 shadow 구독/기록 ──────
 
     def _make_shadow_scheduler(self):
@@ -2413,6 +2459,57 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             10,
             exchange=Exchange.KRX,
             source="strategy_force_exit:S",
+            finalize_immediately=False,
+            trace_id=ANY,
+        )
+
+    async def test_force_liquidate_uses_broker_holding_for_successful_buy_missing_journal(self):
+        """원장 HOLD 누락이어도 당일 성공 BUY 이력과 실제 잔고가 있으면 강제 청산한다."""
+        from datetime import datetime
+
+        scheduler, vm, oes, tm, _ = self._make_scheduler(dry_run=False)
+        tm.get_current_kst_time.return_value = datetime(2026, 6, 9, 15, 10, 0)
+
+        strategy = MockStrategy(name="래리윌리엄스VBO")
+        config = StrategySchedulerConfig(strategy=strategy, force_exit_on_close=True, order_qty=1)
+        vm.get_holds_by_strategy.return_value = []
+
+        scheduler._signal_history = [
+            SignalRecord(
+                strategy_name="래리윌리엄스VBO",
+                code="023530",
+                name="롯데쇼핑",
+                action="BUY",
+                price=179100,
+                qty=11,
+                reason="VBO돌파",
+                timestamp="2026-06-09 10:07:35",
+                api_success=True,
+            )
+        ]
+        oes.broker_api_wrapper.get_account_balance = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="OK",
+                data={"output1": [{"pdno": "023530", "hldg_qty": "11", "prdt_name": "롯데쇼핑"}]},
+            )
+        )
+        oes.broker_api_wrapper.get_asking_price = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="OK",
+                data={"output1": {"bidp1": "180000"}},
+            )
+        )
+
+        await scheduler._force_liquidate_strategy(config)
+
+        oes.handle_place_sell_order.assert_called_once_with(
+            "023530",
+            180000,
+            11,
+            exchange=Exchange.KRX,
+            source="strategy_force_exit:래리윌리엄스VBO",
             finalize_immediately=False,
             trace_id=ANY,
         )

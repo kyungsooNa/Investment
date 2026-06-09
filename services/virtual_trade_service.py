@@ -1,4 +1,5 @@
 # services/virtual_trade_service.py
+import asyncio
 import logging
 from typing import List, Dict, Tuple, Optional, Any
 import pandas as pd
@@ -222,9 +223,8 @@ class VirtualTradeService:
 
         - 로컬 HOLD인데 실제 잔고 없음 → 해당 code의 로컬 HOLD row를 강제 종결 + 경고
         - 실제 잔고 있는데 로컬 없음 → 경고 로그만 (전략명 불명확 → 자동 insert 불가)
-        - 양쪽에 있으나 수량만 다름 → 경고 로그만
-
-        수량 불일치는 partial close 시 어떤 lot/전략을 닫을지 모호하므로 자동 정정하지 않는다.
+        - 양쪽에 있으나 단일 로컬 HOLD의 수량만 다름 → 실제 잔고 수량으로 qty 동기화
+        - 양쪽에 있으나 여러 로컬 HOLD에 걸쳐 수량이 다름 → 경고 로그만
 
         Args:
             actual_holdings: broker get_account_balance() resp.data["output1"] 리스트
@@ -276,8 +276,43 @@ class VirtualTradeService:
                 f"[Reconciliation] 로컬/브로커 보유 수량 불일치 (수동 확인 필요): {quantity_mismatches}"
             )
 
-        return {
+        quantity_synced = []
+        holds_by_code: dict[str, list[dict]] = {}
+        for hold in local_holds:
+            code = str(hold.get("code", "")).strip()
+            if code:
+                holds_by_code.setdefault(code, []).append(hold)
+
+        for mismatch in quantity_mismatches:
+            code = mismatch["code"]
+            matching_holds = holds_by_code.get(code, [])
+            if len(matching_holds) != 1:
+                continue
+
+            hold = matching_holds[0]
+            strategy = str(hold.get("strategy", "")).strip()
+            if not strategy:
+                continue
+
+            updated = await asyncio.to_thread(
+                self._repo.update_hold_qty,
+                strategy,
+                code,
+                mismatch["broker_qty"],
+            )
+            if updated:
+                quantity_synced.append({
+                    "code": code,
+                    "strategy": strategy,
+                    "old_qty": mismatch["local_qty"],
+                    "new_qty": mismatch["broker_qty"],
+                })
+
+        result = {
             "force_closed": force_closed,
             "unknown_in_broker": unknown_in_broker,
             "quantity_mismatches": quantity_mismatches,
         }
+        if quantity_synced:
+            result["quantity_synced"] = quantity_synced
+        return result
