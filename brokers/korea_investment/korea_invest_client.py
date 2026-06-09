@@ -276,6 +276,10 @@ class KoreaInvestApiClient:
         """실시간 통합 체결가(H0UNCNT0) 구독을 해지합니다."""
         return await self._websocketAPI.unsubscribe_unified_price(stock_code)
 
+    async def wait_for_unified_price_ack(self, stock_code: str, timeout: float = None) -> bool:
+        """통합 체결가 구독 ACK 확정을 기다립니다."""
+        return await self._websocketAPI.wait_for_unified_price_ack(stock_code, timeout)
+
     async def subscribe_realtime_quote(self, stock_code) -> Any:
         """실시간 주식호가 데이터를 구독합니다."""
         return await self._websocketAPI.subscribe_realtime_quote(stock_code)

@@ -188,6 +188,17 @@ class StreamingService:
             self._price_stream_service.clear_subscription_state(code)
         return result
 
+    async def wait_unified_price_ack(self, code: str, timeout: float = None) -> bool:
+        """통합 체결가 구독 ACK 확정을 기다린다 — active 마킹 게이트용.
+
+        브로커가 해당 메서드를 제공하지 않으면(구버전/모킹) 보수적으로 True 를 반환해
+        기존 동작(전송 성공=active)을 유지한다.
+        """
+        waiter = getattr(self.broker, "wait_unified_price_ack", None)
+        if not callable(waiter):
+            return True
+        return await waiter(code, timeout)
+
     # ── 고수준 스트림 핸들러 ──────────────────────────────────────
 
     async def handle_program_trading_stream(self, stock_code: str, duration: int = 60) -> None:

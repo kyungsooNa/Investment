@@ -386,6 +386,14 @@ class SubscriptionPolicy:
         try:
             if stream_type == StreamingType.UNIFIED_PRICE:
                 success = await self._streaming.subscribe_unified_price(code)
+                # subscribe_unified_price 의 성공은 "프레임 전송"일 뿐이다. KIS 등록 ACK 까지
+                # 확정돼야 active 로 마킹한다. ACK 미확정이면 active 로 두지 않아(유령 구독 방지)
+                # 다음 rebalance 에서 재구독된다.
+                if success and not await self._streaming.wait_unified_price_ack(code):
+                    if self._streaming_logger:
+                        self._streaming_logger.log_subscribe_failure(
+                            code, "SubscriptionPolicy: 구독 ACK 미확정 — 다음 rebalance 재시도")
+                    return
             elif stream_type == StreamingType.PROGRAM_TRADING:
                 success = await self._streaming.subscribe_program_trading(code)
             if success:

@@ -11,6 +11,8 @@ def mock_streaming():
     svc = MagicMock()
     svc.subscribe_unified_price = AsyncMock(return_value=True)
     svc.unsubscribe_unified_price = AsyncMock(return_value=True)
+    # 구독 ACK 확정 — 기본은 확정(True). active 마킹 게이트용.
+    svc.wait_unified_price_ack = AsyncMock(return_value=True)
     return svc
 
 

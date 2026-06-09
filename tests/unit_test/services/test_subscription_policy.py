@@ -12,6 +12,8 @@ def mock_streaming():
     svc.unsubscribe_unified_price = AsyncMock(return_value=True)
     svc.subscribe_program_trading = AsyncMock(return_value=True)
     svc.unsubscribe_program_trading = AsyncMock(return_value=True)
+    # 구독 ACK 확정 — 기본은 확정(True). 미확정 경로는 개별 테스트에서 override.
+    svc.wait_unified_price_ack = AsyncMock(return_value=True)
     return svc
 
 @pytest.fixture
@@ -243,6 +245,38 @@ async def test_do_subscribe_success_and_fail(policy, mock_streaming, mock_stock_
     mock_streaming.subscribe_program_trading.return_value = False
     await policy._do_subscribe("B", StreamingType.PROGRAM_TRADING)
     mock_streaming_logger.log_add_subscription_rejection.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_do_subscribe_unified_not_marked_active_when_ack_unconfirmed(
+    policy, mock_streaming, mock_stock_repo, mock_streaming_stock_repo, mock_streaming_logger
+):
+    """전송은 성공했지만 구독 ACK 미확정이면 active 로 마킹하지 않는다(유령 구독 방지)."""
+    mock_streaming.subscribe_unified_price.return_value = True
+    mock_streaming.wait_unified_price_ack.return_value = False  # ACK 미확정
+
+    await policy._do_subscribe("A", StreamingType.UNIFIED_PRICE)
+
+    assert "A" not in policy._active_codes_price
+    mock_stock_repo.mark_streaming.assert_not_called()
+    mock_streaming_stock_repo.mark_active.assert_not_called()
+    mock_streaming_logger.log_subscribe.assert_not_called()
+    mock_streaming_logger.log_subscribe_failure.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_do_subscribe_unified_marked_active_when_ack_confirmed(
+    policy, mock_streaming, mock_streaming_stock_repo
+):
+    """구독 ACK 확정 시에만 active 로 마킹된다."""
+    mock_streaming.subscribe_unified_price.return_value = True
+    mock_streaming.wait_unified_price_ack.return_value = True
+
+    await policy._do_subscribe("A", StreamingType.UNIFIED_PRICE)
+
+    assert "A" in policy._active_codes_price
+    mock_streaming.wait_unified_price_ack.assert_awaited_once()
+    mock_streaming_stock_repo.mark_active.assert_awaited_with("A", StreamingType.UNIFIED_PRICE)
 
 async def test_do_subscribe_market_closed(policy, mock_streaming, mock_streaming_logger, mock_market_calendar):
     """장 외 시간에는 구독 요청이 보류되어야 한다."""

@@ -34,6 +34,10 @@ class KoreaInvestWebSocketAPI:
     `websockets` 라이브러리(asyncio 기반)를 사용하며, 다양한 실시간 데이터 파싱을 포함합니다.
     """
 
+    # 구독 요청 후 KIS 등록 응답(ACK)을 기다리는 기본 타임아웃(초).
+    # 정상 ACK 지연은 1초 미만이며, 이 시간 내 ACK 미수신 시 구독 미확정으로 간주한다.
+    SUBSCRIBE_ACK_TIMEOUT_SEC = 2.0
+
     def __init__(self, env: KoreaInvestApiEnv, logger=None, market_clock: MarketClock = None,
                  market_calendar_service: Optional[MarketCalendarService] = None,
                  streaming_logger: Optional["StreamingEventLogger"] = None):
@@ -386,6 +390,7 @@ class KoreaInvestWebSocketAPI:
                     self._logger.info(f"실시간 요청 응답 성공: TR_KEY={tr_key}, MSG={json_object['body']['msg1']}")
                     if tr_type == "1":
                         self._subscribed_items.add((tr_id, tr_key))
+                    self._resolve_subscription_ack(pending, True)
                     # 체결통보용 AES KEY, IV 수신 처리
                     if tr_id in ["H0IFCNI0", "H0STCNI0", "H0STCNI9", "H0MFCNI0", "H0EUCNI0"] and json_object.get("body",
                                                                                                                  {}).get(
@@ -403,6 +408,8 @@ class KoreaInvestWebSocketAPI:
                     if msg1 == 'ALREADY IN SUBSCRIBE':
                         self._logger.warning("이미 구독 중인 종목입니다.")
                         self._subscribed_items.add((tr_id, tr_key))
+                        # 이미 구독 중 = 사실상 구독 확정
+                        self._resolve_subscription_ack(pending, True)
                     elif 'ALREADY IN USE' in msg1:
                         self._logger.warning("서버가 appkey 중복 사용을 거부했습니다. 재연결 시 대기 시간을 늘립니다.")
                         self._appkey_collision = True
@@ -411,6 +418,8 @@ class KoreaInvestWebSocketAPI:
                             self._streaming_logger.log_unsubscribe_failure(tr_key or tr_id, msg1 or "ACK error")
                         else:
                             self._streaming_logger.log_subscribe_failure(tr_key or tr_id, msg1 or "ACK error")
+                    # ALREADY IN SUBSCRIBE 외 모든 오류 응답은 구독 확정 실패(no-op if 이미 해소).
+                    self._resolve_subscription_ack(pending, False)
             except json.JSONDecodeError:
                 self._logger.exception(f"제어 메시지 JSON 디코딩 실패: {message}")
             except Exception as e:
@@ -816,7 +825,12 @@ class KoreaInvestWebSocketAPI:
         self._logger.info(f"실시간 요청 전송: TR_ID={tr_id}, TR_KEY={tr_key}, TYPE={tr_type}")
         try:
             await self.ws.send(message_json)
-            self._pending_requests[(tr_id, tr_key)] = {"tr_type": tr_type}
+            pending = {"tr_type": tr_type}
+            # 구독(tr_type=="1") 은 KIS 등록 응답(ACK)을 기다릴 수 있도록 future 를 단다.
+            # wait_for_subscription_ack 가 이 future 를 await, 수신 핸들러가 결과를 채운다.
+            if tr_type == "1":
+                pending["ack"] = asyncio.get_event_loop().create_future()
+            self._pending_requests[(tr_id, tr_key)] = pending
             if tr_type == "2":
                 self._subscribed_items.discard((tr_id, tr_key))
             return True
@@ -832,6 +846,46 @@ class KoreaInvestWebSocketAPI:
             self._is_connected = False
             self.ws = None
             return False
+
+    @staticmethod
+    def _resolve_subscription_ack(pending, confirmed: bool) -> None:
+        """수신 핸들러에서 pending 구독 요청의 ACK future 를 해소한다.
+
+        동일 이벤트 루프 내 동기 호출이라 set_result 가 안전하다. 중복 응답 등으로
+        이미 완료된 future 는 건너뛴다.
+        """
+        if not pending:
+            return
+        fut = pending.get("ack")
+        if fut is not None and not fut.done():
+            fut.set_result(confirmed)
+
+    async def wait_for_subscription_ack(self, tr_id, tr_key, timeout: float = None) -> bool:
+        """구독 요청에 대한 KIS 등록 응답(ACK)을 기다린다.
+
+        - 이미 확정된(`_subscribed_items`) 구독이면 즉시 True.
+        - send_realtime_request(tr_type="1") 가 만든 pending future 를 timeout 까지 await.
+        - timeout 내 ACK 미수신 시 False (구독 미확정 → 상위에서 재구독).
+
+        send_realtime_request 자체의 반환 의미(프레임 전송 성공)는 바꾸지 않는다.
+        """
+        if (tr_id, tr_key) in self._subscribed_items:
+            return True
+        if timeout is None:
+            timeout = self.SUBSCRIBE_ACK_TIMEOUT_SEC
+        pending = self._pending_requests.get((tr_id, tr_key))
+        fut = pending.get("ack") if pending else None
+        if fut is None:
+            return (tr_id, tr_key) in self._subscribed_items
+        try:
+            return bool(await asyncio.wait_for(asyncio.shield(fut), timeout))
+        except asyncio.TimeoutError:
+            return False
+
+    async def wait_for_unified_price_ack(self, stock_code, timeout: float = None) -> bool:
+        """통합 체결가(H0UNCNT0) 구독 ACK 확정을 기다린다(상위 계층 편의 메서드)."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('unified_realtime_price', 'H0UNCNT0')
+        return await self.wait_for_subscription_ack(tr_id, stock_code, timeout)
 
     async def subscribe_realtime_price(self, stock_code):
         """실시간 주식체결 데이터(현재가)를 구독합니다."""
