@@ -930,6 +930,44 @@ async def test_report_matches_virtual_trade_strategy_alias_to_log_section(log_di
 
 
 @pytest.mark.asyncio
+async def test_report_matches_virtual_trade_strategy_id_to_vbo_log_section(log_dir):
+    """원장 전략명이 stable id여도 대응하는 VBO 로그 섹션의 매수 완료 detail에 표시한다."""
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return [
+                {
+                    "strategy": "larry_williams_vbo",
+                    "code": "403870",
+                    "name": "HPSP",
+                    "buy_date": "2026-04-18 09:10:00",
+                    "buy_price": 54400,
+                    "status": "HOLD",
+                    "reason": "원장 체결",
+                },
+            ]
+
+        def get_solds(self):
+            return []
+
+        def get_holds(self):
+            return []
+
+    _write_log(os.path.join(log_dir, "20260418_093000_LarryWilliamsVBO.log.json"), [
+        _make_entry("buy_signal_generated", "403870", "HPSP", reason="로그 시그널", price=54400),
+    ])
+
+    svc = StrategyLogReportService(
+        log_dir=log_dir,
+        virtual_trade_service=DummyVirtualTradeService(),
+    )
+    report = await svc.generate_report("20260418")
+
+    assert "<b>1. LarryWilliamsVBO</b>" in report
+    assert "매수 완료 (1건)" in report
+    assert "HPSP(403870): 원장 체결 @ ₩54,400 (09:10)" in report
+
+
+@pytest.mark.asyncio
 async def test_report_filters_disabled_strategy_sections_and_execution_quality(log_dir):
     """스케줄러에서 제외된 전략은 실행 섹션과 체결 품질 요약에서 제외한다."""
     scan_entry = _make_entry("scan_with_watchlist", "", "", reason="")

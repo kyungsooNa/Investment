@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER
 from common.trade_journal_comparison import compare_trade_journals
 from services.multiple_testing_bias_service import compute_multiple_testing_bias_summary
 from services.strategy_correlation_service import compute_strategy_correlation_summary
@@ -122,7 +123,13 @@ def _strategy_report_key(value: Any) -> str:
     raw = str(value or "").strip()
     if not raw:
         return ""
-    return _STRATEGY_CANONICAL_BY_KEY.get(_strategy_alias_key(raw), raw)
+    return (
+        _STRATEGY_CANONICAL_BY_KEY.get(_strategy_alias_key(raw))
+        or _STRATEGY_CANONICAL_BY_KEY.get(
+            _strategy_alias_key(STRATEGY_IDENTITY_RESOLVER.to_display(raw))
+        )
+        or raw
+    )
 
 
 def _is_data_error_reason(reason: str) -> bool:
