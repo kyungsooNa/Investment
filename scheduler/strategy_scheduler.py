@@ -1457,7 +1457,7 @@ class StrategyScheduler:
     async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):
         """전략 중지 시 보유 종목 강제 청산 (force_exit_on_close=True)."""
         name = cfg.strategy.name
-        holdings = self._get_strategy_holdings(cfg)
+        holdings = await self._get_force_liquidation_holdings(cfg)
         if not holdings:
             return
 
@@ -1497,6 +1497,138 @@ class StrategyScheduler:
                 reason=reason,
             )
             await self._execute_signal(signal)
+
+    async def _get_force_liquidation_holdings(self, cfg: StrategySchedulerConfig) -> List[dict]:
+        """강제청산 대상 보유 목록.
+
+        기본은 원장 HOLD 기준이지만, 원장 기록이 누락된 실전 주문을 방어하기 위해
+        당일 성공 BUY 이력과 브로커 실제 잔고가 모두 확인되는 종목을 보강한다.
+        """
+        strategy_name = cfg.strategy.name
+        holdings = self._get_strategy_holdings(cfg)
+        merged: Dict[str, dict] = {
+            str(hold.get("code", "")).strip(): dict(hold)
+            for hold in holdings
+            if str(hold.get("code", "")).strip()
+        }
+
+        broker_positions = await self._get_broker_position_map_for_force_exit()
+        if not broker_positions:
+            return list(merged.values())
+
+        today_prefix = self._current_signal_date_prefix()
+        candidate_codes = {
+            str(record.code).strip()
+            for record in self._signal_history
+            if record.strategy_name == strategy_name
+            and record.action == "BUY"
+            and record.api_success
+            and str(record.code).strip()
+            and self._signal_record_on_date(record, today_prefix)
+        }
+
+        for code in sorted(candidate_codes):
+            if code in merged:
+                continue
+            broker_qty = broker_positions.get(code, 0)
+            if broker_qty <= 0:
+                continue
+
+            signal_qty = self._get_signal_net_qty(
+                strategy_name,
+                code,
+                only_success=True,
+                date_prefix=today_prefix,
+            )
+            if signal_qty <= 0:
+                continue
+
+            latest_buy = self._get_latest_open_buy_record(
+                strategy_name,
+                code,
+                only_success=True,
+                date_prefix=today_prefix,
+            )
+            sell_qty = min(signal_qty, broker_qty)
+            merged[code] = {
+                "strategy": strategy_name,
+                "code": code,
+                "name": (
+                    latest_buy.name
+                    if latest_buy and latest_buy.name
+                    else self.stock_code_repository.get_name_by_code(code) or code
+                ),
+                "buy_price": latest_buy.price if latest_buy else 0,
+                "buy_date": latest_buy.timestamp if latest_buy else "",
+                "qty": sell_qty,
+                "status": "HOLD",
+                "source": "broker_signal_history",
+            }
+            self._logger.warning(
+                f"[Scheduler] force-exit holding recovered from broker/signal_history: "
+                f"strategy={strategy_name}, code={code}, qty={sell_qty}"
+            )
+
+        return list(merged.values())
+
+    async def _get_broker_position_map_for_force_exit(self) -> Dict[str, int]:
+        try:
+            broker = getattr(self._oes, "broker_api_wrapper", None)
+            if broker is None:
+                return {}
+            resp = await broker.get_account_balance()
+            if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                return {}
+            data = resp.data or {}
+            holdings = data.get("output1") if isinstance(data, dict) else None
+            return self._normalize_broker_position_map(holdings or [])
+        except Exception as e:
+            self._logger.warning(f"[Scheduler] force-exit broker balance lookup failed: {e}")
+            return {}
+
+    @staticmethod
+    def _normalize_broker_position_map(holdings: list) -> Dict[str, int]:
+        positions: Dict[str, int] = {}
+        for holding in holdings or []:
+            if not isinstance(holding, dict):
+                continue
+            code = str(
+                holding.get("pdno")
+                or holding.get("PDNO")
+                or holding.get("code")
+                or ""
+            ).strip()
+            if not code:
+                continue
+            qty = StrategyScheduler._parse_position_qty(
+                holding.get("hldg_qty")
+                or holding.get("HLDG_QTY")
+                or holding.get("qty")
+                or holding.get("quantity")
+            )
+            if qty > 0:
+                positions[code] = positions.get(code, 0) + qty
+        return positions
+
+    @staticmethod
+    def _parse_position_qty(value) -> int:
+        try:
+            return int(float(str(value).replace(",", "").strip()))
+        except (TypeError, ValueError):
+            return 0
+
+    def _current_signal_date_prefix(self) -> str:
+        try:
+            now = self._tm.get_current_kst_time()
+            return now.strftime("%Y-%m-%d")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _signal_record_on_date(record: SignalRecord, date_prefix: str) -> bool:
+        if not date_prefix:
+            return True
+        return str(record.timestamp or "").startswith(date_prefix)
 
     # ── 원장 대사 ──
 
@@ -1657,7 +1789,14 @@ class StrategyScheduler:
                 return True
         return False
 
-    def _get_signal_net_qty(self, strategy_name: str, code: str, *, only_success: bool = True) -> int:
+    def _get_signal_net_qty(
+        self,
+        strategy_name: str,
+        code: str,
+        *,
+        only_success: bool = True,
+        date_prefix: str = "",
+    ) -> int:
         """신호 이력 기준으로 전략별 순수량을 추정한다."""
         net_qty = 0
         target_code = str(code)
@@ -1665,6 +1804,8 @@ class StrategyScheduler:
             if record.strategy_name != strategy_name or str(record.code) != target_code:
                 continue
             if only_success and not record.api_success:
+                continue
+            if not self._signal_record_on_date(record, date_prefix):
                 continue
             qty = int(record.qty or 0)
             if record.action == "BUY":
@@ -1679,6 +1820,7 @@ class StrategyScheduler:
         code: str,
         *,
         only_success: bool = True,
+        date_prefix: str = "",
     ) -> Optional[SignalRecord]:
         """현재 미청산 포지션에 대응하는 가장 최근 BUY 신호를 찾는다."""
         remaining_sell_qty = 0
@@ -1687,6 +1829,8 @@ class StrategyScheduler:
             if record.strategy_name != strategy_name or str(record.code) != target_code:
                 continue
             if only_success and not record.api_success:
+                continue
+            if not self._signal_record_on_date(record, date_prefix):
                 continue
             qty = int(record.qty or 0)
             if record.action == "SELL":

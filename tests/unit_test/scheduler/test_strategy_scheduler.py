@@ -2463,6 +2463,57 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             trace_id=ANY,
         )
 
+    async def test_force_liquidate_uses_broker_holding_for_successful_buy_missing_journal(self):
+        """원장 HOLD 누락이어도 당일 성공 BUY 이력과 실제 잔고가 있으면 강제 청산한다."""
+        from datetime import datetime
+
+        scheduler, vm, oes, tm, _ = self._make_scheduler(dry_run=False)
+        tm.get_current_kst_time.return_value = datetime(2026, 6, 9, 15, 10, 0)
+
+        strategy = MockStrategy(name="래리윌리엄스VBO")
+        config = StrategySchedulerConfig(strategy=strategy, force_exit_on_close=True, order_qty=1)
+        vm.get_holds_by_strategy.return_value = []
+
+        scheduler._signal_history = [
+            SignalRecord(
+                strategy_name="래리윌리엄스VBO",
+                code="023530",
+                name="롯데쇼핑",
+                action="BUY",
+                price=179100,
+                qty=11,
+                reason="VBO돌파",
+                timestamp="2026-06-09 10:07:35",
+                api_success=True,
+            )
+        ]
+        oes.broker_api_wrapper.get_account_balance = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="OK",
+                data={"output1": [{"pdno": "023530", "hldg_qty": "11", "prdt_name": "롯데쇼핑"}]},
+            )
+        )
+        oes.broker_api_wrapper.get_asking_price = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="OK",
+                data={"output1": {"bidp1": "180000"}},
+            )
+        )
+
+        await scheduler._force_liquidate_strategy(config)
+
+        oes.handle_place_sell_order.assert_called_once_with(
+            "023530",
+            180000,
+            11,
+            exchange=Exchange.KRX,
+            source="strategy_force_exit:래리윌리엄스VBO",
+            finalize_immediately=False,
+            trace_id=ANY,
+        )
+
     async def test_execute_signal_market_price_api_error(self):
         """시장가 주문 시 현재가 조회 API가 실패 코드를 반환할 때 0원 유지 테스트."""
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
