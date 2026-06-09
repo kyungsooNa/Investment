@@ -2814,3 +2814,90 @@ async def test_resubscribe_all_sleeps_between_items(websocket_api_instance):
 
     assert mock_send.await_count == 2
     mock_sleep.assert_awaited_once_with(0.1)
+
+
+# ─────────────────────────────────────────────────────────────
+# 구독 ACK 확정 대기 (fix/ws-subscription-ack-confirm)
+# send_realtime_request 는 프레임 전송 성공만 알려주므로(반환 불변),
+# 실제 KIS 구독 등록 응답(rt_cd=='0' / ALREADY IN SUBSCRIBE)을 기다리는
+# wait_for_subscription_ack 경로를 검증한다.
+# ─────────────────────────────────────────────────────────────
+def _ack_message(tr_id: str, tr_key: str, rt_cd: str = "0", msg1: str = "SUBSCRIBE SUCCESS") -> str:
+    import json as _json
+    return _json.dumps({
+        "header": {"tr_id": tr_id, "tr_key": tr_key},
+        "body": {"rt_cd": rt_cd, "msg1": msg1},
+    })
+
+
+def _arm_connected(api):
+    api._is_connected = True
+    api.ws = AsyncMock()
+    api.approval_key = "approval-key"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_subscription_ack_resolves_on_ack(websocket_api_instance):
+    api = websocket_api_instance
+    _arm_connected(api)
+
+    sent = await api.send_realtime_request("H0UNCNT0", "005930", tr_type="1")
+    assert sent is True
+    assert ("H0UNCNT0", "005930") in api._pending_requests
+
+    # KIS 구독 성공 응답 수신 → pending future 해소 + _subscribed_items 추가
+    api._handle_websocket_message(_ack_message("H0UNCNT0", "005930"))
+
+    confirmed = await api.wait_for_subscription_ack("H0UNCNT0", "005930", timeout=1.0)
+    assert confirmed is True
+    assert ("H0UNCNT0", "005930") in api._subscribed_items
+
+
+@pytest.mark.asyncio
+async def test_wait_for_subscription_ack_times_out_without_ack(websocket_api_instance):
+    api = websocket_api_instance
+    _arm_connected(api)
+
+    await api.send_realtime_request("H0UNCNT0", "005930", tr_type="1")
+    # ACK 미수신 → 짧은 타임아웃 후 False
+    confirmed = await api.wait_for_subscription_ack("H0UNCNT0", "005930", timeout=0.05)
+    assert confirmed is False
+    assert ("H0UNCNT0", "005930") not in api._subscribed_items
+
+
+@pytest.mark.asyncio
+async def test_wait_for_subscription_ack_true_when_already_subscribed(websocket_api_instance):
+    api = websocket_api_instance
+    api._subscribed_items.add(("H0UNCNT0", "005930"))
+    # 이미 확정된 구독이면 pending 없이 즉시 True
+    confirmed = await api.wait_for_subscription_ack("H0UNCNT0", "005930", timeout=0.05)
+    assert confirmed is True
+
+
+@pytest.mark.asyncio
+async def test_wait_for_subscription_ack_confirms_on_already_in_subscribe(websocket_api_instance):
+    api = websocket_api_instance
+    _arm_connected(api)
+
+    await api.send_realtime_request("H0UNCNT0", "005930", tr_type="1")
+    # 'ALREADY IN SUBSCRIBE' 는 rt_cd != 0 이지만 사실상 구독 확정으로 처리
+    api._handle_websocket_message(
+        _ack_message("H0UNCNT0", "005930", rt_cd="1", msg1="ALREADY IN SUBSCRIBE")
+    )
+    confirmed = await api.wait_for_subscription_ack("H0UNCNT0", "005930", timeout=1.0)
+    assert confirmed is True
+
+
+@pytest.mark.asyncio
+async def test_wait_for_subscription_ack_false_on_hard_error(websocket_api_instance):
+    api = websocket_api_instance
+    _arm_connected(api)
+
+    await api.send_realtime_request("H0UNCNT0", "005930", tr_type="1")
+    # 하드 에러 응답(예: 한도/거부) → 확정 실패
+    api._handle_websocket_message(
+        _ack_message("H0UNCNT0", "005930", rt_cd="1", msg1="SUBSCRIBE ERROR")
+    )
+    confirmed = await api.wait_for_subscription_ack("H0UNCNT0", "005930", timeout=1.0)
+    assert confirmed is False
+    assert ("H0UNCNT0", "005930") not in api._subscribed_items
