@@ -307,12 +307,19 @@ class BacktestPeriodRunner:
             })
         return holdings
 
+    def _order_type_for(self, signal: TradeSignal, side: OrderSide) -> OrderType:
+        # R-4: 손절/스탑 청산은 STOP 주문으로 모델링해 갭 관통 시 시가 체결을 반영한다.
+        # 전략들이 공통으로 쓰는 "손절"/"스탑" reason 토큰을 그대로 사용한다.
+        if side == OrderSide.SELL and _is_stop_exit_reason(signal.reason):
+            return OrderType.STOP
+        return OrderType.LIMIT
+
     def _signal_to_order(self, signal: TradeSignal, idx: int, *, side: OrderSide) -> BacktestOrder:
         return BacktestOrder(
             order_id=f"{self._strategy.name}_{signal.code}_{signal.action}_{idx}",
             code=signal.code,
             side=side,
-            order_type=OrderType.LIMIT,
+            order_type=self._order_type_for(signal, side),
             price=signal.price,
             qty=signal.qty or self._config.default_qty,
             strategy=signal.strategy_name or self._strategy.name,
@@ -536,6 +543,12 @@ def _default_run_id(strategy_name: str, dates: Sequence[str]) -> str:
 
 def _signal_with_qty(signal: TradeSignal, qty: int) -> TradeSignal:
     return signal.model_copy(update={"qty": qty})
+
+
+def _is_stop_exit_reason(reason: str | None) -> bool:
+    if not reason:
+        return False
+    return "손절" in reason or "스탑" in reason
 
 
 def _exchange_for_signal(signal: TradeSignal) -> Exchange:

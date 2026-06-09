@@ -515,7 +515,11 @@
 
 - 증거: `force_exit_on_close` 기본 False(`StrategySchedulerConfig`) → VBO 외 대부분 전략이 **멀티데이 보유**(오버나이트). 한국장 일일 ±30% 가격제한에서 갭다운은 stop_loss를 관통할 수 있다.
 - 왜 위험한가: 백테스트 체결 모델이 갭다운 시에도 stop 가격에 체결됐다고 가정하면 **실제 손실을 과소평가**한다(실전은 시가 갭 체결 → 손실 확대). 0-9 net PnL 통일/1-5 microstructure와 직접 연결되는 체결 현실성 문제.
-- [ ] 백테스트에서 stop_loss가 전일 종가→당일 시가 갭을 관통하면 stop 가격이 아닌 **시가(또는 더 보수적 값) 체결**로 모델링한다.
+- [x] 백테스트에서 stop_loss가 전일 종가→당일 시가 갭을 관통하면 stop 가격이 아닌 **시가(또는 더 보수적 값) 체결**로 모델링한다. (2026-06-10)
+  - 적용 완료: `BacktestExecutionSimulator`에 `OrderType.STOP` 추가. STOP은 발동이 이미 결정된 시장가성 주문이라 항상 체결되며, `_base_fill_price`가 갭 관통 시 보수 체결로 모델링한다 — 매도 stop=`min(stop, bar.open)`(갭다운 관통 시 시가, 아니면 stop), 매수 stop=`max(stop, bar.open)`(갭업 관통 시 시가). market 슬리피지/스프레드/호가단위 내림은 시장가 경로와 동일 적용.
+  - 기존 버그 해소: 손절 청산이 `OrderType.LIMIT`로 모델링돼 갭다운 시 `bar.high < stop`이면 **미체결(손실 누락)**, `bar.high >= stop`이면 **stop 가격 체결(과소 손실)** 되던 두 경로 모두 차단.
+  - 배선: `BacktestPeriodRunner._signal_to_order`가 SELL 청산 reason에 전략 공통 토큰 `손절`/`스탑`이 있으면 STOP으로 분류(`_is_stop_exit_reason`). 익절/일반 SELL은 LIMIT 유지.
+  - 테스트: `test_backtest_execution_simulator.py`(stop 매도 갭다운 시가 체결/무갭 stop 체결/market 슬리피지/매수 stop 갭업 4종), `test_backtest_period_runner.py::test_period_runner_stop_loss_exit_fills_at_gap_open`(손절 청산일 갭다운→시가 체결, 미체결 아님). 단위 5846 passed.
 - [ ] 전략별 오버나이트 노출 한도/익일 갭 리스크 지표를 리포트에 노출할지 검토한다.
 - 관련: `services/backtest_execution_simulator.py`, `scheduler/strategy_scheduler.py`, P1 1-5와 통합
 
