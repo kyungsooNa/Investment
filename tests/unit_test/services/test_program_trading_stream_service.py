@@ -533,6 +533,49 @@ async def test_send_subscribed_last_tick_alert_sends_last_tick_for_desired_codes
     assert "수신 없음" in message
 
 
+@pytest.mark.asyncio
+async def test_send_subscribed_last_tick_alert_refreshes_net_amount_from_rest(manager):
+    """알림 직전 REST 최신 프로그램 순매수대금으로 WebSocket 마지막 tick을 보정한다."""
+    mock_ssr = MagicMock()
+    mock_ssr.get_desired.return_value = {"000660"}
+    mock_reporter = MagicMock()
+    mock_reporter._send_message = AsyncMock(return_value=True)
+    mock_stock_repo = MagicMock()
+    mock_stock_repo.get_name_by_code.return_value = "SK하이닉스"
+    mock_provider = MagicMock()
+    mock_provider.get_program_trade_by_stock_daily = AsyncMock(return_value=MagicMock(
+        rt_cd="0",
+        data={
+            "whol_smtn_ntby_tr_pbmn": "380846000000",
+            "stck_clpr": "2056000",
+            "prdy_ctrt": "7.59",
+        },
+    ))
+
+    manager.wire_streaming_stock_repo(mock_ssr)
+    manager.wire_alert_dependencies(
+        telegram_reporter=mock_reporter,
+        stock_code_repository=mock_stock_repo,
+        program_trade_provider=mock_provider,
+    )
+    manager.on_data_received({
+        "유가증권단축종목코드": "000660",
+        "주식체결시간": "103537",
+        "price": "2056000",
+        "rate": "7.59",
+        "순매수거래대금": "135630000000",
+    })
+
+    sent = await manager.send_subscribed_last_tick_alert()
+
+    assert sent is True
+    mock_provider.get_program_trade_by_stock_daily.assert_awaited_once_with("000660")
+    message = mock_reporter._send_message.call_args[0][0]
+    assert "누적 순매수대금:3,808.5억" in message
+    assert "1,356.3억" not in message
+    assert "REST보정" in message
+
+
 def test_build_db_minute_persistence_status_reports_missing_minutes(manager):
     """장중 1분 단위 저장 여부를 종목별로 계산한다."""
     clock = MarketClock(market_open_time="09:00", market_close_time="09:02")

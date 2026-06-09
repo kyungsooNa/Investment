@@ -600,6 +600,23 @@ class VirtualTradeRepository:
             logger.info(f"[가상매매] {strategy_name}/{code} 매도 기록 (수익률: {round(return_rate, 2):.2f}%{', 사유: '+reason if reason else ''})")
             return round(return_rate, 2)
 
+    def update_hold_qty(self, strategy_name: str, code: str, qty: int) -> int:
+        """전략+종목 매칭 HOLD row의 보유 수량을 갱신한다."""
+        normalized_qty = int(qty)
+        if normalized_qty <= 0:
+            return 0
+
+        with self._lock:
+            where, params = self._strategy_filter(strategy_name)
+            with self._db:
+                cursor = self._db.execute(
+                    f"UPDATE trades SET qty=? WHERE {where} AND code=? AND status='HOLD'",
+                    (normalized_qty, *params, code),
+                )
+            if cursor.rowcount:
+                logger.info(f"[가상매매] {strategy_name}/{code} HOLD 수량 동기화 → {normalized_qty}")
+            return int(cursor.rowcount or 0)
+
     async def log_sell_by_strategy_async(self, strategy_name: str, code: str, current_price, qty: int = 1, reason: str = "") -> float | None:
         """log_sell_by_strategy의 비동기 래퍼. 성공 시 수익률(%) 반환. contract 유지."""
         return await asyncio.to_thread(self.log_sell_by_strategy, strategy_name, code, current_price, qty, reason)
@@ -723,7 +740,9 @@ class VirtualTradeRepository:
     def get_holds(self) -> list:
         """전체 HOLD 포지션 반환."""
         df = pd.read_sql_query(
-            "SELECT strategy,code,buy_date,buy_price,qty,sell_date,sell_price,return_rate,status,reason "
+            "SELECT strategy,code,buy_date,buy_price,qty,sell_date,sell_price,return_rate,status,reason, "
+            "volatility_20d_annualized,config_hash,invalidation_price,stop_loss_price,target_price, "
+            "entry_reason,trailing_rule,expected_holding_period_days,confidence,required_data,market_regime "
             "FROM trades WHERE status='HOLD' ORDER BY id",
             self._db, dtype={'code': str, 'sell_date': object}
         )
@@ -733,7 +752,9 @@ class VirtualTradeRepository:
         """전략별 HOLD 포지션 반환. legacy 한국어 행과 strategy_id 행 모두 매칭."""
         where, params = self._strategy_filter(strategy_name)
         df = pd.read_sql_query(
-            f"SELECT strategy,code,buy_date,buy_price,qty,sell_date,sell_price,return_rate,status,reason "
+            f"SELECT strategy,code,buy_date,buy_price,qty,sell_date,sell_price,return_rate,status,reason, "
+            f"volatility_20d_annualized,config_hash,invalidation_price,stop_loss_price,target_price, "
+            f"entry_reason,trailing_rule,expected_holding_period_days,confidence,required_data,market_regime "
             f"FROM trades WHERE {where} AND status='HOLD' ORDER BY id",
             self._db, params=params, dtype={'code': str, 'sell_date': object}
         )
