@@ -183,6 +183,50 @@ def test_limit_order_not_filled_when_price_is_not_reached():
     assert report.reason == "limit_not_reached"
 
 
+def test_stop_sell_gap_down_fills_at_open_not_stop_price():
+    # R-4: 갭다운으로 stop을 관통하면 stop 가격이 아닌 시가(보수적)로 체결한다.
+    # 같은 조건의 LIMIT SELL이면 high(970) < stop(1000)이라 UNFILLED 처리되던 손실 누락 케이스.
+    sim = BacktestExecutionSimulator(BacktestExecutionPolicy(round_to_tick=False))
+    order = make_order(price=1_000.0, qty=10, side=OrderSide.SELL, order_type=OrderType.STOP)
+    bar = BacktestBar(timestamp="t", open=950, high=970, low=940, close=960, volume=1_000)
+    rep = sim.simulate(order, bar)
+    assert rep.status == OrderStatus.FILLED
+    assert rep.fill_price == 950
+    assert rep.reason == "filled"
+
+
+def test_stop_sell_no_gap_fills_at_stop_price():
+    # 시가가 stop 이상(장중 stop 도달)인 경우 기존 stop 가격 체결을 유지한다.
+    sim = BacktestExecutionSimulator(BacktestExecutionPolicy(round_to_tick=False))
+    order = make_order(price=1_000.0, qty=10, side=OrderSide.SELL, order_type=OrderType.STOP)
+    bar = BacktestBar(timestamp="t", open=1_010, high=1_020, low=990, close=1_005, volume=1_000)
+    rep = sim.simulate(order, bar)
+    assert rep.status == OrderStatus.FILLED
+    assert rep.fill_price == 1_000
+
+
+def test_stop_sell_applies_market_slippage():
+    # stop 청산은 시장가성 체결이므로 market 슬리피지를 부담한다.
+    sim = BacktestExecutionSimulator(
+        BacktestExecutionPolicy(market_slippage_pct=1.0, round_to_tick=False)
+    )
+    order = make_order(price=1_000.0, qty=10, side=OrderSide.SELL, order_type=OrderType.STOP)
+    bar = BacktestBar(timestamp="t", open=950, high=970, low=940, close=960, volume=1_000)
+    rep = sim.simulate(order, bar)
+    # base 950 - 1% sell slippage = 940.5
+    assert rep.fill_price == 940.5
+
+
+def test_stop_buy_gap_up_fills_at_open_not_stop_price():
+    # 대칭: 돌파 매수 stop이 갭업으로 관통되면 시가(더 불리)로 체결한다.
+    sim = BacktestExecutionSimulator(BacktestExecutionPolicy(round_to_tick=False))
+    order = make_order(price=1_000.0, qty=10, side=OrderSide.BUY, order_type=OrderType.STOP)
+    bar = BacktestBar(timestamp="t", open=1_050, high=1_080, low=1_040, close=1_060, volume=1_000)
+    rep = sim.simulate(order, bar)
+    assert rep.status == OrderStatus.FILLED
+    assert rep.fill_price == 1_050
+
+
 def test_market_sell_applies_slippage_and_rounds_to_tick():
     simulator = BacktestExecutionSimulator(
         BacktestExecutionPolicy(market_slippage_pct=0.2)

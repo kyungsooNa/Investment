@@ -23,6 +23,7 @@ class OrderType(str, Enum):
     LIMIT = "LIMIT"
     MARKET = "MARKET"
     BEST_LIMIT = "BEST_LIMIT"
+    STOP = "STOP"
 
 
 class OrderStatus(str, Enum):
@@ -207,6 +208,15 @@ class BacktestExecutionSimulator:
         if order.order_type in (OrderType.MARKET, OrderType.BEST_LIMIT):
             return float(getattr(bar, self.policy.market_price_field, bar.open))
 
+        if order.order_type == OrderType.STOP:
+            # R-4: stop 청산/돌파는 이미 발동이 결정된 시장가성 주문이므로 항상 체결된다.
+            # 갭이 stop을 관통하면(매도=시가<stop, 매수=시가>stop) stop 가격이 아닌
+            # 시가로 보수 체결하고, 관통하지 않으면 기존 stop 가격 체결을 유지한다.
+            stop_price = float(order.price)
+            if order.side == OrderSide.SELL:
+                return min(stop_price, float(bar.open))
+            return max(stop_price, float(bar.open))
+
         limit_price = float(order.price)
         if order.side == OrderSide.BUY:
             return limit_price if bar.low <= limit_price else None
@@ -228,10 +238,11 @@ class BacktestExecutionSimulator:
     ) -> float:
         if order.order_type == OrderType.BEST_LIMIT:
             slip_pct = self.policy.best_limit_slippage_pct
-        elif order.order_type == OrderType.MARKET:
+        elif order.order_type in (OrderType.MARKET, OrderType.STOP):
             slip_pct = self.policy.market_slippage_pct
             if (
-                self.policy.opening_market_slippage_bonus_pct > 0
+                order.order_type == OrderType.MARKET
+                and self.policy.opening_market_slippage_bonus_pct > 0
                 and self.policy.market_price_field == "open"
             ):
                 slip_pct += self.policy.opening_market_slippage_bonus_pct

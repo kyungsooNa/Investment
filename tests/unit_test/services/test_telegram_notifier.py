@@ -103,6 +103,35 @@ async def test_handle_event_success(telegram_notifier, sample_event):
         assert "[STRATEGY] 매수 시그널" in text
         assert "삼성전자 72,000원 매수 체결" in text
 
+
+@pytest.mark.asyncio
+async def test_handle_event_escapes_dynamic_html_text(telegram_notifier):
+    """동적 알림 내용의 '<' 문자가 Telegram HTML 파싱을 깨지 않도록 escape 된다."""
+    event = NotificationEvent(
+        id="market_timing",
+        timestamp="2026-06-10T09:00:08+09:00",
+        category=NotificationCategory.SYSTEM,
+        level=NotificationLevel.WARNING,
+        title="마켓타이밍 검사 & 차단",
+        message="KOSDAQ: MA hard decline: -0.64% < -0.50%",
+        metadata={},
+    )
+
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
+
+        await telegram_notifier.handle_event(event)
+
+        payload = mock_post.call_args[1]["json"]
+        text = payload["text"]
+        assert "<b>" in text
+        assert "[SYSTEM] 마켓타이밍 검사 &amp; 차단" in text
+        assert "KOSDAQ: MA hard decline: -0.64% &lt; -0.50%" in text
+        assert "KOSDAQ: MA hard decline: -0.64% < -0.50%" not in text
+
+
 @pytest.mark.asyncio
 async def test_handle_event_backlog_bot(telegram_notifier, background_event):
     """BACKGROUND 카테고리 이벤트가 backlog_bot_token API URL로 전송되는지 테스트"""

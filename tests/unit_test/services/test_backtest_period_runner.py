@@ -231,6 +231,73 @@ async def test_period_runner_executes_buy_and_sell_through_ledger():
     assert strategy.exit_holdings[-1][0]["qty"] == 2
 
 
+class StopLossExitStrategy:
+    """20260501 매수 후 20260502 손절(stop) 청산 시그널을 내는 전략."""
+
+    name = "OneilPocketPivot"
+
+    def __init__(self) -> None:
+        self.current_date = ""
+
+    def set_backtest_date(self, date_ymd: str) -> None:
+        self.current_date = date_ymd
+
+    async def scan(self):
+        if self.current_date == "20260501":
+            return [
+                TradeSignal(
+                    code="005930",
+                    name="삼성전자",
+                    action="BUY",
+                    price=70_000,
+                    qty=2,
+                    reason="pocket_pivot",
+                    strategy_name=self.name,
+                )
+            ]
+        return []
+
+    async def check_exits(self, holdings):
+        if self.current_date == "20260502" and holdings:
+            return [
+                TradeSignal(
+                    code="005930",
+                    name="삼성전자",
+                    action="SELL",
+                    price=70_000,
+                    qty=2,
+                    reason="하드 스탑 손절: PnL(net) -8.50% ≤ -8%",
+                    strategy_name=self.name,
+                )
+            ]
+        return []
+
+
+@pytest.mark.asyncio
+async def test_period_runner_stop_loss_exit_fills_at_gap_open():
+    # R-4: 손절 청산일에 갭다운(open 64,000 < stop 70,000, high 65,000 < stop)이면
+    # 기존 LIMIT 모델은 high < stop 이라 미체결로 손실을 누락한다. STOP 모델은 시가 체결.
+    strategy = StopLossExitStrategy()
+    provider = StaticBarProvider({
+        ("20260501", "005930", "BUY"): BacktestBar("20260501 091000", 70_000, 70_500, 69_500, 70_200, 1_000),
+        ("20260502", "005930", "SELL"): BacktestBar("20260502 091000", 64_000, 65_000, 63_000, 64_200, 1_000),
+    })
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=provider,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+    )
+
+    result = await runner.run(["20260501", "20260502"])
+
+    assert [report.order.side.value for report in result.execution_reports] == ["BUY", "SELL"]
+    sell_report = result.execution_reports[1]
+    assert sell_report.status.value == "FILLED"
+    assert sell_report.fill_price == 64_000  # 시가 체결 (stop 70,000 아님)
+    assert result.portfolio["positions"] == {}
+    assert result.portfolio["realized_net_pnl"] < 0
+
+
 @pytest.mark.asyncio
 async def test_period_runner_sell_journal_uses_holding_period_mfe_mae():
     strategy = FakeStrategy()

@@ -1,4 +1,5 @@
 import aiohttp
+import html
 import logging
 from typing import Optional, List, Dict
 from services.notification_service import NotificationEvent, NotificationCategory, NotificationLevel
@@ -58,11 +59,15 @@ class TelegramNotifier:
                 else:
                     message_body += f"\n{rt_emoji} 수익: {rr:+.2f}%"
 
+        safe_title = html.escape(str(event.title), quote=False)
+        safe_timestamp = html.escape(str(event.timestamp), quote=False)
+        safe_message_body = html.escape(str(message_body), quote=False)
+
         # 텔레그램으로 보낼 메시지 포맷 구성
         text = (
-            f"{level_emoji} <b>[{event.category.value}] {event.title}</b>\n"
-            f"시간: {event.timestamp}\n"
-            f"내용:\n{message_body}"
+            f"{level_emoji} <b>[{event.category.value}] {safe_title}</b>\n"
+            f"시간: {safe_timestamp}\n"
+            f"내용:\n{safe_message_body}"
         )
 
         payload = {

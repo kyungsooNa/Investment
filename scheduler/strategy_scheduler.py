@@ -1882,6 +1882,28 @@ class StrategyScheduler:
             if str(hold.get("code", "")).strip() == target_code:
                 return True
 
+        if allow_signal_history:
+            today_key = ""
+            try:
+                today_key = str(self._tm.get_current_kst_time().strftime("%Y-%m-%d"))[:10]
+            except Exception:
+                today_key = ""
+            for record in reversed(self._signal_history):
+                if str(record.strategy_name or "").strip() != strategy_name:
+                    continue
+                if str(record.code or "").strip() != target_code:
+                    continue
+                if not record.api_success:
+                    continue
+                record_day = str(record.timestamp or "")[:10]
+                if today_key and record_day != today_key:
+                    continue
+                action = str(record.action or "").upper()
+                if action == "BUY":
+                    return True
+                if action == "SELL":
+                    return False
+
         return False
 
     def _prune_disabled_force_exit_state(

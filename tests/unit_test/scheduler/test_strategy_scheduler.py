@@ -3395,12 +3395,60 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
                 "S",
                 "005930",
                 repo_holdings=[],
+                allow_signal_history=False,
             )
         )
 
         scheduler._persist_strategy_position_state(strategy)
 
         scheduler._logger.warning.assert_not_called()
+
+    def test_prune_stale_position_state_keeps_recent_successful_buy_signal(self):
+        scheduler, _, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="Stateful")
+        strategy._position_state = {"023530": SimpleNamespace(entry_price=191100)}
+        scheduler._signal_history = [
+            SignalRecord(
+                strategy_name="Stateful",
+                code="023530",
+                name="LotteShopping",
+                action="BUY",
+                price=191100,
+                qty=10,
+                reason="entry",
+                timestamp="2023-01-01 10:00:01",
+                api_success=True,
+            )
+        ]
+        config = StrategySchedulerConfig(strategy=strategy)
+
+        removed = scheduler._prune_stale_position_state(config, repo_holdings=[])
+
+        self.assertFalse(removed)
+        self.assertIn("023530", strategy._position_state)
+
+    def test_position_evidence_successful_sell_clears_successful_buy_signal(self):
+        scheduler, _, _, _, _ = self._make_scheduler()
+        scheduler._signal_history = [
+            SignalRecord(
+                "Stateful", "023530", "LotteShopping", "BUY", 191100, 10,
+                timestamp="2023-01-01 10:00:01",
+                api_success=True,
+            ),
+            SignalRecord(
+                "Stateful", "023530", "LotteShopping", "SELL", 190000, 10,
+                timestamp="2023-01-01 10:05:01",
+                api_success=True,
+            ),
+        ]
+
+        self.assertFalse(
+            scheduler._has_open_position_evidence(
+                "Stateful",
+                "023530",
+                repo_holdings=[],
+            )
+        )
 
     def test_build_strategy_state_holding_uses_failed_signal_entry_date_and_name_fallbacks(self):
         scheduler, _, _, _, _ = self._make_scheduler()
