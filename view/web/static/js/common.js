@@ -113,6 +113,17 @@ function loadScript(src) {
     });
 }
 
+// 새로 가져온 문서의 <head> 외부 스크립트(차트 CDN 등)를 로드 (PJAX 진입 시 head_scripts 누락 방지)
+async function loadHeadScripts(doc) {
+    const scripts = Array.from(doc.querySelectorAll('head script[src]'));
+    for (const headScript of scripts) {
+        const normalizedSrc = new URL(headScript.src, location.href).href;
+        if (_loadedScripts.has(normalizedSrc)) continue;
+        _loadedScripts.add(normalizedSrc);
+        try { await loadScript(headScript.src); } catch (e) { console.error('Head script load failed:', headScript.src, e); }
+    }
+}
+
 async function executePageScripts(container) {
     const scripts = Array.from(container.querySelectorAll('script'));
     for (const oldScript of scripts) {
@@ -168,6 +179,7 @@ async function navigatePjax(href) {
         const pageMain = document.querySelector('#page-main');
         pageMain.innerHTML = newMain.innerHTML;
 
+        await loadHeadScripts(doc);
         await executePageScripts(pageMain);
 
         window.history.pushState({path: href}, '', href);
