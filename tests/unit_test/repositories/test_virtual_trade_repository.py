@@ -541,57 +541,36 @@ def test_fetch_close_prices_cache_hit(virutal_trade_repository):
     cache_data = {"005930": {"2025-01-01": 70000, "2025-01-02": 71000, "2025-01-03": 72000}}
     virutal_trade_repository._save_price_cache(cache_data)
 
-    mock_pykrx_stock = MagicMock()
-    mock_pykrx = MagicMock()
-    mock_pykrx.stock = mock_pykrx_stock
-
-    with patch.dict("sys.modules", {"pykrx": mock_pykrx, "pykrx.stock": mock_pykrx_stock}):
+    with patch("FinanceDataReader.DataReader") as mock_fdr:
         result = virutal_trade_repository._fetch_close_prices(["005930"], "2025-01-01", "2025-01-03")
         assert result == cache_data
-        mock_pykrx_stock.get_market_ohlcv_by_date.assert_not_called()
+        mock_fdr.assert_not_called()
 
 def test_fetch_close_prices_api_call(virutal_trade_repository):
     """캐시가 없으면 API 호출 후 저장"""
-    mock_pykrx_stock = MagicMock()
-    mock_df = pd.DataFrame({'종가': [70000, 71000]}, index=pd.to_datetime(['2025-01-01', '2025-01-02']))
-    mock_pykrx_stock.get_market_ohlcv_by_date.return_value = mock_df
+    mock_df = pd.DataFrame({'Close': [70000, 71000]}, index=pd.to_datetime(['2025-01-01', '2025-01-02']))
 
-    mock_pykrx = MagicMock()
-    mock_pykrx.stock = mock_pykrx_stock
-
-    with patch.dict("sys.modules", {"pykrx": mock_pykrx, "pykrx.stock": mock_pykrx_stock}):
+    with patch("FinanceDataReader.DataReader", return_value=mock_df) as mock_fdr:
         result = virutal_trade_repository._fetch_close_prices(["005930"], "2025-01-01", "2025-01-02")
 
         assert "005930" in result
         assert result["005930"]["2025-01-01"] == 70000
         assert result["005930"]["2025-01-02"] == 71000
-        mock_pykrx_stock.get_market_ohlcv_by_date.assert_called_once()
+        mock_fdr.assert_called_once()
 
         loaded = virutal_trade_repository._load_price_cache()
         assert loaded["005930"]["2025-01-01"] == 70000
 
 def test_fetch_close_prices_api_empty(virutal_trade_repository):
     """API 응답이 비어있을 때 처리"""
-    mock_pykrx_stock = MagicMock()
-    mock_pykrx_stock.get_market_ohlcv_by_date.return_value = pd.DataFrame()
-
-    mock_pykrx = MagicMock()
-    mock_pykrx.stock = mock_pykrx_stock
-
-    with patch.dict("sys.modules", {"pykrx": mock_pykrx, "pykrx.stock": mock_pykrx_stock}):
+    with patch("FinanceDataReader.DataReader", return_value=pd.DataFrame()) as mock_fdr:
         result = virutal_trade_repository._fetch_close_prices(["005930"], "2025-01-01", "2025-01-01")
         assert "005930" not in result
-        mock_pykrx_stock.get_market_ohlcv_by_date.assert_called_once()
+        mock_fdr.assert_called_once()
 
 def test_fetch_close_prices_api_exception(virutal_trade_repository):
     """API 호출 중 예외 발생 시 처리"""
-    mock_pykrx_stock = MagicMock()
-    mock_pykrx_stock.get_market_ohlcv_by_date.side_effect = Exception("API Error")
-
-    mock_pykrx = MagicMock()
-    mock_pykrx.stock = mock_pykrx_stock
-
-    with patch.dict("sys.modules", {"pykrx": mock_pykrx, "pykrx.stock": mock_pykrx_stock}):
+    with patch("FinanceDataReader.DataReader", side_effect=Exception("API Error")):
         with patch("repositories.virtual_trade_repository.logger") as mock_logger:
             result = virutal_trade_repository._fetch_close_prices(["005930"], "2025-01-01", "2025-01-01")
             assert "005930" not in result
@@ -1196,17 +1175,17 @@ def test_find_prev_close_and_change_empty_edges(virutal_trade_repository):
     assert virutal_trade_repository.get_weekly_change("S1", 1.0, _data={"daily": {}}) == (None, None)
 
 
-def test_fetch_close_prices_uses_cache_and_handles_pykrx_error(virutal_trade_repository):
+def test_fetch_close_prices_uses_cache_and_handles_fdr_error(virutal_trade_repository):
     """종가 캐시가 충분하면 조회를 건너뛰고, 조회 실패 종목은 스킵한다."""
     cached = {"005930": {"2025-01-01": 70000, "2025-01-02": 71000, "2025-01-03": 72000}}
     with patch.object(virutal_trade_repository, "_load_price_cache", return_value=cached), \
-         patch("pykrx.stock.get_market_ohlcv_by_date") as mock_pykrx:
+         patch("FinanceDataReader.DataReader") as mock_fdr:
         result = virutal_trade_repository._fetch_close_prices(["005930"], "2025-01-01", "2025-01-03")
     assert result is cached
-    mock_pykrx.assert_not_called()
+    mock_fdr.assert_not_called()
 
     with patch.object(virutal_trade_repository, "_load_price_cache", return_value={}), \
-         patch("pykrx.stock.get_market_ohlcv_by_date", side_effect=RuntimeError("boom")), \
+         patch("FinanceDataReader.DataReader", side_effect=RuntimeError("boom")), \
          patch("repositories.virtual_trade_repository.logger") as mock_logger:
         assert virutal_trade_repository._fetch_close_prices(["000660"], "2025-01-01", "2025-01-03") == {}
     mock_logger.warning.assert_called_once()

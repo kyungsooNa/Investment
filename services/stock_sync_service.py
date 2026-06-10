@@ -4,7 +4,6 @@ import pandas as pd
 import json
 import os
 import sqlite3
-from pykrx import stock
 from datetime import datetime
 import FinanceDataReader as fdr
 

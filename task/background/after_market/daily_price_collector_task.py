@@ -8,7 +8,6 @@ import logging
 import time
 import pandas as pd
 import FinanceDataReader as fdr
-import pykrx
 
 from typing import Dict, List, Optional, TYPE_CHECKING
 from common.types import ErrorCode

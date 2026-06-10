@@ -862,14 +862,12 @@ class VirtualTradeRepository:
                 )
 
     def _fetch_close_prices(self, codes: list[str], start_date: str, end_date: str) -> dict:
-        """pykrx로 종가 조회 후 캐시에 병합. 캐시에 이미 있으면 API 스킵.
+        """FinanceDataReader로 종가 조회 후 캐시에 병합. 캐시에 이미 있으면 API 스킵.
         Returns: { code: { "YYYY-MM-DD": close_price, ... }, ... }
         """
-        from pykrx import stock as pykrx_stock
+        import FinanceDataReader as fdr
 
         cache = self._load_price_cache()
-        start_fmt = start_date.replace('-', '')
-        end_fmt = end_date.replace('-', '')
         fetched = 0
 
         for code in codes:
@@ -885,7 +883,7 @@ class VirtualTradeRepository:
                     continue
 
             try:
-                df = pykrx_stock.get_market_ohlcv_by_date(start_fmt, end_fmt, code)
+                df = fdr.DataReader(code, start_date, end_date)
                 if df.empty:
                     continue
 
@@ -894,11 +892,11 @@ class VirtualTradeRepository:
 
                 for date_idx, row in df.iterrows():
                     day_str = date_idx.strftime('%Y-%m-%d')
-                    cache[code][day_str] = int(row['종가'])
+                    cache[code][day_str] = int(row['Close'])
 
                 fetched += 1
             except Exception as e:
-                logger.warning(f"[가상매매] pykrx 종가 조회 실패 {code}: {e}")
+                logger.warning(f"[가상매매] FDR 종가 조회 실패 {code}: {e}")
                 continue
 
         if fetched > 0:
@@ -916,7 +914,7 @@ class VirtualTradeRepository:
         계산 방식 (web_api.py의 save_daily_snapshot과 동일):
         - 해당 날짜 기준 '활성 거래' = 매수일 <= day인 모든 거래
           - SOLD: sell_day <= day → 확정 return_rate 사용
-          - HOLD(당시 기준): 당일 종가 기준 수익률 (pykrx 조회, SQLite 캐시)
+          - HOLD(당시 기준): 당일 종가 기준 수익률 (FinanceDataReader 조회, SQLite 캐시)
         - 전략별 평균 return_rate 저장
         """
         df = self._read()
