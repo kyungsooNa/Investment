@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import time
 from typing import TYPE_CHECKING, Dict, List, Optional
@@ -94,6 +95,9 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         self._range_cache = _RangeCache()
         # P2 2-4: event-driven shadow 평가용 — scan() 직후 후보 종목 집합을 보존
         self._current_candidate_codes_set: set[str] = set()
+        # P2 2-4 진단: evaluate_single 게이트별 탈락/통과 카운터 (code -> Counter).
+        # scan() 종료 시 1회 요약 로깅, 날짜 변경 시 초기화.
+        self._shadow_eval_stats: Dict[str, Counter] = {}
 
     @property
     def name(self) -> str:
@@ -116,6 +120,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         # 날짜 변경 시 당일 매수 기록 초기화
         if self._last_date != today:
             self._bought_today.clear()
+            self._shadow_eval_stats.clear()
             self._last_date = today
 
         # 1) 진입 시간대 가드 (09:10 ~ 14:00)
@@ -271,6 +276,13 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 }, exc_info=True)
 
         self._logger.info({"event": "scan_finished", "signals_found": len(signals)})
+        # P2 2-4 진단: shadow fast-path 게이트 통계 요약 (틱 미수신 vs 게이트 탈락 구분용)
+        if self._shadow_eval_stats:
+            self._logger.info({
+                "event": "shadow_eval_stats",
+                "strategy_name": self.name,
+                "stats": {c: dict(ctr) for c, ctr in self._shadow_eval_stats.items()},
+            })
         return signals
 
     # ------------------------------------------------------------------
@@ -289,20 +301,34 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
 
         execution_strength / program_buy 필터는 shadow 한정으로 생략한다. 폴링
         경로가 동일 시점에 안전망으로 재검증한다.
+
+        진단(P2 2-4): 각 게이트 탈락/통과 사유를 `_shadow_eval_stats[code]` 에
+        누적한다. scan() 종료 시 `shadow_eval_stats` 로그로 요약하며, 다음 장에서
+        틱 미수신(evaluated≈0) vs 게이트 탈락(reject_*) 을 구분한다.
         """
-        if not code or code not in self._current_candidate_codes_set:
+        if not code:
+            return None
+
+        stats = self._shadow_eval_stats.setdefault(code, Counter())
+        stats["evaluated"] += 1
+
+        if code not in self._current_candidate_codes_set:
+            stats["reject_not_candidate"] += 1
             return None
 
         now = self._tm.get_current_kst_time()
         current_time = now.time()
         if not (_ENTRY_START <= current_time <= _ENTRY_CUTOFF):
+            stats["reject_outside_window"] += 1
             return None
 
         if code in self._bought_today:
+            stats["reject_already_bought"] += 1
             return None
 
         rng = self._range_cache.ranges.get(code, 0.0)
         if rng <= 0:
+            stats["reject_range_missing"] += 1
             return None
 
         try:
@@ -310,15 +336,22 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             price_raw = snapshot.get("price")
             current = int(price_raw) if price_raw not in (None, "", "0") else 0
         except (TypeError, ValueError):
+            stats["reject_bad_snapshot"] += 1
             return None
 
-        if open_price <= 0 or current <= 0:
+        if open_price <= 0:
+            stats["reject_invalid_open"] += 1
+            return None
+        if current <= 0:
+            stats["reject_invalid_price"] += 1
             return None
 
         target = open_price + rng * self._cfg.k_value
         if current < target:
+            stats["reject_below_target"] += 1
             return None
 
+        stats["signal"] += 1
         reason = (
             f"VBO돌파(shadow): Open({int(open_price):,})+Range({rng:.0f})×K{self._cfg.k_value}"
             f"=Target({round(target):,}) / 현재({current:,})"

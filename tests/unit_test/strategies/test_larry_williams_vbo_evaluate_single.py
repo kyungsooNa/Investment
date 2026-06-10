@@ -149,6 +149,55 @@ async def test_evaluate_single_handles_zero_open_price():
     assert sig is None
 
 
+@pytest.mark.asyncio
+async def test_evaluate_single_records_signal_stat():
+    s = _make_strategy(10, 0)
+    _seed(s, "005930", range_value=1000.0)
+
+    sig = await s.evaluate_single("005930", {"open": 70000.0, "price": "70600"})
+
+    assert sig is not None
+    assert s._shadow_eval_stats["005930"]["evaluated"] == 1
+    assert s._shadow_eval_stats["005930"]["signal"] == 1
+
+
+@pytest.mark.asyncio
+async def test_evaluate_single_records_invalid_open_stat():
+    """open 누락 시 reject_invalid_open 으로 집계 (023530 진단 가설)."""
+    s = _make_strategy(10, 0)
+    _seed(s, "005930", range_value=1000.0)
+
+    sig = await s.evaluate_single("005930", {"price": "70600"})  # open 없음
+
+    assert sig is None
+    stats = s._shadow_eval_stats["005930"]
+    assert stats["evaluated"] == 1
+    assert stats["reject_invalid_open"] == 1
+    assert stats["signal"] == 0
+
+
+@pytest.mark.asyncio
+async def test_evaluate_single_records_below_target_stat():
+    s = _make_strategy(10, 0)
+    _seed(s, "005930", range_value=1000.0)
+
+    sig = await s.evaluate_single("005930", {"open": 70000.0, "price": "70400"})  # target 70500
+
+    assert sig is None
+    assert s._shadow_eval_stats["005930"]["reject_below_target"] == 1
+
+
+@pytest.mark.asyncio
+async def test_evaluate_single_records_not_candidate_stat():
+    s = _make_strategy(10, 0)
+    _seed(s, "005930", range_value=1000.0)
+
+    sig = await s.evaluate_single("000660", {"open": 70000.0, "price": "75000"})
+
+    assert sig is None
+    assert s._shadow_eval_stats["000660"]["reject_not_candidate"] == 1
+
+
 def test_current_candidate_codes_reflects_scan_state():
     s = _make_strategy(10, 0)
     assert s.current_candidate_codes() == []
