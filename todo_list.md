@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-05-31 (성능 리뷰 follow-up 반영)
+최종 업데이트: 2026-06-12 (StrategyScheduler 코드 리뷰 S-1~S-10 추가)
 
 이 문서는 현재 남은 실행 항목만 추린 목록이다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거한다. 100% 종료된 섹션(`[x]` only, follow-up 없음)은 git history 로 추적하고 본 문서에서 삭제한다.
 
@@ -33,6 +33,7 @@
 - Pool B 튜닝: 후보 부족 재발 시 거래대금/정배열 조건 완화 검토.
 - 완료 기준의 전략 성과 `[~]`: `MomentumStrategy` 등 비활성 백테스트 경로의 표준 journal 통합 여부 결정.
 - 시스템 트레이더 관점 리뷰(R-1~R-6, 2026-06-08): 생존편향·전략 상관/regime 집중·총위험 미집계·갭 체결 등 백테스트 신뢰도/실전 리스크 신규 발견. 자금 확대 전 R-1~R-3 우선 해소 권장. (R-5 거래세율은 검토 결과 0.20% 정확 → 해소, 변경 없음. 하단 "시스템 트레이더 관점 리뷰" 섹션)
+- StrategyScheduler 코드 리뷰(S-1~S-10, 2026-06-12): `stop()` 강제청산 데드 패스, 매도 병렬 에러 처리 비대칭, 이력 트림 vs 복구 충돌 등 버그 + 수명/구조 개선. S-1/S-2/S-4~S-8 수정 완료(단위 5885 / 통합 240 passed). 남은 것: S-3 컷오프-청산 정책 결정, S-9 대형 리팩토링 별도 승인, S-10 CRITICAL 레벨 의도 확인. (하단 "StrategyScheduler 코드 리뷰" 섹션)
 
 ---
 
@@ -550,6 +551,73 @@
 
 - 코드 엔지니어링(리스크 게이트·사이징·reconcile·atomic write·체결 시뮬)은 개인 시스템치고 상당히 견고하다.
 - 그러나 "돈을 버는가"의 핵심 근거인 **백테스트 신뢰도는 R-1(생존편향)·R-4(갭 체결)로 과대평가 가능성**이 있고, **R-2(regime 집중)·R-3(총위험 미집계)는 실전 drawdown을 백테스트보다 키울 수 있다.** 자금 확대 전 R-1~R-3을 우선 해소하지 않으면 1-6/1-7 gate 통과도 "오염된 표본 위의 통과"가 될 위험이 있다.
+
+---
+
+## StrategyScheduler 코드 리뷰 (2026-06-12 추가, `scheduler/strategy_scheduler.py` 2,299줄 전수 분석)
+
+`scheduler/strategy_scheduler.py` 단일 파일 코드 리뷰 결과. 기존 todo 항목(P2 2-4 shadow, P3 3-6 metric 등)과 중복되지 않는 신규 발견만 추린다. 우선순위는 **실전 청산 누락 방지 > 에러 가시성 > 수명/구조** 순. 작업 브랜치: `fix/strategy-scheduler-audit`.
+
+### S-1. `stop()` 강제청산 데드 패스 [버그, 최우선]
+
+- 증거: `stop()`이 모든 전략의 `cfg.enabled = False`를 먼저 설정한 뒤 `stop_strategy(name, perform_force_exit=True)`를 호출하는데, `stop_strategy`의 청산 조건은 `perform_force_exit and cfg.enabled and cfg.force_exit_on_close`라 **항상 거짓**. 주석 의도("save_state=False → 청산 수행")와 달리 `stop()` 경로의 강제청산은 한 번도 실행되지 않는다. 기존 테스트는 `stop_strategy`를 mock으로 대체해 호출 인자만 검증하므로 미탐지.
+- 왜 위험한가: 당일청산 전략(`force_exit_on_close=True`) 보유 중 스케줄러를 수동 정지하면 청산 없이 포지션이 방치되어 오버나이트 갭 리스크(R-4)에 노출된다.
+- [x] 재현 테스트 작성: `stop(save_state=False)` 시 `_force_liquidate_strategy` 호출 0회로 데드 패스 재현 확인 (`test_strategy_scheduler_audit_fixes.py::test_stop_performs_force_exit_for_enabled_force_exit_strategy`).
+- [x] 수정 (2026-06-12): `stop()`의 enabled 일괄 비활성화 선행 루프 제거. 비활성화는 `stop_strategy()`가 전략별 청산 판단 후 수행 — 데드 패스 원인을 주석으로 명시.
+- [x] 회귀 확인: `stop(save_state=True)`(재시작 경로)는 여전히 청산하지 않음 (`test_stop_with_save_state_skips_force_exit`).
+
+### S-2. `scan()` 반환값 None 가드 불일치 [버그]
+
+- 증거: `_run_strategy`에서 stamping 루프는 `buy_signals or []`로 방어하지만, `scan_metrics`의 `len(buy_signals)`와 pyramiding 분기 리스트 컴프리헨션은 `buy_signals`를 직접 사용. 전략이 None을 반환하면 TypeError.
+- [x] 수정 (2026-06-12): scan/check_exits 직후 `list(signals or [])` 1회 정규화. 재현 테스트로 `len(None)` TypeError 확인 후 수정 (`test_run_strategy_handles_none_scan_result`).
+
+### S-3. 주문 컷오프가 check_exits까지 차단 [설계 확인 필요 — 정책 결정 대기]
+
+- 증거: 메인 루프의 컷오프(`ORDER_CUTOFF_MINUTES_BEFORE_CLOSE=20`) 도달 시 `continue`로 전략 실행 전체를 건너뛰어, **마지막 20분 동안 손절 체크가 돌지 않는다.** force_exit 전략은 마감 30분 전에 청산되어 무관하지만, 오버나이트 보유 전략은 종가 급락에 무방비.
+- 결정 필요: (a) 의도된 설계라면 상수 주석에 명시, (b) 아니라면 컷오프 이후에도 check_exits 경로만 허용하도록 분리. 신규 진입 차단은 유지.
+- [ ] 정책 결정 후 반영 (코드 수정 보류 — 마감 직전 매도 주문 허용은 체결 정책과 얽혀 단독 판단 부적절).
+
+### S-4. 매도/매수 병렬 신호 실행의 에러 처리 비대칭 [버그]
+
+- 증거: 매도는 `as_completed` + 직접 await라 한 신호 예외 시 나머지 await가 중단되고(태스크 방치), 매수는 `gather(return_exceptions=True)` 결과를 검사하지 않아 예외를 조용히 삼킨다.
+- 왜 위험한가: 매도 실패는 포지션 잔존 = 실전 손실 경로인데 로그조차 안 남을 수 있다.
+- [x] 수정 (2026-06-12): `_execute_signals_concurrently()` helper로 매도/매수 통일 — `gather(return_exceptions=True)` + 신호별 예외 ERROR 로그. 매도 예외 시에도 scan 단계까지 진행 (`test_sell_signal_exception_does_not_abort_run_strategy`, `test_buy_signal_exception_is_logged`).
+
+### S-5. `MAX_HISTORY=200` 트림과 이력 기반 복구 로직 충돌 [버그]
+
+- 증거: `_get_force_liquidation_holdings` / `_get_signal_net_qty` / `_has_open_position_evidence`는 `_signal_history`에 당일 전체 이력이 있다고 가정하지만, 메모리 이력은 200건으로 잘린다. 신호가 많은 날 force-exit 복구가 보유 종목을 놓칠 수 있다.
+- [x] 수정 (2026-06-12): `_record_signal()` helper로 기록 경로 단일화(메인 + sizing-skip 중복 제거 겸) — 트림 시 당일 레코드 보존, 과거 날짜만 잘림 (`test_history_trim_preserves_today_records`, `test_history_trim_drops_past_date_records_first`).
+- [x] `trace_id` 확인 결과 (2026-06-12): store `signal_history` 테이블에 trace_id 컬럼 자체가 없어 복원 불가. 스키마 마이그레이션이 필요해 별도 재승격 대상 (S-9와 함께 검토).
+
+### S-6. 날짜 키 set 무한 증가 [수명]
+
+- 증거: `_strategy_failure_alert_keys`(날짜 포함 튜플 키), `_reconciled_dates`(YYYY-MM-DD)는 과거 날짜 항목을 비우는 곳이 없어 장기 구동 시 누적된다.
+- [x] 수정 (2026-06-12): `_sync_force_exit_done_date()`에서 날짜 전환 시 `_strategy_failure_alert_keys`(키[0]≠당일 YYYYMMDD)와 `_reconciled_dates`(당일 외) purge (`test_date_rollover_purges_stale_date_keys`).
+
+### S-7. `stop_strategy`가 event router 구독을 해제하지 않음 [수명]
+
+- 증거: `stop_strategy`는 가격 구독 카테고리만 제거하고 `_event_router` 구독과 `_event_shadow_subscriptions`/`_exit_shadow_subscriptions` 항목은 남긴다. 비활성 전략의 shadow evaluator가 계속 틱을 받아 평가를 수행한다.
+- [x] 수정 (2026-06-12): `stop_strategy()`에서 entry(`name`)/exit(`name__exit`) router 구독 해제 + 추적 dict pop. 기존 가격 구독 카테고리 제거와 동일 위치 (`test_stop_strategy_unsubscribes_event_shadow_router`).
+
+### S-8. 중복 블록 추출 [구조]
+
+- 증거: ① 신호 stamping(created_at/signal_id/strategy_id/config_hash)이 exit/scan 경로에 ~20줄씩 복제. ② sizing-skip 경로가 메인 경로의 "record 생성→trim→DB→SSE→알림" 시퀀스를 통째로 중복.
+- [x] 수정 (2026-06-12): `_stamp_signals(signals, strategy)` 추출(exit/scan 공통), record/notify 중복은 S-5의 `_record_signal()`이 흡수. 동작 동등성은 기존 `test_strategy_scheduler_signal_stamping.py` 등 green 유지로 검증.
+
+### S-9. 대형 구조 개선 [보류 — 별도 승인 후 진행]
+
+- god class 분리(스케줄링/신호 실행/shadow 관리/강제청산 복구/대사/SSE 8책임), `_get_strategy_holdings`의 getter 부수효과(prune+persist가 `get_status()` 웹 조회에서도 실행), 전략 private 속성 침투(`_logger`/`_position_state`/`_save_state`/`_bought_today`/`_universe` → LiveStrategy 인터페이스 승격), 동기 DB/CSV 호출의 이벤트 루프 블로킹.
+- 보류 사유: 실전 진입/청산 경로 전반을 건드리는 대형 리팩토링이라 외과수술적 변경 원칙(P3 3-4 보류와 동일 기준)에 따라 단독 PR + 별도 승인으로 진행한다. `_prune_disabled_force_exit_state`/`_prune_stale_position_state` 중복 통합도 이때 함께.
+
+### S-10. 경미 [관찰/소규모]
+
+- [ ] 주문 *성공* 알림에 `NotificationLevel.CRITICAL` 사용 — 의도(성공도 강제 push) 여부 확인 후 주석 명시 또는 레벨 조정. (사용자 확인 대기)
+- [x] 수정 (2026-06-12): `_execute_signal_inner` BUY 분기 `else:` 직후 주석 들여쓰기 정렬, `get_signal_history` 타입 힌트 `Optional[str]`.
+
+진행 로그:
+
+- 2026-06-12: 섹션 작성. S-1부터 TDD로 착수.
+- 2026-06-12: S-1/S-2/S-4/S-5/S-6/S-7/S-8/S-10(일부) 수정 완료. 신규 테스트 9건(`test_strategy_scheduler_audit_fixes.py`) — 수정 전 7건이 의도된 사유로 실패함을 확인 후 구현. 단위 5885 / 통합 240 passed. 남은 것: S-3(정책), S-9(별도 승인), S-10 CRITICAL 레벨(사용자 확인).
 
 ---
 
