@@ -501,7 +501,7 @@
 - [~] regime별(상승/하락/횡보) 전략군 성과를 분해해 "전 전략이 같은 regime에서만 작동"하는지 정량 확인한다. (`market_regime_service` 활용)
   - 적용 완료(journal-time 캡처, 2026-06-09): 사용자 결정에 따라 매수 시점 `market_regime`({kospi,kosdaq,stock_market})을 journal에 persist. 조사 결과 계산(`regime_performance_service.compute_performance_by_regime`)과 전략별 웹 엔드포인트(`GET /strategies/performance-by-regime?strategy=`)는 **이미 존재**했으나 trade에 `market_regime`을 채우는 곳이 없어 dark 상태였다. (1) `VirtualTradeRepository`에 `market_regime` JSON 컬럼+migration+log_buy 파라미터+읽기 dict 역직렬화(1-6 `required_data` 패턴), (2) `StrategyScheduler._market_regime_log_kwargs`가 scan-warm된 cached snapshot+`is_kosdaq`로 dict 구성→매수 log에 stamp, (3) `OneilUniverseService.market_regime_service` property로 공유 instance를 scheduler에 주입(`strategy_factory`). 이제 기존 엔드포인트가 populated 버킷을 받는다. 테스트: repo 6종 + scheduler 5종. 단위 5821 / 통합 240 passed.
   - 특성(prospective): journal-time 캡처라 **배선 후 매수분부터** regime이 채워진다. 과거 trade 소급 분류는 별도(retroactive) 작업.
-  - 후속(선택): 일일 리포트에 per-strategy regime 분해 섹션 추가(상관/DSR 섹션과 동일 패턴). 현재는 웹 엔드포인트로만 노출.
+  - 적용 완료(일일 리포트 regime 분해 섹션, 2026-06-11): 웹 엔드포인트로만 노출되던 per-strategy regime 성과를 일일 HTML 리포트에 노출. 순수 함수 `regime_performance_service.compute_strategy_regime_decomposition`(기존 `compute_performance_by_regime`를 전략별로 묶어 dominant primary 버킷 + regime 집중도 산출, SURGE overlay 는 by_bucket 노출하되 primary total/dominant 미합산) + `StrategyLogReportService._build_regime_decomposition_section`. live journal(`get_standard_journal_records`)로 전략별 주력 국면·버킷별 승률/평균순익 + "N/M 전략이 같은 국면에 몰림" 집중도(≥70%면 ⚠️ 단일 regime 집중)를 노출. regime 채워진 SOLD 전략 <2개면 생략. active/inactive 양쪽 배선(상관/DSR/오버나이트 섹션과 동일 패턴). 테스트: `test_regime_performance_service.py` 5종(분해/집중도/HOLD·regime 누락 제외/SURGE 미합산) + `test_strategy_log_report_regime.py` 4종. 단위 5873 / 통합 240 passed.
 - [ ] 자금 확대 전 비상관 엣지(역추세/숏 가능 시점/저변동 등) 1개 이상 도입 여부를 정책 결정한다.
 - 관련: `services/market_regime_service.py`, `services/strategy_log_report_service.py`, P1 1-1 상관 follow-up과 통합
 
@@ -510,7 +510,10 @@
 - 증거: `PositionSizingService`는 per-trade `risk_qty = total_equity × per_trade_risk_pct / 주당리스크`로 종목별 사이징하지만(L170), **전 전략·전 포지션 합산 open-risk(heat) 한도가 없다**. RiskGate의 `max_total_exposure_pct`는 notional(노출금액) cap이지 risk cap이 아니다(L504-505, positions 합산은 금액 기준).
 - 왜 위험한가: R-2의 고상관 7전략이 각자 per-trade risk를 소진하면, 상관 drawdown 시 **합산 open-risk가 per-trade의 배수**로 누적된다. 개별 종목은 "1% 리스크"여도 동시 10포지션이 같이 무너지면 포트폴리오는 10% 리스크. notional cap만으로는 이 위험을 막지 못한다.
 - [x] 전 포지션 합산 open-risk(Σ 진입가–stop 거리 × 수량 / total_equity) 한도를 RiskGate 또는 PositionSizing에 도입하고, 초과 시 신규 진입 차단/축소한다. (2026-06-09) `PositionSizingService`에 도입(수량 축소 우선, 소진 시 차단). 스냅샷에 종목별 stop이 없어 기존 보유 open-risk를 `Σ(평가금 × |default_stop_loss_pct|)` proxy로 추정(모델 A), 신규 후보는 정확한 `per_share_risk×qty`. reservation overlay 활성 시 같은 사이클 예약도 합산. `_calc_portfolio_heat_qty`가 `heat_limited` 후보로 기존 `min()` 사이징에 합류, budget 소진 시 reason `portfolio_heat_exhausted`. profile별 한도 `max_portfolio_open_risk_pct`(canary 1% / real_limited 3% / paper·real_full 6%, 0이면 비활성). 테스트: `test_position_sizing_service.py` 5종(scale-down/exhausted/disabled/reservation 합산/profile 분기). 단위 5839 / 통합 240 passed.
-- [ ] 상관 가중 heat(고상관 클러스터는 위험 합산)을 검토한다. (R-2 상관행렬과 연계)
+- [x] 상관 가중 heat(고상관 클러스터는 위험 합산)을 검토한다. (R-2 상관행렬과 연계) → **검토 완료, 보류 (2026-06-10)**.
+  - 검토 결론: 현재 `_calc_portfolio_heat_qty`의 기존 보유 open-risk 추정은 `Σ(평가금 × default_stop)` — **분산 크레딧 없이 전 포지션을 완전 상관(worst-case)으로 단순 합산**한다. 그 위에 상관 가중을 얹으면 (1) 고상관 클러스터는 이미 full-sum이라 no-op, (2) 저상관 포지션은 분산 크레딧을 줘 한도를 **완화(loosening)** 하는 방향 → 자본 보호를 조이는 작업이 아니다.
+  - 추가 비용: `PositionSizingService`에 상관 provider + 포지션→전략 귀속(journal `get_holds_by_strategy`) 두 의존성 신규 주입 필요. 상관행렬은 SOLD 5일 overlap이 있어야 산출되므로 canary 초기(자본 적을 때)엔 dark. 비용 대비 보호 이득 없음.
+  - 재승격 조건: flat full-sum 모델을 분산 크레딧 모델로 바꾸기로 정책 결정할 때(=한도를 의도적으로 완화할 때) 함께 설계한다. 그 전까지는 보수적 flat sum 유지.
 - 관련: `services/position_sizing_service.py`, `services/risk_gate_service.py`
 
 ### R-4. 오버나이트 갭 + 스톱 gap-through 가정 [중대]
@@ -522,8 +525,11 @@
   - 기존 버그 해소: 손절 청산이 `OrderType.LIMIT`로 모델링돼 갭다운 시 `bar.high < stop`이면 **미체결(손실 누락)**, `bar.high >= stop`이면 **stop 가격 체결(과소 손실)** 되던 두 경로 모두 차단.
   - 배선: `BacktestPeriodRunner._signal_to_order`가 SELL 청산 reason에 전략 공통 토큰 `손절`/`스탑`이 있으면 STOP으로 분류(`_is_stop_exit_reason`). 익절/일반 SELL은 LIMIT 유지.
   - 테스트: `test_backtest_execution_simulator.py`(stop 매도 갭다운 시가 체결/무갭 stop 체결/market 슬리피지/매수 stop 갭업 4종), `test_backtest_period_runner.py::test_period_runner_stop_loss_exit_fills_at_gap_open`(손절 청산일 갭다운→시가 체결, 미체결 아님). 단위 5846 passed.
-- [ ] 전략별 오버나이트 노출 한도/익일 갭 리스크 지표를 리포트에 노출할지 검토한다.
-- 관련: `services/backtest_execution_simulator.py`, `scheduler/strategy_scheduler.py`, P1 1-5와 통합
+- [x] 전략별 오버나이트 노출 한도/익일 갭 리스크 지표를 리포트에 노출할지 검토한다. → **노출 구현 완료 (2026-06-10)**.
+  - 적용 완료: 순수 함수 `services/overnight_exposure_service.py::compute_overnight_exposure_summary`(strategy_correlation_service 패턴) + `StrategyLogReportService._build_overnight_exposure_section`. live journal 로 (1) **현재 노출**(status==HOLD, 장 마감 후 남은 포지션=익일 갭 노출) 전략별 종목 수·보유 경과일, (2) **실현 멀티세션 보유**(SOLD 중 매수일≠매도일) 전략별 건수·평균보유일·평균/최저 순익(사후 downside proxy)을 일일 HTML 리포트에 노출. 당일 청산(intraday)은 제외, 노출 0이면 섹션 생략. active/inactive 양쪽 조립 경로 배선(상관/DSR 섹션과 동일 패턴).
+  - 범위 밖(명시): **실제 익일 시가 갭(전일 종가→당일 시가)의 정량 측정은 종목별 OHLCV 조인이 필요해 forward gap 은 미구현**. 본 섹션은 노출 *규모*와 실현 다운사이드만 보여준다. forward gap 측정은 별도(미래) 작업.
+  - 테스트: `test_overnight_exposure_service.py` 7종(open/realized/intraday 제외/정렬/빈입력/미파싱일), `test_strategy_log_report_overnight.py` 4종(섹션 노출/생략 조건). 단위+통합 6104 passed.
+- 관련: `services/overnight_exposure_service.py`, `services/strategy_log_report_service.py`, `services/backtest_execution_simulator.py`, `scheduler/strategy_scheduler.py`, P1 1-5와 통합
 
 ### R-5. 증권거래세율 — 검토 결과 0.20% 현행 정확값, 변경 없음 [해소]
 
