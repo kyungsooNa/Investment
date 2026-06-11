@@ -36,6 +36,7 @@ _ENTRY_CUTOFF = time(14, 0)
 _EOD_FLATTEN = time(15, 20)
 
 _RANGE_CACHE_CONCURRENCY = 10
+_EXIT_CONCURRENCY = 15
 
 
 @dataclass
@@ -416,83 +417,100 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
     # ------------------------------------------------------------------
 
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
-        signals: List[TradeSignal] = []
         now = self._tm.get_current_kst_time()
         today = now.strftime("%Y%m%d")
         is_eod = now.time() >= _EOD_FLATTEN
         self._logger.info({"event": "check_exits_started", "holdings_count": len(holdings), "is_eod": is_eod})
 
-        for hold in holdings:
-            code = str(hold.get("code", ""))
-            buy_price_raw = hold.get("buy_price", 0)
-            buy_date_raw = hold.get("buy_date", "")
-            buy_date = normalize_yyyymmdd(buy_date_raw)
-            stock_name = hold.get("name", code)
+        results = await bounded_gather(
+            [self._check_single_exit(hold, today, is_eod) for hold in holdings],
+            limit=_EXIT_CONCURRENCY,
+            return_exceptions=True,
+        )
 
-            if not code or not buy_price_raw:
-                continue
-
-            buy_price = float(buy_price_raw)
-            log_data = {"code": code, "name": stock_name, "buy_price": buy_price}
-
-            try:
-                # 오버나이트 방어: 매수일 ≠ 오늘이면 즉시 시장가 청산
-                if buy_date and buy_date != today:
-                    qty = int(hold.get("qty", 1))
-                    reason = f"오버나이트방어: 매수일({buy_date}) ≠ 오늘({today})"
-                    signals.append(TradeSignal(
-                        code=code, name=stock_name, action="SELL", price=0, qty=qty,
-                        reason=reason, strategy_name=self.name,
-                    ))
-                    self._logger.info({"event": "sell_signal_generated", "strategy_name": self.name,
-                                       "code": code, "reason": reason})
-                    continue
-
-                price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
-                if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
-                    self._logger.warning({"event": "check_exits_price_fail", **log_data})
-                    continue
-
-                data = price_resp.data or {}
-                current = int(data.get("price", "0") or "0")
-                if current <= 0:
-                    continue
-
-                # P0 0-9: 비용 반영 net 수익률 — backtest 와 동일 기준으로 stop trigger.
-                pnl_pct = TransactionCostUtils.net_return_pct(buy_price, current)
-                log_data.update({"current": current, "pnl_pct": round(pnl_pct, 2), "pnl_basis": "net"})
-
-                reason = ""
-                should_sell = False
-
-                # 칼손절: 진입가 대비 -3% (net, P0 0-9)
-                if pnl_pct <= self._cfg.stop_loss_pct:
-                    reason = f"칼손절(net): 매수가대비 {pnl_pct:.1f}%"
-                    should_sell = True
-
-                # EOD 강제청산: 15:20
-                if not should_sell and is_eod:
-                    reason = f"EOD청산: {_EOD_FLATTEN.strftime('%H:%M')} 전량 시장가"
-                    should_sell = True
-
-                if should_sell:
-                    qty = int(hold.get("qty", 1))
-                    signals.append(TradeSignal(
-                        code=code, name=stock_name, action="SELL", price=current, qty=qty,
-                        reason=reason, strategy_name=self.name,
-                    ))
-                    self._logger.info({"event": "sell_signal_generated", "strategy_name": self.name,
-                                       "code": code, "reason": reason, "data": log_data})
-                else:
-                    self._logger.info({"event": "hold_checked", "code": code,
-                                       "reason": "청산 조건 미충족", "data": log_data})
-
-            except Exception as e:
+        signals: List[TradeSignal] = []
+        for result in results:
+            if isinstance(result, Exception):
                 self._logger.error({"event": "check_exits_error", "strategy_name": self.name,
-                                    "code": code, "error": str(e)}, exc_info=True)
+                                    "error": str(result)}, exc_info=True)
+                continue
+            if result is not None:
+                signals.append(result)
 
         self._logger.info({"event": "check_exits_finished", "signals_found": len(signals)})
         return signals
+
+    async def _check_single_exit(self, hold: dict, today: str, is_eod: bool) -> Optional[TradeSignal]:
+        code = str(hold.get("code", ""))
+        buy_price_raw = hold.get("buy_price", 0)
+        buy_date_raw = hold.get("buy_date", "")
+        buy_date = normalize_yyyymmdd(buy_date_raw)
+        stock_name = hold.get("name", code)
+
+        if not code or not buy_price_raw:
+            return None
+
+        buy_price = float(buy_price_raw)
+        log_data = {"code": code, "name": stock_name, "buy_price": buy_price}
+
+        try:
+            # 오버나이트 방어: 매수일 ≠ 오늘이면 즉시 시장가 청산
+            if buy_date and buy_date != today:
+                qty = int(hold.get("qty", 1))
+                reason = f"오버나이트방어: 매수일({buy_date}) ≠ 오늘({today})"
+                signal = TradeSignal(
+                    code=code, name=stock_name, action="SELL", price=0, qty=qty,
+                    reason=reason, strategy_name=self.name,
+                )
+                self._logger.info({"event": "sell_signal_generated", "strategy_name": self.name,
+                                   "code": code, "reason": reason})
+                return signal
+
+            price_resp = await self._sqs.handle_get_current_stock_price(code, caller=self.name)
+            if not price_resp or price_resp.rt_cd != ErrorCode.SUCCESS.value:
+                self._logger.warning({"event": "check_exits_price_fail", **log_data})
+                return None
+
+            data = price_resp.data or {}
+            current = int(data.get("price", "0") or "0")
+            if current <= 0:
+                return None
+
+            # P0 0-9: 비용 반영 net 수익률 — backtest 와 동일 기준으로 stop trigger.
+            pnl_pct = TransactionCostUtils.net_return_pct(buy_price, current)
+            log_data.update({"current": current, "pnl_pct": round(pnl_pct, 2), "pnl_basis": "net"})
+
+            reason = ""
+            should_sell = False
+
+            # 칼손절: 진입가 대비 -3% (net, P0 0-9)
+            if pnl_pct <= self._cfg.stop_loss_pct:
+                reason = f"칼손절(net): 매수가대비 {pnl_pct:.1f}%"
+                should_sell = True
+
+            # EOD 강제청산: 15:20
+            if not should_sell and is_eod:
+                reason = f"EOD청산: {_EOD_FLATTEN.strftime('%H:%M')} 전량 시장가"
+                should_sell = True
+
+            if should_sell:
+                qty = int(hold.get("qty", 1))
+                signal = TradeSignal(
+                    code=code, name=stock_name, action="SELL", price=current, qty=qty,
+                    reason=reason, strategy_name=self.name,
+                )
+                self._logger.info({"event": "sell_signal_generated", "strategy_name": self.name,
+                                   "code": code, "reason": reason, "data": log_data})
+                return signal
+
+            self._logger.info({"event": "hold_checked", "code": code,
+                               "reason": "청산 조건 미충족", "data": log_data})
+            return None
+
+        except Exception as e:
+            self._logger.error({"event": "check_exits_error", "strategy_name": self.name,
+                                "code": code, "error": str(e)}, exc_info=True)
+            return None
 
     # ------------------------------------------------------------------
     # 내부 헬퍼
