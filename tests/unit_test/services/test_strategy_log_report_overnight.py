@@ -53,6 +53,23 @@ def test_section_reports_open_holds_and_realized_overnight():
     assert "-4.00%" in section
 
 
+def test_section_normalizes_strategy_aliases_and_excludes_manual():
+    vts = MagicMock()
+    vts.get_standard_journal_records.return_value = [
+        _sold("래리윌리엄스VBO", "000001", "2026-06-01 10:00:00", "2026-06-02 14:00:00", 1.0),
+        _sold("larry_williams_vbo", "000002", "2026-06-03 10:00:00", "2026-06-04 14:00:00", 2.0),
+        _sold("수동매매", "000003", "2026-06-03 10:00:00", "2026-06-04 14:00:00", 20.0),
+    ]
+    svc = StrategyLogReportService(log_dir=".", virtual_trade_service=vts)
+    section = svc._build_overnight_exposure_section("20260610")
+
+    assert section is not None
+    assert "래리윌리엄스VBO: 2건" in section
+    assert "larry_williams_vbo" not in section
+    assert "수동매매" not in section
+    assert "실현 멀티세션 보유: 2건" in section
+
+
 def test_section_none_without_service():
     svc = StrategyLogReportService(log_dir=".")
     assert svc._build_overnight_exposure_section("20260610") is None

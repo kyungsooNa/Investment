@@ -9,9 +9,9 @@ import os
 import re
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
-from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER
+from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER, StrategyStatus
 from common.trade_journal_comparison import compare_trade_journals
 from services.multiple_testing_bias_service import compute_multiple_testing_bias_summary
 from services.strategy_correlation_service import compute_strategy_correlation_summary
@@ -132,6 +132,12 @@ for _alias, _canonical in _STRATEGY_ALIAS_TO_CANONICAL.items():
     _STRATEGY_CANONICAL_BY_KEY[_strategy_alias_key(_alias)] = _canonical
     _STRATEGY_CANONICAL_BY_KEY[_strategy_alias_key(_canonical)] = _canonical
 
+_NON_STRATEGY_JOURNAL_KEYS = {
+    _strategy_alias_key("BUY실패"),
+    _strategy_alias_key("SELL실패"),
+    _strategy_alias_key("수동매매"),
+}
+
 
 def _strategy_report_key(value: Any) -> str:
     raw = str(value or "").strip()
@@ -144,6 +150,37 @@ def _strategy_report_key(value: Any) -> str:
         )
         or raw
     )
+
+
+def _strategy_metric_key(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if _strategy_alias_key(raw) in _NON_STRATEGY_JOURNAL_KEYS:
+        return ""
+
+    strategy_id = STRATEGY_IDENTITY_RESOLVER.to_id(raw)
+    if STRATEGY_IDENTITY_RESOLVER.is_known_id(strategy_id):
+        if STRATEGY_IDENTITY_RESOLVER.get_status(strategy_id) != StrategyStatus.ACTIVE:
+            return ""
+        return strategy_id
+    return raw
+
+
+def _normalize_strategy_metric_records(records: List[Mapping[str, Any]]) -> List[dict]:
+    normalized: List[dict] = []
+    for record in records:
+        strategy = _strategy_metric_key(record.get("strategy"))
+        if not strategy:
+            continue
+        item = dict(record)
+        item["strategy"] = strategy
+        normalized.append(item)
+    return normalized
+
+
+def _strategy_display_label(value: Any) -> str:
+    return STRATEGY_IDENTITY_RESOLVER.to_display(str(value or ""))
 
 
 def _is_data_error_reason(reason: str) -> bool:
@@ -768,6 +805,10 @@ class StrategyLogReportService:
             backtest_records = self._backtest_journal_provider(target_date) or []
         except Exception:
             return None
+        live_records = _normalize_strategy_metric_records(live_records)
+        backtest_records = _normalize_strategy_metric_records(backtest_records)
+        if not live_records and not backtest_records:
+            return None
 
         divergence_by_strategy: Dict[str, dict] = {}
         try:
@@ -797,7 +838,7 @@ class StrategyLogReportService:
 
         lines = ["<b>📉 전략별 성과 저하 후보</b>"]
         for item in candidates[:5]:
-            strategy = _esc(item.get("strategy") or "")
+            strategy = _esc(_strategy_display_label(item.get("strategy")))
             status = _esc(item.get("status") or "")
             live = item.get("live_metrics") or {}
             reasons = ", ".join(str(reason) for reason in item.get("reasons") or [])
@@ -846,8 +887,11 @@ class StrategyLogReportService:
 
         try:
             cfg = self._strategy_degradation_cfg()
+            metric_records = _normalize_strategy_metric_records(live_records)
+            if not metric_records:
+                return None
             metrics_by_strategy = compute_strategy_window_metrics(
-                live_records,
+                metric_records,
                 window_size=max(int(cfg.window_size or 20), 1),
                 capital_base_won=cfg.capital_base_won,
             )
@@ -889,10 +933,11 @@ class StrategyLogReportService:
             return None
 
         best = summary.get("best_strategy")
+        best_label = _strategy_display_label(best) if best else ""
         header = [
             "<b>🧪 다중검정 / Deflated Sharpe</b>",
-            f"• 전략 {int(summary.get('trial_count') or 0)}개"
-            + (f", 최고 {_esc(best)}" if best else ""),
+            f"• 성과 표본 전략 {int(summary.get('trial_count') or 0)}개"
+            + (f", 최고 {_esc(best_label)}" if best_label else ""),
         ]
         return "\n".join(header + detail_lines + ([warn_line] if warn_line else []))
 
@@ -911,6 +956,9 @@ class StrategyLogReportService:
             return None
         if not live_records:
             return None
+        live_records = _normalize_strategy_metric_records(live_records)
+        if not live_records:
+            return None
 
         try:
             summary = compute_strategy_correlation_summary(live_records)
@@ -927,7 +975,8 @@ class StrategyLogReportService:
         mx = summary.get("max_positive_pair") or {}
         if mx:
             lines.append(
-                f"• 최고 상관: {_esc(mx.get('left'))}↔{_esc(mx.get('right'))} "
+                f"• 최고 상관: {_esc(_strategy_display_label(mx.get('left')))}"
+                f"↔{_esc(_strategy_display_label(mx.get('right')))} "
                 f"{float(mx.get('correlation') or 0):+.2f} (overlap {int(mx.get('overlap') or 0)})"
             )
 
@@ -937,7 +986,8 @@ class StrategyLogReportService:
             lines.append(f"  - ⚠️ 고상관(≥{threshold:.2f}) {len(high)}쌍:")
             for pair in high[:3]:
                 lines.append(
-                    f"    · {_esc(pair.get('left'))}↔{_esc(pair.get('right'))} "
+                    f"    · {_esc(_strategy_display_label(pair.get('left')))}"
+                    f"↔{_esc(_strategy_display_label(pair.get('right')))} "
                     f"{float(pair.get('correlation') or 0):+.2f}"
                 )
             if len(high) > 3:
@@ -962,6 +1012,9 @@ class StrategyLogReportService:
             return None
         if not live_records:
             return None
+        live_records = _normalize_strategy_metric_records(live_records)
+        if not live_records:
+            return None
 
         try:
             summary = compute_overnight_exposure_summary(live_records, today=target_date)
@@ -980,7 +1033,8 @@ class StrategyLogReportService:
             lines.append(f"• 현재 보유(익일 갭 노출): {open_total}종목")
             for row in (open_holds.get("by_strategy") or [])[:5]:
                 lines.append(
-                    f"  - {_esc(row.get('strategy'))}: {int(row.get('count') or 0)}종목 "
+                    f"  - {_esc(_strategy_display_label(row.get('strategy')))}: "
+                    f"{int(row.get('count') or 0)}종목 "
                     f"(최장 {int(row.get('max_holding_days') or 0)}일, "
                     f"평균 {float(row.get('avg_holding_days') or 0):.1f}일)"
                 )
@@ -988,7 +1042,8 @@ class StrategyLogReportService:
             lines.append(f"• 실현 멀티세션 보유: {realized_total}건")
             for row in (realized.get("by_strategy") or [])[:5]:
                 lines.append(
-                    f"  - {_esc(row.get('strategy'))}: {int(row.get('count') or 0)}건 "
+                    f"  - {_esc(_strategy_display_label(row.get('strategy')))}: "
+                    f"{int(row.get('count') or 0)}건 "
                     f"(평균보유 {float(row.get('avg_holding_days') or 0):.1f}일, "
                     f"평균순익 {float(row.get('avg_net_return') or 0):+.2f}%, "
                     f"최저 {float(row.get('worst_net_return') or 0):+.2f}%)"
@@ -1011,6 +1066,9 @@ class StrategyLogReportService:
             live_records = self._virtual_trade_service.get_standard_journal_records() or []
         except Exception:
             return None
+        if not live_records:
+            return None
+        live_records = _normalize_strategy_metric_records(live_records)
         if not live_records:
             return None
 
@@ -1043,7 +1101,7 @@ class StrategyLogReportService:
             dominant = row.get("dominant_bucket")
             dom_label = _REGIME_BUCKET_LABELS.get(dominant, dominant) if dominant else "—"
             lines.append(
-                f"• {_esc(row.get('strategy'))}: 주력 {dom_label} "
+                f"• {_esc(_strategy_display_label(row.get('strategy')))}: 주력 {dom_label} "
                 f"(SOLD {int(row.get('trade_count') or 0)}건)"
             )
             by_bucket = row.get("by_bucket") or {}
