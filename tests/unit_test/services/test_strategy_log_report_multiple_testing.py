@@ -51,6 +51,33 @@ def test_build_multiple_testing_section_reports_deflated_sharpe():
     assert "S1" in section
 
 
+def test_build_multiple_testing_section_normalizes_strategy_aliases_and_excludes_manual():
+    vts = MagicMock()
+    records = []
+    series = {
+        "래리윌리엄스VBO": ([3.0, 4.0], [300.0, 400.0]),
+        "larry_williams_vbo": ([5.0, 6.0], [500.0, 600.0]),
+        "RSI2눌림목": ([1.0, 2.0], [100.0, 200.0]),
+        "rsi2_pullback": ([2.0, 3.0], [200.0, 300.0]),
+        "오닐스퀴즈돌파": ([0.5, 1.0], [50.0, 100.0]),
+        "오닐PP/BGU": ([0.4, 0.8], [40.0, 80.0]),
+        "LarryWilliamsCB": ([0.3, 0.6], [30.0, 60.0]),
+        "수동매매": ([10.0, 11.0], [1000.0, 1100.0]),
+    }
+    for strategy, (returns, pnls) in series.items():
+        for r, pnl in zip(returns, pnls):
+            records.append(_sold(strategy, r, pnl))
+    vts.get_standard_journal_records.return_value = records
+
+    svc = StrategyLogReportService(log_dir=".", virtual_trade_service=vts)
+    section = svc._build_multiple_testing_section("20260418")
+
+    assert section is not None
+    assert "성과 표본 전략 5개" in section
+    assert "수동매매" not in section
+    assert "최고 래리윌리엄스VBO" in section
+
+
 def test_build_multiple_testing_section_none_without_service():
     svc = StrategyLogReportService(log_dir=".")
     assert svc._build_multiple_testing_section("20260418") is None
