@@ -716,6 +716,43 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(signals, [])
 
+    async def test_check_exits_respects_concurrency_limit(self):
+        """현재가 조회는 _EXIT_CONCURRENCY를 초과해 동시에 in-flight 되지 않는다."""
+        import asyncio
+
+        from strategies import larry_williams_vbo_strategy as vbo_mod
+
+        strategy, sqs, tm = self._make_strategy(now_time=_kst(11, 0))
+        today = tm.get_current_kst_time().strftime("%Y%m%d")
+
+        concurrency_limit = vbo_mod._EXIT_CONCURRENCY
+        in_flight = 0
+        peak = 0
+        gate = asyncio.Event()
+
+        async def _tracked(code, caller=None):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            if in_flight >= concurrency_limit:
+                gate.set()
+            try:
+                await gate.wait()
+                return _price_resp(current=70500, open_price=70000)
+            finally:
+                in_flight -= 1
+
+        sqs.handle_get_current_stock_price = _tracked
+        holdings = [
+            {"code": f"C{i:04d}", "name": f"종목{i}", "buy_price": 70000, "buy_date": today, "qty": 1}
+            for i in range(concurrency_limit * 2)
+        ]
+
+        signals = await strategy.check_exits(holdings)
+
+        self.assertEqual(signals, [])
+        self.assertEqual(peak, concurrency_limit)
+
 
 if __name__ == "__main__":
     unittest.main()

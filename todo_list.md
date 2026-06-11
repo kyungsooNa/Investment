@@ -26,7 +26,7 @@
 - P2 2-2: ~~실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 후 budget 기본값 보정.~~ 전역 normal 8/s + emergency 2/s 기본값 보정 완료. 계정별 공식 한도 재확인은 운영 전 외부 확인으로 유지.
 - P2 2-4: VBO shadow 5거래일 jsonl 수집 → polling parity 비교. event-driven live order는 별도 승인 전 No-Go.
 - P2 2-5: ~~전략 scan의 종목별 현재가 REST 호출을 batch quote / WebSocket snapshot 중심으로 줄인다.~~ helper(`StockQueryService.prefetch_prices`) + rsi2 포함 활성 전략 7개 scan 배선 + 테스트 완료.
-- P2 2-6: 라이브 핫패스 성능 follow-up. ~~WebSocket 틱 루프 상수 캐싱/로그 lazy 처리~~ ✅, ~~장마감 배치 `iterrows()` 축소~~ ✅, ~~HTTP/token 미세 정합성 개선(fallback Limits·Timeout / token singleflight / retry jitter)~~ ✅ (2026-05-31). 남은 것: 활성 전략 `scan()`/`check_exits()` 순차 후보 처리 bounded 전환 — 실전 진입/청산 경로라 별도 승인 후 진행(VBO scan은 실익 marginal로 보류 결정).
+- P2 2-6: 라이브 핫패스 성능 follow-up. ~~WebSocket 틱 루프 상수 캐싱/로그 lazy 처리~~ ✅, ~~장마감 배치 `iterrows()` 축소~~ ✅, ~~HTTP/token 미세 정합성 개선(fallback Limits·Timeout / token singleflight / retry jitter)~~ ✅, ~~VBO `check_exits()` bounded 전환~~ ✅ (2026-06-11). 남은 것: 활성 전략 `scan()` 순차 후보 처리 bounded 전환 — 실전 진입 경로라 별도 승인 후 진행(VBO scan은 실익 marginal로 보류 결정).
 - P3 3-4: active strategy lifecycle contract 최소 공통 단계 강제 여부 재설계(현재 보류).
 - P3 3-5: backtest/live 호가단위 tick-size 로직을 단일 utility로 통일한다.
 - P3 3-6: ~~IndicatorService 계산 경로의 광범위 `except Exception` silent skip에 ERROR log/metric/alert hook을 붙인다.~~ ✅ 완료. 전략 레이어 per-code fail-rate metric도 `scan_metrics`/`exit_metrics`에 반영 완료.
@@ -361,10 +361,11 @@
   - 검토 결과(2026-05-31, 보류): 저비용 단계(현재가는 `prefetch_prices` 덕에 대부분 snapshot hit)에서 대다수 후보가 탈락하고, 고비용 REST(`_get_execution_strength`)는 가격 게이트 통과한 돌파 후보(소수)에만 발생. 게다가 전역 `ApiBudgetLimiter`가 모든 REST를 8/s로 직렬화하므로 bounded 전환의 실익은 "동시 돌파 후보 多"일 때의 직렬 RTT 누적 감소뿐(marginal). 실전 진입 경로 동등성(순서/시그널 수/`_bought_today`) 검증 부담 대비 이득이 작아 보류. 재개 시 2-pass(돌파 후보만 `execution_strength` bounded)가 가장 외과적.
   - 주의: `MomentumStrategy.run()`과 `GapUpPullbackStrategy.run()`도 순차 N+1이 맞지만 현재 웹 라이브 스케줄러 등록 대상이 아니므로, 라이브 핫패스 최우선 항목으로 일반화하지 않는다.
   - 검증 기준: 결과 순서/시그널 수/거절 사유/`_bought_today` state 변화가 기존과 동등하고, 동시성 limit은 KIS budget limiter 기본값과 충돌하지 않는다.
-- [ ] 활성 전략 `check_exits()` 순차 루프를 계산 경로별로 점검하고, 보유 종목 수가 늘어나는 경로는 bounded 처리로 통일한다.
+- [x] 활성 전략 `check_exits()` 순차 루프를 계산 경로별로 점검하고, 보유 종목 수가 늘어나는 경로는 bounded 처리로 통일한다. (2026-06-11)
   - 확인: `sell_all_stocks()`에는 이미 `SAFE_SEQUENTIAL` / `BOUNDED_PARALLEL` / `EMERGENCY` 모드가 있으며, `EMERGENCY` unbounded gather는 `emergency_scope()`를 사용하는 의도적 경로다. 리뷰의 "exit unbounded gather"는 이 경로보다 전략별 `check_exits()` 순차 계산 개선으로 재정의한다.
   - 우선 대상: `LarryWilliamsVBOStrategy`, `ProgramBuyFollowStrategy`, `VolumeBreakoutLiveStrategy`, `TraditionalVolumeBreakoutStrategy`의 순차 holdings 루프. 단, 현재 웹 등록 활성 전략은 VBO 중심으로 먼저 적용한다.
-  - 검증 기준: 손절/익절/시간청산 신호 생성 결과가 기존과 동등하고, per-code 예외가 다른 보유 종목 exit 판단을 막지 않는다.
+  - 적용 완료: `LarryWilliamsVBOStrategy.check_exits()`에 `_EXIT_CONCURRENCY=15` + `bounded_gather()` 적용. 기존 오버나이트/EOD/net 손절 판정은 `_check_single_exit()`로 분리해 동등성 유지.
+  - 검증 기준: 손절/익절/시간청산 신호 생성 결과가 기존과 동등하고, per-code 예외가 다른 보유 종목 exit 판단을 막지 않는다. (충족: VBO 전략 단위 39 passed / 단위 5876 passed / 통합 240 passed)
 - [~] 장마감 배치의 `iterrows()` 사용처를 API 호출 전처리와 단순 포맷 변환으로 나눠 낮은 위험부터 개선한다.
   - 적용 완료(2026-05-31): 전체 종목 필터링 루프 3곳(`OneilUniverseService._generate_premium_watchlist()`, `RankingTask._load_all_stocks()`, `MinerviniUpdateTask._load_all_stocks()`)의 `iterrows()`를 컬럼 리스트 추출 후 `zip` 순회로 전환. 행마다 Series 생성하던 비용 제거. `row.get(col, "")` 시맨틱(컬럼 부재→"") 보존, 필터 순서/조건 불변.
   - 테스트 고정: ranking `test_load_all_stocks_preserves_df_order_after_filtering`/`test_load_all_stocks_empty_df_returns_empty`, minervini `test_load_all_stocks_preserves_order_and_all_markets`. 기존 ETF/우선주/스팩/빈코드/비대상시장 테스트 회귀 통과. 단위 5732 passed / 통합 240 passed.
@@ -562,7 +563,7 @@
 2. **코드 수정으로 바로 진행 가능**
    - ~~WebSocket 틱 루프 TR_ID 캐싱 + debug lazy logging 적용 (P2 2-6)~~ ✅ 완료 (2026-05-31)
    - `LarryWilliamsVBOStrategy.scan()` 잔여 순차 후보 처리 bounded 전환 (P2 2-6) — 2026-05-31 검토 후 **보류**(실익 marginal·실전 진입 경로). 재개 시 2-pass 권장.
-   - 활성 전략 `check_exits()` 순차 holdings 루프 bounded 통일 (P2 2-6) — 실전 청산 경로라 별도 승인 후 진행.
+   - ~~활성 전략 `check_exits()` 순차 holdings 루프 bounded 통일 (P2 2-6)~~ ✅ 완료 (2026-06-11, VBO 중심 적용)
    - ~~장마감 배치 `iterrows()` 중 전체 종목 필터링 경로부터 벡터화/`itertuples()` 전환 (P2 2-6)~~ ✅ 완료 (2026-05-31, zip 순회). FDR/RS line 변환 경로는 영향 작아 보류.
    - ~~`KoreaInvestApiBase` fallback client Limits/Timeout + retry jitter + `TokenProvider` singleflight 정합성 개선 (P2 2-6)~~ ✅ 완료 (2026-05-31). JSON 이중 파싱 제거는 MagicMock 충돌/이득 미미로 보류.
    - ~~라이브 일봉 지표 당일 미완성 봉 제외 (P0 0-8)~~ ✅ #478 + rollout 조사 완료 (추가 오염은 `LarryWilliamsChannelBreakout` ADX/채널뿐 → `_confirmed_bars()`로 마감)
