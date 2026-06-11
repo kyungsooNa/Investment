@@ -16,6 +16,10 @@ from common.trade_journal_comparison import compare_trade_journals
 from services.multiple_testing_bias_service import compute_multiple_testing_bias_summary
 from services.strategy_correlation_service import compute_strategy_correlation_summary
 from services.overnight_exposure_service import compute_overnight_exposure_summary
+from services.regime_performance_service import (
+    BUCKET_KEYS,
+    compute_strategy_regime_decomposition,
+)
 from services.strategy_performance_degradation_service import (
     StrategyPerformanceDegradationConfig,
     analyze_strategy_performance_degradation,
@@ -27,6 +31,15 @@ def _esc(value: Any) -> str:
     """HTML 본문 삽입용 텍스트 이스케이프. reason/metric 등에 포함된 '<', '>', '&'가
     Telegram HTML 파서에서 unsupported tag 로 인식되는 것을 방지한다."""
     return html.escape(str(value), quote=False) if value is not None else ""
+
+
+_REGIME_BUCKET_LABELS = {
+    "KOSPI_BULL": "KOSPI 상승",
+    "KOSDAQ_BULL": "KOSDAQ 상승",
+    "SIDEWAYS": "횡보",
+    "BEAR": "하락",
+    "TRADING_VALUE_SURGE": "거래대금급증",
+}
 
 
 def _numeric_values(values: List[Any]) -> List[float]:
@@ -983,6 +996,70 @@ class StrategyLogReportService:
 
         return "\n".join(lines)
 
+    def _build_regime_decomposition_section(self, target_date: str) -> Optional[str]:
+        """전략별 시장 국면(regime) 성과 분해 + 집중도 (R-2 후속).
+
+        live journal 로 compute_strategy_regime_decomposition 를 돌려 전략별 dominant
+        regime 과 버킷별 평균순익을 노출하고, 전 전략이 같은 regime 에 몰려 있는지
+        (=단일 regime 베팅) concentration 으로 드러낸다. "7전략 분산"이 사실은 단일
+        상승/추세 regime 베팅이면 강세장 동시 수익·약세장 동시 손실 위험이 있다.
+        비교 가능한 전략(regime 채워진 SOLD)이 2개 미만이면 생략한다.
+        """
+        if not self._virtual_trade_service:
+            return None
+        try:
+            live_records = self._virtual_trade_service.get_standard_journal_records() or []
+        except Exception:
+            return None
+        if not live_records:
+            return None
+
+        try:
+            summary = compute_strategy_regime_decomposition(live_records)
+        except Exception:
+            return None
+
+        strategies = summary.get("strategies") or []
+        if len(strategies) < 2:
+            return None
+
+        lines = ["<b>🧭 전략별 시장국면(regime) 분해</b>"]
+
+        concentration = summary.get("concentration") or {}
+        top_bucket = concentration.get("top_bucket")
+        if top_bucket:
+            pct = float(concentration.get("concentration_pct") or 0.0) * 100
+            top_n = int(concentration.get("top_bucket_strategy_count") or 0)
+            total_n = int(summary.get("strategy_count") or 0)
+            line = (
+                f"• 집중도: {top_n}/{total_n} 전략 주력 국면이 "
+                f"'{_REGIME_BUCKET_LABELS.get(top_bucket, top_bucket)}' ({pct:.0f}%)"
+            )
+            if pct >= 70.0:
+                line += " ⚠️ 단일 regime 집중"
+            lines.append(line)
+
+        for row in strategies[:6]:
+            dominant = row.get("dominant_bucket")
+            dom_label = _REGIME_BUCKET_LABELS.get(dominant, dominant) if dominant else "—"
+            lines.append(
+                f"• {_esc(row.get('strategy'))}: 주력 {dom_label} "
+                f"(SOLD {int(row.get('trade_count') or 0)}건)"
+            )
+            by_bucket = row.get("by_bucket") or {}
+            for bucket_name in BUCKET_KEYS:
+                metrics = by_bucket.get(bucket_name)
+                if not metrics:
+                    continue
+                lines.append(
+                    f"  - {_REGIME_BUCKET_LABELS.get(bucket_name, bucket_name)}: "
+                    f"{int(metrics.get('trade_count') or 0)}건, "
+                    f"승률 {float(metrics.get('win_rate') or 0) * 100:.0f}%, "
+                    f"평균순익 {float(metrics.get('avg_net_return') or 0):+.2f}%"
+                )
+
+        return "\n".join(lines)
+
     def _build_replay_audit_lines(self, backtest_records: List[dict]) -> List[str]:
         counts = Counter()
         examples: List[dict] = []
@@ -1698,6 +1775,7 @@ class StrategyLogReportService:
         multiple_testing_section = self._build_multiple_testing_section(target_date)
         strategy_correlation_section = self._build_strategy_correlation_section(target_date)
         overnight_exposure_section = self._build_overnight_exposure_section(target_date)
+        regime_decomposition_section = self._build_regime_decomposition_section(target_date)
 
         if not active_sections:
             portfolio_summary = self._build_portfolio_summary(target_date, fallback_buys)
@@ -1714,6 +1792,7 @@ class StrategyLogReportService:
                     multiple_testing_section,
                     strategy_correlation_section,
                     overnight_exposure_section,
+                    regime_decomposition_section,
                 )
                 if section
             ]
@@ -1745,6 +1824,8 @@ class StrategyLogReportService:
             body += f"\n\n{strategy_correlation_section}"
         if overnight_exposure_section:
             body += f"\n\n{overnight_exposure_section}"
+        if regime_decomposition_section:
+            body += f"\n\n{regime_decomposition_section}"
 
         if inactive_names:
             inactive_summary = f"\n\n💤 <i>활동 없음: {_esc(', '.join(inactive_names[:3]))}"

@@ -15,6 +15,7 @@ from services.regime_performance_service import (
     DEFAULT_TRADING_VALUE_SURGE_THRESHOLD_PCT,
     compute_performance_by_regime,
     compute_regime_balance_summary,
+    compute_strategy_regime_decomposition,
     is_trading_value_surge,
 )
 
@@ -264,3 +265,81 @@ def test_regime_balance_summary_passes_when_required_buckets_have_enough_trades(
     assert summary["balanced_pass"] is True
     assert summary["missing_regimes"] == []
     assert summary["weak_regimes"] == []
+
+
+# --- compute_strategy_regime_decomposition (R-2 후속) ---
+
+
+def _strat_trade(strategy, net_pnl, net_return, signal_time, kospi="bull",
+                 kosdaq="bull", stock_market="KOSPI", surge=False, status="SOLD"):
+    rec = _trade(net_pnl, net_return, signal_time, kospi=kospi, kosdaq=kosdaq,
+                 stock_market=stock_market, surge=surge, status=status)
+    rec["strategy"] = strategy
+    return rec
+
+
+def test_decomposition_empty_records():
+    res = compute_strategy_regime_decomposition([])
+    assert res["strategy_count"] == 0
+    assert res["strategies"] == []
+    assert res["concentration"]["top_bucket"] is None
+    assert res["concentration"]["concentration_pct"] == 0.0
+
+
+def test_decomposition_groups_per_strategy_and_picks_dominant_bucket():
+    records = [
+        # S1: 2 KOSPI_BULL, 1 BEAR -> dominant KOSPI_BULL
+        _strat_trade("S1", 100.0, 2.0, "20260514", stock_market="KOSPI"),
+        _strat_trade("S1", -50.0, -1.0, "20260515", stock_market="KOSPI"),
+        _strat_trade("S1", -200.0, -3.0, "20260516", kospi="bear"),
+        # S2: 1 KOSPI_BULL only
+        _strat_trade("S2", 300.0, 1.0, "20260514", stock_market="KOSPI"),
+    ]
+    res = compute_strategy_regime_decomposition(records)
+    assert res["strategy_count"] == 2
+    by_name = {s["strategy"]: s for s in res["strategies"]}
+    assert by_name["S1"]["dominant_bucket"] == "KOSPI_BULL"
+    assert by_name["S1"]["trade_count"] == 3
+    assert set(by_name["S1"]["by_bucket"].keys()) == {"KOSPI_BULL", "BEAR"}
+    assert by_name["S2"]["dominant_bucket"] == "KOSPI_BULL"
+    # 정렬: 거래 수 많은 전략 우선
+    assert res["strategies"][0]["strategy"] == "S1"
+
+
+def test_decomposition_concentration_when_all_strategies_share_regime():
+    records = [
+        _strat_trade("S1", 100.0, 2.0, "20260514", stock_market="KOSPI"),
+        _strat_trade("S2", 100.0, 2.0, "20260514", stock_market="KOSPI"),
+        _strat_trade("S3", 100.0, 2.0, "20260514", stock_market="KOSPI"),
+    ]
+    res = compute_strategy_regime_decomposition(records)
+    conc = res["concentration"]
+    assert conc["top_bucket"] == "KOSPI_BULL"
+    assert conc["top_bucket_strategy_count"] == 3
+    assert conc["concentration_pct"] == pytest.approx(1.0)
+    assert conc["dominant_bucket_counts"] == {"KOSPI_BULL": 3}
+
+
+def test_decomposition_excludes_hold_and_regime_missing():
+    records = [
+        _strat_trade("S1", 100.0, 2.0, "20260514", stock_market="KOSPI"),
+        _strat_trade("S1", 0.0, 0.0, "20260515", status="HOLD"),
+        # regime metadata 없는 record 는 제외
+        {"strategy": "S1", "status": "SOLD", "net_pnl": 1.0, "net_return": 1.0,
+         "signal_time": "20260516", "market_regime": None},
+    ]
+    res = compute_strategy_regime_decomposition(records)
+    assert res["strategy_count"] == 1
+    assert res["strategies"][0]["trade_count"] == 1
+
+
+def test_decomposition_surge_overlay_not_counted_in_primary_total():
+    # surge overlay 는 by_bucket 에 노출되지만 primary trade_count/ dominant 에는 합산 안 함
+    records = [
+        _strat_trade("S1", 100.0, 2.0, "20260514", stock_market="KOSPI", surge=True),
+    ]
+    res = compute_strategy_regime_decomposition(records)
+    s1 = res["strategies"][0]
+    assert s1["trade_count"] == 1  # KOSPI_BULL 1건만 (surge 중복 미합산)
+    assert s1["dominant_bucket"] == "KOSPI_BULL"
+    assert "TRADING_VALUE_SURGE" in s1["by_bucket"]

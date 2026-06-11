@@ -30,6 +30,10 @@ BUCKET_KEYS = (
 )
 
 
+PRIMARY_BUCKET_KEYS = ("KOSPI_BULL", "KOSDAQ_BULL", "SIDEWAYS", "BEAR")
+"""Index 추세 기준 mutually-exclusive 1차 버킷. TRADING_VALUE_SURGE(overlay) 제외."""
+
+
 DEFAULT_TRADING_VALUE_SURGE_THRESHOLD_PCT = 30.0
 """거래대금 급증 판정 기본 임계값 (baseline 대비 +30% 이상)."""
 
@@ -187,6 +191,94 @@ def compute_performance_by_regime(records: Iterable[Mapping[str, Any]]) -> dict[
         }
 
     return result
+
+
+def compute_strategy_regime_decomposition(
+    records: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """전략별 regime 버킷 성과 분해 + regime 집중도 (R-2 후속).
+
+    SOLD record 를 전략별로 묶어 compute_performance_by_regime 로 각각 분해한다.
+    각 전략의 dominant_bucket(거래 수 최다 primary 버킷; 동수면 total_net_pnl 우선)을
+    뽑고, 전 전략이 같은 primary regime 에 몰려 있는지 concentration 으로 정량화한다.
+    "7전략 분산"이 사실은 단일 regime 베팅인지 일일 리포트에서 드러내기 위함.
+
+    TRADING_VALUE_SURGE(overlay)는 by_bucket 에는 노출되지만 primary trade_count 와
+    dominant_bucket 산정에서는 제외한다(중복 합산 방지).
+    """
+    by_strategy: dict[str, list[Mapping[str, Any]]] = {}
+    for rec in records:
+        if str(rec.get("status") or "").upper() != "SOLD":
+            continue
+        if not isinstance(rec.get("market_regime"), Mapping):
+            continue
+        name = str(rec.get("strategy") or "").strip()
+        if not name:
+            continue
+        by_strategy.setdefault(name, []).append(rec)
+
+    strategies: list[dict[str, Any]] = []
+    dominant_counts: dict[str, int] = {}
+    for name, recs in by_strategy.items():
+        buckets = compute_performance_by_regime(recs)
+        by_bucket: dict[str, dict[str, Any]] = {}
+        for bucket_name in BUCKET_KEYS:
+            metrics = buckets.get(bucket_name) or {}
+            if int(metrics.get("trade_count") or 0) <= 0:
+                continue
+            by_bucket[bucket_name] = {
+                "trade_count": int(metrics.get("trade_count") or 0),
+                "win_rate": float(metrics.get("win_rate") or 0.0),
+                "avg_net_return": float(metrics.get("avg_net_return") or 0.0),
+                "total_net_pnl": float(metrics.get("total_net_pnl") or 0.0),
+            }
+
+        primary_total = sum(
+            by_bucket[b]["trade_count"] for b in PRIMARY_BUCKET_KEYS if b in by_bucket
+        )
+        dominant: str | None = None
+        best_key: tuple[int, float] | None = None
+        for b in PRIMARY_BUCKET_KEYS:
+            if b not in by_bucket:
+                continue
+            key = (by_bucket[b]["trade_count"], by_bucket[b]["total_net_pnl"])
+            if best_key is None or key > best_key:
+                best_key = key
+                dominant = b
+        if dominant is not None:
+            dominant_counts[dominant] = dominant_counts.get(dominant, 0) + 1
+
+        strategies.append(
+            {
+                "strategy": name,
+                "trade_count": primary_total,
+                "dominant_bucket": dominant,
+                "by_bucket": by_bucket,
+            }
+        )
+
+    strategies.sort(key=lambda s: (-int(s["trade_count"]), str(s["strategy"])))
+
+    top_bucket: str | None = None
+    top_count = 0
+    for bucket, cnt in sorted(dominant_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+        top_bucket = bucket
+        top_count = cnt
+        break
+
+    strategy_count = len(strategies)
+    concentration_pct = (top_count / strategy_count) if strategy_count else 0.0
+
+    return {
+        "strategy_count": strategy_count,
+        "strategies": strategies,
+        "concentration": {
+            "dominant_bucket_counts": dominant_counts,
+            "top_bucket": top_bucket,
+            "top_bucket_strategy_count": top_count,
+            "concentration_pct": concentration_pct,
+        },
+    }
 
 
 def compute_regime_balance_summary(
