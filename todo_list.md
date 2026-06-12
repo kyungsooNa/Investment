@@ -492,6 +492,7 @@
   - `fdr.DataReader(code, start, end)` OHLCV 조회 **정상**(005930 41행, 장기 이력 1233행). → 상폐 코드 목록만 있으면 OHLCV 백필은 FDR로 가능.
   - `fdr.StockListing('KRX')` **HTTP 404**, `StockListing('KRX-DELISTING')` **0행** → 일자별 상장 구성·상폐 목록을 FDR로 못 가져옴(스크레이퍼 깨짐). pykrx도 불안정.
   - **진짜 병목**: "어느 종목이 언제 상장/상폐됐는가" 신뢰 소스 부재. 이게 없으면 백필 대상 코드도, 편향 정량화도 불가. → 1순위 sub-task = **상폐 종목+상폐일+일자별 구성 신뢰 소스 확보**(예: KRX data.krx.co.kr 상장폐지 목록 수동 export, 또는 대체 소스). 외부 데이터 의사결정 필요.
+- 적용 완료(2026-06-11, 데이터 소스 재검증/감사 스크립트): `scripts/audit_delisting_universe.py` 추가. 현재 환경의 FDR 0.9.110에서는 `StockListing('KRX-DELISTING')`가 다시 정상 동작(전체 4,139행)하고, `DataReader(code, exchange='KRX-DELISTING')` 상폐 종목 OHLCV도 조회 가능하다. 스크립트는 FDR 상폐 목록을 `Market in {KOSPI,KOSDAQ}` + `SecuGroup == 주권`으로 필터하고, KIND `상장폐지현황` POST 결과(시장별 1/2)와 이름+상폐일 기준 대조한다. 2026-01-01~2026-06-11 실측: FDR filtered 44건, KIND 45건, matched 40건, FDR-only 4건, KIND-only 5건. 불일치 대부분은 표기 차이(`에스케이` vs `SK`, `IHQ` vs `아이에이치큐`)와 필터 제외 대상(리츠/투자회사)로 보이며, 다음 단계는 이 audit 결과를 기반으로 point-in-time universe snapshot schema/백필 파이프라인을 설계하는 것.
 - 관련: `services/oneil_universe_service.py`, `services/generic_liquidity_universe_service.py`, `services/stock_sync_service.py`, `task/background/after_market/daily_price_collector_task.py`, `task/background/after_market/ohlcv_update_task.py`, `data/stock_code_list.csv`, `data/ohlcv_extracted.csv`, `scripts/run_backtest.py`
 
 ### R-2. 전략 상관 / 단일 regime 집중 — "7전략 분산"의 착시 [심각]
