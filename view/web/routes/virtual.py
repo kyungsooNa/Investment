@@ -617,6 +617,11 @@ async def _get_virtual_history_impl(ctx, force_code, apply_cost):
                     trade['return_rate'] = vm.calculate_return(bp, sp, qty, apply_cost=apply_cost)
                     trade['sell_price'] = sp
 
+                # 미매도 가정 수익률 (매수가 → 현재가)
+                cur = trade.get('current_price')
+                if cur:
+                    trade['hold_return_rate'] = vm.calculate_return(bp, float(cur), qty, apply_cost=apply_cost)
+
     except Exception as e:
         print(f"[WebAPI] virtual/history enrichment 오류: {e}")
 
