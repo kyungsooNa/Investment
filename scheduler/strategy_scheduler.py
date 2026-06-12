@@ -94,7 +94,11 @@ class StrategyScheduler:
     LOOP_INTERVAL_SEC = 1           # 메인 루프 깨어나는 주기
     MARKET_CLOSED_SLEEP_SEC = 60    # 장 외 시간 sleep
     FORCE_EXIT_MINUTES_BEFORE = 30  # 장 마감 N분 전 강제 청산
-    ORDER_CUTOFF_MINUTES_BEFORE_CLOSE = 20  # 15:40 설정 기준 15:20 이후 전략 주문 중단
+    # 15:40 설정 기준 15:20(KRX 종가 동시호가 시작) 이후 전략 주문 중단.
+    # 의도: 동시호가 구간은 연속체결이 없어 현재가 기반 전략 판단이 무의미하다.
+    # check_exits 도 함께 중단된다 — 당일청산 전략은 FORCE_EXIT(마감 30분 전)가
+    # 선행 청산하고, 오버나이트 전략의 청산은 다음 거래일에 수행한다.
+    ORDER_CUTOFF_MINUTES_BEFORE_CLOSE = 20
     STAGGER_INTERVAL_SEC = 60       # 전략 간 실행 시차 (초)
     ORDER_POLL_INTERVAL_SEC = 15    # 활성 주문 체결조회 보정 주기 (초)
     WATCHLIST_EXCLUDE_POLICY_RULES = {
@@ -1030,6 +1034,9 @@ class StrategyScheduler:
 
         if self._notification_service and not order_deferred:
             action_kr = "매수" if signal.action == "BUY" else "매도"
+            # 성공에 CRITICAL 사용은 의도된 것: Telegram route_levels.STRATEGY 가
+            # warning/error/critical 만 통과시키므로 INFO 로 낮추면 실주문 성공
+            # push 가 누락된다 (notification_queue_task._should_send_external 참고).
             level = NotificationLevel.CRITICAL if api_success else NotificationLevel.ERROR
             title = f"[{signal.strategy_name}] {signal.name} {action_kr} {'성공' if api_success else '실패'}"
             msg = (f"종목: {signal.name}({signal.code})\n"
