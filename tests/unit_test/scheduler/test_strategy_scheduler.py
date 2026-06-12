@@ -6,7 +6,7 @@ import shutil
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch, mock_open, call, ANY
-from common.types import TradeSignal, ErrorCode, ResCommonResponse, Exchange, OrderState
+from common.types import TradeSignal, ErrorCode, ResCommonResponse, Exchange, OrderState, OrderSide, OrderContext
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig, SignalRecord
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
 from interfaces.live_strategy import LiveStrategy
@@ -72,6 +72,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         oes.poll_active_orders_once = AsyncMock(return_value=0)
         oes.check_stuck_orders_once = AsyncMock(return_value=0)
         oes.get_active_order_poll_interval_sec = MagicMock(return_value=StrategyScheduler.ORDER_POLL_INTERVAL_SEC)
+        oes.get_order_context = MagicMock(return_value=None)
 
         sqs = MagicMock()
         sqs.get_current_price = AsyncMock(
@@ -2514,6 +2515,60 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             trace_id=ANY,
         )
 
+    async def test_force_liquidate_skips_signal_history_recovery_when_buy_order_active(self):
+        """당일 BUY 주문이 아직 미체결 대기 중이면 신호 이력만으로 강제 청산하지 않는다."""
+        from datetime import datetime
+
+        scheduler, vm, oes, tm, _ = self._make_scheduler(dry_run=False)
+        tm.get_current_kst_time.return_value = datetime(2026, 6, 12, 15, 10, 0)
+
+        strategy = MockStrategy(name="래리윌리엄스VBO")
+        config = StrategySchedulerConfig(strategy=strategy, force_exit_on_close=True, order_qty=1)
+        vm.get_holds_by_strategy.return_value = []
+
+        scheduler._signal_history = [
+            SignalRecord(
+                strategy_name="래리윌리엄스VBO",
+                code="403870",
+                name="HPSP",
+                action="BUY",
+                price=71500,
+                qty=27,
+                reason="VBO돌파",
+                timestamp="2026-06-12 12:02:47",
+                api_success=True,
+            )
+        ]
+        oes.get_order_context.return_value = OrderContext(
+            order_key="KRX:403870:BUY",
+            stock_code="403870",
+            side=OrderSide.BUY,
+            state=OrderState.SUBMITTED,
+            exchange=Exchange.KRX,
+            price=71500,
+            qty=27,
+            filled_qty=0,
+            broker_order_no="0000024244",
+            source="strategy:래리윌리엄스VBO",
+        )
+        oes.broker_api_wrapper.get_account_balance = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="OK",
+                data={"output1": [{"pdno": "403870", "hldg_qty": "27", "prdt_name": "HPSP"}]},
+            )
+        )
+
+        await scheduler._force_liquidate_strategy(config)
+
+        oes.handle_place_sell_order.assert_not_called()
+        self.assertTrue(
+            any(
+                "active BUY order" in str(call_args)
+                for call_args in scheduler._logger.warning.call_args_list
+            )
+        )
+
     async def test_execute_signal_market_price_api_error(self):
         """시장가 주문 시 현재가 조회 API가 실패 코드를 반환할 때 0원 유지 테스트."""
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
@@ -2765,7 +2820,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         args, kwargs = mock_notifier.emit.call_args
         self.assertEqual(args[0], NotificationCategory.STRATEGY)
         self.assertEqual(args[1], NotificationLevel.CRITICAL)
-        self.assertTrue("성공" in args[2])
+        self.assertTrue("주문 접수" in args[2])
+        self.assertTrue("체결은 별도 확인 필요" in args[3])
 
     async def test_execute_sell_signal_notification_includes_estimated_return_rate(self):
         """실전 매도 알림은 체결 확정 전에도 보유 매수가 기준 수익률을 포함한다."""

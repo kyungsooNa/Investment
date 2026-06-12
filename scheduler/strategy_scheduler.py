@@ -964,7 +964,7 @@ class StrategyScheduler:
                         if self._price_sub_svc:
                             await self._price_sub_svc.remove_subscription(signal.code, category_key)
                     self._logger.info(
-                        f"[Scheduler] API 주문 성공: {signal.action} {signal.code}"
+                        f"[Scheduler] API 주문 접수: {signal.action} {signal.code}"
                     )
                 elif resp and resp.rt_cd == ErrorCode.ORDER_DEFERRED.value:
                     # 동일 종목 진행 주문 → DeferredOrderQueue 자동 재시도 예정.
@@ -1035,13 +1035,16 @@ class StrategyScheduler:
         if self._notification_service and not order_deferred:
             action_kr = "매수" if signal.action == "BUY" else "매도"
             # 성공에 CRITICAL 사용은 의도된 것: Telegram route_levels.STRATEGY 가
-            # warning/error/critical 만 통과시키므로 INFO 로 낮추면 실주문 성공
+            # warning/error/critical 만 통과시키므로 INFO 로 낮추면 실주문 접수
             # push 가 누락된다 (notification_queue_task._should_send_external 참고).
             level = NotificationLevel.CRITICAL if api_success else NotificationLevel.ERROR
-            title = f"[{signal.strategy_name}] {signal.name} {action_kr} {'성공' if api_success else '실패'}"
+            success_label = "성공" if self._dry_run else "주문 접수"
+            title = f"[{signal.strategy_name}] {signal.name} {action_kr} {success_label if api_success else '실패'}"
             msg = (f"종목: {signal.name}({signal.code})\n"
                    f"주문: {log_price:,}원 × {signal.qty}주\n"
                    f"사유: {signal.reason}")
+            if api_success and not self._dry_run:
+                msg = f"{msg}\n상태: 주문 접수(API 성공, 체결은 별도 확인 필요)"
             if not api_success:
                 title = f"[{signal.strategy_name}] {signal.name} {action_kr} 실패"
                 if order_error_msg:
@@ -1533,6 +1536,12 @@ class StrategyScheduler:
         for code in sorted(candidate_codes):
             if code in merged:
                 continue
+            if self._has_active_buy_order_for_force_exit(code):
+                self._logger.warning(
+                    f"[Scheduler] force-exit recovery skipped: active BUY order still open: "
+                    f"strategy={strategy_name}, code={code}"
+                )
+                continue
             broker_qty = broker_positions.get(code, 0)
             if broker_qty <= 0:
                 continue
@@ -1573,6 +1582,30 @@ class StrategyScheduler:
             )
 
         return list(merged.values())
+
+    def _has_active_buy_order_for_force_exit(self, code: str) -> bool:
+        getter = getattr(self._oes, "get_order_context", None)
+        if not callable(getter):
+            return False
+
+        try:
+            context = getter(code, True, Exchange.KRX)
+        except TypeError:
+            context = getter(code, True)
+        except Exception as exc:
+            self._logger.warning(
+                f"[Scheduler] force-exit active order lookup failed: code={code}, error={exc}"
+            )
+            return False
+
+        if context is None:
+            return False
+
+        state = getattr(context, "state", None)
+        if getattr(state, "is_terminal", False):
+            return False
+
+        return True
 
     async def _get_broker_position_map_for_force_exit(self) -> Dict[str, int]:
         try:

@@ -495,14 +495,14 @@ class OrderExecutionService:
             )
             if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:
                 self.logger.info(
-                    f"주식 매수 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
+                    f"주식 매수 주문 접수: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{buy_order_result.rt_cd}', 'msg1': '{buy_order_result.msg1}'}}")
                 if self._price_sub_svc:
                     asyncio.create_task(self._price_sub_svc.add_subscription(
                         stock_code, SubscriptionPriority.HIGH, "portfolio", StreamingType.UNIFIED_PRICE
                     ))
                 if self._notification_service:
-                    await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "매수 주문 성공",
-                                        f"{stock_code} {qty}주 @ {price}원",
+                    await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "매수 주문 접수",
+                                        f"{stock_code} {qty}주 @ {price}원 - 체결은 별도 확인 필요",
                                         metadata={"code": stock_code, "qty": qty, "price": price, "trace_id": current_trace})
             else:
                 rt_cd = buy_order_result.rt_cd if buy_order_result else 'None'
@@ -558,14 +558,14 @@ class OrderExecutionService:
             )
             if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
                 self.logger.info(
-                    f"주식 매도 주문 성공: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
+                    f"주식 매도 주문 접수: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
                 if self._price_sub_svc:
                     asyncio.create_task(self._price_sub_svc.remove_subscription(
                         stock_code, "portfolio"
                     ))
                 if self._notification_service:
-                    await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "매도 주문 성공",
-                                        f"{stock_code} {qty}주 @ {price}원",
+                    await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "매도 주문 접수",
+                                        f"{stock_code} {qty}주 @ {price}원 - 체결은 별도 확인 필요",
                                         metadata={"code": stock_code, "qty": qty, "price": price, "trace_id": current_trace})
             else:
                 rt_cd = sell_order_result.rt_cd if sell_order_result else 'None'
@@ -738,7 +738,7 @@ class OrderExecutionService:
         try:
             result = await self.handle_place_sell_order(stock_code, 0, quantity, exchange=exchange)
             if result and result.rt_cd == ErrorCode.SUCCESS.value:
-                self.logger.info(f"매도 주문 성공: {stock_code}")
+                self.logger.info(f"매도 주문 접수: {stock_code}")
                 return {"stock_code": stock_code, "success": True, "message": result.msg1}
             msg = result.msg1 if result else "알 수 없는 오류"
             self.logger.error(f"매도 주문 실패: {stock_code}, 이유: {msg}")

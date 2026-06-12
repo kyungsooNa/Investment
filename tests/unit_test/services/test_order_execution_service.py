@@ -146,7 +146,7 @@ async def test_handle_buy_stock_success(handler, mock_broker_api_wrapper, mock_l
 
     mock_logger.info.assert_called()
     info_msgs = [str(call.args[0]) for call in mock_logger.info.call_args_list]
-    assert any("주식 매수 주문 성공" in m and f"종목={stock_code_input}" in m for m in info_msgs)
+    assert any("주식 매수 주문 접수" in m and f"종목={stock_code_input}" in m for m in info_msgs)
 
 
 @pytest.mark.asyncio
