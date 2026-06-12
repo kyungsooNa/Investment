@@ -271,6 +271,41 @@ async def test_get_virtual_history_complex(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_get_virtual_history_sold_hold_return_rate(web_client, mock_web_ctx):
+    """GET /api/virtual/history SOLD 거래에 미매도 가정 수익률(hold_return_rate) 포함 검증"""
+    web_api._PRICE_CACHE.clear()
+    mock_web_ctx.virtual_trade_service.get_all_trades.return_value = [
+        mock_trade(code="000660", status="SOLD", buy_price=1000, sell_price=1100,
+                   sell_date="2025-01-05 15:00:00", strategy="A")
+    ]
+    mock_web_ctx.virtual_trade_service.calculate_return.side_effect = \
+        lambda bp, sp, qty=1, apply_cost=False: round((sp - bp) / bp * 100, 2)
+
+    mock_web_ctx.stock_code_repository = MagicMock()
+    mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "SK하이닉스"
+
+    async def mock_multi_price(codes):
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=[
+            {"stck_shrn_iscd": "000660", "stck_prpr": "1300", "prdy_ctrt": "2.0"}
+        ])
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
+
+    mock_web_ctx.virtual_trade_service.save_daily_snapshot = MagicMock()
+    mock_web_ctx.virtual_trade_service._load_data.return_value = {}
+    mock_web_ctx.virtual_trade_service.get_daily_change.return_value = (0.0, None)
+    mock_web_ctx.virtual_trade_service.get_weekly_change.return_value = (0.0, None)
+
+    response = web_client.get("/api/virtual/history")
+    assert response.status_code == 200
+
+    sold = response.json()["trades"][0]
+    assert sold["return_rate"] == 10.0       # 매수가 1000 → 매도가 1100
+    assert sold["hold_return_rate"] == 30.0  # 매수가 1000 → 현재가 1300 (미매도 가정)
+
+    web_api._PRICE_CACHE.clear()
+
+
+@pytest.mark.asyncio
 async def test_get_virtual_history_force_update(web_client, mock_web_ctx):
     """GET /api/virtual/history force_code 테스트"""
     web_api._PRICE_CACHE.clear()

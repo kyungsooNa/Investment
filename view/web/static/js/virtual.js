@@ -920,6 +920,11 @@ function renderVirtualSoldTable() {
     pageData.forEach(item => {
         const ror = item.return_rate || 0;
         const rorClass = ror > 0 ? 'text-positive' : (ror < 0 ? 'text-negative' : '');
+        const hrr = item.hold_return_rate;
+        const hrrClass = hrr > 0 ? 'text-positive' : (hrr < 0 ? 'text-negative' : '');
+        const holdRorHtml = (hrr !== null && hrr !== undefined)
+            ? `<div style="font-size:0.8em; color:var(--text-secondary);" title="매도하지 않고 보유했다면 현재가 기준 수익률">미매도 <span class="${hrrClass}">${formatVirtualPct(hrr)}</span></div>`
+            : '';
         const buyDate = item.buy_date ? item.buy_date.split(' ')[0] : '-';
         const sellDate = item.sell_date ? item.sell_date.split(' ')[0] : '-';
         const buyPrice = Number(item.buy_price).toLocaleString();
@@ -955,7 +960,7 @@ function renderVirtualSoldTable() {
                 </td>
                 <td>${buyPrice}</td>
                 <td>${sellPrice}<div style="font-size:0.8em; color:var(--text-secondary);">${curPrice}${cacheLabel}${forceBtn}</div></td>
-                <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong>${costHtml}</td>
+                <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong>${costHtml}${holdRorHtml}</td>
                 <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate} ~ ${sellDate}</div></td>
             </tr>
         `);
