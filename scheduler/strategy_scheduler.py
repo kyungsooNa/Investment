@@ -452,7 +452,7 @@ class StrategyScheduler:
         holdings = self._get_strategy_holdings(cfg)
         if holdings:
             t_exit = self._pm.start_timer()
-            strategy_logger = getattr(cfg.strategy, "_logger", None)
+            strategy_logger = getattr(cfg.strategy, "strategy_logger", None)
             exit_failure_counter = StrategyCalcFailureCounter() if strategy_logger is not None else None
             if exit_failure_counter is not None:
                 strategy_logger.addHandler(exit_failure_counter)
@@ -520,7 +520,7 @@ class StrategyScheduler:
         t_scan = self._pm.start_timer()
         # P2 2-2 1차: scan cycle 성능 계측. entry_rejected 로그를 카운트하기 위해
         # strategy logger 에 EntryRejectionCounter 를 일시 attach. 예외에도 detach 보장.
-        strategy_logger = getattr(cfg.strategy, "_logger", None)
+        strategy_logger = getattr(cfg.strategy, "strategy_logger", None)
         rejection_counter = EntryRejectionCounter() if strategy_logger is not None else None
         scan_failure_counter = StrategyCalcFailureCounter() if strategy_logger is not None else None
         if rejection_counter is not None:
@@ -998,9 +998,9 @@ class StrategyScheduler:
             for _cfg in self._strategies:
                 if _cfg.strategy.name == signal.strategy_name:
                     _ps = self._get_strategy_position_state(_cfg.strategy)
-                    bought_today = getattr(_cfg.strategy, "_bought_today", None)
-                    if isinstance(bought_today, set):
-                        bought_today.discard(signal.code)
+                    discard_bought = getattr(_cfg.strategy, "discard_bought_today", None)
+                    if callable(discard_bought):
+                        discard_bought(signal.code)
                     if signal.code in _ps:
                         _ps.pop(signal.code, None)
                         self._persist_strategy_position_state(_cfg.strategy)
@@ -1143,18 +1143,16 @@ class StrategyScheduler:
         for cfg in self._strategies:
             if cfg.strategy.name != signal.strategy_name:
                 continue
-            universe = getattr(cfg.strategy, "_universe", None)
-            exclude = getattr(universe, "exclude_code_for_today", None)
-            if callable(exclude):
-                exclude(
-                    signal.code,
-                    reason=rule,
-                    metadata={
-                        "strategy_name": signal.strategy_name,
-                        "order_msg": resp.msg1,
-                        "order_policy": data,
-                    },
-                )
+            exclude = getattr(cfg.strategy, "exclude_code_for_today", None)
+            if callable(exclude) and exclude(
+                signal.code,
+                reason=rule,
+                metadata={
+                    "strategy_name": signal.strategy_name,
+                    "order_msg": resp.msg1,
+                    "order_policy": data,
+                },
+            ):
                 self._logger.warning(
                     f"[Scheduler] 주문 정책 차단 종목 당일 제외: "
                     f"strategy={signal.strategy_name}, code={signal.code}, rule={rule}"
@@ -1903,17 +1901,20 @@ class StrategyScheduler:
         return code.isdigit() and len(code) == 6
 
     def _get_strategy_position_state(self, strategy: LiveStrategy) -> Dict[str, object]:
-        """전략이 자체 관리하는 position_state를 반환한다."""
-        state = getattr(strategy, "_position_state", None)
+        """전략이 자체 관리하는 position_state를 반환한다 (LiveStrategy.position_state).
+
+        isinstance 가드는 LiveStrategy 가 아닌 mock 전략 객체 방어용으로 유지한다.
+        """
+        state = getattr(strategy, "position_state", None)
         return state if isinstance(state, dict) else {}
 
     def _persist_strategy_position_state(self, strategy: LiveStrategy):
         """전략이 제공하는 state 저장 함수를 통해 position_state를 즉시 반영한다."""
-        save_state = getattr(strategy, "_save_state", None)
-        if not callable(save_state):
+        persist = getattr(strategy, "persist_state", None)
+        if not callable(persist):
             return
         try:
-            save_state()
+            persist()
         except Exception as e:
             self._logger.warning(f"[Scheduler] 전략 state 저장 실패: {strategy.name} - {e}")
 

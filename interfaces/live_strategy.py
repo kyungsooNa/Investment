@@ -107,3 +107,48 @@ class LiveStrategy(ABC):
         명시적으로 await 가능한 표면을 제공한다.
         """
         return None
+
+    # ── scheduler 연동 표면 (S-9 후속) ──
+    # 기존 전략들은 관례적으로 _position_state / _save_state / _bought_today /
+    # _universe / _logger 내부 속성을 가진다. 스케줄러가 private 속성을 직접
+    # 더듬지 않도록 기본 구현이 그 관례 속성으로 위임한다 (전략 무변경 호환).
+    # 새 전략은 관례 속성 대신 이 멤버들을 직접 override 해도 된다.
+
+    @property
+    def position_state(self) -> dict:
+        """전략 내부 보유 state dict. 없거나 dict 가 아니면 빈 dict.
+
+        반환 dict 는 복사본이 아니므로 호출자의 mutation(pop 등)이 전략 state 에
+        그대로 반영된다 — 스케줄러의 stale state 정리/롤백이 이에 의존한다.
+        """
+        state = getattr(self, "_position_state", None)
+        return state if isinstance(state, dict) else {}
+
+    def persist_state(self) -> None:
+        """position_state 등 내부 state 를 즉시 영속화하는 sync hook (없으면 no-op)."""
+        save = getattr(self, "_save_state", None)
+        if callable(save):
+            save()
+
+    def discard_bought_today(self, code: str) -> None:
+        """당일 매수 가드(_bought_today)에서 종목 제거 — 매수 실패 롤백용 (없으면 no-op)."""
+        bought = getattr(self, "_bought_today", None)
+        if isinstance(bought, set):
+            bought.discard(code)
+
+    def exclude_code_for_today(self, code: str, *, reason: str = "", metadata: Optional[dict] = None) -> bool:
+        """유니버스에서 종목을 당일 제외한다. 제외를 수행했으면 True.
+
+        주문 정책 차단(투자경고/거래정지 등) 종목의 반복 주문을 막는 용도.
+        """
+        universe = getattr(self, "_universe", None)
+        exclude = getattr(universe, "exclude_code_for_today", None)
+        if callable(exclude):
+            exclude(code, reason=reason, metadata=metadata)
+            return True
+        return False
+
+    @property
+    def strategy_logger(self) -> Optional[object]:
+        """전략 자체 logger (스케줄러가 메트릭 counter 를 일시 attach 하는 용도). 없으면 None."""
+        return getattr(self, "_logger", None)
