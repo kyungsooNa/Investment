@@ -15,7 +15,7 @@ except ImportError:
     def _dumps(obj) -> str: return json.dumps(obj, ensure_ascii=False)
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -1932,40 +1932,16 @@ class StrategyScheduler:
         *,
         repo_holdings: Optional[List[dict]] = None,
     ) -> bool:
-        """비활성 force-exit 전략에 남은 stale position_state를 정리한다."""
+        """비활성 force-exit 전략에 남은 stale position_state를 정리한다.
+
+        signal_history 근거는 인정하지 않는다 — 비활성 당일청산 전략의 state 는
+        원장 HOLD 가 없으면 무조건 stale 로 본다.
+        """
         if cfg.enabled or not cfg.force_exit_on_close:
             return False
-
-        position_state = self._get_strategy_position_state(cfg.strategy)
-        if not position_state:
-            return False
-
-        stale_codes: List[str] = []
-        for raw_code in list(position_state.keys()):
-            norm_code = str(raw_code).strip()
-            if not norm_code or not self._is_valid_strategy_code(norm_code):
-                stale_codes.append(raw_code)
-                continue
-            if self._has_open_position_evidence(
-                cfg.strategy.name,
-                norm_code,
-                repo_holdings=repo_holdings,
-                allow_signal_history=False,
-            ):
-                continue
-            stale_codes.append(raw_code)
-
-        if not stale_codes:
-            return False
-
-        for raw_code in stale_codes:
-            position_state.pop(raw_code, None)
-
-        self._persist_strategy_position_state(cfg.strategy)
-        self._logger.warning(
-            f"[Scheduler] stale position_state cleared: strategy={cfg.strategy.name}, codes={stale_codes}"
+        return self._prune_position_state_without_evidence(
+            cfg, repo_holdings=repo_holdings, allow_signal_history=False
         )
-        return True
 
     def _prune_stale_position_state(
         self,
@@ -1974,6 +1950,18 @@ class StrategyScheduler:
         repo_holdings: Optional[List[dict]] = None,
     ) -> bool:
         """주문/DB 근거 없는 전략 내부 보유 state를 정리한다."""
+        return self._prune_position_state_without_evidence(
+            cfg, repo_holdings=repo_holdings, allow_signal_history=True
+        )
+
+    def _prune_position_state_without_evidence(
+        self,
+        cfg: StrategySchedulerConfig,
+        *,
+        repo_holdings: Optional[List[dict]],
+        allow_signal_history: bool,
+    ) -> bool:
+        """포지션 근거 없는 전략 내부 state 정리 공통 구현. 정리 발생 시 True."""
         position_state = self._get_strategy_position_state(cfg.strategy)
         if not position_state:
             return False
@@ -1988,7 +1976,7 @@ class StrategyScheduler:
                 cfg.strategy.name,
                 norm_code,
                 repo_holdings=repo_holdings,
-                allow_signal_history=True,
+                allow_signal_history=allow_signal_history,
             ):
                 continue
             stale_codes.append(raw_code)
@@ -2072,7 +2060,12 @@ class StrategyScheduler:
         return holding
 
     def _get_strategy_holdings(self, cfg: StrategySchedulerConfig) -> List[dict]:
-        """가상매매 DB를 기준으로 한 보유 목록."""
+        """가상매매 DB를 기준으로 한 보유 목록.
+
+        주의: 조회이지만 의도적으로 stale position_state prune/persist 를 동반한다.
+        get_status(웹 폴링) 경유 정리가 테스트로 잠긴 계약이다
+        (test_get_status_prunes_* 4건).
+        """
         strategy_name = cfg.strategy.name
         merged: Dict[str, dict] = {}
 
@@ -2147,6 +2140,7 @@ class StrategyScheduler:
                     reason=d["reason"],
                     timestamp=d["timestamp"],
                     api_success=d["api_success"],
+                    trace_id=d.get("trace_id", ""),
                 )
                 for d in records_data
             ]

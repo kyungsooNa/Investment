@@ -33,7 +33,7 @@
 - Pool B 튜닝: 후보 부족 재발 시 거래대금/정배열 조건 완화 검토.
 - 완료 기준의 전략 성과 `[~]`: `MomentumStrategy` 등 비활성 백테스트 경로의 표준 journal 통합 여부 결정.
 - 시스템 트레이더 관점 리뷰(R-1~R-6, 2026-06-08): 생존편향·전략 상관/regime 집중·총위험 미집계·갭 체결 등 백테스트 신뢰도/실전 리스크 신규 발견. 자금 확대 전 R-1~R-3 우선 해소 권장. (R-5 거래세율은 검토 결과 0.20% 정확 → 해소, 변경 없음. 하단 "시스템 트레이더 관점 리뷰" 섹션)
-- StrategyScheduler 코드 리뷰(S-1~S-10, 2026-06-12): `stop()` 강제청산 데드 패스, 매도 병렬 에러 처리 비대칭, 이력 트림 vs 복구 충돌 등 버그 + 수명/구조 개선. S-1/S-2/S-4~S-8 수정 완료(단위 5885 / 통합 240 passed), S-3/S-10은 코드 근거로 의도된 설계 확인 후 주석 명시로 종결. 남은 것: S-9 대형 리팩토링(별도 승인 후 단독 PR). (하단 "StrategyScheduler 코드 리뷰" 섹션)
+- StrategyScheduler 코드 리뷰(S-1~S-10, 2026-06-12): `stop()` 강제청산 데드 패스, 매도 병렬 에러 처리 비대칭, 이력 트림 vs 복구 충돌 등 버그 + 수명/구조 개선. S-1/S-2/S-4~S-8 수정 완료, S-3/S-10은 의도된 설계 확인 후 주석 명시로 종결. S-9는 부분 진행(prune 통합/trace_id 영속화/import 정리) — getter 부수효과는 의도된 계약으로 판명되어 철회, god class 분리는 P2 2-4 parity 판정 후 재평가로 보류. (하단 "StrategyScheduler 코드 리뷰" 섹션)
 
 ---
 
@@ -587,7 +587,7 @@
 
 - 증거: `_get_force_liquidation_holdings` / `_get_signal_net_qty` / `_has_open_position_evidence`는 `_signal_history`에 당일 전체 이력이 있다고 가정하지만, 메모리 이력은 200건으로 잘린다. 신호가 많은 날 force-exit 복구가 보유 종목을 놓칠 수 있다.
 - [x] 수정 (2026-06-12): `_record_signal()` helper로 기록 경로 단일화(메인 + sizing-skip 중복 제거 겸) — 트림 시 당일 레코드 보존, 과거 날짜만 잘림 (`test_history_trim_preserves_today_records`, `test_history_trim_drops_past_date_records_first`).
-- [x] `trace_id` 확인 결과 (2026-06-12): store `signal_history` 테이블에 trace_id 컬럼 자체가 없어 복원 불가. 스키마 마이그레이션이 필요해 별도 재승격 대상 (S-9와 함께 검토).
+- [x] `trace_id` 확인 결과 (2026-06-12): store `signal_history` 테이블에 trace_id 컬럼 자체가 없어 복원 불가 → **S-9에서 해소** (컬럼 추가 + ALTER 마이그레이션 + 복원 배선, 같은 날 2차 작업).
 
 ### S-6. 날짜 키 set 무한 증가 [수명]
 
@@ -604,10 +604,14 @@
 - 증거: ① 신호 stamping(created_at/signal_id/strategy_id/config_hash)이 exit/scan 경로에 ~20줄씩 복제. ② sizing-skip 경로가 메인 경로의 "record 생성→trim→DB→SSE→알림" 시퀀스를 통째로 중복.
 - [x] 수정 (2026-06-12): `_stamp_signals(signals, strategy)` 추출(exit/scan 공통), record/notify 중복은 S-5의 `_record_signal()`이 흡수. 동작 동등성은 기존 `test_strategy_scheduler_signal_stamping.py` 등 green 유지로 검증.
 
-### S-9. 대형 구조 개선 [보류 — 별도 승인 후 진행]
+### S-9. 대형 구조 개선 [부분 진행 완료 — 잔여는 보류, 브랜치 refactor/scheduler-s9]
 
-- god class 분리(스케줄링/신호 실행/shadow 관리/강제청산 복구/대사/SSE 8책임), `_get_strategy_holdings`의 getter 부수효과(prune+persist가 `get_status()` 웹 조회에서도 실행), 전략 private 속성 침투(`_logger`/`_position_state`/`_save_state`/`_bought_today`/`_universe` → LiveStrategy 인터페이스 승격), 동기 DB/CSV 호출의 이벤트 루프 블로킹.
-- 보류 사유: 실전 진입/청산 경로 전반을 건드리는 대형 리팩토링이라 외과수술적 변경 원칙(P3 3-4 보류와 동일 기준)에 따라 단독 PR + 별도 승인으로 진행한다. `_prune_disabled_force_exit_state`/`_prune_stale_position_state` 중복 통합도 이때 함께.
+- [x] `_prune_disabled_force_exit_state`/`_prune_stale_position_state` 중복 통합 (2026-06-12): 공통 구현 `_prune_position_state_without_evidence(cfg, repo_holdings, allow_signal_history)` 추출, 기존 두 메서드는 가드+플래그만 다른 wrapper 로 유지. 동작 동등성은 기존 prune 테스트로 잠금.
+- [x] trace_id 영속화/복원 (2026-06-12, S-5 잔여 해소): store `signal_history`에 `trace_id` 컬럼 추가(신규 DDL + 기존 DB `PRAGMA table_info`→ALTER 마이그레이션, 1-6 `_ensure_trade_columns` 패턴), append/load/load_for_date 배선, `_load_signal_history` 복원. 테스트 5종(영속/부재 기본값/날짜조회/레거시 DB 마이그레이션/복원).
+- [x] 미사용 `field` import 제거 (2026-06-12).
+- **철회** — `_get_strategy_holdings` getter 부수효과 제거: 조사 결과 `get_status()` 경유 prune 은 **의도된 계약**이었다 (`test_get_status_prunes_disabled_force_exit_strategy_state_*` 등 4개 테스트가 명시적으로 잠금 — 웹 폴링을 stale state janitor 트리거로 사용). 리뷰 판단(C4)이 틀렸으므로 변경하지 않고 `_get_strategy_holdings` docstring 에 의도를 명시.
+- **보류** — EventShadowManager 등 god class 분리: 테스트 ~26곳이 scheduler 내부 표면을 직접 잠그고(특히 `scheduler._event_router = ...`/`._event_shadow_journal = ...` **생성 후 재할당** 패턴) 호환 유지에 property setter 등 shim 7~8개가 필요해 순복잡도가 증가한다. 또한 shadow 코드는 P2 2-4 parity 결과에 따라 실주문 승격/폐기가 갈리므로 지금 분리하면 재작업 위험. parity 판정(PR-3 진입 여부) 후 재평가.
+- **보류** — LiveStrategy 인터페이스 승격(`_position_state`/`_save_state`/`_bought_today` 정식 메서드화), 동기 DB/CSV 호출 to_thread 전환: 전략 7개 + 호출 경로 전반을 건드려 단독 PR 필요. 인터페이스 승격은 P3 3-4 lifecycle contract 재설계와 함께 다루는 것이 외과적.
 
 ### S-10. 경미 [관찰/소규모]
 
@@ -619,6 +623,7 @@
 - 2026-06-12: 섹션 작성. S-1부터 TDD로 착수.
 - 2026-06-12: S-1/S-2/S-4/S-5/S-6/S-7/S-8/S-10(일부) 수정 완료. 신규 테스트 9건(`test_strategy_scheduler_audit_fixes.py`) — 수정 전 7건이 의도된 사유로 실패함을 확인 후 구현. 단위 5885 / 통합 240 passed. 남은 것: S-3(정책), S-9(별도 승인), S-10 CRITICAL 레벨(사용자 확인).
 - 2026-06-12 (2차): S-3/S-10 코드 근거 조사로 종결 — 컷오프=동시호가 시작(15:20) 일치, CRITICAL=Telegram route_levels 통과 요건. 둘 다 의도된 설계로 판정하고 주석만 추가(동작 무변경). 남은 것: S-9만 (별도 승인 후 단독 PR).
+- 2026-06-12 (3차, S-9): prune 중복 통합 + trace_id 영속화/복원 + 미사용 import 정리 완료. getter 부수효과 제거는 TDD 중 기존 테스트 4건이 의도된 계약임을 발견해 **철회**(docstring 명시로 대체). god class 분리는 shim 비용·P2 2-4 갈림길 근거로 보류. 브랜치 `refactor/scheduler-s9` (#519 위 stacked).
 
 ---
 
