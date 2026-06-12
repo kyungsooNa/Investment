@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS signal_history (
     return_rate   REAL,
     reason        TEXT,
     timestamp     TEXT    NOT NULL,
-    api_success   INTEGER NOT NULL DEFAULT 1
+    api_success   INTEGER NOT NULL DEFAULT 1,
+    trace_id      TEXT    NOT NULL DEFAULT ''
 );
 """
 
@@ -67,8 +68,18 @@ class StrategySchedulerStore:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute(_DDL_SIGNAL_HISTORY)
         conn.execute(_DDL_SCHEDULER_STATE)
+        self._ensure_signal_history_columns(conn)
         conn.commit()
         return conn
+
+    @staticmethod
+    def _ensure_signal_history_columns(conn: sqlite3.Connection) -> None:
+        """기존 DB에 누락된 컬럼을 ALTER 로 보강한다 (trace_id, 2026-06-12 추가)."""
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(signal_history)")}
+        if "trace_id" not in cols:
+            conn.execute(
+                "ALTER TABLE signal_history ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''"
+            )
 
     def close(self) -> None:
         with self._lock:
@@ -84,12 +95,13 @@ class StrategySchedulerStore:
             self._conn.execute(
                 """INSERT INTO signal_history
                    (strategy_name, code, name, action, price, qty,
-                    return_rate, reason, timestamp, api_success)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    return_rate, reason, timestamp, api_success, trace_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     record.strategy_name, record.code, record.name, record.action,
                     record.price, record.qty, record.return_rate, record.reason,
                     record.timestamp, 1 if record.api_success else 0,
+                    getattr(record, "trace_id", "") or "",
                 ),
             )
             self._conn.commit()
@@ -99,7 +111,7 @@ class StrategySchedulerStore:
         with self._lock:
             cur = self._conn.execute(
                 """SELECT strategy_name, code, name, action, price, qty,
-                          return_rate, reason, timestamp, api_success
+                          return_rate, reason, timestamp, api_success, trace_id
                    FROM signal_history
                    ORDER BY id DESC LIMIT ?""",
                 (limit,),
@@ -111,6 +123,7 @@ class StrategySchedulerStore:
                 "action": r[3], "price": r[4], "qty": r[5],
                 "return_rate": r[6], "reason": r[7],
                 "timestamp": r[8], "api_success": bool(r[9]),
+                "trace_id": r[10] or "",
             }
             for r in reversed(rows)
         ]
@@ -124,7 +137,7 @@ class StrategySchedulerStore:
         with self._lock:
             cur = self._conn.execute(
                 """SELECT strategy_name, code, name, action, price, qty,
-                          return_rate, reason, timestamp, api_success
+                          return_rate, reason, timestamp, api_success, trace_id
                    FROM signal_history
                    WHERE timestamp LIKE ?
                    ORDER BY timestamp ASC, id ASC""",
@@ -137,6 +150,7 @@ class StrategySchedulerStore:
                 "action": r[3], "price": r[4], "qty": r[5],
                 "return_rate": r[6], "reason": r[7],
                 "timestamp": r[8], "api_success": bool(r[9]),
+                "trace_id": r[10] or "",
             }
             for r in rows
         ]

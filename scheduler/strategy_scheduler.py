@@ -15,7 +15,7 @@ except ImportError:
     def _dumps(obj) -> str: return json.dumps(obj, ensure_ascii=False)
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -94,7 +94,11 @@ class StrategyScheduler:
     LOOP_INTERVAL_SEC = 1           # 메인 루프 깨어나는 주기
     MARKET_CLOSED_SLEEP_SEC = 60    # 장 외 시간 sleep
     FORCE_EXIT_MINUTES_BEFORE = 30  # 장 마감 N분 전 강제 청산
-    ORDER_CUTOFF_MINUTES_BEFORE_CLOSE = 20  # 15:40 설정 기준 15:20 이후 전략 주문 중단
+    # 15:40 설정 기준 15:20(KRX 종가 동시호가 시작) 이후 전략 주문 중단.
+    # 의도: 동시호가 구간은 연속체결이 없어 현재가 기반 전략 판단이 무의미하다.
+    # check_exits 도 함께 중단된다 — 당일청산 전략은 FORCE_EXIT(마감 30분 전)가
+    # 선행 청산하고, 오버나이트 전략의 청산은 다음 거래일에 수행한다.
+    ORDER_CUTOFF_MINUTES_BEFORE_CLOSE = 20
     STAGGER_INTERVAL_SEC = 60       # 전략 간 실행 시차 (초)
     ORDER_POLL_INTERVAL_SEC = 15    # 활성 주문 체결조회 보정 주기 (초)
     WATCHLIST_EXCLUDE_POLICY_RULES = {
@@ -201,8 +205,9 @@ class StrategyScheduler:
 
         self._running = False
         self._stop_event.set()
-        for cfg in self._strategies:
-            cfg.enabled = False
+        # 주의: 여기서 전략 enabled 를 일괄 False 로 만들지 않는다.
+        # stop_strategy()의 강제청산 조건이 cfg.enabled 를 요구하므로,
+        # 비활성화는 아래 stop_strategy() 호출이 전략별로 수행한다.
         if self._task:
             self._task.cancel()
             try:
@@ -344,6 +349,12 @@ class StrategyScheduler:
             return
         self._force_exit_done.clear()
         self._force_exit_done_date = today
+        # 날짜 키를 포함하는 set 의 과거 항목 purge (장기 구동 시 무한 증가 방지)
+        today_compact = now.strftime("%Y%m%d")
+        self._strategy_failure_alert_keys = {
+            key for key in self._strategy_failure_alert_keys if key[0] == today_compact
+        }
+        self._reconciled_dates &= {today}
 
     def _get_order_cutoff_time(self, close_time: datetime) -> datetime:
         return close_time - timedelta(minutes=self.ORDER_CUTOFF_MINUTES_BEFORE_CLOSE)
@@ -468,29 +479,10 @@ class StrategyScheduler:
             })
             # P2 2-2 후속: signal-to-order latency 측정용 — 미stamp 신호에만 현재 시각 부여.
             # P3-4 Phase 2c: signal_id / strategy_id 도 동일 시점에 자동 stamp.
-            _exit_stamp = time.time()
-            # LiveStrategy.strategy_id default 는 self.name (한국어) fallback 이라
-            # 어떤 경로로 오든 resolver 한 번 더 통과시켜 strategy_id 표준화 보장.
-            _exit_strategy_id = STRATEGY_IDENTITY_RESOLVER.to_id(
-                getattr(cfg.strategy, "strategy_id", None) or name
-            )
-            # P3-4 설정 변경 통제: 신호 생성 시점의 전략 config hash 도 stamp.
-            _exit_config_hash = compute_config_hash(
-                getattr(cfg.strategy, "_cfg", None) or getattr(cfg.strategy, "config", None)
-            )
-            for _sig in sell_signals or []:
-                if _sig.created_at is None:
-                    _sig.created_at = _exit_stamp
-                if not _sig.signal_id:
-                    _sig.signal_id = str(uuid.uuid4())
-                if not _sig.strategy_id:
-                    _sig.strategy_id = _exit_strategy_id
-                if not _sig.config_hash and _exit_config_hash:
-                    _sig.config_hash = _exit_config_hash
+            sell_signals = list(sell_signals or [])
+            self._stamp_signals(sell_signals, cfg.strategy)
             if sell_signals:
-                tasks = [self._execute_signal(sig) for sig in sell_signals]
-                for f in asyncio.as_completed(tasks):
-                    await f
+                await self._execute_signals_concurrently(sell_signals)
 
         # P2 2-4 exit: 보유 종목 손절 shadow 구독 갱신 (entry gate 와 무관하게 매 사이클 실행).
         await self._refresh_exit_shadow_subscriptions(cfg)
@@ -553,25 +545,8 @@ class StrategyScheduler:
                 strategy_logger.removeHandler(scan_failure_counter)
         # P2 2-2 후속: signal-to-order latency 측정용 — scan 직후 stamp.
         # P3-4 Phase 2c: signal_id / strategy_id 도 동일 시점에 자동 stamp.
-        _scan_stamp = time.time()
-        # LiveStrategy.strategy_id default 는 self.name (한국어) fallback 이라
-        # 어떤 경로로 오든 resolver 한 번 더 통과시켜 strategy_id 표준화 보장.
-        _scan_strategy_id = STRATEGY_IDENTITY_RESOLVER.to_id(
-            getattr(cfg.strategy, "strategy_id", None) or name
-        )
-        # P3-4 설정 변경 통제: 신호 생성 시점의 전략 config hash 도 stamp.
-        _scan_config_hash = compute_config_hash(
-            getattr(cfg.strategy, "_cfg", None) or getattr(cfg.strategy, "config", None)
-        )
-        for _sig in buy_signals or []:
-            if _sig.created_at is None:
-                _sig.created_at = _scan_stamp
-            if not _sig.signal_id:
-                _sig.signal_id = str(uuid.uuid4())
-            if not _sig.strategy_id:
-                _sig.strategy_id = _scan_strategy_id
-            if not _sig.config_hash and _scan_config_hash:
-                _sig.config_hash = _scan_config_hash
+        buy_signals = list(buy_signals or [])
+        self._stamp_signals(buy_signals, cfg.strategy)
         self._pm.log_timer(f"{name}.scan()", t_scan)
 
         try:
@@ -630,10 +605,7 @@ class StrategyScheduler:
 
         if target_signals:
             # target_signals는 remaining 기준으로 이미 슬라이싱됨 → 병렬 실행 안전
-            await asyncio.gather(
-                *[self._execute_signal(sig) for sig in target_signals],
-                return_exceptions=True,
-            )
+            await self._execute_signals_concurrently(target_signals)
 
         self._pm.log_timer(f"{name}.run_strategy", t_run)
         self._logger.info(f"[Scheduler] {name} 실행 완료")
@@ -695,6 +667,42 @@ class StrategyScheduler:
             f"strategy={cfg.strategy.name}, codes={removed_codes}, "
             f"max_positions={cfg.max_positions}"
         )
+
+    def _stamp_signals(self, signals: List[TradeSignal], strategy: LiveStrategy) -> None:
+        """미stamp 신호에 created_at/signal_id/strategy_id/config_hash 부여 (scan/exit 공통)."""
+        stamp = time.time()
+        # LiveStrategy.strategy_id default 는 self.name (한국어) fallback 이라
+        # 어떤 경로로 오든 resolver 한 번 더 통과시켜 strategy_id 표준화 보장.
+        strategy_id = STRATEGY_IDENTITY_RESOLVER.to_id(
+            getattr(strategy, "strategy_id", None) or strategy.name
+        )
+        # P3-4 설정 변경 통제: 신호 생성 시점의 전략 config hash 도 stamp.
+        config_hash = compute_config_hash(
+            getattr(strategy, "_cfg", None) or getattr(strategy, "config", None)
+        )
+        for sig in signals:
+            if sig.created_at is None:
+                sig.created_at = stamp
+            if not sig.signal_id:
+                sig.signal_id = str(uuid.uuid4())
+            if not sig.strategy_id:
+                sig.strategy_id = strategy_id
+            if not sig.config_hash and config_hash:
+                sig.config_hash = config_hash
+
+    async def _execute_signals_concurrently(self, signals: List[TradeSignal]) -> None:
+        """신호 병렬 실행. 개별 예외가 다른 신호 실행을 막지 않도록 격리하고 ERROR 로그로 남긴다."""
+        results = await asyncio.gather(
+            *[self._execute_signal(sig) for sig in signals],
+            return_exceptions=True,
+        )
+        for sig, result in zip(signals, results):
+            if isinstance(result, BaseException):
+                self._logger.error(
+                    f"[Scheduler] 신호 실행 예외: [{sig.strategy_name}] "
+                    f"{sig.action} {sig.code} - {result}",
+                    exc_info=result,
+                )
 
     # ── 시그널 실행 ──
 
@@ -864,7 +872,7 @@ class StrategyScheduler:
                             "gate_details": entry_gate.details,
                         })
                     else:
-                    # 포지션 사이징 보정
+                        # 포지션 사이징 보정
                         buy_qty = signal.qty
                         if self._position_sizer is not None:
                             buy_qty, sizing_reason = await self._position_sizer.adjust_buy_qty(
@@ -888,11 +896,7 @@ class StrategyScheduler:
                                     api_success=False,
                                     trace_id=tid,
                                 )
-                                self._signal_history.append(_skip_record)
-                                if len(self._signal_history) > self.MAX_HISTORY:
-                                    self._signal_history = self._signal_history[-self.MAX_HISTORY:]
-                                await self._append_signal_db(_skip_record)
-                                await self._notify_subscribers(_skip_record)
+                                await self._record_signal(_skip_record)
                                 if self._notification_service:
                                     await self._notification_service.emit(
                                         NotificationCategory.STRATEGY,
@@ -960,7 +964,7 @@ class StrategyScheduler:
                         if self._price_sub_svc:
                             await self._price_sub_svc.remove_subscription(signal.code, category_key)
                     self._logger.info(
-                        f"[Scheduler] API 주문 성공: {signal.action} {signal.code}"
+                        f"[Scheduler] API 주문 접수: {signal.action} {signal.code}"
                     )
                 elif resp and resp.rt_cd == ErrorCode.ORDER_DEFERRED.value:
                     # 동일 종목 진행 주문 → DeferredOrderQueue 자동 재시도 예정.
@@ -1026,19 +1030,21 @@ class StrategyScheduler:
             return_rate=return_rate,
             trace_id=tid,
         )
-        self._signal_history.append(record)
-        if len(self._signal_history) > self.MAX_HISTORY:
-            self._signal_history = self._signal_history[-self.MAX_HISTORY:]
-        await self._append_signal_db(record)
-        await self._notify_subscribers(record)
+        await self._record_signal(record)
 
         if self._notification_service and not order_deferred:
             action_kr = "매수" if signal.action == "BUY" else "매도"
+            # 성공에 CRITICAL 사용은 의도된 것: Telegram route_levels.STRATEGY 가
+            # warning/error/critical 만 통과시키므로 INFO 로 낮추면 실주문 접수
+            # push 가 누락된다 (notification_queue_task._should_send_external 참고).
             level = NotificationLevel.CRITICAL if api_success else NotificationLevel.ERROR
-            title = f"[{signal.strategy_name}] {signal.name} {action_kr} {'성공' if api_success else '실패'}"
+            success_label = "성공" if self._dry_run else "주문 접수"
+            title = f"[{signal.strategy_name}] {signal.name} {action_kr} {success_label if api_success else '실패'}"
             msg = (f"종목: {signal.name}({signal.code})\n"
                    f"주문: {log_price:,}원 × {signal.qty}주\n"
                    f"사유: {signal.reason}")
+            if api_success and not self._dry_run:
+                msg = f"{msg}\n상태: 주문 접수(API 성공, 체결은 별도 확인 필요)"
             if not api_success:
                 title = f"[{signal.strategy_name}] {signal.name} {action_kr} 실패"
                 if order_error_msg:
@@ -1530,6 +1536,12 @@ class StrategyScheduler:
         for code in sorted(candidate_codes):
             if code in merged:
                 continue
+            if self._has_active_buy_order_for_force_exit(code):
+                self._logger.warning(
+                    f"[Scheduler] force-exit recovery skipped: active BUY order still open: "
+                    f"strategy={strategy_name}, code={code}"
+                )
+                continue
             broker_qty = broker_positions.get(code, 0)
             if broker_qty <= 0:
                 continue
@@ -1570,6 +1582,30 @@ class StrategyScheduler:
             )
 
         return list(merged.values())
+
+    def _has_active_buy_order_for_force_exit(self, code: str) -> bool:
+        getter = getattr(self._oes, "get_order_context", None)
+        if not callable(getter):
+            return False
+
+        try:
+            context = getter(code, True, Exchange.KRX)
+        except TypeError:
+            context = getter(code, True)
+        except Exception as exc:
+            self._logger.warning(
+                f"[Scheduler] force-exit active order lookup failed: code={code}, error={exc}"
+            )
+            return False
+
+        if context is None:
+            return False
+
+        state = getattr(context, "state", None)
+        if getattr(state, "is_terminal", False):
+            return False
+
+        return True
 
     async def _get_broker_position_map_for_force_exit(self) -> Dict[str, int]:
         try:
@@ -1764,6 +1800,23 @@ class StrategyScheduler:
                 cfg.enabled = False
                 self._logger.info(f"[Scheduler] 전략 비활성화: {name}")
 
+                if cfg.event_driven_shadow and self._event_router is not None:
+                    for code in self._event_shadow_subscriptions.pop(name, set()):
+                        try:
+                            self._event_router.unsubscribe(code, name)
+                        except Exception as e:
+                            self._logger.warning(
+                                f"[Scheduler] {name} shadow unsubscribe({code}) 실패: {e}"
+                            )
+                    exit_sub_name = self._exit_shadow_subscriber_name(name)
+                    for code in self._exit_shadow_subscriptions.pop(name, set()):
+                        try:
+                            self._event_router.unsubscribe(code, exit_sub_name)
+                        except Exception as e:
+                            self._logger.warning(
+                                f"[Scheduler] {name} exit shadow unsubscribe({code}) 실패: {e}"
+                            )
+
                 if self._price_sub_svc:
                     await self._price_sub_svc.remove_category(f"scheduler_{name}")
                     if cfg.event_driven_shadow:
@@ -1912,40 +1965,16 @@ class StrategyScheduler:
         *,
         repo_holdings: Optional[List[dict]] = None,
     ) -> bool:
-        """비활성 force-exit 전략에 남은 stale position_state를 정리한다."""
+        """비활성 force-exit 전략에 남은 stale position_state를 정리한다.
+
+        signal_history 근거는 인정하지 않는다 — 비활성 당일청산 전략의 state 는
+        원장 HOLD 가 없으면 무조건 stale 로 본다.
+        """
         if cfg.enabled or not cfg.force_exit_on_close:
             return False
-
-        position_state = self._get_strategy_position_state(cfg.strategy)
-        if not position_state:
-            return False
-
-        stale_codes: List[str] = []
-        for raw_code in list(position_state.keys()):
-            norm_code = str(raw_code).strip()
-            if not norm_code or not self._is_valid_strategy_code(norm_code):
-                stale_codes.append(raw_code)
-                continue
-            if self._has_open_position_evidence(
-                cfg.strategy.name,
-                norm_code,
-                repo_holdings=repo_holdings,
-                allow_signal_history=False,
-            ):
-                continue
-            stale_codes.append(raw_code)
-
-        if not stale_codes:
-            return False
-
-        for raw_code in stale_codes:
-            position_state.pop(raw_code, None)
-
-        self._persist_strategy_position_state(cfg.strategy)
-        self._logger.warning(
-            f"[Scheduler] stale position_state cleared: strategy={cfg.strategy.name}, codes={stale_codes}"
+        return self._prune_position_state_without_evidence(
+            cfg, repo_holdings=repo_holdings, allow_signal_history=False
         )
-        return True
 
     def _prune_stale_position_state(
         self,
@@ -1954,6 +1983,18 @@ class StrategyScheduler:
         repo_holdings: Optional[List[dict]] = None,
     ) -> bool:
         """주문/DB 근거 없는 전략 내부 보유 state를 정리한다."""
+        return self._prune_position_state_without_evidence(
+            cfg, repo_holdings=repo_holdings, allow_signal_history=True
+        )
+
+    def _prune_position_state_without_evidence(
+        self,
+        cfg: StrategySchedulerConfig,
+        *,
+        repo_holdings: Optional[List[dict]],
+        allow_signal_history: bool,
+    ) -> bool:
+        """포지션 근거 없는 전략 내부 state 정리 공통 구현. 정리 발생 시 True."""
         position_state = self._get_strategy_position_state(cfg.strategy)
         if not position_state:
             return False
@@ -1968,7 +2009,7 @@ class StrategyScheduler:
                 cfg.strategy.name,
                 norm_code,
                 repo_holdings=repo_holdings,
-                allow_signal_history=True,
+                allow_signal_history=allow_signal_history,
             ):
                 continue
             stale_codes.append(raw_code)
@@ -2052,7 +2093,12 @@ class StrategyScheduler:
         return holding
 
     def _get_strategy_holdings(self, cfg: StrategySchedulerConfig) -> List[dict]:
-        """가상매매 DB를 기준으로 한 보유 목록."""
+        """가상매매 DB를 기준으로 한 보유 목록.
+
+        주의: 조회이지만 의도적으로 stale position_state prune/persist 를 동반한다.
+        get_status(웹 폴링) 경유 정리가 테스트로 잠긴 계약이다
+        (test_get_status_prunes_* 4건).
+        """
         strategy_name = cfg.strategy.name
         merged: Dict[str, dict] = {}
 
@@ -2127,6 +2173,7 @@ class StrategyScheduler:
                     reason=d["reason"],
                     timestamp=d["timestamp"],
                     api_success=d["api_success"],
+                    trace_id=d.get("trace_id", ""),
                 )
                 for d in records_data
             ]
@@ -2232,6 +2279,24 @@ class StrategyScheduler:
         except Exception as e:
             self._logger.error(f"[Scheduler] 상태 복원 실패: {e}")
 
+    async def _record_signal(self, record: SignalRecord) -> None:
+        """시그널 이력 기록 (메모리 append + 트림 + DB + SSE).
+
+        당일 레코드는 force-exit 복구/순수량 추정의 근거라 MAX_HISTORY 초과분이라도
+        트림하지 않고 보존한다 (과거 날짜 레코드만 잘려 나간다).
+        """
+        self._signal_history.append(record)
+        if len(self._signal_history) > self.MAX_HISTORY:
+            today_prefix = self._current_signal_date_prefix()
+            overflow = self._signal_history[:-self.MAX_HISTORY]
+            kept = [
+                r for r in overflow
+                if today_prefix and str(r.timestamp or "").startswith(today_prefix)
+            ]
+            self._signal_history = kept + self._signal_history[-self.MAX_HISTORY:]
+        await self._append_signal_db(record)
+        await self._notify_subscribers(record)
+
     async def _append_signal_db(self, record: SignalRecord):
         """시그널 1건을 DB에 비동기 삽입."""
         try:
@@ -2239,7 +2304,7 @@ class StrategyScheduler:
         except Exception as e:
             self._logger.error(f"[Scheduler] 시그널 DB 저장 실패: {e}")
 
-    def get_signal_history(self, strategy_name: str = None) -> list:
+    def get_signal_history(self, strategy_name: Optional[str] = None) -> list:
         """시그널 실행 이력 반환. strategy_name 지정 시 해당 전략만 필터."""
         records = self._signal_history
         if strategy_name:
