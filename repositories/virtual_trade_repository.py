@@ -748,17 +748,43 @@ class VirtualTradeRepository:
         )
         return self._to_json_records(df)
 
+    _HOLD_COLUMNS = (
+        "strategy", "code", "buy_date", "buy_price", "qty", "sell_date", "sell_price",
+        "return_rate", "status", "reason", "volatility_20d_annualized", "config_hash",
+        "invalidation_price", "stop_loss_price", "target_price", "entry_reason",
+        "trailing_rule", "expected_holding_period_days", "confidence", "required_data",
+        "market_regime",
+    )
+
     def get_holds_by_strategy(self, strategy_name: str) -> list:
-        """전략별 HOLD 포지션 반환. legacy 한국어 행과 strategy_id 행 모두 매칭."""
+        """전략별 HOLD 포지션 반환. legacy 한국어 행과 strategy_id 행 모두 매칭.
+
+        스케줄러 사이클·웹 상태 폴링 hot path 라 pandas 를 거치지 않는다
+        (pd.read_sql_query 는 행 수와 무관하게 호출당 ~9ms 고정 비용,
+        raw cursor 는 동일 쿼리 0.1ms 내외 — 변환 계약은
+        test_get_holds_by_strategy_conversion_semantics 가 잠근다).
+        """
         where, params = self._strategy_filter(strategy_name)
-        df = pd.read_sql_query(
-            f"SELECT strategy,code,buy_date,buy_price,qty,sell_date,sell_price,return_rate,status,reason, "
-            f"volatility_20d_annualized,config_hash,invalidation_price,stop_loss_price,target_price, "
-            f"entry_reason,trailing_rule,expected_holding_period_days,confidence,required_data,market_regime "
+        cur = self._db.execute(
+            f"SELECT {','.join(self._HOLD_COLUMNS)} "
             f"FROM trades WHERE {where} AND status='HOLD' ORDER BY id",
-            self._db, params=params, dtype={'code': str, 'sell_date': object}
+            params,
         )
-        return self._to_json_records(df)
+        records = []
+        for row in cur.fetchall():
+            record = dict(zip(self._HOLD_COLUMNS, row))
+            # pandas 경로의 dtype={'code': str} 와 동일하게 code 는 항상 문자열
+            if record["code"] is not None:
+                record["code"] = str(record["code"])
+            # R-2: market_regime 은 JSON TEXT 저장 → dict 복원 (_to_json_records 와 동일 계약)
+            raw_regime = record.get("market_regime")
+            if isinstance(raw_regime, str) and raw_regime:
+                try:
+                    record["market_regime"] = json.loads(raw_regime)
+                except (ValueError, TypeError):
+                    record["market_regime"] = None
+            records.append(record)
+        return records
 
     def is_holding(self, strategy_name: str, code: str) -> bool:
         """해당 전략에서 종목 보유 중인지 확인. legacy 한국어 행도 함께 매칭."""
