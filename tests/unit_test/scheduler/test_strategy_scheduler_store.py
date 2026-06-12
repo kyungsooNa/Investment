@@ -267,3 +267,77 @@ def test_migrate_skip_when_db_exists(store, tmp_path, mock_logger, monkeypatch):
     # 이미 데이터가 있으므로 내용 파싱 없이 파일 이름만 변경됨
     assert not os.path.exists(str(csv_path))
     assert os.path.exists(str(csv_path) + ".migrated")
+
+
+# ── trace_id 영속화 (S-9, S-5 잔여) ──
+
+def test_signal_history_persists_trace_id(store):
+    """trace_id가 있는 레코드는 저장/로드 시 trace_id를 유지한다."""
+    record = MockSignalRecord("S1", "001", "N1", "BUY", 100, 10, 1.5, "R1", "2025-01-01 10:00", True)
+    record.trace_id = "trace-abc-123"
+
+    store.append_signal(record)
+    history = store.load_signal_history(limit=1)
+
+    assert history[0]["trace_id"] == "trace-abc-123"
+
+
+def test_signal_history_trace_id_defaults_empty_when_absent(store):
+    """trace_id 속성이 없는 레코드도 저장 가능하고 빈 문자열로 로드된다."""
+    record = MockSignalRecord("S1", "001", "N1", "BUY", 100, 10, 1.5, "R1", "2025-01-01 10:00", True)
+
+    store.append_signal(record)
+    history = store.load_signal_history(limit=1)
+
+    assert history[0]["trace_id"] == ""
+
+
+def test_load_signal_history_for_date_includes_trace_id(store):
+    record = MockSignalRecord("S1", "001", "N1", "BUY", 100, 10, 1.5, "R1", "2025-01-01 10:00", True)
+    record.trace_id = "trace-day"
+
+    store.append_signal(record)
+    rows = store.load_signal_history_for_date("20250101")
+
+    assert rows and rows[0]["trace_id"] == "trace-day"
+
+
+def test_legacy_db_without_trace_id_column_is_migrated(db_path, mock_logger):
+    """trace_id 컬럼이 없는 기존 DB를 열면 ALTER 마이그레이션 후 정상 동작한다."""
+    legacy_ddl = """
+    CREATE TABLE signal_history (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        strategy_name TEXT    NOT NULL,
+        code          TEXT    NOT NULL,
+        name          TEXT    NOT NULL,
+        action        TEXT    NOT NULL,
+        price         INTEGER NOT NULL,
+        qty           INTEGER NOT NULL DEFAULT 1,
+        return_rate   REAL,
+        reason        TEXT,
+        timestamp     TEXT    NOT NULL,
+        api_success   INTEGER NOT NULL DEFAULT 1
+    );
+    """
+    conn = sqlite3.connect(db_path)
+    conn.execute(legacy_ddl)
+    conn.execute(
+        """INSERT INTO signal_history
+           (strategy_name, code, name, action, price, qty, return_rate, reason, timestamp, api_success)
+           VALUES ('S1', '001', 'N1', 'BUY', 100, 1, NULL, 'R', '2025-01-01 10:00', 1)"""
+    )
+    conn.commit()
+    conn.close()
+
+    store = StrategySchedulerStore(db_path=db_path, logger=mock_logger)
+    try:
+        history = store.load_signal_history(limit=10)
+        assert history[0]["trace_id"] == ""
+
+        record = MockSignalRecord("S2", "002", "N2", "SELL", 200, 2, None, "R2", "2025-01-02 10:00", True)
+        record.trace_id = "trace-new"
+        store.append_signal(record)
+        history = store.load_signal_history(limit=10)
+        assert history[-1]["trace_id"] == "trace-new"
+    finally:
+        store.close()

@@ -276,6 +276,23 @@ def test_date_rollover_purges_stale_date_keys():
     assert scheduler._force_exit_done == set()
 
 
+# ── S-9. 시그널 이력 복원 시 trace_id 유지 (S-5 잔여) ──
+
+def test_load_signal_history_restores_trace_id():
+    """DB에서 복원한 시그널 이력의 trace_id가 유실되지 않는다."""
+    scheduler, _, _, _, _ = _make_scheduler()
+    scheduler._store.load_signal_history.return_value = [{
+        "strategy_name": "감사테스트전략", "code": "000001", "name": "종목1",
+        "action": "BUY", "price": 10000, "qty": 1, "return_rate": None,
+        "reason": "테스트", "timestamp": "2026-06-12 09:00:00",
+        "api_success": True, "trace_id": "trace-restored",
+    }]
+
+    records = scheduler._load_signal_history()
+
+    assert records[0].trace_id == "trace-restored"
+
+
 # ── S-7. stop_strategy의 event shadow router 구독 해제 ──
 
 async def test_stop_strategy_unsubscribes_event_shadow_router():
