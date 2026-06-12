@@ -1276,3 +1276,38 @@ async def test_log_sell_by_strategy_async_contract_unchanged(virutal_trade_repos
     )
     assert isinstance(ret, float)
     assert ret == pytest.approx(10.0, abs=0.1)
+
+
+# ── get_holds_by_strategy 변환 시맨틱 잠금 (S-9 후속: pandas 제거 전 특성화) ──
+
+def test_get_holds_by_strategy_conversion_semantics(virutal_trade_repository):
+    """hot-path 조회의 변환 계약: NULL→None, code 문자열, market_regime dict 복원."""
+    repo = virutal_trade_repository
+    regime = {"kospi": "bull", "kosdaq": None, "stock_market": "KOSPI"}
+    repo.log_buy("전략A", "005930", 70000, qty=2, market_regime=regime)
+    repo.log_buy("전략A", "000020", 10000)  # 옵션 필드 전부 NULL
+
+    holds = repo.get_holds_by_strategy("전략A")
+
+    assert [h["code"] for h in holds] == ["005930", "000020"]
+    assert all(isinstance(h["code"], str) for h in holds)
+    assert holds[0]["market_regime"] == regime
+    bare = holds[1]
+    assert bare["market_regime"] is None
+    assert bare["volatility_20d_annualized"] is None
+    assert bare["stop_loss_price"] is None
+    assert bare["required_data"] is None
+    assert bare["status"] == "HOLD"
+    assert bare["qty"] == 1
+
+
+def test_get_holds_by_strategy_broken_regime_json_returns_none(virutal_trade_repository):
+    """market_regime 컬럼에 깨진 JSON 이 있어도 예외 없이 None 으로 복원한다."""
+    repo = virutal_trade_repository
+    repo.log_buy("전략A", "005930", 70000)
+    repo._db.execute("UPDATE trades SET market_regime='{broken json' WHERE code='005930'")
+    repo._db.commit()
+
+    holds = repo.get_holds_by_strategy("전략A")
+
+    assert holds[0]["market_regime"] is None
