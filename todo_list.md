@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-06-13 (해외주식 Mode V1/V2 merge 완료, 현재가 조회 해외 검색 통합 계획 추가)
+최종 업데이트: 2026-06-14 (해외주식 Mode V2.1 — /stock 현재가 조회 화면 해외 검색 통합 완료)
 
 이 문서는 현재 남은 실행 항목만 추린 목록이다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거한다. 100% 종료된 섹션(`[x]` only, follow-up 없음)은 git history 로 추적하고 본 문서에서 삭제한다.
 
@@ -34,7 +34,7 @@
 - 완료 기준의 전략 성과 `[~]`: `MomentumStrategy` 등 비활성 백테스트 경로의 표준 journal 통합 여부 결정.
 - 시스템 트레이더 관점 리뷰(R-1~R-6, 2026-06-08): 생존편향·전략 상관/regime 집중·총위험 미집계·갭 체결 등 백테스트 신뢰도/실전 리스크 신규 발견. 자금 확대 전 R-1~R-3 우선 해소 권장. (R-5 거래세율은 검토 결과 0.20% 정확 → 해소, 변경 없음. 하단 "시스템 트레이더 관점 리뷰" 섹션)
 - StrategyScheduler 코드 리뷰(S-1~S-10, 2026-06-12): `stop()` 강제청산 데드 패스, 매도 병렬 에러 처리 비대칭, 이력 트림 vs 복구 충돌 등 버그 + 수명/구조 개선. S-1/S-2/S-4~S-8 수정 완료, S-3/S-10은 의도된 설계 확인 후 주석 명시로 종결. S-9는 부분 진행(prune 통합/trace_id 영속화/import 정리) — getter 부수효과는 의도된 계약으로 판명되어 철회, god class 분리는 P2 2-4 parity 판정 후 재평가로 보류. (하단 "StrategyScheduler 코드 리뷰" 섹션)
-- 해외주식 Mode: V1/V2는 main merge 완료(2026-06-13) — 미국 3시장 조회 + 수동 USD 지정가 주문 + 실전 fail-close + 해외 mode 자동전략 차단 + 국내 run 유지 상태의 해외 수동 Web surface. 다음은 기존 현재가 조회(`/stock`) 화면에 해외 심볼 직접 검색을 통합한다. 자동전략 해외 지원, 해외 WebSocket, 통합 해외 reconciliation은 계속 제외.
+- 해외주식 Mode: V1/V2는 main merge 완료(2026-06-13) — 미국 3시장 조회 + 수동 USD 지정가 주문 + 실전 fail-close + 해외 mode 자동전략 차단 + 국내 run 유지 상태의 해외 수동 Web surface. V2.1(2026-06-14)로 기존 현재가 조회(`/stock`) 화면에 국내/해외 모드 토글 + 해외 심볼 직접 검색 통합 완료. 자동전략 해외 지원, 해외 WebSocket, 통합 해외 reconciliation은 계속 제외.
 
 ---
 
@@ -71,29 +71,21 @@
 - [x] `enabled_market_modes`에 `overseas_us`가 없으면 화면 JS가 조회/주문 호출 전에 fail-close 메시지를 표시한다.
 - [x] 페이지 렌더링/정적 자산/JS API 호출 문자열을 테스트로 고정한다.
 
-### V2.1 현재가 조회 화면 해외 검색 통합
+### V2.1 현재가 조회 화면 해외 검색 통합 — ✅ 완료 (2026-06-14)
 
-- [ ] `/stock` 현재가 조회 화면에 `국내/해외` 조회 모드 선택 UI를 추가한다.
-- [ ] 국내 모드 기본 동작은 그대로 유지한다. 국내 종목명 자동완성, 국내 코드 조회, 차트/지표 표시 경로는 회귀 없이 보존한다.
-- [ ] 해외 모드에서는 ticker 직접 입력(`AAPL` 등) + 거래소 선택(`NASD`/`NYSE`/`AMEX`)만 허용한다. v1/v2 범위에서는 해외 심볼 자동완성/마스터 검색은 제외한다.
-- [ ] 해외 모드 조회는 `/api/overseas/stock/{symbol}?exchange=...`를 호출하고 `symbol`, `exchange`, `currency`, `price`, `change_rate`, `volume`, `timestamp` 최소 view model만 표시한다.
-- [ ] `enabled_market_modes`에 `overseas_us`가 없으면 `/stock` 화면에서도 해외 조회를 fail-close 메시지로 차단한다.
-- [ ] 해외 모드에서는 국내 전용 보조 액션(국내 차트/국내 지표/랭킹 연결 등)을 숨기거나 비활성화한다.
-- [ ] 테스트는 `/stock` 렌더링, JS 모드 전환 문자열, 해외 API 호출 경로, 해외 disabled fail-close를 우선 고정한다.
+- [x] `/stock` 현재가 조회 화면에 `국내/해외` 조회 모드 선택 UI를 추가한다. (`stock-mode-domestic`/`stock-mode-overseas` 세그먼트 토글 + `setStockMarketMode()`)
+- [x] 국내 모드 기본 동작은 그대로 유지한다. 국내 종목명 자동완성, 국내 코드 조회, 차트/지표 표시 경로는 회귀 없이 보존한다. (기본 모드=국내, 기존 `searchStock` 경로 무변경)
+- [x] 해외 모드에서는 ticker 직접 입력(`AAPL` 등) + 거래소 선택(`NASD`/`NYSE`/`AMEX`)만 허용한다. v1/v2 범위에서는 해외 심볼 자동완성/마스터 검색은 제외한다.
+- [x] 해외 모드 조회는 `/api/overseas/stock/{symbol}?exchange=...`를 호출하고 `symbol`, `exchange`, `currency`, `price`, `change_rate`, `volume`, `timestamp` 최소 view model만 표시한다. (백엔드 엔드포인트는 V2에서 이미 구현 → 프론트만 배선)
+- [x] `enabled_market_modes`에 `overseas_us`가 없으면 `/stock` 화면에서도 해외 조회를 fail-close 메시지로 차단한다. (`_ensureOverseasEnabledForStock()` → `/api/market-mode` 확인)
+- [x] 해외 모드에서는 국내 전용 보조 액션(국내 차트/국내 지표/랭킹 연결 등)을 숨기거나 비활성화한다. (모드 전환/해외 조회 시 차트 카드 detach+hide)
+- [x] 테스트는 `/stock` 렌더링, JS 모드 전환 문자열, 해외 API 호출 경로, 해외 disabled fail-close를 우선 고정한다. (`test_web_pages.py::test_pages_render_success_no_login` /stock 분기 + 신규 `test_stock_static_js_exposes_overseas_mode`)
 
-주요 파일:
+주요 파일(V2.1 실제 수정 범위 — 프론트엔드 한정, 백엔드는 V2에서 완료):
 
-- `config/config_loader.py`
-- `config/config.yaml.example`
-- `view/web/routes/stock.py`
-- `view/web/routes/balance.py`
-- `view/web/routes/order.py`
 - `view/web/templates/stock.html`
 - `view/web/static/js/stock.js`
-- `view/web/templates/overseas.html`
-- `view/web/static/js/overseas.js`
-- `view/web/bootstrap/service_container.py`
-- `view/web/bootstrap/strategy_factory.py`
+- `tests/unit_test/view/web/test_web_pages.py`
 
 ---
 

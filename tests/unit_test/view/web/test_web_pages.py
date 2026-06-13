@@ -37,6 +37,12 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert "Investment" in response.text
         elif path == "/stock":
             assert "종목 현재가 조회" in response.text
+            # V2.1: 국내/해외 조회 모드 토글 + 해외 ticker 입력
+            assert 'id="stock-mode-domestic"' in response.text
+            assert 'id="stock-mode-overseas"' in response.text
+            assert 'id="overseas-stock-symbol"' in response.text
+            assert 'id="overseas-stock-exchange"' in response.text
+            assert 'value="NASD"' in response.text
         elif path == "/balance":
             assert "계좌 잔고" in response.text
         elif path == "/order":
@@ -81,6 +87,16 @@ def test_virtual_static_js_exposes_divergence_workflow():
     assert "compareVirtualDivergence" in script
     assert "filled_qty" in script
     assert "slippage_pct" in script
+
+
+def test_stock_static_js_exposes_overseas_mode():
+    """stock.js가 /stock 화면에서 해외 모드 조회를 fail-close와 함께 지원해야 한다."""
+    script = Path("view/web/static/js/stock.js").read_text(encoding="utf-8")
+
+    assert "setStockMarketMode" in script
+    assert "searchOverseasStock" in script
+    assert "/api/overseas/stock/" in script
+    assert "/api/market-mode" in script
 
 
 def test_overseas_static_js_exposes_manual_workflow():

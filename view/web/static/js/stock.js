@@ -31,6 +31,101 @@ document.addEventListener('stock-price-tick', function (e) {
     if (lowEl  && tick.low  > 0) lowEl.textContent  = fmt(tick.low);
 });
 
+/* ── 국내/해외 조회 모드 토글 (V2.1) ── */
+function setStockMarketMode(mode) {
+    const domesticRow = document.getElementById('domestic-stock-row');
+    const overseasRow = document.getElementById('overseas-stock-row');
+    const domesticBtn = document.getElementById('stock-mode-domestic');
+    const overseasBtn = document.getElementById('stock-mode-overseas');
+    const isOverseas = mode === 'overseas';
+
+    if (domesticRow) domesticRow.style.display = isOverseas ? 'none' : '';
+    if (overseasRow) overseasRow.style.display = isOverseas ? '' : 'none';
+    if (domesticBtn) domesticBtn.classList.toggle('active', !isOverseas);
+    if (overseasBtn) overseasBtn.classList.toggle('active', isOverseas);
+
+    // 모드 전환 시 결과/차트 영역 초기화 (국내↔해외 잔여 UI 방지)
+    const resultDiv = document.getElementById('stock-result');
+    if (resultDiv) resultDiv.innerHTML = '';
+    const chartCard = document.getElementById('stock-chart-card');
+    const sectionStock = document.getElementById('section-stock');
+    if (chartCard && sectionStock && chartCard.parentElement !== sectionStock) {
+        sectionStock.appendChild(chartCard);
+    }
+    if (chartCard) chartCard.style.display = 'none';
+}
+
+/* overseas_us가 enabled된 run에서만 해외 조회 허용 (fail-close) */
+async function _ensureOverseasEnabledForStock() {
+    try {
+        const res = await fetchWithTimeout('/api/market-mode', {}, 5000);
+        if (!res.ok) return false;
+        const json = await res.json();
+        return Array.isArray(json.enabled_market_modes) && json.enabled_market_modes.includes('overseas_us');
+    } catch (_) {
+        return false;
+    }
+}
+
+async function searchOverseasStock() {
+    const symbolInput = document.getElementById('overseas-stock-symbol');
+    const exchangeSel = document.getElementById('overseas-stock-exchange');
+    const symbol = symbolInput ? symbolInput.value.trim().toUpperCase() : '';
+    const exchange = exchangeSel ? exchangeSel.value : 'NASD';
+    const resultDiv = document.getElementById('stock-result');
+    if (!symbol) {
+        alert('심볼을 입력하세요.');
+        return;
+    }
+    if (symbolInput) symbolInput.value = symbol;
+    if (!resultDiv) return;
+
+    // 해외 모드에서는 국내 전용 차트 카드를 숨긴다.
+    const chartCard = document.getElementById('stock-chart-card');
+    if (chartCard) chartCard.style.display = 'none';
+
+    showLoading(resultDiv, '해외 종목 조회 중...');
+    try {
+        const enabled = await _ensureOverseasEnabledForStock();
+        if (!enabled) {
+            resultDiv.innerHTML = '<p class="error">해외주식 조회는 overseas_us가 enabled된 run에서만 사용할 수 있습니다.</p>';
+            return;
+        }
+        const res = await fetchWithTimeout(`/api/overseas/stock/${encodeURIComponent(symbol)}?exchange=${exchange}`, {}, 12000);
+        const json = await res.json();
+        if (!res.ok || json.rt_cd !== '0') {
+            resultDiv.innerHTML = `<p class="error">조회 실패: ${json.msg1 || res.status}</p>`;
+            return;
+        }
+        const data = json.data || {};
+        const rate = Number(data.change_rate || 0);
+        const rateClass = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
+        const usd = (v) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
+        };
+        const num = (v) => {
+            const n = Number(String(v ?? '').replace(/,/g, ''));
+            return Number.isFinite(n) ? n.toLocaleString() : '-';
+        };
+        resultDiv.innerHTML = `
+            <div class="card stock-info-box">
+                <h3 style="margin:0;">${data.symbol || symbol} <span style="color:#aaa;font-size:0.85rem;">${data.exchange || exchange} ${data.currency || 'USD'}</span></h3>
+                <p class="price ${rateClass}">${usd(data.price)}</p>
+                <p class="change-rate">등락률: <span class="${rateClass}">${Number.isFinite(rate) ? (rate > 0 ? '+' : '') + rate.toFixed(2) + '%' : '-'}</span></p>
+                <p>거래량: ${num(data.volume)}</p>
+                <p>시각: ${data.timestamp || '-'}</p>
+            </div>
+        `;
+    } catch (e) {
+        if (e.name === 'AbortError') {
+            resultDiv.innerHTML = `<p class="error">요청 시간이 초과되었습니다. 다시 시도해주세요.</p>`;
+        } else {
+            resultDiv.innerHTML = `<p class="error">통신 오류: ${e.message || e}</p>`;
+        }
+    }
+}
+
 function changeExchange(exchange, btn) {
     if (_currentExchange === exchange) return;
     _currentExchange = exchange;
