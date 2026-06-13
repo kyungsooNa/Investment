@@ -116,12 +116,18 @@ async function loadOverseasChart() {
             resultDiv.innerHTML = `<p class="error">일봉 조회 실패: ${json.msg1 || res.status}</p>`;
             return;
         }
-        const rows = Array.isArray(json.data) ? json.data.slice(-10).reverse() : [];
+        // KIS 해외 일봉은 원본 body(dict)를 그대로 반환하므로 output2 배열을 꺼낸다.
+        // (이미 배열로 정규화된 형태도 하위호환으로 허용)
+        const data = json.data || {};
+        const list = Array.isArray(data)
+            ? data
+            : (Array.isArray(data.output2) ? data.output2 : []);
+        const rows = list.slice(-10).reverse();
         const body = rows.map((row) => `
             <tr>
                 <td>${row.date || row.xymd || row.stck_bsop_date || '-'}</td>
-                <td>${_formatUsd(row.close || row.clpr || row.ovrs_nmix_prpr)}</td>
-                <td>${_formatNumber(row.volume || row.acml_vol)}</td>
+                <td>${_formatUsd(row.close || row.clos || row.clpr || row.ovrs_nmix_prpr)}</td>
+                <td>${_formatNumber(row.volume || row.tvol || row.acml_vol)}</td>
             </tr>
         `).join('');
         resultDiv.innerHTML = `
