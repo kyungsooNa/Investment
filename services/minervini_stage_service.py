@@ -58,6 +58,7 @@ class MinerviniStageService:
         self._rs_rating_svc = rs_rating_service
         self._stock_repository = stock_repository
         self._minervini_update_task: Optional["MinerviniUpdateTask"] = None
+        self._refresh_task: Optional[asyncio.Task] = None
         self._slope_lookback = slope_lookback
         self._vol_threshold = volatility_threshold
         self._logger = logger or logging.getLogger(__name__)
@@ -101,8 +102,8 @@ class MinerviniStageService:
                             for it in db_items
                         ]
                         return ResCommonResponse(rt_cd="0", msg1="성공", data=data)
-            except Exception:
-                pass
+            except Exception as e:
+                self._logger.debug(f"[MinerviniStage] Stage2 DB 조회 실패 — 캐시로 폴백: {e}")
 
         # 2차: in-memory 캐시
         task = self._minervini_update_task
@@ -116,7 +117,8 @@ class MinerviniStageService:
         # 3차: 갱신 트리거 후 수집 대기
         progress = task.get_progress()
         if not progress.get("running"):
-            asyncio.create_task(task.refresh_minervini_stage2())
+            # 참조를 보관해 실행 중 GC 수거를 방지 (fire-and-forget 안티패턴 회피).
+            self._refresh_task = asyncio.create_task(task.refresh_minervini_stage2())
         return ResCommonResponse(rt_cd="0", msg1="수집 중", data=[])
 
     async def get_stage_for_code(self, code: str) -> tuple[int, str]:
@@ -214,9 +216,11 @@ class MinerviniStageService:
         ma150 = mean(closes[-150:])
         ma200 = mean(closes[-200:])
 
-        # MA200 기울기: numpy 선형회귀 (20일 = 미너비니 "최소 1개월 우상향" 기준)
-        slope_window = closes[-self._slope_lookback:]
-        ma200_slope = self._calculate_slope(slope_window)
+        # MA200 기울기: MA200 시리즈 자체에 numpy 선형회귀
+        # (20일 = 미너비니 "최소 1개월 우상향" 기준). 원시 종가가 아니라
+        # 이동평균선의 추세를 봐야 단기 눌림을 하락 전환으로 오판하지 않는다.
+        ma200_series = self._ma_series(closes, 200, self._slope_lookback)
+        ma200_slope = self._calculate_slope(ma200_series)
 
         # 52주 고가: 종가 기준
         w52_closes = closes[-252:] if len(closes) >= 252 else closes
@@ -270,6 +274,23 @@ class MinerviniStageService:
         return (self.STAGE_1_NEGLECT, reason) if return_reason else self.STAGE_1_NEGLECT
 
     # ── 내부 헬퍼 ──────────────────────────────────────────────────────────
+
+    def _ma_series(self, closes: List[float], window: int, count: int) -> List[float]:
+        """최근 'count'개 거래일에 대한 'window'기간 단순이동평균 시리즈(오래된 순).
+
+        MA200 기울기 산출에 사용. 데이터가 window+1 미만이면 점이 1개 이하라
+        기울기를 낼 수 없어 빈/단일 리스트를 반환하며, 이 경우 _calculate_slope가
+        0.0을 돌려주어 보수적으로 Stage 4(하락)로 분류된다.
+        """
+        n = len(closes)
+        max_points = n - window + 1
+        if max_points < 1:
+            return []
+        points = min(count, max_points)
+        return [
+            mean(closes[i - window + 1: i + 1])
+            for i in range(n - points, n)
+        ]
 
     def _calculate_slope(self, values: List[float]) -> float:
         """numpy 선형회귀로 기울기 산출.
@@ -351,8 +372,11 @@ class MinerviniStageService:
         """OHLCV 행 목록에서 종가/저가 리스트 추출.
 
         KIS API 필드명(stck_clpr, stck_lwpr) 우선, 없으면 'close'/'low' fallback.
-        rows는 오래된 순 또는 최신 순 모두 처리 — DB에서 날짜 오름차순 반환 가정.
+        모든 행에 날짜 키가 있으면 오래된 순으로 정렬해 closes[-1]이 최신가가 되도록
+        보장한다(없으면 입력 순서 유지). 종가 0 이하 행은 거래정지 등 비정상으로
+        보고 제외한다 — 52주 저가 등 계산 오염 방지.
         """
+        rows = self._ensure_ascending(rows)
         closes: List[float] = []
         lows: List[float] = []
         for r in rows:
@@ -367,9 +391,20 @@ class MinerviniStageService:
                     f"close={close_val!r}, low={low_val!r}"
                 )
                 continue
+            if c <= 0:
+                continue
+            if l <= 0:
+                l = c
             closes.append(c)
             lows.append(l)
         return closes, lows
+
+    def _ensure_ascending(self, rows: list) -> list:
+        """모든 행에 동일한 날짜 키가 있으면 오래된 순으로 정렬, 아니면 원본 유지."""
+        for key in ("date", "stck_bsop_date"):
+            if rows and all(isinstance(r, dict) and r.get(key) for r in rows):
+                return sorted(rows, key=lambda r: r[key])
+        return rows
 
     async def _fetch_rs_rating(self, code: str) -> int:
         """RS Rating 서비스에서 최신 RS Rating 조회. 없으면 0 반환."""
