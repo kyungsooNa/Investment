@@ -88,15 +88,18 @@ class EventShadowJournalService:
     def flush_to_file(self, date_str: str) -> Optional[Path]:
         if not self._buffer:
             return None
-        self._log_dir.mkdir(parents=True, exist_ok=True)
+        # flush 가 worker thread 로 오프로드될 수 있으므로(이벤트 루프의 record 와 경합),
+        # 버퍼를 통째로 교체한 뒤 쓰고, 실패 시 되돌려 유실을 막는다.
+        records, self._buffer = self._buffer, []
         path = self._log_dir / f"{date_str}.jsonl"
         try:
+            self._log_dir.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as f:
-                for rec in self._buffer:
+                for rec in records:
                     f.write(json.dumps(rec, ensure_ascii=False))
                     f.write("\n")
-            self._buffer.clear()
             return path
         except OSError as e:
+            self._buffer = records + self._buffer
             self._logger.warning(f"[EventShadowJournal] flush 실패: {e}")
             return None

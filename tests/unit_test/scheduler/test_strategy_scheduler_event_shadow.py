@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -188,6 +188,31 @@ async def test_shadow_evaluator_records_signal_and_returns_none():
     assert call_kwargs["signal"]["action"] == "BUY"
     assert call_kwargs["snapshot"] == snapshot
     journal.flush_to_file.assert_called_once_with("20260520")
+
+
+@pytest.mark.asyncio
+async def test_shadow_record_flush_offloaded_to_thread():
+    """flush_to_file 은 이벤트 루프를 막지 않도록 asyncio.to_thread 로 오프로드된다."""
+    router = MagicMock()
+    router.subscribe = MagicMock()
+    journal = MagicMock()
+    journal.record = MagicMock()
+    scheduler = _make_scheduler(event_router=router, event_shadow_journal=journal)
+
+    sig = TradeSignal(
+        code="005930", name="삼성전자", action="BUY", price=75000,
+        qty=1, reason="test", strategy_name="VBO",
+    )
+    cfg = _make_strategy_cfg("VBO", event_driven_shadow=True, codes=["005930"])
+    cfg.strategy.evaluate_single = AsyncMock(return_value=sig)
+
+    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    evaluator = router.subscribe.call_args.kwargs["evaluator"]
+
+    with patch("asyncio.to_thread", new_callable=AsyncMock) as to_thread:
+        await evaluator("005930", {"price": "75000"})
+
+    to_thread.assert_awaited_once_with(journal.flush_to_file, "20260520")
 
 
 @pytest.mark.asyncio
