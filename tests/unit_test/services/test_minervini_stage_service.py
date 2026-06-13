@@ -93,6 +93,16 @@ class TestClassifyStage:
         assert isinstance(reason, str)
         assert reason
 
+    def test_ma200_slope_uses_ma_series_not_raw_closes(self):
+        # 장기 강한 상승(240일) 후 최근 20일 완만한 눌림.
+        # 원시 종가 기울기는 음수지만 MA200 자체는 여전히 우상향이므로
+        # Stage 4(하락/매수금지)로 오판해서는 안 된다.
+        svc = _make_svc()
+        closes = _trending_closes(5000, 14000, 240) + _trending_closes(14000, 13500, 20)
+        lows = [c * 0.97 for c in closes]
+        result = svc.classify_stage(closes, lows, rs_rating=80)
+        assert result != MinerviniStageService.STAGE_4_DECLINING
+
 
 class TestCheckVcpPattern:
 
@@ -173,6 +183,30 @@ class TestHelpers:
         closes, lows = svc._extract_price_series(rows)
         assert closes == [100.0, 200.0, 300.0]
         assert lows == [90.0, 190.0, 300.0]
+
+    def test_extract_price_series_sorts_by_date_ascending(self):
+        # 모든 행에 날짜 키가 있으면 오래된 순으로 정렬해 closes[-1]이 최신가가 되도록 한다.
+        svc = _make_svc()
+        rows = [
+            {"date": "20260103", "stck_clpr": "300", "stck_lwpr": "290"},
+            {"date": "20260101", "stck_clpr": "100", "stck_lwpr": "90"},
+            {"date": "20260102", "stck_clpr": "200", "stck_lwpr": "190"},
+        ]
+        closes, lows = svc._extract_price_series(rows)
+        assert closes == [100.0, 200.0, 300.0]
+        assert lows == [90.0, 190.0, 290.0]
+
+    def test_extract_price_series_skips_zero_prices(self):
+        # 거래정지 등으로 종가 0이 들어오면 52주 저가 등을 오염시키므로 제외한다.
+        svc = _make_svc()
+        rows = [
+            {"stck_clpr": "100", "stck_lwpr": "90"},
+            {"stck_clpr": "0", "stck_lwpr": "0"},
+            {"stck_clpr": "200", "stck_lwpr": "190"},
+        ]
+        closes, lows = svc._extract_price_series(rows)
+        assert closes == [100.0, 200.0]
+        assert 0.0 not in lows
 
     def test_describe_stage_mapping(self):
         svc = _make_svc()
@@ -284,6 +318,42 @@ class TestGetStage2List:
 
         assert resp.rt_cd == "0"
         assert resp.data[0]["code"] == "035720"
+
+    @pytest.mark.asyncio
+    async def test_db_exception_is_logged(self):
+        stock_repo = AsyncMock()
+        stock_repo.get_latest_trade_date.side_effect = RuntimeError("DB 오류")
+        update_task = AsyncMock()
+        update_task.get_minervini_stage2_cache.return_value = [{"code": "035720"}]
+        logger = MagicMock()
+
+        svc = MinerviniStageService(
+            stock_query_service=AsyncMock(), stock_repository=stock_repo, logger=logger
+        )
+        svc._minervini_update_task = update_task
+
+        await svc.get_stage2_list()
+
+        assert logger.debug.called or logger.warning.called
+
+    @pytest.mark.asyncio
+    async def test_refresh_task_reference_is_retained(self):
+        stock_repo = AsyncMock()
+        stock_repo.get_latest_trade_date.return_value = None
+        update_task = AsyncMock()
+        update_task.get_minervini_stage2_cache.return_value = []
+        update_task.get_progress = MagicMock(return_value={"running": False})
+
+        svc = MinerviniStageService(stock_query_service=AsyncMock(), stock_repository=stock_repo)
+        svc._minervini_update_task = update_task
+
+        sentinel = MagicMock()
+        with patch(
+            "services.minervini_stage_service.asyncio.create_task", return_value=sentinel
+        ):
+            await svc.get_stage2_list()
+
+        assert svc._refresh_task is sentinel
 
 
 class TestGetStageForCode:
