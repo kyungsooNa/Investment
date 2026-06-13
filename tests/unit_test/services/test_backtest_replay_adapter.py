@@ -5,7 +5,8 @@ from datetime import datetime
 
 import pytest
 
-from common.types import ResCommonResponse, TradeSignal
+from common.types import ErrorCode, ResCommonResponse, TradeSignal
+from services.delisted_ohlcv_store import DelistedOhlcvStore
 from services.backtest_replay_context import BacktestMarketClock
 from services.backtest_period_runner import BacktestExecutionBarPolicy, BacktestPeriodRunner
 from services.backtest_execution_simulator import BacktestPortfolioLedger
@@ -349,3 +350,88 @@ async def test_daily_mtm_provider_returns_only_intermediate_holding_daily_bars()
         limit=14,
         end_date="20260504",
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# R-1 연결층 3a: 상폐 OHLCV fallback (opt-in delisted_ohlcv_store)
+# ─────────────────────────────────────────────────────────────
+def _empty_daily_resp():
+    return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="empty", data=[])
+
+
+def _delisted_store(rows):
+    return DelistedOhlcvStore({"900100": rows})
+
+
+@pytest.mark.asyncio
+async def test_recent_daily_ohlcv_falls_back_to_delisted_store_when_primary_empty():
+    sqs = AsyncMock()
+    sqs.get_recent_daily_ohlcv.return_value = _empty_daily_resp()
+    store = _delisted_store([
+        {"date": "2026-03-10", "open": 1, "high": 2, "low": 1, "close": 2, "volume": 5},
+        {"date": "2026-03-11", "open": 2, "high": 3, "low": 2, "close": 3, "volume": 6},
+    ])
+    replay = StockQueryBacktestReplayService(sqs, delisted_ohlcv_store=store)
+    replay.set_backtest_date("20260311")
+
+    resp = await replay.get_recent_daily_ohlcv("900100", limit=60)
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert [r["date"] for r in resp.data] == ["20260310", "20260311"]
+
+
+@pytest.mark.asyncio
+async def test_recent_daily_ohlcv_prefers_primary_and_skips_store_when_present():
+    sqs = AsyncMock()
+    primary = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="ok",
+        data=[{"date": "20260311", "close": 100}],
+    )
+    sqs.get_recent_daily_ohlcv.return_value = primary
+
+    class _BoomStore:
+        def get_daily_rows(self, *a, **k):  # pragma: no cover - 호출되면 실패
+            raise AssertionError("primary 데이터가 있으면 store 를 조회하면 안 된다")
+
+    replay = StockQueryBacktestReplayService(sqs, delisted_ohlcv_store=_BoomStore())
+    replay.set_backtest_date("20260311")
+
+    resp = await replay.get_recent_daily_ohlcv("005930", limit=60)
+    assert resp is primary
+
+
+@pytest.mark.asyncio
+async def test_recent_daily_ohlcv_without_store_is_unchanged():
+    sqs = AsyncMock()
+    sqs.get_recent_daily_ohlcv.return_value = _empty_daily_resp()
+    replay = StockQueryBacktestReplayService(sqs)
+    replay.set_backtest_date("20260311")
+
+    resp = await replay.get_recent_daily_ohlcv("900100", limit=60)
+    assert resp.data == []  # fallback 없음
+
+
+@pytest.mark.asyncio
+async def test_recent_daily_ohlcv_returns_primary_when_store_also_empty():
+    sqs = AsyncMock()
+    empty = _empty_daily_resp()
+    sqs.get_recent_daily_ohlcv.return_value = empty
+    replay = StockQueryBacktestReplayService(sqs, delisted_ohlcv_store=DelistedOhlcvStore({}))
+    replay.set_backtest_date("20260311")
+
+    resp = await replay.get_recent_daily_ohlcv("900100", limit=60)
+    assert resp is empty
+
+
+@pytest.mark.asyncio
+async def test_recent_daily_ohlcv_fallback_applies_limit_and_end_date():
+    sqs = AsyncMock()
+    sqs.get_recent_daily_ohlcv.return_value = _empty_daily_resp()
+    store = _delisted_store([
+        {"date": "2026-03-09", "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1},
+        {"date": "2026-03-10", "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1},
+        {"date": "2026-03-11", "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1},
+    ])
+    replay = StockQueryBacktestReplayService(sqs, delisted_ohlcv_store=store)
+
+    resp = await replay.get_recent_daily_ohlcv("900100", limit=2, end_date="20260310")
+    assert [r["date"] for r in resp.data] == ["20260309", "20260310"]

@@ -653,3 +653,26 @@ def _get_trading_api_from_ctx(web_ctx):
             if hasattr(api, "url") and hasattr(api, "_async_session"):
                 return api
     return None
+
+
+_INTEGRATION_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def pytest_collection_modifyitems(config, items):
+    """통합 테스트 전용 timeout 상향 (30s → 60s).
+
+    이 디렉터리 테스트는 deep `WebAppContext` 픽스처를 setup 마다 빌드해(약 4~7s) `-n auto`
+    병렬 부하 시 기본 30s timeout(pytest.ini)을 간헐적으로 넘긴다 — 동작 hang 이 아니라
+    setup 비용 문제다(TEST_HANG_TROUBLESHOOTING 원인 패턴 4). 통합 테스트에만 timeout 을
+    60s 로 올린다. 명시적 `@pytest.mark.timeout` 이 있으면 존중하고, 단위 테스트의 30s
+    hang 가드는 그대로 둔다.
+    """
+    for item in items:
+        try:
+            path = os.path.abspath(str(item.fspath))
+        except Exception:
+            continue
+        if not path.startswith(_INTEGRATION_DIR):
+            continue
+        if item.get_closest_marker("timeout") is None:
+            item.add_marker(pytest.mark.timeout(60))
