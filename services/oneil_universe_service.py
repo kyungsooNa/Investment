@@ -399,7 +399,7 @@ class OneilUniverseService:
             cap_billion = int(getattr(output, "hts_avls", 0) or getattr(output, "stck_llam", 0) or 0)
         stck_llam = cap_billion * 100_000_000  # 억 단위 -> 원 단위 변환
 
-        # Pool B 전용 시가총액 필터
+        # 시가총액 필터 (Pool A 우량주 시총 범위)
         if not (self._cfg.premium_stocks_cap_min <= stck_llam <= self._cfg.premium_stocks_cap_max):
             if logger: logger.debug({"event": "drop", "code": code, "reason": "market_cap_out_of_range", "cap": stck_llam})
             return None
