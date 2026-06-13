@@ -133,6 +133,7 @@ def test_app_config_defaults_to_paper_trading_when_omitted():
     assert config.order_execution.order_max_retries == 3
     assert config.order_execution.order_retry_delay_sec == 3
     assert config.market_mode == "domestic"
+    assert config.enabled_market_modes == ["domestic"]
     assert config.overseas_stock.enabled_exchanges == ["NASD", "NYSE", "AMEX"]
     assert config.overseas_stock.default_exchange == "NASD"
     assert config.overseas_stock.currency == "USD"
@@ -154,6 +155,7 @@ def test_app_config_accepts_overseas_us_market_mode():
     )
 
     assert config.market_mode == "overseas_us"
+    assert config.enabled_market_modes == ["overseas_us"]
     assert config.overseas_stock.enabled_exchanges == ["NASD", "NYSE"]
     assert config.overseas_stock.default_exchange == "NYSE"
     assert config.overseas_stock.allow_live_trading is True
@@ -164,6 +166,25 @@ def test_app_config_rejects_invalid_market_mode():
         AppConfig(
             web={"host": "localhost", "port": 8080},
             market_mode="global",
+        )
+
+
+def test_app_config_accepts_domestic_and_overseas_enabled_market_modes():
+    config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        market_mode="domestic",
+        enabled_market_modes=["domestic", "overseas_us"],
+    )
+
+    assert config.market_mode == "domestic"
+    assert config.enabled_market_modes == ["domestic", "overseas_us"]
+
+
+def test_app_config_rejects_invalid_enabled_market_mode():
+    with pytest.raises(ValidationError):
+        AppConfig(
+            web={"host": "localhost", "port": 8080},
+            enabled_market_modes=["domestic", "crypto"],
         )
 
 

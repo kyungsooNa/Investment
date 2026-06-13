@@ -118,6 +118,26 @@ async def test_get_overseas_balance_calls_service(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_get_overseas_balance_allowed_when_domestic_active_but_overseas_enabled(web_client, mock_web_ctx):
+    """국내 active run에서도 overseas_us가 enabled이면 해외 잔고 조회를 허용한다."""
+    mock_web_ctx.market_mode = "domestic"
+    mock_web_ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    mock_web_ctx.stock_query_service.get_overseas_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={"output1": []}
+    )
+
+    response = web_client.get("/api/overseas/balance?exchange=NASD")
+
+    assert response.status_code == 200
+    assert response.json()["account_info"]["market_mode"] == "domestic"
+    assert response.json()["account_info"]["enabled_market_modes"] == ["domestic", "overseas_us"]
+    mock_web_ctx.stock_query_service.get_overseas_balance.assert_awaited_once_with(
+        exchange=OverseasExchange.NASD,
+        currency="USD",
+    )
+
+
+@pytest.mark.asyncio
 async def test_post_balance_sell_all_success(web_client, mock_web_ctx):
     """POST /api/balance/sell_all 성공 테스트"""
     mock_results = {"message": "일괄 매도가 완료되었습니다.", "results": [{"stock_code": "005930", "success": True}]}
