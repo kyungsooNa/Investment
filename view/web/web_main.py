@@ -208,6 +208,7 @@ _FOREGROUND_PATHS = frozenset({
     "/api/balance",
     # order.py
     "/api/order",
+    "/api/overseas/",
     # ranking.py
     "/api/ranking/",
     "/api/top-market-cap",
@@ -321,6 +322,10 @@ async def balance(request: Request):
 @page_router.get("/order")
 async def order(request: Request):
     return await render_page(request, "order.html", "order")
+
+@page_router.get("/overseas")
+async def overseas(request: Request):
+    return await render_page(request, "overseas.html", "overseas")
 
 @page_router.get("/ranking")
 async def ranking(request: Request):

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div id="section-overseas" class="section">
+    <div id="overseas-real-banner" style="display:none; padding:10px 14px; margin-bottom:12px; background:#7a1f1f; color:#fff; border:2px solid #ff4d4d; border-radius:6px; font-weight:bold;">
+        실전투자 모드
+    </div>
+
+    <div class="card">
+        <h2>해외주식</h2>
+        <div class="form-row">
+            <label>심볼</label>
+            <input type="text" id="overseas-symbol" placeholder="AAPL" maxlength="12" autocomplete="off">
+        </div>
+        <div class="form-row">
+            <label>거래소</label>
+            <select id="overseas-exchange">
+                <option value="NASD">NASDAQ</option>
+                <option value="NYSE">NYSE</option>
+                <option value="AMEX">AMEX</option>
+            </select>
+        </div>
+        <div class="form-row">
+            <button class="btn" onclick="loadOverseasQuote()">현재가</button>
+            <button class="btn" onclick="loadOverseasChart()">일봉</button>
+            <button class="btn" onclick="loadOverseasBalance()">잔고</button>
+        </div>
+    </div>
+
+    <div id="overseas-quote-result"></div>
+    <div id="overseas-chart-result"></div>
+    <div id="overseas-balance-result"></div>
+
+    <div class="card">
+        <h2>해외 지정가 주문 <span id="overseas-order-mode-label" style="font-size:0.7em; color:#aaa;"></span></h2>
+        <div class="form-row">
+            <label>심볼</label>
+            <input type="text" id="overseas-order-symbol" placeholder="AAPL" maxlength="12" autocomplete="off">
+        </div>
+        <div class="form-row">
+            <label>거래소</label>
+            <select id="overseas-order-exchange">
+                <option value="NASD">NASDAQ</option>
+                <option value="NYSE">NYSE</option>
+                <option value="AMEX">AMEX</option>
+            </select>
+        </div>
+        <div class="form-row">
+            <label>수량</label>
+            <input type="number" id="overseas-order-qty" min="1" step="1" placeholder="1">
+        </div>
+        <div class="form-row">
+            <label>지정가</label>
+            <input type="number" id="overseas-order-price" min="0.01" step="0.01" placeholder="190.00">
+        </div>
+        <div class="form-row">
+            <button class="btn btn-buy" onclick="placeOverseasOrder('buy')">매수</button>
+            <button class="btn btn-sell" onclick="placeOverseasOrder('sell')">매도</button>
+        </div>
+    </div>
+
+    <div id="overseas-order-result"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/overseas.js?v=1"></script>
+{% endblock %}

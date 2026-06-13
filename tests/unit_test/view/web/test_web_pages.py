@@ -8,6 +8,7 @@ PAGES = [
     ("/stock", "stock"),
     ("/balance", "balance"),
     ("/order", "order"),
+    ("/overseas", "overseas"),
     ("/ranking", "ranking"),
     ("/marketcap", "marketcap"),
     ("/virtual", "virtual"),
@@ -40,6 +41,10 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert "계좌 잔고" in response.text
         elif path == "/order":
             assert "주식 주문" in response.text
+        elif path == "/overseas":
+            assert "해외주식" in response.text
+            assert 'id="overseas-symbol"' in response.text
+            assert "/static/js/overseas.js" in response.text
         elif path == "/ranking":
             assert "상위 종목 랭킹" in response.text
         elif path == "/marketcap":
@@ -76,6 +81,17 @@ def test_virtual_static_js_exposes_divergence_workflow():
     assert "compareVirtualDivergence" in script
     assert "filled_qty" in script
     assert "slippage_pct" in script
+
+
+def test_overseas_static_js_exposes_manual_workflow():
+    """overseas.js가 해외 조회/잔고/수동 주문 API를 호출할 수 있어야 한다."""
+    script = Path("view/web/static/js/overseas.js").read_text(encoding="utf-8")
+
+    assert "/api/overseas/stock/" in script
+    assert "/api/overseas/balance" in script
+    assert "/api/overseas/order" in script
+    assert "loadOverseasQuote" in script
+    assert "placeOverseasOrder" in script
 
 def test_pages_show_login_page_when_unauthorized(web_client, mock_web_ctx):
     """로그인 기능 활성화 시 토큰 없이 접근하면 로그인 페이지가 렌더링되는지 테스트"""
