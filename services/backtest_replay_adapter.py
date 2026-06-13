@@ -27,11 +27,14 @@ class StockQueryBacktestReplayService:
         program_provider: Any | None = None,
         market_clock: Any | None = None,
         session: str = "REGULAR",
+        delisted_ohlcv_store: Any | None = None,
     ) -> None:
         self._stock_query_service = stock_query_service
         self._program_provider = program_provider
         self._market_clock = market_clock
         self._session = session
+        # R-1 생존편향: primary sqs 에 없는 상폐 종목 일봉을 fallback 제공(opt-in).
+        self._delisted_ohlcv_store = delisted_ohlcv_store
         self._backtest_date: str | None = None
         self._row_cache: dict[tuple[str, str, str, str], list[dict]] = {}
         self._program_cache: dict[tuple[str, str], dict] = {}
@@ -86,11 +89,33 @@ class StockQueryBacktestReplayService:
         end_date: str | None = None,
     ) -> ResCommonResponse:
         replay_end_date = end_date or self._backtest_date
-        return await self._stock_query_service.get_recent_daily_ohlcv(
+        response = await self._stock_query_service.get_recent_daily_ohlcv(
             stock_code,
             limit=limit,
             end_date=replay_end_date,
         )
+        # R-1: primary 에 데이터가 없는 상폐 종목은 백필된 상폐 OHLCV 로 fallback(opt-in).
+        if self._delisted_ohlcv_store is not None and not self._response_has_rows(response):
+            rows = self._delisted_ohlcv_store.get_daily_rows(
+                stock_code, limit=limit, end_date=replay_end_date,
+            )
+            if rows:
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.SUCCESS.value,
+                    msg1="backtest replay delisted ohlcv",
+                    data=rows,
+                )
+        return response
+
+    @staticmethod
+    def _response_has_rows(response: Any) -> bool:
+        if isinstance(response, ResCommonResponse):
+            return (
+                response.rt_cd == ErrorCode.SUCCESS.value
+                and isinstance(response.data, list)
+                and len(response.data) > 0
+            )
+        return bool(response)
 
     async def get_day_intraday_minutes_list(self, stock_code: str, **kwargs) -> list[dict]:
         if "date_ymd" not in kwargs or kwargs.get("date_ymd") is None:
