@@ -218,8 +218,8 @@ async def test_get_newhigh_list_cache_null_fields(mock_task):
 
 # ── force_run 트리거 ──────────────────────────────────────────────────────
 
-async def test_get_newhigh_list_no_cache_triggers_collect(mock_task):
-    """캐시가 없고 task가 실행 중이 아닐 때 갱신을 트리거하고 빈 목록을 반환한다."""
+async def test_get_newhigh_list_no_cache_returns_collecting(mock_task):
+    """캐시가 비면 수집을 get_newhigh_cache에 위임하고 빈 목록('수집 중')을 반환한다."""
     mock_task.get_newhigh_cache.return_value = []
     mock_task.get_progress.return_value = {"running": False}
 
@@ -229,11 +229,12 @@ async def test_get_newhigh_list_no_cache_triggers_collect(mock_task):
     assert result.rt_cd == "0"
     assert result.msg1 == "수집 중"
     assert result.data == []
-    mock_task.trigger_refresh.assert_called_once()
+    mock_task.get_newhigh_cache.assert_awaited_once()
+    mock_task.trigger_refresh.assert_not_called()
 
 
-async def test_get_newhigh_list_no_cache_already_running_no_duplicate_trigger(mock_task):
-    """캐시가 없고 task가 이미 실행 중이면 force_run을 중복 트리거하지 않는다."""
+async def test_get_newhigh_list_no_cache_running_service_does_not_trigger(mock_task):
+    """실행 중 여부와 무관하게 서비스는 직접 트리거하지 않고 '수집 중'을 반환한다."""
     mock_task.get_newhigh_cache.return_value = []
     mock_task.get_progress.return_value = {"running": True}
 
@@ -243,6 +244,32 @@ async def test_get_newhigh_list_no_cache_already_running_no_duplicate_trigger(mo
     assert result.rt_cd == "0"
     assert result.msg1 == "수집 중"
     mock_task.trigger_refresh.assert_not_called()
+
+
+# ── 결과 개수 제한 / 0.0 등락률 보존 ─────────────────────────────────────────────
+
+async def test_get_newhigh_list_db_truncates_to_max_items(mock_repo):
+    """DB 경로도 캐시 경로와 동일하게 _MAX_ITEMS 개수로 잘린다."""
+    base = mock_repo.get_newhigh_stocks.return_value[0]
+    mock_repo.get_newhigh_stocks.return_value = [
+        dict(base) for _ in range(NewHighService._MAX_ITEMS + 5)
+    ]
+    service = make_service(repo=mock_repo)
+    result = await service.get_newhigh_list()
+
+    assert result.rt_cd == "0"
+    assert len(result.data) == NewHighService._MAX_ITEMS
+
+
+async def test_get_newhigh_list_zero_change_rate_preserved(mock_repo):
+    """change_rate가 정확히 0.0이면 '0.0'으로 보존되어 None(미수집, '0')과 구분된다."""
+    item0 = dict(mock_repo.get_newhigh_stocks.return_value[0])
+    item0["change_rate"] = 0.0
+    mock_repo.get_newhigh_stocks.return_value = [item0]
+    service = make_service(repo=mock_repo)
+    result = await service.get_newhigh_list()
+
+    assert result.data[0]["prdy_ctrt"] == "0.0"
 
 
 # ── task 미설정 ───────────────────────────────────────────────────────────────
