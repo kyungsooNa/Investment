@@ -6,6 +6,10 @@ __pycache__/
 # C extensions
 *.so
 
+# Node / frontend test toolchain (jsdom regression harness)
+node_modules/
+tests/frontend/package-lock.json
+
 # Distribution / packaging
 .Python
 build/

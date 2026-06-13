@@ -32,6 +32,19 @@ document.addEventListener('stock-price-tick', function (e) {
 });
 
 /* ── 국내/해외 조회 모드 토글 (V2.1) ── */
+
+/* 차트 카드를 stock-result 밖(section-stock)으로 대피시키고 숨긴다.
+ * searchStock가 차트 카드를 stock-result 안으로 옮기므로, stock-result를
+ * 비우기 전에 먼저 대피시키지 않으면 innerHTML 초기화 시 카드가 파괴된다. */
+function _detachStockChartCard() {
+    const chartCard = document.getElementById('stock-chart-card');
+    const sectionStock = document.getElementById('section-stock');
+    if (chartCard && sectionStock && chartCard.parentElement !== sectionStock) {
+        sectionStock.appendChild(chartCard);
+    }
+    if (chartCard) chartCard.style.display = 'none';
+}
+
 function setStockMarketMode(mode) {
     const domesticRow = document.getElementById('domestic-stock-row');
     const overseasRow = document.getElementById('overseas-stock-row');
@@ -45,14 +58,10 @@ function setStockMarketMode(mode) {
     if (overseasBtn) overseasBtn.classList.toggle('active', isOverseas);
 
     // 모드 전환 시 결과/차트 영역 초기화 (국내↔해외 잔여 UI 방지)
+    // 차트 카드를 먼저 대피시킨 뒤 결과를 비운다.
+    _detachStockChartCard();
     const resultDiv = document.getElementById('stock-result');
     if (resultDiv) resultDiv.innerHTML = '';
-    const chartCard = document.getElementById('stock-chart-card');
-    const sectionStock = document.getElementById('section-stock');
-    if (chartCard && sectionStock && chartCard.parentElement !== sectionStock) {
-        sectionStock.appendChild(chartCard);
-    }
-    if (chartCard) chartCard.style.display = 'none';
 }
 
 /* overseas_us가 enabled된 run에서만 해외 조회 허용 (fail-close) */
@@ -80,9 +89,8 @@ async function searchOverseasStock() {
     if (symbolInput) symbolInput.value = symbol;
     if (!resultDiv) return;
 
-    // 해외 모드에서는 국내 전용 차트 카드를 숨긴다.
-    const chartCard = document.getElementById('stock-chart-card');
-    if (chartCard) chartCard.style.display = 'none';
+    // 해외 모드는 국내 전용 차트 카드를 미표시. 결과를 덮어쓰기 전에 먼저 대피시킨다.
+    _detachStockChartCard();
 
     showLoading(resultDiv, '해외 종목 조회 중...');
     try {
