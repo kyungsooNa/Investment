@@ -97,6 +97,18 @@ def task(mock_sqs, mock_mapper, mock_stock_repo, mock_mcs):
     )
 
 
+@pytest.fixture(autouse=True)
+def _stub_fdr_network():
+    """FDR(StockListing/DataReader)은 실네트워크 호출이므로 단위 테스트에서 차단한다.
+
+    빈 DataFrame을 반환하면 Tier1/Tier2가 자연스럽게 실패해 Tier3(mock된 API) 경로로 흐른다.
+    개별 TC가 with patch로 재정의하면 그 블록에서는 해당 패치가 우선한다.
+    """
+    with patch("task.background.after_market.ohlcv_update_task.fdr.StockListing", return_value=pd.DataFrame()), \
+         patch("task.background.after_market.ohlcv_update_task.fdr.DataReader", return_value=pd.DataFrame()):
+        yield
+
+
 # ──────────────────────────────────────────────
 # 태스크 기본 속성
 # ──────────────────────────────────────────────

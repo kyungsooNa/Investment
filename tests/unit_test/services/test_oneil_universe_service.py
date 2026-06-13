@@ -238,6 +238,36 @@ async def test_get_watchlist_filters_loaded_premium_blocked_security_status(mock
     assert watchlist == {}
     assert service._watchlist == {}
 
+async def test_get_watchlist_retains_subscription_sync_task(mock_deps):
+    """get_watchlist: sync_subscriptions fire-and-forget 태스크를 강참조로 보관한다(GC 방지)."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    price_sub_svc = MagicMock()
+    price_sub_svc.sync_subscriptions = AsyncMock(return_value=None)
+    service = OneilUniverseService(
+        sqs, indicator, mapper, tm, logger=logger,
+        price_subscription_service=price_sub_svc,
+    )
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 10, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+
+    item = OSBWatchlistItem(
+        code="005930", name="삼성전자", market="KOSPI",
+        high_20d=1000, ma_20d=900, ma_50d=800, avg_vol_20d=10000,
+        bb_width_min_20d=10, prev_bb_width=11, w52_hgpr=1200,
+        avg_trading_value_5d=20_000_000_000, market_cap=500_000_000_000,
+    )
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({})},
+    )
+
+    with patch.object(service, "_load_premium_stocks", return_value=[item]), \
+         patch.object(service, "_build_daily_surge_pool", new_callable=AsyncMock, return_value={}):
+        watchlist = await service.get_watchlist(logger=logger)
+
+    assert "005930" in watchlist
+    # 반환 직후 태스크는 아직 실행 전이므로 강참조 집합에 보관되어 있어야 한다.
+    assert len(service._subscription_sync_tasks) == 1
+
 async def test_analyze_premium_candidate_filter_trading_value(mock_deps):
     """_analyze_premium_candidate: 거래대금 부족 시 None 반환 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1023,6 +1053,42 @@ async def test_build_daily_surge_pool_partial_api_failure(mock_deps):
         assert "A" in pool_b
         assert len(pool_b) == 1
 
+async def test_analyze_surge_candidate_calls_current_price_once(mock_deps):
+    """_analyze_surge_candidate: 모든 필터를 통과해도 get_current_price를 1회만 호출한다.
+
+    첫 호출 output에 이미 w52_hgpr/시총이 포함되므로 두 번째 조회는 불필요하다(중복 API 제거).
+    """
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+
+    # 어제까지의 OHLCV (상승 추세 → 정배열 통과)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=create_surge_ohlcv(length=90)
+    )
+
+    # 현재가 output: 첫 호출이 현재가/시초가/고저가 + w52_hgpr/시총을 모두 포함
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK",
+        data={"output": create_mock_stock_info({
+            "stck_prpr": "1500", "acml_vol": "100000000",
+            "stck_oprc": "1490", "stck_hgpr": "1510", "stck_lwpr": "1480",
+            "w52_hgpr": "1450", "hts_avls": "5000",  # 5000억 → 시총 범위 내
+        })},
+    )
+
+    indicator.calc_bb_widths_sync.return_value = [20.0] * 30
+    indicator.calc_rs_sync.return_value = 10.0
+    mapper.is_kosdaq.return_value = False
+
+    item = await service._analyze_surge_candidate("005930", "Samsung", logger=logger)
+
+    assert item is not None
+    assert item.code == "005930"
+    assert sqs.get_current_price.call_count == 1
+
+
 async def test_analyze_premium_candidate_price_api_object_access(mock_deps):
     """_analyze_premium_candidate: get_current_price 응답이 객체(속성 접근)일 때 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -1124,31 +1190,31 @@ async def test_generate_premium_watchlist_fallback_market_cap(mock_deps, tmp_pat
         # passed_first가 1이어야 함 (5000 * 1억 = 5000억 -> 범위 내)
         assert result['passed_first'] == 1
 
-def test_should_refresh_watchlist_logic(mock_deps):
-    """_should_refresh_watchlist: 설정된 시간에 따른 갱신 트리거 검증."""
+def test_mark_due_refreshes_logic(mock_deps):
+    """_mark_due_refreshes: 설정된 시간에 따른 갱신 트리거 + 완료 처리 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
-    
+
     service._cfg.watchlist_refresh_minutes = [10, 30, 60]
     service._watchlist_refresh_done = set()
-    
+
     tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
-    
+
     # 1. 5분 경과 -> False
     tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 5, 0)
-    assert service._should_refresh_watchlist() is False
-    
+    assert service._mark_due_refreshes() is False
+
     # 2. 10분 경과 -> True
     tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 10, 0)
-    assert service._should_refresh_watchlist() is True
+    assert service._mark_due_refreshes() is True
     assert 10 in service._watchlist_refresh_done
-    
+
     # 3. 10분 경과 (재호출) -> False (이미 수행됨)
-    assert service._should_refresh_watchlist() is False
-    
+    assert service._mark_due_refreshes() is False
+
     # 4. 35분 경과 -> True (30분 트리거)
     tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 35, 0)
-    assert service._should_refresh_watchlist() is True
+    assert service._mark_due_refreshes() is True
     assert 30 in service._watchlist_refresh_done
 
 async def test_build_daily_surge_pool_analyze_exception(mock_deps):
@@ -1451,7 +1517,7 @@ async def test_get_watchlist_syncs_subscriptions(mock_deps):
         coro.close()
         return MagicMock()
 
-    with patch.object(service, "_should_refresh_watchlist", return_value=False), \
+    with patch.object(service, "_mark_due_refreshes", return_value=False), \
          patch("services.oneil_universe_service.asyncio.create_task", side_effect=fake_create_task) as mock_create_task:
         result = await service.get_watchlist()
 
@@ -1503,18 +1569,17 @@ async def test_analyze_surge_candidate_success_with_dict_output(mock_deps):
         "w52_hgpr": "1500",
         "hts_avls": "800000",
     }
-    sqs.get_current_price.side_effect = [
-        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": price_output}),
-        ResCommonResponse(rt_cd="0", msg1="OK", data={"output": price_output}),
-    ]
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": price_output}
+    )
     indicator.calc_bb_widths_sync.return_value = [10.0] * 25
     indicator.calc_rs_sync.return_value = 12.3
 
     item = await service._analyze_surge_candidate("005930", "Samsung", logger=logger)
 
     assert item is not None
+    # 첫 현재가 output 재사용 → get_current_price는 1회만 호출
     assert sqs.get_current_price.await_args_list == [
-        call("005930", caller="OneilUniverseService", allow_snapshot=False),
         call("005930", caller="OneilUniverseService", allow_snapshot=False),
     ]
     assert item.market == "KOSPI"

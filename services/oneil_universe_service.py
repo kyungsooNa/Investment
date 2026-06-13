@@ -93,6 +93,8 @@ class OneilUniverseService:
 
         # 상태 관리
         self._watchlist: Dict[str, OSBWatchlistItem] = {}
+        # 구독 동기화 fire-and-forget 태스크 강참조 보관 (GC 중간 취소 방지)
+        self._subscription_sync_tasks: set = set()
         self._watchlist_date: str = ""
         self._watchlist_refresh_done: set = set()
         self._pool_a_loaded: bool = False
@@ -141,10 +143,10 @@ class OneilUniverseService:
             self._market_timing_date = "" # 마켓타이밍도 재확인 필요
             
             # 초기화 시점에도 현재 시간 기준 이미 지난 갱신 주기는 완료 처리하여 중복 갱신 방지
-            self._should_refresh_watchlist()
-        
+            self._mark_due_refreshes()
+
         # 장중 갱신 주기 체크
-        elif self._should_refresh_watchlist():
+        elif self._mark_due_refreshes():
             await self._build_watchlist(logger=logger)
 
         if self._excluded_codes_today:
@@ -154,11 +156,14 @@ class OneilUniverseService:
             }
 
         if self._price_sub_svc and self._watchlist:
-            asyncio.create_task(self._price_sub_svc.sync_subscriptions(
+            # 강참조 보관: create_task 결과를 잡아두지 않으면 GC가 태스크를 중간 취소할 수 있다.
+            task = asyncio.create_task(self._price_sub_svc.sync_subscriptions(
                 codes=list(self._watchlist.keys()),
                 category_key="strategy_oneil",
                 priority=SubscriptionPriority.MEDIUM,
             ))
+            self._subscription_sync_tasks.add(task)
+            task.add_done_callback(self._subscription_sync_tasks.discard)
         return self._watchlist
 
     async def is_market_timing_ok(self, market: str, caller: str = "", logger: Optional[logging.Logger] = None) -> bool:
@@ -394,7 +399,7 @@ class OneilUniverseService:
             cap_billion = int(getattr(output, "hts_avls", 0) or getattr(output, "stck_llam", 0) or 0)
         stck_llam = cap_billion * 100_000_000  # 억 단위 -> 원 단위 변환
 
-        # Pool B 전용 시가총액 필터
+        # 시가총액 필터 (Pool A 우량주 시총 범위)
         if not (self._cfg.premium_stocks_cap_min <= stck_llam <= self._cfg.premium_stocks_cap_max):
             if logger: logger.debug({"event": "drop", "code": code, "reason": "market_cap_out_of_range", "cap": stck_llam})
             return None
@@ -571,20 +576,7 @@ class OneilUniverseService:
             })
             return None
 
-        # 필터: 52주 고가 근접
-        full_resp = await self._sqs.get_current_price(
-            code,
-            caller="OneilUniverseService",
-            allow_snapshot=False,
-        )
-        if not full_resp or full_resp.rt_cd != ErrorCode.SUCCESS.value:
-            if logger: logger.debug({"event": "drop", "code": code, "reason": "current_price_api_fail"})
-            return None
-        output = full_resp.data.get("output") if full_resp.data else None
-        if not output:
-            if logger: logger.debug({"event": "drop", "code": code, "reason": "no_price_output"})
-            return None
-        
+        # 필터: 52주 고가 근접 (위에서 조회한 현재가 output 재사용 — 중복 API 호출 제거)
         if isinstance(output, dict):
             w52_hgpr = int(output.get("w52_hgpr") or 0)
             cap_billion = int(output.get("hts_avls") or output.get("stck_llam") or 0)
@@ -961,11 +953,12 @@ class OneilUniverseService:
 
         return None
 
-    def _should_refresh_watchlist(self) -> bool:
+    def _mark_due_refreshes(self) -> bool:
+        """이미 도래한 갱신 주기를 완료 처리(상태 변이)하고, 이번 호출에서 새로 트리거된 주기가 있으면 True를 반환한다."""
         now = self._tm.get_current_kst_time()
         open_time = self._tm.get_market_open_time()
         elapsed = (now - open_time).total_seconds() / 60
-        
+
         triggered = False
         for t_min in self._cfg.watchlist_refresh_minutes:
             if elapsed >= t_min and t_min not in self._watchlist_refresh_done:
