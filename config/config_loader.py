@@ -3,7 +3,7 @@ import yaml
 import os
 import json
 from typing import Dict, Any, Literal, Optional, List
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 # config.yaml 및 tr_ids_config.yaml 파일 경로 설정
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -388,6 +388,7 @@ class AppConfig(BaseModel):
 
     # Product/market surface. This is orthogonal to paper/real and runtime mode.
     market_mode: Literal["domestic", "overseas_us"] = "domestic"
+    enabled_market_modes: Optional[List[Literal["domestic", "overseas_us"]]] = None
 
     # Sub-configs
     web: WebConfig
@@ -426,6 +427,20 @@ class AppConfig(BaseModel):
         if v and not (v.startswith("http://") or v.startswith("https://")):
             raise ValueError("base_url은 'http://' 또는 'https://'로 시작해야 합니다.")
         return v
+
+    @model_validator(mode="after")
+    def normalize_enabled_market_modes(self):
+        modes = self.enabled_market_modes
+        if modes is None:
+            modes = [self.market_mode]
+        normalized = []
+        for mode in modes:
+            if mode not in normalized:
+                normalized.append(mode)
+        if self.market_mode not in normalized:
+            normalized.append(self.market_mode)
+        self.enabled_market_modes = normalized
+        return self
 
     def __getitem__(self, item):
         return getattr(self, item)

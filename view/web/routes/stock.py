@@ -12,6 +12,7 @@ from repositories.streaming_stock_repo import StreamingType
 from services.price_subscription_service import SubscriptionPriority
 from view.web.api_common import _get_ctx, _serialize_response, EnvironmentRequest
 import view.web.api_common as api_common
+from view.web.market_mode_utils import enabled_market_modes_of, is_market_enabled, market_mode_of
 
 router = APIRouter()
 
@@ -23,11 +24,6 @@ _STATUS_CACHE_TTL = 5.0
 
 class MarketModeRequest(BaseModel):
     market_mode: str
-
-
-def _market_mode_of(ctx) -> str:
-    mode = getattr(ctx, "market_mode", "domestic")
-    return mode if mode in ("domestic", "overseas_us") else "domestic"
 
 
 @router.get("/status")
@@ -42,6 +38,7 @@ async def get_status():
             "env_type": "미설정",
             "is_paper_trading": True,
             "market_mode": "domestic",
+            "enabled_market_modes": ["domestic"],
             "current_time": "",
             "initialized": False,
         }
@@ -50,14 +47,16 @@ async def get_status():
     if _status_cache is not None and (now - _status_cache_ts) < _STATUS_CACHE_TTL:
         # 캐시된 결과 반환 (현재 시각만 갱신)
         _status_cache["current_time"] = ctx.get_current_time_str()
-        _status_cache["market_mode"] = _market_mode_of(ctx)
+        _status_cache["market_mode"] = market_mode_of(ctx)
+        _status_cache["enabled_market_modes"] = enabled_market_modes_of(ctx)
         return _status_cache
 
     result = {
         "market_open": await ctx.is_market_open_now(),
         "env_type": ctx.get_env_type(),
         "is_paper_trading": bool(getattr(getattr(ctx, "env", None), "is_paper_trading", True)),
-        "market_mode": _market_mode_of(ctx),
+        "market_mode": market_mode_of(ctx),
+        "enabled_market_modes": enabled_market_modes_of(ctx),
         "current_time": ctx.get_current_time_str(),
         "initialized": ctx.initialized
     }
@@ -69,10 +68,11 @@ async def get_status():
 @router.get("/market-mode")
 def get_market_mode():
     ctx = _get_ctx()
-    mode = _market_mode_of(ctx)
+    mode = market_mode_of(ctx)
     return {
         "success": True,
         "market_mode": mode,
+        "enabled_market_modes": enabled_market_modes_of(ctx),
         "requires_reinitialize": False,
     }
 
@@ -85,17 +85,24 @@ def change_market_mode(req: MarketModeRequest):
     if mode not in ("domestic", "overseas_us"):
         raise HTTPException(status_code=400, detail="market_mode는 domestic 또는 overseas_us만 지원합니다.")
 
-    current = _market_mode_of(ctx)
+    current = market_mode_of(ctx)
     ctx.market_mode = mode
+    enabled_modes = enabled_market_modes_of(ctx)
+    if mode not in enabled_modes:
+        enabled_modes.append(mode)
+    ctx.enabled_market_modes = enabled_modes
     full_config = getattr(ctx, "full_config", None)
     if full_config is not None and hasattr(full_config, "market_mode"):
         full_config.market_mode = mode
+    if full_config is not None and hasattr(full_config, "enabled_market_modes"):
+        full_config.enabled_market_modes = enabled_modes
 
     _status_cache = None
     _status_cache_ts = 0.0
     return {
         "success": True,
         "market_mode": mode,
+        "enabled_market_modes": enabled_modes,
         "previous_market_mode": current,
         "requires_reinitialize": current != mode,
     }
@@ -215,6 +222,8 @@ async def get_stock_price(code: str, exchange: str = Query("KRX")):
 @router.get("/overseas/stock/{symbol}")
 async def get_overseas_stock_price(symbol: str, exchange: str = Query("NASD")):
     ctx = _get_ctx()
+    if not is_market_enabled(ctx, "overseas_us"):
+        raise HTTPException(status_code=400, detail="해외주식 조회는 overseas_us가 enabled된 run에서만 사용할 수 있습니다.")
     try:
         exchange_enum = OverseasExchange(exchange.upper())
     except ValueError:
@@ -232,6 +241,8 @@ async def get_overseas_stock_chart(
     end_date: str = Query(""),
 ):
     ctx = _get_ctx()
+    if not is_market_enabled(ctx, "overseas_us"):
+        raise HTTPException(status_code=400, detail="해외주식 차트 조회는 overseas_us가 enabled된 run에서만 사용할 수 있습니다.")
     try:
         exchange_enum = OverseasExchange(exchange.upper())
     except ValueError:

@@ -168,7 +168,7 @@ async def test_place_overseas_limit_order_calls_broker(web_client, mock_web_ctx)
 
 @pytest.mark.asyncio
 async def test_place_overseas_order_requires_overseas_mode(web_client, mock_web_ctx):
-    """국내 mode에서는 해외 주문 endpoint가 닫혀 있어야 한다."""
+    """overseas_us가 enabled되지 않은 run에서는 해외 주문 endpoint가 닫혀 있어야 한다."""
     payload = {
         "symbol": "AAPL",
         "exchange": "NASD",
@@ -181,6 +181,35 @@ async def test_place_overseas_order_requires_overseas_mode(web_client, mock_web_
 
     assert response.status_code == 400
     mock_web_ctx.broker.place_overseas_limit_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_place_overseas_order_allowed_when_domestic_active_but_overseas_enabled(web_client, mock_web_ctx):
+    """국내 active run에서도 overseas_us가 enabled이면 해외 수동 지정가 주문을 허용한다."""
+    mock_web_ctx.market_mode = "domestic"
+    mock_web_ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    mock_web_ctx.broker.place_overseas_limit_order.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Order Placed", data={"ord_no": "A12345"}
+    )
+
+    payload = {
+        "symbol": "AAPL",
+        "exchange": "NASD",
+        "side": "buy",
+        "qty": 1,
+        "limit_price": 190.0,
+        "currency": "USD",
+    }
+    response = web_client.post("/api/overseas/order", json=payload)
+
+    assert response.status_code == 200
+    mock_web_ctx.broker.place_overseas_limit_order.assert_awaited_once_with(
+        symbol="AAPL",
+        exchange=OverseasExchange.NASD,
+        side="buy",
+        qty=1,
+        limit_price=190.0,
+    )
 
 
 @pytest.mark.asyncio

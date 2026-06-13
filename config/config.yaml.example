@@ -31,6 +31,9 @@ operating_profile: "canary"
 # domestic    : 기존 국내주식 모드
 # overseas_us : 미국 3시장(NASDAQ/NYSE/AMEX) 조회 + 수동 지정가 주문 v1
 market_mode: "domestic"
+# V2: 한 프로세스에서 국내 전략/배치를 유지하면서 해외 수동 조회/주문 surface를 열려면
+# ["domestic", "overseas_us"] 로 설정한다. overseas_us active mode는 국내 전략/배치를 fail-close한다.
+enabled_market_modes: ["domestic"]
 
 overseas_stock:
   enabled_exchanges: ["NASD", "NYSE", "AMEX"]

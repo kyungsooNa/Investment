@@ -19,6 +19,7 @@ def test_get_status(web_client, mock_web_ctx):
         "current_time": "2025-01-01 12:00:00",
         "initialized": True,
         "market_mode": "domestic",
+        "enabled_market_modes": ["domestic"],
     }
 
 
@@ -235,6 +236,7 @@ async def test_get_status_ctx_none(web_client, monkeypatch):
         "current_time": "",
         "initialized": False,
         "market_mode": "domestic",
+        "enabled_market_modes": ["domestic"],
     }
 
 
@@ -262,6 +264,7 @@ async def test_get_status_cached(web_client, mock_web_ctx):
     # 캐시를 반환하되 시간은 갱신되었는지 확인
     assert json_resp["current_time"] == "new_time"
     assert json_resp["market_mode"] == "domestic"
+    assert json_resp["enabled_market_modes"] == ["domestic"]
 
 
 @pytest.mark.asyncio
@@ -275,6 +278,7 @@ async def test_get_market_mode(web_client, mock_web_ctx):
     assert response.json() == {
         "success": True,
         "market_mode": "overseas_us",
+        "enabled_market_modes": ["domestic", "overseas_us"],
         "requires_reinitialize": False,
     }
 
@@ -287,8 +291,22 @@ async def test_change_market_mode_marks_reinitialize(web_client, mock_web_ctx):
     assert response.status_code == 200
     assert response.json()["success"] is True
     assert response.json()["market_mode"] == "overseas_us"
+    assert response.json()["enabled_market_modes"] == ["domestic", "overseas_us"]
     assert response.json()["requires_reinitialize"] is True
     assert mock_web_ctx.market_mode == "overseas_us"
+
+
+@pytest.mark.asyncio
+async def test_get_market_mode_reports_enabled_markets(web_client, mock_web_ctx):
+    """GET /api/market-mode는 active mode와 enabled market 목록을 함께 반환한다."""
+    mock_web_ctx.market_mode = "domestic"
+    mock_web_ctx.enabled_market_modes = ["domestic", "overseas_us"]
+
+    response = web_client.get("/api/market-mode")
+
+    assert response.status_code == 200
+    assert response.json()["market_mode"] == "domestic"
+    assert response.json()["enabled_market_modes"] == ["domestic", "overseas_us"]
 
 
 @pytest.mark.asyncio
@@ -303,6 +321,7 @@ async def test_change_market_mode_invalid(web_client, mock_web_ctx):
 @pytest.mark.asyncio
 async def test_get_overseas_stock_price_calls_service(web_client, mock_web_ctx):
     """GET /api/overseas/stock/{symbol}은 해외 조회 서비스를 호출한다."""
+    mock_web_ctx.enabled_market_modes = ["domestic", "overseas_us"]
     mock_web_ctx.stock_query_service.get_overseas_price.return_value = ResCommonResponse(
         rt_cd="0", msg1="Success", data={"symbol": "AAPL", "price": 190.0}
     )
@@ -319,6 +338,7 @@ async def test_get_overseas_stock_price_calls_service(web_client, mock_web_ctx):
 @pytest.mark.asyncio
 async def test_get_overseas_stock_chart_calls_service(web_client, mock_web_ctx):
     """GET /api/overseas/chart/{symbol}은 해외 일봉 조회 서비스를 호출한다."""
+    mock_web_ctx.enabled_market_modes = ["domestic", "overseas_us"]
     mock_web_ctx.stock_query_service.get_overseas_dailyprice.return_value = ResCommonResponse(
         rt_cd="0", msg1="Success", data=[{"date": "20250101", "close": 190.0}]
     )

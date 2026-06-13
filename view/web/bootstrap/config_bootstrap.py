@@ -36,6 +36,7 @@ class ConfigBootstrap:
         config_data = load_configs()
         ctx.full_config = config_data
         ctx.market_mode = getattr(config_data, "market_mode", "domestic")
+        ctx.enabled_market_modes = list(getattr(config_data, "enabled_market_modes", [ctx.market_mode]))
 
         config_dict = config_data
         if hasattr(config_data, "model_dump"):
@@ -72,7 +73,10 @@ class ConfigBootstrap:
         self._register_telegram(ctx, config_dict)
 
         ctx._load_position_sizing_state()
-        ctx.logger.info(f"웹 앱: 환경 설정 로드 완료. market_mode={ctx.market_mode}")
+        ctx.logger.info(
+            f"웹 앱: 환경 설정 로드 완료. market_mode={ctx.market_mode}, "
+            f"enabled_market_modes={ctx.enabled_market_modes}"
+        )
 
         ctx._mcs = MarketCalendarService(
             ctx.market_clock, ctx.logger, performance_profiler=ctx.pm

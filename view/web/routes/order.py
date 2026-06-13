@@ -6,6 +6,7 @@ from fastapi import Query
 from common.overseas_types import OverseasOrderRequest
 from common.types import ErrorCode, ResCommonResponse
 from view.web.api_common import _get_ctx, _serialize_response, OrderRequest
+from view.web.market_mode_utils import is_market_enabled
 
 router = APIRouter()
 
@@ -52,8 +53,8 @@ async def place_order(req: OrderRequest):
 async def place_overseas_order(req: OverseasOrderRequest):
     """해외주식 수동 지정가 주문. v1은 미국 3시장 + USD 지정가만 지원한다."""
     ctx = _get_ctx()
-    if getattr(ctx, "market_mode", "domestic") != "overseas_us":
-        raise HTTPException(status_code=400, detail="해외주식 주문은 overseas_us mode에서만 사용할 수 있습니다.")
+    if not is_market_enabled(ctx, "overseas_us"):
+        raise HTTPException(status_code=400, detail="해외주식 주문은 overseas_us가 enabled된 run에서만 사용할 수 있습니다.")
 
     cfg = getattr(getattr(ctx, "full_config", None), "overseas_stock", None)
     enabled_exchanges = set(getattr(cfg, "enabled_exchanges", ["NASD", "NYSE", "AMEX"]))
@@ -93,8 +94,8 @@ async def get_overseas_orders(
     ccld_nccs_dvsn: str = Query("00"),
 ):
     ctx = _get_ctx()
-    if getattr(ctx, "market_mode", "domestic") != "overseas_us":
-        raise HTTPException(status_code=400, detail="해외주식 주문 조회는 overseas_us mode에서만 사용할 수 있습니다.")
+    if not is_market_enabled(ctx, "overseas_us"):
+        raise HTTPException(status_code=400, detail="해외주식 주문 조회는 overseas_us가 enabled된 run에서만 사용할 수 있습니다.")
     if not start_date or not end_date:
         today = ctx.market_clock.get_current_kst_time().strftime("%Y%m%d")
         start_date = start_date or today

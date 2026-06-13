@@ -5,6 +5,7 @@ from fastapi import APIRouter, Query, HTTPException
 from common.overseas_types import OverseasExchange
 from common.types import Exchange
 from view.web.api_common import _get_ctx, _serialize_response
+from view.web.market_mode_utils import enabled_market_modes_of, is_market_enabled, market_mode_of
 
 router = APIRouter()
 
@@ -75,6 +76,8 @@ async def get_balance(exchange: str = Query("KRX")):
 async def get_overseas_balance(exchange: str = Query("NASD"), currency: str = Query("USD")):
     """해외주식 잔고 조회. v1은 미국 3시장 + USD만 지원한다."""
     ctx = _get_ctx()
+    if not is_market_enabled(ctx, "overseas_us"):
+        raise HTTPException(status_code=400, detail="해외주식 잔고 조회는 overseas_us가 enabled된 run에서만 사용할 수 있습니다.")
     try:
         exchange_enum = OverseasExchange(exchange.upper())
     except ValueError:
@@ -88,7 +91,8 @@ async def get_overseas_balance(exchange: str = Query("NASD"), currency: str = Qu
         "type": ctx.get_env_type(),
         "exchange": exchange_enum.value,
         "currency": "USD",
-        "market_mode": getattr(ctx, "market_mode", "domestic"),
+        "market_mode": market_mode_of(ctx),
+        "enabled_market_modes": enabled_market_modes_of(ctx),
     }
     return result
 
