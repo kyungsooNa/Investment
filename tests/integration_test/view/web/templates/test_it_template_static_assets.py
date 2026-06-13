@@ -18,6 +18,7 @@ PAGE_PATHS = [
     "/favorite",
     "/balance",
     "/order",
+    "/overseas",
     "/ranking",
     "/marketcap",
     "/virtual",

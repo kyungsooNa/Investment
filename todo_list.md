@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-06-13 (해외주식 Mode V1 완료 및 V2 병행 운영 범위 추가)
+최종 업데이트: 2026-06-13 (해외주식 Mode V1 완료, V2 병행 운영 + Web 수동 surface 추가)
 
 이 문서는 현재 남은 실행 항목만 추린 목록이다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거한다. 100% 종료된 섹션(`[x]` only, follow-up 없음)은 git history 로 추적하고 본 문서에서 삭제한다.
 
@@ -34,7 +34,7 @@
 - 완료 기준의 전략 성과 `[~]`: `MomentumStrategy` 등 비활성 백테스트 경로의 표준 journal 통합 여부 결정.
 - 시스템 트레이더 관점 리뷰(R-1~R-6, 2026-06-08): 생존편향·전략 상관/regime 집중·총위험 미집계·갭 체결 등 백테스트 신뢰도/실전 리스크 신규 발견. 자금 확대 전 R-1~R-3 우선 해소 권장. (R-5 거래세율은 검토 결과 0.20% 정확 → 해소, 변경 없음. 하단 "시스템 트레이더 관점 리뷰" 섹션)
 - StrategyScheduler 코드 리뷰(S-1~S-10, 2026-06-12): `stop()` 강제청산 데드 패스, 매도 병렬 에러 처리 비대칭, 이력 트림 vs 복구 충돌 등 버그 + 수명/구조 개선. S-1/S-2/S-4~S-8 수정 완료, S-3/S-10은 의도된 설계 확인 후 주석 명시로 종결. S-9는 부분 진행(prune 통합/trace_id 영속화/import 정리) — getter 부수효과는 의도된 계약으로 판명되어 철회, god class 분리는 P2 2-4 parity 판정 후 재평가로 보류. (하단 "StrategyScheduler 코드 리뷰" 섹션)
-- 해외주식 Mode: V1은 main merge 완료(2026-06-13) — 미국 3시장 조회 + 수동 USD 지정가 주문 + 실전 fail-close + 해외 mode 자동전략 차단. V2는 **국내 run을 유지하면서 해외 수동 조회/주문 surface를 병행 활성화**하는 `enabled_market_modes` 축 추가로 진행한다. 자동전략 해외 지원, 해외 WebSocket, 통합 해외 reconciliation은 계속 제외.
+- 해외주식 Mode: V1은 main merge 완료(2026-06-13) — 미국 3시장 조회 + 수동 USD 지정가 주문 + 실전 fail-close + 해외 mode 자동전략 차단. V2는 **국내 run을 유지하면서 해외 수동 조회/주문 surface를 병행 활성화**하는 `enabled_market_modes` 축과 Web 수동 화면 연결까지 진행한다. 자동전략 해외 지원, 해외 WebSocket, 통합 해외 reconciliation은 계속 제외.
 
 ---
 
@@ -63,6 +63,14 @@
 - [x] 해외 route fail-close: `overseas_us`가 enabled가 아니면 차단.
 - [x] bootstrap: `market_mode=domestic`, `enabled_market_modes`에 해외 포함 시 국내 전략/배치 생성 경로를 유지한다.
 
+### Web 수동 surface
+
+- [x] `/overseas` 화면을 추가해 미국 3시장 심볼 현재가/일봉/잔고 조회를 노출한다.
+- [x] 해외 주문 화면은 USD 지정가 수동 매수/매도만 노출한다.
+- [x] 실전 모드에서는 기존 실전 배지 감지 + confirm + `REAL` 재확인을 요구한다.
+- [x] `enabled_market_modes`에 `overseas_us`가 없으면 화면 JS가 조회/주문 호출 전에 fail-close 메시지를 표시한다.
+- [x] 페이지 렌더링/정적 자산/JS API 호출 문자열을 테스트로 고정한다.
+
 주요 파일:
 
 - `config/config_loader.py`
@@ -70,6 +78,8 @@
 - `view/web/routes/stock.py`
 - `view/web/routes/balance.py`
 - `view/web/routes/order.py`
+- `view/web/templates/overseas.html`
+- `view/web/static/js/overseas.js`
 - `view/web/bootstrap/service_container.py`
 - `view/web/bootstrap/strategy_factory.py`
 
