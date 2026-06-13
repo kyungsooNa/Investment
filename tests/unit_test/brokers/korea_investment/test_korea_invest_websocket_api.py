@@ -2901,3 +2901,41 @@ async def test_wait_for_subscription_ack_false_on_hard_error(websocket_api_insta
     confirmed = await api.wait_for_subscription_ack("H0UNCNT0", "005930", timeout=1.0)
     assert confirmed is False
     assert ("H0UNCNT0", "005930") not in api._subscribed_items
+
+
+@pytest.mark.asyncio
+async def test_wait_for_ack_awaits_fresh_frame_despite_stale_membership(websocket_api_instance):
+    """재연결 후 stale _subscribed_items 멤버십이 남아있어도, 새로 전송한 구독 프레임의
+    ACK 가 안 오면(유령 구독) False 여야 한다. (P2 2-4 no-tick 근본원인 #1)
+
+    disconnect 시 _subscribed_items 는 정리되지 않으므로(내부 _resubscribe_all 이 의존),
+    멤버십만 보고 즉시 True 를 반환하면 현재 연결에 등록 안 된 구독을 가짜 통과시킨다.
+    """
+    api = websocket_api_instance
+    _arm_connected(api)
+    # 이전 연결에서 ACK 됐던 stale 멤버십
+    api._subscribed_items.add(("H0UNCNT0", "005930"))
+    # 재연결 후 새 프레임 전송(fresh pending) — KIS 응답 없음(유령)
+    await api.send_realtime_request("H0UNCNT0", "005930", tr_type="1")
+
+    confirmed = await api.wait_for_subscription_ack("H0UNCNT0", "005930", timeout=0.05)
+    assert confirmed is False
+
+
+@pytest.mark.asyncio
+async def test_hard_error_discards_stale_subscription_membership(websocket_api_instance):
+    """현재 연결에서 구독이 거부되면(레이트리밋/한도) stale 멤버십을 제거해야 한다.
+    (P2 2-4 no-tick 근본원인 #2)
+    """
+    api = websocket_api_instance
+    _arm_connected(api)
+    api._subscribed_items.add(("H0UNCNT0", "005930"))  # 이전 연결의 stale 멤버십
+    await api.send_realtime_request("H0UNCNT0", "005930", tr_type="1")
+
+    api._handle_websocket_message(
+        _ack_message("H0UNCNT0", "005930", rt_cd="1", msg1="SUBSCRIBE ERROR")
+    )
+
+    assert ("H0UNCNT0", "005930") not in api._subscribed_items
+    confirmed = await api.wait_for_subscription_ack("H0UNCNT0", "005930", timeout=0.05)
+    assert confirmed is False

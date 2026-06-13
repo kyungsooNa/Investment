@@ -413,11 +413,16 @@ class KoreaInvestWebSocketAPI:
                     elif 'ALREADY IN USE' in msg1:
                         self._logger.warning("서버가 appkey 중복 사용을 거부했습니다. 재연결 시 대기 시간을 늘립니다.")
                         self._appkey_collision = True
-                    elif self._streaming_logger:
-                        if tr_type == "2":
-                            self._streaming_logger.log_unsubscribe_failure(tr_key or tr_id, msg1 or "ACK error")
-                        else:
-                            self._streaming_logger.log_subscribe_failure(tr_key or tr_id, msg1 or "ACK error")
+                    else:
+                        # 현재 연결에서 구독이 거부됨 → 재연결 후 남아있을 수 있는 stale 등록 정보를
+                        # 제거해 유령 구독(active 인데 tick 0)을 방지한다. (P2 2-4 no-tick 근본원인)
+                        if tr_type == "1":
+                            self._subscribed_items.discard((tr_id, tr_key))
+                        if self._streaming_logger:
+                            if tr_type == "2":
+                                self._streaming_logger.log_unsubscribe_failure(tr_key or tr_id, msg1 or "ACK error")
+                            else:
+                                self._streaming_logger.log_subscribe_failure(tr_key or tr_id, msg1 or "ACK error")
                     # ALREADY IN SUBSCRIBE 외 모든 오류 응답은 구독 확정 실패(no-op if 이미 해소).
                     self._resolve_subscription_ack(pending, False)
             except json.JSONDecodeError:
@@ -863,14 +868,15 @@ class KoreaInvestWebSocketAPI:
     async def wait_for_subscription_ack(self, tr_id, tr_key, timeout: float = None) -> bool:
         """구독 요청에 대한 KIS 등록 응답(ACK)을 기다린다.
 
-        - 이미 확정된(`_subscribed_items`) 구독이면 즉시 True.
-        - send_realtime_request(tr_type="1") 가 만든 pending future 를 timeout 까지 await.
-        - timeout 내 ACK 미수신 시 False (구독 미확정 → 상위에서 재구독).
+        - send_realtime_request(tr_type="1") 가 만든 fresh pending future 가 있으면 그것을
+          우선 await 한다. timeout 내 ACK 미수신 시 False (구독 미확정 → 상위에서 재구독).
+        - pending future 가 없을 때만 `_subscribed_items` 멤버십을 신뢰한다.
+          (`_subscribed_items` 는 disconnect 시 정리되지 않으므로 — 내부 `_resubscribe_all`
+           이 의존 — 멤버십을 먼저 보면 재연결 후 현재 연결에 등록 안 된 구독을 가짜로
+           통과시킨다. fresh frame 을 보냈다면 반드시 그 ACK 로 확정한다.)
 
         send_realtime_request 자체의 반환 의미(프레임 전송 성공)는 바꾸지 않는다.
         """
-        if (tr_id, tr_key) in self._subscribed_items:
-            return True
         if timeout is None:
             timeout = self.SUBSCRIBE_ACK_TIMEOUT_SEC
         pending = self._pending_requests.get((tr_id, tr_key))
