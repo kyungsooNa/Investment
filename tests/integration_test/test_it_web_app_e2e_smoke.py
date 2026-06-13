@@ -198,6 +198,7 @@ def test_real_app_status_api_uses_initialized_context(client_with_fake_lifespan,
         "market_open": True,
         "env_type": "모의투자",
         "is_paper_trading": True,
+        "market_mode": "domestic",
         "current_time": "2026-03-08 10:30:00",
         "initialized": True,
     }

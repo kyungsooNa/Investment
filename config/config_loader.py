@@ -355,6 +355,18 @@ class OpeningPositionReconcileConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class OverseasStockConfig(BaseModel):
+    enabled_exchanges: List[Literal["NASD", "NYSE", "AMEX"]] = Field(
+        default_factory=lambda: ["NASD", "NYSE", "AMEX"]
+    )
+    default_exchange: Literal["NASD", "NYSE", "AMEX"] = "NASD"
+    currency: Literal["USD"] = "USD"
+    manual_order_only: bool = True
+    allow_live_trading: bool = False
+
+    model_config = {"extra": "allow"}
+
+
 class AppConfig(BaseModel):
     # Core API keys
     api_key: Optional[str] = None
@@ -374,6 +386,9 @@ class AppConfig(BaseModel):
     # paper 모드에서는 base 값을 사용하므로 profile 무관. real 모드에서 overlay 선택.
     operating_profile: Literal["canary", "real_limited", "real_full"] = "canary"
 
+    # Product/market surface. This is orthogonal to paper/real and runtime mode.
+    market_mode: Literal["domestic", "overseas_us"] = "domestic"
+
     # Sub-configs
     web: WebConfig
     cache: CacheConfig = Field(default_factory=CacheConfig)
@@ -392,6 +407,7 @@ class AppConfig(BaseModel):
         default_factory=StrategyProfitabilityGateConfig
     )
     opening_position_reconcile: OpeningPositionReconcileConfig = Field(default_factory=OpeningPositionReconcileConfig)
+    overseas_stock: OverseasStockConfig = Field(default_factory=OverseasStockConfig)
     
     # Dynamic/Merged configs
     tr_ids: Dict[str, Any] = Field(default_factory=dict)

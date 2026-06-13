@@ -27,6 +27,15 @@ paths:
   order_rvsecncl: /uapi/domestic-stock/v1/trading/order-rvsecncl
   hashkey: /uapi/hashkey   # 선택: 없으면 코드에서 리터럴로 써도 됨
 
+  # 해외주식 v1 (미국 3시장 조회 + 수동 지정가 주문)
+  overseas_stock_price: /uapi/overseas-price/v1/quotations/price
+  overseas_stock_dailyprice: /uapi/overseas-price/v1/quotations/dailyprice
+  overseas_stock_inquire_balance: /uapi/overseas-stock/v1/trading/inquire-balance
+  overseas_stock_inquire_ccnl: /uapi/overseas-stock/v1/trading/inquire-ccnl
+  overseas_stock_inquire_nccs: /uapi/overseas-stock/v1/trading/inquire-nccs
+  overseas_stock_order: /uapi/overseas-stock/v1/trading/order
+  overseas_stock_order_rvsecncl: /uapi/overseas-stock/v1/trading/order-rvsecncl
+
   # websocket
   approval_key: /oauth2/Approval
   real_time_price: /tryitout/H0STCNT0

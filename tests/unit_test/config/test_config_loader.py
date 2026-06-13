@@ -132,6 +132,39 @@ def test_app_config_defaults_to_paper_trading_when_omitted():
     assert config.data_quality.violation_alert_window_sec == 60.0
     assert config.order_execution.order_max_retries == 3
     assert config.order_execution.order_retry_delay_sec == 3
+    assert config.market_mode == "domestic"
+    assert config.overseas_stock.enabled_exchanges == ["NASD", "NYSE", "AMEX"]
+    assert config.overseas_stock.default_exchange == "NASD"
+    assert config.overseas_stock.currency == "USD"
+    assert config.overseas_stock.manual_order_only is True
+    assert config.overseas_stock.allow_live_trading is False
+
+
+def test_app_config_accepts_overseas_us_market_mode():
+    config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        market_mode="overseas_us",
+        overseas_stock={
+            "enabled_exchanges": ["NASD", "NYSE"],
+            "default_exchange": "NYSE",
+            "currency": "USD",
+            "manual_order_only": True,
+            "allow_live_trading": True,
+        },
+    )
+
+    assert config.market_mode == "overseas_us"
+    assert config.overseas_stock.enabled_exchanges == ["NASD", "NYSE"]
+    assert config.overseas_stock.default_exchange == "NYSE"
+    assert config.overseas_stock.allow_live_trading is True
+
+
+def test_app_config_rejects_invalid_market_mode():
+    with pytest.raises(ValidationError):
+        AppConfig(
+            web={"host": "localhost", "port": 8080},
+            market_mode="global",
+        )
 
 
 def test_position_sizing_real_mode_overrides_defaults_are_canary_friendly():

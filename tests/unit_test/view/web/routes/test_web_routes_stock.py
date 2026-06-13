@@ -3,6 +3,7 @@
 """
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from common.overseas_types import OverseasExchange
 from common.types import ResCommonResponse
 
 
@@ -16,7 +17,8 @@ def test_get_status(web_client, mock_web_ctx):
         "is_paper_trading": True,
         "env_type": "모의투자",
         "current_time": "2025-01-01 12:00:00",
-        "initialized": True
+        "initialized": True,
+        "market_mode": "domestic",
     }
 
 
@@ -231,7 +233,8 @@ async def test_get_status_ctx_none(web_client, monkeypatch):
         "env_type": "미설정",
         "is_paper_trading": True,
         "current_time": "",
-        "initialized": False
+        "initialized": False,
+        "market_mode": "domestic",
     }
 
 
@@ -258,6 +261,79 @@ async def test_get_status_cached(web_client, mock_web_ctx):
     assert json_resp["env_type"] == "테스트"
     # 캐시를 반환하되 시간은 갱신되었는지 확인
     assert json_resp["current_time"] == "new_time"
+    assert json_resp["market_mode"] == "domestic"
+
+
+@pytest.mark.asyncio
+async def test_get_market_mode(web_client, mock_web_ctx):
+    """GET /api/market-mode는 현재 market_mode를 반환한다."""
+    mock_web_ctx.market_mode = "overseas_us"
+
+    response = web_client.get("/api/market-mode")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "success": True,
+        "market_mode": "overseas_us",
+        "requires_reinitialize": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_change_market_mode_marks_reinitialize(web_client, mock_web_ctx):
+    """POST /api/market-mode는 허용된 mode만 반영하고 재초기화 필요 여부를 반환한다."""
+    response = web_client.post("/api/market-mode", json={"market_mode": "overseas_us"})
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["market_mode"] == "overseas_us"
+    assert response.json()["requires_reinitialize"] is True
+    assert mock_web_ctx.market_mode == "overseas_us"
+
+
+@pytest.mark.asyncio
+async def test_change_market_mode_invalid(web_client, mock_web_ctx):
+    """POST /api/market-mode는 domestic/overseas_us 외 값을 거부한다."""
+    response = web_client.post("/api/market-mode", json={"market_mode": "crypto"})
+
+    assert response.status_code == 400
+    assert mock_web_ctx.market_mode == "domestic"
+
+
+@pytest.mark.asyncio
+async def test_get_overseas_stock_price_calls_service(web_client, mock_web_ctx):
+    """GET /api/overseas/stock/{symbol}은 해외 조회 서비스를 호출한다."""
+    mock_web_ctx.stock_query_service.get_overseas_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={"symbol": "AAPL", "price": 190.0}
+    )
+
+    response = web_client.get("/api/overseas/stock/AAPL?exchange=NASD")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["symbol"] == "AAPL"
+    mock_web_ctx.stock_query_service.get_overseas_price.assert_awaited_once_with(
+        "AAPL", exchange=OverseasExchange.NASD
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_overseas_stock_chart_calls_service(web_client, mock_web_ctx):
+    """GET /api/overseas/chart/{symbol}은 해외 일봉 조회 서비스를 호출한다."""
+    mock_web_ctx.stock_query_service.get_overseas_dailyprice.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data=[{"date": "20250101", "close": 190.0}]
+    )
+
+    response = web_client.get("/api/overseas/chart/AAPL?exchange=NYSE&period=W")
+
+    assert response.status_code == 200
+    assert response.json()["data"][0]["close"] == 190.0
+    mock_web_ctx.stock_query_service.get_overseas_dailyprice.assert_awaited_once_with(
+        "AAPL",
+        exchange=OverseasExchange.NYSE,
+        period="W",
+        start_date="",
+        end_date="",
+    )
 
 
 @pytest.mark.asyncio

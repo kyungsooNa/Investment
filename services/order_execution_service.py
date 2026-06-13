@@ -70,7 +70,8 @@ class OrderExecutionService:
                  execution_quality_config: Optional[ExecutionQualityReportConfig] = None,
                  deferred_order_queue=None,
                  order_max_retries: int = _ORDER_MAX_RETRIES,
-                 order_retry_delay_sec: int = _ORDER_RETRY_DELAY_SEC):
+                 order_retry_delay_sec: int = _ORDER_RETRY_DELAY_SEC,
+                 market_mode: str = "domestic"):
         self.broker_api_wrapper = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
@@ -85,6 +86,7 @@ class OrderExecutionService:
         self._order_policy = order_policy_service
         self._data_quality = data_quality_service
         self._execution_quality_config = execution_quality_config or ExecutionQualityReportConfig()
+        self._market_mode = str(market_mode or "domestic")
         self._order_max_retries = self._validate_order_max_retries(order_max_retries)
         self._order_retry_delay_sec = self._validate_order_retry_delay_sec(order_retry_delay_sec)
         self._exec_quality_reporter = ExecutionQualityReporter(
@@ -229,6 +231,9 @@ class OrderExecutionService:
     def _is_strategy_source(source: str) -> bool:
         text = str(source or "")
         return text.startswith("strategy:") or text.startswith("strategy_force_exit:")
+
+    def _is_overseas_mode(self) -> bool:
+        return self._market_mode == "overseas_us"
 
     def _log_real_order_preview(self, **kwargs) -> None:
         return self._submission_coordinator._log_real_order_preview(**kwargs)
@@ -472,6 +477,16 @@ class OrderExecutionService:
         current_trace = trace_id or get_trace_id() or new_trace_id("MANUAL")
         with trace_scope(current_trace):
             t_start = self.pm.start_timer()
+            if self._is_overseas_mode() and self._is_strategy_source(source):
+                msg = "해외주식 mode v1에서는 자동전략 매수 주문을 지원하지 않습니다."
+                self.logger.warning(
+                    f"[OrderPolicy] overseas_us strategy BUY blocked: stock_code={stock_code}, source={source}"
+                )
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.ORDER_POLICY_BLOCKED.value,
+                    msg1=msg,
+                    data={"rule": "overseas_strategy_buy_blocked"},
+                )
             if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
                 self.logger.warning("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
                 return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)

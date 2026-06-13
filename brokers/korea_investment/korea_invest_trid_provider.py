@@ -6,7 +6,7 @@ from config.config_loader import load_configs, load_config, TR_IDS_CONFIG_PATH
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_trid_keys import TrIdLeaf, TrId
 
-_DOMAINS = ("quotations", "account", "trading")
+_DOMAINS = ("quotations", "account", "trading", "overseas_stock")
 
 class KoreaInvestTrIdProvider:
     """
@@ -109,3 +109,37 @@ class KoreaInvestTrIdProvider:
     def time_daily_itemchartprice(self) -> str:
         leaf = TrIdLeaf.TIME_DAILY_ITEMCHARTPRICE
         return self.get_by_leaf(leaf)
+
+    # ── 해외주식 v1 ───────────────────────────────────────────────
+    def overseas_stock(self, leaf_key: str) -> str:
+        dom = self._tr_ids.get("overseas_stock", {})
+        if leaf_key not in dom:
+            raise KeyError(f"tr_ids.overseas_stock에 '{leaf_key}'를 찾을 수 없습니다.")
+        return dom[leaf_key]
+
+    def _overseas_mode_leaf(self, base: str) -> str:
+        return f"{base}_{'paper' if bool(self._env.is_paper_trading) else 'real'}"
+
+    def overseas_stock_inquire_balance(self) -> str:
+        return self.overseas_stock(self._overseas_mode_leaf("inquire_balance"))
+
+    def overseas_stock_inquire_ccnl(self) -> str:
+        return self.overseas_stock(self._overseas_mode_leaf("inquire_ccnl"))
+
+    def overseas_stock_inquire_nccs(self) -> str:
+        return self.overseas_stock(self._overseas_mode_leaf("inquire_nccs"))
+
+    def overseas_stock_order(self, is_buy: bool) -> str:
+        if self._env.is_paper_trading:
+            key = "order_buy_paper" if is_buy else "order_sell_paper"
+            dom = self._tr_ids.get("overseas_stock", {})
+            if key in dom:
+                return dom[key]
+        return self.overseas_stock("order_buy_real" if is_buy else "order_sell_real")
+
+    def overseas_stock_order_rvsecncl(self) -> str:
+        if self._env.is_paper_trading:
+            dom = self._tr_ids.get("overseas_stock", {})
+            if "order_rvsecncl_paper" in dom:
+                return dom["order_rvsecncl_paper"]
+        return self.overseas_stock("order_rvsecncl_real")

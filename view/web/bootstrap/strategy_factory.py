@@ -32,6 +32,12 @@ class StrategyFactory:
 
     def build(self) -> None:
         ctx = self._ctx
+        if getattr(ctx, "market_mode", "domestic") == "overseas_us":
+            ctx.logger.info(
+                "[StrategyFactory] market_mode=overseas_us — 해외주식 v1은 자동전략을 비활성화합니다."
+            )
+            ctx.scheduler = None
+            return
         if not (ctx.runtime_mode & RuntimeMode.TRADING):
             ctx.logger.info(
                 "[StrategyFactory] runtime_mode=%s — TRADING 비활성, StrategyScheduler 미생성.",

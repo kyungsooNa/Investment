@@ -95,6 +95,7 @@ class WebAppContext:
         from view.web.bootstrap.runtime_mode import RuntimeMode
         self.logger = Logger()
         self.runtime_mode: RuntimeMode = runtime_mode if runtime_mode is not None else RuntimeMode.ALL
+        self.market_mode: str = "domestic"
         self.env = app_context.env if app_context else None
         self.full_config = {}  # [추가] 전체 설정을 담을 그릇
         self.market_clock: MarketClock = None

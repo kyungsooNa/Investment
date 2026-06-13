@@ -5,6 +5,7 @@ from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
 from brokers.korea_investment.korea_invest_quotations_api import KoreaInvestApiQuotations
 from brokers.korea_investment.korea_invest_account_api import KoreaInvestApiAccount
 from brokers.korea_investment.korea_invest_trading_api import KoreaInvestApiTrading
+from brokers.korea_investment.korea_invest_overseas_stock_api import KoreaInvestOverseasStockApi
 from brokers.korea_investment.korea_invest_websocket_api import KoreaInvestWebSocketAPI
 from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env
 from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
@@ -78,6 +79,15 @@ class KoreaInvestApiClient:
             url_provider=url_provider,
             trid_provider=trid_provider,
         )
+        self._overseas_stock = KoreaInvestOverseasStockApi(
+            self._env,
+            self._logger,
+            self.market_clock,
+            async_client=shared_client,
+            header_provider=header_provider.fork(),
+            url_provider=url_provider,
+            trid_provider=trid_provider,
+        )
         self._websocketAPI = KoreaInvestWebSocketAPI(
             self._env, self._logger,
             market_clock=self.market_clock,
@@ -105,6 +115,28 @@ class KoreaInvestApiClient:
 
     async def cancel_stock_order(self, **kwargs) -> ResCommonResponse:
         return await self._trading.cancel_stock_order(**kwargs)
+
+    # --- Overseas stock API delegation ---
+    async def get_overseas_price(self, symbol: str, **kwargs) -> ResCommonResponse:
+        return await self._overseas_stock.get_overseas_price(symbol, **kwargs)
+
+    async def get_overseas_dailyprice(self, symbol: str, **kwargs) -> ResCommonResponse:
+        return await self._overseas_stock.get_overseas_dailyprice(symbol, **kwargs)
+
+    async def get_overseas_balance(self, **kwargs) -> ResCommonResponse:
+        return await self._overseas_stock.get_overseas_balance(**kwargs)
+
+    async def inquire_overseas_ccnl(self, **kwargs) -> ResCommonResponse:
+        return await self._overseas_stock.inquire_overseas_ccnl(**kwargs)
+
+    async def inquire_overseas_unfilled(self, **kwargs) -> ResCommonResponse:
+        return await self._overseas_stock.inquire_overseas_unfilled(**kwargs)
+
+    async def place_overseas_limit_order(self, **kwargs) -> ResCommonResponse:
+        return await self._overseas_stock.place_overseas_limit_order(**kwargs)
+
+    async def cancel_overseas_order(self, **kwargs) -> ResCommonResponse:
+        return await self._overseas_stock.cancel_overseas_order(**kwargs)
 
     # --- Quotations API delegation (Updated) ---
     # KoreaInvestApiQuotations의 모든 메서드가 ResCommonResponse를 반환하도록 이미 수정되었으므로, 해당 반환 타입을 반영

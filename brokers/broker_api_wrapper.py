@@ -311,6 +311,49 @@ class BrokerAPIWrapper:
         """주식 주문 취소를 실행합니다 (KoreaInvestApiTrading 위임)."""
         return await self._client.cancel_stock_order(**kwargs)
 
+    # --- KoreaInvestApiClient / Overseas stock API delegation ---
+    async def get_overseas_price(self, symbol: str, **kwargs) -> ResCommonResponse:
+        return await self._client.get_overseas_price(symbol, **kwargs)
+
+    async def get_overseas_dailyprice(self, symbol: str, **kwargs) -> ResCommonResponse:
+        return await self._client.get_overseas_dailyprice(symbol, **kwargs)
+
+    async def get_overseas_balance(self, **kwargs) -> ResCommonResponse:
+        return await self._client.get_overseas_balance(**kwargs)
+
+    async def inquire_overseas_ccnl(self, **kwargs) -> ResCommonResponse:
+        return await self._client.inquire_overseas_ccnl(**kwargs)
+
+    async def inquire_overseas_unfilled(self, **kwargs) -> ResCommonResponse:
+        return await self._client.inquire_overseas_unfilled(**kwargs)
+
+    async def place_overseas_limit_order(self, **kwargs) -> ResCommonResponse:
+        if self._cb_is_open():
+            remaining = (self._cb_open_until - datetime.now()).seconds // 60
+            if self._logger:
+                self._logger.warning(
+                    f"[CircuitBreaker] 해외주식 주문 차단됨 ({remaining}분 남음): {kwargs.get('symbol')}"
+                )
+            return ResCommonResponse(
+                rt_cd=ErrorCode.API_ERROR.value,
+                msg1=f"서킷 브레이커 개방 — {remaining}분 후 재시도",
+            )
+        resp = await self._client.place_overseas_limit_order(**kwargs)
+        rt_cd = getattr(resp, "rt_cd", None) if resp else None
+        if rt_cd == ErrorCode.SUCCESS.value:
+            self._cb_record_success()
+        elif is_non_retriable_business_error(resp):
+            if self._logger:
+                self._logger.warning(
+                    f"[CircuitBreaker] 해외주식 비즈니스 거부는 실패 카운트 제외: {kwargs.get('symbol')}"
+                )
+        else:
+            self._cb_record_failure()
+        return resp
+
+    async def cancel_overseas_order(self, **kwargs) -> ResCommonResponse:
+        return await self._client.cancel_overseas_order(**kwargs)
+
     # --- KoreaInvestApiClient / WebSocket API delegation ---
     def is_websocket_receive_alive(self) -> bool:
         """웹소켓 수신 태스크가 살아있는지 확인."""

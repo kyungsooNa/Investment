@@ -27,6 +27,19 @@ is_paper_trading: true
 # canary 외 profile 은 WARN 으로 보고된다.
 operating_profile: "canary"
 
+# 시장 mode. paper/real 및 RUNTIME_MODE 와 독립 축이다.
+# domestic    : 기존 국내주식 모드
+# overseas_us : 미국 3시장(NASDAQ/NYSE/AMEX) 조회 + 수동 지정가 주문 v1
+market_mode: "domestic"
+
+overseas_stock:
+  enabled_exchanges: ["NASD", "NYSE", "AMEX"]
+  default_exchange: "NASD"
+  currency: "USD"
+  manual_order_only: true
+  # 실전 해외 주문은 기본 차단. 운영 검증 후 별도 승인으로만 true 전환.
+  allow_live_trading: false
+
 # 선택
 htsid: ""
 custtype: "P"
