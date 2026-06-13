@@ -1727,6 +1727,75 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         mock_run.assert_not_awaited()
 
+    async def test_loop_logs_order_cutoff_skip_only_once(self):
+        """주문 컷오프 스킵 INFO 로그는 컷오프 진입 시 1회만 남긴다 (매초 반복 금지)."""
+        from datetime import datetime
+
+        scheduler, _, _, tm, mcs = self._make_scheduler()
+        now_dt = datetime(2026, 5, 19, 15, 25, 0)
+        close_dt = datetime(2026, 5, 19, 15, 40, 0)
+        tm.get_current_kst_time.return_value = now_dt
+        tm.get_market_close_time.return_value = close_dt
+
+        strategy = MockStrategy(name="전략A")
+        scheduler.register(StrategySchedulerConfig(strategy=strategy, interval_minutes=0))
+        scheduler._running = True
+        # 컷오프 이후 시간대에서 루프 2회 반복 후 종료
+        mcs.is_market_open_now.side_effect = [True, True, asyncio.CancelledError()]
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            try:
+                await scheduler._loop()
+            except asyncio.CancelledError:
+                pass
+
+        cutoff_logs = [
+            c for c in scheduler._logger.info.call_args_list
+            if c.args and isinstance(c.args[0], str) and "주문 컷오프" in c.args[0]
+        ]
+        self.assertEqual(len(cutoff_logs), 1)
+
+    def test_sync_force_exit_done_date_resets_cutoff_log_flag(self):
+        """날짜가 바뀌면 컷오프 로그 1회화 플래그가 초기화된다."""
+        from datetime import datetime
+
+        scheduler, _, _, _, _ = self._make_scheduler()
+        scheduler._sync_force_exit_done_date(datetime(2026, 5, 19, 15, 25, 0))
+        scheduler._order_cutoff_logged = True
+
+        scheduler._sync_force_exit_done_date(datetime(2026, 5, 20, 9, 0, 0))
+
+        self.assertFalse(scheduler._order_cutoff_logged)
+
+    async def test_run_strategy_fetches_holdings_once_when_no_sells(self):
+        """매도 신호가 없는 사이클은 보유 목록을 1회만 조회한다 (중복 조회 제거)."""
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(strategy=strategy)
+        scheduler.register(config)
+
+        await scheduler._run_strategy(config)
+
+        self.assertEqual(vm.get_holds_by_strategy.call_count, 1)
+
+    async def test_run_strategy_refetches_holdings_after_sell_signals(self):
+        """매도 신호를 실행한 사이클은 매수 스캔 전에 보유 목록을 재조회한다."""
+        sell = TradeSignal(
+            code="005930", name="삼성전자", action="SELL",
+            price=70000, qty=1, reason="청산", strategy_name="전략A",
+        )
+        strategy = MockStrategy(name="전략A", exit_signals=[sell])
+        scheduler, vm, _, _, _ = self._make_scheduler()
+        vm.get_holds_by_strategy.return_value = [
+            {"code": "005930", "name": "삼성전자", "buy_price": 60000, "qty": 1, "status": "HOLD"}
+        ]
+        config = StrategySchedulerConfig(strategy=strategy)
+        scheduler.register(config)
+
+        await scheduler._run_strategy(config)
+
+        self.assertEqual(vm.get_holds_by_strategy.call_count, 2)
+
     async def test_loop_exception_handling(self):
         """루프 내 예외 발생 시 계속 실행되는지 테스트."""
         scheduler, _, _, tm, _ = self._make_scheduler()

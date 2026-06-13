@@ -164,6 +164,7 @@ class StrategyScheduler:
         self._last_order_poll_time: Optional[datetime] = None
         self._force_exit_done: set = set()  # 당일 강제 청산 완료된 전략
         self._force_exit_done_date: Optional[str] = None
+        self._order_cutoff_logged = False  # 컷오프 스킵 로그 1회화 (매초 반복 방지)
         self._reconciled_dates: set = set()  # 원장 대사 완료된 날짜 (YYYY-MM-DD)
         self.MAX_HISTORY = 200  # 최대 보관 이력 수
         self._signal_history: List[SignalRecord] = self._load_signal_history()
@@ -252,11 +253,13 @@ class StrategyScheduler:
                 self._sync_force_exit_done_date(now)
 
                 if self._is_after_order_cutoff(now, close_time):
-                    self._logger.info(
-                        f"[Scheduler] 주문 컷오프 이후 전략 실행 스킵 "
-                        f"(now={now.strftime('%H:%M:%S')}, cutoff="
-                        f"{self._get_order_cutoff_time(close_time).strftime('%H:%M:%S')})"
-                    )
+                    if not self._order_cutoff_logged:
+                        self._order_cutoff_logged = True
+                        self._logger.info(
+                            f"[Scheduler] 주문 컷오프 이후 전략 실행 스킵 "
+                            f"(now={now.strftime('%H:%M:%S')}, cutoff="
+                            f"{self._get_order_cutoff_time(close_time).strftime('%H:%M:%S')})"
+                        )
                     await asyncio.sleep(self.LOOP_INTERVAL_SEC)
                     continue
 
@@ -349,6 +352,7 @@ class StrategyScheduler:
             return
         self._force_exit_done.clear()
         self._force_exit_done_date = today
+        self._order_cutoff_logged = False
         # 날짜 키를 포함하는 set 의 과거 항목 purge (장기 구동 시 무한 증가 방지)
         today_compact = now.strftime("%Y%m%d")
         self._strategy_failure_alert_keys = {
@@ -450,6 +454,7 @@ class StrategyScheduler:
 
         # 1) 보유 종목 청산 조건 체크
         holdings = self._get_strategy_holdings(cfg)
+        sells_dispatched = False
         if holdings:
             t_exit = self._pm.start_timer()
             strategy_logger = getattr(cfg.strategy, "strategy_logger", None)
@@ -483,9 +488,13 @@ class StrategyScheduler:
             self._stamp_signals(sell_signals, cfg.strategy)
             if sell_signals:
                 await self._execute_signals_concurrently(sell_signals)
+                sells_dispatched = True
+
+        # 매도 미발생 사이클은 위 조회 결과를 재사용해 중복 조회/prune 패스를 줄인다.
+        post_exit_holdings = holdings if not sells_dispatched else None
 
         # P2 2-4 exit: 보유 종목 손절 shadow 구독 갱신 (entry gate 와 무관하게 매 사이클 실행).
-        await self._refresh_exit_shadow_subscriptions(cfg)
+        await self._refresh_exit_shadow_subscriptions(cfg, holdings=post_exit_holdings)
 
         # 2) 새 매수 스캔
         entry_gate = self._check_live_expansion_gate(name)
@@ -500,7 +509,10 @@ class StrategyScheduler:
             self._pm.log_timer(f"{name}.run_strategy", t_run)
             return
 
-        current_holdings = self._get_strategy_holdings(cfg)
+        current_holdings = (
+            post_exit_holdings if post_exit_holdings is not None
+            else self._get_strategy_holdings(cfg)
+        )
         current_holds_count = len(current_holdings)
 
         position_full = current_holds_count >= cfg.max_positions
@@ -1172,7 +1184,7 @@ class StrategyScheduler:
         if self._event_shadow_journal is None:
             return
         if self._event_router is None:
-            self._record_event_shadow_status(
+            await self._record_event_shadow_status(
                 strategy_name=getattr(cfg.strategy, "name", ""),
                 event="subscriptions_skipped",
                 details={"reason": "event_router_missing"},
@@ -1187,7 +1199,7 @@ class StrategyScheduler:
             self._logger.warning(
                 f"[Scheduler] {name} current_candidate_codes() 호출 오류: {e}"
             )
-            self._record_event_shadow_status(
+            await self._record_event_shadow_status(
                 strategy_name=name,
                 event="subscriptions_skipped",
                 details={"reason": "candidate_codes_error", "error": str(e)},
@@ -1220,7 +1232,7 @@ class StrategyScheduler:
 
         self._event_shadow_subscriptions[name] = new_codes
         await self._sync_event_shadow_price_subscriptions(name, new_codes)
-        self._record_event_shadow_status(
+        await self._record_event_shadow_status(
             strategy_name=name,
             event="subscriptions_refreshed",
             details={
@@ -1293,7 +1305,7 @@ class StrategyScheduler:
             except Exception:
                 payload = {"action": getattr(signal, "action", ""), "code": getattr(signal, "code", code)}
             try:
-                self._record_event_shadow_signal(
+                await self._record_event_shadow_signal(
                     strategy_name=strategy.name,
                     code=code,
                     signal=payload,
@@ -1314,7 +1326,7 @@ class StrategyScheduler:
         except Exception:
             return time.strftime("%Y%m%d")
 
-    def _record_event_shadow_signal(
+    async def _record_event_shadow_signal(
         self,
         *,
         strategy_name: str,
@@ -1333,11 +1345,9 @@ class StrategyScheduler:
             snapshot=snapshot,
             signal_source=signal_source,
         )
-        flush_fn = getattr(journal, "flush_to_file", None)
-        if callable(flush_fn):
-            flush_fn(self._event_shadow_date_str())
+        await self._flush_event_shadow_journal()
 
-    def _record_event_shadow_status(
+    async def _record_event_shadow_status(
         self,
         *,
         strategy_name: str,
@@ -1355,9 +1365,13 @@ class StrategyScheduler:
             event=event,
             details=details or {},
         )
-        flush_fn = getattr(journal, "flush_to_file", None)
+        await self._flush_event_shadow_journal()
+
+    async def _flush_event_shadow_journal(self) -> None:
+        """journal flush 를 worker thread 로 오프로드 (틱 경로 이벤트 루프 blocking 방지)."""
+        flush_fn = getattr(self._event_shadow_journal, "flush_to_file", None)
         if callable(flush_fn):
-            flush_fn(self._event_shadow_date_str())
+            await asyncio.to_thread(flush_fn, self._event_shadow_date_str())
 
     @staticmethod
     def _exit_shadow_category_key(strategy_name: str) -> str:
@@ -1368,7 +1382,11 @@ class StrategyScheduler:
         # entry shadow 와 같은 종목을 구독해도 router 키가 겹치지 않도록 접미사를 붙인다.
         return f"{strategy_name}__exit"
 
-    async def _refresh_exit_shadow_subscriptions(self, cfg: StrategySchedulerConfig) -> None:
+    async def _refresh_exit_shadow_subscriptions(
+        self,
+        cfg: StrategySchedulerConfig,
+        holdings: Optional[List[dict]] = None,
+    ) -> None:
         """P2 2-4 exit: event_driven_shadow 전략의 보유 종목을 손절 shadow 로 router 구독.
 
         - flag False / router·journal 미주입 시 no-op.
@@ -1384,11 +1402,12 @@ class StrategyScheduler:
 
         strategy = cfg.strategy
         name = strategy.name
-        try:
-            holdings = self._get_strategy_holdings(cfg) or []
-        except Exception as e:
-            self._logger.warning(f"[Scheduler] {name} exit shadow 보유 조회 오류: {e}")
-            return
+        if holdings is None:
+            try:
+                holdings = self._get_strategy_holdings(cfg) or []
+            except Exception as e:
+                self._logger.warning(f"[Scheduler] {name} exit shadow 보유 조회 오류: {e}")
+                return
 
         holdings_by_code: Dict[str, dict] = {}
         for hold in holdings:
@@ -1443,7 +1462,7 @@ class StrategyScheduler:
             except Exception:
                 payload = {"action": getattr(signal, "action", ""), "code": getattr(signal, "code", code)}
             try:
-                self._record_event_shadow_signal(
+                await self._record_event_shadow_signal(
                     strategy_name=strategy.name,
                     code=code,
                     signal=payload,

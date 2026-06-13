@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -113,6 +113,19 @@ def test_flush_appends_to_existing_file(tmp_path, logger):
 
     lines = path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2  # 첫 flush 1줄 + 두 번째 flush 1줄
+
+
+def test_flush_to_file_keeps_records_on_write_failure(tmp_path, logger):
+    """flush 쓰기 실패 시 레코드가 유실되지 않고 버퍼에 보존된다."""
+    svc = EventShadowJournalService(log_root=tmp_path, logger=logger)
+    svc.record(strategy_name="VBO", code="005930", signal={"a": 1}, snapshot={})
+
+    with patch.object(Path, "open", side_effect=OSError("disk full")):
+        result = svc.flush_to_file(date_str="20260518")
+
+    assert result is None
+    assert len(svc.get_records()) == 1
+    logger.warning.assert_called_once()
 
 
 def test_record_ignores_missing_required_fields(tmp_path, logger):
