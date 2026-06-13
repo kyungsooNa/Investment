@@ -2,6 +2,7 @@
 계좌 잔고 관련 API 엔드포인트 (balance.html).
 """
 from fastapi import APIRouter, Query, HTTPException
+from common.overseas_types import OverseasExchange
 from common.types import Exchange
 from view.web.api_common import _get_ctx, _serialize_response
 
@@ -67,6 +68,28 @@ async def get_balance(exchange: str = Query("KRX")):
         }
 
     ctx.pm.log_timer("get_balance", t_start)
+    return result
+
+
+@router.get("/overseas/balance")
+async def get_overseas_balance(exchange: str = Query("NASD"), currency: str = Query("USD")):
+    """해외주식 잔고 조회. v1은 미국 3시장 + USD만 지원한다."""
+    ctx = _get_ctx()
+    try:
+        exchange_enum = OverseasExchange(exchange.upper())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="exchange는 NASD, NYSE, AMEX 중 하나여야 합니다.")
+    if currency.upper() != "USD":
+        raise HTTPException(status_code=400, detail="v1은 USD만 지원합니다.")
+
+    resp = await ctx.stock_query_service.get_overseas_balance(exchange=exchange_enum, currency="USD")
+    result = _serialize_response(resp)
+    result["account_info"] = {
+        "type": ctx.get_env_type(),
+        "exchange": exchange_enum.value,
+        "currency": "USD",
+        "market_mode": getattr(ctx, "market_mode", "domestic"),
+    }
     return result
 
 @router.post("/balance/sell_all")

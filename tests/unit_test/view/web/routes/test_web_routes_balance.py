@@ -3,6 +3,7 @@
 """
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
+from common.overseas_types import OverseasExchange
 from common.types import ResCommonResponse
 
 @pytest.fixture(autouse=True)
@@ -95,6 +96,25 @@ async def test_get_balance_full_config_exception(web_client, mock_web_ctx):
     response = web_client.get("/api/balance")
     assert response.status_code == 200
     assert response.json()["account_info"]["number"] == "번호없음"
+
+
+@pytest.mark.asyncio
+async def test_get_overseas_balance_calls_service(web_client, mock_web_ctx):
+    """GET /api/overseas/balance는 해외 잔고 조회 서비스를 호출한다."""
+    mock_web_ctx.market_mode = "overseas_us"
+    mock_web_ctx.stock_query_service.get_overseas_balance.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={"output1": []}
+    )
+
+    response = web_client.get("/api/overseas/balance?exchange=AMEX&currency=USD")
+
+    assert response.status_code == 200
+    assert response.json()["account_info"]["market_mode"] == "overseas_us"
+    assert response.json()["account_info"]["exchange"] == "AMEX"
+    mock_web_ctx.stock_query_service.get_overseas_balance.assert_awaited_once_with(
+        exchange=OverseasExchange.AMEX,
+        currency="USD",
+    )
 
 
 @pytest.mark.asyncio

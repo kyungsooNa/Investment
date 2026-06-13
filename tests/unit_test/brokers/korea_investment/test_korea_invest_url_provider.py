@@ -98,6 +98,25 @@ def test_url_with_enum(url_provider):
     """url: Enum 멤버를 사용하여 전체 URL을 생성하는지 테스트."""
     assert url_provider.url(DummyEnum.GET_PRICE) == "https://mock.api.com/api/v1/price"
 
+
+def test_url_with_overseas_stock_paths(mock_env):
+    provider = KoreaInvestUrlProvider(
+        get_base_url=mock_env.get_base_url,
+        paths={
+            "overseas_stock_price": "/uapi/overseas-price/v1/quotations/price",
+            "overseas_stock_order": "/uapi/overseas-stock/v1/trading/order",
+        },
+    )
+
+    assert (
+        provider.url("overseas_stock_price")
+        == "https://mock.api.com/uapi/overseas-price/v1/quotations/price"
+    )
+    assert (
+        provider.url("overseas_stock_order")
+        == "https://mock.api.com/uapi/overseas-stock/v1/trading/order"
+    )
+
 def test_url_with_slashes(mock_paths):
     """url: base_url과 path의 슬래시 처리가 올바른지 테스트."""
     # Case 1: base_url에 trailing slash

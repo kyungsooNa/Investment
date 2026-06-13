@@ -5,6 +5,8 @@
 import asyncio
 import time
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+from common.overseas_types import OverseasExchange
 from common.types import Exchange
 from repositories.streaming_stock_repo import StreamingType
 from services.price_subscription_service import SubscriptionPriority
@@ -19,6 +21,15 @@ _status_cache_ts = 0.0
 _STATUS_CACHE_TTL = 5.0
 
 
+class MarketModeRequest(BaseModel):
+    market_mode: str
+
+
+def _market_mode_of(ctx) -> str:
+    mode = getattr(ctx, "market_mode", "domestic")
+    return mode if mode in ("domestic", "overseas_us") else "domestic"
+
+
 @router.get("/status")
 async def get_status():
     """시장 상태 및 환경 정보."""
@@ -30,6 +41,7 @@ async def get_status():
             "market_open": False,
             "env_type": "미설정",
             "is_paper_trading": True,
+            "market_mode": "domestic",
             "current_time": "",
             "initialized": False,
         }
@@ -38,18 +50,55 @@ async def get_status():
     if _status_cache is not None and (now - _status_cache_ts) < _STATUS_CACHE_TTL:
         # 캐시된 결과 반환 (현재 시각만 갱신)
         _status_cache["current_time"] = ctx.get_current_time_str()
+        _status_cache["market_mode"] = _market_mode_of(ctx)
         return _status_cache
 
     result = {
         "market_open": await ctx.is_market_open_now(),
         "env_type": ctx.get_env_type(),
         "is_paper_trading": bool(getattr(getattr(ctx, "env", None), "is_paper_trading", True)),
+        "market_mode": _market_mode_of(ctx),
         "current_time": ctx.get_current_time_str(),
         "initialized": ctx.initialized
     }
     _status_cache = result
     _status_cache_ts = now
     return result
+
+
+@router.get("/market-mode")
+def get_market_mode():
+    ctx = _get_ctx()
+    mode = _market_mode_of(ctx)
+    return {
+        "success": True,
+        "market_mode": mode,
+        "requires_reinitialize": False,
+    }
+
+
+@router.post("/market-mode")
+def change_market_mode(req: MarketModeRequest):
+    global _status_cache, _status_cache_ts
+    ctx = _get_ctx()
+    mode = str(req.market_mode or "").strip().lower()
+    if mode not in ("domestic", "overseas_us"):
+        raise HTTPException(status_code=400, detail="market_mode는 domestic 또는 overseas_us만 지원합니다.")
+
+    current = _market_mode_of(ctx)
+    ctx.market_mode = mode
+    full_config = getattr(ctx, "full_config", None)
+    if full_config is not None and hasattr(full_config, "market_mode"):
+        full_config.market_mode = mode
+
+    _status_cache = None
+    _status_cache_ts = 0.0
+    return {
+        "success": True,
+        "market_mode": mode,
+        "previous_market_mode": current,
+        "requires_reinitialize": current != mode,
+    }
 
 
 @router.get("/stocks/list")
@@ -161,6 +210,40 @@ async def get_stock_price(code: str, exchange: str = Query("KRX")):
     asyncio.create_task(_preload_ohlcv())
 
     return result
+
+
+@router.get("/overseas/stock/{symbol}")
+async def get_overseas_stock_price(symbol: str, exchange: str = Query("NASD")):
+    ctx = _get_ctx()
+    try:
+        exchange_enum = OverseasExchange(exchange.upper())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="exchange는 NASD, NYSE, AMEX 중 하나여야 합니다.")
+    resp = await ctx.stock_query_service.get_overseas_price(symbol, exchange=exchange_enum)
+    return _serialize_response(resp)
+
+
+@router.get("/overseas/chart/{symbol}")
+async def get_overseas_stock_chart(
+    symbol: str,
+    exchange: str = Query("NASD"),
+    period: str = Query("D"),
+    start_date: str = Query(""),
+    end_date: str = Query(""),
+):
+    ctx = _get_ctx()
+    try:
+        exchange_enum = OverseasExchange(exchange.upper())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="exchange는 NASD, NYSE, AMEX 중 하나여야 합니다.")
+    resp = await ctx.stock_query_service.get_overseas_dailyprice(
+        symbol,
+        exchange=exchange_enum,
+        start_date=start_date,
+        end_date=end_date,
+        period=period,
+    )
+    return _serialize_response(resp)
 
 
 @router.get("/chart/{code}")

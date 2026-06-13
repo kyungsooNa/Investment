@@ -164,6 +164,12 @@ class ServiceContainer:
         needs_trading = bool(mode & RuntimeMode.TRADING)
         needs_batch = bool(mode & RuntimeMode.BATCH)
         needs_realtime = bool(mode & (RuntimeMode.WEB | RuntimeMode.TRADING))
+        is_overseas_us = getattr(ctx, "market_mode", "domestic") == "overseas_us"
+        if is_overseas_us:
+            # 해외주식 v1은 조회 + 수동 지정가 주문만 지원한다.
+            needs_trading = False
+            needs_batch = False
+            needs_realtime = False
 
         config_dict = ctx.full_config
         if hasattr(config_dict, "model_dump"):
@@ -235,19 +241,22 @@ class ServiceContainer:
             raise
 
         try:
-            ctx.ranking_task = RankingTask(
-                broker_api_wrapper=ctx.broker,
-                stock_code_repository=ctx.stock_code_repository,
-                env=ctx.env,
-                logger=ctx.logger,
-                market_clock=ctx.market_clock,
-                performance_profiler=ctx.pm,
-                notification_service=ctx.notification_service,
-                telegram_reporter=getattr(ctx, 'telegram_reporter', None),
-                market_calendar_service=ctx._mcs,
-                market_data_service=ctx.market_data_service,
-                worker_pool=ctx.worker_pool,
-            )
+            if is_overseas_us:
+                ctx.ranking_task = None
+            else:
+                ctx.ranking_task = RankingTask(
+                    broker_api_wrapper=ctx.broker,
+                    stock_code_repository=ctx.stock_code_repository,
+                    env=ctx.env,
+                    logger=ctx.logger,
+                    market_clock=ctx.market_clock,
+                    performance_profiler=ctx.pm,
+                    notification_service=ctx.notification_service,
+                    telegram_reporter=getattr(ctx, 'telegram_reporter', None),
+                    market_calendar_service=ctx._mcs,
+                    market_data_service=ctx.market_data_service,
+                    worker_pool=ctx.worker_pool,
+                )
             ctx.stock_query_service = StockQueryService(
                 market_data_service=ctx.market_data_service, logger=ctx.logger, market_clock=ctx.market_clock,
                 indicator_service=ctx.indicator_service,
@@ -263,12 +272,15 @@ class ServiceContainer:
             raise
 
         try:
-            ctx.minervini_stage_service = MinerviniStageService(
-                stock_query_service=ctx.stock_query_service,
-                rs_rating_service=getattr(ctx, "rs_rating_service", None),
-                stock_repository=ctx.stock_repository,
-                logger=ctx.logger,
-            )
+            if is_overseas_us:
+                ctx.minervini_stage_service = None
+            else:
+                ctx.minervini_stage_service = MinerviniStageService(
+                    stock_query_service=ctx.stock_query_service,
+                    rs_rating_service=getattr(ctx, "rs_rating_service", None),
+                    stock_repository=ctx.stock_repository,
+                    logger=ctx.logger,
+                )
             # NOTE: favorite_service.minervini_stage_service wiring is performed by WiringPhase.
         except Exception as e:
             ctx.logger.warning(f"[ServiceBootstrap:MinerviniStage] 초기화 실패: {e}")
@@ -504,6 +516,7 @@ class ServiceContainer:
                     "order_retry_delay_sec",
                     OrderExecutionService._ORDER_RETRY_DELAY_SEC,
                 ),
+                market_mode=getattr(ctx, "market_mode", "domestic"),
             )
             # NOTE: streaming_service.register_handler("signing_notice", ...) is performed by WiringPhase.
         except Exception as e:
@@ -511,6 +524,28 @@ class ServiceContainer:
             raise
 
         try:
+            if is_overseas_us:
+                ctx.oneil_universe_service = None
+                ctx.premium_watchlist_generator_task = None
+                ctx.cache_warmup_task = None
+                ctx.log_cleanup_task = None
+                ctx.newhigh_task = None
+                ctx.newhigh_service = None
+                ctx.strategy_log_report_task = None
+                ctx.post_market_replay_audit_task = None
+                ctx.after_market_reconcile_task = None
+                ctx.opening_position_reconcile_task = None
+                if needs_web:
+                    ctx.notification_queue_task = NotificationQueueTask(
+                        notification_service=ctx.notification_service,
+                        poll_interval=config_dict.get("notification_queue_poll_interval", 1.0),
+                        telegram_config=getattr(getattr(ctx.full_config, "notifications", None), "telegram", None),
+                        logger=ctx.logger,
+                    )
+                else:
+                    ctx.notification_queue_task = None
+                return
+
             ctx.oneil_universe_service = OneilUniverseService(
                 stock_query_service=ctx.stock_query_service,
                 indicator_service=ctx.indicator_service,

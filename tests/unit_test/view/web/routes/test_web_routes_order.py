@@ -2,7 +2,8 @@
 주문 관련 테스트 (order.html).
 """
 import pytest
-from common.types import ResCommonResponse
+from common.overseas_types import OverseasExchange
+from common.types import ErrorCode, ResCommonResponse
 
 
 @pytest.mark.asyncio
@@ -134,3 +135,72 @@ async def test_place_order_market_price_lookup_exception(web_client, mock_web_ct
     assert response.status_code == 200
     
     mock_web_ctx.virtual_trade_service.log_buy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_place_overseas_limit_order_calls_broker(web_client, mock_web_ctx):
+    """POST /api/overseas/order는 해외 mode에서 수동 지정가 주문만 브로커에 위임한다."""
+    mock_web_ctx.market_mode = "overseas_us"
+    mock_web_ctx.broker.place_overseas_limit_order.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Order Placed", data={"ord_no": "A12345"}
+    )
+
+    payload = {
+        "symbol": "AAPL",
+        "exchange": "NASD",
+        "side": "buy",
+        "qty": 3,
+        "limit_price": 190.25,
+        "currency": "USD",
+    }
+    response = web_client.post("/api/overseas/order", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["ord_no"] == "A12345"
+    mock_web_ctx.broker.place_overseas_limit_order.assert_awaited_once_with(
+        symbol="AAPL",
+        exchange=OverseasExchange.NASD,
+        side="buy",
+        qty=3,
+        limit_price=190.25,
+    )
+
+
+@pytest.mark.asyncio
+async def test_place_overseas_order_requires_overseas_mode(web_client, mock_web_ctx):
+    """국내 mode에서는 해외 주문 endpoint가 닫혀 있어야 한다."""
+    payload = {
+        "symbol": "AAPL",
+        "exchange": "NASD",
+        "side": "buy",
+        "qty": 1,
+        "limit_price": 190.0,
+        "currency": "USD",
+    }
+    response = web_client.post("/api/overseas/order", json=payload)
+
+    assert response.status_code == 400
+    mock_web_ctx.broker.place_overseas_limit_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_place_overseas_real_order_requires_allow_live_trading(web_client, mock_web_ctx):
+    """실전 해외주문은 allow_live_trading=False이면 정책 차단 응답을 반환한다."""
+    mock_web_ctx.market_mode = "overseas_us"
+    mock_web_ctx.env.is_paper_trading = False
+
+    payload = {
+        "symbol": "AAPL",
+        "exchange": "NASD",
+        "side": "buy",
+        "qty": 1,
+        "limit_price": 190.0,
+        "currency": "USD",
+        "real_order_confirmation": "REAL",
+    }
+    response = web_client.post("/api/overseas/order", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] == ErrorCode.ORDER_POLICY_BLOCKED.value
+    assert response.json()["data"]["rule"] == "overseas_live_trading_disabled"
+    mock_web_ctx.broker.place_overseas_limit_order.assert_not_awaited()

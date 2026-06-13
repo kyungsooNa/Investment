@@ -36,6 +36,18 @@ tr_ids:
     order_cash_sell_paper: VTTC0011U # 모의 주식 현금 매도
     order_rvsecncl_real: TTTC0803U # 실전 주식 정정취소
     order_rvsecncl_paper: VTTC0803U # 모의 주식 정정취소
+  overseas_stock:
+    price: HHDFS00000300 # 해외주식 현재체결가
+    dailyprice: HHDFS76240000 # 해외주식 기간별 시세
+    inquire_balance_real: TTTS3012R # 해외주식 잔고 (실전)
+    inquire_balance_paper: VTTS3012R # 해외주식 잔고 (모의)
+    inquire_ccnl_real: TTTS3035R # 해외주식 주문체결내역 (실전)
+    inquire_ccnl_paper: VTTS3035R # 해외주식 주문체결내역 (모의)
+    inquire_nccs_real: TTTS3018R # 해외주식 미체결내역 (실전)
+    inquire_nccs_paper: VTTS3018R # 해외주식 미체결내역 (모의)
+    order_buy_real: TTTS6036U # 해외주식 미국주간 지정가 매수
+    order_sell_real: TTTS6037U # 해외주식 미국주간 지정가 매도
+    order_rvsecncl_real: TTTS6038U # 해외주식 미국주간 정정취소
   # --- 웹소켓 TR ID 추가 ---
   websocket:
     approval_key: 실시간-000 # 웹소켓 접속키 발급 TR ID (문서에 명시된 값)

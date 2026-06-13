@@ -32,6 +32,19 @@ def mock_tr_ids():
             "order_rvsecncl_real": "TR_CANCEL_REAL",
             "inquire_psbl_rvsecncl_paper": "TR_PSBL_CANCEL_PAPER",
             "inquire_psbl_rvsecncl_real": "TR_PSBL_CANCEL_REAL"
+        },
+        "overseas_stock": {
+            "price": "TR_OVRS_PRICE",
+            "dailyprice": "TR_OVRS_DAILY",
+            "inquire_balance_real": "TR_OVRS_BALANCE_REAL",
+            "inquire_balance_paper": "TR_OVRS_BALANCE_PAPER",
+            "inquire_ccnl_real": "TR_OVRS_CCLD_REAL",
+            "inquire_ccnl_paper": "TR_OVRS_CCLD_PAPER",
+            "inquire_nccs_real": "TR_OVRS_NCCS_REAL",
+            "inquire_nccs_paper": "TR_OVRS_NCCS_PAPER",
+            "order_buy_real": "TR_OVRS_BUY_REAL",
+            "order_sell_real": "TR_OVRS_SELL_REAL",
+            "order_rvsecncl_real": "TR_OVRS_CANCEL_REAL"
         }
     }
 
@@ -130,3 +143,18 @@ def test_get_leaf_string_delegates_to_leaf_lookup(mock_env, mock_tr_ids):
     provider = KoreaInvestTrIdProvider(mock_env, mock_tr_ids)
 
     assert provider.get("inquire_daily_itemchartprice") == "TR_DAILY_CHART"
+
+
+def test_overseas_stock_convenience_methods_respect_paper_and_real(mock_env, mock_tr_ids):
+    provider = KoreaInvestTrIdProvider(mock_env, mock_tr_ids)
+
+    assert provider.overseas_stock("price") == "TR_OVRS_PRICE"
+    assert provider.overseas_stock_inquire_balance() == "TR_OVRS_BALANCE_PAPER"
+    assert provider.overseas_stock_inquire_ccnl() == "TR_OVRS_CCLD_PAPER"
+    assert provider.overseas_stock_inquire_nccs() == "TR_OVRS_NCCS_PAPER"
+
+    mock_env.is_paper_trading = False
+    assert provider.overseas_stock_inquire_balance() == "TR_OVRS_BALANCE_REAL"
+    assert provider.overseas_stock_order(is_buy=True) == "TR_OVRS_BUY_REAL"
+    assert provider.overseas_stock_order(is_buy=False) == "TR_OVRS_SELL_REAL"
+    assert provider.overseas_stock_order_rvsecncl() == "TR_OVRS_CANCEL_REAL"

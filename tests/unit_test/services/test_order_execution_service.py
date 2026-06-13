@@ -345,6 +345,34 @@ async def test_strategy_sell_failure_does_not_emit_duplicate_system_notification
     assert result.rt_cd == ErrorCode.API_ERROR.value
     mock_notification_service.emit.assert_not_awaited()
 
+
+@pytest.mark.asyncio
+async def test_overseas_mode_blocks_strategy_buy_before_broker_call(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    handler_instance = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        market_mode="overseas_us",
+    )
+
+    result = await handler_instance.handle_place_buy_order(
+        "AAPL",
+        190,
+        1,
+        source="strategy:OneilSqueezeBreakout",
+    )
+
+    assert result.rt_cd == ErrorCode.ORDER_POLICY_BLOCKED.value
+    assert result.data == {"rule": "overseas_strategy_buy_blocked"}
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+    mock_logger.warning.assert_called_once()
+
 @pytest.mark.asyncio # This test is not directly related to the market open check, but it's good to ensure it still works.
 async def test_handle_realtime_price_quote_stream_success(handler, mock_broker_api_wrapper, mock_logger, mock_market_calendar_service):
     """실시간 스트림이 성공적으로 연결, 구독, 종료되는지 테스트합니다."""

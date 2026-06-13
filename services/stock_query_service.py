@@ -2,6 +2,7 @@
 from __future__ import annotations
 import time
 from common.market_snapshot import ConclusionSnapshot, MarketSnapshot
+from common.overseas_types import OverseasExchange
 from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, \
     ResStockFullInfoApiOutput, Exchange
 from config.DynamicConfig import DynamicConfig
@@ -1093,6 +1094,66 @@ class StockQueryService:
         특정 기간의 OHLCV 데이터를 조회합니다.
         """
         return await self.market_data_service.get_ohlcv_range(stock_code, period, start_date, end_date, exchange=exchange)
+
+    async def get_overseas_price(
+        self,
+        symbol: str,
+        *,
+        exchange: OverseasExchange | str = OverseasExchange.NASD,
+    ) -> ResCommonResponse:
+        if not self.broker:
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1="broker 미설정", data=None)
+        return await self.broker.get_overseas_price(symbol, exchange=exchange)
+
+    async def get_overseas_dailyprice(
+        self,
+        symbol: str,
+        *,
+        exchange: OverseasExchange | str = OverseasExchange.NASD,
+        start_date: str = "",
+        end_date: str = "",
+        period: str = "D",
+    ) -> ResCommonResponse:
+        if not self.broker:
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1="broker 미설정", data=[])
+        return await self.broker.get_overseas_dailyprice(
+            symbol,
+            exchange=exchange,
+            start_date=start_date,
+            end_date=end_date,
+            period=period,
+        )
+
+    async def get_overseas_balance(
+        self,
+        *,
+        exchange: OverseasExchange | str = OverseasExchange.NASD,
+        currency: str = "USD",
+    ) -> ResCommonResponse:
+        if not self.broker:
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1="broker 미설정", data=None)
+        return await self.broker.get_overseas_balance(exchange=exchange, currency=currency)
+
+    async def get_overseas_order_history(
+        self,
+        *,
+        symbol: str = "%",
+        exchange: OverseasExchange | str = OverseasExchange.NASD,
+        start_date: str,
+        end_date: str,
+        side_code: str = "00",
+        ccld_nccs_dvsn: str = "00",
+    ) -> ResCommonResponse:
+        if not self.broker:
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1="broker 미설정", data=None)
+        return await self.broker.inquire_overseas_ccnl(
+            symbol=symbol,
+            exchange=exchange,
+            start_date=start_date,
+            end_date=end_date,
+            side_code=side_code,
+            ccld_nccs_dvsn=ccld_nccs_dvsn,
+        )
 
     async def get_ohlcv_with_indicators(self, stock_code: str, period: str = "D", caller: str = "unknown") -> ResCommonResponse:
         """

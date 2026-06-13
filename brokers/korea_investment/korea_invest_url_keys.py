@@ -28,3 +28,12 @@ class EndpointKey(str, Enum):
     ORDER_CASH = "order_cash"
     ORDER_RVSECNCL = "order_rvsecncl"
     HASHKEY = "hashkey"                       # YAML에 없으면 리터럴(/uapi/hashkey) 써도 됨
+
+    # ── 해외주식 v1 ─────────────────────
+    OVERSEAS_STOCK_PRICE = "overseas_stock_price"
+    OVERSEAS_STOCK_DAILYPRICE = "overseas_stock_dailyprice"
+    OVERSEAS_STOCK_INQUIRE_BALANCE = "overseas_stock_inquire_balance"
+    OVERSEAS_STOCK_INQUIRE_CCNL = "overseas_stock_inquire_ccnl"
+    OVERSEAS_STOCK_INQUIRE_NCCS = "overseas_stock_inquire_nccs"
+    OVERSEAS_STOCK_ORDER = "overseas_stock_order"
+    OVERSEAS_STOCK_ORDER_RVSECNCL = "overseas_stock_order_rvsecncl"

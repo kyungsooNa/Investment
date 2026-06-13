@@ -140,6 +140,7 @@ def mock_web_ctx():
     ctx.get_env_type.return_value = "모의투자"
     ctx.get_current_time_str.return_value = "2025-01-01 12:00:00"
     ctx.initialized = True
+    ctx.market_mode = "domestic"
     
     # 하위 서비스 Mocking
     ctx.stock_query_service = AsyncMock()
