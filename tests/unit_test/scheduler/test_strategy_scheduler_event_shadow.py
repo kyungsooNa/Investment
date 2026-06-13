@@ -21,7 +21,8 @@ from services.event_shadow_journal_service import EventShadowJournalService
 from services.price_subscription_service import SubscriptionPriority
 
 
-def _make_scheduler(event_router=None, event_shadow_journal=None, price_subscription_service=None):
+def _make_scheduler(event_router=None, event_shadow_journal=None, price_subscription_service=None,
+                    price_stream_service=None):
     market_clock = MagicMock()
     market_clock.get_current_kst_time.return_value = datetime(2026, 5, 20, 10, 30, 0)
     return StrategyScheduler(
@@ -37,6 +38,7 @@ def _make_scheduler(event_router=None, event_shadow_journal=None, price_subscrip
         price_subscription_service=price_subscription_service,
         event_router=event_router,
         event_shadow_journal=event_shadow_journal,
+        price_stream_service=price_stream_service,
     )
 
 
@@ -155,6 +157,54 @@ async def test_refresh_subscriptions_writes_status_record_to_daily_jsonl(tmp_pat
     assert records[-1]["details"]["candidate_count"] == 2
     assert records[-1]["details"]["added_count"] == 2
     assert sorted(records[-1]["details"]["candidate_codes"]) == ["000660", "005930"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_subscriptions_attaches_tick_ingest_stats(tmp_path):
+    """price_stream_service 주입 시 subscriptions_refreshed 에 후보별 tick_ingest 카운터가 붙는다.
+
+    no-tick(a1) vs quality 거절(a2) 분기 진단용.
+    """
+    router = MagicMock()
+    router.subscribe = MagicMock()
+    router.unsubscribe = MagicMock()
+    journal = EventShadowJournalService(log_root=tmp_path)
+    price_stream = MagicMock()
+    price_stream.tick_ingest_stats_snapshot.return_value = {
+        "000660": {"received": 0, "quality_reject": 0, "dispatched": 0},
+        "005930": {"received": 12, "quality_reject": 12, "dispatched": 0},
+    }
+    scheduler = _make_scheduler(
+        event_router=router, event_shadow_journal=journal, price_stream_service=price_stream
+    )
+
+    cfg = _make_strategy_cfg("래리윌리엄스VBO", event_driven_shadow=True, codes=["005930", "000660"])
+    await scheduler._refresh_event_shadow_subscriptions(cfg)
+
+    price_stream.tick_ingest_stats_snapshot.assert_called_once_with(["000660", "005930"])
+    path = tmp_path / "event_shadow" / "20260520.jsonl"
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    tick_ingest = records[-1]["details"]["tick_ingest"]
+    assert tick_ingest["000660"] == {"received": 0, "quality_reject": 0, "dispatched": 0}
+    assert tick_ingest["005930"]["received"] == 12
+    assert tick_ingest["005930"]["quality_reject"] == 12
+
+
+@pytest.mark.asyncio
+async def test_refresh_subscriptions_omits_tick_ingest_when_no_price_stream(tmp_path):
+    """price_stream_service 미주입 시 tick_ingest 키는 details 에 없다 (no-op)."""
+    router = MagicMock()
+    router.subscribe = MagicMock()
+    router.unsubscribe = MagicMock()
+    journal = EventShadowJournalService(log_root=tmp_path)
+    scheduler = _make_scheduler(event_router=router, event_shadow_journal=journal)
+
+    cfg = _make_strategy_cfg("VBO", event_driven_shadow=True, codes=["005930"])
+    await scheduler._refresh_event_shadow_subscriptions(cfg)
+
+    path = tmp_path / "event_shadow" / "20260520.jsonl"
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert "tick_ingest" not in records[-1]["details"]
 
 
 @pytest.mark.asyncio
