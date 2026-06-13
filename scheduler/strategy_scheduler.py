@@ -129,6 +129,7 @@ class StrategyScheduler:
         event_shadow_journal=None,
         live_expansion_gate_service=None,
         market_regime_service=None,
+        price_stream_service=None,
     ):
         self._virtual_trade_service = virtual_trade_service
         self._oes = order_execution_service
@@ -149,6 +150,7 @@ class StrategyScheduler:
         self._position_sizer = position_sizing_service
         self._event_router = event_router
         self._event_shadow_journal = event_shadow_journal
+        self._price_stream_svc = price_stream_service
         self._live_expansion_gate = live_expansion_gate_service
         # strategy_name → 현재 router 에 구독된 종목 set
         self._event_shadow_subscriptions: Dict[str, set[str]] = {}
@@ -1232,18 +1234,39 @@ class StrategyScheduler:
 
         self._event_shadow_subscriptions[name] = new_codes
         await self._sync_event_shadow_price_subscriptions(name, new_codes)
+        details = {
+            "candidate_count": len(new_codes),
+            "added_count": len(to_add),
+            "removed_count": len(to_remove),
+            "candidate_codes": sorted(new_codes),
+            "added_codes": sorted(to_add),
+            "removed_codes": sorted(to_remove),
+        }
+        tick_ingest = self._tick_ingest_snapshot_for(new_codes)
+        if tick_ingest is not None:
+            details["tick_ingest"] = tick_ingest
         await self._record_event_shadow_status(
             strategy_name=name,
             event="subscriptions_refreshed",
-            details={
-                "candidate_count": len(new_codes),
-                "added_count": len(to_add),
-                "removed_count": len(to_remove),
-                "candidate_codes": sorted(new_codes),
-                "added_codes": sorted(to_add),
-                "removed_codes": sorted(to_remove),
-            },
+            details=details,
         )
+
+    def _tick_ingest_snapshot_for(self, codes: set[str]) -> Optional[dict]:
+        """후보 종목별 tick 처리 카운터 스냅샷 (P2 2-4 shadow no-tick 진단).
+
+        price_stream_service 미주입 또는 스냅샷 메서드 부재 시 None (no-op).
+        """
+        svc = self._price_stream_svc
+        if svc is None:
+            return None
+        snapshot_fn = getattr(svc, "tick_ingest_stats_snapshot", None)
+        if not callable(snapshot_fn):
+            return None
+        try:
+            return snapshot_fn(sorted(codes))
+        except Exception as e:
+            self._logger.warning(f"[Scheduler] tick_ingest 스냅샷 실패: {e}")
+            return None
 
     async def _sync_event_shadow_price_subscriptions(self, strategy_name: str, codes: set[str],
                                                       category_key: Optional[str] = None) -> None:

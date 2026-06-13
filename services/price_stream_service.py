@@ -48,10 +48,39 @@ class PriceStreamService:
         self._last_tick_ts: Dict[str, float] = {}
         self._last_any_tick_ts: float = 0.0
         self._subscription_requested_ts: Dict[str, float] = {}
+        # P2 2-4 shadow no-tick 진단: 종목별 누적 tick 처리 카운터.
+        self._tick_ingest_received: Dict[str, int] = {}
+        self._tick_ingest_quality_reject: Dict[str, int] = {}
+        self._tick_ingest_dispatched: Dict[str, int] = {}
 
     def set_event_router(self, event_router) -> None:
         """Late injection 용. WebAppContext 조립 순서 문제로 생성자에 주입 못한 경우 사용."""
         self._event_router = event_router
+
+    def tick_ingest_stats_snapshot(self, codes=None) -> Dict[str, Dict[str, int]]:
+        """종목별 누적 tick 처리 카운터 스냅샷 (P2 2-4 shadow no-tick 진단).
+
+        - received: 유효 payload 로 on_price_tick 에 진입한 frame 수
+        - quality_reject: DataQuality 게이트에서 탈락한 frame 수
+        - dispatched: event_router 로 전달된 frame 수
+        codes 가 주어지면 해당 종목만(미수신은 0으로) 반환한다.
+        """
+        if codes is None:
+            keys = (
+                set(self._tick_ingest_received)
+                | set(self._tick_ingest_quality_reject)
+                | set(self._tick_ingest_dispatched)
+            )
+        else:
+            keys = set(codes)
+        return {
+            c: {
+                "received": self._tick_ingest_received.get(c, 0),
+                "quality_reject": self._tick_ingest_quality_reject.get(c, 0),
+                "dispatched": self._tick_ingest_dispatched.get(c, 0),
+            }
+            for c in sorted(keys)
+        }
 
     def on_price_tick(self, realtime_data: dict) -> None:
         """
@@ -65,6 +94,8 @@ class PriceStreamService:
 
         if not stock_code or not current_price:
             return
+
+        self._tick_ingest_received[stock_code] = self._tick_ingest_received.get(stock_code, 0) + 1
 
         now_ts = time.time()
         quality_status = "ok"
@@ -92,6 +123,9 @@ class PriceStreamService:
                         ))
                     except RuntimeError:
                         pass
+                self._tick_ingest_quality_reject[stock_code] = (
+                    self._tick_ingest_quality_reject.get(stock_code, 0) + 1
+                )
                 return
 
         self._last_tick_ts[stock_code] = now_ts
@@ -164,6 +198,9 @@ class PriceStreamService:
                     self._event_router.on_price_tick(
                         stock_code, snapshot, snapshot_ts=now_ts
                     )
+                )
+                self._tick_ingest_dispatched[stock_code] = (
+                    self._tick_ingest_dispatched.get(stock_code, 0) + 1
                 )
             except RuntimeError:
                 pass
