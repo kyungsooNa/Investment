@@ -119,6 +119,17 @@ async def get_stocks_list():
     return {"stocks": stock_list, "count": len(stock_list)}
 
 
+@router.get("/overseas/stocks/list")
+async def get_overseas_stocks_list():
+    """해외(미국) 전 심볼 리스트 반환 (클라이언트 자동완성용, localStorage 캐싱 대상)."""
+    ctx = _get_ctx()
+    repo = getattr(ctx, "overseas_stock_code_repository", None)
+    if repo is None:
+        return {"stocks": [], "count": 0}
+    stock_list = repo.all_symbols()
+    return {"stocks": stock_list, "count": len(stock_list)}
+
+
 @router.get("/stock/search")
 async def search_stock_by_name(q: str = ""):
     """종목명 부분 일치 검색 (자동완성용)."""

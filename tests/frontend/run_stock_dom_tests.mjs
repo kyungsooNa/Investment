@@ -50,8 +50,10 @@ function makeWindow() {
   const { window } = dom;
   // stock.js 가 로드 시점에 호출/참조하는 전역 스텁
   window.StockAutocomplete = () => {};
+  window._overseasStockSearch = () => [];
   window.showLoading = (el, msg) => { if (el) el.innerHTML = `<p class="loading">${msg}</p>`; };
   window.fetchWithTimeout = async () => ({ ok: true, json: async () => ({}) });
+  window.fetch = async () => ({ json: async () => ({ stocks: [] }) });
   window.loadAndRenderStockChart = () => {};
   window.loadAndRenderOverseasStockChart = () => {};
   window.formatTradingValue = () => "";

@@ -400,6 +400,29 @@ async def test_get_stocks_list(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_get_overseas_stocks_list(web_client, mock_web_ctx):
+    """GET /api/overseas/stocks/list 엔드포인트 테스트"""
+    mock_web_ctx.overseas_stock_code_repository.all_symbols.return_value = [
+        {"s": "AAPL", "n": "Apple Inc", "e": "NASD"},
+        {"s": "LLY", "n": "Eli Lilly and Co", "e": "NYSE"},
+    ]
+    response = web_client.get("/api/overseas/stocks/list")
+    assert response.status_code == 200
+    json_resp = response.json()
+    assert json_resp["count"] == 2
+    assert {"s": "AAPL", "n": "Apple Inc", "e": "NASD"} in json_resp["stocks"]
+
+
+@pytest.mark.asyncio
+async def test_get_overseas_stocks_list_no_repo(web_client, mock_web_ctx):
+    """리포지토리가 None이면 빈 목록을 반환한다."""
+    mock_web_ctx.overseas_stock_code_repository = None
+    response = web_client.get("/api/overseas/stocks/list")
+    assert response.status_code == 200
+    assert response.json() == {"stocks": [], "count": 0}
+
+
+@pytest.mark.asyncio
 async def test_search_stock_by_name(web_client, mock_web_ctx):
     """GET /api/stock/search 엔드포인트 테스트 (빈 쿼리 및 정상 쿼리)"""
     # 빈 문자열 검색

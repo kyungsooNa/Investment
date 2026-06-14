@@ -3,6 +3,31 @@
 let _currentExchange = 'KRX';
 let _currentStockCode = null;
 
+/* 해외 심볼 리스트: localStorage 즉시 복원, 없으면 해외 모드 진입 시 지연 로드.
+ * 국내(ALL_STOCKS)와 달리 대부분의 방문자가 국내만 쓰므로 ~7천 심볼을
+ * 매 방문마다 받지 않도록 lazy 로드한다. */
+window.ALL_OVERSEAS_STOCKS = (function () {
+    try {
+        var cached = localStorage.getItem('all_overseas_stocks_v1');
+        if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return null;
+})();
+let _overseasStocksLoading = false;
+function _ensureOverseasStocksLoaded() {
+    if (window.ALL_OVERSEAS_STOCKS || _overseasStocksLoading) return;
+    _overseasStocksLoading = true;
+    fetch('/api/overseas/stocks/list')
+        .then(function (r) { return r.json(); })
+        .then(function (json) {
+            window.ALL_OVERSEAS_STOCKS = json.stocks || [];
+            try { localStorage.setItem('all_overseas_stocks_v1', JSON.stringify(window.ALL_OVERSEAS_STOCKS)); } catch (e) {}
+            document.dispatchEvent(new CustomEvent('all-overseas-stocks-ready', { detail: window.ALL_OVERSEAS_STOCKS }));
+        })
+        .catch(function () { window.ALL_OVERSEAS_STOCKS = []; })
+        .finally(function () { _overseasStocksLoading = false; });
+}
+
 // SSE 실시간 틱 수신 → 가격·전일대비·당일시세(고가·저가) UI 업데이트
 document.addEventListener('stock-price-tick', function (e) {
     const tick = e.detail;
@@ -56,6 +81,9 @@ function setStockMarketMode(mode) {
     if (overseasRow) overseasRow.style.display = isOverseas ? '' : 'none';
     if (domesticBtn) domesticBtn.classList.toggle('active', !isOverseas);
     if (overseasBtn) overseasBtn.classList.toggle('active', isOverseas);
+
+    // 해외 모드 진입 시 자동완성용 심볼 리스트를 지연 로드한다.
+    if (isOverseas) _ensureOverseasStocksLoaded();
 
     // 모드 전환 시 결과/차트 영역 초기화 (국내↔해외 잔여 UI 방지)
     // 차트 카드를 먼저 대피시킨 뒤 결과를 비운다.
@@ -207,6 +235,28 @@ StockAutocomplete({
     onConfirm: function() { searchStock(); }
 });
 
+/* ── 해외 심볼 자동완성 (심볼 prefix + 영문명 매칭, 선택 시 거래소 자동설정) ── */
+function _initOverseasAutocomplete() {
+    StockAutocomplete({
+        inputId: 'overseas-stock-symbol',
+        listId: 'overseas-autocomplete-list',
+        valueKey: 's',
+        readyEvent: 'all-overseas-stocks-ready',
+        getInitial: function () { return window.ALL_OVERSEAS_STOCKS || null; },
+        searchImpl: _overseasStockSearch,
+        formatItem: function (s) { return s.s + ' — ' + s.n + ' (' + s.e + ')'; },
+        onSelect: function (symbol, name, item) {
+            const input = document.getElementById('overseas-stock-symbol');
+            if (input) input.value = symbol;
+            const sel = document.getElementById('overseas-stock-exchange');
+            if (sel && item && item.e) sel.value = item.e;
+            searchOverseasStock();
+        },
+        onConfirm: function () { searchOverseasStock(); }
+    });
+}
+_initOverseasAutocomplete();
+
 /* ── Pjax 재방문 시 자동완성 재초기화 ── */
 document.addEventListener('pjax:ready', (e) => {
     if (e.detail?.path !== '/stock') return;
@@ -220,6 +270,7 @@ document.addEventListener('pjax:ready', (e) => {
         },
         onConfirm: function() { searchStock(); }
     });
+    _initOverseasAutocomplete();
 
         const urlParams = new URLSearchParams(window.location.search);
         const code = urlParams.get('code');

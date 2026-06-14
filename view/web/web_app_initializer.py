@@ -16,6 +16,7 @@ from repositories.virtual_trade_repository import VirtualTradeRepository
 from repositories.backtest_journal_repository import BacktestJournalRepository
 from services.virtual_trade_service import VirtualTradeService
 from repositories.stock_code_repository import StockCodeRepository
+from repositories.overseas_stock_code_repository import OverseasStockCodeRepository
 from repositories.rs_rating_repository import RSRatingRepository
 from repositories.favorite_repository import FavoriteRepository
 from services.favorite_service import FavoriteService
@@ -114,6 +115,13 @@ class WebAppContext:
         self.virtual_trade_service = VirtualTradeService(repository=self.virtual_repo, market_clock=self.market_clock)
         self.virtual_trade_service.backfill_snapshots()  # 과거 CSV 기반 스냅샷 역산
         self.stock_code_repository = StockCodeRepository(logger=self.logger)
+        # 해외 심볼 자동완성용 리포지토리. 첫 실행 시 FDR 다운로드가 실패해도
+        # 웹 시작을 막지 않도록 방어적으로 생성한다(실패 시 None → 목록 API는 빈 결과).
+        try:
+            self.overseas_stock_code_repository = OverseasStockCodeRepository(logger=self.logger)
+        except Exception as e:
+            self.logger.warning(f"해외 종목코드 리포지토리 초기화 실패(자동완성 비활성): {e}")
+            self.overseas_stock_code_repository = None
         self.favorite_repo = FavoriteRepository()
         self.favorite_service = FavoriteService(
             repository=self.favorite_repo,
