@@ -336,6 +336,22 @@ async def test_get_overseas_stock_price_calls_service(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_get_overseas_stock_price_timeout(web_client, mock_web_ctx):
+    """GET /api/overseas/stock/{symbol}은 타임아웃 시 에러 응답을 반환한다."""
+    import asyncio
+
+    mock_web_ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    mock_web_ctx.stock_query_service.get_overseas_price.side_effect = asyncio.TimeoutError()
+
+    response = web_client.get("/api/overseas/stock/AAPL?exchange=NASD")
+
+    assert response.status_code == 200
+    json_resp = response.json()
+    assert json_resp["rt_cd"] == "1"
+    assert "초과" in json_resp["msg1"]
+
+
+@pytest.mark.asyncio
 async def test_get_overseas_stock_chart_calls_service(web_client, mock_web_ctx):
     """GET /api/overseas/chart/{symbol}은 해외 일봉 조회 서비스를 호출한다."""
     mock_web_ctx.enabled_market_modes = ["domestic", "overseas_us"]
@@ -354,6 +370,22 @@ async def test_get_overseas_stock_chart_calls_service(web_client, mock_web_ctx):
         start_date="",
         end_date="",
     )
+
+
+@pytest.mark.asyncio
+async def test_get_overseas_stock_chart_timeout(web_client, mock_web_ctx):
+    """GET /api/overseas/chart/{symbol}은 타임아웃 시 에러 응답을 반환한다."""
+    import asyncio
+
+    mock_web_ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    mock_web_ctx.stock_query_service.get_overseas_dailyprice.side_effect = asyncio.TimeoutError()
+
+    response = web_client.get("/api/overseas/chart/AAPL?exchange=NASD")
+
+    assert response.status_code == 200
+    json_resp = response.json()
+    assert json_resp["rt_cd"] == "1"
+    assert "초과" in json_resp["msg1"]
 
 
 @pytest.mark.asyncio

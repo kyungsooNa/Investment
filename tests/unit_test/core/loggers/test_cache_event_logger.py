@@ -62,7 +62,8 @@ def test_get_cache_event_logger_creates_file(cache_logger_setup):
     inner = logging.getLogger("cache_event")
     assert not inner.propagate
     assert inner.level == logging.DEBUG
-    assert len(inner.handlers) == 1
+    app_handlers = [h for h in inner.handlers if isinstance(h, core.logger.DictPreservingQueueHandler)]
+    assert len(app_handlers) == 1
     
     handler = None
     for listener in core.logger._active_listeners:
@@ -80,6 +81,62 @@ def test_get_cache_event_logger_creates_file(cache_logger_setup):
 
     log_files = list(cache_log_dir.glob("*_cache_*.log.json"))
     assert len(log_files) == 1
+
+
+def test_get_cache_event_logger_ignores_foreign_handlers(tmp_path):
+    """외부 캡처 핸들러가 있어도 cache_event 파일 핸들러를 초기화한다."""
+    reset_log_timestamp_for_test()
+
+    inner = logging.getLogger("cache_event")
+    foreign_handler = logging.NullHandler()
+    inner.addHandler(foreign_handler)
+
+    log_dir = tmp_path / "logs"
+    try:
+        cache_logger = get_cache_event_logger(log_dir=str(log_dir))
+        cache_logger.log_ohlcv_miss("005930", "test")
+        _flush_cache_logger()
+
+        log_files = list((log_dir / "cache").glob("*_cache_*.log.json"))
+        assert len(log_files) == 1
+    finally:
+        for h in inner.handlers[:]:
+            h.close()
+            inner.removeHandler(h)
+        for listener in core.logger._active_listeners[:]:
+            listener.stop()
+        core.logger._active_listeners.clear()
+
+
+def test_get_cache_event_logger_removes_late_foreign_handlers(tmp_path):
+    """초기화 후 추가된 외부 핸들러도 다음 호출에서 제거한다."""
+    reset_log_timestamp_for_test()
+
+    inner = logging.getLogger("cache_event")
+    for h in inner.handlers[:]:
+        h.close()
+        inner.removeHandler(h)
+
+    log_dir = tmp_path / "logs"
+    try:
+        get_cache_event_logger(log_dir=str(log_dir))
+        inner.addHandler(logging.NullHandler())
+        inner.addHandler(logging.NullHandler())
+
+        cache_logger = get_cache_event_logger(log_dir=str(log_dir))
+        cache_logger.log_ohlcv_miss("005930", "test")
+        _flush_cache_logger()
+
+        assert len(inner.handlers) == 1
+        log_files = list((log_dir / "cache").glob("*_cache_*.log.json"))
+        assert len(log_files) == 1
+    finally:
+        for h in inner.handlers[:]:
+            h.close()
+            inner.removeHandler(h)
+        for listener in core.logger._active_listeners[:]:
+            listener.stop()
+        core.logger._active_listeners.clear()
 
 
 def test_get_cache_event_logger_returns_same_logger_on_second_call(tmp_path):

@@ -141,6 +141,33 @@ def test_logger_creates_log_dir_if_not_exists(tmp_path):
 
     logging.root.handlers = original_handlers
 
+
+def test_logger_reinitializes_after_previous_close(tmp_path):
+    """이전 Logger.close() 후 남은 QueueHandler가 새 로그 파일 생성을 막지 않아야 한다."""
+    reset_log_timestamp_for_test()
+
+    log_dir_a = tmp_path / "logs_a"
+    first = Logger(log_dir=str(log_dir_a))
+    first.close()
+
+    log_dir_b = tmp_path / "logs_b"
+    second = Logger(log_dir=str(log_dir_b))
+    try:
+        second.error("second logger writes")
+        second.flush()
+
+        log_files = list((log_dir_b / "common").glob("*.log"))
+        assert len(log_files) == 2
+        assert all("second logger writes" in f.read_text(encoding="utf-8") for f in log_files)
+    finally:
+        second.close()
+        for name in ["operational_logger", "debug_logger"]:
+            inner = logging.getLogger(name)
+            for handler in inner.handlers[:]:
+                handler.close()
+                inner.removeHandler(handler)
+
+
 def test_log_cleanup(tmp_path):
     log_dir = tmp_path / "logs_cleanup_test"
     common_dir = log_dir / "common"

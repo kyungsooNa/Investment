@@ -228,7 +228,14 @@ async def get_overseas_stock_price(symbol: str, exchange: str = Query("NASD")):
         exchange_enum = OverseasExchange(exchange.upper())
     except ValueError:
         raise HTTPException(status_code=400, detail="exchange는 NASD, NYSE, AMEX 중 하나여야 합니다.")
-    resp = await ctx.stock_query_service.get_overseas_price(symbol, exchange=exchange_enum)
+    try:
+        resp = await asyncio.wait_for(
+            ctx.stock_query_service.get_overseas_price(symbol, exchange=exchange_enum),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        ctx.logger.warning(f"[stock] 해외 현재가 조회 타임아웃 ({symbol}, 10s 초과)")
+        return {"rt_cd": "1", "msg1": "해외주식 API 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.", "data": None}
     return _serialize_response(resp)
 
 
@@ -247,13 +254,20 @@ async def get_overseas_stock_chart(
         exchange_enum = OverseasExchange(exchange.upper())
     except ValueError:
         raise HTTPException(status_code=400, detail="exchange는 NASD, NYSE, AMEX 중 하나여야 합니다.")
-    resp = await ctx.stock_query_service.get_overseas_dailyprice(
-        symbol,
-        exchange=exchange_enum,
-        start_date=start_date,
-        end_date=end_date,
-        period=period,
-    )
+    try:
+        resp = await asyncio.wait_for(
+            ctx.stock_query_service.get_overseas_dailyprice(
+                symbol,
+                exchange=exchange_enum,
+                start_date=start_date,
+                end_date=end_date,
+                period=period,
+            ),
+            timeout=12.0,
+        )
+    except asyncio.TimeoutError:
+        ctx.logger.warning(f"[stock] 해외 차트 조회 타임아웃 ({symbol}, 12s 초과)")
+        return {"rt_cd": "1", "msg1": "해외주식 차트 API 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.", "data": None}
     return _serialize_response(resp)
 
 

@@ -611,6 +611,11 @@ async def deep_paper_ctx(test_logger, web_app, mocker, tmp_path):
 
         await web_ctx.initialize_services(is_paper_trading=True)
 
+        # 전략 scan 통합 테스트는 HTTP/캐시 경로를 검증한다. 실시간 구독 정책까지
+        # 활성화하면 WebSocket 연결/ACK 대기 경로가 병렬 실행 부하에 따라 timeout을 유발할 수 있다.
+        web_ctx.price_subscription_service = None
+        web_ctx.stock_query_service.price_subscription_service = None
+
         # [HOTFIX] StockQueryService -> MarketDataService 호출 간 서명 불일치 해결
         # StockQueryService는 logger 인자를 전달하지만, MarketDataService는 이를 받지 않음.
         ts = web_ctx.market_data_service

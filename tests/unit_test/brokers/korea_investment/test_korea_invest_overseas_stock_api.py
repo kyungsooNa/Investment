@@ -103,6 +103,19 @@ async def test_get_overseas_dailyprice_uses_period_and_date_params(overseas_api)
 
 
 @pytest.mark.asyncio
+async def test_get_overseas_dailyprice_defaults_bymd_when_date_omitted(overseas_api):
+    await overseas_api.get_overseas_dailyprice(
+        "AAPL",
+        exchange=OverseasExchange.NASD,
+        period="D",
+    )
+
+    bymd = overseas_api.call_api.await_args.kwargs["params"]["BYMD"]
+    assert bymd.isdigit()
+    assert len(bymd) == 8
+
+
+@pytest.mark.asyncio
 async def test_place_overseas_limit_order_uses_overseas_body_and_hashkey(overseas_api):
     overseas_api._get_hashkey = AsyncMock(return_value="HASH")
 

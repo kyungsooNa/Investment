@@ -28,6 +28,29 @@ def _resolve_log_dir(log_dir: str) -> str:
         return os.getenv("INVESTMENT_LOG_DIR", log_dir)
     return log_dir
 
+def _clear_logger_handlers(logger: logging.Logger) -> None:
+    """기존 핸들러를 제거해 전역 logger 재사용 시 stale 상태를 끊는다."""
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
+
+def _remove_foreign_handlers(logger: logging.Logger) -> bool:
+    """이 모듈이 붙인 큐 핸들러만 남기고 외부 캡처 핸들러를 제거한다."""
+    has_queue_handler = False
+    for handler in logger.handlers[:]:
+        if isinstance(handler, DictPreservingQueueHandler):
+            has_queue_handler = True
+            continue
+        logger.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
+    return has_queue_handler
+
 def setup_async_logger(logger: logging.Logger, file_handler: logging.Handler):
     """파일 I/O를 백그라운드 스레드로 위임하는 비동기 큐 세팅"""
     log_queue = queue.Queue(-1)
@@ -69,21 +92,28 @@ def get_streaming_logger(log_dir: str = "logs") -> "StreamingEventLogger":
     logger_name = "streaming_event"
     logger = logging.getLogger(logger_name)
 
-    if not logger.handlers:
-        logger.setLevel(LOG_LEVEL)
-        logger.propagate = False
+    expected_dir = os.path.abspath(streaming_log_dir)
+    if logger.handlers and getattr(logger, "_streaming_log_dir", None) == expected_dir:
+        if _remove_foreign_handlers(logger):
+            return StreamingEventLogger(logger)
+    if logger.handlers:
+        _clear_logger_handlers(logger)
 
-        timestamp = get_log_timestamp()
-        log_file = os.path.join(streaming_log_dir, f"{timestamp}_streaming.log.json")
-        handler = SizeTimeRotatingFileHandler(
-            log_file,
-            mode="a",
-            encoding="utf-8",
-            maxBytes=LOG_MAX_BYTES,
-            backupCount=LOG_BACKUP_COUNT,
-        )
-        handler.setFormatter(JsonFormatter())
-        setup_async_logger(logger, handler)
+    logger.setLevel(LOG_LEVEL)
+    logger.propagate = False
+
+    timestamp = get_log_timestamp()
+    log_file = os.path.join(streaming_log_dir, f"{timestamp}_streaming.log.json")
+    handler = SizeTimeRotatingFileHandler(
+        log_file,
+        mode="a",
+        encoding="utf-8",
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+    )
+    handler.setFormatter(JsonFormatter())
+    setup_async_logger(logger, handler)
+    logger._streaming_log_dir = expected_dir
 
     return StreamingEventLogger(logger)
 
@@ -103,21 +133,28 @@ def get_cache_event_logger(log_dir: str = "logs") -> "CacheEventLogger":
     logger_name = "cache_event"
     logger = logging.getLogger(logger_name)
 
-    if not logger.handlers:
-        logger.setLevel(LOG_LEVEL)
-        logger.propagate = False
+    expected_dir = os.path.abspath(cache_log_dir)
+    if logger.handlers and getattr(logger, "_cache_log_dir", None) == expected_dir:
+        if _remove_foreign_handlers(logger):
+            return CacheEventLogger(logger)
+    if logger.handlers:
+        _clear_logger_handlers(logger)
 
-        timestamp = get_log_timestamp()
-        log_file = os.path.join(cache_log_dir, f"{timestamp}_cache.log.json")
-        handler = SizeTimeRotatingFileHandler(
-            log_file,
-            mode="a",
-            encoding="utf-8",
-            maxBytes=LOG_MAX_BYTES,
-            backupCount=LOG_BACKUP_COUNT,
-        )
-        handler.setFormatter(JsonFormatter())
-        setup_async_logger(logger, handler)
+    logger.setLevel(LOG_LEVEL)
+    logger.propagate = False
+
+    timestamp = get_log_timestamp()
+    log_file = os.path.join(cache_log_dir, f"{timestamp}_cache.log.json")
+    handler = SizeTimeRotatingFileHandler(
+        log_file,
+        mode="a",
+        encoding="utf-8",
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+    )
+    handler.setFormatter(JsonFormatter())
+    setup_async_logger(logger, handler)
+    logger._cache_log_dir = expected_dir
 
     return CacheEventLogger(logger)
 
