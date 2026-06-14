@@ -114,7 +114,7 @@ async function searchOverseasStock() {
             resultDiv.innerHTML = '<p class="error">해외주식 조회는 overseas_us가 enabled된 run에서만 사용할 수 있습니다.</p>';
             return;
         }
-        const res = await fetchWithTimeout(`/api/overseas/stock/${encodeURIComponent(symbol)}?exchange=${exchange}`, {}, 12000);
+        const res = await fetchWithTimeout(`/api/overseas/stock/${encodeURIComponent(symbol)}?exchange=${exchange}`, {}, 20000);
         const json = await res.json();
         if (!res.ok || json.rt_cd !== '0') {
             resultDiv.innerHTML = `<p class="error">조회 실패: ${json.msg1 || res.status}</p>`;
@@ -175,7 +175,7 @@ async function searchOverseasStock() {
         }
     } catch (e) {
         if (e.name === 'AbortError') {
-            resultDiv.innerHTML = `<p class="error">요청 시간이 초과되었습니다. 다시 시도해주세요.</p>`;
+            resultDiv.innerHTML = `<p class="error">해외주식 조회 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.</p>`;
         } else {
             resultDiv.innerHTML = `<p class="error">통신 오류: ${e.message || e}</p>`;
         }
