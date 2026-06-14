@@ -157,3 +157,194 @@ async def test_place_overseas_order_blocks_market_order(overseas_api):
     assert resp.rt_cd == ErrorCode.ORDER_POLICY_BLOCKED.value
     assert "지정가" in resp.msg1
     overseas_api.call_api.assert_not_awaited()
+
+
+# --- 정적 헬퍼 ---
+
+def test_split_account_variants():
+    assert KoreaInvestOverseasStockApi._split_account("12345678-99") == ("12345678", "99")
+    # 대시 없음 / 잘못된 형식 → 기본 상품코드 "01"
+    assert KoreaInvestOverseasStockApi._split_account("12345678") == ("12345678", "01")
+    assert KoreaInvestOverseasStockApi._split_account("") == ("", "01")
+
+
+def test_as_exchange_from_string():
+    assert KoreaInvestOverseasStockApi._as_exchange("nasd") == OverseasExchange.NASD
+    assert KoreaInvestOverseasStockApi._as_exchange(OverseasExchange.NYSE) == OverseasExchange.NYSE
+
+
+def test_to_float_and_to_int_invalid_returns_default():
+    assert KoreaInvestOverseasStockApi._to_float("abc") == 0.0
+    assert KoreaInvestOverseasStockApi._to_float("abc", default=-1.0) == -1.0
+    assert KoreaInvestOverseasStockApi._to_float("1,234.5") == 1234.5
+    assert KoreaInvestOverseasStockApi._to_int("abc") == 0
+    assert KoreaInvestOverseasStockApi._to_int("abc", default=7) == 7
+    assert KoreaInvestOverseasStockApi._to_int("1,200") == 1200
+
+
+# --- 조회 응답 처리 ---
+
+@pytest.mark.asyncio
+async def test_get_overseas_price_returns_failure_response(overseas_api):
+    overseas_api.call_api = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="에러", data=None)
+    )
+    resp = await overseas_api.get_overseas_price("AAPL")
+    assert resp.rt_cd == ErrorCode.API_ERROR.value
+
+
+@pytest.mark.asyncio
+async def test_get_overseas_price_normalizes_output(overseas_api):
+    overseas_api.call_api = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="OK",
+            data={"output": {"last": "150.5", "rate": "1.2", "tvol": "1000", "xymd": "20260512"}},
+        )
+    )
+    resp = await overseas_api.get_overseas_price("aapl", exchange="nasd")
+    summary = resp.data
+    assert summary.symbol == "AAPL"
+    assert summary.price == 150.5
+    assert summary.change_rate == 1.2
+    assert summary.volume == 1000
+    assert summary.timestamp == "20260512"
+
+
+@pytest.mark.asyncio
+async def test_get_overseas_price_handles_non_dict_output(overseas_api):
+    overseas_api.call_api = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": "weird"}
+        )
+    )
+    resp = await overseas_api.get_overseas_price("AAPL")
+    assert resp.data.price == 0.0  # output 비-dict → 기본값
+
+
+@pytest.mark.asyncio
+async def test_get_overseas_dailyprice_invalid_period(overseas_api):
+    resp = await overseas_api.get_overseas_dailyprice("AAPL", period="X")
+    assert resp.rt_cd == ErrorCode.INVALID_INPUT.value
+    overseas_api.call_api.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_overseas_balance_params(overseas_api):
+    await overseas_api.get_overseas_balance(exchange=OverseasExchange.NASD, currency="USD")
+    assert overseas_api.call_api.await_args.args[1] == EndpointKey.OVERSEAS_STOCK_INQUIRE_BALANCE
+    params = overseas_api.call_api.await_args.kwargs["params"]
+    assert params["CANO"] == "12345678"
+    assert params["OVRS_EXCG_CD"] == "NASD"
+    assert params["TR_CRCY_CD"] == "USD"
+
+
+@pytest.mark.asyncio
+async def test_inquire_overseas_ccnl_params(overseas_api):
+    await overseas_api.inquire_overseas_ccnl(
+        symbol="AAPL",
+        exchange=OverseasExchange.NASD,
+        start_date="20260101",
+        end_date="20260131",
+    )
+    assert overseas_api.call_api.await_args.args[1] == EndpointKey.OVERSEAS_STOCK_INQUIRE_CCNL
+    params = overseas_api.call_api.await_args.kwargs["params"]
+    assert params["PDNO"] == "AAPL"
+    assert params["ORD_STRT_DT"] == "20260101"
+    assert params["ORD_END_DT"] == "20260131"
+
+
+@pytest.mark.asyncio
+async def test_inquire_overseas_unfilled_params(overseas_api):
+    await overseas_api.inquire_overseas_unfilled(exchange=OverseasExchange.NYSE)
+    assert overseas_api.call_api.await_args.args[1] == EndpointKey.OVERSEAS_STOCK_INQUIRE_NCCS
+    assert overseas_api.call_api.await_args.kwargs["params"]["OVRS_EXCG_CD"] == "NYSE"
+
+
+# --- 주문/취소 분기 ---
+
+@pytest.mark.asyncio
+async def test_place_order_invalid_side(overseas_api):
+    resp = await overseas_api.place_overseas_limit_order(
+        symbol="AAPL", exchange=OverseasExchange.NASD, side="hold", qty=1, limit_price="10"
+    )
+    assert resp.rt_cd == ErrorCode.INVALID_INPUT.value
+    overseas_api.call_api.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_place_order_invalid_qty(overseas_api):
+    resp = await overseas_api.place_overseas_limit_order(
+        symbol="AAPL", exchange=OverseasExchange.NASD, side="buy", qty=0, limit_price="10"
+    )
+    assert resp.rt_cd == ErrorCode.INVALID_INPUT.value
+    overseas_api.call_api.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_place_order_hashkey_failure(overseas_api):
+    overseas_api._get_hashkey = AsyncMock(return_value=None)
+    resp = await overseas_api.place_overseas_limit_order(
+        symbol="AAPL", exchange=OverseasExchange.NASD, side="buy", qty=1, limit_price="10"
+    )
+    assert resp.rt_cd == ErrorCode.MISSING_KEY.value
+    overseas_api.call_api.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_place_order_returns_failure_response(overseas_api):
+    overseas_api._get_hashkey = AsyncMock(return_value="HASH")
+    overseas_api.call_api = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="거부", data=None)
+    )
+    resp = await overseas_api.place_overseas_limit_order(
+        symbol="AAPL", exchange=OverseasExchange.NASD, side="sell", qty=1, limit_price="10"
+    )
+    assert resp.rt_cd == ErrorCode.API_ERROR.value
+
+
+@pytest.mark.asyncio
+async def test_place_order_builds_report_with_order_no(overseas_api):
+    overseas_api._get_hashkey = AsyncMock(return_value="HASH")
+    overseas_api.call_api = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {"ODNO": "0001234"}}
+        )
+    )
+    resp = await overseas_api.place_overseas_limit_order(
+        symbol="aapl", exchange=OverseasExchange.NASD, side="buy", qty=2, limit_price="150.25"
+    )
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert resp.data.broker_order_no == "0001234"
+    assert resp.data.symbol == "AAPL"
+    assert resp.data.qty == 2
+
+
+@pytest.mark.asyncio
+async def test_cancel_overseas_order_success(overseas_api):
+    overseas_api._get_hashkey = AsyncMock(return_value="HASH")
+    await overseas_api.cancel_overseas_order(
+        symbol="AAPL",
+        exchange=OverseasExchange.NASD,
+        original_order_no="0001234",
+        qty=1,
+        limit_price="150.0",
+    )
+    assert overseas_api.call_api.await_args.args[1] == EndpointKey.OVERSEAS_STOCK_ORDER_RVSECNCL
+    body = overseas_api.call_api.await_args.kwargs["data"]
+    assert body["ORGN_ODNO"] == "0001234"
+    assert body["RVSE_CNCL_DVSN_CD"] == "02"
+
+
+@pytest.mark.asyncio
+async def test_cancel_overseas_order_hashkey_failure(overseas_api):
+    overseas_api._get_hashkey = AsyncMock(return_value=None)
+    resp = await overseas_api.cancel_overseas_order(
+        symbol="AAPL",
+        exchange=OverseasExchange.NASD,
+        original_order_no="0001234",
+        qty=1,
+        limit_price="150.0",
+    )
+    assert resp.rt_cd == ErrorCode.MISSING_KEY.value
+    overseas_api.call_api.assert_not_awaited()

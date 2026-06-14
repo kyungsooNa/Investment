@@ -51,3 +51,53 @@ async def test_force_run_falls_back_to_today_when_calendar_fails():
 
     service.run.assert_awaited_once_with("20260505")
     task._logger.warning.assert_called_once()
+
+
+def test_task_name_and_scheduler_label():
+    task = _make_task()
+    assert task.task_name == "post_market_replay_audit"
+    assert task._scheduler_label == "PostMarketReplayAuditTask"
+
+
+async def test_on_market_closed_swallows_audit_exception():
+    task = _make_task()
+    task._audit_service.run = AsyncMock(side_effect=RuntimeError("audit boom"))
+
+    await task._on_market_closed("20260505")
+
+    task._logger.error.assert_called_once()
+    assert task._last_result is None
+
+
+def test_get_progress_without_result():
+    task = _make_task()
+    progress = task.get_progress()
+    assert progress["running"] is False
+    assert progress["last_result"] is None
+
+
+def test_get_progress_with_result():
+    from types import SimpleNamespace
+
+    task = _make_task()
+    task._last_result = SimpleNamespace(
+        target_date="20260505",
+        skipped=False,
+        skip_reason="",
+        strategy_count=3,
+        missed_count=1,
+        late_count=2,
+        missing_from_universe_count=4,
+    )
+
+    progress = task.get_progress()
+
+    assert progress["last_result"] == {
+        "target_date": "20260505",
+        "skipped": False,
+        "skip_reason": "",
+        "strategy_count": 3,
+        "missed_count": 1,
+        "late_count": 2,
+        "missing_from_universe_count": 4,
+    }
