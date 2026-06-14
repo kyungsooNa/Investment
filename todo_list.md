@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-06-14 (해외주식 Mode V2.1 — /stock 현재가 조회 화면 해외 검색 통합 완료)
+최종 업데이트: 2026-06-15 (남은 착수 항목 정리 — 완료/stale 항목 재분류)
 
 이 문서는 현재 남은 실행 항목만 추린 목록이다. 완료된 구현 상세, 완료 체크 항목, 과거 세션 요약은 제거한다. 100% 종료된 섹션(`[x]` only, follow-up 없음)은 git history 로 추적하고 본 문서에서 삭제한다.
 
@@ -14,78 +14,19 @@
 
 남은 실행 영역 요약:
 
-- P0 0-1: 실전 체결 이력 fixture 회귀 잠금 완료, broker order mapper 분리 후속.
-- P0 0-7: ~~canary 5% 노출 제한을 코드/config profile로 분리하고 real 기본 30%와 운영 혼동을 제거.~~ ✅ 완료 (2026-05-27).
-- P0 0-8: ~~라이브 전략 일봉 지표에서 당일 미완성 봉 제외 옵션을 도입한다.~~ ✅ 완료 (2026-05-28, #478 + rollout 조사). 지표 API + RSI2 + ATR sizing 적용. rollout 전수 조사 결과 추가 오염 경로는 `LarryWilliamsChannelBreakout`(ADX/채널)뿐이라 `_confirmed_bars()`로 마감.
-- P0 0-9: ~~라이브 손절/익절 판단을 gross PnL이 아닌 비용 반영 net PnL 기준으로 통일한다.~~ ✅ 완료 (2026-05-28, #479).
-- P0 0-10: ~~같은 사이클/이전 사이클의 신규 BUY에 대해 pending/reserved cash와 동일 종목 전 전략 합산 노출을 qty cap에 반영한다.~~ ✅ 완료.
-- P0 0-11: ~~kill switch 및 sync fallback state 저장을 atomic write로 통일한다.~~ ✅ 완료 (2026-05-28, #481).
+- P0 0-1: 실전 체결 이력 fixture 회귀 잠금 완료, submit/signing notice raw fixture 추가 확보 필요.
 - P1 1-5: 한국장 microstructure fixture 로 체결 모델 보수성 검증.
 - P1 1-6: 실전 journal/shadow/paper/live 성과 데이터로 profitability gate의 실제 통과 근거 확보.
 - P1 1-7: formal Deflated Sharpe Ratio 구현 완료(2026-06-08, proxy 병행). 남은 것은 formal PBO(CSCV)·walk-forward/purged·ablation 자동 리포트 + 수익률 모멘트 metric.
 - P2 2-2: ~~실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 후 budget 기본값 보정.~~ 전역 normal 8/s + emergency 2/s 기본값 보정 완료. 계정별 공식 한도 재확인은 운영 전 외부 확인으로 유지.
 - P2 2-4: VBO shadow 5거래일 jsonl 수집 → polling parity 비교. event-driven live order는 별도 승인 전 No-Go.
-- P2 2-5: ~~전략 scan의 종목별 현재가 REST 호출을 batch quote / WebSocket snapshot 중심으로 줄인다.~~ helper(`StockQueryService.prefetch_prices`) + rsi2 포함 활성 전략 7개 scan 배선 + 테스트 완료.
 - P2 2-6: 라이브 핫패스 성능 follow-up. ~~WebSocket 틱 루프 상수 캐싱/로그 lazy 처리~~ ✅, ~~장마감 배치 `iterrows()` 축소~~ ✅, ~~HTTP/token 미세 정합성 개선(fallback Limits·Timeout / token singleflight / retry jitter)~~ ✅, ~~VBO `check_exits()` bounded 전환~~ ✅ (2026-06-11). 남은 것: 활성 전략 `scan()` 순차 후보 처리 bounded 전환 — 실전 진입 경로라 별도 승인 후 진행(VBO scan은 실익 marginal로 보류 결정).
 - P3 3-4: active strategy lifecycle contract 최소 공통 단계 강제 여부 재설계(현재 보류).
-- P3 3-5: backtest/live 호가단위 tick-size 로직을 단일 utility로 통일한다.
-- P3 3-6: ~~IndicatorService 계산 경로의 광범위 `except Exception` silent skip에 ERROR log/metric/alert hook을 붙인다.~~ ✅ 완료. 전략 레이어 per-code fail-rate metric도 `scan_metrics`/`exit_metrics`에 반영 완료.
 - Pool B 튜닝: 후보 부족 재발 시 거래대금/정배열 조건 완화 검토.
 - 완료 기준의 전략 성과 `[~]`: `MomentumStrategy` 등 비활성 백테스트 경로의 표준 journal 통합 여부 결정.
 - 시스템 트레이더 관점 리뷰(R-1~R-6, 2026-06-08): 생존편향·전략 상관/regime 집중·총위험 미집계·갭 체결 등 백테스트 신뢰도/실전 리스크 신규 발견. 자금 확대 전 R-1~R-3 우선 해소 권장. (R-5 거래세율은 검토 결과 0.20% 정확 → 해소, 변경 없음. 하단 "시스템 트레이더 관점 리뷰" 섹션)
 - StrategyScheduler 코드 리뷰(S-1~S-10, 2026-06-12): `stop()` 강제청산 데드 패스, 매도 병렬 에러 처리 비대칭, 이력 트림 vs 복구 충돌 등 버그 + 수명/구조 개선. S-1/S-2/S-4~S-8 수정 완료, S-3/S-10은 의도된 설계 확인 후 주석 명시로 종결. S-9는 부분 진행(prune 통합/trace_id 영속화/import 정리) — getter 부수효과는 의도된 계약으로 판명되어 철회, god class 분리는 P2 2-4 parity 판정 후 재평가로 보류. (하단 "StrategyScheduler 코드 리뷰" 섹션)
-- 해외주식 Mode: V1/V2는 main merge 완료(2026-06-13) — 미국 3시장 조회 + 수동 USD 지정가 주문 + 실전 fail-close + 해외 mode 자동전략 차단 + 국내 run 유지 상태의 해외 수동 Web surface. V2.1(2026-06-14)로 기존 현재가 조회(`/stock`) 화면에 국내/해외 모드 토글 + 해외 심볼 직접 검색 통합 완료. 자동전략 해외 지원, 해외 WebSocket, 통합 해외 reconciliation은 계속 제외.
-
----
-
-## 해외주식 Mode V2. 국내/해외 수동 surface 병행 운영
-
-### 목표
-
-- [x] `market_mode`는 active/default 화면·부트스트랩 mode로 유지한다.
-- [x] `enabled_market_modes: ["domestic"] | ["domestic", "overseas_us"]`를 추가해 한 프로세스에서 국내 전략/배치를 유지하면서 해외 수동 조회/주문 API를 사용할 수 있게 한다.
-- [x] `domestic` active mode + `overseas_us` enabled 상태에서는 국내 `StrategyFactory`/batch/realtime은 기존처럼 동작하고, 해외 endpoint는 mode 전환 없이 허용한다.
-- [x] `overseas_us` active mode는 V1처럼 국내 전략/배치/실시간을 fail-close한다.
-- [x] 해외 주문은 계속 수동 USD 지정가만 허용한다. 실전 해외주문은 `allow_live_trading=True` + 기존 real 확인 gate를 모두 통과해야 한다.
-
-### 제외
-
-- [ ] 해외 자동전략 BUY/SELL 지원.
-- [ ] 국내/해외 주문 FSM과 reconciliation의 단일 장부 통합.
-- [ ] 해외 WebSocket 실시간 시세/체결통보.
-- [ ] 다국가/다통화, 프리/애프터마켓 자동 운영.
-
-### 테스트 계획
-
-- [x] config loader: 기본값 `enabled_market_modes=["domestic"]`, 국내+해외 허용, 잘못된 mode 거부.
-- [x] Web status/market-mode API: active `market_mode`와 enabled modes를 함께 반환.
-- [x] 해외 balance/order route: active mode가 `domestic`이어도 `overseas_us`가 enabled면 허용.
-- [x] 해외 route fail-close: `overseas_us`가 enabled가 아니면 차단.
-- [x] bootstrap: `market_mode=domestic`, `enabled_market_modes`에 해외 포함 시 국내 전략/배치 생성 경로를 유지한다.
-
-### Web 수동 surface
-
-- [x] `/overseas` 화면을 추가해 미국 3시장 심볼 현재가/일봉/잔고 조회를 노출한다.
-- [x] 해외 주문 화면은 USD 지정가 수동 매수/매도만 노출한다.
-- [x] 실전 모드에서는 기존 실전 배지 감지 + confirm + `REAL` 재확인을 요구한다.
-- [x] `enabled_market_modes`에 `overseas_us`가 없으면 화면 JS가 조회/주문 호출 전에 fail-close 메시지를 표시한다.
-- [x] 페이지 렌더링/정적 자산/JS API 호출 문자열을 테스트로 고정한다.
-
-### V2.1 현재가 조회 화면 해외 검색 통합 — ✅ 완료 (2026-06-14)
-
-- [x] `/stock` 현재가 조회 화면에 `국내/해외` 조회 모드 선택 UI를 추가한다. (`stock-mode-domestic`/`stock-mode-overseas` 세그먼트 토글 + `setStockMarketMode()`)
-- [x] 국내 모드 기본 동작은 그대로 유지한다. 국내 종목명 자동완성, 국내 코드 조회, 차트/지표 표시 경로는 회귀 없이 보존한다. (기본 모드=국내, 기존 `searchStock` 경로 무변경)
-- [x] 해외 모드에서는 ticker 직접 입력(`AAPL` 등) + 거래소 선택(`NASD`/`NYSE`/`AMEX`)만 허용한다. v1/v2 범위에서는 해외 심볼 자동완성/마스터 검색은 제외한다.
-- [x] 해외 모드 조회는 `/api/overseas/stock/{symbol}?exchange=...`를 호출하고 `symbol`, `exchange`, `currency`, `price`, `change_rate`, `volume`, `timestamp` 최소 view model만 표시한다. (백엔드 엔드포인트는 V2에서 이미 구현 → 프론트만 배선)
-- [x] `enabled_market_modes`에 `overseas_us`가 없으면 `/stock` 화면에서도 해외 조회를 fail-close 메시지로 차단한다. (`_ensureOverseasEnabledForStock()` → `/api/market-mode` 확인)
-- [x] 해외 모드에서는 국내 전용 보조 액션(국내 차트/국내 지표/랭킹 연결 등)을 숨기거나 비활성화한다. (모드 전환/해외 조회 시 차트 카드 detach+hide)
-- [x] 테스트는 `/stock` 렌더링, JS 모드 전환 문자열, 해외 API 호출 경로, 해외 disabled fail-close를 우선 고정한다. (`test_web_pages.py::test_pages_render_success_no_login` /stock 분기 + 신규 `test_stock_static_js_exposes_overseas_mode`)
-
-주요 파일(V2.1 실제 수정 범위 — 프론트엔드 한정, 백엔드는 V2에서 완료):
-
-- `view/web/templates/stock.html`
-- `view/web/static/js/stock.js`
-- `tests/unit_test/view/web/test_web_pages.py`
+- 해외주식 Mode 후속 제외: 자동전략 해외 지원, 해외 WebSocket, 통합 해외 reconciliation은 현재 착수 범위가 아니다.
 
 ---
 
@@ -98,7 +39,7 @@
 - [x] paper fixture와 real fixture의 필드 차이를 회귀 테스트에 반영한다. (`test_order_query_report_from_kis_inquire_daily_ccld_fixture`가 실전 fixture를 자동 discovery)
 - [~] 주문번호, 종목코드, 매수/매도 구분, 주문수량, 누적체결수량, 미체결수량, 평균체결가 매핑을 실전 체결 fixture로 고정했다. 취소/거부 실전 row는 아직 미확보라 synthetic fixture 보강 상태를 유지한다.
 - [x] 실전 KRX 조회에서 `EXCG_ID_DVSN_CD=KRX`를 보내도록 계좌 체결/미체결 조회 파라미터를 고정한다.
-- [~] 주문 접수 응답의 broker order number mapper를 실전/모의 fixture 기반으로 확장한다.
+- [~] 주문 접수 응답/체결통보(signing notice)의 broker order number mapper를 실전 raw fixture로 추가 검증한다.
   - 적용 완료: 주문번호 추출 실패 시 raw payload 보존 + `FillReconciliationService.on_broker_order_no_missing` → 운영자 CRITICAL 알림 + 다음 reconcile 사이클까지 신규 주문 차단.
   - 적용 완료: `BrokerOrderResponseMapper` 별도 클래스로 분리하고 submit response / order query / signing notice normalize 경로를 이 클래스로 통일했다. 기존 `OrderExecutionReport.from_order_query()` / `from_signing_notice()`와 `OrderStateMachine.extract_broker_order_no()`는 호환 wrapper로 유지한다.
   - 테스트 고정: `ordno`, `order_no`, `odno`, `ORDNO`, `ORDER_NO`, `ODNO`, `ODER_NO`, `주문번호`, 중첩 `output` payload, 실전 `inquire-daily-ccld` fixture row, 체결통보 payload 키.
@@ -699,44 +640,32 @@
 
 ## 바로 착수 추천 순서
 
-남은 항목은 외부 데이터/운영 관찰 대기 작업과 코드 수정으로 바로 진행 가능한 작업으로 나뉜다. 실전 자본 보호에 직접 닿는 코드 수정 항목을 우선 정리한다.
+남은 항목은 외부 데이터/운영 확인, 운영 관찰, 코드/리포트로 바로 진행 가능한 작업, 정책 합의 후 재승격 후보로 나눈다. 완료 항목은 이 목록에 다시 넣지 않는다.
 
-1. **외부 운영 확인 후 즉시 진행**
+1. **외부 운영·데이터 확보 후 진행**
    - 실제 KIS 계정별 REST/WebSocket 유량 한도 재확인 → 필요 시 `_global` 8/s + `_global.emergency` 2/s 운영값 조정 (P2 2-2; 공통 HTTP 경로 강제 주입과 보수 기본값은 적용 완료)
+   - 실전 submit response/signing notice raw fixture 확보 → `BrokerOrderResponseMapper` 회귀 테스트 보강 (P0 0-1; mapper 분리와 대표 shape 테스트는 완료)
+   - 장중 후보 종목 프로그램매매 WebSocket 샘플 캡처 → replay fixture overlay (P1 1-5)
+   - 한국장 microstructure fixture 로 체결 모델 보수성 검증 (P1 1-5)
 
-2. **코드 수정으로 바로 진행 가능**
-   - ~~WebSocket 틱 루프 TR_ID 캐싱 + debug lazy logging 적용 (P2 2-6)~~ ✅ 완료 (2026-05-31)
-   - `LarryWilliamsVBOStrategy.scan()` 잔여 순차 후보 처리 bounded 전환 (P2 2-6) — 2026-05-31 검토 후 **보류**(실익 marginal·실전 진입 경로). 재개 시 2-pass 권장.
-   - ~~활성 전략 `check_exits()` 순차 holdings 루프 bounded 통일 (P2 2-6)~~ ✅ 완료 (2026-06-11, VBO 중심 적용)
-   - ~~장마감 배치 `iterrows()` 중 전체 종목 필터링 경로부터 벡터화/`itertuples()` 전환 (P2 2-6)~~ ✅ 완료 (2026-05-31, zip 순회). FDR/RS line 변환 경로는 영향 작아 보류.
-   - ~~`KoreaInvestApiBase` fallback client Limits/Timeout + retry jitter + `TokenProvider` singleflight 정합성 개선 (P2 2-6)~~ ✅ 완료 (2026-05-31). JSON 이중 파싱 제거는 MagicMock 충돌/이득 미미로 보류.
-   - ~~라이브 일봉 지표 당일 미완성 봉 제외 (P0 0-8)~~ ✅ #478 + rollout 조사 완료 (추가 오염은 `LarryWilliamsChannelBreakout` ADX/채널뿐 → `_confirmed_bars()`로 마감)
-   - ~~라이브 exit net PnL 통일 (P0 0-9)~~ ✅ #479
-   - ~~pending/reserved cash + 전 전략 same-symbol qty cap 반영 (P0 0-10)~~ ✅ 완료
-   - ~~kill switch/state sync fallback atomic write 통일 (P0 0-11)~~ ✅ #481
-   - ~~backtest/live tick-size 단일화 (P3 3-5)~~ ✅ 완료
-   - ~~전략 scan 현재가 batch/snapshot 최적화 (P2 2-5)~~ ✅ helper + 활성 전략 7개 scan 배선 + 테스트 완료
-   - ~~IndicatorService silent skip에 alert/metric hook + 전략 레이어 per-code fail-rate metric (P3 3-6)~~ ✅ 완료
-
-3. **운영 관찰 진행 중**
+2. **운영 관찰 진행 중**
    - VBO shadow 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py` 로 parity 리포트 생성 → PR-3 진입 판정 (P2 2-4 PR-2.5)
      - 2026-05-31 배선 수정 후 장중 운영일부터 수집일 카운트 재시작.
    - ~~손절 전용 exit fast-path shadow/latency 측정 설계 (P2 2-4 후속)~~ ✅ 측정 경로 + parity exit 분류 구현 완료 (2026-06-01). 남은 것: 장중 `event_shadow_exit` 5거래일 수집 → 리포트.
    - profitability gate는 우회하지 않고 shadow/paper/canary journal로 전략별 실전 근거를 축적 (P1 1-6)
+   - VBO 실 적용 + OSB shadow 진입은 PR-2.5 결과가 양호할 때만 진행한다.
 
-4. **외부 데이터 확보 후 진행 가능 (blocked)**
-   - ~~실전 KIS `inquire-daily-ccld` 체결 이력 응답 캡처 → fixture 회귀 (P0 0-1)~~ ✅ 완료 (2026-06-01, `001510`)
-   - broker order number mapper 별도 클래스 분리 + fixture 테스트 (P0 0-1)
-   - 장중 후보 종목 프로그램매매 WebSocket 샘플 캡처 → replay fixture overlay (P1 1-5)
-   - 한국장 microstructure fixture 로 체결 모델 보수성 검증 (P1 1-5)
-   - VBO 실 적용 + OSB shadow 진입 (PR-3, P2 2-4 — PR-2.5 결과 양호 조건)
+3. **코드·리포트로 바로 진행 가능**
+   - regime별(상승/하락/횡보) 전략군 성과 분해 리포트 구현/검증 (R-2; `market_regime_service` 활용)
+   - formal PBO(CSCV) / walk-forward / purged validation / ablation 자동 리포트 범위를 정하고, 작은 단위부터 구현한다 (P1 1-7)
+   - 수익률 모멘트 metric 추가 여부를 DSR/PBO 리포트와 함께 결정한다 (P1 1-7)
 
-5. **조건부 트리거 — 재발 시 진행**
+4. **조건부 트리거 — 재발 시 진행**
    - Pool B 거래대금 50→30억 완화 검토
    - Pool B 정배열 조건을 `current > ma_20d` 중심 완화 검토
 
-6. **정책 합의 후 재승격 후보 (보류)**
-   - ~~Deflated Sharpe formal 검증 도입~~ ✅ 완료 (2026-06-08, formal DSR). 남은 것: formal PBO(CSCV) / walk-forward / purged validation 도입 여부 결정 (P1 1-7)
+5. **정책 합의 후 재승격 후보 (보류)**
+   - `LarryWilliamsVBOStrategy.scan()` 잔여 순차 후보 처리 bounded 전환 (P2 2-6) — 실익 marginal·실전 진입 경로라 별도 승인 후 2-pass 방식으로 재개
    - active strategy lifecycle 7단계 base class 분해 (P3 3-4, 외과수술적 변경 원칙으로 보류)
    - tiered force-exit window(거래대금별 30/45/60분) 도입 여부 결정. 현재 `force_exit_on_close=True` 기본 등록은 VBO 중심이므로 전 전략 리스크로 일반화하지 않는다.
    - RiskGate daily cap은 broker retry마다 중복 증가하지 않는다. 다만 현재 구조상 broker 성공 전 `validate_order()`에서 일일 주문금액을 기록하므로, 실패 주문도 cap을 소모하는 정책이 의도인지 별도 결정한다.
