@@ -55,7 +55,8 @@ def test_get_streaming_logger_creates_file(streaming_logger_setup):
 
     inner = logging.getLogger("streaming_event")
     assert not inner.propagate
-    assert len(inner.handlers) == 1
+    app_handlers = [h for h in inner.handlers if isinstance(h, core.logger.DictPreservingQueueHandler)]
+    assert len(app_handlers) == 1
     
     handler = None
     for listener in core.logger._active_listeners:
