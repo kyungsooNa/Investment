@@ -128,3 +128,47 @@ def test_recovery_falls_back_to_minimal(mock_save, mock_write_minimal, mock_logg
     repo = OverseasStockCodeRepository(db_path=db_path, logger=mock_logger)
     mock_write_minimal.assert_called_once()
     assert repo.symbol_to_meta["(NONE)"]["name"] == "(종목목록 없음)"
+
+
+@patch("repositories.overseas_stock_code_repository.save_overseas_stock_code_list")
+def test_init_raises_when_initial_creation_fails(mock_save, mock_logger, tmp_path):
+    """DB 파일 생성 실패 시 예외를 전파하고 에러를 로깅한다."""
+    db_path = str(tmp_path / "overseas_stock_code_list.db")
+    mock_save.side_effect = RuntimeError("Create Failed")
+
+    with pytest.raises(RuntimeError, match="Create Failed"):
+        OverseasStockCodeRepository(db_path=db_path, logger=mock_logger)
+
+    mock_logger.error.assert_called_once()
+
+
+@patch("repositories.overseas_stock_code_repository.save_overseas_stock_code_list")
+def test_recovery_succeeds_on_second_attempt(mock_save, mock_logger, tmp_path):
+    """최초 로드가 최소 DB라 실패해도, 갱신이 성공하면 정상 데이터로 복구된다."""
+    db_path = str(tmp_path / "overseas_stock_code_list.db")
+    _write_minimal_db(db_path)  # 첫 로드는 최소 DB → ValueError 유발
+
+    mock_save.side_effect = lambda **kwargs: _create_test_db(db_path)
+
+    repo = OverseasStockCodeRepository(db_path=db_path, logger=mock_logger)
+
+    mock_save.assert_called_once_with(force_update=True)
+    assert repo.symbol_to_meta["AAPL"]["name"] == "Apple Inc"
+
+
+@patch("repositories.overseas_stock_code_repository.os.remove")
+@patch("repositories.overseas_stock_code_repository.save_overseas_stock_code_list")
+def test_recovery_continues_when_remove_fails(mock_save, mock_remove, mock_logger, tmp_path):
+    """복구 중 손상 파일 삭제가 실패해도 갱신 성공 시 정상 복구된다."""
+    db_path = str(tmp_path / "overseas_stock_code_list.db")
+    _write_minimal_db(db_path)  # 첫 로드 실패 유발
+
+    mock_remove.side_effect = OSError("권한 없음")
+    mock_save.side_effect = lambda **kwargs: _create_test_db(db_path)
+
+    repo = OverseasStockCodeRepository(db_path=db_path, logger=mock_logger)
+
+    mock_remove.assert_called_once()
+    assert repo.symbol_to_meta["AAPL"]["name"] == "Apple Inc"
+    # 삭제 실패 에러가 로깅되어야 한다.
+    assert any("삭제 실패" in str(c.args[0]) for c in mock_logger.error.call_args_list)

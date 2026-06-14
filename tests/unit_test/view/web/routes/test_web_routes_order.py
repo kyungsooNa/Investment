@@ -233,3 +233,87 @@ async def test_place_overseas_real_order_requires_allow_live_trading(web_client,
     assert response.json()["rt_cd"] == ErrorCode.ORDER_POLICY_BLOCKED.value
     assert response.json()["data"]["rule"] == "overseas_live_trading_disabled"
     mock_web_ctx.broker.place_overseas_limit_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_place_overseas_order_rejects_disabled_exchange(web_client, mock_web_ctx):
+    """overseas_stock.enabled_exchanges 밖의 거래소는 400으로 차단된다."""
+    from types import SimpleNamespace
+
+    mock_web_ctx.market_mode = "overseas_us"
+    mock_web_ctx.full_config = SimpleNamespace(
+        overseas_stock=SimpleNamespace(enabled_exchanges=["NYSE"])
+    )
+
+    payload = {
+        "symbol": "AAPL",
+        "exchange": "NASD",  # NYSE만 활성화 → NASD는 차단
+        "side": "buy",
+        "qty": 1,
+        "limit_price": 190.0,
+        "currency": "USD",
+    }
+    response = web_client.post("/api/overseas/order", json=payload)
+
+    assert response.status_code == 400
+    mock_web_ctx.broker.place_overseas_limit_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_place_overseas_real_order_requires_confirmation_when_live_allowed(web_client, mock_web_ctx):
+    """allow_live_trading=True 라도 확인 문자열이 없으면 400."""
+    from types import SimpleNamespace
+
+    mock_web_ctx.market_mode = "overseas_us"
+    mock_web_ctx.env.is_paper_trading = False
+    mock_web_ctx.full_config = SimpleNamespace(
+        overseas_stock=SimpleNamespace(
+            allow_live_trading=True,
+            enabled_exchanges=["NASD", "NYSE", "AMEX"],
+        )
+    )
+
+    payload = {
+        "symbol": "AAPL",
+        "exchange": "NASD",
+        "side": "buy",
+        "qty": 1,
+        "limit_price": 190.0,
+        "currency": "USD",
+        # real_order_confirmation 누락
+    }
+    response = web_client.post("/api/overseas/order", json=payload)
+
+    assert response.status_code == 400
+    mock_web_ctx.broker.place_overseas_limit_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_overseas_orders_requires_overseas_mode(web_client, mock_web_ctx):
+    """overseas_us가 enabled되지 않은 run에서는 해외 주문 조회가 닫혀 있다."""
+    response = web_client.get("/api/overseas/orders")
+    assert response.status_code == 400
+    mock_web_ctx.stock_query_service.get_overseas_order_history.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_overseas_orders_defaults_dates_to_today(web_client, mock_web_ctx):
+    """날짜 미지정 시 market_clock 기준 오늘 날짜로 채워 조회한다."""
+    mock_web_ctx.market_mode = "overseas_us"
+    mock_web_ctx.market_clock.get_current_kst_time.return_value.strftime.return_value = "20260614"
+    mock_web_ctx.stock_query_service.get_overseas_order_history.return_value = ResCommonResponse(
+        rt_cd="0", msg1="ok", data={"orders": []}
+    )
+
+    response = web_client.get("/api/overseas/orders")
+
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] == "0"
+    mock_web_ctx.stock_query_service.get_overseas_order_history.assert_awaited_once_with(
+        symbol="%",
+        exchange="NASD",
+        start_date="20260614",
+        end_date="20260614",
+        side_code="00",
+        ccld_nccs_dvsn="00",
+    )

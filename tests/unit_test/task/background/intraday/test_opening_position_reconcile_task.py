@@ -133,3 +133,127 @@ async def test_opening_position_reconcile_loop_runs_once_and_recovers_errors():
 
     task.run_once.assert_awaited_once()
     task._logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_should_run_now_false_without_clock_or_calendar():
+    task = OpeningPositionReconcileTask(reconcile_service=AsyncMock(), logger=MagicMock())
+    assert await task._should_run_now() is False
+
+
+@pytest.mark.asyncio
+async def test_should_run_now_false_on_non_business_day():
+    clock = MagicMock()
+    open_time = datetime(2026, 4, 30, 9, 0)
+    clock.get_market_open_time.return_value = open_time
+    clock.get_current_kst_time.return_value = open_time + timedelta(seconds=61)
+    mcs = AsyncMock()
+    mcs.is_business_day.return_value = False
+    task = OpeningPositionReconcileTask(
+        reconcile_service=AsyncMock(), market_calendar_service=mcs, market_clock=clock
+    )
+    assert await task._should_run_now() is False
+
+
+@pytest.mark.asyncio
+async def test_should_run_now_false_when_business_day_check_raises():
+    clock = MagicMock()
+    open_time = datetime(2026, 4, 30, 9, 0)
+    clock.get_market_open_time.return_value = open_time
+    clock.get_current_kst_time.return_value = open_time + timedelta(seconds=61)
+    mcs = AsyncMock()
+    mcs.is_business_day.side_effect = RuntimeError("calendar down")
+    task = OpeningPositionReconcileTask(
+        reconcile_service=AsyncMock(), market_calendar_service=mcs, market_clock=clock
+    )
+    assert await task._should_run_now() is False
+
+
+@pytest.mark.asyncio
+async def test_suspend_resume_and_progress():
+    task = OpeningPositionReconcileTask(reconcile_service=AsyncMock(), logger=MagicMock())
+
+    task._state = TaskState.RUNNING
+    await task.suspend()
+    assert task.state == TaskState.SUSPENDED
+
+    progress = task.get_progress()
+    assert progress["running"] is False
+    assert progress["last_result"] == {"mismatch_count": None, "error": None}
+
+    await task.resume()
+    assert task.state == TaskState.IDLE
+
+
+@pytest.mark.asyncio
+async def test_start_resets_state_after_stop():
+    task = OpeningPositionReconcileTask(reconcile_service=AsyncMock(), logger=MagicMock())
+    try:
+        await task.start()
+        await task.stop()
+        assert task.state == TaskState.STOPPED
+
+        # STOPPED 상태에서 재시작하면 IDLE로 복귀해야 한다.
+        await task.start()
+        assert task.state == TaskState.IDLE
+    finally:
+        await task.stop()
+
+
+@pytest.mark.asyncio
+async def test_loop_continues_when_suspended():
+    task = OpeningPositionReconcileTask(reconcile_service=AsyncMock(), logger=MagicMock())
+    task._state = TaskState.SUSPENDED
+    task._should_run_now = AsyncMock()
+
+    with patch(
+        "task.background.intraday.opening_position_reconcile_task.asyncio.sleep",
+        new=AsyncMock(side_effect=[None, asyncio.CancelledError()]),
+    ):
+        await task._loop()
+
+    # SUSPENDED 동안에는 실행 여부 판단 자체를 건너뛴다.
+    task._should_run_now.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_once_reports_to_operator_alert_on_mismatch():
+    oas = AsyncMock()
+    service = AsyncMock()
+    service.reconcile_once.return_value = {"mismatch_count": 2, "force_closed": ["A"]}
+    task = OpeningPositionReconcileTask(
+        reconcile_service=service, operator_alert_service=oas, logger=MagicMock()
+    )
+
+    await task.run_once()
+
+    oas.report.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_once_resolves_operator_alert_when_ok():
+    oas = AsyncMock()
+    service = AsyncMock()
+    service.reconcile_once.return_value = {"mismatch_count": 0}
+    task = OpeningPositionReconcileTask(
+        reconcile_service=service, operator_alert_service=oas, logger=MagicMock()
+    )
+
+    await task.run_once()
+
+    oas.resolve.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_once_reports_to_operator_alert_on_failure():
+    oas = AsyncMock()
+    service = AsyncMock()
+    service.reconcile_once.side_effect = RuntimeError("boom")
+    task = OpeningPositionReconcileTask(
+        reconcile_service=service, operator_alert_service=oas, logger=MagicMock()
+    )
+
+    result = await task.run_once()
+
+    assert result["error"] == "boom"
+    oas.report.assert_awaited_once()
