@@ -24,7 +24,7 @@
 - P3 3-4: active strategy lifecycle contract 최소 공통 단계 강제 여부 재설계(현재 보류).
 - Pool B 튜닝: 후보 부족 재발 시 거래대금/정배열 조건 완화 검토.
 - 완료 기준의 전략 성과 `[~]`: `MomentumStrategy` 등 비활성 백테스트 경로의 표준 journal 통합 여부 결정.
-- 시스템 트레이더 관점 리뷰(R-1~R-6, 2026-06-08): 생존편향·전략 상관/regime 집중·총위험 미집계·갭 체결 등 백테스트 신뢰도/실전 리스크 신규 발견. 자금 확대 전 R-1~R-3 우선 해소 권장. (R-5 거래세율은 검토 결과 0.20% 정확 → 해소, 변경 없음. 하단 "시스템 트레이더 관점 리뷰" 섹션)
+- 시스템 트레이더 관점 리뷰(R-1~R-6, 2026-06-08): 생존편향·전략 상관/regime 집중·총위험 미집계·갭 체결 등 백테스트 신뢰도/실전 리스크 신규 발견. R-2/R-3/R-4/R-5는 핵심 코드·리포트 대응 완료, R-1 PIT 배선과 실전 성과 데이터 축적은 계속 진행. (하단 "시스템 트레이더 관점 리뷰" 섹션)
 - StrategyScheduler 코드 리뷰(S-1~S-10, 2026-06-12): `stop()` 강제청산 데드 패스, 매도 병렬 에러 처리 비대칭, 이력 트림 vs 복구 충돌 등 버그 + 수명/구조 개선. S-1/S-2/S-4~S-8 수정 완료, S-3/S-10은 의도된 설계 확인 후 주석 명시로 종결. S-9는 부분 진행(prune 통합/trace_id 영속화/import 정리) — getter 부수효과는 의도된 계약으로 판명되어 철회, god class 분리는 P2 2-4 parity 판정 후 재평가로 보류. (하단 "StrategyScheduler 코드 리뷰" 섹션)
 - 해외주식 Mode 후속 제외: 자동전략 해외 지원, 해외 WebSocket, 통합 해외 reconciliation은 현재 착수 범위가 아니다.
 
@@ -507,10 +507,11 @@
 - 증거: 활성 등록 7개 전략(`first_pullback`/`high_tight_flag`/`larry_williams_channel_breakout`/`larry_williams_vbo`/`oneil_pocket_pivot`/`oneil_squeeze_breakout`/`rsi2_pullback`)이 **전부 long-only 모멘텀/돌파/눌림목 계열**(RSI2 mean-reversion도 long). 숏·헤지·마켓뉴트럴·비상관 자산 없음.
 - 왜 위험한가: 사실상 **단일 "상승/추세 regime 베팅"**이다. 강세장에서 동시 수익, 약세·횡보장에서 **동시 손실**. 전략 수가 분산처럼 보이지만 실제 포트폴리오 상관이 높아 drawdown이 합산된다. multiple testing(1-7)으로 과최적화는 방어해도 regime 집중 자체는 별개 리스크.
 - [x] 전략 간 실현수익률 상관행렬을 journal로 산출해 리포트(1-7 DSR 섹션 옆)에 노출하고, 고상관 클러스터를 명시한다. (2026-06-09) 계산은 기존 `services/strategy_correlation_service.py::compute_strategy_correlation_summary`(이미 gate에서 사용 중)가 있어 재구축 없이 **리포트 노출만** 추가. `StrategyLogReportService._build_strategy_correlation_section`이 live journal 일별 net_return으로 최고 상관쌍 + 고상관(≥0.8) 클러스터 + 경고를 노출. active/inactive 양쪽 배선. **부수 수정**: DSR `multiple_testing_section`이 active(정상) 리포트 경로 body append에서 누락돼 inactive 경로에만 나오던 #505 버그를 함께 바로잡음. 테스트: `test_strategy_log_report_correlation.py` 4종. 단위 5810 / 통합 240 passed.
-- [~] regime별(상승/하락/횡보) 전략군 성과를 분해해 "전 전략이 같은 regime에서만 작동"하는지 정량 확인한다. (`market_regime_service` 활용)
+- [x] regime별(상승/하락/횡보) 전략군 성과를 분해해 "전 전략이 같은 regime에서만 작동"하는지 정량 확인한다. (`market_regime_service` 활용)
   - 적용 완료(journal-time 캡처, 2026-06-09): 사용자 결정에 따라 매수 시점 `market_regime`({kospi,kosdaq,stock_market})을 journal에 persist. 조사 결과 계산(`regime_performance_service.compute_performance_by_regime`)과 전략별 웹 엔드포인트(`GET /strategies/performance-by-regime?strategy=`)는 **이미 존재**했으나 trade에 `market_regime`을 채우는 곳이 없어 dark 상태였다. (1) `VirtualTradeRepository`에 `market_regime` JSON 컬럼+migration+log_buy 파라미터+읽기 dict 역직렬화(1-6 `required_data` 패턴), (2) `StrategyScheduler._market_regime_log_kwargs`가 scan-warm된 cached snapshot+`is_kosdaq`로 dict 구성→매수 log에 stamp, (3) `OneilUniverseService.market_regime_service` property로 공유 instance를 scheduler에 주입(`strategy_factory`). 이제 기존 엔드포인트가 populated 버킷을 받는다. 테스트: repo 6종 + scheduler 5종. 단위 5821 / 통합 240 passed.
   - 특성(prospective): journal-time 캡처라 **배선 후 매수분부터** regime이 채워진다. 과거 trade 소급 분류는 별도(retroactive) 작업.
   - 적용 완료(일일 리포트 regime 분해 섹션, 2026-06-11): 웹 엔드포인트로만 노출되던 per-strategy regime 성과를 일일 HTML 리포트에 노출. 순수 함수 `regime_performance_service.compute_strategy_regime_decomposition`(기존 `compute_performance_by_regime`를 전략별로 묶어 dominant primary 버킷 + regime 집중도 산출, SURGE overlay 는 by_bucket 노출하되 primary total/dominant 미합산) + `StrategyLogReportService._build_regime_decomposition_section`. live journal(`get_standard_journal_records`)로 전략별 주력 국면·버킷별 승률/평균순익 + "N/M 전략이 같은 국면에 몰림" 집중도(≥70%면 ⚠️ 단일 regime 집중)를 노출. regime 채워진 SOLD 전략 <2개면 생략. active/inactive 양쪽 배선(상관/DSR/오버나이트 섹션과 동일 패턴). 테스트: `test_regime_performance_service.py` 5종(분해/집중도/HOLD·regime 누락 제외/SURGE 미합산) + `test_strategy_log_report_regime.py` 4종. 단위 5873 / 통합 240 passed.
+  - 회귀 보강(2026-06-15): `generate_report()` 본문에 regime 분해 섹션이 실제 포함되는지 `test_report_includes_strategy_regime_decomposition_section`로 고정.
 - [ ] 자금 확대 전 비상관 엣지(역추세/숏 가능 시점/저변동 등) 1개 이상 도입 여부를 정책 결정한다.
 - 관련: `services/market_regime_service.py`, `services/strategy_log_report_service.py`, P1 1-1 상관 follow-up과 통합
 
@@ -656,7 +657,6 @@
    - VBO 실 적용 + OSB shadow 진입은 PR-2.5 결과가 양호할 때만 진행한다.
 
 3. **코드·리포트로 바로 진행 가능**
-   - regime별(상승/하락/횡보) 전략군 성과 분해 리포트 구현/검증 (R-2; `market_regime_service` 활용)
    - formal PBO(CSCV) / walk-forward / purged validation / ablation 자동 리포트 범위를 정하고, 작은 단위부터 구현한다 (P1 1-7)
    - 수익률 모멘트 metric 추가 여부를 DSR/PBO 리포트와 함께 결정한다 (P1 1-7)
 

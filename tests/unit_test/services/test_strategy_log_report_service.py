@@ -968,6 +968,65 @@ async def test_report_matches_virtual_trade_strategy_id_to_vbo_log_section(log_d
 
 
 @pytest.mark.asyncio
+async def test_report_includes_strategy_regime_decomposition_section(log_dir):
+    """일일 리포트 본문에 전략별 regime 분해 섹션을 포함한다."""
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return []
+
+        def get_solds(self):
+            return []
+
+        def get_holds(self):
+            return []
+
+        def get_standard_journal_records(self):
+            return [
+                {
+                    "strategy": "S1",
+                    "code": "000001",
+                    "status": "SOLD",
+                    "signal_time": "2026-04-15 10:00:00",
+                    "net_pnl": 100.0,
+                    "net_return": 2.0,
+                    "market_regime": {
+                        "kospi": "bull",
+                        "kosdaq": "bull",
+                        "stock_market": "KOSPI",
+                    },
+                },
+                {
+                    "strategy": "S2",
+                    "code": "000002",
+                    "status": "SOLD",
+                    "signal_time": "2026-04-16 10:00:00",
+                    "net_pnl": 120.0,
+                    "net_return": 1.5,
+                    "market_regime": {
+                        "kospi": "bull",
+                        "kosdaq": "bull",
+                        "stock_market": "KOSPI",
+                    },
+                },
+            ]
+
+    scan_entry = _make_entry("scan_with_watchlist", "", "", date="2026-04-18")
+    scan_entry["data"]["count"] = 2
+    _write_log(os.path.join(log_dir, "20260418_093000_FirstPullback.log.json"), [scan_entry])
+
+    svc = StrategyLogReportService(
+        log_dir=log_dir,
+        virtual_trade_service=DummyVirtualTradeService(),
+    )
+    report = await svc.generate_report("20260418")
+
+    assert "전략별 시장국면(regime) 분해" in report
+    assert "집중도: 2/2" in report
+    assert "S1" in report
+    assert "S2" in report
+
+
+@pytest.mark.asyncio
 async def test_report_filters_disabled_strategy_sections_and_execution_quality(log_dir):
     """스케줄러에서 제외된 전략은 실행 섹션과 체결 품질 요약에서 제외한다."""
     scan_entry = _make_entry("scan_with_watchlist", "", "", reason="")
