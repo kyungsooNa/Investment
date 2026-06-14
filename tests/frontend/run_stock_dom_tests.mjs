@@ -36,6 +36,7 @@ const SCAFFOLD = `
   </div>
   <div id="stock-result"></div>
   <div class="card" id="stock-chart-card" style="display:none;">
+    <div id="chart-controls-area"></div>
     <canvas id="stockChart"></canvas>
   </div>
 </div>
@@ -52,6 +53,7 @@ function makeWindow() {
   window.showLoading = (el, msg) => { if (el) el.innerHTML = `<p class="loading">${msg}</p>`; };
   window.fetchWithTimeout = async () => ({ ok: true, json: async () => ({}) });
   window.loadAndRenderStockChart = () => {};
+  window.loadAndRenderOverseasStockChart = () => {};
   window.formatTradingValue = () => "";
   window.ALL_STOCKS = [];
   window._matchMixed = () => false;
@@ -102,6 +104,10 @@ test("국내→해외→국내 왕복 후에도 차트 카드와 캔버스가 �
 test("searchOverseasStock 가 차트 카드를 보존하고 최소 view model 을 렌더한다", async () => {
   const window = makeWindow();
   simulateDomesticSearchRendered(window);
+  let chartCalledWith = null;
+  window.loadAndRenderOverseasStockChart = (symbol, exchange) => {
+    chartCalledWith = { symbol, exchange };
+  };
   window.fetchWithTimeout = async (url) => {
     if (url.includes("/api/market-mode")) {
       return { ok: true, json: async () => ({ enabled_market_modes: ["domestic", "overseas_us"] }) };
@@ -121,7 +127,10 @@ test("searchOverseasStock 가 차트 카드를 보존하고 최소 view model �
   assert(window.document.getElementById("stock-chart-card"), "회귀: 해외 조회가 차트 카드를 파괴함");
   const html = window.document.getElementById("stock-result").innerHTML;
   assert(html.includes("AAPL"), "심볼 표시 누락");
+  assert(html.includes("NASDAQ"), "거래소 표시명 누락");
   assert(html.includes("$190.50"), "가격(USD) 표시 누락");
+  assert(chartCalledWith && chartCalledWith.symbol === "AAPL" && chartCalledWith.exchange === "NASD",
+    "해외 조회 성공 후 해외 차트 로더가 호출되어야 함");
   // 해외 렌더는 국내 전용 SSE 타깃 id 를 만들면 안 된다(틱 핸들러 오작동 방지)
   assert(!html.includes('id="rt-price"'), "해외 렌더가 국내 전용 rt-price id 를 생성함");
 });

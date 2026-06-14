@@ -109,6 +109,156 @@ async function loadAndRenderStockChart(code) {
     }
 }
 
+function _ensureChartControls() {
+    const controlsArea = document.getElementById('chart-controls-area');
+    if (document.getElementById('chart-controls')) return;
+
+    const controls = document.createElement('div');
+    controls.id = 'chart-controls';
+    controls.className = 'chart-controls';
+    controls.innerHTML = `
+        <button class="btn-xs active" onclick="changeChartPeriod('3M', this)">3개월</button>
+        <button class="btn-xs" onclick="changeChartPeriod('6M', this)">6개월</button>
+        <button class="btn-xs" onclick="changeChartPeriod('1Y', this)">1년</button>
+    `;
+    if (controlsArea) {
+        controlsArea.appendChild(controls);
+    } else {
+        const canvas = document.getElementById('stockChart');
+        if (canvas) canvas.parentNode.insertBefore(controls, canvas);
+    }
+
+    if (!document.getElementById('chart-btn-style')) {
+        const style = document.createElement('style');
+        style.id = 'chart-btn-style';
+        style.innerHTML = `
+            .btn-xs { padding: 4px 8px; font-size: 12px; margin-left: 4px; background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-secondary); border-radius: 4px; cursor: pointer; }
+            .btn-xs.active { background: var(--accent); color: white; border-color: var(--accent); }
+            .btn-xs:hover { background: var(--bg-card); }
+        `;
+        document.head.appendChild(style);
+    }
+}
+
+function _toChartNumber(value) {
+    const n = Number(String(value ?? '').replace(/,/g, ''));
+    return Number.isFinite(n) ? n : 0;
+}
+
+function _readOverseasChartRows(data) {
+    if (Array.isArray(data)) return data;
+    if (data && Array.isArray(data.output2)) return data.output2;
+    return [];
+}
+
+function _overseasRowDate(row) {
+    return String(row.date || row.xymd || row.stck_bsop_date || '').replace(/-/g, '');
+}
+
+function _normalizeOverseasOhlcv(rows) {
+    return rows
+        .map((row) => {
+            const date = _overseasRowDate(row);
+            const close = _toChartNumber(row.close || row.clos || row.clpr || row.ovrs_nmix_prpr);
+            const open = _toChartNumber(row.open || row.open_pric || row.ovrs_nmix_oprc || row.ovrs_nmix_prdy_vrss);
+            const high = _toChartNumber(row.high || row.high_pric || row.ovrs_nmix_hgpr);
+            const low = _toChartNumber(row.low || row.low_pric || row.ovrs_nmix_lwpr);
+            return {
+                date,
+                open: open || close,
+                high: high || close,
+                low: low || close,
+                close,
+                volume: _toChartNumber(row.volume || row.tvol || row.acml_vol),
+            };
+        })
+        .filter((row) => row.date && row.close > 0)
+        .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function _movingAverageRows(rows, period) {
+    return rows.map((row, idx) => {
+        if (idx + 1 < period) return null;
+        let sum = 0;
+        for (let i = idx - period + 1; i <= idx; i++) sum += rows[i].close;
+        return { date: row.date, ma: sum / period };
+    });
+}
+
+function _volumeMovingAverageRows(rows, period) {
+    return rows.map((row, idx) => {
+        if (idx + 1 < period) return null;
+        let sum = 0;
+        for (let i = idx - period + 1; i <= idx; i++) sum += rows[i].volume;
+        return { date: row.date, ma: sum / period };
+    });
+}
+
+function _bollingerRows(rows, period = 20, multiplier = 2) {
+    return rows.map((row, idx) => {
+        if (idx + 1 < period) return null;
+        const values = rows.slice(idx - period + 1, idx + 1).map((r) => r.close);
+        const mean = values.reduce((acc, v) => acc + v, 0) / period;
+        const variance = values.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / period;
+        const std = Math.sqrt(variance);
+        return {
+            date: row.date,
+            upper: mean + std * multiplier,
+            middle: mean,
+            lower: mean - std * multiplier,
+        };
+    });
+}
+
+function _buildOverseasIndicators(rows) {
+    return {
+        ma5: _movingAverageRows(rows, 5),
+        ma10: _movingAverageRows(rows, 10),
+        ma20: _movingAverageRows(rows, 20),
+        ma50: _movingAverageRows(rows, 50),
+        ma60: _movingAverageRows(rows, 60),
+        ma120: _movingAverageRows(rows, 120),
+        ma150: _movingAverageRows(rows, 150),
+        ma200: _movingAverageRows(rows, 200),
+        bb: _bollingerRows(rows),
+        vol_ma5: _volumeMovingAverageRows(rows, 5),
+        vol_ma20: _volumeMovingAverageRows(rows, 20),
+        vol_ma60: _volumeMovingAverageRows(rows, 60),
+    };
+}
+
+async function loadAndRenderOverseasStockChart(symbol, exchange) {
+    const chartCard = document.getElementById('stock-chart-card');
+    if (!chartCard) return;
+    _ensureChartControls();
+
+    try {
+        const res = await fetchWithTimeout(
+            `/api/overseas/chart/${encodeURIComponent(symbol)}?exchange=${exchange}&period=D`,
+            {},
+            12000
+        );
+        const json = await res.json();
+        const rows = _normalizeOverseasOhlcv(_readOverseasChartRows(json.data));
+        if (!res.ok || json.rt_cd !== "0" || rows.length === 0) {
+            chartCard.style.display = 'none';
+            return;
+        }
+
+        const formatYYYYMMDD = (str) => str.substring(0, 4) + '-' + str.substring(4, 6) + '-' + str.substring(6, 8);
+        rows.forEach(d => { d.formattedDate = formatYYYYMMDD(d.date); });
+        g_chartRawData = rows;
+        g_chartIndicators = _buildOverseasIndicators(rows);
+        g_chartCode = symbol;
+
+        chartCard.style.display = 'block';
+        renderStockChart('3M');
+    } catch (e) {
+        console.error("Overseas chart rendering failed:", e);
+        chartCard.style.display = 'none';
+    }
+}
+
 function changeChartPeriod(period, btn) {
     if (btn) {
         document.querySelectorAll('#chart-controls .btn-xs').forEach(b => b.classList.remove('active'));
@@ -186,6 +336,7 @@ function renderStockChart(period) {
     // [최적화 3] 고가/저가 레이블 문자열을 플러그인 외부에서 1회 생성
     const highLabel = `${highestPrice.toLocaleString()} (${labels[highIdx]}) ${highPct > 0 ? '+' : ''}${highPct}%`;
     const lowLabel  = `${lowestPrice.toLocaleString()} (${labels[lowIdx]}) ${lowPct > 0 ? '+' : ''}${lowPct}%`;
+    const compactPoints = (points) => points.filter(Boolean);
 
     const highLowPlugin = {
         id: 'highLowMarker',
@@ -263,21 +414,21 @@ function renderStockChart(period) {
                     borderColors: { up: '#ff0000', down: '#0000ff', unchanged: '#777777' },
                     order: 1
                 },
-                { label: 'MA5', data: ma5, type: 'line', borderColor: '#ff6b6b', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
-                { label: 'MA10', data: ma10, type: 'line', borderColor: '#51cf66', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 }, // [추가] Green
-                { label: 'MA20', data: ma20, type: 'line', borderColor: '#feca57', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
-                { label: 'MA50', data: ma50, type: 'line', borderColor: '#ff8a00', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
-                { label: 'MA60', data: ma60, type: 'line', borderColor: '#54a0ff', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
-                { label: 'MA120', data: ma120, type: 'line', borderColor: '#a29bfe', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 }, // [추가] 보라색 계열
-                { label: 'MA150', data: ma150, type: 'line', borderColor: '#6f42c1', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
-                { label: 'MA200', data: ma200, type: 'line', borderColor: '#2ecc71', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
-                { label: 'BB Upper', data: bbUpper, type: 'line', borderColor: 'rgba(78, 76, 76, 0.8)', borderWidth: 3, pointRadius: 0, yAxisID: 'y', fill: false, order: 3 },
-                { label: 'BB Lower', data: bbLower, type: 'line', borderColor: 'rgba(78, 76, 76, 0.8)', borderWidth: 3, pointRadius: 0, yAxisID: 'y', fill: '-1', backgroundColor: 'rgba(200,200,200,0.1)', order: 3 },
-                { label: 'BB Middle', data: bbMiddle, type: 'line', borderColor: 'rgba(255, 215, 0, 0.8)', borderWidth: 1.5, borderDash: [3, 3], pointRadius: 0, yAxisID: 'y', fill: false, order: 3, hidden: true }, // [수정] MA20과 중복되므로 기본 숨김
+                { label: 'MA5', data: compactPoints(ma5), type: 'line', borderColor: '#ff6b6b', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
+                { label: 'MA10', data: compactPoints(ma10), type: 'line', borderColor: '#51cf66', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 }, // [추가] Green
+                { label: 'MA20', data: compactPoints(ma20), type: 'line', borderColor: '#feca57', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
+                { label: 'MA50', data: compactPoints(ma50), type: 'line', borderColor: '#ff8a00', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
+                { label: 'MA60', data: compactPoints(ma60), type: 'line', borderColor: '#54a0ff', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
+                { label: 'MA120', data: compactPoints(ma120), type: 'line', borderColor: '#a29bfe', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 }, // [추가] 보라색 계열
+                { label: 'MA150', data: compactPoints(ma150), type: 'line', borderColor: '#6f42c1', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
+                { label: 'MA200', data: compactPoints(ma200), type: 'line', borderColor: '#2ecc71', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 2 },
+                { label: 'BB Upper', data: compactPoints(bbUpper), type: 'line', borderColor: 'rgba(78, 76, 76, 0.8)', borderWidth: 3, pointRadius: 0, yAxisID: 'y', fill: false, order: 3 },
+                { label: 'BB Lower', data: compactPoints(bbLower), type: 'line', borderColor: 'rgba(78, 76, 76, 0.8)', borderWidth: 3, pointRadius: 0, yAxisID: 'y', fill: '-1', backgroundColor: 'rgba(200,200,200,0.1)', order: 3 },
+                { label: 'BB Middle', data: compactPoints(bbMiddle), type: 'line', borderColor: 'rgba(255, 215, 0, 0.8)', borderWidth: 1.5, borderDash: [3, 3], pointRadius: 0, yAxisID: 'y', fill: false, order: 3, hidden: true }, // [수정] MA20과 중복되므로 기본 숨김
                 { label: '거래량', data: volumes, type: 'bar', yAxisID: 'y1', backgroundColor: volumeColors, order: 4 },
-                { label: 'Vol MA5',  data: volMa5,  type: 'line', borderColor: '#ff6b6b', borderWidth: 1, pointRadius: 0, yAxisID: 'y1', order: 5 },
-                { label: 'Vol MA20', data: volMa20, type: 'line', borderColor: '#feca57', borderWidth: 1, pointRadius: 0, yAxisID: 'y1', order: 5 },
-                { label: 'Vol MA60', data: volMa60, type: 'line', borderColor: '#54a0ff', borderWidth: 1, pointRadius: 0, yAxisID: 'y1', order: 5 }
+                { label: 'Vol MA5',  data: compactPoints(volMa5),  type: 'line', borderColor: '#ff6b6b', borderWidth: 1, pointRadius: 0, yAxisID: 'y1', order: 5 },
+                { label: 'Vol MA20', data: compactPoints(volMa20), type: 'line', borderColor: '#feca57', borderWidth: 1, pointRadius: 0, yAxisID: 'y1', order: 5 },
+                { label: 'Vol MA60', data: compactPoints(volMa60), type: 'line', borderColor: '#54a0ff', borderWidth: 1, pointRadius: 0, yAxisID: 'y1', order: 5 }
             ]
         },
         options: {

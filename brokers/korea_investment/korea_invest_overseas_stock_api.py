@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 import httpx
@@ -185,7 +186,7 @@ class KoreaInvestOverseasStockApi(KoreaInvestApiTrading):
             "EXCD": self._exchange_price_code(exchange),
             "SYMB": str(symbol).upper(),
             "GUBN": period_code,
-            "BYMD": end_date or start_date,
+            "BYMD": end_date or start_date or datetime.now().strftime("%Y%m%d"),
             "MODP": "1" if adjusted else "0",
         }
         return await self.call_api(
