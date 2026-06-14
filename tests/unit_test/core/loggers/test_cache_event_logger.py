@@ -82,6 +82,31 @@ def test_get_cache_event_logger_creates_file(cache_logger_setup):
     assert len(log_files) == 1
 
 
+def test_get_cache_event_logger_ignores_foreign_handlers(tmp_path):
+    """외부 캡처 핸들러가 있어도 cache_event 파일 핸들러를 초기화한다."""
+    reset_log_timestamp_for_test()
+
+    inner = logging.getLogger("cache_event")
+    foreign_handler = logging.NullHandler()
+    inner.addHandler(foreign_handler)
+
+    log_dir = tmp_path / "logs"
+    try:
+        cache_logger = get_cache_event_logger(log_dir=str(log_dir))
+        cache_logger.log_ohlcv_miss("005930", "test")
+        _flush_cache_logger()
+
+        log_files = list((log_dir / "cache").glob("*_cache_*.log.json"))
+        assert len(log_files) == 1
+    finally:
+        for h in inner.handlers[:]:
+            h.close()
+            inner.removeHandler(h)
+        for listener in core.logger._active_listeners[:]:
+            listener.stop()
+        core.logger._active_listeners.clear()
+
+
 def test_get_cache_event_logger_returns_same_logger_on_second_call(tmp_path):
     reset_log_timestamp_for_test()
     existing = logging.getLogger("cache_event")

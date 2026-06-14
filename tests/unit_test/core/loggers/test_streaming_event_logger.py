@@ -75,6 +75,31 @@ def test_get_streaming_logger_creates_file(streaming_logger_setup):
     assert len(log_files) == 1
 
 
+def test_get_streaming_logger_ignores_foreign_handlers(tmp_path):
+    """외부 캡처 핸들러가 있어도 streaming_event 파일 핸들러를 초기화한다."""
+    reset_log_timestamp_for_test()
+
+    inner = logging.getLogger("streaming_event")
+    foreign_handler = logging.NullHandler()
+    inner.addHandler(foreign_handler)
+
+    log_dir = tmp_path / "logs"
+    try:
+        streaming_logger = get_streaming_logger(log_dir=str(log_dir))
+        streaming_logger.log_connect()
+        _flush_streaming_logger()
+
+        log_files = list((log_dir / "streaming").glob("*_streaming_*.log.json"))
+        assert len(log_files) == 1
+    finally:
+        for h in inner.handlers[:]:
+            h.close()
+            inner.removeHandler(h)
+        for listener in core.logger._active_listeners[:]:
+            listener.stop()
+        core.logger._active_listeners.clear()
+
+
 def test_log_connect_writes_json(streaming_logger_setup):
     streaming_logger, streaming_log_dir = streaming_logger_setup
 

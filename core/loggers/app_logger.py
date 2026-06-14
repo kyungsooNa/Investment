@@ -90,7 +90,12 @@ class Logger:
         logger.propagate = False
 
         if logger.handlers:
-            return logger
+            for handler in logger.handlers[:]:
+                logger.removeHandler(handler)
+                try:
+                    handler.close()
+                except Exception:
+                    pass
 
         file_handler = SizeTimeRotatingFileHandler(
             log_file,
@@ -150,3 +155,11 @@ class Logger:
             listener.stop()
             for handler in listener.handlers:
                 handler.close()
+        self._listeners.clear()
+        for logger in (self.operational_logger, self.debug_logger):
+            for handler in logger.handlers[:]:
+                logger.removeHandler(handler)
+                try:
+                    handler.close()
+                except Exception:
+                    pass
