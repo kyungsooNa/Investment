@@ -177,6 +177,34 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
         # 총 2번의 post 요청이 있었는지 확인
         self.assertEqual(self.api_base._async_session.post.await_count, 2)
 
+    async def test_execute_request_refreshes_real_token_when_real_auth_enabled(self):
+        """
+        TC: 조회 API(_use_real_auth=True)에서 EGW00123 응답 시 실전 토큰을 재발급해야 한다.
+        """
+        self.api_base._use_real_auth = True
+        self.mock_env.get_real_config.return_value = {
+            "api_key": "real_key",
+            "api_secret_key": "real_secret",
+        }
+        self.mock_env.get_real_access_token = AsyncMock(side_effect=["old_real", "new_real", "new_real"])
+        self.mock_env.refresh_real_token = AsyncMock()
+        self.mock_env.refresh_token = AsyncMock()
+
+        resp1 = MagicMock(spec=httpx.Response)
+        resp1.json.return_value = {"msg_cd": "EGW00123", "rt_cd": "1"}
+
+        resp2 = MagicMock(spec=httpx.Response)
+        resp2.json.return_value = {"rt_cd": "0", "msg_cd": "MCA00000"}
+
+        self.api_base._async_session.get = AsyncMock(side_effect=[resp1, resp2])
+
+        response = await self.api_base._execute_request("GET", "http://test-url", None, None)
+
+        self.mock_env.refresh_real_token.assert_awaited_once()
+        self.mock_env.refresh_token.assert_not_awaited()
+        self.assertEqual(response, resp2)
+        self.assertEqual(self.api_base._async_session.get.await_count, 2)
+
     async def test_call_api_custom_retry_delay(self):
         """
         TC: ApiRetryError에 delay가 설정된 경우 해당 시간만큼 대기하는지 검증
@@ -214,6 +242,25 @@ class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         self.assertEqual(result, {"some_key": "some_value"})
+
+    async def test_handle_response_invalidates_real_token_when_real_auth_enabled(self):
+        """
+        TC: 조회 API(_use_real_auth=True)의 최종 EGW00123 응답은 실전 토큰을 무효화한다.
+        """
+        self.api_base._use_real_auth = True
+        self.mock_env.invalidate_real_token = MagicMock()
+        self.mock_env.invalidate_token = MagicMock()
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"rt_cd": "1", "msg_cd": "EGW00123"}
+        mock_response.raise_for_status.return_value = None
+
+        with self.assertRaises(ApiRetryError):
+            await self.api_base._handle_response(mock_response)
+
+        self.mock_env.invalidate_real_token.assert_called_once()
+        self.mock_env.invalidate_token.assert_not_called()
 
     async def test_execute_request_missing_token(self):
         """
