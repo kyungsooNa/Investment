@@ -338,6 +338,21 @@ class TestKoreaInvestApiEnv(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_kwargs['app_key'], self.mock_config_data['api_key'])
         self.assertEqual(call_kwargs['app_secret'], self.mock_config_data['api_secret_key'])
 
+    async def test_refresh_real_token_delegates_to_real_provider(self):
+        """
+        TC: 모의투자 모드에서도 조회 API용 실전 토큰 갱신은 real provider로 위임한다.
+        """
+        self.env.set_trading_mode(True)
+        self.env._token_provider_real = AsyncMock()
+
+        await self.env.refresh_real_token()
+
+        self.env._token_provider_real.refresh_token.assert_awaited_once()
+        call_kwargs = self.env._token_provider_real.refresh_token.call_args.kwargs
+        self.assertEqual(call_kwargs['base_url'], self.mock_config_data['url'])
+        self.assertEqual(call_kwargs['app_key'], self.mock_config_data['api_key'])
+        self.assertEqual(call_kwargs['app_secret'], self.mock_config_data['api_secret_key'])
+
     async def test_refresh_token_no_provider(self):
         """
         TC: TokenProvider가 없을 때 refresh_token 호출 시 에러 없이 넘어가는지 검증

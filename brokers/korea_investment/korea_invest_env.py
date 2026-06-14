@@ -153,12 +153,27 @@ class KoreaInvestApiEnv:
         if self._token_provider:
             self._token_provider.invalidate_token()
 
+    def invalidate_real_token(self):
+        """조회 API용 실전 토큰을 무효화합니다."""
+        if self._token_provider_real:
+            self._token_provider_real.invalidate_token()
+
     async def refresh_token(self):
         if self._token_provider:
             await self._token_provider.refresh_token(
                 base_url=self.active_config['base_url'],
                 app_key=self.active_config['api_key'],
                 app_secret=self.active_config['api_secret_key']
+            )
+
+    async def refresh_real_token(self):
+        """조회 API용 실전 토큰을 강제로 재발급합니다."""
+        real_cfg = self.get_real_config()
+        if self._token_provider_real:
+            await self._token_provider_real.refresh_token(
+                base_url=real_cfg['base_url'],
+                app_key=real_cfg['api_key'],
+                app_secret=real_cfg['api_secret_key']
             )
 
     def get_base_url(self):

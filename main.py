@@ -33,7 +33,7 @@ def run_web():
     host = configs.web.host
     port = configs.web.port
 
-    def _wait_for_port(timeout: float = 10.0) -> bool:
+    def _wait_for_port(timeout: float = 60.0) -> bool:
         import socket, time
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:

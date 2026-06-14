@@ -243,13 +243,20 @@ class KoreaInvestApiBase:
             if isinstance(res_json, dict) and res_json.get("msg_cd") == "EGW00123" and not token_refreshed:
                 self._logger.warning("🔁 토큰 만료 감지 (EGW00123). 재발급 후 1회 재시도")
                 await self.market_clock.async_sleep(3)
-                await self._env.refresh_token()
+                if self._use_real_auth:
+                    await self._env.refresh_real_token()
+                else:
+                    await self._env.refresh_token()
                 token_refreshed = True  # ✅ 재시도 플래그 설정
 
                 # ✅ 강제 delay 삽입
 
                 # ✅ 반드시 새로 가져온 토큰으로 Authorization 헤더 재세팅
-                new_token = await self._env.get_access_token()
+                new_token = (
+                    await self._env.get_real_access_token()
+                    if self._use_real_auth
+                    else await self._env.get_access_token()
+                )
                 self._headers.set_auth_bearer(new_token)  # ✅ 메서드 사용
                 self._logger.debug(f"✅ 재발급 후 토큰 적용 확인: {new_token[:40]}...")
 
@@ -293,7 +300,10 @@ class KoreaInvestApiBase:
         # 4. 토큰 만료 오류 처리 (API 응답 내용 기반)
         if response_json.get('msg_cd') == 'EGW00123':
             self._logger.error("최종 토큰 만료 오류(EGW00123) 감지.")
-            self._env.invalidate_token()
+            if self._use_real_auth:
+                self._env.invalidate_real_token()
+            else:
+                self._env.invalidate_token()
             raise ApiRetryError("Token expired")
 
         if not expect_standard_schema:
