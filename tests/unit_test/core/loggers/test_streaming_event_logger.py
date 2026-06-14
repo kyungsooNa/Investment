@@ -100,6 +100,37 @@ def test_get_streaming_logger_ignores_foreign_handlers(tmp_path):
         core.logger._active_listeners.clear()
 
 
+def test_get_streaming_logger_removes_late_foreign_handlers(tmp_path):
+    """초기화 후 추가된 외부 핸들러도 다음 호출에서 제거한다."""
+    reset_log_timestamp_for_test()
+
+    inner = logging.getLogger("streaming_event")
+    for h in inner.handlers[:]:
+        h.close()
+        inner.removeHandler(h)
+
+    log_dir = tmp_path / "logs"
+    try:
+        get_streaming_logger(log_dir=str(log_dir))
+        inner.addHandler(logging.NullHandler())
+        inner.addHandler(logging.NullHandler())
+
+        streaming_logger = get_streaming_logger(log_dir=str(log_dir))
+        streaming_logger.log_connect()
+        _flush_streaming_logger()
+
+        assert len(inner.handlers) == 1
+        log_files = list((log_dir / "streaming").glob("*_streaming_*.log.json"))
+        assert len(log_files) == 1
+    finally:
+        for h in inner.handlers[:]:
+            h.close()
+            inner.removeHandler(h)
+        for listener in core.logger._active_listeners[:]:
+            listener.stop()
+        core.logger._active_listeners.clear()
+
+
 def test_log_connect_writes_json(streaming_logger_setup):
     streaming_logger, streaming_log_dir = streaming_logger_setup
 

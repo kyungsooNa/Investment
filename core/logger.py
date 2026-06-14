@@ -37,6 +37,20 @@ def _clear_logger_handlers(logger: logging.Logger) -> None:
         except Exception:
             pass
 
+def _remove_foreign_handlers(logger: logging.Logger) -> bool:
+    """이 모듈이 붙인 큐 핸들러만 남기고 외부 캡처 핸들러를 제거한다."""
+    has_queue_handler = False
+    for handler in logger.handlers[:]:
+        if isinstance(handler, DictPreservingQueueHandler):
+            has_queue_handler = True
+            continue
+        logger.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
+    return has_queue_handler
+
 def setup_async_logger(logger: logging.Logger, file_handler: logging.Handler):
     """파일 I/O를 백그라운드 스레드로 위임하는 비동기 큐 세팅"""
     log_queue = queue.Queue(-1)
@@ -80,7 +94,8 @@ def get_streaming_logger(log_dir: str = "logs") -> "StreamingEventLogger":
 
     expected_dir = os.path.abspath(streaming_log_dir)
     if logger.handlers and getattr(logger, "_streaming_log_dir", None) == expected_dir:
-        return StreamingEventLogger(logger)
+        if _remove_foreign_handlers(logger):
+            return StreamingEventLogger(logger)
     if logger.handlers:
         _clear_logger_handlers(logger)
 
@@ -120,7 +135,8 @@ def get_cache_event_logger(log_dir: str = "logs") -> "CacheEventLogger":
 
     expected_dir = os.path.abspath(cache_log_dir)
     if logger.handlers and getattr(logger, "_cache_log_dir", None) == expected_dir:
-        return CacheEventLogger(logger)
+        if _remove_foreign_handlers(logger):
+            return CacheEventLogger(logger)
     if logger.handlers:
         _clear_logger_handlers(logger)
 
