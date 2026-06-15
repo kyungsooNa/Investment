@@ -14,6 +14,7 @@ from common.types import (
     ResTopMarketCapApiItem, ResBasicStockInfo, ResFluctuation, ResDailyChartApiItem, Exchange,
     ResStockFullInfoApiOutput
 )
+from common.overseas_types import OverseasExchange
 from core.cache.cache_store import CacheStore
 from core.performance_profiler import PerformanceProfiler
 from common.date_utils import previous_trading_day_str
@@ -21,6 +22,14 @@ from services.market_calendar_service import MarketCalendarService
 
 if TYPE_CHECKING:
     from repositories.stock_repository import StockRepository
+
+
+def _is_overseas_exchange(exchange) -> bool:
+    """exchange 인자가 해외 거래소(NASD/NYSE/AMEX)를 가리키는지 판정한다."""
+    if isinstance(exchange, OverseasExchange):
+        return True
+    val = getattr(exchange, "value", exchange)
+    return str(val).upper() in {"NASD", "NYSE", "AMEX"}
 
 class MarketDataService:
     """
@@ -371,15 +380,16 @@ class MarketDataService:
             except Exception: return None
         rows = []
         for it in items or []:
-            date = _get(it, "stck_bsop_date") or _get(it, "date")
+            # 국내 키(stck_*) / 표준 키(open..) / 해외 키(xymd,clos,tvol) 모두 수용
+            date = _get(it, "stck_bsop_date") or _get(it, "date") or _get(it, "xymd")
             if not date: continue
             rows.append({
                 "date": date,
                 "open": _to_float(_get(it, "stck_oprc") or _get(it, "open")),
                 "high": _to_float(_get(it, "stck_hgpr") or _get(it, "high")),
                 "low": _to_float(_get(it, "stck_lwpr") or _get(it, "low")),
-                "close": _to_float(_get(it, "stck_clpr") or _get(it, "close")),
-                "volume": _to_int(_get(it, "acml_vol") or _get(it, "volume")),
+                "close": _to_float(_get(it, "stck_clpr") or _get(it, "close") or _get(it, "clos")),
+                "volume": _to_int(_get(it, "acml_vol") or _get(it, "volume") or _get(it, "tvol")),
             })
         rows.sort(key=lambda r: r["date"])
         return rows
@@ -532,6 +542,8 @@ class MarketDataService:
         """
         시작일~종료일 범위형 차트 API 호출 (일/분 공통).
         """
+        if _is_overseas_exchange(exchange):
+            return await self._get_overseas_ohlcv_range(stock_code, period, start_date, end_date, exchange)
         ed = end_date or self._market_clock.get_current_kst_time()
         sd = start_date or (datetime.strptime(ed, "%Y%m%d") - timedelta(days=240)).strftime("%Y%m%d")
         raw = await self._broker_api_wrapper.inquire_daily_itemchartprice(stock_code, start_date=sd, end_date=ed, fid_period_div_code=period.upper(), exchange=exchange)
@@ -549,6 +561,9 @@ class MarketDataService:
         있으면 API를 호출하지 않고 DB에서 바로 반환한다. ohlcv_update_task가 장 마감 후
         전 종목을 갱신하므로 장중에는 API 호출 없이 DB 조회만으로 충분하다.
         """
+        if _is_overseas_exchange(exchange):
+            return await self._get_overseas_recent_daily_ohlcv(code, limit, end_date, exchange)
+
         t_start = self.pm.start_timer()
         current_ed_dt = datetime.strptime(end_date, "%Y%m%d") if end_date else self._market_clock.get_current_kst_time()
 
@@ -601,6 +616,38 @@ class MarketDataService:
             
         self.pm.log_timer(f"MarketData.get_recent_daily_ohlcv({code})", t_start)
         return all_rows
+
+    # ── 해외주식 일봉 어댑터 (Phase 1-1) ──────────────────────────────────────
+    async def _get_overseas_ohlcv_range(self, symbol: str, period: str, start_date: Optional[str],
+                                        end_date: Optional[str], exchange) -> ResCommonResponse:
+        """해외 일봉을 get_overseas_dailyprice 로 조회해 표준 OHLCV 스키마로 정규화한다.
+
+        KIS HHDFS76240000 응답은 full json 의 output2 배열에 일봉 행을 담는다.
+        국내 StockRepository 캐시/today 병합 경로는 타지 않는다.
+        """
+        ed = end_date or self._market_clock.to_yyyymmdd(self._market_clock.get_current_kst_time())
+        raw = await self._broker_api_wrapper.get_overseas_dailyprice(
+            symbol, exchange=exchange, start_date=start_date or "", end_date=ed, period=(period or "D").upper(),
+        )
+        if not raw or raw.rt_cd != ErrorCode.SUCCESS.value:
+            return raw
+        payload = raw.data
+        if isinstance(payload, dict):
+            items = payload.get("output2") or payload.get("output1") or payload.get("output") or []
+        elif isinstance(payload, list):
+            items = payload
+        else:
+            items = []
+        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=self._normalize_ohlcv_rows(items))
+
+    async def _get_overseas_recent_daily_ohlcv(self, symbol: str, limit: int,
+                                               end_date: Optional[str], exchange) -> List[Dict[str, Any]]:
+        """해외 최근 limit개 일봉을 반환(오름차순). 실패 시 빈 리스트."""
+        resp = await self._get_overseas_ohlcv_range(symbol, "D", None, end_date, exchange)
+        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+            return []
+        rows = resp.data or []
+        return rows[-limit:] if limit and len(rows) > limit else rows
 
     async def get_intraday_minutes_today(self, *, stock_code: str, input_hour_1: str) -> ResCommonResponse:
         """

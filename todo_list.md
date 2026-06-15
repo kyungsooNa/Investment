@@ -27,6 +27,7 @@
 - 시스템 트레이더 관점 리뷰(R-1~R-6, 2026-06-08): 생존편향·전략 상관/regime 집중·총위험 미집계·갭 체결 등 백테스트 신뢰도/실전 리스크 신규 발견. R-2/R-3/R-4/R-5는 핵심 코드·리포트 대응 완료, R-1 PIT 배선과 실전 성과 데이터 축적은 계속 진행. (하단 "시스템 트레이더 관점 리뷰" 섹션)
 - StrategyScheduler 코드 리뷰(S-1~S-10, 2026-06-12): `stop()` 강제청산 데드 패스, 매도 병렬 에러 처리 비대칭, 이력 트림 vs 복구 충돌 등 버그 + 수명/구조 개선. S-1/S-2/S-4~S-8 수정 완료, S-3/S-10은 의도된 설계 확인 후 주석 명시로 종결. S-9는 부분 진행(prune 통합/trace_id 영속화/import 정리) — getter 부수효과는 의도된 계약으로 판명되어 철회, god class 분리는 P2 2-4 parity 판정 후 재평가로 보류. (하단 "StrategyScheduler 코드 리뷰" 섹션)
 - 해외주식 Mode 후속 제외: 자동전략 해외 지원, 해외 WebSocket, 통합 해외 reconciliation은 현재 착수 범위가 아니다.
+- 해외주식 전략 적용 검토(2026-06-15): 일봉 셋업형 전략은 PoC 적용 가능(해외 일봉 API 존재), 장중/실시간 전략은 분봉·랭킹·웹소켓 부재로 불가. 어댑터(broker_wrapper exchange 분기)·해외 유니버스 선행 필요. (하단 "해외주식 전략 적용 검토" 섹션)
 
 ---
 
@@ -465,6 +466,79 @@
 - `scheduler/strategy_scheduler.py`
 - `tests/unit_test/core/test_scan_rejection_counter.py`
 - `tests/unit_test/scheduler/test_strategy_scheduler_scan_metrics.py`
+
+---
+
+## 해외주식 전략 적용 검토 (2026-06-15 추가, 코드 기반)
+
+기존 매매 전략을 해외주식(US)에 적용 가능한지 코드 조사. 결론: **일봉 셋업형 전략은 PoC 적용 가능, 장중/실시간 전략은 현재 인프라로 불가.** 적용하려면 어댑터 + 해외 유니버스 선행 작업 필요.
+
+현재 해외 인프라(이미 존재):
+
+- `brokers/korea_investment/korea_invest_overseas_stock_api.py`: `get_overseas_price`(현재가, HHDFS00000300), `get_overseas_dailyprice`(일/주/월봉, HHDFS76240000), `get_overseas_balance`, `inquire_overseas_ccnl`/`inquire_overseas_unfilled`, `place_overseas_limit_order`(지정가만)/`cancel_overseas_order`.
+- `common/overseas_types.py`: `OverseasExchange`(NASD/NYSE/AMEX), `OverseasPriceSummary`, `OverseasOrderRequest/Report`.
+- `market_mode="overseas_us"` 배선(`view/web/bootstrap/service_container.py`, `view/web/market_mode_utils.py`, 웹 라우트).
+- **현재 설계상 해외는 수동매매 전용**: `view/web/bootstrap/strategy_factory.py`가 `overseas_us` 모드에서 자동전략을 의도적으로 비활성화("해외주식 v1은 자동전략을 비활성화합니다").
+
+데이터/요구사항 격차:
+
+| 전략 요구 | 국내 | 해외 |
+| --- | --- | --- |
+| 현재가 | O | O (`get_overseas_price`) |
+| 일봉 OHLCV | O | O (`get_overseas_dailyprice` D/W/M) |
+| 분봉(intraday) | O | X (TR 없음) |
+| 랭킹 유니버스(거래량/등락률/시총) | O | X (없음) |
+| 실시간 웹소켓 스트림 | O | X (`PriceStreamService` 해외 미지원) |
+| 주문 | 시장가/지정가 | 지정가만 |
+| 응답 스키마 | `stck_prpr`(ResStockFullInfo) | `OverseasPriceSummary`(다른 필드) |
+| broker_wrapper 라우팅 | `exchange=KRX` 경로 | `get_price_summary`/`get_current_price` 해외 미라우팅 |
+
+구조적 차단 요소 3가지:
+
+1. **유니버스 부재** — 모든 전략은 후보 종목을 ranking/universe 서비스(`OneilUniverseService`, `vbo_volatility_universe_service` 등)에서 받는다. 해외용 유니버스 소스(랭킹·유동성) 없음 → 정적 리스트 공급 필요.
+2. **데이터 어댑터 부재** — 전략 코드가 `broker.get_price_summary(code)`/`get_current_price(code)`(KRX 경로, `stck_prpr` 스키마)를 직접 호출. 해외는 별도 API 클래스 + 다른 스키마라, 전략 무수정 적용하려면 `broker_api_wrapper`에서 exchange 분기 라우팅 + 스키마 정규화 필요.
+3. **분봉·웹소켓 부재** — 3분 스캐닝/실시간 유동성 필터(`strategy_executor._lookup_liquidity`) 동작 불가.
+
+적용 가능성 분류:
+
+- **장중·실시간 전략(Momentum, VBO live, 3분 오닐 Squeeze/PocketPivot/HTF)**: 분봉·랭킹·웹소켓 모두 부재로 **현재 불가**. KIS 해외 분봉/실시간 TR 추가 구현 전까지 보류.
+- **일봉 셋업 전략(Oneil 오버나잇, Larry Williams 채널/VBO, RSI2)**: 로직이 일봉 OHLCV만 요구하고 해외 일봉 API가 이미 있어 **PoC 적용 가능성 높음**.
+
+권장 단계(착수 시):
+
+- [ ] 일봉 기반 전략 1종(예: Larry Williams VBO) 해외 PoC — 해외 유니버스를 정적 CSV(S&P500/나스닥100 등)로 공급 → `get_overseas_dailyprice`로 EOD(장마감 후) 셋업 평가 → `place_overseas_limit_order` 진입.
+- [ ] 어댑터 계층 — `broker_api_wrapper`의 `get_current_price`/`get_price_summary`에 exchange 분기 추가, 해외 심볼이면 해외 API로 위임 + `OverseasPriceSummary` → 공통 스키마 매핑. (이게 되면 일봉형 전략 거의 무수정 재사용)
+- [ ] 분봉/랭킹/웹소켓 의존 전략은 해당 해외 TR 구현 이후로 후순위.
+
+### 확정 계획 (2026-06-15): VBO 해외 PoC / 어댑터 통합
+
+사용자 결정 — 첫 대상 전략 = `LarryWilliamsVBOStrategy`(일봉 셋업, universe optional), 접근 = 어댑터 통합(`stock_query_service`/`broker_api_wrapper`에 exchange 분기 추가해 기존 전략 거의 무수정 재사용).
+
+VBO 결합 지점(3개): `get_recent_daily_ohlcv(code, limit=21/2)`, `get_current_price(code)`, `_universe`(optional — 없으면 시장국면 게이트만 skip).
+
+제약: **해외 주문 TR은 실전(TTTS6036U 등)만 존재, 모의 주문 TR 없음** → 백테스트/dry-run 검증 전 실주문 배선 금지.
+
+- [ ] **Phase 1 데이터 어댑터 (시작점)**
+  - [ ] 1-1. `get_recent_daily_ohlcv`/`get_ohlcv`/`get_ohlcv_range` exchange 분기 → 해외면 `get_overseas_dailyprice` 위임 + 필드 정규화(date/open/high/low/close/volume, 과거→미래 정렬, 국내와 동일 키). 검증: 해외 mock 응답이 국내와 동일 스키마로 반환되는 단위 테스트.
+  - [ ] 1-2. `get_current_price`/`get_price_summary` 해외 분기 + `OverseasPriceSummary` → 공통 스키마(`stck_prpr` 등) 매핑. 검증: 해외 심볼 호출 시 매핑 고정.
+  - [ ] 1-3. 후보 심볼 소스 — `OverseasStockCodeRepository`(전체 심볼 DB) + 일봉 거래대금 필터로 watchlist 산출. 검증: 거래대금 하위 제거 리스트 반환.
+- [ ] **Phase 2 해외 일봉 백테스트** — `get_overseas_dailyprice` 과거 데이터로 VBO 진입/청산 재현. (실주문 전 필수 게이트)
+- [ ] **Phase 3 배선 + dry-run** — `strategy_factory`/`service_container` overseas_us 분기 완화(VBO 1종 등록), EOD 스케줄, `market_clock` 미국장 시간대(서머타임) 확장, dry-run shadow 저널(실주문 X).
+- [ ] **Phase 4 주문/사이징** — `place_overseas_limit_order`(지정가) 연결, USD position sizing/환율, 일봉 기반 exit.
+- [ ] **Phase 5 안전/canary** — `get_overseas_balance`/`ccnl` reconcile, risk gate/kill switch/canary USD 확장, 실전 소액 canary.
+
+주요 파일:
+
+- `brokers/korea_investment/korea_invest_overseas_stock_api.py`
+- `common/overseas_types.py`
+- `brokers/broker_api_wrapper.py`
+- `services/stock_query_service.py`
+- `services/market_data_service.py`
+- `repositories/overseas_stock_code_repository.py`
+- `strategies/larry_williams_vbo_strategy.py`
+- `view/web/bootstrap/strategy_factory.py`
+- `view/web/bootstrap/service_container.py`
+- `config/tr_ids_config.yaml` (overseas_stock 섹션 — 현재 price/dailyprice/order/balance만)
 
 ---
 

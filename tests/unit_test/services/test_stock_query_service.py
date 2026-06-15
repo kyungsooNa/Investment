@@ -1587,7 +1587,8 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         result = await self.stockQueryService.get_recent_daily_ohlcv("005930", limit=10)
 
         # Assert
-        self.mock_market_data_service.get_recent_daily_ohlcv.assert_awaited_once_with("005930", limit=10, end_date=None)
+        from common.types import Exchange
+        self.mock_market_data_service.get_recent_daily_ohlcv.assert_awaited_once_with("005930", limit=10, end_date=None, exchange=Exchange.KRX)
         self.assertEqual(result.rt_cd, ErrorCode.SUCCESS.value)
         self.assertEqual(result.data, rows)
 
