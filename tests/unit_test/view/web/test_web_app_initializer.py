@@ -22,6 +22,7 @@ def mock_deps():
         ("vtm", patch("view.web.web_app_initializer.VirtualTradeRepository", autospec=True)),
         ("backtest_journal_repo", patch("view.web.web_app_initializer.BacktestJournalRepository", autospec=True)),
         ("scm", patch("view.web.web_app_initializer.StockCodeRepository", autospec=True)),
+        ("oscm", patch("view.web.web_app_initializer.OverseasStockCodeRepository", autospec=True)),
         ("sched", patch("view.web.bootstrap.strategy_factory.StrategyScheduler", autospec=True)),
         ("rdm", patch("view.web.web_app_initializer.ProgramTradingStreamService", autospec=True)),
         ("ind", patch("view.web.bootstrap.service_container.IndicatorService", autospec=True)),

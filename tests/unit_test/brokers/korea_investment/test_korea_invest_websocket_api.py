@@ -904,6 +904,12 @@ def test_parse_signing_notice_fill_data(websocket_api_instance):
     assert parsed["체결단가"] == "70000"
     assert parsed["통보유형"] == "체결"
     assert parsed["tr_id"] == "H0STCNI0"
+    assert parsed["ODER_NO"] == "A0001"
+    assert parsed["STCK_SHRN_ISCD"] == "005930"
+    assert parsed["SELN_BYOV_CLS"] == "02"
+    assert parsed["CNTG_QTY"] == "4"
+    assert parsed["CNTG_UNPR"] == "70000"
+    assert parsed["STCK_CNTG_HOUR"] == "101500"
 
 
 def test_parse_signing_notice_acceptance_data(websocket_api_instance):
@@ -920,7 +926,34 @@ def test_parse_signing_notice_acceptance_data(websocket_api_instance):
     assert parsed["주문수량"] == "10"
     assert parsed["체결여부"] == "1"
     assert parsed["CNTG_YN"] == "1"
+    assert parsed["ODER_NO"] == "A0001"
+    assert parsed["ODER_QTY"] == "10"
+    assert parsed["ORD_UNPR"] == "70000"
     assert parsed["통보유형"] == "접수"
+
+
+def test_parse_signing_notice_short_fill_payload_with_required_fields_is_not_warning(websocket_api_instance):
+    api = websocket_api_instance
+    values = [
+        "test-htsid", "12345678", "A0001", "", "02", "00", "00", "00",
+        "005930", "5", "5660", "151046", "N", "2", "Y", "001",
+        "353", "계좌명", "0", "KRX", "Y", "", ""
+    ]
+
+    parsed = KoreaInvestWebSocketAPI._parse_signing_notice(api, "^".join(values), "H0STCNI9")
+
+    assert parsed["parse_warning"] == "short_payload"
+    assert parsed["field_count"] == 23
+    assert parsed["ODER_NO"] == "A0001"
+    assert parsed["STCK_SHRN_ISCD"] == "005930"
+    assert parsed["SELN_BYOV_CLS"] == "02"
+    assert parsed["CNTG_QTY"] == "5"
+    assert parsed["CNTG_UNPR"] == "5660"
+    assert parsed["ODER_QTY"] == "353"
+    assert parsed["STCK_CNTG_HOUR"] == "151046"
+    assert parsed["통보유형"] == "체결"
+    api._logger.warning.assert_not_called()
+    api._logger.debug.assert_called_once()
 
 
 def test_parse_signing_notice_short_payload_is_observable(websocket_api_instance):

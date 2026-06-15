@@ -520,6 +520,26 @@ async def test_persist_records_buy_via_virtual_trade(broker, fsm, reporter, fixe
 # ── resolve_submitted_order + mark_* ─────────────────────────────────────
 
 @pytest.mark.asyncio
+async def test_persist_records_average_fill_price_when_available(broker, fsm, reporter, fixed_now):
+    vts = AsyncMock()
+    svc = _make_service(broker=broker, fsm=fsm, reporter=reporter, fixed_now=fixed_now, virtual_trade_service=vts)
+    ctx = fsm.register(_make_context(source="strategy:momentum"))
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED)
+    filled = fsm.transition(
+        ctx.order_key,
+        OrderState.FILLED,
+        filled_qty=10,
+        average_fill_price=70525.5,
+    )
+
+    report = OrderExecutionReport(broker_order_no="X", stock_code="005930", side=OrderSide.BUY, fill_price=70600)
+    await svc._persist_virtual_trade_for_terminal_report(filled, report)
+
+    args = vts.log_buy_async.await_args.args
+    assert args[2] == 70525.5
+
+
+@pytest.mark.asyncio
 async def test_resolve_submitted_transitions_to_filled(broker, fsm, reporter, fixed_now):
     svc = _make_service(broker=broker, fsm=fsm, reporter=reporter, fixed_now=fixed_now)
     fsm.register(_make_context())

@@ -495,14 +495,53 @@ class KoreaInvestWebSocketAPI:
         parsed["CNTG_YN"] = parsed.get("체결여부", "")
         parsed["ACPT_YN"] = parsed.get("접수여부", "")
         parsed["RFUS_YN"] = parsed.get("거부여부", "")
+        def _field(index: int) -> str:
+            return values[index] if index < len(values) else ""
+
+        parsed.update({
+            "CUST_ID": _field(0),
+            "ACNT_NO": _field(1),
+            "ODER_NO": _field(2),
+            "ORGN_ODER_NO": _field(3),
+            "SELN_BYOV_CLS": _field(4),
+            "STCK_SHRN_ISCD": _field(8),
+            "STCK_CNTG_HOUR": _field(11),
+            "RFUS_YN": _field(12),
+            "CNTG_YN": _field(13),
+            "ACPT_YN": _field(14),
+        })
+        if is_fill_notice:
+            parsed["CNTG_QTY"] = _field(9)
+            parsed["CNTG_UNPR"] = _field(10)
+            parsed["ODER_QTY"] = _field(16)
+            parsed["ORD_UNPR"] = _field(25)
+        else:
+            parsed["ODER_QTY"] = _field(9)
+            parsed["ORD_UNPR"] = _field(10)
+            parsed["CNTG_QTY"] = ""
+            parsed["CNTG_UNPR"] = _field(25)
+
         if len(values) < len(keys):
             parsed["parse_warning"] = "short_payload"
             parsed["field_count"] = len(values)
             parsed["raw"] = data_str
-            self._logger.warning(
-                f"체결통보 payload가 공식 필드 수보다 짧습니다: TR_ID={tr_id}, "
-                f"field_count={len(values)}, expected={len(keys)}"
-            )
+            required_indices = (2, 4, 8, 11, 12, 13, 14)
+            required_indices += (9, 10) if is_fill_notice else (9,)
+            missing_required = [
+                index for index in required_indices
+                if index >= len(values) or values[index] in (None, "")
+            ]
+            if missing_required:
+                parsed["missing_required_indices"] = missing_required
+                self._logger.warning(
+                    f"체결통보 payload가 공식 필드 수보다 짧고 필수 필드가 비었습니다: TR_ID={tr_id}, "
+                    f"field_count={len(values)}, expected={len(keys)}, missing={missing_required}"
+                )
+            else:
+                self._logger.debug(
+                    f"체결통보 payload optional fields omitted: TR_ID={tr_id}, "
+                    f"field_count={len(values)}, expected={len(keys)}"
+                )
         if parsed["RFUS_YN"].upper() == "Y":
             parsed["통보유형"] = "거부"
         elif parsed["CNTG_YN"] == "2":

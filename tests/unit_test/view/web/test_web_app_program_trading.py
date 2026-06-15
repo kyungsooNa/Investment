@@ -13,6 +13,7 @@ def mock_ctx():
     with patch('view.web.web_app_initializer.ProgramTradingStreamService') as MockRDM, \
          patch('view.web.web_app_initializer.StockRepository'), \
          patch('view.web.web_app_initializer.StockCodeRepository'), \
+         patch('view.web.web_app_initializer.OverseasStockCodeRepository'), \
          patch('view.web.web_app_initializer.VirtualTradeService'), \
          patch('view.web.web_app_initializer.Logger'):
         ctx = WebAppContext(app_context)
