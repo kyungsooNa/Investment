@@ -1203,13 +1203,14 @@ class StockQueryService:
             self.logger.error(f"{stock_code} OHLCV+지표 통합 조회 중 오류: {e}", exc_info=True)
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
 
-    async def get_recent_daily_ohlcv(self, stock_code: str, limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE, end_date: Optional[str] = None) -> ResCommonResponse:
+    async def get_recent_daily_ohlcv(self, stock_code: str, limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE, end_date: Optional[str] = None, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         타겟 종목의 최근 일봉을 limit개 반환.
         TradingService.get_recent_daily_ohlcv를 래핑하여 ResCommonResponse 형태로 통일.
+        exchange 가 해외(NASD/NYSE/AMEX)면 해외 일봉 API로 위임된다.
         """
         try:
-            rows = await self.market_data_service.get_recent_daily_ohlcv(stock_code, limit=limit, end_date=end_date)
+            rows = await self.market_data_service.get_recent_daily_ohlcv(stock_code, limit=limit, end_date=end_date, exchange=exchange)
             if not rows:
                 return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="데이터 없음", data=[])
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data=rows)
