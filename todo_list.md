@@ -519,8 +519,8 @@ VBO 결합 지점(3개): `get_recent_daily_ohlcv(code, limit=21/2)`, `get_curren
 제약: **해외 주문 TR은 실전(TTTS6036U 등)만 존재, 모의 주문 TR 없음** → 백테스트/dry-run 검증 전 실주문 배선 금지.
 
 - [ ] **Phase 1 데이터 어댑터 (시작점)**
-  - [ ] 1-1. `get_recent_daily_ohlcv`/`get_ohlcv`/`get_ohlcv_range` exchange 분기 → 해외면 `get_overseas_dailyprice` 위임 + 필드 정규화(date/open/high/low/close/volume, 과거→미래 정렬, 국내와 동일 키). 검증: 해외 mock 응답이 국내와 동일 스키마로 반환되는 단위 테스트.
-  - [ ] 1-2. `get_current_price`/`get_price_summary` 해외 분기 + `OverseasPriceSummary` → 공통 스키마(`stck_prpr` 등) 매핑. 검증: 해외 심볼 호출 시 매핑 고정.
+  - [x] 1-1. `get_recent_daily_ohlcv`/`get_ohlcv_range` exchange 분기 → 해외면 `get_overseas_dailyprice` 위임 + 필드 정규화(date/open/high/low/close/volume, `output2` 파싱, 국내와 동일 키). `_normalize_ohlcv_rows`에 해외 키(xymd/clos/tvol) 추가(도메스틱 무영향), DB-first/today 병합 우회. (PR #549)
+  - [x] 1-2. `get_current_price`/`get_price_summary` 해외 분기 + `OverseasPriceSummary` → 공통 스키마 매핑(`get_current_price`→`stck_prpr`/`price`/`output.stck_prpr`/`acml_vol`, `get_price_summary`→`current`/`change_rate`/`volume`). 국내 캐시/스냅샷 경로 우회. 해외 현재가 API는 OHLC 미제공이라 요약은 best-effort.
   - [ ] 1-3. 후보 심볼 소스 — `OverseasStockCodeRepository`(전체 심볼 DB) + 일봉 거래대금 필터로 watchlist 산출. 검증: 거래대금 하위 제거 리스트 반환.
 - [ ] **Phase 2 해외 일봉 백테스트** — `get_overseas_dailyprice` 과거 데이터로 VBO 진입/청산 재현. (실주문 전 필수 게이트)
 - [ ] **Phase 3 배선 + dry-run** — `strategy_factory`/`service_container` overseas_us 분기 완화(VBO 1종 등록), EOD 스케줄, `market_clock` 미국장 시간대(서머타임) 확장, dry-run shadow 저널(실주문 X).

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from services.market_data_service import MarketDataService
 from common.types import ErrorCode, ResCommonResponse
-from common.overseas_types import OverseasExchange
+from common.overseas_types import OverseasExchange, OverseasPriceSummary
 
 
 @pytest.fixture
@@ -20,6 +20,9 @@ def mds():
     broker = MagicMock()
     broker.inquire_daily_itemchartprice = AsyncMock()
     broker.get_overseas_dailyprice = AsyncMock()
+    broker.get_overseas_price = AsyncMock()
+    broker.get_current_price = AsyncMock()
+    broker.get_price_summary = AsyncMock()
 
     tm = MagicMock()
     tm.get_current_kst_time.return_value = datetime(2026, 5, 13, 10, 0, 0)
@@ -108,6 +111,66 @@ async def test_get_ohlcv_range_overseas_normalizes_output2(mds):
     assert resp.rt_cd == ErrorCode.SUCCESS.value
     assert [r["date"] for r in resp.data] == ["20260511", "20260512", "20260513"]
     mds.broker.inquire_daily_itemchartprice.assert_not_called()
+
+
+def _price_resp(price=150.5, vol=1000, chg=1.2):
+    return ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data=OverseasPriceSummary(
+            symbol="AAPL", exchange=OverseasExchange.NASD,
+            price=price, change_rate=chg, volume=vol,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_overseas_routes_and_maps(mds):
+    mds.broker.get_overseas_price.return_value = _price_resp()
+
+    resp = await mds.service.get_current_price("AAPL", exchange=OverseasExchange.NASD)
+
+    # 국내 현재가 경로/캐시는 타지 않는다
+    mds.broker.get_current_price.assert_not_called()
+    mds.broker.get_overseas_price.assert_awaited_once()
+    # 전략이 읽는 키(stck_prpr / price / output.stck_prpr) 모두 매핑
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert resp.data["stck_prpr"] == 150.5
+    assert resp.data["price"] == 150.5
+    assert resp.data["acml_vol"] == 1000
+    assert resp.data["output"]["stck_prpr"] == 150.5
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_overseas_accepts_string_exchange(mds):
+    mds.broker.get_overseas_price.return_value = _price_resp(price=42.0)
+
+    resp = await mds.service.get_current_price("MSFT", exchange="NYSE")
+
+    mds.broker.get_overseas_price.assert_awaited_once()
+    assert resp.data["output"]["stck_prpr"] == 42.0
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_overseas_failure_propagates(mds):
+    fail = ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="fail", data=None)
+    mds.broker.get_overseas_price.return_value = fail
+
+    resp = await mds.service.get_current_price("AAPL", exchange=OverseasExchange.AMEX)
+
+    assert resp.rt_cd == ErrorCode.API_ERROR.value
+
+
+@pytest.mark.asyncio
+async def test_get_price_summary_overseas_maps_current(mds):
+    mds.broker.get_overseas_price.return_value = _price_resp(price=200.0, vol=500, chg=-0.8)
+
+    resp = await mds.service.get_price_summary("AAPL", exchange=OverseasExchange.NASD)
+
+    mds.broker.get_price_summary.assert_not_called()
+    assert resp.data["current"] == 200.0
+    assert resp.data["change_rate"] == -0.8
+    assert resp.data["volume"] == 500
 
 
 @pytest.mark.asyncio

@@ -95,6 +95,8 @@ class MarketDataService:
 
     async def get_price_summary(self, stock_code, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """주어진 종목코드에 대해 시가/현재가/등락률(%) 요약 정보를 반환합니다 (KoreaInvestApiQuotations 위임)."""
+        if _is_overseas_exchange(exchange):
+            return await self._get_overseas_price_summary(stock_code, exchange)
         self._logger.info(f"MarketDataService - {stock_code} 종목 요약 정보 조회 요청")
         return await self._broker_api_wrapper.get_price_summary(stock_code, exchange=exchange)
 
@@ -104,6 +106,8 @@ class MarketDataService:
         return await self._broker_api_wrapper.get_stock_info_by_code(stock_code, exchange=exchange)
 
     async def get_current_price(self, stock_code, exchange: Exchange = Exchange.KRX, count_stats: bool = True, caller: str = "unknown", force_fresh: bool = False) -> ResCommonResponse:
+        if _is_overseas_exchange(exchange):
+            return await self._get_overseas_current_price(stock_code, exchange)
         if not force_fresh:
             # 1. StockRepository 단기 캐시 확인 (웹소켓 틱 갱신 또는 최근 API 조회 결과)
             if self._stock_repo:
@@ -616,6 +620,41 @@ class MarketDataService:
             
         self.pm.log_timer(f"MarketData.get_recent_daily_ohlcv({code})", t_start)
         return all_rows
+
+    # ── 해외주식 현재가 어댑터 (Phase 1-2) ────────────────────────────────────
+    @staticmethod
+    def _overseas_summary_values(summary) -> tuple:
+        """OverseasPriceSummary(또는 dict)에서 (price, volume, change_rate) 추출."""
+        def _g(attr):
+            return summary.get(attr) if isinstance(summary, dict) else getattr(summary, attr, None)
+        price = float(_g("price") or 0)
+        volume = int(_g("volume") or 0)
+        change_rate = float(_g("change_rate") or 0)
+        return price, volume, change_rate
+
+    async def _get_overseas_current_price(self, symbol: str, exchange) -> ResCommonResponse:
+        """해외 현재가를 get_overseas_price 로 조회해 국내 스키마(stck_prpr 등)로 매핑한다.
+
+        국내 StockRepository 캐시/DB 스냅샷 경로는 타지 않는다(해외 미지원).
+        전략 호환을 위해 output 중첩 + 평면 키를 모두 채운다.
+        """
+        resp = await self._broker_api_wrapper.get_overseas_price(symbol, exchange=exchange)
+        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+            return resp
+        price, volume, change_rate = self._overseas_summary_values(resp.data)
+        output = {"stck_prpr": price, "price": price, "acml_vol": volume, "prdy_ctrt": change_rate}
+        data = {"output": output, "stck_prpr": price, "price": price, "acml_vol": volume, "prdy_ctrt": change_rate}
+        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK(해외)", data=data)
+
+    async def _get_overseas_price_summary(self, symbol: str, exchange) -> ResCommonResponse:
+        """해외 현재가 요약(current/change_rate/volume) 매핑. 해외 현재가 API는 OHLC 미제공."""
+        resp = await self._broker_api_wrapper.get_overseas_price(symbol, exchange=exchange)
+        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+            return resp
+        price, volume, change_rate = self._overseas_summary_values(resp.data)
+        data = {"symbol": str(symbol).upper(), "current": price, "price": price,
+                "change_rate": change_rate, "prdy_ctrt": change_rate, "volume": volume}
+        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK(해외)", data=data)
 
     # ── 해외주식 일봉 어댑터 (Phase 1-1) ──────────────────────────────────────
     async def _get_overseas_ohlcv_range(self, symbol: str, period: str, start_date: Optional[str],
