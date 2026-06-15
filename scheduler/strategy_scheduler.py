@@ -1058,7 +1058,7 @@ class StrategyScheduler:
                    f"주문: {log_price:,}원 × {signal.qty}주\n"
                    f"사유: {signal.reason}")
             if api_success and not self._dry_run:
-                msg = f"{msg}\n상태: 주문 접수(API 성공, 체결은 별도 확인 필요)"
+                msg = f"{msg}\n상태: 주문 접수(API 성공, 체결 미확정 - 체결통보/조회로 별도 확인)"
             if not api_success:
                 title = f"[{signal.strategy_name}] {signal.name} {action_kr} 실패"
                 if order_error_msg:

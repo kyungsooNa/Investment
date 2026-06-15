@@ -630,6 +630,27 @@ def test_build_db_minute_persistence_status_splits_unsaved_and_no_tick_minutes(m
     assert item["no_tick_minutes"] == ["09:02"]
 
 
+def test_build_db_minute_persistence_status_caps_to_regular_session_and_includes_close_minute(manager):
+    clock = MarketClock(market_open_time="15:29", market_close_time="15:40")
+    manager.wire_alert_dependencies(market_clock=clock)
+
+    day = clock.market_timezone.localize(datetime(2026, 6, 15, 15, 30, 26))
+    with manager._get_connection() as conn:
+        conn.execute(
+            "INSERT INTO pt_history (code, trade_time, created_at) VALUES (?, ?, ?)",
+            ("005930", "153026", day.timestamp()),
+        )
+
+    status = manager.build_db_minute_persistence_status(["005930"], "20260615")
+    item = status["codes"]["005930"]
+
+    assert status["window"]["end"] == "2026-06-15 15:30:00"
+    assert status["expected_minute_count"] == 2
+    assert item["saved_minute_count"] == 1
+    assert item["missing_minutes"] == ["15:29"]
+    assert "15:31" not in item["missing_minutes"]
+
+
 @pytest.mark.asyncio
 async def test_send_db_persistence_report_sends_summary(manager):
     """장마감 DB 저장 점검 결과를 텔레그램으로 전송한다."""

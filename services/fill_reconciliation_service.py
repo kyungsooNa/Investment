@@ -199,11 +199,11 @@ class FillReconciliationService:
 
         strategy_name, is_strategy_source = self._strategy_name_from_source(context.source)
         record_qty = context.filled_qty
-        record_price = report.fill_price or context.price
-        if self._kill_switch and report.fill_price and context.price > 0:
+        record_price = context.average_fill_price or report.fill_price or context.price
+        if self._kill_switch and record_price and context.price > 0:
             await self._kill_switch.record_fill_event(
                 context.price,
-                report.fill_price,
+                record_price,
                 context.stock_code,
                 record_qty,
                 side=context.side.value,

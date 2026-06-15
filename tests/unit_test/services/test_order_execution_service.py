@@ -260,7 +260,7 @@ async def test_handle_sell_stock_place_order_delegation_failure(handler, mock_br
     assert "005930" in logged_msg
 
 @pytest.mark.asyncio
-async def test_handle_place_buy_order_success(handler, mock_broker_api_wrapper, mock_logger):
+async def test_handle_place_buy_order_success(handler, mock_broker_api_wrapper, mock_logger, mock_notification_service):
     """handle_place_buy_order 매수 주문 실행 성공 테스트."""
     mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
         rt_cd="0",
@@ -273,6 +273,9 @@ async def test_handle_place_buy_order_success(handler, mock_broker_api_wrapper, 
         "005930", 70000, 10, is_buy=True, exchange=Exchange.KRX
     )
     mock_logger.info.assert_called()
+    emit_args = mock_notification_service.emit.await_args.args
+    assert emit_args[2] == "매수 주문 접수"
+    assert "체결 미확정" in emit_args[3]
     assert result.rt_cd == "0"
     assert result.msg1 == "주문 성공"
 
@@ -291,7 +294,7 @@ async def test_handle_place_buy_order_trading_service_failure(handler, mock_brok
     assert result.msg1 == "잔고 부족"
 
 @pytest.mark.asyncio
-async def test_handle_place_sell_order_success(handler, mock_broker_api_wrapper, mock_logger):
+async def test_handle_place_sell_order_success(handler, mock_broker_api_wrapper, mock_logger, mock_notification_service):
     """handle_place_sell_order 매도 주문 실행 성공 테스트."""
     mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
         rt_cd="0",
@@ -304,6 +307,9 @@ async def test_handle_place_sell_order_success(handler, mock_broker_api_wrapper,
         "005930", 60000, 5, is_buy=False, exchange=Exchange.KRX
     )
     mock_logger.info.assert_called()
+    emit_args = mock_notification_service.emit.await_args.args
+    assert emit_args[2] == "매도 주문 접수"
+    assert "체결 미확정" in emit_args[3]
     assert result.rt_cd == "0"
     assert result.msg1 == "매도 성공"
 
@@ -1322,7 +1328,7 @@ async def test_partial_fill_then_cancel_persists_confirmed_partial_qty(mock_brok
 
     assert canceled.state == OrderState.CANCELED
     assert canceled.virtual_recorded_qty == 4
-    virtual_trade_service.log_buy_async.assert_awaited_once_with("수동매매", "005930", 70200, 4, volatility_20d_annualized=None)
+    virtual_trade_service.log_buy_async.assert_awaited_once_with("수동매매", "005930", 70100.0, 4, volatility_20d_annualized=None)
 
 
 def _seed_order_context(

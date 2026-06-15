@@ -2890,7 +2890,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[0], NotificationCategory.STRATEGY)
         self.assertEqual(args[1], NotificationLevel.CRITICAL)
         self.assertTrue("주문 접수" in args[2])
-        self.assertTrue("체결은 별도 확인 필요" in args[3])
+        self.assertTrue("체결 미확정" in args[3])
 
     async def test_execute_sell_signal_notification_includes_estimated_return_rate(self):
         """실전 매도 알림은 체결 확정 전에도 보유 매수가 기준 수익률을 포함한다."""

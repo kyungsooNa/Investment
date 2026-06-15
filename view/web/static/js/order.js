@@ -92,7 +92,7 @@ async function placeOrder(side) {
         const json = await res.json();
 
         if (json.rt_cd === "0") {
-            resDiv.innerHTML = `<p class="success">주문 접수! 체결은 별도 확인 필요 (주문번호: ${json.data.ord_no})</p>`;
+            resDiv.innerHTML = `<p class="success">주문 접수! 체결 미확정 - 체결통보/조회로 별도 확인 (주문번호: ${json.data.ord_no})</p>`;
             if (typeof invalidateVirtualChartCache === 'function') invalidateVirtualChartCache();
         } else {
             resDiv.innerHTML = `<p class="error">주문 실패: ${json.msg1}</p>`;

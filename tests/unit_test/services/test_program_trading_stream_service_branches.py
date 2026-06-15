@@ -188,7 +188,7 @@ def test_build_trading_window_defaults_to_today_for_short_date(svc):
     start_dt, end_dt, minutes, tz = svc._build_trading_window("abc")
     assert tz is None
     assert minutes[0] == "09:00"
-    assert minutes[-1] == "15:40"
+    assert minutes[-1] == "15:30"
 
 
 def test_minute_from_trade_time_invalid(svc):
@@ -241,6 +241,8 @@ async def test_hourly_tick_alert_loop_swallows_generic_error(svc):
 
 @pytest.mark.asyncio
 async def test_after_market_db_check_loop_reports_once_per_date(svc):
+    import scheduler.after_market_loop
+
     svc._market_calendar_service = MagicMock()
     svc._market_clock = MagicMock()
     svc.send_db_persistence_report = AsyncMock(return_value=True)

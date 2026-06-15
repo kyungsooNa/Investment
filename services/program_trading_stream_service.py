@@ -27,6 +27,7 @@ class ProgramTradingStreamService:
     FLUSH_INTERVAL_SEC = 1.0
     FLUSH_BATCH_SIZE = 100
     HOURLY_TICK_ALERT_INTERVAL_SEC = 60 * 60
+    REGULAR_SESSION_CLOSE_TIME = "15:30"
 
     def __init__(self, logger=None):
         self.logger = logger if logger else logging.getLogger(__name__)
@@ -435,6 +436,9 @@ class ProgramTradingStreamService:
 
         open_time = getattr(self._market_clock, "market_open_time_str", "09:00")
         close_time = getattr(self._market_clock, "market_close_time_str", "15:40")
+        regular_close_time = self.REGULAR_SESSION_CLOSE_TIME
+        if close_time > regular_close_time:
+            close_time = regular_close_time
         open_hour, open_minute = map(int, open_time.split(":"))
         close_hour, close_minute = map(int, close_time.split(":"))
         start_dt = datetime(day.year, day.month, day.day, open_hour, open_minute)
@@ -479,7 +483,7 @@ class ProgramTradingStreamService:
         records = self._repo.get_history_records_for_persistence_by_code(
             codes,
             start_dt.timestamp(),
-            end_dt.timestamp(),
+            (end_dt + timedelta(seconds=59)).timestamp(),
         )
         expected_set = set(expected_minutes)
 
@@ -532,7 +536,7 @@ class ProgramTradingStreamService:
             f"<b>프로그램매매 DB 저장 점검 ({html.escape(str(status.get('date', '')))}일)</b>",
             f"구간: {html.escape(status['window']['start'])} ~ {html.escape(status['window']['end'])}",
             f"기대 분봉: {status['expected_minute_count']}분",
-            "기준: 체결시간 기준, 수신 분봉 대비 DB 저장 여부",
+            "기준: 체결시간 기준, 정규장 프로그램매매 수신 분봉 대비 DB 저장 여부",
             "",
         ]
         for code, item in status["codes"].items():

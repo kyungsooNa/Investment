@@ -517,7 +517,7 @@ class OrderExecutionService:
                     ))
                 if self._notification_service:
                     await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "매수 주문 접수",
-                                        f"{stock_code} {qty}주 @ {price}원 - 체결은 별도 확인 필요",
+                                        f"{stock_code} {qty}주 @ {price}원 주문 접수 - 체결 미확정, 체결통보/조회로 별도 확인",
                                         metadata={"code": stock_code, "qty": qty, "price": price, "trace_id": current_trace})
             else:
                 rt_cd = buy_order_result.rt_cd if buy_order_result else 'None'
@@ -580,7 +580,7 @@ class OrderExecutionService:
                     ))
                 if self._notification_service:
                     await self._notification_service.emit(NotificationCategory.API, NotificationLevel.INFO, "매도 주문 접수",
-                                        f"{stock_code} {qty}주 @ {price}원 - 체결은 별도 확인 필요",
+                                        f"{stock_code} {qty}주 @ {price}원 주문 접수 - 체결 미확정, 체결통보/조회로 별도 확인",
                                         metadata={"code": stock_code, "qty": qty, "price": price, "trace_id": current_trace})
             else:
                 rt_cd = sell_order_result.rt_cd if sell_order_result else 'None'
