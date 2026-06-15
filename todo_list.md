@@ -523,7 +523,10 @@ VBO 결합 지점(3개): `get_recent_daily_ohlcv(code, limit=21/2)`, `get_curren
   - [x] 1-2. `get_current_price`/`get_price_summary` 해외 분기 + `OverseasPriceSummary` → 공통 스키마 매핑(`get_current_price`→`stck_prpr`/`price`/`output.stck_prpr`/`acml_vol`, `get_price_summary`→`current`/`change_rate`/`volume`). 국내 캐시/스냅샷 경로 우회. 해외 현재가 API는 OHLC 미제공이라 요약은 best-effort.
   - [x] 1-3. 후보 심볼 소스 — `OverseasCandidateService`(신규): `OverseasStockCodeRepository`(전 심볼) + 일봉 거래대금 필터(close×volume 평균)로 watchlist 산출. 거래소 필터/min 거래대금/top_n/실패 제외/명시 symbols override. 일봉은 Phase 1-1 어댑터 경유(exchange 위임). 배선(VBO 주입)은 Phase 3.
 - [x] **Phase 2 해외 일봉 백테스트** — `OverseasDailyVBOBacktest`(신규): 고전적 Larry Williams 일봉 근사(target=당일시가+K×전일Range, 고≥target 진입, 저≤손절가 손절 / else 종가 청산). 해외 일봉은 Phase 1-1 어댑터(`get_ohlcv_range` exchange 위임) 경유. trades/요약(win_rate/avg/total net) + 비용(round_trip_cost_pct) 반영. ⚠️ VBO는 본래 장중 전략이라 일봉 근사임(분봉/실시간 부재). 실주문 전 신호 유효성 게이트.
-- [ ] **Phase 3 배선 + dry-run** — `strategy_factory`/`service_container` overseas_us 분기 완화(VBO 1종 등록), EOD 스케줄, `market_clock` 미국장 시간대(서머타임) 확장, dry-run shadow 저널(실주문 X).
+- [~] **Phase 3 배선 + dry-run** — 안전 우선으로 **주문 경로 없는 dry-run 파이프라인**부터 구현.
+  - [x] 3a. `MarketClock.for_us_equities()` — America/New_York 09:30~16:00(DST pytz 자동) 팩토리.
+  - [x] 3b. `OverseasVBODryRunService`(신규): 후보(1-3)→일봉(1-1)→VBO 일봉 진입규칙(2)→shadow 저널(`signal_source="overseas_dryrun"`). order_execution 미주입으로 실주문 구조적 차단. 라이브 VBO는 분봉/웹소켓 부재로 해외 재생 불가 → EOD 일봉 dry-run만.
+  - [ ] 3c. `strategy_factory`/`service_container` overseas_us 실제 등록 + EOD 스케줄 — 부팅/스케줄러 경로 변경이라 격리 리뷰 필요(별도 PR). dry-run 서비스를 after-market 태스크로 배선.
 - [ ] **Phase 4 주문/사이징** — `place_overseas_limit_order`(지정가) 연결, USD position sizing/환율, 일봉 기반 exit.
 - [ ] **Phase 5 안전/canary** — `get_overseas_balance`/`ccnl` reconcile, risk gate/kill switch/canary USD 확장, 실전 소액 canary.
 

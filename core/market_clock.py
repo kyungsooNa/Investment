@@ -32,6 +32,15 @@ class MarketClock:
             self.timezone_name = "Asia/Seoul"
             self.market_timezone = pytz.timezone(self.timezone_name)
 
+    @classmethod
+    def for_us_equities(cls, logger=None) -> "MarketClock":
+        """미국 정규장(America/New_York 09:30~16:00) 구성 MarketClock.
+
+        EST/EDT 서머타임 전환은 pytz 의 America/New_York 가 자동 처리한다.
+        """
+        return cls(market_open_time="09:30", market_close_time="16:00",
+                   timezone="America/New_York", logger=logger)
+
     def get_current_kst_time(self):
         """현재 한국 시간(KST)을 timezone-aware datetime 객체로 반환합니다."""
         return datetime.now(self.market_timezone)
