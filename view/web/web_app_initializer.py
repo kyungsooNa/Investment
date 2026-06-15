@@ -166,6 +166,10 @@ class WebAppContext:
         # P2 2-4: event-driven shadow 인프라 (default: 비활성, event_driven_shadow=False)
         self.strategy_event_router = None
         self.event_shadow_journal_service = None
+        # Phase 3c: 해외 VBO dry-run 파이프라인 (overseas_us 모드에서만 구성)
+        self.overseas_candidate_service = None
+        self.overseas_vbo_dryrun_service = None
+        self.overseas_dryrun_task = None
         self._last_missing_reason_log_ts: dict[tuple[str, str], float] = {}
         self._last_rest_price_refresh_ts: dict[str, float] = {}
         self._pending_rest_price_refresh_tasks: dict[str, asyncio.Task] = {}

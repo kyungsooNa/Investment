@@ -526,7 +526,8 @@ VBO 결합 지점(3개): `get_recent_daily_ohlcv(code, limit=21/2)`, `get_curren
 - [~] **Phase 3 배선 + dry-run** — 안전 우선으로 **주문 경로 없는 dry-run 파이프라인**부터 구현.
   - [x] 3a. `MarketClock.for_us_equities()` — America/New_York 09:30~16:00(DST pytz 자동) 팩토리.
   - [x] 3b. `OverseasVBODryRunService`(신규): 후보(1-3)→일봉(1-1)→VBO 일봉 진입규칙(2)→shadow 저널(`signal_source="overseas_dryrun"`). order_execution 미주입으로 실주문 구조적 차단. 라이브 VBO는 분봉/웹소켓 부재로 해외 재생 불가 → EOD 일봉 dry-run만.
-  - [ ] 3c. `strategy_factory`/`service_container` overseas_us 실제 등록 + EOD 스케줄 — 부팅/스케줄러 경로 변경이라 격리 리뷰 필요(별도 PR). dry-run 서비스를 after-market 태스크로 배선.
+  - [x] 3c. dry-run 배선 — `OverseasDryRunTask`(AfterMarketTask)로 service_container overseas_us 분기에서 구성(event_shadow_journal + candidate + dryrun service + task), scheduler_bootstrap `_register_overseas_tasks`로 등록. **사용자 결정(2026-06-16)**: 기존 한국장 after-market 스케줄러 재사용(KST 트리거) — 미국장 EOD 스케줄 인프라가 없어 한국장 마감을 일일 트리거로 재사용(일봉 기반이라 기능상 충분). 주문 경로 없음(실주문 불가). market_mode!=overseas_us 면 미등록(국내 회귀 0).
+  - [ ] 3d(후속): 미국장 마감(ET) 기준 정밀 트리거가 필요하면 US-aware 스케줄 경로 신설 검토(현재는 KST 트리거로 충분 판단).
 - [ ] **Phase 4 주문/사이징** — `place_overseas_limit_order`(지정가) 연결, USD position sizing/환율, 일봉 기반 exit.
 - [ ] **Phase 5 안전/canary** — `get_overseas_balance`/`ccnl` reconcile, risk gate/kill switch/canary USD 확장, 실전 소액 canary.
 

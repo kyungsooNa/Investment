@@ -43,6 +43,9 @@ class SchedulerBootstrap:
                 self._register_trading_tasks()
             if mode & RuntimeMode.BATCH:
                 self._register_batch_tasks()
+            # Phase 3c: overseas_us 모드는 batch 가 꺼져 있으므로 dry-run 태스크를 별도 등록.
+            if getattr(ctx, "market_mode", "domestic") == "overseas_us":
+                self._register_overseas_tasks()
             # websocket_watchdog: WEB | TRADING 어느 한쪽이라도 켜져 있으면 한 번만 등록.
             if mode & (RuntimeMode.WEB | RuntimeMode.TRADING):
                 self._register_websocket_watchdog()
@@ -103,6 +106,10 @@ class SchedulerBootstrap:
         self._register(ctx.post_market_replay_audit_task, TaskPriority.LOW)
         self._register(ctx.strategy_log_report_task, TaskPriority.LOW)
         self._register(ctx.after_market_reconcile_task, TaskPriority.LOW)
+
+    def _register_overseas_tasks(self) -> None:
+        # 해외 VBO dry-run (주문 경로 없음). 미구성 시 _register 가 no-op.
+        self._register(getattr(self._ctx, "overseas_dryrun_task", None), TaskPriority.LOW)
 
     def _register_websocket_watchdog(self) -> None:
         # WebSocket watchdog 은 TimeDispatcher 등록 대상이 아님 (continuous monitor).
