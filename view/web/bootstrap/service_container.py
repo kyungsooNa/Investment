@@ -49,6 +49,8 @@ from services.stock_query_service import StockQueryService
 from services.streaming_service import StreamingService
 from services.strategy_event_router import StrategyEventRouter
 from services.event_shadow_journal_service import EventShadowJournalService
+from services.overseas_candidate_service import OverseasCandidateService
+from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
 from services.post_market_replay_audit_service import PostMarketReplayAuditService
 from services.strategy_log_report_service import StrategyLogReportService
 from task.background.after_market.after_market_reconcile_task import AfterMarketReconcileTask
@@ -62,6 +64,7 @@ from task.background.after_market.premium_watchlist_generator_task import Premiu
 from task.background.after_market.ranking_task import RankingTask
 from task.background.after_market.strategy_log_report_task import StrategyLogReportTask
 from task.background.after_market.post_market_replay_audit_task import PostMarketReplayAuditTask
+from task.background.after_market.overseas_dryrun_task import OverseasDryRunTask
 from task.background.always_on.notification_queue_task import NotificationQueueTask
 from task.background.intraday.opening_position_reconcile_task import OpeningPositionReconcileTask
 from task.background.intraday.pre_market_health_check_task import PreMarketHealthCheckTask
@@ -544,6 +547,34 @@ class ServiceContainer:
                     )
                 else:
                     ctx.notification_queue_task = None
+                # Phase 3c: 해외 VBO dry-run 파이프라인 (주문 경로 없음 — 실주문 불가).
+                # 한국장 마감(KST)을 일일 트리거로 재사용해 일봉 기반 dry-run 신호를 누적한다.
+                ctx.event_shadow_journal_service = EventShadowJournalService(
+                    log_root="logs/strategies", logger=ctx.logger,
+                )
+                ctx.overseas_candidate_service = None
+                ctx.overseas_vbo_dryrun_service = None
+                ctx.overseas_dryrun_task = None
+                if getattr(ctx, "overseas_stock_code_repository", None) is not None:
+                    ctx.overseas_candidate_service = OverseasCandidateService(
+                        overseas_stock_code_repository=ctx.overseas_stock_code_repository,
+                        stock_query_service=ctx.stock_query_service,
+                        logger=ctx.logger,
+                    )
+                    ctx.overseas_vbo_dryrun_service = OverseasVBODryRunService(
+                        candidate_service=ctx.overseas_candidate_service,
+                        stock_query_service=ctx.stock_query_service,
+                        shadow_journal=ctx.event_shadow_journal_service,
+                        logger=ctx.logger,
+                    )
+                    ctx.overseas_dryrun_task = OverseasDryRunTask(
+                        dryrun_service=ctx.overseas_vbo_dryrun_service,
+                        shadow_journal=ctx.event_shadow_journal_service,
+                        market_calendar_service=ctx._mcs,
+                        market_clock=ctx.market_clock,
+                        logger=ctx.logger,
+                        worker_pool=getattr(ctx, "worker_pool", None),
+                    )
                 return
 
             ctx.oneil_universe_service = OneilUniverseService(
