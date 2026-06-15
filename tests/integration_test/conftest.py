@@ -584,6 +584,7 @@ async def deep_paper_ctx(test_logger, web_app, mocker, tmp_path):
     with patch("view.web.bootstrap.config_bootstrap.load_configs", return_value=mock_config), \
          patch("view.web.web_app_initializer.VirtualTradeRepository") as MockVTM, \
          patch("view.web.web_app_initializer.StockCodeRepository"), \
+         patch("view.web.web_app_initializer.OverseasStockCodeRepository"), \
          patch("brokers.broker_api_wrapper.StockCodeRepository"), \
          patch("view.web.bootstrap.config_bootstrap.MarketCalendarService") as Mockmcs:
 
