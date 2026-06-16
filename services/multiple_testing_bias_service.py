@@ -8,8 +8,9 @@ requiring a full walk-forward research stack.
 from __future__ import annotations
 
 import math
+from itertools import combinations
 from statistics import NormalDist, median, pstdev, variance
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 def compute_multiple_testing_bias_summary(
@@ -27,6 +28,9 @@ def compute_multiple_testing_bias_summary(
     sample_size_metric: str = "trade_count",
     skew_metric: str = "return_skew",
     kurtosis_metric: str = "return_kurtosis",
+    returns_matrix: Sequence[Sequence[float]] | None = None,
+    pbo_cscv_splits: int = 16,
+    max_pbo_cscv_probability: float | None = None,
 ) -> dict[str, Any]:
     rows: list[tuple[str, float]] = []
     for strategy, metrics in metrics_by_strategy.items():
@@ -85,6 +89,17 @@ def compute_multiple_testing_bias_summary(
     if deflated_sharpe_formal.get("available") and deflated_sharpe_formal.get("passed") is False:
         warning_reasons.append("deflated_sharpe_probability_below_threshold")
 
+    if returns_matrix is not None:
+        pbo_cscv = compute_pbo_cscv(
+            returns_matrix,
+            n_splits=pbo_cscv_splits,
+            threshold=max_pbo_cscv_probability,
+        )
+    else:
+        pbo_cscv = {"available": False, "reason": "not_provided", "passed": None}
+    if pbo_cscv.get("available") and pbo_cscv.get("passed") is False:
+        warning_reasons.append("pbo_cscv_above_threshold")
+
     return {
         "trial_count": trial_count,
         "primary_metric": primary_metric,
@@ -101,6 +116,110 @@ def compute_multiple_testing_bias_summary(
         "deflated_sharpe_proxy": deflated_sharpe,
         "deflated_sharpe": deflated_sharpe_formal,
         "pbo_proxy": pbo,
+        "pbo_cscv": pbo_cscv,
+    }
+
+
+def compute_pbo_cscv(
+    returns_matrix: Sequence[Sequence[float]],
+    *,
+    n_splits: int = 16,
+    threshold: float | None = None,
+) -> dict[str, Any]:
+    """Formal Probability of Backtest Overfitting via CSCV.
+
+    Combinatorially Symmetric Cross-Validation (Bailey, Borwein, Lopez de Prado,
+    Zhu, 2014). Unlike ``_compute_pbo_proxy`` (a single IS/OOS split heuristic on
+    per-strategy scalars), this consumes a full ``T x N`` matrix — T time periods
+    (rows) x N candidate configs (columns) of per-period returns — and asks: when
+    we pick the in-sample best config across every symmetric IS/OOS partition, how
+    often does it land in the bottom half out-of-sample?
+
+    PBO = P(logit(OOS relative rank of the IS-best config) <= 0). High PBO (→0.5+)
+    means selection is driven by overfitting; a genuine edge keeps the IS-best near
+    the OOS top (PBO → 0).
+
+    The matrix is split into ``n_splits`` (S, even) contiguous equal blocks; we
+    evaluate all C(S, S/2) ways of choosing S/2 blocks as in-sample. Block-level
+    sufficient statistics keep this cheap even for S=16 (12,870 combinations).
+    """
+    def _unavailable(reason: str) -> dict[str, Any]:
+        return {"available": False, "reason": reason, "pbo": None, "passed": None,
+                "n_splits": int(n_splits), "threshold": threshold}
+
+    rows = [list(r) for r in (returns_matrix or [])]
+    t_periods = len(rows)
+    if t_periods == 0:
+        return _unavailable("empty_matrix")
+    n_configs = len(rows[0])
+    if any(len(r) != n_configs for r in rows):
+        return _unavailable("ragged_matrix")
+    if n_configs < 2:
+        return _unavailable("insufficient_configs")
+    s = int(n_splits)
+    if s < 4 or s % 2 != 0:
+        return _unavailable("invalid_n_splits")
+    block = t_periods // s
+    if block < 2:  # need >=2 obs/block for a sample stdev
+        return _unavailable("insufficient_periods")
+
+    # block-level sufficient stats: count, sum, sum-of-squares per (block, config)
+    cnt = [0] * s
+    bsum = [[0.0] * n_configs for _ in range(s)]
+    bsq = [[0.0] * n_configs for _ in range(s)]
+    for b in range(s):
+        for i in range(b * block, (b + 1) * block):
+            cnt[b] += 1
+            row = rows[i]
+            sums_b, sq_b = bsum[b], bsq[b]
+            for j in range(n_configs):
+                v = _to_float(row[j]) or 0.0
+                sums_b[j] += v
+                sq_b[j] += v * v
+
+    def _sharpes(blockset: tuple[int, ...]) -> list[float]:
+        n = sum(cnt[b] for b in blockset)
+        out = [0.0] * n_configs
+        for j in range(n_configs):
+            s_sum = sum(bsum[b][j] for b in blockset)
+            s_sq = sum(bsq[b][j] for b in blockset)
+            mean = s_sum / n
+            var = (s_sq - n * mean * mean) / (n - 1) if n > 1 else 0.0
+            out[j] = mean / math.sqrt(var) if var > 1e-18 else 0.0
+        return out
+
+    all_blocks = range(s)
+    overfit = 0
+    total = 0
+    logits: list[float] = []
+    for combo in combinations(all_blocks, s // 2):
+        is_set = set(combo)
+        oos = tuple(b for b in all_blocks if b not in is_set)
+        is_sharpe = _sharpes(combo)
+        oos_sharpe = _sharpes(oos)
+        n_star = max(range(n_configs), key=lambda j: is_sharpe[j])
+        oos_val = oos_sharpe[n_star]
+        # OOS rank of the IS-best: 1 = worst .. N = best
+        rank = 1 + sum(1 for j in range(n_configs) if oos_sharpe[j] < oos_val)
+        omega = rank / (n_configs + 1)
+        lam = math.log(omega / (1.0 - omega))
+        logits.append(lam)
+        if lam <= 0:
+            overfit += 1
+        total += 1
+
+    pbo = overfit / total if total else None
+    passed = None if (threshold is None or pbo is None) else pbo <= float(threshold)
+    return {
+        "available": True,
+        "pbo": round(pbo, 6) if pbo is not None else None,
+        "n_configs": n_configs,
+        "n_splits": s,
+        "n_combinations": total,
+        "n_periods_used": block * s,
+        "median_logit": round(median(logits), 6) if logits else None,
+        "threshold": threshold,
+        "passed": passed,
     }
 
 
