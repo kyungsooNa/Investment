@@ -64,6 +64,9 @@ class StreamingService:
 
         # Observer 레지스트리: data_type → [handler, ...]
         self._handlers: Dict[str, List[Callable[[dict], None]]] = {}
+        # PriceStreamService.on_price_tick 처럼 running event loop 가 필요한
+        # non-blocking 동기 핸들러는 executor 로 보내지 않고 현재 루프에서 실행한다.
+        self._event_loop_handlers: List[Callable[[dict], None]] = []
 
         if price_stream_service is not None:
             self.set_price_stream_service(price_stream_service)
@@ -94,9 +97,12 @@ class StreamingService:
             handlers = self._handlers.get('realtime_price', [])
             if self._price_stream_service.on_price_tick in handlers:
                 handlers.remove(self._price_stream_service.on_price_tick)
+            if self._price_stream_service.on_price_tick in self._event_loop_handlers:
+                self._event_loop_handlers.remove(self._price_stream_service.on_price_tick)
 
         self._price_stream_service = svc
         self.register_handler('realtime_price', svc.on_price_tick)
+        self._event_loop_handlers.append(svc.on_price_tick)
 
     def set_streaming_stock_repo(self, repo: "StreamingStockRepo") -> None:
         """StreamingStockRepo를 사후 주입한다."""
@@ -288,6 +294,9 @@ class StreamingService:
                             pass
                     task.add_done_callback(_log_done)
                 else:
+                    if handler in self._event_loop_handlers:
+                        handler(inner)
+                        continue
                     # 동기(또는 블로킹) 핸들러는 스레드 풀로 오프로드
                     try:
                         loop = asyncio.get_running_loop()
