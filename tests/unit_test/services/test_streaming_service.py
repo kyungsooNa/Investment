@@ -3,6 +3,7 @@ import logging
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from services.streaming_service import StreamingService
+from services.price_stream_service import PriceStreamService
 from common.types import ResCommonResponse, ErrorCode
 
 @pytest.fixture
@@ -409,6 +410,30 @@ def test_set_price_stream_service_registers_handler(streaming_service):
     streaming_service.dispatch_realtime_message({'type': 'realtime_price', 'data': inner})
 
     mock_svc.on_price_tick.assert_called_once_with(inner)
+
+
+@pytest.mark.asyncio
+async def test_price_stream_handler_dispatches_event_router_from_streaming_service(
+    streaming_service,
+):
+    """StreamingService 경유 realtime_price도 event router까지 전달되어야 한다."""
+    router = MagicMock()
+    router.on_price_tick = AsyncMock()
+    stock_repo = MagicMock()
+    price_stream = PriceStreamService(stock_repo=stock_repo, event_router=router)
+    streaming_service.set_price_stream_service(price_stream)
+
+    inner = {'유가증권단축종목코드': '005930', '주식현재가': '70000'}
+    streaming_service.dispatch_realtime_message({'type': 'realtime_price', 'data': inner})
+    current = asyncio.current_task()
+    pending = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    router.on_price_tick.assert_awaited_once()
+    snap = price_stream.tick_ingest_stats_snapshot(["005930"])
+    assert snap["005930"]["received"] == 1
+    assert snap["005930"]["dispatched"] == 1
 
 
 def test_set_price_stream_service_replaces_previous_handler(streaming_service):
