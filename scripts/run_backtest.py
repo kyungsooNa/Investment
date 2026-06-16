@@ -15,6 +15,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -140,6 +141,32 @@ def _parse_args() -> argparse.Namespace:
         default=False,
         help="모의투자 모드로 서비스 그래프 초기화. 과거 분봉/프로그램매매 API는 실전 전용이라 기본은 실전 데이터 모드",
     )
+    parser.add_argument(
+        "--pit-universe",
+        default=None,
+        dest="pit_universe",
+        help=(
+            "point-in-time universe full-records 스냅샷 JSON 경로 (R-1 생존편향). 지정하면 "
+            "백테스트 universe 에 그 날 상장돼 있던 상폐 종목을 합류시킨다. "
+            "build_point_in_time_universe.py --full-records 로 생성."
+        ),
+    )
+    parser.add_argument(
+        "--delisted-ohlcv-dir",
+        default=None,
+        dest="delisted_ohlcv_dir",
+        help=(
+            "상폐 종목 백필 OHLCV 디렉터리 (backfill_delisted_ohlcv.py 산출물). 지정하면 "
+            "replay 가 상폐 종목 일봉을 이 디렉터리에서 fallback 한다. --pit-universe 와 함께 사용."
+        ),
+    )
+    parser.add_argument(
+        "--pit-min-trading-value",
+        type=int,
+        default=0,
+        dest="pit_min_trading_value",
+        help="상폐 후보 합류 시 5일 평균 거래대금 하한(원). 0이면 전략 자체 필터에 위임.",
+    )
     return parser.parse_args()
 
 
@@ -165,6 +192,77 @@ def _build_dates(args: argparse.Namespace) -> list[str]:
 def _get_program_provider(stock_query_service: Any) -> Any | None:
     market_data_service = getattr(stock_query_service, "market_data_service", None)
     return getattr(market_data_service, "_broker_api_wrapper", None)
+
+
+def _load_pit_provider(path: str | None) -> Any | None:
+    """full-records 스냅샷 JSON → PointInTimeUniverseProvider (R-1 생존편향)."""
+    if not path:
+        return None
+    from services.point_in_time_universe_provider import PointInTimeUniverseProvider
+
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    return PointInTimeUniverseProvider.from_snapshot_payload(payload)
+
+
+def _load_delisted_ohlcv_store(directory: str | None) -> Any | None:
+    """백필 OHLCV 디렉터리 → DelistedOhlcvStore (R-1 생존편향)."""
+    if not directory:
+        return None
+    from services.delisted_ohlcv_store import DelistedOhlcvStore
+
+    return DelistedOhlcvStore.from_backfill_dir(directory)
+
+
+def _make_osb_pit_item_factory():
+    """상폐 후보용 OSBWatchlistItem 팩토리.
+
+    활성 전략들의 universe(`OneilUniverseService`/`GenericLiquidity`/`VboVolatility`)는
+    모두 `OSBWatchlistItem` 을 반환한다. 상폐 종목은 시가총액 데이터가 없으므로
+    `market_cap=0` 으로 둔다 — VBO `_passes_validity_filter` 는 `market_cap>0` 일 때만
+    시총 게이트를 적용하므로 상폐 종목은 시총 면제, 거래대금 게이트만 적용된다(설계 의도).
+    OHLCV 파생 필드(high_20d/ma 등)는 전략이 백필 OHLCV 로 직접 재계산하는 경로만
+    쓰므로 0 으로 둔다.
+    """
+    from strategies.oneil_common_types import OSBWatchlistItem
+
+    def factory(*, code: str, name: str, market: str, avg_trading_value_5d: float):
+        return OSBWatchlistItem(
+            code=code,
+            name=name,
+            market=market,
+            high_20d=0,
+            ma_20d=0.0,
+            ma_50d=0.0,
+            avg_vol_20d=0.0,
+            bb_width_min_20d=0.0,
+            prev_bb_width=0.0,
+            w52_hgpr=0,
+            avg_trading_value_5d=avg_trading_value_5d,
+            market_cap=0,
+        )
+
+    return factory
+
+
+def _wrap_pit_universe(
+    base_universe: Any,
+    *,
+    pit_provider: Any,
+    replay_sqs: Any,
+    backtest_clock: Any,
+    min_trading_value: int,
+) -> Any:
+    """base universe 를 PointInTimeAugmentedUniverse 로 래핑 (상폐 후보 합류)."""
+    from services.point_in_time_universe_wrapper import PointInTimeAugmentedUniverse
+
+    return PointInTimeAugmentedUniverse(
+        base_universe,
+        pit_provider=pit_provider,
+        sqs=replay_sqs,
+        clock=backtest_clock,
+        item_factory=_make_osb_pit_item_factory(),
+        min_avg_trading_value_5d=min_trading_value,
+    )
 
 
 def _build_replay_bar_providers(replay_sqs: Any) -> tuple[Any, Any]:
@@ -1259,9 +1357,20 @@ async def _run(args: argparse.Namespace) -> None:
         print(f"[ERROR] {e}", file=sys.stderr)
         sys.exit(1)
 
+    delisted_ohlcv_store = _load_delisted_ohlcv_store(args.delisted_ohlcv_dir)
+    pit_provider = _load_pit_provider(args.pit_universe)
+    if pit_provider is not None:
+        print("[INFO] point-in-time universe(상폐 종목 합류) 활성화 — 생존편향 비교 모드")
+        if delisted_ohlcv_store is None:
+            print(
+                "[WARN] --pit-universe 지정됐으나 --delisted-ohlcv-dir 없음 — "
+                "상폐 종목 일봉 fallback 불가로 후보 평가가 제한됩니다."
+            )
+
     replay_sqs = StockQueryBacktestReplayService(
         sqs,
         program_provider=_get_program_provider(sqs),
+        delisted_ohlcv_store=delisted_ohlcv_store,
     )
     backtest_clock = BacktestMarketClock.from_clock(
         market_clock,
@@ -1298,6 +1407,16 @@ async def _run(args: argparse.Namespace) -> None:
                 base_universe=universe_service,
                 variant=variant,
             )
+            # point-in-time 상폐 종목 합류는 baseline(non-ablation) universe 에만 적용한다.
+            # ablation variant 는 별도 universe 비교용이라 PIT 증강과 합성하지 않는다.
+            if pit_provider is not None and variant is None:
+                variant_universe = _wrap_pit_universe(
+                    variant_universe,
+                    pit_provider=pit_provider,
+                    replay_sqs=replay_sqs,
+                    backtest_clock=backtest_clock,
+                    min_trading_value=args.pit_min_trading_value,
+                )
             strategy = _build_backtest_strategy(
                 strategy_key=args.strategy,
                 replay_sqs=replay_sqs,
