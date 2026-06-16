@@ -73,6 +73,44 @@ def build_snapshot_payload(
     }
 
 
+def build_full_records_payload(
+    *,
+    markets: Sequence[str] = ("KOSPI", "KOSDAQ"),
+    exclude_spac: bool = False,
+) -> dict[str, Any]:
+    """as-of 필터 없이 current+delisted 전체 정규화 레코드를 담는다.
+
+    기간(period) 백테스트용. `PointInTimeUniverseProvider` 가 레코드별
+    상장일/상폐일을 보고 *질의 시점마다* as-of 필터를 수행하므로, 빌드 단계에서는
+    단일 시점 스냅샷이 아니라 전체 레코드를 넘겨야 기간 중간에 상폐된 종목까지
+    커버된다. (단일 as-of 스냅샷은 그 시점 기준으로 이미 잘려 기간 중 상폐 종목을
+    놓친다.)
+    """
+    current_records = normalize_current_listings(fetch_current_listing())
+    delisted_rows = normalize_fdr_delistings(
+        fetch_fdr_delisting_listing(),
+        markets=markets,
+        secu_groups=("주권",),
+        exclude_spac=exclude_spac,
+    )
+    delisted_records = normalize_delisted_listings(delisted_rows)
+    all_records = current_records + delisted_records
+    return {
+        "config": {
+            "as_of_date": None,
+            "markets": list(markets),
+            "exclude_spac": exclude_spac,
+            "full_records": True,
+        },
+        "totals": {
+            "current_records": len(current_records),
+            "delisted_records": len(delisted_records),
+            "snapshot_records": len(all_records),
+        },
+        "records": _records_to_dicts(all_records),
+    }
+
+
 def write_csv(records: Sequence[dict[str, Any]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
@@ -131,7 +169,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Build a point-in-time KRX universe snapshot.",
     )
-    parser.add_argument("--as-of-date", required=True, help="YYYYMMDD or YYYY-MM-DD")
+    parser.add_argument("--as-of-date", help="YYYYMMDD or YYYY-MM-DD (단일 as-of 스냅샷)")
+    parser.add_argument(
+        "--full-records",
+        action="store_true",
+        help="as-of 필터 없이 current+delisted 전체 레코드 출력 (기간 백테스트용)",
+    )
     parser.add_argument("--markets", default="KOSPI,KOSDAQ")
     parser.add_argument("--exclude-spac", action="store_true")
     parser.add_argument("--output-json")
@@ -141,12 +184,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
-    payload = build_snapshot_payload(
-        as_of_date=args.as_of_date,
-        markets=_split_csv_arg(args.markets),
-        exclude_spac=args.exclude_spac,
-    )
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not args.full_records and not args.as_of_date:
+        parser.error("--as-of-date 또는 --full-records 중 하나는 필요합니다.")
+
+    if args.full_records:
+        payload = build_full_records_payload(
+            markets=_split_csv_arg(args.markets),
+            exclude_spac=args.exclude_spac,
+        )
+    else:
+        payload = build_snapshot_payload(
+            as_of_date=args.as_of_date,
+            markets=_split_csv_arg(args.markets),
+            exclude_spac=args.exclude_spac,
+        )
 
     wrote = False
     if args.output_json:
@@ -161,11 +214,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"[INFO] CSV snapshot: {path}")
         wrote = True
     if args.output_markdown:
-        path = Path(args.output_markdown)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(format_markdown_report(payload), encoding="utf-8")
-        print(f"[INFO] Markdown report: {path}")
-        wrote = True
+        if "survivorship_gap" not in payload:
+            print("[WARN] --output-markdown 은 as-of 스냅샷 전용입니다. full-records 모드에선 생략합니다.")
+        else:
+            path = Path(args.output_markdown)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(format_markdown_report(payload), encoding="utf-8")
+            print(f"[INFO] Markdown report: {path}")
+            wrote = True
     if not wrote:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
