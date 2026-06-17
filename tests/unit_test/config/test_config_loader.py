@@ -139,6 +139,8 @@ def test_app_config_defaults_to_paper_trading_when_omitted():
     assert config.overseas_stock.currency == "USD"
     assert config.overseas_stock.manual_order_only is True
     assert config.overseas_stock.allow_live_trading is False
+    assert config.overseas_stock.dryrun_slot_usd == 1000.0
+    assert config.overseas_stock.dryrun_max_qty is None
 
 
 def test_app_config_accepts_overseas_us_market_mode():
@@ -159,6 +161,20 @@ def test_app_config_accepts_overseas_us_market_mode():
     assert config.overseas_stock.enabled_exchanges == ["NASD", "NYSE"]
     assert config.overseas_stock.default_exchange == "NYSE"
     assert config.overseas_stock.allow_live_trading is True
+    assert config.overseas_stock.dryrun_slot_usd == 1000.0
+
+
+def test_app_config_accepts_overseas_dryrun_sizing_values():
+    config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={
+            "dryrun_slot_usd": 500.0,
+            "dryrun_max_qty": 3,
+        },
+    )
+
+    assert config.overseas_stock.dryrun_slot_usd == 500.0
+    assert config.overseas_stock.dryrun_max_qty == 3
 
 
 def test_app_config_rejects_invalid_market_mode():

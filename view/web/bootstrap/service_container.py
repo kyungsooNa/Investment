@@ -50,6 +50,7 @@ from services.streaming_service import StreamingService
 from services.strategy_event_router import StrategyEventRouter
 from services.event_shadow_journal_service import EventShadowJournalService
 from services.overseas_candidate_service import OverseasCandidateService
+from services.overseas_position_sizing_service import OverseasPositionSizingService
 from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
 from services.post_market_replay_audit_service import PostMarketReplayAuditService
 from services.strategy_log_report_service import StrategyLogReportService
@@ -556,6 +557,12 @@ class ServiceContainer:
                 ctx.overseas_vbo_dryrun_service = None
                 ctx.overseas_dryrun_task = None
                 if getattr(ctx, "overseas_stock_code_repository", None) is not None:
+                    overseas_stock_cfg = getattr(ctx.full_config, "overseas_stock", None)
+                    overseas_position_sizing_service = OverseasPositionSizingService(
+                        slot_usd=getattr(overseas_stock_cfg, "dryrun_slot_usd", 1000.0),
+                        max_qty=getattr(overseas_stock_cfg, "dryrun_max_qty", None),
+                        logger=ctx.logger,
+                    )
                     ctx.overseas_candidate_service = OverseasCandidateService(
                         overseas_stock_code_repository=ctx.overseas_stock_code_repository,
                         stock_query_service=ctx.stock_query_service,
@@ -566,6 +573,7 @@ class ServiceContainer:
                         stock_query_service=ctx.stock_query_service,
                         shadow_journal=ctx.event_shadow_journal_service,
                         logger=ctx.logger,
+                        position_sizing_service=overseas_position_sizing_service,
                     )
                     ctx.overseas_dryrun_task = OverseasDryRunTask(
                         dryrun_service=ctx.overseas_vbo_dryrun_service,

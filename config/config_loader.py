@@ -363,6 +363,8 @@ class OverseasStockConfig(BaseModel):
     currency: Literal["USD"] = "USD"
     manual_order_only: bool = True
     allow_live_trading: bool = False
+    dryrun_slot_usd: float = Field(1000.0, gt=0)
+    dryrun_max_qty: Optional[int] = Field(default=None, gt=0)
 
     model_config = {"extra": "allow"}
 

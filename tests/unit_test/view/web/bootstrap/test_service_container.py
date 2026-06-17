@@ -285,3 +285,33 @@ def test_service_container_does_not_wire_minervini_circular_pair(patched_service
     update_instance = patched_service_container_deps["MinerviniUpdateTask"].return_value
     assert ctx.minervini_stage_service is stage_instance
     assert ctx.minervini_update_task is update_instance
+
+
+def test_service_container_wires_overseas_dryrun_position_sizing(patched_service_container_deps):
+    """overseas_us 모드의 VBO dry-run 에 고정 USD 슬롯 사이징을 주입한다."""
+    from config.config_loader import AppConfig
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.market_mode = "overseas_us"
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        market_mode="overseas_us",
+        overseas_stock={"dryrun_slot_usd": 750.0, "dryrun_max_qty": 4},
+    )
+    ctx.overseas_stock_code_repository = MagicMock()
+
+    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True) as sizing_cls, \
+         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True) as candidate_cls, \
+         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True) as dryrun_cls, \
+         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True):
+        ServiceContainer(ctx).run()
+
+    sizing_cls.assert_called_once_with(
+        slot_usd=750.0,
+        max_qty=4,
+        logger=ctx.logger,
+    )
+    dryrun_kwargs = dryrun_cls.call_args.kwargs
+    assert dryrun_kwargs["candidate_service"] is candidate_cls.return_value
+    assert dryrun_kwargs["position_sizing_service"] is sizing_cls.return_value

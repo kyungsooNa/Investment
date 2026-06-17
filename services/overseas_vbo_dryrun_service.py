@@ -32,6 +32,7 @@ class OverseasVBODryRunService:
         k_value: float = 0.5,
         stop_loss_pct: float = -3.0,
         exchange: OverseasExchange = OverseasExchange.NASD,
+        position_sizing_service=None,
     ):
         self._candidate_service = candidate_service
         self._sqs = stock_query_service
@@ -40,6 +41,8 @@ class OverseasVBODryRunService:
         self._k = k_value
         self._stop_loss_pct = stop_loss_pct
         self._default_exchange = exchange
+        # 고정 USD 슬롯 사이징(순수 계산, 주문 경로 없음). 미주입 시 qty 미산출.
+        self._sizing_service = position_sizing_service
 
     async def scan_dry_run(
         self,
@@ -71,6 +74,10 @@ class OverseasVBODryRunService:
             sig = self._evaluate(code, resp.data)
             if not sig:
                 continue
+            if self._sizing_service is not None:
+                sizing = self._sizing_service.size(limit_price_usd=sig["entry_price"])
+                sig["qty"] = sizing.get("qty")
+                sig["notional_usd"] = sizing.get("notional_usd")
             signals.append(sig)
             if record and self._journal is not None:
                 self._journal.record(
