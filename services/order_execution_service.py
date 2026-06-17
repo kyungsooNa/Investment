@@ -807,7 +807,7 @@ class OrderExecutionService:
 
         # 웹소켓 연결 및 구독 요청
         if await self.broker_api_wrapper.connect_websocket(on_message_callback=realtime_data_display_callback):
-            await self.broker_api_wrapper.subscribe_realtime_price(stock_code)
+            await self.broker_api_wrapper.subscribe_unified_price(stock_code)
             await self.broker_api_wrapper.subscribe_realtime_quote(stock_code)
 
             try:
@@ -816,7 +816,7 @@ class OrderExecutionService:
             except KeyboardInterrupt:
                 self.logger.info("실시간 구독 중단 (KeyboardInterrupt).")
             finally:
-                await self.broker_api_wrapper.unsubscribe_realtime_price(stock_code)
+                await self.broker_api_wrapper.unsubscribe_unified_price(stock_code)
                 await self.broker_api_wrapper.unsubscribe_realtime_quote(stock_code)
                 await self.broker_api_wrapper.disconnect_websocket()
                 self.logger.info(f"실시간 주식 스트림 종료: 종목={stock_code}")

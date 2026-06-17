@@ -383,9 +383,9 @@ async def test_overseas_mode_blocks_strategy_buy_before_broker_call(
 async def test_handle_realtime_price_quote_stream_success(handler, mock_broker_api_wrapper, mock_logger, mock_market_calendar_service):
     """실시간 스트림이 성공적으로 연결, 구독, 종료되는지 테스트합니다."""
     mock_broker_api_wrapper.connect_websocket.return_value = True
-    mock_broker_api_wrapper.subscribe_realtime_price.return_value = True
+    mock_broker_api_wrapper.subscribe_unified_price.return_value = True
     mock_broker_api_wrapper.subscribe_realtime_quote.return_value = True
-    mock_broker_api_wrapper.unsubscribe_realtime_price.return_value = True # This was missing in the original mock setup
+    mock_broker_api_wrapper.unsubscribe_unified_price.return_value = True
     mock_broker_api_wrapper.unsubscribe_realtime_quote.return_value = True
     mock_broker_api_wrapper.disconnect_websocket.return_value = True
 
@@ -397,9 +397,11 @@ async def test_handle_realtime_price_quote_stream_success(handler, mock_broker_a
         mock_broker_api_wrapper.connect_websocket.assert_awaited_once_with(
             on_message_callback=ANY
         )
-        mock_broker_api_wrapper.subscribe_realtime_price.assert_awaited_once_with("005930")
+        mock_broker_api_wrapper.subscribe_unified_price.assert_awaited_once_with("005930")
+        mock_broker_api_wrapper.subscribe_realtime_price.assert_not_awaited()
         mock_broker_api_wrapper.subscribe_realtime_quote.assert_awaited_once_with("005930")
-        mock_broker_api_wrapper.unsubscribe_realtime_price.assert_awaited_once_with("005930")
+        mock_broker_api_wrapper.unsubscribe_unified_price.assert_awaited_once_with("005930")
+        mock_broker_api_wrapper.unsubscribe_realtime_price.assert_not_awaited()
         mock_broker_api_wrapper.unsubscribe_realtime_quote.assert_awaited_once_with("005930")
         mock_broker_api_wrapper.disconnect_websocket.assert_awaited_once()
         mock_logger.info.assert_any_call(f"실시간 주식 스트림 종료: 종목=005930")
@@ -415,15 +417,16 @@ async def test_handle_realtime_price_quote_stream_connection_failure(handler, mo
         on_message_callback=ANY
     )
     mock_broker_api_wrapper.subscribe_realtime_price.assert_not_awaited()
+    mock_broker_api_wrapper.subscribe_unified_price.assert_not_awaited()
     mock_logger.error.assert_called_once_with("실시간 웹소켓 연결 실패.")
 
 @pytest.mark.asyncio
 async def test_handle_realtime_price_quote_stream_keyboard_interrupt(handler, mock_broker_api_wrapper, mock_logger, mock_market_calendar_service):
     """스트림 수신 중 KeyboardInterrupt 발생 시 정상적으로 종료되는지 테스트합니다."""
     mock_broker_api_wrapper.connect_websocket.return_value = True
-    mock_broker_api_wrapper.subscribe_realtime_price.return_value = True
+    mock_broker_api_wrapper.subscribe_unified_price.return_value = True
     mock_broker_api_wrapper.subscribe_realtime_quote.return_value = True
-    mock_broker_api_wrapper.unsubscribe_realtime_price.return_value = True
+    mock_broker_api_wrapper.unsubscribe_unified_price.return_value = True
     mock_broker_api_wrapper.unsubscribe_realtime_quote.return_value = True
     mock_broker_api_wrapper.disconnect_websocket.return_value = True
 
@@ -436,7 +439,8 @@ async def test_handle_realtime_price_quote_stream_keyboard_interrupt(handler, mo
             call("실시간 구독 중단 (KeyboardInterrupt)."),
             call(f"실시간 주식 스트림 종료: 종목=005930")
         ])
-        mock_broker_api_wrapper.unsubscribe_realtime_price.assert_awaited_once()
+        mock_broker_api_wrapper.unsubscribe_unified_price.assert_awaited_once_with("005930")
+        mock_broker_api_wrapper.unsubscribe_realtime_price.assert_not_awaited()
         mock_broker_api_wrapper.disconnect_websocket.assert_awaited_once()
 
 @pytest.mark.asyncio # This test is directly related to the market open check.
@@ -457,9 +461,9 @@ async def test_realtime_data_display_callback_logic(handler, mock_broker_api_wra
     realtime_data_display_callback 함수의 내부 로직을 다양한 데이터 타입으로 검증합니다.
     """
     mock_broker_api_wrapper.connect_websocket.return_value = True
-    mock_broker_api_wrapper.subscribe_realtime_price.return_value = True
+    mock_broker_api_wrapper.subscribe_unified_price.return_value = True
     mock_broker_api_wrapper.subscribe_realtime_quote.return_value = True
-    mock_broker_api_wrapper.unsubscribe_realtime_price.return_value = True
+    mock_broker_api_wrapper.unsubscribe_unified_price.return_value = True
     mock_broker_api_wrapper.unsubscribe_realtime_quote.return_value = True
     mock_broker_api_wrapper.disconnect_websocket.return_value = True
 
