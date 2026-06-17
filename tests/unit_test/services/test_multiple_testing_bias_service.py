@@ -5,6 +5,7 @@ import random
 import pytest
 
 from services.multiple_testing_bias_service import (
+    build_config_period_pnl_matrix,
     compute_multiple_testing_bias_summary,
     compute_pbo_cscv,
 )
@@ -58,6 +59,38 @@ def test_pbo_cscv_rejects_odd_n_splits():
     assert res["reason"] == "invalid_n_splits"
 
 
+def test_pbo_cscv_embargo_echoed_and_default_zero():
+    res = compute_pbo_cscv(_noise_matrix(), n_splits=8)
+    assert res["embargo"] == 0
+
+
+def test_pbo_cscv_embargo_zero_matches_default():
+    base = compute_pbo_cscv(_noise_matrix(), n_splits=8)
+    emb0 = compute_pbo_cscv(_noise_matrix(), n_splits=8, embargo=0)
+    assert base["pbo"] == emb0["pbo"]
+
+
+def test_pbo_cscv_embargo_applies_and_stays_valid():
+    # block = 160//8 = 20 → embargo 5 는 유효(블록당 15 obs 잔존)
+    res = compute_pbo_cscv(_noise_matrix(), n_splits=8, embargo=5)
+    assert res["available"] is True
+    assert res["embargo"] == 5
+    assert 0.0 <= res["pbo"] <= 1.0
+
+
+def test_pbo_cscv_embargo_too_large_unavailable():
+    # block = 20 → embargo 19 는 블록당 <2 obs → 거부
+    res = compute_pbo_cscv(_noise_matrix(), n_splits=8, embargo=19)
+    assert res["available"] is False
+    assert res["reason"] == "embargo_too_large"
+
+
+def test_pbo_cscv_embargo_dominant_still_low_pbo():
+    res = compute_pbo_cscv(_dominant_matrix(t_periods=80), n_splits=8, embargo=2)
+    assert res["available"] is True
+    assert res["pbo"] == 0.0  # 일관 우월 config는 embargo 와 무관하게 OOS 최상위
+
+
 def test_pbo_cscv_threshold_breach_sets_passed_false():
     res = compute_pbo_cscv(_noise_matrix(), n_splits=8, threshold=0.1)
     assert res["available"] is True
@@ -74,6 +107,60 @@ def test_summary_includes_pbo_cscv_when_matrix_provided():
     assert summary["pbo_cscv"]["available"] is True
     assert summary["pbo_cscv"]["passed"] is False
     assert "pbo_cscv_above_threshold" in summary["warning_reasons"]
+
+
+def test_build_matrix_buckets_net_pnl_by_date_per_config():
+    records_by_config = {
+        "baseline": [
+            {"status": "SOLD", "signal_time": "2025-01-02 15:30:00", "net_pnl": 100.0},
+            {"status": "SOLD", "signal_time": "2025-01-03 09:10:00", "net_pnl": -50.0},
+            {"status": "SOLD", "signal_time": "2025-01-03 14:00:00", "net_pnl": 20.0},  # same day → 합산
+        ],
+        "variant_a": [
+            {"status": "SOLD", "signal_time": "20250102", "net_pnl": -10.0},
+            {"status": "SOLD", "signal_time": "2025-01-04", "net_pnl": 70.0},
+        ],
+    }
+    matrix, configs, periods = build_config_period_pnl_matrix(records_by_config)
+
+    assert configs == ["baseline", "variant_a"]
+    assert periods == ["20250102", "20250103", "20250104"]
+    # 행=기간, 열=config
+    assert matrix == [
+        [100.0, -10.0],   # 01-02
+        [-30.0, 0.0],     # 01-03 (baseline -50+20, variant 없음→0)
+        [0.0, 70.0],      # 01-04
+    ]
+
+
+def test_build_matrix_excludes_non_sold_and_empty_date():
+    records_by_config = {
+        "c1": [
+            {"status": "SUBMITTED", "signal_time": "2025-01-02", "net_pnl": 999.0},  # 미완료 제외
+            {"status": "SOLD", "signal_time": "", "net_pnl": 5.0},  # 날짜 없음 제외
+            {"status": "SOLD", "signal_time": "2025-01-02", "net_pnl": 10.0},
+        ],
+        "c2": [{"status": "SOLD", "signal_time": "2025-01-02", "net_pnl": 3.0}],
+    }
+    matrix, configs, periods = build_config_period_pnl_matrix(records_by_config)
+    assert periods == ["20250102"]
+    assert matrix == [[10.0, 3.0]]
+
+
+def test_build_matrix_feeds_compute_pbo_cscv():
+    # dominant config가 매 기간 우월 → 조립된 행렬로 PBO 0
+    records_by_config = {}
+    for c in range(4):
+        recs = []
+        for d in range(40):
+            pnl = (100.0 if c == 0 else -5.0) + (1.0 if d % 2 else 0.0)
+            recs.append({"status": "SOLD", "signal_time": f"2025{(d // 28) + 1:02d}{(d % 28) + 1:02d}", "net_pnl": pnl})
+        records_by_config[f"c{c}"] = recs
+    matrix, configs, periods = build_config_period_pnl_matrix(records_by_config)
+    res = compute_pbo_cscv(matrix, n_splits=8)
+    assert res["available"] is True
+    assert res["n_configs"] == 4
+    assert res["pbo"] == 0.0
 
 
 def test_summary_pbo_cscv_absent_when_no_matrix():
