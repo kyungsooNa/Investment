@@ -131,6 +131,97 @@ async def test_apply_execution_report_filled_transitions_state(broker, fsm, repo
     assert after.filled_qty == 10
 
 
+@pytest.mark.asyncio
+async def test_apply_execution_report_filled_emits_completion_notification(
+    broker, fsm, reporter, fixed_now
+):
+    notification = AsyncMock()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        notification_service=notification,
+    )
+    ctx = fsm.register(_make_context(source="manual:수동매매"))
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED, broker_order_no="B0001")
+
+    report = OrderExecutionReport(
+        broker_order_no="B0001", stock_code="005930", side=OrderSide.BUY,
+        fill_qty=10, fill_price=70500, cumulative_filled_qty=10, remaining_qty=0,
+    )
+    await svc.apply_execution_report(report)
+
+    notification.emit.assert_awaited_once()
+    args, kwargs = notification.emit.await_args
+    assert args[0] == NotificationCategory.TRADE
+    assert args[1] == NotificationLevel.INFO
+    assert args[2] == "매수 체결 완료"
+    assert "체결 완료" in args[3]
+    assert kwargs["metadata"]["state"] == OrderState.FILLED.value
+    assert kwargs["metadata"]["filled_qty"] == 10
+
+
+@pytest.mark.asyncio
+async def test_apply_execution_report_rejected_emits_failure_notification(
+    broker, fsm, reporter, fixed_now
+):
+    notification = AsyncMock()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        notification_service=notification,
+    )
+    ctx = fsm.register(_make_context())
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED, broker_order_no="B0001")
+
+    report = OrderExecutionReport(
+        broker_order_no="B0001",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        event_state=OrderState.REJECTED,
+        message="증거금 부족",
+    )
+    await svc.apply_execution_report(report)
+
+    notification.emit.assert_awaited_once()
+    args, kwargs = notification.emit.await_args
+    assert args[0] == NotificationCategory.TRADE
+    assert args[1] == NotificationLevel.ERROR
+    assert args[2] == "매수 주문 실패"
+    assert "증거금 부족" in args[3]
+    assert kwargs["metadata"]["state"] == OrderState.REJECTED.value
+
+
+@pytest.mark.asyncio
+async def test_apply_execution_report_submitted_does_not_emit_completion_notification(
+    broker, fsm, reporter, fixed_now
+):
+    notification = AsyncMock()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        notification_service=notification,
+    )
+    ctx = fsm.register(_make_context())
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED, broker_order_no="B0001")
+
+    report = OrderExecutionReport(
+        broker_order_no="B0001",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        event_state=OrderState.SUBMITTED,
+        fill_qty=0,
+    )
+    await svc.apply_execution_report(report)
+
+    notification.emit.assert_not_awaited()
+
+
 # ── order_to_fill_latency event (P2-2 L354 잔여 후속) ─────────────────────
 
 

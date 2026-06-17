@@ -1971,19 +1971,27 @@ async def test_execution_quality_threshold_breach_emits_notification_once(
     ))
     await asyncio.sleep(0.01)
 
-    mock_notification_service.emit.assert_called_once()
-    args = mock_notification_service.emit.call_args.args
+    quality_calls = [
+        call for call in mock_notification_service.emit.call_args_list
+        if call.args[2] == "체결 품질 임계 초과"
+    ]
+    assert len(quality_calls) == 1
+    args = quality_calls[0].args
     assert args[0] == NotificationCategory.TRADE
     assert args[1] == NotificationLevel.ERROR
     assert args[2] == "체결 품질 임계 초과"
-    metadata = mock_notification_service.emit.call_args.kwargs["metadata"]
+    metadata = quality_calls[0].kwargs["metadata"]
     breach_metrics = {item["metric"] for item in metadata["breaches"]}
     assert "slippage_pct" in breach_metrics
     assert "first_fill_latency_sec" in breach_metrics
 
     handler._exec_quality_reporter.log(updated)
     await asyncio.sleep(0.01)
-    assert mock_notification_service.emit.call_count == 1
+    quality_calls = [
+        call for call in mock_notification_service.emit.call_args_list
+        if call.args[2] == "체결 품질 임계 초과"
+    ]
+    assert len(quality_calls) == 1
 
 
 @pytest.mark.asyncio
