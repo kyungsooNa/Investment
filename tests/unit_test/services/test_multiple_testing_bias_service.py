@@ -1,8 +1,88 @@
 from __future__ import annotations
 
+import random
+
 import pytest
 
-from services.multiple_testing_bias_service import compute_multiple_testing_bias_summary
+from services.multiple_testing_bias_service import (
+    compute_multiple_testing_bias_summary,
+    compute_pbo_cscv,
+)
+
+
+def _dominant_matrix(t_periods=80, n_configs=4):
+    """config0가 모든 기간에서 일관되게 우월 → 진짜 엣지(과최적화 아님)."""
+    rows = []
+    for i in range(t_periods):
+        row = [1.0 + (0.2 if i % 2 else 0.0)]  # config0: 평균 큰 양수, 높은 Sharpe
+        for j in range(1, n_configs):
+            row.append((-0.1 if i % 2 else 0.1) * j)  # 나머지: 0 근처 잡음
+        rows.append(row)
+    return rows
+
+
+def _noise_matrix(t_periods=160, n_configs=8, seed=7):
+    """진짜 엣지 없는 순수 잡음 → IS 최고는 운 → OOS 순위 무작위 → PBO ~ 0.5."""
+    rng = random.Random(seed)
+    return [[rng.gauss(0.0, 1.0) for _ in range(n_configs)] for _ in range(t_periods)]
+
+
+def test_pbo_cscv_dominant_config_low_pbo():
+    res = compute_pbo_cscv(_dominant_matrix(), n_splits=8, threshold=0.5)
+    assert res["available"] is True
+    assert res["pbo"] == 0.0  # 일관 우월 config는 OOS도 최상위 → 과최적화 0
+    assert res["passed"] is True
+
+
+def test_pbo_cscv_pure_noise_near_half():
+    res = compute_pbo_cscv(_noise_matrix(), n_splits=8)
+    assert res["available"] is True
+    assert 0.3 <= res["pbo"] <= 0.7  # 엣지 없음 → 과최적화 확률 ~0.5
+
+
+def test_pbo_cscv_unavailable_too_few_configs():
+    res = compute_pbo_cscv([[1.0], [2.0], [3.0]], n_splits=4)
+    assert res["available"] is False
+    assert res["reason"] == "insufficient_configs"
+
+
+def test_pbo_cscv_unavailable_too_few_periods():
+    res = compute_pbo_cscv([[1.0, 2.0], [3.0, 4.0]], n_splits=8)
+    assert res["available"] is False
+    assert res["reason"] == "insufficient_periods"
+
+
+def test_pbo_cscv_rejects_odd_n_splits():
+    res = compute_pbo_cscv(_noise_matrix(), n_splits=7)
+    assert res["available"] is False
+    assert res["reason"] == "invalid_n_splits"
+
+
+def test_pbo_cscv_threshold_breach_sets_passed_false():
+    res = compute_pbo_cscv(_noise_matrix(), n_splits=8, threshold=0.1)
+    assert res["available"] is True
+    assert res["pbo"] > 0.1
+    assert res["passed"] is False
+
+
+def test_summary_includes_pbo_cscv_when_matrix_provided():
+    summary = compute_multiple_testing_bias_summary(
+        {"S1": {"total_net_pnl": 100}, "S2": {"total_net_pnl": 50}},
+        returns_matrix=_noise_matrix(),
+        max_pbo_cscv_probability=0.1,
+    )
+    assert summary["pbo_cscv"]["available"] is True
+    assert summary["pbo_cscv"]["passed"] is False
+    assert "pbo_cscv_above_threshold" in summary["warning_reasons"]
+
+
+def test_summary_pbo_cscv_absent_when_no_matrix():
+    summary = compute_multiple_testing_bias_summary(
+        {"S1": {"total_net_pnl": 100}, "S2": {"total_net_pnl": 50}},
+    )
+    assert summary["pbo_cscv"]["available"] is False
+    assert summary["pbo_cscv"]["reason"] == "not_provided"
+    assert "pbo_cscv_above_threshold" not in summary["warning_reasons"]
 
 
 def test_multiple_testing_bias_summary_skips_when_trial_count_is_small():
