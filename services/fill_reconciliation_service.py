@@ -65,6 +65,7 @@ class FillReconciliationService:
         self._critical_alarm_manual_required: bool = False
         self._reconcile_consecutive_mismatch_by_key: Dict[str, int] = {}
         self._notification_tasks: set[asyncio.Task] = set()
+        self._terminal_notification_sent: set[tuple[str, str]] = set()
 
     # ── reconcile_alarm read API (Coordinator용) ────────────────────
     def is_reconcile_alarm_active(self) -> bool:
@@ -182,6 +183,84 @@ class FillReconciliationService:
     def _is_reconcile_source(source: str) -> bool:
         return (source or "").startswith("reconcile:")
 
+    @staticmethod
+    def _side_label(side: OrderSide) -> str:
+        return "매수" if side == OrderSide.BUY else "매도"
+
+    async def _emit_terminal_order_notification(
+        self,
+        context: OrderContext,
+        report: Optional[OrderExecutionReport] = None,
+    ) -> None:
+        """주문 접수와 체결 완료를 분리해 terminal 상태에서만 완료/실패 알림을 보낸다."""
+        if self._notification_service is None or not context.state.is_terminal:
+            return
+
+        dedup_key = (context.order_key, context.state.value)
+        if dedup_key in self._terminal_notification_sent:
+            return
+
+        side_label = self._side_label(context.side)
+        fill_price = (
+            context.average_fill_price
+            or (report.fill_price if report else None)
+            or context.last_fill_price
+            or context.price
+        )
+        metadata = {
+            "order_key": context.order_key,
+            "broker_order_no": context.broker_order_no or "",
+            "stock_code": context.stock_code,
+            "side": context.side.value,
+            "state": context.state.value,
+            "qty": context.qty,
+            "filled_qty": context.filled_qty,
+            "remaining_qty": context.remaining_qty,
+            "fill_price": fill_price,
+            "source": context.source,
+            "trace_id": context.trace_id or "",
+        }
+
+        if context.state == OrderState.FILLED:
+            level = NotificationLevel.INFO
+            title = f"{side_label} 체결 완료"
+            message = (
+                f"{context.stock_code} {context.filled_qty}/{context.qty}주 "
+                f"체결 완료 @ {fill_price or 'N/A'}"
+            )
+        elif context.state == OrderState.REJECTED:
+            level = NotificationLevel.ERROR
+            title = f"{side_label} 주문 실패"
+            reason = context.last_error_message or (report.message if report else "") or "주문 거부"
+            message = f"{context.stock_code} {side_label} 주문 거부 - {reason}"
+            metadata["reason"] = reason
+        elif context.state == OrderState.CANCELED:
+            level = NotificationLevel.ERROR
+            title = f"{side_label} 주문 실패"
+            reason = context.last_error_message or (report.message if report else "") or "주문 취소"
+            if context.filled_qty > 0:
+                message = (
+                    f"{context.stock_code} {side_label} 주문 부분체결 후 취소 - "
+                    f"체결 {context.filled_qty}/{context.qty}주, 잔량 {context.remaining_qty}주"
+                )
+            else:
+                message = f"{context.stock_code} {side_label} 주문 미체결 취소 - {reason}"
+            metadata["reason"] = reason
+        else:
+            return
+
+        try:
+            await self._notification_service.emit(
+                NotificationCategory.TRADE,
+                level,
+                title,
+                message,
+                metadata=metadata,
+            )
+            self._terminal_notification_sent.add(dedup_key)
+        except Exception as exc:  # noqa: BLE001 - 알림 실패가 주문 상태 반영을 막지 않도록 격리
+            self.logger.warning(f"주문 terminal 알림 발행 실패: {exc}")
+
     # ── 가상매매 영구 기록 (terminal report 시) ──────────────────────
     async def _persist_virtual_trade_for_terminal_report(
         self,
@@ -298,11 +377,13 @@ class FillReconciliationService:
                 error_message=report.message or "주문 거부",
             )
             self._exec_quality_reporter.log(rejected)
+            await self._emit_terminal_order_notification(rejected, report)
             return rejected
 
         if report.event_state == OrderState.CANCELED:
             canceled = self._fsm.transition(context.order_key, OrderState.CANCELED)
             self._exec_quality_reporter.log(canceled)
+            await self._emit_terminal_order_notification(canceled, report)
             return await self._persist_virtual_trade_for_terminal_report(canceled, report)
 
         if report.fill_qty <= 0:
@@ -348,6 +429,8 @@ class FillReconciliationService:
                 "trace_id": context.trace_id or "",
             })
         self._exec_quality_reporter.log(transitioned)
+        if transitioned.state == OrderState.FILLED:
+            await self._emit_terminal_order_notification(transitioned, report)
         return await self._persist_virtual_trade_for_terminal_report(transitioned, report)
 
     async def handle_signing_notice(self, data: dict, tr_id: str = "") -> Optional[OrderContext]:
@@ -853,6 +936,7 @@ class FillReconciliationService:
         transitioned = self._fsm.transition(order_key, final_state, filled_qty=qty)
         if transitioned.state.is_terminal or transitioned.average_fill_price is not None:
             self._exec_quality_reporter.log(transitioned)
+        await self._emit_terminal_order_notification(transitioned)
         return transitioned
 
     async def mark_order_partial_filled(
