@@ -150,6 +150,13 @@ def _parse_args() -> argparse.Namespace:
         help="formal PBO(CSCV) 경고 임계(0~1). 초과 시 과최적화 경고. 미지정 시 보고만.",
     )
     parser.add_argument(
+        "--pbo-cscv-embargo",
+        type=int,
+        default=0,
+        dest="pbo_cscv_embargo",
+        help="PBO(CSCV) purge embargo — IS/OOS 블록 경계 누수 방지용으로 블록 head N개 관측치 제외(기본 0).",
+    )
+    parser.add_argument(
         "--paper",
         action="store_true",
         default=False,
@@ -1120,6 +1127,7 @@ async def _run_ablation_for_result(
         matrix,
         n_splits=int(getattr(args, "pbo_cscv_splits", 16) or 16),
         threshold=getattr(args, "max_pbo_cscv", None),
+        embargo=int(getattr(args, "pbo_cscv_embargo", 0) or 0),
     )
 
     object.__setattr__(
@@ -1333,6 +1341,7 @@ async def _run_parameter_stability_for_result(
         matrix,
         n_splits=int(getattr(args, "pbo_cscv_splits", 16) or 16),
         threshold=getattr(args, "max_pbo_cscv", None),
+        embargo=int(getattr(args, "pbo_cscv_embargo", 0) or 0),
     )
 
     object.__setattr__(

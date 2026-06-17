@@ -173,6 +173,7 @@ def compute_pbo_cscv(
     *,
     n_splits: int = 16,
     threshold: float | None = None,
+    embargo: int = 0,
 ) -> dict[str, Any]:
     """Formal Probability of Backtest Overfitting via CSCV.
 
@@ -193,7 +194,7 @@ def compute_pbo_cscv(
     """
     def _unavailable(reason: str) -> dict[str, Any]:
         return {"available": False, "reason": reason, "pbo": None, "passed": None,
-                "n_splits": int(n_splits), "threshold": threshold}
+                "n_splits": int(n_splits), "threshold": threshold, "embargo": int(embargo)}
 
     rows = [list(r) for r in (returns_matrix or [])]
     t_periods = len(rows)
@@ -210,29 +211,46 @@ def compute_pbo_cscv(
     block = t_periods // s
     if block < 2:  # need >=2 obs/block for a sample stdev
         return _unavailable("insufficient_periods")
+    emb = int(embargo)
+    if emb < 0:
+        return _unavailable("invalid_embargo")
+    if emb >= block - 1:  # 잘라낸 뒤에도 블록당 >=2 obs 보장 (stdev)
+        return _unavailable("embargo_too_large")
 
-    # block-level sufficient stats: count, sum, sum-of-squares per (block, config)
-    cnt = [0] * s
-    bsum = [[0.0] * n_configs for _ in range(s)]
-    bsq = [[0.0] * n_configs for _ in range(s)]
-    for b in range(s):
-        for i in range(b * block, (b + 1) * block):
-            cnt[b] += 1
+    # block-level sufficient stats per (block, config): full + head-trimmed(embargo).
+    # purged CSCV: 블록 시작부 embargo 관측치는 직전(다른 partition) 블록과의 serial
+    # correlation 누수원이므로, 직전 블록이 반대편 partition일 때만 head를 잘라낸다.
+    def _block_stats(b: int, head_skip: int) -> tuple[int, list[float], list[float]]:
+        start = b * block + head_skip
+        end = (b + 1) * block
+        sums = [0.0] * n_configs
+        sq = [0.0] * n_configs
+        for i in range(start, end):
             row = rows[i]
-            sums_b, sq_b = bsum[b], bsq[b]
             for j in range(n_configs):
                 v = _to_float(row[j]) or 0.0
-                sums_b[j] += v
-                sq_b[j] += v * v
+                sums[j] += v
+                sq[j] += v * v
+        return end - start, sums, sq
+
+    full = [_block_stats(b, 0) for b in range(s)]
+    trimmed = [_block_stats(b, emb) for b in range(s)] if emb > 0 else full
 
     def _sharpes(blockset: tuple[int, ...]) -> list[float]:
-        n = sum(cnt[b] for b in blockset)
+        block_in = set(blockset)
+        chosen = [
+            trimmed[b] if (emb > 0 and b > 0 and (b - 1) not in block_in) else full[b]
+            for b in blockset
+        ]
+        n = sum(c for c, _, _ in chosen)
         out = [0.0] * n_configs
+        if n <= 1:
+            return out
         for j in range(n_configs):
-            s_sum = sum(bsum[b][j] for b in blockset)
-            s_sq = sum(bsq[b][j] for b in blockset)
+            s_sum = sum(sums[j] for _, sums, _ in chosen)
+            s_sq = sum(sq[j] for _, _, sq in chosen)
             mean = s_sum / n
-            var = (s_sq - n * mean * mean) / (n - 1) if n > 1 else 0.0
+            var = (s_sq - n * mean * mean) / (n - 1)
             out[j] = mean / math.sqrt(var) if var > 1e-18 else 0.0
         return out
 
@@ -265,6 +283,7 @@ def compute_pbo_cscv(
         "n_splits": s,
         "n_combinations": total,
         "n_periods_used": block * s,
+        "embargo": emb,
         "median_logit": round(median(logits), 6) if logits else None,
         "threshold": threshold,
         "passed": passed,

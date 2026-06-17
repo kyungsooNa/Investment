@@ -59,6 +59,38 @@ def test_pbo_cscv_rejects_odd_n_splits():
     assert res["reason"] == "invalid_n_splits"
 
 
+def test_pbo_cscv_embargo_echoed_and_default_zero():
+    res = compute_pbo_cscv(_noise_matrix(), n_splits=8)
+    assert res["embargo"] == 0
+
+
+def test_pbo_cscv_embargo_zero_matches_default():
+    base = compute_pbo_cscv(_noise_matrix(), n_splits=8)
+    emb0 = compute_pbo_cscv(_noise_matrix(), n_splits=8, embargo=0)
+    assert base["pbo"] == emb0["pbo"]
+
+
+def test_pbo_cscv_embargo_applies_and_stays_valid():
+    # block = 160//8 = 20 → embargo 5 는 유효(블록당 15 obs 잔존)
+    res = compute_pbo_cscv(_noise_matrix(), n_splits=8, embargo=5)
+    assert res["available"] is True
+    assert res["embargo"] == 5
+    assert 0.0 <= res["pbo"] <= 1.0
+
+
+def test_pbo_cscv_embargo_too_large_unavailable():
+    # block = 20 → embargo 19 는 블록당 <2 obs → 거부
+    res = compute_pbo_cscv(_noise_matrix(), n_splits=8, embargo=19)
+    assert res["available"] is False
+    assert res["reason"] == "embargo_too_large"
+
+
+def test_pbo_cscv_embargo_dominant_still_low_pbo():
+    res = compute_pbo_cscv(_dominant_matrix(t_periods=80), n_splits=8, embargo=2)
+    assert res["available"] is True
+    assert res["pbo"] == 0.0  # 일관 우월 config는 embargo 와 무관하게 OOS 최상위
+
+
 def test_pbo_cscv_threshold_breach_sets_passed_false():
     res = compute_pbo_cscv(_noise_matrix(), n_splits=8, threshold=0.1)
     assert res["available"] is True

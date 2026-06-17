@@ -33,6 +33,18 @@ def test_parse_args_includes_pbo_cscv_flags(monkeypatch):
     assert args.max_pbo_cscv == 0.6
 
 
+def test_parse_args_includes_pbo_cscv_embargo(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_backtest.py", "--strategy", "oneil_pocket_pivot", "--dates", "20250102",
+            "--parameter-stability", "oneil_pocket_pivot", "--pbo-cscv-embargo", "3",
+        ],
+    )
+    args = _parse_args()
+    assert args.pbo_cscv_embargo == 3
+
+
 def test_pbo_cscv_flags_default(monkeypatch):
     monkeypatch.setattr(
         "sys.argv",
@@ -41,6 +53,7 @@ def test_pbo_cscv_flags_default(monkeypatch):
     args = _parse_args()
     assert args.pbo_cscv_splits == 16
     assert args.max_pbo_cscv is None
+    assert args.pbo_cscv_embargo == 0
 
 
 def test_format_pbo_cscv_none_or_empty():
