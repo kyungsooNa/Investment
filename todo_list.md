@@ -82,8 +82,9 @@
 
 ### 2-4. Polling에서 event-driven으로 점진 전환
 
-- **[최우선 블로커] WebSocket price 피드 무틱 ≈55%**: 6/9~6/12 streaming 로그 실측 — 구독 30~34종목 중 18~21종목이 종일 `subscribed_no_tick`. shadow는 tick에만 의존하므로 parity 수집 자체가 불가. `connection_lost` 12~18/일 + `price_data_gap` 단조 증가(force-reconnect로 미치유). ACK 수정(#509)으로 미해소. **shadow뿐 아니라 라이브 실시간 데이터 전반 품질 문제** → 별도 최우선 과제로 격상. 코드 감사 결과 슬롯 cap(40)·ACK 확정은 정상 → 무틱 = KIS가 ACK 후 데이터 미전송 가설. **1거래일 ACK 레벨 로그 필요(코드 선제 수정 불가)**.
+- **[최우선 블로커] WebSocket price 피드 무틱 ≈55%**: 6/9~6/12 streaming 로그 실측 — 구독 30~34종목 중 18~21종목이 종일 `subscribed_no_tick`. shadow는 tick에만 의존하므로 parity 수집 자체가 불가. `connection_lost` 12~18/일 + `price_data_gap` 단조 증가(force-reconnect로 미치유). ACK 수정(#509)으로 미해소. **shadow뿐 아니라 라이브 실시간 데이터 전반 품질 문제** → 별도 최우선 과제로 격상. 코드 감사 결과 슬롯 cap(40)·ACK 확정은 정상 → 무틱 = KIS가 ACK 후 데이터 미전송 가설. **진단 로깅은 이미 완비 — 신규 코드 불필요. 남은 것은 1거래일 라이브 가동 + 로그 수집뿐(선제 코드 작업 없음).**
   - 디스패치 갭은 해소(#551): `StreamingService`가 `on_price_tick`을 스레드풀 executor로 오프로드해 async `event_router` 디스패치가 끊기던 버그 수정 → tick 도착 종목은 shadow 평가 실행됨. #533 tick-ingest 카운터(received/quality_reject/dispatched) 관측 배선 존재.
+  - 진단 로깅 완비 근거(2026-06-17 코드 확인): ① `_active_codes_price`는 **KIS 등록 ACK 확정 종목만** 마킹(`subscription_policy.py` ≈389-401, 전송 성공≠active, 유령 구독 방지 — 테스트 잠금). ② watchdog가 `subscribed_no_tick`(=active AND `last_tick_ts<=0`, 즉 ACK 확정 후 0틱) vs `not_subscribed`(ACK 미확정)를 종목별 분리 로깅(`websocket_watchdog_task.py` ≈271-279). ③ `tick_ingest_stats_snapshot`이 `received=0`(프레임 자체 0=a1) vs `received>0 & quality_reject↑`(게이트 탈락=a2) 구별. → 1거래일 로그면 "ACK 후 KIS 미전송" 가설 즉시 입증/반증 가능. 단 tick-ingest 스냅샷은 현재 구독 refresh 시점에만 event_shadow에 첨부(`strategy_scheduler.py` ≈1245) — 주기 방출/일말 집계 아님이라, **로그 입수 후** `subscribed_no_tick`×카운터 조인 파싱 스크립트 1개가 a1/a2 판정에 필요(선제 작업 아님).
 - [ ] (블로커 해소 후) `event_shadow`/`event_shadow_exit` 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py`로 entry/exit parity 리포트 → PR-3 진입 판정.
 - [ ] event-driven signal은 별도 승인 전 shadow/latency 측정용으로만 운영(실주문은 polling + full gate 경로만). VBO fast path는 execution strength/program-buy 생략.
 - [blocked] PR-3: PR-2.5 관찰 양호 시 VBO 실 적용 + OSB shadow 진입. / PR-4+: 단계적 확장.
