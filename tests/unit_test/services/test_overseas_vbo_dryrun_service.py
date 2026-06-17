@@ -107,3 +107,47 @@ async def test_scan_has_no_order_path(svc):
     """서비스는 order_execution 의존을 갖지 않는다(실주문 불가 보장)."""
     assert not hasattr(svc.service, "_order_execution_service")
     assert not hasattr(svc.service, "_order_service")
+
+
+@pytest.mark.asyncio
+async def test_scan_omits_qty_when_no_sizing(svc):
+    """사이징 서비스 미주입 시 신호에 qty 를 넣지 않는다(하위 호환)."""
+    bars = [_bar("20260511", 100, 110, 100, 105), _bar("20260512", 100, 120, 104, 115)]
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))
+
+    signals = await svc.service.scan_dry_run(exchange=OverseasExchange.NASD)
+
+    assert "qty" not in signals[0]
+
+
+@pytest.mark.asyncio
+async def test_scan_includes_qty_when_sizing_injected():
+    """사이징 서비스 주입 시 would-be qty/notional 을 신호에 동봉한다(주문 경로 없음)."""
+    candidate_service = MagicMock()
+    candidate_service.get_candidates = AsyncMock(return_value=[
+        {"code": "AAA", "name": "Aaa", "exchange": "NASD", "avg_trading_value": 10_000_000.0},
+    ])
+    sqs = MagicMock()
+    bars = [_bar("20260511", 100, 110, 100, 105), _bar("20260512", 100, 120, 104, 115)]
+    sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))
+
+    sizing = MagicMock()
+    sizing.size = MagicMock(return_value={"qty": 9, "notional_usd": 945.0, "reason": "slot"})
+
+    service = OverseasVBODryRunService(
+        candidate_service=candidate_service,
+        stock_query_service=sqs,
+        shadow_journal=MagicMock(),
+        logger=MagicMock(),
+        position_sizing_service=sizing,
+    )
+
+    signals = await service.scan_dry_run(exchange=OverseasExchange.NASD)
+
+    assert signals[0]["qty"] == 9
+    assert signals[0]["notional_usd"] == 945.0
+    # entry_price(=target 105) 로 사이징 호출
+    _, kwargs = sizing.size.call_args
+    assert kwargs["limit_price_usd"] == 105.0
+    # 사이징 주입돼도 order_execution 의존은 없다
+    assert not hasattr(service, "_order_execution_service")
