@@ -120,6 +120,54 @@ def compute_multiple_testing_bias_summary(
     }
 
 
+def _extract_period_key(value: Any) -> str | None:
+    """signal_time/날짜 문자열에서 YYYYMMDD 기간 키 추출 (ISO·compact 모두 허용)."""
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    return digits[:8] if len(digits) >= 8 else None
+
+
+def build_config_period_pnl_matrix(
+    records_by_config: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    completed_statuses: tuple[str, ...] = ("SOLD", "ROUND_TRIP", "CLOSED"),
+    date_key: str = "signal_time",
+    value_key: str = "net_pnl",
+) -> tuple[list[list[float]], list[str], list[str]]:
+    """config별 journal records → CSCV용 ``T x N`` (기간 x config) net_pnl 행렬.
+
+    각 config의 완료 거래를 청산일(``date_key`` 의 YYYYMMDD)별로 묶어 ``value_key``
+    합을 구하고, 모든 config의 기간 합집합을 시간순 정렬해 공통 인덱스로 정렬한다.
+    해당 기간에 거래가 없는 config 셀은 0.0. 반환: (matrix, config_names, periods).
+
+    ``compute_pbo_cscv`` 의 입력 형태(행=기간, 열=config)와 정확히 일치한다.
+    """
+    config_names = list(records_by_config.keys())
+    statuses = {s.upper() for s in completed_statuses}
+    per_config: dict[str, dict[str, float]] = {}
+    all_periods: set[str] = set()
+    for name in config_names:
+        bucket: dict[str, float] = {}
+        for record in records_by_config[name] or []:
+            if str(record.get("status") or "").upper() not in statuses:
+                continue
+            period = _extract_period_key(record.get(date_key))
+            if period is None:
+                continue
+            pnl = _to_float(record.get(value_key))
+            if pnl is None:
+                continue
+            bucket[period] = bucket.get(period, 0.0) + pnl
+            all_periods.add(period)
+        per_config[name] = bucket
+
+    periods = sorted(all_periods)
+    matrix = [
+        [per_config[name].get(period, 0.0) for name in config_names]
+        for period in periods
+    ]
+    return matrix, config_names, periods
+
+
 def compute_pbo_cscv(
     returns_matrix: Sequence[Sequence[float]],
     *,

@@ -136,6 +136,20 @@ def _parse_args() -> argparse.Namespace:
         help="실행할 dimension 이름 (쉼표 구분). 미지정 시 preset 의 모든 dimension 실행.",
     )
     parser.add_argument(
+        "--pbo-cscv-splits",
+        type=int,
+        default=16,
+        dest="pbo_cscv_splits",
+        help="parameter-stability sweep 시 formal PBO(CSCV) 블록 수 S (짝수). 기간 부족하면 PBO unavailable.",
+    )
+    parser.add_argument(
+        "--max-pbo-cscv",
+        type=float,
+        default=None,
+        dest="max_pbo_cscv",
+        help="formal PBO(CSCV) 경고 임계(0~1). 초과 시 과최적화 경고. 미지정 시 보고만.",
+    )
+    parser.add_argument(
         "--paper",
         action="store_true",
         default=False,
@@ -535,7 +549,24 @@ def _format_console(result) -> str:
                 parameter_stability["strategy_key"], parameter_stability["summary"]
             )
         )
+        lines.extend(_format_pbo_cscv_console_lines(parameter_stability.get("pbo_cscv")))
     return "\n".join(lines)
+
+
+def _format_pbo_cscv_console_lines(pbo_cscv: dict[str, Any] | None) -> list[str]:
+    """formal PBO(CSCV) 결과 콘솔 라인. 미산출 시 사유만 표기."""
+    if not pbo_cscv:
+        return []
+    if not pbo_cscv.get("available"):
+        return [f"  [PBO_CSCV] unavailable ({pbo_cscv.get('reason', 'n/a')})"]
+    pbo = pbo_cscv.get("pbo")
+    passed = pbo_cscv.get("passed")
+    verdict = "" if passed is None else (" PASS" if passed else " WARN(과최적화)")
+    return [
+        f"  [PBO_CSCV] pbo={pbo:.3f} configs={pbo_cscv.get('n_configs')} "
+        f"periods={pbo_cscv.get('n_periods_used')} splits={pbo_cscv.get('n_splits')} "
+        f"combos={pbo_cscv.get('n_combinations')}{verdict}"
+    ]
 
 
 def _result_to_payload(result) -> dict[str, Any]:
@@ -1265,10 +1296,31 @@ async def _run_parameter_stability_for_result(
         sweep_records_by_dim=sweep_records_by_dim,
         capital_base_won=float(getattr(args, "initial_cash", 0.0)) or None,
     )
+
+    # formal PBO(CSCV): sweep 후보들을 config로 보고 config별 per-period net_pnl 행렬을
+    # 조립해 과최적화 확률을 산출한다. 후보 = baseline + 모든 sweep point.
+    from services.multiple_testing_bias_service import (
+        build_config_period_pnl_matrix,
+        compute_pbo_cscv,
+    )
+
+    configs: dict[str, list[dict]] = {
+        "baseline": list(getattr(result, "journal_records", []) or [])
+    }
+    for dim_name, per_value in sweep_records_by_dim.items():
+        for value, records in per_value.items():
+            configs[f"{dim_name}={value}"] = list(records or [])
+    matrix, _config_names, _periods = build_config_period_pnl_matrix(configs)
+    pbo_cscv = compute_pbo_cscv(
+        matrix,
+        n_splits=int(getattr(args, "pbo_cscv_splits", 16) or 16),
+        threshold=getattr(args, "max_pbo_cscv", None),
+    )
+
     object.__setattr__(
         result,
         "parameter_stability",
-        {"strategy_key": preset.strategy_key, "summary": summary},
+        {"strategy_key": preset.strategy_key, "summary": summary, "pbo_cscv": pbo_cscv},
     )
 
 
