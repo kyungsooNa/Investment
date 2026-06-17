@@ -536,6 +536,7 @@ def _format_console(result) -> str:
         lines.extend(
             _format_ablation_console_lines(ablation["strategy_key"], ablation["summary"])
         )
+        lines.extend(_format_pbo_cscv_console_lines(ablation.get("pbo_cscv")))
         if ablation.get("universe_exclusion"):
             lines.extend(
                 _format_universe_exclusion_console_lines(
@@ -1105,6 +1106,22 @@ async def _run_ablation_for_result(
         baseline_records=baseline_records,
         variant_records=variant_records,
     )
+
+    # formal PBO(CSCV): ablation variant도 선택 대상 후보군이므로 과최적화 확률을 산출한다.
+    # 후보 = baseline + 모든 ablation variant.
+    from services.multiple_testing_bias_service import (
+        build_config_period_pnl_matrix,
+        compute_pbo_cscv,
+    )
+
+    configs: dict[str, list[dict]] = {"baseline": baseline_records, **variant_records}
+    matrix, _names, _periods = build_config_period_pnl_matrix(configs)
+    pbo_cscv = compute_pbo_cscv(
+        matrix,
+        n_splits=int(getattr(args, "pbo_cscv_splits", 16) or 16),
+        threshold=getattr(args, "max_pbo_cscv", None),
+    )
+
     object.__setattr__(
         result,
         "ablation",
@@ -1113,6 +1130,7 @@ async def _run_ablation_for_result(
             "summary": summary,
             "gate": gate,
             "universe_exclusion": exclusion,
+            "pbo_cscv": pbo_cscv,
         },
     )
 
