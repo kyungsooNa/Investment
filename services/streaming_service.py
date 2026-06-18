@@ -234,7 +234,7 @@ class StreamingService:
             await self.connect_websocket()
             for code in stock_codes:
                 if "price" in fields:
-                    await self.subscribe_realtime_price(code)
+                    await self.subscribe_unified_price(code)
                 if "quote" in fields:
                     await self.broker.subscribe_realtime_quote(code)
 
@@ -247,7 +247,7 @@ class StreamingService:
         finally:
             for code in stock_codes:
                 if "price" in fields:
-                    await self.unsubscribe_realtime_price(code)
+                    await self.unsubscribe_unified_price(code)
                 if "quote" in fields:
                     await self.broker.unsubscribe_realtime_quote(code)
             await self.disconnect_websocket()

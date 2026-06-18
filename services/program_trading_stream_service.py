@@ -28,6 +28,7 @@ class ProgramTradingStreamService:
     FLUSH_BATCH_SIZE = 100
     HOURLY_TICK_ALERT_INTERVAL_SEC = 60 * 60
     REGULAR_SESSION_CLOSE_TIME = "15:30"
+    CLOSING_AUCTION_START_TIME = "15:20"
 
     def __init__(self, logger=None):
         self.logger = logger if logger else logging.getLogger(__name__)
@@ -546,15 +547,21 @@ class ProgramTradingStreamService:
             if item["ok"]:
                 lines.append(f"{html.escape(label)}: OK ({saved}/{expected})")
             else:
-                sample = ", ".join(item["missing_minutes"][:10])
-                extra = "" if item["missing_minute_count"] <= 10 else f" 외 {item['missing_minute_count'] - 10}분"
+                display_missing_minutes = [
+                    minute for minute in item["missing_minutes"]
+                    if minute < self.CLOSING_AUCTION_START_TIME
+                ]
+                sample = ", ".join(display_missing_minutes[:10])
+                extra = "" if len(display_missing_minutes) <= 10 else f" 외 {len(display_missing_minutes) - 10}분"
                 unsaved = item.get("unsaved_received_minute_count", 0)
                 no_tick = item.get("no_tick_minute_count", item["missing_minute_count"])
-                lines.append(
+                line = (
                     f"{html.escape(label)}: 누락 {item['missing_minute_count']}분 "
-                    f"(DB 미저장 {unsaved}분, 수신없음 {no_tick}분, 저장 {saved}/{expected}) "
-                    f"예: {html.escape(sample)}{extra}"
+                    f"(DB 미저장 {unsaved}분, 수신없음 {no_tick}분, 저장 {saved}/{expected})"
                 )
+                if sample:
+                    line += f" 예: {html.escape(sample)}{extra}"
+                lines.append(line)
         return "\n".join(lines)
 
     def get_background_task_status(self) -> dict:

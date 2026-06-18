@@ -225,7 +225,7 @@ async def test_handle_program_trading_stream_exception(streaming_service, mock_b
 
 @pytest.mark.asyncio
 async def test_handle_realtime_stream(streaming_service, mock_broker, mock_market_clock):
-    """고수준 스트림 핸들러: 실시간 스트림 다중 종목/필드 구독 및 해지 처리"""
+    """고수준 스트림 핸들러: price 필드는 KRX+NXT 통합 체결가로 구독/해지한다."""
     # duration=0 을 넘겨서 while 루프를 한 번도 돌지 않도록 빠르게 통과
     await streaming_service.handle_realtime_stream(
         stock_codes=["005930", "000660"],
@@ -234,17 +234,19 @@ async def test_handle_realtime_stream(streaming_service, mock_broker, mock_marke
     )
 
     mock_broker.connect_websocket.assert_awaited_once()
-    assert mock_broker.subscribe_realtime_price.await_count == 2
+    mock_broker.subscribe_realtime_price.assert_not_awaited()
+    assert mock_broker.subscribe_unified_price.await_count == 2
     assert mock_broker.subscribe_realtime_quote.await_count == 2
 
-    assert mock_broker.unsubscribe_realtime_price.await_count == 2
+    mock_broker.unsubscribe_realtime_price.assert_not_awaited()
+    assert mock_broker.unsubscribe_unified_price.await_count == 2
     assert mock_broker.unsubscribe_realtime_quote.await_count == 2
     mock_broker.disconnect_websocket.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_handle_realtime_stream_exception(streaming_service, mock_broker):
     """실시간 스트림 핸들러 수행 중 오류 발생 시 정상적인 리소스 정리(finally) 테스트"""
-    mock_broker.subscribe_realtime_price.side_effect = Exception("Test Error")
+    mock_broker.subscribe_unified_price.side_effect = Exception("Test Error")
 
     await streaming_service.handle_realtime_stream(
         stock_codes=["005930"],
@@ -253,7 +255,8 @@ async def test_handle_realtime_stream_exception(streaming_service, mock_broker):
     )
 
     streaming_service.logger.exception.assert_called_once()
-    mock_broker.unsubscribe_realtime_price.assert_awaited_once_with("005930")
+    mock_broker.unsubscribe_unified_price.assert_awaited_once_with("005930")
+    mock_broker.unsubscribe_realtime_price.assert_not_awaited()
     mock_broker.disconnect_websocket.assert_awaited_once()
 
 @pytest.mark.asyncio
@@ -266,8 +269,10 @@ async def test_handle_realtime_stream_only_quote(streaming_service, mock_broker)
     )
 
     mock_broker.subscribe_realtime_price.assert_not_awaited()
+    mock_broker.subscribe_unified_price.assert_not_awaited()
     mock_broker.subscribe_realtime_quote.assert_awaited_once_with("005930")
     mock_broker.unsubscribe_realtime_price.assert_not_awaited()
+    mock_broker.unsubscribe_unified_price.assert_not_awaited()
     mock_broker.unsubscribe_realtime_quote.assert_awaited_once_with("005930")
 
 # ── Observer 패턴 테스트 ──────────────────────────────────────────
