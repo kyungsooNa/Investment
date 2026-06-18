@@ -56,6 +56,34 @@ async def test_scan_emits_buy_on_breakout(svc):
 
 
 @pytest.mark.asyncio
+async def test_scan_emits_same_day_eod_exit(svc):
+    """돌파 후 당일저가 손절가 미터치 → 당일 종가(eod) 청산을 동봉한다(Phase 2 모델 동일)."""
+    # target=105, stop=105*0.97=101.85, 당일저 104 > stop → eod 청산(종가 115)
+    bars = [_bar("20260511", 100, 110, 100, 105), _bar("20260512", 100, 120, 104, 115)]
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))
+
+    signals = await svc.service.scan_dry_run(exchange=OverseasExchange.NASD)
+
+    assert signals[0]["exit_reason"] == "eod"
+    assert signals[0]["exit_price"] == 115.0
+    assert signals[0]["realized_pct"] == pytest.approx((115.0 / 105.0 - 1) * 100)
+
+
+@pytest.mark.asyncio
+async def test_scan_emits_same_day_stop_exit(svc):
+    """돌파 후 당일저가 손절가 터치 → 손절가(stop) 청산을 동봉한다."""
+    # target=105, stop=101.85, 당일저 100 <= stop → stop 청산
+    bars = [_bar("20260511", 100, 110, 100, 105), _bar("20260512", 100, 120, 100, 102)]
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))
+
+    signals = await svc.service.scan_dry_run(exchange=OverseasExchange.NASD)
+
+    assert signals[0]["exit_reason"] == "stop"
+    assert signals[0]["exit_price"] == pytest.approx(101.85)
+    assert signals[0]["realized_pct"] == pytest.approx(-3.0)
+
+
+@pytest.mark.asyncio
 async def test_scan_no_signal_when_no_breakout(svc):
     bars = [_bar("20260511", 100, 110, 100, 105), _bar("20260512", 100, 104, 100, 103)]
     svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))

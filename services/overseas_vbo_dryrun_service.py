@@ -112,6 +112,15 @@ class OverseasVBODryRunService:
             return None
         entry = target
         stop = entry * (1 + self._stop_loss_pct / 100.0)
+        # 당일 same-day exit(Phase 2 백테스트 모델과 동일): 당일저 <= 손절가면 손절가,
+        # 아니면 당일 종가(eod) 청산. 주문 경로 없는 would-be 청산 결과만 동봉한다.
+        low = self._f(cur.get("low"))
+        close = self._f(cur.get("close"))
+        if low <= stop:
+            exit_price, exit_reason = stop, "stop"
+        else:
+            exit_price, exit_reason = close, "eod"
+        realized_pct = (exit_price / entry - 1) * 100.0 if entry > 0 else 0.0
         return {
             "code": code,
             "action": "BUY",
@@ -120,6 +129,9 @@ class OverseasVBODryRunService:
             "target": target,
             "stop_price": stop,
             "prev_range": prev_range,
+            "exit_price": exit_price,
+            "exit_reason": exit_reason,
+            "realized_pct": realized_pct,
             "reason": "vbo_daily_breakout",
         }
 
