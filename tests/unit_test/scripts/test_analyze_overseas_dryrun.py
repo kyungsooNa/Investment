@@ -142,6 +142,27 @@ def test_compute_sizing_aggregates_only_when_present():
     assert sz["total_notional_usd"] == pytest.approx(945.0)
 
 
+def test_compute_krw_exposure_aggregates_only_when_present():
+    records = [
+        {"code": "AAA", "exchange": "NASD", "trade_date": "20260601",
+         "realized_pct": 5.0, "exit_reason": "eod", "qty": 9, "notional_usd": 945.0,
+         "krw_exposure": 1_275_750.0},
+        {"code": "BBB", "exchange": "NASD", "trade_date": "20260601",
+         "realized_pct": 2.0, "exit_reason": "eod", "qty": 4, "notional_usd": 400.0,
+         "krw_exposure": 540_000.0},
+        {"code": "CCC", "exchange": "NYSE", "trade_date": "20260602",
+         "realized_pct": 1.0, "exit_reason": "eod", "qty": None, "notional_usd": None,
+         "krw_exposure": None},
+    ]
+
+    report = compute_dryrun_report(records)
+
+    sz = report["sizing"]
+    assert sz["fx_sized_count"] == 2
+    assert sz["total_krw_exposure"] == pytest.approx(1_815_750.0)
+    assert sz["avg_krw_exposure"] == pytest.approx(907_875.0)
+
+
 def test_compute_empty_records():
     report = compute_dryrun_report([])
     assert report["totals"]["signals"] == 0

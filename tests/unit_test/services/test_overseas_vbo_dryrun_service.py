@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
+from services.overseas_position_sizing_service import OverseasPositionSizingService
 from common.types import ErrorCode, ResCommonResponse
 from common.overseas_types import OverseasExchange
 
@@ -179,3 +180,101 @@ async def test_scan_includes_qty_when_sizing_injected():
     assert kwargs["limit_price_usd"] == 105.0
     # 사이징 주입돼도 order_execution 의존은 없다
     assert not hasattr(service, "_order_execution_service")
+
+
+def _sizing_svc(slot_usd=1000.0):
+    return OverseasPositionSizingService(slot_usd=slot_usd)
+
+
+def _breakout_service(*, fx_provider=None, sizing=None):
+    candidate_service = MagicMock()
+    candidate_service.get_candidates = AsyncMock(return_value=[
+        {"code": "AAA", "name": "Aaa", "exchange": "NASD", "avg_trading_value": 10_000_000.0},
+    ])
+    sqs = MagicMock()
+    bars = [_bar("20260511", 100, 110, 100, 105), _bar("20260512", 100, 120, 104, 115)]
+    sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))
+    return OverseasVBODryRunService(
+        candidate_service=candidate_service,
+        stock_query_service=sqs,
+        shadow_journal=MagicMock(),
+        logger=MagicMock(),
+        position_sizing_service=sizing if sizing is not None else _sizing_svc(),
+        fx_provider=fx_provider,
+    )
+
+
+@pytest.mark.asyncio
+async def test_scan_passes_fx_to_sizing_and_records_krw_exposure():
+    """fx_provider 주입 시 scan당 FX를 조회해 사이징에 전달하고 krw_exposure 를 동봉한다."""
+    fx_provider = AsyncMock(return_value=1350.0)
+    service = _breakout_service(fx_provider=fx_provider)
+
+    signals = await service.scan_dry_run(exchange=OverseasExchange.NASD)
+
+    # entry=105 → qty=floor(1000/105)=9, notional=945, krw=945*1350
+    assert signals[0]["qty"] == 9
+    assert signals[0]["fx_krw_per_usd"] == 1350.0
+    assert signals[0]["krw_exposure"] == pytest.approx(945.0 * 1350.0)
+
+
+@pytest.mark.asyncio
+async def test_scan_omits_krw_when_fx_provider_returns_none():
+    """fx_provider 가 None 반환 시 KRW 환산을 생략한다(qty 는 유지, 하위 호환)."""
+    service = _breakout_service(fx_provider=AsyncMock(return_value=None))
+
+    signals = await service.scan_dry_run(exchange=OverseasExchange.NASD)
+
+    assert signals[0]["qty"] == 9
+    assert "krw_exposure" not in signals[0]
+    assert "fx_krw_per_usd" not in signals[0]
+
+
+@pytest.mark.asyncio
+async def test_scan_tolerates_fx_provider_error():
+    """fx_provider 예외는 삼키고 KRW 없이 신호를 산출한다(실주문/수집 중단 없음)."""
+    service = _breakout_service(fx_provider=AsyncMock(side_effect=RuntimeError("boom")))
+
+    signals = await service.scan_dry_run(exchange=OverseasExchange.NASD)
+
+    assert signals[0]["qty"] == 9
+    assert "krw_exposure" not in signals[0]
+
+
+@pytest.mark.asyncio
+async def test_scan_fetches_fx_once_per_scan():
+    """후보가 여러 개여도 FX 조회는 scan당 1회만 수행한다."""
+    fx_provider = AsyncMock(return_value=1350.0)
+    service = _breakout_service(fx_provider=fx_provider)
+    service._candidate_service.get_candidates = AsyncMock(return_value=[
+        {"code": "AAA", "avg_trading_value": 1.0},
+        {"code": "BBB", "avg_trading_value": 1.0},
+    ])
+
+    await service.scan_dry_run(exchange=OverseasExchange.NASD)
+
+    fx_provider.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scan_skips_fx_when_no_sizing_service():
+    """사이징 미주입 시 fx_provider 를 호출하지 않는다(KRW 산출 불가)."""
+    fx_provider = AsyncMock(return_value=1350.0)
+    candidate_service = MagicMock()
+    candidate_service.get_candidates = AsyncMock(return_value=[
+        {"code": "AAA", "avg_trading_value": 1.0},
+    ])
+    sqs = MagicMock()
+    bars = [_bar("20260511", 100, 110, 100, 105), _bar("20260512", 100, 120, 104, 115)]
+    sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))
+    service = OverseasVBODryRunService(
+        candidate_service=candidate_service,
+        stock_query_service=sqs,
+        shadow_journal=MagicMock(),
+        logger=MagicMock(),
+        fx_provider=fx_provider,
+    )
+
+    await service.scan_dry_run(exchange=OverseasExchange.NASD)
+
+    fx_provider.assert_not_awaited()

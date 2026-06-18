@@ -9,7 +9,7 @@
 """
 import contextlib
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -315,3 +315,38 @@ def test_service_container_wires_overseas_dryrun_position_sizing(patched_service
     dryrun_kwargs = dryrun_cls.call_args.kwargs
     assert dryrun_kwargs["candidate_service"] is candidate_cls.return_value
     assert dryrun_kwargs["position_sizing_service"] is sizing_cls.return_value
+    # FX provider 배선: KIS 해외 잔고에서 USD/KRW 환율 추출(읽기 전용, 실주문 없음)
+    fx_provider = dryrun_kwargs["fx_provider"]
+    assert callable(fx_provider)
+
+
+@pytest.mark.asyncio
+async def test_overseas_fx_provider_extracts_rate_from_balance(patched_service_container_deps):
+    """배선된 fx_provider 는 broker 잔고 응답에서 USD/KRW 환율을 추출한다(실패 시 None)."""
+    from config.config_loader import AppConfig
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.market_mode = "overseas_us"
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        market_mode="overseas_us",
+        overseas_stock={"dryrun_slot_usd": 750.0},
+    )
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.broker.get_overseas_balance = AsyncMock(
+        return_value=SimpleNamespace(data={"output2": {"frst_bltn_exrt": "1357.5"}})
+    )
+
+    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True) as dryrun_cls, \
+         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True):
+        ServiceContainer(ctx).run()
+
+    fx_provider = dryrun_cls.call_args.kwargs["fx_provider"]
+    assert await fx_provider() == 1357.5
+
+    # 잔고 조회 실패 시 None → KRW 환산 생략
+    ctx.broker.get_overseas_balance = AsyncMock(side_effect=RuntimeError("boom"))
+    assert await fx_provider() is None

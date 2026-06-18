@@ -88,6 +88,7 @@ def load_dryrun_records(
                     "realized_pct": realized,
                     "qty": signal.get("qty"),
                     "notional_usd": _to_float(signal.get("notional_usd")),
+                    "krw_exposure": _to_float(signal.get("krw_exposure")),
                 })
     return out
 
@@ -130,10 +131,14 @@ def compute_dryrun_report(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         d_b["sum_realized_pct"] += r["realized_pct"]
 
     notionals = [r["notional_usd"] for r in records if r.get("notional_usd") is not None]
+    krw_exposures = [r["krw_exposure"] for r in records if r.get("krw_exposure") is not None]
     sizing = {
         "sized_count": len(notionals),
         "total_notional_usd": round(sum(notionals), 4) if notionals else 0.0,
         "avg_notional_usd": round(sum(notionals) / len(notionals), 4) if notionals else None,
+        "fx_sized_count": len(krw_exposures),
+        "total_krw_exposure": round(sum(krw_exposures), 2) if krw_exposures else 0.0,
+        "avg_krw_exposure": round(sum(krw_exposures) / len(krw_exposures), 2) if krw_exposures else None,
     }
 
     return {
@@ -216,6 +221,9 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
     lines.append(f"- sized_count: {sz.get('sized_count', 0)}")
     lines.append(f"- total_notional_usd: {_fmt(sz.get('total_notional_usd'))}")
     lines.append(f"- avg_notional_usd: {_fmt(sz.get('avg_notional_usd'))}")
+    lines.append(f"- fx_sized_count: {sz.get('fx_sized_count', 0)}")
+    lines.append(f"- total_krw_exposure: {_fmt(sz.get('total_krw_exposure'))}")
+    lines.append(f"- avg_krw_exposure: {_fmt(sz.get('avg_krw_exposure'))}")
     lines.append("")
 
     return "\n".join(lines)
