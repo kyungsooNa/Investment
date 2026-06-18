@@ -712,6 +712,34 @@ def test_format_db_persistence_report_explains_no_tick_cause(manager):
     assert "수신없음 1분" in message
 
 
+def test_format_db_persistence_report_hides_call_auction_missing_examples(manager):
+    """15:20 이후 동시호가 누락 시간은 예시 목록에 표시하지 않는다."""
+    mock_stock_repo = MagicMock()
+    mock_stock_repo.get_name_by_code.return_value = "제주반도체"
+    manager.wire_alert_dependencies(stock_code_repository=mock_stock_repo)
+
+    message = manager._format_db_persistence_report({
+        "date": "20260618",
+        "window": {"start": "2026-06-18 09:00:00", "end": "2026-06-18 15:30:00"},
+        "expected_minute_count": 391,
+        "codes": {
+            "080220": {
+                "ok": False,
+                "saved_minute_count": 385,
+                "missing_minute_count": 6,
+                "missing_minutes": ["09:00", "15:21", "15:22", "15:24", "15:25", "15:27"],
+                "unsaved_received_minute_count": 0,
+                "no_tick_minute_count": 6,
+            }
+        },
+    })
+
+    assert "제주반도체: 누락 6분" in message
+    assert "예: 09:00" in message
+    assert "15:21" not in message
+    assert "15:27" not in message
+
+
 def test_get_background_task_status_reports_internal_loops(manager):
     """서비스 내부 루프 상태를 system.py에서 읽을 수 있는 형태로 반환한다."""
     manager._flush_task = MagicMock()
