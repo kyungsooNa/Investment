@@ -220,6 +220,7 @@ class FillReconciliationService:
             "source": context.source,
             "trace_id": context.trace_id or "",
         }
+        strategy_notification = dict(context.strategy_notification or {})
 
         if context.state == OrderState.FILLED:
             level = NotificationLevel.INFO
@@ -249,9 +250,38 @@ class FillReconciliationService:
         else:
             return
 
+        if strategy_notification:
+            strategy_name = strategy_notification.get("strategy_name") or self._strategy_name_from_source(context.source)[0]
+            stock_name = strategy_notification.get("stock_name") or context.stock_code
+            requested_price = strategy_notification.get("price") or context.price
+            requested_qty = strategy_notification.get("qty") or context.qty
+            reason = strategy_notification.get("reason") or ""
+            try:
+                requested_price_text = f"{int(requested_price):,}원"
+            except (TypeError, ValueError):
+                requested_price_text = "N/A"
+            if context.state == OrderState.FILLED:
+                level = NotificationLevel.CRITICAL
+                title = f"[{strategy_name}] {stock_name} {side_label} 체결 완료"
+                status_line = f"상태: 체결 완료({context.filled_qty}/{context.qty}주)"
+            else:
+                level = NotificationLevel.ERROR
+                title = f"[{strategy_name}] {stock_name} {side_label} 실패"
+                status_line = f"상태: {context.state.value}"
+            message = (
+                f"종목: {stock_name}({context.stock_code})\n"
+                f"주문: {requested_price_text} × {requested_qty}주\n"
+                f"체결: {fill_price or 'N/A'}원 × {context.filled_qty}/{context.qty}주\n"
+                f"사유: {reason}\n"
+                f"{status_line}"
+            )
+            if context.state != OrderState.FILLED and metadata.get("reason"):
+                message = f"{message}\n실패: {metadata['reason']}"
+            metadata.update(strategy_notification)
+
         try:
             await self._notification_service.emit(
-                NotificationCategory.TRADE,
+                NotificationCategory.STRATEGY if strategy_notification else NotificationCategory.TRADE,
                 level,
                 title,
                 message,
