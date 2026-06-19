@@ -5,6 +5,7 @@ a1(KIS 미전송)·a2(quality 게이트 탈락)·a3(측정 갭)·정상·not_sub
 """
 from __future__ import annotations
 
+import fnmatch
 import json
 from pathlib import Path
 
@@ -14,11 +15,14 @@ from scripts.analyze_no_tick_diagnosis import (
     A1,
     A2,
     A3,
+    DEFAULT_STREAMING_GLOB,
     MALFORMED,
     RECEIVED_NOT_DISPATCHED,
     UNKNOWN_NO_SNAPSHOT,
+    _collect_warnings,
     classify_code,
     compute_no_tick_report,
+    filter_streaming_paths_by_date,
     format_markdown_report,
     load_missing_reasons,
     load_tick_ingest_snapshots,
@@ -199,6 +203,106 @@ def test_format_markdown_contains_verdict_and_table():
     assert "무틱(no-tick) 진단 리포트" in md
     assert A1 in md
     assert "A1CODE" in md
+
+
+# ── streaming 날짜 스코프 (day-mixing 방지) ───────────────────────────────────
+
+def test_filter_streaming_paths_by_date_keeps_in_range():
+    paths = [
+        Path("logs/streaming/20260618_080000_streaming_1.log.json"),
+        Path("logs/streaming/20260619_082018_streaming_1.log.json"),
+        Path("logs/streaming/20260620_080000_streaming_1.log.json"),
+    ]
+    out = filter_streaming_paths_by_date(paths, "20260619", "20260619")
+    assert out == [Path("logs/streaming/20260619_082018_streaming_1.log.json")]
+
+
+def test_filter_streaming_paths_keeps_undated_names():
+    """날짜 prefix 없는 파일명(수동 지정 등)은 보존한다."""
+    paths = [Path("custom_streaming_1.log.json")]
+    assert filter_streaming_paths_by_date(paths, "20260619", "20260619") == paths
+
+
+def test_main_excludes_other_day_streaming(tmp_path):
+    """다른 날 streaming 파일이 glob 에 걸려도 날짜 범위 밖이면 무틱 집계에서 제외."""
+    streaming = tmp_path / "logs" / "streaming"
+    streaming.mkdir(parents=True)
+    _write_jsonl(streaming / "20260618_1_streaming_1.log.json", [
+        _streaming_line("missing_reason", "OLDDAY", "subscribed_no_tick"),
+    ])
+    _write_jsonl(streaming / "20260619_1_streaming_1.log.json", [
+        _streaming_line("missing_reason", "TODAY1", "subscribed_no_tick"),
+    ])
+    shadow_dir = tmp_path / "shadow"
+    _write_jsonl(shadow_dir / "20260619.jsonl", [
+        _shadow_status(1000.0, {"TODAY1": {"received": 0, "quality_reject": 0, "dispatched": 0}}),
+    ])
+    out_json = tmp_path / "out" / "report.json"
+    rc = main([
+        "--streaming-glob", str(streaming / "*_streaming*.log.json"),
+        "--shadow-dir", str(shadow_dir),
+        "--date-from", "20260619", "--date-to", "20260619",
+        "--output-json", str(out_json),
+    ])
+    assert rc == 0
+    report = json.loads(out_json.read_text(encoding="utf-8"))
+    codes = {e["code"] for e in report["per_code"]}
+    assert codes == {"TODAY1"}  # OLDDAY 제외 → unknown_no_snapshot 오판 없음
+    assert report["summary"]["verdict"] == A1
+
+
+# ── 기본 glob / silent false-negative 경고 ────────────────────────────────────
+
+def test_default_glob_matches_rotated_filename():
+    """기본 glob 은 rotation suffix(`_streaming_1.log.json`)와 비-rotation 둘 다 매칭."""
+    pattern = Path(DEFAULT_STREAMING_GLOB).name
+    assert fnmatch.fnmatch("20260619_082018_streaming_1.log.json", pattern)
+    assert fnmatch.fnmatch("20260619_082018_streaming.log.json", pattern)
+
+
+def test_collect_warnings_when_glob_matches_no_files():
+    out = _collect_warnings("logs/streaming/*.json", [], {})
+    assert len(out) == 1
+    assert "0개 파일" in out[0]
+
+
+def test_collect_warnings_when_files_but_no_no_tick():
+    out = _collect_warnings(
+        "g", [Path("a.json")], {"X0001": {"not_subscribed": 5}}
+    )
+    assert len(out) == 1
+    assert "subscribed_no_tick" in out[0]
+
+
+def test_collect_warnings_silent_when_no_tick_present():
+    out = _collect_warnings(
+        "g", [Path("a.json")], {"X0001": {"subscribed_no_tick": 3}}
+    )
+    assert out == []
+
+
+def test_main_warns_when_glob_matches_nothing(tmp_path, capsys):
+    """실제 로그(rotation 파일)가 있어도 잘못된 glob 이면 경고가 떠야 한다(silent 0 방지)."""
+    streaming = tmp_path / "logs" / "streaming"
+    streaming.mkdir(parents=True)
+    _write_jsonl(streaming / "20260619_1_streaming_1.log.json", [
+        _streaming_line("missing_reason", "A1CODE", "subscribed_no_tick"),
+    ])
+    shadow_dir = tmp_path / "shadow"
+    _write_jsonl(shadow_dir / "20260619.jsonl", [])
+    out_json = tmp_path / "out" / "report.json"
+    rc = main([
+        # 구버전 패턴 — rotation 파일을 놓침
+        "--streaming-glob", str(streaming / "*_streaming.log.json"),
+        "--shadow-dir", str(shadow_dir),
+        "--date-from", "20260619", "--date-to", "20260619",
+        "--output-json", str(out_json),
+    ])
+    assert rc == 0
+    report = json.loads(out_json.read_text(encoding="utf-8"))
+    assert report["warnings"]  # 비어있지 않아야 함
+    assert "0개 파일" in report["warnings"][0]
+    assert "[WARN]" in capsys.readouterr().err
 
 
 def test_main_writes_json_report(tmp_path, capsys):
