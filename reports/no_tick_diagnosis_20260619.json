@@ -1,0 +1,170 @@
+{
+  "summary": {
+    "total_no_tick_codes": 16,
+    "not_subscribed_only_codes": 0,
+    "classification_counts": {
+      "a1_kis_no_send": 15,
+      "malformed_payload": 0,
+      "a2_quality_reject": 0,
+      "a3_inconsistent": 0,
+      "received_not_dispatched": 0,
+      "unknown_no_snapshot": 1
+    },
+    "verdict": "a1_kis_no_send"
+  },
+  "per_code": [
+    {
+      "code": "004710",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 202,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "009155",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 66,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "0162Z0",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 138,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "0167A0",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 138,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "052710",
+      "classification": "unknown_no_snapshot",
+      "subscribed_no_tick_log_count": 4
+    },
+    {
+      "code": "069500",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 138,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "080220",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 210,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "122630",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 72,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "149950",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 20,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "198440",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 146,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "320000",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 146,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "353200",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 209,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "360750",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 76,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "379800",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 107,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "396500",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 134,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    },
+    {
+      "code": "469150",
+      "classification": "a1_kis_no_send",
+      "subscribed_no_tick_log_count": 13,
+      "received": 0,
+      "quality_reject": 0,
+      "dispatched": 0,
+      "malformed": 0
+    }
+  ],
+  "not_subscribed_only": [],
+  "warnings": [],
+  "config": {
+    "streaming_glob": "logs/streaming/*_streaming*.log.json",
+    "shadow_dir": "logs/strategies/event_shadow",
+    "date_from": "20260619",
+    "date_to": "20260619",
+    "strategy": "",
+    "streaming_files": [
+      "logs\\streaming\\20260619_082018_streaming_1.log.json",
+      "logs\\streaming\\20260619_131839_streaming_1.log.json"
+    ]
+  }
+}
