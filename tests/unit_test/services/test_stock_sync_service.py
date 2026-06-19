@@ -35,11 +35,14 @@ def setup_and_teardown(tmp_path, mocker):
 @patch("FinanceDataReader.StockListing")
 def test_force_update_saves_files(mock_fdr_listing):
     """force_update=True로 save_stock_code_list를 호출하면 DB와 메타데이터가 저장됩니다."""
-    mock_fdr_listing.return_value = pd.DataFrame({
-        'Code': ['005930', '123456'],
-        'Name': ['삼성전자', '코스닥종목'],
-        'MarketId': ['STK', 'KSQ']
-    })
+    mock_fdr_listing.side_effect = [
+        pd.DataFrame({
+            'Code': ['005930', '123456'],
+            'Name': ['삼성전자', '코스닥종목'],
+            'MarketId': ['STK', 'KSQ']
+        }),
+        pd.DataFrame(),
+    ]
 
     stock_sync_service.save_stock_code_list(force_update=True)
 
@@ -56,12 +59,43 @@ def test_force_update_saves_files(mock_fdr_listing):
 
 
 @patch("FinanceDataReader.StockListing")
+def test_force_update_includes_etf_codes(mock_fdr_listing):
+    """ETF/KR 목록도 종목명 매핑 DB에 함께 저장합니다."""
+    mock_fdr_listing.side_effect = [
+        pd.DataFrame({
+            'Code': ['005930'],
+            'Name': ['삼성전자'],
+            'MarketId': ['STK'],
+        }),
+        pd.DataFrame({
+            'Symbol': ['069500', '0162Z0'],
+            'Name': ['KODEX 200', 'RISE 삼성전자SK하이닉스채권혼합50'],
+        }),
+    ]
+
+    stock_sync_service.save_stock_code_list(force_update=True)
+
+    conn = sqlite3.connect(stock_sync_service.DB_FILE_PATH)
+    df = pd.read_sql("SELECT * FROM stocks", conn, dtype={"종목코드": str})
+    conn.close()
+
+    names = dict(zip(df["종목코드"], df["종목명"]))
+    markets = dict(zip(df["종목코드"], df["시장구분"]))
+    assert names["069500"] == "KODEX 200"
+    assert names["0162Z0"] == "RISE 삼성전자SK하이닉스채권혼합50"
+    assert markets["069500"] == "ETF"
+
+
+@patch("FinanceDataReader.StockListing")
 def test_metadata_blocks_update_within_7_days(mock_fdr_listing, capfd):
-    mock_fdr_listing.return_value = pd.DataFrame({
-        'Code': ['005930'],
-        'Name': ['삼성전자'],
-        'MarketId': ['STK']
-    })
+    mock_fdr_listing.side_effect = [
+        pd.DataFrame({
+            'Code': ['005930'],
+            'Name': ['삼성전자'],
+            'MarketId': ['STK']
+        }),
+        pd.DataFrame(),
+    ]
     # 강제로 한 번 저장
     stock_sync_service.save_stock_code_list(force_update=True)
 

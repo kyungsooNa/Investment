@@ -56,27 +56,14 @@ def save_stock_code_list_fdr(force_update=False):
 
     try:
         print("🔄 FinanceDataReader를 통해 KRX 종목 목록을 다운로드합니다...")
-        # 전체 종목 리스트 가져오기
-        df_all = fdr.StockListing('KRX')
-
-        # 1. 필요한 컬럼만 추출 및 이름 변경 (pykrx 형식에 맞춤)
-        # FinanceDataReader: Code -> 종목코드, Name -> 종목명
-        # MarketId를 통해 시장구분 생성
-        df_all = df_all[['Code', 'Name', 'MarketId']].copy()
-        
-        # MarketId를 KOSPI/KOSDAQ으로 변환 (KONEX 포함 여부는 선택)
-        market_map = {
-            'STK': 'KOSPI',
-            'KSQ': 'KOSDAQ',
-            'KNX': 'KONEX'
-        }
-        df_all['시장구분'] = df_all['MarketId'].map(market_map)
-        
-        # 컬럼명 최종 변경
-        df = df_all.rename(columns={'Code': '종목코드', 'Name': '종목명'})
-        
-        # 필요한 시장만 필터링 (KONEX를 제외하려면 아래 주석 해제)
-        df = df[df['시장구분'].isin(['KOSPI', 'KOSDAQ'])]
+        stock_df = _load_krx_stock_listing()
+        etf_df = _load_etf_listing()
+        df = pd.concat([stock_df, etf_df], ignore_index=True)
+        df = df.dropna(subset=["종목코드", "종목명"])
+        df["종목코드"] = df["종목코드"].astype(str).str.strip()
+        df["종목명"] = df["종목명"].astype(str).str.strip()
+        df = df[(df["종목코드"] != "") & (df["종목명"] != "")]
+        df = df.drop_duplicates(subset=["종목코드"], keep="first")
 
         # --- 이후 DB 저장 로직은 기존과 동일 ---
         os.makedirs(DATA_DIR, exist_ok=True)
@@ -97,6 +84,46 @@ def save_stock_code_list_fdr(force_update=False):
     except Exception as e:
         print(f"❌ 데이터 업데이트 실패: {e}")
         raise
+
+
+def _load_krx_stock_listing() -> pd.DataFrame:
+    # 전체 종목 리스트 가져오기
+    df_all = fdr.StockListing('KRX')
+
+    # 1. 필요한 컬럼만 추출 및 이름 변경 (pykrx 형식에 맞춤)
+    # FinanceDataReader: Code -> 종목코드, Name -> 종목명
+    # MarketId를 통해 시장구분 생성
+    df_all = df_all[['Code', 'Name', 'MarketId']].copy()
+
+    # MarketId를 KOSPI/KOSDAQ으로 변환 (KONEX 포함 여부는 선택)
+    market_map = {
+        'STK': 'KOSPI',
+        'KSQ': 'KOSDAQ',
+        'KNX': 'KONEX'
+    }
+    df_all['시장구분'] = df_all['MarketId'].map(market_map)
+
+    # 컬럼명 최종 변경
+    df = df_all.rename(columns={'Code': '종목코드', 'Name': '종목명'})
+
+    # 필요한 시장만 필터링 (KONEX를 제외하려면 아래 주석 해제)
+    return df[df['시장구분'].isin(['KOSPI', 'KOSDAQ'])][['종목코드', '종목명', '시장구분']]
+
+
+def _load_etf_listing() -> pd.DataFrame:
+    try:
+        df_all = fdr.StockListing('ETF/KR')
+    except Exception as e:
+        print(f"⚠️ ETF 목록 다운로드 실패. ETF 종목명 매핑은 건너뜁니다: {e}")
+        return pd.DataFrame(columns=['종목코드', '종목명', '시장구분'])
+
+    if df_all.empty or not {'Symbol', 'Name'}.issubset(df_all.columns):
+        return pd.DataFrame(columns=['종목코드', '종목명', '시장구분'])
+
+    df = df_all[['Symbol', 'Name']].copy()
+    df = df.rename(columns={'Symbol': '종목코드', 'Name': '종목명'})
+    df['시장구분'] = 'ETF'
+    return df[['종목코드', '종목명', '시장구분']]
 
 def load_stock_code_list():
     conn = sqlite3.connect(DB_FILE_PATH)
