@@ -90,13 +90,15 @@ def test_no_router_no_dispatch_but_received(stock_repo, logger):
     assert snap["005930"]["quality_reject"] == 0
 
 
-def test_missing_payload_not_counted(stock_repo, logger):
+def test_missing_payload_counted_as_malformed(stock_repo, logger):
     svc = PriceStreamService(stock_repo=stock_repo, logger=logger)
 
     svc.on_price_tick({"주식현재가": "75000"})  # 코드 누락
     svc.on_price_tick({"유가증권단축종목코드": "005930"})  # 현재가 누락
 
-    assert svc.tick_ingest_stats_snapshot() == {}
+    snap = svc.tick_ingest_stats_snapshot(["005930", "__unknown__"])
+    assert snap["005930"] == {"received": 0, "quality_reject": 0, "dispatched": 0, "malformed": 1}
+    assert snap["__unknown__"] == {"received": 0, "quality_reject": 0, "dispatched": 0, "malformed": 1}
 
 
 def test_snapshot_zero_fills_requested_unseen_codes(stock_repo, logger):
@@ -107,4 +109,4 @@ def test_snapshot_zero_fills_requested_unseen_codes(stock_repo, logger):
     snap = svc.tick_ingest_stats_snapshot(["005930", "403870"])
     assert snap["005930"]["received"] == 1
     # 구독은 됐으나 tick 미수신인 종목 → 0으로 표면화 (a1 진단)
-    assert snap["403870"] == {"received": 0, "quality_reject": 0, "dispatched": 0}
+    assert snap["403870"] == {"received": 0, "quality_reject": 0, "dispatched": 0, "malformed": 0}

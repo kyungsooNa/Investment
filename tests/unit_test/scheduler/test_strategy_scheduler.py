@@ -553,8 +553,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # max_positions 도달 → log_buy 호출 안됨
         vm.log_buy_async.assert_not_called()
 
-    async def test_run_strategy_allows_exits_but_skips_scan_when_live_gate_blocks_entries(self):
-        """실전 확대 gate 차단은 기존 포지션 청산을 유지하고 신규 scan만 막는다."""
+    async def test_run_strategy_scans_and_refreshes_shadow_when_live_gate_blocks_entries(self):
+        """실전 확대 gate 차단은 실주문만 막고 scan/shadow 관측 수집은 계속한다."""
         gate = MagicMock()
         gate.check_strategy.return_value = SimpleNamespace(
             allowed=False,
@@ -582,15 +582,20 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             exit_signals=[sell_signal],
         )
         strategy.scan = AsyncMock(return_value=strategy._scan_signals)
+        strategy.current_candidate_codes = MagicMock(return_value=["000660"])
         config = StrategySchedulerConfig(strategy=strategy, max_positions=3)
         scheduler.register(config)
 
-        with patch.object(scheduler, "_execute_signal", new_callable=AsyncMock) as mock_execute:
+        with patch.object(
+            scheduler, "_refresh_event_shadow_subscriptions", new_callable=AsyncMock
+        ) as refresh_shadow:
             await scheduler._run_strategy(config)
 
-        mock_execute.assert_awaited_once_with(sell_signal)
-        strategy.scan.assert_not_awaited()
-        scheduler._logger.warning.assert_called()
+        strategy.scan.assert_awaited_once()
+        refresh_shadow.assert_awaited_once_with(config)
+        scheduler._oes.handle_place_sell_order.assert_awaited_once()
+        scheduler._oes.handle_place_buy_order.assert_not_called()
+        self.assertIn("profitability_gate_blocked", scheduler._signal_history[-1].reason)
 
     async def test_execute_buy_signal_blocks_order_when_live_gate_blocks_entries(self):
         """방어선: scan 밖에서 들어온 BUY도 실전 확대 gate 미통과면 주문하지 않는다."""

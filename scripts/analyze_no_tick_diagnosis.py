@@ -4,8 +4,9 @@ P2 2-4 최우선 블로커 진단 도구. 워치독이 `subscribed_no_tick`(=KIS
 확정 후 0틱)으로 표시한 종목을, event_shadow 의 tick-ingest 카운터 스냅샷과
 종목별로 조인해 다음으로 분류한다.
 
-  - a1_kis_no_send     : received==0 → ACK 후 KIS 가 프레임 자체를 보내지 않음
+  - a1_kis_no_send     : received==0 & malformed==0 → ACK 후 KIS 가 프레임 자체를 보내지 않음
                          (todo P2 2-4 "ACK 후 KIS 미전송" 가설 입증)
+  - malformed_payload  : malformed>0 & received==0 → 프레임은 왔지만 필수 필드 누락/파싱 이상
   - a2_quality_reject  : received>0 & dispatched==0 & quality_reject>0
                          → 프레임은 도착하나 DataQuality 게이트에서 전량 탈락
   - a3_inconsistent    : received>0 & dispatched>0 → 틱이 디스패치됐는데도 워치독이
@@ -44,10 +45,11 @@ from typing import Any, Dict, List, Optional
 A1 = "a1_kis_no_send"
 A2 = "a2_quality_reject"
 A3 = "a3_inconsistent"
+MALFORMED = "malformed_payload"
 RECEIVED_NOT_DISPATCHED = "received_not_dispatched"
 UNKNOWN_NO_SNAPSHOT = "unknown_no_snapshot"
 
-_CLASSES = [A1, A2, A3, RECEIVED_NOT_DISPATCHED, UNKNOWN_NO_SNAPSHOT]
+_CLASSES = [A1, MALFORMED, A2, A3, RECEIVED_NOT_DISPATCHED, UNKNOWN_NO_SNAPSHOT]
 
 
 # ── Loaders ──────────────────────────────────────────────────────────────────
@@ -94,7 +96,7 @@ def load_tick_ingest_snapshots(
     """event_shadow jsonl 에서 종목별 최신(누적) tick-ingest 스냅샷을 반환.
 
     카운터는 monotonic 누적이므로 recorded_at 이 가장 늦은 스냅샷이 종일 합계다.
-    반환: {code: {"received":int, "quality_reject":int, "dispatched":int,
+    반환: {code: {"received":int, "quality_reject":int, "dispatched":int, "malformed":int,
                   "recorded_at":float, "strategy":str}}
     """
     shadow_dir = Path(shadow_dir)
@@ -136,6 +138,7 @@ def load_tick_ingest_snapshots(
                         "received": int(counts.get("received", 0)),
                         "quality_reject": int(counts.get("quality_reject", 0)),
                         "dispatched": int(counts.get("dispatched", 0)),
+                        "malformed": int(counts.get("malformed", 0)),
                         "recorded_at": recorded_at,
                         "strategy": strategy,
                     }
@@ -151,7 +154,10 @@ def classify_code(snap: Optional[Dict[str, Any]]) -> str:
     received = snap.get("received", 0)
     dispatched = snap.get("dispatched", 0)
     quality_reject = snap.get("quality_reject", 0)
+    malformed = snap.get("malformed", 0)
     if received == 0:
+        if malformed > 0:
+            return MALFORMED
         return A1
     if dispatched > 0:
         return A3
@@ -193,6 +199,7 @@ def compute_no_tick_report(
             entry["received"] = snap["received"]
             entry["quality_reject"] = snap["quality_reject"]
             entry["dispatched"] = snap["dispatched"]
+            entry["malformed"] = snap.get("malformed", 0)
         per_code.append(entry)
 
     total = len(no_tick_codes)
@@ -219,6 +226,7 @@ def compute_no_tick_report(
 
 _CLASS_DESC = {
     A1: "ACK 후 KIS 프레임 미전송 (received==0)",
+    MALFORMED: "필수 필드 누락/파싱 이상 (malformed>0)",
     A2: "DataQuality 게이트 전량 탈락 (received>0, dispatched==0)",
     A3: "디스패치됐는데 no-tick 표시 (측정/타이밍 갭, 무틱 아님)",
     RECEIVED_NOT_DISPATCHED: "프레임 진입했으나 reject/dispatch 아님",
@@ -244,12 +252,13 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
     lines.append("")
     lines.append("## 종목별 상세")
     lines.append("")
-    lines.append("| 종목 | 분류 | received | quality_reject | dispatched | no_tick 로그수 |")
-    lines.append("|------|------|----------|----------------|------------|----------------|")
+    lines.append("| 종목 | 분류 | received | malformed | quality_reject | dispatched | no_tick 로그수 |")
+    lines.append("|------|------|----------|-----------|----------------|------------|----------------|")
     for e in report["per_code"]:
         lines.append(
             f"| {e['code']} | {e['classification']} | "
-            f"{e.get('received', '-')} | {e.get('quality_reject', '-')} | "
+            f"{e.get('received', '-')} | {e.get('malformed', '-')} | "
+            f"{e.get('quality_reject', '-')} | "
             f"{e.get('dispatched', '-')} | {e['subscribed_no_tick_log_count']} |"
         )
     lines.append("")

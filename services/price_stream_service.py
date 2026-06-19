@@ -52,6 +52,7 @@ class PriceStreamService:
         self._tick_ingest_received: Dict[str, int] = {}
         self._tick_ingest_quality_reject: Dict[str, int] = {}
         self._tick_ingest_dispatched: Dict[str, int] = {}
+        self._tick_ingest_malformed: Dict[str, int] = {}
 
     def set_event_router(self, event_router) -> None:
         """Late injection 용. WebAppContext 조립 순서 문제로 생성자에 주입 못한 경우 사용."""
@@ -61,6 +62,7 @@ class PriceStreamService:
         """종목별 누적 tick 처리 카운터 스냅샷 (P2 2-4 shadow no-tick 진단).
 
         - received: 유효 payload 로 on_price_tick 에 진입한 frame 수
+        - malformed: 필수 필드(종목코드/현재가) 누락으로 버린 frame 수
         - quality_reject: DataQuality 게이트에서 탈락한 frame 수
         - dispatched: event_router 로 전달된 frame 수
         codes 가 주어지면 해당 종목만(미수신은 0으로) 반환한다.
@@ -70,6 +72,7 @@ class PriceStreamService:
                 set(self._tick_ingest_received)
                 | set(self._tick_ingest_quality_reject)
                 | set(self._tick_ingest_dispatched)
+                | set(self._tick_ingest_malformed)
             )
         else:
             keys = set(codes)
@@ -78,6 +81,7 @@ class PriceStreamService:
                 "received": self._tick_ingest_received.get(c, 0),
                 "quality_reject": self._tick_ingest_quality_reject.get(c, 0),
                 "dispatched": self._tick_ingest_dispatched.get(c, 0),
+                "malformed": self._tick_ingest_malformed.get(c, 0),
             }
             for c in sorted(keys)
         }
@@ -93,6 +97,8 @@ class PriceStreamService:
         current_price = realtime_data.get('주식현재가')
 
         if not stock_code or not current_price:
+            key = str(stock_code).strip() if stock_code else "__unknown__"
+            self._tick_ingest_malformed[key] = self._tick_ingest_malformed.get(key, 0) + 1
             return
 
         self._tick_ingest_received[stock_code] = self._tick_ingest_received.get(stock_code, 0) + 1
