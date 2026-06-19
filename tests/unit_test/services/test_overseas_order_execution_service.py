@@ -121,6 +121,41 @@ async def test_invalid_price_rejected_before_broker(price):
     broker.place_overseas_limit_order.assert_not_called()
 
 
+# ── kill-switch 게이트 (live 경로) ────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_live_blocked_by_kill_switch_does_not_call_broker():
+    broker = _broker()
+    ks = MagicMock()
+    ks.check_orders_allowed = AsyncMock(return_value=(False, "일일 손실 한도 초과"))
+    svc = OverseasOrderExecutionService(broker, live_enabled=True, kill_switch=ks)
+    resp = await svc.place_entry(code="AAPL", qty=6, limit_price=150.0)
+    assert resp.rt_cd == ErrorCode.KILL_SWITCH_BLOCKED.value
+    broker.place_overseas_limit_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_live_allowed_by_kill_switch_calls_broker():
+    broker = _broker()
+    ks = MagicMock()
+    ks.check_orders_allowed = AsyncMock(return_value=(True, None))
+    svc = OverseasOrderExecutionService(broker, live_enabled=True, kill_switch=ks)
+    resp = await svc.place_entry(code="AAPL", qty=6, limit_price=150.0)
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    broker.place_overseas_limit_order.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_paper_mode_skips_kill_switch_check():
+    """paper(live off)는 실주문이 없으므로 kill-switch 를 호출하지 않는다."""
+    ks = MagicMock()
+    ks.check_orders_allowed = AsyncMock(return_value=(False, "blocked"))
+    svc = OverseasOrderExecutionService(None, live_enabled=False, kill_switch=ks)
+    resp = await svc.place_entry(code="AAPL", qty=6, limit_price=150.0)
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    ks.check_orders_allowed.assert_not_called()
+
+
 # ── 일봉 기반 exit 판정 (순수 로직) ───────────────────────────────────────────
 
 def test_decide_daily_exit_stop_when_low_breaks_stop():

@@ -34,6 +34,7 @@ class OverseasOrderExecutionService:
         live_enabled: bool = False,
         default_exchange: OverseasExchange = OverseasExchange.NASD,
         journal=None,
+        kill_switch=None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         # broker 는 live_enabled=True 일 때만 필요. paper 모드에선 None 허용(구조적 잠금).
@@ -41,6 +42,8 @@ class OverseasOrderExecutionService:
         self._live_enabled = bool(live_enabled)
         self._default_exchange = default_exchange
         self._journal = journal
+        # live 실주문 직전 차단 게이트(check_orders_allowed). paper 모드는 실주문이 없어 미적용.
+        self._kill_switch = kill_switch
         self._logger = logger or logging.getLogger(__name__)
 
     async def place_entry(
@@ -103,12 +106,31 @@ class OverseasOrderExecutionService:
         if not self._live_enabled:
             resp = self._would_be_response(symbol, ex, side, int(qty), limit_str, exit_reason)
         else:
+            blocked = await self._kill_switch_block(symbol, side)
+            if blocked is not None:
+                return blocked
             resp = await self._broker.place_overseas_limit_order(
                 symbol=symbol, exchange=ex, side=side, qty=int(qty), limit_price=limit_str,
             )
 
         self._record_journal(symbol, ex, side, int(qty), limit_str, signal, exit_reason, resp)
         return resp
+
+    async def _kill_switch_block(self, symbol: str, side: str) -> Optional[ResCommonResponse]:
+        """live 실주문 직전 kill-switch 차단 확인. 차단이면 응답 반환, 통과면 None."""
+        if self._kill_switch is None:
+            return None
+        allowed, reason = await self._kill_switch.check_orders_allowed()
+        if allowed:
+            return None
+        self._logger.warning({
+            "event": "overseas_order_kill_switch_blocked", "code": symbol,
+            "side": side, "reason": reason,
+        })
+        return ResCommonResponse(
+            rt_cd=ErrorCode.KILL_SWITCH_BLOCKED.value,
+            msg1=f"Kill Switch 활성 — {reason or ''}", data=None,
+        )
 
     def _would_be_response(
         self, symbol: str, ex: OverseasExchange, side: str, qty: int,
