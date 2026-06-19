@@ -26,7 +26,7 @@ P2 2-4 최우선 블로커 진단 도구. 워치독이 `subscribed_no_tick`(=KIS
 
 Examples:
     python scripts/analyze_no_tick_diagnosis.py \
-        --streaming-glob "logs/streaming/*_streaming.log.json" \
+        --streaming-glob "logs/streaming/*_streaming*.log.json" \
         --shadow-dir logs/strategies/event_shadow \
         --date-from 20260619 --date-to 20260619 \
         --output-json reports/no_tick_diagnosis.json \
@@ -50,6 +50,11 @@ RECEIVED_NOT_DISPATCHED = "received_not_dispatched"
 UNKNOWN_NO_SNAPSHOT = "unknown_no_snapshot"
 
 _CLASSES = [A1, MALFORMED, A2, A3, RECEIVED_NOT_DISPATCHED, UNKNOWN_NO_SNAPSHOT]
+
+# streaming 로그 기본 glob. 로그 rotation suffix(`_streaming_1.log.json`)까지 매칭하도록
+# `_streaming*` 와일드카드를 둔다. 과거 기본값 `*_streaming.log.json` 은 rotation 파일을
+# 놓쳐 데이터가 있어도 무틱 0 으로 오판하는 silent false-negative 를 냈다.
+DEFAULT_STREAMING_GLOB = "logs/streaming/*_streaming*.log.json"
 
 
 # ── Loaders ──────────────────────────────────────────────────────────────────
@@ -142,6 +147,27 @@ def load_tick_ingest_snapshots(
                         "recorded_at": recorded_at,
                         "strategy": strategy,
                     }
+    return out
+
+
+def filter_streaming_paths_by_date(
+    paths: List[Path], date_from: str, date_to: str
+) -> List[Path]:
+    """파일명 앞 8자리(YYYYMMDD)가 날짜 범위 안인 streaming 로그만 남긴다.
+
+    streaming 측엔 레코드 단위 날짜 필터가 없어, shadow jsonl(날짜 필터됨)과 다른 날의
+    종목이 섞이면 그 종목은 당일 tick-ingest 스냅샷이 없어 unknown_no_snapshot 으로
+    오판된다. 파일명 날짜로 streaming 도 동일 범위로 스코프해 이를 막는다.
+    날짜 prefix 가 없는 파일명(수동 지정 등)은 보존한다.
+    """
+    out: List[Path] = []
+    for p in paths:
+        stem = Path(p).name[:8]
+        if stem.isdigit():
+            if date_from <= stem <= date_to:
+                out.append(p)
+        else:
+            out.append(p)
     return out
 
 
@@ -267,9 +293,34 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
+def _collect_warnings(
+    streaming_glob: str,
+    streaming_paths: List[Path],
+    missing_reasons: Dict[str, Dict[str, int]],
+) -> List[str]:
+    """입력 부재로 인한 '무틱 0' 오판(silent false-negative)을 경고로 표면화한다.
+
+    glob 이 0개 파일과 매칭되거나, 파일은 읽었지만 subscribed_no_tick 레코드가
+    하나도 없으면 — 진짜로 무틱이 없는 것인지 입력이 잘못된 것인지 운영자가 구분할
+    수 있도록 경고를 낸다.
+    """
+    warnings: List[str] = []
+    if not streaming_paths:
+        warnings.append(
+            f"streaming glob '{streaming_glob}' 가 0개 파일과 매칭됨 — 경로/패턴 확인 "
+            f"(무틱 0 판정이 데이터 부재 때문일 수 있음)"
+        )
+    elif not any(r.get("subscribed_no_tick", 0) > 0 for r in missing_reasons.values()):
+        warnings.append(
+            f"streaming 파일 {len(streaming_paths)}개를 읽었으나 subscribed_no_tick "
+            f"레코드 0건 — glob/로그 포맷 확인"
+        )
+    return warnings
+
+
 def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="WebSocket 무틱 a1/a2 판정기 (P2 2-4)")
-    p.add_argument("--streaming-glob", default="logs/streaming/*_streaming.log.json",
+    p.add_argument("--streaming-glob", default=DEFAULT_STREAMING_GLOB,
                    help="streaming 로그 glob 패턴")
     p.add_argument("--shadow-dir", default="logs/strategies/event_shadow",
                    help="event_shadow jsonl 디렉토리")
@@ -285,6 +336,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = _parse_args(argv)
 
     streaming_paths = [Path(p) for p in sorted(_glob.glob(args.streaming_glob))]
+    streaming_paths = filter_streaming_paths_by_date(
+        streaming_paths, args.date_from, args.date_to
+    )
     missing_reasons = load_missing_reasons(streaming_paths)
     tick_snaps = load_tick_ingest_snapshots(
         shadow_dir=Path(args.shadow_dir),
@@ -293,6 +347,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         strategy_filter=args.strategy or None,
     )
     report = compute_no_tick_report(missing_reasons, tick_snaps)
+    report["warnings"] = _collect_warnings(args.streaming_glob, streaming_paths, missing_reasons)
+    for w in report["warnings"]:
+        print(f"[WARN] {w}", file=sys.stderr)
     report["config"] = {
         "streaming_glob": args.streaming_glob,
         "shadow_dir": str(args.shadow_dir),
