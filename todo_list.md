@@ -20,7 +20,7 @@
 - **P0 0-1** 실전 submit/signing notice raw fixture 확보 후 mapper 회귀 보강(외부 데이터 의존).
 - **P1 1-5** 한국장 microstructure fixture로 체결 모델 보수성 검증(장중 캡처 의존, blocked).
 - **P2 2-2** 외부: 실 KIS 계정 유량 한도 운영 직전 재확인.
-- **해외주식** Phase 4(주문/사이징)·5(안전/canary) — Phase 1~3(데이터 어댑터·일봉 백테스트·dry-run) 완료.
+- **해외주식** Phase 4(주문/사이징) 컴포넌트 완료(order-gating·USD sizing·FX·일봉 exit, live_enabled=False 잠금), 잔여는 Phase 5(canary auto-fire 배선·reconcile·live 전환, 라이브 검증 gated). Phase 1~3(데이터 어댑터·일봉 백테스트·dry-run) 완료.
 - **R-1 생존편향**: 노출·PnL 정량화 완료 — 결론 "의무 손절이 PnL 생존편향을 방어"(상세 `data/survivorship/survivorship_exposure_report.md`). 코드 후속 없음.
 - **조건부/정책**: Pool B 튜닝(재발 시), R-2 비상관 엣지 도입, S-9 god class 분리(PR-3 판정 후) 등 — 하단.
 
@@ -119,11 +119,12 @@
 결론: 일봉 셋업형 전략만 적용 가능(해외 일봉 API 존재), 장중/실시간 전략은 분봉·랭킹·웹소켓 부재로 불가. 첫 대상 = `LarryWilliamsVBOStrategy`(일봉 셋업). 제약: **해외 주문 TR은 실전(TTTS6036U 등)만, 모의 주문 TR 없음** → dry-run 검증 전 실주문 배선 금지.
 
 - 완료: Phase 1 데이터 어댑터(`get_recent_daily_ohlcv`/`get_current_price` exchange 분기 + `OverseasCandidateService`), Phase 2 `OverseasDailyVBOBacktest`(일봉 근사), Phase 3 `MarketClock.for_us_equities()` + `OverseasVBODryRunService` + `OverseasDryRunTask`(주문 경로 없는 dry-run, 한국장 after-market 스케줄러 재사용). (#549·#550)
-- [ ] **Phase 4 주문/사이징**: `place_overseas_limit_order`(지정가) 연결, USD position sizing/환율, 일봉 기반 exit.
-- [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile, risk gate/kill switch/canary USD 확장, 실전 소액 canary.
+- [~] **Phase 4 주문/사이징**: 컴포넌트 완료 — `OverseasOrderExecutionService`(`place_overseas_limit_order` 지정가 연결, `live_enabled=False` 구조적 실주문 잠금 + would-be 레코드), `OverseasPositionSizingService`(고정 USD 슬롯÷지정가 floor + `max_qty`/`available_usd` cap), FX 환율(`extract_fx_krw_per_usd` 잔고 관용 추출 + `_overseas_fx_provider` 배선 → dry-run KRW 환산 노출), 일봉 기반 exit(`decide_daily_exit` stop/eod). 테스트 잠금 완료.
+  - 남은 것(Phase 5 소관): scheduler/factory가 sizing→order_execution 자동 연결(canary auto-fire) + `live_enabled=True` 전환 — dry-run 검증 + canary 후로 게이팅.
+- [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile(`OverseasReconcileService` scaffolding 존재), risk gate/kill switch/canary USD 확장, 실전 소액 canary, canary auto-fire 배선 + `live_enabled` 전환.
 - [ ] 3d(후속): 미국장 마감(ET) 정밀 트리거가 필요하면 US-aware 스케줄 경로 신설(현재 KST 트리거로 충분 판단).
 
-주요 파일: `brokers/korea_investment/korea_invest_overseas_stock_api.py`, `brokers/broker_api_wrapper.py`, `services/stock_query_service.py`, `view/web/bootstrap/{service_container,strategy_factory}.py`, `config/tr_ids_config.yaml`
+주요 파일: `brokers/korea_investment/korea_invest_overseas_stock_api.py`, `brokers/broker_api_wrapper.py`, `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/stock_query_service.py`, `view/web/bootstrap/{service_container,strategy_factory}.py`, `config/tr_ids_config.yaml`
 
 ---
 
