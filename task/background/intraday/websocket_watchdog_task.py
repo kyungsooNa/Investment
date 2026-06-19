@@ -387,8 +387,19 @@ class WebSocketWatchdogTask(SchedulableTask):
             await asyncio.sleep(self.SUBSCRIBE_DELAY_SEC)
 
             success = await self._streaming_service.subscribe_unified_price(code)
-            if success and self._streaming_logger:
+            ack_confirmed = True
+            if success:
+                wait_ack = getattr(self._streaming_service, "wait_unified_price_ack", None)
+                if callable(wait_ack):
+                    ack_confirmed = bool(await wait_ack(code))
+            if success and ack_confirmed and self._streaming_logger:
                 self._streaming_logger.log_price_subscribe(code, reason="subscribed_no_tick_refresh")
+            elif self._streaming_logger:
+                reason = "ACK 미확정" if success else "구독 요청 실패"
+                self._streaming_logger.log_subscribe_failure(
+                    code,
+                    f"subscribed_no_tick_refresh {reason}",
+                )
 
             self._last_subscribed_no_tick_refresh_ts[code] = time.time()
 

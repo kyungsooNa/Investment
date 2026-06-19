@@ -171,8 +171,8 @@ async def test_refresh_subscriptions_attaches_tick_ingest_stats(tmp_path):
     journal = EventShadowJournalService(log_root=tmp_path)
     price_stream = MagicMock()
     price_stream.tick_ingest_stats_snapshot.return_value = {
-        "000660": {"received": 0, "quality_reject": 0, "dispatched": 0},
-        "005930": {"received": 12, "quality_reject": 12, "dispatched": 0},
+        "000660": {"received": 0, "quality_reject": 0, "dispatched": 0, "malformed": 0},
+        "005930": {"received": 12, "quality_reject": 12, "dispatched": 0, "malformed": 0},
     }
     scheduler = _make_scheduler(
         event_router=router, event_shadow_journal=journal, price_stream_service=price_stream
@@ -185,7 +185,9 @@ async def test_refresh_subscriptions_attaches_tick_ingest_stats(tmp_path):
     path = tmp_path / "event_shadow" / "20260520.jsonl"
     records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     tick_ingest = records[-1]["details"]["tick_ingest"]
-    assert tick_ingest["000660"] == {"received": 0, "quality_reject": 0, "dispatched": 0}
+    assert tick_ingest["000660"] == {
+        "received": 0, "quality_reject": 0, "dispatched": 0, "malformed": 0,
+    }
     assert tick_ingest["005930"]["received"] == 12
     assert tick_ingest["005930"]["quality_reject"] == 12
 

@@ -14,6 +14,7 @@ from scripts.analyze_no_tick_diagnosis import (
     A1,
     A2,
     A3,
+    MALFORMED,
     RECEIVED_NOT_DISPATCHED,
     UNKNOWN_NO_SNAPSHOT,
     classify_code,
@@ -59,6 +60,12 @@ def _shadow_status(recorded_at: float, tick_ingest: dict,
 
 def test_classify_a1_received_zero():
     assert classify_code({"received": 0, "quality_reject": 0, "dispatched": 0}) == A1
+
+
+def test_classify_malformed_payload():
+    assert classify_code(
+        {"received": 0, "quality_reject": 0, "dispatched": 0, "malformed": 3}
+    ) == MALFORMED
 
 
 def test_classify_a2_quality_reject_all():

@@ -441,6 +441,7 @@ async def test_streaming_watchdog_refreshes_subscribed_no_tick_codes(watchdog_ta
     svc._price_stream_service.get_subscription_age.return_value = 190.0
     svc._price_stream_service.get_last_tick_ts.return_value = 0.0
     svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
+    svc._streaming_service.wait_unified_price_ack = AsyncMock(return_value=True)
     svc.force_reconnect = AsyncMock()
 
     with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(2)):
@@ -452,6 +453,7 @@ async def test_streaming_watchdog_refreshes_subscribed_no_tick_codes(watchdog_ta
     svc._streaming_logger.log_missing_reason.assert_called_with("005930", "subscribed_no_tick")
     svc._streaming_service.unsubscribe_unified_price.assert_awaited_once_with("005930")
     svc._streaming_service.subscribe_unified_price.assert_awaited_once_with("005930")
+    svc._streaming_service.wait_unified_price_ack.assert_awaited_once_with("005930")
     svc.force_reconnect.assert_not_called()
 
 

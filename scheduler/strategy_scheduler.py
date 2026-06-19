@@ -499,18 +499,8 @@ class StrategyScheduler:
         await self._refresh_exit_shadow_subscriptions(cfg, holdings=post_exit_holdings)
 
         # 2) 새 매수 스캔
-        entry_gate = self._check_live_expansion_gate(name)
-        if not entry_gate.allowed:
-            self._logger.warning({
-                "event": "scheduler_skip",
-                "strategy_name": name,
-                "reason": "profitability_gate_blocked",
-                "gate_reason": entry_gate.reason,
-                "gate_details": entry_gate.details,
-            })
-            self._pm.log_timer(f"{name}.run_strategy", t_run)
-            return
-
+        # Profitability gate 는 BUY 주문 직전에만 적용한다. scan/event-shadow 는
+        # 실전 차단 중에도 계속 돌려야 gate 통과 근거와 parity 데이터를 축적할 수 있다.
         current_holdings = (
             post_exit_holdings if post_exit_holdings is not None
             else self._get_strategy_holdings(cfg)
