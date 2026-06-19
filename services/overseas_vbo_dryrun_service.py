@@ -33,6 +33,7 @@ class OverseasVBODryRunService:
         stop_loss_pct: float = -3.0,
         exchange: OverseasExchange = OverseasExchange.NASD,
         position_sizing_service=None,
+        fx_provider=None,
     ):
         self._candidate_service = candidate_service
         self._sqs = stock_query_service
@@ -43,6 +44,9 @@ class OverseasVBODryRunService:
         self._default_exchange = exchange
         # 고정 USD 슬롯 사이징(순수 계산, 주문 경로 없음). 미주입 시 qty 미산출.
         self._sizing_service = position_sizing_service
+        # USD/KRW 환율 조회용 async callable(`() -> Optional[float]`). 사이징이 있을 때만
+        # scan당 1회 호출해 KRW 환산 노출을 동봉한다. 미주입/실패/비양수 시 KRW 생략.
+        self._fx_provider = fx_provider
 
     async def scan_dry_run(
         self,
@@ -58,6 +62,7 @@ class OverseasVBODryRunService:
             ex, top_n=top_n, min_avg_trading_value=min_avg_trading_value
         )
 
+        fx_rate = await self._resolve_fx_rate()
         signals: List[Dict[str, Any]] = []
         for cand in candidates or []:
             code = cand.get("code")
@@ -75,9 +80,15 @@ class OverseasVBODryRunService:
             if not sig:
                 continue
             if self._sizing_service is not None:
-                sizing = self._sizing_service.size(limit_price_usd=sig["entry_price"])
+                sizing = self._sizing_service.size(
+                    limit_price_usd=sig["entry_price"], fx_krw_per_usd=fx_rate
+                )
                 sig["qty"] = sizing.get("qty")
                 sig["notional_usd"] = sizing.get("notional_usd")
+                if sizing.get("fx_krw_per_usd") is not None:
+                    sig["fx_krw_per_usd"] = sizing.get("fx_krw_per_usd")
+                if sizing.get("krw_exposure") is not None:
+                    sig["krw_exposure"] = sizing.get("krw_exposure")
             signals.append(sig)
             if record and self._journal is not None:
                 self._journal.record(
@@ -90,6 +101,25 @@ class OverseasVBODryRunService:
         self._logger.info({"event": "overseas_dryrun_scan", "exchange": ex.value,
                            "candidates": len(candidates or []), "signals": len(signals)})
         return signals
+
+    async def _resolve_fx_rate(self) -> Optional[float]:
+        """scan당 1회 USD/KRW 환율을 조회한다(사이징·provider 모두 있을 때만).
+
+        provider 예외·None·비양수는 모두 None으로 흡수해 KRW 환산을 생략한다
+        (dry-run 수집 중단/실주문 없음). FX는 부가 리포팅값이므로 실패해도 신호는 산출된다.
+        """
+        if self._sizing_service is None or self._fx_provider is None:
+            return None
+        try:
+            rate = await self._fx_provider()
+        except Exception as e:
+            self._logger.warning({"event": "overseas_dryrun_fx_error", "error": str(e)})
+            return None
+        try:
+            rate = float(rate) if rate is not None else None
+        except (TypeError, ValueError):
+            return None
+        return rate if (rate is not None and rate > 0) else None
 
     def _evaluate(self, code: str, rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """최근 일봉(오름차순)에서 VBO 일봉 진입 규칙으로 BUY 신호 판정.

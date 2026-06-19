@@ -50,7 +50,7 @@ from services.streaming_service import StreamingService
 from services.strategy_event_router import StrategyEventRouter
 from services.event_shadow_journal_service import EventShadowJournalService
 from services.overseas_candidate_service import OverseasCandidateService
-from services.overseas_position_sizing_service import OverseasPositionSizingService
+from services.overseas_position_sizing_service import OverseasPositionSizingService, extract_fx_krw_per_usd
 from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
 from services.post_market_replay_audit_service import PostMarketReplayAuditService
 from services.strategy_log_report_service import StrategyLogReportService
@@ -568,12 +568,21 @@ class ServiceContainer:
                         stock_query_service=ctx.stock_query_service,
                         logger=ctx.logger,
                     )
+                    async def _overseas_fx_provider():
+                        # KIS 해외 잔고(읽기 전용)에서 USD/KRW 환율 추출. 실패 시 None → KRW 생략.
+                        try:
+                            resp = await ctx.broker.get_overseas_balance()
+                        except Exception:
+                            return None
+                        return extract_fx_krw_per_usd(getattr(resp, "data", None))
+
                     ctx.overseas_vbo_dryrun_service = OverseasVBODryRunService(
                         candidate_service=ctx.overseas_candidate_service,
                         stock_query_service=ctx.stock_query_service,
                         shadow_journal=ctx.event_shadow_journal_service,
                         logger=ctx.logger,
                         position_sizing_service=overseas_position_sizing_service,
+                        fx_provider=_overseas_fx_provider,
                     )
                     ctx.overseas_dryrun_task = OverseasDryRunTask(
                         dryrun_service=ctx.overseas_vbo_dryrun_service,
