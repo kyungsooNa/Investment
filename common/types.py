@@ -131,6 +131,7 @@ class OrderContext(BaseModel):
     slippage_pct: Optional[float] = None
     first_fill_latency_sec: Optional[float] = None
     volatility_20d_annualized: Optional[float] = None  # 매수 신호 생성 시점 변동성 (리포트 집계용)
+    strategy_notification: Dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def sync_remaining_qty(self) -> "OrderContext":

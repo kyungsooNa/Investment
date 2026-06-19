@@ -527,7 +527,12 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             finalize_immediately=False,
             trace_id=ANY,
             volatility_20d_annualized=None,
+            strategy_notification=ANY,
         )
+        payload = oes.handle_place_buy_order.call_args.kwargs["strategy_notification"]
+        self.assertEqual(payload["strategy_name"], "테스트전략")
+        self.assertEqual(payload["stock_name"], "삼성전자")
+        self.assertEqual(payload["reason"], "테스트")
 
     async def test_run_strategy_scan_respects_max_positions(self):
         """max_positions에 도달하면 스캔을 스킵하는지 테스트."""
@@ -1854,6 +1859,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             source="strategy_force_exit:TestStrategy",
             finalize_immediately=False,
             trace_id=ANY,
+            strategy_notification=ANY,
         )
         # 3. live 모드 가상매매 기록은 체결 확인 이후 OrderExecutionService가 처리
         vm.log_sell_by_strategy_async.assert_not_awaited()
@@ -1889,6 +1895,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             source="strategy_force_exit:TestStrategy",
             finalize_immediately=False,
             trace_id=ANY,
+            strategy_notification=ANY,
         )
         vm.log_sell_by_strategy_async.assert_not_awaited()
 
@@ -2015,6 +2022,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             source="strategy:TestStrat",
             finalize_immediately=False,
             trace_id=ANY,
+            strategy_notification=ANY,
         )
         vm.log_sell_by_strategy_async.assert_not_awaited()
 
@@ -2102,6 +2110,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             source="strategy:TestStrat",
             finalize_immediately=False,
             trace_id=ANY,
+            strategy_notification=ANY,
         )
 
         vm.log_sell_by_strategy_async.assert_not_awaited()
@@ -2536,6 +2545,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             source="strategy_force_exit:S",
             finalize_immediately=False,
             trace_id=ANY,
+            strategy_notification=ANY,
         )
 
     async def test_force_liquidate_uses_broker_holding_for_successful_buy_missing_journal(self):
@@ -2587,6 +2597,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             source="strategy_force_exit:래리윌리엄스VBO",
             finalize_immediately=False,
             trace_id=ANY,
+            strategy_notification=ANY,
         )
 
     async def test_force_liquidate_skips_signal_history_recovery_when_buy_order_active(self):
@@ -2882,7 +2893,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler._logger.warning.assert_called()
 
     async def test_execute_signal_notification_success(self):
-        """_execute_signal() API 주문 성공 시 알림 전송 테스트."""
+        """실주문 성공 직후에는 체결 미확정 전략 알림을 보내지 않는다."""
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
         mock_notifier = AsyncMock()
         scheduler._notification_service = mock_notifier
@@ -2890,12 +2901,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         signal = TradeSignal(code="005930", name="삼성전자", action="BUY", price=70000, qty=1, reason="Test", strategy_name="S1")
         await scheduler._execute_signal(signal)
         
-        mock_notifier.emit.assert_awaited_once()
-        args, kwargs = mock_notifier.emit.call_args
-        self.assertEqual(args[0], NotificationCategory.STRATEGY)
-        self.assertEqual(args[1], NotificationLevel.CRITICAL)
-        self.assertTrue("주문 접수" in args[2])
-        self.assertTrue("체결 미확정" in args[3])
+        mock_notifier.emit.assert_not_awaited()
 
     async def test_execute_sell_signal_notification_includes_estimated_return_rate(self):
         """실전 매도 알림은 체결 확정 전에도 보유 매수가 기준 수익률을 포함한다."""
@@ -2914,10 +2920,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler._execute_signal(signal)
 
         vm.log_sell_by_strategy_async.assert_not_awaited()
-        mock_notifier.emit.assert_awaited_once()
-        args, kwargs = mock_notifier.emit.call_args
-        self.assertEqual(args[0], NotificationCategory.STRATEGY)
-        self.assertEqual(kwargs["metadata"]["return_rate"], 10.0)
+        mock_notifier.emit.assert_not_awaited()
         self.assertEqual(scheduler._signal_history[-1].return_rate, 10.0)
 
     async def test_execute_signal_notification_failure(self):
@@ -2972,6 +2975,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             finalize_immediately=False,
             trace_id=ANY,
             volatility_20d_annualized=None,
+            strategy_notification=ANY,
         )
 
     async def test_restore_state_with_price_subscription(self):

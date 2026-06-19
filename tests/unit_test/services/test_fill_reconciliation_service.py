@@ -163,6 +163,51 @@ async def test_apply_execution_report_filled_emits_completion_notification(
 
 
 @pytest.mark.asyncio
+async def test_apply_execution_report_filled_emits_strategy_final_notification(
+    broker, fsm, reporter, fixed_now
+):
+    notification = AsyncMock()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        notification_service=notification,
+    )
+    ctx = fsm.register(_make_context(
+        order_key="KRX:005930:SELL",
+        side=OrderSide.SELL,
+        source="strategy:LarryWilliamsCB",
+        strategy_notification={
+            "strategy_name": "LarryWilliamsCB",
+            "stock_name": "롯데쇼핑",
+            "code": "005930",
+            "action": "SELL",
+            "price": 179400,
+            "qty": 10,
+            "reason": "칼손절",
+        },
+    ))
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED, broker_order_no="B0001")
+
+    report = OrderExecutionReport(
+        broker_order_no="B0001", stock_code="005930", side=OrderSide.SELL,
+        fill_qty=10, fill_price=179300, cumulative_filled_qty=10, remaining_qty=0,
+    )
+    await svc.apply_execution_report(report)
+
+    notification.emit.assert_awaited_once()
+    args, kwargs = notification.emit.await_args
+    assert args[0] == NotificationCategory.STRATEGY
+    assert args[1] == NotificationLevel.CRITICAL
+    assert args[2] == "[LarryWilliamsCB] 롯데쇼핑 매도 체결 완료"
+    assert "체결 완료" in args[3]
+    assert "칼손절" in args[3]
+    assert kwargs["metadata"]["strategy_name"] == "LarryWilliamsCB"
+    assert kwargs["metadata"]["state"] == OrderState.FILLED.value
+
+
+@pytest.mark.asyncio
 async def test_apply_execution_report_rejected_emits_failure_notification(
     broker, fsm, reporter, fixed_now
 ):

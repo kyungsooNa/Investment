@@ -144,7 +144,7 @@ async def test_buy_with_sizer_zero_qty_emits_failure_notification():
 
 @pytest.mark.asyncio
 async def test_buy_with_sizer_adjusted_qty_recorded_and_notified():
-    """sizer가 수량을 줄이면 기록과 알림에도 실제 주문 수량을 사용한다."""
+    """sizer가 수량을 줄이면 기록과 최종 알림 payload에도 실제 주문 수량을 사용한다."""
     sizer = AsyncMock()
     sizer.adjust_buy_qty.return_value = (3, "risk_limited")
 
@@ -156,9 +156,8 @@ async def test_buy_with_sizer_adjusted_qty_recorded_and_notified():
     await scheduler._execute_signal(signal)
 
     assert scheduler._signal_history[0].qty == 3
-    args, kwargs = notifier.emit.call_args
-    assert "3주" in args[3]
-    assert kwargs["metadata"]["qty"] == 3
+    notifier.emit.assert_not_awaited()
+    assert oes.handle_place_buy_order.call_args.kwargs["strategy_notification"]["qty"] == 3
 
 
 # ── dry_run=True 이면 sizer 호출 안 함 ────────────────────────────────

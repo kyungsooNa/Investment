@@ -179,6 +179,7 @@ class OrderSubmissionCoordinator:
         volatility_20d_annualized: Optional[float] = None,
         invalidation_price: Optional[float] = None,
         stop_loss_price: Optional[float] = None,
+        strategy_notification: Optional[dict] = None,
     ) -> ResCommonResponse:
         order_key = self._fsm.make_order_key(stock_code, side, exchange)
         action_kr = "매수" if side == OrderSide.BUY else "매도"
@@ -317,6 +318,7 @@ class OrderSubmissionCoordinator:
                 order_type=self._exec_quality_reporter.resolve_order_type(price, policy_decision),
                 spread_pct=self._exec_quality_reporter.resolve_spread_pct(policy_decision),
                 volatility_20d_annualized=volatility_20d_annualized,
+                strategy_notification=dict(strategy_notification or {}),
             )
             self._fsm.register(context)
             self._fsm.register_intent(resolved_intent_id, order_key)

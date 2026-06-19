@@ -932,6 +932,7 @@ class StrategyScheduler:
                             "finalize_immediately": False,
                             "trace_id": tid,
                             "volatility_20d_annualized": signal.volatility_20d_annualized,
+                            "strategy_notification": self._strategy_notification_payload(signal, log_price),
                         }
                         buy_order_kwargs.update(self._signal_price_policy_kwargs(signal))
                         resp = await self._oes.handle_place_buy_order(
@@ -951,6 +952,7 @@ class StrategyScheduler:
                         "source": self._source_for_signal(signal),
                         "finalize_immediately": False,
                         "trace_id": tid,
+                        "strategy_notification": self._strategy_notification_payload(signal, log_price),
                     }
                     sell_order_kwargs.update(self._signal_price_policy_kwargs(signal))
                     resp = await self._oes.handle_place_sell_order(
@@ -1036,7 +1038,7 @@ class StrategyScheduler:
         )
         await self._record_signal(record)
 
-        if self._notification_service and not order_deferred:
+        if self._notification_service and not order_deferred and (self._dry_run or not api_success):
             action_kr = "매수" if signal.action == "BUY" else "매도"
             # 성공에 CRITICAL 사용은 의도된 것: Telegram route_levels.STRATEGY 가
             # warning/error/critical 만 통과시키므로 INFO 로 낮추면 실주문 접수
@@ -1071,6 +1073,18 @@ class StrategyScheduler:
                     "return_rate": return_rate,
                     "trace_id": tid,
                 })
+
+    @staticmethod
+    def _strategy_notification_payload(signal: TradeSignal, log_price: int) -> dict:
+        return {
+            "strategy_name": signal.strategy_name,
+            "stock_name": signal.name,
+            "code": signal.code,
+            "action": signal.action,
+            "price": log_price,
+            "qty": signal.qty,
+            "reason": signal.reason,
+        }
 
     @staticmethod
     def _virtual_trade_log_kwargs(signal: TradeSignal) -> dict:
