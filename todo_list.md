@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-06-17 (문서 정리 — 완료 구현 상세/100% 종료 섹션 제거, 남은 실행 항목만 유지. 완료 내역은 git history·PR 추적)
+최종 업데이트: 2026-06-19 (실제 코드/산출물 대조 — 무틱 진단 결과·profitability gate·해외주식 수동/자동 주문 상태 반영)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR로 추적하고 본 문서에서 제거한다.
 
@@ -14,13 +14,13 @@
 
 ## 남은 실행 영역 요약 (우선순위 순)
 
-- **[최우선·블로커] P2 2-4 WS price 피드 무틱 ≈55%**: 구독 종목 절반 이상이 종일 no-tick → VBO shadow parity 수집 불가 + 라이브 실시간 데이터 품질 문제. 디스패치 갭(#551)은 해소됐으나 무틱은 별개. 1거래일 ACK 로그 필요(코드 선제 수정 불가).
+- **[최우선·블로커] P2 2-4 WS price 피드 무틱 ≈55%**: 구독 종목 절반 이상이 종일 no-tick → VBO shadow parity 수집 불가 + 라이브 실시간 데이터 품질 문제. 2026-06-19 로그 진단 결과 `a1_kis_no_send` 우세(ACK 후 KIS 프레임 미전송)로 확인. 후속은 코드 선제 수정이 아니라 KIS 원인 확인/운영 우회책 판단.
 - **P1 1-6** 실전 journal/shadow/paper/canary 성과 데이터로 profitability gate 실제 통과 근거 확보 — "돈을 버는가"의 핵심, 라이브 데이터 축적 의존.
-- **P1 1-7** formal 과최적화 방어(DSR + PBO CSCV + purge embargo) 완료. 남은 것은 gate hard 배선(canary 데이터 후 정책 결정)뿐.
+- **P1 1-7** formal 과최적화 방어(DSR + PBO CSCV + purge embargo) 완료. PBO/adjusted-Sharpe hard gate 옵션과 real-mode overlay는 구현됨. 남은 것은 DSR hard 기준 포함 최종 운영 정책 결정(canary 데이터 후).
 - **P0 0-1** 실전 submit/signing notice raw fixture 확보 후 mapper 회귀 보강(외부 데이터 의존).
 - **P1 1-5** 한국장 microstructure fixture로 체결 모델 보수성 검증(장중 캡처 의존, blocked).
 - **P2 2-2** 외부: 실 KIS 계정 유량 한도 운영 직전 재확인.
-- **해외주식** Phase 4(주문/사이징) 컴포넌트 완료(order-gating·USD sizing·FX·일봉 exit, live_enabled=False 잠금), 잔여는 Phase 5(canary auto-fire 배선·reconcile·live 전환, 라이브 검증 gated). Phase 1~3(데이터 어댑터·일봉 백테스트·dry-run) 완료.
+- **해외주식** Phase 4(주문/사이징) 컴포넌트 완료(order-gating·USD sizing·FX·일봉 exit, 자동 전략 경로 `live_enabled=False` 잠금), 잔여는 Phase 5(canary auto-fire 배선·reconcile·live 전환, 라이브 검증 gated). 수동 해외 지정가 주문 API는 별도 존재하며 실전은 `allow_live_trading=true` + 확인 문자열로만 허용. Phase 1~3(데이터 어댑터·일봉 백테스트·dry-run) 완료.
 - **R-1 생존편향**: 노출·PnL 정량화 완료 — 결론 "의무 손절이 PnL 생존편향을 방어"(상세 `data/survivorship/survivorship_exposure_report.md`). 코드 후속 없음.
 - **조건부/정책**: Pool B 튜닝(재발 시), R-2 비상관 엣지 도입, S-9 god class 분리(PR-3 판정 후) 등 — 하단.
 
@@ -61,7 +61,7 @@
 ### 1-7. Multiple testing / 과최적화 방어 고도화
 
 - 완료: formal Deflated Sharpe(Bailey & López de Prado 2014) + 수익률 모멘트 metric(skew/kurtosis) + 일일 리포트 DSR 섹션 + **formal PBO(CSCV)** 알고리즘·실데이터 가동(parameter-stability·ablation 두 sweep 경로, `--output json`/콘솔 노출) + **purged CSCV(embargo)**. 기존 proxy(adjusted Sharpe·PBO-like)는 불변 병행. (git/PR #555·#556)
-- [ ] formal PBO/DSR을 profitability gate에 **hard 배선**할지 결정 — 현재는 리포트/콘솔/JSON 노출까지. canary 성과 데이터 축적 후 정책 결정(지금 enforce 시 근거 없는 차단).
+- [~] formal PBO/DSR의 profitability gate **hard 적용 정책** 결정 — PBO/adjusted-Sharpe hard gate 옵션과 real-mode overlay(`require_multiple_testing_adjustment=True`, `multiple_testing_max_pbo_probability=0.5`)는 구현됨. DSR hard threshold는 아직 운영 기준 미정. canary 성과 데이터 축적 후 enforce 기준 확정.
 - [ ] 전략 수·필터 조합 증가 시 canary 통과 기준과 자금 확대 기준 분리(자금 확대 = formal 검증 + 실전 성과 + regime 일관성).
 - 우선순위 낮음: purged K-fold 별도 CV 러너(walk-forward+embargo·CSCV embargo로 실질 커버).
 
@@ -82,9 +82,9 @@
 
 ### 2-4. Polling에서 event-driven으로 점진 전환
 
-- **[최우선 블로커] WebSocket price 피드 무틱 ≈55%**: 6/9~6/12 streaming 로그 실측 — 구독 30~34종목 중 18~21종목이 종일 `subscribed_no_tick`. shadow는 tick에만 의존하므로 parity 수집 자체가 불가. `connection_lost` 12~18/일 + `price_data_gap` 단조 증가(force-reconnect로 미치유). ACK 수정(#509)으로 미해소. **shadow뿐 아니라 라이브 실시간 데이터 전반 품질 문제** → 별도 최우선 과제로 격상. 코드 감사 결과 슬롯 cap(40)·ACK 확정은 정상 → 무틱 = KIS가 ACK 후 데이터 미전송 가설. **진단 로깅은 이미 완비 — 신규 코드 불필요. 남은 것은 1거래일 라이브 가동 + 로그 수집뿐(선제 코드 작업 없음).**
-  - 디스패치 갭은 해소(#551): `StreamingService`가 `on_price_tick`을 스레드풀 executor로 오프로드해 async `event_router` 디스패치가 끊기던 버그 수정 → tick 도착 종목은 shadow 평가 실행됨. #533 tick-ingest 카운터(received/quality_reject/dispatched) 관측 배선 존재.
-  - 진단 로깅 완비 근거(2026-06-17 코드 확인): ① `_active_codes_price`는 **KIS 등록 ACK 확정 종목만** 마킹(`subscription_policy.py` ≈389-401, 전송 성공≠active, 유령 구독 방지 — 테스트 잠금). ② watchdog가 `subscribed_no_tick`(=active AND `last_tick_ts<=0`, 즉 ACK 확정 후 0틱) vs `not_subscribed`(ACK 미확정)를 종목별 분리 로깅(`websocket_watchdog_task.py` ≈271-279). ③ `tick_ingest_stats_snapshot`이 `received=0`(프레임 자체 0=a1) vs `received>0 & quality_reject↑`(게이트 탈락=a2) 구별. → 1거래일 로그면 "ACK 후 KIS 미전송" 가설 즉시 입증/반증 가능. tick-ingest 스냅샷 방출 충분성 재확인(2026-06-19 코드 검증): tick-ingest 카운터는 monotonic 누적(`price_stream_service.py` `received`/`quality_reject`/`dispatched` `+=1`, reset 없음)이고, 스냅샷은 매 scan(`interval_minutes` 기본 5분)마다 `subscriptions_refreshed`로 event_shadow에 첨부(`strategy_scheduler.py` ≈598·1245). → 표본 빈도와 무관하게 가장 늦은 스냅샷이 종일 합계를 보존하므로 1거래일 로그로 a1/a2 판정 충분(주기 방출 한 줄 추가 등 선제 코드 불필요). 조인 파싱 스크립트 작성 완료: `scripts/analyze_no_tick_diagnosis.py`(+`tests/unit_test/scripts/test_analyze_no_tick_diagnosis.py`) — 로그 입수 시 `subscribed_no_tick`×tick-ingest 카운터 조인해 a1/a2/a3 판정. **남은 것은 1거래일 라이브 로그 입수 후 실행뿐.**
+- **[최우선 블로커] WebSocket price 피드 무틱 ≈55%**: 6/9~6/12 streaming 로그 실측 — 구독 30~34종목 중 18~21종목이 종일 `subscribed_no_tick`. shadow는 tick에만 의존하므로 parity 수집 자체가 불가. `connection_lost` 12~18/일 + `price_data_gap` 단조 증가(force-reconnect로 미치유). ACK 수정(#509)으로 미해소. **shadow뿐 아니라 라이브 실시간 데이터 전반 품질 문제** → 별도 최우선 과제로 격상. 코드 감사 결과 슬롯 cap(40)·ACK 확정은 정상. 2026-06-19 라이브 로그 진단 결과 no-tick 16종목 중 15종목이 `a1_kis_no_send`(ACK 후 KIS 프레임 미전송, received=0), 1종목은 `unknown_no_snapshot`, `not_subscribed`는 0건. 최신 리포트: `reports/no_tick_diagnosis_20260619.md`.
+  - 디스패치 갭은 해소(#551): `StreamingService`가 `PriceStreamService.on_price_tick`을 event-loop handler로 유지해 running loop 의존 디스패치가 끊기지 않도록 처리한다. 기타 동기/블로킹 핸들러만 executor로 오프로드된다. tick 도착 종목은 shadow 평가 실행됨. #533 tick-ingest 카운터(received/quality_reject/dispatched) 관측 배선 존재.
+  - 진단 로깅 완비 근거(2026-06-19 코드/로그 확인): ① `_active_codes_price`는 **KIS 등록 ACK 확정 종목만** 마킹(`subscription_policy.py` ≈389-401, 전송 성공≠active, 유령 구독 방지 — 테스트 잠금). ② watchdog가 `subscribed_no_tick`(=active AND `last_tick_ts<=0`, 즉 ACK 확정 후 0틱) vs `not_subscribed`(ACK 미확정)를 종목별 분리 로깅(`websocket_watchdog_task.py` ≈271-279). ③ `tick_ingest_stats_snapshot`이 `received=0`(프레임 자체 0=a1) vs `received>0 & quality_reject↑`(게이트 탈락=a2) 구별. tick-ingest 카운터는 monotonic 누적(`price_stream_service.py` `received`/`quality_reject`/`dispatched` `+=1`, reset 없음)이고, 스냅샷은 매 scan(`interval_minutes` 기본 5분)마다 `subscriptions_refreshed`로 event_shadow에 첨부(`strategy_scheduler.py` ≈598·1245). 조인 파싱 스크립트 `scripts/analyze_no_tick_diagnosis.py`(+`tests/unit_test/scripts/test_analyze_no_tick_diagnosis.py`) 실행 결과 `a1_kis_no_send` 우세 판정. **남은 것은 KIS 프레임 미전송 원인 확인, 구독 대상/시장/상품군 분리 실험, 운영 우회책 판단.**
 - [ ] (블로커 해소 후) `event_shadow`/`event_shadow_exit` 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py`로 entry/exit parity 리포트 → PR-3 진입 판정.
 - [ ] event-driven signal은 별도 승인 전 shadow/latency 측정용으로만 운영(실주문은 polling + full gate 경로만). VBO fast path는 execution strength/program-buy 생략.
 - [blocked] PR-3: PR-2.5 관찰 양호 시 VBO 실 적용 + OSB shadow 진입. / PR-4+: 단계적 확장.
@@ -119,7 +119,7 @@
 결론: 일봉 셋업형 전략만 적용 가능(해외 일봉 API 존재), 장중/실시간 전략은 분봉·랭킹·웹소켓 부재로 불가. 첫 대상 = `LarryWilliamsVBOStrategy`(일봉 셋업). 제약: **해외 주문 TR은 실전(TTTS6036U 등)만, 모의 주문 TR 없음** → dry-run 검증 전 실주문 배선 금지.
 
 - 완료: Phase 1 데이터 어댑터(`get_recent_daily_ohlcv`/`get_current_price` exchange 분기 + `OverseasCandidateService`), Phase 2 `OverseasDailyVBOBacktest`(일봉 근사), Phase 3 `MarketClock.for_us_equities()` + `OverseasVBODryRunService` + `OverseasDryRunTask`(주문 경로 없는 dry-run, 한국장 after-market 스케줄러 재사용). (#549·#550)
-- [~] **Phase 4 주문/사이징**: 컴포넌트 완료 — `OverseasOrderExecutionService`(`place_overseas_limit_order` 지정가 연결, `live_enabled=False` 구조적 실주문 잠금 + would-be 레코드), `OverseasPositionSizingService`(고정 USD 슬롯÷지정가 floor + `max_qty`/`available_usd` cap), FX 환율(`extract_fx_krw_per_usd` 잔고 관용 추출 + `_overseas_fx_provider` 배선 → dry-run KRW 환산 노출), 일봉 기반 exit(`decide_daily_exit` stop/eod). 테스트 잠금 완료.
+- [~] **Phase 4 주문/사이징**: 자동 전략 컴포넌트 완료 — `OverseasOrderExecutionService`(`place_overseas_limit_order` 지정가 연결, `live_enabled=False` 구조적 실주문 잠금 + would-be 레코드), `OverseasPositionSizingService`(고정 USD 슬롯÷지정가 floor + `max_qty`/`available_usd` cap), FX 환율(`extract_fx_krw_per_usd` 잔고 관용 추출 + `_overseas_fx_provider` 배선 → dry-run KRW 환산 노출), 일봉 기반 exit(`decide_daily_exit` stop/eod). 테스트 잠금 완료. 별도 웹 수동 해외 지정가 주문은 존재하며, 실전 모드에서는 `overseas_stock.allow_live_trading=true`와 `REAL` 확인 문자열 없이는 broker 호출 전 차단된다.
   - 남은 것(Phase 5 소관): scheduler/factory가 sizing→order_execution 자동 연결(canary auto-fire) + `live_enabled=True` 전환 — dry-run 검증 + canary 후로 게이팅.
 - [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile(`OverseasReconcileService` scaffolding 존재), risk gate/kill switch/canary USD 확장, 실전 소액 canary, canary auto-fire 배선 + `live_enabled` 전환.
 - [ ] 3d(후속): 미국장 마감(ET) 정밀 트리거가 필요하면 US-aware 스케줄 경로 신설(현재 KST 트리거로 충분 판단).
@@ -187,11 +187,11 @@ S-1(stop 강제청산 데드 패스)~S-8 버그/수명/구조 수정 완료, S-3
    - 장중 프로그램매매 WebSocket 샘플 캡처 + 한국장 microstructure fixture (P1 1-5)
 
 2. **운영 관찰·블로커 (최우선)**
-   - **WebSocket price 피드 무틱 ≈55% 근본 원인 해소** (P2 2-4) — 라이브 실시간 데이터 품질 블로커. 1거래일 ACK 로그 진단 필요. 해소 전까지 shadow 수집 불가.
+   - **WebSocket price 피드 무틱 ≈55% 근본 원인 해소** (P2 2-4) — 라이브 실시간 데이터 품질 블로커. 2026-06-19 진단은 `a1_kis_no_send` 우세. 해소 전까지 shadow 수집 불가.
    - profitability gate를 우회하지 않고 shadow/paper/canary journal로 전략별 실전 근거 축적 (P1 1-6)
 
 3. **정책 결정 후 진행**
-   - formal PBO/DSR을 profitability gate에 hard 배선할지 (P1 1-7, canary 데이터 후)
+   - DSR hard threshold 및 PBO/DSR profitability gate 운영 기준 확정 (P1 1-7, canary 데이터 후)
    - 자금 확대 전 비상관 엣지 도입 여부 (R-2)
 
 4. **조건부 트리거 — 재발 시**
