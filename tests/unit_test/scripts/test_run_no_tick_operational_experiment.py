@@ -2,16 +2,20 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
 from scripts.run_no_tick_operational_experiment import (
     build_dry_run_result,
+    format_live_preflight_summary,
     format_markdown_result,
     main,
     run_experiment,
     select_experiments,
     select_experiment,
+    validate_live_preflight,
 )
 
 
@@ -187,3 +191,45 @@ def test_main_batch_dry_run_writes_each_result_and_analysis(tmp_path):
     analysis = json.loads((out_dir / "no_tick_operational_experiment_analysis_pytest.json").read_text(encoding="utf-8"))
     assert analysis["summary"]["experiments"] == 2
     assert (out_dir / "no_tick_operational_experiment_analysis_pytest.md").exists()
+
+
+def _live_args(**overrides):
+    defaults = {
+        "execute_live": True,
+        "paper": False,
+        "real": True,
+        "force_live": False,
+        "duration_sec": 180,
+        "between_sec": 30.0,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def test_live_preflight_requires_explicit_environment():
+    open_time = datetime(2026, 6, 22, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+    experiment = select_experiment(_plan(), "A_common_stock_only")
+
+    with pytest.raises(ValueError, match="--paper or --real"):
+        validate_live_preflight(_live_args(paper=False, real=False), [experiment], now=open_time)
+
+
+def test_live_preflight_blocks_closed_market_without_force():
+    sunday = datetime(2026, 6, 21, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+    experiment = select_experiment(_plan(), "A_common_stock_only")
+
+    with pytest.raises(RuntimeError, match="market is not operating hours"):
+        validate_live_preflight(_live_args(force_live=False), [experiment], now=sunday)
+
+
+def test_live_preflight_force_allows_closed_market_and_formats_summary():
+    sunday = datetime(2026, 6, 21, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+    experiment = select_experiment(_plan(), "A_common_stock_only")
+
+    summary = validate_live_preflight(_live_args(force_live=True, paper=True, real=False), [experiment], now=sunday)
+    text = format_live_preflight_summary(summary)
+
+    assert summary["market_open"] is False
+    assert summary["mode"] == "paper"
+    assert summary["experiment_ids"] == ["A_common_stock_only"]
+    assert "force_live: True" in text

@@ -1,8 +1,9 @@
 """Run a selected no-tick operational experiment cohort.
 
 Default mode is a dry run: it validates the plan and writes the selected cohort
-without opening a WebSocket. Pass --execute-live during market hours to connect
-to KIS, subscribe unified price streams, wait, and persist tick-ingest deltas.
+without opening a WebSocket. Pass --execute-live with --paper or --real during
+market hours to connect to KIS, subscribe unified price streams, wait, and
+persist tick-ingest deltas.
 """
 from __future__ import annotations
 
@@ -246,6 +247,71 @@ def format_markdown_result(result: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _live_mode(args: argparse.Namespace) -> str:
+    is_paper = bool(getattr(args, "paper", False))
+    is_real = bool(getattr(args, "real", False))
+    if is_paper == is_real:
+        raise ValueError("--execute-live requires exactly one of --paper or --real.")
+    return "paper" if is_paper else "real"
+
+
+def build_live_preflight_summary(
+    args: argparse.Namespace,
+    experiments: List[Dict[str, Any]],
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    from core.market_clock import MarketClock
+
+    mode = _live_mode(args)
+    market_clock = MarketClock()
+    market_time = now or market_clock.get_current_kst_time()
+    experiment_ids = [str(experiment.get("id", "")) for experiment in experiments]
+    return {
+        "mode": mode,
+        "market_open": bool(market_clock.is_market_operating_hours(market_time)),
+        "market_time": market_time.isoformat(timespec="seconds"),
+        "force_live": bool(getattr(args, "force_live", False)),
+        "duration_sec": int(getattr(args, "duration_sec", 0)),
+        "between_sec": float(getattr(args, "between_sec", 0.0)),
+        "total_experiments": len(experiments),
+        "total_codes": sum(len(experiment.get("codes", [])) for experiment in experiments),
+        "experiment_ids": experiment_ids,
+    }
+
+
+def validate_live_preflight(
+    args: argparse.Namespace,
+    experiments: List[Dict[str, Any]],
+    *,
+    now: Optional[datetime] = None,
+    summary: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    summary = summary or build_live_preflight_summary(args, experiments, now=now)
+    if not summary["market_open"] and not summary["force_live"]:
+        raise RuntimeError(
+            "Live execution blocked: market is not operating hours. "
+            "Use --force-live to override."
+        )
+    return summary
+
+
+def format_live_preflight_summary(summary: Dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "[PREFLIGHT] Live execution summary",
+            f"- mode: {summary.get('mode', '')}",
+            f"- market_open: {summary.get('market_open', False)}",
+            f"- market_time: {summary.get('market_time', '')}",
+            f"- force_live: {summary.get('force_live', False)}",
+            f"- experiments: {', '.join(summary.get('experiment_ids') or [])}",
+            f"- total_codes: {summary.get('total_codes', 0)}",
+            f"- duration_sec: {summary.get('duration_sec', 0)}",
+            f"- between_sec: {summary.get('between_sec', 0.0)}",
+        ]
+    )
+
+
 def _write_outputs(result: Dict[str, Any], output_json: Optional[Path], output_markdown: Optional[Path]) -> None:
     if output_json:
         output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -407,7 +473,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-label", help="Stable suffix for result and analysis file names.")
     parser.add_argument("--analyze-after", action="store_true", help="Analyze generated result JSON files after all runs.")
     parser.add_argument("--execute-live", action="store_true", help="Open KIS WebSocket and run the cohort.")
-    parser.add_argument("--paper", action="store_true", help="Use paper-trading KIS config for live execution.")
+    parser.add_argument("--force-live", action="store_true", help="Override the market-hours live execution preflight.")
+    environment = parser.add_mutually_exclusive_group()
+    environment.add_argument("--paper", action="store_true", help="Use paper-trading KIS config for live execution.")
+    environment.add_argument("--real", action="store_true", help="Use real-trading KIS config for live execution.")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging.")
     return parser
 
@@ -422,6 +491,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         raise ValueError("--output-json/--output-markdown are only supported for single experiment runs. Use --output-dir for batch runs.")
     if (is_batch or args.analyze_after) and not args.run_label:
         args.run_label = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if args.execute_live:
+        preflight_summary = build_live_preflight_summary(args, experiments)
+        print(format_live_preflight_summary(preflight_summary))
+        validate_live_preflight(args, experiments, summary=preflight_summary)
 
     results = asyncio.run(_run_selected_experiments(args, experiments))
 
