@@ -88,3 +88,17 @@
 - `reports/no_tick_diagnosis_20260619.md`
 - `reports/no_tick_diagnosis_20260619.json`
 - `reports/no_tick_operational_diagnosis_20260619.md`
+
+## 실행 명령
+
+Dry-run:
+
+```powershell
+C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe scripts\run_no_tick_operational_experiment.py --plan reports\no_tick_operational_experiment_plan_20260619.json --experiment-id A_common_stock_only --duration-sec 180
+```
+
+Live execution:
+
+```powershell
+C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe scripts\run_no_tick_operational_experiment.py --plan reports\no_tick_operational_experiment_plan_20260619.json --experiment-id A_common_stock_only --duration-sec 180 --execute-live
+```
