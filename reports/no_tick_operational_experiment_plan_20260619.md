@@ -108,3 +108,9 @@ Analyze results:
 ```powershell
 C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe scripts\analyze_no_tick_operational_experiment.py --result "reports\no_tick_operational_experiment_result_*.json" --output-markdown reports\no_tick_operational_experiment_analysis.md
 ```
+
+Batch live execution + analysis:
+
+```powershell
+C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe scripts\run_no_tick_operational_experiment.py --plan reports\no_tick_operational_experiment_plan_20260619.json --all --duration-sec 180 --between-sec 30 --output-dir reports --run-label 20260622_live --execute-live --analyze-after
+```
