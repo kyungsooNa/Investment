@@ -10,6 +10,7 @@ from scripts.run_no_tick_operational_experiment import (
     format_markdown_result,
     main,
     run_experiment,
+    select_experiments,
     select_experiment,
 )
 
@@ -84,6 +85,16 @@ def test_select_experiment_by_id():
     assert experiment["codes"] == ["ETF01"]
 
 
+def test_select_experiments_supports_csv_and_all():
+    plan = _plan()
+
+    selected = select_experiments(plan, "A_common_stock_only,B_non_common_only", include_all=False)
+    all_selected = select_experiments(plan, None, include_all=True)
+
+    assert [item["id"] for item in selected] == ["A_common_stock_only", "B_non_common_only"]
+    assert [item["id"] for item in all_selected] == ["A_common_stock_only", "B_non_common_only"]
+
+
 def test_select_experiment_raises_for_unknown_id():
     with pytest.raises(ValueError, match="UNKNOWN"):
         select_experiment(_plan(), "UNKNOWN")
@@ -149,3 +160,30 @@ def test_main_dry_run_writes_json_and_markdown(tmp_path):
     assert rc == 0
     assert json.loads(out_json.read_text(encoding="utf-8"))["status"] == "dry_run"
     assert "A_common_stock_only" in out_md.read_text(encoding="utf-8")
+
+
+def test_main_batch_dry_run_writes_each_result_and_analysis(tmp_path):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(_plan(), ensure_ascii=False), encoding="utf-8")
+    out_dir = tmp_path / "batch"
+
+    rc = main([
+        "--plan", str(plan_path),
+        "--all",
+        "--duration-sec", "5",
+        "--between-sec", "0",
+        "--output-dir", str(out_dir),
+        "--run-label", "pytest",
+        "--analyze-after",
+    ])
+
+    assert rc == 0
+    result_files = sorted(out_dir.glob("no_tick_operational_experiment_result_*_pytest.json"))
+    assert [p.name for p in result_files] == [
+        "no_tick_operational_experiment_result_A_common_stock_only_pytest.json",
+        "no_tick_operational_experiment_result_B_non_common_only_pytest.json",
+    ]
+    assert json.loads(result_files[0].read_text(encoding="utf-8"))["status"] == "dry_run"
+    analysis = json.loads((out_dir / "no_tick_operational_experiment_analysis_pytest.json").read_text(encoding="utf-8"))
+    assert analysis["summary"]["experiments"] == 2
+    assert (out_dir / "no_tick_operational_experiment_analysis_pytest.md").exists()

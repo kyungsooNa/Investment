@@ -45,6 +45,15 @@ def select_experiment(plan: Dict[str, Any], experiment_id: str) -> Dict[str, Any
     raise ValueError(f"Experiment id not found: {experiment_id}. Available: {available}")
 
 
+def select_experiments(plan: Dict[str, Any], experiment_ids: Optional[str], *, include_all: bool = False) -> List[Dict[str, Any]]:
+    if include_all:
+        return list(plan.get("experiments", []))
+    ids = [part.strip() for part in str(experiment_ids or "").split(",") if part.strip()]
+    if not ids:
+        raise ValueError("At least one --experiment-id or --all is required.")
+    return [select_experiment(plan, experiment_id) for experiment_id in ids]
+
+
 def _empty_stats() -> Dict[str, int]:
     return {"received": 0, "quality_reject": 0, "dispatched": 0, "malformed": 0}
 
@@ -250,10 +259,20 @@ def _write_outputs(result: Dict[str, Any], output_json: Optional[Path], output_m
         print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
-def _default_output_paths(experiment_id: str) -> Tuple[Path, Path]:
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+def _safe_filename_part(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in value)
+
+
+def _default_output_paths(experiment_id: str, *, output_dir: Path = Path("reports"), run_label: Optional[str] = None) -> Tuple[Path, Path]:
+    label = run_label or datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_id = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in experiment_id)
-    base = Path("reports") / f"no_tick_operational_experiment_result_{safe_id}_{stamp}"
+    base = output_dir / f"no_tick_operational_experiment_result_{safe_id}_{_safe_filename_part(label)}"
+    return base.with_suffix(".json"), base.with_suffix(".md")
+
+
+def _default_analysis_paths(*, output_dir: Path = Path("reports"), run_label: Optional[str] = None) -> Tuple[Path, Path]:
+    label = run_label or datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = output_dir / f"no_tick_operational_experiment_analysis_{_safe_filename_part(label)}"
     return base.with_suffix(".json"), base.with_suffix(".md")
 
 
@@ -340,14 +359,53 @@ async def _execute_live(args: argparse.Namespace, experiment: Dict[str, Any]) ->
             await stopper()
 
 
+async def _sleep_between(seconds: float) -> None:
+    if seconds > 0:
+        await asyncio.sleep(seconds)
+
+
+def _analyze_result_files(result_paths: List[Path], output_json: Path, output_markdown: Path) -> None:
+    from scripts.analyze_no_tick_operational_experiment import (
+        analyze_results,
+        format_markdown_analysis,
+        load_result,
+    )
+
+    analysis = analyze_results([load_result(path) for path in result_paths])
+    output_json.parent.mkdir(parents=True, exist_ok=True)
+    output_markdown.parent.mkdir(parents=True, exist_ok=True)
+    output_json.write_text(json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8")
+    output_markdown.write_text(format_markdown_analysis(analysis), encoding="utf-8")
+    print(f"[INFO] JSON analysis: {output_json}")
+    print(f"[INFO] Markdown analysis: {output_markdown}")
+
+
+async def _run_selected_experiments(args: argparse.Namespace, experiments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    for index, experiment in enumerate(experiments):
+        if index > 0:
+            await _sleep_between(args.between_sec)
+        if args.execute_live:
+            result = await _execute_live(args, experiment)
+        else:
+            result = build_dry_run_result(experiment=experiment, duration_sec=args.duration_sec)
+        results.append(result)
+    return results
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", required=True, type=Path, help="Experiment plan JSON path.")
-    parser.add_argument("--experiment-id", required=True, help="Experiment id to run.")
+    parser.add_argument("--experiment-id", help="Experiment id to run. Comma-separated ids are allowed.")
+    parser.add_argument("--all", action="store_true", help="Run every experiment in the plan, in plan order.")
     parser.add_argument("--duration-sec", type=int, default=180, help="Live subscription duration in seconds.")
+    parser.add_argument("--between-sec", type=float, default=0.0, help="Seconds to wait between experiments.")
     parser.add_argument("--ack-timeout-sec", type=float, default=2.0, help="Unified price ACK wait timeout.")
     parser.add_argument("--output-json", type=Path, help="Result JSON path.")
     parser.add_argument("--output-markdown", type=Path, help="Result Markdown path.")
+    parser.add_argument("--output-dir", type=Path, help="Directory for batch/default outputs.")
+    parser.add_argument("--run-label", help="Stable suffix for result and analysis file names.")
+    parser.add_argument("--analyze-after", action="store_true", help="Analyze generated result JSON files after all runs.")
     parser.add_argument("--execute-live", action="store_true", help="Open KIS WebSocket and run the cohort.")
     parser.add_argument("--paper", action="store_true", help="Use paper-trading KIS config for live execution.")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging.")
@@ -358,19 +416,42 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     plan = load_plan(args.plan)
-    experiment = select_experiment(plan, args.experiment_id)
+    experiments = select_experiments(plan, args.experiment_id, include_all=args.all)
+    is_batch = len(experiments) > 1
+    if is_batch and (args.output_json or args.output_markdown):
+        raise ValueError("--output-json/--output-markdown are only supported for single experiment runs. Use --output-dir for batch runs.")
+    if (is_batch or args.analyze_after) and not args.run_label:
+        args.run_label = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    output_json = args.output_json
-    output_markdown = args.output_markdown
-    if args.execute_live and not (output_json or output_markdown):
-        output_json, output_markdown = _default_output_paths(args.experiment_id)
+    results = asyncio.run(_run_selected_experiments(args, experiments))
 
-    if args.execute_live:
-        result = asyncio.run(_execute_live(args, experiment))
-    else:
-        result = build_dry_run_result(experiment=experiment, duration_sec=args.duration_sec)
+    default_output_dir = args.output_dir or Path("reports")
+    result_json_paths: List[Path] = []
+    for result in results:
+        should_use_default_paths = (
+            is_batch
+            or args.run_label
+            or (args.execute_live and not (args.output_json or args.output_markdown))
+            or (args.output_dir is not None and not (args.output_json or args.output_markdown))
+        )
+        if should_use_default_paths:
+            output_json, output_markdown = _default_output_paths(
+                result.get("experiment_id", ""),
+                output_dir=default_output_dir,
+                run_label=args.run_label,
+            )
+        else:
+            output_json = args.output_json
+            output_markdown = args.output_markdown
+        _write_outputs(result, output_json, output_markdown)
+        if output_json:
+            result_json_paths.append(output_json)
 
-    _write_outputs(result, output_json, output_markdown)
+    if args.analyze_after:
+        if not result_json_paths:
+            raise ValueError("--analyze-after requires JSON result output paths.")
+        analysis_json, analysis_md = _default_analysis_paths(output_dir=default_output_dir, run_label=args.run_label)
+        _analyze_result_files(result_json_paths, analysis_json, analysis_md)
     return 0
 
 
