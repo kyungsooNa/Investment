@@ -100,8 +100,10 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe scripts\run_no_tick_operationa
 Live execution:
 
 ```powershell
-C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe scripts\run_no_tick_operational_experiment.py --plan reports\no_tick_operational_experiment_plan_20260619.json --experiment-id A_common_stock_only --duration-sec 180 --execute-live
+C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe scripts\run_no_tick_operational_experiment.py --plan reports\no_tick_operational_experiment_plan_20260619.json --experiment-id A_common_stock_only --duration-sec 180 --execute-live --real
 ```
+
+Live execution blocks outside market operating hours by default. Use `--force-live` only when intentionally overriding that preflight.
 
 Analyze results:
 
@@ -112,5 +114,5 @@ C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe scripts\analyze_no_tick_operat
 Batch live execution + analysis:
 
 ```powershell
-C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe scripts\run_no_tick_operational_experiment.py --plan reports\no_tick_operational_experiment_plan_20260619.json --all --duration-sec 180 --between-sec 30 --output-dir reports --run-label 20260622_live --execute-live --analyze-after
+C:\Users\Kyungsoo\anaconda3\envs\py310\python.exe scripts\run_no_tick_operational_experiment.py --plan reports\no_tick_operational_experiment_plan_20260619.json --all --duration-sec 180 --between-sec 30 --output-dir reports --run-label 20260622_live --execute-live --real --analyze-after
 ```
