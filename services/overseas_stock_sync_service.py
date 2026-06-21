@@ -5,11 +5,14 @@
 # 국내용 stock_sync_service.py와 동일한 메타데이터/캐시 패턴을 따른다.
 
 import json
+import logging
 import os
 import sqlite3
 from datetime import datetime
 import pandas as pd
 import FinanceDataReader as fdr
+
+logger = logging.getLogger(__name__)
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DATA_DIR = os.path.join(ROOT_DIR, "data")
@@ -53,11 +56,11 @@ def save_overseas_stock_code_list(force_update=False):
     force_update=True일 경우 날짜와 무관하게 업데이트.
     """
     if not force_update and not _needs_update():
-        print("✅ 해외 종목: 최근 7일 이내에 이미 업데이트됨. 업데이트 생략.")
+        logger.info("✅ 해외 종목: 최근 7일 이내에 이미 업데이트됨. 업데이트 생략.")
         return
 
     try:
-        print("🔄 FinanceDataReader를 통해 해외(NASDAQ/NYSE/AMEX) 종목 목록을 다운로드합니다...")
+        logger.info("🔄 FinanceDataReader를 통해 해외(NASDAQ/NYSE/AMEX) 종목 목록을 다운로드합니다...")
         frames = []
         for market, exchange in _MARKET_TO_EXCHANGE.items():
             df_market = fdr.StockListing(market)[["Symbol", "Name"]].copy()
@@ -81,10 +84,10 @@ def save_overseas_stock_code_list(force_update=False):
             conn.close()
 
         _save_metadata()
-        print(f"🟢 {len(df)}개 해외 종목 저장 완료 (FDR 사용): {DB_FILE_PATH}")
+        logger.info(f"🟢 {len(df)}개 해외 종목 저장 완료 (FDR 사용): {DB_FILE_PATH}")
 
     except Exception as e:
-        print(f"❌ 해외 종목 데이터 업데이트 실패: {e}")
+        logger.error(f"❌ 해외 종목 데이터 업데이트 실패: {e}")
         raise
 
 

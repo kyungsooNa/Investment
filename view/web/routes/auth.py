@@ -13,11 +13,6 @@ async def login(response: Response, username: str = Form(...), password: str = F
     ctx = _get_ctx()
     auth_config = ctx.full_config.get("auth", {})
 
-    print(f"\n=== 로그인 시도 ===")
-    print(f"입력 ID: {username} / PW: {password}")
-    print(f"설정 ID: {auth_config.get('username')} / PW: {auth_config.get('password')}")
-    print(f"==================\n")
-
     if username == auth_config.get("username") and password == auth_config.get("password"):
         response = JSONResponse(content={"success": True})
         # 쿠키 설정

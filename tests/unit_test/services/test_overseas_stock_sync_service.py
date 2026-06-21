@@ -59,11 +59,12 @@ def test_force_update_saves_files(mock_listing):
 
 
 @patch("FinanceDataReader.StockListing", side_effect=_fake_listing)
-def test_metadata_blocks_update_within_7_days(mock_listing, capfd):
+def test_metadata_blocks_update_within_7_days(mock_listing, caplog):
+    import logging
     svc.save_overseas_stock_code_list(force_update=True)
-    svc.save_overseas_stock_code_list(force_update=False)
-    captured = capfd.readouterr()
-    assert "이미 업데이트됨" in captured.out
+    with caplog.at_level(logging.INFO):
+        svc.save_overseas_stock_code_list(force_update=False)
+    assert "이미 업데이트됨" in caplog.text
 
 
 def test_needs_update_logic():

@@ -2,6 +2,7 @@
 가상 매매 관련 API 엔드포인트 (virtual.html).
 """
 import asyncio
+import logging
 import math
 import time
 from fastapi import APIRouter, Body
@@ -13,6 +14,7 @@ import numpy as np
 from datetime import datetime, timezone, timedelta
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _sync_virtual_trade_state(ctx):
@@ -23,7 +25,7 @@ def _sync_virtual_trade_state(ctx):
     try:
         vm.sync_live_strategy_positions()
     except Exception as e:
-        print(f"[WebAPI] virtual sync 오류: {e}")
+        logger.error(f"[WebAPI] virtual sync 오류: {e}")
     return vm
 
 
@@ -412,7 +414,7 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
                 if d_date: daily_ref_dates[key] = d_date
                 if w_date: weekly_ref_dates[key] = w_date
         except Exception as e:
-            print(f"[WebAPI] virtual/history 스냅샷 처리 오류: {e}")
+            logger.error(f"[WebAPI] virtual/history 스냅샷 처리 오류: {e}")
 
         # 최초 매매일
         df['buy_date_str'] = df['buy_date'].astype(str).str[:10]
@@ -489,7 +491,7 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
             profit_factors[strat], expectancies[strat] = pf_s, exp_s
 
     except Exception as e:
-        print(f"[WebAPI] virtual/history Pandas 집계 오류: {e}")
+        logger.error(f"[WebAPI] virtual/history Pandas 집계 오류: {e}")
         summary_agg = {}
         strategy_returns = {}
         daily_changes = weekly_changes = daily_ref_dates = weekly_ref_dates = {}
@@ -578,7 +580,7 @@ async def _get_virtual_history_impl(ctx, force_code, apply_cost):
                                     _PRICE_CACHE[code] = (price_val, rate_val, time.time())
                                     price_map[code] = (price_val, rate_val, False, time.time())
                     except Exception as e:
-                        print(f"[WebAPI] 복수종목 조회 예외: {e}")
+                        logger.error(f"[WebAPI] 복수종목 조회 예외: {e}")
 
                 # API 실패 시 기존 캐시 폴백
                 for code in fetch_codes:
@@ -623,7 +625,7 @@ async def _get_virtual_history_impl(ctx, force_code, apply_cost):
                     trade['hold_return_rate'] = vm.calculate_return(bp, float(cur), qty, apply_cost=apply_cost)
 
     except Exception as e:
-        print(f"[WebAPI] virtual/history enrichment 오류: {e}")
+        logger.error(f"[WebAPI] virtual/history enrichment 오류: {e}")
 
     # ---------------------------------------------------------
     # 4~7단계: Pandas 고속 집계 — CPU-bound 작업을 thread pool로 위임

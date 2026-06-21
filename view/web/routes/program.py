@@ -3,6 +3,7 @@
 """
 import asyncio
 import json
+import logging
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from view.web.api_common import (
@@ -12,6 +13,7 @@ from view.web.api_common import (
 from repositories.streaming_stock_repo import StreamingType
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 SSE_KEEPALIVE_TIMEOUT_SEC = 15.0
 
 
@@ -135,7 +137,7 @@ async def save_pt_data(data: ProgramTradingDataModel):
         ctx.pm.log_timer("save_pt_data", t_start)
         return {"success": True}
     except Exception as e:
-        print(f"[WebAPI] PT Data Save Error: {e}")
+        logger.error(f"[WebAPI] PT Data Save Error: {e}")
         return {"success": False, "msg": str(e)}
 
 
