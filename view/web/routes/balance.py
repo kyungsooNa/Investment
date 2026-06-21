@@ -41,7 +41,7 @@ async def get_balance(exchange: str = Query("KRX")):
         if not config and hasattr(env, 'get_full_config'):
              try:
                  config = env.get_full_config()
-             except:
+             except Exception:
                  config = {}
 
         # 계좌번호 키 찾기 (설정 파일마다 키 이름이 다를 수 있음)

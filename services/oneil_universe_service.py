@@ -1276,5 +1276,6 @@ class OneilUniverseService:
             if isinstance(target, dict):
                 for k in ["bsop_prti_icdc", "sale_totl_prfi_icdc", "op_profit_growth", "bsop_prfi_inrt", "grs"]:
                     if val := target.get(k): return float(val)
-        except: pass
+        except Exception:
+            pass
         return 0.0

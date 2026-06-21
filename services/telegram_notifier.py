@@ -160,7 +160,7 @@ class TelegramReporter:
                     rate_str = f"{rate:.1f}%"
                 else:
                     rate_str = "0.0%"
-            except:
+            except Exception:
                 rate_str = "-"
 
             # 3. 금액 (억)
@@ -185,7 +185,7 @@ class TelegramReporter:
                         
                         ratio = abs(net_won) / acml_tr_pbmn * 100
                         ratio_str = f"{ratio:.1f}%"
-                except:
+                except Exception:
                     pass
 
                 table += f"{rank:<2} {name_str} {rate_str:>7} {val_str:>8} {ratio_str:>6}\n"

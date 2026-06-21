@@ -88,69 +88,86 @@ pytest tests/integration_test -v    # 통합 테스트
 ## 디렉토리 구조
 ```
 Investment/
-├── main.py                 # 진입점 (CLI/Web 모드 선택)
-├── app/                    # TradingApp, UserActionExecutor (메뉴 커맨드 디스패치)
-├── brokers/korea_investment/  # 한국투자증권 API 클라이언트 계층
-│   ├── korea_invest_env.py          # 환경(실전/모의), API키, 토큰 관리
-│   ├── korea_invest_client.py       # 최상위 클라이언트 (Quotations+Account+Trading 통합)
-│   ├── korea_invest_api_base.py     # HTTP 엔진 (httpx, 재시도 로직)
-│   ├── korea_invest_quotations_api.py  # 시세 조회 API
-│   ├── korea_invest_account_api.py     # 계좌 조회 API
-│   ├── korea_invest_trading_api.py     # 매수/매도 주문 API
-│   ├── korea_invest_websocket_api.py   # 실시간 WebSocket (체결가, 호가, 프로그램매매)
-│   ├── korea_invest_*_provider.py      # Header, URL, TrID, Params 프로바이더
-│   └── korea_invest_token_provider.py   # 토큰 발급/갱신/저장
+├── main.py                 # 진입점 (설정 로드 후 uvicorn으로 웹 서버 구동, 크래시 덤프 로깅)
+├── brokers/
+│   ├── broker_api_wrapper.py        # 서비스가 쓰는 통합 브로커 인터페이스 (cache+retry+circuit breaker)
+│   └── korea_investment/            # 한국투자증권 API 클라이언트 계층
+│       ├── korea_invest_env.py          # 환경(실전/모의), API키, 토큰 관리
+│       ├── korea_invest_client.py       # 최상위 클라이언트 (Quotations+Account+Trading+WebSocket 통합)
+│       ├── korea_invest_api_base.py     # HTTP 엔진 (httpx, 재시도 로직)
+│       ├── korea_invest_quotations_api.py  # 시세 조회 API
+│       ├── korea_invest_account_api.py     # 계좌 조회 API
+│       ├── korea_invest_trading_api.py     # 매수/매도 주문 API
+│       ├── korea_invest_websocket_api.py   # 실시간 WebSocket (체결가, 호가, 프로그램매매)
+│       ├── korea_invest_*_provider.py      # Header, URL, TrID, Params 프로바이더
+│       └── korea_invest_token_provider.py  # 토큰 발급/갱신/저장
 ├── common/types.py         # 공통 데이터 모델 (ResCommonResponse, ErrorCode, TradeSignal 등)
 ├── config/                 # YAML 설정 파일들
 │   ├── config.yaml(.example)   # API키, 계좌번호, URL (gitignore 대상)
 │   ├── tr_ids_config.yaml      # TR ID 매핑
 │   ├── kis_config.yaml         # 엔드포인트 경로 + 쿼리 파라미터
 │   ├── cache_config.yaml       # 캐시 설정 (TTL, 활성 메서드 목록)
+│   ├── task_config.yaml        # 백그라운드 태스크 설정
+│   ├── config_loader.py / task_config_loader.py  # 설정 로더
 │   └── DynamicConfig.py        # 코드 내 상수 (OHLCV 범위 등)
-├── core/                   # 인프라 (Logger, MarketClock, Cache 서브시스템)
-├── data/                   # stock_code_list.csv (KOSPI+KOSDAQ 종목코드)
-├── interfaces/strategy.py  # Strategy 추상 인터페이스
-├── managers/               # VirtualTradeManager (CSV 기반 모의매매 저널)
-├── market_data/            # StockCodeRepository (종목코드 ↔ 이름 매핑)
-├── services/               # 비즈니스 로직
-│   ├── trading_service.py          # 핵심 도메인 서비스
+├── core/                   # 인프라
+│   ├── cache/              # 캐시 서브시스템 (memory/file/db + cache_wrapper)
+│   ├── loggers/            # 구조화 로깅 (app_logger, async_handler, json_formatter 등)
+│   ├── retry_queue/        # API 요청 큐 + 재시도 분류 + budget limiter
+│   └── market_clock.py / logger.py / performance_profiler.py
+├── data/                   # 종목코드 CSV, 백테스트 산출물(JSON), 저널
+├── docs/                   # 운영 런북, 아키텍처, 백테스트 문서
+├── interfaces/             # 추상 인터페이스 (strategy, live_strategy, schedulable_task)
+├── repositories/           # 데이터 저장소 (virtual_trade, stock_code, ohlcv, rs_rating, favorite 등)
+├── scheduler/              # 실행 스케줄러 (strategy_scheduler, background/foreground, after_market_loop)
+├── scripts/                # 백테스트/실험/진단 CLI 스크립트 (run_backtest, no-tick 실험 등)
+├── services/               # 비즈니스 로직 (80+ 서비스)
 │   ├── stock_query_service.py      # 시세 조회 서비스 (분봉 페이지네이션 포함)
-│   └── order_execution_service.py  # 주문 실행 서비스
-├── strategies/             # 매매 전략 + 백테스트
+│   ├── market_data_service.py      # 조회 허브 (캐시/DB/API 폴백)
+│   ├── order_execution_service.py  # 주문 실행 서비스
+│   ├── virtual_trade_service.py    # 모의매매 성과
+│   ├── rs_rating / minervini_stage / oneil_universe / newhigh_service  # 종목 선별
+│   └── ... (백테스트·리스크게이트·주문정책·전략게이트·해외 등)
+├── strategies/             # 매매 전략 + 백테스트 (모멘텀, VBO, 오닐, 눌림목 등 + ablation/stability)
 │   ├── momentum_strategy.py        # 모멘텀 전략 (변동률+후속상승)
 │   ├── GapUpPullback_strategy.py   # 갭상승 눌림목 전략
-│   ├── volume_breakout_strategy.py # 거래량 돌파 백테스트 (독립형)
-│   ├── strategy_executor.py        # Strategy 래퍼
+│   ├── strategy_executor.py        # Strategy 래퍼 (+ Minervini Stage Guard)
 │   └── backtest_data_provider.py   # 백테스트 데이터 제공
+├── task/background/        # 백그라운드 태스크
+│   ├── after_market/       # 장마감 후 (랭킹, OHLCV, 리포트, 캐시워밍 등)
+│   ├── intraday/           # 장중 (스케줄러 어댑터, 웹소켓 watchdog, 개장 대사 등)
+│   └── always_on/          # 상시 (알림 큐)
 ├── tests/
-│   ├── unit_test/          # 34개 단위 테스트
-│   └── integration_test/   # 통합 테스트 (HTTP 모킹)
-├── utils/                  # 종목코드 CSV 업데이터 (pykrx)
+│   ├── unit_test/          # 단위 테스트 (316개 파일, pytest-xdist 병렬)
+│   └── integration_test/   # 통합 테스트 (29개 파일, HTTP 모킹)
+├── utils/                  # 종목코드 CSV 업데이터 (pykrx) 등
 └── view/
-    ├── cli/cli_view.py     # CLI 뷰 (터미널 I/O)
+    ├── cli/                # CLI 뷰 (현재 main.py는 웹 실행 중심)
     └── web/                # FastAPI 웹 뷰
-        ├── web_main.py         # FastAPI 앱, 라우트, lifespan
-        ├── web_api.py          # /api/* 엔드포인트
-        ├── web_app_initializer.py  # WebAppContext (서비스 초기화)
-        └── templates/          # Jinja2 HTML
+        ├── web_main.py             # FastAPI 앱, 라우트, lifespan, 미들웨어
+        ├── web_api.py              # routes 재노출 호환 레이어
+        ├── web_app_initializer.py  # WebAppContext (서비스 조립)
+        ├── bootstrap/              # 조립 분리 (service_container, *_bootstrap, strategy_factory)
+        ├── routes/                 # /api/* 엔드포인트 (stock, order, balance, ranking, virtual 등)
+        ├── static/                 # CSS/JS
+        └── templates/              # Jinja2 HTML
 ```
 
 ## 아키텍처 계층
 ```
-View (CLIView / FastAPI)
-  → UserActionExecutor / web_api.py
-    → StockQueryService / OrderExecutionService
-      → TradingService (도메인 로직)
-        → BrokerAPIWrapper (브로커 추상화 + 캐시 프록시)
-          → KoreaInvestApiClient
-            → Quotations / Account / Trading / WebSocket API
-              → KoreaInvestApiBase (httpx HTTP 엔진)
+View (FastAPI 웹 / CLI)
+  → view/web/routes/* (/api/* 엔드포인트)
+    → StockQueryService / OrderExecutionService / MarketDataService (서비스 계층)
+      → BrokerAPIWrapper (브로커 추상화 + cache/retry/circuit breaker)
+        → KoreaInvestApiClient
+          → Quotations / Account / Trading / WebSocket API
+            → KoreaInvestApiBase (httpx HTTP 엔진)
 ```
 
 ## 핵심 설계 패턴
 - **DI**: 모든 주요 클래스가 생성자를 통해 의존성 주입 (logger, market_clock, env 등)
-- **Command 패턴**: `UserActionExecutor.COMMANDS` dict → 메뉴 번호 → 핸들러 메서드 디스패치
-- **Strategy 패턴**: `Strategy` 추상 클래스 → `MomentumStrategy`, `GapUpPullbackStrategy` 구현
+- **라우팅**: FastAPI `view/web/routes/*` 모듈이 기능별로 `/api/*` 엔드포인트를 디스패치
+- **Strategy 패턴**: `Strategy` 추상 클래스 → `MomentumStrategy`, `GapUpPullbackStrategy`, 오닐/VBO 등 구현
 - **Proxy/Decorator**: `ClientWithCache`가 API 클라이언트를 래핑 (장 마감 후 캐시 활성)
 - **실전/모의 투명 전환**: URL, TR ID가 `is_paper_trading` 플래그에 따라 자동 전환
 
@@ -168,12 +185,13 @@ View (CLIView / FastAPI)
 - `cache_config.yaml`에서 메서드별 활성화/비활성화 제어
 
 ## 수동매매 성과요약
-- **VirtualTradeManager** (`managers/virtual_trade_manager.py`): CSV(`data/trade_journal.csv`) 기반 거래 기록/통계
-  - `log_buy(strategy, code, price)` / `log_sell(code, price)` — 매수/매도 기록 (중복 매수 방지)
+- **VirtualTradeRepository** (`repositories/virtual_trade_repository.py`): 거래 기록/통계 저장소
+  - `log_buy(strategy_name, code, current_price, qty)` / `log_sell(code, current_price, qty)` — 매수/매도 기록 (중복 매수 방지)
   - `get_summary()` → `{total_trades, win_rate, avg_return}` (SOLD 건만 집계)
   - `get_all_trades()` / `get_holds()` / `get_holds_by_strategy()` — 조회
-- **웹 API**: `GET /api/virtual/summary`, `GET /api/virtual/history`
-- **웹 주문 연동**: `POST /api/order` 성공 시 `"수동매매"` 전략명으로 자동 기록 (`web_api.py`)
+- **VirtualTradeService** (`services/virtual_trade_service.py`): 성과 요약, 전략별 수익률 변화, 실제 잔고 reconcile
+- **웹 API**: `GET /api/virtual/summary`, `GET /api/virtual/history` (`view/web/routes/virtual.py`)
+- **웹 주문 연동**: `POST /api/order` 성공 시 `"수동매매"` 전략명으로 자동 기록 (`view/web/routes/order.py`)
 - **웹 UI**: 전략별 탭 필터링 + 성과 요약 박스 (`app.js` — `loadVirtualHistory()`, `filterVirtualStrategy()`)
 - **CLI**: 성과요약 전용 메뉴 없음 (웹 UI에서만 조회 가능)
 

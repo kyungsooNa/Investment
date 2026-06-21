@@ -266,7 +266,7 @@ page_router = APIRouter()
 async def render_page(request: Request, template_name: str, active_page: str, extra_context: dict = None):
     try:
         ctx = web_api._get_ctx()
-    except:
+    except Exception:
         return templates.TemplateResponse(request, "login.html")
 
     use_login = ctx.full_config.get("use_login", True)
