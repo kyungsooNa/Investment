@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-06-19 (실제 코드/산출물 대조 — 무틱 진단 결과·profitability gate·해외주식 수동/자동 주문 상태 반영)
+최종 업데이트: 2026-06-21 (키움/StockEasy 테마 참고 TODO 추가)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR로 추적하고 본 문서에서 제거한다.
 
@@ -21,6 +21,7 @@
 - **P1 1-5** 한국장 microstructure fixture로 체결 모델 보수성 검증(장중 캡처 의존, blocked).
 - **P2 2-2** 외부: 실 KIS 계정 유량 한도 운영 직전 재확인.
 - **해외주식** Phase 4(주문/사이징) 컴포넌트 완료(order-gating·USD sizing·FX·일봉 exit, 자동 전략 경로 `live_enabled=False` 잠금), 잔여는 Phase 5(canary auto-fire 배선·reconcile·live 전환, 라이브 검증 gated). 수동 해외 지정가 주문 API는 별도 존재하며 실전은 `allow_live_trading=true` + 확인 문자열로만 허용. Phase 1~3(데이터 어댑터·일봉 백테스트·dry-run) 완료.
+- **테마/분류 데이터**: 네이버 테마를 1차 소스로 적용하고, 키움 테마 REST API(`ka90001`/`ka90002`)는 후속 TODO로 분리. StockEasy 섹터RS 화면의 테마/섹터 taxonomy를 정규화 참고자료로 활용. 통합 테마는 source별 원본을 보존한 뒤 `normalized_name` 기준 OR 병합.
 - **R-1 생존편향**: 노출·PnL 정량화 완료 — 결론 "의무 손절이 PnL 생존편향을 방어"(상세 `data/survivorship/survivorship_exposure_report.md`). 코드 후속 없음.
 - **조건부/정책**: Pool B 튜닝(재발 시), R-2 비상관 엣지 도입, S-9 god class 분리(PR-3 판정 후) 등 — 하단.
 
@@ -99,6 +100,27 @@
 - [~] 활성 전략 `scan()` 잔여 순차 후보 처리(현재가/체결강도/변동성 보강)를 `bounded_gather`로 전환 — **보류**. 저비용 단계에서 대다수 후보 탈락 + 고비용 REST는 소수 돌파 후보만 + 전역 limiter 8/s 직렬화로 실익 marginal. 실전 진입 경로 동등성 검증 부담 대비 이득 작음. 재개 시 2-pass(돌파 후보만 `execution_strength` bounded)가 외과적.
 
 주요 파일: `strategies/larry_williams_vbo_strategy.py`
+
+---
+
+## 테마/분류 데이터
+
+### T-0. StockEasy 섹터RS taxonomy 참고
+
+- [ ] StockEasy 종합 RS 화면(`stockeasy.intellio.kr/stock-analysis`)의 섹터/테마 분류를 네이버/키움 통합 테마 정규화 참고자료로 사용한다.
+- [ ] 화면 기준 주요 후보: 반도체소재, 지주사, 메모리, 비메모리/팹리스, 전력기기, 반도체장비, 보험, 건설, 테스트소켓, 유통, 로봇/자동화, 미용기기, 산업기계, 완성차, SW/AI, 자동차부품, 증권, 우주항공, 배터리셀, 통신, 원자력, 양극재, 신재생, 전자장비, 조선기자재, 조선, 타이어, 바이오신약, 방위산업, 음극재/소재, 은행, 정유/화학, 철강/비철, 의료기기, 해운, 여행/레저, 음식료, 패션/의류, 제약, 인터넷/플랫폼, 유틸리티, 리츠/부동산, 게임, CDMO, 화장품, 엔터/미디어.
+- [ ] StockEasy 자체를 무단 수집 소스로 고정하지 말고, 우선은 테마명 alias/표시명/RS UI 참고로 둔다. 실제 구성종목 데이터는 네이버/키움 등 수집 가능한 source에 귀속한다.
+
+### T-1. 키움 테마 REST API 연동 (후속 TODO)
+
+- [ ] 키움 REST API 사용 신청/인증 설정을 별도 config로 분리한다. 허용 IP, 토큰 발급/갱신, 호출 제한 정책을 문서화한다.
+- [ ] `ka90001`(테마그룹별요청)으로 키움 테마 목록을 수집한다.
+- [ ] `ka90002`(테마구성종목요청)으로 테마별 구성 종목을 수집한다.
+- [ ] 수집 결과는 `source="KIWOOM"`, `category_type="theme"`으로 저장하고, 네이버 테마와 OR 병합할 수 있도록 `raw_group_id`, `raw_name`, `normalized_name`, `code`, `name`, `collected_at`을 보존한다.
+- [ ] 네이버/키움 동일 테마명 차이는 alias 테이블로 정규화한다. 자동 병합보다 명시 alias를 우선한다.
+- [ ] 키움 호출 실패 시 기존 성공 캐시를 유지하고, 테마 주도주 화면에는 source와 마지막 갱신 시각을 노출한다.
+
+주요 후보 파일: `services/kiwoom_theme_service.py`, `repositories/theme_classification_repository.py`, `config/kiwoom_config.yaml`
 
 ---
 
