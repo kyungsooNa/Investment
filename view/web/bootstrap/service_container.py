@@ -22,6 +22,7 @@ from core.account_snapshot import AccountSnapshotCache
 from core.cache.cache_store import CacheStore
 from core.performance_profiler import PerformanceProfiler
 from repositories.rs_rating_repository import RSRatingRepository
+from repositories.stock_classification_repository import StockClassificationRepository
 from repositories.stock_repository import StockRepository
 from repositories.streaming_stock_repo import StreamingStockRepo
 from scheduler.dispatcher.time_dispatcher import TimeDispatcher
@@ -37,6 +38,9 @@ from services.minervini_stage_service import MinerviniStageService
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from services.newhigh_service import NewHighService
 from services.oneil_universe_service import OneilUniverseService
+from services.theme_classification_collector_service import ThemeClassificationCollectorService
+from services.theme_leader_service import ThemeLeaderService
+from task.background.after_market.theme_classification_task import ThemeClassificationTask
 from services.opening_position_reconcile_service import OpeningPositionReconcileService
 from services.order_execution_service import OrderExecutionService
 from services.order_policy_service import OrderPolicyService
@@ -204,6 +208,19 @@ class ServiceContainer:
             )
         except Exception as e:
             ctx.logger.warning(f"[ServiceBootstrap:RSRating] 초기화 실패: {e}")
+
+        try:
+            ctx.theme_classification_repository = StockClassificationRepository(logger=ctx.logger)
+            ctx.theme_leader_service = ThemeLeaderService(
+                classification_repository=ctx.theme_classification_repository,
+                rs_rating_repository=getattr(ctx, "rs_rating_repository", None),
+                logger=ctx.logger,
+                performance_profiler=ctx.pm,
+            )
+        except Exception as e:
+            ctx.logger.warning(f"[ServiceBootstrap:ThemeLeader] 초기화 실패: {e}")
+            ctx.theme_classification_repository = None
+            ctx.theme_leader_service = None
 
         try:
             ctx.market_data_service = MarketDataService(
@@ -661,6 +678,18 @@ class ServiceContainer:
                     newhigh_task=ctx.newhigh_task,
                     logger=ctx.logger,
                 )
+                if ctx.theme_classification_repository is not None:
+                    ctx.theme_classification_task = ThemeClassificationTask(
+                        collector_service=ThemeClassificationCollectorService(
+                            classification_repository=ctx.theme_classification_repository,
+                            logger=ctx.logger,
+                        ),
+                        classification_repository=ctx.theme_classification_repository,
+                        market_calendar_service=ctx._mcs,
+                        market_clock=ctx.market_clock,
+                        logger=ctx.logger,
+                        worker_pool=ctx.worker_pool,
+                    )
                 ctx.strategy_log_report_task = StrategyLogReportTask(
                     report_service=StrategyLogReportService(
                         log_dir=os.path.join(ctx.logger.log_dir, "strategies"),
@@ -714,6 +743,7 @@ class ServiceContainer:
                 ctx.log_cleanup_task = None
                 ctx.newhigh_task = None
                 ctx.newhigh_service = None
+                ctx.theme_classification_task = None
                 ctx.strategy_log_report_task = None
                 ctx.post_market_replay_audit_task = None
                 ctx.after_market_reconcile_task = None

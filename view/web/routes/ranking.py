@@ -55,6 +55,22 @@ async def get_minervini_stage2():
     return {"rt_cd": resp.rt_cd, "msg1": resp.msg1, "data": resp.data}
 
 
+@router.get("/ranking/theme_leaders")
+async def get_theme_leaders(include_industry: bool = False):
+    """테마(선택적으로 업종 포함) 그룹별 주도주(RS 상위)를 그룹 강도순으로 반환한다.
+
+    각 그룹: { normalized_name, sources, group_rs_median, member_count, leaders[...] }
+    데이터 미수집 시 rt_cd="0", data=[] 로 응답한다(진행률 폴링 없음).
+    """
+    ctx = _get_ctx()
+    svc = getattr(ctx, "theme_leader_service", None)
+    if not svc:
+        return {"rt_cd": "1", "msg1": "ThemeLeaderService 미설정", "data": None}
+    cats = ("theme", "industry") if include_industry else ("theme",)
+    resp = await svc.get_theme_leaders(category_types=cats)
+    return {"rt_cd": resp.rt_cd, "msg1": resp.msg1, "data": resp.data}
+
+
 @router.get("/ranking/{category}")
 async def get_ranking(category: str):
     """랭킹 조회 (rise/fall/volume/trading_value/foreign_buy/foreign_sell/inst_buy/inst_sell/prsn_buy/prsn_sell)."""

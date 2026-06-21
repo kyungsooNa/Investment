@@ -27,6 +27,8 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "PositionSizingService", "RiskGateService", "ExecutionFlowService",
     "OrderPolicyService", "DeferredOrderQueue", "OrderExecutionService",
     "OneilUniverseService", "NaverFinanceScraperService",
+    "StockClassificationRepository", "ThemeLeaderService",
+    "ThemeClassificationCollectorService", "ThemeClassificationTask",
     "PremiumWatchlistGeneratorTask", "CacheWarmupTask", "LogCleanupTask",
     "NewHighTask", "NewHighService", "StrategyLogReportTask",
     "StrategyLogReportService", "NotificationQueueTask",
@@ -98,6 +100,18 @@ def test_service_container_creates_query_and_order_services(patched_service_cont
     assert ctx.stock_query_service is patched_service_container_deps["StockQueryService"].return_value
     assert ctx.order_execution_service is patched_service_container_deps["OrderExecutionService"].return_value
     assert ctx.risk_gate_service is patched_service_container_deps["RiskGateService"].return_value
+
+
+def test_service_container_creates_theme_leader_service(patched_service_container_deps):
+    """ThemeLeaderService 와 분류 저장소가 ctx 에 주입된다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ServiceContainer(ctx).run()
+
+    assert ctx.theme_classification_repository is patched_service_container_deps[
+        "StockClassificationRepository"].return_value
+    assert ctx.theme_leader_service is patched_service_container_deps["ThemeLeaderService"].return_value
 
 
 def test_service_container_passes_order_execution_retry_config(patched_service_container_deps):
