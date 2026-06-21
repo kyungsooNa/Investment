@@ -87,7 +87,7 @@ def test_force_update_includes_etf_codes(mock_fdr_listing):
 
 
 @patch("FinanceDataReader.StockListing")
-def test_metadata_blocks_update_within_7_days(mock_fdr_listing, capfd):
+def test_metadata_blocks_update_within_7_days(mock_fdr_listing, caplog):
     mock_fdr_listing.side_effect = [
         pd.DataFrame({
             'Code': ['005930'],
@@ -96,14 +96,15 @@ def test_metadata_blocks_update_within_7_days(mock_fdr_listing, capfd):
         }),
         pd.DataFrame(),
     ]
+    import logging
     # 강제로 한 번 저장
     stock_sync_service.save_stock_code_list(force_update=True)
 
     # 다시 저장 시도 → 최근 업데이트된 상태라 저장 생략되어야 함
-    stock_sync_service.save_stock_code_list(force_update=False)
+    with caplog.at_level(logging.INFO):
+        stock_sync_service.save_stock_code_list(force_update=False)
 
-    captured = capfd.readouterr()
-    assert "이미 업데이트됨" in captured.out
+    assert "이미 업데이트됨" in caplog.text
 
 
 def test_needs_update_logic():

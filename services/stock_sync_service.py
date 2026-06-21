@@ -2,10 +2,13 @@
 
 import pandas as pd
 import json
+import logging
 import os
 import sqlite3
 from datetime import datetime
 import FinanceDataReader as fdr
+
+logger = logging.getLogger(__name__)
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DATA_DIR = os.path.join(ROOT_DIR, "data")
@@ -51,11 +54,11 @@ def save_stock_code_list(force_update=False):
 
 def save_stock_code_list_fdr(force_update=False):
     if not force_update and not _needs_update():
-        print("✅ 최근 7일 이내에 이미 업데이트됨. 업데이트 생략.")
+        logger.info("✅ 최근 7일 이내에 이미 업데이트됨. 업데이트 생략.")
         return
 
     try:
-        print("🔄 FinanceDataReader를 통해 KRX 종목 목록을 다운로드합니다...")
+        logger.info("🔄 FinanceDataReader를 통해 KRX 종목 목록을 다운로드합니다...")
         stock_df = _load_krx_stock_listing()
         etf_df = _load_etf_listing()
         df = pd.concat([stock_df, etf_df], ignore_index=True)
@@ -79,10 +82,10 @@ def save_stock_code_list_fdr(force_update=False):
             conn.close()
 
         _save_metadata()
-        print(f"🟢 {len(df)}개 종목 저장 완료 (FDR 사용): {DB_FILE_PATH}")
+        logger.info(f"🟢 {len(df)}개 종목 저장 완료 (FDR 사용): {DB_FILE_PATH}")
 
     except Exception as e:
-        print(f"❌ 데이터 업데이트 실패: {e}")
+        logger.error(f"❌ 데이터 업데이트 실패: {e}")
         raise
 
 
@@ -114,7 +117,7 @@ def _load_etf_listing() -> pd.DataFrame:
     try:
         df_all = fdr.StockListing('ETF/KR')
     except Exception as e:
-        print(f"⚠️ ETF 목록 다운로드 실패. ETF 종목명 매핑은 건너뜁니다: {e}")
+        logger.warning(f"⚠️ ETF 목록 다운로드 실패. ETF 종목명 매핑은 건너뜁니다: {e}")
         return pd.DataFrame(columns=['종목코드', '종목명', '시장구분'])
 
     if df_all.empty or not {'Symbol', 'Name'}.issubset(df_all.columns):

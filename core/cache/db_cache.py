@@ -221,5 +221,7 @@ class DBCache:
             with self._get_connection() as conn:
                 cursor = conn.execute("SELECT 1 FROM cache WHERE key = ?", (key,))
                 return cursor.fetchone() is not None
-        except:
+        except Exception as e:
+            if self._logger:
+                self._logger.debug(f"[DBCache] exists() Error: {e}")
             return False

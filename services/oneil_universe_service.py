@@ -657,7 +657,7 @@ class OneilUniverseService:
         ]
 
         total_stocks = len(all_stocks)
-        print(f"[전일 기준 우량주 생성] 시작시간: {start_time_str} | 전체 종목 수: {total_stocks}개. 1차 필터링(시총) 시작...")
+        self._logger.info(f"[전일 기준 우량주 생성] 시작시간: {start_time_str} | 전체 종목 수: {total_stocks}개. 1차 필터링(시총) 시작...")
         pool_a_logger.info({"event": "1st_filter_start", "total_stocks": total_stocks})
         self._generation_progress = {
             "running": True, "phase": "1차_필터(시총)",
@@ -729,14 +729,14 @@ class OneilUniverseService:
             if processed_count % 100 == 0 or processed_count >= total_stocks:
                 pct = (processed_count / total_stocks * 100) if total_stocks > 0 else 0.0
                 elapsed = time.time() - start_time
-                print(f"  > [1차 필터] 진행: {processed_count}/{total_stocks} ({pct:.1f}%) | 통과: {len(passed_first)} | 소요: {elapsed:.1f}s")
+                self._logger.info(f"  > [1차 필터] 진행: {processed_count}/{total_stocks} ({pct:.1f}%) | 통과: {len(passed_first)} | 소요: {elapsed:.1f}s")
                 pool_a_logger.info({"event": "1st_filter_progress", "processed": processed_count, "total": total_stocks, "passed": len(passed_first)})
                 self._generation_progress.update({
                     "processed": processed_count, "passed": len(passed_first), "elapsed": round(elapsed, 1),
                 })
 
 
-        print(f"[전일 기준 우량주 생성] 1차 필터 완료. 통과: {len(passed_first)}개. 2차 상세 분석(OHLCV/지표) 시작...")
+        self._logger.info(f"[전일 기준 우량주 생성] 1차 필터 완료. 통과: {len(passed_first)}개. 2차 상세 분석(OHLCV/지표) 시작...")
         pool_a_logger.info({"event": "1st_filter_done", "passed": len(passed_first)})
         pool_a_logger.info({"event": "2nd_filter_start", "total_candidates": len(passed_first)})
         self._generation_progress.update({
@@ -757,7 +757,7 @@ class OneilUniverseService:
             if processed_count_2 % 50 == 0 or processed_count_2 >= total_passed:
                 pct2 = (processed_count_2 / total_passed * 100) if total_passed > 0 else 0.0
                 elapsed = time.time() - start_time
-                print(f"  > [2차 필터] 진행: {processed_count_2}/{total_passed} ({pct2:.1f}%) | 선정: {len(items)} | 소요: {elapsed:.1f}s")
+                self._logger.info(f"  > [2차 필터] 진행: {processed_count_2}/{total_passed} ({pct2:.1f}%) | 선정: {len(items)} | 소요: {elapsed:.1f}s")
                 pool_a_logger.info({"event": "2nd_filter_progress", "processed": processed_count_2, "total": total_passed, "selected": len(items)})
                 self._generation_progress.update({
                     "processed": processed_count_2, "selected": len(items), "elapsed": round(elapsed, 1),
@@ -783,7 +783,7 @@ class OneilUniverseService:
         pool_a_logger.info({"event": "save_done", "kospi_count": len(kospi), "kosdaq_count": len(kosdaq)})
 
         total_elapsed = time.time() - start_time
-        print(f"[전일 기준 우량주 생성] 완료. 총 소요시간: {total_elapsed:.1f}초")
+        self._logger.info(f"[전일 기준 우량주 생성] 완료. 총 소요시간: {total_elapsed:.1f}초")
         pool_a_logger.info({"event": "generate_premium_watchlist_finished", "elapsed_seconds": total_elapsed})
         self._generation_progress.update({"running": False, "phase": None, "elapsed": round(total_elapsed, 1)})
 
@@ -1276,5 +1276,6 @@ class OneilUniverseService:
             if isinstance(target, dict):
                 for k in ["bsop_prti_icdc", "sale_totl_prfi_icdc", "op_profit_growth", "bsop_prfi_inrt", "grs"]:
                     if val := target.get(k): return float(val)
-        except: pass
+        except Exception:
+            pass
         return 0.0
