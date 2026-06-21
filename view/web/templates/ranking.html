@@ -18,6 +18,7 @@
                 <button class="btn ranking-tab" data-cat="trading_value" onclick="loadRanking('trading_value')">거래대금</button>
                 <button class="btn ranking-tab" data-cat="minervini_stage2" onclick="loadRanking('minervini_stage2')">Minervini S2</button>
                 <button class="btn ranking-tab" data-cat="newhigh" onclick="loadRanking('newhigh')">신고가</button>
+                <button class="btn ranking-tab" data-cat="theme_leaders" onclick="loadThemeLeaders()">테마주도</button>
             </div>
             <div class="ranking-investor-group" style="margin-top: 6px;">
                 <div class="form-row" style="margin-bottom: 0;">
@@ -38,7 +39,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/ranking.js?v=2"></script>
+<script src="/static/js/ranking.js?v=3"></script>
 <script>
     loadRanking('rise');
 </script>

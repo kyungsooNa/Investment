@@ -252,6 +252,83 @@ async function loadInvestorRanking() {
     }
 }
 
+async function loadThemeLeaders() {
+    if (_rankingPollTimer) {
+        clearTimeout(_rankingPollTimer);
+        _rankingPollTimer = null;
+    }
+    if (window.Paginator) window.Paginator.reset('ranking');
+    _rankingCurrentCategory = 'theme_leaders';
+    _rankingDirection = null;
+
+    document.querySelectorAll('.ranking-tab').forEach(b => {
+        b.classList.remove('active');
+        if (b.dataset.cat === 'theme_leaders') b.classList.add('active');
+    });
+    const invRow = document.getElementById('investor-type-row');
+    if (invRow) invRow.style.display = 'none';
+
+    const div = document.getElementById('ranking-result');
+    _showRankingSkeleton();
+
+    try {
+        const res = await fetchWithTimeout('/api/ranking/theme_leaders');
+        const json = await res.json();
+
+        if (json.rt_cd !== "0") {
+            div.innerHTML = `<p class="error">실패: ${json.msg1}</p>`;
+            return;
+        }
+        // 빈 데이터는 진행률 폴링이 아니라 전용 안내로 처리한다.
+        if (!json.data || json.data.length === 0) {
+            div.innerHTML = `<div class="card" style="text-align:center; padding:40px;">
+                <p style="font-size:1.1em;">${json.msg1 || '테마 데이터가 아직 수집되지 않았습니다.'}</p>
+                <p style="color:#888; margin-top:8px;">장 마감 후 테마 분류 수집이 완료되면 표시됩니다.</p>
+            </div>`;
+            return;
+        }
+        renderThemeLeaders(json.data);
+    } catch (e) {
+        if (e.name === 'AbortError') {
+            div.innerHTML = '<p class="error">요청 시간이 초과되었습니다. 다시 시도해주세요.</p>';
+        } else {
+            div.innerHTML = "오류: " + e;
+        }
+    }
+}
+
+function _sourceBadges(sources) {
+    const label = { NAVER: '네이버', KIWOOM: '키움', WICS: 'WICS' };
+    return (sources || []).map(s =>
+        `<span style="display:inline-block; font-size:0.75em; padding:1px 6px; margin-left:4px;
+            border-radius:8px; background:var(--accent-secondary,#3b82f6); color:#fff;">${label[s] || s}</span>`
+    ).join('');
+}
+
+function renderThemeLeaders(groups) {
+    const div = document.getElementById('ranking-result');
+    const cards = groups.map(g => {
+        const rows = g.leaders.map((l, i) => `
+            <tr>
+                <td>${i + 1}</td>
+                <td>${l.name || l.code}</td>
+                <td>${l.rs_rating}</td>
+                <td>${_sourceBadges(l.sources)}</td>
+            </tr>`).join('');
+        return `<div class="card" style="margin-bottom:12px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                <h3 style="margin:0;">${g.normalized_name}${_sourceBadges(g.sources)}</h3>
+                <span style="color:#888;">RS 중앙값 ${g.group_rs_median} · ${g.member_count}종목</span>
+            </div>
+            <table class="data-table">
+                <thead><tr><th>순위</th><th>종목명</th><th>RS</th><th>출처</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`;
+    }).join('');
+    div.innerHTML = cards;
+}
+
 function _formatElapsed(sec) {
     if (sec < 60) return `${sec.toFixed(1)}s`;
     const m = Math.floor(sec / 60);

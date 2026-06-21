@@ -2,7 +2,49 @@
 랭킹/시가총액 관련 테스트 (ranking.html, marketcap.html).
 """
 import pytest
+from unittest.mock import AsyncMock
 from common.types import ResCommonResponse
+
+
+@pytest.mark.asyncio
+async def test_get_theme_leaders_success(web_client, mock_web_ctx):
+    """GET /api/ranking/theme_leaders 정상 응답 + 기본 category_types=theme."""
+    mock_web_ctx.theme_leader_service = AsyncMock()
+    mock_web_ctx.theme_leader_service.get_theme_leaders.return_value = ResCommonResponse(
+        rt_cd="0", msg1="성공",
+        data=[{"normalized_name": "로봇", "sources": ["NAVER"], "group_rs_median": 88.0,
+               "member_count": 3, "leaders": [{"code": "005930", "name": "삼성전자",
+                                               "rs_rating": 99, "sources": ["NAVER"]}]}],
+    )
+    response = web_client.get("/api/ranking/theme_leaders")
+    assert response.status_code == 200
+    assert response.json()["data"][0]["normalized_name"] == "로봇"
+    mock_web_ctx.theme_leader_service.get_theme_leaders.assert_awaited_once_with(
+        category_types=("theme",)
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_theme_leaders_include_industry(web_client, mock_web_ctx):
+    """include_industry=true 면 category_types 에 industry 가 포함된다."""
+    mock_web_ctx.theme_leader_service = AsyncMock()
+    mock_web_ctx.theme_leader_service.get_theme_leaders.return_value = ResCommonResponse(
+        rt_cd="0", msg1="성공", data=[]
+    )
+    response = web_client.get("/api/ranking/theme_leaders?include_industry=true")
+    assert response.status_code == 200
+    mock_web_ctx.theme_leader_service.get_theme_leaders.assert_awaited_once_with(
+        category_types=("theme", "industry")
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_theme_leaders_service_missing(web_client, mock_web_ctx):
+    """ThemeLeaderService 미설정 시 rt_cd=1 안내."""
+    mock_web_ctx.theme_leader_service = None
+    response = web_client.get("/api/ranking/theme_leaders")
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] == "1"
 
 
 @pytest.mark.asyncio
