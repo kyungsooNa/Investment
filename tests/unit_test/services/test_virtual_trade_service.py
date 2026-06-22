@@ -378,24 +378,51 @@ async def test_reconcile_with_broker_force_closes_missing_local_holds(virtual_tr
 
 
 @pytest.mark.asyncio
-async def test_reconcile_with_broker_reports_unknown_broker_holdings(virtual_trade_service, mock_repo):
-    """실제 보유인데 로컬 DB가 없으면 unknown_in_broker로 보고한다."""
+async def test_reconcile_with_broker_inserts_unknown_as_broker_reconciled(virtual_trade_service, mock_repo):
+    """실제 보유인데 로컬 DB가 없으면 'broker_reconciled' 전략으로 자동 등록한다."""
     mock_repo.get_holds.return_value = [{"code": "005930", "strategy": "S1", "qty": 2}]
     mock_repo.log_sell_async = AsyncMock()
+    mock_repo.log_buy_async = AsyncMock()
     test_logger = MagicMock()
 
     result = await virtual_trade_service.reconcile_with_broker(
         actual_holdings=[
             {"pdno": "005930", "hldg_qty": "2"},
-            {"pdno": "035420", "hldg_qty": "1"},
+            {"pdno": "035420", "hldg_qty": "3", "pchs_avg_pric": "50000"},
             {"pdno": "111111", "hldg_qty": "0"},
         ],
         logger=test_logger,
     )
 
     mock_repo.log_sell_async.assert_not_awaited()
-    assert result == {"force_closed": [], "unknown_in_broker": ["035420"], "quantity_mismatches": []}
+    mock_repo.log_buy_async.assert_awaited_once_with("broker_reconciled", "035420", 50000.0, 3)
+    assert result == {
+        "force_closed": [],
+        "unknown_in_broker": ["035420"],
+        "quantity_mismatches": [],
+        "broker_inserted": [{"code": "035420", "qty": 3, "buy_price": 50000.0}],
+    }
     assert test_logger.warning.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_with_broker_inserts_unknown_with_default_price_when_missing(virtual_trade_service, mock_repo):
+    """평균매입가 필드가 없으면 buy_price 0.0으로 자동 등록한다."""
+    mock_repo.get_holds.return_value = [{"code": "005930", "strategy": "S1", "qty": 2}]
+    mock_repo.log_sell_async = AsyncMock()
+    mock_repo.log_buy_async = AsyncMock()
+    test_logger = MagicMock()
+
+    result = await virtual_trade_service.reconcile_with_broker(
+        actual_holdings=[
+            {"pdno": "005930", "hldg_qty": "2"},
+            {"pdno": "035420", "hldg_qty": "1"},
+        ],
+        logger=test_logger,
+    )
+
+    mock_repo.log_buy_async.assert_awaited_once_with("broker_reconciled", "035420", 0.0, 1)
+    assert result["broker_inserted"] == [{"code": "035420", "qty": 1, "buy_price": 0.0}]
 
 
 @pytest.mark.asyncio

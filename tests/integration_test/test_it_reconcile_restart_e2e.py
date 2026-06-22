@@ -6,7 +6,7 @@ Tests:
    이후 신규 주문 진입은 정상 허용된다.
 2. local-only HOLD: reconcile_with_broker가 force_close 처리하고 VirtualTradeService에서
    해당 종목을 제거한다. 이후 KillSwitch는 주문을 허용한다(경고만).
-3. broker-only / 수량 불일치: 자동 주문 발생 없이 경고 로그만 기록된다.
+3. broker-only: reconcile_with_broker가 'broker_reconciled' 전략 HOLD로 자동 등록한다.
 
 Background tasks는 직접 start() 하지 않고 reconcile_once() / restore_state_from_broker()
 를 직접 호출해 결정성을 보장한다 (hang 방지).
@@ -66,6 +66,7 @@ def _make_vts(holds: list) -> VirtualTradeService:
     repo = MagicMock()
     repo.get_holds.return_value = holds
     repo.log_sell_async = AsyncMock(return_value=None)
+    repo.log_buy_async = AsyncMock(return_value=None)
     vts = VirtualTradeService(repository=repo)
     return vts
 
@@ -192,11 +193,11 @@ async def test_force_close_does_not_trip_kill_switch():
     assert reason is None
 
 
-# ─── Scenario 3: broker-only / 수량 불일치 → 경고만 ─────────────────────────
+# ─── Scenario 3: broker-only → 'broker_reconciled' 전략으로 자동 등록 ──────────
 
 @pytest.mark.asyncio
-async def test_broker_only_does_not_auto_insert():
-    """broker에만 있는 종목은 자동 주문/insert 없이 경고만 기록된다."""
+async def test_broker_only_auto_inserts_as_broker_reconciled():
+    """broker에만 있는 종목은 'broker_reconciled' 전략 HOLD로 자동 등록된다."""
     broker_holds = BALANCE_FIXTURE["scenarios"]["broker_only"]["output1"]
     broker = MagicMock()
     broker.get_account_balance = AsyncMock(
@@ -215,7 +216,11 @@ async def test_broker_only_does_not_auto_insert():
 
     assert result["force_closed"] == []
     assert "000660" in result["unknown_in_broker"]
+    assert result["broker_inserted"] == [
+        {"code": "000660", "qty": 5, "buy_price": 120000.0}
+    ]
     vts._repo.log_sell_async.assert_not_awaited()
+    vts._repo.log_buy_async.assert_awaited_once_with("broker_reconciled", "000660", 120000.0, 5)
 
 
 @pytest.mark.asyncio

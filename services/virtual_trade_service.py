@@ -14,6 +14,9 @@ from utils.transaction_cost_utils import TransactionCostUtils
 
 logger = logging.getLogger(__name__)
 
+# 브로커에만 있고 로컬 원장엔 없는 포지션을 대사 시 자동 등록할 때 사용하는 전략명.
+_BROKER_RECONCILED_STRATEGY = "broker_reconciled"
+
 
 def _parse_position_qty(value: Any) -> int:
     try:
@@ -41,6 +44,20 @@ def _normalize_broker_holdings(holdings: list[dict]) -> dict[str, int]:
         if qty > 0:
             positions[code] = positions.get(code, 0) + qty
     return positions
+
+
+def _broker_avg_prices(holdings: list[dict]) -> dict[str, float]:
+    prices: dict[str, float] = {}
+    for holding in holdings or []:
+        code = str(_first_non_empty(holding, ("pdno", "PDNO", "code")) or "").strip()
+        if not code or code in prices:
+            continue
+        raw = _first_non_empty(holding, ("pchs_avg_pric", "PCHS_AVG_PRIC", "buy_price", "price"))
+        try:
+            prices[code] = float(str(raw if raw is not None else "0").replace(",", "").strip() or 0)
+        except (TypeError, ValueError):
+            prices[code] = 0.0
+    return prices
 
 
 def _normalize_local_holds(holds: list[dict]) -> dict[str, int]:
@@ -222,7 +239,7 @@ class VirtualTradeService:
         """실제 증권사 잔고와 로컬 DB를 비교하여 불일치를 처리한다.
 
         - 로컬 HOLD인데 실제 잔고 없음 → 해당 code의 로컬 HOLD row를 강제 종결 + 경고
-        - 실제 잔고 있는데 로컬 없음 → 경고 로그만 (전략명 불명확 → 자동 insert 불가)
+        - 실제 잔고 있는데 로컬 없음 → 'broker_reconciled' 전략 HOLD로 자동 등록 + 경고 (사후 전략 재지정 필요)
         - 양쪽에 있으나 단일 로컬 HOLD의 수량만 다름 → 실제 잔고 수량으로 qty 동기화
         - 양쪽에 있으나 여러 로컬 HOLD에 걸쳐 수량이 다름 → 경고 로그만
 
@@ -235,6 +252,7 @@ class VirtualTradeService:
                 "force_closed": [codes],
                 "unknown_in_broker": [codes],
                 "quantity_mismatches": [{"code": code, "local_qty": L, "broker_qty": B}],
+                "broker_inserted": [{"code": code, "qty": Q, "buy_price": P}],  # 자동 등록 시에만
             }
         """
         _log = logger or __import__('logging').getLogger(__name__)
@@ -257,9 +275,17 @@ class VirtualTradeService:
         local_codes = set(local_positions)
         broker_codes = set(broker_positions)
         unknown_in_broker = sorted(broker_codes - local_codes)
+        broker_inserted = []
         if unknown_in_broker:
+            broker_prices = _broker_avg_prices(actual_holdings)
+            for code in unknown_in_broker:
+                qty = broker_positions[code]
+                buy_price = broker_prices.get(code, 0.0)
+                await self.log_buy_async(_BROKER_RECONCILED_STRATEGY, code, buy_price, qty)
+                broker_inserted.append({"code": code, "qty": qty, "buy_price": buy_price})
             _log.warning(
-                f"[Reconciliation] 실제 보유 중이나 로컬 DB 없음 (수동 확인 필요): {unknown_in_broker}"
+                f"[Reconciliation] 실제 보유 중이나 로컬 DB 없음 → '{_BROKER_RECONCILED_STRATEGY}' "
+                f"전략으로 자동 등록 (사후 전략 재지정 필요): {unknown_in_broker}"
             )
 
         quantity_mismatches = [
@@ -315,4 +341,6 @@ class VirtualTradeService:
         }
         if quantity_synced:
             result["quantity_synced"] = quantity_synced
+        if broker_inserted:
+            result["broker_inserted"] = broker_inserted
         return result
