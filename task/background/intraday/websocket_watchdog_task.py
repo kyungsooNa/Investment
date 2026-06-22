@@ -34,6 +34,8 @@ class WebSocketWatchdogTask(SchedulableTask):
     PRICE_DATA_GAP_THRESHOLD_SEC = 180
     PRICE_SUBSCRIPTION_GRACE_SEC = 30
     SUBSCRIBED_NO_TICK_REFRESH_COOLDOWN_SEC = 300
+    # 무효 refresh가 이 횟수에 도달하면 종목을 격리해 unsub/resub churn을 중단한다.
+    QUARANTINE_NO_TICK_REFRESH_THRESHOLD = 3
     RECONNECT_COOLDOWN_SEC = 10.0
     RECONNECT_ALERT_CONFIRMATION_COUNT = 2
     REALTIME_HEALTH_CHECK_END_HOUR = 15
@@ -71,6 +73,8 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._market_open: Optional[bool] = None  # 가장 최근 시장 개장 여부 (워치독 루프에서 갱신)
         self._intentionally_disconnected: bool = False  # 장 마감으로 인한 의도적 연결 종료 여부
         self._last_subscribed_no_tick_refresh_ts: Dict[str, float] = {}
+        self._no_tick_refresh_counts: Dict[str, int] = {}
+        self._quarantined_no_tick_codes: set = set()
         self._reconnect_lock = asyncio.Lock()
         self._last_reconnect_started_ts: float = 0.0
         self._reconnect_trigger_counts: Dict[str, int] = {}
@@ -268,16 +272,27 @@ class WebSocketWatchdogTask(SchedulableTask):
                         if self._price_subscription_service:
                             await self._price_subscription_service._rebalance()
 
+                    # KIS가 결국 프레임을 보내기 시작한 격리 종목은 격리를 해제한다.
+                    self._release_recovered_no_tick_codes()
+
                     subscribed_no_tick_codes = [
                         code for code in stale_price_codes
                         if code in active_price_like_codes
                         and self._price_stream_service.get_last_tick_ts(code) <= 0
                     ]
                     if receive_alive and subscribed_no_tick_codes:
+                        refreshable_no_tick_codes = []
                         for code in subscribed_no_tick_codes:
+                            if code in self._quarantined_no_tick_codes:
+                                # 격리 종목은 refresh churn을 일으키지 않고 가시화만 한다.
+                                if self._streaming_logger:
+                                    self._streaming_logger.log_missing_reason(code, "quarantined_no_tick")
+                                continue
                             if self._streaming_logger:
                                 self._streaming_logger.log_missing_reason(code, "subscribed_no_tick")
-                        await self._refresh_subscribed_no_tick_codes(subscribed_no_tick_codes)
+                            refreshable_no_tick_codes.append(code)
+                        if refreshable_no_tick_codes:
+                            await self._refresh_subscribed_no_tick_codes(refreshable_no_tick_codes)
 
                 reconnect_trigger = None
                 if not receive_alive:
@@ -369,6 +384,17 @@ class WebSocketWatchdogTask(SchedulableTask):
             self.REALTIME_HEALTH_CHECK_END_MINUTE,
         )
 
+    def _release_recovered_no_tick_codes(self) -> None:
+        """격리된 종목이 다시 틱을 받으면 격리를 해제한다."""
+        if not self._price_stream_service:
+            return
+        for code in list(self._quarantined_no_tick_codes):
+            if self._price_stream_service.get_last_tick_ts(code) > 0:
+                self._quarantined_no_tick_codes.discard(code)
+                self._no_tick_refresh_counts.pop(code, None)
+                if self._streaming_logger:
+                    self._streaming_logger.log_missing_reason(code, "no_tick_recovered")
+
     async def _refresh_subscribed_no_tick_codes(self, codes: List[str]) -> None:
         """첫 틱이 오지 않는 가격 구독을 개별 재요청한다."""
         if not self._streaming_service:
@@ -376,6 +402,10 @@ class WebSocketWatchdogTask(SchedulableTask):
 
         now_ts = time.time()
         for code in codes:
+            if code in self._quarantined_no_tick_codes:
+                # 격리 종목은 unsub/resub churn을 일으키지 않는다.
+                continue
+
             last_refresh_ts = self._last_subscribed_no_tick_refresh_ts.get(code, 0.0)
             if (now_ts - last_refresh_ts) < self.SUBSCRIBED_NO_TICK_REFRESH_COOLDOWN_SEC:
                 continue
@@ -402,6 +432,13 @@ class WebSocketWatchdogTask(SchedulableTask):
                 )
 
             self._last_subscribed_no_tick_refresh_ts[code] = time.time()
+
+            # 무효 refresh 누적 추적 — 임계값 도달 시 격리해 churn 중단.
+            self._no_tick_refresh_counts[code] = self._no_tick_refresh_counts.get(code, 0) + 1
+            if self._no_tick_refresh_counts[code] >= self.QUARANTINE_NO_TICK_REFRESH_THRESHOLD:
+                self._quarantined_no_tick_codes.add(code)
+                if self._streaming_logger:
+                    self._streaming_logger.log_missing_reason(code, "quarantined_no_tick")
 
     def get_progress(self) -> Dict:
         """태스크 진행률 반환 (SchedulableTask 인터페이스 구현).
