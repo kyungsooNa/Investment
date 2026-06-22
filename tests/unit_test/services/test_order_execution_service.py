@@ -1168,6 +1168,73 @@ async def test_execution_confirmed_buy_persists_virtual_trade(mock_broker_api_wr
 
 
 @pytest.mark.asyncio
+async def test_execution_confirmed_buy_persists_signal_metadata(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
+    virtual_trade_service = AsyncMock()
+    handler = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="주문 성공",
+        data={"ordno": "A0001"},
+    )
+    await handler.handle_place_buy_order(
+        "005930",
+        70000,
+        10,
+        source="strategy:모멘텀",
+        finalize_immediately=False,
+        volatility_20d_annualized=0.42,
+        config_hash="abc123def456",
+        invalidation_price=68000,
+        stop_loss_price=66000,
+        target_price=78000,
+        entry_reason="pocket_pivot_breakout",
+        trailing_rule="ma20_after_profit",
+        expected_holding_period_days=20,
+        confidence=0.75,
+        required_data=["daily_ohlcv", "execution_strength"],
+        market_regime={"kospi": "bull", "kosdaq": "sideways", "stock_market": "KOSPI"},
+    )
+
+    filled = await handler.handle_signing_notice({
+        "ODER_NO": "A0001",
+        "STCK_SHRN_ISCD": "005930",
+        "SELN_BYOV_CLS": "02",
+        "CNTG_QTY": "10",
+        "CNTG_UNPR": "70100",
+        "STCK_CNTG_HOUR": "101500",
+        "RFUS_YN": "N",
+        "CNTG_YN": "2",
+        "ACPT_YN": "Y",
+        "ODER_QTY": "10",
+    }, tr_id="H0STCNI0")
+
+    assert filled.state == OrderState.FILLED
+    virtual_trade_service.log_buy_async.assert_awaited_once_with(
+        "모멘텀",
+        "005930",
+        70100,
+        10,
+        volatility_20d_annualized=0.42,
+        config_hash="abc123def456",
+        invalidation_price=68000,
+        stop_loss_price=66000,
+        target_price=78000,
+        entry_reason="pocket_pivot_breakout",
+        trailing_rule="ma20_after_profit",
+        expected_holding_period_days=20,
+        confidence=0.75,
+        required_data=["daily_ohlcv", "execution_strength"],
+        market_regime={"kospi": "bull", "kosdaq": "sideways", "stock_market": "KOSPI"},
+    )
+
+
+@pytest.mark.asyncio
 async def test_reconcile_source_does_not_persist_virtual_trade(mock_broker_api_wrapper, mock_logger, mock_market_clock, mock_market_calendar_service):
     virtual_trade_service = AsyncMock()
     handler = OrderExecutionService(

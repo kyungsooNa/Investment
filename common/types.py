@@ -131,6 +131,16 @@ class OrderContext(BaseModel):
     slippage_pct: Optional[float] = None
     first_fill_latency_sec: Optional[float] = None
     volatility_20d_annualized: Optional[float] = None  # 매수 신호 생성 시점 변동성 (리포트 집계용)
+    config_hash: Optional[str] = None
+    invalidation_price: Optional[float] = None
+    stop_loss_price: Optional[float] = None
+    target_price: Optional[float] = None
+    entry_reason: Optional[str] = None
+    trailing_rule: Optional[str] = None
+    expected_holding_period_days: Optional[int] = None
+    confidence: Optional[float] = None
+    required_data: Optional[list[str]] = None
+    market_regime: Optional[Dict[str, Any]] = None
     strategy_notification: Dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")

@@ -655,6 +655,49 @@ async def test_persist_records_buy_via_virtual_trade(broker, fsm, reporter, fixe
     assert result.virtual_recorded_qty == 10
 
 
+@pytest.mark.asyncio
+async def test_persist_records_buy_signal_metadata_via_virtual_trade(broker, fsm, reporter, fixed_now):
+    vts = AsyncMock()
+    svc = _make_service(broker=broker, fsm=fsm, reporter=reporter, fixed_now=fixed_now, virtual_trade_service=vts)
+    ctx = fsm.register(_make_context(
+        source="strategy:momentum",
+        volatility_20d_annualized=0.42,
+        config_hash="abc123def456",
+        invalidation_price=68000,
+        stop_loss_price=66000,
+        target_price=78000,
+        entry_reason="pocket_pivot_breakout",
+        trailing_rule="ma20_after_profit",
+        expected_holding_period_days=20,
+        confidence=0.75,
+        required_data=["daily_ohlcv", "execution_strength"],
+        market_regime={"kospi": "bull", "kosdaq": "sideways", "stock_market": "KOSPI"},
+    ))
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED)
+    filled = fsm.transition(ctx.order_key, OrderState.FILLED, filled_qty=10)
+
+    report = OrderExecutionReport(broker_order_no="X", stock_code="005930", side=OrderSide.BUY, fill_price=70500)
+    await svc._persist_virtual_trade_for_terminal_report(filled, report)
+
+    vts.log_buy_async.assert_awaited_once_with(
+        "momentum",
+        "005930",
+        70500,
+        10,
+        volatility_20d_annualized=0.42,
+        config_hash="abc123def456",
+        invalidation_price=68000,
+        stop_loss_price=66000,
+        target_price=78000,
+        entry_reason="pocket_pivot_breakout",
+        trailing_rule="ma20_after_profit",
+        expected_holding_period_days=20,
+        confidence=0.75,
+        required_data=["daily_ohlcv", "execution_strength"],
+        market_regime={"kospi": "bull", "kosdaq": "sideways", "stock_market": "KOSPI"},
+    )
+
+
 # ── resolve_submitted_order + mark_* ─────────────────────────────────────
 
 @pytest.mark.asyncio

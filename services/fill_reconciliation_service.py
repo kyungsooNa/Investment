@@ -338,9 +338,27 @@ class FillReconciliationService:
         sell_result = None
         try:
             if context.side == OrderSide.BUY:
+                buy_log_kwargs = {
+                    "volatility_20d_annualized": context.volatility_20d_annualized,
+                }
+                for key in (
+                    "config_hash",
+                    "invalidation_price",
+                    "stop_loss_price",
+                    "target_price",
+                    "entry_reason",
+                    "trailing_rule",
+                    "expected_holding_period_days",
+                    "confidence",
+                    "required_data",
+                    "market_regime",
+                ):
+                    value = getattr(context, key, None)
+                    if value is not None:
+                        buy_log_kwargs[key] = value
                 await self._virtual_trade_service.log_buy_async(
                     strategy_name, context.stock_code, record_price, record_qty,
-                    volatility_20d_annualized=context.volatility_20d_annualized,
+                    **buy_log_kwargs,
                 )
             elif is_strategy_source:
                 sell_result = await self._virtual_trade_service.log_sell_by_strategy_async_with_result(
