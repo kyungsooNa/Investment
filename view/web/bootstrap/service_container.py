@@ -20,6 +20,7 @@ from config.config_loader import (
 )
 from core.account_snapshot import AccountSnapshotCache
 from core.cache.cache_store import CacheStore
+from core.market_clock import MarketClock
 from core.performance_profiler import PerformanceProfiler
 from repositories.rs_rating_repository import RSRatingRepository
 from repositories.stock_classification_repository import StockClassificationRepository
@@ -601,11 +602,13 @@ class ServiceContainer:
                         position_sizing_service=overseas_position_sizing_service,
                         fx_provider=_overseas_fx_provider,
                     )
+                    # 미국 정규장 마감(16:00 ET) 직후 트리거. 한국 거래 캘린더(mcs)는
+                    # 미국장에 적용되지 않으므로 미주입(None)하고, 미국장 클럭을 주입한다.
                     ctx.overseas_dryrun_task = OverseasDryRunTask(
                         dryrun_service=ctx.overseas_vbo_dryrun_service,
                         shadow_journal=ctx.event_shadow_journal_service,
-                        market_calendar_service=ctx._mcs,
-                        market_clock=ctx.market_clock,
+                        market_calendar_service=None,
+                        market_clock=MarketClock.for_us_equities(logger=ctx.logger),
                         logger=ctx.logger,
                         worker_pool=getattr(ctx, "worker_pool", None),
                     )

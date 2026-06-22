@@ -1,12 +1,16 @@
 # task/background/after_market/overseas_dryrun_task.py
 """해외 VBO dry-run after-market 태스크 (Phase 3c).
 
-OverseasVBODryRunService 의 일봉 기반 dry-run 신호 산출을 기존 한국장 after-market
-스케줄러(KST 마감 트리거)에 얹어 매일 1회 실행하고, shadow 저널을 파일로 flush 한다.
+OverseasVBODryRunService 의 일봉 기반 dry-run 신호 산출을 after-market 스케줄러에
+얹어 매일 1회 실행하고, shadow 저널을 파일로 flush 한다.
 
-해외는 분봉/실시간/미국장 EOD 스케줄 인프라가 없으므로 한국장 마감을 일일 트리거로
-재사용한다(타이밍은 KST지만 일봉 기반 dry-run 이라 기능상 충분). **주문 경로 없음** —
-OverseasVBODryRunService 가 order_execution 의존을 갖지 않아 실주문이 발생하지 않는다.
+트리거는 미국 정규장 마감(America/New_York 16:00) 직후 16:30 ET 로 맞춘다
+(AfterMarketLoop 의 timezone/cron 훅 오버라이드). 한국 거래 캘린더(mcs)는 미국장에
+적용되지 않으므로 미주입(None)하며, cron 의 mon-fri(NY) 필터 + 클럭 날짜로 거래일을
+식별한다. 미국 공휴일에는 직전 완성봉을 재평가할 수 있으나 dry-run 이라 무해하다.
+
+**주문 경로 없음** — OverseasVBODryRunService 가 order_execution 의존을 갖지 않아
+실주문이 발생하지 않는다.
 """
 from __future__ import annotations
 
@@ -53,6 +57,19 @@ class OverseasDryRunTask(AfterMarketTask):
     @property
     def _scheduler_label(self) -> str:
         return "OverseasVBODryRun"
+
+    # ── 미국 정규장 마감(16:00 ET) 직후 16:30 ET 트리거 ──
+    @property
+    def _loop_timezone(self) -> str:
+        return "America/New_York"
+
+    @property
+    def _loop_cron_hour(self) -> int:
+        return 16
+
+    @property
+    def _loop_cron_minute(self) -> int:
+        return 30
 
     @property
     def priority(self) -> TaskPriority:

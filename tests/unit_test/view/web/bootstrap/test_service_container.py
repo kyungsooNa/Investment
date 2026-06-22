@@ -334,6 +334,33 @@ def test_service_container_wires_overseas_dryrun_position_sizing(patched_service
     assert callable(fx_provider)
 
 
+def test_service_container_wires_overseas_dryrun_us_market_clock(patched_service_container_deps):
+    """overseas_us dry-run 태스크는 미국장 클럭으로, 한국 캘린더(mcs) 없이 배선한다."""
+    from config.config_loader import AppConfig
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.market_mode = "overseas_us"
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        market_mode="overseas_us",
+        overseas_stock={"dryrun_slot_usd": 1000.0},
+    )
+    ctx.overseas_stock_code_repository = MagicMock()
+
+    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True) as task_cls:
+        ServiceContainer(ctx).run()
+
+    task_kwargs = task_cls.call_args.kwargs
+    # 한국 거래 캘린더는 미국장에 적용되지 않으므로 미주입
+    assert task_kwargs["market_calendar_service"] is None
+    # 미국 정규장 클럭 주입 (America/New_York)
+    assert task_kwargs["market_clock"].timezone_name == "America/New_York"
+
+
 @pytest.mark.asyncio
 async def test_overseas_fx_provider_extracts_rate_from_balance(patched_service_container_deps):
     """배선된 fx_provider 는 broker 잔고 응답에서 USD/KRW 환율을 추출한다(실패 시 None)."""
