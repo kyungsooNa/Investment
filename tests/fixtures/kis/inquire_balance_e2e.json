@@ -19,7 +19,7 @@
       "output1": []
     },
     "broker_only": {
-      "description": "broker holds 000660 but local has no HOLD — should warn, not auto-insert",
+      "description": "broker holds 000660 but local has no HOLD — auto-inserts as 'broker_reconciled' strategy",
       "output1": [
         {
           "pdno": "000660",
