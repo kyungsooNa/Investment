@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-06-21 (키움/StockEasy 테마 참고 TODO 추가)
+최종 업데이트: 2026-06-22 (no-tick 운영 실험 A~D 라이브 결과 반영)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR로 추적하고 본 문서에서 제거한다.
 
@@ -14,7 +14,7 @@
 
 ## 남은 실행 영역 요약 (우선순위 순)
 
-- **[최우선·블로커] P2 2-4 WS price 피드 무틱 ≈55%**: 구독 종목 절반 이상이 종일 no-tick → VBO shadow parity 수집 불가 + 라이브 실시간 데이터 품질 문제. 2026-06-19 로그 진단 결과 `a1_kis_no_send` 우세(ACK 후 KIS 프레임 미전송)로 확인. 후속은 코드 선제 수정이 아니라 KIS 원인 확인/운영 우회책 판단.
+- **[최우선·블로커] P2 2-4 WS price 피드 무틱 ≈55%**: 구독 종목 절반 이상이 종일 no-tick → VBO shadow parity 수집 불가 + 라이브 실시간 데이터 품질 문제. 2026-06-19 로그 진단 결과 `a1_kis_no_send` 우세(ACK 후 KIS 프레임 미전송)로 확인. 2026-06-22 운영 실험 A~D 라이브 실행으로 원인을 **종목/상품군/계정 단위 KIS측 미전송**으로 좁힘(subscribe/ack/quality_reject 전부 0, received 5 vs no_tick 18). 후속은 코드 선제 수정이 아니라 KIS 에스컬레이션/운영 우회책(무틱 종목 격리) 판단.
 - **P1 1-6** 실전 journal/shadow/paper/canary 성과 데이터로 profitability gate 실제 통과 근거 확보 — "돈을 버는가"의 핵심, 라이브 데이터 축적 의존.
 - **P1 1-7** formal 과최적화 방어(DSR + PBO CSCV + purge embargo) 완료. PBO/adjusted-Sharpe hard gate 옵션과 real-mode overlay는 구현됨. 남은 것은 DSR hard 기준 포함 최종 운영 정책 결정(canary 데이터 후).
 - **P0 0-1** 실전 submit/signing notice raw fixture 확보 후 mapper 회귀 보강(외부 데이터 의존).
@@ -84,6 +84,7 @@
 ### 2-4. Polling에서 event-driven으로 점진 전환
 
 - **[최우선 블로커] WebSocket price 피드 무틱 ≈55%**: 6/9~6/12 streaming 로그 실측 — 구독 30~34종목 중 18~21종목이 종일 `subscribed_no_tick`. shadow는 tick에만 의존하므로 parity 수집 자체가 불가. `connection_lost` 12~18/일 + `price_data_gap` 단조 증가(force-reconnect로 미치유). ACK 수정(#509)으로 미해소. **shadow뿐 아니라 라이브 실시간 데이터 전반 품질 문제** → 별도 최우선 과제로 격상. 코드 감사 결과 슬롯 cap(40)·ACK 확정은 정상. 2026-06-19 라이브 로그 진단 결과 no-tick 16종목 중 15종목이 `a1_kis_no_send`(ACK 후 KIS 프레임 미전송, received=0), 1종목은 `unknown_no_snapshot`, `not_subscribed`는 0건. 최신 리포트: `reports/no_tick_diagnosis_20260619.md`.
+  - **2026-06-22 운영 분리 실험(A~D, 각 180초 라이브) 결과**(`reports/no_tick_operational_experiment_analysis_20260622_live.md`): 종합 received 5 / no_tick 18, subscribe_failure·ack_failure·quality_reject 전부 0 → 구독·ACK는 성공인데 KIS가 프레임 미전송(`a1_kis_no_send` 패턴 재확인). 실험별: **A(보통주만)** `common_no_tick_persists` — 동일 코호트에서 일부 보통주만 틱 수신(삼성물산 729·원익IPS 806 등) vs 일부 0틱(제주반도체·대덕전자·한솔테크닉스·강동씨앤엘·한울반도체), 종목 단위 차이 시사. **B(ETF/우선주만)** `non_common_product_class_no_tick_likely` — KODEX200·TIGER반도체TOP10 등 5종목 전부 0틱 → 상품군 단위 미지원 가능성. **C(무틱 보통주 단독 구독)** `symbol_or_account_level_issue_likely` — 격리해도 0틱 지속. **D(refresh 관찰)** `refresh_ineffective` — refresh로 회복 0. → 원인이 코드/슬롯/디스패치가 아니라 **종목·상품군·계정 단위 KIS측**임이 라이브로 확인됨. 다음 액션: B는 KIS에 ETF/우선주 WS 지원 여부 확인, C는 무틱 보통주를 runner 출력 첨부해 KIS 에스컬레이션, D는 intraday refresh churn 축소 + 무틱 종목 격리(quarantine).
   - 디스패치 갭은 해소(#551): `StreamingService`가 `PriceStreamService.on_price_tick`을 event-loop handler로 유지해 running loop 의존 디스패치가 끊기지 않도록 처리한다. 기타 동기/블로킹 핸들러만 executor로 오프로드된다. tick 도착 종목은 shadow 평가 실행됨. #533 tick-ingest 카운터(received/quality_reject/dispatched) 관측 배선 존재.
   - 진단 로깅 완비 근거(2026-06-19 코드/로그 확인): ① `_active_codes_price`는 **KIS 등록 ACK 확정 종목만** 마킹(`subscription_policy.py` ≈389-401, 전송 성공≠active, 유령 구독 방지 — 테스트 잠금). ② watchdog가 `subscribed_no_tick`(=active AND `last_tick_ts<=0`, 즉 ACK 확정 후 0틱) vs `not_subscribed`(ACK 미확정)를 종목별 분리 로깅(`websocket_watchdog_task.py` ≈271-279). ③ `tick_ingest_stats_snapshot`이 `received=0`(프레임 자체 0=a1) vs `received>0 & quality_reject↑`(게이트 탈락=a2) 구별. tick-ingest 카운터는 monotonic 누적(`price_stream_service.py` `received`/`quality_reject`/`dispatched` `+=1`, reset 없음)이고, 스냅샷은 매 scan(`interval_minutes` 기본 5분)마다 `subscriptions_refreshed`로 event_shadow에 첨부(`strategy_scheduler.py` ≈598·1245). 조인 파싱 스크립트 `scripts/analyze_no_tick_diagnosis.py`(+`tests/unit_test/scripts/test_analyze_no_tick_diagnosis.py`) 실행 결과 `a1_kis_no_send` 우세 판정. **남은 것은 KIS 프레임 미전송 원인 확인, 구독 대상/시장/상품군 분리 실험, 운영 우회책 판단.**
 - [ ] (블로커 해소 후) `event_shadow`/`event_shadow_exit` 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py`로 entry/exit parity 리포트 → PR-3 진입 판정.
@@ -209,7 +210,7 @@ S-1(stop 강제청산 데드 패스)~S-8 버그/수명/구조 수정 완료, S-3
    - 장중 프로그램매매 WebSocket 샘플 캡처 + 한국장 microstructure fixture (P1 1-5)
 
 2. **운영 관찰·블로커 (최우선)**
-   - **WebSocket price 피드 무틱 ≈55% 근본 원인 해소** (P2 2-4) — 라이브 실시간 데이터 품질 블로커. 2026-06-19 진단은 `a1_kis_no_send` 우세. 해소 전까지 shadow 수집 불가.
+   - **WebSocket price 피드 무틱 ≈55% 근본 원인 해소** (P2 2-4) — 라이브 실시간 데이터 품질 블로커. 2026-06-19 진단 `a1_kis_no_send` 우세 + 2026-06-22 실험으로 종목/상품군/계정 단위 KIS측 미전송 확정. 다음은 **KIS 에스컬레이션**(코드 수정 아님). 해소 전까지 shadow 수집 불가.
    - profitability gate를 우회하지 않고 shadow/paper/canary journal로 전략별 실전 근거 축적 (P1 1-6)
 
 3. **정책 결정 후 진행**
