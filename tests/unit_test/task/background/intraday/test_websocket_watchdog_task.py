@@ -1073,6 +1073,78 @@ async def test_refresh_subscribed_no_tick_returns_without_streaming_service(watc
 
 
 @pytest.mark.asyncio
+async def test_no_tick_code_quarantined_after_threshold_refreshes(watchdog_task):
+    """무효 refresh가 임계값에 도달하면 종목을 격리하고 quarantined_no_tick으로 기록한다."""
+    svc = watchdog_task
+    svc._streaming_service.wait_unified_price_ack = AsyncMock(return_value=True)
+
+    for _ in range(svc.QUARANTINE_NO_TICK_REFRESH_THRESHOLD):
+        # 쿨다운을 초기화해 매 호출마다 실제 refresh가 수행되도록 한다.
+        svc._last_subscribed_no_tick_refresh_ts = {}
+        await svc._refresh_subscribed_no_tick_codes(["005930"])
+
+    assert "005930" in svc._quarantined_no_tick_codes
+    assert svc._no_tick_refresh_counts["005930"] >= svc.QUARANTINE_NO_TICK_REFRESH_THRESHOLD
+    svc._streaming_logger.log_missing_reason.assert_any_call("005930", "quarantined_no_tick")
+
+
+@pytest.mark.asyncio
+async def test_quarantined_code_is_not_refreshed(watchdog_task):
+    """격리된 종목은 unsub/resub churn을 발생시키지 않는다."""
+    svc = watchdog_task
+    svc._quarantined_no_tick_codes.add("005930")
+
+    await svc._refresh_subscribed_no_tick_codes(["005930"])
+
+    svc._streaming_service.unsubscribe_unified_price.assert_not_awaited()
+    svc._streaming_service.subscribe_unified_price.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_quarantined_code_released_on_tick_recovery(watchdog_task):
+    """격리 종목이 다시 틱을 받으면 격리를 해제하고 no_tick_recovered로 기록한다."""
+    svc = watchdog_task
+    svc._quarantined_no_tick_codes.add("005930")
+    svc._no_tick_refresh_counts["005930"] = svc.QUARANTINE_NO_TICK_REFRESH_THRESHOLD
+    svc._price_stream_service.get_last_tick_ts.return_value = time.time()
+
+    svc._release_recovered_no_tick_codes()
+
+    assert "005930" not in svc._quarantined_no_tick_codes
+    assert "005930" not in svc._no_tick_refresh_counts
+    svc._streaming_logger.log_missing_reason.assert_any_call("005930", "no_tick_recovered")
+
+
+@pytest.mark.asyncio
+async def test_streaming_watchdog_skips_refresh_for_quarantined_code(watchdog_task):
+    """워치독 루프에서 격리 종목은 refresh 대신 quarantined_no_tick으로만 기록한다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.UNIFIED_PRICE else set()
+    )
+    svc._streaming_stock_repo.get_active.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.UNIFIED_PRICE else set()
+    )
+    svc._price_stream_service.get_last_any_tick_ts.return_value = time.time() - 30
+    svc._price_stream_service.get_stale_codes.return_value = ["005930"]
+    svc._price_stream_service.get_subscription_age.return_value = 190.0
+    svc._price_stream_service.get_last_tick_ts.return_value = 0.0
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
+    svc._quarantined_no_tick_codes.add("005930")
+    svc.force_reconnect = AsyncMock()
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(2)):
+        try:
+            await svc._streaming_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc._streaming_logger.log_missing_reason.assert_any_call("005930", "quarantined_no_tick")
+    svc._streaming_service.unsubscribe_unified_price.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_streaming_watchdog_no_desired_codes(watchdog_task):
     """PT 구독도 없고 체결가 구독도 없을 때 워치독 루프가 스킵되는지 검증."""
     svc = watchdog_task
