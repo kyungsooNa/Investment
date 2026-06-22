@@ -470,8 +470,16 @@ class OrderExecutionService:
         trace_id: Optional[str] = None,
         intent_id: Optional[str] = None,
         volatility_20d_annualized: Optional[float] = None,
+        config_hash: Optional[str] = None,
         invalidation_price: Optional[float] = None,
         stop_loss_price: Optional[float] = None,
+        target_price: Optional[float] = None,
+        entry_reason: Optional[str] = None,
+        trailing_rule: Optional[str] = None,
+        expected_holding_period_days: Optional[int] = None,
+        confidence: Optional[float] = None,
+        required_data: Optional[list] = None,
+        market_regime: Optional[dict] = None,
         strategy_notification: Optional[dict] = None,
     ):
         """주식 매수 주문 요청 및 결과 출력."""
@@ -506,8 +514,16 @@ class OrderExecutionService:
                 trace_id=current_trace,
                 intent_id=intent_id,
                 volatility_20d_annualized=volatility_20d_annualized,
+                config_hash=config_hash,
                 invalidation_price=invalidation_price,
                 stop_loss_price=stop_loss_price,
+                target_price=target_price,
+                entry_reason=entry_reason,
+                trailing_rule=trailing_rule,
+                expected_holding_period_days=expected_holding_period_days,
+                confidence=confidence,
+                required_data=required_data,
+                market_regime=market_regime,
                 strategy_notification=strategy_notification,
             )
             if buy_order_result and buy_order_result.rt_cd == ErrorCode.SUCCESS.value:

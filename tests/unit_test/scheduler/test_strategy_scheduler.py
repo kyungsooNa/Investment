@@ -461,6 +461,40 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["invalidation_price"], 68_000)
         self.assertEqual(kwargs["stop_loss_price"], 66_000)
 
+    async def test_execute_buy_signal_passes_signal_metadata_to_order_execution(self):
+        """실전 주문 경로도 journal 재현용 signal metadata 를 주문 컨텍스트로 전달한다."""
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
+        signal = TradeSignal(
+            code="005930",
+            name="삼성전자",
+            action="BUY",
+            price=70_000,
+            qty=1,
+            reason="테스트",
+            strategy_name="테스트전략",
+            config_hash="abc123def456",
+            invalidation_price=68_000,
+            stop_loss_price=66_000,
+            target_price=78_000,
+            entry_reason="pocket_pivot_breakout",
+            trailing_rule="ma20_after_profit",
+            expected_holding_period_days=20,
+            confidence=0.75,
+            required_data=["daily_ohlcv", "execution_strength"],
+        )
+
+        await scheduler._execute_signal(signal)
+
+        oes.handle_place_buy_order.assert_awaited_once()
+        kwargs = oes.handle_place_buy_order.await_args.kwargs
+        self.assertEqual(kwargs["config_hash"], "abc123def456")
+        self.assertEqual(kwargs["target_price"], 78_000)
+        self.assertEqual(kwargs["entry_reason"], "pocket_pivot_breakout")
+        self.assertEqual(kwargs["trailing_rule"], "ma20_after_profit")
+        self.assertEqual(kwargs["expected_holding_period_days"], 20)
+        self.assertEqual(kwargs["confidence"], 0.75)
+        self.assertEqual(kwargs["required_data"], ["daily_ohlcv", "execution_strength"])
+
     async def test_execute_buy_signal_dry_run(self):
         """dry_run 모드에서 BUY 시그널 실행: CSV만 기록, API 미호출."""
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=True)
@@ -2921,6 +2955,9 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         vm.log_sell_by_strategy_async.assert_not_awaited()
         mock_notifier.emit.assert_not_awaited()
+        payload = oes.handle_place_sell_order.call_args.kwargs["strategy_notification"]
+        self.assertEqual(payload["buy_price"], 10000.0)
+        self.assertEqual(payload["return_rate"], 10.0)
         self.assertEqual(scheduler._signal_history[-1].return_rate, 10.0)
 
     async def test_execute_signal_notification_failure(self):

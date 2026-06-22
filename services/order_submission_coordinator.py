@@ -123,8 +123,17 @@ class OrderSubmissionCoordinator:
         side: OrderSide,
         source: str,
         existing,
+        volatility_20d_annualized: Optional[float] = None,
+        config_hash: Optional[str] = None,
         invalidation_price: Optional[float] = None,
         stop_loss_price: Optional[float] = None,
+        target_price: Optional[float] = None,
+        entry_reason: Optional[str] = None,
+        trailing_rule: Optional[str] = None,
+        expected_holding_period_days: Optional[int] = None,
+        confidence: Optional[float] = None,
+        required_data: Optional[list] = None,
+        market_regime: Optional[dict] = None,
     ) -> Optional[ResCommonResponse]:
         """진행 중 주문이 있을 때 신규 주문을 deferred queue 에 enqueue.
 
@@ -142,8 +151,17 @@ class OrderSubmissionCoordinator:
                 side=side,
                 source=source,
                 finalize_immediately=False,
+                volatility_20d_annualized=volatility_20d_annualized,
+                config_hash=config_hash,
                 invalidation_price=invalidation_price,
                 stop_loss_price=stop_loss_price,
+                target_price=target_price,
+                entry_reason=entry_reason,
+                trailing_rule=trailing_rule,
+                expected_holding_period_days=expected_holding_period_days,
+                confidence=confidence,
+                required_data=required_data,
+                market_regime=market_regime,
             )
 
         result = await self._deferred_queue.enqueue(
@@ -177,8 +195,16 @@ class OrderSubmissionCoordinator:
         trace_id: Optional[str] = None,
         intent_id: Optional[str] = None,
         volatility_20d_annualized: Optional[float] = None,
+        config_hash: Optional[str] = None,
         invalidation_price: Optional[float] = None,
         stop_loss_price: Optional[float] = None,
+        target_price: Optional[float] = None,
+        entry_reason: Optional[str] = None,
+        trailing_rule: Optional[str] = None,
+        expected_holding_period_days: Optional[int] = None,
+        confidence: Optional[float] = None,
+        required_data: Optional[list] = None,
+        market_regime: Optional[dict] = None,
         strategy_notification: Optional[dict] = None,
     ) -> ResCommonResponse:
         order_key = self._fsm.make_order_key(stock_code, side, exchange)
@@ -227,8 +253,17 @@ class OrderSubmissionCoordinator:
                             side=side,
                             source=source,
                             existing=existing,
+                            volatility_20d_annualized=volatility_20d_annualized,
+                            config_hash=config_hash,
                             invalidation_price=invalidation_price,
                             stop_loss_price=stop_loss_price,
+                            target_price=target_price,
+                            entry_reason=entry_reason,
+                            trailing_rule=trailing_rule,
+                            expected_holding_period_days=expected_holding_period_days,
+                            confidence=confidence,
+                            required_data=required_data,
+                            market_regime=market_regime,
                         )
                         if deferred_resp is not None:
                             return deferred_resp
@@ -318,6 +353,16 @@ class OrderSubmissionCoordinator:
                 order_type=self._exec_quality_reporter.resolve_order_type(price, policy_decision),
                 spread_pct=self._exec_quality_reporter.resolve_spread_pct(policy_decision),
                 volatility_20d_annualized=volatility_20d_annualized,
+                config_hash=config_hash,
+                invalidation_price=invalidation_price,
+                stop_loss_price=stop_loss_price,
+                target_price=target_price,
+                entry_reason=entry_reason,
+                trailing_rule=trailing_rule,
+                expected_holding_period_days=expected_holding_period_days,
+                confidence=confidence,
+                required_data=required_data,
+                market_regime=market_regime,
                 strategy_notification=dict(strategy_notification or {}),
             )
             self._fsm.register(context)
