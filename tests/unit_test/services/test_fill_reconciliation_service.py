@@ -185,6 +185,7 @@ async def test_apply_execution_report_filled_emits_strategy_final_notification(
             "action": "SELL",
             "price": 179400,
             "qty": 10,
+            "buy_price": 170000,
             "reason": "칼손절",
         },
     ))
@@ -204,6 +205,7 @@ async def test_apply_execution_report_filled_emits_strategy_final_notification(
     assert "체결 완료" in args[3]
     assert "칼손절" in args[3]
     assert kwargs["metadata"]["strategy_name"] == "LarryWilliamsCB"
+    assert kwargs["metadata"]["return_rate"] == pytest.approx(5.47)
     assert kwargs["metadata"]["state"] == OrderState.FILLED.value
 
 

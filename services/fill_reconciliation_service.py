@@ -187,6 +187,17 @@ class FillReconciliationService:
     def _side_label(side: OrderSide) -> str:
         return "매수" if side == OrderSide.BUY else "매도"
 
+    @staticmethod
+    def _calculate_return_rate(buy_price, sell_price) -> Optional[float]:
+        try:
+            buy = float(buy_price)
+            sell = float(sell_price)
+        except (TypeError, ValueError):
+            return None
+        if buy <= 0:
+            return None
+        return round((sell - buy) / buy * 100, 2)
+
     async def _emit_terminal_order_notification(
         self,
         context: OrderContext,
@@ -256,6 +267,13 @@ class FillReconciliationService:
             requested_price = strategy_notification.get("price") or context.price
             requested_qty = strategy_notification.get("qty") or context.qty
             reason = strategy_notification.get("reason") or ""
+            if context.side == OrderSide.SELL:
+                actual_return_rate = self._calculate_return_rate(
+                    strategy_notification.get("buy_price"),
+                    fill_price,
+                )
+                if actual_return_rate is not None:
+                    strategy_notification["return_rate"] = actual_return_rate
             try:
                 requested_price_text = f"{int(requested_price):,}원"
             except (TypeError, ValueError):

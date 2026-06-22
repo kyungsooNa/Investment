@@ -2921,6 +2921,9 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         vm.log_sell_by_strategy_async.assert_not_awaited()
         mock_notifier.emit.assert_not_awaited()
+        payload = oes.handle_place_sell_order.call_args.kwargs["strategy_notification"]
+        self.assertEqual(payload["buy_price"], 10000.0)
+        self.assertEqual(payload["return_rate"], 10.0)
         self.assertEqual(scheduler._signal_history[-1].return_rate, 10.0)
 
     async def test_execute_signal_notification_failure(self):

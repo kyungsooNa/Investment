@@ -746,14 +746,14 @@ class StrategyScheduler:
             "trace_id": tid,
         })
 
-    def _estimate_return_rate_from_hold(self, strategy_name: str, code: str, sell_price: int) -> Optional[float]:
-        if not self._virtual_trade_service or sell_price <= 0:
+    def _find_buy_price_from_hold(self, strategy_name: str, code: str) -> Optional[float]:
+        if not self._virtual_trade_service:
             return None
         try:
             holds = self._virtual_trade_service.get_holds_by_strategy(strategy_name) or []
         except Exception as exc:
             self._logger.warning(
-                f"[Scheduler] 수익률 추정 실패: strategy={strategy_name} code={code} error={exc}"
+                f"[Scheduler] 보유 매수가 조회 실패: strategy={strategy_name} code={code} error={exc}"
             )
             return None
 
@@ -766,9 +766,20 @@ class StrategyScheduler:
                 return None
             if buy_price <= 0:
                 return None
-            return round((sell_price - buy_price) / buy_price * 100, 2)
+            return buy_price
 
         return None
+
+    def _estimate_return_rate_from_hold(self, strategy_name: str, code: str, sell_price: int) -> Optional[float]:
+        if sell_price <= 0:
+            return None
+        buy_price = self._find_buy_price_from_hold(strategy_name, code)
+        if buy_price is None:
+            return None
+        try:
+            return round((sell_price - buy_price) / buy_price * 100, 2)
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
 
     def _should_emit_strategy_signal_notification(
         self,
@@ -831,6 +842,7 @@ class StrategyScheduler:
         order_error_msg = ""
         order_deferred = False
         resp = None
+        estimated_return_rate = None
 
         if self._dry_run:
             if signal.action == "BUY":
@@ -947,12 +959,18 @@ class StrategyScheduler:
                         signal.price = adjusted_sell_price
                         log_price = adjusted_sell_price
                     self._log_signal_to_order_latency(signal, tid)
+                    sell_strategy_notification = self._strategy_notification_payload(signal, log_price)
+                    buy_price = self._find_buy_price_from_hold(signal.strategy_name, signal.code)
+                    if buy_price is not None and log_price > 0:
+                        estimated_return_rate = round((log_price - buy_price) / buy_price * 100, 2)
+                        sell_strategy_notification["buy_price"] = buy_price
+                        sell_strategy_notification["return_rate"] = estimated_return_rate
                     sell_order_kwargs = {
                         "exchange": signal_exchange,
                         "source": self._source_for_signal(signal),
                         "finalize_immediately": False,
                         "trace_id": tid,
-                        "strategy_notification": self._strategy_notification_payload(signal, log_price),
+                        "strategy_notification": sell_strategy_notification,
                     }
                     sell_order_kwargs.update(self._signal_price_policy_kwargs(signal))
                     resp = await self._oes.handle_place_sell_order(
@@ -1017,9 +1035,11 @@ class StrategyScheduler:
                     break
 
         if signal.action == "SELL" and return_rate is None and api_success:
-            return_rate = self._estimate_return_rate_from_hold(
-                signal.strategy_name, signal.code, log_price
-            )
+            return_rate = estimated_return_rate
+            if return_rate is None:
+                return_rate = self._estimate_return_rate_from_hold(
+                    signal.strategy_name, signal.code, log_price
+                )
 
         # 시그널 이력 기록 (메모리 + CSV 영속화)
         now = self._tm.get_current_kst_time()
