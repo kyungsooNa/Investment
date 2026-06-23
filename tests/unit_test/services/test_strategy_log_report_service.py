@@ -930,6 +930,44 @@ async def test_report_matches_virtual_trade_strategy_alias_to_log_section(log_di
 
 
 @pytest.mark.asyncio
+async def test_report_formats_fractional_average_fill_price_with_total_amount(log_dir):
+    """원장 평균 매입가가 소수이면 평균체결가/총체결금액으로 표시한다."""
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return [
+                {
+                    "strategy": "RSI2눌림목",
+                    "code": "252990",
+                    "name": "샘씨엔에스",
+                    "buy_date": "2026-06-23 15:10:48",
+                    "buy_price": 12931.623376623376,
+                    "qty": 154,
+                    "status": "HOLD",
+                    "reason": "체결 원장 기록",
+                },
+            ]
+
+        def get_solds(self):
+            return []
+
+        def get_holds(self):
+            return []
+
+    _write_log(os.path.join(log_dir, "20260623_151000_RSI2Pullback.log.json"), [
+        _make_entry("buy_signal_generated", "252990", "샘씨엔에스", date="2026-06-23", reason="RSI2", price=12940),
+    ])
+
+    svc = StrategyLogReportService(
+        log_dir=log_dir,
+        virtual_trade_service=DummyVirtualTradeService(),
+    )
+    report = await svc.generate_report("20260623")
+
+    assert "샘씨엔에스(252990): 체결 원장 기록 — 평균체결가 ₩12,931.62 / 총체결금액 ₩1,991,470 (15:10)" in report
+    assert "체결 원장 기록 @ ₩12,931" not in report
+
+
+@pytest.mark.asyncio
 async def test_report_matches_virtual_trade_strategy_id_to_vbo_log_section(log_dir):
     """원장 전략명이 stable id여도 대응하는 VBO 로그 섹션의 매수 완료 detail에 표시한다."""
     class DummyVirtualTradeService:
