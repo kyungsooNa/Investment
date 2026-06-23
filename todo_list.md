@@ -106,6 +106,8 @@
 
 ## 테마/분류 데이터
 
+> 네이버 테마 수집(1차 소스) 상태: `ThemeClassificationTask`가 `SchedulerBootstrap._register_batch_tasks`에 미등록이라 한 번도 수집되지 않던 배선 누락을 복구(PR #586). 등록 회귀를 단위/통합 테스트로 잠그고, end-to-end 1회 수집으로 `data/stock_classifications.db` 0건→6,445건(테마 265/종목 2,343) 확인. 주기 가드를 무시하는 수동 트리거 `POST /api/background/theme-classification/force-update` 추가. 운영에서는 BATCH 모드 장마감 후 자동 수집(기본 7일 간격).
+
 ### T-0. StockEasy 섹터RS taxonomy 참고
 
 - [ ] StockEasy 종합 RS 화면(`stockeasy.intellio.kr/stock-analysis`)의 섹터/테마 분류를 네이버/키움 통합 테마 정규화 참고자료로 사용한다.
