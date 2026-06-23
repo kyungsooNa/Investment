@@ -210,6 +210,55 @@ async def test_apply_execution_report_filled_emits_strategy_final_notification(
 
 
 @pytest.mark.asyncio
+async def test_strategy_final_notification_labels_average_fill_price_and_total_amount(
+    broker, fsm, reporter, fixed_now
+):
+    notification = AsyncMock()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        notification_service=notification,
+    )
+    ctx = fsm.register(_make_context(
+        order_key="KRX:252990:BUY",
+        stock_code="252990",
+        side=OrderSide.BUY,
+        source="strategy:RSI2눌림목",
+        price=12940,
+        qty=154,
+        strategy_notification={
+            "strategy_name": "RSI2눌림목",
+            "stock_name": "샘씨엔에스",
+            "code": "252990",
+            "action": "BUY",
+            "price": 12940,
+            "qty": 154,
+            "reason": "RSI(2)=6.57 ≤ 10.0, Stage 2, 정상비중 진입",
+        },
+    ))
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED, broker_order_no="B0001")
+
+    await svc.apply_execution_report(OrderExecutionReport(
+        broker_order_no="B0001", stock_code="252990", side=OrderSide.BUY,
+        fill_qty=129, fill_price=12930, cumulative_filled_qty=129, remaining_qty=25,
+    ))
+    await svc.apply_execution_report(OrderExecutionReport(
+        broker_order_no="B0001", stock_code="252990", side=OrderSide.BUY,
+        fill_qty=25, fill_price=12940, cumulative_filled_qty=154, remaining_qty=0,
+    ))
+
+    notification.emit.assert_awaited_once()
+    args, kwargs = notification.emit.await_args
+    message = args[3]
+    assert "평균체결가: 12,931.62원 × 154/154주" in message
+    assert "총체결금액: 1,991,470원" in message
+    assert "체결: 12931.623376623376원" not in message
+    assert kwargs["metadata"]["fill_price"] == pytest.approx(12931.623376623376)
+
+
+@pytest.mark.asyncio
 async def test_apply_execution_report_rejected_emits_failure_notification(
     broker, fsm, reporter, fixed_now
 ):
