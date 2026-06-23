@@ -163,6 +163,7 @@ def test_it_scheduler_bootstrap_registers_replay_audit_batch_task_with_delay():
         "log_cleanup_task",
         "strategy_log_report_task",
         "after_market_reconcile_task",
+        "theme_classification_task",
     ):
         setattr(ctx, name, None)
 

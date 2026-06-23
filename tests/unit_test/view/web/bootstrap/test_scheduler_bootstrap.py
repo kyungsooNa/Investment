@@ -44,7 +44,7 @@ def _make_fake_context(runtime_mode: RuntimeMode = RuntimeMode.ALL):
     for name in [
         "ranking_task", "minervini_update_task", "daily_price_collector_task",
         "ohlcv_update_task", "premium_watchlist_generator_task", "newhigh_task",
-        "log_cleanup_task", "strategy_log_report_task",
+        "log_cleanup_task", "strategy_log_report_task", "theme_classification_task",
         "opening_position_reconcile_task", "after_market_reconcile_task",
         "post_market_replay_audit_task",
         "websocket_watchdog_task", "pre_market_health_check_task",
@@ -87,17 +87,17 @@ def test_creates_foreground_even_in_batch_only_mode(patched_scheduler_deps):
 
 # ---------- mode=ALL 회귀 (현행 동작 100% 유지) ----------
 
-def test_all_mode_registers_15_tasks_to_background(patched_scheduler_deps):
+def test_all_mode_registers_16_tasks_to_background(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.ALL)
     _run(ctx)
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 15
+    assert bg.register.call_count == 16
 
 
-def test_all_mode_registers_11_tasks_to_time_dispatcher(patched_scheduler_deps):
+def test_all_mode_registers_12_tasks_to_time_dispatcher(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.ALL)
     _run(ctx)
-    assert ctx.time_dispatcher.register_task.call_count == 11
+    assert ctx.time_dispatcher.register_task.call_count == 12
 
 
 # ---------- mode 별 task 등록 ----------
@@ -154,9 +154,18 @@ def test_batch_only_registers_after_market_tasks_no_watchdog(patched_scheduler_d
         "ohlcv_update_task", "premium_watchlist_generator_task", "newhigh_task",
         "log_cleanup_task", "post_market_replay_audit_task",
         "strategy_log_report_task", "after_market_reconcile_task",
+        "theme_classification_task",
     }
     assert names == expected
     assert "websocket_watchdog_task" not in names
+
+
+def test_batch_registers_theme_classification_task(patched_scheduler_deps):
+    """테마 분류 수집 태스크가 BATCH(장마감 후) 그룹에 등록되어야 한다."""
+    ctx = _make_fake_context(RuntimeMode.BATCH)
+    _run(ctx)
+    names = _registered_bg_task_names(patched_scheduler_deps)
+    assert "theme_classification_task" in names
 
 
 def test_web_and_trading_registers_watchdog_exactly_once(patched_scheduler_deps):
@@ -194,6 +203,6 @@ def test_skips_none_tasks(patched_scheduler_deps):
     _run(ctx)
     # opening_position_reconcile_task 는 TRADING 그룹 + TimeDispatcher 등록 대상이었으므로
     # 둘 다 -1 감소한다.
-    assert ctx.time_dispatcher.register_task.call_count == 10
+    assert ctx.time_dispatcher.register_task.call_count == 11
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 14
+    assert bg.register.call_count == 15
