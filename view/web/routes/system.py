@@ -27,6 +27,7 @@ _SCHEDULE_TYPES = {
     "ohlcv_update":        "after_market",
     "전일기준주도주_생성":  "after_market",
     "newhigh":             "after_market",
+    "theme_classification": "after_market",
     "notification_queue_task":  "always_on",
     "program_trading_monitor":  "always_on",
 }
@@ -744,6 +745,22 @@ async def force_newhigh_update():
 
     asyncio.create_task(task.force_run())
     return {"success": True, "message": "52주 신고가 강제 탐색이 시작되었습니다."}
+
+
+@router.post("/background/theme-classification/force-update")
+async def force_theme_classification_update():
+    """주기 가드(기본 7일)를 무시하고 네이버 테마 분류 수집을 강제 실행한다."""
+    ctx = _get_ctx()
+    task = getattr(ctx, "theme_classification_task", None)
+    if not task:
+        raise HTTPException(status_code=503, detail="ThemeClassificationTask가 초기화되지 않았습니다")
+
+    progress = task.get_progress()
+    if progress.get("running"):
+        raise HTTPException(status_code=409, detail="이미 수집이 진행 중입니다")
+
+    asyncio.create_task(task.force_run())
+    return {"success": True, "message": "테마 분류 강제 수집이 시작되었습니다."}
 
 
 @router.post("/background/strategy-log-report/force-update")

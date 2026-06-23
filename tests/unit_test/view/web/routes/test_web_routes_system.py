@@ -521,6 +521,25 @@ def test_get_background_status_module_names(web_client, mock_web_ctx):
     assert all(v == 0 for v in delays.values())
 
 
+def test_get_background_status_theme_classification_is_after_market(web_client, mock_web_ctx):
+    """테마 분류 태스크는 장마감 후 배치로 분류된다."""
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": False}
+
+    mock_web_ctx.background_scheduler = MagicMock()
+    mock_web_ctx.background_scheduler.get_all_status.return_value = [
+        {"name": "theme_classification", "state": "idle", "priority": 100},
+    ]
+    mock_web_ctx.background_scheduler.get_task.return_value = mock_task
+
+    response = web_client.get("/api/background/status")
+
+    assert response.status_code == 200
+    item = response.json()["data"][0]
+    assert item["name"] == "theme_classification"
+    assert item["schedule_type"] == "after_market"
+
+
 def test_get_background_status_pre_market_health_check_schedule_type(web_client, mock_web_ctx):
     """pre_market_health_check는 IDLE이어도 실제 점검 progress를 반환한다."""
     class PreMarketTask:
@@ -834,6 +853,41 @@ async def test_force_newhigh_update_running(web_client, mock_web_ctx):
 async def test_force_newhigh_update_not_init(web_client, mock_web_ctx):
     mock_web_ctx.newhigh_task = None
     response = web_client.post("/api/background/newhigh/force-update")
+    assert response.status_code == 503
+
+
+# ── POST /api/background/theme-classification/force-update ─────────────
+
+@pytest.mark.asyncio
+async def test_force_theme_classification_update_success(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": False}
+    mock_task.force_run = AsyncMock()
+    mock_web_ctx.theme_classification_task = mock_task
+
+    response = web_client.post("/api/background/theme-classification/force-update")
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    await asyncio.sleep(0)
+    mock_task.force_run.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_force_theme_classification_update_running(web_client, mock_web_ctx):
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": True}
+    mock_web_ctx.theme_classification_task = mock_task
+
+    response = web_client.post("/api/background/theme-classification/force-update")
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_force_theme_classification_update_not_init(web_client, mock_web_ctx):
+    mock_web_ctx.theme_classification_task = None
+    response = web_client.post("/api/background/theme-classification/force-update")
     assert response.status_code == 503
 
 
