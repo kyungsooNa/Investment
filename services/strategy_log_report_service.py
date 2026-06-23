@@ -245,6 +245,22 @@ def _to_float(value: Any) -> Optional[float]:
         return None
 
 
+def _to_int(value: Any, default: int = 0) -> int:
+    numeric = _to_float(value)
+    if numeric is None:
+        return default
+    return int(numeric)
+
+
+def _format_krw(value: Any, *, force_integer: bool = False) -> str:
+    amount = _to_float(value)
+    if amount is None or amount <= 0:
+        return ""
+    if force_integer or amount.is_integer():
+        return f"₩{int(round(amount)):,}"
+    return f"₩{amount:,.2f}"
+
+
 def _first_number(data: dict, *keys: str) -> Optional[float]:
     for key in keys:
         if key in data:
@@ -510,14 +526,15 @@ class StrategyLogReportService:
             if not strategy or not code:
                 continue
 
-            try:
-                price = int(float(trade.get('buy_price') or 0))
-            except (TypeError, ValueError):
-                price = 0
+            price = _to_float(trade.get('buy_price')) or 0.0
+            qty = max(_to_int(trade.get('qty'), default=1), 0)
+            total_amount = round(price * qty) if price > 0 and qty > 0 else 0
 
             result.setdefault(_strategy_report_key(strategy), {})[code] = {
                 'name': str(trade.get('name') or code),
                 'price': price,
+                'qty': qty,
+                'total_amount': total_amount,
                 'reason': str(trade.get('reason') or '체결 원장 기록'),
                 'time': str(trade.get('buy_date', ''))[11:16],
                 'volatility_20d_annualized': _to_float(trade.get('volatility_20d_annualized')),
@@ -530,6 +547,22 @@ class StrategyLogReportService:
         # 원장을 읽을 수 있으면 buy_signal_generated 로그보다 원장을 신뢰한다.
         # 전략 태그가 없는 당일 거래가 있어도 테스트/드라이런 로그를 실매수로 오인하지 않는다.
         return True, result
+
+    @staticmethod
+    def _format_buy_execution_detail(info: Mapping[str, Any]) -> str:
+        avg_price = _format_krw(info.get('price'))
+        if not avg_price:
+            return ""
+
+        qty = _to_int(info.get('qty'), default=0)
+        if qty <= 1:
+            return f" @ {avg_price}"
+
+        total_amount = info.get('total_amount')
+        total_text = _format_krw(total_amount, force_integer=True)
+        if not total_text:
+            return f" — 평균체결가 {avg_price}"
+        return f" — 평균체결가 {avg_price} / 총체결금액 {total_text}"
 
     def _get_enabled_strategy_keys(self) -> Optional[set[str]]:
         if not self._enabled_strategy_provider:
@@ -1751,7 +1784,7 @@ class StrategyLogReportService:
             if summary['bought']:
                 lines.append(f"\n✅ 매수 완료 ({len(summary['bought'])}건)")
                 for code, info in summary['bought'].items():
-                    price_str = f" @ ₩{info['price']:,}" if info['price'] else ""
+                    price_str = self._format_buy_execution_detail(info)
                     time_str = f" ({info['time']})" if info.get('time') else ""
                     confluence = confluence_map.get(code, {})
                     confluence_str = ""

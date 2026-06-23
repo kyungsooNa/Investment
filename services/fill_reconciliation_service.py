@@ -198,6 +198,25 @@ class FillReconciliationService:
             return None
         return round((sell - buy) / buy * 100, 2)
 
+    @staticmethod
+    def _format_won(value) -> str:
+        try:
+            amount = float(value)
+        except (TypeError, ValueError):
+            return "N/A"
+        if amount <= 0:
+            return "N/A"
+        if amount.is_integer():
+            return f"{int(amount):,}원"
+        return f"{amount:,.2f}원"
+
+    @classmethod
+    def _format_fill_total_won(cls, context: OrderContext, fill_price) -> str:
+        total_amount = context.total_fill_amount
+        if not total_amount and fill_price and context.filled_qty > 0:
+            total_amount = round(float(fill_price) * context.filled_qty)
+        return cls._format_won(total_amount)
+
     async def _emit_terminal_order_notification(
         self,
         context: OrderContext,
@@ -286,10 +305,14 @@ class FillReconciliationService:
                 level = NotificationLevel.ERROR
                 title = f"[{strategy_name}] {stock_name} {side_label} 실패"
                 status_line = f"상태: {context.state.value}"
+            displayed_fill_price = fill_price if context.filled_qty > 0 else None
+            fill_price_text = self._format_won(displayed_fill_price)
+            fill_total_text = self._format_fill_total_won(context, displayed_fill_price)
             message = (
                 f"종목: {stock_name}({context.stock_code})\n"
                 f"주문: {requested_price_text} × {requested_qty}주\n"
-                f"체결: {fill_price or 'N/A'}원 × {context.filled_qty}/{context.qty}주\n"
+                f"평균체결가: {fill_price_text} × {context.filled_qty}/{context.qty}주\n"
+                f"총체결금액: {fill_total_text}\n"
                 f"사유: {reason}\n"
                 f"{status_line}"
             )

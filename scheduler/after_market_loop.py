@@ -55,6 +55,9 @@ class AfterMarketLoop:
         label: str = "AfterMarketLoop",
         delay_sec: int = 0,
         store=None,
+        timezone: str = "Asia/Seoul",
+        cron_hour: int = _CRON_HOUR,
+        cron_minute: int = _CRON_MINUTE,
     ) -> None:
         """
         Args:
@@ -62,6 +65,10 @@ class AfterMarketLoop:
                 제공 시 last_run_date를 SQLite에 영속화하여
                 catch-up 중복 실행을 방지한다.
                 미제공 시 on_market_closed 콜백이 멱등성을 직접 책임진다.
+            timezone: cron 트리거 타임존. 기본 Asia/Seoul(국내 마감).
+                미국장 dry-run 등은 America/New_York 로 주입한다.
+            cron_hour / cron_minute: 트리거 시각. 기본 15:41 KST.
+                해당 타임존 기준 마감 직후 시각으로 주입한다.
         """
         self._mcs = mcs
         self._market_clock = market_clock
@@ -70,9 +77,11 @@ class AfterMarketLoop:
         self._label = label
         self._delay_sec = delay_sec
         self._store = store
+        self._cron_hour = cron_hour
+        self._cron_minute = cron_minute
 
         self._stop_event: asyncio.Event = asyncio.Event()
-        self._scheduler: AsyncIOScheduler = AsyncIOScheduler(timezone="Asia/Seoul")
+        self._scheduler: AsyncIOScheduler = AsyncIOScheduler(timezone=timezone)
 
     # ── 생명주기 ──
 
@@ -87,8 +96,8 @@ class AfterMarketLoop:
             self._run_job,
             "cron",
             day_of_week="mon-fri",
-            hour=_CRON_HOUR,
-            minute=_CRON_MINUTE,
+            hour=self._cron_hour,
+            minute=self._cron_minute,
             misfire_grace_time=_MISFIRE_GRACE_SEC,
             id=f"after_market_{self._label}",
             replace_existing=True,
@@ -117,8 +126,8 @@ class AfterMarketLoop:
             return
 
         now_kst = self._market_clock.get_current_kst_time()
-        past_close = now_kst.hour > _CRON_HOUR or (
-            now_kst.hour == _CRON_HOUR and now_kst.minute >= _CRON_MINUTE
+        past_close = now_kst.hour > self._cron_hour or (
+            now_kst.hour == self._cron_hour and now_kst.minute >= self._cron_minute
         )
         if not past_close:
             return
@@ -145,15 +154,17 @@ class AfterMarketLoop:
 
     async def _run_job(self) -> None:
         """APScheduler 또는 catch-up에 의해 호출되는 실제 작업 실행 메서드."""
+        today_str = (
+            self._market_clock.get_current_kst_date_str() if self._market_clock else None
+        )
+        # mcs(거래 캘린더) 미주입 시 클럭 날짜를 거래일 식별자로 사용한다.
+        # 미국장 dry-run 은 한국 캘린더가 없으므로 cron 의 mon-fri 필터 + 클럭 날짜로 대체.
         latest_trading_date = (
-            await self._mcs.get_latest_trading_date() if self._mcs else None
+            await self._mcs.get_latest_trading_date() if self._mcs else today_str
         )
         if not latest_trading_date:
             return
 
-        today_str = (
-            self._market_clock.get_current_kst_date_str() if self._market_clock else None
-        )
         if today_str and latest_trading_date != today_str:
             self._log.info(
                 f"[{self._label}] 오늘({today_str})은 휴장일 — 콜백 스킵 (latest={latest_trading_date})"
@@ -192,6 +203,9 @@ async def run_after_market_loop(
     on_market_closed: Callable[[str], Awaitable[None]],
     label: str = "AfterMarketLoop",
     delay_sec: int = 0,
+    timezone: str = "Asia/Seoul",
+    cron_hour: int = _CRON_HOUR,
+    cron_minute: int = _CRON_MINUTE,
 ) -> None:
     """하위 호환 래퍼 — 기존 코드는 이 함수를 asyncio.create_task()로 실행한다.
 
@@ -205,6 +219,8 @@ async def run_after_market_loop(
         label: 로그 메시지에 표시할 태스크 이름.
         delay_sec: 장 마감 감지 후 콜백 실행 전까지의 Padding 시간(초).
             여러 태스크의 실행 시점을 분산시킬 때 사용한다.
+        timezone / cron_hour / cron_minute: cron 트리거 타임존·시각.
+            기본 Asia/Seoul 15:41(국내 마감). 미국장 등은 별도 주입.
     """
     loop = AfterMarketLoop(
         mcs=mcs,
@@ -213,6 +229,9 @@ async def run_after_market_loop(
         on_market_closed=on_market_closed,
         label=label,
         delay_sec=delay_sec,
+        timezone=timezone,
+        cron_hour=cron_hour,
+        cron_minute=cron_minute,
     )
     try:
         await loop.start()

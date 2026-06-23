@@ -145,7 +145,7 @@
 - [~] **Phase 4 주문/사이징**: 자동 전략 컴포넌트 완료 — `OverseasOrderExecutionService`(`place_overseas_limit_order` 지정가 연결, `live_enabled=False` 구조적 실주문 잠금 + would-be 레코드), `OverseasPositionSizingService`(고정 USD 슬롯÷지정가 floor + `max_qty`/`available_usd` cap), FX 환율(`extract_fx_krw_per_usd` 잔고 관용 추출 + `_overseas_fx_provider` 배선 → dry-run KRW 환산 노출), 일봉 기반 exit(`decide_daily_exit` stop/eod). 테스트 잠금 완료. 별도 웹 수동 해외 지정가 주문은 존재하며, 실전 모드에서는 `overseas_stock.allow_live_trading=true`와 `REAL` 확인 문자열 없이는 broker 호출 전 차단된다.
   - 남은 것(Phase 5 소관): scheduler/factory가 sizing→order_execution 자동 연결(canary auto-fire) + `live_enabled=True` 전환 — dry-run 검증 + canary 후로 게이팅.
 - [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile(`OverseasReconcileService` scaffolding 존재), risk gate/kill switch/canary USD 확장, 실전 소액 canary, canary auto-fire 배선 + `live_enabled` 전환.
-- [ ] 3d(후속): 미국장 마감(ET) 정밀 트리거가 필요하면 US-aware 스케줄 경로 신설(현재 KST 트리거로 충분 판단).
+- [x] 3d(후속): 미국장 마감(ET) 정밀 트리거. `AfterMarketLoop`에 timezone/cron 파라미터화(기본 KST 유지) + mcs 미주입 시 클럭 날짜 폴백 → `OverseasDryRunTask`를 America/New_York 16:30 트리거로 전환, `service_container`가 `MarketClock.for_us_equities()` + `mcs=None` 배선. (#585)
 
 주요 파일: `brokers/korea_investment/korea_invest_overseas_stock_api.py`, `brokers/broker_api_wrapper.py`, `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/stock_query_service.py`, `view/web/bootstrap/{service_container,strategy_factory}.py`, `config/tr_ids_config.yaml`
 

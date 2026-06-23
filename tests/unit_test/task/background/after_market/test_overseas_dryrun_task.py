@@ -33,6 +33,18 @@ def test_task_metadata():
     assert task.priority == TaskPriority.LOW
 
 
+def test_loop_triggers_on_us_market_close():
+    """after-market 루프를 미국 정규장 마감(16:00 ET) 직후 NY 타임존에 맞춘다.
+
+    KST 15:41 하드코딩이 아니라 America/New_York 16:30 으로 트리거되도록
+    AfterMarketLoop 파라미터 훅을 오버라이드한다.
+    """
+    task, _, _ = _make_task()
+    assert task._loop_timezone == "America/New_York"
+    assert task._loop_cron_hour == 16
+    assert task._loop_cron_minute == 30
+
+
 @pytest.mark.asyncio
 async def test_on_market_closed_runs_scan_and_flushes():
     task, dryrun, journal = _make_task(OverseasExchange.NASD)

@@ -24,18 +24,32 @@ def _make_loop(
     last_run: str | None = None,
     delay_sec: int = 0,
     with_store: bool = False,
+    with_mcs: bool = True,
+    timezone: str | None = None,
+    cron_hour: int | None = None,
+    cron_minute: int | None = None,
 ) -> AfterMarketLoop:
     tm = MagicMock()
     tm.get_current_kst_time.return_value = MagicMock(hour=hour, minute=minute)
     tm.get_current_kst_date_str.return_value = today
 
-    mcs = MagicMock()
-    mcs.get_latest_trading_date = AsyncMock(return_value=latest_trading_date)
+    mcs = None
+    if with_mcs:
+        mcs = MagicMock()
+        mcs.get_latest_trading_date = AsyncMock(return_value=latest_trading_date)
 
     store = None
     if with_store:
         store = MagicMock()
         store.load_keyed.return_value = last_run
+
+    kwargs = {}
+    if timezone is not None:
+        kwargs["timezone"] = timezone
+    if cron_hour is not None:
+        kwargs["cron_hour"] = cron_hour
+    if cron_minute is not None:
+        kwargs["cron_minute"] = cron_minute
 
     return AfterMarketLoop(
         mcs=mcs,
@@ -45,6 +59,7 @@ def _make_loop(
         label="Test",
         delay_sec=delay_sec,
         store=store,
+        **kwargs,
     )
 
 
@@ -100,9 +115,53 @@ class TestCatchUp:
         assert len(created) == 1
 
 
+# ── timezone / cron 시각 파라미터화 ──
+
+class TestSchedulerTimezoneAndCron:
+
+    def test_default_timezone_is_seoul(self):
+        """기본값은 Asia/Seoul (국내 태스크 무영향)."""
+        loop = _make_loop()
+        assert str(loop._scheduler.timezone) == "Asia/Seoul"
+
+    def test_custom_timezone_applied_to_scheduler(self):
+        """timezone 인자가 APScheduler 에 반영된다 (미국장 등)."""
+        loop = _make_loop(timezone="America/New_York")
+        assert str(loop._scheduler.timezone) == "America/New_York"
+
+    async def test_custom_cron_boundary_triggers_catchup(self):
+        """cron_hour/minute 경계 이후이면 catch-up 을 트리거한다 (16:30 ET 등)."""
+        loop = _make_loop(
+            hour=16, minute=30, cron_hour=16, cron_minute=30,
+            with_store=True, last_run=None,
+        )
+        created = []
+        with patch("asyncio.create_task", side_effect=lambda c: created.append(c)):
+            await loop._catch_up_if_needed()
+        assert len(created) == 1
+
+    async def test_custom_cron_boundary_skips_before(self):
+        """cron 경계 1분 전이면 catch-up 을 트리거하지 않는다."""
+        loop = _make_loop(hour=16, minute=29, cron_hour=16, cron_minute=30)
+        with patch("asyncio.create_task") as mock_create:
+            await loop._catch_up_if_needed()
+            mock_create.assert_not_called()
+
+
 # ── _run_job 실행 로직 ──
 
 class TestRunJob:
+
+    async def test_uses_clock_date_when_no_mcs(self):
+        """mcs 미주입 시 market_clock 의 날짜를 latest_trading_date 로 사용한다.
+
+        미국장 dry-run 은 한국 거래 캘린더(mcs)가 없으므로, 클럭 날짜를
+        거래일 식별자로 사용해 콜백을 호출한다(휴장 가드 vacuous).
+        """
+        loop = _make_loop(with_mcs=False, today="20260622")
+        await loop._run_job()
+        loop._on_market_closed.assert_awaited_once_with("20260622")
+
 
     async def test_calls_callback_with_latest_date(self):
         """_run_job이 콜백을 latest_trading_date와 함께 호출한다."""

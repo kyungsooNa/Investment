@@ -148,6 +148,20 @@ class AfterMarketTask(SchedulableTask, ABC):
     def _scheduler_label(self) -> str:
         """run_after_market_loop 에 전달할 레이블 (로그 식별자)."""
 
+    # ── 루프 트리거 타임존/시각 (기본 KST 마감, 서브클래스 오버라이드) ──
+    # None 이면 run_after_market_loop 의 기본값(Asia/Seoul 15:41)을 사용한다.
+    @property
+    def _loop_timezone(self) -> Optional[str]:
+        return None
+
+    @property
+    def _loop_cron_hour(self) -> Optional[int]:
+        return None
+
+    @property
+    def _loop_cron_minute(self) -> Optional[int]:
+        return None
+
     async def _after_market_scheduler(self) -> None:
         """장 마감 후 자동으로 작업을 스케줄링하는 루프."""
         # 루프 진입 = 대기 구간 시작 → IDLE
@@ -158,6 +172,14 @@ class AfterMarketTask(SchedulableTask, ABC):
             async with self._running_state():
                 await self._on_market_closed(date)
 
+        loop_kwargs = {}
+        if self._loop_timezone is not None:
+            loop_kwargs["timezone"] = self._loop_timezone
+        if self._loop_cron_hour is not None:
+            loop_kwargs["cron_hour"] = self._loop_cron_hour
+        if self._loop_cron_minute is not None:
+            loop_kwargs["cron_minute"] = self._loop_cron_minute
+
         try:
             await run_after_market_loop(
                 mcs=self._mcs,
@@ -165,6 +187,7 @@ class AfterMarketTask(SchedulableTask, ABC):
                 logger=self._logger,
                 on_market_closed=_on_closed_with_state,
                 label=self._scheduler_label,
+                **loop_kwargs,
             )
         except asyncio.CancelledError:
             # Propagate cancellation so callers can cancel the task normally.
