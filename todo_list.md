@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-06-22 (no-tick 운영 실험 A~D 라이브 결과 반영)
+최종 업데이트: 2026-06-24 (Phase 4 상태·no-tick 착수 순서 정리)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR로 추적하고 본 문서에서 제거한다.
 
@@ -110,9 +110,8 @@
 
 ### T-0. StockEasy 섹터RS taxonomy 참고
 
-- [ ] StockEasy 종합 RS 화면(`stockeasy.intellio.kr/stock-analysis`)의 섹터/테마 분류를 네이버/키움 통합 테마 정규화 참고자료로 사용한다.
-- [ ] 화면 기준 주요 후보: 반도체소재, 지주사, 메모리, 비메모리/팹리스, 전력기기, 반도체장비, 보험, 건설, 테스트소켓, 유통, 로봇/자동화, 미용기기, 산업기계, 완성차, SW/AI, 자동차부품, 증권, 우주항공, 배터리셀, 통신, 원자력, 양극재, 신재생, 전자장비, 조선기자재, 조선, 타이어, 바이오신약, 방위산업, 음극재/소재, 은행, 정유/화학, 철강/비철, 의료기기, 해운, 여행/레저, 음식료, 패션/의류, 제약, 인터넷/플랫폼, 유틸리티, 리츠/부동산, 게임, CDMO, 화장품, 엔터/미디어.
-- [ ] StockEasy 자체를 무단 수집 소스로 고정하지 말고, 우선은 테마명 alias/표시명/RS UI 참고로 둔다. 실제 구성종목 데이터는 네이버/키움 등 수집 가능한 source에 귀속한다.
+- [ ] StockEasy 종합 RS 화면(`stockeasy.intellio.kr/stock-analysis`)의 섹터/테마 분류를 네이버/키움 통합 테마의 alias/표시명 후보 참고자료로 정리한다. StockEasy 자체를 무단 수집 소스로 고정하지 말고, 실제 구성종목 데이터는 네이버/키움 등 수집 가능한 source에 귀속한다.
+  - 화면 기준 주요 후보: 반도체소재, 지주사, 메모리, 비메모리/팹리스, 전력기기, 반도체장비, 보험, 건설, 테스트소켓, 유통, 로봇/자동화, 미용기기, 산업기계, 완성차, SW/AI, 자동차부품, 증권, 우주항공, 배터리셀, 통신, 원자력, 양극재, 신재생, 전자장비, 조선기자재, 조선, 타이어, 바이오신약, 방위산업, 음극재/소재, 은행, 정유/화학, 철강/비철, 의료기기, 해운, 여행/레저, 음식료, 패션/의류, 제약, 인터넷/플랫폼, 유틸리티, 리츠/부동산, 게임, CDMO, 화장품, 엔터/미디어.
 
 ### T-1. 키움 테마 REST API 연동 (후속 TODO)
 
@@ -144,7 +143,7 @@
 결론: 일봉 셋업형 전략만 적용 가능(해외 일봉 API 존재), 장중/실시간 전략은 분봉·랭킹·웹소켓 부재로 불가. 첫 대상 = `LarryWilliamsVBOStrategy`(일봉 셋업). 제약: **해외 주문 TR은 실전(TTTS6036U 등)만, 모의 주문 TR 없음** → dry-run 검증 전 실주문 배선 금지.
 
 - 완료: Phase 1 데이터 어댑터(`get_recent_daily_ohlcv`/`get_current_price` exchange 분기 + `OverseasCandidateService`), Phase 2 `OverseasDailyVBOBacktest`(일봉 근사), Phase 3 `MarketClock.for_us_equities()` + `OverseasVBODryRunService` + `OverseasDryRunTask`(주문 경로 없는 dry-run, 한국장 after-market 스케줄러 재사용). (#549·#550)
-- [~] **Phase 4 주문/사이징**: 자동 전략 컴포넌트 완료 — `OverseasOrderExecutionService`(`place_overseas_limit_order` 지정가 연결, `live_enabled=False` 구조적 실주문 잠금 + would-be 레코드), `OverseasPositionSizingService`(고정 USD 슬롯÷지정가 floor + `max_qty`/`available_usd` cap), FX 환율(`extract_fx_krw_per_usd` 잔고 관용 추출 + `_overseas_fx_provider` 배선 → dry-run KRW 환산 노출), 일봉 기반 exit(`decide_daily_exit` stop/eod). 테스트 잠금 완료. 별도 웹 수동 해외 지정가 주문은 존재하며, 실전 모드에서는 `overseas_stock.allow_live_trading=true`와 `REAL` 확인 문자열 없이는 broker 호출 전 차단된다.
+- 완료: **Phase 4 주문/사이징** 자동 전략 컴포넌트 — `OverseasOrderExecutionService`(`place_overseas_limit_order` 지정가 연결, `live_enabled=False` 구조적 실주문 잠금 + would-be 레코드), `OverseasPositionSizingService`(고정 USD 슬롯÷지정가 floor + `max_qty`/`available_usd` cap), FX 환율(`extract_fx_krw_per_usd` 잔고 관용 추출 + `_overseas_fx_provider` 배선 → dry-run KRW 환산 노출), 일봉 기반 exit(`decide_daily_exit` stop/eod). 테스트 잠금 완료. 별도 웹 수동 해외 지정가 주문은 존재하며, 실전 모드에서는 `overseas_stock.allow_live_trading=true`와 `REAL` 확인 문자열 없이는 broker 호출 전 차단된다.
   - 남은 것(Phase 5 소관): scheduler/factory가 sizing→order_execution 자동 연결(canary auto-fire) + `live_enabled=True` 전환 — dry-run 검증 + canary 후로 게이팅.
 - [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile(`OverseasReconcileService` scaffolding 존재), risk gate/kill switch/canary USD 확장, 실전 소액 canary, canary auto-fire 배선 + `live_enabled` 전환.
 - [x] 3d(후속): 미국장 마감(ET) 정밀 트리거. `AfterMarketLoop`에 timezone/cron 파라미터화(기본 KST 유지) + mcs 미주입 시 클럭 날짜 폴백 → `OverseasDryRunTask`를 America/New_York 16:30 트리거로 전환, `service_container`가 `MarketClock.for_us_equities()` + `mcs=None` 배선. (#585)
@@ -206,14 +205,14 @@ S-1(stop 강제청산 데드 패스)~S-8 버그/수명/구조 수정 완료, S-3
 
 ## 바로 착수 추천 순서
 
-1. **외부 운영·데이터 확보 후 진행**
+1. **운영 관찰·블로커 (최우선)**
+   - **WebSocket price 피드 무틱 ≈55% 근본 원인 해소** (P2 2-4) — 라이브 실시간 데이터 품질 블로커. 2026-06-19 진단 `a1_kis_no_send` 우세 + 2026-06-22 실험으로 종목/상품군/계정 단위 KIS측 미전송 확정. 다음은 **KIS 에스컬레이션**(코드 수정 아님). 해소 전까지 shadow 수집 불가.
+   - profitability gate를 우회하지 않고 shadow/paper/canary journal로 전략별 실전 근거 축적 (P1 1-6)
+
+2. **외부 운영·데이터 확보 후 진행**
    - 실 KIS 계정 REST/WebSocket 유량 한도 재확인 → 필요 시 운영값 조정 (P2 2-2)
    - 실전 submit/signing notice raw fixture 확보 → mapper 회귀 보강 (P0 0-1)
    - 장중 프로그램매매 WebSocket 샘플 캡처 + 한국장 microstructure fixture (P1 1-5)
-
-2. **운영 관찰·블로커 (최우선)**
-   - **WebSocket price 피드 무틱 ≈55% 근본 원인 해소** (P2 2-4) — 라이브 실시간 데이터 품질 블로커. 2026-06-19 진단 `a1_kis_no_send` 우세 + 2026-06-22 실험으로 종목/상품군/계정 단위 KIS측 미전송 확정. 다음은 **KIS 에스컬레이션**(코드 수정 아님). 해소 전까지 shadow 수집 불가.
-   - profitability gate를 우회하지 않고 shadow/paper/canary journal로 전략별 실전 근거 축적 (P1 1-6)
 
 3. **정책 결정 후 진행**
    - DSR hard threshold 및 PBO/DSR profitability gate 운영 기준 확정 (P1 1-7, canary 데이터 후)
@@ -230,7 +229,7 @@ S-1(stop 강제청산 데드 패스)~S-8 버그/수명/구조 수정 완료, S-3
 
 ---
 
-## 완료 기준
+## 운영 안전 기준 현황
 
 표기: `[x]` 완료, `[~]` 부분 완료/진행 필요, `[ ]` 미완료
 
