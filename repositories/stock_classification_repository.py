@@ -113,6 +113,45 @@ class StockClassificationRepository:
                 self._logger.error(f"StockClassificationRepository.upsert_classifications 실패: {e}")
                 return 0
 
+    async def replace_source_classifications(
+        self, source: str, category_type: str, records: List[Dict[str, Any]]
+    ) -> int:
+        """특정 (source, category_type) 분류를 records로 통째로 교체한다.
+
+        컬렉터가 매번 소스 전체를 전수 스크래핑하므로, 기존 행을 삭제 후 삽입해
+        그룹에서 빠진 종목(stale)이 영구 누적되지 않도록 한다. 다른 소스/카테고리는
+        건드리지 않는다. records가 비면 삭제도 하지 않고 0을 반환(전수 수집 실패로
+        간주, 기존 데이터 보존). 삭제+삽입은 단일 트랜잭션으로 커밋한다.
+        """
+        if not records:
+            return 0
+        await self._ensure_locks()
+        async with self._write_lock:
+            try:
+                conn = await self._get_write_conn()
+                await conn.execute(
+                    "DELETE FROM stock_classifications WHERE source = ? AND category_type = ?",
+                    (source, category_type),
+                )
+                await conn.executemany(
+                    """
+                    INSERT INTO stock_classifications
+                        (source, category_type, group_name, normalized_name, code, name, collected_at)
+                    VALUES
+                        (:source, :category_type, :group_name, :normalized_name, :code, :name, :collected_at)
+                    ON CONFLICT(source, category_type, group_name, code) DO UPDATE SET
+                        normalized_name = excluded.normalized_name,
+                        name            = excluded.name,
+                        collected_at    = excluded.collected_at
+                    """,
+                    records,
+                )
+                await conn.commit()
+                return len(records)
+            except Exception as e:
+                self._logger.error(f"StockClassificationRepository.replace_source_classifications 실패: {e}")
+                return 0
+
     async def upsert_aliases(self, records: List[Dict[str, str]]) -> int:
         """theme_aliases 배치 upsert. records: [{"source","raw_name","normalized_name"}]."""
         if not records:
