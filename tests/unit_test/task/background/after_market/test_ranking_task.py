@@ -273,6 +273,7 @@ async def test_refresh_investor_ranking_etf_excluded(bg_service, mock_deps):
         ("005930", "삼성전자", "KOSPI"),
         ("069500", "KODEX 200", "KOSPI"),  # ETF
         ("102110", "TIGER 200", "KOSPI"),  # ETF
+        ("0162Z0", "RISE 삼성전자SK하이닉스채권혼합50", "KOSPI"),  # ETF
     ])
 
     async def mock_trend(code, date=None):
@@ -287,6 +288,7 @@ async def test_refresh_investor_ranking_etf_excluded(bg_service, mock_deps):
     assert "삼성전자" in names
     assert "KODEX 200" not in names
     assert "TIGER 200" not in names
+    assert "RISE 삼성전자SK하이닉스채권혼합50" not in names
 
 
 @pytest.mark.asyncio
@@ -601,6 +603,7 @@ def test_load_all_stocks_filters_etf(bg_service, mock_deps):
         ("000660", "SK하이닉스", "KOSPI"),
         ("123456", "KODEX 200", "KOSPI"),
         ("654321", "TIGER 200", "KOSPI"),
+        ("0162Z0", "RISE 삼성전자SK하이닉스채권혼합50", "KOSPI"),
     ])
 
     stocks = bg_service._load_all_stocks()
@@ -616,6 +619,7 @@ def test_load_all_stocks_filters_etf(bg_service, mock_deps):
     # ETF 종목은 제외되어야 함
     assert "123456" not in codes
     assert "654321" not in codes
+    assert "0162Z0" not in codes
     
     # 필터링된 목록에 ETF 접두사가 포함된 종목이 없는지 재확인
     for name in names:
