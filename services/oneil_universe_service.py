@@ -34,6 +34,13 @@ def _chunked(lst, size):
         yield lst[i:i + size]
 
 
+_ETF_NAME_PREFIXES = (
+    "KODEX", "TIGER", "KBSTAR", "ARIRANG", "SOL", "ACE",
+    "HANARO", "KOSEF", "PLUS", "TIMEFOLIO", "WON", "FOCUS",
+    "VITA", "TREX", "MASTER", "WOORI", "KINDEX", "RISE",
+)
+
+
 class OneilUniverseService:
     """오닐 전략 유니버스 관리 서비스.
     
@@ -190,7 +197,11 @@ class OneilUniverseService:
         # 1) Pool A 로드
         if not self._pool_a_loaded:
             raw = self._load_premium_stocks()
-            self._pool_a_items = {item.code: item for item in raw}
+            self._pool_a_items = {
+                item.code: item
+                for item in raw
+                if not self._is_excluded_etf(item.code, item.name, logger=logger)
+            }
             self._pool_a_loaded = True
 
         # 2) 당일 급등주 빌드 (실시간 랭킹)
@@ -259,7 +270,7 @@ class OneilUniverseService:
                 else:
                     code = getattr(stock, "mksc_shrn_iscd", "") or getattr(stock, "stck_shrn_iscd", "")
                     name = getattr(stock, "hts_kor_isnm", "")
-                if code:
+                if code and not self._is_excluded_etf(code, name, logger=logger):
                     candidate_map[code] = name
 
         # 분석 및 필터링
@@ -322,6 +333,9 @@ class OneilUniverseService:
     async def _analyze_premium_candidate(self, code: str, name: str, logger: Optional[logging.Logger] = None) -> Optional[OSBWatchlistItem]:
         """장마감 후 전일 기준 우량주(Pool A) 분석. 
         어제까지의 확정된 일봉 데이터만 사용하므로 별도의 슬라이싱이 필요하지 않습니다."""
+        if self._is_excluded_etf(code, name, logger=logger):
+            return None
+
         ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=260)
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
 
@@ -471,6 +485,8 @@ class OneilUniverseService:
         """장중 실시간 급등주(Pool B) 분석.
         어제까지의 캐시된 OHLCV 데이터와 오늘의 실시간 가격을 결합하여 분석합니다.
         """
+        if self._is_excluded_etf(code, name, logger=logger):
+            return None
 
         # 1. 어제 날짜 계산 (전략의 _check_entry 패턴 적용)
         now = self._tm.get_current_kst_time()
@@ -653,7 +669,9 @@ class OneilUniverseService:
         all_stocks = [
             (code, name, market)
             for code, name, market in zip(codes, names, markets)
-            if code and market in ("KOSPI", "KOSDAQ")
+            if code
+            and market in ("KOSPI", "KOSDAQ")
+            and not self._is_excluded_etf(code, name, logger=pool_a_logger)
         ]
 
         total_stocks = len(all_stocks)
@@ -806,6 +824,21 @@ class OneilUniverseService:
         }
 
     # ── 헬퍼 메서드 ───────────────────────────────────────────────
+
+    def _is_excluded_etf(
+        self,
+        code: str,
+        name: str,
+        logger: Optional[logging.Logger] = None,
+    ) -> bool:
+        if not self._cfg.exclude_etf_universe:
+            return False
+        normalized = str(name or "").strip().upper()
+        if not any(normalized.startswith(prefix) for prefix in _ETF_NAME_PREFIXES):
+            return False
+        if logger:
+            logger.debug({"event": "drop", "code": code, "name": name, "reason": "etf_excluded"})
+        return True
 
     def _reset_daily_exclusions(self, today: Optional[str] = None) -> None:
         if not today:

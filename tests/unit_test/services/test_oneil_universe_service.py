@@ -147,6 +147,22 @@ async def test_analyze_premium_candidate_success(mock_deps):
     assert item.market == "KOSDAQ"
     assert item.rs_return_3m == 10.0
 
+async def test_analyze_premium_candidate_rejects_etf_name_before_api(mock_deps):
+    """Pool A 후보가 ETF/ETN 이름이면 상세 분석 API 호출 전 제외한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+
+    item = await service._analyze_premium_candidate("395160", "KODEX AI반도체TOP2플러스", logger=logger)
+
+    assert item is None
+    sqs.get_recent_daily_ohlcv.assert_not_awaited()
+    assert any(
+        call.args
+        and isinstance(call.args[0], dict)
+        and call.args[0].get("reason") == "etf_excluded"
+        for call in logger.debug.call_args_list
+    )
+
 async def test_analyze_premium_candidate_filter_market_cap(mock_deps):
     """_analyze_premium_candidate: 시가총액 범위(2천억~2조) 벗어날 시 탈락 검증."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -238,6 +254,36 @@ async def test_get_watchlist_filters_loaded_premium_blocked_security_status(mock
     assert watchlist == {}
     assert service._watchlist == {}
 
+async def test_get_watchlist_filters_loaded_premium_etfs(mock_deps):
+    """저장된 Pool A 파일에 남은 ETF도 워치리스트 빌드 시 제외한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 9, 10, 0)
+    tm.get_market_open_time.return_value = datetime(2025, 1, 1, 9, 0, 0)
+
+    etf_item = OSBWatchlistItem(
+        code="395160", name="KODEX AI반도체TOP2플러스", market="KOSPI",
+        high_20d=1000, ma_20d=900, ma_50d=800, avg_vol_20d=10000,
+        bb_width_min_20d=10, prev_bb_width=11, w52_hgpr=1200,
+        avg_trading_value_5d=20_000_000_000, market_cap=500_000_000_000,
+    )
+    stock_item = OSBWatchlistItem(
+        code="222800", name="심텍", market="KOSDAQ",
+        high_20d=1000, ma_20d=900, ma_50d=800, avg_vol_20d=10000,
+        bb_width_min_20d=10, prev_bb_width=11, w52_hgpr=1200,
+        avg_trading_value_5d=20_000_000_000, market_cap=500_000_000_000,
+    )
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": create_mock_stock_info({})},
+    )
+
+    with patch.object(service, "_load_premium_stocks", return_value=[etf_item, stock_item]), \
+         patch.object(service, "_build_daily_surge_pool", new_callable=AsyncMock, return_value={}):
+        watchlist = await service.get_watchlist(logger=logger)
+
+    assert list(watchlist) == ["222800"]
+    assert list(service._pool_a_items) == ["222800"]
+
 async def test_get_watchlist_retains_subscription_sync_task(mock_deps):
     """get_watchlist: sync_subscriptions fire-and-forget 태스크를 강참조로 보관한다(GC 방지)."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
@@ -292,9 +338,9 @@ async def test_generate_premium_watchlist(mock_deps, tmp_path):
     
     # 1. 전체 종목 리스트 Mock
     mapper.df = pd.DataFrame({
-        "종목코드": ["000001", "000002"],
-        "종목명": ["StockA", "StockB"],
-        "시장구분": ["KOSPI", "KOSDAQ"]
+        "종목코드": ["000001", "000002", "395160"],
+        "종목명": ["StockA", "StockB", "KODEX AI반도체TOP2플러스"],
+        "시장구분": ["KOSPI", "KOSDAQ", "KOSPI"]
     })
     
     # 2. 1차 필터 (시총) Mock
@@ -336,6 +382,7 @@ async def test_generate_premium_watchlist(mock_deps, tmp_path):
             assert isinstance(result['kospi_stocks'], list)
             assert len(result['kospi_stocks']) == 1
             assert result['kospi_stocks'][0]['code'] == "000001"
+            assert "395160" not in [call.args[0] for call in sqs.get_current_price.await_args_list]
 
 async def test_get_watchlist_refresh_logic(mock_deps):
     """get_watchlist: 시간 경과에 따른 갱신 및 캐싱 로직 검증."""
@@ -1587,6 +1634,26 @@ async def test_analyze_surge_candidate_success_with_dict_output(mock_deps):
     assert item.w52_hgpr == 1500
     passed_ohlcv = indicator.calc_bb_widths_sync.call_args[0][0]
     assert passed_ohlcv[-1]["date"] != "20250102"
+
+
+@pytest.mark.asyncio
+async def test_analyze_surge_candidate_rejects_etf_name_before_api(mock_deps):
+    """Pool B 후보가 ETF/ETN 이름이면 OHLCV/현재가 API 호출 전 제외한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+
+    item = await service._analyze_surge_candidate("0167A0", "SOL AI반도체TOP2플러스", logger=logger)
+
+    assert item is None
+    tm.get_current_kst_time.assert_not_called()
+    sqs.get_recent_daily_ohlcv.assert_not_awaited()
+    sqs.get_current_price.assert_not_awaited()
+    assert any(
+        call.args
+        and isinstance(call.args[0], dict)
+        and call.args[0].get("reason") == "etf_excluded"
+        for call in logger.debug.call_args_list
+    )
 
 
 @pytest.mark.asyncio
