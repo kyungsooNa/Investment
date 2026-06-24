@@ -33,7 +33,7 @@ def _chunked(lst, size):
 _ETF_PREFIXES = (
     "KODEX", "TIGER", "KBSTAR", "ARIRANG", "SOL", "ACE",
     "HANARO", "KOSEF", "PLUS", "TIMEFOLIO", "WON", "FOCUS",
-    "VITA", "TREX", "MASTER", "WOORI", "KINDEX",
+    "VITA", "TREX", "MASTER", "WOORI", "KINDEX", "RISE",
 )
 
 
