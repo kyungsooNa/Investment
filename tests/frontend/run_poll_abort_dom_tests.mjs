@@ -9,6 +9,7 @@ import { JSDOM } from "jsdom";
 
 const COMMON_JS = resolve(import.meta.dirname, "../../view/web/static/js/common.js");
 const SYSTEM_JS = resolve(import.meta.dirname, "../../view/web/static/js/system.js");
+const KILL_SWITCH_JS = resolve(import.meta.dirname, "../../view/web/static/js/kill_switch.js");
 
 function makeAbortError() {
   try {
@@ -28,6 +29,7 @@ function makeWindow(pathname = "/") {
     <div id="background-tasks-body"></div>
     <div id="operations-summary"></div>
     <div id="sub-table-body"></div>
+    <button id="ks-badge"><span id="ks-badge-text"></span></button>
     <input id="input-max-order-amount">
     <input id="input-max-position-pct">
   </body></html>`, {
@@ -69,6 +71,29 @@ test("common updateStatus ignores fetch AbortError", async () => {
   assert(errors.length === 0, "AbortError should not be logged by updateStatus");
 });
 
+test("header polling fetches do not force abort signals", async () => {
+  const window = makeWindow("/");
+  const calls = [];
+  window.fetch = async (url, options = {}) => {
+    calls.push({ url, hasSignal: !!options.signal });
+    return {
+      ok: true,
+      json: async () => url.includes("kill-switch")
+        ? { is_tripped: false }
+        : { current_time: "09:00:00", market_open: true, env_type: "모의투자", is_paper_trading: true },
+    };
+  };
+  window.eval(readFileSync(COMMON_JS, "utf8"));
+  window.eval(readFileSync(KILL_SWITCH_JS, "utf8"));
+
+  await window.updateStatus();
+  await window.loadKillSwitchStatus();
+
+  assert(calls.some(call => call.url === "/api/status"), "status polling should fetch");
+  assert(calls.some(call => call.url === "/api/kill-switch/status"), "kill switch polling should fetch");
+  assert(calls.every(call => call.hasSignal === false), "header polling should not pass AbortController signals");
+});
+
 test("system polling updates ignore fetch AbortError", async () => {
   const window = makeWindow("/system");
   window.fetch = async () => { throw makeAbortError(); };
@@ -83,6 +108,28 @@ test("system polling updates ignore fetch AbortError", async () => {
   });
 
   assert(errors.length === 0, "AbortError should not be logged by system polling updates");
+});
+
+test("system polling fetches do not force abort signals", async () => {
+  const window = makeWindow("/system");
+  const calls = [];
+  window.fetch = async (url, options = {}) => {
+    calls.push({ url, hasSignal: !!options.signal });
+    return {
+      ok: true,
+      json: async () => ({ success: true, data: [] }),
+    };
+  };
+  window.eval(readFileSync(COMMON_JS, "utf8"));
+  window.eval(readFileSync(SYSTEM_JS, "utf8"));
+
+  await window.updateCacheStatus();
+  await window.updateBackgroundStatus();
+  await window.updateOperationsStatus();
+  await window.updateSubscriptionStatus();
+
+  assert(calls.length >= 4, "system polling should fetch status endpoints");
+  assert(calls.every(call => call.hasSignal === false), "system polling should not pass AbortController signals");
 });
 
 let failed = 0;

@@ -15,13 +15,7 @@ function _isSystemPageActive() {
 }
 
 async function _fetchWithTimeout(url, options = {}, timeoutMs = SYSTEM_POLL_TIMEOUT_MS) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-        return await fetch(url, { ...options, signal: controller.signal });
-    } finally {
-        clearTimeout(timer);
-    }
+    return await fetch(url, options);
 }
 
 function _isPollAbortError(error) {

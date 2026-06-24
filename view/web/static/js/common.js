@@ -264,10 +264,8 @@ async function updateStatus() {
     if (window.__pjaxNavigating) return;
     if (_statusInFlight) return;
     _statusInFlight = true;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
     try {
-        const res = await fetch('/api/status', { signal: controller.signal });
+        const res = await fetch('/api/status');
         const data = await res.json();
 
         document.getElementById('status-time').innerText = data.current_time || '--:--:--';
@@ -304,7 +302,6 @@ async function updateStatus() {
         if (isAbortError(e)) return;
         console.error("Status update failed:", e);
     } finally {
-        clearTimeout(timer);
         _statusInFlight = false;
     }
 }

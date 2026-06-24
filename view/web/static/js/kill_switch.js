@@ -14,16 +14,13 @@ async function loadKillSwitchStatus() {
     if (window.__pjaxNavigating) return;
     if (_ksStatusInFlight) return;
     _ksStatusInFlight = true;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
     try {
-        const res = await fetch('/api/kill-switch/status', { signal: controller.signal });
+        const res = await fetch('/api/kill-switch/status');
         if (!res.ok) return;
         _ksStatus = await res.json();
         _updateBadge(_ksStatus);
     } catch (_) { /* silent */ }
     finally {
-        clearTimeout(timer);
         _ksStatusInFlight = false;
     }
 }
