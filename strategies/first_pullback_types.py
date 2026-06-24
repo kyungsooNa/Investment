@@ -29,6 +29,7 @@ class FirstPullbackConfig(BaseStrategyConfig):
     reversal_min_relative_pos: float = 0.5         # 캔들 내 현재가 상대위치 최소값 (0.5=중간)
 
     # Phase 4: Exit (기계적 청산)
+    hard_stop_loss_pct: float = -5.0        # 진입가 대비 하드스탑 (net 기준)
     stop_loss_below_ma_pct: float = -2.0    # 20MA -2% 이탈 시 손절
     ma_break_grace_minutes: int = 10        # 20MA 이탈 후 손절 유예 시간 (분)
     ma_break_eod_hour: int = 14             # 장마감 전 즉시손절 기준 시각 (시)

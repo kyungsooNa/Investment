@@ -52,6 +52,7 @@ class OneilUniverseConfig(BaseStrategyConfig):
 
     # 종목 상태 필터 (주문 정책과 동일 계열의 위험 종목을 유니버스 단계에서 제외)
     security_status_filter_enabled: bool = True
+    exclude_etf_universe: bool = True
     block_managed_issue: bool = True
     block_investment_warning: bool = True
     block_investment_caution: bool = False

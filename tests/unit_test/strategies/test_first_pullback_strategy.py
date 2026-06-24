@@ -731,6 +731,35 @@ async def test_scan_cgld_exception_returns_none(fp_scan_setup):
 # ════════════════════════════════════════════════════════════════
 
 @pytest.mark.asyncio
+async def test_exits_hard_stop_before_ma_break_grace(mock_deps):
+    """진입가 기준 하드스탑 도달 시 20MA 유예 없이 즉시 전량 매도."""
+    sqs, universe, tm, logger = mock_deps
+    strategy = FirstPullbackStrategy(sqs, universe, tm, logger=logger)
+    strategy._save_state = MagicMock()
+
+    strategy._position_state["005930"] = FPPositionState(10000, "20250101", 10500, 12000, False)
+
+    # 20MA 기준 손절선은 8,820원이라 현재가 9,400원은 MA 손절 조건이 아니다.
+    ohlcv = _make_ohlcv(20, close=9000)
+    sqs.get_recent_daily_ohlcv.return_value = ResCommonResponse(rt_cd="0", msg1="OK", data=ohlcv)
+    sqs.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output": {"stck_prpr": "9400"}}
+    )
+
+    signals = await strategy.check_exits([
+        {"code": "005930", "buy_price": 10000, "qty": 4, "market": "KOSPI"}
+    ])
+
+    assert len(signals) == 1
+    assert signals[0].action == "SELL"
+    assert signals[0].qty == 4
+    assert "하드스탑" in signals[0].reason
+    assert "005930" not in strategy._position_state
+    assert strategy._position_state.get("005930") is None
+    assert tm.get_current_kst_time.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_exits_stop_loss_below_ma(mock_deps):
     """손절: 현재가 < 20MA * 0.98 → 잔량 전체 매도."""
     sqs, universe, tm, logger = mock_deps

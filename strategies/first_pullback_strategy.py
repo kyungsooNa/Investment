@@ -501,15 +501,22 @@ class FirstPullbackStrategy(LiveStrategy):
             state.mae_pct = round(pnl, 2)
             state_dirty = True
 
-        # 20MA 동적 계산 (매일 변하는 최신 MA)
-        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.ma_period)
-        ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
-        closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
-
         reason = ""
 
+        # 🚨 하드스탑: 20MA 유예와 무관하게 진입가 대비 손실 한도 도달 시 즉시 청산.
+        if pnl_net <= self._cfg.hard_stop_loss_pct:
+            reason = f"하드스탑(net {pnl_net:.1f}% ≤ {self._cfg.hard_stop_loss_pct:.1f}%)"
+
+        # 20MA 동적 계산 (매일 변하는 최신 MA)
+        if not reason:
+            ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._cfg.ma_period)
+            ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
+            closes = [r.get("close", 0) for r in ohlcv if r.get("close")]
+        else:
+            closes = []
+
         # 🚨 손절: 20MA -2% 이탈 → 10분 유예 후 확정 (14:50 이후는 즉시) — 가격 기준 trigger, log 는 net 표시
-        if len(closes) >= self._cfg.ma_period:
+        if not reason and len(closes) >= self._cfg.ma_period:
             ma_20d = float(sum(closes[-self._cfg.ma_period:]) / self._cfg.ma_period)
             threshold = ma_20d * (1 + self._cfg.stop_loss_below_ma_pct / 100)
             if current < threshold:
@@ -520,14 +527,14 @@ class FirstPullbackStrategy(LiveStrategy):
                     second=0, microsecond=0,
                 )
                 if now >= eod:
-                    reason = f"손절(20MA {ma_20d:,.0f} 장마감전 이탈, net {pnl_net:.1f}%)"
+                    reason = f"손절(20MA {ma_20d:,.0f}, trigger {threshold:,.0f} 장마감전 이탈, net {pnl_net:.1f}%)"
                 elif not state.ma_break_since_ts:
                     state.ma_break_since_ts = now.strftime("%Y%m%d%H%M%S")
                     state_dirty = True
                 else:
                     break_dt = datetime.strptime(state.ma_break_since_ts, "%Y%m%d%H%M%S").replace(tzinfo=now.tzinfo)
                     if (now - break_dt).total_seconds() / 60 >= self._cfg.ma_break_grace_minutes:
-                        reason = f"손절(20MA {ma_20d:,.0f} {self._cfg.ma_break_grace_minutes}분 이탈유지, net {pnl_net:.1f}%)"
+                        reason = f"손절(20MA {ma_20d:,.0f}, trigger {threshold:,.0f} {self._cfg.ma_break_grace_minutes}분 이탈유지, net {pnl_net:.1f}%)"
             else:
                 if state.ma_break_since_ts:
                     state.ma_break_since_ts = None
