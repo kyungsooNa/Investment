@@ -73,13 +73,17 @@ function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
         .finally(() => clearTimeout(timer));
 }
 
+function isAbortError(error) {
+    return error && error.name === 'AbortError';
+}
+
 async function withLoading(btn, targetEl, message, asyncFn) {
     if (btn) btn.disabled = true;
     showLoading(targetEl, message);
     try {
         await asyncFn();
     } catch (e) {
-        if (e.name === 'AbortError') {
+        if (isAbortError(e)) {
             if (targetEl) targetEl.innerHTML = '<p class="error">요청 시간이 초과되었습니다. 다시 시도해주세요.</p>';
         } else {
             if (targetEl) targetEl.innerHTML = `<p class="error">오류: ${escapeHtml(String(e.message || e))}</p>`;
@@ -297,6 +301,7 @@ async function updateStatus() {
         }
 
     } catch (e) {
+        if (isAbortError(e)) return;
         console.error("Status update failed:", e);
     } finally {
         clearTimeout(timer);

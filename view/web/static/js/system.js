@@ -24,6 +24,11 @@ async function _fetchWithTimeout(url, options = {}, timeoutMs = SYSTEM_POLL_TIME
     }
 }
 
+function _isPollAbortError(error) {
+    if (typeof isAbortError === 'function') return isAbortError(error);
+    return error && error.name === 'AbortError';
+}
+
 function _clearSystemTimer(name) {
     const timer = _systemPollTimers[name];
     if (timer) clearTimeout(timer);
@@ -233,6 +238,7 @@ async function updateCacheStatus() {
         if (_cacheExpanded.price)  renderPriceCacheDetails(stats.price_cache || {});
         if (_cacheExpanded.ohlcv)  renderOhlcvCacheDetails(stats.ohlcv_cache || {});
     } catch (error) {
+        if (_isPollAbortError(error)) return;
         console.error('캐시 상태를 가져오는 중 오류 발생:', error);
     } finally {
         _cacheStatusInFlight = false;
@@ -626,6 +632,7 @@ async function updateBackgroundStatus() {
             `;
         }).join('');
     } catch (e) {
+        if (_isPollAbortError(e)) return;
         console.error('백그라운드 태스크 상태 조회 오류:', e);
     } finally {
         _backgroundStatusInFlight = false;
@@ -691,6 +698,7 @@ async function updateOperationsStatus() {
             plMeasuredTotal > 0 ? renderOpsMetric('Snap 우회', `Fresh ${plForceFresh} / 상세 ${plFullOutput} / 연결 ${plStreamUnavailable}`) : '',
         ].join('');
     } catch (e) {
+        if (_isPollAbortError(e)) return;
         console.error('운영 요약 조회 오류:', e);
     } finally {
         _operationsStatusInFlight = false;
@@ -786,6 +794,7 @@ async function updateSubscriptionStatus() {
 
         renderSubTable();
     } catch (e) {
+        if (_isPollAbortError(e)) return;
         console.error('구독 현황 조회 오류:', e);
     } finally {
         _subscriptionStatusInFlight = false;
