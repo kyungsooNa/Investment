@@ -107,3 +107,57 @@ async def test_upsert_is_idempotent_on_pk(repo):
     groups = await repo.get_groups(("theme",))
     assert len(groups["로봇"]["members"]) == 1
     assert await repo.get_latest_collected_at() == "2026-06-21T18:00:00"
+
+
+@pytest.mark.asyncio
+async def test_replace_source_drops_stale_members(repo):
+    """전수 재수집 시 그룹에서 빠진 종목(stale)이 제거된다."""
+    await repo.replace_source_classifications("NAVER", "theme", [
+        _rec("NAVER", "005930", "삼성전자"),
+        _rec("NAVER", "000660", "SK하이닉스"),
+    ])
+    # 2차 수집: 000660 빠지고 247540 추가
+    await repo.replace_source_classifications("NAVER", "theme", [
+        _rec("NAVER", "005930", "삼성전자"),
+        _rec("NAVER", "247540", "에코프로비엠"),
+    ])
+    groups = await repo.get_groups(("theme",))
+    codes = {m["code"] for m in groups["로봇"]["members"]}
+    assert codes == {"005930", "247540"}
+
+
+@pytest.mark.asyncio
+async def test_replace_source_preserves_other_sources(repo):
+    """replace 는 대상 소스만 교체하고 다른 소스 데이터는 보존한다."""
+    await repo.upsert_classifications([_rec("KIWOOM", "005930", "삼성전자")])
+    await repo.replace_source_classifications("NAVER", "theme", [
+        _rec("NAVER", "247540", "에코프로비엠"),
+    ])
+    groups = await repo.get_groups(("theme",))
+    by_code = {m["code"]: m for m in groups["로봇"]["members"]}
+    assert by_code["005930"]["sources"] == ["KIWOOM"]
+    assert "247540" in by_code
+
+
+@pytest.mark.asyncio
+async def test_replace_source_scoped_to_category(repo):
+    """replace 는 대상 category_type 만 교체하고 다른 카테고리는 건드리지 않는다."""
+    await repo.upsert_classifications([
+        _rec("NAVER", "005930", "삼성전자", cat="industry", group="전기전자", normalized="전기전자"),
+    ])
+    await repo.replace_source_classifications("NAVER", "theme", [
+        _rec("NAVER", "247540", "에코프로비엠"),
+    ])
+    both = await repo.get_groups(("theme", "industry"))
+    assert "전기전자" in both           # industry 보존
+    assert "로봇" in both
+
+
+@pytest.mark.asyncio
+async def test_replace_source_empty_keeps_existing(repo):
+    """records 가 비면(전수 수집 실패) 기존 데이터를 지우지 않고 0을 반환한다."""
+    await repo.replace_source_classifications("NAVER", "theme", [_rec("NAVER", "005930", "삼성전자")])
+    n = await repo.replace_source_classifications("NAVER", "theme", [])
+    assert n == 0
+    groups = await repo.get_groups(("theme",))
+    assert {m["code"] for m in groups["로봇"]["members"]} == {"005930"}

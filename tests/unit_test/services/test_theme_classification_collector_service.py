@@ -33,6 +33,8 @@ def repo():
     r = MagicMock()
     r.get_alias_map = AsyncMock(return_value={})
     r.upsert_classifications = AsyncMock(side_effect=lambda recs: len(recs))
+    r.replace_source_classifications = AsyncMock(side_effect=lambda src, cat, recs: len(recs))
+    r.upsert_aliases = AsyncMock(return_value=0)
     r.get_latest_collected_at = AsyncMock(return_value=None)
     return r
 
@@ -67,7 +69,8 @@ async def test_collect_builds_records_with_alias(repo):
 
     saved = await svc.collect_naver_themes()
     assert saved == 1
-    recs = repo.upsert_classifications.call_args[0][0]
+    src, cat, recs = repo.replace_source_classifications.call_args[0]
+    assert (src, cat) == ("NAVER", "theme")
     assert recs[0]["source"] == "NAVER"
     assert recs[0]["category_type"] == "theme"
     assert recs[0]["group_name"] == "2차전지 소재"
@@ -85,7 +88,7 @@ async def test_collect_skips_failed_detail(repo):
     ])
     saved = await svc.collect_naver_themes()
     assert saved == 1
-    recs = repo.upsert_classifications.call_args[0][0]
+    recs = repo.replace_source_classifications.call_args[0][2]
     assert [r["code"] for r in recs] == ["000660"]
     assert recs[0]["group_name"] == "테마B"
 
@@ -96,7 +99,7 @@ async def test_collect_empty_list_returns_zero(repo):
     svc._fetch_html = AsyncMock(return_value="<html>no themes</html>")
     saved = await svc.collect_naver_themes()
     assert saved == 0
-    repo.upsert_classifications.assert_not_called()
+    repo.replace_source_classifications.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -105,3 +108,43 @@ async def test_collect_list_fetch_failure_returns_zero(repo):
     svc._fetch_html = AsyncMock(side_effect=RuntimeError("목록 실패"))
     saved = await svc.collect_naver_themes()
     assert saved == 0
+
+
+@pytest.mark.asyncio
+async def test_collect_syncs_alias_config(tmp_path, repo):
+    """alias yaml 이 있으면 파싱해 upsert_aliases 로 반영한다."""
+    cfg = tmp_path / "theme_aliases.yaml"
+    cfg.write_text(
+        "aliases:\n  2차전지:\n    - 2차전지 소재\n    - 2차전지(소재)\n",
+        encoding="utf-8",
+    )
+    svc = ThemeClassificationCollectorService(
+        repo, logger=MagicMock(), request_delay=0, alias_config_path=str(cfg)
+    )
+    svc._fetch_html = AsyncMock(side_effect=[
+        _list_html([("1", "2차전지 소재")]),
+        _detail_html([("247540", "에코프로비엠")]),
+    ])
+
+    await svc.collect_naver_themes()
+
+    repo.upsert_aliases.assert_awaited_once()
+    alias_recs = repo.upsert_aliases.call_args[0][0]
+    assert {"source": "NAVER", "raw_name": "2차전지 소재", "normalized_name": "2차전지"} in alias_recs
+    assert {"source": "NAVER", "raw_name": "2차전지(소재)", "normalized_name": "2차전지"} in alias_recs
+
+
+@pytest.mark.asyncio
+async def test_collect_without_alias_config_skips_alias_upsert(repo):
+    """alias 설정 파일이 없으면 upsert_aliases 를 호출하지 않고 정상 수집한다."""
+    svc = ThemeClassificationCollectorService(
+        repo, logger=MagicMock(), request_delay=0,
+        alias_config_path="config/__nonexistent_alias__.yaml",
+    )
+    svc._fetch_html = AsyncMock(side_effect=[
+        _list_html([("1", "로봇")]),
+        _detail_html([("005930", "삼성전자")]),
+    ])
+    saved = await svc.collect_naver_themes()
+    assert saved == 1
+    repo.upsert_aliases.assert_not_called()

@@ -7,12 +7,14 @@
 - 개별 실패는 warning 후 skip(부분 성공 허용). 파싱은 정적 메서드로 분리해 테스트 가능.
 - HTML 구조 변경 시 깨질 수 있으므로 graceful degrade(예외 흡수, 0 반환)를 유지한다.
 """
+import os
 import re
 import asyncio
 import logging
 from datetime import datetime
-from typing import List, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
+import yaml
 import aiohttp
 from bs4 import BeautifulSoup
 
@@ -22,6 +24,7 @@ if TYPE_CHECKING:
 _BASE = "https://finance.naver.com"
 _LIST_URL = _BASE + "/sise/sise_group.naver?type=theme"
 _DETAIL_URL = _BASE + "/sise/sise_group_detail.naver?type=theme&no={no}"
+_DEFAULT_ALIAS_CONFIG = os.path.join("config", "theme_aliases.yaml")
 
 _RE_DETAIL_NO = re.compile(r"no=(\d+)")
 _RE_CODE = re.compile(r"code=(\d{6})")
@@ -38,10 +41,12 @@ class ThemeClassificationCollectorService:
         classification_repository: "StockClassificationRepository",
         logger: Optional[logging.Logger] = None,
         request_delay: float = 0.3,
+        alias_config_path: str = _DEFAULT_ALIAS_CONFIG,
     ):
         self._repo = classification_repository
         self._logger = logger or logging.getLogger(__name__)
         self._request_delay = request_delay
+        self._alias_config_path = alias_config_path
         self._headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -62,6 +67,7 @@ class ThemeClassificationCollectorService:
             self._logger.warning({"event": "theme_list_empty"})
             return 0
 
+        await self._sync_aliases()
         alias_map = await self._repo.get_alias_map(self.SOURCE)
         collected_at = datetime.now().isoformat(timespec="seconds")
         records: List[dict] = []
@@ -90,9 +96,50 @@ class ThemeClassificationCollectorService:
 
         if not records:
             return 0
-        saved = await self._repo.upsert_classifications(records)
+        saved = await self._repo.replace_source_classifications(
+            self.SOURCE, self.CATEGORY_TYPE, records
+        )
         self._logger.info({"event": "theme_collect_done", "themes": len(themes), "records": saved})
         return saved
+
+    async def _sync_aliases(self) -> None:
+        """alias 설정 파일을 읽어 theme_aliases 에 반영한다(설정이 있을 때만).
+
+        파일이 없거나 비어 있으면 정규화 없이 raw 테마명을 그대로 사용한다.
+        """
+        records = self._load_alias_config()
+        if records:
+            await self._repo.upsert_aliases(records)
+
+    def _load_alias_config(self) -> List[Dict[str, str]]:
+        """alias yaml → [{"source","raw_name","normalized_name"}] 변환.
+
+        형식: aliases: {<표준명>: [<원본명>, ...]}. 파싱 실패/형식 불일치는 빈 목록.
+        """
+        path = self._alias_config_path
+        if not path or not os.path.exists(path):
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+        except Exception as e:
+            self._logger.warning({"event": "theme_alias_config_load_failed", "error": str(e)})
+            return []
+
+        aliases = raw.get("aliases") if isinstance(raw, dict) else None
+        if not isinstance(aliases, dict):
+            return []
+        out: List[Dict[str, str]] = []
+        for normalized, raw_names in aliases.items():
+            if not isinstance(raw_names, (list, tuple)):
+                continue
+            for raw_name in raw_names:
+                out.append({
+                    "source": self.SOURCE,
+                    "raw_name": str(raw_name),
+                    "normalized_name": str(normalized),
+                })
+        return out
 
     async def _fetch_html(self, url: str) -> str:
         async with aiohttp.ClientSession() as session:
