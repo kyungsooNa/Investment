@@ -292,6 +292,9 @@ function renderStockChart(period) {
     const ma60 = new Array(len), ma120 = new Array(len), ma150 = new Array(len), ma200 = new Array(len);
     const bbUpper = new Array(len), bbMiddle = new Array(len), bbLower = new Array(len);
     const volMa5 = new Array(len), volMa20 = new Array(len), volMa60 = new Array(len);
+    // 일자별 Minervini Stage (백엔드 제공 시에만). ohlcv와 1:1 정렬되어 rawIdx로 접근.
+    const hasStage = Array.isArray(g_chartIndicators.minervini_stage);
+    const stages = hasStage ? new Array(len) : null;
 
     const currentPrice = slicedRaw[len - 1].close;
     let highestPrice = -Infinity, lowestPrice = Infinity;
@@ -328,6 +331,7 @@ function renderStockChart(period) {
         if (ind.vol_ma5  && ind.vol_ma5[rawIdx])  volMa5[i]  = { x: i, y: ind.vol_ma5[rawIdx].ma };
         if (ind.vol_ma20 && ind.vol_ma20[rawIdx]) volMa20[i] = { x: i, y: ind.vol_ma20[rawIdx].ma };
         if (ind.vol_ma60 && ind.vol_ma60[rawIdx]) volMa60[i] = { x: i, y: ind.vol_ma60[rawIdx].ma };
+        if (hasStage) stages[i] = ind.minervini_stage[rawIdx];
     }
 
     const highPct = ((highestPrice - currentPrice) / currentPrice * 100).toFixed(1);
@@ -372,6 +376,62 @@ function renderStockChart(period) {
         }
     };
 
+    // [추가] Minervini Stage 배경 컬러 밴드 플러그인 (캔들 뒤에 그림)
+    // Stage 2(상승)=초록, 3(고점)=노랑, 4(하락)=빨강, 1(무관심)=회색, 0(미계산)=없음.
+    const STAGE_BANDS = {
+        1: { color: 'rgba(150, 150, 150, 0.10)', label: 'S1 무관심' },
+        2: { color: 'rgba(0, 200, 80, 0.12)',    label: 'S2 상승' },
+        3: { color: 'rgba(255, 200, 0, 0.14)',   label: 'S3 고점' },
+        4: { color: 'rgba(255, 60, 60, 0.12)',   label: 'S4 하락' },
+    };
+    const stageBandPlugin = {
+        id: 'minerviniStageBand',
+        beforeDatasetsDraw(chart) {
+            if (!stages) return;
+            const { ctx: c, chartArea, scales: { x, y } } = chart;
+            if (!x || !y) return;
+            const top = y.top, height = y.bottom - y.top;
+            const step = len > 1
+                ? Math.abs(x.getPixelForValue(1) - x.getPixelForValue(0))
+                : (chartArea.right - chartArea.left);
+            const clampL = (v) => Math.max(chartArea.left, v);
+            const clampR = (v) => Math.min(chartArea.right, v);
+
+            c.save();
+            // 동일 Stage 연속 구간을 한 사각형으로 묶어 그린다.
+            let runStart = 0;
+            for (let i = 1; i <= len; i++) {
+                if (i < len && stages[i] === stages[runStart]) continue;
+                const st = stages[runStart];
+                const band = STAGE_BANDS[st];
+                if (band) {
+                    const left = clampL(x.getPixelForValue(runStart) - step / 2);
+                    const right = clampR(x.getPixelForValue(i - 1) + step / 2);
+                    c.fillStyle = band.color;
+                    c.fillRect(left, top, right - left, height);
+                }
+                runStart = i;
+            }
+
+            // 우상단 범례 (현재 차트에 존재하는 Stage만)
+            const present = [...new Set(stages.filter((s) => STAGE_BANDS[s]))].sort();
+            if (present.length) {
+                c.font = 'bold 10px sans-serif';
+                c.textAlign = 'left';
+                let ly = top + 8;
+                for (const st of present) {
+                    const band = STAGE_BANDS[st];
+                    c.fillStyle = band.color.replace(/[\d.]+\)$/, '0.9)');
+                    c.fillRect(chartArea.left + 6, ly, 10, 10);
+                    c.fillStyle = '#888';
+                    c.fillText(band.label, chartArea.left + 20, ly + 9);
+                    ly += 14;
+                }
+            }
+            c.restore();
+        }
+    };
+
     // [추가] 차트 구분선 플러그인 (주가/거래량 사이)
     const splitLinePlugin = {
         id: 'splitLine',
@@ -400,7 +460,7 @@ function renderStockChart(period) {
     const tChartStart = performance.now();
     stockChartInstance = new Chart(ctx, {
         type: 'candlestick',
-        plugins: [highLowPlugin, splitLinePlugin],
+        plugins: [stageBandPlugin, highLowPlugin, splitLinePlugin],
         data: {
             labels: labels, // X축 라벨 (날짜)
             datasets: [

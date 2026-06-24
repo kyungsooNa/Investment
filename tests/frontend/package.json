@@ -5,7 +5,7 @@
   "description": "jsdom regression harness for /stock screen JS (domestic regression guard for overseas features)",
   "type": "module",
   "scripts": {
-    "test": "node run_stock_dom_tests.mjs && node run_overseas_dom_tests.mjs && node run_autocomplete_dom_tests.mjs"
+    "test": "node run_stock_dom_tests.mjs && node run_overseas_dom_tests.mjs && node run_autocomplete_dom_tests.mjs && node run_candle_chart_dom_tests.mjs"
   },
   "devDependencies": {
     "jsdom": "^24.0.0"

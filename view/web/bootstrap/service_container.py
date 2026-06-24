@@ -303,6 +303,8 @@ class ServiceContainer:
                     stock_repository=ctx.stock_repository,
                     logger=ctx.logger,
                 )
+                # 차트 일자별 Stage 표기를 위해 StockQueryService에 후주입.
+                ctx.stock_query_service.set_minervini_stage_service(ctx.minervini_stage_service)
             # NOTE: favorite_service.minervini_stage_service wiring is performed by WiringPhase.
         except Exception as e:
             ctx.logger.warning(f"[ServiceBootstrap:MinerviniStage] 초기화 실패: {e}")
