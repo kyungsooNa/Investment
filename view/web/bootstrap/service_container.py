@@ -703,6 +703,9 @@ class ServiceContainer:
                         strategy_degradation_config=getattr(
                             ctx.full_config, "strategy_performance_degradation", None
                         ),
+                        profitability_gate_config=getattr(
+                            ctx.full_config, "strategy_profitability_gate", None
+                        ),
                         enabled_strategy_provider=ctx._get_enabled_strategy_names_for_report,
                     ),
                     notification_service=ctx.notification_service,

@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-06-24 (Phase 4 상태·no-tick 착수 순서 정리)
+최종 업데이트: 2026-06-24 (no-tick 블로커를 외부 액션으로 재분류·코드 진행 가능 항목 명시)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR로 추적하고 본 문서에서 제거한다.
 
@@ -12,9 +12,13 @@
 - 주문/브로커/스케줄러 변경은 테스트 hang 가이드와 paper/real 분기 검증을 함께 적용한다.
 - `VolumeBreakoutStrategy`, `VolumeBreakoutLiveStrategy`, `TraditionalVolumeBreakoutStrategy`, `GapUpPullbackStrategy`, `ProgramBuyFollowStrategy`, `MomentumStrategy`는 비활성/레거시이므로 신규 연결·개선 우선순위에서 제외한다.
 
+## 현재 코드 진행 가능 항목
+
+> **순수 코드로 지금 착수 가능한 신규 P0~P2 구현은 없다** — P0 0-1·P1 1-5/1-7·P2 2-2/2-4 잔여는 외부 데이터 확보·KIS 운영 액션에 의존(아래 각 항목 참조). 단 **P1 1-6(paper/소액 canary journal 축적)은 무틱 블로커와 독립적으로 라이브 런타임에서 시간 축적만 하면 진행 가능**하다(코드 확인: gate journal은 `virtual_trade_service.get_standard_journal_records` ← polling scan + REST 가격 경로로 채워짐, 틱 비의존. 무틱에 막히는 건 1-6의 "shadow" 하위 요소뿐이며 이는 2-4 parity와 동일 의존). 그 밖에 코드 착수가 가능한 것은 ① 신규 비상관 엣지(R-2) 정책 결정 후 구현, ② 키움 테마 REST(T-1), ③ 보류 항목 재승격(S-9·lifecycle 분해 등)이며 모두 정책 합의가 선행 조건이다.
+
 ## 남은 실행 영역 요약 (우선순위 순)
 
-- **[최우선·블로커] P2 2-4 WS price 피드 무틱 ≈55%**: 구독 종목 절반 이상이 종일 no-tick → VBO shadow parity 수집 불가 + 라이브 실시간 데이터 품질 문제. 2026-06-19 로그 진단 결과 `a1_kis_no_send` 우세(ACK 후 KIS 프레임 미전송)로 확인. 2026-06-22 운영 실험 A~D 라이브 실행으로 원인을 **종목/상품군/계정 단위 KIS측 미전송**으로 좁힘(subscribe/ack/quality_reject 전부 0, received 5 vs no_tick 18). 후속은 코드 선제 수정이 아니라 KIS 에스컬레이션/운영 우회책(무틱 종목 격리) 판단.
+- **[최우선·블로커 / 외부 액션] P2 2-4 WS price 피드 무틱 ≈55%**: 구독 종목 절반 이상이 종일 no-tick → VBO shadow parity 수집 불가 + 라이브 실시간 데이터 품질 문제. **이 레포에서 코드로 할 수 있는 작업은 종결**(무틱 종목 격리 구현 완료) — 남은 것은 KIS 에스컬레이션/운영 우회책뿐이며 코드 액션 없음. 2026-06-19 로그 진단 결과 `a1_kis_no_send` 우세(ACK 후 KIS 프레임 미전송)로 확인. 2026-06-22 운영 실험 A~D 라이브 실행으로 원인을 **종목/상품군/계정 단위 KIS측 미전송**으로 좁힘(subscribe/ack/quality_reject 전부 0, received 5 vs no_tick 18).
 - **P1 1-6** 실전 journal/shadow/paper/canary 성과 데이터로 profitability gate 실제 통과 근거 확보 — "돈을 버는가"의 핵심, 라이브 데이터 축적 의존.
 - **P1 1-7** formal 과최적화 방어(DSR + PBO CSCV + purge embargo) 완료. PBO/adjusted-Sharpe hard gate 옵션과 real-mode overlay는 구현됨. 남은 것은 DSR hard 기준 포함 최종 운영 정책 결정(canary 데이터 후).
 - **P0 0-1** 실전 submit/signing notice raw fixture 확보 후 mapper 회귀 보강(외부 데이터 의존).
@@ -54,6 +58,7 @@
 ### 1-6. 실전 수익성 데이터 확보와 profitability gate 운영
 
 - [ ] shadow / paper / 소액 canary journal을 표준 포맷으로 누적하고, 전략별 profitability gate 통과 근거를 리포트한다. (라이브 데이터 축적 의존 — "돈을 버는가"의 실증 단계)
+  - **무틱 블로커와의 관계**: paper/canary journal은 polling scan → REST 가격 → `log_buy/log_sell` → `virtual_trade_service.get_standard_journal_records`(=gate 입력) 경로로 채워지며 WS 틱에 비의존이므로 **2-4 무틱 블로커와 독립적으로 축적 가능**(라이브 런타임 시간만 필요). 무틱에 막히는 건 본 항목의 "shadow" 하위 요소(=event_shadow parity, 2-4와 동일 의존)뿐이다.
   - 최소 유지 기준: 실전 override `min_trades=100`, `profit_factor>=1.3`, `payoff_ratio>=1.2`, `win_rate>=40%`, `max_drawdown<=12%`, regime별 최소 거래 30. parameter stability·Monte Carlo·regime balance·multiple testing 보정을 운영 편의로 낮추지 않는다.
   - 완료(기반): fail-close 잠금(provider/journal 부재 시 real BUY 차단, paper bypass), gate 배선 lock 테스트, 전략 신호 9필드(`entry_reason`/`invalidation_price`/`stop_loss_price`/`target_price`/`trailing_rule`/`expected_holding_period_days`/`confidence`/`required_data`/`config_hash`) journal persist + surfacing.
 
@@ -146,7 +151,6 @@
 - 완료: **Phase 4 주문/사이징** 자동 전략 컴포넌트 — `OverseasOrderExecutionService`(`place_overseas_limit_order` 지정가 연결, `live_enabled=False` 구조적 실주문 잠금 + would-be 레코드), `OverseasPositionSizingService`(고정 USD 슬롯÷지정가 floor + `max_qty`/`available_usd` cap), FX 환율(`extract_fx_krw_per_usd` 잔고 관용 추출 + `_overseas_fx_provider` 배선 → dry-run KRW 환산 노출), 일봉 기반 exit(`decide_daily_exit` stop/eod). 테스트 잠금 완료. 별도 웹 수동 해외 지정가 주문은 존재하며, 실전 모드에서는 `overseas_stock.allow_live_trading=true`와 `REAL` 확인 문자열 없이는 broker 호출 전 차단된다.
   - 남은 것(Phase 5 소관): scheduler/factory가 sizing→order_execution 자동 연결(canary auto-fire) + `live_enabled=True` 전환 — dry-run 검증 + canary 후로 게이팅.
 - [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile(`OverseasReconcileService` scaffolding 존재), risk gate/kill switch/canary USD 확장, 실전 소액 canary, canary auto-fire 배선 + `live_enabled` 전환.
-- [x] 3d(후속): 미국장 마감(ET) 정밀 트리거. `AfterMarketLoop`에 timezone/cron 파라미터화(기본 KST 유지) + mcs 미주입 시 클럭 날짜 폴백 → `OverseasDryRunTask`를 America/New_York 16:30 트리거로 전환, `service_container`가 `MarketClock.for_us_equities()` + `mcs=None` 배선. (#585)
 
 주요 파일: `brokers/korea_investment/korea_invest_overseas_stock_api.py`, `brokers/broker_api_wrapper.py`, `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/stock_query_service.py`, `view/web/bootstrap/{service_container,strategy_factory}.py`, `config/tr_ids_config.yaml`
 

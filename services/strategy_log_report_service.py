@@ -25,6 +25,10 @@ from services.strategy_performance_degradation_service import (
     analyze_strategy_performance_degradation,
     compute_strategy_window_metrics,
 )
+from services.strategy_profitability_gate_service import (
+    StrategyProfitabilityGateConfig,
+    evaluate_strategy_profitability_gate,
+)
 
 
 def _esc(value: Any) -> str:
@@ -40,6 +44,36 @@ _REGIME_BUCKET_LABELS = {
     "BEAR": "하락",
     "TRADING_VALUE_SURGE": "거래대금급증",
 }
+
+
+# P1 1-6: profitability gate 결과(status/blocking_reasons)를 일일 리포트 한글로 노출.
+_PROFITABILITY_GATE_STATUS_LABELS = {
+    "pass": "통과",
+    "fail": "차단",
+    "insufficient_sample": "표본 부족",
+}
+
+_PROFITABILITY_GATE_REASON_LABELS = {
+    "insufficient_trades": "거래 수 부족",
+    "profit_factor_below": "수익팩터 미달",
+    "payoff_ratio_below": "손익비 미달",
+    "win_rate_below": "승률 미달",
+    "avg_net_return_below": "평균 순수익률 미달",
+    "total_net_pnl_not_positive": "순손익 음수",
+    "mdd_pct_above": "MDD 초과",
+    "monte_carlo_ruin_probability_above": "몬테카를로 파산확률 초과",
+    "monte_carlo_worst_mdd_pct_above": "몬테카를로 최악 MDD 초과",
+    "monte_carlo_unavailable": "몬테카를로 미산출",
+    "regime_balance_incomplete": "레짐 균형 미충족",
+    "parameter_stability_unavailable": "파라미터 안정성 미산출",
+    "multiple_testing_bias_warning": "다중검정 편향 경고",
+}
+
+
+def _profitability_gate_reason_label(reason: Any) -> str:
+    """blocking_reason 코드를 한글 라벨로 변환한다. 동적 사유(regime_*_negative_pnl 등)는
+    매핑이 없으면 원본 코드를 그대로 노출한다."""
+    return _PROFITABILITY_GATE_REASON_LABELS.get(str(reason), str(reason))
 
 
 def _numeric_values(values: List[Any]) -> List[float]:
@@ -405,6 +439,7 @@ class StrategyLogReportService:
         backtest_journal_provider: Optional[Callable[[str], List[dict]]] = None,
         enabled_strategy_provider: Optional[Callable[[], Optional[List[str]]]] = None,
         strategy_degradation_config: Optional[Any] = None,
+        profitability_gate_config: Optional[Any] = None,
     ):
         self._log_dir = log_dir
         self._stock_code_repo = stock_code_repo
@@ -413,6 +448,7 @@ class StrategyLogReportService:
         self._backtest_journal_provider = backtest_journal_provider
         self._enabled_strategy_provider = enabled_strategy_provider
         self._strategy_degradation_config = strategy_degradation_config
+        self._profitability_gate_config = profitability_gate_config
         self._last_execution_quality_candidates: List[dict] = []
         self._last_strategy_degradation_candidates: List[dict] = []
 
@@ -900,6 +936,63 @@ class StrategyLogReportService:
         rest_count = len(candidates) - 5
         if rest_count > 0:
             lines.append(f"  …외 {rest_count}개 전략")
+        return "\n".join(lines)
+
+    def _profitability_gate_cfg(self) -> StrategyProfitabilityGateConfig:
+        cfg = self._profitability_gate_config
+        if isinstance(cfg, StrategyProfitabilityGateConfig):
+            return cfg
+        values = {}
+        if cfg is not None:
+            for field in StrategyProfitabilityGateConfig.__dataclass_fields__:
+                if hasattr(cfg, field):
+                    values[field] = getattr(cfg, field)
+        return StrategyProfitabilityGateConfig(**values)
+
+    def _build_profitability_gate_section(self, target_date: str) -> Optional[str]:
+        """라이브 표준 journal 에 profitability gate 를 돌려 전략별 통과/차단 근거를
+        일일 리포트에 노출한다 (P1 1-6). 운영자가 "이 전략이 실전 확대 기준을
+        통과하는가 / 어떤 사유로 막히는가"를 일일 리포트에서 확인하기 위함이다."""
+        if not self._virtual_trade_service:
+            return None
+        try:
+            live_records = self._virtual_trade_service.get_standard_journal_records() or []
+        except Exception:
+            return None
+        if not live_records:
+            return None
+
+        cfg = self._profitability_gate_cfg()
+        try:
+            result = evaluate_strategy_profitability_gate(live_records, cfg)
+        except Exception:
+            return None
+        strategies = result.get("strategies") or {}
+        if not strategies:
+            return None
+
+        lines = ["<b>💹 전략별 수익성 게이트</b>"]
+        for name in sorted(strategies):
+            decision = strategies[name] or {}
+            metrics = decision.get("metrics") or {}
+            status = str(decision.get("status") or "")
+            status_label = _esc(_PROFITABILITY_GATE_STATUS_LABELS.get(status, status))
+            strategy = _esc(_strategy_display_label(name))
+            pf = metrics.get("profit_factor")
+            payoff = metrics.get("payoff_ratio")
+            pf_text = f"{float(pf):.2f}" if pf is not None else "—"
+            payoff_text = f"{float(payoff):.2f}" if payoff is not None else "—"
+            lines.append(
+                f"• {strategy}: {status_label} — "
+                f"거래 {int(metrics.get('trade_count') or 0)}/{int(cfg.min_trades)}, "
+                f"승률 {float(metrics.get('win_rate') or 0) * 100:.1f}%, "
+                f"PF {pf_text}, payoff {payoff_text}, "
+                f"순손익 {int(round(float(metrics.get('total_net_pnl') or 0))):,}원"
+            )
+            reasons = decision.get("blocking_reasons") or []
+            if reasons:
+                reason_text = ", ".join(_profitability_gate_reason_label(r) for r in reasons)
+                lines.append(f"  - 차단 사유: {_esc(reason_text)}")
         return "\n".join(lines)
 
     def _build_multiple_testing_section(self, target_date: str) -> Optional[str]:
@@ -1861,6 +1954,7 @@ class StrategyLogReportService:
         execution_quality_section = self._build_execution_quality_section(execution_quality_records)
         divergence_section = self._build_backtest_live_divergence_section(target_date)
         degradation_section = self._build_strategy_degradation_section(target_date)
+        profitability_gate_section = self._build_profitability_gate_section(target_date)
         volatility_section = self._build_volatility_section(strategy_summaries)
         signal_metadata_section = self._build_signal_metadata_section(strategy_summaries)
         multiple_testing_section = self._build_multiple_testing_section(target_date)
@@ -1877,6 +1971,7 @@ class StrategyLogReportService:
                     portfolio_summary,
                     divergence_section,
                     degradation_section,
+                    profitability_gate_section,
                     execution_quality_section,
                     volatility_section,
                     signal_metadata_section,
@@ -1903,6 +1998,8 @@ class StrategyLogReportService:
             body += f"\n\n{divergence_section}"
         if degradation_section:
             body += f"\n\n{degradation_section}"
+        if profitability_gate_section:
+            body += f"\n\n{profitability_gate_section}"
         if execution_quality_section:
             body += f"\n\n{execution_quality_section}"
         if volatility_section:
