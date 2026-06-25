@@ -604,6 +604,35 @@ async def test_send_newhigh_report_numeric_formatting_and_exceptions(telegram_re
 
 
 @pytest.mark.asyncio
+async def test_send_newhigh_report_uses_rs_rating_when_rs_placeholder(telegram_reporter):
+    """RS enrichment 후 rs_rating에만 값이 채워지고 rs는 '-' 인 실제 흐름을 검증한다.
+
+    NewHighTask._filter_newhigh가 rs='-'를 선점하고
+    _enrich_and_filter_rs_rating이 rs_rating에만 값을 주입하므로,
+    리포트는 rs_rating을 우선 읽어야 한다.
+    """
+    stocks = [
+        {
+            "code": "000660",
+            "name": "SK하이닉스",
+            "current_price": 2917000,
+            "market_cap": 207895280000000,
+            "trading_value": 18752600000000,
+            "change_rate": 13.06,
+            "rs": "-",
+            "rs_rating": 88,
+        },
+    ]
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+
+    await telegram_reporter.send_newhigh_report(stocks, "2026-06-25")
+
+    full = "".join([c[0][0] for c in telegram_reporter._send_message.call_args_list])
+    assert "RS:88" in full
+    assert "RS:-" not in full
+
+
+@pytest.mark.asyncio
 async def test_send_premium_watchlist_report_basic(telegram_reporter):
     """send_premium_watchlist_report: 정상 데이터 전송 검증"""
     kospi = [
