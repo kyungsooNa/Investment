@@ -104,6 +104,65 @@ class TestClassifyStage:
         assert result != MinerviniStageService.STAGE_4_DECLINING
 
 
+class TestClassifyStageSeries:
+
+    def test_length_matches_input(self):
+        svc = _make_svc()
+        closes = _trending_closes(5000, 15000, 260)
+        lows = [c * 0.95 for c in closes]
+        series = svc.classify_stage_series(closes, lows, rs_rating=80)
+        assert len(series) == len(closes)
+
+    def test_first_199_are_unknown(self):
+        # 200일 미만 룩백 구간은 계산 불가 → STAGE_UNKNOWN.
+        svc = _make_svc()
+        closes = _trending_closes(5000, 15000, 260)
+        lows = [c * 0.95 for c in closes]
+        series = svc.classify_stage_series(closes, lows, rs_rating=80)
+        assert all(s == MinerviniStageService.STAGE_UNKNOWN for s in series[:199])
+        assert series[199] != MinerviniStageService.STAGE_UNKNOWN
+
+    def test_uptrend_last_point_is_stage2(self):
+        svc = _make_svc()
+        closes = _trending_closes(5000, 15000, 260)
+        lows = [c * 0.95 for c in closes]
+        series = svc.classify_stage_series(closes, lows, rs_rating=80)
+        assert series[-1] == MinerviniStageService.STAGE_2_ADVANCING
+
+    def test_short_input_all_unknown(self):
+        svc = _make_svc()
+        closes = _flat_closes(10000, 120)
+        series = svc.classify_stage_series(closes, closes)
+        assert series == [MinerviniStageService.STAGE_UNKNOWN] * 120
+
+    def test_matches_naive_per_slice_classification(self):
+        # 벡터화 시리즈는 매 시점 classify_stage(슬라이스) 호출과 동일해야 한다.
+        import random
+        rng = random.Random(42)
+        price = 8000.0
+        closes, lows = [], []
+        for _ in range(320):
+            price *= 1 + rng.uniform(-0.03, 0.035)
+            closes.append(price)
+            lows.append(price * (1 - rng.uniform(0.0, 0.04)))
+        svc = _make_svc()
+        fast = svc.classify_stage_series(closes, lows, rs_rating=0)
+        naive = [
+            (svc.classify_stage(closes[: i + 1], lows[: i + 1], 0) if i >= 199
+             else MinerviniStageService.STAGE_UNKNOWN)
+            for i in range(len(closes))
+        ]
+        assert fast == naive
+
+    def test_entries_are_plain_ints(self):
+        # return_reason=False 경로 → 튜플이 아닌 int 만 담겨야 한다.
+        svc = _make_svc()
+        closes = _trending_closes(5000, 15000, 210)
+        lows = [c * 0.95 for c in closes]
+        series = svc.classify_stage_series(closes, lows, rs_rating=80)
+        assert all(isinstance(s, int) for s in series)
+
+
 class TestCheckVcpPattern:
 
     def test_contracting_weekly_ranges_returns_true(self):

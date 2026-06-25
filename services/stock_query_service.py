@@ -32,6 +32,7 @@ class StockQueryService:
         self.logger = logger
         self.market_clock = market_clock
         self.indicator_service = indicator_service
+        self.minervini_stage_service = None  # 후주입 (순환 의존 해소: ServiceContainer)
         self.ranking_task = ranking_task
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
@@ -60,6 +61,10 @@ class StockQueryService:
         self._multi_price_prefetch_cooldown_sec = 300.0
         self._multi_price_prefetch_consecutive_failures = 0
         self._multi_price_prefetch_disabled_until = 0.0
+
+    def set_minervini_stage_service(self, minervini_stage_service) -> None:
+        """MinerviniStageService 후주입 — 차트 일자별 Stage 표기용 (ServiceContainer 호출)."""
+        self.minervini_stage_service = minervini_stage_service
 
     def _count_price_lookup(self, key: str, enabled: bool = True) -> None:
         """운영 현재가 조회 통계를 선택적으로 증가시킨다."""
@@ -1190,6 +1195,33 @@ class StockQueryService:
                 indicators_data = {"ma5": [], "ma10": [], "ma20": [], "ma60": [], "ma120": [], "bb": [], "rs": []}
             else:
                 indicators_data = indicators_resp.data
+
+            # 3. 일자별 Minervini Stage (차트 배경 밴드용) — 서비스가 주입된 경우에만.
+            #    프론트는 minervini_stage[i]를 ohlcv[i]에 정렬하므로 1:1 인덱스를
+            #    유지해야 한다 → 행 제거/재정렬 없이 ohlcv_data 순서 그대로 추출하고,
+            #    비정상(0 이하) 종가는 직전 유효가로 보정해 MA 왜곡만 방지한다.
+            #    과거 일자별 RS Rating은 없으므로 rs_rating=0(⑧조건 skip)으로 계산한다.
+            if self.minervini_stage_service is not None and len(ohlcv_data) >= 200:
+                try:
+                    closes, lows, prev = [], [], 0.0
+                    for r in ohlcv_data:
+                        try:
+                            c = float(r.get("close") or r.get("stck_clpr") or 0)
+                            lo = float(r.get("low") or r.get("stck_lwpr") or c)
+                        except (TypeError, ValueError):
+                            c, lo = 0.0, 0.0
+                        if c <= 0:
+                            c = prev
+                        if lo <= 0:
+                            lo = c
+                        prev = c
+                        closes.append(c)
+                        lows.append(lo)
+                    indicators_data["minervini_stage"] = (
+                        self.minervini_stage_service.classify_stage_series(closes, lows, 0)
+                    )
+                except Exception as e:
+                    self.logger.warning(f"{stock_code} Minervini Stage 시리즈 계산 실패: {e}")
 
             result = {
                 "ohlcv": ohlcv_data,

@@ -83,6 +83,9 @@ class SchedulerBootstrap:
             )
         ctx.background_scheduler.register(task)
 
+    def _optional_task(self, attr_name: str):
+        return getattr(self._ctx, "__dict__", {}).get(attr_name)
+
     def _register_web_tasks(self) -> None:
         ctx = self._ctx
         # NotificationQueueTask 는 TimeDispatcher 등록 대상이 아님 (always-on)
@@ -97,6 +100,10 @@ class SchedulerBootstrap:
     def _register_batch_tasks(self) -> None:
         ctx = self._ctx
         self._register(ctx.ranking_task, TaskPriority.LOW)
+        # 자체 AfterMarketLoop 사용: 한국장/미국장 각각의 cron timezone이 필요해
+        # KST TimeDispatcher에는 등록하지 않는다.
+        self._register(self._optional_task("market_cap_gap_report_kr_task"))
+        self._register(self._optional_task("market_cap_gap_report_us_task"))
         self._register(ctx.minervini_update_task, TaskPriority.LOW)
         self._register(ctx.daily_price_collector_task, TaskPriority.LOW)
         self._register(ctx.ohlcv_update_task, TaskPriority.LOW)
@@ -110,7 +117,7 @@ class SchedulerBootstrap:
 
     def _register_overseas_tasks(self) -> None:
         # 해외 VBO dry-run (주문 경로 없음). 미구성 시 _register 가 no-op.
-        self._register(getattr(self._ctx, "overseas_dryrun_task", None), TaskPriority.LOW)
+        self._register(self._optional_task("overseas_dryrun_task"), TaskPriority.LOW)
 
     def _register_websocket_watchdog(self) -> None:
         # WebSocket watchdog 은 TimeDispatcher 등록 대상이 아님 (continuous monitor).

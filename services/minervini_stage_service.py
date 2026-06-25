@@ -230,23 +230,50 @@ class MinerviniStageService:
         low_window = lows[-252:] if len(lows) >= 252 else lows
         w52_low = min(low_window) if low_window else min(closes)
 
-        # ── Stage 4 (최우선 필터) ──────────────────────────────────────────
-        if price < ma200:
-            reason = f"가격이 MA200 아래 (가격={price:.2f} < MA200={ma200:.2f})"
-            return (self.STAGE_4_DECLINING, reason) if return_reason else self.STAGE_4_DECLINING
-        if ma200_slope <= 0:
-            reason = f"MA200 기울기 비양수 (기울기={ma200_slope:.6f})"
-            return (self.STAGE_4_DECLINING, reason) if return_reason else self.STAGE_4_DECLINING
-
-        # ── Stage 2 (트렌드 템플릿 8조건) ────────────────────────────────
         # 조건 8: RS Rating — 데이터 없으면(0) skip하고 경고 로그
         if rs_rating == 0:
             self._logger.debug(
                 f"[MinerviniStage] RS Rating 데이터 부족 — RS 조건 skip (stage 판정 계속)"
             )
-            rs_ok = True
-        else:
-            rs_ok = rs_rating >= 70
+
+        is_high_vol = self._is_high_volatility(closes)
+        return self._classify_from_metrics(
+            price, ma50, ma150, ma200, ma200_slope,
+            w52_high, w52_low, is_high_vol, rs_rating, return_reason,
+        )
+
+    def _classify_from_metrics(
+        self,
+        price: float,
+        ma50: float,
+        ma150: float,
+        ma200: float,
+        ma200_slope: float,
+        w52_high: float,
+        w52_low: float,
+        is_high_vol: bool,
+        rs_rating: int,
+        return_reason: bool = False,
+    ) -> tuple[int, str] | int:
+        """사전 계산된 지표로 Stage를 판정한다 (classify_stage/series 공용 결정 로직).
+
+        단일/일자별 경로 모두 동일한 트렌드 템플릿 임계값을 쓰도록 결정부를
+        한 곳에 모은 헬퍼. 지표 산출 방식만 호출자가 다르게(스칼라 vs 벡터) 구현한다.
+        """
+        # 일자별 시리즈는 return_reason=False로 수백 회 호출되므로
+        # reason f-string은 조건식 안에서만(필요 시) 생성한다.
+        # ── Stage 4 (최우선 필터) ──────────────────────────────────────────
+        if price < ma200:
+            if not return_reason:
+                return self.STAGE_4_DECLINING
+            return self.STAGE_4_DECLINING, f"가격이 MA200 아래 (가격={price:.2f} < MA200={ma200:.2f})"
+        if ma200_slope <= 0:
+            if not return_reason:
+                return self.STAGE_4_DECLINING
+            return self.STAGE_4_DECLINING, f"MA200 기울기 비양수 (기울기={ma200_slope:.6f})"
+
+        # ── Stage 2 (트렌드 템플릿 8조건) ────────────────────────────────
+        rs_ok = True if rs_rating == 0 else rs_rating >= 70
 
         is_stage2 = (
             ma200_slope > 0              # ①  MA200 우상향
@@ -258,20 +285,84 @@ class MinerviniStageService:
             and rs_ok                    # ⑧  RS Rating >= 70
         )
         if is_stage2:
-            reason = (
+            if not return_reason:
+                return self.STAGE_2_ADVANCING
+            return self.STAGE_2_ADVANCING, (
                 f"트렌드 템플릿 충족: ma200_slope={ma200_slope:.6f}, ma50={ma50:.2f}, "
                 f"ma150={ma150:.2f}, ma200={ma200:.2f}, 가격={price:.2f}, RS={rs_rating}"
             )
-            return (self.STAGE_2_ADVANCING, reason) if return_reason else self.STAGE_2_ADVANCING
 
         # ── Stage 3 (고점/배분) ───────────────────────────────────────────
-        if price < ma50 and self._is_high_volatility(closes):
-            reason = f"MA50 아래이면서 고변동성 (가격={price:.2f} < MA50={ma50:.2f})"
-            return (self.STAGE_3_TOPPING, reason) if return_reason else self.STAGE_3_TOPPING
+        if price < ma50 and is_high_vol:
+            if not return_reason:
+                return self.STAGE_3_TOPPING
+            return self.STAGE_3_TOPPING, f"MA50 아래이면서 고변동성 (가격={price:.2f} < MA50={ma50:.2f})"
 
         # ── Stage 1 (무관심/횡보) ─────────────────────────────────────────
-        reason = "기본: 무관심/횡보"
-        return (self.STAGE_1_NEGLECT, reason) if return_reason else self.STAGE_1_NEGLECT
+        return (self.STAGE_1_NEGLECT, "기본: 무관심/횡보") if return_reason else self.STAGE_1_NEGLECT
+
+    def classify_stage_series(
+        self,
+        closes: List[float],
+        lows: List[float],
+        rs_rating: int = 0,
+    ) -> List[int]:
+        """일자별 Stage를 계산한다 (차트 일자별 표기용).
+
+        각 인덱스 i에 대해 그 시점까지의 윈도우(closes[:i+1], lows[:i+1])로
+        classify_stage를 호출해 해당 날짜의 Stage를 산출한다. 200일 룩백이
+        확보되지 않는 앞 구간은 STAGE_UNKNOWN(0)으로 채운다.
+
+        Args:
+            closes:    종가 리스트 (오래된 순).
+            lows:      장중 저가 리스트 (오래된 순). closes와 길이 동일 가정.
+            rs_rating: RS Rating. 과거 일자별 값은 없으므로 보통 0(조건 skip).
+
+        Returns:
+            closes와 동일 길이의 Stage 리스트 (각 원소 0~4).
+        """
+        import pandas as pd
+
+        n = len(closes)
+        stages = [self.STAGE_UNKNOWN] * n
+        if n < 200:
+            return stages
+
+        c = pd.Series(closes, dtype=float)
+        l = pd.Series(lows, dtype=float)
+
+        # 롤링 지표를 1회 벡터화 계산 (classify_stage가 매 시점 재계산하던 부분).
+        ma50 = c.rolling(50).mean().to_numpy()
+        ma150 = c.rolling(150).mean().to_numpy()
+        ma200_s = c.rolling(200).mean()
+        ma200 = ma200_s.to_numpy()
+        # 52주 고가(종가)/저가(장중 저가): 데이터가 252일 미만이면 보유분 전체 기준.
+        w52_high = c.rolling(252, min_periods=1).max().to_numpy()
+        w52_low = l.rolling(252, min_periods=1).min().to_numpy()
+        # 고변동성(ATR-proxy): 최근 20일 |Δ| 평균 / 최근 20일 평균가 > 임계값.
+        chg_mean = c.diff().abs().rolling(20).mean().to_numpy()
+        px_mean20 = c.rolling(20).mean().to_numpy()
+
+        lookback = self._slope_lookback
+        for i in range(199, n):
+            # MA200 기울기: MA200 시리즈의 최근 lookback개 점에 선형회귀.
+            # _ma_series와 동일하게 사용 가능한 점 수가 부족하면 그만큼만 사용.
+            # polyfit 대신 등간격 x 폐형식(최소제곱 기울기)으로 루프 비용 절감.
+            points = min(lookback, i - 198)
+            slope = self._slope_evenly_spaced(ma200[i - points + 1 : i + 1])
+
+            avg_px = px_mean20[i]
+            is_high_vol = bool(
+                i >= 20
+                and avg_px
+                and (chg_mean[i] / (avg_px or 1.0)) > self._vol_threshold
+            )
+
+            stages[i] = self._classify_from_metrics(
+                closes[i], ma50[i], ma150[i], ma200[i], slope,
+                w52_high[i], w52_low[i], is_high_vol, rs_rating,
+            )
+        return stages
 
     # ── 내부 헬퍼 ──────────────────────────────────────────────────────────
 
@@ -291,6 +382,23 @@ class MinerviniStageService:
             mean(closes[i - window + 1: i + 1])
             for i in range(n - points, n)
         ]
+
+    @staticmethod
+    def _slope_evenly_spaced(y: np.ndarray) -> float:
+        """등간격 x(0,1,2,…)에 대한 최소제곱 기울기를 폐형식으로 산출.
+
+        polyfit(deg=1) 기울기와 수학적으로 동일하나 객체 생성/일반화 비용이
+        없어 일자별 시리즈 루프에서 훨씬 빠르다. 점이 2개 미만이면 0.0.
+        """
+        k = y.shape[0]
+        if k < 2:
+            return 0.0
+        x = np.arange(k, dtype=float)
+        xm = (k - 1) / 2.0
+        denom = float(((x - xm) ** 2).sum())
+        if denom == 0.0:
+            return 0.0
+        return float(((x - xm) * (y - y.mean())).sum() / denom)
 
     def _calculate_slope(self, values: List[float]) -> float:
         """numpy 선형회귀로 기울기 산출.

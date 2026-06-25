@@ -1520,6 +1520,51 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         self.mock_market_data_service.get_ohlcv.assert_awaited_once_with("005930", period="D", caller="unknown")
         self.mock_indicator_service.get_chart_indicators.assert_awaited_once_with("005930", ohlcv_data)
 
+    async def test_get_ohlcv_with_indicators_includes_minervini_stage(self):
+        """minervini_stage_service 주입 시 일자별 Stage 배열이 ohlcv와 1:1 정렬되어 포함된다."""
+        from services.minervini_stage_service import MinerviniStageService
+
+        n = 260
+        ohlcv_data = [
+            {"date": f"2023{i:04d}", "close": 5000 + i * 30, "low": (5000 + i * 30) * 0.95}
+            for i in range(n)
+        ]
+        self.mock_market_data_service.get_ohlcv.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=ohlcv_data
+        )
+        self.mock_indicator_service.get_chart_indicators.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data={"ma5": []}
+        )
+        self.stockQueryService.set_minervini_stage_service(
+            MinerviniStageService(stock_query_service=AsyncMock())
+        )
+
+        result = await self.stockQueryService.get_ohlcv_with_indicators("005930", "D")
+
+        stages = result.data["indicators"]["minervini_stage"]
+        self.assertEqual(len(stages), n)  # ohlcv와 동일 길이 (인덱스 정렬)
+        self.assertTrue(all(s == 0 for s in stages[:199]))  # 룩백 부족 구간
+        self.assertEqual(stages[-1], MinerviniStageService.STAGE_2_ADVANCING)
+
+    async def test_get_ohlcv_with_indicators_skips_stage_when_too_few_rows(self):
+        """200봉 미만이면 Stage 시리즈를 계산/포함하지 않는다."""
+        from services.minervini_stage_service import MinerviniStageService
+
+        ohlcv_data = [{"date": f"2023{i:04d}", "close": 100 + i} for i in range(50)]
+        self.mock_market_data_service.get_ohlcv.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data=ohlcv_data
+        )
+        self.mock_indicator_service.get_chart_indicators.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="성공", data={"ma5": []}
+        )
+        self.stockQueryService.set_minervini_stage_service(
+            MinerviniStageService(stock_query_service=AsyncMock())
+        )
+
+        result = await self.stockQueryService.get_ohlcv_with_indicators("005930", "D")
+
+        self.assertNotIn("minervini_stage", result.data["indicators"])
+
     async def test_get_ohlcv_with_indicators_none_response(self):
         """get_ohlcv_with_indicators: 응답이 None일 때 (Line 602-604 coverage)"""
         self.mock_market_data_service.get_ohlcv.return_value = None
