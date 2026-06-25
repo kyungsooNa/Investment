@@ -11,6 +11,7 @@ from core.logger import get_strategy_logger
 from scheduler.strategy_scheduler import StrategyScheduler, StrategySchedulerConfig
 from strategies.first_pullback_strategy import FirstPullbackStrategy
 from strategies.high_tight_flag_strategy import HighTightFlagStrategy
+from strategies.inverse_etf_regime_strategy import InverseEtfRegimeStrategy
 from strategies.larry_williams_channel_breakout_strategy import LarryWilliamsChannelBreakoutStrategy
 from strategies.larry_williams_vbo_strategy import LarryWilliamsVBOStrategy
 from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
@@ -200,6 +201,27 @@ class StrategyFactory:
             enabled=False,              # 수동 활성화 대기
             force_exit_on_close=False,  # 스윙 포지션 — 오버나잇 허용
             allow_pyramiding=False,     # 1종목 1포지션 invariant
+            scan_when_position_full=True,
+        ))
+
+        # 인버스 ETF 레짐 슬리브 등록 (R-2 비상관 엣지) — shadow/paper 관찰용, 수동 활성화 대기.
+        # KOSPI 하락추세(bear)에서만 -1x 인버스 ETF를 추세추종 매수해 long-only 7전략과
+        # 음의 상관을 노린다. 일봉+REST 경로라 WS 틱(ETF 무틱)에 비의존.
+        inverse_etf_strategy = InverseEtfRegimeStrategy(
+            stock_query_service=ctx.stock_query_service,
+            market_regime_service=getattr(ctx.oneil_universe_service, "market_regime_service", None),
+            indicator_service=ctx.indicator_service,
+            market_clock=ctx.market_clock,
+            logger=get_strategy_logger('InverseEtfRegime'),
+        )
+        ctx.scheduler.register(StrategySchedulerConfig(
+            strategy=inverse_etf_strategy,
+            interval_minutes=5,
+            max_positions=1,            # 단일 종목 슬리브
+            order_qty=1,
+            enabled=False,              # 수동 활성화 대기 (shadow/paper 관찰)
+            force_exit_on_close=False,  # 멀티데이 베어 헤지 — 오버나잇 허용
+            allow_pyramiding=False,     # 1포지션 invariant
             scan_when_position_full=True,
         ))
 

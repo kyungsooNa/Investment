@@ -20,7 +20,6 @@
 
 - **코드 착수 가능 (정책 합의 선행)**
   - **P1 1-6 paper/소액 canary journal 축적** — 무틱 블로커와 독립. journal은 `virtual_trade_service.get_standard_journal_records` ← polling scan + REST 가격 경로로 채워져 틱 비의존. 라이브 런타임 시간만 필요(무틱에 막히는 건 "shadow" 하위 요소뿐, 2-4 parity와 동일 의존).
-  - **R-2 비상관 엣지 도입** — 정책 결정 후 구현.
   - **S-9 god class 분리 / 3-4 lifecycle 분해** — 보류 해제(정책 합의 시).
 - **외부 액션 대기 (블로커)**: P2 2-4(KIS 에스컬레이션), P0 0-1(fixture), P1 1-5(microstructure 캡처), P2 2-2(KIS 유량 한도 재확인), P1 1-7(canary 후 정책), 해외 Phase 5(canary 게이팅).
 - **종결**: T-1 키움 테마 REST — **드롭**. 네이버 테마(`ThemeClassificationCollectorService`) 자동 수집으로 분류 데이터 충분, 키움 추가 소스 불필요. (멀티소스 병합 인프라는 `StockClassificationRepository`에 잔존하나 신규 소스 연결 계획 없음.)
@@ -122,12 +121,14 @@
 - [ ] 거래대금 기준 50억 → 30억 추가 완화 검토.
 - [ ] 정배열 조건을 Pool B 전용 `current > ma_20d` 중심으로 완화 검토.
 
-### R-2. 전략 상관 / 단일 regime 집중 [부분 해소]
+### R-2. 전략 상관 / 단일 regime 집중 [엣지 도입 — Phase 1~3 완료, Phase 4 데이터 대기]
 
 - 활성 7전략 전부 long-only 모멘텀/돌파/눌림목 → 단일 "상승/추세 regime 베팅". 상관행렬·regime 분해는 일일 리포트에 노출 완료.
-- [ ] 자금 확대 전 비상관 엣지(역추세/숏/저변동 등) 1개 이상 도입 여부 정책 결정.
+- 비상관 엣지 = **인버스 ETF 레짐 슬리브**(KOSPI bear에서만 -1x 인버스 ETF 추세추종 매수, long-only와 음의 상관). 직접 숏(공매도)은 개인 비현실적이라 제외.
+  - 완료: Phase 1 전략(#594) · Phase 2 다중 베어 사이클 백테스트(#595, 실데이터 46거래 복리 +20% MDD −11.8%) · Phase 3 factory 배선 `enabled=False`(#596, shadow/paper 관찰). 일봉+REST라 ETF 무틱(2-4) 무관.
+- [ ] **Phase 4 (베어 paper 데이터 + 정책 후 구현)**: profitability gate는 전역 단일 config(per-strategy override 없음)라 인버스 슬리브가 표준 gate와 3중 충돌(① win_rate 0.35/0.40 vs 실측 34.8% ② min_trades 30/100 vs regime-conditional ③ regime-balance vs BEAR 단일). **방향 A 확정**: 추세추종 디코릴레이터엔 win_rate가 잘못된 기준 → gate에 per-strategy override 추가 + 인버스 전용 프로파일(win_rate 완화/제거, payoff·profit_factor·양(+)PnL 유지, min_trades 완화+≥2 독립 베어 에피소드, regime-balance 면제). 임계값 보정할 paper 베어 데이터가 없어 **다음 베어장 paper 축적 후 구현**(선구현 금지). 이후 canary → `enabled=True` 전환.
 
-주요 파일: `services/market_regime_service.py`, `services/strategy_log_report_service.py`
+주요 파일: `strategies/inverse_etf_regime_strategy.py`, `strategies/inverse_etf_regime_backtest.py`, `services/strategy_profitability_gate_service.py`, `services/market_regime_service.py`, `view/web/bootstrap/strategy_factory.py`
 
 ### R-6. 비용 모델 — capacity/시장충격 [관찰]
 
@@ -148,8 +149,8 @@
 1. **운영 관찰·블로커 (최우선, 코드 아님)**
    - WebSocket 무틱 ≈55% — **KIS 에스컬레이션**(ETF/우선주 WS 지원 확인 + 무틱 보통주 계정 단위 문의). 해소 전까지 shadow 수집 불가. (P2 2-4)
    - profitability gate 우회 없이 shadow/paper/canary journal로 전략별 실전 근거 축적 (P1 1-6, 라이브 축적)
-2. **코드 착수 가능 (정책 합의 선행)**
-   - 비상관 엣지 도입 여부 정책 결정 후 구현 (R-2)
+2. **데이터 + 정책 대기**
+   - R-2 인버스 ETF 슬리브 Phase 4(추세추종 게이트 프로파일) — 다음 베어장 paper 데이터 축적 후 구현
 3. **외부 운영·데이터 확보 후**
    - KIS REST/WebSocket 유량 한도 재확인 (P2 2-2) · 실전 submit/signing fixture (P0 0-1) · 장중 microstructure 캡처 (P1 1-5)
 4. **정책 결정 후**

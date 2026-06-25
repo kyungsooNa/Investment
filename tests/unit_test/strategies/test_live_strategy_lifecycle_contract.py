@@ -1,7 +1,8 @@
 """활성 라이브 전략의 lifecycle contract checklist 테스트 (P3 3-4 ①).
 
-`LiveStrategy` 인터페이스 + 활성 전략 7개가 공유해야 할 최소 lifecycle hook 의
-존재/타입을 고정한다. 신규 전략 추가 시 contract 누락을 자동 탐지하기 위한 안전망.
+`LiveStrategy` 인터페이스 + 등록 전략(활성 7 + 인버스 ETF 슬리브 shadow/paper)이
+공유해야 할 최소 lifecycle hook 의 존재/타입을 고정한다. 신규 전략 추가 시 contract
+누락을 자동 탐지하기 위한 안전망.
 
 검증 항목:
   - 식별자 3종 (`name`/`strategy_id`/`display_name`) 이 non-empty str.
@@ -22,6 +23,7 @@ import pytest
 from interfaces.live_strategy import LiveStrategy
 from strategies.first_pullback_strategy import FirstPullbackStrategy
 from strategies.high_tight_flag_strategy import HighTightFlagStrategy
+from strategies.inverse_etf_regime_strategy import InverseEtfRegimeStrategy
 from strategies.larry_williams_channel_breakout_strategy import (
     LarryWilliamsChannelBreakoutStrategy,
 )
@@ -78,6 +80,16 @@ def _factory_vbo() -> LiveStrategy:
     )
 
 
+def _factory_inverse() -> LiveStrategy:
+    return InverseEtfRegimeStrategy(
+        stock_query_service=MagicMock(),
+        market_regime_service=MagicMock(),
+        indicator_service=MagicMock(),
+        market_clock=MagicMock(),
+        logger=MagicMock(),
+    )
+
+
 ACTIVE_STRATEGY_FACTORIES: list[tuple[str, Callable[[], LiveStrategy]]] = [
     ("oneil_pocket_pivot", _factory_pp),
     ("high_tight_flag", _factory_htf),
@@ -86,6 +98,7 @@ ACTIVE_STRATEGY_FACTORIES: list[tuple[str, Callable[[], LiveStrategy]]] = [
     ("rsi2_pullback", _factory_rsi2),
     ("larry_williams_channel_breakout", _factory_cb),
     ("larry_williams_vbo", _factory_vbo),
+    ("inverse_etf_regime", _factory_inverse),
 ]
 
 
