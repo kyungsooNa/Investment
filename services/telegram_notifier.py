@@ -309,8 +309,8 @@ class TelegramReporter:
             except (ValueError, TypeError):
                 tv_str = "-"
             
-            # RS (상대강도) - 추후 연동 전까지 기본값 표기
-            rs = s.get("rs", "-")
+            # RS (상대강도) - RS enrichment는 rs_rating 키에만 값을 주입하므로 우선 사용
+            rs = s.get("rs_rating") or s.get("rs") or "-"
 
             try:
                 rate_f = float(s.get("change_rate") or "0")
