@@ -385,6 +385,33 @@ def test_get_background_status_returns_task_info(web_client, mock_web_ctx):
     assert item["progress"]["total"] == 500
 
 
+def test_get_background_status_includes_us_cron_trigger(web_client, mock_web_ctx):
+    """미국장 after-market task는 상태 응답에 NY cron 트리거 정보를 노출한다."""
+    mock_task = MagicMock()
+    mock_task._loop_timezone = "America/New_York"
+    mock_task._loop_cron_hour = 16
+    mock_task._loop_cron_minute = 30
+    mock_task.get_progress.return_value = {"running": False, "last_run_date": None}
+
+    mock_web_ctx.background_scheduler = MagicMock()
+    mock_web_ctx.background_scheduler.get_all_status.return_value = [
+        {"name": "overseas_vbo_dryrun", "state": "idle", "priority": 100},
+    ]
+    mock_web_ctx.background_scheduler.get_task.return_value = mock_task
+
+    response = web_client.get("/api/background/status")
+
+    assert response.status_code == 200
+    item = response.json()["data"][0]
+    assert item["name"] == "overseas_vbo_dryrun"
+    assert item["schedule_type"] == "after_market"
+    assert item["trigger"] == {
+        "timezone": "America/New_York",
+        "hour": 16,
+        "minute": 30,
+    }
+
+
 def test_get_background_status_task_not_found_gives_none_progress(web_client, mock_web_ctx):
     """get_task()가 None 반환 시 해당 항목의 progress는 None."""
     mock_web_ctx.background_scheduler = MagicMock()

@@ -22,6 +22,7 @@ async def test_tvb_scan_cache_behavior_reduces_api_calls(deep_paper_ctx, mocker)
     md_service = deep_paper_ctx.stock_query_service.market_data_service
     broker = md_service._broker_api_wrapper
     stock_repo = md_service._stock_repo
+    mocker.patch.object(stock_repo._ohlcv_repo, "get_stock_data", new_callable=AsyncMock, return_value=None)
 
     # 2. Broker API 모킹 (현재가 조회: 가격 돌파와 거래량 돌파 조건을 통과하도록 데이터 세팅)
     mock_get_price = mocker.patch.object(

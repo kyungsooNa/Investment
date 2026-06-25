@@ -31,26 +31,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from common.overseas_types import OverseasExchange
 
-from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
-from brokers.broker_api_wrapper import BrokerAPIWrapper
-from config.config_loader import load_configs
-from core.cache.cache_store import CacheStore
-from core.market_clock import MarketClock
-from core.performance_profiler import PerformanceProfiler
-from repositories.overseas_stock_code_repository import OverseasStockCodeRepository
-from repositories.stock_code_repository import StockCodeRepository
-from services.event_shadow_journal_service import EventShadowJournalService
-from services.indicator_service import IndicatorService
-from services.market_calendar_service import MarketCalendarService
-from services.market_data_service import MarketDataService
-from services.overseas_candidate_service import OverseasCandidateService
-from services.overseas_position_sizing_service import (
-    OverseasPositionSizingService,
-    extract_fx_krw_per_usd,
-)
-from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
-from services.stock_query_service import StockQueryService
-
 
 def _make_stdout_logger(level: int = logging.INFO) -> logging.Logger:
     logger = logging.getLogger("overseas_dryrun_runner")
@@ -83,6 +63,26 @@ async def build_dryrun_service(
     Returns:
         (OverseasVBODryRunService, EventShadowJournalService, MarketClock(US))
     """
+    from brokers.broker_api_wrapper import BrokerAPIWrapper
+    from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+    from config.config_loader import load_configs
+    from core.cache.cache_store import CacheStore
+    from core.market_clock import MarketClock
+    from core.performance_profiler import PerformanceProfiler
+    from repositories.overseas_stock_code_repository import OverseasStockCodeRepository
+    from repositories.stock_code_repository import StockCodeRepository
+    from services.event_shadow_journal_service import EventShadowJournalService
+    from services.indicator_service import IndicatorService
+    from services.market_calendar_service import MarketCalendarService
+    from services.market_data_service import MarketDataService
+    from services.overseas_candidate_service import OverseasCandidateService
+    from services.overseas_position_sizing_service import (
+        OverseasPositionSizingService,
+        extract_fx_krw_per_usd,
+    )
+    from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
+    from services.stock_query_service import StockQueryService
+
     config_data = load_configs()
     config_dict = config_data
     if hasattr(config_data, "model_dump"):

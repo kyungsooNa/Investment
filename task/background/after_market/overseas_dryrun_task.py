@@ -19,6 +19,7 @@ from typing import Optional, TYPE_CHECKING
 
 from common.overseas_types import OverseasExchange
 from interfaces.schedulable_task import TaskPriority
+from services.notification_service import NotificationCategory, NotificationLevel
 from task.background.after_market.after_market_task_base import AfterMarketTask
 
 if TYPE_CHECKING:
@@ -36,6 +37,7 @@ class OverseasDryRunTask(AfterMarketTask):
         market_calendar_service: Optional["MarketCalendarService"] = None,
         market_clock: Optional["MarketClock"] = None,
         logger=None,
+        notification_service=None,
         worker_pool=None,
         exchange: OverseasExchange = OverseasExchange.NASD,
     ) -> None:
@@ -47,6 +49,7 @@ class OverseasDryRunTask(AfterMarketTask):
         )
         self._dryrun_service = dryrun_service
         self._journal = shadow_journal
+        self._notification_service = notification_service
         self._exchange = exchange
         self._last_run_date: Optional[str] = None
 
@@ -91,8 +94,22 @@ class OverseasDryRunTask(AfterMarketTask):
             self._logger.info(
                 {"event": "overseas_dryrun_done", "date": latest_trading_date, "signals": len(signals or [])}
             )
+            if self._notification_service:
+                await self._notification_service.emit(
+                    NotificationCategory.BACKGROUND,
+                    NotificationLevel.INFO,
+                    "해외 VBO dry-run 완료",
+                    f"{latest_trading_date} 기준 {len(signals or [])}개 신호",
+                )
             self._last_run_date = latest_trading_date  # 성공 시에만 dedup 마킹 → 실패 시 재시도
         except Exception as e:
             self._logger.error(
                 {"event": "overseas_dryrun_error", "date": latest_trading_date, "error": str(e)}, exc_info=True
             )
+            if self._notification_service:
+                await self._notification_service.emit(
+                    NotificationCategory.BACKGROUND,
+                    NotificationLevel.ERROR,
+                    "해외 VBO dry-run 실패",
+                    str(e),
+                )

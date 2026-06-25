@@ -364,7 +364,7 @@ def test_service_container_wires_overseas_dryrun_position_sizing(patched_service
 
 
 def test_service_container_wires_overseas_dryrun_us_market_clock(patched_service_container_deps):
-    """overseas_us dry-run 태스크는 미국장 클럭으로, 한국 캘린더(mcs) 없이 배선한다."""
+    """overseas_us dry-run 태스크는 미국장 cron으로, 한국 캘린더/티켓 큐 없이 배선한다."""
     from config.config_loader import AppConfig
     from view.web.bootstrap.service_container import ServiceContainer
 
@@ -388,6 +388,9 @@ def test_service_container_wires_overseas_dryrun_us_market_clock(patched_service
     assert task_kwargs["market_calendar_service"] is None
     # 미국 정규장 클럭 주입 (America/New_York)
     assert task_kwargs["market_clock"].timezone_name == "America/New_York"
+    # KST TimeDispatcher/WorkerPool 티켓 경로에 묶이면 미국장 16:30 ET 트리거가 무시된다.
+    assert task_kwargs["worker_pool"] is None
+    assert task_kwargs["notification_service"] is ctx.notification_service
 
 
 def test_domestic_active_with_overseas_enabled_builds_dryrun_task(patched_service_container_deps):
