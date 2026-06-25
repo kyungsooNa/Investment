@@ -481,76 +481,71 @@ class TelegramReporter:
         uk = abs_won / 100_000_000
         return f"{sign}{uk:,.0f}억"
 
-    @staticmethod
-    def _format_usd_cap(value) -> str:
-        try:
-            usd = int(float(value or 0))
-        except (TypeError, ValueError):
-            return "-"
-        if usd <= 0:
-            return "-"
-        trillion = usd / 1_000_000_000_000
-        if trillion >= 1:
-            return f"${trillion:,.2f}T"
-        billion = usd / 1_000_000_000
-        return f"${billion:,.0f}B"
-
     async def send_market_cap_gap_report(self, report: Dict, report_date: str, trigger_label: str, limit: int = 10):
-        """삼성전자/SK하이닉스와 미국 주요 기업 시총갭 리포트를 전송합니다."""
+        """삼성전자/SK하이닉스 대비 미국 주요 기업 시총갭 리포트를 전송합니다.
+
+        US 종목을 기준으로 묶어, 각 종목 아래 국내 앵커별 배율(굵게)·갭(조)을
+        인라인으로 표시한다 (모바일 텔레그램 가독성을 위한 2줄/종목 카드형).
+        """
         fx = report.get("fx_rate")
         fx_text = f"{float(fx):,.2f}" if fx else "-"
-        title = (
-            f"📊 <b>시총갭 리포트 ({report_date})</b>\n"
-            f"기준: {html.escape(str(trigger_label), quote=False)} | USD/KRW: {fx_text}\n"
-        )
-        await self._send_message(title)
+        lines = [
+            f"📊 <b>시총갭 ({report_date})</b>",
+            f"USD/KRW {fx_text} · {html.escape(str(trigger_label), quote=False)}",
+        ]
 
         korean = report.get("korean") or []
-        us_items = report.get("us") or []
+        if korean:
+            kr_summary = " · ".join(
+                f"{html.escape(str(k.get('name') or k.get('symbol') or ''), quote=False)} "
+                f"{self._format_krw_cap(k.get('market_cap_krw'))}"
+                for k in korean
+            )
+            lines += ["", f"🇰🇷 {kr_summary}"]
+
         comparisons = report.get("comparisons") or []
-
-        summary_lines = ["<b>국내 기준</b>"]
-        for item in korean:
-            name = html.escape(str(item.get("name") or item.get("symbol") or ""), quote=False)
-            symbol = html.escape(str(item.get("symbol") or ""), quote=False)
-            summary_lines.append(
-                f"- {name}({symbol}) {self._format_krw_cap(item.get('market_cap_krw'))}"
-            )
-        summary_lines.append("")
-        summary_lines.append("<b>미국 비교군</b>")
-        for item in us_items[:limit]:
-            name = html.escape(str(item.get("name") or item.get("symbol") or ""), quote=False)
-            symbol = html.escape(str(item.get("symbol") or ""), quote=False)
-            summary_lines.append(
-                f"- {name}({symbol}) {self._format_usd_cap(item.get('market_cap_usd'))} "
-                f"/ {self._format_krw_cap(item.get('market_cap_krw'))}"
-            )
-        await self._send_message("\n".join(summary_lines))
-
         if not comparisons:
-            await self._send_message("시총갭 계산 불가: 환율 또는 시총 데이터 부족")
+            lines += ["", "시총갭 계산 불가: 환율 또는 시총 데이터 부족"]
+            await self._send_message("\n".join(lines))
             return
 
-        grouped = {}
-        for row in comparisons:
-            grouped.setdefault(row.get("korean_symbol"), []).append(row)
+        lines += ["", "🇺🇸 미국 비교군  (배율 · 갭조, ✅=한국우위)"]
 
-        for korean_symbol, rows in grouped.items():
-            if not rows:
-                continue
-            korean_name = html.escape(str(rows[0].get("korean_name") or korean_symbol), quote=False)
-            lines = [f"<b>{korean_name} 대비 갭</b>"]
-            for row in rows[:limit]:
-                us_name = html.escape(str(row.get("us_name") or row.get("us_symbol") or ""), quote=False)
-                us_symbol = html.escape(str(row.get("us_symbol") or ""), quote=False)
-                ratio = row.get("ratio")
+        us_cap = {u.get("symbol"): u.get("market_cap_krw") for u in (report.get("us") or [])}
+        order = [u.get("symbol") for u in (report.get("us") or [])]
+        grouped: Dict = {}
+        for row in comparisons:
+            grouped.setdefault(row.get("us_symbol"), []).append(row)
+        if not order:
+            order = list(grouped.keys())
+
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        blocks = []
+        ranked = [s for s in order if s in grouped][:limit]
+        for rank, sym in enumerate(ranked, 1):
+            prefix = medals.get(rank, f"{rank}.")
+            symbol_text = html.escape(str(sym or ""), quote=False)
+            block = [f"{prefix} {symbol_text}  {self._format_krw_cap(us_cap.get(sym))}"]
+            for row in grouped[sym]:
+                kr_label = html.escape(str(row.get("korean_name") or row.get("korean_symbol") or ""), quote=False)
                 try:
-                    ratio_text = f"{float(ratio):.2f}x"
+                    ratio_val = float(row.get("ratio"))
+                    ratio_text = f"{ratio_val:.2f}x"
                 except (TypeError, ValueError):
+                    ratio_val = None
                     ratio_text = "-"
-                lines.append(
-                    f"- {us_name}({us_symbol}) "
-                    f"갭:{self._format_krw_cap(row.get('gap_krw'))} "
-                    f"배율:{ratio_text}"
-                )
-            await self._send_message("\n".join(lines))
+                gap_text = self._format_krw_cap(row.get("gap_krw"))
+                flag = " ✅" if (ratio_val is not None and ratio_val < 1) else ""
+                block.append(f"   {kr_label} <b>{ratio_text}</b> ({gap_text}){flag}")
+            blocks.append("\n".join(block))
+
+        # Telegram 4096 byte 제한 대비, 종목 블록 단위로 메시지를 나눠 보낸다.
+        current = "\n".join(lines)
+        for block in blocks:
+            candidate = f"{current}\n\n{block}"
+            if len(candidate.encode("utf-8")) > 4000:
+                await self._send_message(current)
+                current = block
+            else:
+                current = candidate
+        await self._send_message(current)

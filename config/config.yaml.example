@@ -150,6 +150,13 @@ notifications:
       STRATEGY: ["warning", "error", "critical"]
       API: ["error", "critical"]
 
+# 시총갭 리포트 발송 세션 on/off (기본 둘 다 on)
+#   kr: 한국장 마감(15:50 KST) 후 발송 — 미국 시총은 전일 종가 기준(프리뷰)
+#   us: 미국장 마감(16:30 ET ≈ 익일 06:30 KST) 후 발송 — 양쪽 시총 최신(확정값)
+# 알림 피로를 줄이려면 한쪽을 false 로 둔다.
+market_cap_gap_report_kr_enabled: true
+market_cap_gap_report_us_enabled: true
+
 # 체결 품질 리포트 경고 기준 (사후 평가용, 자동 비활성화는 기본 OFF)
 execution_quality_report:
   enabled: true

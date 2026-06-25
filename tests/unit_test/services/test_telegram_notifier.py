@@ -866,35 +866,34 @@ async def test_send_market_cap_gap_report_formats_korean_us_gap(telegram_reporte
             {"symbol": "MU", "name": "Micron", "market_cap_usd": 150_000_000_000, "market_cap_krw": 210_000_000_000_000},
         ],
         "comparisons": [
-            {
-                "korean_symbol": "005930",
-                "korean_name": "삼성전자",
-                "korean_market_cap_krw": 500_000_000_000_000,
-                "us_symbol": "NVDA",
-                "us_name": "NVIDIA",
-                "us_market_cap_krw": 4_200_000_000_000_000,
-                "gap_krw": 3_700_000_000_000_000,
-                "ratio": 8.4,
-            },
-            {
-                "korean_symbol": "000660",
-                "korean_name": "SK하이닉스",
-                "korean_market_cap_krw": 200_000_000_000_000,
-                "us_symbol": "MU",
-                "us_name": "Micron",
-                "us_market_cap_krw": 210_000_000_000_000,
-                "gap_krw": 10_000_000_000_000,
-                "ratio": 1.05,
-            },
+            {"korean_symbol": "005930", "korean_name": "삼성전자", "us_symbol": "NVDA",
+             "us_name": "NVIDIA", "gap_krw": 3_700_000_000_000_000, "ratio": 8.4},
+            {"korean_symbol": "000660", "korean_name": "SK하이닉스", "us_symbol": "NVDA",
+             "us_name": "NVIDIA", "gap_krw": 4_000_000_000_000_000, "ratio": 21.0},
+            {"korean_symbol": "005930", "korean_name": "삼성전자", "us_symbol": "MU",
+             "us_name": "Micron", "gap_krw": -290_000_000_000_000, "ratio": 0.42},
+            {"korean_symbol": "000660", "korean_name": "SK하이닉스", "us_symbol": "MU",
+             "us_name": "Micron", "gap_krw": 10_000_000_000_000, "ratio": 1.05},
         ],
     }
 
     await telegram_reporter.send_market_cap_gap_report(report, "20260625", "한국장 마감")
 
     full = "".join(call[0][0] for call in telegram_reporter._send_message.call_args_list)
-    assert "시총갭 리포트" in full
+    # 헤더: 제목 / 환율 / 트리거 라벨
+    assert "시총갭" in full
     assert "한국장 마감" in full
-    assert "삼성전자" in full
-    assert "NVIDIA" in full
+    assert "USD/KRW 1,400" in full
+    # 국내 앵커 요약 (이름 + 조 단위 시총)
+    assert "삼성전자" in full and "SK하이닉스" in full
+    assert "500조" in full and "200조" in full
+    # US 종목 기준 그룹 + 순위(메달/숫자) 헤드라인은 티커 사용
+    assert "🥇 NVDA" in full
+    assert "🥈 MU" in full
+    # 배율은 굵게, 삼성/SK 인라인, 갭은 조 단위 괄호
+    assert "<b>8.40x</b>" in full
+    assert "<b>21.00x</b>" in full
     assert "3,700조" in full
-    assert "8.40x" in full
+    # 배율 < 1 (한국 우위) 행에는 ✅ 표시
+    assert "<b>0.42x</b>" in full
+    assert "✅" in full

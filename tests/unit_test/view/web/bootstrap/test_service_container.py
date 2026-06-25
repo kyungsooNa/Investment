@@ -291,6 +291,32 @@ def test_service_container_creates_universe_and_tasks(patched_service_container_
     assert patched_service_container_deps["MarketCapGapReportTask"].call_count == 2
 
 
+def test_service_container_disables_kr_cap_gap_task_via_config(patched_service_container_deps):
+    """config 플래그로 한국장 시총갭 리포트를 끄면 kr_task 만 None 이 된다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {"market_cap_gap_report_kr_enabled": False}
+    ServiceContainer(ctx).run()
+
+    assert ctx.market_cap_gap_report_kr_task is None
+    assert ctx.market_cap_gap_report_us_task is patched_service_container_deps["MarketCapGapReportTask"].return_value
+    assert patched_service_container_deps["MarketCapGapReportTask"].call_count == 1
+
+
+def test_service_container_disables_us_cap_gap_task_via_config(patched_service_container_deps):
+    """config 플래그로 미국장 시총갭 리포트를 끄면 us_task 만 None 이 된다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {"market_cap_gap_report_us_enabled": False}
+    ServiceContainer(ctx).run()
+
+    assert ctx.market_cap_gap_report_us_task is None
+    assert ctx.market_cap_gap_report_kr_task is patched_service_container_deps["MarketCapGapReportTask"].return_value
+    assert patched_service_container_deps["MarketCapGapReportTask"].call_count == 1
+
+
 def test_service_container_does_not_wire_minervini_circular_pair(patched_service_container_deps):
     """MinerviniStage ↔ MinerviniUpdate 후주입은 WiringPhase 책임 — ServiceContainer 는 인스턴스만 만든다."""
     from view.web.bootstrap.service_container import ServiceContainer
