@@ -819,3 +819,53 @@ async def test_send_minervini_report_empty_and_normal(telegram_reporter):
     assert "삼성전자" in full_message
     assert "SK하이닉스" in full_message
     assert "테스트 사유" in full_message
+
+
+@pytest.mark.asyncio
+async def test_send_market_cap_gap_report_formats_korean_us_gap(telegram_reporter):
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    report = {
+        "report_date": "20260625",
+        "trigger": "kr_close",
+        "fx_rate": 1400.0,
+        "korean": [
+            {"symbol": "005930", "name": "삼성전자", "market_cap_krw": 500_000_000_000_000},
+            {"symbol": "000660", "name": "SK하이닉스", "market_cap_krw": 200_000_000_000_000},
+        ],
+        "us": [
+            {"symbol": "NVDA", "name": "NVIDIA", "market_cap_usd": 3_000_000_000_000, "market_cap_krw": 4_200_000_000_000_000},
+            {"symbol": "MU", "name": "Micron", "market_cap_usd": 150_000_000_000, "market_cap_krw": 210_000_000_000_000},
+        ],
+        "comparisons": [
+            {
+                "korean_symbol": "005930",
+                "korean_name": "삼성전자",
+                "korean_market_cap_krw": 500_000_000_000_000,
+                "us_symbol": "NVDA",
+                "us_name": "NVIDIA",
+                "us_market_cap_krw": 4_200_000_000_000_000,
+                "gap_krw": 3_700_000_000_000_000,
+                "ratio": 8.4,
+            },
+            {
+                "korean_symbol": "000660",
+                "korean_name": "SK하이닉스",
+                "korean_market_cap_krw": 200_000_000_000_000,
+                "us_symbol": "MU",
+                "us_name": "Micron",
+                "us_market_cap_krw": 210_000_000_000_000,
+                "gap_krw": 10_000_000_000_000,
+                "ratio": 1.05,
+            },
+        ],
+    }
+
+    await telegram_reporter.send_market_cap_gap_report(report, "20260625", "한국장 마감")
+
+    full = "".join(call[0][0] for call in telegram_reporter._send_message.call_args_list)
+    assert "시총갭 리포트" in full
+    assert "한국장 마감" in full
+    assert "삼성전자" in full
+    assert "NVIDIA" in full
+    assert "3,700조" in full
+    assert "8.40x" in full

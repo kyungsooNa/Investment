@@ -29,6 +29,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "OneilUniverseService", "NaverFinanceScraperService",
     "StockClassificationRepository", "ThemeLeaderService",
     "ThemeClassificationCollectorService", "ThemeClassificationTask",
+    "MarketCapGapService", "MarketCapGapReportTask",
     "PremiumWatchlistGeneratorTask", "CacheWarmupTask", "LogCleanupTask",
     "NewHighTask", "NewHighService", "StrategyLogReportTask",
     "StrategyLogReportService", "NotificationQueueTask",
@@ -286,6 +287,8 @@ def test_service_container_creates_universe_and_tasks(patched_service_container_
     assert ctx.oneil_universe_service is patched_service_container_deps["OneilUniverseService"].return_value
     assert ctx.ranking_task is patched_service_container_deps["RankingTask"].return_value
     assert ctx.strategy_log_report_task is patched_service_container_deps["StrategyLogReportTask"].return_value
+    assert ctx.market_cap_gap_service is patched_service_container_deps["MarketCapGapService"].return_value
+    assert patched_service_container_deps["MarketCapGapReportTask"].call_count == 2
 
 
 def test_service_container_does_not_wire_minervini_circular_pair(patched_service_container_deps):

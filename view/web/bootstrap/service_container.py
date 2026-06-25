@@ -35,6 +35,7 @@ from services.execution_flow_service import ExecutionFlowService
 from services.indicator_service import IndicatorService
 from services.deferred_order_queue import DeferredOrderQueue
 from services.market_data_service import MarketDataService
+from services.market_cap_gap_service import MarketCapGapService
 from services.minervini_stage_service import MinerviniStageService
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from services.newhigh_service import NewHighService
@@ -63,6 +64,7 @@ from task.background.after_market.after_market_reconcile_task import AfterMarket
 from task.background.after_market.cache_warmup_task import CacheWarmupTask
 from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
 from task.background.after_market.log_cleanup_task import LogCleanupTask
+from task.background.after_market.market_cap_gap_report_task import MarketCapGapReportTask
 from task.background.after_market.minervini_update_task import MinerviniUpdateTask
 from task.background.after_market.newhigh_task import NewHighTask
 from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
@@ -265,6 +267,9 @@ class ServiceContainer:
         try:
             if is_overseas_us:
                 ctx.ranking_task = None
+                ctx.market_cap_gap_service = None
+                ctx.market_cap_gap_report_kr_task = None
+                ctx.market_cap_gap_report_us_task = None
             else:
                 ctx.ranking_task = RankingTask(
                     broker_api_wrapper=ctx.broker,
@@ -279,6 +284,33 @@ class ServiceContainer:
                     market_data_service=ctx.market_data_service,
                     worker_pool=ctx.worker_pool,
                 )
+                if needs_batch:
+                    ctx.market_cap_gap_service = MarketCapGapService(
+                        broker=ctx.broker,
+                        logger=ctx.logger,
+                    )
+                    ctx.market_cap_gap_report_kr_task = MarketCapGapReportTask(
+                        market_cap_gap_service=ctx.market_cap_gap_service,
+                        telegram_reporter=getattr(ctx, "telegram_reporter", None),
+                        notification_service=ctx.notification_service,
+                        session="kr_close",
+                        market_calendar_service=ctx._mcs,
+                        market_clock=ctx.market_clock,
+                        logger=ctx.logger,
+                    )
+                    ctx.market_cap_gap_report_us_task = MarketCapGapReportTask(
+                        market_cap_gap_service=ctx.market_cap_gap_service,
+                        telegram_reporter=getattr(ctx, "telegram_reporter", None),
+                        notification_service=ctx.notification_service,
+                        session="us_close",
+                        market_calendar_service=None,
+                        market_clock=MarketClock.for_us_equities(logger=ctx.logger),
+                        logger=ctx.logger,
+                    )
+                else:
+                    ctx.market_cap_gap_service = None
+                    ctx.market_cap_gap_report_kr_task = None
+                    ctx.market_cap_gap_report_us_task = None
             ctx.stock_query_service = StockQueryService(
                 market_data_service=ctx.market_data_service, logger=ctx.logger, market_clock=ctx.market_clock,
                 indicator_service=ctx.indicator_service,

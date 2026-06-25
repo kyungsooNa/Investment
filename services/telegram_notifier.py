@@ -464,3 +464,93 @@ class TelegramReporter:
 
         if current:
             await self._send_message(current)
+
+    @staticmethod
+    def _format_krw_cap(value) -> str:
+        try:
+            won = int(float(value or 0))
+        except (TypeError, ValueError):
+            return "-"
+        if won == 0:
+            return "-"
+        sign = "-" if won < 0 else ""
+        abs_won = abs(won)
+        jo = abs_won / 1_000_000_000_000
+        if jo >= 1:
+            return f"{sign}{jo:,.0f}조"
+        uk = abs_won / 100_000_000
+        return f"{sign}{uk:,.0f}억"
+
+    @staticmethod
+    def _format_usd_cap(value) -> str:
+        try:
+            usd = int(float(value or 0))
+        except (TypeError, ValueError):
+            return "-"
+        if usd <= 0:
+            return "-"
+        trillion = usd / 1_000_000_000_000
+        if trillion >= 1:
+            return f"${trillion:,.2f}T"
+        billion = usd / 1_000_000_000
+        return f"${billion:,.0f}B"
+
+    async def send_market_cap_gap_report(self, report: Dict, report_date: str, trigger_label: str, limit: int = 10):
+        """삼성전자/SK하이닉스와 미국 주요 기업 시총갭 리포트를 전송합니다."""
+        fx = report.get("fx_rate")
+        fx_text = f"{float(fx):,.2f}" if fx else "-"
+        title = (
+            f"📊 <b>시총갭 리포트 ({report_date})</b>\n"
+            f"기준: {html.escape(str(trigger_label), quote=False)} | USD/KRW: {fx_text}\n"
+        )
+        await self._send_message(title)
+
+        korean = report.get("korean") or []
+        us_items = report.get("us") or []
+        comparisons = report.get("comparisons") or []
+
+        summary_lines = ["<b>국내 기준</b>"]
+        for item in korean:
+            name = html.escape(str(item.get("name") or item.get("symbol") or ""), quote=False)
+            symbol = html.escape(str(item.get("symbol") or ""), quote=False)
+            summary_lines.append(
+                f"- {name}({symbol}) {self._format_krw_cap(item.get('market_cap_krw'))}"
+            )
+        summary_lines.append("")
+        summary_lines.append("<b>미국 비교군</b>")
+        for item in us_items[:limit]:
+            name = html.escape(str(item.get("name") or item.get("symbol") or ""), quote=False)
+            symbol = html.escape(str(item.get("symbol") or ""), quote=False)
+            summary_lines.append(
+                f"- {name}({symbol}) {self._format_usd_cap(item.get('market_cap_usd'))} "
+                f"/ {self._format_krw_cap(item.get('market_cap_krw'))}"
+            )
+        await self._send_message("\n".join(summary_lines))
+
+        if not comparisons:
+            await self._send_message("시총갭 계산 불가: 환율 또는 시총 데이터 부족")
+            return
+
+        grouped = {}
+        for row in comparisons:
+            grouped.setdefault(row.get("korean_symbol"), []).append(row)
+
+        for korean_symbol, rows in grouped.items():
+            if not rows:
+                continue
+            korean_name = html.escape(str(rows[0].get("korean_name") or korean_symbol), quote=False)
+            lines = [f"<b>{korean_name} 대비 갭</b>"]
+            for row in rows[:limit]:
+                us_name = html.escape(str(row.get("us_name") or row.get("us_symbol") or ""), quote=False)
+                us_symbol = html.escape(str(row.get("us_symbol") or ""), quote=False)
+                ratio = row.get("ratio")
+                try:
+                    ratio_text = f"{float(ratio):.2f}x"
+                except (TypeError, ValueError):
+                    ratio_text = "-"
+                lines.append(
+                    f"- {us_name}({us_symbol}) "
+                    f"갭:{self._format_krw_cap(row.get('gap_krw'))} "
+                    f"배율:{ratio_text}"
+                )
+            await self._send_message("\n".join(lines))
