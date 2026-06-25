@@ -289,6 +289,9 @@ class ServiceContainer:
                         broker=ctx.broker,
                         logger=ctx.logger,
                     )
+                    # 한국장/미국장 시총갭 리포트는 config 플래그로 개별 on/off (기본 둘 다 on)
+                    kr_gap_enabled = config_dict.get("market_cap_gap_report_kr_enabled", True)
+                    us_gap_enabled = config_dict.get("market_cap_gap_report_us_enabled", True)
                     ctx.market_cap_gap_report_kr_task = MarketCapGapReportTask(
                         market_cap_gap_service=ctx.market_cap_gap_service,
                         telegram_reporter=getattr(ctx, "telegram_reporter", None),
@@ -297,7 +300,7 @@ class ServiceContainer:
                         market_calendar_service=ctx._mcs,
                         market_clock=ctx.market_clock,
                         logger=ctx.logger,
-                    )
+                    ) if kr_gap_enabled else None
                     ctx.market_cap_gap_report_us_task = MarketCapGapReportTask(
                         market_cap_gap_service=ctx.market_cap_gap_service,
                         telegram_reporter=getattr(ctx, "telegram_reporter", None),
@@ -306,7 +309,7 @@ class ServiceContainer:
                         market_calendar_service=None,
                         market_clock=MarketClock.for_us_equities(logger=ctx.logger),
                         logger=ctx.logger,
-                    )
+                    ) if us_gap_enabled else None
                 else:
                     ctx.market_cap_gap_service = None
                     ctx.market_cap_gap_report_kr_task = None

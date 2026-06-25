@@ -417,8 +417,12 @@ class AppConfig(BaseModel):
     paths: Dict[str, str] = Field(default_factory=dict)
 
     # ✅ 필드 추가 (기본값 False 설정)
-    performance_logging: bool = False 
+    performance_logging: bool = False
     performance_threshold: float = 0.1
+
+    # 시총갭 리포트 세션별 on/off (기본 둘 다 on)
+    market_cap_gap_report_kr_enabled: bool = True
+    market_cap_gap_report_us_enabled: bool = True
 
     # Extra fields for anything else in config.yaml
     model_config = {"extra": "allow"}
