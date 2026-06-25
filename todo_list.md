@@ -19,11 +19,11 @@
 순수 코드로 지금 착수 가능한 항목은 제한적이다. 대부분의 P0~P2 잔여는 외부 데이터 확보·KIS 운영 액션에 의존한다.
 
 - **코드 착수 가능 (정책 합의 선행)**
-  - **T-1 키움 테마 REST**(`ka90001`/`ka90002`) — 신규 구현, config 분리부터.
   - **P1 1-6 paper/소액 canary journal 축적** — 무틱 블로커와 독립. journal은 `virtual_trade_service.get_standard_journal_records` ← polling scan + REST 가격 경로로 채워져 틱 비의존. 라이브 런타임 시간만 필요(무틱에 막히는 건 "shadow" 하위 요소뿐, 2-4 parity와 동일 의존).
   - **R-2 비상관 엣지 도입** — 정책 결정 후 구현.
   - **S-9 god class 분리 / 3-4 lifecycle 분해** — 보류 해제(정책 합의 시).
 - **외부 액션 대기 (블로커)**: P2 2-4(KIS 에스컬레이션), P0 0-1(fixture), P1 1-5(microstructure 캡처), P2 2-2(KIS 유량 한도 재확인), P1 1-7(canary 후 정책), 해외 Phase 5(canary 게이팅).
+- **종결**: T-1 키움 테마 REST — **드롭**. 네이버 테마(`ThemeClassificationCollectorService`) 자동 수집으로 분류 데이터 충분, 키움 추가 소스 불필요. (멀티소스 병합 인프라는 `StockClassificationRepository`에 잔존하나 신규 소스 연결 계획 없음.)
 
 ---
 
@@ -96,23 +96,12 @@
 
 ## 테마/분류 데이터
 
-네이버 테마(1차 소스)는 `ThemeClassificationTask` 자동 수집 가동 중(BATCH 모드 장마감 후, 기본 7일 간격). 수동 트리거 `POST /api/background/theme-classification/force-update`. 통합 테마는 source별 원본 보존 후 `normalized_name` 기준 OR 병합.
+네이버 테마(주 소스)는 `ThemeClassificationTask` 자동 수집 가동 중(BATCH 모드 장마감 후, 기본 7일 간격). 수동 트리거 `POST /api/background/theme-classification/force-update`. 분류 데이터는 네이버 단일 소스로 충분 — 키움 등 추가 소스 연동 계획 없음(T-1 드롭).
 
-### T-0. StockEasy 섹터RS taxonomy 참고
+### T-0. StockEasy 섹터RS taxonomy 참고 (선택)
 
-- [ ] StockEasy 종합 RS 화면(`stockeasy.intellio.kr/stock-analysis`)의 섹터/테마 분류를 네이버/키움 통합 테마의 alias/표시명 후보 참고자료로 정리한다. StockEasy 자체를 무단 수집 소스로 고정하지 말고, 실제 구성종목 데이터는 네이버/키움 등 수집 가능한 source에 귀속한다.
+- [ ] StockEasy 종합 RS 화면(`stockeasy.intellio.kr/stock-analysis`)의 섹터/테마 분류를 네이버 테마 alias/표시명 후보 참고자료로 정리한다. StockEasy 자체를 무단 수집 소스로 고정하지 말고, 실제 구성종목 데이터는 네이버 등 수집 가능한 source에 귀속한다.
   - 주요 후보: 반도체소재, 지주사, 메모리, 비메모리/팹리스, 전력기기, 반도체장비, 보험, 건설, 테스트소켓, 유통, 로봇/자동화, 미용기기, 산업기계, 완성차, SW/AI, 자동차부품, 증권, 우주항공, 배터리셀, 통신, 원자력, 양극재, 신재생, 전자장비, 조선기자재, 조선, 타이어, 바이오신약, 방위산업, 음극재/소재, 은행, 정유/화학, 철강/비철, 의료기기, 해운, 여행/레저, 음식료, 패션/의류, 제약, 인터넷/플랫폼, 유틸리티, 리츠/부동산, 게임, CDMO, 화장품, 엔터/미디어.
-
-### T-1. 키움 테마 REST API 연동 [코드 착수 가능]
-
-- [ ] 키움 REST API 사용 신청/인증 설정을 별도 config로 분리(허용 IP, 토큰 발급/갱신, 호출 제한 문서화).
-- [ ] `ka90001`(테마그룹별요청)으로 테마 목록 수집.
-- [ ] `ka90002`(테마구성종목요청)으로 테마별 구성 종목 수집.
-- [ ] 결과는 `source="KIWOOM"`, `category_type="theme"`으로 저장, 네이버 테마와 OR 병합 위해 `raw_group_id`, `raw_name`, `normalized_name`, `code`, `name`, `collected_at` 보존.
-- [ ] 네이버/키움 동일 테마명 차이는 alias 테이블로 정규화(자동 병합보다 명시 alias 우선).
-- [ ] 키움 호출 실패 시 기존 성공 캐시 유지, 테마 주도주 화면에 source·마지막 갱신 시각 노출.
-
-주요 후보 파일: `services/kiwoom_theme_service.py`, `repositories/theme_classification_repository.py`, `config/kiwoom_config.yaml`
 
 ---
 
@@ -160,7 +149,6 @@
    - WebSocket 무틱 ≈55% — **KIS 에스컬레이션**(ETF/우선주 WS 지원 확인 + 무틱 보통주 계정 단위 문의). 해소 전까지 shadow 수집 불가. (P2 2-4)
    - profitability gate 우회 없이 shadow/paper/canary journal로 전략별 실전 근거 축적 (P1 1-6, 라이브 축적)
 2. **코드 착수 가능 (정책 합의 선행)**
-   - 키움 테마 REST 연동 (T-1)
    - 비상관 엣지 도입 여부 정책 결정 후 구현 (R-2)
 3. **외부 운영·데이터 확보 후**
    - KIS REST/WebSocket 유량 한도 재확인 (P2 2-2) · 실전 submit/signing fixture (P0 0-1) · 장중 microstructure 캡처 (P1 1-5)
