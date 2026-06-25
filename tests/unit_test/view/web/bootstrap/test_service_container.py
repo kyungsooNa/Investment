@@ -390,6 +390,36 @@ def test_service_container_wires_overseas_dryrun_us_market_clock(patched_service
     assert task_kwargs["market_clock"].timezone_name == "America/New_York"
 
 
+def test_domestic_active_with_overseas_enabled_builds_dryrun_task(patched_service_container_deps):
+    """active=domestic 이라도 enabled_market_modes 에 overseas_us 가 있으면 dry-run 태스크를 공존 조립한다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()  # market_mode 미설정 → domestic active (국내 전 서비스 조립)
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+
+    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True) as task_cls:
+        ServiceContainer(ctx).run()
+
+    # 국내 active 서비스가 살아 있으면서(국내 fail-close 아님) 해외 dry-run 태스크도 조립된다.
+    assert ctx.stock_query_service is patched_service_container_deps["StockQueryService"].return_value
+    assert ctx.overseas_dryrun_task is task_cls.return_value
+
+
+def test_domestic_active_without_overseas_enabled_skips_dryrun_task(patched_service_container_deps):
+    """overseas_us 가 enabled 에 없으면 dry-run 태스크는 조립되지 않는다(None)."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()  # enabled 미설정 → domestic 단독
+    ctx.overseas_stock_code_repository = MagicMock()
+    ServiceContainer(ctx).run()
+
+    assert ctx.overseas_dryrun_task is None
+
+
 @pytest.mark.asyncio
 async def test_overseas_fx_provider_extracts_rate_from_balance(patched_service_container_deps):
     """배선된 fx_provider 는 broker 잔고 응답에서 USD/KRW 환율을 추출한다(실패 시 None)."""

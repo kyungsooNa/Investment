@@ -78,6 +78,7 @@ from task.background.intraday.opening_position_reconcile_task import OpeningPosi
 from task.background.intraday.pre_market_health_check_task import PreMarketHealthCheckTask
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from view.web.bootstrap.runtime_mode import RuntimeMode
+from view.web.market_mode_utils import is_market_enabled
 
 if TYPE_CHECKING:  # pragma: no cover
     from view.web.web_app_initializer import WebAppContext
@@ -604,51 +605,7 @@ class ServiceContainer:
                 else:
                     ctx.notification_queue_task = None
                 # Phase 3c: 해외 VBO dry-run 파이프라인 (주문 경로 없음 — 실주문 불가).
-                # 한국장 마감(KST)을 일일 트리거로 재사용해 일봉 기반 dry-run 신호를 누적한다.
-                ctx.event_shadow_journal_service = EventShadowJournalService(
-                    log_root="logs/strategies", logger=ctx.logger,
-                )
-                ctx.overseas_candidate_service = None
-                ctx.overseas_vbo_dryrun_service = None
-                ctx.overseas_dryrun_task = None
-                if getattr(ctx, "overseas_stock_code_repository", None) is not None:
-                    overseas_stock_cfg = getattr(ctx.full_config, "overseas_stock", None)
-                    overseas_position_sizing_service = OverseasPositionSizingService(
-                        slot_usd=getattr(overseas_stock_cfg, "dryrun_slot_usd", 1000.0),
-                        max_qty=getattr(overseas_stock_cfg, "dryrun_max_qty", None),
-                        logger=ctx.logger,
-                    )
-                    ctx.overseas_candidate_service = OverseasCandidateService(
-                        overseas_stock_code_repository=ctx.overseas_stock_code_repository,
-                        stock_query_service=ctx.stock_query_service,
-                        logger=ctx.logger,
-                    )
-                    async def _overseas_fx_provider():
-                        # KIS 해외 잔고(읽기 전용)에서 USD/KRW 환율 추출. 실패 시 None → KRW 생략.
-                        try:
-                            resp = await ctx.broker.get_overseas_balance()
-                        except Exception:
-                            return None
-                        return extract_fx_krw_per_usd(getattr(resp, "data", None))
-
-                    ctx.overseas_vbo_dryrun_service = OverseasVBODryRunService(
-                        candidate_service=ctx.overseas_candidate_service,
-                        stock_query_service=ctx.stock_query_service,
-                        shadow_journal=ctx.event_shadow_journal_service,
-                        logger=ctx.logger,
-                        position_sizing_service=overseas_position_sizing_service,
-                        fx_provider=_overseas_fx_provider,
-                    )
-                    # 미국 정규장 마감(16:00 ET) 직후 트리거. 한국 거래 캘린더(mcs)는
-                    # 미국장에 적용되지 않으므로 미주입(None)하고, 미국장 클럭을 주입한다.
-                    ctx.overseas_dryrun_task = OverseasDryRunTask(
-                        dryrun_service=ctx.overseas_vbo_dryrun_service,
-                        shadow_journal=ctx.event_shadow_journal_service,
-                        market_calendar_service=None,
-                        market_clock=MarketClock.for_us_equities(logger=ctx.logger),
-                        logger=ctx.logger,
-                        worker_pool=getattr(ctx, "worker_pool", None),
-                    )
+                self._build_overseas_dryrun_pipeline()
                 return
 
             ctx.oneil_universe_service = OneilUniverseService(
@@ -832,6 +789,73 @@ class ServiceContainer:
                     open_delay_sec=getattr(reconcile_cfg, "open_delay_sec", 60),
                     run_window_min=getattr(reconcile_cfg, "run_window_min", 10),
                 )
+
+            # 해외 VBO dry-run 공존: active=domestic 이라도 enabled_market_modes 에
+            # overseas_us 가 포함되면 국내 active 런과 함께 조립한다. dry-run 태스크는
+            # 미국 정규장 마감(16:30 ET) cron 으로 자체 트리거되므로 한국장 배치와
+            # 타임존이 충돌하지 않는다(주문 경로 없음 — 실주문 불가).
+            if is_market_enabled(ctx, "overseas_us"):
+                self._build_overseas_dryrun_pipeline()
+            else:
+                ctx.overseas_candidate_service = None
+                ctx.overseas_vbo_dryrun_service = None
+                ctx.overseas_dryrun_task = None
         except Exception as e:
             ctx.logger.critical(f"[ServiceBootstrap:Universe] 초기화 실패: {e}", exc_info=True)
             raise
+
+    def _build_overseas_dryrun_pipeline(self) -> None:
+        """해외 VBO dry-run 파이프라인 조립 (주문 경로 없음 — 실주문 불가).
+
+        overseas_us active 분기와 국내 active 공존 경로가 공유한다.
+        `overseas_stock_code_repository` 가 없으면 no-op. shadow 저널은 realtime 경로에서
+        만든 인스턴스를 재사용하고, 없으면(overseas active 등) 새로 만든다.
+        """
+        ctx = self._ctx
+        ctx.overseas_candidate_service = None
+        ctx.overseas_vbo_dryrun_service = None
+        ctx.overseas_dryrun_task = None
+        if getattr(ctx, "overseas_stock_code_repository", None) is None:
+            return
+        if getattr(ctx, "event_shadow_journal_service", None) is None:
+            ctx.event_shadow_journal_service = EventShadowJournalService(
+                log_root="logs/strategies", logger=ctx.logger,
+            )
+        overseas_stock_cfg = getattr(ctx.full_config, "overseas_stock", None)
+        overseas_position_sizing_service = OverseasPositionSizingService(
+            slot_usd=getattr(overseas_stock_cfg, "dryrun_slot_usd", 1000.0),
+            max_qty=getattr(overseas_stock_cfg, "dryrun_max_qty", None),
+            logger=ctx.logger,
+        )
+        ctx.overseas_candidate_service = OverseasCandidateService(
+            overseas_stock_code_repository=ctx.overseas_stock_code_repository,
+            stock_query_service=ctx.stock_query_service,
+            logger=ctx.logger,
+        )
+
+        async def _overseas_fx_provider():
+            # KIS 해외 잔고(읽기 전용)에서 USD/KRW 환율 추출. 실패 시 None → KRW 생략.
+            try:
+                resp = await ctx.broker.get_overseas_balance()
+            except Exception:
+                return None
+            return extract_fx_krw_per_usd(getattr(resp, "data", None))
+
+        ctx.overseas_vbo_dryrun_service = OverseasVBODryRunService(
+            candidate_service=ctx.overseas_candidate_service,
+            stock_query_service=ctx.stock_query_service,
+            shadow_journal=ctx.event_shadow_journal_service,
+            logger=ctx.logger,
+            position_sizing_service=overseas_position_sizing_service,
+            fx_provider=_overseas_fx_provider,
+        )
+        # 미국 정규장 마감(16:00 ET) 직후 트리거. 한국 거래 캘린더(mcs)는
+        # 미국장에 적용되지 않으므로 미주입(None)하고, 미국장 클럭을 주입한다.
+        ctx.overseas_dryrun_task = OverseasDryRunTask(
+            dryrun_service=ctx.overseas_vbo_dryrun_service,
+            shadow_journal=ctx.event_shadow_journal_service,
+            market_calendar_service=None,
+            market_clock=MarketClock.for_us_equities(logger=ctx.logger),
+            logger=ctx.logger,
+            worker_pool=getattr(ctx, "worker_pool", None),
+        )

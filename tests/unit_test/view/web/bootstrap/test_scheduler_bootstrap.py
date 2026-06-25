@@ -127,11 +127,22 @@ def test_overseas_us_registers_dryrun_task(patched_scheduler_deps):
 
 
 def test_domestic_mode_does_not_register_overseas_task(patched_scheduler_deps):
-    ctx = _make_fake_context(RuntimeMode.WEB)  # market_mode 미설정 → domestic
+    ctx = _make_fake_context(RuntimeMode.WEB)  # market_mode 미설정 → domestic, overseas 미활성
     ctx.overseas_dryrun_task = MagicMock(task_name="overseas_vbo_dryrun")
     _run(ctx)
     names = _registered_bg_task_names(patched_scheduler_deps)
     assert "overseas_vbo_dryrun" not in names
+
+
+def test_domestic_active_with_overseas_enabled_registers_dryrun_task(patched_scheduler_deps):
+    """active=domestic 이라도 enabled_market_modes 에 overseas_us 가 있으면 공존 등록한다."""
+    ctx = _make_fake_context(RuntimeMode.WEB)
+    ctx.market_mode = "domestic"
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_dryrun_task = MagicMock(task_name="overseas_vbo_dryrun")
+    _run(ctx)
+    names = _registered_bg_task_names(patched_scheduler_deps)
+    assert "overseas_vbo_dryrun" in names
 
 
 def test_trading_only_registers_intraday_and_watchdog(patched_scheduler_deps):

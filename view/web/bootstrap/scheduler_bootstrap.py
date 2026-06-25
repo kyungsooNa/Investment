@@ -17,6 +17,7 @@ from interfaces.schedulable_task import TaskPriority
 from scheduler.background_scheduler import BackgroundScheduler
 from scheduler.foreground_scheduler import ForegroundScheduler
 from view.web.bootstrap.runtime_mode import RuntimeMode
+from view.web.market_mode_utils import is_market_enabled
 
 if TYPE_CHECKING:  # pragma: no cover
     from view.web.web_app_initializer import WebAppContext
@@ -43,8 +44,10 @@ class SchedulerBootstrap:
                 self._register_trading_tasks()
             if mode & RuntimeMode.BATCH:
                 self._register_batch_tasks()
-            # Phase 3c: overseas_us 모드는 batch 가 꺼져 있으므로 dry-run 태스크를 별도 등록.
-            if getattr(ctx, "market_mode", "domestic") == "overseas_us":
+            # Phase 3c: overseas_us 가 enabled_market_modes 에 포함되면 dry-run 태스크를
+            # 별도 등록한다. active=overseas_us(batch off) 와 active=domestic 공존 양쪽을
+            # 모두 포괄한다. 미국장 마감 cron 으로 자체 트리거되므로 KST 배치와 무관.
+            if is_market_enabled(ctx, "overseas_us"):
                 self._register_overseas_tasks()
             # websocket_watchdog: WEB | TRADING 어느 한쪽이라도 켜져 있으면 한 번만 등록.
             if mode & (RuntimeMode.WEB | RuntimeMode.TRADING):
