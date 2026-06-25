@@ -659,7 +659,7 @@ class TestWebAppContextInitialization:
     async def test_initialize_scheduler_registers_strategies(self, mock_config, test_logger):
         """
         initialize_scheduler 호출 시 스케줄러가 생성되고
-        7개 전략이 등록되는지 검증.
+        8개 전략이 등록되는지 검증.
         """
         from view.web.web_app_initializer import WebAppContext
         from scheduler.strategy_scheduler import StrategyScheduler
@@ -691,11 +691,11 @@ class TestWebAppContextInitialization:
             assert ctx.scheduler is not None
             assert isinstance(ctx.scheduler, StrategyScheduler)
 
-            # 등록된 전략 개수 검증 (7개: OneilSqueezeBreakout, OneilPocketPivot, HighTightFlag, FirstPullback,
-            # LarryWilliamsVBO, RSI2Pullback, LarryWilliamsCB)
+            # 등록된 전략 개수 검증 (8개: OneilSqueezeBreakout, OneilPocketPivot, HighTightFlag, FirstPullback,
+            # LarryWilliamsVBO, RSI2Pullback, LarryWilliamsCB, InverseEtfRegime)
             # VolumeBreakoutLive / ProgramBuyFollow / TraditionalVolumeBreakout 은 스케줄러 등록에서 제거됨
             registered = ctx.scheduler.get_status()
-            assert len(registered["strategies"]) == 7
+            assert len(registered["strategies"]) == 8
 
     @pytest.mark.asyncio
     async def test_initialize_then_switch_environment(self, mock_config, test_logger):

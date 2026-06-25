@@ -20,6 +20,7 @@ STRATEGY_CLASS_NAMES = [
     "LarryWilliamsVBOStrategy",
     "RSI2PullbackStrategy",
     "LarryWilliamsChannelBreakoutStrategy",
+    "InverseEtfRegimeStrategy",
 ]
 
 
@@ -89,13 +90,31 @@ def test_strategy_factory_wires_live_expansion_gate_with_journal_provider(patche
     assert gate._enabled is True
 
 
-def test_strategy_factory_registers_seven_strategies(patched_factory_deps):
+def test_strategy_factory_registers_eight_strategies(patched_factory_deps):
     from view.web.bootstrap.strategy_factory import StrategyFactory
 
     ctx = _make_fake_context()
     StrategyFactory(ctx).build()
 
-    assert ctx.scheduler.register.call_count == 7
+    assert ctx.scheduler.register.call_count == 8
+
+
+def test_strategy_factory_registers_inverse_etf_sleeve_disabled(patched_factory_deps):
+    """R-2 인버스 ETF 슬리브는 등록되되 수동 활성화 대기(enabled=False)이며
+    단일 종목(max_positions=1)·오버나잇 허용(force_exit_on_close=False)으로 배선된다."""
+    from view.web.bootstrap.strategy_factory import StrategyFactory
+
+    ctx = _make_fake_context()
+    StrategyFactory(ctx).build()
+
+    inverse_strategy = patched_factory_deps["InverseEtfRegimeStrategy"].return_value
+    registered_configs = [call.args[0] for call in ctx.scheduler.register.call_args_list]
+    cfg = next(c for c in registered_configs if c.strategy is inverse_strategy)
+
+    assert cfg.enabled is False
+    assert cfg.max_positions == 1
+    assert cfg.force_exit_on_close is False
+    assert cfg.allow_pyramiding is False
 
 
 def test_strategy_factory_enables_vbo_event_shadow_without_live_trading(patched_factory_deps):
@@ -185,5 +204,5 @@ def test_strategy_factory_builds_when_trading_enabled_via_combination(patched_fa
     StrategyFactory(ctx).build()
 
     assert ctx.scheduler is patched_factory_deps["StrategyScheduler"].return_value
-    assert ctx.scheduler.register.call_count == 7
+    assert ctx.scheduler.register.call_count == 8
     patched_factory_deps["StrategySchedulerTaskAdapter"].assert_called_once()
