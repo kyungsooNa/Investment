@@ -120,7 +120,8 @@ class SchedulerBootstrap:
 
     def _register_overseas_tasks(self) -> None:
         # 해외 VBO dry-run (주문 경로 없음). 미구성 시 _register 가 no-op.
-        self._register(self._optional_task("overseas_dryrun_task"), TaskPriority.LOW)
+        # 미국장 16:30 ET cron 을 자체 AfterMarketLoop 로 사용하므로 KST TimeDispatcher 에 등록하지 않는다.
+        self._register(self._optional_task("overseas_dryrun_task"))
 
     def _register_websocket_watchdog(self) -> None:
         # WebSocket watchdog 은 TimeDispatcher 등록 대상이 아님 (continuous monitor).

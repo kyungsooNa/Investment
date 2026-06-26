@@ -28,6 +28,13 @@ _SCHEDULE_TYPES = {
     "전일기준주도주_생성":  "after_market",
     "newhigh":             "after_market",
     "theme_classification": "after_market",
+    "market_cap_gap_report_kr": "after_market",
+    "market_cap_gap_report_us": "after_market",
+    "overseas_vbo_dryrun": "after_market",
+    "after_market_reconcile": "after_market",
+    "post_market_replay_audit": "after_market",
+    "strategy_log_report": "after_market",
+    "log_cleanup": "after_market",
     "notification_queue_task":  "always_on",
     "program_trading_monitor":  "always_on",
 }
@@ -39,6 +46,24 @@ _SCHEDULE_ORDER = {
     "after_market": 3,
     "unknown": 99,
 }
+
+
+def _task_trigger_info(task) -> dict | None:
+    """APScheduler cron 기반 task의 트리거 정보를 상태 API용으로 정규화한다."""
+    if task is None:
+        return None
+    timezone = getattr(task, "_loop_timezone", None)
+    hour = getattr(task, "_loop_cron_hour", None)
+    minute = getattr(task, "_loop_cron_minute", None)
+    if not isinstance(timezone, str):
+        return None
+    if not isinstance(hour, int) or not isinstance(minute, int):
+        return None
+    return {
+        "timezone": timezone,
+        "hour": hour,
+        "minute": minute,
+    }
 
 
 @router.get("/cache/status")
@@ -448,6 +473,7 @@ async def get_background_status():
             "schedule_type": schedule_type,
             "schedule_order": _SCHEDULE_ORDER.get(schedule_type, 99),
             "delay_sec": delays.get(name, 0),
+            "trigger": _task_trigger_info(task),
             "progress": progress,
         })
 

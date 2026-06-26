@@ -857,5 +857,6 @@ class ServiceContainer:
             market_calendar_service=None,
             market_clock=MarketClock.for_us_equities(logger=ctx.logger),
             logger=ctx.logger,
-            worker_pool=getattr(ctx, "worker_pool", None),
+            notification_service=ctx.notification_service,
+            worker_pool=None,
         )

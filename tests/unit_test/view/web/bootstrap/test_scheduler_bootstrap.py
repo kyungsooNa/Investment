@@ -143,6 +143,10 @@ def test_domestic_active_with_overseas_enabled_registers_dryrun_task(patched_sch
     _run(ctx)
     names = _registered_bg_task_names(patched_scheduler_deps)
     assert "overseas_vbo_dryrun" in names
+    dispatched_names = [
+        call.args[0] for call in ctx.time_dispatcher.register_task.call_args_list
+    ]
+    assert "overseas_vbo_dryrun" not in dispatched_names
 
 
 def test_trading_only_registers_intraday_and_watchdog(patched_scheduler_deps):
