@@ -79,6 +79,29 @@ def test_section_renders_blocking_reason_in_korean():
     assert "순손익 음수" in section
 
 
+def test_section_normalizes_strategy_aliases_and_excludes_manual():
+    vts = MagicMock()
+    vts.get_standard_journal_records.return_value = [
+        _sold("래리윌리엄스VBO", 3.0, 300.0),
+        _sold("larry_williams_vbo", 4.0, 400.0),
+        _sold("LarryWilliamsVBO", 5.0, 500.0),
+        _sold("수동매매", 10.0, 1000.0),
+    ]
+    svc = StrategyLogReportService(
+        log_dir=".",
+        virtual_trade_service=vts,
+        profitability_gate_config=StrategyProfitabilityGateConfig(min_trades=2),
+    )
+
+    section = svc._build_profitability_gate_section("20260418")
+
+    assert section is not None
+    assert section.count("래리윌리엄스VBO:") == 1
+    assert "거래 3/2" in section
+    assert "LarryWilliamsVBO:" not in section
+    assert "수동매매" not in section
+
+
 def test_section_none_without_service():
     svc = StrategyLogReportService(log_dir=".")
     assert svc._build_profitability_gate_section("20260418") is None
