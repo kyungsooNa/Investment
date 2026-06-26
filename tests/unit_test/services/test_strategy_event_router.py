@@ -35,6 +35,12 @@ def _market_clock(is_open: bool = True):
     return mc
 
 
+def _time_only_market_clock(is_open: bool = True):
+    mc = MagicMock()
+    mc.is_market_operating_hours = MagicMock(return_value=is_open)
+    return mc
+
+
 def _kill_switch(allowed: bool = True):
     ks = MagicMock()
     ks.check_strategies_allowed = AsyncMock(return_value=(allowed, "ok"))
@@ -65,6 +71,18 @@ async def test_subscribe_same_strategy_replaces_evaluator_not_duplicates():
     assert len(results) == 1
     old_eval.assert_not_called()
     new_eval.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_market_clock_without_calendar_method_uses_operating_hours():
+    router = StrategyEventRouter(market_clock=_time_only_market_clock(is_open=True))
+    evaluator = AsyncMock(return_value=_signal("005930", "VBO"))
+    router.subscribe("005930", strategy_name="VBO", evaluator=evaluator)
+
+    results = await router.on_price_tick("005930", {"price": "10000"})
+
+    assert len(results) == 1
+    evaluator.assert_awaited_once()
 
 
 @pytest.mark.asyncio
