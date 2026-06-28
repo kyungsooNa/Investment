@@ -267,13 +267,13 @@ def test_date_rollover_purges_stale_date_keys():
     scheduler._strategy_failure_alert_keys = {old_key, today_key}
     scheduler._reconciled_dates = {"2026-06-11", "2026-06-12"}
     scheduler._force_exit_done_date = "2026-06-11"
-    scheduler._force_exit_done = {"전략"}
+    scheduler._force_exit_progress = {"전략": 1.0}
 
     scheduler._sync_force_exit_done_date(datetime(2026, 6, 12, 9, 0, 0))
 
     assert scheduler._strategy_failure_alert_keys == {today_key}
     assert scheduler._reconciled_dates == {"2026-06-12"}
-    assert scheduler._force_exit_done == set()
+    assert scheduler._force_exit_progress == {}
 
 
 # ── S-9. 시그널 이력 복원 시 trace_id 유지 (S-5 잔여) ──

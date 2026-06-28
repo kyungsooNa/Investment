@@ -159,5 +159,5 @@ class TestTimeWindowGate(unittest.IsolatedAsyncioTestCase):
             force_exit_on_close=True,
         )
         await scheduler._run_strategy(cfg, force_exit_only=True)
-        scheduler._force_liquidate_strategy.assert_awaited_once_with(cfg)
+        scheduler._force_liquidate_strategy.assert_awaited_once_with(cfg, sell_fraction=1.0)
         strategy._scan_mock.assert_not_called()  # force_exit 경로는 어차피 scan 안 함
