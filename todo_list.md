@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-06-25 (완료·해소 항목 정리, 남은 실행 항목 중심으로 슬림화)
+최종 업데이트: 2026-06-28 (S-9 god class 분리 착수 반영)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -136,7 +136,7 @@
 
 ### 보류 — 정책 합의 후 재승격
 
-- [ ] **S-9 god class 분리** (EventShadowManager 등, scheduler shadow 블록 ≈330줄) — 테스트 ~26곳이 내부 표면 직접 잠금 + shadow 코드 거취가 **2-4 PR-3 판정**에 달림. parity 판정 후 재평가(Go=분리 선행 / No-Go=shadow 삭제로 종결).
+- [x] **S-9 god class 분리** — `EventShadowManager`(`scheduler/event_shadow_manager.py`)로 shadow 블록 ~327줄 추출 완료(2026-06-28). scheduler 2432→2097줄. entry/exit 구독·evaluator·journal record/flush·teardown 이동, 테스트 ~44곳 receiver를 `_event_shadow_manager`로 갱신(동작 불변, unit 6505 + integration 245 green). 분리로 2-4 PR-3 No-Go(삭제) 시에도 단일 파일 제거로 종결 가능.
 - [ ] **3-4 active strategy lifecycle 7단계 분해**(`get_watchlist`/`filter_candidates`/`evaluate_entries_bounded`/`evaluate_exits_bounded`/`emit_metrics`) — 현재 `scan`/`check_exits`에 묻혀 있어 대형 리팩토링. checklist 테스트는 적용 완료. 공통 흐름이 더 쌓이면 재승격.
 - [ ] 기타: tiered force-exit window / RiskGate 실패 주문 cap 정책 / 전략별 min trading value·market cap 하한 / 매도 RiskGate 우회·KillSwitch auto-trigger / volatility hard gate / 성과 저하 자동 해제·수량 축소 / WebSocket health probe 자동화 / 레거시 전략 백테스트 통합 여부.
 

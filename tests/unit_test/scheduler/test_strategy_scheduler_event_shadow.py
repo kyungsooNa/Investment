@@ -62,7 +62,7 @@ async def test_refresh_subscriptions_adds_codes_from_candidate_set():
     scheduler = _make_scheduler(event_router=router, event_shadow_journal=journal)
 
     cfg = _make_strategy_cfg("VBO", event_driven_shadow=True, codes=["005930", "000660"])
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
 
     assert router.subscribe.call_count == 2
     subscribed_codes = sorted(call.args[0] for call in router.subscribe.call_args_list)
@@ -80,12 +80,12 @@ async def test_refresh_subscriptions_diffs_against_previous_set():
     scheduler = _make_scheduler(event_router=router, event_shadow_journal=MagicMock())
 
     cfg = _make_strategy_cfg("VBO", event_driven_shadow=True, codes=["005930", "000660"])
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
     router.subscribe.reset_mock()
 
     # 다음 scan: 005930 빠지고 035720 추가
     cfg.strategy.current_candidate_codes.return_value = ["000660", "035720"]
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
 
     router.unsubscribe.assert_called_once_with("005930", "VBO")
     router.subscribe.assert_called_once()
@@ -98,7 +98,7 @@ async def test_refresh_subscriptions_noop_when_flag_off():
     scheduler = _make_scheduler(event_router=router, event_shadow_journal=MagicMock())
 
     cfg = _make_strategy_cfg("VBO", event_driven_shadow=False, codes=["005930"])
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
 
     router.subscribe.assert_not_called()
     router.unsubscribe.assert_not_called()
@@ -111,7 +111,7 @@ async def test_refresh_subscriptions_noop_when_router_missing():
 
     cfg = _make_strategy_cfg("VBO", event_driven_shadow=True, codes=["005930"])
     # router 없이도 예외 없이 종료해야 한다
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
 
 
 @pytest.mark.asyncio
@@ -127,7 +127,7 @@ async def test_refresh_subscriptions_syncs_price_subscription_category():
     )
 
     cfg = _make_strategy_cfg("래리윌리엄스VBO", event_driven_shadow=True, codes=["005930", "000660"])
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
 
     price_sub.sync_subscriptions.assert_awaited_once_with(
         ["000660", "005930"],
@@ -146,7 +146,7 @@ async def test_refresh_subscriptions_writes_status_record_to_daily_jsonl(tmp_pat
     scheduler = _make_scheduler(event_router=router, event_shadow_journal=journal)
 
     cfg = _make_strategy_cfg("래리윌리엄스VBO", event_driven_shadow=True, codes=["005930", "000660"])
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
 
     path = tmp_path / "event_shadow" / "20260520.jsonl"
     assert path.exists()
@@ -179,7 +179,7 @@ async def test_refresh_subscriptions_attaches_tick_ingest_stats(tmp_path):
     )
 
     cfg = _make_strategy_cfg("래리윌리엄스VBO", event_driven_shadow=True, codes=["005930", "000660"])
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
 
     price_stream.tick_ingest_stats_snapshot.assert_called_once_with(["000660", "005930"])
     path = tmp_path / "event_shadow" / "20260520.jsonl"
@@ -202,7 +202,7 @@ async def test_refresh_subscriptions_omits_tick_ingest_when_no_price_stream(tmp_
     scheduler = _make_scheduler(event_router=router, event_shadow_journal=journal)
 
     cfg = _make_strategy_cfg("VBO", event_driven_shadow=True, codes=["005930"])
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
 
     path = tmp_path / "event_shadow" / "20260520.jsonl"
     records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
@@ -224,7 +224,7 @@ async def test_shadow_evaluator_records_signal_and_returns_none():
     cfg = _make_strategy_cfg("VBO", event_driven_shadow=True, codes=["005930"])
     cfg.strategy.evaluate_single = AsyncMock(return_value=sig)
 
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
     journal.record.reset_mock()
     journal.flush_to_file.reset_mock()
     evaluator = router.subscribe.call_args.kwargs["evaluator"]
@@ -258,7 +258,7 @@ async def test_shadow_record_flush_offloaded_to_thread():
     cfg = _make_strategy_cfg("VBO", event_driven_shadow=True, codes=["005930"])
     cfg.strategy.evaluate_single = AsyncMock(return_value=sig)
 
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
     evaluator = router.subscribe.call_args.kwargs["evaluator"]
 
     with patch("asyncio.to_thread", new_callable=AsyncMock) as to_thread:
@@ -278,7 +278,7 @@ async def test_shadow_evaluator_does_not_record_when_no_signal():
     cfg = _make_strategy_cfg("VBO", event_driven_shadow=True, codes=["005930"])
     cfg.strategy.evaluate_single = AsyncMock(return_value=None)
 
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
     journal.record.reset_mock()
     journal.flush_to_file.reset_mock()
     evaluator = router.subscribe.call_args.kwargs["evaluator"]
@@ -304,7 +304,7 @@ async def test_shadow_evaluator_persists_signal_to_event_shadow_jsonl(tmp_path):
     cfg = _make_strategy_cfg("VBO", event_driven_shadow=True, codes=["005930"])
     cfg.strategy.evaluate_single = AsyncMock(return_value=sig)
 
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
     evaluator = router.subscribe.call_args.kwargs["evaluator"]
     await evaluator("005930", {"price": "75000", "open": 74000.0})
 
@@ -327,7 +327,7 @@ async def test_exit_shadow_evaluator_flushes_record_to_daily_jsonl():
     strategy.name = "VBO"
     strategy.evaluate_exit_single = AsyncMock(return_value=sell)
 
-    evaluator = scheduler._build_exit_shadow_evaluator(
+    evaluator = scheduler._event_shadow_manager._build_exit_shadow_evaluator(
         strategy,
         {"005930": {"code": "005930", "buy_price": 71000, "qty": 1}},
     )

@@ -112,14 +112,14 @@ async def test_live_tick_flows_to_entry_shadow_jsonl(tmp_path):
     scheduler = _make_scheduler(clock, event_router=None, event_shadow_journal=journal)
     # 실제 router/price_stream 으로 교체 (scheduler 는 evaluator 빌드/기록 경로용).
     router, price_stream = _build_pipeline(clock, journal)
-    scheduler._event_router = router
+    scheduler._event_shadow_manager._event_router = router
 
     # Open 74,000 + Range 2,000 × K 0.5 = Target 75,000.
     vbo = _make_vbo(clock, candidates=["005930"], ranges={"005930": 2000.0})
     cfg = StrategySchedulerConfig(strategy=vbo, event_driven_shadow=True)
 
     # scan 직후 배선과 동일: 후보를 router 에 구독 + (price_sub None 이라) 가격 sync no-op.
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
     assert "래리윌리엄스VBO" in router.subscribers_for("005930")
 
     # 실제 KIS realtime_price 필드 모양의 돌파 틱 (현재가 == Target).
@@ -160,11 +160,11 @@ async def test_below_target_tick_writes_no_entry_record(tmp_path):
     journal = EventShadowJournalService(log_root=tmp_path)
     scheduler = _make_scheduler(clock, event_router=None, event_shadow_journal=journal)
     router, price_stream = _build_pipeline(clock, journal)
-    scheduler._event_router = router
+    scheduler._event_shadow_manager._event_router = router
 
     vbo = _make_vbo(clock, candidates=["005930"], ranges={"005930": 2000.0})
     cfg = StrategySchedulerConfig(strategy=vbo, event_driven_shadow=True)
-    await scheduler._refresh_event_shadow_subscriptions(cfg)
+    await scheduler._event_shadow_manager._refresh_event_shadow_subscriptions(cfg)
 
     price_stream.on_price_tick({
         "유가증권단축종목코드": "005930",
@@ -188,7 +188,7 @@ async def test_live_tick_flows_to_exit_shadow_jsonl(tmp_path):
     journal = EventShadowJournalService(log_root=tmp_path)
     scheduler = _make_scheduler(clock, event_router=None, event_shadow_journal=journal)
     router, price_stream = _build_pipeline(clock, journal)
-    scheduler._event_router = router
+    scheduler._event_shadow_manager._event_router = router
 
     vbo = _make_vbo(clock, candidates=[], ranges={})
     holdings_by_code = {
@@ -196,7 +196,7 @@ async def test_live_tick_flows_to_exit_shadow_jsonl(tmp_path):
     }
     # exit evaluator 는 holdings 를 closure 로 받는다(= _refresh_exit_shadow_subscriptions
     # 가 vts 조회 후 빌드하는 것과 동일 형태). vts mock 부담을 피해 직접 빌드/구독한다.
-    evaluator = scheduler._build_exit_shadow_evaluator(vbo, holdings_by_code)
+    evaluator = scheduler._event_shadow_manager._build_exit_shadow_evaluator(vbo, holdings_by_code)
     router.subscribe("005930", strategy_name="래리윌리엄스VBO__exit", evaluator=evaluator)
 
     # 80,000 매수 대비 75,000 → net 손절(-3%)보다 큰 손실 → SELL.
