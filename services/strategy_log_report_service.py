@@ -156,6 +156,19 @@ _STRATEGY_ALIAS_TO_CANONICAL = {
     "거래량돌파(전통)": "TraditionalVolumeBreakout",
 }
 
+_STRATEGY_CANONICAL_TO_ID = {
+    "OneilSqueezeBreakout": "oneil_squeeze_breakout",
+    "OneilPocketPivot": "oneil_pocket_pivot",
+    "HighTightFlag": "high_tight_flag",
+    "FirstPullback": "first_pullback",
+    "LarryWilliamsVBO": "larry_williams_vbo",
+    "RSI2Pullback": "rsi2_pullback",
+    "LarryWilliamsCB": "larry_williams_cb",
+    "ProgramBuyFollow": "program_buy_follow",
+    "TraditionalVolumeBreakout": "traditional_volume_breakout",
+    "VolumeBreakoutLive": "volume_breakout_live",
+}
+
 
 def _strategy_alias_key(value: Any) -> str:
     return re.sub(r"\s+", "", str(value or "").strip()).casefold()
@@ -190,10 +203,14 @@ def _strategy_metric_key(value: Any) -> str:
     raw = str(value or "").strip()
     if not raw:
         return ""
-    if _strategy_alias_key(raw) in _NON_STRATEGY_JOURNAL_KEYS:
+    alias_key = _strategy_alias_key(raw)
+    if alias_key in _NON_STRATEGY_JOURNAL_KEYS:
         return ""
 
-    strategy_id = STRATEGY_IDENTITY_RESOLVER.to_id(raw)
+    canonical = _STRATEGY_CANONICAL_BY_KEY.get(alias_key)
+    strategy_id = _STRATEGY_CANONICAL_TO_ID.get(canonical or "")
+    if not strategy_id:
+        strategy_id = STRATEGY_IDENTITY_RESOLVER.to_id(raw)
     if STRATEGY_IDENTITY_RESOLVER.is_known_id(strategy_id):
         if STRATEGY_IDENTITY_RESOLVER.get_status(strategy_id) != StrategyStatus.ACTIVE:
             return ""
@@ -959,6 +976,9 @@ class StrategyLogReportService:
             live_records = self._virtual_trade_service.get_standard_journal_records() or []
         except Exception:
             return None
+        if not live_records:
+            return None
+        live_records = _normalize_strategy_metric_records(live_records)
         if not live_records:
             return None
 

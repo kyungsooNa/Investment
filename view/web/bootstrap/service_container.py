@@ -386,7 +386,7 @@ class ServiceContainer:
                     logger=ctx.logger,
                 )
                 ctx.strategy_event_router = StrategyEventRouter(
-                    market_clock=ctx.market_clock,
+                    market_clock=ctx._mcs,
                     kill_switch_service=ctx.kill_switch_service,
                     logger=ctx.logger,
                     throttle_sec=0.1,  # Q5: evaluator burst 흡수만, trigger crossing 보장.
