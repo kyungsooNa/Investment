@@ -858,4 +858,27 @@ async function savePositionSizingLimits() {
     }
 }
 
+// ── 서버 프로세스 종료 ───────────────────────────────────────
+async function shutdownServer(btn) {
+    if (!confirm('웹 서버 프로세스를 종료합니다.\n종료 후에는 터미널에서 다시 실행해야 합니다.\n\n계속하시겠습니까?')) return;
+    const msgEl = document.getElementById('shutdown-msg');
+    if (btn) btn.disabled = true;
+    if (msgEl) { msgEl.textContent = '종료 요청 중...'; msgEl.style.color = 'var(--text-secondary, #888)'; }
+    try {
+        const res = await fetch('/api/system/shutdown', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success) {
+            if (msgEl) { msgEl.textContent = '서버를 종료합니다. 잠시 후 연결이 끊어집니다.'; msgEl.style.color = 'var(--danger-color, #f44336)'; }
+            if (typeof showToast === 'function') showToast('서버 종료 요청을 전송했습니다.', 'success');
+        } else {
+            if (btn) btn.disabled = false;
+            if (msgEl) { msgEl.textContent = '종료 실패: ' + (data.detail || JSON.stringify(data)); msgEl.style.color = 'var(--danger-color, #f44336)'; }
+        }
+    } catch (e) {
+        // 서버가 즉시 종료되면 fetch 가 네트워크 에러로 끝날 수 있다 — 정상 종료로 간주.
+        if (msgEl) { msgEl.textContent = '서버 연결이 종료되었습니다.'; msgEl.style.color = 'var(--danger-color, #f44336)'; }
+        if (typeof showToast === 'function') showToast('서버가 종료되었습니다.', 'success');
+    }
+}
+
 document.addEventListener('DOMContentLoaded', startSystemPolling);
