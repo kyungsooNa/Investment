@@ -299,6 +299,37 @@ def test_get_data_quality_history_missing_service(web_client, mock_web_ctx):
     assert response.json() == {"success": True, "data": []}
 
 
+# ── POST /api/system/shutdown ───────────────────────────────────────────────
+
+
+def test_shutdown_server_schedules_termination(web_client, mock_web_ctx, monkeypatch):
+    """종료 엔드포인트는 200으로 응답하고 프로세스 종료를 예약한다(실제 종료는 훅으로 분리)."""
+    from view.web.routes import system
+
+    called = {}
+    monkeypatch.setattr(system, "_schedule_shutdown", lambda *a, **k: called.setdefault("hit", True))
+
+    response = web_client.post("/api/system/shutdown")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert called.get("hit") is True
+
+
+def test_terminate_process_falls_back_to_os_exit(monkeypatch):
+    """os.kill 이 실패하면 os._exit 로 강제 종료한다(테스트에서는 호출만 검증)."""
+    from view.web.routes import system
+
+    monkeypatch.setattr(system.os, "kill", MagicMock(side_effect=OSError("no signal")))
+    exit_called = {}
+    monkeypatch.setattr(system.os, "_exit", lambda code: exit_called.setdefault("code", code))
+
+    system._terminate_process()
+
+    assert exit_called.get("code") == 0
+
+
 # ── GET /api/background/status ──────────────────────────────────────────────
 
 

@@ -2,6 +2,9 @@
 시스템 상태 및 캐시 모니터링 API 엔드포인트.
 """
 import asyncio
+import os
+import signal
+import threading
 import time
 from fastapi import APIRouter, HTTPException, Query
 from repositories.streaming_stock_repo import StreamingType
@@ -374,6 +377,38 @@ def get_data_quality_history(
         except Exception:
             pass
     return {"success": True, "data": []}
+
+
+# ── 서버 프로세스 종료 (UI 종료 버튼) ────────────────────────────────────
+
+_SHUTDOWN_DELAY_SEC = 0.5
+
+
+def _terminate_process() -> None:
+    """현재 웹 서버 프로세스를 종료한다.
+
+    uvicorn 메인 스레드의 시그널 핸들러를 깨워 종료를 유도한다. Windows 는 os.kill 이
+    SIGINT 를 지원하지 않으므로 SIGTERM 으로 대체하고, 둘 다 실패하면 os._exit 로 강제 종료한다.
+    """
+    sig = signal.SIGTERM if os.name == "nt" else signal.SIGINT
+    try:
+        os.kill(os.getpid(), sig)
+    except (ValueError, OSError, AttributeError):
+        os._exit(0)
+
+
+def _schedule_shutdown(delay_sec: float = _SHUTDOWN_DELAY_SEC) -> None:
+    """HTTP 응답이 먼저 전송되도록 약간의 지연 후 프로세스를 종료하도록 예약한다."""
+    timer = threading.Timer(delay_sec, _terminate_process)
+    timer.daemon = True
+    timer.start()
+
+
+@router.post("/system/shutdown")
+async def shutdown_server():
+    """웹 서버 프로세스를 종료한다. 종료 후에는 터미널에서 다시 실행해야 한다."""
+    _schedule_shutdown()
+    return {"success": True, "message": "서버를 종료합니다. 잠시 후 연결이 끊어집니다."}
 
 
 # 1. 동기(def) 함수를 비동기(async def) 함수로 변경하여 이벤트 루프 데드락 방지
