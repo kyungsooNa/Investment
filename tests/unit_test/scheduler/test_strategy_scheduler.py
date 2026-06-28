@@ -1131,8 +1131,8 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         with patch.object(scheduler, '_force_liquidate_strategy', new_callable=AsyncMock) as mock_liq:
             await scheduler._run_strategy(config, force_exit_only=True)
 
-            # _force_liquidate_strategy가 호출되어야 함
-            mock_liq.assert_awaited_once_with(config)
+            # _force_liquidate_strategy가 호출되어야 함 (기본 force_exit_fraction=1.0 → 전량)
+            mock_liq.assert_awaited_once_with(config, sell_fraction=1.0)
 
     async def test_run_strategy_force_exit_sells_all_holdings(self):
         """force_exit_only=True 시 check_exits와 무관하게 보유 종목 전량이 시장가 매도되는지 테스트.
@@ -1738,10 +1738,10 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
                     pass
 
             # 전략 A는 강제 청산 모드(True)로 실행되어야 함
-            mock_run.assert_any_call(config_a, force_exit_only=True)
+            mock_run.assert_any_call(config_a, force_exit_only=True, force_exit_fraction=0.5)
 
             # 전략 B는 일반 모드(False)로 실행되어야 함 (쿨다운 이후 두 번째 루프에서 실행)
-            mock_run.assert_any_call(config_b, force_exit_only=False)
+            mock_run.assert_any_call(config_b, force_exit_only=False, force_exit_fraction=1.0)
 
     async def test_loop_skips_strategy_after_order_cutoff(self):
         """주문 컷오프 이후에는 일반 실행과 강제청산 모두 시그널을 만들지 않는다."""
@@ -1863,6 +1863,97 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # 에러 로그가 호출되었는지 확인
         scheduler._logger.error.assert_called()
     
+    def test_pending_force_exit_tier_progression(self):
+        """tiered force-exit: 마감 잔여시간/진행률에 따른 tier 선택과 catch-up 동작."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        scheduler._force_exit_progress = {}
+
+        # 윈도우 밖(T-40): 발화 tier 없음
+        assert scheduler._pending_force_exit_tier("S", 40) is None
+
+        # T-25: 1단계(30분,0.5)만 발화 → 현재 보유의 50% 매도
+        assert scheduler._pending_force_exit_tier("S", 25) == (0.5, 0.5)
+
+        # 진행률 0.5 기록 후 T-25 재호출: 동일 tier 재발화 안 함
+        scheduler._force_exit_progress["S"] = 0.5
+        assert scheduler._pending_force_exit_tier("S", 25) is None
+
+        # T-10: 2단계(15분,1.0) 발화 → 잔여 전량(fraction=1.0)
+        target, fraction = scheduler._pending_force_exit_tier("S", 10)
+        assert target == 1.0 and abs(fraction - 1.0) < 1e-9
+
+        # 진행률 1.0(전량 완료) 후: 더 이상 발화 없음
+        scheduler._force_exit_progress["S"] = 1.0
+        assert scheduler._pending_force_exit_tier("S", 10) is None
+
+        # 1단계를 놓치고 T-10에 처음 진입: 곧장 누적 1.0 전량으로 catch-up
+        assert scheduler._pending_force_exit_tier("LATE", 10) == (1.0, 1.0)
+
+    async def test_force_liquidate_partial_fraction_sells_floor(self):
+        """sell_fraction<1.0 시 floor(qty*fraction) 수량만 매도한다."""
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
+        scheduler._sqs.get_current_price = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {"stck_prpr": "60000"}}
+            )
+        )
+        config = StrategySchedulerConfig(
+            strategy=MockStrategy(name="T"), force_exit_on_close=True, order_qty=10
+        )
+        vm.get_holds_by_strategy.return_value = [
+            {"code": "005930", "name": "S", "buy_price": 50000, "qty": 10}
+        ]
+
+        await scheduler._force_liquidate_strategy(config, sell_fraction=0.5)
+
+        oes.handle_place_sell_order.assert_called_once_with(
+            "005930", 0, 5, exchange=Exchange.KRX,
+            source="strategy_force_exit:T", finalize_immediately=False,
+            trace_id=ANY, strategy_notification=ANY,
+        )
+
+    async def test_force_liquidate_full_fraction_sells_all(self):
+        """sell_fraction>=1.0(기본) 시 보유 전량 매도(기존 동작 유지)."""
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
+        scheduler._sqs.get_current_price = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {"stck_prpr": "60000"}}
+            )
+        )
+        config = StrategySchedulerConfig(
+            strategy=MockStrategy(name="T"), force_exit_on_close=True, order_qty=10
+        )
+        vm.get_holds_by_strategy.return_value = [
+            {"code": "005930", "name": "S", "buy_price": 50000, "qty": 10}
+        ]
+
+        await scheduler._force_liquidate_strategy(config, sell_fraction=1.0)
+
+        oes.handle_place_sell_order.assert_called_once_with(
+            "005930", 0, 10, exchange=Exchange.KRX,
+            source="strategy_force_exit:T", finalize_immediately=False,
+            trace_id=ANY, strategy_notification=ANY,
+        )
+
+    async def test_force_liquidate_one_share_intermediate_tier_no_order(self):
+        """1주 포지션 + 중간 tier(0.5): floor(0.5)=0 → 매도 주문 미발생(전량은 최종 tier에서)."""
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
+        scheduler._sqs.get_current_price = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {"stck_prpr": "60000"}}
+            )
+        )
+        config = StrategySchedulerConfig(
+            strategy=MockStrategy(name="T"), force_exit_on_close=True, order_qty=1
+        )
+        vm.get_holds_by_strategy.return_value = [
+            {"code": "005930", "name": "S", "buy_price": 50000, "qty": 1}
+        ]
+
+        await scheduler._force_liquidate_strategy(config, sell_fraction=0.5)
+
+        oes.handle_place_sell_order.assert_not_called()
+
     async def test_force_liquidate_strategy_execution(self):
         """강제 청산 실행 시: 현재가 조회 후 시장가 매도 주문 및 로깅 확인."""
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
@@ -3064,7 +3155,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         config = StrategySchedulerConfig(strategy=strategy, force_exit_on_close=True, enabled=True)
         scheduler.register(config)
         
-        scheduler._force_exit_done = set() 
+        scheduler._force_exit_progress = {} 
         scheduler._running = True
         
         with patch.object(scheduler, '_run_strategy', side_effect=Exception("Liquidate Error")) as mock_run:
@@ -3422,7 +3513,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
     async def test_loop_continues_after_market_closed_wait_returns(self):
         scheduler, _, _, _, mcs = self._make_scheduler()
         scheduler._running = True
-        scheduler._force_exit_done = set()
+        scheduler._force_exit_progress = {}
         mcs.is_market_open_now.return_value = False
         mcs.wait_until_next_open = AsyncMock(
             side_effect=[None, asyncio.CancelledError()]

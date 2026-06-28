@@ -138,7 +138,8 @@
 
 - [x] **S-9 god class 분리** — `EventShadowManager`(`scheduler/event_shadow_manager.py`)로 shadow 블록 ~327줄 추출 완료(2026-06-28). scheduler 2432→2097줄. entry/exit 구독·evaluator·journal record/flush·teardown 이동, 테스트 ~44곳 receiver를 `_event_shadow_manager`로 갱신(동작 불변, unit 6505 + integration 245 green). 분리로 2-4 PR-3 No-Go(삭제) 시에도 단일 파일 제거로 종결 가능.
 - [ ] **3-4 active strategy lifecycle 7단계 분해**(`get_watchlist`/`filter_candidates`/`evaluate_entries_bounded`/`evaluate_exits_bounded`/`emit_metrics`) — 현재 `scan`/`check_exits`에 묻혀 있어 대형 리팩토링. checklist 테스트는 적용 완료. 공통 흐름이 더 쌓이면 재승격.
-- [ ] 기타: tiered force-exit window / RiskGate 실패 주문 cap 정책 / 전략별 min trading value·market cap 하한 / 매도 RiskGate 우회·KillSwitch auto-trigger / volatility hard gate / 성과 저하 자동 해제·수량 축소 / WebSocket health probe 자동화 / 레거시 전략 백테스트 통합 여부.
+- [x] **tiered force-exit window** — 단일 T-30 전량 청산을 단계화(2026-06-28). 기본 `FORCE_EXIT_TIERS=[(30,0.5),(15,1.0)]`(마지막 tier 1.0 = 마감 전 flat 보장 유지), `_force_exit_done` set→`_force_exit_progress` dict, `_pending_force_exit_tier`(놓친 tier catch-up), `_force_liquidate_strategy(sell_fraction)` floor 라운딩(초과 매도 없음). 1주 포지션은 중간 tier 0주→최종 tier 전량. unit 6509 + integration 245 green.
+- [ ] 기타: RiskGate 실패 주문 cap 정책 / 전략별 min trading value·market cap 하한 / 매도 RiskGate 우회·KillSwitch auto-trigger / volatility hard gate / 성과 저하 자동 해제·수량 축소 / WebSocket health probe 자동화 / 레거시 전략 백테스트 통합 여부. (※ KillSwitch auto-trigger·WS health probe·daily cap 등 상당수는 이미 구현됨 — 잔여는 정책/임계 결정 동반.)
 
 주요 파일: `interfaces/live_strategy.py`, `tests/unit_test/strategies/test_live_strategy_lifecycle_contract.py`
 

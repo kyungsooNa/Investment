@@ -94,7 +94,10 @@ class StrategyScheduler:
 
     LOOP_INTERVAL_SEC = 1           # 메인 루프 깨어나는 주기
     MARKET_CLOSED_SLEEP_SEC = 60    # 장 외 시간 sleep
-    FORCE_EXIT_MINUTES_BEFORE = 30  # 장 마감 N분 전 강제 청산
+    FORCE_EXIT_MINUTES_BEFORE = 30  # 장 마감 N분 전 강제 청산 (= 첫 tier 진입 시점)
+    # tiered force-exit: (마감 N분 전, 누적 청산 비율). 마지막 tier 는 반드시 1.0(전량) 으로
+    # 마감 전 flat 보장. 1주 포지션은 중간 tier 에서 floor 라운딩으로 0주 → 최종 tier 에서 전량.
+    FORCE_EXIT_TIERS = [(30, 0.5), (15, 1.0)]
     # 15:40 설정 기준 15:20(KRX 종가 동시호가 시작) 이후 전략 주문 중단.
     # 의도: 동시호가 구간은 연속체결이 없어 현재가 기반 전략 판단이 무의미하다.
     # check_exits 도 함께 중단된다 — 당일청산 전략은 FORCE_EXIT(마감 30분 전)가
@@ -169,7 +172,7 @@ class StrategyScheduler:
         self._last_run: Dict[str, datetime] = {}
         self._last_execution_time: Optional[datetime] = None  # 전략 간 실행 쿨다운용
         self._last_order_poll_time: Optional[datetime] = None
-        self._force_exit_done: set = set()  # 당일 강제 청산 완료된 전략
+        self._force_exit_progress: Dict[str, float] = {}  # 전략명 → 당일 누적 강제청산 비율(0~1)
         self._force_exit_done_date: Optional[str] = None
         self._order_cutoff_logged = False  # 컷오프 스킵 로그 1회화 (매초 반복 방지)
         self._reconciled_dates: set = set()  # 원장 대사 완료된 날짜 (YYYY-MM-DD)
@@ -295,10 +298,12 @@ class StrategyScheduler:
                     last = self._last_run.get(name)
                     elapsed = (now - last).total_seconds() if last else float('inf')
 
-                    # 강제 청산: 마감 N분 전이면 즉시 실행 (1회만) — kill switch와 무관하게 허용
-                    force_exit = (cfg.force_exit_on_close
-                                  and in_force_exit_window
-                                  and name not in self._force_exit_done)
+                    # 강제 청산: 마감 전 단계별(tier) 청산 — kill switch와 무관하게 허용
+                    force_exit_tier = (
+                        self._pending_force_exit_tier(name, minutes_to_close)
+                        if cfg.force_exit_on_close else None
+                    )
+                    force_exit = force_exit_tier is not None
 
                     # 정규 실행: force_exit_on_close 전략은 마감 전 구간에서 새 매수 금지
                     # kill switch 활성 시 신규 전략 실행 차단
@@ -312,13 +317,14 @@ class StrategyScheduler:
                         overdue = elapsed - (cfg.interval_minutes * 60) if last else float('inf')
                         if force_exit:
                             overdue = float('inf') # 강제 청산은 최우선순위
-                        evaluations.append((overdue, cfg, force_exit))
+                        evaluations.append((overdue, cfg, force_exit_tier))
 
                 # 2. 가장 오래 지연된(overdue가 큰) 전략부터 내림차순 정렬
                 evaluations.sort(key=lambda x: x[0], reverse=True)
 
-                for overdue, cfg, force_exit in evaluations:
+                for overdue, cfg, force_exit_tier in evaluations:
                     name = cfg.strategy.name
+                    force_exit = force_exit_tier is not None
 
                     # 전략 간 API 자원 충돌 방지 (강제 청산은 쿨다운 무시)
                     if not force_exit and self._last_execution_time:
@@ -327,12 +333,18 @@ class StrategyScheduler:
                             continue
 
                     self._last_run[name] = now
+                    sell_fraction = 1.0
                     if force_exit:
-                        self._force_exit_done.add(name)
-                        self._logger.info(f"[Scheduler] {name}: 장 마감 {minutes_to_close:.1f}분 전 — 강제 청산 실행")
-                    
+                        target_cum, sell_fraction = force_exit_tier
+                        self._force_exit_progress[name] = target_cum
+                        self._logger.info(
+                            f"[Scheduler] {name}: 장 마감 {minutes_to_close:.1f}분 전 — "
+                            f"강제 청산 tier 실행 (누적 {target_cum:.0%}, 이번 매도 비율 {sell_fraction:.0%})"
+                        )
+
                     try:
-                        await self._run_strategy(cfg, force_exit_only=force_exit)
+                        await self._run_strategy(cfg, force_exit_only=force_exit,
+                                                 force_exit_fraction=sell_fraction)
                     except Exception as e:
                         self._logger.error(f"[Scheduler] {name} 실행 오류: {e}", exc_info=True)
                     finally:
@@ -357,7 +369,7 @@ class StrategyScheduler:
         today = now.strftime("%Y-%m-%d")
         if self._force_exit_done_date == today:
             return
-        self._force_exit_done.clear()
+        self._force_exit_progress.clear()
         self._force_exit_done_date = today
         self._order_cutoff_logged = False
         # 날짜 키를 포함하는 set 의 과거 항목 purge (장기 구동 시 무한 증가 방지)
@@ -448,14 +460,38 @@ class StrategyScheduler:
 
         return False
 
-    async def _run_strategy(self, cfg: StrategySchedulerConfig, force_exit_only: bool = False):
+    def _pending_force_exit_tier(self, name: str, minutes_to_close: float):
+        """현재 마감 잔여시간 기준 발화할 force-exit tier 반환.
+
+        반환: (target_cumulative_fraction, sell_fraction_of_current_holdings) 또는 None.
+        - 이미 누적 1.0(전량) 청산 완료면 None.
+        - 발화 가능한 tier 중 가장 큰 누적 목표 선택(놓친 tier 자동 catch-up).
+        - sell_fraction 은 현재 보유 대비 비율 (target-progress)/(1-progress), 최종 tier 는 1.0.
+        """
+        progress = self._force_exit_progress.get(name, 0.0)
+        if progress >= 1.0 - 1e-9:
+            return None
+        target = None
+        for minutes_before, cumulative in self.FORCE_EXIT_TIERS:
+            if minutes_to_close <= minutes_before and cumulative > progress + 1e-9:
+                target = cumulative if target is None else max(target, cumulative)
+        if target is None:
+            return None
+        if target >= 1.0 - 1e-9:
+            sell_fraction = 1.0
+        else:
+            sell_fraction = (target - progress) / (1.0 - progress)
+        return target, sell_fraction
+
+    async def _run_strategy(self, cfg: StrategySchedulerConfig, force_exit_only: bool = False,
+                            force_exit_fraction: float = 1.0):
         name = cfg.strategy.name
         t_run = self._pm.start_timer()
         self._logger.info(f"[Scheduler] {name} 실행 시작 (force_exit_only={force_exit_only})")
 
-        # 강제 청산 모드: 전략의 check_exits 로직 무시, 보유 종목 전량 시장가 매도
+        # 강제 청산 모드: 전략의 check_exits 로직 무시, 보유 종목(비율) 시장가 매도
         if force_exit_only:
-            await self._force_liquidate_strategy(cfg)
+            await self._force_liquidate_strategy(cfg, sell_fraction=force_exit_fraction)
             self._pm.log_timer(f"{name}.run_strategy(force_exit)", t_run)
             return
 
@@ -1204,8 +1240,12 @@ class StrategyScheduler:
                 )
             return
 
-    async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig):
-        """전략 중지 시 보유 종목 강제 청산 (force_exit_on_close=True)."""
+    async def _force_liquidate_strategy(self, cfg: StrategySchedulerConfig, sell_fraction: float = 1.0):
+        """전략 중지/마감 강제 청산 (force_exit_on_close=True).
+
+        sell_fraction<1.0 이면 보유별 floor(qty*fraction) 만 매도(tiered force-exit 중간 단계).
+        sell_fraction>=1.0(기본) 이면 보유 전량 매도.
+        """
         name = cfg.strategy.name
         holdings = await self._get_force_liquidation_holdings(cfg)
         if not holdings:
@@ -1223,6 +1263,13 @@ class StrategyScheduler:
             holding_qty = int(hold.get("qty") or 0)
             if holding_qty <= 0:
                 holding_qty = cfg.order_qty
+
+            if sell_fraction >= 1.0:
+                sell_qty = holding_qty
+            else:
+                sell_qty = int(holding_qty * sell_fraction)
+            if sell_qty <= 0:
+                continue
 
             # 최우선매수호가(bidp1) 조회 → 지정가 청산, 실패 시 시장가 fallback
             sell_price = 0
@@ -1243,7 +1290,7 @@ class StrategyScheduler:
                 name=stock_name,
                 action="SELL",
                 price=sell_price,
-                qty=holding_qty,
+                qty=sell_qty,
                 reason=reason,
             )
             await self._execute_signal(signal)
