@@ -303,13 +303,13 @@ async def test_stop_strategy_unsubscribes_event_shadow_router():
     strategy = MockStrategy(name=name)
     cfg = StrategySchedulerConfig(strategy=strategy, event_driven_shadow=True)
     scheduler.register(cfg)
-    scheduler._event_shadow_subscriptions[name] = {"000001"}
-    scheduler._exit_shadow_subscriptions[name] = {"000002"}
+    scheduler._event_shadow_manager._event_shadow_subscriptions[name] = {"000001"}
+    scheduler._event_shadow_manager._exit_shadow_subscriptions[name] = {"000002"}
 
     result = await scheduler.stop_strategy(name)
 
     assert result is True
     router.unsubscribe.assert_any_call("000001", name)
     router.unsubscribe.assert_any_call("000002", f"{name}__exit")
-    assert name not in scheduler._event_shadow_subscriptions
-    assert name not in scheduler._exit_shadow_subscriptions
+    assert name not in scheduler._event_shadow_manager._event_shadow_subscriptions
+    assert name not in scheduler._event_shadow_manager._exit_shadow_subscriptions
