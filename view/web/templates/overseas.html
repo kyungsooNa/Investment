@@ -60,9 +60,18 @@
     </div>
 
     <div id="overseas-order-result"></div>
+
+    <div class="card">
+        <h2>미체결 주문</h2>
+        <div class="form-row">
+            <button class="btn" onclick="loadOverseasOrders()">미체결 조회</button>
+        </div>
+    </div>
+
+    <div id="overseas-orders-result"></div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/overseas.js?v=2"></script>
+<script src="/static/js/overseas.js?v=3"></script>
 {% endblock %}
