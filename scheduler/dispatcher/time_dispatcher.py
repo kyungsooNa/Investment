@@ -37,7 +37,7 @@ class TimeDispatcher:
         self,
         broker: MessageBroker,
         market_clock: "MarketClock",
-        mcs: "MarketCalendarService",
+        mcs: Optional["MarketCalendarService"],
         logger: Optional[logging.Logger] = None,
         db_path: Optional[str] = None,
     ) -> None:
@@ -137,7 +137,13 @@ class TimeDispatcher:
         if not self._is_after_market_close():
             return
 
-        latest_trading_date = await self._mcs.get_latest_trading_date()
+        if self._mcs is not None:
+            latest_trading_date = await self._mcs.get_latest_trading_date()
+        else:
+            # 거래 캘린더 미주입(해외장 등): clock 날짜를 거래일 식별자로 사용한다.
+            # 주말 발행 차단은 _is_after_market_close()의 weekday 필터가 담당하며,
+            # 공휴일은 미반영(현행 AfterMarketLoop mcs=None 동작과 동일한 한계).
+            latest_trading_date = self._market_clock.get_current_kst_date_str()
         if not latest_trading_date:
             return
 

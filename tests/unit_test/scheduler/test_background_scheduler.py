@@ -220,6 +220,37 @@ async def test_shutdown_with_worker_pool_and_time_dispatcher():
 
 
 @pytest.mark.asyncio
+async def test_start_and_shutdown_with_multiple_time_dispatchers():
+    """time_dispatchers(복수) 주입 시 각 dispatcher가 run/stop 된다 (KR + US 동시)."""
+    mock_worker_pool = MagicMock()
+    mock_worker_pool.start = AsyncMock()
+    mock_worker_pool.shutdown = AsyncMock()
+
+    td_kr = MagicMock()
+    td_kr.run = AsyncMock(return_value=None)
+    td_kr.stop = MagicMock()
+    td_us = MagicMock()
+    td_us.run = AsyncMock(return_value=None)
+    td_us.stop = MagicMock()
+
+    scheduler = BackgroundScheduler(
+        logger=MagicMock(),
+        worker_pool=mock_worker_pool,
+        time_dispatchers=[td_kr, td_us],
+    )
+    task = _make_mock_task("t1", TaskState.IDLE)
+    scheduler.register(task)
+
+    await scheduler.start_all()
+    assert len(scheduler._infra_tasks) == 2
+
+    await scheduler.shutdown()
+    td_kr.stop.assert_called_once()
+    td_us.stop.assert_called_once()
+    assert scheduler._infra_tasks == []
+
+
+@pytest.mark.asyncio
 async def test_suspend_all_with_worker_pool():
     """suspend_all 시 worker_pool.suspend()도 호출된다."""
     mock_worker_pool = MagicMock()

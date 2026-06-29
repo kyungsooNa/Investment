@@ -61,11 +61,16 @@ class SchedulerBootstrap:
 
     def _create_background_scheduler(self) -> None:
         ctx = self._ctx
+        # 시장별 TimeDispatcher(KST + US)를 모두 BackgroundScheduler에 넘겨 동시 구동한다.
+        dispatchers = [
+            d for d in (ctx.time_dispatcher, getattr(ctx, "time_dispatcher_us", None))
+            if d is not None
+        ]
         ctx.background_scheduler = BackgroundScheduler(
             logger=ctx.logger,
             performance_profiler=ctx.pm,
             worker_pool=ctx.worker_pool,
-            time_dispatcher=ctx.time_dispatcher,
+            time_dispatchers=dispatchers,
         )
 
     def _create_foreground_scheduler(self) -> None:
@@ -76,14 +81,20 @@ class SchedulerBootstrap:
             performance_profiler=ctx.pm,
         )
 
-    def _register(self, task, priority: TaskPriority | None = None) -> None:
+    def _register(
+        self, task, priority: TaskPriority | None = None, market: str = "domestic"
+    ) -> None:
         if not task:
             return
         ctx = self._ctx
         if priority is not None:
-            ctx.time_dispatcher.register_task(
-                task.task_name, priority, delay_sec=self._delays.get(task.task_name, 0)
-            )
+            dispatcher = ctx.time_dispatcher
+            if market == "overseas_us":
+                dispatcher = getattr(ctx, "time_dispatcher_us", None)
+            if dispatcher is not None:
+                dispatcher.register_task(
+                    task.task_name, priority, delay_sec=self._delays.get(task.task_name, 0)
+                )
         ctx.background_scheduler.register(task)
 
     def _optional_task(self, attr_name: str):
@@ -120,8 +131,13 @@ class SchedulerBootstrap:
 
     def _register_overseas_tasks(self) -> None:
         # 해외 VBO dry-run (주문 경로 없음). 미구성 시 _register 가 no-op.
-        # 미국장 16:30 ET cron 을 자체 AfterMarketLoop 로 사용하므로 KST TimeDispatcher 에 등록하지 않는다.
-        self._register(self._optional_task("overseas_dryrun_task"))
+        # 미국장 TimeDispatcher(time_dispatcher_us)에 등록 → NY 마감 후 delay 만큼 대기 뒤
+        # 티켓 발행(task_config 의 overseas_vbo_dryrun delay 로 16:30 ET 효과 트리거).
+        self._register(
+            self._optional_task("overseas_dryrun_task"),
+            TaskPriority.LOW,
+            market="overseas_us",
+        )
 
     def _register_websocket_watchdog(self) -> None:
         # WebSocket watchdog 은 TimeDispatcher 등록 대상이 아님 (continuous monitor).

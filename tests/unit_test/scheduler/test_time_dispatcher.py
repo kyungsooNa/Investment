@@ -12,15 +12,17 @@ def db_path(tmp_path):
     return str(tmp_path / "dispatcher_state.db")
 
 
-def _make_clock(*, is_operating: bool, is_after_close: bool, weekday: int = 1):
+def _make_clock(*, is_operating: bool, is_after_close: bool, weekday: int = 1, date_str: str = "20250417"):
     """MarketClock mock 생성.
 
     is_after_close=True  → 장 마감 후 (정상 발행 시간)
     is_after_close=False → 장 전 오전 (발행 차단)
     weekday: 0=월 ~ 4=금, 5=토, 6=일
+    date_str: get_current_kst_date_str() 반환값 (mcs=None fallback 거래일 식별자)
     """
     clock = MagicMock()
     clock.is_market_operating_hours.return_value = is_operating
+    clock.get_current_kst_date_str.return_value = date_str
 
     now_mock = MagicMock(spec=datetime)
     now_mock.weekday.return_value = weekday
@@ -345,6 +347,80 @@ def test_get_status_handles_market_clock_exception(db_path):
             "last_dispatched_date": "20250416",
         }
     ]
+
+
+# ── mcs=None (해외장 등 거래 캘린더 미주입) TC ──────────────────────────────
+
+def _make_dispatcher_no_mcs(
+    is_operating: bool,
+    db_path: str,
+    *,
+    is_after_close: bool = True,
+    weekday: int = 1,
+    date_str: str = "20250417",
+):
+    """mcs=None 인 dispatcher (미국장 등). 거래일 식별자는 clock 날짜로 대체된다."""
+    broker = MessageBroker()
+    market_clock = _make_clock(
+        is_operating=is_operating, is_after_close=is_after_close,
+        weekday=weekday, date_str=date_str,
+    )
+    dispatcher = TimeDispatcher(
+        broker=broker, market_clock=market_clock, mcs=None, db_path=db_path
+    )
+    return dispatcher, broker
+
+
+async def test_no_mcs_publishes_after_close_using_clock_date(db_path):
+    """mcs=None이면 clock 날짜를 거래일 식별자로 사용해 마감 후 발행한다."""
+    dispatcher, broker = _make_dispatcher_no_mcs(
+        is_operating=False, db_path=db_path, date_str="20250417"
+    )
+    dispatcher.register_task("OVERSEAS_DRYRUN", priority=100)
+
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+
+    assert broker.qsize == 1
+    ticket = await broker.consume()
+    broker.task_done()
+    assert ticket.task_name == "OVERSEAS_DRYRUN"
+    assert ticket.payload["date"] == "20250417"
+
+
+async def test_no_mcs_no_ticket_during_market_hours(db_path):
+    """mcs=None이어도 장중에는 발행하지 않는다."""
+    dispatcher, broker = _make_dispatcher_no_mcs(is_operating=True, db_path=db_path)
+    dispatcher.register_task("OVERSEAS_DRYRUN", priority=100)
+
+    await dispatcher._maybe_dispatch()
+    assert broker.empty is True
+
+
+async def test_no_mcs_no_ticket_before_close(db_path):
+    """mcs=None이어도 평일 장 마감 전에는 발행하지 않는다."""
+    dispatcher, broker = _make_dispatcher_no_mcs(
+        is_operating=False, db_path=db_path, is_after_close=False, weekday=1
+    )
+    dispatcher.register_task("OVERSEAS_DRYRUN", priority=100)
+
+    await dispatcher._maybe_dispatch()
+    assert broker.empty is True
+
+
+async def test_no_mcs_no_duplicate_same_date(db_path):
+    """mcs=None이어도 같은 clock 날짜에는 중복 발행하지 않는다."""
+    dispatcher, broker = _make_dispatcher_no_mcs(
+        is_operating=False, db_path=db_path, date_str="20250417"
+    )
+    dispatcher.register_task("OVERSEAS_DRYRUN", priority=100)
+
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+
+    assert broker.qsize == 1
 
 
 async def test_stop_cancels_pending_publish_tasks(db_path):
