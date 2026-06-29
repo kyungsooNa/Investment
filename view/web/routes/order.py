@@ -3,7 +3,7 @@
 """
 from fastapi import APIRouter, HTTPException
 from fastapi import Query
-from common.overseas_types import OverseasOrderRequest
+from common.overseas_types import OverseasOrderRequest, OverseasCancelRequest
 from common.types import ErrorCode, ResCommonResponse
 from view.web.api_common import _get_ctx, _serialize_response, OrderRequest
 from view.web.market_mode_utils import is_market_enabled
@@ -80,6 +80,40 @@ async def place_overseas_order(req: OverseasOrderRequest):
         side=req.side,
         qty=req.qty,
         limit_price=req.limit_price,
+    )
+    return _serialize_response(resp)
+
+
+@router.post("/overseas/order/cancel")
+async def cancel_overseas_order(req: OverseasCancelRequest):
+    """해외주식 미체결 주문 취소. v1은 미국 3시장 + USD만 지원한다."""
+    ctx = _get_ctx()
+    if not is_market_enabled(ctx, "overseas_us"):
+        raise HTTPException(status_code=400, detail="해외주식 주문 취소는 overseas_us가 enabled된 run에서만 사용할 수 있습니다.")
+
+    cfg = getattr(getattr(ctx, "full_config", None), "overseas_stock", None)
+    enabled_exchanges = set(getattr(cfg, "enabled_exchanges", ["NASD", "NYSE", "AMEX"]))
+    if req.exchange.value not in enabled_exchanges:
+        raise HTTPException(status_code=400, detail="활성화되지 않은 해외 거래소입니다.")
+    if _is_real_trading_mode(ctx):
+        if not bool(getattr(cfg, "allow_live_trading", False)):
+            return _serialize_response(
+                ResCommonResponse(
+                    rt_cd=ErrorCode.ORDER_POLICY_BLOCKED.value,
+                    msg1="실전 해외주식 주문 취소는 overseas_stock.allow_live_trading=true 설정 전까지 차단됩니다.",
+                    data={"rule": "overseas_live_trading_disabled"},
+                )
+            )
+        if req.real_order_confirmation != "REAL":
+            raise HTTPException(status_code=400, detail="실전 주문 확인 문자열이 필요합니다.")
+
+    resp = await ctx.broker.cancel_overseas_order(
+        symbol=req.symbol,
+        exchange=req.exchange,
+        original_order_no=req.original_order_no,
+        qty=req.qty,
+        limit_price="0",
+        rvse_cncl_dvsn_cd="02",
     )
     return _serialize_response(resp)
 
