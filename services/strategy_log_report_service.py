@@ -1888,10 +1888,13 @@ class StrategyLogReportService:
         active_sections: List[str] = []
         for idx, summary in enumerate(strategy_summaries, start=1):
             if summary['scan_only']:
-                active_sections.append(f"<b>{idx}. {_esc(summary['name'])}</b> — {summary['scan_count']}종목 스캔 (시그널 없음)")
+                active_sections.append(
+                    f"<b>{idx}. {_esc(summary['name'])}</b> — "
+                    f"최근 스캔 후보 {summary['scan_count']}종목 (시그널 없음)"
+                )
                 continue
 
-            scan_str = f" — {summary['scan_count']}종목 스캔" if summary['scan_count'] else ""
+            scan_str = f" — 최근 스캔 후보 {summary['scan_count']}종목" if summary['scan_count'] else ""
             lines = [f"<b>{idx}. {_esc(summary['name'])}</b>{scan_str}"]
 
             if summary['bought']:
@@ -1908,7 +1911,7 @@ class StrategyLogReportService:
                 lines.append("\n✅ 매수 완료: 없음")
 
             if summary['rejected']:
-                lines.append(f"\n❌ 매수 실패 ({len(summary['rejected'])}건)")
+                lines.append(f"\n❌ 매수 실패 종목 ({len(summary['rejected'])}건)")
                 reason_summary = self._build_rejected_reason_summary(summary['rejected'])
                 if reason_summary:
                     lines.append(reason_summary)
