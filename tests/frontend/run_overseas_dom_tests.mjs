@@ -23,6 +23,12 @@ const SCAFFOLD = `
 <div id="overseas-quote-result"></div>
 <div id="overseas-chart-result"></div>
 <div id="overseas-balance-result"></div>
+<input id="overseas-order-symbol" type="text">
+<select id="overseas-order-exchange"><option value="NASD">NASDAQ</option></select>
+<input id="overseas-order-qty" type="number">
+<input id="overseas-order-price" type="number">
+<div id="overseas-order-result"></div>
+<div id="overseas-orders-result"></div>
 `;
 
 function makeWindow() {
@@ -98,6 +104,80 @@ test("loadOverseasChart 가 이미 배열인 data 도 처리한다(하위호환)
   const html = window.document.getElementById("overseas-chart-result").innerHTML;
   assert(html.includes("20260103"), "배열 형태 data 미처리");
   assert(html.includes("$195.00"), "배열 형태 종가 미표시");
+});
+
+test("loadOverseasOrders 가 미체결 주문을 행으로 렌더하고 취소 버튼을 단다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    if (url.includes("/api/overseas/orders")) {
+      return { ok: true, json: async () => ({
+        rt_cd: "0",
+        // KIS 미체결(inquire_ccnl, ccld_nccs_dvsn=02) 원본: data.output 배열
+        data: { output: [
+          { odno: "39870", pdno: "AAPL", prdt_name: "애플", sll_buy_dvsn_cd_name: "매수",
+            ft_ord_qty: "1", nccs_qty: "1", ft_ord_unpr3: "197.00000000", ovrs_excg_cd: "NASD" },
+        ] },
+      }) };
+    }
+    return { ok: false, json: async () => ({}) };
+  };
+
+  await window.loadOverseasOrders();
+
+  const html = window.document.getElementById("overseas-orders-result").innerHTML;
+  assert(html.includes("39870"), "회귀: 주문번호 미표시");
+  assert(html.includes("AAPL"), "회귀: 심볼 미표시");
+  assert(html.includes("$197.00"), "회귀: 지정가(ft_ord_unpr3) 매핑 실패");
+  assert(/취소/.test(html), "회귀: 취소 버튼 미표시");
+  assert(html.includes("cancelOverseasOrder"), "회귀: 취소 버튼에 핸들러 미연결");
+  assert(!html.includes("미체결 없음"), "회귀: 데이터 있는데 빈 표시");
+});
+
+test("cancelOverseasOrder 가 취소 API에 올바른 body로 POST하고 목록을 갱신한다", async () => {
+  const window = makeWindow();
+  window.confirm = () => true;
+  let postBody = null;
+  let ordersReloaded = 0;
+  window.fetchWithTimeout = async (url, opts) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    if (url.includes("/api/overseas/order/cancel")) {
+      postBody = JSON.parse(opts.body);
+      return { ok: true, json: async () => ({ rt_cd: "0", data: {} }) };
+    }
+    if (url.includes("/api/overseas/orders")) {
+      ordersReloaded += 1;
+      return { ok: true, json: async () => ({ rt_cd: "0", data: { output: [] } }) };
+    }
+    return { ok: false, json: async () => ({}) };
+  };
+
+  await window.cancelOverseasOrder("39870", "AAPL", "NASD", 1);
+
+  assert(postBody, "회귀: 취소 API가 호출되지 않음");
+  assert(postBody.original_order_no === "39870", "회귀: 주문번호 전달 오류");
+  assert(postBody.symbol === "AAPL", "회귀: 심볼 전달 오류");
+  assert(postBody.exchange === "NASD", "회귀: 거래소 전달 오류");
+  assert(postBody.qty === 1, "회귀: 수량 전달 오류");
+  assert(ordersReloaded >= 1, "회귀: 취소 후 미체결 목록 갱신 안 함");
+});
+
+test("cancelOverseasOrder 가 paper 모드에서 confirm 취소 시 API를 호출하지 않는다", async () => {
+  const window = makeWindow();
+  window.confirm = () => false;
+  let called = false;
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/overseas/order/cancel")) called = true;
+    return { ok: true, json: async () => ({ rt_cd: "0", data: {} }) };
+  };
+
+  await window.cancelOverseasOrder("39870", "AAPL", "NASD", 1);
+
+  assert(!called, "회귀: confirm 거부에도 취소 API가 호출됨");
 });
 
 let failed = 0;

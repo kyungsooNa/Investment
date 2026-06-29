@@ -158,3 +158,27 @@ def test_overseas_stock_convenience_methods_respect_paper_and_real(mock_env, moc
     assert provider.overseas_stock_order(is_buy=True) == "TR_OVRS_BUY_REAL"
     assert provider.overseas_stock_order(is_buy=False) == "TR_OVRS_SELL_REAL"
     assert provider.overseas_stock_order_rvsecncl() == "TR_OVRS_CANCEL_REAL"
+
+
+def test_overseas_us_order_tr_ids_use_regular_session_with_mock(mock_env):
+    """실제 config: 미국 해외주식 주문 TR은 정규장(TTTT...)이며 모의(VTTT...) 쌍이 존재해야 한다.
+
+    주간거래(TTTS603x)는 KIS 모의투자를 지원하지 않아 모의 주문 검증이 불가능하므로,
+    모의 검증이 가능한 정규장(/uapi/overseas-stock/v1/trading/order) TR로 통일한다.
+    값 출처: KIS open-trading-api 공식 예제 (order.py / order_rvsecncl.py).
+    """
+    from config.config_loader import load_config, TR_IDS_CONFIG_PATH
+
+    tr_ids = load_config(TR_IDS_CONFIG_PATH)["tr_ids"]
+    provider = KoreaInvestTrIdProvider(mock_env, tr_ids)
+
+    # 모의투자 (mock_env.is_paper_trading=True)
+    assert provider.overseas_stock_order(is_buy=True) == "VTTT1002U"
+    assert provider.overseas_stock_order(is_buy=False) == "VTTT1006U"
+    assert provider.overseas_stock_order_rvsecncl() == "VTTT1004U"
+
+    # 실전투자
+    mock_env.is_paper_trading = False
+    assert provider.overseas_stock_order(is_buy=True) == "TTTT1002U"
+    assert provider.overseas_stock_order(is_buy=False) == "TTTT1006U"
+    assert provider.overseas_stock_order_rvsecncl() == "TTTT1004U"

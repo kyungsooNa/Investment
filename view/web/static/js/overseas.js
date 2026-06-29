@@ -247,6 +247,109 @@ async function placeOverseasOrder(side) {
     }
 }
 
+async function loadOverseasOrders() {
+    const exchange = _overseasExchangeValue('overseas-order-exchange');
+    const resultDiv = document.getElementById('overseas-orders-result');
+    showLoading(resultDiv, '미체결 조회 중...');
+
+    try {
+        const enabled = await _ensureOverseasEnabled();
+        if (!enabled) {
+            resultDiv.innerHTML = '<p class="error">overseas_us가 enabled되어 있지 않습니다.</p>';
+            return;
+        }
+        const res = await fetchWithTimeout(`/api/overseas/orders?exchange=${exchange}&ccld_nccs_dvsn=02`, {}, 12000);
+        const json = await res.json();
+        if (!res.ok || json.rt_cd !== '0') {
+            resultDiv.innerHTML = `<p class="error">미체결 조회 실패: ${json.msg1 || res.status}</p>`;
+            return;
+        }
+        const data = json.data || {};
+        const rows = Array.isArray(data.output) ? data.output : (Array.isArray(data) ? data : []);
+        const body = rows.map((row) => {
+            const odno = String(row.odno || row.ODNO || '');
+            const sym = String(row.pdno || row.ovrs_pdno || row.symbol || '');
+            const exc = row.ovrs_excg_cd || exchange;
+            const nccs = Number(String(row.nccs_qty ?? row.ft_ord_qty ?? row.qty ?? '0').replace(/,/g, '')) || 0;
+            return `
+            <tr>
+                <td>${odno || '-'}</td>
+                <td>${sym || '-'}</td>
+                <td>${row.sll_buy_dvsn_cd_name || '-'}</td>
+                <td>${_formatNumber(row.ft_ord_qty || row.qty)}</td>
+                <td>${_formatNumber(nccs)}</td>
+                <td>${_formatUsd(row.ft_ord_unpr3 || row.price)}</td>
+                <td><button class="btn btn-sell" onclick="cancelOverseasOrder('${odno}','${sym}','${exc}',${nccs})">취소</button></td>
+            </tr>
+        `;
+        }).join('');
+        resultDiv.innerHTML = `
+            <div class="card">
+                <h3>미체결 주문 <span style="color:#aaa;font-size:0.85rem;">${exchange} USD</span></h3>
+                <table>
+                    <thead><tr><th>주문번호</th><th>심볼</th><th>구분</th><th>수량</th><th>미체결</th><th>지정가</th><th></th></tr></thead>
+                    <tbody>${body || '<tr><td colspan="7">미체결 없음</td></tr>'}</tbody>
+                </table>
+            </div>
+        `;
+    } catch (e) {
+        resultDiv.innerHTML = `<p class="error">통신 오류: ${e.message || e}</p>`;
+    }
+}
+
+async function cancelOverseasOrder(orderNo, symbol, exchange, qty) {
+    if (!orderNo) {
+        alert('주문번호가 없습니다.');
+        return;
+    }
+    const resultDiv = document.getElementById('overseas-orders-result');
+
+    let realOrderConfirmation = null;
+    if (_overseasIsRealMode()) {
+        const step1 = confirm(
+            `[실전투자] 해외 주문 취소\n\n` +
+            `심볼: ${symbol}\n거래소: ${exchange}\n주문번호: ${orderNo}\n수량: ${qty}\n\n` +
+            `계속하시겠습니까?`
+        );
+        if (!step1) return;
+        realOrderConfirmation = prompt('최종 확인을 위해 "REAL"을 입력하세요:');
+        if (realOrderConfirmation !== 'REAL') {
+            alert('확인 문자열이 일치하지 않아 취소 요청이 중단되었습니다.');
+            return;
+        }
+    } else if (!confirm(`해외 주문 취소\n심볼: ${symbol}\n주문번호: ${orderNo}\n수량: ${qty}`)) {
+        return;
+    }
+
+    try {
+        const enabled = await _ensureOverseasEnabled();
+        if (!enabled) {
+            if (resultDiv) resultDiv.innerHTML = '<p class="error">overseas_us가 enabled되어 있지 않습니다.</p>';
+            return;
+        }
+        const res = await fetchWithTimeout('/api/overseas/order/cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                symbol,
+                exchange,
+                original_order_no: orderNo,
+                qty,
+                currency: 'USD',
+                real_order_confirmation: realOrderConfirmation
+            })
+        }, 15000);
+        const json = await res.json();
+        if (!res.ok || json.rt_cd !== '0') {
+            alert(`취소 실패: ${json.msg1 || res.status}`);
+            return;
+        }
+        await loadOverseasOrders();
+    } catch (e) {
+        alert(`통신 오류: ${e.message || e}`);
+    }
+}
+
 function initOverseasPage() {
     _refreshOverseasRealBanner();
     if (!window.__overseasRealBannerTimer) {

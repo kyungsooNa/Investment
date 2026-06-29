@@ -42,6 +42,18 @@ class OverseasOrderRequest(BaseModel):
         return self.model_dump()
 
 
+class OverseasCancelRequest(BaseModel):
+    symbol: str
+    exchange: OverseasExchange
+    original_order_no: str
+    qty: int
+    currency: Literal["USD"] = "USD"
+    real_order_confirmation: str | None = None
+
+    def to_dict(self):
+        return self.model_dump()
+
+
 class OverseasOrderReport(BaseModel):
     symbol: str
     exchange: OverseasExchange

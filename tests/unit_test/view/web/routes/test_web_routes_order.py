@@ -289,6 +289,73 @@ async def test_place_overseas_real_order_requires_confirmation_when_live_allowed
 
 
 @pytest.mark.asyncio
+async def test_cancel_overseas_order_calls_broker(web_client, mock_web_ctx):
+    """POST /api/overseas/order/cancel는 미체결 주문 취소를 브로커에 위임한다."""
+    mock_web_ctx.market_mode = "overseas_us"
+    mock_web_ctx.broker.cancel_overseas_order.return_value = ResCommonResponse(
+        rt_cd="0", msg1="취소 완료", data={"odno": "39870"}
+    )
+
+    payload = {
+        "symbol": "AAPL",
+        "exchange": "NASD",
+        "original_order_no": "0000039870",
+        "qty": 1,
+        "currency": "USD",
+    }
+    response = web_client.post("/api/overseas/order/cancel", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] == "0"
+    mock_web_ctx.broker.cancel_overseas_order.assert_awaited_once_with(
+        symbol="AAPL",
+        exchange=OverseasExchange.NASD,
+        original_order_no="0000039870",
+        qty=1,
+        limit_price="0",
+        rvse_cncl_dvsn_cd="02",
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_overseas_order_requires_overseas_mode(web_client, mock_web_ctx):
+    """overseas_us가 enabled되지 않은 run에서는 해외 주문 취소가 닫혀 있어야 한다."""
+    payload = {
+        "symbol": "AAPL",
+        "exchange": "NASD",
+        "original_order_no": "0000039870",
+        "qty": 1,
+        "currency": "USD",
+    }
+    response = web_client.post("/api/overseas/order/cancel", json=payload)
+
+    assert response.status_code == 400
+    mock_web_ctx.broker.cancel_overseas_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_overseas_real_order_requires_allow_live_trading(web_client, mock_web_ctx):
+    """실전 해외주문 취소도 allow_live_trading=False이면 정책 차단 응답을 반환한다."""
+    mock_web_ctx.market_mode = "overseas_us"
+    mock_web_ctx.env.is_paper_trading = False
+
+    payload = {
+        "symbol": "AAPL",
+        "exchange": "NASD",
+        "original_order_no": "0000039870",
+        "qty": 1,
+        "currency": "USD",
+        "real_order_confirmation": "REAL",
+    }
+    response = web_client.post("/api/overseas/order/cancel", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] == ErrorCode.ORDER_POLICY_BLOCKED.value
+    assert response.json()["data"]["rule"] == "overseas_live_trading_disabled"
+    mock_web_ctx.broker.cancel_overseas_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_get_overseas_orders_requires_overseas_mode(web_client, mock_web_ctx):
     """overseas_us가 enabled되지 않은 run에서는 해외 주문 조회가 닫혀 있다."""
     response = web_client.get("/api/overseas/orders")
