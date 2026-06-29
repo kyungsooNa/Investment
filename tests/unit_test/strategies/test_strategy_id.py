@@ -26,6 +26,7 @@ _SNAKE_CASE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _ACTIVE_STRATEGIES: List[tuple] = [
     ("strategies.first_pullback_strategy", "FirstPullbackStrategy", "first_pullback"),
     ("strategies.high_tight_flag_strategy", "HighTightFlagStrategy", "high_tight_flag"),
+    ("strategies.inverse_etf_regime_strategy", "InverseEtfRegimeStrategy", "inverse_etf_regime"),
     (
         "strategies.larry_williams_channel_breakout_strategy",
         "LarryWilliamsChannelBreakoutStrategy",

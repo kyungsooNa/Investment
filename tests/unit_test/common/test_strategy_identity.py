@@ -24,6 +24,7 @@ from common.strategy_identity import (
 PHASE1_PAIRS = [
     ("first_pullback", "첫눌림목"),
     ("high_tight_flag", "하이타이트플래그"),
+    ("inverse_etf_regime", "인버스ETF레짐"),
     ("larry_williams_cb", "LarryWilliamsCB"),
     ("larry_williams_vbo", "래리윌리엄스VBO"),
     ("oneil_pocket_pivot", "오닐PP/BGU"),

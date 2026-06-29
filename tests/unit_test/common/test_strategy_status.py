@@ -1,7 +1,7 @@
 """STRATEGY_STATUS_MAP — P3-4 활성/실험/레거시 registry (1차 대안).
 
-Phase 1 매핑 잠금된 10개 전략을 status 별로 분류한다:
-- StrategyFactory.build() 가 자동 register 하는 7개 = ACTIVE
+Phase 1 매핑 잠금된 11개 전략을 status 별로 분류한다:
+- StrategyFactory.build() 가 자동 register 하는 8개 = ACTIVE
 - 수동/백테스트 용도로 코드는 있으나 자동 register 안 되는 3개 = EXPERIMENTAL
 - 1차에서는 LEGACY 없음 (디렉터리 이동 없이 metadata 만 추가)
 
@@ -22,6 +22,7 @@ from common.strategy_identity import (
 ACTIVE_IDS = {
     "first_pullback",
     "high_tight_flag",
+    "inverse_etf_regime",
     "larry_williams_cb",
     "larry_williams_vbo",
     "oneil_pocket_pivot",
@@ -43,11 +44,11 @@ def test_status_enum_has_expected_members():
 
 
 def test_status_map_covers_all_phase1_strategies():
-    """Phase 1 매핑 잠금된 10개 모두 status 가 지정되어야 한다."""
+    """Phase 1 매핑 잠금된 11개 모두 status 가 지정되어야 한다."""
     assert set(STRATEGY_STATUS_MAP.keys()) == set(STRATEGY_DISPLAY_MAP.keys())
 
 
-def test_status_map_active_seven_strategies():
+def test_status_map_active_eight_strategies():
     actual_active = {
         sid for sid, status in STRATEGY_STATUS_MAP.items()
         if status == StrategyStatus.ACTIVE
@@ -87,3 +88,4 @@ def test_resolver_get_status_accepts_display_name():
     """display 입력도 받아서 내부적으로 strategy_id 로 정규화 후 status 반환."""
     assert STRATEGY_IDENTITY_RESOLVER.get_status("거래량돌파") == StrategyStatus.EXPERIMENTAL
     assert STRATEGY_IDENTITY_RESOLVER.get_status("첫눌림목") == StrategyStatus.ACTIVE
+    assert STRATEGY_IDENTITY_RESOLVER.get_status("인버스ETF레짐") == StrategyStatus.ACTIVE

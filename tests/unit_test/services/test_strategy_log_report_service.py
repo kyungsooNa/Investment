@@ -650,10 +650,32 @@ async def test_report_inactive_summary_and_old_file_ignored(log_dir):
     svc = StrategyLogReportService(log_dir=log_dir)
     report = await svc.generate_report("20260418")
 
-    assert "ScannedStrategy</b> — 17종목 스캔 (시그널 없음)" in report
+    assert "ScannedStrategy</b> — 최근 스캔 후보 17종목 (시그널 없음)" in report
     assert "💤 <i>활동 없음: DormantA, DormantB, DormantC 외 1개" in report
     assert "활동 없음: ScannedStrategy" not in report
     assert "StaleStrategy" not in report
+
+
+@pytest.mark.asyncio
+async def test_report_labels_scan_count_as_recent_candidates_and_rejections_as_symbols(log_dir):
+    """scan_count 와 탈락 집계가 서로 다른 기준임을 리포트 라벨로 드러낸다."""
+    log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
+    scan_entry = _make_entry("scan_with_watchlist", "", "")
+    scan_entry["data"]["count"] = 2
+    entries = [scan_entry]
+    entries.extend(
+        _make_entry("breakout_rejected", f"A0000{i}", f"종목{i}", reason="poor_candle_quality")
+        for i in range(1, 4)
+    )
+    _write_log(log_path, entries)
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "TestStrategy</b> — 최근 스캔 후보 2종목" in report
+    assert "❌ 매수 실패 종목 (3건)" in report
+    assert "2종목 스캔" not in report
+    assert "❌ 매수 실패 (3건)" not in report
 
 
 @pytest.mark.asyncio
