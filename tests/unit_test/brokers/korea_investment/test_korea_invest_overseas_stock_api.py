@@ -47,9 +47,12 @@ def overseas_api(overseas_env):
             "inquire_ccnl_paper": "VTTS3035R",
             "inquire_nccs_real": "TTTS3018R",
             "inquire_nccs_paper": "VTTS3018R",
-            "order_buy_real": "TTTS6036U",
-            "order_sell_real": "TTTS6037U",
-            "order_rvsecncl_real": "TTTS6038U",
+            "order_buy_real": "TTTT1002U",
+            "order_buy_paper": "VTTT1002U",
+            "order_sell_real": "TTTT1006U",
+            "order_sell_paper": "VTTT1006U",
+            "order_rvsecncl_real": "TTTT1004U",
+            "order_rvsecncl_paper": "VTTT1004U",
         }
     }
     api = KoreaInvestOverseasStockApi(
@@ -141,7 +144,7 @@ async def test_place_overseas_limit_order_uses_overseas_body_and_hashkey(oversea
     }
     assert overseas_api.call_api.await_args.args[1] == EndpointKey.OVERSEAS_STOCK_ORDER
     assert overseas_api.call_api.await_args.kwargs["data"] == body
-    assert overseas_api._headers.build()["tr_id"] == "TTTS6036U"
+    assert overseas_api._headers.build()["tr_id"] == "VTTT1002U"
 
 
 @pytest.mark.asyncio

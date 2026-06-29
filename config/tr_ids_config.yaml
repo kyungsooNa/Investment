@@ -45,9 +45,12 @@ tr_ids:
     inquire_ccnl_paper: VTTS3035R # 해외주식 주문체결내역 (모의)
     inquire_nccs_real: TTTS3018R # 해외주식 미체결내역 (실전)
     inquire_nccs_paper: VTTS3018R # 해외주식 미체결내역 (모의)
-    order_buy_real: TTTS6036U # 해외주식 미국주간 지정가 매수
-    order_sell_real: TTTS6037U # 해외주식 미국주간 지정가 매도
-    order_rvsecncl_real: TTTS6038U # 해외주식 미국주간 정정취소
+    order_buy_real: TTTT1002U # 해외주식 미국 정규장 지정가 매수 (실전)
+    order_buy_paper: VTTT1002U # 해외주식 미국 정규장 지정가 매수 (모의)
+    order_sell_real: TTTT1006U # 해외주식 미국 정규장 지정가 매도 (실전)
+    order_sell_paper: VTTT1006U # 해외주식 미국 정규장 지정가 매도 (모의)
+    order_rvsecncl_real: TTTT1004U # 해외주식 미국 정규장 정정취소 (실전)
+    order_rvsecncl_paper: VTTT1004U # 해외주식 미국 정규장 정정취소 (모의)
   # --- 웹소켓 TR ID 추가 ---
   websocket:
     approval_key: 실시간-000 # 웹소켓 접속키 발급 TR ID (문서에 명시된 값)
