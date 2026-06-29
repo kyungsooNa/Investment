@@ -253,6 +253,18 @@ class ServiceContainer:
                 mcs=ctx._mcs,
                 logger=ctx.logger,
             )
+            # 미국장 배치(해외 dry-run 등)를 위한 별도 TimeDispatcher. KST dispatcher와
+            # 동일한 MessageBroker/WorkerPool 을 공유하며, 미국장 클럭으로 NY 마감을 감지한다.
+            # 거래 캘린더(mcs)는 미주입 → clock 날짜를 거래일 식별자로 사용(주말 필터만 적용).
+            ctx.time_dispatcher_us = None
+            if is_market_enabled(ctx, "overseas_us"):
+                ctx.time_dispatcher_us = TimeDispatcher(
+                    broker=ctx.message_broker,
+                    market_clock=MarketClock.for_us_equities(logger=ctx.logger),
+                    mcs=None,
+                    logger=ctx.logger,
+                    db_path="data/time_dispatcher_state_us.db",
+                )
             ctx.data_quality_service = DataQualityService(
                 config=getattr(ctx.full_config, "data_quality", None) or DataQualityConfig(),
                 market_clock=ctx.market_clock,
@@ -858,5 +870,7 @@ class ServiceContainer:
             market_clock=MarketClock.for_us_equities(logger=ctx.logger),
             logger=ctx.logger,
             notification_service=ctx.notification_service,
-            worker_pool=None,
+            # Ticket-driven: 미국장 TimeDispatcher(time_dispatcher_us)가 NY 마감 후
+            # 티켓을 발행하면 WorkerPool 이 execute() 를 호출한다(자체 AfterMarketLoop 미사용).
+            worker_pool=ctx.worker_pool,
         )

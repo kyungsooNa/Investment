@@ -118,12 +118,18 @@ def test_web_only_registers_notification_and_watchdog(patched_scheduler_deps):
 def test_overseas_us_registers_dryrun_task(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.WEB)
     ctx.market_mode = "overseas_us"
+    ctx.time_dispatcher_us = MagicMock()
     task = MagicMock()
     task.task_name = "overseas_vbo_dryrun"
     ctx.overseas_dryrun_task = task
     _run(ctx)
     names = _registered_bg_task_names(patched_scheduler_deps)
     assert "overseas_vbo_dryrun" in names
+    # 미국장 dispatcher 에 priority 와 함께 등록되고 KST dispatcher 에는 등록되지 않는다.
+    us_dispatched = [c.args[0] for c in ctx.time_dispatcher_us.register_task.call_args_list]
+    kst_dispatched = [c.args[0] for c in ctx.time_dispatcher.register_task.call_args_list]
+    assert "overseas_vbo_dryrun" in us_dispatched
+    assert "overseas_vbo_dryrun" not in kst_dispatched
 
 
 def test_domestic_mode_does_not_register_overseas_task(patched_scheduler_deps):
@@ -139,14 +145,18 @@ def test_domestic_active_with_overseas_enabled_registers_dryrun_task(patched_sch
     ctx = _make_fake_context(RuntimeMode.WEB)
     ctx.market_mode = "domestic"
     ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.time_dispatcher_us = MagicMock()
     ctx.overseas_dryrun_task = MagicMock(task_name="overseas_vbo_dryrun")
     _run(ctx)
     names = _registered_bg_task_names(patched_scheduler_deps)
     assert "overseas_vbo_dryrun" in names
+    # 공존 모드에서도 dry-run 은 KST dispatcher 가 아닌 US dispatcher 에만 등록된다.
     dispatched_names = [
         call.args[0] for call in ctx.time_dispatcher.register_task.call_args_list
     ]
     assert "overseas_vbo_dryrun" not in dispatched_names
+    us_dispatched = [c.args[0] for c in ctx.time_dispatcher_us.register_task.call_args_list]
+    assert "overseas_vbo_dryrun" in us_dispatched
 
 
 def test_trading_only_registers_intraday_and_watchdog(patched_scheduler_deps):

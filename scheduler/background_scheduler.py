@@ -29,12 +29,17 @@ class BackgroundScheduler:
         performance_profiler: Optional[PerformanceProfiler] = None,
         worker_pool=None,
         time_dispatcher=None,
+        time_dispatchers=None,
     ):
         self._logger = logger or logging.getLogger(__name__)
         self._pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._tasks: Dict[str, SchedulableTask] = {}  # name -> task
         self._worker_pool = worker_pool
-        self._time_dispatcher = time_dispatcher
+        # 시장별 TimeDispatcher 복수 지원: 단수 time_dispatcher 와 복수 time_dispatchers 를
+        # 함께 받아 하나의 리스트로 정규화한다 (KR + US 동시 구동).
+        self._time_dispatchers = list(time_dispatchers or [])
+        if time_dispatcher is not None:
+            self._time_dispatchers.insert(0, time_dispatcher)
         self._infra_tasks: List[asyncio.Task] = []  # WorkerPool/Dispatcher asyncio.Task 목록
         self._start_lock: Optional[asyncio.Lock] = None
         self._shutdown_lock: Optional[asyncio.Lock] = None
@@ -97,10 +102,13 @@ class BackgroundScheduler:
         if self._worker_pool is not None:
             await self._worker_pool.start()
             self._logger.info("[BackgroundScheduler] WorkerPool 시작 완료")
-        if self._time_dispatcher is not None:
-            t = asyncio.create_task(self._time_dispatcher.run(), name="time-dispatcher")
+        for idx, dispatcher in enumerate(self._time_dispatchers):
+            t = asyncio.create_task(dispatcher.run(), name=f"time-dispatcher-{idx}")
             self._infra_tasks.append(t)
-            self._logger.info("[BackgroundScheduler] TimeDispatcher 시작 완료")
+        if self._time_dispatchers:
+            self._logger.info(
+                f"[BackgroundScheduler] TimeDispatcher {len(self._time_dispatchers)}개 시작 완료"
+            )
 
         for name, task in self._tasks.items():
             if task.state == TaskState.SUSPENDED:
@@ -143,8 +151,8 @@ class BackgroundScheduler:
         self._logger.info(f"[BackgroundScheduler] 전체 종료: {len(self._tasks)}개 태스크")
 
         # 1. TimeDispatcher 중지 (새 티켓 발행 차단)
-        if self._time_dispatcher is not None:
-            self._time_dispatcher.stop()
+        for dispatcher in self._time_dispatchers:
+            dispatcher.stop()
         for t in self._infra_tasks:
             if not t.done():
                 t.cancel()

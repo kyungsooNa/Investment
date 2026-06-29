@@ -388,9 +388,18 @@ def test_service_container_wires_overseas_dryrun_us_market_clock(patched_service
     assert task_kwargs["market_calendar_service"] is None
     # 미국 정규장 클럭 주입 (America/New_York)
     assert task_kwargs["market_clock"].timezone_name == "America/New_York"
-    # KST TimeDispatcher/WorkerPool 티켓 경로에 묶이면 미국장 16:30 ET 트리거가 무시된다.
-    assert task_kwargs["worker_pool"] is None
+    # Ticket-driven 전환: 미국장 TimeDispatcher(time_dispatcher_us)가 NY 마감 후
+    # delay 만큼 대기 뒤 티켓을 발행 → WorkerPool 이 execute() 를 호출한다.
+    assert task_kwargs["worker_pool"] is ctx.worker_pool
     assert task_kwargs["notification_service"] is ctx.notification_service
+    # 미국장 전용 TimeDispatcher 가 mcs=None + 미국장 클럭으로 생성된다.
+    assert ctx.time_dispatcher_us is not None
+    td_us_calls = [
+        c for c in patched_service_container_deps["TimeDispatcher"].call_args_list
+        if c.kwargs.get("mcs") is None
+    ]
+    assert len(td_us_calls) == 1
+    assert td_us_calls[0].kwargs["market_clock"].timezone_name == "America/New_York"
 
 
 def test_domestic_active_with_overseas_enabled_builds_dryrun_task(patched_service_container_deps):
