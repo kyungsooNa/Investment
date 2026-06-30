@@ -47,6 +47,7 @@ def test_build_multiple_testing_section_reports_deflated_sharpe():
     assert section is not None
     assert "Deflated Sharpe" in section
     assert "전략 5개" in section
+    assert "best 전략 거래 표본" in section
     # best by total_net_pnl is S1 (highest cumulative pnl).
     assert "S1" in section
 

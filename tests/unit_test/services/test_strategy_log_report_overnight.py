@@ -51,6 +51,9 @@ def test_section_reports_open_holds_and_realized_overnight():
     assert "S2" in section
     # 최저 순익이 음수로 표기.
     assert "-4.00%" in section
+    assert "  • S1:" in section
+    assert "  • S2:" in section
+    assert "\n  - " not in section
 
 
 def test_section_normalizes_strategy_aliases_and_excludes_manual():

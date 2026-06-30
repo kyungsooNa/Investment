@@ -88,7 +88,7 @@ def test_service_helper_branches_for_summaries_and_quality_labels():
         )
     }
     summary = svc._build_rejected_reason_summary(rejected)
-    assert "기타(3건)" in summary
+    assert "기타(3종목)" in summary
 
     assert svc._format_order_type_counts({}) == "N/A"
     assert svc._format_order_type_counts({"market": 2, "custom": 1, "limit": 0}) == "시장가 2/custom 1"
@@ -650,7 +650,7 @@ async def test_report_inactive_summary_and_old_file_ignored(log_dir):
     svc = StrategyLogReportService(log_dir=log_dir)
     report = await svc.generate_report("20260418")
 
-    assert "ScannedStrategy</b> — 최근 스캔 후보 17종목 (시그널 없음)" in report
+    assert "ScannedStrategy</b> — 최근 관찰 후보 17종목 (시그널 없음)" in report
     assert "💤 <i>활동 없음: DormantA, DormantB, DormantC 외 1개" in report
     assert "활동 없음: ScannedStrategy" not in report
     assert "StaleStrategy" not in report
@@ -672,8 +672,8 @@ async def test_report_labels_scan_count_as_recent_candidates_and_rejections_as_s
     svc = StrategyLogReportService(log_dir=log_dir)
     report = await svc.generate_report("20260418")
 
-    assert "TestStrategy</b> — 최근 스캔 후보 2종목" in report
-    assert "❌ 매수 실패 종목 (3건)" in report
+    assert "TestStrategy</b> — 최근 관찰 후보 2종목" in report
+    assert "❌ 매수 실패 종목 (3종목)" in report
     assert "2종목 스캔" not in report
     assert "❌ 매수 실패 (3건)" not in report
 
@@ -691,8 +691,29 @@ async def test_report_rejected_limit_shows_rest_count(log_dir):
     svc = StrategyLogReportService(log_dir=log_dir)
     report = await svc.generate_report("20260418")
 
-    assert "…외 1건" in report
+    assert "…외 1종목" in report
     assert "종목6(A00006)" not in report
+
+
+@pytest.mark.asyncio
+async def test_report_translates_common_raw_rejection_reason_codes(log_dir):
+    """리포트에 자주 노출되는 raw reason 코드는 한글 라벨로 정리한다."""
+    log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")
+    _write_log(log_path, [
+        _make_info_entry("entry_rejected", "000001", "패턴종목", reason="pattern_not_detected"),
+        _make_info_entry("entry_rejected", "000002", "밴드종목", reason="out_of_entry_band"),
+        _make_info_entry("entry_rejected", "000003", "버퍼종목", reason="below_breakout_buffer"),
+    ])
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "패턴 미감지" in report
+    assert "진입 밴드 이탈" in report
+    assert "돌파 버퍼 미달" in report
+    assert "pattern_not_detected" not in report
+    assert "out_of_entry_band" not in report
+    assert "below_breakout_buffer" not in report
 
 
 @pytest.mark.asyncio
@@ -741,7 +762,7 @@ async def test_report_large_rejected_adds_reason_summary(log_dir):
     svc = StrategyLogReportService(log_dir=log_dir)
     report = await svc.generate_report("20260418")
 
-    assert "주요 탈락 사유: 신고가 근접 미달(6건), 이동평균선 역배열/하락(3건), 기타(1건)" in report
+    assert "주요 탈락 사유: 신고가 근접 미달(6종목), 이동평균선 역배열/하락(3종목), 기타(1종목)" in report
 
 
 @pytest.mark.asyncio
