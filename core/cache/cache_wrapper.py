@@ -5,6 +5,7 @@ from typing import TypeVar, Callable, Optional, Any
 from common.types import ResCommonResponse, ErrorCode
 from core.cache.cache_store import CacheStore
 from core.cache.cache_config import load_cache_config
+from core.performance_profiler import layer_profiler
 from datetime import datetime
 from collections import OrderedDict
 
@@ -20,10 +21,12 @@ class ClientWithCache:
             mode_fn: Callable[[], str],
             cache_store: Optional[CacheStore] = None,
             config: Optional[dict] = None,
-            market_calendar_service: Optional[Any] = None  # [추가] MarketCalendarService 주입
+            market_calendar_service: Optional[Any] = None,  # [추가] MarketCalendarService 주입
+            performance_profiler=None
     ):
         self._client = client
         self._logger = logger
+        self._pm = layer_profiler(performance_profiler)
         self._market_clock = market_clock
         self._mcs = market_calendar_service  # [추가]
         self._mode_fn = mode_fn  # 동적으로 모드 가져오기
@@ -66,7 +69,7 @@ class ClientWithCache:
             parts = [p for p in [mode, func_name, arg_str, kwarg_str] if p]
             return "_".join(parts)
 
-        async def wrapped(*args, **kwargs):
+        async def _wrapped_impl(*args, **kwargs):
             # _skip_cache 플래그가 있으면 캐시를 완전히 우회 (무한 재귀 방지용)
             skip_cache = kwargs.pop("_skip_cache", False)
             if skip_cache:
@@ -198,6 +201,15 @@ class ClientWithCache:
 
             return result
 
+        async def wrapped(*args, **kwargs):
+            # [S2 계층 타이머] 캐시 계층 총 소요(캐시 로직 + 하위 호출).
+            # HIT은 짧고, MISS는 하위(S3 재시도큐/S4 HTTP)를 포함 → 계층 분해 비교용.
+            _t_perf = self._pm.start_timer()
+            try:
+                return await _wrapped_impl(*args, **kwargs)
+            finally:
+                self._pm.log_timer(f"Cache.{name}", _t_perf)
+
         return wrapped
 
     def __dir__(self):
@@ -232,7 +244,8 @@ def cache_wrap_client(
         mode_getter: Callable[[], str],
         config: Optional[dict] = None,
         cache_store: Optional[CacheStore] = None,
-        market_calendar_service: Optional[Any] = None
+        market_calendar_service: Optional[Any] = None,
+        performance_profiler=None
 ) -> T:
     return ClientWithCache(
         client=api_client,
@@ -241,5 +254,6 @@ def cache_wrap_client(
         mode_fn=mode_getter,
         cache_store=cache_store,
         config=config,
-        market_calendar_service=market_calendar_service
+        market_calendar_service=market_calendar_service,
+        performance_profiler=performance_profiler
     )

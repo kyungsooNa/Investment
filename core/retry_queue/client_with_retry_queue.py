@@ -2,6 +2,7 @@
 import asyncio
 from core.api_priority import current_priority
 from core.retry_queue.api_request_queue import ApiRequestQueue
+from core.performance_profiler import layer_profiler
 
 
 # 주문(멱등성 우려) 및 WebSocket(상태 기반) 메서드는 큐를 통하지 않고 직접 호출
@@ -251,10 +252,11 @@ class ClientWithRetryQueue:
     - 주문/WebSocket API: retry queue 우회, global budget 만 적용 후 직접 위임
     """
 
-    def __init__(self, client, queue: ApiRequestQueue, budget_limiter=None):
+    def __init__(self, client, queue: ApiRequestQueue, budget_limiter=None, performance_profiler=None):
         self._client = client
         self._queue = queue
         self._budget_limiter = budget_limiter
+        self._pm = layer_profiler(performance_profiler)
         # 캐시된 래퍼 함수 저장: 동적 함수 객체 생성을 방지
         self._method_cache: dict = {}
 
@@ -274,23 +276,33 @@ class ClientWithRetryQueue:
                 return attr
 
             async def budgeted_direct(*args, **kwargs):
-                async with self._budget_limiter.acquire(category, priority=current_priority()):
-                    return await attr(*args, **kwargs)
+                # [S3 계층 타이머] budget 대기 + 직접 호출 총 소요(주문/WS 경로).
+                _t_perf = self._pm.start_timer()
+                try:
+                    async with self._budget_limiter.acquire(category, priority=current_priority()):
+                        return await attr(*args, **kwargs)
+                finally:
+                    self._pm.log_timer(f"RetryQueue.{name}(budget)", _t_perf)
 
             self._method_cache[name] = budgeted_direct
             return budgeted_direct
 
         # 비동기 조회 메서드 → 큐를 통해 실행
         async def queued(*args, **kwargs):
-            future = await self._queue.submit(
-                attr,
-                *args,
-                request_id=name,
-                request_category=_budget_category_for_method(name),
-                budget_limiter=self._budget_limiter,
-                **kwargs,
-            )
-            return await future
+            # [S3 계층 타이머] 큐 대기 + budget throttle + 재시도 + 하위(HTTP) 호출 총 소요.
+            _t_perf = self._pm.start_timer()
+            try:
+                future = await self._queue.submit(
+                    attr,
+                    *args,
+                    request_id=name,
+                    request_category=_budget_category_for_method(name),
+                    budget_limiter=self._budget_limiter,
+                    **kwargs,
+                )
+                return await future
+            finally:
+                self._pm.log_timer(f"RetryQueue.{name}", _t_perf)
 
         # 캐싱 후 반환
         self._method_cache[name] = queued
@@ -306,6 +318,6 @@ def _budget_category_for_method(name: str) -> str:
     return "quotation"
 
 
-def retry_queue_wrap_client(client, queue: ApiRequestQueue, budget_limiter=None) -> ClientWithRetryQueue:
+def retry_queue_wrap_client(client, queue: ApiRequestQueue, budget_limiter=None, performance_profiler=None) -> ClientWithRetryQueue:
     """BrokerAPIWrapper.__init__ 에서 호출하는 팩토리 함수."""
-    return ClientWithRetryQueue(client, queue, budget_limiter=budget_limiter)
+    return ClientWithRetryQueue(client, queue, budget_limiter=budget_limiter, performance_profiler=performance_profiler)

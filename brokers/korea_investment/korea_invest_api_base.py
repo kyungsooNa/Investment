@@ -17,6 +17,7 @@ import ssl
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv  # TokenProvider를 import
 from brokers.korea_investment.korea_invest_token_provider import TokenRateLimitError
 from common.types import ErrorCode, ResCommonResponse
+from core.performance_profiler import layer_profiler
 from typing import Union, Optional
 from brokers.korea_investment.korea_invest_header_provider import build_header_provider_from_env, \
     KoreaInvestHeaderProvider
@@ -51,8 +52,10 @@ class KoreaInvestApiBase:
                  async_client: Optional[httpx.AsyncClient] = None,
                  header_provider: Optional[KoreaInvestHeaderProvider] = None,
                  url_provider: Optional[KoreaInvestUrlProvider] = None,
-                 trid_provider: Optional[KoreaInvestTrIdProvider] = None):
+                 trid_provider: Optional[KoreaInvestTrIdProvider] = None,
+                 performance_profiler=None):
         self._logger = logger if logger else logging.getLogger(__name__)
+        self._pm = layer_profiler(performance_profiler)
         self.market_clock = market_clock
         self._env = env
         self._base_url = None
@@ -80,6 +83,26 @@ class KoreaInvestApiBase:
         return self._url_provider.url(key_or_path)
 
     async def call_api(self,
+                       method,
+                       key_or_path,
+                       params=None,
+                       data=None,
+                       expect_standard_schema: bool = True,
+                       retry_count=10,
+                       delay=1):
+        # [S4 계층 타이머] HTTP 계층 총 소요 = 네트워크 RTT + 응답파싱 + 토큰갱신/재시도(백오프 대기 포함).
+        # threshold 미만은 미기록(핫패스 보호). EGW00133 토큰 대기가 여기 잡힌다.
+        _t_perf = self._pm.start_timer()
+        try:
+            return await self._call_api_impl(
+                method, key_or_path, params=params, data=data,
+                expect_standard_schema=expect_standard_schema,
+                retry_count=retry_count, delay=delay,
+            )
+        finally:
+            self._pm.log_timer(f"KISApiBase.call_api({method} {key_or_path})", _t_perf)
+
+    async def _call_api_impl(self,
                        method,
                        key_or_path,
                        params=None,

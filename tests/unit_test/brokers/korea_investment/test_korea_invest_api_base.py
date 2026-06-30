@@ -59,6 +59,29 @@ def get_mock_env():
     return mock_env
 
 
+@pytest.mark.asyncio
+async def test_call_api_emits_s4_layer_timer():
+    """[S4] call_api는 HTTP 계층 타이머(KISApiBase.call_api)를 항상 호출한다 (계층 분해 계측)."""
+    mock_pm = MagicMock()
+    api_base = KoreaInvestApiBase(
+        env=get_mock_env(),
+        logger=MagicMock(),
+        market_clock=AsyncMock(),
+        trid_provider=MagicMock(),
+        performance_profiler=mock_pm,
+    )
+    # 실제 네트워크 대신 내부 구현을 모킹 → call_api 래퍼의 타이머 동작만 검증
+    api_base._call_api_impl = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="정상", data={"ok": 1}))
+
+    resp = await api_base.call_api("GET", "some/path")
+
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    mock_pm.start_timer.assert_called_once()
+    mock_pm.log_timer.assert_called_once()
+    assert mock_pm.log_timer.call_args.args[0].startswith("KISApiBase.call_api(")
+
+
 class TestKoreaInvestApiBase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         """ 각 테스트 실행 전에 필요한 객체들을 초기화합니다. """

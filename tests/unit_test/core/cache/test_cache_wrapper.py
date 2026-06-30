@@ -29,6 +29,36 @@ class DummyApiClient:
         )
 
 @pytest.mark.asyncio
+async def test_cache_wrapper_emits_s2_layer_timer(cache_store, test_cache_config):
+    """[S2] 캐시 래퍼 호출은 캐시 계층 타이머(Cache.<method>)를 호출한다 (계층 분해 계측)."""
+    logger = MagicMock()
+    market_clock = MagicMock()
+    market_clock.is_market_operating_hours.return_value = False
+    seoul_tz = pytz.timezone("Asia/Seoul")
+    market_clock.market_timezone = seoul_tz
+    now = seoul_tz.localize(datetime.now())
+    market_clock.get_latest_market_close_time.return_value = now - timedelta(minutes=5)
+    market_clock.get_next_market_open_time.return_value = now + timedelta(hours=8)
+    mock_pm = MagicMock()
+
+    wrapped = cache_wrap_client(
+        api_client=DummyApiClient(),
+        logger=logger,
+        market_clock=market_clock,
+        mode_getter=lambda: "TEST",
+        cache_store=cache_store,
+        config=test_cache_config,
+        performance_profiler=mock_pm,
+    )
+
+    result = await wrapped.get_data(1)
+
+    assert result.data.get("key") == "value-1"
+    mock_pm.log_timer.assert_called_once()
+    assert mock_pm.log_timer.call_args.args[0] == "Cache.get_data"
+
+
+@pytest.mark.asyncio
 async def test_cache_wrapper_hit_and_miss(cache_store, test_cache_config):
     logger = MagicMock()
     market_clock = MagicMock()

@@ -22,9 +22,22 @@ class PerformanceProfiler:
     PROFILE_OUTPUT_DIR = "logs/profile"
 
     def __init__(self, logger: Optional[logging.Logger] = None, enabled: bool = False, threshold: float = 0.0):
-        self.logger = logger if logger else get_performance_logger()
+        # 로거는 지연 해석(lazy): 생성만으로 get_performance_logger() 의 부수효과
+        # (파일 핸들러/리스너 전역 등록)를 일으키지 않도록 첫 기록 시점까지 미룬다.
+        # 계층 진단용 프로파일러가 다수 생성돼도 전역 로거 상태를 오염시키지 않는다.
+        self._logger = logger
         self.enabled = enabled
         self.threshold = threshold
+
+    @property
+    def logger(self):
+        if self._logger is None:
+            self._logger = get_performance_logger()
+        return self._logger
+
+    @logger.setter
+    def logger(self, value):
+        self._logger = value
 
     # ── 타이머 (기존) ──
 
@@ -119,3 +132,23 @@ class PerformanceProfiler:
         finally:
             profiler.stop()
             self._save_profile_result(profiler, name, save_html)
+
+
+# ── 레이어 경계 진단용 (S2 캐시 / S3 재시도큐 / S4 HTTP) ──
+# 브로커 호출 체인의 각 계층이 소비하는 시간을 분해하기 위한 threshold-gated 타이머.
+# 기본 ON이지만 threshold(기본 1.0s)로 정상 호출은 기록하지 않아 핫패스 로그 폭주를 막는다.
+# 환경변수로 전체 토글/임계값 조정 가능: KIS_LAYER_TIMING=0 으로 끄기.
+_LAYER_TIMING_ENABLED = os.getenv("KIS_LAYER_TIMING", "1") != "0"
+_LAYER_TIMING_THRESHOLD = float(os.getenv("KIS_LAYER_TIMING_THRESHOLD", "1.0"))
+
+
+def layer_profiler(performance_profiler: Optional["PerformanceProfiler"] = None) -> "PerformanceProfiler":
+    """
+    브로커 호출 체인의 계층 경계(cache/retry-queue/HTTP)에서 쓰는 진단용 프로파일러.
+
+    - performance_profiler가 주입되면 그대로 사용(테스트/중앙 제어 시).
+    - 없으면 enabled=_LAYER_TIMING_ENABLED, threshold=_LAYER_TIMING_THRESHOLD 로 생성.
+    """
+    if performance_profiler is not None:
+        return performance_profiler
+    return PerformanceProfiler(enabled=_LAYER_TIMING_ENABLED, threshold=_LAYER_TIMING_THRESHOLD)
