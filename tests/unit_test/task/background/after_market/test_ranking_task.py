@@ -1308,8 +1308,8 @@ async def test_refresh_investor_ranking_calls_telegram_reporter(bg_service, mock
 
 
 @pytest.mark.asyncio
-async def test_refresh_investor_ranking_sends_daily_theme_report(bg_service, mock_deps):
-    """투자자 랭킹 리포트 데이터로 당일 주도 테마 리포트도 전송한다."""
+async def test_refresh_investor_ranking_caches_daily_theme_report_source(bg_service, mock_deps):
+    """투자자 랭킹 갱신은 테마 리포트 원천 데이터만 캐시하고 직접 전송하지 않는다."""
     broker, mapper, _, _, _, _ = mock_deps
     mock_reporter = AsyncMock()
     theme_service = MagicMock()
@@ -1329,18 +1329,17 @@ async def test_refresh_investor_ranking_sends_daily_theme_report(bg_service, moc
 
     await bg_service.refresh_investor_ranking()
 
-    theme_service.build_daily_theme_report.assert_awaited_once()
-    rankings_arg = theme_service.build_daily_theme_report.call_args.args[0]
-    assert "all_stocks" in rankings_arg
-    mock_reporter.send_daily_theme_report.assert_awaited_once_with(
-        [{"normalized_name": "반도체/소부장", "leaders": []}],
-        report_date="20250101",
-    )
+    theme_service.build_daily_theme_report.assert_not_called()
+    mock_reporter.send_daily_theme_report.assert_not_called()
+    rankings = bg_service.get_daily_theme_report_rankings()
+    assert "all_stocks" in rankings
+    assert rankings["all_stocks"][0]["stck_shrn_iscd"] == "005930"
+    assert rankings["report_date"] == "20250101"
 
 
 @pytest.mark.asyncio
-async def test_refresh_investor_ranking_theme_report_exception_handled(bg_service, mock_deps):
-    """테마 리포트 예외는 랭킹 리포트 전송을 막지 않는다."""
+async def test_refresh_investor_ranking_does_not_call_theme_report_service(bg_service, mock_deps):
+    """테마 리포트는 별도 task 책임이므로 RankingTask에서 호출하지 않는다."""
     broker, mapper, _, logger, _, _ = mock_deps
     mock_reporter = AsyncMock()
     theme_service = MagicMock()
@@ -1354,8 +1353,8 @@ async def test_refresh_investor_ranking_theme_report_exception_handled(bg_servic
     await bg_service.refresh_investor_ranking()
 
     mock_reporter.send_ranking_report.assert_awaited_once()
-    logger.error.assert_called()
-    assert "텔레그램 테마 리포트 전송 중 오류" in str(logger.error.call_args)
+    theme_service.build_daily_theme_report.assert_not_called()
+    logger.error.assert_not_called()
 
 
 @pytest.mark.asyncio

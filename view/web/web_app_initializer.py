@@ -151,6 +151,7 @@ class WebAppContext:
         self.theme_classification_task = None
         self.theme_leader_service = None
         self.theme_daily_leader_service = None
+        self.theme_daily_leader_report_task = None
         self.strategy_log_report_task: StrategyLogReportTask = None
         self.post_market_replay_audit_task: PostMarketReplayAuditTask = None
         self.stock_repository: StockRepository = None

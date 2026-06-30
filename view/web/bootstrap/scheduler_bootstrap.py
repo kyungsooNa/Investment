@@ -124,6 +124,7 @@ class SchedulerBootstrap:
         self._register(ctx.premium_watchlist_generator_task, TaskPriority.LOW)
         self._register(ctx.newhigh_task, TaskPriority.LOW)
         self._register(ctx.theme_classification_task, TaskPriority.LOW)
+        self._register(self._optional_task("theme_daily_leader_report_task"), TaskPriority.LOW)
         self._register(ctx.log_cleanup_task, TaskPriority.MAINTENANCE)
         self._register(ctx.post_market_replay_audit_task, TaskPriority.LOW)
         self._register(ctx.strategy_log_report_task, TaskPriority.LOW)

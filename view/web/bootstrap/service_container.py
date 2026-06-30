@@ -72,6 +72,7 @@ from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
 from task.background.after_market.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
 from task.background.after_market.ranking_task import RankingTask
 from task.background.after_market.strategy_log_report_task import StrategyLogReportTask
+from task.background.after_market.theme_daily_leader_report_task import ThemeDailyLeaderReportTask
 from task.background.after_market.post_market_replay_audit_task import PostMarketReplayAuditTask
 from task.background.after_market.overseas_dryrun_task import OverseasDryRunTask
 from task.background.always_on.notification_queue_task import NotificationQueueTask
@@ -300,7 +301,6 @@ class ServiceContainer:
                     performance_profiler=ctx.pm,
                     notification_service=ctx.notification_service,
                     telegram_reporter=getattr(ctx, 'telegram_reporter', None),
-                    theme_daily_leader_service=getattr(ctx, "theme_daily_leader_service", None),
                     market_calendar_service=ctx._mcs,
                     market_data_service=ctx.market_data_service,
                     worker_pool=ctx.worker_pool,
@@ -707,6 +707,17 @@ class ServiceContainer:
                         logger=ctx.logger,
                         worker_pool=ctx.worker_pool,
                     )
+                if ctx.theme_daily_leader_service is not None:
+                    ctx.theme_daily_leader_report_task = ThemeDailyLeaderReportTask(
+                        ranking_task=ctx.ranking_task,
+                        theme_daily_leader_service=ctx.theme_daily_leader_service,
+                        telegram_reporter=getattr(ctx, 'telegram_reporter', None),
+                        notification_service=ctx.notification_service,
+                        mcs=ctx._mcs,
+                        market_clock=ctx.market_clock,
+                        logger=ctx.logger,
+                        worker_pool=ctx.worker_pool,
+                    )
                 ctx.strategy_log_report_task = StrategyLogReportTask(
                     report_service=StrategyLogReportService(
                         log_dir=os.path.join(ctx.logger.log_dir, "strategies"),
@@ -764,6 +775,7 @@ class ServiceContainer:
                 ctx.newhigh_task = None
                 ctx.newhigh_service = None
                 ctx.theme_classification_task = None
+                ctx.theme_daily_leader_report_task = None
                 ctx.strategy_log_report_task = None
                 ctx.post_market_replay_audit_task = None
                 ctx.after_market_reconcile_task = None

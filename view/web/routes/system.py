@@ -31,6 +31,7 @@ _SCHEDULE_TYPES = {
     "전일기준주도주_생성":  "after_market",
     "newhigh":             "after_market",
     "theme_classification": "after_market",
+    "daily_theme_leader_report": "after_market",
     "market_cap_gap_report_kr": "after_market",
     "market_cap_gap_report_us": "after_market",
     "overseas_vbo_dryrun": "after_market",
@@ -822,6 +823,22 @@ async def force_theme_classification_update():
 
     asyncio.create_task(task.force_run())
     return {"success": True, "message": "테마 분류 강제 수집이 시작되었습니다."}
+
+
+@router.post("/background/daily-theme-leader-report/force-update")
+async def force_daily_theme_leader_report():
+    """skip 조건을 무시하고 당일 주도 테마 리포트를 강제로 생성/전송한다."""
+    ctx = _get_ctx()
+    task = getattr(ctx, "theme_daily_leader_report_task", None)
+    if not task:
+        raise HTTPException(status_code=503, detail="ThemeDailyLeaderReportTask가 초기화되지 않았습니다")
+
+    progress = task.get_progress()
+    if progress.get("running"):
+        raise HTTPException(status_code=409, detail="이미 리포트 생성이 진행 중입니다")
+
+    asyncio.create_task(task.force_run())
+    return {"success": True, "message": "당일 주도 테마 리포트 강제 생성이 시작되었습니다."}
 
 
 @router.post("/background/strategy-log-report/force-update")
