@@ -272,6 +272,17 @@ _REASON_KR: Dict[str, str] = {
     # ── TraditionalVolumeBreakout / free-form English reasons ───
     "not_near_high":                 "신고가 근접 미달",
     "not_in_uptrend":                "이동평균선 역배열/하락",
+    # ── 사람이 보는 리포트용 raw reason 정리 ──────────────────────
+    "pattern_not_detected":          "패턴 미감지",
+    "out_of_entry_band":             "진입 밴드 이탈",
+    "below_breakout_buffer":         "돌파 버퍼 미달",
+    "below_target":                  "목표가 미달",
+    "program_buy_unavailable":       "프로그램 매수 데이터 없음",
+    "range_unavailable":             "가격 범위 데이터 없음",
+    "rs_rating_below_min":           "RS Rating 기준 미달",
+    "adx_below_threshold":           "ADX 기준 미달",
+    "not_stage2":                    "Stage2 아님",
+    "rsi_above_threshold":           "RSI 기준 초과",
 }
 
 # 각 섹션에서 보여줄 최대 종목 수
@@ -547,13 +558,13 @@ class StrategyLogReportService:
             return None
 
         if len(counts) <= 2:
-            parts = [f"{_esc(reason)}({count}건)" for reason, count in counts.most_common()]
+            parts = [f"{_esc(reason)}({count}종목)" for reason, count in counts.most_common()]
         else:
             top2 = counts.most_common(2)
             other_count = sum(counts.values()) - sum(count for _, count in top2)
-            parts = [f"{_esc(reason)}({count}건)" for reason, count in top2]
+            parts = [f"{_esc(reason)}({count}종목)" for reason, count in top2]
             if other_count > 0:
-                parts.append(f"기타({other_count}건)")
+                parts.append(f"기타({other_count}종목)")
         return f"• 주요 탈락 사유: {', '.join(parts)}"
 
     def _executed_buys_by_strategy(self, target_date: str) -> Tuple[bool, Dict[str, Dict[str, dict]]]:
@@ -1058,7 +1069,7 @@ class StrategyLogReportService:
                 f"• Deflated Sharpe(확률) {float(dsr.get('deflated_sharpe_ratio') or 0):.3f} "
                 f"— best SR {float(dsr.get('best_sharpe') or 0):.2f}, "
                 f"기대최대 {float(dsr.get('expected_max_sharpe') or 0):.2f}, "
-                f"표본 {int(dsr.get('sample_size') or 0)}건"
+                f"best 전략 거래 표본 {int(dsr.get('sample_size') or 0)}건"
             )
         if proxy.get("available"):
             detail_lines.append(
@@ -1179,7 +1190,7 @@ class StrategyLogReportService:
             lines.append(f"• 현재 보유(익일 갭 노출): {open_total}종목")
             for row in (open_holds.get("by_strategy") or [])[:5]:
                 lines.append(
-                    f"  - {_esc(_strategy_display_label(row.get('strategy')))}: "
+                    f"  • {_esc(_strategy_display_label(row.get('strategy')))}: "
                     f"{int(row.get('count') or 0)}종목 "
                     f"(최장 {int(row.get('max_holding_days') or 0)}일, "
                     f"평균 {float(row.get('avg_holding_days') or 0):.1f}일)"
@@ -1188,7 +1199,7 @@ class StrategyLogReportService:
             lines.append(f"• 실현 멀티세션 보유: {realized_total}건")
             for row in (realized.get("by_strategy") or [])[:5]:
                 lines.append(
-                    f"  - {_esc(_strategy_display_label(row.get('strategy')))}: "
+                    f"  • {_esc(_strategy_display_label(row.get('strategy')))}: "
                     f"{int(row.get('count') or 0)}건 "
                     f"(평균보유 {float(row.get('avg_holding_days') or 0):.1f}일, "
                     f"평균순익 {float(row.get('avg_net_return') or 0):+.2f}%, "
@@ -1890,11 +1901,11 @@ class StrategyLogReportService:
             if summary['scan_only']:
                 active_sections.append(
                     f"<b>{idx}. {_esc(summary['name'])}</b> — "
-                    f"최근 스캔 후보 {summary['scan_count']}종목 (시그널 없음)"
+                    f"최근 관찰 후보 {summary['scan_count']}종목 (시그널 없음)"
                 )
                 continue
 
-            scan_str = f" — 최근 스캔 후보 {summary['scan_count']}종목" if summary['scan_count'] else ""
+            scan_str = f" — 최근 관찰 후보 {summary['scan_count']}종목" if summary['scan_count'] else ""
             lines = [f"<b>{idx}. {_esc(summary['name'])}</b>{scan_str}"]
 
             if summary['bought']:
@@ -1911,7 +1922,7 @@ class StrategyLogReportService:
                 lines.append("\n✅ 매수 완료: 없음")
 
             if summary['rejected']:
-                lines.append(f"\n❌ 매수 실패 종목 ({len(summary['rejected'])}건)")
+                lines.append(f"\n❌ 매수 실패 종목 ({len(summary['rejected'])}종목)")
                 reason_summary = self._build_rejected_reason_summary(summary['rejected'])
                 if reason_summary:
                     lines.append(reason_summary)
@@ -1926,7 +1937,7 @@ class StrategyLogReportService:
                     count_str = f" {count}회 탈락" if count > 1 else ""
                     lines.append(f"• {_esc(info['name'])}({code}): {_esc(reason_kr)}{metric_str}{count_str}")
                 if rest_count > 0:
-                    lines.append(f"  …외 {rest_count}건")
+                    lines.append(f"  …외 {rest_count}종목")
             else:
                 lines.append("\n❌ 매수 실패: 없음")
 

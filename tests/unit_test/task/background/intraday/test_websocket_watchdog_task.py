@@ -241,7 +241,7 @@ async def test_streaming_watchdog_data_gap(watchdog_task, mock_deps):
 
 @pytest.mark.asyncio
 async def test_streaming_watchdog_skips_data_gap_after_realtime_health_window(watchdog_task):
-    """15:30 이후에는 tick 중단을 장 종료 구간으로 보고 data gap 재연결을 하지 않는다."""
+    """15:20 이후에는 동시호가 구간으로 보고 data gap 재연결을 하지 않는다."""
     svc = watchdog_task
     svc.mcs.is_market_open_now.return_value = True
     svc._streaming_stock_repo.get_desired.side_effect = (
@@ -253,7 +253,7 @@ async def test_streaming_watchdog_skips_data_gap_after_realtime_health_window(wa
     svc._program_trading_stream_service.last_data_ts = time.time() - 600
     svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
     svc.force_reconnect = AsyncMock()
-    after_realtime = time.struct_time((2026, 6, 4, 15, 31, 0, 3, 156, -1))
+    after_realtime = time.struct_time((2026, 6, 4, 15, 21, 0, 3, 156, -1))
 
     with patch("task.background.intraday.websocket_watchdog_task.time.localtime", return_value=after_realtime), \
          patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
@@ -264,6 +264,34 @@ async def test_streaming_watchdog_skips_data_gap_after_realtime_health_window(wa
 
     svc.force_reconnect.assert_not_called()
     svc._streaming_logger.log_pt_data_gap.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_streaming_watchdog_skips_price_data_gap_after_call_auction_start(watchdog_task):
+    """15:20 이후 체결가 tick gap은 동시호가 구간으로 보고 재연결하지 않는다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now.return_value = True
+    svc._streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.UNIFIED_PRICE else set()
+    )
+    svc._streaming_stock_repo.get_active.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.UNIFIED_PRICE else set()
+    )
+    svc._price_stream_service.get_last_any_tick_ts.return_value = time.time() - 600
+    svc._price_stream_service.get_stale_codes.return_value = ["005930"]
+    svc._streaming_service.broker.is_websocket_receive_alive.return_value = True
+    svc.force_reconnect = AsyncMock()
+    call_auction_time = time.struct_time((2026, 6, 4, 15, 21, 0, 3, 156, -1))
+
+    with patch("task.background.intraday.websocket_watchdog_task.time.localtime", return_value=call_auction_time), \
+         patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", side_effect=make_sleep_side_effect(1)):
+        try:
+            await svc._streaming_watchdog()
+        except asyncio.CancelledError:
+            pass
+
+    svc.force_reconnect.assert_not_called()
+    svc._streaming_logger.log_price_data_gap.assert_not_called()
 
 
 @pytest.mark.asyncio

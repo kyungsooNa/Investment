@@ -826,6 +826,46 @@ async def test_send_ranking_report_program_combined_exception_skips_bad_stock(te
 
 
 @pytest.mark.asyncio
+async def test_send_daily_theme_report_formats_stockeasy_like_cards(telegram_reporter):
+    """당일 주도 테마 리포트는 테마 카드형 요약과 대표 종목을 전송한다."""
+    themes = [
+        {
+            "normalized_name": "반도체/소부장",
+            "leader_avg_change_rate": 12.33,
+            "trading_value_sum_won": 380_100_000_000,
+            "advancing_ratio": 75.0,
+            "flow_ratio": 1.67,
+            "leaders": [
+                {"name": "테스", "code": "A", "change_rate": 14.9, "trading_value_won": 193_000_000_000},
+                {"name": "유진테크", "code": "B", "change_rate": 12.6, "trading_value_won": 54_300_000_000},
+                {"name": "피에스케이", "code": "C", "change_rate": 9.5, "trading_value_won": 122_800_000_000},
+            ],
+        }
+    ]
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+
+    await telegram_reporter.send_daily_theme_report(themes, "20260630")
+
+    full = "".join(call[0][0] for call in telegram_reporter._send_message.call_args_list)
+    assert "오늘의 주도 테마" in full
+    assert "1. 반도체/소부장" in full
+    assert "+12.33%" in full
+    assert "3,801억" in full
+    assert "테스 +14.9% 1,930억" in full
+
+
+@pytest.mark.asyncio
+async def test_send_daily_theme_report_empty(telegram_reporter):
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+
+    await telegram_reporter.send_daily_theme_report([], "20260630")
+
+    full = "".join(call[0][0] for call in telegram_reporter._send_message.call_args_list)
+    assert "오늘의 주도 테마" in full
+    assert "데이터 없음" in full
+
+
+@pytest.mark.asyncio
 async def test_send_minervini_report_empty_and_normal(telegram_reporter):
     """Minervini 리포트의 빈 리스트 처리와 정상 항목 전송 검증"""
     telegram_reporter._send_message = AsyncMock(return_value=True)

@@ -41,6 +41,7 @@ from services.naver_finance_scraper_service import NaverFinanceScraperService
 from services.newhigh_service import NewHighService
 from services.oneil_universe_service import OneilUniverseService
 from services.theme_classification_collector_service import ThemeClassificationCollectorService
+from services.theme_daily_leader_service import ThemeDailyLeaderService
 from services.theme_leader_service import ThemeLeaderService
 from task.background.after_market.theme_classification_task import ThemeClassificationTask
 from services.opening_position_reconcile_service import OpeningPositionReconcileService
@@ -221,10 +222,16 @@ class ServiceContainer:
                 logger=ctx.logger,
                 performance_profiler=ctx.pm,
             )
+            ctx.theme_daily_leader_service = ThemeDailyLeaderService(
+                classification_repository=ctx.theme_classification_repository,
+                logger=ctx.logger,
+                performance_profiler=ctx.pm,
+            )
         except Exception as e:
             ctx.logger.warning(f"[ServiceBootstrap:ThemeLeader] 초기화 실패: {e}")
             ctx.theme_classification_repository = None
             ctx.theme_leader_service = None
+            ctx.theme_daily_leader_service = None
 
         try:
             ctx.market_data_service = MarketDataService(
@@ -293,6 +300,7 @@ class ServiceContainer:
                     performance_profiler=ctx.pm,
                     notification_service=ctx.notification_service,
                     telegram_reporter=getattr(ctx, 'telegram_reporter', None),
+                    theme_daily_leader_service=getattr(ctx, "theme_daily_leader_service", None),
                     market_calendar_service=ctx._mcs,
                     market_data_service=ctx.market_data_service,
                     worker_pool=ctx.worker_pool,
