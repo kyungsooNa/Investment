@@ -27,6 +27,7 @@ from repositories.stock_classification_repository import StockClassificationRepo
 from repositories.stock_repository import StockRepository
 from repositories.streaming_stock_repo import StreamingStockRepo
 from scheduler.dispatcher.time_dispatcher import TimeDispatcher
+from scheduler.strategy_scheduler_store import StrategySchedulerStore
 from scheduler.ticket_queue.dlq_manager import DlqManager
 from scheduler.ticket_queue.message_broker import MessageBroker
 from scheduler.worker.worker_pool import WorkerPool
@@ -313,6 +314,8 @@ class ServiceContainer:
                     # 한국장/미국장 시총갭 리포트는 config 플래그로 개별 on/off (기본 둘 다 on)
                     kr_gap_enabled = config_dict.get("market_cap_gap_report_kr_enabled", True)
                     us_gap_enabled = config_dict.get("market_cap_gap_report_us_enabled", True)
+                    # 재시작 시 catch-up 으로 인한 중복 전송을 막기 위해 "마지막 전송 날짜"를 SQLite 에 영속화.
+                    gap_report_store = StrategySchedulerStore(logger=ctx.logger)
                     ctx.market_cap_gap_report_kr_task = MarketCapGapReportTask(
                         market_cap_gap_service=ctx.market_cap_gap_service,
                         telegram_reporter=getattr(ctx, "telegram_reporter", None),
@@ -320,6 +323,7 @@ class ServiceContainer:
                         session="kr_close",
                         market_calendar_service=ctx._mcs,
                         market_clock=ctx.market_clock,
+                        scheduler_store=gap_report_store,
                         logger=ctx.logger,
                     ) if kr_gap_enabled else None
                     ctx.market_cap_gap_report_us_task = MarketCapGapReportTask(
@@ -329,6 +333,7 @@ class ServiceContainer:
                         session="us_close",
                         market_calendar_service=None,
                         market_clock=MarketClock.for_us_equities(logger=ctx.logger),
+                        scheduler_store=gap_report_store,
                         logger=ctx.logger,
                     ) if us_gap_enabled else None
                 else:

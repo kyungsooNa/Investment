@@ -24,6 +24,7 @@ class MarketCapGapReportTask(AfterMarketTask):
         session: str = "kr_close",
         market_calendar_service=None,
         market_clock=None,
+        scheduler_store=None,
         logger=None,
     ):
         if session not in self._SESSION_LABELS:
@@ -38,10 +39,13 @@ class MarketCapGapReportTask(AfterMarketTask):
         self._telegram_reporter = telegram_reporter
         self._notification_service = notification_service
         self._session = session
-        self._last_reported_date: Optional[str] = None
+        # 재시작 시 중복 전송 방지를 위해 "마지막 전송 날짜"를 영속화한다.
+        self._scheduler_store = scheduler_store
+        self._state_key = f"market_cap_gap_last_sent_{self._session}"
+        self._last_reported_date: Optional[str] = self._load_last_reported_date()
         self._progress = {
             "running": False,
-            "last_reported_date": None,
+            "last_reported_date": self._last_reported_date,
             "last_result": None,
         }
 
@@ -73,6 +77,23 @@ class MarketCapGapReportTask(AfterMarketTask):
     def get_progress(self) -> dict:
         return dict(self._progress)
 
+    def _load_last_reported_date(self) -> Optional[str]:
+        if self._scheduler_store is None:
+            return None
+        try:
+            return self._scheduler_store.load_keyed(self._state_key)
+        except Exception as exc:
+            self._logger.warning(f"{self.task_name}: 마지막 전송 날짜 로드 실패 — {exc}")
+            return None
+
+    def _save_last_reported_date(self, date_str: str) -> None:
+        if self._scheduler_store is None:
+            return
+        try:
+            self._scheduler_store.save_keyed(self._state_key, date_str)
+        except Exception as exc:
+            self._logger.warning(f"{self.task_name}: 마지막 전송 날짜 저장 실패 — {exc}")
+
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         if self._last_reported_date == latest_trading_date:
             self._logger.info(f"{self.task_name}: {latest_trading_date} 이미 전송 완료 — 스킵")
@@ -91,6 +112,7 @@ class MarketCapGapReportTask(AfterMarketTask):
                     self._SESSION_LABELS[self._session],
                 )
             self._last_reported_date = latest_trading_date
+            self._save_last_reported_date(latest_trading_date)
             self._progress["last_reported_date"] = latest_trading_date
             self._progress["last_result"] = {
                 "korean": len(report.get("korean") or []),
