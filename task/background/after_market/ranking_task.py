@@ -55,6 +55,7 @@ class RankingTask(AfterMarketTask):
         performance_profiler: Optional[PerformanceProfiler] = None,
         notification_service: Optional[NotificationService] = None,
         telegram_reporter: Optional[TelegramReporter] = None,
+        theme_daily_leader_service=None,
         market_calendar_service: Optional[MarketCalendarService] = None,
         worker_pool: Optional[WorkerPool] = None,
     ):
@@ -71,6 +72,7 @@ class RankingTask(AfterMarketTask):
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
         self._telegram_reporter = telegram_reporter
+        self._theme_daily_leader_service = theme_daily_leader_service
         self._suspend_event: asyncio.Event = asyncio.Event()
         self._suspend_event.set()  # 초기에는 실행 가능 상태
 
@@ -475,6 +477,18 @@ class RankingTask(AfterMarketTask):
                     self._logger.info("텔레그램 랭킹 리포트 전송 완료")
                 except Exception as e:
                     self._logger.error(f"텔레그램 랭킹 리포트 전송 중 오류: {e}", exc_info=True)
+                if self._theme_daily_leader_service:
+                    self._logger.info("텔레그램 테마 리포트 전송 시작")
+                    try:
+                        theme_resp = await self._theme_daily_leader_service.build_daily_theme_report(
+                            rankings_for_report,
+                            report_date=target_date,
+                        )
+                        theme_data = theme_resp.data if theme_resp and theme_resp.rt_cd == ErrorCode.SUCCESS.value else []
+                        await self._telegram_reporter.send_daily_theme_report(theme_data or [], report_date=target_date)
+                        self._logger.info("텔레그램 테마 리포트 전송 완료")
+                    except Exception as e:
+                        self._logger.error(f"텔레그램 테마 리포트 전송 중 오류: {e}", exc_info=True)
         except Exception as e:
             self._logger.error(f"투자자 랭킹 갱신 실패: {e}", exc_info=True)
             if self._notification_service:

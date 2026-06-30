@@ -27,7 +27,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "PositionSizingService", "RiskGateService", "ExecutionFlowService",
     "OrderPolicyService", "DeferredOrderQueue", "OrderExecutionService",
     "OneilUniverseService", "NaverFinanceScraperService",
-    "StockClassificationRepository", "ThemeLeaderService",
+    "StockClassificationRepository", "ThemeLeaderService", "ThemeDailyLeaderService",
     "ThemeClassificationCollectorService", "ThemeClassificationTask",
     "MarketCapGapService", "MarketCapGapReportTask",
     "PremiumWatchlistGeneratorTask", "CacheWarmupTask", "LogCleanupTask",
@@ -104,7 +104,7 @@ def test_service_container_creates_query_and_order_services(patched_service_cont
 
 
 def test_service_container_creates_theme_leader_service(patched_service_container_deps):
-    """ThemeLeaderService 와 분류 저장소가 ctx 에 주입된다."""
+    """ThemeLeaderService, ThemeDailyLeaderService 와 분류 저장소가 ctx 에 주입된다."""
     from view.web.bootstrap.service_container import ServiceContainer
 
     ctx = _make_fake_context()
@@ -113,6 +113,8 @@ def test_service_container_creates_theme_leader_service(patched_service_containe
     assert ctx.theme_classification_repository is patched_service_container_deps[
         "StockClassificationRepository"].return_value
     assert ctx.theme_leader_service is patched_service_container_deps["ThemeLeaderService"].return_value
+    assert ctx.theme_daily_leader_service is patched_service_container_deps[
+        "ThemeDailyLeaderService"].return_value
 
 
 def test_service_container_passes_order_execution_retry_config(patched_service_container_deps):
@@ -286,6 +288,8 @@ def test_service_container_creates_universe_and_tasks(patched_service_container_
 
     assert ctx.oneil_universe_service is patched_service_container_deps["OneilUniverseService"].return_value
     assert ctx.ranking_task is patched_service_container_deps["RankingTask"].return_value
+    ranking_kwargs = patched_service_container_deps["RankingTask"].call_args.kwargs
+    assert ranking_kwargs["theme_daily_leader_service"] is ctx.theme_daily_leader_service
     assert ctx.strategy_log_report_task is patched_service_container_deps["StrategyLogReportTask"].return_value
     assert ctx.market_cap_gap_service is patched_service_container_deps["MarketCapGapService"].return_value
     assert patched_service_container_deps["MarketCapGapReportTask"].call_count == 2

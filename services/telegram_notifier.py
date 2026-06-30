@@ -264,6 +264,70 @@ class TelegramReporter:
         if current_message:
             await self._send_message(current_message)
 
+    @staticmethod
+    def _format_won_100m(value) -> str:
+        try:
+            amount = float(value or 0)
+        except (TypeError, ValueError):
+            return "-"
+        if amount == 0:
+            return "-"
+        amount_uk = amount / 100_000_000
+        if abs(amount_uk) >= 10_000:
+            jo = int(amount_uk // 10_000)
+            uk = int(abs(amount_uk) % 10_000)
+            sign = "-" if amount_uk < 0 and jo == 0 else ""
+            return f"{sign}{jo:,}조" + (f" {uk:,}억" if uk else "")
+        return f"{amount_uk:,.0f}억"
+
+    @staticmethod
+    def _format_signed_pct(value, digits: int = 1) -> str:
+        try:
+            rate = float(value or 0)
+        except (TypeError, ValueError):
+            return "-"
+        return f"{rate:+.{digits}f}%"
+
+    async def send_daily_theme_report(self, themes: List[Dict], report_date: str, limit: int = 10):
+        """당일 주도 테마 리포트를 텔레그램에 전송한다."""
+        title = f"🔥 <b>오늘의 주도 테마 ({report_date})</b>\n"
+        await self._send_message(title)
+
+        if not themes:
+            await self._send_message("데이터 없음")
+            return
+
+        parts = []
+        for rank, theme in enumerate(themes[:limit], 1):
+            theme_name = html.escape(str(theme.get("normalized_name") or ""), quote=False)
+            avg_rate = self._format_signed_pct(theme.get("leader_avg_change_rate"), digits=2)
+            trading_value = self._format_won_100m(theme.get("trading_value_sum_won"))
+            advancing_ratio = self._format_signed_pct(theme.get("advancing_ratio"), digits=1).replace("+", "")
+            flow_ratio = self._format_signed_pct(theme.get("flow_ratio"), digits=2)
+            lines = [
+                f"<b>{rank}. {theme_name}</b>  {avg_rate}  {trading_value}",
+                f"상승비율 {advancing_ratio} | 수급비중 {flow_ratio}",
+                "<pre>",
+            ]
+            for leader in (theme.get("leaders") or [])[:3]:
+                name = html.escape(str(leader.get("name") or leader.get("code") or ""), quote=False)
+                rate = self._format_signed_pct(leader.get("change_rate"), digits=1)
+                tv = self._format_won_100m(leader.get("trading_value_won"))
+                lines.append(f"{name} {rate} {tv}")
+            lines.append("</pre>")
+            parts.append("\n".join(lines))
+
+        current = ""
+        for part in parts:
+            chunk = part + "\n\n"
+            if len((current + chunk).encode("utf-8")) > 4000:
+                await self._send_message(current)
+                current = chunk
+            else:
+                current += chunk
+        if current:
+            await self._send_message(current.rstrip())
+
     async def send_newhigh_report(self, stocks: List[Dict], report_date: str):
         """52주 신고가 종목 리포트를 텔레그램에 전송합니다."""
         title = f"🚀 <b>52주 신고가 종목 리포트 ({report_date})</b>\n총 {len(stocks)}개 종목\n"

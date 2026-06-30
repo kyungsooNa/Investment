@@ -1306,6 +1306,58 @@ async def test_refresh_investor_ranking_calls_telegram_reporter(bg_service, mock
     assert 'trading_value' in rankings
     assert report_date == "20250101" # fixture에서 설정한 날짜
 
+
+@pytest.mark.asyncio
+async def test_refresh_investor_ranking_sends_daily_theme_report(bg_service, mock_deps):
+    """투자자 랭킹 리포트 데이터로 당일 주도 테마 리포트도 전송한다."""
+    broker, mapper, _, _, _, _ = mock_deps
+    mock_reporter = AsyncMock()
+    theme_service = MagicMock()
+    theme_service.build_daily_theme_report = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="성공",
+            data=[{"normalized_name": "반도체/소부장", "leaders": []}],
+        )
+    )
+    bg_service._telegram_reporter = mock_reporter
+    bg_service._theme_daily_leader_service = theme_service
+
+    mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
+    broker.get_investor_trade_by_stock_daily = AsyncMock(return_value=_make_investor_response(100))
+    broker.get_program_trade_by_stock_daily = AsyncMock(return_value=_make_program_response(100))
+
+    await bg_service.refresh_investor_ranking()
+
+    theme_service.build_daily_theme_report.assert_awaited_once()
+    rankings_arg = theme_service.build_daily_theme_report.call_args.args[0]
+    assert "all_stocks" in rankings_arg
+    mock_reporter.send_daily_theme_report.assert_awaited_once_with(
+        [{"normalized_name": "반도체/소부장", "leaders": []}],
+        report_date="20250101",
+    )
+
+
+@pytest.mark.asyncio
+async def test_refresh_investor_ranking_theme_report_exception_handled(bg_service, mock_deps):
+    """테마 리포트 예외는 랭킹 리포트 전송을 막지 않는다."""
+    broker, mapper, _, logger, _, _ = mock_deps
+    mock_reporter = AsyncMock()
+    theme_service = MagicMock()
+    theme_service.build_daily_theme_report = AsyncMock(side_effect=Exception("Theme Error"))
+    bg_service._telegram_reporter = mock_reporter
+    bg_service._theme_daily_leader_service = theme_service
+
+    mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
+    broker.get_investor_trade_by_stock_daily = AsyncMock(return_value=_make_investor_response(100))
+
+    await bg_service.refresh_investor_ranking()
+
+    mock_reporter.send_ranking_report.assert_awaited_once()
+    logger.error.assert_called()
+    assert "텔레그램 테마 리포트 전송 중 오류" in str(logger.error.call_args)
+
+
 @pytest.mark.asyncio
 async def test_refresh_investor_ranking_reporter_exception_handled(bg_service, mock_deps):
     """리포트 전송 중 예외가 발생해도 서비스가 중단되지 않고 로깅되는지 검증"""
