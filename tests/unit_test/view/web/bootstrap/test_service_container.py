@@ -28,7 +28,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "OrderPolicyService", "DeferredOrderQueue", "OrderExecutionService",
     "OneilUniverseService", "NaverFinanceScraperService",
     "StockClassificationRepository", "ThemeLeaderService", "ThemeDailyLeaderService",
-    "ThemeClassificationCollectorService", "ThemeClassificationTask",
+    "ThemeClassificationCollectorService", "ThemeClassificationTask", "ThemeDailyLeaderReportTask",
     "MarketCapGapService", "MarketCapGapReportTask",
     "PremiumWatchlistGeneratorTask", "CacheWarmupTask", "LogCleanupTask",
     "NewHighTask", "NewHighService", "StrategyLogReportTask",
@@ -233,6 +233,7 @@ def test_service_container_web_mode_keeps_realtime_and_skips_trading_batch_tasks
     patched_service_container_deps["DailyPriceCollectorTask"].assert_not_called()
     patched_service_container_deps["OhlcvUpdateTask"].assert_not_called()
     patched_service_container_deps["AfterMarketReconcileTask"].assert_not_called()
+    patched_service_container_deps["ThemeDailyLeaderReportTask"].assert_not_called()
     patched_service_container_deps["PostMarketReplayAuditTask"].assert_not_called()
 
     assert ctx.pre_market_health_check_task is None
@@ -265,6 +266,7 @@ def test_service_container_trading_mode_keeps_realtime_intraday_and_skips_web_ba
     patched_service_container_deps["DailyPriceCollectorTask"].assert_not_called()
     patched_service_container_deps["OhlcvUpdateTask"].assert_not_called()
     patched_service_container_deps["AfterMarketReconcileTask"].assert_not_called()
+    patched_service_container_deps["ThemeDailyLeaderReportTask"].assert_not_called()
     patched_service_container_deps["StrategyLogReportTask"].assert_not_called()
     patched_service_container_deps["PostMarketReplayAuditTask"].assert_not_called()
 
@@ -273,6 +275,7 @@ def test_service_container_trading_mode_keeps_realtime_intraday_and_skips_web_ba
     assert ctx.daily_price_collector_task is None
     assert ctx.ohlcv_update_task is None
     assert ctx.after_market_reconcile_task is None
+    assert ctx.theme_daily_leader_report_task is None
     assert ctx.strategy_log_report_task is None
     assert ctx.post_market_replay_audit_task is None
     assert ctx.order_execution_service is patched_service_container_deps["OrderExecutionService"].return_value
@@ -280,7 +283,7 @@ def test_service_container_trading_mode_keeps_realtime_intraday_and_skips_web_ba
 
 
 def test_service_container_creates_universe_and_tasks(patched_service_container_deps):
-    """OneilUniverseService, RankingTask, StrategyLogReportTask 가 생성된다."""
+    """OneilUniverseService, RankingTask, ThemeDailyLeaderReportTask, StrategyLogReportTask 가 생성된다."""
     from view.web.bootstrap.service_container import ServiceContainer
 
     ctx = _make_fake_context()
@@ -289,7 +292,13 @@ def test_service_container_creates_universe_and_tasks(patched_service_container_
     assert ctx.oneil_universe_service is patched_service_container_deps["OneilUniverseService"].return_value
     assert ctx.ranking_task is patched_service_container_deps["RankingTask"].return_value
     ranking_kwargs = patched_service_container_deps["RankingTask"].call_args.kwargs
-    assert ranking_kwargs["theme_daily_leader_service"] is ctx.theme_daily_leader_service
+    assert "theme_daily_leader_service" not in ranking_kwargs
+    assert ctx.theme_daily_leader_report_task is patched_service_container_deps[
+        "ThemeDailyLeaderReportTask"
+    ].return_value
+    theme_report_kwargs = patched_service_container_deps["ThemeDailyLeaderReportTask"].call_args.kwargs
+    assert theme_report_kwargs["ranking_task"] is ctx.ranking_task
+    assert theme_report_kwargs["theme_daily_leader_service"] is ctx.theme_daily_leader_service
     assert ctx.strategy_log_report_task is patched_service_container_deps["StrategyLogReportTask"].return_value
     assert ctx.market_cap_gap_service is patched_service_container_deps["MarketCapGapService"].return_value
     assert patched_service_container_deps["MarketCapGapReportTask"].call_count == 2

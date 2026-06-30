@@ -55,7 +55,6 @@ class RankingTask(AfterMarketTask):
         performance_profiler: Optional[PerformanceProfiler] = None,
         notification_service: Optional[NotificationService] = None,
         telegram_reporter: Optional[TelegramReporter] = None,
-        theme_daily_leader_service=None,
         market_calendar_service: Optional[MarketCalendarService] = None,
         worker_pool: Optional[WorkerPool] = None,
     ):
@@ -72,7 +71,6 @@ class RankingTask(AfterMarketTask):
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
         self._telegram_reporter = telegram_reporter
-        self._theme_daily_leader_service = theme_daily_leader_service
         self._suspend_event: asyncio.Event = asyncio.Event()
         self._suspend_event.set()  # 초기에는 실행 가능 상태
 
@@ -87,6 +85,7 @@ class RankingTask(AfterMarketTask):
         # 프로그램 매매 랭킹 캐시
         self._program_net_buy_cache: List[Dict] = []
         self._program_net_sell_cache: List[Dict] = []
+        self._daily_theme_report_rankings: Dict[str, List[Dict] | str] = {}
         self._investor_ranking_updated_at: Optional[datetime] = None
         self._is_refreshing: bool = False
         self._last_collected_date: Optional[str] = None
@@ -224,6 +223,16 @@ class RankingTask(AfterMarketTask):
     def get_investor_ranking_progress(self) -> Dict:
         """투자자 랭킹 수집 진행률 반환."""
         return self.get_progress()
+
+    def get_daily_theme_report_rankings(self) -> Dict:
+        """당일 주도 테마 리포트용 랭킹 원천 데이터를 반환한다."""
+        result: Dict = {}
+        for key, value in self._daily_theme_report_rankings.items():
+            if isinstance(value, list):
+                result[key] = [dict(item) for item in value]
+            else:
+                result[key] = value
+        return result
 
     def get_basic_ranking_cache(self, category: str) -> Optional[ResCommonResponse]:
         """장마감 후 캐시된 기본 랭킹 반환. 캐시 없으면 None."""
@@ -457,38 +466,31 @@ class RankingTask(AfterMarketTask):
                     NotificationCategory.BACKGROUND, NotificationLevel.INFO, "투자자 랭킹 갱신 완료",
                     f"{len(results)}개 종목 수집, 소요: {elapsed:.1f}초",
                 )
+            rankings_for_report = {
+                'foreign_buy': self._foreign_net_buy_cache,
+                'foreign_sell': self._foreign_net_sell_cache,
+                'inst_buy': self._inst_net_buy_cache,
+                'inst_sell': self._inst_net_sell_cache,
+                'prsn_buy': self._prsn_net_buy_cache,
+                'prsn_sell': self._prsn_net_sell_cache,
+                'program_buy': self._program_net_buy_cache,
+                'program_sell': self._program_net_sell_cache,
+                'trading_value': self._trading_value_cache,
+                'all_stocks': results,
+                'program_all_stocks': program_results
+            }
+            self._daily_theme_report_rankings = {
+                key: [dict(item) for item in value] if isinstance(value, list) else value
+                for key, value in rankings_for_report.items()
+            }
+            self._daily_theme_report_rankings["report_date"] = target_date
             if self._telegram_reporter:
                 self._logger.info("텔레그램 랭킹 리포트 전송 시작")
-                rankings_for_report = {
-                    'foreign_buy': self._foreign_net_buy_cache,
-                    'foreign_sell': self._foreign_net_sell_cache,
-                    'inst_buy': self._inst_net_buy_cache,
-                    'inst_sell': self._inst_net_sell_cache,
-                    'prsn_buy': self._prsn_net_buy_cache,
-                    'prsn_sell': self._prsn_net_sell_cache,
-                    'program_buy': self._program_net_buy_cache,
-                    'program_sell': self._program_net_sell_cache,
-                    'trading_value': self._trading_value_cache,
-                    'all_stocks': results,
-                    'program_all_stocks': program_results
-                }
                 try:
                     await self._telegram_reporter.send_ranking_report(rankings_for_report, report_date=target_date)
                     self._logger.info("텔레그램 랭킹 리포트 전송 완료")
                 except Exception as e:
                     self._logger.error(f"텔레그램 랭킹 리포트 전송 중 오류: {e}", exc_info=True)
-                if self._theme_daily_leader_service:
-                    self._logger.info("텔레그램 테마 리포트 전송 시작")
-                    try:
-                        theme_resp = await self._theme_daily_leader_service.build_daily_theme_report(
-                            rankings_for_report,
-                            report_date=target_date,
-                        )
-                        theme_data = theme_resp.data if theme_resp and theme_resp.rt_cd == ErrorCode.SUCCESS.value else []
-                        await self._telegram_reporter.send_daily_theme_report(theme_data or [], report_date=target_date)
-                        self._logger.info("텔레그램 테마 리포트 전송 완료")
-                    except Exception as e:
-                        self._logger.error(f"텔레그램 테마 리포트 전송 중 오류: {e}", exc_info=True)
         except Exception as e:
             self._logger.error(f"투자자 랭킹 갱신 실패: {e}", exc_info=True)
             if self._notification_service:

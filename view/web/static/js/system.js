@@ -528,6 +528,7 @@ const FORCE_UPDATE_CONFIG = {
     cache_warmup:         { endpoint: '/api/background/cache-warmup/force-update',     label: '강제 웜업' },
     newhigh:              { endpoint: '/api/background/newhigh/force-update',          label: '강제 수집' },
     theme_classification:  { endpoint: '/api/background/theme-classification/force-update', label: '강제 수집' },
+    daily_theme_leader_report: { endpoint: '/api/background/daily-theme-leader-report/force-update', label: '강제 발송' },
     minervini_update:     { endpoint: '/api/background/minervini/force-update',         label: '강제 수집' },
     strategy_log_report:  { endpoint: '/api/background/strategy-log-report/force-update', label: '강제 발송' },
 };
