@@ -119,6 +119,18 @@ def wrapped(fake_client, queue):
     return ClientWithRetryQueue(fake_client, queue)
 
 
+async def test_queued_call_emits_s3_layer_timer(fake_client, queue):
+    """[S3] 큐를 통하는 조회 호출은 retry-queue 계층 타이머(RetryQueue.<method>)를 호출한다."""
+    mock_pm = MagicMock()
+    wrapped = ClientWithRetryQueue(fake_client, queue, performance_profiler=mock_pm)
+
+    result = await wrapped.get_current_price("005930")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    mock_pm.log_timer.assert_called_once()
+    assert mock_pm.log_timer.call_args.args[0] == "RetryQueue.get_current_price"
+
+
 class TestAsyncMethodThroughQueue:
     async def test_quotation_method_uses_queue(self, wrapped, queue):
         result = await wrapped.get_current_price("005930")
