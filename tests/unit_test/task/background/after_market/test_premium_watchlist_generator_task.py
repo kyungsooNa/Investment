@@ -3,7 +3,7 @@ PremiumWatchlistGeneratorTask 단위 테스트.
 장 마감 후 전일 기준 우량주 자동 생성 태스크 검증.
 """
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 
 from task.background.after_market.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
 from interfaces.schedulable_task import TaskPriority, TaskState
@@ -499,25 +499,14 @@ class TestTelegramReporterIntegration:
         )
 
     async def test_run_generation_calls_reporter_on_success(self, task_with_reporter, mock_reporter):
-        """생성 성공 시 TelegramReporter.send_premium_watchlist_report가 호출된다."""
-        with patch("asyncio.create_task") as mock_create_task:
-            await task_with_reporter._run_generation("20260320")
-            mock_create_task.assert_called_once()
+        """생성 성공 시 TelegramReporter.send_premium_watchlist_report를 완료까지 기다린다."""
+        await task_with_reporter._run_generation("20260320")
+
+        mock_reporter.send_premium_watchlist_report.assert_awaited_once()
 
     async def test_run_generation_passes_stocks_to_reporter(self, task_with_reporter, mock_reporter, mock_universe_service):
         """리포터에 kospi_stocks / kosdaq_stocks 가 올바르게 전달된다."""
-        captured_coro = None
-
-        def capture_task(coro):
-            nonlocal captured_coro
-            captured_coro = coro
-            return MagicMock()
-
-        with patch("asyncio.create_task", side_effect=capture_task):
-            await task_with_reporter._run_generation("20260320")
-
-        assert captured_coro is not None
-        await captured_coro  # 실제 코루틴 실행
+        await task_with_reporter._run_generation("20260320")
 
         mock_reporter.send_premium_watchlist_report.assert_awaited_once_with(
             kospi=[_SAMPLE_KOSPI_STOCK] * 30,
@@ -534,6 +523,6 @@ class TestTelegramReporterIntegration:
     async def test_run_generation_failure_does_not_call_reporter(self, task_with_reporter, mock_universe_service, mock_reporter):
         """생성 실패 시 리포터를 호출하지 않는다."""
         mock_universe_service.generate_premium_watchlist.side_effect = RuntimeError("실패")
-        with patch("asyncio.create_task") as mock_create_task:
-            await task_with_reporter._run_generation("20260320")
-            mock_create_task.assert_not_called()
+        await task_with_reporter._run_generation("20260320")
+
+        mock_reporter.send_premium_watchlist_report.assert_not_awaited()
