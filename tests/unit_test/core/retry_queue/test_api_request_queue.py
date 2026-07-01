@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock
 
 from common.types import ResCommonResponse, ErrorCode
-from core.retry_queue.api_request_queue import ApiRequestQueue
+from core.retry_queue.api_request_queue import ApiRequestQueue, QueuedRequest
 
 
 def success_resp() -> ResCommonResponse:
@@ -31,6 +31,37 @@ def logger():
 @pytest.fixture
 def queue(logger):
     return ApiRequestQueue(logger=logger)
+
+
+class FakeBudgetLimiter:
+    @asynccontextmanager
+    async def acquire(self, category, **kwargs):
+        yield
+
+
+async def test_execute_emits_budget_wait_timer(logger):
+    """[S3분해] budget 경유 실행 시 RQBudget.{category} 타이머를 기록한다."""
+    mock_pm = MagicMock()
+    queue = ApiRequestQueue(logger=logger, budget_limiter=FakeBudgetLimiter(),
+                            performance_profiler=mock_pm)
+    fn = AsyncMock(return_value=success_resp())
+    future = await queue.submit(fn, "005930", request_id="ohlcv",
+                                request_category="quotation_ohlcv")
+    await future
+    names = [c.args[0] for c in mock_pm.log_timer.call_args_list]
+    assert "RQBudget.quotation_ohlcv" in names
+
+
+async def test_delay_and_execute_emits_retry_delay_timer(logger):
+    """[S3분해] 재시도 백오프 대기 시 RQRetryDelay.{id} 타이머를 기록한다."""
+    mock_pm = MagicMock()
+    queue = ApiRequestQueue(logger=logger, performance_profiler=mock_pm)
+    fut = asyncio.get_event_loop().create_future()
+    req = QueuedRequest(fn=AsyncMock(return_value=success_resp()), args=(), kwargs={},
+                        future=fut, request_id="get_price")
+    await queue._delay_and_execute(req, 0.0)
+    names = [c.args[0] for c in mock_pm.log_timer.call_args_list]
+    assert "RQRetryDelay.get_price" in names
 
 
 class TestSubmitSuccess:
