@@ -1890,6 +1890,82 @@ def test_compute_total_scores_stage2_bonus(mock_deps):
     assert item.total_score == 55.0
 
 
+def _theme_item(code):
+    return OSBWatchlistItem(
+        code=code, name=code, market="KOSPI", high_20d=1, ma_20d=1, ma_50d=1,
+        avg_vol_20d=1, bb_width_min_20d=1, prev_bb_width=1, w52_hgpr=1, avg_trading_value_5d=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_compute_theme_scores_leading_group(mock_deps):
+    """동일 테마에 선정 종목이 임계(3) 이상 몰리면 소속 종목에 가산점을 준다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    repo = MagicMock()
+    repo.get_groups = AsyncMock(return_value={
+        # A,B,C 선정 → count 3 (Z는 선정 안됨)
+        "반도체": {"sources": ["NAVER"], "members": [
+            {"code": "A"}, {"code": "B"}, {"code": "C"}, {"code": "Z"}]},
+        # D만 선정 → count 1 < min_leaders
+        "잡테마": {"sources": ["NAVER"], "members": [{"code": "D"}, {"code": "E"}]},
+    })
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger, classification_repository=repo)
+    items = [_theme_item(c) for c in ("A", "B", "C", "D")]
+
+    await service._compute_theme_scores(items, logger=logger)
+
+    by = {i.code: i.theme_score for i in items}
+    # count 3 → (3-3+1)*3 = 3.0
+    assert by["A"] == 3.0 and by["B"] == 3.0 and by["C"] == 3.0
+    assert by["D"] == 0.0  # 테마 내 선정 1개 < 임계
+
+
+@pytest.mark.asyncio
+async def test_compute_theme_scores_cap_and_multi_theme(mock_deps):
+    """점수는 상한(캡=10)에서 멈추고, 다중 테마 소속은 최대 카운트를 쓴다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    repo = MagicMock()
+    repo.get_groups = AsyncMock(return_value={
+        "대형테마": {"members": [{"code": c} for c in ("A", "B", "C", "D", "E", "F", "G")]},  # count 7
+        "소형테마": {"members": [{"code": "A"}, {"code": "B"}, {"code": "C"}]},  # count 3
+    })
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger, classification_repository=repo)
+    items = [_theme_item(c) for c in ("A", "B", "C", "D", "E", "F", "G")]
+
+    await service._compute_theme_scores(items, logger=logger)
+
+    by = {i.code: i.theme_score for i in items}
+    # 대형테마 count 7 → (7-3+1)*3 = 15 → cap 10
+    assert by["G"] == 10.0
+    # A는 대형(7)·소형(3) 둘 다 소속 → max(7) 기준 → cap 10
+    assert by["A"] == 10.0
+
+
+@pytest.mark.asyncio
+async def test_compute_theme_scores_no_repo_is_noop(mock_deps):
+    """분류 repo가 없으면 theme_score는 0으로 유지(안전 degrade)."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)  # repo 미주입
+    items = [_theme_item("A"), _theme_item("B")]
+
+    await service._compute_theme_scores(items, logger=logger)
+
+    assert all(i.theme_score == 0.0 for i in items)
+
+
+def test_compute_total_scores_includes_theme_score(mock_deps):
+    """총점에 theme_score가 합산된다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    item = _theme_item("A")
+    item.rs_score = 10.0
+    item.theme_score = 6.0
+
+    service._compute_total_scores([item], logger=logger)
+
+    assert item.total_score == 16.0
+
+
 def test_save_and_load_premium_stocks_and_meta(mock_deps, tmp_path):
     """저장/로드/메타 조회 및 예외 분기를 검증한다."""
     _, sqs, indicator, mapper, tm, logger = mock_deps

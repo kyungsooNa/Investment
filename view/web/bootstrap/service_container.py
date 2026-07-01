@@ -645,6 +645,7 @@ class ServiceContainer:
                 rs_rating_service=getattr(ctx, "rs_rating_service", None),
                 minervini_service=getattr(ctx, "minervini_stage_service", None),
                 notification_service=getattr(ctx, "notification_service", None),
+                classification_repository=getattr(ctx, "theme_classification_repository", None),
             )
             if needs_batch:
                 ctx.premium_watchlist_generator_task = PremiumWatchlistGeneratorTask(
