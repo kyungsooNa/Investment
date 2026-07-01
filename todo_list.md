@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-06-28 (S-9 god class 분리 착수 반영)
+최종 업데이트: 2026-07-01 (코드 sync 대조 반영)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -76,7 +76,8 @@
 
 - **[최우선 블로커] WebSocket price 피드 무틱 ≈55%**: 구독 종목 절반 이상이 종일 `subscribed_no_tick` → shadow parity 수집 불가 + 라이브 실시간 데이터 품질 문제. **이 레포의 코드 작업은 종결**(무틱 종목 격리 구현 완료). 진단 확정: 종목·상품군·계정 단위 **KIS측 프레임 미전송**(`a1_kis_no_send`).
   - 근거: 2026-06-19 로그 진단(`reports/no_tick_diagnosis_20260619.md`) + 2026-06-22 운영 실험 A~D(`reports/no_tick_operational_experiment_analysis_20260622_live.md`) — subscribe/ack/quality_reject 전부 0, received 5 vs no_tick 18. 보통주 일부만 0틱(종목 단위), ETF/우선주 전부 0틱(상품군 단위), 격리해도 0틱 지속(계정 단위), refresh 무효.
-  - **다음 액션(코드 아님)**: ① B군 — KIS에 ETF/우선주 WS 지원 여부 확인. ② C군 — 무틱 보통주를 runner 출력 첨부해 KIS 에스컬레이션.
+  - **정책 결정(2026-07-01)**: ETF/우선주는 WS tick 없음으로 **간주**(상품군 단위 무틱 수용) → B군 KIS 문의 **드롭**. REST 폴링 경로로 처리하고, 무틱 지표에서 ETF/우선주는 정상(예상된 무틱)으로 본다. 코드 변경 없음(사후 격리가 이미 churn 중단). ※ 실전 전략은 보통주 롱온리라 ETF/우선주 WS 구독은 부수적.
+  - **다음 액션(코드 아님)**: C군 — 무틱 **보통주**만 runner 출력 첨부해 KIS 에스컬레이션(계정/종목 단위 프레임 미전송 문의).
 - [ ] (블로커 해소 후) `event_shadow`/`event_shadow_exit` 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py`로 entry/exit parity 리포트 → PR-3 진입 판정.
 - [ ] event-driven signal은 별도 승인 전 shadow/latency 측정용으로만 운영(실주문은 polling + full gate 경로만). VBO fast path는 execution strength/program-buy 생략.
 - [blocked] PR-3: 관찰 양호 시 VBO 실 적용 + OSB shadow 진입. / PR-4+: 단계적 확장.
@@ -136,9 +137,9 @@
 
 ### 보류 — 정책 합의 후 재승격
 
-- [x] **S-9 god class 분리** — `EventShadowManager`(`scheduler/event_shadow_manager.py`)로 shadow 블록 ~327줄 추출 완료(2026-06-28). scheduler 2432→2097줄. entry/exit 구독·evaluator·journal record/flush·teardown 이동, 테스트 ~44곳 receiver를 `_event_shadow_manager`로 갱신(동작 불변, unit 6505 + integration 245 green). 분리로 2-4 PR-3 No-Go(삭제) 시에도 단일 파일 제거로 종결 가능.
+- [x] **S-9 god class 분리** — `EventShadowManager`(`scheduler/event_shadow_manager.py`) 추출 완료(2026-06-28). 잔여 의미: 2-4 PR-3 No-Go(삭제) 시 단일 파일 제거로 종결 가능.
 - [ ] **3-4 active strategy lifecycle 7단계 분해**(`get_watchlist`/`filter_candidates`/`evaluate_entries_bounded`/`evaluate_exits_bounded`/`emit_metrics`) — 현재 `scan`/`check_exits`에 묻혀 있어 대형 리팩토링. checklist 테스트는 적용 완료. 공통 흐름이 더 쌓이면 재승격.
-- [x] **tiered force-exit window** — 단일 T-30 전량 청산을 단계화(2026-06-28). 기본 `FORCE_EXIT_TIERS=[(30,0.5),(15,1.0)]`(마지막 tier 1.0 = 마감 전 flat 보장 유지), `_force_exit_done` set→`_force_exit_progress` dict, `_pending_force_exit_tier`(놓친 tier catch-up), `_force_liquidate_strategy(sell_fraction)` floor 라운딩(초과 매도 없음). 1주 포지션은 중간 tier 0주→최종 tier 전량. unit 6509 + integration 245 green.
+- [x] **tiered force-exit window** — 단계화 청산(`FORCE_EXIT_TIERS=[(30,0.5),(15,1.0)]`) 완료(2026-06-28). 잔여 작업 없음.
 - [ ] 기타: RiskGate 실패 주문 cap 정책 / 전략별 min trading value·market cap 하한 / 매도 RiskGate 우회·KillSwitch auto-trigger / volatility hard gate / 성과 저하 자동 해제·수량 축소 / WebSocket health probe 자동화 / 레거시 전략 백테스트 통합 여부. (※ KillSwitch auto-trigger·WS health probe·daily cap 등 상당수는 이미 구현됨 — 잔여는 정책/임계 결정 동반.)
 
 주요 파일: `interfaces/live_strategy.py`, `tests/unit_test/strategies/test_live_strategy_lifecycle_contract.py`
@@ -148,7 +149,7 @@
 ## 바로 착수 추천 순서
 
 1. **운영 관찰·블로커 (최우선, 코드 아님)**
-   - WebSocket 무틱 ≈55% — **KIS 에스컬레이션**(ETF/우선주 WS 지원 확인 + 무틱 보통주 계정 단위 문의). 해소 전까지 shadow 수집 불가. (P2 2-4)
+   - WebSocket 무틱 — **KIS 에스컬레이션**(무틱 보통주 계정/종목 단위 문의만; ETF/우선주는 무틱 수용으로 B군 드롭). 해소 전까지 보통주 shadow 수집 불가. (P2 2-4)
    - profitability gate 우회 없이 shadow/paper/canary journal로 전략별 실전 근거 축적 (P1 1-6, 라이브 축적)
 2. **데이터 + 정책 대기**
    - R-2 인버스 ETF 슬리브 Phase 4(추세추종 게이트 프로파일) — 다음 베어장 paper 데이터 축적 후 구현
