@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-01 (코드 sync 대조 반영)
+최종 업데이트: 2026-07-02 (착수 순서·보류/완료 항목 정리)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -137,10 +137,8 @@
 
 ### 보류 — 정책 합의 후 재승격
 
-- [x] **S-9 god class 분리** — `EventShadowManager`(`scheduler/event_shadow_manager.py`) 추출 완료(2026-06-28). 잔여 의미: 2-4 PR-3 No-Go(삭제) 시 단일 파일 제거로 종결 가능.
 - [ ] **3-4 active strategy lifecycle 7단계 분해**(`get_watchlist`/`filter_candidates`/`evaluate_entries_bounded`/`evaluate_exits_bounded`/`emit_metrics`) — 현재 `scan`/`check_exits`에 묻혀 있어 대형 리팩토링. checklist 테스트는 적용 완료. 공통 흐름이 더 쌓이면 재승격.
-- [x] **tiered force-exit window** — 단계화 청산(`FORCE_EXIT_TIERS=[(30,0.5),(15,1.0)]`) 완료(2026-06-28). 잔여 작업 없음.
-- [ ] 기타: RiskGate 실패 주문 cap 정책 / 전략별 min trading value·market cap 하한 / 매도 RiskGate 우회·KillSwitch auto-trigger / volatility hard gate / 성과 저하 자동 해제·수량 축소 / WebSocket health probe 자동화 / 레거시 전략 백테스트 통합 여부. (※ KillSwitch auto-trigger·WS health probe·daily cap 등 상당수는 이미 구현됨 — 잔여는 정책/임계 결정 동반.)
+- [ ] 기타 정책/임계값 결정: RiskGate 실패 주문 cap 정책 / 전략별 min trading value·market cap 하한 / 매도 RiskGate 우회 / volatility hard gate / 성과 저하 자동 해제·수량 축소 / 레거시 전략 백테스트 통합 여부.
 
 주요 파일: `interfaces/live_strategy.py`, `tests/unit_test/strategies/test_live_strategy_lifecycle_contract.py`
 
@@ -150,14 +148,15 @@
 
 1. **운영 관찰·블로커 (최우선, 코드 아님)**
    - WebSocket 무틱 — **KIS 에스컬레이션**(무틱 보통주 계정/종목 단위 문의만; ETF/우선주는 무틱 수용으로 B군 드롭). 해소 전까지 보통주 shadow 수집 불가. (P2 2-4)
+2. **코드/운영 착수 가능**
    - profitability gate 우회 없이 shadow/paper/canary journal로 전략별 실전 근거 축적 (P1 1-6, 라이브 축적)
-2. **데이터 + 정책 대기**
+3. **데이터 + 정책 대기**
    - R-2 인버스 ETF 슬리브 Phase 4(추세추종 게이트 프로파일) — 다음 베어장 paper 데이터 축적 후 구현
-3. **외부 운영·데이터 확보 후**
+4. **외부 운영·데이터 확보 후**
    - KIS REST/WebSocket 유량 한도 재확인 (P2 2-2) · 실전 submit/signing fixture (P0 0-1) · 장중 microstructure 캡처 (P1 1-5)
-4. **정책 결정 후**
+5. **정책 결정 후**
    - DSR hard threshold 및 PBO/DSR gate 운영 기준 확정 (P1 1-7, canary 후)
-5. **조건부 트리거 — 재발 시**
+6. **조건부 트리거 — 재발 시**
    - Pool B 거래대금 50→30억 / 정배열 완화
 
 ---
@@ -184,4 +183,6 @@
 - **R-3 포트폴리오 heat [해소]**: 전 포지션 합산 open-risk 한도 도입(profile별 1%/3%/6%). 재승격 조건: flat full-sum을 분산 크레딧 모델로 바꾸기로 정책 결정할 때 상관 가중 함께 설계.
 - **R-4 갭 스톱 [해소]**: 백테스트 `OrderType.STOP` 갭 관통 보수 체결(매도=`min(stop,open)`). 잔여: 실제 forward gap 정량 측정은 종목별 OHLCV 조인 필요(R-1과 동일 맥락, 미구현).
 - **R-5 증권거래세율 [해소]**: 0.20%(0.002) 현행 정확값 — 변경 없음.
-- **S-1~S-10 StrategyScheduler 리뷰**: S-1~S-8 버그/수명/구조 수정 완료, S-3/S-10 의도된 설계 확인, S-9는 위 "보류" 항목으로 이관.
+- **S-1~S-10 StrategyScheduler 리뷰**: S-1~S-8 버그/수명/구조 수정 완료, S-3/S-10 의도된 설계 확인, S-9는 `EventShadowManager`(`scheduler/event_shadow_manager.py`) 추출 완료(2026-06-28).
+- **tiered force-exit window [해소]**: 단계화 청산(`FORCE_EXIT_TIERS=[(30,0.5),(15,1.0)]`) 완료(2026-06-28). 잔여 작업 없음.
+- **운영 guard 일부 [해소]**: KillSwitch auto-trigger, WebSocket watchdog/health 계열, daily cap 계열은 구현 확인. 잔여는 위 "보류"의 정책/임계값 결정만 추적.
