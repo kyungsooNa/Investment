@@ -5,6 +5,7 @@ import random
 from typing import Callable, Coroutine, Any
 
 from core.retry_queue.retry_classifier import classify, RequestOutcome
+from core.performance_profiler import layer_profiler
 
 
 @dataclasses.dataclass
@@ -34,10 +35,12 @@ class ApiRequestQueue:
     BASE_DELAY  = 1.0   # 초 (지수 백오프: BASE_DELAY * 2^(attempt-1))
     MAX_DELAY   = 30.0  # 최대 지연
 
-    def __init__(self, logger, budget_limiter=None, default_request_category: str = "quotation"):
+    def __init__(self, logger, budget_limiter=None, default_request_category: str = "quotation",
+                 performance_profiler=None):
         self._logger = logger
         self._budget_limiter = budget_limiter
         self._default_request_category = default_request_category
+        self._pm = layer_profiler(performance_profiler)
         self._done_q: asyncio.Queue[tuple[QueuedRequest, Any]] = asyncio.Queue()
         self._fail_q: asyncio.Queue[tuple[QueuedRequest, Any]] = asyncio.Queue()
         self._pending_tasks: set[asyncio.Task] = set()
@@ -99,7 +102,11 @@ class ApiRequestQueue:
             if limiter is None:
                 result = await req.fn(*req.args, **req.kwargs)
             else:
+                # [S3 분해] budget acquire 대기 = global/category rate slot + semaphore 대기.
+                # 타이머 시작 후 컨텍스트 진입 직후 기록 → __aenter__(throttle) 소요만 잡힌다.
+                _t_bud = self._pm.start_timer()
                 async with limiter.acquire(req.request_category):
+                    self._pm.log_timer(f"RQBudget.{req.request_category}", _t_bud)
                     result = await req.fn(*req.args, **req.kwargs)
         except Exception as e:
             self._logger.warning(
@@ -142,7 +149,10 @@ class ApiRequestQueue:
             await self._fail_q.put((req, result))
 
     async def _delay_and_execute(self, req: QueuedRequest, delay: float):
+        # [S3 분해] 재시도 백오프 대기(지수, 1~30s). throttle 대기와 구분.
+        _t_retry = self._pm.start_timer()
         await asyncio.sleep(delay)
+        self._pm.log_timer(f"RQRetryDelay.{req.request_id}", _t_retry)
         await self._execute(req)
 
     def _resolve(self, req: QueuedRequest, result: Any):
