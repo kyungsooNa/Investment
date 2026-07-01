@@ -5,7 +5,6 @@
 장 마감 후 자동으로 OneilUniverseService.generate_premium_watchlist()를 실행하여
 오닐 전략 전일 기준 우량주 풀을 갱신한다.
 """
-import asyncio
 import logging
 import time
 from typing import Dict, Optional, TYPE_CHECKING
@@ -134,12 +133,10 @@ class PremiumWatchlistGeneratorTask(AfterMarketTask):
                     f"KOSPI {result.get('kospi_count')}개, KOSDAQ {result.get('kosdaq_count')}개 종목 수집 완료 (소요: {elapsed:.1f}초)"
                 )
             if self._telegram_reporter:
-                asyncio.create_task(
-                    self._telegram_reporter.send_premium_watchlist_report(
-                        kospi=result.get("kospi_stocks", []),
-                        kosdaq=result.get("kosdaq_stocks", []),
-                        report_date=trading_date,
-                    )
+                await self._telegram_reporter.send_premium_watchlist_report(
+                    kospi=result.get("kospi_stocks", []),
+                    kosdaq=result.get("kosdaq_stocks", []),
+                    report_date=trading_date,
                 )
         except Exception as e:
             self._logger.error(f"전일 기준 우량주 생성 실패: {e}", exc_info=True)

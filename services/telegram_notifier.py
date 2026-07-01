@@ -1,3 +1,6 @@
+import asyncio
+from functools import wraps
+
 import aiohttp
 import html
 import logging
@@ -6,6 +9,15 @@ from services.notification_service import NotificationEvent, NotificationCategor
 import unicodedata
 
 logger = logging.getLogger(__name__)
+
+
+def _serialized_report_send(func):
+    @wraps(func)
+    async def wrapper(self, *args, **kwargs):
+        async with self._report_send_lock:
+            return await func(self, *args, **kwargs)
+    return wrapper
+
 
 class TelegramNotifier:
     """Telegram 알림을 비동기적으로 전송하는 핸들러 클래스입니다."""
@@ -95,6 +107,7 @@ class TelegramReporter:
         self.report_bot_token = report_bot_token
         self.chat_id = chat_id
         self.api_url = f"https://api.telegram.org/bot{self.report_bot_token}/sendMessage"
+        self._report_send_lock = asyncio.Lock()
 
     async def _send_message(self, text: str) -> bool:
         """텔레그램으로 메시지를 비동기적으로 전송하는 헬퍼 메서드입니다."""
@@ -195,6 +208,7 @@ class TelegramReporter:
         table += "</pre>"
         return header + table
 
+    @_serialized_report_send
     async def send_ranking_report(self, rankings: Dict[str, List[Dict]], report_date: str):
         """
         다양한 랭킹 정보를 하나의 리포트로 묶어 텔레그램에 전송합니다.
@@ -288,6 +302,7 @@ class TelegramReporter:
             return "-"
         return f"{rate:+.{digits}f}%"
 
+    @_serialized_report_send
     async def send_daily_theme_report(self, themes: List[Dict], report_date: str, limit: int = 10):
         """당일 주도 테마 리포트를 텔레그램에 전송한다."""
         title = f"🔥 <b>오늘의 주도 테마 ({report_date})</b>\n"
@@ -328,6 +343,7 @@ class TelegramReporter:
         if current:
             await self._send_message(current.rstrip())
 
+    @_serialized_report_send
     async def send_newhigh_report(self, stocks: List[Dict], report_date: str):
         """52주 신고가 종목 리포트를 텔레그램에 전송합니다."""
         title = f"🚀 <b>52주 신고가 종목 리포트 ({report_date})</b>\n총 {len(stocks)}개 종목\n"
@@ -397,6 +413,7 @@ class TelegramReporter:
         if current:
             await self._send_message(current)
 
+    @_serialized_report_send
     async def send_strategy_log_report(self, report_html: str, report_date: str):
         """전략 로그 분석 리포트를 텔레그램으로 전송합니다."""
         title = f"📋 <b>전략 실행 요약 리포트 ({report_date})</b>\n"
@@ -413,6 +430,7 @@ class TelegramReporter:
         if current:
             await self._send_message(current)
 
+    @_serialized_report_send
     async def send_premium_watchlist_report(self, kospi: List[Dict], kosdaq: List[Dict], report_date: str, limit: int = 30):
         """전일 기준 우량주 풀 리포트를 텔레그램으로 전송합니다."""
         title = (
@@ -473,6 +491,7 @@ class TelegramReporter:
             if current:
                 await self._send_message(current)
 
+    @_serialized_report_send
     async def send_minervini_report(self, items: List[Dict], report_date: str, limit: int = 30):
         """Minervini Stage2 종목 목록을 텔레그램으로 전송합니다.
 
@@ -545,6 +564,7 @@ class TelegramReporter:
         uk = abs_won / 100_000_000
         return f"{sign}{uk:,.0f}억"
 
+    @_serialized_report_send
     async def send_market_cap_gap_report(self, report: Dict, report_date: str, trigger_label: str, limit: int = 10):
         """삼성전자/SK하이닉스 대비 미국 주요 기업 시총갭 리포트를 전송합니다.
 

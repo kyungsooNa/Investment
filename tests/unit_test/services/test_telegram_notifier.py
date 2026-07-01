@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
@@ -863,6 +865,49 @@ async def test_send_daily_theme_report_empty(telegram_reporter):
     full = "".join(call[0][0] for call in telegram_reporter._send_message.call_args_list)
     assert "오늘의 주도 테마" in full
     assert "데이터 없음" in full
+
+
+@pytest.mark.asyncio
+async def test_report_messages_are_not_interleaved_when_sent_concurrently(telegram_reporter):
+    """같은 시각에 두 리포트가 실행돼도 제목/본문 메시지가 서로 끼어들지 않는다."""
+    messages = []
+
+    async def record_message(text):
+        messages.append(text)
+        if "전일 기준 우량주 리포트" in text:
+            await asyncio.sleep(0.01)
+        return True
+
+    telegram_reporter._send_message = record_message
+    stock = {
+        "code": "005930",
+        "name": "삼성전자",
+        "total_score": 80.0,
+        "rs_rating": 90,
+        "market_cap": 400_000_000_000_000,
+        "avg_trading_value_5d": 200_000_000_000,
+        "minervini_stage": 2,
+    }
+    theme = {
+        "normalized_name": "반도체",
+        "leader_avg_change_rate": 12.3,
+        "trading_value_sum_won": 200_000_000_000,
+        "advancing_ratio": 80.0,
+        "flow_ratio": 1.5,
+        "leaders": [{"name": "삼성전자", "change_rate": 3.2, "trading_value_won": 200_000_000_000}],
+    }
+
+    await asyncio.gather(
+        telegram_reporter.send_premium_watchlist_report([stock], [], "20260701"),
+        telegram_reporter.send_daily_theme_report([theme], "20260701"),
+    )
+
+    premium_title_idx = next(i for i, msg in enumerate(messages) if "전일 기준 우량주 리포트" in msg)
+    premium_body_idx = next(i for i, msg in enumerate(messages) if "── KOSPI" in msg)
+    theme_title_idx = next(i for i, msg in enumerate(messages) if "오늘의 주도 테마" in msg)
+    theme_body_idx = next(i for i, msg in enumerate(messages) if "1. 반도체" in msg)
+
+    assert premium_title_idx < premium_body_idx < theme_title_idx < theme_body_idx
 
 
 @pytest.mark.asyncio
