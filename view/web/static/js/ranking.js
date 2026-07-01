@@ -297,14 +297,6 @@ async function loadThemeLeaders() {
     }
 }
 
-function _sourceBadges(sources) {
-    const label = { NAVER: '네이버', KIWOOM: '키움', WICS: 'WICS' };
-    return (sources || []).map(s =>
-        `<span style="display:inline-block; font-size:0.75em; padding:1px 6px; margin-left:4px;
-            border-radius:8px; background:var(--accent-secondary,#3b82f6); color:#fff;">${label[s] || s}</span>`
-    ).join('');
-}
-
 function renderThemeLeaders(groups) {
     const div = document.getElementById('ranking-result');
     const cards = groups.map(g => {
@@ -313,15 +305,14 @@ function renderThemeLeaders(groups) {
                 <td>${i + 1}</td>
                 <td>${l.name || l.code}</td>
                 <td>${l.rs_rating}</td>
-                <td>${_sourceBadges(l.sources)}</td>
             </tr>`).join('');
         return `<div class="card" style="margin-bottom:12px;">
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-                <h3 style="margin:0;">${g.normalized_name}${_sourceBadges(g.sources)}</h3>
+                <h3 style="margin:0;">${g.normalized_name}</h3>
                 <span style="color:#888;">RS 중앙값 ${g.group_rs_median} · ${g.member_count}종목</span>
             </div>
             <table class="data-table">
-                <thead><tr><th>순위</th><th>종목명</th><th>RS</th><th>출처</th></tr></thead>
+                <thead><tr><th>순위</th><th>종목명</th><th>RS</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>`;

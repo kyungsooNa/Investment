@@ -128,6 +128,7 @@ class ThemeDailyLeaderService:
                 key=lambda item: (
                     item["leader_avg_change_rate"],
                     item["advancing_ratio"],
+                    item["flow_ratio"],
                     item["trading_value_sum_won"],
                 ),
                 reverse=True,

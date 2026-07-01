@@ -113,6 +113,40 @@ async def test_builds_theme_report_from_ranking_data():
 
 
 @pytest.mark.asyncio
+async def test_flow_ratio_breaks_tie_between_equal_price_themes():
+    """등락률·상승비율·거래대금이 같으면 수급(flow_ratio)이 높은 테마가 상위로 온다."""
+    groups = {
+        # 삽입 순서상 약수급이 먼저 — 수급 타이브레이크가 없으면 이 순서가 유지된다.
+        "약수급": {
+            "sources": ["NAVER"],
+            "members": [_member("A", "A"), _member("B", "B"), _member("C", "C")],
+        },
+        "강수급": {
+            "sources": ["NAVER"],
+            "members": [_member("D", "D"), _member("E", "E"), _member("F", "F")],
+        },
+    }
+    svc, _ = _service(groups)
+    rankings = {
+        "all_stocks": [
+            # 두 테마 모두 전 종목 +10.0%, 거래대금 1000억 동일 → 가격 지표는 완전 동률
+            _stock("A", "A", 10.0, 100_000_000_000),
+            _stock("B", "B", 10.0, 100_000_000_000),
+            _stock("C", "C", 10.0, 100_000_000_000),
+            _stock("D", "D", 10.0, 100_000_000_000, foreign=5_000),
+            _stock("E", "E", 10.0, 100_000_000_000, foreign=5_000),
+            _stock("F", "F", 10.0, 100_000_000_000, foreign=5_000),
+        ],
+    }
+
+    resp = await svc.build_daily_theme_report(rankings, "20260630")
+
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert [item["normalized_name"] for item in resp.data] == ["강수급", "약수급"]
+    assert resp.data[0]["flow_ratio"] > resp.data[1]["flow_ratio"]
+
+
+@pytest.mark.asyncio
 async def test_skips_theme_with_less_than_min_members():
     svc, _ = _service({
         "개별주": {
