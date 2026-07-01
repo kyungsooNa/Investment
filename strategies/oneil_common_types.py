@@ -68,6 +68,11 @@ class OneilUniverseConfig(BaseStrategyConfig):
     smart_money_to_tv_pct: float = 10.0           # 또는 누적 거래대금의 10% 이상 매집 시
     smart_money_score_points: float = 15.0        # +15점 부여
 
+    # 주도 테마(leading group) 스코어링 — 동일 테마에 선정 종목이 다수 몰릴수록 가산
+    theme_min_leaders: int = 3                    # 테마당 최소 선정 종목 수(미만은 노이즈, 0점)
+    theme_score_per_leader: float = 3.0           # 임계 이상부터 선정 종목 1개당 가산점
+    theme_score_points: float = 10.0              # 테마 스코어 상한(캡)
+
 @dataclass
 class OneilBreakoutConfig(BaseStrategyConfig):
     """오닐 돌파 매매 전략(Strategy B) 설정."""
@@ -141,6 +146,7 @@ class OSBWatchlistItem:
     rs_rating: int = 0              # 1~99 IBD/오닐 RS Rating (0=미계산)
     profit_growth_score: float = 0.0
     smart_money_score: float = 0.0
+    theme_score: float = 0.0        # 주도 테마(동일 테마 다수 선정) 가산점
     total_score: float = 0.0
 
     # 미너비니 트렌드 템플릿

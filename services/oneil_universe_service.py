@@ -66,12 +66,14 @@ class OneilUniverseService:
         minervini_service: Optional["MinerviniStageService"] = None,
         notification_service: Optional[NotificationService] = None,
         market_regime_service: Optional[MarketRegimeService] = None,
+        classification_repository=None,
     ):
         self._sqs = stock_query_service
         self._indicator = indicator_service
         self.stock_code_repository = stock_code_repository
         self._tm = market_clock
         self._scraper = scraper_service
+        self._classification_repo = classification_repository
         self._cfg = config or OneilUniverseConfig()
         self._logger = logger or logging.getLogger(__name__)
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
@@ -790,12 +792,17 @@ class OneilUniverseService:
         self._compute_rs_scores(items, logger=pool_a_logger, rating_map=pool_a_rating_map)
         await self._compute_profit_growth_scores(items, logger=pool_a_logger)
         await self._compute_smart_money_scores(items, logger=pool_a_logger, date=trading_date)
+        code_to_themes = await self._compute_theme_scores(items, logger=pool_a_logger)
         self._compute_total_scores(items, logger=pool_a_logger)
         pool_a_logger.info({"event": "scoring_done"})
 
         sort_key = lambda x: (x.total_score, self._calc_turnover_ratio(x))
         kospi = sorted([i for i in items if i.market != "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.premium_stocks_kospi_size]
         kosdaq = sorted([i for i in items if i.market == "KOSDAQ"], key=sort_key, reverse=True)[:self._cfg.premium_stocks_kosdaq_size]
+
+        # 관측: 최종 리스트의 테마 편중(하드 제한 없음). theme_score 편중 risk 모니터링용.
+        theme_distribution = self._summarize_theme_distribution(kospi + kosdaq, code_to_themes)
+        pool_a_logger.info({"event": "theme_distribution", **theme_distribution})
 
         self._save_premium_stocks(kospi, kosdaq, trading_date=trading_date)
         pool_a_logger.info({"event": "save_done", "kospi_count": len(kospi), "kosdaq_count": len(kosdaq)})
@@ -820,7 +827,8 @@ class OneilUniverseService:
             "passed_first": len(passed_first), "first_filter_passed": len(passed_first),
             "second_filter_passed": len(items),
             "market_cap_filter": cap_str,
-            "total_elapsed_seconds": total_elapsed
+            "total_elapsed_seconds": total_elapsed,
+            "theme_distribution": theme_distribution,
         }
 
     # ── 헬퍼 메서드 ───────────────────────────────────────────────
@@ -1203,12 +1211,98 @@ class OneilUniverseService:
 
         logger.debug({"event": "compute_smart_money_scores_finished"})
 
+    def _theme_score_from_count(self, count: int) -> float:
+        """테마 내 선정 종목 수 -> 테마 스코어. 임계 미만은 0, 임계 이상은 선형 가산 후 캡."""
+        if count < self._cfg.theme_min_leaders:
+            return 0.0
+        raw = (count - self._cfg.theme_min_leaders + 1) * self._cfg.theme_score_per_leader
+        return min(raw, self._cfg.theme_score_points)
+
+    async def _compute_theme_scores(self, items: List[OSBWatchlistItem], logger: Optional[logging.Logger] = None) -> Dict[str, List[str]]:
+        """주도 테마(leading group) 스코어링.
+
+        선정된 종목 집합(items) 내에서, 같은 테마에 몰린 종목이 많을수록 그 테마 소속
+        종목에 가산점을 준다. 카운트 기준 집합이 items 로 고정되므로 total_score 와의
+        순환 참조가 없다. 분류 데이터(StockClassificationRepository)만 읽고 네트워크 호출은 없다.
+
+        Returns:
+            code -> [테마명, ...] 매핑(관측용). repo 미주입/미수집 시 빈 dict.
+        """
+        logger = logger or self._logger
+        if not items:
+            return {}
+        for item in items:
+            item.theme_score = 0.0
+        if not self._classification_repo:
+            return {}
+        try:
+            groups = await self._classification_repo.get_groups(("theme",))
+        except Exception as e:
+            logger.warning({"event": "theme_score_repo_error", "error": str(e)})
+            return {}
+        if not groups:
+            return {}
+
+        item_codes = {i.code for i in items}
+        theme_leader_count: Dict[str, int] = {}
+        code_to_themes: Dict[str, List[str]] = {}
+        for name, group in groups.items():
+            present = [
+                m.get("code") for m in group.get("members", [])
+                if m.get("code") in item_codes
+            ]
+            theme_leader_count[name] = len(present)
+            for code in present:
+                code_to_themes.setdefault(code, []).append(name)
+
+        scored = 0
+        for item in items:
+            themes = code_to_themes.get(item.code)
+            if not themes:
+                continue
+            best = max(theme_leader_count[t] for t in themes)
+            item.theme_score = self._theme_score_from_count(best)
+            if item.theme_score > 0:
+                scored += 1
+                logger.debug({
+                    "event": "theme_score_assigned", "code": item.code, "name": item.name,
+                    "leader_count": best, "score": item.theme_score,
+                })
+        logger.debug({"event": "compute_theme_scores_finished", "scored_items": scored})
+        return code_to_themes
+
+    @staticmethod
+    def _summarize_theme_distribution(
+        final_items: List[OSBWatchlistItem],
+        code_to_themes: Dict[str, List[str]],
+        top_n: int = 5,
+    ) -> Dict:
+        """최종 저장 리스트의 테마 분포를 관측용으로 요약한다(하드 제한 없음).
+
+        theme_score가 워치리스트를 한 테마로 쏠리게 할 수 있어, 편중 정도를
+        로그/리포트로 노출하기 위한 순수 집계. 선정 로직에는 영향을 주지 않는다.
+        """
+        total = len(final_items)
+        counts: Dict[str, int] = {}
+        for item in final_items:
+            for theme in code_to_themes.get(item.code, []):
+                counts[theme] = counts.get(theme, 0) + 1
+        ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+        top_themes = [{"theme": t, "count": c} for t, c in ranked[:top_n]]
+        max_theme, max_count = ranked[0] if ranked else (None, 0)
+        return {
+            "final_count": total,
+            "max_theme": max_theme,
+            "max_theme_share_pct": round(max_count / total * 100, 1) if total else 0.0,
+            "top_themes": top_themes,
+        }
+
     def _compute_total_scores(self, items: List[OSBWatchlistItem], logger: Optional[logging.Logger] = None):
         logger = logger or self._logger
         if not items: return
         logger.debug({"event": "compute_total_scores_started", "item_count": len(items)})
         for item in items:
-            item.total_score = item.rs_score + item.profit_growth_score + item.smart_money_score
+            item.total_score = item.rs_score + item.profit_growth_score + item.smart_money_score + item.theme_score
             # 미너비니 Stage 2 가산점: 트렌드 템플릿 충족 종목 우선
             if item.minervini_stage == 2:
                 item.total_score += 20.0
@@ -1217,6 +1311,7 @@ class OneilUniverseService:
                     "event": "total_score_calculated", "code": item.code, "name": item.name,
                     "rs_score": item.rs_score, "profit_score": item.profit_growth_score,
                     "smart_money_score": item.smart_money_score,
+                    "theme_score": item.theme_score,
                     "minervini_stage": item.minervini_stage,
                     "total_score": item.total_score
                 })
