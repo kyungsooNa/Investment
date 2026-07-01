@@ -1966,6 +1966,50 @@ def test_compute_total_scores_includes_theme_score(mock_deps):
     assert item.total_score == 16.0
 
 
+@pytest.mark.asyncio
+async def test_compute_theme_scores_returns_code_to_themes(mock_deps):
+    """_compute_theme_scores는 관측용 종목→테마 매핑을 반환한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    repo = MagicMock()
+    repo.get_groups = AsyncMock(return_value={
+        "반도체": {"members": [{"code": "A"}, {"code": "B"}, {"code": "C"}]},
+        "장비": {"members": [{"code": "A"}]},
+    })
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger, classification_repository=repo)
+    items = [_theme_item(c) for c in ("A", "B", "C")]
+
+    c2t = await service._compute_theme_scores(items, logger=logger)
+
+    assert set(c2t["A"]) == {"반도체", "장비"}
+    assert c2t["B"] == ["반도체"]
+
+
+@pytest.mark.asyncio
+async def test_compute_theme_scores_no_repo_returns_empty_map(mock_deps):
+    """repo 미주입 시 빈 매핑을 반환(관측 요약도 자연히 비게 됨)."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+
+    c2t = await service._compute_theme_scores([_theme_item("A")], logger=logger)
+
+    assert c2t == {}
+
+
+def test_summarize_theme_distribution(mock_deps):
+    """최종 리스트의 테마 분포/최대 편중 비율을 관측용으로 요약한다(하드 제한 없음)."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger)
+    final = [_theme_item(c) for c in ("A", "B", "C", "D")]
+    code_to_themes = {"A": ["반도체"], "B": ["반도체"], "C": ["반도체"], "D": ["바이오"]}
+
+    summary = service._summarize_theme_distribution(final, code_to_themes)
+
+    assert summary["final_count"] == 4
+    assert summary["max_theme"] == "반도체"
+    assert summary["max_theme_share_pct"] == 75.0
+    assert {"theme": "반도체", "count": 3} in summary["top_themes"]
+
+
 def test_save_and_load_premium_stocks_and_meta(mock_deps, tmp_path):
     """저장/로드/메타 조회 및 예외 분기를 검증한다."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
