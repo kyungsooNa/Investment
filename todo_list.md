@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-02 (시스템 트레이더 관점 리뷰 반영 — 우선 처리 순서로 재정렬, 신규 항목 1-8 / O-1 / O-2 / M-1 / M-2 추가)
+최종 업데이트: 2026-07-03 (1-8 백테스트 재실행 파일럿 판정 반영 — PIT 후보 부재로 blocked, Pool B 후보 부족 재발 확인)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -20,8 +20,7 @@
 리뷰 핵심 판단: 운영 인프라·리스크 규율(킬스위치 영속화·RiskGate·tiered force-exit·profitability gate·캐너리 사이징)은 갖춰졌다. 남은 크리티컬 패스는 **엣지(수익성) 입증**이다. 엣지의 원천으로 삼는 수급 필터(체결강도·프로그램매매)가 장중 히스토리 부재로 백테스트 검증 불가능한 상태이므로, 검증 데이터 축적을 지금 시작하는 것이 최우선이다.
 
 1. **[즉시 착수 — 엣지 검증 크리티컬 패스]**
-   - 1-5 장중 microstructure 캡처 **상시 가동** (blocked 해제 단계 자체가 착수 항목)
-   - 1-8 현행 전략 버전 walk-forward + Monte Carlo 재실행 + 슬리피지 민감도 (신규)
+   - 1-5 장중 microstructure 캡처 **상시 가동** (blocked 해제 단계 자체가 착수 항목) — 태스크 배선 완료(#618), 코퍼스 축적 중
    - 1-6 shadow/paper/소액 canary journal 축적 (운영 상시 — 무틱 블로커와 독립)
 2. **[외부 블로커 — 병행 진행]**
    - 2-4 WebSocket 무틱 — KIS 에스컬레이션 (무틱 보통주만; ETF/우선주는 무틱 수용으로 종결)
@@ -30,9 +29,10 @@
    - M-1 포지션 사이징 단일화 (신규 — canary→자금 확대 전 필수)
    - 0-1 실전 체결필드 fixture · 2-2 KIS 유량 한도 실측 (실전 전환 직전, 외부 의존)
 4. **[데이터·정책 대기]**
+   - 1-8 백테스트 재실행 (CLI 노출 완료 #619 — PIT 후보 부재로 blocked, 2026-07-03 파일럿 판정)
    - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (dry-run 검증 + O-1/O-2 후)
 5. **[조건부·저위험 상시]**
-   - Pool B 완화 (재발 시) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 · T-0/R-6 (선택/관찰)
+   - Pool B 완화 (**재발 확인 2026-07-02 — 정책 결정 대기**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 · T-0/R-6 (선택/관찰)
 
 ---
 
@@ -46,10 +46,14 @@
 
 주요 파일: `services/backtest_execution_simulator.py`, `services/backtest_replay_context.py`, `scripts/run_backtest.py`, `tests/fixtures/backtest/`
 
-### 1-8. 현행 전략 버전 백테스트 재실행 [신규 — 2026-07-02 리뷰]
+### 1-8. 현행 전략 버전 백테스트 재실행 [blocked — PIT 후보 부재, 2026-07-03 파일럿 판정]
 
-- [ ] 활성 전략 전체를 **현재 코드 버전**으로 walk-forward + Monte Carlo 전기간 재실행하고 `data/` 산출물을 갱신한다. 마지막 산출물이 2026-05-14(스텁 수준)이고 이후 전략 수정 다수 — 현행 파라미터에 대한 최신 근거 부재.
-- [ ] 슬리피지 민감도 표(0% / 0.1% / 0.3%) 산출 — 왕복 비용 ≈0.23%(수수료 0.014%×2 + 매도세 0.2%) + 폴링 지연(5분 scan + 60초 stagger + 전역 8/s) 슬리피지가 당일청산 VBO 엣지를 잠식하는지 수치로 확인.
+- [x] 슬리피지/스프레드 CLI 노출 (#619) — `--market-slippage-pct`(MARKET/STOP 체결)·`--spread-pct`. LIMIT 체결엔 미적용(시뮬레이터 의미론).
+- [blocked] 활성 전략 전체 walk-forward + Monte Carlo 재실행 + 민감도 표 — **2026-07-03 파일럿(VBO 6/15-30, PP 6/1-12) 결과 전 구간 0거래**로 현시점 무의미.
+  - 원인 ①: 백테스트 유니버스가 **현재 시점** `data/premium_stocks.json`(PIT 아님) — 2026-07-02 기준 KOSPI 1종목/KOSDAQ 0종목이라 어떤 과거 구간을 돌려도 후보가 없다.
+  - 원인 ②: 6월 하순 양시장 MA 하락 → 마켓 타이밍 게이트가 스캔 차단(`market_timing_off_both`) — 롱온리 전략의 정상 휴식.
+  - 해제 조건: (a) 1-5 캡처 코퍼스 축적(`replay_microstructure_*.json`의 `metadata.codes`가 당일 후보 스냅샷 = PIT 후보군 역할) 또는 (b) 시장 회복으로 Pool B 복원.
+  - 실행 메모: 첫 런이 REST 지배적(12거래일 ≈ 18~23분), **캐시 워밍 후 변형 런 ≈ 1분** — 후보만 갖춰지면 민감도 그리드는 저렴.
 
 주요 파일: `scripts/run_backtest.py`, `services/backtest_walk_forward.py`, `docs/backtest.md`, `data/backtest_*.json`
 
@@ -167,8 +171,9 @@
 
 ## 조건부 / 정책 결정 대기
 
-### Pool B 튜닝 (후보 부족 재발 시)
+### Pool B 튜닝 (후보 부족 **재발 확인 — 정책 결정 대기**)
 
+- **재발 확인 (2026-07-02)**: 장마감 프리미엄 워치리스트 생성 결과 KOSPI 1종목(신세계)/KOSDAQ 0종목 (`logs/strategies/oneil_pool/20260702_generate_premium_watchlist_1.log.json`). 단, 양시장 MA 하락 구간이라 마켓 타이밍 게이트가 어차피 스캔을 차단 중 — 하락장에서 Stage 2+RS 필터가 마르는 것은 설계상 자연스러운 면이 있어, 완화가 실익(추가 진입 기회)으로 이어지는지는 시장 회복 국면의 후보 수로 판단할 것.
 - [ ] 거래대금 기준 50억 → 30억 추가 완화 검토.
 - [ ] 정배열 조건을 Pool B 전용 `current > ma_20d` 중심으로 완화 검토.
 
