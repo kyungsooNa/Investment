@@ -29,7 +29,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "OneilUniverseService", "NaverFinanceScraperService",
     "StockClassificationRepository", "ThemeLeaderService", "ThemeDailyLeaderService",
     "ThemeClassificationCollectorService", "ThemeClassificationTask", "ThemeDailyLeaderReportTask",
-    "MarketCapGapService", "MarketCapGapReportTask",
+    "MarketCapGapService", "MarketCapGapReportTask", "USMarketCalendarService",
     "BacktestMicrostructureCaptureService", "MicrostructureCaptureTask",
     "PremiumWatchlistGeneratorTask", "CacheWarmupTask", "LogCleanupTask",
     "NewHighTask", "NewHighService", "StrategyLogReportTask",
@@ -398,21 +398,23 @@ def test_service_container_wires_overseas_dryrun_us_market_clock(patched_service
         ServiceContainer(ctx).run()
 
     task_kwargs = task_cls.call_args.kwargs
-    # 한국 거래 캘린더는 미국장에 적용되지 않으므로 미주입
-    assert task_kwargs["market_calendar_service"] is None
+    # O-1: 규칙 기반 NYSE 캘린더가 주입된다 (미국 휴장일 스킵).
+    us_calendar = patched_service_container_deps["USMarketCalendarService"].return_value
+    assert task_kwargs["market_calendar_service"] is us_calendar
     # 미국 정규장 클럭 주입 (America/New_York)
     assert task_kwargs["market_clock"].timezone_name == "America/New_York"
     # Ticket-driven 전환: 미국장 TimeDispatcher(time_dispatcher_us)가 NY 마감 후
     # delay 만큼 대기 뒤 티켓을 발행 → WorkerPool 이 execute() 를 호출한다.
     assert task_kwargs["worker_pool"] is ctx.worker_pool
     assert task_kwargs["notification_service"] is ctx.notification_service
-    # 미국장 전용 TimeDispatcher 가 mcs=None + 미국장 클럭으로 생성된다.
+    # 미국장 전용 TimeDispatcher 가 NYSE 캘린더(mcs) + 미국장 클럭으로 생성된다.
     assert ctx.time_dispatcher_us is not None
     td_us_calls = [
         c for c in patched_service_container_deps["TimeDispatcher"].call_args_list
-        if c.kwargs.get("mcs") is None
+        if c.kwargs.get("db_path") == "data/time_dispatcher_state_us.db"
     ]
     assert len(td_us_calls) == 1
+    assert td_us_calls[0].kwargs["mcs"] is us_calendar
     assert td_us_calls[0].kwargs["market_clock"].timezone_name == "America/New_York"
 
 

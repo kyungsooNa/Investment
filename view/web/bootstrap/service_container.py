@@ -43,6 +43,7 @@ from services.naver_finance_scraper_service import NaverFinanceScraperService
 from services.newhigh_service import NewHighService
 from services.oneil_universe_service import OneilUniverseService
 from services.theme_classification_collector_service import ThemeClassificationCollectorService
+from services.us_market_calendar_service import USMarketCalendarService
 from services.theme_daily_leader_service import ThemeDailyLeaderService
 from services.theme_leader_service import ThemeLeaderService
 from task.background.after_market.theme_classification_task import ThemeClassificationTask
@@ -266,13 +267,15 @@ class ServiceContainer:
             )
             # 미국장 배치(해외 dry-run 등)를 위한 별도 TimeDispatcher. KST dispatcher와
             # 동일한 MessageBroker/WorkerPool 을 공유하며, 미국장 클럭으로 NY 마감을 감지한다.
-            # 거래 캘린더(mcs)는 미주입 → clock 날짜를 거래일 식별자로 사용(주말 필터만 적용).
+            # O-1: 규칙 기반 NYSE 캘린더(mcs) 주입 → 휴장일에는 latest_trading_date가
+            # 직전 거래일로 유지되어 중복 발행이 차단된다 (주말 필터만 있던 기존 한계 해소).
             ctx.time_dispatcher_us = None
             if is_market_enabled(ctx, "overseas_us"):
+                us_clock = MarketClock.for_us_equities(logger=ctx.logger)
                 ctx.time_dispatcher_us = TimeDispatcher(
                     broker=ctx.message_broker,
-                    market_clock=MarketClock.for_us_equities(logger=ctx.logger),
-                    mcs=None,
+                    market_clock=us_clock,
+                    mcs=USMarketCalendarService(market_clock=us_clock, logger=ctx.logger),
                     logger=ctx.logger,
                     db_path="data/time_dispatcher_state_us.db",
                 )
@@ -328,13 +331,17 @@ class ServiceContainer:
                         scheduler_store=gap_report_store,
                         logger=ctx.logger,
                     ) if kr_gap_enabled else None
+                    # O-1: NYSE 캘린더 주입 — 미국 휴장일에 us_close 리포트 스킵.
+                    us_gap_clock = MarketClock.for_us_equities(logger=ctx.logger)
                     ctx.market_cap_gap_report_us_task = MarketCapGapReportTask(
                         market_cap_gap_service=ctx.market_cap_gap_service,
                         telegram_reporter=getattr(ctx, "telegram_reporter", None),
                         notification_service=ctx.notification_service,
                         session="us_close",
-                        market_calendar_service=None,
-                        market_clock=MarketClock.for_us_equities(logger=ctx.logger),
+                        market_calendar_service=USMarketCalendarService(
+                            market_clock=us_gap_clock, logger=ctx.logger,
+                        ),
+                        market_clock=us_gap_clock,
                         scheduler_store=gap_report_store,
                         logger=ctx.logger,
                     ) if us_gap_enabled else None
@@ -905,13 +912,16 @@ class ServiceContainer:
             position_sizing_service=overseas_position_sizing_service,
             fx_provider=_overseas_fx_provider,
         )
-        # 미국 정규장 마감(16:00 ET) 직후 트리거. 한국 거래 캘린더(mcs)는
-        # 미국장에 적용되지 않으므로 미주입(None)하고, 미국장 클럭을 주입한다.
+        # 미국 정규장 마감(16:00 ET) 직후 트리거. O-1: 규칙 기반 NYSE 캘린더를
+        # 주입해 미국 휴장일에는 실행을 스킵한다 (기존: 주말 필터만).
+        dryrun_us_clock = MarketClock.for_us_equities(logger=ctx.logger)
         ctx.overseas_dryrun_task = OverseasDryRunTask(
             dryrun_service=ctx.overseas_vbo_dryrun_service,
             shadow_journal=ctx.event_shadow_journal_service,
-            market_calendar_service=None,
-            market_clock=MarketClock.for_us_equities(logger=ctx.logger),
+            market_calendar_service=USMarketCalendarService(
+                market_clock=dryrun_us_clock, logger=ctx.logger,
+            ),
+            market_clock=dryrun_us_clock,
             logger=ctx.logger,
             notification_service=ctx.notification_service,
             # Ticket-driven: 미국장 TimeDispatcher(time_dispatcher_us)가 NY 마감 후

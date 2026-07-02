@@ -6,11 +6,10 @@ OverseasVBODryRunService 의 일봉 기반 dry-run 신호 산출을 after-market
 
 트리거는 미국장 전용 TimeDispatcher(time_dispatcher_us)가 담당한다 — NY 정규장
 마감(16:00 ET) 감지 후 task delay(30분)만큼 대기해 16:30 ET 효과로 티켓을 발행하면
-WorkerPool 이 execute() 를 호출한다(Ticket-driven, worker_pool 주입). 한국 거래
-캘린더(mcs)는 미국장에 적용되지 않으므로 dispatcher 에 미주입(None)하며, NY 주말
-필터 + 클럭 날짜로 거래일을 식별한다. 미국 공휴일에는 직전 완성봉을 재평가할 수
-있으나 dry-run 이라 무해하다. (_loop_* 프로퍼티는 시스템 상태 화면의 트리거 표기용
-메타데이터로 유지된다.)
+WorkerPool 이 execute() 를 호출한다(Ticket-driven, worker_pool 주입). O-1: dispatcher
+와 이 태스크에 규칙 기반 NYSE 캘린더(`USMarketCalendarService`)가 주입되어 미국
+휴장일에는 latest_trading_date 가 직전 거래일로 유지되고 중복 발행이 차단된다.
+(_loop_* 프로퍼티는 시스템 상태 화면의 트리거 표기용 메타데이터로 유지된다.)
 
 **주문 경로 없음** — OverseasVBODryRunService 가 order_execution 의존을 갖지 않아
 실주문이 발생하지 않는다.
