@@ -51,6 +51,7 @@ def _make_fake_context(runtime_mode: RuntimeMode = RuntimeMode.ALL):
         "websocket_watchdog_task", "pre_market_health_check_task",
         "cache_warmup_task", "notification_queue_task",
         "market_cap_gap_report_kr_task", "market_cap_gap_report_us_task",
+        "microstructure_capture_task",
     ]:
         task = MagicMock()
         task.task_name = name
@@ -93,7 +94,7 @@ def test_all_mode_registers_16_tasks_to_background(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.ALL)
     _run(ctx)
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 19
+    assert bg.register.call_count == 20
 
 
 def test_all_mode_registers_12_tasks_to_time_dispatcher(patched_scheduler_deps):
@@ -183,6 +184,7 @@ def test_batch_only_registers_after_market_tasks_no_watchdog(patched_scheduler_d
         "strategy_log_report_task", "after_market_reconcile_task",
         "theme_classification_task", "theme_daily_leader_report_task",
         "market_cap_gap_report_kr_task", "market_cap_gap_report_us_task",
+        "microstructure_capture_task",
     }
     assert names == expected
     assert "websocket_watchdog_task" not in names
@@ -233,4 +235,4 @@ def test_skips_none_tasks(patched_scheduler_deps):
     # 둘 다 -1 감소한다.
     assert ctx.time_dispatcher.register_task.call_count == 12
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 18
+    assert bg.register.call_count == 19

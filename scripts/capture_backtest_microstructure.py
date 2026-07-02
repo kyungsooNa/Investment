@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
 import os
 import sys
@@ -84,42 +83,7 @@ def _get_program_provider(stock_query_service: Any) -> Any | None:
 
 
 def _write_output_files(payload: dict[str, Any], output_dir: Path) -> dict[str, Path]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    trade_date = payload["metadata"]["trade_date"]
-    capture_path = output_dir / f"replay_microstructure_{trade_date}.json"
-    execution_strength_path = output_dir / f"replay_execution_strength_{trade_date}.json"
-    program_trades_path = output_dir / f"replay_program_trades_{trade_date}.json"
-    intraday_path = output_dir / f"replay_intraday_minutes_{trade_date}.json"
-
-    _write_json(capture_path, payload)
-    _write_json(execution_strength_path, payload.get("execution_strength", {}))
-    _write_json(program_trades_path, _flatten_program_trades(payload.get("program_trades", {})))
-    _write_json(intraday_path, payload.get("intraday_minutes", {}))
-
-    return {
-        "capture": capture_path,
-        "execution_strength": execution_strength_path,
-        "program_trades": program_trades_path,
-        "intraday_minutes": intraday_path,
-    }
-
-
-def _flatten_program_trades(program_trades: dict[str, Any]) -> dict[str, int | None]:
-    flattened: dict[str, int | None] = {}
-    for code, row in program_trades.items():
-        flattened[code] = (
-            row.get("program_net_buy_qty")
-            if isinstance(row, dict)
-            else None
-        )
-    return flattened
-
-
-def _write_json(path: Path, payload: Any) -> None:
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    return BacktestMicrostructureCaptureService.write_overlay_files(payload, output_dir)
 
 
 if __name__ == "__main__":

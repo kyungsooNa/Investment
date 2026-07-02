@@ -31,6 +31,7 @@ from scheduler.strategy_scheduler_store import StrategySchedulerStore
 from scheduler.ticket_queue.dlq_manager import DlqManager
 from scheduler.ticket_queue.message_broker import MessageBroker
 from scheduler.worker.worker_pool import WorkerPool
+from services.backtest_microstructure_capture import BacktestMicrostructureCaptureService
 from services.data_quality_service import DataQualityService
 from services.execution_flow_service import ExecutionFlowService
 from services.indicator_service import IndicatorService
@@ -67,6 +68,7 @@ from task.background.after_market.cache_warmup_task import CacheWarmupTask
 from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
 from task.background.after_market.log_cleanup_task import LogCleanupTask
 from task.background.after_market.market_cap_gap_report_task import MarketCapGapReportTask
+from task.background.after_market.microstructure_capture_task import MicrostructureCaptureTask
 from task.background.after_market.minervini_update_task import MinerviniUpdateTask
 from task.background.after_market.newhigh_task import NewHighTask
 from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
@@ -620,6 +622,7 @@ class ServiceContainer:
                 ctx.post_market_replay_audit_task = None
                 ctx.after_market_reconcile_task = None
                 ctx.opening_position_reconcile_task = None
+                ctx.microstructure_capture_task = None
                 if needs_web:
                     ctx.notification_queue_task = NotificationQueueTask(
                         notification_service=ctx.notification_service,
@@ -776,6 +779,20 @@ class ServiceContainer:
                     logger=ctx.logger,
                     worker_pool=ctx.worker_pool,
                 )
+                # todo 1-5: 장마감 후 후보/보유 종목 microstructure overlay 캡처 (replay 코퍼스 축적)
+                microstructure_enabled = config_dict.get("microstructure_capture_enabled", True)
+                ctx.microstructure_capture_task = MicrostructureCaptureTask(
+                    capture_service=BacktestMicrostructureCaptureService(
+                        stock_query_service=ctx.stock_query_service,
+                        program_provider=ctx.broker,
+                    ),
+                    universe_service=ctx.oneil_universe_service,
+                    virtual_trade_service=ctx.virtual_trade_service,
+                    market_calendar_service=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    scheduler_store=StrategySchedulerStore(logger=ctx.logger),
+                    logger=ctx.logger,
+                ) if microstructure_enabled else None
             else:
                 ctx.log_cleanup_task = None
                 ctx.newhigh_task = None
@@ -785,6 +802,7 @@ class ServiceContainer:
                 ctx.strategy_log_report_task = None
                 ctx.post_market_replay_audit_task = None
                 ctx.after_market_reconcile_task = None
+                ctx.microstructure_capture_task = None
 
             if needs_web:
                 ctx.notification_queue_task = NotificationQueueTask(

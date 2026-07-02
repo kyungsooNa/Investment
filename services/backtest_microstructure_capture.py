@@ -1,6 +1,7 @@
 """Capture microstructure overlays for historical replay fixtures."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -187,6 +188,32 @@ class BacktestMicrostructureCaptureService:
                 result[code] = {"program_net_buy_qty": qty} if qty is not None else None
         return result
 
+    @staticmethod
+    def write_overlay_files(payload: dict[str, Any], output_dir: Path) -> dict[str, Path]:
+        """capture() payload를 replay fixture 규약 파일명 4종으로 저장한다.
+
+        CLI(scripts.capture_backtest_microstructure)와 after-market 태스크가
+        동일한 파일 레이아웃을 쓰도록 단일 소스로 유지한다.
+        """
+        output_dir.mkdir(parents=True, exist_ok=True)
+        trade_date = payload["metadata"]["trade_date"]
+        capture_path = output_dir / f"replay_microstructure_{trade_date}.json"
+        execution_strength_path = output_dir / f"replay_execution_strength_{trade_date}.json"
+        program_trades_path = output_dir / f"replay_program_trades_{trade_date}.json"
+        intraday_path = output_dir / f"replay_intraday_minutes_{trade_date}.json"
+
+        _write_json(capture_path, payload)
+        _write_json(execution_strength_path, payload.get("execution_strength", {}))
+        _write_json(program_trades_path, _flatten_program_trades(payload.get("program_trades", {})))
+        _write_json(intraday_path, payload.get("intraday_minutes", {}))
+
+        return {
+            "capture": capture_path,
+            "execution_strength": execution_strength_path,
+            "program_trades": program_trades_path,
+            "intraday_minutes": intraday_path,
+        }
+
 
 def _extract_execution_strength(resp: Any) -> float | None:
     if not _is_success(resp):
@@ -257,4 +284,22 @@ def _to_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _flatten_program_trades(program_trades: dict[str, Any]) -> dict[str, int | None]:
+    flattened: dict[str, int | None] = {}
+    for code, row in program_trades.items():
+        flattened[code] = (
+            row.get("program_net_buy_qty")
+            if isinstance(row, dict)
+            else None
+        )
+    return flattened
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 

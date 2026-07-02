@@ -30,6 +30,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "StockClassificationRepository", "ThemeLeaderService", "ThemeDailyLeaderService",
     "ThemeClassificationCollectorService", "ThemeClassificationTask", "ThemeDailyLeaderReportTask",
     "MarketCapGapService", "MarketCapGapReportTask",
+    "BacktestMicrostructureCaptureService", "MicrostructureCaptureTask",
     "PremiumWatchlistGeneratorTask", "CacheWarmupTask", "LogCleanupTask",
     "NewHighTask", "NewHighService", "StrategyLogReportTask",
     "StrategyLogReportService", "NotificationQueueTask",
