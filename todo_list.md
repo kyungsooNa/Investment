@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-02 (착수 순서·보류/완료 항목 정리)
+최종 업데이트: 2026-07-02 (시스템 트레이더 관점 리뷰 반영 — 우선 처리 순서로 재정렬, 신규 항목 1-8 / O-1 / O-2 / M-1 / M-2 추가)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -11,44 +11,51 @@
 - 후보군 관리는 기존 `OneilUniverseService` / `SubscriptionPolicy` 공통 파이프라인 확장 과제로 본다.
 - 주문/브로커/스케줄러 변경은 테스트 hang 가이드와 paper/real 분기 검증을 함께 적용한다.
 - `VolumeBreakoutStrategy`, `VolumeBreakoutLiveStrategy`, `TraditionalVolumeBreakoutStrategy`, `GapUpPullbackStrategy`, `ProgramBuyFollowStrategy`, `MomentumStrategy`는 비활성/레거시이므로 신규 연결·개선 우선순위에서 제외한다.
+- 항목 번호(0-1, 1-5, 2-4 등)는 기존 PR·리포트·메모 참조 보존을 위해 유지하고, **문서 배치만 우선 처리 순서**를 따른다.
 
 ---
 
-## 착수 가능성 요약
+## 우선 처리 순서 (2026-07-02 리뷰 기준)
 
-순수 코드로 지금 착수 가능한 항목은 제한적이다. 대부분의 P0~P2 잔여는 외부 데이터 확보·KIS 운영 액션에 의존한다.
+리뷰 핵심 판단: 운영 인프라·리스크 규율(킬스위치 영속화·RiskGate·tiered force-exit·profitability gate·캐너리 사이징)은 갖춰졌다. 남은 크리티컬 패스는 **엣지(수익성) 입증**이다. 엣지의 원천으로 삼는 수급 필터(체결강도·프로그램매매)가 장중 히스토리 부재로 백테스트 검증 불가능한 상태이므로, 검증 데이터 축적을 지금 시작하는 것이 최우선이다.
 
-- **코드 착수 가능 (정책 합의 선행)**
-  - **P1 1-6 paper/소액 canary journal 축적** — 무틱 블로커와 독립. journal은 `virtual_trade_service.get_standard_journal_records` ← polling scan + REST 가격 경로로 채워져 틱 비의존. 라이브 런타임 시간만 필요(무틱에 막히는 건 "shadow" 하위 요소뿐, 2-4 parity와 동일 의존).
-  - **S-9 god class 분리 / 3-4 lifecycle 분해** — 보류 해제(정책 합의 시).
-- **외부 액션 대기 (블로커)**: P2 2-4(KIS 에스컬레이션), P0 0-1(fixture), P1 1-5(microstructure 캡처), P2 2-2(KIS 유량 한도 재확인), P1 1-7(canary 후 정책), 해외 Phase 5(canary 게이팅).
-- **종결**: T-1 키움 테마 REST — **드롭**. 네이버 테마(`ThemeClassificationCollectorService`) 자동 수집으로 분류 데이터 충분, 키움 추가 소스 불필요. (멀티소스 병합 인프라는 `StockClassificationRepository`에 잔존하나 신규 소스 연결 계획 없음.)
-
----
-
-## P0. 실전 손실 방지
-
-### 0-1. 실전 KIS `inquire-daily-ccld` 응답 필드 검증 [외부 데이터 의존]
-
-- [~] 실전 submit response/체결통보(signing notice) raw fixture를 확보해 `BrokerOrderResponseMapper` 회귀를 보강한다.
-  - 남은 것: 취소/거부 실전 row 포함 raw fixture 추가 확보 시 회귀 고정.
-
-주요 파일: `common/broker_order_response_mapper.py`, `services/order_execution_service.py`, `services/fill_reconciliation_service.py`, `tests/fixtures/kis/`
+1. **[즉시 착수 — 엣지 검증 크리티컬 패스]**
+   - 1-5 장중 microstructure 캡처 **상시 가동** (blocked 해제 단계 자체가 착수 항목)
+   - 1-8 현행 전략 버전 walk-forward + Monte Carlo 재실행 + 슬리피지 민감도 (신규)
+   - 1-6 shadow/paper/소액 canary journal 축적 (운영 상시 — 무틱 블로커와 독립)
+2. **[외부 블로커 — 병행 진행]**
+   - 2-4 WebSocket 무틱 — KIS 에스컬레이션 (무틱 보통주만; ETF/우선주는 무틱 수용으로 종결)
+3. **[확대·전환 전 필수 게이트]**
+   - O-1 미국 휴장일/조기폐장 캘린더 (신규 — 해외 Phase 5/라이브 전환 전 필수)
+   - M-1 포지션 사이징 단일화 (신규 — canary→자금 확대 전 필수)
+   - 0-1 실전 체결필드 fixture · 2-2 KIS 유량 한도 실측 (실전 전환 직전, 외부 의존)
+4. **[데이터·정책 대기]**
+   - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (dry-run 검증 + O-1/O-2 후)
+5. **[조건부·저위험 상시]**
+   - Pool B 완화 (재발 시) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 · T-0/R-6 (선택/관찰)
 
 ---
 
-## P1. 전략 수익성 검증
+## P1. 전략 수익성 검증 [최우선 승격 — 2026-07-02 리뷰]
 
-### 1-5. 백테스트 검증 확장 [blocked — 장중 캡처 의존]
+### 1-5. 백테스트 검증 확장 [승격: 캡처 가동은 즉시 착수 가능]
 
-- [blocked] 실제 replay fixture를 통과 케이스까지 확장 — 장중 프로그램매매 WebSocket 샘플 미확보. 해제 조건: 장중 `scripts.capture_backtest_microstructure`로 후보 종목 샘플 확보 → replay overlay.
+- [ ] **(최우선) 장중 microstructure 캡처 파이프라인 상시 가동** — `scripts.capture_backtest_microstructure`를 장중 운영 루틴으로 돌려 후보 종목 bid/ask·잔량·체결강도·프로그램매매 리플레이 코퍼스 축적을 시작한다. VBO/OSB의 수급 게이트(체결강도 ≥120%, 프로그램 순매수 ≥ 거래대금 10%)가 현재 백테스트로 검증 불가능한 상태 — 백테스트가 검증하는 전략과 라이브가 거래하는 전략이 다르다. 이 캡처가 엣지 판별의 크리티컬 패스. (2026-07-02 리뷰)
+- [blocked — 캡처 코퍼스 축적 후] 실제 replay fixture를 통과 케이스까지 확장 → replay overlay.
 - [ ] 한국장 실전 microstructure fixture(bid/ask book·잔량·체결강도·프로그램매매 overlay)로 체결 모델 보정 + 시장가/최유리/지정가별 fill quality가 live journal과 얼마나 벌어지는지 리포트.
 
 주요 파일: `services/backtest_execution_simulator.py`, `services/backtest_replay_context.py`, `scripts/run_backtest.py`, `tests/fixtures/backtest/`
 
+### 1-8. 현행 전략 버전 백테스트 재실행 [신규 — 2026-07-02 리뷰]
+
+- [ ] 활성 전략 전체를 **현재 코드 버전**으로 walk-forward + Monte Carlo 전기간 재실행하고 `data/` 산출물을 갱신한다. 마지막 산출물이 2026-05-14(스텁 수준)이고 이후 전략 수정 다수 — 현행 파라미터에 대한 최신 근거 부재.
+- [ ] 슬리피지 민감도 표(0% / 0.1% / 0.3%) 산출 — 왕복 비용 ≈0.23%(수수료 0.014%×2 + 매도세 0.2%) + 폴링 지연(5분 scan + 60초 stagger + 전역 8/s) 슬리피지가 당일청산 VBO 엣지를 잠식하는지 수치로 확인.
+
+주요 파일: `scripts/run_backtest.py`, `services/backtest_walk_forward.py`, `docs/backtest.md`, `data/backtest_*.json`
+
 ### 1-6. 실전 수익성 데이터 확보와 profitability gate 운영 [라이브 축적 — 코드 착수 가능]
 
-- [ ] shadow / paper / 소액 canary journal을 표준 포맷으로 누적하고, 전략별 profitability gate 통과 근거를 리포트한다. (paper/canary는 WS 틱 비의존이라 무틱 블로커와 독립적으로 축적 가능. shadow 하위 요소만 2-4와 동일 의존.)
+- [ ] shadow / paper / 소액 canary journal을 표준 포맷으로 누적하고, 전략별 profitability gate 통과 근거를 리포트한다. (journal은 `virtual_trade_service.get_standard_journal_records` ← polling scan + REST 가격 경로로 채워져 WS 틱 비의존 — 무틱 블로커와 독립적으로 축적 가능. shadow 하위 요소만 2-4와 동일 의존. 라이브 런타임 시간만 필요.)
   - 최소 유지 기준: 실전 override `min_trades=100`, `profit_factor>=1.3`, `payoff_ratio>=1.2`, `win_rate>=40%`, `max_drawdown<=12%`, regime별 최소 거래 30. parameter stability·Monte Carlo·regime balance·multiple testing 보정을 운영 편의로 낮추지 않는다.
 
 주요 파일: `services/strategy_live_expansion_gate_service.py`, `services/strategy_profitability_gate_service.py`, `scheduler/strategy_scheduler.py`, `services/strategy_log_report_service.py`
@@ -65,19 +72,13 @@
 
 ## P2. 시스템 성능
 
-### 2-2. API 호출 최적화 [외부 — 운영 직전 재확인]
-
-- [~] API budget limiter 운영 정책 — 동시성/rate 분리·emergency overlay·전역 8/s 등 구현 완료.
-  - 남은 작업(외부): 실제 KIS 계정별 REST/WebSocket 유량 한도 숫자를 공식 포털/계정 공지로 **운영 직전 재확인** → 필요 시 `_global` 8/s 운영값 조정. 공개 자료가 갈리므로 코드 기본값은 보수값 유지.
-
-주요 파일: `core/retry_queue/api_budget_limiter.py`, `docs/api_budget_coverage_matrix.md`
-
 ### 2-4. Polling → event-driven 전환 [최우선 블로커 — KIS 에스컬레이션]
 
 - **[최우선 블로커] WebSocket price 피드 무틱 ≈55%**: 구독 종목 절반 이상이 종일 `subscribed_no_tick` → shadow parity 수집 불가 + 라이브 실시간 데이터 품질 문제. **이 레포의 코드 작업은 종결**(무틱 종목 격리 구현 완료). 진단 확정: 종목·상품군·계정 단위 **KIS측 프레임 미전송**(`a1_kis_no_send`).
   - 근거: 2026-06-19 로그 진단(`reports/no_tick_diagnosis_20260619.md`) + 2026-06-22 운영 실험 A~D(`reports/no_tick_operational_experiment_analysis_20260622_live.md`) — subscribe/ack/quality_reject 전부 0, received 5 vs no_tick 18. 보통주 일부만 0틱(종목 단위), ETF/우선주 전부 0틱(상품군 단위), 격리해도 0틱 지속(계정 단위), refresh 무효.
   - **정책 결정(2026-07-01)**: ETF/우선주는 WS tick 없음으로 **간주**(상품군 단위 무틱 수용) → B군 KIS 문의 **드롭**. REST 폴링 경로로 처리하고, 무틱 지표에서 ETF/우선주는 정상(예상된 무틱)으로 본다. 코드 변경 없음(사후 격리가 이미 churn 중단). ※ 실전 전략은 보통주 롱온리라 ETF/우선주 WS 구독은 부수적.
   - **다음 액션(코드 아님)**: C군 — 무틱 **보통주**만 runner 출력 첨부해 KIS 에스컬레이션(계정/종목 단위 프레임 미전송 문의).
+  - ※ 폴링 지연(5분 scan + stagger + limiter)은 돌파 전략의 실질 슬리피지로 작용 — 무틱 해소 → event-driven 전환이 VBO 계열 수익성의 전제 조건이기도 하다. (2026-07-02 리뷰)
 - [ ] (블로커 해소 후) `event_shadow`/`event_shadow_exit` 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py`로 entry/exit parity 리포트 → PR-3 진입 판정.
 - [ ] event-driven signal은 별도 승인 전 shadow/latency 측정용으로만 운영(실주문은 polling + full gate 경로만). VBO fast path는 execution strength/program-buy 생략.
 - [blocked] PR-3: 관찰 양호 시 VBO 실 적용 + OSB shadow 진입. / PR-4+: 단계적 확장.
@@ -85,6 +86,13 @@
 구현 결정(`docs/event_driven_architecture.md` §9): event throttle 0.5s / stale snapshot 5s / shadow 운영 1주(5거래일) / `signal_source`=metadata JSON 키 / trigger crossing은 평가 허용·publish만 debounce.
 
 주요 파일: `services/strategy_event_router.py`, `services/event_shadow_journal_service.py`, `services/price_stream_service.py`, `services/streaming_service.py`, `brokers/korea_investment/korea_invest_websocket_api.py`, `task/background/intraday/websocket_watchdog_task.py`, `scheduler/strategy_scheduler.py`
+
+### 2-2. API 호출 최적화 [외부 — 운영 직전 재확인]
+
+- [~] API budget limiter 운영 정책 — 동시성/rate 분리·emergency overlay·전역 8/s 등 구현 완료.
+  - 남은 작업(외부): 실제 KIS 계정별 REST/WebSocket 유량 한도 숫자를 공식 포털/계정 공지로 **운영 직전 재확인** → 필요 시 `_global` 8/s 운영값 조정. 공개 자료가 갈리므로 코드 기본값은 보수값 유지.
+
+주요 파일: `core/retry_queue/api_budget_limiter.py`, `docs/api_budget_coverage_matrix.md`
 
 ### 2-6. 라이브 핫패스 성능 — 잔여 [보류]
 
@@ -94,14 +102,15 @@
 
 ---
 
-## 테마/분류 데이터
+## P0. 실전 손실 방지
 
-네이버 테마(주 소스)는 `ThemeClassificationTask` 자동 수집 가동 중(BATCH 모드 장마감 후, 기본 7일 간격). 수동 트리거 `POST /api/background/theme-classification/force-update`. 분류 데이터는 네이버 단일 소스로 충분 — 키움 등 추가 소스 연동 계획 없음(T-1 드롭).
+### 0-1. 실전 KIS `inquire-daily-ccld` 응답 필드 검증 [외부 데이터 의존 — 실전 전환 직전 필수]
 
-### T-0. StockEasy 섹터RS taxonomy 참고 (선택)
+- [~] 실전 submit response/체결통보(signing notice) raw fixture를 확보해 `BrokerOrderResponseMapper` 회귀를 보강한다.
+  - 남은 것: 취소/거부 실전 row 포함 raw fixture 추가 확보 시 회귀 고정.
+  - ※ 체결 대사가 실전 필드명에서 깨지면 킬스위치 손익 집계 자체가 틀어진다 — 실전 첫날 소액 검증 필수. (2026-07-02 리뷰)
 
-- [ ] StockEasy 종합 RS 화면(`stockeasy.intellio.kr/stock-analysis`)의 섹터/테마 분류를 네이버 테마 alias/표시명 후보 참고자료로 정리한다. StockEasy 자체를 무단 수집 소스로 고정하지 말고, 실제 구성종목 데이터는 네이버 등 수집 가능한 source에 귀속한다.
-  - 주요 후보: 반도체소재, 지주사, 메모리, 비메모리/팹리스, 전력기기, 반도체장비, 보험, 건설, 테스트소켓, 유통, 로봇/자동화, 미용기기, 산업기계, 완성차, SW/AI, 자동차부품, 증권, 우주항공, 배터리셀, 통신, 원자력, 양극재, 신재생, 전자장비, 조선기자재, 조선, 타이어, 바이오신약, 방위산업, 음극재/소재, 은행, 정유/화학, 철강/비철, 의료기기, 해운, 여행/레저, 음식료, 패션/의류, 제약, 인터넷/플랫폼, 유틸리티, 리츠/부동산, 게임, CDMO, 화장품, 엔터/미디어.
+주요 파일: `common/broker_order_response_mapper.py`, `services/order_execution_service.py`, `services/fill_reconciliation_service.py`, `tests/fixtures/kis/`
 
 ---
 
@@ -109,9 +118,50 @@
 
 결론: 일봉 셋업형 전략만 적용 가능(해외 일봉 API 존재), 장중/실시간 전략은 불가. 첫 대상 = `LarryWilliamsVBOStrategy`. 제약: **해외 주문 TR은 실전(TTTS6036U 등)만, 모의 주문 TR 없음** → dry-run 검증 전 실주문 배선 금지. Phase 1~4(데이터 어댑터·일봉 백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금.
 
+### O-1. 미국 휴장일/조기폐장 캘린더 [신규 — Phase 5/라이브 전환 전 필수]
+
+- [ ] NY 휴장일(추수감사절·독립기념일 등)과 조기폐장일(13:00 ET 마감, 연 3~4회) 캘린더를 추가한다. 현재 "cron mon-fri + NY 클럭"으로 대체 운영 중 — dry-run 단계는 휴장일 노이즈로 끝나지만, 라이브 전환 시 조기폐장일 EOD 청산 미스 = 의도치 않은 오버나이트 포지션으로 직결. Phase 5(`live_enabled=True`) 전환의 전제 게이트. (2026-07-02 리뷰)
+
+주요 파일: `core/market_clock.py`, `scheduler/after_market_loop.py`, `task/background/after_market/overseas_dryrun_task.py`
+
+### O-2. dry-run 비용/진입가 가정 보정 [신규]
+
+- [ ] `scripts/analyze_overseas_dryrun.py`의 왕복 비용 기본값 0.2%를 실계약 KIS 해외 요율 기반으로 교체 — 편도 수수료 0.25% 수준이면 0.2%는 낙관적. (2026-07-02 리뷰)
+- [ ] 일봉 기반 would-be 진입가의 낙관 편향(장중 실체결가 대비 유리하게 잡힘)을 dry-run 리포트에 명시해 성과 해석 시 참고하도록 한다.
+
+주요 파일: `scripts/analyze_overseas_dryrun.py`, `services/overseas_vbo_dryrun_service.py`
+
+### Phase 5. 안전/canary [dry-run 검증 + O-1/O-2 후]
+
 - [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile(`OverseasReconcileService` scaffolding 존재), risk gate/kill switch/canary USD 확장, 실전 소액 canary, canary auto-fire 배선 + `live_enabled=True` 전환 — dry-run 검증 + canary 게이팅.
 
 주요 파일: `brokers/korea_investment/korea_invest_overseas_stock_api.py`, `brokers/broker_api_wrapper.py`, `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/stock_query_service.py`, `view/web/bootstrap/{service_container,strategy_factory}.py`, `config/tr_ids_config.yaml`
+
+---
+
+## M. 유지보수 / 구조 [신규 섹션 — 2026-07-02 리뷰]
+
+### M-1. 포지션 사이징 단일화 [canary→자금 확대 전 필수 게이트]
+
+- [ ] 사이징 개념이 4곳에 분산되어 있다 — `position_size_pct`(전략 config) / `order_qty=1`(스케줄러 캐너리 고정값) / `position_sizer` 후주입(옵션, `adjust_buy_qty`) / RiskGate `max_order_amount_won`. 캐너리 단계에서는 무해하지만, 1-6 게이트 통과 후 자금 확대 **전에** 단일 사이징 모듈로 통합하지 않으면 첫 스케일업에서 사고 위험. 통합 시 리스크 기반 사이징(포지션당 리스크 % 기준)으로 수렴 권장.
+
+주요 파일: `view/web/bootstrap/strategy_factory.py`, `scheduler/strategy_scheduler.py`, `strategies/oneil_common_types.py` 등 전략 config 계열, `config/config_loader.py`
+
+### M-2. 문서 동기화 + 구조 감시 [저위험 상시]
+
+- [ ] `docs/backtest.md`(최종 2026-05-13)·`CODEBASE_SUMMARY.md`(최종 2026-06-21)를 최근 변경(bootstrap 분해 진전·EventShadowManager 분리·해외/테마 계층·브로커 계층 계측)에 맞춰 갱신.
+- 감시(조치 아님): `view/web/bootstrap/service_container.py`(902줄, 최근 11일간 13회 변경)가 web_app_initializer 비대화의 재발 패턴인지 주기 점검. `scheduler/strategy_scheduler.py` 2,152줄 / `services/strategy_log_report_service.py` 2,059줄 — 분해는 3-4 재승격과 함께 진행.
+
+---
+
+## 테마/분류 데이터
+
+네이버 테마(주 소스)는 `ThemeClassificationTask` 자동 수집 가동 중(BATCH 모드 장마감 후, 기본 7일 간격). 수동 트리거 `POST /api/background/theme-classification/force-update`. 분류 데이터는 네이버 단일 소스로 충분 — 키움 등 추가 소스 연동 계획 없음(T-1 드롭). 멀티소스 병합 인프라는 `StockClassificationRepository`에 잔존하나 신규 소스 연결 계획 없음.
+
+### T-0. StockEasy 섹터RS taxonomy 참고 (선택)
+
+- [ ] StockEasy 종합 RS 화면(`stockeasy.intellio.kr/stock-analysis`)의 섹터/테마 분류를 네이버 테마 alias/표시명 후보 참고자료로 정리한다. StockEasy 자체를 무단 수집 소스로 고정하지 말고, 실제 구성종목 데이터는 네이버 등 수집 가능한 source에 귀속한다.
+  - 주요 후보: 반도체소재, 지주사, 메모리, 비메모리/팹리스, 전력기기, 반도체장비, 보험, 건설, 테스트소켓, 유통, 로봇/자동화, 미용기기, 산업기계, 완성차, SW/AI, 자동차부품, 증권, 우주항공, 배터리셀, 통신, 원자력, 양극재, 신재생, 전자장비, 조선기자재, 조선, 타이어, 바이오신약, 방위산업, 음극재/소재, 은행, 정유/화학, 철강/비철, 의료기기, 해운, 여행/레저, 음식료, 패션/의류, 제약, 인터넷/플랫폼, 유틸리티, 리츠/부동산, 게임, CDMO, 화장품, 엔터/미디어.
 
 ---
 
@@ -137,27 +187,10 @@
 
 ### 보류 — 정책 합의 후 재승격
 
-- [ ] **3-4 active strategy lifecycle 7단계 분해**(`get_watchlist`/`filter_candidates`/`evaluate_entries_bounded`/`evaluate_exits_bounded`/`emit_metrics`) — 현재 `scan`/`check_exits`에 묻혀 있어 대형 리팩토링. checklist 테스트는 적용 완료. 공통 흐름이 더 쌓이면 재승격.
+- [ ] **3-4 active strategy lifecycle 7단계 분해**(`get_watchlist`/`filter_candidates`/`evaluate_entries_bounded`/`evaluate_exits_bounded`/`emit_metrics`) — 현재 `scan`/`check_exits`에 묻혀 있어 대형 리팩토링. checklist 테스트는 적용 완료. 공통 흐름이 더 쌓이면 재승격. (M-2의 god class 줄수 계측이 재승격 근거 — `strategy_scheduler.py` 2,152줄.)
 - [ ] 기타 정책/임계값 결정: RiskGate 실패 주문 cap 정책 / 전략별 min trading value·market cap 하한 / 매도 RiskGate 우회 / volatility hard gate / 성과 저하 자동 해제·수량 축소 / 레거시 전략 백테스트 통합 여부.
 
 주요 파일: `interfaces/live_strategy.py`, `tests/unit_test/strategies/test_live_strategy_lifecycle_contract.py`
-
----
-
-## 바로 착수 추천 순서
-
-1. **운영 관찰·블로커 (최우선, 코드 아님)**
-   - WebSocket 무틱 — **KIS 에스컬레이션**(무틱 보통주 계정/종목 단위 문의만; ETF/우선주는 무틱 수용으로 B군 드롭). 해소 전까지 보통주 shadow 수집 불가. (P2 2-4)
-2. **코드/운영 착수 가능**
-   - profitability gate 우회 없이 shadow/paper/canary journal로 전략별 실전 근거 축적 (P1 1-6, 라이브 축적)
-3. **데이터 + 정책 대기**
-   - R-2 인버스 ETF 슬리브 Phase 4(추세추종 게이트 프로파일) — 다음 베어장 paper 데이터 축적 후 구현
-4. **외부 운영·데이터 확보 후**
-   - KIS REST/WebSocket 유량 한도 재확인 (P2 2-2) · 실전 submit/signing fixture (P0 0-1) · 장중 microstructure 캡처 (P1 1-5)
-5. **정책 결정 후**
-   - DSR hard threshold 및 PBO/DSR gate 운영 기준 확정 (P1 1-7, canary 후)
-6. **조건부 트리거 — 재발 시**
-   - Pool B 거래대금 50→30억 / 정배열 완화
 
 ---
 
@@ -170,6 +203,7 @@
 - [x] 서비스 재시작 후 미체결 주문·잔고를 복원/reconcile한다. (`restore_state_from_broker`/`reconcile_orders_with_broker`)
 - [x] paper/real URL·TR ID·토큰·계좌 분기가 테스트로 검증된다.
 - [x] 장애·데이터 지연·websocket 끊김·reconcile 실패 시 신규 주문 차단 또는 경고 전환.
+- [x] 킬스위치 상태(연속손실·일손실 카운터)는 atomic JSON으로 영속화되어 재시작 시 유지된다.
 - [~] 전략 성과는 수수료·세금·슬리피지 반영 순수익 기준으로 추적된다.
   - 진행 필요: `MomentumStrategy` 등 비활성/레거시 독립 백테스트 경로까지 동일 체결 리포트/장부 통합할지 결정.
 
@@ -186,3 +220,4 @@
 - **S-1~S-10 StrategyScheduler 리뷰**: S-1~S-8 버그/수명/구조 수정 완료, S-3/S-10 의도된 설계 확인, S-9는 `EventShadowManager`(`scheduler/event_shadow_manager.py`) 추출 완료(2026-06-28).
 - **tiered force-exit window [해소]**: 단계화 청산(`FORCE_EXIT_TIERS=[(30,0.5),(15,1.0)]`) 완료(2026-06-28). 잔여 작업 없음.
 - **운영 guard 일부 [해소]**: KillSwitch auto-trigger, WebSocket watchdog/health 계열, daily cap 계열은 구현 확인. 잔여는 위 "보류"의 정책/임계값 결정만 추적.
+- **T-1 키움 테마 REST [드롭]**: 네이버 테마(`ThemeClassificationCollectorService`) 자동 수집으로 분류 데이터 충분, 키움 추가 소스 불필요.
