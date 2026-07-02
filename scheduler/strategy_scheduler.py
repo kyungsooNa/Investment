@@ -313,21 +313,30 @@ class StrategyScheduler:
                                   and _ks_allowed)
 
                     if should_run or force_exit:
+                        has_holdings = False
+                        if not force_exit:
+                            try:
+                                has_holdings = bool(self._get_strategy_holdings(cfg))
+                            except Exception as e:
+                                self._logger.warning(
+                                    f"[Scheduler] {name} 보유 종목 우선순위 확인 실패: {e}",
+                                    exc_info=True,
+                                )
                         # 지연 시간(초) 계산 - 처음 실행 시(last가 None) 무한대로 처리
                         overdue = elapsed - (cfg.interval_minutes * 60) if last else float('inf')
                         if force_exit:
                             overdue = float('inf') # 강제 청산은 최우선순위
-                        evaluations.append((overdue, cfg, force_exit_tier))
+                        evaluations.append((force_exit, has_holdings, overdue, cfg, force_exit_tier))
 
-                # 2. 가장 오래 지연된(overdue가 큰) 전략부터 내림차순 정렬
-                evaluations.sort(key=lambda x: x[0], reverse=True)
+                # 2. 청산 필요 가능성이 있는 보유 전략을 신규 진입 스캔보다 우선 실행한다.
+                #    이후에는 가장 오래 지연된(overdue가 큰) 전략부터 처리한다.
+                evaluations.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
 
-                for overdue, cfg, force_exit_tier in evaluations:
+                for force_exit, has_holdings, overdue, cfg, force_exit_tier in evaluations:
                     name = cfg.strategy.name
-                    force_exit = force_exit_tier is not None
 
                     # 전략 간 API 자원 충돌 방지 (강제 청산은 쿨다운 무시)
-                    if not force_exit and self._last_execution_time:
+                    if not force_exit and not has_holdings and self._last_execution_time:
                         since_last_exec = (now - self._last_execution_time).total_seconds()
                         if since_last_exec < self.STAGGER_INTERVAL_SEC:
                             continue
