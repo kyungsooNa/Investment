@@ -16,6 +16,7 @@ from scripts.run_backtest import (
     _build_dates,
     _build_risk_sizing_services,
     _build_backtest_strategy,
+    _build_execution_simulator,
     _format_console,
     _format_walk_forward_console,
     _format_walk_forward_json,
@@ -145,6 +146,47 @@ def test_parse_args_accepts_execution_bar_policy(monkeypatch):
     args = _parse_args()
 
     assert args.execution_bar_policy == "next_bar"
+
+
+def test_parse_args_accepts_slippage_and_spread(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_backtest",
+            "--dates",
+            "20260501",
+            "--market-slippage-pct",
+            "0.3",
+            "--spread-pct",
+            "0.1",
+        ],
+    )
+
+    args = _parse_args()
+
+    assert args.market_slippage_pct == 0.3
+    assert args.spread_pct == 0.1
+
+
+def test_parse_args_slippage_and_spread_default_zero(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_backtest", "--dates", "20260501"],
+    )
+
+    args = _parse_args()
+
+    assert args.market_slippage_pct == 0.0
+    assert args.spread_pct == 0.0
+
+
+def test_build_execution_simulator_maps_policy_fields():
+    args = SimpleNamespace(market_slippage_pct=0.3, spread_pct=0.1)
+
+    simulator = _build_execution_simulator(args)
+
+    assert simulator.policy.market_slippage_pct == 0.3
+    assert simulator.policy.spread_pct == 0.1
 
 
 def test_parse_args_accepts_backtest_time(monkeypatch):

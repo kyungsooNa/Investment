@@ -463,6 +463,14 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 20260501 --end-date 20260510 --execution-bar-policy next_bar
 ```
 
+### 슬리피지/스프레드 민감도 (비용 민감도 실행)
+
+`--market-slippage-pct`는 시장가성 주문(MARKET/STOP 손절) 체결에 적용되는 슬리피지 %이고, `--spread-pct`는 bid/ask 부재 시 시장가성 주문에 적용할 스프레드 %(절반이 체결가에 가산)다. **LIMIT 체결에는 둘 다 적용되지 않는다** (지정가는 정의상 지정가 체결). 기본값은 둘 다 0.0이며 run metadata에 기록된다.
+
+```powershell
+python -m scripts.run_backtest --strategy larry_williams_vbo --start-date 20260501 --end-date 20260630 --market-slippage-pct 0.3 --spread-pct 0.1
+```
+
 ### 운영 RiskGate/PositionSizing 설정 적용
 
 ```powershell
