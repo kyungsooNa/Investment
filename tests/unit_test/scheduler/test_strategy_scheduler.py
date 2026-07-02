@@ -3256,6 +3256,57 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         mock_run.assert_not_awaited()
 
+    async def test_loop_prioritizes_holding_strategy_on_intraday_start(self):
+        from datetime import datetime
+
+        scheduler, vm, _, tm, mcs = self._make_scheduler()
+        now_dt = datetime(2026, 4, 24, 10, 0, 0)
+        tm.get_current_kst_time.return_value = now_dt
+        tm.get_market_close_time.return_value = datetime(2026, 4, 24, 15, 30, 0)
+        mcs.is_market_open_now.return_value = True
+
+        first = MockStrategy(name="NoPosition")
+        second = MockStrategy(name="HasPosition")
+        scheduler.register(StrategySchedulerConfig(strategy=first, interval_minutes=0))
+        scheduler.register(StrategySchedulerConfig(strategy=second, interval_minutes=0))
+        vm.get_holds_by_strategy.side_effect = lambda strategy_name: (
+            [{"code": "067310", "name": "하나마이크론", "buy_price": 51800, "qty": 38, "status": "HOLD"}]
+            if strategy_name == "HasPosition" else []
+        )
+        scheduler._running = True
+
+        with patch.object(scheduler, "_run_reconciliation", new_callable=AsyncMock), \
+             patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as mock_run, \
+             patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+            await scheduler._loop()
+
+        mock_run.assert_awaited_once()
+        self.assertEqual(mock_run.await_args.args[0].strategy.name, "HasPosition")
+
+    async def test_loop_runs_holding_strategy_inside_stagger_window_for_exit_check(self):
+        from datetime import datetime
+
+        scheduler, vm, _, tm, mcs = self._make_scheduler()
+        now_dt = datetime(2026, 4, 24, 10, 0, 0)
+        tm.get_current_kst_time.return_value = now_dt
+        tm.get_market_close_time.return_value = datetime(2026, 4, 24, 15, 30, 0)
+        mcs.is_market_open_now.return_value = True
+
+        strategy = MockStrategy(name="HasPosition")
+        scheduler.register(StrategySchedulerConfig(strategy=strategy, interval_minutes=0))
+        vm.get_holds_by_strategy.return_value = [
+            {"code": "067310", "name": "하나마이크론", "buy_price": 51800, "qty": 38, "status": "HOLD"}
+        ]
+        scheduler._last_execution_time = now_dt
+        scheduler._running = True
+
+        with patch.object(scheduler, "_run_reconciliation", new_callable=AsyncMock), \
+             patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as mock_run, \
+             patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+            await scheduler._loop()
+
+        mock_run.assert_awaited_once()
+
     async def test_force_liquidate_uses_best_bid_when_orderbook_available(self):
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
         oes.broker_api_wrapper.get_asking_price = AsyncMock(
