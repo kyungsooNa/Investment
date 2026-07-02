@@ -59,6 +59,20 @@ def _parse_args() -> argparse.Namespace:
         dest="execution_bar_policy",
         help="체결 후보 봉 선택 정책: current_bar=가격에 닿은 첫 분봉, next_bar=가격에 닿은 신호 봉 다음 분봉",
     )
+    parser.add_argument(
+        "--market-slippage-pct",
+        type=float,
+        default=0.0,
+        dest="market_slippage_pct",
+        help="시장가성 주문(MARKET/STOP 손절) 체결 슬리피지 %% (LIMIT 체결엔 미적용, default: 0.0)",
+    )
+    parser.add_argument(
+        "--spread-pct",
+        type=float,
+        default=0.0,
+        dest="spread_pct",
+        help="bid/ask 부재 시 시장가성 주문에 적용할 스프레드 %% — 절반이 체결가에 가산 (default: 0.0)",
+    )
     parser.add_argument("--output", default="console", choices=["console", "json"])
     parser.add_argument("--output-file", default=None, dest="output_file")
     parser.add_argument(
@@ -1405,6 +1419,22 @@ def _format_parameter_stability_row(
     return base + f"  Δtrades={trade_diff:+d} Δnet_pnl={pnl_diff:+,.0f}"
 
 
+def _build_execution_simulator(args: argparse.Namespace):
+    """CLI 슬리피지/스프레드 인자를 체결 정책으로 매핑한 시뮬레이터를 만든다.
+
+    비용 민감도 실행용 (todo 1-8). 두 값 모두 0이면 기본 정책과 동일하다.
+    """
+    from services.backtest_execution_simulator import (
+        BacktestExecutionPolicy,
+        BacktestExecutionSimulator,
+    )
+
+    return BacktestExecutionSimulator(BacktestExecutionPolicy(
+        market_slippage_pct=float(getattr(args, "market_slippage_pct", 0.0) or 0.0),
+        spread_pct=float(getattr(args, "spread_pct", 0.0) or 0.0),
+    ))
+
+
 async def _run(args: argparse.Namespace) -> None:
     from scripts._bootstrap import bootstrap_pp_strategy, make_stdout_logger
     from config.config_loader import load_configs
@@ -1525,6 +1555,8 @@ async def _run(args: argparse.Namespace) -> None:
                 "strategy_key": args.strategy,
                 "backtest_time": args.backtest_time,
                 "execution_bar_policy": args.execution_bar_policy,
+                "market_slippage_pct": args.market_slippage_pct,
+                "spread_pct": args.spread_pct,
                 "use_risk_sizing": args.use_risk_sizing,
                 "output": args.output,
                 "walk_forward": segment is not None,
@@ -1543,6 +1575,7 @@ async def _run(args: argparse.Namespace) -> None:
                 strategy=strategy,
                 bar_provider=bar_provider,
                 ledger=ledger,
+                simulator=_build_execution_simulator(args),
                 backtest_journal_repository=BacktestJournalRepository(),
                 run_id="_".join(run_parts),
                 metadata=metadata,
