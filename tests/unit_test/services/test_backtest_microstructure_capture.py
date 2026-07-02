@@ -261,3 +261,24 @@ def test_to_float_and_to_int_edge_cases():
     assert _to_int("xyz") is None
     assert _to_int("42") == 42
 
+
+def test_write_overlay_files_creates_four_fixture_files(tmp_path):
+    import json
+
+    payload = {
+        "metadata": {"trade_date": "20260702", "codes": ["000001"]},
+        "intraday_minutes": {"000001": [{"stck_cntg_hour": "090000"}]},
+        "execution_strength": {"000001": 145.5},
+        "program_trades": {"000001": {"program_net_buy_qty": 30000}},
+    }
+
+    paths = BacktestMicrostructureCaptureService.write_overlay_files(payload, tmp_path / "out")
+
+    assert json.loads(paths["capture"].read_text(encoding="utf-8")) == payload
+    assert json.loads(paths["execution_strength"].read_text(encoding="utf-8")) == {"000001": 145.5}
+    assert json.loads(paths["program_trades"].read_text(encoding="utf-8")) == {"000001": 30000}
+    assert json.loads(paths["intraday_minutes"].read_text(encoding="utf-8")) == {
+        "000001": [{"stck_cntg_hour": "090000"}],
+    }
+    assert paths["capture"].name == "replay_microstructure_20260702.json"
+
