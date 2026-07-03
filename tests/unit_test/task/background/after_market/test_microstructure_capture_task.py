@@ -186,6 +186,26 @@ async def test_capture_error_logged_and_date_not_marked(capture_service, univers
     assert task.get_progress()["last_result"] == {"error": "KIS down"}
 
 
+@pytest.mark.asyncio
+async def test_quality_and_fallback_exposed_in_last_result(
+    capture_service, universe_service, tmp_path
+):
+    payload = _payload()
+    payload["metadata"]["program_fallback_codes"] = ["000660"]
+    payload["metadata"]["quality"] = {
+        "empty_minute_codes": ["005930"],
+        "stale_minute_rows_dropped": {},
+    }
+    capture_service.capture = AsyncMock(return_value=payload)
+    task = _make_task(capture_service, tmp_path, universe_service=universe_service)
+
+    await task._on_market_closed("20260702")
+
+    last_result = task.get_progress()["last_result"]
+    assert last_result["program_fallback_codes"] == ["000660"]
+    assert last_result["quality"]["empty_minute_codes"] == ["005930"]
+
+
 def test_write_output_dir_passed_through(capture_service, tmp_path):
     task = _make_task(capture_service, tmp_path)
     assert task.task_name == "microstructure_capture"

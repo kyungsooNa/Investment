@@ -133,14 +133,21 @@ class MicrostructureCaptureTask(AfterMarketTask):
             self._last_captured_date = latest_trading_date
             self._save_last_captured_date(latest_trading_date)
             self._progress["last_captured_date"] = latest_trading_date
+            metadata = payload.get("metadata") or {}
+            quality = metadata.get("quality") or {}
+            program_fallback_codes = metadata.get("program_fallback_codes") or []
             self._progress["last_result"] = {
                 "codes": len(codes),
                 "program_source": program_source,
-                "row_counts": (payload.get("metadata") or {}).get("row_counts"),
+                "row_counts": metadata.get("row_counts"),
+                "program_fallback_codes": program_fallback_codes,
+                "quality": quality,
             }
             self._logger.info(
                 f"{self.task_name}: {latest_trading_date} 캡처 완료 "
-                f"(codes={len(codes)}, program_source={program_source})"
+                f"(codes={len(codes)}, program_source={program_source}, "
+                f"program_fallback={len(program_fallback_codes)}, "
+                f"empty_minutes={len(quality.get('empty_minute_codes') or [])})"
             )
         except Exception as exc:
             self._logger.error(f"{self.task_name}: 캡처 실패 — {exc}", exc_info=True)
