@@ -20,7 +20,7 @@
 리뷰 핵심 판단: 운영 인프라·리스크 규율(킬스위치 영속화·RiskGate·tiered force-exit·profitability gate·캐너리 사이징)은 갖춰졌다. 남은 크리티컬 패스는 **엣지(수익성) 입증**이다. 엣지의 원천으로 삼는 수급 필터(체결강도·프로그램매매)가 장중 히스토리 부재로 백테스트 검증 불가능한 상태이므로, 검증 데이터 축적을 지금 시작하는 것이 최우선이다.
 
 1. **[즉시 착수 — 엣지 검증 크리티컬 패스]**
-   - 1-5 장중 microstructure 캡처 **상시 가동** (blocked 해제 단계 자체가 착수 항목) — 태스크 배선 완료(#618), 코퍼스 축적 중
+   - 1-5 장중 microstructure 캡처 **상시 가동** (blocked 해제 단계 자체가 착수 항목) — 태스크 배선 완료(#618), 코퍼스 축적 중, 1일차 품질 결함 보정 완료(2026-07-04)
    - 1-6 shadow/paper/소액 canary journal 축적 (운영 상시 — 무틱 블로커와 독립)
 2. **[외부 블로커 — 병행 진행]**
    - 2-4 WebSocket 무틱 — KIS 에스컬레이션 (무틱 보통주만; ETF/우선주는 무틱 수용으로 종결)
@@ -40,7 +40,10 @@
 
 ### 1-5. 백테스트 검증 확장 [승격: 캡처 가동은 즉시 착수 가능]
 
-- [ ] **(최우선) 장중 microstructure 캡처 파이프라인 상시 가동** — `scripts.capture_backtest_microstructure`를 장중 운영 루틴으로 돌려 후보 종목 bid/ask·잔량·체결강도·프로그램매매 리플레이 코퍼스 축적을 시작한다. VBO/OSB의 수급 게이트(체결강도 ≥120%, 프로그램 순매수 ≥ 거래대금 10%)가 현재 백테스트로 검증 불가능한 상태 — 백테스트가 검증하는 전략과 라이브가 거래하는 전략이 다르다. 이 캡처가 엣지 판별의 크리티컬 패스. (2026-07-02 리뷰)
+- [~] **(최우선) 장중 microstructure 캡처 파이프라인 상시 가동** — `scripts.capture_backtest_microstructure`를 장중 운영 루틴으로 돌려 후보 종목 bid/ask·잔량·체결강도·프로그램매매 리플레이 코퍼스 축적을 시작한다. VBO/OSB의 수급 게이트(체결강도 ≥120%, 프로그램 순매수 ≥ 거래대금 10%)가 현재 백테스트로 검증 불가능한 상태 — 백테스트가 검증하는 전략과 라이브가 거래하는 전략이 다르다. 이 캡처가 엣지 판별의 크리티컬 패스. (2026-07-02 리뷰)
+  - 가동 확인 + 1일차(20260703, 후보 10종목) 산출물 검증에서 품질 결함 3건 발견·보정 (2026-07-04): ① 프로그램 overlay 전량 null — 태스크가 DB 파일 존재만으로 `program_db` 소스 확정하는데 `pt_subscriptions`가 고정 4종목뿐이라 후보 행 없음 → DB 미스 종목만 daily_rest per-code 폴백 + `metadata.program_fallback_codes` 기록. ② 무거래/정지 종목에 직전 거래일 분봉 유입(033160에 2025-12-30 행 57건) → `trade_date` 불일치 행 필터. ③ 분봉 0건 종목 무플래그 → `metadata.quality`(empty_minute_codes·stale_minute_rows_dropped) + 태스크 last_result/로그 노출.
+  - 프로그램 장중 시계열 캡처 경로 배선 완료 (2026-07-04): `ProgramCaptureSubscriptionTask`(intraday)가 장중에 캡처 후보(보유+워치리스트)를 LOW 우선순위 `PROGRAM_TRADING` 구독(cap 10종목, PT=2슬롯)으로 동기화해 `pt_history`에 장중 순매수 시계열을 축적 → 장마감 캡처가 program_db 소스로 소비(미커버 종목만 daily_rest 폴백). 수동 UI PT 구독은 제외, 슬롯 압박 시 트레이딩 구독이 아닌 이 카테고리가 먼저 해지됨. 구독 목록 영속화로 크래시 잔재는 재시작 시 자동 정리. `program_capture_subscription_enabled`(기본 on).
+  - ※ 남은 구조적 한계: 체결강도는 EOD 스칼라 1개/종목만 확보 가능(장중 시계열 REST API 없음) — "체결강도 ≥120%" 장중 게이트의 충실한 리플레이는 여전히 불가. 남은 것: quality 플래그·PT 커버리지(`program_fallback_codes` 감소 여부) 일일 관찰 + 체결강도 장중 시계열 확보 방안 검토(WS 체결 스트림 기반 — 무틱 2-4와 연관).
 - [blocked — 캡처 코퍼스 축적 후] 실제 replay fixture를 통과 케이스까지 확장 → replay overlay.
 - [ ] 한국장 실전 microstructure fixture(bid/ask book·잔량·체결강도·프로그램매매 overlay)로 체결 모델 보정 + 시장가/최유리/지정가별 fill quality가 live journal과 얼마나 벌어지는지 리포트.
 

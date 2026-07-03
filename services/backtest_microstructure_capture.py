@@ -36,22 +36,26 @@ class BacktestMicrostructureCaptureService:
         program_source: str = "daily_rest",
     ) -> dict[str, Any]:
         selected_codes = [code.strip() for code in codes if code.strip()]
-        intraday = await self._capture_intraday(
+        intraday, stale_minute_rows_dropped = await self._capture_intraday(
             selected_codes,
             date_ymd=date_ymd,
             start_hhmmss=start_hhmmss,
             end_hhmmss=end_hhmmss,
             session=session,
-        ) if include_intraday else {code: [] for code in selected_codes}
+        ) if include_intraday else ({code: [] for code in selected_codes}, {})
         execution_strength = await self._capture_execution_strength(
             selected_codes
         ) if include_execution_strength else {code: None for code in selected_codes}
-        program_trades = await self._capture_program_trades(
+        program_trades, program_fallback_codes = await self._capture_program_trades(
             selected_codes,
             date_ymd=date_ymd,
             source=program_source,
             start_hhmmss=start_hhmmss,
             end_hhmmss=end_hhmmss,
+        )
+        empty_minute_codes = (
+            [code for code in selected_codes if not intraday.get(code)]
+            if include_intraday else []
         )
 
         return {
@@ -64,6 +68,11 @@ class BacktestMicrostructureCaptureService:
                 "end_hhmmss": end_hhmmss,
                 "session": session,
                 "program_source": program_source,
+                "program_fallback_codes": program_fallback_codes,
+                "quality": {
+                    "empty_minute_codes": empty_minute_codes,
+                    "stale_minute_rows_dropped": stale_minute_rows_dropped,
+                },
                 "row_counts": {
                     "intraday_minutes": sum(len(rows) for rows in intraday.values()),
                     "execution_strength": sum(
@@ -89,8 +98,9 @@ class BacktestMicrostructureCaptureService:
         start_hhmmss: str,
         end_hhmmss: str,
         session: str,
-    ) -> dict[str, list[dict]]:
+    ) -> tuple[dict[str, list[dict]], dict[str, int]]:
         result: dict[str, list[dict]] = {}
+        stale_dropped: dict[str, int] = {}
         for code in codes:
             rows = await self._sqs.get_day_intraday_minutes_list(
                 code,
@@ -99,8 +109,20 @@ class BacktestMicrostructureCaptureService:
                 start_hhmmss=start_hhmmss,
                 end_hhmmss=end_hhmmss,
             )
-            result[code] = rows if isinstance(rows, list) else []
-        return result
+            rows = rows if isinstance(rows, list) else []
+            # 무거래/정지 종목에서 API 가 직전 거래일 분봉을 반환할 수 있다 —
+            # 캡처 대상일과 다른 날짜 행은 버린다 (날짜 필드 없는 행은 보존).
+            kept = [
+                row for row in rows
+                if not (
+                    isinstance(row, dict)
+                    and row.get("stck_bsop_date") not in (None, "", date_ymd)
+                )
+            ]
+            if len(kept) != len(rows):
+                stale_dropped[code] = len(rows) - len(kept)
+            result[code] = kept
+        return result, stale_dropped
 
     async def _capture_execution_strength(
         self,
@@ -124,18 +146,31 @@ class BacktestMicrostructureCaptureService:
         source: str,
         start_hhmmss: str,
         end_hhmmss: str,
-    ) -> dict[str, dict | None]:
+    ) -> tuple[dict[str, dict | None], list[str]]:
         if source == "none":
-            return {code: None for code in codes}
+            return {code: None for code in codes}, []
         if source == "program_db":
-            return self._capture_program_trades_from_db(
+            result = self._capture_program_trades_from_db(
                 codes,
                 start_hhmmss=start_hhmmss,
                 end_hhmmss=end_hhmmss,
             )
+            # 프로그램 WS 구독(pt_subscriptions)이 후보 종목을 커버하지 못하면
+            # DB 행이 없다 — 미스 종목만 daily_rest 로 폴백해 overlay 전량 null 을 막는다.
+            missing = [code for code in codes if result.get(code) is None]
+            fallback_codes: list[str] = []
+            if missing:
+                fallback = await self._capture_program_trades_from_daily_rest(
+                    missing, date_ymd
+                )
+                for code in missing:
+                    if fallback.get(code) is not None:
+                        result[code] = fallback[code]
+                        fallback_codes.append(code)
+            return result, fallback_codes
         if source != "daily_rest":
             raise ValueError(f"unsupported program_source: {source}")
-        return await self._capture_program_trades_from_daily_rest(codes, date_ymd)
+        return await self._capture_program_trades_from_daily_rest(codes, date_ymd), []
 
     async def _capture_program_trades_from_daily_rest(
         self,

@@ -212,6 +212,100 @@ async def test_capture_program_db_no_matching_row_returns_none(tmp_path):
     assert payload["program_trades"] == {"000001": None}
 
 
+@pytest.mark.asyncio
+async def test_capture_program_db_falls_back_to_daily_rest_for_missing_codes(tmp_path):
+    # program_db 에 행이 없는 종목은 daily_rest 로 per-code 폴백한다.
+    # (pt_subscriptions 가 후보 종목을 커버하지 못해 overlay 전량 null 이 되는 회귀 방지)
+    db_path = tmp_path / "program_trading.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE pt_history (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "code TEXT, trade_time TEXT, net_vol INTEGER, created_at REAL)"
+        )
+        conn.execute(
+            "INSERT INTO pt_history (code, trade_time, net_vol, created_at) VALUES (?,?,?,?)",
+            ("000001", "101500", 350, 1.0),
+        )
+    provider = AsyncMock()
+    provider.get_program_trade_by_stock_daily.return_value = _response(
+        {"whol_smtn_ntby_qty": "-700"}
+    )
+
+    payload = await _service(provider=provider, db_path=db_path).capture(
+        codes=["000001", "000002"],
+        date_ymd="20260703",
+        include_intraday=False,
+        include_execution_strength=False,
+        program_source="program_db",
+    )
+
+    assert payload["program_trades"] == {
+        "000001": {"program_net_buy_qty": 350},
+        "000002": {"program_net_buy_qty": -700},
+    }
+    assert payload["metadata"]["program_fallback_codes"] == ["000002"]
+    assert payload["metadata"]["row_counts"]["program_trades"] == 2
+    # DB 에서 채워진 종목은 daily_rest 를 호출하지 않는다
+    provider.get_program_trade_by_stock_daily.assert_awaited_once_with("000002", "20260703")
+
+
+@pytest.mark.asyncio
+async def test_capture_program_db_fallback_unfilled_stays_none(tmp_path):
+    db_path = tmp_path / "program_trading.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE pt_history (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "code TEXT, trade_time TEXT, net_vol INTEGER, created_at REAL)"
+        )
+    provider = AsyncMock()
+    provider.get_program_trade_by_stock_daily.return_value = _response({"unrelated": "1"})
+
+    payload = await _service(provider=provider, db_path=db_path).capture(
+        codes=["000001"],
+        date_ymd="20260703",
+        include_intraday=False,
+        include_execution_strength=False,
+        program_source="program_db",
+    )
+
+    assert payload["program_trades"] == {"000001": None}
+    assert payload["metadata"]["program_fallback_codes"] == []
+
+
+@pytest.mark.asyncio
+async def test_capture_intraday_drops_stale_date_rows_and_flags_quality():
+    # 무거래/정지 종목에서 API 가 직전 거래일 분봉을 반환하는 오염 방지
+    # (20260703 캡처에 033160 의 2025-12-30 분봉이 유입된 실사례)
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.side_effect = [
+        [
+            {"stck_bsop_date": "20260703", "stck_cntg_hour": "090000", "stck_prpr": "10000"},
+            {"stck_bsop_date": "20251230", "stck_cntg_hour": "140300", "stck_prpr": "8290"},
+            {"stck_cntg_hour": "090100", "stck_prpr": "10050"},  # 날짜 필드 없음 → 보존
+        ],
+        [],
+    ]
+
+    payload = await _service(sqs=sqs).capture(
+        codes=["000001", "000002"],
+        date_ymd="20260703",
+        include_execution_strength=False,
+        program_source="none",
+    )
+
+    assert [row["stck_cntg_hour"] for row in payload["intraday_minutes"]["000001"]] == [
+        "090000",
+        "090100",
+    ]
+    assert payload["intraday_minutes"]["000002"] == []
+    assert payload["metadata"]["quality"] == {
+        "empty_minute_codes": ["000002"],
+        "stale_minute_rows_dropped": {"000001": 1},
+    }
+    assert payload["metadata"]["row_counts"]["intraday_minutes"] == 2
+    assert payload["metadata"]["program_fallback_codes"] == []
+
+
 # --- 모듈 레벨 헬퍼 단위 테스트 ---
 from services.backtest_microstructure_capture import (  # noqa: E402
     _extract_execution_strength,

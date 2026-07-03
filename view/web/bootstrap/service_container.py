@@ -82,6 +82,7 @@ from task.background.after_market.overseas_dryrun_task import OverseasDryRunTask
 from task.background.always_on.notification_queue_task import NotificationQueueTask
 from task.background.intraday.opening_position_reconcile_task import OpeningPositionReconcileTask
 from task.background.intraday.pre_market_health_check_task import PreMarketHealthCheckTask
+from task.background.intraday.program_capture_subscription_task import ProgramCaptureSubscriptionTask
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from view.web.bootstrap.runtime_mode import RuntimeMode
 from view.web.market_mode_utils import is_market_enabled
@@ -800,6 +801,23 @@ class ServiceContainer:
                     scheduler_store=StrategySchedulerStore(logger=ctx.logger),
                     logger=ctx.logger,
                 ) if microstructure_enabled else None
+                # todo 1-5: 장중 캡처 후보 프로그램매매 WS 구독 (pt_history 장중 시계열 축적).
+                # LOW 우선순위 — 트레이딩용 price 구독을 밀어내지 않는다.
+                program_capture_sub_enabled = config_dict.get(
+                    "program_capture_subscription_enabled", True
+                )
+                ctx.program_capture_subscription_task = ProgramCaptureSubscriptionTask(
+                    subscription_policy=ctx.price_subscription_service,
+                    streaming_stock_repo=ctx.streaming_stock_repo,
+                    universe_service=ctx.oneil_universe_service,
+                    virtual_trade_service=ctx.virtual_trade_service,
+                    market_calendar_service=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    scheduler_store=StrategySchedulerStore(logger=ctx.logger),
+                    logger=ctx.logger,
+                ) if (
+                    program_capture_sub_enabled and ctx.price_subscription_service
+                ) else None
             else:
                 ctx.log_cleanup_task = None
                 ctx.newhigh_task = None
@@ -810,6 +828,7 @@ class ServiceContainer:
                 ctx.post_market_replay_audit_task = None
                 ctx.after_market_reconcile_task = None
                 ctx.microstructure_capture_task = None
+                ctx.program_capture_subscription_task = None
 
             if needs_web:
                 ctx.notification_queue_task = NotificationQueueTask(
