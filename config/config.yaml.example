@@ -160,6 +160,9 @@ market_cap_gap_report_us_enabled: true
 # 장마감 후 후보/보유 종목 microstructure overlay 캡처 (백테스트 replay 코퍼스 축적, KST 16:05)
 microstructure_capture_enabled: true
 
+# 장중 캡처 후보 종목 프로그램매매 WS 구독 (pt_history 장중 시계열 축적, LOW 우선순위 — 트레이딩 구독 비간섭)
+program_capture_subscription_enabled: true
+
 # 체결 품질 리포트 경고 기준 (사후 평가용, 자동 비활성화는 기본 OFF)
 execution_quality_report:
   enabled: true

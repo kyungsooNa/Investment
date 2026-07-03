@@ -131,6 +131,8 @@ class SchedulerBootstrap:
         self._register(ctx.after_market_reconcile_task, TaskPriority.LOW)
         # 자체 AfterMarketLoop 사용 (KST 16:05): market_cap_gap 과 동일 패턴.
         self._register(self._optional_task("microstructure_capture_task"))
+        # 장중 캡처 후보 PT 구독 (continuous intraday loop — TimeDispatcher 미등록)
+        self._register(self._optional_task("program_capture_subscription_task"))
 
     def _register_overseas_tasks(self) -> None:
         # 해외 VBO dry-run (주문 경로 없음). 미구성 시 _register 가 no-op.

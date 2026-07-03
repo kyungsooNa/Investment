@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from task.background.after_market.after_market_task_base import AfterMarketTask
+from task.background.capture_candidates import resolve_capture_codes
 
 
 class MicrostructureCaptureTask(AfterMarketTask):
@@ -90,21 +91,13 @@ class MicrostructureCaptureTask(AfterMarketTask):
 
     async def _resolve_codes(self) -> list[str]:
         """캡처 대상 종목: 보유 종목 우선 + Pool B 워치리스트, 중복 제거 후 cap."""
-        codes: list[str] = []
-        if self._virtual_trade_service is not None:
-            try:
-                holds = self._virtual_trade_service.get_holds() or []
-                codes.extend(str(h.get("code")) for h in holds if h.get("code"))
-            except Exception as exc:
-                self._logger.warning(f"{self.task_name}: 보유 종목 조회 실패 — {exc}")
-        if self._universe_service is not None:
-            try:
-                watchlist = await self._universe_service.get_watchlist() or {}
-                codes.extend(str(code) for code in watchlist.keys())
-            except Exception as exc:
-                self._logger.warning(f"{self.task_name}: 워치리스트 조회 실패 — {exc}")
-        deduped = list(dict.fromkeys(code for code in codes if code))
-        return deduped[: self._max_codes]
+        return await resolve_capture_codes(
+            virtual_trade_service=self._virtual_trade_service,
+            universe_service=self._universe_service,
+            max_codes=self._max_codes,
+            logger=self._logger,
+            task_name=self.task_name,
+        )
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         if not latest_trading_date:
