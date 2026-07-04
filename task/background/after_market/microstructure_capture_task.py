@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from services.notification_service import NotificationCategory, NotificationLevel
 from task.background.after_market.after_market_task_base import AfterMarketTask
 from task.background.capture_candidates import resolve_capture_codes
 
@@ -34,6 +35,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
         program_db_path: str | Path = "data/program_subscribe/program_trading.db",
         max_codes: int = 40,
         logger=None,
+        notification_service=None,
     ):
         super().__init__(
             mcs=market_calendar_service,
@@ -47,6 +49,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
         self._output_dir = Path(output_dir)
         self._program_db_path = Path(program_db_path)
         self._max_codes = max_codes
+        self._notification_service = notification_service
         # 재시작 시 catch-up 중복 캡처 방지를 위해 "마지막 캡처 날짜"를 영속화한다.
         self._scheduler_store = scheduler_store
         self._state_key = "microstructure_capture_last_date"
@@ -160,6 +163,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
                     f"program={quality_summary['program_overlay_coverage_pct']:.1f}%, "
                     f"program_db={_format_optional_pct(quality_summary['program_db_coverage_pct'])})"
                 )
+                await self._emit_quality_gate_warning(latest_trading_date, quality_summary)
             self._logger.info(
                 f"{self.task_name}: {latest_trading_date} 캡처 완료 "
                 f"(codes={len(codes)}, program_source={program_source}, "
@@ -171,6 +175,33 @@ class MicrostructureCaptureTask(AfterMarketTask):
             self._progress["last_result"] = {"error": str(exc)}
         finally:
             self._progress["running"] = False
+
+    async def _emit_quality_gate_warning(
+        self,
+        latest_trading_date: str,
+        quality_summary: dict[str, Any],
+    ) -> None:
+        if not self._notification_service:
+            return
+        await self._notification_service.emit(
+            NotificationCategory.BACKGROUND,
+            NotificationLevel.WARNING,
+            "Microstructure 캡처 품질 게이트 실패",
+            f"{latest_trading_date}: "
+            f"intraday={quality_summary['intraday_coverage_pct']:.1f}%, "
+            f"program={quality_summary['program_overlay_coverage_pct']:.1f}%, "
+            f"program_db={_format_optional_pct(quality_summary['program_db_coverage_pct'])}",
+            metadata={
+                "alert_type": "microstructure_capture_quality_gate",
+                "trade_date": latest_trading_date,
+                "codes": quality_summary["codes"],
+                "issues": quality_summary["issues"],
+                "intraday_coverage_pct": quality_summary["intraday_coverage_pct"],
+                "execution_strength_coverage_pct": quality_summary["execution_strength_coverage_pct"],
+                "program_overlay_coverage_pct": quality_summary["program_overlay_coverage_pct"],
+                "program_db_coverage_pct": quality_summary["program_db_coverage_pct"],
+            },
+        )
 
 
 def _summarize_capture_quality(
@@ -229,6 +260,7 @@ def _summarize_capture_quality(
 
     return {
         "quality_gate_passed": not issues,
+        "codes": code_count,
         "issues": issues,
         "intraday_coverage_pct": intraday_coverage_pct,
         "execution_strength_coverage_pct": execution_strength_coverage_pct,
