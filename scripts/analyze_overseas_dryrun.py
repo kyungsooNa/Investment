@@ -30,6 +30,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 _SIGNAL_SOURCE = "overseas_dryrun"
+DEFAULT_ROUND_TRIP_COST_PCT = 0.5
+DEFAULT_COST_MODEL = "commission_only"
+DEFAULT_ENTRY_PRICE_ASSUMPTION = "daily_breakout_target"
 
 
 def _to_float(value: Any) -> Optional[float]:
@@ -352,6 +355,22 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
             f"signal_source: `{cfg.get('signal_source', '')}`  "
             f"shadow_dir: `{cfg.get('shadow_dir', '')}`"
         )
+        cost_pct = cfg.get("round_trip_cost_pct")
+        lines.append("")
+        lines.append("## 가정/주의")
+        lines.append("")
+        if isinstance(cost_pct, (int, float)):
+            lines.append(
+                f"- 왕복 비용 {float(cost_pct):.3f}% "
+                f"(`{cfg.get('cost_model', DEFAULT_COST_MODEL)}`): "
+                "미국주식 온라인 기본 수수료 0.25%/side를 왕복으로 반영한 값이며, "
+                "환전 스프레드·SEC/TAF 등 매도 제비용은 별도입니다."
+            )
+        lines.append(
+            "- 일봉 기반 would-be 진입가: 당일 intraday 체결 경로가 아니라 "
+            "`open + K * prev_range` 목표가 체결을 가정하므로 실제 장중 체결가보다 "
+            "낙관적일 수 있습니다."
+        )
         lines.append("")
 
     def _fmt(v: Optional[float], suffix: str = "") -> str:
@@ -444,8 +463,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="멀티데이 trailing stop %% (회고 가정값)")
     parser.add_argument("--time-stop-days", type=int, default=20,
                         help="멀티데이 time stop 보유일수(회고 가정값)")
-    parser.add_argument("--cost-pct", type=float, default=0.2,
-                        help="멀티데이 왕복 비용 %% (net 산출)")
+    parser.add_argument("--cost-pct", type=float, default=DEFAULT_ROUND_TRIP_COST_PCT,
+                        help="멀티데이 왕복 비용 %% (net 산출). 기본값 0.5%%는 미국주식 온라인 수수료 0.25%%/side 왕복 가정.")
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-markdown", default=None)
     return parser
@@ -466,6 +485,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         "date_to": args.date_to,
         "signal_source": args.signal_source,
         "shadow_dir": str(args.shadow_dir),
+        "round_trip_cost_pct": args.cost_pct,
+        "cost_model": DEFAULT_COST_MODEL,
+        "entry_price_assumption": DEFAULT_ENTRY_PRICE_ASSUMPTION,
     }
 
     if args.ohlcv_dir:

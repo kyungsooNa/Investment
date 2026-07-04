@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-04 (1-5 microstructure QC 태스크 알림 추가 — 캡처 품질 게이트 실패를 last_result/log/notification에서 확인 가능)
+최종 업데이트: 2026-07-04 (O-2 해외 dry-run 비용/진입가 가정 보정 — 왕복 비용 기본값 0.5% 및 리포트 주의문 추가)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -135,8 +135,8 @@
 
 ### O-2. dry-run 비용/진입가 가정 보정 [신규]
 
-- [ ] `scripts/analyze_overseas_dryrun.py`의 왕복 비용 기본값 0.2%를 실계약 KIS 해외 요율 기반으로 교체 — 편도 수수료 0.25% 수준이면 0.2%는 낙관적. (2026-07-02 리뷰)
-- [ ] 일봉 기반 would-be 진입가의 낙관 편향(장중 실체결가 대비 유리하게 잡힘)을 dry-run 리포트에 명시해 성과 해석 시 참고하도록 한다.
+- [x] `scripts/analyze_overseas_dryrun.py`의 왕복 비용 기본값 0.2%를 미국주식 온라인 기본 수수료 0.25%/side 기준 0.5%로 보정 (2026-07-04). 환전 스프레드·SEC/TAF 등 매도 제비용은 별도이므로 리포트에 `commission_only` 가정으로 명시.
+- [x] 일봉 기반 would-be 진입가의 낙관 편향(장중 실체결가 대비 유리하게 잡힘)을 dry-run Markdown 리포트 `가정/주의` 섹션에 명시.
 
 주요 파일: `scripts/analyze_overseas_dryrun.py`, `services/overseas_vbo_dryrun_service.py`
 

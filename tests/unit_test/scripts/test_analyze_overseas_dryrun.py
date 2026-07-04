@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from scripts.analyze_overseas_dryrun import (
+    build_parser,
     compute_dryrun_report,
     compute_multiday_report,
     format_markdown_report,
@@ -183,9 +184,23 @@ def test_format_markdown_smoke():
         {"code": "AAA", "exchange": "NASD", "trade_date": "20260601",
          "realized_pct": 5.0, "exit_reason": "eod", "qty": 9, "notional_usd": 945.0},
     ])
+    report["config"] = {
+        "round_trip_cost_pct": 0.5,
+        "cost_model": "commission_only",
+        "entry_price_assumption": "daily_breakout_target",
+    }
     md = format_markdown_report(report)
     assert "Overseas VBO Dry-run" in md
     assert "win_rate" in md
+    assert "가정/주의" in md
+    assert "왕복 비용 0.500%" in md
+    assert "일봉 기반 would-be 진입가" in md
+
+
+def test_parser_defaults_to_us_online_round_trip_commission():
+    args = build_parser().parse_args(["--date-from", "20260601", "--date-to", "20260605"])
+
+    assert args.cost_pct == pytest.approx(0.5)
 
 
 # ── multiday 회고 재구성 ─────────────────────────────────────────────────────
