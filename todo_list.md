@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-04 (O-2 해외 dry-run 비용/진입가 가정 보정 — 왕복 비용 기본값 0.5% 및 리포트 주의문 추가)
+최종 업데이트: 2026-07-04 (O-2 해외 dry-run 비용/진입가 가정 보정 + 1-6 표준 journal 축적 현황 리포트 추가)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -65,6 +65,7 @@
 ### 1-6. 실전 수익성 데이터 확보와 profitability gate 운영 [라이브 축적 — 코드 착수 가능]
 
 - [ ] shadow / paper / 소액 canary journal을 표준 포맷으로 누적하고, 전략별 profitability gate 통과 근거를 리포트한다. (journal은 `virtual_trade_service.get_standard_journal_records` ← polling scan + REST 가격 경로로 채워져 WS 틱 비의존 — 무틱 블로커와 독립적으로 축적 가능. shadow 하위 요소만 2-4와 동일 의존. 라이브 런타임 시간만 필요.)
+  - 표준 journal 축적 현황 리포트 추가 (2026-07-04): 일일 전략 리포트에 source별 레코드 수, SOLD/진행중 status, 전략별 SOLD 표본 진행률(`min_trades` 대비)을 노출해 paper/canary 데이터가 gate 해제 기준까지 얼마나 쌓였는지 확인 가능.
   - 최소 유지 기준: 실전 override `min_trades=100`, `profit_factor>=1.3`, `payoff_ratio>=1.2`, `win_rate>=40%`, `max_drawdown<=12%`, regime별 최소 거래 30. parameter stability·Monte Carlo·regime balance·multiple testing 보정을 운영 편의로 낮추지 않는다.
 
 주요 파일: `services/strategy_live_expansion_gate_service.py`, `services/strategy_profitability_gate_service.py`, `scheduler/strategy_scheduler.py`, `services/strategy_log_report_service.py`

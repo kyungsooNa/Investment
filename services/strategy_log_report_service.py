@@ -230,6 +230,18 @@ def _normalize_strategy_metric_records(records: List[Mapping[str, Any]]) -> List
     return normalized
 
 
+def _journal_source(record: Mapping[str, Any]) -> str:
+    source = str(record.get("source") or "").strip()
+    if source:
+        return source
+    metadata = record.get("metadata")
+    if isinstance(metadata, Mapping):
+        signal_source = str(metadata.get("signal_source") or "").strip()
+        if signal_source:
+            return signal_source
+    return "unknown"
+
+
 def _strategy_display_label(value: Any) -> str:
     return STRATEGY_IDENTITY_RESOLVER.to_display(str(value or ""))
 
@@ -1024,6 +1036,74 @@ class StrategyLogReportService:
             if reasons:
                 reason_text = ", ".join(_profitability_gate_reason_label(r) for r in reasons)
                 lines.append(f"  - 차단 사유: {_esc(reason_text)}")
+        return "\n".join(lines)
+
+    def _build_standard_journal_accumulation_section(self, target_date: str) -> Optional[str]:
+        """shadow/paper/canary journal 축적량을 일일 리포트에 노출한다 (P1 1-6).
+
+        profitability gate 는 표본이 부족하면 차단 사유만 보여주므로, 이 섹션은
+        운영자가 소스별/전략별 표본 축적 속도를 별도로 확인하기 위한 요약이다.
+        """
+        if not self._virtual_trade_service:
+            return None
+        try:
+            records = self._virtual_trade_service.get_standard_journal_records() or []
+        except Exception:
+            return None
+        if not records:
+            return None
+
+        normalized_records = _normalize_strategy_metric_records(records)
+        status_counts = Counter(
+            str(record.get("status") or "UNKNOWN").upper()
+            for record in records
+        )
+        source_counts = Counter(_journal_source(record) for record in records)
+        sold_by_strategy = Counter(
+            str(record.get("strategy") or "")
+            for record in normalized_records
+            if str(record.get("status") or "").upper() == "SOLD"
+        )
+        total_by_strategy = Counter(
+            str(record.get("strategy") or "")
+            for record in normalized_records
+        )
+
+        sold_count = status_counts.get("SOLD", 0)
+        open_count = sum(
+            count for status, count in status_counts.items()
+            if status != "SOLD"
+        )
+        source_text = ", ".join(
+            f"{_esc(source)} {count}건"
+            for source, count in sorted(
+                source_counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        )
+        cfg = self._profitability_gate_cfg()
+        lines = [
+            "<b>📒 표준 journal 축적 현황</b>",
+            f"• 전체 {len(records)}건 / SOLD {sold_count}건 / 진행중 {open_count}건",
+        ]
+        if source_text:
+            lines.append(f"• source: {source_text}")
+
+        strategy_names = sorted(
+            total_by_strategy,
+            key=lambda name: (-sold_by_strategy.get(name, 0), name),
+        )[:5]
+        for name in strategy_names:
+            strategy = _esc(_strategy_display_label(name))
+            sold = sold_by_strategy.get(name, 0)
+            total = total_by_strategy.get(name, 0)
+            lines.append(
+                f"• {strategy}: SOLD {sold}/{int(cfg.min_trades)}건 "
+                f"(전체 {total}건)"
+            )
+        remaining = len(total_by_strategy) - len(strategy_names)
+        if remaining > 0:
+            lines.append(f"  …외 {remaining}개 전략")
         return "\n".join(lines)
 
     def _build_multiple_testing_section(self, target_date: str) -> Optional[str]:
@@ -1988,6 +2068,7 @@ class StrategyLogReportService:
         execution_quality_section = self._build_execution_quality_section(execution_quality_records)
         divergence_section = self._build_backtest_live_divergence_section(target_date)
         degradation_section = self._build_strategy_degradation_section(target_date)
+        journal_accumulation_section = self._build_standard_journal_accumulation_section(target_date)
         profitability_gate_section = self._build_profitability_gate_section(target_date)
         volatility_section = self._build_volatility_section(strategy_summaries)
         signal_metadata_section = self._build_signal_metadata_section(strategy_summaries)
@@ -2005,6 +2086,7 @@ class StrategyLogReportService:
                     portfolio_summary,
                     divergence_section,
                     degradation_section,
+                    journal_accumulation_section,
                     profitability_gate_section,
                     execution_quality_section,
                     volatility_section,
@@ -2032,6 +2114,8 @@ class StrategyLogReportService:
             body += f"\n\n{divergence_section}"
         if degradation_section:
             body += f"\n\n{degradation_section}"
+        if journal_accumulation_section:
+            body += f"\n\n{journal_accumulation_section}"
         if profitability_gate_section:
             body += f"\n\n{profitability_gate_section}"
         if execution_quality_section:
