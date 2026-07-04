@@ -45,6 +45,7 @@ async def test_capture_collects_intraday_execution_strength_and_daily_program_ov
     assert payload["metadata"]["row_counts"] == {
         "intraday_minutes": 2,
         "execution_strength": 2,
+        "execution_strength_intraday_rows": 0,
         "program_trades": 2,
     }
     assert payload["intraday_minutes"]["000001"][0]["stck_prpr"] == "10000"
@@ -375,4 +376,149 @@ def test_write_overlay_files_creates_four_fixture_files(tmp_path):
         "000001": [{"stck_cntg_hour": "090000"}],
     }
     assert paths["capture"].name == "replay_microstructure_20260702.json"
+
+
+def _seed_es_db(tmp_path):
+    db_path = tmp_path / "execution_strength.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE es_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                trade_time TEXT NOT NULL,
+                strength REAL NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO es_history (code, trade_date, trade_time, strength, created_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            [
+                ("000001", "20260512", "090001", 110.0, 1.0),
+                ("000001", "20260512", "091001", 125.5, 2.0),
+                ("000001", "20260511", "090001", 90.0, 0.5),  # 다른 거래일 — 제외
+                ("000001", "20260512", "154000", 99.0, 3.0),  # 마감 이후 — 제외
+                ("000002", "20260512", "090001", 80.0, 1.5),
+            ],
+        )
+    return db_path
+
+
+@pytest.mark.asyncio
+async def test_capture_execution_strength_intraday_from_es_db(tmp_path):
+    db_path = _seed_es_db(tmp_path)
+    sqs = AsyncMock()
+    sqs.get_stock_conclusion.side_effect = [
+        _response({"output": [{"tday_rltv": "145.5"}]}),
+        _response({"output": [{"tday_rltv": "132.0"}]}),
+        _response({"output": [{"tday_rltv": "120.0"}]}),
+    ]
+    service = BacktestMicrostructureCaptureService(
+        stock_query_service=sqs,
+        execution_strength_db_path=db_path,
+    )
+
+    payload = await service.capture(
+        codes=["000001", "000002", "000003"],
+        date_ymd="20260512",
+        include_intraday=False,
+        program_source="none",
+        execution_strength_source="es_db",
+    )
+
+    assert payload["execution_strength_intraday"] == {
+        "000001": [
+            {"time": "090001", "strength": 110.0},
+            {"time": "091001", "strength": 125.5},
+        ],
+        "000002": [{"time": "090001", "strength": 80.0}],
+        "000003": [],
+    }
+    assert payload["metadata"]["execution_strength_source"] == "es_db"
+    # DB 미스 종목만 fallback — REST 스칼라는 전 종목 그대로 캡처된다
+    assert payload["metadata"]["execution_strength_fallback_codes"] == ["000003"]
+    assert payload["metadata"]["row_counts"]["execution_strength_intraday_rows"] == 3
+    assert payload["execution_strength"] == {
+        "000001": 145.5,
+        "000002": 132.0,
+        "000003": 120.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_capture_execution_strength_rest_scalar_has_empty_intraday():
+    sqs = AsyncMock()
+    sqs.get_stock_conclusion.return_value = _response({"output": [{"tday_rltv": "100.0"}]})
+
+    payload = await _service(sqs=sqs).capture(
+        codes=["000001"],
+        date_ymd="20260512",
+        include_intraday=False,
+        program_source="none",
+    )
+
+    assert payload["metadata"]["execution_strength_source"] == "rest_scalar"
+    assert payload["execution_strength_intraday"] == {"000001": []}
+    assert payload["metadata"]["execution_strength_fallback_codes"] == []
+
+
+@pytest.mark.asyncio
+async def test_capture_execution_strength_es_db_missing_file_marks_all_fallback(tmp_path):
+    sqs = AsyncMock()
+    sqs.get_stock_conclusion.return_value = _response({"output": [{"tday_rltv": "100.0"}]})
+    service = BacktestMicrostructureCaptureService(
+        stock_query_service=sqs,
+        execution_strength_db_path=tmp_path / "missing.db",
+    )
+
+    payload = await service.capture(
+        codes=["000001"],
+        date_ymd="20260512",
+        include_intraday=False,
+        program_source="none",
+        execution_strength_source="es_db",
+    )
+
+    assert payload["execution_strength_intraday"] == {"000001": []}
+    assert payload["metadata"]["execution_strength_fallback_codes"] == ["000001"]
+
+
+@pytest.mark.asyncio
+async def test_capture_rejects_unknown_execution_strength_source():
+    with pytest.raises(ValueError):
+        await _service().capture(
+            codes=["000001"],
+            date_ymd="20260512",
+            include_intraday=False,
+            include_execution_strength=False,
+            program_source="none",
+            execution_strength_source="bogus",
+        )
+
+
+def test_write_overlay_files_includes_execution_strength_intraday(tmp_path):
+    import json
+
+    payload = {
+        "metadata": {"trade_date": "20260512", "codes": ["000001"]},
+        "intraday_minutes": {},
+        "execution_strength": {"000001": 100.0},
+        "execution_strength_intraday": {
+            "000001": [{"time": "090001", "strength": 100.0}],
+        },
+        "program_trades": {},
+    }
+
+    paths = BacktestMicrostructureCaptureService.write_overlay_files(payload, tmp_path / "out")
+
+    assert (
+        paths["execution_strength_intraday"].name
+        == "replay_execution_strength_intraday_20260512.json"
+    )
+    assert json.loads(
+        paths["execution_strength_intraday"].read_text(encoding="utf-8")
+    ) == {"000001": [{"time": "090001", "strength": 100.0}]}
 

@@ -211,3 +211,44 @@ def test_main_fail_on_gate_returns_nonzero_for_bad_quality(tmp_path):
     ])
 
     assert rc == 1
+
+
+def test_compute_quality_report_aggregates_execution_strength_db_coverage():
+    report = compute_quality_report([
+        {
+            "metadata": {
+                "trade_date": "20260703",
+                "codes": ["A", "B"],
+                "execution_strength_source": "es_db",
+            },
+            "intraday_minutes": {"A": [{"r": 1}], "B": [{"r": 1}]},
+            "execution_strength": {"A": 1.0, "B": 1.0},
+            "execution_strength_intraday": {
+                "A": [{"time": "090001", "strength": 1.0}],
+                "B": [],
+            },
+            "program_trades": {"A": {"q": 1}, "B": {"q": 1}},
+        },
+    ])
+
+    assert report["totals"]["execution_strength_db_coverage_pct"] == pytest.approx(50.0)
+    assert report["by_date"]["20260703"][
+        "execution_strength_db_coverage_pct"
+    ] == pytest.approx(50.0)
+
+    md = format_markdown_report(report)
+    assert "execution_strength_db_coverage" in md
+
+
+def test_execution_strength_db_coverage_absent_for_rest_scalar_payloads():
+    report = compute_quality_report([
+        _payload(
+            date="20260701",
+            codes=["A"],
+            intraday_minutes={"A": [{"r": 1}]},
+            execution_strength={"A": 1.0},
+            program_trades={"A": {"q": 1}},
+        ),
+    ])
+
+    assert report["totals"]["execution_strength_db_coverage_pct"] is None

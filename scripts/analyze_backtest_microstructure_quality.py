@@ -53,6 +53,7 @@ def compute_quality_report(
     min_intraday_coverage_pct: float = 80.0,
     min_program_overlay_coverage_pct: float = 80.0,
     min_program_db_coverage_pct: float = 50.0,
+    min_execution_strength_db_coverage_pct: float = 30.0,
     max_stale_rows: int = 0,
 ) -> Dict[str, Any]:
     """Compute daily and aggregate quality metrics."""
@@ -61,6 +62,7 @@ def compute_quality_report(
         min_intraday_coverage_pct=min_intraday_coverage_pct,
         min_program_overlay_coverage_pct=min_program_overlay_coverage_pct,
         min_program_db_coverage_pct=min_program_db_coverage_pct,
+        min_execution_strength_db_coverage_pct=min_execution_strength_db_coverage_pct,
         max_stale_rows=max_stale_rows,
     )
     for payload in payloads:
@@ -87,6 +89,14 @@ def compute_quality_report(
         row["program_db_available"] or 0 for row in by_date.values()
         if row["program_db_coverage_pct"] is not None
     )
+    es_db_denominator = sum(
+        row["codes"] for row in by_date.values()
+        if row["execution_strength_db_coverage_pct"] is not None
+    )
+    es_db_available = sum(
+        row["execution_strength_db_available"] or 0 for row in by_date.values()
+        if row["execution_strength_db_coverage_pct"] is not None
+    )
     stale_rows = sum(row["stale_minute_rows_dropped"] for row in by_date.values())
     fallback_count = sum(len(row["program_fallback_codes"]) for row in by_date.values())
 
@@ -112,6 +122,11 @@ def compute_quality_report(
         ),
         "program_fallback_count": fallback_count,
         "program_fallback_pct": coverage_pct(fallback_count, total_codes),
+        "execution_strength_db_available": es_db_available,
+        "execution_strength_db_coverage_pct": (
+            coverage_pct(es_db_available, es_db_denominator)
+            if es_db_denominator > 0 else None
+        ),
         "stale_minute_rows_dropped": stale_rows,
         "quality_gate_passed": gate_passed,
         "daily_failures": daily_failures,
@@ -124,6 +139,7 @@ def compute_quality_report(
             "min_intraday_coverage_pct": min_intraday_coverage_pct,
             "min_program_overlay_coverage_pct": min_program_overlay_coverage_pct,
             "min_program_db_coverage_pct": min_program_db_coverage_pct,
+            "min_execution_strength_db_coverage_pct": min_execution_strength_db_coverage_pct,
             "max_stale_rows": max_stale_rows,
         },
         "totals": totals,
@@ -150,14 +166,15 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
         f"| execution_strength_coverage | {_fmt_pct(totals.get('execution_strength_coverage_pct'))} |",
         f"| program_overlay_coverage | {_fmt_pct(totals.get('program_overlay_coverage_pct'))} |",
         f"| program_db_coverage | {_fmt_pct(totals.get('program_db_coverage_pct'))} |",
+        f"| execution_strength_db_coverage | {_fmt_pct(totals.get('execution_strength_db_coverage_pct'))} |",
         f"| program_fallback_count | {totals.get('program_fallback_count', 0)} |",
         f"| stale_minute_rows_dropped | {totals.get('stale_minute_rows_dropped', 0)} |",
         f"| quality_gate_passed | {totals.get('quality_gate_passed', False)} |",
         "",
         "## By Date",
         "",
-        "| date | codes | intraday | exec_strength | program | program_db | stale | issues |",
-        "|---|---:|---:|---:|---:|---:|---:|---|",
+        "| date | codes | intraday | exec_strength | program | program_db | es_db | stale | issues |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for date, row in sorted((report.get("by_date") or {}).items()):
         issues = ", ".join(row.get("issues") or []) or "-"
@@ -167,6 +184,7 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
             f"{_fmt_pct(row.get('execution_strength_coverage_pct'))} | "
             f"{_fmt_pct(row.get('program_overlay_coverage_pct'))} | "
             f"{_fmt_pct(row.get('program_db_coverage_pct'))} | "
+            f"{_fmt_pct(row.get('execution_strength_db_coverage_pct'))} | "
             f"{row.get('stale_minute_rows_dropped', 0)} | {issues} |"
         )
     lines.append("")
@@ -183,6 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-intraday-coverage-pct", type=float, default=80.0)
     parser.add_argument("--min-program-overlay-coverage-pct", type=float, default=80.0)
     parser.add_argument("--min-program-db-coverage-pct", type=float, default=50.0)
+    parser.add_argument("--min-execution-strength-db-coverage-pct", type=float, default=30.0)
     parser.add_argument("--max-stale-rows", type=int, default=0)
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-markdown", default=None)
@@ -206,6 +225,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         min_intraday_coverage_pct=args.min_intraday_coverage_pct,
         min_program_overlay_coverage_pct=args.min_program_overlay_coverage_pct,
         min_program_db_coverage_pct=args.min_program_db_coverage_pct,
+        min_execution_strength_db_coverage_pct=args.min_execution_strength_db_coverage_pct,
         max_stale_rows=args.max_stale_rows,
     )
     report["config"].update({

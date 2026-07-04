@@ -9,6 +9,8 @@ class MicrostructureQualityThresholds:
     min_intraday_coverage_pct: float = 80.0
     min_program_overlay_coverage_pct: float = 80.0
     min_program_db_coverage_pct: float = 50.0
+    # 무틱 ~55%(P2 2-4) + PRICE 미구독 후보를 감안한 보수 임계 — 배선 전손 감지용
+    min_execution_strength_db_coverage_pct: float = 30.0
     max_stale_rows: int = 0
 
 
@@ -51,6 +53,18 @@ def summarize_capture_quality(
         program_db_available = max(0, program_overlay_available - len(program_fallback_codes))
         program_db_coverage_pct = coverage_pct(program_db_available, code_count)
 
+    execution_strength_source = str(metadata.get("execution_strength_source") or "")
+    execution_strength_intraday = payload.get("execution_strength_intraday") or {}
+    execution_strength_db_available: Optional[int] = None
+    execution_strength_db_coverage_pct: Optional[float] = None
+    if execution_strength_source == "es_db":
+        execution_strength_db_available = sum(
+            1 for code in codes if execution_strength_intraday.get(code)
+        )
+        execution_strength_db_coverage_pct = coverage_pct(
+            execution_strength_db_available, code_count
+        )
+
     intraday_coverage_pct = coverage_pct(intraday_available, code_count)
     execution_strength_coverage_pct = coverage_pct(
         execution_strength_available, code_count
@@ -69,6 +83,12 @@ def summarize_capture_quality(
         and program_db_coverage_pct < thresholds.min_program_db_coverage_pct
     ):
         issues.append("program_db_coverage_below_threshold")
+    if (
+        execution_strength_db_coverage_pct is not None
+        and execution_strength_db_coverage_pct
+        < thresholds.min_execution_strength_db_coverage_pct
+    ):
+        issues.append("execution_strength_db_coverage_below_threshold")
     if stale_rows > thresholds.max_stale_rows:
         issues.append("stale_minute_rows_present")
 
@@ -86,6 +106,9 @@ def summarize_capture_quality(
         "program_fallback_pct": coverage_pct(len(program_fallback_codes), code_count),
         "program_db_available": program_db_available,
         "program_db_coverage_pct": program_db_coverage_pct,
+        "execution_strength_source": execution_strength_source,
+        "execution_strength_db_available": execution_strength_db_available,
+        "execution_strength_db_coverage_pct": execution_strength_db_coverage_pct,
         "empty_minute_codes": quality.get("empty_minute_codes") or [],
         "stale_minute_rows_dropped": stale_rows,
         "issues": issues,

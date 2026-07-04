@@ -34,6 +34,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--program-db-path",
         default="data/program_subscribe/program_trading.db",
     )
+    parser.add_argument(
+        "--execution-strength-source",
+        choices=("rest_scalar", "es_db"),
+        default="rest_scalar",
+        help="체결강도 출처: rest_scalar=EOD REST 스칼라, es_db=장중 WS 샘플링 DB(미스 종목은 스칼라 폴백)",
+    )
+    parser.add_argument(
+        "--execution-strength-db-path",
+        default="data/execution_strength/execution_strength.db",
+    )
     parser.add_argument("--output-dir", default="data/backtest_microstructure")
     parser.add_argument("--paper", action="store_true", default=False)
     parser.add_argument("--no-intraday", action="store_true", default=False)
@@ -56,6 +66,7 @@ async def _run(args: argparse.Namespace) -> int:
         stock_query_service=sqs,
         program_provider=_get_program_provider(sqs),
         program_db_path=args.program_db_path,
+        execution_strength_db_path=args.execution_strength_db_path,
     )
     payload = await service.capture(
         codes=_parse_codes(args.codes),
@@ -66,6 +77,7 @@ async def _run(args: argparse.Namespace) -> int:
         include_intraday=not args.no_intraday,
         include_execution_strength=not args.no_execution_strength,
         program_source=args.program_source,
+        execution_strength_source=args.execution_strength_source,
     )
     paths = _write_output_files(payload, Path(args.output_dir))
     for label, path in paths.items():

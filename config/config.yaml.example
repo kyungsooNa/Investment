@@ -163,6 +163,9 @@ microstructure_capture_enabled: true
 # 장중 캡처 후보 종목 프로그램매매 WS 구독 (pt_history 장중 시계열 축적, LOW 우선순위 — 트레이딩 구독 비간섭)
 program_capture_subscription_enabled: true
 
+# 장중 체결강도 시계열 축적 (기존 PRICE 틱 무임승차 — es_history DB, 장마감 캡처가 es_db 소스로 소비)
+execution_strength_capture_enabled: true
+
 # 체결 품질 리포트 경고 기준 (사후 평가용, 자동 비활성화는 기본 OFF)
 execution_quality_report:
   enabled: true

@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-04 (O-2 해외 dry-run 비용/진입가 가정 보정 + 1-6 표준 journal 축적 현황 리포트 추가)
+최종 업데이트: 2026-07-04 (1-5 체결강도 장중 시계열 캡처 배선 + O-1 완료 반영)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -20,17 +20,16 @@
 리뷰 핵심 판단: 운영 인프라·리스크 규율(킬스위치 영속화·RiskGate·tiered force-exit·profitability gate·캐너리 사이징)은 갖춰졌다. 남은 크리티컬 패스는 **엣지(수익성) 입증**이다. 엣지의 원천으로 삼는 수급 필터(체결강도·프로그램매매)가 장중 히스토리 부재로 백테스트 검증 불가능한 상태이므로, 검증 데이터 축적을 지금 시작하는 것이 최우선이다.
 
 1. **[즉시 착수 — 엣지 검증 크리티컬 패스]**
-   - 1-5 장중 microstructure 캡처 **상시 가동** (blocked 해제 단계 자체가 착수 항목) — 태스크 배선 완료(#618), 코퍼스 축적 중, 1일차 품질 결함 보정 완료(2026-07-04)
+   - 1-5 장중 microstructure 캡처 **상시 가동** (blocked 해제 단계 자체가 착수 항목) — 태스크 배선 완료(#618), 코퍼스 축적 중, 1일차 품질 결함 보정 + 체결강도 장중 시계열 배선 완료(2026-07-04)
    - 1-6 shadow/paper/소액 canary journal 축적 (운영 상시 — 무틱 블로커와 독립)
 2. **[외부 블로커 — 병행 진행]**
    - 2-4 WebSocket 무틱 — KIS 에스컬레이션 (무틱 보통주만; ETF/우선주는 무틱 수용으로 종결)
 3. **[확대·전환 전 필수 게이트]**
-   - O-1 미국 휴장일/조기폐장 캘린더 (신규 — 해외 Phase 5/라이브 전환 전 필수)
    - M-1 포지션 사이징 단일화 (신규 — canary→자금 확대 전 필수)
    - 0-1 실전 체결필드 fixture · 2-2 KIS 유량 한도 실측 (실전 전환 직전, 외부 의존)
 4. **[데이터·정책 대기]**
    - 1-8 백테스트 재실행 (CLI 노출 완료 #619 — PIT 후보 부재로 blocked, 2026-07-03 파일럿 판정)
-   - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (dry-run 검증 + O-1/O-2 후)
+   - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (dry-run 검증 후 — O-1 #621/O-2 완료)
 5. **[조건부·저위험 상시]**
    - Pool B 완화 (**재발 확인 2026-07-02 — 정책 결정 대기**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 · T-0/R-6 (선택/관찰)
 
@@ -45,11 +44,12 @@
   - 프로그램 장중 시계열 캡처 경로 배선 완료 (2026-07-04): `ProgramCaptureSubscriptionTask`(intraday)가 장중에 캡처 후보(보유+워치리스트)를 LOW 우선순위 `PROGRAM_TRADING` 구독(cap 10종목, PT=2슬롯)으로 동기화해 `pt_history`에 장중 순매수 시계열을 축적 → 장마감 캡처가 program_db 소스로 소비(미커버 종목만 daily_rest 폴백). 수동 UI PT 구독은 제외, 슬롯 압박 시 트레이딩 구독이 아닌 이 카테고리가 먼저 해지됨. 구독 목록 영속화로 크래시 잔재는 재시작 시 자동 정리. `program_capture_subscription_enabled`(기본 on).
   - 캡처 QC 리포트 추가 (2026-07-04): `scripts/analyze_backtest_microstructure_quality.py`로 `replay_microstructure_*.json`의 intraday/execution_strength/program overlay 커버리지, stale row, program DB/fallback 비율을 날짜별 집계하고 `--fail-on-gate`로 품질 게이트를 자동 판정한다.
   - 캡처 태스크 QC 노출 추가 (2026-07-04): `MicrostructureCaptureTask.last_result`에 `quality_gate_passed`, `quality_issues`, intraday/execution_strength/program/program_db coverage를 노출하고, 게이트 실패 시 warning 로그와 BACKGROUND/WARNING notification을 남긴다.
-  - ※ 남은 구조적 한계: 체결강도는 EOD 스칼라 1개/종목만 확보 가능(장중 시계열 REST API 없음) — "체결강도 ≥120%" 장중 게이트의 충실한 리플레이는 여전히 불가. 남은 것: quality 플래그·PT 커버리지(`program_fallback_codes` 감소 여부) 일일 관찰 + 체결강도 장중 시계열 확보 방안 검토(WS 체결 스트림 기반 — 무틱 2-4와 연관).
+  - 체결강도 장중 시계열 캡처 배선 완료 (2026-07-04): WS 체결 틱(H0STCNT0)에 포함된 `체결강도`를 `PriceStreamService.on_price_tick`에서 종목당 60초 샘플링해 `es_history` SQLite(`data/execution_strength/`, `ExecutionStrengthRepository`)에 축적 — **신규 WS 구독 없음**(기존 PRICE 틱 무임승차, 슬롯 비간섭). 장마감 캡처가 `execution_strength_source=es_db`로 소비하고 DB 미스 종목은 기존 REST 스칼라 유지 + `metadata.execution_strength_fallback_codes` 기록. QC에 `execution_strength_db_coverage_pct`(임계 30% — 배선 전손 감지용) 노출, overlay 파일 `replay_execution_strength_intraday_*.json` 추가. `execution_strength_capture_enabled`(기본 on).
+  - ※ 남은 한계: 체결강도 시계열 커버리지가 "PRICE 구독 중 + 유틱" 종목으로 제한(무틱 ~55% — 2-4 해소 시 개선, 미커버는 EOD 스칼라 폴백). 남은 것: quality 플래그·PT/ES 커버리지(`program_fallback_codes`·`execution_strength_fallback_codes` 감소 여부) 일일 관찰.
 - [blocked — 캡처 코퍼스 축적 후] 실제 replay fixture를 통과 케이스까지 확장 → replay overlay.
 - [ ] 한국장 실전 microstructure fixture(bid/ask book·잔량·체결강도·프로그램매매 overlay)로 체결 모델 보정 + 시장가/최유리/지정가별 fill quality가 live journal과 얼마나 벌어지는지 리포트.
 
-주요 파일: `services/backtest_execution_simulator.py`, `services/backtest_replay_context.py`, `scripts/run_backtest.py`, `tests/fixtures/backtest/`
+주요 파일: `services/backtest_execution_simulator.py`, `services/backtest_replay_context.py`, `services/backtest_microstructure_capture.py`, `repositories/execution_strength_repo.py`, `scripts/run_backtest.py`, `tests/fixtures/backtest/`
 
 ### 1-8. 현행 전략 버전 백테스트 재실행 [blocked — PIT 후보 부재, 2026-07-03 파일럿 판정]
 
@@ -128,11 +128,11 @@
 
 결론: 일봉 셋업형 전략만 적용 가능(해외 일봉 API 존재), 장중/실시간 전략은 불가. 첫 대상 = `LarryWilliamsVBOStrategy`. 제약: **해외 주문 TR은 실전(TTTS6036U 등)만, 모의 주문 TR 없음** → dry-run 검증 전 실주문 배선 금지. Phase 1~4(데이터 어댑터·일봉 백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금.
 
-### O-1. 미국 휴장일/조기폐장 캘린더 [신규 — Phase 5/라이브 전환 전 필수]
+### O-1. 미국 휴장일/조기폐장 캘린더 [완료 — #621, 2026-07-03]
 
-- [ ] NY 휴장일(추수감사절·독립기념일 등)과 조기폐장일(13:00 ET 마감, 연 3~4회) 캘린더를 추가한다. 현재 "cron mon-fri + NY 클럭"으로 대체 운영 중 — dry-run 단계는 휴장일 노이즈로 끝나지만, 라이브 전환 시 조기폐장일 EOD 청산 미스 = 의도치 않은 오버나이트 포지션으로 직결. Phase 5(`live_enabled=True`) 전환의 전제 게이트. (2026-07-02 리뷰)
+- [x] 규칙 기반 NYSE 캘린더 `USMarketCalendarService` 추가 — 전휴장 10종(신정 토요일 무관측·성금요일 computus·준틴스 2022~) + 조기폐장(13:00 ET) 3종(7/3·추수감사절 익일·12/24) + `get_close_time_str()`(Phase 5 EOD 청산 소비용). `time_dispatcher_us`/`OverseasDryRunTask`/`MarketCapGapReportTask` 3곳 주입. KIS에 해외 휴장일 TR이 없어 로컬 규칙 계산. 한계: 임시 특별휴장 미반영(docstring 명시).
 
-주요 파일: `core/market_clock.py`, `scheduler/after_market_loop.py`, `task/background/after_market/overseas_dryrun_task.py`
+주요 파일: `services/us_market_calendar_service.py`, `task/background/after_market/overseas_dryrun_task.py`, `view/web/bootstrap/service_container.py`
 
 ### O-2. dry-run 비용/진입가 가정 보정 [신규]
 
@@ -141,7 +141,7 @@
 
 주요 파일: `scripts/analyze_overseas_dryrun.py`, `services/overseas_vbo_dryrun_service.py`
 
-### Phase 5. 안전/canary [dry-run 검증 + O-1/O-2 후]
+### Phase 5. 안전/canary [dry-run 검증 후 — O-1/O-2 완료]
 
 - [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile(`OverseasReconcileService` scaffolding 존재), risk gate/kill switch/canary USD 확장, 실전 소액 canary, canary auto-fire 배선 + `live_enabled=True` 전환 — dry-run 검증 + canary 게이팅.
 
