@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-04 (1-5 microstructure QC 리포트 스크립트 추가 — 캡처 품질/커버리지 게이트 확인 가능)
+최종 업데이트: 2026-07-04 (1-5 microstructure QC 태스크 알림 추가 — 캡처 품질 게이트 실패를 last_result/log/notification에서 확인 가능)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -44,6 +44,7 @@
   - 가동 확인 + 1일차(20260703, 후보 10종목) 산출물 검증에서 품질 결함 3건 발견·보정 (2026-07-04): ① 프로그램 overlay 전량 null — 태스크가 DB 파일 존재만으로 `program_db` 소스 확정하는데 `pt_subscriptions`가 고정 4종목뿐이라 후보 행 없음 → DB 미스 종목만 daily_rest per-code 폴백 + `metadata.program_fallback_codes` 기록. ② 무거래/정지 종목에 직전 거래일 분봉 유입(033160에 2025-12-30 행 57건) → `trade_date` 불일치 행 필터. ③ 분봉 0건 종목 무플래그 → `metadata.quality`(empty_minute_codes·stale_minute_rows_dropped) + 태스크 last_result/로그 노출.
   - 프로그램 장중 시계열 캡처 경로 배선 완료 (2026-07-04): `ProgramCaptureSubscriptionTask`(intraday)가 장중에 캡처 후보(보유+워치리스트)를 LOW 우선순위 `PROGRAM_TRADING` 구독(cap 10종목, PT=2슬롯)으로 동기화해 `pt_history`에 장중 순매수 시계열을 축적 → 장마감 캡처가 program_db 소스로 소비(미커버 종목만 daily_rest 폴백). 수동 UI PT 구독은 제외, 슬롯 압박 시 트레이딩 구독이 아닌 이 카테고리가 먼저 해지됨. 구독 목록 영속화로 크래시 잔재는 재시작 시 자동 정리. `program_capture_subscription_enabled`(기본 on).
   - 캡처 QC 리포트 추가 (2026-07-04): `scripts/analyze_backtest_microstructure_quality.py`로 `replay_microstructure_*.json`의 intraday/execution_strength/program overlay 커버리지, stale row, program DB/fallback 비율을 날짜별 집계하고 `--fail-on-gate`로 품질 게이트를 자동 판정한다.
+  - 캡처 태스크 QC 노출 추가 (2026-07-04): `MicrostructureCaptureTask.last_result`에 `quality_gate_passed`, `quality_issues`, intraday/execution_strength/program/program_db coverage를 노출하고, 게이트 실패 시 warning 로그와 BACKGROUND/WARNING notification을 남긴다.
   - ※ 남은 구조적 한계: 체결강도는 EOD 스칼라 1개/종목만 확보 가능(장중 시계열 REST API 없음) — "체결강도 ≥120%" 장중 게이트의 충실한 리플레이는 여전히 불가. 남은 것: quality 플래그·PT 커버리지(`program_fallback_codes` 감소 여부) 일일 관찰 + 체결강도 장중 시계열 확보 방안 검토(WS 체결 스트림 기반 — 무틱 2-4와 연관).
 - [blocked — 캡처 코퍼스 축적 후] 실제 replay fixture를 통과 케이스까지 확장 → replay overlay.
 - [ ] 한국장 실전 microstructure fixture(bid/ask book·잔량·체결강도·프로그램매매 overlay)로 체결 모델 보정 + 시장가/최유리/지정가별 fill quality가 live journal과 얼마나 벌어지는지 리포트.

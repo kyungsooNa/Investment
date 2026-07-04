@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from services.notification_service import NotificationCategory, NotificationLevel
 from task.background.after_market.microstructure_capture_task import MicrostructureCaptureTask
 
 
@@ -204,6 +205,187 @@ async def test_quality_and_fallback_exposed_in_last_result(
     last_result = task.get_progress()["last_result"]
     assert last_result["program_fallback_codes"] == ["000660"]
     assert last_result["quality"]["empty_minute_codes"] == ["005930"]
+
+
+@pytest.mark.asyncio
+async def test_quality_gate_metrics_exposed_and_warned_when_capture_quality_fails(
+    capture_service, universe_service, tmp_path
+):
+    payload = {
+        "metadata": {
+            "trade_date": "20260702",
+            "codes": ["005930", "000660"],
+            "program_source": "program_db",
+            "program_fallback_codes": [],
+            "quality": {
+                "empty_minute_codes": ["000660"],
+                "stale_minute_rows_dropped": {"005930": 2},
+            },
+            "row_counts": {"intraday_minutes": 1, "execution_strength": 2, "program_trades": 0},
+        },
+        "intraday_minutes": {"005930": [{"stck_cntg_hour": "090000"}], "000660": []},
+        "execution_strength": {"005930": 120.0, "000660": 130.0},
+        "program_trades": {"005930": None, "000660": None},
+    }
+    capture_service.capture = AsyncMock(return_value=payload)
+    logger = MagicMock()
+    db_path = tmp_path / "program_trading.db"
+    db_path.write_bytes(b"")
+    task = _make_task(
+        capture_service,
+        tmp_path,
+        universe_service=universe_service,
+        program_db_path=db_path,
+        logger=logger,
+    )
+
+    await task._on_market_closed("20260702")
+
+    last_result = task.get_progress()["last_result"]
+    assert last_result["quality_gate_passed"] is False
+    assert last_result["quality_issues"] == [
+        "intraday_coverage_below_threshold",
+        "program_overlay_coverage_below_threshold",
+        "program_db_coverage_below_threshold",
+        "stale_minute_rows_present",
+    ]
+    assert last_result["intraday_coverage_pct"] == 50.0
+    assert last_result["program_overlay_coverage_pct"] == 0.0
+    assert last_result["program_db_coverage_pct"] == 0.0
+    logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_quality_gate_failure_emits_background_warning_notification(
+    capture_service, universe_service, tmp_path
+):
+    payload = {
+        "metadata": {
+            "trade_date": "20260702",
+            "codes": ["005930", "000660"],
+            "program_source": "program_db",
+            "program_fallback_codes": [],
+            "quality": {
+                "empty_minute_codes": ["000660"],
+                "stale_minute_rows_dropped": {},
+            },
+            "row_counts": {"intraday_minutes": 1, "execution_strength": 2, "program_trades": 0},
+        },
+        "intraday_minutes": {"005930": [{}], "000660": []},
+        "execution_strength": {"005930": 120.0, "000660": 130.0},
+        "program_trades": {"005930": None, "000660": None},
+    }
+    capture_service.capture = AsyncMock(return_value=payload)
+    notification_service = MagicMock()
+    notification_service.emit = AsyncMock()
+    db_path = tmp_path / "program_trading.db"
+    db_path.write_bytes(b"")
+    task = _make_task(
+        capture_service,
+        tmp_path,
+        universe_service=universe_service,
+        program_db_path=db_path,
+        notification_service=notification_service,
+    )
+
+    await task._on_market_closed("20260702")
+
+    notification_service.emit.assert_awaited_once()
+    args = notification_service.emit.await_args.args
+    kwargs = notification_service.emit.await_args.kwargs
+    assert args[:4] == (
+        NotificationCategory.BACKGROUND,
+        NotificationLevel.WARNING,
+        "Microstructure 캡처 품질 게이트 실패",
+        "20260702: intraday=50.0%, program=0.0%, program_db=0.0%",
+    )
+    assert kwargs["metadata"]["issues"] == [
+        "intraday_coverage_below_threshold",
+        "program_overlay_coverage_below_threshold",
+        "program_db_coverage_below_threshold",
+    ]
+    assert kwargs["metadata"]["codes"] == 2
+
+
+@pytest.mark.asyncio
+async def test_quality_gate_passes_without_warning_when_capture_quality_is_good(
+    capture_service, universe_service, tmp_path
+):
+    payload = {
+        "metadata": {
+            "trade_date": "20260702",
+            "codes": ["005930", "000660"],
+            "program_source": "program_db",
+            "program_fallback_codes": [],
+            "quality": {
+                "empty_minute_codes": [],
+                "stale_minute_rows_dropped": {},
+            },
+            "row_counts": {"intraday_minutes": 2, "execution_strength": 2, "program_trades": 2},
+        },
+        "intraday_minutes": {"005930": [{}], "000660": [{}]},
+        "execution_strength": {"005930": 120.0, "000660": 130.0},
+        "program_trades": {
+            "005930": {"program_net_buy_qty": 1},
+            "000660": {"program_net_buy_qty": -1},
+        },
+    }
+    capture_service.capture = AsyncMock(return_value=payload)
+    logger = MagicMock()
+    db_path = tmp_path / "program_trading.db"
+    db_path.write_bytes(b"")
+    task = _make_task(
+        capture_service,
+        tmp_path,
+        universe_service=universe_service,
+        program_db_path=db_path,
+        logger=logger,
+    )
+
+    await task._on_market_closed("20260702")
+
+    last_result = task.get_progress()["last_result"]
+    assert last_result["quality_gate_passed"] is True
+    assert last_result["quality_issues"] == []
+    assert last_result["intraday_coverage_pct"] == 100.0
+    assert last_result["program_overlay_coverage_pct"] == 100.0
+    assert last_result["program_db_coverage_pct"] == 100.0
+    logger.warning.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_quality_gate_success_does_not_emit_notification(
+    capture_service, universe_service, tmp_path
+):
+    payload = {
+        "metadata": {
+            "trade_date": "20260702",
+            "codes": ["005930"],
+            "program_source": "daily_rest",
+            "program_fallback_codes": [],
+            "quality": {
+                "empty_minute_codes": [],
+                "stale_minute_rows_dropped": {},
+            },
+            "row_counts": {"intraday_minutes": 1, "execution_strength": 1, "program_trades": 1},
+        },
+        "intraday_minutes": {"005930": [{}]},
+        "execution_strength": {"005930": 120.0},
+        "program_trades": {"005930": {"program_net_buy_qty": 1}},
+    }
+    capture_service.capture = AsyncMock(return_value=payload)
+    notification_service = MagicMock()
+    notification_service.emit = AsyncMock()
+    task = _make_task(
+        capture_service,
+        tmp_path,
+        universe_service=universe_service,
+        notification_service=notification_service,
+    )
+
+    await task._on_market_closed("20260702")
+
+    notification_service.emit.assert_not_awaited()
 
 
 def test_write_output_dir_passed_through(capture_service, tmp_path):
