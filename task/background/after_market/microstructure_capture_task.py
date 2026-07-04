@@ -31,6 +31,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
         scheduler_store=None,
         output_dir: str | Path = "data/backtest_microstructure",
         program_db_path: str | Path = "data/program_subscribe/program_trading.db",
+        execution_strength_db_path: str | Path = "data/execution_strength/execution_strength.db",
         max_codes: int = 40,
         logger=None,
         notification_service=None,
@@ -46,6 +47,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
         self._virtual_trade_service = virtual_trade_service
         self._output_dir = Path(output_dir)
         self._program_db_path = Path(program_db_path)
+        self._execution_strength_db_path = Path(execution_strength_db_path)
         self._max_codes = max_codes
         self._notification_service = notification_service
         # 재시작 시 catch-up 중복 캡처 방지를 위해 "마지막 캡처 날짜"를 영속화한다.
@@ -122,12 +124,16 @@ class MicrostructureCaptureTask(AfterMarketTask):
         program_source = (
             "program_db" if self._program_db_path.exists() else "daily_rest"
         )
+        execution_strength_source = (
+            "es_db" if self._execution_strength_db_path.exists() else "rest_scalar"
+        )
         self._progress["running"] = True
         try:
             payload = await self._service.capture(
                 codes=codes,
                 date_ymd=latest_trading_date,
                 program_source=program_source,
+                execution_strength_source=execution_strength_source,
             )
             self._service.write_overlay_files(payload, self._output_dir)
             self._last_captured_date = latest_trading_date
@@ -136,6 +142,9 @@ class MicrostructureCaptureTask(AfterMarketTask):
             metadata = payload.get("metadata") or {}
             quality = metadata.get("quality") or {}
             program_fallback_codes = metadata.get("program_fallback_codes") or []
+            execution_strength_fallback_codes = (
+                metadata.get("execution_strength_fallback_codes") or []
+            )
             quality_summary = summarize_capture_quality(
                 payload,
                 fallback_codes=codes,
@@ -152,6 +161,9 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "execution_strength_coverage_pct": quality_summary["execution_strength_coverage_pct"],
                 "program_overlay_coverage_pct": quality_summary["program_overlay_coverage_pct"],
                 "program_db_coverage_pct": quality_summary["program_db_coverage_pct"],
+                "execution_strength_source": execution_strength_source,
+                "execution_strength_fallback_codes": execution_strength_fallback_codes,
+                "execution_strength_db_coverage_pct": quality_summary["execution_strength_db_coverage_pct"],
             }
             if not quality_summary["quality_gate_passed"]:
                 self._logger.warning(
@@ -166,6 +178,8 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 f"{self.task_name}: {latest_trading_date} 캡처 완료 "
                 f"(codes={len(codes)}, program_source={program_source}, "
                 f"program_fallback={len(program_fallback_codes)}, "
+                f"execution_strength_source={execution_strength_source}, "
+                f"execution_strength_fallback={len(execution_strength_fallback_codes)}, "
                 f"empty_minutes={len(quality.get('empty_minute_codes') or [])})"
             )
         except Exception as exc:

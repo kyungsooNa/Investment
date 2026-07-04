@@ -1,6 +1,27 @@
 import json
 
-from scripts.capture_backtest_microstructure import _write_output_files
+from scripts.capture_backtest_microstructure import _write_output_files, build_parser
+
+
+def test_build_parser_execution_strength_defaults():
+    args = build_parser().parse_args(["--date", "20260512", "--codes", "000001"])
+
+    assert args.execution_strength_source == "rest_scalar"
+    assert args.execution_strength_db_path == "data/execution_strength/execution_strength.db"
+
+
+def test_build_parser_execution_strength_es_db():
+    args = build_parser().parse_args(
+        [
+            "--date", "20260512",
+            "--codes", "000001",
+            "--execution-strength-source", "es_db",
+            "--execution-strength-db-path", "custom/es.db",
+        ]
+    )
+
+    assert args.execution_strength_source == "es_db"
+    assert args.execution_strength_db_path == "custom/es.db"
 
 
 def test_write_output_files_creates_overlay_and_intraday_files(tmp_path):

@@ -22,6 +22,7 @@ from core.account_snapshot import AccountSnapshotCache
 from core.cache.cache_store import CacheStore
 from core.market_clock import MarketClock
 from core.performance_profiler import PerformanceProfiler
+from repositories.execution_strength_repo import ExecutionStrengthRepository
 from repositories.rs_rating_repository import RSRatingRepository
 from repositories.stock_classification_repository import StockClassificationRepository
 from repositories.stock_repository import StockRepository
@@ -428,12 +429,22 @@ class ServiceContainer:
                     signal_debounce_sec=0.5,  # Q5: 같은 (strategy, code) 중복 publish 차단.
                     signal_sink=None,  # PR-3 본 작업에서 live consumer 주입 예정. shadow 운영은 None 유지.
                 )
+                # todo 1-5: 체결강도 장중 시계열 축적 — 기존 PRICE 틱에 무임승차 (신규 구독 없음).
+                # 장마감 microstructure 캡처가 es_db 소스로 소비한다.
+                es_capture_enabled = config_dict.get(
+                    "execution_strength_capture_enabled", True
+                )
+                ctx.execution_strength_repo = (
+                    ExecutionStrengthRepository(logger=ctx.logger)
+                    if es_capture_enabled else None
+                )
                 ctx.price_stream_service = PriceStreamService(
                     stock_repo=ctx.stock_repository,
                     logger=ctx.logger,
                     data_quality_service=ctx.data_quality_service,
                     notification_service=ctx.notification_service,
                     event_router=ctx.strategy_event_router,
+                    execution_strength_recorder=ctx.execution_strength_repo,
                 )
                 # NOTE: data_quality / streaming / stock_query <-> price_stream wiring is performed by WiringPhase.
                 ctx.streaming_stock_repo = StreamingStockRepo(logger=ctx.logger)
@@ -474,6 +485,7 @@ class ServiceContainer:
                 ctx.streaming_service = None
                 ctx.event_shadow_journal_service = None
                 ctx.strategy_event_router = None
+                ctx.execution_strength_repo = None
                 ctx.price_stream_service = None
                 ctx.streaming_stock_repo = None
                 ctx.price_subscription_service = None

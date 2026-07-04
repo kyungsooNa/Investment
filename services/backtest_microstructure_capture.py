@@ -18,10 +18,12 @@ class BacktestMicrostructureCaptureService:
         stock_query_service: Any,
         program_provider: Any | None = None,
         program_db_path: str | Path = "data/program_subscribe/program_trading.db",
+        execution_strength_db_path: str | Path = "data/execution_strength/execution_strength.db",
     ) -> None:
         self._sqs = stock_query_service
         self._program_provider = program_provider
         self._program_db_path = Path(program_db_path)
+        self._execution_strength_db_path = Path(execution_strength_db_path)
 
     async def capture(
         self,
@@ -34,6 +36,7 @@ class BacktestMicrostructureCaptureService:
         include_intraday: bool = True,
         include_execution_strength: bool = True,
         program_source: str = "daily_rest",
+        execution_strength_source: str = "rest_scalar",
     ) -> dict[str, Any]:
         selected_codes = [code.strip() for code in codes if code.strip()]
         intraday, stale_minute_rows_dropped = await self._capture_intraday(
@@ -46,6 +49,15 @@ class BacktestMicrostructureCaptureService:
         execution_strength = await self._capture_execution_strength(
             selected_codes
         ) if include_execution_strength else {code: None for code in selected_codes}
+        execution_strength_intraday, execution_strength_fallback_codes = (
+            self._capture_execution_strength_intraday(
+                selected_codes,
+                date_ymd=date_ymd,
+                source=execution_strength_source,
+                start_hhmmss=start_hhmmss,
+                end_hhmmss=end_hhmmss,
+            )
+        )
         program_trades, program_fallback_codes = await self._capture_program_trades(
             selected_codes,
             date_ymd=date_ymd,
@@ -69,6 +81,8 @@ class BacktestMicrostructureCaptureService:
                 "session": session,
                 "program_source": program_source,
                 "program_fallback_codes": program_fallback_codes,
+                "execution_strength_source": execution_strength_source,
+                "execution_strength_fallback_codes": execution_strength_fallback_codes,
                 "quality": {
                     "empty_minute_codes": empty_minute_codes,
                     "stale_minute_rows_dropped": stale_minute_rows_dropped,
@@ -79,6 +93,9 @@ class BacktestMicrostructureCaptureService:
                         1 for value in execution_strength.values()
                         if value is not None
                     ),
+                    "execution_strength_intraday_rows": sum(
+                        len(rows) for rows in execution_strength_intraday.values()
+                    ),
                     "program_trades": sum(
                         1 for value in program_trades.values()
                         if value is not None
@@ -87,6 +104,7 @@ class BacktestMicrostructureCaptureService:
             },
             "intraday_minutes": intraday,
             "execution_strength": execution_strength,
+            "execution_strength_intraday": execution_strength_intraday,
             "program_trades": program_trades,
         }
 
@@ -137,6 +155,43 @@ class BacktestMicrostructureCaptureService:
                 continue
             result[code] = _extract_execution_strength(resp)
         return result
+
+    def _capture_execution_strength_intraday(
+        self,
+        codes: list[str],
+        *,
+        date_ymd: str,
+        source: str,
+        start_hhmmss: str,
+        end_hhmmss: str,
+    ) -> tuple[dict[str, list[dict]], list[str]]:
+        if source not in ("rest_scalar", "es_db"):
+            raise ValueError(f"unsupported execution_strength_source: {source}")
+        result: dict[str, list[dict]] = {code: [] for code in codes}
+        if source == "rest_scalar":
+            return result, []
+        # es_db: 장중 WS 틱 샘플링 DB(es_history). 미스 종목(무틱/미구독)은
+        # 기존 REST 스칼라(execution_strength)가 폴백 역할을 한다.
+        if self._execution_strength_db_path.exists():
+            with sqlite3.connect(self._execution_strength_db_path) as conn:
+                for code in codes:
+                    rows = conn.execute(
+                        """
+                        SELECT trade_time, strength
+                        FROM es_history
+                        WHERE code = ?
+                          AND trade_date = ?
+                          AND trade_time >= ?
+                          AND trade_time <= ?
+                        ORDER BY trade_time ASC, id ASC
+                        """,
+                        (code, date_ymd, start_hhmmss, end_hhmmss),
+                    ).fetchall()
+                    result[code] = [
+                        {"time": row[0], "strength": row[1]} for row in rows
+                    ]
+        fallback_codes = [code for code in codes if not result[code]]
+        return result, fallback_codes
 
     async def _capture_program_trades(
         self,
@@ -234,17 +289,25 @@ class BacktestMicrostructureCaptureService:
         trade_date = payload["metadata"]["trade_date"]
         capture_path = output_dir / f"replay_microstructure_{trade_date}.json"
         execution_strength_path = output_dir / f"replay_execution_strength_{trade_date}.json"
+        execution_strength_intraday_path = (
+            output_dir / f"replay_execution_strength_intraday_{trade_date}.json"
+        )
         program_trades_path = output_dir / f"replay_program_trades_{trade_date}.json"
         intraday_path = output_dir / f"replay_intraday_minutes_{trade_date}.json"
 
         _write_json(capture_path, payload)
         _write_json(execution_strength_path, payload.get("execution_strength", {}))
+        _write_json(
+            execution_strength_intraday_path,
+            payload.get("execution_strength_intraday", {}),
+        )
         _write_json(program_trades_path, _flatten_program_trades(payload.get("program_trades", {})))
         _write_json(intraday_path, payload.get("intraday_minutes", {}))
 
         return {
             "capture": capture_path,
             "execution_strength": execution_strength_path,
+            "execution_strength_intraday": execution_strength_intraday_path,
             "program_trades": program_trades_path,
             "intraday_minutes": intraday_path,
         }

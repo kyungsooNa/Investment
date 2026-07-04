@@ -22,6 +22,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "WorkerPool", "TimeDispatcher", "DataQualityService", "RankingTask",
     "StockQueryService", "MinerviniStageService", "MinerviniUpdateTask",
     "StreamingService", "PriceStreamService", "StreamingStockRepo",
+    "ExecutionStrengthRepository",
     "PriceSubscriptionService", "WebSocketWatchdogTask", "PreMarketHealthCheckTask",
     "DailyPriceCollectorTask", "OhlcvUpdateTask", "AccountSnapshotCache",
     "PositionSizingService", "RiskGateService", "ExecutionFlowService",
@@ -478,3 +479,31 @@ async def test_overseas_fx_provider_extracts_rate_from_balance(patched_service_c
     # 잔고 조회 실패 시 None → KRW 환산 생략
     ctx.broker.get_overseas_balance = AsyncMock(side_effect=RuntimeError("boom"))
     assert await fx_provider() is None
+
+
+def test_service_container_wires_execution_strength_recorder(patched_service_container_deps):
+    """체결강도 recorder(repo)가 생성되어 PriceStreamService에 주입된다 (todo 1-5)."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ServiceContainer(ctx).run()
+
+    es_repo = patched_service_container_deps["ExecutionStrengthRepository"].return_value
+    assert ctx.execution_strength_repo is es_repo
+    kwargs = patched_service_container_deps["PriceStreamService"].call_args.kwargs
+    assert kwargs["execution_strength_recorder"] is es_repo
+
+
+def test_service_container_disables_execution_strength_capture_via_config(
+    patched_service_container_deps,
+):
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {"execution_strength_capture_enabled": False}
+    ServiceContainer(ctx).run()
+
+    patched_service_container_deps["ExecutionStrengthRepository"].assert_not_called()
+    assert ctx.execution_strength_repo is None
+    kwargs = patched_service_container_deps["PriceStreamService"].call_args.kwargs
+    assert kwargs["execution_strength_recorder"] is None

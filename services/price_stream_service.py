@@ -36,12 +36,14 @@ class PriceStreamService:
         data_quality_service=None,
         notification_service=None,
         event_router=None,
+        execution_strength_recorder=None,
     ):
         self._stock_repo = stock_repo
         self._logger = logger or logging.getLogger(__name__)
         self._data_quality_service = data_quality_service
         self._notification_service = notification_service
         self._event_router = event_router
+        self._execution_strength_recorder = execution_strength_recorder
         self._latest_prices: Dict[str, dict] = {}
         self._latest_conclusions: Dict[str, dict] = {}  # code → conclusion snapshot dict
         self._sse_queues: Dict[str, List[asyncio.Queue]] = {}  # code → SSE 구독 큐 목록
@@ -136,6 +138,18 @@ class PriceStreamService:
 
         self._last_tick_ts[stock_code] = now_ts
         self._last_any_tick_ts = now_ts
+
+        if self._execution_strength_recorder is not None:
+            # todo 1-5: 체결강도 장중 시계열 축적 (샘플링/파싱은 recorder 책임)
+            try:
+                self._execution_strength_recorder.record_tick(
+                    stock_code,
+                    realtime_data.get('체결강도'),
+                    realtime_data.get('주식체결시간'),
+                    realtime_data.get('영업일자'),
+                )
+            except Exception as e:
+                self._logger.warning(f"체결강도 기록 실패: code={stock_code}, error={e}")
 
         cum_vol = realtime_data.get('누적거래량', '0')
         try:

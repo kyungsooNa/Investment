@@ -59,6 +59,7 @@ def _make_task(capture_service, tmp_path, **kwargs):
         capture_service=capture_service,
         output_dir=tmp_path / "out",
         program_db_path=tmp_path / "program_trading.db",
+        execution_strength_db_path=tmp_path / "execution_strength.db",
         logger=MagicMock(),
     )
     defaults.update(kwargs)
@@ -392,3 +393,66 @@ def test_write_output_dir_passed_through(capture_service, tmp_path):
     task = _make_task(capture_service, tmp_path)
     assert task.task_name == "microstructure_capture"
     assert task.get_progress()["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_execution_strength_source_auto_selects_es_db_when_db_exists(
+    capture_service, universe_service, tmp_path
+):
+    es_db = tmp_path / "execution_strength.db"
+    es_db.write_bytes(b"")
+    task = _make_task(
+        capture_service, tmp_path,
+        universe_service=universe_service,
+        execution_strength_db_path=es_db,
+    )
+
+    await task._on_market_closed("20260702")
+
+    kwargs = capture_service.capture.await_args.kwargs
+    assert kwargs["execution_strength_source"] == "es_db"
+    assert task.get_progress()["last_result"]["execution_strength_source"] == "es_db"
+
+
+@pytest.mark.asyncio
+async def test_execution_strength_source_falls_back_to_rest_scalar_without_db(
+    capture_service, universe_service, tmp_path
+):
+    task = _make_task(capture_service, tmp_path, universe_service=universe_service)
+
+    await task._on_market_closed("20260702")
+
+    kwargs = capture_service.capture.await_args.kwargs
+    assert kwargs["execution_strength_source"] == "rest_scalar"
+    assert (
+        task.get_progress()["last_result"]["execution_strength_source"]
+        == "rest_scalar"
+    )
+
+
+@pytest.mark.asyncio
+async def test_execution_strength_metrics_exposed_in_last_result(
+    capture_service, universe_service, tmp_path
+):
+    payload = _payload()
+    payload["metadata"]["codes"] = ["005930", "000660"]
+    payload["metadata"]["execution_strength_source"] = "es_db"
+    payload["metadata"]["execution_strength_fallback_codes"] = ["000660"]
+    payload["execution_strength_intraday"] = {
+        "005930": [{"time": "090001", "strength": 110.0}],
+        "000660": [],
+    }
+    capture_service.capture = AsyncMock(return_value=payload)
+    es_db = tmp_path / "execution_strength.db"
+    es_db.write_bytes(b"")
+    task = _make_task(
+        capture_service, tmp_path,
+        universe_service=universe_service,
+        execution_strength_db_path=es_db,
+    )
+
+    await task._on_market_closed("20260702")
+
+    last_result = task.get_progress()["last_result"]
+    assert last_result["execution_strength_fallback_codes"] == ["000660"]
+    assert last_result["execution_strength_db_coverage_pct"] == 50.0
