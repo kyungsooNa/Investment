@@ -1049,6 +1049,64 @@ async def test_report_matches_virtual_trade_strategy_id_to_vbo_log_section(log_d
 
 
 @pytest.mark.asyncio
+async def test_report_includes_standard_journal_accumulation_section(log_dir):
+    """표준 journal 축적 현황을 일일 리포트에 노출한다."""
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return []
+
+        def get_solds(self):
+            return []
+
+        def get_holds(self):
+            return []
+
+        def get_standard_journal_records(self):
+            return [
+                {
+                    "source": "paper",
+                    "strategy": "S1",
+                    "code": "000001",
+                    "status": "SOLD",
+                    "signal_time": "2026-04-15 10:00:00",
+                    "net_pnl": 100.0,
+                    "net_return": 1.0,
+                },
+                {
+                    "source": "paper",
+                    "strategy": "S1",
+                    "code": "000002",
+                    "status": "HOLD",
+                    "signal_time": "2026-04-18 10:00:00",
+                },
+                {
+                    "source": "event_shadow",
+                    "strategy": "S2",
+                    "code": "000003",
+                    "status": "SIGNAL",
+                    "signal_time": "2026-04-18 09:30:00",
+                    "metadata": {"signal_source": "event_shadow"},
+                },
+            ]
+
+    scan_entry = _make_entry("scan_with_watchlist", "", "", date="2026-04-18")
+    scan_entry["data"]["count"] = 2
+    _write_log(os.path.join(log_dir, "20260418_093000_FirstPullback.log.json"), [scan_entry])
+
+    svc = StrategyLogReportService(
+        log_dir=log_dir,
+        virtual_trade_service=DummyVirtualTradeService(),
+        profitability_gate_config=SimpleNamespace(min_trades=3),
+    )
+    report = await svc.generate_report("20260418")
+
+    assert "표준 journal 축적 현황" in report
+    assert "전체 3건 / SOLD 1건 / 진행중 2건" in report
+    assert "source: paper 2건, event_shadow 1건" in report
+    assert "S1: SOLD 1/3건" in report
+
+
+@pytest.mark.asyncio
 async def test_report_includes_strategy_regime_decomposition_section(log_dir):
     """일일 리포트 본문에 전략별 regime 분해 섹션을 포함한다."""
     class DummyVirtualTradeService:
