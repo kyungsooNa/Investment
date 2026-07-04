@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-04 (1-5 체결강도 장중 시계열 캡처 배선 + O-1 완료 반영)
+최종 업데이트: 2026-07-05 (2-4 KIS 보통주 무틱 에스컬레이션 패키지 작성)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -87,7 +87,7 @@
 - **[최우선 블로커] WebSocket price 피드 무틱 ≈55%**: 구독 종목 절반 이상이 종일 `subscribed_no_tick` → shadow parity 수집 불가 + 라이브 실시간 데이터 품질 문제. **이 레포의 코드 작업은 종결**(무틱 종목 격리 구현 완료). 진단 확정: 종목·상품군·계정 단위 **KIS측 프레임 미전송**(`a1_kis_no_send`).
   - 근거: 2026-06-19 로그 진단(`reports/no_tick_diagnosis_20260619.md`) + 2026-06-22 운영 실험 A~D(`reports/no_tick_operational_experiment_analysis_20260622_live.md`) — subscribe/ack/quality_reject 전부 0, received 5 vs no_tick 18. 보통주 일부만 0틱(종목 단위), ETF/우선주 전부 0틱(상품군 단위), 격리해도 0틱 지속(계정 단위), refresh 무효.
   - **정책 결정(2026-07-01)**: ETF/우선주는 WS tick 없음으로 **간주**(상품군 단위 무틱 수용) → B군 KIS 문의 **드롭**. REST 폴링 경로로 처리하고, 무틱 지표에서 ETF/우선주는 정상(예상된 무틱)으로 본다. 코드 변경 없음(사후 격리가 이미 churn 중단). ※ 실전 전략은 보통주 롱온리라 ETF/우선주 WS 구독은 부수적.
-  - **다음 액션(코드 아님)**: C군 — 무틱 **보통주**만 runner 출력 첨부해 KIS 에스컬레이션(계정/종목 단위 프레임 미전송 문의).
+  - **다음 액션(코드 아님)**: KIS 에스컬레이션 접수 준비 — 무틱 **보통주**만 대상으로 정리한 문의 패키지 `reports/kis_no_tick_common_stock_escalation_20260705.md`와 C군 runner 출력(`reports/no_tick_operational_experiment_result_C_no_tick_common_solo_20260622_live.{json,md}`) 첨부. 완료 판정은 KIS 답변으로 서버/권한/종목 예외 확인 또는 재현 실험 요청 수신.
   - ※ 폴링 지연(5분 scan + stagger + limiter)은 돌파 전략의 실질 슬리피지로 작용 — 무틱 해소 → event-driven 전환이 VBO 계열 수익성의 전제 조건이기도 하다. (2026-07-02 리뷰)
 - [ ] (블로커 해소 후) `event_shadow`/`event_shadow_exit` 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py`로 entry/exit parity 리포트 → PR-3 진입 판정.
 - [ ] event-driven signal은 별도 승인 전 shadow/latency 측정용으로만 운영(실주문은 polling + full gate 경로만). VBO fast path는 execution strength/program-buy 생략.
