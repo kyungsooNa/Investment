@@ -4,15 +4,13 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from services.backtest_microstructure_quality import (
+    format_optional_pct,
+    summarize_capture_quality,
+)
 from services.notification_service import NotificationCategory, NotificationLevel
 from task.background.after_market.after_market_task_base import AfterMarketTask
 from task.background.capture_candidates import resolve_capture_codes
-
-
-_MIN_INTRADAY_COVERAGE_PCT = 80.0
-_MIN_PROGRAM_OVERLAY_COVERAGE_PCT = 80.0
-_MIN_PROGRAM_DB_COVERAGE_PCT = 50.0
-_MAX_STALE_ROWS = 0
 
 
 class MicrostructureCaptureTask(AfterMarketTask):
@@ -138,7 +136,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
             metadata = payload.get("metadata") or {}
             quality = metadata.get("quality") or {}
             program_fallback_codes = metadata.get("program_fallback_codes") or []
-            quality_summary = _summarize_capture_quality(
+            quality_summary = summarize_capture_quality(
                 payload,
                 fallback_codes=codes,
             )
@@ -161,7 +159,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
                     f"(issues={quality_summary['issues']}, "
                     f"intraday={quality_summary['intraday_coverage_pct']:.1f}%, "
                     f"program={quality_summary['program_overlay_coverage_pct']:.1f}%, "
-                    f"program_db={_format_optional_pct(quality_summary['program_db_coverage_pct'])})"
+                    f"program_db={format_optional_pct(quality_summary['program_db_coverage_pct'])})"
                 )
                 await self._emit_quality_gate_warning(latest_trading_date, quality_summary)
             self._logger.info(
@@ -190,7 +188,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
             f"{latest_trading_date}: "
             f"intraday={quality_summary['intraday_coverage_pct']:.1f}%, "
             f"program={quality_summary['program_overlay_coverage_pct']:.1f}%, "
-            f"program_db={_format_optional_pct(quality_summary['program_db_coverage_pct'])}",
+            f"program_db={format_optional_pct(quality_summary['program_db_coverage_pct'])}",
             metadata={
                 "alert_type": "microstructure_capture_quality_gate",
                 "trade_date": latest_trading_date,
@@ -202,87 +200,3 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "program_db_coverage_pct": quality_summary["program_db_coverage_pct"],
             },
         )
-
-
-def _summarize_capture_quality(
-    payload: dict[str, Any],
-    *,
-    fallback_codes: list[str],
-) -> dict[str, Any]:
-    metadata = payload.get("metadata") or {}
-    codes = [str(code) for code in (metadata.get("codes") or fallback_codes or [])]
-    code_set = set(codes)
-    code_count = len(codes)
-    intraday = payload.get("intraday_minutes") or {}
-    execution_strength = payload.get("execution_strength") or {}
-    program_trades = payload.get("program_trades") or {}
-    quality = metadata.get("quality") or {}
-    program_fallback_codes = [
-        str(code) for code in (metadata.get("program_fallback_codes") or [])
-        if str(code) in code_set
-    ]
-    stale_rows = sum(
-        _to_int(value)
-        for value in (quality.get("stale_minute_rows_dropped") or {}).values()
-    )
-
-    intraday_available = sum(1 for code in codes if bool(intraday.get(code)))
-    execution_strength_available = sum(
-        1 for code in codes if execution_strength.get(code) is not None
-    )
-    program_overlay_available = sum(
-        1 for code in codes if program_trades.get(code) is not None
-    )
-    program_source = str(metadata.get("program_source") or "")
-    program_db_coverage_pct = None
-    if program_source == "program_db":
-        program_db_available = max(0, program_overlay_available - len(program_fallback_codes))
-        program_db_coverage_pct = _pct(program_db_available, code_count)
-
-    intraday_coverage_pct = _pct(intraday_available, code_count)
-    execution_strength_coverage_pct = _pct(execution_strength_available, code_count)
-    program_overlay_coverage_pct = _pct(program_overlay_available, code_count)
-
-    issues: list[str] = []
-    if code_count == 0:
-        issues.append("no_codes")
-    if intraday_coverage_pct < _MIN_INTRADAY_COVERAGE_PCT:
-        issues.append("intraday_coverage_below_threshold")
-    if program_overlay_coverage_pct < _MIN_PROGRAM_OVERLAY_COVERAGE_PCT:
-        issues.append("program_overlay_coverage_below_threshold")
-    if (
-        program_db_coverage_pct is not None
-        and program_db_coverage_pct < _MIN_PROGRAM_DB_COVERAGE_PCT
-    ):
-        issues.append("program_db_coverage_below_threshold")
-    if stale_rows > _MAX_STALE_ROWS:
-        issues.append("stale_minute_rows_present")
-
-    return {
-        "quality_gate_passed": not issues,
-        "codes": code_count,
-        "issues": issues,
-        "intraday_coverage_pct": intraday_coverage_pct,
-        "execution_strength_coverage_pct": execution_strength_coverage_pct,
-        "program_overlay_coverage_pct": program_overlay_coverage_pct,
-        "program_db_coverage_pct": program_db_coverage_pct,
-    }
-
-
-def _pct(numerator: int, denominator: int) -> float:
-    if denominator <= 0:
-        return 0.0
-    return numerator / denominator * 100.0
-
-
-def _to_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _format_optional_pct(value: Any) -> str:
-    if isinstance(value, (int, float)):
-        return f"{value:.1f}%"
-    return "-"

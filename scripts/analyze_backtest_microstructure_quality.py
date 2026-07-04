@@ -12,22 +12,11 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-
-def _pct(numerator: int, denominator: int) -> float:
-    if denominator <= 0:
-        return 0.0
-    return numerator / denominator * 100.0
-
-
-def _to_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _is_present(value: Any) -> bool:
-    return value is not None
+from services.backtest_microstructure_quality import (
+    MicrostructureQualityThresholds,
+    coverage_pct,
+    summarize_capture_quality,
+)
 
 
 def load_capture_payloads(
@@ -58,82 +47,6 @@ def load_capture_payloads(
     return payloads
 
 
-def _daily_quality(
-    payload: Dict[str, Any],
-    *,
-    min_intraday_coverage_pct: float,
-    min_program_overlay_coverage_pct: float,
-    min_program_db_coverage_pct: float,
-    max_stale_rows: int,
-) -> Dict[str, Any]:
-    metadata = payload.get("metadata") or {}
-    codes = [str(code) for code in (metadata.get("codes") or [])]
-    code_count = len(codes)
-    intraday = payload.get("intraday_minutes") or {}
-    execution_strength = payload.get("execution_strength") or {}
-    program_trades = payload.get("program_trades") or {}
-    quality = metadata.get("quality") or {}
-    fallback_codes = [
-        str(code) for code in (metadata.get("program_fallback_codes") or [])
-        if str(code) in set(codes)
-    ]
-    stale_by_code = quality.get("stale_minute_rows_dropped") or {}
-    stale_rows = sum(_to_int(v) for v in stale_by_code.values())
-
-    intraday_available = sum(1 for code in codes if bool(intraday.get(code)))
-    execution_strength_available = sum(
-        1 for code in codes if _is_present(execution_strength.get(code))
-    )
-    program_overlay_available = sum(
-        1 for code in codes if _is_present(program_trades.get(code))
-    )
-    program_source = str(metadata.get("program_source") or "")
-    program_db_available: Optional[int] = None
-    program_db_coverage_pct: Optional[float] = None
-    if program_source == "program_db":
-        program_db_available = max(0, program_overlay_available - len(fallback_codes))
-        program_db_coverage_pct = _pct(program_db_available, code_count)
-
-    intraday_coverage_pct = _pct(intraday_available, code_count)
-    execution_strength_coverage_pct = _pct(execution_strength_available, code_count)
-    program_overlay_coverage_pct = _pct(program_overlay_available, code_count)
-
-    issues: List[str] = []
-    if code_count == 0:
-        issues.append("no_codes")
-    if intraday_coverage_pct < min_intraday_coverage_pct:
-        issues.append("intraday_coverage_below_threshold")
-    if program_overlay_coverage_pct < min_program_overlay_coverage_pct:
-        issues.append("program_overlay_coverage_below_threshold")
-    if (
-        program_db_coverage_pct is not None
-        and program_db_coverage_pct < min_program_db_coverage_pct
-    ):
-        issues.append("program_db_coverage_below_threshold")
-    if stale_rows > max_stale_rows:
-        issues.append("stale_minute_rows_present")
-
-    return {
-        "trade_date": str(metadata.get("trade_date") or ""),
-        "codes": code_count,
-        "intraday_available": intraday_available,
-        "intraday_coverage_pct": intraday_coverage_pct,
-        "execution_strength_available": execution_strength_available,
-        "execution_strength_coverage_pct": execution_strength_coverage_pct,
-        "program_overlay_available": program_overlay_available,
-        "program_overlay_coverage_pct": program_overlay_coverage_pct,
-        "program_source": program_source,
-        "program_fallback_codes": fallback_codes,
-        "program_fallback_pct": _pct(len(fallback_codes), code_count),
-        "program_db_available": program_db_available,
-        "program_db_coverage_pct": program_db_coverage_pct,
-        "empty_minute_codes": quality.get("empty_minute_codes") or [],
-        "stale_minute_rows_dropped": stale_rows,
-        "issues": issues,
-        "quality_gate_passed": not issues,
-    }
-
-
 def compute_quality_report(
     payloads: List[Dict[str, Any]],
     *,
@@ -144,13 +57,16 @@ def compute_quality_report(
 ) -> Dict[str, Any]:
     """Compute daily and aggregate quality metrics."""
     by_date: Dict[str, Dict[str, Any]] = {}
+    thresholds = MicrostructureQualityThresholds(
+        min_intraday_coverage_pct=min_intraday_coverage_pct,
+        min_program_overlay_coverage_pct=min_program_overlay_coverage_pct,
+        min_program_db_coverage_pct=min_program_db_coverage_pct,
+        max_stale_rows=max_stale_rows,
+    )
     for payload in payloads:
-        daily = _daily_quality(
+        daily = summarize_capture_quality(
             payload,
-            min_intraday_coverage_pct=min_intraday_coverage_pct,
-            min_program_overlay_coverage_pct=min_program_overlay_coverage_pct,
-            min_program_db_coverage_pct=min_program_db_coverage_pct,
-            max_stale_rows=max_stale_rows,
+            thresholds=thresholds,
         )
         key = daily["trade_date"] or f"unknown_{len(by_date) + 1}"
         by_date[key] = daily
@@ -184,18 +100,18 @@ def compute_quality_report(
         "trading_days": len(by_date),
         "total_codes": total_codes,
         "intraday_available": intraday_available,
-        "intraday_coverage_pct": _pct(intraday_available, total_codes),
+        "intraday_coverage_pct": coverage_pct(intraday_available, total_codes),
         "execution_strength_available": execution_strength_available,
-        "execution_strength_coverage_pct": _pct(execution_strength_available, total_codes),
+        "execution_strength_coverage_pct": coverage_pct(execution_strength_available, total_codes),
         "program_overlay_available": program_overlay_available,
-        "program_overlay_coverage_pct": _pct(program_overlay_available, total_codes),
+        "program_overlay_coverage_pct": coverage_pct(program_overlay_available, total_codes),
         "program_db_available": program_db_available,
         "program_db_coverage_pct": (
-            _pct(program_db_available, program_db_denominator)
+            coverage_pct(program_db_available, program_db_denominator)
             if program_db_denominator > 0 else None
         ),
         "program_fallback_count": fallback_count,
-        "program_fallback_pct": _pct(fallback_count, total_codes),
+        "program_fallback_pct": coverage_pct(fallback_count, total_codes),
         "stale_minute_rows_dropped": stale_rows,
         "quality_gate_passed": gate_passed,
         "daily_failures": daily_failures,
