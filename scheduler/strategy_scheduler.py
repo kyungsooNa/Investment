@@ -65,7 +65,7 @@ class StrategySchedulerConfig:
     strategy: LiveStrategy
     interval_minutes: int = 5       # 실행 주기 (분)
     max_positions: int = 3          # 최대 동시 보유 포지션 수
-    order_qty: int = 1              # 주문 수량
+    order_qty: int = 1              # 강제청산 시 보유수량 조회 실패 폴백 전용 (신규 진입 사이징은 PositionSizingService가 결정)
     enabled: bool = True            # 개별 전략 활성/비활성
     allow_pyramiding: bool = False  # 불타기(추가매수) 허용 여부
     force_exit_on_close: bool = False       # 당일 청산 여부

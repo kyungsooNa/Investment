@@ -220,6 +220,8 @@ class PositionSizingService:
         if top_of_book_qty is not None:
             candidates["top_of_book_limited"] = top_of_book_qty
         if signal.qty is not None:
+            # 전략이 자체 산정한 qty(예: position_size_pct 기반)는 여기서 상한으로만 참여한다 —
+            # min() 구조상 risk 기반 계산보다 느슨해질 수 없고 더 타이트해질 수만 있다.
             candidates["signal_cap"] = signal.qty
         final_qty = max(0, min(candidates.values()))
 

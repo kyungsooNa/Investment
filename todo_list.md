@@ -25,7 +25,6 @@
 2. **[외부 블로커 — 병행 진행]**
    - 2-4 WebSocket 무틱 — KIS 에스컬레이션 (무틱 보통주만; ETF/우선주는 무틱 수용으로 종결)
 3. **[확대·전환 전 필수 게이트]**
-   - M-1 포지션 사이징 단일화 (신규 — canary→자금 확대 전 필수)
    - 0-1 실전 체결필드 fixture · 2-2 KIS 유량 한도 실측 (실전 전환 직전, 외부 의존)
 4. **[데이터·정책 대기]**
    - 1-8 백테스트 재실행 (CLI 노출 완료 #619 — PIT 후보 부재로 blocked, 2026-07-03 파일럿 판정)
@@ -152,11 +151,17 @@
 
 ## M. 유지보수 / 구조 [신규 섹션 — 2026-07-02 리뷰]
 
-### M-1. 포지션 사이징 단일화 [canary→자금 확대 전 필수 게이트]
+### M-1. 포지션 사이징 단일화 [재조사 완료 2026-07-05 — 필수 게이트 아님으로 하향]
 
-- [ ] 사이징 개념이 4곳에 분산되어 있다 — `position_size_pct`(전략 config) / `order_qty=1`(스케줄러 캐너리 고정값) / `position_sizer` 후주입(옵션, `adjust_buy_qty`) / RiskGate `max_order_amount_won`. 캐너리 단계에서는 무해하지만, 1-6 게이트 통과 후 자금 확대 **전에** 단일 사이징 모듈로 통합하지 않으면 첫 스케일업에서 사고 위험. 통합 시 리스크 기반 사이징(포지션당 리스크 % 기준)으로 수렴 권장.
+- [x] **재조사 결과: "4곳 분산"은 과장된 진단이었다.** 실측 결과 3곳은 이미 하나의 파이프라인(`PositionSizingService._compute_buy_qty`)으로 수렴되어 있었다.
+  - `position_sizer`는 "후주입 옵션"이 아니라 `service_container.py`에서 상시 구성되어 프로덕션 경로에 항상 주입됨 — canary/real_mode별 `per_trade_risk_pct` 계층(0.25%/0.5%)까지 이미 존재.
+  - RiskGate `max_order_amount_won`은 `_calc_max_order_amount_qty`를 통해 이미 이 파이프라인의 `min()` 후보 중 하나로 통합되어 있음 — 별도 경로 아님.
+  - `order_qty=1`(스케줄러 config)은 신규 진입 사이징과 무관 — 강제청산 시 보유수량 조회 실패 폴백 전용([strategy_scheduler.py:68](scheduler/strategy_scheduler.py:68)에 주석 명시).
+  - 남은 유일한 잠재적 중복은 `position_size_pct`(전략 config, 7곳)인데, `final_qty = min(candidates.values())` 구조상 이는 `signal_cap`으로만 참여해 risk 기반 계산보다 **더 타이트해질 수만 있고 느슨해질 수 없음**을 코드 구조로 증명([position_sizing_service.py:222](services/position_sizing_service.py:222)에 주석 명시) — 자금 확대 시 사고 위험 없음.
+  - 로그 실측(최근 3일 `[PositionSizing]` 결정 로그)은 캐너리 신호 자체가 희소해(3일간 1건) 표본 부족으로 보류 — 위 구조적 증명으로 안전성 판정을 대체.
+- [ ] (저위험, 선택) `position_size_pct` 필드가 risk 기반 계산에 의해 사실상 항상 지배되는지 canary 신호가 쌓인 뒤 재확인하고, 지배 확정 시 7개 전략 config에서 deprecate 검토(안전 문제 아닌 정리 과제).
 
-주요 파일: `view/web/bootstrap/strategy_factory.py`, `scheduler/strategy_scheduler.py`, `strategies/oneil_common_types.py` 등 전략 config 계열, `config/config_loader.py`
+주요 파일: `services/position_sizing_service.py`, `scheduler/strategy_scheduler.py`, `view/web/bootstrap/strategy_factory.py`, `strategies/oneil_common_types.py` 등 전략 config 계열, `config/config_loader.py`
 
 ### M-2. 문서 동기화 + 구조 감시 [저위험 상시]
 
