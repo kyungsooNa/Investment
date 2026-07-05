@@ -48,6 +48,7 @@ class TimeDispatcher:
         self._task_schedule: Dict[str, int] = {}   # task_name → priority
         self._task_delays: Dict[str, int] = {}     # task_name → delay_sec
         self._task_dispatched_dates: Dict[str, Optional[str]] = {}  # task_name → last dispatched date
+        self._last_non_trading_log_key: Optional[str] = None
         self._running = False
         self._sleep_task: Optional[asyncio.Task] = None
         self._pending_publish_tasks: Set[asyncio.Task] = set()
@@ -83,7 +84,7 @@ class TimeDispatcher:
 
     def _is_after_market_close(self) -> bool:
         """현재 시각이 당일 장 마감(15:40) 이후인지 확인한다.
-        주말은 항상 True(직전 거래일 기준 발행 허용), 평일은 마감 후에만 True."""
+        주말은 항상 True로 보되, mcs 주입 시 비거래일 발행 여부는 _maybe_dispatch가 다시 막는다."""
         now = self._market_clock.get_current_kst_time()
         if now.weekday() >= 5:  # 주말
             return True
@@ -137,13 +138,24 @@ class TimeDispatcher:
         if not self._is_after_market_close():
             return
 
+        today_str = self._market_clock.get_current_kst_date_str()
         if self._mcs is not None:
             latest_trading_date = await self._mcs.get_latest_trading_date()
+            if not latest_trading_date:
+                return
+            if today_str and latest_trading_date != today_str:
+                log_key = f"{today_str}:{latest_trading_date}"
+                if self._last_non_trading_log_key != log_key:
+                    self._logger.info(
+                        f"[TimeDispatcher] 오늘({today_str})은 휴장일/비거래일입니다 — "
+                        f"티켓 발행 스킵 (최근 거래일={latest_trading_date})"
+                    )
+                    self._last_non_trading_log_key = log_key
+                return
         else:
             # 거래 캘린더 미주입(해외장 등): clock 날짜를 거래일 식별자로 사용한다.
-            # 주말 발행 차단은 _is_after_market_close()의 weekday 필터가 담당하며,
-            # 공휴일은 미반영(현행 AfterMarketLoop mcs=None 동작과 동일한 한계).
-            latest_trading_date = self._market_clock.get_current_kst_date_str()
+            # 주말/공휴일은 미반영(현행 AfterMarketLoop mcs=None 동작과 동일한 한계).
+            latest_trading_date = today_str
         if not latest_trading_date:
             return
 
