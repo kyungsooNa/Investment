@@ -71,6 +71,7 @@ class SchedulerBootstrap:
             performance_profiler=ctx.pm,
             worker_pool=ctx.worker_pool,
             time_dispatchers=dispatchers,
+            api_budget_limiter=getattr(ctx, "api_budget_limiter", None),
         )
 
     def _create_foreground_scheduler(self) -> None:

@@ -438,3 +438,55 @@ async def test_shutdown_sequential_repeat_is_noop(scheduler):
 
     t1.stop.assert_awaited_once()
     scheduler._logger.warning.assert_any_call("[BackgroundScheduler] 이미 종료됨 — shutdown 호출 무시")
+
+
+@pytest.mark.asyncio
+async def test_start_all_without_api_budget_limiter_skips_snapshot_task():
+    """api_budget_limiter 미주입 시 스냅샷 태스크가 생성되지 않는다 (기존 동작 유지)."""
+    scheduler = BackgroundScheduler(logger=MagicMock())
+
+    await scheduler.start_all()
+    assert scheduler._infra_tasks == []
+
+    await scheduler.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_start_all_with_api_budget_limiter_but_pm_disabled_skips_snapshot_task():
+    """pm이 비활성화면 limiter가 있어도 스냅샷 태스크를 만들지 않는다."""
+    from core.retry_queue.api_budget_limiter import ApiBudgetLimiter
+
+    limiter = ApiBudgetLimiter({"quotation": 2})
+    scheduler = BackgroundScheduler(logger=MagicMock(), api_budget_limiter=limiter)
+
+    await scheduler.start_all()
+    assert scheduler._infra_tasks == []
+
+    await scheduler.shutdown()
+
+
+@pytest.mark.real_sleep
+@pytest.mark.asyncio
+async def test_start_all_with_api_budget_limiter_logs_snapshot_periodically():
+    """api_budget_limiter 주입 + pm 활성화 시 주기적으로 BudgetSnapshot 로그를 남긴다."""
+    from core.performance_profiler import PerformanceProfiler
+    from core.retry_queue.api_budget_limiter import ApiBudgetLimiter
+
+    fake_logger = MagicMock()
+    pm = PerformanceProfiler(logger=fake_logger, enabled=True, threshold=0.0)
+    limiter = ApiBudgetLimiter({"quotation": 2})
+
+    scheduler = BackgroundScheduler(
+        logger=MagicMock(),
+        performance_profiler=pm,
+        api_budget_limiter=limiter,
+        budget_snapshot_interval_sec=0.02,
+    )
+
+    await scheduler.start_all()
+    await asyncio.sleep(0.08)
+    await scheduler.shutdown()
+
+    logged = [c.args[0] for c in fake_logger.info.call_args_list]
+    assert any("[Performance] BudgetSnapshot.quotation:" in m for m in logged)
+    assert scheduler._infra_tasks == []

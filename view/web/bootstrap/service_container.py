@@ -260,6 +260,7 @@ class ServiceContainer:
                 dlq_manager=ctx.dlq_manager,
                 logger=ctx.logger,
                 num_workers=1,  # after_market 태스크는 API 레이트 리밋 고려해 순차 실행
+                performance_profiler=ctx.pm,
             )
             ctx.time_dispatcher = TimeDispatcher(
                 broker=ctx.message_broker,
