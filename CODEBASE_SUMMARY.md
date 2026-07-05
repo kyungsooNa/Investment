@@ -1,6 +1,6 @@
 # CODEBASE_SUMMARY
 
-최종 업데이트: 2026-06-21
+최종 업데이트: 2026-07-05 (bootstrap 분해 진전 · EventShadowManager 분리 · 해외/테마 계층 · 브로커 계층 계측 반영)
 
 규모(실측): 프로덕션 304개 파일 / ~74,200 LoC, 테스트 단위 316개·통합 29개 파일.
 
@@ -96,6 +96,29 @@
 - `brokers/korea_investment/*`
   - 한국투자증권 API 세부 구현
   - quotations/account/trading/websocket 분리
+
+### 4. 해외 주식 계층 (일봉 VBO, 자동 실주문 잠금)
+
+- 결론: 일봉 셋업형 전략만 적용 가능(해외 일봉 API만 존재), 장중/실시간 전략은 불가
+- `brokers/korea_investment/korea_invest_overseas_stock_api.py`
+  - 해외 주문/조회 API (해외 주문 TR은 실전만 존재, 모의 주문 TR 없음)
+- `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/overseas_candidate_service.py`, `services/overseas_stock_sync_service.py`, `services/overseas_vbo_dryrun_service.py`
+- `services/us_market_calendar_service.py`
+  - 규칙 기반 NYSE 휴장일/조기폐장 캘린더 (KIS에 해외 휴장일 TR 없어 로컬 계산)
+- `strategies/inverse_etf_regime_strategy.py` / `inverse_etf_regime_backtest.py`
+  - KOSPI bear 국면 전용 인버스 ETF 추세추종 슬리브. factory 배선 `enabled=False`(shadow/paper 관찰 중)
+- Phase 1~4(데이터 어댑터·백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금 — dry-run 검증 후 canary 단계로 진행 예정
+
+### 5. 테마/분류 계층
+
+- `task/background/after_market/theme_classification_task.py`
+  - 네이버 테마 자동 수집(BATCH 모드, 장마감 후, 기본 7일 간격)
+- `services/theme_classification_collector_service.py`
+  - 네이버 테마 스크래핑/수집 (FDR/KIS에 테마 분류 API 없어 네이버가 유일 실용 소스)
+- `repositories/stock_classification_repository.py`
+  - 분류 데이터 저장 (멀티소스 병합 인프라 보유하나 네이버 단일 소스로 운영, 추가 소스 연동 계획 없음)
+- `services/theme_leader_service.py`, `services/theme_daily_leader_service.py`, `task/background/after_market/theme_daily_leader_report_task.py`
+  - 테마별 주도주/일별 리포트
 
 ## 환경 분리
 
@@ -236,7 +259,7 @@
 
 - `view/web/web_app_initializer.py`가 너무 많은 책임을 가진다.
 - 환경 로드, 브로커 생성, 서비스 조립, 전략/태스크 등록, 알림 설정, 스케줄러 초기화가 한곳에 몰려 있다.
-- 분리 작업 일부 착수됨: `view/web/bootstrap/`(service_container, *_bootstrap, strategy_factory, wiring_phase)로 조립부가 이미 추출되는 중. 다만 `web_app_initializer.py`도 여전히 큼
+- 분리 진전(2026-07-05 기준): `view/web/bootstrap/`(service_container.py 962줄·strategy_factory.py 233줄·scheduler_bootstrap.py 149줄·config_bootstrap.py 124줄·wiring_phase.py 93줄·broker_bootstrap.py 47줄·runtime_mode.py 47줄, 합계 2,299줄)로 조립부가 상당 부분 이관됨. `web_app_initializer.py`는 628줄로 줄었으나 `service_container.py`가 계속 증가 중(902→962줄, 최근 잦은 변경)이라 비대화가 재발하는지 주기 관찰 필요(M-2)
 
 ### 2. 서비스 초기화 순서 의존성
 
@@ -257,6 +280,7 @@
 - `BrokerAPIWrapper -> retry queue wrapper -> cache wrapper -> KoreaInvestApiClient`
 - 운영상 유용하지만 테스트에서 mock이 잘못되면 hang/재시도 누적 위험
 - AGENTS.md의 hang 패턴과 직결되는 부분
+- 계층별 성능 계측 존재: `core/performance_profiler.py`가 S2(캐시)/S3(retry queue budget·backoff)/S4(`KoreaInvestApiBase.call_api` 실네트워크) 구간별 타이머를 제공. `KIS_LAYER_TIMING`(기본 on, threshold 1.0s)로 토글. 지연 원인 분석 시 재시도가 아니라 budget throttle 대기가 대부분이었던 사례 있음(2026-07-02)
 
 ### 5. 일부 문서/실행 진입점 불일치 가능성
 
@@ -298,6 +322,9 @@
   - 당일 1회 원장 대사 수행
   - 전략 간 `STAGGER_INTERVAL_SEC`로 호출 간격 보장
   - signal history 저장
+- `scheduler/event_shadow_manager.py` (395줄, 2026-06-28 분리)
+  - P2 2-4 event-driven shadow 구독/저널링을 `StrategyScheduler`에서 추출한 전담 컴포넌트
+  - 실주문 경로에는 관여하지 않고 event-driven 신호와 polling 신호의 parity 관찰용
 
 즉 전략 스케줄러는 단순 cron이 아니라 포지션/청산/실행간격을 함께 관리하는 운영 컴포넌트다.
 
