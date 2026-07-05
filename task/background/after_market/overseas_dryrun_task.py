@@ -85,10 +85,25 @@ class OverseasDryRunTask(AfterMarketTask):
     def get_progress(self) -> dict:
         return {"last_run_date": self._last_run_date}
 
+    @staticmethod
+    def _format_market_date(yyyymmdd: str) -> str:
+        if len(yyyymmdd) == 8 and yyyymmdd.isdigit():
+            return f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
+        return yyyymmdd
+
     async def _on_market_closed(self, latest_trading_date: str) -> None:
+        market_date_text = self._format_market_date(latest_trading_date)
+        exchange_value = self._exchange.value
         if self._last_run_date == latest_trading_date:
             self._logger.info(
-                {"event": "overseas_dryrun_skip", "date": latest_trading_date, "reason": "already_run"}
+                {
+                    "event": "overseas_dryrun_skip",
+                    "market_date": latest_trading_date,
+                    "market_date_text": market_date_text,
+                    "exchange": exchange_value,
+                    "reason": "already_run",
+                    "reason_text": "이미 처리한 미국 거래일이므로 dry-run을 스킵합니다.",
+                }
             )
             return
         try:
@@ -96,19 +111,32 @@ class OverseasDryRunTask(AfterMarketTask):
             if self._journal is not None:
                 self._journal.flush_to_file(latest_trading_date)
             self._logger.info(
-                {"event": "overseas_dryrun_done", "date": latest_trading_date, "signals": len(signals or [])}
+                {
+                    "event": "overseas_dryrun_done",
+                    "market_date": latest_trading_date,
+                    "market_date_text": market_date_text,
+                    "exchange": exchange_value,
+                    "signals": len(signals or []),
+                }
             )
             if self._notification_service:
                 await self._notification_service.emit(
                     NotificationCategory.BACKGROUND,
                     NotificationLevel.INFO,
                     "해외 VBO dry-run 완료",
-                    f"{latest_trading_date} 기준 {len(signals or [])}개 신호",
+                    f"미국 거래일 {market_date_text} 기준 dry-run 리포트: {len(signals or [])}개 신호",
                 )
             self._last_run_date = latest_trading_date  # 성공 시에만 dedup 마킹 → 실패 시 재시도
         except Exception as e:
             self._logger.error(
-                {"event": "overseas_dryrun_error", "date": latest_trading_date, "error": str(e)}, exc_info=True
+                {
+                    "event": "overseas_dryrun_error",
+                    "market_date": latest_trading_date,
+                    "market_date_text": market_date_text,
+                    "exchange": exchange_value,
+                    "error": str(e),
+                },
+                exc_info=True,
             )
             if self._notification_service:
                 await self._notification_service.emit(

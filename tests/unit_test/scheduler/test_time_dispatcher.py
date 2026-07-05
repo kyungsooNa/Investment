@@ -40,15 +40,18 @@ def _make_dispatcher(
     *,
     is_after_close: bool = True,
     weekday: int = 1,
+    date_str: str = "20250417",
 ):
     broker = MessageBroker()
     market_clock = _make_clock(
-        is_operating=is_operating, is_after_close=is_after_close, weekday=weekday
+        is_operating=is_operating, is_after_close=is_after_close,
+        weekday=weekday, date_str=date_str,
     )
     mcs = MagicMock()
     mcs.get_latest_trading_date = AsyncMock(return_value=latest_date)
+    logger = MagicMock()
     dispatcher = TimeDispatcher(
-        broker=broker, market_clock=market_clock, mcs=mcs, db_path=db_path
+        broker=broker, market_clock=market_clock, mcs=mcs, logger=logger, db_path=db_path
     )
     return dispatcher, broker
 
@@ -130,18 +133,62 @@ async def test_stop_exits_run_loop(db_path):
 
 # ── 장전 오전 실행 방지 TC ───────────────────────────────────────────────────
 
-async def test_ticket_allowed_on_weekend(db_path):
-    """주말에는 장 마감 시각 체크 없이 직전 거래일 티켓 발행이 허용된다."""
+async def test_no_ticket_on_non_trading_day_even_if_previous_trading_date_missing(db_path):
+    """mcs 주입 시 주말/휴장일에는 직전 거래일 티켓을 새로 발행하지 않는다."""
     dispatcher, broker = _make_dispatcher(
         is_operating=False, latest_date="20250418", db_path=db_path,
-        is_after_close=False, weekday=5,  # 토요일
+        is_after_close=False, weekday=5, date_str="20250419",  # 토요일
     )
     dispatcher.register_task("RANKING_UPDATE", priority=100)
 
     await dispatcher._maybe_dispatch()
     await _drain(dispatcher)
 
+    assert broker.empty is True
+
+
+async def test_us_holiday_20260703_skips_ticket_and_logs_clear_reason(db_path):
+    """2026-07-03 미국 독립기념일 관측휴장에는 7/2 기준 dry-run을 발행하지 않는다."""
+    dispatcher, broker = _make_dispatcher(
+        is_operating=False,
+        latest_date="20260702",
+        db_path=db_path,
+        is_after_close=True,
+        weekday=4,  # 금요일
+        date_str="20260703",
+    )
+    dispatcher.register_task("overseas_vbo_dryrun", priority=100)
+
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+
+    assert broker.empty is True
+    dispatcher._logger.info.assert_any_call(
+        "[TimeDispatcher] 오늘(20260703)은 휴장일/비거래일입니다 — "
+        "티켓 발행 스킵 (최근 거래일=20260702)"
+    )
+
+
+async def test_us_resume_20260706_dispatches_new_market_date(db_path):
+    """2026-07-06 미국장 재개일에는 새 거래일로 dry-run 티켓을 발행한다."""
+    dispatcher, broker = _make_dispatcher(
+        is_operating=False,
+        latest_date="20260706",
+        db_path=db_path,
+        is_after_close=True,
+        weekday=0,  # 월요일
+        date_str="20260706",
+    )
+    dispatcher.register_task("overseas_vbo_dryrun", priority=100)
+
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+
     assert broker.qsize == 1
+    ticket = await broker.consume()
+    broker.task_done()
+    assert ticket.task_name == "overseas_vbo_dryrun"
+    assert ticket.payload["date"] == "20260706"
 
 
 # ── SQLite 영속화 TC ─────────────────────────────────────────────────────────
