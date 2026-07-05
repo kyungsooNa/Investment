@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Awaitable, Callable, Dict, List, Optional
 
 from scheduler.ticket_queue.ticket import Ticket, POISON_PRIORITY
 from scheduler.ticket_queue.message_broker import MessageBroker
 from scheduler.ticket_queue.dlq_manager import DlqManager
 from core.loggers.trace_context import trace_scope
+from core.performance_profiler import PerformanceProfiler
 
 
 Handler = Callable[[dict], Awaitable[None]]
@@ -32,11 +34,13 @@ class WorkerPool:
         dlq_manager: DlqManager,
         logger: Optional[logging.Logger] = None,
         num_workers: int = 2,
+        performance_profiler: Optional[PerformanceProfiler] = None,
     ) -> None:
         self._broker = broker
         self._dlq = dlq_manager
         self._logger = logger or logging.getLogger(__name__)
         self._num_workers = num_workers
+        self._pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._registry: Dict[str, Handler] = {}
         self._worker_tasks: List[asyncio.Task] = []
         self._resume_event = asyncio.Event()
@@ -109,20 +113,31 @@ class WorkerPool:
         if not handler:
             self._logger.warning(f"[Worker-{worker_id}] 등록되지 않은 태스크: {ticket.task_name}")
             return
+        if self._pm.enabled:
+            # 발행(publish) → 실행 시작까지의 큐 대기시간. created_at은 UTC epoch 기준이라
+            # time.time()과 직접 뺄셈 가능 (log_timer(name, start_time)와 동일한 계산식).
+            self._pm.log_timer(
+                f"AfterMarketTask.{ticket.task_name}(queue_wait)",
+                datetime.fromisoformat(ticket.created_at).timestamp(),
+            )
+        t_exec = self._pm.start_timer()
         try:
-            with trace_scope(ticket.trace_id):
-                await handler(ticket.payload)
-        except Exception as e:
-            with trace_scope(ticket.trace_id):
-                self._logger.error(
-                    f"[Worker-{worker_id}] 작업 실패: {ticket.task_name} (시도 {ticket.attempt + 1}/{self.MAX_RETRIES}) — {e}",
-                    exc_info=True,
-                )
-            ticket.attempt += 1
-            if ticket.attempt < self.MAX_RETRIES:
-                delay = self.BASE_DELAY * ticket.attempt
-                self._logger.info(f"[Worker-{worker_id}] {delay:.0f}s 후 재시도: {ticket.task_name}")
-                await asyncio.sleep(delay)
-                await self._broker.publish(ticket)
-            else:
-                await self._dlq.handle_failed_ticket(ticket, str(e))
+            try:
+                with trace_scope(ticket.trace_id):
+                    await handler(ticket.payload)
+            except Exception as e:
+                with trace_scope(ticket.trace_id):
+                    self._logger.error(
+                        f"[Worker-{worker_id}] 작업 실패: {ticket.task_name} (시도 {ticket.attempt + 1}/{self.MAX_RETRIES}) — {e}",
+                        exc_info=True,
+                    )
+                ticket.attempt += 1
+                if ticket.attempt < self.MAX_RETRIES:
+                    delay = self.BASE_DELAY * ticket.attempt
+                    self._logger.info(f"[Worker-{worker_id}] {delay:.0f}s 후 재시도: {ticket.task_name}")
+                    await asyncio.sleep(delay)
+                    await self._broker.publish(ticket)
+                else:
+                    await self._dlq.handle_failed_ticket(ticket, str(e))
+        finally:
+            self._pm.log_timer(f"AfterMarketTask.{ticket.task_name}", t_exec)

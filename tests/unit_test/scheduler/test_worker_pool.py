@@ -156,3 +156,53 @@ async def test_no_trace_id_ticket_handler_gets_none():
     await pool.shutdown()
 
     assert captured == [None]
+
+
+async def test_handle_logs_perf_timers_when_profiler_enabled():
+    """profiler 활성화 시 큐 대기시간과 실행시간을 [Performance] 로그로 남긴다."""
+    from core.performance_profiler import PerformanceProfiler
+
+    fake_logger = MagicMock()
+    pm = PerformanceProfiler(logger=fake_logger, enabled=True, threshold=0.0)
+    broker = MessageBroker()
+    dlq = MagicMock(spec=DlqManager)
+    pool = WorkerPool(broker=broker, dlq_manager=dlq, performance_profiler=pm, num_workers=1)
+
+    async def handler(payload):
+        pass
+
+    pool.register("PERF_TASK", handler)
+    await pool.start()
+    await broker.publish(Ticket(priority=50, task_name="PERF_TASK", payload={}))
+    await broker.join()
+    await pool.shutdown()
+
+    logged = [c.args[0] for c in fake_logger.info.call_args_list]
+    assert any("AfterMarketTask.PERF_TASK(queue_wait):" in m for m in logged)
+    assert any(m.startswith("[Performance] AfterMarketTask.PERF_TASK:") for m in logged)
+
+
+async def test_handle_logs_execution_timer_even_on_failure():
+    """실행 중 예외가 발생해도 실행시간 타이머는 매 시도마다 기록된다."""
+    from core.performance_profiler import PerformanceProfiler
+
+    fake_logger = MagicMock()
+    pm = PerformanceProfiler(logger=fake_logger, enabled=True, threshold=0.0)
+    broker = MessageBroker()
+    dlq = MagicMock(spec=DlqManager)
+    dlq.handle_failed_ticket = AsyncMock()
+    pool = WorkerPool(broker=broker, dlq_manager=dlq, performance_profiler=pm, num_workers=1)
+    pool.BASE_DELAY = 0
+
+    async def always_fail(payload):
+        raise RuntimeError("boom")
+
+    pool.register("FAIL_TASK", always_fail)
+    await pool.start()
+    await broker.publish(Ticket(priority=50, task_name="FAIL_TASK", payload={}))
+    await broker.join()
+    await pool.shutdown()
+
+    logged = [c.args[0] for c in fake_logger.info.call_args_list]
+    exec_logs = [m for m in logged if m.startswith("[Performance] AfterMarketTask.FAIL_TASK:")]
+    assert len(exec_logs) == pool.MAX_RETRIES

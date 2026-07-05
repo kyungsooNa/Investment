@@ -30,11 +30,15 @@ class BackgroundScheduler:
         worker_pool=None,
         time_dispatcher=None,
         time_dispatchers=None,
+        api_budget_limiter=None,
+        budget_snapshot_interval_sec: float = 60.0,
     ):
         self._logger = logger or logging.getLogger(__name__)
         self._pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._tasks: Dict[str, SchedulableTask] = {}  # name -> task
         self._worker_pool = worker_pool
+        self._api_budget_limiter = api_budget_limiter
+        self._budget_snapshot_interval_sec = budget_snapshot_interval_sec
         # 시장별 TimeDispatcher 복수 지원: 단수 time_dispatcher 와 복수 time_dispatchers 를
         # 함께 받아 하나의 리스트로 정규화한다 (KR + US 동시 구동).
         self._time_dispatchers = list(time_dispatchers or [])
@@ -109,6 +113,10 @@ class BackgroundScheduler:
             self._logger.info(
                 f"[BackgroundScheduler] TimeDispatcher {len(self._time_dispatchers)}개 시작 완료"
             )
+        if self._api_budget_limiter is not None and self._pm.enabled:
+            t = asyncio.create_task(self._budget_snapshot_loop(), name="budget-snapshot-logger")
+            self._infra_tasks.append(t)
+            self._logger.info("[BackgroundScheduler] BudgetSnapshot 로거 시작")
 
         for name, task in self._tasks.items():
             if task.state == TaskState.SUSPENDED:
@@ -124,6 +132,36 @@ class BackgroundScheduler:
                 except Exception as e:
                     self._logger.error(f"[BackgroundScheduler] '{name}' 시작 실패: {e}", exc_info=True)
         self._pm.log_timer("BackgroundScheduler.start_all", t_start)
+
+    async def _budget_snapshot_loop(self) -> None:
+        """ApiBudgetLimiter 상태를 주기적으로 성능 로그에 남긴다.
+
+        [Performance] 타이머는 threshold(기본 1.0s) 미만 호출을 걷어내 실제 호출량을
+        가려버린다. acquired_total/rate_wait_seconds_total 같은 누적 카운터를 주기
+        스냅샷으로 남겨 그 공백(실호출량, 검열 없는 총 대기시간)을 메운다.
+        """
+        try:
+            while True:
+                await asyncio.sleep(self._budget_snapshot_interval_sec)
+                self._log_budget_snapshot()
+        except asyncio.CancelledError:
+            pass
+
+    def _log_budget_snapshot(self) -> None:
+        snapshot = self._api_budget_limiter.snapshot()
+        for category, lane in snapshot.items():
+            self._emit_budget_snapshot_line(category, lane)
+            emergency = lane.get("emergency")
+            if emergency:
+                self._emit_budget_snapshot_line(f"{category}(emergency)", emergency)
+
+    def _emit_budget_snapshot_line(self, category: str, lane: dict) -> None:
+        msg = (
+            f"[Performance] BudgetSnapshot.{category}: {lane['rate_wait_seconds_total']:.4f}s "
+            f"(active={lane['active']}, limit={lane['limit']}, acquired_total={lane['acquired_total']}, "
+            f"rate_wait_total={lane['rate_wait_total']}, max_observed_active={lane['max_observed_active']})"
+        )
+        self._pm.logger.info(msg)
 
     async def shutdown(self) -> None:
         """등록된 모든 태스크를 정상 종료한다.
