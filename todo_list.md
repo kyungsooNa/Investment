@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-05 (검토 반영: Pool B/M-2 수치 동기화 + 2-2 내부 budget 한도 검토 항목 추가)
+최종 업데이트: 2026-07-05 (M-1 재조사로 필수 게이트 하향 + M-2 문서 동기화 완료)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -165,7 +165,7 @@
 
 ### M-2. 문서 동기화 + 구조 감시 [저위험 상시]
 
-- [ ] `docs/backtest.md`(최종 2026-07-03 #619 — 슬리피지 인자만 반영, 전반 동기화 필요)·`CODEBASE_SUMMARY.md`(최종 2026-06-21)를 최근 변경(bootstrap 분해 진전·EventShadowManager 분리·해외/테마 계층·브로커 계층 계측)에 맞춰 갱신.
+- [x] `docs/backtest.md`(본문은 #619 슬리피지/스프레드 CLI까지 이미 반영, 날짜만 동기화)·`CODEBASE_SUMMARY.md`(bootstrap 분해 진전·EventShadowManager 분리·해외/테마 계층·브로커 계층 계측 4곳 반영) 갱신 완료 (2026-07-05).
 - 감시(조치 아님): `view/web/bootstrap/service_container.py`(962줄 — 2026-07-05 기준, 07-02 902줄 대비 +60줄로 증가 지속)가 web_app_initializer 비대화의 재발 패턴인지 주기 점검. `scheduler/strategy_scheduler.py` 2,152줄 / `services/strategy_log_report_service.py` 2,143줄 — 분해는 3-4 재승격과 함께 진행.
 
 ---
