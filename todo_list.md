@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-05 (2-4 KIS 보통주 무틱 에스컬레이션 패키지 작성)
+최종 업데이트: 2026-07-05 (검토 반영: Pool B/M-2 수치 동기화 + 2-2 내부 budget 한도 검토 항목 추가)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -55,7 +55,7 @@
 
 - [x] 슬리피지/스프레드 CLI 노출 (#619) — `--market-slippage-pct`(MARKET/STOP 체결)·`--spread-pct`. LIMIT 체결엔 미적용(시뮬레이터 의미론).
 - [blocked] 활성 전략 전체 walk-forward + Monte Carlo 재실행 + 민감도 표 — **2026-07-03 파일럿(VBO 6/15-30, PP 6/1-12) 결과 전 구간 0거래**로 현시점 무의미.
-  - 원인 ①: 백테스트 유니버스가 **현재 시점** `data/premium_stocks.json`(PIT 아님) — 2026-07-02 기준 KOSPI 1종목/KOSDAQ 0종목이라 어떤 과거 구간을 돌려도 후보가 없다.
+  - 원인 ①: 백테스트 유니버스가 **현재 시점** `data/premium_stocks.json`(PIT 아님) — 2026-07-03 재생성 기준 KOSPI 0종목/KOSDAQ 0종목이라 어떤 과거 구간을 돌려도 후보가 없다.
   - 원인 ②: 6월 하순 양시장 MA 하락 → 마켓 타이밍 게이트가 스캔 차단(`market_timing_off_both`) — 롱온리 전략의 정상 휴식.
   - 해제 조건: (a) 1-5 캡처 코퍼스 축적(`replay_microstructure_*.json`의 `metadata.codes`가 당일 후보 스냅샷 = PIT 후보군 역할) 또는 (b) 시장 회복으로 Pool B 복원.
   - 실행 메모: 첫 런이 REST 지배적(12거래일 ≈ 18~23분), **캐시 워밍 후 변형 런 ≈ 1분** — 후보만 갖춰지면 민감도 그리드는 저렴.
@@ -101,6 +101,7 @@
 
 - [~] API budget limiter 운영 정책 — 동시성/rate 분리·emergency overlay·전역 8/s 등 구현 완료.
   - 남은 작업(외부): 실제 KIS 계정별 REST/WebSocket 유량 한도 숫자를 공식 포털/계정 공지로 **운영 직전 재확인** → 필요 시 `_global` 8/s 운영값 조정. 공개 자료가 갈리므로 코드 기본값은 보수값 유지.
+  - [ ] 남은 작업(내부): #609/#613 계층 계측의 07-02 정화 로그 결론 반영 — 지연의 94%가 `RQBudget` throttle 대기(재시도·KIS 네트워크 무죄), 특히 `quotation_ohlcv` 콜당 평균 2.61s(736콜)·`quotation` 1.46s(2,586콜). `DEFAULT_API_BUDGET_LIMITS`의 해당 카테고리 한도 vs 실호출량을 비교해 상향 여지 검토. 폴링 지연이 2-4의 실질 슬리피지로 작용하므로 무틱 해소와 별개의 내부 개선 여지.
 
 주요 파일: `core/retry_queue/api_budget_limiter.py`, `docs/api_budget_coverage_matrix.md`
 
@@ -159,8 +160,8 @@
 
 ### M-2. 문서 동기화 + 구조 감시 [저위험 상시]
 
-- [ ] `docs/backtest.md`(최종 2026-05-13)·`CODEBASE_SUMMARY.md`(최종 2026-06-21)를 최근 변경(bootstrap 분해 진전·EventShadowManager 분리·해외/테마 계층·브로커 계층 계측)에 맞춰 갱신.
-- 감시(조치 아님): `view/web/bootstrap/service_container.py`(902줄, 최근 11일간 13회 변경)가 web_app_initializer 비대화의 재발 패턴인지 주기 점검. `scheduler/strategy_scheduler.py` 2,152줄 / `services/strategy_log_report_service.py` 2,059줄 — 분해는 3-4 재승격과 함께 진행.
+- [ ] `docs/backtest.md`(최종 2026-07-03 #619 — 슬리피지 인자만 반영, 전반 동기화 필요)·`CODEBASE_SUMMARY.md`(최종 2026-06-21)를 최근 변경(bootstrap 분해 진전·EventShadowManager 분리·해외/테마 계층·브로커 계층 계측)에 맞춰 갱신.
+- 감시(조치 아님): `view/web/bootstrap/service_container.py`(962줄 — 2026-07-05 기준, 07-02 902줄 대비 +60줄로 증가 지속)가 web_app_initializer 비대화의 재발 패턴인지 주기 점검. `scheduler/strategy_scheduler.py` 2,152줄 / `services/strategy_log_report_service.py` 2,143줄 — 분해는 3-4 재승격과 함께 진행.
 
 ---
 
@@ -179,7 +180,7 @@
 
 ### Pool B 튜닝 (후보 부족 **재발 확인 — 정책 결정 대기**)
 
-- **재발 확인 (2026-07-02)**: 장마감 프리미엄 워치리스트 생성 결과 KOSPI 1종목(신세계)/KOSDAQ 0종목 (`logs/strategies/oneil_pool/20260702_generate_premium_watchlist_1.log.json`). 단, 양시장 MA 하락 구간이라 마켓 타이밍 게이트가 어차피 스캔을 차단 중 — 하락장에서 Stage 2+RS 필터가 마르는 것은 설계상 자연스러운 면이 있어, 완화가 실익(추가 진입 기회)으로 이어지는지는 시장 회복 국면의 후보 수로 판단할 것.
+- **재발 확인 (2026-07-02, 07-03 악화)**: 장마감 프리미엄 워치리스트 생성 결과 KOSPI 1종목(신세계)/KOSDAQ 0종목 (`logs/strategies/oneil_pool/20260702_generate_premium_watchlist_1.log.json`), 2026-07-03 재생성은 KOSPI 0/KOSDAQ 0 (`data/premium_stocks.json`). 단, 양시장 MA 하락 구간이라 마켓 타이밍 게이트가 어차피 스캔을 차단 중 — 하락장에서 Stage 2+RS 필터가 마르는 것은 설계상 자연스러운 면이 있어, 완화가 실익(추가 진입 기회)으로 이어지는지는 시장 회복 국면의 후보 수로 판단할 것.
 - [ ] 거래대금 기준 50억 → 30억 추가 완화 검토.
 - [ ] 정배열 조건을 Pool B 전용 `current > ma_20d` 중심으로 완화 검토.
 
