@@ -526,7 +526,7 @@ async def _get_virtual_history_impl(ctx, force_code, apply_cost):
     if vm is None:
         return {"trades": [], "weekly_changes": {}}
 
-    trades = vm.get_all_trades(apply_cost=apply_cost)
+    trades = [t for t in vm.get_all_trades(apply_cost=apply_cost) if t.get('status') != 'FAILED']
 
     # ---------------------------------------------------------
     # 1~3단계: 종목명 및 현재가 Enrichment (기존 로직 유지 - API 통신)

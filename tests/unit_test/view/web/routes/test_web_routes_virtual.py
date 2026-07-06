@@ -881,6 +881,43 @@ async def test_calculate_benchmark_exception_returns_zero_history(mock_web_ctx):
     ]
 
 
+@pytest.mark.asyncio
+async def test_get_virtual_history_excludes_failed_order_pseudo_strategies(web_client, mock_web_ctx):
+    """BUY실패/SELL실패(주문 실패 FAILED 상태 기록)는 성과 집계/전략 목록에서 제외되어야 한다."""
+    web_api._PRICE_CACHE.clear()
+
+    mock_web_ctx.virtual_trade_service.get_all_trades.return_value = [
+        mock_trade(code="A", strategy="S1", buy_price=1000, qty=1, status="SOLD", sell_price=1200, return_rate=20.0, buy_date="2025-01-01 09:00:00"),
+        mock_trade(code="B", strategy="BUY실패", buy_price=1000, qty=1, status="FAILED", sell_price=0, return_rate=0.0, buy_date="2025-01-02 09:00:00"),
+        mock_trade(code="C", strategy="SELL실패", buy_price=1000, qty=1, status="FAILED", sell_price=0, return_rate=0.0, buy_date="2025-01-02 09:00:00"),
+    ]
+
+    mock_web_ctx.virtual_trade_service.save_daily_snapshot = MagicMock()
+    mock_web_ctx.virtual_trade_service._load_data.return_value = {}
+    mock_web_ctx.virtual_trade_service.get_daily_change.return_value = (None, None)
+    mock_web_ctx.virtual_trade_service.get_weekly_change.return_value = (None, None)
+
+    async def mock_multi_price(codes):
+        return ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
+
+    response = web_client.get("/api/virtual/history?apply_cost=false")
+    assert response.status_code == 200
+    data = response.json()
+
+    trade_strategies = [t["strategy"] for t in data["trades"]]
+    assert "BUY실패" not in trade_strategies
+    assert "SELL실패" not in trade_strategies
+    assert "S1" in trade_strategies
+
+    assert "BUY실패" not in data["cumulative_returns"]
+    assert "SELL실패" not in data["cumulative_returns"]
+    assert "BUY실패" not in data["summary_agg"]
+    assert "SELL실패" not in data["summary_agg"]
+    assert "BUY실패" not in data["counts"]
+    assert "SELL실패" not in data["counts"]
+
+
 def test_aggregate_virtual_data_empty_and_exception_path():
     """집계 함수의 빈 입력/예외 폴백 분기 검증."""
     from view.web.routes.virtual import _aggregate_virtual_data
