@@ -24,6 +24,7 @@ _SCHEDULE_TYPES = {
     "websocket_watchdog":  "intraday",
     "cache_warmup":       "pre_market",
     "strategy_scheduler":  "intraday",
+    "intraday_theme_leader_alert": "intraday",
     "ranking_refresh":     "after_market",
     "daily_price_collector": "after_market",
     "minervini_update":     "after_market",

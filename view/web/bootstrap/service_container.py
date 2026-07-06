@@ -86,6 +86,7 @@ from task.background.always_on.notification_queue_task import NotificationQueueT
 from task.background.intraday.opening_position_reconcile_task import OpeningPositionReconcileTask
 from task.background.intraday.pre_market_health_check_task import PreMarketHealthCheckTask
 from task.background.intraday.program_capture_subscription_task import ProgramCaptureSubscriptionTask
+from task.background.intraday.theme_intraday_leader_alert_task import ThemeIntradayLeaderAlertTask
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from view.web.bootstrap.runtime_mode import RuntimeMode
 from view.web.market_mode_utils import is_market_enabled
@@ -647,6 +648,7 @@ class ServiceContainer:
                 ctx.after_market_reconcile_task = None
                 ctx.opening_position_reconcile_task = None
                 ctx.microstructure_capture_task = None
+                ctx.theme_intraday_leader_alert_task = None
                 if needs_web:
                     ctx.notification_queue_task = NotificationQueueTask(
                         notification_service=ctx.notification_service,
@@ -864,6 +866,20 @@ class ServiceContainer:
                 ctx.after_market_reconcile_task = None
                 ctx.microstructure_capture_task = None
                 ctx.program_capture_subscription_task = None
+                ctx.theme_intraday_leader_alert_task = None
+
+            ctx.theme_intraday_leader_alert_task = ThemeIntradayLeaderAlertTask(
+                ranking_task=ctx.ranking_task,
+                theme_daily_leader_service=ctx.theme_daily_leader_service,
+                telegram_reporter=getattr(ctx, 'telegram_reporter', None),
+                market_calendar_service=ctx._mcs,
+                market_clock=ctx.market_clock,
+                logger=ctx.logger,
+            ) if (
+                needs_trading
+                and ctx.ranking_task is not None
+                and ctx.theme_daily_leader_service is not None
+            ) else None
 
             if needs_web:
                 ctx.notification_queue_task = NotificationQueueTask(
