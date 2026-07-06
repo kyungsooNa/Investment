@@ -40,9 +40,8 @@ _ETF_PREFIXES = (
 class RankingTask(AfterMarketTask):
     """랭킹 데이터를 수집·캐시하는 백그라운드 태스크."""
 
-    # 청크 크기 및 레이트 리밋
+    # 청크 크기 (API 호출 페이싱은 ApiBudgetLimiter가 중앙에서 담당)
     API_CHUNK_SIZE = 8
-    CHUNK_SLEEP_SEC = 1.1
 
     def __init__(
         self,
@@ -423,14 +422,6 @@ class RankingTask(AfterMarketTask):
                         f"투자자 랭킹 진행: {processed}/{total} ({processed/total*100:.1f}%) "
                         f"| 수집: {len(results)} | 프로그램: {len(program_results)} | 소요: {elapsed:.1f}s"
                     )
-
-                # 전체 캐시 HIT면 sleep 불필요, 실제 API 호출이 있었으면 rate limit sleep
-                all_cache_hit = all(
-                    getattr(r, '_cache_hit', False)
-                    for r in all_responses if not isinstance(r, Exception)
-                )
-                if not all_cache_hit:
-                    await asyncio.sleep(self.CHUNK_SLEEP_SEC)
 
             # 2-1. 프로그램 데이터의 acml_tr_pbmn으로 투자자 결과 보정
             prog_tr_map = {r["stck_shrn_iscd"]: r["acml_tr_pbmn"] for r in program_results}
