@@ -244,9 +244,13 @@ async def test_program_trading_subscription(mock_deps):
     ctx.streaming_service.subscribe_program_trading.assert_awaited_with("005930")
     ctx.streaming_service.subscribe_unified_price.assert_awaited_with("005930")
     ctx.streaming_stock_repo.mark_desired.assert_called_with("005930", StreamingType.PROGRAM_TRADING)
+    ctx.streaming_stock_repo.mark_active.assert_any_call("005930", StreamingType.PROGRAM_TRADING)
+    ctx.streaming_stock_repo.mark_active.assert_any_call("005930", StreamingType.UNIFIED_PRICE)
 
     # 2. 중복 구독 시도 (API 호출 없어야 함)
-    ctx.streaming_stock_repo.get_desired.return_value = {"005930"}
+    ctx.streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
     await ctx.start_program_trading("005930")
     assert ctx.streaming_service.subscribe_program_trading.call_count == 1
 
@@ -254,6 +258,8 @@ async def test_program_trading_subscription(mock_deps):
     await ctx.stop_program_trading("005930")
     ctx.streaming_service.unsubscribe_program_trading.assert_awaited_with("005930")
     ctx.streaming_stock_repo.unmark_desired.assert_called_with("005930", StreamingType.PROGRAM_TRADING)
+    ctx.streaming_stock_repo.mark_inactive.assert_any_call("005930", StreamingType.PROGRAM_TRADING)
+    ctx.streaming_stock_repo.mark_inactive.assert_any_call("005930", StreamingType.UNIFIED_PRICE)
 
 @pytest.mark.asyncio
 async def test_market_clock_methods(mock_deps):
@@ -449,7 +455,10 @@ async def test_stop_all_program_trading(mock_deps):
     ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
 
     ctx.streaming_stock_repo = MagicMock()
-    ctx.streaming_stock_repo.get_desired = MagicMock(return_value={"005930", "000660"})
+    ctx.streaming_stock_repo.get_desired = MagicMock(
+        side_effect=lambda stream_type: {"005930", "000660"}
+        if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
     ctx.streaming_stock_repo.unmark_desired = AsyncMock()
     ctx.streaming_stock_repo.mark_inactive = AsyncMock()
 
@@ -458,6 +467,7 @@ async def test_stop_all_program_trading(mock_deps):
     assert ctx.streaming_service.unsubscribe_program_trading.call_count == 2
     assert ctx.streaming_service.unsubscribe_unified_price.call_count == 2
     assert ctx.streaming_stock_repo.unmark_desired.call_count == 2
+    assert ctx.streaming_stock_repo.mark_inactive.call_count == 4
 
 @pytest.mark.asyncio
 async def test_initialize_services_with_pydantic_config_object(mock_deps):

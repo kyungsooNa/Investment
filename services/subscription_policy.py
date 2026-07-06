@@ -280,12 +280,17 @@ class SubscriptionPolicy:
             is_price = any(req["type"] == StreamingType.UNIFIED_PRICE for req in requests)
 
             slots_needed = 0
-            if is_pt: slots_needed += 2
-            if is_price: slots_needed += 1
+            if is_pt:
+                slots_needed += 2  # H0STPGM0 + H0UNCNT0 companion price
+            elif is_price:
+                slots_needed += 1
 
             if available_slots >= slots_needed:
-                if is_pt: desired_pt.add(code)
-                if is_price: desired_price.add(code)
+                if is_pt:
+                    desired_pt.add(code)
+                    desired_price.add(code)
+                elif is_price:
+                    desired_price.add(code)
                 available_slots -= slots_needed
             else:
                 # 슬롯 부족 시: Price만이라도 가능한지 확인
@@ -459,7 +464,12 @@ class SubscriptionPolicy:
         현재 사용 중인 웹소켓 슬롯 개수를 계산합니다.
         (일반 호가/체결(Price) = 1슬롯, 프로그램 매매(PT) = 2슬롯)
         """
-        return len(self._active_codes_price) + (len(self._active_codes_pt) * 2)
+        missing_companion_price = self._active_codes_pt - self._active_codes_price
+        return (
+            len(self._active_codes_price)
+            + len(self._active_codes_pt)
+            + len(missing_companion_price)
+        )
 
 # Backward-compatibility alias
 PriceSubscriptionService = SubscriptionPolicy
