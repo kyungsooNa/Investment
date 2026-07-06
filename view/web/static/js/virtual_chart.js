@@ -113,7 +113,13 @@ function setVirtualChartMessage(message) {
     grid.appendChild(empty);
 }
 
-function createVirtualChartCard(strategyName) {
+function formatVirtualChartTradeCounts(counts) {
+    const buyCount = Number(counts?.buy ?? 0);
+    const sellCount = Number(counts?.sell ?? 0);
+    return `기간 매수 ${buyCount} / 매도 ${sellCount}`;
+}
+
+function createVirtualChartCard(strategyName, tradeCounts) {
     const card = document.createElement('div');
     card.className = 'virtual-mini-chart-card';
 
@@ -124,7 +130,7 @@ function createVirtualChartCard(strategyName) {
     title.textContent = strategyName === 'ALL' ? '전체(ALL)' : strategyName;
 
     const legend = document.createElement('span');
-    legend.textContent = 'KOSPI200 / KOSDAQ150 비교';
+    legend.textContent = formatVirtualChartTradeCounts(tradeCounts);
 
     header.appendChild(title);
     header.appendChild(legend);
@@ -374,12 +380,12 @@ function getDisplayStrategies(selectedStrategies, allHistories) {
     return selectedStrategies.filter(name => allHistories[name]?.length > 0);
 }
 
-function renderMiniChart(grid, strategyName, strategyHistory, benchmarks) {
+function renderMiniChart(grid, strategyName, strategyHistory, benchmarks, tradeCounts) {
     const activeDates = strategyHistory.map(h => h.date).filter(Boolean);
     if (activeDates.length === 0) return;
 
     const labels = activeDates.map(d => d.substring(5));
-    const { card, canvas } = createVirtualChartCard(strategyName);
+    const { card, canvas } = createVirtualChartCard(strategyName, tradeCounts);
     grid.appendChild(card);
 
     const chart = new Chart(canvas.getContext('2d'), {
@@ -415,6 +421,7 @@ window.refreshVirtualChart = async function(selectedStrategies) {
 
         const allHistories = data.histories;
         const benchmarks = data.benchmarks || {};
+        const chartCounts = data.chart_counts || {};
         const allStrategyNames = Object.keys(allHistories).filter(name => name !== 'ALL');
         allStrategyNames.forEach(name => getStrategyColor(name));
 
@@ -427,7 +434,7 @@ window.refreshVirtualChart = async function(selectedStrategies) {
         destroyVirtualCharts();
         grid.innerHTML = '';
         displayStrategies.forEach(name => {
-            renderMiniChart(grid, name, allHistories[name], benchmarks);
+            renderMiniChart(grid, name, allHistories[name], benchmarks, chartCounts[name]);
         });
     } catch (error) {
         console.error('[VirtualChart] 업데이트 실패:', error);

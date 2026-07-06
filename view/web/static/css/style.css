@@ -386,6 +386,8 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 }
 
 .virtual-mini-chart-header h3 {
+    flex: 1 1 auto;
+    min-width: 0;
     margin: 0;
     color: var(--text-primary);
     font-size: 0.95rem;
@@ -399,6 +401,7 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     flex: 0 0 auto;
     color: var(--text-secondary);
     font-size: 0.75rem;
+    white-space: nowrap;
 }
 
 .virtual-mini-chart-canvas {
