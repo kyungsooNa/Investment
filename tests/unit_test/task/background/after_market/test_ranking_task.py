@@ -773,6 +773,22 @@ async def test_refresh_investor_ranking_optimization(bg_service, mock_deps):
 
 
 @pytest.mark.asyncio
+async def test_refresh_investor_ranking_does_not_sleep_between_chunks(bg_service, mock_deps, disable_asyncio_sleep):
+    """중앙 ApiBudgetLimiter가 이미 API 호출 페이싱을 담당하므로, 청크 사이 수동 sleep은 없어야 한다."""
+    broker, mapper, _, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([
+        (f"{i:05d}0", f"종목{i}", "KOSPI") for i in range(9)
+    ])
+    broker.get_investor_trade_by_stock_daily = AsyncMock(
+        return_value=_make_investor_response(100)
+    )
+
+    await bg_service.refresh_investor_ranking()
+
+    disable_asyncio_sleep.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_refresh_investor_ranking_skipped_during_market_open(bg_service, mock_deps):
     """장 중에는 투자자 랭킹 갱신(직접 호출)을 스킵해야 한다."""
     broker, _, _, logger, market_clock, market_calendar_service = mock_deps

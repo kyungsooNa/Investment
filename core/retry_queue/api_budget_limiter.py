@@ -69,6 +69,8 @@ class _LaneState:
     max_observed_active: int = 0
     rate_wait_total: int = 0
     rate_wait_seconds_total: float = 0.0
+    semaphore_wait_total: int = 0
+    semaphore_wait_seconds_total: float = 0.0
 
 
 @dataclass
@@ -140,7 +142,13 @@ class ApiBudgetLimiter:
         lane = self._lane_for(budget, priority)
         await self._wait_for_rate_slot(self._global_lane_for(priority))
         await self._wait_for_rate_slot(lane)
+        will_wait_for_semaphore = lane.active >= lane.limit
+        if will_wait_for_semaphore:
+            semaphore_wait_start = self._monotonic()
         await lane.semaphore.acquire()
+        if will_wait_for_semaphore:
+            lane.semaphore_wait_total += 1
+            lane.semaphore_wait_seconds_total += self._monotonic() - semaphore_wait_start
         lane.active += 1
         lane.acquired_total += 1
         lane.max_observed_active = max(lane.max_observed_active, lane.active)
@@ -171,6 +179,8 @@ class ApiBudgetLimiter:
             "max_observed_active": lane.max_observed_active,
             "rate_wait_total": lane.rate_wait_total,
             "rate_wait_seconds_total": lane.rate_wait_seconds_total,
+            "semaphore_wait_total": lane.semaphore_wait_total,
+            "semaphore_wait_seconds_total": lane.semaphore_wait_seconds_total,
         }
 
     def _budget_for(self, category: str) -> _CategoryBudget:
