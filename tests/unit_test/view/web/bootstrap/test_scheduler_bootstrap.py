@@ -6,7 +6,7 @@ TimeDispatcher 태스크 등록, BackgroundScheduler / ForegroundScheduler 생�
 
 또한 `WebAppContext.runtime_mode` 별로 task 등록이 그룹 단위로 분기되는지
 검증한다. StrategySchedulerTaskAdapter 는 StrategyFactory 책임이라 여기서
-다루지 않는다 (총 15개 = SchedulerBootstrap 등록 분, 16번째 adapter 는 별도).
+다루지 않는다.
 """
 import contextlib
 from types import SimpleNamespace
@@ -47,7 +47,7 @@ def _make_fake_context(runtime_mode: RuntimeMode = RuntimeMode.ALL):
         "log_cleanup_task", "strategy_log_report_task", "theme_classification_task",
         "theme_daily_leader_report_task",
         "opening_position_reconcile_task", "after_market_reconcile_task",
-        "post_market_replay_audit_task",
+        "post_market_replay_audit_task", "newhigh_strategy_coverage_backtest_task",
         "websocket_watchdog_task", "pre_market_health_check_task",
         "cache_warmup_task", "notification_queue_task",
         "market_cap_gap_report_kr_task", "market_cap_gap_report_us_task",
@@ -90,17 +90,17 @@ def test_creates_foreground_even_in_batch_only_mode(patched_scheduler_deps):
 
 # ---------- mode=ALL 회귀 (현행 동작 100% 유지) ----------
 
-def test_all_mode_registers_16_tasks_to_background(patched_scheduler_deps):
+def test_all_mode_registers_22_tasks_to_background(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.ALL)
     _run(ctx)
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 21
+    assert bg.register.call_count == 22
 
 
-def test_all_mode_registers_12_tasks_to_time_dispatcher(patched_scheduler_deps):
+def test_all_mode_registers_14_tasks_to_time_dispatcher(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.ALL)
     _run(ctx)
-    assert ctx.time_dispatcher.register_task.call_count == 13
+    assert ctx.time_dispatcher.register_task.call_count == 14
 
 
 # ---------- mode 별 task 등록 ----------
@@ -181,6 +181,7 @@ def test_batch_only_registers_after_market_tasks_no_watchdog(patched_scheduler_d
         "ranking_task", "minervini_update_task", "daily_price_collector_task",
         "ohlcv_update_task", "premium_watchlist_generator_task", "newhigh_task",
         "log_cleanup_task", "post_market_replay_audit_task",
+        "newhigh_strategy_coverage_backtest_task",
         "strategy_log_report_task", "after_market_reconcile_task",
         "theme_classification_task", "theme_daily_leader_report_task",
         "market_cap_gap_report_kr_task", "market_cap_gap_report_us_task",
@@ -233,6 +234,6 @@ def test_skips_none_tasks(patched_scheduler_deps):
     _run(ctx)
     # opening_position_reconcile_task 는 TRADING 그룹 + TimeDispatcher 등록 대상이었으므로
     # 둘 다 -1 감소한다.
-    assert ctx.time_dispatcher.register_task.call_count == 12
+    assert ctx.time_dispatcher.register_task.call_count == 13
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 20
+    assert bg.register.call_count == 21

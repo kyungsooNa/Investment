@@ -128,6 +128,7 @@ class SchedulerBootstrap:
         self._register(self._optional_task("theme_daily_leader_report_task"), TaskPriority.LOW)
         self._register(ctx.log_cleanup_task, TaskPriority.MAINTENANCE)
         self._register(ctx.post_market_replay_audit_task, TaskPriority.LOW)
+        self._register(self._optional_task("newhigh_strategy_coverage_backtest_task"), TaskPriority.LOW)
         self._register(ctx.strategy_log_report_task, TaskPriority.LOW)
         self._register(ctx.after_market_reconcile_task, TaskPriority.LOW)
         # 자체 AfterMarketLoop 사용 (KST 16:05): market_cap_gap 과 동일 패턴.

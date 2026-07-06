@@ -38,6 +38,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "AfterMarketReconcileTask", "OpeningPositionReconcileTask",
     "OpeningPositionReconcileService", "PerformanceProfiler",
     "PostMarketReplayAuditService", "PostMarketReplayAuditTask",
+    "NewHighStrategyCoverageBacktestService", "NewHighStrategyCoverageBacktestTask",
 ]
 
 
@@ -211,6 +212,9 @@ def test_service_container_batch_mode_skips_streaming_and_intraday_web_tasks(pat
     assert ctx.notification_queue_task is None
     assert ctx.after_market_reconcile_task is patched_service_container_deps["AfterMarketReconcileTask"].return_value
     assert ctx.post_market_replay_audit_task is patched_service_container_deps["PostMarketReplayAuditTask"].return_value
+    assert ctx.newhigh_strategy_coverage_backtest_task is patched_service_container_deps[
+        "NewHighStrategyCoverageBacktestTask"
+    ].return_value
     assert ctx.daily_price_collector_task is patched_service_container_deps["DailyPriceCollectorTask"].return_value
     assert ctx.order_execution_service is patched_service_container_deps["OrderExecutionService"].return_value
 
@@ -271,6 +275,7 @@ def test_service_container_trading_mode_keeps_realtime_intraday_and_skips_web_ba
     patched_service_container_deps["ThemeDailyLeaderReportTask"].assert_not_called()
     patched_service_container_deps["StrategyLogReportTask"].assert_not_called()
     patched_service_container_deps["PostMarketReplayAuditTask"].assert_not_called()
+    patched_service_container_deps["NewHighStrategyCoverageBacktestTask"].assert_not_called()
 
     assert ctx.notification_queue_task is None
     assert ctx.minervini_update_task is None
@@ -280,6 +285,7 @@ def test_service_container_trading_mode_keeps_realtime_intraday_and_skips_web_ba
     assert ctx.theme_daily_leader_report_task is None
     assert ctx.strategy_log_report_task is None
     assert ctx.post_market_replay_audit_task is None
+    assert ctx.newhigh_strategy_coverage_backtest_task is None
     assert ctx.order_execution_service is patched_service_container_deps["OrderExecutionService"].return_value
     assert ctx.oneil_universe_service is patched_service_container_deps["OneilUniverseService"].return_value
 

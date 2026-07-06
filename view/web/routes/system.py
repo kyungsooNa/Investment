@@ -37,6 +37,7 @@ _SCHEDULE_TYPES = {
     "overseas_vbo_dryrun": "after_market",
     "after_market_reconcile": "after_market",
     "post_market_replay_audit": "after_market",
+    "newhigh_strategy_coverage_backtest": "after_market",
     "strategy_log_report": "after_market",
     "log_cleanup": "after_market",
     "notification_queue_task":  "always_on",
@@ -807,6 +808,25 @@ async def force_newhigh_update():
 
     asyncio.create_task(task.force_run())
     return {"success": True, "message": "52주 신고가 강제 탐색이 시작되었습니다."}
+
+
+@router.post("/background/newhigh-strategy-coverage/force-update")
+async def force_newhigh_strategy_coverage_backtest():
+    """신고가 종목 대상 전략별 미매수 비율 백테스트를 강제 실행한다."""
+    ctx = _get_ctx()
+    task = getattr(ctx, "newhigh_strategy_coverage_backtest_task", None)
+    if not task:
+        raise HTTPException(
+            status_code=503,
+            detail="NewHighStrategyCoverageBacktestTask가 초기화되지 않았습니다",
+        )
+
+    progress = task.get_progress()
+    if progress.get("running"):
+        raise HTTPException(status_code=409, detail="이미 백테스트가 진행 중입니다")
+
+    asyncio.create_task(task.force_run())
+    return {"success": True, "message": "신고가 전략 커버리지 백테스트가 시작되었습니다."}
 
 
 @router.post("/background/theme-classification/force-update")

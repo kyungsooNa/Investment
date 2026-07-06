@@ -43,6 +43,7 @@ from services.minervini_stage_service import MinerviniStageService
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from services.newhigh_service import NewHighService
 from services.oneil_universe_service import OneilUniverseService
+from services.newhigh_strategy_coverage_backtest_service import NewHighStrategyCoverageBacktestService
 from services.theme_classification_collector_service import ThemeClassificationCollectorService
 from services.us_market_calendar_service import USMarketCalendarService
 from services.theme_daily_leader_service import ThemeDailyLeaderService
@@ -79,6 +80,7 @@ from task.background.after_market.ranking_task import RankingTask
 from task.background.after_market.strategy_log_report_task import StrategyLogReportTask
 from task.background.after_market.theme_daily_leader_report_task import ThemeDailyLeaderReportTask
 from task.background.after_market.post_market_replay_audit_task import PostMarketReplayAuditTask
+from task.background.after_market.newhigh_strategy_coverage_backtest_task import NewHighStrategyCoverageBacktestTask
 from task.background.after_market.overseas_dryrun_task import OverseasDryRunTask
 from task.background.always_on.notification_queue_task import NotificationQueueTask
 from task.background.intraday.opening_position_reconcile_task import OpeningPositionReconcileTask
@@ -641,6 +643,7 @@ class ServiceContainer:
                 ctx.newhigh_service = None
                 ctx.strategy_log_report_task = None
                 ctx.post_market_replay_audit_task = None
+                ctx.newhigh_strategy_coverage_backtest_task = None
                 ctx.after_market_reconcile_task = None
                 ctx.opening_position_reconcile_task = None
                 ctx.microstructure_capture_task = None
@@ -791,6 +794,23 @@ class ServiceContainer:
                     logger=ctx.logger,
                     worker_pool=ctx.worker_pool,
                 )
+                ctx.newhigh_strategy_coverage_backtest_task = NewHighStrategyCoverageBacktestTask(
+                    coverage_service=NewHighStrategyCoverageBacktestService(
+                        stock_repository=ctx.stock_repository,
+                        stock_query_service=ctx.stock_query_service,
+                        universe_service=ctx.oneil_universe_service,
+                        indicator_service=ctx.indicator_service,
+                        market_clock=ctx.market_clock,
+                        backtest_journal_repository=ctx.backtest_journal_repository,
+                        program_provider=getattr(ctx.broker, "_client", ctx.broker),
+                        env=ctx.env,
+                        logger=ctx.logger,
+                    ),
+                    mcs=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    logger=ctx.logger,
+                    worker_pool=ctx.worker_pool,
+                )
                 ctx.after_market_reconcile_task = AfterMarketReconcileTask(
                     order_execution_service=ctx.order_execution_service,
                     notification_service=ctx.notification_service,
@@ -840,6 +860,7 @@ class ServiceContainer:
                 ctx.theme_daily_leader_report_task = None
                 ctx.strategy_log_report_task = None
                 ctx.post_market_replay_audit_task = None
+                ctx.newhigh_strategy_coverage_backtest_task = None
                 ctx.after_market_reconcile_task = None
                 ctx.microstructure_capture_task = None
                 ctx.program_capture_subscription_task = None
