@@ -159,7 +159,9 @@ class BackgroundScheduler:
         msg = (
             f"[Performance] BudgetSnapshot.{category}: {lane['rate_wait_seconds_total']:.4f}s "
             f"(active={lane['active']}, limit={lane['limit']}, acquired_total={lane['acquired_total']}, "
-            f"rate_wait_total={lane['rate_wait_total']}, max_observed_active={lane['max_observed_active']})"
+            f"rate_wait_total={lane['rate_wait_total']}, max_observed_active={lane['max_observed_active']}, "
+            f"semaphore_wait_total={lane['semaphore_wait_total']}, "
+            f"semaphore_wait_seconds_total={lane['semaphore_wait_seconds_total']:.4f})"
         )
         self._pm.logger.info(msg)
 

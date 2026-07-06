@@ -244,6 +244,47 @@ async def test_emergency_global_rate_bucket_is_independent_from_normal_global_bu
 
 
 @pytest.mark.real_sleep
+async def test_limiter_tracks_semaphore_wait_seconds_when_concurrency_limit_saturated():
+    """rate 대기와 별개로, concurrency semaphore 대기(동시성 한도 포화)도 누적 계측한다."""
+    limiter = ApiBudgetLimiter(
+        {"quotation_price": 1},
+        rate_limits_per_sec={"quotation_price": 100.0},
+        global_rate_limit_per_sec=100.0,
+        emergency_global_rate_limit_per_sec=100.0,
+    )
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    second_started = asyncio.Event()
+    second_waiting = asyncio.Event()
+
+    async def run_first():
+        async with limiter.acquire("quotation_price"):
+            first_started.set()
+            await release_first.wait()
+
+    async def run_second():
+        second_waiting.set()
+        async with limiter.acquire("quotation_price"):
+            second_started.set()
+
+    first_task = asyncio.create_task(run_first())
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+
+    second_task = asyncio.create_task(run_second())
+    await asyncio.wait_for(second_waiting.wait(), timeout=1)
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(second_started.wait(), timeout=0.05)
+
+    release_first.set()
+    await asyncio.wait_for(second_started.wait(), timeout=1)
+    await asyncio.gather(first_task, second_task)
+
+    snapshot = limiter.snapshot()
+    assert snapshot["quotation_price"]["semaphore_wait_total"] == 1
+    assert snapshot["quotation_price"]["semaphore_wait_seconds_total"] > 0.0
+
+
+@pytest.mark.real_sleep
 async def test_account_reconciliation_budget_is_independent_from_quotation_scan_budget():
     limiter = ApiBudgetLimiter(
         {"quotation_price": 1, "account_reconciliation": 1},
