@@ -178,6 +178,43 @@ async def test_get_strategy_chart_selected_strategies_use_selected_date_range(we
 
 
 @pytest.mark.asyncio
+async def test_get_strategy_chart_includes_trade_counts_for_chart_period(web_client, mock_web_ctx):
+    """차트 응답은 각 전략 차트 기간 안의 매수/매도 횟수를 함께 반환한다."""
+    history_map = {
+        "StrategyB": [
+            {"date": "2025-04-24", "return_rate": 0.5},
+            {"date": "2025-04-25", "return_rate": 0.1},
+        ],
+        "StrategyC": [{"date": "2025-04-25", "return_rate": -0.2}],
+    }
+    mock_web_ctx.virtual_trade_service.get_strategy_return_history.side_effect = lambda name: history_map[name]
+    mock_web_ctx.virtual_trade_service.get_all_trades.return_value = [
+        mock_trade(strategy="StrategyB", buy_date="2025-04-23 09:00:00", sell_date="2025-04-24 15:00:00", status="SOLD"),
+        mock_trade(strategy="StrategyB", buy_date="2025-04-24 09:00:00", status="HOLD"),
+        mock_trade(strategy="StrategyB", buy_date="2025-04-25 09:00:00", sell_date="2025-04-26 15:00:00", status="SOLD"),
+        mock_trade(strategy="StrategyC", buy_date="2025-04-25 09:00:00", sell_date="2025-04-25 15:00:00", status="SOLD"),
+        mock_trade(strategy="Other", buy_date="2025-04-24 09:00:00", sell_date="2025-04-24 15:00:00", status="SOLD"),
+    ]
+    mock_web_ctx.stock_query_service.get_ohlcv_range = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd="0",
+            msg1="Success",
+            data=[
+                {"date": "20250424", "close": 30000},
+                {"date": "20250425", "close": 30300},
+            ],
+        )
+    )
+
+    response = web_client.get("/api/virtual/chart/ALL?strategies=StrategyB,StrategyC")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["chart_counts"]["StrategyB"] == {"buy": 2, "sell": 1}
+    assert data["chart_counts"]["StrategyC"] == {"buy": 1, "sell": 1}
+
+
+@pytest.mark.asyncio
 async def test_calculate_benchmark_zero_base_price(web_client, mock_web_ctx):
     """_calculate_benchmark 기준가 0일 때 테스트"""
     mock_web_ctx.virtual_trade_service.get_all_strategies.return_value = ["StratA"]

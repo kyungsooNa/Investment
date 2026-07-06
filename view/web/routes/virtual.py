@@ -105,6 +105,60 @@ def _build_reference_history(histories: dict[str, list], strategy_names: list[st
     return [{"date": date} for date in sorted(date_set)]
 
 
+def _date_prefix(value) -> str | None:
+    text = str(value or "")[:10]
+    if len(text) == 10 and text[4] == "-" and text[7] == "-":
+        return text
+    return None
+
+
+def _build_chart_trade_counts(vm, histories: dict[str, list], strategy_names: list[str]) -> dict[str, dict[str, int]]:
+    """각 전략 차트 날짜 범위 안에 포함된 매수/매도 횟수를 계산한다."""
+    try:
+        trades = vm.get_all_trades(apply_cost=False)
+    except TypeError:
+        trades = vm.get_all_trades()
+    except Exception as e:
+        logger.error(f"[WebAPI] virtual/chart 거래 카운트 조회 오류: {e}")
+        return {}
+
+    if not isinstance(trades, list):
+        return {}
+
+    selected_names = set(strategy_names or [])
+    counts = {}
+    for name, history in histories.items():
+        dates = sorted(entry.get("date") for entry in history if entry.get("date"))
+        if not dates:
+            continue
+
+        start_date, end_date = dates[0], dates[-1]
+        buy_count = 0
+        sell_count = 0
+        for trade in trades:
+            if not isinstance(trade, dict) or trade.get("status") == "FAILED":
+                continue
+
+            trade_strategy = trade.get("strategy")
+            if name == "ALL":
+                if selected_names and trade_strategy not in selected_names:
+                    continue
+            elif trade_strategy != name:
+                continue
+
+            buy_date = _date_prefix(trade.get("buy_date"))
+            if buy_date and start_date <= buy_date <= end_date:
+                buy_count += 1
+
+            sell_date = _date_prefix(trade.get("sell_date"))
+            if sell_date and start_date <= sell_date <= end_date:
+                sell_count += 1
+
+        counts[name] = {"buy": buy_count, "sell": sell_count}
+
+    return counts
+
+
 @router.get("/virtual/chart/{strategy_name}")
 async def get_strategy_chart(strategy_name: str, strategies: str | None = None):
     """특정 전략의 수익률 히스토리(차트용) 반환 + 벤치마크(KOSPI200, KOSDAQ150) 포함"""
@@ -113,7 +167,7 @@ async def get_strategy_chart(strategy_name: str, strategies: str | None = None):
         t_start = ctx.pm.start_timer()
         vm = _sync_virtual_trade_state(ctx)
         if vm is None:
-            return {"histories": {}, "benchmarks": {}}
+            return {"histories": {}, "benchmarks": {}, "chart_counts": {}}
 
         # 1. 히스토리 데이터 수집
         if strategy_name == "ALL":
@@ -148,10 +202,11 @@ async def get_strategy_chart(strategy_name: str, strategies: str | None = None):
         )
 
         if not ref_history:
-            return {"histories": {}, "benchmarks": {}}
+            return {"histories": {}, "benchmarks": {}, "chart_counts": {}}
 
         start_date = ref_history[0]['date'].replace('-', '')
         end_date = ref_history[-1]['date'].replace('-', '')
+        chart_counts = _build_chart_trade_counts(vm, histories, selected_strategy_names)
 
         # 벤치마크 데이터 (KOSPI 200, KOSDAQ 150)
         kospi_benchmark, kosdaq_benchmark = await asyncio.gather(
@@ -165,7 +220,7 @@ async def get_strategy_chart(strategy_name: str, strategies: str | None = None):
         }
 
         ctx.pm.log_timer(f"get_strategy_chart({strategy_name})", t_start)
-        return {"histories": histories, "benchmarks": benchmarks}
+        return {"histories": histories, "benchmarks": benchmarks, "chart_counts": chart_counts}
 
 
 def _sanitize_for_json(obj):
