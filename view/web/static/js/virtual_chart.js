@@ -223,9 +223,18 @@ function buildAnnotations(labels, activeDates, strategyHistory) {
             type: 'line',
             yMin: 0,
             yMax: 0,
-            borderColor: 'rgba(255, 255, 255, 0.25)',
-            borderWidth: 1,
-            borderDash: [3, 3]
+            borderColor: 'rgba(255, 255, 255, 0.6)',
+            borderWidth: 1.5,
+            label: {
+                display: true,
+                content: '0%',
+                position: 'end',
+                backgroundColor: 'rgba(255, 255, 255, 0.15)',
+                color: '#e9ecef',
+                font: { size: 9, weight: 'bold' },
+                padding: { top: 1, bottom: 1, left: 4, right: 4 },
+                borderRadius: 3
+            }
         }
     };
     if (activeDates.length < 2) return annotations;
