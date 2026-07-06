@@ -56,8 +56,36 @@ def test_summarize_capture_quality_uses_metadata_codes_and_program_db_fallbacks(
     assert summary["issues"] == [
         "intraday_coverage_below_threshold",
         "program_overlay_coverage_below_threshold",
-        "stale_minute_rows_present",
     ]
+
+
+def test_summarize_capture_quality_keeps_stale_rows_as_diagnostic_only():
+    payload = {
+        "metadata": {
+            "trade_date": "20260702",
+            "codes": ["005930", "000660"],
+            "program_source": "program_db",
+            "quality": {
+                "empty_minute_codes": [],
+                "stale_minute_rows_dropped": {"005930": 57},
+            },
+        },
+        "intraday_minutes": {"005930": [{}], "000660": [{}]},
+        "execution_strength": {"005930": 120.0, "000660": 130.0},
+        "program_trades": {
+            "005930": {"program_net_buy_qty": 1},
+            "000660": {"program_net_buy_qty": -1},
+        },
+    }
+
+    summary = summarize_capture_quality(
+        payload,
+        thresholds=MicrostructureQualityThresholds(max_stale_rows=0),
+    )
+
+    assert summary["stale_minute_rows_dropped"] == 57
+    assert "stale_minute_rows_present" not in summary["issues"]
+    assert summary["quality_gate_passed"] is True
 
 
 def test_summarize_capture_quality_falls_back_to_resolved_codes_when_metadata_missing():

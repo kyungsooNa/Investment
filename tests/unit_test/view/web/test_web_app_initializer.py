@@ -43,6 +43,8 @@ def mock_deps():
         ("tr", patch("view.web.bootstrap.config_bootstrap.TelegramReporter", autospec=True)),
         ("strategy_log_report_task", patch("view.web.bootstrap.service_container.StrategyLogReportTask", autospec=True)),
         ("strategy_log_report_service", patch("view.web.bootstrap.service_container.StrategyLogReportService", autospec=True)),
+        ("newhigh_coverage_service", patch("view.web.bootstrap.service_container.NewHighStrategyCoverageBacktestService", autospec=True)),
+        ("newhigh_coverage_task", patch("view.web.bootstrap.service_container.NewHighStrategyCoverageBacktestTask", autospec=True)),
     ]
 
     with contextlib.ExitStack() as stack:

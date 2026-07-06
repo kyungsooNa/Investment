@@ -527,6 +527,7 @@ const FORCE_UPDATE_CONFIG = {
     '전일기준주도주_생성': { endpoint: '/api/background/watchlist/force-update',        label: '강제 생성' },
     cache_warmup:         { endpoint: '/api/background/cache-warmup/force-update',     label: '강제 웜업' },
     newhigh:              { endpoint: '/api/background/newhigh/force-update',          label: '강제 수집' },
+    newhigh_strategy_coverage_backtest: { endpoint: '/api/background/newhigh-strategy-coverage/force-update', label: '강제 실행' },
     theme_classification:  { endpoint: '/api/background/theme-classification/force-update', label: '강제 수집' },
     daily_theme_leader_report: { endpoint: '/api/background/daily-theme-leader-report/force-update', label: '강제 발송' },
     minervini_update:     { endpoint: '/api/background/minervini/force-update',         label: '강제 수집' },

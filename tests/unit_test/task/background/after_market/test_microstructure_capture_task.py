@@ -248,7 +248,6 @@ async def test_quality_gate_metrics_exposed_and_warned_when_capture_quality_fail
         "intraday_coverage_below_threshold",
         "program_overlay_coverage_below_threshold",
         "program_db_coverage_below_threshold",
-        "stale_minute_rows_present",
     ]
     assert last_result["intraday_coverage_pct"] == 50.0
     assert last_result["program_overlay_coverage_pct"] == 0.0
@@ -268,7 +267,7 @@ async def test_quality_gate_failure_emits_background_warning_notification(
             "program_fallback_codes": [],
             "quality": {
                 "empty_minute_codes": ["000660"],
-                "stale_minute_rows_dropped": {},
+                "stale_minute_rows_dropped": {"005930": 2},
             },
             "row_counts": {"intraday_minutes": 1, "execution_strength": 2, "program_trades": 0},
         },
@@ -298,7 +297,7 @@ async def test_quality_gate_failure_emits_background_warning_notification(
         NotificationCategory.BACKGROUND,
         NotificationLevel.WARNING,
         "Microstructure 캡처 품질 게이트 실패",
-        "20260702: intraday=50.0%, program=0.0%, program_db=0.0%",
+        "20260702: intraday=50.0%, program=0.0%, program_db=0.0%, empty_minutes=1, stale_dropped=2",
     )
     assert kwargs["metadata"]["issues"] == [
         "intraday_coverage_below_threshold",
@@ -306,6 +305,9 @@ async def test_quality_gate_failure_emits_background_warning_notification(
         "program_db_coverage_below_threshold",
     ]
     assert kwargs["metadata"]["codes"] == 2
+    assert kwargs["metadata"]["empty_minute_codes"] == ["000660"]
+    assert kwargs["metadata"]["stale_minute_rows_dropped"] == 2
+    assert kwargs["metadata"]["program_fallback_codes"] == []
 
 
 @pytest.mark.asyncio

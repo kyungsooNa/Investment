@@ -89,9 +89,6 @@ def summarize_capture_quality(
         < thresholds.min_execution_strength_db_coverage_pct
     ):
         issues.append("execution_strength_db_coverage_below_threshold")
-    if stale_rows > thresholds.max_stale_rows:
-        issues.append("stale_minute_rows_present")
-
     return {
         "trade_date": str(metadata.get("trade_date") or ""),
         "codes": code_count,

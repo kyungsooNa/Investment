@@ -124,7 +124,7 @@ def test_compute_quality_report_flags_stale_rows_and_low_coverage():
     assert "intraday_coverage_below_threshold" in bad_day["issues"]
     assert "program_overlay_coverage_below_threshold" in bad_day["issues"]
     assert "program_db_coverage_below_threshold" in bad_day["issues"]
-    assert "stale_minute_rows_present" in bad_day["issues"]
+    assert "stale_minute_rows_present" not in bad_day["issues"]
 
 
 def test_compute_quality_report_passes_when_payloads_meet_thresholds():

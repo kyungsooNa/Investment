@@ -617,6 +617,25 @@ def test_get_background_status_daily_theme_leader_report_is_after_market(web_cli
     assert item["schedule_type"] == "after_market"
 
 
+def test_get_background_status_intraday_theme_leader_alert_is_intraday(web_client, mock_web_ctx):
+    """장중 주도테마 알림 태스크는 intraday 로 분류된다."""
+    mock_task = MagicMock()
+    mock_task.get_progress.return_value = {"running": False}
+
+    mock_web_ctx.background_scheduler = MagicMock()
+    mock_web_ctx.background_scheduler.get_all_status.return_value = [
+        {"name": "intraday_theme_leader_alert", "state": "idle", "priority": 100},
+    ]
+    mock_web_ctx.background_scheduler.get_task.return_value = mock_task
+
+    response = web_client.get("/api/background/status")
+
+    assert response.status_code == 200
+    item = response.json()["data"][0]
+    assert item["name"] == "intraday_theme_leader_alert"
+    assert item["schedule_type"] == "intraday"
+
+
 def test_get_background_status_pre_market_health_check_schedule_type(web_client, mock_web_ctx):
     """pre_market_health_check는 IDLE이어도 실제 점검 progress를 반환한다."""
     class PreMarketTask:
@@ -966,6 +985,41 @@ async def test_force_newhigh_update_not_init(web_client, mock_web_ctx):
     mock_web_ctx.newhigh_task = None
     response = web_client.post("/api/background/newhigh/force-update")
     assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_force_newhigh_strategy_coverage_success_running_and_not_init(
+    web_client,
+    mock_web_ctx,
+    monkeypatch,
+):
+    from view.web.routes import system
+
+    mock_web_ctx.newhigh_strategy_coverage_backtest_task = None
+    response = web_client.post("/api/background/newhigh-strategy-coverage/force-update")
+    assert response.status_code == 503
+
+    running_task = MagicMock()
+    running_task.get_progress.return_value = {"running": True}
+    mock_web_ctx.newhigh_strategy_coverage_backtest_task = running_task
+    response = web_client.post("/api/background/newhigh-strategy-coverage/force-update")
+    assert response.status_code == 409
+
+    task = MagicMock()
+    task.get_progress.return_value = {"running": False}
+    task.force_run = AsyncMock()
+    mock_web_ctx.newhigh_strategy_coverage_backtest_task = task
+
+    def fake_create_task(coro):
+        coro.close()
+        return MagicMock()
+
+    monkeypatch.setattr(system.asyncio, "create_task", fake_create_task)
+    response = web_client.post("/api/background/newhigh-strategy-coverage/force-update")
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    task.force_run.assert_called_once()
 
 
 # ── POST /api/background/theme-classification/force-update ─────────────
