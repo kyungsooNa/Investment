@@ -480,9 +480,9 @@ class WebSocketWatchdogTask(SchedulableTask):
         앱 시작 또는 재연결 직후 모든 구독(PT + H0UNCNT0)을 복원한다.
 
         핵심 순서:
-          1. PT active 상태 초기화 (브로커 연결 리셋 → 내부 상태도 리셋)
-          2. PT + H0STCNT0 재구독
-          3. H0UNCNT0 active 상태 초기화 후 _rebalance()로 재구독
+          1. PT/H0UNCNT0 active 상태 초기화 (브로커 연결 리셋 → 내부 상태도 리셋)
+          2. PT + H0UNCNT0 재구독
+          3. 가격 정책 active 상태 초기화 후 _rebalance()로 재구독
              (단순 _rebalance() 호출만 하면 _active_codes에 이전 상태가 남아
               "이미 구독됨"으로 판단해 브로커에 subscribe를 보내지 않는 버그 방지)
         """
@@ -494,9 +494,10 @@ class WebSocketWatchdogTask(SchedulableTask):
 
         from repositories.streaming_stock_repo import StreamingType
 
-        # ── 1. PT active 상태 초기화 ──────────────────────────────
+        # ── 1. PT/H0UNCNT0 active 상태 초기화 ─────────────────────
         if self._streaming_stock_repo:
             await self._streaming_stock_repo.clear_active(StreamingType.PROGRAM_TRADING)
+            await self._streaming_stock_repo.clear_active(StreamingType.UNIFIED_PRICE)
 
         # ── 2. PT + H0STCNT0 복원 ─────────────────────────────────
         pt_codes = sorted(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if self._streaming_stock_repo else []
@@ -520,14 +521,16 @@ class WebSocketWatchdogTask(SchedulableTask):
             else:
                 for code in pt_codes:
                     try:
-                        await self._streaming_service.subscribe_program_trading(code)
+                        pt_ok = await self._streaming_service.subscribe_program_trading(code)
                         if self._streaming_logger:
                             self._streaming_logger.log_pt_subscribe(code, reason="restore")
-                        await self._streaming_service.subscribe_unified_price(code)
+                        price_ok = await self._streaming_service.subscribe_unified_price(code)
                         if self._streaming_logger:
                             self._streaming_logger.log_price_subscribe(code, reason="restore")
-                        if self._streaming_stock_repo:
+                        if self._streaming_stock_repo and pt_ok:
                             await self._streaming_stock_repo.mark_active(code, StreamingType.PROGRAM_TRADING)
+                        if self._streaming_stock_repo and price_ok:
+                            await self._streaming_stock_repo.mark_active(code, StreamingType.UNIFIED_PRICE)
                         pt_success += 1
                         await asyncio.sleep(self.SUBSCRIBE_DELAY_SEC)
                     except Exception as e:
@@ -552,8 +555,6 @@ class WebSocketWatchdogTask(SchedulableTask):
         # ── 3. H0UNCNT0 복원 (핵심 버그 수정) ────────────────────
         if self._price_subscription_service:
             self._price_subscription_service.clear_active_state()
-            if self._streaming_stock_repo:
-                await self._streaming_stock_repo.clear_active(StreamingType.UNIFIED_PRICE)
             desired_count = len(self._price_subscription_service._refs)
             if desired_count > 0:
                 # PT 구독이 없어도 WebSocket 연결 보장 (미연결 시 _rebalance() 실패 방지)

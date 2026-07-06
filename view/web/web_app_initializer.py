@@ -594,6 +594,7 @@ class WebAppContext:
                 if self.streaming_stock_repo:
                     await self.streaming_stock_repo.mark_desired(code, StreamingType.PROGRAM_TRADING)
                     await self.streaming_stock_repo.mark_active(code, StreamingType.PROGRAM_TRADING)
+                    await self.streaming_stock_repo.mark_active(code, StreamingType.UNIFIED_PRICE)
                 self.logger.info(f"프로그램매매 신규 구독 성공: {code}")
                 return True
             else:
@@ -609,20 +610,48 @@ class WebAppContext:
             self.logger.error(f"프로그램매매 구독 중 예외 발생 ({code}): {e}", exc_info=True)
             return False
 
+    def _has_independent_price_subscription(self, code: str) -> bool:
+        """PT companion이 아닌 별도 통합 체결가 구독 수요가 있는지 확인한다."""
+        if not code:
+            return False
+
+        if self.streaming_stock_repo:
+            try:
+                if code in self.streaming_stock_repo.get_desired(StreamingType.UNIFIED_PRICE):
+                    return True
+            except Exception:
+                pass
+
+        svc = getattr(self, "price_subscription_service", None)
+        refs = getattr(svc, "_refs", None)
+        if isinstance(refs, dict):
+            for req in refs.get(code, {}).values():
+                if isinstance(req, dict) and req.get("type") == StreamingType.UNIFIED_PRICE:
+                    return True
+        return False
+
     async def stop_program_trading(self, code: str):
         """특정 종목 프로그램매매 구독 해지."""
         if self.streaming_stock_repo and code in self.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING):
             await self.streaming_service.unsubscribe_program_trading(code)
-            await self.streaming_service.unsubscribe_unified_price(code)
+            keep_price = self._has_independent_price_subscription(code)
+            if not keep_price:
+                await self.streaming_service.unsubscribe_unified_price(code)
             await self.streaming_stock_repo.unmark_desired(code, StreamingType.PROGRAM_TRADING)
             await self.streaming_stock_repo.mark_inactive(code, StreamingType.PROGRAM_TRADING)
+            if not keep_price:
+                await self.streaming_stock_repo.mark_inactive(code, StreamingType.UNIFIED_PRICE)
 
     async def stop_all_program_trading(self):
         """모든 프로그램매매 구독 해지."""
         codes = sorted(self.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if self.streaming_stock_repo else []
         for code in codes:
             await self.streaming_service.unsubscribe_program_trading(code)
-            await self.streaming_service.unsubscribe_unified_price(code)
+            keep_price = self._has_independent_price_subscription(code)
+            if not keep_price:
+                await self.streaming_service.unsubscribe_unified_price(code)
             if self.streaming_stock_repo:
                 await self.streaming_stock_repo.unmark_desired(code, StreamingType.PROGRAM_TRADING)
                 await self.streaming_stock_repo.mark_inactive(code, StreamingType.PROGRAM_TRADING)
+                if not keep_price:
+                    await self.streaming_stock_repo.mark_inactive(code, StreamingType.UNIFIED_PRICE)

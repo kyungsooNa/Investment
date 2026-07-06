@@ -199,6 +199,31 @@ async def test_rebalance_slot_allocation(policy, mock_streaming_logger):
 
 
 @pytest.mark.asyncio
+async def test_rebalance_program_trading_subscribes_companion_unified_price(
+    policy, mock_streaming, mock_streaming_stock_repo
+):
+    """PROGRAM_TRADING 요청은 PT와 통합 체결가 2개 구독을 함께 활성화한다."""
+    policy._refs = {
+        "005930": {
+            "program_capture": {
+                "priority": SubscriptionPriority.LOW,
+                "type": StreamingType.PROGRAM_TRADING,
+            }
+        }
+    }
+
+    await policy._rebalance()
+
+    mock_streaming.subscribe_program_trading.assert_awaited_once_with("005930")
+    mock_streaming.subscribe_unified_price.assert_awaited_once_with("005930")
+    assert "005930" in policy._active_codes_pt
+    assert "005930" in policy._active_codes_price
+    mock_streaming_stock_repo.mark_active.assert_any_await("005930", StreamingType.PROGRAM_TRADING)
+    mock_streaming_stock_repo.mark_active.assert_any_await("005930", StreamingType.UNIFIED_PRICE)
+    assert policy._calculate_used_slots() == 2
+
+
+@pytest.mark.asyncio
 async def test_rebalance_connects_websocket_before_subscribe(policy, mock_streaming):
     """장중 신규 구독은 WebSocket 연결을 먼저 보장한 뒤 subscribe를 보낸다."""
     policy._refs = {

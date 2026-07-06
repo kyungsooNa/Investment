@@ -1363,6 +1363,7 @@ async def test_restore_sequence_accounts_for_pt_slots(watchdog_task, mock_price_
         # 3. 검증: PT 마킹이 먼저 발생하고, 그 다음 rebalance가 호출되어야 함
         expected_calls = [
             call.mark_active("005930", StreamingType.PROGRAM_TRADING),
+            call.mark_active("005930", StreamingType.UNIFIED_PRICE),
             call.rebalance()
         ]
         manager.assert_has_calls(expected_calls, any_order=False)

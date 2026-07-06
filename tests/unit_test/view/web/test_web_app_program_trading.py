@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock, patch, call
 from view.web.web_app_initializer import WebAppContext
 from repositories.streaming_stock_repo import StreamingType
 
@@ -60,7 +60,8 @@ async def test_start_program_trading_success(mock_ctx):
     mock_ctx.streaming_service.subscribe_program_trading.assert_called_once_with(code)
     mock_ctx.streaming_service.subscribe_unified_price.assert_called_once_with(code)
     mock_ctx.streaming_stock_repo.mark_desired.assert_called_once_with(code, StreamingType.PROGRAM_TRADING)
-    mock_ctx.streaming_stock_repo.mark_active.assert_called_once_with(code, StreamingType.PROGRAM_TRADING)
+    mock_ctx.streaming_stock_repo.mark_active.assert_any_call(code, StreamingType.PROGRAM_TRADING)
+    mock_ctx.streaming_stock_repo.mark_active.assert_any_call(code, StreamingType.UNIFIED_PRICE)
 
 
 @pytest.mark.asyncio
@@ -77,6 +78,24 @@ async def test_start_program_trading_partial_fail(mock_ctx):
     mock_ctx.streaming_stock_repo.mark_desired.assert_not_called()
     # 성공했던 PT 구독 해지 롤백 확인
     mock_ctx.streaming_service.unsubscribe_program_trading.assert_called_once_with(code)
+
+
+@pytest.mark.asyncio
+async def test_stop_program_trading_keeps_independent_price_subscription(mock_ctx):
+    """PT 해지 시 별도 체결가 구독 수요가 있으면 H0UNCNT0는 해지하지 않는다."""
+    code = "005930"
+    mock_ctx.streaming_stock_repo.get_desired.side_effect = (
+        lambda stream_type: {code}
+        if stream_type in (StreamingType.PROGRAM_TRADING, StreamingType.UNIFIED_PRICE)
+        else set()
+    )
+
+    await mock_ctx.stop_program_trading(code)
+
+    mock_ctx.streaming_service.unsubscribe_program_trading.assert_called_once_with(code)
+    mock_ctx.streaming_service.unsubscribe_unified_price.assert_not_called()
+    mock_ctx.streaming_stock_repo.mark_inactive.assert_any_call(code, StreamingType.PROGRAM_TRADING)
+    assert call(code, StreamingType.UNIFIED_PRICE) not in mock_ctx.streaming_stock_repo.mark_inactive.call_args_list
 
 
 @pytest.mark.asyncio
