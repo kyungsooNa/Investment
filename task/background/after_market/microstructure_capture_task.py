@@ -195,6 +195,9 @@ class MicrostructureCaptureTask(AfterMarketTask):
     ) -> None:
         if not self._notification_service:
             return
+        empty_minute_codes = quality_summary.get("empty_minute_codes") or []
+        stale_minute_rows_dropped = quality_summary.get("stale_minute_rows_dropped") or 0
+        program_fallback_codes = quality_summary.get("program_fallback_codes") or []
         await self._notification_service.emit(
             NotificationCategory.BACKGROUND,
             NotificationLevel.WARNING,
@@ -202,7 +205,9 @@ class MicrostructureCaptureTask(AfterMarketTask):
             f"{latest_trading_date}: "
             f"intraday={quality_summary['intraday_coverage_pct']:.1f}%, "
             f"program={quality_summary['program_overlay_coverage_pct']:.1f}%, "
-            f"program_db={format_optional_pct(quality_summary['program_db_coverage_pct'])}",
+            f"program_db={format_optional_pct(quality_summary['program_db_coverage_pct'])}, "
+            f"empty_minutes={len(empty_minute_codes)}, "
+            f"stale_dropped={stale_minute_rows_dropped}",
             metadata={
                 "alert_type": "microstructure_capture_quality_gate",
                 "trade_date": latest_trading_date,
@@ -212,5 +217,8 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "execution_strength_coverage_pct": quality_summary["execution_strength_coverage_pct"],
                 "program_overlay_coverage_pct": quality_summary["program_overlay_coverage_pct"],
                 "program_db_coverage_pct": quality_summary["program_db_coverage_pct"],
+                "empty_minute_codes": empty_minute_codes,
+                "stale_minute_rows_dropped": stale_minute_rows_dropped,
+                "program_fallback_codes": program_fallback_codes,
             },
         )
