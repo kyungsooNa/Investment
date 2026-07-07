@@ -109,7 +109,54 @@ async def test_builds_theme_report_from_ranking_data():
     assert semi["fi_net_buy_won"] == 350_000_000
     assert semi["program_net_buy_won"] == 6_000_000_000
     assert semi["flow_ratio"] == 1.67
+    assert semi["value_weighted_change_rate"] == 12.41
+    assert semi["zero_trading_value_ratio"] == 0.0
+    assert semi["negative_trading_value_ratio"] == 2.63
+    assert semi["theme_score"] == 17.5
     assert [leader["code"] for leader in semi["leaders"][:3]] == ["A", "B", "C"]
+
+
+@pytest.mark.asyncio
+async def test_ranks_liquid_theme_above_thin_high_change_theme():
+    groups = {
+        "저유동성급등": {
+            "sources": ["NAVER"],
+            "members": [
+                _member("A", "급등1"),
+                _member("B", "급등2"),
+                _member("C", "급등3"),
+            ],
+        },
+        "대금동반상승": {
+            "sources": ["NAVER"],
+            "members": [
+                _member("D", "대금1"),
+                _member("E", "대금2"),
+                _member("F", "대금3"),
+            ],
+        },
+    }
+    svc, _ = _service(groups)
+    rankings = {
+        "all_stocks": [
+            _stock("A", "급등1", 10.0, 200_000_000),
+            _stock("B", "급등2", 9.0, 0),
+            _stock("C", "급등3", 8.0, 0),
+            _stock("D", "대금1", 5.0, 300_000_000_000),
+            _stock("E", "대금2", 4.0, 250_000_000_000),
+            _stock("F", "대금3", 3.0, 200_000_000_000),
+        ],
+        "program_all_stocks": [],
+    }
+
+    resp = await svc.build_daily_theme_report(rankings, "20260630")
+
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert [item["normalized_name"] for item in resp.data] == ["대금동반상승", "저유동성급등"]
+    liquid, thin = resp.data
+    assert liquid["leader_avg_change_rate"] < thin["leader_avg_change_rate"]
+    assert liquid["theme_score"] > thin["theme_score"]
+    assert thin["zero_trading_value_ratio"] == 66.67
 
 
 @pytest.mark.asyncio

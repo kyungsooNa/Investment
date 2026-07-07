@@ -319,9 +319,16 @@ class TelegramReporter:
             trading_value = self._format_won_100m(theme.get("trading_value_sum_won"))
             advancing_ratio = self._format_signed_pct(theme.get("advancing_ratio"), digits=1).replace("+", "")
             flow_ratio = self._format_signed_pct(theme.get("flow_ratio"), digits=2)
+            theme_score = theme.get("theme_score")
+            score_text = ""
+            if theme_score is not None:
+                try:
+                    score_text = f" | 종합점수 {float(theme_score):.2f}"
+                except (TypeError, ValueError):
+                    score_text = ""
             lines = [
                 f"<b>{rank}. {theme_name}</b>  {avg_rate}  {trading_value}",
-                f"상승비율 {advancing_ratio} | 수급비중 {flow_ratio}",
+                f"상승비율 {advancing_ratio} | 수급비중 {flow_ratio}{score_text}",
                 "<pre>",
             ]
             for leader in (theme.get("leaders") or [])[:3]:

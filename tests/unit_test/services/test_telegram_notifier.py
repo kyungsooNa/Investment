@@ -837,6 +837,7 @@ async def test_send_daily_theme_report_formats_stockeasy_like_cards(telegram_rep
             "trading_value_sum_won": 380_100_000_000,
             "advancing_ratio": 75.0,
             "flow_ratio": 1.67,
+            "theme_score": 12.17,
             "leaders": [
                 {"name": "테스", "code": "A", "change_rate": 14.9, "trading_value_won": 193_000_000_000},
                 {"name": "유진테크", "code": "B", "change_rate": 12.6, "trading_value_won": 54_300_000_000},
@@ -853,6 +854,7 @@ async def test_send_daily_theme_report_formats_stockeasy_like_cards(telegram_rep
     assert "1. 반도체/소부장" in full
     assert "+12.33%" in full
     assert "3,801억" in full
+    assert "종합점수 12.17" in full
     assert "테스 +14.9% 1,930억" in full
 
 
