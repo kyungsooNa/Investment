@@ -34,7 +34,7 @@ def _make_response(data):
 
 
 def _make_task(*, now=None, open_now=True, basic_rankings=None, service_response=None):
-    clock = _Clock(now or datetime(2026, 7, 6, 10, 3, 0), open_now=open_now)
+    clock = _Clock(now or datetime(2026, 7, 6, 10, 10, 0), open_now=open_now)
     ranking_task = MagicMock()
     ranking_task.refresh_basic_ranking = AsyncMock()
     basic_rankings = basic_rankings if basic_rankings is not None else {
@@ -94,7 +94,7 @@ def _make_task(*, now=None, open_now=True, basic_rankings=None, service_response
 
 
 @pytest.mark.asyncio
-async def test_open_tick_sends_intraday_theme_report_for_current_30m_slot():
+async def test_open_tick_sends_intraday_theme_report_for_current_hourly_slot():
     deps = _make_task()
 
     await deps.task._tick()
@@ -107,37 +107,47 @@ async def test_open_tick_sends_intraday_theme_report_for_current_30m_slot():
     samsung = next(item for item in rankings["all_stocks"] if item["stck_shrn_iscd"] == "005930")
     assert samsung["acml_tr_pbmn"] == "80000000"
     deps.theme_service.build_daily_theme_report.assert_awaited_once()
-    assert deps.theme_service.build_daily_theme_report.await_args.kwargs["report_date"] == "20260706 10:00"
+    assert deps.theme_service.build_daily_theme_report.await_args.kwargs["report_date"] == "20260706 10:10"
     deps.telegram_reporter.send_daily_theme_report.assert_awaited_once_with(
         [{"normalized_name": "반도체", "leaders": []}],
-        report_date="20260706 10:00",
+        report_date="20260706 10:10",
     )
     progress = deps.task.get_progress()
-    assert progress["last_report_slot"] == "20260706 10:00"
+    assert progress["last_report_slot"] == "20260706 10:10"
     assert progress["sent_count"] == 1
 
 
 @pytest.mark.asyncio
-async def test_same_30m_slot_does_not_send_twice():
+async def test_same_hourly_slot_does_not_send_twice():
     deps = _make_task()
 
     await deps.task._tick()
-    deps.clock.now = datetime(2026, 7, 6, 10, 29, 0)
+    deps.clock.now = datetime(2026, 7, 6, 11, 9, 0)
     await deps.task._tick()
 
     deps.telegram_reporter.send_daily_theme_report.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_next_30m_slot_sends_again():
+async def test_next_hourly_slot_sends_again():
     deps = _make_task()
 
     await deps.task._tick()
-    deps.clock.now = datetime(2026, 7, 6, 10, 30, 0)
+    deps.clock.now = datetime(2026, 7, 6, 11, 10, 0)
     await deps.task._tick()
 
     assert deps.telegram_reporter.send_daily_theme_report.await_count == 2
-    assert deps.task.get_progress()["last_report_slot"] == "20260706 10:30"
+    assert deps.task.get_progress()["last_report_slot"] == "20260706 11:10"
+
+
+@pytest.mark.asyncio
+async def test_before_0910_skips_alert():
+    deps = _make_task(now=datetime(2026, 7, 6, 9, 9, 0))
+
+    await deps.task._tick()
+
+    deps.theme_service.build_daily_theme_report.assert_not_called()
+    deps.telegram_reporter.send_daily_theme_report.assert_not_called()
 
 
 @pytest.mark.asyncio
