@@ -45,6 +45,7 @@ class OpeningPositionReconcileTask(SchedulableTask):
         self._tasks: List[asyncio.Task] = []
         self._last_checked_date: Optional[str] = None
         self._last_result: Dict = {"mismatch_count": None, "error": None}
+        self._last_stale_codes: set = set()
 
     @property
     def task_name(self) -> str:
@@ -155,6 +156,9 @@ class OpeningPositionReconcileTask(SchedulableTask):
                 self._logger.info("[OpeningPositionReconcile] OK")
                 if self._oas:
                     await self._oas.resolve(AlertSource.RECONCILE, "reconcile:opening", "대사 일치")
+
+            if self._oas:
+                await self._report_stale_broker_reconciled(result.get("stale_broker_reconciled") or [])
             return result
         except Exception as exc:
             self._last_result = {"mismatch_count": None, "error": str(exc)}
@@ -173,3 +177,34 @@ class OpeningPositionReconcileTask(SchedulableTask):
                     "error", "장 시작 원장/잔고 대사 실패", str(exc),
                 )
             return self._last_result
+
+    async def _report_stale_broker_reconciled(self, stale_items: List[Dict]) -> None:
+        """broker_reconciled로 자동 등록된 뒤 오래 방치된 포지션을 종목별로 재보고한다.
+
+        발견 당일 1회 경보만 남기면 이후 아무도 관리하지 않는 포지션이 조용히
+        누적되므로, 임계값을 넘긴 종목은 종목별 dedup_key로 계속 active 상태를
+        유지하고, 해소(매도/전략 재지정)되어 목록에서 빠지면 resolve한다.
+        """
+        current_codes = set()
+        for item in stale_items:
+            code = item.get("code")
+            if not code:
+                continue
+            current_codes.add(code)
+            await self._oas.report(
+                AlertSource.RECONCILE,
+                f"reconcile:broker_reconciled_stale:{code}",
+                "warning",
+                "장기 미정리 broker_reconciled 포지션",
+                f"{code} broker_reconciled 상태로 {item.get('days_held')}일째 보유 중 "
+                f"— 전략 재지정 또는 매도 필요",
+                metadata=item,
+            )
+
+        for code in self._last_stale_codes - current_codes:
+            await self._oas.resolve(
+                AlertSource.RECONCILE,
+                f"reconcile:broker_reconciled_stale:{code}",
+                "재지정 또는 매도 완료",
+            )
+        self._last_stale_codes = current_codes
