@@ -63,6 +63,8 @@ _METHOD_BUDGET_CATEGORIES = {
     "inquire_daily_ccld": "account_reconciliation",
     "inquire_unfilled_orders": "account_reconciliation",
     "inquire_filled_history": "account_reconciliation",
+    "get_overseas_dailyprice": "quotation_overseas",
+    "get_overseas_price": "quotation_overseas",
 }
 
 API_BUDGET_COVERAGE_MATRIX = (
@@ -126,6 +128,20 @@ API_BUDGET_COVERAGE_MATRIX = (
         "operation": "filled_history_reconciliation_rest",
         "method_name": "inquire_filled_history",
         "category": "account_reconciliation",
+        "execution_path": "retry_queue",
+        "lane": "normal",
+    },
+    {
+        "operation": "overseas_dailyprice_rest",
+        "method_name": "get_overseas_dailyprice",
+        "category": "quotation_overseas",
+        "execution_path": "retry_queue",
+        "lane": "normal",
+    },
+    {
+        "operation": "overseas_price_rest",
+        "method_name": "get_overseas_price",
+        "category": "quotation_overseas",
         "execution_path": "retry_queue",
         "lane": "normal",
     },

@@ -175,18 +175,23 @@ class TimeDispatcher:
         )
         self._last_dispatched_at = time.time()
 
+        # 재시작 시점이 실제 마감 시각보다 한참 뒤일 수 있으므로(예: 앱이 마감 후 몇 시간 뒤에야
+        # 기동), delay_sec은 "감지 시각부터"가 아닌 "실제 마감 시각부터" 흐른 것으로 본다.
+        # 이미 경과한 시간만큼 차감해, 장중 등 엉뚱한 시간대에 지연 발행되는 것을 방지한다.
+        elapsed_since_close = max(0.0, -self._market_clock.get_seconds_until_market_close())
+
         for task_name, priority in tasks_to_dispatch:
             # 재시작 후 중복 발행 방지를 위해 asyncio.create_task 전에 DB 저장
             self._task_dispatched_dates[task_name] = latest_trading_date
             self._save_task_date(task_name, latest_trading_date)
-            delay = self._task_delays.get(task_name, 0)
+            delay = max(0.0, self._task_delays.get(task_name, 0) - elapsed_since_close)
             t = asyncio.create_task(
                 self._publish_after_delay(task_name, priority, latest_trading_date, delay)
             )
             self._pending_publish_tasks.add(t)
             t.add_done_callback(self._pending_publish_tasks.discard)
 
-    async def _publish_after_delay(self, task_name: str, priority: int, date: str, delay_sec: int) -> None:
+    async def _publish_after_delay(self, task_name: str, priority: int, date: str, delay_sec: float) -> None:
         """delay_sec(초) 대기 후 티켓을 발행한다."""
         if delay_sec > 0:
             self._logger.info(f"[TimeDispatcher] {task_name} — {delay_sec}초 후 발행 예정")

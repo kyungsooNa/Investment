@@ -470,6 +470,50 @@ async def test_no_mcs_no_duplicate_same_date(db_path):
     assert broker.qsize == 1
 
 
+async def test_delay_fully_absorbed_when_close_was_long_ago(db_path, monkeypatch):
+    """재시작이 실제 마감보다 delay_sec 이상 늦었다면(예: 마감 후 몇 시간 뒤 기동),
+    감지 시각부터 다시 delay_sec을 기다리지 않고 즉시 발행해야 한다."""
+    dispatcher, broker = _make_dispatcher(
+        is_operating=False, latest_date="20250417", db_path=db_path, date_str="20250417",
+    )
+    dispatcher._market_clock.get_seconds_until_market_close.return_value = -1800  # 마감 후 30분 경과
+    dispatcher.register_task("overseas_vbo_dryrun", priority=100, delay_sec=1800)
+
+    sleep_calls = []
+
+    async def fake_sleep(delay):
+        sleep_calls.append(delay)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+
+    assert sleep_calls == []
+    assert broker.qsize == 1
+
+
+async def test_delay_reduced_by_time_elapsed_since_close(db_path, monkeypatch):
+    """마감 후 일부만 경과했다면, 설정된 delay_sec에서 경과분만 차감해 대기한다."""
+    dispatcher, broker = _make_dispatcher(
+        is_operating=False, latest_date="20250417", db_path=db_path, date_str="20250417",
+    )
+    dispatcher._market_clock.get_seconds_until_market_close.return_value = -600  # 마감 후 10분 경과
+    dispatcher.register_task("overseas_vbo_dryrun", priority=100, delay_sec=1800)
+
+    sleep_calls = []
+
+    async def fake_sleep(delay):
+        sleep_calls.append(delay)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+
+    assert sleep_calls == [1200]
+
+
 async def test_stop_cancels_pending_publish_tasks(db_path):
     """stop()은 대기 중인 발행 태스크를 취소한다."""
     dispatcher, _ = _make_dispatcher(is_operating=False, latest_date="20250417", db_path=db_path)

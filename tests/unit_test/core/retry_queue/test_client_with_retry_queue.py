@@ -199,6 +199,8 @@ class TestAsyncMethodThroughQueue:
             ("get_account_balance", "account_balance"),
             ("inquire_daily_ccld", "account_reconciliation"),
             ("inquire_unfilled_orders", "account_reconciliation"),
+            ("get_overseas_dailyprice", "quotation_overseas"),
+            ("get_overseas_price", "quotation_overseas"),
             ("unknown_lookup", "quotation"),
         ],
     )
