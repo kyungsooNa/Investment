@@ -372,12 +372,23 @@ function buildStrategyDatasets(strategyName, strategyHistory, benchmarks, active
     return datasets;
 }
 
+const EXCLUDED_CHART_STRATEGIES = new Set(['BUY실패', 'SELL실패']);
+
+function getLatestReturnRate(history) {
+    if (!history || history.length === 0) return -Infinity;
+    return history[history.length - 1].return_rate ?? -Infinity;
+}
+
 function getDisplayStrategies(selectedStrategies, allHistories) {
     const isAll = !selectedStrategies || selectedStrategies.includes('ALL');
+    let names;
     if (isAll) {
-        return Object.keys(allHistories).filter(name => name !== 'ALL' && allHistories[name]?.length > 0);
+        names = Object.keys(allHistories).filter(name => name !== 'ALL' && allHistories[name]?.length > 0);
+    } else {
+        names = selectedStrategies.filter(name => allHistories[name]?.length > 0);
     }
-    return selectedStrategies.filter(name => allHistories[name]?.length > 0);
+    names = names.filter(name => !EXCLUDED_CHART_STRATEGIES.has(name));
+    return names.sort((a, b) => getLatestReturnRate(allHistories[b]) - getLatestReturnRate(allHistories[a]));
 }
 
 function renderMiniChart(grid, strategyName, strategyHistory, benchmarks, tradeCounts) {
