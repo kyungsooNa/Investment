@@ -1,4 +1,4 @@
-"""장중 주도테마 리포트를 30분 슬롯마다 발송하는 태스크."""
+"""장중 주도테마 리포트를 1시간 슬롯마다 발송하는 태스크."""
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +19,9 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
     """기본 랭킹 캐시를 갱신해 장중 주도테마 리포트를 주기적으로 보낸다."""
 
     CHECK_INTERVAL_SEC = 60
-    ALERT_INTERVAL_SEC = 30 * 60
+    ALERT_INTERVAL_SEC = 60 * 60
+    ALERT_START_HOUR = 9
+    ALERT_START_MINUTE = 10
 
     def __init__(
         self,
@@ -113,6 +115,8 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
             return
         now = self._market_clock.get_current_kst_time()
         slot_label = self._slot_label(now)
+        if slot_label is None:
+            return
         if self._progress["last_report_slot"] == slot_label:
             return
         await self._send_report(slot_label)
@@ -132,11 +136,18 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
                 return False
         return True
 
-    def _slot_label(self, now: datetime) -> str:
-        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        elapsed = int((now - midnight).total_seconds())
+    def _slot_label(self, now: datetime) -> Optional[str]:
+        start = now.replace(
+            hour=self.ALERT_START_HOUR,
+            minute=self.ALERT_START_MINUTE,
+            second=0,
+            microsecond=0,
+        )
+        if now < start:
+            return None
+        elapsed = int((now - start).total_seconds())
         slot_elapsed = elapsed - (elapsed % self._alert_interval_sec)
-        slot = midnight + timedelta(seconds=slot_elapsed)
+        slot = start + timedelta(seconds=slot_elapsed)
         return slot.strftime("%Y%m%d %H:%M")
 
     async def _send_report(self, slot_label: str) -> None:

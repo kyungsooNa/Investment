@@ -1,5 +1,6 @@
 """당일 랭킹 데이터 기반 주도 테마 리포트 서비스."""
 import logging
+import math
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from common.types import ErrorCode, ResCommonResponse
@@ -106,26 +107,39 @@ class ThemeDailyLeaderService:
                     round(((fi_net_sum + program_net_sum) / trading_value_sum) * 100, 2)
                     if trading_value_sum else 0.0
                 )
+                leader_avg_change_rate = round(
+                    sum(item["change_rate"] for item in leaders) / len(leaders), 2
+                )
+                score_info = self._build_theme_score(
+                    scored=scored,
+                    leader_avg_change_rate=leader_avg_change_rate,
+                    advancing_ratio=round(advance_count / len(scored) * 100, 1),
+                    trading_value_sum_won=trading_value_sum,
+                    flow_ratio=flow_ratio,
+                )
 
                 themes.append({
                     "normalized_name": normalized_name,
                     "sources": group.get("sources", []),
                     "report_date": report_date,
                     "scored_member_count": len(scored),
-                    "leader_avg_change_rate": round(
-                        sum(item["change_rate"] for item in leaders) / len(leaders), 2
-                    ),
+                    "leader_avg_change_rate": leader_avg_change_rate,
                     "advance_count": advance_count,
-                    "advancing_ratio": round(advance_count / len(scored) * 100, 1),
+                    "advancing_ratio": score_info["advancing_ratio"],
                     "trading_value_sum_won": trading_value_sum,
                     "fi_net_buy_won": fi_net_sum,
                     "program_net_buy_won": program_net_sum,
                     "flow_ratio": flow_ratio,
+                    "value_weighted_change_rate": score_info["value_weighted_change_rate"],
+                    "zero_trading_value_ratio": score_info["zero_trading_value_ratio"],
+                    "negative_trading_value_ratio": score_info["negative_trading_value_ratio"],
+                    "theme_score": score_info["theme_score"],
                     "leaders": leaders,
                 })
 
             themes.sort(
                 key=lambda item: (
+                    item["theme_score"],
                     item["leader_avg_change_rate"],
                     item["advancing_ratio"],
                     item["trading_value_sum_won"],
@@ -178,6 +192,54 @@ class ThemeDailyLeaderService:
             if code:
                 out[str(code)] = _to_int(_get(stock, "whol_smtn_ntby_tr_pbmn"))
         return out
+
+    @staticmethod
+    def _build_theme_score(
+        scored: List[Dict[str, Any]],
+        leader_avg_change_rate: float,
+        advancing_ratio: float,
+        trading_value_sum_won: int,
+        flow_ratio: float,
+    ) -> Dict[str, float]:
+        total_count = len(scored)
+        zero_trading_value_count = sum(1 for item in scored if item["trading_value_won"] <= 0)
+        negative_trading_value_sum = sum(
+            item["trading_value_won"] for item in scored if item["change_rate"] < 0
+        )
+        if trading_value_sum_won > 0:
+            value_weighted_change_rate = (
+                sum(item["change_rate"] * item["trading_value_won"] for item in scored)
+                / trading_value_sum_won
+            )
+            trading_value_score = min(math.log10(trading_value_sum_won / 100_000_000), 5.0)
+            negative_trading_value_ratio = negative_trading_value_sum / trading_value_sum_won * 100
+        else:
+            value_weighted_change_rate = (
+                sum(item["change_rate"] for item in scored) / total_count if total_count else 0.0
+            )
+            trading_value_score = 0.0
+            negative_trading_value_ratio = 0.0
+
+        zero_trading_value_ratio = (
+            zero_trading_value_count / total_count * 100 if total_count else 0.0
+        )
+        clipped_flow_ratio = max(min(flow_ratio, 20.0), -20.0)
+        theme_score = (
+            leader_avg_change_rate * 0.45
+            + value_weighted_change_rate * 0.20
+            + advancing_ratio * 0.03
+            + trading_value_score * 2.0
+            + clipped_flow_ratio * 0.10
+            - zero_trading_value_ratio * 0.05
+            - negative_trading_value_ratio * 0.04
+        )
+        return {
+            "advancing_ratio": advancing_ratio,
+            "value_weighted_change_rate": round(value_weighted_change_rate, 2),
+            "zero_trading_value_ratio": round(zero_trading_value_ratio, 2),
+            "negative_trading_value_ratio": round(negative_trading_value_ratio, 2),
+            "theme_score": round(theme_score, 2),
+        }
 
     @staticmethod
     def _build_member_score(member: Dict[str, Any], stock: Any, program_net_won: int) -> Dict[str, Any]:
