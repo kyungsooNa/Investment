@@ -1,9 +1,10 @@
 import asyncio
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
+from common.operator_alert_types import AlertSource
 from interfaces.schedulable_task import TaskState
 from task.background.intraday.opening_position_reconcile_task import OpeningPositionReconcileTask
 
@@ -257,3 +258,49 @@ async def test_run_once_reports_to_operator_alert_on_failure():
 
     assert result["error"] == "boom"
     oas.report.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_once_reports_stale_broker_reconciled_positions():
+    oas = AsyncMock()
+    service = AsyncMock()
+    service.reconcile_once.return_value = {
+        "mismatch_count": 0,
+        "stale_broker_reconciled": [{"code": "006110", "days_held": 54}],
+    }
+    task = OpeningPositionReconcileTask(
+        reconcile_service=service, operator_alert_service=oas, logger=MagicMock()
+    )
+
+    await task.run_once()
+
+    oas.report.assert_any_call(
+        AlertSource.RECONCILE,
+        "reconcile:broker_reconciled_stale:006110",
+        "warning",
+        ANY,
+        ANY,
+        metadata={"code": "006110", "days_held": 54},
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_once_resolves_stale_broker_reconciled_alert_when_cleared():
+    oas = AsyncMock()
+    service = AsyncMock()
+    service.reconcile_once.return_value = {
+        "mismatch_count": 0,
+        "stale_broker_reconciled": [{"code": "006110", "days_held": 54}],
+    }
+    task = OpeningPositionReconcileTask(
+        reconcile_service=service, operator_alert_service=oas, logger=MagicMock()
+    )
+    await task.run_once()
+    oas.reset_mock()
+
+    service.reconcile_once.return_value = {"mismatch_count": 0, "stale_broker_reconciled": []}
+    await task.run_once()
+
+    oas.resolve.assert_any_call(
+        AlertSource.RECONCILE, "reconcile:broker_reconciled_stale:006110", ANY
+    )

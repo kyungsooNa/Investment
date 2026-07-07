@@ -909,6 +909,7 @@ class ServiceContainer:
                 opening_reconcile_service = OpeningPositionReconcileService(
                     broker=ctx.broker,
                     virtual_trade_service=ctx.virtual_trade_service,
+                    market_clock=ctx.market_clock,
                     logger=ctx.logger,
                 )
                 ctx.opening_position_reconcile_task = OpeningPositionReconcileTask(
