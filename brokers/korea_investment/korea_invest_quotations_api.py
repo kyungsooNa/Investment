@@ -435,8 +435,8 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
 
         raw = response_data.data
         if isinstance(raw, dict):
-            # KIS 관례: output1 = 요약/메타, output2 = 캔들 리스트
-            output_list = raw.get("output2") or raw.get("output") or raw.get("output1") or []
+            # KIS 관례: output1 = 요약/메타(캔들 아님, 폴백 대상 아님), output2 = 캔들 리스트
+            output_list = raw.get("output2") or raw.get("output") or []
         else:
             output_list = raw or []
 

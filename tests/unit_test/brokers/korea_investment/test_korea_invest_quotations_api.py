@@ -740,6 +740,30 @@ async def test_inquire_daily_itemchartprice_parses_output2(mocker, mock_quotatio
 
 
 @pytest.mark.asyncio
+async def test_inquire_daily_itemchartprice_output2_empty_does_not_use_output1(mocker, mock_quotations):
+    """output2가 빈 리스트일 때 output1(현재가 요약)을 캔들 데이터로 오인해 파싱하면 안 된다."""
+    payload = {
+        "msg1": "정상처리 되었습니다.",
+        "msg_cd": "MCA00000",
+        "rt_cd": "0",
+        "output1": {"stck_shrn_iscd": "005930", "stck_prpr": "70000", "per": "12.34"},
+        "output2": [],
+    }
+    mocker.patch.object(
+        mock_quotations, "call_api",
+        return_value=ResCommonResponse(rt_cd="0", msg1="ok", data=payload)
+    )
+
+    res = await mock_quotations.inquire_daily_itemchartprice(
+        "005930", start_date="20250814", end_date="20250814", fid_period_div_code="D"
+    )
+
+    assert res.rt_cd == ErrorCode.SUCCESS.value
+    assert res.data == []
+    mock_quotations._logger.warning.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_get_current_price_success(mock_quotations):
     """
     get_current_price가 정상적인 응답을 반환하는 경우를 테스트합니다.
