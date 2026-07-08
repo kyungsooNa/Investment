@@ -1763,7 +1763,7 @@ async def test_analyze_surge_candidate_filter_branches_after_candle_merge(mock_d
 
 @pytest.mark.asyncio
 async def test_update_market_timing_emits_notifications(mock_deps):
-    """마켓 타이밍 갱신 시 상승/하락 모두 알림을 발행한다."""
+    """마켓 타이밍 갱신 시 KOSDAQ/KOSPI를 하나의 알림에 함께 담아 발행한다."""
     _, sqs, indicator, mapper, tm, logger = mock_deps
     notification = AsyncMock()
     service = OneilUniverseService(sqs, indicator, mapper, tm, logger=logger, notification_service=notification)
@@ -1784,14 +1784,19 @@ async def test_update_market_timing_emits_notifications(mock_deps):
     ])
     await service._update_market_timing(caller="tester", logger=logger)
 
-    assert notification.emit.await_count == 2
-    first_call = notification.emit.await_args_list[0].kwargs
-    second_call = notification.emit.await_args_list[1].kwargs
-    assert first_call["level"] == service._notification_service.emit.await_args_list[0].kwargs["level"]
-    assert "[tester] 마켓 타이밍 갱신 (KOSDAQ)" == first_call["title"]
-    assert first_call["metadata"] == {"force_external": True, "event": "market_timing_updated", "market": "KOSDAQ"}
-    assert second_call["metadata"] == {"force_external": True, "event": "market_timing_updated", "market": "KOSPI"}
-    assert "MA decline" in second_call["message"]
+    notification.emit.assert_awaited_once()
+    call_kwargs = notification.emit.await_args.kwargs
+    assert call_kwargs["level"].value == "warning"
+    assert "[tester] 마켓 타이밍 갱신" == call_kwargs["title"]
+    assert call_kwargs["metadata"] == {
+        "force_external": True,
+        "event": "market_timing_updated",
+        "market": "ALL",
+        "markets": ["KOSDAQ", "KOSPI"],
+    }
+    assert "KOSDAQ" in call_kwargs["message"]
+    assert "KOSPI" in call_kwargs["message"]
+    assert "MA decline" in call_kwargs["message"]
 
 
 def test_compute_rs_scores_rating_mode(mock_deps):

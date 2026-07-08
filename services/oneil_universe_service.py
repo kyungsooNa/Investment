@@ -1009,6 +1009,8 @@ class OneilUniverseService:
 
     async def _update_market_timing(self, caller: str = "", logger: Optional[logging.Logger] = None):
         logger = logger or self._logger
+        notification_rows = []
+        overall_level = NotificationLevel.INFO
         for market, code in [("KOSDAQ", self._cfg.kosdaq_etf_code), ("KOSPI", self._cfg.kospi_etf_code)]:
             snap = await self._regime_svc.classify(market, logger=logger)
             is_rising = snap.is_rising
@@ -1024,28 +1026,33 @@ class OneilUniverseService:
             if self._notification_service:
                 status_text = "🟢 매수 적합 (우상향)" if is_rising else "🔴 매수 부적합 (추세 꺾임)"
                 level = NotificationLevel.INFO if is_rising else NotificationLevel.WARNING
+                if level == NotificationLevel.WARNING:
+                    overall_level = NotificationLevel.WARNING
 
                 ma_str = " ➔ ".join([f"{v:.2f}" for v in snap.ma_values])
                 msg = f"• 지수: {market} ({code})\n• 상태: {status_text}\n"
                 if not is_rising and snap.fail_detail:
                     msg += f"• 사유: {snap.fail_detail}\n"
                 msg += f"• 최근 MA({self._cfg.market_ma_period}) 추이: {ma_str}"
+                notification_rows.append(msg)
 
-                title = f"마켓 타이밍 갱신 ({market})"
-                if caller:
-                    title = f"[{caller}] {title}"
+        if self._notification_service and notification_rows:
+            title = "마켓 타이밍 갱신"
+            if caller:
+                title = f"[{caller}] {title}"
 
-                await self._notification_service.emit(
-                    category=NotificationCategory.STRATEGY,
-                    level=level,
-                    title=title,
-                    message=msg,
-                    metadata={
-                        "force_external": True,
-                        "event": "market_timing_updated",
-                        "market": market,
-                    },
-                )
+            await self._notification_service.emit(
+                category=NotificationCategory.STRATEGY,
+                level=overall_level,
+                title=title,
+                message="\n\n".join(notification_rows),
+                metadata={
+                    "force_external": True,
+                    "event": "market_timing_updated",
+                    "market": "ALL",
+                    "markets": ["KOSDAQ", "KOSPI"],
+                },
+            )
 
     def _compute_rs_scores(
         self,
