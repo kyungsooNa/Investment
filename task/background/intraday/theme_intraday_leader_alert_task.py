@@ -20,6 +20,7 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
 
     CHECK_INTERVAL_SEC = 60
     ALERT_INTERVAL_SEC = 60 * 60
+    ALERT_GRACE_SEC = 120
     ALERT_START_HOUR = 9
     ALERT_START_MINUTE = 10
 
@@ -33,6 +34,7 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
         market_clock: Optional["MarketClock"] = None,
         check_interval_sec: Optional[int] = None,
         alert_interval_sec: Optional[int] = None,
+        alert_grace_sec: Optional[int] = None,
         logger=None,
     ) -> None:
         self._ranking_task = ranking_task
@@ -42,6 +44,7 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
         self._market_clock = market_clock
         self._check_interval_sec = check_interval_sec or self.CHECK_INTERVAL_SEC
         self._alert_interval_sec = alert_interval_sec or self.ALERT_INTERVAL_SEC
+        self._alert_grace_sec = alert_grace_sec or self.ALERT_GRACE_SEC
         self._logger = logger or logging.getLogger(__name__)
         self._state = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
@@ -147,6 +150,8 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
             return None
         elapsed = int((now - start).total_seconds())
         slot_elapsed = elapsed - (elapsed % self._alert_interval_sec)
+        if elapsed - slot_elapsed > self._alert_grace_sec:
+            return None
         slot = start + timedelta(seconds=slot_elapsed)
         return slot.strftime("%Y%m%d %H:%M")
 

@@ -98,9 +98,9 @@ async def test_builds_theme_report_from_ranking_data():
     resp = await svc.build_daily_theme_report(rankings, "20260630")
 
     assert resp.rt_cd == ErrorCode.SUCCESS.value
-    assert [item["normalized_name"] for item in resp.data] == ["반도체/소부장", "우주항공"]
+    assert [item["normalized_name"] for item in resp.data] == ["우주항공", "반도체/소부장"]
 
-    semi = resp.data[0]
+    semi = next(item for item in resp.data if item["normalized_name"] == "반도체/소부장")
     assert semi["scored_member_count"] == 4
     assert semi["advance_count"] == 3
     assert semi["advancing_ratio"] == 75.0
@@ -112,7 +112,7 @@ async def test_builds_theme_report_from_ranking_data():
     assert semi["value_weighted_change_rate"] == 12.41
     assert semi["zero_trading_value_ratio"] == 0.0
     assert semi["negative_trading_value_ratio"] == 2.63
-    assert semi["theme_score"] == 17.5
+    assert semi["theme_score"] == 13.21
     assert [leader["code"] for leader in semi["leaders"][:3]] == ["A", "B", "C"]
 
 
@@ -157,6 +157,48 @@ async def test_ranks_liquid_theme_above_thin_high_change_theme():
     assert liquid["leader_avg_change_rate"] < thin["leader_avg_change_rate"]
     assert liquid["theme_score"] > thin["theme_score"]
     assert thin["zero_trading_value_ratio"] == 66.67
+
+
+@pytest.mark.asyncio
+async def test_high_liquidity_low_momentum_does_not_dominate_stronger_theme():
+    groups = {
+        "대형주저탄력": {
+            "sources": ["NAVER"],
+            "members": [
+                _member("A", "대형1"),
+                _member("B", "대형2"),
+                _member("C", "대형3"),
+            ],
+        },
+        "중형주강세": {
+            "sources": ["NAVER"],
+            "members": [
+                _member("D", "강세1"),
+                _member("E", "강세2"),
+                _member("F", "강세3"),
+            ],
+        },
+    }
+    svc, _ = _service(groups)
+    rankings = {
+        "all_stocks": [
+            _stock("A", "대형1", 1.5, 10_000_000_000_000),
+            _stock("B", "대형2", 1.0, 10_000_000_000_000),
+            _stock("C", "대형3", 0.5, 10_000_000_000_000),
+            _stock("D", "강세1", 8.0, 10_000_000_000),
+            _stock("E", "강세2", 7.0, 10_000_000_000),
+            _stock("F", "강세3", 6.0, 10_000_000_000),
+        ],
+        "program_all_stocks": [],
+    }
+
+    resp = await svc.build_daily_theme_report(rankings, "20260630")
+
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert [item["normalized_name"] for item in resp.data] == ["중형주강세", "대형주저탄력"]
+    strong, mega = resp.data
+    assert strong["leader_avg_change_rate"] > mega["leader_avg_change_rate"]
+    assert strong["theme_score"] > mega["theme_score"]
 
 
 @pytest.mark.asyncio

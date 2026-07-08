@@ -141,6 +141,17 @@ async def test_next_hourly_slot_sends_again():
 
 
 @pytest.mark.asyncio
+async def test_late_restart_inside_hourly_slot_does_not_send_catchup_alert():
+    deps = _make_task(now=datetime(2026, 7, 6, 10, 41, 0))
+
+    await deps.task._tick()
+
+    deps.theme_service.build_daily_theme_report.assert_not_called()
+    deps.telegram_reporter.send_daily_theme_report.assert_not_called()
+    assert deps.task.get_progress()["last_report_slot"] is None
+
+
+@pytest.mark.asyncio
 async def test_before_0910_skips_alert():
     deps = _make_task(now=datetime(2026, 7, 6, 9, 9, 0))
 

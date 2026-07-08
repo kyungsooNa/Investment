@@ -228,7 +228,7 @@ class ThemeDailyLeaderService:
             leader_avg_change_rate * 0.45
             + value_weighted_change_rate * 0.20
             + advancing_ratio * 0.03
-            + trading_value_score * 2.0
+            + trading_value_score * 0.8
             + clipped_flow_ratio * 0.10
             - zero_trading_value_ratio * 0.05
             - negative_trading_value_ratio * 0.04
