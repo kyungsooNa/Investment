@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Optional
@@ -35,6 +36,8 @@ class MicrostructureCaptureTask(AfterMarketTask):
         max_codes: int = 40,
         logger=None,
         notification_service=None,
+        quality_retry_attempts: int = 1,
+        quality_retry_delay_sec: float = 15 * 60,
     ):
         super().__init__(
             mcs=market_calendar_service,
@@ -50,6 +53,8 @@ class MicrostructureCaptureTask(AfterMarketTask):
         self._execution_strength_db_path = Path(execution_strength_db_path)
         self._max_codes = max_codes
         self._notification_service = notification_service
+        self._quality_retry_attempts = max(0, int(quality_retry_attempts))
+        self._quality_retry_delay_sec = max(0.0, float(quality_retry_delay_sec))
         # 재시작 시 catch-up 중복 캡처 방지를 위해 "마지막 캡처 날짜"를 영속화한다.
         self._scheduler_store = scheduler_store
         self._state_key = "microstructure_capture_last_date"
@@ -129,9 +134,9 @@ class MicrostructureCaptureTask(AfterMarketTask):
         )
         self._progress["running"] = True
         try:
-            payload = await self._service.capture(
+            payload, quality_summary = await self._capture_with_quality_retry(
                 codes=codes,
-                date_ymd=latest_trading_date,
+                latest_trading_date=latest_trading_date,
                 program_source=program_source,
                 execution_strength_source=execution_strength_source,
             )
@@ -144,10 +149,6 @@ class MicrostructureCaptureTask(AfterMarketTask):
             program_fallback_codes = metadata.get("program_fallback_codes") or []
             execution_strength_fallback_codes = (
                 metadata.get("execution_strength_fallback_codes") or []
-            )
-            quality_summary = summarize_capture_quality(
-                payload,
-                fallback_codes=codes,
             )
             self._progress["last_result"] = {
                 "codes": len(codes),
@@ -188,6 +189,57 @@ class MicrostructureCaptureTask(AfterMarketTask):
         finally:
             self._progress["running"] = False
 
+    async def _capture_with_quality_retry(
+        self,
+        *,
+        codes: list[str],
+        latest_trading_date: str,
+        program_source: str,
+        execution_strength_source: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        payload = await self._capture_once(
+            codes=codes,
+            latest_trading_date=latest_trading_date,
+            program_source=program_source,
+            execution_strength_source=execution_strength_source,
+        )
+        quality_summary = summarize_capture_quality(payload, fallback_codes=codes)
+
+        for attempt in range(self._quality_retry_attempts):
+            if "intraday_coverage_below_threshold" not in quality_summary["issues"]:
+                break
+            self._logger.warning(
+                f"{self.task_name}: {latest_trading_date} intraday 분봉 품질 낮음 "
+                f"(intraday={quality_summary['intraday_coverage_pct']:.1f}%) — "
+                f"{self._quality_retry_delay_sec:.0f}초 후 재시도 "
+                f"({attempt + 1}/{self._quality_retry_attempts})"
+            )
+            await asyncio.sleep(self._quality_retry_delay_sec)
+            payload = await self._capture_once(
+                codes=codes,
+                latest_trading_date=latest_trading_date,
+                program_source=program_source,
+                execution_strength_source=execution_strength_source,
+            )
+            quality_summary = summarize_capture_quality(payload, fallback_codes=codes)
+
+        return payload, quality_summary
+
+    async def _capture_once(
+        self,
+        *,
+        codes: list[str],
+        latest_trading_date: str,
+        program_source: str,
+        execution_strength_source: str,
+    ) -> dict[str, Any]:
+        return await self._service.capture(
+            codes=codes,
+            date_ymd=latest_trading_date,
+            program_source=program_source,
+            execution_strength_source=execution_strength_source,
+        )
+
     async def _emit_quality_gate_warning(
         self,
         latest_trading_date: str,
@@ -197,7 +249,12 @@ class MicrostructureCaptureTask(AfterMarketTask):
             return
         empty_minute_codes = quality_summary.get("empty_minute_codes") or []
         stale_minute_rows_dropped = quality_summary.get("stale_minute_rows_dropped") or 0
+        stale_minute_rows_dropped_by_code = (
+            quality_summary.get("stale_minute_rows_dropped_by_code") or {}
+        )
         program_fallback_codes = quality_summary.get("program_fallback_codes") or []
+        empty_detail = _format_code_list(empty_minute_codes)
+        stale_detail = _format_stale_by_code(stale_minute_rows_dropped_by_code)
         await self._notification_service.emit(
             NotificationCategory.BACKGROUND,
             NotificationLevel.WARNING,
@@ -206,8 +263,8 @@ class MicrostructureCaptureTask(AfterMarketTask):
             f"intraday={quality_summary['intraday_coverage_pct']:.1f}%, "
             f"program={quality_summary['program_overlay_coverage_pct']:.1f}%, "
             f"program_db={format_optional_pct(quality_summary['program_db_coverage_pct'])}, "
-            f"empty_minutes={len(empty_minute_codes)}, "
-            f"stale_dropped={stale_minute_rows_dropped}",
+            f"empty_minutes={len(empty_minute_codes)}{empty_detail}, "
+            f"stale_dropped={stale_minute_rows_dropped}{stale_detail}",
             metadata={
                 "alert_type": "microstructure_capture_quality_gate",
                 "trade_date": latest_trading_date,
@@ -219,6 +276,24 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "program_db_coverage_pct": quality_summary["program_db_coverage_pct"],
                 "empty_minute_codes": empty_minute_codes,
                 "stale_minute_rows_dropped": stale_minute_rows_dropped,
+                "stale_minute_rows_dropped_by_code": stale_minute_rows_dropped_by_code,
                 "program_fallback_codes": program_fallback_codes,
             },
         )
+
+
+def _format_code_list(codes: list[str], *, limit: int = 8) -> str:
+    if not codes:
+        return ""
+    visible = [str(code) for code in codes[:limit]]
+    suffix = "" if len(codes) <= limit else f", +{len(codes) - limit}"
+    return f" [{','.join(visible)}{suffix}]"
+
+
+def _format_stale_by_code(stale_by_code: dict[str, int], *, limit: int = 8) -> str:
+    if not stale_by_code:
+        return ""
+    items = list(stale_by_code.items())[:limit]
+    visible = [f"{code}:{count}" for code, count in items]
+    suffix = "" if len(stale_by_code) <= limit else f", +{len(stale_by_code) - limit}"
+    return f" [{','.join(visible)}{suffix}]"

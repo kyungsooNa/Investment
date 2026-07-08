@@ -19,6 +19,41 @@ def _payload(date="20260702"):
     }
 
 
+def _quality_payload(
+    *,
+    date="20260702",
+    codes=None,
+    intraday_minutes=None,
+    program_trades=None,
+    quality=None,
+):
+    codes = codes or ["005930", "000660"]
+    intraday_minutes = intraday_minutes or {code: [{}] for code in codes}
+    program_trades = program_trades or {
+        code: {"program_net_buy_qty": 1} for code in codes
+    }
+    return {
+        "metadata": {
+            "trade_date": date,
+            "codes": codes,
+            "program_source": "program_db",
+            "program_fallback_codes": [],
+            "quality": quality or {
+                "empty_minute_codes": [],
+                "stale_minute_rows_dropped": {},
+            },
+            "row_counts": {
+                "intraday_minutes": sum(len(rows) for rows in intraday_minutes.values()),
+                "execution_strength": len(codes),
+                "program_trades": sum(1 for value in program_trades.values() if value is not None),
+            },
+        },
+        "intraday_minutes": intraday_minutes,
+        "execution_strength": {code: 120.0 for code in codes},
+        "program_trades": program_trades,
+    }
+
+
 @pytest.fixture
 def capture_service():
     svc = MagicMock()
@@ -61,6 +96,7 @@ def _make_task(capture_service, tmp_path, **kwargs):
         program_db_path=tmp_path / "program_trading.db",
         execution_strength_db_path=tmp_path / "execution_strength.db",
         logger=MagicMock(),
+        quality_retry_attempts=0,
     )
     defaults.update(kwargs)
     return MicrostructureCaptureTask(**defaults)
@@ -297,7 +333,8 @@ async def test_quality_gate_failure_emits_background_warning_notification(
         NotificationCategory.BACKGROUND,
         NotificationLevel.WARNING,
         "Microstructure 캡처 품질 게이트 실패",
-        "20260702: intraday=50.0%, program=0.0%, program_db=0.0%, empty_minutes=1, stale_dropped=2",
+        "20260702: intraday=50.0%, program=0.0%, program_db=0.0%, "
+        "empty_minutes=1 [000660], stale_dropped=2 [005930:2]",
     )
     assert kwargs["metadata"]["issues"] == [
         "intraday_coverage_below_threshold",
@@ -307,7 +344,46 @@ async def test_quality_gate_failure_emits_background_warning_notification(
     assert kwargs["metadata"]["codes"] == 2
     assert kwargs["metadata"]["empty_minute_codes"] == ["000660"]
     assert kwargs["metadata"]["stale_minute_rows_dropped"] == 2
+    assert kwargs["metadata"]["stale_minute_rows_dropped_by_code"] == {"005930": 2}
     assert kwargs["metadata"]["program_fallback_codes"] == []
+
+
+@pytest.mark.asyncio
+async def test_intraday_quality_failure_retries_once_before_warning(
+    capture_service, universe_service, tmp_path
+):
+    first_payload = _quality_payload(
+        intraday_minutes={"005930": [{}], "000660": []},
+        quality={
+            "empty_minute_codes": ["000660"],
+            "stale_minute_rows_dropped": {},
+        },
+    )
+    retry_payload = _quality_payload()
+    capture_service.capture = AsyncMock(side_effect=[first_payload, retry_payload])
+    notification_service = MagicMock()
+    notification_service.emit = AsyncMock()
+    db_path = tmp_path / "program_trading.db"
+    db_path.write_bytes(b"")
+    task = _make_task(
+        capture_service,
+        tmp_path,
+        universe_service=universe_service,
+        program_db_path=db_path,
+        notification_service=notification_service,
+        quality_retry_attempts=1,
+        quality_retry_delay_sec=0,
+    )
+
+    await task._on_market_closed("20260702")
+
+    assert capture_service.capture.await_count == 2
+    capture_service.write_overlay_files.assert_called_once_with(
+        retry_payload,
+        tmp_path / "out",
+    )
+    notification_service.emit.assert_not_awaited()
+    assert task.get_progress()["last_result"]["quality_gate_passed"] is True
 
 
 @pytest.mark.asyncio
