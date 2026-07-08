@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-05 (M-1 재조사로 필수 게이트 하향 + M-2 문서 동기화 완료)
+최종 업데이트: 2026-07-08 (1-5 캡처 QC 1주차 판정 + 캡처 후보 랭킹 보충 + 2-2 내부 budget 실측 종결 + Pool B 캡처 우회 결정)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -20,17 +20,17 @@
 리뷰 핵심 판단: 운영 인프라·리스크 규율(킬스위치 영속화·RiskGate·tiered force-exit·profitability gate·캐너리 사이징)은 갖춰졌다. 남은 크리티컬 패스는 **엣지(수익성) 입증**이다. 엣지의 원천으로 삼는 수급 필터(체결강도·프로그램매매)가 장중 히스토리 부재로 백테스트 검증 불가능한 상태이므로, 검증 데이터 축적을 지금 시작하는 것이 최우선이다.
 
 1. **[즉시 착수 — 엣지 검증 크리티컬 패스]**
-   - 1-5 장중 microstructure 캡처 **상시 가동** (blocked 해제 단계 자체가 착수 항목) — 태스크 배선 완료(#618), 코퍼스 축적 중, 1일차 품질 결함 보정 + 체결강도 장중 시계열 배선 완료(2026-07-04)
+   - 1-5 장중 microstructure 캡처 **상시 가동** (blocked 해제 단계 자체가 착수 항목) — 태스크 배선 완료(#618), 코퍼스 축적 중, 1일차 품질 결함 보정 + 체결강도 장중 시계열 배선 완료(2026-07-04), QC 1주차 양호 판정 + 거래대금 랭킹 보충으로 코퍼스 폭 확대(2026-07-08)
    - 1-6 shadow/paper/소액 canary journal 축적 (운영 상시 — 무틱 블로커와 독립)
 2. **[외부 블로커 — 병행 진행]**
-   - 2-4 WebSocket 무틱 — KIS 에스컬레이션 (무틱 보통주만; ETF/우선주는 무틱 수용으로 종결)
+   - 2-4 WebSocket 무틱 — KIS 에스컬레이션 **접수 대기** (패키지 준비 완료 #630, 남은 액션은 실제 접수뿐; 무틱 보통주만 — ETF/우선주는 무틱 수용으로 종결)
 3. **[확대·전환 전 필수 게이트]**
    - 0-1 실전 체결필드 fixture · 2-2 KIS 유량 한도 실측 (실전 전환 직전, 외부 의존)
 4. **[데이터·정책 대기]**
    - 1-8 백테스트 재실행 (CLI 노출 완료 #619 — PIT 후보 부재로 blocked, 2026-07-03 파일럿 판정)
    - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (dry-run 검증 후 — O-1 #621/O-2 완료)
 5. **[조건부·저위험 상시]**
-   - Pool B 완화 (**재발 확인 2026-07-02 — 정책 결정 대기**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 · T-0/R-6 (선택/관찰)
+   - Pool B 완화 (**캡처 우회 적용 2026-07-08 — 트레이딩 완화는 시장 회복 후 재판단**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 · T-0/R-6 (선택/관찰)
 
 ---
 
@@ -44,7 +44,9 @@
   - 캡처 QC 리포트 추가 (2026-07-04): `scripts/analyze_backtest_microstructure_quality.py`로 `replay_microstructure_*.json`의 intraday/execution_strength/program overlay 커버리지, stale row, program DB/fallback 비율을 날짜별 집계하고 `--fail-on-gate`로 품질 게이트를 자동 판정한다.
   - 캡처 태스크 QC 노출 추가 (2026-07-04): `MicrostructureCaptureTask.last_result`에 `quality_gate_passed`, `quality_issues`, intraday/execution_strength/program/program_db coverage를 노출하고, 게이트 실패 시 warning 로그와 BACKGROUND/WARNING notification을 남긴다.
   - 체결강도 장중 시계열 캡처 배선 완료 (2026-07-04): WS 체결 틱(H0STCNT0)에 포함된 `체결강도`를 `PriceStreamService.on_price_tick`에서 종목당 60초 샘플링해 `es_history` SQLite(`data/execution_strength/`, `ExecutionStrengthRepository`)에 축적 — **신규 WS 구독 없음**(기존 PRICE 틱 무임승차, 슬롯 비간섭). 장마감 캡처가 `execution_strength_source=es_db`로 소비하고 DB 미스 종목은 기존 REST 스칼라 유지 + `metadata.execution_strength_fallback_codes` 기록. QC에 `execution_strength_db_coverage_pct`(임계 30% — 배선 전손 감지용) 노출, overlay 파일 `replay_execution_strength_intraday_*.json` 추가. `execution_strength_capture_enabled`(기본 on).
-  - ※ 남은 한계: 체결강도 시계열 커버리지가 "PRICE 구독 중 + 유틱" 종목으로 제한(무틱 ~55% — 2-4 해소 시 개선, 미커버는 EOD 스칼라 폴백). 남은 것: quality 플래그·PT/ES 커버리지(`program_fallback_codes`·`execution_strength_fallback_codes` 감소 여부) 일일 관찰.
+  - QC 1주차 판정 (2026-07-08, 4거래일 07-03/06/07/08 실측): ① program fallback 2종목(07-06)→0→0 수렴 — PT 구독 배선 의도대로 작동, program_db 완전 커버 도달. ② ES fallback(일 4~6종목)은 3일 모두 `empty_minute_codes`(무거래/정지 종목)와 정확히 일치 — 거래가 있었던 후보는 ES 시계열 전량 커버, "무틱 ~55% 제한" 우려는 캡처 후보군에선 실측상 미발현(표본 9~12종목/일 단서). ③ stale row 필터 작동(033160 매일 57행 드랍). 이후 관찰은 이 기준선 대비 악화 여부로 판단.
+  - 캡처 전용 후보 확장 (2026-07-08): 워치리스트 기근(Pool B 항목 참조)으로 코퍼스 폭이 9~12종목/일에 갇혀, `resolve_capture_codes`에 거래대금 상위 랭킹 보충(기본 20종목, ETF 프리픽스 제외, 조회 실패 시 무보충) 추가 — 장마감 캡처·장중 PT 구독 공통 적용, 트레이딩 후보/주문 경로 불변. 랭킹 API는 실전 전용이라 모의 환경에선 자동으로 기존 동작.
+  - ※ 남은 한계: 체결강도 시계열 커버리지가 "PRICE 구독 중 + 유틱" 종목으로 제한(무틱 ~55% — 2-4 해소 시 개선, 미커버는 EOD 스칼라 폴백; 랭킹 보충분도 PRICE 미구독이면 EOD 스칼라). 남은 것: quality 플래그·PT/ES 커버리지(`program_fallback_codes`·`execution_strength_fallback_codes` 감소 여부) 일일 관찰.
 - [blocked — 캡처 코퍼스 축적 후] 실제 replay fixture를 통과 케이스까지 확장 → replay overlay.
 - [ ] 한국장 실전 microstructure fixture(bid/ask book·잔량·체결강도·프로그램매매 overlay)로 체결 모델 보정 + 시장가/최유리/지정가별 fill quality가 live journal과 얼마나 벌어지는지 리포트.
 
@@ -56,7 +58,7 @@
 - [blocked] 활성 전략 전체 walk-forward + Monte Carlo 재실행 + 민감도 표 — **2026-07-03 파일럿(VBO 6/15-30, PP 6/1-12) 결과 전 구간 0거래**로 현시점 무의미.
   - 원인 ①: 백테스트 유니버스가 **현재 시점** `data/premium_stocks.json`(PIT 아님) — 2026-07-03 재생성 기준 KOSPI 0종목/KOSDAQ 0종목이라 어떤 과거 구간을 돌려도 후보가 없다.
   - 원인 ②: 6월 하순 양시장 MA 하락 → 마켓 타이밍 게이트가 스캔 차단(`market_timing_off_both`) — 롱온리 전략의 정상 휴식.
-  - 해제 조건: (a) 1-5 캡처 코퍼스 축적(`replay_microstructure_*.json`의 `metadata.codes`가 당일 후보 스냅샷 = PIT 후보군 역할) 또는 (b) 시장 회복으로 Pool B 복원.
+  - 해제 조건: (a) 1-5 캡처 코퍼스 축적(`replay_microstructure_*.json`의 `metadata.codes`가 당일 후보 스냅샷 = PIT 후보군 역할) 또는 (b) 시장 회복으로 Pool B 복원. ※ 2026-07-08 랭킹 보충으로 codes 폭 확대 — 단, 보충분은 필터 통과 '후보'가 아닌 유동성 상위 종목이므로 PIT 후보군으로 해석할 때 소스 구분에 유의(보충 발생 시 capture_candidates info 로그에 소스별 개수 기록).
   - 실행 메모: 첫 런이 REST 지배적(12거래일 ≈ 18~23분), **캐시 워밍 후 변형 런 ≈ 1분** — 후보만 갖춰지면 민감도 그리드는 저렴.
 
 주요 파일: `scripts/run_backtest.py`, `services/backtest_walk_forward.py`, `docs/backtest.md`, `data/backtest_*.json`
@@ -86,7 +88,7 @@
 - **[최우선 블로커] WebSocket price 피드 무틱 ≈55%**: 구독 종목 절반 이상이 종일 `subscribed_no_tick` → shadow parity 수집 불가 + 라이브 실시간 데이터 품질 문제. **이 레포의 코드 작업은 종결**(무틱 종목 격리 구현 완료). 진단 확정: 종목·상품군·계정 단위 **KIS측 프레임 미전송**(`a1_kis_no_send`).
   - 근거: 2026-06-19 로그 진단(`reports/no_tick_diagnosis_20260619.md`) + 2026-06-22 운영 실험 A~D(`reports/no_tick_operational_experiment_analysis_20260622_live.md`) — subscribe/ack/quality_reject 전부 0, received 5 vs no_tick 18. 보통주 일부만 0틱(종목 단위), ETF/우선주 전부 0틱(상품군 단위), 격리해도 0틱 지속(계정 단위), refresh 무효.
   - **정책 결정(2026-07-01)**: ETF/우선주는 WS tick 없음으로 **간주**(상품군 단위 무틱 수용) → B군 KIS 문의 **드롭**. REST 폴링 경로로 처리하고, 무틱 지표에서 ETF/우선주는 정상(예상된 무틱)으로 본다. 코드 변경 없음(사후 격리가 이미 churn 중단). ※ 실전 전략은 보통주 롱온리라 ETF/우선주 WS 구독은 부수적.
-  - **다음 액션(코드 아님)**: KIS 에스컬레이션 접수 준비 — 무틱 **보통주**만 대상으로 정리한 문의 패키지 `reports/kis_no_tick_common_stock_escalation_20260705.md`와 C군 runner 출력(`reports/no_tick_operational_experiment_result_C_no_tick_common_solo_20260622_live.{json,md}`) 첨부. 완료 판정은 KIS 답변으로 서버/권한/종목 예외 확인 또는 재현 실험 요청 수신.
+  - **다음 액션(코드 아님)**: 접수 준비 **완료**(#630, 패키지 완결성 재확인 2026-07-08 — 문의 문안·첨부 목록·완료 판정 기준 포함). 무틱 **보통주**만 대상 문의 패키지 `reports/kis_no_tick_common_stock_escalation_20260705.md`와 C군 runner 출력(`reports/no_tick_operational_experiment_result_C_no_tick_common_solo_20260622_live.{json,md}`) 첨부. **남은 액션: 실제 KIS 접수(사용자 외부 액션)뿐.** 완료 판정은 KIS 답변으로 서버/권한/종목 예외 확인 또는 재현 실험 요청 수신.
   - ※ 폴링 지연(5분 scan + stagger + limiter)은 돌파 전략의 실질 슬리피지로 작용 — 무틱 해소 → event-driven 전환이 VBO 계열 수익성의 전제 조건이기도 하다. (2026-07-02 리뷰)
 - [ ] (블로커 해소 후) `event_shadow`/`event_shadow_exit` 5거래일 jsonl 수집 → `scripts/analyze_event_shadow_parity.py`로 entry/exit parity 리포트 → PR-3 진입 판정.
 - [ ] event-driven signal은 별도 승인 전 shadow/latency 측정용으로만 운영(실주문은 polling + full gate 경로만). VBO fast path는 execution strength/program-buy 생략.
@@ -100,7 +102,7 @@
 
 - [~] API budget limiter 운영 정책 — 동시성/rate 분리·emergency overlay·전역 8/s 등 구현 완료.
   - 남은 작업(외부): 실제 KIS 계정별 REST/WebSocket 유량 한도 숫자를 공식 포털/계정 공지로 **운영 직전 재확인** → 필요 시 `_global` 8/s 운영값 조정. 공개 자료가 갈리므로 코드 기본값은 보수값 유지.
-  - [ ] 남은 작업(내부): #609/#613 계층 계측의 07-02 정화 로그 결론 반영 — 지연의 94%가 `RQBudget` throttle 대기(재시도·KIS 네트워크 무죄), 특히 `quotation_ohlcv` 콜당 평균 2.61s(736콜)·`quotation` 1.46s(2,586콜). `DEFAULT_API_BUDGET_LIMITS`의 해당 카테고리 한도 vs 실호출량을 비교해 상향 여지 검토. 폴링 지연이 2-4의 실질 슬리피지로 작용하므로 무틱 해소와 별개의 내부 개선 여지.
+  - [x] 남은 작업(내부) **종결** (2026-07-08): #635/#638 BudgetSnapshot 계측 3거래일(07-06/07/08) 실측 — `quotation_ohlcv`만 유의미 대기(콜당 0.87~1.02s, 일 1,250~1,540콜에 총 ~21분)이나 **그 99%가 장외 16:15~16:45 장마감 OHLCV 배치에 집중**, 장중 대기는 일 2~69s. 07-02 결론의 "폴링 지연=budget 슬리피지" 성분은 **장중에선 이미 해소된 것으로 실측 확인**(콜당 2.61s→0.87~1.02s, quotation 1.46s→0.01s). 배치 피크 구간 전역 사용률 ~3.2/s(8/s 대비 헤드룸 ~4.8/s)라 카테고리 한도 상향 여지는 있으나 실익이 배치 10~15분 단축뿐이라 **현행 유지 결정**. 잔여 관찰: 07-07 하루 `quotation` 세마포어 대기 578s 1회 관측 — 재발 시 동시성 4→6 검토.
 
 주요 파일: `core/retry_queue/api_budget_limiter.py`, `docs/api_budget_coverage_matrix.md`
 
@@ -166,7 +168,7 @@
 ### M-2. 문서 동기화 + 구조 감시 [저위험 상시]
 
 - [x] `docs/backtest.md`(본문은 #619 슬리피지/스프레드 CLI까지 이미 반영, 날짜만 동기화)·`CODEBASE_SUMMARY.md`(bootstrap 분해 진전·EventShadowManager 분리·해외/테마 계층·브로커 계층 계측 4곳 반영) 갱신 완료 (2026-07-05).
-- 감시(조치 아님): `view/web/bootstrap/service_container.py`(962줄 — 2026-07-05 기준, 07-02 902줄 대비 +60줄로 증가 지속)가 web_app_initializer 비대화의 재발 패턴인지 주기 점검. `scheduler/strategy_scheduler.py` 2,152줄 / `services/strategy_log_report_service.py` 2,143줄 — 분해는 3-4 재승격과 함께 진행.
+- 감시(조치 아님): `view/web/bootstrap/service_container.py`(1,004줄 — 2026-07-08 기준: 07-02 902 → 07-05 962 → +42줄, 증가세 지속으로 경고 기울기)가 web_app_initializer 비대화의 재발 패턴인지 주기 점검. `scheduler/strategy_scheduler.py` 2,153줄 / `services/strategy_log_report_service.py` 2,144줄(정체) — 분해는 3-4 재승격과 함께 진행.
 
 ---
 
@@ -183,11 +185,13 @@
 
 ## 조건부 / 정책 결정 대기
 
-### Pool B 튜닝 (후보 부족 **재발 확인 — 정책 결정 대기**)
+### Pool B 튜닝 (후보 부족 지속 — **트레이딩 완화는 보류, 캡처는 랭킹 보충으로 우회** 2026-07-08)
 
-- **재발 확인 (2026-07-02, 07-03 악화)**: 장마감 프리미엄 워치리스트 생성 결과 KOSPI 1종목(신세계)/KOSDAQ 0종목 (`logs/strategies/oneil_pool/20260702_generate_premium_watchlist_1.log.json`), 2026-07-03 재생성은 KOSPI 0/KOSDAQ 0 (`data/premium_stocks.json`). 단, 양시장 MA 하락 구간이라 마켓 타이밍 게이트가 어차피 스캔을 차단 중 — 하락장에서 Stage 2+RS 필터가 마르는 것은 설계상 자연스러운 면이 있어, 완화가 실익(추가 진입 기회)으로 이어지는지는 시장 회복 국면의 후보 수로 판단할 것.
-- [ ] 거래대금 기준 50억 → 30억 추가 완화 검토.
-- [ ] 정배열 조건을 Pool B 전용 `current > ma_20d` 중심으로 완화 검토.
+- **기근 지속**: 07-02 KOSPI 1/KOSDAQ 0 → 07-03 0/0 → 07-07 1/1 → 07-08 1/0. 양시장 MA 하락 구간이라 마켓 타이밍 게이트가 어차피 스캔을 차단 중 — 하락장에서 Stage 2+RS 필터가 마르는 것은 설계상 자연스러운 면이 있어, 완화가 실익(추가 진입 기회)으로 이어지는지는 시장 회복 국면의 후보 수로 판단할 것.
+- **funnel 실측 (2026-07-08, 프리미엄 배치 3일 07-02/07/08 동일 패턴)**: 1차 통과 812~839종목 → **거래대금 100억 필터에서 596~620종목(73%) 탈락** → 통과 ~216종목 중 **정배열(current>ma20>ma50)에서 201종목(93%) 탈락** → 52주고가·스퀴즈 → 최종 1~2종목. what-if: 100억→50억 완화 시 +98~110종목이 정배열 관문으로 진행하나 최종 생존 추정 +2~7종목/일에 그침.
+- **결정 (2026-07-08)**: 트레이딩 필터 완화는 보류 — 마켓타이밍 차단 중이라 진입 실익이 없고, 기근이 물고 있던 캡처 코퍼스 폭·1-8 PIT 후보 문제는 1-5 캡처 전용 랭킹 보충(주문 경로 불변)으로 우회 해결.
+- [ ] (시장 회복 후 재판단) 거래대금 기준 완화 — Pool B 장중 임계 50억→30억 및 프리미엄 배치 임계 100억→50억(기근의 실측 관문은 배치 100억 쪽).
+- [ ] (시장 회복 후 재판단) 정배열 조건을 Pool B 전용 `current > ma_20d` 중심으로 완화 검토.
 
 ### R-2. 전략 상관 / 단일 regime 집중 [엣지 도입 — Phase 1~3 완료, Phase 4 데이터 대기]
 

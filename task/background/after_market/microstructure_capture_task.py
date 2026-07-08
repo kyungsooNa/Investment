@@ -27,6 +27,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
         capture_service,
         universe_service=None,
         virtual_trade_service=None,
+        stock_query_service=None,
         market_calendar_service=None,
         market_clock=None,
         scheduler_store=None,
@@ -48,6 +49,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
         self._service = capture_service
         self._universe_service = universe_service
         self._virtual_trade_service = virtual_trade_service
+        self._stock_query_service = stock_query_service
         self._output_dir = Path(output_dir)
         self._program_db_path = Path(program_db_path)
         self._execution_strength_db_path = Path(execution_strength_db_path)
@@ -108,6 +110,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
         return await resolve_capture_codes(
             virtual_trade_service=self._virtual_trade_service,
             universe_service=self._universe_service,
+            stock_query_service=self._stock_query_service,
             max_codes=self._max_codes,
             logger=self._logger,
             task_name=self.task_name,
