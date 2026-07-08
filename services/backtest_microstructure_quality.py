@@ -38,6 +38,11 @@ def summarize_capture_quality(
     ]
     stale_by_code = quality.get("stale_minute_rows_dropped") or {}
     stale_rows = sum(_to_int(value) for value in stale_by_code.values())
+    stale_by_code = {
+        str(code): _to_int(value)
+        for code, value in stale_by_code.items()
+        if _to_int(value) > 0
+    }
 
     intraday_available = sum(1 for code in codes if bool(intraday.get(code)))
     execution_strength_available = sum(
@@ -108,6 +113,7 @@ def summarize_capture_quality(
         "execution_strength_db_coverage_pct": execution_strength_db_coverage_pct,
         "empty_minute_codes": quality.get("empty_minute_codes") or [],
         "stale_minute_rows_dropped": stale_rows,
+        "stale_minute_rows_dropped_by_code": stale_by_code,
         "issues": issues,
         "quality_gate_passed": not issues,
     }
