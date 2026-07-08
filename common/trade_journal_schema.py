@@ -77,6 +77,22 @@ def _resolve_volatility(
     return None
 
 
+# 2026-05-26경 기록 전략명이 표시명→ID로 전환되며 과거 행이 두 표기로 갈라졌다.
+# gate 표본 카운트·journal 진행률이 전략명 단위이므로 read-time에 구 표시명을
+# 현 ID로 정규화한다. 원본 표기는 metadata(원본 row 복사본)에 보존된다.
+_LEGACY_STRATEGY_NAME_ALIASES = {
+    "래리윌리엄스VBO": "larry_williams_vbo",
+    "LarryWilliamsCB": "larry_williams_cb",
+    "RSI2눌림목": "rsi2_pullback",
+    "첫눌림목": "first_pullback",
+}
+
+
+def _canonical_strategy_name(name: Any) -> str:
+    raw = str(name or "")
+    return _LEGACY_STRATEGY_NAME_ALIASES.get(raw, raw)
+
+
 def normalize_virtual_trade(
     trade: Mapping[str, Any],
     *,
@@ -115,7 +131,7 @@ def normalize_virtual_trade(
 
     return _ordered_record(
         source=source,
-        strategy=str(trade.get("strategy") or ""),
+        strategy=_canonical_strategy_name(trade.get("strategy")),
         code=str(trade.get("code") or ""),
         signal_time=str(trade.get("buy_date") or ""),
         decision_reason="" if is_failed else reason,

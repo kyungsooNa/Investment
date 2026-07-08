@@ -67,6 +67,7 @@
 
 - [ ] shadow / paper / 소액 canary journal을 표준 포맷으로 누적하고, 전략별 profitability gate 통과 근거를 리포트한다. (journal은 `virtual_trade_service.get_standard_journal_records` ← polling scan + REST 가격 경로로 채워져 WS 틱 비의존 — 무틱 블로커와 독립적으로 축적 가능. shadow 하위 요소만 2-4와 동일 의존. 라이브 런타임 시간만 필요.)
   - 표준 journal 축적 현황 리포트 추가 (2026-07-04): 일일 전략 리포트에 source별 레코드 수, SOLD/진행중 status, 전략별 SOLD 표본 진행률(`min_trades` 대비)을 노출해 paper/canary 데이터가 gate 해제 기준까지 얼마나 쌓였는지 확인 가능.
+  - 전략명 별칭 통합 (2026-07-09): 2026-05-26경 기록 전략명이 표시명→ID로 전환되며 표본이 두 표기로 갈라져 있던 것을 `normalize_virtual_trade` read-time 별칭 매핑으로 통합(래리윌리엄스VBO→larry_williams_vbo 등 4쌍, DB 불변). 통합 후 실측 진행률: VBO SOLD 34/100, RSI2 14, CB 4 — 7월은 마켓타이밍 차단으로 +3건뿐(설계된 정체). regime 태그는 62건 중 53건 null(태깅 도입 전)이라 regime별 최소 30은 사실상 신규 축적 필요.
   - 최소 유지 기준: 실전 override `min_trades=100`, `profit_factor>=1.3`, `payoff_ratio>=1.2`, `win_rate>=40%`, `max_drawdown<=12%`, regime별 최소 거래 30. parameter stability·Monte Carlo·regime balance·multiple testing 보정을 운영 편의로 낮추지 않는다.
 
 주요 파일: `services/strategy_live_expansion_gate_service.py`, `services/strategy_profitability_gate_service.py`, `scheduler/strategy_scheduler.py`, `services/strategy_log_report_service.py`
