@@ -37,6 +37,7 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
         streaming_stock_repo=None,
         universe_service=None,
         virtual_trade_service=None,
+        stock_query_service=None,
         market_calendar_service=None,
         market_clock=None,
         scheduler_store=None,
@@ -48,6 +49,7 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
         self._streaming_stock_repo = streaming_stock_repo
         self._universe_service = universe_service
         self._virtual_trade_service = virtual_trade_service
+        self._stock_query_service = stock_query_service
         self._mcs = market_calendar_service
         self._market_clock = market_clock
         self._scheduler_store = scheduler_store
@@ -175,6 +177,7 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
         codes = await resolve_capture_codes(
             virtual_trade_service=self._virtual_trade_service,
             universe_service=self._universe_service,
+            stock_query_service=self._stock_query_service,
             max_codes=None,
             logger=self._logger,
             task_name=self.task_name,
