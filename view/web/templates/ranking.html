@@ -19,6 +19,7 @@
                 <button class="btn ranking-tab" data-cat="minervini_stage2" onclick="loadRanking('minervini_stage2')">Minervini S2</button>
                 <button class="btn ranking-tab" data-cat="newhigh" onclick="loadRanking('newhigh')">신고가</button>
                 <button class="btn ranking-tab" data-cat="theme_leaders" onclick="loadThemeLeaders()">테마주도</button>
+                <button class="btn ranking-tab" data-cat="investor_period" onclick="loadPeriodInvestorRanking()">기간수급</button>
             </div>
             <div class="ranking-investor-group" style="margin-top: 6px;">
                 <div class="form-row" style="margin-bottom: 0;">
@@ -31,6 +32,17 @@
                         <button class="btn investor-toggle" data-inv="program" onclick="toggleRankingInvestor('program')">프로그램</button>
                     </div>
                 </div>
+                <div id="period-investor-row" class="form-row" style="display: none; margin-top: 6px; margin-bottom: 0;">
+                    <button class="btn period-days active" data-days="5" onclick="setPeriodInvestorDays(5, this)">5D</button>
+                    <button class="btn period-days" data-days="1" onclick="setPeriodInvestorDays(1, this)">1D</button>
+                    <button class="btn period-days" data-days="3" onclick="setPeriodInvestorDays(3, this)">3D</button>
+                    <button class="btn period-days" data-days="10" onclick="setPeriodInvestorDays(10, this)">10D</button>
+                    <button class="btn period-days" data-days="20" onclick="setPeriodInvestorDays(20, this)">20D</button>
+                    <div style="margin-left: 8px; padding-left: 12px; border-left: 2px solid var(--accent-secondary, #3b82f6);">
+                        <button class="btn period-metric active" data-metric="amount" onclick="setPeriodInvestorMetric('amount', this)">금액</button>
+                        <button class="btn period-metric" data-metric="qty" onclick="setPeriodInvestorMetric('qty', this)">수량</button>
+                    </div>
+                </div>
             </div>
         </div>
         <div id="ranking-result"></div>
@@ -39,7 +51,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/ranking.js?v=4"></script>
+<script src="/static/js/ranking.js?v=5"></script>
 <script>
     loadRanking('rise');
 </script>

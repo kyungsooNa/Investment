@@ -1988,6 +1988,46 @@ async def test_get_program_trade_by_stock_daily_parsing_error(mock_quotations):
 
 
 @pytest.mark.asyncio
+async def test_get_program_trade_by_stock_daily_multi_success(mock_quotations):
+    """프로그램매매추이 다중일 조회는 output[:days] 리스트를 반환한다."""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data={
+            "output": [
+                {"stck_bsop_date": "20260305", "whol_smtn_ntby_qty": "1000"},
+                {"stck_bsop_date": "20260304", "whol_smtn_ntby_qty": "-500"},
+                {"stck_bsop_date": "20260303", "whol_smtn_ntby_qty": "300"},
+            ]
+        },
+    ))
+
+    result = await api.get_program_trade_by_stock_daily_multi("005930", date="20260305", days=2)
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert len(result.data) == 2
+    assert result.data[0]["stck_bsop_date"] == "20260305"
+    assert result.data[1]["stck_bsop_date"] == "20260304"
+    api.call_api.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_program_trade_by_stock_daily_multi_empty(mock_quotations):
+    """프로그램매매추이 다중일 output 이 비어 있으면 빈 리스트를 반환한다."""
+    api = mock_quotations
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": []}
+    ))
+
+    result = await api.get_program_trade_by_stock_daily_multi("005930")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data == []
+    assert "데이터 없음" in result.msg1
+
+
+@pytest.mark.asyncio
 async def test_read_only_ranking_apis_pass_through_in_paper_mode(mock_quotations):
     """paper 모드에서도 조회성 랭킹 API는 KIS 조회 엔드포인트로 전달한다."""
     mock_quotations._env.is_paper_trading = True

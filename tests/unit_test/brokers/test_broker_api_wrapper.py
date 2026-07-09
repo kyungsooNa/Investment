@@ -677,6 +677,11 @@ async def test_investor_and_program_trade_delegations(broker_wrapper_instance):
     mock_client.get_program_trade_by_stock_daily.assert_called_once_with("005930", "20250101")
     assert result == {"program": "trade"}
 
+    mock_client.get_program_trade_by_stock_daily_multi.return_value = [{"program": "multi"}]
+    result = await wrapper.get_program_trade_by_stock_daily_multi("005930", "20250101", days=5)
+    mock_client.get_program_trade_by_stock_daily_multi.assert_called_once_with("005930", "20250101", 5)
+    assert result == [{"program": "multi"}]
+
 
 @pytest.mark.asyncio
 async def test_check_holiday_delegation(broker_wrapper_instance):
