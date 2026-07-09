@@ -71,6 +71,10 @@ class CacheStore:
                 if self._logger:
                     self._logger.debug(f"🚫 File Cache MISS: {key}")
 
+        if raw is None:
+            # 순수 캐시 MISS — 구조 오류가 아니므로 경고 없이 종료 (MISS debug 로그는 위에서 남김)
+            return None
+
         if not isinstance(raw, dict) or "timestamp" not in raw or "data" not in raw:
             if self._logger:
                 self._logger.warning(f"[CacheStore] ❌ 잘못된 캐시 구조 감지: {key} / 내용: {raw}")
