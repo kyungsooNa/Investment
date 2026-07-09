@@ -1012,3 +1012,35 @@ async def test_send_market_cap_gap_report_formats_korean_us_gap(telegram_reporte
     # 배율 < 1 (한국 우위) 행에는 ✅ 표시
     assert "<b>0.42x</b>" in full
     assert "✅" in full
+
+
+@pytest.mark.asyncio
+async def test_send_market_cap_gap_report_marks_korea_advantage_by_negative_gap(telegram_reporter):
+    """반올림된 ratio가 1.00이어도 gap이 음수면 한국우위로 표시한다."""
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    report = {
+        "report_date": "20260709",
+        "trigger": "kr_close",
+        "fx_rate": 1507.48,
+        "korean": [
+            {"symbol": "005930", "name": "삼성전자", "market_cap_krw": 1_622_000_000_000_000},
+        ],
+        "us": [
+            {"symbol": "MU", "name": "Micron", "market_cap_usd": 0, "market_cap_krw": 1_615_000_000_000_000},
+        ],
+        "comparisons": [
+            {
+                "korean_symbol": "005930",
+                "korean_name": "삼성전자",
+                "us_symbol": "MU",
+                "us_name": "Micron",
+                "gap_krw": -7_000_000_000_000,
+                "ratio": 1.00,
+            },
+        ],
+    }
+
+    await telegram_reporter.send_market_cap_gap_report(report, "20260709", "한국장 마감")
+
+    full = "".join(call[0][0] for call in telegram_reporter._send_message.call_args_list)
+    assert "삼성전자 <b>1.00x</b> (-7조) ✅" in full

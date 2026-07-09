@@ -635,8 +635,13 @@ class TelegramReporter:
                 except (TypeError, ValueError):
                     ratio_val = None
                     ratio_text = "-"
-                gap_text = self._format_krw_cap(row.get("gap_krw"))
-                flag = " ✅" if (ratio_val is not None and ratio_val < 1) else ""
+                gap_krw = row.get("gap_krw")
+                gap_text = self._format_krw_cap(gap_krw)
+                try:
+                    is_korea_advantage = int(gap_krw) < 0
+                except (TypeError, ValueError):
+                    is_korea_advantage = False
+                flag = " ✅" if is_korea_advantage else ""
                 block.append(f"   {kr_label} <b>{ratio_text}</b> ({gap_text}){flag}")
             blocks.append("\n".join(block))
 
