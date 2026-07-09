@@ -303,7 +303,13 @@ class TelegramReporter:
         return f"{rate:+.{digits}f}%"
 
     @_serialized_report_send
-    async def send_daily_theme_report(self, themes: List[Dict], report_date: str, limit: int = 10):
+    async def send_daily_theme_report(
+        self,
+        themes: List[Dict],
+        report_date: str,
+        limit: int = 10,
+        show_flow_ratio: bool = True,
+    ):
         """당일 주도 테마 리포트를 텔레그램에 전송한다."""
         title = f"🔥 <b>오늘의 주도 테마 ({report_date})</b>\n"
         await self._send_message(title)
@@ -326,9 +332,13 @@ class TelegramReporter:
                     score_text = f" | 종합점수 {float(theme_score):.2f}"
                 except (TypeError, ValueError):
                     score_text = ""
+            summary_parts = [f"상승비율 {advancing_ratio}"]
+            if show_flow_ratio:
+                summary_parts.append(f"수급비중 {flow_ratio}")
+            summary_line = " | ".join(summary_parts) + score_text
             lines = [
                 f"<b>{rank}. {theme_name}</b>  {avg_rate}  {trading_value}",
-                f"상승비율 {advancing_ratio} | 수급비중 {flow_ratio}{score_text}",
+                summary_line,
                 "<pre>",
             ]
             for leader in (theme.get("leaders") or [])[:3]:
@@ -426,6 +436,20 @@ class TelegramReporter:
         title = f"📋 <b>전략 실행 요약 리포트 ({report_date})</b>\n"
         await self._send_message(title)
 
+        current = ""
+        for line in report_html.split('\n'):
+            chunk = line + '\n'
+            if len((current + chunk).encode('utf-8')) > 4000:
+                await self._send_message(current)
+                current = chunk
+            else:
+                current += chunk
+        if current:
+            await self._send_message(current)
+
+    @_serialized_report_send
+    async def send_operational_decision_report(self, report_html: str, report_date: str):
+        """운영자가 바로 볼 짧은 의사결정 요약을 텔레그램으로 전송합니다."""
         current = ""
         for line in report_html.split('\n'):
             chunk = line + '\n'
@@ -625,8 +649,13 @@ class TelegramReporter:
                 except (TypeError, ValueError):
                     ratio_val = None
                     ratio_text = "-"
-                gap_text = self._format_krw_cap(row.get("gap_krw"))
-                flag = " ✅" if (ratio_val is not None and ratio_val < 1) else ""
+                gap_krw = row.get("gap_krw")
+                gap_text = self._format_krw_cap(gap_krw)
+                try:
+                    is_korea_advantage = int(gap_krw) < 0
+                except (TypeError, ValueError):
+                    is_korea_advantage = False
+                flag = " ✅" if is_korea_advantage else ""
                 block.append(f"   {kr_label} <b>{ratio_text}</b> ({gap_text}){flag}")
             blocks.append("\n".join(block))
 

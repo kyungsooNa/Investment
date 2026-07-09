@@ -225,7 +225,11 @@ class SubscriptionPolicy:
                 if code not in self._refs:
                     await self._streaming_stock_repo.unmark_desired(code, stream_type)
             for code in added_codes:
-                await self._streaming_stock_repo.mark_desired(code, stream_type)
+                await self._streaming_stock_repo.mark_desired(
+                    code,
+                    stream_type,
+                    source="program",
+                )
 
         await self._rebalance()
 

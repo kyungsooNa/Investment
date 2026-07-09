@@ -245,7 +245,11 @@ async def test_program_trading_subscription(mock_deps):
     ctx.streaming_service.connect_websocket.assert_awaited_once()
     ctx.streaming_service.subscribe_program_trading.assert_awaited_with("005930")
     ctx.streaming_service.subscribe_unified_price.assert_awaited_with("005930")
-    ctx.streaming_stock_repo.mark_desired.assert_called_with("005930", StreamingType.PROGRAM_TRADING)
+    ctx.streaming_stock_repo.mark_desired.assert_called_with(
+        "005930",
+        StreamingType.PROGRAM_TRADING,
+        source="manual",
+    )
     ctx.streaming_stock_repo.mark_active.assert_any_call("005930", StreamingType.PROGRAM_TRADING)
     ctx.streaming_stock_repo.mark_active.assert_any_call("005930", StreamingType.UNIFIED_PRICE)
 

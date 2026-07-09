@@ -159,6 +159,23 @@ async def test_sync_subscriptions(policy, mock_streaming_stock_repo):
     assert "C" in policy._refs
     assert policy._refs["C"]["cat1"]["priority"] == SubscriptionPriority.HIGH
 
+
+@pytest.mark.asyncio
+async def test_sync_program_trading_subscriptions_marks_program_source(policy, mock_streaming_stock_repo):
+    """정책 동기화로 추가된 PT 구독은 프로그램 판단 출처로 저장한다."""
+    await policy.sync_subscriptions(
+        ["005930"],
+        "microstructure_capture",
+        SubscriptionPriority.LOW,
+        StreamingType.PROGRAM_TRADING,
+    )
+
+    mock_streaming_stock_repo.mark_desired.assert_awaited_once_with(
+        "005930",
+        StreamingType.PROGRAM_TRADING,
+        source="program",
+    )
+
 def test_is_streaming_and_get_status(policy):
     """스트리밍 여부 판별 및 구독 현황 조회 로직 검증"""
     policy._active_codes_price = {"005930"}

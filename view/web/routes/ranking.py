@@ -1,11 +1,23 @@
 """
 랭킹/시가총액 관련 API 엔드포인트 (ranking.html, marketcap.html).
 """
+from typing import Any
+
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
 from common.types import ErrorCode
 from view.web.api_common import _get_ctx, _serialize_response, _serialize_list_items
 
 router = APIRouter()
+
+
+class RankingAIAnalysisRequest(BaseModel):
+    candidates: list[dict[str, Any]] = []
+    market_context: dict[str, Any] | None = None
+    max_candidates: int = 20
+    provider_name: str | None = None
+    model: str | None = None
 
 
 @router.get("/ranking/progress")
@@ -69,6 +81,45 @@ async def get_theme_leaders(include_industry: bool = False):
     cats = ("theme", "industry") if include_industry else ("theme",)
     resp = await svc.get_theme_leaders(category_types=cats)
     return {"rt_cd": resp.rt_cd, "msg1": resp.msg1, "data": resp.data}
+
+
+@router.post("/ranking/ai-analysis")
+async def analyze_ranking_candidates(payload: RankingAIAnalysisRequest):
+    """현재 랭킹 후보를 AI provider로 해설한다. 주문/전략 판단에는 사용하지 않는다."""
+    ctx = _get_ctx()
+    candidates = payload.candidates or []
+    if not candidates:
+        return {
+            "rt_cd": ErrorCode.EMPTY_VALUES.value,
+            "msg1": "AI 분석 대상 후보가 없습니다.",
+            "data": None,
+        }
+
+    ai_service = getattr(ctx, "ai_analysis_service", None)
+    if ai_service is None or payload.provider_name or payload.model:
+        try:
+            from services.ai_analysis_service import AIAnalysisService
+
+            ai_service = AIAnalysisService(
+                provider_name=payload.provider_name,
+                model=payload.model,
+                logger=getattr(ctx, "logger", None),
+            )
+            if not payload.provider_name and not payload.model:
+                ctx.ai_analysis_service = ai_service
+        except Exception as e:
+            return {
+                "rt_cd": ErrorCode.API_ERROR.value,
+                "msg1": str(e),
+                "data": None,
+            }
+
+    resp = await ai_service.analyze_leading_stocks(
+        candidates,
+        market_context=payload.market_context or {},
+        max_candidates=payload.max_candidates,
+    )
+    return _serialize_response(resp)
 
 
 @router.get("/ranking/{category}")

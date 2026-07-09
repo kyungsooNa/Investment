@@ -112,9 +112,21 @@ class ProgramTradingRepo:
 
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS pt_subscriptions (
-                        code TEXT PRIMARY KEY
+                        code TEXT PRIMARY KEY,
+                        source TEXT NOT NULL DEFAULT 'manual',
+                        updated_at REAL
                     )
                 """)
+                columns = {
+                    row[1]
+                    for row in conn.execute("PRAGMA table_info(pt_subscriptions)").fetchall()
+                }
+                if "source" not in columns:
+                    conn.execute(
+                        "ALTER TABLE pt_subscriptions ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'"
+                    )
+                if "updated_at" not in columns:
+                    conn.execute("ALTER TABLE pt_subscriptions ADD COLUMN updated_at REAL")
             self._logger.info("ProgramTradingRepo: SQLite DB 초기화 완료")
         except Exception as e:
             self._logger.error(f"SQLite DB 초기화 실패: {e}")

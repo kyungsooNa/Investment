@@ -111,6 +111,7 @@ class WebAppContext:
         self.rejection_distribution_service: RejectionDistributionService = None
         self.data_quality_service: DataQualityService = None
         self.indicator_service: IndicatorService = None
+        self.ai_analysis_service = None
         self.virtual_repo = VirtualTradeRepository()
         self.backtest_journal_repository = BacktestJournalRepository()
         self.virtual_trade_service = VirtualTradeService(repository=self.virtual_repo, market_clock=self.market_clock)
@@ -595,7 +596,11 @@ class WebAppContext:
 
             if sub_pt_success and sub_price_success:
                 if self.streaming_stock_repo:
-                    await self.streaming_stock_repo.mark_desired(code, StreamingType.PROGRAM_TRADING)
+                    await self.streaming_stock_repo.mark_desired(
+                        code,
+                        StreamingType.PROGRAM_TRADING,
+                        source="manual",
+                    )
                     await self.streaming_stock_repo.mark_active(code, StreamingType.PROGRAM_TRADING)
                     await self.streaming_stock_repo.mark_active(code, StreamingType.UNIFIED_PRICE)
                 self.logger.info(f"프로그램매매 신규 구독 성공: {code}")

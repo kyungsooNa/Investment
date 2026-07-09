@@ -178,6 +178,7 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
             await self._telegram_reporter.send_daily_theme_report(
                 theme_data,
                 report_date=slot_label,
+                show_flow_ratio=False,
             )
         self._progress["last_report_slot"] = slot_label
         self._progress["sent_count"] = len(theme_data)

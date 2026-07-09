@@ -53,6 +53,44 @@ def test_normalize_virtual_trade_outputs_standard_schema_with_net_values():
     assert normalized["mae"] == -1.2
 
 
+def test_normalize_virtual_trade_maps_legacy_strategy_display_names():
+    # 2026-05-26경 기록 전략명이 표시명→ID로 전환되며 과거 행이 두 표기로 갈라짐 —
+    # gate 표본 카운트 희석 방지를 위해 read-time에 구 표시명을 현 ID로 정규화한다.
+    for legacy, canonical in [
+        ("래리윌리엄스VBO", "larry_williams_vbo"),
+        ("LarryWilliamsCB", "larry_williams_cb"),
+        ("RSI2눌림목", "rsi2_pullback"),
+        ("첫눌림목", "first_pullback"),
+    ]:
+        trade = {
+            "strategy": legacy,
+            "code": "005930",
+            "buy_date": "2026-05-15 09:10:00",
+            "buy_price": 10000,
+            "qty": 1,
+            "status": "HOLD",
+            "reason": "",
+        }
+        normalized = normalize_virtual_trade(trade)
+        assert normalized["strategy"] == canonical
+        # 원본 표기는 metadata(원본 row 복사본)에 보존된다.
+        assert normalized["metadata"]["strategy"] == legacy
+
+
+def test_normalize_virtual_trade_keeps_non_legacy_strategy_names():
+    for name in ["오닐PP/BGU", "larry_williams_vbo", "수동매매"]:
+        trade = {
+            "strategy": name,
+            "code": "005930",
+            "buy_date": "2026-07-01 09:10:00",
+            "buy_price": 10000,
+            "qty": 1,
+            "status": "HOLD",
+            "reason": "",
+        }
+        assert normalize_virtual_trade(trade)["strategy"] == name
+
+
 def test_normalize_failed_virtual_trade_uses_rejected_reason():
     trade = {
         "strategy": "S1",

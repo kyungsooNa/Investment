@@ -66,6 +66,13 @@ class StrategyLogReportTask(AfterMarketTask):
             self._logger.error(f"전략 로그 리포트 생성 실패: {e}", exc_info=True)
             return
 
+        save_diagnostic_report = getattr(self._report_service, "save_diagnostic_report", None)
+        if callable(save_diagnostic_report):
+            try:
+                save_diagnostic_report(latest_trading_date, report_html)
+            except Exception as e:
+                self._logger.warning(f"전략 운영품질진단 리포트 저장 실패: {e}")
+
         await self._emit_execution_quality_candidate_alert(latest_trading_date)
         await self._emit_strategy_degradation_candidate_alert(latest_trading_date)
 
@@ -76,6 +83,23 @@ class StrategyLogReportTask(AfterMarketTask):
                 self._logger.warning(f"거절 사유 분포 파일 저장 실패: {e}")
 
         if self._telegram_reporter:
+            try:
+                get_decision_report = getattr(
+                    self._report_service,
+                    "get_last_operational_decision_report",
+                    None,
+                )
+                send_decision_report = getattr(
+                    self._telegram_reporter,
+                    "send_operational_decision_report",
+                    None,
+                )
+                if callable(get_decision_report) and callable(send_decision_report):
+                    decision_report = get_decision_report()
+                    if decision_report:
+                        await send_decision_report(decision_report, latest_trading_date)
+            except Exception as e:
+                self._logger.warning(f"Telegram 운영 의사결정 리포트 전송 실패: {e}")
             try:
                 await self._telegram_reporter.send_strategy_log_report(report_html, latest_trading_date)
             except Exception as e:

@@ -14,6 +14,8 @@ from interfaces.schedulable_task import TaskPriority, TaskState
 def mock_report_service():
     svc = MagicMock()
     svc.generate_report = AsyncMock(return_value="<html>report</html>")
+    svc.save_diagnostic_report = MagicMock(return_value="logs/reports/diagnostic.html")
+    svc.get_last_operational_decision_report.return_value = "<b>운영 의사결정</b>"
     svc.get_last_execution_quality_candidates.return_value = []
     svc.get_last_strategy_degradation_candidates.return_value = []
     return svc
@@ -37,6 +39,7 @@ def mock_operator_alert_service():
 def mock_telegram():
     tg = MagicMock()
     tg.send_strategy_log_report = AsyncMock()
+    tg.send_operational_decision_report = AsyncMock()
     return tg
 
 
@@ -95,6 +98,18 @@ class TestOnMarketClosed:
         await task._on_market_closed("20260419")
         mock_telegram.send_strategy_log_report.assert_awaited_once_with(
             "<html>report</html>", "20260419"
+        )
+
+    async def test_diagnostic_report_is_saved(self, task, mock_report_service):
+        await task._on_market_closed("20260419")
+        mock_report_service.save_diagnostic_report.assert_called_once_with(
+            "20260419", "<html>report</html>"
+        )
+
+    async def test_operational_decision_report_is_sent(self, task, mock_telegram):
+        await task._on_market_closed("20260419")
+        mock_telegram.send_operational_decision_report.assert_awaited_once_with(
+            "<b>운영 의사결정</b>", "20260419"
         )
 
     async def test_execution_quality_candidates_emit_strategy_warning(
