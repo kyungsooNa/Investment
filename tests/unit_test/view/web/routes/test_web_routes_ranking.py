@@ -7,6 +7,50 @@ from common.types import ResCommonResponse
 
 
 @pytest.mark.asyncio
+async def test_post_ranking_ai_analysis_success(web_client, mock_web_ctx):
+    """POST /api/ranking/ai-analysis 는 후보 목록을 AI 분석 서비스로 전달한다."""
+    mock_web_ctx.ai_analysis_service = AsyncMock()
+    mock_web_ctx.ai_analysis_service.analyze_leading_stocks.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="AI 분석 성공",
+        data={"analysis": "강한 후보입니다.", "provider": "gemini", "model": "gemini-test"},
+    )
+
+    response = web_client.post(
+        "/api/ranking/ai-analysis",
+        json={
+            "candidates": [{"code": "005930", "name": "삼성전자", "prdy_ctrt": "3.1"}],
+            "market_context": {"category": "rise"},
+            "max_candidates": 10,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rt_cd"] == "0"
+    assert body["data"]["analysis"] == "강한 후보입니다."
+    mock_web_ctx.ai_analysis_service.analyze_leading_stocks.assert_awaited_once_with(
+        [{"code": "005930", "name": "삼성전자", "prdy_ctrt": "3.1"}],
+        market_context={"category": "rise"},
+        max_candidates=10,
+    )
+
+
+@pytest.mark.asyncio
+async def test_post_ranking_ai_analysis_empty_candidates(web_client, mock_web_ctx):
+    """후보가 없으면 AI provider 생성/호출 없이 EMPTY_VALUES 응답을 반환한다."""
+    mock_web_ctx.ai_analysis_service = AsyncMock()
+
+    response = web_client.post("/api/ranking/ai-analysis", json={"candidates": []})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rt_cd"] != "0"
+    assert "후보" in body["msg1"]
+    mock_web_ctx.ai_analysis_service.analyze_leading_stocks.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_get_theme_leaders_success(web_client, mock_web_ctx):
     """GET /api/ranking/theme_leaders 정상 응답 + 기본 category_types=theme."""
     mock_web_ctx.theme_leader_service = AsyncMock()

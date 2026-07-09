@@ -111,6 +111,7 @@ class WebAppContext:
         self.rejection_distribution_service: RejectionDistributionService = None
         self.data_quality_service: DataQualityService = None
         self.indicator_service: IndicatorService = None
+        self.ai_analysis_service = None
         self.virtual_repo = VirtualTradeRepository()
         self.backtest_journal_repository = BacktestJournalRepository()
         self.virtual_trade_service = VirtualTradeService(repository=self.virtual_repo, market_clock=self.market_clock)

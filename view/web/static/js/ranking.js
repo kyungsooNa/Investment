@@ -6,6 +6,7 @@ let _rankingData = [];
 let _rankingSortState = { key: null, dir: 'asc' };
 let _rankingDirection = null;
 let _rankingSelectedInvestors = new Set(['foreign']);
+let _rankingAIAnalysisState = { loading: false, result: null, error: null };
 
 const _investorTypeFields = {
     'foreign': { pbmn: 'frgn_ntby_tr_pbmn', qty: 'frgn_ntby_qty', isMil: true, label: '외인' },
@@ -18,10 +19,15 @@ let _rankingMarketFilter = 'ALL';
 
 function setMarketFilter(market, btn) {
     _rankingMarketFilter = market;
+    _resetRankingAIAnalysis();
     document.querySelectorAll('.market-filter').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     if (_rankingDirection) loadInvestorRanking();
     else if (_rankingCurrentCategory) loadRanking(_rankingCurrentCategory);
+}
+
+function _resetRankingAIAnalysis() {
+    _rankingAIAnalysisState = { loading: false, result: null, error: null };
 }
 
 function _showRankingSkeleton() {
@@ -51,6 +57,7 @@ async function loadRanking(category) {
     if (window.Paginator) window.Paginator.reset('ranking');
     _rankingCurrentCategory = category;
     _rankingDirection = null;
+    _resetRankingAIAnalysis();
 
     document.querySelectorAll('.ranking-tab').forEach(b => {
         b.classList.remove('active');
@@ -118,6 +125,7 @@ function setRankingDirection(dir) {
         _rankingPollTimer = null;
     }
     _rankingDirection = dir;
+    _resetRankingAIAnalysis();
 
     document.querySelectorAll('.ranking-tab').forEach(b => {
         b.classList.remove('active');
@@ -147,6 +155,7 @@ function toggleRankingInvestor(type) {
         b.classList.toggle('active', _rankingSelectedInvestors.has(b.dataset.inv));
     });
 
+    _resetRankingAIAnalysis();
     loadInvestorRanking();
 }
 
@@ -260,6 +269,7 @@ async function loadThemeLeaders() {
     if (window.Paginator) window.Paginator.reset('ranking');
     _rankingCurrentCategory = 'theme_leaders';
     _rankingDirection = null;
+    _resetRankingAIAnalysis();
 
     document.querySelectorAll('.ranking-tab').forEach(b => {
         b.classList.remove('active');
@@ -327,6 +337,95 @@ function renderThemeLeaders(groups) {
         </div>`;
     }).join('');
     div.innerHTML = cards;
+}
+
+function _buildAIAnalysisCandidate(item) {
+    const candidate = {
+        code: item.stck_shrn_iscd || item.iscd || item.mksc_shrn_iscd || item.code || '',
+        name: item.hts_kor_isnm || item.name || '',
+        rank: item.data_rank || item.rank || '',
+        current_price: item.stck_prpr || item.current_price || '',
+        change_rate: item.prdy_ctrt || item.change_rate || '',
+        volume: item.acml_vol || '',
+        trading_value_won: item.acml_tr_pbmn || item.trading_value || '',
+        market_cap: item.market_cap || '',
+        rs_rating: item.rs_rating || item.rs || '',
+        stage: item.stage || item.minervini_stage || '',
+    };
+    if (item._combined_pbmn !== undefined) candidate.combined_net_amount_won = item._combined_pbmn;
+    if (item._combined_qty !== undefined) candidate.combined_net_qty = item._combined_qty;
+    for (const key of [
+        'frgn_ntby_tr_pbmn', 'frgn_ntby_qty',
+        'orgn_ntby_tr_pbmn', 'orgn_ntby_qty',
+        'prsn_ntby_tr_pbmn', 'prsn_ntby_qty',
+        'whol_smtn_ntby_tr_pbmn', 'whol_smtn_ntby_qty',
+    ]) {
+        if (item[key] !== undefined) candidate[key] = item[key];
+    }
+    return candidate;
+}
+
+function _renderRankingAIAnalysisPanel(totalCount) {
+    if (!totalCount || _rankingCurrentCategory === 'theme_leaders') return '';
+
+    const disabled = _rankingAIAnalysisState.loading ? 'disabled' : '';
+    const buttonText = _rankingAIAnalysisState.loading ? '분석 중...' : 'AI 분석';
+    let body = '';
+    if (_rankingAIAnalysisState.error) {
+        body = `<div style="margin-top:10px; color:var(--text-red); white-space:pre-wrap;">${escapeHtml(_rankingAIAnalysisState.error)}</div>`;
+    } else if (_rankingAIAnalysisState.result) {
+        const result = _rankingAIAnalysisState.result;
+        const meta = [result.provider, result.model].filter(Boolean).join(' · ');
+        body = `<div style="margin-top:10px; white-space:pre-wrap; line-height:1.55;">${escapeHtml(result.analysis || '')}</div>`
+            + (meta ? `<div style="margin-top:8px; color:#888; font-size:0.9em;">${escapeHtml(meta)}</div>` : '');
+    }
+
+    return `<div class="card" style="margin-bottom:12px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+            <div style="font-weight:600;">랭킹 후보 AI 분석</div>
+            <button class="btn" onclick="runRankingAIAnalysis()" ${disabled}>${buttonText}</button>
+        </div>
+        ${body}
+    </div>`;
+}
+
+async function runRankingAIAnalysis() {
+    if (_rankingAIAnalysisState.loading || !_rankingData.length) return;
+
+    _rankingAIAnalysisState = { loading: true, result: null, error: null };
+    renderRankingTable();
+
+    try {
+        const candidates = _rankingData.slice(0, 20).map(_buildAIAnalysisCandidate);
+        const res = await fetchWithTimeout('/api/ranking/ai-analysis', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                candidates,
+                max_candidates: 20,
+                market_context: {
+                    category: _rankingCurrentCategory,
+                    direction: _rankingDirection,
+                    investors: Array.from(_rankingSelectedInvestors),
+                    market_filter: _rankingMarketFilter,
+                },
+            }),
+        }, 60000);
+        const json = await res.json();
+        if (json.rt_cd !== "0") {
+            _rankingAIAnalysisState = { loading: false, result: null, error: json.msg1 || 'AI 분석 실패' };
+            renderRankingTable();
+            return;
+        }
+        _rankingAIAnalysisState = { loading: false, result: json.data, error: null };
+        renderRankingTable();
+    } catch (e) {
+        const message = e.name === 'AbortError'
+            ? 'AI 분석 요청 시간이 초과되었습니다.'
+            : `AI 분석 오류: ${e}`;
+        _rankingAIAnalysisState = { loading: false, result: null, error: message };
+        renderRankingTable();
+    }
 }
 
 function _formatElapsed(sec) {
@@ -524,7 +623,7 @@ function renderRankingTable() {
         </tr>`;
     });
 
-    div.innerHTML = `<div class="card"><table class="data-table">
+    div.innerHTML = `${_renderRankingAIAnalysisPanel(data.length)}<div class="card"><table class="data-table">
         <thead><tr>${headerRow}</tr></thead>
         <tbody>${rows}</tbody></table></div>`;
 }
