@@ -397,6 +397,11 @@ def test_cache_store_get_raw_rejects_invalid_timestamp(cache_store):
 
 
 def test_cache_store_get_raw_logs_memory_and_file_miss(cache_store):
+    """순수 캐시 MISS는 debug 로그만 남기고 '잘못된 캐시 구조' 경고를 찍지 않는다.
+
+    2026-07-09 실측: 장마감 배치의 콜드 미스 1만여 건이 전부 구조 오류 WARNING으로
+    오탐 기록되던 회귀 방지.
+    """
     logger = MagicMock()
     cache_store.set_logger(logger)
 
@@ -404,7 +409,19 @@ def test_cache_store_get_raw_logs_memory_and_file_miss(cache_store):
     debug_messages = [call.args[0] for call in logger.debug.call_args_list]
     assert any("Memory Cache MISS: missing_key" in message for message in debug_messages)
     assert any("File Cache MISS: missing_key" in message for message in debug_messages)
-    logger.warning.assert_called_once()
+    logger.warning.assert_not_called()
+
+
+def test_cache_store_get_raw_warns_on_malformed_entry(cache_store):
+    """내용이 존재하지만 wrapper 구조(timestamp/data)가 아니면 경고 후 None을 반환한다."""
+    key = "malformed_entry"
+    cache_store.set(key, {"unexpected": "shape"})
+    logger = MagicMock()
+    cache_store.set_logger(logger)
+
+    assert cache_store.get_raw(key) is None
+    warning_messages = [call.args[0] for call in logger.warning.call_args_list]
+    assert any("잘못된 캐시 구조 감지" in message for message in warning_messages)
 
 
 def test_cache_store_get_raw_logs_file_hit_after_memory_clear(cache_store):
