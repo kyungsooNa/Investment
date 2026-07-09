@@ -111,6 +111,7 @@ async def test_open_tick_sends_intraday_theme_report_for_current_hourly_slot():
     deps.telegram_reporter.send_daily_theme_report.assert_awaited_once_with(
         [{"normalized_name": "반도체", "leaders": []}],
         report_date="20260706 10:10",
+        show_flow_ratio=False,
     )
     progress = deps.task.get_progress()
     assert progress["last_report_slot"] == "20260706 10:10"

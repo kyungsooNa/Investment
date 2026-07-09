@@ -859,6 +859,34 @@ async def test_send_daily_theme_report_formats_stockeasy_like_cards(telegram_rep
 
 
 @pytest.mark.asyncio
+async def test_send_daily_theme_report_can_hide_flow_ratio(telegram_reporter):
+    """장중 주도 테마 리포트는 수급 데이터가 없으므로 수급비중을 숨길 수 있다."""
+    themes = [
+        {
+            "normalized_name": "반도체/소부장",
+            "leader_avg_change_rate": 12.33,
+            "trading_value_sum_won": 380_100_000_000,
+            "advancing_ratio": 75.0,
+            "flow_ratio": 0.0,
+            "theme_score": 12.17,
+            "leaders": [],
+        }
+    ]
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+
+    await telegram_reporter.send_daily_theme_report(
+        themes,
+        "20260706 10:10",
+        show_flow_ratio=False,
+    )
+
+    full = "".join(call[0][0] for call in telegram_reporter._send_message.call_args_list)
+    assert "상승비율 75.0% | 종합점수 12.17" in full
+    assert "수급비중" not in full
+    assert "+0.00%" not in full
+
+
+@pytest.mark.asyncio
 async def test_send_daily_theme_report_empty(telegram_reporter):
     telegram_reporter._send_message = AsyncMock(return_value=True)
 

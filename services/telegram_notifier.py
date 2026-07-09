@@ -303,7 +303,13 @@ class TelegramReporter:
         return f"{rate:+.{digits}f}%"
 
     @_serialized_report_send
-    async def send_daily_theme_report(self, themes: List[Dict], report_date: str, limit: int = 10):
+    async def send_daily_theme_report(
+        self,
+        themes: List[Dict],
+        report_date: str,
+        limit: int = 10,
+        show_flow_ratio: bool = True,
+    ):
         """당일 주도 테마 리포트를 텔레그램에 전송한다."""
         title = f"🔥 <b>오늘의 주도 테마 ({report_date})</b>\n"
         await self._send_message(title)
@@ -326,9 +332,13 @@ class TelegramReporter:
                     score_text = f" | 종합점수 {float(theme_score):.2f}"
                 except (TypeError, ValueError):
                     score_text = ""
+            summary_parts = [f"상승비율 {advancing_ratio}"]
+            if show_flow_ratio:
+                summary_parts.append(f"수급비중 {flow_ratio}")
+            summary_line = " | ".join(summary_parts) + score_text
             lines = [
                 f"<b>{rank}. {theme_name}</b>  {avg_rate}  {trading_value}",
-                f"상승비율 {advancing_ratio} | 수급비중 {flow_ratio}{score_text}",
+                summary_line,
                 "<pre>",
             ]
             for leader in (theme.get("leaders") or [])[:3]:
