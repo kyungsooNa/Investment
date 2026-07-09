@@ -576,6 +576,47 @@ async def test_send_subscribed_last_tick_alert_refreshes_net_amount_from_rest(ma
     assert "REST보정" in message
 
 
+@pytest.mark.asyncio
+async def test_format_last_tick_report_places_manual_sources_first_and_bolds(manager):
+    """수동 등록 PT 구독은 알림 상단에 굵게 표시하고 프로그램 판단 구독과 구분한다."""
+    mock_ssr = MagicMock()
+    mock_ssr.get_pt_subscription_sources.return_value = {
+        "005930": "manual",
+        "000660": "program",
+    }
+    mock_stock_repo = MagicMock()
+    mock_stock_repo.get_name_by_code.side_effect = lambda code: {
+        "005930": "삼성전자",
+        "000660": "SK하이닉스",
+    }.get(code, code)
+
+    manager.wire_streaming_stock_repo(mock_ssr)
+    manager.wire_alert_dependencies(stock_code_repository=mock_stock_repo)
+    manager.on_data_received({
+        "유가증권단축종목코드": "000660",
+        "주식체결시간": "101530",
+        "price": "200000",
+        "rate": "2.50",
+        "순매수거래대금": "10000000000",
+    })
+    manager.on_data_received({
+        "유가증권단축종목코드": "005930",
+        "주식체결시간": "101531",
+        "price": "72000",
+        "rate": "1.25",
+        "순매수거래대금": "12345600000",
+    })
+
+    message = await manager._format_last_tick_report_async(["000660", "005930"])
+
+    manual_idx = message.index("<b>[수동] 삼성전자:")
+    program_idx = message.index("[프로그램] SK하이닉스:")
+    assert manual_idx < program_idx
+    assert "<b>[수동] 삼성전자: 72,000원" in message
+    assert "[프로그램] SK하이닉스: 200,000원" in message
+    assert mock_ssr.get_pt_subscription_sources.call_count == 1
+
+
 def test_build_db_minute_persistence_status_reports_missing_minutes(manager):
     """장중 1분 단위 저장 여부를 종목별로 계산한다."""
     clock = MarketClock(market_open_time="09:00", market_close_time="09:02")

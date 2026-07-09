@@ -59,7 +59,11 @@ async def test_start_program_trading_success(mock_ctx):
     assert result is True
     mock_ctx.streaming_service.subscribe_program_trading.assert_called_once_with(code)
     mock_ctx.streaming_service.subscribe_unified_price.assert_called_once_with(code)
-    mock_ctx.streaming_stock_repo.mark_desired.assert_called_once_with(code, StreamingType.PROGRAM_TRADING)
+    mock_ctx.streaming_stock_repo.mark_desired.assert_called_once_with(
+        code,
+        StreamingType.PROGRAM_TRADING,
+        source="manual",
+    )
     mock_ctx.streaming_stock_repo.mark_active.assert_any_call(code, StreamingType.PROGRAM_TRADING)
     mock_ctx.streaming_stock_repo.mark_active.assert_any_call(code, StreamingType.UNIFIED_PRICE)
 
@@ -141,4 +145,8 @@ async def test_start_program_trading_dead_reconnect_fail_retry_success(mock_ctx)
     assert result is True
     # 재연결 후 신규 구독 로직 실행 확인
     mock_ctx.streaming_service.connect_websocket.assert_called_once()
-    mock_ctx.streaming_stock_repo.mark_desired.assert_called_once_with(code, StreamingType.PROGRAM_TRADING)
+    mock_ctx.streaming_stock_repo.mark_desired.assert_called_once_with(
+        code,
+        StreamingType.PROGRAM_TRADING,
+        source="manual",
+    )

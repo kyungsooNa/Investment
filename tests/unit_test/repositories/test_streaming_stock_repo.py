@@ -131,6 +131,47 @@ async def test_pt_persistence_flow(tmp_path, mock_logger):
     assert "000660" in desired3
 
 
+@pytest.mark.asyncio
+async def test_pt_persistence_tracks_subscription_source(tmp_path, mock_logger):
+    """PROGRAM_TRADING desired는 수동/프로그램 출처를 함께 저장한다."""
+    db_path = str(tmp_path / "test_pt.db")
+    repo = StreamingStockRepo(logger=mock_logger)
+    repo.load_pt_desired_from_db(db_path)
+
+    await repo.mark_desired("005930", StreamingType.PROGRAM_TRADING, source="manual")
+    await repo.mark_desired("000660", StreamingType.PROGRAM_TRADING, source="program")
+    repo.flush_pt_desired_sync()
+
+    assert repo.get_pt_subscription_sources() == {
+        "005930": "manual",
+        "000660": "program",
+    }
+
+    conn = sqlite3.connect(db_path)
+    rows = dict(conn.execute("SELECT code, source FROM pt_subscriptions").fetchall())
+    conn.close()
+    assert rows == {
+        "005930": "manual",
+        "000660": "program",
+    }
+
+
+def test_load_legacy_pt_subscription_table_migrates_source_to_manual(tmp_path, mock_logger):
+    """기존 code-only pt_subscriptions 테이블은 manual 기본값으로 이관한다."""
+    db_path = str(tmp_path / "test_pt.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE pt_subscriptions (code TEXT PRIMARY KEY)")
+    conn.execute("INSERT INTO pt_subscriptions (code) VALUES ('005930')")
+    conn.commit()
+    conn.close()
+
+    repo = StreamingStockRepo(logger=mock_logger)
+    repo.load_pt_desired_from_db(db_path)
+
+    assert repo.get_desired(StreamingType.PROGRAM_TRADING) == {"005930"}
+    assert repo.get_pt_subscription_sources() == {"005930": "manual"}
+
+
 def test_load_pt_desired_from_db_uses_snapshot_fallback_when_db_empty(tmp_path, mock_logger):
     """기존 스냅샷 구독 종목을 빈 pt_subscriptions 테이블로 1회 이관한다."""
     db_path = str(tmp_path / "test_pt.db")

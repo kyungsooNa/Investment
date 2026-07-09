@@ -22,6 +22,7 @@ import asyncio
 import logging
 import sqlite3
 import threading
+import time
 from enum import Enum
 from typing import Dict, Iterable, Optional, Set
 
@@ -42,6 +43,9 @@ class StreamingStockRepo:
     워치독은 get_pending()으로 "desired - active" 종목을 파악하여 재구독 처리한다.
     """
 
+    SOURCE_MANUAL = "manual"
+    SOURCE_PROGRAM = "program"
+
     def __init__(self, logger=None):
         self._logger = logger or logging.getLogger(__name__)
         self._desired: Dict[StreamingType, Set[str]] = {t: set() for t in StreamingType}
@@ -54,16 +58,37 @@ class StreamingStockRepo:
         self._db_path: Optional[str] = None
 
         # 배치 flush용 pending queue — 즉시 commit 대신 flush_pt_desired_sync()에서 일괄 처리
-        self._pending_desired_ops: list = []  # list of (code: str, add: bool)
+        self._pending_desired_ops: list = []  # list of (code: str, add: bool, source: str)
         self._pending_lock = threading.Lock()
+        self._pt_sources: Dict[str, str] = {}
 
     # ── 초기화 / 영속성 ──────────────────────────────────────────────
 
     def _ensure_pt_subscription_table_locked(self) -> None:
         """pt_subscriptions 테이블을 보장한다. 호출자는 _db_lock을 보유해야 한다."""
-        self._db_conn.execute(
-            "CREATE TABLE IF NOT EXISTS pt_subscriptions (code TEXT PRIMARY KEY)"
-        )
+        self._db_conn.execute("""
+            CREATE TABLE IF NOT EXISTS pt_subscriptions (
+                code TEXT PRIMARY KEY,
+                source TEXT NOT NULL DEFAULT 'manual',
+                updated_at REAL
+            )
+        """)
+        columns = {
+            row[1]
+            for row in self._db_conn.execute("PRAGMA table_info(pt_subscriptions)").fetchall()
+        }
+        if "source" not in columns:
+            self._db_conn.execute(
+                "ALTER TABLE pt_subscriptions ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'"
+            )
+        if "updated_at" not in columns:
+            self._db_conn.execute(
+                "ALTER TABLE pt_subscriptions ADD COLUMN updated_at REAL"
+            )
+
+    @classmethod
+    def _normalize_source(cls, source: Optional[str]) -> str:
+        return cls.SOURCE_PROGRAM if source == cls.SOURCE_PROGRAM else cls.SOURCE_MANUAL
 
     @staticmethod
     def _normalize_codes(codes: Optional[Iterable[str]]) -> Set[str]:
@@ -93,29 +118,39 @@ class StreamingStockRepo:
             self._db_conn = sqlite3.connect(db_path, check_same_thread=False)
             with self._db_lock:
                 self._ensure_pt_subscription_table_locked()
-                cursor = self._db_conn.execute("SELECT code FROM pt_subscriptions")
-                codes = {row[0] for row in cursor.fetchall()}
+                cursor = self._db_conn.execute("SELECT code, source FROM pt_subscriptions")
+                source_rows = {
+                    row[0]: self._normalize_source(row[1])
+                    for row in cursor.fetchall()
+                }
+                codes = set(source_rows)
                 if not codes:
                     codes = self._normalize_codes(fallback_codes)
                     if codes:
+                        now = time.time()
                         self._db_conn.executemany(
-                            "INSERT OR IGNORE INTO pt_subscriptions (code) VALUES (?)",
-                            [(code,) for code in sorted(codes)],
+                            """
+                            INSERT OR IGNORE INTO pt_subscriptions (code, source, updated_at)
+                            VALUES (?, ?, ?)
+                            """,
+                            [(code, self.SOURCE_MANUAL, now) for code in sorted(codes)],
                         )
+                        source_rows = {code: self.SOURCE_MANUAL for code in codes}
                 self._db_conn.commit()
             # desired 초기화 (lock 불필요 — 앱 시작 단계, 단일 스레드)
             self._desired[StreamingType.PROGRAM_TRADING] = codes
+            self._pt_sources = source_rows
             if codes:
                 self._logger.info(f"StreamingStockRepo: PT desired 복원 {sorted(codes)}")
         except Exception as e:
             self._logger.warning(f"StreamingStockRepo: PT desired DB 복원 실패 (무시): {e}")
 
-    def _persist_pt_desired(self, code: str, add: bool) -> None:
+    def _persist_pt_desired(self, code: str, add: bool, source: str = "manual") -> None:
         """PT desired 변경을 pending queue에 적재. flush_pt_desired_sync()에서 일괄 커밋."""
         if self._db_conn is None:
             return
         with self._pending_lock:
-            self._pending_desired_ops.append((code, add))
+            self._pending_desired_ops.append((code, add, self._normalize_source(source)))
 
     def flush_pt_desired_sync(self) -> None:
         """pending queue의 PT desired 변경을 1회 트랜잭션으로 일괄 커밋."""
@@ -129,10 +164,23 @@ class StreamingStockRepo:
         try:
             with self._db_lock:
                 self._ensure_pt_subscription_table_locked()
-                for code, add in ops:
+                now = time.time()
+                for code, add, source in ops:
                     if add:
                         self._db_conn.execute(
-                            "INSERT OR IGNORE INTO pt_subscriptions (code) VALUES (?)", (code,)
+                            """
+                            INSERT OR IGNORE INTO pt_subscriptions (code, source, updated_at)
+                            VALUES (?, ?, ?)
+                            """,
+                            (code, source, now),
+                        )
+                        self._db_conn.execute(
+                            """
+                            UPDATE pt_subscriptions
+                            SET source = ?, updated_at = ?
+                            WHERE code = ?
+                            """,
+                            (source, now, code),
                         )
                     else:
                         self._db_conn.execute(
@@ -148,17 +196,27 @@ class StreamingStockRepo:
 
     # ── 상태 변경 (asyncio.Lock 보호) ────────────────────────────────
 
-    async def mark_desired(self, code: str, stream_type: StreamingType) -> None:
+    async def mark_desired(
+        self,
+        code: str,
+        stream_type: StreamingType,
+        source: str = "manual",
+    ) -> None:
         """종목을 구독 대상으로 등록한다."""
+        normalized_source = self._normalize_source(source)
         async with self._lock:
             self._desired[stream_type].add(code)
+            if stream_type == StreamingType.PROGRAM_TRADING:
+                self._pt_sources[code] = normalized_source
         if stream_type == StreamingType.PROGRAM_TRADING:
-            self._persist_pt_desired(code, add=True)
+            self._persist_pt_desired(code, add=True, source=normalized_source)
 
     async def unmark_desired(self, code: str, stream_type: StreamingType) -> None:
         """종목을 구독 대상에서 제거한다."""
         async with self._lock:
             self._desired[stream_type].discard(code)
+            if stream_type == StreamingType.PROGRAM_TRADING:
+                self._pt_sources.pop(code, None)
         if stream_type == StreamingType.PROGRAM_TRADING:
             self._persist_pt_desired(code, add=False)
 
@@ -190,6 +248,10 @@ class StreamingStockRepo:
     def get_desired(self, stream_type: StreamingType) -> Set[str]:
         """desired 집합의 복사본을 반환한다 (lock-free 안전 읽기)."""
         return set(self._desired[stream_type])
+
+    def get_pt_subscription_sources(self) -> Dict[str, str]:
+        """PROGRAM_TRADING desired 종목별 등록 출처를 반환한다."""
+        return dict(self._pt_sources)
 
     def get_active(self, stream_type: StreamingType) -> Set[str]:
         """active 집합의 복사본을 반환한다 (lock-free 안전 읽기)."""

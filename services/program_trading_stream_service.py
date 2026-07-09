@@ -297,6 +297,56 @@ class ProgramTradingStreamService:
             self.logger.warning(f"프로그램매매 종목명 조회 실패: code={code}, error={e}")
             return code
 
+    @staticmethod
+    def _normalize_subscription_source(source) -> str:
+        return "program" if source == "program" else "manual"
+
+    def _get_pt_subscription_sources(self) -> dict[str, str]:
+        if not self._streaming_stock_repo:
+            return {}
+        getter = getattr(self._streaming_stock_repo, "get_pt_subscription_sources", None)
+        if not callable(getter):
+            return {}
+        try:
+            sources = getter()
+        except Exception as e:
+            self.logger.warning(f"프로그램매매 구독 출처 조회 실패: {e}")
+            return {}
+        if not isinstance(sources, dict):
+            return {}
+        return {
+            str(code): self._normalize_subscription_source(source)
+            for code, source in sources.items()
+        }
+
+    def _sort_codes_by_subscription_source(
+        self,
+        codes: list[str],
+        sources: dict[str, str],
+    ) -> list[str]:
+        return [
+            code
+            for _, code in sorted(
+                enumerate(codes),
+                key=lambda item: (
+                    0 if sources.get(item[1]) == "manual" else 1,
+                    item[0],
+                ),
+            )
+        ]
+
+    def _format_tick_alert_line(
+        self,
+        code: str,
+        label: str,
+        body: str,
+        sources: dict[str, str],
+    ) -> str:
+        source = sources.get(code)
+        if source == "manual":
+            return f"<b>[수동] {html.escape(label)}: {body}</b>"
+        return f"[프로그램] {html.escape(label)}: {body}"
+
     def _extract_latest_program_snapshot(self, data: dict) -> dict | None:
         if not isinstance(data, dict):
             return None
@@ -338,17 +388,19 @@ class ProgramTradingStreamService:
             return None
 
     async def _format_last_tick_report_async(self, codes: list[str]) -> str:
+        sources = self._get_pt_subscription_sources()
+        ordered_codes = self._sort_codes_by_subscription_source(codes, sources)
         lines = [
             "<b>프로그램매매 구독 Tick 상태</b>",
             f"생성: {html.escape(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}",
             f"구독 종목: {len(codes)}개",
             "",
         ]
-        for code in codes:
+        for code in ordered_codes:
             label = self._format_stock_label(code)
             history = self._pt_history.get(code) or []
             if not history:
-                lines.append(f"{html.escape(label)}: 수신 없음")
+                lines.append(self._format_tick_alert_line(code, label, "수신 없음", sources))
                 continue
 
             tick = dict(history[-1])
@@ -367,25 +419,28 @@ class ProgramTradingStreamService:
             rate = self._format_rate(tick.get("rate", 0.0))
             net_amt = self._format_eok(tick.get("순매수거래대금", 0))
             source = " REST보정" if refreshed else ""
-            lines.append(
-                f"{html.escape(label)}: {price}원 ({rate}) "
+            body = (
+                f"{price}원 ({rate}) "
                 f"체결:{html.escape(trade_time)} 수신:{received_at}{source} 누적 순매수대금:{net_amt}"
             )
+            lines.append(self._format_tick_alert_line(code, label, body, sources))
         return "\n".join(lines)
 
     def _format_last_tick_report(self, codes: list[str]) -> str:
         """하위 호환용 동기 포맷터. 운영 전송은 REST 보정 가능한 async 경로를 사용한다."""
+        sources = self._get_pt_subscription_sources()
+        ordered_codes = self._sort_codes_by_subscription_source(codes, sources)
         lines = [
             "<b>프로그램매매 구독 Tick 상태</b>",
             f"생성: {html.escape(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}",
             f"구독 종목: {len(codes)}개",
             "",
         ]
-        for code in codes:
+        for code in ordered_codes:
             label = self._format_stock_label(code)
             history = self._pt_history.get(code) or []
             if not history:
-                lines.append(f"{html.escape(label)}: 수신 없음")
+                lines.append(self._format_tick_alert_line(code, label, "수신 없음", sources))
                 continue
 
             tick = history[-1]
@@ -398,10 +453,11 @@ class ProgramTradingStreamService:
             price = self._format_int(tick.get("price", 0))
             rate = self._format_rate(tick.get("rate", 0.0))
             net_amt = self._format_eok(tick.get("순매수거래대금", 0))
-            lines.append(
-                f"{html.escape(label)}: {price}원 ({rate}) "
+            body = (
+                f"{price}원 ({rate}) "
                 f"체결:{html.escape(trade_time)} 수신:{received_at} 누적 순매수대금:{net_amt}"
             )
+            lines.append(self._format_tick_alert_line(code, label, body, sources))
         return "\n".join(lines)
 
     async def _send_telegram_message(self, message: str) -> bool:
