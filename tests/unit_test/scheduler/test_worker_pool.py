@@ -206,3 +206,31 @@ async def test_handle_logs_execution_timer_even_on_failure():
     logged = [c.args[0] for c in fake_logger.info.call_args_list]
     exec_logs = [m for m in logged if m.startswith("[Performance] AfterMarketTask.FAIL_TASK:")]
     assert len(exec_logs) == pool.MAX_RETRIES
+
+
+async def test_handle_logs_timers_below_profiler_threshold():
+    """운영 threshold(1.0s)보다 빨리 끝나도 after-market 타이머는 항상 기록된다.
+
+    2026-07-09 실측: post_market_replay_audit가 1ms에 skip 완료되자 실행시간
+    라인이 threshold 게이트에 억제되어 '미실행'과 구분 불가했던 회귀 방지.
+    """
+    from core.performance_profiler import PerformanceProfiler
+
+    fake_logger = MagicMock()
+    pm = PerformanceProfiler(logger=fake_logger, enabled=True, threshold=1.0)
+    broker = MessageBroker()
+    dlq = MagicMock(spec=DlqManager)
+    pool = WorkerPool(broker=broker, dlq_manager=dlq, performance_profiler=pm, num_workers=1)
+
+    async def fast_handler(payload):
+        pass
+
+    pool.register("FAST_TASK", fast_handler)
+    await pool.start()
+    await broker.publish(Ticket(priority=50, task_name="FAST_TASK", payload={}))
+    await broker.join()
+    await pool.shutdown()
+
+    logged = [c.args[0] for c in fake_logger.info.call_args_list]
+    assert any("AfterMarketTask.FAST_TASK(queue_wait):" in m for m in logged)
+    assert any(m.startswith("[Performance] AfterMarketTask.FAST_TASK:") for m in logged)
