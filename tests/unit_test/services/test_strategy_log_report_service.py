@@ -1593,3 +1593,63 @@ async def test_near_miss_ma_proximity_filters_far_distance_and_sorts_closest(log
     assert "덜가까운종목" in near_miss_section
     assert "먼종목" not in near_miss_section
     assert near_miss_section.index("가까운종목") < near_miss_section.index("덜가까운종목")
+
+
+def test_save_diagnostic_report_writes_accumulated_file(tmp_path):
+    svc = StrategyLogReportService(log_dir=str(tmp_path / "strategies"))
+
+    path = svc.save_diagnostic_report(
+        "20260709",
+        "<b>diagnostic</b>",
+        report_dir=str(tmp_path / "reports"),
+    )
+
+    assert os.path.exists(path)
+    assert "20260709" in os.path.basename(path)
+    with open(path, "r", encoding="utf-8") as f:
+        assert f.read() == "<b>diagnostic</b>"
+
+
+@pytest.mark.asyncio
+async def test_operational_decision_report_summarizes_generated_diagnostic(tmp_path):
+    log_dir = tmp_path / "strategies"
+    log_dir.mkdir()
+    log_path = log_dir / "20260709_160000_LarryWilliamsVBO.log.json"
+    _write_log(str(log_path), [
+        {
+            "timestamp": "2026-07-09T15:30:00",
+            "data": {"event": "scan_with_watchlist", "count": 3},
+        },
+    ])
+
+    svc = StrategyLogReportService(log_dir=str(log_dir))
+    svc._build_profitability_gate_section = lambda _date: (
+        "<b>💹 전략별 수익성 게이트</b>\n"
+        "• 래리윌리엄스VBO: 통과 — 거래 34/30, 승률 55.9%, PF 1.82, payoff 1.38, 순손익 640,948원\n"
+        "• RSI2눌림목: 표본 부족 — 거래 14/30, 승률 28.6%, PF 0.33, payoff 0.69, 순손익 -639,140원"
+    )
+    svc._build_multiple_testing_section = lambda _date: (
+        "<b>🧪 다중검정 / Deflated Sharpe</b>\n"
+        "• Deflated Sharpe(확률) 0.475 — best SR 0.45, 기대최대 0.51, best 전략 거래 표본 2건\n"
+        "• adjusted Sharpe(proxy) -0.24 (haircut 0.68)\n"
+        "  - ⚠️ 편향 경고: best_positive_median_non_positive"
+    )
+    svc._build_overnight_exposure_section = lambda _date: (
+        "<b>🌙 오버나이트 노출 (익일 갭 리스크)</b>\n"
+        "• 현재 보유(익일 갭 노출): 8종목\n"
+        "  • broker_reconciled: 8종목 (최장 56일, 평균 33.5일)"
+    )
+    svc._build_regime_decomposition_section = lambda _date: (
+        "<b>🧭 전략별 시장국면(regime) 분해</b>\n"
+        "• 집중도: 3/3 전략 주력 국면이 'KOSDAQ 상승' (100%) ⚠️ 단일 regime 집중"
+    )
+
+    await svc.generate_report("20260709")
+    decision = svc.get_last_operational_decision_report()
+
+    assert "운영 의사결정 요약" in decision
+    assert "신규 진입 없음" in decision
+    assert "래리윌리엄스VBO" in decision
+    assert "broker_reconciled 보유 8종목" in decision
+    assert "KOSDAQ 상승 regime 집중" in decision
+    assert "Deflated Sharpe 약함" in decision

@@ -491,6 +491,7 @@ class StrategyLogReportService:
         self._profitability_gate_config = profitability_gate_config
         self._last_execution_quality_candidates: List[dict] = []
         self._last_strategy_degradation_candidates: List[dict] = []
+        self._last_operational_decision_report: str = ""
 
     def get_last_execution_quality_candidates(self) -> List[dict]:
         """최근 generate_report 실행에서 산출된 체결 품질 비활성화 후보 목록."""
@@ -499,6 +500,28 @@ class StrategyLogReportService:
     def get_last_strategy_degradation_candidates(self) -> List[dict]:
         """최근 generate_report 실행에서 산출된 전략 성과 저하 후보 목록."""
         return list(self._last_strategy_degradation_candidates)
+
+    def get_last_operational_decision_report(self) -> str:
+        """최근 generate_report 실행에서 산출된 운영 의사결정 요약."""
+        return self._last_operational_decision_report
+
+    def save_diagnostic_report(
+        self,
+        report_date: str,
+        report_html: str,
+        report_dir: Optional[str] = None,
+    ) -> str:
+        """기존 상세 전략 리포트를 운영품질진단 산출물로 파일에 축적한다."""
+        if report_dir is None:
+            base_dir = os.path.dirname(os.path.normpath(self._log_dir)) or "."
+            report_dir = os.path.join(base_dir, "reports", "strategy_diagnostics")
+        os.makedirs(report_dir, exist_ok=True)
+        safe_date = re.sub(r"[^0-9]", "", str(report_date)) or datetime.now().strftime("%Y%m%d")
+        stamp = datetime.now().strftime("%H%M%S_%f")
+        path = os.path.join(report_dir, f"{safe_date}_{stamp}_strategy_diagnostic_report.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(report_html)
+        return path
 
     # ── 파일 탐색 ────────────────────────────────────────────────
 
@@ -1355,6 +1378,116 @@ class StrategyLogReportService:
 
         return "\n".join(lines)
 
+    @staticmethod
+    def _extract_gate_pass_strategies(profitability_gate_section: Optional[str]) -> List[str]:
+        if not profitability_gate_section:
+            return []
+        names: List[str] = []
+        for line in profitability_gate_section.splitlines():
+            match = re.match(r"•\s+(.+?):\s+통과\b", re.sub(r"<[^>]+>", "", line).strip())
+            if match:
+                names.append(match.group(1).strip())
+        return names
+
+    @staticmethod
+    def _multiple_testing_is_weak(multiple_testing_section: Optional[str]) -> bool:
+        if not multiple_testing_section:
+            return False
+        text = re.sub(r"<[^>]+>", "", multiple_testing_section)
+        if "편향 경고" in text or "adjusted Sharpe(proxy) -" in text:
+            return True
+        match = re.search(r"Deflated Sharpe\(확률\)\s+([0-9.]+)", text)
+        if match:
+            try:
+                return float(match.group(1)) < 0.55
+            except ValueError:
+                return False
+        return False
+
+    @staticmethod
+    def _extract_broker_reconciled_count(overnight_exposure_section: Optional[str]) -> Optional[int]:
+        if not overnight_exposure_section or "broker_reconciled" not in overnight_exposure_section:
+            return None
+        match = re.search(r"broker_reconciled:\s+(\d+)종목", overnight_exposure_section)
+        if not match:
+            return None
+        return int(match.group(1))
+
+    @staticmethod
+    def _extract_open_hold_count(overnight_exposure_section: Optional[str]) -> Optional[int]:
+        if not overnight_exposure_section:
+            return None
+        match = re.search(r"현재 보유\(익일 갭 노출\):\s+(\d+)종목", overnight_exposure_section)
+        if not match:
+            return None
+        return int(match.group(1))
+
+    @staticmethod
+    def _extract_regime_concentration_label(regime_decomposition_section: Optional[str]) -> Optional[str]:
+        if not regime_decomposition_section or "단일 regime 집중" not in regime_decomposition_section:
+            return None
+        match = re.search(r"'([^']+)'", regime_decomposition_section)
+        return match.group(1) if match else "단일"
+
+    def _build_operational_decision_report(
+        self,
+        target_date: str,
+        *,
+        buy_count: int,
+        profitability_gate_section: Optional[str],
+        multiple_testing_section: Optional[str],
+        overnight_exposure_section: Optional[str],
+        regime_decomposition_section: Optional[str],
+        degradation_section: Optional[str],
+        execution_quality_section: Optional[str],
+        warnings_section: Optional[str],
+    ) -> str:
+        lines = [f"<b>🧭 [{_fmt_date(target_date)}] 운영 의사결정 요약</b>"]
+
+        if buy_count > 0:
+            lines.append(f"• 신규 진입 {buy_count}건 — 체결/포지션 관리 확인")
+        else:
+            lines.append("• 신규 진입 없음 — 주요 후보는 진입 조건 미달/시그널 없음")
+
+        pass_strategies = self._extract_gate_pass_strategies(profitability_gate_section)
+        multiple_weak = self._multiple_testing_is_weak(multiple_testing_section)
+        if pass_strategies:
+            shown = ", ".join(_esc(name) for name in pass_strategies[:3])
+            extra = f" 외 {len(pass_strategies) - 3}개" if len(pass_strategies) > 3 else ""
+            caveat = " (단 Deflated Sharpe 약함)" if multiple_weak else ""
+            lines.append(f"• 전략 확대 후보: {shown}{extra}{caveat}")
+        else:
+            lines.append("• 전략 확대 후보: 없음 — 표본/수익성 게이트 기준 미충족")
+            if multiple_weak:
+                lines.append("• 검증 리스크: Deflated Sharpe 약함")
+
+        broker_count = self._extract_broker_reconciled_count(overnight_exposure_section)
+        if broker_count is not None:
+            lines.append(
+                f"• 즉시 점검: broker_reconciled 보유 {broker_count}종목의 전략 귀속/청산 책임"
+            )
+        else:
+            open_hold_count = self._extract_open_hold_count(overnight_exposure_section)
+            if open_hold_count:
+                lines.append(f"• 보유 리스크: 익일 갭 노출 {open_hold_count}종목")
+
+        regime_label = self._extract_regime_concentration_label(regime_decomposition_section)
+        if regime_label:
+            lines.append(f"• 리스크: {_esc(regime_label)} regime 집중")
+
+        if degradation_section:
+            lines.append("• 성과 저하 후보: 별도 경고 확인")
+        if execution_quality_section:
+            lines.append("• 체결 품질 후보: 별도 경고 확인")
+        if warnings_section:
+            lines.append("• 시스템 경고: 데이터 수신/파싱 상태 확인")
+
+        if pass_strategies and not (broker_count or regime_label or multiple_weak):
+            lines.append("• 다음 행동: 통과 전략만 소액 확대 검토")
+        else:
+            lines.append("• 다음 행동: 신규매수 기준 유지, 점검 항목 해결 전 전략 확대 보류")
+        return "\n".join(lines)
+
     def _build_replay_audit_lines(self, backtest_records: List[dict]) -> List[str]:
         counts = Counter()
         examples: List[dict] = []
@@ -1797,6 +1930,17 @@ class StrategyLogReportService:
         strategy_files = self._find_strategy_files()
 
         if not strategy_files:
+            self._last_operational_decision_report = self._build_operational_decision_report(
+                target_date,
+                buy_count=0,
+                profitability_gate_section=None,
+                multiple_testing_section=None,
+                overnight_exposure_section=None,
+                regime_decomposition_section=None,
+                degradation_section=None,
+                execution_quality_section=None,
+                warnings_section=None,
+            )
             return (
                 f"<b>📊 [{_fmt_date(target_date)}] 전략 실행 요약</b>\n\n"
                 "당일 전략 로그가 없습니다."
@@ -2076,6 +2220,17 @@ class StrategyLogReportService:
         strategy_correlation_section = self._build_strategy_correlation_section(target_date)
         overnight_exposure_section = self._build_overnight_exposure_section(target_date)
         regime_decomposition_section = self._build_regime_decomposition_section(target_date)
+        self._last_operational_decision_report = self._build_operational_decision_report(
+            target_date,
+            buy_count=len(fallback_buys),
+            profitability_gate_section=profitability_gate_section,
+            multiple_testing_section=multiple_testing_section,
+            overnight_exposure_section=overnight_exposure_section,
+            regime_decomposition_section=regime_decomposition_section,
+            degradation_section=degradation_section,
+            execution_quality_section=execution_quality_section,
+            warnings_section=warnings_section,
+        )
 
         if not active_sections:
             portfolio_summary = self._build_portfolio_summary(target_date, fallback_buys)

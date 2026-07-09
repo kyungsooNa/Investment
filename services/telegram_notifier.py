@@ -448,6 +448,20 @@ class TelegramReporter:
             await self._send_message(current)
 
     @_serialized_report_send
+    async def send_operational_decision_report(self, report_html: str, report_date: str):
+        """운영자가 바로 볼 짧은 의사결정 요약을 텔레그램으로 전송합니다."""
+        current = ""
+        for line in report_html.split('\n'):
+            chunk = line + '\n'
+            if len((current + chunk).encode('utf-8')) > 4000:
+                await self._send_message(current)
+                current = chunk
+            else:
+                current += chunk
+        if current:
+            await self._send_message(current)
+
+    @_serialized_report_send
     async def send_premium_watchlist_report(self, kospi: List[Dict], kosdaq: List[Dict], report_date: str, limit: int = 30):
         """전일 기준 우량주 풀 리포트를 텔레그램으로 전송합니다."""
         title = (
