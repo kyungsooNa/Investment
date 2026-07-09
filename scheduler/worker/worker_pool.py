@@ -116,9 +116,12 @@ class WorkerPool:
         if self._pm.enabled:
             # 발행(publish) → 실행 시작까지의 큐 대기시간. created_at은 UTC epoch 기준이라
             # time.time()과 직접 뺄셈 가능 (log_timer(name, start_time)와 동일한 계산식).
+            # after-market 태스크는 저빈도(하루 십수 건)라 threshold 게이트 없이 항상 기록
+            # — 기록 부재가 '미실행'을 의미하도록 유지한다.
             self._pm.log_timer(
                 f"AfterMarketTask.{ticket.task_name}(queue_wait)",
                 datetime.fromisoformat(ticket.created_at).timestamp(),
+                threshold=0.0,
             )
         t_exec = self._pm.start_timer()
         try:
@@ -140,4 +143,4 @@ class WorkerPool:
                 else:
                     await self._dlq.handle_failed_ticket(ticket, str(e))
         finally:
-            self._pm.log_timer(f"AfterMarketTask.{ticket.task_name}", t_exec)
+            self._pm.log_timer(f"AfterMarketTask.{ticket.task_name}", t_exec, threshold=0.0)
