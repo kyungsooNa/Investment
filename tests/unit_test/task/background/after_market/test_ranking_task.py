@@ -367,6 +367,86 @@ async def test_period_investor_program_ranking_can_sort_by_qty(bg_service, mock_
 
 
 @pytest.mark.asyncio
+async def test_period_investor_program_ranking_excludes_partial_api_results(bg_service, mock_deps):
+    """세 주체 합산 랭킹은 투자자·프로그램 응답이 모두 성공한 종목만 포함한다."""
+    broker, mapper, _, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
+    broker.get_investor_trade_by_stock_daily_multi = AsyncMock(return_value=_make_investor_multi_response([
+        {"frgn_ntby_qty": "10", "orgn_ntby_qty": "20", "frgn_ntby_tr_pbmn": "100", "orgn_ntby_tr_pbmn": "200"},
+    ]))
+    broker.get_program_trade_by_stock_daily_multi = AsyncMock(return_value=None)
+
+    resp = await bg_service.get_period_investor_program_net_buy_ranking(days=5)
+
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert resp.data == []
+
+
+@pytest.mark.asyncio
+async def test_period_investor_program_ranking_reuses_collection_for_other_metric(bg_service, mock_deps):
+    """같은 기준일·기간에서 지표만 바꾸면 원천 API를 다시 호출하지 않는다."""
+    broker, mapper, _, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
+    broker.get_investor_trade_by_stock_daily_multi = AsyncMock(return_value=_make_investor_multi_response([
+        {"frgn_ntby_qty": "10", "orgn_ntby_qty": "20", "frgn_ntby_tr_pbmn": "100", "orgn_ntby_tr_pbmn": "200"},
+    ]))
+    broker.get_program_trade_by_stock_daily_multi = AsyncMock(return_value=_make_program_multi_response([
+        {"whol_smtn_ntby_qty": "30", "whol_smtn_ntby_tr_pbmn": "300000000"},
+    ]))
+
+    amount_resp = await bg_service.get_period_investor_program_net_buy_ranking(days=5, metric="amount")
+    qty_resp = await bg_service.get_period_investor_program_net_buy_ranking(days=5, metric="qty")
+
+    assert amount_resp.rt_cd == ErrorCode.SUCCESS.value
+    assert qty_resp.rt_cd == ErrorCode.SUCCESS.value
+    assert broker.get_investor_trade_by_stock_daily_multi.await_count == 1
+    assert broker.get_program_trade_by_stock_daily_multi.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_period_investor_program_ranking_shares_in_progress_collection(bg_service, mock_deps):
+    """동일 기준일·기간의 동시 요청은 한 번의 원천 수집 Task를 공유한다."""
+    broker, mapper, _, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
+    gate = asyncio.Event()
+    started = asyncio.Event()
+    calls = {"investor": 0, "program": 0}
+
+    async def fetch_investor(*_args):
+        calls["investor"] += 1
+        if sum(calls.values()) == 2:
+            started.set()
+        await gate.wait()
+        return _make_investor_multi_response([
+            {"frgn_ntby_qty": "10", "orgn_ntby_qty": "20", "frgn_ntby_tr_pbmn": "100", "orgn_ntby_tr_pbmn": "200"},
+        ])
+
+    async def fetch_program(*_args):
+        calls["program"] += 1
+        if sum(calls.values()) == 2:
+            started.set()
+        await gate.wait()
+        return _make_program_multi_response([
+            {"whol_smtn_ntby_qty": "30", "whol_smtn_ntby_tr_pbmn": "300000000"},
+        ])
+
+    broker.get_investor_trade_by_stock_daily_multi = AsyncMock(side_effect=fetch_investor)
+    broker.get_program_trade_by_stock_daily_multi = AsyncMock(side_effect=fetch_program)
+
+    first = asyncio.create_task(bg_service.get_period_investor_program_net_buy_ranking(days=5, metric="amount"))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    second = asyncio.create_task(bg_service.get_period_investor_program_net_buy_ranking(days=5, metric="qty"))
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(asyncio.shield(second), timeout=0.05)
+
+    assert calls == {"investor": 1, "program": 1}
+    gate.set()
+    first_resp, second_resp = await asyncio.gather(first, second)
+    assert first_resp.rt_cd == ErrorCode.SUCCESS.value
+    assert second_resp.rt_cd == ErrorCode.SUCCESS.value
+
+
+@pytest.mark.asyncio
 async def test_refresh_investor_ranking_etf_excluded(bg_service, mock_deps):
     """ETF/ETN 종목은 제외되어야 한다."""
     broker, mapper, _, _, _, _ = mock_deps
