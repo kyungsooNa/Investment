@@ -156,8 +156,8 @@ async def test_pt_persistence_tracks_subscription_source(tmp_path, mock_logger):
     }
 
 
-def test_load_legacy_pt_subscription_table_migrates_source_to_manual(tmp_path, mock_logger):
-    """기존 code-only pt_subscriptions 테이블은 manual 기본값으로 이관한다."""
+def test_load_legacy_pt_subscription_table_migrates_source_to_legacy(tmp_path, mock_logger):
+    """기존 code-only pt_subscriptions 테이블은 출처 미확인(legacy)으로 이관한다."""
     db_path = str(tmp_path / "test_pt.db")
     conn = sqlite3.connect(db_path)
     conn.execute("CREATE TABLE pt_subscriptions (code TEXT PRIMARY KEY)")
@@ -169,7 +169,7 @@ def test_load_legacy_pt_subscription_table_migrates_source_to_manual(tmp_path, m
     repo.load_pt_desired_from_db(db_path)
 
     assert repo.get_desired(StreamingType.PROGRAM_TRADING) == {"005930"}
-    assert repo.get_pt_subscription_sources() == {"005930": "manual"}
+    assert repo.get_pt_subscription_sources() == {"005930": "legacy"}
 
 
 def test_load_pt_desired_from_db_uses_snapshot_fallback_when_db_empty(tmp_path, mock_logger):
@@ -186,6 +186,32 @@ def test_load_pt_desired_from_db_uses_snapshot_fallback_when_db_empty(tmp_path, 
     rows = {row[0] for row in conn.execute("SELECT code FROM pt_subscriptions").fetchall()}
     conn.close()
     assert rows == {"005930", "000660"}
+    assert repo.get_pt_subscription_sources() == {
+        "005930": "legacy",
+        "000660": "legacy",
+    }
+
+
+def test_load_pt_desired_from_db_reclassifies_old_manual_rows_without_timestamp(tmp_path, mock_logger):
+    """출처 추적 전 manual 행(updated_at NULL)은 legacy로 재분류한다."""
+    db_path = str(tmp_path / "test_pt.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE pt_subscriptions (code TEXT PRIMARY KEY, source TEXT, updated_at REAL)"
+    )
+    conn.execute(
+        "INSERT INTO pt_subscriptions (code, source, updated_at) VALUES ('005930', 'manual', NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+    repo = StreamingStockRepo(logger=mock_logger)
+    repo.load_pt_desired_from_db(db_path)
+
+    assert repo.get_pt_subscription_sources() == {"005930": "legacy"}
+    conn = sqlite3.connect(db_path)
+    assert conn.execute("SELECT source FROM pt_subscriptions WHERE code = '005930'").fetchone()[0] == "legacy"
+    conn.close()
 
 
 def test_load_pt_desired_from_db_prefers_existing_db_over_snapshot_fallback(tmp_path, mock_logger):

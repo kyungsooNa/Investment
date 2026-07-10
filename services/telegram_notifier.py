@@ -346,6 +346,19 @@ class TelegramReporter:
                 rate = self._format_signed_pct(leader.get("change_rate"), digits=1)
                 tv = self._format_won_100m(leader.get("trading_value_won"))
                 lines.append(f"{name} {rate} {tv}")
+            momentum_leaders = theme.get("momentum_leaders") or []
+            liquid_codes = {leader.get("code") for leader in (theme.get("leaders") or [])}
+            thin_momentum_leaders = [
+                leader for leader in momentum_leaders
+                if leader.get("code") not in liquid_codes
+            ]
+            if thin_momentum_leaders:
+                lines.append("상승률 상위(저유동성 포함)")
+                for leader in thin_momentum_leaders[:3]:
+                    name = html.escape(str(leader.get("name") or leader.get("code") or ""), quote=False)
+                    rate = self._format_signed_pct(leader.get("change_rate"), digits=1)
+                    tv = self._format_won_100m(leader.get("trading_value_won"))
+                    lines.append(f"{name} {rate} {tv}")
             lines.append("</pre>")
             parts.append("\n".join(lines))
 

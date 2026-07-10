@@ -104,7 +104,7 @@ async def test_stop_program_trading_keeps_independent_price_subscription(mock_ct
 
 @pytest.mark.asyncio
 async def test_start_program_trading_already_subscribed_alive(mock_ctx):
-    """이미 desired에 있고 연결 살아있으면 스킵"""
+    """기존 desired를 UI에서 다시 선택하면 수동 출처로 승격한다."""
     code = "005930"
     mock_ctx.streaming_stock_repo.get_desired.return_value = {code}  # 이미 구독 중
     mock_ctx.broker.is_websocket_receive_alive.return_value = True
@@ -113,6 +113,11 @@ async def test_start_program_trading_already_subscribed_alive(mock_ctx):
 
     assert result is True
     mock_ctx.streaming_service.connect_websocket.assert_not_called()
+    mock_ctx.streaming_stock_repo.mark_desired.assert_awaited_once_with(
+        code,
+        StreamingType.PROGRAM_TRADING,
+        source="manual",
+    )
 
 
 @pytest.mark.asyncio
