@@ -3,6 +3,7 @@
 TradingApp의 초기화 로직을 참고하여 서비스 레이어만 초기화한다.
 """
 import asyncio
+import inspect
 import time
 from config.config_loader import load_configs, KillSwitchConfig, RiskGateConfig, DataQualityConfig
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
@@ -573,9 +574,25 @@ class WebAppContext:
 
                 # 재연결 후에도 desired에 있으면 성공으로 간주
                 if self.streaming_stock_repo and code in self.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING):
+                    mark_result = self.streaming_stock_repo.mark_desired(
+                        code,
+                        StreamingType.PROGRAM_TRADING,
+                        source="manual",
+                    )
+                    if inspect.isawaitable(mark_result):
+                        await mark_result
                     return True
                 self.logger.info(f"[프로그램매매] {code} 재연결 실패로 구독 해제됨. 신규 구독 재시도.")
             else:
+                # 구버전/이관 구독을 사용자가 UI에서 다시 선택하면 수동 등록으로 확정한다.
+                if self.streaming_stock_repo:
+                    mark_result = self.streaming_stock_repo.mark_desired(
+                        code,
+                        StreamingType.PROGRAM_TRADING,
+                        source="manual",
+                    )
+                    if inspect.isawaitable(mark_result):
+                        await mark_result
                 return True
 
         try:

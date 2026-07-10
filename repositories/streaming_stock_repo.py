@@ -45,6 +45,7 @@ class StreamingStockRepo:
 
     SOURCE_MANUAL = "manual"
     SOURCE_PROGRAM = "program"
+    SOURCE_LEGACY = "legacy"
 
     def __init__(self, logger=None):
         self._logger = logger or logging.getLogger(__name__)
@@ -69,7 +70,7 @@ class StreamingStockRepo:
         self._db_conn.execute("""
             CREATE TABLE IF NOT EXISTS pt_subscriptions (
                 code TEXT PRIMARY KEY,
-                source TEXT NOT NULL DEFAULT 'manual',
+                source TEXT NOT NULL DEFAULT 'legacy',
                 updated_at REAL
             )
         """)
@@ -79,7 +80,7 @@ class StreamingStockRepo:
         }
         if "source" not in columns:
             self._db_conn.execute(
-                "ALTER TABLE pt_subscriptions ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'"
+                "ALTER TABLE pt_subscriptions ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'"
             )
         if "updated_at" not in columns:
             self._db_conn.execute(
@@ -88,7 +89,11 @@ class StreamingStockRepo:
 
     @classmethod
     def _normalize_source(cls, source: Optional[str]) -> str:
-        return cls.SOURCE_PROGRAM if source == cls.SOURCE_PROGRAM else cls.SOURCE_MANUAL
+        if source == cls.SOURCE_PROGRAM:
+            return cls.SOURCE_PROGRAM
+        if source == cls.SOURCE_MANUAL:
+            return cls.SOURCE_MANUAL
+        return cls.SOURCE_LEGACY
 
     @staticmethod
     def _normalize_codes(codes: Optional[Iterable[str]]) -> Set[str]:
@@ -118,11 +123,17 @@ class StreamingStockRepo:
             self._db_conn = sqlite3.connect(db_path, check_same_thread=False)
             with self._db_lock:
                 self._ensure_pt_subscription_table_locked()
-                cursor = self._db_conn.execute("SELECT code, source FROM pt_subscriptions")
-                source_rows = {
-                    row[0]: self._normalize_source(row[1])
-                    for row in cursor.fetchall()
-                }
+                cursor = self._db_conn.execute("SELECT code, source, updated_at FROM pt_subscriptions")
+                source_rows = {}
+                for code, source, updated_at in cursor.fetchall():
+                    normalized_source = self._normalize_source(source)
+                    if normalized_source == self.SOURCE_MANUAL and updated_at is None:
+                        normalized_source = self.SOURCE_LEGACY
+                        self._db_conn.execute(
+                            "UPDATE pt_subscriptions SET source = ? WHERE code = ?",
+                            (normalized_source, code),
+                        )
+                    source_rows[code] = normalized_source
                 codes = set(source_rows)
                 if not codes:
                     codes = self._normalize_codes(fallback_codes)
@@ -133,9 +144,9 @@ class StreamingStockRepo:
                             INSERT OR IGNORE INTO pt_subscriptions (code, source, updated_at)
                             VALUES (?, ?, ?)
                             """,
-                            [(code, self.SOURCE_MANUAL, now) for code in sorted(codes)],
+                            [(code, self.SOURCE_LEGACY, now) for code in sorted(codes)],
                         )
-                        source_rows = {code: self.SOURCE_MANUAL for code in codes}
+                        source_rows = {code: self.SOURCE_LEGACY for code in codes}
                 self._db_conn.commit()
             # desired 초기화 (lock 불필요 — 앱 시작 단계, 단일 스레드)
             self._desired[StreamingType.PROGRAM_TRADING] = codes

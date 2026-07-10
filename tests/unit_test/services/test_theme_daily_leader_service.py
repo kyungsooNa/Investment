@@ -98,7 +98,7 @@ async def test_builds_theme_report_from_ranking_data():
     resp = await svc.build_daily_theme_report(rankings, "20260630")
 
     assert resp.rt_cd == ErrorCode.SUCCESS.value
-    assert [item["normalized_name"] for item in resp.data] == ["우주항공", "반도체/소부장"]
+    assert [item["normalized_name"] for item in resp.data] == ["반도체/소부장", "우주항공"]
 
     semi = next(item for item in resp.data if item["normalized_name"] == "반도체/소부장")
     assert semi["scored_member_count"] == 4
@@ -154,7 +154,8 @@ async def test_ranks_liquid_theme_above_thin_high_change_theme():
     assert resp.rt_cd == ErrorCode.SUCCESS.value
     assert [item["normalized_name"] for item in resp.data] == ["대금동반상승", "저유동성급등"]
     liquid, thin = resp.data
-    assert liquid["leader_avg_change_rate"] < thin["leader_avg_change_rate"]
+    assert liquid["leader_avg_change_rate"] > thin["leader_avg_change_rate"]
+    assert thin["momentum_leaders"][0]["change_rate"] > liquid["leaders"][0]["change_rate"]
     assert liquid["theme_score"] > thin["theme_score"]
     assert thin["zero_trading_value_ratio"] == 66.67
 
@@ -214,3 +215,80 @@ async def test_skips_theme_with_less_than_min_members():
     resp = await svc.build_daily_theme_report(rankings, "20260630")
 
     assert resp.data == []
+
+
+@pytest.mark.asyncio
+async def test_separates_thin_momentum_stock_from_liquid_theme_leaders():
+    """10억 미만 급등주는 상승률 상위로만 보이고 유동성 주도주에서는 제외한다."""
+    svc, _ = _service({
+        "OLED": {
+            "sources": ["NAVER"],
+            "members": [_member("A", "베셀"), _member("B", "티에스이"), _member("C", "예스티")],
+        }
+    })
+    rankings = {
+        "all_stocks": [
+            _stock("A", "베셀", 23.2, 900_000_000),
+            _stock("B", "티에스이", 20.0, 32_300_000_000),
+            _stock("C", "예스티", 18.8, 17_200_000_000),
+        ],
+        "program_all_stocks": [],
+    }
+
+    resp = await svc.build_daily_theme_report(rankings, "20260710")
+
+    theme = resp.data[0]
+    assert [item["code"] for item in theme["leaders"]] == ["B", "C"]
+    assert [item["code"] for item in theme["momentum_leaders"]] == ["A", "B", "C"]
+    assert theme["liquid_member_count"] == 2
+    assert theme["is_liquid_theme"] is True
+
+
+@pytest.mark.asyncio
+async def test_penalizes_theme_trading_value_concentrated_in_one_stock():
+    """동일한 상승률·총대금이라도 한 종목 쏠림 테마는 분산 테마보다 뒤로 보낸다."""
+    svc, _ = _service({
+        "단일종목쏠림": {
+            "sources": ["NAVER"],
+            "members": [_member("A", "쏠림1"), _member("B", "쏠림2"), _member("C", "쏠림3")],
+        },
+        "대금분산": {
+            "sources": ["NAVER"],
+            "members": [_member("D", "분산1"), _member("E", "분산2"), _member("F", "분산3")],
+        },
+    })
+    rankings = {"all_stocks": [
+        _stock("A", "쏠림1", 10, 90_000_000_000), _stock("B", "쏠림2", 10, 5_000_000_000), _stock("C", "쏠림3", 10, 5_000_000_000),
+        _stock("D", "분산1", 10, 34_000_000_000), _stock("E", "분산2", 10, 33_000_000_000), _stock("F", "분산3", 10, 33_000_000_000),
+    ]}
+
+    resp = await svc.build_daily_theme_report(rankings, "20260710")
+
+    assert [theme["normalized_name"] for theme in resp.data] == ["대금분산", "단일종목쏠림"]
+    assert resp.data[1]["trading_value_concentration_ratio"] == 90.0
+
+
+@pytest.mark.asyncio
+async def test_ranks_high_liquidity_theme_above_thin_higher_momentum_theme():
+    """시장 주도 순위는 소수 급등 테마보다 대금이 크게 붙은 테마를 우선한다."""
+    svc, _ = _service({
+        "통신장비": {
+            "sources": ["NAVER"],
+            "members": [_member("A", "기가레인"), _member("B", "빛과전자"), _member("C", "주성코퍼레이션")],
+        },
+        "반도체장비": {
+            "sources": ["NAVER"],
+            "members": [_member("D", "저스템"), _member("E", "피에스케이"), _member("F", "유진테크")],
+        },
+    })
+    rankings = {"all_stocks": [
+        _stock("A", "기가레인", 29.9, 2_100_000_000), _stock("B", "빛과전자", 29.9, 16_200_000_000), _stock("C", "주성코퍼레이션", 19.1, 17_900_000_000),
+        _stock("D", "저스템", 24.1, 20_500_000_000), _stock("E", "피에스케이", 23.3, 177_700_000_000), _stock("F", "유진테크", 20.0, 1_240_500_000_000),
+    ]}
+
+    resp = await svc.build_daily_theme_report(rankings, "20260710")
+
+    assert [theme["normalized_name"] for theme in resp.data] == ["반도체장비", "통신장비"]
+    semi, telecom = resp.data
+    assert semi["market_leadership_score"] > telecom["market_leadership_score"]
+    assert telecom["leader_avg_change_rate"] > semi["leader_avg_change_rate"]

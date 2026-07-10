@@ -92,6 +92,8 @@ class RankingTask(AfterMarketTask):
         self._investor_ranking_updated_at: Optional[datetime] = None
         self._is_refreshing: bool = False
         self._last_collected_date: Optional[str] = None
+        self._period_ranking_cache: Dict[tuple[str, int], List[Dict]] = {}
+        self._period_ranking_tasks: Dict[tuple[str, int], asyncio.Task] = {}
 
         # 기본 랭킹 캐시 (상승/하락/거래량/거래대금) — 장마감 후 1회
         self._basic_ranking_cache: Dict[str, ResCommonResponse] = {}
@@ -585,16 +587,54 @@ class RankingTask(AfterMarketTask):
         if not target_date:
             target_date = datetime.now().strftime("%Y%m%d")
 
+        cache_key = (str(target_date), days)
+        results = self._period_ranking_cache.get(cache_key)
+        if results is None:
+            task = self._period_ranking_tasks.get(cache_key)
+            if task is None:
+                task = asyncio.create_task(
+                    self._collect_period_investor_program_ranking(str(target_date), days)
+                )
+                self._period_ranking_tasks[cache_key] = task
+            try:
+                results, is_complete = await task
+            finally:
+                if task.done() and self._period_ranking_tasks.get(cache_key) is task:
+                    self._period_ranking_tasks.pop(cache_key, None)
+
+            if is_complete:
+                self._period_ranking_cache[cache_key] = results
+
+        sort_field = "combined_period_ntby_tr_pbmn_won" if metric == "amount" else "combined_period_ntby_qty"
+        ranked_results = [
+            dict(item, period_metric=metric)
+            for item in results
+            if self._to_int(item.get(sort_field)) > 0
+        ]
+        ranked_results.sort(key=lambda item: self._to_int(item.get(sort_field)), reverse=True)
+        top = [dict(item) for item in ranked_results[:limit]]
+        for i, item in enumerate(top, 1):
+            item["data_rank"] = str(i)
+
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1=f"최근 {days}거래일 외국인+기관+프로그램 기간 순매수 랭킹 조회 성공",
+            data=top,
+        )
+
+    async def _collect_period_investor_program_ranking(
+        self,
+        target_date: str,
+        days: int,
+    ) -> tuple[List[Dict], bool]:
+        """기간 수급 원천 데이터를 수집한다. 불완전한 결과는 캐시하지 않는다."""
         all_stocks = self._load_all_stocks()
         if not all_stocks:
-            return ResCommonResponse(
-                rt_cd=ErrorCode.SUCCESS.value,
-                msg1="대상 종목 없음",
-                data=[],
-            )
+            return [], True
 
         industry_map = await self._load_industry_map()
         results: List[Dict] = []
+        is_complete = True
 
         for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
             await self._suspend_event.wait()
@@ -614,7 +654,15 @@ class RankingTask(AfterMarketTask):
             program_responses = all_responses[len(chunk):]
 
             for (code, name, _market), investor_resp, program_resp in zip(chunk, investor_responses, program_responses):
-                if isinstance(investor_resp, Exception) or isinstance(program_resp, Exception):
+                if (
+                    isinstance(investor_resp, Exception)
+                    or isinstance(program_resp, Exception)
+                    or not investor_resp
+                    or not program_resp
+                    or investor_resp.rt_cd != ErrorCode.SUCCESS.value
+                    or program_resp.rt_cd != ErrorCode.SUCCESS.value
+                ):
+                    is_complete = False
                     continue
 
                 investor_rows = investor_resp.data if investor_resp and isinstance(investor_resp.data, list) else []
@@ -632,8 +680,7 @@ class RankingTask(AfterMarketTask):
                 combined_pbmn_won = frgn_pbmn_won + orgn_pbmn_won + program_pbmn_won
                 combined_qty = frgn_qty + orgn_qty + program_qty
 
-                rank_value = combined_pbmn_won if metric == "amount" else combined_qty
-                if rank_value <= 0:
+                if combined_pbmn_won <= 0 and combined_qty <= 0:
                     continue
 
                 first_investor = investor_rows[0] if investor_rows and isinstance(investor_rows[0], dict) else {}
@@ -646,7 +693,6 @@ class RankingTask(AfterMarketTask):
                     "hts_kor_isnm": name,
                     "industry": industry_map.get(code, "-"),
                     "period_days": str(days),
-                    "period_metric": metric,
                     "stck_prpr": str(stck_prpr or "0"),
                     "prdy_ctrt": str(first_investor.get("prdy_ctrt") or first_program.get("prdy_ctrt") or "0"),
                     "prdy_vrss": str(first_investor.get("prdy_vrss") or first_program.get("prdy_vrss") or "0"),
@@ -666,17 +712,7 @@ class RankingTask(AfterMarketTask):
                     "combined_period_ntby_tr_pbmn_won": str(combined_pbmn_won),
                 })
 
-        sort_field = "combined_period_ntby_tr_pbmn_won" if metric == "amount" else "combined_period_ntby_qty"
-        results.sort(key=lambda item: self._to_int(item.get(sort_field)), reverse=True)
-        top = [dict(item) for item in results[:limit]]
-        for i, item in enumerate(top, 1):
-            item["data_rank"] = str(i)
-
-        return ResCommonResponse(
-            rt_cd=ErrorCode.SUCCESS.value,
-            msg1=f"최근 {days}거래일 외국인+기관+프로그램 기간 순매수 랭킹 조회 성공",
-            data=top,
-        )
+        return results, is_complete
 
     async def get_trading_value_ranking(self, limit: int = 30) -> ResCommonResponse:
         """투자자 데이터 기반 거래대금 랭킹 반환 (캐시에서 즉시)."""

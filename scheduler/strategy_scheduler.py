@@ -180,6 +180,194 @@ class StrategyScheduler:
         self._signal_history: List[SignalRecord] = self._load_signal_history()
         self._subscriber_queues: List[asyncio.Queue] = []
         self._strategy_failure_alert_keys: set[tuple[str, str, str, str, str, str]] = set()
+        self._force_exit_retry_tasks: Dict[str, asyncio.Task] = {}
+
+    @staticmethod
+    def _is_force_exit_circuit_breaker_response(signal: TradeSignal, resp) -> bool:
+        """강제청산 주문이 로컬 서킷브레이커에만 차단됐는지 판별한다."""
+        return bool(
+            signal.action == "SELL"
+            and str(signal.reason or "").startswith("전략 종료 강제 청산")
+            and resp is not None
+            and "서킷 브레이커 개방" in str(getattr(resp, "msg1", "") or "")
+        )
+
+    @staticmethod
+    def _force_exit_retry_delay_sec(resp) -> int:
+        data = getattr(resp, "data", None)
+        if isinstance(data, dict):
+            try:
+                return max(1, int(data.get("retry_after_seconds") or 0))
+            except (TypeError, ValueError):
+                pass
+        # 구버전 응답에는 분 단위 문구만 있어 정확한 해제 시각을 알 수 없다.
+        # 기본 5분 대기 후 사전 검증을 수행한다.
+        return 5 * 60
+
+    def _force_exit_retry_key(self, signal: TradeSignal) -> str:
+        return f"{signal.strategy_name}:{signal.code}"
+
+    def _schedule_force_exit_circuit_breaker_retry(self, signal: TradeSignal, resp) -> bool:
+        """서킷브레이커 해제 후 강제청산을 안전하게 한 번 재시도한다.
+
+        재시도 전에는 반드시 미체결 매도와 실제 잔고를 조회한다. 따라서 이전 요청이
+        응답 유실 상태에서 이미 접수됐어도 중복 매도를 제출하지 않는다.
+        """
+        delay_sec = self._force_exit_retry_delay_sec(resp)
+        now = self._tm.get_current_kst_time()
+        cutoff = self._get_order_cutoff_time(self._tm.get_market_close_time())
+        if now + timedelta(seconds=delay_sec) >= cutoff:
+            self._logger.error(
+                f"[Scheduler] 강제 청산 재시도 예약 불가(주문 컷오프 초과): "
+                f"code={signal.code}, retry_after={delay_sec}s"
+            )
+            return False
+
+        key = self._force_exit_retry_key(signal)
+        existing = self._force_exit_retry_tasks.get(key)
+        if existing is not None and not existing.done():
+            self._logger.info(
+                f"[Scheduler] 강제 청산 재시도 이미 예약됨: {key}"
+            )
+            return True
+
+        retry_signal = TradeSignal(
+            strategy_name=signal.strategy_name,
+            code=signal.code,
+            name=signal.name,
+            action="SELL",
+            price=signal.price,
+            qty=signal.qty,
+            reason=signal.reason,
+            exchange=signal.exchange,
+        )
+        task = asyncio.create_task(
+            self._retry_force_exit_after_circuit_breaker(key, retry_signal, delay_sec)
+        )
+        self._force_exit_retry_tasks[key] = task
+        def _clear_completed_task(done, retry_key=key):
+            if self._force_exit_retry_tasks.get(retry_key) is done:
+                self._force_exit_retry_tasks.pop(retry_key, None)
+        task.add_done_callback(_clear_completed_task)
+        self._logger.warning(
+            f"[Scheduler] 강제 청산 재시도 예약: code={signal.code}, "
+            f"서킷브레이커 해제 후 {delay_sec}초 뒤 잔고/미체결 확인"
+        )
+        return True
+
+    async def _retry_force_exit_after_circuit_breaker(
+        self,
+        key: str,
+        signal: TradeSignal,
+        delay_sec: int,
+    ) -> None:
+        try:
+            if self._tm is not None and hasattr(self._tm, "async_sleep"):
+                await self._tm.async_sleep(delay_sec)
+            else:
+                await asyncio.sleep(delay_sec)
+
+            if not self._running:
+                self._logger.info(
+                    f"[Scheduler] 강제 청산 재시도 취소(스케줄러 정지): code={signal.code}"
+                )
+                return
+
+            now = self._tm.get_current_kst_time()
+            if now >= self._get_order_cutoff_time(self._tm.get_market_close_time()):
+                self._logger.error(
+                    f"[Scheduler] 강제 청산 재시도 취소(주문 컷오프): code={signal.code}"
+                )
+                return
+
+            broker = getattr(self._oes, "broker_api_wrapper", None)
+            if broker is None:
+                self._logger.error(
+                    f"[Scheduler] 강제 청산 재시도 취소(브로커 없음): code={signal.code}"
+                )
+                return
+
+            unfilled_resp = await broker.inquire_unfilled_orders()
+            if not unfilled_resp or unfilled_resp.rt_cd != ErrorCode.SUCCESS.value:
+                self._logger.error(
+                    f"[Scheduler] 강제 청산 재시도 취소(미체결 확인 실패): code={signal.code}"
+                )
+                return
+            if self._has_broker_unfilled_sell(unfilled_resp.data, signal.code):
+                self._logger.warning(
+                    f"[Scheduler] 강제 청산 재시도 생략(기존 미체결 매도 확인): code={signal.code}"
+                )
+                return
+
+            positions = await self._get_broker_position_map_for_force_exit()
+            broker_qty = positions.get(str(signal.code), 0)
+            if broker_qty <= 0:
+                self._logger.warning(
+                    f"[Scheduler] 강제 청산 재시도 생략(보유 수량 없음): code={signal.code}"
+                )
+                return
+
+            retry_price = 0
+            retry_reason = "전략 종료 강제 청산 재시도 (서킷 브레이커 해제 후 시장가)"
+            try:
+                quote = await broker.get_asking_price(signal.code)
+                if quote and quote.rt_cd == ErrorCode.SUCCESS.value:
+                    best_bid = self._extract_best_bid(quote.data)
+                    if best_bid > 0:
+                        retry_price = best_bid
+                        retry_reason = (
+                            "전략 종료 강제 청산 재시도 "
+                            f"(서킷 브레이커 해제 후 지정가 {best_bid:,}원)"
+                        )
+            except Exception as exc:
+                self._logger.warning(
+                    f"[Scheduler] 강제 청산 재시도 호가 조회 실패, 시장가 사용: "
+                    f"code={signal.code}, error={exc}"
+                )
+
+            retry_signal = TradeSignal(
+                strategy_name=signal.strategy_name,
+                code=signal.code,
+                name=signal.name,
+                action="SELL",
+                price=retry_price,
+                qty=min(int(signal.qty or 0), broker_qty),
+                reason=retry_reason,
+                exchange=signal.exchange,
+            )
+            if retry_signal.qty <= 0:
+                return
+            self._logger.warning(
+                f"[Scheduler] 강제 청산 재시도 실행: code={signal.code}, qty={retry_signal.qty}"
+            )
+            # 재시도 주문이 다시 서킷브레이커에 막힐 경우 새 예약을 허용한다.
+            self._force_exit_retry_tasks.pop(key, None)
+            await self._execute_signal(retry_signal)
+        except asyncio.CancelledError:
+            self._logger.info(f"[Scheduler] 강제 청산 재시도 취소됨: {key}")
+            raise
+        except Exception as exc:
+            self._logger.exception(
+                f"[Scheduler] 강제 청산 재시도 예외: code={signal.code}, error={exc}"
+            )
+
+    @staticmethod
+    def _has_broker_unfilled_sell(data, stock_code: str) -> bool:
+        """증권사 미체결 목록에 동일 종목 매도 주문이 있는지 확인한다."""
+        if not isinstance(data, dict):
+            return False
+        rows = data.get("output") or data.get("output1") or []
+        if isinstance(rows, dict):
+            rows = [rows]
+        target = str(stock_code).strip()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("pdno") or row.get("PDNO") or "").strip()
+            side = str(row.get("sll_buy_dvsn_cd") or row.get("SLL_BUY_DVSN_CD") or "").strip()
+            if code == target and side == "01":
+                return True
+        return False
 
     # ── 전략 등록 ──
 
@@ -233,6 +421,13 @@ class StrategyScheduler:
         perform_exit = not save_state
         for cfg in self._strategies:
             await self.stop_strategy(cfg.strategy.name, perform_force_exit=perform_exit)
+
+        retry_tasks = list(self._force_exit_retry_tasks.values())
+        for task in retry_tasks:
+            task.cancel()
+        if retry_tasks:
+            await asyncio.gather(*retry_tasks, return_exceptions=True)
+        self._force_exit_retry_tasks.clear()
 
         await StrategyStateIO.flush_pending()
         self.close()
@@ -1055,10 +1250,42 @@ class StrategyScheduler:
                     api_success = False
                     msg = resp.msg1 if resp else "응답 없음"
                     order_error_msg = msg
-                    self._logger.warning(
-                        f"[Scheduler] API 주문 실패: {signal.action} {signal.code} - {msg} "
-                        f"(CSV는 기록됨)"
-                    )
+                    if self._is_force_exit_circuit_breaker_response(signal, resp) and \
+                            self._schedule_force_exit_circuit_breaker_retry(signal, resp):
+                        # 서킷브레이커 자체는 주문 API에 요청을 보내지 않은 로컬 차단이다.
+                        # 예약 작업이 해제 후 잔고/미체결을 확인하고 안전하게 재시도한다.
+                        order_deferred = True
+                        self._logger.warning(
+                            f"[Scheduler] 강제 청산 주문 보류(서킷브레이커 재시도 예정): "
+                            f"{signal.code} - {msg}"
+                        )
+                        if self._notification_service:
+                            await self._notification_service.emit(
+                                NotificationCategory.STRATEGY,
+                                NotificationLevel.WARNING,
+                                f"[{signal.strategy_name}] {signal.name} 강제 청산 재시도 예약",
+                                (
+                                    f"종목: {signal.name}({signal.code})\n"
+                                    f"주문: {log_price:,}원 × {signal.qty}주\n"
+                                    "상태: 서킷브레이커 해제 후 잔고·미체결을 확인한 뒤 재시도"
+                                ),
+                                metadata={
+                                    "strategy_name": signal.strategy_name,
+                                    "code": signal.code,
+                                    "action": signal.action,
+                                    "price": log_price,
+                                    "qty": signal.qty,
+                                    "reason": signal.reason,
+                                    "order_error": msg,
+                                    "retry_scheduled": True,
+                                    "trace_id": tid,
+                                },
+                            )
+                    else:
+                        self._logger.warning(
+                            f"[Scheduler] API 주문 실패: {signal.action} {signal.code} - {msg} "
+                            f"(CSV는 기록됨)"
+                        )
             except Exception as e:
                 api_success = False
                 order_error_msg = str(e)

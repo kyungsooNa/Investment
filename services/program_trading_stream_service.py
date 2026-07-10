@@ -299,7 +299,11 @@ class ProgramTradingStreamService:
 
     @staticmethod
     def _normalize_subscription_source(source) -> str:
-        return "program" if source == "program" else "manual"
+        if source == "program":
+            return "program"
+        if source == "manual":
+            return "manual"
+        return "legacy"
 
     def _get_pt_subscription_sources(self) -> dict[str, str]:
         if not self._streaming_stock_repo:
@@ -329,7 +333,7 @@ class ProgramTradingStreamService:
             for _, code in sorted(
                 enumerate(codes),
                 key=lambda item: (
-                    0 if sources.get(item[1]) == "manual" else 1,
+                    {"manual": 0, "program": 1, "legacy": 2}.get(sources.get(item[1]), 2),
                     item[0],
                 ),
             )
@@ -345,7 +349,9 @@ class ProgramTradingStreamService:
         source = sources.get(code)
         if source == "manual":
             return f"<b>[수동] {html.escape(label)}: {body}</b>"
-        return f"[프로그램] {html.escape(label)}: {body}"
+        if source == "program":
+            return f"[프로그램] {html.escape(label)}: {body}"
+        return f"[기존] {html.escape(label)}: {body}"
 
     def _extract_latest_program_snapshot(self, data: dict) -> dict | None:
         if not isinstance(data, dict):

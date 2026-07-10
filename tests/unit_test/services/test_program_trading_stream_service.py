@@ -617,6 +617,29 @@ async def test_format_last_tick_report_places_manual_sources_first_and_bolds(man
     assert mock_ssr.get_pt_subscription_sources.call_count == 1
 
 
+@pytest.mark.asyncio
+async def test_format_last_tick_report_marks_legacy_source_separately(manager):
+    """출처 미확인 구독은 수동이 아닌 기존 구독으로 표시한다."""
+    mock_ssr = MagicMock()
+    mock_ssr.get_pt_subscription_sources.return_value = {
+        "005930": "manual",
+        "000660": "program",
+        "080220": "legacy",
+    }
+    mock_stock_repo = MagicMock()
+    mock_stock_repo.get_name_by_code.side_effect = lambda code: {
+        "005930": "삼성전자", "000660": "SK하이닉스", "080220": "제주반도체",
+    }.get(code, code)
+
+    manager.wire_streaming_stock_repo(mock_ssr)
+    manager.wire_alert_dependencies(stock_code_repository=mock_stock_repo)
+
+    message = await manager._format_last_tick_report_async(["080220", "000660", "005930"])
+
+    assert message.index("[수동] 삼성전자") < message.index("[프로그램] SK하이닉스")
+    assert message.index("[프로그램] SK하이닉스") < message.index("[기존] 제주반도체")
+
+
 def test_build_db_minute_persistence_status_reports_missing_minutes(manager):
     """장중 1분 단위 저장 여부를 종목별로 계산한다."""
     clock = MarketClock(market_open_time="09:00", market_close_time="09:02")

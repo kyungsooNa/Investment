@@ -3365,6 +3365,55 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             "strategy_force_exit:래리윌리엄스VBO",
         )
 
+    async def test_force_exit_circuit_breaker_retries_after_safe_preflight(self):
+        """강제청산이 서킷브레이커에 막히면 해제 후 잔고/미체결 확인 뒤 재시도한다."""
+        from datetime import datetime
+
+        scheduler, _, oes, tm, _ = self._make_scheduler(dry_run=False)
+        scheduler._running = True
+        now = datetime(2026, 7, 10, 15, 12, 0)
+        tm.get_current_kst_time.return_value = now
+        tm.get_market_close_time.return_value = datetime(2026, 7, 10, 15, 40, 0)
+        tm.async_sleep = AsyncMock()
+
+        broker = MagicMock()
+        broker.inquire_unfilled_orders = AsyncMock(
+            return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": []})
+        )
+        broker.get_account_balance = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="OK",
+                data={"output1": [{"pdno": "105560", "hldg_qty": "5"}]},
+            )
+        )
+        broker.get_asking_price = AsyncMock(
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"bidp1": "185100"}
+            )
+        )
+        oes.broker_api_wrapper = broker
+        oes.handle_place_sell_order.side_effect = [
+            ResCommonResponse(
+                rt_cd=ErrorCode.API_ERROR.value,
+                msg1="서킷 브레이커 개방 — 4분 후 재시도",
+                data={"retry_after_seconds": 1},
+            ),
+            ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK"),
+        ]
+
+        signal = TradeSignal(
+            code="105560", name="KB금융", action="SELL", price=185000, qty=5,
+            reason="전략 종료 강제 청산 (지정가 185,000원)", strategy_name="래리윌리엄스VBO",
+        )
+        await scheduler._execute_signal(signal)
+        await asyncio.sleep(0)
+
+        self.assertEqual(oes.handle_place_sell_order.await_count, 2)
+        retry_call = oes.handle_place_sell_order.await_args_list[1]
+        self.assertEqual(retry_call.args[:3], ("105560", 185100, 5))
+        self.assertIn("서킷 브레이커 해제", retry_call.kwargs["strategy_notification"]["reason"])
+
     async def test_execute_strategy_sell_reprices_to_best_bid_when_above_book(self):
         scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
         oes.broker_api_wrapper = MagicMock()

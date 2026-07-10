@@ -37,6 +37,10 @@ def _get(item: Any, key: str, default: Any = None) -> Any:
 class ThemeDailyLeaderService:
     """장마감 랭킹 캐시를 테마별로 묶어 당일 주도 테마를 산출한다."""
 
+    MIN_LIQUID_LEADER_TRADING_VALUE_WON = 1_000_000_000  # 10억
+    MIN_LIQUID_THEME_TRADING_VALUE_WON = 10_000_000_000  # 100억
+    MIN_LIQUID_MEMBER_COUNT = 2
+
     def __init__(
         self,
         classification_repository: "StockClassificationRepository",
@@ -94,12 +98,21 @@ class ThemeDailyLeaderService:
                 if len(scored) < min_members:
                     continue
 
-                scored.sort(
+                momentum_leaders = sorted(
+                    scored,
                     key=lambda item: (item["change_rate"], item["trading_value_won"]),
                     reverse=True,
                 )
-                leaders = scored[:leader_count]
+                liquid_members = [
+                    item for item in momentum_leaders
+                    if item["trading_value_won"] >= self.MIN_LIQUID_LEADER_TRADING_VALUE_WON
+                ]
+                leaders = liquid_members[:leader_count]
                 trading_value_sum = sum(item["trading_value_won"] for item in scored)
+                trading_value_concentration_ratio = (
+                    max(item["trading_value_won"] for item in scored) / trading_value_sum * 100
+                    if trading_value_sum else 0.0
+                )
                 fi_net_sum = sum(item["fi_net_buy_won"] for item in scored)
                 program_net_sum = sum(item["program_net_buy_won"] for item in scored)
                 advance_count = sum(1 for item in scored if item["change_rate"] > 0)
@@ -109,24 +122,36 @@ class ThemeDailyLeaderService:
                 )
                 leader_avg_change_rate = round(
                     sum(item["change_rate"] for item in leaders) / len(leaders), 2
-                )
+                ) if leaders else 0.0
                 score_info = self._build_theme_score(
                     scored=scored,
                     leader_avg_change_rate=leader_avg_change_rate,
                     advancing_ratio=round(advance_count / len(scored) * 100, 1),
                     trading_value_sum_won=trading_value_sum,
                     flow_ratio=flow_ratio,
+                    trading_value_concentration_ratio=trading_value_concentration_ratio,
                 )
+                liquidity_bonus = self._build_liquidity_bonus(
+                    trading_value_sum,
+                    leader_avg_change_rate,
+                )
+                market_leadership_score = round(score_info["theme_score"] + liquidity_bonus, 2)
 
                 themes.append({
                     "normalized_name": normalized_name,
                     "sources": group.get("sources", []),
                     "report_date": report_date,
                     "scored_member_count": len(scored),
+                    "liquid_member_count": len(liquid_members),
+                    "is_liquid_theme": (
+                        trading_value_sum >= self.MIN_LIQUID_THEME_TRADING_VALUE_WON
+                        and len(liquid_members) >= self.MIN_LIQUID_MEMBER_COUNT
+                    ),
                     "leader_avg_change_rate": leader_avg_change_rate,
                     "advance_count": advance_count,
                     "advancing_ratio": score_info["advancing_ratio"],
                     "trading_value_sum_won": trading_value_sum,
+                    "trading_value_concentration_ratio": round(trading_value_concentration_ratio, 2),
                     "fi_net_buy_won": fi_net_sum,
                     "program_net_buy_won": program_net_sum,
                     "flow_ratio": flow_ratio,
@@ -134,12 +159,17 @@ class ThemeDailyLeaderService:
                     "zero_trading_value_ratio": score_info["zero_trading_value_ratio"],
                     "negative_trading_value_ratio": score_info["negative_trading_value_ratio"],
                     "theme_score": score_info["theme_score"],
+                    "momentum_score": score_info["theme_score"],
+                    "liquidity_bonus": liquidity_bonus,
+                    "market_leadership_score": market_leadership_score,
                     "leaders": leaders,
+                    "momentum_leaders": momentum_leaders[:leader_count],
                 })
 
             themes.sort(
                 key=lambda item: (
-                    item["theme_score"],
+                    item["is_liquid_theme"],
+                    item["market_leadership_score"],
                     item["leader_avg_change_rate"],
                     item["advancing_ratio"],
                     item["trading_value_sum_won"],
@@ -200,6 +230,7 @@ class ThemeDailyLeaderService:
         advancing_ratio: float,
         trading_value_sum_won: int,
         flow_ratio: float,
+        trading_value_concentration_ratio: float,
     ) -> Dict[str, float]:
         total_count = len(scored)
         zero_trading_value_count = sum(1 for item in scored if item["trading_value_won"] <= 0)
@@ -224,6 +255,7 @@ class ThemeDailyLeaderService:
             zero_trading_value_count / total_count * 100 if total_count else 0.0
         )
         clipped_flow_ratio = max(min(flow_ratio, 20.0), -20.0)
+        concentration_penalty = max(trading_value_concentration_ratio - 70.0, 0.0) * 0.05
         theme_score = (
             leader_avg_change_rate * 0.45
             + value_weighted_change_rate * 0.20
@@ -232,6 +264,7 @@ class ThemeDailyLeaderService:
             + clipped_flow_ratio * 0.10
             - zero_trading_value_ratio * 0.05
             - negative_trading_value_ratio * 0.04
+            - concentration_penalty
         )
         return {
             "advancing_ratio": advancing_ratio,
@@ -240,6 +273,19 @@ class ThemeDailyLeaderService:
             "negative_trading_value_ratio": round(negative_trading_value_ratio, 2),
             "theme_score": round(theme_score, 2),
         }
+
+    @classmethod
+    def _build_liquidity_bonus(
+        cls,
+        trading_value_sum_won: int,
+        leader_avg_change_rate: float,
+    ) -> float:
+        """시장 주도성 정렬용 거래대금 보너스. 저탄력 대형주는 보너스를 제한한다."""
+        if trading_value_sum_won < cls.MIN_LIQUID_THEME_TRADING_VALUE_WON:
+            return 0.0
+        ratio = trading_value_sum_won / cls.MIN_LIQUID_THEME_TRADING_VALUE_WON
+        cap = 1.5 if leader_avg_change_rate < 5.0 else 9.0
+        return round(min(math.log10(ratio) * 2.0, cap), 2)
 
     @staticmethod
     def _build_member_score(member: Dict[str, Any], stock: Any, program_net_won: int) -> Dict[str, Any]:

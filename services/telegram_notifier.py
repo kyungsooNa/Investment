@@ -325,14 +325,26 @@ class TelegramReporter:
             trading_value = self._format_won_100m(theme.get("trading_value_sum_won"))
             advancing_ratio = self._format_signed_pct(theme.get("advancing_ratio"), digits=1).replace("+", "")
             flow_ratio = self._format_signed_pct(theme.get("flow_ratio"), digits=2)
-            theme_score = theme.get("theme_score")
+            theme_score = theme.get("market_leadership_score", theme.get("theme_score"))
             score_text = ""
             if theme_score is not None:
                 try:
-                    score_text = f" | 종합점수 {float(theme_score):.2f}"
+                    score_label = "주도점수" if "market_leadership_score" in theme else "종합점수"
+                    score_text = f" | {score_label} {float(theme_score):.2f}"
                 except (TypeError, ValueError):
                     score_text = ""
-            summary_parts = [f"상승비율 {advancing_ratio}"]
+            member_count = theme.get("scored_member_count")
+            advance_count = theme.get("advance_count")
+            if member_count is not None and advance_count is not None:
+                summary_parts = [f"상승 {advance_count}/{member_count} ({advancing_ratio})"]
+            else:
+                summary_parts = [f"상승비율 {advancing_ratio}"]
+            liquidity_bonus = theme.get("liquidity_bonus")
+            if liquidity_bonus is not None:
+                try:
+                    summary_parts.append(f"유동성 +{float(liquidity_bonus):.2f}")
+                except (TypeError, ValueError):
+                    pass
             if show_flow_ratio:
                 summary_parts.append(f"수급비중 {flow_ratio}")
             summary_line = " | ".join(summary_parts) + score_text
@@ -346,6 +358,19 @@ class TelegramReporter:
                 rate = self._format_signed_pct(leader.get("change_rate"), digits=1)
                 tv = self._format_won_100m(leader.get("trading_value_won"))
                 lines.append(f"{name} {rate} {tv}")
+            momentum_leaders = theme.get("momentum_leaders") or []
+            liquid_codes = {leader.get("code") for leader in (theme.get("leaders") or [])}
+            thin_momentum_leaders = [
+                leader for leader in momentum_leaders
+                if leader.get("code") not in liquid_codes
+            ]
+            if thin_momentum_leaders:
+                lines.append("상승률 상위(저유동성 포함)")
+                for leader in thin_momentum_leaders[:3]:
+                    name = html.escape(str(leader.get("name") or leader.get("code") or ""), quote=False)
+                    rate = self._format_signed_pct(leader.get("change_rate"), digits=1)
+                    tv = self._format_won_100m(leader.get("trading_value_won"))
+                    lines.append(f"{name} {rate} {tv}")
             lines.append("</pre>")
             parts.append("\n".join(lines))
 
