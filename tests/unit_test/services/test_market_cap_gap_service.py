@@ -91,6 +91,27 @@ async def test_build_report_returns_no_comparisons_when_fx_missing():
 
 
 @pytest.mark.asyncio
+async def test_get_us_market_caps_does_not_query_domestic_market_cap():
+    broker = SimpleNamespace()
+    broker.get_market_cap = AsyncMock()
+    provider = StaticUsMarketCapProvider(
+        quotes=[
+            MarketCapQuote(symbol="AAPL", name="Apple", currency="USD", market_cap=2_000_000_000_000),
+            MarketCapQuote(symbol="NVDA", name="NVIDIA", currency="USD", market_cap=3_000_000_000_000),
+        ],
+        usdkrw=1400.0,
+    )
+    service = MarketCapGapService(broker=broker, us_provider=provider, korean_provider=None)
+
+    summary = await service.get_us_market_caps()
+
+    assert summary["fx_rate"] == 1400.0
+    assert [item["symbol"] for item in summary["items"]] == ["NVDA", "AAPL"]
+    assert summary["items"][0]["market_cap_krw"] == 4_200_000_000_000_000
+    broker.get_market_cap.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_build_report_uses_korean_fallback_when_broker_market_cap_unavailable():
     broker = SimpleNamespace()
     broker.get_market_cap = AsyncMock(side_effect=[
