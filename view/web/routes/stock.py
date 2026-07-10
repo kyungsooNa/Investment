@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from common.overseas_types import OverseasExchange
 from common.types import Exchange
 from repositories.streaming_stock_repo import StreamingType
+from services.market_cap_gap_service import MarketCapGapService
 from services.price_subscription_service import SubscriptionPriority
 from view.web.api_common import _get_ctx, _serialize_response, EnvironmentRequest
 import view.web.api_common as api_common
@@ -280,6 +281,29 @@ async def get_overseas_stock_chart(
         ctx.logger.warning(f"[stock] 해외 차트 조회 타임아웃 ({symbol}, 12s 초과)")
         return {"rt_cd": "1", "msg1": "해외주식 차트 API 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.", "data": None}
     return _serialize_response(resp)
+
+
+@router.get("/overseas/market-cap")
+async def get_overseas_market_cap():
+    """기존 대형주 유니버스의 미국 시가총액 요약을 반환한다."""
+    ctx = _get_ctx()
+    if not is_market_enabled(ctx, "overseas_us"):
+        raise HTTPException(status_code=400, detail="미국주식 시가총액은 overseas_us가 enabled된 run에서만 사용할 수 있습니다.")
+
+    service = getattr(ctx, "market_cap_gap_service", None)
+    if service is None:
+        service = MarketCapGapService(broker=ctx.broker, logger=ctx.logger)
+        ctx.market_cap_gap_service = service
+    try:
+        data = await asyncio.wait_for(service.get_us_market_caps(), timeout=12.0)
+    except asyncio.TimeoutError:
+        ctx.logger.warning("[stock] 미국 시가총액 조회 타임아웃 (12s 초과)")
+        return {"rt_cd": "1", "msg1": "미국 시가총액 API 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.", "data": None}
+    except Exception as exc:
+        ctx.logger.warning(f"[stock] 미국 시가총액 조회 실패: {exc}")
+        return {"rt_cd": "1", "msg1": "미국 시가총액을 조회하지 못했습니다. 잠시 후 다시 시도해주세요.", "data": None}
+
+    return {"rt_cd": "0", "msg1": "미국 주요 대형주 시가총액 조회 성공", "data": data}
 
 
 @router.get("/chart/{code}")

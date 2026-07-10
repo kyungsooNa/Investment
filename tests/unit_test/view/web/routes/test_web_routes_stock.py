@@ -389,6 +389,31 @@ async def test_get_overseas_stock_chart_timeout(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_get_overseas_market_cap_uses_us_only_summary_service(web_client, mock_web_ctx):
+    """해외 시총 화면 API는 국내 시총 조회 없이 미국 대형주 요약만 반환한다."""
+    mock_web_ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    mock_web_ctx.market_cap_gap_service = MagicMock()
+    mock_web_ctx.market_cap_gap_service.get_us_market_caps = AsyncMock(return_value={
+        "fx_rate": 1400.0,
+        "items": [{
+            "symbol": "NVDA",
+            "name": "NVIDIA",
+            "currency": "USD",
+            "market_cap_usd": 3_000_000_000_000,
+            "market_cap_krw": 4_200_000_000_000_000,
+        }],
+    })
+
+    response = web_client.get("/api/overseas/market-cap")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rt_cd"] == "0"
+    assert body["data"]["items"][0]["symbol"] == "NVDA"
+    mock_web_ctx.market_cap_gap_service.get_us_market_caps.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_get_stocks_list(web_client, mock_web_ctx):
     """GET /api/stocks/list 엔드포인트 테스트"""
     mock_web_ctx.stock_code_repository.name_to_code = {"삼성전자": "005930", "카카오": "035720"}

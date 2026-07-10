@@ -1,77 +1,115 @@
 {% extends "base.html" %}
 
 {% block content %}
+<style>
+    .overseas-header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+    .overseas-header h2 { margin-bottom:4px; }
+    .overseas-status { margin:0; color:var(--text-secondary, #666); font-size:0.9rem; }
+    .overseas-tabs { margin:0; }
+    .overseas-panel[hidden] { display:none; }
+</style>
 <div id="section-overseas" class="section">
     <div id="overseas-real-banner" style="display:none; padding:10px 14px; margin-bottom:12px; background:#7a1f1f; color:#fff; border:2px solid #ff4d4d; border-radius:6px; font-weight:bold;">
         실전투자 모드
     </div>
 
-    <div class="card">
-        <h2>해외주식</h2>
-        <div class="form-row">
-            <label>심볼</label>
-            <input type="text" id="overseas-symbol" placeholder="AAPL" maxlength="12" autocomplete="off">
+    <div class="card overseas-header">
+        <div>
+            <h2>미국주식</h2>
+            <p class="overseas-status">NASDAQ · NYSE · AMEX / USD 지정가 주문 지원</p>
+            <p id="overseas-status" class="overseas-status">해외주식 기능 상태를 확인 중입니다.</p>
         </div>
-        <div class="form-row">
-            <label>거래소</label>
-            <select id="overseas-exchange">
-                <option value="NASD">NASDAQ</option>
-                <option value="NYSE">NYSE</option>
-                <option value="AMEX">AMEX</option>
-            </select>
-        </div>
-        <div class="form-row">
-            <button class="btn" onclick="loadOverseasQuote()">현재가</button>
-            <button class="btn" onclick="loadOverseasChart()">일봉</button>
-            <button class="btn" onclick="loadOverseasBalance()">잔고</button>
+        <div class="overseas-tabs" role="tablist" aria-label="미국주식 메뉴">
+            <button type="button" id="overseas-tab-overview" class="sub-tab-btn active" data-overseas-tab="overview" onclick="setOverseasTab('overview')">시장 개요</button>
+            <button type="button" id="overseas-tab-marketcap" class="sub-tab-btn" data-overseas-tab="marketcap" onclick="setOverseasTab('marketcap')">주요 대형주</button>
+            <button type="button" id="overseas-tab-orders" class="sub-tab-btn" data-overseas-tab="orders" onclick="setOverseasTab('orders')">보유·주문</button>
         </div>
     </div>
 
-    <div id="overseas-quote-result"></div>
-    <div id="overseas-chart-result"></div>
-    <div id="overseas-balance-result"></div>
+    <section id="overseas-panel-overview" class="overseas-panel">
+        <div class="card">
+            <h2>시세 조회</h2>
+            <div class="form-row">
+                <label>심볼</label>
+                <input type="text" id="overseas-symbol" placeholder="AAPL" maxlength="12" autocomplete="off">
+            </div>
+            <div class="form-row">
+                <label>거래소</label>
+                <select id="overseas-exchange">
+                    <option value="NASD">NASDAQ</option>
+                    <option value="NYSE">NYSE</option>
+                    <option value="AMEX">AMEX</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <button class="btn" data-overseas-required onclick="loadOverseasQuote()">현재가</button>
+                <button class="btn" data-overseas-required onclick="loadOverseasChart()">일봉</button>
+            </div>
+        </div>
+        <div id="overseas-quote-result"></div>
+        <div id="overseas-chart-result"></div>
+    </section>
 
-    <div class="card">
-        <h2>해외 지정가 주문 <span id="overseas-order-mode-label" style="font-size:0.7em; color:#aaa;"></span></h2>
-        <div class="form-row">
-            <label>심볼</label>
-            <input type="text" id="overseas-order-symbol" placeholder="AAPL" maxlength="12" autocomplete="off">
+    <section id="overseas-panel-marketcap" class="overseas-panel" hidden>
+        <div class="card">
+            <h2>주요 미국 대형주</h2>
+            <p class="small">기존 비교 리포트의 고정 대형주 유니버스를 USD 시가총액 기준으로 표시합니다.</p>
+            <div class="form-row">
+                <button class="btn" data-overseas-required onclick="loadOverseasMarketCap()">새로고침</button>
+            </div>
         </div>
-        <div class="form-row">
-            <label>거래소</label>
-            <select id="overseas-order-exchange">
-                <option value="NASD">NASDAQ</option>
-                <option value="NYSE">NYSE</option>
-                <option value="AMEX">AMEX</option>
-            </select>
-        </div>
-        <div class="form-row">
-            <label>수량</label>
-            <input type="number" id="overseas-order-qty" min="1" step="1" placeholder="1">
-        </div>
-        <div class="form-row">
-            <label>지정가</label>
-            <input type="number" id="overseas-order-price" min="0.01" step="0.01" placeholder="190.00">
-        </div>
-        <div class="form-row">
-            <button class="btn btn-buy" onclick="placeOverseasOrder('buy')">매수</button>
-            <button class="btn btn-sell" onclick="placeOverseasOrder('sell')">매도</button>
-        </div>
-    </div>
+        <div id="overseas-marketcap-result"></div>
+    </section>
 
-    <div id="overseas-order-result"></div>
-
-    <div class="card">
-        <h2>미체결 주문</h2>
-        <div class="form-row">
-            <button class="btn" onclick="loadOverseasOrders()">미체결 조회</button>
+    <section id="overseas-panel-orders" class="overseas-panel" hidden>
+        <div class="card">
+            <h2>보유 현황</h2>
+            <div class="form-row">
+                <button class="btn" data-overseas-required onclick="loadOverseasBalance()">잔고 조회</button>
+            </div>
         </div>
-    </div>
+        <div id="overseas-balance-result"></div>
 
-    <div id="overseas-orders-result"></div>
+        <div class="card">
+            <h2>미국 지정가 주문 <span id="overseas-order-mode-label" style="font-size:0.7em; color:#aaa;"></span></h2>
+            <div class="form-row">
+                <label>심볼</label>
+                <input type="text" id="overseas-order-symbol" placeholder="AAPL" maxlength="12" autocomplete="off">
+            </div>
+            <div class="form-row">
+                <label>거래소</label>
+                <select id="overseas-order-exchange">
+                    <option value="NASD">NASDAQ</option>
+                    <option value="NYSE">NYSE</option>
+                    <option value="AMEX">AMEX</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>수량</label>
+                <input type="number" id="overseas-order-qty" min="1" step="1" placeholder="1">
+            </div>
+            <div class="form-row">
+                <label>지정가</label>
+                <input type="number" id="overseas-order-price" min="0.01" step="0.01" placeholder="190.00">
+            </div>
+            <div class="form-row">
+                <button class="btn btn-buy" data-overseas-required onclick="placeOverseasOrder('buy')">매수</button>
+                <button class="btn btn-sell" data-overseas-required onclick="placeOverseasOrder('sell')">매도</button>
+            </div>
+        </div>
+        <div id="overseas-order-result"></div>
+
+        <div class="card">
+            <h2>미체결 주문</h2>
+            <div class="form-row">
+                <button class="btn" data-overseas-required onclick="loadOverseasOrders()">미체결 조회</button>
+            </div>
+        </div>
+        <div id="overseas-orders-result"></div>
+    </section>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/overseas.js?v=3"></script>
+<script src="/static/js/overseas.js?v=4"></script>
 {% endblock %}

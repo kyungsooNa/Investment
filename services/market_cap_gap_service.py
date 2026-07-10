@@ -359,6 +359,14 @@ class MarketCapGapService:
         items.sort(key=lambda item: item.get("market_cap_krw") or item.get("market_cap_usd") or 0, reverse=True)
         return items
 
+    async def get_us_market_caps(self) -> dict:
+        """미국 대형주 시총 화면용 요약. 국내 시총 API는 호출하지 않는다."""
+        fx_rate = await self._us_provider.fetch_usdkrw()
+        return {
+            "fx_rate": fx_rate,
+            "items": await self._fetch_us_caps(fx_rate),
+        }
+
     @staticmethod
     def _build_comparisons(korean: list[dict], us: list[dict]) -> list[dict]:
         comparisons: list[dict] = []
