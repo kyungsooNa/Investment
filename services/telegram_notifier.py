@@ -325,14 +325,26 @@ class TelegramReporter:
             trading_value = self._format_won_100m(theme.get("trading_value_sum_won"))
             advancing_ratio = self._format_signed_pct(theme.get("advancing_ratio"), digits=1).replace("+", "")
             flow_ratio = self._format_signed_pct(theme.get("flow_ratio"), digits=2)
-            theme_score = theme.get("theme_score")
+            theme_score = theme.get("market_leadership_score", theme.get("theme_score"))
             score_text = ""
             if theme_score is not None:
                 try:
-                    score_text = f" | 종합점수 {float(theme_score):.2f}"
+                    score_label = "주도점수" if "market_leadership_score" in theme else "종합점수"
+                    score_text = f" | {score_label} {float(theme_score):.2f}"
                 except (TypeError, ValueError):
                     score_text = ""
-            summary_parts = [f"상승비율 {advancing_ratio}"]
+            member_count = theme.get("scored_member_count")
+            advance_count = theme.get("advance_count")
+            if member_count is not None and advance_count is not None:
+                summary_parts = [f"상승 {advance_count}/{member_count} ({advancing_ratio})"]
+            else:
+                summary_parts = [f"상승비율 {advancing_ratio}"]
+            liquidity_bonus = theme.get("liquidity_bonus")
+            if liquidity_bonus is not None:
+                try:
+                    summary_parts.append(f"유동성 +{float(liquidity_bonus):.2f}")
+                except (TypeError, ValueError):
+                    pass
             if show_flow_ratio:
                 summary_parts.append(f"수급비중 {flow_ratio}")
             summary_line = " | ".join(summary_parts) + score_text

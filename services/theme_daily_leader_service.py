@@ -131,6 +131,11 @@ class ThemeDailyLeaderService:
                     flow_ratio=flow_ratio,
                     trading_value_concentration_ratio=trading_value_concentration_ratio,
                 )
+                liquidity_bonus = self._build_liquidity_bonus(
+                    trading_value_sum,
+                    leader_avg_change_rate,
+                )
+                market_leadership_score = round(score_info["theme_score"] + liquidity_bonus, 2)
 
                 themes.append({
                     "normalized_name": normalized_name,
@@ -154,6 +159,9 @@ class ThemeDailyLeaderService:
                     "zero_trading_value_ratio": score_info["zero_trading_value_ratio"],
                     "negative_trading_value_ratio": score_info["negative_trading_value_ratio"],
                     "theme_score": score_info["theme_score"],
+                    "momentum_score": score_info["theme_score"],
+                    "liquidity_bonus": liquidity_bonus,
+                    "market_leadership_score": market_leadership_score,
                     "leaders": leaders,
                     "momentum_leaders": momentum_leaders[:leader_count],
                 })
@@ -161,7 +169,7 @@ class ThemeDailyLeaderService:
             themes.sort(
                 key=lambda item: (
                     item["is_liquid_theme"],
-                    item["theme_score"],
+                    item["market_leadership_score"],
                     item["leader_avg_change_rate"],
                     item["advancing_ratio"],
                     item["trading_value_sum_won"],
@@ -265,6 +273,19 @@ class ThemeDailyLeaderService:
             "negative_trading_value_ratio": round(negative_trading_value_ratio, 2),
             "theme_score": round(theme_score, 2),
         }
+
+    @classmethod
+    def _build_liquidity_bonus(
+        cls,
+        trading_value_sum_won: int,
+        leader_avg_change_rate: float,
+    ) -> float:
+        """시장 주도성 정렬용 거래대금 보너스. 저탄력 대형주는 보너스를 제한한다."""
+        if trading_value_sum_won < cls.MIN_LIQUID_THEME_TRADING_VALUE_WON:
+            return 0.0
+        ratio = trading_value_sum_won / cls.MIN_LIQUID_THEME_TRADING_VALUE_WON
+        cap = 1.5 if leader_avg_change_rate < 5.0 else 9.0
+        return round(min(math.log10(ratio) * 2.0, cap), 2)
 
     @staticmethod
     def _build_member_score(member: Dict[str, Any], stock: Any, program_net_won: int) -> Dict[str, Any]:

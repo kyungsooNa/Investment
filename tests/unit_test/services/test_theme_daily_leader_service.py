@@ -98,7 +98,7 @@ async def test_builds_theme_report_from_ranking_data():
     resp = await svc.build_daily_theme_report(rankings, "20260630")
 
     assert resp.rt_cd == ErrorCode.SUCCESS.value
-    assert [item["normalized_name"] for item in resp.data] == ["우주항공", "반도체/소부장"]
+    assert [item["normalized_name"] for item in resp.data] == ["반도체/소부장", "우주항공"]
 
     semi = next(item for item in resp.data if item["normalized_name"] == "반도체/소부장")
     assert semi["scored_member_count"] == 4
@@ -266,3 +266,29 @@ async def test_penalizes_theme_trading_value_concentrated_in_one_stock():
 
     assert [theme["normalized_name"] for theme in resp.data] == ["대금분산", "단일종목쏠림"]
     assert resp.data[1]["trading_value_concentration_ratio"] == 90.0
+
+
+@pytest.mark.asyncio
+async def test_ranks_high_liquidity_theme_above_thin_higher_momentum_theme():
+    """시장 주도 순위는 소수 급등 테마보다 대금이 크게 붙은 테마를 우선한다."""
+    svc, _ = _service({
+        "통신장비": {
+            "sources": ["NAVER"],
+            "members": [_member("A", "기가레인"), _member("B", "빛과전자"), _member("C", "주성코퍼레이션")],
+        },
+        "반도체장비": {
+            "sources": ["NAVER"],
+            "members": [_member("D", "저스템"), _member("E", "피에스케이"), _member("F", "유진테크")],
+        },
+    })
+    rankings = {"all_stocks": [
+        _stock("A", "기가레인", 29.9, 2_100_000_000), _stock("B", "빛과전자", 29.9, 16_200_000_000), _stock("C", "주성코퍼레이션", 19.1, 17_900_000_000),
+        _stock("D", "저스템", 24.1, 20_500_000_000), _stock("E", "피에스케이", 23.3, 177_700_000_000), _stock("F", "유진테크", 20.0, 1_240_500_000_000),
+    ]}
+
+    resp = await svc.build_daily_theme_report(rankings, "20260710")
+
+    assert [theme["normalized_name"] for theme in resp.data] == ["반도체장비", "통신장비"]
+    semi, telecom = resp.data
+    assert semi["market_leadership_score"] > telecom["market_leadership_score"]
+    assert telecom["leader_avg_change_rate"] > semi["leader_avg_change_rate"]
