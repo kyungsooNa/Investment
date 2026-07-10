@@ -289,7 +289,11 @@ class BrokerAPIWrapper:
                                 exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """범용 주식 주문을 실행합니다 (KoreaInvestApiTrading 위임)."""
         if self._cb_is_open():
-            remaining = (self._cb_open_until - datetime.now()).seconds // 60
+            remaining_seconds = max(
+                1,
+                int((self._cb_open_until - datetime.now()).total_seconds()) + 1,
+            )
+            remaining = (remaining_seconds + 59) // 60
             if self._logger:
                 self._logger.warning(
                     f"[CircuitBreaker] 주문 차단됨 ({remaining}분 남음): {stock_code}"
@@ -297,6 +301,7 @@ class BrokerAPIWrapper:
             return ResCommonResponse(
                 rt_cd=ErrorCode.API_ERROR.value,
                 msg1=f"서킷 브레이커 개방 — {remaining}분 후 재시도",
+                data={"retry_after_seconds": remaining_seconds},
             )
         resp = await self._client.place_stock_order(stock_code, order_price, order_qty, is_buy, exchange=exchange)
         rt_cd = getattr(resp, 'rt_cd', None) if resp else None
