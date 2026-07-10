@@ -316,6 +316,7 @@ class ServiceContainer:
                     market_calendar_service=ctx._mcs,
                     market_data_service=ctx.market_data_service,
                     worker_pool=ctx.worker_pool,
+                    stock_classification_repository=getattr(ctx, "theme_classification_repository", None),
                 )
                 if needs_batch:
                     ctx.market_cap_gap_service = MarketCapGapService(

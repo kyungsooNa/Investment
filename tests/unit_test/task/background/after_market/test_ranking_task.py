@@ -33,6 +33,15 @@ def _make_program_response(ntby_tr_pbmn=0, ntby_qty=0, stck_clpr="10000", prdy_c
     )
 
 
+def _make_program_multi_response(rows):
+    """프로그램매매추이 다중일 응답 생성 헬퍼."""
+    return ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data=rows,
+    )
+
+
 @pytest.fixture
 def mock_deps():
     broker = MagicMock()
@@ -103,6 +112,15 @@ def _make_investor_response(
             "orgn_ntby_tr_pbmn": str(orgn_pbmn),
             "prsn_ntby_tr_pbmn": str(prsn_pbmn),
         }
+    )
+
+
+def _make_investor_multi_response(rows):
+    """투자자 매매동향 다중일 응답 생성 헬퍼."""
+    return ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data=rows,
     )
 
 # ==============================================================================
@@ -262,6 +280,90 @@ async def test_refresh_investor_ranking_basic(bg_service, mock_deps):
     # 개인 순매도 상위: 삼성(-300)
     prsn_sell = await bg_service.get_prsn_net_sell_ranking()
     assert prsn_sell.data[0]["hts_kor_isnm"] == "삼성전자"
+
+
+@pytest.mark.asyncio
+async def test_period_investor_program_ranking_defaults_to_combined_amount(bg_service, mock_deps):
+    """기간 수급 랭킹은 외국인+기관(백만원)과 프로그램(원)을 원 단위로 합산해 정렬한다."""
+    broker, mapper, _, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([
+        ("005930", "삼성전자", "KOSPI"),
+        ("000660", "SK하이닉스", "KOSPI"),
+        ("035420", "NAVER", "KOSDAQ"),
+    ])
+
+    broker.get_investor_trade_by_stock_daily_multi = AsyncMock(side_effect=lambda code, date=None, days=5: {
+        "005930": _make_investor_multi_response([
+            {"frgn_ntby_qty": "10", "orgn_ntby_qty": "20", "frgn_ntby_tr_pbmn": "100", "orgn_ntby_tr_pbmn": "200"},
+            {"frgn_ntby_qty": "5", "orgn_ntby_qty": "5", "frgn_ntby_tr_pbmn": "50", "orgn_ntby_tr_pbmn": "50"},
+        ]),
+        "000660": _make_investor_multi_response([
+            {"frgn_ntby_qty": "50", "orgn_ntby_qty": "10", "frgn_ntby_tr_pbmn": "10", "orgn_ntby_tr_pbmn": "10"},
+        ]),
+        "035420": _make_investor_multi_response([
+            {"frgn_ntby_qty": "-10", "orgn_ntby_qty": "-10", "frgn_ntby_tr_pbmn": "-100", "orgn_ntby_tr_pbmn": "-100"},
+        ]),
+    }[code])
+    broker.get_program_trade_by_stock_daily_multi = AsyncMock(side_effect=lambda code, date=None, days=5: {
+        "005930": _make_program_multi_response([
+            {"whol_smtn_ntby_qty": "7", "whol_smtn_ntby_tr_pbmn": "70000000"},
+        ]),
+        "000660": _make_program_multi_response([
+            {"whol_smtn_ntby_qty": "200", "whol_smtn_ntby_tr_pbmn": "900000000"},
+        ]),
+        "035420": _make_program_multi_response([
+            {"whol_smtn_ntby_qty": "1", "whol_smtn_ntby_tr_pbmn": "1000000"},
+        ]),
+    }[code])
+    bg_service._stock_classification_repository = AsyncMock()
+    bg_service._stock_classification_repository.get_groups.return_value = {
+        "반도체": {"members": [{"code": "005930", "name": "삼성전자"}]},
+        "IT": {"members": [{"code": "000660", "name": "SK하이닉스"}]},
+    }
+
+    resp = await bg_service.get_period_investor_program_net_buy_ranking(days=5)
+
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert [item["hts_kor_isnm"] for item in resp.data] == ["SK하이닉스", "삼성전자"]
+    assert resp.data[0]["combined_period_ntby_tr_pbmn_won"] == "920000000"
+    assert resp.data[1]["combined_period_ntby_tr_pbmn_won"] == "470000000"
+    assert all(item["hts_kor_isnm"] != "NAVER" for item in resp.data)
+    assert resp.data[0]["industry"] == "IT"
+    assert resp.data[1]["industry"] == "반도체"
+
+
+@pytest.mark.asyncio
+async def test_period_investor_program_ranking_can_sort_by_qty(bg_service, mock_deps):
+    """metric=qty 는 외국인+기관+프로그램 기간 순매수량 합산 기준으로 정렬한다."""
+    broker, mapper, _, _, _, _ = mock_deps
+    mapper.df = _make_stock_df([
+        ("005930", "삼성전자", "KOSPI"),
+        ("000660", "SK하이닉스", "KOSPI"),
+    ])
+
+    broker.get_investor_trade_by_stock_daily_multi = AsyncMock(side_effect=lambda code, date=None, days=5: {
+        "005930": _make_investor_multi_response([
+            {"frgn_ntby_qty": "10", "orgn_ntby_qty": "20", "frgn_ntby_tr_pbmn": "500", "orgn_ntby_tr_pbmn": "500"},
+        ]),
+        "000660": _make_investor_multi_response([
+            {"frgn_ntby_qty": "100", "orgn_ntby_qty": "100", "frgn_ntby_tr_pbmn": "10", "orgn_ntby_tr_pbmn": "10"},
+        ]),
+    }[code])
+    broker.get_program_trade_by_stock_daily_multi = AsyncMock(side_effect=lambda code, date=None, days=5: {
+        "005930": _make_program_multi_response([
+            {"whol_smtn_ntby_qty": "1", "whol_smtn_ntby_tr_pbmn": "1"},
+        ]),
+        "000660": _make_program_multi_response([
+            {"whol_smtn_ntby_qty": "100", "whol_smtn_ntby_tr_pbmn": "1"},
+        ]),
+    }[code])
+
+    resp = await bg_service.get_period_investor_program_net_buy_ranking(days=5, metric="qty")
+
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert [item["hts_kor_isnm"] for item in resp.data] == ["SK하이닉스", "삼성전자"]
+    assert resp.data[0]["combined_period_ntby_qty"] == "300"
+    assert resp.data[1]["combined_period_ntby_qty"] == "31"
 
 
 @pytest.mark.asyncio

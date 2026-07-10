@@ -7,6 +7,8 @@ let _rankingSortState = { key: null, dir: 'asc' };
 let _rankingDirection = null;
 let _rankingSelectedInvestors = new Set(['foreign']);
 let _rankingAIAnalysisState = { loading: false, result: null, error: null };
+let _rankingPeriodDays = 5;
+let _rankingPeriodMetric = 'amount';
 
 const _investorTypeFields = {
     'foreign': { pbmn: 'frgn_ntby_tr_pbmn', qty: 'frgn_ntby_qty', isMil: true, label: '외인' },
@@ -22,7 +24,8 @@ function setMarketFilter(market, btn) {
     _resetRankingAIAnalysis();
     document.querySelectorAll('.market-filter').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    if (_rankingDirection) loadInvestorRanking();
+    if (_rankingCurrentCategory === 'investor_period') loadPeriodInvestorRanking();
+    else if (_rankingDirection) loadInvestorRanking();
     else if (_rankingCurrentCategory) loadRanking(_rankingCurrentCategory);
 }
 
@@ -66,6 +69,8 @@ async function loadRanking(category) {
 
     const invRow = document.getElementById('investor-type-row');
     if (invRow) invRow.style.display = 'none';
+    const periodRow = document.getElementById('period-investor-row');
+    if (periodRow) periodRow.style.display = 'none';
 
     const div = document.getElementById('ranking-result');
     _showRankingSkeleton();
@@ -134,6 +139,8 @@ function setRankingDirection(dir) {
 
     const invRow = document.getElementById('investor-type-row');
     if (invRow) invRow.style.display = '';
+    const periodRow = document.getElementById('period-investor-row');
+    if (periodRow) periodRow.style.display = 'none';
 
     document.querySelectorAll('.investor-toggle').forEach(b => {
         b.classList.toggle('active', _rankingSelectedInvestors.has(b.dataset.inv));
@@ -157,6 +164,74 @@ function toggleRankingInvestor(type) {
 
     _resetRankingAIAnalysis();
     loadInvestorRanking();
+}
+
+function setPeriodInvestorDays(days, btn) {
+    _rankingPeriodDays = days;
+    document.querySelectorAll('.period-days').forEach(b => {
+        b.classList.toggle('active', parseInt(b.dataset.days || 0) === days);
+    });
+    loadPeriodInvestorRanking();
+}
+
+function setPeriodInvestorMetric(metric, btn) {
+    _rankingPeriodMetric = metric;
+    document.querySelectorAll('.period-metric').forEach(b => {
+        b.classList.toggle('active', b.dataset.metric === metric);
+    });
+    loadPeriodInvestorRanking();
+}
+
+async function loadPeriodInvestorRanking() {
+    if (_rankingPollTimer) {
+        clearTimeout(_rankingPollTimer);
+        _rankingPollTimer = null;
+    }
+    if (window.Paginator) window.Paginator.reset('ranking');
+    _rankingCurrentCategory = 'investor_period';
+    _rankingDirection = null;
+    _rankingSortState = { key: null, dir: 'asc' };
+    _resetRankingAIAnalysis();
+
+    document.querySelectorAll('.ranking-tab').forEach(b => {
+        b.classList.remove('active');
+        if (b.dataset.cat === 'investor_period') b.classList.add('active');
+    });
+
+    const invRow = document.getElementById('investor-type-row');
+    if (invRow) invRow.style.display = 'none';
+    const periodRow = document.getElementById('period-investor-row');
+    if (periodRow) periodRow.style.display = '';
+
+    document.querySelectorAll('.period-days').forEach(b => {
+        b.classList.toggle('active', parseInt(b.dataset.days || 0) === _rankingPeriodDays);
+    });
+    document.querySelectorAll('.period-metric').forEach(b => {
+        b.classList.toggle('active', b.dataset.metric === _rankingPeriodMetric);
+    });
+
+    const div = document.getElementById('ranking-result');
+    _showRankingSkeleton();
+
+    try {
+        const url = `/api/ranking/investor-period?days=${_rankingPeriodDays}&metric=${_rankingPeriodMetric}&limit=30`;
+        const res = await fetchWithTimeout(url, {}, 300000);
+        const json = await res.json();
+
+        if (json.rt_cd !== "0") {
+            div.innerHTML = `<p class="error">실패: ${json.msg1}</p>`;
+            return;
+        }
+
+        _rankingData = json.data || [];
+        renderRankingTable();
+    } catch (e) {
+        if (e.name === 'AbortError') {
+            div.innerHTML = '<p class="error">요청 시간이 초과되었습니다. 기간수급 수집은 전체 종목을 순회하므로 잠시 후 다시 시도해주세요.</p>';
+        } else {
+            div.innerHTML = "오류: " + e;
+        }
+    }
 }
 
 async function loadInvestorRanking() {
@@ -277,6 +352,8 @@ async function loadThemeLeaders() {
     });
     const invRow = document.getElementById('investor-type-row');
     if (invRow) invRow.style.display = 'none';
+    const periodRow = document.getElementById('period-investor-row');
+    if (periodRow) periodRow.style.display = 'none';
 
     const div = document.getElementById('ranking-result');
     _showRankingSkeleton();
@@ -485,6 +562,7 @@ function renderRankingTable() {
     const isInvestor = ['foreign_buy', 'foreign_sell', 'inst_buy', 'inst_sell', 'prsn_buy', 'prsn_sell'].includes(cat);
     const isProgram = ['program_buy', 'program_sell'].includes(cat);
     const isCombined = cat === 'investor_buy' || cat === 'investor_sell';
+    const isPeriodInvestor = cat === 'investor_period';
     const isTradingValue = cat === 'trading_value';
     const isSell = cat.endsWith('_sell') || cat === 'investor_sell';
 
@@ -498,7 +576,17 @@ function renderRankingTable() {
         : '';
 
     let headerRow;
-    if (isInvestor || isProgram || isCombined) {
+    if (isPeriodInvestor) {
+        const unitLabel = _rankingPeriodMetric === 'amount' ? '순매수대금' : '순매수량';
+        const totalLabel = _rankingPeriodMetric === 'amount' ? '매수금액(백만)' : '합산순매수량';
+        headerRow = `<th class="${sortCls('rank')}" onclick="sortRanking('rank')">순위</th>`
+            + `<th class="${sortCls('industry')}" onclick="sortRanking('industry')">업종</th>`
+            + `<th class="${sortCls('name')}" onclick="sortRanking('name')">종목명</th>`
+            + `<th class="${sortCls('period_foreign')}" onclick="sortRanking('period_foreign')">외국인 ${unitLabel}</th>`
+            + `<th class="${sortCls('period_inst')}" onclick="sortRanking('period_inst')">기관 ${unitLabel}</th>`
+            + `<th class="${sortCls('period_program')}" onclick="sortRanking('period_program')">프로그램 ${unitLabel}</th>`
+            + `<th class="${sortCls('period_combined')}" onclick="sortRanking('period_combined')">${totalLabel}</th>`;
+    } else if (isInvestor || isProgram || isCombined) {
         const pbmnLabel = isCombined
             ? `${investorLabel} ${isSell ? '순매도대금' : '순매수대금'}`
             : (isSell ? '순매도대금' : '순매수대금');
@@ -574,12 +662,44 @@ function renderRankingTable() {
         }
         return v.toLocaleString() + "억";
     };
+    const formatPeriodAmountMillion = (val) => {
+        const n = parseInt(val || 0);
+        return isNaN(n) ? '-' : n.toLocaleString();
+    };
+    const formatPeriodQty = (val) => {
+        const n = parseInt(val || 0);
+        return isNaN(n) ? '-' : n.toLocaleString();
+    };
 
     let rows = '';
     pageData.forEach(item => {
         const rate = parseFloat(item.prdy_ctrt || 0);
         const color = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
         const code = item.stck_shrn_iscd || item.iscd || item.mksc_shrn_iscd || item.code || '';
+        if (isPeriodInvestor) {
+            const foreignVal = _rankingPeriodMetric === 'amount'
+                ? formatPeriodAmountMillion(item.frgn_period_ntby_tr_pbmn)
+                : formatPeriodQty(item.frgn_period_ntby_qty);
+            const instVal = _rankingPeriodMetric === 'amount'
+                ? formatPeriodAmountMillion(item.orgn_period_ntby_tr_pbmn)
+                : formatPeriodQty(item.orgn_period_ntby_qty);
+            const programVal = _rankingPeriodMetric === 'amount'
+                ? formatPeriodAmountMillion(item.program_period_ntby_tr_pbmn)
+                : formatPeriodQty(item.program_period_ntby_qty);
+            const combinedVal = _rankingPeriodMetric === 'amount'
+                ? formatPeriodAmountMillion(item.combined_period_ntby_tr_pbmn)
+                : formatPeriodQty(item.combined_period_ntby_qty);
+            rows += `<tr>
+                <td>${item.data_rank || item.rank || '-'}</td>
+                <td>${escapeHtml(item.industry || '-')}</td>
+                <td><a href="/stock?code=${code}" target="_blank" class="stock-link">${escapeHtml(item.hts_kor_isnm || item.name || code)}</a></td>
+                <td>${foreignVal}</td>
+                <td>${instVal}</td>
+                <td>${programVal}</td>
+                <td>${combinedVal}</td>
+            </tr>`;
+            return;
+        }
         let extraCols;
         if (isMinervini) {
             extraCols = `<td>S${item.stage}</td><td>${item.rs_rating || '-'}</td><td>${formatMarketCap(item.market_cap || 0)}</td>`;
@@ -642,6 +762,7 @@ function sortRanking(key) {
 function rankingSortCompare(data, key, dir) {
     const cat = _rankingCurrentCategory;
     const isCombined = cat === 'investor_buy' || cat === 'investor_sell';
+    const isPeriodInvestor = cat === 'investor_period';
     const isInvestor = ['foreign_buy', 'foreign_sell', 'inst_buy', 'inst_sell', 'prsn_buy', 'prsn_sell'].includes(cat);
     const sorted = data.slice();
     const d = dir === 'asc' ? 1 : -1;
@@ -653,6 +774,10 @@ function rankingSortCompare(data, key, dir) {
         } else if (key === 'name') {
             va = (a.hts_kor_isnm || a.name || '').toLowerCase();
             vb = (b.hts_kor_isnm || b.name || '').toLowerCase();
+            return d * va.localeCompare(vb);
+        } else if (key === 'industry') {
+            va = (a.industry || '').toLowerCase();
+            vb = (b.industry || '').toLowerCase();
             return d * va.localeCompare(vb);
         } else if (key === 'price') {
             va = parseInt(a.stck_prpr || 0);
@@ -698,6 +823,18 @@ function rankingSortCompare(data, key, dir) {
                 va = acmlA ? (rawA / acmlA) : 0;
                 vb = acmlB ? (rawB / acmlB) : 0;
             }
+        } else if (key === 'period_foreign' && isPeriodInvestor) {
+            va = parseInt(_rankingPeriodMetric === 'amount' ? a.frgn_period_ntby_tr_pbmn_won || 0 : a.frgn_period_ntby_qty || 0);
+            vb = parseInt(_rankingPeriodMetric === 'amount' ? b.frgn_period_ntby_tr_pbmn_won || 0 : b.frgn_period_ntby_qty || 0);
+        } else if (key === 'period_inst' && isPeriodInvestor) {
+            va = parseInt(_rankingPeriodMetric === 'amount' ? a.orgn_period_ntby_tr_pbmn_won || 0 : a.orgn_period_ntby_qty || 0);
+            vb = parseInt(_rankingPeriodMetric === 'amount' ? b.orgn_period_ntby_tr_pbmn_won || 0 : b.orgn_period_ntby_qty || 0);
+        } else if (key === 'period_program' && isPeriodInvestor) {
+            va = parseInt(_rankingPeriodMetric === 'amount' ? a.program_period_ntby_tr_pbmn_won || 0 : a.program_period_ntby_qty || 0);
+            vb = parseInt(_rankingPeriodMetric === 'amount' ? b.program_period_ntby_tr_pbmn_won || 0 : b.program_period_ntby_qty || 0);
+        } else if (key === 'period_combined' && isPeriodInvestor) {
+            va = parseInt(_rankingPeriodMetric === 'amount' ? a.combined_period_ntby_tr_pbmn_won || 0 : a.combined_period_ntby_qty || 0);
+            vb = parseInt(_rankingPeriodMetric === 'amount' ? b.combined_period_ntby_tr_pbmn_won || 0 : b.combined_period_ntby_qty || 0);
         } else if (key === 'market_cap') {
             va = parseInt(a.market_cap || 0);
             vb = parseInt(b.market_cap || 0);

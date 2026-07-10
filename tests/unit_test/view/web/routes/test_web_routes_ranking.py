@@ -121,6 +121,47 @@ async def test_get_ranking_failure(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_get_period_investor_program_ranking(web_client, mock_web_ctx):
+    """GET /api/ranking/investor-period 는 기간 수급 랭킹을 반환한다."""
+    mock_web_ctx.ranking_task.get_period_investor_program_net_buy_ranking = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0",
+        msg1="Success",
+        data=[{
+            "data_rank": "1",
+            "industry": "반도체",
+            "hts_kor_isnm": "삼성전자",
+            "combined_period_ntby_tr_pbmn_won": "300000000",
+        }],
+    ))
+
+    response = web_client.get("/api/ranking/investor-period?days=5&metric=amount&limit=10")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rt_cd"] == "0"
+    assert body["data"][0]["industry"] == "반도체"
+    mock_web_ctx.ranking_task.get_period_investor_program_net_buy_ranking.assert_awaited_once_with(
+        days=5,
+        metric="amount",
+        limit=10,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_period_investor_program_ranking_validates_query(web_client, mock_web_ctx):
+    """기간 수급 랭킹은 허용된 days/metric 만 받는다."""
+    mock_web_ctx.ranking_task.get_period_investor_program_net_buy_ranking = AsyncMock()
+
+    response = web_client.get("/api/ranking/investor-period?days=7&metric=amount")
+    assert response.status_code == 400
+
+    response = web_client.get("/api/ranking/investor-period?days=5&metric=bad")
+    assert response.status_code == 400
+
+    mock_web_ctx.ranking_task.get_period_investor_program_net_buy_ranking.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_get_top_market_cap(web_client, mock_web_ctx):
     """GET /api/top-market-cap 엔드포인트 테스트"""
     mock_web_ctx.broker.get_top_market_cap_stocks_code.return_value = ResCommonResponse(

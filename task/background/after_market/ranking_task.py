@@ -42,6 +42,8 @@ class RankingTask(AfterMarketTask):
 
     # 청크 크기 (API 호출 페이싱은 ApiBudgetLimiter가 중앙에서 담당)
     API_CHUNK_SIZE = 8
+    PERIOD_RANKING_ALLOWED_DAYS = {1, 3, 5, 10, 20}
+    PERIOD_RANKING_ALLOWED_METRICS = {"amount", "qty"}
 
     def __init__(
         self,
@@ -56,6 +58,7 @@ class RankingTask(AfterMarketTask):
         telegram_reporter: Optional[TelegramReporter] = None,
         market_calendar_service: Optional[MarketCalendarService] = None,
         worker_pool: Optional[WorkerPool] = None,
+        stock_classification_repository=None,
     ):
         super().__init__(
             mcs=market_calendar_service,
@@ -70,6 +73,7 @@ class RankingTask(AfterMarketTask):
         self.pm = performance_profiler if performance_profiler else PerformanceProfiler(enabled=False)
         self._notification_service = notification_service
         self._telegram_reporter = telegram_reporter
+        self._stock_classification_repository = stock_classification_repository
         self._suspend_event: asyncio.Event = asyncio.Event()
         self._suspend_event.set()  # 초기에는 실행 가능 상태
 
@@ -514,6 +518,165 @@ class RankingTask(AfterMarketTask):
         for i, item in enumerate(top, 1):
             item["data_rank"] = str(i)
         return top
+
+    @staticmethod
+    def _to_int(value, default: int = 0) -> int:
+        try:
+            if value in (None, ""):
+                return default
+            return int(str(value).replace(",", ""))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _sum_rows(rows: List[Dict], field: str) -> int:
+        return sum(RankingTask._to_int(row.get(field, 0)) for row in rows if isinstance(row, dict))
+
+    async def _load_industry_map(self) -> Dict[str, str]:
+        """분류 저장소에서 종목코드 -> 대표 업종명을 만든다. 데이터가 없으면 빈 dict."""
+        repo = self._stock_classification_repository
+        if repo is None:
+            return {}
+
+        try:
+            groups = await repo.get_groups(category_types=("industry",))
+        except Exception as e:
+            self._logger.warning(f"업종 분류 조회 실패: {e}")
+            return {}
+
+        industry_map: Dict[str, str] = {}
+        for industry, group in sorted((groups or {}).items(), key=lambda item: item[0]):
+            members = group.get("members", []) if isinstance(group, dict) else []
+            for member in members:
+                if not isinstance(member, dict):
+                    continue
+                code = str(member.get("code") or "").strip()
+                if code and code not in industry_map:
+                    industry_map[code] = industry
+        return industry_map
+
+    async def get_period_investor_program_net_buy_ranking(
+        self,
+        days: int = 5,
+        metric: str = "amount",
+        limit: int = 30,
+    ) -> ResCommonResponse:
+        """최근 N거래일 외국인+기관+프로그램 순매수 기간 랭킹을 생성한다.
+
+        amount 정렬은 외국인/기관 백만원 단위와 프로그램 원 단위를 원 단위로 통일한다.
+        qty 정렬은 세 주체의 순매수량 합산 기준이다.
+        """
+        if days not in self.PERIOD_RANKING_ALLOWED_DAYS:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.INVALID_INPUT.value,
+                msg1=f"days는 {sorted(self.PERIOD_RANKING_ALLOWED_DAYS)} 중 하나여야 합니다.",
+                data=[],
+            )
+        if metric not in self.PERIOD_RANKING_ALLOWED_METRICS:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.INVALID_INPUT.value,
+                msg1="metric은 amount 또는 qty 여야 합니다.",
+                data=[],
+            )
+
+        target_date = None
+        if self._mcs:
+            target_date = await self._mcs.get_latest_trading_date()
+        if not target_date:
+            target_date = datetime.now().strftime("%Y%m%d")
+
+        all_stocks = self._load_all_stocks()
+        if not all_stocks:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="대상 종목 없음",
+                data=[],
+            )
+
+        industry_map = await self._load_industry_map()
+        results: List[Dict] = []
+
+        for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
+            await self._suspend_event.wait()
+
+            investor_tasks = [
+                self._fetch_with_retry(self._broker.get_investor_trade_by_stock_daily_multi, code, target_date, days)
+                for code, _, _ in chunk
+            ]
+            program_tasks = [
+                self._fetch_with_retry(self._broker.get_program_trade_by_stock_daily_multi, code, target_date, days)
+                for code, _, _ in chunk
+            ]
+            all_responses = await asyncio.gather(
+                *investor_tasks, *program_tasks, return_exceptions=True
+            )
+            investor_responses = all_responses[:len(chunk)]
+            program_responses = all_responses[len(chunk):]
+
+            for (code, name, _market), investor_resp, program_resp in zip(chunk, investor_responses, program_responses):
+                if isinstance(investor_resp, Exception) or isinstance(program_resp, Exception):
+                    continue
+
+                investor_rows = investor_resp.data if investor_resp and isinstance(investor_resp.data, list) else []
+                program_rows = program_resp.data if program_resp and isinstance(program_resp.data, list) else []
+
+                frgn_qty = self._sum_rows(investor_rows, "frgn_ntby_qty")
+                orgn_qty = self._sum_rows(investor_rows, "orgn_ntby_qty")
+                frgn_pbmn_mil = self._sum_rows(investor_rows, "frgn_ntby_tr_pbmn")
+                orgn_pbmn_mil = self._sum_rows(investor_rows, "orgn_ntby_tr_pbmn")
+                program_qty = self._sum_rows(program_rows, "whol_smtn_ntby_qty")
+                program_pbmn_won = self._sum_rows(program_rows, "whol_smtn_ntby_tr_pbmn")
+
+                frgn_pbmn_won = frgn_pbmn_mil * 1_000_000
+                orgn_pbmn_won = orgn_pbmn_mil * 1_000_000
+                combined_pbmn_won = frgn_pbmn_won + orgn_pbmn_won + program_pbmn_won
+                combined_qty = frgn_qty + orgn_qty + program_qty
+
+                rank_value = combined_pbmn_won if metric == "amount" else combined_qty
+                if rank_value <= 0:
+                    continue
+
+                first_investor = investor_rows[0] if investor_rows and isinstance(investor_rows[0], dict) else {}
+                first_program = program_rows[0] if program_rows and isinstance(program_rows[0], dict) else {}
+                stck_prpr = first_investor.get("stck_prpr") or first_program.get("stck_clpr") or "0"
+                acml_tr_pbmn = first_investor.get("acml_tr_pbmn") or first_program.get("acml_tr_pbmn") or "0"
+
+                results.append({
+                    "stck_shrn_iscd": code,
+                    "hts_kor_isnm": name,
+                    "industry": industry_map.get(code, "-"),
+                    "period_days": str(days),
+                    "period_metric": metric,
+                    "stck_prpr": str(stck_prpr or "0"),
+                    "prdy_ctrt": str(first_investor.get("prdy_ctrt") or first_program.get("prdy_ctrt") or "0"),
+                    "prdy_vrss": str(first_investor.get("prdy_vrss") or first_program.get("prdy_vrss") or "0"),
+                    "prdy_vrss_sign": str(first_investor.get("prdy_vrss_sign") or first_program.get("prdy_vrss_sign") or ""),
+                    "acml_tr_pbmn": str(acml_tr_pbmn or "0"),
+                    "frgn_period_ntby_qty": str(frgn_qty),
+                    "orgn_period_ntby_qty": str(orgn_qty),
+                    "program_period_ntby_qty": str(program_qty),
+                    "combined_period_ntby_qty": str(combined_qty),
+                    "frgn_period_ntby_tr_pbmn": str(frgn_pbmn_mil),
+                    "orgn_period_ntby_tr_pbmn": str(orgn_pbmn_mil),
+                    "program_period_ntby_tr_pbmn": str(program_pbmn_won // 1_000_000),
+                    "combined_period_ntby_tr_pbmn": str(combined_pbmn_won // 1_000_000),
+                    "frgn_period_ntby_tr_pbmn_won": str(frgn_pbmn_won),
+                    "orgn_period_ntby_tr_pbmn_won": str(orgn_pbmn_won),
+                    "program_period_ntby_tr_pbmn_won": str(program_pbmn_won),
+                    "combined_period_ntby_tr_pbmn_won": str(combined_pbmn_won),
+                })
+
+        sort_field = "combined_period_ntby_tr_pbmn_won" if metric == "amount" else "combined_period_ntby_qty"
+        results.sort(key=lambda item: self._to_int(item.get(sort_field)), reverse=True)
+        top = [dict(item) for item in results[:limit]]
+        for i, item in enumerate(top, 1):
+            item["data_rank"] = str(i)
+
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1=f"최근 {days}거래일 외국인+기관+프로그램 기간 순매수 랭킹 조회 성공",
+            data=top,
+        )
 
     async def get_trading_value_ranking(self, limit: int = 30) -> ResCommonResponse:
         """투자자 데이터 기반 거래대금 랭킹 반환 (캐시에서 즉시)."""

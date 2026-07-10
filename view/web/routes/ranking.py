@@ -3,7 +3,7 @@
 """
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from common.types import ErrorCode
@@ -119,6 +119,39 @@ async def analyze_ranking_candidates(payload: RankingAIAnalysisRequest):
         market_context=payload.market_context or {},
         max_candidates=payload.max_candidates,
     )
+    return _serialize_response(resp)
+
+
+@router.get("/ranking/investor-period")
+async def get_period_investor_program_ranking(
+    days: int = Query(5),
+    metric: str = Query("amount"),
+    limit: int = Query(30, ge=1, le=100),
+):
+    """최근 N거래일 외국인+기관+프로그램 기간 순매수 랭킹 조회."""
+    valid_days = (1, 3, 5, 10, 20)
+    valid_metrics = ("amount", "qty")
+    if days not in valid_days:
+        raise HTTPException(status_code=400, detail=f"days는 {', '.join(map(str, valid_days))} 중 하나여야 합니다.")
+    if metric not in valid_metrics:
+        raise HTTPException(status_code=400, detail="metric은 amount 또는 qty 여야 합니다.")
+
+    ctx = _get_ctx()
+    ranking_task = getattr(ctx, "ranking_task", None)
+    if not ranking_task:
+        return {"rt_cd": ErrorCode.API_ERROR.value, "msg1": "RankingTask 미설정", "data": []}
+
+    resp = await ranking_task.get_period_investor_program_net_buy_ranking(
+        days=days,
+        metric=metric,
+        limit=limit,
+    )
+    if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
+        return {
+            "rt_cd": resp.rt_cd,
+            "msg1": resp.msg1,
+            "data": _serialize_list_items(resp.data),
+        }
     return _serialize_response(resp)
 
 
