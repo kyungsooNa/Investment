@@ -860,6 +860,30 @@ async function savePositionSizingLimits() {
     }
 }
 
+// ── 서버 프로세스 재수행(재시작) ─────────────────────────────
+async function restartServer(btn) {
+    if (!confirm('웹 서버 프로세스를 재시작합니다.\n새 프로세스가 뜬 뒤 현재 프로세스는 종료되며, 잠시 후 다시 연결됩니다.\n\n계속하시겠습니까?')) return;
+    const msgEl = document.getElementById('shutdown-msg');
+    if (btn) btn.disabled = true;
+    if (msgEl) { msgEl.textContent = '재시작 요청 중...'; msgEl.style.color = 'var(--text-secondary, #888)'; }
+    try {
+        const res = await fetch('/api/system/restart', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success) {
+            if (msgEl) { msgEl.textContent = '서버를 재시작합니다. 잠시 후 새 프로세스로 다시 연결됩니다.'; msgEl.style.color = 'var(--primary-color, #1976d2)'; }
+            if (typeof showToast === 'function') showToast('서버 재시작 요청을 전송했습니다.', 'success');
+        } else {
+            if (btn) btn.disabled = false;
+            if (msgEl) { msgEl.textContent = '재시작 실패: ' + (data.detail || JSON.stringify(data)); msgEl.style.color = 'var(--danger-color, #f44336)'; }
+        }
+    } catch (e) {
+        // 현재 프로세스가 종료되면 fetch 가 네트워크 에러로 끝날 수 있다 — 재시작 진행 중으로 간주.
+        console.error('[system] 재시작 요청 오류', e);
+        if (msgEl) { msgEl.textContent = '현재 프로세스가 종료되었습니다. 잠시 후 새 프로세스로 새로고침하세요.'; msgEl.style.color = 'var(--primary-color, #1976d2)'; }
+        if (typeof showToast === 'function') showToast('서버 재시작을 요청했습니다.', 'success');
+    }
+}
+
 // ── 서버 프로세스 종료 ───────────────────────────────────────
 async function shutdownServer(btn) {
     if (!confirm('웹 서버 프로세스를 종료합니다.\n종료 후에는 터미널에서 다시 실행해야 합니다.\n\n계속하시겠습니까?')) return;
