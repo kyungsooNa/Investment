@@ -156,8 +156,13 @@
         <div class="card" style="padding: 20px 12px;">
             <h3 style="margin-top: 0; margin-bottom: 12px;">🖥️ 서버 제어</h3>
             <p style="font-size: 0.9rem; color: var(--text-secondary, #888); margin: 0 0 12px;">
-                웹 서버 프로세스를 종료합니다. 종료 후에는 터미널에서 <code>python main.py --web</code> 으로 다시 실행해야 합니다.
+                <strong>재수행</strong>은 새 프로세스를 띄운 뒤 현재 프로세스를 종료합니다(웹 모드로 자동 복귀).
+                <strong>종료</strong>는 프로세스를 내리며, 이후 터미널에서 <code>python main.py --web</code> 으로 다시 실행해야 합니다.
             </p>
+            <button id="btn-restart-server" class="btn" onclick="restartServer(this)"
+                    style="background: var(--primary-color, #1976d2); color: #fff; height: 36px; margin-right: 8px;">
+                프로세스 재수행
+            </button>
             <button id="btn-shutdown-server" class="btn" onclick="shutdownServer(this)"
                     style="background: var(--danger-color, #f44336); color: #fff; height: 36px;">
                 프로세스 종료
@@ -169,5 +174,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/system.js?v=22"></script>
+<script src="/static/js/system.js?v=23"></script>
 {% endblock %}

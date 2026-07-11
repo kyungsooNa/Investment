@@ -330,6 +330,73 @@ def test_terminate_process_falls_back_to_os_exit(monkeypatch):
     assert exit_called.get("code") == 0
 
 
+# ── POST /api/system/restart ────────────────────────────────────────────────
+
+
+def test_restart_server_schedules_restart(web_client, mock_web_ctx, monkeypatch):
+    """재수행 엔드포인트는 200으로 응답하고 프로세스 재시작을 예약한다(실제 재시작은 훅으로 분리)."""
+    from view.web.routes import system
+
+    called = {}
+    monkeypatch.setattr(system, "_schedule_restart", lambda *a, **k: called.setdefault("hit", True))
+
+    response = web_client.post("/api/system/restart")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert called.get("hit") is True
+
+
+def test_restart_process_spawns_new_then_terminates(monkeypatch):
+    """_restart_process 는 새 프로세스를 먼저 띄운 뒤 현재 프로세스를 종료한다(순서 보장)."""
+    from view.web.routes import system
+
+    order = []
+    monkeypatch.setattr(system, "_spawn_restarted_process", lambda: order.append("spawn"))
+    monkeypatch.setattr(system, "_terminate_process", lambda: order.append("terminate"))
+
+    system._restart_process()
+
+    assert order == ["spawn", "terminate"]
+
+
+def test_restart_process_keeps_running_when_spawn_fails(monkeypatch):
+    """새 프로세스 기동이 실패하면 현재 프로세스를 종료하지 않는다(유일 서버 보존)."""
+    from view.web.routes import system
+
+    def _boom():
+        raise OSError("spawn failed")
+
+    terminated = {}
+    monkeypatch.setattr(system, "_spawn_restarted_process", _boom)
+    monkeypatch.setattr(system, "_terminate_process", lambda: terminated.setdefault("hit", True))
+
+    system._restart_process()
+
+    assert "hit" not in terminated
+
+
+def test_spawn_restarted_process_launches_same_command(monkeypatch):
+    """_spawn_restarted_process 는 현재 인터프리터/인자로 새 프로세스를 띄운다."""
+    from view.web.routes import system
+
+    captured = {}
+
+    def _fake_popen(args, **kwargs):
+        captured["args"] = list(args)
+        captured["kwargs"] = kwargs
+        return MagicMock()
+
+    monkeypatch.setattr(system.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(system.sys, "executable", "/usr/bin/python")
+    monkeypatch.setattr(system.sys, "argv", ["main.py"])
+
+    system._spawn_restarted_process()
+
+    assert captured["args"] == ["/usr/bin/python", "main.py"]
+
+
 # ── GET /api/background/status ──────────────────────────────────────────────
 
 

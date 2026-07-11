@@ -4,6 +4,8 @@
 import asyncio
 import os
 import signal
+import subprocess
+import sys
 import threading
 import time
 from fastapi import APIRouter, HTTPException, Query
@@ -412,6 +414,53 @@ async def shutdown_server():
     """웹 서버 프로세스를 종료한다. 종료 후에는 터미널에서 다시 실행해야 한다."""
     _schedule_shutdown()
     return {"success": True, "message": "서버를 종료합니다. 잠시 후 연결이 끊어집니다."}
+
+
+# ── 서버 프로세스 재수행 (UI 재시작 버튼) ────────────────────────────────
+
+def _spawn_restarted_process() -> None:
+    """현재와 동일한 명령으로 새 웹 서버 프로세스를 띄운다.
+
+    main.py 는 대화형 메뉴 없이 run_web() 을 바로 실행하므로 현재 인터프리터/인자를
+    그대로 재실행하면 웹 모드로 다시 진입한다. 부모(현재) 프로세스 종료와 독립적으로
+    살아남도록 Windows 는 새 콘솔(CREATE_NEW_CONSOLE)에서, POSIX 는 새 세션에서 띄운다.
+    무거운 서비스 조립으로 새 프로세스의 포트 bind 는 수 초 뒤에 일어나므로, 그 사이
+    현재 프로세스가 종료되며 포트를 반납한다.
+    """
+    args = [sys.executable, *sys.argv]
+    kwargs = {"cwd": os.getcwd(), "close_fds": True}
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen(args, **kwargs)
+
+
+def _restart_process() -> None:
+    """새 프로세스를 띄운 뒤 현재 프로세스를 종료한다.
+
+    새 프로세스 기동이 실패하면 현재 프로세스를 종료하지 않는다 — 교체 프로세스 없이
+    유일한 서버까지 내려가는 것을 막고 수동 재시작을 유도하기 위함이다.
+    """
+    try:
+        _spawn_restarted_process()
+    except Exception:
+        return
+    _terminate_process()
+
+
+def _schedule_restart(delay_sec: float = _SHUTDOWN_DELAY_SEC) -> None:
+    """HTTP 응답이 먼저 전송되도록 약간의 지연 후 재시작하도록 예약한다."""
+    timer = threading.Timer(delay_sec, _restart_process)
+    timer.daemon = True
+    timer.start()
+
+
+@router.post("/system/restart")
+async def restart_server():
+    """웹 서버 프로세스를 재수행(재시작)한다. 새 프로세스가 뜬 뒤 현재 프로세스는 종료된다."""
+    _schedule_restart()
+    return {"success": True, "message": "서버를 재시작합니다. 잠시 후 새 프로세스로 다시 연결됩니다."}
 
 
 # 1. 동기(def) 함수를 비동기(async def) 함수로 변경하여 이벤트 루프 데드락 방지
