@@ -260,6 +260,11 @@ class StaticUsMarketCapProvider:
 
 
 class MarketCapGapService:
+    ADR_KOREAN_SYMBOL = "000660"
+    ADR_KOREAN_NAME = "SK하이닉스"
+    ADR_SYMBOLS = ("SKHY", "SKHYV")
+    ADS_PER_COMMON_SHARE = 10
+
     DEFAULT_KOREAN_TARGETS = (
         ("005930", "삼성전자"),
         ("000660", "SK하이닉스"),
@@ -368,6 +373,69 @@ class MarketCapGapService:
         }
 
     @staticmethod
+    def _read_price(data, *names: str) -> float:
+        for name in names:
+            value = data.get(name) if isinstance(data, dict) else getattr(data, name, None)
+            try:
+                price = float(value or 0)
+            except (TypeError, ValueError):
+                continue
+            if price > 0:
+                return price
+        return 0.0
+
+    async def _build_adr_gap(self, fx_rate: Optional[float]) -> Optional[dict]:
+        if not fx_rate:
+            return None
+        try:
+            domestic_resp = await self._broker.get_current_price(self.ADR_KOREAN_SYMBOL)
+        except Exception as exc:
+            self._logger.warning(f"ADR 국내 본주 가격 조회 실패: {exc}")
+            return None
+        if getattr(domestic_resp, "rt_cd", None) != ErrorCode.SUCCESS.value:
+            return None
+        korean_price = self._read_price(
+            getattr(domestic_resp, "data", None), "stck_prpr", "current_price", "price"
+        )
+        if korean_price <= 0:
+            return None
+
+        adr_symbol = None
+        adr_price = 0.0
+        for symbol in self.ADR_SYMBOLS:
+            try:
+                overseas_resp = await self._broker.get_overseas_price(symbol)
+            except Exception as exc:
+                self._logger.warning(f"ADR 가격 조회 실패: {symbol} {exc}")
+                continue
+            if getattr(overseas_resp, "rt_cd", None) != ErrorCode.SUCCESS.value:
+                continue
+            adr_price = self._read_price(
+                getattr(overseas_resp, "data", None), "price", "last", "last_price"
+            )
+            if adr_price > 0:
+                adr_symbol = symbol
+                break
+        if not adr_symbol:
+            return None
+
+        implied_price = int(round(adr_price * float(fx_rate) * self.ADS_PER_COMMON_SHARE))
+        korean_price_int = int(round(korean_price))
+        gap_krw = implied_price - korean_price_int
+        return {
+            "korean_symbol": self.ADR_KOREAN_SYMBOL,
+            "korean_name": self.ADR_KOREAN_NAME,
+            "korean_price_krw": korean_price_int,
+            "adr_symbol": adr_symbol,
+            "adr_price_usd": adr_price,
+            "ads_per_common_share": self.ADS_PER_COMMON_SHARE,
+            "fx_rate": float(fx_rate),
+            "implied_korean_price_krw": implied_price,
+            "gap_krw": gap_krw,
+            "gap_percent": round(gap_krw / korean_price_int * 100, 2),
+        }
+
+    @staticmethod
     def _build_comparisons(korean: list[dict], us: list[dict]) -> list[dict]:
         comparisons: list[dict] = []
         for kr in korean:
@@ -403,4 +471,5 @@ class MarketCapGapService:
             "korean": korean,
             "us": us,
             "comparisons": self._build_comparisons(korean, us) if fx_rate else [],
+            "adr_gap": await self._build_adr_gap(fx_rate),
         }
