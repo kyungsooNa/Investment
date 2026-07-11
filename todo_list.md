@@ -175,19 +175,19 @@
 
 #653(marketcap/overseas UI 하드닝)의 취지는 유효하나, 리뷰에서 즉시 수정 2건 + 하드닝 보완 4건 + 중복 정리 후속을 확인.
 
-**즉시 수정 (버그)**
+**즉시 수정 (버그) — [완료 2026-07-11, jsdom 회귀 테스트 동반]**
 
-- [ ] **marketcap.html 캐시버스팅 갱신** — #653이 marketcap.js를 XSS·경쟁조건 방어로 재작성했지만 `marketcap.html:18`은 `?v=1` 그대로(같은 커밋에서 overseas.html은 v=4로 올림). 캐시된 구버전(무방비) 스크립트가 계속 실행돼 XSS 수정이 미배포와 동일 → `?v=2`로 1줄 수정.
-- [ ] **환율 null → "USD/KRW 0" 오표시** — `fetch_usdkrw()`가 None 반환 시 `Number(null)===0`이라 '환율 정보 없음' 분기 미도달, 잘못된 환율 0이 표시됨(`overseas.js:243`). null/undefined 선제 검사.
+- [x] **marketcap.html 캐시버스팅 갱신** — `marketcap.html:18`을 `?v=2`로 올려 캐시된 구버전(무방비) 스크립트 서빙 차단(#653 XSS 수정 실효화).
+- [x] **환율 null → "USD/KRW 0" 오표시** — `loadOverseasMarketCap`에서 `data.fx_rate == null ? NaN : Number(...)` 선제 검사로 null 시 '환율 정보 없음' 표시.
 
-**하드닝 보완 (#653과 같은 클래스)**
+**하드닝 보완 (#653과 같은 클래스) — [완료 2026-07-11]**
 
-- [ ] 잔고 조회의 거래소 기준이 다른 탭에 숨은 셀렉트 — '보유·주문' 탭의 잔고 조회(`overseas.js:260`)가 '시장 개요' 탭의 `overseas-exchange` 값을 읽음(탭 분리로 신규 노출). 거래소 선택을 orders 패널에 노출하거나 `overseas-order-exchange` 재사용.
-- [ ] `loadOverseasMarketCap` stale-response 가드 — marketcap.js에 넣은 시퀀스 가드가 같은 커밋의 신규 로더(`overseas.js:213`)엔 없음.
-- [ ] catch 블록 진단정보 소실 — 새 catch들이 오류 객체를 console.error 없이 삼킴(`marketcap.js:118`, overseas.js 7곳). 화면 비노출은 유지하되 `console.error(e)` 추가.
-- [ ] 가용성 확인 1회성 — `_refreshOverseasAvailability`가 init 1회뿐(`overseas.js:465`)이라 일시 실패/모드 변경이 버튼 상태에 미반영. 재시도 또는 기존 3s 배너 타이머 편승 검토.
+- [x] 잔고 조회의 거래소 기준이 다른 탭에 숨은 셀렉트 — `loadOverseasBalance`가 같은 '보유·주문' 탭의 `overseas-order-exchange`를 사용하도록 변경(숨겨진 개요 탭 `overseas-exchange` 대신).
+- [x] `loadOverseasMarketCap` stale-response 가드 — `_overseasMarketCapSequence` 시퀀스 가드 추가(marketcap.js 패턴 이식).
+- [x] catch 블록 진단정보 소실 — overseas.js 7곳·marketcap.js 1곳 catch에 `console.error` 추가(화면 문구는 불변).
+- [x] 가용성 확인 1회성 — `setOverseasTab` 전환마다 `_refreshOverseasAvailability` 재호출(init 1회 + 탭 전환 이벤트 구동).
 
-**중복 정리 (별도 리팩토링 PR 권장)**
+**중복 정리 (별도 리팩토링 PR 권장 — 미착수)**
 
 - [ ] **escapeHtml 단일화(깊이 수정)** — 페이지별 `_escapeMarketCapHtml`/`_escapeOverseasHtml` 2벌이 추가됐는데 정작 전 페이지 공용 `common.js:56` escapeHtml은 작은따옴표 미이스케이프·falsy→`''` 상태로 방치. 공용본을 강화하고 두 파일이 호출하도록 통합(공유본을 쓰는 ranking.js 등도 수혜).
 - [ ] `_readOverseasJson`/오류 렌더러 common.js 승격 — 동일 응답검증 프로토콜·한국어 문구가 marketcap.js에 인라인 중복(`marketcap.js:66`), `_showMarketCapError`/`_showOverseasError` 렌더러 2벌.

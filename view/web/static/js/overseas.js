@@ -1,5 +1,7 @@
 /* view/web/static/js/overseas.js — 미국주식 조회/주문 */
 
+let _overseasMarketCapSequence = 0;
+
 function _escapeOverseasHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({
         '&': '&amp;',
@@ -124,6 +126,9 @@ async function setOverseasTab(tabName) {
         }
     });
 
+    // 탭 전환마다 가용성을 재확인해 초기 확인 실패/모드 변경이 버튼 상태에 반영되게 한다.
+    void _refreshOverseasAvailability();
+
     if (tabName === 'marketcap') await loadOverseasMarketCap();
 }
 
@@ -162,6 +167,7 @@ async function loadOverseasQuote() {
             </div>
         `;
     } catch (e) {
+        console.error('[overseas] 통신 오류', e);
         _showOverseasError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
     }
 }
@@ -206,21 +212,26 @@ async function loadOverseasChart() {
             </div>
         `;
     } catch (e) {
+        console.error('[overseas] 통신 오류', e);
         _showOverseasError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
     }
 }
 
 async function loadOverseasMarketCap() {
+    const requestSequence = ++_overseasMarketCapSequence;
+    const isLatestRequest = () => requestSequence === _overseasMarketCapSequence;
     const resultDiv = document.getElementById('overseas-marketcap-result');
     showLoading(resultDiv, '주요 미국 대형주 시가총액 조회 중...');
 
     try {
         if (!await _ensureOverseasEnabled()) {
+            if (!isLatestRequest()) return;
             _showOverseasError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
             return;
         }
         const res = await fetchWithTimeout('/api/overseas/market-cap', {}, 12000);
         const { json, error } = await _readOverseasJson(res);
+        if (!isLatestRequest()) return;
         if (error || json.rt_cd !== '0') {
             _showOverseasError(resultDiv, `시가총액 조회 실패: ${error || json.msg1 || res.status}`);
             return;
@@ -240,7 +251,7 @@ async function loadOverseasMarketCap() {
                 <td>${_formatKrwMarketCap(item.market_cap_krw)}</td>
             </tr>
         `).join('');
-        const fxRate = Number(data.fx_rate);
+        const fxRate = data.fx_rate == null ? NaN : Number(data.fx_rate);
         const fxText = Number.isFinite(fxRate) ? `USD/KRW ${fxRate.toLocaleString()}` : '환율 정보 없음';
         resultDiv.innerHTML = `
             <div class="card">
@@ -252,12 +263,16 @@ async function loadOverseasMarketCap() {
             </div>
         `;
     } catch (e) {
+        console.error('[overseas] 시가총액 조회 오류', e);
+        if (!isLatestRequest()) return;
         _showOverseasError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '시가총액을 불러오지 못했습니다.');
     }
 }
 
 async function loadOverseasBalance() {
-    const exchange = _overseasExchangeValue('overseas-exchange');
+    // 잔고 조회 버튼은 '보유·주문' 탭에 있으므로, 같은 탭의 주문 거래소 셀렉트를 기준으로 삼는다.
+    // (개요 탭의 overseas-exchange 는 탭 분리 후 숨겨져 있어 사용자가 조작할 수 없다.)
+    const exchange = _overseasExchangeValue('overseas-order-exchange');
     const resultDiv = document.getElementById('overseas-balance-result');
     showLoading(resultDiv, '잔고 조회 중...');
 
@@ -292,6 +307,7 @@ async function loadOverseasBalance() {
             </div>
         `;
     } catch (e) {
+        console.error('[overseas] 통신 오류', e);
         _showOverseasError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
     }
 }
@@ -348,6 +364,7 @@ async function placeOverseasOrder(side) {
         const orderNo = json.data && (json.data.broker_order_no || json.data.ord_no || json.data.ODNO);
         resultDiv.innerHTML = `<p class="success">주문 접수: ${_escapeOverseasHtml(orderNo || '-')}</p>`;
     } catch (e) {
+        console.error('[overseas] 통신 오류', e);
         _showOverseasError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
     }
 }
@@ -405,6 +422,7 @@ async function loadOverseasOrders() {
             ));
         });
     } catch (e) {
+        console.error('[overseas] 통신 오류', e);
         _showOverseasError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
     }
 }
@@ -456,6 +474,7 @@ async function cancelOverseasOrder(orderNo, symbol, exchange, qty) {
         }
         await loadOverseasOrders();
     } catch (e) {
+        console.error('[overseas] 주문 취소 오류', e);
         alert(e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
     }
 }

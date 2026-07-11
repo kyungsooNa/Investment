@@ -116,6 +116,7 @@ async function loadTopMarketCap(market = '0001') {
         html += '</tbody></table></div>';
         div.innerHTML = html;
     } catch (e) {
+        console.error('[marketcap] 시가총액 랭킹 오류', e);
         if (!isLatestRequest()) return;
         if (e.name === 'AbortError') {
             _showMarketCapError(div, '요청 시간이 초과되었습니다. 다시 시도해주세요.');
