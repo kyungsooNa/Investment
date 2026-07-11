@@ -1044,3 +1044,35 @@ async def test_send_market_cap_gap_report_marks_korea_advantage_by_negative_gap(
 
     full = "".join(call[0][0] for call in telegram_reporter._send_message.call_args_list)
     assert "삼성전자 <b>1.00x</b> (-7조) ✅" in full
+
+
+@pytest.mark.asyncio
+async def test_send_market_cap_gap_report_formats_skhynix_adr_gap(telegram_reporter):
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    report = {
+        "fx_rate": 1380.0,
+        "korean": [],
+        "us": [],
+        "comparisons": [],
+        "adr_gap": {
+            "korean_symbol": "000660",
+            "korean_name": "SK하이닉스",
+            "korean_price_krw": 2_076_000,
+            "adr_symbol": "SKHYV",
+            "adr_price_usd": 176.0,
+            "ads_per_common_share": 10,
+            "implied_korean_price_krw": 2_428_800,
+            "gap_krw": 352_800,
+            "gap_percent": 16.99,
+        },
+    }
+
+    await telegram_reporter.send_market_cap_gap_report(report, "20260710", "미국장 마감")
+
+    full = "".join(call[0][0] for call in telegram_reporter._send_message.call_args_list)
+    assert "SK하이닉스 ADR 가격갭" in full
+    assert "000660 2,076,000원" in full
+    assert "SKHYV $176.00" in full
+    assert "환산 2,428,800원" in full
+    assert "+16.99% (ADR 프리미엄)" in full
+    assert "1 ADS = 본주 0.1주" in full

@@ -643,9 +643,25 @@ class TelegramReporter:
             )
             lines += ["", f"🇰🇷 {kr_summary}"]
 
+        adr_gap = report.get("adr_gap")
+        if adr_gap:
+            gap_percent = float(adr_gap.get("gap_percent") or 0)
+            gap_label = "ADR 프리미엄" if gap_percent > 0 else "ADR 디스카운트" if gap_percent < 0 else "동일"
+            lines += [
+                "",
+                "🔄 <b>SK하이닉스 ADR 가격갭</b>",
+                f"본주 {html.escape(str(adr_gap.get('korean_symbol') or ''), quote=False)} "
+                f"{int(adr_gap.get('korean_price_krw') or 0):,}원",
+                f"ADR {html.escape(str(adr_gap.get('adr_symbol') or ''), quote=False)} "
+                f"${float(adr_gap.get('adr_price_usd') or 0):,.2f}",
+                f"환산 {int(adr_gap.get('implied_korean_price_krw') or 0):,}원 · "
+                f"{gap_percent:+.2f}% ({gap_label})",
+                "1 ADS = 본주 0.1주 · 환율·거래비용 미반영",
+            ]
+
         comparisons = report.get("comparisons") or []
         if not comparisons:
-            lines += ["", "시총갭 계산 불가: 환율 또는 시총 데이터 부족"]
+            lines += ["", "미국 비교군 시총갭 계산 불가: 환율 또는 시총 데이터 부족"]
             await self._send_message("\n".join(lines))
             return
 

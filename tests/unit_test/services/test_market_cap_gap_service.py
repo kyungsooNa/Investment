@@ -5,6 +5,7 @@ import sqlite3
 import pytest
 
 from common.types import ErrorCode, ResCommonResponse
+from common.overseas_types import OverseasExchange, OverseasPriceSummary
 from services.market_cap_gap_service import (
     MarketCapGapService,
     MarketCapQuote,
@@ -48,6 +49,70 @@ async def test_build_report_compares_korean_caps_to_us_caps_in_krw():
     )
     assert samsung_nvda["gap_krw"] == 3_700_000_000_000_000
     assert samsung_nvda["ratio"] == 8.4
+
+
+@pytest.mark.asyncio
+async def test_build_report_includes_skhynix_adr_price_gap_with_symbol_fallback():
+    broker = SimpleNamespace()
+    broker.get_market_cap = AsyncMock(side_effect=[
+        _domestic_response(500_000_000_000_000),
+        _domestic_response(200_000_000_000_000),
+    ])
+    broker.get_current_price = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data=SimpleNamespace(stck_prpr="2076000"),
+    ))
+    broker.get_overseas_price = AsyncMock(side_effect=[
+        ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="not found", data=None),
+        ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="OK",
+            data=OverseasPriceSummary(
+                symbol="SKHYV",
+                exchange=OverseasExchange.NASD,
+                price=176.0,
+            ),
+        ),
+    ])
+    provider = StaticUsMarketCapProvider(quotes=[], usdkrw=1380.0)
+    service = MarketCapGapService(broker=broker, us_provider=provider, korean_provider=None)
+
+    report = await service.build_report(report_date="20260710", trigger="us_close")
+
+    assert report["adr_gap"] == {
+        "korean_symbol": "000660",
+        "korean_name": "SK하이닉스",
+        "korean_price_krw": 2_076_000,
+        "adr_symbol": "SKHYV",
+        "adr_price_usd": 176.0,
+        "ads_per_common_share": 10,
+        "fx_rate": 1380.0,
+        "implied_korean_price_krw": 2_428_800,
+        "gap_krw": 352_800,
+        "gap_percent": 16.99,
+    }
+    assert [call.args[0] for call in broker.get_overseas_price.await_args_list] == ["SKHY", "SKHYV"]
+
+
+@pytest.mark.asyncio
+async def test_build_report_omits_adr_gap_when_price_data_is_missing():
+    broker = SimpleNamespace()
+    broker.get_market_cap = AsyncMock(side_effect=[
+        _domestic_response(500_000_000_000_000),
+        _domestic_response(200_000_000_000_000),
+    ])
+    broker.get_current_price = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="failed", data=None,
+    ))
+    broker.get_overseas_price = AsyncMock()
+    provider = StaticUsMarketCapProvider(quotes=[], usdkrw=1380.0)
+    service = MarketCapGapService(broker=broker, us_provider=provider, korean_provider=None)
+
+    report = await service.build_report(report_date="20260710", trigger="kr_close")
+
+    assert report["adr_gap"] is None
+    broker.get_overseas_price.assert_not_awaited()
 
 
 @pytest.mark.asyncio
