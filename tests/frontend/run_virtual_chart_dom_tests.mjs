@@ -7,6 +7,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
+import { test, assert, run } from "./harness.mjs";
 
 const VIRTUAL_CHART_JS = resolve(import.meta.dirname, "../../view/web/static/js/virtual_chart.js");
 
@@ -94,9 +95,6 @@ function makeWindow(fetchPayload = SAMPLE_CHART_DATA) {
   return window;
 }
 
-const tests = [];
-const test = (name, fn) => tests.push({ name, fn });
-function assert(cond, msg) { if (!cond) throw new Error(msg); }
 
 test("ALL 선택 시 ALL 집계선이 아니라 전략별 미니 차트를 생성한다", async () => {
   const window = makeWindow();
@@ -182,15 +180,4 @@ test("BUY실패/SELL실패는 제외하고 나머지는 최신 수익률 내림�
   );
 });
 
-let failed = 0;
-for (const { name, fn } of tests) {
-  try {
-    await fn();
-    console.log(`PASS  ${name}`);
-  } catch (e) {
-    failed += 1;
-    console.error(`FAIL  ${name}\n      ${e.message}`);
-  }
-}
-console.log(`\n${tests.length - failed}/${tests.length} passed`);
-process.exit(failed === 0 ? 0 : 1);
+await run();

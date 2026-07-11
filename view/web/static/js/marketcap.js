@@ -2,16 +2,6 @@
 
 let _marketCapRequestSequence = 0;
 
-function _escapeMarketCapHtml(value) {
-    return String(value ?? '').replace(/[&<>"']/g, char => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;',
-    })[char]);
-}
-
 function _toFiniteMarketCapNumber(value) {
     if (value === null || value === undefined || value === '') return null;
     const number = Number(value);
@@ -38,10 +28,6 @@ function _formatMarketCapValue(value) {
     return number === null ? '-' : formatMarketCap(Math.trunc(number));
 }
 
-function _showMarketCapError(div, message) {
-    div.innerHTML = `<p class="error">${_escapeMarketCapHtml(message)}</p>`;
-}
-
 function _showMarketCapEmpty(div) {
     div.innerHTML = '<p class="empty">조회 결과가 없습니다.</p>';
 }
@@ -60,33 +46,19 @@ async function loadTopMarketCap(market = '0001') {
     try {
         const query = new URLSearchParams({ limit: '30', market }).toString();
         const res = await fetchWithTimeout(`/api/top-market-cap?${query}`);
+        const { json, error } = await readJsonResponse(res);
         if (!isLatestRequest()) return;
 
-        if (!res.ok) {
-            _showMarketCapError(div, `요청에 실패했습니다. (HTTP ${res.status})`);
-            return;
-        }
-
-        let json;
-        try {
-            json = await res.json();
-        } catch (_) {
-            if (!isLatestRequest()) return;
-            _showMarketCapError(div, '응답을 처리하지 못했습니다. 다시 시도해주세요.');
-            return;
-        }
-        if (!isLatestRequest()) return;
-
-        if (!json || typeof json !== 'object') {
-            _showMarketCapError(div, '응답 형식이 올바르지 않습니다.');
+        if (error) {
+            showError(div, `시가총액 랭킹 조회 실패: ${error}`);
             return;
         }
         if (json.rt_cd !== '0') {
-            _showMarketCapError(div, `실패: ${json.msg1 || '시가총액 랭킹 조회에 실패했습니다.'}`);
+            showError(div, `실패: ${json.msg1 || '시가총액 랭킹 조회에 실패했습니다.'}`);
             return;
         }
         if (!Array.isArray(json.data)) {
-            _showMarketCapError(div, '응답 형식이 올바르지 않습니다.');
+            showError(div, '응답 형식이 올바르지 않습니다.');
             return;
         }
         if (json.data.length === 0) {
@@ -106,8 +78,8 @@ async function loadTopMarketCap(market = '0001') {
             const code = String(row.code ?? '');
             html += `
                 <tr>
-                    <td>${_escapeMarketCapHtml(row.rank || (idx + 1))}</td>
-                    <td><a href="/stock?code=${encodeURIComponent(code)}" target="_blank" class="stock-link">${_escapeMarketCapHtml(row.name)}(${_escapeMarketCapHtml(code)})</a></td>
+                    <td>${escapeHtml(row.rank || (idx + 1))}</td>
+                    <td><a href="/stock?code=${encodeURIComponent(code)}" target="_blank" class="stock-link">${escapeHtml(row.name)}(${escapeHtml(code)})</a></td>
                     <td>${_formatMarketCapPrice(row.current_price)} <small class="${rate.color}">(${rate.text})</small></td>
                     <td>${_formatMarketCapValue(row.market_cap)}</td>
                 </tr>
@@ -119,9 +91,9 @@ async function loadTopMarketCap(market = '0001') {
         console.error('[marketcap] 시가총액 랭킹 오류', e);
         if (!isLatestRequest()) return;
         if (e.name === 'AbortError') {
-            _showMarketCapError(div, '요청 시간이 초과되었습니다. 다시 시도해주세요.');
+            showError(div, '요청 시간이 초과되었습니다. 다시 시도해주세요.');
         } else {
-            _showMarketCapError(div, '시가총액 랭킹을 불러오지 못했습니다. 다시 시도해주세요.');
+            showError(div, '시가총액 랭킹을 불러오지 못했습니다. 다시 시도해주세요.');
         }
     }
 }

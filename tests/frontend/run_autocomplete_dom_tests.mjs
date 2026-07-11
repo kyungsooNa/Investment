@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
+import { test, assert, run } from "./harness.mjs";
 
 const AUTOCOMPLETE_JS = resolve(import.meta.dirname, "../../view/web/static/js/autocomplete.js");
 const STOCK_JS = resolve(import.meta.dirname, "../../view/web/static/js/stock.js");
@@ -79,9 +80,6 @@ function typeInto(window, id, value) {
   el.dispatchEvent(new window.Event("input", { bubbles: true }));
 }
 
-const tests = [];
-const test = (name, fn) => tests.push({ name, fn });
-function assert(cond, msg) { if (!cond) throw new Error(msg); }
 
 test("국내 자동완성: 종목명 입력 시 드롭다운 렌더 + 선택 시 searchStock(code) 호출", async () => {
   const window = await makeWindow();
@@ -168,15 +166,4 @@ test("해외 자동완성: 미선택 Enter 시 onConfirm(searchOverseasStock) �
   assert(searched === true, "미선택 Enter 시 직접 입력 조회가 트리거되지 않음");
 });
 
-let failed = 0;
-for (const { name, fn } of tests) {
-  try {
-    await fn();
-    console.log(`PASS  ${name}`);
-  } catch (e) {
-    failed += 1;
-    console.error(`FAIL  ${name}\n      ${e.message}`);
-  }
-}
-console.log(`\n${tests.length - failed}/${tests.length} passed`);
-process.exit(failed === 0 ? 0 : 1);
+await run();

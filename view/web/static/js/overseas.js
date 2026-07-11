@@ -2,16 +2,6 @@
 
 let _overseasMarketCapSequence = 0;
 
-function _escapeOverseasHtml(value) {
-    return String(value ?? '').replace(/[&<>"']/g, char => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;',
-    })[char]);
-}
-
 function _overseasIsRealMode() {
     const badge = document.getElementById('status-env');
     return !!(badge && (
@@ -30,7 +20,7 @@ function _overseasExchangeValue(selectId) {
 }
 
 function _formatUsd(value) {
-    const n = Number(value);
+    const n = Number(String(value ?? '').replace(/,/g, ''));
     if (!Number.isFinite(n)) return '-';
     return '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -51,7 +41,8 @@ function _formatUsdMarketCap(value) {
 function _formatKrwMarketCap(value) {
     const n = Number(value);
     if (!Number.isFinite(n) || n <= 0) return '-';
-    return n.toLocaleString() + '원';
+    // 나머지 화면과 동일한 조/억 표기를 위해 공용 formatTradingValue 를 사용한다.
+    return formatTradingValue(n);
 }
 
 function _setOverseasOrderSymbol(symbol, exchange) {
@@ -59,10 +50,6 @@ function _setOverseasOrderSymbol(symbol, exchange) {
     const exchangeSelect = document.getElementById('overseas-order-exchange');
     if (symbolInput && symbol) symbolInput.value = symbol;
     if (exchangeSelect && exchange) exchangeSelect.value = exchange;
-}
-
-function _showOverseasError(element, message) {
-    if (element) element.innerHTML = `<p class="error">${_escapeOverseasHtml(message)}</p>`;
 }
 
 function _refreshOverseasRealBanner() {
@@ -81,18 +68,6 @@ async function _ensureOverseasEnabled() {
     if (!res.ok) return false;
     const json = await res.json();
     return Array.isArray(json.enabled_market_modes) && json.enabled_market_modes.includes('overseas_us');
-}
-
-async function _readOverseasJson(res) {
-    if (!res.ok) return { json: null, error: `HTTP ${res.status}` };
-    try {
-        const json = await res.json();
-        return json && typeof json === 'object'
-            ? { json, error: null }
-            : { json: null, error: '응답 형식이 올바르지 않습니다.' };
-    } catch (_) {
-        return { json: null, error: '응답을 처리하지 못했습니다.' };
-    }
 }
 
 async function _refreshOverseasAvailability() {
@@ -145,13 +120,13 @@ async function loadOverseasQuote() {
 
     try {
         if (!await _ensureOverseasEnabled()) {
-            _showOverseasError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
+            showError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
             return;
         }
         const res = await fetchWithTimeout(`/api/overseas/stock/${encodeURIComponent(symbol)}?exchange=${encodeURIComponent(exchange)}`, {}, 12000);
-        const { json, error } = await _readOverseasJson(res);
+        const { json, error } = await readJsonResponse(res);
         if (error || json.rt_cd !== '0') {
-            _showOverseasError(resultDiv, `조회 실패: ${error || json.msg1 || res.status}`);
+            showError(resultDiv, `조회 실패: ${error || json.msg1 || res.status}`);
             return;
         }
         const data = json.data || {};
@@ -159,16 +134,16 @@ async function loadOverseasQuote() {
         const rateClass = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
         resultDiv.innerHTML = `
             <div class="card">
-                <h3>${_escapeOverseasHtml(data.symbol || symbol)} <span style="color:#aaa;font-size:0.85rem;">${_escapeOverseasHtml(data.exchange || exchange)} ${_escapeOverseasHtml(data.currency || 'USD')}</span></h3>
+                <h3>${escapeHtml(data.symbol || symbol)} <span style="color:#aaa;font-size:0.85rem;">${escapeHtml(data.exchange || exchange)} ${escapeHtml(data.currency || 'USD')}</span></h3>
                 <p class="price ${rateClass}">${_formatUsd(data.price)}</p>
                 <p>등락률: <span class="${rateClass}">${Number.isFinite(rate) ? rate.toFixed(2) + '%' : '-'}</span></p>
                 <p>거래량: ${_formatNumber(data.volume)}</p>
-                <p>시각: ${_escapeOverseasHtml(data.timestamp || '-')}</p>
+                <p>시각: ${escapeHtml(data.timestamp || '-')}</p>
             </div>
         `;
     } catch (e) {
         console.error('[overseas] 통신 오류', e);
-        _showOverseasError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
+        showError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
     }
 }
 
@@ -184,27 +159,27 @@ async function loadOverseasChart() {
 
     try {
         if (!await _ensureOverseasEnabled()) {
-            _showOverseasError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
+            showError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
             return;
         }
         const res = await fetchWithTimeout(`/api/overseas/chart/${encodeURIComponent(symbol)}?exchange=${encodeURIComponent(exchange)}&period=D`, {}, 12000);
-        const { json, error } = await _readOverseasJson(res);
+        const { json, error } = await readJsonResponse(res);
         if (error || json.rt_cd !== '0') {
-            _showOverseasError(resultDiv, `일봉 조회 실패: ${error || json.msg1 || res.status}`);
+            showError(resultDiv, `일봉 조회 실패: ${error || json.msg1 || res.status}`);
             return;
         }
         const data = json.data || {};
         const list = Array.isArray(data) ? data : (Array.isArray(data.output2) ? data.output2 : []);
         const body = list.slice(-10).reverse().map(row => `
             <tr>
-                <td>${_escapeOverseasHtml(row.date || row.xymd || row.stck_bsop_date || '-')}</td>
+                <td>${escapeHtml(row.date || row.xymd || row.stck_bsop_date || '-')}</td>
                 <td>${_formatUsd(row.close || row.clos || row.clpr || row.ovrs_nmix_prpr)}</td>
                 <td>${_formatNumber(row.volume || row.tvol || row.acml_vol)}</td>
             </tr>
         `).join('');
         resultDiv.innerHTML = `
             <div class="card">
-                <h3>${_escapeOverseasHtml(symbol)} 일봉</h3>
+                <h3>${escapeHtml(symbol)} 일봉</h3>
                 <table class="data-table">
                     <thead><tr><th>일자</th><th>종가</th><th>거래량</th></tr></thead>
                     <tbody>${body || '<tr><td colspan="3">데이터 없음</td></tr>'}</tbody>
@@ -213,7 +188,7 @@ async function loadOverseasChart() {
         `;
     } catch (e) {
         console.error('[overseas] 통신 오류', e);
-        _showOverseasError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
+        showError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
     }
 }
 
@@ -226,14 +201,14 @@ async function loadOverseasMarketCap() {
     try {
         if (!await _ensureOverseasEnabled()) {
             if (!isLatestRequest()) return;
-            _showOverseasError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
+            showError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
             return;
         }
         const res = await fetchWithTimeout('/api/overseas/market-cap', {}, 12000);
-        const { json, error } = await _readOverseasJson(res);
+        const { json, error } = await readJsonResponse(res);
         if (!isLatestRequest()) return;
         if (error || json.rt_cd !== '0') {
-            _showOverseasError(resultDiv, `시가총액 조회 실패: ${error || json.msg1 || res.status}`);
+            showError(resultDiv, `시가총액 조회 실패: ${error || json.msg1 || res.status}`);
             return;
         }
         const data = json.data || {};
@@ -245,8 +220,8 @@ async function loadOverseasMarketCap() {
         const rows = items.map((item, index) => `
             <tr>
                 <td>${index + 1}</td>
-                <td>${_escapeOverseasHtml(item.symbol || '-')}</td>
-                <td>${_escapeOverseasHtml(item.name || '-')}</td>
+                <td>${escapeHtml(item.symbol || '-')}</td>
+                <td>${escapeHtml(item.name || '-')}</td>
                 <td>${_formatUsdMarketCap(item.market_cap_usd)}</td>
                 <td>${_formatKrwMarketCap(item.market_cap_krw)}</td>
             </tr>
@@ -265,7 +240,7 @@ async function loadOverseasMarketCap() {
     } catch (e) {
         console.error('[overseas] 시가총액 조회 오류', e);
         if (!isLatestRequest()) return;
-        _showOverseasError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '시가총액을 불러오지 못했습니다.');
+        showError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '시가총액을 불러오지 못했습니다.');
     }
 }
 
@@ -278,28 +253,28 @@ async function loadOverseasBalance() {
 
     try {
         if (!await _ensureOverseasEnabled()) {
-            _showOverseasError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
+            showError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
             return;
         }
         const res = await fetchWithTimeout(`/api/overseas/balance?exchange=${encodeURIComponent(exchange)}&currency=USD`, {}, 12000);
-        const { json, error } = await _readOverseasJson(res);
+        const { json, error } = await readJsonResponse(res);
         if (error || json.rt_cd !== '0') {
-            _showOverseasError(resultDiv, `잔고 조회 실패: ${error || json.msg1 || res.status}`);
+            showError(resultDiv, `잔고 조회 실패: ${error || json.msg1 || res.status}`);
             return;
         }
         const data = json.data || {};
         const rows = Array.isArray(data.output1) ? data.output1 : (Array.isArray(data) ? data : []);
         const body = rows.map(row => `
             <tr>
-                <td>${_escapeOverseasHtml(row.ovrs_pdno || row.pdno || row.symbol || '-')}</td>
-                <td>${_escapeOverseasHtml(row.ovrs_item_name || row.prdt_name || row.name || '-')}</td>
+                <td>${escapeHtml(row.ovrs_pdno || row.pdno || row.symbol || '-')}</td>
+                <td>${escapeHtml(row.ovrs_item_name || row.prdt_name || row.name || '-')}</td>
                 <td>${_formatNumber(row.ovrs_cblc_qty || row.hldg_qty || row.qty)}</td>
                 <td>${_formatUsd(row.now_pric2 || row.price || row.ovrs_now_pric1)}</td>
             </tr>
         `).join('');
         resultDiv.innerHTML = `
             <div class="card">
-                <h3>미국주식 잔고 <span style="color:#aaa;font-size:0.85rem;">${_escapeOverseasHtml(exchange)} USD</span></h3>
+                <h3>미국주식 잔고 <span style="color:#aaa;font-size:0.85rem;">${escapeHtml(exchange)} USD</span></h3>
                 <table class="data-table">
                     <thead><tr><th>심볼</th><th>이름</th><th>수량</th><th>현재가</th></tr></thead>
                     <tbody>${body || '<tr><td colspan="4">보유 없음</td></tr>'}</tbody>
@@ -308,7 +283,7 @@ async function loadOverseasBalance() {
         `;
     } catch (e) {
         console.error('[overseas] 통신 오류', e);
-        _showOverseasError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
+        showError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
     }
 }
 
@@ -345,7 +320,7 @@ async function placeOverseasOrder(side) {
     showLoading(resultDiv, '주문 전송 중...');
     try {
         if (!await _ensureOverseasEnabled()) {
-            _showOverseasError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
+            showError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
             return;
         }
         const res = await fetchWithTimeout('/api/overseas/order', {
@@ -356,16 +331,16 @@ async function placeOverseasOrder(side) {
                 real_order_confirmation: realOrderConfirmation,
             }),
         }, 15000);
-        const { json, error } = await _readOverseasJson(res);
+        const { json, error } = await readJsonResponse(res);
         if (error || json.rt_cd !== '0') {
-            _showOverseasError(resultDiv, `주문 실패: ${error || json.msg1 || res.status}`);
+            showError(resultDiv, `주문 실패: ${error || json.msg1 || res.status}`);
             return;
         }
         const orderNo = json.data && (json.data.broker_order_no || json.data.ord_no || json.data.ODNO);
-        resultDiv.innerHTML = `<p class="success">주문 접수: ${_escapeOverseasHtml(orderNo || '-')}</p>`;
+        resultDiv.innerHTML = `<p class="success">주문 접수: ${escapeHtml(orderNo || '-')}</p>`;
     } catch (e) {
         console.error('[overseas] 통신 오류', e);
-        _showOverseasError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
+        showError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
     }
 }
 
@@ -376,13 +351,13 @@ async function loadOverseasOrders() {
 
     try {
         if (!await _ensureOverseasEnabled()) {
-            _showOverseasError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
+            showError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
             return;
         }
         const res = await fetchWithTimeout(`/api/overseas/orders?exchange=${encodeURIComponent(exchange)}&ccld_nccs_dvsn=02`, {}, 12000);
-        const { json, error } = await _readOverseasJson(res);
+        const { json, error } = await readJsonResponse(res);
         if (error || json.rt_cd !== '0') {
-            _showOverseasError(resultDiv, `미체결 조회 실패: ${error || json.msg1 || res.status}`);
+            showError(resultDiv, `미체결 조회 실패: ${error || json.msg1 || res.status}`);
             return;
         }
         const data = json.data || {};
@@ -394,19 +369,19 @@ async function loadOverseasOrders() {
             const qty = Number(String(row.nccs_qty ?? row.ft_ord_qty ?? row.qty ?? '0').replace(/,/g, '')) || 0;
             return `
                 <tr>
-                    <td>${_escapeOverseasHtml(odno || '-')}</td>
-                    <td>${_escapeOverseasHtml(symbol || '-')}</td>
-                    <td>${_escapeOverseasHtml(row.sll_buy_dvsn_cd_name || '-')}</td>
+                    <td>${escapeHtml(odno || '-')}</td>
+                    <td>${escapeHtml(symbol || '-')}</td>
+                    <td>${escapeHtml(row.sll_buy_dvsn_cd_name || '-')}</td>
                     <td>${_formatNumber(row.ft_ord_qty || row.qty)}</td>
                     <td>${_formatNumber(qty)}</td>
                     <td>${_formatUsd(row.ft_ord_unpr3 || row.price)}</td>
-                    <td><button type="button" class="btn btn-sell" data-overseas-cancel data-order-no="${_escapeOverseasHtml(odno)}" data-symbol="${_escapeOverseasHtml(symbol)}" data-exchange="${_escapeOverseasHtml(orderExchange)}" data-qty="${qty}">취소</button></td>
+                    <td><button type="button" class="btn btn-sell" data-overseas-cancel data-order-no="${escapeHtml(odno)}" data-symbol="${escapeHtml(symbol)}" data-exchange="${escapeHtml(orderExchange)}" data-qty="${qty}">취소</button></td>
                 </tr>
             `;
         }).join('');
         resultDiv.innerHTML = `
             <div class="card">
-                <h3>미체결 주문 <span style="color:#aaa;font-size:0.85rem;">${_escapeOverseasHtml(exchange)} USD</span></h3>
+                <h3>미체결 주문 <span style="color:#aaa;font-size:0.85rem;">${escapeHtml(exchange)} USD</span></h3>
                 <table class="data-table">
                     <thead><tr><th>주문번호</th><th>심볼</th><th>구분</th><th>수량</th><th>미체결</th><th>지정가</th><th></th></tr></thead>
                     <tbody>${body || '<tr><td colspan="7">미체결 없음</td></tr>'}</tbody>
@@ -423,7 +398,7 @@ async function loadOverseasOrders() {
         });
     } catch (e) {
         console.error('[overseas] 통신 오류', e);
-        _showOverseasError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
+        showError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
     }
 }
 
@@ -452,7 +427,7 @@ async function cancelOverseasOrder(orderNo, symbol, exchange, qty) {
 
     try {
         if (!await _ensureOverseasEnabled()) {
-            _showOverseasError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
+            showError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
             return;
         }
         const res = await fetchWithTimeout('/api/overseas/order/cancel', {
@@ -467,7 +442,7 @@ async function cancelOverseasOrder(orderNo, symbol, exchange, qty) {
                 real_order_confirmation: realOrderConfirmation,
             }),
         }, 15000);
-        const { json, error } = await _readOverseasJson(res);
+        const { json, error } = await readJsonResponse(res);
         if (error || json.rt_cd !== '0') {
             alert(`취소 실패: ${error || json.msg1 || res.status}`);
             return;

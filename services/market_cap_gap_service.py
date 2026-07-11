@@ -302,6 +302,15 @@ class MarketCapGapService:
         self._us_targets = tuple(str(symbol).upper() for symbol in us_targets)
         self._logger = logger or logging.getLogger(__name__)
 
+    @classmethod
+    def build_default(cls, broker, logger=None) -> "MarketCapGapService":
+        """부트스트랩/UI 라우트 공용 기본 조립 진입점.
+
+        생성 인자가 늘어나도 조립 지점이 이 한 곳으로 수렴하도록,
+        service_container 와 /overseas/market-cap 라우트가 모두 이 메서드를 사용한다.
+        """
+        return cls(broker=broker, logger=logger)
+
     async def _fetch_korean_caps(self, report_date: str) -> list[dict]:
         items: list[dict] = []
         missing: list[tuple[str, str]] = []
@@ -347,8 +356,7 @@ class MarketCapGapService:
                 })
         return items
 
-    async def _fetch_us_caps(self, fx_rate: Optional[float]) -> list[dict]:
-        quotes = await self._us_provider.fetch_quotes(self._us_targets)
+    def _build_us_items(self, quotes: list, fx_rate: Optional[float]) -> list[dict]:
         items: list[dict] = []
         for quote in quotes:
             if quote.market_cap <= 0:
@@ -364,12 +372,20 @@ class MarketCapGapService:
         items.sort(key=lambda item: item.get("market_cap_krw") or item.get("market_cap_usd") or 0, reverse=True)
         return items
 
+    async def _fetch_us_caps(self, fx_rate: Optional[float]) -> list[dict]:
+        quotes = await self._us_provider.fetch_quotes(self._us_targets)
+        return self._build_us_items(quotes, fx_rate)
+
     async def get_us_market_caps(self) -> dict:
         """미국 대형주 시총 화면용 요약. 국내 시총 API는 호출하지 않는다."""
-        fx_rate = await self._us_provider.fetch_usdkrw()
+        # 환율 조회와 시세 조회는 서로 독립적인 외부 호출이므로 병렬로 실행한다.
+        fx_rate, quotes = await asyncio.gather(
+            self._us_provider.fetch_usdkrw(),
+            self._us_provider.fetch_quotes(self._us_targets),
+        )
         return {
             "fx_rate": fx_rate,
-            "items": await self._fetch_us_caps(fx_rate),
+            "items": self._build_us_items(quotes, fx_rate),
         }
 
     @staticmethod
