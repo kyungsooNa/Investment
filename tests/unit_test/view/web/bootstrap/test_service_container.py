@@ -325,7 +325,7 @@ def test_service_container_creates_universe_and_tasks(patched_service_container_
     assert intraday_theme_kwargs["ranking_task"] is ctx.ranking_task
     assert intraday_theme_kwargs["theme_daily_leader_service"] is ctx.theme_daily_leader_service
     assert ctx.strategy_log_report_task is patched_service_container_deps["StrategyLogReportTask"].return_value
-    assert ctx.market_cap_gap_service is patched_service_container_deps["MarketCapGapService"].return_value
+    assert ctx.market_cap_gap_service is patched_service_container_deps["MarketCapGapService"].build_default.return_value
     assert patched_service_container_deps["MarketCapGapReportTask"].call_count == 2
 
 
