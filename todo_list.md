@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-08 (1-5 캡처 QC 1주차 판정 + 캡처 후보 랭킹 보충 + 2-2 내부 budget 실측 종결 + Pool B 캡처 우회 결정)
+최종 업데이트: 2026-07-11 (#653 시가총액/미국주식 UI 코드리뷰 후속 M-3 추가)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -30,7 +30,7 @@
    - 1-8 백테스트 재실행 (CLI 노출 완료 #619 — PIT 후보 부재로 blocked, 2026-07-03 파일럿 판정)
    - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (dry-run 검증 후 — O-1 #621/O-2 완료)
 5. **[조건부·저위험 상시]**
-   - Pool B 완화 (**캡처 우회 적용 2026-07-08 — 트레이딩 완화는 시장 회복 후 재판단**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 · T-0/R-6 (선택/관찰)
+   - Pool B 완화 (**캡처 우회 적용 2026-07-08 — 트레이딩 완화는 시장 회복 후 재판단**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 · M-3 #653 UI 리뷰 후속 (**캐시버스트·fx null 2건은 즉시 수정 권장**) · T-0/R-6 (선택/관찰)
 
 ---
 
@@ -170,6 +170,33 @@
 
 - [x] `docs/backtest.md`(본문은 #619 슬리피지/스프레드 CLI까지 이미 반영, 날짜만 동기화)·`CODEBASE_SUMMARY.md`(bootstrap 분해 진전·EventShadowManager 분리·해외/테마 계층·브로커 계층 계측 4곳 반영) 갱신 완료 (2026-07-05).
 - 감시(조치 아님): `view/web/bootstrap/service_container.py`(1,004줄 — 2026-07-08 기준: 07-02 902 → 07-05 962 → +42줄, 증가세 지속으로 경고 기울기)가 web_app_initializer 비대화의 재발 패턴인지 주기 점검. `scheduler/strategy_scheduler.py` 2,153줄 / `services/strategy_log_report_service.py` 2,144줄(정체) — 분해는 3-4 재승격과 함께 진행.
+
+### M-3. 시가총액/미국주식 UI 하드닝 후속 [#653 코드리뷰 xhigh, 2026-07-11]
+
+#653(marketcap/overseas UI 하드닝)의 취지는 유효하나, 리뷰에서 즉시 수정 2건 + 하드닝 보완 4건 + 중복 정리 후속을 확인.
+
+**즉시 수정 (버그)**
+
+- [ ] **marketcap.html 캐시버스팅 갱신** — #653이 marketcap.js를 XSS·경쟁조건 방어로 재작성했지만 `marketcap.html:18`은 `?v=1` 그대로(같은 커밋에서 overseas.html은 v=4로 올림). 캐시된 구버전(무방비) 스크립트가 계속 실행돼 XSS 수정이 미배포와 동일 → `?v=2`로 1줄 수정.
+- [ ] **환율 null → "USD/KRW 0" 오표시** — `fetch_usdkrw()`가 None 반환 시 `Number(null)===0`이라 '환율 정보 없음' 분기 미도달, 잘못된 환율 0이 표시됨(`overseas.js:243`). null/undefined 선제 검사.
+
+**하드닝 보완 (#653과 같은 클래스)**
+
+- [ ] 잔고 조회의 거래소 기준이 다른 탭에 숨은 셀렉트 — '보유·주문' 탭의 잔고 조회(`overseas.js:260`)가 '시장 개요' 탭의 `overseas-exchange` 값을 읽음(탭 분리로 신규 노출). 거래소 선택을 orders 패널에 노출하거나 `overseas-order-exchange` 재사용.
+- [ ] `loadOverseasMarketCap` stale-response 가드 — marketcap.js에 넣은 시퀀스 가드가 같은 커밋의 신규 로더(`overseas.js:213`)엔 없음.
+- [ ] catch 블록 진단정보 소실 — 새 catch들이 오류 객체를 console.error 없이 삼킴(`marketcap.js:118`, overseas.js 7곳). 화면 비노출은 유지하되 `console.error(e)` 추가.
+- [ ] 가용성 확인 1회성 — `_refreshOverseasAvailability`가 init 1회뿐(`overseas.js:465`)이라 일시 실패/모드 변경이 버튼 상태에 미반영. 재시도 또는 기존 3s 배너 타이머 편승 검토.
+
+**중복 정리 (별도 리팩토링 PR 권장)**
+
+- [ ] **escapeHtml 단일화(깊이 수정)** — 페이지별 `_escapeMarketCapHtml`/`_escapeOverseasHtml` 2벌이 추가됐는데 정작 전 페이지 공용 `common.js:56` escapeHtml은 작은따옴표 미이스케이프·falsy→`''` 상태로 방치. 공용본을 강화하고 두 파일이 호출하도록 통합(공유본을 쓰는 ranking.js 등도 수혜).
+- [ ] `_readOverseasJson`/오류 렌더러 common.js 승격 — 동일 응답검증 프로토콜·한국어 문구가 marketcap.js에 인라인 중복(`marketcap.js:66`), `_showMarketCapError`/`_showOverseasError` 렌더러 2벌.
+- [ ] MarketCapGapService 조립 단일화 — 라우트(`stock.py:295`) 지연 조립이 `service_container.py`(:303 overseas_us→None 정책, :322 조립)와 2원화. 조립을 컨테이너로 이동, 라우트는 읽기만.
+- [ ] KRW/숫자 포매터 통일 — `_formatKrwMarketCap`(`overseas.js:49`)이 공용 `formatTradingValue`(조/억) 대신 16자리 콤마 문자열 출력, `_formatUsd`(`overseas.js:30`)는 콤마 미제거로 콤마 문자열이 '-' 소실 — 일괄 정리.
+- [ ] tests/frontend 러너 공용화 — `run_*_dom_tests.mjs` 7개가 동일한 test/assert/PASS-FAIL 러너 보일러플레이트 복제 → 공용 `harness.mjs` 추출.
+- [ ] (선택) `get_us_market_caps` 병렬화 — fx·시세가 독립인데 순차 await(`market_cap_gap_service.py:364`)로 라우트 12s 예산 소모 → `asyncio.gather`.
+
+주요 파일: `view/web/templates/marketcap.html`, `view/web/static/js/marketcap.js`, `view/web/static/js/overseas.js`, `view/web/static/js/common.js`, `view/web/routes/stock.py`, `view/web/bootstrap/service_container.py`, `services/market_cap_gap_service.py`, `tests/frontend/`
 
 ---
 
