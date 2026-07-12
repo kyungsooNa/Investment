@@ -29,7 +29,6 @@ from repositories.stock_repository import StockRepository
 from repositories.streaming_stock_repo import StreamingStockRepo
 from scheduler.dispatcher.time_dispatcher import TimeDispatcher
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
-from strategies.debug.strategy_debug_runner import StrategyDebugRunner
 from scheduler.ticket_queue.dlq_manager import DlqManager
 from scheduler.ticket_queue.message_broker import MessageBroker
 from scheduler.worker.worker_pool import WorkerPool
@@ -44,7 +43,6 @@ from services.minervini_stage_service import MinerviniStageService
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from services.newhigh_service import NewHighService
 from services.oneil_universe_service import OneilUniverseService
-from services.newhigh_strategy_coverage_backtest_service import NewHighStrategyCoverageBacktestService
 from services.theme_classification_collector_service import ThemeClassificationCollectorService
 from services.us_market_calendar_service import USMarketCalendarService
 from services.theme_daily_leader_service import ThemeDailyLeaderService
@@ -65,7 +63,6 @@ from services.event_shadow_journal_service import EventShadowJournalService
 from services.overseas_candidate_service import OverseasCandidateService
 from services.overseas_position_sizing_service import OverseasPositionSizingService, extract_fx_krw_per_usd
 from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
-from services.post_market_replay_audit_service import PostMarketReplayAuditService
 from services.strategy_log_report_service import StrategyLogReportService
 from task.background.after_market.after_market_reconcile_task import AfterMarketReconcileTask
 from task.background.after_market.cache_warmup_task import CacheWarmupTask
@@ -80,8 +77,6 @@ from task.background.after_market.premium_watchlist_generator_task import Premiu
 from task.background.after_market.ranking_task import RankingTask
 from task.background.after_market.strategy_log_report_task import StrategyLogReportTask
 from task.background.after_market.theme_daily_leader_report_task import ThemeDailyLeaderReportTask
-from task.background.after_market.post_market_replay_audit_task import PostMarketReplayAuditTask
-from task.background.after_market.newhigh_strategy_coverage_backtest_task import NewHighStrategyCoverageBacktestTask
 from task.background.after_market.overseas_dryrun_task import OverseasDryRunTask
 from task.background.always_on.notification_queue_task import NotificationQueueTask
 from task.background.intraday.opening_position_reconcile_task import OpeningPositionReconcileTask
@@ -90,6 +85,7 @@ from task.background.intraday.program_capture_subscription_task import ProgramCa
 from task.background.intraday.theme_intraday_leader_alert_task import ThemeIntradayLeaderAlertTask
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from view.web.bootstrap.runtime_mode import RuntimeMode
+from view.web.bootstrap.backtest_task_bootstrap import BacktestTaskBootstrap
 from view.web.market_mode_utils import is_market_enabled
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -780,44 +776,7 @@ class ServiceContainer:
                     worker_pool=ctx.worker_pool,
                     rejection_distribution_service=ctx.rejection_distribution_service,
                 )
-                ctx.post_market_replay_audit_task = PostMarketReplayAuditTask(
-                    audit_service=PostMarketReplayAuditService(
-                        stock_query_service=ctx.stock_query_service,
-                        universe_service=ctx.oneil_universe_service,
-                        indicator_service=ctx.indicator_service,
-                        market_clock=ctx.market_clock,
-                        backtest_journal_repository=ctx.backtest_journal_repository,
-                        scheduler_store=StrategySchedulerStore(logger=ctx.logger),
-                        debug_runner_factory=StrategyDebugRunner,
-                        virtual_trade_service=ctx.virtual_trade_service,
-                        log_dir=os.path.join(ctx.logger.log_dir, "strategies"),
-                        program_provider=getattr(ctx.broker, "_client", ctx.broker),
-                        env=ctx.env,
-                        logger=ctx.logger,
-                    ),
-                    mcs=ctx._mcs,
-                    market_clock=ctx.market_clock,
-                    logger=ctx.logger,
-                    worker_pool=ctx.worker_pool,
-                )
-                ctx.newhigh_strategy_coverage_backtest_task = NewHighStrategyCoverageBacktestTask(
-                    coverage_service=NewHighStrategyCoverageBacktestService(
-                        stock_repository=ctx.stock_repository,
-                        stock_query_service=ctx.stock_query_service,
-                        universe_service=ctx.oneil_universe_service,
-                        indicator_service=ctx.indicator_service,
-                        market_clock=ctx.market_clock,
-                        backtest_journal_repository=ctx.backtest_journal_repository,
-                        debug_runner_factory=StrategyDebugRunner,
-                        program_provider=getattr(ctx.broker, "_client", ctx.broker),
-                        env=ctx.env,
-                        logger=ctx.logger,
-                    ),
-                    mcs=ctx._mcs,
-                    market_clock=ctx.market_clock,
-                    logger=ctx.logger,
-                    worker_pool=ctx.worker_pool,
-                )
+                BacktestTaskBootstrap(ctx).run()
                 ctx.after_market_reconcile_task = AfterMarketReconcileTask(
                     order_execution_service=ctx.order_execution_service,
                     notification_service=ctx.notification_service,
