@@ -53,9 +53,19 @@ function showToast(message, type = 'success') {
     }, 3000);
 }
 
-function escapeHtml(str) {
-    if (!str) return '';
-    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function escapeHtml(value) {
+    // null/undefined/숫자 등도 안전하게 문자열화하고, 작은따옴표까지 이스케이프한다.
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    })[char]);
+}
+
+function showError(targetEl, message) {
+    if (targetEl) targetEl.innerHTML = `<p class="error">${escapeHtml(message)}</p>`;
 }
 
 // ==========================================
@@ -71,6 +81,19 @@ function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     return fetch(url, { ...options, signal: controller.signal })
         .finally(() => clearTimeout(timer));
+}
+
+// fetch 응답을 안전하게 JSON 으로 읽는다: HTTP 오류/파싱 실패/비객체를 { json, error } 로 정규화.
+async function readJsonResponse(res) {
+    if (!res.ok) return { json: null, error: `HTTP ${res.status}` };
+    try {
+        const json = await res.json();
+        return json && typeof json === 'object'
+            ? { json, error: null }
+            : { json: null, error: '응답 형식이 올바르지 않습니다.' };
+    } catch (_) {
+        return { json: null, error: '응답을 처리하지 못했습니다.' };
+    }
 }
 
 function isAbortError(error) {

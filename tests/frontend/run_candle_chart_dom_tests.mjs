@@ -11,6 +11,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
+import { test, assert, run } from "./harness.mjs";
 
 const CANDLE_JS = resolve(import.meta.dirname, "../../view/web/static/js/candle_chart.js");
 
@@ -89,9 +90,6 @@ function makeFakeChart(len) {
   };
 }
 
-const tests = [];
-const test = (name, fn) => tests.push({ name, fn });
-function assert(cond, msg) { if (!cond) throw new Error(msg); }
 
 test("renderStockChart 가 stageBandPlugin 을 캔들보다 먼저 그리도록 등록한다", async () => {
   const window = makeWindow();
@@ -137,15 +135,4 @@ test("minervini_stage 가 없으면 밴드를 그리지 않는다 (no-op, 회귀
   assert(fake.calls.fillRect.length === 0, "stage 데이터 없는데 밴드가 그려짐");
 });
 
-let failed = 0;
-for (const { name, fn } of tests) {
-  try {
-    await fn();
-    console.log(`PASS  ${name}`);
-  } catch (e) {
-    failed += 1;
-    console.error(`FAIL  ${name}\n      ${e.message}`);
-  }
-}
-console.log(`\n${tests.length - failed}/${tests.length} passed`);
-process.exit(failed === 0 ? 0 : 1);
+await run();

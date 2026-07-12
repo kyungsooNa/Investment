@@ -319,7 +319,7 @@ class ServiceContainer:
                     stock_classification_repository=getattr(ctx, "theme_classification_repository", None),
                 )
                 if needs_batch:
-                    ctx.market_cap_gap_service = MarketCapGapService(
+                    ctx.market_cap_gap_service = MarketCapGapService.build_default(
                         broker=ctx.broker,
                         logger=ctx.logger,
                     )

@@ -30,7 +30,7 @@
    - 1-8 백테스트 재실행 (CLI 노출 완료 #619 — PIT 후보 부재로 blocked, 2026-07-03 파일럿 판정)
    - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (dry-run 검증 후 — O-1 #621/O-2 완료)
 5. **[조건부·저위험 상시]**
-   - Pool B 완화 (**캡처 우회 적용 2026-07-08 — 트레이딩 완화는 시장 회복 후 재판단**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 · M-3 #653 UI 리뷰 후속 (**캐시버스트·fx null 2건은 즉시 수정 권장**) · T-0/R-6 (선택/관찰)
+   - Pool B 완화 (**캡처 우회 적용 2026-07-08 — 트레이딩 완화는 시장 회복 후 재판단**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 · M-3 #653 UI 리뷰 후속 (**완료 2026-07-11 — 즉시수정·하드닝·중복정리 12건**) · T-0/R-6 (선택/관찰)
 
 ---
 
@@ -187,14 +187,14 @@
 - [x] catch 블록 진단정보 소실 — overseas.js 7곳·marketcap.js 1곳 catch에 `console.error` 추가(화면 문구는 불변).
 - [x] 가용성 확인 1회성 — `setOverseasTab` 전환마다 `_refreshOverseasAvailability` 재호출(init 1회 + 탭 전환 이벤트 구동).
 
-**중복 정리 (별도 리팩토링 PR 권장 — 미착수)**
+**중복 정리 (별도 리팩토링 PR — [완료 2026-07-11])**
 
-- [ ] **escapeHtml 단일화(깊이 수정)** — 페이지별 `_escapeMarketCapHtml`/`_escapeOverseasHtml` 2벌이 추가됐는데 정작 전 페이지 공용 `common.js:56` escapeHtml은 작은따옴표 미이스케이프·falsy→`''` 상태로 방치. 공용본을 강화하고 두 파일이 호출하도록 통합(공유본을 쓰는 ranking.js 등도 수혜).
-- [ ] `_readOverseasJson`/오류 렌더러 common.js 승격 — 동일 응답검증 프로토콜·한국어 문구가 marketcap.js에 인라인 중복(`marketcap.js:66`), `_showMarketCapError`/`_showOverseasError` 렌더러 2벌.
-- [ ] MarketCapGapService 조립 단일화 — 라우트(`stock.py:295`) 지연 조립이 `service_container.py`(:303 overseas_us→None 정책, :322 조립)와 2원화. 조립을 컨테이너로 이동, 라우트는 읽기만.
-- [ ] KRW/숫자 포매터 통일 — `_formatKrwMarketCap`(`overseas.js:49`)이 공용 `formatTradingValue`(조/억) 대신 16자리 콤마 문자열 출력, `_formatUsd`(`overseas.js:30`)는 콤마 미제거로 콤마 문자열이 '-' 소실 — 일괄 정리.
-- [ ] tests/frontend 러너 공용화 — `run_*_dom_tests.mjs` 7개가 동일한 test/assert/PASS-FAIL 러너 보일러플레이트 복제 → 공용 `harness.mjs` 추출.
-- [ ] (선택) `get_us_market_caps` 병렬화 — fx·시세가 독립인데 순차 await(`market_cap_gap_service.py:364`)로 라우트 12s 예산 소모 → `asyncio.gather`.
+- [x] **escapeHtml 단일화(깊이 수정)** — `common.js` escapeHtml을 `String(v??'')` 강제변환 + 작은따옴표 이스케이프로 하드닝하고 `showError`를 공용화. `_escapeMarketCapHtml`/`_escapeOverseasHtml`/`_showMarketCapError`/`_showOverseasError` 제거하고 공용본 호출로 통합(ranking.js·notifications.js도 하드닝 수혜).
+- [x] `readJsonResponse`/오류 렌더러 common.js 승격 — `_readOverseasJson`을 `readJsonResponse`로 common.js에 이관, overseas.js 7곳 + marketcap.js 응답검증 블록이 공용본 사용.
+- [x] MarketCapGapService 조립 단일화 — `MarketCapGapService.build_default(broker, logger)` 팩토리 도입, `service_container.py`와 `stock.py` 라우트가 모두 이 진입점 사용(생성 인자 변경 시 1곳 수렴). 라우트 지연 조립은 미개방 시 불필요 생성을 막는 이점이 있어 유지.
+- [x] KRW/숫자 포매터 통일 — `_formatKrwMarketCap`이 공용 `formatTradingValue`(조/억) 위임(무효값 '-' 가드 유지), `_formatUsd`는 콤마 제거 후 파싱.
+- [x] tests/frontend 러너 공용화 — 공용 `tests/frontend/harness.mjs`(test/assert/run + `applyCommonStubs`) 추출, `run_*_dom_tests.mjs` 7개가 로컬 러너 보일러플레이트 제거하고 import.
+- [x] `get_us_market_caps` 병렬화 — `asyncio.gather(fetch_usdkrw, fetch_quotes)` + `_build_us_items` 헬퍼로 fx·시세 동시 조회.
 
 주요 파일: `view/web/templates/marketcap.html`, `view/web/static/js/marketcap.js`, `view/web/static/js/overseas.js`, `view/web/static/js/common.js`, `view/web/routes/stock.py`, `view/web/bootstrap/service_container.py`, `services/market_cap_gap_service.py`, `tests/frontend/`
 

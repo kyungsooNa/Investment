@@ -292,7 +292,7 @@ async def get_overseas_market_cap():
 
     service = getattr(ctx, "market_cap_gap_service", None)
     if service is None:
-        service = MarketCapGapService(broker=ctx.broker, logger=ctx.logger)
+        service = MarketCapGapService.build_default(broker=ctx.broker, logger=ctx.logger)
         ctx.market_cap_gap_service = service
     try:
         data = await asyncio.wait_for(service.get_us_market_caps(), timeout=12.0)

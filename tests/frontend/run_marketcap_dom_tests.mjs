@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
+import { applyCommonStubs, test, assert, run } from "./harness.mjs";
 
 const MARKETCAP_JS = process.env.MARKETCAP_JS_PATH
   ? resolve(process.env.MARKETCAP_JS_PATH)
@@ -25,9 +26,8 @@ function makeWindow(fetchWithTimeout) {
     runScripts: "outside-only",
   });
   const { window } = dom;
-  window.showLoading = (el, message) => { el.innerHTML = `<p class="loading">${message}</p>`; };
+  applyCommonStubs(window);
   window.fetchWithTimeout = fetchWithTimeout;
-  window.formatMarketCap = value => `${value}억`;
   window.eval(readFileSync(MARKETCAP_JS, "utf8"));
   return window;
 }
@@ -42,11 +42,6 @@ function deferred() {
   return { promise, resolve };
 }
 
-const tests = [];
-const test = (name, fn) => tests.push({ name, fn });
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
 
 test("늦게 끝난 이전 탭 요청이 최신 랭킹을 덮어쓰지 않는다", async () => {
   const pending = [];
@@ -127,16 +122,4 @@ test("비정상 숫자는 NaN 대신 대체 기호로 표시한다", async () =>
   assert(text.includes("-"), "비정상 숫자는 대체 기호로 표시되어야 함");
 });
 
-let failed = 0;
-for (const { name, fn } of tests) {
-  try {
-    await fn();
-    console.log(`PASS  ${name}`);
-  } catch (error) {
-    failed += 1;
-    console.error(`FAIL  ${name}\n      ${error.message}`);
-  }
-}
-
-console.log(`\n${tests.length - failed}/${tests.length} passed`);
-process.exit(failed === 0 ? 0 : 1);
+await run();

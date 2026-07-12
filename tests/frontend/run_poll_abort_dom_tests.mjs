@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
+import { test, assert, run } from "./harness.mjs";
 
 const COMMON_JS = resolve(import.meta.dirname, "../../view/web/static/js/common.js");
 const SYSTEM_JS = resolve(import.meta.dirname, "../../view/web/static/js/system.js");
@@ -57,9 +58,6 @@ async function withConsoleErrorSpy(window, fn) {
   return calls;
 }
 
-const tests = [];
-const test = (name, fn) => tests.push({ name, fn });
-function assert(cond, msg) { if (!cond) throw new Error(msg); }
 
 test("common updateStatus ignores fetch AbortError", async () => {
   const window = makeWindow("/");
@@ -132,15 +130,4 @@ test("system polling fetches do not force abort signals", async () => {
   assert(calls.every(call => call.hasSignal === false), "system polling should not pass AbortController signals");
 });
 
-let failed = 0;
-for (const { name, fn } of tests) {
-  try {
-    await fn();
-    console.log(`PASS  ${name}`);
-  } catch (e) {
-    failed += 1;
-    console.error(`FAIL  ${name}\n      ${e.message}`);
-  }
-}
-console.log(`\n${tests.length - failed}/${tests.length} passed`);
-process.exit(failed === 0 ? 0 : 1);
+await run();
