@@ -37,7 +37,7 @@ def mock_deps():
         ("osb", patch("view.web.bootstrap.strategy_factory.OneilSqueezeBreakoutStrategy", autospec=True)),
         ("pp", patch("view.web.bootstrap.strategy_factory.OneilPocketPivotStrategy", autospec=True)),
         ("htf", patch("view.web.bootstrap.strategy_factory.HighTightFlagStrategy", autospec=True)),
-        ("cm", patch("view.web.bootstrap.service_container.CacheStore", autospec=True)),
+        ("cm", patch("view.web.bootstrap.repository_bootstrap.CacheStore", autospec=True)),
         ("logger", patch("view.web.web_app_initializer.Logger", autospec=True)),
         ("tn", patch("view.web.bootstrap.config_bootstrap.TelegramNotifier", autospec=True)),
         ("tr", patch("view.web.bootstrap.config_bootstrap.TelegramReporter", autospec=True)),

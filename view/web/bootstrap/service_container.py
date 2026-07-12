@@ -19,13 +19,10 @@ from config.config_loader import (
     RiskGateConfig,
 )
 from core.account_snapshot import AccountSnapshotCache
-from core.cache.cache_store import CacheStore
 from core.market_clock import MarketClock
-from core.performance_profiler import PerformanceProfiler
 from repositories.execution_strength_repo import ExecutionStrengthRepository
 from repositories.rs_rating_repository import RSRatingRepository
 from repositories.stock_classification_repository import StockClassificationRepository
-from repositories.stock_repository import StockRepository
 from repositories.streaming_stock_repo import StreamingStockRepo
 from scheduler.dispatcher.time_dispatcher import TimeDispatcher
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
@@ -86,6 +83,7 @@ from task.background.intraday.theme_intraday_leader_alert_task import ThemeIntra
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from view.web.bootstrap.runtime_mode import RuntimeMode
 from view.web.bootstrap.backtest_task_bootstrap import BacktestTaskBootstrap
+from view.web.bootstrap.repository_bootstrap import RepositoryBootstrap
 from view.web.market_mode_utils import is_market_enabled
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -197,17 +195,7 @@ class ServiceContainer:
         elif hasattr(config_dict, "dict"):
             config_dict = config_dict.dict()
 
-        perf_log = config_dict.get("performance_logging", False)
-        perf_threshold = config_dict.get("performance_threshold", 0.1)
-        ctx.pm = PerformanceProfiler(enabled=perf_log, threshold=perf_threshold)
-
-        try:
-            cache_store = CacheStore(config_dict)
-            cache_store.set_logger(ctx.logger)
-            ctx.stock_repository = StockRepository(logger=ctx.logger)
-        except Exception as e:
-            ctx.logger.critical(f"[ServiceBootstrap:Repository] 초기화 실패: {e}", exc_info=True)
-            raise
+        cache_store = RepositoryBootstrap(ctx).run(config_dict)
 
         try:
             ctx.rs_rating_repository = RSRatingRepository(logger=ctx.logger)
