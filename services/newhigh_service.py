@@ -2,10 +2,10 @@ from __future__ import annotations
 import logging
 from typing import Optional, TYPE_CHECKING
 from common.types import ResCommonResponse
+from interfaces.refresh_task import NewHighRefreshTask
 
 if TYPE_CHECKING:
     from repositories.stock_repository import StockRepository
-    from task.background.after_market.newhigh_task import NewHighTask
 
 
 class NewHighService:
@@ -20,7 +20,7 @@ class NewHighService:
     def __init__(
         self,
         stock_repository: Optional["StockRepository"] = None,
-        newhigh_task: Optional["NewHighTask"] = None,
+        newhigh_task: Optional[NewHighRefreshTask] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self._stock_repository = stock_repository

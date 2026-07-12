@@ -6,6 +6,7 @@ import time
 import logging
 from datetime import datetime, timedelta
 from contextlib import contextmanager
+from typing import Awaitable, Callable
 
 from repositories.program_trading_repo import ProgramTradingRepo
 
@@ -30,8 +31,13 @@ class ProgramTradingStreamService:
     REGULAR_SESSION_CLOSE_TIME = "15:30"
     CLOSING_AUCTION_START_TIME = "15:20"
 
-    def __init__(self, logger=None):
+    def __init__(
+        self,
+        logger=None,
+        after_market_runner: Callable[..., Awaitable[None]] | None = None,
+    ):
         self.logger = logger if logger else logging.getLogger(__name__)
+        self._after_market_runner = after_market_runner
 
         # 메모리 캐시 (성능 최적화)
         self._pt_history: dict = {}
@@ -681,8 +687,6 @@ class ProgramTradingStreamService:
             self.logger.error(f"프로그램매매 시간별 tick 알림 루프 종료: {e}", exc_info=True)
 
     async def _after_market_db_check_loop(self) -> None:
-        from scheduler.after_market_loop import run_after_market_loop
-
         async def _on_market_closed(latest_trading_date: str) -> None:
             if self._last_db_check_report_date == latest_trading_date:
                 return
@@ -690,7 +694,11 @@ class ProgramTradingStreamService:
             if sent:
                 self._last_db_check_report_date = latest_trading_date
 
-        await run_after_market_loop(
+        if self._after_market_runner is None:
+            self.logger.warning("장마감 실행기가 주입되지 않아 프로그램매매 DB 점검을 생략합니다.")
+            return
+
+        await self._after_market_runner(
             mcs=self._market_calendar_service,
             market_clock=self._market_clock,
             logger=self.logger,

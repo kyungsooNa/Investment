@@ -8,6 +8,7 @@ from core.market_clock import MarketClock
 from services.newhigh_strategy_coverage_backtest_service import (
     NewHighStrategyCoverageBacktestService,
 )
+from strategies.debug.strategy_debug_runner import StrategyDebugRunner
 
 
 def _fake_strategy_factory(**kwargs):
@@ -60,6 +61,7 @@ def _make_service(*, stock_repository=None, repo=None, strategy_factory=_fake_st
         market_clock=MarketClock(),
         backtest_journal_repository=repo,
         strategy_factory=strategy_factory,
+        debug_runner_factory=StrategyDebugRunner,
         env=env or SimpleNamespace(is_paper_trading=False),
         logger=MagicMock(),
     ), stock_repository, repo

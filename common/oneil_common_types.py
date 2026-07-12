@@ -1,0 +1,322 @@
+# common/oneil_common_types.py
+from dataclasses import dataclass
+import os
+from common.base_strategy_config import BaseStrategyConfig
+
+@dataclass
+class OneilUniverseConfig(BaseStrategyConfig):
+    """오닐 유니버스(종목 발굴) 관련 설정."""
+    # 유니버스 필터
+    min_avg_trading_value_5d: int = 10_000_000_000  # 5일 평균 거래대금 100억 원
+    near_52w_high_pct: float = 20.0                  # 52주 최고가 대비 20% 이내
+
+    # 워치리스트 갱신 시각 (장 시작 후 경과 분)
+    watchlist_refresh_minutes: tuple = (10, 30, 60, 90, 60*3, 60*5)
+
+    # 스퀴즈 조건
+    bb_period: int = 20
+    multiplier: float = 2.0 # 표준편차의 배수
+    squeeze_tolerance: float = 1.2  # BB 폭이 20일 최소폭의 1.2배 이내
+
+    # 마켓 타이밍
+    kosdaq_etf_code: str = "229200"   # KODEX 코스닥150
+    kospi_etf_code: str = "069500"    # KODEX 200
+    market_ma_period: int = 20
+    market_ma_rising_days: int = 3
+    market_ma_min_net_change_pct: float = -0.10
+    market_ma_daily_dip_tolerance_pct: float = -0.20
+    market_ma_hard_decline_pct: float = -0.50
+
+    # V2 스코어링
+    rs_period_days: int = 63
+    rs_top_percentile: float = 10.0
+    rs_score_points: float = 30.0
+    rs_rating_min: int = 70         # RS Rating 최소 기준 (0=비활성, 70~80 권장)
+    profit_growth_threshold_pct: float = 25.0
+    profit_growth_score_points: float = 20.0
+    api_chunk_size: int = 10
+
+    # 전일기준우량주 / 당일급등주 설정
+    premium_stocks_file: str = os.path.join("data", "premium_stocks.json")
+    premium_stocks_kospi_size: int = 20
+    premium_stocks_kosdaq_size: int = 40
+
+    premium_stocks_cap_min: int = 200_000_000_000   # 2000억
+    premium_stocks_cap_max: int = 20_000_000_000_000 # 20조
+    daily_surge_size: int = 30
+    daily_surge_min_avg_trading_value_5d: int = 5_000_000_000
+    daily_surge_cap_min: int = 100_000_000_000
+    daily_surge_cap_max: int = 100_000_000_000_000
+
+    max_watchlist: int = premium_stocks_kospi_size + premium_stocks_kosdaq_size + daily_surge_size # 최대 감시 종목 수
+
+    # 종목 상태 필터 (주문 정책과 동일 계열의 위험 종목을 유니버스 단계에서 제외)
+    security_status_filter_enabled: bool = True
+    exclude_etf_universe: bool = True
+    block_managed_issue: bool = True
+    block_investment_warning: bool = True
+    block_investment_caution: bool = False
+    blocked_stock_status_codes: tuple = ("51", "52", "53", "58")
+    blocked_market_warning_codes: tuple = ("2", "3")
+
+    # 돌파 기준 기간 (데이터 수집용)
+    high_breakout_period: int = 20
+
+    # 스마트 머니 (수급) 스코어링
+    smart_money_lookback_days: int = 3            # 3일 누적 기준
+    smart_money_to_mcap_pct: float = 0.5          # 시총의 0.5% 이상 매집 시
+    smart_money_to_tv_pct: float = 10.0           # 또는 누적 거래대금의 10% 이상 매집 시
+    smart_money_score_points: float = 15.0        # +15점 부여
+
+    # 주도 테마(leading group) 스코어링 — 동일 테마에 선정 종목이 다수 몰릴수록 가산
+    theme_min_leaders: int = 3                    # 테마당 최소 선정 종목 수(미만은 노이즈, 0점)
+    theme_score_per_leader: float = 3.0           # 임계 이상부터 선정 종목 1개당 가산점
+    theme_score_points: float = 10.0              # 테마 스코어 상한(캡)
+
+@dataclass
+class OneilBreakoutConfig(BaseStrategyConfig):
+    """오닐 돌파 매매 전략(Strategy B) 설정."""
+    # 매수 조건
+    volume_breakout_multiplier: float = 1.5       # 20일 평균 거래량의 150%
+    program_net_buy_min: int = 0                  # pgtr_ntby_qty > 0
+    program_to_trade_value_pct: float = 10.0      # (프로그램순매수금/거래대금) >= 10%
+    program_to_market_cap_pct: float = 0.5        # (프로그램순매수금/시총) >= 0.5%
+
+    # 매도 조건
+    stop_loss_pct: float = -5.0
+    trailing_stop_pct: float = 8.0
+    time_stop_days: int = 5
+    time_stop_box_range_pct: float = 2.0
+    trend_exit_ma_period: int = 10
+
+    # 자금 관리
+    total_portfolio_krw: int = 10_000_000
+    position_size_pct: float = 5.0
+    min_qty: int = 1
+
+    # [추가] 돌파 품질: 현재가가 당일 변동폭(고가-저가)의 상단 70% 위에 있어야 함
+    osb_min_candle_relative_pos: float = 0.7
+
+    # [추가] 스마트 머니 유연화 기준
+    sm_flexible_pg_ratio: float = 7.0           # 프로그램 비중이 약간 낮아도(7%)
+    sm_flexible_execution_strength: float = 140.0 # 체결강도가 압도적(140%)이면 인정
+
+    # [추가] 시가총액 대비 프로그램 매수 기본 허들 (중소형주 기준)
+    program_to_market_cap_pct: float = 0.3
+
+    execution_strength_min: float = 120.0  # 체결강도 기본 하한선
+    osb_max_extension_pct: float = 2.0     # 돌파 후 최대 추격 허용 범위 (2%)
+    early_partial_profit_pct: float = 7.0  # 조기 부분익절 기준 (+7%)
+    early_partial_sell_ratio: float = 0.3  # 조기 부분익절 비율 (30%)
+    cooldown_days: int = 3                 # 손절 후 재진입 금지 기간 (일)
+
+    # [신규] 전천후 방어막 4종
+    # 1. 스퀴즈 런타임 게이트 (Pool A 전용)
+    osb_runtime_squeeze_tolerance: float = 1.2  # prev_bb_width <= bb_width_min_20d * 1.2
+    # 2. 다이내믹 거래량 필터 (매직넘버 config화 포함)
+    baseline_min_vol_ratio: float = 0.3         # 전 시간대 절대 하한 (기존 하드코딩 0.3 승격)
+    morning_cutoff_hour: int = 10               # 오전장 종료 기준 시 (미만 = 오전장)
+    morning_min_vol_ratio: float = 0.4          # 오전 추가 절대 하한 (baseline보다 빡빡)
+    afternoon_cutoff_hour: int = 13             # 오후장 시작 기준 시 (이상 = 오후장)
+    afternoon_volume_boost: float = 1.0         # 오후장 multiplier 가산 (1.5 → 2.5)
+    # 3. 안착 버퍼 (HTF의 breakout_min_buffer_pct 차용)
+    breakout_min_buffer_pct: float = 0.5        # high_20d 대비 최소 +0.5% 돌파 요구
+    # 4. 트레일링 스탑 수익 게이트
+    trailing_min_peak_profit_pct: float = 5.0   # peak_pnl >= 5% 도달 후에만 트레일링 발동
+
+@dataclass
+class OSBWatchlistItem:
+    """감시 종목 정보 (Universe Service -> Strategy 전달 객체)."""
+    code: str
+    name: str
+    market: str             # "KOSPI" or "KOSDAQ"
+    high_20d: int           # 20일 최고가 (돌파 기준)
+    ma_20d: float           # 20일 이동평균
+    ma_50d: float           # 50일 이동평균
+    avg_vol_20d: float      # 20일 평균 거래량
+    bb_width_min_20d: float # 최근 20일간 BB 밴드폭 최소값
+    prev_bb_width: float    # 전일 BB 밴드폭
+    w52_hgpr: int           # 52주 최고가
+    avg_trading_value_5d: float  # 5일 평균 거래대금
+    market_cap: int = 0         # 시가총액
+
+    # 스코어링
+    rs_return_3m: float = 0.0
+    rs_score: float = 0.0
+    rs_rating: int = 0              # 1~99 IBD/오닐 RS Rating (0=미계산)
+    profit_growth_score: float = 0.0
+    smart_money_score: float = 0.0
+    theme_score: float = 0.0        # 주도 테마(동일 테마 다수 선정) 가산점
+    total_score: float = 0.0
+
+    # 미너비니 트렌드 템플릿
+    ma_150d: float = 0.0            # 150일 이동평균 (Trend Template)
+    ma_200d: float = 0.0            # 200일 이동평균 (Trend Template)
+    w52_lwpr: int = 0               # 52주 최저가 (장중 저가 기준)
+    minervini_stage: int = 0        # 1~4단계 (0=미계산)
+
+    # Pool 구분 (squeeze 게이트 선택적 적용용)
+    source: str = "pool_a"          # "pool_a" (전일기준 우량주) | "pool_b" (당일 급등주)
+
+    # 리포트 집계용: 신호 생성 직전 20거래일 종가 로그수익률 std × √252
+    volatility_20d_annualized: float | None = None
+
+
+@dataclass
+class OSBPositionState:
+    """보유 포지션 추적 상태."""
+    entry_price: int        # 진입가
+    entry_date: str         # 진입일 (YYYYMMDD)
+    peak_price: int         # 진입 후 최고가 (트레일링 스탑용)
+    breakout_level: int     # 진입 시 20일 최고가
+    last_partial_sell_price: int = 0   # 마지막 부분익절 가격 (0=미실행)
+    breakeven_armed: bool = False       # 부분익절 후 본절스탑 활성화 플래그
+    mfe_pct: float = 0.0   # Maximum Favorable Excursion (진입 후 최대 수익률 %)
+    mae_pct: float = 0.0   # Maximum Adverse Excursion (진입 후 최대 손실률 %)
+
+
+@dataclass
+class OneilPocketPivotConfig(BaseStrategyConfig):
+    """포켓 피봇 & BGU 전략(Strategy C) 설정."""
+    # 공통 스마트 머니 필터
+    program_to_trade_value_pct: float = 10.0      # PG순매수금/거래대금 >= 10%
+    program_to_market_cap_pct: float = 0.3        # PG순매수금/시총 >= 0.3%
+    execution_strength_min: float = 120.0         # 체결강도 >= 120%
+
+    # Entry A: Pocket Pivot
+    pp_ma_proximity_lower_pct: float = -2.0       # MA 대비 하한 (-2%)
+    pp_ma_proximity_upper_pct: float = 4.0        # MA 대비 상한 (+4%)
+    pp_down_day_lookback: int = 10                # 하락일 거래량 비교 기간 (일)
+
+    # Entry B: BGU (Buyable Gap-Up)
+    bgu_gap_pct: float = 4.0                      # 시가 갭 >= 4%
+    bgu_volume_multiplier: float = 3.0            # 50일 평균거래량의 300%
+    bgu_whipsaw_after_minutes: int = 10           # 장 시작 후 10분 경과 후 진입
+
+    # 매도: 손절
+    pp_stop_loss_below_ma_pct: float = -2.0       # PP: 지지MA 대비 -2% 이탈 시 손절
+
+    # 매도: 7주 홀딩 룰
+    holding_rule_days: int = 35                   # 7주 = 35거래일
+    holding_rule_ma_period: int = 50              # 50일선 기준
+    holding_profit_anchor_pct: float = 5.0        # +5% 이상 수익 시 holding_start_date 기록 (1회만)
+
+    # 매도: 부분 익절
+    partial_profit_trigger_pct: float = 15.0      # +15% 도달 시 50% 익절
+    partial_sell_ratio: float = 0.5               # 50% 매도
+
+    # 매도: 하드 스탑
+    hard_stop_from_peak_pct: float = -10.0        # 고점 대비 -10% 하락 시 즉시 청산
+
+    # 자금 관리
+    total_portfolio_krw: int = 10_000_000
+    position_size_pct: float = 5.0
+    min_qty: int = 2                              # 부분 익절을 위해 최소 2주 매수
+
+    # [추가] 1. 거래량 노이즈 제거 필터
+    # 과거 음봉 최대 거래량의 몇 %를 넘어야 인정할 것인가 (예: 0.9 = 90%)
+    pp_down_vol_threshold_ratio: float = 0.9
+
+    # [추가] 2. 스마트 머니 유연화 (상호 보완 조건)
+    # 프로그램 비중이 낮더라도 체결강도가 이 수치 이상이면 통과
+    sm_flexible_pg_ratio: float = 7.0
+    sm_flexible_execution_strength: float = 140.0
+
+    # [추가] 3. 캔들 품질 (몸통 위치)
+    # 0.0(저가) ~ 1.0(고가) 사이에서 현재가가 최소 어디에 위치해야 하는가
+    pp_min_candle_relative_pos: float = 0.5
+    cooldown_days: int = 3                 # 손절 후 재진입 금지 기간 (일)
+
+    # BGU 전용: 진입 시 최소 스마트머니 비중 (거래대금 대비 %)
+    bgu_min_pg_tv_pct: float = 8.0
+
+    # 수급이탈 조기 청산 기준 (진입 시점 대비 비율)
+    smart_money_exit_pg_ratio: float = 0.5    # 진입 시 PG순매수금의 50% 미만으로 감소
+    smart_money_exit_cgld_ratio: float = 0.7  # 진입 시 체결강도의 70% 미만으로 감소
+
+@dataclass
+class PPPositionState:
+    """포켓 피봇 / BGU 포지션 추적 상태."""
+    entry_type: str                     # "PP" or "BGU"
+    entry_price: int                    # 진입가
+    entry_date: str                     # 진입일 (YYYYMMDD)
+    peak_price: int                     # 진입 후 최고가
+    supporting_ma: str                  # PP전용: "10"/"20"/"50" (지지 MA 종류)
+    gap_day_low: int                    # BGU전용: 갭업 당일 장중 저가
+    partial_sold: bool = False          # deprecated (JSON 하위호환용)
+    holding_start_date: str = ""        # 수익 안착일 (+5% 돌파 시 1회만 기록, 7주 룰 기산점)
+    last_partial_sell_price: int = 0    # 마지막 부분익절 가격 (0=미실행, >0=기준가)
+    entry_pg_buy_amount: int = 0        # 진입 시점 PG순매수금액 (수급이탈 기준값)
+    entry_cgld: float = 0.0             # 진입 시점 체결강도 (수급이탈 기준값)
+    breakeven_armed: bool = False       # 부분익절 후 본절스탑 활성화 플래그
+    mfe_pct: float = 0.0               # Maximum Favorable Excursion (진입 후 최대 수익률 %)
+    mae_pct: float = 0.0               # Maximum Adverse Excursion (진입 후 최대 손실률 %)
+
+
+@dataclass
+class HTFConfig(BaseStrategyConfig):
+    """하이 타이트 플래그 전략 설정."""
+    # Phase 1: 깃대 (Pole)
+    pole_lookback_days: int = 40             # 40거래일 스캔
+    pole_min_surge_ratio: float = 1.90       # max(high)/min(low) >= 1.90
+
+    # Phase 2: 깃발 (Flag)
+    flag_min_days: int = 5                   # 최소 횡보 기간 (한국형: Short Stroke 대응)
+    flag_max_days: int = 25                  # 최대 횡보 기간
+    flag_max_drawdown_pct: float = 20.0      # 고점 대비 최대 하락폭 (종가 기준)
+    flag_volume_shrink_ratio: float = 1.2    # 깃발 평균거래량 < 50일평균 * 1.2
+
+    # Phase 3: 돌파 (Breakout)
+    volume_breakout_multiplier: float = 2.0  # 예상거래량 >= 50일평균 * 200%
+    execution_strength_min: float = 120.0    # 체결강도 >= 120%
+
+    # Phase 4: 청산 (Exit)
+    stop_loss_pct: float = -5.0              # 칼손절
+    trailing_ma_period: int = 5              # 5일 MA 트레일링스탑 (HTF 고변동성 대응)
+    trailing_peak_drop_pct: float = -8.0     # 고점 대비 -8% 이탈 시 트레일링스탑
+    partial_profit_trigger_pct: float = 20.0 # +20% 도달 시 부분익절
+    partial_sell_ratio: float = 0.5          # 50% 매도
+
+    # 자금 관리
+    total_portfolio_krw: int = 10_000_000
+    position_size_pct: float = 5.0
+    position_size_scale: float = 0.5         # HTF 고변동성 대응: 기본 비중의 50% 적용
+    min_qty: int = 1
+
+    min_candle_relative_pos: float = 0.7  # 돌파 시 현재가가 당일 변동폭 상단 70% 이상 위치해야 함
+    sm_flexible_pg_ratio : float = 7.0           # 프로그램 비중이 약간 낮아도(7%) — 유연 판정 제거됨(사용 안 함)
+    sm_flexible_execution_strength: float = 150.0 # 체결강도가 압도적(150%)이면 인정 — 유연 판정 제거됨(사용 안 함)
+    program_to_market_cap_pct: float = 0.3        # (프로그램순매수금/시총) >= 0.3%
+    cooldown_days: int = 5                         # 손절 후 재진입 금지 기간 (일, HTF는 더 길게)
+
+    # 필살기: 가짜 신호 방어
+    breakout_min_buffer_pct: float = 0.5          # 돌파 진입 하한: pole_high 대비 +0.5% 안착 확인
+    breakout_max_extension_pct: float = 2.0       # 돌파 진입 상한: pole_high 대비 +2% 초과 시 과확장 거부
+    afternoon_volume_multiplier: float = 3.0      # 오후 12시 이후 거래량 허들 강화 (2.0 → 3.0)
+    afternoon_cutoff_hour: int = 12               # 오후 가중치 적용 기준 시각 (KST)
+
+    # VCP 타이트함: 깃발 최근 N일 일변동폭(고가-저가) 평균이 깃대 변동폭 평균 대비 충분히 축소되었는지
+    vcp_tightness_check_enabled: bool = False    # default off — 관찰 누적 후 hard gate 도입 결정
+    vcp_recent_flag_days: int = 5                # 깃발 마지막 N일 평균
+    vcp_max_tightness_ratio: float = 0.7         # flag_recent_range_avg / pole_range_avg <= 0.7
+
+    # 깃발 기간 20MA 지지: 깃발 종가가 그 시점 20일 MA 대비 일정 % 이상 하락한 적이 없는지
+    ma20_support_check_enabled: bool = False     # default off — 관찰 누적 후 hard gate 도입 결정
+    ma20_support_min_pct: float = -2.0           # 20MA 대비 -2% 이하 종가가 한 번이라도 있으면 거절
+
+    # 돌파 확인 지연: pole_high 돌파 후 N분간 분봉 종가가 임계가 위에 유지되는지 확인
+    breakout_hold_check_enabled: bool = False    # default off — 분봉 API 호출 비용 누적 후 도입 결정
+    breakout_hold_minutes: int = 3               # 최근 N개 분봉 검사
+    breakout_hold_min_pct: float = 0.0           # pole_high * (1 + min_pct/100) 임계가
+
+@dataclass
+class HTFPositionState:
+    """HTF 포지션 추적 상태."""
+    entry_price: int         # 진입가
+    entry_date: str          # 진입일 (YYYYMMDD)
+    peak_price: int          # 진입 후 최고가
+    pole_high: int           # 깃대 최고점 (돌파 기준가)
+    last_partial_sell_price: int = 0   # 마지막 부분익절 가격 (0=미실행)
+    breakeven_armed: bool = False       # 부분익절 후 본절스탑 활성화 플래그
+    mfe_pct: float = 0.0    # Maximum Favorable Excursion (진입 후 최대 수익률 %)
+    mae_pct: float = 0.0    # Maximum Adverse Excursion (진입 후 최대 손실률 %)

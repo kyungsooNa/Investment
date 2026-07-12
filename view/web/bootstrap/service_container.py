@@ -29,6 +29,7 @@ from repositories.stock_repository import StockRepository
 from repositories.streaming_stock_repo import StreamingStockRepo
 from scheduler.dispatcher.time_dispatcher import TimeDispatcher
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
+from strategies.debug.strategy_debug_runner import StrategyDebugRunner
 from scheduler.ticket_queue.dlq_manager import DlqManager
 from scheduler.ticket_queue.message_broker import MessageBroker
 from scheduler.worker.worker_pool import WorkerPool
@@ -786,6 +787,8 @@ class ServiceContainer:
                         indicator_service=ctx.indicator_service,
                         market_clock=ctx.market_clock,
                         backtest_journal_repository=ctx.backtest_journal_repository,
+                        scheduler_store=StrategySchedulerStore(logger=ctx.logger),
+                        debug_runner_factory=StrategyDebugRunner,
                         virtual_trade_service=ctx.virtual_trade_service,
                         log_dir=os.path.join(ctx.logger.log_dir, "strategies"),
                         program_provider=getattr(ctx.broker, "_client", ctx.broker),
@@ -805,6 +808,7 @@ class ServiceContainer:
                         indicator_service=ctx.indicator_service,
                         market_clock=ctx.market_clock,
                         backtest_journal_repository=ctx.backtest_journal_repository,
+                        debug_runner_factory=StrategyDebugRunner,
                         program_provider=getattr(ctx.broker, "_client", ctx.broker),
                         env=ctx.env,
                         logger=ctx.logger,

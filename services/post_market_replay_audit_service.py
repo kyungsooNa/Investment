@@ -14,10 +14,8 @@ from datetime import datetime
 from typing import Any, Callable
 
 from common.trade_journal_schema import normalize_backtest_decision
-from scheduler.strategy_scheduler_store import StrategySchedulerStore
 from services.backtest_replay_adapter import StockQueryBacktestReplayService
 from services.backtest_replay_context import BacktestMarketClock
-from strategies.debug.strategy_debug_runner import StrategyDebugRunner
 
 
 _STRATEGY_NAME_RE = re.compile(r"^\d{8}_(?:\d{6}_)?(.+?)(?:_\d+)?\.log\.json.*$")
@@ -71,6 +69,7 @@ class PostMarketReplayAuditService:
         log_dir: str = "logs/strategies",
         program_provider: Any | None = None,
         strategy_factory: Callable[..., Any] | None = None,
+        debug_runner_factory: Callable[..., Any] | None = None,
         env: Any | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -79,11 +78,16 @@ class PostMarketReplayAuditService:
         self._indicator_service = indicator_service
         self._market_clock = market_clock
         self._repo = backtest_journal_repository
-        self._scheduler_store = scheduler_store or StrategySchedulerStore(logger=logger)
+        if scheduler_store is None:
+            raise ValueError("scheduler_store must be provided by the composition root")
+        self._scheduler_store = scheduler_store
         self._virtual_trade_service = virtual_trade_service
         self._log_dir = log_dir
         self._program_provider = program_provider
         self._strategy_factory = strategy_factory or self._default_strategy_factory
+        if debug_runner_factory is None:
+            raise ValueError("debug_runner_factory must be provided by the composition root")
+        self._debug_runner_factory = debug_runner_factory
         self._env = env
         self._logger = logger or logging.getLogger(__name__)
         self._debug_logger = logger if isinstance(logger, logging.Logger) else logging.getLogger(__name__)
@@ -160,7 +164,7 @@ class PostMarketReplayAuditService:
                     state_dir=state_dir,
                     logger=self._debug_logger,
                 )
-                report = await StrategyDebugRunner(
+                report = await self._debug_runner_factory(
                     strategy,
                     self._debug_logger,
                     target_date=target_date,
