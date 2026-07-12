@@ -1,7 +1,5 @@
-# strategies/base_strategy_config.py
-from dataclasses import dataclass
+"""하위 호환성을 위한 전략 기본 설정 re-export."""
 
-@dataclass
-class BaseStrategyConfig:
-    """모든 전략 공통 설정."""
-    use_fixed_qty: bool = True  # [테스트용] True면 자금 관리 로직 무시하고 무조건 1주 매수
+from common.base_strategy_config import BaseStrategyConfig
+
+__all__ = ["BaseStrategyConfig"]

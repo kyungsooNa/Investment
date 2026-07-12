@@ -13,7 +13,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from common.types import ErrorCode
-from strategies.oneil_common_types import OSBWatchlistItem
+from common.oneil_common_types import OSBWatchlistItem
 from utils.volatility_utils import annualized_return_std
 
 

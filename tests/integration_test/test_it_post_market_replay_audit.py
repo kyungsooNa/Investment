@@ -11,6 +11,7 @@ from core.market_clock import MarketClock
 from interfaces.schedulable_task import TaskPriority
 from repositories.backtest_journal_repository import BacktestJournalRepository
 from services.post_market_replay_audit_service import PostMarketReplayAuditService
+from strategies.debug.strategy_debug_runner import StrategyDebugRunner
 from services.strategy_log_report_service import StrategyLogReportService
 from task.background.after_market.post_market_replay_audit_task import PostMarketReplayAuditTask
 from view.web.bootstrap.scheduler_bootstrap import SchedulerBootstrap
@@ -83,6 +84,7 @@ async def test_it_post_market_replay_audit_task_saves_backtest_journal_run(tmp_p
         scheduler_store=store,
         log_dir=log_dir,
         strategy_factory=_strategy_factory,
+        debug_runner_factory=StrategyDebugRunner,
         env=SimpleNamespace(is_paper_trading=False),
         logger=logging.getLogger("test_it_post_market_replay_audit"),
     )

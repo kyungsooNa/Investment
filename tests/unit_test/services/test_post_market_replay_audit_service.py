@@ -8,6 +8,7 @@ import pytest
 from common.types import TradeSignal
 from core.market_clock import MarketClock
 from services.post_market_replay_audit_service import PostMarketReplayAuditService
+from strategies.debug.strategy_debug_runner import StrategyDebugRunner
 
 
 def _write_strategy_log(log_dir: str, strategy: str = "OneilPocketPivot") -> None:
@@ -84,6 +85,7 @@ async def test_audit_service_marks_late_signal_and_missing_from_universe(tmp_pat
         scheduler_store=store,
         log_dir=str(tmp_path),
         strategy_factory=_strategy_factory,
+        debug_runner_factory=StrategyDebugRunner,
         env=SimpleNamespace(is_paper_trading=False),
         logger=MagicMock(),
     )
@@ -118,6 +120,7 @@ async def test_audit_service_marks_replay_signal_missing_when_live_has_no_buy(tm
         scheduler_store=store,
         log_dir=str(tmp_path),
         strategy_factory=_strategy_factory,
+        debug_runner_factory=StrategyDebugRunner,
         env=SimpleNamespace(is_paper_trading=False),
         logger=MagicMock(),
     )
@@ -143,6 +146,7 @@ async def test_audit_service_skips_paper_mode_without_failing(tmp_path):
         scheduler_store=MagicMock(),
         log_dir=str(tmp_path),
         strategy_factory=_strategy_factory,
+        debug_runner_factory=StrategyDebugRunner,
         env=SimpleNamespace(is_paper_trading=True),
         logger=MagicMock(),
     )
@@ -196,6 +200,7 @@ def _make_service(tmp_path, **overrides):
         scheduler_store=MagicMock(),
         log_dir=str(tmp_path),
         strategy_factory=_strategy_factory,
+        debug_runner_factory=StrategyDebugRunner,
         env=SimpleNamespace(is_paper_trading=False),
         logger=MagicMock(),
     )

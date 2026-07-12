@@ -7,9 +7,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_services_do_not_depend_on_task_or_scheduler_packages():
+def test_services_do_not_depend_on_orchestration_or_strategy_packages():
     """서비스 계층은 실행 오케스트레이션 계층을 알지 않아야 한다."""
-    forbidden_roots = {"task", "scheduler"}
+    forbidden_roots = {"task", "scheduler", "strategies"}
     violations = []
 
     for path in (PROJECT_ROOT / "services").glob("*.py"):

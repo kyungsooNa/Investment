@@ -16,7 +16,7 @@ from services.indicator_service import IndicatorService
 from repositories.stock_code_repository import StockCodeRepository
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from core.market_clock import MarketClock
-from strategies.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
+from common.oneil_common_types import OneilUniverseConfig, OSBWatchlistItem
 from utils.volatility_utils import annualized_return_std
 from core.logger import get_strategy_logger
 from core.performance_profiler import PerformanceProfiler

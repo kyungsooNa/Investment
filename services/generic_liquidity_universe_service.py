@@ -13,7 +13,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from common.types import ErrorCode
-from strategies.oneil_common_types import OSBWatchlistItem
+from common.oneil_common_types import OSBWatchlistItem
 
 
 def _safe_int(value: Any) -> int:
