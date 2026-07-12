@@ -29,7 +29,7 @@ def mock_deps():
 
         ("ous", patch("view.web.bootstrap.service_container.OneilUniverseService", autospec=True)),
         ("ranking_task", patch("view.web.bootstrap.query_bootstrap.RankingTask", autospec=True)),
-        ("watchdog_task", patch("view.web.bootstrap.service_container.WebSocketWatchdogTask", autospec=True)),
+        ("watchdog_task", patch("view.web.bootstrap.realtime_bootstrap.WebSocketWatchdogTask", autospec=True)),
         ("watchdog_task_in_main", patch("view.web.web_app_initializer.WebSocketWatchdogTask", autospec=True)),
         ("premium_watchlist_task", patch("view.web.bootstrap.service_container.PremiumWatchlistGeneratorTask", autospec=True)),
         ("log_cleanup_task", patch("view.web.bootstrap.service_container.LogCleanupTask", autospec=True)),

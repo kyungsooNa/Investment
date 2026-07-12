@@ -19,11 +19,10 @@ from config.config_loader import (
 )
 from core.account_snapshot import AccountSnapshotCache
 from core.market_clock import MarketClock
-from repositories.execution_strength_repo import ExecutionStrengthRepository
-from repositories.streaming_stock_repo import StreamingStockRepo
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
 from services.backtest_microstructure_capture import BacktestMicrostructureCaptureService
 from services.execution_flow_service import ExecutionFlowService
+from services.event_shadow_journal_service import EventShadowJournalService
 from services.deferred_order_queue import DeferredOrderQueue
 from services.minervini_stage_service import MinerviniStageService
 from services.naver_finance_scraper_service import NaverFinanceScraperService
@@ -36,12 +35,7 @@ from services.opening_position_reconcile_service import OpeningPositionReconcile
 from services.order_execution_service import OrderExecutionService
 from services.order_policy_service import OrderPolicyService
 from services.position_sizing_service import PositionSizingService
-from services.price_stream_service import PriceStreamService
-from services.price_subscription_service import PriceSubscriptionService
 from services.risk_gate_service import RiskGateService
-from services.streaming_service import StreamingService
-from services.strategy_event_router import StrategyEventRouter
-from services.event_shadow_journal_service import EventShadowJournalService
 from services.overseas_candidate_service import OverseasCandidateService
 from services.overseas_position_sizing_service import OverseasPositionSizingService, extract_fx_krw_per_usd
 from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
@@ -63,12 +57,12 @@ from task.background.intraday.opening_position_reconcile_task import OpeningPosi
 from task.background.intraday.pre_market_health_check_task import PreMarketHealthCheckTask
 from task.background.intraday.program_capture_subscription_task import ProgramCaptureSubscriptionTask
 from task.background.intraday.theme_intraday_leader_alert_task import ThemeIntradayLeaderAlertTask
-from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from view.web.bootstrap.runtime_mode import RuntimeMode
 from view.web.bootstrap.backtest_task_bootstrap import BacktestTaskBootstrap
 from view.web.bootstrap.repository_bootstrap import RepositoryBootstrap
 from view.web.bootstrap.market_data_bootstrap import MarketDataBootstrap
 from view.web.bootstrap.query_bootstrap import QueryBootstrap
+from view.web.bootstrap.realtime_bootstrap import RealtimeBootstrap
 from view.web.market_mode_utils import is_market_enabled
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -237,89 +231,10 @@ class ServiceContainer:
         # NOTE: minervini_stage_service ↔ minervini_update_task circular wiring is performed by WiringPhase.
 
         try:
-            if needs_realtime:
-                ctx.streaming_service = StreamingService(
-                    broker_api_wrapper=ctx.broker,
-                    logger=ctx.logger,
-                    market_clock=ctx.market_clock,
-                    market_data_service=ctx.market_data_service,
-                    streaming_logger=ctx.streaming_event_logger,
-                    data_quality_service=ctx.data_quality_service,
-                )
-                # P2 2-4: event-driven shadow 인프라. shadow 활성 전략이 있을 때만 로그가 생성된다.
-                ctx.event_shadow_journal_service = EventShadowJournalService(
-                    log_root="logs/strategies",
-                    logger=ctx.logger,
-                )
-                ctx.strategy_event_router = StrategyEventRouter(
-                    market_clock=ctx._mcs,
-                    kill_switch_service=ctx.kill_switch_service,
-                    logger=ctx.logger,
-                    throttle_sec=0.1,  # Q5: evaluator burst 흡수만, trigger crossing 보장.
-                    signal_debounce_sec=0.5,  # Q5: 같은 (strategy, code) 중복 publish 차단.
-                    signal_sink=None,  # PR-3 본 작업에서 live consumer 주입 예정. shadow 운영은 None 유지.
-                )
-                # todo 1-5: 체결강도 장중 시계열 축적 — 기존 PRICE 틱에 무임승차 (신규 구독 없음).
-                # 장마감 microstructure 캡처가 es_db 소스로 소비한다.
-                es_capture_enabled = config_dict.get(
-                    "execution_strength_capture_enabled", True
-                )
-                ctx.execution_strength_repo = (
-                    ExecutionStrengthRepository(logger=ctx.logger)
-                    if es_capture_enabled else None
-                )
-                ctx.price_stream_service = PriceStreamService(
-                    stock_repo=ctx.stock_repository,
-                    logger=ctx.logger,
-                    data_quality_service=ctx.data_quality_service,
-                    notification_service=ctx.notification_service,
-                    event_router=ctx.strategy_event_router,
-                    execution_strength_recorder=ctx.execution_strength_repo,
-                )
-                # NOTE: data_quality / streaming / stock_query <-> price_stream wiring is performed by WiringPhase.
-                ctx.streaming_stock_repo = StreamingStockRepo(logger=ctx.logger)
-                pt_snapshot = ctx.program_trading_stream_service.load_snapshot()
-                fallback_pt_codes = []
-                if isinstance(pt_snapshot, dict):
-                    raw_codes = pt_snapshot.get("subscribedCodes", [])
-                    if isinstance(raw_codes, list):
-                        fallback_pt_codes = raw_codes
-                ctx.streaming_stock_repo.load_pt_desired_from_db(
-                    "data/program_subscribe/program_trading.db",
-                    fallback_codes=fallback_pt_codes,
-                )
-                ctx.price_subscription_service = PriceSubscriptionService(
-                    streaming_service=ctx.streaming_service,
-                    stock_repo=ctx.stock_repository,
-                    logger=ctx.logger,
-                    streaming_logger=ctx.streaming_event_logger,
-                    streaming_stock_repo=ctx.streaming_stock_repo,
-                    market_calendar=ctx._mcs,
-                )
-                # NOTE: streaming.set_streaming_stock_repo, program_trading.wire_streaming_stock_repo,
-                # and stock_query.price_subscription_service wiring is performed by WiringPhase.
-                ctx.websocket_watchdog_task = WebSocketWatchdogTask(
-                    streaming_service=ctx.streaming_service,
-                    program_trading_stream_service=ctx.program_trading_stream_service,
-                    market_calendar_service=ctx._mcs,
-                    performance_profiler=ctx.pm,
-                    notification_service=ctx.notification_service,
-                    operator_alert_service=ctx.operator_alert_service,
-                    logger=ctx.logger,
-                    streaming_logger=ctx.streaming_event_logger,
-                    streaming_stock_repo=ctx.streaming_stock_repo,
-                    price_subscription_service=ctx.price_subscription_service,
-                    price_stream_service=ctx.price_stream_service,
-                )
-            else:
-                ctx.streaming_service = None
-                ctx.event_shadow_journal_service = None
-                ctx.strategy_event_router = None
-                ctx.execution_strength_repo = None
-                ctx.price_stream_service = None
-                ctx.streaming_stock_repo = None
-                ctx.price_subscription_service = None
-                ctx.websocket_watchdog_task = None
+            RealtimeBootstrap(ctx).run(
+                config=config_dict,
+                needs_realtime=needs_realtime,
+            )
 
             if needs_trading:
                 ctx.pre_market_health_check_task = PreMarketHealthCheckTask(
