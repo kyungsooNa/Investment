@@ -17,7 +17,7 @@ from view.web.bootstrap.runtime_mode import RuntimeMode
 
 
 SERVICE_CONTAINER_PATCH_NAMES = [
-    "CacheStore", "StockRepository", "RSRatingRepository", "RSRatingService",
+    "RSRatingRepository", "RSRatingService",
     "MarketDataService", "IndicatorService", "MessageBroker", "DlqManager",
     "WorkerPool", "TimeDispatcher", "DataQualityService", "RankingTask",
     "StockQueryService", "MinerviniStageService", "MinerviniUpdateTask",
@@ -37,7 +37,11 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "NewHighTask", "NewHighService", "StrategyLogReportTask",
     "StrategyLogReportService", "NotificationQueueTask",
     "AfterMarketReconcileTask", "OpeningPositionReconcileTask",
-    "OpeningPositionReconcileService", "PerformanceProfiler",
+    "OpeningPositionReconcileService",
+]
+
+REPOSITORY_BOOTSTRAP_PATCH_NAMES = [
+    "CacheStore", "StockRepository", "PerformanceProfiler",
 ]
 
 BACKTEST_BOOTSTRAP_PATCH_NAMES = [
@@ -56,6 +60,10 @@ def patched_service_container_deps():
     targets.extend(
         (name, patch(f"view.web.bootstrap.backtest_task_bootstrap.{name}", autospec=True))
         for name in BACKTEST_BOOTSTRAP_PATCH_NAMES
+    )
+    targets.extend(
+        (name, patch(f"view.web.bootstrap.repository_bootstrap.{name}", autospec=True))
+        for name in REPOSITORY_BOOTSTRAP_PATCH_NAMES
     )
     with contextlib.ExitStack() as stack:
         mocks = {name: stack.enter_context(p) for name, p in targets}
