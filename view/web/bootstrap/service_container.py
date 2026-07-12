@@ -25,7 +25,6 @@ from scheduler.strategy_scheduler_store import StrategySchedulerStore
 from services.backtest_microstructure_capture import BacktestMicrostructureCaptureService
 from services.execution_flow_service import ExecutionFlowService
 from services.deferred_order_queue import DeferredOrderQueue
-from services.market_cap_gap_service import MarketCapGapService
 from services.minervini_stage_service import MinerviniStageService
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from services.newhigh_service import NewHighService
@@ -40,7 +39,6 @@ from services.position_sizing_service import PositionSizingService
 from services.price_stream_service import PriceStreamService
 from services.price_subscription_service import PriceSubscriptionService
 from services.risk_gate_service import RiskGateService
-from services.stock_query_service import StockQueryService
 from services.streaming_service import StreamingService
 from services.strategy_event_router import StrategyEventRouter
 from services.event_shadow_journal_service import EventShadowJournalService
@@ -52,13 +50,11 @@ from task.background.after_market.after_market_reconcile_task import AfterMarket
 from task.background.after_market.cache_warmup_task import CacheWarmupTask
 from task.background.after_market.daily_price_collector_task import DailyPriceCollectorTask
 from task.background.after_market.log_cleanup_task import LogCleanupTask
-from task.background.after_market.market_cap_gap_report_task import MarketCapGapReportTask
 from task.background.after_market.microstructure_capture_task import MicrostructureCaptureTask
 from task.background.after_market.minervini_update_task import MinerviniUpdateTask
 from task.background.after_market.newhigh_task import NewHighTask
 from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
 from task.background.after_market.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
-from task.background.after_market.ranking_task import RankingTask
 from task.background.after_market.strategy_log_report_task import StrategyLogReportTask
 from task.background.after_market.theme_daily_leader_report_task import ThemeDailyLeaderReportTask
 from task.background.after_market.overseas_dryrun_task import OverseasDryRunTask
@@ -72,6 +68,7 @@ from view.web.bootstrap.runtime_mode import RuntimeMode
 from view.web.bootstrap.backtest_task_bootstrap import BacktestTaskBootstrap
 from view.web.bootstrap.repository_bootstrap import RepositoryBootstrap
 from view.web.bootstrap.market_data_bootstrap import MarketDataBootstrap
+from view.web.bootstrap.query_bootstrap import QueryBootstrap
 from view.web.market_mode_utils import is_market_enabled
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -189,78 +186,14 @@ class ServiceContainer:
             us_market_calendar_factory=USMarketCalendarService,
         ).run(cache_store)
 
-        try:
-            if is_overseas_us:
-                ctx.ranking_task = None
-                ctx.market_cap_gap_service = None
-                ctx.market_cap_gap_report_kr_task = None
-                ctx.market_cap_gap_report_us_task = None
-            else:
-                ctx.ranking_task = RankingTask(
-                    broker_api_wrapper=ctx.broker,
-                    stock_code_repository=ctx.stock_code_repository,
-                    env=ctx.env,
-                    logger=ctx.logger,
-                    market_clock=ctx.market_clock,
-                    performance_profiler=ctx.pm,
-                    notification_service=ctx.notification_service,
-                    telegram_reporter=getattr(ctx, 'telegram_reporter', None),
-                    market_calendar_service=ctx._mcs,
-                    market_data_service=ctx.market_data_service,
-                    worker_pool=ctx.worker_pool,
-                    stock_classification_repository=getattr(ctx, "theme_classification_repository", None),
-                )
-                if needs_batch:
-                    ctx.market_cap_gap_service = MarketCapGapService.build_default(
-                        broker=ctx.broker,
-                        logger=ctx.logger,
-                    )
-                    # 한국장/미국장 시총갭 리포트는 config 플래그로 개별 on/off (기본 둘 다 on)
-                    kr_gap_enabled = config_dict.get("market_cap_gap_report_kr_enabled", True)
-                    us_gap_enabled = config_dict.get("market_cap_gap_report_us_enabled", True)
-                    # 재시작 시 catch-up 으로 인한 중복 전송을 막기 위해 "마지막 전송 날짜"를 SQLite 에 영속화.
-                    gap_report_store = StrategySchedulerStore(logger=ctx.logger)
-                    ctx.market_cap_gap_report_kr_task = MarketCapGapReportTask(
-                        market_cap_gap_service=ctx.market_cap_gap_service,
-                        telegram_reporter=getattr(ctx, "telegram_reporter", None),
-                        notification_service=ctx.notification_service,
-                        session="kr_close",
-                        market_calendar_service=ctx._mcs,
-                        market_clock=ctx.market_clock,
-                        scheduler_store=gap_report_store,
-                        logger=ctx.logger,
-                    ) if kr_gap_enabled else None
-                    # O-1: NYSE 캘린더 주입 — 미국 휴장일에 us_close 리포트 스킵.
-                    us_gap_clock = MarketClock.for_us_equities(logger=ctx.logger)
-                    ctx.market_cap_gap_report_us_task = MarketCapGapReportTask(
-                        market_cap_gap_service=ctx.market_cap_gap_service,
-                        telegram_reporter=getattr(ctx, "telegram_reporter", None),
-                        notification_service=ctx.notification_service,
-                        session="us_close",
-                        market_calendar_service=USMarketCalendarService(
-                            market_clock=us_gap_clock, logger=ctx.logger,
-                        ),
-                        market_clock=us_gap_clock,
-                        scheduler_store=gap_report_store,
-                        logger=ctx.logger,
-                    ) if us_gap_enabled else None
-                else:
-                    ctx.market_cap_gap_service = None
-                    ctx.market_cap_gap_report_kr_task = None
-                    ctx.market_cap_gap_report_us_task = None
-            ctx.stock_query_service = StockQueryService(
-                market_data_service=ctx.market_data_service, logger=ctx.logger, market_clock=ctx.market_clock,
-                indicator_service=ctx.indicator_service,
-                ranking_task=ctx.ranking_task,
-                performance_profiler=ctx.pm,
-                notification_service=ctx.notification_service,
-                broker_api_wrapper=ctx.broker,
-                streaming_logger=ctx.streaming_event_logger,
-            )
-            # NOTE: indicator_service / favorite_service collaborator wiring is performed by WiringPhase.
-        except Exception as e:
-            ctx.logger.critical(f"[ServiceBootstrap:QueryServices] 초기화 실패: {e}", exc_info=True)
-            raise
+        QueryBootstrap(
+            ctx,
+            us_market_calendar_factory=USMarketCalendarService,
+        ).run(
+            config=config_dict,
+            is_overseas_us=is_overseas_us,
+            needs_batch=needs_batch,
+        )
 
         try:
             if is_overseas_us:
