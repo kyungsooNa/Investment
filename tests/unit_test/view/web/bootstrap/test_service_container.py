@@ -17,18 +17,15 @@ from view.web.bootstrap.runtime_mode import RuntimeMode
 
 
 SERVICE_CONTAINER_PATCH_NAMES = [
-    "RankingTask",
-    "StockQueryService", "MinerviniStageService", "MinerviniUpdateTask",
-    "StreamingService", "PriceStreamService", "StreamingStockRepo",
-    "ExecutionStrengthRepository",
-    "PriceSubscriptionService", "WebSocketWatchdogTask", "PreMarketHealthCheckTask",
+    "MinerviniStageService", "MinerviniUpdateTask",
+    "PreMarketHealthCheckTask",
     "DailyPriceCollectorTask", "OhlcvUpdateTask", "AccountSnapshotCache",
     "PositionSizingService", "RiskGateService", "ExecutionFlowService",
     "OrderPolicyService", "DeferredOrderQueue", "OrderExecutionService",
     "OneilUniverseService", "NaverFinanceScraperService",
     "ThemeClassificationCollectorService", "ThemeClassificationTask", "ThemeDailyLeaderReportTask",
     "ThemeIntradayLeaderAlertTask",
-    "MarketCapGapService", "MarketCapGapReportTask", "USMarketCalendarService",
+    "USMarketCalendarService",
     "BacktestMicrostructureCaptureService", "MicrostructureCaptureTask",
     "PremiumWatchlistGeneratorTask", "CacheWarmupTask", "LogCleanupTask",
     "NewHighTask", "NewHighService", "StrategyLogReportTask",
@@ -46,6 +43,17 @@ MARKET_DATA_BOOTSTRAP_PATCH_NAMES = [
     "ThemeLeaderService", "ThemeDailyLeaderService", "MarketDataService",
     "IndicatorService", "MessageBroker", "DlqManager", "WorkerPool",
     "TimeDispatcher", "DataQualityService",
+]
+
+QUERY_BOOTSTRAP_PATCH_NAMES = [
+    "RankingTask", "MarketCapGapService", "MarketCapGapReportTask",
+    "StockQueryService",
+]
+
+REALTIME_BOOTSTRAP_PATCH_NAMES = [
+    "StreamingService", "EventShadowJournalService", "StrategyEventRouter",
+    "ExecutionStrengthRepository", "PriceStreamService", "StreamingStockRepo",
+    "PriceSubscriptionService", "WebSocketWatchdogTask",
 ]
 
 BACKTEST_BOOTSTRAP_PATCH_NAMES = [
@@ -72,6 +80,14 @@ def patched_service_container_deps():
     targets.extend(
         (name, patch(f"view.web.bootstrap.market_data_bootstrap.{name}", autospec=True))
         for name in MARKET_DATA_BOOTSTRAP_PATCH_NAMES
+    )
+    targets.extend(
+        (name, patch(f"view.web.bootstrap.query_bootstrap.{name}", autospec=True))
+        for name in QUERY_BOOTSTRAP_PATCH_NAMES
+    )
+    targets.extend(
+        (name, patch(f"view.web.bootstrap.realtime_bootstrap.{name}", autospec=True))
+        for name in REALTIME_BOOTSTRAP_PATCH_NAMES
     )
     with contextlib.ExitStack() as stack:
         mocks = {name: stack.enter_context(p) for name, p in targets}
