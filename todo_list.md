@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-11 (#653 시가총액/미국주식 UI 코드리뷰 후속 M-3 추가)
+최종 업데이트: 2026-07-12 (M-2 구조 동기화 — service_container bootstrap 분해 #659~662 반영)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -30,7 +30,7 @@
    - 1-8 백테스트 재실행 (CLI 노출 완료 #619 — PIT 후보 부재로 blocked, 2026-07-03 파일럿 판정)
    - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (dry-run 검증 후 — O-1 #621/O-2 완료)
 5. **[조건부·저위험 상시]**
-   - Pool B 완화 (**캡처 우회 적용 2026-07-08 — 트레이딩 완화는 시장 회복 후 재판단**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 · M-3 #653 UI 리뷰 후속 (**완료 2026-07-11 — 즉시수정·하드닝·중복정리 12건**) · T-0/R-6 (선택/관찰)
+   - Pool B 완화 (**캡처 우회 적용 2026-07-08 — 트레이딩 완화는 시장 회복 후 재판단**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 (**완료 2026-07-12 — service_container bootstrap 분해 반영**) · M-3 #653 UI 리뷰 후속 (**완료 2026-07-11 — 즉시수정·하드닝·중복정리 12건**) · T-0/R-6 (선택/관찰)
 
 ---
 
@@ -169,7 +169,8 @@
 ### M-2. 문서 동기화 + 구조 감시 [저위험 상시]
 
 - [x] `docs/backtest.md`(본문은 #619 슬리피지/스프레드 CLI까지 이미 반영, 날짜만 동기화)·`CODEBASE_SUMMARY.md`(bootstrap 분해 진전·EventShadowManager 분리·해외/테마 계층·브로커 계층 계측 4곳 반영) 갱신 완료 (2026-07-05).
-- 감시(조치 아님): `view/web/bootstrap/service_container.py`(1,004줄 — 2026-07-08 기준: 07-02 902 → 07-05 962 → +42줄, 증가세 지속으로 경고 기울기)가 web_app_initializer 비대화의 재발 패턴인지 주기 점검. `scheduler/strategy_scheduler.py` 2,153줄 / `services/strategy_log_report_service.py` 2,144줄(정체) — 분해는 3-4 재승격과 함께 진행.
+- [x] **`service_container.py` 비대화 경고 해소 — bootstrap 분해 + 의존성 경계 테스트 추가 (2026-07-12)**: #659(서비스↔전략 의존성 경계 강제, `oneil_common_types.py`를 `strategies/`→`common/`으로 이관, `test_architecture_dependencies.py` 신규) · #660(`backtest_task_bootstrap.py` 추출) · #661(`repository_bootstrap.py` 추출) · #662(`market_data_bootstrap.py` 추출) 4개 PR로 `service_container.py`가 962→**862줄**로 감소, 07-05까지의 증가 추세 반전.
+- 감시(조치 아님): `scheduler/strategy_scheduler.py` 2,153→**2,379줄**(+226) / `services/strategy_log_report_service.py` 2,144→**2,298줄**(+154, 07-08 "정체" 판정 이후 증가 재개) — 분해는 3-4 재승격과 함께 진행.
 
 ### M-3. 시가총액/미국주식 UI 하드닝 후속 [#653 코드리뷰 xhigh, 2026-07-11]
 
