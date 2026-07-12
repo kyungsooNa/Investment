@@ -38,6 +38,9 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "StrategyLogReportService", "NotificationQueueTask",
     "AfterMarketReconcileTask", "OpeningPositionReconcileTask",
     "OpeningPositionReconcileService", "PerformanceProfiler",
+]
+
+BACKTEST_BOOTSTRAP_PATCH_NAMES = [
     "PostMarketReplayAuditService", "PostMarketReplayAuditTask",
     "NewHighStrategyCoverageBacktestService", "NewHighStrategyCoverageBacktestTask",
 ]
@@ -50,6 +53,10 @@ def patched_service_container_deps():
         (name, patch(f"view.web.bootstrap.service_container.{name}", autospec=True))
         for name in SERVICE_CONTAINER_PATCH_NAMES
     ]
+    targets.extend(
+        (name, patch(f"view.web.bootstrap.backtest_task_bootstrap.{name}", autospec=True))
+        for name in BACKTEST_BOOTSTRAP_PATCH_NAMES
+    )
     with contextlib.ExitStack() as stack:
         mocks = {name: stack.enter_context(p) for name, p in targets}
         yield mocks
