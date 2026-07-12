@@ -17,13 +17,14 @@ from statistics import mean
 import asyncio
 from typing import List, Optional, TYPE_CHECKING
 
+from interfaces.refresh_task import MinerviniRefreshTask
+
 import numpy as np
 
 if TYPE_CHECKING:
     from services.stock_query_service import StockQueryService
     from services.rs_rating_service import RSRatingService
     from repositories.stock_repository import StockRepository
-    from task.background.after_market.minervini_update_task import MinerviniUpdateTask
 
 
 class MinerviniStageService:
@@ -57,13 +58,13 @@ class MinerviniStageService:
         self._stock_query_svc = stock_query_service
         self._rs_rating_svc = rs_rating_service
         self._stock_repository = stock_repository
-        self._minervini_update_task: Optional["MinerviniUpdateTask"] = None
+        self._minervini_update_task: Optional[MinerviniRefreshTask] = None
         self._refresh_task: Optional[asyncio.Task] = None
         self._slope_lookback = slope_lookback
         self._vol_threshold = volatility_threshold
         self._logger = logger or logging.getLogger(__name__)
 
-    def set_minervini_update_task(self, minervini_update_task) -> None:
+    def set_minervini_update_task(self, minervini_update_task: MinerviniRefreshTask) -> None:
         """MinerviniUpdateTask 후주입 — 순환 의존 해소용 (WiringPhase 에서 호출)."""
         self._minervini_update_task = minervini_update_task
 

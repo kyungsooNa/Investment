@@ -241,8 +241,6 @@ async def test_hourly_tick_alert_loop_swallows_generic_error(svc):
 
 @pytest.mark.asyncio
 async def test_after_market_db_check_loop_reports_once_per_date(svc):
-    import scheduler.after_market_loop
-
     svc._market_calendar_service = MagicMock()
     svc._market_clock = MagicMock()
     svc.send_db_persistence_report = AsyncMock(return_value=True)
@@ -252,9 +250,8 @@ async def test_after_market_db_check_loop_reports_once_per_date(svc):
         await cb("20260505")
         await cb("20260505")  # 같은 날짜 → 조기 반환
 
-    with patch("scheduler.after_market_loop.run_after_market_loop",
-               new=AsyncMock(side_effect=fake_loop)):
-        await svc._after_market_db_check_loop()
+    svc._after_market_runner = fake_loop
+    await svc._after_market_db_check_loop()
 
     assert svc._last_db_check_report_date == "20260505"
     svc.send_db_persistence_report.assert_awaited_once()

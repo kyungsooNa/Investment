@@ -64,6 +64,7 @@ from strategies.larry_williams_channel_breakout_strategy import LarryWilliamsCha
 from services.oneil_universe_service import OneilUniverseService
 from repositories.stock_repository import StockRepository
 from services.program_trading_stream_service import ProgramTradingStreamService
+from scheduler.after_market_loop import run_after_market_loop
 from services.market_data_service import MarketDataService
 from services.market_calendar_service import MarketCalendarService
 from services.notification_service import NotificationService, NotificationCategory
@@ -169,7 +170,10 @@ class WebAppContext:
         self.pm: PerformanceProfiler = None
 
         # 프로그램매매 실시간 데이터 서비스
-        self.program_trading_stream_service = ProgramTradingStreamService(self.logger)
+        self.program_trading_stream_service = ProgramTradingStreamService(
+            self.logger,
+            after_market_runner=run_after_market_loop,
+        )
         self.price_subscription_service: PriceSubscriptionService = None
         self.price_stream_service: PriceStreamService = None
         self.streaming_stock_repo: StreamingStockRepo = None

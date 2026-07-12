@@ -786,6 +786,7 @@ class ServiceContainer:
                         indicator_service=ctx.indicator_service,
                         market_clock=ctx.market_clock,
                         backtest_journal_repository=ctx.backtest_journal_repository,
+                        scheduler_store=StrategySchedulerStore(logger=ctx.logger),
                         virtual_trade_service=ctx.virtual_trade_service,
                         log_dir=os.path.join(ctx.logger.log_dir, "strategies"),
                         program_provider=getattr(ctx.broker, "_client", ctx.broker),

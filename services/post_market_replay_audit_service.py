@@ -14,7 +14,6 @@ from datetime import datetime
 from typing import Any, Callable
 
 from common.trade_journal_schema import normalize_backtest_decision
-from scheduler.strategy_scheduler_store import StrategySchedulerStore
 from services.backtest_replay_adapter import StockQueryBacktestReplayService
 from services.backtest_replay_context import BacktestMarketClock
 from strategies.debug.strategy_debug_runner import StrategyDebugRunner
@@ -79,7 +78,9 @@ class PostMarketReplayAuditService:
         self._indicator_service = indicator_service
         self._market_clock = market_clock
         self._repo = backtest_journal_repository
-        self._scheduler_store = scheduler_store or StrategySchedulerStore(logger=logger)
+        if scheduler_store is None:
+            raise ValueError("scheduler_store must be provided by the composition root")
+        self._scheduler_store = scheduler_store
         self._virtual_trade_service = virtual_trade_service
         self._log_dir = log_dir
         self._program_provider = program_provider
