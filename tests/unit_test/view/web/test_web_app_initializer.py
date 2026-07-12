@@ -14,7 +14,7 @@ def mock_deps():
         ("env", patch("view.web.bootstrap.config_bootstrap.KoreaInvestApiEnv", autospec=True)),
         ("tm", patch("view.web.bootstrap.config_bootstrap.MarketClock", autospec=True)),
         ("broker", patch("view.web.bootstrap.broker_bootstrap.BrokerAPIWrapper", autospec=True)),
-        ("mds", patch("view.web.bootstrap.service_container.MarketDataService", autospec=True)),
+        ("mds", patch("view.web.bootstrap.market_data_bootstrap.MarketDataService", autospec=True)),
         ("sqs", patch("view.web.bootstrap.service_container.StockQueryService", autospec=True)),
         ("oes", patch("view.web.bootstrap.service_container.OrderExecutionService", autospec=True)),
         ("risk_gate", patch("view.web.bootstrap.service_container.RiskGateService", autospec=True)),
@@ -25,7 +25,7 @@ def mock_deps():
         ("oscm", patch("view.web.web_app_initializer.OverseasStockCodeRepository", autospec=True)),
         ("sched", patch("view.web.bootstrap.strategy_factory.StrategyScheduler", autospec=True)),
         ("rdm", patch("view.web.web_app_initializer.ProgramTradingStreamService", autospec=True)),
-        ("ind", patch("view.web.bootstrap.service_container.IndicatorService", autospec=True)),
+        ("ind", patch("view.web.bootstrap.market_data_bootstrap.IndicatorService", autospec=True)),
 
         ("ous", patch("view.web.bootstrap.service_container.OneilUniverseService", autospec=True)),
         ("ranking_task", patch("view.web.bootstrap.service_container.RankingTask", autospec=True)),

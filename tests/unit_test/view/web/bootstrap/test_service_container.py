@@ -17,9 +17,7 @@ from view.web.bootstrap.runtime_mode import RuntimeMode
 
 
 SERVICE_CONTAINER_PATCH_NAMES = [
-    "RSRatingRepository", "RSRatingService",
-    "MarketDataService", "IndicatorService", "MessageBroker", "DlqManager",
-    "WorkerPool", "TimeDispatcher", "DataQualityService", "RankingTask",
+    "RankingTask",
     "StockQueryService", "MinerviniStageService", "MinerviniUpdateTask",
     "StreamingService", "PriceStreamService", "StreamingStockRepo",
     "ExecutionStrengthRepository",
@@ -28,7 +26,6 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "PositionSizingService", "RiskGateService", "ExecutionFlowService",
     "OrderPolicyService", "DeferredOrderQueue", "OrderExecutionService",
     "OneilUniverseService", "NaverFinanceScraperService",
-    "StockClassificationRepository", "ThemeLeaderService", "ThemeDailyLeaderService",
     "ThemeClassificationCollectorService", "ThemeClassificationTask", "ThemeDailyLeaderReportTask",
     "ThemeIntradayLeaderAlertTask",
     "MarketCapGapService", "MarketCapGapReportTask", "USMarketCalendarService",
@@ -42,6 +39,13 @@ SERVICE_CONTAINER_PATCH_NAMES = [
 
 REPOSITORY_BOOTSTRAP_PATCH_NAMES = [
     "CacheStore", "StockRepository", "PerformanceProfiler",
+]
+
+MARKET_DATA_BOOTSTRAP_PATCH_NAMES = [
+    "RSRatingRepository", "RSRatingService", "StockClassificationRepository",
+    "ThemeLeaderService", "ThemeDailyLeaderService", "MarketDataService",
+    "IndicatorService", "MessageBroker", "DlqManager", "WorkerPool",
+    "TimeDispatcher", "DataQualityService",
 ]
 
 BACKTEST_BOOTSTRAP_PATCH_NAMES = [
@@ -64,6 +68,10 @@ def patched_service_container_deps():
     targets.extend(
         (name, patch(f"view.web.bootstrap.repository_bootstrap.{name}", autospec=True))
         for name in REPOSITORY_BOOTSTRAP_PATCH_NAMES
+    )
+    targets.extend(
+        (name, patch(f"view.web.bootstrap.market_data_bootstrap.{name}", autospec=True))
+        for name in MARKET_DATA_BOOTSTRAP_PATCH_NAMES
     )
     with contextlib.ExitStack() as stack:
         mocks = {name: stack.enter_context(p) for name, p in targets}

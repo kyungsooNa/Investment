@@ -13,7 +13,6 @@ from typing import Any, Optional, TYPE_CHECKING
 
 from common.types import ErrorCode, Exchange
 from config.config_loader import (
-    DataQualityConfig,
     OrderPolicyConfig,
     PositionSizingConfig,
     RiskGateConfig,
@@ -21,20 +20,11 @@ from config.config_loader import (
 from core.account_snapshot import AccountSnapshotCache
 from core.market_clock import MarketClock
 from repositories.execution_strength_repo import ExecutionStrengthRepository
-from repositories.rs_rating_repository import RSRatingRepository
-from repositories.stock_classification_repository import StockClassificationRepository
 from repositories.streaming_stock_repo import StreamingStockRepo
-from scheduler.dispatcher.time_dispatcher import TimeDispatcher
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
-from scheduler.ticket_queue.dlq_manager import DlqManager
-from scheduler.ticket_queue.message_broker import MessageBroker
-from scheduler.worker.worker_pool import WorkerPool
 from services.backtest_microstructure_capture import BacktestMicrostructureCaptureService
-from services.data_quality_service import DataQualityService
 from services.execution_flow_service import ExecutionFlowService
-from services.indicator_service import IndicatorService
 from services.deferred_order_queue import DeferredOrderQueue
-from services.market_data_service import MarketDataService
 from services.market_cap_gap_service import MarketCapGapService
 from services.minervini_stage_service import MinerviniStageService
 from services.naver_finance_scraper_service import NaverFinanceScraperService
@@ -42,8 +32,6 @@ from services.newhigh_service import NewHighService
 from services.oneil_universe_service import OneilUniverseService
 from services.theme_classification_collector_service import ThemeClassificationCollectorService
 from services.us_market_calendar_service import USMarketCalendarService
-from services.theme_daily_leader_service import ThemeDailyLeaderService
-from services.theme_leader_service import ThemeLeaderService
 from task.background.after_market.theme_classification_task import ThemeClassificationTask
 from services.opening_position_reconcile_service import OpeningPositionReconcileService
 from services.order_execution_service import OrderExecutionService
@@ -52,7 +40,6 @@ from services.position_sizing_service import PositionSizingService
 from services.price_stream_service import PriceStreamService
 from services.price_subscription_service import PriceSubscriptionService
 from services.risk_gate_service import RiskGateService
-from services.rs_rating_service import RSRatingService
 from services.stock_query_service import StockQueryService
 from services.streaming_service import StreamingService
 from services.strategy_event_router import StrategyEventRouter
@@ -84,6 +71,7 @@ from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTa
 from view.web.bootstrap.runtime_mode import RuntimeMode
 from view.web.bootstrap.backtest_task_bootstrap import BacktestTaskBootstrap
 from view.web.bootstrap.repository_bootstrap import RepositoryBootstrap
+from view.web.bootstrap.market_data_bootstrap import MarketDataBootstrap
 from view.web.market_mode_utils import is_market_enabled
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -196,91 +184,10 @@ class ServiceContainer:
             config_dict = config_dict.dict()
 
         cache_store = RepositoryBootstrap(ctx).run(config_dict)
-
-        try:
-            ctx.rs_rating_repository = RSRatingRepository(logger=ctx.logger)
-            ctx.rs_rating_service = RSRatingService(
-                stock_ohlcv_repository=ctx.stock_repository._ohlcv_repo,
-                rs_rating_repository=ctx.rs_rating_repository,
-                stock_code_repository=ctx.stock_code_repository,
-                logger=ctx.logger,
-                performance_profiler=ctx.pm,
-            )
-        except Exception as e:
-            ctx.logger.warning(f"[ServiceBootstrap:RSRating] 초기화 실패: {e}")
-
-        try:
-            ctx.theme_classification_repository = StockClassificationRepository(logger=ctx.logger)
-            ctx.theme_leader_service = ThemeLeaderService(
-                classification_repository=ctx.theme_classification_repository,
-                rs_rating_repository=getattr(ctx, "rs_rating_repository", None),
-                logger=ctx.logger,
-                performance_profiler=ctx.pm,
-            )
-            ctx.theme_daily_leader_service = ThemeDailyLeaderService(
-                classification_repository=ctx.theme_classification_repository,
-                logger=ctx.logger,
-                performance_profiler=ctx.pm,
-            )
-        except Exception as e:
-            ctx.logger.warning(f"[ServiceBootstrap:ThemeLeader] 초기화 실패: {e}")
-            ctx.theme_classification_repository = None
-            ctx.theme_leader_service = None
-            ctx.theme_daily_leader_service = None
-
-        try:
-            ctx.market_data_service = MarketDataService(
-                broker_api_wrapper=ctx.broker, env=ctx.env, logger=ctx.logger, market_clock=ctx.market_clock, cache_store=cache_store,
-                market_calendar_service=ctx._mcs,
-                performance_profiler=ctx.pm,
-                stock_repository=ctx.stock_repository,
-                data_quality_service=getattr(ctx, "data_quality_service", None),
-            )
-            ctx.indicator_service = IndicatorService(
-                cache_store=cache_store,
-                performance_profiler=ctx.pm,
-                operator_alert_service=getattr(ctx, "operator_alert_service", None),
-            )
-            ctx.message_broker = MessageBroker()
-            ctx.dlq_manager = DlqManager(logger=ctx.logger)
-            ctx.worker_pool = WorkerPool(
-                broker=ctx.message_broker,
-                dlq_manager=ctx.dlq_manager,
-                logger=ctx.logger,
-                num_workers=1,  # after_market 태스크는 API 레이트 리밋 고려해 순차 실행
-                performance_profiler=ctx.pm,
-            )
-            ctx.time_dispatcher = TimeDispatcher(
-                broker=ctx.message_broker,
-                market_clock=ctx.market_clock,
-                mcs=ctx._mcs,
-                logger=ctx.logger,
-            )
-            # 미국장 배치(해외 dry-run 등)를 위한 별도 TimeDispatcher. KST dispatcher와
-            # 동일한 MessageBroker/WorkerPool 을 공유하며, 미국장 클럭으로 NY 마감을 감지한다.
-            # O-1: 규칙 기반 NYSE 캘린더(mcs) 주입 → 휴장일에는 latest_trading_date가
-            # 직전 거래일로 유지되어 중복 발행이 차단된다 (주말 필터만 있던 기존 한계 해소).
-            ctx.time_dispatcher_us = None
-            if is_market_enabled(ctx, "overseas_us"):
-                us_clock = MarketClock.for_us_equities(logger=ctx.logger)
-                ctx.time_dispatcher_us = TimeDispatcher(
-                    broker=ctx.message_broker,
-                    market_clock=us_clock,
-                    mcs=USMarketCalendarService(market_clock=us_clock, logger=ctx.logger),
-                    logger=ctx.logger,
-                    db_path="data/time_dispatcher_state_us.db",
-                )
-            ctx.data_quality_service = DataQualityService(
-                config=getattr(ctx.full_config, "data_quality", None) or DataQualityConfig(),
-                market_clock=ctx.market_clock,
-                logger=ctx.logger,
-                operator_alert_service=ctx.operator_alert_service,
-            )
-            ctx.data_quality_service.apply_trading_mode(bool(getattr(ctx.env, "is_paper_trading", True)))
-            # NOTE: market_data_service._data_quality_service back-injection is performed by WiringPhase.
-        except Exception as e:
-            ctx.logger.critical(f"[ServiceBootstrap:CoreServices] 초기화 실패: {e}", exc_info=True)
-            raise
+        MarketDataBootstrap(
+            ctx,
+            us_market_calendar_factory=USMarketCalendarService,
+        ).run(cache_store)
 
         try:
             if is_overseas_us:
