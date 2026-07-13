@@ -608,11 +608,16 @@ class WebAppContext:
                 return False
 
             t_sub_pt = self.pm.start_timer()
-            sub_pt_success = await self.streaming_service.subscribe_program_trading(code)
+            sub_pt_sent = await self.streaming_service.subscribe_program_trading(code)
+            sub_pt_success = sub_pt_sent
+            if sub_pt_sent:
+                sub_pt_success = await self.streaming_service.wait_program_trading_ack(code)
             self.pm.log_timer(f"subscribe_program_trading({code})", t_sub_pt)
 
             t_sub_price = self.pm.start_timer()
             sub_price_success = await self.streaming_service.subscribe_unified_price(code)
+            if sub_price_success:
+                sub_price_success = await self.streaming_service.wait_unified_price_ack(code)
             self.pm.log_timer(f"subscribe_unified_price({code})", t_sub_price)
 
             if sub_pt_success and sub_price_success:
@@ -629,7 +634,7 @@ class WebAppContext:
             else:
                 # 하나라도 실패하면, 성공했을 수 있는 다른 구독을 해지하여 상태를 정리한다.
                 self.logger.warning(f"프로그램매매 구독 실패 (pt: {sub_pt_success}, price: {sub_price_success}) - {code}")
-                if sub_pt_success:
+                if sub_pt_sent:
                     await self.streaming_service.unsubscribe_program_trading(code)
                 if sub_price_success:
                     await self.streaming_service.unsubscribe_unified_price(code)

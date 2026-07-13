@@ -56,8 +56,10 @@ def _make_streaming_stock_repo(pt_desired=None):
 def mock_deps():
     streaming_service = MagicMock()
     streaming_service.connect_websocket = AsyncMock(return_value=True)
-    streaming_service.subscribe_program_trading = AsyncMock()
-    streaming_service.subscribe_unified_price = AsyncMock()
+    streaming_service.subscribe_program_trading = AsyncMock(return_value=True)
+    streaming_service.wait_program_trading_ack = AsyncMock(return_value=True)
+    streaming_service.subscribe_unified_price = AsyncMock(return_value=True)
+    streaming_service.wait_unified_price_ack = AsyncMock(return_value=True)
     streaming_service.unsubscribe_unified_price = AsyncMock()
     streaming_service.disconnect_websocket = AsyncMock()
     streaming_service.broker = MagicMock()

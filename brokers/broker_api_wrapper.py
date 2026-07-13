@@ -396,6 +396,10 @@ class BrokerAPIWrapper:
         """통합 체결가 구독 ACK 확정을 기다립니다 (구독 active 마킹 게이트용)."""
         return await self._client.wait_for_unified_price_ack(stock_code, timeout)
 
+    async def wait_program_trading_ack(self, stock_code: str, timeout: float = None) -> bool:
+        """프로그램매매 구독 ACK 확정을 기다립니다."""
+        return await self._client.wait_for_program_trading_ack(stock_code, timeout)
+
     async def subscribe_realtime_quote(self, stock_code: str) -> Any:  # 실제 반환 값에 따라 타입 변경
         """실시간 호가 데이터 구독합니다 (KoreaInvestWebSocketAPI 위임)."""
         return await self._client.subscribe_realtime_quote(stock_code)

@@ -228,7 +228,9 @@ async def test_program_trading_subscription(mock_deps):
     ctx.streaming_service = MagicMock()
     ctx.streaming_service.connect_websocket = AsyncMock(return_value=True)
     ctx.streaming_service.subscribe_program_trading = AsyncMock(return_value=True)
+    ctx.streaming_service.wait_program_trading_ack = AsyncMock(return_value=True)
     ctx.streaming_service.subscribe_unified_price = AsyncMock(return_value=True)
+    ctx.streaming_service.wait_unified_price_ack = AsyncMock(return_value=True)
     ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
     ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
 
@@ -900,6 +902,7 @@ async def test_start_program_trading_subscription_failure_cleans_partial_success
     ctx.streaming_service = MagicMock()
     ctx.streaming_service.connect_websocket = AsyncMock(return_value=True)
     ctx.streaming_service.subscribe_program_trading = AsyncMock(return_value=True)
+    ctx.streaming_service.wait_program_trading_ack = AsyncMock(return_value=True)
     ctx.streaming_service.subscribe_unified_price = AsyncMock(return_value=False)
     ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
     ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
@@ -1106,6 +1109,7 @@ async def test_start_program_trading_connection_failure_price_only_cleanup_and_e
     ctx.streaming_service.connect_websocket = AsyncMock(return_value=True)
     ctx.streaming_service.subscribe_program_trading = AsyncMock(return_value=False)
     ctx.streaming_service.subscribe_unified_price = AsyncMock(return_value=True)
+    ctx.streaming_service.wait_unified_price_ack = AsyncMock(return_value=True)
     ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
     ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
 
@@ -1115,6 +1119,33 @@ async def test_start_program_trading_connection_failure_price_only_cleanup_and_e
     ctx.streaming_service.connect_websocket = AsyncMock(side_effect=RuntimeError("boom"))
     assert await ctx.start_program_trading("005930") is False
     ctx.logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_start_program_trading_requires_program_ack_before_marking_active(mock_deps):
+    """PT 요청 전송만 성공하고 ACK가 거부되면 active로 기록하지 않는다."""
+    ctx = WebAppContext(None)
+    ctx.pm = MagicMock()
+    ctx.pm.start_timer.return_value = 0.0
+    ctx.logger = MagicMock()
+    ctx.streaming_stock_repo = MagicMock()
+    ctx.streaming_stock_repo.get_desired.return_value = set()
+    ctx.streaming_stock_repo.mark_desired = AsyncMock()
+    ctx.streaming_stock_repo.mark_active = AsyncMock()
+    ctx.streaming_service = MagicMock()
+    ctx.streaming_service.connect_websocket = AsyncMock(return_value=True)
+    ctx.streaming_service.subscribe_program_trading = AsyncMock(return_value=True)
+    ctx.streaming_service.wait_program_trading_ack = AsyncMock(return_value=False)
+    ctx.streaming_service.subscribe_unified_price = AsyncMock(return_value=True)
+    ctx.streaming_service.wait_unified_price_ack = AsyncMock(return_value=True)
+    ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
+    ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
+
+    assert await ctx.start_program_trading("005930") is False
+
+    ctx.streaming_stock_repo.mark_active.assert_not_awaited()
+    ctx.streaming_service.unsubscribe_program_trading.assert_awaited_once_with("005930")
+    ctx.streaming_service.unsubscribe_unified_price.assert_awaited_once_with("005930")
 
 
 @pytest.mark.asyncio

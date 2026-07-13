@@ -522,16 +522,23 @@ class WebSocketWatchdogTask(SchedulableTask):
                 for code in pt_codes:
                     try:
                         pt_ok = await self._streaming_service.subscribe_program_trading(code)
+                        if pt_ok:
+                            pt_ok = await self._streaming_service.wait_program_trading_ack(code)
                         if self._streaming_logger:
                             self._streaming_logger.log_pt_subscribe(code, reason="restore")
                         price_ok = await self._streaming_service.subscribe_unified_price(code)
+                        if price_ok:
+                            price_ok = await self._streaming_service.wait_unified_price_ack(code)
                         if self._streaming_logger:
                             self._streaming_logger.log_price_subscribe(code, reason="restore")
                         if self._streaming_stock_repo and pt_ok:
                             await self._streaming_stock_repo.mark_active(code, StreamingType.PROGRAM_TRADING)
                         if self._streaming_stock_repo and price_ok:
                             await self._streaming_stock_repo.mark_active(code, StreamingType.UNIFIED_PRICE)
-                        pt_success += 1
+                        if pt_ok and price_ok:
+                            pt_success += 1
+                        else:
+                            pt_failed.append(code)
                         await asyncio.sleep(self.SUBSCRIBE_DELAY_SEC)
                     except Exception as e:
                         if self._streaming_logger:
