@@ -4,9 +4,10 @@ import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import time
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 from common.date_utils import normalize_yyyymmdd
+from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER
 from common.types import ErrorCode, TradeSignal
 from core.logger import get_strategy_logger
 from core.market_clock import MarketClock
@@ -84,12 +85,14 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         universe_service: Optional["OneilUniverseService"] = None,
         config: Optional[LarryWilliamsVBOConfig] = None,
         logger: Optional[logging.Logger] = None,
+        trade_history_provider: Optional[Callable[[], list[dict]]] = None,
     ):
         self._sqs = stock_query_service
         self._tm = market_clock
         self._universe = universe_service
         self._cfg = config or LarryWilliamsVBOConfig()
         self._logger = logger or get_strategy_logger("LarryWilliamsVBO")
+        self._trade_history_provider = trade_history_provider
 
         self._bought_today: set[str] = set()
         self._last_date: str = ""
@@ -123,6 +126,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             self._bought_today.clear()
             self._shadow_eval_stats.clear()
             self._last_date = today
+            self._restore_bought_today(today)
 
         # 1) 진입 시간대 가드 (09:10 ~ 14:00)
         current_time = now.time()
@@ -285,6 +289,35 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 "stats": {c: dict(ctr) for c, ctr in self._shadow_eval_stats.items()},
             })
         return signals
+
+    def _restore_bought_today(self, today: str) -> None:
+        """재시작 시 원장에서 당일 매수 이력을 복원해 재진입을 차단한다."""
+        if self._cfg.allow_reentry or self._trade_history_provider is None:
+            return
+        try:
+            trades = self._trade_history_provider() or []
+            restored = {
+                str(trade.get("code") or "").zfill(6)
+                for trade in trades
+                if STRATEGY_IDENTITY_RESOLVER.to_id(trade.get("strategy")) == self.strategy_id
+                and normalize_yyyymmdd(trade.get("buy_date")) == today
+                and trade.get("code")
+            }
+            self._bought_today.update(restored)
+            if restored:
+                self._logger.info({
+                    "event": "bought_today_restored",
+                    "strategy_name": self.name,
+                    "date": today,
+                    "codes": sorted(restored),
+                })
+        except Exception as exc:
+            self._logger.error({
+                "event": "bought_today_restore_failed",
+                "strategy_name": self.name,
+                "date": today,
+                "error": str(exc),
+            }, exc_info=True)
 
     # ------------------------------------------------------------------
     # evaluate_single — event-driven shadow fast-path (P2 2-4)
