@@ -57,6 +57,8 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert "/static/js/overseas.js" in response.text
         elif path == "/ranking":
             assert "상위 종목 랭킹" in response.text
+            assert 'data-cat="ytd"' in response.text
+            assert "YTD 상승률" in response.text
         elif path == "/marketcap":
             assert "시가총액 상위 종목" in response.text
         elif path == "/virtual":

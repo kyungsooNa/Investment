@@ -44,6 +44,7 @@ class RankingTask(AfterMarketTask):
     API_CHUNK_SIZE = 8
     PERIOD_RANKING_ALLOWED_DAYS = {1, 3, 5, 10, 20}
     PERIOD_RANKING_ALLOWED_METRICS = {"amount", "qty"}
+    DEFAULT_PERIOD_RANKING_DAYS = 5
 
     def __init__(
         self,
@@ -144,8 +145,9 @@ class RankingTask(AfterMarketTask):
         date: str = payload.get("date", "")
         needs_basic = not self._basic_last_collected_date or self._basic_last_collected_date != date
         needs_investor = not self._last_collected_date or self._last_collected_date != date
+        needs_period = (date, self.DEFAULT_PERIOD_RANKING_DAYS) not in self._period_ranking_cache
 
-        if not needs_basic and not needs_investor:
+        if not needs_basic and not needs_investor and not needs_period:
             self._logger.info(f"RankingTask execute: {date} 이미 완료 — 스킵")
             return
 
@@ -157,6 +159,8 @@ class RankingTask(AfterMarketTask):
             if needs_investor:
                 await self.refresh_investor_ranking()
                 self._last_collected_date = date
+            if needs_period:
+                await self.prewarm_period_ranking(date)
 
     # ── 장마감 후 자동 갱신 스케줄러 ────────────────────────────
 
@@ -174,6 +178,10 @@ class RankingTask(AfterMarketTask):
             not self._last_collected_date
             or self._last_collected_date != latest_trading_date
         )
+        needs_period = (
+            latest_trading_date,
+            self.DEFAULT_PERIOD_RANKING_DAYS,
+        ) not in self._period_ranking_cache
 
         if needs_basic:
             await self.refresh_basic_ranking()
@@ -181,6 +189,8 @@ class RankingTask(AfterMarketTask):
         if needs_investor:
             await self.refresh_investor_ranking()
             self._last_collected_date = latest_trading_date
+        if needs_period:
+            await self.prewarm_period_ranking(latest_trading_date)
 
     # ── 기본 랭킹 캐시 (상승/하락/거래량/거래대금) ───────────────
 
@@ -588,22 +598,7 @@ class RankingTask(AfterMarketTask):
             target_date = datetime.now().strftime("%Y%m%d")
 
         cache_key = (str(target_date), days)
-        results = self._period_ranking_cache.get(cache_key)
-        if results is None:
-            task = self._period_ranking_tasks.get(cache_key)
-            if task is None:
-                task = asyncio.create_task(
-                    self._collect_period_investor_program_ranking(str(target_date), days)
-                )
-                self._period_ranking_tasks[cache_key] = task
-            try:
-                results, is_complete = await task
-            finally:
-                if task.done() and self._period_ranking_tasks.get(cache_key) is task:
-                    self._period_ranking_tasks.pop(cache_key, None)
-
-            if is_complete:
-                self._period_ranking_cache[cache_key] = results
+        results = await self._get_or_collect_period_ranking(cache_key)
 
         sort_field = "combined_period_ntby_tr_pbmn_won" if metric == "amount" else "combined_period_ntby_qty"
         ranked_results = [
@@ -621,6 +616,47 @@ class RankingTask(AfterMarketTask):
             msg1=f"최근 {days}거래일 외국인+기관+프로그램 기간 순매수 랭킹 조회 성공",
             data=top,
         )
+
+    async def prewarm_period_ranking(
+        self,
+        target_date: str,
+        days: int = DEFAULT_PERIOD_RANKING_DAYS,
+    ) -> None:
+        """장 마감 배치의 유휴 구간에서 기본 기간수급 캐시를 미리 생성한다."""
+        cache_key = (str(target_date), days)
+        if cache_key in self._period_ranking_cache:
+            return
+        self._logger.info(f"기간수급 랭킹 캐시 예열 시작: {target_date}, {days}일")
+        await self._get_or_collect_period_ranking(cache_key)
+        if cache_key in self._period_ranking_cache:
+            self._logger.info(f"기간수급 랭킹 캐시 예열 완료: {target_date}, {days}일")
+        else:
+            self._logger.warning(f"기간수급 랭킹 캐시 예열 미완료: {target_date}, {days}일")
+
+    async def _get_or_collect_period_ranking(
+        self,
+        cache_key: tuple[str, int],
+    ) -> List[Dict]:
+        results = self._period_ranking_cache.get(cache_key)
+        if results is not None:
+            return results
+
+        task = self._period_ranking_tasks.get(cache_key)
+        if task is None:
+            target_date, days = cache_key
+            task = asyncio.create_task(
+                self._collect_period_investor_program_ranking(target_date, days)
+            )
+            self._period_ranking_tasks[cache_key] = task
+        try:
+            results, is_complete = await task
+        finally:
+            if task.done() and self._period_ranking_tasks.get(cache_key) is task:
+                self._period_ranking_tasks.pop(cache_key, None)
+
+        if is_complete:
+            self._period_ranking_cache[cache_key] = results
+        return results
 
     async def _collect_period_investor_program_ranking(
         self,

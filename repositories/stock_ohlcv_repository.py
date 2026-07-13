@@ -502,6 +502,58 @@ class StockOhlcvRepository:
             self._logger.error(f"StockOhlcvRepository daily_prices 전종목 조회 실패: {e}")
             return []
 
+    async def get_ytd_return_ranking(self, limit: int = 100) -> List[Dict]:
+        """최신 거래일과 해당 연도 첫 스냅샷의 종가를 비교한 YTD 수익률 랭킹."""
+        try:
+            async with self._get_read_connection() as conn:
+                async with conn.execute("SELECT MAX(trade_date) FROM daily_prices") as cursor:
+                    latest_row = await cursor.fetchone()
+                latest_date = latest_row[0] if latest_row and latest_row[0] else None
+                if not latest_date:
+                    return []
+
+                year_prefix = f"{latest_date[:4]}%"
+                async with conn.execute(
+                    "SELECT MIN(trade_date) FROM daily_prices WHERE trade_date LIKE ?",
+                    (year_prefix,),
+                ) as cursor:
+                    base_row = await cursor.fetchone()
+                base_date = base_row[0] if base_row and base_row[0] else None
+                if not base_date:
+                    return []
+
+                async with conn.execute(
+                    """
+                    SELECT latest.*, base.current_price AS base_price
+                    FROM daily_prices AS latest
+                    JOIN daily_prices AS base
+                      ON base.code = latest.code AND base.trade_date = ?
+                    WHERE latest.trade_date = ?
+                      AND latest.current_price > 0
+                      AND base.current_price > 0
+                    ORDER BY ((CAST(latest.current_price AS REAL) / base.current_price) - 1.0) DESC
+                    LIMIT ?
+                    """,
+                    (base_date, latest_date, limit),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+
+            results = []
+            for rank, row in enumerate(rows, 1):
+                item = dict(row)
+                item["base_date"] = base_date
+                item["latest_date"] = latest_date
+                item["ytd_return_rate"] = round(
+                    (item["current_price"] / item["base_price"] - 1.0) * 100,
+                    2,
+                )
+                item["data_rank"] = str(rank)
+                results.append(item)
+            return results
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository YTD 수익률 랭킹 조회 실패: {e}")
+            return []
+
     async def get_newhigh_stocks(self, trade_date: str) -> List[Dict]:
         """특정 거래일의 신고가(is_newhigh=1) 종목을 시가총액 내림차순으로 조회."""
         try:
