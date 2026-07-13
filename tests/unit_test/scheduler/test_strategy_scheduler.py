@@ -4,6 +4,7 @@ import asyncio
 import tempfile
 import shutil
 import json
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch, mock_open, call, ANY
 from common.types import TradeSignal, ErrorCode, ResCommonResponse, Exchange, OrderState, OrderSide, OrderContext
@@ -1524,6 +1525,49 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             await scheduler.restore_state()
             self.assertTrue(scheduler._running)
             self.assertTrue(config.enabled)
+
+    async def test_restart_warmup_blocks_scan_but_allows_exit_check(self):
+        """장중 복원 직후에는 청산을 실행하되 신규 매수 scan은 차단한다."""
+        scheduler, vm, _, tm, _ = self._make_scheduler()
+        now = datetime(2026, 7, 13, 10, 36, 56)
+        tm.get_current_kst_time.return_value = now
+        strategy = MockStrategy(name="전략A")
+        strategy.scan = AsyncMock(return_value=[])
+        strategy.check_exits = AsyncMock(return_value=[])
+        config = StrategySchedulerConfig(strategy=strategy)
+        vm.get_holds_by_strategy.return_value = [{"code": "005930", "qty": 1}]
+        scheduler._entry_warmup_until = now + timedelta(minutes=5)
+
+        await scheduler._run_strategy(config)
+
+        strategy.check_exits.assert_awaited_once()
+        strategy.scan.assert_not_awaited()
+
+    async def test_restore_state_restores_last_run_and_runs_exit_only(self):
+        """복원 시 기존 스캔 주기를 유지하면서 청산 점검은 즉시 실행한다."""
+        scheduler, vm, _, tm, mcs = self._make_scheduler()
+        now = datetime(2026, 7, 13, 10, 36, 56)
+        last_run = datetime(2026, 7, 13, 10, 33, 58)
+        tm.get_current_kst_time.return_value = now
+        mcs.is_market_open_now.return_value = True
+        strategy = MockStrategy(name="전략A")
+        config = StrategySchedulerConfig(strategy=strategy, interval_minutes=5)
+        scheduler.register(config)
+        vm.get_holds_by_strategy.return_value = [{"code": "005930", "qty": 1}]
+        scheduler._store.load_state.return_value = {
+            "enabled_strategies": ["전략A"],
+            "current_positions": [],
+            "strategy_configs": {},
+        }
+        scheduler._store.load_keyed.return_value = last_run.isoformat()
+
+        with patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as run_strategy, \
+             patch.object(scheduler, "_loop", new_callable=AsyncMock):
+            await scheduler.restore_state()
+
+        self.assertEqual(scheduler._last_run["전략A"], last_run)
+        self.assertEqual(scheduler._entry_warmup_until, now + timedelta(minutes=5))
+        run_strategy.assert_awaited_once_with(config, exits_only=True)
 
     async def test_restore_state_file_not_found(self):
         """저장된 상태가 없을 때 복원 시도 테스트."""

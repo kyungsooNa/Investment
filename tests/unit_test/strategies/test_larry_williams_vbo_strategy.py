@@ -619,6 +619,22 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(strategy._range_cache.ranges, {})
         self.assertEqual(sqs.get_recent_daily_ohlcv.call_count, 2)
 
+    async def test_refresh_range_cache_retries_missing_code_on_same_day(self):
+        """일봉 조회 실패 종목은 날짜 캐시에 고정하지 않고 다음 스캔에서 재시도한다."""
+        strategy, sqs, _ = self._make_strategy()
+        sqs.get_recent_daily_ohlcv.side_effect = [
+            ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="temporary"),
+            _ohlcv_resp(high=40_000, low=38_000),
+        ]
+
+        await strategy._refresh_range_cache("20260713", ["001450"])
+        self.assertNotIn("001450", strategy._range_cache.ranges)
+
+        await strategy._refresh_range_cache("20260713", ["001450"])
+
+        self.assertEqual(strategy._range_cache.ranges["001450"], 2000.0)
+        self.assertEqual(sqs.get_recent_daily_ohlcv.await_count, 2)
+
     async def test_refresh_range_cache_respects_concurrency_limit(self):
         """일봉 조회는 _RANGE_CACHE_CONCURRENCY를 초과해 동시에 in-flight 되지 않는다."""
         import asyncio

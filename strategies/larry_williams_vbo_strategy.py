@@ -564,10 +564,12 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
           rows[0] = 가장 최근 완성된 일봉 (장중에는 전일)
           각 row: {date, open, high, low, close, volume}
         """
-        if self._range_cache.date == today:
-            return
-        self._range_cache.date = today
-        self._range_cache.ranges.clear()
+        if self._range_cache.date != today:
+            self._range_cache.date = today
+            self._range_cache.ranges.clear()
+
+        # 성공한 Range만 당일 캐시한다. 실패/빈 응답 종목은 다음 스캔에서 재시도한다.
+        codes = [code for code in codes if code not in self._range_cache.ranges]
 
         if not codes:
             return

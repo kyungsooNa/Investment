@@ -105,6 +105,7 @@ class StrategyScheduler:
     ORDER_CUTOFF_MINUTES_BEFORE_CLOSE = 20
     STAGGER_INTERVAL_SEC = 60       # 전략 간 실행 시차 (초)
     ORDER_POLL_INTERVAL_SEC = 15    # 활성 주문 체결조회 보정 주기 (초)
+    RESTART_ENTRY_WARMUP_MINUTES = 5  # 장중 재시작 후 신규 매수 안정화 시간
     WATCHLIST_EXCLUDE_POLICY_RULES = {
         "investment_warning_stock",
         "managed_issue_stock",
@@ -170,6 +171,7 @@ class StrategyScheduler:
         self._task: Optional[asyncio.Task] = None
         self._stop_event: asyncio.Event = asyncio.Event()
         self._last_run: Dict[str, datetime] = {}
+        self._entry_warmup_until: Optional[datetime] = None
         self._last_execution_time: Optional[datetime] = None  # 전략 간 실행 쿨다운용
         self._last_order_poll_time: Optional[datetime] = None
         self._force_exit_progress: Dict[str, float] = {}  # 전략명 → 당일 누적 강제청산 비율(0~1)
@@ -537,6 +539,7 @@ class StrategyScheduler:
                             continue
 
                     self._last_run[name] = now
+                    self._persist_last_run(name, now)
                     sell_fraction = 1.0
                     if force_exit:
                         target_cum, sell_fraction = force_exit_tier
@@ -688,7 +691,7 @@ class StrategyScheduler:
         return target, sell_fraction
 
     async def _run_strategy(self, cfg: StrategySchedulerConfig, force_exit_only: bool = False,
-                            force_exit_fraction: float = 1.0):
+                            force_exit_fraction: float = 1.0, exits_only: bool = False):
         name = cfg.strategy.name
         t_run = self._pm.start_timer()
         self._logger.info(f"[Scheduler] {name} 실행 시작 (force_exit_only={force_exit_only})")
@@ -742,6 +745,21 @@ class StrategyScheduler:
 
         # P2 2-4 exit: 보유 종목 손절 shadow 구독 갱신 (entry gate 와 무관하게 매 사이클 실행).
         await self._event_shadow_manager._refresh_exit_shadow_subscriptions(cfg, holdings=post_exit_holdings)
+
+        if exits_only:
+            self._pm.log_timer(f"{name}.run_strategy(exits_only)", t_run)
+            return
+
+        now = self._tm.get_current_kst_time()
+        if self._entry_warmup_until is not None and now < self._entry_warmup_until:
+            self._logger.info({
+                "event": "scheduler_skip",
+                "strategy_name": name,
+                "reason": "restart_entry_warmup",
+                "warmup_until": self._entry_warmup_until.isoformat(),
+            })
+            self._pm.log_timer(f"{name}.run_strategy", t_run)
+            return
 
         # 2) 새 매수 스캔
         # Profitability gate 는 BUY 주문 직전에만 적용한다. scan/event-shadow 는
@@ -2220,6 +2238,24 @@ class StrategyScheduler:
         except Exception as e:
             self._logger.error(f"[Scheduler] 상태 저장 실패: {e}")
 
+    def _persist_last_run(self, strategy_name: str, value: datetime) -> None:
+        """재시작 후에도 전략별 실행 주기를 이어갈 수 있도록 마지막 실행 시각을 저장한다."""
+        try:
+            self._store.save_keyed(f"strategy_last_run::{strategy_name}", value.isoformat())
+        except Exception as e:
+            self._logger.warning(f"[Scheduler] 마지막 실행 시각 저장 실패 ({strategy_name}): {e}")
+
+    def _restore_last_run(self, strategy_name: str, now: datetime) -> None:
+        try:
+            raw = self._store.load_keyed(f"strategy_last_run::{strategy_name}")
+            if not raw or not isinstance(raw, str):
+                return
+            restored = datetime.fromisoformat(raw)
+            if restored.date() == now.date() and restored <= now:
+                self._last_run[strategy_name] = restored
+        except Exception as e:
+            self._logger.warning(f"[Scheduler] 마지막 실행 시각 복원 실패 ({strategy_name}): {e}")
+
     def clear_saved_state(self):
         """저장된 상태 삭제 (수동 정지 시 호출)."""
         try:
@@ -2266,9 +2302,20 @@ class StrategyScheduler:
                     stale_state_cleared = True
 
             if restored:
+                now = self._tm.get_current_kst_time()
+                for name in restored:
+                    self._restore_last_run(name, now)
+                if await self._mcs.is_market_open_now():
+                    self._entry_warmup_until = now + timedelta(minutes=self.RESTART_ENTRY_WARMUP_MINUTES)
                 self._running = True
-                self._task = asyncio.create_task(self._loop())
                 self._logger.info(f"[Scheduler] 이전 상태 복원 — 자동 시작: {restored}")
+
+                # 신규 진입 유예와 무관하게 보유 포지션 청산 조건은 즉시 확인한다.
+                for cfg in self._strategies:
+                    if cfg.strategy.name in restored and self._get_strategy_holdings(cfg):
+                        await self._run_strategy(cfg, exits_only=True)
+
+                self._task = asyncio.create_task(self._loop())
 
             if stale_state_cleared:
                 self._save_scheduler_state()
