@@ -25,6 +25,17 @@ async def get_recent_notifications(
     return {"notifications": items}
 
 
+@router.get("/notifications/telegram/today")
+async def get_today_telegram_notifications(
+    count: int = Query(200, ge=1, le=200),
+):
+    """오늘 Telegram으로 실제 발송된 알림 목록 조회."""
+    ctx = _get_ctx()
+    today = ctx.market_clock.get_current_kst_time().date()
+    items = ctx.telegram_notification_repository.get_by_date(today, count=count)
+    return {"notifications": items}
+
+
 @router.get("/notifications/stream")
 async def stream_notifications(request: Request):
     """SSE 스트리밍: 알림 이벤트를 실시간으로 브라우저에 전달."""

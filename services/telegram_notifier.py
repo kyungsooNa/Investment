@@ -1,5 +1,8 @@
 import asyncio
 from functools import wraps
+from datetime import datetime
+import re
+from zoneinfo import ZoneInfo
 
 import aiohttp
 import html
@@ -19,15 +22,24 @@ def _serialized_report_send(func):
     return wrapper
 
 
+def _telegram_html_to_parts(text: str) -> tuple[str, str]:
+    plain = html.unescape(re.sub(r"<[^>]+>", "", text))
+    lines = [line.strip() for line in plain.splitlines() if line.strip()]
+    if not lines:
+        return "Telegram 알림", ""
+    return lines[0], "\n".join(lines[1:])
+
+
 class TelegramNotifier:
     """Telegram 알림을 비동기적으로 전송하는 핸들러 클래스입니다."""
 
-    def __init__(self, strategy_bot_token: str, backlog_bot_token: str, chat_id: str):
+    def __init__(self, strategy_bot_token: str, backlog_bot_token: str, chat_id: str, history_repository=None):
         self.strategy_bot_token = strategy_bot_token
         self.backlog_bot_token = backlog_bot_token
         self.chat_id = chat_id
         self.strategy_api_url = f"https://api.telegram.org/bot{self.strategy_bot_token}/sendMessage"
         self.backlog_api_url = f"https://api.telegram.org/bot{self.backlog_bot_token}/sendMessage"
+        self._history_repository = history_repository
         # 허용할 카테고리 목록 설정 (기본값: STRATEGY, BACKGROUND, SYSTEM)
         self.allowed_categories = [NotificationCategory.STRATEGY, NotificationCategory.BACKGROUND, NotificationCategory.SYSTEM]
 
@@ -96,6 +108,17 @@ class TelegramNotifier:
                     if response.status != 200:
                         response_text = await response.text()
                         logger.error(f"Telegram 알림 전송 실패: {response.status} - {response_text}")
+                    elif self._history_repository is not None:
+                        try:
+                            self._history_repository.record(
+                                sent_at=event.timestamp,
+                                source="strategy" if event.category == NotificationCategory.STRATEGY else "backlog",
+                                title=event.title,
+                                message=event.message,
+                                level=event.level.value,
+                            )
+                        except Exception as e:
+                            logger.error(f"Telegram 알림 이력 저장 실패: {e}")
         except Exception as e:
             logger.error(f"Telegram 알림 전송 중 예외 발생: {e}")
 
@@ -103,11 +126,12 @@ class TelegramNotifier:
 class TelegramReporter:
     """텔레그램으로 정형화된 리포트(랭킹 등)를 전송하는 클래스입니다."""
 
-    def __init__(self, report_bot_token: str, chat_id: str):
+    def __init__(self, report_bot_token: str, chat_id: str, history_repository=None):
         self.report_bot_token = report_bot_token
         self.chat_id = chat_id
         self.api_url = f"https://api.telegram.org/bot{self.report_bot_token}/sendMessage"
         self._report_send_lock = asyncio.Lock()
+        self._history_repository = history_repository
 
     async def _send_message(self, text: str) -> bool:
         """텔레그램으로 메시지를 비동기적으로 전송하는 헬퍼 메서드입니다."""
@@ -128,6 +152,18 @@ class TelegramReporter:
                         response_text = await response.text()
                         logger.error(f"Telegram 리포트 전송 실패: {response.status} - {response_text}")
                         return False
+            if self._history_repository is not None:
+                try:
+                    title, message = _telegram_html_to_parts(text)
+                    self._history_repository.record(
+                        sent_at=datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
+                        source="report",
+                        title=title,
+                        message=message,
+                        level="info",
+                    )
+                except Exception as e:
+                    logger.error(f"Telegram 리포트 이력 저장 실패: {e}")
             return True
         except Exception as e:
             logger.error(f"Telegram 리포트 전송 중 예외 발생: {e}")

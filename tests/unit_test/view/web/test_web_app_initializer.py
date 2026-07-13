@@ -41,6 +41,7 @@ def mock_deps():
         ("logger", patch("view.web.web_app_initializer.Logger", autospec=True)),
         ("tn", patch("view.web.bootstrap.config_bootstrap.TelegramNotifier", autospec=True)),
         ("tr", patch("view.web.bootstrap.config_bootstrap.TelegramReporter", autospec=True)),
+        ("telegram_history", patch("view.web.bootstrap.config_bootstrap.TelegramNotificationRepository", autospec=True)),
         ("strategy_log_report_task", patch("view.web.bootstrap.service_container.StrategyLogReportTask", autospec=True)),
         ("strategy_log_report_service", patch("view.web.bootstrap.service_container.StrategyLogReportService", autospec=True)),
         ("newhigh_coverage_service", patch("view.web.bootstrap.backtest_task_bootstrap.NewHighStrategyCoverageBacktestService", autospec=True)),
@@ -602,9 +603,14 @@ def test_load_config_and_env_with_telegram(mock_deps):
     mock_deps["tn"].assert_called_once_with(
         backlog_bot_token="TEST_BACKLOG_TOKEN",
         strategy_bot_token="TEST_STRATEGY_TOKEN",
-        chat_id="TEST_CHAT_ID"
+        chat_id="TEST_CHAT_ID",
+        history_repository=mock_deps["telegram_history"].return_value,
     )  # Notifier
-    mock_deps["tr"].assert_called_once_with(report_bot_token="TEST_REPORT_TOKEN", chat_id="TEST_CHAT_ID") # Reporter
+    mock_deps["tr"].assert_called_once_with(
+        report_bot_token="TEST_REPORT_TOKEN",
+        chat_id="TEST_CHAT_ID",
+        history_repository=mock_deps["telegram_history"].return_value,
+    )  # Reporter
     assert ctx.telegram_reporter is not None
 
 @pytest.mark.asyncio

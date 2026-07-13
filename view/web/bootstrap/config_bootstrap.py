@@ -19,6 +19,7 @@ from services.operator_alert_service import OperatorAlertService
 from services.rejection_distribution_service import RejectionDistributionService
 from services.strategy_log_report_service import _REASON_KR
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
+from repositories.telegram_notification_repository import TelegramNotificationRepository
 
 if TYPE_CHECKING:  # pragma: no cover
     from view.web.web_app_initializer import WebAppContext
@@ -54,6 +55,7 @@ class ConfigBootstrap:
         ctx.virtual_repo.tm = ctx.market_clock
         ctx.virtual_trade_service.tm = ctx.market_clock
         ctx.notification_service = NotificationService(ctx.market_clock)
+        ctx.telegram_notification_repository = TelegramNotificationRepository()
         ctx.operator_alert_service = OperatorAlertService(
             notification_service=ctx.notification_service,
             market_clock=ctx.market_clock,
@@ -110,6 +112,7 @@ class ConfigBootstrap:
                 backlog_bot_token=telegram_backlog_bot_token,
                 strategy_bot_token=telegram_strategy_bot_token,
                 chat_id=telegram_chat_id,
+                history_repository=ctx.telegram_notification_repository,
             )
             ctx.notification_service.register_external_handler(
                 ctx.telegram_notifier.handle_event
@@ -117,7 +120,9 @@ class ConfigBootstrap:
             ctx.logger.info("텔레그램 외부 알림 핸들러가 성공적으로 등록되었습니다.")
 
             ctx.telegram_reporter = TelegramReporter(
-                report_bot_token=telegram_report_bot_token, chat_id=telegram_chat_id
+                report_bot_token=telegram_report_bot_token,
+                chat_id=telegram_chat_id,
+                history_repository=ctx.telegram_notification_repository,
             )
             ctx.logger.info("텔레그램 리포터가 초기화되었습니다.")
         else:
