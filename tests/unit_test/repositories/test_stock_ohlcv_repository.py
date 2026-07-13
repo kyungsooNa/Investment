@@ -451,6 +451,52 @@ class TestGetAllDailySnapshots:
         assert await repo.get_all_daily_snapshots("20260414") == []
 
 
+class TestGetYtdReturnRanking:
+    """get_ytd_return_ranking: 연초 첫 스냅샷 대비 최신 수익률 랭킹."""
+
+    @pytest.mark.asyncio
+    async def test_returns_latest_year_ranked_by_ytd_return(self, repo):
+        await repo.upsert_daily_snapshot("20260102", [
+            _make_snapshot("A001", name="상승주", price=100),
+            _make_snapshot("A002", name="보합주", price=200),
+        ])
+        await repo.upsert_daily_snapshot("20260713", [
+            _make_snapshot("A001", name="상승주", price=150),
+            _make_snapshot("A002", name="보합주", price=180),
+        ])
+        await repo.upsert_daily_snapshot("20251230", [
+            _make_snapshot("OLD", name="전년도", price=1),
+        ])
+
+        result = await repo.get_ytd_return_ranking(limit=10)
+
+        assert [row["code"] for row in result] == ["A001", "A002"]
+        assert result[0]["ytd_return_rate"] == pytest.approx(50.0)
+        assert result[1]["ytd_return_rate"] == pytest.approx(-10.0)
+        assert result[0]["base_date"] == "20260102"
+        assert result[0]["latest_date"] == "20260713"
+        assert result[0]["base_price"] == 100
+        assert result[0]["current_price"] == 150
+        assert result[0]["data_rank"] == "1"
+
+    @pytest.mark.asyncio
+    async def test_excludes_stock_without_market_first_day_snapshot(self, repo):
+        await repo.upsert_daily_snapshot("20260102", [_make_snapshot("A001", price=100)])
+        await repo.upsert_daily_snapshot("20260303", [_make_snapshot("IPO", price=100)])
+        await repo.upsert_daily_snapshot("20260713", [
+            _make_snapshot("A001", price=120),
+            _make_snapshot("IPO", price=300),
+        ])
+
+        result = await repo.get_ytd_return_ranking(limit=10)
+
+        assert [row["code"] for row in result] == ["A001"]
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_without_snapshots(self, repo):
+        assert await repo.get_ytd_return_ranking() == []
+
+
 # ── get_price_history ────────────────────────────────────────────────────────
 
 class TestGetPriceHistory:

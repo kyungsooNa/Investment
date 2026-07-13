@@ -155,6 +155,22 @@ async def get_period_investor_program_ranking(
     return _serialize_response(resp)
 
 
+@router.get("/ranking/ytd")
+async def get_ytd_return_ranking(limit: int = Query(100, ge=1, le=500)):
+    """저장된 일별 스냅샷으로 연초 대비 수익률 랭킹을 반환한다."""
+    ctx = _get_ctx()
+    repository = getattr(ctx, "stock_repository", None)
+    if not repository:
+        return {"rt_cd": ErrorCode.API_ERROR.value, "msg1": "StockRepository 미설정", "data": []}
+
+    data = await repository.get_ytd_return_ranking(limit=limit)
+    return {
+        "rt_cd": ErrorCode.SUCCESS.value,
+        "msg1": "YTD 상승률 랭킹 조회 성공" if data else "YTD 비교 데이터가 없습니다.",
+        "data": _serialize_list_items(data),
+    }
+
+
 @router.get("/ranking/{category}")
 async def get_ranking(category: str):
     """랭킹 조회 (rise/fall/volume/trading_value/foreign_buy/foreign_sell/inst_buy/inst_sell/prsn_buy/prsn_sell)."""

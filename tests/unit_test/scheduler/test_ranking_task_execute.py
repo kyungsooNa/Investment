@@ -22,14 +22,17 @@ async def test_execute_skips_when_already_done():
     task = _make_task()
     task._basic_last_collected_date = "20250417"
     task._last_collected_date = "20250417"
+    task._period_ranking_cache[("20250417", task.DEFAULT_PERIOD_RANKING_DAYS)] = []
 
     task.refresh_basic_ranking = AsyncMock()
     task.refresh_investor_ranking = AsyncMock()
+    task.prewarm_period_ranking = AsyncMock()
 
     await task.execute({"date": "20250417"})
 
     task.refresh_basic_ranking.assert_not_called()
     task.refresh_investor_ranking.assert_not_called()
+    task.prewarm_period_ranking.assert_not_called()
 
 
 async def test_execute_runs_both_when_not_done():
@@ -39,11 +42,13 @@ async def test_execute_runs_both_when_not_done():
 
     task.refresh_basic_ranking = AsyncMock()
     task.refresh_investor_ranking = AsyncMock()
+    task.prewarm_period_ranking = AsyncMock()
 
     await task.execute({"date": "20250417"})
 
     task.refresh_basic_ranking.assert_called_once()
     task.refresh_investor_ranking.assert_called_once()
+    task.prewarm_period_ranking.assert_awaited_once_with("20250417")
     assert task._basic_last_collected_date == "20250417"
     assert task._last_collected_date == "20250417"
 
@@ -55,11 +60,29 @@ async def test_execute_runs_only_investor_if_basic_done():
 
     task.refresh_basic_ranking = AsyncMock()
     task.refresh_investor_ranking = AsyncMock()
+    task.prewarm_period_ranking = AsyncMock()
 
     await task.execute({"date": "20250417"})
 
     task.refresh_basic_ranking.assert_not_called()
     task.refresh_investor_ranking.assert_called_once()
+    task.prewarm_period_ranking.assert_awaited_once_with("20250417")
+
+
+async def test_execute_prewarms_default_period_when_daily_rankings_are_done():
+    task = _make_task()
+    task._basic_last_collected_date = "20250417"
+    task._last_collected_date = "20250417"
+
+    task.refresh_basic_ranking = AsyncMock()
+    task.refresh_investor_ranking = AsyncMock()
+    task.prewarm_period_ranking = AsyncMock()
+
+    await task.execute({"date": "20250417"})
+
+    task.refresh_basic_ranking.assert_not_called()
+    task.refresh_investor_ranking.assert_not_called()
+    task.prewarm_period_ranking.assert_awaited_once_with("20250417")
 
 
 async def test_execute_sets_state_running_then_idle():
@@ -73,6 +96,7 @@ async def test_execute_sets_state_running_then_idle():
 
     task.refresh_basic_ranking = capture_state
     task.refresh_investor_ranking = capture_state
+    task.prewarm_period_ranking = capture_state
 
     await task.execute({"date": "20250417"})
 

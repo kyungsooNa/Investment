@@ -121,6 +121,29 @@ async def test_get_ranking_failure(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_get_ytd_ranking(web_client, mock_web_ctx):
+    """GET /api/ranking/ytd 는 저장된 연초 대비 수익률 랭킹을 반환한다."""
+    mock_web_ctx.stock_repository.get_ytd_return_ranking = AsyncMock(return_value=[{
+        "code": "005930",
+        "name": "삼성전자",
+        "current_price": 75000,
+        "base_price": 50000,
+        "base_date": "20260102",
+        "latest_date": "20260713",
+        "ytd_return_rate": 50.0,
+        "data_rank": "1",
+    }])
+
+    response = web_client.get("/api/ranking/ytd?limit=30")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rt_cd"] == "0"
+    assert body["data"][0]["ytd_return_rate"] == 50.0
+    mock_web_ctx.stock_repository.get_ytd_return_ranking.assert_awaited_once_with(limit=30)
+
+
+@pytest.mark.asyncio
 async def test_get_period_investor_program_ranking(web_client, mock_web_ctx):
     """GET /api/ranking/investor-period 는 기간 수급 랭킹을 반환한다."""
     mock_web_ctx.ranking_task.get_period_investor_program_net_buy_ranking = AsyncMock(return_value=ResCommonResponse(

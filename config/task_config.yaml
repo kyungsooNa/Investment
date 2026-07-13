@@ -16,6 +16,7 @@ after_market_tasks:
     strategy_log_report: 40         # strategy_log_report — replay audit 이후 리포트 생성
     ranking_refresh: 5          # RankingTask — 장 마감 5분 후
     daily_theme_leader_report: 15  # ThemeDailyLeaderReportTask — 랭킹 갱신 후 당일 주도 테마 리포트 발송
+    ytd_ranking_report: 15      # YtdRankingReportTask — 주 마지막 거래일, 가격 수집 후 주간 YTD 리포트
     daily_price_collector: 10      # DailyPriceCollectorTask — 장 마감 10분 후
     ohlcv_update: 20             # OhlcvUpdateTask — 장 마감 20분 후
     post_market_replay_audit: 30  # PostMarketReplayAuditTask — live 후보군 missed-signal 감사

@@ -93,7 +93,7 @@ async function loadRanking(category) {
 
         if (!json.data || json.data.length === 0) {
             const isPaperBlock = json.msg1 && json.msg1.includes('실전투자 전용');
-            if (isPaperBlock) {
+            if (isPaperBlock || category === 'ytd') {
                 div.innerHTML = `<div class="card" style="text-align:center; padding:40px;">
                     <p style="font-size:1.2em;">${json.msg1}</p>
                 </div>`;
@@ -564,6 +564,7 @@ function renderRankingTable() {
     const isCombined = cat === 'investor_buy' || cat === 'investor_sell';
     const isPeriodInvestor = cat === 'investor_period';
     const isTradingValue = cat === 'trading_value';
+    const isYtd = cat === 'ytd';
     const isSell = cat.endsWith('_sell') || cat === 'investor_sell';
 
     const sortCls = (key) => {
@@ -586,6 +587,13 @@ function renderRankingTable() {
             + `<th class="${sortCls('period_inst')}" onclick="sortRanking('period_inst')">기관 ${unitLabel}</th>`
             + `<th class="${sortCls('period_program')}" onclick="sortRanking('period_program')">프로그램 ${unitLabel}</th>`
             + `<th class="${sortCls('period_combined')}" onclick="sortRanking('period_combined')">${totalLabel}</th>`;
+    } else if (isYtd) {
+        headerRow = `<th class="${sortCls('rank')}" onclick="sortRanking('rank')">순위</th>`
+            + `<th class="${sortCls('name')}" onclick="sortRanking('name')">종목명</th>`
+            + `<th class="${sortCls('price')}" onclick="sortRanking('price')">현재가</th>`
+            + `<th class="${sortCls('ytd_rate')}" onclick="sortRanking('ytd_rate')">YTD 상승률</th>`
+            + `<th class="${sortCls('base_price')}" onclick="sortRanking('base_price')">연초 기준가</th>`
+            + `<th class="${sortCls('base_date')}" onclick="sortRanking('base_date')">기준일</th>`;
     } else if (isInvestor || isProgram || isCombined) {
         const pbmnLabel = isCombined
             ? `${investorLabel} ${isSell ? '순매도대금' : '순매수대금'}`
@@ -700,6 +708,19 @@ function renderRankingTable() {
             </tr>`;
             return;
         }
+        if (isYtd) {
+            const ytdRate = parseFloat(item.ytd_return_rate || 0);
+            const ytdColor = ytdRate > 0 ? 'text-red' : (ytdRate < 0 ? 'text-blue' : '');
+            rows += `<tr>
+                <td>${item.data_rank || item.rank || '-'}</td>
+                <td><a href="/stock?code=${code}" target="_blank" class="stock-link">${escapeHtml(item.name || code)}</a></td>
+                <td>${parseInt(item.current_price || 0).toLocaleString()}</td>
+                <td class="${ytdColor}">${ytdRate.toFixed(2)}%</td>
+                <td>${parseInt(item.base_price || 0).toLocaleString()}</td>
+                <td>${escapeHtml(item.base_date || '-')}</td>
+            </tr>`;
+            return;
+        }
         let extraCols;
         if (isMinervini) {
             extraCols = `<td>S${item.stage}</td><td>${item.rs_rating || '-'}</td><td>${formatMarketCap(item.market_cap || 0)}</td>`;
@@ -780,8 +801,8 @@ function rankingSortCompare(data, key, dir) {
             vb = (b.industry || '').toLowerCase();
             return d * va.localeCompare(vb);
         } else if (key === 'price') {
-            va = parseInt(a.stck_prpr || 0);
-            vb = parseInt(b.stck_prpr || 0);
+            va = parseInt(a.stck_prpr || a.current_price || 0);
+            vb = parseInt(b.stck_prpr || b.current_price || 0);
         } else if (key === 'rate') {
             va = parseFloat(a.prdy_ctrt || 0);
             vb = parseFloat(b.prdy_ctrt || 0);
@@ -835,6 +856,15 @@ function rankingSortCompare(data, key, dir) {
         } else if (key === 'period_combined' && isPeriodInvestor) {
             va = parseInt(_rankingPeriodMetric === 'amount' ? a.combined_period_ntby_tr_pbmn_won || 0 : a.combined_period_ntby_qty || 0);
             vb = parseInt(_rankingPeriodMetric === 'amount' ? b.combined_period_ntby_tr_pbmn_won || 0 : b.combined_period_ntby_qty || 0);
+        } else if (key === 'ytd_rate') {
+            va = parseFloat(a.ytd_return_rate || 0);
+            vb = parseFloat(b.ytd_return_rate || 0);
+        } else if (key === 'base_price') {
+            va = parseInt(a.base_price || 0);
+            vb = parseInt(b.base_price || 0);
+        } else if (key === 'base_date') {
+            va = parseInt(a.base_date || 0);
+            vb = parseInt(b.base_date || 0);
         } else if (key === 'market_cap') {
             va = parseInt(a.market_cap || 0);
             vb = parseInt(b.market_cap || 0);

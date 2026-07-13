@@ -8,6 +8,7 @@ from services.market_cap_gap_service import MarketCapGapService
 from services.stock_query_service import StockQueryService
 from task.background.after_market.market_cap_gap_report_task import MarketCapGapReportTask
 from task.background.after_market.ranking_task import RankingTask
+from task.background.after_market.ytd_ranking_report_task import YtdRankingReportTask
 
 if TYPE_CHECKING:  # pragma: no cover
     from view.web.web_app_initializer import WebAppContext
@@ -34,6 +35,7 @@ class QueryBootstrap:
                 ctx.market_cap_gap_service = None
                 ctx.market_cap_gap_report_kr_task = None
                 ctx.market_cap_gap_report_us_task = None
+                ctx.ytd_ranking_report_task = None
             else:
                 ctx.ranking_task = RankingTask(
                     broker_api_wrapper=ctx.broker,
@@ -79,6 +81,7 @@ class QueryBootstrap:
             ctx.market_cap_gap_service = None
             ctx.market_cap_gap_report_kr_task = None
             ctx.market_cap_gap_report_us_task = None
+            ctx.ytd_ranking_report_task = None
             return
 
         ctx.market_cap_gap_service = MarketCapGapService.build_default(
@@ -88,6 +91,16 @@ class QueryBootstrap:
         kr_gap_enabled = config.get("market_cap_gap_report_kr_enabled", True)
         us_gap_enabled = config.get("market_cap_gap_report_us_enabled", True)
         gap_report_store = StrategySchedulerStore(logger=ctx.logger)
+        ytd_report_enabled = config.get("ytd_ranking_report_enabled", True)
+        ctx.ytd_ranking_report_task = YtdRankingReportTask(
+            stock_repository=ctx.stock_repository,
+            telegram_reporter=getattr(ctx, "telegram_reporter", None),
+            market_calendar_service=ctx._mcs,
+            market_clock=ctx.market_clock,
+            scheduler_store=gap_report_store,
+            worker_pool=ctx.worker_pool,
+            logger=ctx.logger,
+        ) if ytd_report_enabled else None
         ctx.market_cap_gap_report_kr_task = MarketCapGapReportTask(
             market_cap_gap_service=ctx.market_cap_gap_service,
             telegram_reporter=getattr(ctx, "telegram_reporter", None),

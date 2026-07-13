@@ -116,6 +116,7 @@ class SchedulerBootstrap:
     def _register_batch_tasks(self) -> None:
         ctx = self._ctx
         self._register(ctx.ranking_task, TaskPriority.LOW)
+        self._register(self._optional_task("ytd_ranking_report_task"), TaskPriority.LOW)
         # 자체 AfterMarketLoop 사용: 한국장/미국장 각각의 cron timezone이 필요해
         # KST TimeDispatcher에는 등록하지 않는다.
         self._register(self._optional_task("market_cap_gap_report_kr_task"))
