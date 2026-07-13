@@ -3,6 +3,8 @@
 import pytest
 import asyncio
 import json
+from datetime import datetime
+from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock, patch
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
@@ -46,6 +48,30 @@ def test_get_recent_notifications(mock_get_ctx, client, mock_ctx):
     response = client.get(f"/notifications/recent?count=10&category={NotificationCategory.SYSTEM.value}")
     assert response.status_code == 200
     mock_ctx.notification_service.get_recent.assert_called_with(count=10, category=NotificationCategory.SYSTEM)
+
+
+@patch("view.web.routes.notification._get_ctx")
+def test_get_today_telegram_notifications(mock_get_ctx, client, mock_ctx):
+    mock_get_ctx.return_value = mock_ctx
+    mock_ctx.market_clock.get_current_kst_time.return_value = datetime(2026, 7, 13, 10, 0)
+    expected = [{"id": "telegram-1", "category": "TELEGRAM", "title": "리포트"}]
+    mock_ctx.telegram_notification_repository.get_by_date.return_value = expected
+
+    response = client.get("/notifications/telegram/today?count=100")
+
+    assert response.status_code == 200
+    assert response.json() == {"notifications": expected}
+    mock_ctx.telegram_notification_repository.get_by_date.assert_called_once_with(
+        datetime(2026, 7, 13).date(), count=100
+    )
+
+
+def test_web_notification_center_exposes_today_telegram_filter():
+    template = Path("view/web/templates/base.html").read_text(encoding="utf-8")
+    script = Path("view/web/static/js/notifications.js").read_text(encoding="utf-8")
+
+    assert "filterNotifications('TELEGRAM')" in template
+    assert "/api/notifications/telegram/today?count=200" in script
 
 @pytest.mark.asyncio
 @patch("view.web.routes.notification._get_ctx")

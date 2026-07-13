@@ -19,6 +19,7 @@ def patched_bootstrap_deps():
         ("env_cls", patch("view.web.bootstrap.config_bootstrap.KoreaInvestApiEnv", autospec=True)),
         ("clock_cls", patch("view.web.bootstrap.config_bootstrap.MarketClock", autospec=True)),
         ("notif_cls", patch("view.web.bootstrap.config_bootstrap.NotificationService", autospec=True)),
+        ("telegram_history_cls", patch("view.web.bootstrap.config_bootstrap.TelegramNotificationRepository", autospec=True)),
         ("op_alert_cls", patch("view.web.bootstrap.config_bootstrap.OperatorAlertService", autospec=True)),
         ("kill_cls", patch("view.web.bootstrap.config_bootstrap.KillSwitchService", autospec=True)),
         ("rej_cls", patch("view.web.bootstrap.config_bootstrap.RejectionDistributionService", autospec=True)),
@@ -70,6 +71,7 @@ def test_config_bootstrap_creates_notification_alert_killswitch(patched_bootstra
     ConfigBootstrap(ctx).run()
 
     assert ctx.notification_service is patched_bootstrap_deps["notif_cls"].return_value
+    assert ctx.telegram_notification_repository is patched_bootstrap_deps["telegram_history_cls"].return_value
     assert ctx.operator_alert_service is patched_bootstrap_deps["op_alert_cls"].return_value
     assert ctx.kill_switch_service is patched_bootstrap_deps["kill_cls"].return_value
 
@@ -128,6 +130,9 @@ def test_config_bootstrap_registers_telegram_when_tokens_present(patched_bootstr
 
     patched_bootstrap_deps["tn_cls"].assert_called_once()
     patched_bootstrap_deps["tr_cls"].assert_called_once()
+    history = patched_bootstrap_deps["telegram_history_cls"].return_value
+    assert patched_bootstrap_deps["tn_cls"].call_args.kwargs["history_repository"] is history
+    assert patched_bootstrap_deps["tr_cls"].call_args.kwargs["history_repository"] is history
     notif_instance = patched_bootstrap_deps["notif_cls"].return_value
     notif_instance.register_external_handler.assert_called_once()
 

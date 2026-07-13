@@ -107,6 +107,43 @@ async def test_handle_event_success(telegram_notifier, sample_event):
 
 
 @pytest.mark.asyncio
+async def test_handle_event_records_successful_telegram_delivery(sample_event):
+    history = MagicMock()
+    notifier = TelegramNotifier("strategy", "backlog", "chat", history_repository=history)
+
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        response = AsyncMock()
+        response.status = 200
+        mock_post.return_value.__aenter__.return_value = response
+
+        await notifier.handle_event(sample_event)
+
+    history.record.assert_called_once_with(
+        sent_at=sample_event.timestamp,
+        source="strategy",
+        title=sample_event.title,
+        message=sample_event.message,
+        level=sample_event.level.value,
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_event_does_not_record_failed_delivery(sample_event):
+    history = MagicMock()
+    notifier = TelegramNotifier("strategy", "backlog", "chat", history_repository=history)
+
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        response = AsyncMock()
+        response.status = 500
+        response.text.return_value = "error"
+        mock_post.return_value.__aenter__.return_value = response
+
+        await notifier.handle_event(sample_event)
+
+    history.record.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_handle_event_escapes_dynamic_html_text(telegram_notifier):
     """동적 알림 내용의 '<' 문자가 Telegram HTML 파싱을 깨지 않도록 escape 된다."""
     event = NotificationEvent(
@@ -329,6 +366,26 @@ async def test_reporter_send_message(telegram_reporter):
         payload = mock_post.call_args[1]['json']
         assert payload['chat_id'] == "test_chat_id"
         assert payload['text'] == "테스트 메시지"
+
+
+@pytest.mark.asyncio
+async def test_reporter_records_successful_message_as_plain_text():
+    history = MagicMock()
+    reporter = TelegramReporter("report", "chat", history_repository=history)
+
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        response = AsyncMock()
+        response.status = 200
+        mock_post.return_value.__aenter__.return_value = response
+
+        result = await reporter._send_message("<b>📊 장 마감 리포트</b>\n삼성전자 &amp; SK하이닉스")
+
+    assert result is True
+    record = history.record.call_args.kwargs
+    assert record["source"] == "report"
+    assert record["title"] == "📊 장 마감 리포트"
+    assert record["message"] == "삼성전자 & SK하이닉스"
+    assert record["level"] == "info"
 
 @pytest.mark.asyncio
 async def test_reporter_send_message_empty(telegram_reporter):

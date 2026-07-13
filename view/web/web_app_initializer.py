@@ -165,6 +165,7 @@ class WebAppContext:
         self.foreground_scheduler: ForegroundScheduler = None
         self._mcs: MarketCalendarService = None
         self.notification_service: NotificationService = None
+        self.telegram_notification_repository = None
         self.notification_queue_task: NotificationQueueTask = None
         self.initialized = False
         self.pm: PerformanceProfiler = None

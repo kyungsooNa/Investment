@@ -601,6 +601,7 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 }
 .notification-filters {
     display: flex;
+    flex-wrap: wrap;
     gap: 6px;
     padding: 8px 16px;
     border-bottom: 1px solid var(--border);
@@ -661,6 +662,9 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 .notif-item.category-API {
     border-left-color: var(--neutral);
 }
+.notif-item.category-TELEGRAM {
+    border-left-color: #229ed9;
+}
 .notif-item-header {
     display: flex;
     justify-content: space-between;
@@ -679,6 +683,7 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 .notif-category.cat-STRATEGY { background: #b7791f; }
 .notif-category.cat-SYSTEM { background: var(--negative); }
 .notif-category.cat-API { background: var(--neutral); }
+.notif-category.cat-TELEGRAM { background: #229ed9; }
 .notif-time {
     font-size: 0.7rem;
     color: var(--text-secondary);

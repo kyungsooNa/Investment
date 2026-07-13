@@ -5,6 +5,7 @@ let _notifications = [];
 let _notifUnreadCount = 0;
 let _notifCurrentFilter = 'all';
 let _notifPanelOpen = false;
+let _telegramNotifications = [];
 
 document.addEventListener('DOMContentLoaded', () => {
     initNotifications();
@@ -90,6 +91,18 @@ function filterNotifications(category) {
     document.querySelectorAll('.notif-filter').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.category === category);
     });
+    if (category === 'TELEGRAM') {
+        fetch('/api/notifications/telegram/today?count=200')
+            .then(r => r.json())
+            .then(data => {
+                _telegramNotifications = data.notifications || [];
+                renderNotifications();
+            })
+            .catch(() => {
+                renderNotifications();
+            });
+        return;
+    }
     renderNotifications();
 }
 
@@ -97,13 +110,14 @@ function renderNotifications() {
     const list = document.getElementById('notification-list');
     if (!list) return;
 
-    let items = _notifications;
-    if (_notifCurrentFilter !== 'all') {
+    let items = _notifCurrentFilter === 'TELEGRAM' ? _telegramNotifications : _notifications;
+    if (_notifCurrentFilter !== 'all' && _notifCurrentFilter !== 'TELEGRAM') {
         items = items.filter(n => n.category === _notifCurrentFilter);
     }
 
     if (items.length === 0) {
-        list.innerHTML = '<div class="notification-empty">알림이 없습니다.</div>';
+        const message = _notifCurrentFilter === 'TELEGRAM' ? '오늘 발송된 Telegram 알림이 없습니다.' : '알림이 없습니다.';
+        list.innerHTML = `<div class="notification-empty">${message}</div>`;
         return;
     }
 
