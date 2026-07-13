@@ -155,6 +155,7 @@ class StrategyFactory:
             market_clock=ctx.market_clock,
             universe_service=ctx.oneil_universe_service,
             logger=get_strategy_logger('LarryWilliamsVBO'),
+            trade_history_provider=ctx.virtual_trade_service.get_all_trades,
         )
         ctx.scheduler.register(StrategySchedulerConfig(
             strategy=vbo_strategy,

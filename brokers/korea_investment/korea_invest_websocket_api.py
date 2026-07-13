@@ -932,6 +932,11 @@ class KoreaInvestWebSocketAPI:
         tr_id = self._env.active_config['tr_ids']['websocket'].get('unified_realtime_price', 'H0UNCNT0')
         return await self.wait_for_subscription_ack(tr_id, stock_code, timeout)
 
+    async def wait_for_program_trading_ack(self, stock_code, timeout: float = None) -> bool:
+        """프로그램매매(H0STPGM0) 구독 ACK 확정을 기다린다."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0STPGM0')
+        return await self.wait_for_subscription_ack(tr_id, stock_code, timeout)
+
     async def subscribe_realtime_price(self, stock_code):
         """실시간 주식체결 데이터(현재가)를 구독합니다."""
         tr_id = self._env.active_config['tr_ids']['websocket']['realtime_price']

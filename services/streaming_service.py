@@ -158,6 +158,13 @@ class StreamingService:
         """프로그램매매 구독 해지 (BrokerAPIWrapper 위임)."""
         return await self.broker.unsubscribe_program_trading(code)
 
+    async def wait_program_trading_ack(self, code: str, timeout: float = None) -> bool:
+        """프로그램매매 구독 ACK 확정을 기다린다 — active 마킹 게이트용."""
+        waiter = getattr(self.broker, "wait_program_trading_ack", None)
+        if not callable(waiter):
+            return True
+        return await waiter(code, timeout)
+
     async def subscribe_realtime_price(self, code: str):
         """실시간 체결가 구독 (BrokerAPIWrapper 위임)."""
         if self._price_stream_service:

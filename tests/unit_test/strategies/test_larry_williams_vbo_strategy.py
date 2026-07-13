@@ -54,7 +54,8 @@ def _conclusion_resp(tday_rltv: float) -> ResCommonResponse:
 
 class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
 
-    def _make_strategy(self, now_time: datetime = None, **cfg_kwargs) -> tuple:
+    def _make_strategy(self, now_time: datetime = None, trade_history_provider=None,
+                       **cfg_kwargs) -> tuple:
         sqs = MagicMock(spec=StockQueryService)
         sqs.get_top_trading_value_stocks = AsyncMock()
         sqs.get_recent_daily_ohlcv = AsyncMock()
@@ -76,8 +77,28 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
             market_clock=tm,
             config=config,
             logger=MagicMock(),
+            trade_history_provider=trade_history_provider,
         )
         return strategy, sqs, tm
+
+    async def test_scan_blocks_same_day_reentry_restored_from_trade_history(self):
+        """서버 재시작 후에도 당일 SOLD 종목은 재진입하지 않는다."""
+        history = MagicMock(return_value=[{
+            "strategy": "larry_williams_vbo",
+            "code": "005930",
+            "buy_date": "2026-01-15 09:30:00",
+            "status": "SOLD",
+        }])
+        strategy, sqs, _ = self._make_strategy(trade_history_provider=history)
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(110_000, 100_000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(106_000, 100_000)
+        sqs.get_stock_conclusion.return_value = _conclusion_resp(150.0)
+
+        signals = await strategy.scan()
+
+        self.assertEqual(signals, [])
+        history.assert_called_once_with()
 
     def _pool_b(self, code: str = "005930", name: str = "삼성전자",
                 stck_avls: str = "500000000000") -> ResCommonResponse:
@@ -618,6 +639,22 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(strategy._range_cache.ranges, {})
         self.assertEqual(sqs.get_recent_daily_ohlcv.call_count, 2)
+
+    async def test_refresh_range_cache_retries_missing_code_on_same_day(self):
+        """일봉 조회 실패 종목은 날짜 캐시에 고정하지 않고 다음 스캔에서 재시도한다."""
+        strategy, sqs, _ = self._make_strategy()
+        sqs.get_recent_daily_ohlcv.side_effect = [
+            ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="temporary"),
+            _ohlcv_resp(high=40_000, low=38_000),
+        ]
+
+        await strategy._refresh_range_cache("20260713", ["001450"])
+        self.assertNotIn("001450", strategy._range_cache.ranges)
+
+        await strategy._refresh_range_cache("20260713", ["001450"])
+
+        self.assertEqual(strategy._range_cache.ranges["001450"], 2000.0)
+        self.assertEqual(sqs.get_recent_daily_ohlcv.await_count, 2)
 
     async def test_refresh_range_cache_respects_concurrency_limit(self):
         """일봉 조회는 _RANGE_CACHE_CONCURRENCY를 초과해 동시에 in-flight 되지 않는다."""
