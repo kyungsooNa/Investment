@@ -483,18 +483,40 @@ async def test_send_ranking_report_combined_ranking(telegram_reporter):
     
     telegram_reporter._send_message = AsyncMock(return_value=True)
     await telegram_reporter.send_ranking_report(rankings, "20250101")
-    
+
     calls = telegram_reporter._send_message.call_args_list
     full_message = "".join([call[0][0] for call in calls])
-    
+
     # 1. 외인+기관 = 100억 + 50억 = 150억. divisor=100이므로 150으로 표시
     assert "외인+기관 순매수" in full_message
     assert "150" in full_message
-    
+
     # 2. 외인+기관+프로그램 = 100억(백만) + 50억(백만) + 200억(원 단위 -> 20000 백만)
     # 총 35000 (백만 단위, 350억). divisor=100이므로 350으로 표시
     assert "외인+기관+프로그램 순매수" in full_message
     assert "350" in full_message
+
+
+@pytest.mark.asyncio
+async def test_send_ytd_ranking_report(telegram_reporter):
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    rows = [{
+        "name": "삼성전자",
+        "current_price": 75000,
+        "base_price": 50000,
+        "base_date": "20260102",
+        "latest_date": "20260717",
+        "ytd_return_rate": 50.0,
+    }]
+
+    sent = await telegram_reporter.send_ytd_ranking_report(rows, "20260717")
+
+    assert sent is True
+    message = telegram_reporter._send_message.await_args.args[0]
+    assert "주간 YTD 상승률 랭킹" in message
+    assert "삼성전자" in message
+    assert "+50.00%" in message
+    assert "20260102" in message
 
 @pytest.mark.asyncio
 async def test_send_ranking_report_splits_message(telegram_reporter):

@@ -314,6 +314,39 @@ class TelegramReporter:
         if current_message:
             await self._send_message(current_message)
 
+    @_serialized_report_send
+    async def send_ytd_ranking_report(
+        self,
+        ranking_data: List[Dict],
+        report_date: str,
+        limit: int = 20,
+    ) -> bool:
+        """주 마지막 거래일 기준 YTD 상승률 상위 종목을 전송한다."""
+        if not ranking_data:
+            return False
+
+        first = ranking_data[0]
+        base_date = html.escape(str(first.get("base_date") or "-"), quote=False)
+        latest_date = html.escape(str(first.get("latest_date") or report_date), quote=False)
+        lines = [
+            f"📈 <b>주간 YTD 상승률 랭킹 ({report_date})</b>",
+            f"기준: {base_date} → {latest_date}",
+            "<pre>",
+            "순 종목         현재가       YTD",
+            "-" * 34,
+        ]
+        for rank, item in enumerate(ranking_data[:limit], 1):
+            name = html.escape(str(item.get("name") or item.get("code") or "-"), quote=False)
+            name = name[:8]
+            try:
+                price = f"{int(item.get('current_price') or 0):,}"
+            except (TypeError, ValueError):
+                price = "-"
+            rate = self._format_signed_pct(item.get("ytd_return_rate"), digits=2)
+            lines.append(f"{rank:<2} {name:<8} {price:>10} {rate:>9}")
+        lines.append("</pre>")
+        return await self._send_message("\n".join(lines))
+
     @staticmethod
     def _format_won_100m(value) -> str:
         try:

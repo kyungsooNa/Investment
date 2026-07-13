@@ -140,6 +140,7 @@ class WebAppContext:
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
         self.ranking_task: RankingTask = None
+        self.ytd_ranking_report_task = None
         self.minervini_update_task: MinerviniUpdateTask = None
         self.websocket_watchdog_task: WebSocketWatchdogTask = None
         self.pre_market_health_check_task: PreMarketHealthCheckTask = None
