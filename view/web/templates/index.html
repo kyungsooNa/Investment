@@ -10,12 +10,18 @@
             box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
             border-color: var(--accent, #4a90e2);
         }
+        .home-menu-group { margin-top: 28px; text-align: left; }
+        .home-menu-group h3 { margin-bottom: 12px; }
+        .home-menu-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
     </style>
     <div class="section">
         <div class="card" style="text-align: center; padding: 48px 24px;">
             <h2 style="margin-bottom: 12px;">Investment</h2>
             <p style="color: var(--text-secondary); margin-bottom: 32px;">한국투자증권 Open API 기반 주식 자동매매 시스템</p>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; max-width: 800px; margin: 0 auto;">
+            <div style="max-width: 900px; margin: 0 auto;">
+            <section class="home-menu-group" data-home-market="domestic">
+                <h3>한국장</h3>
+                <div class="home-menu-grid">
                 <a href="/stock" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">📈</div>
                     <div style="font-weight: 600;">현재가 조회</div>
@@ -36,6 +42,30 @@
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">🏆</div>
                     <div style="font-weight: 600;">랭킹</div>
                 </a>
+                <a href="/marketcap" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">🏢</div>
+                    <div style="font-weight: 600;">시가총액</div>
+                </a>
+                <a href="/program" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">🖥️</div>
+                    <div style="font-weight: 600;">프로그램매매</div>
+                </a>
+                </div>
+            </section>
+
+            <section class="home-menu-group" data-home-market="overseas_us">
+                <h3>미국장</h3>
+                <div class="home-menu-grid">
+                <a href="/overseas" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">🇺🇸</div>
+                    <div style="font-weight: 600;">시세·보유·주문</div>
+                </a>
+                </div>
+            </section>
+
+            <section class="home-menu-group" data-home-market="common">
+                <h3>공통</h3>
+                <div class="home-menu-grid">
                 <a href="/virtual" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">📊</div>
                     <div style="font-weight: 600;">모의투자 기록</div>
@@ -44,14 +74,16 @@
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">⏰</div>
                     <div style="font-weight: 600;">전략 스케줄러</div>
                 </a>
-                <a href="/program" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
-                    <div style="font-size: 1.5rem; margin-bottom: 8px;">🖥️</div>
-                    <div style="font-weight: 600;">프로그램매매</div>
+                <a href="/strategy-reports" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">📝</div>
+                    <div style="font-weight: 600;">상세 리포트</div>
                 </a>
                 <a href="/system" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">⚙️</div>
                     <div style="font-weight: 600;">시스템 상태</div>
                 </a>
+                </div>
+            </section>
             </div>
         </div>
     </div>

@@ -85,3 +85,56 @@ def test_rendered_pages_reference_served_static_assets(web_client_with_fake_ctx)
 
             assert asset.status_code == 200, f"{page_path} references missing asset: {static_path}"
             assert asset.content
+
+
+@pytest.mark.parametrize(
+    ("page_path", "expected_market"),
+    [
+        ("/stock", "domestic"),
+        ("/favorite", "domestic"),
+        ("/balance", "domestic"),
+        ("/order", "domestic"),
+        ("/overseas", "overseas_us"),
+        ("/virtual", "common"),
+        ("/system", "common"),
+    ],
+)
+def test_rendered_pages_expose_view_market_context(
+    web_client_with_fake_ctx,
+    page_path,
+    expected_market,
+):
+    page = web_client_with_fake_ctx.get(page_path)
+
+    assert page.status_code == 200
+    assert f'data-view-market="{expected_market}"' in page.text
+
+
+def test_navigation_separates_domestic_overseas_and_common_areas(web_client_with_fake_ctx):
+    page = web_client_with_fake_ctx.get("/stock")
+
+    assert page.status_code == 200
+    assert 'data-nav-market="domestic"' in page.text
+    assert 'data-nav-market="overseas_us"' in page.text
+    assert 'data-nav-market="common"' in page.text
+    assert '>한국장<' in page.text
+    assert '>미국장<' in page.text
+
+
+def test_stock_page_is_domestic_only(web_client_with_fake_ctx):
+    page = web_client_with_fake_ctx.get("/stock")
+
+    assert page.status_code == 200
+    assert 'id="stock-market-label"' in page.text
+    assert 'id="stock-mode-overseas"' not in page.text
+    assert 'id="overseas-stock-row"' not in page.text
+    assert "searchOverseasStock" not in page.text
+
+
+def test_home_groups_market_and_common_entry_points(web_client_with_fake_ctx):
+    page = web_client_with_fake_ctx.get("/")
+
+    assert page.status_code == 200
+    assert 'data-home-market="domestic"' in page.text
+    assert 'data-home-market="overseas_us"' in page.text
+    assert 'data-home-market="common"' in page.text
