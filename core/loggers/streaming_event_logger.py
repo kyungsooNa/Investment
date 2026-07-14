@@ -519,6 +519,15 @@ class StreamingEventLogger:
             return
         self._logger.warning({"action": "pt_restore_failed_pending", "codes": sorted(codes)})
 
+    def log_pt_capacity_pending(self, selected: list, pending: list, max_codes: int) -> None:
+        """WebSocket 슬롯 한도로 이번 복원에서 제외된 PT 종목을 기록한다."""
+        self._logger.warning({
+            "action": "pt_capacity_pending",
+            "selected": selected,
+            "pending": pending,
+            "max_codes": max_codes,
+        })
+
     def log_price_restore_start(self, desired_count: int) -> None:
         """H0UNCNT0(실시간 체결가) 구독 복원 시작.
 

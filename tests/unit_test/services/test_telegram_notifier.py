@@ -931,7 +931,7 @@ async def test_send_daily_theme_report_formats_stockeasy_like_cards(telegram_rep
     full = "".join(call[0][0] for call in telegram_reporter._send_message.call_args_list)
     assert "오늘의 주도 테마" in full
     assert "1. 반도체/소부장" in full
-    assert "+12.33%" in full
+    assert "주도주 평균 +12.33%" in full
     assert "3,801억" in full
     assert "종합점수 12.17" in full
     assert "테스 +14.9% 1,930억" in full

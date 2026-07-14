@@ -85,6 +85,9 @@ class FakeClient:
     async def unsubscribe_program_trading(self, stock_code: str) -> None:
         pass
 
+    async def wait_for_program_trading_ack(self, stock_code: str, timeout=None) -> bool:
+        return True
+
     async def subscribe_unified_price(self, stock_code: str) -> bool:
         return True
 
@@ -469,8 +472,16 @@ class TestExcludedMethodsSet:
             "subscribe_order_notice",
             "unsubscribe_order_notice",
             "is_websocket_receive_alive",
+            "wait_for_program_trading_ack",
         }
         assert expected.issubset(_EXCLUDED_METHODS)
+
+    async def test_program_trading_ack_wait_bypasses_retry_queue(self, fake_client, queue):
+        queue.submit = AsyncMock()
+        wrapped = ClientWithRetryQueue(fake_client, queue)
+
+        assert await wrapped.wait_for_program_trading_ack("005930") is True
+        queue.submit.assert_not_awaited()
 
 
 class TestEmergencyPriorityPropagation:

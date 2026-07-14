@@ -235,6 +235,22 @@ class NotificationsConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class DartDisclosureConfig(BaseModel):
+    enabled: bool = False
+    api_key: str = ""
+    poll_interval_sec: int = Field(300, ge=60)
+    off_hours_interval_sec: int = Field(1800, ge=60)
+    active_start_time: str = "07:00"
+    active_end_time: str = "19:30"
+    request_timeout_sec: float = Field(5.0, gt=0)
+    immediate_alert_score: int = Field(70, ge=0, le=100)
+    daily_digest_enabled: bool = True
+    daily_digest_time: str = "19:40"
+    max_pages_per_poll: int = Field(5, ge=1, le=100)
+
+    model_config = {"extra": "allow"}
+
+
 class ExecutionQualityReportConfig(BaseModel):
     enabled: bool = True
     min_sample_count: int = 3
@@ -401,6 +417,7 @@ class AppConfig(BaseModel):
     order_execution: OrderExecutionConfig = Field(default_factory=OrderExecutionConfig)
     data_quality: DataQualityConfig = Field(default_factory=DataQualityConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
+    dart_disclosure: DartDisclosureConfig = Field(default_factory=DartDisclosureConfig)
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
     execution_quality_report: ExecutionQualityReportConfig = Field(default_factory=ExecutionQualityReportConfig)
     strategy_performance_degradation: StrategyPerformanceDegradationConfig = Field(

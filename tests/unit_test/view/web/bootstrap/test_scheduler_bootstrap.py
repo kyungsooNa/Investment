@@ -60,6 +60,7 @@ def _make_fake_context(runtime_mode: RuntimeMode = RuntimeMode.ALL):
         setattr(ctx, name, task)
     ctx.price_subscription_service = None  # _initialize_price_subscriptions 에서 즉시 종료
     ctx._initialize_price_subscriptions = MagicMock()
+    ctx.dart_disclosure_monitor_task = None
     return ctx
 
 
@@ -117,6 +118,16 @@ def test_web_only_registers_notification_and_watchdog(patched_scheduler_deps):
     _run(ctx)
     names = _registered_bg_task_names(patched_scheduler_deps)
     assert names == {"notification_queue_task", "websocket_watchdog_task"}
+
+
+def test_web_registers_optional_dart_disclosure_monitor(patched_scheduler_deps):
+    ctx = _make_fake_context(RuntimeMode.WEB)
+    ctx.dart_disclosure_monitor_task = MagicMock(task_name="dart_disclosure_monitor")
+
+    _run(ctx)
+
+    names = _registered_bg_task_names(patched_scheduler_deps)
+    assert "dart_disclosure_monitor" in names
 
 
 def test_overseas_us_registers_dryrun_task(patched_scheduler_deps):

@@ -90,6 +90,21 @@ def test_runtime_mode_injection(mock_deps):
     assert ctx2.runtime_mode == (RuntimeMode.WEB | RuntimeMode.TRADING)
 
 
+def test_logger_injection_skips_default_logger_construction(mock_deps):
+    """logger 인자로 주입 시 내부 Logger() 를 생성하지 않고 주입된 인스턴스를 그대로 사용한다.
+
+    WebAppContext.__init__ 이 항상 Logger() 를 생성하면, 테스트에서 나중에
+    ctx.logger 를 재할당해도 이미 실행된 Logger() 부작용(logs/common 파일 생성,
+    'operational_logger'/'debug_logger' 전역 싱글턴 핸들러 교체)을 되돌릴 수 없다.
+    """
+    injected_logger = MagicMock()
+
+    ctx = WebAppContext(None, logger=injected_logger)
+
+    assert ctx.logger is injected_logger
+    mock_deps["logger"].assert_not_called()
+
+
 def test_initialize_scheduler_noop_when_trading_disabled(mock_deps):
     """runtime_mode=WEB 일 때 initialize_scheduler() 가 StrategyScheduler 를 생성하지 않는다."""
     from view.web.bootstrap.runtime_mode import RuntimeMode

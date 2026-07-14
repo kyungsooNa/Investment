@@ -640,6 +640,42 @@ async def test_format_last_tick_report_marks_legacy_source_separately(manager):
     assert message.index("[프로그램] SK하이닉스") < message.index("[기존] 제주반도체")
 
 
+@pytest.mark.asyncio
+async def test_format_last_tick_report_discards_previous_day_memory(manager):
+    """자정 이후 상태 알림에 전일 메모리 tick을 재사용하지 않는다."""
+    manager._pt_history["005930"] = [{
+        "유가증권단축종목코드": "005930",
+        "주식체결시간": "153000",
+        "price": "70000",
+        "rate": "1.00",
+        "순매수거래대금": "100000000",
+    }]
+    manager._last_tick_ts_by_code["005930"] = time.time()
+    manager.last_data_ts = time.time()
+    manager._history_date = "2026-07-13"
+
+    message = await manager._format_last_tick_report_async(["005930"])
+
+    assert "[기존] 005930: 수신 없음" in message
+    assert "70,000원" not in message
+    assert manager._last_tick_ts_by_code == {}
+    assert manager.last_data_ts == 0.0
+
+
+@pytest.mark.asyncio
+async def test_format_last_tick_report_marks_capacity_pending(manager):
+    """WebSocket 한도로 제외된 종목은 실제 구독의 무수신과 구분한다."""
+    mock_ssr = MagicMock()
+    mock_ssr.get_pt_subscription_sources.return_value = {"005930": "manual"}
+    mock_ssr.get_pt_capacity_pending.return_value = {"005930"}
+    manager.wire_streaming_stock_repo(mock_ssr)
+
+    message = await manager._format_last_tick_report_async(["005930"])
+
+    assert "구독 대기 (WebSocket 한도)" in message
+    assert "수신 없음" not in message
+
+
 def test_build_db_minute_persistence_status_reports_missing_minutes(manager):
     """장중 1분 단위 저장 여부를 종목별로 계산한다."""
     clock = MarketClock(market_open_time="09:00", market_close_time="09:02")

@@ -14,6 +14,7 @@ def mock_streaming():
     svc.unsubscribe_program_trading = AsyncMock(return_value=True)
     # 구독 ACK 확정 — 기본은 확정(True). 미확정 경로는 개별 테스트에서 override.
     svc.wait_unified_price_ack = AsyncMock(return_value=True)
+    svc.wait_program_trading_ack = AsyncMock(return_value=True)
     return svc
 
 @pytest.fixture
@@ -82,6 +83,26 @@ def test_clear_active_state(policy, mock_streaming_logger):
     assert len(policy._active_codes_pt) == 0
     # 구체화된 로깅 메서드 호출 검증
     assert mock_streaming_logger.log_clear_active_state.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_external_reserved_slots_reduce_rebalance_capacity(policy, mock_streaming):
+    """워치독이 복원한 PT 슬롯을 제외한 범위에서만 일반 구독을 배정한다."""
+    policy.MAX_WS_SLOTS = 4
+    policy.set_external_reserved_slots(2)
+    for code in ("000001", "000002", "000003"):
+        policy._refs[code] = {
+            "portfolio": {
+                "priority": SubscriptionPriority.HIGH,
+                "type": StreamingType.UNIFIED_PRICE,
+            }
+        }
+
+    await policy._rebalance()
+
+    subscribed = {call.args[0] for call in mock_streaming.subscribe_unified_price.await_args_list}
+    assert subscribed == {"000001", "000002"}
+    assert policy._calculate_used_slots() == 4
 
 @pytest.mark.asyncio
 async def test_add_remove_subscription(policy, mock_streaming_stock_repo):

@@ -169,7 +169,7 @@
 ### M-2. 문서 동기화 + 구조 감시 [저위험 상시]
 
 - [x] `docs/backtest.md`(본문은 #619 슬리피지/스프레드 CLI까지 이미 반영, 날짜만 동기화)·`CODEBASE_SUMMARY.md`(bootstrap 분해 진전·EventShadowManager 분리·해외/테마 계층·브로커 계층 계측 4곳 반영) 갱신 완료 (2026-07-05).
-- [x] **`service_container.py` 비대화 경고 해소 — bootstrap 분해 + 의존성 경계 테스트 추가 (2026-07-12)**: #659(서비스↔전략 의존성 경계 강제, `oneil_common_types.py`를 `strategies/`→`common/`으로 이관, `test_architecture_dependencies.py` 신규) · #660(`backtest_task_bootstrap.py` 추출) · #661(`repository_bootstrap.py` 추출) · #662(`market_data_bootstrap.py` 추출) 4개 PR로 `service_container.py`가 962→**862줄**로 감소, 07-05까지의 증가 추세 반전.
+- [x] **`service_container.py` 비대화 경고 해소 — bootstrap 분해 + 의존성 경계 테스트 추가 (2026-07-12)**: #659(서비스↔전략 의존성 경계 강제, `oneil_common_types.py`를 `strategies/`→`common/`으로 이관, `test_architecture_dependencies.py` 신규) · #660(`backtest_task_bootstrap.py` 추출) · #661(`repository_bootstrap.py` 추출) · #662(`market_data_bootstrap.py` 추출) · #663(`query_bootstrap.py` 추출) · #664(`realtime_bootstrap.py` 추출) 6개 PR로 `service_container.py`가 962→**710줄**로 감소, 07-05까지의 증가 추세 반전.
 - 감시(조치 아님): `scheduler/strategy_scheduler.py` 2,153→**2,379줄**(+226) / `services/strategy_log_report_service.py` 2,144→**2,298줄**(+154, 07-08 "정체" 판정 이후 증가 재개) — 분해는 3-4 재승격과 함께 진행.
 
 ### M-3. 시가총액/미국주식 UI 하드닝 후속 [#653 코드리뷰 xhigh, 2026-07-11]

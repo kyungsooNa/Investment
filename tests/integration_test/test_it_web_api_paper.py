@@ -550,8 +550,7 @@ class TestWebAppContextInitialization:
              patch("view.web.web_app_initializer.OverseasStockCodeRepository"), \
              patch("view.web.web_app_initializer.StockCodeRepository"):
 
-            ctx = WebAppContext(SimpleContext())
-            ctx.logger = test_logger
+            ctx = WebAppContext(SimpleContext(), logger=test_logger)
             ctx.load_config_and_env()
 
             # _sync_calendar_if_needed는 실제 KIS HTTP 호출을 유발하므로 mock 처리
@@ -609,8 +608,7 @@ class TestWebAppContextInitialization:
              patch("view.web.web_app_initializer.OverseasStockCodeRepository"), \
              patch("view.web.web_app_initializer.StockCodeRepository"):
 
-            ctx = WebAppContext(SimpleContext())
-            ctx.logger = test_logger
+            ctx = WebAppContext(SimpleContext(), logger=test_logger)
             ctx.load_config_and_env()
             ctx._mcs._sync_calendar_if_needed = AsyncMock()
 
@@ -641,8 +639,7 @@ class TestWebAppContextInitialization:
              patch("view.web.web_app_initializer.OverseasStockCodeRepository"), \
              patch("view.web.web_app_initializer.StockCodeRepository"):
 
-            ctx = WebAppContext(SimpleContext())
-            ctx.logger = test_logger
+            ctx = WebAppContext(SimpleContext(), logger=test_logger)
             ctx.load_config_and_env()
             ctx._mcs._sync_calendar_if_needed = AsyncMock()
 
@@ -673,8 +670,7 @@ class TestWebAppContextInitialization:
              patch("view.web.web_app_initializer.OverseasStockCodeRepository"), \
              patch("view.web.web_app_initializer.StockCodeRepository"):
 
-            ctx = WebAppContext(SimpleContext())
-            ctx.logger = test_logger
+            ctx = WebAppContext(SimpleContext(), logger=test_logger)
             ctx.load_config_and_env()
             ctx._mcs._sync_calendar_if_needed = AsyncMock()
 
@@ -714,8 +710,7 @@ class TestWebAppContextInitialization:
              patch("view.web.web_app_initializer.OverseasStockCodeRepository"), \
              patch("view.web.web_app_initializer.StockCodeRepository"):
 
-            ctx = WebAppContext(SimpleContext())
-            ctx.logger = test_logger
+            ctx = WebAppContext(SimpleContext(), logger=test_logger)
             ctx.load_config_and_env()
             ctx._mcs._sync_calendar_if_needed = AsyncMock()
 
@@ -753,8 +748,7 @@ class TestWebAppContextInitialization:
              patch("view.web.web_app_initializer.OverseasStockCodeRepository"), \
              patch("view.web.web_app_initializer.StockCodeRepository"):
 
-            ctx = WebAppContext(SimpleContext())
-            ctx.logger = test_logger
+            ctx = WebAppContext(SimpleContext(), logger=test_logger)
             ctx.load_config_and_env()
             ctx._mcs._sync_calendar_if_needed = AsyncMock()
 

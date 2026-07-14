@@ -62,6 +62,7 @@ class StreamingStockRepo:
         self._pending_desired_ops: list = []  # list of (code: str, add: bool, source: str)
         self._pending_lock = threading.Lock()
         self._pt_sources: Dict[str, str] = {}
+        self._pt_capacity_pending: Set[str] = set()
 
     # ── 초기화 / 영속성 ──────────────────────────────────────────────
 
@@ -264,6 +265,14 @@ class StreamingStockRepo:
         """PROGRAM_TRADING desired 종목별 등록 출처를 반환한다."""
         return dict(self._pt_sources)
 
+    def set_pt_capacity_pending(self, codes: Iterable[str]) -> None:
+        """WebSocket 슬롯 한도로 활성 복원에서 제외된 PT 종목을 기록한다."""
+        self._pt_capacity_pending = self._normalize_codes(codes)
+
+    def get_pt_capacity_pending(self) -> Set[str]:
+        """WebSocket 슬롯 확보를 기다리는 PT 종목 snapshot을 반환한다."""
+        return set(self._pt_capacity_pending)
+
     def get_active(self, stream_type: StreamingType) -> Set[str]:
         """active 집합의 복사본을 반환한다 (lock-free 안전 읽기)."""
         return set(self._active[stream_type])
@@ -285,6 +294,10 @@ class StreamingStockRepo:
                 "desired": sorted(self._desired[stream_type]),
                 "active": sorted(self._active[stream_type]),
                 "pending": sorted(self.get_pending(stream_type)),
+                **(
+                    {"capacity_pending": sorted(self._pt_capacity_pending)}
+                    if stream_type == StreamingType.PROGRAM_TRADING else {}
+                ),
             }
             for stream_type in StreamingType
         }

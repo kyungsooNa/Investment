@@ -5,6 +5,7 @@ WebSocket 수신 태스크 상태를 주기적으로 감시하고,
 데이터 수신이 끊기면 재연결한다.
 """
 import asyncio
+import inspect
 import logging
 import time
 from typing import Dict, List, Optional, TYPE_CHECKING
@@ -40,6 +41,9 @@ class WebSocketWatchdogTask(SchedulableTask):
     RECONNECT_ALERT_CONFIRMATION_COUNT = 2
     REALTIME_HEALTH_CHECK_END_HOUR = 15
     REALTIME_HEALTH_CHECK_END_MINUTE = 20
+    # KIS 40슬롯 중 PT 18종목(H0STPGM0+H0UNCNT0=36)과 주문통보 1슬롯을 예약한다.
+    PT_RESTORE_MAX_CODES = 18
+    ORDER_NOTICE_RESERVED_SLOTS = 1
 
     def __init__(
         self,
@@ -79,6 +83,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         self._last_reconnect_started_ts: float = 0.0
         self._reconnect_trigger_counts: Dict[str, int] = {}
         self._pt_no_initial_data_started_ts: Optional[float] = None
+        self._capacity_pending_pt_codes: set[str] = set()
 
     # ── SchedulableTask 인터페이스 구현 ────────────────────────
 
@@ -175,7 +180,11 @@ class WebSocketWatchdogTask(SchedulableTask):
                     if self._streaming_stock_repo else []
                 raw_price_codes = sorted(self._streaming_stock_repo.get_desired(StreamingType.UNIFIED_PRICE)) \
                     if self._streaming_stock_repo else []
-                price_codes = sorted(set(raw_price_codes) | set(pt_codes))
+                monitored_pt_codes = [
+                    code for code in pt_codes
+                    if code not in self._capacity_pending_pt_codes
+                ]
+                price_codes = sorted(set(raw_price_codes) | set(monitored_pt_codes))
                 active_price_codes = set(self._streaming_stock_repo.get_active(StreamingType.UNIFIED_PRICE)) \
                     if self._streaming_stock_repo else set()
                 active_pt_codes = set(self._streaming_stock_repo.get_active(StreamingType.PROGRAM_TRADING)) \
@@ -340,6 +349,7 @@ class WebSocketWatchdogTask(SchedulableTask):
                     pending_pt_codes = [
                         code for code in pt_codes
                         if code not in active_pt_codes
+                        and code not in self._capacity_pending_pt_codes
                     ]
                     if pending_pt_codes:
                         for code in pending_pt_codes:
@@ -475,7 +485,7 @@ class WebSocketWatchdogTask(SchedulableTask):
             "market_open": self._market_open,
         }
 
-    async def _restore_all_subscriptions(self) -> None:
+    async def _restore_all_subscriptions(self, reset_connection: bool = True) -> None:
         """
         앱 시작 또는 재연결 직후 모든 구독(PT + H0UNCNT0)을 복원한다.
 
@@ -500,7 +510,50 @@ class WebSocketWatchdogTask(SchedulableTask):
             await self._streaming_stock_repo.clear_active(StreamingType.UNIFIED_PRICE)
 
         # ── 2. PT + H0STCNT0 복원 ─────────────────────────────────
-        pt_codes = sorted(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if self._streaming_stock_repo else []
+        all_pt_codes = sorted(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if self._streaming_stock_repo else []
+        sources = {}
+        if self._streaming_stock_repo:
+            getter = getattr(self._streaming_stock_repo, "get_pt_subscription_sources", None)
+            if callable(getter):
+                sources = getter() or {}
+        source_rank = {"manual": 0, "program": 1, "legacy": 2}
+        ordered_pt_codes = sorted(
+            all_pt_codes,
+            key=lambda code: (source_rank.get(sources.get(code), 2), code),
+        )
+        pt_codes = ordered_pt_codes[:self.PT_RESTORE_MAX_CODES]
+        capacity_pending = ordered_pt_codes[self.PT_RESTORE_MAX_CODES:]
+        self._capacity_pending_pt_codes = set(capacity_pending)
+        if self._streaming_stock_repo:
+            setter = getattr(self._streaming_stock_repo, "set_pt_capacity_pending", None)
+            if callable(setter):
+                setter(capacity_pending)
+
+        if self._streaming_logger and capacity_pending:
+            self._streaming_logger.log_pt_capacity_pending(
+                selected=pt_codes,
+                pending=capacity_pending,
+                max_codes=self.PT_RESTORE_MAX_CODES,
+            )
+
+        if self._price_subscription_service:
+            reserved_slots = (
+                len(pt_codes) * 2
+                + self.ORDER_NOTICE_RESERVED_SLOTS
+            )
+            reserve = getattr(self._price_subscription_service, "set_external_reserved_slots", None)
+            if callable(reserve):
+                reserve(reserved_slots)
+            self._price_subscription_service.clear_active_state()
+
+        # 시작 단계에서 먼저 등록된 가격 구독을 비우고 하나의 슬롯 계획으로 다시 구성한다.
+        if self._streaming_service and reset_connection:
+            try:
+                disconnect_result = self._streaming_service.disconnect_websocket()
+                if inspect.isawaitable(disconnect_result):
+                    await disconnect_result
+            except Exception as e:
+                self._logger.warning(f"구독 복원 전 WebSocket 초기화 실패 (계속 진행): {e}")
 
         import time as _time
         _recovery_start = _time.monotonic()
@@ -510,8 +563,8 @@ class WebSocketWatchdogTask(SchedulableTask):
         if pt_codes:
             if self._streaming_logger:
                 self._streaming_logger.log_subscription_recovery_start(
-                    total=len(pt_codes),
-                    codes=pt_codes,
+                    total=len(all_pt_codes),
+                    codes=all_pt_codes,
                 )
             connected = await self._streaming_service.connect_websocket()
             if not connected:
@@ -554,14 +607,13 @@ class WebSocketWatchdogTask(SchedulableTask):
             if self._streaming_logger:
                 self._streaming_logger.log_subscription_recovery_done(
                     success=pt_success,
-                    total=len(pt_codes),
-                    failed_codes=pt_failed,
+                    total=len(all_pt_codes),
+                    failed_codes=[*pt_failed, *capacity_pending],
                     elapsed_ms=(_time.monotonic() - _recovery_start) * 1000,
                 )
 
         # ── 3. H0UNCNT0 복원 (핵심 버그 수정) ────────────────────
         if self._price_subscription_service:
-            self._price_subscription_service.clear_active_state()
             desired_count = len(self._price_subscription_service._refs)
             if desired_count > 0:
                 # PT 구독이 없어도 WebSocket 연결 보장 (미연결 시 _rebalance() 실패 방지)
@@ -582,7 +634,7 @@ class WebSocketWatchdogTask(SchedulableTask):
             self._streaming_logger.log_restore(
                 codes=pt_codes,
                 success=pt_success,
-                total=len(pt_codes),
+                total=len(all_pt_codes),
             )
 
     async def force_reconnect(self, trigger: str = "manual") -> None:
@@ -627,7 +679,7 @@ class WebSocketWatchdogTask(SchedulableTask):
                 if self._streaming_logger:
                     self._streaming_logger.log_force_reconnect_disconnect_error(str(e))
 
-            await self._restore_all_subscriptions()
+            await self._restore_all_subscriptions(reset_connection=False)
 
             restored_count, desired_count = self._get_reconnect_restore_counts(pt_codes)
             if self._oas and trigger != "market_open":
@@ -661,7 +713,7 @@ class WebSocketWatchdogTask(SchedulableTask):
         """재연결 후 desired 구독 대비 active 복원 개수를 계산한다."""
         from repositories.streaming_stock_repo import StreamingType
 
-        desired_pt_codes = set(pt_codes)
+        desired_pt_codes = set(pt_codes) - self._capacity_pending_pt_codes
         active_pt_codes = set()
         if self._streaming_stock_repo:
             active_pt_codes = set(self._streaming_stock_repo.get_active(StreamingType.PROGRAM_TRADING))
