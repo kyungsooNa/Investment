@@ -124,3 +124,44 @@ async def test_rejected_reasons_field_names(web_client, mock_web_ctx):
     assert "count" in row
     assert "label_kr" in row
     assert "strategy" in row
+
+
+def test_diagnostic_report_archive_list(web_client, mock_web_ctx):
+    mock_web_ctx.strategy_diagnostic_report_repository.list_reports.return_value = [
+        {
+            "id": "20260714_162151_000001_strategy_diagnostic_report.html",
+            "report_date": "20260714",
+            "created_at": "2026-07-14T16:21:51",
+        }
+    ]
+
+    response = web_client.get("/api/strategies/diagnostic-reports?limit=20")
+
+    assert response.status_code == 200
+    assert response.json()["reports"][0]["report_date"] == "20260714"
+    mock_web_ctx.strategy_diagnostic_report_repository.list_reports.assert_called_once_with(
+        limit=20
+    )
+
+
+def test_diagnostic_report_archive_detail(web_client, mock_web_ctx):
+    report_id = "20260714_162151_000001_strategy_diagnostic_report.html"
+    mock_web_ctx.strategy_diagnostic_report_repository.get_report.return_value = {
+        "id": report_id,
+        "report_date": "20260714",
+        "created_at": "2026-07-14T16:21:51",
+        "content": "<b>상세 리포트</b>",
+    }
+
+    response = web_client.get(f"/api/strategies/diagnostic-reports/{report_id}")
+
+    assert response.status_code == 200
+    assert response.json()["content"] == "<b>상세 리포트</b>"
+
+
+def test_diagnostic_report_archive_detail_not_found(web_client, mock_web_ctx):
+    mock_web_ctx.strategy_diagnostic_report_repository.get_report.return_value = None
+
+    response = web_client.get("/api/strategies/diagnostic-reports/missing.html")
+
+    assert response.status_code == 404

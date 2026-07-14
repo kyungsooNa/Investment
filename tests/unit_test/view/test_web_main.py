@@ -129,6 +129,19 @@ def test_render_page_success(mock_web_app_context_cls):
             assert "Investment Login" not in response.text
             assert "Investment - Web View" in response.text
 
+
+def test_strategy_report_archive_page(mock_web_app_context_cls):
+    mock_ctx = MagicMock()
+    mock_ctx.full_config = {"use_login": False}
+
+    with patch("view.web.web_api._get_ctx", return_value=mock_ctx):
+        with TestClient(app) as client:
+            response = client.get("/strategy-reports")
+
+    assert response.status_code == 200
+    assert "상세 리포트 보관함" in response.text
+    assert "/static/js/strategy_reports.js" in response.text
+
 def test_debug_handler_do_get_404():
     """진단 서버 404 경로 처리 테스트"""
     handler = _DebugHandler.__new__(_DebugHandler)
@@ -264,7 +277,7 @@ def test_all_page_routers(mock_web_app_context_cls):
     with patch("view.web.web_api._get_ctx", return_value=mock_ctx):
         with TestClient(app) as client:
             client.cookies.set("access_token", "correct_token")
-            pages = ["/stock", "/balance", "/order", "/ranking", "/marketcap", "/virtual", "/scheduler", "/program", "/system", "/favorite"]
+            pages = ["/stock", "/balance", "/order", "/ranking", "/marketcap", "/virtual", "/scheduler", "/strategy-reports", "/program", "/system", "/favorite"]
             for page in pages:
                 response = client.get(page)
                 assert response.status_code == 200

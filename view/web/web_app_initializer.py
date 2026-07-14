@@ -167,6 +167,7 @@ class WebAppContext:
         self._mcs: MarketCalendarService = None
         self.notification_service: NotificationService = None
         self.telegram_notification_repository = None
+        self.strategy_diagnostic_report_repository = None
         self.notification_queue_task: NotificationQueueTask = None
         self.dart_disclosure_client = None
         self.dart_disclosure_repository = None

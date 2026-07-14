@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from typing import List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
 
 from common.trade_journal_schema import normalize_virtual_trade
 from services.regime_performance_service import (
@@ -18,6 +18,23 @@ from view.web.api_common import _get_ctx
 router = APIRouter()
 
 _DEFAULT_LOG_DIR = os.path.join("logs", "strategies", "rejections")
+
+
+@router.get("/strategies/diagnostic-reports")
+async def get_diagnostic_reports(limit: int = Query(100, ge=1, le=500)):
+    """저장된 전략 상세 진단 리포트 목록을 최신순으로 반환한다."""
+    repository = _get_ctx().strategy_diagnostic_report_repository
+    return {"reports": repository.list_reports(limit=limit)}
+
+
+@router.get("/strategies/diagnostic-reports/{report_id}")
+async def get_diagnostic_report(report_id: str):
+    """전략 상세 진단 리포트 한 건을 반환한다."""
+    repository = _get_ctx().strategy_diagnostic_report_repository
+    report = repository.get_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="상세 리포트를 찾을 수 없습니다.")
+    return report
 
 
 def _read_file_rows(date: str, log_dir: str) -> List[dict]:

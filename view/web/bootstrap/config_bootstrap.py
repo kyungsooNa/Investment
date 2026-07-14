@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from config.config_loader import KillSwitchConfig, load_configs
@@ -20,6 +21,9 @@ from services.rejection_distribution_service import RejectionDistributionService
 from services.strategy_log_report_service import _REASON_KR
 from services.telegram_notifier import TelegramNotifier, TelegramReporter
 from repositories.telegram_notification_repository import TelegramNotificationRepository
+from repositories.strategy_diagnostic_report_repository import (
+    StrategyDiagnosticReportRepository,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from view.web.web_app_initializer import WebAppContext
@@ -56,6 +60,12 @@ class ConfigBootstrap:
         ctx.virtual_trade_service.tm = ctx.market_clock
         ctx.notification_service = NotificationService(ctx.market_clock)
         ctx.telegram_notification_repository = TelegramNotificationRepository()
+        logger_log_dir = getattr(ctx.logger, "log_dir", "logs")
+        if not isinstance(logger_log_dir, (str, Path)):
+            logger_log_dir = "logs"
+        ctx.strategy_diagnostic_report_repository = StrategyDiagnosticReportRepository(
+            Path(logger_log_dir) / "reports" / "strategy_diagnostics"
+        )
         ctx.operator_alert_service = OperatorAlertService(
             notification_service=ctx.notification_service,
             market_clock=ctx.market_clock,

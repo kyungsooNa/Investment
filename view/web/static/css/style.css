@@ -12,6 +12,97 @@
     --border: #dcdde1;
 }
 
+/* 전략 상세 리포트 보관함 */
+.strategy-report-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.strategy-report-header h2,
+.strategy-report-header p {
+    margin: 0;
+}
+
+.strategy-report-header p {
+    margin-top: 6px;
+    color: var(--text-secondary);
+}
+
+.strategy-report-layout {
+    display: grid;
+    grid-template-columns: minmax(210px, 280px) minmax(0, 1fr);
+    gap: 16px;
+    min-height: 560px;
+}
+
+.strategy-report-list,
+.strategy-report-viewer {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.strategy-report-list {
+    overflow-y: auto;
+    max-height: 70vh;
+}
+
+.strategy-report-item {
+    display: flex;
+    width: 100%;
+    padding: 13px 14px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    color: var(--text-primary);
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    text-align: left;
+}
+
+.strategy-report-item:hover,
+.strategy-report-item.active {
+    background: rgba(233, 69, 96, 0.14);
+}
+
+.strategy-report-item span,
+.strategy-report-meta,
+.strategy-report-empty {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.strategy-report-empty,
+.strategy-report-meta {
+    padding: 14px;
+}
+
+.strategy-report-meta {
+    border-bottom: 1px solid var(--border);
+}
+
+.strategy-report-content {
+    padding: 18px;
+    white-space: pre-wrap;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+    .strategy-report-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .strategy-report-list {
+        max-height: 220px;
+    }
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
