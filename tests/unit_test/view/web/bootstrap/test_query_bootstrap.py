@@ -24,7 +24,8 @@ def test_query_bootstrap_builds_domestic_ranking_and_query_service():
     )
 
     with patch("view.web.bootstrap.query_bootstrap.RankingTask") as ranking, \
-         patch("view.web.bootstrap.query_bootstrap.StockQueryService") as query:
+         patch("view.web.bootstrap.query_bootstrap.StockQueryService") as query, \
+         patch("view.web.bootstrap.query_bootstrap.PeriodRankingRepository") as period_repo:
         QueryBootstrap(ctx, us_market_calendar_factory=MagicMock()).run(
             config={},
             is_overseas_us=False,
@@ -35,6 +36,8 @@ def test_query_bootstrap_builds_domestic_ranking_and_query_service():
     assert ctx.stock_query_service is query.return_value
     assert ctx.market_cap_gap_service is None
     assert ctx.ytd_ranking_report_task is None
+    _, kwargs = ranking.call_args
+    assert kwargs["period_ranking_repository"] is period_repo.return_value
 
 
 def test_query_bootstrap_builds_ytd_weekly_report_for_batch_mode():
@@ -49,6 +52,7 @@ def test_query_bootstrap_builds_ytd_weekly_report_for_batch_mode():
 
     with patch("view.web.bootstrap.query_bootstrap.RankingTask"), \
          patch("view.web.bootstrap.query_bootstrap.StockQueryService"), \
+         patch("view.web.bootstrap.query_bootstrap.PeriodRankingRepository"), \
          patch("view.web.bootstrap.query_bootstrap.MarketCapGapService"), \
          patch("view.web.bootstrap.query_bootstrap.MarketCapGapReportTask"), \
          patch("view.web.bootstrap.query_bootstrap.YtdRankingReportTask") as ytd_task, \

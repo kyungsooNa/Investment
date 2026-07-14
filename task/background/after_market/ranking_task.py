@@ -60,6 +60,7 @@ class RankingTask(AfterMarketTask):
         market_calendar_service: Optional[MarketCalendarService] = None,
         worker_pool: Optional[WorkerPool] = None,
         stock_classification_repository=None,
+        period_ranking_repository=None,
     ):
         super().__init__(
             mcs=market_calendar_service,
@@ -75,6 +76,7 @@ class RankingTask(AfterMarketTask):
         self._notification_service = notification_service
         self._telegram_reporter = telegram_reporter
         self._stock_classification_repository = stock_classification_repository
+        self._period_ranking_repository = period_ranking_repository
         self._suspend_event: asyncio.Event = asyncio.Event()
         self._suspend_event.set()  # 초기에는 실행 가능 상태
 
@@ -122,6 +124,9 @@ class RankingTask(AfterMarketTask):
 
     async def _on_start_hook(self) -> None:
         self._suspend_event.set()
+        # 재시작 복구: TimeDispatcher는 거래일당 1회만 티켓을 발행하므로
+        # 티켓 발행 후 재시작하면 당일 기간수급 캐시가 비어도 재예열이 없다.
+        self._tasks.append(asyncio.create_task(self._period_ranking_self_heal()))
 
     async def suspend(self) -> None:
         """랭킹 수집을 일시 중지한다 (chunk 사이에서 대기)."""
@@ -633,6 +638,48 @@ class RankingTask(AfterMarketTask):
         else:
             self._logger.warning(f"기간수급 랭킹 캐시 예열 미완료: {target_date}, {days}일")
 
+    async def _period_ranking_self_heal(self) -> None:
+        """시작 시 당일 기간수급 캐시가 없으면 DB 복원 또는 예열한다 (장중 제외)."""
+        try:
+            if self._mcs is None:
+                return
+            if await self._mcs.is_market_open_now():
+                return
+            target_date = await self._mcs.get_latest_trading_date()
+            if not target_date:
+                return
+            cache_key = (str(target_date), self.DEFAULT_PERIOD_RANKING_DAYS)
+            if cache_key in self._period_ranking_cache:
+                return
+            async with self._running_state():
+                await self.prewarm_period_ranking(str(target_date))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self._logger.warning(f"기간수급 self-heal 실패: {e}")
+
+    def _load_period_ranking_from_db(self, cache_key: tuple[str, int]) -> Optional[List[Dict]]:
+        if not self._period_ranking_repository:
+            return None
+        target_date, days = cache_key
+        try:
+            return self._period_ranking_repository.get(target_date, days)
+        except Exception as e:
+            self._logger.warning(f"기간수급 DB 조회 실패: {e}")
+            return None
+
+    async def _save_period_ranking_to_db(self, cache_key: tuple[str, int], results: List[Dict]) -> None:
+        if not self._period_ranking_repository:
+            return
+        # 장중 수집분은 당일 부분 데이터일 수 있어 영속화하지 않는다
+        if self._mcs and await self._mcs.is_market_open_now():
+            return
+        target_date, days = cache_key
+        try:
+            self._period_ranking_repository.save(target_date, days, results)
+        except Exception as e:
+            self._logger.warning(f"기간수급 DB 저장 실패: {e}")
+
     async def _get_or_collect_period_ranking(
         self,
         cache_key: tuple[str, int],
@@ -640,6 +687,12 @@ class RankingTask(AfterMarketTask):
         results = self._period_ranking_cache.get(cache_key)
         if results is not None:
             return results
+
+        stored = self._load_period_ranking_from_db(cache_key)
+        if stored:
+            self._logger.info(f"기간수급 랭킹 DB 복원: {cache_key[0]}, {cache_key[1]}일")
+            self._period_ranking_cache[cache_key] = stored
+            return stored
 
         task = self._period_ranking_tasks.get(cache_key)
         if task is None:
@@ -656,6 +709,7 @@ class RankingTask(AfterMarketTask):
 
         if is_complete:
             self._period_ranking_cache[cache_key] = results
+            await self._save_period_ranking_to_db(cache_key, results)
         return results
 
     async def _collect_period_investor_program_ranking(
