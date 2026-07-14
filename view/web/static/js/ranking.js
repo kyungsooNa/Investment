@@ -224,6 +224,16 @@ async function loadPeriodInvestorRanking() {
         }
 
         _rankingData = json.data || [];
+        if (_rankingData.length === 0 && (json.msg1 || '').includes('수집 중')) {
+            div.innerHTML = `<div class="card" style="text-align:center; padding:40px;">
+                <div class="loading-indicator" style="margin-bottom: 12px;"><span class="spinner"></span><span class="loading-text" style="font-size:1.2em;">기간수급 수집 중...</span></div>
+                <p style="color:#888; margin-top:8px;">전체 종목을 순회하여 기간 순매수를 집계하고 있습니다. 완료되면 자동 표시됩니다.</p>
+            </div>`;
+            _rankingPollTimer = setTimeout(() => {
+                if (_rankingCurrentCategory === 'investor_period') loadPeriodInvestorRanking();
+            }, 10000);
+            return;
+        }
         renderRankingTable();
     } catch (e) {
         if (e.name === 'AbortError') {

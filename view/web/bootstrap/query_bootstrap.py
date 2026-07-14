@@ -3,6 +3,7 @@
 from typing import Any, TYPE_CHECKING
 
 from core.market_clock import MarketClock
+from repositories.period_ranking_repository import PeriodRankingRepository
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
 from services.market_cap_gap_service import MarketCapGapService
 from services.stock_query_service import StockQueryService
@@ -54,6 +55,7 @@ class QueryBootstrap:
                         "theme_classification_repository",
                         None,
                     ),
+                    period_ranking_repository=PeriodRankingRepository(),
                 )
                 self._build_market_cap_gap_tasks(config, needs_batch)
 

@@ -321,6 +321,7 @@ async def test_period_investor_program_ranking_defaults_to_combined_amount(bg_se
         "IT": {"members": [{"code": "000660", "name": "SK하이닉스"}]},
     }
 
+    await bg_service.prewarm_period_ranking("20250101")
     resp = await bg_service.get_period_investor_program_net_buy_ranking(days=5)
 
     assert resp.rt_cd == ErrorCode.SUCCESS.value
@@ -358,6 +359,7 @@ async def test_period_investor_program_ranking_can_sort_by_qty(bg_service, mock_
         ]),
     }[code])
 
+    await bg_service.prewarm_period_ranking("20250101")
     resp = await bg_service.get_period_investor_program_net_buy_ranking(days=5, metric="qty")
 
     assert resp.rt_cd == ErrorCode.SUCCESS.value
@@ -376,10 +378,12 @@ async def test_period_investor_program_ranking_excludes_partial_api_results(bg_s
     ]))
     broker.get_program_trade_by_stock_daily_multi = AsyncMock(return_value=None)
 
+    await bg_service.prewarm_period_ranking("20250101")
     resp = await bg_service.get_period_investor_program_net_buy_ranking(days=5)
 
     assert resp.rt_cd == ErrorCode.SUCCESS.value
     assert resp.data == []
+    await asyncio.gather(*bg_service._tasks)  # 온디맨드 재수집 태스크 정리
 
 
 @pytest.mark.asyncio
@@ -394,6 +398,7 @@ async def test_period_investor_program_ranking_reuses_collection_for_other_metri
         {"whol_smtn_ntby_qty": "30", "whol_smtn_ntby_tr_pbmn": "300000000"},
     ]))
 
+    await bg_service.prewarm_period_ranking("20250101")
     amount_resp = await bg_service.get_period_investor_program_net_buy_ranking(days=5, metric="amount")
     qty_resp = await bg_service.get_period_investor_program_net_buy_ranking(days=5, metric="qty")
 
@@ -405,7 +410,7 @@ async def test_period_investor_program_ranking_reuses_collection_for_other_metri
 
 @pytest.mark.asyncio
 async def test_period_investor_program_ranking_shares_in_progress_collection(bg_service, mock_deps):
-    """동일 기준일·기간의 동시 요청은 한 번의 원천 수집 Task를 공유한다."""
+    """수집 진행 중 재요청은 새 수집을 트리거하지 않고 '수집 중' 응답을 즉시 반환한다."""
     broker, mapper, _, _, _, _ = mock_deps
     mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
     gate = asyncio.Event()
@@ -433,17 +438,21 @@ async def test_period_investor_program_ranking_shares_in_progress_collection(bg_
     broker.get_investor_trade_by_stock_daily_multi = AsyncMock(side_effect=fetch_investor)
     broker.get_program_trade_by_stock_daily_multi = AsyncMock(side_effect=fetch_program)
 
-    first = asyncio.create_task(bg_service.get_period_investor_program_net_buy_ranking(days=5, metric="amount"))
+    first = await bg_service.get_period_investor_program_net_buy_ranking(days=5, metric="amount")
+    assert first.data == []
+    assert "수집 중" in first.msg1
     await asyncio.wait_for(started.wait(), timeout=1)
-    second = asyncio.create_task(bg_service.get_period_investor_program_net_buy_ranking(days=5, metric="qty"))
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(asyncio.shield(second), timeout=0.05)
 
+    second = await bg_service.get_period_investor_program_net_buy_ranking(days=5, metric="qty")
+    assert second.data == []
     assert calls == {"investor": 1, "program": 1}
+
     gate.set()
-    first_resp, second_resp = await asyncio.gather(first, second)
-    assert first_resp.rt_cd == ErrorCode.SUCCESS.value
-    assert second_resp.rt_cd == ErrorCode.SUCCESS.value
+    await asyncio.gather(*bg_service._tasks)
+
+    resp = await bg_service.get_period_investor_program_net_buy_ranking(days=5, metric="amount")
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    assert resp.data[0]["hts_kor_isnm"] == "삼성전자"
 
 
 @pytest.mark.asyncio
