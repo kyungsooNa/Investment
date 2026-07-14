@@ -32,6 +32,8 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "StrategyLogReportService", "NotificationQueueTask",
     "AfterMarketReconcileTask", "OpeningPositionReconcileTask",
     "OpeningPositionReconcileService",
+    "DartDisclosureClient", "DartDisclosureRepository",
+    "DartDisclosureRuleService", "DartDisclosureMonitorTask",
 ]
 
 REPOSITORY_BOOTSTRAP_PATCH_NAMES = [
@@ -115,6 +117,7 @@ def _make_fake_context():
     ctx.kill_switch_service = MagicMock()
     ctx.rejection_distribution_service = MagicMock()
     ctx.favorite_service = MagicMock()
+    ctx.favorite_repo = MagicMock()
     ctx.program_trading_stream_service = MagicMock()
     ctx.telegram_reporter = MagicMock()
     ctx.pm = None
@@ -132,6 +135,42 @@ def test_service_container_creates_core_services(patched_service_container_deps)
     assert ctx.market_data_service is patched_service_container_deps["MarketDataService"].return_value
     assert ctx.indicator_service is patched_service_container_deps["IndicatorService"].return_value
     assert ctx.data_quality_service is patched_service_container_deps["DataQualityService"].return_value
+
+
+def test_service_container_builds_enabled_dart_disclosure_pipeline(patched_service_container_deps):
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {
+        "dart_disclosure": {
+            "enabled": True,
+            "api_key": "dart-test-key",
+            "request_timeout_sec": 4,
+        }
+    }
+
+    ServiceContainer(ctx).run()
+
+    client_cls = patched_service_container_deps["DartDisclosureClient"]
+    client_cls.assert_called_once_with("dart-test-key", timeout_sec=4.0)
+    task_kwargs = patched_service_container_deps["DartDisclosureMonitorTask"].call_args.kwargs
+    assert task_kwargs["favorite_repository"] is ctx.favorite_repo
+    assert task_kwargs["telegram_reporter"] is ctx.telegram_reporter
+    assert ctx.dart_disclosure_monitor_task is patched_service_container_deps[
+        "DartDisclosureMonitorTask"
+    ].return_value
+
+
+def test_service_container_skips_dart_pipeline_without_key(patched_service_container_deps):
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {"dart_disclosure": {"enabled": True, "api_key": ""}}
+
+    ServiceContainer(ctx).run()
+
+    assert ctx.dart_disclosure_monitor_task is None
+    patched_service_container_deps["DartDisclosureClient"].assert_not_called()
 
 
 def test_service_container_creates_query_and_order_services(patched_service_container_deps):

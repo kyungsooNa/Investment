@@ -79,6 +79,7 @@ class SubscriptionPolicy:
         # 현재 실제로 WebSocket 구독 중인 종목 집합
         self._active_codes_price: Set[str] = set()
         self._active_codes_pt: Set[str] = set()
+        self._external_reserved_slots = 0
 
         # summary 로그 스로틀 (동시 다발적 rebalance 호출로 인한 중복 발화 방지)
         self._last_summary_time: float = 0.0
@@ -98,6 +99,10 @@ class SubscriptionPolicy:
         self._active_codes_pt.clear()
         self._streaming_logger.log_clear_active_state(f"SubscriptionPolicy: active 상태 초기화 {count_price}개 클리어")
         self._streaming_logger.log_clear_active_state(f"SubscriptionPolicy: active 상태 초기화 {count_pt}개 클리어")
+
+    def set_external_reserved_slots(self, slots: int) -> None:
+        """정책 외부에서 복원한 PT/주문통보 슬롯을 일반 구독 배정에서 제외한다."""
+        self._external_reserved_slots = max(0, min(int(slots), self.MAX_WS_SLOTS))
 
     async def add_subscription(
         self, code: str, priority: SubscriptionPriority, 
@@ -275,7 +280,7 @@ class SubscriptionPolicy:
         desired_price: Set[str] = set()
         desired_pt: Set[str] = set()
 
-        available_slots = self.MAX_WS_SLOTS
+        available_slots = max(0, self.MAX_WS_SLOTS - self._external_reserved_slots)
 
         # 2. 슬롯 할당 (Greedy)
         for code in ranked_codes:
@@ -405,6 +410,8 @@ class SubscriptionPolicy:
                     return
             elif stream_type == StreamingType.PROGRAM_TRADING:
                 success = await self._streaming.subscribe_program_trading(code)
+                if success:
+                    success = await self._streaming.wait_program_trading_ack(code)
             if success:
                 if stream_type == StreamingType.UNIFIED_PRICE:
                     self._active_codes_price.add(code)
@@ -470,6 +477,8 @@ class SubscriptionPolicy:
         """
         missing_companion_price = self._active_codes_pt - self._active_codes_price
         return (
+            self._external_reserved_slots
+            +
             len(self._active_codes_price)
             + len(self._active_codes_pt)
             + len(missing_companion_price)

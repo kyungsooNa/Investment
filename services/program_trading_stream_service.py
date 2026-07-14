@@ -43,6 +43,7 @@ class ProgramTradingStreamService:
         self._pt_history: dict = {}
         self._last_tick_ts_by_code: dict[str, float] = {}
         self.last_data_ts = 0.0
+        self._history_date = datetime.now().date().isoformat()
 
         # 클라이언트 스트리밍 큐
         self._pt_queues: list = []
@@ -113,6 +114,21 @@ class ProgramTradingStreamService:
     def _load_pt_history(self):
         self._pt_history = self._repo.load_today_history()
 
+    def _ensure_current_day_history(self) -> None:
+        """자정 이후 전일 메모리 tick이 오늘 데이터로 노출되지 않도록 초기화한다."""
+        current_date = datetime.now().date().isoformat()
+        if self._history_date == current_date:
+            return
+
+        previous_date = self._history_date
+        self._pt_history.clear()
+        self._last_tick_ts_by_code.clear()
+        self.last_data_ts = 0.0
+        self._history_date = current_date
+        self.logger.info(
+            f"프로그램매매 메모리 히스토리 일자 전환: {previous_date} -> {current_date}"
+        )
+
     def _bulk_insert_to_db(self, batch: list):
         self._repo._bulk_insert_to_db(batch)
 
@@ -154,6 +170,7 @@ class ProgramTradingStreamService:
         DB 쓰기는 버퍼에 적재 후 백그라운드에서 일괄 처리하여
         이벤트 루프 블로킹을 방지한다.
         """
+        self._ensure_current_day_history()
         code = data.get('유가증권단축종목코드')
         if not code:
             return
@@ -215,6 +232,7 @@ class ProgramTradingStreamService:
 
     def get_history_data(self):
         """현재 메모리에 있는 히스토리 데이터 반환."""
+        self._ensure_current_day_history()
         return self._pt_history
 
     # ── 스냅샷 저장/로드 (repo 위임) ─────────────────────────────────
@@ -329,6 +347,19 @@ class ProgramTradingStreamService:
             for code, source in sources.items()
         }
 
+    def _get_pt_capacity_pending(self) -> set[str]:
+        if not self._streaming_stock_repo:
+            return set()
+        getter = getattr(self._streaming_stock_repo, "get_pt_capacity_pending", None)
+        if not callable(getter):
+            return set()
+        try:
+            codes = getter()
+        except Exception as e:
+            self.logger.warning(f"프로그램매매 용량 대기 목록 조회 실패: {e}")
+            return set()
+        return {str(code) for code in codes} if isinstance(codes, (set, list, tuple)) else set()
+
     def _sort_codes_by_subscription_source(
         self,
         codes: list[str],
@@ -400,7 +431,9 @@ class ProgramTradingStreamService:
             return None
 
     async def _format_last_tick_report_async(self, codes: list[str]) -> str:
+        self._ensure_current_day_history()
         sources = self._get_pt_subscription_sources()
+        capacity_pending = self._get_pt_capacity_pending()
         ordered_codes = self._sort_codes_by_subscription_source(codes, sources)
         lines = [
             "<b>프로그램매매 구독 Tick 상태</b>",
@@ -412,7 +445,11 @@ class ProgramTradingStreamService:
             label = self._format_stock_label(code)
             history = self._pt_history.get(code) or []
             if not history:
-                lines.append(self._format_tick_alert_line(code, label, "수신 없음", sources))
+                body = (
+                    "구독 대기 (WebSocket 한도)"
+                    if code in capacity_pending else "수신 없음"
+                )
+                lines.append(self._format_tick_alert_line(code, label, body, sources))
                 continue
 
             tick = dict(history[-1])
@@ -440,7 +477,9 @@ class ProgramTradingStreamService:
 
     def _format_last_tick_report(self, codes: list[str]) -> str:
         """하위 호환용 동기 포맷터. 운영 전송은 REST 보정 가능한 async 경로를 사용한다."""
+        self._ensure_current_day_history()
         sources = self._get_pt_subscription_sources()
+        capacity_pending = self._get_pt_capacity_pending()
         ordered_codes = self._sort_codes_by_subscription_source(codes, sources)
         lines = [
             "<b>프로그램매매 구독 Tick 상태</b>",
@@ -452,7 +491,11 @@ class ProgramTradingStreamService:
             label = self._format_stock_label(code)
             history = self._pt_history.get(code) or []
             if not history:
-                lines.append(self._format_tick_alert_line(code, label, "수신 없음", sources))
+                body = (
+                    "구독 대기 (WebSocket 한도)"
+                    if code in capacity_pending else "수신 없음"
+                )
+                lines.append(self._format_tick_alert_line(code, label, body, sources))
                 continue
 
             tick = history[-1]

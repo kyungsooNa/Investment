@@ -27,6 +27,7 @@ _EXCLUDED_METHODS = frozenset({
     "is_websocket_receive_alive",
     # 구독 ACK 대기 — 큐/버짓에 태우면 안 되는 단순 await (budget 카테고리 미등록 → 직접 호출)
     "wait_for_unified_price_ack",
+    "wait_for_program_trading_ack",
 })
 
 _BUDGET_ONLY_METHOD_CATEGORIES = {

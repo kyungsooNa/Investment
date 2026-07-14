@@ -600,8 +600,7 @@ async def deep_paper_ctx(test_logger, web_app, mocker, tmp_path):
         mock_vtm_instance.log_sell_by_strategy_async = AsyncMock()
         mock_vtm_instance.log_order_failure_async = AsyncMock()
 
-        web_ctx = WebAppContext(SimpleContext())
-        web_ctx.logger = test_logger
+        web_ctx = WebAppContext(SimpleContext(), logger=test_logger)
         web_ctx.load_config_and_env()
 
         # 토큰 발급 mock

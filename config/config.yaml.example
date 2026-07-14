@@ -150,6 +150,20 @@ notifications:
       STRATEGY: ["warning", "error", "critical"]
       API: ["error", "critical"]
 
+# OpenDART 관심종목 공시 알림 (API 키 발급 후 enabled=true)
+dart_disclosure:
+  enabled: false
+  api_key: ""
+  poll_interval_sec: 300
+  off_hours_interval_sec: 1800
+  active_start_time: "07:00"
+  active_end_time: "19:30"
+  request_timeout_sec: 5
+  immediate_alert_score: 70
+  daily_digest_enabled: true
+  daily_digest_time: "19:40"
+  max_pages_per_poll: 5
+
 # 시총갭 리포트 발송 세션 on/off (기본 둘 다 on)
 #   kr: 한국장 마감(15:50 KST) 후 발송 — 미국 시총은 전일 종가 기준(프리뷰)
 #   us: 미국장 마감(16:30 ET ≈ 익일 06:30 KST) 후 발송 — 양쪽 시총 최신(확정값)

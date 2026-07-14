@@ -95,9 +95,9 @@ class WebAppContext:
 
     REST_PRICE_REFRESH_COOLDOWN_SEC = 10.0
 
-    def __init__(self, app_context, runtime_mode=None):
+    def __init__(self, app_context, runtime_mode=None, logger=None):
         from view.web.bootstrap.runtime_mode import RuntimeMode
-        self.logger = Logger()
+        self.logger = logger if logger is not None else Logger()
         self.runtime_mode: RuntimeMode = runtime_mode if runtime_mode is not None else RuntimeMode.ALL
         self.market_mode: str = "domestic"
         self.enabled_market_modes: list[str] = ["domestic"]
@@ -168,6 +168,10 @@ class WebAppContext:
         self.notification_service: NotificationService = None
         self.telegram_notification_repository = None
         self.notification_queue_task: NotificationQueueTask = None
+        self.dart_disclosure_client = None
+        self.dart_disclosure_repository = None
+        self.dart_disclosure_rule_service = None
+        self.dart_disclosure_monitor_task = None
         self.initialized = False
         self.pm: PerformanceProfiler = None
 

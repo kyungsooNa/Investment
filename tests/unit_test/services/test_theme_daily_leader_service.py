@@ -292,3 +292,65 @@ async def test_ranks_high_liquidity_theme_above_thin_higher_momentum_theme():
     semi, telecom = resp.data
     assert semi["market_leadership_score"] > telecom["market_leadership_score"]
     assert telecom["leader_avg_change_rate"] > semi["leader_avg_change_rate"]
+
+
+@pytest.mark.asyncio
+async def test_liquidity_bonus_uses_advancing_trading_value_only():
+    """하락 대형주의 거래대금은 테마 유동성 보너스를 만들지 않는다."""
+    svc, _ = _service({
+        "대형주혼합": {
+            "sources": ["NAVER"],
+            "members": [_member("A", "상승1"), _member("B", "상승2"), _member("C", "하락대형주")],
+        }
+    })
+    rankings = {"all_stocks": [
+        _stock("A", "상승1", 10.0, 20_000_000_000),
+        _stock("B", "상승2", 5.0, 20_000_000_000),
+        _stock("C", "하락대형주", -1.0, 1_000_000_000_000),
+    ]}
+
+    resp = await svc.build_daily_theme_report(rankings, "20260714")
+
+    theme = resp.data[0]
+    assert theme["advancing_trading_value_sum_won"] == 40_000_000_000
+    assert theme["liquidity_bonus"] == 1.2
+    assert theme["is_liquid_theme"] is True
+
+
+@pytest.mark.asyncio
+async def test_theme_requires_two_liquid_advancers_and_half_breadth():
+    """거래대금이 커도 상승 확산 조건이 부족하면 주도 테마로 인정하지 않는다."""
+    svc, _ = _service({
+        "단일상승": {
+            "sources": ["NAVER"],
+            "members": [_member("A", "상승1"), _member("B", "하락1"), _member("C", "하락2")],
+        },
+        "낮은확산": {
+            "sources": ["NAVER"],
+            "members": [
+                _member("D", "상승2"), _member("E", "상승3"), _member("F", "하락3"),
+                _member("G", "하락4"), _member("H", "하락5"),
+            ],
+        },
+    })
+    rankings = {"all_stocks": [
+        _stock("A", "상승1", 20.0, 100_000_000_000),
+        _stock("B", "하락1", -1.0, 100_000_000_000),
+        _stock("C", "하락2", -1.0, 100_000_000_000),
+        _stock("D", "상승2", 10.0, 100_000_000_000),
+        _stock("E", "상승3", 9.0, 100_000_000_000),
+        _stock("F", "하락3", -1.0, 100_000_000_000),
+        _stock("G", "하락4", -1.0, 100_000_000_000),
+        _stock("H", "하락5", -1.0, 100_000_000_000),
+    ]}
+
+    resp = await svc.build_daily_theme_report(rankings, "20260714")
+
+    by_name = {theme["normalized_name"]: theme for theme in resp.data}
+    assert by_name["단일상승"]["liquid_advancing_member_count"] == 1
+    assert by_name["단일상승"]["is_liquid_theme"] is False
+    assert by_name["단일상승"]["liquidity_bonus"] == 0.0
+    assert by_name["낮은확산"]["liquid_advancing_member_count"] == 2
+    assert by_name["낮은확산"]["advancing_ratio"] == 40.0
+    assert by_name["낮은확산"]["is_liquid_theme"] is False
+    assert by_name["낮은확산"]["liquidity_bonus"] == 0.0

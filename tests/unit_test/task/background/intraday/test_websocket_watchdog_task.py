@@ -172,6 +172,35 @@ async def test_restore_program_trading_success(watchdog_task, mock_deps):
 
 
 @pytest.mark.asyncio
+async def test_restore_caps_pt_codes_and_prioritizes_subscription_source(watchdog_task):
+    """한도 초과 시 수동, 프로그램, 기존 순으로 복원하고 초과 종목은 요청하지 않는다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
+    svc.PT_RESTORE_MAX_CODES = 3
+    codes = {"000001", "000002", "000003", "000004", "000005"}
+    svc._streaming_stock_repo.get_desired.return_value = codes
+    svc._streaming_stock_repo.get_pt_subscription_sources.return_value = {
+        "000001": "legacy",
+        "000002": "program",
+        "000003": "manual",
+        "000004": "manual",
+        "000005": "program",
+    }
+
+    with patch("task.background.intraday.websocket_watchdog_task.asyncio.sleep", new_callable=AsyncMock):
+        await svc._restore_all_subscriptions()
+
+    requested = [call.args[0] for call in svc._streaming_service.subscribe_program_trading.await_args_list]
+    assert requested == ["000003", "000004", "000002"]
+    assert svc._capacity_pending_pt_codes == {"000001", "000005"}
+    svc._streaming_logger.log_pt_capacity_pending.assert_called_once_with(
+        selected=["000003", "000004", "000002"],
+        pending=["000005", "000001"],
+        max_codes=3,
+    )
+
+
+@pytest.mark.asyncio
 async def test_restore_program_trading_partial_failure(watchdog_task, mock_deps):
     """_restore_all_subscriptions: 구독 예외 종목은 desired 유지(재시도 대기), 성공 종목은 active 등록."""
     svc = watchdog_task
@@ -571,7 +600,7 @@ async def test_force_reconnect_skips_concurrent_request(watchdog_task):
 
     release = asyncio.Event()
 
-    async def slow_restore():
+    async def slow_restore(**kwargs):
         await release.wait()
 
     svc._restore_all_subscriptions = AsyncMock(side_effect=slow_restore)

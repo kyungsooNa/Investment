@@ -105,6 +105,7 @@ class SchedulerBootstrap:
         ctx = self._ctx
         # NotificationQueueTask 는 TimeDispatcher 등록 대상이 아님 (always-on)
         self._register(ctx.notification_queue_task)
+        self._register(self._optional_task("dart_disclosure_monitor_task"))
 
     def _register_trading_tasks(self) -> None:
         ctx = self._ctx

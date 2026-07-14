@@ -107,8 +107,14 @@ class ThemeDailyLeaderService:
                     item for item in momentum_leaders
                     if item["trading_value_won"] >= self.MIN_LIQUID_LEADER_TRADING_VALUE_WON
                 ]
+                liquid_advancing_members = [
+                    item for item in liquid_members if item["change_rate"] > 0
+                ]
                 leaders = liquid_members[:leader_count]
                 trading_value_sum = sum(item["trading_value_won"] for item in scored)
+                advancing_trading_value_sum = sum(
+                    item["trading_value_won"] for item in scored if item["change_rate"] > 0
+                )
                 trading_value_concentration_ratio = (
                     max(item["trading_value_won"] for item in scored) / trading_value_sum * 100
                     if trading_value_sum else 0.0
@@ -116,6 +122,12 @@ class ThemeDailyLeaderService:
                 fi_net_sum = sum(item["fi_net_buy_won"] for item in scored)
                 program_net_sum = sum(item["program_net_buy_won"] for item in scored)
                 advance_count = sum(1 for item in scored if item["change_rate"] > 0)
+                advancing_ratio = round(advance_count / len(scored) * 100, 1)
+                is_liquid_theme = (
+                    advancing_trading_value_sum >= self.MIN_LIQUID_THEME_TRADING_VALUE_WON
+                    and len(liquid_advancing_members) >= self.MIN_LIQUID_MEMBER_COUNT
+                    and advancing_ratio >= 50.0
+                )
                 flow_ratio = (
                     round(((fi_net_sum + program_net_sum) / trading_value_sum) * 100, 2)
                     if trading_value_sum else 0.0
@@ -126,14 +138,17 @@ class ThemeDailyLeaderService:
                 score_info = self._build_theme_score(
                     scored=scored,
                     leader_avg_change_rate=leader_avg_change_rate,
-                    advancing_ratio=round(advance_count / len(scored) * 100, 1),
+                    advancing_ratio=advancing_ratio,
                     trading_value_sum_won=trading_value_sum,
                     flow_ratio=flow_ratio,
                     trading_value_concentration_ratio=trading_value_concentration_ratio,
                 )
-                liquidity_bonus = self._build_liquidity_bonus(
-                    trading_value_sum,
-                    leader_avg_change_rate,
+                liquidity_bonus = (
+                    self._build_liquidity_bonus(
+                        advancing_trading_value_sum,
+                        leader_avg_change_rate,
+                    )
+                    if is_liquid_theme else 0.0
                 )
                 market_leadership_score = round(score_info["theme_score"] + liquidity_bonus, 2)
 
@@ -143,14 +158,13 @@ class ThemeDailyLeaderService:
                     "report_date": report_date,
                     "scored_member_count": len(scored),
                     "liquid_member_count": len(liquid_members),
-                    "is_liquid_theme": (
-                        trading_value_sum >= self.MIN_LIQUID_THEME_TRADING_VALUE_WON
-                        and len(liquid_members) >= self.MIN_LIQUID_MEMBER_COUNT
-                    ),
+                    "liquid_advancing_member_count": len(liquid_advancing_members),
+                    "is_liquid_theme": is_liquid_theme,
                     "leader_avg_change_rate": leader_avg_change_rate,
                     "advance_count": advance_count,
                     "advancing_ratio": score_info["advancing_ratio"],
                     "trading_value_sum_won": trading_value_sum,
+                    "advancing_trading_value_sum_won": advancing_trading_value_sum,
                     "trading_value_concentration_ratio": round(trading_value_concentration_ratio, 2),
                     "fi_net_buy_won": fi_net_sum,
                     "program_net_buy_won": program_net_sum,

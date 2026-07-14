@@ -418,7 +418,7 @@ class TelegramReporter:
                 summary_parts.append(f"수급비중 {flow_ratio}")
             summary_line = " | ".join(summary_parts) + score_text
             lines = [
-                f"<b>{rank}. {theme_name}</b>  {avg_rate}  {trading_value}",
+                f"<b>{rank}. {theme_name}</b>  주도주 평균 {avg_rate}  {trading_value}",
                 summary_line,
                 "<pre>",
             ]
@@ -554,6 +554,62 @@ class TelegramReporter:
                 current += chunk
         if current:
             await self._send_message(current)
+
+    @_serialized_report_send
+    async def send_disclosure_alert(self, disclosure, importance) -> bool:
+        """관심종목 중요 공시 한 건을 즉시 전송한다."""
+        company = html.escape(str(disclosure.corp_name or disclosure.stock_code), quote=False)
+        stock_code = html.escape(str(disclosure.stock_code), quote=False)
+        report_name = html.escape(str(disclosure.report_name), quote=False)
+        reasons = "\n".join(
+            f"• {html.escape(str(reason), quote=False)}" for reason in importance.reasons
+        )
+        message = (
+            "🚨 <b>관심종목 중요 공시</b>\n\n"
+            f"<b>{company} ({stock_code})</b>\n"
+            f"공시: {report_name}\n"
+            f"중요도: {html.escape(str(importance.level), quote=False)} "
+            f"({int(importance.score)}점)\n\n"
+            f"<b>판정 근거</b>\n{reasons}\n\n"
+            f"접수일: {html.escape(str(disclosure.receipt_date), quote=False)}\n"
+            f'<a href="{disclosure.viewer_url}">DART 원문 보기</a>'
+        )
+        return await self._send_message(message)
+
+    @_serialized_report_send
+    async def send_disclosure_digest(self, stored_items, report_date: str) -> bool:
+        """즉시 알림 기준 미만 공시를 일일 요약으로 전송한다."""
+        if not stored_items:
+            return True
+        header = f"📋 <b>관심종목 공시 요약 — {html.escape(str(report_date), quote=False)}</b>\n"
+        parts = []
+        for item in stored_items:
+            disclosure = item.disclosure
+            importance = item.importance
+            company = html.escape(str(disclosure.corp_name or disclosure.stock_code), quote=False)
+            report_name = html.escape(str(disclosure.report_name), quote=False)
+            parts.append(
+                f"\n<b>{company} ({html.escape(str(disclosure.stock_code), quote=False)})</b>\n"
+                f"• {report_name}\n"
+                f"• 중요도: {html.escape(str(importance.level), quote=False)} ({int(importance.score)}점)\n"
+                f'<a href="{disclosure.viewer_url}">원문</a>\n'
+            )
+
+        messages = []
+        current = header
+        for part in parts:
+            if len((current + part).encode("utf-8")) > 4000:
+                messages.append(current)
+                current = header + part
+            else:
+                current += part
+        if current:
+            messages.append(current)
+
+        success = True
+        for message in messages:
+            success = await self._send_message(message) and success
+        return success
 
     @_serialized_report_send
     async def send_premium_watchlist_report(self, kospi: List[Dict], kosdaq: List[Dict], report_date: str, limit: int = 30):
