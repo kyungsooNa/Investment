@@ -106,6 +106,58 @@ async def test_get_or_collect_db_error_falls_back_to_collect():
     task._collect_period_investor_program_ranking.assert_called_once()
 
 
+# ── get_period...: 비차단 온디맨드 수집 ────────────────────────────
+
+
+async def test_get_period_returns_collecting_immediately_on_cache_miss():
+    task = _make_task(mcs=_make_mcs(market_open=False, latest_date="20260714"))
+    task._collect_period_investor_program_ranking = AsyncMock(
+        return_value=(
+            [{"hts_kor_isnm": "삼성전자", "combined_period_ntby_tr_pbmn_won": "100"}],
+            True,
+        )
+    )
+
+    resp = await task.get_period_investor_program_net_buy_ranking(days=5)
+
+    assert resp.rt_cd == "0"
+    assert resp.data == []
+    assert "수집 중" in resp.msg1
+    assert task._tasks, "백그라운드 수집 태스크가 스폰되어야 한다"
+
+    await asyncio.gather(*task._tasks)
+
+    resp2 = await task.get_period_investor_program_net_buy_ranking(days=5)
+    assert resp2.data[0]["hts_kor_isnm"] == "삼성전자"
+    task._collect_period_investor_program_ranking.assert_called_once()
+
+
+async def test_get_period_returns_db_data_without_collecting():
+    repo = MagicMock()
+    repo.get.return_value = [
+        {"hts_kor_isnm": "SK하이닉스", "combined_period_ntby_tr_pbmn_won": "920000000"}
+    ]
+    task = _make_task(period_repo=repo, mcs=_make_mcs(market_open=False, latest_date="20260714"))
+    task._collect_period_investor_program_ranking = AsyncMock()
+
+    resp = await task.get_period_investor_program_net_buy_ranking(days=5)
+
+    assert resp.rt_cd == "0"
+    assert resp.data[0]["hts_kor_isnm"] == "SK하이닉스"
+    task._collect_period_investor_program_ranking.assert_not_called()
+    assert not task._tasks
+
+
+async def test_trigger_period_collection_dedups_in_progress():
+    task = _make_task(mcs=_make_mcs())
+    key = ("20260714", 5)
+    task._period_ranking_tasks[key] = MagicMock()  # 수집 진행 중 시뮬레이션
+
+    task._trigger_period_ranking_collection(key)
+
+    assert not task._tasks, "진행 중이면 새 수집 태스크를 만들지 않는다"
+
+
 # ── _period_ranking_self_heal: 재시작 복구 ─────────────────────────
 
 

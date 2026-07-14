@@ -603,7 +603,14 @@ class RankingTask(AfterMarketTask):
             target_date = datetime.now().strftime("%Y%m%d")
 
         cache_key = (str(target_date), days)
-        results = await self._get_or_collect_period_ranking(cache_key)
+        results = self._peek_period_ranking(cache_key)
+        if results is None:
+            self._trigger_period_ranking_collection(cache_key)
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1=f"최근 {days}거래일 기간수급 수집 중입니다. 완료되면 자동 갱신됩니다.",
+                data=[],
+            )
 
         sort_field = "combined_period_ntby_tr_pbmn_won" if metric == "amount" else "combined_period_ntby_qty"
         ranked_results = [
@@ -658,6 +665,39 @@ class RankingTask(AfterMarketTask):
         except Exception as e:
             self._logger.warning(f"기간수급 self-heal 실패: {e}")
 
+    def _peek_period_ranking(self, cache_key: tuple[str, int]) -> Optional[List[Dict]]:
+        """메모리 → DB 순으로 즉시 반환 가능한 기간수급 결과를 찾는다."""
+        results = self._period_ranking_cache.get(cache_key)
+        if results is not None:
+            return results
+        stored = self._load_period_ranking_from_db(cache_key)
+        if stored:
+            self._logger.info(f"기간수급 랭킹 DB 복원: {cache_key[0]}, {cache_key[1]}일")
+            self._period_ranking_cache[cache_key] = stored
+            return stored
+        return None
+
+    def _trigger_period_ranking_collection(self, cache_key: tuple[str, int]) -> None:
+        """기간수급 수집을 백그라운드로 시작한다 (이미 진행 중이면 no-op)."""
+        if cache_key in self._period_ranking_tasks:
+            return
+        self._logger.info(
+            f"기간수급 캐시 없음 → 온디맨드 백그라운드 수집 트리거: {cache_key[0]}, {cache_key[1]}일"
+        )
+        self._tasks = [t for t in self._tasks if not t.done()]
+        self._tasks.append(
+            asyncio.create_task(self._collect_period_ranking_in_background(cache_key))
+        )
+
+    async def _collect_period_ranking_in_background(self, cache_key: tuple[str, int]) -> None:
+        try:
+            async with self._running_state():
+                await self._get_or_collect_period_ranking(cache_key)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self._logger.warning(f"기간수급 백그라운드 수집 실패: {e}")
+
     def _load_period_ranking_from_db(self, cache_key: tuple[str, int]) -> Optional[List[Dict]]:
         if not self._period_ranking_repository:
             return None
@@ -684,15 +724,9 @@ class RankingTask(AfterMarketTask):
         self,
         cache_key: tuple[str, int],
     ) -> List[Dict]:
-        results = self._period_ranking_cache.get(cache_key)
+        results = self._peek_period_ranking(cache_key)
         if results is not None:
             return results
-
-        stored = self._load_period_ranking_from_db(cache_key)
-        if stored:
-            self._logger.info(f"기간수급 랭킹 DB 복원: {cache_key[0]}, {cache_key[1]}일")
-            self._period_ranking_cache[cache_key] = stored
-            return stored
 
         task = self._period_ranking_tasks.get(cache_key)
         if task is None:
