@@ -106,6 +106,68 @@ async def test_get_or_collect_db_error_falls_back_to_collect():
     task._collect_period_investor_program_ranking.assert_called_once()
 
 
+# ── 장중 수집 캐시 무효화 ──────────────────────────────────────────
+
+
+async def test_intraday_collection_marked_for_invalidation():
+    repo = MagicMock()
+    repo.get.return_value = None
+    task = _make_task(period_repo=repo, mcs=_make_mcs(market_open=True))
+    task._collect_period_investor_program_ranking = AsyncMock(
+        return_value=([{"a": "1"}], True)
+    )
+
+    await task._get_or_collect_period_ranking(("20260714", 5))
+
+    assert ("20260714", 5) in task._period_ranking_intraday_keys
+    repo.save.assert_not_called()
+
+
+async def test_after_close_collection_not_marked_intraday():
+    task = _make_task(mcs=_make_mcs(market_open=False))
+    task._collect_period_investor_program_ranking = AsyncMock(
+        return_value=([{"a": "1"}], True)
+    )
+
+    await task._get_or_collect_period_ranking(("20260714", 5))
+
+    assert ("20260714", 5) not in task._period_ranking_intraday_keys
+    assert task._period_ranking_cache[("20260714", 5)] == [{"a": "1"}]
+
+
+async def test_execute_invalidates_intraday_cache_and_reprewarms():
+    task = _make_task(mcs=_make_mcs(market_open=False))
+    task._period_ranking_cache[("20260714", 5)] = [{"a": "partial"}]
+    task._period_ranking_intraday_keys.add(("20260714", 5))
+    task._basic_last_collected_date = "20260714"
+    task._last_collected_date = "20260714"
+    task.refresh_basic_ranking = AsyncMock()
+    task.refresh_investor_ranking = AsyncMock()
+    task.prewarm_period_ranking = AsyncMock()
+
+    await task.execute({"date": "20260714"})
+
+    assert ("20260714", 5) not in task._period_ranking_cache
+    assert not task._period_ranking_intraday_keys
+    task.prewarm_period_ranking.assert_awaited_once_with("20260714")
+
+
+async def test_on_market_closed_invalidates_intraday_cache():
+    task = _make_task(mcs=_make_mcs(market_open=False))
+    task._period_ranking_cache[("20260714", 5)] = [{"a": "partial"}]
+    task._period_ranking_intraday_keys.add(("20260714", 5))
+    task._basic_last_collected_date = "20260714"
+    task._last_collected_date = "20260714"
+    task.refresh_basic_ranking = AsyncMock()
+    task.refresh_investor_ranking = AsyncMock()
+    task.prewarm_period_ranking = AsyncMock()
+
+    await task._on_market_closed("20260714")
+
+    assert ("20260714", 5) not in task._period_ranking_cache
+    task.prewarm_period_ranking.assert_awaited_once_with("20260714")
+
+
 # ── get_period...: 비차단 온디맨드 수집 ────────────────────────────
 
 

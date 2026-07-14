@@ -97,6 +97,7 @@ class RankingTask(AfterMarketTask):
         self._last_collected_date: Optional[str] = None
         self._period_ranking_cache: Dict[tuple[str, int], List[Dict]] = {}
         self._period_ranking_tasks: Dict[tuple[str, int], asyncio.Task] = {}
+        self._period_ranking_intraday_keys: set[tuple[str, int]] = set()
 
         # 기본 랭킹 캐시 (상승/하락/거래량/거래대금) — 장마감 후 1회
         self._basic_ranking_cache: Dict[str, ResCommonResponse] = {}
@@ -148,6 +149,7 @@ class RankingTask(AfterMarketTask):
         멱등성 보장: 동일 날짜에 기본·투자자 랭킹이 모두 수집되어 있으면 즉시 반환.
         """
         date: str = payload.get("date", "")
+        self._invalidate_intraday_period_cache()
         needs_basic = not self._basic_last_collected_date or self._basic_last_collected_date != date
         needs_investor = not self._last_collected_date or self._last_collected_date != date
         needs_period = (date, self.DEFAULT_PERIOD_RANKING_DAYS) not in self._period_ranking_cache
@@ -175,6 +177,7 @@ class RankingTask(AfterMarketTask):
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         """장 마감 후 콜백: 해당 거래일의 랭킹 갱신이 필요하면 실행."""
+        self._invalidate_intraday_period_cache()
         needs_basic = (
             not self._basic_last_collected_date
             or self._basic_last_collected_date != latest_trading_date
@@ -708,11 +711,15 @@ class RankingTask(AfterMarketTask):
             self._logger.warning(f"기간수급 DB 조회 실패: {e}")
             return None
 
+    def _invalidate_intraday_period_cache(self) -> None:
+        """장중에 수집된 기간수급 캐시를 무효화한다 (마감 후 완전본 재수집 유도)."""
+        for key in self._period_ranking_intraday_keys:
+            self._period_ranking_cache.pop(key, None)
+            self._logger.info(f"장중 수집 기간수급 캐시 무효화: {key[0]}, {key[1]}일")
+        self._period_ranking_intraday_keys.clear()
+
     async def _save_period_ranking_to_db(self, cache_key: tuple[str, int], results: List[Dict]) -> None:
         if not self._period_ranking_repository:
-            return
-        # 장중 수집분은 당일 부분 데이터일 수 있어 영속화하지 않는다
-        if self._mcs and await self._mcs.is_market_open_now():
             return
         target_date, days = cache_key
         try:
@@ -743,7 +750,11 @@ class RankingTask(AfterMarketTask):
 
         if is_complete:
             self._period_ranking_cache[cache_key] = results
-            await self._save_period_ranking_to_db(cache_key, results)
+            if self._mcs and await self._mcs.is_market_open_now():
+                # 장중 수집분은 당일 부분 데이터 — 장 마감 시 무효화·재수집 대상으로 표시
+                self._period_ranking_intraday_keys.add(cache_key)
+            else:
+                await self._save_period_ranking_to_db(cache_key, results)
         return results
 
     async def _collect_period_investor_program_ranking(
