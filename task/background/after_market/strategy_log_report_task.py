@@ -100,12 +100,8 @@ class StrategyLogReportTask(AfterMarketTask):
                         await send_decision_report(decision_report, latest_trading_date)
             except Exception as e:
                 self._logger.warning(f"Telegram 운영 의사결정 리포트 전송 실패: {e}")
-            try:
-                await self._telegram_reporter.send_strategy_log_report(report_html, latest_trading_date)
-            except Exception as e:
-                self._logger.warning(f"Telegram 리포트 전송 실패: {e}")
 
-        self._logger.info("전략 로그 리포트 발송 완료")
+        self._logger.info("전략 상세 리포트 저장 및 운영 요약 발송 완료")
 
     async def _emit_execution_quality_candidate_alert(self, report_date: str) -> None:
         if not self._notification_service:

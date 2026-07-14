@@ -23,6 +23,7 @@ PAGE_PATHS = [
     "/marketcap",
     "/virtual",
     "/scheduler",
+    "/strategy-reports",
     "/program",
     "/system",
 ]

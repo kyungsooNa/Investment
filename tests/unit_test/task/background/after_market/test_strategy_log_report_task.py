@@ -94,11 +94,9 @@ class TestOnMarketClosed:
         await task._on_market_closed("20260419")
         mock_report_service.generate_report.assert_awaited_once_with("20260419")
 
-    async def test_telegram_reporter_receives_report_html(self, task, mock_telegram):
+    async def test_detailed_report_is_not_sent_to_telegram(self, task, mock_telegram):
         await task._on_market_closed("20260419")
-        mock_telegram.send_strategy_log_report.assert_awaited_once_with(
-            "<html>report</html>", "20260419"
-        )
+        mock_telegram.send_strategy_log_report.assert_not_awaited()
 
     async def test_diagnostic_report_is_saved(self, task, mock_report_service):
         await task._on_market_closed("20260419")
@@ -340,11 +338,12 @@ class TestOnMarketClosed:
         assert args[2] == "전략 성과 저하 후보"
         assert kwargs["metadata"]["alert_type"] == "strategy_degradation_candidate"
 
-    async def test_telegram_send_called(self, task, mock_telegram):
+    async def test_only_operational_summary_is_sent_to_telegram(self, task, mock_telegram):
         await task._on_market_closed("20260419")
-        mock_telegram.send_strategy_log_report.assert_awaited_once_with(
-            "<html>report</html>", "20260419"
+        mock_telegram.send_operational_decision_report.assert_awaited_once_with(
+            "<b>운영 의사결정</b>", "20260419"
         )
+        mock_telegram.send_strategy_log_report.assert_not_awaited()
 
     async def test_report_generation_failure_skips_notification_and_telegram(
         self, task, mock_report_service, mock_notification_service, mock_telegram
@@ -359,7 +358,8 @@ class TestOnMarketClosed:
     ):
         task_minimal._telegram_reporter = mock_telegram
         await task_minimal._on_market_closed("20260419")
-        mock_telegram.send_strategy_log_report.assert_awaited_once()
+        mock_telegram.send_operational_decision_report.assert_awaited_once()
+        mock_telegram.send_strategy_log_report.assert_not_awaited()
 
     async def test_notification_service_without_candidate_getter_returns(
         self, mock_notification_service

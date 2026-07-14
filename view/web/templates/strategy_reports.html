@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="section strategy-report-archive">
+    <div class="strategy-report-header">
+        <div>
+            <h2>상세 리포트 보관함</h2>
+            <p>텔레그램에는 운영 요약만 전송되고, 전략별 상세 진단은 이곳에 보관됩니다.</p>
+        </div>
+        <button type="button" class="btn" onclick="loadStrategyReports()">새로고침</button>
+    </div>
+
+    <div class="strategy-report-layout">
+        <aside id="strategy-report-list" class="strategy-report-list">
+            <div class="strategy-report-empty">저장된 상세 리포트를 불러오는 중입니다.</div>
+        </aside>
+        <article class="strategy-report-viewer">
+            <div id="strategy-report-meta" class="strategy-report-meta">리포트를 선택하세요.</div>
+            <div id="strategy-report-content" class="strategy-report-content"></div>
+        </article>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/strategy_reports.js?v=1"></script>
+{% endblock %}

@@ -515,13 +515,13 @@ class StrategyLogReportService:
         if report_dir is None:
             base_dir = os.path.dirname(os.path.normpath(self._log_dir)) or "."
             report_dir = os.path.join(base_dir, "reports", "strategy_diagnostics")
-        os.makedirs(report_dir, exist_ok=True)
-        safe_date = re.sub(r"[^0-9]", "", str(report_date)) or datetime.now().strftime("%Y%m%d")
-        stamp = datetime.now().strftime("%H%M%S_%f")
-        path = os.path.join(report_dir, f"{safe_date}_{stamp}_strategy_diagnostic_report.html")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(report_html)
-        return path
+        from repositories.strategy_diagnostic_report_repository import (
+            StrategyDiagnosticReportRepository,
+        )
+
+        repository = StrategyDiagnosticReportRepository(report_dir)
+        saved = repository.save(report_date, report_html)
+        return os.path.join(report_dir, saved["id"])
 
     # ── 파일 탐색 ────────────────────────────────────────────────
 

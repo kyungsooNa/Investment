@@ -359,6 +359,10 @@ async def favorite(request: Request):
 async def operator_dashboard(request: Request):
     return await render_page(request, "operator_dashboard.html", "operator")
 
+@page_router.get("/strategy-reports")
+async def strategy_reports(request: Request):
+    return await render_page(request, "strategy_reports.html", "strategy_reports")
+
 # 5. 로그아웃
 @page_router.get("/logout")
 async def logout():
