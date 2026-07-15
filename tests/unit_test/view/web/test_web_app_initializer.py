@@ -957,6 +957,23 @@ async def test_shutdown_cancels_pending_refresh_tasks_and_stops_broker(mock_deps
 
 
 @pytest.mark.asyncio
+async def test_shutdown_closes_program_trading_service_and_stock_repository(mock_deps):
+    """shutdown은 컨텍스트가 소유한 DB 저장소와 스트림 서비스를 닫는다."""
+    ctx = WebAppContext(None)
+    ctx.background_scheduler = None
+    ctx.broker = None
+    ctx.program_trading_stream_service = MagicMock()
+    ctx.program_trading_stream_service.shutdown = AsyncMock()
+    ctx.stock_repository = MagicMock()
+    ctx.stock_repository.close = AsyncMock()
+
+    await ctx.shutdown()
+
+    ctx.program_trading_stream_service.shutdown.assert_awaited_once()
+    ctx.stock_repository.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_shutdown_cancels_price_subscription_init_task(mock_deps):
     """shutdown은 초기 가격 구독 task도 취소해 pending task를 남기지 않는다."""
     ctx = WebAppContext(None)

@@ -13,6 +13,9 @@ from typing import Any, Dict, Iterable, Optional
 from tests.integration_test import ctx  # ← 방금 만든 모듈
 
 
+_test_log_cleanup_done = False
+
+
 @pytest.fixture(autouse=True)
 def patch_cache_wrap_client_for_tests(mocker):
     # 캐시를 바이패스하여 NoneType 에러 원천 차단
@@ -26,6 +29,36 @@ def fast_sleep(mocker):
     """asyncio.sleep을 즉시 반환으로 패치 — RetryQueue 재시도 sleep 지연 방지."""
     mocker.patch("asyncio.sleep", new_callable=AsyncMock)
     mocker.patch("core.retry_queue.api_request_queue.asyncio.sleep", new_callable=AsyncMock)
+
+
+@pytest.fixture(autouse=True)
+def isolate_program_trading_db(mocker, tmp_path):
+    """통합 테스트가 운영 프로그램매매 DB를 읽거나 누적하지 않도록 격리한다."""
+    base_dir = tmp_path / "program_subscribe"
+    mocker.patch(
+        "services.program_trading_stream_service.ProgramTradingStreamService._get_base_dir",
+        return_value=str(base_dir),
+    )
+
+
+@pytest.fixture(autouse=True)
+async def flush_strategy_state_io_tasks():
+    """테스트 이벤트 루프가 닫히기 전에 전략 상태 I/O 태스크를 완료한다."""
+    import asyncio
+    from utils.strategy_state_io import StrategyStateIO
+
+    yield
+
+    state_load_tasks = [
+        task
+        for task in asyncio.all_tasks()
+        if task is not asyncio.current_task()
+        and not task.done()
+        and getattr(task.get_coro(), "__name__", "") == "_load_state_async"
+    ]
+    if state_load_tasks:
+        await asyncio.gather(*state_load_tasks, return_exceptions=True)
+    await StrategyStateIO.flush_pending(timeout=5.0)
 
 @pytest.fixture(scope="session")
 def test_cache_config():
@@ -74,11 +107,18 @@ def clear_cache_files(test_cache_config):
         shutil.rmtree(base_dir, onerror=on_rm_error)
 
 @pytest.fixture(scope="function")
-def test_logger(request):
+def test_logger(request, mocker):
+    global _test_log_cleanup_done
+
     # 📌 현재 conftest.py 기준 ./log 경로 생성
     log_dir = os.path.join(os.path.dirname(__file__), "log")
     os.makedirs(log_dir, exist_ok=True)
+    if _test_log_cleanup_done:
+        # 보존기간 정리는 worker 최초 Logger 생성에서 한 번만 수행한다.
+        # 매 테스트마다 전체 로그 트리를 다시 stat하면 fixture setup 병목이 된다.
+        mocker.patch.object(Logger, "_cleanup_old_logs", return_value=None)
     logger = Logger(log_dir=log_dir)
+    _test_log_cleanup_done = True
 
     # 실행되는 테스트 케이스 이름 로깅
     tc_name = request.node.name
@@ -628,10 +668,13 @@ async def deep_paper_ctx(test_logger, web_app, mocker, tmp_path):
 
         # TestClient에 연결
         api_common.set_ctx(web_ctx)
-        with TestClient(web_app) as client:
-            web_ctx._test_client = client
-            yield web_ctx
-        api_common.set_ctx(None)
+        try:
+            with TestClient(web_app) as client:
+                web_ctx._test_client = client
+                yield web_ctx
+        finally:
+            api_common.set_ctx(None)
+            await web_ctx.shutdown()
 
 
 def _unwrap_client_from_ctx(web_ctx):
