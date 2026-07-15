@@ -674,6 +674,13 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     opacity: 1;
 }
 
+/* 기간수급 기간(일수)/지표 선택 - 비선택 상태를 더 어둡게 */
+.period-days:not(.active), .period-metric:not(.active) {
+    opacity: 0.45;
+    background: var(--bg-secondary, #2a2a3e) !important;
+    color: var(--text-muted, #666) !important;
+}
+
 /* 시장 필터 */
 .market-filter {
     padding: 5px 12px !important;
