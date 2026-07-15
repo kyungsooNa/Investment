@@ -1,6 +1,7 @@
 """당일 랭킹 데이터 기반 주도 테마 리포트 서비스."""
 import logging
 import math
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from common.types import ErrorCode, ResCommonResponse
@@ -44,12 +45,105 @@ class ThemeDailyLeaderService:
     def __init__(
         self,
         classification_repository: "StockClassificationRepository",
+        snapshot_repository=None,
         logger=None,
         performance_profiler: Optional[PerformanceProfiler] = None,
     ):
         self._classification_repo = classification_repository
+        self._snapshot_repo = snapshot_repository
         self._logger = logger or logging.getLogger(__name__)
         self.pm = performance_profiler or PerformanceProfiler(enabled=False)
+
+    async def build_intraday_theme_report(
+        self,
+        rankings: Dict[str, List[Dict]],
+        report_time: str | datetime,
+        window_minutes: int = 3,
+        top_themes: int = 10,
+        leader_count: int = 3,
+    ) -> ResCommonResponse:
+        """누적 거래대금 스냅샷 차이로 최근 구간의 주도 테마를 계산한다."""
+        if self._snapshot_repo is None:
+            return await self.build_daily_theme_report(
+                rankings,
+                report_date=str(report_time),
+                top_themes=top_themes,
+                leader_count=leader_count,
+            )
+
+        captured_at = self._parse_report_time(report_time)
+        stock_map = self._build_stock_map(rankings.get("all_stocks") or [])
+        current_values = {
+            code: _to_int(_get(stock, "acml_tr_pbmn"))
+            for code, stock in stock_map.items()
+        }
+        codes = list(current_values)
+        past_values = await self._snapshot_repo.get_values_at_or_before(
+            captured_at - timedelta(minutes=window_minutes), codes
+        )
+        previous_values = await self._snapshot_repo.get_values_at_or_before(
+            captured_at - timedelta(minutes=window_minutes * 2), codes
+        )
+        await self._snapshot_repo.save_snapshot(captured_at, current_values)
+
+        base_resp = await self.build_daily_theme_report(
+            rankings,
+            report_date=captured_at.strftime("%Y%m%d %H:%M"),
+            top_themes=10_000,
+            leader_count=leader_count,
+        )
+        if base_resp.rt_cd != ErrorCode.SUCCESS.value or not base_resp.data:
+            return base_resp
+
+        for theme in base_resp.data:
+            member_codes = {
+                item.get("code") for item in theme.get("members", []) if item.get("code")
+            }
+            recent_by_code = {}
+            previous_by_code = {}
+            for code in member_codes:
+                current = current_values.get(code)
+                past = past_values.get(code)
+                previous = previous_values.get(code)
+                if current is not None and past is not None:
+                    recent_by_code[code] = max(current - past, 0)
+                if past is not None and previous is not None:
+                    previous_by_code[code] = max(past - previous, 0)
+
+            for key in ("members", "leaders", "momentum_leaders"):
+                for item in theme.get(key, []):
+                    code = item.get("code")
+                    item["recent_trading_value_won"] = recent_by_code.get(code, 0)
+                    item["has_recent_trading_value"] = code in recent_by_code
+
+            recent_sum = sum(recent_by_code.values())
+            previous_sum = sum(previous_by_code.values())
+            theme.update({
+                "snapshot_captured_at": captured_at.strftime("%Y%m%d %H:%M"),
+                "recent_window_minutes": window_minutes,
+                "recent_trading_value_won": recent_sum,
+                "previous_trading_value_won": previous_sum,
+                "recent_trading_value_change_won": recent_sum - previous_sum,
+                "recent_coverage_count": len(recent_by_code),
+            })
+
+        base_resp.data.sort(
+            key=lambda item: (
+                item["recent_coverage_count"] > 0,
+                item["recent_trading_value_won"],
+                item["market_leadership_score"],
+            ),
+            reverse=True,
+        )
+        base_resp.data = base_resp.data[:top_themes]
+        base_resp.msg1 = f"성공 ({len(base_resp.data)}개 장중 테마)"
+        return base_resp
+
+    @staticmethod
+    def _parse_report_time(value: str | datetime) -> datetime:
+        if isinstance(value, datetime):
+            return value.replace(second=0, microsecond=0)
+        return datetime.strptime(str(value), "%Y%m%d %H:%M")
 
     async def build_daily_theme_report(
         self,
@@ -176,6 +270,7 @@ class ThemeDailyLeaderService:
                     "momentum_score": score_info["theme_score"],
                     "liquidity_bonus": liquidity_bonus,
                     "market_leadership_score": market_leadership_score,
+                    "members": scored,
                     "leaders": leaders,
                     "momentum_leaders": momentum_leaders[:leader_count],
                 })

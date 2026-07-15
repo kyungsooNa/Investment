@@ -54,6 +54,8 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
             "sent_count": 0,
             "last_error": None,
         }
+        self._latest_report: Dict[str, Any] = {"captured_at": None, "data": []}
+        self._last_snapshot_minute: Optional[str] = None
 
     @property
     def task_name(self) -> str:
@@ -94,6 +96,12 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
     def get_progress(self) -> Dict:
         return dict(self._progress)
 
+    def get_latest_report(self) -> Dict[str, Any]:
+        return {
+            "captured_at": self._latest_report.get("captured_at"),
+            "data": [dict(item) for item in self._latest_report.get("data", [])],
+        }
+
     async def _loop(self) -> None:
         while True:
             try:
@@ -117,6 +125,11 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
         if not await self._is_market_open_now():
             return
         now = self._market_clock.get_current_kst_time()
+        captured_at = now.strftime("%Y%m%d %H:%M")
+        if self._last_snapshot_minute != captured_at:
+            await self._refresh_latest_report(captured_at)
+            self._last_snapshot_minute = captured_at
+
         slot_label = self._slot_label(now)
         if slot_label is None:
             return
@@ -156,24 +169,11 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
         return slot.strftime("%Y%m%d %H:%M")
 
     async def _send_report(self, slot_label: str) -> None:
-        self._progress["last_error"] = None
-        rankings = await self._build_intraday_rankings(slot_label)
-        if not rankings or not rankings.get("all_stocks"):
-            self._progress["last_error"] = "intraday_ranking_empty"
-            self._logger.info(f"{self.task_name}: 장중 기본 랭킹 없음 — {slot_label} 스킵")
+        theme_data = self._latest_report.get("data") or []
+        if not theme_data:
+            if not self._progress.get("last_error"):
+                self._progress["last_error"] = "intraday_theme_empty"
             return
-
-        theme_resp = await self._theme_daily_leader_service.build_daily_theme_report(
-            rankings,
-            report_date=slot_label,
-        )
-        if not theme_resp or theme_resp.rt_cd != ErrorCode.SUCCESS.value:
-            msg = getattr(theme_resp, "msg1", "") if theme_resp else "응답 없음"
-            self._progress["last_error"] = f"theme_service_error:{msg}"
-            self._logger.warning(f"{self.task_name}: 주도테마 생성 실패 — {msg}")
-            return
-
-        theme_data = theme_resp.data or []
         if self._telegram_reporter:
             await self._telegram_reporter.send_daily_theme_report(
                 theme_data,
@@ -186,6 +186,27 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
             f"{self.task_name}: {slot_label} 장중 주도테마 알림 발송 완료 "
             f"({len(theme_data)}개 테마)"
         )
+
+    async def _refresh_latest_report(self, captured_at: str) -> None:
+        self._progress["last_error"] = None
+        rankings = await self._build_intraday_rankings(captured_at)
+        if not rankings or not rankings.get("all_stocks"):
+            self._progress["last_error"] = "intraday_ranking_empty"
+            self._logger.info(f"{self.task_name}: 장중 기본 랭킹 없음 — {captured_at} 스킵")
+            return
+
+        theme_resp = await self._theme_daily_leader_service.build_intraday_theme_report(
+            rankings,
+            report_time=captured_at,
+        )
+        if not theme_resp or theme_resp.rt_cd != ErrorCode.SUCCESS.value:
+            msg = getattr(theme_resp, "msg1", "") if theme_resp else "응답 없음"
+            self._progress["last_error"] = f"theme_service_error:{msg}"
+            self._logger.warning(f"{self.task_name}: 주도테마 생성 실패 — {msg}")
+            return
+
+        theme_data = theme_resp.data or []
+        self._latest_report = {"captured_at": captured_at, "data": theme_data}
 
     async def _build_intraday_rankings(self, slot_label: str) -> Dict[str, Any]:
         refresh = getattr(self._ranking_task, "refresh_basic_ranking", None)

@@ -121,6 +121,31 @@ async def test_get_ranking_failure(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_get_intraday_theme_leaders_returns_latest_task_report(web_client, mock_web_ctx):
+    mock_web_ctx.theme_intraday_leader_alert_task.get_latest_report.return_value = {
+        "captured_at": "20260715 10:06",
+        "data": [{"normalized_name": "반도체", "recent_trading_value_won": 50_000_000_000}],
+    }
+
+    response = web_client.get("/api/ranking/themes/intraday")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rt_cd"] == "0"
+    assert body["data"][0]["normalized_name"] == "반도체"
+
+
+@pytest.mark.asyncio
+async def test_get_intraday_theme_leaders_handles_unavailable_task(web_client, mock_web_ctx):
+    mock_web_ctx.theme_intraday_leader_alert_task = None
+
+    response = web_client.get("/api/ranking/themes/intraday")
+
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] != "0"
+
+
+@pytest.mark.asyncio
 async def test_get_ytd_ranking(web_client, mock_web_ctx):
     """GET /api/ranking/ytd 는 저장된 연초 대비 수익률 랭킹을 반환한다."""
     mock_web_ctx.stock_repository.get_ytd_return_ranking = AsyncMock(return_value=[{
