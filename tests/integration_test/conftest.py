@@ -27,6 +27,26 @@ def fast_sleep(mocker):
     mocker.patch("asyncio.sleep", new_callable=AsyncMock)
     mocker.patch("core.retry_queue.api_request_queue.asyncio.sleep", new_callable=AsyncMock)
 
+
+@pytest.fixture(autouse=True)
+def isolate_program_trading_db(mocker, tmp_path):
+    """통합 테스트가 운영 프로그램매매 DB를 읽거나 누적하지 않도록 격리한다."""
+    base_dir = tmp_path / "program_subscribe"
+    mocker.patch(
+        "services.program_trading_stream_service.ProgramTradingStreamService._get_base_dir",
+        return_value=str(base_dir),
+    )
+
+
+@pytest.fixture(autouse=True)
+async def flush_strategy_state_io_tasks():
+    """테스트 이벤트 루프가 닫히기 전에 전략 상태 저장 태스크를 완료한다."""
+    from utils.strategy_state_io import StrategyStateIO
+
+    yield
+
+    await StrategyStateIO.flush_pending(timeout=5.0)
+
 @pytest.fixture(scope="session")
 def test_cache_config():
     test_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".cache"))
@@ -628,10 +648,13 @@ async def deep_paper_ctx(test_logger, web_app, mocker, tmp_path):
 
         # TestClient에 연결
         api_common.set_ctx(web_ctx)
-        with TestClient(web_app) as client:
-            web_ctx._test_client = client
-            yield web_ctx
-        api_common.set_ctx(None)
+        try:
+            with TestClient(web_app) as client:
+                web_ctx._test_client = client
+                yield web_ctx
+        finally:
+            api_common.set_ctx(None)
+            await web_ctx.shutdown()
 
 
 def _unwrap_client_from_ctx(web_ctx):

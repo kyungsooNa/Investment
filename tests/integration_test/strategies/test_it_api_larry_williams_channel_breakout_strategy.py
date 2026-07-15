@@ -406,13 +406,14 @@ async def test_check_exits_no_position_state_no_exit(strategy, mock_sqs):
 # ─── state persistence ────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
-def _reset_strategy_state_io():
+async def _reset_strategy_state_io():
     """StrategyStateIO class-level lock/pending 상태는 event loop 사이 leak 발생.
     각 테스트 전후 reset 으로 분리.
     """
     from utils.strategy_state_io import StrategyStateIO
     StrategyStateIO._reset_for_test()
     yield
+    await StrategyStateIO.flush_pending(timeout=5.0)
     StrategyStateIO._reset_for_test()
 
 
