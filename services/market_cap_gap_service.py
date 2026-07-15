@@ -410,8 +410,11 @@ class MarketCapGapService:
             return None
         if getattr(domestic_resp, "rt_cd", None) != ErrorCode.SUCCESS.value:
             return None
+        domestic_data = getattr(domestic_resp, "data", None)
+        if isinstance(domestic_data, dict) and "output" in domestic_data:
+            domestic_data = domestic_data["output"]
         korean_price = self._read_price(
-            getattr(domestic_resp, "data", None), "stck_prpr", "current_price", "price"
+            domestic_data, "stck_prpr", "current_price", "price"
         )
         if korean_price <= 0:
             return None
