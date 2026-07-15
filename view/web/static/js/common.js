@@ -201,10 +201,20 @@ async function navigatePjax(href) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, 'text/html');
         const newMain = doc.querySelector('#page-main');
-        if (!newMain) throw new Error('page-main not found');
+        const newMarketNav = doc.querySelector('nav.market-nav');
+        const newFeatureNav = doc.querySelector('nav.nav');
+        if (!newMain || !newMarketNav || !newFeatureNav) {
+            throw new Error('page layout not found');
+        }
 
         const pageMain = document.querySelector('#page-main');
         pageMain.innerHTML = newMain.innerHTML;
+        document.querySelector('nav.market-nav').replaceWith(newMarketNav.cloneNode(true));
+        document.querySelector('nav.nav').replaceWith(newFeatureNav.cloneNode(true));
+        document.body.setAttribute(
+            'data-view-market',
+            doc.body.getAttribute('data-view-market') || 'common',
+        );
 
         await loadHeadScripts(doc);
         await executePageScripts(pageMain);
@@ -231,7 +241,7 @@ async function navigatePjax(href) {
 
 // 네비게이션 클릭 가로채기
 document.addEventListener('click', (e) => {
-    const link = e.target.closest('nav.nav a');
+    const link = e.target.closest('nav.nav a, nav.market-nav a');
     if (!link) return;
     const href = link.getAttribute('href');
     if (!href || href === '#') return;

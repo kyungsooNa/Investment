@@ -18,3 +18,12 @@ def test_real_web_app_serves_all_static_js_files():
         assert response.status_code == 200
         assert response.text.strip()
         assert "javascript" in response.headers["content-type"]
+
+
+def test_pjax_updates_market_navigation_and_view_context():
+    source = (JS_ROOT / "common.js").read_text(encoding="utf-8")
+
+    assert "nav.market-nav a" in source
+    assert "data-view-market" in source
+    assert "newMarketNav" in source
+    assert "newFeatureNav" in source

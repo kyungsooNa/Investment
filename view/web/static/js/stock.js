@@ -3,31 +3,6 @@
 let _currentExchange = 'KRX';
 let _currentStockCode = null;
 
-/* 해외 심볼 리스트: localStorage 즉시 복원, 없으면 해외 모드 진입 시 지연 로드.
- * 국내(ALL_STOCKS)와 달리 대부분의 방문자가 국내만 쓰므로 ~7천 심볼을
- * 매 방문마다 받지 않도록 lazy 로드한다. */
-window.ALL_OVERSEAS_STOCKS = (function () {
-    try {
-        var cached = localStorage.getItem('all_overseas_stocks_v1');
-        if (cached) return JSON.parse(cached);
-    } catch (e) {}
-    return null;
-})();
-let _overseasStocksLoading = false;
-function _ensureOverseasStocksLoaded() {
-    if (window.ALL_OVERSEAS_STOCKS || _overseasStocksLoading) return;
-    _overseasStocksLoading = true;
-    fetch('/api/overseas/stocks/list')
-        .then(function (r) { return r.json(); })
-        .then(function (json) {
-            window.ALL_OVERSEAS_STOCKS = json.stocks || [];
-            try { localStorage.setItem('all_overseas_stocks_v1', JSON.stringify(window.ALL_OVERSEAS_STOCKS)); } catch (e) {}
-            document.dispatchEvent(new CustomEvent('all-overseas-stocks-ready', { detail: window.ALL_OVERSEAS_STOCKS }));
-        })
-        .catch(function () { window.ALL_OVERSEAS_STOCKS = []; })
-        .finally(function () { _overseasStocksLoading = false; });
-}
-
 // SSE 실시간 틱 수신 → 가격·전일대비·당일시세(고가·저가) UI 업데이트
 document.addEventListener('stock-price-tick', function (e) {
     const tick = e.detail;
@@ -56,160 +31,6 @@ document.addEventListener('stock-price-tick', function (e) {
     if (lowEl  && tick.low  > 0) lowEl.textContent  = fmt(tick.low);
 });
 
-/* ── 국내/해외 조회 모드 토글 (V2.1) ── */
-
-/* 차트 카드를 stock-result 밖(section-stock)으로 대피시키고 숨긴다.
- * searchStock가 차트 카드를 stock-result 안으로 옮기므로, stock-result를
- * 비우기 전에 먼저 대피시키지 않으면 innerHTML 초기화 시 카드가 파괴된다. */
-function _detachStockChartCard() {
-    const chartCard = document.getElementById('stock-chart-card');
-    const sectionStock = document.getElementById('section-stock');
-    if (chartCard && sectionStock && chartCard.parentElement !== sectionStock) {
-        sectionStock.appendChild(chartCard);
-    }
-    if (chartCard) chartCard.style.display = 'none';
-}
-
-function setStockMarketMode(mode) {
-    const domesticRow = document.getElementById('domestic-stock-row');
-    const overseasRow = document.getElementById('overseas-stock-row');
-    const domesticBtn = document.getElementById('stock-mode-domestic');
-    const overseasBtn = document.getElementById('stock-mode-overseas');
-    const isOverseas = mode === 'overseas';
-
-    if (domesticRow) domesticRow.style.display = isOverseas ? 'none' : '';
-    if (overseasRow) overseasRow.style.display = isOverseas ? '' : 'none';
-    if (domesticBtn) domesticBtn.classList.toggle('active', !isOverseas);
-    if (overseasBtn) overseasBtn.classList.toggle('active', isOverseas);
-
-    // 해외 모드 진입 시 자동완성용 심볼 리스트를 지연 로드한다.
-    if (isOverseas) _ensureOverseasStocksLoaded();
-
-    // 모드 전환 시 결과/차트 영역 초기화 (국내↔해외 잔여 UI 방지)
-    // 차트 카드를 먼저 대피시킨 뒤 결과를 비운다.
-    _detachStockChartCard();
-    const resultDiv = document.getElementById('stock-result');
-    if (resultDiv) resultDiv.innerHTML = '';
-}
-
-/* overseas_us가 enabled된 run에서만 해외 조회 허용 (fail-close) */
-async function _ensureOverseasEnabledForStock() {
-    try {
-        const res = await fetchWithTimeout('/api/market-mode', {}, 5000);
-        if (!res.ok) return false;
-        const json = await res.json();
-        return Array.isArray(json.enabled_market_modes) && json.enabled_market_modes.includes('overseas_us');
-    } catch (_) {
-        return false;
-    }
-}
-
-function _overseasExchangeLabel(exchange) {
-    return ({ NASD: 'NASDAQ', NYSE: 'NYSE', AMEX: 'AMEX' })[exchange] || exchange || '-';
-}
-
-function _formatOverseasTimestamp(value) {
-    const text = String(value || '').trim();
-    if (/^\d{8}$/.test(text)) {
-        return `${text.substring(0, 4)}-${text.substring(4, 6)}-${text.substring(6, 8)}`;
-    }
-    return text || '-';
-}
-
-async function searchOverseasStock() {
-    const symbolInput = document.getElementById('overseas-stock-symbol');
-    const exchangeSel = document.getElementById('overseas-stock-exchange');
-    const symbol = symbolInput ? symbolInput.value.trim().toUpperCase() : '';
-    const exchange = exchangeSel ? exchangeSel.value : 'NASD';
-    const resultDiv = document.getElementById('stock-result');
-    if (!symbol) {
-        alert('심볼을 입력하세요.');
-        return;
-    }
-    if (symbolInput) symbolInput.value = symbol;
-    if (!resultDiv) return;
-
-    // 해외 모드는 국내 실시간 구독을 끊고 차트 카드를 대피시킨 뒤 다시 배치한다.
-    if (typeof unsubscribeRealtimePrice === 'function') {
-        unsubscribeRealtimePrice();
-    }
-    _detachStockChartCard();
-
-    showLoading(resultDiv, '해외 종목 조회 중...');
-    try {
-        const enabled = await _ensureOverseasEnabledForStock();
-        if (!enabled) {
-            resultDiv.innerHTML = '<p class="error">해외주식 조회는 overseas_us가 enabled된 run에서만 사용할 수 있습니다.</p>';
-            return;
-        }
-        const res = await fetchWithTimeout(`/api/overseas/stock/${encodeURIComponent(symbol)}?exchange=${exchange}`, {}, 20000);
-        const json = await res.json();
-        if (!res.ok || json.rt_cd !== '0') {
-            resultDiv.innerHTML = `<p class="error">조회 실패: ${json.msg1 || res.status}</p>`;
-            return;
-        }
-        const data = json.data || {};
-        const rate = Number(data.change_rate || 0);
-        const rateClass = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
-        const exchangeLabel = _overseasExchangeLabel(data.exchange || exchange);
-        const usd = (v) => {
-            const n = Number(v);
-            return Number.isFinite(n) ? '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
-        };
-        const num = (v) => {
-            const n = Number(String(v ?? '').replace(/,/g, ''));
-            return Number.isFinite(n) ? n.toLocaleString() : '-';
-        };
-        resultDiv.innerHTML = `
-            <div class="card stock-info-box" style="position: relative;">
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-                    <h3 class="stock-title" style="margin:0;">
-                        ${data.symbol || symbol}
-                        <span style="color:#aaa;font-size:0.85rem;">${exchangeLabel} ${data.currency || 'USD'}</span>
-                    </h3>
-                    <span class="badge" style="background:var(--bg-primary,#f5f5f5); border:1px solid var(--border,#ccc); border-radius:8px; padding:8px 10px; font-weight:bold;">
-                        해외
-                    </span>
-                </div>
-                <p class="price ${rateClass}">${usd(data.price)}</p>
-                <p class="change-rate">등락률: <span class="${rateClass}">${Number.isFinite(rate) ? (rate > 0 ? '+' : '') + rate.toFixed(2) + '%' : '-'}</span></p>
-                <div id="chart-placeholder" style="margin: 16px 0;"></div>
-                <div class="stock-details">
-                    <div class="detail-group">
-                        <h4>기본 정보</h4>
-                        <p><strong>거래소:</strong> <span>${exchangeLabel}</span></p>
-                        <p><strong>통화:</strong> <span>${data.currency || 'USD'}</span></p>
-                    </div>
-                    <div class="detail-group">
-                        <h4>시세</h4>
-                        <p><strong>현재가:</strong> <span>${usd(data.price)}</span></p>
-                        <p><strong>등락률:</strong> <span class="${rateClass}">${Number.isFinite(rate) ? (rate > 0 ? '+' : '') + rate.toFixed(2) + '%' : '-'}</span></p>
-                    </div>
-                    <div class="detail-group">
-                        <h4>거래</h4>
-                        <p><strong>거래량:</strong> <span>${num(data.volume)}</span></p>
-                        <p><strong>시각:</strong> <span>${_formatOverseasTimestamp(data.timestamp)}</span></p>
-                    </div>
-                </div>
-            </div>
-        `;
-        const chartCard = document.getElementById('stock-chart-card');
-        const placeholder = document.getElementById('chart-placeholder');
-        if (chartCard && placeholder) {
-            placeholder.appendChild(chartCard);
-        }
-        if (typeof loadAndRenderOverseasStockChart === 'function') {
-            loadAndRenderOverseasStockChart(data.symbol || symbol, data.exchange || exchange);
-        }
-    } catch (e) {
-        if (e.name === 'AbortError') {
-            resultDiv.innerHTML = `<p class="error">해외주식 조회 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.</p>`;
-        } else {
-            resultDiv.innerHTML = `<p class="error">통신 오류: ${e.message || e}</p>`;
-        }
-    }
-}
-
 function changeExchange(exchange, btn) {
     if (_currentExchange === exchange) return;
     _currentExchange = exchange;
@@ -235,28 +56,6 @@ StockAutocomplete({
     onConfirm: function() { searchStock(); }
 });
 
-/* ── 해외 심볼 자동완성 (심볼 prefix + 영문명 매칭, 선택 시 거래소 자동설정) ── */
-function _initOverseasAutocomplete() {
-    StockAutocomplete({
-        inputId: 'overseas-stock-symbol',
-        listId: 'overseas-autocomplete-list',
-        valueKey: 's',
-        readyEvent: 'all-overseas-stocks-ready',
-        getInitial: function () { return window.ALL_OVERSEAS_STOCKS || null; },
-        searchImpl: _overseasStockSearch,
-        formatItem: function (s) { return s.s + ' — ' + s.n + ' (' + s.e + ')'; },
-        onSelect: function (symbol, name, item) {
-            const input = document.getElementById('overseas-stock-symbol');
-            if (input) input.value = symbol;
-            const sel = document.getElementById('overseas-stock-exchange');
-            if (sel && item && item.e) sel.value = item.e;
-            searchOverseasStock();
-        },
-        onConfirm: function () { searchOverseasStock(); }
-    });
-}
-_initOverseasAutocomplete();
-
 /* ── Pjax 재방문 시 자동완성 재초기화 ── */
 document.addEventListener('pjax:ready', (e) => {
     if (e.detail?.path !== '/stock') return;
@@ -270,13 +69,11 @@ document.addEventListener('pjax:ready', (e) => {
         },
         onConfirm: function() { searchStock(); }
     });
-    _initOverseasAutocomplete();
-
-        const urlParams = new URLSearchParams(window.location.search);
-        const code = urlParams.get('code');
-        if (code) {
-            searchStock(code);
-        }
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    if (code) {
+        searchStock(code);
+    }
 });
 
 document.addEventListener('DOMContentLoaded', () => {

@@ -15,7 +15,7 @@
 
     <div class="card overseas-header">
         <div>
-            <h2>미국주식</h2>
+            <h2>미국장</h2>
             <p class="overseas-status">NASDAQ · NYSE · AMEX / USD 지정가 주문 지원</p>
             <p id="overseas-status" class="overseas-status">해외주식 기능 상태를 확인 중입니다.</p>
         </div>
@@ -29,9 +29,10 @@
     <section id="overseas-panel-overview" class="overseas-panel">
         <div class="card">
             <h2>시세 조회</h2>
-            <div class="form-row">
+            <div class="form-row" style="position:relative;">
                 <label>심볼</label>
                 <input type="text" id="overseas-symbol" placeholder="AAPL" maxlength="12" autocomplete="off">
+                <ul id="overseas-autocomplete-list" class="autocomplete-list"></ul>
             </div>
             <div class="form-row">
                 <label>거래소</label>
@@ -111,5 +112,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/autocomplete.js?v=2"></script>
+<script src="/static/js/overseas_autocomplete.js?v=1"></script>
 <script src="/static/js/overseas.js?v=5"></script>
 {% endblock %}

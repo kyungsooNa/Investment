@@ -263,7 +263,13 @@ app.include_router(operator_dashboard_router, prefix="/api")
 page_router = APIRouter()
 
 # 공통 페이지 렌더링 함수 (로그인 체크 포함)
-async def render_page(request: Request, template_name: str, active_page: str, extra_context: dict = None):
+async def render_page(
+    request: Request,
+    template_name: str,
+    active_page: str,
+    extra_context: dict = None,
+    view_market: str = "common",
+):
     try:
         ctx = web_api._get_ctx()
     except Exception:
@@ -278,7 +284,7 @@ async def render_page(request: Request, template_name: str, active_page: str, ex
         if not token or token != expected_token:
             return templates.TemplateResponse(request, "login.html")
 
-    context = {"active_page": active_page}
+    context = {"active_page": active_page, "view_market": view_market}
     if extra_context:
         context.update(extra_context)
     return templates.TemplateResponse(request, template_name, context)
@@ -291,7 +297,7 @@ async def index(request: Request):
 @page_router.get("/stock")
 async def stock(request: Request):
     # 종목 리스트는 클라이언트에서 /api/stocks/list + localStorage로 관리
-    return await render_page(request, "stock.html", "stock")
+    return await render_page(request, "stock.html", "stock", view_market="domestic")
 
 @page_router.get("/balance")
 async def balance(request: Request):
@@ -317,23 +323,29 @@ async def balance(request: Request):
     except Exception:
         pass
     extra = {"initial_data": initial_data} if initial_data else None
-    return await render_page(request, "balance.html", "balance", extra_context=extra)
+    return await render_page(
+        request,
+        "balance.html",
+        "balance",
+        extra_context=extra,
+        view_market="domestic",
+    )
 
 @page_router.get("/order")
 async def order(request: Request):
-    return await render_page(request, "order.html", "order")
+    return await render_page(request, "order.html", "order", view_market="domestic")
 
 @page_router.get("/overseas")
 async def overseas(request: Request):
-    return await render_page(request, "overseas.html", "overseas")
+    return await render_page(request, "overseas.html", "overseas", view_market="overseas_us")
 
 @page_router.get("/ranking")
 async def ranking(request: Request):
-    return await render_page(request, "ranking.html", "ranking")
+    return await render_page(request, "ranking.html", "ranking", view_market="domestic")
 
 @page_router.get("/marketcap")
 async def marketcap(request: Request):
-    return await render_page(request, "marketcap.html", "marketcap")
+    return await render_page(request, "marketcap.html", "marketcap", view_market="domestic")
 
 @page_router.get("/virtual")
 async def virtual(request: Request):
@@ -345,7 +357,7 @@ async def scheduler(request: Request):
 
 @page_router.get("/program")
 async def program(request: Request):
-    return await render_page(request, "program.html", "program")
+    return await render_page(request, "program.html", "program", view_market="domestic")
 
 @page_router.get("/system")
 async def system(request: Request):
@@ -353,7 +365,7 @@ async def system(request: Request):
 
 @page_router.get("/favorite")
 async def favorite(request: Request):
-    return await render_page(request, "favorite.html", "favorite")
+    return await render_page(request, "favorite.html", "favorite", view_market="domestic")
 
 @page_router.get("/operator")
 async def operator_dashboard(request: Request):
