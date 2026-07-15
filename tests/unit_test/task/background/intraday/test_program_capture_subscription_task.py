@@ -164,6 +164,54 @@ async def test_excludes_manual_pt_desired_and_caps_max_codes():
 
 
 @pytest.mark.asyncio
+async def test_excludes_preferred_stocks_from_program_trading_subscription():
+    """프로그램매매 tick이 없는 우선주는 자동 구독 후보에서 제외한다."""
+    universe_service = MagicMock()
+    universe_service.get_watchlist = AsyncMock(
+        return_value={
+            "005935": MagicMock(),  # 삼성전자우
+            "000660": MagicMock(),
+            "051915": MagicMock(),  # LG화학우
+        }
+    )
+    virtual_trade_service = MagicMock()
+    virtual_trade_service.get_holds = MagicMock(
+        return_value=[{"code": "005930"}, {"code": "000885"}]  # 한화우
+    )
+    task, policy = _make_task(
+        universe_service=universe_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+
+    await task._tick()
+
+    policy.sync_subscriptions.assert_awaited_once_with(
+        ["005930", "000660"],
+        CATEGORY,
+        SubscriptionPriority.LOW,
+        StreamingType.PROGRAM_TRADING,
+    )
+
+
+@pytest.mark.asyncio
+async def test_restart_does_not_restore_preferred_stock_subscription():
+    """재시작 저장 목록에 남은 우선주도 PT 구독으로 복원하지 않는다."""
+    store = _FakeStore()
+    store.save_keyed("program_capture_subscribed_codes", "005930,005935")
+    task, policy = _make_task(scheduler_store=store, market_clock=_clock(open_now=False))
+
+    await task._tick()
+
+    assert policy.sync_subscriptions.await_args_list == [
+        call(
+            ["005930"], CATEGORY,
+            SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
+        ),
+        call([], CATEGORY, SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_non_business_day_does_not_subscribe():
     task, policy = _make_task(market_calendar_service=_mcs(business_day=False))
 

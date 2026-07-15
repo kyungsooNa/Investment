@@ -96,6 +96,38 @@ async def test_build_report_includes_skhynix_adr_price_gap_with_symbol_fallback(
 
 
 @pytest.mark.asyncio
+async def test_build_report_reads_skhynix_price_from_kis_output_wrapper():
+    broker = SimpleNamespace()
+    broker.get_market_cap = AsyncMock(side_effect=[
+        _domestic_response(500_000_000_000_000),
+        _domestic_response(200_000_000_000_000),
+    ])
+    broker.get_current_price = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data={"output": SimpleNamespace(stck_prpr="2076000")},
+    ))
+    broker.get_overseas_price = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="OK",
+        data=OverseasPriceSummary(
+            symbol="SKHY",
+            exchange=OverseasExchange.NASD,
+            price=176.0,
+        ),
+    ))
+    provider = StaticUsMarketCapProvider(quotes=[], usdkrw=1380.0)
+    service = MarketCapGapService(broker=broker, us_provider=provider, korean_provider=None)
+
+    report = await service.build_report(report_date="20260710", trigger="us_close")
+
+    assert report["adr_gap"] is not None
+    assert report["adr_gap"]["korean_price_krw"] == 2_076_000
+    assert report["adr_gap"]["adr_symbol"] == "SKHY"
+    broker.get_overseas_price.assert_awaited_once_with("SKHY")
+
+
+@pytest.mark.asyncio
 async def test_build_report_omits_adr_gap_when_price_data_is_missing():
     broker = SimpleNamespace()
     broker.get_market_cap = AsyncMock(side_effect=[

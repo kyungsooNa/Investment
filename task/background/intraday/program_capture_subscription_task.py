@@ -106,6 +106,12 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
             "synced_codes": list(self._synced_codes),
         }
 
+    @staticmethod
+    def _is_preferred_stock_code(code: str) -> bool:
+        """국내 6자리 종목코드 중 끝자리가 0이 아닌 우선주를 판별한다."""
+        normalized = str(code).strip()
+        return len(normalized) == 6 and normalized.isdigit() and normalized[-1] != "0"
+
     async def _loop(self) -> None:
         while True:
             try:
@@ -192,7 +198,10 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
                 self._logger.warning(f"{self.task_name}: PT desired 조회 실패 — {exc}")
         # 우리 카테고리가 이미 올린 desired는 제외 대상이 아니다 (재시작 재편입 케이스)
         manual_desired = already_desired - set(self._synced_codes)
-        filtered = [code for code in codes if code not in manual_desired]
+        filtered = [
+            code for code in codes
+            if code not in manual_desired and not self._is_preferred_stock_code(code)
+        ]
         return filtered[: self._max_codes]
 
     def _load_stored_codes(self) -> List[str]:
@@ -205,7 +214,10 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
             return []
         if not raw:
             return []
-        return [code for code in str(raw).split(",") if code]
+        return [
+            code for code in str(raw).split(",")
+            if code and not self._is_preferred_stock_code(code)
+        ]
 
     def _save_codes(self, codes: List[str]) -> None:
         if self._scheduler_store is None:

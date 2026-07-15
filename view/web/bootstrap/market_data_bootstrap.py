@@ -6,6 +6,7 @@ from config.config_loader import DataQualityConfig
 from core.market_clock import MarketClock
 from repositories.rs_rating_repository import RSRatingRepository
 from repositories.stock_classification_repository import StockClassificationRepository
+from repositories.theme_trading_value_snapshot_repository import ThemeTradingValueSnapshotRepository
 from scheduler.dispatcher.time_dispatcher import TimeDispatcher
 from scheduler.ticket_queue.dlq_manager import DlqManager
 from scheduler.ticket_queue.message_broker import MessageBroker
@@ -46,6 +47,7 @@ class MarketDataBootstrap:
 
         try:
             ctx.theme_classification_repository = StockClassificationRepository(logger=ctx.logger)
+            ctx.theme_trading_value_snapshot_repository = ThemeTradingValueSnapshotRepository()
             ctx.theme_leader_service = ThemeLeaderService(
                 classification_repository=ctx.theme_classification_repository,
                 rs_rating_repository=getattr(ctx, "rs_rating_repository", None),
@@ -54,6 +56,7 @@ class MarketDataBootstrap:
             )
             ctx.theme_daily_leader_service = ThemeDailyLeaderService(
                 classification_repository=ctx.theme_classification_repository,
+                snapshot_repository=ctx.theme_trading_value_snapshot_repository,
                 logger=ctx.logger,
                 performance_profiler=ctx.pm,
             )
@@ -62,6 +65,7 @@ class MarketDataBootstrap:
             ctx.theme_classification_repository = None
             ctx.theme_leader_service = None
             ctx.theme_daily_leader_service = None
+            ctx.theme_trading_value_snapshot_repository = None
 
         try:
             ctx.market_data_service = MarketDataService(
