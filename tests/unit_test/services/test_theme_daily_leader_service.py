@@ -39,10 +39,73 @@ def _program(code, amount):
     }
 
 
-def _service(groups):
+def _service(groups, snapshot_repo=None):
     repo = MagicMock()
     repo.get_groups = AsyncMock(return_value=groups)
-    return ThemeDailyLeaderService(classification_repository=repo, logger=MagicMock()), repo
+    return ThemeDailyLeaderService(
+        classification_repository=repo,
+        snapshot_repository=snapshot_repo,
+        logger=MagicMock(),
+    ), repo
+
+
+@pytest.mark.asyncio
+async def test_intraday_report_calculates_recent_three_minute_value_and_delta():
+    groups = {
+        "반도체": {
+            "sources": ["NAVER"],
+            "members": [_member("A", "A"), _member("B", "B"), _member("C", "C")],
+        }
+    }
+    snapshot_repo = MagicMock()
+    snapshot_repo.save_snapshot = AsyncMock()
+    snapshot_repo.get_values_at_or_before = AsyncMock(side_effect=[
+        {"A": 900_000_000, "B": 1_800_000_000, "C": 2_700_000_000},
+        {"A": 800_000_000, "B": 1_700_000_000, "C": 2_500_000_000},
+    ])
+    svc, _ = _service(groups, snapshot_repo=snapshot_repo)
+    rankings = {"all_stocks": [
+        _stock("A", "A", 10, 1_000_000_100),
+        _stock("B", "B", 9, 2_000_000_300),
+        _stock("C", "C", 8, 3_000_000_600),
+    ]}
+
+    resp = await svc.build_intraday_theme_report(
+        rankings,
+        report_time="20260715 10:06",
+        window_minutes=3,
+    )
+
+    theme = resp.data[0]
+    assert theme["recent_trading_value_won"] == 600_001_000
+    assert theme["previous_trading_value_won"] == 400_000_000
+    assert theme["recent_trading_value_change_won"] == 200_001_000
+    assert theme["recent_coverage_count"] == 3
+    assert theme["recent_window_minutes"] == 3
+    assert theme["leaders"][0]["recent_trading_value_won"] == 100_000_100
+    snapshot_repo.save_snapshot.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_intraday_report_gracefully_marks_missing_history():
+    groups = {
+        "로봇": {
+            "sources": ["NAVER"],
+            "members": [_member("A", "A"), _member("B", "B"), _member("C", "C")],
+        }
+    }
+    snapshot_repo = MagicMock()
+    snapshot_repo.save_snapshot = AsyncMock()
+    snapshot_repo.get_values_at_or_before = AsyncMock(return_value={})
+    svc, _ = _service(groups, snapshot_repo=snapshot_repo)
+
+    resp = await svc.build_intraday_theme_report(
+        {"all_stocks": [_stock("A", "A", 10, 100), _stock("B", "B", 9, 200), _stock("C", "C", 8, 300)]},
+        report_time="20260715 09:01",
+    )
+
+    assert resp.data[0]["recent_coverage_count"] == 0
+    assert resp.data[0]["recent_trading_value_won"] == 0
 
 
 @pytest.mark.asyncio

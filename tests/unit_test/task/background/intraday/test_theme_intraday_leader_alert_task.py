@@ -64,7 +64,7 @@ def _make_task(*, now=None, open_now=True, basic_rankings=None, service_response
 
     ranking_task.get_basic_ranking_cache.side_effect = _basic_cache
     theme_service = MagicMock()
-    theme_service.build_daily_theme_report = AsyncMock(
+    theme_service.build_intraday_theme_report = AsyncMock(
         return_value=service_response or ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="성공",
@@ -100,14 +100,14 @@ async def test_open_tick_sends_intraday_theme_report_for_current_hourly_slot():
     await deps.task._tick()
 
     deps.ranking_task.refresh_basic_ranking.assert_awaited_once()
-    rankings = deps.theme_service.build_daily_theme_report.await_args.args[0]
+    rankings = deps.theme_service.build_intraday_theme_report.await_args.args[0]
     assert rankings["report_date"] == "20260706"
     assert rankings["program_all_stocks"] == []
     assert {item["stck_shrn_iscd"] for item in rankings["all_stocks"]} == {"005930", "000660"}
     samsung = next(item for item in rankings["all_stocks"] if item["stck_shrn_iscd"] == "005930")
     assert samsung["acml_tr_pbmn"] == "80000000"
-    deps.theme_service.build_daily_theme_report.assert_awaited_once()
-    assert deps.theme_service.build_daily_theme_report.await_args.kwargs["report_date"] == "20260706 10:10"
+    deps.theme_service.build_intraday_theme_report.assert_awaited_once()
+    assert deps.theme_service.build_intraday_theme_report.await_args.kwargs["report_time"] == "20260706 10:10"
     deps.telegram_reporter.send_daily_theme_report.assert_awaited_once_with(
         [{"normalized_name": "반도체", "leaders": []}],
         report_date="20260706 10:10",
@@ -127,6 +127,7 @@ async def test_same_hourly_slot_does_not_send_twice():
     await deps.task._tick()
 
     deps.telegram_reporter.send_daily_theme_report.assert_awaited_once()
+    assert deps.theme_service.build_intraday_theme_report.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -147,7 +148,7 @@ async def test_late_restart_inside_hourly_slot_does_not_send_catchup_alert():
 
     await deps.task._tick()
 
-    deps.theme_service.build_daily_theme_report.assert_not_called()
+    deps.theme_service.build_intraday_theme_report.assert_awaited_once()
     deps.telegram_reporter.send_daily_theme_report.assert_not_called()
     assert deps.task.get_progress()["last_report_slot"] is None
 
@@ -158,7 +159,7 @@ async def test_before_0910_skips_alert():
 
     await deps.task._tick()
 
-    deps.theme_service.build_daily_theme_report.assert_not_called()
+    deps.theme_service.build_intraday_theme_report.assert_awaited_once()
     deps.telegram_reporter.send_daily_theme_report.assert_not_called()
 
 
@@ -168,7 +169,7 @@ async def test_market_closed_skips_alert():
 
     await deps.task._tick()
 
-    deps.theme_service.build_daily_theme_report.assert_not_called()
+    deps.theme_service.build_intraday_theme_report.assert_not_called()
     deps.telegram_reporter.send_daily_theme_report.assert_not_called()
 
 
@@ -178,7 +179,7 @@ async def test_empty_ranking_cache_skips_without_marking_slot_sent():
 
     await deps.task._tick()
 
-    deps.theme_service.build_daily_theme_report.assert_not_called()
+    deps.theme_service.build_intraday_theme_report.assert_not_called()
     deps.telegram_reporter.send_daily_theme_report.assert_not_called()
     assert deps.task.get_progress()["last_error"] == "intraday_ranking_empty"
     assert deps.task.get_progress()["last_report_slot"] is None
@@ -189,3 +190,18 @@ def test_task_identity_and_initial_progress():
 
     assert deps.task.task_name == "intraday_theme_leader_alert"
     assert deps.task.get_progress()["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_latest_report_is_refreshed_each_minute_without_extra_telegram():
+    deps = _make_task(now=datetime(2026, 7, 6, 10, 13, 0))
+
+    await deps.task._tick()
+    deps.clock.now = datetime(2026, 7, 6, 10, 14, 0)
+    await deps.task._tick()
+
+    assert deps.theme_service.build_intraday_theme_report.await_count == 2
+    deps.telegram_reporter.send_daily_theme_report.assert_not_called()
+    latest = deps.task.get_latest_report()
+    assert latest["captured_at"] == "20260706 10:14"
+    assert latest["data"][0]["normalized_name"] == "반도체"

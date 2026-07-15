@@ -369,7 +369,7 @@ async function loadThemeLeaders() {
     _showRankingSkeleton();
 
     try {
-        const res = await fetchWithTimeout('/api/ranking/theme_leaders');
+        const res = await fetchWithTimeout('/api/ranking/themes/intraday');
         const json = await res.json();
 
         if (json.rt_cd !== "0") {
@@ -380,11 +380,14 @@ async function loadThemeLeaders() {
         if (!json.data || json.data.length === 0) {
             div.innerHTML = `<div class="card" style="text-align:center; padding:40px;">
                 <p style="font-size:1.1em;">${json.msg1 || '테마 데이터가 아직 수집되지 않았습니다.'}</p>
-                <p style="color:#888; margin-top:8px;">장 마감 후 테마 분류 수집이 완료되면 표시됩니다.</p>
+                <p style="color:#888; margin-top:8px;">장중에는 매분 갱신되며, 최근 3분 값은 스냅샷이 쌓인 뒤 표시됩니다.</p>
             </div>`;
             return;
         }
-        renderThemeLeaders(json.data);
+        renderThemeLeaders(json.data, json.captured_at);
+        _rankingPollTimer = setTimeout(() => {
+            if (_rankingCurrentCategory === 'theme_leaders') loadThemeLeaders();
+        }, 60000);
     } catch (e) {
         if (e.name === 'AbortError') {
             div.innerHTML = '<p class="error">요청 시간이 초과되었습니다. 다시 시도해주세요.</p>';
@@ -402,28 +405,46 @@ function _sourceBadges(sources) {
     ).join('');
 }
 
-function renderThemeLeaders(groups) {
+function renderThemeLeaders(groups, capturedAt) {
     const div = document.getElementById('ranking-result');
-    const cards = groups.map(g => {
-        const rows = g.leaders.map((l, i) => `
-            <tr>
-                <td>${i + 1}</td>
-                <td>${l.name || l.code}</td>
-                <td>${l.rs_rating}</td>
-                <td>${_sourceBadges(l.sources)}</td>
-            </tr>`).join('');
+    const cards = groups.map((g, index) => {
+        const recent = parseInt(g.recent_trading_value_won || 0);
+        const delta = parseInt(g.recent_trading_value_change_won || 0);
+        const deltaClass = delta > 0 ? 'text-red' : (delta < 0 ? 'text-blue' : '');
+        const deltaPrefix = delta > 0 ? '+' : '';
+        const coverageText = g.recent_coverage_count > 0
+            ? `${g.recent_coverage_count}종목 측정`
+            : '3분 스냅샷 수집 중';
+        const leaders = (g.leaders || []).map(l => {
+            const rate = parseFloat(l.change_rate || 0);
+            const rateClass = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
+            return `<div style="display:grid; grid-template-columns:minmax(110px,1fr) auto auto; gap:12px; align-items:center; padding:9px 0; border-top:1px solid var(--border-color,#eee);">
+                <a href="/stock?code=${encodeURIComponent(l.code || '')}" target="_blank" class="stock-link">${escapeHtml(l.name || l.code || '-')}</a>
+                <span>${parseInt(l.current_price || 0).toLocaleString()}원</span>
+                <span class="${rateClass}">${rate > 0 ? '+' : ''}${rate.toFixed(2)}%</span>
+                <span style="grid-column:1 / -1; color:#888; font-size:.86em;">최근 3분 ${l.has_recent_trading_value ? formatTradingValue(l.recent_trading_value_won) : '수집 중'} · 누적 ${formatTradingValue(l.trading_value_won)}</span>
+            </div>`;
+        }).join('');
         return `<div class="card" style="margin-bottom:12px;">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-                <h3 style="margin:0;">${g.normalized_name}${_sourceBadges(g.sources)}</h3>
-                <span style="color:#888;">RS 중앙값 ${g.group_rs_median} · ${g.member_count}종목</span>
+            <div style="display:flex; gap:12px; align-items:flex-start;">
+                <div style="font-size:1.1em; color:#888; min-width:24px;">${index + 1}</div>
+                <div style="flex:1; min-width:0;">
+                    <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                        <h3 style="margin:0;">${escapeHtml(g.normalized_name || '')}${_sourceBadges(g.sources)}</h3>
+                        <strong>${g.recent_coverage_count > 0 ? formatTradingValue(recent) : '수집 중'}</strong>
+                    </div>
+                    <div style="margin:5px 0 10px; color:#888; font-size:.9em;">
+                        최근 ${g.recent_window_minutes || 3}분 · ${coverageText}
+                        <span class="${deltaClass}" style="margin-left:8px;">직전 구간 대비 ${deltaPrefix}${formatTradingValue(delta)}</span>
+                        <span style="margin-left:8px;">상승 확산 ${Number(g.advancing_ratio || 0).toFixed(1)}%</span>
+                    </div>
+                    ${leaders}
+                </div>
             </div>
-            <table class="data-table">
-                <thead><tr><th>순위</th><th>종목명</th><th>RS</th><th>출처</th></tr></thead>
-                <tbody>${rows}</tbody>
-            </table>
         </div>`;
     }).join('');
-    div.innerHTML = cards;
+    const updated = capturedAt ? `<div style="color:#888; margin:0 0 10px; text-align:right;">기준 ${escapeHtml(capturedAt)} · 1분 자동 갱신</div>` : '';
+    div.innerHTML = updated + cards;
 }
 
 function _buildAIAnalysisCandidate(item) {

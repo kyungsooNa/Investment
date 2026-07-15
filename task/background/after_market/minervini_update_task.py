@@ -336,16 +336,6 @@ class MinerviniUpdateTask(AfterMarketTask):
             if self._notification_service:
                 await self._notification_service.emit(NotificationCategory.BACKGROUND, NotificationLevel.INFO, "Minervini S2 갱신 완료", f"{len(collected)}개 수집, 소요: {elapsed:.1f}s")
 
-            # Telegram report (if reporter available)
-            try:
-                if getattr(self, '_telegram_reporter', None):
-                    # use trade_date if available, else formatted updated_at
-                    report_date = target_date or (self._updated_at.strftime('%Y%m%d') if self._updated_at else datetime.now().strftime('%Y%m%d'))
-                    # send top N (already sorted by rs)
-                    await self._telegram_reporter.send_minervini_report(collected, report_date)
-            except Exception as e:
-                self._logger.warning(f"Telegram 리포트 전송 실패: {e}")
-
             # Persist minervini stage info into daily snapshot DB (best-effort)
             # update_minervini_fields만 호출하여 DailyPriceCollectorTask의
             # INSERT OR REPLACE가 해당 컬럼을 NULL로 덮어쓰는 문제를 방지한다.

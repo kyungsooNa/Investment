@@ -128,7 +128,7 @@ async def test_persist_all_stages(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_telegram_only_stage2():
+async def test_minervini_report_is_not_sent_to_mobile():
     rows = [
         {"종목코드": "0001", "종목명": "A", "시장구분": "KOSPI"},
         {"종목코드": "0002", "종목명": "B", "시장구분": "KOSDAQ"},
@@ -156,12 +156,7 @@ async def test_telegram_only_stage2():
 
     await task.refresh_minervini_stage2(force=True)
 
-    # telegram should have been sent
-    assert tg.sent is not None
-    collected, report_date = tg.sent
-    # only stage2 code should be in collected
-    codes = {it.get("code") for it in collected}
-    assert codes == {"0002"}
+    assert tg.sent is None
 
 
 @pytest.mark.asyncio
@@ -662,23 +657,27 @@ async def test_notification_emitted_on_completion():
 
 
 @pytest.mark.asyncio
-async def test_telegram_exception_is_swallowed():
-    """telegram reporter가 예외를 던져도 refresh가 정상 완료되는지 확인 (L343-L344)"""
+async def test_mobile_reporter_is_not_called_during_refresh():
     class FailingTelegram:
+        def __init__(self):
+            self.called = False
+
         async def send_minervini_report(self, collected, report_date):
+            self.called = True
             raise RuntimeError("Telegram connection failed")
 
     sc_repo = DummyStockCodeRepo([])
     stock_repo = DummyStockRepo()
+    telegram = FailingTelegram()
 
     task = MinerviniUpdateTask(
         minervini_service=DummyMinerviniSvc({}),
         stock_code_repository=sc_repo,
         stock_repository=stock_repo,
-        telegram_reporter=FailingTelegram(),
+        telegram_reporter=telegram,
     )
-    # 예외 전파 없이 완료되어야 함
     await task.refresh_minervini_stage2(force=True)
+    assert telegram.called is False
     assert task._updated_at is not None
     assert task._is_refreshing is False
 

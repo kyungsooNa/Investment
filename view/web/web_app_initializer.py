@@ -156,6 +156,7 @@ class WebAppContext:
         self.theme_classification_task = None
         self.theme_leader_service = None
         self.theme_daily_leader_service = None
+        self.theme_trading_value_snapshot_repository = None
         self.theme_daily_leader_report_task = None
         self.theme_intraday_leader_alert_task = None
         self.strategy_log_report_task: StrategyLogReportTask = None

@@ -42,6 +42,7 @@ REPOSITORY_BOOTSTRAP_PATCH_NAMES = [
 
 MARKET_DATA_BOOTSTRAP_PATCH_NAMES = [
     "RSRatingRepository", "RSRatingService", "StockClassificationRepository",
+    "ThemeTradingValueSnapshotRepository",
     "ThemeLeaderService", "ThemeDailyLeaderService", "MarketDataService",
     "IndicatorService", "MessageBroker", "DlqManager", "WorkerPool",
     "TimeDispatcher", "DataQualityService",
@@ -197,6 +198,11 @@ def test_service_container_creates_theme_leader_service(patched_service_containe
     assert ctx.theme_leader_service is patched_service_container_deps["ThemeLeaderService"].return_value
     assert ctx.theme_daily_leader_service is patched_service_container_deps[
         "ThemeDailyLeaderService"].return_value
+    assert ctx.theme_trading_value_snapshot_repository is patched_service_container_deps[
+        "ThemeTradingValueSnapshotRepository"
+    ].return_value
+    theme_kwargs = patched_service_container_deps["ThemeDailyLeaderService"].call_args.kwargs
+    assert theme_kwargs["snapshot_repository"] is ctx.theme_trading_value_snapshot_repository
 
 
 def test_service_container_passes_order_execution_retry_config(patched_service_container_deps):

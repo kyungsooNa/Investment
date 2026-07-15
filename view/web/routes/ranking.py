@@ -83,6 +83,27 @@ async def get_theme_leaders(include_industry: bool = False):
     return {"rt_cd": resp.rt_cd, "msg1": resp.msg1, "data": resp.data}
 
 
+@router.get("/ranking/themes/intraday")
+async def get_intraday_theme_leaders():
+    """장중 태스크가 매분 계산한 최근 3분 주도 테마를 반환한다."""
+    ctx = _get_ctx()
+    task = getattr(ctx, "theme_intraday_leader_alert_task", None)
+    if not task:
+        return {
+            "rt_cd": ErrorCode.API_ERROR.value,
+            "msg1": "장중 주도 테마 태스크가 활성화되지 않았습니다.",
+            "data": [],
+        }
+    latest = task.get_latest_report()
+    data = latest.get("data") or []
+    return {
+        "rt_cd": ErrorCode.SUCCESS.value,
+        "msg1": "장중 주도 테마 조회 성공" if data else "장중 테마 데이터를 수집 중입니다.",
+        "captured_at": latest.get("captured_at"),
+        "data": data,
+    }
+
+
 @router.post("/ranking/ai-analysis")
 async def analyze_ranking_candidates(payload: RankingAIAnalysisRequest):
     """현재 랭킹 후보를 AI provider로 해설한다. 주문/전략 판단에는 사용하지 않는다."""
