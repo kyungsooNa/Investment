@@ -18,6 +18,7 @@ const _investorTypeFields = {
 };
 
 let _rankingMarketFilter = 'ALL';
+let _rankingYtdMarket = 'ALL';
 
 function setMarketFilter(market, btn) {
     _rankingMarketFilter = market;
@@ -27,6 +28,14 @@ function setMarketFilter(market, btn) {
     if (_rankingCurrentCategory === 'investor_period') loadPeriodInvestorRanking();
     else if (_rankingDirection) loadInvestorRanking();
     else if (_rankingCurrentCategory) loadRanking(_rankingCurrentCategory);
+}
+
+function setYtdMarketFilter(market) {
+    _rankingYtdMarket = market;
+    document.querySelectorAll('.ytd-market-toggle').forEach(b => {
+        b.classList.toggle('active', b.dataset.ytdMarket === market);
+    });
+    loadRanking('ytd');
 }
 
 function _resetRankingAIAnalysis() {
@@ -71,6 +80,8 @@ async function loadRanking(category) {
     if (invRow) invRow.style.display = 'none';
     const periodRow = document.getElementById('period-investor-row');
     if (periodRow) periodRow.style.display = 'none';
+    const ytdMarketRow = document.getElementById('ytd-market-row');
+    if (ytdMarketRow) ytdMarketRow.style.display = category === 'ytd' ? '' : 'none';
 
     const div = document.getElementById('ranking-result');
     _showRankingSkeleton();
@@ -81,6 +92,8 @@ async function loadRanking(category) {
             res = await fetchWithTimeout(`/api/ranking/minervini_stage2`);
         } else if (category === 'newhigh') {
             res = await fetchWithTimeout(`/api/ranking/newhigh`);
+        } else if (category === 'ytd') {
+            res = await fetchWithTimeout(`/api/ranking/ytd?market=${_rankingYtdMarket}`);
         } else {
             res = await fetchWithTimeout(`/api/ranking/${category}`);
         }

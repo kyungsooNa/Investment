@@ -165,7 +165,18 @@ async def test_get_ytd_ranking(web_client, mock_web_ctx):
     body = response.json()
     assert body["rt_cd"] == "0"
     assert body["data"][0]["ytd_return_rate"] == 50.0
-    mock_web_ctx.stock_repository.get_ytd_return_ranking.assert_awaited_once_with(limit=30)
+    mock_web_ctx.stock_repository.get_ytd_return_ranking.assert_awaited_once_with(limit=30, market=None)
+
+
+@pytest.mark.asyncio
+async def test_get_ytd_ranking_with_market_filter(web_client, mock_web_ctx):
+    """GET /api/ranking/ytd?market=KOSPI 는 market 필터를 그대로 저장소에 전달한다."""
+    mock_web_ctx.stock_repository.get_ytd_return_ranking = AsyncMock(return_value=[])
+
+    response = web_client.get("/api/ranking/ytd?limit=30&market=KOSPI")
+
+    assert response.status_code == 200
+    mock_web_ctx.stock_repository.get_ytd_return_ranking.assert_awaited_once_with(limit=30, market="KOSPI")
 
 
 @pytest.mark.asyncio

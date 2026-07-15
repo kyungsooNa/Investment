@@ -29,6 +29,7 @@ def _make_snapshot(
     mang_issu_cls_code=None,
     mrkt_warn_cls_code=None,
     invt_caful_yn=None,
+    market="KOSPI",
 ):
     return {
         "code": code,
@@ -49,7 +50,7 @@ def _make_snapshot(
         "eps": None,
         "w52_high": None,
         "w52_low": None,
-        "market": "KOSPI",
+        "market": market,
         "iscd_stat_cls_code": iscd_stat_cls_code,
         "mang_issu_cls_code": mang_issu_cls_code,
         "mrkt_warn_cls_code": mrkt_warn_cls_code,
@@ -495,6 +496,21 @@ class TestGetYtdReturnRanking:
     @pytest.mark.asyncio
     async def test_returns_empty_without_snapshots(self, repo):
         assert await repo.get_ytd_return_ranking() == []
+
+    @pytest.mark.asyncio
+    async def test_filters_by_market(self, repo):
+        await repo.upsert_daily_snapshot("20260102", [
+            _make_snapshot("A001", price=100, market="KOSPI"),
+            _make_snapshot("A002", price=100, market="KOSDAQ"),
+        ])
+        await repo.upsert_daily_snapshot("20260713", [
+            _make_snapshot("A001", price=150, market="KOSPI"),
+            _make_snapshot("A002", price=200, market="KOSDAQ"),
+        ])
+
+        result = await repo.get_ytd_return_ranking(limit=10, market="KOSDAQ")
+
+        assert [row["code"] for row in result] == ["A002"]
 
 
 # ── get_price_history ────────────────────────────────────────────────────────

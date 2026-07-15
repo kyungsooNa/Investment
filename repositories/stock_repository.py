@@ -102,9 +102,9 @@ class StockRepository:
         """특정 거래일의 전체 종목 스냅샷을 시가총액 내림차순으로 조회."""
         return await self._ohlcv_repo.get_all_daily_snapshots(trade_date)
 
-    async def get_ytd_return_ranking(self, limit: int = 100) -> List[Dict]:
+    async def get_ytd_return_ranking(self, limit: int = 100, market: Optional[str] = None) -> List[Dict]:
         """최신 거래일 기준 YTD 수익률 랭킹 조회."""
-        return await self._ohlcv_repo.get_ytd_return_ranking(limit=limit)
+        return await self._ohlcv_repo.get_ytd_return_ranking(limit=limit, market=market)
 
     async def update_newhigh_fields(self, trade_date: str, records: List[Dict]):
         """is_newhigh 및 is_historical_newhigh 컬럼 업데이트."""
