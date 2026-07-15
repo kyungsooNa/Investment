@@ -502,8 +502,11 @@ class StockOhlcvRepository:
             self._logger.error(f"StockOhlcvRepository daily_prices 전종목 조회 실패: {e}")
             return []
 
-    async def get_ytd_return_ranking(self, limit: int = 100) -> List[Dict]:
-        """최신 거래일과 해당 연도 첫 스냅샷의 종가를 비교한 YTD 수익률 랭킹."""
+    async def get_ytd_return_ranking(self, limit: int = 100, market: Optional[str] = None) -> List[Dict]:
+        """최신 거래일과 해당 연도 첫 스냅샷의 종가를 비교한 YTD 수익률 랭킹.
+
+        market: "KOSPI"/"KOSDAQ" 지정 시 해당 시장으로 필터링, None/"ALL"이면 전체.
+        """
         try:
             async with self._get_read_connection() as conn:
                 async with conn.execute("SELECT MAX(trade_date) FROM daily_prices") as cursor:
@@ -522,8 +525,15 @@ class StockOhlcvRepository:
                 if not base_date:
                     return []
 
+                market_filter = ""
+                params = [base_date, latest_date]
+                if market and market != "ALL":
+                    market_filter = "AND latest.market = ?"
+                    params.append(market)
+                params.append(limit)
+
                 async with conn.execute(
-                    """
+                    f"""
                     SELECT latest.*, base.current_price AS base_price
                     FROM daily_prices AS latest
                     JOIN daily_prices AS base
@@ -531,10 +541,11 @@ class StockOhlcvRepository:
                     WHERE latest.trade_date = ?
                       AND latest.current_price > 0
                       AND base.current_price > 0
+                      {market_filter}
                     ORDER BY ((CAST(latest.current_price AS REAL) / base.current_price) - 1.0) DESC
                     LIMIT ?
                     """,
-                    (base_date, latest_date, limit),
+                    params,
                 ) as cursor:
                     rows = await cursor.fetchall()
 
