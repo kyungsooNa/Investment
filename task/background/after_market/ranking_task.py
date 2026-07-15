@@ -617,7 +617,7 @@ class RankingTask(AfterMarketTask):
 
         sort_field = "combined_period_ntby_tr_pbmn_won" if metric == "amount" else "combined_period_ntby_qty"
         ranked_results = [
-            dict(item, period_metric=metric)
+            dict(item, period_metric=metric, latest_trading_date=str(target_date))
             for item in results
             if self._to_int(item.get(sort_field)) > 0
         ]

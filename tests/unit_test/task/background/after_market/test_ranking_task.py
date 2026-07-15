@@ -331,6 +331,7 @@ async def test_period_investor_program_ranking_defaults_to_combined_amount(bg_se
     assert all(item["hts_kor_isnm"] != "NAVER" for item in resp.data)
     assert resp.data[0]["industry"] == "IT"
     assert resp.data[1]["industry"] == "반도체"
+    assert all(item["latest_trading_date"] == "20250101" for item in resp.data)
 
 
 @pytest.mark.asyncio
