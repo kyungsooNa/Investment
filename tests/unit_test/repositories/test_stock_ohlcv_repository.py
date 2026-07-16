@@ -531,6 +531,22 @@ class TestGetYtdReturnRanking:
         assert result[0]["base_price"] == 100
 
     @pytest.mark.asyncio
+    async def test_skips_holiday_only_date_with_no_overlapping_codes(self, repo):
+        """연초 첫 ohlcv 날짜가 휴장일(채권 등 다른 코드만 존재)이라 현재 종목과 전혀
+        겹치지 않으면, 실제로 겹치는 코드가 있는 다음 날짜를 기준일로 채택한다."""
+        await repo.upsert_ohlcv([
+            _make_ohlcv("BOND1", "20260101", close=999),
+            _make_ohlcv("A001", "20260102", close=100),
+        ])
+        await repo.upsert_daily_snapshot("20260713", [_make_snapshot("A001", price=150)])
+
+        result = await repo.get_ytd_return_ranking(limit=10)
+
+        assert [row["code"] for row in result] == ["A001"]
+        assert result[0]["base_date"] == "20260102"
+        assert result[0]["base_price"] == 100
+
+    @pytest.mark.asyncio
     async def test_includes_market_cap_from_latest_snapshot(self, repo):
         await repo.upsert_ohlcv([_make_ohlcv("A001", "20260102", close=100)])
         await repo.upsert_daily_snapshot("20260713", [

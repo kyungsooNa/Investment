@@ -519,9 +519,17 @@ class StockOhlcvRepository:
 
                 year = latest_date[:4]
                 date_glob = f"{year}[0-1][0-9][0-3][0-9]"
+                # 휴장일(채권 등 현재 추적 종목과 무관한 코드만 존재)이 연초 최초 날짜로
+                # 잡히지 않도록, 최신 스냅샷 종목과 실제로 겹치는 코드가 있는 날짜만 후보로 삼는다.
                 async with conn.execute(
-                    "SELECT MIN(date) FROM ohlcv WHERE date GLOB ?",
-                    (date_glob,),
+                    """
+                    SELECT MIN(base.date)
+                    FROM ohlcv AS base
+                    JOIN daily_prices AS latest
+                      ON latest.code = base.code AND latest.trade_date = ?
+                    WHERE base.date GLOB ?
+                    """,
+                    (latest_date, date_glob),
                 ) as cursor:
                     base_row = await cursor.fetchone()
                 base_date = base_row[0] if base_row and base_row[0] else None
