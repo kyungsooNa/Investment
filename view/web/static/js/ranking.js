@@ -723,6 +723,8 @@ function renderRankingTable() {
         return isNaN(n) ? '-' : n.toLocaleString();
     };
 
+    const ytdMarketCapRank = isYtd ? _buildMarketCapRankMap(_rankingData) : null;
+
     let rows = '';
     pageData.forEach(item => {
         const rate = parseFloat(item.prdy_ctrt || 0);
@@ -755,13 +757,14 @@ function renderRankingTable() {
         if (isYtd) {
             const ytdRate = parseFloat(item.ytd_return_rate || 0);
             const ytdColor = ytdRate > 0 ? 'text-red' : (ytdRate < 0 ? 'text-blue' : '');
+            const mcapRank = ytdMarketCapRank ? ytdMarketCapRank.get(code) : null;
             rows += `<tr>
                 <td>${item.data_rank || item.rank || '-'}</td>
                 <td><a href="/stock?code=${code}" target="_blank" class="stock-link">${escapeHtml(item.name || code)}</a></td>
                 <td>${parseInt(item.current_price || 0).toLocaleString()}</td>
                 <td class="${ytdColor}">${ytdRate.toFixed(2)}%</td>
                 <td>${parseInt(item.base_price || 0).toLocaleString()}</td>
-                <td>${formatMarketCap(item.market_cap)}</td>
+                <td>${formatMarketCap(item.market_cap)}${mcapRank ? ` (${mcapRank}위)` : ''}</td>
             </tr>`;
             return;
         }
@@ -822,6 +825,16 @@ function _renderPeriodRankingLabel(data) {
         ? ` (~ ${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)})`
         : '';
     return `<p style="color:#888; margin: 4px 0 12px;">최근 ${_rankingPeriodDays}거래일 기준${dateLabel}</p>`;
+}
+
+function _buildMarketCapRankMap(list) {
+    const map = new Map();
+    const sorted = list.slice().sort((a, b) => parseInt(b.market_cap || 0) - parseInt(a.market_cap || 0));
+    sorted.forEach((item, idx) => {
+        const code = item.stck_shrn_iscd || item.iscd || item.mksc_shrn_iscd || item.code || '';
+        if (code) map.set(code, idx + 1);
+    });
+    return map;
 }
 
 function _renderYtdRankingLabel(data) {
