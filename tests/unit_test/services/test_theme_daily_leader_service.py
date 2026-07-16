@@ -109,6 +109,51 @@ async def test_intraday_report_gracefully_marks_missing_history():
 
 
 @pytest.mark.asyncio
+async def test_intraday_report_prioritizes_leadership_score_over_recent_trading_value():
+    groups = {
+        "advancing_theme": {
+            "sources": ["NAVER"],
+            "members": [_member("U1", "U1"), _member("U2", "U2"), _member("U3", "U3")],
+        },
+        "falling_theme": {
+            "sources": ["NAVER"],
+            "members": [_member("D1", "D1"), _member("D2", "D2"), _member("D3", "D3")],
+        },
+    }
+    snapshot_repo = MagicMock()
+    snapshot_repo.save_snapshot = AsyncMock()
+    snapshot_repo.get_values_at_or_before = AsyncMock(side_effect=[
+        {
+            "U1": 900_000_000, "U2": 900_000_000, "U3": 900_000_000,
+            "D1": 1_000_000_000, "D2": 1_000_000_000, "D3": 1_000_000_000,
+        },
+        {
+            "U1": 800_000_000, "U2": 800_000_000, "U3": 800_000_000,
+            "D1": 900_000_000, "D2": 900_000_000, "D3": 900_000_000,
+        },
+    ])
+    svc, _ = _service(groups, snapshot_repo=snapshot_repo)
+    rankings = {"all_stocks": [
+        _stock("U1", "U1", 3.0, 1_000_000_000),
+        _stock("U2", "U2", 2.5, 1_000_000_000),
+        _stock("U3", "U3", 2.0, 1_000_000_000),
+        _stock("D1", "D1", -4.0, 10_000_000_000),
+        _stock("D2", "D2", -5.0, 10_000_000_000),
+        _stock("D3", "D3", -6.0, 10_000_000_000),
+    ]}
+
+    resp = await svc.build_intraday_theme_report(
+        rankings,
+        report_time="20260715 10:06",
+        window_minutes=3,
+    )
+
+    assert resp.data[0]["normalized_name"] == "advancing_theme"
+    assert resp.data[0]["market_leadership_score"] > resp.data[1]["market_leadership_score"]
+    assert resp.data[0]["recent_trading_value_won"] < resp.data[1]["recent_trading_value_won"]
+
+
+@pytest.mark.asyncio
 async def test_returns_empty_without_theme_groups():
     svc, _ = _service({})
 

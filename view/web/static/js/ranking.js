@@ -637,7 +637,8 @@ function renderRankingTable() {
             + `<th class="${sortCls('price')}" onclick="sortRanking('price')">현재가</th>`
             + `<th class="${sortCls('ytd_rate')}" onclick="sortRanking('ytd_rate')">YTD 상승률</th>`
             + `<th class="${sortCls('base_price')}" onclick="sortRanking('base_price')">연초 기준가</th>`
-            + `<th class="${sortCls('base_date')}" onclick="sortRanking('base_date')">기준일</th>`;
+            + `<th class="${sortCls('base_date')}" onclick="sortRanking('base_date')">기준일</th>`
+            + `<th class="${sortCls('market_cap')}" onclick="sortRanking('market_cap')">시가총액</th>`;
     } else if (isInvestor || isProgram || isCombined) {
         const pbmnLabel = isCombined
             ? `${investorLabel} ${isSell ? '순매도대금' : '순매수대금'}`
@@ -762,6 +763,7 @@ function renderRankingTable() {
                 <td class="${ytdColor}">${ytdRate.toFixed(2)}%</td>
                 <td>${parseInt(item.base_price || 0).toLocaleString()}</td>
                 <td>${escapeHtml(item.base_date || '-')}</td>
+                <td>${formatMarketCap(item.market_cap)}</td>
             </tr>`;
             return;
         }

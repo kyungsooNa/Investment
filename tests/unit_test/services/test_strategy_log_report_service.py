@@ -1653,3 +1653,48 @@ async def test_operational_decision_report_summarizes_generated_diagnostic(tmp_p
     assert "broker_reconciled 보유 8종목" in decision
     assert "KOSDAQ 상승 regime 집중" in decision
     assert "Deflated Sharpe 약함" in decision
+
+
+@pytest.mark.asyncio
+async def test_operational_decision_report_includes_new_entry_details(tmp_path):
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return [
+                {
+                    "strategy": "first_pullback",
+                    "code": "005930",
+                    "name": "삼성전자",
+                    "buy_price": 75000,
+                    "qty": 2,
+                    "buy_date": "2026-07-16 09:10:00",
+                    "status": "HOLD",
+                    "reason": "원장 체결",
+                }
+            ]
+
+        def get_solds(self):
+            return []
+
+        def get_holds(self):
+            return []
+
+    log_dir = tmp_path / "strategies"
+    log_dir.mkdir()
+    _write_log(
+        str(log_dir / "20260716_091000_FirstPullback.log.json"),
+        [{
+            "timestamp": "2026-07-16 09:10:00,000",
+            "level": "INFO",
+            "data": {"event": "scan_with_watchlist", "count": 1},
+        }],
+    )
+
+    svc = StrategyLogReportService(
+        log_dir=str(log_dir),
+        virtual_trade_service=DummyVirtualTradeService(),
+    )
+    await svc.generate_report("20260716")
+
+    decision = svc.get_last_operational_decision_report()
+    assert "신규 진입 1건 — 체결/포지션 관리 확인" in decision
+    assert "FirstPullback · 삼성전자(005930) · 2주 · ₩75,000 · 09:10" in decision

@@ -631,7 +631,7 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 }
 
 /* 서브 탭(랭킹, 전략 필터 등) 공통 스타일 */
-.ranking-tab, .sub-tab-btn, .investor-toggle, .market-filter {
+.ranking-tab, .sub-tab-btn, .investor-toggle, .market-filter, .ytd-market-toggle {
     background-color: var(--bg-primary) !important;
     color: var(--text-secondary) !important;
     border: 1px solid var(--border) !important;
@@ -644,7 +644,7 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     font-size: 0.9rem;
 }
 
-.ranking-tab:hover, .sub-tab-btn:hover, .investor-toggle:hover, .market-filter:hover {
+.ranking-tab:hover, .sub-tab-btn:hover, .investor-toggle:hover, .market-filter:hover, .ytd-market-toggle:hover {
     background-color: var(--bg-card) !important;
     color: var(--text-primary) !important;
 }
@@ -666,6 +666,22 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 }
 
 .investor-toggle.active {
+    background-color: var(--accent-secondary, #3b82f6) !important;
+    color: white !important;
+    border-color: var(--accent-secondary, #3b82f6) !important;
+    font-weight: bold !important;
+    box-shadow: 0 2px 6px rgba(59, 130, 246, 0.4);
+    opacity: 1;
+}
+
+/* YTD 랭킹 - 코스피/코스닥 토글 - 비선택 상태를 더 어둡게 */
+.ytd-market-toggle:not(.active) {
+    opacity: 0.45;
+    background-color: var(--bg-secondary, #2a2a3e) !important;
+    color: var(--text-muted, #666) !important;
+}
+
+.ytd-market-toggle.active {
     background-color: var(--accent-secondary, #3b82f6) !important;
     color: white !important;
     border-color: var(--accent-secondary, #3b82f6) !important;
