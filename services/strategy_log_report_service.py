@@ -1434,6 +1434,7 @@ class StrategyLogReportService:
         target_date: str,
         *,
         buy_count: int,
+        buy_entries: List[dict],
         profitability_gate_section: Optional[str],
         multiple_testing_section: Optional[str],
         overnight_exposure_section: Optional[str],
@@ -1446,6 +1447,22 @@ class StrategyLogReportService:
 
         if buy_count > 0:
             lines.append(f"• 신규 진입 {buy_count}건 — 체결/포지션 관리 확인")
+            for entry in buy_entries:
+                strategy = _esc(entry.get("strategy") or "전략 미상")
+                code = str(entry.get("code") or "").strip()
+                name = _esc(entry.get("name") or code or "종목 미상")
+                instrument = f"{name}({_esc(code)})" if code else name
+                details = [strategy, instrument]
+
+                qty = _to_int(entry.get("qty"), default=0)
+                if qty > 0:
+                    details.append(f"{qty}주")
+                price = _format_krw(entry.get("price"))
+                if price:
+                    details.append(price)
+                if entry.get("time"):
+                    details.append(_esc(entry["time"]))
+                lines.append(f"  - {' · '.join(details)}")
         else:
             lines.append("• 신규 진입 없음 — 주요 후보는 진입 조건 미달/시그널 없음")
 
@@ -1933,6 +1950,7 @@ class StrategyLogReportService:
             self._last_operational_decision_report = self._build_operational_decision_report(
                 target_date,
                 buy_count=0,
+                buy_entries=[],
                 profitability_gate_section=None,
                 multiple_testing_section=None,
                 overnight_exposure_section=None,
@@ -2112,9 +2130,18 @@ class StrategyLogReportService:
 
         confluence_map: Dict[str, dict] = {}
         fallback_buys: List[dict] = []
+        operational_buy_entries: List[dict] = []
         for summary in strategy_summaries:
             for code, info in summary['bought'].items():
                 fallback_buys.append({'code': code, 'name': info['name']})
+                operational_buy_entries.append({
+                    'strategy': summary['name'],
+                    'code': code,
+                    'name': info['name'],
+                    'qty': info.get('qty'),
+                    'price': info.get('price'),
+                    'time': info.get('time'),
+                })
                 entry = confluence_map.setdefault(code, {'name': info['name'], 'count': 0, 'strategies': []})
                 entry['name'] = info['name']
                 entry['count'] += 1
@@ -2223,6 +2250,7 @@ class StrategyLogReportService:
         self._last_operational_decision_report = self._build_operational_decision_report(
             target_date,
             buy_count=len(fallback_buys),
+            buy_entries=operational_buy_entries,
             profitability_gate_section=profitability_gate_section,
             multiple_testing_section=multiple_testing_section,
             overnight_exposure_section=overnight_exposure_section,
