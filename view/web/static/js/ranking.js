@@ -637,7 +637,6 @@ function renderRankingTable() {
             + `<th class="${sortCls('price')}" onclick="sortRanking('price')">현재가</th>`
             + `<th class="${sortCls('ytd_rate')}" onclick="sortRanking('ytd_rate')">YTD 상승률</th>`
             + `<th class="${sortCls('base_price')}" onclick="sortRanking('base_price')">연초 기준가</th>`
-            + `<th class="${sortCls('base_date')}" onclick="sortRanking('base_date')">기준일</th>`
             + `<th class="${sortCls('market_cap')}" onclick="sortRanking('market_cap')">시가총액</th>`;
     } else if (isInvestor || isProgram || isCombined) {
         const pbmnLabel = isCombined
@@ -762,7 +761,6 @@ function renderRankingTable() {
                 <td>${parseInt(item.current_price || 0).toLocaleString()}</td>
                 <td class="${ytdColor}">${ytdRate.toFixed(2)}%</td>
                 <td>${parseInt(item.base_price || 0).toLocaleString()}</td>
-                <td>${escapeHtml(item.base_date || '-')}</td>
                 <td>${formatMarketCap(item.market_cap)}</td>
             </tr>`;
             return;
@@ -811,8 +809,9 @@ function renderRankingTable() {
     });
 
     const periodLabel = isPeriodInvestor ? _renderPeriodRankingLabel(data) : '';
+    const ytdLabel = isYtd ? _renderYtdRankingLabel(data) : '';
 
-    div.innerHTML = `${periodLabel}${_renderRankingAIAnalysisPanel(data.length)}<div class="card"><table class="data-table">
+    div.innerHTML = `${periodLabel}${ytdLabel}${_renderRankingAIAnalysisPanel(data.length)}<div class="card"><table class="data-table">
         <thead><tr>${headerRow}</tr></thead>
         <tbody>${rows}</tbody></table></div>`;
 }
@@ -823,6 +822,14 @@ function _renderPeriodRankingLabel(data) {
         ? ` (~ ${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)})`
         : '';
     return `<p style="color:#888; margin: 4px 0 12px;">최근 ${_rankingPeriodDays}거래일 기준${dateLabel}</p>`;
+}
+
+function _renderYtdRankingLabel(data) {
+    const raw = data[0] && data[0].base_date;
+    const dateLabel = raw && raw.length === 8
+        ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+        : '-';
+    return `<p style="color:#888; margin: 4px 0 12px;">연초 기준일: ${dateLabel}</p>`;
 }
 
 function sortRanking(key) {
@@ -918,9 +925,6 @@ function rankingSortCompare(data, key, dir) {
         } else if (key === 'base_price') {
             va = parseInt(a.base_price || 0);
             vb = parseInt(b.base_price || 0);
-        } else if (key === 'base_date') {
-            va = parseInt(a.base_date || 0);
-            vb = parseInt(b.base_date || 0);
         } else if (key === 'market_cap') {
             va = parseInt(a.market_cap || 0);
             vb = parseInt(b.market_cap || 0);
