@@ -129,9 +129,9 @@ class ThemeDailyLeaderService:
 
         base_resp.data.sort(
             key=lambda item: (
+                item["market_leadership_score"],
                 item["recent_coverage_count"] > 0,
                 item["recent_trading_value_won"],
-                item["market_leadership_score"],
             ),
             reverse=True,
         )
