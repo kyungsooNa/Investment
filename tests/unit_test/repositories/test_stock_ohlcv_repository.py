@@ -453,20 +453,22 @@ class TestGetAllDailySnapshots:
 
 
 class TestGetYtdReturnRanking:
-    """get_ytd_return_ranking: 연초 첫 스냅샷 대비 최신 수익률 랭킹."""
+    """get_ytd_return_ranking: 연초 첫 스냅샷(ohlcv) 대비 최신 수익률(daily_prices) 랭킹.
+
+    daily_prices 스냅샷 수집은 특정 시점(예: 4월)에 시작될 수 있어 연초 데이터가 없을 수
+    있으므로, 연초 기준가는 더 오래 축적된 ohlcv 테이블에서 조회한다.
+    """
 
     @pytest.mark.asyncio
     async def test_returns_latest_year_ranked_by_ytd_return(self, repo):
-        await repo.upsert_daily_snapshot("20260102", [
-            _make_snapshot("A001", name="상승주", price=100),
-            _make_snapshot("A002", name="보합주", price=200),
+        await repo.upsert_ohlcv([
+            _make_ohlcv("A001", "20260102", close=100),
+            _make_ohlcv("A002", "20260102", close=200),
+            _make_ohlcv("OLD", "20251230", close=1),
         ])
         await repo.upsert_daily_snapshot("20260713", [
             _make_snapshot("A001", name="상승주", price=150),
             _make_snapshot("A002", name="보합주", price=180),
-        ])
-        await repo.upsert_daily_snapshot("20251230", [
-            _make_snapshot("OLD", name="전년도", price=1),
         ])
 
         result = await repo.get_ytd_return_ranking(limit=10)
@@ -482,8 +484,10 @@ class TestGetYtdReturnRanking:
 
     @pytest.mark.asyncio
     async def test_excludes_stock_without_market_first_day_snapshot(self, repo):
-        await repo.upsert_daily_snapshot("20260102", [_make_snapshot("A001", price=100)])
-        await repo.upsert_daily_snapshot("20260303", [_make_snapshot("IPO", price=100)])
+        await repo.upsert_ohlcv([
+            _make_ohlcv("A001", "20260102", close=100),
+            _make_ohlcv("IPO", "20260303", close=100),
+        ])
         await repo.upsert_daily_snapshot("20260713", [
             _make_snapshot("A001", price=120),
             _make_snapshot("IPO", price=300),
@@ -499,9 +503,9 @@ class TestGetYtdReturnRanking:
 
     @pytest.mark.asyncio
     async def test_filters_by_market(self, repo):
-        await repo.upsert_daily_snapshot("20260102", [
-            _make_snapshot("A001", price=100, market="KOSPI"),
-            _make_snapshot("A002", price=100, market="KOSDAQ"),
+        await repo.upsert_ohlcv([
+            _make_ohlcv("A001", "20260102", close=100),
+            _make_ohlcv("A002", "20260102", close=100),
         ])
         await repo.upsert_daily_snapshot("20260713", [
             _make_snapshot("A001", price=150, market="KOSPI"),
@@ -511,6 +515,31 @@ class TestGetYtdReturnRanking:
         result = await repo.get_ytd_return_ranking(limit=10, market="KOSDAQ")
 
         assert [row["code"] for row in result] == ["A002"]
+
+    @pytest.mark.asyncio
+    async def test_ignores_malformed_ohlcv_dates_when_finding_base_date(self, repo):
+        """일부 ohlcv 레코드에 잘못된 형식(자릿수 오류) 날짜가 섞여 있어도 정상 8자리 날짜만 기준일로 채택한다."""
+        await repo.upsert_ohlcv([
+            _make_ohlcv("A001", "202600101", close=999),
+            _make_ohlcv("A001", "20260102", close=100),
+        ])
+        await repo.upsert_daily_snapshot("20260713", [_make_snapshot("A001", price=150)])
+
+        result = await repo.get_ytd_return_ranking(limit=10)
+
+        assert result[0]["base_date"] == "20260102"
+        assert result[0]["base_price"] == 100
+
+    @pytest.mark.asyncio
+    async def test_includes_market_cap_from_latest_snapshot(self, repo):
+        await repo.upsert_ohlcv([_make_ohlcv("A001", "20260102", close=100)])
+        await repo.upsert_daily_snapshot("20260713", [
+            _make_snapshot("A001", price=150, market_cap=999_000_000),
+        ])
+
+        result = await repo.get_ytd_return_ranking(limit=10)
+
+        assert result[0]["market_cap"] == 999_000_000
 
 
 # ── get_price_history ────────────────────────────────────────────────────────

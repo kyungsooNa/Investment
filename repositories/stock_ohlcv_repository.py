@@ -503,8 +503,10 @@ class StockOhlcvRepository:
             return []
 
     async def get_ytd_return_ranking(self, limit: int = 100, market: Optional[str] = None) -> List[Dict]:
-        """최신 거래일과 해당 연도 첫 스냅샷의 종가를 비교한 YTD 수익률 랭킹.
+        """최신 거래일(daily_prices)과 연초 첫 종가(ohlcv)를 비교한 YTD 수익률 랭킹.
 
+        daily_prices 스냅샷 수집은 특정 시점부터 시작되어 연초 데이터가 없을 수 있으므로,
+        연초 기준가는 더 오래 축적된 ohlcv 테이블에서 조회한다.
         market: "KOSPI"/"KOSDAQ" 지정 시 해당 시장으로 필터링, None/"ALL"이면 전체.
         """
         try:
@@ -515,10 +517,11 @@ class StockOhlcvRepository:
                 if not latest_date:
                     return []
 
-                year_prefix = f"{latest_date[:4]}%"
+                year = latest_date[:4]
+                date_glob = f"{year}[0-1][0-9][0-3][0-9]"
                 async with conn.execute(
-                    "SELECT MIN(trade_date) FROM daily_prices WHERE trade_date LIKE ?",
-                    (year_prefix,),
+                    "SELECT MIN(date) FROM ohlcv WHERE date GLOB ?",
+                    (date_glob,),
                 ) as cursor:
                     base_row = await cursor.fetchone()
                 base_date = base_row[0] if base_row and base_row[0] else None
@@ -534,15 +537,15 @@ class StockOhlcvRepository:
 
                 async with conn.execute(
                     f"""
-                    SELECT latest.*, base.current_price AS base_price
+                    SELECT latest.*, base.close AS base_price
                     FROM daily_prices AS latest
-                    JOIN daily_prices AS base
-                      ON base.code = latest.code AND base.trade_date = ?
+                    JOIN ohlcv AS base
+                      ON base.code = latest.code AND base.date = ?
                     WHERE latest.trade_date = ?
                       AND latest.current_price > 0
-                      AND base.current_price > 0
+                      AND base.close > 0
                       {market_filter}
-                    ORDER BY ((CAST(latest.current_price AS REAL) / base.current_price) - 1.0) DESC
+                    ORDER BY ((CAST(latest.current_price AS REAL) / base.close) - 1.0) DESC
                     LIMIT ?
                     """,
                     params,
