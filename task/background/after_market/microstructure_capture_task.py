@@ -11,7 +11,7 @@ from services.backtest_microstructure_quality import (
 )
 from services.notification_service import NotificationCategory, NotificationLevel
 from task.background.after_market.after_market_task_base import AfterMarketTask
-from task.background.capture_candidates import resolve_capture_codes
+from task.background.capture_candidates import resolve_capture_codes_with_sources
 
 
 class MicrostructureCaptureTask(AfterMarketTask):
@@ -105,9 +105,9 @@ class MicrostructureCaptureTask(AfterMarketTask):
         except Exception as exc:
             self._logger.warning(f"{self.task_name}: 마지막 캡처 날짜 저장 실패 — {exc}")
 
-    async def _resolve_codes(self) -> list[str]:
-        """캡처 대상 종목: 보유 종목 우선 + Pool B 워치리스트, 중복 제거 후 cap."""
-        return await resolve_capture_codes(
+    async def _resolve_codes(self) -> tuple[list[str], dict[str, list[str]]]:
+        """캡처 대상 종목: 보유 종목 우선 + Pool B 워치리스트, 중복 제거 후 cap + 소스 구분."""
+        return await resolve_capture_codes_with_sources(
             virtual_trade_service=self._virtual_trade_service,
             universe_service=self._universe_service,
             stock_query_service=self._stock_query_service,
@@ -124,7 +124,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 f"{self.task_name}: {latest_trading_date} 이미 캡처됨 — skip"
             )
             return
-        codes = await self._resolve_codes()
+        codes, candidate_sources = await self._resolve_codes()
         if not codes:
             # 날짜를 저장하지 않아 이후 재실행(예: force) 시 재시도 여지를 남긴다.
             self._logger.warning(f"{self.task_name}: 캡처 대상 종목 없음 — skip")
@@ -142,6 +142,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 latest_trading_date=latest_trading_date,
                 program_source=program_source,
                 execution_strength_source=execution_strength_source,
+                candidate_sources=candidate_sources,
             )
             self._service.write_overlay_files(payload, self._output_dir)
             self._last_captured_date = latest_trading_date
@@ -155,6 +156,10 @@ class MicrostructureCaptureTask(AfterMarketTask):
             )
             self._progress["last_result"] = {
                 "codes": len(codes),
+                "candidate_source_counts": {
+                    source: len(source_codes)
+                    for source, source_codes in candidate_sources.items()
+                },
                 "program_source": program_source,
                 "row_counts": metadata.get("row_counts"),
                 "program_fallback_codes": program_fallback_codes,
@@ -199,12 +204,14 @@ class MicrostructureCaptureTask(AfterMarketTask):
         latest_trading_date: str,
         program_source: str,
         execution_strength_source: str,
+        candidate_sources: dict[str, list[str]] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         payload = await self._capture_once(
             codes=codes,
             latest_trading_date=latest_trading_date,
             program_source=program_source,
             execution_strength_source=execution_strength_source,
+            candidate_sources=candidate_sources,
         )
         quality_summary = summarize_capture_quality(payload, fallback_codes=codes)
 
@@ -223,6 +230,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 latest_trading_date=latest_trading_date,
                 program_source=program_source,
                 execution_strength_source=execution_strength_source,
+                candidate_sources=candidate_sources,
             )
             quality_summary = summarize_capture_quality(payload, fallback_codes=codes)
 
@@ -235,12 +243,14 @@ class MicrostructureCaptureTask(AfterMarketTask):
         latest_trading_date: str,
         program_source: str,
         execution_strength_source: str,
+        candidate_sources: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
         return await self._service.capture(
             codes=codes,
             date_ymd=latest_trading_date,
             program_source=program_source,
             execution_strength_source=execution_strength_source,
+            candidate_sources=candidate_sources,
         )
 
     async def _emit_quality_gate_warning(

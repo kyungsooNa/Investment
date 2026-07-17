@@ -522,3 +522,32 @@ def test_write_overlay_files_includes_execution_strength_intraday(tmp_path):
         paths["execution_strength_intraday"].read_text(encoding="utf-8")
     ) == {"000001": [{"time": "090001", "strength": 100.0}]}
 
+
+@pytest.mark.asyncio
+async def test_capture_records_candidate_sources_in_metadata():
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = []
+    sqs.get_stock_conclusion.return_value = _response({"output": [{"tday_rltv": "100.0"}]})
+    program_provider = AsyncMock()
+    program_provider.get_program_trade_by_stock_daily.return_value = _response(
+        {"whol_smtn_ntby_qty": "0"}
+    )
+    service = BacktestMicrostructureCaptureService(
+        stock_query_service=sqs,
+        program_provider=program_provider,
+    )
+
+    payload = await service.capture(
+        codes=["000001", "100001"],
+        date_ymd="20260512",
+        candidate_sources={"base": ["000001"], "ranking_supplement": ["100001"]},
+    )
+
+    assert payload["metadata"]["candidate_sources"] == {
+        "base": ["000001"],
+        "ranking_supplement": ["100001"],
+    }
+
+    plain = await service.capture(codes=["000001"], date_ymd="20260512")
+    assert "candidate_sources" not in plain["metadata"]
+

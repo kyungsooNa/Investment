@@ -52,7 +52,7 @@ async def _fetch_ranking_codes(
     return codes
 
 
-async def resolve_capture_codes(
+async def resolve_capture_codes_with_sources(
     *,
     virtual_trade_service=None,
     universe_service=None,
@@ -61,8 +61,14 @@ async def resolve_capture_codes(
     max_codes: Optional[int] = None,
     logger=None,
     task_name: str = "capture_candidates",
-) -> list[str]:
-    """캡처 대상 종목: 보유 우선 + Pool B 워치리스트 + 거래대금 랭킹 보충, 중복 제거 후 cap."""
+) -> tuple[list[str], dict[str, list[str]]]:
+    """`resolve_capture_codes` + 최종 목록의 소스 구분.
+
+    랭킹 보충 코드는 필터 통과 '후보'가 아니므로 replay metadata에서 PIT 후보군으로
+    해석할 때 소스를 구분할 수 있어야 한다. (todo 1-8) 반환되는 소스 구분은
+    dedup·cap 적용 후 최종 목록 기준이며, base(보유+워치리스트)와 중복인 랭킹
+    코드는 base로 귀속된다.
+    """
     codes: list[str] = []
     if virtual_trade_service is not None:
         try:
@@ -78,17 +84,45 @@ async def resolve_capture_codes(
         except Exception as exc:
             if logger:
                 logger.warning(f"{task_name}: 워치리스트 조회 실패 — {exc}")
+    base_codes = list(dict.fromkeys(code for code in codes if code))
     if stock_query_service is not None:
-        base_count = len(dict.fromkeys(code for code in codes if code))
         ranking_codes = await _fetch_ranking_codes(
             stock_query_service, ranking_limit, logger, task_name
         )
         codes.extend(ranking_codes)
         if ranking_codes and logger:
             logger.info(
-                f"{task_name}: 캡처 후보 랭킹 보충 — 기본 {base_count}종목 + 랭킹 {len(ranking_codes)}종목"
+                f"{task_name}: 캡처 후보 랭킹 보충 — 기본 {len(base_codes)}종목 + 랭킹 {len(ranking_codes)}종목"
             )
     deduped = list(dict.fromkeys(code for code in codes if code))
     if max_codes is not None:
-        return deduped[:max_codes]
-    return deduped
+        deduped = deduped[:max_codes]
+    base_set = set(base_codes)
+    sources = {
+        "base": [code for code in deduped if code in base_set],
+        "ranking_supplement": [code for code in deduped if code not in base_set],
+    }
+    return deduped, sources
+
+
+async def resolve_capture_codes(
+    *,
+    virtual_trade_service=None,
+    universe_service=None,
+    stock_query_service=None,
+    ranking_limit: int = 20,
+    max_codes: Optional[int] = None,
+    logger=None,
+    task_name: str = "capture_candidates",
+) -> list[str]:
+    """캡처 대상 종목: 보유 우선 + Pool B 워치리스트 + 거래대금 랭킹 보충, 중복 제거 후 cap."""
+    codes, _ = await resolve_capture_codes_with_sources(
+        virtual_trade_service=virtual_trade_service,
+        universe_service=universe_service,
+        stock_query_service=stock_query_service,
+        ranking_limit=ranking_limit,
+        max_codes=max_codes,
+        logger=logger,
+        task_name=task_name,
+    )
+    return codes
