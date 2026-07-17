@@ -770,6 +770,7 @@ class RankingTask(AfterMarketTask):
         industry_map = await self._load_industry_map()
         results: List[Dict] = []
         is_complete = True
+        observed_trading_dates = {str(target_date)}
 
         for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
             await self._suspend_event.wait()
@@ -802,6 +803,12 @@ class RankingTask(AfterMarketTask):
 
                 investor_rows = investor_resp.data if investor_resp and isinstance(investor_resp.data, list) else []
                 program_rows = program_resp.data if program_resp and isinstance(program_resp.data, list) else []
+                for row in [*investor_rows, *program_rows]:
+                    if not isinstance(row, dict):
+                        continue
+                    trading_date = str(row.get("stck_bsop_date") or "")
+                    if len(trading_date) == 8 and trading_date.isdigit():
+                        observed_trading_dates.add(trading_date)
 
                 frgn_qty = self._sum_rows(investor_rows, "frgn_ntby_qty")
                 orgn_qty = self._sum_rows(investor_rows, "orgn_ntby_qty")
@@ -846,6 +853,10 @@ class RankingTask(AfterMarketTask):
                     "program_period_ntby_tr_pbmn_won": str(program_pbmn_won),
                     "combined_period_ntby_tr_pbmn_won": str(combined_pbmn_won),
                 })
+
+        earliest_trading_date = min(observed_trading_dates)
+        for result in results:
+            result["earliest_trading_date"] = earliest_trading_date
 
         return results, is_complete
 

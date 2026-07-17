@@ -207,6 +207,8 @@ async function searchStock(codeOverride, exchangeOverride) {
         const sign = data.sign || '';
         const newHighBadge = (data.is_new_high) ? '<span class="badge new-high">🔥 신고가</span>' : '';
         const newLowBadge = (data.is_new_low) ? '<span class="badge new-low">💧 신저가</span>' : '';
+        const market = ['KOSPI', 'KOSDAQ'].includes(data.market) ? data.market : '';
+        const marketBadge = market ? `<span class="stock-market-badge ${market.toLowerCase()}">${market}</span>` : '';
 
         const styles = `
             <style>
@@ -215,6 +217,12 @@ async function searchStock(codeOverride, exchangeOverride) {
                 .exchange-btn.active { background: var(--accent, #4a90e2); color: white; border-color: var(--accent, #4a90e2); font-weight: bold; }
                 .exchange-btn:hover { background: var(--bg-card, #e8e8e8); }
                 .stock-title { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+                .stock-market-badge {
+                    color: #fff; font-size: 0.75rem; line-height: 1;
+                    padding: 0.35rem 0.55rem; border-radius: 999px; font-weight: 700;
+                }
+                .stock-market-badge.kospi { background: #2980b9; }
+                .stock-market-badge.kosdaq { background: #8e44ad; }
                 .badge.new-high {
                     background-color: #ff6b35; color: white; font-size: 0.8em;
                     padding: 0.2em 0.6em; border-radius: 10px; font-weight: bold; white-space: nowrap;
@@ -326,7 +334,7 @@ async function searchStock(codeOverride, exchangeOverride) {
                 <button id="fav-toggle-btn" class="fav-star-btn" onclick="toggleFavorite('${data.code}')" title="관심종목">☆</button>
                 ${exchangeButtons}
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <h3 class="stock-title" style="margin:0;" id="stock-title-area">${data.name} (${data.code}) ${newHighBadge}${newLowBadge}</h3>
+                    <h3 class="stock-title" style="margin:0;" id="stock-title-area">${data.name} (${data.code}) ${marketBadge}${newHighBadge}${newLowBadge}</h3>
                 </div>
                 <p id="rt-price" class="price ${changeClass}">${fnum(data.price, '원')}</p>
                 <p id="rt-change-rate" class="change-rate">전일대비: ${sign}${fnum(data.change_absolute || Math.abs(data.change))} (${frate(data.rate)})</p>
