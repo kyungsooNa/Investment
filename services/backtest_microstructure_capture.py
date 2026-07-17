@@ -70,6 +70,12 @@ class BacktestMicrostructureCaptureService:
             [code for code in selected_codes if not intraday.get(code)]
             if include_intraday else []
         )
+        empty_minute_reasons = (
+            await self._diagnose_empty_minutes(
+                empty_minute_codes, date_ymd=date_ymd, end_hhmmss=end_hhmmss
+            )
+            if empty_minute_codes else {}
+        )
 
         metadata: dict[str, Any] = {
                 "schema_version": 1,
@@ -86,6 +92,7 @@ class BacktestMicrostructureCaptureService:
                 "quality": {
                     "empty_minute_codes": empty_minute_codes,
                     "stale_minute_rows_dropped": stale_minute_rows_dropped,
+                    "empty_minute_reasons": empty_minute_reasons,
                 },
                 "row_counts": {
                     "intraday_minutes": sum(len(rows) for rows in intraday.values()),
@@ -145,6 +152,54 @@ class BacktestMicrostructureCaptureService:
                 stale_dropped[code] = len(rows) - len(kept)
             result[code] = kept
         return result, stale_dropped
+
+    async def _diagnose_empty_minutes(
+        self,
+        codes: list[str],
+        *,
+        date_ymd: str,
+        end_hhmmss: str,
+    ) -> dict[str, str]:
+        """분봉이 비어 나온 종목을 단일 배치로 재조회해 원인을 분류한다. (todo 1-5)
+
+        `get_day_intraday_minutes_list`는 rt_cd 오류를 빈 리스트로 흡수하므로,
+        empty 종목이 무거래인지 API 오류인지 페이지네이션 갭인지 캡처 파일만으로는
+        구분할 수 없다. end_hhmmss 기준 단일 배치(= 첫 배치와 동일)를 프로브해
+        `metadata.quality.empty_minute_reasons`로 남긴다.
+        """
+        probe = getattr(self._sqs, "get_intraday_minutes_by_date", None)
+        reasons: dict[str, str] = {}
+        for code in codes:
+            if probe is None:
+                reasons[code] = "no_probe"
+                continue
+            try:
+                resp = await probe(
+                    code, input_date_1=date_ymd, input_hour_1=end_hhmmss
+                )
+            except Exception as exc:  # 진단은 캡처를 절대 깨뜨리지 않는다
+                reasons[code] = f"probe_failed:{type(exc).__name__}"
+                continue
+            rt_cd = str(getattr(resp, "rt_cd", "") or "")
+            if rt_cd != "0":
+                msg = str(getattr(resp, "msg1", "") or "").strip()
+                reasons[code] = f"api_error:{rt_cd}" + (f":{msg[:40]}" if msg else "")
+                continue
+            rows = _extract_probe_rows(resp)
+            if not rows:
+                reasons[code] = "empty_response"
+                continue
+            dates = {
+                str(row.get("stck_bsop_date") or "")
+                for row in rows
+                if isinstance(row, dict)
+            }
+            if dates and all(d and d != date_ymd for d in dates):
+                reasons[code] = "stale_date_only"
+            else:
+                # 단일 프로브엔 당일 행이 있는데 페이지네이션 캡처는 비었음 = 커서 갭
+                reasons[code] = "has_rows_capture_empty"
+        return reasons
 
     async def _capture_execution_strength(
         self,
@@ -355,6 +410,17 @@ def _first_output_row(resp: Any) -> Any | None:
     if isinstance(output, list):
         return output[0] if output else None
     return output
+
+
+def _extract_probe_rows(resp: Any) -> list[dict]:
+    """분봉 프로브 응답의 행 리스트를 추출한다 (data list 또는 output2/rows/data dict)."""
+    data = _response_data(resp)
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict):
+        rows = data.get("output2") or data.get("rows") or data.get("data") or []
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    return []
 
 
 def _first(row: Any, *names: str) -> Any:
