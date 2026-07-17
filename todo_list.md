@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-15 (OpenDART·AI 분석용 외부 API 키 준비 항목 추가)
+최종 업데이트: 2026-07-17 (1-5 QC 2주차 판정·캡처 후보 소스 구분 metadata 기록)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -65,7 +65,10 @@
   - 체결강도 장중 시계열 캡처 배선 완료 (2026-07-04): WS 체결 틱(H0STCNT0)에 포함된 `체결강도`를 `PriceStreamService.on_price_tick`에서 종목당 60초 샘플링해 `es_history` SQLite(`data/execution_strength/`, `ExecutionStrengthRepository`)에 축적 — **신규 WS 구독 없음**(기존 PRICE 틱 무임승차, 슬롯 비간섭). 장마감 캡처가 `execution_strength_source=es_db`로 소비하고 DB 미스 종목은 기존 REST 스칼라 유지 + `metadata.execution_strength_fallback_codes` 기록. QC에 `execution_strength_db_coverage_pct`(임계 30% — 배선 전손 감지용) 노출, overlay 파일 `replay_execution_strength_intraday_*.json` 추가. `execution_strength_capture_enabled`(기본 on).
   - QC 1주차 판정 (2026-07-08, 4거래일 07-03/06/07/08 실측): ① program fallback 2종목(07-06)→0→0 수렴 — PT 구독 배선 의도대로 작동, program_db 완전 커버 도달. ② ES fallback(일 4~6종목)은 3일 모두 `empty_minute_codes`(무거래/정지 종목)와 정확히 일치 — 거래가 있었던 후보는 ES 시계열 전량 커버, "무틱 ~55% 제한" 우려는 캡처 후보군에선 실측상 미발현(표본 9~12종목/일 단서). ③ stale row 필터 작동(033160 매일 57행 드랍). 이후 관찰은 이 기준선 대비 악화 여부로 판단.
   - 캡처 전용 후보 확장 (2026-07-08): 워치리스트 기근(Pool B 항목 참조)으로 코퍼스 폭이 9~12종목/일에 갇혀, `resolve_capture_codes`에 거래대금 상위 랭킹 보충(기본 20종목, ETF 프리픽스 제외, 조회 실패 시 무보충) 추가 — 장마감 캡처·장중 PT 구독 공통 적용, 트레이딩 후보/주문 경로 불변. 랭킹 API는 실전 전용이라 모의 환경에선 자동으로 기존 동작.
-  - ※ 남은 한계: 체결강도 시계열 커버리지가 "PRICE 구독 중 + 유틱" 종목으로 제한(무틱 ~55% — 2-4 해소 시 개선, 미커버는 EOD 스칼라 폴백; 랭킹 보충분도 PRICE 미구독이면 EOD 스칼라). 남은 것: quality 플래그·PT/ES 커버리지(`program_fallback_codes`·`execution_strength_fallback_codes` 감소 여부) 일일 관찰.
+  - QC 2주차 판정 (2026-07-17, 07-09~16 6거래일 실측): 코퍼스 폭 34종목/일 안착(랭킹 보충 효과). ① program fallback 10→8→5→4 — 1주차 "0 수렴" 기준선과 다르나 후보 34 vs PT 구독 cap 10의 구조적 결과이며 program_db coverage는 48→88%로 상승 추세(pt_history 누적·구독 로테이션). 005935(삼성전자우) 상시 폴백은 #672 우선주 PT 구독 제외의 예상된 결과. ② ES fallback(일 14~19종목)이 empty_minute(9~11) 초과 — 초과분 전수 확인 결과 전부 랭킹 보충 대형주(현대차·삼성SDI·NAVER 등, PRICE 미구독 → 설계된 EOD 스칼라 폴백). **회귀 아님 판정.** 신기준선: base(보유+워치리스트) 종목의 fallback 발생만 회귀 신호로 본다. ③ stale 필터 정상(033160 57행/일, 07-16부터 019210 89행 추가).
+  - **QC 게이트 상시 실패 발견 (2026-07-17)**: 07-09~16 6일 전부 `quality_gate_passed=false`, 주원인 `intraday_coverage_below_threshold`(실측 45~74% < 임계 80%) — 분모에 무거래/정지 base 종목(~10종목)이 포함되는 구조라 현행 정의로는 통과 불가능. → candidate_sources 데이터 축적 후 coverage 분모 재정의(무거래 제외 또는 base-only) 혹은 임계 조정 필요. 그 전까지 게이트 WARNING 알림은 참고용으로만 해석.
+  - 캡처 후보 소스 구분 metadata 기록 (2026-07-17): `resolve_capture_codes_with_sources`로 base(보유+워치리스트) vs ranking_supplement를 구분해 `metadata.candidate_sources`에 기록, 태스크 `last_result.candidate_source_counts` 노출. 기존엔 info 로그에 개수만 남아 replay 파일 단독으로 PIT 후보(base) 식별이 불가능했던 갭 해소 — 1-8 해제 조건 (a)의 전제.
+  - ※ 남은 한계: 체결강도 시계열 커버리지가 "PRICE 구독 중 + 유틱" 종목으로 제한(무틱 ~55% — 2-4 해소 시 개선, 미커버는 EOD 스칼라 폴백; 랭킹 보충분도 PRICE 미구독이면 EOD 스칼라). 남은 것: base 종목 기준 fallback 발생 여부 일일 관찰(신기준선), QC 게이트 coverage 정의 재조정.
 - [blocked — 캡처 코퍼스 축적 후] 실제 replay fixture를 통과 케이스까지 확장 → replay overlay.
 - [ ] 한국장 실전 microstructure fixture(bid/ask book·잔량·체결강도·프로그램매매 overlay)로 체결 모델 보정 + 시장가/최유리/지정가별 fill quality가 live journal과 얼마나 벌어지는지 리포트.
 
@@ -77,7 +80,7 @@
 - [blocked] 활성 전략 전체 walk-forward + Monte Carlo 재실행 + 민감도 표 — **2026-07-03 파일럿(VBO 6/15-30, PP 6/1-12) 결과 전 구간 0거래**로 현시점 무의미.
   - 원인 ①: 백테스트 유니버스가 **현재 시점** `data/premium_stocks.json`(PIT 아님) — 2026-07-03 재생성 기준 KOSPI 0종목/KOSDAQ 0종목이라 어떤 과거 구간을 돌려도 후보가 없다.
   - 원인 ②: 6월 하순 양시장 MA 하락 → 마켓 타이밍 게이트가 스캔 차단(`market_timing_off_both`) — 롱온리 전략의 정상 휴식.
-  - 해제 조건: (a) 1-5 캡처 코퍼스 축적(`replay_microstructure_*.json`의 `metadata.codes`가 당일 후보 스냅샷 = PIT 후보군 역할) 또는 (b) 시장 회복으로 Pool B 복원. ※ 2026-07-08 랭킹 보충으로 codes 폭 확대 — 단, 보충분은 필터 통과 '후보'가 아닌 유동성 상위 종목이므로 PIT 후보군으로 해석할 때 소스 구분에 유의(보충 발생 시 capture_candidates info 로그에 소스별 개수 기록).
+  - 해제 조건: (a) 1-5 캡처 코퍼스 축적(`replay_microstructure_*.json`의 `metadata.codes`가 당일 후보 스냅샷 = PIT 후보군 역할) 또는 (b) 시장 회복으로 Pool B 복원. ※ 2026-07-08 랭킹 보충으로 codes 폭 확대 — 단, 보충분은 필터 통과 '후보'가 아닌 유동성 상위 종목이므로 PIT 후보군으로 해석할 때 소스 구분에 유의. 2026-07-17부터 `metadata.candidate_sources`(base/ranking_supplement)가 파일에 기록되므로 PIT 후보군은 base만 사용(그 이전 파일은 로그 교차 참조 필요).
   - 실행 메모: 첫 런이 REST 지배적(12거래일 ≈ 18~23분), **캐시 워밍 후 변형 런 ≈ 1분** — 후보만 갖춰지면 민감도 그리드는 저렴.
 
 주요 파일: `scripts/run_backtest.py`, `services/backtest_walk_forward.py`, `docs/backtest.md`, `data/backtest_*.json`

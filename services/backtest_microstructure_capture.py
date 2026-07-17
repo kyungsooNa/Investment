@@ -37,6 +37,7 @@ class BacktestMicrostructureCaptureService:
         include_execution_strength: bool = True,
         program_source: str = "daily_rest",
         execution_strength_source: str = "rest_scalar",
+        candidate_sources: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
         selected_codes = [code.strip() for code in codes if code.strip()]
         intraday, stale_minute_rows_dropped = await self._capture_intraday(
@@ -70,8 +71,7 @@ class BacktestMicrostructureCaptureService:
             if include_intraday else []
         )
 
-        return {
-            "metadata": {
+        metadata: dict[str, Any] = {
                 "schema_version": 1,
                 "capture_type": "backtest_microstructure_overlay",
                 "trade_date": date_ymd,
@@ -101,7 +101,11 @@ class BacktestMicrostructureCaptureService:
                         if value is not None
                     ),
                 },
-            },
+        }
+        if candidate_sources is not None:
+            metadata["candidate_sources"] = candidate_sources
+        return {
+            "metadata": metadata,
             "intraday_minutes": intraday,
             "execution_strength": execution_strength,
             "execution_strength_intraday": execution_strength_intraday,

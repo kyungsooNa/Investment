@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from common.types import ErrorCode, ResCommonResponse
 from services.notification_service import NotificationCategory, NotificationLevel
 from task.background.after_market.microstructure_capture_task import MicrostructureCaptureTask
 
@@ -534,3 +535,32 @@ async def test_execution_strength_metrics_exposed_in_last_result(
     last_result = task.get_progress()["last_result"]
     assert last_result["execution_strength_fallback_codes"] == ["000660"]
     assert last_result["execution_strength_db_coverage_pct"] == 50.0
+
+
+@pytest.mark.asyncio
+async def test_candidate_sources_passed_to_capture_and_counts_exposed(
+    capture_service, universe_service, tmp_path
+):
+    sqs = MagicMock()
+    sqs.get_top_trading_value_stocks = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="ok",
+            data=[{"mksc_shrn_iscd": "100001", "hts_kor_isnm": "랭킹A"}],
+        )
+    )
+    task = _make_task(
+        capture_service, tmp_path,
+        universe_service=universe_service,
+        stock_query_service=sqs,
+    )
+
+    await task._on_market_closed("20260702")
+
+    kwargs = capture_service.capture.await_args.kwargs
+    assert kwargs["candidate_sources"] == {
+        "base": ["005930", "000660"],
+        "ranking_supplement": ["100001"],
+    }
+    last_result = task.get_progress()["last_result"]
+    assert last_result["candidate_source_counts"] == {"base": 2, "ranking_supplement": 1}

@@ -2,7 +2,10 @@
 from unittest.mock import AsyncMock, MagicMock
 
 from common.types import ErrorCode, ResCommonResponse
-from task.background.capture_candidates import resolve_capture_codes
+from task.background.capture_candidates import (
+    resolve_capture_codes,
+    resolve_capture_codes_with_sources,
+)
 
 
 def _make_virtual_trade_service(codes):
@@ -109,3 +112,49 @@ async def test_without_stock_query_service_behavior_unchanged():
         universe_service=_make_universe_service(["000002"]),
     )
     assert codes == ["000001", "000002"]
+
+
+async def test_with_sources_splits_base_and_ranking_supplement():
+    sqs = _make_stock_query_service([
+        _ranking_item("100001", "랭킹A"),
+        _ranking_item("100002", "랭킹B"),
+    ])
+    codes, sources = await resolve_capture_codes_with_sources(
+        virtual_trade_service=_make_virtual_trade_service(["000001"]),
+        universe_service=_make_universe_service(["000002"]),
+        stock_query_service=sqs,
+    )
+    assert codes == ["000001", "000002", "100001", "100002"]
+    assert sources == {
+        "base": ["000001", "000002"],
+        "ranking_supplement": ["100001", "100002"],
+    }
+
+
+async def test_with_sources_ranking_overlap_counted_as_base():
+    sqs = _make_stock_query_service([
+        _ranking_item("000001", "보유중복"),
+        _ranking_item("100001", "랭킹A"),
+    ])
+    codes, sources = await resolve_capture_codes_with_sources(
+        virtual_trade_service=_make_virtual_trade_service(["000001"]),
+        universe_service=_make_universe_service([]),
+        stock_query_service=sqs,
+    )
+    assert codes == ["000001", "100001"]
+    assert sources == {"base": ["000001"], "ranking_supplement": ["100001"]}
+
+
+async def test_with_sources_max_codes_cap_reflected_in_split():
+    sqs = _make_stock_query_service([
+        _ranking_item("100001", "랭킹A"),
+        _ranking_item("100002", "랭킹B"),
+    ])
+    codes, sources = await resolve_capture_codes_with_sources(
+        virtual_trade_service=_make_virtual_trade_service(["000001"]),
+        universe_service=_make_universe_service(["000002"]),
+        stock_query_service=sqs,
+        max_codes=3,
+    )
+    assert codes == ["000001", "000002", "100001"]
+    assert sources == {"base": ["000001", "000002"], "ranking_supplement": ["100001"]}
