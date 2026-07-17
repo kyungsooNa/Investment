@@ -820,10 +820,14 @@ function renderRankingTable() {
 }
 
 function _renderPeriodRankingLabel(data) {
-    const raw = data[0] && data[0].latest_trading_date;
-    const dateLabel = raw && raw.length === 8
-        ? ` (~ ${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)})`
+    const latest = data[0] && data[0].latest_trading_date;
+    const earliest = data[0] && data[0].earliest_trading_date;
+    const formatDate = raw => raw && raw.length === 8
+        ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
         : '';
+    const start = formatDate(earliest);
+    const end = formatDate(latest);
+    const dateLabel = start && end ? ` (${start} ~ ${end})` : end ? ` (~ ${end})` : '';
     return `<p style="color:#888; margin: 4px 0 12px;">최근 ${_rankingPeriodDays}거래일 기준${dateLabel}</p>`;
 }
 

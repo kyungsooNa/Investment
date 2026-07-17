@@ -35,7 +35,8 @@ function renderStrategyReportList() {
         <button type="button" class="strategy-report-item ${report.id === _selectedStrategyReportId ? 'active' : ''}"
                 data-report-id="${escapeHtml(report.id)}"
                 onclick="selectStrategyReport(this.dataset.reportId)">
-            <strong>${formatReportDate(report.report_date)}</strong>
+            <strong>${escapeHtml(report.title || '전략 상세 진단')}</strong>
+            <span>${report.kind === 'telegram' ? '텔레그램' : '전략 상세'} · ${formatReportDate(report.report_date)}</span>
             <span>${formatCreatedAt(report.created_at)}</span>
         </button>
     `).join('');
@@ -52,7 +53,8 @@ async function selectStrategyReport(reportId) {
         const response = await fetch(`/api/strategies/diagnostic-reports/${encodeURIComponent(reportId)}`);
         if (!response.ok) throw new Error('상세 조회 실패');
         const report = await response.json();
-        meta.textContent = `${formatReportDate(report.report_date)} · ${formatCreatedAt(report.created_at)}`;
+        const kind = report.kind === 'telegram' ? '텔레그램' : '전략 상세';
+        meta.textContent = `${kind} · ${report.title || '전략 상세 진단'} · ${formatReportDate(report.report_date)} · ${formatCreatedAt(report.created_at)}`;
         content.replaceChildren(sanitizeStrategyReport(report.content || ''));
     } catch (_) {
         clearStrategyReportViewer('상세 리포트를 불러오지 못했습니다.');

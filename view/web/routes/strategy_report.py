@@ -22,16 +22,39 @@ _DEFAULT_LOG_DIR = os.path.join("logs", "strategies", "rejections")
 
 @router.get("/strategies/diagnostic-reports")
 async def get_diagnostic_reports(limit: int = Query(100, ge=1, le=500)):
-    """저장된 전략 상세 진단 리포트 목록을 최신순으로 반환한다."""
-    repository = _get_ctx().strategy_diagnostic_report_repository
-    return {"reports": repository.list_reports(limit=limit)}
+    """전략 상세 진단과 Telegram 발송 이력을 최신순으로 반환한다."""
+    ctx = _get_ctx()
+    diagnostics = [
+        {
+            **report,
+            "kind": "strategy_diagnostic",
+            "title": "전략 상세 진단",
+        }
+        for report in ctx.strategy_diagnostic_report_repository.list_reports(limit=limit)
+    ]
+    telegram = ctx.telegram_notification_repository.list_reports(limit=limit)
+    reports = sorted(
+        [*diagnostics, *telegram],
+        key=lambda report: report.get("created_at", ""),
+        reverse=True,
+    )
+    return {"reports": reports[:limit]}
 
 
 @router.get("/strategies/diagnostic-reports/{report_id}")
 async def get_diagnostic_report(report_id: str):
-    """전략 상세 진단 리포트 한 건을 반환한다."""
-    repository = _get_ctx().strategy_diagnostic_report_repository
-    report = repository.get_report(report_id)
+    """전략 상세 진단 또는 Telegram 발송 이력 한 건을 반환한다."""
+    ctx = _get_ctx()
+    if report_id.startswith("telegram-"):
+        report = ctx.telegram_notification_repository.get_report(report_id)
+    else:
+        report = ctx.strategy_diagnostic_report_repository.get_report(report_id)
+        if report is not None:
+            report = {
+                **report,
+                "kind": "strategy_diagnostic",
+                "title": "전략 상세 진단",
+            }
     if report is None:
         raise HTTPException(status_code=404, detail="상세 리포트를 찾을 수 없습니다.")
     return report

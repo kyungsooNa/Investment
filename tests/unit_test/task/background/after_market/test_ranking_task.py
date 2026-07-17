@@ -294,8 +294,8 @@ async def test_period_investor_program_ranking_defaults_to_combined_amount(bg_se
 
     broker.get_investor_trade_by_stock_daily_multi = AsyncMock(side_effect=lambda code, date=None, days=5: {
         "005930": _make_investor_multi_response([
-            {"frgn_ntby_qty": "10", "orgn_ntby_qty": "20", "frgn_ntby_tr_pbmn": "100", "orgn_ntby_tr_pbmn": "200"},
-            {"frgn_ntby_qty": "5", "orgn_ntby_qty": "5", "frgn_ntby_tr_pbmn": "50", "orgn_ntby_tr_pbmn": "50"},
+            {"stck_bsop_date": "20250101", "frgn_ntby_qty": "10", "orgn_ntby_qty": "20", "frgn_ntby_tr_pbmn": "100", "orgn_ntby_tr_pbmn": "200"},
+            {"stck_bsop_date": "20241224", "frgn_ntby_qty": "5", "orgn_ntby_qty": "5", "frgn_ntby_tr_pbmn": "50", "orgn_ntby_tr_pbmn": "50"},
         ]),
         "000660": _make_investor_multi_response([
             {"frgn_ntby_qty": "50", "orgn_ntby_qty": "10", "frgn_ntby_tr_pbmn": "10", "orgn_ntby_tr_pbmn": "10"},
@@ -332,6 +332,7 @@ async def test_period_investor_program_ranking_defaults_to_combined_amount(bg_se
     assert resp.data[0]["industry"] == "IT"
     assert resp.data[1]["industry"] == "반도체"
     assert all(item["latest_trading_date"] == "20250101" for item in resp.data)
+    assert resp.data[1]["earliest_trading_date"] == "20241224"
 
 
 @pytest.mark.asyncio
