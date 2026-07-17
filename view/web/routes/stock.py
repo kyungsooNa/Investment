@@ -208,6 +208,8 @@ async def get_stock_price(code: str, exchange: str = Query("KRX")):
         ctx.logger.warning(f"[stock] 현재가 조회 타임아웃 ({code}, 12s 초과)")
         return {"rt_cd": "1", "msg1": "API 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.", "data": None}
     result = _serialize_response(resp)
+    if result.get("rt_cd") == "0" and isinstance(result.get("data"), dict):
+        result["data"]["market"] = ctx.stock_code_repository.get_market_by_code(code)
 
     ctx.pm.log_timer(f"get_stock_price({code})", t_start)
 

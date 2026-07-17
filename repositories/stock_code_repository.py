@@ -130,6 +130,15 @@ class StockCodeRepository:
             self.logger.warning(f"❗ 종목코드 없음: {name}")
         return code
 
+    def get_market_by_code(self, code: str) -> str:
+        """종목코드의 시장 구분(KOSPI/KOSDAQ 등)을 반환한다."""
+        if "시장구분" not in self.df.columns:
+            return ""
+        row = self.df[self.df["종목코드"] == code]
+        if row.empty:
+            return ""
+        return str(row.iloc[0]["시장구분"] or "")
+
     def search_by_name(self, keyword: str, limit: int = 20) -> list:
         """종목명 부분 일치 검색. [{"code": "005930", "name": "삼성전자"}, ...] 형태로 반환."""
         keyword_lower = keyword.lower()

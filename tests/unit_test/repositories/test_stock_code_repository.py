@@ -256,6 +256,10 @@ def test_kosdaq_methods(test_db_with_market, mock_logger):
     assert mapper.is_kosdaq('005930') is False
     assert mapper.is_kosdaq('999999') is False
 
+    assert mapper.get_market_by_code('005930') == 'KOSPI'
+    assert mapper.get_market_by_code('123456') == 'KOSDAQ'
+    assert mapper.get_market_by_code('999999') == ''
+
 
 def test_kosdaq_methods_missing_column(test_db, mock_logger):
     """시장구분 컬럼이 없을 때 KOSDAQ 관련 메서드가 안전하게 동작하는지 테스트합니다."""
@@ -263,6 +267,7 @@ def test_kosdaq_methods_missing_column(test_db, mock_logger):
 
     assert mapper.get_kosdaq_codes() == []
     assert mapper.is_kosdaq('005930') is False
+    assert mapper.get_market_by_code('005930') == ''
 
 
 def test_get_name_by_code_without_logger(test_db):

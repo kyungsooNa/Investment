@@ -68,4 +68,30 @@ test("국내 조회에 필요한 입력과 차트 DOM이 존재한다", async ()
   assert(window.document.getElementById("stockChart"), "차트 캔버스 누락");
 });
 
+test("현재가 조회 결과에 KOSPI/KOSDAQ 시장 배지를 표시한다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.startsWith("/api/stock/123456?")) {
+      return {
+        ok: true,
+        json: async () => ({
+          rt_cd: "0",
+          data: {
+            code: "123456", name: "테스트종목", market: "KOSDAQ",
+            price: "10000", change: "0", rate: "0", sign: "",
+            open: "10000", high: "10100", low: "9900", prev_close: "10000",
+          },
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ rt_cd: "1", data: null }) };
+  };
+
+  await window.searchStock("123456");
+
+  const badge = window.document.querySelector(".stock-market-badge");
+  assert(badge, "시장 구분 배지가 없음");
+  assert(badge.textContent === "KOSDAQ", "시장 구분 배지 값이 KOSDAQ이 아님");
+});
+
 await run();
