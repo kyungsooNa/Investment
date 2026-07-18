@@ -286,6 +286,7 @@ async def test_capture_intraday_drops_stale_date_rows_and_flags_quality():
         ],
         [],
     ]
+    sqs.get_intraday_minutes_by_date = AsyncMock(return_value=_response({"output2": []}))
 
     payload = await _service(sqs=sqs).capture(
         codes=["000001", "000002"],
@@ -302,9 +303,96 @@ async def test_capture_intraday_drops_stale_date_rows_and_flags_quality():
     assert payload["metadata"]["quality"] == {
         "empty_minute_codes": ["000002"],
         "stale_minute_rows_dropped": {"000001": 1},
+        "empty_minute_reasons": {"000002": "empty_response"},
     }
     assert payload["metadata"]["row_counts"]["intraday_minutes"] == 2
     assert payload["metadata"]["program_fallback_codes"] == []
+
+
+@pytest.mark.asyncio
+async def test_empty_minute_reason_records_api_error():
+    # 분봉 0행 종목을 프로브 조회 → rt_cd 에러면 api_error 로 분류 (todo 1-5 캡처 결손 진단)
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = []
+    sqs.get_intraday_minutes_by_date = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="1", msg1="초당 거래건수 초과", data=None)
+    )
+
+    payload = await _service(sqs=sqs).capture(
+        codes=["005935"],
+        date_ymd="20260716",
+        include_execution_strength=False,
+        program_source="none",
+    )
+
+    reasons = payload["metadata"]["quality"]["empty_minute_reasons"]
+    assert reasons["005935"].startswith("api_error:1")
+    assert "초당 거래건수 초과" in reasons["005935"]
+
+
+@pytest.mark.asyncio
+async def test_empty_minute_reason_records_stale_date_only():
+    # 프로브가 rt_cd 0 이지만 직전 거래일 행만 반환 → stale_date_only
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = []
+    sqs.get_intraday_minutes_by_date = AsyncMock(
+        return_value=_response(
+            {"output2": [{"stck_bsop_date": "20260715", "stck_cntg_hour": "150000"}]}
+        )
+    )
+
+    payload = await _service(sqs=sqs).capture(
+        codes=["033160"],
+        date_ymd="20260716",
+        include_execution_strength=False,
+        program_source="none",
+    )
+
+    assert payload["metadata"]["quality"]["empty_minute_reasons"] == {
+        "033160": "stale_date_only"
+    }
+
+
+@pytest.mark.asyncio
+async def test_empty_minute_reason_flags_pagination_gap_when_probe_has_current_rows():
+    # 페이지네이션 캡처는 비었는데 단일 프로브엔 당일 행 존재 → 커서/페이지네이션 갭
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = []
+    sqs.get_intraday_minutes_by_date = AsyncMock(
+        return_value=_response(
+            {"output2": [{"stck_bsop_date": "20260716", "stck_cntg_hour": "151500"}]}
+        )
+    )
+
+    payload = await _service(sqs=sqs).capture(
+        codes=["403870"],
+        date_ymd="20260716",
+        include_execution_strength=False,
+        program_source="none",
+    )
+
+    assert payload["metadata"]["quality"]["empty_minute_reasons"] == {
+        "403870": "has_rows_capture_empty"
+    }
+
+
+@pytest.mark.asyncio
+async def test_no_empty_minute_reasons_when_all_codes_have_minutes():
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = [
+        {"stck_bsop_date": "20260716", "stck_cntg_hour": "090000", "stck_prpr": "10000"},
+    ]
+    sqs.get_intraday_minutes_by_date = AsyncMock()
+
+    payload = await _service(sqs=sqs).capture(
+        codes=["000001"],
+        date_ymd="20260716",
+        include_execution_strength=False,
+        program_source="none",
+    )
+
+    assert payload["metadata"]["quality"]["empty_minute_reasons"] == {}
+    sqs.get_intraday_minutes_by_date.assert_not_awaited()
 
 
 # --- 모듈 레벨 헬퍼 단위 테스트 ---
