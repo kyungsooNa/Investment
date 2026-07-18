@@ -41,13 +41,9 @@ def isolate_program_trading_db(mocker, tmp_path):
     )
 
 
-@pytest.fixture(autouse=True)
-async def flush_strategy_state_io_tasks():
-    """테스트 이벤트 루프가 닫히기 전에 전략 상태 I/O 태스크를 완료한다."""
+async def _drain_strategy_state_load_tasks(timeout: float = 5.0) -> None:
+    """전략 상태 로드 태스크를 제한 시간만 기다리고 정체 태스크는 취소한다."""
     import asyncio
-    from utils.strategy_state_io import StrategyStateIO
-
-    yield
 
     state_load_tasks = [
         task
@@ -56,8 +52,23 @@ async def flush_strategy_state_io_tasks():
         and not task.done()
         and getattr(task.get_coro(), "__name__", "") == "_load_state_async"
     ]
-    if state_load_tasks:
-        await asyncio.gather(*state_load_tasks, return_exceptions=True)
+    if not state_load_tasks:
+        return
+
+    _, pending = await asyncio.wait(state_load_tasks, timeout=timeout)
+    for task in pending:
+        task.cancel()
+    await asyncio.gather(*state_load_tasks, return_exceptions=True)
+
+
+@pytest.fixture(autouse=True)
+async def flush_strategy_state_io_tasks():
+    """테스트 이벤트 루프가 닫히기 전에 전략 상태 I/O 태스크를 정리한다."""
+    from utils.strategy_state_io import StrategyStateIO
+
+    yield
+
+    await _drain_strategy_state_load_tasks(timeout=5.0)
     await StrategyStateIO.flush_pending(timeout=5.0)
 
 @pytest.fixture(scope="session")
