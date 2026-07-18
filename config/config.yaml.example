@@ -164,6 +164,23 @@ dart_disclosure:
   daily_digest_time: "19:40"
   max_pages_per_poll: 5
 
+# AI 분석 (Gemini/Groq/Ollama OpenAI 호환 엔드포인트 공통)
+#   1차: 관심종목 중요 공시를 걸러 요약해 텔레그램 알림에 덧붙임
+#   provider 전환은 base_url/api_key/model 만 바꾸면 됨(코드 변경 불필요)
+#   - Gemini : base_url https://generativelanguage.googleapis.com/v1beta/openai , api_key 필수
+#   - Groq   : base_url https://api.groq.com/openai/v1 , api_key 필수
+#   - Ollama : base_url http://localhost:11434/v1 , api_key 불필요(빈 값)
+#   AI 호출 실패/타임아웃 시 기존 규칙 판정으로 자동 폴백(알림은 계속 발송)
+ai_analysis:
+  enabled: false
+  provider: "gemini"
+  base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+  api_key: ""
+  model: "gemini-2.5-flash"
+  timeout_sec: 15
+  max_tokens: 256
+  disclosure_summary_enabled: true
+
 # 시총갭 리포트 발송 세션 on/off (기본 둘 다 on)
 #   kr: 한국장 마감(15:50 KST) 후 발송 — 미국 시총은 전일 종가 기준(프리뷰)
 #   us: 미국장 마감(16:30 ET ≈ 익일 06:30 KST) 후 발송 — 양쪽 시총 최신(확정값)

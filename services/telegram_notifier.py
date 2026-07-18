@@ -556,20 +556,28 @@ class TelegramReporter:
             await self._send_message(current)
 
     @_serialized_report_send
-    async def send_disclosure_alert(self, disclosure, importance) -> bool:
-        """관심종목 중요 공시 한 건을 즉시 전송한다."""
+    async def send_disclosure_alert(self, disclosure, importance, ai_summary: Optional[str] = None) -> bool:
+        """관심종목 중요 공시 한 건을 즉시 전송한다.
+
+        ai_summary 가 주어지면 규칙 판정 위에 AI 요약 블록을 덧붙인다. None 이면
+        (AI 비활성/호출 실패) 기존 규칙 기반 알림과 동일하게 발송한다.
+        """
         company = html.escape(str(disclosure.corp_name or disclosure.stock_code), quote=False)
         stock_code = html.escape(str(disclosure.stock_code), quote=False)
         report_name = html.escape(str(disclosure.report_name), quote=False)
         reasons = "\n".join(
             f"• {html.escape(str(reason), quote=False)}" for reason in importance.reasons
         )
+        ai_block = ""
+        if ai_summary:
+            ai_block = f"🤖 <b>AI 요약</b>\n{html.escape(str(ai_summary), quote=False)}\n\n"
         message = (
             "🚨 <b>관심종목 중요 공시</b>\n\n"
             f"<b>{company} ({stock_code})</b>\n"
             f"공시: {report_name}\n"
             f"중요도: {html.escape(str(importance.level), quote=False)} "
             f"({int(importance.score)}점)\n\n"
+            f"{ai_block}"
             f"<b>판정 근거</b>\n{reasons}\n\n"
             f"접수일: {html.escape(str(disclosure.receipt_date), quote=False)}\n"
             f'<a href="{disclosure.viewer_url}">DART 원문 보기</a>'

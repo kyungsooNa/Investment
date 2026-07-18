@@ -13,6 +13,7 @@ from typing import Any, Optional, TYPE_CHECKING
 
 from common.types import ErrorCode, Exchange
 from config.config_loader import (
+    AiAnalysisConfig,
     DartDisclosureConfig,
     OrderPolicyConfig,
     PositionSizingConfig,
@@ -25,6 +26,8 @@ from services.backtest_microstructure_capture import BacktestMicrostructureCaptu
 from services.execution_flow_service import ExecutionFlowService
 from services.event_shadow_journal_service import EventShadowJournalService
 from services.deferred_order_queue import DeferredOrderQueue
+from services.ai_client import AiClient
+from services.ai_disclosure_analyzer import AiDisclosureAnalyzer
 from services.dart_disclosure_client import DartDisclosureClient
 from services.dart_disclosure_rule_service import DartDisclosureRuleService
 from services.minervini_stage_service import MinerviniStageService
@@ -194,6 +197,24 @@ class ServiceContainer:
             needs_batch=needs_batch,
         )
 
+        # AI 분석 클라이언트 (Gemini/Groq/Ollama OpenAI 호환) — 1차: 공시 요약,
+        # 2차(종목 분석)에서 ctx.ai_client 재사용. provider 차이는 config 로 흡수.
+        ctx.ai_client = None
+        ctx.ai_disclosure_analyzer = None
+        raw_ai_config = config_dict.get("ai_analysis") or {}
+        ai_config = AiAnalysisConfig.model_validate(raw_ai_config)
+        if ai_config.enabled and ai_config.base_url and ai_config.model:
+            ctx.ai_client = AiClient(
+                base_url=ai_config.base_url,
+                api_key=ai_config.api_key,
+                model=ai_config.model,
+                timeout_sec=float(ai_config.timeout_sec),
+            )
+            if ai_config.disclosure_summary_enabled:
+                ctx.ai_disclosure_analyzer = AiDisclosureAnalyzer(
+                    ctx.ai_client, logger=ctx.logger, max_tokens=int(ai_config.max_tokens)
+                )
+
         ctx.dart_disclosure_client = None
         ctx.dart_disclosure_repository = None
         ctx.dart_disclosure_rule_service = None
@@ -223,6 +244,7 @@ class ServiceContainer:
                     config=dart_config,
                     market_clock=ctx.market_clock,
                     logger=ctx.logger,
+                    ai_analyzer=ctx.ai_disclosure_analyzer,
                 )
 
         try:
