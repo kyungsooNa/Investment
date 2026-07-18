@@ -41,13 +41,9 @@ def isolate_program_trading_db(mocker, tmp_path):
     )
 
 
-@pytest.fixture(autouse=True)
-async def flush_strategy_state_io_tasks():
-    """테스트 이벤트 루프가 닫히기 전에 전략 상태 I/O 태스크를 완료한다."""
+async def _drain_strategy_state_load_tasks(timeout: float = 5.0) -> None:
+    """전략 상태 로드 태스크를 제한 시간만 기다리고 정체 태스크는 취소한다."""
     import asyncio
-    from utils.strategy_state_io import StrategyStateIO
-
-    yield
 
     state_load_tasks = [
         task
@@ -56,8 +52,23 @@ async def flush_strategy_state_io_tasks():
         and not task.done()
         and getattr(task.get_coro(), "__name__", "") == "_load_state_async"
     ]
-    if state_load_tasks:
-        await asyncio.gather(*state_load_tasks, return_exceptions=True)
+    if not state_load_tasks:
+        return
+
+    _, pending = await asyncio.wait(state_load_tasks, timeout=timeout)
+    for task in pending:
+        task.cancel()
+    await asyncio.gather(*state_load_tasks, return_exceptions=True)
+
+
+@pytest.fixture(autouse=True)
+async def flush_strategy_state_io_tasks():
+    """테스트 이벤트 루프가 닫히기 전에 전략 상태 I/O 태스크를 정리한다."""
+    from utils.strategy_state_io import StrategyStateIO
+
+    yield
+
+    await _drain_strategy_state_load_tasks(timeout=5.0)
     await StrategyStateIO.flush_pending(timeout=5.0)
 
 @pytest.fixture(scope="session")
@@ -425,6 +436,7 @@ def clear_status_cache():
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from view.web.routes import router as api_router
 import view.web.api_common as api_common
 from common.types import ResCommonResponse
@@ -666,10 +678,14 @@ async def deep_paper_ctx(test_logger, web_app, mocker, tmp_path):
                 return await real_get_top(*args, **kwargs)
             mocker.patch.object(ts, "get_top_trading_value_stocks", side_effect=_patched_get_top)
 
-        # TestClient에 연결
+        # 서비스와 동일한 이벤트 루프에서 ASGI 요청을 실행한다.
         api_common.set_ctx(web_ctx)
         try:
-            with TestClient(web_app) as client:
+            transport = ASGITransport(app=web_app)
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+            ) as client:
                 web_ctx._test_client = client
                 yield web_ctx
         finally:
