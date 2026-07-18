@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from httpx import AsyncClient
 
 from tests.integration_test.conftest import _drain_strategy_state_load_tasks
 
@@ -20,3 +21,8 @@ async def test_drain_strategy_state_load_tasks_cancels_stuck_task():
 
     assert task.done()
     assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_deep_paper_ctx_uses_same_loop_async_client(deep_paper_ctx):
+    assert isinstance(deep_paper_ctx._test_client, AsyncClient)

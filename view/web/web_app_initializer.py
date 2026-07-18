@@ -195,6 +195,7 @@ class WebAppContext:
         self._last_missing_reason_log_ts: dict[tuple[str, str], float] = {}
         self._last_rest_price_refresh_ts: dict[str, float] = {}
         self._pending_rest_price_refresh_tasks: dict[str, asyncio.Task] = {}
+        self._pending_ohlcv_preload_tasks: set[asyncio.Task] = set()
         self._price_subscription_init_task: asyncio.Task | None = None
 
         # 실시간 스트리밍 전용 이벤트 로거 (logs/streaming/)
@@ -421,7 +422,10 @@ class WebAppContext:
 
     async def shutdown(self):
         """서비스 종료 처리 — BackgroundScheduler에 위임."""
-        pending_tasks = list(self._pending_rest_price_refresh_tasks.values())
+        pending_tasks = [
+            *self._pending_rest_price_refresh_tasks.values(),
+            *self._pending_ohlcv_preload_tasks,
+        ]
         if self._price_subscription_init_task and not self._price_subscription_init_task.done():
             pending_tasks.append(self._price_subscription_init_task)
         for task in pending_tasks:
@@ -429,6 +433,7 @@ class WebAppContext:
         if pending_tasks:
             await asyncio.gather(*pending_tasks, return_exceptions=True)
         self._pending_rest_price_refresh_tasks.clear()
+        self._pending_ohlcv_preload_tasks.clear()
         self._price_subscription_init_task = None
         if self.background_scheduler:
             await self.background_scheduler.shutdown()

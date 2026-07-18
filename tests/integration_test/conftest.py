@@ -436,6 +436,7 @@ def clear_status_cache():
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from view.web.routes import router as api_router
 import view.web.api_common as api_common
 from common.types import ResCommonResponse
@@ -677,10 +678,14 @@ async def deep_paper_ctx(test_logger, web_app, mocker, tmp_path):
                 return await real_get_top(*args, **kwargs)
             mocker.patch.object(ts, "get_top_trading_value_stocks", side_effect=_patched_get_top)
 
-        # TestClient에 연결
+        # 서비스와 동일한 이벤트 루프에서 ASGI 요청을 실행한다.
         api_common.set_ctx(web_ctx)
         try:
-            with TestClient(web_app) as client:
+            transport = ASGITransport(app=web_app)
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+            ) as client:
                 web_ctx._test_client = client
                 yield web_ctx
         finally:

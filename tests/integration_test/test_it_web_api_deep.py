@@ -409,7 +409,7 @@ class TestDeepStockPrice:
         deep_paper_ctx.broker._stock_mapper.get_name_by_code = MagicMock(return_value="삼성전자")
 
         client = deep_paper_ctx._test_client
-        resp = client.get("/api/stock/005930")
+        resp = await client.get("/api/stock/005930")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -443,11 +443,17 @@ class TestDeepStockPrice:
         patch_session_get(quot_api, mocker, error_payload)
 
         client = deep_paper_ctx._test_client
-        resp = client.get("/api/stock/005930")
+        resp = await client.get("/api/stock/005930")
 
         assert resp.status_code == 200
         body = resp.json()
         assert body["rt_cd"] != "0"
+        preload_tasks = [
+            task
+            for task in asyncio.all_tasks()
+            if getattr(task.get_coro(), "__name__", "") == "_preload_ohlcv"
+        ]
+        assert preload_tasks == []
 
 
 # ============================================================================
@@ -469,7 +475,7 @@ class TestDeepBalance:
         patch_session_get(account_api, mocker, payload)
 
         client = deep_paper_ctx._test_client
-        resp = client.get("/api/balance")
+        resp = await client.get("/api/balance")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -491,7 +497,7 @@ class TestDeepBalance:
         patch_session_get(account_api, mocker, error_payload)
 
         client = deep_paper_ctx._test_client
-        resp = client.get("/api/balance")
+        resp = await client.get("/api/balance")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -548,7 +554,7 @@ class TestDeepBuyOrder:
 
         mocker.patch.object(deep_paper_ctx.virtual_trade_service, "log_buy")
         client = deep_paper_ctx._test_client
-        resp = client.post("/api/order", json={
+        resp = await client.post("/api/order", json={
             "code": "005930", "price": "70000", "qty": "10", "side": "buy"
         })
 
@@ -568,7 +574,7 @@ class TestDeepBuyOrder:
         mocker.patch.object(deep_paper_ctx.virtual_trade_service, "log_buy")
 
         client = deep_paper_ctx._test_client
-        resp = client.post("/api/order", json={
+        resp = await client.post("/api/order", json={
             "code": "005930", "price": "70000", "qty": "10", "side": "buy"
         })
 
@@ -622,7 +628,7 @@ class TestDeepSellOrder:
         mocker.patch.object(deep_paper_ctx.virtual_trade_service, "log_sell")
         mocker.patch.object(deep_paper_ctx.virtual_trade_service, "log_sell")
         client = deep_paper_ctx._test_client
-        resp = client.post("/api/order", json={
+        resp = await client.post("/api/order", json={
             "code": "005930", "price": "71000", "qty": "5", "side": "sell"
         })
 
@@ -655,7 +661,7 @@ class TestDeepSellOrder:
 
         mocker.patch.object(deep_paper_ctx.virtual_trade_service, "log_sell")
         client = deep_paper_ctx._test_client
-        resp = client.post("/api/order", json={
+        resp = await client.post("/api/order", json={
             "code": "005930", "price": "71000", "qty": "5", "side": "sell"
         })
 
@@ -691,7 +697,7 @@ class TestDeepRanking:
         deep_paper_ctx.stock_query_service.ranking_task = None
 
         client = deep_paper_ctx._test_client
-        resp = client.get("/api/ranking/rise")
+        resp = await client.get("/api/ranking/rise")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -717,7 +723,7 @@ class TestDeepRanking:
         deep_paper_ctx.stock_query_service.ranking_task = None
 
         client = deep_paper_ctx._test_client
-        resp = client.get("/api/ranking/volume")
+        resp = await client.get("/api/ranking/volume")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -739,7 +745,7 @@ class TestDeepStatus:
     async def test_status_with_real_context(self, deep_paper_ctx):
         """실제 WebAppContext로 /api/status가 올바르게 응답한다."""
         client = deep_paper_ctx._test_client
-        resp = client.get("/api/status")
+        resp = await client.get("/api/status")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -761,7 +767,7 @@ class TestDeepInputValidation:
     async def test_order_invalid_side(self, deep_paper_ctx):
         """잘못된 side 값은 400을 반환한다."""
         client = deep_paper_ctx._test_client
-        resp = client.post("/api/order", json={
+        resp = await client.post("/api/order", json={
             "code": "005930", "price": "70000", "qty": "10", "side": "hold"
         })
         assert resp.status_code == 400
@@ -772,7 +778,7 @@ class TestDeepInputValidation:
         deep_paper_ctx.order_execution_service.market_calendar_service.is_market_open_now = AsyncMock(return_value=True)
 
         client = deep_paper_ctx._test_client
-        resp = client.post("/api/order", json={
+        resp = await client.post("/api/order", json={
             "code": "005930", "price": "abc", "qty": "10", "side": "buy"
         })
         assert resp.status_code == 200
@@ -784,5 +790,5 @@ class TestDeepInputValidation:
     async def test_ranking_invalid_category(self, deep_paper_ctx):
         """잘못된 랭킹 카테고리는 400을 반환한다."""
         client = deep_paper_ctx._test_client
-        resp = client.get("/api/ranking/nonexistent")
+        resp = await client.get("/api/ranking/nonexistent")
         assert resp.status_code == 400

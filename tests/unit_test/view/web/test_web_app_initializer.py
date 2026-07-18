@@ -957,6 +957,24 @@ async def test_shutdown_cancels_pending_refresh_tasks_and_stops_broker(mock_deps
 
 
 @pytest.mark.asyncio
+async def test_shutdown_cancels_pending_ohlcv_preload_tasks(mock_deps):
+    """shutdown은 현재가 조회가 생성한 OHLCV 프리로드 task도 취소한다."""
+    ctx = WebAppContext(None)
+    pending = MagicMock()
+    pending.cancel = MagicMock()
+    ctx._pending_ohlcv_preload_tasks = {pending}
+    ctx.background_scheduler = None
+    ctx.broker = None
+
+    with patch("view.web.web_app_initializer.asyncio.gather", new=AsyncMock()) as mock_gather:
+        await ctx.shutdown()
+
+    pending.cancel.assert_called_once()
+    mock_gather.assert_awaited_once_with(pending, return_exceptions=True)
+    assert ctx._pending_ohlcv_preload_tasks == set()
+
+
+@pytest.mark.asyncio
 async def test_shutdown_closes_program_trading_service_and_stock_repository(mock_deps):
     """shutdown은 컨텍스트가 소유한 DB 저장소와 스트림 서비스를 닫는다."""
     ctx = WebAppContext(None)

@@ -208,7 +208,8 @@ async def get_stock_price(code: str, exchange: str = Query("KRX")):
         ctx.logger.warning(f"[stock] 현재가 조회 타임아웃 ({code}, 12s 초과)")
         return {"rt_cd": "1", "msg1": "API 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.", "data": None}
     result = _serialize_response(resp)
-    if result.get("rt_cd") == "0" and isinstance(result.get("data"), dict):
+    is_success = result.get("rt_cd") == "0"
+    if is_success and isinstance(result.get("data"), dict):
         result["data"]["market"] = ctx.stock_code_repository.get_market_by_code(code)
 
     ctx.pm.log_timer(f"get_stock_price({code})", t_start)
@@ -222,13 +223,19 @@ async def get_stock_price(code: str, exchange: str = Query("KRX")):
                 ctx.logger.error(f"[stock] 실시간 구독 등록 실패 ({c}): {e}")
         asyncio.create_task(_add_subscription_background(code))
 
-    # 현재가 조회 후 OHLCV 2년치 백그라운드 프리로드 (캐시 miss 시에만 실제 API 호출)
-    async def _preload_ohlcv():
-        try:
-            await ctx.stock_query_service.get_ohlcv(code, caller="preload_on_price_query")
-        except Exception:
-            pass
-    asyncio.create_task(_preload_ohlcv())
+    # 성공한 현재가 조회 후 OHLCV 2년치 백그라운드 프리로드
+    if is_success:
+        async def _preload_ohlcv():
+            try:
+                await ctx.stock_query_service.get_ohlcv(code, caller="preload_on_price_query")
+            except Exception:
+                pass
+
+        preload_task = asyncio.create_task(_preload_ohlcv())
+        pending_preloads = getattr(ctx, "_pending_ohlcv_preload_tasks", None)
+        if pending_preloads is not None:
+            pending_preloads.add(preload_task)
+            preload_task.add_done_callback(pending_preloads.discard)
 
     return result
 
