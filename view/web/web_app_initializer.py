@@ -174,6 +174,8 @@ class WebAppContext:
         self.dart_disclosure_repository = None
         self.dart_disclosure_rule_service = None
         self.dart_disclosure_monitor_task = None
+        self.ai_client = None
+        self.ai_disclosure_analyzer = None
         self.initialized = False
         self.pm: PerformanceProfiler = None
 

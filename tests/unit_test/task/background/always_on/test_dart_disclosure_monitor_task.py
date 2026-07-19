@@ -30,7 +30,7 @@ def _disclosure(code="005930", receipt_no="20260714000001", report_name="전환�
     )
 
 
-def _make_task(items, *, initialized=True, now=None):
+def _make_task(items, *, initialized=True, now=None, ai_analyzer=None):
     client = MagicMock()
     client.fetch_disclosures = AsyncMock(
         return_value=DartDisclosurePage(items, 1, 100, len(items), 1)
@@ -74,6 +74,7 @@ def _make_task(items, *, initialized=True, now=None):
         config=config,
         market_clock=_Clock(now or datetime(2026, 7, 14, 10, 0, 0)),
         logger=MagicMock(),
+        ai_analyzer=ai_analyzer,
     )
     return SimpleNamespace(
         task=task,
@@ -82,6 +83,7 @@ def _make_task(items, *, initialized=True, now=None):
         favorites=favorites,
         rules=rule_service,
         reporter=reporter,
+        ai_analyzer=ai_analyzer,
     )
 
 
@@ -107,9 +109,43 @@ async def test_new_favorite_disclosure_is_saved_and_immediately_reported():
     await deps.task._tick()
 
     deps.repo.save_detected.assert_awaited_once()
-    deps.reporter.send_disclosure_alert.assert_awaited_once_with(disclosure, importance)
+    deps.reporter.send_disclosure_alert.assert_awaited_once_with(
+        disclosure, importance, ai_summary=None
+    )
     deps.repo.mark_immediate_sent.assert_awaited_once()
     assert deps.task.get_progress()["sent_count"] == 1
+
+
+async def test_ai_summary_is_attached_to_immediate_alert_when_analyzer_present():
+    disclosure = _disclosure()
+    importance = DisclosureImportance(85, "HIGH", ["자금조달·주식 희석 관련 공시"])
+    analyzer = MagicMock()
+    analyzer.summarize = AsyncMock(return_value="전환사채 발행 요약")
+    deps = _make_task([disclosure], initialized=True, ai_analyzer=analyzer)
+    deps.repo.get_pending_immediate.return_value = [StoredDisclosure(disclosure, importance)]
+
+    await deps.task._tick()
+
+    analyzer.summarize.assert_awaited_once_with(disclosure, importance)
+    deps.reporter.send_disclosure_alert.assert_awaited_once_with(
+        disclosure, importance, ai_summary="전환사채 발행 요약"
+    )
+
+
+async def test_ai_analyzer_failure_falls_back_to_rule_only_alert():
+    disclosure = _disclosure()
+    importance = DisclosureImportance(85, "HIGH", ["중요"])
+    analyzer = MagicMock()
+    analyzer.summarize = AsyncMock(return_value=None)  # 폴백 신호
+    deps = _make_task([disclosure], initialized=True, ai_analyzer=analyzer)
+    deps.repo.get_pending_immediate.return_value = [StoredDisclosure(disclosure, importance)]
+
+    await deps.task._tick()
+
+    deps.reporter.send_disclosure_alert.assert_awaited_once_with(
+        disclosure, importance, ai_summary=None
+    )
+    deps.repo.mark_immediate_sent.assert_awaited_once()
 
 
 async def test_non_favorite_disclosure_is_ignored():

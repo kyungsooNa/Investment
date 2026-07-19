@@ -251,6 +251,26 @@ class DartDisclosureConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class AiAnalysisConfig(BaseModel):
+    """AI 분석 공통 설정 (Gemini/Groq/Ollama OpenAI 호환 엔드포인트).
+
+    provider 차이는 base_url/api_key/model 로 흡수한다. api_key 는 클라우드
+    (Gemini/Groq)엔 필수, 로컬 Ollama 엔 불필요(빈 값 허용).
+    """
+    enabled: bool = False
+    provider: str = "gemini"
+    base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    api_key: str = ""
+    model: str = "gemini-2.5-flash"
+    timeout_sec: float = Field(15.0, gt=0)
+    # Gemini 2.5 계열은 thinking 토큰이 max_tokens 예산을 소비하므로, 짧게 잡으면
+    # 실제 요약이 잘린다. 사고 후에도 2~3문장이 완성되도록 넉넉히 둔다.
+    max_tokens: int = Field(2048, ge=1, le=8192)
+    disclosure_summary_enabled: bool = True
+
+    model_config = {"extra": "allow"}
+
+
 class ExecutionQualityReportConfig(BaseModel):
     enabled: bool = True
     min_sample_count: int = 3
@@ -418,6 +438,7 @@ class AppConfig(BaseModel):
     data_quality: DataQualityConfig = Field(default_factory=DataQualityConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     dart_disclosure: DartDisclosureConfig = Field(default_factory=DartDisclosureConfig)
+    ai_analysis: AiAnalysisConfig = Field(default_factory=AiAnalysisConfig)
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
     execution_quality_report: ExecutionQualityReportConfig = Field(default_factory=ExecutionQualityReportConfig)
     strategy_performance_degradation: StrategyPerformanceDegradationConfig = Field(

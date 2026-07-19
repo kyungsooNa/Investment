@@ -36,6 +36,32 @@ async def test_send_disclosure_alert_escapes_html_and_includes_reason_and_link()
     assert "rcpNo=20260714001234" in message
 
 
+async def test_send_disclosure_alert_includes_ai_summary_block_when_provided():
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    stored = _stored("전환사채권발행결정", 85)
+
+    sent = await reporter.send_disclosure_alert(
+        stored.disclosure, stored.importance, ai_summary="전환사채 발행 <주의>"
+    )
+
+    assert sent is True
+    message = reporter._send_message.await_args.args[0]
+    assert "AI 요약" in message
+    assert "전환사채 발행 &lt;주의&gt;" in message
+
+
+async def test_send_disclosure_alert_omits_ai_block_when_absent():
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    stored = _stored("전환사채권발행결정", 85)
+
+    await reporter.send_disclosure_alert(stored.disclosure, stored.importance)
+
+    message = reporter._send_message.await_args.args[0]
+    assert "AI 요약" not in message
+
+
 async def test_send_disclosure_digest_formats_multiple_rows():
     reporter = TelegramReporter("token", "chat")
     reporter._send_message = AsyncMock(return_value=True)
