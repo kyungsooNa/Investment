@@ -48,8 +48,13 @@ async def _main() -> None:
     if not api_key:
         print("[오류] ai_analysis.api_key 가 비어 있습니다. config.yaml 에 키를 넣으세요.")
         sys.exit(1)
-    if not api_key.startswith("AIza") and "googleapis" in base_url:
-        print(f"[경고] Gemini 키는 보통 'AIza' 로 시작합니다. 현재 키: {_mask(api_key)}")
+    # Gemini API 키는 'AIza'(구형) 또는 'AQ.'(신형) 로 시작한다. 둘 다 유효.
+    if (
+        "googleapis" in base_url
+        and not api_key.startswith("AIza")
+        and not api_key.startswith("AQ.")
+    ):
+        print(f"[경고] Gemini 키는 보통 'AIza' 또는 'AQ.' 로 시작합니다. 현재 키: {_mask(api_key)}")
         print("→ Google AI Studio > Create API key 로 발급한 값인지 확인하세요.")
 
     print(f"모델={model}  base_url={base_url}  키={_mask(api_key)}")
