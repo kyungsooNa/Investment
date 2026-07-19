@@ -29,7 +29,8 @@ class AiClient:
         timeout_sec: float = 15.0,
     ) -> None:
         self._base_url = str(base_url or "").rstrip("/")
-        self._api_key = str(api_key or "")
+        # 복사 과정에서 붙는 앞뒤 공백·개행 제거 (흔한 오염 원인)
+        self._api_key = str(api_key or "").strip()
         self._model = str(model or "")
         self._http_client = http_client
         self._timeout_sec = float(timeout_sec)
@@ -45,6 +46,14 @@ class AiClient:
         url = f"{self._base_url}/chat/completions"
         headers = {}
         if self._api_key:
+            # HTTP 헤더는 ASCII만 허용. 키에 한글 등 비ASCII가 섞이면 httpx가
+            # 크립틱한 UnicodeEncodeError를 던지므로, 미리 명확한 안내로 바꾼다.
+            if not self._api_key.isascii():
+                raise AiClientError(
+                    "KEY_ENCODING",
+                    "API 키에 ASCII 외 문자가 섞여 있습니다 — config.yaml의 키를 "
+                    "지우고 공백·한글 없이 다시 붙여넣으세요.",
+                )
             headers["Authorization"] = f"Bearer {self._api_key}"
         payload = {
             "model": self._model,

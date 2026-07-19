@@ -71,6 +71,38 @@ async def test_empty_api_key_omits_authorization_header():
     assert "Authorization" not in http_client.post.await_args.kwargs["headers"]
 
 
+async def test_api_key_surrounding_whitespace_is_stripped():
+    http_client = AsyncMock()
+    http_client.post.return_value = _response(_completion("ok"))
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="  AQ.Ab8valid \n",
+        model="m",
+        http_client=http_client,
+    )
+
+    await client.complete(system="s", user="u")
+
+    assert http_client.post.await_args.kwargs["headers"]["Authorization"] == "Bearer AQ.Ab8valid"
+
+
+async def test_non_ascii_api_key_raises_clear_error_not_raw_unicodeerror():
+    http_client = AsyncMock()  # 네트워크 도달 전에 막혀야 한다
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="AQ.Ab8한글오염key",
+        model="m",
+        http_client=http_client,
+    )
+
+    with pytest.raises(AiClientError) as exc_info:
+        await client.complete(system="s", user="u")
+
+    message = str(exc_info.value)
+    assert "ASCII" in message.upper() or "키" in message
+    http_client.post.assert_not_awaited()
+
+
 async def test_missing_choices_raises_ai_client_error():
     http_client = AsyncMock()
     http_client.post.return_value = _response({"choices": []})
