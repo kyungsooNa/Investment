@@ -330,6 +330,17 @@ async function searchStock(codeOverride, exchangeOverride) {
                       border-top: 1px solid var(--border-color, #ddd);
                   }
                   .ai-stock-analysis-output.error { color: #dc3545; }
+                  .ai-news-list {
+                      display: none; list-style: none; margin: 0.85rem 0 0; padding: 0.85rem 0 0;
+                      border-top: 1px solid var(--border-color, #ddd);
+                      max-height: 260px; overflow-y: auto;
+                  }
+                  .ai-news-list li { padding: 0.3rem 0; font-size: 0.86rem; }
+                  .ai-news-list a { color: var(--accent, #4a90e2); text-decoration: none; }
+                  .ai-news-list a:hover { text-decoration: underline; }
+                  .ai-news-list .meta {
+                      color: var(--text-secondary, #777); font-size: 0.78rem; margin-left: 0.4rem;
+                  }
             </style>
         `;
 
@@ -419,6 +430,16 @@ async function searchStock(codeOverride, exchangeOverride) {
                         <p id="ai-stock-analysis-status" class="ai-stock-analysis-meta" aria-live="polite"></p>
                         <p id="ai-stock-analysis-sources" class="ai-stock-analysis-meta"></p>
                         <div id="ai-stock-analysis-output" class="ai-stock-analysis-output"></div>
+                    </div>
+                    <div class="ai-stock-analysis-panel">
+                        <div class="ai-stock-analysis-head">
+                            <h4>📰 AI 뉴스 검토</h4>
+                            <button id="ai-news-btn" class="btn" onclick="requestAiNewsReview('${data.code}')">뉴스 검토</button>
+                        </div>
+                        <p class="ai-stock-analysis-note">최근 뉴스 제목을 모아 요약합니다. 기사 본문은 읽지 않으므로 원문 확인이 필요합니다.</p>
+                        <p id="ai-news-status" class="ai-stock-analysis-meta" aria-live="polite"></p>
+                        <div id="ai-news-output" class="ai-stock-analysis-output"></div>
+                        <ul id="ai-news-list" class="ai-news-list"></ul>
                     </div>
                 </div>
             </div>
@@ -520,6 +541,79 @@ async function requestAiStockAnalysis(code) {
     } finally {
         button.disabled = false;
         button.textContent = '다시 분석';
+    }
+}
+
+async function requestAiNewsReview(code) {
+    const targetCode = String(code || _currentStockCode || '').trim();
+    const button = document.getElementById('ai-news-btn');
+    const status = document.getElementById('ai-news-status');
+    const output = document.getElementById('ai-news-output');
+    const list = document.getElementById('ai-news-list');
+    if (!targetCode || !button || !status || !output || !list || button.disabled) return;
+
+    button.disabled = true;
+    button.textContent = '검토 중...';
+    status.textContent = '최근 뉴스를 모아 검토하고 있습니다.';
+    output.textContent = '';
+    output.classList.remove('error');
+    output.style.display = 'none';
+    list.textContent = '';
+    list.style.display = 'none';
+
+    try {
+        const response = await fetchWithTimeout(
+            `/api/stock/${encodeURIComponent(targetCode)}/ai-news`,
+            { method: 'POST' },
+            45000,
+        );
+        let json = {};
+        try {
+            json = await response.json();
+        } catch (parseError) {
+            console.error('[stock-news] 응답 파싱 실패:', parseError);
+        }
+        if (!response.ok || json.rt_cd !== '0') {
+            throw new Error(json.detail || json.msg1 || `AI 뉴스 검토 실패 (HTTP ${response.status})`);
+        }
+        if (_currentStockCode && _currentStockCode !== targetCode) return;
+
+        const data = json.data || {};
+        const articles = Array.isArray(data.news) ? data.news : [];
+
+        // 스크래핑한 외부 문자열이므로 textContent 로만 삽입한다(innerHTML 금지).
+        articles.forEach((article) => {
+            const li = document.createElement('li');
+            const link = document.createElement('a');
+            link.href = article.url || '#';
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.textContent = article.title || '(제목 없음)';
+            const meta = document.createElement('span');
+            meta.className = 'meta';
+            meta.textContent = `${article.press || ''} ${article.published_at || ''}`.trim();
+            li.appendChild(link);
+            li.appendChild(meta);
+            list.appendChild(li);
+        });
+        list.style.display = articles.length ? 'block' : 'none';
+
+        if (!data.analysis) {
+            status.textContent = json.msg1 || '최근 뉴스를 찾지 못했습니다.';
+            return;
+        }
+        status.textContent = `기사 ${data.news_count || articles.length}건 · 생성 시각: ${data.generated_at || ''}`.trim();
+        output.textContent = String(data.analysis);
+        output.style.display = 'block';
+    } catch (error) {
+        console.error('[stock-news] 검토 실패:', error);
+        status.textContent = '';
+        output.textContent = error.message || 'AI 뉴스 검토 요청에 실패했습니다.';
+        output.classList.add('error');
+        output.style.display = 'block';
+    } finally {
+        button.disabled = false;
+        button.textContent = '다시 검토';
     }
 }
 

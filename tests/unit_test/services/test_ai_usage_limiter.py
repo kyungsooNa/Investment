@@ -94,3 +94,42 @@ async def test_zero_daily_limit_disables_local_blocking(tmp_path):
     snapshot = await limiter.get_snapshot()
     assert snapshot["enabled"] is False
     assert snapshot["daily_limit"] == 0
+
+
+async def test_snapshot_reports_usage_broken_down_by_type(tmp_path):
+    """어떤 기능이 한도를 소비하는지 보려면 usage_type 별 내역이 필요하다."""
+    limiter = AiUsageLimiter(
+        db_path=tmp_path / "usage.db",
+        daily_request_limit=100,
+        disclosure_reserve=20,
+        now_provider=lambda: PACIFIC.localize(datetime(2026, 7, 20, 10, 0)),
+    )
+
+    await limiter.reserve("stock")
+    await limiter.reserve("news")
+    await limiter.reserve("news")
+    await limiter.reserve("disclosure")
+
+    snapshot = await limiter.get_snapshot()
+
+    assert snapshot["by_type"] == {"stock": 1, "news": 2, "disclosure": 1}
+    assert snapshot["used"] == 4
+    assert snapshot["interactive_used"] == 3
+
+
+async def test_snapshot_by_type_is_empty_when_unused(tmp_path):
+    limiter = AiUsageLimiter(db_path=tmp_path / "usage.db", daily_request_limit=10)
+
+    snapshot = await limiter.get_snapshot()
+
+    assert snapshot["by_type"] == {}
+    assert snapshot["used"] == 0
+
+
+async def test_disabled_snapshot_still_exposes_by_type_key(tmp_path):
+    limiter = AiUsageLimiter(db_path=tmp_path / "usage.db", daily_request_limit=0)
+
+    snapshot = await limiter.get_snapshot()
+
+    assert snapshot["enabled"] is False
+    assert snapshot["by_type"] == {}
