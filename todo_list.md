@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-17 (1-5 QC 2주차 판정·캡처 후보 소스 구분 metadata 기록)
+최종 업데이트: 2026-07-19 (AI 공시 요약 브랜치 코드리뷰 후속 3건 추가)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -54,6 +54,14 @@
   - 실데이터 검증(20260715 공시)에서 버그 4건 발견·수정: base_url 폴백 누락 / 비ASCII 키 처리 / 콘솔 출력 잘림(UTF-8) / **max_tokens 256→2048**(Gemini 2.5 thinking 토큰이 출력 예산 소비 — 짧으면 요약 잘림).
   - ⚠️ 실전 발동 전제: `dart_disclosure.enabled`(X-1) + 텔레그램 리포터 + 관심종목 1개+ + `ai_analysis.enabled`.
 - [ ] **2차 (종목 자체 AI 분석)**: 검증된 `ctx.ai_client` 재사용. 종목 하나에 [최근 공시 + 재무/시세 + Minervini Stage/RS + 수급]을 컨텍스트로 묶어 AI 종합 분석. 데이터 수집 계층(`StockQueryService`·`MinerviniStageService`·`rs_rating`)은 기존 것 활용, 프롬프트·수집 배선만 추가.
+
+### X-3. AI 공시 요약 코드리뷰 후속 [P2 — 2026-07-19]
+
+- [ ] **Telegram 메시지 길이 제한 적용** — AI 요약은 `max_tokens=2048`까지 반환될 수 있으나 `send_disclosure_alert()`는 단건 메시지를 길이 검증 없이 전송한다. Telegram 한도 초과 시 전송 실패 → `immediate_sent_at` 미기록 → 동일 공시 영구 재시도 가능. 메시지 조립 전 AI 요약을 안전한 길이로 제한하거나 메시지를 분할하고, 초과 응답 회귀 테스트를 추가한다.
+- [ ] **Telegram 재시도 시 AI 중복 호출 제거** — 전송 실패 건은 pending으로 남지만 생성한 AI 요약을 보관하지 않아 매 poll마다 같은 공시를 다시 요약한다. `receipt_no` 기준으로 요약 결과(실패 폴백 포함)를 저장·캐시해 Telegram 전송만 재시도하고, 일시적 전송 실패에서 AI 호출이 1회로 유지되는 테스트를 추가한다.
+- [ ] **빈 API 키 Ollama 진단 지원** — 프로덕션 `AiClient`와 설정은 로컬 Ollama의 빈 키를 허용하지만 `scripts/check_ai_key.py`는 즉시 종료하고 `scripts/check_disclosure_ai.py`는 analyzer를 비활성화한다. `provider` 또는 `base_url` 기준으로 클라우드 제공자에만 키를 요구하고 두 진단 스크립트의 Ollama 경로를 테스트한다.
+
+주요 파일: `services/telegram_notifier.py`, `task/background/always_on/dart_disclosure_monitor_task.py`, `scripts/check_ai_key.py`, `scripts/check_disclosure_ai.py`, `tests/unit_test/services/test_dart_disclosure_telegram.py`, `tests/unit_test/task/background/always_on/test_dart_disclosure_monitor_task.py`
 
 ---
 
