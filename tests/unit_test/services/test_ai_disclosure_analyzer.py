@@ -36,6 +36,7 @@ async def test_summarize_returns_ai_text_and_passes_context():
     assert "삼성전자" in user_prompt
     assert "전환사채권발행결정" in user_prompt
     assert "005930" in user_prompt
+    assert ai_client.complete.await_args.kwargs["usage_type"] == "disclosure"
 
 
 async def test_summarize_returns_none_when_ai_fails():

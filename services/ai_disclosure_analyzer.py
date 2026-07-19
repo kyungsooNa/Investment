@@ -34,6 +34,7 @@ class AiDisclosureAnalyzer:
                 system=_SYSTEM_PROMPT,
                 user=self._build_prompt(disclosure, importance),
                 max_tokens=self._max_tokens,
+                usage_type="disclosure",
             )
         except Exception as exc:
             self._logger.warning(

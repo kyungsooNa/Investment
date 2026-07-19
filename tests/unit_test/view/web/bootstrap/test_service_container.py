@@ -32,7 +32,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "StrategyLogReportService", "NotificationQueueTask",
     "AfterMarketReconcileTask", "OpeningPositionReconcileTask",
     "OpeningPositionReconcileService",
-    "AiClient", "AiStockAnalyzer", "AIAnalysisService",
+    "AiClient", "AiStockAnalyzer", "AIAnalysisService", "AiUsageLimiter",
     "DartDisclosureClient", "DartDisclosureRepository",
     "DartDisclosureRuleService", "DartDisclosureMonitorTask",
 ]
@@ -188,17 +188,24 @@ def test_service_container_builds_enabled_ai_stock_analyzer(patched_service_cont
             "timeout_sec": 8,
             "max_tokens": 1536,
             "disclosure_summary_enabled": False,
+            "daily_request_limit": 100,
+            "disclosure_reserve": 20,
         }
     }
 
     ServiceContainer(ctx).run()
 
     ai_client_cls = patched_service_container_deps["AiClient"]
+    patched_service_container_deps["AiUsageLimiter"].assert_called_once_with(
+        daily_request_limit=100,
+        disclosure_reserve=20,
+    )
     ai_client_cls.assert_called_once_with(
         base_url="https://ai.example/v1",
         api_key="test-key",
         model="test-model",
         timeout_sec=8.0,
+        usage_limiter=patched_service_container_deps["AiUsageLimiter"].return_value,
     )
     patched_service_container_deps["AiStockAnalyzer"].assert_called_once_with(
         ai_client_cls.return_value,

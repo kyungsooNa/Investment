@@ -27,6 +27,7 @@ class AiClient:
         model: str,
         http_client: Optional[httpx.AsyncClient] = None,
         timeout_sec: float = 15.0,
+        usage_limiter=None,
     ) -> None:
         self._base_url = str(base_url or "").rstrip("/")
         # 복사 과정에서 붙는 앞뒤 공백·개행 제거 (흔한 오염 원인)
@@ -34,6 +35,7 @@ class AiClient:
         self._model = str(model or "")
         self._http_client = http_client
         self._timeout_sec = float(timeout_sec)
+        self._usage_limiter = usage_limiter
 
     async def complete(
         self,
@@ -42,9 +44,14 @@ class AiClient:
         user: str,
         max_tokens: int = 2048,
         temperature: float = 0.2,
+        usage_type: str = "general",
     ) -> str:
         data = await self.chat_json(
-            system=system, user=user, max_tokens=max_tokens, temperature=temperature
+            system=system,
+            user=user,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            usage_type=usage_type,
         )
         return self._parse(data)
 
@@ -55,6 +62,7 @@ class AiClient:
         user: str,
         max_tokens: int = 2048,
         temperature: float = 0.2,
+        usage_type: str = "general",
     ) -> dict:
         """파싱 전 원본 응답 JSON을 반환한다 (진단용: finish_reason/usage 확인)."""
         url = f"{self._base_url}/chat/completions"
@@ -76,6 +84,8 @@ class AiClient:
             "max_tokens": int(max_tokens),
             "temperature": float(temperature),
         }
+        if self._usage_limiter is not None:
+            await self._usage_limiter.reserve(usage_type)
         if self._http_client is not None:
             return await self._request(self._http_client, url, headers, payload)
         async with httpx.AsyncClient(timeout=self._timeout_sec) as client:

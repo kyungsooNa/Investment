@@ -44,6 +44,7 @@ async def test_analyze_leading_stocks_uses_shared_ai_client():
     assert "제공된 데이터만" in call["system"]
     assert call["max_tokens"] == 1536
     assert call["temperature"] == 0.2
+    assert call["usage_type"] == "ranking"
     payload = json.loads(call["user"])
     assert payload["analysis_type"] == "leading_stock_candidates"
     assert payload["market_context"]["trade_date"] == "20260707"

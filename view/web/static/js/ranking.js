@@ -533,8 +533,12 @@ async function runRankingAIAnalysis() {
             }),
         }, 60000);
         const json = await res.json();
-        if (json.rt_cd !== "0") {
-            _rankingAIAnalysisState = { loading: false, result: null, error: json.msg1 || 'AI 분석 실패' };
+        if (!res.ok || json.rt_cd !== "0") {
+            _rankingAIAnalysisState = {
+                loading: false,
+                result: null,
+                error: json.detail || json.msg1 || 'AI 분석 실패',
+            };
             renderRankingTable();
             return;
         }
