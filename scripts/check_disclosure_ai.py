@@ -142,6 +142,10 @@ async def _main() -> None:
         if analyzer and importance.score >= threshold:
             summary = await analyzer.summarize(disclosure, importance)
             print(f"   🤖 AI: {summary or '(요약 실패 — 규칙 판정으로 폴백)'}")
+            if args.debug and summary is not None:
+                # ascii()는 한글을 \uXXXX로 바꿔 어떤 콘솔에서도 안 잘림 →
+                # 데이터가 온전한지(길이) vs 콘솔 표시만 잘리는지 확정
+                print(f"   [DEBUG len={len(summary)}] {ascii(summary)}")
             if summary is None and args.debug:
                 await _debug_ai_call(ai_client, disclosure, importance)
         print()
