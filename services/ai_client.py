@@ -43,11 +43,23 @@ class AiClient:
         max_tokens: int = 2048,
         temperature: float = 0.2,
     ) -> str:
+        data = await self.chat_json(
+            system=system, user=user, max_tokens=max_tokens, temperature=temperature
+        )
+        return self._parse(data)
+
+    async def chat_json(
+        self,
+        *,
+        system: str,
+        user: str,
+        max_tokens: int = 2048,
+        temperature: float = 0.2,
+    ) -> dict:
+        """파싱 전 원본 응답 JSON을 반환한다 (진단용: finish_reason/usage 확인)."""
         url = f"{self._base_url}/chat/completions"
         headers = {}
         if self._api_key:
-            # HTTP 헤더는 ASCII만 허용. 키에 한글 등 비ASCII가 섞이면 httpx가
-            # 크립틱한 UnicodeEncodeError를 던지므로, 미리 명확한 안내로 바꾼다.
             if not self._api_key.isascii():
                 raise AiClientError(
                     "KEY_ENCODING",
@@ -65,11 +77,9 @@ class AiClient:
             "temperature": float(temperature),
         }
         if self._http_client is not None:
-            data = await self._request(self._http_client, url, headers, payload)
-        else:
-            async with httpx.AsyncClient(timeout=self._timeout_sec) as client:
-                data = await self._request(client, url, headers, payload)
-        return self._parse(data)
+            return await self._request(self._http_client, url, headers, payload)
+        async with httpx.AsyncClient(timeout=self._timeout_sec) as client:
+            return await self._request(client, url, headers, payload)
 
     async def _request(self, client, url, headers, payload):
         response = await client.post(

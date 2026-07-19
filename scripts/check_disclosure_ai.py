@@ -142,11 +142,9 @@ async def _main() -> None:
         if analyzer and importance.score >= threshold:
             summary = await analyzer.summarize(disclosure, importance)
             print(f"   🤖 AI: {summary or '(요약 실패 — 규칙 판정으로 폴백)'}")
-            if args.debug and summary is not None:
-                # ascii()는 한글을 \uXXXX로 바꿔 어떤 콘솔에서도 안 잘림 →
-                # 데이터가 온전한지(길이) vs 콘솔 표시만 잘리는지 확정
-                print(f"   [DEBUG len={len(summary)}] {ascii(summary)}")
-            if summary is None and args.debug:
+            if args.debug:
+                if summary is not None:
+                    print(f"   [DEBUG summary len={len(summary)}] {ascii(summary)}")
                 await _debug_ai_call(ai_client, disclosure, importance)
         print()
 
@@ -158,10 +156,14 @@ async def _debug_ai_call(ai_client, disclosure, importance) -> None:
     from services.ai_disclosure_analyzer import _SYSTEM_PROMPT, AiDisclosureAnalyzer
 
     prompt = AiDisclosureAnalyzer._build_prompt(disclosure, importance)
-    print("   --- DEBUG: 직접 호출 traceback ---")
+    print("   --- DEBUG: 원본 응답(finish_reason/usage) ---")
     try:
-        result = await ai_client.complete(system=_SYSTEM_PROMPT, user=prompt, max_tokens=2048)
-        print(f"   DEBUG 성공: {result!r}")
+        data = await ai_client.chat_json(system=_SYSTEM_PROMPT, user=prompt, max_tokens=2048)
+        choice = (data.get("choices") or [{}])[0]
+        print(f"   finish_reason = {choice.get('finish_reason')}")
+        print(f"   usage = {data.get('usage')}")
+        content = (choice.get("message") or {}).get("content")
+        print(f"   content len = {len(content or '')}")
     except Exception:
         traceback.print_exc()
     print("   --- DEBUG 끝 ---")
