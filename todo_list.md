@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-19 (AI API 호출 경로 공통화 완료)
+최종 업데이트: 2026-07-20 (종목 뉴스 AI 검토 추가 — X-4)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -32,7 +32,7 @@
    - 1-8 백테스트 재실행 (CLI 노출 완료 #619 — PIT 후보 부재로 blocked, 2026-07-03 파일럿 판정)
    - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (dry-run 검증 후 — O-1 #621/O-2 완료)
 5. **[조건부·저위험 상시]**
-   - Pool B 완화 (**캡처 우회 적용 2026-07-08 — 트레이딩 완화는 시장 회복 후 재판단**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 (**완료 2026-07-12 — service_container bootstrap 분해 반영**) · M-3 #653 UI 리뷰 후속 (**완료 2026-07-11 — 즉시수정·하드닝·중복정리 12건**) · T-0/R-6 (선택/관찰)
+   - Pool B 완화 (**캡처 우회 적용 2026-07-08 — 트레이딩 완화는 시장 회복 후 재판단**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · M-2 문서 동기화 (**완료 2026-07-12 — service_container bootstrap 분해 반영**) · M-3 #653 UI 리뷰 후속 (**완료 2026-07-11 — 즉시수정·하드닝·중복정리 12건**) · X-4 뉴스 AI 검토 후속 (**1차 완료 2026-07-20 #689 — 한도 절약 개선 4건 미착수**) · T-0/R-6 (선택/관찰)
 
 ---
 
@@ -64,6 +64,24 @@
 - [x] **빈 API 키 Ollama 진단 지원** — `check_ai_key.py`는 Ollama에 한해 빈 키를 허용하고, `check_disclosure_ai.py`는 `enabled` 기준으로 analyzer를 생성한다. 두 진단 스크립트의 Ollama 빈 키 경로 테스트를 추가했다.
 
 주요 파일: `services/telegram_notifier.py`, `task/background/always_on/dart_disclosure_monitor_task.py`, `scripts/check_ai_key.py`, `scripts/check_disclosure_ai.py`, `tests/unit_test/services/test_dart_disclosure_telegram.py`, `tests/unit_test/task/background/always_on/test_dart_disclosure_monitor_task.py`
+
+### X-4. 종목 뉴스 AI 검토 [1차 완료 — PR #689, 2026-07-20]
+
+공시(DART)는 규제 이벤트만 잡아내 언론 이벤트(수주·계약·소송·증설·리포트)가 사각지대였다. 네이버 금융 종목뉴스를 수집해 기존 `ctx.ai_client` 경로로 검토한다. **주기 없는 100% 온디맨드**(버튼 클릭 시에만) — 백그라운드 폴링·텔레그램·영속 저장 없음.
+
+- [x] **1차 구현**: `services/stock_news_collector_service.py`(aiohttp+BeautifulSoup, euc-kr) · `services/ai_news_analyzer.py`(`usage_type="news"`) · `POST /api/stock/{code}/ai-news` · 종목 상세 UI 패널. 기사 본문은 받지 않고 제목·언론사·시각만 AI 입력으로 쓴다. 뉴스 0건이면 AI 미호출(한도 절약). 진단: `scripts/check_news_ai.py`(`--no-ai`로 한도 0건 수집 확인).
+  - ⚠️ **네이버 스크래핑 계약 함정 2건** (실측 2026-07-20, 둘 다 예외 없이 "뉴스 없음"으로 조용히 degrade): ① **Referer 헤더 필수** — 없으면 기사 0건(User-Agent는 무관). 기존 `ThemeClassificationCollectorService`는 UA만 설정하므로 그 패턴 복사 시 빈 수집기가 된다. `clusterId=` 파라미터(빈 값)도 필수. ② **`tr.relation_lst` 행 자신도 제외** — 연관기사 블록이 중첩 `<table>`이라 그 행 자신이 중첩 anchor 때문에 `td.title a.tit`에 걸린다. 라이브 데이터에선 제목 dedup이 이 버그를 가려 고정 fixture 테스트로만 잡힌다.
+- [x] **AI 사용량 가시화**: `AiUsageLimiter.get_snapshot()`에 `by_type` 추가 + 미노출 상태였던 스냅샷을 `GET /api/ai/usage`로 노출. `news`는 기존 인터랙티브 풀(daily 100 − disclosure_reserve 20 = 80건)에 편입되며 공시 예약분은 영향 없음.
+
+**개선포인트 (미착수 — 우선순위 순)**
+
+- [ ] **(추천, 서버 변경 0) 프론트엔드 결과 보존** — 현재 캐시가 없어 버튼을 두 번 누르면 한도가 2건 나간다. 주가·수급과 달리 **뉴스 목록은 몇 시간씩 그대로**라(삼성전자 첫 페이지 10건이 전부 같은 날 00:01~00:15에 몰림) 재분석 실익이 낮다. 이미 검토한 종목으로 돌아왔을 때 직전 결과를 다시 보여주고 재요청은 명시적으로만 받는다. 실사용에서 한도를 가장 많이 낭비하는 패턴(화면 왕복 중 재클릭)을 정확히 막는다.
+- [ ] **수집 결과 해시 비교로 AI 스킵** — 스크래핑은 매번 수행(무료)하되 기사 제목 집합이 직전과 같으면 AI를 건너뛰고 이전 결과 재사용. 인메모리 dict로 충분. `by_type` 실측으로 뉴스 소비가 실제로 많다고 확인된 뒤 착수.
+- [ ] **news 전용 하위 한도(`news_daily_limit`)** — 지금은 정할 근거가 없어 넣지 않았다. `GET /api/ai/usage`의 `by_type`을 며칠 실측해 stock/ranking 대비 news 비중을 본 뒤 판단한다(선구현 금지).
+- [ ] **(조건부·큰 작업) 주기적 백그라운드 수집** — 관심종목 뉴스 폴링. 한도 소비가 관심종목 수 × 주기로 폭증하므로 **중요도 필터가 선행 조건**이며, 사실상 공시 파이프라인(dedup DB·재시도·다이제스트) 규모의 작업이다. 위 3개 항목 이후에 재검토.
+- [ ] **기존 진단 스크립트 리미터 미부착** — `check_ai_key.py`·`check_disclosure_ai.py`는 `AiClient`에 `usage_limiter`를 붙이지 않아 소비가 `/api/ai/usage` 집계에서 빠진다(`check_news_ai.py`는 부착됨). 저위험 정리 과제.
+
+주요 파일: `services/stock_news_collector_service.py`, `services/ai_news_analyzer.py`, `services/ai_usage_limiter.py`, `view/web/routes/stock.py`, `view/web/routes/ai.py`, `view/web/static/js/stock.js`, `scripts/check_news_ai.py`, `tests/frontend/run_stock_dom_tests.mjs`
 
 ---
 
