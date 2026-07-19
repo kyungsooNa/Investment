@@ -129,3 +129,49 @@ async def test_blank_content_raises_ai_client_error():
 
     with pytest.raises(AiClientError):
         await client.complete(system="s", user="u")
+
+
+async def test_complete_reserves_usage_before_http_request():
+    http_client = AsyncMock()
+    http_client.post.return_value = _response(_completion("ok"))
+    usage_limiter = MagicMock()
+    usage_limiter.reserve = AsyncMock()
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="m",
+        http_client=http_client,
+        usage_limiter=usage_limiter,
+    )
+
+    await client.complete(system="s", user="u", usage_type="stock")
+
+    usage_limiter.reserve.assert_awaited_once_with("stock")
+    http_client.post.assert_awaited_once()
+
+
+async def test_usage_limit_block_prevents_http_request():
+    from services.ai_usage_limiter import AiUsageLimitExceeded
+
+    http_client = AsyncMock()
+    usage_limiter = MagicMock()
+    usage_limiter.reserve = AsyncMock(
+        side_effect=AiUsageLimitExceeded(
+            limit_kind="interactive",
+            daily_limit=100,
+            used=80,
+            reset_at="2026-07-20T00:00:00-07:00",
+        )
+    )
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="m",
+        http_client=http_client,
+        usage_limiter=usage_limiter,
+    )
+
+    with pytest.raises(AiUsageLimitExceeded):
+        await client.complete(system="s", user="u", usage_type="ranking")
+
+    http_client.post.assert_not_awaited()

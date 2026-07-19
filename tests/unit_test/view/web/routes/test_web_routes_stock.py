@@ -111,6 +111,42 @@ def test_ai_stock_analysis_rejects_invalid_code(web_client, mock_web_ctx):
     assert response.status_code == 400
 
 
+def test_ai_stock_analysis_returns_429_when_daily_limit_is_reached(
+    web_client, mock_web_ctx
+):
+    from services.ai_usage_limiter import AiUsageLimitExceeded
+
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = (
+        ResCommonResponse(rt_cd="0", msg1="성공", data={"price": "70000"})
+    )
+    mock_web_ctx.stock_query_service.get_financial_ratio.return_value = (
+        ResCommonResponse(rt_cd="1", msg1="없음", data=None)
+    )
+    mock_web_ctx.stock_query_service.get_investor_trade_daily_multi.return_value = (
+        ResCommonResponse(rt_cd="1", msg1="없음", data=None)
+    )
+    mock_web_ctx.ai_stock_analyzer = MagicMock()
+    mock_web_ctx.ai_stock_analyzer.analyze = AsyncMock(
+        side_effect=AiUsageLimitExceeded(
+            limit_kind="interactive",
+            daily_limit=100,
+            used=80,
+            reset_at="2026-07-20T00:00:00-07:00",
+            interactive_limit=80,
+            disclosure_reserve=20,
+        )
+    )
+    mock_web_ctx.minervini_stage_service = None
+    mock_web_ctx.rs_rating_service = None
+    mock_web_ctx.dart_disclosure_repository = None
+
+    response = web_client.post("/api/stock/005930/ai-analysis")
+
+    assert response.status_code == 429
+    assert "일일" in response.json()["detail"]
+    assert "공시" in response.json()["detail"]
+
+
 def test_ai_stock_analysis_collects_context_and_returns_source_status(
     web_client, mock_web_ctx
 ):

@@ -6,6 +6,7 @@ import logging
 from typing import Any, Mapping, Sequence
 
 from common.types import ErrorCode, ResCommonResponse
+from services.ai_usage_limiter import AiUsageLimitExceeded
 
 
 _LEADING_STOCK_INSTRUCTIONS = """
@@ -68,6 +69,7 @@ class AIAnalysisService:
                 user=input_text,
                 max_tokens=self._max_tokens,
                 temperature=0.2,
+                usage_type="ranking",
             )
             output_text = str(output_text or "").strip()
             if not output_text:
@@ -86,6 +88,8 @@ class AIAnalysisService:
                     "candidate_count": len(limited_candidates),
                 },
             )
+        except AiUsageLimitExceeded:
+            raise
         except Exception as exc:
             self._logger.exception(
                 f"AIAnalysisService.analyze_leading_stocks 오류: {exc}"

@@ -181,6 +181,10 @@ ai_analysis:
   # Gemini 2.5 계열은 thinking 토큰이 max_tokens를 소비하므로 넉넉히 (짧으면 요약이 잘림)
   max_tokens: 2048
   disclosure_summary_enabled: true
+  # Gemini 프로젝트 일일 한도보다 낮게 설정. 0이면 로컬 차단 비활성화.
+  daily_request_limit: 100
+  # 일반 종목/랭킹 분석이 사용하지 못하도록 중요 공시 요약에 남겨둘 요청 수.
+  disclosure_reserve: 20
 
 # 시총갭 리포트 발송 세션 on/off (기본 둘 다 on)
 #   kr: 한국장 마감(15:50 KST) 후 발송 — 미국 시총은 전일 종가 기준(프리뷰)

@@ -267,6 +267,8 @@ class AiAnalysisConfig(BaseModel):
     # 실제 요약이 잘린다. 사고 후에도 2~3문장이 완성되도록 넉넉히 둔다.
     max_tokens: int = Field(2048, ge=1, le=8192)
     disclosure_summary_enabled: bool = True
+    daily_request_limit: int = Field(100, ge=0)
+    disclosure_reserve: int = Field(20, ge=0)
 
     model_config = {"extra": "allow"}
 

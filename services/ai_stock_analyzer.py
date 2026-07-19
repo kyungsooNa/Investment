@@ -33,5 +33,6 @@ class AiStockAnalyzer:
             user=prompt,
             max_tokens=self._max_tokens,
             temperature=0.2,
+            usage_type="stock",
         )
         return str(result or "").strip()

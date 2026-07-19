@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from common.overseas_types import OverseasExchange
 from common.types import Exchange
+from services.ai_usage_limiter import AiUsageLimitExceeded
 from repositories.streaming_stock_repo import StreamingType
 from services.market_cap_gap_service import MarketCapGapService
 from services.price_subscription_service import SubscriptionPriority
@@ -272,6 +273,8 @@ async def get_ai_stock_analysis(code: str):
     }
     try:
         analysis = await analyzer.analyze(context)
+    except AiUsageLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except Exception as exc:
         ctx.logger.warning(
             f"[stock-ai] {code} 분석 실패: {type(exc).__name__}: {exc}"

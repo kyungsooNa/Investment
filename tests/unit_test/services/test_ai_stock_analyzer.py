@@ -23,6 +23,7 @@ async def test_analyze_passes_all_stock_context_to_ai_client():
     assert result == "상승 추세지만 밸류에이션 확인이 필요합니다."
     call = ai_client.complete.await_args.kwargs
     assert call["max_tokens"] == 1536
+    assert call["usage_type"] == "stock"
     assert "투자 권유" in call["system"]
     for expected in (
         "005930",

@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from common.types import ErrorCode
+from services.ai_usage_limiter import AiUsageLimitExceeded
 from view.web.api_common import _get_ctx, _serialize_response, _serialize_list_items
 
 router = APIRouter()
@@ -123,11 +124,14 @@ async def analyze_ranking_candidates(payload: RankingAIAnalysisRequest):
             detail="AI 분석이 비활성화되어 있습니다. ai_analysis 설정을 확인하세요.",
         )
 
-    resp = await ai_service.analyze_leading_stocks(
-        candidates,
-        market_context=payload.market_context or {},
-        max_candidates=payload.max_candidates,
-    )
+    try:
+        resp = await ai_service.analyze_leading_stocks(
+            candidates,
+            market_context=payload.market_context or {},
+            max_candidates=payload.max_candidates,
+        )
+    except AiUsageLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     return _serialize_response(resp)
 
 

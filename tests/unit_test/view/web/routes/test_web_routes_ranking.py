@@ -78,6 +78,32 @@ def test_post_ranking_ai_analysis_rejects_provider_override(web_client, mock_web
     mock_web_ctx.ai_analysis_service.analyze_leading_stocks.assert_not_awaited()
 
 
+def test_post_ranking_ai_analysis_returns_429_when_daily_limit_is_reached(
+    web_client, mock_web_ctx
+):
+    from services.ai_usage_limiter import AiUsageLimitExceeded
+
+    mock_web_ctx.ai_analysis_service = AsyncMock()
+    mock_web_ctx.ai_analysis_service.analyze_leading_stocks.side_effect = (
+        AiUsageLimitExceeded(
+            limit_kind="interactive",
+            daily_limit=100,
+            used=80,
+            reset_at="2026-07-20T00:00:00-07:00",
+            interactive_limit=80,
+            disclosure_reserve=20,
+        )
+    )
+
+    response = web_client.post(
+        "/api/ranking/ai-analysis",
+        json={"candidates": [{"code": "005930", "name": "삼성전자"}]},
+    )
+
+    assert response.status_code == 429
+    assert "일일" in response.json()["detail"]
+
+
 @pytest.mark.asyncio
 async def test_get_theme_leaders_success(web_client, mock_web_ctx):
     """GET /api/ranking/theme_leaders 정상 응답 + 기본 category_types=theme."""
