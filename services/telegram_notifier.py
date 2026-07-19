@@ -13,6 +13,8 @@ import unicodedata
 
 logger = logging.getLogger(__name__)
 
+_DISCLOSURE_AI_SUMMARY_MAX_CHARS = 1000
+
 
 def _serialized_report_send(func):
     @wraps(func)
@@ -570,7 +572,12 @@ class TelegramReporter:
         )
         ai_block = ""
         if ai_summary:
-            ai_block = f"🤖 <b>AI 요약</b>\n{html.escape(str(ai_summary), quote=False)}\n\n"
+            summary_text = str(ai_summary).strip()
+            if len(summary_text) > _DISCLOSURE_AI_SUMMARY_MAX_CHARS:
+                summary_text = (
+                    summary_text[: _DISCLOSURE_AI_SUMMARY_MAX_CHARS - 1].rstrip() + "…"
+                )
+            ai_block = f"🤖 <b>AI 요약</b>\n{html.escape(summary_text, quote=False)}\n\n"
         message = (
             "🚨 <b>관심종목 중요 공시</b>\n\n"
             f"<b>{company} ({stock_code})</b>\n"

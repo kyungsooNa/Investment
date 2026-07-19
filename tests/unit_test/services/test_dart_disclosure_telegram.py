@@ -51,6 +51,21 @@ async def test_send_disclosure_alert_includes_ai_summary_block_when_provided():
     assert "전환사채 발행 &lt;주의&gt;" in message
 
 
+async def test_send_disclosure_alert_truncates_oversized_ai_summary():
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    stored = _stored("전환사채권발행결정", 85)
+
+    await reporter.send_disclosure_alert(
+        stored.disclosure, stored.importance, ai_summary="가" * 5000
+    )
+
+    message = reporter._send_message.await_args.args[0]
+    assert len(message) <= 4000
+    assert "가" * 5000 not in message
+    assert "…" in message
+
+
 async def test_send_disclosure_alert_omits_ai_block_when_absent():
     reporter = TelegramReporter("token", "chat")
     reporter._send_message = AsyncMock(return_value=True)

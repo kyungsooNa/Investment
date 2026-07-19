@@ -148,6 +148,42 @@ async def test_ai_analyzer_failure_falls_back_to_rule_only_alert():
     deps.repo.mark_immediate_sent.assert_awaited_once()
 
 
+async def test_telegram_retry_reuses_ai_summary_without_second_ai_call():
+    disclosure = _disclosure()
+    importance = DisclosureImportance(85, "HIGH", ["중요"])
+    analyzer = MagicMock()
+    analyzer.summarize = AsyncMock(return_value="재사용할 요약")
+    deps = _make_task([disclosure], initialized=True, ai_analyzer=analyzer)
+    deps.repo.get_pending_immediate.return_value = [StoredDisclosure(disclosure, importance)]
+    deps.reporter.send_disclosure_alert.side_effect = [False, True]
+
+    await deps.task._send_pending_immediate(deps.task._market_clock.now)
+    await deps.task._send_pending_immediate(deps.task._market_clock.now)
+
+    analyzer.summarize.assert_awaited_once_with(disclosure, importance)
+    assert deps.reporter.send_disclosure_alert.await_count == 2
+    for call in deps.reporter.send_disclosure_alert.await_args_list:
+        assert call.kwargs["ai_summary"] == "재사용할 요약"
+
+
+async def test_telegram_retry_reuses_rule_fallback_without_second_ai_call():
+    disclosure = _disclosure()
+    importance = DisclosureImportance(85, "HIGH", ["중요"])
+    analyzer = MagicMock()
+    analyzer.summarize = AsyncMock(return_value=None)
+    deps = _make_task([disclosure], initialized=True, ai_analyzer=analyzer)
+    deps.repo.get_pending_immediate.return_value = [StoredDisclosure(disclosure, importance)]
+    deps.reporter.send_disclosure_alert.side_effect = [False, True]
+
+    await deps.task._send_pending_immediate(deps.task._market_clock.now)
+    await deps.task._send_pending_immediate(deps.task._market_clock.now)
+
+    analyzer.summarize.assert_awaited_once_with(disclosure, importance)
+    assert deps.reporter.send_disclosure_alert.await_count == 2
+    for call in deps.reporter.send_disclosure_alert.await_args_list:
+        assert call.kwargs["ai_summary"] is None
+
+
 async def test_non_favorite_disclosure_is_ignored():
     deps = _make_task([_disclosure(code="000660")])
 
