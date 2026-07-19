@@ -50,17 +50,19 @@ async def _fetch(client, date, max_pages):
     return collected
 
 
-def _build_analyzer(ai_cfg: dict):
+def _build_ai(ai_cfg: dict):
+    """(AiClient, AiDisclosureAnalyzer) 또는 (None, None) 반환."""
     ai_key = str(ai_cfg.get("api_key") or "")
     if not (ai_cfg.get("enabled") and ai_key):
-        return None
+        return None, None
     ai_client = AiClient(
         base_url=str(ai_cfg.get("base_url") or _DEFAULT_BASE_URL),
         api_key=ai_key,
         model=str(ai_cfg.get("model") or _DEFAULT_MODEL),
         timeout_sec=float(ai_cfg.get("timeout_sec", 15)),
     )
-    return AiDisclosureAnalyzer(ai_client, max_tokens=int(ai_cfg.get("max_tokens", 256)))
+    analyzer = AiDisclosureAnalyzer(ai_client, max_tokens=int(ai_cfg.get("max_tokens", 256)))
+    return ai_client, analyzer
 
 
 async def _resolve_targets(args):
@@ -77,6 +79,7 @@ async def _main() -> None:
     parser.add_argument("--codes", default=None, help="쉼표구분 종목코드 (관심종목 대신)")
     parser.add_argument("--all", action="store_true", help="관심종목 필터 없이 전체")
     parser.add_argument("--limit", type=int, default=20, help="표시 건수 상한")
+    parser.add_argument("--debug", action="store_true", help="AI 실패 시 전체 traceback 출력")
     args = parser.parse_args()
 
     config = _load_config()
@@ -96,7 +99,7 @@ async def _main() -> None:
         dart_key, timeout_sec=float(dart_cfg.get("request_timeout_sec", 5))
     )
     rules = DartDisclosureRuleService()
-    analyzer = _build_analyzer(ai_cfg)
+    ai_client, analyzer = _build_ai(ai_cfg)
 
     targets = await _resolve_targets(args)
     if targets is not None and not targets:
@@ -133,7 +136,25 @@ async def _main() -> None:
         if analyzer and importance.score >= threshold:
             summary = await analyzer.summarize(disclosure, importance)
             print(f"   🤖 AI: {summary or '(요약 실패 — 규칙 판정으로 폴백)'}")
+            if summary is None and args.debug:
+                await _debug_ai_call(ai_client, disclosure, importance)
         print()
+
+
+async def _debug_ai_call(ai_client, disclosure, importance) -> None:
+    """AI 실패 원인을 정확히 보기 위해 swallow 없이 직접 호출 후 traceback 출력."""
+    import traceback
+
+    from services.ai_disclosure_analyzer import _SYSTEM_PROMPT, AiDisclosureAnalyzer
+
+    prompt = AiDisclosureAnalyzer._build_prompt(disclosure, importance)
+    print("   --- DEBUG: 직접 호출 traceback ---")
+    try:
+        result = await ai_client.complete(system=_SYSTEM_PROMPT, user=prompt, max_tokens=256)
+        print(f"   DEBUG 성공: {result!r}")
+    except Exception:
+        traceback.print_exc()
+    print("   --- DEBUG 끝 ---")
 
 
 if __name__ == "__main__":
