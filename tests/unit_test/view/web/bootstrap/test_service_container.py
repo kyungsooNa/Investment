@@ -32,7 +32,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "StrategyLogReportService", "NotificationQueueTask",
     "AfterMarketReconcileTask", "OpeningPositionReconcileTask",
     "OpeningPositionReconcileService",
-    "AiClient", "AiStockAnalyzer",
+    "AiClient", "AiStockAnalyzer", "AIAnalysisService",
     "DartDisclosureClient", "DartDisclosureRepository",
     "DartDisclosureRuleService", "DartDisclosureMonitorTask",
 ]
@@ -204,8 +204,18 @@ def test_service_container_builds_enabled_ai_stock_analyzer(patched_service_cont
         ai_client_cls.return_value,
         max_tokens=1536,
     )
+    patched_service_container_deps["AIAnalysisService"].assert_called_once_with(
+        ai_client_cls.return_value,
+        provider_name="gemini",
+        model="test-model",
+        logger=ctx.logger,
+        max_tokens=1536,
+    )
     assert ctx.ai_stock_analyzer is patched_service_container_deps[
         "AiStockAnalyzer"
+    ].return_value
+    assert ctx.ai_analysis_service is patched_service_container_deps[
+        "AIAnalysisService"
     ].return_value
 
 

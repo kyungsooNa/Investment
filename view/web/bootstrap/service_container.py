@@ -27,6 +27,7 @@ from services.execution_flow_service import ExecutionFlowService
 from services.event_shadow_journal_service import EventShadowJournalService
 from services.deferred_order_queue import DeferredOrderQueue
 from services.ai_client import AiClient
+from services.ai_analysis_service import AIAnalysisService
 from services.ai_disclosure_analyzer import AiDisclosureAnalyzer
 from services.ai_stock_analyzer import AiStockAnalyzer
 from services.dart_disclosure_client import DartDisclosureClient
@@ -201,6 +202,7 @@ class ServiceContainer:
         # AI 분석 클라이언트 (Gemini/Groq/Ollama OpenAI 호환) — 1차: 공시 요약,
         # 2차(종목 분석)에서 ctx.ai_client 재사용. provider 차이는 config 로 흡수.
         ctx.ai_client = None
+        ctx.ai_analysis_service = None
         ctx.ai_disclosure_analyzer = None
         ctx.ai_stock_analyzer = None
         raw_ai_config = config_dict.get("ai_analysis") or {}
@@ -214,6 +216,13 @@ class ServiceContainer:
             )
             ctx.ai_stock_analyzer = AiStockAnalyzer(
                 ctx.ai_client, max_tokens=int(ai_config.max_tokens)
+            )
+            ctx.ai_analysis_service = AIAnalysisService(
+                ctx.ai_client,
+                provider_name=ai_config.provider,
+                model=ai_config.model,
+                logger=ctx.logger,
+                max_tokens=int(ai_config.max_tokens),
             )
             if ai_config.disclosure_summary_enabled:
                 ctx.ai_disclosure_analyzer = AiDisclosureAnalyzer(
