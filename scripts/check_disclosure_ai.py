@@ -20,6 +20,12 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Windows 콘솔(cp949)이 처리 못 하는 문자에서 출력이 잘리지 않도록 UTF-8 고정.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 from repositories.favorite_repository import FavoriteRepository  # noqa: E402
 from services.ai_client import AiClient  # noqa: E402
 from services.ai_disclosure_analyzer import AiDisclosureAnalyzer  # noqa: E402
