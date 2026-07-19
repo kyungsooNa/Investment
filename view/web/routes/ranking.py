@@ -4,7 +4,7 @@
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from common.types import ErrorCode
 from view.web.api_common import _get_ctx, _serialize_response, _serialize_list_items
@@ -13,11 +13,11 @@ router = APIRouter()
 
 
 class RankingAIAnalysisRequest(BaseModel):
-    candidates: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
     market_context: dict[str, Any] | None = None
-    max_candidates: int = 20
-    provider_name: str | None = None
-    model: str | None = None
+    max_candidates: int = Field(20, ge=1, le=20)
+
+    model_config = {"extra": "forbid"}
 
 
 @router.get("/ranking/progress")
@@ -117,23 +117,11 @@ async def analyze_ranking_candidates(payload: RankingAIAnalysisRequest):
         }
 
     ai_service = getattr(ctx, "ai_analysis_service", None)
-    if ai_service is None or payload.provider_name or payload.model:
-        try:
-            from services.ai_analysis_service import AIAnalysisService
-
-            ai_service = AIAnalysisService(
-                provider_name=payload.provider_name,
-                model=payload.model,
-                logger=getattr(ctx, "logger", None),
-            )
-            if not payload.provider_name and not payload.model:
-                ctx.ai_analysis_service = ai_service
-        except Exception as e:
-            return {
-                "rt_cd": ErrorCode.API_ERROR.value,
-                "msg1": str(e),
-                "data": None,
-            }
+    if ai_service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="AI 분석이 비활성화되어 있습니다. ai_analysis 설정을 확인하세요.",
+        )
 
     resp = await ai_service.analyze_leading_stocks(
         candidates,
