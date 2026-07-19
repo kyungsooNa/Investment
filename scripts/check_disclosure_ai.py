@@ -59,7 +59,7 @@ async def _fetch(client, date, max_pages):
 def _build_ai(ai_cfg: dict):
     """(AiClient, AiDisclosureAnalyzer) 또는 (None, None) 반환."""
     ai_key = str(ai_cfg.get("api_key") or "")
-    if not (ai_cfg.get("enabled") and ai_key):
+    if not ai_cfg.get("enabled"):
         return None, None
     ai_client = AiClient(
         base_url=str(ai_cfg.get("base_url") or _DEFAULT_BASE_URL),

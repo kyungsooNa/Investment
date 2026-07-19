@@ -50,8 +50,9 @@ async def _main() -> None:
     api_key = str(cfg.get("api_key") or "")
     base_url = str(cfg.get("base_url") or _DEFAULT_BASE_URL)
     model = str(cfg.get("model") or _DEFAULT_MODEL)
+    provider = str(cfg.get("provider") or "gemini").strip().lower()
 
-    if not api_key:
+    if not api_key and provider != "ollama":
         print("[오류] ai_analysis.api_key 가 비어 있습니다. config.yaml 에 키를 넣으세요.")
         sys.exit(1)
     # Gemini API 키는 'AIza'(구형) 또는 'AQ.'(신형) 로 시작한다. 둘 다 유효.

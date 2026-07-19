@@ -33,6 +33,7 @@ class DartDisclosureMonitorTask(SchedulableTask):
         self._market_clock = market_clock
         self._logger = logger or logging.getLogger(__name__)
         self._ai_analyzer = ai_analyzer
+        self._ai_summary_cache: Dict[str, Optional[str]] = {}
         self._state = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
         self._tick_lock: Optional[asyncio.Lock] = None
@@ -175,23 +176,27 @@ class DartDisclosureMonitorTask(SchedulableTask):
         threshold = int(getattr(self._config, "immediate_alert_score", 70))
         pending = await self._repository.get_pending_immediate(threshold)
         for item in pending:
-            ai_summary = None
-            if self._ai_analyzer is not None:
-                ai_summary = await self._ai_analyzer.summarize(
-                    item.disclosure, item.importance
-                )
+            receipt_no = item.disclosure.receipt_no
+            if receipt_no in self._ai_summary_cache:
+                ai_summary = self._ai_summary_cache[receipt_no]
+            else:
+                ai_summary = None
+                if self._ai_analyzer is not None:
+                    ai_summary = await self._ai_analyzer.summarize(
+                        item.disclosure, item.importance
+                    )
+                    self._ai_summary_cache[receipt_no] = ai_summary
             sent = await self._reporter.send_disclosure_alert(
                 item.disclosure, item.importance, ai_summary=ai_summary
             )
             if sent:
                 await self._repository.mark_immediate_sent(
-                    item.disclosure.receipt_no, now
+                    receipt_no, now
                 )
+                self._ai_summary_cache.pop(receipt_no, None)
                 self._progress["sent_count"] += 1
             else:
-                await self._repository.increment_send_retry(
-                    item.disclosure.receipt_no
-                )
+                await self._repository.increment_send_retry(receipt_no)
 
     async def _send_digest_if_due(self, now: datetime, date: str) -> None:
         if not bool(getattr(self._config, "daily_digest_enabled", True)):
