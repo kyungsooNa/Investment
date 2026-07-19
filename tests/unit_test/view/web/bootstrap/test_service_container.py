@@ -33,6 +33,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "AfterMarketReconcileTask", "OpeningPositionReconcileTask",
     "OpeningPositionReconcileService",
     "AiClient", "AiStockAnalyzer", "AIAnalysisService", "AiUsageLimiter",
+    "AiNewsAnalyzer", "StockNewsCollectorService",
     "DartDisclosureClient", "DartDisclosureRepository",
     "DartDisclosureRuleService", "DartDisclosureMonitorTask",
 ]
@@ -223,6 +224,31 @@ def test_service_container_builds_enabled_ai_stock_analyzer(patched_service_cont
     ].return_value
     assert ctx.ai_analysis_service is patched_service_container_deps[
         "AIAnalysisService"
+    ].return_value
+    patched_service_container_deps["AiNewsAnalyzer"].assert_called_once_with(
+        ai_client_cls.return_value,
+        max_tokens=1536,
+    )
+    assert ctx.ai_news_analyzer is patched_service_container_deps[
+        "AiNewsAnalyzer"
+    ].return_value
+
+
+def test_service_container_skips_ai_news_analyzer_when_disabled(
+    patched_service_container_deps,
+):
+    """AI 비활성 시 분석기는 None 이지만 뉴스 수집기는 항상 생성된다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {"ai_analysis": {"enabled": False}}
+
+    ServiceContainer(ctx).run()
+
+    assert ctx.ai_news_analyzer is None
+    patched_service_container_deps["AiNewsAnalyzer"].assert_not_called()
+    assert ctx.stock_news_collector is patched_service_container_deps[
+        "StockNewsCollectorService"
     ].return_value
 
 

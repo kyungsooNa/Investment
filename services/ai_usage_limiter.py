@@ -141,12 +141,14 @@ class AiUsageLimiter:
                 "disclosure_reserve": 0,
                 "remaining": None,
                 "reset_at": reset_at,
+                "by_type": {},
             }
         async with self._lock:
             async with aiosqlite.connect(self._db_path, timeout=10) as conn:
                 await conn.execute(_DDL)
                 await conn.commit()
                 total, disclosure_used = await self._counts(conn, period_key)
+                by_type = await self._counts_by_type(conn, period_key)
         return {
             "enabled": True,
             "period_key": period_key,
@@ -158,6 +160,7 @@ class AiUsageLimiter:
             "disclosure_reserve": self._disclosure_reserve,
             "remaining": max(0, self._daily_limit - total),
             "reset_at": reset_at,
+            "by_type": by_type,
         }
 
     async def _counts(
@@ -177,6 +180,21 @@ class AiUsageLimiter:
         ) as cursor:
             row = await cursor.fetchone()
         return int(row[0]), int(row[1])
+
+    async def _counts_by_type(
+        self, conn: aiosqlite.Connection, period_key: str
+    ) -> dict:
+        async with conn.execute(
+            """
+            SELECT usage_type, request_count
+            FROM ai_usage_daily
+            WHERE period_key = ? AND request_count > 0
+            ORDER BY request_count DESC
+            """,
+            (period_key,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return {str(row[0]): int(row[1]) for row in rows}
 
     def _now(self) -> datetime:
         now = self._now_provider()

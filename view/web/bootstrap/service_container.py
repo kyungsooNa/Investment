@@ -31,6 +31,8 @@ from services.ai_usage_limiter import AiUsageLimiter
 from services.ai_analysis_service import AIAnalysisService
 from services.ai_disclosure_analyzer import AiDisclosureAnalyzer
 from services.ai_stock_analyzer import AiStockAnalyzer
+from services.ai_news_analyzer import AiNewsAnalyzer
+from services.stock_news_collector_service import StockNewsCollectorService
 from services.dart_disclosure_client import DartDisclosureClient
 from services.dart_disclosure_rule_service import DartDisclosureRuleService
 from services.minervini_stage_service import MinerviniStageService
@@ -207,6 +209,9 @@ class ServiceContainer:
         ctx.ai_analysis_service = None
         ctx.ai_disclosure_analyzer = None
         ctx.ai_stock_analyzer = None
+        ctx.ai_news_analyzer = None
+        # 뉴스 수집 자체는 AI 와 무관하므로 AI 비활성 상태에서도 항상 생성한다.
+        ctx.stock_news_collector = StockNewsCollectorService(logger=ctx.logger)
         raw_ai_config = config_dict.get("ai_analysis") or {}
         ai_config = AiAnalysisConfig.model_validate(raw_ai_config)
         if ai_config.enabled and ai_config.base_url and ai_config.model:
@@ -222,6 +227,9 @@ class ServiceContainer:
                 usage_limiter=ctx.ai_usage_limiter,
             )
             ctx.ai_stock_analyzer = AiStockAnalyzer(
+                ctx.ai_client, max_tokens=int(ai_config.max_tokens)
+            )
+            ctx.ai_news_analyzer = AiNewsAnalyzer(
                 ctx.ai_client, max_tokens=int(ai_config.max_tokens)
             )
             ctx.ai_analysis_service = AIAnalysisService(

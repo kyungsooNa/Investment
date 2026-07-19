@@ -309,6 +309,75 @@ async def get_ai_stock_analysis(code: str):
     }
 
 
+_NEWS_LIMIT = 15
+
+
+@router.post("/stock/{code}/ai-news")
+async def get_ai_news_review(code: str):
+    """종목 최신 뉴스를 수집해 요청 시점에 AI 검토 결과를 생성한다."""
+    ctx = _get_ctx()
+    if not code.isdigit() or len(code) != 6:
+        raise HTTPException(status_code=400, detail="국내 종목코드 6자리를 입력하세요.")
+    analyzer = getattr(ctx, "ai_news_analyzer", None)
+    collector = getattr(ctx, "stock_news_collector", None)
+    if analyzer is None or collector is None:
+        raise HTTPException(
+            status_code=503,
+            detail="AI 분석이 비활성화되어 있습니다. ai_analysis 설정을 확인하세요.",
+        )
+
+    name = ctx.stock_code_repository.get_name_by_code(code) or code
+    try:
+        news = await collector.collect(code, limit=_NEWS_LIMIT)
+    except Exception as exc:
+        ctx.logger.warning(
+            f"[stock-news] {code} 뉴스 수집 실패: {type(exc).__name__}: {exc}"
+        )
+        news = []
+
+    # 수집 결과가 없으면 AI 를 호출하지 않는다(일일 사용량 낭비 방지).
+    if not news:
+        return {
+            "rt_cd": "0",
+            "msg1": "최근 뉴스를 찾지 못했습니다.",
+            "data": {
+                "code": code,
+                "name": name,
+                "analysis": None,
+                "news": [],
+                "news_count": 0,
+                "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            },
+        }
+
+    try:
+        analysis = await analyzer.analyze({"code": code, "name": name, "news": news})
+    except AiUsageLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except Exception as exc:
+        ctx.logger.warning(
+            f"[stock-news] {code} AI 검토 실패: {type(exc).__name__}: {exc}"
+        )
+        raise HTTPException(
+            status_code=502, detail="AI 뉴스 검토 요청에 실패했습니다. 잠시 후 다시 시도하세요."
+        ) from exc
+    if not analysis:
+        raise HTTPException(status_code=502, detail="AI 뉴스 검토 결과가 비어 있습니다.")
+
+    return {
+        "rt_cd": "0",
+        "msg1": "성공",
+        "data": {
+            "code": code,
+            "name": name,
+            "analysis": analysis,
+            "news": news,
+            "news_count": len(news),
+            "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        },
+    }
+
+
 @router.get("/stock/{code}")
 async def get_stock_price(code: str, exchange: str = Query("KRX")):
     """현재가 조회. 종목명이 들어오면 종목코드로 변환 후 조회. exchange=KRX|NXT|UN 선택 가능."""

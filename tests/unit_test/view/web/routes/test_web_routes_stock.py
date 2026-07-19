@@ -765,3 +765,124 @@ async def test_get_stock_chart_invalid_exchange_fallback(web_client, mock_web_ct
     mock_web_ctx.stock_query_service.get_ohlcv.assert_awaited_once_with(
         "005930", "D", caller="stock.py - get_stock_chart", exchange=Exchange.KRX
     )
+
+
+# --- POST /api/stock/{code}/ai-news -------------------------------------------------
+
+_SAMPLE_NEWS = [
+    {
+        "title": "삼성전자, HBM4 양산 계약 체결",
+        "press": "연합뉴스",
+        "published_at": "2026.07.20 09:10",
+        "url": "https://finance.naver.com/item/news_read.naver?article_id=1",
+    },
+    {
+        "title": "코스피 이번 주 운명의 한 주",
+        "press": "주간조선",
+        "published_at": "2026.07.19 18:00",
+        "url": "https://finance.naver.com/item/news_read.naver?article_id=2",
+    },
+]
+
+
+def _setup_news_ctx(mock_web_ctx, *, news=None, analysis="AI 뉴스 검토 결과"):
+    mock_web_ctx.ai_news_analyzer = MagicMock()
+    mock_web_ctx.ai_news_analyzer.analyze = AsyncMock(return_value=analysis)
+    mock_web_ctx.stock_news_collector = MagicMock()
+    mock_web_ctx.stock_news_collector.collect = AsyncMock(
+        return_value=_SAMPLE_NEWS if news is None else news
+    )
+    mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "삼성전자"
+    return mock_web_ctx
+
+
+def test_ai_news_review_returns_analysis_and_article_list(web_client, mock_web_ctx):
+    _setup_news_ctx(mock_web_ctx)
+
+    response = web_client.post("/api/stock/005930/ai-news")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["analysis"] == "AI 뉴스 검토 결과"
+    assert payload["news_count"] == 2
+    assert payload["news"][0]["title"] == "삼성전자, HBM4 양산 계약 체결"
+    assert payload["name"] == "삼성전자"
+    context = mock_web_ctx.ai_news_analyzer.analyze.await_args.args[0]
+    assert context["code"] == "005930"
+    assert context["news"] == _SAMPLE_NEWS
+
+
+def test_ai_news_review_skips_ai_call_when_no_news(web_client, mock_web_ctx):
+    """뉴스가 없으면 일일 사용량을 쓰지 않아야 한다."""
+    _setup_news_ctx(mock_web_ctx, news=[])
+
+    response = web_client.post("/api/stock/005930/ai-news")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["analysis"] is None
+    assert payload["news_count"] == 0
+    mock_web_ctx.ai_news_analyzer.analyze.assert_not_awaited()
+
+
+def test_ai_news_review_survives_collector_failure(web_client, mock_web_ctx):
+    _setup_news_ctx(mock_web_ctx)
+    mock_web_ctx.stock_news_collector.collect = AsyncMock(
+        side_effect=RuntimeError("scrape boom")
+    )
+
+    response = web_client.post("/api/stock/005930/ai-news")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["news_count"] == 0
+    mock_web_ctx.ai_news_analyzer.analyze.assert_not_awaited()
+
+
+def test_ai_news_review_requires_enabled_ai(web_client, mock_web_ctx):
+    _setup_news_ctx(mock_web_ctx)
+    mock_web_ctx.ai_news_analyzer = None
+
+    response = web_client.post("/api/stock/005930/ai-news")
+
+    assert response.status_code == 503
+
+
+def test_ai_news_review_rejects_invalid_code(web_client, mock_web_ctx):
+    _setup_news_ctx(mock_web_ctx)
+
+    response = web_client.post("/api/stock/ABC/ai-news")
+
+    assert response.status_code == 400
+
+
+def test_ai_news_review_returns_429_when_daily_limit_is_reached(
+    web_client, mock_web_ctx
+):
+    from services.ai_usage_limiter import AiUsageLimitExceeded
+
+    _setup_news_ctx(mock_web_ctx)
+    mock_web_ctx.ai_news_analyzer.analyze = AsyncMock(
+        side_effect=AiUsageLimitExceeded(
+            limit_kind="interactive",
+            daily_limit=100,
+            used=80,
+            reset_at="2026-07-21T00:00:00-07:00",
+            interactive_limit=80,
+            disclosure_reserve=20,
+        )
+    )
+
+    response = web_client.post("/api/stock/005930/ai-news")
+
+    assert response.status_code == 429
+
+
+def test_ai_news_review_returns_502_on_ai_failure_or_blank_result(
+    web_client, mock_web_ctx
+):
+    _setup_news_ctx(mock_web_ctx)
+    mock_web_ctx.ai_news_analyzer.analyze = AsyncMock(side_effect=RuntimeError("boom"))
+    assert web_client.post("/api/stock/005930/ai-news").status_code == 502
+
+    _setup_news_ctx(mock_web_ctx, analysis="")
+    assert web_client.post("/api/stock/005930/ai-news").status_code == 502
