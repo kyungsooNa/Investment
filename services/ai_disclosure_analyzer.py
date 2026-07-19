@@ -21,7 +21,7 @@ _SYSTEM_PROMPT = (
 
 
 class AiDisclosureAnalyzer:
-    def __init__(self, ai_client, *, logger=None, max_tokens: int = 256):
+    def __init__(self, ai_client, *, logger=None, max_tokens: int = 2048):
         self._client = ai_client
         self._logger = logger or logging.getLogger(__name__)
         self._max_tokens = int(max_tokens)

@@ -178,7 +178,8 @@ ai_analysis:
   api_key: ""
   model: "gemini-2.5-flash"
   timeout_sec: 15
-  max_tokens: 256
+  # Gemini 2.5 계열은 thinking 토큰이 max_tokens를 소비하므로 넉넉히 (짧으면 요약이 잘림)
+  max_tokens: 2048
   disclosure_summary_enabled: true
 
 # 시총갭 리포트 발송 세션 on/off (기본 둘 다 on)

@@ -263,7 +263,9 @@ class AiAnalysisConfig(BaseModel):
     api_key: str = ""
     model: str = "gemini-2.5-flash"
     timeout_sec: float = Field(15.0, gt=0)
-    max_tokens: int = Field(256, ge=1, le=4096)
+    # Gemini 2.5 계열은 thinking 토큰이 max_tokens 예산을 소비하므로, 짧게 잡으면
+    # 실제 요약이 잘린다. 사고 후에도 2~3문장이 완성되도록 넉넉히 둔다.
+    max_tokens: int = Field(2048, ge=1, le=8192)
     disclosure_summary_enabled: bool = True
 
     model_config = {"extra": "allow"}

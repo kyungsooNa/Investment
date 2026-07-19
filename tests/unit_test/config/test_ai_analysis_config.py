@@ -10,6 +10,8 @@ def test_defaults_are_disabled_and_gemini_flash():
     assert cfg.model
     assert cfg.timeout_sec > 0
     assert cfg.disclosure_summary_enabled is True
+    # Gemini 2.5 thinking 토큰이 출력 예산을 갉아먹으므로 요약이 잘리지 않게 넉넉히
+    assert cfg.max_tokens >= 1024
 
 
 def test_accepts_ollama_local_overrides():

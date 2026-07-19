@@ -40,7 +40,7 @@ class AiClient:
         *,
         system: str,
         user: str,
-        max_tokens: int = 512,
+        max_tokens: int = 2048,
         temperature: float = 0.2,
     ) -> str:
         url = f"{self._base_url}/chat/completions"

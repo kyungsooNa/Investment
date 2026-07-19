@@ -67,7 +67,7 @@ def _build_ai(ai_cfg: dict):
         model=str(ai_cfg.get("model") or _DEFAULT_MODEL),
         timeout_sec=float(ai_cfg.get("timeout_sec", 15)),
     )
-    analyzer = AiDisclosureAnalyzer(ai_client, max_tokens=int(ai_cfg.get("max_tokens", 256)))
+    analyzer = AiDisclosureAnalyzer(ai_client, max_tokens=int(ai_cfg.get("max_tokens", 2048)))
     return ai_client, analyzer
 
 
@@ -160,7 +160,7 @@ async def _debug_ai_call(ai_client, disclosure, importance) -> None:
     prompt = AiDisclosureAnalyzer._build_prompt(disclosure, importance)
     print("   --- DEBUG: 직접 호출 traceback ---")
     try:
-        result = await ai_client.complete(system=_SYSTEM_PROMPT, user=prompt, max_tokens=256)
+        result = await ai_client.complete(system=_SYSTEM_PROMPT, user=prompt, max_tokens=2048)
         print(f"   DEBUG 성공: {result!r}")
     except Exception:
         traceback.print_exc()
