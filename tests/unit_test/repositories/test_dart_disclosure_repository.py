@@ -80,3 +80,31 @@ async def test_digest_rows_are_marked_after_send(tmp_path, disclosure, importanc
 
     await repo.mark_digest_sent([disclosure.receipt_no], datetime(2026, 7, 14, 19, 40, 0))
     assert await repo.get_pending_digest("20260714", immediate_threshold=70) == []
+
+
+async def test_get_recent_by_stock_code_filters_and_orders(tmp_path, disclosure, importance):
+    repo = DartDisclosureRepository(tmp_path / "dart.db")
+    older = disclosure.__class__(
+        **{
+            **disclosure.__dict__,
+            "receipt_no": "20260713000001",
+            "receipt_date": "20260713",
+            "report_name": "사업보고서",
+        }
+    )
+    other_stock = disclosure.__class__(
+        **{
+            **disclosure.__dict__,
+            "receipt_no": "20260715000001",
+            "receipt_date": "20260715",
+            "stock_code": "000660",
+        }
+    )
+    await repo.save_detected(older, importance)
+    await repo.save_detected(disclosure, importance)
+    await repo.save_detected(other_stock, importance)
+
+    rows = await repo.get_recent_by_stock_code("005930", limit=1)
+
+    assert len(rows) == 1
+    assert rows[0].disclosure.receipt_no == disclosure.receipt_no

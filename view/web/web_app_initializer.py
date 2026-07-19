@@ -176,6 +176,7 @@ class WebAppContext:
         self.dart_disclosure_monitor_task = None
         self.ai_client = None
         self.ai_disclosure_analyzer = None
+        self.ai_stock_analyzer = None
         self.initialized = False
         self.pm: PerformanceProfiler = None
 

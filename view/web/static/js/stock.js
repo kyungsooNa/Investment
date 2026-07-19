@@ -304,11 +304,32 @@ async function searchStock(codeOverride, exchangeOverride) {
                      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
                      font-size: 0.9rem;
                  }
-                 .rs-rating-box .val {
-                     color: var(--text-primary, #333);
-                     margin-left: 6px;
-                     font-size: 1.2rem;
-                 }
+                  .rs-rating-box .val {
+                      color: var(--text-primary, #333);
+                      margin-left: 6px;
+                      font-size: 1.2rem;
+                  }
+                  .ai-stock-analysis-panel {
+                      grid-column: 1 / -1;
+                      border: 1px solid color-mix(in srgb, var(--accent, #4a90e2) 45%, transparent);
+                      border-radius: 10px;
+                      padding: 1rem;
+                      background: color-mix(in srgb, var(--accent, #4a90e2) 7%, var(--background-light, #fff));
+                  }
+                  .ai-stock-analysis-head {
+                      display: flex; align-items: center; justify-content: space-between;
+                      gap: 0.75rem; flex-wrap: wrap;
+                  }
+                  .ai-stock-analysis-head h4 { margin: 0; border: 0; padding: 0; }
+                  .ai-stock-analysis-note, .ai-stock-analysis-meta {
+                      color: var(--text-secondary, #777); font-size: 0.82rem; margin: 0.5rem 0 0;
+                  }
+                  .ai-stock-analysis-output {
+                      display: none; white-space: pre-wrap; line-height: 1.65;
+                      margin-top: 0.85rem; padding-top: 0.85rem;
+                      border-top: 1px solid var(--border-color, #ddd);
+                  }
+                  .ai-stock-analysis-output.error { color: #dc3545; }
             </style>
         `;
 
@@ -389,6 +410,16 @@ async function searchStock(codeOverride, exchangeOverride) {
                         <p><strong>단기 과열:</strong> <span id="detail-short">${data.short_over_yn || loading}</span></p>
                         <p><strong>정리 매매:</strong> <span id="detail-sltr">${data.sltr_yn || loading}</span></p>
                     </div>
+                    <div class="ai-stock-analysis-panel">
+                        <div class="ai-stock-analysis-head">
+                            <h4>🤖 AI 종합 분석</h4>
+                            <button id="ai-stock-analysis-btn" class="btn" onclick="requestAiStockAnalysis('${data.code}')">분석 요청</button>
+                        </div>
+                        <p class="ai-stock-analysis-note">버튼을 누를 때만 AI를 호출합니다. 결과는 투자 판단의 참고 자료이며 투자 권유가 아닙니다.</p>
+                        <p id="ai-stock-analysis-status" class="ai-stock-analysis-meta" aria-live="polite"></p>
+                        <p id="ai-stock-analysis-sources" class="ai-stock-analysis-meta"></p>
+                        <div id="ai-stock-analysis-output" class="ai-stock-analysis-output"></div>
+                    </div>
                 </div>
             </div>
         `;
@@ -425,6 +456,70 @@ async function searchStock(codeOverride, exchangeOverride) {
             resultDiv.innerHTML = `<p class="error">오류 발생: ${e.message}</p>`;
         }
         if(chartCard) chartCard.style.display = 'none';
+    }
+}
+
+async function requestAiStockAnalysis(code) {
+    const targetCode = String(code || _currentStockCode || '').trim();
+    const button = document.getElementById('ai-stock-analysis-btn');
+    const status = document.getElementById('ai-stock-analysis-status');
+    const sources = document.getElementById('ai-stock-analysis-sources');
+    const output = document.getElementById('ai-stock-analysis-output');
+    if (!targetCode || !button || !status || !sources || !output || button.disabled) return;
+
+    button.disabled = true;
+    button.textContent = '분석 중...';
+    status.textContent = '현재가·재무·추세·수급·공시 데이터를 모아 분석하고 있습니다.';
+    sources.textContent = '';
+    output.textContent = '';
+    output.classList.remove('error');
+    output.style.display = 'none';
+
+    try {
+        const response = await fetchWithTimeout(
+            `/api/stock/${encodeURIComponent(targetCode)}/ai-analysis`,
+            { method: 'POST' },
+            45000,
+        );
+        let json = {};
+        try {
+            json = await response.json();
+        } catch (parseError) {
+            console.error('[stock-ai] 응답 파싱 실패:', parseError);
+        }
+        if (!response.ok || json.rt_cd !== '0' || !json.data?.analysis) {
+            throw new Error(json.detail || json.msg1 || `AI 분석 요청 실패 (HTTP ${response.status})`);
+        }
+        if (_currentStockCode && _currentStockCode !== targetCode) return;
+
+        const labels = {
+            current: '현재가·밸류',
+            financial: '재무비율',
+            stage: 'Minervini Stage',
+            rs_rating: 'RS Rating',
+            investor_flow: '투자자 수급',
+            disclosures: '최근 공시',
+        };
+        const usedSources = Object.entries(json.data.sources || {})
+            .filter(([, available]) => available)
+            .map(([key]) => labels[key] || key);
+        status.textContent = json.data.generated_at
+            ? `생성 시각: ${json.data.generated_at}`
+            : '분석 완료';
+        sources.textContent = usedSources.length
+            ? `사용 데이터: ${usedSources.join(' · ')}`
+            : '사용 가능한 데이터가 제한적입니다.';
+        output.textContent = String(json.data.analysis);
+        output.style.display = 'block';
+    } catch (error) {
+        console.error('[stock-ai] 분석 실패:', error);
+        status.textContent = '';
+        output.textContent = error.message || 'AI 분석 요청에 실패했습니다.';
+        output.classList.add('error');
+        output.style.display = 'block';
+    } finally {
+        button.disabled = false;
+        button.textContent = '다시 분석';
     }
 }
 

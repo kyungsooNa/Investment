@@ -4,6 +4,7 @@
 """
 import asyncio
 import time
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from common.overseas_types import OverseasExchange
@@ -182,6 +183,127 @@ async def get_stock_detail(code: str, exchange: str = Query("KRX")):
         ctx.logger.warning(f"[stock] 상세 정보 조회 타임아웃 ({code}, 12s 초과)")
         return {"rt_cd": "1", "msg1": "API 응답 시간이 초과되었습니다.", "data": None}
     return _serialize_response(resp)
+
+
+@router.post("/stock/{code}/ai-analysis")
+async def get_ai_stock_analysis(code: str):
+    """현재가·재무·추세·수급·공시를 모아 요청 시점에 종목 AI 분석을 생성한다."""
+    ctx = _get_ctx()
+    if not code.isdigit() or len(code) != 6:
+        raise HTTPException(status_code=400, detail="국내 종목코드 6자리를 입력하세요.")
+    analyzer = getattr(ctx, "ai_stock_analyzer", None)
+    if analyzer is None:
+        raise HTTPException(
+            status_code=503,
+            detail="AI 분석이 비활성화되어 있습니다. ai_analysis 설정을 확인하세요.",
+        )
+
+    async def _load_stage():
+        service = getattr(ctx, "minervini_stage_service", None)
+        if service is None:
+            return None
+        stage, reason = await service.get_stage_for_code(code)
+        return {"stage": stage, "reason": reason}
+
+    async def _load_rs_rating():
+        service = getattr(ctx, "rs_rating_service", None)
+        if service is None:
+            return None
+        return await service.get_rating(code)
+
+    async def _load_disclosures():
+        repository = getattr(ctx, "dart_disclosure_repository", None)
+        if repository is None:
+            return []
+        rows = await repository.get_recent_by_stock_code(code, limit=5)
+        return [
+            {
+                "report_name": row.disclosure.report_name,
+                "receipt_date": row.disclosure.receipt_date,
+                "importance_level": row.importance.level,
+                "importance_score": row.importance.score,
+                "reasons": row.importance.reasons,
+                "viewer_url": row.disclosure.viewer_url,
+            }
+            for row in rows
+        ]
+
+    results = await asyncio.gather(
+        ctx.stock_query_service.handle_get_current_stock_price(
+            code,
+            caller="stock.py - get_ai_stock_analysis",
+            exchange=Exchange.KRX,
+            force_fresh=True,
+        ),
+        ctx.stock_query_service.get_financial_ratio(code),
+        _load_stage(),
+        _load_rs_rating(),
+        ctx.stock_query_service.get_investor_trade_daily_multi(code, days=5),
+        _load_disclosures(),
+        return_exceptions=True,
+    )
+
+    def _data_or_none(value):
+        if isinstance(value, Exception):
+            ctx.logger.warning(
+                f"[stock-ai] {code} 컨텍스트 일부 조회 실패: "
+                f"{type(value).__name__}: {value}"
+            )
+            return None
+        if isinstance(value, (dict, list)) or value is None:
+            return value
+        serialized = _serialize_response(value)
+        if serialized.get("rt_cd") != "0":
+            return None
+        return serialized.get("data")
+
+    current, financial, stage, rs_rating, investor_flow, disclosures = (
+        _data_or_none(value) for value in results
+    )
+    context = {
+        "code": code,
+        "name": ctx.stock_code_repository.get_name_by_code(code) or code,
+        "current": current,
+        "financial": financial,
+        "stage": stage,
+        "rs_rating": rs_rating,
+        "investor_flow": investor_flow,
+        "disclosures": disclosures,
+    }
+    try:
+        analysis = await analyzer.analyze(context)
+    except Exception as exc:
+        ctx.logger.warning(
+            f"[stock-ai] {code} 분석 실패: {type(exc).__name__}: {exc}"
+        )
+        raise HTTPException(
+            status_code=502, detail="AI 분석 요청에 실패했습니다. 잠시 후 다시 시도하세요."
+        ) from exc
+    if not analysis:
+        raise HTTPException(status_code=502, detail="AI 분석 결과가 비어 있습니다.")
+
+    sources = {
+        key: bool(context[key])
+        for key in (
+            "current",
+            "financial",
+            "stage",
+            "rs_rating",
+            "investor_flow",
+            "disclosures",
+        )
+    }
+    return {
+        "rt_cd": "0",
+        "msg1": "성공",
+        "data": {
+            "code": code,
+            "name": context["name"],
+            "analysis": analysis,
+            "sources": sources,
+            "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        },
+    }
 
 
 @router.get("/stock/{code}")

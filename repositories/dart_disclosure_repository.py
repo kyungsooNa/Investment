@@ -130,6 +130,19 @@ class DartDisclosureRepository:
             (int(threshold),),
         )
 
+    async def get_recent_by_stock_code(
+        self, stock_code: str, *, limit: int = 5
+    ) -> list[StoredDisclosure]:
+        return await self._query_stored(
+            """
+            SELECT * FROM disclosures
+            WHERE stock_code = ?
+            ORDER BY receipt_date DESC, rcept_no DESC
+            LIMIT ?
+            """,
+            (str(stock_code), max(1, int(limit))),
+        )
+
     async def mark_immediate_sent(self, receipt_no: str, sent_at: datetime) -> None:
         await self._update_timestamp("immediate_sent_at", [receipt_no], sent_at)
 

@@ -94,6 +94,145 @@ async def test_get_stock_detail_timeout(web_client, mock_web_ctx):
     assert "초과" in json_resp["msg1"]
 
 
+def test_ai_stock_analysis_requires_enabled_ai(web_client, mock_web_ctx):
+    mock_web_ctx.ai_stock_analyzer = None
+
+    response = web_client.post("/api/stock/005930/ai-analysis")
+
+    assert response.status_code == 503
+    assert "AI 분석" in response.json()["detail"]
+
+
+def test_ai_stock_analysis_rejects_invalid_code(web_client, mock_web_ctx):
+    mock_web_ctx.ai_stock_analyzer = MagicMock()
+
+    response = web_client.post("/api/stock/ABC/ai-analysis")
+
+    assert response.status_code == 400
+
+
+def test_ai_stock_analysis_collects_context_and_returns_source_status(
+    web_client, mock_web_ctx
+):
+    from repositories.dart_disclosure_repository import StoredDisclosure
+    from services.dart_disclosure_client import DartDisclosure
+    from services.dart_disclosure_rule_service import DisclosureImportance
+
+    mock_web_ctx.ai_stock_analyzer = MagicMock()
+    mock_web_ctx.ai_stock_analyzer.analyze = AsyncMock(return_value="AI 종합 분석 결과")
+    mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "삼성전자"
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = (
+        ResCommonResponse(
+            rt_cd="0",
+            msg1="성공",
+            data={"price": "70000", "per": "15.2", "pbr": "1.4"},
+        )
+    )
+    mock_web_ctx.stock_query_service.get_financial_ratio.return_value = (
+        ResCommonResponse(
+            rt_cd="0",
+            msg1="성공",
+            data=[{"stac_yymm": "202512", "roe_val": "9.5"}],
+        )
+    )
+    mock_web_ctx.stock_query_service.get_investor_trade_daily_multi.return_value = (
+        ResCommonResponse(
+            rt_cd="0",
+            msg1="성공",
+            data=[{"frgn_ntby_tr_pbmn": "12000"}],
+        )
+    )
+    mock_web_ctx.minervini_stage_service = MagicMock()
+    mock_web_ctx.minervini_stage_service.get_stage_for_code = AsyncMock(
+        return_value=(2, "상승 추세")
+    )
+    mock_web_ctx.rs_rating_service = MagicMock()
+    mock_web_ctx.rs_rating_service.get_rating = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd="0", msg1="성공", data={"rs_rating": 87}
+        )
+    )
+    disclosure = DartDisclosure(
+        corp_class="Y",
+        corp_name="삼성전자",
+        corp_code="00126380",
+        stock_code="005930",
+        report_name="분기보고서",
+        receipt_no="20260715000001",
+        filer_name="삼성전자",
+        receipt_date="20260715",
+    )
+    mock_web_ctx.dart_disclosure_repository = MagicMock()
+    mock_web_ctx.dart_disclosure_repository.get_recent_by_stock_code = AsyncMock(
+        return_value=[
+            StoredDisclosure(
+                disclosure,
+                DisclosureImportance(30, "NORMAL", ["정기보고서"]),
+            )
+        ]
+    )
+
+    response = web_client.post("/api/stock/005930/ai-analysis")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["analysis"] == "AI 종합 분석 결과"
+    assert payload["code"] == "005930"
+    assert all(payload["sources"].values())
+    context = mock_web_ctx.ai_stock_analyzer.analyze.await_args.args[0]
+    assert context["name"] == "삼성전자"
+    assert context["current"]["price"] == "70000"
+    assert context["financial"][0]["roe_val"] == "9.5"
+    assert context["stage"]["stage"] == 2
+    assert context["rs_rating"]["rs_rating"] == 87
+    assert context["investor_flow"][0]["frgn_ntby_tr_pbmn"] == "12000"
+    assert context["disclosures"][0]["report_name"] == "분기보고서"
+
+
+def test_ai_stock_analysis_continues_with_partial_source_failures(
+    web_client, mock_web_ctx
+):
+    mock_web_ctx.ai_stock_analyzer = MagicMock()
+    mock_web_ctx.ai_stock_analyzer.analyze = AsyncMock(
+        return_value="사용 가능한 데이터 기반 분석"
+    )
+    mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "삼성전자"
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = (
+        ResCommonResponse(
+            rt_cd="0",
+            msg1="성공",
+            data={"price": "70000"},
+        )
+    )
+    mock_web_ctx.stock_query_service.get_financial_ratio.side_effect = RuntimeError(
+        "재무 API 실패"
+    )
+    mock_web_ctx.stock_query_service.get_investor_trade_daily_multi.return_value = (
+        ResCommonResponse(rt_cd="1", msg1="수급 조회 실패", data=None)
+    )
+    mock_web_ctx.minervini_stage_service = None
+    mock_web_ctx.rs_rating_service = None
+    mock_web_ctx.dart_disclosure_repository = None
+
+    response = web_client.post("/api/stock/005930/ai-analysis")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["analysis"] == "사용 가능한 데이터 기반 분석"
+    assert payload["sources"] == {
+        "current": True,
+        "financial": False,
+        "stage": False,
+        "rs_rating": False,
+        "investor_flow": False,
+        "disclosures": False,
+    }
+    context = mock_web_ctx.ai_stock_analyzer.analyze.await_args.args[0]
+    assert context["current"]["price"] == "70000"
+    assert context["financial"] is None
+    assert context["investor_flow"] is None
+
+
 @pytest.mark.asyncio
 async def test_get_stock_chart(web_client, mock_web_ctx):
     """GET /api/chart/{code} 엔드포인트 테스트"""
