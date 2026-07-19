@@ -27,6 +27,8 @@ from services.dart_disclosure_client import DartDisclosureClient  # noqa: E402
 from services.dart_disclosure_rule_service import DartDisclosureRuleService  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+_DEFAULT_MODEL = "gemini-2.5-flash"
 
 
 def _load_config() -> dict:
@@ -53,9 +55,9 @@ def _build_analyzer(ai_cfg: dict):
     if not (ai_cfg.get("enabled") and ai_key):
         return None
     ai_client = AiClient(
-        base_url=str(ai_cfg.get("base_url") or ""),
+        base_url=str(ai_cfg.get("base_url") or _DEFAULT_BASE_URL),
         api_key=ai_key,
-        model=str(ai_cfg.get("model") or ""),
+        model=str(ai_cfg.get("model") or _DEFAULT_MODEL),
         timeout_sec=float(ai_cfg.get("timeout_sec", 15)),
     )
     return AiDisclosureAnalyzer(ai_client, max_tokens=int(ai_cfg.get("max_tokens", 256)))
