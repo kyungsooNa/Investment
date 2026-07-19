@@ -32,6 +32,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "StrategyLogReportService", "NotificationQueueTask",
     "AfterMarketReconcileTask", "OpeningPositionReconcileTask",
     "OpeningPositionReconcileService",
+    "AiClient", "AiStockAnalyzer",
     "DartDisclosureClient", "DartDisclosureRepository",
     "DartDisclosureRuleService", "DartDisclosureMonitorTask",
 ]
@@ -172,6 +173,40 @@ def test_service_container_skips_dart_pipeline_without_key(patched_service_conta
 
     assert ctx.dart_disclosure_monitor_task is None
     patched_service_container_deps["DartDisclosureClient"].assert_not_called()
+
+
+def test_service_container_builds_enabled_ai_stock_analyzer(patched_service_container_deps):
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {
+        "ai_analysis": {
+            "enabled": True,
+            "base_url": "https://ai.example/v1",
+            "api_key": "test-key",
+            "model": "test-model",
+            "timeout_sec": 8,
+            "max_tokens": 1536,
+            "disclosure_summary_enabled": False,
+        }
+    }
+
+    ServiceContainer(ctx).run()
+
+    ai_client_cls = patched_service_container_deps["AiClient"]
+    ai_client_cls.assert_called_once_with(
+        base_url="https://ai.example/v1",
+        api_key="test-key",
+        model="test-model",
+        timeout_sec=8.0,
+    )
+    patched_service_container_deps["AiStockAnalyzer"].assert_called_once_with(
+        ai_client_cls.return_value,
+        max_tokens=1536,
+    )
+    assert ctx.ai_stock_analyzer is patched_service_container_deps[
+        "AiStockAnalyzer"
+    ].return_value
 
 
 def test_service_container_creates_query_and_order_services(patched_service_container_deps):

@@ -92,6 +92,53 @@ test("현재가 조회 결과에 KOSPI/KOSDAQ 시장 배지를 표시한다", as
   const badge = window.document.querySelector(".stock-market-badge");
   assert(badge, "시장 구분 배지가 없음");
   assert(badge.textContent === "KOSDAQ", "시장 구분 배지 값이 KOSDAQ이 아님");
+  assert(window.document.getElementById("ai-stock-analysis-btn"), "AI 분석 버튼이 없음");
+  assert(window.document.getElementById("ai-stock-analysis-output"), "AI 분석 결과 영역이 없음");
+});
+
+test("AI 종목 분석은 POST로 요청하고 결과를 텍스트로 안전하게 표시한다", async () => {
+  const window = makeWindow();
+  window.document.getElementById("stock-result").innerHTML = `
+    <button id="ai-stock-analysis-btn"></button>
+    <span id="ai-stock-analysis-status"></span>
+    <div id="ai-stock-analysis-sources"></div>
+    <div id="ai-stock-analysis-output"></div>
+  `;
+  let requested = null;
+  window.fetchWithTimeout = async (url, options, timeout) => {
+    requested = { url, options, timeout };
+    return {
+      ok: true,
+      json: async () => ({
+        rt_cd: "0",
+        data: {
+          analysis: "<img src=x onerror=alert(1)>상승 추세",
+          generated_at: "2026-07-19T12:00:00+09:00",
+          sources: {
+            current: true,
+            financial: true,
+            stage: true,
+            rs_rating: true,
+            investor_flow: false,
+            disclosures: false,
+          },
+        },
+      }),
+    };
+  };
+
+  await window.requestAiStockAnalysis("005930");
+
+  assert(requested.url === "/api/stock/005930/ai-analysis", "AI 분석 URL이 잘못됨");
+  assert(requested.options.method === "POST", "AI 분석이 POST 요청이 아님");
+  assert(requested.timeout === 45000, "AI 분석 타임아웃이 45초가 아님");
+  const output = window.document.getElementById("ai-stock-analysis-output");
+  assert(output.textContent.includes("<img src=x"), "AI 결과가 텍스트로 보존되지 않음");
+  assert(!output.querySelector("img"), "AI 결과가 HTML로 실행됨");
+  assert(
+    window.document.getElementById("ai-stock-analysis-sources").textContent.includes("현재가"),
+    "사용 데이터 출처가 표시되지 않음",
+  );
 });
 
 await run();

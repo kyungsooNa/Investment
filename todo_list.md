@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-19 (AI 공시 요약 코드리뷰 후속 3건 적용 완료)
+최종 업데이트: 2026-07-19 (2차 종목 AI 종합 분석 및 상세 UI 적용 완료)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -45,7 +45,7 @@
 - [ ] 웹 앱을 재시작한 뒤 `data/dart_disclosures.db` 생성과 `dart_disclosure_monitor` 태스크 실행을 확인한다.
 - [ ] 최초 동기화에서 2026-07-15 SK하이닉스 유상증자 공시가 관심종목 요약으로 수신되는지 검증한다.
 
-### X-2. AI 공시 분석 (1차 공시 요약 — 완료 / 2차 종목 분석 — 대기)
+### X-2. AI 분석 (1차 공시 요약 / 2차 종목 분석 — 완료)
 
 - [x] 제공자·모델 확정: **Gemini 2.5 Flash** (무료 티어). provider 차이는 OpenAI 호환 엔드포인트로 흡수 — `ai_analysis` config(`base_url`/`api_key`/`model`)만 바꾸면 Groq·Ollama 전환 가능(코드 불변).
 - [x] 키 발급·보관: `config/config.yaml`의 `ai_analysis.api_key`(git 비추적). 키 형식은 `AIza`(구형)/`AQ.`(신형) 모두 유효.
@@ -53,7 +53,7 @@
 - [x] **1차 구현·검증 완료**: 관심종목 중요 공시(규칙 ≥`immediate_alert_score`)에 제목/메타 기반 AI 요약을 텔레그램 알림에 덧붙임. `services/ai_client.py`(OpenAI 호환)·`services/ai_disclosure_analyzer.py` 신규, `dart_disclosure_monitor_task`/`telegram_notifier`/`service_container` 연동. 진단: `scripts/check_ai_key.py`·`scripts/check_disclosure_ai.py`.
   - 실데이터 검증(20260715 공시)에서 버그 4건 발견·수정: base_url 폴백 누락 / 비ASCII 키 처리 / 콘솔 출력 잘림(UTF-8) / **max_tokens 256→2048**(Gemini 2.5 thinking 토큰이 출력 예산 소비 — 짧으면 요약 잘림).
   - ⚠️ 실전 발동 전제: `dart_disclosure.enabled`(X-1) + 텔레그램 리포터 + 관심종목 1개+ + `ai_analysis.enabled`.
-- [ ] **2차 (종목 자체 AI 분석)**: 검증된 `ctx.ai_client` 재사용. 종목 하나에 [최근 공시 + 재무/시세 + Minervini Stage/RS + 수급]을 컨텍스트로 묶어 AI 종합 분석. 데이터 수집 계층(`StockQueryService`·`MinerviniStageService`·`rs_rating`)은 기존 것 활용, 프롬프트·수집 배선만 추가.
+- [x] **2차 (종목 자체 AI 분석)**: 검증된 `ctx.ai_client`를 재사용해 현재가·재무비율·Minervini Stage·RS Rating·최근 5일 수급·로컬 OpenDART 공시를 병렬 수집하고 AI 종합 분석을 생성한다. 일부 소스 실패 시 남은 데이터로 계속 분석하며 사용 소스를 응답에 노출한다. 종목 상세 UI에서 명시적 버튼을 눌렀을 때만 호출하고, 45초 타임아웃·중복 클릭 방지·안전한 텍스트 렌더링·투자 권유 아님 안내를 적용했다. (`POST /api/stock/{code}/ai-analysis`)
 
 ### X-3. AI 공시 요약 코드리뷰 후속 [완료 — 2026-07-19]
 
