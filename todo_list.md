@@ -72,6 +72,8 @@
 - [x] **1차 구현**: `services/stock_news_collector_service.py`(aiohttp+BeautifulSoup, euc-kr) · `services/ai_news_analyzer.py`(`usage_type="news"`) · `POST /api/stock/{code}/ai-news` · 종목 상세 UI 패널. 기사 본문은 받지 않고 제목·언론사·시각만 AI 입력으로 쓴다. 뉴스 0건이면 AI 미호출(한도 절약). 진단: `scripts/check_news_ai.py`(`--no-ai`로 한도 0건 수집 확인).
   - ⚠️ **네이버 스크래핑 계약 함정 2건** (실측 2026-07-20, 둘 다 예외 없이 "뉴스 없음"으로 조용히 degrade): ① **Referer 헤더 필수** — 없으면 기사 0건(User-Agent는 무관). 기존 `ThemeClassificationCollectorService`는 UA만 설정하므로 그 패턴 복사 시 빈 수집기가 된다. `clusterId=` 파라미터(빈 값)도 필수. ② **`tr.relation_lst` 행 자신도 제외** — 연관기사 블록이 중첩 `<table>`이라 그 행 자신이 중첩 anchor 때문에 `td.title a.tit`에 걸린다. 라이브 데이터에선 제목 dedup이 이 버그를 가려 고정 fixture 테스트로만 잡힌다.
 - [x] **AI 사용량 가시화**: `AiUsageLimiter.get_snapshot()`에 `by_type` 추가 + 미노출 상태였던 스냅샷을 `GET /api/ai/usage`로 노출. `news`는 기존 인터랙티브 풀(daily 100 − disclosure_reserve 20 = 80건)에 편입되며 공시 예약분은 영향 없음.
+- [x] **뉴스 수집 페이지네이션 (2026-07-20)**: 첫 페이지(클러스터 제외 후 ~10건)만 긁던 수집기가 `limit`(라우트 상한 15→30) 도달까지 최대 5페이지를 이어 붙인다. 페이지 간 제목 dedup, 마지막 페이지를 넘겨 같은 기사가 반복되면 중단, 도중 페이지 실패 시 수집분 유지. 뉴스가 몰리는 날(삼성전자 등) 검토 범위가 1~2시간치에서 넓어진다.
+- [x] **AI 종합 분석에 뉴스 반영 (2026-07-20)**: `POST /api/stock/{code}/ai-analysis` 컨텍스트에 최근 뉴스 10건(제목·언론사·시각만, 링크 제외)을 추가하고 `sources.news`로 노출(UI 라벨 '최근 뉴스'). collector 부재·수집 실패 시 기존 소스만으로 계속 진행.
 
 **개선포인트 (미착수 — 우선순위 순)**
 

@@ -1,4 +1,4 @@
-"""현재가·재무·추세·수급·공시 컨텍스트를 이용한 종목 AI 분석."""
+"""현재가·재무·추세·수급·공시·뉴스 컨텍스트를 이용한 종목 AI 분석."""
 from __future__ import annotations
 
 import json

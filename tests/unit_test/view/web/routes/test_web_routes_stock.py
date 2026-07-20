@@ -139,6 +139,7 @@ def test_ai_stock_analysis_returns_429_when_daily_limit_is_reached(
     mock_web_ctx.minervini_stage_service = None
     mock_web_ctx.rs_rating_service = None
     mock_web_ctx.dart_disclosure_repository = None
+    mock_web_ctx.stock_news_collector = None
 
     response = web_client.post("/api/stock/005930/ai-analysis")
 
@@ -207,6 +208,17 @@ def test_ai_stock_analysis_collects_context_and_returns_source_status(
             )
         ]
     )
+    mock_web_ctx.stock_news_collector = MagicMock()
+    mock_web_ctx.stock_news_collector.collect = AsyncMock(
+        return_value=[
+            {
+                "title": "삼성전자, HBM4 공급 계약",
+                "press": "연합뉴스",
+                "published_at": "2026.07.20 09:00",
+                "url": "https://finance.naver.com/item/news_read.naver?article_id=1",
+            }
+        ]
+    )
 
     response = web_client.post("/api/stock/005930/ai-analysis")
 
@@ -223,6 +235,17 @@ def test_ai_stock_analysis_collects_context_and_returns_source_status(
     assert context["rs_rating"]["rs_rating"] == 87
     assert context["investor_flow"][0]["frgn_ntby_tr_pbmn"] == "12000"
     assert context["disclosures"][0]["report_name"] == "분기보고서"
+    # AI 입력에는 원문 링크(url)를 빼고 제목·언론사·시각만 전달한다
+    assert context["news"] == [
+        {
+            "title": "삼성전자, HBM4 공급 계약",
+            "press": "연합뉴스",
+            "published_at": "2026.07.20 09:00",
+        }
+    ]
+    mock_web_ctx.stock_news_collector.collect.assert_awaited_once_with(
+        "005930", limit=10
+    )
 
 
 def test_ai_stock_analysis_continues_with_partial_source_failures(
@@ -249,6 +272,7 @@ def test_ai_stock_analysis_continues_with_partial_source_failures(
     mock_web_ctx.minervini_stage_service = None
     mock_web_ctx.rs_rating_service = None
     mock_web_ctx.dart_disclosure_repository = None
+    mock_web_ctx.stock_news_collector = None
 
     response = web_client.post("/api/stock/005930/ai-analysis")
 
@@ -262,11 +286,13 @@ def test_ai_stock_analysis_continues_with_partial_source_failures(
         "rs_rating": False,
         "investor_flow": False,
         "disclosures": False,
+        "news": False,
     }
     context = mock_web_ctx.ai_stock_analyzer.analyze.await_args.args[0]
     assert context["current"]["price"] == "70000"
     assert context["financial"] is None
     assert context["investor_flow"] is None
+    assert context["news"] == []
 
 
 @pytest.mark.asyncio

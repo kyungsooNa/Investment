@@ -490,7 +490,7 @@ async function requestAiStockAnalysis(code) {
 
     button.disabled = true;
     button.textContent = '분석 중...';
-    status.textContent = '현재가·재무·추세·수급·공시 데이터를 모아 분석하고 있습니다.';
+    status.textContent = '현재가·재무·추세·수급·공시·뉴스 데이터를 모아 분석하고 있습니다.';
     sources.textContent = '';
     output.textContent = '';
     output.classList.remove('error');
@@ -520,6 +520,7 @@ async function requestAiStockAnalysis(code) {
             rs_rating: 'RS Rating',
             investor_flow: '투자자 수급',
             disclosures: '최근 공시',
+            news: '최근 뉴스',
         };
         const usedSources = Object.entries(json.data.sources || {})
             .filter(([, available]) => available)

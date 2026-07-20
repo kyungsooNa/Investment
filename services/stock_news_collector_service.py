@@ -16,8 +16,10 @@ import aiohttp
 from bs4 import BeautifulSoup
 
 _BASE = "https://finance.naver.com"
-_LIST_URL = _BASE + "/item/news_news.naver?code={code}&page=&clusterId="
+_LIST_URL = _BASE + "/item/news_news.naver?code={code}&page={page}&clusterId="
 _REFERER_URL = _BASE + "/item/news.naver?code={code}"
+# 폭주 방지 상한. 정상 종료 조건은 limit 도달 또는 새 기사 없음(마지막 페이지 반복).
+_MAX_PAGES = 5
 
 _RE_CODE = re.compile(r"^\d{6}$")
 
@@ -34,25 +36,50 @@ class StockNewsCollectorService:
         self._timeout_sec = timeout_sec
 
     async def collect(self, code: str, *, limit: int = 15) -> List[Dict[str, str]]:
-        """종목코드의 최신 뉴스를 최대 limit 건 반환한다. 실패 시 빈 목록."""
+        """종목코드의 최신 뉴스를 최대 limit 건 반환한다.
+
+        페이지당 기사 수가 적어(클러스터 제외 후 ~10건) limit 에 못 미치면
+        다음 페이지를 이어서 수집한다. 마지막 페이지를 넘기면 네이버가 같은
+        기사를 반복하므로 새 기사가 없으면 중단하고, 도중 실패 시 수집분은
+        유지한다.
+        """
         code = str(code or "").strip()
         if not _RE_CODE.match(code):
             return []
 
-        url = _LIST_URL.format(code=code)
         headers = {"Referer": _REFERER_URL.format(code=code)}
-        try:
-            html = await self._fetch_html(url, headers)
-        except Exception as e:
-            self._logger.warning(
-                {"event": "stock_news_fetch_failed", "code": code, "error": str(e)}
-            )
-            return []
+        out: List[Dict[str, str]] = []
+        seen = set()
+        fetch_failed = False
+        for page in range(1, _MAX_PAGES + 1):
+            url = _LIST_URL.format(code=code, page=page)
+            try:
+                html = await self._fetch_html(url, headers)
+            except Exception as e:
+                fetch_failed = True
+                self._logger.warning(
+                    {
+                        "event": "stock_news_fetch_failed",
+                        "code": code,
+                        "page": page,
+                        "error": str(e),
+                    }
+                )
+                break
 
-        rows = self._parse_news_list(html)
-        if not rows:
+            new_rows = [
+                row for row in self._parse_news_list(html) if row["title"] not in seen
+            ]
+            if not new_rows:
+                break
+            seen.update(row["title"] for row in new_rows)
+            out.extend(new_rows)
+            if limit and limit > 0 and len(out) >= limit:
+                break
+
+        if not out and not fetch_failed:
             self._logger.info({"event": "stock_news_empty", "code": code})
-        return rows[:limit] if limit and limit > 0 else rows
+        return out[:limit] if limit and limit > 0 else out
 
     async def _fetch_html(self, url: str, headers: Dict[str, str]) -> str:
         async with aiohttp.ClientSession() as session:

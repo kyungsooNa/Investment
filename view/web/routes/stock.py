@@ -188,7 +188,7 @@ async def get_stock_detail(code: str, exchange: str = Query("KRX")):
 
 @router.post("/stock/{code}/ai-analysis")
 async def get_ai_stock_analysis(code: str):
-    """현재가·재무·추세·수급·공시를 모아 요청 시점에 종목 AI 분석을 생성한다."""
+    """현재가·재무·추세·수급·공시·뉴스를 모아 요청 시점에 종목 AI 분석을 생성한다."""
     ctx = _get_ctx()
     if not code.isdigit() or len(code) != 6:
         raise HTTPException(status_code=400, detail="국내 종목코드 6자리를 입력하세요.")
@@ -229,6 +229,21 @@ async def get_ai_stock_analysis(code: str):
             for row in rows
         ]
 
+    async def _load_news():
+        collector = getattr(ctx, "stock_news_collector", None)
+        if collector is None:
+            return []
+        articles = await collector.collect(code, limit=10)
+        # AI 입력에는 원문 링크가 불필요하므로 제목·언론사·시각만 전달한다.
+        return [
+            {
+                "title": item.get("title", ""),
+                "press": item.get("press", ""),
+                "published_at": item.get("published_at", ""),
+            }
+            for item in articles
+        ]
+
     results = await asyncio.gather(
         ctx.stock_query_service.handle_get_current_stock_price(
             code,
@@ -241,6 +256,7 @@ async def get_ai_stock_analysis(code: str):
         _load_rs_rating(),
         ctx.stock_query_service.get_investor_trade_daily_multi(code, days=5),
         _load_disclosures(),
+        _load_news(),
         return_exceptions=True,
     )
 
@@ -258,7 +274,7 @@ async def get_ai_stock_analysis(code: str):
             return None
         return serialized.get("data")
 
-    current, financial, stage, rs_rating, investor_flow, disclosures = (
+    current, financial, stage, rs_rating, investor_flow, disclosures, news = (
         _data_or_none(value) for value in results
     )
     context = {
@@ -270,6 +286,7 @@ async def get_ai_stock_analysis(code: str):
         "rs_rating": rs_rating,
         "investor_flow": investor_flow,
         "disclosures": disclosures,
+        "news": news,
     }
     try:
         analysis = await analyzer.analyze(context)
@@ -294,6 +311,7 @@ async def get_ai_stock_analysis(code: str):
             "rs_rating",
             "investor_flow",
             "disclosures",
+            "news",
         )
     }
     return {
@@ -309,7 +327,8 @@ async def get_ai_stock_analysis(code: str):
     }
 
 
-_NEWS_LIMIT = 15
+# 수집기가 여러 페이지를 이어 붙이므로 첫 페이지(~10건)보다 넓게 잡는다.
+_NEWS_LIMIT = 30
 
 
 @router.post("/stock/{code}/ai-news")

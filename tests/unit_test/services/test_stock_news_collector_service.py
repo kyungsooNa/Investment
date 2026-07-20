@@ -169,3 +169,73 @@ async def test_collect_rejects_invalid_code_without_network_call():
         assert await service.collect("") == []
 
     fetch.assert_not_awaited()
+
+
+def _page_html(*titles):
+    """지정한 제목들로 구성된 종목뉴스 1페이지 HTML을 만든다."""
+    rows = "".join(
+        f'<tr><td class="title">'
+        f'<a href="/item/news_read.naver?article_id={i}&amp;code=005930" class="tit" target=_top>{title}</a>'
+        f'</td><td class="info">언론사</td><td class="date"> 2026.07.20 0{i}:00</td></tr>'
+        for i, title in enumerate(titles)
+    )
+    return f'<table class="type5"><caption>종목뉴스</caption><tbody>{rows}</tbody></table>'
+
+
+async def test_collect_paginates_and_dedupes_across_pages():
+    """1페이지가 limit 에 못 미치면 다음 페이지를 이어서 수집하고, 페이지 경계 중복 제목은 제거한다."""
+    page1 = _page_html("기사 A", "기사 B")
+    page2 = _page_html("기사 B", "기사 C")
+    service = StockNewsCollectorService()
+    with patch.object(
+        StockNewsCollectorService,
+        "_fetch_html",
+        new=AsyncMock(side_effect=[page1, page2]),
+    ) as fetch:
+        rows = await service.collect("005930", limit=3)
+
+    assert [r["title"] for r in rows] == ["기사 A", "기사 B", "기사 C"]
+    urls = [call.args[0] for call in fetch.await_args_list]
+    assert "page=1" in urls[0]
+    assert "page=2" in urls[1]
+
+
+async def test_collect_stops_when_next_page_has_no_new_articles():
+    """마지막 페이지를 넘기면 네이버가 같은 기사를 반복하므로 새 기사가 없으면 중단한다."""
+    page = _page_html("기사 A", "기사 B")
+    service = StockNewsCollectorService()
+    with patch.object(
+        StockNewsCollectorService, "_fetch_html", new=AsyncMock(return_value=page)
+    ) as fetch:
+        rows = await service.collect("005930", limit=30)
+
+    assert len(rows) == 2
+    assert fetch.await_count == 2
+
+
+async def test_collect_keeps_collected_rows_when_later_page_fails():
+    """도중 페이지 실패 시 이미 수집한 기사는 유지한다."""
+    logger = MagicMock()
+    service = StockNewsCollectorService(logger=logger)
+    with patch.object(
+        StockNewsCollectorService,
+        "_fetch_html",
+        new=AsyncMock(side_effect=[_page_html("기사 A", "기사 B"), RuntimeError("HTTP 503")]),
+    ):
+        rows = await service.collect("005930", limit=30)
+
+    assert [r["title"] for r in rows] == ["기사 A", "기사 B"]
+    logger.warning.assert_called_once()
+
+
+async def test_collect_respects_page_cap():
+    """limit 이 커도 페이지 조회는 상한(5페이지)을 넘지 않는다."""
+    pages = [_page_html(f"기사 {i}A", f"기사 {i}B") for i in range(1, 8)]
+    service = StockNewsCollectorService()
+    with patch.object(
+        StockNewsCollectorService, "_fetch_html", new=AsyncMock(side_effect=pages)
+    ) as fetch:
+        rows = await service.collect("005930", limit=100)
+
+    assert fetch.await_count == 5
+    assert len(rows) == 10
