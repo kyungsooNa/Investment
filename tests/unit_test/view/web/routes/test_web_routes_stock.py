@@ -246,6 +246,36 @@ def test_ai_stock_analysis_collects_context_and_returns_source_status(
     mock_web_ctx.stock_news_collector.collect.assert_awaited_once_with(
         "005930", limit=10
     )
+    # 신호 줄이 없는 응답이면 signal 은 None 으로 내려간다
+    assert payload["signal"] is None
+
+
+def test_ai_stock_analysis_extracts_signal_from_first_line(web_client, mock_web_ctx):
+    mock_web_ctx.ai_stock_analyzer = MagicMock()
+    mock_web_ctx.ai_stock_analyzer.analyze = AsyncMock(
+        return_value="신호: 상\n한줄 요약: 데이터가 우호적입니다."
+    )
+    mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "삼성전자"
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = (
+        ResCommonResponse(rt_cd="0", msg1="성공", data={"price": "70000"})
+    )
+    mock_web_ctx.stock_query_service.get_financial_ratio.return_value = (
+        ResCommonResponse(rt_cd="1", msg1="없음", data=None)
+    )
+    mock_web_ctx.stock_query_service.get_investor_trade_daily_multi.return_value = (
+        ResCommonResponse(rt_cd="1", msg1="없음", data=None)
+    )
+    mock_web_ctx.minervini_stage_service = None
+    mock_web_ctx.rs_rating_service = None
+    mock_web_ctx.dart_disclosure_repository = None
+    mock_web_ctx.stock_news_collector = None
+
+    response = web_client.post("/api/stock/005930/ai-analysis")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["signal"] == "상"
+    assert payload["analysis"] == "한줄 요약: 데이터가 우호적입니다."
 
 
 def test_ai_stock_analysis_continues_with_partial_source_failures(
@@ -836,6 +866,19 @@ def test_ai_news_review_returns_analysis_and_article_list(web_client, mock_web_c
     context = mock_web_ctx.ai_news_analyzer.analyze.await_args.args[0]
     assert context["code"] == "005930"
     assert context["news"] == _SAMPLE_NEWS
+    # 신호 줄이 없는 응답이면 signal 은 None 으로 내려간다
+    assert payload["signal"] is None
+
+
+def test_ai_news_review_extracts_signal_from_first_line(web_client, mock_web_ctx):
+    _setup_news_ctx(mock_web_ctx, analysis="신호: 하\n한줄 요약: 악재가 우세합니다.")
+
+    response = web_client.post("/api/stock/005930/ai-news")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["signal"] == "하"
+    assert payload["analysis"] == "한줄 요약: 악재가 우세합니다."
 
 
 def test_ai_news_review_skips_ai_call_when_no_news(web_client, mock_web_ctx):

@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from common.overseas_types import OverseasExchange
 from common.types import Exchange
+from services.ai_signal import extract_signal
 from services.ai_usage_limiter import AiUsageLimitExceeded
 from repositories.streaming_stock_repo import StreamingType
 from services.market_cap_gap_service import MarketCapGapService
@@ -301,6 +302,7 @@ async def get_ai_stock_analysis(code: str):
         ) from exc
     if not analysis:
         raise HTTPException(status_code=502, detail="AI 분석 결과가 비어 있습니다.")
+    signal, analysis = extract_signal(analysis)
 
     sources = {
         key: bool(context[key])
@@ -321,6 +323,7 @@ async def get_ai_stock_analysis(code: str):
             "code": code,
             "name": context["name"],
             "analysis": analysis,
+            "signal": signal,
             "sources": sources,
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         },
@@ -382,6 +385,7 @@ async def get_ai_news_review(code: str):
         ) from exc
     if not analysis:
         raise HTTPException(status_code=502, detail="AI 뉴스 검토 결과가 비어 있습니다.")
+    signal, analysis = extract_signal(analysis)
 
     return {
         "rt_cd": "0",
@@ -390,6 +394,7 @@ async def get_ai_news_review(code: str):
             "code": code,
             "name": name,
             "analysis": analysis,
+            "signal": signal,
             "news": news,
             "news_count": len(news),
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),

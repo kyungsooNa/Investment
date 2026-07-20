@@ -321,6 +321,14 @@ async function searchStock(codeOverride, exchangeOverride) {
                       gap: 0.75rem; flex-wrap: wrap;
                   }
                   .ai-stock-analysis-head h4 { margin: 0; border: 0; padding: 0; }
+                  .ai-signal {
+                      display: none; font-size: 0.78rem; font-weight: bold;
+                      padding: 0.1rem 0.5rem; border-radius: 999px;
+                      margin-left: 0.45rem; vertical-align: middle;
+                  }
+                  .ai-signal.high { color: #1e7e34; background: color-mix(in srgb, #28a745 16%, transparent); }
+                  .ai-signal.mid { color: #9a7b0a; background: color-mix(in srgb, #ffc107 22%, transparent); }
+                  .ai-signal.low { color: #dc3545; background: color-mix(in srgb, #dc3545 13%, transparent); }
                   .ai-stock-analysis-note, .ai-stock-analysis-meta {
                       color: var(--text-secondary, #777); font-size: 0.82rem; margin: 0.5rem 0 0;
                   }
@@ -423,7 +431,7 @@ async function searchStock(codeOverride, exchangeOverride) {
                     </div>
                     <div class="ai-stock-analysis-panel">
                         <div class="ai-stock-analysis-head">
-                            <h4>🤖 AI 종합 분석</h4>
+                            <h4>🤖 AI 종합 분석 <span id="ai-stock-analysis-signal" class="ai-signal"></span></h4>
                             <button id="ai-stock-analysis-btn" class="btn" onclick="requestAiStockAnalysis('${data.code}')">분석 요청</button>
                         </div>
                         <p class="ai-stock-analysis-note">버튼을 누를 때만 AI를 호출합니다. 결과는 투자 판단의 참고 자료이며 투자 권유가 아닙니다.</p>
@@ -433,7 +441,7 @@ async function searchStock(codeOverride, exchangeOverride) {
                     </div>
                     <div class="ai-stock-analysis-panel">
                         <div class="ai-stock-analysis-head">
-                            <h4>📰 AI 뉴스 검토</h4>
+                            <h4>📰 AI 뉴스 검토 <span id="ai-news-signal" class="ai-signal"></span></h4>
                             <button id="ai-news-btn" class="btn" onclick="requestAiNewsReview('${data.code}')">뉴스 검토</button>
                         </div>
                         <p class="ai-stock-analysis-note">최근 뉴스 제목을 모아 요약합니다. 기사 본문은 읽지 않으므로 원문 확인이 필요합니다.</p>
@@ -480,6 +488,23 @@ async function searchStock(codeOverride, exchangeOverride) {
     }
 }
 
+// AI가 첫 줄에 판정한 신호(상/중/하)를 신호등 배지로 표시한다. 값이 없으면 숨긴다.
+function renderAiSignal(elementId, signal) {
+    const badge = document.getElementById(elementId);
+    if (!badge) return;
+    const kinds = { '상': ['high', '🟢 상'], '중': ['mid', '🟡 중'], '하': ['low', '🔴 하'] };
+    badge.classList.remove('high', 'mid', 'low');
+    const kind = kinds[signal];
+    if (!kind) {
+        badge.textContent = '';
+        badge.style.display = 'none';
+        return;
+    }
+    badge.classList.add(kind[0]);
+    badge.textContent = kind[1];
+    badge.style.display = 'inline-block';
+}
+
 async function requestAiStockAnalysis(code) {
     const targetCode = String(code || _currentStockCode || '').trim();
     const button = document.getElementById('ai-stock-analysis-btn');
@@ -492,6 +517,7 @@ async function requestAiStockAnalysis(code) {
     button.textContent = '분석 중...';
     status.textContent = '현재가·재무·추세·수급·공시·뉴스 데이터를 모아 분석하고 있습니다.';
     sources.textContent = '';
+    renderAiSignal('ai-stock-analysis-signal', null);
     output.textContent = '';
     output.classList.remove('error');
     output.style.display = 'none';
@@ -531,6 +557,7 @@ async function requestAiStockAnalysis(code) {
         sources.textContent = usedSources.length
             ? `사용 데이터: ${usedSources.join(' · ')}`
             : '사용 가능한 데이터가 제한적입니다.';
+        renderAiSignal('ai-stock-analysis-signal', json.data.signal);
         output.textContent = String(json.data.analysis);
         output.style.display = 'block';
     } catch (error) {
@@ -556,6 +583,7 @@ async function requestAiNewsReview(code) {
     button.disabled = true;
     button.textContent = '검토 중...';
     status.textContent = '최근 뉴스를 모아 검토하고 있습니다.';
+    renderAiSignal('ai-news-signal', null);
     output.textContent = '';
     output.classList.remove('error');
     output.style.display = 'none';
@@ -604,6 +632,7 @@ async function requestAiNewsReview(code) {
             return;
         }
         status.textContent = `기사 ${data.news_count || articles.length}건 · 생성 시각: ${data.generated_at || ''}`.trim();
+        renderAiSignal('ai-news-signal', data.signal);
         output.textContent = String(data.analysis);
         output.style.display = 'block';
     } catch (error) {
