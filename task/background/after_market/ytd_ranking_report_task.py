@@ -1,5 +1,6 @@
 """주 마지막 거래일 장 마감 후 YTD 상승률 랭킹을 전송한다."""
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Optional
@@ -33,6 +34,7 @@ class YtdRankingReportTask(AfterMarketTask):
         self._telegram_reporter = telegram_reporter
         self._scheduler_store = scheduler_store
         self._last_reported_date: Optional[str] = self._load_last_reported_date()
+        self._send_lock = asyncio.Lock()
         self._progress = {
             "running": False,
             "last_reported_date": self._last_reported_date,
@@ -49,6 +51,11 @@ class YtdRankingReportTask(AfterMarketTask):
 
     def get_progress(self) -> dict:
         return dict(self._progress)
+
+    async def _on_start_hook(self) -> None:
+        """재시작 전에 전송하지 못한 직전 주간 리포트를 비동기로 복구한다."""
+        if self._telegram_reporter is not None:
+            self._tasks.append(asyncio.create_task(self._recover_missed_report()))
 
     def _load_last_reported_date(self) -> Optional[str]:
         if self._scheduler_store is None:
@@ -91,6 +98,45 @@ class YtdRankingReportTask(AfterMarketTask):
             return False
         return self._week_key(next_open) != self._week_key(date_str)
 
+    async def _send_report(self, rows: list[dict], report_date: str) -> bool:
+        async with self._send_lock:
+            if self._already_reported_this_week(report_date):
+                return False
+
+            sent = await self._telegram_reporter.send_ytd_ranking_report(rows, report_date)
+            if not sent:
+                self._logger.warning("YTD 주간 리포트: Telegram 전송 실패 — 완료 처리하지 않음")
+                return False
+
+            self._last_reported_date = report_date
+            self._save_last_reported_date(report_date)
+            self._progress["last_reported_date"] = report_date
+            self._progress["last_result_count"] = len(rows)
+            return True
+
+    async def _recover_missed_report(self) -> None:
+        """최신 저장 스냅샷이 미전송 주 마지막 거래일이면 리포트를 복구한다."""
+        self._progress["running"] = True
+        try:
+            rows = await self._stock_repository.get_ytd_return_ranking(
+                limit=self.REPORT_LIMIT,
+            )
+            if not rows:
+                return
+
+            report_date = str(rows[0].get("latest_date") or "")
+            if not report_date or self._already_reported_this_week(report_date):
+                return
+            if not await self._is_last_trading_day_of_week(report_date):
+                return
+
+            self._logger.info(f"YTD 주간 리포트 미전송분 복구: {report_date}")
+            await self._send_report(rows, report_date)
+        except Exception as exc:
+            self._logger.error(f"YTD 주간 리포트 미전송분 복구 실패: {exc}", exc_info=True)
+        finally:
+            self._progress["running"] = False
+
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         if self._already_reported_this_week(latest_trading_date):
             self._logger.info(f"YTD 주간 리포트: {latest_trading_date} 주차 이미 전송 완료 — 스킵")
@@ -109,18 +155,7 @@ class YtdRankingReportTask(AfterMarketTask):
                 self._logger.warning("YTD 주간 리포트: 비교 데이터 없음 — 전송 보류")
                 return
 
-            sent = await self._telegram_reporter.send_ytd_ranking_report(
-                rows,
-                latest_trading_date,
-            )
-            if not sent:
-                self._logger.warning("YTD 주간 리포트: Telegram 전송 실패 — 완료 처리하지 않음")
-                return
-
-            self._last_reported_date = latest_trading_date
-            self._save_last_reported_date(latest_trading_date)
-            self._progress["last_reported_date"] = latest_trading_date
-            self._progress["last_result_count"] = len(rows)
+            await self._send_report(rows, latest_trading_date)
         except Exception as exc:
             self._logger.error(f"YTD 주간 리포트 전송 실패: {exc}", exc_info=True)
         finally:

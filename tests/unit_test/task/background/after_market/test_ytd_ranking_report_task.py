@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -104,3 +105,78 @@ async def test_empty_ranking_is_not_sent_or_marked_complete():
 
     reporter.send_ytd_ranking_report.assert_not_awaited()
     assert task.get_progress()["last_reported_date"] is None
+
+
+@pytest.mark.asyncio
+async def test_startup_recovers_unsent_last_trading_day_report():
+    rows = [{
+        "code": "005930",
+        "name": "삼성전자",
+        "current_price": 75000,
+        "base_price": 50000,
+        "base_date": "20260102",
+        "latest_date": "20260716",
+        "ytd_return_rate": 50.0,
+    }]
+    task, repository, reporter = _make_task(next_open="20260720", rows=rows)
+
+    await task._on_start_hook()
+    await asyncio.gather(*task._tasks)
+
+    repository.get_ytd_return_ranking.assert_awaited_once_with(limit=20)
+    reporter.send_ytd_ranking_report.assert_awaited_once_with(rows, "20260716")
+    assert task.get_progress()["last_reported_date"] == "20260716"
+
+
+@pytest.mark.asyncio
+async def test_startup_recovery_skips_current_week_snapshot():
+    rows = [{
+        "code": "005930",
+        "name": "삼성전자",
+        "latest_date": "20260715",
+    }]
+    task, _, reporter = _make_task(next_open="20260716", rows=rows)
+
+    await task._recover_missed_report()
+
+    reporter.send_ytd_ranking_report.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_startup_recovery_skips_already_reported_week():
+    store = _FakeStore()
+    store.save_keyed(YtdRankingReportTask._STATE_KEY, "20260716")
+    rows = [{
+        "code": "005930",
+        "name": "삼성전자",
+        "latest_date": "20260716",
+    }]
+    task, repository, reporter = _make_task(
+        next_open="20260720",
+        rows=rows,
+        store=store,
+    )
+
+    await task._recover_missed_report()
+
+    repository.get_ytd_return_ranking.assert_awaited_once_with(limit=20)
+    reporter.send_ytd_ranking_report.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_startup_recovery_and_close_execution_do_not_send_duplicate():
+    task, _, reporter = _make_task(next_open="20260720")
+    rows = [{"code": "005930", "latest_date": "20260717"}]
+
+    async def delayed_send(*_args):
+        await asyncio.sleep(0)
+        return True
+
+    reporter.send_ytd_ranking_report.side_effect = delayed_send
+
+    await asyncio.gather(
+        task._send_report(rows, "20260717"),
+        task._send_report(rows, "20260717"),
+    )
+
+    reporter.send_ytd_ranking_report.assert_awaited_once()
