@@ -248,12 +248,16 @@ def test_ai_stock_analysis_collects_context_and_returns_source_status(
     )
     # 신호 줄이 없는 응답이면 signal 은 None 으로 내려간다
     assert payload["signal"] is None
+    assert payload["signal_reason"] is None
 
 
 def test_ai_stock_analysis_extracts_signal_from_first_line(web_client, mock_web_ctx):
     mock_web_ctx.ai_stock_analyzer = MagicMock()
     mock_web_ctx.ai_stock_analyzer.analyze = AsyncMock(
-        return_value="신호: 상\n한줄 요약: 데이터가 우호적입니다."
+        return_value=(
+            "신호: 상\n신호 근거: RS 87에 수급 순매수 우세\n"
+            "한줄 요약: 데이터가 우호적입니다."
+        )
     )
     mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "삼성전자"
     mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = (
@@ -275,6 +279,7 @@ def test_ai_stock_analysis_extracts_signal_from_first_line(web_client, mock_web_
     assert response.status_code == 200
     payload = response.json()["data"]
     assert payload["signal"] == "상"
+    assert payload["signal_reason"] == "RS 87에 수급 순매수 우세"
     assert payload["analysis"] == "한줄 요약: 데이터가 우호적입니다."
 
 
@@ -868,16 +873,24 @@ def test_ai_news_review_returns_analysis_and_article_list(web_client, mock_web_c
     assert context["news"] == _SAMPLE_NEWS
     # 신호 줄이 없는 응답이면 signal 은 None 으로 내려간다
     assert payload["signal"] is None
+    assert payload["signal_reason"] is None
 
 
 def test_ai_news_review_extracts_signal_from_first_line(web_client, mock_web_ctx):
-    _setup_news_ctx(mock_web_ctx, analysis="신호: 하\n한줄 요약: 악재가 우세합니다.")
+    _setup_news_ctx(
+        mock_web_ctx,
+        analysis=(
+            "신호: 하\n신호 근거: 레버리지 손실 악재 기사가 다수\n"
+            "한줄 요약: 악재가 우세합니다."
+        ),
+    )
 
     response = web_client.post("/api/stock/005930/ai-news")
 
     assert response.status_code == 200
     payload = response.json()["data"]
     assert payload["signal"] == "하"
+    assert payload["signal_reason"] == "레버리지 손실 악재 기사가 다수"
     assert payload["analysis"] == "한줄 요약: 악재가 우세합니다."
 
 
