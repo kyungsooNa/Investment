@@ -19,6 +19,7 @@ def _text_response(text):
     response = MagicMock()
     response.raise_for_status = lambda: None
     response.text = text
+    response.content = text.encode("utf-8")
     return response
 
 
@@ -127,3 +128,54 @@ async def test_fetch_disclosure_text_returns_empty_when_viewer_id_is_missing():
     client = DartDisclosureClient("secret", http_client=http_client)
 
     assert await client.fetch_disclosure_text("20260720800314") == ""
+
+
+async def test_fetch_disclosure_text_decodes_euc_kr_document_as_cp949():
+    http_client = AsyncMock()
+    main = _text_response(
+        'viewDoc("20260720000120", "11480001", "0", "0", "0", "HTML", "");'
+    )
+    viewer = MagicMock()
+    viewer.raise_for_status = lambda: None
+    viewer.content = (
+        '<html><head><meta charset="euc-kr"></head>'
+        "<body>미래에셋증권 주가연계증권 발행</body></html>"
+    ).encode("cp949")
+    viewer.text = viewer.content.decode("latin-1")
+    http_client.get.side_effect = [main, viewer]
+    client = DartDisclosureClient("secret", http_client=http_client)
+
+    text = await client.fetch_disclosure_text("20260720000120")
+
+    assert "미래에셋증권 주가연계증권 발행" in text
+    assert "�" not in text
+
+
+async def test_fetch_disclosure_text_uses_real_viewer_section_parameters():
+    http_client = AsyncMock()
+    main = _text_response(
+        """
+        node1['rcpNo'] = "20260720000120";
+        node1['dcmNo'] = "11482504";
+        node1['eleId'] = "1";
+        node1['offset'] = "787";
+        node1['length'] = "6248";
+        node1['dtd'] = "dart4.xsd";
+        """
+    )
+    viewer = _text_response("<html><body>정상 한글 본문</body></html>")
+    http_client.get.side_effect = [main, viewer]
+    client = DartDisclosureClient("secret", http_client=http_client)
+
+    text = await client.fetch_disclosure_text("20260720000120")
+
+    assert text == "정상 한글 본문"
+    params = http_client.get.await_args_list[1].kwargs["params"]
+    assert params == {
+        "rcpNo": "20260720000120",
+        "dcmNo": "11482504",
+        "eleId": "1",
+        "offset": "787",
+        "length": "6248",
+        "dtd": "dart4.xsd",
+    }

@@ -17,7 +17,9 @@ _SYSTEM_PROMPT = (
     "투자 중요도를 0~100점으로 평가하고 2~3문장으로 요약한다. "
     "90점 이상은 존속·거래·감사 등 치명적 사건, 80점대는 대규모 희석·구조개편, "
     "70점대는 구체적인 실적·수주·신제품·공장·시장진출 계획, 50점대는 중간 영향, "
-    "30점 이하는 정기·안내성 정보다. 반드시 JSON 객체만 반환한다."
+    "30점 이하는 정기·안내성 정보다. 동일한 경제적 사건의 여러 문서를 묶을 수 있게 "
+    "상품종류·회차·금액 등 본문 식별자를 정규화한 event_key를 만든다. 확실한 식별자가 "
+    "없으면 event_key는 빈 문자열로 둔다. 반드시 JSON 객체만 반환한다."
 )
 
 
@@ -25,6 +27,7 @@ _SYSTEM_PROMPT = (
 class AiDisclosureAnalysis:
     summary: str
     importance: DisclosureImportance
+    event_key: str = ""
 
 
 class AiDisclosureAnalyzer:
@@ -78,7 +81,10 @@ class AiDisclosureAnalyzer:
             f"{str(document_text or '')[:16_000]}\n"
             "[공시 원문 끝]\n\n"
             '다음 형식으로 반환: {"summary":"...", "score":75, '
-            '"reasons":["구체적 근거 1","구체적 근거 2"]}'
+            '"reasons":["구체적 근거 1","구체적 근거 2"], '
+            '"event_key":"사건종류|회차·계약상대 등 식별자|금액·기준일"}\n'
+            "event_key는 같은 기업의 동일 경제적 사건 문서에서 완전히 같은 값이어야 "
+            "하며, 문서 제목·접수번호는 넣지 않는다. 동일성을 확신할 수 없으면 \"\"."
         )
 
     @classmethod
@@ -103,7 +109,12 @@ class AiDisclosureAnalyzer:
             level=cls._level(score),
             reasons=reasons,
         )
-        return AiDisclosureAnalysis(summary=summary, importance=importance)
+        event_key = str(payload.get("event_key") or "").strip()[:300]
+        return AiDisclosureAnalysis(
+            summary=summary,
+            importance=importance,
+            event_key=event_key,
+        )
 
     @staticmethod
     def _level(score: int) -> str:

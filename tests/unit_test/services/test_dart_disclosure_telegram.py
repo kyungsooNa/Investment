@@ -6,20 +6,26 @@ from services.dart_disclosure_rule_service import DisclosureImportance
 from services.telegram_notifier import TelegramReporter
 
 
-def _stored(report_name="분기보고서 (2026.03)", score=30):
+def _stored(
+    report_name="분기보고서 (2026.03)",
+    score=30,
+    *,
+    receipt_no="20260714001234",
+    event_key="",
+):
     disclosure = DartDisclosure(
         corp_class="Y",
         corp_name="A&B <전자>",
         corp_code="00126380",
         stock_code="005930",
         report_name=report_name,
-        receipt_no="20260714001234",
+        receipt_no=receipt_no,
         filer_name="A&B",
         receipt_date="20260714",
         remarks="유",
     )
     importance = DisclosureImportance(score, "NORMAL", ["정기보고서"])
-    return StoredDisclosure(disclosure, importance)
+    return StoredDisclosure(disclosure, importance, event_key)
 
 
 async def test_send_disclosure_alert_escapes_html_and_includes_reason_and_link():
@@ -89,3 +95,37 @@ async def test_send_disclosure_digest_formats_multiple_rows():
     assert "관심종목 공시 요약" in full
     assert "분기보고서" in full
     assert "기업설명회" in full
+
+
+async def test_send_disclosure_digest_groups_only_same_non_empty_event_key():
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    rows = [
+        _stored(
+            "일괄신고추가서류(파생결합증권-주가연계증권)",
+            10,
+            receipt_no="20260720000120",
+            event_key="ELS|37980,37981|20000000000",
+        ),
+        _stored(
+            "투자설명서(일괄신고)",
+            10,
+            receipt_no="20260720000134",
+            event_key="ELS|37980,37981|20000000000",
+        ),
+        _stored(
+            "증권신고서(채무증권)",
+            10,
+            receipt_no="20260720000190",
+            event_key="CP|2-1,2-2,2-3|1191161446589",
+        ),
+    ]
+
+    await reporter.send_disclosure_digest(rows, "20260720")
+
+    full = "".join(call.args[0] for call in reporter._send_message.await_args_list)
+    assert "관련 공시 2건" in full
+    assert full.count("<b>A&amp;B &lt;전자&gt; (005930)</b>") == 2
+    assert "원문 1" in full
+    assert "원문 2" in full
+    assert "증권신고서(채무증권)" in full
