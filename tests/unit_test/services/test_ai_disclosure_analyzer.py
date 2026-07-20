@@ -24,38 +24,51 @@ def _importance():
     return DisclosureImportance(85, "HIGH", ["자금조달·주식 희석 관련 공시"])
 
 
-async def test_summarize_returns_ai_text_and_passes_context():
+async def test_analyze_returns_structured_result_and_passes_document_text():
     ai_client = MagicMock()
-    ai_client.complete = AsyncMock(return_value="  전환사채 발행으로 주식 희석 우려가 있습니다.  ")
+    ai_client.complete = AsyncMock(
+        return_value=(
+            '```json\n{"summary":"하이브리드 본더 공장과 미국 법인을 추진합니다.",'
+            '"score":75,"reasons":["신제품 및 생산능력 확대"]}\n```'
+        )
+    )
     analyzer = AiDisclosureAnalyzer(ai_client, logger=MagicMock())
 
-    result = await analyzer.summarize(_disclosure(), _importance())
+    result = await analyzer.analyze(
+        _disclosure(),
+        _importance(),
+        "2027년 상반기 하이브리드 본더 전용 공장 가동 예정",
+    )
 
-    assert result == "전환사채 발행으로 주식 희석 우려가 있습니다."
+    assert result.summary == "하이브리드 본더 공장과 미국 법인을 추진합니다."
+    assert result.importance.score == 75
+    assert result.importance.level == "HIGH"
+    assert result.importance.reasons == ["신제품 및 생산능력 확대"]
     user_prompt = ai_client.complete.await_args.kwargs["user"]
     assert "삼성전자" in user_prompt
     assert "전환사채권발행결정" in user_prompt
     assert "005930" in user_prompt
+    assert "하이브리드 본더 전용 공장" in user_prompt
     assert ai_client.complete.await_args.kwargs["usage_type"] == "disclosure"
 
 
-async def test_summarize_returns_none_when_ai_fails():
+async def test_analyze_returns_none_when_ai_fails():
     ai_client = MagicMock()
     ai_client.complete = AsyncMock(side_effect=AiClientError("NETWORK", "timeout"))
     logger = MagicMock()
     analyzer = AiDisclosureAnalyzer(ai_client, logger=logger)
 
-    result = await analyzer.summarize(_disclosure(), _importance())
+    result = await analyzer.analyze(_disclosure(), _importance(), "공시 본문")
 
     assert result is None
     logger.warning.assert_called_once()
 
 
-async def test_summarize_returns_none_when_ai_returns_blank():
+async def test_analyze_returns_none_when_ai_returns_invalid_json():
     ai_client = MagicMock()
-    ai_client.complete = AsyncMock(return_value="   ")
+    ai_client.complete = AsyncMock(return_value="중요한 공시입니다.")
     analyzer = AiDisclosureAnalyzer(ai_client, logger=MagicMock())
 
-    result = await analyzer.summarize(_disclosure(), _importance())
+    result = await analyzer.analyze(_disclosure(), _importance(), "공시 본문")
 
     assert result is None

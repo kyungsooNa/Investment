@@ -15,6 +15,13 @@ def _response(payload):
     return response
 
 
+def _text_response(text):
+    response = MagicMock()
+    response.raise_for_status = lambda: None
+    response.text = text
+    return response
+
+
 async def test_fetch_disclosures_uses_official_list_contract_and_parses_rows():
     http_client = AsyncMock()
     http_client.get.return_value = _response(
@@ -82,3 +89,41 @@ async def test_api_error_does_not_expose_key():
 
     assert exc_info.value.status == "020"
     assert "super-secret" not in str(exc_info.value)
+
+
+async def test_fetch_disclosure_text_loads_viewer_and_extracts_actual_body():
+    http_client = AsyncMock()
+    http_client.get.side_effect = [
+        _text_response(
+            'viewDoc("20260720800314", "11482555", "0", "0", "0", "HTML", "");'
+        ),
+        _text_response(
+            """
+            <html><body>
+              <table>
+                <tr><th>주요 내용</th></tr>
+                <tr><td>2027년 상반기 하이브리드 본더 전용 공장 가동 예정</td></tr>
+              </table>
+            </body></html>
+            """
+        ),
+    ]
+    client = DartDisclosureClient("secret", http_client=http_client)
+
+    text = await client.fetch_disclosure_text("20260720800314")
+
+    assert "하이브리드 본더 전용 공장" in text
+    assert "<table>" not in text
+    first_call, second_call = http_client.get.await_args_list
+    assert first_call.args[0] == client.MAIN_URL
+    assert first_call.kwargs["params"] == {"rcpNo": "20260720800314"}
+    assert second_call.args[0] == client.VIEWER_URL
+    assert second_call.kwargs["params"]["dcmNo"] == "11482555"
+
+
+async def test_fetch_disclosure_text_returns_empty_when_viewer_id_is_missing():
+    http_client = AsyncMock()
+    http_client.get.return_value = _text_response("<html>문서 생성 중</html>")
+    client = DartDisclosureClient("secret", http_client=http_client)
+
+    assert await client.fetch_disclosure_text("20260720800314") == ""

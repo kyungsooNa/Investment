@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from repositories.dart_disclosure_repository import StoredDisclosure
+from services.ai_disclosure_analyzer import AiDisclosureAnalysis
 from services.dart_disclosure_client import DartDisclosure, DartDisclosurePage
 from services.dart_disclosure_rule_service import DisclosureImportance
 from task.background.always_on.dart_disclosure_monitor_task import DartDisclosureMonitorTask
@@ -35,6 +36,7 @@ def _make_task(items, *, initialized=True, now=None, ai_analyzer=None):
     client.fetch_disclosures = AsyncMock(
         return_value=DartDisclosurePage(items, 1, 100, len(items), 1)
     )
+    client.fetch_disclosure_text = AsyncMock(return_value="공시 실제 본문")
     repo = MagicMock()
     repo.is_initialized = AsyncMock(return_value=initialized)
     repo.mark_initialized = AsyncMock()
@@ -120,13 +122,15 @@ async def test_ai_summary_is_attached_to_immediate_alert_when_analyzer_present()
     disclosure = _disclosure()
     importance = DisclosureImportance(85, "HIGH", ["자금조달·주식 희석 관련 공시"])
     analyzer = MagicMock()
-    analyzer.summarize = AsyncMock(return_value="전환사채 발행 요약")
+    analyzer.analyze = AsyncMock(
+        return_value=AiDisclosureAnalysis("전환사채 발행 요약", importance)
+    )
     deps = _make_task([disclosure], initialized=True, ai_analyzer=analyzer)
     deps.repo.get_pending_immediate.return_value = [StoredDisclosure(disclosure, importance)]
 
     await deps.task._tick()
 
-    analyzer.summarize.assert_awaited_once_with(disclosure, importance)
+    analyzer.analyze.assert_awaited_once_with(disclosure, importance, "공시 실제 본문")
     deps.reporter.send_disclosure_alert.assert_awaited_once_with(
         disclosure, importance, ai_summary="전환사채 발행 요약"
     )
@@ -136,7 +140,7 @@ async def test_ai_analyzer_failure_falls_back_to_rule_only_alert():
     disclosure = _disclosure()
     importance = DisclosureImportance(85, "HIGH", ["중요"])
     analyzer = MagicMock()
-    analyzer.summarize = AsyncMock(return_value=None)  # 폴백 신호
+    analyzer.analyze = AsyncMock(return_value=None)  # 폴백 신호
     deps = _make_task([disclosure], initialized=True, ai_analyzer=analyzer)
     deps.repo.get_pending_immediate.return_value = [StoredDisclosure(disclosure, importance)]
 
@@ -152,7 +156,9 @@ async def test_telegram_retry_reuses_ai_summary_without_second_ai_call():
     disclosure = _disclosure()
     importance = DisclosureImportance(85, "HIGH", ["중요"])
     analyzer = MagicMock()
-    analyzer.summarize = AsyncMock(return_value="재사용할 요약")
+    analyzer.analyze = AsyncMock(
+        return_value=AiDisclosureAnalysis("재사용할 요약", importance)
+    )
     deps = _make_task([disclosure], initialized=True, ai_analyzer=analyzer)
     deps.repo.get_pending_immediate.return_value = [StoredDisclosure(disclosure, importance)]
     deps.reporter.send_disclosure_alert.side_effect = [False, True]
@@ -160,7 +166,7 @@ async def test_telegram_retry_reuses_ai_summary_without_second_ai_call():
     await deps.task._send_pending_immediate(deps.task._market_clock.now)
     await deps.task._send_pending_immediate(deps.task._market_clock.now)
 
-    analyzer.summarize.assert_awaited_once_with(disclosure, importance)
+    analyzer.analyze.assert_awaited_once_with(disclosure, importance, "공시 실제 본문")
     assert deps.reporter.send_disclosure_alert.await_count == 2
     for call in deps.reporter.send_disclosure_alert.await_args_list:
         assert call.kwargs["ai_summary"] == "재사용할 요약"
@@ -170,7 +176,7 @@ async def test_telegram_retry_reuses_rule_fallback_without_second_ai_call():
     disclosure = _disclosure()
     importance = DisclosureImportance(85, "HIGH", ["중요"])
     analyzer = MagicMock()
-    analyzer.summarize = AsyncMock(return_value=None)
+    analyzer.analyze = AsyncMock(return_value=None)
     deps = _make_task([disclosure], initialized=True, ai_analyzer=analyzer)
     deps.repo.get_pending_immediate.return_value = [StoredDisclosure(disclosure, importance)]
     deps.reporter.send_disclosure_alert.side_effect = [False, True]
@@ -178,7 +184,7 @@ async def test_telegram_retry_reuses_rule_fallback_without_second_ai_call():
     await deps.task._send_pending_immediate(deps.task._market_clock.now)
     await deps.task._send_pending_immediate(deps.task._market_clock.now)
 
-    analyzer.summarize.assert_awaited_once_with(disclosure, importance)
+    analyzer.analyze.assert_awaited_once_with(disclosure, importance, "공시 실제 본문")
     assert deps.reporter.send_disclosure_alert.await_count == 2
     for call in deps.reporter.send_disclosure_alert.await_args_list:
         assert call.kwargs["ai_summary"] is None
@@ -241,3 +247,34 @@ def test_sleep_interval_wakes_at_digest_time_during_off_hours():
     deps = _make_task([], now=datetime(2026, 7, 14, 19, 35, 0))
 
     assert deps.task._interval_for(deps.task._market_clock.now) == 300
+
+
+async def test_actual_content_analysis_can_promote_low_title_to_immediate_alert():
+    disclosure = _disclosure(report_name="기업가치제고계획(자율공시)")
+    preliminary = DisclosureImportance(10, "LOW", ["일반 공시"])
+    promoted = DisclosureImportance(75, "HIGH", ["신제품·생산능력·해외진출 계획"])
+    analyzer = MagicMock()
+    analyzer.analyze = AsyncMock(
+        return_value=AiDisclosureAnalysis(
+            "하이브리드 본더 공장과 미국 법인 설립을 추진합니다.",
+            promoted,
+        )
+    )
+    deps = _make_task([disclosure], initialized=True, ai_analyzer=analyzer)
+    deps.rules.evaluate.return_value = preliminary
+    deps.repo.get_pending_immediate.return_value = [
+        StoredDisclosure(disclosure, promoted)
+    ]
+
+    await deps.task._tick()
+
+    deps.client.fetch_disclosure_text.assert_awaited_once_with(disclosure.receipt_no)
+    analyzer.analyze.assert_awaited_once_with(
+        disclosure, preliminary, "공시 실제 본문"
+    )
+    assert deps.repo.save_detected.await_args.args[1] == promoted
+    deps.reporter.send_disclosure_alert.assert_awaited_once_with(
+        disclosure,
+        promoted,
+        ai_summary="하이브리드 본더 공장과 미국 법인 설립을 추진합니다.",
+    )

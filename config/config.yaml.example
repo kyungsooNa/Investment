@@ -165,7 +165,8 @@ dart_disclosure:
   max_pages_per_poll: 5
 
 # AI 분석 (Gemini/Groq/Ollama OpenAI 호환 엔드포인트 공통)
-#   1차: 관심종목 중요 공시를 걸러 요약해 텔레그램 알림에 덧붙임
+#   관심종목 신규 공시의 실제 DART 본문을 읽어 최종 중요도와 요약을 산출
+#   본문/AI 조회 실패 시 제목 규칙 판정으로 자동 폴백
 #   provider 전환은 base_url/api_key/model 만 바꾸면 됨(코드 변경 불필요)
 #   - Gemini : base_url https://generativelanguage.googleapis.com/v1beta/openai , api_key 필수
 #   - Groq   : base_url https://api.groq.com/openai/v1 , api_key 필수
@@ -183,7 +184,7 @@ ai_analysis:
   disclosure_summary_enabled: true
   # Gemini 프로젝트 일일 한도보다 낮게 설정. 0이면 로컬 차단 비활성화.
   daily_request_limit: 100
-  # 일반 종목/랭킹 분석이 사용하지 못하도록 중요 공시 요약에 남겨둘 요청 수.
+  # 일반 종목/랭킹 분석이 사용하지 못하도록 신규 공시 분석에 남겨둘 요청 수.
   disclosure_reserve: 20
 
 # 시총갭 리포트 발송 세션 on/off (기본 둘 다 on)
