@@ -1802,44 +1802,55 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         # Verify calls
         self.assertEqual(self.mock_market_data_service.get_intraday_minutes_by_date.call_count, 2)
 
-    async def test_get_day_intraday_minutes_list_pagination_with_duplicates(self):
-        """페이지네이션 중 중복 데이터(added=0)가 발생해도 min_time_in_batch를 갱신하여 계속 진행하는지 테스트"""
+    async def test_get_day_intraday_minutes_list_stops_when_duplicate_batch_does_not_advance_cursor(self):
+        """동일 응답으로 다음 커서가 진행하지 않으면 반복 호출을 중단한다."""
         self.mock_market_data_service._env.is_paper_trading = False
         self.mock_market_clock.to_hhmmss.side_effect = lambda x: x
-        # dec_minute: 단순히 1분 뺀 문자열 반환 (HHMMSS)
-        def mock_dec_minute(t, m):
-            return f"{int(t)-m:06d}"
-        self.mock_market_clock.dec_minute.side_effect = mock_dec_minute
+        self.mock_market_clock.dec_minute.return_value = "095900"
 
         # Batch 1: 10:00:00
         data1 = [{"stck_bsop_date": "20250101", "stck_cntg_hour": "100000", "price": 100}]
         resp1 = ResCommonResponse(rt_cd="0", msg1="OK", data=data1)
         
-        # Batch 2: 10:00:00 (Duplicate) -> added=0
-        # Fix가 적용되면 min_time=100000 -> cursor=095959 (mock logic) -> continue
+        # Batch 2: 같은 10:00:00만 다시 반환되어 다음 커서도 09:59:00으로 동일하다.
         data2 = [{"stck_bsop_date": "20250101", "stck_cntg_hour": "100000", "price": 100}]
         resp2 = ResCommonResponse(rt_cd="0", msg1="OK", data=data2)
-        
-        # Batch 3: 09:59:00
-        data3 = [{"stck_bsop_date": "20250101", "stck_cntg_hour": "095900", "price": 99}]
-        resp3 = ResCommonResponse(rt_cd="0", msg1="OK", data=data3)
-        
-        # Batch 4: Empty (End)
-        resp4 = ResCommonResponse(rt_cd="0", msg1="OK", data=[])
 
-        self.mock_market_data_service.get_intraday_minutes_by_date.side_effect = [resp1, resp2, resp3, resp4]
+        self.mock_market_data_service.get_intraday_minutes_by_date.side_effect = [resp1, resp2]
         
         result = await self.stockQueryService.get_day_intraday_minutes_list(
             "005930", date_ymd="20250101", start_hhmmss="090000", end_hhmmss="120000"
         )
         
-        # Should have 2 items (10:00:00 and 09:59:00)
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]["stck_cntg_hour"], "095900")
-        self.assertEqual(result[1]["stck_cntg_hour"], "100000")
-        
-        # Verify API calls: 1, 2, 3, 4 -> 4 calls
-        self.assertEqual(self.mock_market_data_service.get_intraday_minutes_by_date.call_count, 4)
+        self.assertEqual(result, data1)
+        self.assertEqual(self.mock_market_data_service.get_intraday_minutes_by_date.call_count, 2)
+
+    async def test_get_day_intraday_minutes_list_ignores_rows_without_trade_time(self):
+        """체결시간 없는 행은 23:59 커서를 만들지 않고 무시한다."""
+        self.mock_market_data_service._env.is_paper_trading = False
+
+        def normalize_hhmmss(value):
+            digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+            return digits[-6:].rjust(6, "0")
+
+        self.mock_market_clock.to_hhmmss.side_effect = normalize_hhmmss
+        self.mock_market_clock.dec_minute.return_value = "235900"
+        resp = ResCommonResponse(
+            rt_cd="0",
+            msg1="OK",
+            data=[{"stck_bsop_date": "20250101", "stck_cntg_hour": ""}],
+        )
+        self.mock_market_data_service.get_intraday_minutes_by_date.return_value = resp
+
+        result = await self.stockQueryService.get_day_intraday_minutes_list(
+            "005930",
+            date_ymd="20250101",
+            start_hhmmss="090000",
+            end_hhmmss="153000",
+        )
+
+        self.assertEqual(result, [])
+        self.mock_market_data_service.get_intraday_minutes_by_date.assert_called_once()
 
     async def test_get_day_intraday_minutes_list_by_date_extended_session(self):
         """get_day_intraday_minutes_list 특정일, 확장 세션 테스트"""
