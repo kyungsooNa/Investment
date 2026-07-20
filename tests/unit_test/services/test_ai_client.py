@@ -303,3 +303,52 @@ async def test_backoff_grows_exponentially_between_attempts(monkeypatch):
         await client.complete(system="s", user="u")
 
     assert slept == [0.5, 1.0]
+
+
+async def test_length_finish_reason_appends_truncation_notice():
+    """thinking 모델이 max_tokens 를 소진해 잘린 응답은 조용히 넘기지 않는다."""
+    http_client = AsyncMock()
+    http_client.post.return_value = _response(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "한줄 요약: 잘린 분석"},
+                    "finish_reason": "length",
+                }
+            ]
+        }
+    )
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="gemini-2.5-flash",
+        http_client=http_client,
+    )
+
+    result = await client.complete(system="s", user="u")
+
+    assert result.startswith("한줄 요약: 잘린 분석")
+    assert "max_tokens" in result  # 잘림 안내가 덧붙는다
+    assert "잘려" in result
+
+
+async def test_stop_finish_reason_returns_content_unchanged():
+    http_client = AsyncMock()
+    http_client.post.return_value = _response(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "정상 분석"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+    )
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="m",
+        http_client=http_client,
+    )
+
+    assert await client.complete(system="s", user="u") == "정상 분석"

@@ -179,8 +179,9 @@ ai_analysis:
   api_key: ""
   model: "gemini-2.5-flash"
   timeout_sec: 15
-  # Gemini 2.5 계열은 thinking 토큰이 max_tokens를 소비하므로 넉넉히 (짧으면 요약이 잘림)
-  max_tokens: 2048
+  # Gemini 2.5 계열은 thinking 토큰이 max_tokens를 소비하므로 넉넉히 (짧으면 요약이 잘림).
+  # 2048은 종합 분석처럼 컨텍스트가 큰 요청에서 본문이 문장 중간에 잘리는 것이 실측됨(2026-07-21).
+  max_tokens: 4096
   disclosure_summary_enabled: true
   # Gemini 프로젝트 일일 한도보다 낮게 설정. 0이면 로컬 차단 비활성화.
   daily_request_limit: 100

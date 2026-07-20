@@ -131,4 +131,12 @@ class AiClient:
         content = message.get("content")
         if not isinstance(content, str) or not content.strip():
             raise AiClientError("EMPTY", "응답 content가 비어 있습니다")
-        return content.strip()
+        text = content.strip()
+        # thinking 모델(Gemini 2.5 등)은 thinking 토큰이 max_tokens 를 소비해
+        # 본문이 문장 중간에서 잘릴 수 있다. 조용히 넘기지 않고 명시한다.
+        if choices[0].get("finish_reason") == "length":
+            text += (
+                "\n\n⚠️ 응답이 max_tokens 한도로 잘려 마지막 부분이 누락되었습니다. "
+                "config.yaml의 ai_analysis.max_tokens 상향이 필요합니다."
+            )
+        return text
