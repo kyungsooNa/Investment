@@ -1358,11 +1358,13 @@ class StockQueryService:
                 break
 
             min_time_in_batch = None
-            added = 0
 
             for row in rows:
+                raw_time = row.get("stck_cntg_hour")
+                if raw_time in (None, ""):
+                    continue
                 d = str(row.get("stck_bsop_date") or ymd)
-                t = self.market_clock.to_hhmmss(row.get("stck_cntg_hour") or "")
+                t = self.market_clock.to_hhmmss(raw_time)
 
                 if (min_time_in_batch is None) or (t < min_time_in_batch):
                     min_time_in_batch = t
@@ -1379,21 +1381,15 @@ class StockQueryService:
                 norm["stck_bsop_date"] = d
                 norm["stck_cntg_hour"] = t
                 collected.append(norm)
-                added += 1
 
-            if added == 0:
-                if min_time_in_batch:
-                    cursor = self.market_clock.dec_minute(min_time_in_batch, 1)
-                    if cursor < start_hhmmss:
-                        break
-                    continue
+            if not min_time_in_batch:
                 break
 
-            if min_time_in_batch:
-                cursor = self.market_clock.dec_minute(min_time_in_batch, 1)
-                if cursor < start_hhmmss:
-                    break
-            else:
+            next_cursor = self.market_clock.dec_minute(min_time_in_batch, 1)
+            if next_cursor >= cursor:
+                break
+            cursor = next_cursor
+            if cursor < start_hhmmss:
                 break
 
         # 최종 정렬(과거→현재)
