@@ -77,6 +77,11 @@
     font-size: 0.85rem;
 }
 
+.strategy-report-item .strategy-report-summary {
+    color: var(--text-primary);
+    white-space: pre-wrap;
+}
+
 .strategy-report-empty,
 .strategy-report-meta {
     padding: 14px;
