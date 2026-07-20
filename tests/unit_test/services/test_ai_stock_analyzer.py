@@ -58,3 +58,16 @@ async def test_analyze_accepts_missing_optional_sources():
 
     assert result == "데이터가 제한적입니다."
     assert "데이터 없음" in ai_client.complete.await_args.kwargs["user"]
+
+
+async def test_system_prompt_requires_first_line_signal():
+    ai_client = MagicMock()
+    ai_client.complete = AsyncMock(return_value="신호: 중\n한줄 요약")
+    analyzer = AiStockAnalyzer(ai_client)
+
+    await analyzer.analyze({"code": "005930", "name": "삼성전자"})
+
+    system = ai_client.complete.await_args.kwargs["system"]
+    assert "첫 줄" in system
+    for expected in ("신호: 상", "신호: 중", "신호: 하"):
+        assert expected in system

@@ -51,6 +51,19 @@ async def test_system_prompt_forbids_recommendation_and_body_guessing():
     assert "제목" in system  # 제목만 제공된다는 사실을 프롬프트가 명시해야 한다
 
 
+async def test_system_prompt_requires_first_line_signal():
+    ai_client = MagicMock()
+    ai_client.complete = AsyncMock(return_value="신호: 하\n한줄 요약")
+    analyzer = AiNewsAnalyzer(ai_client)
+
+    await analyzer.analyze(_context())
+
+    system = ai_client.complete.await_args.kwargs["system"]
+    assert "첫 줄" in system
+    for expected in ("신호: 상", "신호: 중", "신호: 하"):
+        assert expected in system
+
+
 async def test_analyze_handles_empty_news_and_blank_response():
     ai_client = MagicMock()
     ai_client.complete = AsyncMock(return_value="")
