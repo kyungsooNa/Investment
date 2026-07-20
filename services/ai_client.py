@@ -6,9 +6,13 @@ provider 에 비의존한다.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Optional
 
 import httpx
+
+# 업스트림 과부하/속도제한 등 재시도로 회복 가능한 상태 코드
+_RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 
 
 class AiClientError(RuntimeError):
@@ -28,6 +32,8 @@ class AiClient:
         http_client: Optional[httpx.AsyncClient] = None,
         timeout_sec: float = 15.0,
         usage_limiter=None,
+        max_retries: int = 2,
+        retry_backoff_sec: float = 0.5,
     ) -> None:
         self._base_url = str(base_url or "").rstrip("/")
         # 복사 과정에서 붙는 앞뒤 공백·개행 제거 (흔한 오염 원인)
@@ -36,6 +42,8 @@ class AiClient:
         self._http_client = http_client
         self._timeout_sec = float(timeout_sec)
         self._usage_limiter = usage_limiter
+        self._max_retries = max(0, int(max_retries))
+        self._retry_backoff_sec = float(retry_backoff_sec)
 
     async def complete(
         self,
@@ -92,11 +100,27 @@ class AiClient:
             return await self._request(client, url, headers, payload)
 
     async def _request(self, client, url, headers, payload):
-        response = await client.post(
-            url, headers=headers, json=payload, timeout=self._timeout_sec
-        )
-        response.raise_for_status()
-        return response.json()
+        """일시적 업스트림 오류(503 과부하 등)는 지수 백오프로 재시도한다.
+
+        사용량 예약은 호출 전 1회만 하므로 재시도가 일일 할당량을 추가로 쓰지 않는다.
+        """
+        last_exc = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                response = await client.post(
+                    url, headers=headers, json=payload, timeout=self._timeout_sec
+                )
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code not in _RETRYABLE_STATUS:
+                    raise
+                last_exc = exc
+            except httpx.TransportError as exc:
+                last_exc = exc
+            if attempt < self._max_retries:
+                await asyncio.sleep(self._retry_backoff_sec * (2**attempt))
+        raise last_exc
 
     @staticmethod
     def _parse(payload: dict) -> str:

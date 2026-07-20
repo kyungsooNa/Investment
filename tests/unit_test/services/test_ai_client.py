@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from services.ai_client import AiClient, AiClientError
@@ -175,3 +176,130 @@ async def test_usage_limit_block_prevents_http_request():
         await client.complete(system="s", user="u", usage_type="ranking")
 
     http_client.post.assert_not_awaited()
+
+
+def _status_response(status_code):
+    """실제 httpx.Response 로 raise_for_status 동작을 그대로 재현한다."""
+    request = httpx.Request("POST", "https://example.com/v1/chat/completions")
+    return httpx.Response(status_code, request=request, json={"error": "upstream"})
+
+
+async def test_transient_503_is_retried_then_succeeds():
+    http_client = AsyncMock()
+    http_client.post.side_effect = [
+        _status_response(503),
+        _response(_completion("복구된 응답")),
+    ]
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="m",
+        http_client=http_client,
+        retry_backoff_sec=0,
+    )
+
+    result = await client.complete(system="s", user="u")
+
+    assert result == "복구된 응답"
+    assert http_client.post.await_count == 2
+
+
+async def test_transient_network_error_is_retried_then_succeeds():
+    http_client = AsyncMock()
+    http_client.post.side_effect = [
+        httpx.ConnectError("connection reset"),
+        _response(_completion("ok")),
+    ]
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="m",
+        http_client=http_client,
+        retry_backoff_sec=0,
+    )
+
+    assert await client.complete(system="s", user="u") == "ok"
+    assert http_client.post.await_count == 2
+
+
+async def test_client_error_4xx_is_not_retried():
+    http_client = AsyncMock()
+    http_client.post.return_value = _status_response(401)
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="bad",
+        model="m",
+        http_client=http_client,
+        retry_backoff_sec=0,
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.complete(system="s", user="u")
+
+    http_client.post.assert_awaited_once()
+
+
+async def test_retry_exhaustion_raises_last_error():
+    http_client = AsyncMock()
+    http_client.post.return_value = _status_response(503)
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="m",
+        http_client=http_client,
+        max_retries=2,
+        retry_backoff_sec=0,
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.complete(system="s", user="u")
+
+    assert http_client.post.await_count == 3  # 최초 1회 + 재시도 2회
+
+
+async def test_retry_does_not_consume_extra_usage_quota():
+    http_client = AsyncMock()
+    http_client.post.side_effect = [
+        _status_response(503),
+        _status_response(503),
+        _response(_completion("ok")),
+    ]
+    usage_limiter = MagicMock()
+    usage_limiter.reserve = AsyncMock()
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="m",
+        http_client=http_client,
+        usage_limiter=usage_limiter,
+        retry_backoff_sec=0,
+    )
+
+    await client.complete(system="s", user="u", usage_type="stock")
+
+    usage_limiter.reserve.assert_awaited_once_with("stock")
+    assert http_client.post.await_count == 3
+
+
+async def test_backoff_grows_exponentially_between_attempts(monkeypatch):
+    slept = []
+
+    async def _fake_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", _fake_sleep)
+    http_client = AsyncMock()
+    http_client.post.return_value = _status_response(503)
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="m",
+        http_client=http_client,
+        max_retries=2,
+        retry_backoff_sec=0.5,
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.complete(system="s", user="u")
+
+    assert slept == [0.5, 1.0]
