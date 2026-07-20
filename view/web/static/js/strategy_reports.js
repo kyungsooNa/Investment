@@ -36,6 +36,7 @@ function renderStrategyReportList() {
                 data-report-id="${escapeHtml(report.id)}"
                 onclick="selectStrategyReport(this.dataset.reportId)">
             <strong>${escapeHtml(report.title || '전략 상세 진단')}</strong>
+            ${report.summary ? `<span class="strategy-report-summary">${escapeHtml(report.summary)}</span>` : ''}
             <span>${report.kind === 'telegram' ? '텔레그램' : '전략 상세'} · ${formatReportDate(report.report_date)}</span>
             <span>${formatCreatedAt(report.created_at)}</span>
         </button>

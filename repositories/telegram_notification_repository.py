@@ -82,7 +82,7 @@ class TelegramNotificationRepository:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
-                SELECT id, sent_at, source, title
+                SELECT id, sent_at, source, title, message
                 FROM telegram_notifications
                 ORDER BY sent_at DESC, id DESC
                 LIMIT ?
@@ -113,6 +113,8 @@ class TelegramNotificationRepository:
 
     @staticmethod
     def _report_metadata(row: sqlite3.Row) -> dict:
+        message = str(row["message"] or "")
+        summary = message if len(message) <= 160 else f"{message[:157]}..."
         return {
             "id": f"telegram-{row['id']}",
             "report_date": row["sent_at"][:10].replace("-", ""),
@@ -120,4 +122,5 @@ class TelegramNotificationRepository:
             "kind": "telegram",
             "title": row["title"],
             "source": row["source"],
+            "summary": summary,
         }

@@ -67,6 +67,7 @@ def test_list_reports_and_get_report_for_archive(tmp_path):
         "kind": "telegram",
         "title": "장 마감 랭킹",
         "source": "report",
+        "summary": "상승률 및 수급 랭킹 내용",
     }]
     assert repository.get_report("telegram-1") == {
         **reports[0],
