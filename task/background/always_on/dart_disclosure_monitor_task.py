@@ -8,6 +8,8 @@ from typing import Dict, List, Optional
 
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from repositories.dart_disclosure_repository import StoredDisclosure
+from services.ai_disclosure_analyzer import AiDisclosureAnalysis
+from services.dart_disclosure_rule_service import DisclosureImportance
 
 
 class DartDisclosureMonitorTask(SchedulableTask):
@@ -134,7 +136,21 @@ class DartDisclosureMonitorTask(SchedulableTask):
 
             baseline_items = []
             for disclosure in matching:
-                importance = self._rules.evaluate(disclosure)
+                if await self._repository.has_receipt(disclosure.receipt_no):
+                    continue
+                preliminary = self._rules.evaluate(disclosure)
+                importance = preliminary
+                if initialized:
+                    analysis = await self._analyze_actual_content(
+                        disclosure, preliminary
+                    )
+                    if analysis is not None:
+                        importance = self._merge_importance(
+                            preliminary, analysis.importance
+                        )
+                    self._ai_summary_cache[disclosure.receipt_no] = (
+                        analysis.summary if analysis is not None else None
+                    )
                 inserted = await self._repository.save_detected(
                     disclosure,
                     importance,
@@ -182,9 +198,11 @@ class DartDisclosureMonitorTask(SchedulableTask):
             else:
                 ai_summary = None
                 if self._ai_analyzer is not None:
-                    ai_summary = await self._ai_analyzer.summarize(
+                    analysis = await self._analyze_actual_content(
                         item.disclosure, item.importance
                     )
+                    if analysis is not None:
+                        ai_summary = analysis.summary
                     self._ai_summary_cache[receipt_no] = ai_summary
             sent = await self._reporter.send_disclosure_alert(
                 item.disclosure, item.importance, ai_summary=ai_summary
@@ -197,6 +215,49 @@ class DartDisclosureMonitorTask(SchedulableTask):
                 self._progress["sent_count"] += 1
             else:
                 await self._repository.increment_send_retry(receipt_no)
+
+    async def _analyze_actual_content(
+        self,
+        disclosure,
+        preliminary: DisclosureImportance,
+    ) -> Optional[AiDisclosureAnalysis]:
+        if self._ai_analyzer is None:
+            return None
+        try:
+            document_text = await self._client.fetch_disclosure_text(
+                disclosure.receipt_no
+            )
+        except Exception as exc:
+            self._logger.warning(
+                f"{self.task_name}: 공시 본문 조회 실패 — "
+                f"{disclosure.receipt_no}: {type(exc).__name__}: {exc}"
+            )
+            return None
+        if not document_text:
+            self._logger.warning(
+                f"{self.task_name}: 공시 본문이 비어 제목 규칙으로 폴백 — "
+                f"{disclosure.receipt_no}"
+            )
+            return None
+        return await self._ai_analyzer.analyze(
+            disclosure, preliminary, document_text
+        )
+
+    @staticmethod
+    def _merge_importance(
+        preliminary: DisclosureImportance,
+        analyzed: DisclosureImportance,
+    ) -> DisclosureImportance:
+        if analyzed.score > preliminary.score:
+            return analyzed
+        if analyzed.score < preliminary.score:
+            return preliminary
+        reasons = list(dict.fromkeys([*preliminary.reasons, *analyzed.reasons]))
+        return DisclosureImportance(
+            score=preliminary.score,
+            level=preliminary.level,
+            reasons=reasons,
+        )
 
     async def _send_digest_if_due(self, now: datetime, date: str) -> None:
         if not bool(getattr(self._config, "daily_digest_enabled", True)):
