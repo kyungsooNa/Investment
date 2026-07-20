@@ -29,7 +29,8 @@ async def test_analyze_returns_structured_result_and_passes_document_text():
     ai_client.complete = AsyncMock(
         return_value=(
             '```json\n{"summary":"하이브리드 본더 공장과 미국 법인을 추진합니다.",'
-            '"score":75,"reasons":["신제품 및 생산능력 확대"]}\n```'
+            '"score":75,"reasons":["신제품 및 생산능력 확대"],'
+            '"event_key":"공장투자|하이브리드본더|2027상반기"}\n```'
         )
     )
     analyzer = AiDisclosureAnalyzer(ai_client, logger=MagicMock())
@@ -44,12 +45,14 @@ async def test_analyze_returns_structured_result_and_passes_document_text():
     assert result.importance.score == 75
     assert result.importance.level == "HIGH"
     assert result.importance.reasons == ["신제품 및 생산능력 확대"]
+    assert result.event_key == "공장투자|하이브리드본더|2027상반기"
     user_prompt = ai_client.complete.await_args.kwargs["user"]
     assert "삼성전자" in user_prompt
     assert "전환사채권발행결정" in user_prompt
     assert "005930" in user_prompt
     assert "하이브리드 본더 전용 공장" in user_prompt
     assert ai_client.complete.await_args.kwargs["usage_type"] == "disclosure"
+    assert '"event_key"' in user_prompt
 
 
 async def test_analyze_returns_none_when_ai_fails():

@@ -1,4 +1,5 @@
 from datetime import datetime
+import sqlite3
 
 import pytest
 
@@ -108,3 +109,35 @@ async def test_get_recent_by_stock_code_filters_and_orders(tmp_path, disclosure,
 
     assert len(rows) == 1
     assert rows[0].disclosure.receipt_no == disclosure.receipt_no
+
+
+async def test_event_key_round_trips_and_legacy_schema_is_migrated(
+    tmp_path, disclosure, importance
+):
+    path = tmp_path / "legacy.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE disclosures (
+                rcept_no TEXT PRIMARY KEY, corp_code TEXT NOT NULL,
+                stock_code TEXT NOT NULL, corp_name TEXT NOT NULL,
+                report_name TEXT NOT NULL, filer_name TEXT NOT NULL,
+                receipt_date TEXT NOT NULL, remarks TEXT NOT NULL,
+                importance_score INTEGER NOT NULL, importance_level TEXT NOT NULL,
+                importance_reasons TEXT NOT NULL, detected_at TEXT NOT NULL,
+                alert_suppressed INTEGER NOT NULL DEFAULT 0,
+                immediate_sent_at TEXT, digest_sent_at TEXT,
+                send_retry_count INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
+    repo = DartDisclosureRepository(path)
+    await repo.save_detected(
+        disclosure,
+        importance,
+        event_key="ELS|37980,37981|20000000000",
+    )
+
+    rows = await repo.get_recent_by_stock_code(disclosure.stock_code)
+    assert rows[0].event_key == "ELS|37980,37981|20000000000"

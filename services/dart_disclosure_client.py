@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass
 from typing import List, Optional
 
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
 
 @dataclass(frozen=True)
@@ -101,26 +102,44 @@ class DartDisclosureClient:
                 timeout=self._timeout_sec,
             )
             main_response.raise_for_status()
-            dcm_no = self._extract_dcm_no(main_response.text, receipt_no)
-            if not dcm_no:
+            main_html = self._decode_response_text(main_response)
+            sections = self._extract_viewer_sections(main_html, receipt_no)
+            if not sections:
+                dcm_no = self._extract_dcm_no(main_html, receipt_no)
+                if dcm_no:
+                    sections = [(dcm_no, "0", "0", "0", "HTML")]
+            if not sections:
                 return ""
 
-            viewer_response = await client.get(
-                self.VIEWER_URL,
-                params={
-                    "rcpNo": receipt_no,
-                    "dcmNo": dcm_no,
-                    "eleId": "0",
-                    "offset": "0",
-                    "length": "0",
-                    "dtd": "HTML",
-                },
-                timeout=self._timeout_sec,
-            )
-            viewer_response.raise_for_status()
-            text = BeautifulSoup(viewer_response.text, "html.parser").get_text(
-                "\n", strip=True
-            )
+            extracted_parts = []
+            extracted_length = 0
+            for dcm_no, ele_id, offset, length, dtd in sections:
+                viewer_response = await client.get(
+                    self.VIEWER_URL,
+                    params={
+                        "rcpNo": receipt_no,
+                        "dcmNo": dcm_no,
+                        "eleId": ele_id,
+                        "offset": offset,
+                        "length": length,
+                        "dtd": dtd,
+                    },
+                    timeout=self._timeout_sec,
+                )
+                viewer_response.raise_for_status()
+                viewer_html = self._decode_response_text(viewer_response)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", XMLParsedAsHTMLWarning)
+                    part = BeautifulSoup(viewer_html, "html.parser").get_text(
+                        "\n", strip=True
+                    )
+                if part:
+                    extracted_parts.append(part)
+                    extracted_length += len(part)
+                if extracted_length >= max(1, int(max_chars)):
+                    break
+
+            text = "\n".join(extracted_parts)
             text = re.sub(r"[ \t]+", " ", text)
             text = re.sub(r"\n{2,}", "\n", text).strip()
             return text[: max(1, int(max_chars))]
@@ -154,6 +173,68 @@ class DartDisclosureClient:
         )
         match = re.search(pattern, str(html or ""))
         return match.group(1) if match else ""
+
+    @staticmethod
+    def _extract_viewer_sections(
+        html: str, receipt_no: str
+    ) -> list[tuple[str, str, str, str, str]]:
+        text = str(html or "")
+        escaped_receipt = re.escape(receipt_no)
+        node_pattern = re.compile(
+            r"""node\d+\[['"]rcpNo['"]\]\s*=\s*["']"""
+            + escaped_receipt
+            + r"""["']\s*;.*?"""
+            r"""node\d+\[['"]dcmNo['"]\]\s*=\s*["'](\d+)["']\s*;.*?"""
+            r"""node\d+\[['"]eleId['"]\]\s*=\s*["'](\d+)["']\s*;.*?"""
+            r"""node\d+\[['"]offset['"]\]\s*=\s*["'](\d+)["']\s*;.*?"""
+            r"""node\d+\[['"]length['"]\]\s*=\s*["'](\d+)["']\s*;.*?"""
+            r"""node\d+\[['"]dtd['"]\]\s*=\s*["']([^"']+)["']\s*;""",
+            re.DOTALL,
+        )
+        sections = node_pattern.findall(text)
+        if not sections:
+            call_pattern = re.compile(
+                r"""viewDoc\(\s*["']"""
+                + escaped_receipt
+                + r"""["']\s*,\s*["'](\d+)["']\s*,\s*["'](\d+)["']"""
+                r"""\s*,\s*["'](\d+)["']\s*,\s*["'](\d+)["']"""
+                r"""\s*,\s*["']([^"']+)["']""",
+            )
+            sections = call_pattern.findall(text)
+        return list(dict.fromkeys(sections))
+
+    @staticmethod
+    def _decode_response_text(response) -> str:
+        """DART 구형 문서의 EUC-KR 표기를 Windows CP949로 호환 디코딩한다."""
+        content = getattr(response, "content", None)
+        if not isinstance(content, bytes):
+            return str(getattr(response, "text", "") or "")
+        head = content[:4096].lower()
+        charset_match = re.search(
+            br"""(?:charset|encoding)\s*=\s*["']?\s*([a-z0-9._-]+)""", head
+        )
+        charset = (
+            charset_match.group(1).decode("ascii", errors="ignore")
+            if charset_match
+            else ""
+        )
+        if charset in {"euc-kr", "euckr", "ks_c_5601-1987", "cp949", "uhc"}:
+            return content.decode("cp949", errors="replace")
+        if charset in {"utf-8", "utf8"}:
+            return content.decode("utf-8", errors="replace")
+
+        encoding = str(getattr(response, "encoding", "") or "").lower()
+        if encoding in {"euc-kr", "euckr", "ks_c_5601-1987", "cp949", "uhc"}:
+            encoding = "cp949"
+        if encoding:
+            try:
+                return content.decode(encoding)
+            except (LookupError, UnicodeDecodeError):
+                pass
+        try:
+            return content.decode("utf-8")
+        except UnicodeDecodeError:
+            return content.decode("cp949", errors="replace")
 
     @staticmethod
     def _parse_response(payload: dict) -> DartDisclosurePage:

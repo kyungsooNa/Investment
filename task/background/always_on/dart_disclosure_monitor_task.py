@@ -140,6 +140,7 @@ class DartDisclosureMonitorTask(SchedulableTask):
                     continue
                 preliminary = self._rules.evaluate(disclosure)
                 importance = preliminary
+                event_key = ""
                 if initialized:
                     analysis = await self._analyze_actual_content(
                         disclosure, preliminary
@@ -148,6 +149,7 @@ class DartDisclosureMonitorTask(SchedulableTask):
                         importance = self._merge_importance(
                             preliminary, analysis.importance
                         )
+                        event_key = analysis.event_key
                     self._ai_summary_cache[disclosure.receipt_no] = (
                         analysis.summary if analysis is not None else None
                     )
@@ -155,6 +157,7 @@ class DartDisclosureMonitorTask(SchedulableTask):
                     disclosure,
                     importance,
                     suppress_immediate=not initialized,
+                    event_key=event_key,
                 )
                 if not initialized and inserted:
                     baseline_items.append(StoredDisclosure(disclosure, importance))

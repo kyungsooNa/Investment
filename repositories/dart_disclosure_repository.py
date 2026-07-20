@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS disclosures (
     importance_score INTEGER NOT NULL,
     importance_level TEXT NOT NULL,
     importance_reasons TEXT NOT NULL,
+    event_key TEXT NOT NULL DEFAULT '',
     detected_at TEXT NOT NULL,
     alert_suppressed INTEGER NOT NULL DEFAULT 0,
     immediate_sent_at TEXT,
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS monitor_state (
 class StoredDisclosure:
     disclosure: DartDisclosure
     importance: DisclosureImportance
+    event_key: str = ""
 
 
 class DartDisclosureRepository:
@@ -58,6 +60,12 @@ class DartDisclosureRepository:
     async def _setup(self, conn: aiosqlite.Connection) -> None:
         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute(_DDL_DISCLOSURES)
+        async with conn.execute("PRAGMA table_info(disclosures)") as cur:
+            columns = {str(row[1]) for row in await cur.fetchall()}
+        if "event_key" not in columns:
+            await conn.execute(
+                "ALTER TABLE disclosures ADD COLUMN event_key TEXT NOT NULL DEFAULT ''"
+            )
         await conn.execute(_DDL_STATE)
         await conn.commit()
 
@@ -67,6 +75,7 @@ class DartDisclosureRepository:
         importance: DisclosureImportance,
         *,
         suppress_immediate: bool = False,
+        event_key: str = "",
     ) -> bool:
         detected_at = datetime.now().isoformat()
         async with aiosqlite.connect(self._db_path) as conn:
@@ -76,8 +85,9 @@ class DartDisclosureRepository:
                 INSERT OR IGNORE INTO disclosures(
                     rcept_no, corp_code, stock_code, corp_name, report_name,
                     filer_name, receipt_date, remarks, importance_score,
-                    importance_level, importance_reasons, detected_at, alert_suppressed
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    importance_level, importance_reasons, event_key, detected_at,
+                    alert_suppressed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     disclosure.receipt_no,
@@ -91,6 +101,7 @@ class DartDisclosureRepository:
                     importance.score,
                     importance.level,
                     json.dumps(importance.reasons, ensure_ascii=False),
+                    str(event_key or "")[:300],
                     detected_at,
                     int(suppress_immediate),
                 ),
@@ -228,4 +239,5 @@ class DartDisclosureRepository:
                 level=row["importance_level"],
                 reasons=json.loads(row["importance_reasons"]),
             ),
+            event_key=str(row["event_key"] or ""),
         )

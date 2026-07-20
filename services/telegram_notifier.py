@@ -597,17 +597,52 @@ class TelegramReporter:
         if not stored_items:
             return True
         header = f"📋 <b>관심종목 공시 요약 — {html.escape(str(report_date), quote=False)}</b>\n"
-        parts = []
-        for item in stored_items:
+        grouped = []
+        group_indexes = {}
+        for index, item in enumerate(stored_items):
             disclosure = item.disclosure
-            importance = item.importance
+            event_key = str(getattr(item, "event_key", "") or "").strip()
+            key = (
+                (str(disclosure.stock_code), str(disclosure.receipt_date), event_key)
+                if event_key
+                else ("receipt", str(disclosure.receipt_no), str(index))
+            )
+            if key not in group_indexes:
+                group_indexes[key] = len(grouped)
+                grouped.append([])
+            grouped[group_indexes[key]].append(item)
+
+        parts = []
+        for group in grouped:
+            disclosure = group[0].disclosure
             company = html.escape(str(disclosure.corp_name or disclosure.stock_code), quote=False)
-            report_name = html.escape(str(disclosure.report_name), quote=False)
+            stock_code = html.escape(str(disclosure.stock_code), quote=False)
+            if len(group) == 1:
+                importance = group[0].importance
+                report_name = html.escape(str(disclosure.report_name), quote=False)
+                parts.append(
+                    f"\n<b>{company} ({stock_code})</b>\n"
+                    f"• {report_name}\n"
+                    f"• 중요도: {html.escape(str(importance.level), quote=False)} ({int(importance.score)}점)\n"
+                    f'<a href="{disclosure.viewer_url}">원문</a>\n'
+                )
+                continue
+
+            importance = max(group, key=lambda row: int(row.importance.score)).importance
+            titles = "\n".join(
+                f"  - {html.escape(str(row.disclosure.report_name), quote=False)}"
+                for row in group
+            )
+            links = " · ".join(
+                f'<a href="{row.disclosure.viewer_url}">원문 {number}</a>'
+                for number, row in enumerate(group, 1)
+            )
             parts.append(
-                f"\n<b>{company} ({html.escape(str(disclosure.stock_code), quote=False)})</b>\n"
-                f"• {report_name}\n"
-                f"• 중요도: {html.escape(str(importance.level), quote=False)} ({int(importance.score)}점)\n"
-                f'<a href="{disclosure.viewer_url}">원문</a>\n'
+                f"\n<b>{company} ({stock_code})</b>\n"
+                f"• 관련 공시 {len(group)}건\n{titles}\n"
+                f"• 중요도: {html.escape(str(importance.level), quote=False)} "
+                f"({int(importance.score)}점)\n"
+                f"{links}\n"
             )
 
         messages = []
