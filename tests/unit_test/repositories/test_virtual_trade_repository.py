@@ -103,6 +103,65 @@ def test_log_sell_by_strategy(virutal_trade_repository):
     assert df[df['strategy'] == "S1"].iloc[0]['status'] == "SOLD"
     assert df[df['strategy'] == "S2"].iloc[0]['status'] == "HOLD"
 
+
+def test_log_sell_partial_keeps_remainder_hold(virutal_trade_repository):
+    """부분 매도 시 잔량은 HOLD로 남고 매도분만 별도 SOLD row로 분리된다."""
+    virutal_trade_repository.log_buy("StrategyA", "005930", 10000, qty=10)
+    virutal_trade_repository.log_sell("005930", 11000, qty=4)
+
+    df = virutal_trade_repository._read()
+    holds = df[df["status"] == "HOLD"]
+    solds = df[df["status"] == "SOLD"]
+    assert len(holds) == 1
+    assert holds.iloc[0]["qty"] == 6
+    assert len(solds) == 1
+    assert solds.iloc[0]["qty"] == 4
+    assert solds.iloc[0]["sell_price"] == 11000
+
+
+def test_log_sell_partial_preserves_strategy_on_remainder(virutal_trade_repository):
+    """부분 매도 잔량은 원 전략 귀속을 유지한다 (broker_reconciled 고아화 방지)."""
+    virutal_trade_repository.log_buy("래리윌리엄스VBO", "086790", 133400, qty=14)
+    virutal_trade_repository.log_sell("086790", 131900, qty=7)
+
+    df = virutal_trade_repository._read()
+    remainder = df[df["status"] == "HOLD"].iloc[0]
+    realized = df[df["status"] == "SOLD"].iloc[0]
+    # 잔량이 매도분과 동일한 전략에 그대로 귀속되어야 한다 (미귀속 → broker_reconciled 고아화)
+    assert remainder["strategy"] == realized["strategy"]
+    assert remainder["strategy"] != "broker_reconciled"
+    assert remainder["qty"] == 7
+    assert remainder["buy_price"] == 133400
+
+
+def test_log_sell_without_qty_closes_entire_hold(virutal_trade_repository):
+    """qty 미지정 매도는 보유 전량 청산 (기존 호출부 하위호환)."""
+    virutal_trade_repository.log_buy("StrategyA", "005930", 10000, qty=10)
+    virutal_trade_repository.log_sell("005930", 11000)
+
+    df = virutal_trade_repository._read()
+    assert len(df) == 1
+    assert df.iloc[0]["status"] == "SOLD"
+    assert df.iloc[0]["qty"] == 10
+
+
+def test_log_sell_by_strategy_partial_splits_lot(virutal_trade_repository):
+    """전략 매칭 부분 매도도 lot을 분할하며 다른 전략 보유는 건드리지 않는다."""
+    virutal_trade_repository.log_buy("S1", "005930", 10000, qty=10)
+    virutal_trade_repository.log_buy("S2", "005930", 10000, qty=8)
+    virutal_trade_repository.log_sell_by_strategy("S1", "005930", 12000, qty=6)
+
+    df = virutal_trade_repository._read()
+    s1 = df[df["strategy"] == "S1"]
+    assert set(s1["status"]) == {"HOLD", "SOLD"}
+    assert s1[s1["status"] == "HOLD"].iloc[0]["qty"] == 4
+    assert s1[s1["status"] == "SOLD"].iloc[0]["qty"] == 6
+
+    s2 = df[df["strategy"] == "S2"]
+    assert len(s2) == 1
+    assert s2.iloc[0]["status"] == "HOLD"
+    assert s2.iloc[0]["qty"] == 8
+
 def test_get_all_trades_json_compatibility(virutal_trade_repository):
     """NaN 값이 None으로 변환되어 JSON 직렬화가 가능한지 확인"""
     virutal_trade_repository.log_buy("S1", "005930", 70000)

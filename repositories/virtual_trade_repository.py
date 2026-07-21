@@ -520,83 +520,124 @@ class VirtualTradeRepository:
             market_regime
         )
 
-    def log_sell(self, code: str, current_price, qty: int = 1, reason: str = ""):
-        """가상 매도 — 해당 종목 가장 최근 HOLD 건."""
+    def _settle_hold_sale(self, trade_id: int, held_qty, sold_qty, current_price,
+                          return_rate: float, sell_date: str, reason: str) -> int:
+        """HOLD row 매도 정산. 실제 매도된 수량을 반환한다.
+
+        sold_qty 가 None 이거나 보유 수량 이상이면 전량 청산(기존 동작).
+        보유 수량보다 적으면 부분 매도로 보고 lot 을 분할한다 — 매도분은 신규 SOLD row 로
+        떼어내고 원본 row 는 잔량만 남긴 채 HOLD 를 유지한다. 잔량이 HOLD 로 남아야
+        전략 귀속이 보존되고 다음 청산(강제청산 최종 tier 등)이 대상을 찾을 수 있다.
+        """
+        held = int(held_qty or 0)
+        filled = held if sold_qty is None else int(sold_qty)
+
+        if filled <= 0 or filled >= held:
+            with self._db:
+                self._db.execute(
+                    "UPDATE trades SET sell_date=?, sell_price=?, return_rate=?, status='SOLD', reason=? WHERE id=?",
+                    (sell_date, current_price, round(return_rate, 2), reason, trade_id)
+                )
+            return held if held > 0 else filled
+
+        columns = [r[1] for r in self._db.execute("PRAGMA table_info(trades)").fetchall() if r[1] != "id"]
+        overrides = {
+            "qty": filled,
+            "sell_date": sell_date,
+            "sell_price": current_price,
+            "return_rate": round(return_rate, 2),
+            "status": "SOLD",
+            "reason": reason,
+        }
+        select_terms, params = [], []
+        for col in columns:
+            if col in overrides:
+                select_terms.append("?")
+                params.append(overrides[col])
+            else:
+                select_terms.append(col)
+        params.append(trade_id)
+
+        with self._db:
+            self._db.execute(
+                f"INSERT INTO trades ({', '.join(columns)}) "
+                f"SELECT {', '.join(select_terms)} FROM trades WHERE id=?",
+                params
+            )
+            self._db.execute("UPDATE trades SET qty=? WHERE id=?", (held - filled, trade_id))
+        logger.info(f"[가상매매] 부분 매도 분할: trade_id={trade_id} 매도 {filled}주 / 잔량 {held - filled}주 HOLD 유지")
+        return filled
+
+    def log_sell(self, code: str, current_price, qty: int | None = None, reason: str = ""):
+        """가상 매도 — 해당 종목 가장 최근 HOLD 건.
+
+        qty 미지정(None)이면 보유 전량 청산. 보유 수량보다 적으면 부분 매도로 처리한다.
+        """
         with self._lock:
             row = self._db.execute(
-                "SELECT id, buy_price FROM trades WHERE code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
+                "SELECT id, buy_price, qty FROM trades WHERE code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
                 (code,)
             ).fetchone()
             if row is None:
                 logger.warning(f"[가상매매] {code} 매도 실패: 보유 내역 없음")
                 return
-            trade_id, buy_price = row
+            trade_id, buy_price, held_qty = row
             return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
             sell_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
-            with self._db:
-                self._db.execute(
-                    "UPDATE trades SET sell_date=?, sell_price=?, return_rate=?, status='SOLD', reason=? WHERE id=?",
-                    (sell_date, current_price, round(return_rate, 2), reason, trade_id)
-                )
+            self._settle_hold_sale(trade_id, held_qty, qty, current_price, return_rate, sell_date, reason)
             logger.info(f"[가상매매] {code} 매도 기록 (수익률: {return_rate:.2f}%{', 사유: '+reason if reason else ''})")
 
-    async def log_sell_async(self, code: str, current_price, qty: int = 1, reason: str = ""):
+    async def log_sell_async(self, code: str, current_price, qty: int | None = None, reason: str = ""):
         """log_sell의 비동기 래퍼 (스레드 실행). 반환값 없음 (None)."""
         await asyncio.to_thread(self.log_sell, code, current_price, qty, reason)
 
-    def log_sell_with_result(self, code: str, current_price, qty: int = 1, reason: str = "") -> SellResult:
+    def log_sell_with_result(self, code: str, current_price, qty: int | None = None, reason: str = "") -> SellResult:
         """매도 기록 후 SellResult 반환. KS hook 연결용."""
         with self._lock:
             row = self._db.execute(
-                "SELECT id, buy_price, buy_date FROM trades WHERE code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
+                "SELECT id, buy_price, buy_date, qty FROM trades WHERE code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
                 (code,)
             ).fetchone()
             if row is None:
                 logger.warning(f"[가상매매] {code} 매도 실패: 보유 내역 없음")
                 return SellResult(return_rate=None, net_pnl_won=None, pnl_filled_qty=0)
-            trade_id, buy_price, buy_date = row
+            trade_id, buy_price, buy_date, held_qty = row
             return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
             sell_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
-            with self._db:
-                self._db.execute(
-                    "UPDATE trades SET sell_date=?, sell_price=?, return_rate=?, status='SOLD', reason=? WHERE id=?",
-                    (sell_date, current_price, round(return_rate, 2), reason, trade_id)
-                )
+            filled_qty = self._settle_hold_sale(
+                trade_id, held_qty, qty, current_price, return_rate, sell_date, reason
+            )
             logger.info(f"[가상매매] {code} 매도 기록 (수익률: {return_rate:.2f}%{', 사유: '+reason if reason else ''})")
             net_pnl_won: Optional[int] = None
             if buy_price and current_price and reason != _FORCE_CLOSE_REASON:
-                net_pnl_won = TransactionCostUtils.calculate_net_pnl_won(buy_price, current_price, qty)
+                net_pnl_won = TransactionCostUtils.calculate_net_pnl_won(buy_price, current_price, filled_qty)
             is_intraday_trade = _date_key(buy_date) == _date_key(sell_date)
             return SellResult(
                 return_rate=round(return_rate, 2),
                 net_pnl_won=net_pnl_won,
-                pnl_filled_qty=qty,
+                pnl_filled_qty=filled_qty,
                 is_intraday_trade=is_intraday_trade,
             )
 
-    async def log_sell_async_with_result(self, code: str, current_price, qty: int = 1, reason: str = "") -> SellResult:
+    async def log_sell_async_with_result(self, code: str, current_price, qty: int | None = None, reason: str = "") -> SellResult:
         """log_sell_with_result의 비동기 래퍼."""
         return await asyncio.to_thread(self.log_sell_with_result, code, current_price, qty, reason)
 
-    def log_sell_by_strategy(self, strategy_name: str, code: str, current_price, qty: int = 1, reason: str = "") -> float | None:
+    def log_sell_by_strategy(self, strategy_name: str, code: str, current_price, qty: int | None = None, reason: str = "") -> float | None:
         """전략+종목 매칭 매도. 성공 시 수익률 반환, 실패 시 None 반환."""
         with self._lock:
             where, params = self._strategy_filter(strategy_name)
             row = self._db.execute(
-                f"SELECT id, buy_price FROM trades WHERE {where} AND code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
+                f"SELECT id, buy_price, qty FROM trades WHERE {where} AND code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
                 (*params, code)
             ).fetchone()
             if row is None:
                 logger.warning(f"[가상매매] {strategy_name}/{code} 매도 실패: 보유 내역 없음")
                 return None
-            trade_id, buy_price = row
+            trade_id, buy_price, held_qty = row
             return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
             sell_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
-            with self._db:
-                self._db.execute(
-                    "UPDATE trades SET sell_date=?, sell_price=?, return_rate=?, status='SOLD', reason=? WHERE id=?",
-                    (sell_date, current_price, round(return_rate, 2), reason, trade_id)
-                )
+            self._settle_hold_sale(trade_id, held_qty, qty, current_price, return_rate, sell_date, reason)
             logger.info(f"[가상매매] {strategy_name}/{code} 매도 기록 (수익률: {round(return_rate, 2):.2f}%{', 사유: '+reason if reason else ''})")
             return round(return_rate, 2)
 
@@ -617,38 +658,36 @@ class VirtualTradeRepository:
                 logger.info(f"[가상매매] {strategy_name}/{code} HOLD 수량 동기화 → {normalized_qty}")
             return int(cursor.rowcount or 0)
 
-    async def log_sell_by_strategy_async(self, strategy_name: str, code: str, current_price, qty: int = 1, reason: str = "") -> float | None:
+    async def log_sell_by_strategy_async(self, strategy_name: str, code: str, current_price, qty: int | None = None, reason: str = "") -> float | None:
         """log_sell_by_strategy의 비동기 래퍼. 성공 시 수익률(%) 반환. contract 유지."""
         return await asyncio.to_thread(self.log_sell_by_strategy, strategy_name, code, current_price, qty, reason)
 
-    def log_sell_by_strategy_with_result(self, strategy_name: str, code: str, current_price, qty: int = 1, reason: str = "") -> SellResult:
+    def log_sell_by_strategy_with_result(self, strategy_name: str, code: str, current_price, qty: int | None = None, reason: str = "") -> SellResult:
         """전략+종목 매칭 매도 후 SellResult 반환. KS hook 연결용."""
         with self._lock:
             where, params = self._strategy_filter(strategy_name)
             row = self._db.execute(
-                f"SELECT id, buy_price, buy_date FROM trades WHERE {where} AND code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
+                f"SELECT id, buy_price, buy_date, qty FROM trades WHERE {where} AND code=? AND status='HOLD' ORDER BY id DESC LIMIT 1",
                 (*params, code)
             ).fetchone()
             if row is None:
                 logger.warning(f"[가상매매] {strategy_name}/{code} 매도 실패: 보유 내역 없음")
                 return SellResult(return_rate=None, net_pnl_won=None, pnl_filled_qty=0)
-            trade_id, buy_price, buy_date = row
+            trade_id, buy_price, buy_date, held_qty = row
             return_rate = ((current_price - buy_price) / buy_price) * 100 if buy_price else 0
             sell_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
-            with self._db:
-                self._db.execute(
-                    "UPDATE trades SET sell_date=?, sell_price=?, return_rate=?, status='SOLD', reason=? WHERE id=?",
-                    (sell_date, current_price, round(return_rate, 2), reason, trade_id)
-                )
+            filled_qty = self._settle_hold_sale(
+                trade_id, held_qty, qty, current_price, return_rate, sell_date, reason
+            )
             logger.info(f"[가상매매] {strategy_name}/{code} 매도 기록 (수익률: {round(return_rate, 2):.2f}%{', 사유: '+reason if reason else ''})")
             net_pnl_won: Optional[int] = None
             if buy_price and current_price and reason != _FORCE_CLOSE_REASON:
-                net_pnl_won = TransactionCostUtils.calculate_net_pnl_won(buy_price, current_price, qty)
+                net_pnl_won = TransactionCostUtils.calculate_net_pnl_won(buy_price, current_price, filled_qty)
             is_intraday_trade = _date_key(buy_date) == _date_key(sell_date)
             return SellResult(
                 return_rate=round(return_rate, 2),
                 net_pnl_won=net_pnl_won,
-                pnl_filled_qty=qty,
+                pnl_filled_qty=filled_qty,
                 is_intraday_trade=is_intraday_trade,
             )
 
