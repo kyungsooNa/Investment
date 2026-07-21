@@ -10,6 +10,7 @@ from task.background.intraday.program_capture_subscription_task import (
 )
 
 CATEGORY = ProgramCaptureSubscriptionTask.CATEGORY_KEY
+PRICE_CATEGORY = ProgramCaptureSubscriptionTask.PRICE_CATEGORY_KEY
 
 
 class _FakeStore:
@@ -76,12 +77,13 @@ async def test_open_tick_syncs_candidates_low_priority_pt_and_persists():
 
     await task._tick()
 
-    policy.sync_subscriptions.assert_awaited_once_with(
-        ["005930", "000660", "035420"],
-        CATEGORY,
-        SubscriptionPriority.LOW,
-        StreamingType.PROGRAM_TRADING,
-    )
+    assert policy.sync_subscriptions.await_args_list == [
+        call(
+            ["005930", "000660", "035420"], CATEGORY,
+            SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
+        ),
+        call([], PRICE_CATEGORY, SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE),
+    ]
     assert store.load_keyed("program_capture_subscribed_codes") == "005930,000660,035420"
     assert task.get_progress()["synced_date"] == "20260703"
 
@@ -93,7 +95,7 @@ async def test_same_day_second_tick_does_not_resync():
     await task._tick()
     await task._tick()
 
-    policy.sync_subscriptions.assert_awaited_once()
+    assert policy.sync_subscriptions.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -106,15 +108,16 @@ async def test_market_close_clears_category_and_store():
     clock.is_market_operating_hours.return_value = False
     await task._tick()
 
-    assert policy.sync_subscriptions.await_args_list[-1] == call(
-        [], CATEGORY, SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING
-    )
+    assert policy.sync_subscriptions.await_args_list[-2:] == [
+        call([], CATEGORY, SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING),
+        call([], PRICE_CATEGORY, SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE),
+    ]
     assert store.load_keyed("program_capture_subscribed_codes") == ""
     assert task.get_progress()["synced_date"] is None
 
     # 이후 장외 tick 은 no-op (해지 반복 없음)
     await task._tick()
-    assert policy.sync_subscriptions.await_count == 2
+    assert policy.sync_subscriptions.await_count == 4
 
 
 @pytest.mark.asyncio
@@ -133,6 +136,7 @@ async def test_restart_leftover_is_adopted_then_cleared_when_closed():
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
         call([], CATEGORY, SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING),
+        call([], PRICE_CATEGORY, SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE),
     ]
     assert store.load_keyed("program_capture_subscribed_codes") == ""
 
@@ -155,17 +159,18 @@ async def test_excludes_manual_pt_desired_and_caps_max_codes():
     await task._tick()
 
     repo.get_desired.assert_called_with(StreamingType.PROGRAM_TRADING)
-    policy.sync_subscriptions.assert_awaited_once_with(
-        ["005930", "035420"],
-        CATEGORY,
-        SubscriptionPriority.LOW,
-        StreamingType.PROGRAM_TRADING,
-    )
+    assert policy.sync_subscriptions.await_args_list == [
+        call(
+            ["035420", "084370"], CATEGORY,
+            SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
+        ),
+        call([], PRICE_CATEGORY, SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE),
+    ]
 
 
 @pytest.mark.asyncio
-async def test_excludes_preferred_stocks_from_program_trading_subscription():
-    """프로그램매매 tick이 없는 우선주는 자동 구독 후보에서 제외한다."""
+async def test_preferred_stocks_use_price_only_instead_of_program_subscription():
+    """프로그램매매 tick이 없는 우선주는 PRICE 캡처로 분리한다."""
     universe_service = MagicMock()
     universe_service.get_watchlist = AsyncMock(
         return_value={
@@ -185,12 +190,16 @@ async def test_excludes_preferred_stocks_from_program_trading_subscription():
 
     await task._tick()
 
-    policy.sync_subscriptions.assert_awaited_once_with(
-        ["005930", "000660"],
-        CATEGORY,
-        SubscriptionPriority.LOW,
-        StreamingType.PROGRAM_TRADING,
-    )
+    assert policy.sync_subscriptions.await_args_list == [
+        call(
+            ["005930", "000660"], CATEGORY,
+            SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
+        ),
+        call(
+            ["000885", "005935", "051915"], PRICE_CATEGORY,
+            SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE,
+        ),
+    ]
 
 
 @pytest.mark.asyncio
@@ -208,6 +217,7 @@ async def test_restart_does_not_restore_preferred_stock_subscription():
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
         call([], CATEGORY, SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING),
+        call([], PRICE_CATEGORY, SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE),
     ]
 
 
@@ -235,3 +245,68 @@ def test_task_identity():
     task, _ = _make_task()
     assert task.task_name == "program_capture_subscription"
     assert task.get_progress()["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_rotates_capture_batch_every_thirty_minutes():
+    universe_service = MagicMock()
+    universe_service.get_watchlist = AsyncMock(
+        return_value={f"{code:06d}": MagicMock() for code in range(10, 80, 10)}
+    )
+    virtual_trade_service = MagicMock()
+    virtual_trade_service.get_holds = MagicMock(return_value=[])
+    clock = _clock()
+    clock.get_current_kst_time.return_value = datetime(2026, 7, 3, 9, 0)
+    task, policy = _make_task(
+        universe_service=universe_service,
+        virtual_trade_service=virtual_trade_service,
+        market_clock=clock,
+        max_codes=3,
+    )
+
+    await task._tick()
+    clock.get_current_kst_time.return_value = datetime(2026, 7, 3, 9, 29)
+    await task._tick()
+    clock.get_current_kst_time.return_value = datetime(2026, 7, 3, 9, 30)
+    await task._tick()
+
+    assert policy.sync_subscriptions.await_args_list == [
+        call(
+            ["000010", "000020", "000030"], CATEGORY,
+            SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
+        ),
+        call([], PRICE_CATEGORY, SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE),
+        call(
+            ["000040", "000050", "000060"], CATEGORY,
+            SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
+        ),
+        call([], PRICE_CATEGORY, SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE),
+    ]
+    assert task.get_progress()["candidate_count"] == 7
+
+
+@pytest.mark.asyncio
+async def test_preferred_stock_in_rotation_batch_uses_price_only_subscription():
+    universe_service = MagicMock()
+    universe_service.get_watchlist = AsyncMock(
+        return_value={"005935": MagicMock(), "000660": MagicMock()}
+    )
+    virtual_trade_service = MagicMock()
+    virtual_trade_service.get_holds = MagicMock(return_value=[])
+    task, policy = _make_task(
+        universe_service=universe_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+
+    await task._tick()
+
+    assert policy.sync_subscriptions.await_args_list == [
+        call(
+            ["000660"], CATEGORY,
+            SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
+        ),
+        call(
+            ["005935"], PRICE_CATEGORY,
+            SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE,
+        ),
+    ]

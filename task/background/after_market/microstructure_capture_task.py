@@ -154,6 +154,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "valid_for_backtest": quality_summary["quality_gate_passed"],
                 "passed": quality_summary["quality_gate_passed"],
                 "issues": list(quality_summary["issues"]),
+                "warnings": list(quality_summary["warnings"]),
                 "intraday_coverage_pct": quality_summary["intraday_coverage_pct"],
                 "program_overlay_coverage_pct": quality_summary["program_overlay_coverage_pct"],
                 "program_db_coverage_pct": quality_summary["program_db_coverage_pct"],
@@ -190,6 +191,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "quality": quality,
                 "quality_gate_passed": quality_summary["quality_gate_passed"],
                 "quality_issues": quality_summary["issues"],
+                "quality_warnings": quality_summary["warnings"],
                 "intraday_coverage_pct": quality_summary["intraday_coverage_pct"],
                 "execution_strength_coverage_pct": quality_summary["execution_strength_coverage_pct"],
                 "program_overlay_coverage_pct": quality_summary["program_overlay_coverage_pct"],
@@ -202,10 +204,12 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "orderbook_db_coverage_pct": quality_summary["orderbook_db_coverage_pct"],
                 "orderbook_sparse_codes": quality_summary["orderbook_sparse_codes"],
             }
-            if not quality_summary["quality_gate_passed"]:
+            if not quality_summary["quality_gate_passed"] or quality_summary["warnings"]:
+                status = "실패" if not quality_summary["quality_gate_passed"] else "경고"
                 self._logger.warning(
-                    f"{self.task_name}: {latest_trading_date} 캡처 품질 게이트 실패 "
+                    f"{self.task_name}: {latest_trading_date} 캡처 품질 {status} "
                     f"(issues={quality_summary['issues']}, "
+                    f"warnings={quality_summary['warnings']}, "
                     f"intraday={quality_summary['intraday_coverage_pct']:.1f}%, "
                     f"program={quality_summary['program_overlay_coverage_pct']:.1f}%, "
                     f"program_db={format_optional_pct(quality_summary['program_db_coverage_pct'])}, "
@@ -305,7 +309,11 @@ class MicrostructureCaptureTask(AfterMarketTask):
         await self._notification_service.emit(
             NotificationCategory.BACKGROUND,
             NotificationLevel.WARNING,
-            "Microstructure 캡처 품질 게이트 실패",
+            (
+                "Microstructure 캡처 품질 게이트 실패"
+                if quality_summary.get("issues")
+                else "Microstructure 캡처 품질 경고"
+            ),
             f"{latest_trading_date}: "
             f"intraday={quality_summary['intraday_coverage_pct']:.1f}%, "
             f"program={quality_summary['program_overlay_coverage_pct']:.1f}%, "
@@ -318,6 +326,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "trade_date": latest_trading_date,
                 "codes": quality_summary["codes"],
                 "issues": quality_summary["issues"],
+                "warnings": quality_summary["warnings"],
                 "intraday_coverage_pct": quality_summary["intraday_coverage_pct"],
                 "execution_strength_coverage_pct": quality_summary["execution_strength_coverage_pct"],
                 "program_overlay_coverage_pct": quality_summary["program_overlay_coverage_pct"],

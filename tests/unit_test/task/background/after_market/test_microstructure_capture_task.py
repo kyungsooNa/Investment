@@ -299,6 +299,7 @@ async def test_quality_gate_metrics_exposed_and_warned_when_capture_quality_fail
             "program_overlay_coverage_below_threshold",
             "program_db_coverage_below_threshold",
         ],
+        "warnings": [],
         "intraday_coverage_pct": 50.0,
         "program_overlay_coverage_pct": 0.0,
         "program_db_coverage_pct": 0.0,
@@ -487,6 +488,50 @@ async def test_quality_gate_success_does_not_emit_notification(
     await task._on_market_closed("20260702")
 
     notification_service.emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_quality_target_warning_is_exposed_and_notified_without_gate_failure(
+    capture_service, universe_service, tmp_path
+):
+    codes = ["005930", "000660"]
+    orderbook_rows = [
+        {"time": f"0900{i:02d}", "ask_price": 101, "bid_price": 100}
+        for i in range(30)
+    ]
+    payload = _quality_payload(codes=codes)
+    payload["metadata"].update({
+        "execution_strength_source": "es_db",
+        "orderbook_source": "orderbook_db",
+    })
+    payload["execution_strength_intraday"] = {
+        "005930": [{"time": "090001", "strength": 120.0}],
+        "000660": [],
+    }
+    payload["orderbook_intraday"] = {
+        "005930": orderbook_rows,
+        "000660": [],
+    }
+    capture_service.capture = AsyncMock(return_value=payload)
+    notification_service = MagicMock()
+    notification_service.emit = AsyncMock()
+    task = _make_task(
+        capture_service,
+        tmp_path,
+        universe_service=universe_service,
+        notification_service=notification_service,
+    )
+
+    await task._on_market_closed("20260702")
+
+    result = task.get_progress()["last_result"]
+    assert result["quality_gate_passed"] is True
+    assert result["quality_warnings"] == [
+        "execution_strength_db_coverage_below_target",
+        "orderbook_db_coverage_below_target",
+    ]
+    notification_service.emit.assert_awaited_once()
+    assert notification_service.emit.await_args.args[2] == "Microstructure 캡처 품질 경고"
 
 
 def test_write_output_dir_passed_through(capture_service, tmp_path):

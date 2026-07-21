@@ -9,9 +9,10 @@ class MicrostructureQualityThresholds:
     min_intraday_coverage_pct: float = 80.0
     min_program_overlay_coverage_pct: float = 80.0
     min_program_db_coverage_pct: float = 50.0
-    # 무틱 ~55%(P2 2-4) + PRICE 미구독 후보를 감안한 보수 임계 — 배선 전손 감지용
-    min_execution_strength_db_coverage_pct: float = 30.0
-    min_orderbook_db_coverage_pct: float = 30.0
+    min_execution_strength_db_coverage_pct: float = 50.0
+    min_orderbook_db_coverage_pct: float = 50.0
+    warn_execution_strength_db_coverage_pct: float = 70.0
+    warn_orderbook_db_coverage_pct: float = 70.0
     min_orderbook_rows_per_code: int = 30
     max_stale_rows: int = 0
 
@@ -120,6 +121,18 @@ def summarize_capture_quality(
         and orderbook_db_coverage_pct < thresholds.min_orderbook_db_coverage_pct
     ):
         issues.append("orderbook_db_coverage_below_threshold")
+    warnings: list[str] = []
+    if (
+        execution_strength_db_coverage_pct is not None
+        and execution_strength_db_coverage_pct
+        < thresholds.warn_execution_strength_db_coverage_pct
+    ):
+        warnings.append("execution_strength_db_coverage_below_target")
+    if (
+        orderbook_db_coverage_pct is not None
+        and orderbook_db_coverage_pct < thresholds.warn_orderbook_db_coverage_pct
+    ):
+        warnings.append("orderbook_db_coverage_below_target")
     return {
         "trade_date": str(metadata.get("trade_date") or ""),
         "codes": code_count,
@@ -146,6 +159,7 @@ def summarize_capture_quality(
         "stale_minute_rows_dropped": stale_rows,
         "stale_minute_rows_dropped_by_code": stale_by_code,
         "issues": issues,
+        "warnings": warnings,
         "quality_gate_passed": not issues,
     }
 

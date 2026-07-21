@@ -576,6 +576,10 @@ python -m scripts.capture_backtest_microstructure --date 20260512 --codes 000660
 - `replay_program_trades_YYYYMMDD.json`: exporter에 바로 넘길 프로그램 순매수 수량 overlay
 - `replay_orderbook_intraday_YYYYMMDD.json`: 종목별 최우선 bid/ask·1호가/총 잔량 시계열
 
+장중 캡처 후보 구독은 기본 10종목 묶음을 30분마다 순환한다. 일반주는 프로그램매매 구독의 동반 PRICE 틱에서 프로그램매매·체결강도·최우선 호가를 함께 수집하고, 프로그램매매 틱이 없는 우선주는 PRICE 전용으로 수집한다. 모두 LOW 우선순위라 보유·전략 구독을 밀어내지 않는다. `program_capture_rotation_batch_size`와 `program_capture_rotation_interval_minutes`로 묶음 크기와 주기를 조정할 수 있다.
+
+원본 장중 시계열 QC는 체결강도 DB 및 호가 DB 커버리지 50% 미만을 실패로, 50% 이상 70% 미만을 경고로 판정한다. 최종값 REST 폴백 커버리지와 원본 시계열 커버리지는 별도 지표로 유지한다. 호가는 종목당 30행 이상이어야 커버 종목으로 인정한다.
+
 기본 `--program-source daily_rest`는 과거 일별 프로그램매매 REST 응답에서 `whol_smtn_ntby_qty`를 사용한다. 장중 WebSocket 프로그램매매를 이미 구독해 `data/program_subscribe/program_trading.db`에 쌓아둔 경우에는 아래처럼 DB의 마지막 `net_vol`을 overlay로 사용할 수 있다.
 
 ```powershell

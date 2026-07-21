@@ -53,8 +53,10 @@ def compute_quality_report(
     min_intraday_coverage_pct: float = 80.0,
     min_program_overlay_coverage_pct: float = 80.0,
     min_program_db_coverage_pct: float = 50.0,
-    min_execution_strength_db_coverage_pct: float = 30.0,
-    min_orderbook_db_coverage_pct: float = 30.0,
+    min_execution_strength_db_coverage_pct: float = 50.0,
+    min_orderbook_db_coverage_pct: float = 50.0,
+    warn_execution_strength_db_coverage_pct: float = 70.0,
+    warn_orderbook_db_coverage_pct: float = 70.0,
     min_orderbook_rows_per_code: int = 30,
     max_stale_rows: int = 0,
 ) -> Dict[str, Any]:
@@ -66,6 +68,8 @@ def compute_quality_report(
         min_program_db_coverage_pct=min_program_db_coverage_pct,
         min_execution_strength_db_coverage_pct=min_execution_strength_db_coverage_pct,
         min_orderbook_db_coverage_pct=min_orderbook_db_coverage_pct,
+        warn_execution_strength_db_coverage_pct=warn_execution_strength_db_coverage_pct,
+        warn_orderbook_db_coverage_pct=warn_orderbook_db_coverage_pct,
         min_orderbook_rows_per_code=min_orderbook_rows_per_code,
         max_stale_rows=max_stale_rows,
     )
@@ -116,6 +120,10 @@ def compute_quality_report(
         date: row["issues"] for date, row in by_date.items()
         if row["issues"]
     }
+    daily_warnings = {
+        date: row["warnings"] for date, row in by_date.items()
+        if row["warnings"]
+    }
     gate_passed = bool(payloads) and not daily_failures
     totals = {
         "capture_files": len(payloads),
@@ -147,6 +155,7 @@ def compute_quality_report(
         "stale_minute_rows_dropped": stale_rows,
         "quality_gate_passed": gate_passed,
         "daily_failures": daily_failures,
+        "daily_warnings": daily_warnings,
     }
     if not payloads:
         totals["daily_failures"] = {"all": ["no_capture_files"]}
@@ -158,6 +167,8 @@ def compute_quality_report(
             "min_program_db_coverage_pct": min_program_db_coverage_pct,
             "min_execution_strength_db_coverage_pct": min_execution_strength_db_coverage_pct,
             "min_orderbook_db_coverage_pct": min_orderbook_db_coverage_pct,
+            "warn_execution_strength_db_coverage_pct": warn_execution_strength_db_coverage_pct,
+            "warn_orderbook_db_coverage_pct": warn_orderbook_db_coverage_pct,
             "min_orderbook_rows_per_code": min_orderbook_rows_per_code,
             "max_stale_rows": max_stale_rows,
         },
@@ -174,6 +185,7 @@ def build_quality_manifest(report: Dict[str, Any]) -> Dict[str, Any]:
         dates[date] = {
             "valid_for_backtest": valid,
             "issues": list(row.get("issues") or []),
+            "warnings": list(row.get("warnings") or []),
             "intraday_coverage_pct": row.get("intraday_coverage_pct"),
             "program_overlay_coverage_pct": row.get("program_overlay_coverage_pct"),
             "program_db_coverage_pct": row.get("program_db_coverage_pct"),
@@ -218,11 +230,12 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
         "",
         "## By Date",
         "",
-        "| date | codes | intraday | exec_strength | program | program_db | es_db | orderbook_db | stale | issues |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| date | codes | intraday | exec_strength | program | program_db | es_db | orderbook_db | stale | warnings | issues |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
     ]
     for date, row in sorted((report.get("by_date") or {}).items()):
         issues = ", ".join(row.get("issues") or []) or "-"
+        warnings = ", ".join(row.get("warnings") or []) or "-"
         lines.append(
             f"| {date} | {row.get('codes', 0)} | "
             f"{_fmt_pct(row.get('intraday_coverage_pct'))} | "
@@ -231,7 +244,7 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
             f"{_fmt_pct(row.get('program_db_coverage_pct'))} | "
             f"{_fmt_pct(row.get('execution_strength_db_coverage_pct'))} | "
             f"{_fmt_pct(row.get('orderbook_db_coverage_pct'))} | "
-            f"{row.get('stale_minute_rows_dropped', 0)} | {issues} |"
+            f"{row.get('stale_minute_rows_dropped', 0)} | {warnings} | {issues} |"
         )
     lines.append("")
     return "\n".join(lines)
@@ -247,8 +260,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-intraday-coverage-pct", type=float, default=80.0)
     parser.add_argument("--min-program-overlay-coverage-pct", type=float, default=80.0)
     parser.add_argument("--min-program-db-coverage-pct", type=float, default=50.0)
-    parser.add_argument("--min-execution-strength-db-coverage-pct", type=float, default=30.0)
-    parser.add_argument("--min-orderbook-db-coverage-pct", type=float, default=30.0)
+    parser.add_argument("--min-execution-strength-db-coverage-pct", type=float, default=50.0)
+    parser.add_argument("--min-orderbook-db-coverage-pct", type=float, default=50.0)
+    parser.add_argument("--warn-execution-strength-db-coverage-pct", type=float, default=70.0)
+    parser.add_argument("--warn-orderbook-db-coverage-pct", type=float, default=70.0)
     parser.add_argument("--min-orderbook-rows-per-code", type=int, default=30)
     parser.add_argument("--max-stale-rows", type=int, default=0)
     parser.add_argument("--output-json", default=None)
@@ -280,6 +295,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         min_program_db_coverage_pct=args.min_program_db_coverage_pct,
         min_execution_strength_db_coverage_pct=args.min_execution_strength_db_coverage_pct,
         min_orderbook_db_coverage_pct=args.min_orderbook_db_coverage_pct,
+        warn_execution_strength_db_coverage_pct=args.warn_execution_strength_db_coverage_pct,
+        warn_orderbook_db_coverage_pct=args.warn_orderbook_db_coverage_pct,
         min_orderbook_rows_per_code=args.min_orderbook_rows_per_code,
         max_stale_rows=args.max_stale_rows,
     )
