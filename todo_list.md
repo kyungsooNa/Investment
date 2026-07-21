@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-20 (종목 뉴스 AI 검토 추가 — X-4)
+최종 업데이트: 2026-07-22 (강제청산 절반 유출 수정 사후 검증 추가 — 0-2)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -20,6 +20,7 @@
 리뷰 핵심 판단: 운영 인프라·리스크 규율(킬스위치 영속화·RiskGate·tiered force-exit·profitability gate·캐너리 사이징)은 갖춰졌다. 남은 크리티컬 패스는 **엣지(수익성) 입증**이다. 엣지의 원천으로 삼는 수급 필터(체결강도·프로그램매매)가 장중 히스토리 부재로 백테스트 검증 불가능한 상태이므로, 검증 데이터 축적을 지금 시작하는 것이 최우선이다.
 
 1. **[즉시 착수 — 엣지 검증 크리티컬 패스]**
+   - 0-2 강제청산 절반 유출 수정 **실장 확인** (PR #700 머지·배포 완료 2026-07-22 — 당일 장중/익일 대사 검증만 남음). 이 결함이 성과 기록 5건을 오염시켰으므로 엣지 검증의 선행 조건이다.
    - 1-5 장중 microstructure 캡처 **상시 가동** (blocked 해제 단계 자체가 착수 항목) — 태스크 배선 완료(#618), 코퍼스 축적 중, 1일차 품질 결함 보정 + 체결강도 장중 시계열 배선 완료(2026-07-04), QC 1주차 양호 판정 + 거래대금 랭킹 보충으로 코퍼스 폭 확대(2026-07-08)
    - 1-6 shadow/paper/소액 canary journal 축적 (운영 상시 — 무틱 블로커와 독립)
 2. **[외부 블로커 — 병행 진행]**
@@ -195,6 +196,22 @@
 
 주요 파일: `common/broker_order_response_mapper.py`, `services/order_execution_service.py`, `services/fill_reconciliation_service.py`, `tests/fixtures/kis/`
 
+### 0-2. 강제청산 절반 유출 수정 사후 검증 [PR #700 머지·배포 완료 — 실장 확인 대기, 2026-07-22]
+
+배경: 당일청산 전략이 포지션의 절반을 조용히 오버나이트로 넘기고, 잔량이 다음날 대사에서 `broker_reconciled` 고아로 등록되던 결함. 원인 2개(최종 force-exit tier 가 주문 컷오프 이후라 영구 미실행 / `log_sell` 이 qty 를 무시하고 lot 전체를 SOLD 처리) 수정 완료. 06-28 tiered 도입 이후 SOLD 15건 중 5건 오염(전부 VBO).
+
+- [ ] **개장 직후**: 달바글로벌(483650) 복구분 4주가 오버나이트 방어로 전량 청산되는지 확인. 성공 시 HOLD 에서 사라지고 고아는 10종목 유지.
+- [ ] **15:10 / 15:15**: 신규 VBO 진입 발생 시 1차 tier 후 **잔량이 HOLD 로 남고** 2차 tier 가 실제 실행되어 flat 이 되는지 확인. 종목당 `strategy_force_exit` 이벤트 2회면 정상 — 수정의 첫 실증.
+- [ ] **익일 대사**: 고아가 10종목에서 늘지 않으면 유출 종료 확인.
+- [ ] 기존 고아 10종목 처리 방침 결정. 7월 4건(031980·086790·001450 ×2)은 `scripts/repair_partial_sell_ledger.py` 로 복구 가능하나 원 전략이 전부 당일청산 VBO 라 **복구 = 익일 강제청산 지시**임 — 청산 의사 결정 후 실행. 5~6월 6건은 절반 패턴이 아니라 원인 미상, 별도 조사.
+- [ ] 오염된 성과 기록 5건(trade id 251·261·263·265·269) 의심 플래그. 나머지 절반이 미청산이라 소급 재구성 불가 — 재작성하지 말 것.
+- [ ] 운영 요약 오탐 2건 수정: `_build_decision_summary` 가 `if execution_quality_section:` / `if degradation_section:` 로 **섹션 존재 여부만** 검사해 슬리피지 0%에도 "별도 경고 확인"이 뜬다. 임계 필터링된 `get_last_execution_quality_candidates()` 를 써야 한다. 같은 함수의 "신규 진입 N건" 도 당일 청산을 반영하지 않아 이미 닫힌 포지션을 관리 대상으로 표시한다. ※ 이 오탐이 이번 결함을 3주간 가렸다.
+- [ ] (제안) "당일청산 전략인데 마감 후 보유 중" 직접 검출 점검 추가. 이번 결함은 장부상 정상이라 무경보였고, 발견 경로가 "고아가 이상하게 는다"는 간접 신호뿐이었다.
+
+주요 파일: `scheduler/strategy_scheduler.py`(FORCE_EXIT_TIERS/ORDER_CUTOFF), `repositories/virtual_trade_repository.py`(`_settle_hold_sale`), `services/strategy_log_report_service.py`, `scripts/repair_partial_sell_ledger.py`
+
+※ 이 DB 는 WAL 모드다 — 백업은 반드시 `sqlite3` backup API 로. 파일 복사는 `-wal` 의 최신 커밋을 놓쳐 조용히 불완전한 스냅샷을 만든다.
+
 ---
 
 ## 해외주식 전략 적용 (VBO 일봉)
@@ -338,6 +355,6 @@
 - **R-4 갭 스톱 [해소]**: 백테스트 `OrderType.STOP` 갭 관통 보수 체결(매도=`min(stop,open)`). 잔여: 실제 forward gap 정량 측정은 종목별 OHLCV 조인 필요(R-1과 동일 맥락, 미구현).
 - **R-5 증권거래세율 [해소]**: 0.20%(0.002) 현행 정확값 — 변경 없음.
 - **S-1~S-10 StrategyScheduler 리뷰**: S-1~S-8 버그/수명/구조 수정 완료, S-3/S-10 의도된 설계 확인, S-9는 `EventShadowManager`(`scheduler/event_shadow_manager.py`) 추출 완료(2026-06-28).
-- **tiered force-exit window [해소]**: 단계화 청산(`FORCE_EXIT_TIERS=[(30,0.5),(15,1.0)]`) 완료(2026-06-28). 잔여 작업 없음.
+- **tiered force-exit window [해소 판정 오류 — 0-2 로 재개]**: 단계화 청산(`FORCE_EXIT_TIERS=[(30,0.5),(15,1.0)]`) 도입(2026-06-28) 당시 "잔여 작업 없음"으로 종결했으나, 최종 tier(마감 15분 전)가 주문 컷오프(20분 전) 이후라 **영구 미실행**이었다. 도입 직후부터 당일청산 포지션의 절반이 오버나이트로 유출됐고 3주간 무경보로 지나갔다. 수정은 PR #700, 사후 검증은 0-2. ※ "완료" 판정 시 상수 간 상호작용(tier 시각 vs 컷오프 시각)까지 확인해야 한다는 교훈.
 - **운영 guard 일부 [해소]**: KillSwitch auto-trigger, WebSocket watchdog/health 계열, daily cap 계열은 구현 확인. 잔여는 위 "보류"의 정책/임계값 결정만 추적.
 - **T-1 키움 테마 REST [드롭]**: 네이버 테마(`ThemeClassificationCollectorService`) 자동 수집으로 분류 데이터 충분, 키움 추가 소스 불필요.
