@@ -16,12 +16,15 @@ def test_realtime_bootstrap_builds_streaming_chain():
     ctx.program_trading_stream_service.load_snapshot.return_value = {}
 
     with patch("view.web.bootstrap.realtime_bootstrap.StreamingService") as streaming, \
+         patch("view.web.bootstrap.realtime_bootstrap.OrderbookSnapshotRepository") as orderbook_repo, \
          patch("view.web.bootstrap.realtime_bootstrap.PriceStreamService") as price_stream, \
          patch("view.web.bootstrap.realtime_bootstrap.PriceSubscriptionService") as subscriptions, \
          patch("view.web.bootstrap.realtime_bootstrap.WebSocketWatchdogTask") as watchdog:
         RealtimeBootstrap(ctx).run(config={}, needs_realtime=True)
 
     assert ctx.streaming_service is streaming.return_value
+    assert ctx.orderbook_snapshot_repo is orderbook_repo.return_value
+    assert price_stream.call_args.kwargs["orderbook_recorder"] is orderbook_repo.return_value
     assert ctx.price_stream_service is price_stream.return_value
     assert ctx.price_subscription_service is subscriptions.return_value
     assert ctx.websocket_watchdog_task is watchdog.return_value

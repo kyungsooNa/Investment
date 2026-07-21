@@ -12,7 +12,7 @@ from task.background.capture_candidates import resolve_capture_codes
 
 
 class ProgramCaptureSubscriptionTask(SchedulableTask):
-    """장중에 캡처 후보(보유+워치리스트)를 프로그램매매 WS로 구독해 pt_history에 장중 시계열을 축적한다.
+    """캡처 후보를 순환 구독해 PT·체결강도·최우선 호가 시계열을 축적한다.
 
     todo 1-5: 캡처 코퍼스의 program overlay가 daily_rest(일 단위 aggregate)에
     의존하는 한계 보완 — 장중 프로그램 순매수 시계열은 pt_history(WS 수신 DB)에만
@@ -20,14 +20,17 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
 
     안전 설계:
       - SubscriptionPriority.LOW → 트레이딩용 price 구독(HIGH/MEDIUM)을 밀어내지
-        않으며(PT=2슬롯/종목), 슬롯 압박 시 rebalance가 이 카테고리를 먼저 해지한다.
+        않으며(PT=2슬롯/종목), 30분마다 제한된 묶음을 순환한다.
+      - PT가 없는 우선주는 PRICE 전용으로 구독해 호가·체결강도만 수집한다.
       - 수동 UI로 이미 PT desired인 종목은 대상에서 제외해 해지/영속 상태 간섭을 막는다.
       - 구독 목록을 scheduler_store에 영속화 — 크래시 잔재를 재시작 시 카테고리로
         재편입한 뒤 해지해 pt_subscriptions 영구 오염을 방지한다.
     """
 
     CATEGORY_KEY = "microstructure_capture"
+    PRICE_CATEGORY_KEY = "microstructure_capture_price"
     CHECK_INTERVAL_SEC = 60
+    ROTATION_INTERVAL_MINUTES = 30
     MAX_CODES = 10  # PT=2슬롯/종목 — 캡처용 상한 (트레이딩 슬롯 여유 보존)
 
     def __init__(
@@ -43,6 +46,7 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
         scheduler_store=None,
         max_codes: Optional[int] = None,
         check_interval_sec: Optional[int] = None,
+        rotation_interval_minutes: Optional[int] = None,
         logger=None,
     ) -> None:
         self._policy = subscription_policy
@@ -55,12 +59,20 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
         self._scheduler_store = scheduler_store
         self._max_codes = max_codes if max_codes is not None else self.MAX_CODES
         self._check_interval_sec = check_interval_sec or self.CHECK_INTERVAL_SEC
+        self._rotation_interval_minutes = (
+            rotation_interval_minutes or self.ROTATION_INTERVAL_MINUTES
+        )
         self._logger = logger or logging.getLogger(__name__)
         self._state = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
         self._state_key = "program_capture_subscribed_codes"
+        self._price_state_key = "price_capture_subscribed_codes"
         self._synced_date: Optional[str] = None
         self._synced_codes: List[str] = []
+        self._synced_pt_codes: List[str] = []
+        self._synced_price_codes: List[str] = []
+        self._synced_window: Optional[str] = None
+        self._candidate_count = 0
         self._adopted = False  # 프로세스 시작 후 store 잔재 재편입 1회 수행 여부
 
     @property
@@ -104,6 +116,10 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
             "running": self._state == TaskState.RUNNING,
             "synced_date": self._synced_date,
             "synced_codes": list(self._synced_codes),
+            "synced_pt_codes": list(self._synced_pt_codes),
+            "synced_price_codes": list(self._synced_price_codes),
+            "rotation_window": self._synced_window,
+            "candidate_count": self._candidate_count,
         }
 
     @staticmethod
@@ -133,6 +149,7 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
             return
         if not self._adopted:
             stored = self._load_stored_codes()
+            stored_price = self._load_stored_codes(self._price_state_key)
             if stored:
                 # 크래시/재시작 잔재 재편입 — 이후 sync가 카테고리를 교체/해지하며 정리한다.
                 await self._policy.sync_subscriptions(
@@ -140,32 +157,65 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
                     SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
                 )
                 self._synced_codes = stored
+                self._synced_pt_codes = stored
+            if stored_price:
+                await self._policy.sync_subscriptions(
+                    stored_price, self.PRICE_CATEGORY_KEY,
+                    SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE,
+                )
+                self._synced_price_codes = stored_price
+                self._synced_codes = list(dict.fromkeys(stored + stored_price))
             self._adopted = True
 
         if await self._is_market_open_now():
             today = self._market_clock.get_current_kst_date_str()
-            if self._synced_date == today:
+            now = self._market_clock.get_current_kst_time()
+            rotation_window = self._rotation_window_key(today, now)
+            if self._synced_window == rotation_window:
                 return
             codes = await self._resolve_target_codes()
+            self._candidate_count = len(codes)
+            codes = self._select_rotation_batch(codes, now)
+            pt_codes = [code for code in codes if not self._is_preferred_stock_code(code)]
+            price_codes = [code for code in codes if self._is_preferred_stock_code(code)]
             await self._policy.sync_subscriptions(
-                codes, self.CATEGORY_KEY,
+                pt_codes, self.CATEGORY_KEY,
                 SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
+            )
+            await self._policy.sync_subscriptions(
+                price_codes, self.PRICE_CATEGORY_KEY,
+                SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE,
             )
             self._synced_date = today
             self._synced_codes = codes
-            self._save_codes(codes)
+            self._synced_pt_codes = pt_codes
+            self._synced_price_codes = price_codes
+            self._synced_window = rotation_window
+            self._save_codes(pt_codes)
+            self._save_codes(price_codes, self._price_state_key)
             self._logger.info(
-                f"{self.task_name}: {today} 캡처 후보 PT 구독 동기화 — {len(codes)}종목"
+                f"{self.task_name}: {today} 캡처 후보 순환 동기화 — "
+                f"PT {len(pt_codes)}종목, PRICE {len(price_codes)}종목, "
+                f"전체 후보 {self._candidate_count}종목"
             )
         elif self._synced_codes:
             await self._policy.sync_subscriptions(
                 [], self.CATEGORY_KEY,
                 SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
             )
+            await self._policy.sync_subscriptions(
+                [], self.PRICE_CATEGORY_KEY,
+                SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE,
+            )
             self._synced_date = None
             self._synced_codes = []
+            self._synced_pt_codes = []
+            self._synced_price_codes = []
+            self._synced_window = None
+            self._candidate_count = 0
             self._save_codes([])
-            self._logger.info(f"{self.task_name}: 장외 — 캡처 후보 PT 구독 해지")
+            self._save_codes([], self._price_state_key)
+            self._logger.info(f"{self.task_name}: 장외 — 캡처 후보 순환 구독 해지")
 
     async def _is_market_open_now(self) -> bool:
         now = self._market_clock.get_current_kst_time()
@@ -198,31 +248,42 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
                 self._logger.warning(f"{self.task_name}: PT desired 조회 실패 — {exc}")
         # 우리 카테고리가 이미 올린 desired는 제외 대상이 아니다 (재시작 재편입 케이스)
         manual_desired = already_desired - set(self._synced_codes)
-        filtered = [
+        return [
             code for code in codes
-            if code not in manual_desired and not self._is_preferred_stock_code(code)
+            if code not in manual_desired
         ]
-        return filtered[: self._max_codes]
 
-    def _load_stored_codes(self) -> List[str]:
+    def _rotation_window_key(self, date: str, now) -> str:
+        market_minutes = max(0, now.hour * 60 + now.minute - 9 * 60)
+        return f"{date}:{market_minutes // self._rotation_interval_minutes}"
+
+    def _select_rotation_batch(self, codes: List[str], now) -> List[str]:
+        if len(codes) <= self._max_codes:
+            return list(codes)
+        market_minutes = max(0, now.hour * 60 + now.minute - 9 * 60)
+        window = market_minutes // self._rotation_interval_minutes
+        start = (window * self._max_codes) % len(codes)
+        return [codes[(start + offset) % len(codes)] for offset in range(self._max_codes)]
+
+    def _load_stored_codes(self, state_key: Optional[str] = None) -> List[str]:
         if self._scheduler_store is None:
             return []
         try:
-            raw = self._scheduler_store.load_keyed(self._state_key)
+            raw = self._scheduler_store.load_keyed(state_key or self._state_key)
         except Exception as exc:
             self._logger.warning(f"{self.task_name}: 구독 목록 로드 실패 — {exc}")
             return []
         if not raw:
             return []
-        return [
-            code for code in str(raw).split(",")
-            if code and not self._is_preferred_stock_code(code)
-        ]
+        codes = [code for code in str(raw).split(",") if code]
+        if state_key in (None, self._state_key):
+            return [code for code in codes if not self._is_preferred_stock_code(code)]
+        return codes
 
-    def _save_codes(self, codes: List[str]) -> None:
+    def _save_codes(self, codes: List[str], state_key: Optional[str] = None) -> None:
         if self._scheduler_store is None:
             return
         try:
-            self._scheduler_store.save_keyed(self._state_key, ",".join(codes))
+            self._scheduler_store.save_keyed(state_key or self._state_key, ",".join(codes))
         except Exception as exc:
             self._logger.warning(f"{self.task_name}: 구독 목록 저장 실패 — {exc}")

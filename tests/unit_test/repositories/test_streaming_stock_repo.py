@@ -67,6 +67,15 @@ async def test_get_pending(repo):
 
 
 @pytest.mark.asyncio
+async def test_mark_active_program_trading_clears_capacity_pending(repo):
+    repo.set_pt_capacity_pending({"005930", "000660"})
+
+    await repo.mark_active("005930", StreamingType.PROGRAM_TRADING)
+
+    assert repo.get_pt_capacity_pending() == {"000660"}
+
+
+@pytest.mark.asyncio
 async def test_get_status(repo):
     """현재 상태 요약(get_status) 검증"""
     st = StreamingType.UNIFIED_PRICE

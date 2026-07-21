@@ -1694,9 +1694,12 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         # 첫 호출 커서 확인
         self.mock_market_data_service.get_intraday_minutes_today.assert_any_call(stock_code="005930", input_hour_1="153000")
 
-    async def test_get_day_intraday_minutes_list_paper_with_date_uses_by_date_api(self):
-        """date_ymd가 있으면 모의투자에서도 특정일 분봉 조회 API를 사용한다."""
+    async def test_get_day_intraday_minutes_list_today_with_date_uses_today_api(self):
+        """오늘 날짜를 명시해도 모의투자 지원 당일 분봉 API를 사용한다."""
         self.mock_market_data_service._env.is_paper_trading = True
+        self.mock_market_clock.get_current_kst_time.return_value = MagicMock(
+            strftime=MagicMock(return_value="20250101")
+        )
         self.mock_market_clock.to_hhmmss.side_effect = lambda x: x.ljust(6, "0")
         self.mock_market_clock.dec_minute.return_value = "085900"
 
@@ -1705,7 +1708,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             msg1="OK",
             data={"output2": [{"stck_bsop_date": "20250101", "stck_cntg_hour": "090000"}]},
         )
-        self.mock_market_data_service.get_intraday_minutes_by_date.side_effect = [
+        self.mock_market_data_service.get_intraday_minutes_today.side_effect = [
             resp,
             ResCommonResponse(rt_cd="0", msg1="OK", data=[]),
         ]
@@ -1715,8 +1718,8 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(len(result), 1)
-        self.mock_market_data_service.get_intraday_minutes_by_date.assert_called()
-        self.mock_market_data_service.get_intraday_minutes_today.assert_not_called()
+        self.mock_market_data_service.get_intraday_minutes_today.assert_called()
+        self.mock_market_data_service.get_intraday_minutes_by_date.assert_not_called()
 
     async def test_get_day_intraday_minutes_list_extract_rows_dict_unknown_key(self):
         """_extract_rows: dict 응답이지만 알려진 키가 없을 때 (Line 697 coverage)"""

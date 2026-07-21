@@ -19,11 +19,13 @@ class BacktestMicrostructureCaptureService:
         program_provider: Any | None = None,
         program_db_path: str | Path = "data/program_subscribe/program_trading.db",
         execution_strength_db_path: str | Path = "data/execution_strength/execution_strength.db",
+        orderbook_db_path: str | Path = "data/orderbook_snapshots/orderbook_snapshots.db",
     ) -> None:
         self._sqs = stock_query_service
         self._program_provider = program_provider
         self._program_db_path = Path(program_db_path)
         self._execution_strength_db_path = Path(execution_strength_db_path)
+        self._orderbook_db_path = Path(orderbook_db_path)
 
     async def capture(
         self,
@@ -37,6 +39,7 @@ class BacktestMicrostructureCaptureService:
         include_execution_strength: bool = True,
         program_source: str = "daily_rest",
         execution_strength_source: str = "rest_scalar",
+        orderbook_source: str = "none",
         candidate_sources: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
         selected_codes = [code.strip() for code in codes if code.strip()]
@@ -66,6 +69,13 @@ class BacktestMicrostructureCaptureService:
             start_hhmmss=start_hhmmss,
             end_hhmmss=end_hhmmss,
         )
+        orderbook_intraday, orderbook_fallback_codes = self._capture_orderbook_intraday(
+            selected_codes,
+            date_ymd=date_ymd,
+            source=orderbook_source,
+            start_hhmmss=start_hhmmss,
+            end_hhmmss=end_hhmmss,
+        )
         empty_minute_codes = (
             [code for code in selected_codes if not intraday.get(code)]
             if include_intraday else []
@@ -89,6 +99,8 @@ class BacktestMicrostructureCaptureService:
                 "program_fallback_codes": program_fallback_codes,
                 "execution_strength_source": execution_strength_source,
                 "execution_strength_fallback_codes": execution_strength_fallback_codes,
+                "orderbook_source": orderbook_source,
+                "orderbook_fallback_codes": orderbook_fallback_codes,
                 "quality": {
                     "empty_minute_codes": empty_minute_codes,
                     "stale_minute_rows_dropped": stale_minute_rows_dropped,
@@ -107,6 +119,9 @@ class BacktestMicrostructureCaptureService:
                         1 for value in program_trades.values()
                         if value is not None
                     ),
+                    "orderbook_intraday_rows": sum(
+                        len(rows) for rows in orderbook_intraday.values()
+                    ),
                 },
         }
         if candidate_sources is not None:
@@ -117,6 +132,7 @@ class BacktestMicrostructureCaptureService:
             "execution_strength": execution_strength,
             "execution_strength_intraday": execution_strength_intraday,
             "program_trades": program_trades,
+            "orderbook_intraday": orderbook_intraday,
         }
 
     async def _capture_intraday(
@@ -252,6 +268,48 @@ class BacktestMicrostructureCaptureService:
         fallback_codes = [code for code in codes if not result[code]]
         return result, fallback_codes
 
+    def _capture_orderbook_intraday(
+        self,
+        codes: list[str],
+        *,
+        date_ymd: str,
+        source: str,
+        start_hhmmss: str,
+        end_hhmmss: str,
+    ) -> tuple[dict[str, list[dict]], list[str]]:
+        if source not in ("none", "orderbook_db"):
+            raise ValueError(f"unsupported orderbook_source: {source}")
+        result: dict[str, list[dict]] = {code: [] for code in codes}
+        if source == "none":
+            return result, []
+        if self._orderbook_db_path.exists():
+            with sqlite3.connect(self._orderbook_db_path) as conn:
+                for code in codes:
+                    rows = conn.execute(
+                        """
+                        SELECT trade_time, ask_price, bid_price, ask_qty, bid_qty,
+                               total_ask_qty, total_bid_qty
+                        FROM top_of_book_history
+                        WHERE code = ? AND trade_date = ?
+                          AND trade_time >= ? AND trade_time <= ?
+                        ORDER BY trade_time ASC, id ASC
+                        """,
+                        (code, date_ymd, start_hhmmss, end_hhmmss),
+                    ).fetchall()
+                    result[code] = [
+                        {
+                            "time": row[0],
+                            "ask_price": row[1],
+                            "bid_price": row[2],
+                            "ask_qty": row[3],
+                            "bid_qty": row[4],
+                            "total_ask_qty": row[5],
+                            "total_bid_qty": row[6],
+                        }
+                        for row in rows
+                    ]
+        return result, [code for code in codes if not result[code]]
+
     async def _capture_program_trades(
         self,
         codes: list[str],
@@ -339,7 +397,7 @@ class BacktestMicrostructureCaptureService:
 
     @staticmethod
     def write_overlay_files(payload: dict[str, Any], output_dir: Path) -> dict[str, Path]:
-        """capture() payload를 replay fixture 규약 파일명 4종으로 저장한다.
+        """capture() payload를 replay fixture 규약 파일들로 저장한다.
 
         CLI(scripts.capture_backtest_microstructure)와 after-market 태스크가
         동일한 파일 레이아웃을 쓰도록 단일 소스로 유지한다.
@@ -353,6 +411,8 @@ class BacktestMicrostructureCaptureService:
         )
         program_trades_path = output_dir / f"replay_program_trades_{trade_date}.json"
         intraday_path = output_dir / f"replay_intraday_minutes_{trade_date}.json"
+        quality_path = output_dir / f"replay_quality_{trade_date}.json"
+        orderbook_path = output_dir / f"replay_orderbook_intraday_{trade_date}.json"
 
         _write_json(capture_path, payload)
         _write_json(execution_strength_path, payload.get("execution_strength", {}))
@@ -362,14 +422,23 @@ class BacktestMicrostructureCaptureService:
         )
         _write_json(program_trades_path, _flatten_program_trades(payload.get("program_trades", {})))
         _write_json(intraday_path, payload.get("intraday_minutes", {}))
+        _write_json(orderbook_path, payload.get("orderbook_intraday", {}))
 
-        return {
+        quality_gate = (payload.get("metadata") or {}).get("quality_gate")
+        if isinstance(quality_gate, dict):
+            _write_json(quality_path, quality_gate)
+
+        paths = {
             "capture": capture_path,
             "execution_strength": execution_strength_path,
             "execution_strength_intraday": execution_strength_intraday_path,
             "program_trades": program_trades_path,
             "intraday_minutes": intraday_path,
+            "orderbook_intraday": orderbook_path,
         }
+        if isinstance(quality_gate, dict):
+            paths["quality"] = quality_path
+        return paths
 
 
 def _extract_execution_strength(resp: Any) -> float | None:
