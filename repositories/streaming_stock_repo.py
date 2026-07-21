@@ -236,6 +236,8 @@ class StreamingStockRepo:
         """브로커 구독 성공 후 활성 상태로 전환한다."""
         async with self._lock:
             self._active[stream_type].add(code)
+            if stream_type == StreamingType.PROGRAM_TRADING:
+                self._pt_capacity_pending.discard(code)
 
     async def mark_inactive(self, code: str, stream_type: StreamingType) -> None:
         """브로커 구독 해지 후 활성 상태에서 제거한다."""

@@ -3,6 +3,7 @@
 from typing import Any, TYPE_CHECKING
 
 from repositories.execution_strength_repo import ExecutionStrengthRepository
+from repositories.orderbook_snapshot_repo import OrderbookSnapshotRepository
 from repositories.streaming_stock_repo import StreamingStockRepo
 from services.event_shadow_journal_service import EventShadowJournalService
 from services.price_stream_service import PriceStreamService
@@ -53,6 +54,12 @@ class RealtimeBootstrap:
             if es_capture_enabled
             else None
         )
+        orderbook_capture_enabled = config.get("orderbook_capture_enabled", True)
+        ctx.orderbook_snapshot_repo = (
+            OrderbookSnapshotRepository(logger=ctx.logger)
+            if orderbook_capture_enabled
+            else None
+        )
         ctx.price_stream_service = PriceStreamService(
             stock_repo=ctx.stock_repository,
             logger=ctx.logger,
@@ -60,6 +67,7 @@ class RealtimeBootstrap:
             notification_service=ctx.notification_service,
             event_router=ctx.strategy_event_router,
             execution_strength_recorder=ctx.execution_strength_repo,
+            orderbook_recorder=ctx.orderbook_snapshot_repo,
         )
         ctx.streaming_stock_repo = StreamingStockRepo(logger=ctx.logger)
         snapshot = ctx.program_trading_stream_service.load_snapshot()
@@ -100,6 +108,7 @@ class RealtimeBootstrap:
         ctx.event_shadow_journal_service = None
         ctx.strategy_event_router = None
         ctx.execution_strength_repo = None
+        ctx.orderbook_snapshot_repo = None
         ctx.price_stream_service = None
         ctx.streaming_stock_repo = None
         ctx.price_subscription_service = None

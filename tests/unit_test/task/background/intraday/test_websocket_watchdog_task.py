@@ -172,8 +172,8 @@ async def test_restore_program_trading_success(watchdog_task, mock_deps):
 
 
 @pytest.mark.asyncio
-async def test_restore_caps_pt_codes_and_prioritizes_subscription_source(watchdog_task):
-    """한도 초과 시 수동, 프로그램, 기존 순으로 복원하고 초과 종목은 요청하지 않는다."""
+async def test_restore_only_manual_pt_when_persisted_sources_are_available(watchdog_task):
+    """수동 PT만 직접 복원하고 program/legacy는 정책 동기화 또는 정리 대기로 남긴다."""
     svc = watchdog_task
     svc.mcs.is_market_open_now = AsyncMock(return_value=True)
     svc.PT_RESTORE_MAX_CODES = 3
@@ -191,13 +191,82 @@ async def test_restore_caps_pt_codes_and_prioritizes_subscription_source(watchdo
         await svc._restore_all_subscriptions()
 
     requested = [call.args[0] for call in svc._streaming_service.subscribe_program_trading.await_args_list]
-    assert requested == ["000003", "000004", "000002"]
-    assert svc._capacity_pending_pt_codes == {"000001", "000005"}
+    assert requested == ["000003", "000004"]
+    assert svc._capacity_pending_pt_codes == {"000001", "000002", "000005"}
     svc._streaming_logger.log_pt_capacity_pending.assert_called_once_with(
-        selected=["000003", "000004", "000002"],
-        pending=["000005", "000001"],
+        selected=["000003", "000004"],
+        pending=["000002", "000005", "000001"],
         max_codes=3,
     )
+
+
+@pytest.mark.asyncio
+async def test_restore_reduces_pt_codes_to_preserve_requested_price_slots(
+    watchdog_task,
+    mock_price_subscription_service,
+):
+    """PT 복원이 현재 PRICE 요청의 슬롯을 선점하지 않는다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
+    svc._price_subscription_service = mock_price_subscription_service
+    svc.PT_RESTORE_MAX_CODES = 18
+    mock_price_subscription_service.MAX_WS_SLOTS = 40
+    mock_price_subscription_service._refs = {
+        f"P{index:05d}": {
+            "strategy": {
+                "priority": 10,
+                "type": StreamingType.UNIFIED_PRICE,
+            }
+        }
+        for index in range(20)
+    }
+    pt_codes = {f"T{index:05d}" for index in range(18)}
+    svc._streaming_stock_repo.get_desired.return_value = pt_codes
+    svc._streaming_stock_repo.get_pt_subscription_sources.return_value = {
+        code: "manual" for code in pt_codes
+    }
+
+    with patch(
+        "task.background.intraday.websocket_watchdog_task.asyncio.sleep",
+        new_callable=AsyncMock,
+    ):
+        await svc._restore_all_subscriptions()
+
+    # 40슬롯 - PRICE 20 - 주문통보 1 = 19슬롯이므로 PT(2슬롯)는 9종목만 복원한다.
+    assert svc._streaming_service.subscribe_program_trading.await_count == 9
+    mock_price_subscription_service.set_external_reserved_slots.assert_called_once_with(19)
+    assert len(svc._capacity_pending_pt_codes) == 9
+    assert svc._streaming_logger.log_pt_capacity_pending.call_args.kwargs["max_codes"] == 9
+
+
+@pytest.mark.asyncio
+async def test_restore_reserves_minimum_price_slots_without_current_price_requests(
+    watchdog_task,
+    mock_price_subscription_service,
+):
+    """시작 시 PRICE 요청이 없어도 이후 전략 구독을 위한 최소 슬롯을 남긴다."""
+    svc = watchdog_task
+    svc.mcs.is_market_open_now = AsyncMock(return_value=True)
+    svc._price_subscription_service = mock_price_subscription_service
+    svc.PT_RESTORE_MAX_CODES = 18
+    svc.MIN_PRICE_RESERVED_SLOTS = 10
+    mock_price_subscription_service.MAX_WS_SLOTS = 40
+    mock_price_subscription_service._refs = {}
+    pt_codes = {f"T{index:05d}" for index in range(18)}
+    svc._streaming_stock_repo.get_desired.return_value = pt_codes
+    svc._streaming_stock_repo.get_pt_subscription_sources.return_value = {
+        code: "manual" for code in pt_codes
+    }
+
+    with patch(
+        "task.background.intraday.websocket_watchdog_task.asyncio.sleep",
+        new_callable=AsyncMock,
+    ):
+        await svc._restore_all_subscriptions()
+
+    # 40슬롯 - PRICE 최소 10 - 주문통보 1 = 29슬롯 → PT 최대 14종목.
+    assert svc._streaming_service.subscribe_program_trading.await_count == 14
+    mock_price_subscription_service.set_external_reserved_slots.assert_called_once_with(29)
 
 
 @pytest.mark.asyncio
@@ -828,12 +897,30 @@ def test_get_progress_with_subscriptions(watchdog_task):
         return set()
         
     watchdog_task._streaming_stock_repo.get_desired.side_effect = mock_get_desired
+    watchdog_task._streaming_stock_repo.get_active.side_effect = (
+        lambda stream_type: {"005930"}
+        if stream_type == StreamingType.PROGRAM_TRADING
+        else {"005930", "035720"}
+    )
+    watchdog_task._streaming_stock_repo.get_pending.side_effect = (
+        lambda stream_type: {"000660"}
+        if stream_type == StreamingType.PROGRAM_TRADING
+        else set()
+    )
+    watchdog_task._streaming_stock_repo.get_pt_capacity_pending.return_value = {"000660"}
 
     p = watchdog_task.get_progress()
 
     assert p["subscribed_codes"] == 3
     assert p["subscribed_pt_codes"] == 2
     assert p["subscribed_price_codes"] == 1
+    assert p["desired_pt_codes"] == 2
+    assert p["desired_price_codes"] == 1
+    assert p["active_pt_codes"] == 1
+    assert p["active_price_codes"] == 2
+    assert p["pending_pt_codes"] == 1
+    assert p["pending_price_codes"] == 0
+    assert p["capacity_pending_pt_codes"] == 1
 
 
 def test_get_progress_data_gap_calculated(watchdog_task):

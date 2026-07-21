@@ -135,7 +135,8 @@
 - `current_bar` 정책에서는 신호 가격이 닿는 첫 분봉을 체결 후보 봉으로 제공한다.
 - `next_bar` 정책에서는 신호 가격이 닿는 신호 봉 다음 분봉을 체결 후보 봉으로 제공한다.
 - 신호 가격이 닿지 않으면 마지막 분봉을 반환해 simulator가 미체결을 판단하게 한다.
-- 종목, 날짜, 세션 단위로 분봉을 캐시한다.
+  - 종목, 날짜, 세션 단위로 분봉을 캐시한다.
+  - `--microstructure-dir`을 지정하면 품질 manifest에서 valid인 날짜의 `replay_orderbook_intraday_YYYYMMDD.json`을 읽어 해당 분봉 시각 이전의 가장 가까운 bid/ask를 주입한다. 120초를 초과한 스냅샷과 미래 스냅샷은 사용하지 않으며, 유효 호가가 없을 때만 `--spread-pct`로 폴백한다.
 
 - `StockQueryBacktestReplayService`를 추가했다.
 - 전략 내부의 `get_current_price()` 호출을 과거 분봉 기반 현재가 응답으로 바꾼다.
@@ -573,12 +574,19 @@ python -m scripts.capture_backtest_microstructure --date 20260512 --codes 000660
 - `replay_intraday_minutes_YYYYMMDD.json`: 종목별 분봉
 - `replay_execution_strength_YYYYMMDD.json`: exporter에 바로 넘길 체결강도 overlay
 - `replay_program_trades_YYYYMMDD.json`: exporter에 바로 넘길 프로그램 순매수 수량 overlay
+- `replay_orderbook_intraday_YYYYMMDD.json`: 종목별 최우선 bid/ask·1호가/총 잔량 시계열
 
 기본 `--program-source daily_rest`는 과거 일별 프로그램매매 REST 응답에서 `whol_smtn_ntby_qty`를 사용한다. 장중 WebSocket 프로그램매매를 이미 구독해 `data/program_subscribe/program_trading.db`에 쌓아둔 경우에는 아래처럼 DB의 마지막 `net_vol`을 overlay로 사용할 수 있다.
 
 ```powershell
-python -m scripts.capture_backtest_microstructure --date 20260512 --codes 000660,005930 --program-source program_db --program-db-path data/program_subscribe/program_trading.db --output-dir data/backtest_microstructure
-```
+  python -m scripts.capture_backtest_microstructure --date 20260512 --codes 000660,005930 --program-source program_db --program-db-path data/program_subscribe/program_trading.db --output-dir data/backtest_microstructure
+  ```
+
+  품질 게이트를 통과한 호가 overlay를 체결 스프레드에 사용하려면 다음처럼 실행한다.
+
+  ```powershell
+  python -m scripts.run_backtest --strategy larry_williams_vbo --dates 20260721 --microstructure-dir data/backtest_microstructure
+  ```
 
 캡처 파일을 실제 replay fixture에 결합한다.
 

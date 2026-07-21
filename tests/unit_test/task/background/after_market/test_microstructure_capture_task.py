@@ -96,6 +96,7 @@ def _make_task(capture_service, tmp_path, **kwargs):
         output_dir=tmp_path / "out",
         program_db_path=tmp_path / "program_trading.db",
         execution_strength_db_path=tmp_path / "execution_strength.db",
+        orderbook_db_path=tmp_path / "orderbook_snapshots.db",
         logger=MagicMock(),
         quality_retry_attempts=0,
     )
@@ -289,6 +290,23 @@ async def test_quality_gate_metrics_exposed_and_warned_when_capture_quality_fail
     assert last_result["intraday_coverage_pct"] == 50.0
     assert last_result["program_overlay_coverage_pct"] == 0.0
     assert last_result["program_db_coverage_pct"] == 0.0
+    written_payload = capture_service.write_overlay_files.call_args.args[0]
+    assert written_payload["metadata"]["quality_gate"] == {
+        "valid_for_backtest": False,
+        "passed": False,
+        "issues": [
+            "intraday_coverage_below_threshold",
+            "program_overlay_coverage_below_threshold",
+            "program_db_coverage_below_threshold",
+        ],
+        "intraday_coverage_pct": 50.0,
+        "program_overlay_coverage_pct": 0.0,
+        "program_db_coverage_pct": 0.0,
+        "execution_strength_db_coverage_pct": None,
+        "orderbook_db_coverage_pct": None,
+        "orderbook_sparse_codes": [],
+        "orderbook_min_rows_per_code": 30,
+    }
     logger.warning.assert_called_once()
 
 
@@ -335,6 +353,7 @@ async def test_quality_gate_failure_emits_background_warning_notification(
         NotificationLevel.WARNING,
         "Microstructure 캡처 품질 게이트 실패",
         "20260702: intraday=50.0%, program=0.0%, program_db=0.0%, "
+        "orderbook_db=-, "
         "empty_minutes=1 [000660], stale_dropped=2 [005930:2]",
     )
     assert kwargs["metadata"]["issues"] == [
@@ -347,6 +366,8 @@ async def test_quality_gate_failure_emits_background_warning_notification(
     assert kwargs["metadata"]["stale_minute_rows_dropped"] == 2
     assert kwargs["metadata"]["stale_minute_rows_dropped_by_code"] == {"005930": 2}
     assert kwargs["metadata"]["program_fallback_codes"] == []
+    assert kwargs["metadata"]["orderbook_db_coverage_pct"] is None
+    assert kwargs["metadata"]["orderbook_sparse_codes"] == []
 
 
 @pytest.mark.asyncio
@@ -507,6 +528,26 @@ async def test_execution_strength_source_falls_back_to_rest_scalar_without_db(
         task.get_progress()["last_result"]["execution_strength_source"]
         == "rest_scalar"
     )
+
+
+@pytest.mark.asyncio
+async def test_orderbook_source_auto_selects_db_when_file_exists(
+    capture_service, universe_service, tmp_path
+):
+    orderbook_db = tmp_path / "orderbook_snapshots.db"
+    orderbook_db.write_bytes(b"")
+    task = _make_task(
+        capture_service,
+        tmp_path,
+        universe_service=universe_service,
+        orderbook_db_path=orderbook_db,
+    )
+
+    await task._on_market_closed("20260702")
+
+    kwargs = capture_service.capture.await_args.kwargs
+    assert kwargs["orderbook_source"] == "orderbook_db"
+    assert task.get_progress()["last_result"]["orderbook_source"] == "orderbook_db"
 
 
 @pytest.mark.asyncio

@@ -1291,8 +1291,9 @@ class StockQueryService:
     ) -> List[Dict]:
         """
         하루치 분봉(분봉 행 dict)의 '정규화된 리스트'를 반환한다. (출력은 호출부/cli_view에서)
-        - date_ymd=None: 오늘(KST) → get_intraday_minutes_today(배치당 30개; 모의/실전 모두 가능)
-        - date_ymd=YYYYMMDD: 지정일 → get_intraday_minutes_by_date(배치당 100개; 실전 전용)
+        - 오늘(KST, date_ymd로 오늘을 명시한 경우 포함) →
+          get_intraday_minutes_today(배치당 30개; 모의/실전 모두 가능)
+        - 과거 date_ymd=YYYYMMDD → get_intraday_minutes_by_date(배치당 100개; 실전 전용)
         - 시간 범위: session 프리셋으로 선택하거나 start/end를 직접 지정 가능
         - 반환: 시간 오름차순(HHMMSS) 정렬된 리스트. 각 행은 최소 다음 키를 포함:
           'stck_bsop_date'(YYYYMMDD), 'stck_cntg_hour'(HHMMSS), 나머지는 원본 필드 유지
@@ -1310,17 +1311,16 @@ class StockQueryService:
         start_hhmmss = self.market_clock.to_hhmmss(start_hhmmss)
         end_hhmmss   = self.market_clock.to_hhmmss(end_hhmmss)
 
-        # 조회 날짜
-        if date_ymd:
-            ymd = date_ymd
-        else:
-            now_kst = self.market_clock.get_current_kst_time()
-            ymd = now_kst.strftime("%Y%m%d")
+        # 캡처 태스크는 오늘 날짜를 date_ymd로 명시한다. 이 경우에도
+        # 실전 전용 지정일 API 대신 모의/실전 공통 당일 API를 사용한다.
+        today_ymd = self.market_clock.get_current_kst_time().strftime("%Y%m%d")
+        ymd = date_ymd or today_ymd
+        use_today_api = ymd == today_ymd
 
         # 배치 호출 함수 선택
         async def _fetch_batch(cursor_hhmmss: str):
             cursor_hhmmss = self.market_clock.to_hhmmss(cursor_hhmmss)
-            if not date_ymd:
+            if use_today_api:
                 # 오늘(모의/실전; 배치당 30개)
                 return await self.get_intraday_minutes_today(
                     stock_code, input_hour_1=cursor_hhmmss

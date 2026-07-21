@@ -44,6 +44,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--execution-strength-db-path",
         default="data/execution_strength/execution_strength.db",
     )
+    parser.add_argument(
+        "--orderbook-source",
+        choices=("none", "orderbook_db"),
+        default="none",
+        help="최우선 호가·잔량 출처: orderbook_db=기존 PRICE 틱 샘플링 DB",
+    )
+    parser.add_argument(
+        "--orderbook-db-path",
+        default="data/orderbook_snapshots/orderbook_snapshots.db",
+    )
     parser.add_argument("--output-dir", default="data/backtest_microstructure")
     parser.add_argument("--paper", action="store_true", default=False)
     parser.add_argument("--no-intraday", action="store_true", default=False)
@@ -67,6 +77,7 @@ async def _run(args: argparse.Namespace) -> int:
         program_provider=_get_program_provider(sqs),
         program_db_path=args.program_db_path,
         execution_strength_db_path=args.execution_strength_db_path,
+        orderbook_db_path=args.orderbook_db_path,
     )
     payload = await service.capture(
         codes=_parse_codes(args.codes),
@@ -78,6 +89,7 @@ async def _run(args: argparse.Namespace) -> int:
         include_execution_strength=not args.no_execution_strength,
         program_source=args.program_source,
         execution_strength_source=args.execution_strength_source,
+        orderbook_source=args.orderbook_source,
     )
     paths = _write_output_files(payload, Path(args.output_dir))
     for label, path in paths.items():

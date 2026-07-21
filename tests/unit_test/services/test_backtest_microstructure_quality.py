@@ -160,3 +160,43 @@ def test_execution_strength_db_coverage_absent_for_non_es_db_payload():
     assert summary["execution_strength_db_available"] is None
     assert summary["execution_strength_db_coverage_pct"] is None
     assert "execution_strength_db_coverage_below_threshold" not in summary["issues"]
+
+
+def test_orderbook_db_coverage_is_gated_for_new_payloads():
+    payload = _es_payload({
+        "A": [{"time": "090001", "strength": 110.0}],
+        "B": [{"time": "090001", "strength": 120.0}],
+    })
+    payload["metadata"]["orderbook_source"] = "orderbook_db"
+    payload["orderbook_intraday"] = {
+        "A": [{"time": "090001", "ask_price": 101, "bid_price": 100}],
+        "B": [],
+    }
+
+    summary = summarize_capture_quality(
+        payload,
+        thresholds=MicrostructureQualityThresholds(
+            min_orderbook_db_coverage_pct=60.0,
+            min_orderbook_rows_per_code=1,
+        ),
+    )
+
+    assert summary["orderbook_db_available"] == 1
+    assert summary["orderbook_db_coverage_pct"] == 50.0
+    assert "orderbook_db_coverage_below_threshold" in summary["issues"]
+
+
+def test_orderbook_sparse_code_is_not_counted_as_db_coverage():
+    payload = _es_payload({
+        "A": [{"time": "090001", "strength": 110.0}],
+    })
+    payload["metadata"]["orderbook_source"] = "orderbook_db"
+    payload["orderbook_intraday"] = {
+        "A": [{"time": "090001", "ask_price": 101, "bid_price": 100}],
+    }
+
+    summary = summarize_capture_quality(payload)
+
+    assert summary["orderbook_db_available"] == 0
+    assert summary["orderbook_sparse_codes"] == ["A"]
+    assert "orderbook_db_coverage_below_threshold" in summary["issues"]

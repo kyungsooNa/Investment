@@ -11,6 +11,8 @@ class MicrostructureQualityThresholds:
     min_program_db_coverage_pct: float = 50.0
     # 무틱 ~55%(P2 2-4) + PRICE 미구독 후보를 감안한 보수 임계 — 배선 전손 감지용
     min_execution_strength_db_coverage_pct: float = 30.0
+    min_orderbook_db_coverage_pct: float = 30.0
+    min_orderbook_rows_per_code: int = 30
     max_stale_rows: int = 0
 
 
@@ -70,6 +72,25 @@ def summarize_capture_quality(
             execution_strength_db_available, code_count
         )
 
+    orderbook_source = str(metadata.get("orderbook_source") or "")
+    orderbook_intraday = payload.get("orderbook_intraday") or {}
+    orderbook_db_available: Optional[int] = None
+    orderbook_db_coverage_pct: Optional[float] = None
+    if orderbook_source == "orderbook_db":
+        orderbook_db_available = sum(
+            1
+            for code in codes
+            if len(orderbook_intraday.get(code) or [])
+            >= thresholds.min_orderbook_rows_per_code
+        )
+        orderbook_db_coverage_pct = coverage_pct(orderbook_db_available, code_count)
+    orderbook_sparse_codes = [
+        code
+        for code in codes
+        if 0 < len(orderbook_intraday.get(code) or [])
+        < thresholds.min_orderbook_rows_per_code
+    ] if orderbook_source == "orderbook_db" else []
+
     intraday_coverage_pct = coverage_pct(intraday_available, code_count)
     execution_strength_coverage_pct = coverage_pct(
         execution_strength_available, code_count
@@ -94,6 +115,11 @@ def summarize_capture_quality(
         < thresholds.min_execution_strength_db_coverage_pct
     ):
         issues.append("execution_strength_db_coverage_below_threshold")
+    if (
+        orderbook_db_coverage_pct is not None
+        and orderbook_db_coverage_pct < thresholds.min_orderbook_db_coverage_pct
+    ):
+        issues.append("orderbook_db_coverage_below_threshold")
     return {
         "trade_date": str(metadata.get("trade_date") or ""),
         "codes": code_count,
@@ -111,6 +137,11 @@ def summarize_capture_quality(
         "execution_strength_source": execution_strength_source,
         "execution_strength_db_available": execution_strength_db_available,
         "execution_strength_db_coverage_pct": execution_strength_db_coverage_pct,
+        "orderbook_source": orderbook_source,
+        "orderbook_db_available": orderbook_db_available,
+        "orderbook_db_coverage_pct": orderbook_db_coverage_pct,
+        "orderbook_sparse_codes": orderbook_sparse_codes,
+        "orderbook_min_rows_per_code": thresholds.min_orderbook_rows_per_code,
         "empty_minute_codes": quality.get("empty_minute_codes") or [],
         "stale_minute_rows_dropped": stale_rows,
         "stale_minute_rows_dropped_by_code": stale_by_code,

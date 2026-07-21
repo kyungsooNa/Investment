@@ -41,9 +41,10 @@ class WebSocketWatchdogTask(SchedulableTask):
     RECONNECT_ALERT_CONFIRMATION_COUNT = 2
     REALTIME_HEALTH_CHECK_END_HOUR = 15
     REALTIME_HEALTH_CHECK_END_MINUTE = 20
-    # KIS 40슬롯 중 PT 18종목(H0STPGM0+H0UNCNT0=36)과 주문통보 1슬롯을 예약한다.
+    # PT 복원 절대 상한. 실제 상한은 현재 PRICE 요청과 최소 예약 슬롯을 반영해 더 낮아질 수 있다.
     PT_RESTORE_MAX_CODES = 18
     ORDER_NOTICE_RESERVED_SLOTS = 1
+    MIN_PRICE_RESERVED_SLOTS = 10
 
     def __init__(
         self,
@@ -457,10 +458,26 @@ class WebSocketWatchdogTask(SchedulableTask):
         """
         subscribed_pt = 0
         subscribed_price = 0
+        active_pt = 0
+        active_price = 0
+        pending_pt = 0
+        pending_price = 0
+        capacity_pending_pt = 0
         if self._streaming_stock_repo:
             from repositories.streaming_stock_repo import StreamingType
             subscribed_pt = len(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING))
             subscribed_price = len(self._streaming_stock_repo.get_desired(StreamingType.UNIFIED_PRICE))
+            active_pt = len(self._streaming_stock_repo.get_active(StreamingType.PROGRAM_TRADING))
+            active_price = len(self._streaming_stock_repo.get_active(StreamingType.UNIFIED_PRICE))
+            pending_pt = len(self._streaming_stock_repo.get_pending(StreamingType.PROGRAM_TRADING))
+            pending_price = len(self._streaming_stock_repo.get_pending(StreamingType.UNIFIED_PRICE))
+            capacity_getter = getattr(
+                self._streaming_stock_repo,
+                "get_pt_capacity_pending",
+                None,
+            )
+            if callable(capacity_getter):
+                capacity_pending_pt = len(capacity_getter())
 
         last_ts = 0.0
         data_gap = None
@@ -480,10 +497,48 @@ class WebSocketWatchdogTask(SchedulableTask):
             "subscribed_codes": subscribed_pt + subscribed_price,
             "subscribed_pt_codes": subscribed_pt,
             "subscribed_price_codes": subscribed_price,
+            "desired_pt_codes": subscribed_pt,
+            "desired_price_codes": subscribed_price,
+            "active_pt_codes": active_pt,
+            "active_price_codes": active_price,
+            "pending_pt_codes": pending_pt,
+            "pending_price_codes": pending_price,
+            "capacity_pending_pt_codes": capacity_pending_pt,
             "data_gap_sec": data_gap,
             "price_data_gap_sec": price_gap,
             "market_open": self._market_open,
         }
+
+    def _calculate_pt_restore_limit(self) -> int:
+        """PRICE 요청 슬롯을 먼저 남긴 뒤 복원 가능한 PT 종목 수를 계산한다."""
+        if self._price_subscription_service is None:
+            return self.PT_RESTORE_MAX_CODES
+
+        max_slots = getattr(self._price_subscription_service, "MAX_WS_SLOTS", 40)
+        if not isinstance(max_slots, int):
+            max_slots = 40
+
+        requested_price_codes = 0
+        refs = getattr(self._price_subscription_service, "_refs", {})
+        if isinstance(refs, dict):
+            for requests in refs.values():
+                if not isinstance(requests, dict):
+                    requested_price_codes += 1
+                    continue
+                if any(
+                    isinstance(request, dict)
+                    and getattr(request.get("type"), "value", request.get("type"))
+                    == "unified_price"
+                    for request in requests.values()
+                ):
+                    requested_price_codes += 1
+
+        price_slots = max(self.MIN_PRICE_RESERVED_SLOTS, requested_price_codes)
+        available_for_pt = max(
+            0,
+            max_slots - self.ORDER_NOTICE_RESERVED_SLOTS - price_slots,
+        )
+        return min(self.PT_RESTORE_MAX_CODES, available_for_pt // 2)
 
     async def _restore_all_subscriptions(self, reset_connection: bool = True) -> None:
         """
@@ -521,8 +576,24 @@ class WebSocketWatchdogTask(SchedulableTask):
             all_pt_codes,
             key=lambda code: (source_rank.get(sources.get(code), 2), code),
         )
-        pt_codes = ordered_pt_codes[:self.PT_RESTORE_MAX_CODES]
-        capacity_pending = ordered_pt_codes[self.PT_RESTORE_MAX_CODES:]
+        pt_restore_limit = self._calculate_pt_restore_limit()
+        if isinstance(sources, dict) and sources:
+            # program 구독은 ProgramCaptureSubscriptionTask가 정책을 통해 다시 동기화한다.
+            # 여기서 직접 복원하면 외부 예약 슬롯과 정책 슬롯이 이중 계산된다.
+            directly_restorable = [
+                code for code in ordered_pt_codes if sources.get(code) == "manual"
+            ]
+            deferred_by_source = [
+                code for code in ordered_pt_codes if sources.get(code) != "manual"
+            ]
+        else:
+            # 출처 메타데이터가 없는 구버전/테스트 저장소는 기존 복원 동작을 유지한다.
+            directly_restorable = ordered_pt_codes
+            deferred_by_source = []
+        pt_codes = directly_restorable[:pt_restore_limit]
+        capacity_pending = (
+            directly_restorable[pt_restore_limit:] + deferred_by_source
+        )
         self._capacity_pending_pt_codes = set(capacity_pending)
         if self._streaming_stock_repo:
             setter = getattr(self._streaming_stock_repo, "set_pt_capacity_pending", None)
@@ -533,7 +604,7 @@ class WebSocketWatchdogTask(SchedulableTask):
             self._streaming_logger.log_pt_capacity_pending(
                 selected=pt_codes,
                 pending=capacity_pending,
-                max_codes=self.PT_RESTORE_MAX_CODES,
+                max_codes=pt_restore_limit,
             )
 
         if self._price_subscription_service:

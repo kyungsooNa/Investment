@@ -73,6 +73,12 @@ def _parse_args() -> argparse.Namespace:
         dest="spread_pct",
         help="bid/ask 부재 시 시장가성 주문에 적용할 스프레드 %% — 절반이 체결가에 가산 (default: 0.0)",
     )
+    parser.add_argument(
+        "--microstructure-dir",
+        default=None,
+        dest="microstructure_dir",
+        help="유효한 replay_orderbook_intraday_YYYYMMDD.json 디렉터리",
+    )
     parser.add_argument("--output", default="console", choices=["console", "json"])
     parser.add_argument("--output-file", default=None, dest="output_file")
     parser.add_argument(
@@ -300,14 +306,21 @@ def _wrap_pit_universe(
     )
 
 
-def _build_replay_bar_providers(replay_sqs: Any) -> tuple[Any, Any]:
+def _build_replay_bar_providers(
+    replay_sqs: Any,
+    *,
+    microstructure_dir: str | None = None,
+) -> tuple[Any, Any]:
     from services.backtest_replay_adapter import (
         StockQueryDailyMtmBarProvider,
         StockQueryIntradayReplayBarProvider,
     )
 
     return (
-        StockQueryIntradayReplayBarProvider(replay_sqs),
+        StockQueryIntradayReplayBarProvider(
+            replay_sqs,
+            microstructure_dir=microstructure_dir,
+        ),
         StockQueryDailyMtmBarProvider(replay_sqs),
     )
 
@@ -1490,7 +1503,10 @@ async def _run(args: argparse.Namespace) -> None:
         stock_query_service=replay_sqs,
         market_clock=backtest_clock,
     )
-    bar_provider, mtm_bar_provider = _build_replay_bar_providers(replay_sqs)
+    bar_provider, mtm_bar_provider = _build_replay_bar_providers(
+        replay_sqs,
+        microstructure_dir=args.microstructure_dir,
+    )
     indicator_service = getattr(sqs, "indicator_service", None)
     with tempfile.TemporaryDirectory(prefix="period_backtest_") as tmp_dir:
         def make_runner(
@@ -1557,6 +1573,7 @@ async def _run(args: argparse.Namespace) -> None:
                 "execution_bar_policy": args.execution_bar_policy,
                 "market_slippage_pct": args.market_slippage_pct,
                 "spread_pct": args.spread_pct,
+                "microstructure_dir": args.microstructure_dir,
                 "use_risk_sizing": args.use_risk_sizing,
                 "output": args.output,
                 "walk_forward": segment is not None,
