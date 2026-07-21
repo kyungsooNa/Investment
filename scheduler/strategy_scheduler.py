@@ -97,7 +97,9 @@ class StrategyScheduler:
     FORCE_EXIT_MINUTES_BEFORE = 30  # 장 마감 N분 전 강제 청산 (= 첫 tier 진입 시점)
     # tiered force-exit: (마감 N분 전, 누적 청산 비율). 마지막 tier 는 반드시 1.0(전량) 으로
     # 마감 전 flat 보장. 1주 포지션은 중간 tier 에서 floor 라운딩으로 0주 → 최종 tier 에서 전량.
-    FORCE_EXIT_TIERS = [(30, 0.5), (15, 1.0)]
+    # 최종 tier 는 ORDER_CUTOFF_MINUTES_BEFORE_CLOSE 보다 먼저 발화해야 한다. 컷오프 이후로
+    # 잡히면 영구 미실행되어 잔량이 그대로 오버나이트로 넘어간다.
+    FORCE_EXIT_TIERS = [(30, 0.5), (25, 1.0)]
     # 15:40 설정 기준 15:20(KRX 종가 동시호가 시작) 이후 전략 주문 중단.
     # 의도: 동시호가 구간은 연속체결이 없어 현재가 기반 전략 판단이 무의미하다.
     # check_exits 도 함께 중단된다 — 당일청산 전략은 FORCE_EXIT(마감 30분 전)가

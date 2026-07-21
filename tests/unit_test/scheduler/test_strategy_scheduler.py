@@ -1758,13 +1758,13 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         config_b = StrategySchedulerConfig(strategy=strategy_b, force_exit_on_close=False, interval_minutes=0)
         scheduler.register(config_b)
 
-        # 현재 시간: 15:05, 마감 시간: 15:30 (25분 남음 -> 강제청산 윈도우 이내, 컷오프 이전)
+        # 현재 시간: 15:02, 마감 시간: 15:30 (28분 남음 -> 1단계 tier(30분)만 발화, 최종 tier(25분) 이전)
         import pytz
         from datetime import datetime
         kst = pytz.timezone("Asia/Seoul")
-        now = kst.localize(datetime(2023, 1, 1, 15, 5))
+        now = kst.localize(datetime(2023, 1, 1, 15, 2))
         # 두 번째 루프에서는 쿨다운(60초) 이후 시점
-        now_after_cooldown = kst.localize(datetime(2023, 1, 1, 15, 6, 1))
+        now_after_cooldown = kst.localize(datetime(2023, 1, 1, 15, 3, 1))
         close_time = kst.localize(datetime(2023, 1, 1, 15, 30))
 
         tm.get_current_kst_time.side_effect = [now, now_after_cooldown]
@@ -1786,6 +1786,35 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
             # 전략 B는 일반 모드(False)로 실행되어야 함 (쿨다운 이후 두 번째 루프에서 실행)
             mock_run.assert_any_call(config_b, force_exit_only=False, force_exit_fraction=1.0)
+
+    def test_force_exit_final_tier_runs_before_order_cutoff(self):
+        """최종 강제청산 tier는 주문 컷오프보다 먼저 발화해야 한다 (마감 전 flat 보장).
+
+        최종 tier가 컷오프 이후에 잡히면 영구 미실행되어 잔량이 오버나이트로 유출된다.
+        """
+        final_tier_minutes = min(m for m, _ in StrategyScheduler.FORCE_EXIT_TIERS)
+        last_cumulative = max(c for _, c in StrategyScheduler.FORCE_EXIT_TIERS)
+
+        self.assertEqual(last_cumulative, 1.0)
+        self.assertGreater(
+            final_tier_minutes,
+            StrategyScheduler.ORDER_CUTOFF_MINUTES_BEFORE_CLOSE,
+            "최종 tier가 주문 컷오프 이후면 영구 미실행 → 잔량 오버나이트 유출",
+        )
+
+    def test_pending_force_exit_tier_reaches_full_exit_before_cutoff(self):
+        """1차 tier로 절반 청산된 뒤, 컷오프 이전에 잔량 전량 청산 tier가 발화한다."""
+        scheduler, _, _, _, _ = self._make_scheduler()
+        name = "전략A"
+        scheduler._force_exit_progress[name] = 0.5
+
+        minutes_just_before_cutoff = StrategyScheduler.ORDER_CUTOFF_MINUTES_BEFORE_CLOSE + 0.1
+        pending = scheduler._pending_force_exit_tier(name, minutes_just_before_cutoff)
+
+        self.assertIsNotNone(pending, "컷오프 이전에 잔량 전량 청산 tier가 발화해야 한다")
+        target, sell_fraction = pending
+        self.assertEqual(target, 1.0)
+        self.assertEqual(sell_fraction, 1.0)
 
     async def test_loop_skips_strategy_after_order_cutoff(self):
         """주문 컷오프 이후에는 일반 실행과 강제청산 모두 시그널을 만들지 않는다."""
@@ -1915,23 +1944,23 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         # 윈도우 밖(T-40): 발화 tier 없음
         assert scheduler._pending_force_exit_tier("S", 40) is None
 
-        # T-25: 1단계(30분,0.5)만 발화 → 현재 보유의 50% 매도
-        assert scheduler._pending_force_exit_tier("S", 25) == (0.5, 0.5)
+        # T-28: 1단계(30분,0.5)만 발화 → 현재 보유의 50% 매도
+        assert scheduler._pending_force_exit_tier("S", 28) == (0.5, 0.5)
 
-        # 진행률 0.5 기록 후 T-25 재호출: 동일 tier 재발화 안 함
+        # 진행률 0.5 기록 후 T-28 재호출: 동일 tier 재발화 안 함
         scheduler._force_exit_progress["S"] = 0.5
-        assert scheduler._pending_force_exit_tier("S", 25) is None
+        assert scheduler._pending_force_exit_tier("S", 28) is None
 
-        # T-10: 2단계(15분,1.0) 발화 → 잔여 전량(fraction=1.0)
-        target, fraction = scheduler._pending_force_exit_tier("S", 10)
+        # T-22: 2단계(25분,1.0) 발화 → 잔여 전량(fraction=1.0). 컷오프(20분) 이전이라 실제 주문 가능.
+        target, fraction = scheduler._pending_force_exit_tier("S", 22)
         assert target == 1.0 and abs(fraction - 1.0) < 1e-9
 
         # 진행률 1.0(전량 완료) 후: 더 이상 발화 없음
         scheduler._force_exit_progress["S"] = 1.0
-        assert scheduler._pending_force_exit_tier("S", 10) is None
+        assert scheduler._pending_force_exit_tier("S", 22) is None
 
-        # 1단계를 놓치고 T-10에 처음 진입: 곧장 누적 1.0 전량으로 catch-up
-        assert scheduler._pending_force_exit_tier("LATE", 10) == (1.0, 1.0)
+        # 1단계를 놓치고 T-22에 처음 진입: 곧장 누적 1.0 전량으로 catch-up
+        assert scheduler._pending_force_exit_tier("LATE", 22) == (1.0, 1.0)
 
     async def test_force_liquidate_partial_fraction_sells_floor(self):
         """sell_fraction<1.0 시 floor(qty*fraction) 수량만 매도한다."""
