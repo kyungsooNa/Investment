@@ -73,6 +73,30 @@ def test_on_price_tick_success(price_stream_service, mock_stock_repo):
     mock_stock_repo.update_realtime_data.assert_called_once_with('005930', 75000.0, 1500000)
 
 
+def test_on_price_tick_records_top_of_book(mock_stock_repo, mock_logger):
+    recorder = MagicMock()
+    service = PriceStreamService(
+        stock_repo=mock_stock_repo,
+        logger=mock_logger,
+        orderbook_recorder=recorder,
+    )
+    data = {
+        '유가증권단축종목코드': '005930',
+        '주식현재가': '71050',
+        '주식체결시간': '101500',
+        '매도호가1': '71100',
+        '매수호가1': '71000',
+        '매도호가잔량': '1200',
+        '매수호가잔량': '900',
+        '총매도호가잔량': '15000',
+        '총매수호가잔량': '18000',
+    }
+
+    service.on_price_tick(data)
+
+    recorder.record_tick.assert_called_once_with('005930', data)
+
+
 def test_on_price_tick_defaults(price_stream_service, mock_stock_repo):
     """선택적 필드가 누락되거나 'N/A'일 때 기본값으로 갱신되는지 검증"""
     data = {

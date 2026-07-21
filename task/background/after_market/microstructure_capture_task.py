@@ -34,6 +34,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
         output_dir: str | Path = "data/backtest_microstructure",
         program_db_path: str | Path = "data/program_subscribe/program_trading.db",
         execution_strength_db_path: str | Path = "data/execution_strength/execution_strength.db",
+        orderbook_db_path: str | Path = "data/orderbook_snapshots/orderbook_snapshots.db",
         max_codes: int = 40,
         logger=None,
         notification_service=None,
@@ -53,6 +54,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
         self._output_dir = Path(output_dir)
         self._program_db_path = Path(program_db_path)
         self._execution_strength_db_path = Path(execution_strength_db_path)
+        self._orderbook_db_path = Path(orderbook_db_path)
         self._max_codes = max_codes
         self._notification_service = notification_service
         self._quality_retry_attempts = max(0, int(quality_retry_attempts))
@@ -135,6 +137,9 @@ class MicrostructureCaptureTask(AfterMarketTask):
         execution_strength_source = (
             "es_db" if self._execution_strength_db_path.exists() else "rest_scalar"
         )
+        orderbook_source = (
+            "orderbook_db" if self._orderbook_db_path.exists() else "none"
+        )
         self._progress["running"] = True
         try:
             payload, quality_summary = await self._capture_with_quality_retry(
@@ -142,8 +147,28 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 latest_trading_date=latest_trading_date,
                 program_source=program_source,
                 execution_strength_source=execution_strength_source,
+                orderbook_source=orderbook_source,
                 candidate_sources=candidate_sources,
             )
+            payload.setdefault("metadata", {})["quality_gate"] = {
+                "valid_for_backtest": quality_summary["quality_gate_passed"],
+                "passed": quality_summary["quality_gate_passed"],
+                "issues": list(quality_summary["issues"]),
+                "warnings": list(quality_summary["warnings"]),
+                "intraday_coverage_pct": quality_summary["intraday_coverage_pct"],
+                "program_overlay_coverage_pct": quality_summary["program_overlay_coverage_pct"],
+                "program_db_coverage_pct": quality_summary["program_db_coverage_pct"],
+                "execution_strength_db_coverage_pct": quality_summary[
+                    "execution_strength_db_coverage_pct"
+                ],
+                "orderbook_db_coverage_pct": quality_summary[
+                    "orderbook_db_coverage_pct"
+                ],
+                "orderbook_sparse_codes": quality_summary["orderbook_sparse_codes"],
+                "orderbook_min_rows_per_code": quality_summary[
+                    "orderbook_min_rows_per_code"
+                ],
+            }
             self._service.write_overlay_files(payload, self._output_dir)
             self._last_captured_date = latest_trading_date
             self._save_last_captured_date(latest_trading_date)
@@ -166,6 +191,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "quality": quality,
                 "quality_gate_passed": quality_summary["quality_gate_passed"],
                 "quality_issues": quality_summary["issues"],
+                "quality_warnings": quality_summary["warnings"],
                 "intraday_coverage_pct": quality_summary["intraday_coverage_pct"],
                 "execution_strength_coverage_pct": quality_summary["execution_strength_coverage_pct"],
                 "program_overlay_coverage_pct": quality_summary["program_overlay_coverage_pct"],
@@ -173,14 +199,21 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "execution_strength_source": execution_strength_source,
                 "execution_strength_fallback_codes": execution_strength_fallback_codes,
                 "execution_strength_db_coverage_pct": quality_summary["execution_strength_db_coverage_pct"],
+                "orderbook_source": orderbook_source,
+                "orderbook_fallback_codes": metadata.get("orderbook_fallback_codes") or [],
+                "orderbook_db_coverage_pct": quality_summary["orderbook_db_coverage_pct"],
+                "orderbook_sparse_codes": quality_summary["orderbook_sparse_codes"],
             }
-            if not quality_summary["quality_gate_passed"]:
+            if not quality_summary["quality_gate_passed"] or quality_summary["warnings"]:
+                status = "실패" if not quality_summary["quality_gate_passed"] else "경고"
                 self._logger.warning(
-                    f"{self.task_name}: {latest_trading_date} 캡처 품질 게이트 실패 "
+                    f"{self.task_name}: {latest_trading_date} 캡처 품질 {status} "
                     f"(issues={quality_summary['issues']}, "
+                    f"warnings={quality_summary['warnings']}, "
                     f"intraday={quality_summary['intraday_coverage_pct']:.1f}%, "
                     f"program={quality_summary['program_overlay_coverage_pct']:.1f}%, "
-                    f"program_db={format_optional_pct(quality_summary['program_db_coverage_pct'])})"
+                    f"program_db={format_optional_pct(quality_summary['program_db_coverage_pct'])}, "
+                    f"orderbook_db={format_optional_pct(quality_summary['orderbook_db_coverage_pct'])})"
                 )
                 await self._emit_quality_gate_warning(latest_trading_date, quality_summary)
             self._logger.info(
@@ -204,6 +237,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
         latest_trading_date: str,
         program_source: str,
         execution_strength_source: str,
+        orderbook_source: str,
         candidate_sources: dict[str, list[str]] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         payload = await self._capture_once(
@@ -211,6 +245,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
             latest_trading_date=latest_trading_date,
             program_source=program_source,
             execution_strength_source=execution_strength_source,
+            orderbook_source=orderbook_source,
             candidate_sources=candidate_sources,
         )
         quality_summary = summarize_capture_quality(payload, fallback_codes=codes)
@@ -230,6 +265,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 latest_trading_date=latest_trading_date,
                 program_source=program_source,
                 execution_strength_source=execution_strength_source,
+                orderbook_source=orderbook_source,
                 candidate_sources=candidate_sources,
             )
             quality_summary = summarize_capture_quality(payload, fallback_codes=codes)
@@ -243,6 +279,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
         latest_trading_date: str,
         program_source: str,
         execution_strength_source: str,
+        orderbook_source: str,
         candidate_sources: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
         return await self._service.capture(
@@ -250,6 +287,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
             date_ymd=latest_trading_date,
             program_source=program_source,
             execution_strength_source=execution_strength_source,
+            orderbook_source=orderbook_source,
             candidate_sources=candidate_sources,
         )
 
@@ -271,11 +309,16 @@ class MicrostructureCaptureTask(AfterMarketTask):
         await self._notification_service.emit(
             NotificationCategory.BACKGROUND,
             NotificationLevel.WARNING,
-            "Microstructure 캡처 품질 게이트 실패",
+            (
+                "Microstructure 캡처 품질 게이트 실패"
+                if quality_summary.get("issues")
+                else "Microstructure 캡처 품질 경고"
+            ),
             f"{latest_trading_date}: "
             f"intraday={quality_summary['intraday_coverage_pct']:.1f}%, "
             f"program={quality_summary['program_overlay_coverage_pct']:.1f}%, "
             f"program_db={format_optional_pct(quality_summary['program_db_coverage_pct'])}, "
+            f"orderbook_db={format_optional_pct(quality_summary['orderbook_db_coverage_pct'])}, "
             f"empty_minutes={len(empty_minute_codes)}{empty_detail}, "
             f"stale_dropped={stale_minute_rows_dropped}{stale_detail}",
             metadata={
@@ -283,10 +326,13 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "trade_date": latest_trading_date,
                 "codes": quality_summary["codes"],
                 "issues": quality_summary["issues"],
+                "warnings": quality_summary["warnings"],
                 "intraday_coverage_pct": quality_summary["intraday_coverage_pct"],
                 "execution_strength_coverage_pct": quality_summary["execution_strength_coverage_pct"],
                 "program_overlay_coverage_pct": quality_summary["program_overlay_coverage_pct"],
                 "program_db_coverage_pct": quality_summary["program_db_coverage_pct"],
+                "orderbook_db_coverage_pct": quality_summary["orderbook_db_coverage_pct"],
+                "orderbook_sparse_codes": quality_summary["orderbook_sparse_codes"],
                 "empty_minute_codes": empty_minute_codes,
                 "stale_minute_rows_dropped": stale_minute_rows_dropped,
                 "stale_minute_rows_dropped_by_code": stale_minute_rows_dropped_by_code,

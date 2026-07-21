@@ -25,6 +25,7 @@ def _disclosure(report_name: str, remarks: str = "") -> DartDisclosure:
         ("횡령ㆍ배임혐의발생", 95, "CRITICAL"),
         ("전환사채권발행결정", 85, "HIGH"),
         ("최대주주변경", 80, "HIGH"),
+        ("최대주주등소유주식변동신고서", 70, "HIGH"),
         ("단일판매ㆍ공급계약체결", 70, "HIGH"),
         ("현금ㆍ현물배당결정", 60, "MEDIUM"),
         ("분기보고서 (2026.03)", 30, "NORMAL"),

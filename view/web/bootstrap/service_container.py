@@ -646,6 +646,10 @@ class ServiceContainer:
                     market_calendar_service=ctx._mcs,
                     market_clock=ctx.market_clock,
                     scheduler_store=StrategySchedulerStore(logger=ctx.logger),
+                    max_codes=config_dict.get("program_capture_rotation_batch_size", 10),
+                    rotation_interval_minutes=config_dict.get(
+                        "program_capture_rotation_interval_minutes", 30
+                    ),
                     logger=ctx.logger,
                 ) if (
                     program_capture_sub_enabled and ctx.price_subscription_service

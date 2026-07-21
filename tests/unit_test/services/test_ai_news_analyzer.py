@@ -62,6 +62,10 @@ async def test_system_prompt_requires_first_line_signal():
     assert "첫 줄" in system
     for expected in ("신호: 상", "신호: 중", "신호: 하"):
         assert expected in system
+    # 판정 규칙(노이즈 제외·우세할 때만 상/하)과 근거 줄을 함께 요구해야 한다
+    assert "신호 근거" in system
+    assert "노이즈" in system
+    assert "우세" in system
 
 
 async def test_analyze_handles_empty_news_and_blank_response():

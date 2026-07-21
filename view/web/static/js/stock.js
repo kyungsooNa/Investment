@@ -436,6 +436,7 @@ async function searchStock(codeOverride, exchangeOverride) {
                         </div>
                         <p class="ai-stock-analysis-note">버튼을 누를 때만 AI를 호출합니다. 결과는 투자 판단의 참고 자료이며 투자 권유가 아닙니다.</p>
                         <p id="ai-stock-analysis-status" class="ai-stock-analysis-meta" aria-live="polite"></p>
+                        <p id="ai-stock-analysis-signal-reason" class="ai-stock-analysis-meta"></p>
                         <p id="ai-stock-analysis-sources" class="ai-stock-analysis-meta"></p>
                         <div id="ai-stock-analysis-output" class="ai-stock-analysis-output"></div>
                     </div>
@@ -446,6 +447,7 @@ async function searchStock(codeOverride, exchangeOverride) {
                         </div>
                         <p class="ai-stock-analysis-note">최근 뉴스 제목을 모아 요약합니다. 기사 본문은 읽지 않으므로 원문 확인이 필요합니다.</p>
                         <p id="ai-news-status" class="ai-stock-analysis-meta" aria-live="polite"></p>
+                        <p id="ai-news-signal-reason" class="ai-stock-analysis-meta"></p>
                         <div id="ai-news-output" class="ai-stock-analysis-output"></div>
                         <ul id="ai-news-list" class="ai-news-list"></ul>
                     </div>
@@ -488,21 +490,27 @@ async function searchStock(codeOverride, exchangeOverride) {
     }
 }
 
-// AI가 첫 줄에 판정한 신호(상/중/하)를 신호등 배지로 표시한다. 값이 없으면 숨긴다.
-function renderAiSignal(elementId, signal) {
+// AI가 첫 줄에 판정한 신호(상/중/하)를 신호등 배지로, 둘째 줄의 판정 근거를
+// 배지 옆 한 줄(<배지 id>-reason 요소)로 표시한다. 값이 없으면 숨긴다.
+function renderAiSignal(elementId, signal, reason) {
     const badge = document.getElementById(elementId);
     if (!badge) return;
     const kinds = { '상': ['high', '🟢 상'], '중': ['mid', '🟡 중'], '하': ['low', '🔴 하'] };
     badge.classList.remove('high', 'mid', 'low');
+    const reasonEl = document.getElementById(elementId + '-reason');
     const kind = kinds[signal];
     if (!kind) {
         badge.textContent = '';
+        badge.title = '';
         badge.style.display = 'none';
+        if (reasonEl) reasonEl.textContent = '';
         return;
     }
     badge.classList.add(kind[0]);
     badge.textContent = kind[1];
+    badge.title = reason || '';
     badge.style.display = 'inline-block';
+    if (reasonEl) reasonEl.textContent = reason ? `신호 근거: ${reason}` : '';
 }
 
 async function requestAiStockAnalysis(code) {
@@ -557,7 +565,7 @@ async function requestAiStockAnalysis(code) {
         sources.textContent = usedSources.length
             ? `사용 데이터: ${usedSources.join(' · ')}`
             : '사용 가능한 데이터가 제한적입니다.';
-        renderAiSignal('ai-stock-analysis-signal', json.data.signal);
+        renderAiSignal('ai-stock-analysis-signal', json.data.signal, json.data.signal_reason);
         output.textContent = String(json.data.analysis);
         output.style.display = 'block';
     } catch (error) {
@@ -632,7 +640,7 @@ async function requestAiNewsReview(code) {
             return;
         }
         status.textContent = `기사 ${data.news_count || articles.length}건 · 생성 시각: ${data.generated_at || ''}`.trim();
-        renderAiSignal('ai-news-signal', data.signal);
+        renderAiSignal('ai-news-signal', data.signal, data.signal_reason);
         output.textContent = String(data.analysis);
         output.style.display = 'block';
     } catch (error) {

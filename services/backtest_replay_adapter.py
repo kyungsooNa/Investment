@@ -1,8 +1,11 @@
 """Replay adapters for period backtests."""
 from __future__ import annotations
 
+import json
 import time
+from bisect import bisect_right
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional, Sequence, Tuple
 
 from common.market_snapshot import ConclusionSnapshot, MarketSnapshot
@@ -394,11 +397,25 @@ class StockQueryIntradayReplayBarProvider:
     execution simulator can produce an unfilled report.
     """
 
-    def __init__(self, stock_query_service: Any, *, session: str = "REGULAR") -> None:
+    def __init__(
+        self,
+        stock_query_service: Any,
+        *,
+        session: str = "REGULAR",
+        microstructure_dir: str | Path | None = None,
+        max_orderbook_age_sec: int = 120,
+    ) -> None:
         self._stock_query_service = stock_query_service
         self._session = session
+        self._microstructure_dir = (
+            Path(microstructure_dir) if microstructure_dir is not None else None
+        )
+        self._max_orderbook_age_sec = max(0, int(max_orderbook_age_sec))
         self._cache: dict[tuple[str, str, str], list[BacktestBar]] = {}
         self._row_cache: dict[tuple[str, str, str], list[dict]] = {}
+        self._orderbook_cache: dict[tuple[str, str], list[dict]] = {}
+        self._quality_manifest: dict | None = None
+        self._date_quality_cache: dict[str, bool | None] = {}
 
     def set_backtest_date(self, date_ymd: str) -> None:
         setter = getattr(self._stock_query_service, "set_backtest_date", None)
@@ -442,8 +459,16 @@ class StockQueryIntradayReplayBarProvider:
         rows = [row for row in rows if isinstance(row, dict)]
         self._row_cache[key] = rows
 
+        orderbook_rows = self._load_orderbook_rows(code, date_ymd)
         bars = [
-            bar for bar in (self._row_to_bar(row, default_date=date_ymd) for row in rows)
+            bar for bar in (
+                self._row_to_bar(
+                    row,
+                    default_date=date_ymd,
+                    orderbook_rows=orderbook_rows,
+                )
+                for row in rows
+            )
             if bar is not None
         ]
         bars.sort(key=lambda bar: bar.timestamp)
@@ -471,7 +496,13 @@ class StockQueryIntradayReplayBarProvider:
                 f"fields={missing}"
             )
 
-    def _row_to_bar(self, row: Any, *, default_date: str) -> BacktestBar | None:
+    def _row_to_bar(
+        self,
+        row: Any,
+        *,
+        default_date: str,
+        orderbook_rows: list[dict] | None = None,
+    ) -> BacktestBar | None:
         if not isinstance(row, dict):
             return None
 
@@ -485,6 +516,7 @@ class StockQueryIntradayReplayBarProvider:
         volume = self._to_int(self._first(row, "cntg_vol", "acml_vol", "volume"))
         date = str(self._first(row, "stck_bsop_date", "bsop_date", "date") or default_date)
         time = str(self._first(row, "stck_cntg_hour", "cntg_hour", "time") or "000000").zfill(6)
+        quote = self._latest_orderbook_at_or_before(orderbook_rows or [], time)
 
         return BacktestBar(
             timestamp=f"{date} {time}",
@@ -493,7 +525,90 @@ class StockQueryIntradayReplayBarProvider:
             low=low,
             close=close,
             volume=volume,
+            bid=self._to_float(quote.get("bid_price")) if quote else None,
+            ask=self._to_float(quote.get("ask_price")) if quote else None,
         )
+
+    def _load_orderbook_rows(self, code: str, date_ymd: str) -> list[dict]:
+        key = (code, date_ymd)
+        if key in self._orderbook_cache:
+            return self._orderbook_cache[key]
+        rows: list[dict] = []
+        if self._microstructure_dir is not None and self._overlay_date_is_valid(date_ymd):
+            path = self._microstructure_dir / f"replay_orderbook_intraday_{date_ymd}.json"
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                raw_rows = payload.get(code, []) if isinstance(payload, dict) else []
+                rows = [row for row in raw_rows if isinstance(row, dict)]
+                rows.sort(key=lambda row: str(row.get("time") or ""))
+            except (OSError, json.JSONDecodeError):
+                rows = []
+        self._orderbook_cache[key] = rows
+        return rows
+
+    def _overlay_date_is_valid(self, date_ymd: str) -> bool:
+        if self._microstructure_dir is None:
+            return False
+        if date_ymd not in self._date_quality_cache:
+            sidecar = self._microstructure_dir / f"replay_quality_{date_ymd}.json"
+            try:
+                payload = json.loads(sidecar.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    value = payload.get("valid_for_backtest", payload.get("passed"))
+                    self._date_quality_cache[date_ymd] = (
+                        bool(value) if isinstance(value, bool) else None
+                    )
+                else:
+                    self._date_quality_cache[date_ymd] = None
+            except FileNotFoundError:
+                self._date_quality_cache[date_ymd] = None
+            except (OSError, json.JSONDecodeError):
+                self._date_quality_cache[date_ymd] = False
+        sidecar_valid = self._date_quality_cache[date_ymd]
+        if sidecar_valid is not None:
+            return sidecar_valid
+        if self._quality_manifest is None:
+            path = self._microstructure_dir / "microstructure_quality_manifest.json"
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                self._quality_manifest = payload if isinstance(payload, dict) else {}
+            except FileNotFoundError:
+                self._quality_manifest = {}
+            except (OSError, json.JSONDecodeError):
+                self._quality_manifest = {"invalid_manifest": True}
+        manifest = self._quality_manifest
+        if not manifest:
+            return True
+        valid_dates = manifest.get("valid_dates")
+        if isinstance(valid_dates, list):
+            return date_ymd in {str(value) for value in valid_dates}
+        return False
+
+    def _latest_orderbook_at_or_before(
+        self,
+        rows: list[dict],
+        target_hhmmss: str,
+    ) -> dict | None:
+        target_sec = _hhmmss_to_seconds(target_hhmmss)
+        if target_sec is None or not rows:
+            return None
+        timed_rows = [
+            (seconds, row)
+            for row in rows
+            if (seconds := _hhmmss_to_seconds(row.get("time"))) is not None
+        ]
+        if not timed_rows:
+            return None
+        seconds = [item[0] for item in timed_rows]
+        idx = bisect_right(seconds, target_sec) - 1
+        if idx < 0 or target_sec - seconds[idx] > self._max_orderbook_age_sec:
+            return None
+        row = timed_rows[idx][1]
+        ask = self._to_float(row.get("ask_price"))
+        bid = self._to_float(row.get("bid_price"))
+        if ask is None or bid is None or ask <= 0 or bid <= 0 or ask < bid:
+            return None
+        return row
 
     @staticmethod
     def _price_reached(bar: BacktestBar, target_price: float, side: str) -> bool:
@@ -643,3 +758,13 @@ def _policy_value(policy) -> str:
 
 def _bar_date(timestamp: str) -> str:
     return str(timestamp).split(" ", 1)[0]
+
+
+def _hhmmss_to_seconds(value: Any) -> int | None:
+    text = str(value or "").strip().replace(":", "")
+    if len(text) != 6 or not text.isdigit():
+        return None
+    hour, minute, second = int(text[:2]), int(text[2:4]), int(text[4:])
+    if hour > 23 or minute > 59 or second > 59:
+        return None
+    return hour * 3600 + minute * 60 + second

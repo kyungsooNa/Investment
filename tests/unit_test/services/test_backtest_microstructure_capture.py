@@ -47,6 +47,7 @@ async def test_capture_collects_intraday_execution_strength_and_daily_program_ov
         "execution_strength": 2,
         "execution_strength_intraday_rows": 0,
         "program_trades": 2,
+        "orderbook_intraday_rows": 0,
     }
     assert payload["intraday_minutes"]["000001"][0]["stck_prpr"] == "10000"
     assert payload["execution_strength"] == {"000001": 145.5, "000002": 132.0}
@@ -609,6 +610,82 @@ def test_write_overlay_files_includes_execution_strength_intraday(tmp_path):
     assert json.loads(
         paths["execution_strength_intraday"].read_text(encoding="utf-8")
     ) == {"000001": [{"time": "090001", "strength": 100.0}]}
+
+
+def test_write_overlay_files_persists_quality_gate_sidecar(tmp_path):
+    import json
+
+    quality_gate = {
+        "valid_for_backtest": False,
+        "passed": False,
+        "issues": ["intraday_coverage_below_threshold"],
+    }
+    payload = {
+        "metadata": {
+            "trade_date": "20260512",
+            "codes": ["000001"],
+            "quality_gate": quality_gate,
+        },
+        "intraday_minutes": {"000001": []},
+        "execution_strength": {},
+        "execution_strength_intraday": {},
+        "program_trades": {},
+    }
+
+    paths = BacktestMicrostructureCaptureService.write_overlay_files(
+        payload,
+        tmp_path / "out",
+    )
+
+    assert paths["quality"].name == "replay_quality_20260512.json"
+    assert json.loads(paths["quality"].read_text(encoding="utf-8")) == quality_gate
+
+
+@pytest.mark.asyncio
+async def test_capture_reads_top_of_book_history_from_db(tmp_path):
+    db_path = tmp_path / "orderbook_snapshots.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE top_of_book_history ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, trade_date TEXT, "
+            "trade_time TEXT, ask_price INTEGER, bid_price INTEGER, "
+            "ask_qty INTEGER, bid_qty INTEGER, total_ask_qty INTEGER, "
+            "total_bid_qty INTEGER, created_at REAL)"
+        )
+        conn.executemany(
+            "INSERT INTO top_of_book_history "
+            "(code, trade_date, trade_time, ask_price, bid_price, ask_qty, bid_qty, "
+            "total_ask_qty, total_bid_qty, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            [
+                ("000001", "20260721", "085959", 101, 99, 1, 2, 3, 4, 1.0),
+                ("000001", "20260721", "090001", 102, 100, 10, 20, 30, 40, 2.0),
+                ("000001", "20260721", "153001", 103, 101, 11, 21, 31, 41, 3.0),
+            ],
+        )
+
+    service = BacktestMicrostructureCaptureService(
+        stock_query_service=AsyncMock(),
+        orderbook_db_path=db_path,
+    )
+    payload = await service.capture(
+        codes=["000001", "000002"],
+        date_ymd="20260721",
+        include_intraday=False,
+        include_execution_strength=False,
+        program_source="none",
+        orderbook_source="orderbook_db",
+    )
+
+    assert payload["orderbook_intraday"] == {
+        "000001": [{
+            "time": "090001", "ask_price": 102, "bid_price": 100,
+            "ask_qty": 10, "bid_qty": 20,
+            "total_ask_qty": 30, "total_bid_qty": 40,
+        }],
+        "000002": [],
+    }
+    assert payload["metadata"]["orderbook_fallback_codes"] == ["000002"]
+    assert payload["metadata"]["row_counts"]["orderbook_intraday_rows"] == 1
 
 
 @pytest.mark.asyncio

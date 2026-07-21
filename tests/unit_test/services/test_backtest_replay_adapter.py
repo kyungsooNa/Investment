@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock
 from datetime import datetime
 
@@ -80,6 +81,136 @@ async def test_replay_provider_selects_first_reachable_buy_bar_and_normalizes_fi
     assert bar.low == 69_900
     assert bar.close == 70_000
     assert bar.volume == 20
+
+
+@pytest.mark.asyncio
+async def test_replay_provider_attaches_latest_non_future_orderbook_snapshot(tmp_path):
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = [
+        {
+            "stck_bsop_date": "20260721",
+            "stck_cntg_hour": "101500",
+            "stck_oprc": "71000",
+            "stck_hgpr": "71200",
+            "stck_lwpr": "70900",
+            "stck_prpr": "71100",
+        },
+    ]
+    (tmp_path / "replay_orderbook_intraday_20260721.json").write_text(
+        json.dumps({
+            "005930": [
+                {"time": "101430", "ask_price": 71100, "bid_price": 71000},
+                {"time": "101510", "ask_price": 71200, "bid_price": 71100},
+            ]
+        }),
+        encoding="utf-8",
+    )
+    provider = StockQueryIntradayReplayBarProvider(
+        sqs,
+        microstructure_dir=tmp_path,
+        max_orderbook_age_sec=120,
+    )
+
+    bar = await provider.get_bar(
+        signal=_signal(price=71_000), date_ymd="20260721", side="BUY"
+    )
+
+    assert bar.bid == 71_000
+    assert bar.ask == 71_100
+
+
+@pytest.mark.asyncio
+async def test_replay_provider_drops_stale_orderbook_snapshot(tmp_path):
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = [
+        {"date": "20260721", "time": "101500", "price": "71100"},
+    ]
+    (tmp_path / "replay_orderbook_intraday_20260721.json").write_text(
+        json.dumps({
+            "005930": [
+                {"time": "101000", "ask_price": 71100, "bid_price": 71000},
+            ]
+        }),
+        encoding="utf-8",
+    )
+    provider = StockQueryIntradayReplayBarProvider(
+        sqs,
+        microstructure_dir=tmp_path,
+        max_orderbook_age_sec=120,
+    )
+
+    bar = await provider.get_bar(
+        signal=_signal(price=71_100), date_ymd="20260721", side="BUY"
+    )
+
+    assert bar.bid is None
+    assert bar.ask is None
+
+
+@pytest.mark.asyncio
+async def test_replay_provider_skips_manifest_invalid_date(tmp_path):
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = [
+        {"date": "20260721", "time": "101500", "price": "71100"},
+    ]
+    (tmp_path / "replay_orderbook_intraday_20260721.json").write_text(
+        json.dumps({
+            "005930": [
+                {"time": "101430", "ask_price": 71100, "bid_price": 71000},
+            ]
+        }),
+        encoding="utf-8",
+    )
+    (tmp_path / "microstructure_quality_manifest.json").write_text(
+        json.dumps({"invalid_dates": ["20260721"], "valid_dates": []}),
+        encoding="utf-8",
+    )
+    provider = StockQueryIntradayReplayBarProvider(
+        sqs,
+        microstructure_dir=tmp_path,
+    )
+
+    bar = await provider.get_bar(
+        signal=_signal(price=71_100), date_ymd="20260721", side="BUY"
+    )
+
+    assert bar.bid is None
+    assert bar.ask is None
+
+
+@pytest.mark.asyncio
+async def test_replay_provider_prefers_date_quality_sidecar_over_stale_manifest(tmp_path):
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = [
+        {"date": "20260721", "time": "101500", "price": "71100"},
+    ]
+    (tmp_path / "replay_orderbook_intraday_20260721.json").write_text(
+        json.dumps({
+            "005930": [
+                {"time": "101430", "ask_price": 71100, "bid_price": 71000},
+            ]
+        }),
+        encoding="utf-8",
+    )
+    (tmp_path / "replay_quality_20260721.json").write_text(
+        json.dumps({"valid_for_backtest": True, "passed": True}),
+        encoding="utf-8",
+    )
+    (tmp_path / "microstructure_quality_manifest.json").write_text(
+        json.dumps({"invalid_dates": ["20260721"], "valid_dates": []}),
+        encoding="utf-8",
+    )
+    provider = StockQueryIntradayReplayBarProvider(
+        sqs,
+        microstructure_dir=tmp_path,
+    )
+
+    bar = await provider.get_bar(
+        signal=_signal(price=71_100), date_ymd="20260721", side="BUY"
+    )
+
+    assert bar.bid == 71_000
+    assert bar.ask == 71_100
 
 
 @pytest.mark.asyncio

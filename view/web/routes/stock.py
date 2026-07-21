@@ -302,7 +302,7 @@ async def get_ai_stock_analysis(code: str):
         ) from exc
     if not analysis:
         raise HTTPException(status_code=502, detail="AI 분석 결과가 비어 있습니다.")
-    signal, analysis = extract_signal(analysis)
+    signal, signal_reason, analysis = extract_signal(analysis)
 
     sources = {
         key: bool(context[key])
@@ -324,6 +324,7 @@ async def get_ai_stock_analysis(code: str):
             "name": context["name"],
             "analysis": analysis,
             "signal": signal,
+            "signal_reason": signal_reason,
             "sources": sources,
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         },
@@ -385,7 +386,7 @@ async def get_ai_news_review(code: str):
         ) from exc
     if not analysis:
         raise HTTPException(status_code=502, detail="AI 뉴스 검토 결과가 비어 있습니다.")
-    signal, analysis = extract_signal(analysis)
+    signal, signal_reason, analysis = extract_signal(analysis)
 
     return {
         "rt_cd": "0",
@@ -395,6 +396,7 @@ async def get_ai_news_review(code: str):
             "name": name,
             "analysis": analysis,
             "signal": signal,
+            "signal_reason": signal_reason,
             "news": news,
             "news_count": len(news),
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),

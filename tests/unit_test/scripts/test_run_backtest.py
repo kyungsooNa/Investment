@@ -180,6 +180,23 @@ def test_parse_args_slippage_and_spread_default_zero(monkeypatch):
     assert args.spread_pct == 0.0
 
 
+def test_parse_args_accepts_microstructure_dir(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_backtest",
+            "--dates",
+            "20260721",
+            "--microstructure-dir",
+            "data/backtest_microstructure",
+        ],
+    )
+
+    args = _parse_args()
+
+    assert args.microstructure_dir == "data/backtest_microstructure"
+
+
 def test_build_execution_simulator_maps_policy_fields():
     args = SimpleNamespace(market_slippage_pct=0.3, spread_pct=0.1)
 
@@ -830,6 +847,17 @@ def test_build_replay_bar_providers_wires_intraday_and_daily_mtm_providers():
 
     assert isinstance(bar_provider, StockQueryIntradayReplayBarProvider)
     assert isinstance(mtm_bar_provider, StockQueryDailyMtmBarProvider)
+
+
+def test_build_replay_bar_providers_passes_microstructure_dir(tmp_path):
+    replay_sqs = MagicMock(name="replay_sqs")
+
+    bar_provider, _ = _build_replay_bar_providers(
+        replay_sqs,
+        microstructure_dir=str(tmp_path),
+    )
+
+    assert bar_provider._microstructure_dir == tmp_path
 
 
 @pytest.mark.asyncio

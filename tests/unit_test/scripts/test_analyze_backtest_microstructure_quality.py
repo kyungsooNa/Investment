@@ -3,6 +3,7 @@ import json
 import pytest
 
 from scripts.analyze_backtest_microstructure_quality import (
+    build_quality_manifest,
     compute_quality_report,
     format_markdown_report,
     load_capture_payloads,
@@ -213,6 +214,61 @@ def test_main_fail_on_gate_returns_nonzero_for_bad_quality(tmp_path):
     assert rc == 1
 
 
+def test_build_quality_manifest_separates_valid_and_invalid_dates():
+    report = compute_quality_report([
+        _payload(
+            date="20260701",
+            codes=["A"],
+            intraday_minutes={"A": [{}]},
+            execution_strength={"A": 100.0},
+            program_trades={"A": {"q": 1}},
+        ),
+        _payload(
+            date="20260702",
+            codes=["B"],
+            intraday_minutes={"B": []},
+            execution_strength={"B": 100.0},
+            program_trades={"B": {"q": 1}},
+            empty_codes=["B"],
+        ),
+    ])
+
+    manifest = build_quality_manifest(report)
+
+    assert manifest["valid_dates"] == ["20260701"]
+    assert manifest["invalid_dates"] == ["20260702"]
+    assert manifest["dates"]["20260701"]["valid_for_backtest"] is True
+    assert manifest["dates"]["20260702"]["valid_for_backtest"] is False
+    assert manifest["dates"]["20260702"]["issues"] == [
+        "intraday_coverage_below_threshold"
+    ]
+
+
+def test_main_writes_quality_manifest(tmp_path):
+    _write_capture(
+        tmp_path / "replay_microstructure_20260701.json",
+        _payload(
+            date="20260701",
+            codes=["000001"],
+            intraday_minutes={"000001": []},
+            execution_strength={"000001": 120.0},
+            program_trades={"000001": {"q": 1}},
+            empty_codes=["000001"],
+        ),
+    )
+    manifest_path = tmp_path / "microstructure_quality_manifest.json"
+
+    rc = main([
+        "--input-dir", str(tmp_path),
+        "--output-manifest", str(manifest_path),
+    ])
+
+    assert rc == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["valid_dates"] == []
+    assert manifest["invalid_dates"] == ["20260701"]
+
+
 def test_compute_quality_report_aggregates_execution_strength_db_coverage():
     report = compute_quality_report([
         {
@@ -252,3 +308,30 @@ def test_execution_strength_db_coverage_absent_for_rest_scalar_payloads():
     ])
 
     assert report["totals"]["execution_strength_db_coverage_pct"] is None
+
+
+def test_compute_quality_report_aggregates_orderbook_db_coverage():
+    payload = _payload(
+        date="20260721",
+        codes=["A", "B"],
+        intraday_minutes={"A": [{}], "B": [{}]},
+        execution_strength={"A": 100.0, "B": 100.0},
+        program_trades={"A": {"q": 1}, "B": {"q": 1}},
+    )
+    payload["metadata"]["orderbook_source"] = "orderbook_db"
+    payload["orderbook_intraday"] = {
+        "A": [{"time": "090001", "ask_price": 101, "bid_price": 100}],
+        "B": [],
+    }
+
+    report = compute_quality_report(
+        [payload],
+        min_orderbook_db_coverage_pct=60.0,
+        min_orderbook_rows_per_code=1,
+    )
+
+    assert report["totals"]["orderbook_db_coverage_pct"] == 50.0
+    assert report["by_date"]["20260721"]["issues"] == [
+        "orderbook_db_coverage_below_threshold"
+    ]
+    assert "orderbook_db_coverage" in format_markdown_report(report)

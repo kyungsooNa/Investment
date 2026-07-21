@@ -179,8 +179,9 @@ ai_analysis:
   api_key: ""
   model: "gemini-2.5-flash"
   timeout_sec: 15
-  # Gemini 2.5 계열은 thinking 토큰이 max_tokens를 소비하므로 넉넉히 (짧으면 요약이 잘림)
-  max_tokens: 2048
+  # Gemini 2.5 계열은 thinking 토큰이 max_tokens를 소비하므로 넉넉히 (짧으면 요약이 잘림).
+  # 2048은 종합 분석처럼 컨텍스트가 큰 요청에서 본문이 문장 중간에 잘리는 것이 실측됨(2026-07-21).
+  max_tokens: 4096
   disclosure_summary_enabled: true
   # Gemini 프로젝트 일일 한도보다 낮게 설정. 0이면 로컬 차단 비활성화.
   daily_request_limit: 100
@@ -197,11 +198,17 @@ market_cap_gap_report_us_enabled: true
 # 장마감 후 후보/보유 종목 microstructure overlay 캡처 (백테스트 replay 코퍼스 축적, KST 16:05)
 microstructure_capture_enabled: true
 
-# 장중 캡처 후보 종목 프로그램매매 WS 구독 (pt_history 장중 시계열 축적, LOW 우선순위 — 트레이딩 구독 비간섭)
+# 장중 캡처 후보 종목 WS 순환 구독 (일반주 PT+동반 PRICE, 우선주 PRICE 전용).
+# LOW 우선순위로 트레이딩 구독을 밀어내지 않으며, 30분마다 다음 후보 묶음으로 교체한다.
 program_capture_subscription_enabled: true
+program_capture_rotation_batch_size: 10
+program_capture_rotation_interval_minutes: 30
 
 # 장중 체결강도 시계열 축적 (기존 PRICE 틱 무임승차 — es_history DB, 장마감 캡처가 es_db 소스로 소비)
 execution_strength_capture_enabled: true
+
+# 최우선 호가·잔량 시계열 축적 (기존 PRICE 틱 무임승차 — orderbook_snapshots DB)
+orderbook_capture_enabled: true
 
 # 체결 품질 리포트 경고 기준 (사후 평가용, 자동 비활성화는 기본 OFF)
 execution_quality_report:
