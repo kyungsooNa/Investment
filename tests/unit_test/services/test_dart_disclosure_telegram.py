@@ -129,3 +129,27 @@ async def test_send_disclosure_digest_groups_only_same_non_empty_event_key():
     assert "원문 1" in full
     assert "원문 2" in full
     assert "증권신고서(채무증권)" in full
+
+
+async def test_send_disclosure_digest_collapses_mass_same_company_report_type():
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    rows = [
+        _stored(
+            "임원ㆍ주요주주특정증권등소유상황보고서",
+            50,
+            receipt_no=f"20260721{index:06d}",
+            event_key=f"임원지분변동|제출자{index}",
+        )
+        for index in range(744)
+    ]
+
+    sent = await reporter.send_disclosure_digest(rows, "20260721")
+
+    assert sent is True
+    reporter._send_message.assert_awaited_once()
+    message = reporter._send_message.await_args.args[0]
+    assert "관련 공시 744건" in message
+    assert message.count("<b>A&amp;B &lt;전자&gt; (005930)</b>") == 1
+    assert "외 741건" in message
+    assert len(message.encode("utf-8")) <= 4000

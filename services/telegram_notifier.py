@@ -14,6 +14,37 @@ import unicodedata
 logger = logging.getLogger(__name__)
 
 _DISCLOSURE_AI_SUMMARY_MAX_CHARS = 1000
+_DISCLOSURE_DIGEST_PREVIEW_LIMIT = 3
+_DISCLOSURE_MASS_REPORT_TYPES = (
+    "임원주요주주특정증권등소유상황보고서",
+)
+
+
+def _normalize_disclosure_report_type(value: str) -> str:
+    normalized = "".join(
+        char for char in str(value or "")
+        if char not in " \t\r\nㆍ·-_/[]()"
+    ).upper()
+    for prefix in ("기재정정", "첨부정정", "정정"):
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix):]
+            break
+    return normalized
+
+
+def _disclosure_digest_group_key(item, index: int) -> tuple[str, ...]:
+    disclosure = item.disclosure
+    stock_code = str(disclosure.stock_code)
+    receipt_date = str(disclosure.receipt_date)
+    report_type = _normalize_disclosure_report_type(disclosure.report_name)
+    if any(value in report_type for value in _DISCLOSURE_MASS_REPORT_TYPES):
+        return ("report_type", stock_code, receipt_date, report_type)
+    event_key = str(getattr(item, "event_key", "") or "").strip()
+    if event_key:
+        return ("event", stock_code, receipt_date, event_key)
+    if report_type:
+        return ("report_type", stock_code, receipt_date, report_type)
+    return ("receipt", str(disclosure.receipt_no), str(index))
 
 
 def _serialized_report_send(func):
@@ -600,13 +631,7 @@ class TelegramReporter:
         grouped = []
         group_indexes = {}
         for index, item in enumerate(stored_items):
-            disclosure = item.disclosure
-            event_key = str(getattr(item, "event_key", "") or "").strip()
-            key = (
-                (str(disclosure.stock_code), str(disclosure.receipt_date), event_key)
-                if event_key
-                else ("receipt", str(disclosure.receipt_no), str(index))
-            )
+            key = _disclosure_digest_group_key(item, index)
             if key not in group_indexes:
                 group_indexes[key] = len(grouped)
                 grouped.append([])
@@ -629,13 +654,20 @@ class TelegramReporter:
                 continue
 
             importance = max(group, key=lambda row: int(row.importance.score)).importance
+            distinct_titles = list(dict.fromkeys(
+                str(row.disclosure.report_name).strip() for row in group
+            ))
             titles = "\n".join(
-                f"  - {html.escape(str(row.disclosure.report_name), quote=False)}"
-                for row in group
+                f"  - {html.escape(title, quote=False)}"
+                for title in distinct_titles[:_DISCLOSURE_DIGEST_PREVIEW_LIMIT]
             )
+            omitted_count = max(0, len(group) - _DISCLOSURE_DIGEST_PREVIEW_LIMIT)
+            if omitted_count:
+                titles += f"\n  - 외 {omitted_count}건"
+            preview_rows = group[:_DISCLOSURE_DIGEST_PREVIEW_LIMIT]
             links = " · ".join(
                 f'<a href="{row.disclosure.viewer_url}">원문 {number}</a>'
-                for number, row in enumerate(group, 1)
+                for number, row in enumerate(preview_rows, 1)
             )
             parts.append(
                 f"\n<b>{company} ({stock_code})</b>\n"
