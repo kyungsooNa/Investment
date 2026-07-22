@@ -7,7 +7,7 @@
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional, TYPE_CHECKING
 
 from brokers.broker_api_wrapper import BrokerAPIWrapper
@@ -767,6 +767,8 @@ class RankingTask(AfterMarketTask):
         if not all_stocks:
             return [], True
 
+        recent_trading_dates = await self._get_recent_trading_dates(target_date, days)
+        recent_trading_date_set = set(recent_trading_dates)
         industry_map = await self._load_industry_map()
         results: List[Dict] = []
         is_complete = True
@@ -803,6 +805,15 @@ class RankingTask(AfterMarketTask):
 
                 investor_rows = investor_resp.data if investor_resp and isinstance(investor_resp.data, list) else []
                 program_rows = program_resp.data if program_resp and isinstance(program_resp.data, list) else []
+                if recent_trading_date_set:
+                    investor_rows = [
+                        row for row in investor_rows
+                        if isinstance(row, dict) and str(row.get("stck_bsop_date") or "") in recent_trading_date_set
+                    ]
+                    program_rows = [
+                        row for row in program_rows
+                        if isinstance(row, dict) and str(row.get("stck_bsop_date") or "") in recent_trading_date_set
+                    ]
                 for row in [*investor_rows, *program_rows]:
                     if not isinstance(row, dict):
                         continue
@@ -854,11 +865,32 @@ class RankingTask(AfterMarketTask):
                     "combined_period_ntby_tr_pbmn_won": str(combined_pbmn_won),
                 })
 
-        earliest_trading_date = min(observed_trading_dates)
+        earliest_trading_date = recent_trading_dates[0] if recent_trading_dates else min(observed_trading_dates)
         for result in results:
             result["earliest_trading_date"] = earliest_trading_date
 
         return results, is_complete
+
+    async def _get_recent_trading_dates(self, target_date: str, days: int) -> List[str]:
+        """시장 캘린더 기준 target_date 포함 최근 N거래일을 오래된 순으로 반환한다."""
+        if self._mcs is None:
+            return []
+
+        current = datetime.strptime(str(target_date), "%Y%m%d")
+        trading_dates: List[str] = []
+        max_lookback_days = days * 3 + 15
+        for _ in range(max_lookback_days):
+            date_str = current.strftime("%Y%m%d")
+            if await self._mcs.is_business_day(date_str):
+                trading_dates.append(date_str)
+                if len(trading_dates) == days:
+                    return sorted(trading_dates)
+            current -= timedelta(days=1)
+
+        self._logger.warning(
+            f"{target_date} 기준 최근 {days}거래일 계산 실패 — API 응답 날짜로 대체합니다."
+        )
+        return []
 
     async def get_trading_value_ranking(self, limit: int = 30) -> ResCommonResponse:
         """투자자 데이터 기반 거래대금 랭킹 반환 (캐시에서 즉시)."""
