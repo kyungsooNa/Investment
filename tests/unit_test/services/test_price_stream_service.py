@@ -69,8 +69,8 @@ def test_on_price_tick_success(price_stream_service, mock_stock_repo):
     assert price_stream_service.get_last_tick_ts('005930') == cached['received_at']
     assert price_stream_service.get_last_any_tick_ts() == cached['received_at']
 
-    # 2. StockRepository.update_realtime_data 호출 확인
-    mock_stock_repo.update_realtime_data.assert_called_once_with('005930', 75000.0, 1500000)
+    # 2. StockRepository.update_realtime_data 호출 확인 (등락률 rate 포함)
+    mock_stock_repo.update_realtime_data.assert_called_once_with('005930', 75000.0, 1500000, rate='1.35')
 
 
 def test_on_price_tick_records_top_of_book(mock_stock_repo, mock_logger):
@@ -113,7 +113,7 @@ def test_on_price_tick_defaults(price_stream_service, mock_stock_repo):
     assert cached['rate'] == '0.00'
     assert cached['sign'] == '3'
 
-    mock_stock_repo.update_realtime_data.assert_called_once_with('000660', 150000.0, 0)
+    mock_stock_repo.update_realtime_data.assert_called_once_with('000660', 150000.0, 0, rate=None)
 
 
 def test_cache_price_snapshot_updates_cache_without_tick_tracking(price_stream_service, mock_stock_repo):
@@ -135,7 +135,7 @@ def test_cache_price_snapshot_updates_cache_without_tick_tracking(price_stream_s
     assert cached["sign"] == "2"
     assert price_stream_service.get_last_tick_ts("005930") == 0.0
     assert price_stream_service.get_last_any_tick_ts() == 0.0
-    mock_stock_repo.update_realtime_data.assert_called_once_with("005930", 71000.0, 3210)
+    mock_stock_repo.update_realtime_data.assert_called_once_with("005930", 71000.0, 3210, rate="0.71")
 
 
 def test_on_price_tick_stores_liquidity_fields(price_stream_service):

@@ -76,8 +76,12 @@ class StockPriceRepository:
             self._cache_logger.log_price_miss(code, caller, "not_found")
         return None
 
-    def update_current_price(self, code: str, current_price: float, volume: int = 0):
-        """WebSocket 틱 데이터로 현재가 캐시를 즉시 갱신합니다."""
+    def update_current_price(self, code: str, current_price: float, volume: int = 0, rate=None):
+        """WebSocket 틱 데이터로 현재가 캐시를 즉시 갱신합니다.
+
+        rate(전일대비율)가 전달되면 등락률(prdy_ctrt)도 함께 갱신하여
+        가격만 최신이고 등락률은 과거 값에 고정되는 문제를 방지합니다.
+        """
         cached = self._price_cache.get(code, count_stats=False, item_type="update_tick")
         if not cached:
             cached = {}
@@ -86,8 +90,11 @@ class StockPriceRepository:
         if "current_price_data" not in cached:
             # 틱만 수신된 경우 최소 구조로 캐시 생성 (_source="tick" 마킹)
             # stock_query_service는 _source 필드로 불완전 캐시를 식별할 수 있음
+            output = {"stck_prpr": str(int(current_price)), "acml_vol": str(volume)}
+            if rate is not None:
+                output["prdy_ctrt"] = str(rate)
             cached["current_price_data"] = {
-                "output": {"stck_prpr": str(int(current_price)), "acml_vol": str(volume)},
+                "output": output,
                 "_source": "tick",
             }
             cached["price_updated_at"] = time.time()
@@ -100,12 +107,16 @@ class StockPriceRepository:
             output["stck_prpr"] = str(int(current_price))
             if volume > 0:
                 output["acml_vol"] = str(volume)
+            if rate is not None:
+                output["prdy_ctrt"] = str(rate)
         elif output is not None:
             try:
                 before_price = getattr(output, "stck_prpr", None)
                 setattr(output, "stck_prpr", str(int(current_price)))
                 if volume > 0:
                     setattr(output, "acml_vol", str(volume))
+                if rate is not None:
+                    setattr(output, "prdy_ctrt", str(rate))
             except Exception:
                 pass
 

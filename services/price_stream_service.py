@@ -194,7 +194,10 @@ class PriceStreamService:
         }
 
         try:
-            self._stock_repo.update_realtime_data(stock_code, float(current_price), vol_int)
+            self._stock_repo.update_realtime_data(
+                stock_code, float(current_price), vol_int,
+                rate=realtime_data.get('전일대비율'),
+            )
         except Exception as e:
             self._logger.warning(f"StockRepository 실시간 틱 캐시 갱신 실패: {e}")
 
@@ -326,7 +329,7 @@ class PriceStreamService:
         }
 
         try:
-            self._stock_repo.update_realtime_data(code, float(price), vol_int)
+            self._stock_repo.update_realtime_data(code, float(price), vol_int, rate=rate)
         except Exception as e:
             self._logger.warning(f"StockRepository 현재가 스냅샷 캐시 갱신 실패: {e}")
 

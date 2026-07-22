@@ -435,6 +435,37 @@ class TestStockPriceRepository:
 
         assert broken.stck_prpr == "73000"
 
+    def test_update_current_price_stores_rate_on_new_tick_cache(self, price_repo):
+        """틱만 수신된 최초 캐시에도 등락률(prdy_ctrt)이 반영되어야 한다."""
+        price_repo.update_current_price("005930", 70123, volume=55, rate="5.41")
+
+        cached = price_repo._price_cache.get("005930", count_stats=False, item_type="check")
+        assert cached["current_price_data"]["output"]["prdy_ctrt"] == "5.41"
+
+    def test_update_current_price_refreshes_stale_rate(self, price_repo):
+        """기존 캐시의 오래된 등락률이 새 틱의 등락률로 갱신되어야 한다."""
+        price_repo._price_cache.put(
+            "005930",
+            {"current_price_data": {"output": {"stck_prpr": "70000", "prdy_ctrt": "0.00"}}, "price_updated_at": 1},
+        )
+
+        price_repo.update_current_price("005930", 71000, volume=99, rate="5.41")
+
+        cached = price_repo._price_cache.get("005930", count_stats=False, item_type="check")
+        assert cached["current_price_data"]["output"]["prdy_ctrt"] == "5.41"
+
+    def test_update_current_price_keeps_rate_when_not_provided(self, price_repo):
+        """rate 미전달 시 기존 등락률을 보존한다(회귀 방지)."""
+        price_repo._price_cache.put(
+            "005930",
+            {"current_price_data": {"output": {"stck_prpr": "70000", "prdy_ctrt": "3.10"}}, "price_updated_at": 1},
+        )
+
+        price_repo.update_current_price("005930", 71000, volume=99)
+
+        cached = price_repo._price_cache.get("005930", count_stats=False, item_type="check")
+        assert cached["current_price_data"]["output"]["prdy_ctrt"] == "3.10"
+
     def test_mark_unmark_streaming_and_cache_stats_expand(self, price_repo):
         price_repo.set_current_price("005930", {"output": {"stck_prpr": "70000"}})
         price_repo.mark_streaming("005930")
