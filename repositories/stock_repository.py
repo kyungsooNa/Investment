@@ -75,13 +75,13 @@ class StockRepository:
 
     # ── 실시간 틱 통합 업데이트 ───────────────────────────────────────────────────
 
-    def update_realtime_data(self, code: str, current_price: float, volume: int = 0):
+    def update_realtime_data(self, code: str, current_price: float, volume: int = 0, rate=None):
         """
         장 중에 수신된 WebSocket 틱 데이터를 메모리 캐시에 즉시 반영합니다.
-        - 현재가 캐시(price_repo) 갱신
+        - 현재가 캐시(price_repo) 갱신 (등락률 rate 포함)
         - OHLCV 당일 캔들(ohlcv_repo) 갱신
         """
-        self._price_repo.update_current_price(code, current_price, volume)
+        self._price_repo.update_current_price(code, current_price, volume, rate=rate)
         self._ohlcv_repo.update_today_candle(code, current_price, volume)
 
     # ── daily_prices (장마감 후 전종목 스냅샷) ──────────────────────────────────
