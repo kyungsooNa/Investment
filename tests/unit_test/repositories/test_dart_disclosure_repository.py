@@ -36,6 +36,19 @@ async def test_save_detected_is_idempotent(tmp_path, disclosure, importance):
     assert await repo.has_receipt(disclosure.receipt_no) is True
 
 
+async def test_ai_summary_round_trips(tmp_path, disclosure, importance):
+    repo = DartDisclosureRepository(tmp_path / "dart.db")
+
+    await repo.save_detected(
+        disclosure,
+        importance,
+        summary="풍문 보도는 사실이 아니며 구체적으로 확정된 사항이 없습니다.",
+    )
+
+    rows = await repo.get_recent_by_stock_code(disclosure.stock_code)
+    assert rows[0].summary == "풍문 보도는 사실이 아니며 구체적으로 확정된 사항이 없습니다."
+
+
 async def test_get_known_receipt_nos_checks_page_in_one_query(tmp_path, disclosure, importance):
     repo = DartDisclosureRepository(tmp_path / "dart.db")
     await repo.save_detected(disclosure, importance)
@@ -141,3 +154,4 @@ async def test_event_key_round_trips_and_legacy_schema_is_migrated(
 
     rows = await repo.get_recent_by_stock_code(disclosure.stock_code)
     assert rows[0].event_key == "ELS|37980,37981|20000000000"
+    assert rows[0].summary == ""

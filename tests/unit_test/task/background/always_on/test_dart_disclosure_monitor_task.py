@@ -278,6 +278,10 @@ async def test_actual_content_analysis_can_promote_low_title_to_immediate_alert(
         deps.repo.save_detected.await_args.kwargs["event_key"]
         == "기업가치제고|하이브리드본더|2027상반기"
     )
+    assert (
+        deps.repo.save_detected.await_args.kwargs["summary"]
+        == "하이브리드 본더 공장과 미국 법인 설립을 추진합니다."
+    )
     deps.reporter.send_disclosure_alert.assert_awaited_once_with(
         disclosure,
         promoted,

@@ -14,6 +14,7 @@ import unicodedata
 logger = logging.getLogger(__name__)
 
 _DISCLOSURE_AI_SUMMARY_MAX_CHARS = 1000
+_DISCLOSURE_DIGEST_SUMMARY_MAX_CHARS = 160
 _DISCLOSURE_DIGEST_PREVIEW_LIMIT = 3
 _DISCLOSURE_MASS_REPORT_TYPES = (
     "임원주요주주특정증권등소유상황보고서",
@@ -45,6 +46,20 @@ def _disclosure_digest_group_key(item, index: int) -> tuple[str, ...]:
     if report_type:
         return ("report_type", stock_code, receipt_date, report_type)
     return ("receipt", str(disclosure.receipt_no), str(index))
+
+
+def _disclosure_digest_summary_line(items) -> str:
+    for item in items:
+        summary = str(getattr(item, "summary", "") or "").strip()
+        if not summary:
+            continue
+        summary = " ".join(summary.split())
+        if len(summary) > _DISCLOSURE_DIGEST_SUMMARY_MAX_CHARS:
+            summary = (
+                summary[: _DISCLOSURE_DIGEST_SUMMARY_MAX_CHARS - 1].rstrip() + "…"
+            )
+        return f"• 내용: {html.escape(summary, quote=False)}\n"
+    return ""
 
 
 def _serialized_report_send(func):
@@ -645,9 +660,11 @@ class TelegramReporter:
             if len(group) == 1:
                 importance = group[0].importance
                 report_name = html.escape(str(disclosure.report_name), quote=False)
+                summary_line = _disclosure_digest_summary_line(group)
                 parts.append(
                     f"\n<b>{company} ({stock_code})</b>\n"
                     f"• {report_name}\n"
+                    f"{summary_line}"
                     f"• 중요도: {html.escape(str(importance.level), quote=False)} ({int(importance.score)}점)\n"
                     f'<a href="{disclosure.viewer_url}">원문</a>\n'
                 )
@@ -669,9 +686,11 @@ class TelegramReporter:
                 f'<a href="{row.disclosure.viewer_url}">원문 {number}</a>'
                 for number, row in enumerate(preview_rows, 1)
             )
+            summary_line = _disclosure_digest_summary_line(group)
             parts.append(
                 f"\n<b>{company} ({stock_code})</b>\n"
                 f"• 관련 공시 {len(group)}건\n{titles}\n"
+                f"{summary_line}"
                 f"• 중요도: {html.escape(str(importance.level), quote=False)} "
                 f"({int(importance.score)}점)\n"
                 f"{links}\n"

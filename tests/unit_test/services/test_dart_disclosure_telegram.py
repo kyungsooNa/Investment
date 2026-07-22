@@ -12,6 +12,7 @@ def _stored(
     *,
     receipt_no="20260714001234",
     event_key="",
+    summary="",
 ):
     disclosure = DartDisclosure(
         corp_class="Y",
@@ -25,7 +26,7 @@ def _stored(
         remarks="유",
     )
     importance = DisclosureImportance(score, "NORMAL", ["정기보고서"])
-    return StoredDisclosure(disclosure, importance, event_key)
+    return StoredDisclosure(disclosure, importance, event_key, summary)
 
 
 async def test_send_disclosure_alert_escapes_html_and_includes_reason_and_link():
@@ -95,6 +96,49 @@ async def test_send_disclosure_digest_formats_multiple_rows():
     assert "관심종목 공시 요약" in full
     assert "분기보고서" in full
     assert "기업설명회" in full
+
+
+async def test_send_disclosure_digest_includes_one_line_summary_when_available():
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    rows = [
+        _stored(
+            "풍문또는보도에대한해명",
+            10,
+            summary="언론의 특정 공급계약 추진 보도는 사실이 아니라고 해명했습니다.",
+        )
+    ]
+
+    sent = await reporter.send_disclosure_digest(rows, "20260722")
+
+    assert sent is True
+    message = reporter._send_message.await_args.args[0]
+    assert "• 내용: 언론의 특정 공급계약 추진 보도는 사실이 아니라고 해명했습니다." in message
+
+
+async def test_send_disclosure_digest_uses_group_summary_and_escapes_html():
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    rows = [
+        _stored(
+            "일괄신고추가서류(파생결합증권-주가연계증권)",
+            10,
+            receipt_no="20260720000120",
+            event_key="ELS|37980,37981|20000000000",
+            summary="ELS <37980회> 발행 조건을 추가 제출했습니다.",
+        ),
+        _stored(
+            "투자설명서(일괄신고)",
+            10,
+            receipt_no="20260720000134",
+            event_key="ELS|37980,37981|20000000000",
+        ),
+    ]
+
+    await reporter.send_disclosure_digest(rows, "20260720")
+
+    full = "".join(call.args[0] for call in reporter._send_message.await_args_list)
+    assert "• 내용: ELS &lt;37980회&gt; 발행 조건을 추가 제출했습니다." in full
 
 
 async def test_send_disclosure_digest_groups_only_same_non_empty_event_key():
