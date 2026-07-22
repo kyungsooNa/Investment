@@ -4,6 +4,7 @@ RankingTask 단위 테스트.
 """
 import asyncio
 import time
+from datetime import datetime
 import pytest
 import pandas as pd
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -38,7 +39,7 @@ def _make_program_multi_response(rows):
     return ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
         msg1="OK",
-        data=rows,
+        data=[dict({"stck_bsop_date": "20250101"}, **row) for row in rows],
     )
 
 
@@ -57,7 +58,9 @@ def mock_deps():
     market_clock = MagicMock()
     market_calendar_service = AsyncMock(spec=MarketCalendarService)
     market_calendar_service.is_market_open_now = AsyncMock(return_value=False) # 기본: 장 마감 상태 (갱신 허용)
-    market_calendar_service.is_business_day = AsyncMock(return_value=True) # 기본: 영업일
+    market_calendar_service.is_business_day = AsyncMock(
+        side_effect=lambda date: datetime.strptime(date, "%Y%m%d").weekday() < 5
+    )
     market_calendar_service.get_latest_trading_date = AsyncMock(return_value="20250101")
     return broker, mapper, env, logger, market_clock, market_calendar_service
 
@@ -120,7 +123,7 @@ def _make_investor_multi_response(rows):
     return ResCommonResponse(
         rt_cd=ErrorCode.SUCCESS.value,
         msg1="OK",
-        data=rows,
+        data=[dict({"stck_bsop_date": "20250101"}, **row) for row in rows],
     )
 
 # ==============================================================================
@@ -327,12 +330,43 @@ async def test_period_investor_program_ranking_defaults_to_combined_amount(bg_se
     assert resp.rt_cd == ErrorCode.SUCCESS.value
     assert [item["hts_kor_isnm"] for item in resp.data] == ["SK하이닉스", "삼성전자"]
     assert resp.data[0]["combined_period_ntby_tr_pbmn_won"] == "920000000"
-    assert resp.data[1]["combined_period_ntby_tr_pbmn_won"] == "470000000"
+    assert resp.data[1]["combined_period_ntby_tr_pbmn_won"] == "370000000"
     assert all(item["hts_kor_isnm"] != "NAVER" for item in resp.data)
     assert resp.data[0]["industry"] == "IT"
     assert resp.data[1]["industry"] == "반도체"
     assert all(item["latest_trading_date"] == "20250101" for item in resp.data)
-    assert resp.data[1]["earliest_trading_date"] == "20241224"
+    assert resp.data[1]["earliest_trading_date"] == "20241226"
+
+
+@pytest.mark.asyncio
+async def test_period_investor_program_ranking_uses_market_window_not_stale_stock_dates(bg_service, mock_deps):
+    """거래정지 종목의 과거 응답은 최근 N거래일 범위와 합산을 오염시키지 않는다."""
+    broker, mapper, _, _, _, market_calendar_service = mock_deps
+    mapper.df = _make_stock_df([("005930", "삼성전자", "KOSPI")])
+    recent_dates = {"20260715", "20260716", "20260717", "20260720", "20260721"}
+    market_calendar_service.get_latest_trading_date.return_value = "20260721"
+    market_calendar_service.is_business_day = AsyncMock(
+        side_effect=lambda date: date in recent_dates
+    )
+    broker.get_investor_trade_by_stock_daily_multi = AsyncMock(
+        return_value=_make_investor_multi_response([
+            {"stck_bsop_date": "20260721", "frgn_ntby_qty": "10", "orgn_ntby_qty": "0", "frgn_ntby_tr_pbmn": "100", "orgn_ntby_tr_pbmn": "0"},
+            {"stck_bsop_date": "20260623", "frgn_ntby_qty": "999", "orgn_ntby_qty": "0", "frgn_ntby_tr_pbmn": "999", "orgn_ntby_tr_pbmn": "0"},
+        ])
+    )
+    broker.get_program_trade_by_stock_daily_multi = AsyncMock(
+        return_value=_make_program_multi_response([
+            {"stck_bsop_date": "20260721", "whol_smtn_ntby_qty": "20", "whol_smtn_ntby_tr_pbmn": "200000000"},
+            {"stck_bsop_date": "20260623", "whol_smtn_ntby_qty": "999", "whol_smtn_ntby_tr_pbmn": "999000000"},
+        ])
+    )
+
+    await bg_service.prewarm_period_ranking("20260721")
+    resp = await bg_service.get_period_investor_program_net_buy_ranking(days=5)
+
+    assert resp.data[0]["earliest_trading_date"] == "20260715"
+    assert resp.data[0]["combined_period_ntby_qty"] == "30"
+    assert resp.data[0]["combined_period_ntby_tr_pbmn_won"] == "300000000"
 
 
 @pytest.mark.asyncio
