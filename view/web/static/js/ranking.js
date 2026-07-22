@@ -154,6 +154,8 @@ function setRankingDirection(dir) {
     if (invRow) invRow.style.display = '';
     const periodRow = document.getElementById('period-investor-row');
     if (periodRow) periodRow.style.display = 'none';
+    const ytdMarketRow = document.getElementById('ytd-market-row');
+    if (ytdMarketRow) ytdMarketRow.style.display = 'none';
 
     document.querySelectorAll('.investor-toggle').forEach(b => {
         b.classList.toggle('active', _rankingSelectedInvestors.has(b.dataset.inv));
@@ -215,6 +217,8 @@ async function loadPeriodInvestorRanking() {
     if (invRow) invRow.style.display = 'none';
     const periodRow = document.getElementById('period-investor-row');
     if (periodRow) periodRow.style.display = '';
+    const ytdMarketRow = document.getElementById('ytd-market-row');
+    if (ytdMarketRow) ytdMarketRow.style.display = 'none';
 
     document.querySelectorAll('.period-days').forEach(b => {
         b.classList.toggle('active', parseInt(b.dataset.days || 0) === _rankingPeriodDays);
@@ -377,6 +381,8 @@ async function loadThemeLeaders() {
     if (invRow) invRow.style.display = 'none';
     const periodRow = document.getElementById('period-investor-row');
     if (periodRow) periodRow.style.display = 'none';
+    const ytdMarketRow = document.getElementById('ytd-market-row');
+    if (ytdMarketRow) ytdMarketRow.style.display = 'none';
 
     const div = document.getElementById('ranking-result');
     _showRankingSkeleton();
