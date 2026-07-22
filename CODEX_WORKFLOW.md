@@ -152,6 +152,7 @@
 - integration 영향이 있으면 관련 통합 테스트를 봤는가?
 - background task 수정이면 cleanup/hang 여부를 봤는가?
 - 주문/전략 수정이면 paper/real 분기를 다시 확인했는가?
+- 게시(PR 생성)까지 마쳤으면 `git checkout main`으로 기본 브랜치에 복귀했는가? (게시 흐름 규칙은 `AGENTS.md` 참조)
 
 ## 실행 명령
 
