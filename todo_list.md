@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-07-22 (강제청산 절반 유출 수정 사후 검증 추가 — 0-2)
+최종 업데이트: 2026-07-23 (실제 코드/DB 대조 정리 — X-1 완료 반영, 0-2 15:10/15:15·익일 대사 검증 완료 반영, X-2 재시도 하드닝 항목 정리)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -20,13 +20,11 @@
 리뷰 핵심 판단: 운영 인프라·리스크 규율(킬스위치 영속화·RiskGate·tiered force-exit·profitability gate·캐너리 사이징)은 갖춰졌다. 남은 크리티컬 패스는 **엣지(수익성) 입증**이다. 엣지의 원천으로 삼는 수급 필터(체결강도·프로그램매매)가 장중 히스토리 부재로 백테스트 검증 불가능한 상태이므로, 검증 데이터 축적을 지금 시작하는 것이 최우선이다.
 
 1. **[즉시 착수 — 엣지 검증 크리티컬 패스]**
-   - 0-2 강제청산 절반 유출 수정 **실장 확인** (PR #700 머지·배포 완료 2026-07-22 — 당일 장중/익일 대사 검증만 남음). 이 결함이 성과 기록 5건을 오염시켰으므로 엣지 검증의 선행 조건이다.
+   - 0-2 강제청산 절반 유출 수정 **실장 검증 완료** (PR #700, 2026-07-22 tier1/tier2 flat 종료 실증 + 2026-07-23 익일 대사로 고아 미증가 확인). 남은 것은 오염된 성과 기록 5건 플래그·기존 고아 10종목 처리 방침뿐 — 엣지 검증 선행 조건은 해소.
    - 1-5 장중 microstructure 캡처 **상시 가동** (blocked 해제 단계 자체가 착수 항목) — 태스크 배선 완료(#618), 코퍼스 축적 중, 1일차 품질 결함 보정 + 체결강도 장중 시계열 배선 완료(2026-07-04), QC 1주차 양호 판정 + 거래대금 랭킹 보충으로 코퍼스 폭 확대(2026-07-08)
    - 1-6 shadow/paper/소액 canary journal 축적 (운영 상시 — 무틱 블로커와 독립)
 2. **[외부 블로커 — 병행 진행]**
    - 2-4 WebSocket 무틱 — KIS 에스컬레이션 **접수 대기** (패키지 준비 완료 #630, 남은 액션은 실제 접수뿐; 무틱 보통주만 — ETF/우선주는 무틱 수용으로 종결)
-   - X-1 OpenDART API 인증키 발급 → 공시 모니터 활성화·재시작·수신 검증
-   - X-2 AI 공시 분석용 API 제공자 확정 및 API 키 발급
 3. **[확대·전환 전 필수 게이트]**
    - 0-1 실전 체결필드 fixture · 2-2 KIS 유량 한도 실측 (실전 전환 직전, 외부 의존)
 4. **[데이터·정책 대기]**
@@ -39,12 +37,9 @@
 
 ## X. 외부 API 키 준비 [즉시]
 
-### X-1. OpenDART API 인증키 발급 및 공시 모니터 활성화
+### X-1. OpenDART API 인증키 발급 및 공시 모니터 활성화 [완료 — 실운영 확인 2026-07-23]
 
-- [ ] OpenDART에서 API 인증키를 신청·발급받는다.
-- [ ] `config/config.yaml`의 `dart_disclosure.api_key`에 키를 저장하고 `enabled: true`로 전환한다. 키는 git에 포함하지 않는다.
-- [ ] 웹 앱을 재시작한 뒤 `data/dart_disclosures.db` 생성과 `dart_disclosure_monitor` 태스크 실행을 확인한다.
-- [ ] 최초 동기화에서 2026-07-15 SK하이닉스 유상증자 공시가 관심종목 요약으로 수신되는지 검증한다.
+- [x] API 키 발급·`config.yaml` 저장(`enabled: true`) · 재시작 후 `data/dart_disclosures.db` 생성·태스크 실행 · 실제 수신 검증 — `data/dart_disclosures.db`가 07-20~07-22 3거래일 762건(삼성전자·SK하이닉스 등)을 스코어링·AI요약과 함께 실시간 축적 중임을 DB 조회로 확인. X-2~X-4가 이 경로 위에서 이미 구현·검증됨.
 
 ### X-2. AI 분석 (1차 공시 요약 / 2차 종목 분석 — 완료)
 
@@ -56,7 +51,7 @@
   - ⚠️ 실전 발동 전제: `dart_disclosure.enabled`(X-1) + 텔레그램 리포터 + 관심종목 1개+ + `ai_analysis.enabled`.
 - [x] **2차 (종목 자체 AI 분석)**: 검증된 `ctx.ai_client`를 재사용해 현재가·재무비율·Minervini Stage·RS Rating·최근 5일 수급·로컬 OpenDART 공시를 병렬 수집하고 AI 종합 분석을 생성한다. 일부 소스 실패 시 남은 데이터로 계속 분석하며 사용 소스를 응답에 노출한다. 종목 상세 UI에서 명시적 버튼을 눌렀을 때만 호출하고, 45초 타임아웃·중복 클릭 방지·안전한 텍스트 렌더링·투자 권유 아님 안내를 적용했다. (`POST /api/stock/{code}/ai-analysis`)
 - [x] **AI API 호출 경로 공통화**: 랭킹 분석의 별도 Gemini/OpenAI SDK·환경변수 경로를 제거하고 공시·종목 분석과 동일한 `ctx.ai_client` 및 `ai_analysis` 설정을 사용한다. API 요청에서 임의 provider/model 재지정을 금지하고, AI 비활성 상태는 외부 SDK 지연 생성 대신 503으로 일관되게 응답한다.
-- [~] **AI API 운영 하드닝**: **일일 호출량 차단 완료(2026-07-19)** — SQLite로 재시작 후에도 사용량을 유지하고 provider 기준 태평양 날짜에 초기화한다. 기본 100회 중 20회를 공시 요약에 예약해 종목·랭킹 분석은 80회에서 HTTP 429로 차단하며, 공시는 총 한도까지 계속 시도한다. `daily_request_limit: 0`이면 로컬 차단을 끌 수 있고 랭킹 UI에도 구체적인 한도 메시지를 표시한다. 남은 작업은 서버 단위 동시 호출·단시간 재호출 제한, 429/일시적 5xx 재시도 정책, 입력 컨텍스트 예산, provider/model·지연·토큰 사용량 계측이다. 자동·반복 분석 확대 전 완료한다.
+- [~] **AI API 운영 하드닝**: **일일 호출량 차단 완료(2026-07-19)** — SQLite로 재시작 후에도 사용량을 유지하고 provider 기준 태평양 날짜에 초기화한다. 기본 100회 중 20회를 공시 요약에 예약해 종목·랭킹 분석은 80회에서 HTTP 429로 차단하며, 공시는 총 한도까지 계속 시도한다. `daily_request_limit: 0`이면 로컬 차단을 끌 수 있고 랭킹 UI에도 구체적인 한도 메시지를 표시한다. 429/일시적 5xx 재시도 정책은 완료(#694, 지수 백오프 2회). 남은 작업은 서버 단위 동시 호출·단시간 재호출 제한, 입력 컨텍스트 예산, provider/model·지연·토큰 사용량 계측이다. 자동·반복 분석 확대 전 완료한다.
 
 ### X-3. AI 공시 요약 코드리뷰 후속 [완료 — 2026-07-19]
 
@@ -196,13 +191,13 @@
 
 주요 파일: `common/broker_order_response_mapper.py`, `services/order_execution_service.py`, `services/fill_reconciliation_service.py`, `tests/fixtures/kis/`
 
-### 0-2. 강제청산 절반 유출 수정 사후 검증 [PR #700 머지·배포 완료 — 실장 확인 대기, 2026-07-22]
+### 0-2. 강제청산 절반 유출 수정 사후 검증 [PR #700 실장 검증 완료 — 잔여는 고아 처리·기록 정리, 2026-07-23]
 
 배경: 당일청산 전략이 포지션의 절반을 조용히 오버나이트로 넘기고, 잔량이 다음날 대사에서 `broker_reconciled` 고아로 등록되던 결함. 원인 2개(최종 force-exit tier 가 주문 컷오프 이후라 영구 미실행 / `log_sell` 이 qty 를 무시하고 lot 전체를 SOLD 처리) 수정 완료. 06-28 tiered 도입 이후 SOLD 15건 중 5건 오염(전부 VBO).
 
 - [x] **개장 직후 실장 확인 완료 (2026-07-22)**: 달바글로벌(483650) 복구분 4주가 오버나이트 방어로 09:00:10에 전량 체결(평균 236,000원, 잔량 0). HOLD 에서 사라졌고 `broker_reconciled` 고아는 10종목 유지.
-- [ ] **15:10 / 15:15**: 신규 VBO 진입 발생 시 1차 tier 후 **잔량이 HOLD 로 남고** 2차 tier 가 실제 실행되어 flat 이 되는지 확인. 종목당 `strategy_force_exit` 이벤트 2회면 정상 — 수정의 첫 실증.
-- [ ] **익일 대사**: 고아가 10종목에서 늘지 않으면 유출 종료 확인.
+- [x] **15:10 / 15:15 확인 완료 (2026-07-22)**: 래리윌리엄스VBO/475150(trade_id=271, 30주)에서 15:10:04 1차 tier 가 15주 매도 후 잔량 15주 HOLD 유지(`부분 매도 분할` 로그), 15:15:10 2차 tier 가 잔여 15주를 마저 체결해 SOLD 로 flat 종료(수익률 -2.58%). 종목당 `strategy_force_exit` 이벤트 2회 확인 — 수정 실증 완료.
+- [x] **익일 대사 완료 (2026-07-23)**: DB 조회로 `broker_reconciled` 고아 10종목이 07-22 이전과 동일하게 유지(증가 없음)됨을 확인 — 유출 종료.
 - [ ] 기존 고아 10종목 처리 방침 결정. 7월 4건(031980·086790·001450 ×2)은 `scripts/repair_partial_sell_ledger.py` 로 복구 가능하나 원 전략이 전부 당일청산 VBO 라 **복구 = 익일 강제청산 지시**임 — 청산 의사 결정 후 실행. 5~6월 6건은 절반 패턴이 아니라 원인 미상, 별도 조사.
 - [ ] 오염된 성과 기록 5건(trade id 251·261·263·265·269) 의심 플래그. 나머지 절반이 미청산이라 소급 재구성 불가 — 재작성하지 말 것.
 - [ ] 운영 요약 오탐 2건 수정: `_build_decision_summary` 가 `if execution_quality_section:` / `if degradation_section:` 로 **섹션 존재 여부만** 검사해 슬리피지 0%에도 "별도 경고 확인"이 뜬다. 임계 필터링된 `get_last_execution_quality_candidates()` 를 써야 한다. 같은 함수의 "신규 진입 N건" 도 당일 청산을 반영하지 않아 이미 닫힌 포지션을 관리 대상으로 표시한다. ※ 이 오탐이 이번 결함을 3주간 가렸다.
@@ -261,28 +256,7 @@
 
 ### M-3. 시가총액/미국주식 UI 하드닝 후속 [#653 코드리뷰 xhigh, 2026-07-11]
 
-#653(marketcap/overseas UI 하드닝)의 취지는 유효하나, 리뷰에서 즉시 수정 2건 + 하드닝 보완 4건 + 중복 정리 후속을 확인.
-
-**즉시 수정 (버그) — [완료 2026-07-11, jsdom 회귀 테스트 동반]**
-
-- [x] **marketcap.html 캐시버스팅 갱신** — `marketcap.html:18`을 `?v=2`로 올려 캐시된 구버전(무방비) 스크립트 서빙 차단(#653 XSS 수정 실효화).
-- [x] **환율 null → "USD/KRW 0" 오표시** — `loadOverseasMarketCap`에서 `data.fx_rate == null ? NaN : Number(...)` 선제 검사로 null 시 '환율 정보 없음' 표시.
-
-**하드닝 보완 (#653과 같은 클래스) — [완료 2026-07-11]**
-
-- [x] 잔고 조회의 거래소 기준이 다른 탭에 숨은 셀렉트 — `loadOverseasBalance`가 같은 '보유·주문' 탭의 `overseas-order-exchange`를 사용하도록 변경(숨겨진 개요 탭 `overseas-exchange` 대신).
-- [x] `loadOverseasMarketCap` stale-response 가드 — `_overseasMarketCapSequence` 시퀀스 가드 추가(marketcap.js 패턴 이식).
-- [x] catch 블록 진단정보 소실 — overseas.js 7곳·marketcap.js 1곳 catch에 `console.error` 추가(화면 문구는 불변).
-- [x] 가용성 확인 1회성 — `setOverseasTab` 전환마다 `_refreshOverseasAvailability` 재호출(init 1회 + 탭 전환 이벤트 구동).
-
-**중복 정리 (별도 리팩토링 PR — [완료 2026-07-11])**
-
-- [x] **escapeHtml 단일화(깊이 수정)** — `common.js` escapeHtml을 `String(v??'')` 강제변환 + 작은따옴표 이스케이프로 하드닝하고 `showError`를 공용화. `_escapeMarketCapHtml`/`_escapeOverseasHtml`/`_showMarketCapError`/`_showOverseasError` 제거하고 공용본 호출로 통합(ranking.js·notifications.js도 하드닝 수혜).
-- [x] `readJsonResponse`/오류 렌더러 common.js 승격 — `_readOverseasJson`을 `readJsonResponse`로 common.js에 이관, overseas.js 7곳 + marketcap.js 응답검증 블록이 공용본 사용.
-- [x] MarketCapGapService 조립 단일화 — `MarketCapGapService.build_default(broker, logger)` 팩토리 도입, `service_container.py`와 `stock.py` 라우트가 모두 이 진입점 사용(생성 인자 변경 시 1곳 수렴). 라우트 지연 조립은 미개방 시 불필요 생성을 막는 이점이 있어 유지.
-- [x] KRW/숫자 포매터 통일 — `_formatKrwMarketCap`이 공용 `formatTradingValue`(조/억) 위임(무효값 '-' 가드 유지), `_formatUsd`는 콤마 제거 후 파싱.
-- [x] tests/frontend 러너 공용화 — 공용 `tests/frontend/harness.mjs`(test/assert/run + `applyCommonStubs`) 추출, `run_*_dom_tests.mjs` 7개가 로컬 러너 보일러플레이트 제거하고 import.
-- [x] `get_us_market_caps` 병렬화 — `asyncio.gather(fetch_usdkrw, fetch_quotes)` + `_build_us_items` 헬퍼로 fx·시세 동시 조회.
+#653(marketcap/overseas UI 하드닝) 후속 검토에서 나온 즉시 수정 2건·하드닝 보완 4건·중복 정리 6건 전부 완료(2026-07-11, jsdom 회귀 테스트 동반). 남은 액션 없음 — 상세는 git 이력 참조.
 
 주요 파일: `view/web/templates/marketcap.html`, `view/web/static/js/marketcap.js`, `view/web/static/js/overseas.js`, `view/web/static/js/common.js`, `view/web/routes/stock.py`, `view/web/bootstrap/service_container.py`, `services/market_cap_gap_service.py`, `tests/frontend/`
 
