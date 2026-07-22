@@ -1,8 +1,11 @@
 """당일 랭킹 데이터 기반 주도 테마 리포트 서비스."""
 import logging
 import math
+import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+import yaml
 
 from common.types import ErrorCode, ResCommonResponse
 from core.performance_profiler import PerformanceProfiler
@@ -38,7 +41,7 @@ def _get(item: Any, key: str, default: Any = None) -> Any:
 class ThemeDailyLeaderService:
     """장마감 랭킹 캐시를 테마별로 묶어 당일 주도 테마를 산출한다."""
 
-    MIN_LIQUID_LEADER_TRADING_VALUE_WON = 1_000_000_000  # 10억
+    MIN_LIQUID_LEADER_TRADING_VALUE_WON = 3_000_000_000  # 30억
     MIN_LIQUID_THEME_TRADING_VALUE_WON = 10_000_000_000  # 100억
     MIN_LIQUID_MEMBER_COUNT = 2
 
@@ -48,11 +51,18 @@ class ThemeDailyLeaderService:
         snapshot_repository=None,
         logger=None,
         performance_profiler: Optional[PerformanceProfiler] = None,
+        theme_member_exclusions: Optional[Dict[str, Dict[str, List[str]]]] = None,
+        theme_member_exclusion_config_path: str = os.path.join("config", "theme_member_exclusions.yaml"),
     ):
         self._classification_repo = classification_repository
         self._snapshot_repo = snapshot_repository
         self._logger = logger or logging.getLogger(__name__)
         self.pm = performance_profiler or PerformanceProfiler(enabled=False)
+        self._theme_member_exclusions = (
+            self._normalize_theme_member_exclusions(theme_member_exclusions)
+            if theme_member_exclusions is not None
+            else self._load_theme_member_exclusions(theme_member_exclusion_config_path)
+        )
 
     async def build_intraday_theme_report(
         self,
@@ -181,7 +191,11 @@ class ThemeDailyLeaderService:
             themes = []
             for normalized_name, group in groups.items():
                 scored = []
+                excluded_member_count = 0
                 for member in group.get("members", []):
+                    if self._is_excluded_theme_member(normalized_name, member):
+                        excluded_member_count += 1
+                        continue
                     code = member.get("code")
                     stock = stock_map.get(code)
                     if not stock:
@@ -251,6 +265,7 @@ class ThemeDailyLeaderService:
                     "sources": group.get("sources", []),
                     "report_date": report_date,
                     "scored_member_count": len(scored),
+                    "excluded_member_count": excluded_member_count,
                     "liquid_member_count": len(liquid_members),
                     "liquid_advancing_member_count": len(liquid_advancing_members),
                     "is_liquid_theme": is_liquid_theme,
@@ -317,6 +332,41 @@ class ThemeDailyLeaderService:
             if code:
                 out[str(code)] = stock
         return out
+
+    def _is_excluded_theme_member(self, normalized_name: str, member: Dict[str, Any]) -> bool:
+        rule = self._theme_member_exclusions.get(str(normalized_name), {})
+        codes = rule.get("codes", set())
+        names = rule.get("names", set())
+        code = str(member.get("code") or "")
+        name = str(member.get("name") or "")
+        return code in codes or name in names
+
+    def _load_theme_member_exclusions(self, path: str) -> Dict[str, Dict[str, set]]:
+        if not path or not os.path.exists(path):
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+            return self._normalize_theme_member_exclusions(raw.get("exclusions", {}))
+        except Exception as e:
+            self._logger.warning(f"테마 구성 제외 설정 로드 실패: {e}")
+            return {}
+
+    @staticmethod
+    def _normalize_theme_member_exclusions(
+        exclusions: Optional[Dict[str, Dict[str, List[str]]]]
+    ) -> Dict[str, Dict[str, set]]:
+        normalized = {}
+        if not isinstance(exclusions, dict):
+            return normalized
+        for theme_name, rule in exclusions.items():
+            if not isinstance(rule, dict):
+                continue
+            normalized[str(theme_name)] = {
+                "codes": {str(code) for code in rule.get("codes", []) if code},
+                "names": {str(name) for name in rule.get("names", []) if name},
+            }
+        return normalized
 
     @staticmethod
     def _build_program_map(program_stocks: List[Any]) -> Dict[str, int]:

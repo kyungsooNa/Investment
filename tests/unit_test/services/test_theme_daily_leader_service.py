@@ -39,13 +39,14 @@ def _program(code, amount):
     }
 
 
-def _service(groups, snapshot_repo=None):
+def _service(groups, snapshot_repo=None, theme_member_exclusions=None):
     repo = MagicMock()
     repo.get_groups = AsyncMock(return_value=groups)
     return ThemeDailyLeaderService(
         classification_repository=repo,
         snapshot_repository=snapshot_repo,
         logger=MagicMock(),
+        theme_member_exclusions=theme_member_exclusions,
     ), repo
 
 
@@ -60,14 +61,14 @@ async def test_intraday_report_calculates_recent_three_minute_value_and_delta():
     snapshot_repo = MagicMock()
     snapshot_repo.save_snapshot = AsyncMock()
     snapshot_repo.get_values_at_or_before = AsyncMock(side_effect=[
-        {"A": 900_000_000, "B": 1_800_000_000, "C": 2_700_000_000},
-        {"A": 800_000_000, "B": 1_700_000_000, "C": 2_500_000_000},
+        {"A": 2_900_000_000, "B": 3_800_000_000, "C": 4_700_000_000},
+        {"A": 2_800_000_000, "B": 3_700_000_000, "C": 4_500_000_000},
     ])
     svc, _ = _service(groups, snapshot_repo=snapshot_repo)
     rankings = {"all_stocks": [
-        _stock("A", "A", 10, 1_000_000_100),
-        _stock("B", "B", 9, 2_000_000_300),
-        _stock("C", "C", 8, 3_000_000_600),
+        _stock("A", "A", 10, 3_000_000_100),
+        _stock("B", "B", 9, 4_000_000_300),
+        _stock("C", "C", 8, 5_000_000_600),
     ]}
 
     resp = await svc.build_intraday_theme_report(
@@ -327,7 +328,7 @@ async def test_skips_theme_with_less_than_min_members():
 
 @pytest.mark.asyncio
 async def test_separates_thin_momentum_stock_from_liquid_theme_leaders():
-    """10억 미만 급등주는 상승률 상위로만 보이고 유동성 주도주에서는 제외한다."""
+    """30억 미만 급등주는 상승률 상위로만 보이고 유동성 주도주에서는 제외한다."""
     svc, _ = _service({
         "OLED": {
             "sources": ["NAVER"],
@@ -336,7 +337,7 @@ async def test_separates_thin_momentum_stock_from_liquid_theme_leaders():
     })
     rankings = {
         "all_stocks": [
-            _stock("A", "베셀", 23.2, 900_000_000),
+            _stock("A", "베셀", 23.2, 2_900_000_000),
             _stock("B", "티에스이", 20.0, 32_300_000_000),
             _stock("C", "예스티", 18.8, 17_200_000_000),
         ],
@@ -350,6 +351,38 @@ async def test_separates_thin_momentum_stock_from_liquid_theme_leaders():
     assert [item["code"] for item in theme["momentum_leaders"]] == ["A", "B", "C"]
     assert theme["liquid_member_count"] == 2
     assert theme["is_liquid_theme"] is True
+
+
+@pytest.mark.asyncio
+async def test_excludes_configured_off_theme_members_before_scoring():
+    """명백히 부자연스러운 편입 종목은 테마 평균과 대표주에서 제외한다."""
+    svc, _ = _service(
+        {
+            "의료기기": {
+                "sources": ["NAVER"],
+                "members": [
+                    _member("A", "나노엔텍"),
+                    _member("B", "의료기기2"),
+                    _member("C", "의료기기3"),
+                    _member("D", "삼성전자"),
+                ],
+            }
+        },
+        theme_member_exclusions={"의료기기": {"names": ["삼성전자"]}},
+    )
+    rankings = {"all_stocks": [
+        _stock("A", "나노엔텍", 29.9, 5_000_000_000),
+        _stock("B", "의료기기2", 10.0, 4_000_000_000),
+        _stock("C", "의료기기3", 8.0, 3_000_000_000),
+        _stock("D", "삼성전자", 5.3, 3_477_700_000_000),
+    ]}
+
+    resp = await svc.build_daily_theme_report(rankings, "20260722")
+
+    theme = resp.data[0]
+    assert [member["name"] for member in theme["members"]] == ["나노엔텍", "의료기기2", "의료기기3"]
+    assert [leader["name"] for leader in theme["leaders"]] == ["나노엔텍", "의료기기2", "의료기기3"]
+    assert theme["excluded_member_count"] == 1
 
 
 @pytest.mark.asyncio

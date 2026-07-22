@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS disclosures (
     importance_level TEXT NOT NULL,
     importance_reasons TEXT NOT NULL,
     event_key TEXT NOT NULL DEFAULT '',
+    ai_summary TEXT NOT NULL DEFAULT '',
     detected_at TEXT NOT NULL,
     alert_suppressed INTEGER NOT NULL DEFAULT 0,
     immediate_sent_at TEXT,
@@ -48,6 +49,7 @@ class StoredDisclosure:
     disclosure: DartDisclosure
     importance: DisclosureImportance
     event_key: str = ""
+    summary: str = ""
 
 
 class DartDisclosureRepository:
@@ -66,6 +68,10 @@ class DartDisclosureRepository:
             await conn.execute(
                 "ALTER TABLE disclosures ADD COLUMN event_key TEXT NOT NULL DEFAULT ''"
             )
+        if "ai_summary" not in columns:
+            await conn.execute(
+                "ALTER TABLE disclosures ADD COLUMN ai_summary TEXT NOT NULL DEFAULT ''"
+            )
         await conn.execute(_DDL_STATE)
         await conn.commit()
 
@@ -76,6 +82,7 @@ class DartDisclosureRepository:
         *,
         suppress_immediate: bool = False,
         event_key: str = "",
+        summary: str = "",
     ) -> bool:
         detected_at = datetime.now().isoformat()
         async with aiosqlite.connect(self._db_path) as conn:
@@ -85,9 +92,9 @@ class DartDisclosureRepository:
                 INSERT OR IGNORE INTO disclosures(
                     rcept_no, corp_code, stock_code, corp_name, report_name,
                     filer_name, receipt_date, remarks, importance_score,
-                    importance_level, importance_reasons, event_key, detected_at,
-                    alert_suppressed
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    importance_level, importance_reasons, event_key, ai_summary,
+                    detected_at, alert_suppressed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     disclosure.receipt_no,
@@ -102,6 +109,7 @@ class DartDisclosureRepository:
                     importance.level,
                     json.dumps(importance.reasons, ensure_ascii=False),
                     str(event_key or "")[:300],
+                    str(summary or "").strip()[:1000],
                     detected_at,
                     int(suppress_immediate),
                 ),
@@ -240,4 +248,5 @@ class DartDisclosureRepository:
                 reasons=json.loads(row["importance_reasons"]),
             ),
             event_key=str(row["event_key"] or ""),
+            summary=str(row["ai_summary"] or ""),
         )
