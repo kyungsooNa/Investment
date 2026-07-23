@@ -66,7 +66,7 @@ def mock_deps():
 
 
 @pytest.fixture
-def bg_service(mock_deps):
+def bg_service(mock_deps, tmp_path):
     broker, mapper, env, logger, market_clock, market_calendar_service = mock_deps
     
     market_data_service = AsyncMock()
@@ -79,6 +79,7 @@ def bg_service(mock_deps):
         market_clock=market_clock,
         market_data_service=market_data_service,
         market_calendar_service=market_calendar_service,
+        ranking_report_state_path=str(tmp_path / "ranking_report_state.json"),
     )
 
 

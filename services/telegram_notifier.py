@@ -78,6 +78,27 @@ def _telegram_html_to_parts(text: str) -> tuple[str, str]:
     return lines[0], "\n".join(lines[1:])
 
 
+def _format_disclosure_ai_summary_html(summary_text: str) -> str:
+    if not summary_text:
+        return ""
+
+    sentence_match = re.search(r".*?[.!?](?:\s|$)", summary_text, re.DOTALL)
+    if sentence_match:
+        end = sentence_match.end()
+    else:
+        first_line = summary_text.splitlines()[0] if summary_text.splitlines() else summary_text
+        end = len(first_line)
+
+    lead = summary_text[:end].rstrip()
+    rest = summary_text[end:]
+    if not lead:
+        return html.escape(summary_text, quote=False)
+    return (
+        f"<b>{html.escape(lead, quote=False)}</b>"
+        f"{html.escape(rest, quote=False)}"
+    )
+
+
 class TelegramNotifier:
     """Telegram 알림을 비동기적으로 전송하는 핸들러 클래스입니다."""
 
@@ -623,7 +644,8 @@ class TelegramReporter:
                 summary_text = (
                     summary_text[: _DISCLOSURE_AI_SUMMARY_MAX_CHARS - 1].rstrip() + "…"
                 )
-            ai_block = f"🤖 <b>AI 요약</b>\n{html.escape(summary_text, quote=False)}\n\n"
+            ai_summary_html = _format_disclosure_ai_summary_html(summary_text)
+            ai_block = f"🤖 <b>AI 요약</b>\n{ai_summary_html}\n\n"
         message = (
             "🚨 <b>관심종목 중요 공시</b>\n\n"
             f"<b>{company} ({stock_code})</b>\n"

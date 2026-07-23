@@ -5,7 +5,9 @@
 장마감 후 기본 랭킹 캐시를 관리한다.
 """
 import asyncio
+import json
 import logging
+import os
 import time
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, TYPE_CHECKING
@@ -61,6 +63,7 @@ class RankingTask(AfterMarketTask):
         worker_pool: Optional[WorkerPool] = None,
         stock_classification_repository=None,
         period_ranking_repository=None,
+        ranking_report_state_path: Optional[str] = None,
     ):
         super().__init__(
             mcs=market_calendar_service,
@@ -77,6 +80,9 @@ class RankingTask(AfterMarketTask):
         self._telegram_reporter = telegram_reporter
         self._stock_classification_repository = stock_classification_repository
         self._period_ranking_repository = period_ranking_repository
+        self._ranking_report_state_path = ranking_report_state_path or os.path.join(
+            "data", "ranking_report_state.json"
+        )
         self._suspend_event: asyncio.Event = asyncio.Event()
         self._suspend_event.set()  # 초기에는 실행 가능 상태
 
@@ -499,13 +505,7 @@ class RankingTask(AfterMarketTask):
                 for key, value in rankings_for_report.items()
             }
             self._daily_theme_report_rankings["report_date"] = target_date
-            if self._telegram_reporter:
-                self._logger.info("텔레그램 랭킹 리포트 전송 시작")
-                try:
-                    await self._telegram_reporter.send_ranking_report(rankings_for_report, report_date=target_date)
-                    self._logger.info("텔레그램 랭킹 리포트 전송 완료")
-                except Exception as e:
-                    self._logger.error(f"텔레그램 랭킹 리포트 전송 중 오류: {e}", exc_info=True)
+            await self._send_ranking_report_once(rankings_for_report, target_date)
         except Exception as e:
             self._logger.error(f"투자자 랭킹 갱신 실패: {e}", exc_info=True)
             if self._notification_service:
@@ -513,6 +513,54 @@ class RankingTask(AfterMarketTask):
         finally:
             self._is_refreshing = False
             self._progress["running"] = False
+
+    def _load_last_ranking_report_date(self) -> Optional[str]:
+        try:
+            with open(self._ranking_report_state_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            value = data.get("last_ranking_report_date")
+            return str(value) if value else None
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            self._logger.warning(f"랭킹 리포트 발송 상태 로드 실패: {e}")
+            return None
+
+    def _save_last_ranking_report_date(self, target_date: str) -> None:
+        try:
+            directory = os.path.dirname(self._ranking_report_state_path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(self._ranking_report_state_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {"last_ranking_report_date": str(target_date)},
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+        except Exception as e:
+            self._logger.warning(f"랭킹 리포트 발송 상태 저장 실패: {e}")
+
+    async def _send_ranking_report_once(self, rankings_for_report: Dict, target_date: str) -> None:
+        if not self._telegram_reporter:
+            return
+
+        last_report_date = self._load_last_ranking_report_date()
+        if last_report_date == str(target_date):
+            self._logger.info(f"텔레그램 랭킹 리포트 이미 전송 완료 ({target_date}) — 스킵")
+            return
+
+        self._logger.info("텔레그램 랭킹 리포트 전송 시작")
+        try:
+            result = await self._telegram_reporter.send_ranking_report(
+                rankings_for_report,
+                report_date=target_date,
+            )
+            if result is not False:
+                self._save_last_ranking_report_date(target_date)
+            self._logger.info("텔레그램 랭킹 리포트 전송 완료")
+        except Exception as e:
+            self._logger.error(f"텔레그램 랭킹 리포트 전송 중 오류: {e}", exc_info=True)
 
     @staticmethod
     def _build_ranking(results: List[Dict], pbmn_field: str, top_n: int = 30):

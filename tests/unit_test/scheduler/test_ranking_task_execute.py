@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from task.background.after_market.ranking_task import RankingTask
 
 
-def _make_task() -> RankingTask:
+def _make_task(**kwargs) -> RankingTask:
     broker = MagicMock()
     stock_repo = MagicMock()
     stock_repo.df = MagicMock()
@@ -14,6 +14,7 @@ def _make_task() -> RankingTask:
         broker_api_wrapper=broker,
         stock_code_repository=stock_repo,
         logger=MagicMock(),
+        **kwargs,
     )
     return task
 
@@ -102,3 +103,32 @@ async def test_execute_sets_state_running_then_idle():
 
     assert TaskState.RUNNING in states_during
     assert task.state == TaskState.IDLE
+
+
+async def test_send_ranking_report_skips_same_trading_date_after_restart(tmp_path):
+    state_path = tmp_path / "ranking_report_state.json"
+
+    first_reporter = MagicMock()
+    first_reporter.send_ranking_report = AsyncMock()
+    first_task = _make_task(
+        telegram_reporter=first_reporter,
+        ranking_report_state_path=str(state_path),
+    )
+
+    await first_task._send_ranking_report_once({"foreign_buy": []}, "20260722")
+
+    first_reporter.send_ranking_report.assert_awaited_once_with(
+        {"foreign_buy": []},
+        report_date="20260722",
+    )
+
+    restarted_reporter = MagicMock()
+    restarted_reporter.send_ranking_report = AsyncMock()
+    restarted_task = _make_task(
+        telegram_reporter=restarted_reporter,
+        ranking_report_state_path=str(state_path),
+    )
+
+    await restarted_task._send_ranking_report_once({"foreign_buy": []}, "20260722")
+
+    restarted_reporter.send_ranking_report.assert_not_called()

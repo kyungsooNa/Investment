@@ -1454,6 +1454,76 @@ def test_get_subscription_status_received_at_populated(web_client, mock_web_ctx)
     assert data["pending_by_priority"]["HIGH"][0]["received_at"] == 1700000000.0
 
 
+def test_get_subscription_status_websocket_tick_implies_active(web_client, mock_web_ctx):
+    """ACK 상태가 active에 반영되지 않았어도 websocket tick이 있으면 active로 노출한다."""
+    mock_svc = MagicMock()
+    mock_svc.get_status.return_value = {
+        "active_count": 0,
+        "max_subscriptions": 40,
+        "active_codes_price": [],
+        "active_codes_pt": [],
+        "pending_count": 1,
+        "pending_by_priority": {
+            "HIGH": [],
+            "MEDIUM": [],
+            "LOW": ["001450"],
+        },
+    }
+    mock_web_ctx.price_subscription_service = mock_svc
+    mock_web_ctx.streaming_service.get_cached_realtime_price = MagicMock(return_value={
+        "price": "37100",
+        "received_at": 1784752235.0,
+        "quality_reason": "websocket",
+    })
+    mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "현대해상"
+
+    response = web_client.get("/api/subscriptions/status")
+
+    data = response.json()["data"]
+    assert data["active_count"] == 1
+    assert data["active_codes_price"] == ["001450"]
+    row = data["pending_by_priority"]["LOW"][0]
+    assert row["active"] is True
+    assert row["received_at"] == 1784752235.0
+    assert row["price_source"] == "websocket"
+
+
+def test_get_subscription_status_rest_snapshot_does_not_imply_active(web_client, mock_web_ctx):
+    """REST 스냅샷 현재가는 표시하되 실시간 수신/active로 오인하지 않는다."""
+    mock_svc = MagicMock()
+    mock_svc.get_status.return_value = {
+        "active_count": 0,
+        "max_subscriptions": 40,
+        "active_codes_price": [],
+        "active_codes_pt": [],
+        "pending_count": 1,
+        "pending_by_priority": {
+            "HIGH": ["005930"],
+            "MEDIUM": [],
+            "LOW": [],
+        },
+    }
+    mock_web_ctx.price_subscription_service = mock_svc
+    mock_web_ctx.streaming_service.get_cached_realtime_price = MagicMock(return_value={
+        "price": "260500",
+        "received_at": 1784752211.0,
+        "quality_reason": "rest_snapshot",
+    })
+    mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "삼성전자"
+
+    response = web_client.get("/api/subscriptions/status")
+
+    data = response.json()["data"]
+    assert data["active_count"] == 0
+    assert data["active_codes_price"] == []
+    row = data["pending_by_priority"]["HIGH"][0]
+    assert row["active"] is False
+    assert row["price"] == "260500"
+    assert row["received_at"] is None
+    assert row["snapshot_at"] == 1784752211.0
+    assert row["price_source"] == "rest_snapshot"
+
+
 def test_get_subscription_status_inactive_code(web_client, mock_web_ctx):
     """active 상태가 아닌 종목은 active=False로 반환된다."""
     mock_svc = MagicMock()

@@ -739,7 +739,9 @@ function renderSubTable() {
             : '<span style="color:#aaa;">-</span>';
         const received = item.received_at
             ? formatTimestamp(item.received_at)
-            : '<span style="color:#aaa;">-</span>';
+            : item.snapshot_at
+                ? `<span title="REST 스냅샷 갱신 시각">스냅샷 ${formatTimestamp(item.snapshot_at)}</span>`
+                : '<span style="color:#aaa;">-</span>';
         return `
             <tr>
                 <td style="font-weight:bold; color:var(--accent);">
