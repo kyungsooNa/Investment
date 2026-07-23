@@ -627,12 +627,12 @@ class TelegramReporter:
         message = (
             "🚨 <b>관심종목 중요 공시</b>\n\n"
             f"<b>{company} ({stock_code})</b>\n"
-            f"공시: {report_name}\n"
-            f"중요도: {html.escape(str(importance.level), quote=False)} "
+            f"<b>공시:</b> {report_name}\n"
+            f"<b>중요도:</b> {html.escape(str(importance.level), quote=False)} "
             f"({int(importance.score)}점)\n\n"
             f"{ai_block}"
             f"<b>판정 근거</b>\n{reasons}\n\n"
-            f"접수일: {html.escape(str(disclosure.receipt_date), quote=False)}\n"
+            f"<b>접수일:</b> {html.escape(str(disclosure.receipt_date), quote=False)}\n"
             f'<a href="{disclosure.viewer_url}">DART 원문 보기</a>'
         )
         return await self._send_message(message)
