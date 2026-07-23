@@ -187,6 +187,35 @@ async def test_get_current_price_accepts_single_item_output_list(mock_quotations
 
 
 @pytest.mark.asyncio
+async def test_get_current_price_nxt_includes_fid_input_date_1(mock_quotations):
+    """NXT(exchange=NXT) 현재가 조회는 KIS가 요구하는 fid_input_date_1을 포함해야 한다.
+
+    실전 로그 확인: fid_input_date_1 누락 시 KIS가
+    'ERROR INPUT FIELD NOT FOUND [FID_INPUT_DATE_1]'로 거부한다 (2026-07-23).
+    """
+    from common.types import Exchange
+
+    output = _BASE_DUMMY_DATA.copy()
+    output.update({
+        "stck_prpr": "432000",
+        "stck_oprc": "467500",
+        "prdy_ctrt": "-7.50",
+    })
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상 처리",
+        data={"output": output},
+    ))
+
+    await mock_quotations.get_current_price("000660", exchange=Exchange.NXT)
+
+    _, kwargs = mock_quotations.call_api.call_args
+    params = kwargs["params"]
+    assert params["fid_cond_mrkt_div_code"] == "NX"
+    assert params.get("fid_input_date_1")
+
+
+@pytest.mark.asyncio
 async def test_get_price_summary_open_price_zero(mock_quotations):
     # Mock 반환 값을 ResCommonResponse 형식으로 변경
     mock_output = _create_dummy_output({
