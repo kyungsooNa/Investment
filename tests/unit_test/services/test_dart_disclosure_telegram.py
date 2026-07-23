@@ -75,6 +75,30 @@ async def test_send_disclosure_alert_emphasizes_key_labels():
     assert "<b>접수일:</b> 20260714" in message
 
 
+async def test_send_disclosure_alert_bolds_first_ai_summary_sentence():
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    stored = _stored("단일판매ㆍ공급계약체결", 75)
+
+    await reporter.send_disclosure_alert(
+        stored.disclosure,
+        stored.importance,
+        ai_summary=(
+            "삼성전기는 글로벌 대형기업과 약 2,951억 원 규모의 MLCC 공급 계약을 체결했습니다. "
+            "계약 상대방은 비밀유지 요청에 따라 공개가 유보됩니다.\n\n"
+            "판정 근거\n"
+            "• 핵심 사업 공급 계약입니다."
+        ),
+    )
+
+    message = reporter._send_message.await_args.args[0]
+    assert (
+        "<b>삼성전기는 글로벌 대형기업과 약 2,951억 원 규모의 MLCC 공급 계약을 체결했습니다.</b>"
+        in message
+    )
+    assert "계약 상대방은 비밀유지 요청에 따라 공개가 유보됩니다." in message
+
+
 async def test_send_disclosure_alert_truncates_oversized_ai_summary():
     reporter = TelegramReporter("token", "chat")
     reporter._send_message = AsyncMock(return_value=True)

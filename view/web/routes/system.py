@@ -678,7 +678,26 @@ def get_subscription_status():
         except Exception:
             pass
 
-    pending_count = len(set().union(*pending_by_priority.values()))
+    def _get_price_info(code: str):
+        if not streaming_svc:
+            return None
+        try:
+            return streaming_svc.get_cached_realtime_price(code)
+        except Exception:
+            return None
+
+    all_pending_codes = set().union(*pending_by_priority.values())
+    price_info_by_code = {
+        code: _get_price_info(code)
+        for code in all_pending_codes
+    }
+    websocket_received_codes = {
+        code for code, info in price_info_by_code.items()
+        if isinstance(info, dict) and info.get("quality_reason") == "websocket"
+    }
+    active_codes_price.update(websocket_received_codes)
+
+    pending_count = len(all_pending_codes)
     active_set = active_codes_price | active_codes_pt
     active_count = len(active_codes_price) + len(active_codes_pt)
 
@@ -686,18 +705,26 @@ def get_subscription_status():
         result = []
         for code in codes:
             name = ctx.stock_code_repository.get_name_by_code(code) or code
-            price_info = streaming_svc.get_cached_realtime_price(code) if streaming_svc else None
+            price_info = price_info_by_code.get(code)
             received_at = None
+            snapshot_at = None
             price = None
+            price_source = None
             if isinstance(price_info, dict):
-                received_at = price_info.get("received_at")
+                price_source = price_info.get("quality_reason")
+                if price_source == "rest_snapshot":
+                    snapshot_at = price_info.get("received_at")
+                else:
+                    received_at = price_info.get("received_at")
                 price = price_info.get("price")
             result.append({
                 "code": code,
                 "name": name,
                 "active": code in active_set, # 병합된 active_set을 통해 활성화 여부 확인
                 "received_at": received_at,
+                "snapshot_at": snapshot_at,
                 "price": price,
+                "price_source": price_source,
             })
         return result
 
