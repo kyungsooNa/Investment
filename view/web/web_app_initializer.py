@@ -637,13 +637,7 @@ class WebAppContext:
                 sub_pt_success = await self.streaming_service.wait_program_trading_ack(code)
             self.pm.log_timer(f"subscribe_program_trading({code})", t_sub_pt)
 
-            t_sub_price = self.pm.start_timer()
-            sub_price_success = await self.streaming_service.subscribe_unified_price(code)
-            if sub_price_success:
-                sub_price_success = await self.streaming_service.wait_unified_price_ack(code)
-            self.pm.log_timer(f"subscribe_unified_price({code})", t_sub_price)
-
-            if sub_pt_success and sub_price_success:
+            if sub_pt_success:
                 if self.streaming_stock_repo:
                     await self.streaming_stock_repo.mark_desired(
                         code,
@@ -651,16 +645,12 @@ class WebAppContext:
                         source="manual",
                     )
                     await self.streaming_stock_repo.mark_active(code, StreamingType.PROGRAM_TRADING)
-                    await self.streaming_stock_repo.mark_active(code, StreamingType.UNIFIED_PRICE)
                 self.logger.info(f"프로그램매매 신규 구독 성공: {code}")
                 return True
             else:
-                # 하나라도 실패하면, 성공했을 수 있는 다른 구독을 해지하여 상태를 정리한다.
-                self.logger.warning(f"프로그램매매 구독 실패 (pt: {sub_pt_success}, price: {sub_price_success}) - {code}")
+                self.logger.warning(f"프로그램매매 구독 실패 (pt: {sub_pt_success}) - {code}")
                 if sub_pt_sent:
                     await self.streaming_service.unsubscribe_program_trading(code)
-                if sub_price_success:
-                    await self.streaming_service.unsubscribe_unified_price(code)
                 return False
 
         except Exception as e:
@@ -668,7 +658,7 @@ class WebAppContext:
             return False
 
     def _has_independent_price_subscription(self, code: str) -> bool:
-        """PT companion이 아닌 별도 통합 체결가 구독 수요가 있는지 확인한다."""
+        """PT와 무관한 별도 통합 체결가 구독 수요가 있는지 확인한다."""
         if not code:
             return False
 

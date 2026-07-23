@@ -232,11 +232,11 @@ async def test_restore_reduces_pt_codes_to_preserve_requested_price_slots(
     ):
         await svc._restore_all_subscriptions()
 
-    # 40슬롯 - PRICE 20 - 주문통보 1 = 19슬롯이므로 PT(2슬롯)는 9종목만 복원한다.
-    assert svc._streaming_service.subscribe_program_trading.await_count == 9
+    # 40슬롯 - PRICE 20 - 주문통보 1 = 19슬롯이고, PT는 1슬롯이므로 cap(18)까지 복원한다.
+    assert svc._streaming_service.subscribe_program_trading.await_count == 18
     mock_price_subscription_service.set_external_reserved_slots.assert_called_once_with(19)
-    assert len(svc._capacity_pending_pt_codes) == 9
-    assert svc._streaming_logger.log_pt_capacity_pending.call_args.kwargs["max_codes"] == 9
+    assert len(svc._capacity_pending_pt_codes) == 0
+    svc._streaming_logger.log_pt_capacity_pending.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -264,9 +264,9 @@ async def test_restore_reserves_minimum_price_slots_without_current_price_reques
     ):
         await svc._restore_all_subscriptions()
 
-    # 40슬롯 - PRICE 최소 10 - 주문통보 1 = 29슬롯 → PT 최대 14종목.
-    assert svc._streaming_service.subscribe_program_trading.await_count == 14
-    mock_price_subscription_service.set_external_reserved_slots.assert_called_once_with(29)
+    # 40슬롯 - PRICE 최소 10 - 주문통보 1 = 29슬롯이고, PT는 1슬롯이므로 cap(18)까지 복원한다.
+    assert svc._streaming_service.subscribe_program_trading.await_count == 18
+    mock_price_subscription_service.set_external_reserved_slots.assert_called_once_with(19)
 
 
 @pytest.mark.asyncio

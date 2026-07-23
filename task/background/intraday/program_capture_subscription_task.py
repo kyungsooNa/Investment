@@ -20,7 +20,7 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
 
     안전 설계:
       - SubscriptionPriority.LOW → 트레이딩용 price 구독(HIGH/MEDIUM)을 밀어내지
-        않으며(PT=2슬롯/종목), 30분마다 제한된 묶음을 순환한다.
+        않으며(PT=1슬롯/종목), 30분마다 제한된 묶음을 순환한다.
       - PT가 없는 우선주는 PRICE 전용으로 구독해 호가·체결강도만 수집한다.
       - 수동 UI로 이미 PT desired인 종목은 대상에서 제외해 해지/영속 상태 간섭을 막는다.
       - 구독 목록을 scheduler_store에 영속화 — 크래시 잔재를 재시작 시 카테고리로
@@ -31,7 +31,7 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
     PRICE_CATEGORY_KEY = "microstructure_capture_price"
     CHECK_INTERVAL_SEC = 60
     ROTATION_INTERVAL_MINUTES = 30
-    MAX_CODES = 10  # PT=2슬롯/종목 — 캡처용 상한 (트레이딩 슬롯 여유 보존)
+    MAX_CODES = 10  # 캡처용 상한 (트레이딩 슬롯 여유 보존)
 
     def __init__(
         self,
