@@ -30,7 +30,7 @@ from typing import Dict, Iterable, Optional, Set
 class StreamingType(str, Enum):
     """WebSocket 구독 TR_ID 타입."""
     UNIFIED_PRICE = "unified_price"      # H0UNCNT0 — 통합 체결가 (40개 한도)
-    PROGRAM_TRADING = "program_trading"  # H0STPGM0 + H0STCNT0 동반 (소수, 제한 없음)
+    PROGRAM_TRADING = "program_trading"  # H0STPGM0 프로그램매매 tick
 
 
 class StreamingStockRepo:

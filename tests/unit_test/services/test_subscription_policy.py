@@ -124,7 +124,7 @@ async def test_add_remove_subscription(policy, mock_streaming_stock_repo):
 @pytest.mark.asyncio
 async def test_add_subscription_critical_rejection(policy, mock_streaming_logger):
     """프로그램 매매(CRITICAL) 슬롯 부족 시 거절(Rejection) 동작 검증"""
-    policy._calculate_used_slots = MagicMock(return_value=39) # 남은 슬롯 1개 (PT는 2슬롯 필요)
+    policy._calculate_used_slots = MagicMock(return_value=40) # 남은 슬롯 없음 (PT는 1슬롯 필요)
     
     result = await policy.add_subscription("000660", SubscriptionPriority.CRITICAL, "pt_req", StreamingType.PROGRAM_TRADING)
     assert result is False
@@ -220,7 +220,7 @@ def test_is_streaming_and_get_status(policy):
 @pytest.mark.asyncio
 async def test_rebalance_slot_allocation(policy, mock_streaming_logger):
     """슬롯 한도 초과 시 타입에 따른 할당 및 Dropped 로직 검증"""
-    policy.MAX_WS_SLOTS = 3 # PT 1개(2슬롯) + Price 1개(1슬롯) 들어가면 꽉 참
+    policy.MAX_WS_SLOTS = 2 # PT 1개(1슬롯) + Price 1개(1슬롯) 들어가면 꽉 참
     policy._refs = {
         "PT_CODE": {"pt": {"priority": SubscriptionPriority.CRITICAL, "type": StreamingType.PROGRAM_TRADING}},
         "PRICE_1": {"p1": {"priority": SubscriptionPriority.HIGH, "type": StreamingType.UNIFIED_PRICE}},
@@ -229,18 +229,19 @@ async def test_rebalance_slot_allocation(policy, mock_streaming_logger):
     
     await policy._rebalance()
     
-    # PT_CODE(2) + PRICE_1(1) = 3슬롯 사용 완료
+    # PT_CODE(1) + PRICE_1(1) = 2슬롯 사용 완료
     assert "PT_CODE" in policy._active_codes_pt
+    assert "PT_CODE" not in policy._active_codes_price
     assert "PRICE_1" in policy._active_codes_price
     assert "PRICE_2" not in policy._active_codes_price
     mock_streaming_logger.log_dropped_subscriptions.assert_called() # Dropped 경고 로깅
 
 
 @pytest.mark.asyncio
-async def test_rebalance_program_trading_subscribes_companion_unified_price(
+async def test_rebalance_program_trading_subscribes_only_program_tick(
     policy, mock_streaming, mock_streaming_stock_repo
 ):
-    """PROGRAM_TRADING 요청은 PT와 통합 체결가 2개 구독을 함께 활성화한다."""
+    """PROGRAM_TRADING 요청은 companion 체결가 없이 PT tick만 활성화한다."""
     policy._refs = {
         "005930": {
             "program_capture": {
@@ -253,12 +254,11 @@ async def test_rebalance_program_trading_subscribes_companion_unified_price(
     await policy._rebalance()
 
     mock_streaming.subscribe_program_trading.assert_awaited_once_with("005930")
-    mock_streaming.subscribe_unified_price.assert_awaited_once_with("005930")
+    mock_streaming.subscribe_unified_price.assert_not_awaited()
     assert "005930" in policy._active_codes_pt
-    assert "005930" in policy._active_codes_price
+    assert "005930" not in policy._active_codes_price
     mock_streaming_stock_repo.mark_active.assert_any_await("005930", StreamingType.PROGRAM_TRADING)
-    mock_streaming_stock_repo.mark_active.assert_any_await("005930", StreamingType.UNIFIED_PRICE)
-    assert policy._calculate_used_slots() == 2
+    assert policy._calculate_used_slots() == 1
 
 
 @pytest.mark.asyncio

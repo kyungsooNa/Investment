@@ -55,7 +55,7 @@ class SubscriptionPolicy:
       - 우선순위가 동일하면 종목코드 오름차순으로 결정적(deterministic) 선택
     """
 
-    MAX_WS_SLOTS = 40  # KIS 웹소켓 최대 구독 한도 (PT=2슬롯, Price=1슬롯)
+    MAX_WS_SLOTS = 40  # KIS 웹소켓 최대 구독 한도 (PT=1슬롯, Price=1슬롯)
 
     def __init__(
         self,
@@ -112,8 +112,8 @@ class SubscriptionPolicy:
         구독을 요청합니다. 
         단, CRITICAL(프로그램 매매) 요청 시 슬롯이 부족하면 밀어내지 않고 False(거절)를 반환합니다.
         """
-        # 1. 시뮬레이션: 이 요청을 수용했을 때 총 슬롯 계산 (PT = 2, Price = 1)
-        required_slots = 2 if stream_type == StreamingType.PROGRAM_TRADING else 1
+        # 1. 시뮬레이션: 이 요청을 수용했을 때 총 슬롯 계산 (PT = 1, Price = 1)
+        required_slots = 1
         current_used_slots = self._calculate_used_slots()
         
         if priority == SubscriptionPriority.CRITICAL and (current_used_slots + required_slots > self.MAX_WS_SLOTS):
@@ -290,14 +290,13 @@ class SubscriptionPolicy:
 
             slots_needed = 0
             if is_pt:
-                slots_needed += 2  # H0STPGM0 + H0UNCNT0 companion price
+                slots_needed += 1  # H0STPGM0 only; price is supplied by independent subscription/REST fallback.
             elif is_price:
                 slots_needed += 1
 
             if available_slots >= slots_needed:
                 if is_pt:
                     desired_pt.add(code)
-                    desired_price.add(code)
                 elif is_price:
                     desired_price.add(code)
                 available_slots -= slots_needed
@@ -473,15 +472,13 @@ class SubscriptionPolicy:
     def _calculate_used_slots(self) -> int:
         """
         현재 사용 중인 웹소켓 슬롯 개수를 계산합니다.
-        (일반 호가/체결(Price) = 1슬롯, 프로그램 매매(PT) = 2슬롯)
+        (일반 호가/체결(Price) = 1슬롯, 프로그램 매매(PT) = 1슬롯)
         """
-        missing_companion_price = self._active_codes_pt - self._active_codes_price
         return (
             self._external_reserved_slots
             +
             len(self._active_codes_price)
             + len(self._active_codes_pt)
-            + len(missing_companion_price)
         )
 
 # Backward-compatibility alias

@@ -263,14 +263,13 @@ async def test_program_trading_subscription(mock_deps):
     await ctx.start_program_trading("005930")
     ctx.streaming_service.connect_websocket.assert_awaited_once()
     ctx.streaming_service.subscribe_program_trading.assert_awaited_with("005930")
-    ctx.streaming_service.subscribe_unified_price.assert_awaited_with("005930")
+    ctx.streaming_service.subscribe_unified_price.assert_not_awaited()
     ctx.streaming_stock_repo.mark_desired.assert_called_with(
         "005930",
         StreamingType.PROGRAM_TRADING,
         source="manual",
     )
     ctx.streaming_stock_repo.mark_active.assert_any_call("005930", StreamingType.PROGRAM_TRADING)
-    ctx.streaming_stock_repo.mark_active.assert_any_call("005930", StreamingType.UNIFIED_PRICE)
 
     # 2. 중복 구독 시도 (API 호출 없어야 함)
     ctx.streaming_stock_repo.get_desired.side_effect = (
@@ -284,7 +283,6 @@ async def test_program_trading_subscription(mock_deps):
     ctx.streaming_service.unsubscribe_program_trading.assert_awaited_with("005930")
     ctx.streaming_stock_repo.unmark_desired.assert_called_with("005930", StreamingType.PROGRAM_TRADING)
     ctx.streaming_stock_repo.mark_inactive.assert_any_call("005930", StreamingType.PROGRAM_TRADING)
-    ctx.streaming_stock_repo.mark_inactive.assert_any_call("005930", StreamingType.UNIFIED_PRICE)
 
 @pytest.mark.asyncio
 async def test_market_clock_methods(mock_deps):
@@ -913,14 +911,16 @@ async def test_start_program_trading_reconnect_existing_desired(mock_deps):
 
 
 @pytest.mark.asyncio
-async def test_start_program_trading_subscription_failure_cleans_partial_success(mock_deps):
-    """PT 구독만 성공하고 가격 구독이 실패하면 PT 구독을 해제한다."""
+async def test_start_program_trading_does_not_require_companion_price_subscription(mock_deps):
+    """PT 구독 성공은 companion 체결가 구독 없이도 성공으로 처리한다."""
     ctx = WebAppContext(None)
     ctx.pm = MagicMock()
     ctx.pm.start_timer.return_value = 0.0
     ctx.logger = MagicMock()
     ctx.streaming_stock_repo = MagicMock()
     ctx.streaming_stock_repo.get_desired.return_value = set()
+    ctx.streaming_stock_repo.mark_desired = AsyncMock()
+    ctx.streaming_stock_repo.mark_active = AsyncMock()
     ctx.streaming_service = MagicMock()
     ctx.streaming_service.connect_websocket = AsyncMock(return_value=True)
     ctx.streaming_service.subscribe_program_trading = AsyncMock(return_value=True)
@@ -931,8 +931,9 @@ async def test_start_program_trading_subscription_failure_cleans_partial_success
 
     result = await ctx.start_program_trading("005930")
 
-    assert result is False
-    ctx.streaming_service.unsubscribe_program_trading.assert_awaited_once_with("005930")
+    assert result is True
+    ctx.streaming_service.subscribe_unified_price.assert_not_awaited()
+    ctx.streaming_service.unsubscribe_program_trading.assert_not_awaited()
     ctx.streaming_service.unsubscribe_unified_price.assert_not_awaited()
 
 
@@ -1150,7 +1151,7 @@ async def test_refresh_price_from_rest_quality_and_invalid_output_edges(mock_dep
 
 @pytest.mark.asyncio
 async def test_start_program_trading_connection_failure_price_only_cleanup_and_exception(mock_deps):
-    """프로그램매매 구독 시작의 연결 실패, 가격 구독만 성공, 예외 경로를 확인한다."""
+    """프로그램매매 구독 시작의 연결 실패, PT 전송 실패, 예외 경로를 확인한다."""
     ctx = WebAppContext(None)
     ctx.pm = MagicMock()
     ctx.pm.start_timer.return_value = 0.0
@@ -1171,7 +1172,8 @@ async def test_start_program_trading_connection_failure_price_only_cleanup_and_e
     ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
 
     assert await ctx.start_program_trading("005930") is False
-    ctx.streaming_service.unsubscribe_unified_price.assert_awaited_once_with("005930")
+    ctx.streaming_service.subscribe_unified_price.assert_not_awaited()
+    ctx.streaming_service.unsubscribe_unified_price.assert_not_awaited()
 
     ctx.streaming_service.connect_websocket = AsyncMock(side_effect=RuntimeError("boom"))
     assert await ctx.start_program_trading("005930") is False
@@ -1202,7 +1204,7 @@ async def test_start_program_trading_requires_program_ack_before_marking_active(
 
     ctx.streaming_stock_repo.mark_active.assert_not_awaited()
     ctx.streaming_service.unsubscribe_program_trading.assert_awaited_once_with("005930")
-    ctx.streaming_service.unsubscribe_unified_price.assert_awaited_once_with("005930")
+    ctx.streaming_service.unsubscribe_unified_price.assert_not_awaited()
 
 
 @pytest.mark.asyncio

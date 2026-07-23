@@ -60,19 +60,18 @@ async def test_start_program_trading_success(mock_ctx):
 
     assert result is True
     mock_ctx.streaming_service.subscribe_program_trading.assert_called_once_with(code)
-    mock_ctx.streaming_service.subscribe_unified_price.assert_called_once_with(code)
+    mock_ctx.streaming_service.subscribe_unified_price.assert_not_called()
     mock_ctx.streaming_stock_repo.mark_desired.assert_called_once_with(
         code,
         StreamingType.PROGRAM_TRADING,
         source="manual",
     )
     mock_ctx.streaming_stock_repo.mark_active.assert_any_call(code, StreamingType.PROGRAM_TRADING)
-    mock_ctx.streaming_stock_repo.mark_active.assert_any_call(code, StreamingType.UNIFIED_PRICE)
 
 
 @pytest.mark.asyncio
-async def test_start_program_trading_partial_fail(mock_ctx):
-    """구독 하나만 성공하고 하나는 실패 시 롤백 및 실패 반환 확인"""
+async def test_start_program_trading_ignores_companion_price_failure(mock_ctx):
+    """PT 구독이 성공하면 companion 체결가 실패 여부와 무관하게 성공한다."""
     code = "005930"
     mock_ctx.streaming_stock_repo.get_desired.return_value = set()
     mock_ctx.streaming_service.subscribe_program_trading.return_value = True
@@ -80,10 +79,14 @@ async def test_start_program_trading_partial_fail(mock_ctx):
 
     result = await mock_ctx.start_program_trading(code)
 
-    assert result is False
-    mock_ctx.streaming_stock_repo.mark_desired.assert_not_called()
-    # 성공했던 PT 구독 해지 롤백 확인
-    mock_ctx.streaming_service.unsubscribe_program_trading.assert_called_once_with(code)
+    assert result is True
+    mock_ctx.streaming_service.subscribe_unified_price.assert_not_called()
+    mock_ctx.streaming_stock_repo.mark_desired.assert_called_once_with(
+        code,
+        StreamingType.PROGRAM_TRADING,
+        source="manual",
+    )
+    mock_ctx.streaming_service.unsubscribe_program_trading.assert_not_called()
 
 
 @pytest.mark.asyncio

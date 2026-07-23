@@ -42,7 +42,7 @@ class WebSocketWatchdogTask(SchedulableTask):
     REALTIME_HEALTH_CHECK_END_HOUR = 15
     REALTIME_HEALTH_CHECK_END_MINUTE = 20
     # PT 복원 절대 상한. 실제 상한은 현재 PRICE 요청과 최소 예약 슬롯을 반영해 더 낮아질 수 있다.
-    PT_RESTORE_MAX_CODES = 18
+    PT_RESTORE_MAX_CODES = 30
     ORDER_NOTICE_RESERVED_SLOTS = 1
     MIN_PRICE_RESERVED_SLOTS = 10
 
@@ -538,7 +538,7 @@ class WebSocketWatchdogTask(SchedulableTask):
             0,
             max_slots - self.ORDER_NOTICE_RESERVED_SLOTS - price_slots,
         )
-        return min(self.PT_RESTORE_MAX_CODES, available_for_pt // 2)
+        return min(self.PT_RESTORE_MAX_CODES, available_for_pt)
 
     async def _restore_all_subscriptions(self, reset_connection: bool = True) -> None:
         """
@@ -546,7 +546,7 @@ class WebSocketWatchdogTask(SchedulableTask):
 
         핵심 순서:
           1. PT/H0UNCNT0 active 상태 초기화 (브로커 연결 리셋 → 내부 상태도 리셋)
-          2. PT + H0UNCNT0 재구독
+          2. PT 재구독
           3. 가격 정책 active 상태 초기화 후 _rebalance()로 재구독
              (단순 _rebalance() 호출만 하면 _active_codes에 이전 상태가 남아
               "이미 구독됨"으로 판단해 브로커에 subscribe를 보내지 않는 버그 방지)
@@ -564,7 +564,7 @@ class WebSocketWatchdogTask(SchedulableTask):
             await self._streaming_stock_repo.clear_active(StreamingType.PROGRAM_TRADING)
             await self._streaming_stock_repo.clear_active(StreamingType.UNIFIED_PRICE)
 
-        # ── 2. PT + H0STCNT0 복원 ─────────────────────────────────
+        # ── 2. PT 복원 ────────────────────────────────────────────
         all_pt_codes = sorted(self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if self._streaming_stock_repo else []
         sources = {}
         if self._streaming_stock_repo:
@@ -609,7 +609,7 @@ class WebSocketWatchdogTask(SchedulableTask):
 
         if self._price_subscription_service:
             reserved_slots = (
-                len(pt_codes) * 2
+                len(pt_codes)
                 + self.ORDER_NOTICE_RESERVED_SLOTS
             )
             reserve = getattr(self._price_subscription_service, "set_external_reserved_slots", None)
