@@ -323,6 +323,21 @@ def _parse_initial_data(html: str) -> dict | None:
     return json.loads(m.group(1)) if m else None
 
 
+def _api_routes(routes):
+    """실제 /api 엔드포인트만 반환한다."""
+    return [
+        route
+        for route in routes
+        if isinstance(getattr(route, "path", None), str)
+        and route.path.startswith("/api/")
+    ]
+
+
+def test_api_route_inventory_ignores_entries_without_path():
+    """FastAPI 내부 라우터 항목은 API 엔드포인트 검사에서 제외한다."""
+    assert _api_routes([object()]) == []
+
+
 def test_api_routes_are_registered_once():
     """동일한 API 경로와 메서드가 앱에 중복 등록되면 안 된다."""
     route_keys = [
@@ -330,8 +345,7 @@ def test_api_routes_are_registered_once():
             route.path,
             tuple(sorted(route.methods)) if getattr(route, "methods", None) else ("WEBSOCKET",),
         )
-        for route in app.routes
-        if route.path.startswith("/api/")
+        for route in _api_routes(app.routes)
     ]
 
     duplicates = [key for key, count in Counter(route_keys).items() if count > 1]
@@ -342,8 +356,8 @@ def test_api_routes_are_registered_once():
 def test_all_non_login_api_routes_have_auth_dependency():
     """로그인 외 모든 API와 WebSocket 라우트는 구조적 인증 dependency를 가진다."""
     missing = []
-    for route in app.routes:
-        if not route.path.startswith("/api/") or route.path == "/api/auth/login":
+    for route in _api_routes(app.routes):
+        if route.path == "/api/auth/login":
             continue
         dependencies = {
             getattr(dependency, "dependency", None)
