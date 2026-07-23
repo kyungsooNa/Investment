@@ -712,7 +712,11 @@ class Params:
 
     @staticmethod
     def inquire_price(stock_code: str, market: MarketCode = "J") -> Dict[str, str]:
-        return InquirePriceParams.of(stock_code, market).to_dict()
+        params = InquirePriceParams.of(stock_code, market).to_dict()
+        if market == "NX":
+            # NXT 현재가 조회는 KIS가 fid_input_date_1을 요구한다 (누락 시 "ERROR INPUT FIELD NOT FOUND [FID_INPUT_DATE_1]").
+            params["fid_input_date_1"] = tm.get_current_kst_date_str()
+        return params
 
     @staticmethod
     def inquire_conclusion(stock_code: str, market: MarketCode = "J") -> Dict[str, str]:
