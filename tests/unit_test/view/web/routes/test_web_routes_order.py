@@ -242,7 +242,8 @@ async def test_place_overseas_order_rejects_disabled_exchange(web_client, mock_w
 
     mock_web_ctx.market_mode = "overseas_us"
     mock_web_ctx.full_config = SimpleNamespace(
-        overseas_stock=SimpleNamespace(enabled_exchanges=["NYSE"])
+        auth=SimpleNamespace(secret_key="secret"),
+        overseas_stock=SimpleNamespace(enabled_exchanges=["NYSE"]),
     )
 
     payload = {
@@ -267,10 +268,11 @@ async def test_place_overseas_real_order_requires_confirmation_when_live_allowed
     mock_web_ctx.market_mode = "overseas_us"
     mock_web_ctx.env.is_paper_trading = False
     mock_web_ctx.full_config = SimpleNamespace(
+        auth=SimpleNamespace(secret_key="secret"),
         overseas_stock=SimpleNamespace(
             allow_live_trading=True,
             enabled_exchanges=["NASD", "NYSE", "AMEX"],
-        )
+        ),
     )
 
     payload = {

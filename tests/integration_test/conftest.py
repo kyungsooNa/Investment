@@ -508,7 +508,7 @@ def mock_real_ctx():
 def paper_client(web_app, mock_paper_ctx):
     """모의투자 모드 TestClient. 테스트 전후 api_common._ctx를 정리."""
     api_common.set_ctx(mock_paper_ctx)
-    with TestClient(web_app) as client:
+    with TestClient(web_app, cookies={"access_token": "test-token"}) as client:
         yield client
     api_common.set_ctx(None)
 
@@ -517,7 +517,7 @@ def paper_client(web_app, mock_paper_ctx):
 def real_client(web_app, mock_real_ctx):
     """실전투자 모드 TestClient."""
     api_common.set_ctx(mock_real_ctx)
-    with TestClient(web_app) as client:
+    with TestClient(web_app, cookies={"access_token": "test-token"}) as client:
         yield client
     api_common.set_ctx(None)
 
@@ -552,6 +552,12 @@ def _build_deep_mock_config():
         "paper_url": "https://openapivts.koreainvestment.com:29443",
         "paper_websocket_url": "ws://ops.koreainvestment.com:31000",
         "is_paper_trading": True,
+        "use_login": False,
+        "auth": {
+            "username": "tester",
+            "password": "secret",
+            "secret_key": "test-token",
+        },
         "htsid": "test-htsid",
         "custtype": "P",
         "market_open_time": "09:00",
@@ -685,6 +691,7 @@ async def deep_paper_ctx(test_logger, web_app, mocker, tmp_path):
             async with AsyncClient(
                 transport=transport,
                 base_url="http://testserver",
+                cookies={"access_token": "test-token"},
             ) as client:
                 web_ctx._test_client = client
                 yield web_ctx

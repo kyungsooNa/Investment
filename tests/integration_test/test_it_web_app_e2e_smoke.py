@@ -140,7 +140,7 @@ def fake_web_ctx():
 @pytest.fixture
 def client_with_fake_lifespan(fake_web_ctx, mocker):
     mocker.patch.object(web_main, "WebAppContext", return_value=fake_web_ctx)
-    with TestClient(web_main.app) as client:
+    with TestClient(web_main.app, cookies={"access_token": "test-token"}) as client:
         yield client
 
 
@@ -253,6 +253,7 @@ def test_real_app_login_gate_and_auth_cookie_allow_page(client_with_fake_lifespa
         },
     }
 
+    client_with_fake_lifespan.cookies.clear()
     blocked = client_with_fake_lifespan.get("/order")
     assert blocked.status_code == 200
     assert "Investment Login" in blocked.text

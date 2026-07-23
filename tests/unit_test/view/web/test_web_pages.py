@@ -126,6 +126,19 @@ def test_pages_show_login_page_when_unauthorized(web_client, mock_web_ctx):
         # 로그인 페이지 특징 확인
         assert "Investment Login" in response.text
 
+
+def test_balance_page_authenticates_before_account_lookup(web_client, mock_web_ctx):
+    """비인증 balance 페이지 요청은 broker 계좌 조회를 시작하지 않는다."""
+    mock_web_ctx.full_config = {"use_login": True, "auth": {"secret_key": "secret_token"}}
+    web_client.cookies.clear()
+
+    response = web_client.get("/balance")
+
+    assert response.status_code == 200
+    assert "Investment Login" in response.text
+    mock_web_ctx.stock_query_service.handle_get_account_balance.assert_not_awaited()
+
+
 def test_pages_render_success_with_login(web_client, mock_web_ctx):
     """로그인 기능 활성화 시 올바른 토큰으로 접근하면 페이지가 렌더링되는지 테스트"""
     # 로그인 활성화 설정

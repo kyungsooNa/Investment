@@ -18,7 +18,7 @@ async def test_reset_strategy_kill_switch_success(web_client, mock_web_ctx):
     mock_web_ctx.kill_switch_service.reset_strategy.assert_awaited_once()
     await_args = mock_web_ctx.kill_switch_service.reset_strategy.await_args
     assert await_args.args[0] == "momentum"
-    assert await_args.args[1] == "secret"  # operator = access_token 쿠키
+    assert await_args.args[1] == "admin"
 
 
 @pytest.mark.asyncio

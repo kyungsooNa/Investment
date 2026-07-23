@@ -79,7 +79,7 @@ def web_app():
 def client(web_app, alert_svc):
     ctx = _make_ctx(alert_svc)
     api_common.set_ctx(ctx)
-    with TestClient(web_app) as c:
+    with TestClient(web_app, cookies={"access_token": "test"}) as c:
         yield c, alert_svc
     api_common.set_ctx(None)
 
@@ -89,7 +89,7 @@ def client_tripped(web_app, alert_svc):
     """Kill Switch가 트립된 상태."""
     ctx = _make_ctx(alert_svc, ks_is_tripped=True)
     api_common.set_ctx(ctx)
-    with TestClient(web_app) as c:
+    with TestClient(web_app, cookies={"access_token": "test"}) as c:
         yield c, alert_svc
     api_common.set_ctx(None)
 
@@ -126,7 +126,7 @@ async def test_status_shows_active_alert_after_report(web_app, alert_svc):
     ctx = _make_ctx(alert_svc, ks_is_tripped=True)
     api_common.set_ctx(ctx)
     try:
-        with TestClient(web_app) as c:
+        with TestClient(web_app, cookies={"access_token": "test"}) as c:
             r = c.get("/api/operator/status")
         assert r.status_code == 200
         data = r.json()
@@ -150,7 +150,7 @@ async def test_alerts_history_after_report(web_app, alert_svc):
     ctx = _make_ctx(alert_svc)
     api_common.set_ctx(ctx)
     try:
-        with TestClient(web_app) as c:
+        with TestClient(web_app, cookies={"access_token": "test"}) as c:
             r = c.get("/api/operator/alerts")
         assert r.status_code == 200
         data = r.json()
@@ -168,7 +168,7 @@ async def test_alerts_source_filter(web_app, alert_svc):
     ctx = _make_ctx(alert_svc)
     api_common.set_ctx(ctx)
     try:
-        with TestClient(web_app) as c:
+        with TestClient(web_app, cookies={"access_token": "test"}) as c:
             r = c.get("/api/operator/alerts?source=KILL_SWITCH")
         data = r.json()
         assert all(h["source"] == "KILL_SWITCH" for h in data["alerts"])
@@ -187,7 +187,7 @@ async def test_resolve_endpoint(web_app, alert_svc, notif):
     ctx = _make_ctx(alert_svc)
     api_common.set_ctx(ctx)
     try:
-        with TestClient(web_app) as c:
+        with TestClient(web_app, cookies={"access_token": "test"}) as c:
             r = c.post("/api/operator/alerts/kill_switch%3Aglobal/resolve?reason=운영자+해제")
         assert r.status_code == 200
         data = r.json()
@@ -202,7 +202,7 @@ async def test_resolve_nonexistent_returns_false(web_app, alert_svc):
     ctx = _make_ctx(alert_svc)
     api_common.set_ctx(ctx)
     try:
-        with TestClient(web_app) as c:
+        with TestClient(web_app, cookies={"access_token": "test"}) as c:
             r = c.post("/api/operator/alerts/kill_switch%3Aglobal/resolve")
         data = r.json()
         assert data["resolved"] is False

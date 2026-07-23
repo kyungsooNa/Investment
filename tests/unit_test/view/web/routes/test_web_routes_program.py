@@ -266,6 +266,21 @@ def test_websocket_echo_endpoint(web_client):
         assert data == "Message text was: 테스트 메시지"
 
 
+def test_websocket_echo_endpoint_requires_auth(web_client, mock_web_ctx):
+    """WebSocket handshake도 공통 API 인증 경계를 통과해야 한다."""
+    from anyio import ClosedResourceError
+    from starlette.websockets import WebSocketDisconnect
+
+    web_client.cookies.clear()
+
+    with pytest.raises((WebSocketDisconnect, ClosedResourceError)) as exc:
+        with web_client.websocket_connect("/api/ws/echo"):
+            pass
+
+    if isinstance(exc.value, WebSocketDisconnect):
+        assert exc.value.code == 1008
+
+
 @pytest.mark.asyncio
 async def test_stream_program_trading_keepalive(mock_web_ctx):
     """
