@@ -58,6 +58,23 @@ async def test_send_disclosure_alert_includes_ai_summary_block_when_provided():
     assert "전환사채 발행 &lt;주의&gt;" in message
 
 
+async def test_send_disclosure_alert_emphasizes_key_labels():
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    stored = _stored("주식소각결정", 80)
+
+    await reporter.send_disclosure_alert(
+        stored.disclosure, stored.importance, ai_summary="자기주식 소각 결정"
+    )
+
+    message = reporter._send_message.await_args.args[0]
+    assert "<b>공시:</b> 주식소각결정" in message
+    assert "<b>중요도:</b> NORMAL (80점)" in message
+    assert "🤖 <b>AI 요약</b>" in message
+    assert "<b>판정 근거</b>" in message
+    assert "<b>접수일:</b> 20260714" in message
+
+
 async def test_send_disclosure_alert_truncates_oversized_ai_summary():
     reporter = TelegramReporter("token", "chat")
     reporter._send_message = AsyncMock(return_value=True)
