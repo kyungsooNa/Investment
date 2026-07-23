@@ -8,10 +8,13 @@
 
 - HTML 페이지는 `web_main.py`의 `render_page()`가 `use_login=true`일 때 로그인 쿠키를 검사한다.
 - JSON API 계층에는 공통 인증이 없다. `check_auth()`를 직접 호출하는 라우트는 현재 `routes/kill_switch.py` 한 파일의 4개 엔드포인트뿐이다.
+- 그 `check_auth()`도 로그인과 다른 설정 경로를 사용한다. 로그인은 `ctx.full_config.auth`를 읽지만 `check_auth()`는 `ctx.env.active_config.auth`를 읽고, `KoreaInvestApiEnv.get_full_config()`가 만드는 `active_config`에는 `auth`가 포함되지 않는다. 초기화 상태에 따라 오류가 발생하거나 쿠키와 기대값이 모두 `None`이 되어 인증이 통과할 수 있다.
 - 따라서 `/api/order`, `/api/overseas/order`, `/api/balance`, `/api/system/*`, `/api/scheduler/*`, `/api/background/*/force-update` 등을 로그인 페이지를 거치지 않고 직접 호출할 수 있다.
 - 국내 실전 주문은 `real_order_confirmation == "REAL"`만 요구하고, 해외 실전 주문은 이 조건과 `overseas_stock.allow_live_trading`을 함께 요구한다.
 - 로그인 성공 시 `secret_key` 원문을 만료 없는 정적 쿠키 값으로 사용한다. 사용자, 역할, 토큰 회전 개념이 없으며 로그인 실패 제한도 없다.
-- `/balance` 페이지는 `web_main.py`에서 조회한 계좌 데이터를 `initial_data`로 서버 렌더 컨텍스트에 포함한다.
+- Kill Switch 상태 변경 라우트는 `access_token` 쿠키 원문을 운영자 식별자로 서비스에 전달한다. 현재 쿠키 값이 `secret_key`이므로 감사 로그나 상태 저장소에 인증 비밀이 남을 수 있다.
+- `/balance` 페이지는 인증 검사 전에 계좌 조회를 실행한 뒤 그 결과를 `initial_data`로 서버 렌더 컨텍스트에 포함한다. 비인증 응답에 데이터를 렌더하지 않더라도 비로그인 요청이 broker API와 foreground 자원을 소비할 수 있다.
+- `operator_dashboard_router`는 통합 API 라우터에 포함된 뒤 `web_main.py`에서 `/api` prefix로 다시 등록된다. 통합 라우터에만 인증 dependency를 적용하면 중복 등록 경로가 보호 정책을 우회할 수 있다.
 - SSE는 HTTP 미들웨어의 적용을 받지만 WebSocket 라우트는 HTTP 인증 미들웨어만으로 보호되지 않는다.
 
 현재 최우선 위험은 공개 모드 기능의 부재가 아니라 **대부분의 API가 서버 측 인증 없이 실행되는 상태**다.
@@ -50,9 +53,15 @@
 
 구현 방식:
 
+- 공통 인증을 적용하기 전 긴급 보정으로 로그인과 `check_auth()`가 모두 `ctx.full_config.auth`를 단일 설정 원천으로 사용하게 한다. broker 요청용 `ctx.env.active_config`에 웹 인증 정보를 추가하지 않는다.
+- Phase 1의 세션 인증을 도입하면 `ctx.full_config.auth` 직접 접근도 전용 인증 설정·서비스 경계로 이동한다.
+- 기대 토큰, 인증 설정 또는 요청 토큰이 누락된 경우에는 비교하지 않고 즉시 `401`로 거부한다. `None == None`과 같은 값 비교로 인증이 성공해서는 안 된다.
 - `/api/*` 라우터에 공통 FastAPI dependency를 적용한다.
 - 경로 문자열 비교 미들웨어만으로 보호 범위를 결정하지 않는다. 라우터 밖에 등록된 API가 생겨도 테스트에서 탐지할 수 있도록 보호 정책을 라우터 등록 구조에 둔다.
+- 통합 라우터와 별도로 등록된 `operator_dashboard_router` 중복을 제거하고, 모든 API 라우트가 하나의 보호 경계를 통과하게 한다.
+- `/balance` 페이지는 인증 성공 후에만 계좌 조회와 `initial_data` 생성을 수행한다. 인증 실패 요청에서는 account balance 서비스와 foreground priority를 호출하지 않는다.
 - 기존 `kill_switch.py`의 개별 `check_auth()`는 공통 인증 적용 후 중복을 제거하되, 보호 정책 회귀 테스트의 기준으로 사용한다.
+- Kill Switch 감사 주체는 쿠키·토큰 원문이 아닌 세션에서 해석한 비민감 운영자 식별자를 사용한다.
 - `web_api.py`가 재노출하는 `check_auth` 호환 레이어도 함께 정리한다.
 
 미들웨어의 논리적 요청 처리 순서는 다음과 같이 고정한다.
@@ -72,6 +81,8 @@
 - `view/web/web_main.py`
 - `view/web/routes/__init__.py`
 - `view/web/routes/kill_switch.py`
+- `view/web/routes/operator_dashboard.py`
+- `view/web/bootstrap/config_bootstrap.py` 또는 신규 인증 설정·서비스 경계
 
 ### Phase 1. 공개 안전 MVP
 
@@ -258,8 +269,12 @@ GitHub Pages UI와 FastAPI API를 다른 origin으로 분리할 경우:
 
 - 인증 없는 민감 API 요청은 `401` 또는 `403`을 반환한다.
 - 로그인 API와 승인된 공개 API만 인증 없이 접근할 수 있다.
+- 인증 설정, 기대 토큰 또는 요청 쿠키가 누락되면 `check_auth()`는 반드시 `401`을 반환한다.
+- 로그인 발급과 API 검증이 동일한 인증 설정 원천을 사용한다.
+- 비인증 `/balance` 페이지 요청은 계좌 조회 서비스와 foreground priority를 호출하지 않는다.
+- Kill Switch 감사 로그와 서비스 호출 인자에 쿠키 또는 토큰 원문이 포함되지 않는다.
 - 인증 실패 요청은 foreground priority를 획득하지 않는다.
-- 새 `/api/*` 라우트가 보호 정책 없이 등록되면 테스트가 실패한다.
+- 새 `/api/*` 라우트가 보호 정책 없이 등록되거나 동일 API 라우트가 중복 등록되면 테스트가 실패한다.
 - SSE는 인증 세션을 요구하고, WebSocket은 handshake 인증 실패 시 연결되지 않는다.
 
 ### Phase 1 단위 테스트
@@ -299,23 +314,28 @@ GitHub Pages UI와 FastAPI API를 다른 origin으로 분리할 경우:
 
 ## 추천 구현 순서
 
-1. Phase 0 공통 API 인증과 보호 경계 테스트
-2. 서명·만료 세션, CSRF, 로그인 실패 제한
-3. `public_mode`와 단일 전역 live trading gate
-4. 국내·해외 주문 fail-close 통합
-5. JSON·서버 렌더·로그 마스킹
-6. 운영 엔드포인트와 SSE·WebSocket 보호
-7. 배포 runbook과 공개 환경 검증
-8. Phase 2 역할 기반 권한
-9. Phase 3 데모 데이터 및 배포 분리
+1. `check_auth()` fail-open, 인증 전 `/balance` 조회, API 중복 등록 긴급 보정
+2. Phase 0 공통 API 인증과 보호 경계 테스트
+3. 서명·만료 세션, CSRF, 로그인 실패 제한
+4. `public_mode`와 단일 전역 live trading gate
+5. 국내·해외 주문 fail-close 통합
+6. JSON·서버 렌더·로그 마스킹
+7. 운영 엔드포인트와 SSE·WebSocket 보호
+8. 배포 runbook과 공개 환경 검증
+9. Phase 2 역할 기반 권한
+10. Phase 3 데모 데이터 및 배포 분리
 
 ## MVP 완료 기준
 
 Phase 0과 Phase 1을 공개 안전 MVP로 정의한다.
 
 - 인증 없이 주문, 잔고, 시스템 제어, 강제 배치, 구독 상태 변경 API를 호출할 수 없다.
+- 인증 설정이나 쿠키가 누락돼도 fail-open되지 않으며, 로그인과 API 검증이 동일한 인증 설정을 사용한다.
+- 비인증 페이지 요청은 계좌 조회 등 보호된 broker 작업을 먼저 실행하지 않는다.
+- 모든 API 라우트가 하나의 인증 경계에 등록되고 중복 API 라우트가 없다.
 - SSE와 WebSocket을 HTTP 페이지 우회로 사용할 수 없다.
 - 정적 `secret_key` 원문 쿠키를 사용하지 않으며 세션 만료, 로그아웃, CSRF 방어가 동작한다.
+- 인증 토큰 원문이 운영자 식별자, 감사 로그 또는 상태 저장소에 사용되지 않는다.
 - 반복 로그인 시도에 제한이 적용된다.
 - 공개 모드에서 국내·해외 실전 주문은 설정 실수와 관계없이 차단된다.
 - 국내·해외 주문이 하나의 전역 live trading gate를 사용한다.
