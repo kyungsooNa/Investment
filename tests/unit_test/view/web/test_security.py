@@ -34,16 +34,26 @@ def test_password_hash_round_trip_and_plaintext_rejection():
 
 
 def test_signed_session_rejects_tampering_and_expiration():
-    token, claims = security.issue_session(_auth_config(), "operator")
+    token, claims = security.issue_session(
+        _auth_config(),
+        "operator",
+        role="operator",
+    )
 
     assert token != "signing-key"
     assert security.verify_session(token, _auth_config()).username == "operator"
+    assert security.verify_session(token, _auth_config()).role == "operator"
     assert security.verify_session(token + "tampered", _auth_config()) is None
     assert security.verify_session(
         token,
         _auth_config(session_max_age_seconds=-1),
     ) is None
     assert claims.csrf_token
+
+
+def test_signed_session_rejects_invalid_role():
+    with pytest.raises(ValueError):
+        security.issue_session(_auth_config(), "operator", role="owner")
 
 
 def test_revoked_session_is_rejected():

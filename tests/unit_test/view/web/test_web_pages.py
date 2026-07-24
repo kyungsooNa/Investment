@@ -140,6 +140,29 @@ def test_balance_page_authenticates_before_account_lookup(web_client, mock_web_c
     mock_web_ctx.stock_query_service.handle_get_account_balance.assert_not_awaited()
 
 
+def test_viewer_balance_page_is_forbidden_before_account_lookup(
+    web_client,
+    mock_web_ctx,
+):
+    auth_config = {
+        "secret_key": "secret_token",
+        "session_max_age_seconds": 3600,
+    }
+    mock_web_ctx.full_config = {"use_login": True, "auth": auth_config}
+    token, _ = issue_session(
+        auth_config,
+        "reader",
+        role="viewer",
+    )
+    web_client.cookies.set(SESSION_COOKIE_NAME, token)
+
+    response = web_client.get("/balance")
+
+    assert response.status_code == 403
+    assert "권한이 부족합니다." in response.text
+    mock_web_ctx.stock_query_service.handle_get_account_balance.assert_not_awaited()
+
+
 def test_pages_render_success_with_login(web_client, mock_web_ctx):
     """로그인 기능 활성화 시 올바른 토큰으로 접근하면 페이지가 렌더링되는지 테스트"""
     # 로그인 활성화 설정

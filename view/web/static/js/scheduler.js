@@ -96,10 +96,12 @@ function renderSchedulerStatus(data) {
         const dayTradeBadge = s.force_exit_on_close
             ? '<span class="badge" style="background:#f59e0b;color:#fff;font-size:0.8em;">당일청산</span>'
             : '';
-        const positionBadge = `<span class="badge ${s.current_holds >= s.max_positions ? 'closed' : 'paper'}" style="cursor:pointer;" onclick="updateMaxPositions('${s.name}', ${s.max_positions})" title="클릭하여 최대 포지션 수 변경">포지션 ${s.current_holds}/${s.max_positions} ✏️</span>`;
+        const adminAllowed = typeof window.hasRequiredRole !== 'function'
+            || window.hasRequiredRole('admin');
+        const positionBadge = `<span class="badge ${s.current_holds >= s.max_positions ? 'closed' : 'paper'}" style="cursor:${adminAllowed ? 'pointer' : 'default'};" ${adminAllowed ? `onclick="updateMaxPositions('${s.name}', ${s.max_positions})"` : ''} title="${adminAllowed ? '클릭하여 최대 포지션 수 변경' : 'admin 권한 필요'}">포지션 ${s.current_holds}/${s.max_positions} ✏️</span>`;
         const toggleBtn = s.enabled
-            ? `<button class="btn btn-sell" style="padding:4px 12px;font-size:0.85em;" onclick="stopStrategy('${s.name}')">정지</button>`
-            : `<button class="btn btn-buy" style="padding:4px 12px;font-size:0.85em;" onclick="startStrategy('${s.name}')">시작</button>`;
+            ? `<button class="btn btn-sell" data-required-role="admin" ${adminAllowed ? '' : 'disabled'} style="padding:4px 12px;font-size:0.85em;" onclick="stopStrategy('${s.name}')">정지</button>`
+            : `<button class="btn btn-buy" data-required-role="admin" ${adminAllowed ? '' : 'disabled'} style="padding:4px 12px;font-size:0.85em;" onclick="startStrategy('${s.name}')">시작</button>`;
         // 보유 종목 리스트 렌더링
         let holdingsHtml = '';
         if (s.holdings && s.holdings.length > 0) {

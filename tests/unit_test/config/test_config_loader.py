@@ -466,6 +466,75 @@ def test_public_mode_rejects_wildcard_allowed_host():
         )
 
 
+def test_auth_config_accepts_role_users():
+    cfg = _minimal_app_config(
+        auth={
+            "secret_key": "x" * 32,
+            "users": [
+                {
+                    "username": "reader",
+                    "password_hash": "pbkdf2_sha256$310000$c2FsdA$ZGlnZXN0",
+                    "role": "viewer",
+                },
+                {
+                    "username": "ops",
+                    "password_hash": "pbkdf2_sha256$310000$c2FsdA$ZGlnZXN0",
+                    "role": "operator",
+                },
+                {
+                    "username": "root",
+                    "password_hash": "pbkdf2_sha256$310000$c2FsdA$ZGlnZXN0",
+                    "role": "admin",
+                },
+            ],
+        },
+    )
+
+    assert [user.role for user in cfg.auth.users] == [
+        "viewer",
+        "operator",
+        "admin",
+    ]
+
+
+def test_auth_config_rejects_duplicate_usernames():
+    with pytest.raises(ValidationError):
+        _minimal_app_config(
+            auth={
+                "users": [
+                    {
+                        "username": "same",
+                        "password_hash": "pbkdf2_sha256$310000$c2FsdA$ZGlnZXN0",
+                        "role": "viewer",
+                    },
+                    {
+                        "username": "same",
+                        "password_hash": "pbkdf2_sha256$310000$c2FsdA$ZGlnZXN0",
+                        "role": "admin",
+                    },
+                ],
+            },
+        )
+
+
+def test_public_mode_role_users_require_enabled_admin():
+    with pytest.raises(ValidationError):
+        _minimal_app_config(
+            deployment={"public_mode": True},
+            auth={
+                "secret_key": "x" * 32,
+                "secure_cookie": True,
+                "users": [
+                    {
+                        "username": "reader",
+                        "password_hash": "pbkdf2_sha256$310000$c2FsdA$ZGlnZXN0",
+                        "role": "viewer",
+                    }
+                ],
+            },
+        )
+
+
 def test_app_config_accepts_real_limited_profile():
     cfg = _minimal_app_config(operating_profile="real_limited")
     assert cfg.operating_profile == "real_limited"

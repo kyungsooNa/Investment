@@ -7,6 +7,7 @@ from view.web.api_common import (
     check_auth,
     check_csrf_for_unsafe_request,
     check_public_operation_allowed,
+    check_role_for_request,
 )
 
 from view.web.routes.auth import router as auth_router
@@ -33,6 +34,7 @@ protected_router = APIRouter(
         Depends(check_auth),
         Depends(check_csrf_for_unsafe_request),
         Depends(check_public_operation_allowed),
+        Depends(check_role_for_request),
     ]
 )
 

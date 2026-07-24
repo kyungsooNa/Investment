@@ -4,6 +4,32 @@
 import pytest
 from common.overseas_types import OverseasExchange
 from common.types import ErrorCode, ResCommonResponse
+from view.web.security import (
+    CSRF_COOKIE_NAME,
+    CSRF_HEADER_NAME,
+    SESSION_COOKIE_NAME,
+    issue_session,
+)
+
+
+def _authenticate_as_operator(web_client, mock_web_ctx):
+    auth_config = mock_web_ctx.full_config["auth"]
+    auth_config["users"] = [
+        {
+            "username": "ops",
+            "password_hash": auth_config["password_hash"],
+            "role": "operator",
+            "enabled": True,
+        }
+    ]
+    token, claims = issue_session(
+        auth_config,
+        "ops",
+        role="operator",
+    )
+    web_client.cookies.set(SESSION_COOKIE_NAME, token)
+    web_client.cookies.set(CSRF_COOKIE_NAME, claims.csrf_token)
+    web_client.headers[CSRF_HEADER_NAME] = claims.csrf_token
 
 
 @pytest.mark.asyncio
@@ -85,6 +111,30 @@ async def test_real_order_with_confirmation_calls_service(web_client, mock_web_c
 
     assert response.status_code == 200
     mock_web_ctx.order_execution_service.handle_buy_stock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_operator_cannot_place_real_order(web_client, mock_web_ctx):
+    mock_web_ctx.env.is_paper_trading = False
+    mock_web_ctx.full_config["deployment"] = {
+        "public_mode": False,
+        "allow_live_trading": True,
+    }
+    _authenticate_as_operator(web_client, mock_web_ctx)
+
+    response = web_client.post(
+        "/api/order",
+        json={
+            "code": "005930",
+            "price": "70000",
+            "qty": "10",
+            "side": "buy",
+            "real_order_confirmation": "REAL",
+        },
+    )
+
+    assert response.status_code == 403
+    mock_web_ctx.order_execution_service.handle_buy_stock.assert_not_awaited()
 
 
 @pytest.mark.asyncio

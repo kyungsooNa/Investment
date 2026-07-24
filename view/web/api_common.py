@@ -55,7 +55,20 @@ def get_auth_config(*, ctx=None):
 def get_session_claims(connection: HTTPConnection, *, ctx=None):
     auth_config = get_auth_config(ctx=ctx)
     token = connection.cookies.get(security.SESSION_COOKIE_NAME)
-    return security.verify_session(token, auth_config)
+    claims = security.verify_session(token, auth_config)
+    if claims is None:
+        return None
+
+    from view.web.user_repository import ConfigUserRepository
+
+    repository = ConfigUserRepository(auth_config)
+    if not repository.has_configured_users:
+        return claims
+    user = repository.find_enabled(claims.username)
+    if user is None or user.role != claims.role:
+        security.revoke_session(claims.session_id)
+        return None
+    return claims
 
 
 def is_authenticated(connection: HTTPConnection, *, ctx=None) -> bool:
@@ -78,6 +91,83 @@ def get_authenticated_operator(connection: HTTPConnection) -> str:
     if claims is None:
         check_auth(connection)
     return claims.username
+
+
+def get_authenticated_principal(connection: HTTPConnection):
+    claims = get_session_claims(connection)
+    if claims is None:
+        check_auth(connection)
+    return claims
+
+
+def _audit_authorization(
+    connection: HTTPConnection,
+    claims,
+    required_role: str,
+    *,
+    allowed: bool,
+) -> None:
+    ctx = _get_ctx()
+    logger = getattr(ctx, "logger", None)
+    log_method = getattr(logger, "info" if allowed else "warning", None)
+    if not callable(log_method):
+        return
+    scope = getattr(connection, "scope", {})
+    log_method(
+        {
+            "event": "rbac_authorization",
+            "username": claims.username,
+            "role": claims.role,
+            "required_role": required_role,
+            "method": scope.get("method", "WEBSOCKET"),
+            "path": scope.get("path", ""),
+            "allowed": allowed,
+        }
+    )
+
+
+def require_role(connection: HTTPConnection, required_role: str):
+    from view.web.authorization import ADMIN, role_allows
+
+    claims = get_authenticated_principal(connection)
+    scope = getattr(connection, "scope", {})
+    state = scope.setdefault("state", {}) if isinstance(scope, dict) else {}
+    audit_key = (
+        claims.session_id,
+        required_role,
+        scope.get("method"),
+        scope.get("path"),
+    )
+    already_checked = state.get("_rbac_authorization") == audit_key
+    allowed = role_allows(claims.role, required_role)
+    if not already_checked and (not allowed or required_role == ADMIN):
+        _audit_authorization(
+            connection,
+            claims,
+            required_role,
+            allowed=allowed,
+        )
+    state["_rbac_authorization"] = audit_key
+    if allowed:
+        return claims
+
+    if scope.get("type") == "websocket":
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+    raise HTTPException(status_code=403, detail="Insufficient role")
+
+
+def check_role_for_request(connection: HTTPConnection) -> bool:
+    from view.web.authorization import required_role_for_request
+
+    scope = getattr(connection, "scope", {})
+    if not isinstance(scope, dict):
+        raise HTTPException(status_code=403, detail="Authorization scope unavailable")
+    required_role = required_role_for_request(
+        str(scope.get("path", "")),
+        str(scope.get("method", "GET")),
+    )
+    require_role(connection, required_role)
+    return True
 
 
 def check_csrf(connection: HTTPConnection) -> bool:

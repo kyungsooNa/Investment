@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from view.web.web_app_initializer import WebAppContext
 import view.web.web_api as web_api
 import view.web.api_common as api_common
+from view.web.authorization import ADMIN, OPERATOR, VIEWER, role_allows
 from view.web.deployment_policy import is_host_allowed
 
 # ── 진단 전용 HTTP 서버 (포트 8001, 별도 OS 스레드) ──────────────────────
@@ -267,6 +268,7 @@ async def api_auth_middleware(request: Request, call_next):
             api_common.check_auth(request)
             api_common.check_csrf_for_unsafe_request(request)
             api_common.check_public_operation_allowed(request)
+            api_common.check_role_for_request(request)
         except HTTPException as exc:
             return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     return await call_next(request)
@@ -297,6 +299,13 @@ def _is_page_authorized(request: Request, ctx) -> bool:
     return not use_login or api_common.is_authenticated(request, ctx=ctx)
 
 
+def _page_role(request: Request, ctx) -> str:
+    if not ctx.full_config.get("use_login", True):
+        return ADMIN
+    claims = api_common.get_session_claims(request, ctx=ctx)
+    return claims.role if claims is not None else ""
+
+
 # 공통 페이지 렌더링 함수 (로그인 체크 포함)
 async def render_page(
     request: Request,
@@ -304,6 +313,7 @@ async def render_page(
     active_page: str,
     extra_context: dict = None,
     view_market: str = "common",
+    required_role: str = VIEWER,
 ):
     try:
         ctx = web_api._get_ctx()
@@ -313,7 +323,24 @@ async def render_page(
     if not _is_page_authorized(request, ctx):
         return templates.TemplateResponse(request, "login.html")
 
-    context = {"active_page": active_page, "view_market": view_market}
+    user_role = _page_role(request, ctx)
+    if not role_allows(user_role, required_role):
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"authorization_error": "이 페이지에 접근할 권한이 부족합니다."},
+            status_code=403,
+        )
+
+    claims = api_common.get_session_claims(request, ctx=ctx)
+    context = {
+        "active_page": active_page,
+        "view_market": view_market,
+        "username": claims.username if claims is not None else "",
+        "user_role": user_role,
+        "can_operate": role_allows(user_role, OPERATOR),
+        "is_admin": role_allows(user_role, ADMIN),
+    }
     if extra_context:
         context.update(extra_context)
     return templates.TemplateResponse(request, template_name, context)
@@ -336,7 +363,19 @@ async def balance(request: Request):
         from view.web.api_common import _serialize_response
         ctx = web_api._get_ctx()
         if not _is_page_authorized(request, ctx):
-            return await render_page(request, "balance.html", "balance")
+            return await render_page(
+                request,
+                "balance.html",
+                "balance",
+                required_role=OPERATOR,
+            )
+        if not role_allows(_page_role(request, ctx), OPERATOR):
+            return await render_page(
+                request,
+                "balance.html",
+                "balance",
+                required_role=OPERATOR,
+            )
         resp = await ctx.stock_query_service.handle_get_account_balance(exchange=Exchange.KRX)
         result = _serialize_response(resp)
         # account_info 추가 (API 엔드포인트와 동일 로직)
@@ -364,11 +403,18 @@ async def balance(request: Request):
         "balance",
         extra_context=extra,
         view_market="domestic",
+        required_role=OPERATOR,
     )
 
 @page_router.get("/order")
 async def order(request: Request):
-    return await render_page(request, "order.html", "order", view_market="domestic")
+    return await render_page(
+        request,
+        "order.html",
+        "order",
+        view_market="domestic",
+        required_role=OPERATOR,
+    )
 
 @page_router.get("/overseas")
 async def overseas(request: Request):
@@ -384,27 +430,59 @@ async def marketcap(request: Request):
 
 @page_router.get("/virtual")
 async def virtual(request: Request):
-    return await render_page(request, "virtual.html", "virtual")
+    return await render_page(
+        request,
+        "virtual.html",
+        "virtual",
+        required_role=OPERATOR,
+    )
 
 @page_router.get("/scheduler")
 async def scheduler(request: Request):
-    return await render_page(request, "scheduler.html", "scheduler")
+    return await render_page(
+        request,
+        "scheduler.html",
+        "scheduler",
+        required_role=OPERATOR,
+    )
 
 @page_router.get("/program")
 async def program(request: Request):
-    return await render_page(request, "program.html", "program", view_market="domestic")
+    return await render_page(
+        request,
+        "program.html",
+        "program",
+        view_market="domestic",
+        required_role=OPERATOR,
+    )
 
 @page_router.get("/system")
 async def system(request: Request):
-    return await render_page(request, "system.html", "system")
+    return await render_page(
+        request,
+        "system.html",
+        "system",
+        required_role=OPERATOR,
+    )
 
 @page_router.get("/favorite")
 async def favorite(request: Request):
-    return await render_page(request, "favorite.html", "favorite", view_market="domestic")
+    return await render_page(
+        request,
+        "favorite.html",
+        "favorite",
+        view_market="domestic",
+        required_role=OPERATOR,
+    )
 
 @page_router.get("/operator")
 async def operator_dashboard(request: Request):
-    return await render_page(request, "operator_dashboard.html", "operator")
+    return await render_page(
+        request,
+        "operator_dashboard.html",
+        "operator",
+        required_role=OPERATOR,
+    )
 
 @page_router.get("/strategy-reports")
 async def strategy_reports(request: Request):

@@ -50,8 +50,19 @@ web:
   port: 8000
 
 auth:
-  username: "operator"
-  password_hash: "pbkdf2_sha256$..."
+  users:
+    - username: "reader"
+      password_hash: "pbkdf2_sha256$..."
+      role: "viewer"
+      enabled: true
+    - username: "operator"
+      password_hash: "pbkdf2_sha256$..."
+      role: "operator"
+      enabled: true
+    - username: "admin"
+      password_hash: "pbkdf2_sha256$..."
+      role: "admin"
+      enabled: true
   secret_key: "32자 이상의 무작위 비밀"
   session_max_age_seconds: 3600
   login_max_failures: 5
@@ -59,7 +70,19 @@ auth:
   secure_cookie: true
 ```
 
-`public_mode=true`에서는 로그인, PBKDF2 비밀번호 해시, 32자 이상 서명 키, secure cookie와 명시적 allowed host가 없으면 설정 로드가 실패한다. `allowed_hosts: ["*"]`는 허용되지 않는다.
+각 사용자는 서로 다른 비밀번호와 해시를 사용한다. `public_mode=true`에서는 활성화된 admin, 모든 활성 사용자의 PBKDF2 비밀번호 해시, 32자 이상 서명 키, secure cookie와 명시적 allowed host가 없으면 설정 로드가 실패한다. `allowed_hosts: ["*"]`는 허용되지 않는다.
+
+기존 `auth.username`과 `auth.password_hash` 단일 계정은 마이그레이션을 위해 admin으로 해석되지만 신규 배포에서는 `auth.users`를 사용한다.
+
+### 역할 운영
+
+- `viewer`: 시세, 차트, 랭킹과 전략 리포트 조회
+- `operator`: viewer 권한과 잔고·운영 상태 조회, 모의 주문, 일반 구독 작업
+- `admin`: operator 권한과 실전 주문, 서버·Kill Switch·스케줄러 제어, 강제 배치와 한도 변경
+
+`public_mode`의 실전 주문 및 위험 작업 차단은 admin보다 우선한다. 사용자 설정을 변경한 뒤 서비스를 재시작한다. 재시작은 메모리 세션을 모두 제거하며, 실행 중 설정에서 사용자가 비활성화되거나 role이 달라진 경우에도 다음 요청에서 해당 세션을 폐기한다.
+
+권한 거부와 admin 작업의 권한 결정은 `rbac_authorization` 감사 로그로 남는다. 비밀번호 해시와 세션 토큰은 로그에 기록하지 않는다.
 
 ## Reverse Proxy
 

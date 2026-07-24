@@ -11,6 +11,8 @@ function _fmtNumber(n) {
 }
 
 async function loadKillSwitchStatus() {
+    if (typeof window.hasRequiredRole === 'function'
+        && !window.hasRequiredRole('operator')) return;
     if (window.__pjaxNavigating) return;
     if (_ksStatusInFlight) return;
     _ksStatusInFlight = true;
@@ -126,6 +128,8 @@ async function resetKillSwitch() {
 
 // 페이지 로드 + 5초 폴링
 document.addEventListener('DOMContentLoaded', () => {
+    if (typeof window.hasRequiredRole === 'function'
+        && !window.hasRequiredRole('operator')) return;
     loadKillSwitchStatus();
     setInterval(loadKillSwitchStatus, 5000);
 });

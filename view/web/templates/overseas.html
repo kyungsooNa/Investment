@@ -22,7 +22,7 @@
         <div class="overseas-tabs" role="tablist" aria-label="미국주식 메뉴">
             <button type="button" id="overseas-tab-overview" class="sub-tab-btn active" data-overseas-tab="overview" onclick="setOverseasTab('overview')">시장 개요</button>
             <button type="button" id="overseas-tab-marketcap" class="sub-tab-btn" data-overseas-tab="marketcap" onclick="setOverseasTab('marketcap')">주요 대형주</button>
-            <button type="button" id="overseas-tab-orders" class="sub-tab-btn" data-overseas-tab="orders" onclick="setOverseasTab('orders')">보유·주문</button>
+            {% if can_operate %}<button type="button" id="overseas-tab-orders" class="sub-tab-btn" data-overseas-tab="orders" onclick="setOverseasTab('orders')">보유·주문</button>{% endif %}
         </div>
     </div>
 
@@ -62,7 +62,7 @@
         <div id="overseas-marketcap-result"></div>
     </section>
 
-    <section id="overseas-panel-orders" class="overseas-panel" hidden>
+    {% if can_operate %}<section id="overseas-panel-orders" class="overseas-panel" hidden>
         <div class="card">
             <h2>보유 현황</h2>
             <div class="form-row">
@@ -107,7 +107,7 @@
             </div>
         </div>
         <div id="overseas-orders-result"></div>
-    </section>
+    </section>{% endif %}
 </div>
 {% endblock %}
 
