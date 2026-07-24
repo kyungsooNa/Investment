@@ -3,7 +3,7 @@
 """
 import pytest
 from unittest.mock import MagicMock
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, WebSocketException
 from view.web import web_api
 
 
@@ -40,7 +40,8 @@ def test_check_auth(mock_web_ctx):
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {"access_token": "secret"}
 
-    mock_web_ctx.env.active_config = {"auth": {"secret_key": "secret"}}
+    mock_web_ctx.full_config = {"auth": {"secret_key": "secret"}}
+    mock_web_ctx.env.active_config = {}
 
     # Success
     assert web_api.check_auth(mock_request) is True
@@ -50,6 +51,46 @@ def test_check_auth(mock_web_ctx):
     with pytest.raises(HTTPException) as exc:
         web_api.check_auth(mock_request)
     assert exc.value.status_code == 401
+
+
+def test_check_auth_rejects_missing_auth_config_and_cookie(mock_web_ctx):
+    """인증 설정과 쿠키가 모두 없어도 fail-open 되면 안 된다."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {}
+    mock_web_ctx.full_config = {}
+    mock_web_ctx.env.active_config = {}
+
+    with pytest.raises(HTTPException) as exc:
+        web_api.check_auth(mock_request)
+
+    assert exc.value.status_code == 401
+
+
+def test_check_auth_rejects_websocket_with_policy_violation(mock_web_ctx):
+    """WebSocket 인증 실패는 handshake 단계에서 정책 위반으로 종료한다."""
+    mock_connection = MagicMock()
+    mock_connection.cookies = {}
+    mock_connection.scope = {"type": "websocket"}
+    mock_web_ctx.full_config = {"auth": {"secret_key": "secret"}}
+
+    with pytest.raises(WebSocketException) as exc:
+        web_api.check_auth(mock_connection)
+
+    assert exc.value.code == 1008
+
+
+def test_sensitive_api_rejects_request_without_cookie(web_client, mock_web_ctx):
+    """로그인 페이지를 우회한 주문 API 직접 호출을 차단한다."""
+    mock_web_ctx.full_config = {"auth": {"secret_key": "secret"}}
+    web_client.cookies.clear()
+
+    response = web_client.post(
+        "/api/order",
+        json={"code": "005930", "price": "70000", "qty": "1", "side": "buy"},
+    )
+
+    assert response.status_code == 401
+    mock_web_ctx.order_execution_service.handle_buy_stock.assert_not_awaited()
 
 
 def test_serialize_helpers():

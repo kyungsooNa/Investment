@@ -6,7 +6,8 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
-from fastapi import FastAPI, Request, APIRouter
+from fastapi import FastAPI, HTTPException, Request, APIRouter
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -170,7 +171,6 @@ if "debugpy" in sys.modules:
 # /api/* 요청의 시작~완료를 api_common._active_requests에 기록한다.
 # /api/debug/requests 엔드포인트가 이 데이터를 읽어 in-flight 요청 목록을 반환한다.
 
-@app.middleware("http")
 async def request_tracker_middleware(request: Request, call_next):
     path = request.url.path
     if not path.startswith("/api/") or path == "/api/debug/requests":
@@ -234,7 +234,6 @@ def _needs_foreground(path: str) -> bool:
     return any(path.startswith(prefix) for prefix in _FOREGROUND_PATHS)
 
 
-@app.middleware("http")
 async def foreground_priority_middleware(request: Request, call_next):
     """Broker API 호출 라우트에 foreground 우선순위를 적용하는 미들웨어."""
     path = request.url.path
@@ -247,6 +246,28 @@ async def foreground_priority_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+_AUTH_EXEMPT_API_PATHS = frozenset({
+    "/api/auth/login",
+})
+
+
+async def api_auth_middleware(request: Request, call_next):
+    """인증되지 않은 API 요청을 foreground 자원 획득 전에 차단한다."""
+    path = request.url.path
+    if path.startswith("/api/") and path not in _AUTH_EXEMPT_API_PATHS:
+        try:
+            api_common.check_auth(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
+
+
+# 실행 순서: request tracker -> auth -> foreground priority -> route
+app.middleware("http")(foreground_priority_middleware)
+app.middleware("http")(api_auth_middleware)
+app.middleware("http")(request_tracker_middleware)
+
+
 # 2. 정적 파일 및 템플릿 설정
 # 현재 파일(web_main.py)의 위치를 기준으로 절대 경로 설정하여 실행 위치에 영향받지 않도록 함
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -256,11 +277,14 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 # 3. API 라우터 등록
 app.include_router(web_api.router)
 
-from view.web.routes.operator_dashboard import router as operator_dashboard_router
-app.include_router(operator_dashboard_router, prefix="/api")
-
 # 페이지 라우터 생성
 page_router = APIRouter()
+
+
+def _is_page_authorized(request: Request, ctx) -> bool:
+    use_login = ctx.full_config.get("use_login", True)
+    return not use_login or api_common.is_authenticated(request, ctx=ctx)
+
 
 # 공통 페이지 렌더링 함수 (로그인 체크 포함)
 async def render_page(
@@ -275,14 +299,8 @@ async def render_page(
     except Exception:
         return templates.TemplateResponse(request, "login.html")
 
-    use_login = ctx.full_config.get("use_login", True)
-    if use_login:
-        auth_config = ctx.full_config.get("auth", {})
-        expected_token = auth_config.get("secret_key")
-        token = request.cookies.get("access_token")
-
-        if not token or token != expected_token:
-            return templates.TemplateResponse(request, "login.html")
+    if not _is_page_authorized(request, ctx):
+        return templates.TemplateResponse(request, "login.html")
 
     context = {"active_page": active_page, "view_market": view_market}
     if extra_context:
@@ -306,6 +324,8 @@ async def balance(request: Request):
         from common.types import Exchange
         from view.web.api_common import _serialize_response
         ctx = web_api._get_ctx()
+        if not _is_page_authorized(request, ctx):
+            return await render_page(request, "balance.html", "balance")
         resp = await ctx.stock_query_service.handle_get_account_balance(exchange=Exchange.KRX)
         result = _serialize_response(resp)
         # account_info 추가 (API 엔드포인트와 동일 로직)

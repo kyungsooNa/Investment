@@ -483,6 +483,12 @@ class TestWebAppContextInitialization:
             "paper_url": "https://openapivts.koreainvestment.com:29443",
             "paper_websocket_url": "ws://ops.koreainvestment.com:31000",
             "is_paper_trading": True,
+            "use_login": False,
+            "auth": {
+                "username": "tester",
+                "password": "secret",
+                "secret_key": "test-token",
+            },
             "htsid": "test-htsid",
             "custtype": "P",
             "market_open_time": "09:00",
@@ -544,7 +550,7 @@ class TestWebAppContextInitialization:
         class SimpleContext:
             env = None
 
-        with patch("config.config_loader.load_configs", return_value=mock_config), \
+        with patch("view.web.bootstrap.config_bootstrap.load_configs", return_value=mock_config), \
              patch("view.web.web_app_initializer.VirtualTradeRepository"), \
              patch("brokers.broker_api_wrapper.StockCodeRepository"), \
              patch("view.web.web_app_initializer.OverseasStockCodeRepository"), \
@@ -742,7 +748,7 @@ class TestWebAppContextInitialization:
         class SimpleContext:
             env = None
 
-        with patch("config.config_loader.load_configs", return_value=mock_config), \
+        with patch("view.web.bootstrap.config_bootstrap.load_configs", return_value=mock_config), \
              patch("view.web.web_app_initializer.VirtualTradeRepository"), \
              patch("brokers.broker_api_wrapper.StockCodeRepository"), \
              patch("view.web.web_app_initializer.OverseasStockCodeRepository"), \
@@ -762,7 +768,7 @@ class TestWebAppContextInitialization:
             # 실제 ctx를 FastAPI 앱에 연결
             api_common.set_ctx(ctx)
             try:
-                with TestClient(web_app) as client:
+                with TestClient(web_app, cookies={"access_token": "test-token"}) as client:
                     # /api/status는 실제 WebAppContext 메서드를 호출
                     resp = client.get("/api/status")
                     assert resp.status_code == 200

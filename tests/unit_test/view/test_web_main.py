@@ -1,5 +1,6 @@
 import json
 import re
+from collections import Counter
 import pytest
 import time
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -260,11 +261,28 @@ def test_foreground_priority_middleware(mock_web_app_context_cls):
     mock_fg.context.return_value = mock_context_manager
     
     mock_ctx.foreground_scheduler = mock_fg
+    mock_ctx.full_config = {"auth": {"secret_key": "test-token"}}
     
     with TestClient(app, raise_server_exceptions=False) as client:
+        client.cookies.set("access_token", "test-token")
         with patch("view.web.api_common._ctx", mock_ctx):
             client.get("/api/stock/123")
             mock_fg.context.assert_called()
+
+
+def test_unauthenticated_api_does_not_enter_foreground(mock_web_app_context_cls):
+    """인증 실패 요청은 broker foreground 자원을 획득하지 않는다."""
+    mock_ctx = MagicMock()
+    mock_ctx.full_config = {"auth": {"secret_key": "test-token"}}
+    mock_ctx.foreground_scheduler = MagicMock()
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        with patch("view.web.api_common._ctx", mock_ctx):
+            response = client.get("/api/stock/123")
+
+    assert response.status_code == 401
+    mock_ctx.foreground_scheduler.context.assert_not_called()
+
 
 def test_all_page_routers(mock_web_app_context_cls):
     """모든 페이지 라우터들이 200 정상 응답을 하는지 테스트"""
@@ -303,6 +321,52 @@ def _parse_initial_data(html: str) -> dict | None:
     """balance.html의 page-initial-data 스크립트 태그에서 JSON을 파싱해 반환."""
     m = _INITIAL_DATA_RE.search(html)
     return json.loads(m.group(1)) if m else None
+
+
+def _api_routes(routes):
+    """실제 /api 엔드포인트만 반환한다."""
+    return [
+        route
+        for route in routes
+        if isinstance(getattr(route, "path", None), str)
+        and route.path.startswith("/api/")
+    ]
+
+
+def test_api_route_inventory_ignores_entries_without_path():
+    """FastAPI 내부 라우터 항목은 API 엔드포인트 검사에서 제외한다."""
+    assert _api_routes([object()]) == []
+
+
+def test_api_routes_are_registered_once():
+    """동일한 API 경로와 메서드가 앱에 중복 등록되면 안 된다."""
+    route_keys = [
+        (
+            route.path,
+            tuple(sorted(route.methods)) if getattr(route, "methods", None) else ("WEBSOCKET",),
+        )
+        for route in _api_routes(app.routes)
+    ]
+
+    duplicates = [key for key, count in Counter(route_keys).items() if count > 1]
+
+    assert duplicates == []
+
+
+def test_all_non_login_api_routes_have_auth_dependency():
+    """로그인 외 모든 API와 WebSocket 라우트는 구조적 인증 dependency를 가진다."""
+    missing = []
+    for route in _api_routes(app.routes):
+        if route.path == "/api/auth/login":
+            continue
+        dependencies = {
+            getattr(dependency, "dependency", None)
+            for dependency in (getattr(route, "dependencies", None) or [])
+        }
+        if api_common.check_auth not in dependencies:
+            missing.append(route.path)
+
+    assert missing == []
 
 
 def _make_balance_ctx(is_paper_trading=True, acc_no_field="stock_account_number", acc_no_value="12345678"):

@@ -126,8 +126,10 @@ def test_app():
 
 @pytest.fixture
 def web_client(test_app):
-    """FastAPI TestClient"""
-    return TestClient(test_app)
+    """기본 인증 상태의 FastAPI TestClient."""
+    client = TestClient(test_app)
+    client.cookies.set("access_token", "secret")
+    return client
 
 @pytest.fixture
 def mock_web_ctx():
@@ -162,7 +164,14 @@ def mock_web_ctx():
     # 환경 설정 Mocking
     ctx.env = MagicMock()
     ctx.env.active_config = {"auth": {"username": "admin", "password": "password", "secret_key": "secret"}}
-    ctx.full_config = {"auth": {"username": "admin", "password": "password"}}
+    ctx.full_config = {
+        "use_login": False,
+        "auth": {
+            "username": "admin",
+            "password": "password",
+            "secret_key": "secret",
+        },
+    }
     
     # MarketCalendarService Mocking
     ctx._mcs = MagicMock()

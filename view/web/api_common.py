@@ -1,8 +1,11 @@
 """
 웹 API 공통 유틸리티: 컨텍스트 관리, 응답 직렬화, 인증, Pydantic 모델.
 """
-from fastapi import HTTPException, Request
+import secrets
+
+from fastapi import HTTPException, WebSocketException, status
 from pydantic import BaseModel
+from starlette.requests import HTTPConnection
 
 _ctx = None  # 전역 변수로 선언
 
@@ -28,15 +31,50 @@ def _get_ctx():
     return _ctx
 
 
-def check_auth(request: Request):
-    """로그인 여부를 확인하는 공통 함수."""
-    ctx = _get_ctx()
-    expected_token = ctx.env.active_config.get("auth", {}).get("secret_key")
-    token = request.cookies.get("access_token")
+def _config_get(config, key: str, default=None):
+    if config is None:
+        return default
+    if isinstance(config, dict):
+        return config.get(key, default)
+    return getattr(config, key, default)
 
-    if token != expected_token:
+
+def get_auth_value(key: str, default=None, *, ctx=None):
+    """웹 인증 설정은 broker active_config가 아닌 전체 앱 설정에서만 읽는다."""
+    if ctx is None:
+        ctx = _get_ctx()
+    auth_config = _config_get(ctx.full_config, "auth", {})
+    return _config_get(auth_config, key, default)
+
+
+def is_authenticated(connection: HTTPConnection, *, ctx=None) -> bool:
+    expected_token = get_auth_value("secret_key", ctx=ctx)
+    token = connection.cookies.get("access_token")
+
+    if not isinstance(expected_token, str) or not expected_token:
+        return False
+    if not isinstance(token, str) or not token:
+        return False
+    return secrets.compare_digest(token, expected_token)
+
+
+def check_auth(connection: HTTPConnection):
+    """로그인 여부를 확인하는 공통 함수."""
+    if not is_authenticated(connection):
+        scope = getattr(connection, "scope", {})
+        if isinstance(scope, dict) and scope.get("type") == "websocket":
+            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
         raise HTTPException(status_code=401, detail="Unauthorized")
     return True
+
+
+def get_authenticated_operator(connection: HTTPConnection) -> str:
+    """감사 로그에 토큰 원문 대신 비민감 운영자 식별자를 반환한다."""
+    check_auth(connection)
+    username = get_auth_value("username")
+    if isinstance(username, str) and username:
+        return username
+    return "authenticated-user"
 
 
 def _serialize_response(resp):

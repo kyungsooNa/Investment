@@ -84,6 +84,7 @@ class _FakeContextManager:
 def _make_mock_ctx(with_fg=True):
     """ForegroundScheduler가 포함된 mock WebAppContext 생성."""
     ctx = MagicMock()
+    ctx.full_config = {"auth": {"secret_key": "test-token"}}
 
     if with_fg:
         ctx.foreground_scheduler = MagicMock()
@@ -122,7 +123,11 @@ async def test_middleware_calls_foreground_on_api_route():
     with patch("view.web.api_common._ctx", mock_ctx):
         from view.web.web_main import app
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"access_token": "test-token"},
+        ) as client:
             resp = await client.get("/api/balance")
 
     assert resp.status_code == 200
@@ -137,7 +142,11 @@ async def test_middleware_skips_foreground_on_excluded_route():
     with patch("view.web.api_common._ctx", mock_ctx):
         from view.web.web_main import app
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"access_token": "test-token"},
+        ) as client:
             resp = await client.get("/api/ranking/progress")
 
     assert resp.status_code == 200
@@ -152,7 +161,11 @@ async def test_middleware_graceful_without_foreground_scheduler():
     with patch("view.web.api_common._ctx", mock_ctx):
         from view.web.web_main import app
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            cookies={"access_token": "test-token"},
+        ) as client:
             resp = await client.get("/api/balance")
             assert resp.status_code == 200
 
