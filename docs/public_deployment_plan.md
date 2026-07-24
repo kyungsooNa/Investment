@@ -369,6 +369,21 @@ pytest tests/integration_test -v
 
 순수 문서 변경만 수행한 경우 테스트는 생략할 수 있다.
 
+## PR Merge 기준
+
+구현 PR은 다음 조건을 모두 만족하면 merge까지 진행할 수 있다.
+
+- PR이 Draft 상태가 아님
+- GitHub의 모든 필수 CI와 자동 review check가 성공
+- base branch와 충돌이 없고 GitHub가 merge 가능 상태로 판정
+- branch protection의 필수 승인과 기타 규칙 충족
+- 요청된 변경 사항과 해결되지 않은 review thread가 없음
+- 작업 트리와 PR 변경 범위에 비밀 설정 파일이나 무관한 변경이 없음
+
+CI 실패, pending check, `mergeable=UNKNOWN`, 충돌, 필수 승인 누락 중 하나라도 있으면 자동으로 merge하지 않는다. 일시적인 `UNKNOWN`은 GitHub 계산이 끝날 때까지 기다린 뒤 다시 확인한다.
+
+Merge 방식은 저장소 기본 정책을 사용한다. Merge 완료 후 로컬 `main`으로 복귀해 `origin/main`과 동기화하고, PR과 check 결과를 기록한다. PR merge는 코드 반영을 의미하며 외부 서버 배포 승인을 대신하지 않는다.
+
 ## 배포 Runbook 후속 문서
 
 `docs/public_deployment_runbook.md`에는 다음 내용을 포함한다.

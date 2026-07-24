@@ -81,6 +81,14 @@ pytest tests/integration_test -v
 git status -sb
 ```
 
+### PR Merge 확인
+
+PR은 Draft가 해제되고 필수 CI와 review check가 모두 성공한 경우에만 merge 후보가 된다. 추가로 충돌 없음, 필수 승인 충족, 해결되지 않은 review thread 없음과 GitHub의 merge 가능 판정을 확인한다.
+
+`pending`, `failure`, `cancelled`, `mergeable=UNKNOWN` 상태에서는 merge하지 않는다. 모든 조건이 충족되면 저장소 기본 merge 방식을 사용해 merge할 수 있다. Merge 후에는 로컬 `main`을 `origin/main`과 동기화하고 최종 커밋과 check 결과를 확인한다.
+
+PR merge와 운영 배포는 별도 승인 단계다. CI가 통과한 PR을 merge했더라도 공개 서버 설정, secret, HTTPS와 복구 절차 확인 없이 자동 배포하지 않는다.
+
 브라우저와 별도 HTTP 클라이언트에서 다음을 확인한다.
 
 - 비로그인 API 요청이 `401` 또는 `403`
