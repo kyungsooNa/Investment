@@ -7,8 +7,8 @@
             <div class="form-row" style="align-items:center;gap:10px;">
                 <span id="scheduler-status-badge" class="badge closed">정지</span>
                 <span id="scheduler-info" style="color:var(--text-secondary);font-size:0.9em;">스케줄러가 초기화되지 않았습니다.</span>
-                <button class="btn btn-buy" id="scheduler-start-btn" onclick="startScheduler()">전체 시작</button>
-                <button class="btn btn-sell" id="scheduler-stop-btn" onclick="stopScheduler()">전체 정지</button>
+                <button class="btn btn-buy" id="scheduler-start-btn" data-required-role="admin" onclick="startScheduler()">전체 시작</button>
+                <button class="btn btn-sell" id="scheduler-stop-btn" data-required-role="admin" onclick="stopScheduler()">전체 정지</button>
             </div>
         </div>
 

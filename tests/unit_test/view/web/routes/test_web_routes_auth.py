@@ -5,7 +5,35 @@ import pytest
 from unittest.mock import MagicMock
 from fastapi import HTTPException, Request, WebSocketException
 from view.web import web_api
-from view.web.security import CSRF_COOKIE_NAME, hash_password, issue_session
+from view.web.security import (
+    CSRF_COOKIE_NAME,
+    CSRF_HEADER_NAME,
+    SESSION_COOKIE_NAME,
+    hash_password,
+    issue_session,
+)
+
+
+def _authenticate_as(web_client, mock_web_ctx, username, role):
+    auth_config = mock_web_ctx.full_config["auth"]
+    users = auth_config.setdefault("users", [])
+    if not any(user["username"] == username for user in users):
+        users.append(
+            {
+                "username": username,
+                "password_hash": hash_password("password", iterations=1_000),
+                "role": role,
+                "enabled": True,
+            }
+        )
+    token, claims = issue_session(
+        auth_config,
+        username,
+        role=role,
+    )
+    web_client.cookies.set(SESSION_COOKIE_NAME, token)
+    web_client.cookies.set(CSRF_COOKIE_NAME, claims.csrf_token)
+    web_client.headers[CSRF_HEADER_NAME] = claims.csrf_token
 
 
 def test_login_success(web_client, mock_web_ctx):
@@ -42,6 +70,96 @@ def test_login_issues_signed_expiring_session_and_csrf_cookie(web_client, mock_w
     assert response.cookies[CSRF_COOKIE_NAME]
     set_cookie = response.headers.get_list("set-cookie")
     assert any("HttpOnly" in value and "Max-Age=900" in value for value in set_cookie)
+
+
+def test_login_issues_role_from_user_repository(web_client, mock_web_ctx):
+    mock_web_ctx.full_config["auth"] = {
+        "users": [
+            {
+                "username": "ops",
+                "password_hash": hash_password("password", iterations=1_000),
+                "role": "operator",
+            }
+        ],
+        "secret_key": "signing-secret",
+        "session_max_age_seconds": 900,
+    }
+    web_client.cookies.clear()
+
+    response = web_client.post(
+        "/api/auth/login",
+        data={"username": "ops", "password": "password"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "operator"
+
+
+def test_auth_me_returns_session_principal(web_client, mock_web_ctx):
+    _authenticate_as(web_client, mock_web_ctx, "reader", "viewer")
+
+    response = web_client.get("/api/auth/me")
+
+    assert response.status_code == 200
+    assert response.json() == {"username": "reader", "role": "viewer"}
+
+
+def test_disabled_user_session_is_revoked(web_client, mock_web_ctx):
+    mock_web_ctx.full_config["auth"] = {
+        "users": [
+            {
+                "username": "ops",
+                "password_hash": hash_password("password", iterations=1_000),
+                "role": "operator",
+                "enabled": True,
+            }
+        ],
+        "secret_key": "signing-secret",
+        "session_max_age_seconds": 900,
+    }
+    _authenticate_as(web_client, mock_web_ctx, "ops", "operator")
+    mock_web_ctx.full_config["auth"]["users"][0]["enabled"] = False
+
+    response = web_client.get("/api/auth/me")
+
+    assert response.status_code == 401
+
+
+def test_viewer_cannot_place_order(web_client, mock_web_ctx):
+    _authenticate_as(web_client, mock_web_ctx, "reader", "viewer")
+
+    response = web_client.post(
+        "/api/order",
+        json={"code": "005930", "price": "70000", "qty": "1", "side": "buy"},
+    )
+
+    assert response.status_code == 403
+    mock_web_ctx.order_execution_service.handle_buy_stock.assert_not_awaited()
+    audit = mock_web_ctx.logger.warning.call_args.args[0]
+    assert audit["event"] == "rbac_authorization"
+    assert audit["username"] == "reader"
+    assert audit["role"] == "viewer"
+    assert audit["required_role"] == "operator"
+    assert audit["allowed"] is False
+
+
+def test_viewer_can_read_market_data_but_not_balance(web_client, mock_web_ctx):
+    _authenticate_as(web_client, mock_web_ctx, "reader", "viewer")
+
+    market_response = web_client.get("/api/status")
+    balance_response = web_client.get("/api/balance")
+
+    assert market_response.status_code == 200
+    assert balance_response.status_code == 403
+    mock_web_ctx.stock_query_service.handle_get_account_balance.assert_not_awaited()
+
+
+def test_operator_cannot_shutdown_server(web_client, mock_web_ctx):
+    _authenticate_as(web_client, mock_web_ctx, "ops", "operator")
+
+    response = web_client.post("/api/system/shutdown")
+
+    assert response.status_code == 403
 
 
 def test_repeated_login_failures_are_rate_limited(web_client, mock_web_ctx):

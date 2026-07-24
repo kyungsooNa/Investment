@@ -16,7 +16,7 @@
             <input type="text" id="username" placeholder="아이디">
             <input type="password" id="password" placeholder="비밀번호">
             <button class="btn" style="width: 100%; margin-top: 20px;" onclick="doLogin()">로그인</button>
-            <p id="msg" style="color: var(--negative); margin-top: 15px; font-size: 0.9em;"></p>
+            <p id="msg" style="color: var(--negative); margin-top: 15px; font-size: 0.9em;">{{ authorization_error|default('') }}</p>
         </div>
     </div>
     <script>

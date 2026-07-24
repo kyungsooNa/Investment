@@ -538,9 +538,11 @@ function renderActionCell(task) {
     const config = FORCE_UPDATE_CONFIG[task.name];
     if (!config) return '-';
     const isRunning = task.progress && task.progress.running;
-    const disabled = isRunning ? 'disabled' : '';
+    const roleBlocked = typeof window.hasRequiredRole === 'function'
+        && !window.hasRequiredRole('admin');
+    const disabled = isRunning || roleBlocked ? 'disabled' : '';
     const label = isRunning ? '진행 중...' : config.label;
-    return `<button class="btn btn-sm" ${disabled} onclick="forceTaskUpdate(this, '${task.name}')" style="font-size:0.82em; padding:3px 10px;">${label}</button>`;
+    return `<button class="btn btn-sm" data-required-role="admin" ${disabled} onclick="forceTaskUpdate(this, '${task.name}')" style="font-size:0.82em; padding:3px 10px;">${label}</button>`;
 }
 
 async function forceTaskUpdate(btn, taskName) {

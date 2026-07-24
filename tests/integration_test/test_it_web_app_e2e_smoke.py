@@ -284,7 +284,11 @@ def test_real_app_login_gate_and_auth_cookie_allow_page(client_with_fake_lifespa
         data={"username": "tester", "password": "secret"},
     )
     assert login.status_code == 200
-    assert login.json() == {"success": True}
+    assert login.json() == {
+        "success": True,
+        "username": "tester",
+        "role": "admin",
+    }
     assert "access_token=" in login.headers["set-cookie"]
     assert "access_token=test-token" not in login.headers["set-cookie"]
     assert "csrf_token=" in login.headers["set-cookie"]

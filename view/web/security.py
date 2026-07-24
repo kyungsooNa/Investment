@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass
 
 from itsdangerous import BadData, URLSafeTimedSerializer
+from view.web.authorization import ADMIN, ROLES
 
 SESSION_COOKIE_NAME = "access_token"
 CSRF_COOKIE_NAME = "csrf_token"
@@ -74,6 +75,7 @@ def verify_password(password: str, encoded: str) -> bool:
 @dataclass(frozen=True)
 class SessionClaims:
     username: str
+    role: str
     session_id: str
     csrf_token: str
 
@@ -88,7 +90,12 @@ def _serializer(auth_config) -> URLSafeTimedSerializer | None:
     return URLSafeTimedSerializer(secret_key=secret_key, salt=_SESSION_SALT)
 
 
-def issue_session(auth_config, username: str) -> tuple[str, SessionClaims]:
+def issue_session(
+    auth_config,
+    username: str,
+    *,
+    role: str = ADMIN,
+) -> tuple[str, SessionClaims]:
     """서명 세션을 발급하고 현재 프로세스의 활성 세션으로 등록한다."""
     serializer = _serializer(auth_config)
     if serializer is None:
@@ -96,15 +103,19 @@ def issue_session(auth_config, username: str) -> tuple[str, SessionClaims]:
     max_age = int(_config_get(auth_config, "session_max_age_seconds", 3600))
     if max_age <= 0:
         raise ValueError("session_max_age_seconds must be positive")
+    if role not in ROLES:
+        raise ValueError("invalid session role")
 
     claims = SessionClaims(
         username=username,
+        role=role,
         session_id=secrets.token_urlsafe(24),
         csrf_token=secrets.token_urlsafe(32),
     )
     token = serializer.dumps(
         {
             "sub": claims.username,
+            "role": claims.role,
             "sid": claims.session_id,
             "csrf": claims.csrf_token,
         }
@@ -123,10 +134,14 @@ def verify_session(token: str | None, auth_config) -> SessionClaims | None:
         payload = serializer.loads(token, max_age=max_age)
         claims = SessionClaims(
             username=payload["sub"],
+            role=payload["role"],
             session_id=payload["sid"],
             csrf_token=payload["csrf"],
         )
     except (BadData, KeyError, TypeError, ValueError):
+        return None
+
+    if claims.role not in ROLES:
         return None
 
     expires_at = _active_sessions.get(claims.session_id)

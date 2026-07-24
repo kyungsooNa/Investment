@@ -380,9 +380,10 @@ def test_api_routes_are_registered_once():
     assert duplicates == []
 
 
-def test_all_non_login_api_routes_have_auth_dependency():
-    """로그인 외 모든 API와 WebSocket 라우트는 구조적 인증 dependency를 가진다."""
-    missing = []
+def test_all_non_login_api_routes_have_security_dependencies():
+    """로그인 외 모든 API와 WebSocket 라우트는 인증·권한 dependency를 가진다."""
+    missing_auth = []
+    missing_role = []
     for route in _api_routes(app.routes):
         if route.path == "/api/auth/login":
             continue
@@ -391,9 +392,12 @@ def test_all_non_login_api_routes_have_auth_dependency():
             for dependency in (getattr(route, "dependencies", None) or [])
         }
         if api_common.check_auth not in dependencies:
-            missing.append(route.path)
+            missing_auth.append(route.path)
+        if api_common.check_role_for_request not in dependencies:
+            missing_role.append(route.path)
 
-    assert missing == []
+    assert missing_auth == []
+    assert missing_role == []
 
 
 def _make_balance_ctx(is_paper_trading=True, acc_no_field="stock_account_number", acc_no_value="12345678"):

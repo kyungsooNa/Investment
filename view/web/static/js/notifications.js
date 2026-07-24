@@ -12,6 +12,8 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initNotifications() {
+    if (typeof window.hasRequiredRole === 'function'
+        && !window.hasRequiredRole('operator')) return;
     fetch('/api/notifications/recent?count=50')
         .then(r => r.json())
         .then(data => {

@@ -2,6 +2,24 @@
 
 const nativeFetch = window.fetch.bind(window);
 const csrfProtectedMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const roleRank = Object.freeze({ viewer: 10, operator: 20, admin: 30 });
+
+window.hasRequiredRole = function hasRequiredRole(requiredRole) {
+    const actualRole = document.body?.dataset.userRole || '';
+    if (!actualRole) return true;
+    return (roleRank[actualRole] || 0) >= (roleRank[requiredRole] || Infinity);
+};
+
+function applyRoleControls(root = document) {
+    root.querySelectorAll('[data-required-role]').forEach((element) => {
+        const allowed = window.hasRequiredRole(element.dataset.requiredRole);
+        if ('disabled' in element) element.disabled = !allowed;
+        element.setAttribute('aria-disabled', String(!allowed));
+        if (!allowed) {
+            element.title = '현재 계정에는 이 작업을 실행할 권한이 없습니다.';
+        }
+    });
+}
 
 function readCookie(name) {
     const prefix = `${encodeURIComponent(name)}=`;
@@ -248,6 +266,7 @@ async function navigatePjax(href) {
 
         await loadHeadScripts(doc);
         await executePageScripts(pageMain);
+        applyRoleControls(pageMain);
 
         window.history.pushState({path: href}, '', href);
         updateNavActive(targetPath);
@@ -297,6 +316,7 @@ window.addEventListener('pageshow', () => {
 // ==========================================
 document.addEventListener('DOMContentLoaded', () => {
     document.body.classList.add('light-mode');
+    applyRoleControls();
 
     // 주식 종목 링크 호버 스타일 추가
     if (!document.getElementById('stock-link-style')) {

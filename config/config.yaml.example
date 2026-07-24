@@ -35,9 +35,20 @@ web:
   port: 8000
 use_login: true
 auth:
-  username: "admin"
-  # python scripts/hash_web_password.py 실행 결과로 교체하세요.
-  password_hash: "pbkdf2_sha256$310000$REPLACE_WITH_GENERATED_SALT$REPLACE_WITH_GENERATED_HASH"
+  users:
+    - username: "viewer"
+      # python scripts/hash_web_password.py 실행 결과로 교체하세요.
+      password_hash: "pbkdf2_sha256$310000$REPLACE_WITH_GENERATED_SALT$REPLACE_WITH_GENERATED_HASH"
+      role: "viewer"
+      enabled: true
+    - username: "operator"
+      password_hash: "pbkdf2_sha256$310000$REPLACE_WITH_GENERATED_SALT$REPLACE_WITH_GENERATED_HASH"
+      role: "operator"
+      enabled: true
+    - username: "admin"
+      password_hash: "pbkdf2_sha256$310000$REPLACE_WITH_GENERATED_SALT$REPLACE_WITH_GENERATED_HASH"
+      role: "admin"
+      enabled: true
   # 충분히 긴 무작위 세션 서명 키로 교체하고 저장소에 커밋하지 마세요.
   secret_key: "REPLACE_WITH_RANDOM_SESSION_SIGNING_KEY"
   session_max_age_seconds: 3600

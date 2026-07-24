@@ -2,10 +2,11 @@
 주문 관련 API 엔드포인트 (order.html).
 """
 from fastapi import APIRouter, HTTPException
-from fastapi import Query
+from fastapi import Query, Request
 from common.overseas_types import OverseasOrderRequest, OverseasCancelRequest
 from common.types import ErrorCode, ResCommonResponse
-from view.web.api_common import _get_ctx, _serialize_response, OrderRequest
+from view.web.api_common import _get_ctx, _serialize_response, OrderRequest, require_role
+from view.web.authorization import ADMIN
 from view.web.deployment_policy import config_section, config_value, live_trading_block
 from view.web.market_mode_utils import is_market_enabled
 
@@ -35,7 +36,7 @@ def _live_trading_block_response(ctx, *, overseas: bool = False):
 
 
 @router.post("/order")
-async def place_order(req: OrderRequest):
+async def place_order(req: OrderRequest, request: Request):
     """매수/매도 주문. 가상 매매 기록은 실제 체결 확인 후 OrderExecutionService가 처리한다."""
     ctx = _get_ctx()
     t_start = ctx.pm.start_timer()
@@ -44,6 +45,7 @@ async def place_order(req: OrderRequest):
         blocked_response = _live_trading_block_response(ctx)
         if blocked_response is not None:
             return blocked_response
+        require_role(request, ADMIN)
         if req.real_order_confirmation != "REAL":
             raise HTTPException(status_code=400, detail="실전 주문 확인 문자열이 필요합니다.")
 
@@ -72,7 +74,7 @@ async def place_order(req: OrderRequest):
 
 
 @router.post("/overseas/order")
-async def place_overseas_order(req: OverseasOrderRequest):
+async def place_overseas_order(req: OverseasOrderRequest, request: Request):
     """해외주식 수동 지정가 주문. v1은 미국 3시장 + USD 지정가만 지원한다."""
     ctx = _get_ctx()
     if not is_market_enabled(ctx, "overseas_us"):
@@ -88,6 +90,7 @@ async def place_overseas_order(req: OverseasOrderRequest):
         blocked_response = _live_trading_block_response(ctx, overseas=True)
         if blocked_response is not None:
             return blocked_response
+        require_role(request, ADMIN)
         if req.real_order_confirmation != "REAL":
             raise HTTPException(status_code=400, detail="실전 주문 확인 문자열이 필요합니다.")
 
@@ -102,7 +105,7 @@ async def place_overseas_order(req: OverseasOrderRequest):
 
 
 @router.post("/overseas/order/cancel")
-async def cancel_overseas_order(req: OverseasCancelRequest):
+async def cancel_overseas_order(req: OverseasCancelRequest, request: Request):
     """해외주식 미체결 주문 취소. v1은 미국 3시장 + USD만 지원한다."""
     ctx = _get_ctx()
     if not is_market_enabled(ctx, "overseas_us"):
@@ -116,6 +119,7 @@ async def cancel_overseas_order(req: OverseasCancelRequest):
         blocked_response = _live_trading_block_response(ctx, overseas=True)
         if blocked_response is not None:
             return blocked_response
+        require_role(request, ADMIN)
         if req.real_order_confirmation != "REAL":
             raise HTTPException(status_code=400, detail="실전 주문 확인 문자열이 필요합니다.")
 

@@ -50,14 +50,17 @@
     {% endblock %}
     <script src="/static/js/common.js?v=10"></script>
 </head>
-<body data-view-market="{{ view_market|default('common') }}">
+<body data-view-market="{{ view_market|default('common') }}" data-user-role="{{ user_role|default('') }}">
 
 <header class="header">
     <h1>Investment</h1>
     <div class="status-bar">
         <span id="status-time">--</span>
+        <span id="status-role" class="badge">{{ user_role|default('--') }}</span>
         <span id="status-market" class="badge closed">--</span>
-        <span id="status-env" class="badge paper clickable" onclick="toggleEnvironment()" title="클릭하여 환경 전환">--</span>
+        <span id="status-env" class="badge paper{% if is_admin %} clickable{% endif %}"
+              {% if is_admin %}onclick="toggleEnvironment()" title="클릭하여 환경 전환"{% endif %}>--</span>
+        {% if can_operate %}
         <button id="ks-badge" class="badge ks-ok" onclick="openKillSwitchModal()" title="Kill Switch 상태 (클릭하여 제어)">
             <span id="ks-badge-text">KS ✓</span>
         </button>
@@ -70,6 +73,7 @@
                 <span id="notification-badge" class="notification-badge" style="display:none;">0</span>
             </button>
         </div>
+        {% endif %}
     </div>
 </header>
 
@@ -82,20 +86,20 @@
 <nav class="nav" aria-label="기능 메뉴">
     {% if view_market == 'domestic' %}
         <a href="/stock" class="{% if active_page == 'stock' %}active{% endif %}">현재가</a>
-        <a href="/favorite" class="{% if active_page == 'favorite' %}active{% endif %}">즐겨찾기</a>
-        <a href="/balance" class="{% if active_page == 'balance' %}active{% endif %}">계좌 잔고</a>
-        <a href="/order" class="{% if active_page == 'order' %}active{% endif %}">매수/매도</a>
+        {% if can_operate %}<a href="/favorite" class="{% if active_page == 'favorite' %}active{% endif %}">즐겨찾기</a>{% endif %}
+        {% if can_operate %}<a href="/balance" class="{% if active_page == 'balance' %}active{% endif %}">계좌 잔고</a>{% endif %}
+        {% if can_operate %}<a href="/order" class="{% if active_page == 'order' %}active{% endif %}">매수/매도</a>{% endif %}
         <a href="/ranking" class="{% if active_page == 'ranking' %}active{% endif %}">랭킹</a>
         <a href="/marketcap" class="{% if active_page == 'marketcap' %}active{% endif %}">시가총액</a>
-        <a href="/program" class="{% if active_page == 'program' %}active{% endif %}">프로그램매매</a>
+        {% if can_operate %}<a href="/program" class="{% if active_page == 'program' %}active{% endif %}">프로그램매매</a>{% endif %}
     {% elif view_market == 'overseas_us' %}
         <a href="/overseas" class="{% if active_page == 'overseas' %}active{% endif %}">미국장 개요·거래</a>
     {% else %}
         <a href="/" class="{% if active_page == 'home' %}active{% endif %}">홈</a>
-        <a href="/virtual" class="{% if active_page == 'virtual' %}active{% endif %}">모의투자 기록</a>
-        <a href="/scheduler" class="{% if active_page == 'scheduler' %}active{% endif %}">전략 스케줄러</a>
+        {% if can_operate %}<a href="/virtual" class="{% if active_page == 'virtual' %}active{% endif %}">모의투자 기록</a>{% endif %}
+        {% if can_operate %}<a href="/scheduler" class="{% if active_page == 'scheduler' %}active{% endif %}">전략 스케줄러</a>{% endif %}
         <a href="/strategy-reports" class="{% if active_page == 'strategy_reports' %}active{% endif %}">상세 리포트</a>
-        <a href="/system" class="{% if active_page == 'system' %}active{% endif %}">시스템 상태</a>
+        {% if can_operate %}<a href="/system" class="{% if active_page == 'system' %}active{% endif %}">시스템 상태</a>{% endif %}
     {% endif %}
 </nav>
 
@@ -142,11 +146,11 @@
     <h3 style="margin:0 0 16px;font-size:1.1rem;">🛡️ Kill Switch 상태</h3>
     <div id="ks-modal-body" style="font-size:0.88rem;line-height:1.7;"></div>
     <div style="margin-top:20px;display:flex;gap:10px;justify-content:flex-end;">
-        <button id="ks-btn-reset" onclick="resetKillSwitch()"
+        <button id="ks-btn-reset" onclick="resetKillSwitch()" data-required-role="admin"
             style="display:none;padding:8px 18px;background:#a6e3a1;color:#1e1e2e;border:none;border-radius:6px;cursor:pointer;font-weight:600;">
             해제
         </button>
-        <button id="ks-btn-trip" onclick="tripKillSwitch()"
+        <button id="ks-btn-trip" onclick="tripKillSwitch()" data-required-role="admin"
             style="padding:8px 18px;background:#f38ba8;color:#1e1e2e;border:none;border-radius:6px;cursor:pointer;font-weight:600;">
             수동 트립
         </button>

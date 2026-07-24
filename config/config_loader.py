@@ -18,9 +18,17 @@ class WebConfig(BaseModel):
     port: int = Field(..., ge=1, le=65535, description="웹 서버 포트 (1~65535)")
 
 
+class AuthUserConfig(BaseModel):
+    username: str = Field(..., min_length=1)
+    password_hash: str
+    role: Literal["viewer", "operator", "admin"]
+    enabled: bool = True
+
+
 class AuthConfig(BaseModel):
     username: Optional[str] = None
     password_hash: Optional[str] = None
+    users: List[AuthUserConfig] = Field(default_factory=list)
     secret_key: Optional[str] = None
     session_max_age_seconds: int = Field(default=3600, ge=60, le=86400)
     secure_cookie: bool = False
@@ -28,6 +36,13 @@ class AuthConfig(BaseModel):
     login_lockout_seconds: int = Field(default=60, ge=1, le=3600)
 
     model_config = {"extra": "allow"}
+
+    @model_validator(mode="after")
+    def validate_unique_usernames(self):
+        usernames = [user.username for user in self.users]
+        if len(usernames) != len(set(usernames)):
+            raise ValueError("auth.users의 username은 중복될 수 없습니다.")
+        return self
 
 
 class DeploymentConfig(BaseModel):
@@ -521,13 +536,29 @@ class AppConfig(BaseModel):
             return self
         if not self.use_login:
             raise ValueError("public_mode에서는 use_login=true가 필요합니다.")
-        if not self.auth.username:
-            raise ValueError("public_mode에서는 auth.username이 필요합니다.")
-        if not (
-            isinstance(self.auth.password_hash, str)
-            and self.auth.password_hash.startswith("pbkdf2_sha256$")
-        ):
-            raise ValueError("public_mode에서는 PBKDF2 auth.password_hash가 필요합니다.")
+        enabled_users = [user for user in self.auth.users if user.enabled]
+        if enabled_users:
+            if not all(
+                user.password_hash.startswith("pbkdf2_sha256$")
+                for user in enabled_users
+            ):
+                raise ValueError(
+                    "public_mode에서는 모든 auth.users에 PBKDF2 password_hash가 필요합니다."
+                )
+            if not any(user.role == "admin" for user in enabled_users):
+                raise ValueError(
+                    "public_mode에서는 활성화된 admin 사용자가 필요합니다."
+                )
+        else:
+            if not self.auth.username:
+                raise ValueError("public_mode에서는 auth 사용자 설정이 필요합니다.")
+            if not (
+                isinstance(self.auth.password_hash, str)
+                and self.auth.password_hash.startswith("pbkdf2_sha256$")
+            ):
+                raise ValueError(
+                    "public_mode에서는 PBKDF2 auth.password_hash가 필요합니다."
+                )
         if not isinstance(self.auth.secret_key, str) or len(self.auth.secret_key) < 32:
             raise ValueError("public_mode에서는 32자 이상의 auth.secret_key가 필요합니다.")
         if not self.auth.secure_cookie:

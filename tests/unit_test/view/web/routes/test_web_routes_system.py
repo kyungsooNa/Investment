@@ -333,6 +333,18 @@ def test_shutdown_server_schedules_termination(web_client, mock_web_ctx, monkeyp
     body = response.json()
     assert body["success"] is True
     assert called.get("hit") is True
+    audit_events = [
+        call.args[0]
+        for call in mock_web_ctx.logger.info.call_args_list
+        if call.args and isinstance(call.args[0], dict)
+    ]
+    assert any(
+        event.get("event") == "rbac_authorization"
+        and event.get("role") == "admin"
+        and event.get("required_role") == "admin"
+        and event.get("allowed") is True
+        for event in audit_events
+    )
 
 
 def test_public_mode_blocks_shutdown(web_client, mock_web_ctx, monkeypatch):
