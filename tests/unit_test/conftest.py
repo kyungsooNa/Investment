@@ -124,11 +124,32 @@ def test_app():
     app.include_router(page_router)
     return app
 
+
+@pytest.fixture(autouse=True)
+def reset_web_security_state():
+    from view.web.security import reset_security_state
+
+    reset_security_state()
+    yield
+    reset_security_state()
+
+
 @pytest.fixture
-def web_client(test_app):
+def web_client(test_app, mock_web_ctx):
     """기본 인증 상태의 FastAPI TestClient."""
+    from view.web.security import (
+        CSRF_COOKIE_NAME,
+        CSRF_HEADER_NAME,
+        SESSION_COOKIE_NAME,
+        issue_session,
+    )
+
     client = TestClient(test_app)
-    client.cookies.set("access_token", "secret")
+    auth_config = mock_web_ctx.full_config["auth"]
+    token, claims = issue_session(auth_config, auth_config["username"])
+    client.cookies.set(SESSION_COOKIE_NAME, token)
+    client.cookies.set(CSRF_COOKIE_NAME, claims.csrf_token)
+    client.headers[CSRF_HEADER_NAME] = claims.csrf_token
     return client
 
 @pytest.fixture
@@ -168,8 +189,9 @@ def mock_web_ctx():
         "use_login": False,
         "auth": {
             "username": "admin",
-            "password": "password",
+            "password_hash": "pbkdf2_sha256$1000$dGVzdC1zYWx0$g6Aj4gLe-oXHKKyKO49OLB_39eXQeY4yWadcnOdTVjU",
             "secret_key": "secret",
+            "session_max_age_seconds": 3600,
         },
     }
     

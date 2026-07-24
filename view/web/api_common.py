@@ -1,11 +1,10 @@
 """
 웹 API 공통 유틸리티: 컨텍스트 관리, 응답 직렬화, 인증, Pydantic 모델.
 """
-import secrets
-
 from fastapi import HTTPException, WebSocketException, status
 from pydantic import BaseModel
 from starlette.requests import HTTPConnection
+from view.web import security
 
 _ctx = None  # 전역 변수로 선언
 
@@ -47,15 +46,20 @@ def get_auth_value(key: str, default=None, *, ctx=None):
     return _config_get(auth_config, key, default)
 
 
-def is_authenticated(connection: HTTPConnection, *, ctx=None) -> bool:
-    expected_token = get_auth_value("secret_key", ctx=ctx)
-    token = connection.cookies.get("access_token")
+def get_auth_config(*, ctx=None):
+    if ctx is None:
+        ctx = _get_ctx()
+    return _config_get(ctx.full_config, "auth", {})
 
-    if not isinstance(expected_token, str) or not expected_token:
-        return False
-    if not isinstance(token, str) or not token:
-        return False
-    return secrets.compare_digest(token, expected_token)
+
+def get_session_claims(connection: HTTPConnection, *, ctx=None):
+    auth_config = get_auth_config(ctx=ctx)
+    token = connection.cookies.get(security.SESSION_COOKIE_NAME)
+    return security.verify_session(token, auth_config)
+
+
+def is_authenticated(connection: HTTPConnection, *, ctx=None) -> bool:
+    return get_session_claims(connection, ctx=ctx) is not None
 
 
 def check_auth(connection: HTTPConnection):
@@ -70,20 +74,66 @@ def check_auth(connection: HTTPConnection):
 
 def get_authenticated_operator(connection: HTTPConnection) -> str:
     """감사 로그에 토큰 원문 대신 비민감 운영자 식별자를 반환한다."""
-    check_auth(connection)
-    username = get_auth_value("username")
-    if isinstance(username, str) and username:
-        return username
-    return "authenticated-user"
+    claims = get_session_claims(connection)
+    if claims is None:
+        check_auth(connection)
+    return claims.username
+
+
+def check_csrf(connection: HTTPConnection) -> bool:
+    """상태 변경 요청의 세션 결합 CSRF 토큰을 검증한다."""
+    claims = get_session_claims(connection)
+    if claims is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not security.verify_csrf(connection, claims):
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+    return True
+
+
+def check_csrf_for_unsafe_request(connection: HTTPConnection) -> bool:
+    """HTTP 상태 변경 메서드에만 CSRF 검증을 적용한다."""
+    scope = getattr(connection, "scope", {})
+    if not isinstance(scope, dict) or scope.get("type") != "http":
+        return True
+    if scope.get("method", "GET").upper() in {"POST", "PUT", "PATCH", "DELETE"}:
+        return check_csrf(connection)
+    return True
+
+
+def check_public_operation_allowed(connection: HTTPConnection) -> bool:
+    from view.web.deployment_policy import is_public_operation_blocked
+
+    scope = getattr(connection, "scope", {})
+    if not isinstance(scope, dict):
+        return True
+    if is_public_operation_blocked(
+        _get_ctx(),
+        str(scope.get("path", "")),
+        str(scope.get("method", "GET")),
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="공개 모드에서는 이 운영 작업을 실행할 수 없습니다.",
+        )
+    return True
 
 
 def _serialize_response(resp):
     """ResCommonResponse를 JSON 직렬화 가능한 dict로 변환."""
     if resp is None:
-        return {"rt_cd": "999", "msg1": "응답 없음", "data": None}
-    if hasattr(resp, 'to_dict'):
-        return resp.to_dict()
-    return {"rt_cd": str(resp.rt_cd), "msg1": str(resp.msg1), "data": resp.data}
+        result = {"rt_cd": "999", "msg1": "응답 없음", "data": None}
+    elif hasattr(resp, 'to_dict'):
+        result = resp.to_dict()
+    else:
+        result = {"rt_cd": str(resp.rt_cd), "msg1": str(resp.msg1), "data": resp.data}
+
+    if _ctx is not None:
+        from view.web.data_masking import mask_sensitive_data
+        from view.web.deployment_policy import is_public_mode
+
+        if is_public_mode(_ctx):
+            return mask_sensitive_data(result)
+    return result
 
 
 def _serialize_list_items(items):

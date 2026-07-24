@@ -17,6 +17,7 @@ from view.web.routes import router as api_router
 from view.web import api_common
 from common.operator_alert_types import AlertSource, AlertTransition
 from services.operator_alert_service import OperatorAlertService
+from tests.web_auth_helpers import authenticated_client_options
 
 
 # ── 픽스처 ─────────────────────────────────────────────────────────
@@ -47,7 +48,14 @@ def _make_ks_status(is_tripped: bool = False):
 def _make_ctx(operator_alert_svc, ks_is_tripped=False):
     mock_ctx = MagicMock()
     mock_ctx.initialized = True
-    mock_ctx.full_config = {"use_login": False, "auth": {"secret_key": "test"}}
+    mock_ctx.full_config = {
+        "use_login": False,
+        "auth": {
+            "username": "test-operator",
+            "secret_key": "test",
+            "session_max_age_seconds": 3600,
+        },
+    }
     mock_ctx.operator_alert_service = operator_alert_svc
     mock_ctx.kill_switch_service = MagicMock()
     mock_ctx.kill_switch_service.get_status.return_value = _make_ks_status(ks_is_tripped)
@@ -79,7 +87,7 @@ def web_app():
 def client(web_app, alert_svc):
     ctx = _make_ctx(alert_svc)
     api_common.set_ctx(ctx)
-    with TestClient(web_app, cookies={"access_token": "test"}) as c:
+    with TestClient(web_app, **authenticated_client_options(ctx)) as c:
         yield c, alert_svc
     api_common.set_ctx(None)
 
@@ -89,7 +97,7 @@ def client_tripped(web_app, alert_svc):
     """Kill Switch가 트립된 상태."""
     ctx = _make_ctx(alert_svc, ks_is_tripped=True)
     api_common.set_ctx(ctx)
-    with TestClient(web_app, cookies={"access_token": "test"}) as c:
+    with TestClient(web_app, **authenticated_client_options(ctx)) as c:
         yield c, alert_svc
     api_common.set_ctx(None)
 
@@ -126,7 +134,7 @@ async def test_status_shows_active_alert_after_report(web_app, alert_svc):
     ctx = _make_ctx(alert_svc, ks_is_tripped=True)
     api_common.set_ctx(ctx)
     try:
-        with TestClient(web_app, cookies={"access_token": "test"}) as c:
+        with TestClient(web_app, **authenticated_client_options(ctx)) as c:
             r = c.get("/api/operator/status")
         assert r.status_code == 200
         data = r.json()
@@ -150,7 +158,7 @@ async def test_alerts_history_after_report(web_app, alert_svc):
     ctx = _make_ctx(alert_svc)
     api_common.set_ctx(ctx)
     try:
-        with TestClient(web_app, cookies={"access_token": "test"}) as c:
+        with TestClient(web_app, **authenticated_client_options(ctx)) as c:
             r = c.get("/api/operator/alerts")
         assert r.status_code == 200
         data = r.json()
@@ -168,7 +176,7 @@ async def test_alerts_source_filter(web_app, alert_svc):
     ctx = _make_ctx(alert_svc)
     api_common.set_ctx(ctx)
     try:
-        with TestClient(web_app, cookies={"access_token": "test"}) as c:
+        with TestClient(web_app, **authenticated_client_options(ctx)) as c:
             r = c.get("/api/operator/alerts?source=KILL_SWITCH")
         data = r.json()
         assert all(h["source"] == "KILL_SWITCH" for h in data["alerts"])
@@ -187,7 +195,7 @@ async def test_resolve_endpoint(web_app, alert_svc, notif):
     ctx = _make_ctx(alert_svc)
     api_common.set_ctx(ctx)
     try:
-        with TestClient(web_app, cookies={"access_token": "test"}) as c:
+        with TestClient(web_app, **authenticated_client_options(ctx)) as c:
             r = c.post("/api/operator/alerts/kill_switch%3Aglobal/resolve?reason=운영자+해제")
         assert r.status_code == 200
         data = r.json()
@@ -202,7 +210,7 @@ async def test_resolve_nonexistent_returns_false(web_app, alert_svc):
     ctx = _make_ctx(alert_svc)
     api_common.set_ctx(ctx)
     try:
-        with TestClient(web_app, cookies={"access_token": "test"}) as c:
+        with TestClient(web_app, **authenticated_client_options(ctx)) as c:
             r = c.post("/api/operator/alerts/kill_switch%3Aglobal/resolve")
         data = r.json()
         assert data["resolved"] is False

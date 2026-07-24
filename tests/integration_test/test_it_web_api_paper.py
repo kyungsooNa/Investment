@@ -768,7 +768,8 @@ class TestWebAppContextInitialization:
             # 실제 ctx를 FastAPI 앱에 연결
             api_common.set_ctx(ctx)
             try:
-                with TestClient(web_app, cookies={"access_token": "test-token"}) as client:
+                from tests.web_auth_helpers import authenticated_client_options
+                with TestClient(web_app, **authenticated_client_options(ctx)) as client:
                     # /api/status는 실제 WebAppContext 메서드를 호출
                     resp = client.get("/api/status")
                     assert resp.status_code == 200

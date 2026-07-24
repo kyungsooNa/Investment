@@ -5,6 +5,7 @@ import pytest
 from unittest.mock import MagicMock
 from fastapi import HTTPException, Request, WebSocketException
 from view.web import web_api
+from view.web.security import CSRF_COOKIE_NAME, hash_password, issue_session
 
 
 def test_login_success(web_client, mock_web_ctx):
@@ -20,6 +21,51 @@ def test_login_failure(web_client, mock_web_ctx):
     response = web_client.post("/api/auth/login", data={"username": "wrong", "password": "wrong"})
     assert response.status_code == 401
     assert response.json()["success"] is False
+
+
+def test_login_issues_signed_expiring_session_and_csrf_cookie(web_client, mock_web_ctx):
+    mock_web_ctx.full_config["auth"] = {
+        "username": "admin",
+        "password_hash": hash_password("password", iterations=1_000),
+        "secret_key": "signing-secret",
+        "session_max_age_seconds": 900,
+    }
+    web_client.cookies.clear()
+
+    response = web_client.post(
+        "/api/auth/login",
+        data={"username": "admin", "password": "password"},
+    )
+
+    assert response.status_code == 200
+    assert response.cookies["access_token"] != "signing-secret"
+    assert response.cookies[CSRF_COOKIE_NAME]
+    set_cookie = response.headers.get_list("set-cookie")
+    assert any("HttpOnly" in value and "Max-Age=900" in value for value in set_cookie)
+
+
+def test_repeated_login_failures_are_rate_limited(web_client, mock_web_ctx):
+    mock_web_ctx.full_config["auth"] = {
+        "username": "admin",
+        "password_hash": hash_password("password", iterations=1_000),
+        "secret_key": "signing-secret",
+        "login_max_failures": 2,
+        "login_lockout_seconds": 60,
+    }
+    web_client.cookies.clear()
+
+    for _ in range(2):
+        response = web_client.post(
+            "/api/auth/login",
+            data={"username": "admin", "password": "wrong"},
+        )
+        assert response.status_code == 401
+
+    response = web_client.post(
+        "/api/auth/login",
+        data={"username": "admin", "password": "password"},
+    )
+    assert response.status_code == 429
 
 
 def test_get_ctx_uninitialized(web_client):
@@ -38,9 +84,11 @@ def test_get_ctx_uninitialized(web_client):
 def test_check_auth(mock_web_ctx):
     """check_auth 함수 테스트"""
     mock_request = MagicMock(spec=Request)
-    mock_request.cookies = {"access_token": "secret"}
+    auth_config = {"secret_key": "secret", "session_max_age_seconds": 3600}
+    token, _ = issue_session(auth_config, "admin")
+    mock_request.cookies = {"access_token": token}
 
-    mock_web_ctx.full_config = {"auth": {"secret_key": "secret"}}
+    mock_web_ctx.full_config = {"auth": auth_config}
     mock_web_ctx.env.active_config = {}
 
     # Success
@@ -90,6 +138,19 @@ def test_sensitive_api_rejects_request_without_cookie(web_client, mock_web_ctx):
     )
 
     assert response.status_code == 401
+    mock_web_ctx.order_execution_service.handle_buy_stock.assert_not_awaited()
+
+
+def test_state_changing_api_rejects_missing_csrf(web_client, mock_web_ctx):
+    web_client.cookies.pop(CSRF_COOKIE_NAME)
+    web_client.headers.pop("X-CSRF-Token")
+
+    response = web_client.post(
+        "/api/order",
+        json={"code": "005930", "price": "70000", "qty": "1", "side": "buy"},
+    )
+
+    assert response.status_code == 403
     mock_web_ctx.order_execution_service.handle_buy_stock.assert_not_awaited()
 
 

@@ -3,7 +3,11 @@
 각 페이지별 라우터를 하나의 router로 결합하여 export.
 """
 from fastapi import APIRouter, Depends
-from view.web.api_common import check_auth
+from view.web.api_common import (
+    check_auth,
+    check_csrf_for_unsafe_request,
+    check_public_operation_allowed,
+)
 
 from view.web.routes.auth import router as auth_router
 from view.web.routes.stock import router as stock_router
@@ -24,7 +28,13 @@ from view.web.routes.operator_dashboard import router as operator_dashboard_rout
 from view.web.routes.ai import router as ai_router
 
 router = APIRouter(prefix="/api")
-protected_router = APIRouter(dependencies=[Depends(check_auth)])
+protected_router = APIRouter(
+    dependencies=[
+        Depends(check_auth),
+        Depends(check_csrf_for_unsafe_request),
+        Depends(check_public_operation_allowed),
+    ]
+)
 
 router.include_router(auth_router)
 protected_router.include_router(stock_router)

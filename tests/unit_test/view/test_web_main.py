@@ -6,6 +6,7 @@ import time
 from unittest.mock import MagicMock, AsyncMock, patch
 from fastapi.testclient import TestClient
 import view.web.api_common as api_common
+from view.web.security import SESSION_COOKIE_NAME, issue_session
 from view.web.web_main import (
     app,
     lifespan,
@@ -14,6 +15,14 @@ from view.web.web_main import (
     _is_ignorable_connection_reset,
     _needs_foreground,
 )
+
+
+def _authenticate_client(client, ctx):
+    auth_config = ctx.full_config["auth"]
+    auth_config.setdefault("session_max_age_seconds", 3600)
+    token, _ = issue_session(auth_config, "test-operator")
+    client.cookies.set(SESSION_COOKIE_NAME, token)
+
 
 # --- Fixtures ---
 @pytest.fixture
@@ -122,7 +131,7 @@ def test_render_page_success(mock_web_app_context_cls):
     
     with patch("view.web.web_api._get_ctx", return_value=mock_ctx):
         with TestClient(app) as client:
-            client.cookies.set("access_token", "correct_token")
+            _authenticate_client(client, mock_ctx)
             
             response = client.get("/")
             
@@ -264,7 +273,7 @@ def test_foreground_priority_middleware(mock_web_app_context_cls):
     mock_ctx.full_config = {"auth": {"secret_key": "test-token"}}
     
     with TestClient(app, raise_server_exceptions=False) as client:
-        client.cookies.set("access_token", "test-token")
+        _authenticate_client(client, mock_ctx)
         with patch("view.web.api_common._ctx", mock_ctx):
             client.get("/api/stock/123")
             mock_fg.context.assert_called()
@@ -284,6 +293,23 @@ def test_unauthenticated_api_does_not_enter_foreground(mock_web_app_context_cls)
     mock_ctx.foreground_scheduler.context.assert_not_called()
 
 
+def test_public_mode_rejects_untrusted_host(mock_web_app_context_cls):
+    mock_ctx = MagicMock()
+    mock_ctx.full_config = {
+        "deployment": {
+            "public_mode": True,
+            "allowed_hosts": ["trade.example.com"],
+        },
+        "auth": {"secret_key": "test-token"},
+    }
+
+    with TestClient(app) as client:
+        with patch("view.web.api_common._ctx", mock_ctx):
+            response = client.get("/", headers={"host": "evil.example.com"})
+
+    assert response.status_code == 400
+
+
 def test_all_page_routers(mock_web_app_context_cls):
     """모든 페이지 라우터들이 200 정상 응답을 하는지 테스트"""
     mock_ctx = MagicMock()
@@ -294,7 +320,7 @@ def test_all_page_routers(mock_web_app_context_cls):
     
     with patch("view.web.web_api._get_ctx", return_value=mock_ctx):
         with TestClient(app) as client:
-            client.cookies.set("access_token", "correct_token")
+            _authenticate_client(client, mock_ctx)
             pages = ["/stock", "/balance", "/order", "/ranking", "/marketcap", "/virtual", "/scheduler", "/strategy-reports", "/program", "/system", "/favorite"]
             for page in pages:
                 response = client.get(page)
@@ -307,6 +333,7 @@ def test_logout(mock_web_app_context_cls):
         response = client.get("/logout", follow_redirects=False)
         assert response.status_code == 307
         assert "access_token" in response.headers.get("set-cookie", "")
+        assert "csrf_token" in response.headers.get("set-cookie", "")
 
 
 # --- /balance 페이지 테스트 ---
@@ -394,7 +421,7 @@ def test_balance_paper_trading_with_account_number(mock_web_app_context_cls):
     with patch("view.web.web_api._get_ctx", return_value=mock_ctx), \
          patch("view.web.api_common._serialize_response", return_value=fake_result):
         with TestClient(app) as client:
-            client.cookies.set("access_token", "tok")
+            _authenticate_client(client, mock_ctx)
             response = client.get("/balance")
 
     assert response.status_code == 200
@@ -405,6 +432,30 @@ def test_balance_paper_trading_with_account_number(mock_web_app_context_cls):
     assert data["account_info"]["exchange"] == "KRX"
 
 
+def test_public_mode_masks_balance_initial_data(mock_web_app_context_cls):
+    mock_ctx, _ = _make_balance_ctx(
+        is_paper_trading=True,
+        acc_no_field="stock_account_number",
+        acc_no_value="1234567890",
+    )
+    mock_ctx.full_config["deployment"] = {
+        "public_mode": True,
+        "allowed_hosts": ["testserver"],
+    }
+    fake_result = {"data": {"tot_evlu_amt": "1000000", "ord_no": "0000123456"}}
+
+    with patch("view.web.web_api._get_ctx", return_value=mock_ctx), \
+         patch("view.web.api_common._serialize_response", return_value=fake_result):
+        with TestClient(app) as client:
+            _authenticate_client(client, mock_ctx)
+            response = client.get("/balance")
+
+    data = _parse_initial_data(response.text)
+    assert data["data"]["tot_evlu_amt"] is None
+    assert data["data"]["ord_no"] == "******3456"
+    assert data["account_info"]["number"] == "******7890"
+
+
 def test_balance_real_trading_with_cano(mock_web_app_context_cls):
     """실전투자 환경, CANO로 계좌번호 조회 테스트"""
     mock_ctx, _ = _make_balance_ctx(is_paper_trading=False, acc_no_field="CANO", acc_no_value="55443322")
@@ -413,7 +464,7 @@ def test_balance_real_trading_with_cano(mock_web_app_context_cls):
     with patch("view.web.web_api._get_ctx", return_value=mock_ctx), \
          patch("view.web.api_common._serialize_response", return_value=fake_result):
         with TestClient(app) as client:
-            client.cookies.set("access_token", "tok")
+            _authenticate_client(client, mock_ctx)
             response = client.get("/balance")
 
     assert response.status_code == 200
@@ -432,7 +483,7 @@ def test_balance_acc_no_from_env_attribute(mock_web_app_context_cls):
     with patch("view.web.web_api._get_ctx", return_value=mock_ctx), \
          patch("view.web.api_common._serialize_response", return_value=fake_result):
         with TestClient(app) as client:
-            client.cookies.set("access_token", "tok")
+            _authenticate_client(client, mock_ctx)
             response = client.get("/balance")
 
     assert response.status_code == 200
@@ -450,7 +501,7 @@ def test_balance_acc_no_fallback_to_default(mock_web_app_context_cls):
     with patch("view.web.web_api._get_ctx", return_value=mock_ctx), \
          patch("view.web.api_common._serialize_response", return_value=fake_result):
         with TestClient(app) as client:
-            client.cookies.set("access_token", "tok")
+            _authenticate_client(client, mock_ctx)
             response = client.get("/balance")
 
     assert response.status_code == 200
@@ -477,7 +528,7 @@ def test_balance_env_via_broker(mock_web_app_context_cls):
     with patch("view.web.web_api._get_ctx", return_value=mock_ctx), \
          patch("view.web.api_common._serialize_response", return_value=fake_result):
         with TestClient(app) as client:
-            client.cookies.set("access_token", "tok")
+            _authenticate_client(client, mock_ctx)
             response = client.get("/balance")
 
     assert response.status_code == 200
@@ -499,7 +550,7 @@ def test_balance_no_env_no_account_info(mock_web_app_context_cls):
     with patch("view.web.web_api._get_ctx", return_value=mock_ctx), \
          patch("view.web.api_common._serialize_response", return_value=fake_result):
         with TestClient(app) as client:
-            client.cookies.set("access_token", "tok")
+            _authenticate_client(client, mock_ctx)
             response = client.get("/balance")
 
     assert response.status_code == 200
@@ -519,7 +570,7 @@ def test_balance_exception_fallback_renders_page(mock_web_app_context_cls):
 
     with patch("view.web.web_api._get_ctx", return_value=mock_ctx):
         with TestClient(app) as client:
-            client.cookies.set("access_token", "tok")
+            _authenticate_client(client, mock_ctx)
             response = client.get("/balance")
 
     assert response.status_code == 200

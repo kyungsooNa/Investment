@@ -17,6 +17,30 @@ class WebConfig(BaseModel):
     host: str
     port: int = Field(..., ge=1, le=65535, description="웹 서버 포트 (1~65535)")
 
+
+class AuthConfig(BaseModel):
+    username: Optional[str] = None
+    password_hash: Optional[str] = None
+    secret_key: Optional[str] = None
+    session_max_age_seconds: int = Field(default=3600, ge=60, le=86400)
+    secure_cookie: bool = False
+    login_max_failures: int = Field(default=5, ge=1, le=20)
+    login_lockout_seconds: int = Field(default=60, ge=1, le=3600)
+
+    model_config = {"extra": "allow"}
+
+
+class DeploymentConfig(BaseModel):
+    public_mode: bool = False
+    demo_mode: bool = False
+    allow_live_trading: bool = False
+    allowed_hosts: List[str] = Field(
+        default_factory=lambda: ["127.0.0.1", "localhost"]
+    )
+
+    model_config = {"extra": "allow"}
+
+
 class CacheConfig(BaseModel):
     base_dir: str = ".cache"
     enabled_methods: List[str] = Field(default_factory=list)
@@ -421,6 +445,7 @@ class AppConfig(BaseModel):
     
     # Flags
     is_paper_trading: bool = True
+    use_login: bool = True
 
     # Operating profile (P0 0-7): canary 5% 노출 vs real_limited 30% vs real_full 95% 운영 한도 분리.
     # paper 모드에서는 base 값을 사용하므로 profile 무관. real 모드에서 overlay 선택.
@@ -432,6 +457,8 @@ class AppConfig(BaseModel):
 
     # Sub-configs
     web: WebConfig
+    auth: AuthConfig = Field(default_factory=AuthConfig)
+    deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     kill_switch: KillSwitchConfig = Field(default_factory=KillSwitchConfig)
     risk_gate: RiskGateConfig = Field(default_factory=RiskGateConfig)
@@ -486,6 +513,32 @@ class AppConfig(BaseModel):
         if self.market_mode not in normalized:
             normalized.append(self.market_mode)
         self.enabled_market_modes = normalized
+        return self
+
+    @model_validator(mode="after")
+    def validate_public_mode_security(self):
+        if not self.deployment.public_mode:
+            return self
+        if not self.use_login:
+            raise ValueError("public_mode에서는 use_login=true가 필요합니다.")
+        if not self.auth.username:
+            raise ValueError("public_mode에서는 auth.username이 필요합니다.")
+        if not (
+            isinstance(self.auth.password_hash, str)
+            and self.auth.password_hash.startswith("pbkdf2_sha256$")
+        ):
+            raise ValueError("public_mode에서는 PBKDF2 auth.password_hash가 필요합니다.")
+        if not isinstance(self.auth.secret_key, str) or len(self.auth.secret_key) < 32:
+            raise ValueError("public_mode에서는 32자 이상의 auth.secret_key가 필요합니다.")
+        if not self.auth.secure_cookie:
+            raise ValueError("public_mode에서는 auth.secure_cookie=true가 필요합니다.")
+        if not self.deployment.allowed_hosts or any(
+            not host.strip() or host.strip() == "*"
+            for host in self.deployment.allowed_hosts
+        ):
+            raise ValueError(
+                "public_mode에서는 deployment.allowed_hosts에 명시적 호스트가 필요합니다."
+            )
         return self
 
     def __getitem__(self, item):

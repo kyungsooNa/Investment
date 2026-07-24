@@ -1,6 +1,7 @@
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
+from view.web.security import SESSION_COOKIE_NAME, issue_session
 
 # 페이지별 라우트와 예상되는 active_page 값 매핑
 PAGES = [
@@ -142,10 +143,12 @@ def test_balance_page_authenticates_before_account_lookup(web_client, mock_web_c
 def test_pages_render_success_with_login(web_client, mock_web_ctx):
     """로그인 기능 활성화 시 올바른 토큰으로 접근하면 페이지가 렌더링되는지 테스트"""
     # 로그인 활성화 설정
-    mock_web_ctx.full_config = {"use_login": True, "auth": {"secret_key": "secret_token"}}
-    
+    auth_config = {"secret_key": "secret_token", "session_max_age_seconds": 3600}
+    mock_web_ctx.full_config = {"use_login": True, "auth": auth_config}
+
     # 올바른 쿠키 설정
-    web_client.cookies.set("access_token", "secret_token")
+    token, _ = issue_session(auth_config, "test-operator")
+    web_client.cookies.set(SESSION_COOKIE_NAME, token)
     
     for path, _ in PAGES:
         response = web_client.get(path)

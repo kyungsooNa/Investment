@@ -9,6 +9,7 @@ from core.loggers.log_config import get_log_timestamp, LOG_MAX_BYTES, LOG_BACKUP
 from core.loggers.size_time_rotating_file_handler import SizeTimeRotatingFileHandler
 from core.loggers.strategy_info_filter import StrategyInfoFilter
 from core.loggers.async_handler import DictPreservingQueueHandler
+from core.loggers.sensitive_data_filter import SensitiveDataFilter
 
 class Logger:
     """
@@ -109,6 +110,7 @@ class Logger:
         
         log_queue = queue.Queue(-1)
         queue_handler = DictPreservingQueueHandler(log_queue)
+        queue_handler.addFilter(SensitiveDataFilter())
         logger.addHandler(queue_handler)
 
         listener = QueueListener(log_queue, file_handler, respect_handler_level=True)

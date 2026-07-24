@@ -51,6 +51,10 @@ async def test_place_order_invalid_side(web_client, mock_web_ctx):
 @pytest.mark.asyncio
 async def test_real_order_without_confirmation_is_blocked(web_client, mock_web_ctx):
     mock_web_ctx.env.is_paper_trading = False
+    mock_web_ctx.full_config["deployment"] = {
+        "public_mode": False,
+        "allow_live_trading": True,
+    }
 
     payload = {"code": "005930", "price": "70000", "qty": "10", "side": "buy"}
     response = web_client.post("/api/order", json=payload)
@@ -62,6 +66,10 @@ async def test_real_order_without_confirmation_is_blocked(web_client, mock_web_c
 @pytest.mark.asyncio
 async def test_real_order_with_confirmation_calls_service(web_client, mock_web_ctx):
     mock_web_ctx.env.is_paper_trading = False
+    mock_web_ctx.full_config["deployment"] = {
+        "public_mode": False,
+        "allow_live_trading": True,
+    }
     mock_web_ctx.order_execution_service.handle_buy_stock.return_value = ResCommonResponse(
         rt_cd="0", msg1="Order Placed", data={"ord_no": "12345"}
     )
@@ -77,6 +85,54 @@ async def test_real_order_with_confirmation_calls_service(web_client, mock_web_c
 
     assert response.status_code == 200
     mock_web_ctx.order_execution_service.handle_buy_stock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_real_order_requires_global_live_trading_gate(web_client, mock_web_ctx):
+    mock_web_ctx.env.is_paper_trading = False
+    mock_web_ctx.full_config["deployment"] = {
+        "public_mode": False,
+        "allow_live_trading": False,
+    }
+
+    response = web_client.post(
+        "/api/order",
+        json={
+            "code": "005930",
+            "price": "70000",
+            "qty": "10",
+            "side": "buy",
+            "real_order_confirmation": "REAL",
+        },
+    )
+
+    assert response.json()["rt_cd"] == ErrorCode.ORDER_POLICY_BLOCKED.value
+    assert response.json()["data"]["rule"] == "global_live_trading_disabled"
+    mock_web_ctx.order_execution_service.handle_buy_stock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_public_mode_blocks_real_order_even_when_gate_enabled(web_client, mock_web_ctx):
+    mock_web_ctx.env.is_paper_trading = False
+    mock_web_ctx.full_config["deployment"] = {
+        "public_mode": True,
+        "allow_live_trading": True,
+    }
+
+    response = web_client.post(
+        "/api/order",
+        json={
+            "code": "005930",
+            "price": "70000",
+            "qty": "10",
+            "side": "buy",
+            "real_order_confirmation": "REAL",
+        },
+    )
+
+    assert response.json()["rt_cd"] == ErrorCode.ORDER_POLICY_BLOCKED.value
+    assert response.json()["data"]["rule"] == "public_mode_live_trading_blocked"
+    mock_web_ctx.order_execution_service.handle_buy_stock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -217,6 +273,13 @@ async def test_place_overseas_real_order_requires_allow_live_trading(web_client,
     """실전 해외주문은 allow_live_trading=False이면 정책 차단 응답을 반환한다."""
     mock_web_ctx.market_mode = "overseas_us"
     mock_web_ctx.env.is_paper_trading = False
+    mock_web_ctx.full_config["deployment"] = {
+        "public_mode": False,
+        "allow_live_trading": True,
+    }
+    mock_web_ctx.full_config["overseas_stock"] = {
+        "allow_live_trading": False,
+    }
 
     payload = {
         "symbol": "AAPL",
@@ -269,6 +332,7 @@ async def test_place_overseas_real_order_requires_confirmation_when_live_allowed
     mock_web_ctx.env.is_paper_trading = False
     mock_web_ctx.full_config = SimpleNamespace(
         auth=SimpleNamespace(secret_key="secret"),
+        deployment=SimpleNamespace(public_mode=False, allow_live_trading=True),
         overseas_stock=SimpleNamespace(
             allow_live_trading=True,
             enabled_exchanges=["NASD", "NYSE", "AMEX"],
@@ -340,6 +404,13 @@ async def test_cancel_overseas_real_order_requires_allow_live_trading(web_client
     """실전 해외주문 취소도 allow_live_trading=False이면 정책 차단 응답을 반환한다."""
     mock_web_ctx.market_mode = "overseas_us"
     mock_web_ctx.env.is_paper_trading = False
+    mock_web_ctx.full_config["deployment"] = {
+        "public_mode": False,
+        "allow_live_trading": True,
+    }
+    mock_web_ctx.full_config["overseas_stock"] = {
+        "allow_live_trading": False,
+    }
 
     payload = {
         "symbol": "AAPL",

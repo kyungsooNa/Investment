@@ -28,6 +28,26 @@ async def test_get_balance(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_public_mode_masks_balance_json_without_mutating_service_response(web_client, mock_web_ctx):
+    source = {"tot_evlu_amt": "1000000", "ord_no": "0000123456"}
+    mock_web_ctx.full_config["deployment"] = {"public_mode": True}
+    mock_web_ctx.env.active_config = {"stock_account_number": "1234567890"}
+    mock_web_ctx.stock_query_service.handle_get_account_balance.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="Success",
+        data=source,
+    )
+
+    response = web_client.get("/api/balance")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["tot_evlu_amt"] is None
+    assert response.json()["data"]["ord_no"] == "******3456"
+    assert response.json()["account_info"]["number"] == "******7890"
+    assert source["tot_evlu_amt"] == "1000000"
+
+
+@pytest.mark.asyncio
 async def test_get_balance_fallback_env(web_client, mock_web_ctx):
     """GET /api/balance 환경 설정 폴백 테스트"""
     mock_web_ctx.stock_query_service.handle_get_account_balance.return_value = ResCommonResponse(

@@ -404,6 +404,12 @@ class WebAppContext:
 
     def start_background_tasks(self):
         """백그라운드 태스크 시작 — BackgroundScheduler에 위임."""
+        from view.web.deployment_policy import is_public_mode
+
+        if is_public_mode(self):
+            self.logger.info("공개 모드: 백그라운드 태스크 시작을 건너뜁니다.")
+            return
+
         # StreamingService에 콜백 등록 (내부 저장 → 재연결 시에도 자동 유지됨)
         if self.streaming_service:
             self.streaming_service._callback = self._web_realtime_callback

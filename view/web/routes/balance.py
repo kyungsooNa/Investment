@@ -5,6 +5,8 @@ from fastapi import APIRouter, Query, HTTPException
 from common.overseas_types import OverseasExchange
 from common.types import Exchange
 from view.web.api_common import _get_ctx, _serialize_response
+from view.web.data_masking import mask_sensitive_data
+from view.web.deployment_policy import is_public_mode
 from view.web.market_mode_utils import enabled_market_modes_of, is_market_enabled, market_mode_of
 
 router = APIRouter()
@@ -68,6 +70,8 @@ async def get_balance(exchange: str = Query("KRX")):
             "exchange": exchange_enum.value,
         }
 
+    if is_public_mode(ctx):
+        result = mask_sensitive_data(result)
     ctx.pm.log_timer("get_balance", t_start)
     return result
 
