@@ -19,6 +19,33 @@ paper_websocket_url: "ws://ops.koreainvestment.com:31000"
 # 실전/모의 선택 (true: 모의, false: 실전)
 is_paper_trading: true
 
+# 외부 공개 정책. 모든 값은 누락 시 fail-close 기본값을 사용합니다.
+deployment:
+  public_mode: false
+  demo_mode: false
+  allow_live_trading: false
+  # 공개 주소의 호스트명만 명시하세요. "*"는 public_mode에서 거부됩니다.
+  allowed_hosts:
+    - "127.0.0.1"
+    - "localhost"
+
+# 웹 서버와 단일 운영자 인증
+web:
+  host: "127.0.0.1"
+  port: 8000
+use_login: true
+auth:
+  username: "admin"
+  # python scripts/hash_web_password.py 실행 결과로 교체하세요.
+  password_hash: "pbkdf2_sha256$310000$REPLACE_WITH_GENERATED_SALT$REPLACE_WITH_GENERATED_HASH"
+  # 충분히 긴 무작위 세션 서명 키로 교체하고 저장소에 커밋하지 마세요.
+  secret_key: "REPLACE_WITH_RANDOM_SESSION_SIGNING_KEY"
+  session_max_age_seconds: 3600
+  login_max_failures: 5
+  login_lockout_seconds: 60
+  # HTTPS reverse proxy를 사용하는 외부 공개 환경에서는 반드시 true.
+  secure_cookie: false
+
 # 운영 profile (P0 0-7): 실전 모드에서 어떤 overlay 를 적용할지 결정.
 #   canary       : 총 노출 5%, 동시 보유 2종, 1주문 1M — 실계좌 소액 검증 단계 (docs/canary_procedure.md 기준)
 #   real_limited : 총 노출 30%, 동시 보유 5종 — canary 통과 후 별도 ack 거쳐 진입하는 중간 단계

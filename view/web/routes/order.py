@@ -6,6 +6,7 @@ from fastapi import Query
 from common.overseas_types import OverseasOrderRequest, OverseasCancelRequest
 from common.types import ErrorCode, ResCommonResponse
 from view.web.api_common import _get_ctx, _serialize_response, OrderRequest
+from view.web.deployment_policy import config_section, config_value, live_trading_block
 from view.web.market_mode_utils import is_market_enabled
 
 router = APIRouter()
@@ -16,14 +17,35 @@ def _is_real_trading_mode(ctx) -> bool:
     return not bool(getattr(env, "is_paper_trading", True))
 
 
+def _live_trading_block_response(ctx, *, overseas: bool = False):
+    blocked = live_trading_block(
+        ctx,
+        require_legacy_overseas_gate=overseas,
+    )
+    if blocked is None:
+        return None
+    rule, message = blocked
+    return _serialize_response(
+        ResCommonResponse(
+            rt_cd=ErrorCode.ORDER_POLICY_BLOCKED.value,
+            msg1=message,
+            data={"rule": rule},
+        )
+    )
+
+
 @router.post("/order")
 async def place_order(req: OrderRequest):
     """매수/매도 주문. 가상 매매 기록은 실제 체결 확인 후 OrderExecutionService가 처리한다."""
     ctx = _get_ctx()
     t_start = ctx.pm.start_timer()
 
-    if _is_real_trading_mode(ctx) and req.real_order_confirmation != "REAL":
-        raise HTTPException(status_code=400, detail="실전 주문 확인 문자열이 필요합니다.")
+    if _is_real_trading_mode(ctx):
+        blocked_response = _live_trading_block_response(ctx)
+        if blocked_response is not None:
+            return blocked_response
+        if req.real_order_confirmation != "REAL":
+            raise HTTPException(status_code=400, detail="실전 주문 확인 문자열이 필요합니다.")
 
     # 1. 실제/모의 투자 주문 전송
     if req.side == "buy":
@@ -56,21 +78,16 @@ async def place_overseas_order(req: OverseasOrderRequest):
     if not is_market_enabled(ctx, "overseas_us"):
         raise HTTPException(status_code=400, detail="해외주식 주문은 overseas_us가 enabled된 run에서만 사용할 수 있습니다.")
 
-    cfg = getattr(getattr(ctx, "full_config", None), "overseas_stock", None)
-    enabled_exchanges = set(getattr(cfg, "enabled_exchanges", ["NASD", "NYSE", "AMEX"]))
+    cfg = config_section(ctx, "overseas_stock")
+    enabled_exchanges = set(config_value(cfg, "enabled_exchanges", ["NASD", "NYSE", "AMEX"]))
     if req.exchange.value not in enabled_exchanges:
         raise HTTPException(status_code=400, detail="활성화되지 않은 해외 거래소입니다.")
     if req.currency != "USD":
         raise HTTPException(status_code=400, detail="v1은 USD 주문만 지원합니다.")
     if _is_real_trading_mode(ctx):
-        if not bool(getattr(cfg, "allow_live_trading", False)):
-            return _serialize_response(
-                ResCommonResponse(
-                    rt_cd=ErrorCode.ORDER_POLICY_BLOCKED.value,
-                    msg1="실전 해외주식 주문은 overseas_stock.allow_live_trading=true 설정 전까지 차단됩니다.",
-                    data={"rule": "overseas_live_trading_disabled"},
-                )
-            )
+        blocked_response = _live_trading_block_response(ctx, overseas=True)
+        if blocked_response is not None:
+            return blocked_response
         if req.real_order_confirmation != "REAL":
             raise HTTPException(status_code=400, detail="실전 주문 확인 문자열이 필요합니다.")
 
@@ -91,19 +108,14 @@ async def cancel_overseas_order(req: OverseasCancelRequest):
     if not is_market_enabled(ctx, "overseas_us"):
         raise HTTPException(status_code=400, detail="해외주식 주문 취소는 overseas_us가 enabled된 run에서만 사용할 수 있습니다.")
 
-    cfg = getattr(getattr(ctx, "full_config", None), "overseas_stock", None)
-    enabled_exchanges = set(getattr(cfg, "enabled_exchanges", ["NASD", "NYSE", "AMEX"]))
+    cfg = config_section(ctx, "overseas_stock")
+    enabled_exchanges = set(config_value(cfg, "enabled_exchanges", ["NASD", "NYSE", "AMEX"]))
     if req.exchange.value not in enabled_exchanges:
         raise HTTPException(status_code=400, detail="활성화되지 않은 해외 거래소입니다.")
     if _is_real_trading_mode(ctx):
-        if not bool(getattr(cfg, "allow_live_trading", False)):
-            return _serialize_response(
-                ResCommonResponse(
-                    rt_cd=ErrorCode.ORDER_POLICY_BLOCKED.value,
-                    msg1="실전 해외주식 주문 취소는 overseas_stock.allow_live_trading=true 설정 전까지 차단됩니다.",
-                    data={"rule": "overseas_live_trading_disabled"},
-                )
-            )
+        blocked_response = _live_trading_block_response(ctx, overseas=True)
+        if blocked_response is not None:
+            return blocked_response
         if req.real_order_confirmation != "REAL":
             raise HTTPException(status_code=400, detail="실전 주문 확인 문자열이 필요합니다.")
 

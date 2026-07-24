@@ -417,6 +417,55 @@ def test_app_config_default_operating_profile_is_canary():
     assert cfg.operating_profile == "canary"
 
 
+def test_public_deployment_defaults_fail_closed():
+    cfg = _minimal_app_config()
+
+    assert cfg.deployment.public_mode is False
+    assert cfg.deployment.demo_mode is False
+    assert cfg.deployment.allow_live_trading is False
+
+
+def test_auth_security_defaults_are_bounded():
+    cfg = _minimal_app_config()
+
+    assert cfg.auth.session_max_age_seconds == 3600
+    assert cfg.auth.login_max_failures == 5
+    assert cfg.auth.login_lockout_seconds == 60
+
+
+def test_public_mode_rejects_incomplete_auth_security():
+    with pytest.raises(ValidationError):
+        _minimal_app_config(deployment={"public_mode": True})
+
+
+def test_public_mode_accepts_hardened_auth_config():
+    cfg = _minimal_app_config(
+        use_login=True,
+        deployment={"public_mode": True},
+        auth={
+            "username": "operator",
+            "password_hash": "pbkdf2_sha256$310000$c2FsdA$ZGlnZXN0",
+            "secret_key": "x" * 32,
+            "secure_cookie": True,
+        },
+    )
+
+    assert cfg.deployment.public_mode is True
+
+
+def test_public_mode_rejects_wildcard_allowed_host():
+    with pytest.raises(ValidationError):
+        _minimal_app_config(
+            deployment={"public_mode": True, "allowed_hosts": ["*"]},
+            auth={
+                "username": "operator",
+                "password_hash": "pbkdf2_sha256$310000$c2FsdA$ZGlnZXN0",
+                "secret_key": "x" * 32,
+                "secure_cookie": True,
+            },
+        )
+
+
 def test_app_config_accepts_real_limited_profile():
     cfg = _minimal_app_config(operating_profile="real_limited")
     assert cfg.operating_profile == "real_limited"

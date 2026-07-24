@@ -228,7 +228,7 @@ def get_operations_status():
         except Exception:
             api_budget = None
 
-    return {
+    result = {
         "success": True,
         "data": {
             "active_strategy_count": active_strategy_count,
@@ -244,6 +244,10 @@ def get_operations_status():
             "api_budget": api_budget,
         },
     }
+    from view.web.data_masking import mask_sensitive_data
+    from view.web.deployment_policy import is_public_mode
+
+    return mask_sensitive_data(result) if is_public_mode(ctx) else result
 
 
 def _to_float(value, default: float = 0.0) -> float:

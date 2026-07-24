@@ -439,7 +439,16 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from view.web.routes import router as api_router
 import view.web.api_common as api_common
+from view.web.security import reset_security_state
+from tests.web_auth_helpers import authenticated_client_options
 from common.types import ResCommonResponse
+
+
+@pytest.fixture(autouse=True)
+def reset_integration_web_security():
+    reset_security_state()
+    yield
+    reset_security_state()
 
 
 def _build_mock_web_ctx(is_paper: bool = True):
@@ -449,7 +458,18 @@ def _build_mock_web_ctx(is_paper: bool = True):
     """
     mock_ctx = MagicMock()
     mock_ctx.initialized = True
-    mock_ctx.full_config = {"use_login": False, "auth": {"secret_key": "test-token"}}
+    mock_ctx.full_config = {
+        "use_login": False,
+        "auth": {
+            "username": "test-operator",
+            "secret_key": "test-token",
+            "session_max_age_seconds": 3600,
+        },
+        "deployment": {
+            "public_mode": False,
+            "allow_live_trading": True,
+        },
+    }
 
     # env 설정
     mock_ctx.env.is_paper_trading = is_paper
@@ -508,7 +528,7 @@ def mock_real_ctx():
 def paper_client(web_app, mock_paper_ctx):
     """모의투자 모드 TestClient. 테스트 전후 api_common._ctx를 정리."""
     api_common.set_ctx(mock_paper_ctx)
-    with TestClient(web_app, cookies={"access_token": "test-token"}) as client:
+    with TestClient(web_app, **authenticated_client_options(mock_paper_ctx)) as client:
         yield client
     api_common.set_ctx(None)
 
@@ -517,7 +537,7 @@ def paper_client(web_app, mock_paper_ctx):
 def real_client(web_app, mock_real_ctx):
     """실전투자 모드 TestClient."""
     api_common.set_ctx(mock_real_ctx)
-    with TestClient(web_app, cookies={"access_token": "test-token"}) as client:
+    with TestClient(web_app, **authenticated_client_options(mock_real_ctx)) as client:
         yield client
     api_common.set_ctx(None)
 
@@ -691,7 +711,7 @@ async def deep_paper_ctx(test_logger, web_app, mocker, tmp_path):
             async with AsyncClient(
                 transport=transport,
                 base_url="http://testserver",
-                cookies={"access_token": "test-token"},
+                **authenticated_client_options(web_ctx),
             ) as client:
                 web_ctx._test_client = client
                 yield web_ctx

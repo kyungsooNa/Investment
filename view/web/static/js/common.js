@@ -1,5 +1,35 @@
 /* view/web/static/js/common.js — 공통 유틸리티, 상태 갱신, 환경 전환 */
 
+const nativeFetch = window.fetch.bind(window);
+const csrfProtectedMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function readCookie(name) {
+    const prefix = `${encodeURIComponent(name)}=`;
+    const item = document.cookie.split('; ').find(part => part.startsWith(prefix));
+    return item ? decodeURIComponent(item.slice(prefix.length)) : null;
+}
+
+window.fetch = function csrfFetch(input, options = {}) {
+    const isRequest = typeof Request !== 'undefined' && input instanceof Request;
+    const requestMethod = isRequest ? input.method : 'GET';
+    const method = String(options.method || requestMethod).toUpperCase();
+    const requestUrl = isRequest ? input.url : String(input);
+    const isSameOrigin = new URL(requestUrl, window.location.href).origin === window.location.origin;
+
+    if (isSameOrigin && csrfProtectedMethods.has(method)) {
+        const csrfToken = readCookie('csrf_token');
+        if (csrfToken) {
+            const sourceHeaders = options.headers || (isRequest ? input.headers : undefined);
+            const headers = new Headers(sourceHeaders);
+            if (!headers.has('X-CSRF-Token')) {
+                headers.set('X-CSRF-Token', csrfToken);
+            }
+            options = { ...options, headers };
+        }
+    }
+    return nativeFetch(input, options);
+};
+
 // ==========================================
 // 유틸리티 함수
 // ==========================================

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from view.web.routes import router as api_router
 from view.web import api_common
+from tests.web_auth_helpers import authenticated_client_options
 
 
 def _make_ks_service(is_tripped: bool = False):
@@ -40,7 +41,14 @@ _SECRET = "test-token"
 def _make_ctx(ks_service):
     mock_ctx = MagicMock()
     mock_ctx.initialized = True
-    mock_ctx.full_config = {"use_login": False, "auth": {"secret_key": _SECRET}}
+    mock_ctx.full_config = {
+        "use_login": False,
+        "auth": {
+            "username": "test-operator",
+            "secret_key": _SECRET,
+            "session_max_age_seconds": 3600,
+        },
+    }
     mock_ctx.env.active_config = {"auth": {"secret_key": _SECRET}}
     mock_ctx.kill_switch_service = ks_service
     return mock_ctx
@@ -57,8 +65,9 @@ def web_app():
 def ks_client(web_app):
     """Kill Switch 서비스가 정상 상태인 테스트 클라이언트."""
     ks_svc = _make_ks_service(is_tripped=False)
-    api_common.set_ctx(_make_ctx(ks_svc))
-    with TestClient(web_app, cookies={"access_token": _SECRET}) as client:
+    ctx = _make_ctx(ks_svc)
+    api_common.set_ctx(ctx)
+    with TestClient(web_app, **authenticated_client_options(ctx)) as client:
         yield client, ks_svc
     api_common.set_ctx(None)
 
@@ -67,8 +76,9 @@ def ks_client(web_app):
 def ks_tripped_client(web_app):
     """Kill Switch가 트립된 상태의 테스트 클라이언트."""
     ks_svc = _make_ks_service(is_tripped=True)
-    api_common.set_ctx(_make_ctx(ks_svc))
-    with TestClient(web_app, cookies={"access_token": _SECRET}) as client:
+    ctx = _make_ctx(ks_svc)
+    api_common.set_ctx(ctx)
+    with TestClient(web_app, **authenticated_client_options(ctx)) as client:
         yield client, ks_svc
     api_common.set_ctx(None)
 
@@ -76,8 +86,9 @@ def ks_tripped_client(web_app):
 @pytest.fixture
 def no_ks_client(web_app):
     """Kill Switch 서비스가 None인 테스트 클라이언트 (503 검증용)."""
-    api_common.set_ctx(_make_ctx(ks_service=None))
-    with TestClient(web_app, cookies={"access_token": _SECRET}) as client:
+    ctx = _make_ctx(ks_service=None)
+    api_common.set_ctx(ctx)
+    with TestClient(web_app, **authenticated_client_options(ctx)) as client:
         yield client
     api_common.set_ctx(None)
 

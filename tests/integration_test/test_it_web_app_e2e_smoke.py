@@ -17,6 +17,8 @@ from common.types import Exchange, ResCommonResponse
 import view.web.api_common as api_common
 from view.web.routes import stock as stock_routes
 import view.web.web_main as web_main
+from tests.web_auth_helpers import authenticated_client_options
+from view.web.security import hash_password
 
 
 class _ForegroundContext(AbstractAsyncContextManager):
@@ -57,7 +59,18 @@ def clear_web_state():
 @pytest.fixture
 def fake_web_ctx():
     ctx = MagicMock()
-    ctx.full_config = {"use_login": False, "auth": {"secret_key": "test-token"}}
+    ctx.full_config = {
+        "use_login": False,
+        "auth": {
+            "username": "test-operator",
+            "secret_key": "test-token",
+            "session_max_age_seconds": 3600,
+        },
+        "deployment": {
+            "public_mode": False,
+            "allow_live_trading": True,
+        },
+    }
     ctx.initialized = True
     ctx.env = SimpleNamespace(
         is_paper_trading=True,
@@ -140,7 +153,7 @@ def fake_web_ctx():
 @pytest.fixture
 def client_with_fake_lifespan(fake_web_ctx, mocker):
     mocker.patch.object(web_main, "WebAppContext", return_value=fake_web_ctx)
-    with TestClient(web_main.app, cookies={"access_token": "test-token"}) as client:
+    with TestClient(web_main.app, **authenticated_client_options(fake_web_ctx)) as client:
         yield client
 
 
@@ -248,8 +261,9 @@ def test_real_app_login_gate_and_auth_cookie_allow_page(client_with_fake_lifespa
         "use_login": True,
         "auth": {
             "username": "tester",
-            "password": "secret",
+            "password_hash": hash_password("secret", iterations=1_000),
             "secret_key": "test-token",
+            "session_max_age_seconds": 3600,
         },
     }
 
@@ -271,7 +285,9 @@ def test_real_app_login_gate_and_auth_cookie_allow_page(client_with_fake_lifespa
     )
     assert login.status_code == 200
     assert login.json() == {"success": True}
-    assert "access_token=test-token" in login.headers["set-cookie"]
+    assert "access_token=" in login.headers["set-cookie"]
+    assert "access_token=test-token" not in login.headers["set-cookie"]
+    assert "csrf_token=" in login.headers["set-cookie"]
 
     allowed = client_with_fake_lifespan.get("/order")
     assert allowed.status_code == 200

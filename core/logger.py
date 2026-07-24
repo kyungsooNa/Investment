@@ -19,6 +19,7 @@ from core.loggers.cache_event_logger import CacheEventLogger
 from core.loggers.strategy_info_filter import StrategyInfoFilter
 from core.loggers.app_logger import Logger
 from core.loggers.async_handler import DictPreservingQueueHandler
+from core.loggers.sensitive_data_filter import SensitiveDataFilter
 
 _active_listeners = []
 
@@ -55,6 +56,7 @@ def setup_async_logger(logger: logging.Logger, file_handler: logging.Handler):
     """파일 I/O를 백그라운드 스레드로 위임하는 비동기 큐 세팅"""
     log_queue = queue.Queue(-1)
     queue_handler = DictPreservingQueueHandler(log_queue)
+    queue_handler.addFilter(SensitiveDataFilter())
     logger.addHandler(queue_handler)
 
     listener = QueueListener(log_queue, file_handler, respect_handler_level=True)

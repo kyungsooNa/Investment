@@ -30,13 +30,13 @@
 ## 구현 현황
 
 - Phase 0: 구현 및 단위·통합 테스트 완료
-- Phase 1: 미구현
+- Phase 1: 구현 및 전체 단위·통합 테스트 완료
 - Phase 2: 미구현
 - Phase 3: 미구현
 
 Phase 0에서는 API·SSE·WebSocket 공통 인증, 인증 fail-open 제거, 인증 전 `/balance` 조회 차단, Kill Switch 감사 주체에서 토큰 원문 제거, API 라우트 중복 제거와 구조 검사를 적용했다.
 
-현재 인증 쿠키는 Phase 0의 임시 정적 토큰 방식이다. 서명·만료 세션, CSRF, 비밀번호 해시, 로그인 실패 제한이 구현되기 전에는 외부 공개 MVP가 완료된 것으로 판단하지 않는다.
+Phase 1에서는 임시 정적 토큰을 서명·만료 세션으로 교체하고 CSRF, 비밀번호 해시, 로그인 실패 제한, 공개 모드, 실전 주문 master gate, 응답·로그 마스킹, 위험 작업 차단과 trusted host 검증을 구현했다. 전체 단위·통합 테스트까지 통과했으므로 공개 안전 MVP 구현을 완료한 것으로 판단한다.
 
 ## 단계별 구현 범위
 
@@ -124,6 +124,8 @@ deployment:
   public_mode: false
   demo_mode: false
   allow_live_trading: false
+  allowed_hosts:
+    - "trade.example.com"
 ```
 
 `deployment.allow_live_trading`을 국내·해외 실전 주문의 **단일 전역 master gate**로 사용한다. 기존 `overseas_stock.allow_live_trading`은 설정 이원화를 막기 위해 폐기한다.
@@ -136,6 +138,7 @@ deployment:
 - 자동매매 백그라운드 태스크 비활성화
 - 서버 종료·재시작과 강제 배치 실행 비활성화
 - 계좌, 잔고, 주문 정보 마스킹
+- `deployment.allowed_hosts`에 없는 Host 요청 거부
 
 대상 파일:
 

@@ -27,3 +27,12 @@ def test_pjax_updates_market_navigation_and_view_context():
     assert "data-view-market" in source
     assert "newMarketNav" in source
     assert "newFeatureNav" in source
+
+
+def test_common_fetch_adds_csrf_header_to_same_origin_state_changes():
+    source = (JS_ROOT / "common.js").read_text(encoding="utf-8")
+
+    assert "csrf_token" in source
+    assert "X-CSRF-Token" in source
+    assert "POST" in source
+    assert "window.fetch" in source

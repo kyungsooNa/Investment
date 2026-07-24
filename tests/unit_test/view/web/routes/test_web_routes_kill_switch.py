@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock
 async def test_reset_strategy_kill_switch_success(web_client, mock_web_ctx):
     """단일 전략 Kill Switch 해제 — 200 + reset_strategy 위임."""
     mock_web_ctx.kill_switch_service.reset_strategy = AsyncMock()
-    web_client.cookies.set("access_token", "secret")
 
     resp = web_client.post("/api/kill-switch/reset-strategy/momentum")
 
@@ -25,7 +24,6 @@ async def test_reset_strategy_kill_switch_success(web_client, mock_web_ctx):
 async def test_reset_strategy_kill_switch_service_unavailable(web_client, mock_web_ctx):
     """Kill Switch 서비스 미초기화 시 503."""
     mock_web_ctx.kill_switch_service = None
-    web_client.cookies.set("access_token", "secret")
 
     resp = web_client.post("/api/kill-switch/reset-strategy/momentum")
 

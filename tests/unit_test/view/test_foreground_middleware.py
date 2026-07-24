@@ -8,6 +8,7 @@ from httpx import AsyncClient, ASGITransport
 
 # 미들웨어에서 사용하는 경로 판별 함수를 직접 테스트
 from view.web.web_main import _needs_foreground
+from view.web.security import SESSION_COOKIE_NAME, issue_session
 
 
 # --- _needs_foreground 경로 판별 테스트 ---
@@ -84,7 +85,12 @@ class _FakeContextManager:
 def _make_mock_ctx(with_fg=True):
     """ForegroundScheduler가 포함된 mock WebAppContext 생성."""
     ctx = MagicMock()
-    ctx.full_config = {"auth": {"secret_key": "test-token"}}
+    ctx.full_config = {
+        "auth": {
+            "secret_key": "test-token",
+            "session_max_age_seconds": 3600,
+        }
+    }
 
     if with_fg:
         ctx.foreground_scheduler = MagicMock()
@@ -115,6 +121,12 @@ def _make_mock_ctx(with_fg=True):
     return ctx
 
 
+def _auth_cookies(ctx):
+    auth_config = ctx.full_config["auth"]
+    token, _ = issue_session(auth_config, "test-operator")
+    return {SESSION_COOKIE_NAME: token}
+
+
 @pytest.mark.asyncio
 async def test_middleware_calls_foreground_on_api_route():
     """Broker API 경로 요청 시 fg.context()가 호출된다."""
@@ -126,7 +138,7 @@ async def test_middleware_calls_foreground_on_api_route():
         async with AsyncClient(
             transport=transport,
             base_url="http://test",
-            cookies={"access_token": "test-token"},
+            cookies=_auth_cookies(mock_ctx),
         ) as client:
             resp = await client.get("/api/balance")
 
@@ -145,7 +157,7 @@ async def test_middleware_skips_foreground_on_excluded_route():
         async with AsyncClient(
             transport=transport,
             base_url="http://test",
-            cookies={"access_token": "test-token"},
+            cookies=_auth_cookies(mock_ctx),
         ) as client:
             resp = await client.get("/api/ranking/progress")
 
@@ -164,7 +176,7 @@ async def test_middleware_graceful_without_foreground_scheduler():
         async with AsyncClient(
             transport=transport,
             base_url="http://test",
-            cookies={"access_token": "test-token"},
+            cookies=_auth_cookies(mock_ctx),
         ) as client:
             resp = await client.get("/api/balance")
             assert resp.status_code == 200

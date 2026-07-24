@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from view.web.web_app_initializer import WebAppContext
 import view.web.web_api as web_api
 import view.web.api_common as api_common
+from view.web.deployment_policy import is_host_allowed
 
 # ── 진단 전용 HTTP 서버 (포트 8001, 별도 OS 스레드) ──────────────────────
 # asyncio 이벤트 루프가 완전히 블록되어도 응답 가능.
@@ -195,6 +196,13 @@ async def request_tracker_middleware(request: Request, call_next):
             del rec[0]
 
 
+async def public_host_middleware(request: Request, call_next):
+    ctx = api_common._ctx
+    if ctx is not None and not is_host_allowed(ctx, request.headers.get("host", "")):
+        return JSONResponse(status_code=400, content={"detail": "Invalid host"})
+    return await call_next(request)
+
+
 # --- Foreground 우선순위 미들웨어 ---
 # Broker API를 호출하는 라우트만 foreground로 래핑하여
 # 백그라운드 태스크(RankingTask, WebSocketWatchdog 등)와의 API rate limit 경합을 방지한다.
@@ -257,6 +265,8 @@ async def api_auth_middleware(request: Request, call_next):
     if path.startswith("/api/") and path not in _AUTH_EXEMPT_API_PATHS:
         try:
             api_common.check_auth(request)
+            api_common.check_csrf_for_unsafe_request(request)
+            api_common.check_public_operation_allowed(request)
         except HTTPException as exc:
             return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     return await call_next(request)
@@ -266,6 +276,7 @@ async def api_auth_middleware(request: Request, call_next):
 app.middleware("http")(foreground_priority_middleware)
 app.middleware("http")(api_auth_middleware)
 app.middleware("http")(request_tracker_middleware)
+app.middleware("http")(public_host_middleware)
 
 
 # 2. 정적 파일 및 템플릿 설정
@@ -339,6 +350,10 @@ async def balance(request: Request):
                 "type": "모의투자" if getattr(env, 'is_paper_trading', False) else "실전투자",
                 "exchange": "KRX",
             }
+        from view.web.data_masking import mask_sensitive_data
+        from view.web.deployment_policy import is_public_mode
+        if is_public_mode(ctx):
+            result = mask_sensitive_data(result)
         initial_data = result
     except Exception:
         pass
@@ -397,10 +412,16 @@ async def strategy_reports(request: Request):
 
 # 5. 로그아웃
 @page_router.get("/logout")
-async def logout():
+async def logout(request: Request):
     from fastapi.responses import RedirectResponse
+    from view.web import security
+
+    claims = api_common.get_session_claims(request)
+    if claims is not None:
+        security.revoke_session(claims.session_id)
     response = RedirectResponse(url="/")
-    response.delete_cookie("access_token")
+    response.delete_cookie(security.SESSION_COOKIE_NAME, path="/")
+    response.delete_cookie(security.CSRF_COOKIE_NAME, path="/")
     return response
 
 app.include_router(page_router)

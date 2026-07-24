@@ -246,6 +246,24 @@ def test_get_operations_status_pnl_breakdown(web_client, mock_web_ctx):
     assert pnl["day"]["baseline_date"] == "2026-04-29"
 
 
+def test_public_mode_masks_operations_financial_values(web_client, mock_web_ctx):
+    mock_web_ctx.full_config["deployment"] = {"public_mode": True}
+    mock_web_ctx.account_snapshot_cache = MagicMock()
+    mock_web_ctx.account_snapshot_cache._snapshot = AccountSnapshot(
+        total_equity=10_000_000,
+        available_cash=3_000_000,
+        positions={"005930": 4_000_000},
+        fetched_at=datetime(2026, 4, 30, 15, 30),
+    )
+
+    response = web_client.get("/api/system/operations/status")
+
+    evaluation = response.json()["data"]["pnl"]["evaluation"]
+    assert evaluation["broker_total_equity"] is None
+    assert evaluation["available_cash"] is None
+    assert evaluation["position_eval_amount"] is None
+
+
 def test_get_operations_status_includes_after_market_reconcile(web_client, mock_web_ctx):
     task = MagicMock()
     task.get_progress.return_value = {
@@ -315,6 +333,19 @@ def test_shutdown_server_schedules_termination(web_client, mock_web_ctx, monkeyp
     body = response.json()
     assert body["success"] is True
     assert called.get("hit") is True
+
+
+def test_public_mode_blocks_shutdown(web_client, mock_web_ctx, monkeypatch):
+    from view.web.routes import system
+
+    mock_web_ctx.full_config["deployment"] = {"public_mode": True}
+    called = {}
+    monkeypatch.setattr(system, "_schedule_shutdown", lambda *a, **k: called.setdefault("hit", True))
+
+    response = web_client.post("/api/system/shutdown")
+
+    assert response.status_code == 403
+    assert called == {}
 
 
 def test_terminate_process_falls_back_to_os_exit(monkeypatch):
@@ -871,6 +902,19 @@ async def test_force_ranking_update_success(web_client, mock_web_ctx):
     # 백그라운드 Task가 실행될 수 있도록 제어권 양보
     await asyncio.sleep(0)
     mock_task.force_run.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_public_mode_blocks_force_update(web_client, mock_web_ctx):
+    mock_web_ctx.full_config["deployment"] = {"public_mode": True}
+    mock_web_ctx.ranking_task = MagicMock()
+    mock_web_ctx.ranking_task.force_run = AsyncMock()
+
+    response = web_client.post("/api/background/ranking/force-update")
+
+    assert response.status_code == 403
+    mock_web_ctx.ranking_task.force_run.assert_not_awaited()
+
 
 @pytest.mark.asyncio
 async def test_force_ranking_update_running(web_client, mock_web_ctx):

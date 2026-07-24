@@ -364,6 +364,22 @@ def test_start_background_tasks_does_not_duplicate_price_subscription_init(mock_
     mock_create_task.assert_not_called()
 
 
+def test_public_mode_does_not_start_background_tasks(mock_deps):
+    ctx = WebAppContext(None)
+    ctx.full_config = {"deployment": {"public_mode": True}}
+    ctx.background_scheduler = MagicMock()
+    ctx.background_scheduler.start_all = AsyncMock()
+    ctx.streaming_service = MagicMock()
+    ctx.price_subscription_service = MagicMock()
+
+    with patch("view.web.web_app_initializer.asyncio.create_task") as mock_create_task:
+        ctx.start_background_tasks()
+
+    mock_create_task.assert_not_called()
+    ctx.background_scheduler.start_all.assert_not_awaited()
+    assert ctx.streaming_service._callback != ctx._web_realtime_callback
+
+
 def test_web_realtime_callback(mock_deps):
     """웹소켓 콜백 처리 테스트"""
     ctx = WebAppContext(None)
