@@ -44,7 +44,8 @@ async def test_virtual_endpoints(web_client, mock_web_ctx):
 
     # History
     mock_web_ctx.virtual_trade_service.get_all_trades.return_value = [
-        mock_trade(code="005930", strategy="StratA", buy_price=1000, qty=1000, status="HOLD", buy_date="2025-01-01")
+        mock_trade(code="005930", strategy="StratA", buy_price=1000, qty=1000, status="HOLD", buy_date="2025-01-01"),
+        mock_trade(code="000660", strategy="StratA", buy_price=1000, qty=1, status="SOLD", sell_price=0, buy_date="2025-01-02"),
     ]
 
     mock_web_ctx.virtual_trade_service.get_daily_change.return_value = (0.0, None)
@@ -54,17 +55,31 @@ async def test_virtual_endpoints(web_client, mock_web_ctx):
 
     mock_web_ctx.stock_code_repository = MagicMock()
     mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "삼성전자"
+    web_api._PRICE_CACHE["005930"] = (50000, 5.0, time.time())
 
     async def mock_multi_price(codes):
         return ResCommonResponse(rt_cd="0", msg1="OK", data=[
-            {"stck_shrn_iscd": "005930", "stck_prpr": "1100", "prdy_ctrt": "10.0"}
+            {"stck_shrn_iscd": "000660", "stck_prpr": "1100", "prdy_ctrt": "10.0"}
         ])
     mock_web_ctx.stock_query_service.get_multi_price = mock_multi_price
 
     response = web_client.get("/api/virtual/history")
     assert response.status_code == 200
+    trades = response.json()["trades"]
+    # 005930: 캐시된 값 확인
+    hold_trade = next(t for t in trades if t["code"] == "005930")
+    assert hold_trade["current_price"] == 50000
+    assert hold_trade["is_cached"] is False
+
+    # 000660: SOLD 가격 보정 확인 (0 -> 1100)
+    sold_trade = next(t for t in trades if t["code"] == "000660")
+    assert sold_trade["sell_price"] == 1100
+    mock_web_ctx.virtual_trade_service.fix_sell_price.assert_called()
+
+    # Cleanup
+    web_api._PRICE_CACHE.clear()
     assert "trades" in response.json()
-    assert len(response.json()["trades"]) == 1
+    assert len(response.json()["trades"]) == 2
     assert response.json()["trades"][0]["stock_name"] == "삼성전자"
     mock_web_ctx.virtual_trade_service.get_all_trades.assert_called_with(apply_cost=True)
     assert mock_web_ctx.virtual_trade_service.sync_live_strategy_positions.call_count >= 3
@@ -291,20 +306,6 @@ async def test_get_virtual_history_complex(web_client, mock_web_ctx):
 
     response = web_client.get("/api/virtual/history")
     assert response.status_code == 200
-
-    trades = response.json()["trades"]
-    # 005930: 캐시된 값 확인
-    hold_trade = next(t for t in trades if t["code"] == "005930")
-    assert hold_trade["current_price"] == 50000
-    assert hold_trade["is_cached"] is False
-
-    # 000660: SOLD 가격 보정 확인 (0 -> 1100)
-    sold_trade = next(t for t in trades if t["code"] == "000660")
-    assert sold_trade["sell_price"] == 1100
-    mock_web_ctx.virtual_trade_service.fix_sell_price.assert_called()
-
-    # Cleanup
-    web_api._PRICE_CACHE.clear()
 
 
 @pytest.mark.asyncio
