@@ -15,6 +15,7 @@ from view.web.security import (
 
 
 def _authenticate_as(web_client, mock_web_ctx, username, role):
+    mock_web_ctx.full_config["use_login"] = True  # 역할 검사는 로그인이 켜진 환경에서만 적용된다
     auth_config = mock_web_ctx.full_config["auth"]
     users = auth_config.setdefault("users", [])
     if not any(user["username"] == username for user in users):
@@ -260,6 +261,7 @@ def test_sensitive_api_rejects_request_without_cookie(web_client, mock_web_ctx):
 
 
 def test_state_changing_api_rejects_missing_csrf(web_client, mock_web_ctx):
+    mock_web_ctx.full_config["use_login"] = True
     web_client.cookies.pop(CSRF_COOKIE_NAME)
     web_client.headers.pop("X-CSRF-Token")
 
@@ -270,6 +272,29 @@ def test_state_changing_api_rejects_missing_csrf(web_client, mock_web_ctx):
 
     assert response.status_code == 403
     mock_web_ctx.order_execution_service.handle_buy_stock.assert_not_awaited()
+
+
+def test_api_allows_local_admin_when_login_disabled(test_app, mock_web_ctx):
+    """use_login=false면 세션 없이도 API가 로컬 관리자 신원으로 동작한다."""
+    from fastapi.testclient import TestClient
+
+    mock_web_ctx.full_config["use_login"] = False
+    client = TestClient(test_app)
+
+    response = client.get("/api/auth/me")
+
+    assert response.status_code == 200
+    assert response.json() == {"username": "local", "role": "admin"}
+
+
+def test_api_requires_session_when_login_enabled(test_app, mock_web_ctx):
+    """use_login=true면 세션 없는 API 요청은 계속 401로 차단된다."""
+    from fastapi.testclient import TestClient
+
+    mock_web_ctx.full_config["use_login"] = True
+    client = TestClient(test_app)
+
+    assert client.get("/api/auth/me").status_code == 401
 
 
 def test_serialize_helpers():

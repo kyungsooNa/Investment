@@ -155,3 +155,21 @@ async def test_get_favorite_list_subscription_exception(web_client, mock_web_ctx
         
         mock_web_ctx.logger.warning.assert_called_once()
         assert "Subscription Error" in mock_web_ctx.logger.warning.call_args[0][0]
+
+
+async def test_favorite_api_allows_unauthenticated_when_login_disabled(test_app, mock_web_ctx):
+    """use_login=false(로컬 실행)면 세션 쿠키 없이도 관심종목 API를 사용할 수 있다."""
+    from fastapi.testclient import TestClient
+
+    mock_web_ctx.full_config["use_login"] = False
+    mock_web_ctx.favorite_service = MagicMock()
+    mock_web_ctx.favorite_service.get_with_details = AsyncMock(return_value=[])
+    mock_web_ctx.favorite_service.add = AsyncMock(return_value=True)
+    mock_web_ctx.price_subscription_service = None
+
+    client = TestClient(test_app)  # 세션 쿠키·CSRF 토큰 없음
+
+    with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
+        assert client.get("/api/favorite").status_code == 200
+        # CSRF 토큰이 없어도 상태 변경 요청이 통과해야 한다
+        assert client.post("/api/favorite/005930").status_code == 200

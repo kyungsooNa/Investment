@@ -27,12 +27,25 @@ function readCookie(name) {
     return item ? decodeURIComponent(item.slice(prefix.length)) : null;
 }
 
+let _sessionExpiredHandled = false;
+
+function handleUnauthorizedApiResponse(response) {
+    // 세션 만료 시 각 페이지가 'HTTP 401'만 노출하는 대신 재로그인을 안내한다.
+    if (response.status !== 401 || _sessionExpiredHandled) return;
+    if (!document.body?.dataset.userRole) return;  // 로그인 화면에서는 안내하지 않음
+    _sessionExpiredHandled = true;
+    showToast('세션이 만료되었습니다. 다시 로그인해 주세요.', 'error');
+    setTimeout(() => window.location.reload(), 1500);
+}
+
 window.fetch = function csrfFetch(input, options = {}) {
     const isRequest = typeof Request !== 'undefined' && input instanceof Request;
     const requestMethod = isRequest ? input.method : 'GET';
     const method = String(options.method || requestMethod).toUpperCase();
     const requestUrl = isRequest ? input.url : String(input);
-    const isSameOrigin = new URL(requestUrl, window.location.href).origin === window.location.origin;
+    const parsedUrl = new URL(requestUrl, window.location.href);
+    const isSameOrigin = parsedUrl.origin === window.location.origin;
+    const isApiRequest = isSameOrigin && parsedUrl.pathname.startsWith('/api/');
 
     if (isSameOrigin && csrfProtectedMethods.has(method)) {
         const csrfToken = readCookie('csrf_token');
@@ -45,7 +58,11 @@ window.fetch = function csrfFetch(input, options = {}) {
             options = { ...options, headers };
         }
     }
-    return nativeFetch(input, options);
+    if (!isApiRequest) return nativeFetch(input, options);
+    return nativeFetch(input, options).then((response) => {
+        handleUnauthorizedApiResponse(response);
+        return response;
+    });
 };
 
 // ==========================================

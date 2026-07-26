@@ -8,6 +8,9 @@ from view.web import security
 
 _ctx = None  # 전역 변수로 선언
 
+# use_login=false(로컬 단독 실행)에서 감사 로그에 남길 신원
+LOCAL_PRINCIPAL_USERNAME = "local"
+
 # API 호출 실패 시 대처를 위한 전역 가격 캐시 (메모리)
 _PRICE_CACHE = {}  # {code: (price, rate, timestamp)}
 
@@ -75,8 +78,29 @@ def is_authenticated(connection: HTTPConnection, *, ctx=None) -> bool:
     return get_session_claims(connection, ctx=ctx) is not None
 
 
+def is_login_required(*, ctx=None) -> bool:
+    """use_login=false(로컬 단독 실행)면 페이지와 동일하게 API 인증도 적용하지 않는다."""
+    if ctx is None:
+        ctx = _get_ctx()
+    return bool(_config_get(ctx.full_config, "use_login", True))
+
+
+def _local_principal():
+    """use_login=false 환경에서 사용할 로컬 관리자 신원."""
+    from view.web.authorization import ADMIN
+
+    return security.SessionClaims(
+        username=LOCAL_PRINCIPAL_USERNAME,
+        role=ADMIN,
+        session_id=LOCAL_PRINCIPAL_USERNAME,
+        csrf_token="",
+    )
+
+
 def check_auth(connection: HTTPConnection):
     """로그인 여부를 확인하는 공통 함수."""
+    if not is_login_required():
+        return True
     if not is_authenticated(connection):
         scope = getattr(connection, "scope", {})
         if isinstance(scope, dict) and scope.get("type") == "websocket":
@@ -87,16 +111,14 @@ def check_auth(connection: HTTPConnection):
 
 def get_authenticated_operator(connection: HTTPConnection) -> str:
     """감사 로그에 토큰 원문 대신 비민감 운영자 식별자를 반환한다."""
-    claims = get_session_claims(connection)
-    if claims is None:
-        check_auth(connection)
-    return claims.username
+    return get_authenticated_principal(connection).username
 
 
 def get_authenticated_principal(connection: HTTPConnection):
     claims = get_session_claims(connection)
     if claims is None:
-        check_auth(connection)
+        check_auth(connection)  # 인증이 필요한 환경이면 여기서 401
+        return _local_principal()
     return claims
 
 
@@ -159,6 +181,8 @@ def require_role(connection: HTTPConnection, required_role: str):
 def check_role_for_request(connection: HTTPConnection) -> bool:
     from view.web.authorization import required_role_for_request
 
+    if not is_login_required():
+        return True
     scope = getattr(connection, "scope", {})
     if not isinstance(scope, dict):
         raise HTTPException(status_code=403, detail="Authorization scope unavailable")
@@ -172,6 +196,8 @@ def check_role_for_request(connection: HTTPConnection) -> bool:
 
 def check_csrf(connection: HTTPConnection) -> bool:
     """상태 변경 요청의 세션 결합 CSRF 토큰을 검증한다."""
+    if not is_login_required():
+        return True
     claims = get_session_claims(connection)
     if claims is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
