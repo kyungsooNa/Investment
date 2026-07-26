@@ -17,6 +17,7 @@ from services.price_subscription_service import SubscriptionPriority
 from view.web.api_common import _get_ctx, _serialize_response, EnvironmentRequest
 import view.web.api_common as api_common
 from view.web.market_mode_utils import enabled_market_modes_of, is_market_enabled, market_mode_of
+from view.web.deployment_policy import is_demo_mode
 
 router = APIRouter()
 
@@ -408,6 +409,8 @@ async def get_ai_news_review(code: str):
 async def get_stock_price(code: str, exchange: str = Query("KRX")):
     """현재가 조회. 종목명이 들어오면 종목코드로 변환 후 조회. exchange=KRX|NXT|UN 선택 가능."""
     ctx = _get_ctx()
+    if is_demo_mode(ctx):
+        return ctx.demo_market_data_service.get_stock_price(code)
     # 숫자가 아닌 입력(종목명)이면 코드로 변환
     if not code.isdigit():
         resolved = ctx.stock_code_repository.get_code_by_name(code)

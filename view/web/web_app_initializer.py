@@ -108,6 +108,7 @@ class WebAppContext:
         self.stock_query_service: StockQueryService = None
         self.streaming_service: StreamingService = None
         self.order_execution_service: OrderExecutionService = None
+        self.demo_market_data_service = None
         self.kill_switch_service: KillSwitchService = None
         self.operator_alert_service: OperatorAlertService = None
         self.rejection_distribution_service: RejectionDistributionService = None
@@ -252,6 +253,17 @@ class WebAppContext:
 
     async def initialize_services(self, is_paper_trading: bool = True):
         """서비스 레이어 초기화."""
+        from view.web.deployment_policy import is_demo_mode
+
+        if is_demo_mode(self):
+            from services.demo_market_data_service import DemoMarketDataService
+
+            self.demo_market_data_service = DemoMarketDataService()
+            self.broker = None
+            self.initialized = True
+            self.logger.info("웹 앱: 외부 broker 없이 데모 서비스 초기화 완료")
+            return True
+
         self.env.set_trading_mode(is_paper_trading)
         if not await self._bootstrap_broker(is_paper_trading):
             return False
@@ -360,6 +372,10 @@ class WebAppContext:
 
     def initialize_scheduler(self):
         """전략 스케줄러 생성 및 전략 등록. StrategyFactory 에 위임."""
+        from view.web.deployment_policy import is_demo_mode
+
+        if is_demo_mode(self):
+            return
         from view.web.bootstrap.strategy_factory import StrategyFactory
         StrategyFactory(self).build()
 
@@ -404,10 +420,10 @@ class WebAppContext:
 
     def start_background_tasks(self):
         """백그라운드 태스크 시작 — BackgroundScheduler에 위임."""
-        from view.web.deployment_policy import is_public_mode
+        from view.web.deployment_policy import is_demo_mode, is_public_mode
 
-        if is_public_mode(self):
-            self.logger.info("공개 모드: 백그라운드 태스크 시작을 건너뜁니다.")
+        if is_public_mode(self) or is_demo_mode(self):
+            self.logger.info("공개/데모 모드: 백그라운드 태스크 시작을 건너뜁니다.")
             return
 
         # StreamingService에 콜백 등록 (내부 저장 → 재연결 시에도 자동 유지됨)

@@ -28,6 +28,32 @@ async def test_get_balance(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_demo_mode_balance_does_not_call_broker_service(
+    web_client, mock_web_ctx
+):
+    mock_web_ctx.full_config["deployment"] = {"demo_mode": True}
+    mock_web_ctx.demo_market_data_service.get_balance.return_value = {
+        "rt_cd": "0",
+        "msg1": "성공",
+        "data": {"output1": [], "output2": [{"tot_evlu_amt": "10000000"}]},
+        "account_info": {
+            "number": "DEMO-0000",
+            "type": "데모",
+            "exchange": "KRX",
+        },
+    }
+
+    response = web_client.get("/api/balance")
+
+    assert response.status_code == 200
+    assert response.json()["account_info"]["type"] == "데모"
+    mock_web_ctx.demo_market_data_service.get_balance.assert_called_once_with(
+        exchange="KRX"
+    )
+    mock_web_ctx.stock_query_service.handle_get_account_balance.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_public_mode_masks_balance_json_without_mutating_service_response(web_client, mock_web_ctx):
     source = {"tot_evlu_amt": "1000000", "ord_no": "0000123456"}
     mock_web_ctx.full_config["deployment"] = {"public_mode": True}

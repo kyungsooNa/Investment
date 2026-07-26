@@ -380,6 +380,27 @@ def test_public_mode_does_not_start_background_tasks(mock_deps):
     assert ctx.streaming_service._callback != ctx._web_realtime_callback
 
 
+@pytest.mark.asyncio
+async def test_demo_mode_initializes_without_broker_or_scheduler(mock_deps):
+    ctx = WebAppContext(None)
+    ctx.full_config = {"deployment": {"demo_mode": True}}
+    ctx.env = MagicMock()
+    ctx._bootstrap_broker = AsyncMock()
+    ctx._bootstrap_services = MagicMock()
+    ctx._bootstrap_schedulers = MagicMock()
+
+    result = await ctx.initialize_services(is_paper_trading=True)
+
+    assert result is True
+    assert ctx.initialized is True
+    assert ctx.broker is None
+    assert ctx.demo_market_data_service is not None
+    ctx.env.set_trading_mode.assert_not_called()
+    ctx._bootstrap_broker.assert_not_awaited()
+    ctx._bootstrap_services.assert_not_called()
+    ctx._bootstrap_schedulers.assert_not_called()
+
+
 def test_web_realtime_callback(mock_deps):
     """웹소켓 콜백 처리 테스트"""
     ctx = WebAppContext(None)

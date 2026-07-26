@@ -40,7 +40,32 @@ async def test_get_stock_price(web_client, mock_web_ctx):
     assert json_resp["data"]["market"] == "KOSPI"
     mock_web_ctx.stock_code_repository.get_market_by_code.assert_called_once_with("005930")
     from common.types import Exchange
-    mock_web_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with("005930", caller="stock.py - get_stock_price", exchange=Exchange.KRX)
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with(
+        "005930",
+        caller="stock.py - get_stock_price",
+        exchange=Exchange.KRX,
+    )
+
+
+@pytest.mark.asyncio
+async def test_demo_mode_stock_price_does_not_call_broker_service(
+    web_client, mock_web_ctx
+):
+    mock_web_ctx.full_config["deployment"] = {"demo_mode": True}
+    mock_web_ctx.demo_market_data_service.get_stock_price.return_value = {
+        "rt_cd": "0",
+        "msg1": "성공",
+        "data": {"code": "005930", "stck_prpr": "70000", "demo": True},
+    }
+
+    response = web_client.get("/api/stock/005930")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["demo"] is True
+    mock_web_ctx.demo_market_data_service.get_stock_price.assert_called_once_with(
+        "005930"
+    )
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -570,6 +570,10 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
 async def get_virtual_history(force_code: str = None, apply_cost: bool = True):
     """가상 매매 전체 기록 조회 (force_code 지정 시 해당 종목은 캐시 무시)"""
     ctx = _get_ctx()
+    from view.web.deployment_policy import is_demo_mode
+
+    if is_demo_mode(ctx):
+        return ctx.demo_market_data_service.get_virtual_history()
     async with ctx.pm.profile_async("get_virtual_history"):
         return await _get_virtual_history_impl(ctx, force_code, apply_cost)
 

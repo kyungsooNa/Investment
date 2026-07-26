@@ -22,6 +22,24 @@ def is_public_mode(ctx) -> bool:
     return _config_get(deployment, "public_mode", False) is True
 
 
+def is_demo_mode(ctx) -> bool:
+    deployment = config_section(ctx, "deployment")
+    return _config_get(deployment, "demo_mode", False) is True
+
+
+def cors_policy(ctx) -> tuple[set[str], bool]:
+    deployment = config_section(ctx, "deployment")
+    origins = {
+        str(origin).strip().rstrip("/")
+        for origin in _config_get(deployment, "cors_allowed_origins", [])
+        if str(origin).strip()
+    }
+    allow_credentials = bool(
+        _config_get(deployment, "cors_allow_credentials", False)
+    )
+    return origins, allow_credentials
+
+
 def is_host_allowed(ctx, host_header: str) -> bool:
     if not is_public_mode(ctx):
         return True

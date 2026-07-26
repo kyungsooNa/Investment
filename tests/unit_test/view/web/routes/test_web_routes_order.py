@@ -67,6 +67,33 @@ async def test_place_order_sell(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_demo_mode_order_is_recorded_without_order_service(
+    web_client, mock_web_ctx
+):
+    mock_web_ctx.full_config["deployment"] = {"demo_mode": True}
+    mock_web_ctx.demo_market_data_service.place_order.return_value = {
+        "rt_cd": "0",
+        "msg1": "데모 주문이 기록되었습니다.",
+        "data": {"ord_no": "DEMO-0001", "demo": True},
+    }
+
+    response = web_client.post(
+        "/api/order",
+        json={"code": "005930", "price": "70000", "qty": "2", "side": "buy"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["demo"] is True
+    mock_web_ctx.demo_market_data_service.place_order.assert_called_once_with(
+        code="005930",
+        side="buy",
+        qty="2",
+        price="70000",
+    )
+    mock_web_ctx.order_execution_service.handle_buy_stock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_place_order_invalid_side(web_client, mock_web_ctx):
     """POST /api/order 잘못된 side 테스트"""
     payload = {"code": "005930", "price": "70000", "qty": "10", "side": "invalid"}

@@ -310,6 +310,45 @@ def test_public_mode_rejects_untrusted_host(mock_web_app_context_cls):
     assert response.status_code == 400
 
 
+def test_demo_cors_allows_only_configured_origin(mock_web_app_context_cls):
+    mock_ctx = MagicMock()
+    mock_ctx.full_config = {
+        "use_login": False,
+        "deployment": {
+            "demo_mode": True,
+            "cors_allowed_origins": ["https://kyungsoona.github.io"],
+            "cors_allow_credentials": True,
+        },
+    }
+
+    with TestClient(app) as client:
+        with patch("view.web.api_common._ctx", mock_ctx):
+            allowed = client.options(
+                "/api/auth/login",
+                headers={
+                    "Origin": "https://kyungsoona.github.io",
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "content-type,x-csrf-token",
+                },
+            )
+            denied = client.options(
+                "/api/auth/login",
+                headers={
+                    "Origin": "https://attacker.example",
+                    "Access-Control-Request-Method": "POST",
+                },
+            )
+
+    assert allowed.status_code == 204
+    assert (
+        allowed.headers["access-control-allow-origin"]
+        == "https://kyungsoona.github.io"
+    )
+    assert allowed.headers["access-control-allow-credentials"] == "true"
+    assert denied.status_code == 400
+    assert "access-control-allow-origin" not in denied.headers
+
+
 def test_all_page_routers(mock_web_app_context_cls):
     """모든 페이지 라우터들이 200 정상 응답을 하는지 테스트"""
     mock_ctx = MagicMock()

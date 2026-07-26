@@ -3,6 +3,7 @@ import yaml
 import os
 import json
 from typing import Dict, Any, Literal, Optional, List
+from urllib.parse import urlsplit
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 # config.yaml 및 tr_ids_config.yaml 파일 경로 설정
@@ -49,11 +50,35 @@ class DeploymentConfig(BaseModel):
     public_mode: bool = False
     demo_mode: bool = False
     allow_live_trading: bool = False
+    cors_allowed_origins: List[str] = Field(default_factory=list)
+    cors_allow_credentials: bool = False
     allowed_hosts: List[str] = Field(
         default_factory=lambda: ["127.0.0.1", "localhost"]
     )
 
     model_config = {"extra": "allow"}
+
+    @model_validator(mode="after")
+    def validate_cors_origins(self):
+        for origin in self.cors_allowed_origins:
+            parsed = urlsplit(origin)
+            if (
+                origin == "*"
+                or "*" in origin
+                or parsed.scheme not in {"http", "https"}
+                or not parsed.netloc
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError(
+                    "deployment.cors_allowed_origins에는 정확한 HTTP(S) origin만 허용됩니다."
+                )
+        if self.cors_allow_credentials and not self.cors_allowed_origins:
+            raise ValueError(
+                "cors_allow_credentials=true이면 cors_allowed_origins가 필요합니다."
+            )
+        return self
 
 
 class CacheConfig(BaseModel):
@@ -532,6 +557,10 @@ class AppConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_public_mode_security(self):
+        if self.deployment.cors_allow_credentials and not self.auth.secure_cookie:
+            raise ValueError(
+                "credential CORS에서는 auth.secure_cookie=true가 필요합니다."
+            )
         if not self.deployment.public_mode:
             return self
         if not self.use_login:

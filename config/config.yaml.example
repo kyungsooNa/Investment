@@ -24,6 +24,9 @@ deployment:
   public_mode: false
   demo_mode: false
   allow_live_trading: false
+  # GitHub Pages UI를 분리할 때만 정확한 origin을 지정하세요.
+  cors_allowed_origins: []
+  cors_allow_credentials: false
   # 공개 주소의 호스트명만 명시하세요. "*"는 public_mode에서 거부됩니다.
   allowed_hosts:
     - "127.0.0.1"

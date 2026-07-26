@@ -10,7 +10,7 @@ from view.web.api_common import (
     get_auth_config,
     get_authenticated_principal,
 )
-from view.web.deployment_policy import is_public_mode
+from view.web.deployment_policy import cors_policy, is_public_mode
 from view.web.security import (
     CSRF_COOKIE_NAME,
     SESSION_COOKIE_NAME,
@@ -45,6 +45,8 @@ async def login(request: Request, username: str = Form(...), password: str = For
         )
         max_age = int(_config_get(auth_config, "session_max_age_seconds", 3600))
         secure_cookie = bool(_config_get(auth_config, "secure_cookie", False)) or is_public_mode(_get_ctx())
+        _, cross_origin_credentials = cors_policy(_get_ctx())
+        same_site = "none" if cross_origin_credentials else "strict"
         response = JSONResponse(
             content={
                 "success": True,
@@ -58,7 +60,7 @@ async def login(request: Request, username: str = Form(...), password: str = For
             max_age=max_age,
             httponly=True,
             secure=secure_cookie,
-            samesite="strict",
+            samesite=same_site,
             path="/",
         )
         response.set_cookie(
@@ -67,7 +69,7 @@ async def login(request: Request, username: str = Form(...), password: str = For
             max_age=max_age,
             httponly=False,
             secure=secure_cookie,
-            samesite="strict",
+            samesite=same_site,
             path="/",
         )
         return response
