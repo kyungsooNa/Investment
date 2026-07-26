@@ -31,7 +31,15 @@ def _disclosure(code="005930", receipt_no="20260714000001", report_name="전환�
     )
 
 
-def _make_task(items, *, initialized=True, now=None, ai_analyzer=None):
+def _make_task(
+    items,
+    *,
+    initialized=True,
+    now=None,
+    ai_analyzer=None,
+    favorite_codes=None,
+    notification_service=None,
+):
     client = MagicMock()
     client.fetch_disclosures = AsyncMock(
         return_value=DartDisclosurePage(items, 1, 100, len(items), 1)
@@ -49,7 +57,9 @@ def _make_task(items, *, initialized=True, now=None, ai_analyzer=None):
     repo.get_pending_digest = AsyncMock(return_value=[])
     repo.mark_digest_sent = AsyncMock()
     favorites = MagicMock()
-    favorites.get_all = AsyncMock(return_value=["005930"])
+    favorites.get_all = AsyncMock(
+        return_value=["005930"] if favorite_codes is None else favorite_codes
+    )
     rule_service = MagicMock()
     rule_service.evaluate.return_value = DisclosureImportance(
         score=85, level="HIGH", reasons=["자금조달·주식 희석 관련 공시"]
@@ -77,6 +87,7 @@ def _make_task(items, *, initialized=True, now=None, ai_analyzer=None):
         market_clock=_Clock(now or datetime(2026, 7, 14, 10, 0, 0)),
         logger=MagicMock(),
         ai_analyzer=ai_analyzer,
+        notification_service=notification_service,
     )
     return SimpleNamespace(
         task=task,
@@ -116,6 +127,33 @@ async def test_new_favorite_disclosure_is_saved_and_immediately_reported():
     )
     deps.repo.mark_immediate_sent.assert_awaited_once()
     assert deps.task.get_progress()["sent_count"] == 1
+
+
+async def test_favorite_codes_are_zero_padded_before_matching_recent_missed_cases():
+    samsung = _disclosure(
+        code="005930",
+        receipt_no="20260714000001",
+        report_name="전환사채권발행결정",
+    )
+    hanmi = _disclosure(
+        code="042700",
+        receipt_no="20260714000002",
+        report_name="기업가치제고계획(자율공시)",
+    )
+    deps = _make_task(
+        [samsung, hanmi],
+        initialized=True,
+        favorite_codes=["5930", "42700"],
+    )
+
+    await deps.task._tick()
+
+    assert deps.repo.save_detected.await_count == 2
+    saved_codes = {
+        call.args[0].stock_code for call in deps.repo.save_detected.await_args_list
+    }
+    assert saved_codes == {"005930", "042700"}
+    assert deps.task.get_progress()["matched_count"] == 2
 
 
 async def test_ai_summary_is_attached_to_immediate_alert_when_analyzer_present():
@@ -219,6 +257,23 @@ async def test_failed_telegram_send_remains_pending_for_retry():
 
     deps.repo.mark_immediate_sent.assert_not_awaited()
     deps.repo.increment_send_retry.assert_awaited_once_with(disclosure.receipt_no)
+
+
+async def test_failed_telegram_send_emits_operational_alert_for_retry():
+    disclosure = _disclosure()
+    importance = DisclosureImportance(85, "HIGH", ["중요"])
+    notification_service = MagicMock()
+    notification_service.emit = AsyncMock()
+    deps = _make_task([disclosure], notification_service=notification_service)
+    deps.repo.get_pending_immediate.return_value = [StoredDisclosure(disclosure, importance)]
+    deps.reporter.send_disclosure_alert.return_value = False
+
+    await deps.task._tick()
+
+    deps.repo.increment_send_retry.assert_awaited_once_with(disclosure.receipt_no)
+    notification_service.emit.assert_awaited_once()
+    assert notification_service.emit.await_args.args[2] == "공시 텔레그램 발송 실패"
+    assert notification_service.emit.await_args.args[4]["receipt_no"] == disclosure.receipt_no
 
 
 async def test_digest_is_sent_once_at_configured_time():

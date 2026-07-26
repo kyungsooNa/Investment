@@ -274,6 +274,7 @@ class ServiceContainer:
                     market_clock=ctx.market_clock,
                     logger=ctx.logger,
                     ai_analyzer=ctx.ai_disclosure_analyzer,
+                    notification_service=ctx.notification_service,
                 )
 
         try:

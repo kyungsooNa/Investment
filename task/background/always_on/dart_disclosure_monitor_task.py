@@ -10,6 +10,12 @@ from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from repositories.dart_disclosure_repository import StoredDisclosure
 from services.ai_disclosure_analyzer import AiDisclosureAnalysis
 from services.dart_disclosure_rule_service import DisclosureImportance
+from services.notification_service import NotificationCategory, NotificationLevel
+
+
+def _normalize_stock_code(code) -> str:
+    value = str(code or "").strip()
+    return value.zfill(6) if value.isdigit() else value
 
 
 class DartDisclosureMonitorTask(SchedulableTask):
@@ -25,6 +31,7 @@ class DartDisclosureMonitorTask(SchedulableTask):
         market_clock,
         logger=None,
         ai_analyzer=None,
+        notification_service=None,
     ) -> None:
         self._client = client
         self._repository = repository
@@ -35,6 +42,7 @@ class DartDisclosureMonitorTask(SchedulableTask):
         self._market_clock = market_clock
         self._logger = logger or logging.getLogger(__name__)
         self._ai_analyzer = ai_analyzer
+        self._notification_service = notification_service
         self._ai_summary_cache: Dict[str, Optional[str]] = {}
         self._state = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
@@ -105,6 +113,11 @@ class DartDisclosureMonitorTask(SchedulableTask):
                         self._logger.error(
                             f"{self.task_name}: 공시 조회 실패 — {exc}", exc_info=True
                         )
+                        await self._emit_operational_alert(
+                            "공시 모니터 처리 실패",
+                            f"{type(exc).__name__}: {exc}",
+                            {"task": self.task_name},
+                        )
                 now = self._market_clock.get_current_kst_time()
                 await asyncio.sleep(self._interval_for(now))
         except asyncio.CancelledError:
@@ -125,13 +138,28 @@ class DartDisclosureMonitorTask(SchedulableTask):
             await self._send_digest_if_due(now, date)
 
             favorite_codes = {str(code) for code in await self._favorites.get_all()}
+            normalized_favorite_codes = {
+                _normalize_stock_code(code) for code in favorite_codes
+            }
             if not favorite_codes:
                 self._progress["last_success_at"] = now.isoformat()
                 return
 
             initialized = await self._repository.is_initialized()
             disclosures = await self._fetch_recent(date)
-            matching = [item for item in disclosures if item.stock_code in favorite_codes]
+            self._logger.info(
+                "%s: 공시 수신 완료 date=%s fetched=%d favorites=%d initialized=%s",
+                self.task_name,
+                date,
+                len(disclosures),
+                len(favorite_codes),
+                initialized,
+            )
+            matching = [
+                item
+                for item in disclosures
+                if _normalize_stock_code(item.stock_code) in normalized_favorite_codes
+            ]
             self._progress["matched_count"] = len(matching)
 
             baseline_items = []
@@ -139,6 +167,14 @@ class DartDisclosureMonitorTask(SchedulableTask):
                 if await self._repository.has_receipt(disclosure.receipt_no):
                     continue
                 preliminary = self._rules.evaluate(disclosure)
+                self._logger.info(
+                    "%s: 공시 분석 시작 receipt_no=%s stock_code=%s report=%s preliminary_score=%s",
+                    self.task_name,
+                    disclosure.receipt_no,
+                    disclosure.stock_code,
+                    disclosure.report_name,
+                    preliminary.score,
+                )
                 importance = preliminary
                 event_key = ""
                 ai_summary = None
@@ -161,6 +197,15 @@ class DartDisclosureMonitorTask(SchedulableTask):
                     suppress_immediate=not initialized,
                     event_key=event_key,
                     summary=ai_summary or "",
+                )
+                self._logger.info(
+                    "%s: 공시 분석 완료 receipt_no=%s stock_code=%s score=%s level=%s inserted=%s",
+                    self.task_name,
+                    disclosure.receipt_no,
+                    disclosure.stock_code,
+                    importance.score,
+                    importance.level,
+                    inserted,
                 )
                 if not initialized and inserted:
                     baseline_items.append(StoredDisclosure(disclosure, importance))
@@ -210,17 +255,54 @@ class DartDisclosureMonitorTask(SchedulableTask):
                     if analysis is not None:
                         ai_summary = analysis.summary
                     self._ai_summary_cache[receipt_no] = ai_summary
-            sent = await self._reporter.send_disclosure_alert(
-                item.disclosure, item.importance, ai_summary=ai_summary
+            self._logger.info(
+                "%s: 텔레그램 발송 시작 receipt_no=%s stock_code=%s score=%s",
+                self.task_name,
+                receipt_no,
+                item.disclosure.stock_code,
+                item.importance.score,
             )
+            try:
+                sent = await self._reporter.send_disclosure_alert(
+                    item.disclosure, item.importance, ai_summary=ai_summary
+                )
+            except Exception as exc:
+                sent = False
+                self._logger.error(
+                    "%s: 텔레그램 발송 예외 receipt_no=%s error=%s",
+                    self.task_name,
+                    receipt_no,
+                    exc,
+                    exc_info=True,
+                )
             if sent:
                 await self._repository.mark_immediate_sent(
                     receipt_no, now
                 )
                 self._ai_summary_cache.pop(receipt_no, None)
                 self._progress["sent_count"] += 1
+                self._logger.info(
+                    "%s: 텔레그램 발송 완료 receipt_no=%s", self.task_name, receipt_no
+                )
             else:
                 await self._repository.increment_send_retry(receipt_no)
+                self._logger.warning(
+                    "%s: 텔레그램 발송 실패, 다음 폴링에서 재시도 receipt_no=%s",
+                    self.task_name,
+                    receipt_no,
+                )
+                await self._emit_operational_alert(
+                    "공시 텔레그램 발송 실패",
+                    (
+                        f"receipt_no={receipt_no}, "
+                        f"stock_code={item.disclosure.stock_code}, "
+                        "다음 폴링에서 재시도합니다."
+                    ),
+                    {
+                        "receipt_no": receipt_no,
+                        "stock_code": item.disclosure.stock_code,
+                    },
+                )
 
     async def _analyze_actual_content(
         self,
@@ -305,3 +387,21 @@ class DartDisclosureMonitorTask(SchedulableTask):
             except (TypeError, ValueError):
                 pass
         return interval
+
+    async def _emit_operational_alert(
+        self, title: str, message: str, metadata: Optional[Dict] = None
+    ) -> None:
+        if self._notification_service is None:
+            return
+        try:
+            await self._notification_service.emit(
+                NotificationCategory.SYSTEM,
+                NotificationLevel.ERROR,
+                title,
+                message,
+                metadata or {},
+            )
+        except Exception as exc:
+            self._logger.error(
+                "%s: 운영 알림 발행 실패 — %s", self.task_name, exc, exc_info=True
+            )
