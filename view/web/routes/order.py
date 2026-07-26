@@ -7,7 +7,12 @@ from common.overseas_types import OverseasOrderRequest, OverseasCancelRequest
 from common.types import ErrorCode, ResCommonResponse
 from view.web.api_common import _get_ctx, _serialize_response, OrderRequest, require_role
 from view.web.authorization import ADMIN
-from view.web.deployment_policy import config_section, config_value, live_trading_block
+from view.web.deployment_policy import (
+    config_section,
+    config_value,
+    is_demo_mode,
+    live_trading_block,
+)
 from view.web.market_mode_utils import is_market_enabled
 
 router = APIRouter()
@@ -41,6 +46,16 @@ async def place_order(req: OrderRequest, request: Request):
     ctx = _get_ctx()
     t_start = ctx.pm.start_timer()
 
+    if req.side not in {"buy", "sell"}:
+        raise HTTPException(status_code=400, detail="side는 'buy' 또는 'sell'이어야 합니다.")
+    if is_demo_mode(ctx):
+        return ctx.demo_market_data_service.place_order(
+            code=req.code,
+            side=req.side,
+            qty=req.qty,
+            price=req.price,
+        )
+
     if _is_real_trading_mode(ctx):
         blocked_response = _live_trading_block_response(ctx)
         if blocked_response is not None:
@@ -66,9 +81,6 @@ async def place_order(req: OrderRequest, request: Request):
             source="manual:수동매매",
             finalize_immediately=False,
         )
-    else:
-        raise HTTPException(status_code=400, detail="side는 'buy' 또는 'sell'이어야 합니다.")
-
     ctx.pm.log_timer("place_order", t_start)
     return _serialize_response(resp)
 

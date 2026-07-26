@@ -1,0 +1,59 @@
+{
+  "stocks": {
+    "005930": {
+      "code": "005930",
+      "stck_shrn_iscd": "005930",
+      "name": "삼성전자",
+      "stck_prpr": "72400",
+      "prdy_vrss": "800",
+      "prdy_ctrt": "1.12"
+    },
+    "000660": {
+      "code": "000660",
+      "stck_shrn_iscd": "000660",
+      "name": "SK하이닉스",
+      "stck_prpr": "198500",
+      "prdy_vrss": "-1500",
+      "prdy_ctrt": "-0.75"
+    }
+  },
+  "balance": {
+    "output1": [
+      {
+        "pdno": "005930",
+        "prdt_name": "삼성전자",
+        "hldg_qty": "10",
+        "pchs_avg_pric": "70000",
+        "prpr": "72400",
+        "evlu_pfls_rt": "3.43"
+      }
+    ],
+    "output2": [
+      {
+        "dnca_tot_amt": "5000000",
+        "scts_evlu_amt": "724000",
+        "tot_evlu_amt": "5724000"
+      }
+    ]
+  },
+  "virtual_history": {
+    "trades": [
+      {
+        "strategy": "데모 전략",
+        "code": "005930",
+        "stock_name": "삼성전자",
+        "buy_date": "2026-07-01",
+        "buy_price": 70000,
+        "qty": 10,
+        "current_price": 72400,
+        "return_rate": 3.43,
+        "status": "HOLD",
+        "demo": true
+      }
+    ],
+    "summary_agg": {},
+    "cumulative_returns": {},
+    "daily_changes": {},
+    "weekly_changes": {}
+  }
+}

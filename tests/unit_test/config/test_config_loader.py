@@ -423,6 +423,38 @@ def test_public_deployment_defaults_fail_closed():
     assert cfg.deployment.public_mode is False
     assert cfg.deployment.demo_mode is False
     assert cfg.deployment.allow_live_trading is False
+    assert cfg.deployment.cors_allowed_origins == []
+    assert cfg.deployment.cors_allow_credentials is False
+
+
+def test_demo_cors_accepts_exact_https_origin():
+    cfg = _minimal_app_config(
+        deployment={
+            "demo_mode": True,
+            "cors_allowed_origins": ["https://kyungsoona.github.io"],
+            "cors_allow_credentials": True,
+        },
+        auth={"secure_cookie": True},
+    )
+
+    assert cfg.deployment.cors_allowed_origins == [
+        "https://kyungsoona.github.io"
+    ]
+    assert cfg.deployment.cors_allow_credentials is True
+
+
+@pytest.mark.parametrize(
+    "origin",
+    ["*", "https://*.github.io", "https://example.com/path"],
+)
+def test_demo_cors_rejects_non_exact_origin(origin):
+    with pytest.raises(ValidationError):
+        _minimal_app_config(
+            deployment={
+                "demo_mode": True,
+                "cors_allowed_origins": [origin],
+            }
+        )
 
 
 def test_auth_security_defaults_are_bounded():

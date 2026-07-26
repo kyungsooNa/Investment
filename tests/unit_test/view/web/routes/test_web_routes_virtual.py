@@ -308,6 +308,25 @@ async def test_get_virtual_history_complex(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_demo_mode_virtual_history_uses_sample_data(
+    web_client, mock_web_ctx
+):
+    sample = {
+        "trades": [{"code": "005930", "status": "HOLD", "demo": True}],
+        "weekly_changes": {},
+    }
+    mock_web_ctx.full_config["deployment"] = {"demo_mode": True}
+    mock_web_ctx.demo_market_data_service.get_virtual_history.return_value = sample
+
+    response = web_client.get("/api/virtual/history")
+
+    assert response.status_code == 200
+    assert response.json()["trades"][0]["demo"] is True
+    mock_web_ctx.demo_market_data_service.get_virtual_history.assert_called_once_with()
+    mock_web_ctx.virtual_trade_service.get_all_trades.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_get_virtual_history_sold_hold_return_rate(web_client, mock_web_ctx):
     """GET /api/virtual/history SOLD 거래에 미매도 가정 수익률(hold_return_rate) 포함 검증"""
     web_api._PRICE_CACHE.clear()

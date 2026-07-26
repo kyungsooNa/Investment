@@ -7,7 +7,7 @@ import uuid
 from contextlib import asynccontextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from fastapi import FastAPI, HTTPException, Request, APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -16,7 +16,7 @@ from view.web.web_app_initializer import WebAppContext
 import view.web.web_api as web_api
 import view.web.api_common as api_common
 from view.web.authorization import ADMIN, OPERATOR, VIEWER, role_allows
-from view.web.deployment_policy import is_host_allowed
+from view.web.deployment_policy import cors_policy, is_host_allowed
 
 # ── 진단 전용 HTTP 서버 (포트 8001, 별도 OS 스레드) ──────────────────────
 # asyncio 이벤트 루프가 완전히 블록되어도 응답 가능.
@@ -204,6 +204,56 @@ async def public_host_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+async def exact_origin_cors_middleware(request: Request, call_next):
+    origin = request.headers.get("origin")
+    ctx = api_common._ctx
+    if not origin or ctx is None:
+        return await call_next(request)
+
+    allowed_origins, allow_credentials = cors_policy(ctx)
+    normalized_origin = origin.rstrip("/")
+    if normalized_origin not in allowed_origins:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "Origin is not allowed"},
+        )
+
+    allowed_methods = "GET, POST, OPTIONS"
+    allowed_headers = {"content-type", "x-csrf-token"}
+    if request.method == "OPTIONS":
+        requested_method = request.headers.get(
+            "access-control-request-method", ""
+        ).upper()
+        requested_headers = {
+            header.strip().lower()
+            for header in request.headers.get(
+                "access-control-request-headers", ""
+            ).split(",")
+            if header.strip()
+        }
+        if (
+            requested_method not in {"GET", "POST"}
+            or not requested_headers.issubset(allowed_headers)
+        ):
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "CORS preflight is not allowed"},
+            )
+        response = Response(status_code=204)
+    else:
+        response = await call_next(request)
+
+    response.headers["Access-Control-Allow-Origin"] = normalized_origin
+    response.headers["Access-Control-Allow-Methods"] = allowed_methods
+    response.headers["Access-Control-Allow-Headers"] = (
+        "Content-Type, X-CSRF-Token"
+    )
+    response.headers["Vary"] = "Origin"
+    if allow_credentials:
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
+
+
 # --- Foreground 우선순위 미들웨어 ---
 # Broker API를 호출하는 라우트만 foreground로 래핑하여
 # 백그라운드 태스크(RankingTask, WebSocketWatchdog 등)와의 API rate limit 경합을 방지한다.
@@ -279,6 +329,7 @@ app.middleware("http")(foreground_priority_middleware)
 app.middleware("http")(api_auth_middleware)
 app.middleware("http")(request_tracker_middleware)
 app.middleware("http")(public_host_middleware)
+app.middleware("http")(exact_origin_cors_middleware)
 
 
 # 2. 정적 파일 및 템플릿 설정
