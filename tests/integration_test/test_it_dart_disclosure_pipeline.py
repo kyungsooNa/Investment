@@ -84,6 +84,82 @@ async def test_it_new_favorite_disclosure_is_sent_once_and_persisted(tmp_path):
     assert await repository.get_pending_immediate(70) == []
 
 
+async def test_it_zero_stripped_favorite_codes_match_dart_six_digit_codes(tmp_path):
+    def handler(request: httpx.Request):
+        return httpx.Response(
+            200,
+            json={
+                "status": "000",
+                "message": "정상",
+                "page_no": 1,
+                "page_count": 100,
+                "total_count": 2,
+                "total_page": 1,
+                "list": [
+                    {
+                        "corp_cls": "Y",
+                        "corp_name": "삼성전자",
+                        "corp_code": "00126380",
+                        "stock_code": "005930",
+                        "report_nm": "전환사채권발행결정",
+                        "rcept_no": "20260714001234",
+                        "flr_nm": "삼성전자",
+                        "rcept_dt": "20260714",
+                        "rm": "유",
+                    },
+                    {
+                        "corp_cls": "Y",
+                        "corp_name": "한미반도체",
+                        "corp_code": "00161383",
+                        "stock_code": "042700",
+                        "report_nm": "단일판매ㆍ공급계약체결",
+                        "rcept_no": "20260714005678",
+                        "flr_nm": "한미반도체",
+                        "rcept_dt": "20260714",
+                        "rm": "유",
+                    },
+                ],
+            },
+        )
+
+    favorites = FavoriteRepository(tmp_path / "favorites.db")
+    await favorites.add("5930")
+    await favorites.add("42700")
+    repository = DartDisclosureRepository(tmp_path / "dart.db")
+    await repository.mark_initialized()
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    config = SimpleNamespace(
+        poll_interval_sec=300,
+        off_hours_interval_sec=1800,
+        active_start_time="07:00",
+        active_end_time="19:30",
+        immediate_alert_score=70,
+        daily_digest_enabled=True,
+        daily_digest_time="19:40",
+        max_pages_per_poll=5,
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        task = DartDisclosureMonitorTask(
+            client=DartDisclosureClient("test-key", http_client=http_client),
+            repository=repository,
+            favorite_repository=favorites,
+            rule_service=DartDisclosureRuleService(),
+            telegram_reporter=reporter,
+            config=config,
+            market_clock=_Clock(),
+            logger=MagicMock(),
+        )
+        await task._tick()
+
+    assert reporter._send_message.await_count == 2
+    sent_text = "\n".join(call.args[0] for call in reporter._send_message.await_args_list)
+    assert "삼성전자" in sent_text
+    assert "한미반도체" in sent_text
+    assert await repository.get_pending_immediate(70) == []
+
+
 async def test_it_actual_body_promotes_generic_title_to_immediate_alert(tmp_path):
     receipt_no = "20260720800314"
 
