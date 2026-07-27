@@ -139,6 +139,7 @@ class ThemeDailyLeaderService:
 
         base_resp.data.sort(
             key=lambda item: (
+                item["is_liquid_theme"],
                 item["market_leadership_score"],
                 item["recent_coverage_count"] > 0,
                 item["recent_trading_value_won"],

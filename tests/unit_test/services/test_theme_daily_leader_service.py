@@ -155,6 +155,45 @@ async def test_intraday_report_prioritizes_leadership_score_over_recent_trading_
 
 
 @pytest.mark.asyncio
+async def test_intraday_report_ranks_liquid_theme_above_thin_high_score_theme():
+    groups = {
+        "의료AI": {
+            "sources": ["NAVER"],
+            "members": [_member("A", "셀바스AI"), _member("B", "셀바스헬스케어"), _member("C", "시선AI")],
+        },
+        "AI 챗봇": {
+            "sources": ["NAVER"],
+            "members": [_member("A", "셀바스AI"), _member("D", "NAVER"), _member("E", "솔트룩스")],
+        },
+    }
+    snapshot_repo = MagicMock()
+    snapshot_repo.save_snapshot = AsyncMock()
+    snapshot_repo.get_values_at_or_before = AsyncMock(side_effect=[
+        {"A": 5_000_000_000, "B": 200_000_000, "C": 400_000_000, "D": 130_000_000_000, "E": 900_000_000},
+        {"A": 4_800_000_000, "B": 100_000_000, "C": 300_000_000, "D": 129_000_000_000, "E": 800_000_000},
+    ])
+    svc, _ = _service(groups, snapshot_repo=snapshot_repo)
+    rankings = {"all_stocks": [
+        _stock("A", "셀바스AI", 29.2, 6_200_000_000),
+        _stock("B", "셀바스헬스케어", 15.3, 300_000_000),
+        _stock("C", "시선AI", 13.4, 500_000_000),
+        _stock("D", "NAVER", 8.2, 143_000_000_000),
+        _stock("E", "솔트룩스", 18.1, 1_200_000_000),
+    ]}
+
+    resp = await svc.build_intraday_theme_report(
+        rankings,
+        report_time="20260727 10:10",
+        window_minutes=3,
+    )
+
+    assert [theme["normalized_name"] for theme in resp.data] == ["AI 챗봇", "의료AI"]
+    assert resp.data[0]["is_liquid_theme"] is True
+    assert resp.data[1]["is_liquid_theme"] is False
+    assert resp.data[1]["market_leadership_score"] > resp.data[0]["market_leadership_score"]
+
+
+@pytest.mark.asyncio
 async def test_returns_empty_without_theme_groups():
     svc, _ = _service({})
 
