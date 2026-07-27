@@ -15,6 +15,12 @@
         .home-menu-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
     </style>
     <div class="section">
+        <div class="card">
+            <h2>글로벌 지수</h2>
+            <div id="market-indices" class="market-indices-grid"></div>
+        </div>
+    </div>
+    <div class="section">
         <div class="card" style="text-align: center; padding: 48px 24px;">
             <h2 style="margin-bottom: 12px;">Investment</h2>
             <p style="color: var(--text-secondary); margin-bottom: 32px;">한국투자증권 Open API 기반 주식 자동매매 시스템</p>
@@ -87,4 +93,8 @@
             </div>
         </div>
     </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/market_indices.js?v=1"></script>
 {% endblock %}

@@ -953,3 +953,29 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     opacity: 0.4;
     cursor: not-allowed;
 }
+
+/* 홈 글로벌 지수 패널 */
+.market-indices-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 12px;
+}
+.market-index-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+.market-index-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+.market-index-error {
+    margin: 0;
+    padding: 40px 0;
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
