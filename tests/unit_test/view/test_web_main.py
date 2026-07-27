@@ -293,6 +293,20 @@ def test_unauthenticated_api_does_not_enter_foreground(mock_web_app_context_cls)
     mock_ctx.foreground_scheduler.context.assert_not_called()
 
 
+def test_login_disabled_allows_api_without_session(mock_web_app_context_cls):
+    """use_login=false면 인증 미들웨어가 세션 없는 API 요청을 차단하지 않는다."""
+    mock_ctx = MagicMock()
+    mock_ctx.full_config = {"use_login": False, "auth": {"secret_key": "test-token"}}
+    mock_ctx.foreground_scheduler = None
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        with patch("view.web.api_common._ctx", mock_ctx):
+            response = client.get("/api/auth/me")
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "admin"
+
+
 def test_public_mode_rejects_untrusted_host(mock_web_app_context_cls):
     mock_ctx = MagicMock()
     mock_ctx.full_config = {

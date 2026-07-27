@@ -33,6 +33,7 @@ async def test_reset_strategy_kill_switch_service_unavailable(web_client, mock_w
 @pytest.mark.asyncio
 async def test_reset_strategy_kill_switch_requires_auth(web_client, mock_web_ctx):
     """인증 쿠키가 없으면 401."""
+    mock_web_ctx.full_config["use_login"] = True
     web_client.cookies.clear()
 
     resp = web_client.post("/api/kill-switch/reset-strategy/momentum")

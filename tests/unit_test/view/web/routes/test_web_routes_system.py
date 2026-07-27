@@ -324,6 +324,7 @@ def test_shutdown_server_schedules_termination(web_client, mock_web_ctx, monkeyp
     """종료 엔드포인트는 200으로 응답하고 프로세스 종료를 예약한다(실제 종료는 훅으로 분리)."""
     from view.web.routes import system
 
+    mock_web_ctx.full_config["use_login"] = True  # rbac 감사 로그는 로그인이 켜진 환경에서만 남는다
     called = {}
     monkeypatch.setattr(system, "_schedule_shutdown", lambda *a, **k: called.setdefault("hit", True))
 

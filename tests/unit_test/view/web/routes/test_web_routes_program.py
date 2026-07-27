@@ -271,6 +271,7 @@ def test_websocket_echo_endpoint_requires_auth(web_client, mock_web_ctx):
     from anyio import ClosedResourceError
     from starlette.websockets import WebSocketDisconnect
 
+    mock_web_ctx.full_config["use_login"] = True
     web_client.cookies.clear()
 
     with pytest.raises((WebSocketDisconnect, ClosedResourceError)) as exc:
