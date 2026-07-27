@@ -132,3 +132,36 @@ async def test_send_ranking_report_skips_same_trading_date_after_restart(tmp_pat
     await restarted_task._send_ranking_report_once({"foreign_buy": []}, "20260722")
 
     restarted_reporter.send_ranking_report.assert_not_called()
+
+
+async def test_startup_self_heal_recovers_missed_investor_report_and_period_ranking():
+    task = _make_task()
+    mcs = MagicMock()
+    mcs.is_market_open_now = AsyncMock(return_value=False)
+    mcs.get_latest_trading_date = AsyncMock(return_value="20260724")
+    task._mcs = mcs
+    task._load_last_ranking_report_date = MagicMock(return_value="20260723")
+    task.refresh_investor_ranking = AsyncMock()
+    task.prewarm_period_ranking = AsyncMock()
+
+    await task._period_ranking_self_heal()
+
+    task.refresh_investor_ranking.assert_awaited_once()
+    task.prewarm_period_ranking.assert_awaited_once_with("20260724")
+    assert task._last_collected_date == "20260724"
+
+
+async def test_startup_self_heal_skips_investor_report_when_already_sent_but_prewarms_period():
+    task = _make_task()
+    mcs = MagicMock()
+    mcs.is_market_open_now = AsyncMock(return_value=False)
+    mcs.get_latest_trading_date = AsyncMock(return_value="20260724")
+    task._mcs = mcs
+    task._load_last_ranking_report_date = MagicMock(return_value="20260724")
+    task.refresh_investor_ranking = AsyncMock()
+    task.prewarm_period_ranking = AsyncMock()
+
+    await task._period_ranking_self_heal()
+
+    task.refresh_investor_ranking.assert_not_awaited()
+    task.prewarm_period_ranking.assert_awaited_once_with("20260724")
