@@ -493,3 +493,29 @@ async def test_get_ranking_progress_no_ranking_task(web_client, mock_web_ctx):
     body = response.json()
     assert body["running"] is False
     assert body["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_period_ranking_progress(web_client, mock_web_ctx):
+    """GET /api/ranking/period_progress 는 기간수급 수집 진행률을 반환한다."""
+    mock_web_ctx.ranking_task.get_period_ranking_progress.return_value = {
+        "running": True, "processed": 800, "total": 2800, "collected": 310, "elapsed": 190.5
+    }
+    response = web_client.get("/api/ranking/period_progress")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["running"] is True
+    assert body["processed"] == 800
+    assert body["total"] == 2800
+    assert body["collected"] == 310
+
+
+@pytest.mark.asyncio
+async def test_get_period_ranking_progress_no_ranking_task(web_client, mock_web_ctx):
+    """ranking_task 없을 때 기본값 반환."""
+    mock_web_ctx.ranking_task = None
+    response = web_client.get("/api/ranking/period_progress")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["running"] is False
+    assert body["total"] == 0
