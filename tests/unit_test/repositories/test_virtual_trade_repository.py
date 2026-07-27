@@ -63,6 +63,22 @@ def test_log_buy_duplicate_skips(virutal_trade_repository):
     df = virutal_trade_repository._read()
     assert len(df) == 1
 
+
+def test_log_buy_duplicate_terminal_replay_skips(virutal_trade_repository):
+    """동일 매수 체결 이벤트가 SOLD 이후 재처리되어도 원장에 중복 삽입하지 않는다."""
+    virutal_trade_repository.tm.get_current_kst_time.return_value = datetime(2026, 7, 27, 12, 8, 29)
+    virutal_trade_repository.log_buy("larry_williams_vbo", "316140", 33250, qty=30)
+
+    virutal_trade_repository.tm.get_current_kst_time.return_value = datetime(2026, 7, 27, 15, 10, 4)
+    virutal_trade_repository.log_sell_by_strategy("larry_williams_vbo", "316140", 33125, qty=30)
+
+    virutal_trade_repository.tm.get_current_kst_time.return_value = datetime(2026, 7, 27, 12, 8, 29)
+    virutal_trade_repository.log_buy("larry_williams_vbo", "316140", 33250, qty=30)
+
+    df = virutal_trade_repository._read()
+    assert len(df) == 1
+    assert df.iloc[0]["status"] == "SOLD"
+
 def test_log_buy_with_qty(virutal_trade_repository):
     """매수 시 수량(qty)이 정상적으로 기록되는지 확인"""
     virutal_trade_repository.log_buy("TestStrategy", "005930", 70000, qty=10)

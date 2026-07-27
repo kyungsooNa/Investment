@@ -456,6 +456,30 @@ class VirtualTradeRepository:
             return "strategy = ?", (sid,)
         return "strategy IN (?, ?)", (sid, display)
 
+    def _has_same_buy_record(
+        self,
+        strategy_id: str,
+        code: str,
+        buy_date: str,
+        current_price,
+        qty: int,
+    ) -> bool:
+        where, params = self._strategy_filter(strategy_id)
+        row = self._db.execute(
+            f"""
+            SELECT 1 FROM trades
+            WHERE {where}
+              AND code=?
+              AND buy_date=?
+              AND buy_price=?
+              AND qty=?
+              AND status != 'FAILED'
+            LIMIT 1
+            """,
+            (*params, code, buy_date, float(current_price), int(qty)),
+        ).fetchone()
+        return row is not None
+
     # ---- 매수/매도 ----
 
     def log_buy(self, strategy_name: str, code: str, current_price, qty: int = 1,
@@ -491,6 +515,12 @@ class VirtualTradeRepository:
                 logger.info(f"[가상매매] {strategy_id}/{code} 이미 보유 중 — 매수 스킵")
                 return
             buy_date = self.tm.get_current_kst_time().strftime("%Y-%m-%d %H:%M:%S")
+            if self._has_same_buy_record(strategy_id, code, buy_date, current_price, qty):
+                logger.info(
+                    f"[가상매매] {strategy_id}/{code} 동일 매수 기록 존재 — 재처리 스킵 "
+                    f"(일시: {buy_date}, 가격: {current_price}, 수량: {qty})"
+                )
+                return
             with self._db:
                 self._db.execute(_INSERT_TRADE,
                     (strategy_id, code, buy_date, current_price, qty, None, None, 0.0, "HOLD", "",
