@@ -30,6 +30,15 @@ async def get_ranking_progress():
     return {"running": False, "processed": 0, "total": 0, "collected": 0, "elapsed": 0.0}
 
 
+@router.get("/ranking/period_progress")
+async def get_period_ranking_progress():
+    """기간수급 수집 진행률 조회."""
+    ctx = _get_ctx()
+    if ctx.ranking_task:
+        return ctx.ranking_task.get_period_ranking_progress()
+    return {"running": False, "processed": 0, "total": 0, "collected": 0, "elapsed": 0.0}
+
+
 @router.get("/ranking/newhigh")
 async def get_newhigh():
     """52주 신고가 종목 목록을 반환한다.

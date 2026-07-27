@@ -55,4 +55,45 @@ test("AI 일일 한도 429의 detail을 랭킹 화면에 표시한다", async ()
   assert(text.includes("공시 요약용 20회"), "공시 예약량 안내가 표시되지 않음");
 });
 
+test("기간수급 수집 중에는 진행률 퍼센트를 표시한다", async () => {
+  const dom = new JSDOM(
+    '<!DOCTYPE html><html><body><div id="ranking-result"></div></body></html>',
+    { url: "http://localhost/ranking", runScripts: "dangerously" },
+  );
+  const { window } = dom;
+  applyCommonStubs(window);
+  window.fetchWithTimeout = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      rt_cd: "0",
+      msg1: "최근 3거래일 기간수급 수집 중입니다. 완료되면 자동 갱신됩니다.",
+      data: [],
+    }),
+  });
+  window.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      running: true,
+      processed: 800,
+      total: 2800,
+      collected: 310,
+      elapsed: 190.5,
+    }),
+  });
+
+  const script = window.document.createElement("script");
+  script.textContent = readFileSync(RANKING_JS, "utf8");
+  window.document.body.appendChild(script);
+
+  await window.loadPeriodInvestorRanking();
+  window.eval("clearTimeout(_rankingPollTimer); _rankingCurrentCategory = null;");
+
+  const text = window.document.getElementById("ranking-result").textContent;
+  assert(text.includes("800/2800"), `진행 종목수가 표시되지 않음: ${text}`);
+  assert(text.includes("28.6%"), `진행률 퍼센트가 표시되지 않음: ${text}`);
+  assert(text.includes("집계: 310"), `집계 건수가 표시되지 않음: ${text}`);
+});
+
 await run();

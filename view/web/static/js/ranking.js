@@ -244,11 +244,9 @@ async function loadPeriodInvestorRanking() {
         if (_rankingData.length === 0 && (json.msg1 || '').includes('수집 중')) {
             div.innerHTML = `<div class="card" style="text-align:center; padding:40px;">
                 <div class="loading-indicator" style="margin-bottom: 12px;"><span class="spinner"></span><span class="loading-text" style="font-size:1.2em;">기간수급 수집 중...</span></div>
-                <p style="color:#888; margin-top:8px;">전체 종목을 순회하여 기간 순매수를 집계하고 있습니다. 완료되면 자동 표시됩니다.</p>
+                <p id="period-progress-text" style="color:#888; margin-top:8px;">전체 종목을 순회하여 기간 순매수를 집계하고 있습니다. 완료되면 자동 표시됩니다.</p>
             </div>`;
-            _rankingPollTimer = setTimeout(() => {
-                if (_rankingCurrentCategory === 'investor_period') loadPeriodInvestorRanking();
-            }, 10000);
+            await _pollPeriodProgress();
             return;
         }
         renderRankingTable();
@@ -259,6 +257,32 @@ async function loadPeriodInvestorRanking() {
             div.innerHTML = "오류: " + e;
         }
     }
+}
+
+/** 기간수급 수집 진행률을 폴링해 퍼센트를 표시하고, 수집이 끝나면 데이터를 다시 불러온다. */
+async function _pollPeriodProgress(tick = 0) {
+    if (_rankingCurrentCategory !== 'investor_period') return;
+
+    let finished = false;
+    try {
+        const res = await fetch('/api/ranking/period_progress');
+        const p = await res.json();
+        const el = document.getElementById('period-progress-text');
+        if (el && p.total > 0) {
+            const pct = (p.processed / p.total * 100).toFixed(1);
+            el.textContent = `${p.processed}/${p.total} 종목 — ${pct}% | 집계: ${p.collected} | 소요: ${_formatElapsed(p.elapsed)}`;
+        }
+        finished = !p.running && p.total > 0 && p.processed >= p.total;
+    } catch (_) { /* ignore */ }
+
+    // 진행률을 못 받아도 기존처럼 10초마다 데이터를 재조회한다
+    if (finished || tick >= 4) {
+        _rankingPollTimer = setTimeout(() => {
+            if (_rankingCurrentCategory === 'investor_period') loadPeriodInvestorRanking();
+        }, 1000);
+        return;
+    }
+    _rankingPollTimer = setTimeout(() => _pollPeriodProgress(tick + 1), 2000);
 }
 
 async function loadInvestorRanking() {

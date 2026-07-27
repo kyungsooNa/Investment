@@ -118,6 +118,14 @@ class RankingTask(AfterMarketTask):
             "collected": 0,
             "elapsed": 0.0,
         }
+        # 기간수급 수집 진행률 (투자자 랭킹과 동시 실행될 수 있어 분리)
+        self._period_progress: Dict = {
+            "running": False,
+            "processed": 0,
+            "total": 0,
+            "collected": 0,
+            "elapsed": 0.0,
+        }
 
     # ── SchedulableTask 인터페이스 구현 ────────────────────────
 
@@ -252,6 +260,10 @@ class RankingTask(AfterMarketTask):
     def get_investor_ranking_progress(self) -> Dict:
         """투자자 랭킹 수집 진행률 반환."""
         return self.get_progress()
+
+    def get_period_ranking_progress(self) -> Dict:
+        """기간수급 수집 진행률 반환."""
+        return dict(self._period_progress)
 
     def get_daily_theme_report_rankings(self) -> Dict:
         """당일 주도 테마 리포트용 랭킹 원천 데이터를 반환한다."""
@@ -831,97 +843,122 @@ class RankingTask(AfterMarketTask):
         results: List[Dict] = []
         is_complete = True
         observed_trading_dates = {str(target_date)}
+        start_time = time.time()
+        processed = 0
+        self._period_progress = {
+            "running": True,
+            "processed": 0,
+            "total": len(all_stocks),
+            "collected": 0,
+            "elapsed": 0.0,
+        }
 
-        for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
-            await self._suspend_event.wait()
+        try:
+            for chunk in _chunked(all_stocks, self.API_CHUNK_SIZE):
+                await self._suspend_event.wait()
 
-            investor_tasks = [
-                self._fetch_with_retry(self._broker.get_investor_trade_by_stock_daily_multi, code, target_date, days)
-                for code, _, _ in chunk
-            ]
-            program_tasks = [
-                self._fetch_with_retry(self._broker.get_program_trade_by_stock_daily_multi, code, target_date, days)
-                for code, _, _ in chunk
-            ]
-            all_responses = await asyncio.gather(
-                *investor_tasks, *program_tasks, return_exceptions=True
-            )
-            investor_responses = all_responses[:len(chunk)]
-            program_responses = all_responses[len(chunk):]
+                investor_tasks = [
+                    self._fetch_with_retry(self._broker.get_investor_trade_by_stock_daily_multi, code, target_date, days)
+                    for code, _, _ in chunk
+                ]
+                program_tasks = [
+                    self._fetch_with_retry(self._broker.get_program_trade_by_stock_daily_multi, code, target_date, days)
+                    for code, _, _ in chunk
+                ]
+                all_responses = await asyncio.gather(
+                    *investor_tasks, *program_tasks, return_exceptions=True
+                )
+                investor_responses = all_responses[:len(chunk)]
+                program_responses = all_responses[len(chunk):]
 
-            for (code, name, _market), investor_resp, program_resp in zip(chunk, investor_responses, program_responses):
-                if (
-                    isinstance(investor_resp, Exception)
-                    or isinstance(program_resp, Exception)
-                    or not investor_resp
-                    or not program_resp
-                    or investor_resp.rt_cd != ErrorCode.SUCCESS.value
-                    or program_resp.rt_cd != ErrorCode.SUCCESS.value
-                ):
-                    is_complete = False
-                    continue
-
-                investor_rows = investor_resp.data if investor_resp and isinstance(investor_resp.data, list) else []
-                program_rows = program_resp.data if program_resp and isinstance(program_resp.data, list) else []
-                if recent_trading_date_set:
-                    investor_rows = [
-                        row for row in investor_rows
-                        if isinstance(row, dict) and str(row.get("stck_bsop_date") or "") in recent_trading_date_set
-                    ]
-                    program_rows = [
-                        row for row in program_rows
-                        if isinstance(row, dict) and str(row.get("stck_bsop_date") or "") in recent_trading_date_set
-                    ]
-                for row in [*investor_rows, *program_rows]:
-                    if not isinstance(row, dict):
+                for (code, name, _market), investor_resp, program_resp in zip(chunk, investor_responses, program_responses):
+                    if (
+                        isinstance(investor_resp, Exception)
+                        or isinstance(program_resp, Exception)
+                        or not investor_resp
+                        or not program_resp
+                        or investor_resp.rt_cd != ErrorCode.SUCCESS.value
+                        or program_resp.rt_cd != ErrorCode.SUCCESS.value
+                    ):
+                        is_complete = False
                         continue
-                    trading_date = str(row.get("stck_bsop_date") or "")
-                    if len(trading_date) == 8 and trading_date.isdigit():
-                        observed_trading_dates.add(trading_date)
 
-                frgn_qty = self._sum_rows(investor_rows, "frgn_ntby_qty")
-                orgn_qty = self._sum_rows(investor_rows, "orgn_ntby_qty")
-                frgn_pbmn_mil = self._sum_rows(investor_rows, "frgn_ntby_tr_pbmn")
-                orgn_pbmn_mil = self._sum_rows(investor_rows, "orgn_ntby_tr_pbmn")
-                program_qty = self._sum_rows(program_rows, "whol_smtn_ntby_qty")
-                program_pbmn_won = self._sum_rows(program_rows, "whol_smtn_ntby_tr_pbmn")
+                    investor_rows = investor_resp.data if investor_resp and isinstance(investor_resp.data, list) else []
+                    program_rows = program_resp.data if program_resp and isinstance(program_resp.data, list) else []
+                    if recent_trading_date_set:
+                        investor_rows = [
+                            row for row in investor_rows
+                            if isinstance(row, dict) and str(row.get("stck_bsop_date") or "") in recent_trading_date_set
+                        ]
+                        program_rows = [
+                            row for row in program_rows
+                            if isinstance(row, dict) and str(row.get("stck_bsop_date") or "") in recent_trading_date_set
+                        ]
+                    for row in [*investor_rows, *program_rows]:
+                        if not isinstance(row, dict):
+                            continue
+                        trading_date = str(row.get("stck_bsop_date") or "")
+                        if len(trading_date) == 8 and trading_date.isdigit():
+                            observed_trading_dates.add(trading_date)
 
-                frgn_pbmn_won = frgn_pbmn_mil * 1_000_000
-                orgn_pbmn_won = orgn_pbmn_mil * 1_000_000
-                combined_pbmn_won = frgn_pbmn_won + orgn_pbmn_won + program_pbmn_won
-                combined_qty = frgn_qty + orgn_qty + program_qty
+                    frgn_qty = self._sum_rows(investor_rows, "frgn_ntby_qty")
+                    orgn_qty = self._sum_rows(investor_rows, "orgn_ntby_qty")
+                    frgn_pbmn_mil = self._sum_rows(investor_rows, "frgn_ntby_tr_pbmn")
+                    orgn_pbmn_mil = self._sum_rows(investor_rows, "orgn_ntby_tr_pbmn")
+                    program_qty = self._sum_rows(program_rows, "whol_smtn_ntby_qty")
+                    program_pbmn_won = self._sum_rows(program_rows, "whol_smtn_ntby_tr_pbmn")
 
-                if combined_pbmn_won <= 0 and combined_qty <= 0:
-                    continue
+                    frgn_pbmn_won = frgn_pbmn_mil * 1_000_000
+                    orgn_pbmn_won = orgn_pbmn_mil * 1_000_000
+                    combined_pbmn_won = frgn_pbmn_won + orgn_pbmn_won + program_pbmn_won
+                    combined_qty = frgn_qty + orgn_qty + program_qty
 
-                first_investor = investor_rows[0] if investor_rows and isinstance(investor_rows[0], dict) else {}
-                first_program = program_rows[0] if program_rows and isinstance(program_rows[0], dict) else {}
-                stck_prpr = first_investor.get("stck_prpr") or first_program.get("stck_clpr") or "0"
-                acml_tr_pbmn = first_investor.get("acml_tr_pbmn") or first_program.get("acml_tr_pbmn") or "0"
+                    if combined_pbmn_won <= 0 and combined_qty <= 0:
+                        continue
 
-                results.append({
-                    "stck_shrn_iscd": code,
-                    "hts_kor_isnm": name,
-                    "industry": industry_map.get(code, "-"),
-                    "period_days": str(days),
-                    "stck_prpr": str(stck_prpr or "0"),
-                    "prdy_ctrt": str(first_investor.get("prdy_ctrt") or first_program.get("prdy_ctrt") or "0"),
-                    "prdy_vrss": str(first_investor.get("prdy_vrss") or first_program.get("prdy_vrss") or "0"),
-                    "prdy_vrss_sign": str(first_investor.get("prdy_vrss_sign") or first_program.get("prdy_vrss_sign") or ""),
-                    "acml_tr_pbmn": str(acml_tr_pbmn or "0"),
-                    "frgn_period_ntby_qty": str(frgn_qty),
-                    "orgn_period_ntby_qty": str(orgn_qty),
-                    "program_period_ntby_qty": str(program_qty),
-                    "combined_period_ntby_qty": str(combined_qty),
-                    "frgn_period_ntby_tr_pbmn": str(frgn_pbmn_mil),
-                    "orgn_period_ntby_tr_pbmn": str(orgn_pbmn_mil),
-                    "program_period_ntby_tr_pbmn": str(program_pbmn_won // 1_000_000),
-                    "combined_period_ntby_tr_pbmn": str(combined_pbmn_won // 1_000_000),
-                    "frgn_period_ntby_tr_pbmn_won": str(frgn_pbmn_won),
-                    "orgn_period_ntby_tr_pbmn_won": str(orgn_pbmn_won),
-                    "program_period_ntby_tr_pbmn_won": str(program_pbmn_won),
-                    "combined_period_ntby_tr_pbmn_won": str(combined_pbmn_won),
+                    first_investor = investor_rows[0] if investor_rows and isinstance(investor_rows[0], dict) else {}
+                    first_program = program_rows[0] if program_rows and isinstance(program_rows[0], dict) else {}
+                    stck_prpr = first_investor.get("stck_prpr") or first_program.get("stck_clpr") or "0"
+                    acml_tr_pbmn = first_investor.get("acml_tr_pbmn") or first_program.get("acml_tr_pbmn") or "0"
+
+                    results.append({
+                        "stck_shrn_iscd": code,
+                        "hts_kor_isnm": name,
+                        "industry": industry_map.get(code, "-"),
+                        "period_days": str(days),
+                        "stck_prpr": str(stck_prpr or "0"),
+                        "prdy_ctrt": str(first_investor.get("prdy_ctrt") or first_program.get("prdy_ctrt") or "0"),
+                        "prdy_vrss": str(first_investor.get("prdy_vrss") or first_program.get("prdy_vrss") or "0"),
+                        "prdy_vrss_sign": str(first_investor.get("prdy_vrss_sign") or first_program.get("prdy_vrss_sign") or ""),
+                        "acml_tr_pbmn": str(acml_tr_pbmn or "0"),
+                        "frgn_period_ntby_qty": str(frgn_qty),
+                        "orgn_period_ntby_qty": str(orgn_qty),
+                        "program_period_ntby_qty": str(program_qty),
+                        "combined_period_ntby_qty": str(combined_qty),
+                        "frgn_period_ntby_tr_pbmn": str(frgn_pbmn_mil),
+                        "orgn_period_ntby_tr_pbmn": str(orgn_pbmn_mil),
+                        "program_period_ntby_tr_pbmn": str(program_pbmn_won // 1_000_000),
+                        "combined_period_ntby_tr_pbmn": str(combined_pbmn_won // 1_000_000),
+                        "frgn_period_ntby_tr_pbmn_won": str(frgn_pbmn_won),
+                        "orgn_period_ntby_tr_pbmn_won": str(orgn_pbmn_won),
+                        "program_period_ntby_tr_pbmn_won": str(program_pbmn_won),
+                        "combined_period_ntby_tr_pbmn_won": str(combined_pbmn_won),
+                    })
+
+                processed += len(chunk)
+                elapsed = time.time() - start_time
+                self._period_progress.update({
+                    "processed": processed,
+                    "collected": len(results),
+                    "elapsed": round(elapsed, 1),
                 })
+                if processed % 400 == 0 or processed >= len(all_stocks):
+                    self._logger.info(
+                        f"기간수급 진행: {processed}/{len(all_stocks)} "
+                        f"({processed / len(all_stocks) * 100:.1f}%) | 수집: {len(results)} | 소요: {elapsed:.1f}s"
+                    )
+        finally:
+            self._period_progress["running"] = False
 
         earliest_trading_date = recent_trading_dates[0] if recent_trading_dates else min(observed_trading_dates)
         for result in results:
