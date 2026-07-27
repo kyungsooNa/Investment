@@ -47,6 +47,8 @@ class RankingTask(AfterMarketTask):
     PERIOD_RANKING_ALLOWED_DAYS = {1, 3, 5, 10, 20}
     PERIOD_RANKING_ALLOWED_METRICS = {"amount", "qty"}
     DEFAULT_PERIOD_RANKING_DAYS = 5
+    # 전 종목 순회 1회로 함께 채우는 구간들 (API 호출 수는 구간 수와 무관)
+    PERIOD_RANKING_PREWARM_DAYS = (1, 3, 5, 10, 20)
 
     def __init__(
         self,
@@ -102,7 +104,8 @@ class RankingTask(AfterMarketTask):
         self._is_refreshing: bool = False
         self._last_collected_date: Optional[str] = None
         self._period_ranking_cache: Dict[tuple[str, int], List[Dict]] = {}
-        self._period_ranking_tasks: Dict[tuple[str, int], asyncio.Task] = {}
+        # 스윕 1회가 전 구간을 채우므로 진행 중 태스크는 거래일 단위로 관리한다
+        self._period_ranking_tasks: Dict[str, asyncio.Task] = {}
         self._period_ranking_intraday_keys: set[tuple[str, int]] = set()
 
         # 기본 랭킹 캐시 (상승/하락/거래량/거래대금) — 장마감 후 1회
@@ -697,14 +700,23 @@ class RankingTask(AfterMarketTask):
         target_date: str,
         days: int = DEFAULT_PERIOD_RANKING_DAYS,
     ) -> None:
-        """장 마감 배치의 유휴 구간에서 기본 기간수급 캐시를 미리 생성한다."""
+        """장 마감 배치의 유휴 구간에서 기간수급 캐시를 미리 생성한다.
+
+        스윕 1회가 전 구간(PERIOD_RANKING_PREWARM_DAYS)을 함께 채운다.
+        """
         cache_key = (str(target_date), days)
         if cache_key in self._period_ranking_cache:
             return
-        self._logger.info(f"기간수급 랭킹 캐시 예열 시작: {target_date}, {days}일")
+        self._logger.info(
+            f"기간수급 랭킹 캐시 예열 시작: {target_date}, {list(self.PERIOD_RANKING_PREWARM_DAYS)}일"
+        )
         await self._get_or_collect_period_ranking(cache_key)
+        warmed = [
+            d for d in self.PERIOD_RANKING_PREWARM_DAYS
+            if (str(target_date), d) in self._period_ranking_cache
+        ]
         if cache_key in self._period_ranking_cache:
-            self._logger.info(f"기간수급 랭킹 캐시 예열 완료: {target_date}, {days}일")
+            self._logger.info(f"기간수급 랭킹 캐시 예열 완료: {target_date}, {warmed}일")
         else:
             self._logger.warning(f"기간수급 랭킹 캐시 예열 미완료: {target_date}, {days}일")
 
@@ -751,8 +763,8 @@ class RankingTask(AfterMarketTask):
         return None
 
     def _trigger_period_ranking_collection(self, cache_key: tuple[str, int]) -> None:
-        """기간수급 수집을 백그라운드로 시작한다 (이미 진행 중이면 no-op)."""
-        if cache_key in self._period_ranking_tasks:
+        """기간수급 수집을 백그라운드로 시작한다 (같은 날짜 스윕이 진행 중이면 no-op)."""
+        if cache_key[0] in self._period_ranking_tasks:
             return
         self._logger.info(
             f"기간수급 캐시 없음 → 온디맨드 백그라운드 수집 트리거: {cache_key[0]}, {cache_key[1]}일"
@@ -805,44 +817,59 @@ class RankingTask(AfterMarketTask):
         if results is not None:
             return results
 
-        task = self._period_ranking_tasks.get(cache_key)
+        target_date, days = cache_key
+        task = self._period_ranking_tasks.get(target_date)
         if task is None:
-            target_date, days = cache_key
             task = asyncio.create_task(
-                self._collect_period_investor_program_ranking(target_date, days)
+                self._collect_period_investor_program_ranking(target_date)
             )
-            self._period_ranking_tasks[cache_key] = task
+            self._period_ranking_tasks[target_date] = task
         try:
-            results, is_complete = await task
+            results_by_days, is_complete = await task
         finally:
-            if task.done() and self._period_ranking_tasks.get(cache_key) is task:
-                self._period_ranking_tasks.pop(cache_key, None)
+            if task.done() and self._period_ranking_tasks.get(target_date) is task:
+                self._period_ranking_tasks.pop(target_date, None)
 
         if is_complete:
-            self._period_ranking_cache[cache_key] = results
-            if self._mcs and await self._mcs.is_market_open_now():
-                # 장중 수집분은 당일 부분 데이터 — 장 마감 시 무효화·재수집 대상으로 표시
-                self._period_ranking_intraday_keys.add(cache_key)
-            else:
-                await self._save_period_ranking_to_db(cache_key, results)
-        return results
+            # 장중 수집분은 당일 부분 데이터 — 장 마감 시 무효화·재수집 대상으로 표시
+            is_intraday = bool(self._mcs and await self._mcs.is_market_open_now())
+            for bucket_days, bucket_results in results_by_days.items():
+                bucket_key = (str(target_date), bucket_days)
+                self._period_ranking_cache[bucket_key] = bucket_results
+                if is_intraday:
+                    self._period_ranking_intraday_keys.add(bucket_key)
+                else:
+                    await self._save_period_ranking_to_db(bucket_key, bucket_results)
+        return results_by_days.get(days, [])
 
     async def _collect_period_investor_program_ranking(
         self,
         target_date: str,
-        days: int,
-    ) -> tuple[List[Dict], bool]:
-        """기간 수급 원천 데이터를 수집한다. 불완전한 결과는 캐시하지 않는다."""
+        days_list: tuple[int, ...] = PERIOD_RANKING_PREWARM_DAYS,
+    ) -> tuple[Dict[int, List[Dict]], bool]:
+        """기간 수급 원천을 1회 순회로 수집해 구간별 결과를 파생한다.
+
+        투자자/프로그램 일별 API는 요청에 기간이 없고 응답을 잘라 쓰는 구조라
+        (days는 output[:days] 슬라이스) 호출 수가 구간 수와 무관하다.
+        따라서 최장 구간으로 한 번만 순회하고 짧은 구간은 같은 행에서 합산한다.
+        불완전한 결과는 캐시하지 않는다.
+        """
+        days_list = tuple(sorted(set(days_list)))
+        max_days = max(days_list)
+        results_by_days: Dict[int, List[Dict]] = {d: [] for d in days_list}
+
         all_stocks = self._load_all_stocks()
         if not all_stocks:
-            return [], True
+            return results_by_days, True
 
-        recent_trading_dates = await self._get_recent_trading_dates(target_date, days)
-        recent_trading_date_set = set(recent_trading_dates)
+        # 구간별 거래일 창은 각각 계산한다 (캘린더 캐시 기반이라 비용이 낮다)
+        trading_dates_by_days = {
+            d: await self._get_recent_trading_dates(target_date, d) for d in days_list
+        }
+        date_sets = {d: set(dates) for d, dates in trading_dates_by_days.items()}
+        observed_by_days: Dict[int, set] = {d: {str(target_date)} for d in days_list}
         industry_map = await self._load_industry_map()
-        results: List[Dict] = []
         is_complete = True
-        observed_trading_dates = {str(target_date)}
         start_time = time.time()
         processed = 0
         self._period_progress = {
@@ -858,11 +885,11 @@ class RankingTask(AfterMarketTask):
                 await self._suspend_event.wait()
 
                 investor_tasks = [
-                    self._fetch_with_retry(self._broker.get_investor_trade_by_stock_daily_multi, code, target_date, days)
+                    self._fetch_with_retry(self._broker.get_investor_trade_by_stock_daily_multi, code, target_date, max_days)
                     for code, _, _ in chunk
                 ]
                 program_tasks = [
-                    self._fetch_with_retry(self._broker.get_program_trade_by_stock_daily_multi, code, target_date, days)
+                    self._fetch_with_retry(self._broker.get_program_trade_by_stock_daily_multi, code, target_date, max_days)
                     for code, _, _ in chunk
                 ]
                 all_responses = await asyncio.gather(
@@ -883,88 +910,115 @@ class RankingTask(AfterMarketTask):
                         is_complete = False
                         continue
 
-                    investor_rows = investor_resp.data if investor_resp and isinstance(investor_resp.data, list) else []
-                    program_rows = program_resp.data if program_resp and isinstance(program_resp.data, list) else []
-                    if recent_trading_date_set:
-                        investor_rows = [
-                            row for row in investor_rows
-                            if isinstance(row, dict) and str(row.get("stck_bsop_date") or "") in recent_trading_date_set
-                        ]
-                        program_rows = [
-                            row for row in program_rows
-                            if isinstance(row, dict) and str(row.get("stck_bsop_date") or "") in recent_trading_date_set
-                        ]
-                    for row in [*investor_rows, *program_rows]:
-                        if not isinstance(row, dict):
-                            continue
-                        trading_date = str(row.get("stck_bsop_date") or "")
-                        if len(trading_date) == 8 and trading_date.isdigit():
-                            observed_trading_dates.add(trading_date)
+                    all_investor_rows = [
+                        row for row in (investor_resp.data if isinstance(investor_resp.data, list) else [])
+                        if isinstance(row, dict)
+                    ]
+                    all_program_rows = [
+                        row for row in (program_resp.data if isinstance(program_resp.data, list) else [])
+                        if isinstance(row, dict)
+                    ]
 
-                    frgn_qty = self._sum_rows(investor_rows, "frgn_ntby_qty")
-                    orgn_qty = self._sum_rows(investor_rows, "orgn_ntby_qty")
-                    frgn_pbmn_mil = self._sum_rows(investor_rows, "frgn_ntby_tr_pbmn")
-                    orgn_pbmn_mil = self._sum_rows(investor_rows, "orgn_ntby_tr_pbmn")
-                    program_qty = self._sum_rows(program_rows, "whol_smtn_ntby_qty")
-                    program_pbmn_won = self._sum_rows(program_rows, "whol_smtn_ntby_tr_pbmn")
+                    for days in days_list:
+                        investor_rows = self._rows_for_period(all_investor_rows, date_sets[days], days)
+                        program_rows = self._rows_for_period(all_program_rows, date_sets[days], days)
+                        for row in [*investor_rows, *program_rows]:
+                            trading_date = str(row.get("stck_bsop_date") or "")
+                            if len(trading_date) == 8 and trading_date.isdigit():
+                                observed_by_days[days].add(trading_date)
 
-                    frgn_pbmn_won = frgn_pbmn_mil * 1_000_000
-                    orgn_pbmn_won = orgn_pbmn_mil * 1_000_000
-                    combined_pbmn_won = frgn_pbmn_won + orgn_pbmn_won + program_pbmn_won
-                    combined_qty = frgn_qty + orgn_qty + program_qty
-
-                    if combined_pbmn_won <= 0 and combined_qty <= 0:
-                        continue
-
-                    first_investor = investor_rows[0] if investor_rows and isinstance(investor_rows[0], dict) else {}
-                    first_program = program_rows[0] if program_rows and isinstance(program_rows[0], dict) else {}
-                    stck_prpr = first_investor.get("stck_prpr") or first_program.get("stck_clpr") or "0"
-                    acml_tr_pbmn = first_investor.get("acml_tr_pbmn") or first_program.get("acml_tr_pbmn") or "0"
-
-                    results.append({
-                        "stck_shrn_iscd": code,
-                        "hts_kor_isnm": name,
-                        "industry": industry_map.get(code, "-"),
-                        "period_days": str(days),
-                        "stck_prpr": str(stck_prpr or "0"),
-                        "prdy_ctrt": str(first_investor.get("prdy_ctrt") or first_program.get("prdy_ctrt") or "0"),
-                        "prdy_vrss": str(first_investor.get("prdy_vrss") or first_program.get("prdy_vrss") or "0"),
-                        "prdy_vrss_sign": str(first_investor.get("prdy_vrss_sign") or first_program.get("prdy_vrss_sign") or ""),
-                        "acml_tr_pbmn": str(acml_tr_pbmn or "0"),
-                        "frgn_period_ntby_qty": str(frgn_qty),
-                        "orgn_period_ntby_qty": str(orgn_qty),
-                        "program_period_ntby_qty": str(program_qty),
-                        "combined_period_ntby_qty": str(combined_qty),
-                        "frgn_period_ntby_tr_pbmn": str(frgn_pbmn_mil),
-                        "orgn_period_ntby_tr_pbmn": str(orgn_pbmn_mil),
-                        "program_period_ntby_tr_pbmn": str(program_pbmn_won // 1_000_000),
-                        "combined_period_ntby_tr_pbmn": str(combined_pbmn_won // 1_000_000),
-                        "frgn_period_ntby_tr_pbmn_won": str(frgn_pbmn_won),
-                        "orgn_period_ntby_tr_pbmn_won": str(orgn_pbmn_won),
-                        "program_period_ntby_tr_pbmn_won": str(program_pbmn_won),
-                        "combined_period_ntby_tr_pbmn_won": str(combined_pbmn_won),
-                    })
+                        item = self._build_period_ranking_item(
+                            code, name, days, industry_map.get(code, "-"), investor_rows, program_rows
+                        )
+                        if item:
+                            results_by_days[days].append(item)
 
                 processed += len(chunk)
                 elapsed = time.time() - start_time
+                collected = len(results_by_days[max_days])
                 self._period_progress.update({
                     "processed": processed,
-                    "collected": len(results),
+                    "collected": collected,
                     "elapsed": round(elapsed, 1),
                 })
                 if processed % 400 == 0 or processed >= len(all_stocks):
                     self._logger.info(
                         f"기간수급 진행: {processed}/{len(all_stocks)} "
-                        f"({processed / len(all_stocks) * 100:.1f}%) | 수집: {len(results)} | 소요: {elapsed:.1f}s"
+                        f"({processed / len(all_stocks) * 100:.1f}%) | 수집: {collected} | 소요: {elapsed:.1f}s"
                     )
         finally:
             self._period_progress["running"] = False
 
-        earliest_trading_date = recent_trading_dates[0] if recent_trading_dates else min(observed_trading_dates)
-        for result in results:
-            result["earliest_trading_date"] = earliest_trading_date
+        for days in days_list:
+            recent_trading_dates = trading_dates_by_days[days]
+            earliest_trading_date = (
+                recent_trading_dates[0] if recent_trading_dates else min(observed_by_days[days])
+            )
+            for result in results_by_days[days]:
+                result["earliest_trading_date"] = earliest_trading_date
 
-        return results, is_complete
+        return results_by_days, is_complete
+
+    @staticmethod
+    def _rows_for_period(rows: List[Dict], date_set: set, days: int) -> List[Dict]:
+        """구간에 해당하는 행만 추린다. 거래일 계산이 불가하면 최신 N행으로 대체한다."""
+        if date_set:
+            return [row for row in rows if str(row.get("stck_bsop_date") or "") in date_set]
+        return rows[:days]
+
+    def _build_period_ranking_item(
+        self,
+        code: str,
+        name: str,
+        days: int,
+        industry: str,
+        investor_rows: List[Dict],
+        program_rows: List[Dict],
+    ) -> Optional[Dict]:
+        """구간 행 합산 결과를 랭킹 항목으로 만든다. 순매수가 없으면 None."""
+        frgn_qty = self._sum_rows(investor_rows, "frgn_ntby_qty")
+        orgn_qty = self._sum_rows(investor_rows, "orgn_ntby_qty")
+        frgn_pbmn_mil = self._sum_rows(investor_rows, "frgn_ntby_tr_pbmn")
+        orgn_pbmn_mil = self._sum_rows(investor_rows, "orgn_ntby_tr_pbmn")
+        program_qty = self._sum_rows(program_rows, "whol_smtn_ntby_qty")
+        program_pbmn_won = self._sum_rows(program_rows, "whol_smtn_ntby_tr_pbmn")
+
+        frgn_pbmn_won = frgn_pbmn_mil * 1_000_000
+        orgn_pbmn_won = orgn_pbmn_mil * 1_000_000
+        combined_pbmn_won = frgn_pbmn_won + orgn_pbmn_won + program_pbmn_won
+        combined_qty = frgn_qty + orgn_qty + program_qty
+
+        if combined_pbmn_won <= 0 and combined_qty <= 0:
+            return None
+
+        first_investor = investor_rows[0] if investor_rows else {}
+        first_program = program_rows[0] if program_rows else {}
+        stck_prpr = first_investor.get("stck_prpr") or first_program.get("stck_clpr") or "0"
+        acml_tr_pbmn = first_investor.get("acml_tr_pbmn") or first_program.get("acml_tr_pbmn") or "0"
+
+        return {
+            "stck_shrn_iscd": code,
+            "hts_kor_isnm": name,
+            "industry": industry,
+            "period_days": str(days),
+            "stck_prpr": str(stck_prpr or "0"),
+            "prdy_ctrt": str(first_investor.get("prdy_ctrt") or first_program.get("prdy_ctrt") or "0"),
+            "prdy_vrss": str(first_investor.get("prdy_vrss") or first_program.get("prdy_vrss") or "0"),
+            "prdy_vrss_sign": str(first_investor.get("prdy_vrss_sign") or first_program.get("prdy_vrss_sign") or ""),
+            "acml_tr_pbmn": str(acml_tr_pbmn or "0"),
+            "frgn_period_ntby_qty": str(frgn_qty),
+            "orgn_period_ntby_qty": str(orgn_qty),
+            "program_period_ntby_qty": str(program_qty),
+            "combined_period_ntby_qty": str(combined_qty),
+            "frgn_period_ntby_tr_pbmn": str(frgn_pbmn_mil),
+            "orgn_period_ntby_tr_pbmn": str(orgn_pbmn_mil),
+            "program_period_ntby_tr_pbmn": str(program_pbmn_won // 1_000_000),
+            "combined_period_ntby_tr_pbmn": str(combined_pbmn_won // 1_000_000),
+            "frgn_period_ntby_tr_pbmn_won": str(frgn_pbmn_won),
+            "orgn_period_ntby_tr_pbmn_won": str(orgn_pbmn_won),
+            "program_period_ntby_tr_pbmn_won": str(program_pbmn_won),
+            "combined_period_ntby_tr_pbmn_won": str(combined_pbmn_won),
+        }
 
     async def _get_recent_trading_dates(self, target_date: str, days: int) -> List[str]:
         """시장 캘린더 기준 target_date 포함 최근 N거래일을 오래된 순으로 반환한다."""

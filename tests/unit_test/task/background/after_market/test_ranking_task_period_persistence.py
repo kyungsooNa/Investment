@@ -54,7 +54,7 @@ async def test_get_or_collect_saves_complete_results_to_db():
     repo.get.return_value = None
     task = _make_task(period_repo=repo, mcs=_make_mcs(market_open=False))
     task._collect_period_investor_program_ranking = AsyncMock(
-        return_value=([{"a": "1"}], True)
+        return_value=({5: [{"a": "1"}]}, True)
     )
 
     results = await task._get_or_collect_period_ranking(("20260714", 5))
@@ -68,7 +68,7 @@ async def test_get_or_collect_skips_db_save_during_market_open():
     repo.get.return_value = None
     task = _make_task(period_repo=repo, mcs=_make_mcs(market_open=True))
     task._collect_period_investor_program_ranking = AsyncMock(
-        return_value=([{"a": "1"}], True)
+        return_value=({5: [{"a": "1"}]}, True)
     )
 
     await task._get_or_collect_period_ranking(("20260714", 5))
@@ -83,7 +83,7 @@ async def test_get_or_collect_does_not_save_incomplete_results():
     repo.get.return_value = None
     task = _make_task(period_repo=repo, mcs=_make_mcs(market_open=False))
     task._collect_period_investor_program_ranking = AsyncMock(
-        return_value=([{"a": "1"}], False)
+        return_value=({5: [{"a": "1"}]}, False)
     )
 
     await task._get_or_collect_period_ranking(("20260714", 5))
@@ -97,7 +97,7 @@ async def test_get_or_collect_db_error_falls_back_to_collect():
     repo.get.side_effect = RuntimeError("db broken")
     task = _make_task(period_repo=repo, mcs=_make_mcs(market_open=False))
     task._collect_period_investor_program_ranking = AsyncMock(
-        return_value=([{"a": "1"}], True)
+        return_value=({5: [{"a": "1"}]}, True)
     )
 
     results = await task._get_or_collect_period_ranking(("20260714", 5))
@@ -114,7 +114,7 @@ async def test_intraday_collection_marked_for_invalidation():
     repo.get.return_value = None
     task = _make_task(period_repo=repo, mcs=_make_mcs(market_open=True))
     task._collect_period_investor_program_ranking = AsyncMock(
-        return_value=([{"a": "1"}], True)
+        return_value=({5: [{"a": "1"}]}, True)
     )
 
     await task._get_or_collect_period_ranking(("20260714", 5))
@@ -126,7 +126,7 @@ async def test_intraday_collection_marked_for_invalidation():
 async def test_after_close_collection_not_marked_intraday():
     task = _make_task(mcs=_make_mcs(market_open=False))
     task._collect_period_investor_program_ranking = AsyncMock(
-        return_value=([{"a": "1"}], True)
+        return_value=({5: [{"a": "1"}]}, True)
     )
 
     await task._get_or_collect_period_ranking(("20260714", 5))
@@ -175,7 +175,7 @@ async def test_get_period_returns_collecting_immediately_on_cache_miss():
     task = _make_task(mcs=_make_mcs(market_open=False, latest_date="20260714"))
     task._collect_period_investor_program_ranking = AsyncMock(
         return_value=(
-            [{"hts_kor_isnm": "삼성전자", "combined_period_ntby_tr_pbmn_won": "100"}],
+            {5: [{"hts_kor_isnm": "삼성전자", "combined_period_ntby_tr_pbmn_won": "100"}]},
             True,
         )
     )
@@ -213,7 +213,7 @@ async def test_get_period_returns_db_data_without_collecting():
 async def test_trigger_period_collection_dedups_in_progress():
     task = _make_task(mcs=_make_mcs())
     key = ("20260714", 5)
-    task._period_ranking_tasks[key] = MagicMock()  # 수집 진행 중 시뮬레이션
+    task._period_ranking_tasks["20260714"] = MagicMock()  # 수집 진행 중 시뮬레이션
 
     task._trigger_period_ranking_collection(key)
 

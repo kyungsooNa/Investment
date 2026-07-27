@@ -66,12 +66,12 @@ async def test_period_progress_reaches_total_after_collection():
     task = _make_task()
     _stub_collection(task, count=20)
 
-    results, _ = await task._collect_period_investor_program_ranking("20260727", 3)
+    buckets, _ = await task._collect_period_investor_program_ranking("20260727")
 
     progress = task.get_period_ranking_progress()
     assert progress["total"] == 20
     assert progress["processed"] == 20
-    assert progress["collected"] == len(results)
+    assert progress["collected"] == len(buckets[max(buckets)])
     assert progress["running"] is False
 
 
@@ -86,7 +86,7 @@ async def test_period_progress_reports_partial_progress_while_running():
 
     task._fetch_with_retry = AsyncMock(side_effect=_capture)
 
-    await task._collect_period_investor_program_ranking("20260727", 3)
+    await task._collect_period_investor_program_ranking("20260727")
 
     assert snapshots, "수집 중 진행률 스냅샷이 있어야 한다"
     assert all(s["running"] is True for s in snapshots)
@@ -102,7 +102,7 @@ async def test_period_progress_clears_running_on_error():
     task._suspend_event.wait = AsyncMock(side_effect=RuntimeError("boom"))
 
     try:
-        await task._collect_period_investor_program_ranking("20260727", 3)
+        await task._collect_period_investor_program_ranking("20260727")
     except RuntimeError:
         pass
 
@@ -113,7 +113,7 @@ async def test_period_progress_is_separate_from_investor_progress():
     task = _make_task()
     _stub_collection(task, count=20)
 
-    await task._collect_period_investor_program_ranking("20260727", 3)
+    await task._collect_period_investor_program_ranking("20260727")
 
     assert task.get_investor_ranking_progress()["total"] == 0
     assert task.get_period_ranking_progress()["total"] == 20
