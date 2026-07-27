@@ -697,7 +697,7 @@ class RankingTask(AfterMarketTask):
             self._logger.warning(f"기간수급 랭킹 캐시 예열 미완료: {target_date}, {days}일")
 
     async def _period_ranking_self_heal(self) -> None:
-        """시작 시 당일 기간수급 캐시가 없으면 DB 복원 또는 예열한다 (장중 제외)."""
+        """시작 시 누락된 최신 거래일 랭킹 리포트/기간수급을 복구한다 (장중 제외)."""
         try:
             if self._mcs is None:
                 return
@@ -707,10 +707,20 @@ class RankingTask(AfterMarketTask):
             if not target_date:
                 return
             cache_key = (str(target_date), self.DEFAULT_PERIOD_RANKING_DAYS)
-            if cache_key in self._period_ranking_cache:
+            needs_period = cache_key not in self._period_ranking_cache
+            needs_investor = (
+                self._last_collected_date != str(target_date)
+                and self._load_last_ranking_report_date() != str(target_date)
+            )
+            if not needs_period and not needs_investor:
                 return
             async with self._running_state():
-                await self.prewarm_period_ranking(str(target_date))
+                if needs_investor:
+                    self._logger.info(f"투자자 랭킹 미전송분 복구 시작: {target_date}")
+                    await self.refresh_investor_ranking()
+                    self._last_collected_date = str(target_date)
+                if needs_period:
+                    await self.prewarm_period_ranking(str(target_date))
         except asyncio.CancelledError:
             raise
         except Exception as e:
