@@ -326,6 +326,10 @@ class KoreaInvestApiClient:
         """프로그램매매 구독 ACK 확정을 기다립니다."""
         return await self._websocketAPI.wait_for_program_trading_ack(stock_code, timeout)
 
+    async def wait_for_market_status_ack(self, stock_code: str, timeout: float = None) -> bool:
+        """장운영정보 구독 ACK 확정을 기다립니다."""
+        return await self._websocketAPI.wait_for_market_status_ack(stock_code, timeout)
+
     async def subscribe_realtime_quote(self, stock_code) -> Any:
         """실시간 주식호가 데이터를 구독합니다."""
         return await self._websocketAPI.subscribe_realtime_quote(stock_code)
@@ -351,3 +355,9 @@ class KoreaInvestApiClient:
 
     async def unsubscribe_program_trading(self, stock_code: str):
         return await self._websocketAPI.unsubscribe_program_trading(stock_code)
+
+    async def subscribe_market_status(self, stock_code: str):
+        return await self._websocketAPI.subscribe_market_status(stock_code)
+
+    async def unsubscribe_market_status(self, stock_code: str):
+        return await self._websocketAPI.unsubscribe_market_status(stock_code)

@@ -85,6 +85,7 @@ class KoreaInvestWebSocketAPI:
         self._rt_tr_unified_realtime_price = None
         self._rt_tr_realtime_quote = None
         self._rt_program_trading_tr_ids = set()
+        self._rt_market_status_tr_ids = set()
 
     def _aes_cbc_base64_dec(self, key, iv, cipher_text):
         """
@@ -288,6 +289,7 @@ class KoreaInvestWebSocketAPI:
         if message and (message.startswith('0|') or message.startswith('1|')):  # 실시간 데이터 (0: 일반, 1: 체결통보)
             recvstr = message.split('|')
             tr_id = recvstr[1]  # 두 번째 요소가 TR_ID
+            tr_key = recvstr[2]  # 세 번째 요소가 구독 키
             data_body = recvstr[3]  # 네 번째 요소가 실제 데이터 본문
 
             self._logger.debug("받은 TR_ID: %s", tr_id)
@@ -363,6 +365,13 @@ class KoreaInvestWebSocketAPI:
             elif tr_id in self._rt_program_trading_tr_ids:
                 parsed_data = self._parse_program_trading_data(data_body)
                 message_type = 'realtime_program_trading'
+            elif tr_id in self._rt_market_status_tr_ids:
+                parsed_data = self._parse_market_status_data(
+                    data_body,
+                    include_stock_code=(tr_id != "H0UNMKO0"),
+                    stock_code=tr_key,
+                )
+                message_type = 'market_status'
 
             # [추가] 파싱된 데이터 디버그 로그 (데이터 내용 확인용) — lazy 포맷팅으로 매 틱 repr 생성 방지
             self._logger.debug("WS 수신 데이터 파싱: Type=%s, TR_ID=%s, Data=%s", message_type, tr_id, parsed_data)
@@ -718,11 +727,37 @@ class KoreaInvestWebSocketAPI:
         values = data_str.split('^')
         return dict(zip(keys, values[:len(keys)]))
 
+    def _parse_market_status_data(
+        self,
+        data_str: str,
+        include_stock_code: bool = True,
+        stock_code: str = "",
+    ) -> dict:
+        """H0STMKO0/H0NXMKO0/H0UNMKO0 (국내주식 장운영정보)를 파싱합니다."""
+        if include_stock_code:
+            menulist = "유가증권단축종목코드|거래정지여부|거래정지사유내용|장운영구분코드|예상장운영구분코드|임의연장구분코드|동시호가배분처리구분코드|종목상태구분코드|VI적용구분코드|시간외단일가VI적용구분코드|거래소구분코드"
+        else:
+            menulist = "거래정지여부|거래정지사유내용|장운영구분코드|예상장운영구분코드|임의연장구분코드|동시호가배분처리구분코드|종목상태구분코드|VI적용구분코드|시간외단일가VI적용구분코드|거래소구분코드"
+        keys = menulist.split('|')
+        values = data_str.split('^')
+        parsed = dict(zip(keys, values[:len(keys)]))
+        if not include_stock_code:
+            parsed["유가증권단축종목코드"] = stock_code
+        return parsed
+
     def _get_program_trading_tr_ids(self) -> set[str]:
         websocket_config = self._env.active_config.get('tr_ids', {}).get('websocket', {})
         return {
             websocket_config.get('realtime_program_trading', 'H0STPGM0'),
             websocket_config.get('nxt_realtime_program_trading', 'H0NXPGM0'),
+        }
+
+    def _get_market_status_tr_ids(self) -> set[str]:
+        websocket_config = self._env.active_config.get('tr_ids', {}).get('websocket', {})
+        return {
+            websocket_config.get('market_status', 'H0STMKO0'),
+            websocket_config.get('nxt_market_status', 'H0NXMKO0'),
+            websocket_config.get('unified_market_status', 'H0UNMKO0'),
         }
 
     def _cache_realtime_tr_ids(self) -> None:
@@ -734,6 +769,7 @@ class KoreaInvestWebSocketAPI:
         self._rt_tr_unified_realtime_price = ws_cfg.get('unified_realtime_price', 'H0UNCNT0')
         self._rt_tr_realtime_quote = ws_cfg['realtime_quote']
         self._rt_program_trading_tr_ids = self._get_program_trading_tr_ids()
+        self._rt_market_status_tr_ids = self._get_market_status_tr_ids()
         self._rt_tr_cached = True
 
     async def subscribe_program_trading(self, stock_code: str):
@@ -746,6 +782,18 @@ class KoreaInvestWebSocketAPI:
         """국내주식 실시간 프로그램매매 동향 (H0STPGM0) 구독 해지."""
         tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0STPGM0')
         self._logger.info(f"[프로그램매매] 종목 {stock_code} 구독 해지 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
+
+    async def subscribe_market_status(self, stock_code: str):
+        """국내주식 장운영정보(H0UNMKO0)를 구독합니다."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('unified_market_status', 'H0UNMKO0')
+        self._logger.info(f"[장운영정보] 종목 {stock_code} 구독 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="1")
+
+    async def unsubscribe_market_status(self, stock_code: str):
+        """국내주식 장운영정보(H0UNMKO0) 구독을 해지합니다."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('unified_market_status', 'H0UNMKO0')
+        self._logger.info(f"[장운영정보] 종목 {stock_code} 구독 해지 요청 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
 
     async def _resubscribe_all(self):
@@ -935,6 +983,11 @@ class KoreaInvestWebSocketAPI:
     async def wait_for_program_trading_ack(self, stock_code, timeout: float = None) -> bool:
         """프로그램매매(H0STPGM0) 구독 ACK 확정을 기다린다."""
         tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_program_trading', 'H0STPGM0')
+        return await self.wait_for_subscription_ack(tr_id, stock_code, timeout)
+
+    async def wait_for_market_status_ack(self, stock_code, timeout: float = None) -> bool:
+        """장운영정보(H0UNMKO0) 구독 ACK 확정을 기다린다."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('unified_market_status', 'H0UNMKO0')
         return await self.wait_for_subscription_ack(tr_id, stock_code, timeout)
 
     async def subscribe_realtime_price(self, stock_code):

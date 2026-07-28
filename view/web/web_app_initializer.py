@@ -172,6 +172,7 @@ class WebAppContext:
         self.foreground_scheduler: ForegroundScheduler = None
         self._mcs: MarketCalendarService = None
         self.notification_service: NotificationService = None
+        self.market_status_alert_service = None
         self.telegram_notification_repository = None
         self.strategy_diagnostic_report_repository = None
         self.notification_queue_task: NotificationQueueTask = None
