@@ -453,7 +453,7 @@ class TelegramReporter:
         await self._send_message(title)
 
         if not themes:
-            await self._send_message("데이터 없음")
+            await self._send_message("주도 테마 없음")
             return
 
         parts = []
