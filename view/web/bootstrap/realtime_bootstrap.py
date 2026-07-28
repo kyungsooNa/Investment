@@ -11,6 +11,7 @@ from services.price_stream_service import PriceStreamService
 from services.price_subscription_service import PriceSubscriptionService
 from services.strategy_event_router import StrategyEventRouter
 from services.streaming_service import StreamingService
+from services.market_status_alert_service import MarketStatusAlertService
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -29,6 +30,26 @@ class RealtimeBootstrap:
             self._disable()
             return
 
+        market_status_cfg = config.get("market_status_alert", {}) if isinstance(config, dict) else {}
+        market_status_enabled = (
+            market_status_cfg.get("enabled", True)
+            if isinstance(market_status_cfg, dict)
+            else True
+        )
+        monitor_codes = (
+            market_status_cfg.get("monitor_codes", ["005930"])
+            if isinstance(market_status_cfg, dict)
+            else ["005930"]
+        )
+        ctx.market_status_alert_service = (
+            MarketStatusAlertService(
+                operator_alert_service=ctx.operator_alert_service,
+                notification_service=ctx.notification_service,
+                logger=ctx.logger,
+            )
+            if market_status_enabled
+            else None
+        )
         ctx.streaming_service = StreamingService(
             broker_api_wrapper=ctx.broker,
             logger=ctx.logger,
@@ -36,6 +57,8 @@ class RealtimeBootstrap:
             market_data_service=ctx.market_data_service,
             streaming_logger=ctx.streaming_event_logger,
             data_quality_service=ctx.data_quality_service,
+            market_status_alert_service=ctx.market_status_alert_service,
+            market_status_monitor_codes=monitor_codes if market_status_enabled else [],
         )
         ctx.event_shadow_journal_service = EventShadowJournalService(
             log_root="logs/strategies",
@@ -122,3 +145,4 @@ class RealtimeBootstrap:
         ctx.streaming_stock_repo = None
         ctx.price_subscription_service = None
         ctx.websocket_watchdog_task = None
+        ctx.market_status_alert_service = None

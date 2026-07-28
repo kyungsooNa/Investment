@@ -63,6 +63,8 @@ tr_ids:
     order_notice_real: H0STCNI0 # 국내주식 체결통보 TR ID (실전)
     order_notice_paper: H0STCNI9 # 국내주식 체결통보 TR ID (모의)
     realtime_program_trading: "H0STPGM0"  # 프로그램매매 TR ID (KRX)
+    market_status: H0STMKO0       # 장운영정보 TR ID (KRX)
+    unified_market_status: H0UNMKO0 # 장운영정보 TR ID (KRX+NXT 통합)
     nxt_realtime_price: H0NXCNT0       # 실시간 주식체결 TR ID (NXT)
     nxt_realtime_quote: H0NXASP0       # 실시간 주식호가 TR ID (NXT)
     nxt_realtime_program_trading: H0NXPGM0  # 프로그램매매 TR ID (NXT)

@@ -27,6 +27,7 @@ class AlertSource(str, Enum):
     DATA_QUALITY = "DATA_QUALITY"
     STRATEGY_PERF = "STRATEGY_PERF"
     INDICATOR = "INDICATOR"
+    MARKET_STATUS = "MARKET_STATUS"
 
 
 # severity 순서 (낮을수록 심각)

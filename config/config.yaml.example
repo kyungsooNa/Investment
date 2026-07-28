@@ -191,6 +191,12 @@ notifications:
       STRATEGY: ["warning", "error", "critical"]
       API: ["error", "critical"]
 
+# 시장 안전장치 알림. 장운영정보 웹소켓(H0UNMKO0)을 대표 종목에 구독해
+# 거래정지 사유에 사이드카/서킷브레이커가 포함되면 SYSTEM 알림을 발행한다.
+market_status_alert:
+  enabled: true
+  monitor_codes: ["005930"]
+
 # OpenDART 관심종목 공시 알림 (API 키 발급 후 enabled=true)
 dart_disclosure:
   enabled: false

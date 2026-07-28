@@ -48,6 +48,8 @@ class StreamingService:
         price_stream_service: Optional["PriceStreamService"] = None,
         streaming_stock_repo: Optional["StreamingStockRepo"] = None,
         data_quality_service=None,
+        market_status_alert_service=None,
+        market_status_monitor_codes: Optional[list[str]] = None,
     ):
         self.broker = broker_api_wrapper
         self.logger = logger
@@ -57,6 +59,8 @@ class StreamingService:
         self._price_stream_service: Optional["PriceStreamService"] = None
         self._streaming_stock_repo: Optional["StreamingStockRepo"] = streaming_stock_repo
         self._data_quality_service = data_quality_service
+        self._market_status_alert_service = market_status_alert_service
+        self._market_status_monitor_codes = list(market_status_monitor_codes or [])
         self._last_console_print_time: float = 0.0
         self._PRINT_THROTTLE_SEC: float = 0.5
         self._callback = None  # 재연결 시 콜백 유실 방지용 저장
@@ -70,6 +74,8 @@ class StreamingService:
 
         if price_stream_service is not None:
             self.set_price_stream_service(price_stream_service)
+        if market_status_alert_service is not None:
+            self.register_handler('market_status', market_status_alert_service.on_market_status)
 
     # ── 의존성 주입 ───────────────────────────────────────────────
 
@@ -130,6 +136,7 @@ class StreamingService:
                     await self.subscribe_order_notice()
                 except Exception as e:
                     self.logger.warning(f"체결통보 구독 실패: {e}")
+                await self._subscribe_market_status_monitors()
             return result
 
     def _is_websocket_receive_alive(self) -> bool:
@@ -164,6 +171,30 @@ class StreamingService:
         if not callable(waiter):
             return True
         return await waiter(code, timeout)
+
+    async def subscribe_market_status(self, code: str):
+        """장운영정보 실시간 구독 (BrokerAPIWrapper 위임)."""
+        return await self.broker.subscribe_market_status(code)
+
+    async def unsubscribe_market_status(self, code: str):
+        """장운영정보 실시간 구독 해지 (BrokerAPIWrapper 위임)."""
+        return await self.broker.unsubscribe_market_status(code)
+
+    async def wait_market_status_ack(self, code: str, timeout: float = None) -> bool:
+        """장운영정보 구독 ACK 확정을 기다린다."""
+        waiter = getattr(self.broker, "wait_market_status_ack", None)
+        if not callable(waiter):
+            return True
+        return await waiter(code, timeout)
+
+    async def _subscribe_market_status_monitors(self) -> None:
+        for code in self._market_status_monitor_codes:
+            try:
+                sent = await self.subscribe_market_status(code)
+                if sent and not await self.wait_market_status_ack(code):
+                    self.logger.warning(f"장운영정보 구독 ACK 미확정: {code}")
+            except Exception as e:
+                self.logger.warning(f"장운영정보 구독 실패 ({code}): {e}")
 
     async def subscribe_realtime_price(self, code: str):
         """실시간 체결가 구독 (BrokerAPIWrapper 위임)."""

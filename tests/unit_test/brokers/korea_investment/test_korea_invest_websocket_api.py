@@ -40,6 +40,7 @@ def websocket_api_instance():
             "websocket": {
                 "realtime_price": "H0STCNT0",
                 "realtime_quote": "H0STASP0",
+                "unified_market_status": "H0UNMKO0",
                 "order_notice_real": "H0STCNI0",
                 "order_notice_paper": "H0STCNI9"
             }
@@ -2763,6 +2764,34 @@ def test_parse_program_trading_data(websocket_api_instance):
     assert result["순매수거래대금"] == "10000"
 
 
+def test_parse_market_status_data(websocket_api_instance):
+    api = websocket_api_instance
+    data_str = "005930^Y^서킷브레이커 발동으로 매매거래중단^2^0^0^0^00^0^0^KRX"
+
+    result = api._parse_market_status_data(data_str, include_stock_code=True)
+
+    assert result["유가증권단축종목코드"] == "005930"
+    assert result["거래정지여부"] == "Y"
+    assert result["거래정지사유내용"] == "서킷브레이커 발동으로 매매거래중단"
+    assert result["거래소구분코드"] == "KRX"
+
+
+def test_handle_websocket_message_market_status_success(websocket_api_instance):
+    api = websocket_api_instance
+    api.on_realtime_message_callback = MagicMock()
+    data_str = "Y^사이드카 발동^2^0^0^0^00^0^0^KRX"
+    message = f"0|H0UNMKO0|005930|{data_str}"
+
+    api._handle_websocket_message(message)
+
+    api.on_realtime_message_callback.assert_called_once()
+    result = api.on_realtime_message_callback.call_args[0][0]
+    assert result["type"] == "market_status"
+    assert result["tr_id"] == "H0UNMKO0"
+    assert result["data"]["유가증권단축종목코드"] == "005930"
+    assert result["data"]["거래정지사유내용"] == "사이드카 발동"
+
+
 def test_is_receive_alive_true_and_false(websocket_api_instance):
     api = websocket_api_instance
     done_task = MagicMock()
@@ -2825,6 +2854,8 @@ async def test_subscribe_unsubscribe_wrappers(websocket_api_instance):
         await api.unsubscribe_program_trading("005930")
         await api.subscribe_unified_price("005930")
         await api.unsubscribe_unified_price("005930")
+        await api.subscribe_market_status("005930")
+        await api.unsubscribe_market_status("005930")
 
     assert mock_send.await_args_list[0].args == ("H0STPGM0", "005930")
     assert mock_send.await_args_list[0].kwargs == {"tr_type": "1"}
@@ -2834,6 +2865,10 @@ async def test_subscribe_unsubscribe_wrappers(websocket_api_instance):
     assert mock_send.await_args_list[2].kwargs == {"tr_type": "1"}
     assert mock_send.await_args_list[3].args == ("H0UNCNT0", "005930")
     assert mock_send.await_args_list[3].kwargs == {"tr_type": "2"}
+    assert mock_send.await_args_list[4].args == ("H0UNMKO0", "005930")
+    assert mock_send.await_args_list[4].kwargs == {"tr_type": "1"}
+    assert mock_send.await_args_list[5].args == ("H0UNMKO0", "005930")
+    assert mock_send.await_args_list[5].kwargs == {"tr_type": "2"}
 
 
 @pytest.mark.asyncio
