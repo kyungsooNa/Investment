@@ -6,6 +6,7 @@ from repositories.execution_strength_repo import ExecutionStrengthRepository
 from repositories.orderbook_snapshot_repo import OrderbookSnapshotRepository
 from repositories.streaming_stock_repo import StreamingStockRepo
 from services.event_shadow_journal_service import EventShadowJournalService
+from services.favorite_price_alert_service import FavoritePriceAlertService
 from services.price_stream_service import PriceStreamService
 from services.price_subscription_service import PriceSubscriptionService
 from services.strategy_event_router import StrategyEventRouter
@@ -60,11 +61,18 @@ class RealtimeBootstrap:
             if orderbook_capture_enabled
             else None
         )
+        ctx.favorite_price_alert_service = FavoritePriceAlertService(
+            favorite_repository=ctx.favorite_repo,
+            notification_service=ctx.notification_service,
+            stock_code_repository=ctx.stock_code_repository,
+            logger=ctx.logger,
+        )
         ctx.price_stream_service = PriceStreamService(
             stock_repo=ctx.stock_repository,
             logger=ctx.logger,
             data_quality_service=ctx.data_quality_service,
             notification_service=ctx.notification_service,
+            favorite_price_alert_service=ctx.favorite_price_alert_service,
             event_router=ctx.strategy_event_router,
             execution_strength_recorder=ctx.execution_strength_repo,
             orderbook_recorder=ctx.orderbook_snapshot_repo,
@@ -110,6 +118,7 @@ class RealtimeBootstrap:
         ctx.execution_strength_repo = None
         ctx.orderbook_snapshot_repo = None
         ctx.price_stream_service = None
+        ctx.favorite_price_alert_service = None
         ctx.streaming_stock_repo = None
         ctx.price_subscription_service = None
         ctx.websocket_watchdog_task = None

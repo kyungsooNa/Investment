@@ -41,6 +41,8 @@ async def test_add_favorite(web_client, mock_web_ctx):
     with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
         mock_web_ctx.favorite_service = MagicMock()
         mock_web_ctx.favorite_service.add = AsyncMock(return_value=True)
+        mock_web_ctx.favorite_price_alert_service = None
+        mock_web_ctx.price_subscription_service = None
 
         response = web_client.post("/api/favorite/005930")
         assert response.status_code == 200
@@ -56,10 +58,32 @@ async def test_add_favorite_already_exists(web_client, mock_web_ctx):
     with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
         mock_web_ctx.favorite_service = MagicMock()
         mock_web_ctx.favorite_service.add = AsyncMock(return_value=False)
+        mock_web_ctx.favorite_price_alert_service = None
+        mock_web_ctx.price_subscription_service = None
 
         response = web_client.post("/api/favorite/005930")
         assert response.status_code == 200
         assert response.json()["added"] is False
+
+
+async def test_add_favorite_syncs_alert_cache_and_price_subscription(web_client, mock_web_ctx):
+    """POST /api/favorite/{code} - 추가 시 가격 알림 캐시와 구독을 동기화한다."""
+    with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
+        mock_web_ctx.favorite_service = MagicMock()
+        mock_web_ctx.favorite_service.add = AsyncMock(return_value=True)
+        mock_web_ctx.favorite_price_alert_service = MagicMock()
+        mock_web_ctx.favorite_price_alert_service.add_favorite = AsyncMock()
+        mock_web_ctx.price_subscription_service = MagicMock()
+        mock_web_ctx.price_subscription_service.add_subscription = AsyncMock()
+
+        response = web_client.post("/api/favorite/005930")
+        assert response.status_code == 200
+
+        mock_web_ctx.favorite_price_alert_service.add_favorite.assert_awaited_once_with("005930")
+        mock_web_ctx.price_subscription_service.add_subscription.assert_awaited_once()
+        args = mock_web_ctx.price_subscription_service.add_subscription.await_args.args
+        assert args[0] == "005930"
+        assert args[2] == "favorite"
 
 
 async def test_remove_favorite(web_client, mock_web_ctx):
@@ -67,6 +91,8 @@ async def test_remove_favorite(web_client, mock_web_ctx):
     with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
         mock_web_ctx.favorite_service = MagicMock()
         mock_web_ctx.favorite_service.remove = AsyncMock(return_value=True)
+        mock_web_ctx.favorite_price_alert_service = None
+        mock_web_ctx.price_subscription_service = None
 
         response = web_client.delete("/api/favorite/005930")
         assert response.status_code == 200
@@ -81,10 +107,29 @@ async def test_remove_favorite_not_found(web_client, mock_web_ctx):
     with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
         mock_web_ctx.favorite_service = MagicMock()
         mock_web_ctx.favorite_service.remove = AsyncMock(return_value=False)
+        mock_web_ctx.favorite_price_alert_service = None
+        mock_web_ctx.price_subscription_service = None
 
         response = web_client.delete("/api/favorite/999999")
         assert response.status_code == 200
         assert response.json()["removed"] is False
+
+
+async def test_remove_favorite_syncs_alert_cache_and_price_subscription(web_client, mock_web_ctx):
+    """DELETE /api/favorite/{code} - 삭제 시 가격 알림 캐시와 구독을 정리한다."""
+    with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
+        mock_web_ctx.favorite_service = MagicMock()
+        mock_web_ctx.favorite_service.remove = AsyncMock(return_value=True)
+        mock_web_ctx.favorite_price_alert_service = MagicMock()
+        mock_web_ctx.favorite_price_alert_service.remove_favorite = AsyncMock()
+        mock_web_ctx.price_subscription_service = MagicMock()
+        mock_web_ctx.price_subscription_service.remove_subscription = AsyncMock()
+
+        response = web_client.delete("/api/favorite/005930")
+        assert response.status_code == 200
+
+        mock_web_ctx.favorite_price_alert_service.remove_favorite.assert_awaited_once_with("005930")
+        mock_web_ctx.price_subscription_service.remove_subscription.assert_awaited_once_with("005930", "favorite")
 
 
 async def test_get_favorite_status_true(web_client, mock_web_ctx):

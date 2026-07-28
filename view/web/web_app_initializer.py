@@ -21,6 +21,7 @@ from repositories.overseas_stock_code_repository import OverseasStockCodeReposit
 from repositories.rs_rating_repository import RSRatingRepository
 from repositories.favorite_repository import FavoriteRepository
 from services.favorite_service import FavoriteService
+from services.favorite_price_alert_service import FavoritePriceAlertService
 from services.indicator_service import IndicatorService
 from core.market_clock import MarketClock
 from core.logger import Logger, get_strategy_logger, get_streaming_logger
@@ -134,6 +135,7 @@ class WebAppContext:
             repository=self.favorite_repo,
             stock_code_repository=self.stock_code_repository,
         )
+        self.favorite_price_alert_service: FavoritePriceAlertService = None
         self.account_snapshot_cache: AccountSnapshotCache = None
         self.api_budget_limiter = ApiBudgetLimiter()
         self.risk_gate_service: RiskGateService = None
@@ -335,6 +337,18 @@ class WebAppContext:
                     )
         except Exception as e:
             self.logger.warning(f"프리미엄 종목 구독 초기화 실패: {e}")
+
+        # 3. 관심종목 → LOW 구독 (알림 및 관심종목 페이지 최신가용)
+        try:
+            favorite_codes = await self.favorite_service.get_all() if self.favorite_service else []
+            if favorite_codes:
+                await self.price_subscription_service.sync_subscriptions(
+                    codes=favorite_codes,
+                    category_key="favorite",
+                    priority=SubscriptionPriority.LOW,
+                )
+        except Exception as e:
+            self.logger.warning(f"관심종목 구독 초기화 실패: {e}")
 
     def get_env_type(self) -> str:
         if self.env is None:
