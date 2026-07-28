@@ -204,6 +204,19 @@ async def public_host_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+def _is_same_origin(request: Request, normalized_origin: str) -> bool:
+    """Origin 이 요청 자신의 출처(scheme+host+port)와 같은지 판정한다.
+
+    브라우저는 same-origin POST 에도 Origin 을 붙이므로, 이를 허용 목록으로만 거르면
+    로컬 실행(cors_allowed_origins 미설정)에서 웹 UI 의 모든 POST 가 막힌다.
+    CORS 는 교차 출처를 막기 위한 장치이고, same-origin 위조 방지는 CSRF 토큰 검사가 담당한다.
+    """
+    host = request.headers.get("host", "").strip()
+    if not host:
+        return False
+    return normalized_origin.lower() == f"{request.url.scheme}://{host}".lower()
+
+
 async def exact_origin_cors_middleware(request: Request, call_next):
     origin = request.headers.get("origin")
     ctx = api_common._ctx
@@ -212,6 +225,8 @@ async def exact_origin_cors_middleware(request: Request, call_next):
 
     allowed_origins, allow_credentials = cors_policy(ctx)
     normalized_origin = origin.rstrip("/")
+    if _is_same_origin(request, normalized_origin):
+        return await call_next(request)
     if normalized_origin not in allowed_origins:
         return JSONResponse(
             status_code=400,
