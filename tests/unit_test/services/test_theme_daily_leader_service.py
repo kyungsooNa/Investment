@@ -101,7 +101,11 @@ async def test_intraday_report_gracefully_marks_missing_history():
     svc, _ = _service(groups, snapshot_repo=snapshot_repo)
 
     resp = await svc.build_intraday_theme_report(
-        {"all_stocks": [_stock("A", "A", 10, 100), _stock("B", "B", 9, 200), _stock("C", "C", 8, 300)]},
+        {"all_stocks": [
+            _stock("A", "A", 10, 10_000_000_000),
+            _stock("B", "B", 9, 10_000_000_000),
+            _stock("C", "C", 8, 10_000_000_000),
+        ]},
         report_time="20260715 09:01",
     )
 
@@ -116,7 +120,7 @@ async def test_intraday_report_prioritizes_leadership_score_over_recent_trading_
             "sources": ["NAVER"],
             "members": [_member("U1", "U1"), _member("U2", "U2"), _member("U3", "U3")],
         },
-        "falling_theme": {
+        "slower_theme": {
             "sources": ["NAVER"],
             "members": [_member("D1", "D1"), _member("D2", "D2"), _member("D3", "D3")],
         },
@@ -126,21 +130,21 @@ async def test_intraday_report_prioritizes_leadership_score_over_recent_trading_
     snapshot_repo.get_values_at_or_before = AsyncMock(side_effect=[
         {
             "U1": 900_000_000, "U2": 900_000_000, "U3": 900_000_000,
-            "D1": 1_000_000_000, "D2": 1_000_000_000, "D3": 1_000_000_000,
+            "D1": 5_000_000_000, "D2": 5_000_000_000, "D3": 5_000_000_000,
         },
         {
             "U1": 800_000_000, "U2": 800_000_000, "U3": 800_000_000,
-            "D1": 900_000_000, "D2": 900_000_000, "D3": 900_000_000,
+            "D1": 4_000_000_000, "D2": 4_000_000_000, "D3": 4_000_000_000,
         },
     ])
     svc, _ = _service(groups, snapshot_repo=snapshot_repo)
     rankings = {"all_stocks": [
-        _stock("U1", "U1", 3.0, 1_000_000_000),
-        _stock("U2", "U2", 2.5, 1_000_000_000),
-        _stock("U3", "U3", 2.0, 1_000_000_000),
-        _stock("D1", "D1", -4.0, 10_000_000_000),
-        _stock("D2", "D2", -5.0, 10_000_000_000),
-        _stock("D3", "D3", -6.0, 10_000_000_000),
+        _stock("U1", "U1", 10.0, 10_000_000_000),
+        _stock("U2", "U2", 9.0, 10_000_000_000),
+        _stock("U3", "U3", 8.0, 10_000_000_000),
+        _stock("D1", "D1", 1.0, 100_000_000_000),
+        _stock("D2", "D2", 1.0, 100_000_000_000),
+        _stock("D3", "D3", 1.0, 100_000_000_000),
     ]}
 
     resp = await svc.build_intraday_theme_report(
@@ -187,10 +191,8 @@ async def test_intraday_report_ranks_liquid_theme_above_thin_high_score_theme():
         window_minutes=3,
     )
 
-    assert [theme["normalized_name"] for theme in resp.data] == ["AI 챗봇", "의료AI"]
+    assert [theme["normalized_name"] for theme in resp.data] == ["AI 챗봇"]
     assert resp.data[0]["is_liquid_theme"] is True
-    assert resp.data[1]["is_liquid_theme"] is False
-    assert resp.data[1]["market_leadership_score"] > resp.data[0]["market_leadership_score"]
 
 
 @pytest.mark.asyncio
@@ -300,12 +302,10 @@ async def test_ranks_liquid_theme_above_thin_high_change_theme():
     resp = await svc.build_daily_theme_report(rankings, "20260630")
 
     assert resp.rt_cd == ErrorCode.SUCCESS.value
-    assert [item["normalized_name"] for item in resp.data] == ["대금동반상승", "저유동성급등"]
-    liquid, thin = resp.data
-    assert liquid["leader_avg_change_rate"] > thin["leader_avg_change_rate"]
-    assert thin["momentum_leaders"][0]["change_rate"] > liquid["leaders"][0]["change_rate"]
-    assert liquid["theme_score"] > thin["theme_score"]
-    assert thin["zero_trading_value_ratio"] == 66.67
+    assert [item["normalized_name"] for item in resp.data] == ["대금동반상승"]
+    liquid = resp.data[0]
+    assert liquid["leader_avg_change_rate"] == 4.0
+    assert liquid["theme_score"] > 0
 
 
 @pytest.mark.asyncio
@@ -362,6 +362,41 @@ async def test_skips_theme_with_less_than_min_members():
 
     resp = await svc.build_daily_theme_report(rankings, "20260630")
 
+    assert resp.data == []
+
+
+@pytest.mark.asyncio
+async def test_filters_weak_relative_themes_without_market_leadership():
+    """약세장 상대 순위만 높은 테마는 주도 테마로 반환하지 않는다."""
+    svc, _ = _service({
+        "반도체장비": {
+            "sources": ["NAVER"],
+            "members": [_member("A", "씨피시스템"), _member("B", "주성엔지니어링"), _member("C", "원익IPS")],
+        },
+        "로봇": {
+            "sources": ["NAVER"],
+            "members": [
+                _member("D", "씨피시스템"), _member("E", "코스모로보틱스"), _member("F", "기아"),
+                _member("G", "하락1"), _member("H", "하락2"), _member("I", "하락3"), _member("J", "하락4"),
+            ],
+        },
+    })
+    rankings = {"all_stocks": [
+        _stock("A", "씨피시스템", 17.2, 104_900_000_000),
+        _stock("B", "주성엔지니어링", -12.5, 53_400_000_000),
+        _stock("C", "원익IPS", -13.4, 30_200_000_000),
+        _stock("D", "씨피시스템", 17.2, 104_900_000_000),
+        _stock("E", "코스모로보틱스", 4.2, 56_500_000_000),
+        _stock("F", "기아", -5.1, 34_400_000_000),
+        _stock("G", "하락1", -7.0, 30_000_000_000),
+        _stock("H", "하락2", -8.0, 30_000_000_000),
+        _stock("I", "하락3", -9.0, 30_000_000_000),
+        _stock("J", "하락4", -10.0, 30_000_000_000),
+    ]}
+
+    resp = await svc.build_daily_theme_report(rankings, "20260728")
+
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
     assert resp.data == []
 
 
@@ -526,11 +561,4 @@ async def test_theme_requires_two_liquid_advancers_and_half_breadth():
 
     resp = await svc.build_daily_theme_report(rankings, "20260714")
 
-    by_name = {theme["normalized_name"]: theme for theme in resp.data}
-    assert by_name["단일상승"]["liquid_advancing_member_count"] == 1
-    assert by_name["단일상승"]["is_liquid_theme"] is False
-    assert by_name["단일상승"]["liquidity_bonus"] == 0.0
-    assert by_name["낮은확산"]["liquid_advancing_member_count"] == 2
-    assert by_name["낮은확산"]["advancing_ratio"] == 40.0
-    assert by_name["낮은확산"]["is_liquid_theme"] is False
-    assert by_name["낮은확산"]["liquidity_bonus"] == 0.0
+    assert resp.data == []

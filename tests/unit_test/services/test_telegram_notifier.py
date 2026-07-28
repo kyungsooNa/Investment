@@ -973,7 +973,7 @@ async def test_send_daily_theme_report_empty(telegram_reporter):
 
     full = "".join(call[0][0] for call in telegram_reporter._send_message.call_args_list)
     assert "오늘의 주도 테마" in full
-    assert "데이터 없음" in full
+    assert "주도 테마 없음" in full
 
 
 @pytest.mark.asyncio

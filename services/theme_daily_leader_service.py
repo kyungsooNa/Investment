@@ -44,6 +44,7 @@ class ThemeDailyLeaderService:
     MIN_LIQUID_LEADER_TRADING_VALUE_WON = 3_000_000_000  # 30억
     MIN_LIQUID_THEME_TRADING_VALUE_WON = 10_000_000_000  # 100억
     MIN_LIQUID_MEMBER_COUNT = 2
+    MIN_LEADERSHIP_ADVANCING_RATIO = 50.0
 
     def __init__(
         self,
@@ -301,7 +302,10 @@ class ThemeDailyLeaderService:
                 ),
                 reverse=True,
             )
-            result = themes[:top_themes]
+            result = [
+                theme for theme in themes
+                if self._is_market_leading_theme(theme)
+            ][:top_themes]
             self.pm.log_timer(
                 "ThemeDailyLeaderService.build_daily_theme_report",
                 t_start,
@@ -319,6 +323,16 @@ class ThemeDailyLeaderService:
                 msg1=str(e),
                 data=None,
             )
+
+    @staticmethod
+    def _is_market_leading_theme(theme: Dict[str, Any]) -> bool:
+        return (
+            theme.get("is_liquid_theme") is True
+            and _to_float(theme.get("leader_avg_change_rate")) > 0.0
+            and _to_float(theme.get("market_leadership_score")) > 0.0
+            and _to_float(theme.get("advancing_ratio")) >= ThemeDailyLeaderService.MIN_LEADERSHIP_ADVANCING_RATIO
+            and _to_int(theme.get("liquid_advancing_member_count")) >= ThemeDailyLeaderService.MIN_LIQUID_MEMBER_COUNT
+        )
 
     @staticmethod
     def _build_stock_map(stocks: List[Any]) -> Dict[str, Any]:
