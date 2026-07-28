@@ -354,7 +354,7 @@ def test_local_mode_allows_same_origin_request(mock_web_app_context_cls):
     assert cross_origin.json()["detail"] == "Origin is not allowed"
 
 
-def test_same_origin_is_allowed_regardless_of_port_and_scheme(mock_web_app_context_cls):
+def test_same_origin_requires_matching_scheme_host_port(mock_web_app_context_cls):
     """same-origin 판정은 scheme+host+port 가 모두 일치할 때만 성립한다."""
     mock_ctx = MagicMock()
     mock_ctx.full_config = {
@@ -370,14 +370,21 @@ def test_same_origin_is_allowed_regardless_of_port_and_scheme(mock_web_app_conte
                 "/api/auth/me",
                 headers={"Origin": "http://localhost:9999", "Host": "localhost:8000"},
             )
-            loopback_alias = client.get(
+            other_host = client.get(
+                "/api/auth/me",
+                headers={"Origin": "http://localhost:8000", "Host": "127.0.0.1:8000"},
+            )
+            matching_loopback = client.get(
                 "/api/auth/me",
                 headers={"Origin": "http://127.0.0.1:8000", "Host": "127.0.0.1:8000"},
             )
 
     # 포트가 다르면 별개 출처다.
     assert other_port.status_code == 400
-    assert loopback_alias.status_code == 200
+    # 호스트 문자열이 다르면 별개 출처다 (localhost 와 127.0.0.1 을 같은 것으로 보지 않는다).
+    assert other_host.status_code == 400
+    # 자기 Host 와 정확히 일치하면 호스트 표기와 무관하게 same-origin 이다.
+    assert matching_loopback.status_code == 200
 
 
 def test_demo_cors_allows_only_configured_origin(mock_web_app_context_cls):
