@@ -35,6 +35,7 @@ class PriceStreamService:
         logger=None,
         data_quality_service=None,
         notification_service=None,
+        favorite_price_alert_service=None,
         event_router=None,
         execution_strength_recorder=None,
         orderbook_recorder=None,
@@ -43,6 +44,7 @@ class PriceStreamService:
         self._logger = logger or logging.getLogger(__name__)
         self._data_quality_service = data_quality_service
         self._notification_service = notification_service
+        self._favorite_price_alert_service = favorite_price_alert_service
         self._event_router = event_router
         self._execution_strength_recorder = execution_strength_recorder
         self._orderbook_recorder = orderbook_recorder
@@ -218,6 +220,21 @@ class PriceStreamService:
                     q.put_nowait(tick)
                 except asyncio.QueueFull:
                     pass
+
+        if self._favorite_price_alert_service is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    self._favorite_price_alert_service.handle_price_tick(
+                        stock_code,
+                        price=current_price,
+                        rate=realtime_data.get('전일대비율'),
+                    )
+                )
+            except RuntimeError:
+                pass
+            except Exception as e:
+                self._logger.warning(f"관심종목 가격 알림 평가 실패: {e}")
 
         if self._event_router is not None:
             try:

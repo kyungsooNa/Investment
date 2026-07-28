@@ -1,7 +1,7 @@
 import asyncio
 import pytest
 import time
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from services.price_stream_service import PriceStreamService
 from services.data_quality_service import DataQualityResult
 
@@ -304,6 +304,29 @@ def test_on_price_tick_broadcasts_even_if_repo_fails(price_stream_service, mock_
     tick = q.get_nowait()
     assert tick["price"] == 75000.0
     assert tick["volume"] == 1000
+
+
+@pytest.mark.asyncio
+async def test_on_price_tick_schedules_favorite_price_alert(mock_stock_repo, mock_logger):
+    alert_service = MagicMock()
+    alert_service.handle_price_tick = AsyncMock()
+    service = PriceStreamService(
+        stock_repo=mock_stock_repo,
+        logger=mock_logger,
+        favorite_price_alert_service=alert_service,
+    )
+
+    service.on_price_tick({
+        '유가증권단축종목코드': '005930',
+        '주식현재가': '75000',
+        '전일대비율': '5.12',
+    })
+    alert_service.handle_price_tick.assert_called_once_with(
+        "005930",
+        price="75000",
+        rate="5.12",
+    )
+    await asyncio.sleep(0)
 
 
 def test_mark_subscription_requested_and_get_subscription_age(price_stream_service):

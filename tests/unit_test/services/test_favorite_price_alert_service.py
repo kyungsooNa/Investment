@@ -1,0 +1,91 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from services.favorite_price_alert_service import FavoritePriceAlertService
+from services.notification_service import NotificationCategory, NotificationLevel
+
+
+@pytest.mark.asyncio
+async def test_alerts_when_favorite_rate_crosses_positive_five_percent():
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["005930"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    stock_codes = MagicMock()
+    stock_codes.get_name_by_code.return_value = "삼성전자"
+    svc = FavoritePriceAlertService(repo, notifications, stock_codes)
+
+    await svc.handle_price_tick("005930", price="75000", rate="5.12")
+
+    notifications.emit.assert_awaited_once()
+    args, kwargs = notifications.emit.call_args
+    assert args[:2] == (NotificationCategory.SYSTEM, NotificationLevel.WARNING)
+    assert "삼성전자" in args[2]
+    assert "+5%" in args[2]
+    assert "75,000원" in args[3]
+    assert kwargs["metadata"]["threshold_pct"] == 5
+    assert kwargs["metadata"]["force_external"] is True
+
+
+@pytest.mark.asyncio
+async def test_does_not_repeat_same_five_percent_bucket_until_next_bucket():
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["005930"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("005930", price="75000", rate="5.12")
+    await svc.handle_price_tick("005930", price="75200", rate="5.44")
+    await svc.handle_price_tick("005930", price="78500", rate="10.02")
+
+    assert notifications.emit.await_count == 2
+    assert notifications.emit.await_args_list[1].kwargs["metadata"]["threshold_pct"] == 10
+
+
+@pytest.mark.asyncio
+async def test_alerts_negative_five_percent_bucket():
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["005930"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("005930", price="70000", rate="-5.01")
+
+    notifications.emit.assert_awaited_once()
+    args, kwargs = notifications.emit.call_args
+    assert "-5%" in args[2]
+    assert kwargs["metadata"]["threshold_pct"] == -5
+
+
+@pytest.mark.asyncio
+async def test_ignores_non_favorite_and_invalid_rate():
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["000660"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("005930", price="75000", rate="6.00")
+    await svc.handle_price_tick("000660", price="150000", rate="bad")
+
+    notifications.emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_add_and_remove_favorite_update_cache_and_reset_alert_state():
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=[])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.add_favorite("005930")
+    await svc.handle_price_tick("005930", price="75000", rate="5.10")
+    await svc.remove_favorite("005930")
+    await svc.handle_price_tick("005930", price="75100", rate="10.10")
+
+    notifications.emit.assert_awaited_once()

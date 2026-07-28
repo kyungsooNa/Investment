@@ -733,6 +733,8 @@ async def test_initialize_price_subscriptions_holdings_no_broker_call(mock_deps)
     mock_vts = MagicMock()
     mock_vts.get_holds.return_value = []
     ctx.virtual_trade_service = mock_vts
+    ctx.favorite_service = MagicMock()
+    ctx.favorite_service.get_all = AsyncMock(return_value=[])
 
     await ctx._initialize_price_subscriptions()
 
@@ -768,8 +770,12 @@ async def test_initialize_price_subscriptions_premium_extracts_code(mock_deps, t
          patch("os.path.exists", return_value=True):
         await ctx._initialize_price_subscriptions()
 
-    mock_price_svc.sync_subscriptions.assert_called_once()
-    call_kwargs = mock_price_svc.sync_subscriptions.call_args[1]
+    premium_calls = [
+        call for call in mock_price_svc.sync_subscriptions.call_args_list
+        if call.kwargs.get("category_key") == "strategy_premium"
+    ]
+    assert len(premium_calls) == 1
+    call_kwargs = premium_calls[0].kwargs
     codes = call_kwargs["codes"]
     # 문자열 코드만 들어있어야 함 (dict 아님)
     assert all(isinstance(c, str) for c in codes), f"dict가 섞임: {codes}"
@@ -795,12 +801,19 @@ async def test_initialize_price_subscriptions_premium_no_dict_leakage(mock_deps,
     mock_vts = MagicMock()
     mock_vts.get_holds.return_value = []
     ctx.virtual_trade_service = mock_vts
+    ctx.favorite_service = MagicMock()
+    ctx.favorite_service.get_all = AsyncMock(return_value=[])
 
     with patch("os.path.join", return_value=str(premium_file)), \
          patch("os.path.exists", return_value=True):
         await ctx._initialize_price_subscriptions()
 
-    call_kwargs = mock_price_svc.sync_subscriptions.call_args[1]
+    premium_calls = [
+        call for call in mock_price_svc.sync_subscriptions.call_args_list
+        if call.kwargs.get("category_key") == "strategy_premium"
+    ]
+    assert len(premium_calls) == 1
+    call_kwargs = premium_calls[0].kwargs
     codes = call_kwargs["codes"]
     for c in codes:
         assert not isinstance(c, dict), f"codes에 dict 포함: {c}"
