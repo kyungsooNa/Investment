@@ -156,6 +156,14 @@ async def get_stock_rs_rating(code: str):
     return _serialize_response(resp)
 
 
+@router.get("/market-index/{index_code}")
+async def get_market_index(index_code: str):
+    """코스피(0001)/코스닥(1001) 지수의 현재값·등락·최근 일별 종가. 홈 화면 지수 패널용."""
+    ctx = _get_ctx()
+    resp = await ctx.stock_query_service.get_index_chart(index_code)
+    return _serialize_response(resp)
+
+
 @router.get("/stock/{code}/stage")
 async def get_stock_stage(code: str):
     """종목의 Minervini Stage 조회 (1~4단계, 0=미계산)"""

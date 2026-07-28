@@ -143,6 +143,13 @@ class BrokerAPIWrapper:
         return await self._client.inquire_daily_itemchartprice(stock_code, start_date=start_date, end_date=end_date,
                                                                fid_period_div_code=fid_period_div_code,
                                                                exchange=exchange, **kwargs)
+
+    async def inquire_daily_indexchartprice(self, index_code: str, start_date: str, end_date: str,
+                                            period: str = 'D') -> ResCommonResponse:
+        """국내업종 기간별 지수 시세를 조회합니다 (KoreaInvestApiQuotations 위임)."""
+        return await self._client.inquire_daily_indexchartprice(index_code, start_date=start_date,
+                                                                end_date=end_date, period=period)
+
     async def inquire_time_itemchartprice(
         self, *, stock_code: str, input_hour_1: str,
         pw_data_incu_yn: str = "Y", etc_cls_code: str = "0"

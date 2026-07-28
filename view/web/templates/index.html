@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 
+{% block head_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
+
 {% block content %}
     <style>
         .menu-card {
@@ -16,8 +20,8 @@
     </style>
     <div class="section">
         <div class="card">
-            <h2>글로벌 지수</h2>
-            <div id="market-indices" class="market-indices-grid"></div>
+            <h2>시장 지수</h2>
+            <div id="market-indices"></div>
         </div>
     </div>
     <div class="section">
@@ -96,5 +100,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/market_indices.js?v=1"></script>
+<script src="/static/js/market_indices.js?v=3"></script>
 {% endblock %}

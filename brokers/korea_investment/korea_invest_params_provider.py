@@ -84,6 +84,30 @@ class DailyItemChartPriceParams:
     def to_dict(self) -> Dict[str, str]:
         return asdict(self)
 
+
+@dataclass(frozen=True)
+class DailyIndexChartPriceParams:
+    """국내업종 기간별 지수 시세. 주식과 달리 시장분류가 "U" 이고 수정주가 항목이 없다."""
+    fid_cond_mrkt_div_code: str  # 업종/지수는 "U"
+    fid_input_iscd: str  # 업종코드 (코스피 0001 / 코스닥 1001)
+    fid_input_date_1: str  # 조회 시작일
+    fid_input_date_2: str  # 조회 종료일
+    fid_period_div_code: str  # 일/주/월/년
+
+    @classmethod
+    def daily_indexchartprice(cls, index_code: str, start_date: str, end_date: str, period: str):
+        return cls(
+            fid_cond_mrkt_div_code="U",
+            fid_input_iscd=index_code,
+            fid_input_date_1=tm.to_yyyymmdd(start_date),
+            fid_input_date_2=tm.to_yyyymmdd(end_date),
+            fid_period_div_code=period,
+        )
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+
 @dataclass(frozen=True)
 class TimeItemChartPriceParams:
     fid_cond_mrkt_div_code: str  # 보통 "J"
@@ -734,6 +758,10 @@ class Params:
     def daily_itemchartprice(stock_code: str, start_date: str, end_date: str, period: str, market: MarketCode = "J", adj: Literal["0", "1"] = "0") -> \
             Dict[str, str]:
         return DailyItemChartPriceParams.daily_itemchartprice(stock_code, start_date, end_date, period, market, adj).to_dict()
+
+    @staticmethod
+    def daily_indexchartprice(index_code: str, start_date: str, end_date: str, period: str) -> Dict[str, str]:
+        return DailyIndexChartPriceParams.daily_indexchartprice(index_code, start_date, end_date, period).to_dict()
 
     @staticmethod
     def time_itemchartprice(stock_code: str, input_hour: str,
