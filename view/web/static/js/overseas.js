@@ -88,7 +88,7 @@ async function _refreshOverseasAvailability() {
 }
 
 async function setOverseasTab(tabName) {
-    const tabs = ['overview', 'marketcap', 'orders'];
+    const tabs = ['overview', 'marketcap', 'favorite', 'orders'];
     if (!tabs.includes(tabName)) return;
 
     tabs.forEach(name => {
@@ -105,6 +105,7 @@ async function setOverseasTab(tabName) {
     void _refreshOverseasAvailability();
 
     if (tabName === 'marketcap') await loadOverseasMarketCap();
+    if (tabName === 'favorite') await loadOverseasFavorites();
 }
 
 async function loadOverseasQuote() {
@@ -454,9 +455,122 @@ async function cancelOverseasOrder(orderNo, symbol, exchange, qty) {
     }
 }
 
+/* ── 미국장 즐겨찾기 ── */
+
+let _overseasFavoriteData = [];
+
+function _initOverseasFavoriteAutocomplete() {
+    if (typeof StockAutocomplete !== 'function') return;
+    if (!document.getElementById('overseas-fav-symbol')) return;
+
+    StockAutocomplete({
+        inputId: 'overseas-fav-symbol',
+        listId: 'overseas-fav-autocomplete-list',
+        valueKey: 's',
+        readyEvent: 'all-overseas-stocks-ready',
+        getInitial: () => window.ALL_OVERSEAS_STOCKS || null,
+        searchImpl: _overseasStockSearch,
+        formatItem: stock => `${stock.s} — ${stock.n} (${stock.e})`,
+        onSelect: symbol => {
+            const input = document.getElementById('overseas-fav-symbol');
+            if (input) input.value = symbol;
+        },
+        onConfirm: () => { void addOverseasFavorite(); },
+    });
+}
+
+function _buildOverseasFavoriteRow(item) {
+    const rate = Number(item.rate);
+    const rateClass = rate > 0 ? 'price-up' : (rate < 0 ? 'price-down' : '');
+    const rateStr = Number.isFinite(rate) ? `${rate > 0 ? '+' : ''}${rate.toFixed(2)}%` : '-';
+    const symbol = escapeHtml(item.code || '');
+    return `<tr>
+        <td style="font-weight:bold;">${symbol}</td>
+        <td>${escapeHtml(item.name || '-')}</td>
+        <td>${escapeHtml(item.exchange || '-')}</td>
+        <td class="${rateClass}">${_formatUsd(item.price)}</td>
+        <td class="${rateClass}">${rateStr}</td>
+        <td><button type="button" class="btn btn-sm" data-overseas-fav-remove data-symbol="${symbol}">삭제</button></td>
+    </tr>`;
+}
+
+function renderOverseasFavoriteTable() {
+    const tbody = document.getElementById('overseas-favorite-body');
+    if (!tbody) return;
+
+    if (!_overseasFavoriteData.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-secondary);">등록된 미국장 즐겨찾기가 없습니다.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = _overseasFavoriteData.map(_buildOverseasFavoriteRow).join('');
+    tbody.querySelectorAll('[data-overseas-fav-remove]').forEach(button => {
+        button.addEventListener('click', () => removeOverseasFavorite(button.dataset.symbol || ''));
+    });
+}
+
+async function loadOverseasFavorites() {
+    const tbody = document.getElementById('overseas-favorite-body');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">로딩 중...</td></tr>';
+
+    try {
+        const res = await fetchWithTimeout('/api/favorite?market=overseas_us', {}, 12000);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        _overseasFavoriteData = await res.json() || [];
+        renderOverseasFavoriteTable();
+    } catch (e) {
+        console.error('[overseas] 즐겨찾기 조회 오류', e);
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#ff6b6b;">불러오기 실패: ${escapeHtml(e.message)}</td></tr>`;
+    }
+}
+
+async function addOverseasFavorite() {
+    const input = document.getElementById('overseas-fav-symbol');
+    const symbol = _overseasSymbolValue('overseas-fav-symbol');
+    if (!symbol) { showToast('심볼을 입력하세요.', 'error'); return; }
+
+    try {
+        const res = await fetchWithTimeout(
+            `/api/favorite/${encodeURIComponent(symbol)}?market=overseas_us`,
+            { method: 'POST' },
+            12000,
+        );
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.detail || `HTTP ${res.status}`);
+        if (!json.added) { showToast('이미 등록된 종목입니다.', 'error'); return; }
+
+        if (input) input.value = '';
+        showToast('미국장 즐겨찾기에 추가되었습니다.', 'success');
+        await loadOverseasFavorites();
+    } catch (e) {
+        showToast(`추가 실패: ${e.message}`, 'error');
+    }
+}
+
+async function removeOverseasFavorite(symbol) {
+    if (!symbol) return;
+    try {
+        const res = await fetchWithTimeout(
+            `/api/favorite/${encodeURIComponent(symbol)}?market=overseas_us`,
+            { method: 'DELETE' },
+            12000,
+        );
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.detail || `HTTP ${res.status}`);
+
+        _overseasFavoriteData = _overseasFavoriteData.filter(item => item.code !== symbol);
+        renderOverseasFavoriteTable();
+        showToast('미국장 즐겨찾기에서 삭제되었습니다.', 'success');
+    } catch (e) {
+        showToast(`삭제 실패: ${e.message}`, 'error');
+    }
+}
+
 function initOverseasPage() {
     _refreshOverseasRealBanner();
     void _refreshOverseasAvailability();
+    _initOverseasFavoriteAutocomplete();
     if (!window.__overseasRealBannerTimer) {
         window.__overseasRealBannerTimer = setInterval(_refreshOverseasRealBanner, 3000);
     }

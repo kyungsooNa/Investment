@@ -2,8 +2,14 @@
 관심종목 서비스 - 비즈니스 로직 담당.
 """
 import asyncio
-from repositories.favorite_repository import FavoriteRepository
+from repositories.favorite_repository import (
+    FavoriteRepository,
+    MARKET_DOMESTIC,
+    MARKET_OVERSEAS_US,
+)
 from repositories.stock_code_repository import StockCodeRepository
+
+_DEFAULT_OVERSEAS_EXCHANGE = "NASD"
 
 
 def _extract_price_rate(data) -> tuple:
@@ -24,26 +30,28 @@ class FavoriteService:
         stock_query_service=None,
         stock_repository=None,
         rs_rating_service=None,
+        overseas_stock_code_repository=None,
     ):
         self.repository = repository
         self.stock_code_repository = stock_code_repository
         self.stock_query_service = stock_query_service
         self.stock_repository = stock_repository
         self.rs_rating_service = rs_rating_service
+        self.overseas_stock_code_repository = overseas_stock_code_repository
 
-    async def get_all(self) -> list:
-        return await self.repository.get_all()
+    async def get_all(self, market: str = MARKET_DOMESTIC) -> list:
+        return await self.repository.get_all(market=market)
 
-    async def add(self, code: str) -> bool:
-        return await self.repository.add(code)
+    async def add(self, code: str, market: str = MARKET_DOMESTIC) -> bool:
+        return await self.repository.add(code, market=market)
 
-    async def remove(self, code: str) -> bool:
-        return await self.repository.remove(code)
+    async def remove(self, code: str, market: str = MARKET_DOMESTIC) -> bool:
+        return await self.repository.remove(code, market=market)
 
-    async def is_favorite(self, code: str) -> bool:
-        return await self.repository.is_favorite(code)
+    async def is_favorite(self, code: str, market: str = MARKET_DOMESTIC) -> bool:
+        return await self.repository.is_favorite(code, market=market)
 
-    async def get_with_details(self) -> list:
+    async def get_with_details(self, market: str = MARKET_DOMESTIC) -> list:
         """관심종목 목록에 종목명·현재가·등락률을 포함하여 반환.
 
         1단계: StockRepository 메모리 캐시 (stock_price_repository, 즉시)
@@ -51,7 +59,10 @@ class FavoriteService:
         3단계: 개별 current_price API 호출 (5초 timeout, 실전/모의 공통)
         stock_query_service 없으면 종목명만 반환 (graceful degradation).
         """
-        codes = await self.repository.get_all()
+        if market == MARKET_OVERSEAS_US:
+            return await self._get_overseas_details()
+
+        codes = await self.repository.get_all(market=market)
         if not codes:
             return []
 
@@ -146,5 +157,52 @@ class FavoriteService:
             for code, stage in zip(result.keys(), stage_results):
                 if not isinstance(stage, Exception) and isinstance(stage, int) and stage > 0:
                     result[code]["minervini_stage"] = stage
+
+        return list(result.values())
+
+    async def _get_overseas_details(self) -> list:
+        """미국장 관심종목에 종목명·거래소·현재가·등락률을 붙여 반환.
+
+        해외는 실시간 스트림/일봉 스냅샷 경로가 없어 해외 현재가 API만 사용한다.
+        RS Rating·Minervini Stage는 국내 데이터 기반이라 항상 None이다.
+        """
+        symbols = await self.repository.get_all(market=MARKET_OVERSEAS_US)
+        if not symbols:
+            return []
+
+        result = {}
+        for symbol in symbols:
+            meta = None
+            if self.overseas_stock_code_repository:
+                meta = self.overseas_stock_code_repository.get_meta(symbol)
+            result[symbol] = {
+                "code": symbol,
+                "name": (meta or {}).get("name") or symbol,
+                "exchange": (meta or {}).get("exchange") or _DEFAULT_OVERSEAS_EXCHANGE,
+                "price": None,
+                "rate": None,
+                "rs_rating": None,
+                "minervini_stage": None,
+            }
+
+        if not self.stock_query_service:
+            return list(result.values())
+
+        async def _fetch(symbol):
+            try:
+                return await asyncio.wait_for(
+                    self.stock_query_service.get_overseas_price(
+                        symbol, exchange=result[symbol]["exchange"]
+                    ),
+                    timeout=5.0,
+                )
+            except Exception:
+                return None
+
+        responses = await asyncio.gather(*[_fetch(s) for s in symbols])
+        for symbol, resp in zip(symbols, responses):
+            if resp and resp.rt_cd == "0" and resp.data:
+                result[symbol]["price"] = getattr(resp.data, "price", None)
+                result[symbol]["rate"] = getattr(resp.data, "change_rate", None)
 
         return list(result.values())

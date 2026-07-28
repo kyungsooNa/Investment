@@ -3,7 +3,11 @@ FavoriteRepository 단위 테스트.
 """
 import pytest
 import aiosqlite
-from repositories.favorite_repository import FavoriteRepository
+from repositories.favorite_repository import (
+    FavoriteRepository,
+    MARKET_DOMESTIC,
+    MARKET_OVERSEAS_US,
+)
 
 
 @pytest.fixture
@@ -80,6 +84,53 @@ async def test_add_and_remove_cycle(repo):
     result = await repo.add("005930")
     assert result is True
     assert await repo.get_all() == ["005930"]
+
+
+async def test_overseas_market_is_separate_from_domestic(repo):
+    """미국장 심볼은 국내 목록에 섞이지 않는다."""
+    await repo.add("005930")
+    await repo.add("AAPL", market=MARKET_OVERSEAS_US)
+
+    assert await repo.get_all() == ["005930"]
+    assert await repo.get_all(market=MARKET_OVERSEAS_US) == ["AAPL"]
+
+
+async def test_same_code_can_exist_in_both_markets(repo):
+    """동일 코드라도 market이 다르면 각각 등록된다."""
+    assert await repo.add("TEST") is True
+    assert await repo.add("TEST", market=MARKET_OVERSEAS_US) is True
+
+    assert await repo.get_all(market=MARKET_DOMESTIC) == ["TEST"]
+    assert await repo.get_all(market=MARKET_OVERSEAS_US) == ["TEST"]
+
+
+async def test_remove_and_is_favorite_scoped_by_market(repo):
+    await repo.add("AAPL", market=MARKET_OVERSEAS_US)
+
+    assert await repo.is_favorite("AAPL") is False
+    assert await repo.is_favorite("AAPL", market=MARKET_OVERSEAS_US) is True
+    assert await repo.remove("AAPL") is False
+    assert await repo.remove("AAPL", market=MARKET_OVERSEAS_US) is True
+    assert await repo.get_all(market=MARKET_OVERSEAS_US) == []
+
+
+async def test_legacy_schema_migrates_to_domestic(tmp_path):
+    """market 컬럼이 없던 기존 DB는 domestic으로 마이그레이션된다."""
+    db_path = tmp_path / "legacy.db"
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.execute(
+            "CREATE TABLE favorites ("
+            " code TEXT PRIMARY KEY,"
+            " created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')))"
+        )
+        await conn.execute("INSERT INTO favorites (code) VALUES ('005930')")
+        await conn.commit()
+
+    repo = FavoriteRepository(db_path=db_path)
+
+    assert await repo.get_all() == ["005930"]
+    assert await repo.get_all(market=MARKET_OVERSEAS_US) == []
+    assert await repo.add("AAPL", market=MARKET_OVERSEAS_US) is True
 
 
 def test_init_with_default_db_path(monkeypatch, tmp_path):
