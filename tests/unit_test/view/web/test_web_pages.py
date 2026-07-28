@@ -52,7 +52,11 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert 'id="overseas-tab-overview"' in response.text
             assert 'id="overseas-tab-marketcap"' in response.text
             assert 'id="overseas-tab-orders"' in response.text
+            assert 'id="overseas-tab-favorite"' in response.text
             assert 'id="overseas-panel-marketcap"' in response.text
+            assert 'id="overseas-panel-favorite"' in response.text
+            assert 'id="overseas-fav-symbol"' in response.text
+            assert 'id="overseas-favorite-body"' in response.text
             assert "/static/js/overseas.js" in response.text
         elif path == "/ranking":
             assert "상위 종목 랭킹" in response.text

@@ -49,12 +49,17 @@ def service(mock_repo, mock_stock_code_repo):
 async def test_get_all_delegates(service, mock_repo):
     mock_repo.get_all.return_value = ["005930"]
     assert await service.get_all() == ["005930"]
-    mock_repo.get_all.assert_called_once()
+    mock_repo.get_all.assert_called_once_with(market="domestic")
+
+
+async def test_add_overseas_passes_market(service, mock_repo):
+    assert await service.add("AAPL", market="overseas_us") is True
+    mock_repo.add.assert_called_once_with("AAPL", market="overseas_us")
 
 
 async def test_add_delegates(service, mock_repo):
     assert await service.add("005930") is True
-    mock_repo.add.assert_called_once_with("005930")
+    mock_repo.add.assert_called_once_with("005930", market="domestic")
 
 
 async def test_add_duplicate_returns_false(service, mock_repo):
@@ -64,13 +69,13 @@ async def test_add_duplicate_returns_false(service, mock_repo):
 
 async def test_remove_delegates(service, mock_repo):
     assert await service.remove("005930") is True
-    mock_repo.remove.assert_called_once_with("005930")
+    mock_repo.remove.assert_called_once_with("005930", market="domestic")
 
 
 async def test_is_favorite_delegates(service, mock_repo):
     mock_repo.is_favorite.return_value = True
     assert await service.is_favorite("005930") is True
-    mock_repo.is_favorite.assert_called_once_with("005930")
+    mock_repo.is_favorite.assert_called_once_with("005930", market="domestic")
 
 
 async def test_get_with_details_empty(service, mock_repo):
@@ -253,3 +258,103 @@ async def test_get_with_details_minervini_stage_various(mock_repo, mock_stock_co
     mapping = {r["code"]: r for r in result}
     assert mapping["005930"]["minervini_stage"] == 2
     assert mapping["000660"]["minervini_stage"] in (None, 0)
+
+
+@pytest.fixture
+def mock_overseas_code_repo():
+    r = MagicMock()
+    r.get_meta.return_value = {"name": "Apple Inc.", "exchange": "NASD"}
+    return r
+
+
+class DummyOverseasSummary:
+    def __init__(self, price, change_rate):
+        self.price = price
+        self.change_rate = change_rate
+
+
+async def test_get_with_details_overseas_uses_overseas_price(
+    mock_repo, mock_stock_code_repo, mock_overseas_code_repo
+):
+    """미국장 목록은 해외 현재가 API와 해외 심볼 메타를 사용한다."""
+    mock_repo.get_all.return_value = ["AAPL"]
+    mock_query = AsyncMock()
+    mock_query.get_overseas_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="정상", data=DummyOverseasSummary(190.5, 1.23)
+    )
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_query_service=mock_query,
+        overseas_stock_code_repository=mock_overseas_code_repo,
+    )
+
+    result = await svc.get_with_details(market="overseas_us")
+
+    mock_repo.get_all.assert_called_once_with(market="overseas_us")
+    mock_query.get_overseas_price.assert_awaited_once_with("AAPL", exchange="NASD")
+    mock_query.get_current_price.assert_not_awaited()
+    assert result == [
+        {
+            "code": "AAPL",
+            "name": "Apple Inc.",
+            "exchange": "NASD",
+            "price": 190.5,
+            "rate": 1.23,
+            "rs_rating": None,
+            "minervini_stage": None,
+        }
+    ]
+
+
+async def test_get_with_details_overseas_without_meta_falls_back(
+    mock_repo, mock_stock_code_repo
+):
+    """심볼 메타가 없으면 심볼명 그대로, 거래소는 NASD 기본값을 쓴다."""
+    mock_repo.get_all.return_value = ["ZZZZ"]
+    overseas_repo = MagicMock()
+    overseas_repo.get_meta.return_value = None
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        overseas_stock_code_repository=overseas_repo,
+    )
+
+    result = await svc.get_with_details(market="overseas_us")
+
+    assert result[0]["name"] == "ZZZZ"
+    assert result[0]["exchange"] == "NASD"
+    assert result[0]["price"] is None
+
+
+async def test_get_with_details_overseas_price_failure_keeps_row(
+    mock_repo, mock_stock_code_repo, mock_overseas_code_repo
+):
+    """해외 시세 조회가 실패해도 종목 행은 유지된다."""
+    mock_repo.get_all.return_value = ["AAPL"]
+    mock_query = AsyncMock()
+    mock_query.get_overseas_price.side_effect = RuntimeError("boom")
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_query_service=mock_query,
+        overseas_stock_code_repository=mock_overseas_code_repo,
+    )
+
+    result = await svc.get_with_details(market="overseas_us")
+
+    assert len(result) == 1
+    assert result[0]["price"] is None
+    assert result[0]["rate"] is None
+
+
+async def test_get_with_details_overseas_empty(mock_repo, mock_stock_code_repo):
+    mock_repo.get_all.return_value = []
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+    )
+    assert await svc.get_with_details(market="overseas_us") == []

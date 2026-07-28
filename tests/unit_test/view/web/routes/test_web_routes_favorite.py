@@ -50,7 +50,7 @@ async def test_add_favorite(web_client, mock_web_ctx):
         assert data["success"] is True
         assert data["added"] is True
         assert data["code"] == "005930"
-        mock_web_ctx.favorite_service.add.assert_called_once_with("005930")
+        mock_web_ctx.favorite_service.add.assert_called_once_with("005930", market="domestic")
 
 
 async def test_add_favorite_already_exists(web_client, mock_web_ctx):
@@ -99,7 +99,7 @@ async def test_remove_favorite(web_client, mock_web_ctx):
         data = response.json()
         assert data["success"] is True
         assert data["removed"] is True
-        mock_web_ctx.favorite_service.remove.assert_called_once_with("005930")
+        mock_web_ctx.favorite_service.remove.assert_called_once_with("005930", market="domestic")
 
 
 async def test_remove_favorite_not_found(web_client, mock_web_ctx):
@@ -130,6 +130,74 @@ async def test_remove_favorite_syncs_alert_cache_and_price_subscription(web_clie
 
         mock_web_ctx.favorite_price_alert_service.remove_favorite.assert_awaited_once_with("005930")
         mock_web_ctx.price_subscription_service.remove_subscription.assert_awaited_once_with("005930", "favorite")
+
+
+async def test_get_favorite_list_overseas_passes_market(web_client, mock_web_ctx):
+    """GET /api/favorite?market=overseas_us - 미국장 목록을 조회한다."""
+    with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
+        mock_web_ctx.favorite_service = MagicMock()
+        mock_web_ctx.favorite_service.get_with_details = AsyncMock(return_value=[
+            {"code": "AAPL", "name": "Apple Inc.", "exchange": "NASD"},
+        ])
+        mock_web_ctx.price_subscription_service = MagicMock()
+        mock_web_ctx.price_subscription_service.sync_subscriptions = AsyncMock()
+
+        response = web_client.get("/api/favorite?market=overseas_us")
+        assert response.status_code == 200
+        assert response.json()[0]["code"] == "AAPL"
+        mock_web_ctx.favorite_service.get_with_details.assert_awaited_once_with(
+            market="overseas_us"
+        )
+        # 해외는 실시간 구독 대상이 아니다.
+        mock_web_ctx.price_subscription_service.sync_subscriptions.assert_not_awaited()
+
+
+async def test_add_favorite_overseas_skips_alert_and_subscription(web_client, mock_web_ctx):
+    """POST /api/favorite/{symbol}?market=overseas_us - 알림/구독 연동을 건너뛴다."""
+    with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
+        mock_web_ctx.favorite_service = MagicMock()
+        mock_web_ctx.favorite_service.add = AsyncMock(return_value=True)
+        mock_web_ctx.favorite_price_alert_service = MagicMock()
+        mock_web_ctx.favorite_price_alert_service.add_favorite = AsyncMock()
+        mock_web_ctx.price_subscription_service = MagicMock()
+        mock_web_ctx.price_subscription_service.add_subscription = AsyncMock()
+
+        response = web_client.post("/api/favorite/AAPL?market=overseas_us")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["added"] is True
+        assert data["market"] == "overseas_us"
+        mock_web_ctx.favorite_service.add.assert_called_once_with("AAPL", market="overseas_us")
+        mock_web_ctx.favorite_price_alert_service.add_favorite.assert_not_awaited()
+        mock_web_ctx.price_subscription_service.add_subscription.assert_not_awaited()
+
+
+async def test_remove_favorite_overseas_skips_alert_and_subscription(web_client, mock_web_ctx):
+    """DELETE /api/favorite/{symbol}?market=overseas_us - 알림/구독 정리를 건너뛴다."""
+    with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
+        mock_web_ctx.favorite_service = MagicMock()
+        mock_web_ctx.favorite_service.remove = AsyncMock(return_value=True)
+        mock_web_ctx.favorite_price_alert_service = MagicMock()
+        mock_web_ctx.favorite_price_alert_service.remove_favorite = AsyncMock()
+        mock_web_ctx.price_subscription_service = MagicMock()
+        mock_web_ctx.price_subscription_service.remove_subscription = AsyncMock()
+
+        response = web_client.delete("/api/favorite/AAPL?market=overseas_us")
+        assert response.status_code == 200
+        mock_web_ctx.favorite_service.remove.assert_called_once_with("AAPL", market="overseas_us")
+        mock_web_ctx.favorite_price_alert_service.remove_favorite.assert_not_awaited()
+        mock_web_ctx.price_subscription_service.remove_subscription.assert_not_awaited()
+
+
+async def test_favorite_rejects_unknown_market(web_client, mock_web_ctx):
+    """알 수 없는 market 값은 400으로 거절한다."""
+    with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
+        mock_web_ctx.favorite_service = MagicMock()
+        mock_web_ctx.favorite_service.get_with_details = AsyncMock(return_value=[])
+
+        response = web_client.get("/api/favorite?market=crypto")
+        assert response.status_code == 400
+        mock_web_ctx.favorite_service.get_with_details.assert_not_awaited()
 
 
 async def test_get_favorite_status_true(web_client, mock_web_ctx):

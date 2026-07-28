@@ -106,6 +106,10 @@ class OverseasStockCodeRepository:
             for _, row in self.df.iterrows()
         }
 
+    def get_meta(self, symbol: str) -> dict | None:
+        """심볼의 {name, exchange} 반환. 미등록이면 None."""
+        return self.symbol_to_meta.get(str(symbol).upper())
+
     def all_symbols(self) -> list:
         """전 심볼 리스트 반환 (클라이언트 자동완성용)."""
         return [

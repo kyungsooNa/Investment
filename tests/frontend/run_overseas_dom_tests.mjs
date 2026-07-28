@@ -22,9 +22,15 @@ const SCAFFOLD = `
 <p id="overseas-status"></p>
 <button id="overseas-tab-overview" data-overseas-tab="overview" class="sub-tab-btn active"></button>
 <button id="overseas-tab-marketcap" data-overseas-tab="marketcap" class="sub-tab-btn"></button>
+<button id="overseas-tab-favorite" data-overseas-tab="favorite" class="sub-tab-btn"></button>
 <button id="overseas-tab-orders" data-overseas-tab="orders" class="sub-tab-btn"></button>
 <section id="overseas-panel-overview"></section>
 <section id="overseas-panel-marketcap" hidden><div id="overseas-marketcap-result"></div></section>
+<section id="overseas-panel-favorite" hidden>
+  <input id="overseas-fav-symbol" type="text">
+  <ul id="overseas-fav-autocomplete-list"></ul>
+  <table><tbody id="overseas-favorite-body"></tbody></table>
+</section>
 <section id="overseas-panel-orders" hidden></section>
 <input id="overseas-symbol" type="text">
 <select id="overseas-exchange"><option value="NASD">NASDAQ</option></select>
@@ -48,6 +54,7 @@ function makeWindow() {
   applyCommonStubs(window);
   window.fetchWithTimeout = async () => ({ ok: true, json: async () => ({}) });
   window.alert = () => {};
+  window.showToast = () => {};
 
   const script = window.document.createElement("script");
   script.textContent = readFileSync(OVERSEAS_JS, "utf8");
@@ -358,6 +365,117 @@ test("setOverseasTab 전환 시 가용성을 재확인해 버튼 상태를 갱�
   assert(btn.disabled === false, "회귀: 탭 전환 시 가용성 재확인으로 버튼이 활성화되지 않음");
   const status = window.document.getElementById("overseas-status").textContent;
   assert(status === "미국주식 기능이 활성화되어 있습니다.", "회귀: 상태 문구가 갱신되지 않음");
+});
+
+test("즐겨찾기 탭 전환 시 미국장 즐겨찾기 목록을 렌더한다", async () => {
+  const window = makeWindow();
+  const requested = [];
+  window.fetchWithTimeout = async (url) => {
+    requested.push(url);
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    if (url.includes("/api/favorite")) {
+      return { ok: true, json: async () => ([
+        { code: "AAPL", name: "Apple Inc.", exchange: "NASD", price: 190.5, rate: 1.23 },
+      ]) };
+    }
+    return { ok: false, json: async () => ({}) };
+  };
+
+  await window.setOverseasTab("favorite");
+  await flush();
+
+  assert(
+    requested.some((url) => url.includes("/api/favorite?market=overseas_us")),
+    "회귀: 즐겨찾기 조회가 market=overseas_us 로 호출되지 않음",
+  );
+  const body = window.document.getElementById("overseas-favorite-body").textContent;
+  assert(body.includes("AAPL"), "심볼이 표시되어야 함");
+  assert(body.includes("Apple Inc."), "종목명이 표시되어야 함");
+  assert(body.includes("$190.50"), "현재가가 USD 로 표시되어야 함");
+  assert(body.includes("+1.23%"), "등락률이 표시되어야 함");
+});
+
+test("즐겨찾기 목록이 비면 안내 문구를 보여준다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return { ok: true, json: async () => ([]) };
+  };
+
+  await window.loadOverseasFavorites();
+  await flush();
+
+  const body = window.document.getElementById("overseas-favorite-body").textContent;
+  assert(body.includes("등록된 미국장 즐겨찾기가 없습니다."), "빈 목록 안내가 표시되어야 함");
+});
+
+test("심볼 추가는 대문자로 정규화해 POST 하고 목록을 새로고침한다", async () => {
+  const window = makeWindow();
+  const calls = [];
+  window.fetchWithTimeout = async (url, options = {}) => {
+    calls.push({ url, method: options.method || "GET" });
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    if (options.method === "POST") {
+      return { ok: true, json: async () => ({ success: true, added: true, market: "overseas_us" }) };
+    }
+    return { ok: true, json: async () => ([
+      { code: "TSLA", name: "Tesla", exchange: "NASD", price: 250, rate: -0.5 },
+    ]) };
+  };
+
+  window.document.getElementById("overseas-fav-symbol").value = " tsla ";
+  await window.addOverseasFavorite();
+  await flush();
+
+  assert(
+    calls.some((c) => c.method === "POST" && c.url === "/api/favorite/TSLA?market=overseas_us"),
+    `회귀: 심볼 정규화/마켓 파라미터가 잘못됨 (${JSON.stringify(calls)})`,
+  );
+  assert(
+    window.document.getElementById("overseas-favorite-body").textContent.includes("TSLA"),
+    "추가 후 목록이 새로고침되어야 함",
+  );
+  assert(window.document.getElementById("overseas-fav-symbol").value === "", "입력값이 비워져야 함");
+});
+
+test("삭제 버튼은 해당 심볼만 DELETE 하고 행을 제거한다", async () => {
+  const window = makeWindow();
+  const calls = [];
+  window.fetchWithTimeout = async (url, options = {}) => {
+    calls.push({ url, method: options.method || "GET" });
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    if (options.method === "DELETE") {
+      return { ok: true, json: async () => ({ success: true, removed: true }) };
+    }
+    return { ok: true, json: async () => ([
+      { code: "AAPL", name: "Apple Inc.", exchange: "NASD", price: 190.5, rate: 1.23 },
+      { code: "MSFT", name: "Microsoft", exchange: "NASD", price: 410, rate: 0.4 },
+    ]) };
+  };
+
+  await window.loadOverseasFavorites();
+  await flush();
+
+  const removeButtons = window.document.querySelectorAll("[data-overseas-fav-remove]");
+  assert(removeButtons.length === 2, "행마다 삭제 버튼이 있어야 함");
+  removeButtons[0].click();
+  await flush();
+
+  assert(
+    calls.some((c) => c.method === "DELETE" && c.url === "/api/favorite/AAPL?market=overseas_us"),
+    `회귀: 삭제 요청 URL 이 잘못됨 (${JSON.stringify(calls)})`,
+  );
+  const body = window.document.getElementById("overseas-favorite-body").textContent;
+  assert(!body.includes("AAPL"), "삭제한 행이 사라져야 함");
+  assert(body.includes("MSFT"), "다른 행은 남아야 함");
 });
 
 await run();

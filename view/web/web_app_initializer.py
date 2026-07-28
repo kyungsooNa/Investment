@@ -134,6 +134,7 @@ class WebAppContext:
         self.favorite_service = FavoriteService(
             repository=self.favorite_repo,
             stock_code_repository=self.stock_code_repository,
+            overseas_stock_code_repository=self.overseas_stock_code_repository,
         )
         self.favorite_price_alert_service: FavoritePriceAlertService = None
         self.account_snapshot_cache: AccountSnapshotCache = None
