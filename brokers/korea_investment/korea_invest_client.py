@@ -172,6 +172,12 @@ class KoreaInvestApiClient:
                                                                    fid_period_div_code=fid_period_div_code,
                                                                    exchange=exchange)
 
+    async def inquire_daily_indexchartprice(self, index_code: str, start_date: str, end_date: str,
+                                            period: str = 'D') -> ResCommonResponse:
+        """국내업종(코스피/코스닥) 기간별 지수 시세를 조회합니다. ResCommonResponse를 반환합니다."""
+        return await self._quotations.inquire_daily_indexchartprice(index_code, start_date=start_date,
+                                                                    end_date=end_date, period=period)
+
     async def inquire_time_itemchartprice(
         self,
         *,

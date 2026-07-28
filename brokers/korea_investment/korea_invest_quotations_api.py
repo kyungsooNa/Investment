@@ -464,6 +464,51 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             data=chart_data_items
         )
 
+    async def inquire_daily_indexchartprice(self, index_code: str,
+                                            start_date: str,
+                                            end_date: str,
+                                            period: str = 'D') -> ResCommonResponse:
+        """
+        국내업종(코스피 0001 / 코스닥 1001) 기간별 지수 시세를 조회합니다.
+        TRID: FHKUP03500100
+        data 에 {"summary": output1(현재가/등락 요약), "candles": output2(기간별 시세)} 를 담아 반환합니다.
+        """
+        valid_period_codes = {"D", "W", "M", "Y"}
+        if period not in valid_period_codes:
+            error_msg = f"지원하지 않는 period: {period}"
+            self._logger.error(error_msg)
+            return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=error_msg, data=None)
+
+        tr_id = self._trid_provider.quotations(TrIdLeaf.DAILY_INDEXCHARTPRICE)
+        params = Params.daily_indexchartprice(index_code, start_date, end_date, period)
+
+        with self._headers.temp(tr_id=tr_id):
+            response_data: ResCommonResponse = await self.call_api(
+                "GET", EndpointKey.DAILY_INDEXCHARTPRICE, params=params
+            )
+
+        if response_data.rt_cd != ErrorCode.SUCCESS.value:
+            error_msg = f"지수 시세 API 응답 비정상 (index_code: {index_code}), 응답: {response_data.data}"
+            self._logger.error(error_msg)
+            return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1=error_msg, data=None)
+
+        raw = response_data.data if isinstance(response_data.data, dict) else {}
+        summary = raw.get("output1") or {}
+        candles = raw.get("output2") or []
+        if not isinstance(candles, list):
+            candles = [candles] if candles else []
+
+        if not candles:
+            warning_msg = f"지수 시세 데이터가 비어있음 (index_code: {index_code})"
+            self._logger.warning(warning_msg)
+            return ResCommonResponse(rt_cd=ErrorCode.MISSING_KEY.value, msg1=warning_msg, data=None)
+
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="지수 시세 조회 성공",
+            data={"summary": summary, "candles": candles},
+        )
+
     async def inquire_time_itemchartprice(
         self,
         stock_code: str,
