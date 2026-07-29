@@ -732,7 +732,12 @@ class RankingTask(AfterMarketTask):
                 return
             cache_key = (str(target_date), self.DEFAULT_PERIOD_RANKING_DAYS)
             needs_period = cache_key not in self._period_ranking_cache
+            can_recover_investor_report = self._can_recover_investor_report_on_startup(
+                str(target_date)
+            )
             needs_investor = (
+                can_recover_investor_report
+                and
                 self._last_collected_date != str(target_date)
                 and self._load_last_ranking_report_date() != str(target_date)
             )
@@ -749,6 +754,23 @@ class RankingTask(AfterMarketTask):
             raise
         except Exception as e:
             self._logger.warning(f"기간수급 self-heal 실패: {e}")
+
+    def _can_recover_investor_report_on_startup(self, target_date: str) -> bool:
+        """장전 재시작에서 전 거래일 랭킹 리포트가 재발송되는 것을 막는다."""
+        if self._market_clock is None:
+            return True
+        try:
+            today = str(self._market_clock.get_current_kst_date_str())
+            if today != str(target_date):
+                self._logger.info(
+                    f"투자자 랭킹 리포트 self-heal 스킵 — "
+                    f"현재일({today})과 대상 거래일({target_date}) 불일치"
+                )
+                return False
+            return self._market_clock.get_seconds_until_market_close() < 0
+        except Exception as e:
+            self._logger.warning(f"투자자 랭킹 리포트 self-heal 시간 확인 실패: {e}")
+            return False
 
     def _peek_period_ranking(self, cache_key: tuple[str, int]) -> Optional[List[Dict]]:
         """메모리 → DB 순으로 즉시 반환 가능한 기간수급 결과를 찾는다."""
