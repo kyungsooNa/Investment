@@ -4,6 +4,7 @@
 import asyncio
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
+from services.price_subscription_service import SubscriptionPriority
 from view.web import web_api
 
 
@@ -83,6 +84,7 @@ async def test_add_favorite_syncs_alert_cache_and_price_subscription(web_client,
         mock_web_ctx.price_subscription_service.add_subscription.assert_awaited_once()
         args = mock_web_ctx.price_subscription_service.add_subscription.await_args.args
         assert args[0] == "005930"
+        assert args[1] == SubscriptionPriority.MEDIUM
         assert args[2] == "favorite"
 
 
@@ -245,6 +247,7 @@ async def test_get_favorite_list_with_subscription(web_client, mock_web_ctx):
         _, kwargs = mock_sub_svc.sync_subscriptions.call_args
         assert kwargs["codes"] == ["005930"]
         assert kwargs["category_key"] == "favorite"
+        assert kwargs["priority"] == SubscriptionPriority.MEDIUM
 
 
 async def test_get_favorite_list_subscription_exception(web_client, mock_web_ctx):

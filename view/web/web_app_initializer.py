@@ -340,15 +340,21 @@ class WebAppContext:
         except Exception as e:
             self.logger.warning(f"프리미엄 종목 구독 초기화 실패: {e}")
 
-        # 3. 관심종목 → LOW 구독 (알림 및 관심종목 페이지 최신가용)
+        # 3. 관심종목 → MEDIUM 구독 (5% 변동폭 알림용)
         try:
             favorite_codes = await self.favorite_service.get_all() if self.favorite_service else []
+            favorite_codes = [
+                str(code).strip()
+                for code in favorite_codes
+                if str(code or "").strip()
+            ]
             if favorite_codes:
                 await self.price_subscription_service.sync_subscriptions(
                     codes=favorite_codes,
                     category_key="favorite",
-                    priority=SubscriptionPriority.LOW,
+                    priority=SubscriptionPriority.MEDIUM,
                 )
+                self.logger.info(f"관심종목 구독 초기화 완료: {len(favorite_codes)}개")
         except Exception as e:
             self.logger.warning(f"관심종목 구독 초기화 실패: {e}")
 

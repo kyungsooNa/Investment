@@ -14,8 +14,8 @@ StreamingService와의 역할 구분:
 
 우선순위 카테고리:
   - HIGH   : 보유 종목 (Portfolio) — category_key: "portfolio"
-  - MEDIUM : 전략 감시 종목 (Strategy watchlist, premium stocks) — category_key: "strategy_*"
-  - LOW    : 관심종목은 "favorite", 웹 UI 조회 종목 — category_key: "ui_*"
+  - MEDIUM : 전략 감시 종목, 프리미엄 종목, 관심종목 알림 — category_key: "strategy_*", "favorite"
+  - LOW    : 웹 UI 조회 종목 — category_key: "ui_*"
 """
 from __future__ import annotations
 
@@ -37,8 +37,8 @@ if TYPE_CHECKING:
 class SubscriptionPriority(IntEnum):
     CRITICAL = 0  # 프로그램 매매 (절대 밀어내기 불가)
     HIGH = 1      # Portfolio (보유 종목)
-    MEDIUM = 2    # Strategy watchlist / premium stocks
-    LOW = 3       # UI page view / watchlist page
+    MEDIUM = 2    # Strategy watchlist / premium stocks / favorite alerts
+    LOW = 3       # UI page view
 
 
 class SubscriptionPolicy:
