@@ -23,6 +23,19 @@ class MarketCapQuote:
     market_cap: int
 
 
+@dataclass(frozen=True)
+class UsQuoteSnapshot:
+    """미국장 시가총액/랭킹 화면용 단일 심볼 스냅샷."""
+
+    symbol: str
+    name: str
+    currency: str
+    price: float
+    change_rate: float
+    volume: int
+    market_cap: int
+
+
 class UsMarketCapProvider(Protocol):
     async def fetch_quotes(self, symbols: Iterable[str]) -> list[MarketCapQuote]:
         ...
@@ -225,6 +238,62 @@ class YahooUsMarketCapProvider:
                 )
             )
         return quotes
+
+    async def fetch_snapshots(
+        self, symbols: Iterable[str], chunk_size: int = 50
+    ) -> list[UsQuoteSnapshot]:
+        """유니버스 심볼을 chunk 로 나눠 시세 스냅샷을 모은다.
+
+        Yahoo quote 엔드포인트는 symbols 길이에 상한이 있어 chunk 로 끊는다.
+        일부 chunk 가 실패해도 나머지 결과는 살려 화면이 통째로 비지 않게 한다.
+        """
+        wanted = [str(symbol).upper() for symbol in symbols if str(symbol).strip()]
+        if not wanted:
+            return []
+
+        snapshots: list[UsQuoteSnapshot] = []
+        for start in range(0, len(wanted), chunk_size):
+            chunk = wanted[start:start + chunk_size]
+            try:
+                rows = await self._fetch_raw(chunk)
+            except Exception as exc:
+                self._logger.warning(f"미국 시세 스냅샷 chunk 조회 실패({chunk[0]}~): {exc}")
+                continue
+            for row in rows:
+                snapshot = self._to_snapshot(row)
+                if snapshot:
+                    snapshots.append(snapshot)
+        return snapshots
+
+    @staticmethod
+    def _to_snapshot(row) -> Optional[UsQuoteSnapshot]:
+        if not isinstance(row, dict):
+            return None
+        symbol = str(row.get("symbol") or "").upper()
+        if not symbol:
+            return None
+        try:
+            price = float(row.get("regularMarketPrice") or 0)
+        except (TypeError, ValueError):
+            return None
+        if price <= 0:
+            return None
+
+        def _number(key, caster, default=0):
+            try:
+                return caster(row.get(key) or 0)
+            except (TypeError, ValueError):
+                return default
+
+        return UsQuoteSnapshot(
+            symbol=symbol,
+            name=str(row.get("shortName") or row.get("longName") or symbol),
+            currency=str(row.get("currency") or "USD"),
+            price=price,
+            change_rate=_number("regularMarketChangePercent", float, 0.0),
+            volume=_number("regularMarketVolume", int),
+            market_cap=_number("marketCap", int),
+        )
 
     async def fetch_usdkrw(self) -> Optional[float]:
         try:

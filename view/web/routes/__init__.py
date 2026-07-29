@@ -15,6 +15,7 @@ from view.web.routes.stock import router as stock_router
 from view.web.routes.balance import router as balance_router
 from view.web.routes.order import router as order_router
 from view.web.routes.ranking import router as ranking_router
+from view.web.routes.overseas_market import router as overseas_market_router
 from view.web.routes.virtual import router as virtual_router
 from view.web.routes.program import router as program_router
 from view.web.routes.scheduler import router as scheduler_router
@@ -43,6 +44,7 @@ protected_router.include_router(stock_router)
 protected_router.include_router(balance_router)
 protected_router.include_router(order_router)
 protected_router.include_router(ranking_router)
+protected_router.include_router(overseas_market_router)
 protected_router.include_router(virtual_router)
 protected_router.include_router(program_router)
 protected_router.include_router(scheduler_router)

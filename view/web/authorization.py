@@ -20,6 +20,7 @@ _VIEWER_GET_EXACT = frozenset(
         "/api/stocks/list",
         "/api/overseas/stocks/list",
         "/api/top-market-cap",
+        "/api/overseas/top-market-cap",
     }
 )
 _VIEWER_GET_PREFIXES = (
@@ -27,6 +28,7 @@ _VIEWER_GET_PREFIXES = (
     "/api/overseas/stock/",
     "/api/overseas/chart/",
     "/api/overseas/market-cap",
+    "/api/overseas/ranking/",
     "/api/chart/",
     "/api/indicator/",
     "/api/ranking/",

@@ -327,3 +327,134 @@ async def test_korean_fallback_provider_reads_local_daily_prices_in_ukwon(tmp_pa
         "005930": 21_000_000 * 100_000_000,
         "000660": 15_000_000 * 100_000_000,
     }
+
+
+def _snapshot_client_factory(calls, payload_by_symbol):
+    """symbols 파라미터에 맞춰 quoteResponse 를 돌려주는 FakeClient 를 만든다."""
+
+    class FakeResponse:
+        def __init__(self, status_code, payload=None, text=""):
+            self.status_code = status_code
+            self._payload = payload or {}
+            self.text = text
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"status={self.status_code}")
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, params=None):
+            symbols = (params or {}).get("symbols", "").split(",")
+            calls.append(symbols)
+            if any(symbol == "BOOM" for symbol in symbols):
+                raise RuntimeError("chunk failed")
+            rows = [payload_by_symbol[s] for s in symbols if s in payload_by_symbol]
+            return FakeResponse(200, payload={"quoteResponse": {"result": rows}})
+
+    return FakeClient
+
+
+@pytest.mark.asyncio
+async def test_fetch_snapshots_returns_price_rate_volume_and_cap(monkeypatch):
+    calls = []
+    payload = {
+        "AAPL": {
+            "symbol": "AAPL", "shortName": "Apple Inc.", "currency": "USD",
+            "regularMarketPrice": 190.5, "regularMarketChangePercent": 1.23,
+            "regularMarketVolume": 50_000_000, "marketCap": 3_000_000_000_000,
+        },
+    }
+    monkeypatch.setattr(
+        "services.market_cap_gap_service.httpx.AsyncClient",
+        _snapshot_client_factory(calls, payload),
+    )
+
+    snapshots = await YahooUsMarketCapProvider().fetch_snapshots(["aapl"])
+
+    assert len(snapshots) == 1
+    snap = snapshots[0]
+    assert snap.symbol == "AAPL"
+    assert snap.name == "Apple Inc."
+    assert snap.price == 190.5
+    assert snap.change_rate == 1.23
+    assert snap.volume == 50_000_000
+    assert snap.market_cap == 3_000_000_000_000
+
+
+@pytest.mark.asyncio
+async def test_fetch_snapshots_splits_symbols_into_chunks(monkeypatch):
+    calls = []
+    symbols = [f"S{i}" for i in range(5)]
+    payload = {
+        s: {"symbol": s, "shortName": s, "regularMarketPrice": 1.0, "marketCap": 1}
+        for s in symbols
+    }
+    monkeypatch.setattr(
+        "services.market_cap_gap_service.httpx.AsyncClient",
+        _snapshot_client_factory(calls, payload),
+    )
+
+    snapshots = await YahooUsMarketCapProvider().fetch_snapshots(symbols, chunk_size=2)
+
+    assert [len(chunk) for chunk in calls] == [2, 2, 1]
+    assert {snap.symbol for snap in snapshots} == set(symbols)
+
+
+@pytest.mark.asyncio
+async def test_fetch_snapshots_keeps_other_chunks_when_one_fails(monkeypatch):
+    calls = []
+    payload = {
+        "AAPL": {"symbol": "AAPL", "shortName": "Apple", "regularMarketPrice": 1.0, "marketCap": 1},
+        "MSFT": {"symbol": "MSFT", "shortName": "Microsoft", "regularMarketPrice": 2.0, "marketCap": 2},
+    }
+    monkeypatch.setattr(
+        "services.market_cap_gap_service.httpx.AsyncClient",
+        _snapshot_client_factory(calls, payload),
+    )
+
+    snapshots = await YahooUsMarketCapProvider().fetch_snapshots(
+        ["AAPL", "BOOM", "MSFT"], chunk_size=1
+    )
+
+    assert {snap.symbol for snap in snapshots} == {"AAPL", "MSFT"}
+
+
+@pytest.mark.asyncio
+async def test_fetch_snapshots_skips_rows_without_price(monkeypatch):
+    calls = []
+    payload = {
+        "AAPL": {"symbol": "AAPL", "shortName": "Apple", "regularMarketPrice": 190.0, "marketCap": 1},
+        "DEAD": {"symbol": "DEAD", "shortName": "Delisted", "marketCap": 0},
+    }
+    monkeypatch.setattr(
+        "services.market_cap_gap_service.httpx.AsyncClient",
+        _snapshot_client_factory(calls, payload),
+    )
+
+    snapshots = await YahooUsMarketCapProvider().fetch_snapshots(["AAPL", "DEAD"])
+
+    assert [snap.symbol for snap in snapshots] == ["AAPL"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_snapshots_empty_symbols_makes_no_request(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "services.market_cap_gap_service.httpx.AsyncClient",
+        _snapshot_client_factory(calls, {}),
+    )
+
+    assert await YahooUsMarketCapProvider().fetch_snapshots([]) == []
+    assert calls == []

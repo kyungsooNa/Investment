@@ -10,6 +10,8 @@ PAGES = [
     ("/balance", "balance"),
     ("/order", "order"),
     ("/overseas", "overseas"),
+    ("/overseas-marketcap", "overseas_marketcap"),
+    ("/overseas-ranking", "overseas_ranking"),
     ("/ranking", "ranking"),
     ("/marketcap", "marketcap"),
     ("/virtual", "virtual"),
@@ -58,6 +60,19 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert 'id="overseas-fav-symbol"' in response.text
             assert 'id="overseas-favorite-body"' in response.text
             assert "/static/js/overseas.js" in response.text
+        elif path == "/overseas-marketcap":
+            assert "미국 시가총액 상위 종목" in response.text
+            assert 'id="overseas-marketcap-result"' in response.text
+            assert 'data-limit="100"' in response.text
+            assert "/static/js/overseas_marketcap.js" in response.text
+        elif path == "/overseas-ranking":
+            assert "미국 상위 종목 랭킹" in response.text
+            assert 'id="overseas-ranking-result"' in response.text
+            for category in ("rise", "fall", "volume", "trading_value"):
+                assert f'data-category="{category}"' in response.text
+            # 외국인/기관/개인 수급은 KRX 전용이라 미국장 화면에 두지 않는다.
+            assert 'data-category="foreign_buy"' not in response.text
+            assert "/static/js/overseas_ranking.js" in response.text
         elif path == "/ranking":
             assert "상위 종목 랭킹" in response.text
             assert 'data-cat="ytd"' in response.text

@@ -4,9 +4,12 @@ from typing import Any, TYPE_CHECKING
 
 from core.market_clock import MarketClock
 from repositories.period_ranking_repository import PeriodRankingRepository
+from repositories.sp500_repository import SP500Repository
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
-from services.market_cap_gap_service import MarketCapGapService
+from services.market_cap_gap_service import MarketCapGapService, YahooUsMarketCapProvider
+from services.overseas_market_stats_service import OverseasMarketStatsService
 from services.stock_query_service import StockQueryService
+from view.web.market_mode_utils import is_market_enabled
 from task.background.after_market.market_cap_gap_report_task import MarketCapGapReportTask
 from task.background.after_market.ranking_task import RankingTask
 from task.background.after_market.ytd_ranking_report_task import YtdRankingReportTask
@@ -59,6 +62,8 @@ class QueryBootstrap:
                 )
                 self._build_market_cap_gap_tasks(config, needs_batch)
 
+            self._build_overseas_market_stats()
+
             ctx.stock_query_service = StockQueryService(
                 market_data_service=ctx.market_data_service,
                 logger=ctx.logger,
@@ -76,6 +81,22 @@ class QueryBootstrap:
                 exc_info=True,
             )
             raise
+
+    def _build_overseas_market_stats(self) -> None:
+        """미국장 시가총액/랭킹 화면용 통계 서비스.
+
+        유니버스(S&P500) DB 는 없으면 생성에 외부 다운로드가 따라붙으므로 팩토리만 넘기고
+        첫 조회 시점에 만든다. 준비에 실패해도 서비스는 빈 결과를 돌려줄 뿐 웹 시작을 막지 않는다.
+        """
+        ctx = self._ctx
+        ctx.overseas_market_stats_service = None
+        if not is_market_enabled(ctx, "overseas_us"):
+            return
+        ctx.overseas_market_stats_service = OverseasMarketStatsService(
+            universe_factory=lambda: SP500Repository(logger=ctx.logger),
+            provider=YahooUsMarketCapProvider(logger=ctx.logger),
+            logger=ctx.logger,
+        )
 
     def _build_market_cap_gap_tasks(self, config: dict[str, Any], needs_batch: bool) -> None:
         ctx = self._ctx
