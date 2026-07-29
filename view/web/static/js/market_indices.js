@@ -38,6 +38,17 @@ const MARKET_INDEX_GROUPS = [
     },
 ];
 
+// 국장 카드 기간 선택. KIS 기간별 지수 API 가 범위와 무관하게 최대 50행만 주므로
+// 1Y 는 서버에서 주봉으로 받는다. 1D 는 10분봉이라 x축이 시각으로 바뀐다.
+const MARKET_INDEX_PERIODS = [
+    { key: '1D', label: '1일' },
+    { key: '1W', label: '1주' },
+    { key: '1M', label: '1개월' },
+    { key: '1Y', label: '1년' },
+];
+
+const MARKET_INDEX_DEFAULT_PERIOD = '1D';
+
 const MARKET_INDEX_WIDGET_SRC =
     'https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js';
 
@@ -111,6 +122,14 @@ function _formatIndexChange(change, rate) {
     return { text: `${delta}(${sign}${rate.toFixed(2)}%)`.replace(' (', ' ('), className };
 }
 
+// 분봉 응답에만 time 이 담기므로 라벨 형식은 요청한 기간이 아니라 받은 데이터를 보고 정한다.
+function _formatIndexPointLabel(point) {
+    const time = String(point.time || '');
+    if (time.length >= 4) return `${time.slice(0, 2)}:${time.slice(2, 4)}`;
+    const date = String(point.date || '');
+    return date.length === 8 ? `${date.slice(4, 6)}/${date.slice(6, 8)}` : date;
+}
+
 function _renderIndexSparkline(canvas, data) {
     if (typeof Chart === 'undefined' || !data.points.length) return;
 
@@ -119,7 +138,7 @@ function _renderIndexSparkline(canvas, data) {
     const chart = new Chart(canvas.getContext('2d'), {
         type: 'line',
         data: {
-            labels: data.points.map(p => p.date),
+            labels: data.points.map(_formatIndexPointLabel),
             datasets: [{
                 data: data.points.map(p => p.close),
                 borderColor: color,
@@ -134,26 +153,72 @@ function _renderIndexSparkline(canvas, data) {
             maintainAspectRatio: false,
             animation: false,
             plugins: { legend: { display: false }, tooltip: { enabled: false } },
-            scales: { x: { display: false }, y: { display: false } },
+            scales: {
+                // 좁은 카드라 눈금을 몇 개로 제한하고 라벨은 눕힌 채로 둔다.
+                x: {
+                    display: true,
+                    grid: { display: false },
+                    border: { display: false },
+                    ticks: {
+                        autoSkip: true,
+                        maxTicksLimit: 5,
+                        maxRotation: 0,
+                        minRotation: 0,
+                        font: { size: 9 },
+                    },
+                },
+                y: { display: false },
+            },
         },
     });
     window.currentCharts = window.currentCharts || [];
     window.currentCharts.push(chart);
+    return chart;
 }
 
-async function buildMarketIndexKisCard(doc, entry) {
-    const card = _marketIndexCardShell(doc, 'kis', entry.code, entry.label);
+function _buildMarketIndexPeriodBar(doc, card, code) {
+    const bar = doc.createElement('div');
+    bar.className = 'market-index-period-bar';
 
-    const body = doc.createElement('div');
-    body.className = 'market-index-body';
-    card.appendChild(body);
+    MARKET_INDEX_PERIODS.forEach(period => {
+        const button = doc.createElement('button');
+        button.type = 'button';
+        button.className = 'market-index-period';
+        button.dataset.period = period.key;
+        button.textContent = period.label;
+        if (period.key === MARKET_INDEX_DEFAULT_PERIOD) button.classList.add('active');
+        button.addEventListener('click', () => selectMarketIndexPeriod(card, code, period.key));
+        bar.appendChild(button);
+    });
 
-    const res = await fetchWithTimeout(`/api/market-index/${entry.code}`);
+    return bar;
+}
+
+function _destroyMarketIndexChart(card) {
+    if (!card._indexChart) return;
+    try { card._indexChart.destroy(); } catch (_) { /* 이미 파기된 차트 */ }
+    if (window.currentCharts) {
+        window.currentCharts = window.currentCharts.filter(chart => chart !== card._indexChart);
+    }
+    card._indexChart = null;
+}
+
+async function selectMarketIndexPeriod(card, code, period) {
+    const doc = card.ownerDocument;
+    card.querySelectorAll('.market-index-period').forEach(button => {
+        button.classList.toggle('active', button.dataset.period === period);
+    });
+
+    const body = card.querySelector('.market-index-body');
+    const res = await fetchWithTimeout(`/api/market-index/${code}?period=${period}`);
     const { json, error } = await readJsonResponse(res);
     const data = json && json.rt_cd === '0' ? json.data : null;
+
+    _destroyMarketIndexChart(card);
+    body.innerHTML = '';
     if (error || !data) {
         body.appendChild(_marketIndexError(doc));
-        return card;
+        return;
     }
 
     const value = doc.createElement('div');
@@ -171,11 +236,21 @@ async function buildMarketIndexKisCard(doc, entry) {
     if (points.length) {
         const canvas = doc.createElement('canvas');
         canvas.className = 'market-index-spark';
-        canvas.height = 70;
+        canvas.height = 88;
         body.appendChild(canvas);
-        _renderIndexSparkline(canvas, { points, changeRate: data.change_rate });
+        card._indexChart = _renderIndexSparkline(canvas, { points, changeRate: data.change_rate });
     }
+}
 
+async function buildMarketIndexKisCard(doc, entry) {
+    const card = _marketIndexCardShell(doc, 'kis', entry.code, entry.label);
+    card.appendChild(_buildMarketIndexPeriodBar(doc, card, entry.code));
+
+    const body = doc.createElement('div');
+    body.className = 'market-index-body';
+    card.appendChild(body);
+
+    await selectMarketIndexPeriod(card, entry.code, MARKET_INDEX_DEFAULT_PERIOD);
     return card;
 }
 

@@ -116,3 +116,62 @@ async def test_index_chart_reports_empty_candles(quotations):
     result = await quotations.inquire_daily_indexchartprice("0001", "20260601", "20260727")
 
     assert result.rt_cd == ErrorCode.MISSING_KEY.value
+
+
+@pytest.mark.asyncio
+async def test_index_minute_chart_sends_interval_as_input_hour(quotations):
+    quotations.call_api = AsyncMock(return_value=_api_response(
+        output2=[{"stck_bsop_date": "20260729", "stck_cntg_hour": "090000", "bstp_nmix_prpr": "2640"}],
+    ))
+
+    await quotations.inquire_time_indexchartprice("1001", interval_seconds=600)
+
+    args, kwargs = quotations.call_api.call_args
+    assert args[1] == EndpointKey.TIME_INDEXCHARTPRICE
+    params = kwargs["params"]
+    assert params["fid_cond_mrkt_div_code"] == "U"
+    assert params["fid_input_iscd"] == "1001"
+    # 이 TR 에서 fid_input_hour_1 은 조회 시각이 아니라 봉 간격(초)이다.
+    assert params["fid_input_hour_1"] == "600"
+    assert params["fid_pw_data_incu_yn"] == "N"
+
+
+@pytest.mark.asyncio
+async def test_index_minute_chart_drops_sentinel_rows_and_sorts(quotations):
+    quotations.call_api = AsyncMock(return_value=_api_response(
+        output1={"hts_kor_isnm": "코스피"},
+        output2=[
+            # KIS 는 최신순으로 주고, 집계용 센티널 시각이 섞여 온다.
+            {"stck_bsop_date": "20260729", "stck_cntg_hour": "999999", "bstp_nmix_prpr": "2650.15"},
+            {"stck_bsop_date": "20260729", "stck_cntg_hour": "888888", "bstp_nmix_prpr": "2650.15"},
+            {"stck_bsop_date": "20260729", "stck_cntg_hour": "091000", "bstp_nmix_prpr": "2650.15"},
+            {"stck_bsop_date": "20260729", "stck_cntg_hour": "090000", "bstp_nmix_prpr": "2640.10"},
+        ],
+    ))
+
+    result = await quotations.inquire_time_indexchartprice("0001")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert [c["stck_cntg_hour"] for c in result.data["candles"]] == ["090000", "091000"]
+
+
+@pytest.mark.asyncio
+async def test_index_minute_chart_reports_when_only_sentinels(quotations):
+    quotations.call_api = AsyncMock(return_value=_api_response(
+        output2=[{"stck_bsop_date": "20260729", "stck_cntg_hour": "999999", "bstp_nmix_prpr": "2650"}],
+    ))
+
+    result = await quotations.inquire_time_indexchartprice("0001")
+
+    assert result.rt_cd == ErrorCode.MISSING_KEY.value
+
+
+@pytest.mark.asyncio
+async def test_index_minute_chart_propagates_api_error(quotations):
+    quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value, msg1="조회 실패", data=None,
+    ))
+
+    result = await quotations.inquire_time_indexchartprice("0001")
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value

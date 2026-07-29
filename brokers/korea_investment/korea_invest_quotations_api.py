@@ -509,6 +509,54 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             data={"summary": summary, "candles": candles},
         )
 
+    # 분봉 응답에는 실제 시각이 아닌 집계용 센티널 행이 섞여 온다.
+    _INDEX_MINUTE_SENTINEL_HOURS = {"999999", "888888"}
+
+    async def inquire_time_indexchartprice(self, index_code: str,
+                                           interval_seconds: int = 600) -> ResCommonResponse:
+        """
+        국내업종(코스피 0001 / 코스닥 1001) 분봉 지수 시세를 조회합니다.
+        TRID: FHKUP03500200
+        interval_seconds 는 봉 간격(초)이며 600(10분봉)이면 정규장 전 구간이 한 번에 담깁니다.
+        data 에 {"summary": output1, "candles": output2(과거→현재)} 를 담아 반환합니다.
+        """
+        tr_id = self._trid_provider.quotations(TrIdLeaf.TIME_INDEXCHARTPRICE)
+        params = Params.time_indexchartprice(index_code, interval_seconds)
+
+        with self._headers.temp(tr_id=tr_id):
+            response_data: ResCommonResponse = await self.call_api(
+                "GET", EndpointKey.TIME_INDEXCHARTPRICE, params=params
+            )
+
+        if response_data.rt_cd != ErrorCode.SUCCESS.value:
+            error_msg = f"지수 분봉 API 응답 비정상 (index_code: {index_code}), 응답: {response_data.data}"
+            self._logger.error(error_msg)
+            return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1=error_msg, data=None)
+
+        raw = response_data.data if isinstance(response_data.data, dict) else {}
+        summary = raw.get("output1") or {}
+        candles = raw.get("output2") or []
+        if not isinstance(candles, list):
+            candles = [candles] if candles else []
+        candles = [
+            candle for candle in candles
+            if str(candle.get("stck_cntg_hour") or "") not in self._INDEX_MINUTE_SENTINEL_HOURS
+        ]
+
+        if not candles:
+            warning_msg = f"지수 분봉 데이터가 비어있음 (index_code: {index_code})"
+            self._logger.warning(warning_msg)
+            return ResCommonResponse(rt_cd=ErrorCode.MISSING_KEY.value, msg1=warning_msg, data=None)
+
+        # KIS 는 최신순으로 주므로 차트용으로 과거→현재로 뒤집는다.
+        candles.sort(key=lambda c: (str(c.get("stck_bsop_date") or ""), str(c.get("stck_cntg_hour") or "")))
+
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="지수 분봉 조회 성공",
+            data={"summary": summary, "candles": candles},
+        )
+
     async def inquire_time_itemchartprice(
         self,
         stock_code: str,

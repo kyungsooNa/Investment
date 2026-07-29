@@ -84,5 +84,15 @@ def test_market_indices_styles_are_defined():
         ".market-index-group-title",
         ".market-index-value",
         ".market-index-spark",
+        ".market-index-period",
     ):
         assert selector in css, f"{selector} 스타일이 없음"
+
+
+def test_domestic_index_period_selector_is_wired():
+    script = _market_indices_js()
+
+    for period in ("'1D'", "'1W'", "'1M'", "'1Y'"):
+        assert period in script, f"{period} 기간 설정이 없음"
+    # 기간은 쿼리 파라미터로 서버에 전달된다.
+    assert "?period=" in script

@@ -157,10 +157,13 @@ async def get_stock_rs_rating(code: str):
 
 
 @router.get("/market-index/{index_code}")
-async def get_market_index(index_code: str):
-    """코스피(0001)/코스닥(1001) 지수의 현재값·등락·최근 일별 종가. 홈 화면 지수 패널용."""
+async def get_market_index(index_code: str, period: str = "1D"):
+    """코스피(0001)/코스닥(1001) 지수의 현재값·등락·기간별 종가. 홈 화면 지수 패널용.
+
+    period: 1D(10분봉) / 1W / 1M / 1Y
+    """
     ctx = _get_ctx()
-    resp = await ctx.stock_query_service.get_index_chart(index_code)
+    resp = await ctx.stock_query_service.get_index_chart(index_code, period=period)
     return _serialize_response(resp)
 
 
