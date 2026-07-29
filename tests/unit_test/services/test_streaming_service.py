@@ -136,6 +136,31 @@ async def test_connect_websocket_logs_order_notice_subscription_failure(
 
 
 @pytest.mark.asyncio
+async def test_connect_websocket_recovers_when_order_notice_kills_receive_task(
+    mock_broker, mock_logger, mock_market_clock, mock_market_data_service
+):
+    """체결통보 구독 직후 연결이 죽으면 체결통보를 끄고 재연결해 스트림 구독을 살린다."""
+    mock_broker.connect_websocket.return_value = True
+    mock_broker.is_websocket_receive_alive.side_effect = [False, True, False]
+    service = StreamingService(
+        broker_api_wrapper=mock_broker,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_data_service=mock_market_data_service,
+    )
+
+    assert await service.connect_websocket() is True
+
+    assert mock_broker.connect_websocket.await_count == 2
+    mock_broker.disconnect_websocket.assert_awaited_once()
+    mock_broker.subscribe_order_notice.assert_awaited_once()
+    assert service._order_notice_auto_subscribe_disabled is True
+    assert "체결통보 구독 후 WebSocket 수신 태스크 종료" in str(
+        mock_logger.warning.call_args_list
+    )
+
+
+@pytest.mark.asyncio
 async def test_connect_websocket_no_callback(streaming_service, mock_broker):
     """connect_websocket: 콜백 없이 호출 시 None이 전달됨"""
     await streaming_service.connect_websocket()
@@ -156,7 +181,7 @@ async def test_connect_websocket_skips_duplicate_when_receive_alive(streaming_se
 async def test_connect_websocket_serializes_concurrent_calls(streaming_service, mock_broker):
     """동시 connect 요청은 하나만 브로커에 전달하고 후속 요청은 살아있는 연결을 재사용한다."""
     release = asyncio.Event()
-    mock_broker.is_websocket_receive_alive.side_effect = [False, True]
+    mock_broker.is_websocket_receive_alive.side_effect = [False, True, True, True]
 
     async def slow_connect(callback):
         await release.wait()
