@@ -65,3 +65,57 @@ def test_query_bootstrap_builds_ytd_weekly_report_for_batch_mode():
     _, kwargs = ytd_task.call_args
     assert kwargs["stock_repository"] is ctx.stock_repository
     assert kwargs["worker_pool"] is ctx.worker_pool
+
+
+def _stats_ctx(**overrides):
+    ctx = SimpleNamespace(
+        broker=MagicMock(), stock_code_repository=MagicMock(), stock_repository=MagicMock(),
+        env=MagicMock(), logger=MagicMock(), market_clock=MagicMock(), pm=MagicMock(),
+        notification_service=MagicMock(), telegram_reporter=MagicMock(), _mcs=MagicMock(),
+        market_data_service=MagicMock(), worker_pool=MagicMock(),
+        theme_classification_repository=MagicMock(), indicator_service=MagicMock(),
+        streaming_event_logger=MagicMock(),
+    )
+    for key, value in overrides.items():
+        setattr(ctx, key, value)
+    return ctx
+
+
+def _run_query_bootstrap(ctx):
+    with patch("view.web.bootstrap.query_bootstrap.RankingTask"), \
+         patch("view.web.bootstrap.query_bootstrap.StockQueryService"), \
+         patch("view.web.bootstrap.query_bootstrap.PeriodRankingRepository"), \
+         patch("view.web.bootstrap.query_bootstrap.SP500Repository") as sp500, \
+         patch("view.web.bootstrap.query_bootstrap.YahooUsMarketCapProvider"):
+        QueryBootstrap(ctx, us_market_calendar_factory=MagicMock()).run(
+            config={},
+            is_overseas_us=False,
+            needs_batch=False,
+        )
+    return sp500
+
+
+def test_overseas_market_stats_service_built_when_overseas_enabled():
+    ctx = _stats_ctx(enabled_market_modes=["domestic", "overseas_us"])
+
+    _run_query_bootstrap(ctx)
+
+    assert ctx.overseas_market_stats_service is not None
+
+
+def test_overseas_market_stats_service_none_when_overseas_disabled():
+    ctx = _stats_ctx(enabled_market_modes=["domestic"])
+
+    sp500 = _run_query_bootstrap(ctx)
+
+    assert ctx.overseas_market_stats_service is None
+    sp500.assert_not_called()
+
+
+def test_sp500_universe_is_not_downloaded_during_bootstrap():
+    """유니버스 생성은 첫 조회 시점으로 미룬다 — 웹 시작이 외부 다운로드에 묶이지 않게."""
+    ctx = _stats_ctx(enabled_market_modes=["domestic", "overseas_us"])
+
+    sp500 = _run_query_bootstrap(ctx)
+
+    sp500.assert_not_called()
