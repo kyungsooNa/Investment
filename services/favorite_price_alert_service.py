@@ -22,6 +22,7 @@ class FavoritePriceAlertService:
         stock_code_repository=None,
         *,
         threshold_step_pct: float = 5.0,
+        upper_limit_rate_pct: float = 29.5,
         favorite_cache_ttl_sec: float = 30.0,
         logger=None,
     ) -> None:
@@ -29,11 +30,13 @@ class FavoritePriceAlertService:
         self._notification_service = notification_service
         self._stock_code_repository = stock_code_repository
         self._threshold_step_pct = float(threshold_step_pct)
+        self._upper_limit_rate_pct = float(upper_limit_rate_pct)
         self._favorite_cache_ttl_sec = float(favorite_cache_ttl_sec)
         self._logger = logger or logging.getLogger(__name__)
         self._favorite_codes: set[str] = set()
         self._favorite_cache_ts: float = 0.0
         self._last_alert_bucket: dict[str, int] = {}
+        self._upper_limit_alerted_codes: set[str] = set()
 
     async def add_favorite(self, code: str) -> None:
         normalized = self._normalize_code(code)
@@ -48,8 +51,17 @@ class FavoritePriceAlertService:
             return
         self._favorite_codes.discard(normalized)
         self._last_alert_bucket.pop(normalized, None)
+        self._upper_limit_alerted_codes.discard(normalized)
 
-    async def handle_price_tick(self, code: str, *, price, rate) -> bool:
+    async def handle_price_tick(
+        self,
+        code: str,
+        *,
+        price,
+        rate,
+        sign=None,
+        is_upper_limit: bool = False,
+    ) -> bool:
         """실시간 현재가 틱을 평가하고 알림 발행 여부를 반환한다."""
         normalized = self._normalize_code(code)
         if not normalized or self._notification_service is None:
@@ -64,6 +76,14 @@ class FavoritePriceAlertService:
         rate_value = self._to_float(rate)
         if rate_value is None:
             return False
+        rate_value = self._apply_kis_sign(rate_value, sign)
+
+        if self._is_upper_limit(rate_value, sign=sign, is_upper_limit=is_upper_limit):
+            if normalized in self._upper_limit_alerted_codes:
+                return False
+            self._upper_limit_alerted_codes.add(normalized)
+            return await self._emit_upper_limit_alert(normalized, price, rate_value)
+        self._upper_limit_alerted_codes.discard(normalized)
 
         bucket = self._rate_bucket(rate_value)
         if bucket == 0:
@@ -98,6 +118,30 @@ class FavoritePriceAlertService:
         )
         return True
 
+    async def _emit_upper_limit_alert(self, code: str, price, rate_value: float) -> bool:
+        name = self._stock_name(code)
+        signed_rate = self._format_signed_pct(rate_value)
+        formatted_price = self._format_price(price)
+
+        await self._notification_service.emit(
+            NotificationCategory.SYSTEM,
+            NotificationLevel.WARNING,
+            f"[관심종목] {name} 상한가",
+            f"{code} {name} 현재 {formatted_price}, 전일대비 {signed_rate}",
+            metadata={
+                "alert_type": "favorite_upper_limit",
+                "code": code,
+                "name": name,
+                "price": self._to_float(price),
+                "rate": rate_value,
+                "threshold_pct": 30,
+                "is_upper_limit": True,
+                "dedup_key": f"favorite_price:{code}:upper_limit",
+                "force_external": True,
+            },
+        )
+        return True
+
     async def _refresh_favorites(self, *, force: bool = False) -> None:
         now = time.monotonic()
         if (
@@ -121,6 +165,22 @@ class FavoritePriceAlertService:
         if bucket < 1:
             return 0
         return bucket if rate > 0 else -bucket
+
+    def _is_upper_limit(self, rate: float, *, sign=None, is_upper_limit: bool = False) -> bool:
+        if is_upper_limit:
+            return True
+        if str(sign or "").strip() == "1":
+            return True
+        return self._upper_limit_rate_pct > 0 and rate >= self._upper_limit_rate_pct
+
+    @staticmethod
+    def _apply_kis_sign(rate: float, sign) -> float:
+        sign_value = str(sign or "").strip()
+        if sign_value in {"4", "5"} and rate > 0:
+            return -rate
+        if sign_value in {"1", "2"} and rate < 0:
+            return abs(rate)
+        return rate
 
     def _stock_name(self, code: str) -> str:
         if self._stock_code_repository is None:

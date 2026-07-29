@@ -229,6 +229,8 @@ class PriceStreamService:
                         stock_code,
                         price=current_price,
                         rate=realtime_data.get('전일대비율'),
+                        sign=realtime_data.get('전일대비부호'),
+                        is_upper_limit=self._is_upper_limit_tick(realtime_data),
                     )
                 )
             except RuntimeError:
@@ -265,6 +267,16 @@ class PriceStreamService:
             return None
         source = "websocket" if cached.get("quality_reason") == "websocket" else "rest"
         return MarketSnapshot.from_legacy_dict(code, cached, source=source)
+
+    @staticmethod
+    def _is_upper_limit_tick(realtime_data: dict) -> bool:
+        if str(realtime_data.get('전일대비부호') or '').strip() == '1':
+            return True
+        for key in ('실시간가격제한구분', '가격제한구분', '실시간상한가'):
+            value = str(realtime_data.get(key) or '').strip().upper()
+            if value in {'1', 'Y', 'U', 'UPPER', 'UPPER_LIMIT', '상한가'}:
+                return True
+        return False
 
     def cache_conclusion_snapshot(self, code: str, execution_strength_pct: float) -> None:
         """체결강도 REST 응답을 캐시에 저장한다."""
