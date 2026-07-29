@@ -1,10 +1,12 @@
 # tests/test_korea_invest_api_base.py
+import asyncio
 import unittest
 import pytest
 import json
 from unittest.mock import MagicMock, AsyncMock, patch, call
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase, ApiRetryError
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
+from brokers.korea_investment.korea_invest_header_provider import KoreaInvestHeaderProvider
 from brokers.korea_investment.korea_invest_token_provider import TokenProvider
 import requests
 import logging
@@ -742,12 +744,11 @@ async def testcall_api_token_expired_retry():
     assert result.data["output"] == {"success": True}
     assert dummy._async_session.get.call_count == 2
 
-    # 수정된 부분: 전체 URL을 예상 인자로 사용
-    dummy._async_session.get.assert_called_with(
-        'https://mock-base/token_expired',  # <- 전체 URL로 변경
-        headers=dummy._headers.build(),  # ✅ 객체 → 빌드된 dict로 검증
-        params=None
-    )
+    _, kwargs = dummy._async_session.get.call_args
+    assert kwargs["params"] is None
+    assert kwargs["headers"]["Authorization"] == "Bearer test-token-for-success-case"
+    assert kwargs["headers"]["appkey"] == "dummy"
+    assert kwargs["headers"]["appsecret"] == "dummy"
 
 
 @pytest.mark.asyncio
@@ -903,11 +904,13 @@ async def test_execute_request_post(monkeypatch):  # monkeypatch fixture 사용
     # 변경: 모킹된 post 메서드가 올바른 인자로 호출되었는지 확인합니다.
     # _dumps는 orjson 설치 여부에 따라 직렬화 결과가 다를 수 있으므로 _dumps로 비교합니다.
     from brokers.korea_investment.korea_invest_api_base import _dumps
-    api._async_session.post.assert_called_once_with(
-        "http://test",
-        headers=api._headers.build(),
-        data=_dumps({"x": "y"})
-    )
+    api._async_session.post.assert_awaited_once()
+    args, kwargs = api._async_session.post.call_args
+    assert args == ("http://test",)
+    assert kwargs["data"] == _dumps({"x": "y"})
+    assert kwargs["headers"]["Authorization"] == "Bearer test-token-for-success-case"
+    assert kwargs["headers"]["appkey"] == "dummy"
+    assert kwargs["headers"]["appsecret"] == "dummy"
 
 
 @pytest.mark.asyncio
@@ -1226,3 +1229,49 @@ async def test_post_request_body_is_string():
         f"POST body가 str이 아닌 {type(captured_data['body'])} 타입입니다"
     )
     assert '"key"' in captured_data["body"]
+
+
+@pytest.mark.asyncio
+async def test_execute_request_uses_request_local_headers_after_token_await():
+    """토큰 조회 await 중 공용 헤더가 바뀌어도 요청 시작 시점의 tr_id를 사용한다."""
+    token_waiting = asyncio.Event()
+    release_token = asyncio.Event()
+    captured_headers = {}
+
+    async def get_access_token():
+        token_waiting.set()
+        await release_token.wait()
+        return "request-token"
+
+    mock_env = get_mock_env()
+    mock_env.get_access_token = AsyncMock(side_effect=get_access_token)
+
+    api = KoreaInvestApiBase(
+        env=mock_env,
+        logger=MagicMock(),
+        market_clock=AsyncMock(),
+        trid_provider=MagicMock(),
+        header_provider=KoreaInvestHeaderProvider("test-agent"),
+    )
+
+    async def capture_get(url, headers, params):
+        captured_headers.update(headers)
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.text = '{"rt_cd":"0","output":{}}'
+        resp.json.return_value = {"rt_cd": "0", "output": {}}
+        resp.raise_for_status.return_value = None
+        return resp
+
+    api._async_session.get = AsyncMock(side_effect=capture_get)
+
+    api._headers.set_tr_id("TR_FIRST")
+    request_task = asyncio.create_task(api._execute_request("GET", "http://test", {"x": "1"}, None))
+    await token_waiting.wait()
+
+    api._headers.set_tr_id("TR_SECOND")
+    release_token.set()
+
+    await request_task
+
+    assert captured_headers["tr_id"] == "TR_FIRST"

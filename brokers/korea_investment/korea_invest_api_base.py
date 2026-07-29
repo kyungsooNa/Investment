@@ -215,24 +215,25 @@ class KoreaInvestApiBase:
         loop = asyncio.get_running_loop()
         response = None
         token_refreshed = False  # ✅ 토큰 재발급 여부 플래그
+        request_headers = self._headers.fork()
 
         async def make_request():
-            self._headers.sync_from_env(self._env)
+            request_headers.sync_from_env(self._env)
 
             if self._use_real_auth:
                 # 조회 API: 항상 실전 인증 사용
                 access_token = await self._env.get_real_access_token()
                 real_cfg = self._env.get_real_config()
-                self._headers.set_app_keys(real_cfg['api_key'], real_cfg['api_secret_key'])
+                request_headers.set_app_keys(real_cfg['api_key'], real_cfg['api_secret_key'])
             else:
                 access_token = await self._env.get_access_token()
-                self._headers.set_app_keys(self._env.active_config['api_key'], self._env.active_config['api_secret_key'])
+                request_headers.set_app_keys(self._env.active_config['api_key'], self._env.active_config['api_secret_key'])
 
             if not isinstance(access_token, str) or access_token is None:
                 raise ValueError("접근 토큰이 없습니다. KoreaInvestEnv에서 먼저 토큰을 발급받아야 합니다.")
 
-            self._headers.set_auth_bearer(access_token)
-            headers = self._headers.build()
+            request_headers.set_auth_bearer(access_token)
+            headers = request_headers.build()
             # self._log_headers()
 
             if method.upper() == 'GET':
@@ -280,7 +281,7 @@ class KoreaInvestApiBase:
                     if self._use_real_auth
                     else await self._env.get_access_token()
                 )
-                self._headers.set_auth_bearer(new_token)  # ✅ 메서드 사용
+                request_headers.set_auth_bearer(new_token)  # ✅ 메서드 사용
                 self._logger.debug(f"✅ 재발급 후 토큰 적용 확인: {new_token[:40]}...")
 
                 response = await make_request()
@@ -288,7 +289,7 @@ class KoreaInvestApiBase:
         except httpx.RequestError as e:
             if self._logger:
                 self._logger.error(f"요청 예외 발생 (httpx): {str(e)}")
-                auth = self._headers.build().get("Authorization", "")  # ✅ 안전 조회
+                auth = request_headers.build().get("Authorization", "")  # ✅ 안전 조회
                 self._logger.debug(f"[EGW00123 대응] 현재 Authorization 헤더: {auth[:40]}...")
             return ResCommonResponse(rt_cd=ErrorCode.NETWORK_ERROR.value, msg1=str(e), data=None)
 
