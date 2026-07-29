@@ -109,6 +109,32 @@ class DailyIndexChartPriceParams:
 
 
 @dataclass(frozen=True)
+class TimeIndexChartPriceParams:
+    """국내업종 분봉 지수 시세. 주식 분봉과 달리 fid_input_hour_1 이 "봉 간격(초)" 이다.
+
+    실측: 60 → 1분봉 100개, 600 → 10분봉 40개(09:00~15:30 전 구간), 1800 → 30분봉 14개.
+    """
+    fid_cond_mrkt_div_code: str  # 업종/지수는 "U"
+    fid_input_iscd: str  # 업종코드 (코스피 0001 / 코스닥 1001)
+    fid_input_hour_1: str  # 봉 간격(초)
+    fid_pw_data_incu_yn: str  # 과거 데이터 포함 여부 (N = 당일만)
+    fid_etc_cls_code: str  # 기타 구분 코드 ("0")
+
+    @classmethod
+    def time_indexchartprice(cls, index_code: str, interval_seconds: int, include_past: str = "N"):
+        return cls(
+            fid_cond_mrkt_div_code="U",
+            fid_input_iscd=index_code,
+            fid_input_hour_1=str(interval_seconds),
+            fid_pw_data_incu_yn=include_past,
+            fid_etc_cls_code="0",
+        )
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class TimeItemChartPriceParams:
     fid_cond_mrkt_div_code: str  # 보통 "J"
     fid_input_iscd: str  # 종목코드
@@ -762,6 +788,10 @@ class Params:
     @staticmethod
     def daily_indexchartprice(index_code: str, start_date: str, end_date: str, period: str) -> Dict[str, str]:
         return DailyIndexChartPriceParams.daily_indexchartprice(index_code, start_date, end_date, period).to_dict()
+
+    @staticmethod
+    def time_indexchartprice(index_code: str, interval_seconds: int, include_past: str = "N") -> Dict[str, str]:
+        return TimeIndexChartPriceParams.time_indexchartprice(index_code, interval_seconds, include_past).to_dict()
 
     @staticmethod
     def time_itemchartprice(stock_code: str, input_hour: str,

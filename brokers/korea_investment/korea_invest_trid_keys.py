@@ -15,6 +15,7 @@ class TrIdLeaf(str, Enum):
 
     DAILY_ITEMCHARTPRICE =      "inquire_daily_itemchartprice"           # 기간별 시세 (일/주/월/년)
     DAILY_INDEXCHARTPRICE =     "inquire_daily_indexchartprice"          # 국내업종 기간별 지수 시세
+    TIME_INDEXCHARTPRICE =      "inquire_time_indexchartprice"           # 국내업종 분봉 지수 시세
     TIME_ITEMCHARTPRICE =       "inquire_time_itemchartprice"             # 당일 분봉 조회
     TIME_DAILY_ITEMCHARTPRICE = "inquire_time_daily_itemchartprice" # 일별 분봉 조회
     FINANCIAL_RATIO = "financial_ratio"  # 기업 재무비율

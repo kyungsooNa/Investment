@@ -983,6 +983,28 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     color: var(--text-secondary);
     margin-bottom: 6px;
 }
+.market-index-period-bar {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 6px;
+}
+.market-index-period {
+    flex: 1;
+    padding: 3px 0;
+    font-family: inherit;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+}
+.market-index-period:hover { color: var(--text-primary); }
+.market-index-period.active {
+    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+}
 .market-index-body {
     height: 150px;
     display: flex;

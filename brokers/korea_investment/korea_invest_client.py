@@ -178,6 +178,12 @@ class KoreaInvestApiClient:
         return await self._quotations.inquire_daily_indexchartprice(index_code, start_date=start_date,
                                                                     end_date=end_date, period=period)
 
+    async def inquire_time_indexchartprice(self, index_code: str,
+                                           interval_seconds: int = 600) -> ResCommonResponse:
+        """국내업종(코스피/코스닥) 분봉 지수 시세를 조회합니다. ResCommonResponse를 반환합니다."""
+        return await self._quotations.inquire_time_indexchartprice(index_code,
+                                                                   interval_seconds=interval_seconds)
+
     async def inquire_time_itemchartprice(
         self,
         *,

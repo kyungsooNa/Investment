@@ -61,8 +61,9 @@ async function makeWindow(fetchWithTimeout) {
   window.currentCharts = [];
   window.__charts = [];
   window.Chart = function (ctx, config) {
-    window.__charts.push({ ctx, config });
-    this.destroy = () => {};
+    const record = { ctx, config, destroyed: false };
+    window.__charts.push(record);
+    this.destroy = () => { record.destroyed = true; };
   };
   window.eval(readFileSync(MARKET_INDICES_JS, "utf8"));
   return window;
@@ -165,7 +166,7 @@ test("국장 카드는 KIS API 를 조회해 값과 차트를 그린다", async 
   const requested = [];
   const window = await makeWindow(async (url) => {
     requested.push(url);
-    const code = url.endsWith("1001") ? "1001" : "0001";
+    const code = url.includes("/1001") ? "1001" : "0001";
     return success(indexPayload({
       code,
       name: code === "0001" ? "코스피" : "코스닥",
@@ -189,7 +190,7 @@ test("스파크라인 색은 등락률 부호를 따른다", async () => {
   const window = await makeWindow(async (url) => success(indexPayload({
     // 60일 추세는 우상향이지만 당일은 하락인 경우
     change: -4.2,
-    change_rate: url.endsWith("1001") ? -0.48 : 0.47,
+    change_rate: url.includes("/1001") ? -0.48 : 0.47,
   })));
 
   await window.renderMarketIndices();
@@ -225,6 +226,110 @@ test("x축 눈금은 조밀해지지 않도록 개수를 제한한다", async ()
   assert(ticks.maxTicksLimit > 1 && ticks.maxTicksLimit <= 6,
     `x축 눈금 개수 제한이 비합리적임 (실제 ${ticks.maxTicksLimit})`);
   assert(ticks.maxRotation === 0, "좁은 카드에서 라벨이 기울면 안 됨");
+});
+
+function minutePayload() {
+  return indexPayload({
+    period: "1D",
+    points: [
+      { date: "20260729", time: "090000", close: 2640.1 },
+      { date: "20260729", time: "091000", close: 2645.0 },
+      { date: "20260729", time: "092000", close: 2650.15 },
+    ],
+  });
+}
+
+test("국장 카드는 기간 선택 버튼을 갖고 기본은 1D 로 조회한다", async () => {
+  const requested = [];
+  const window = await makeWindow(async (url) => {
+    requested.push(url);
+    return success(minutePayload());
+  });
+
+  await window.renderMarketIndices();
+
+  const kospi = window.document.querySelector('.market-index-card[data-key="0001"]');
+  const buttons = Array.from(kospi.querySelectorAll(".market-index-period"));
+  assert(buttons.map(b => b.dataset.period).join(",") === "1D,1W,1M,1Y",
+    `기간 버튼이 1D,1W,1M,1Y 여야 함 (실제 ${buttons.map(b => b.dataset.period)})`);
+  assert(buttons[0].classList.contains("active"), "기본 기간 1D 가 선택 표시되어야 함");
+  assert(requested.every(u => u.includes("period=1D")),
+    `기본 조회가 period=1D 여야 함 (실제 ${requested})`);
+  // 미장 위젯 카드에는 기간 버튼을 붙이지 않는다(위젯이 자체 제공).
+  const widget = window.document.querySelector('.market-index-card[data-kind="widget"]');
+  assert(!widget.querySelector(".market-index-period"), "위젯 카드에 기간 버튼이 붙음");
+});
+
+test("1D 는 x축에 분봉 시각을 표시한다", async () => {
+  const window = await makeWindow(async () => success(minutePayload()));
+
+  await window.renderMarketIndices();
+
+  const labels = window.__charts[0].config.data.labels;
+  assert(labels.join(",") === "09:00,09:10,09:20",
+    `1D x축 라벨이 HH:MM 이어야 함 (실제 ${labels.join(",")})`);
+});
+
+test("기간 버튼을 누르면 그 기간으로 다시 조회하고 차트를 교체한다", async () => {
+  const requested = [];
+  const window = await makeWindow(async (url) => {
+    requested.push(url);
+    return success(url.includes("period=1D") ? minutePayload() : indexPayload({ period: "1M" }));
+  });
+  await window.renderMarketIndices();
+  const kospi = window.document.querySelector('.market-index-card[data-key="0001"]');
+  const before = window.__charts.length;
+
+  const monthly = kospi.querySelector('.market-index-period[data-period="1M"]');
+  await window.selectMarketIndexPeriod(kospi, "0001", "1M");
+
+  assert(requested.some(u => u.includes("/api/market-index/0001?period=1M")),
+    `1M 재조회를 하지 않음 (실제 ${requested})`);
+  assert(monthly.classList.contains("active"), "선택한 기간 버튼이 활성화되어야 함");
+  assert(!kospi.querySelector('.market-index-period[data-period="1D"]').classList.contains("active"),
+    "이전 기간 버튼이 활성 상태로 남음");
+  // 이전 차트는 파기하고 캔버스도 하나만 남아야 한다.
+  // (두 국장 카드가 동시에 렌더되므로 인덱스가 아니라 파기된 개수로 확인한다)
+  const destroyed = window.__charts.filter(chart => chart.destroyed);
+  assert(destroyed.length === 1, `교체한 카드의 이전 차트 1개만 파기되어야 함 (실제 ${destroyed.length}개)`);
+  assert(window.currentCharts.length === before,
+    `currentCharts 가 누적되면 안 됨 (before ${before}, after ${window.currentCharts.length})`);
+  assert(kospi.querySelectorAll("canvas").length === 1,
+    `카드에 캔버스가 하나만 있어야 함 (실제 ${kospi.querySelectorAll("canvas").length}개)`);
+  assert(window.__charts[before].config.data.labels.join(",") === "07/24,07/27",
+    "1M 로 바꾸면 x축이 날짜 라벨이어야 함");
+});
+
+test("기간 버튼 클릭도 같은 재조회 경로를 탄다", async () => {
+  const requested = [];
+  const window = await makeWindow(async (url) => {
+    requested.push(url);
+    return success(url.includes("period=1D") ? minutePayload() : indexPayload({ period: "1Y" }));
+  });
+  await window.renderMarketIndices();
+  const kospi = window.document.querySelector('.market-index-card[data-key="0001"]');
+
+  kospi.querySelector('.market-index-period[data-period="1Y"]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert(requested.some(u => u.includes("period=1Y")), `클릭으로 1Y 조회를 못함 (실제 ${requested})`);
+});
+
+test("기간 재조회가 실패하면 그 카드만 안내로 degrade 한다", async () => {
+  let first = true;
+  const window = await makeWindow(async () => {
+    if (first) { first = false; return success(minutePayload()); }
+    return { ok: false, status: 503, json: async () => ({}) };
+  });
+  await window.renderMarketIndices();
+  const kospi = window.document.querySelector('.market-index-card[data-key="0001"]');
+
+  await window.selectMarketIndexPeriod(kospi, "0001", "1M");
+
+  assert(kospi.querySelector(".market-index-error"), "재조회 실패 안내가 없음");
+  assert(!kospi.querySelector("canvas"), "재조회 실패 시 이전 차트가 남음");
+  // 기간 버튼은 남아 있어야 다시 시도할 수 있다.
+  assert(kospi.querySelectorAll(".market-index-period").length === 4, "실패 후 기간 버튼이 사라짐");
 });
 
 test("국장 API 실패는 카드별 안내로 degrade 한다", async () => {

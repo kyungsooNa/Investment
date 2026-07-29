@@ -1410,45 +1410,71 @@ class StockQueryService:
     # ── 국내 지수 (홈 화면 지수 패널) ──────────────────────────────────────
     DOMESTIC_INDEX_NAMES = {"0001": "코스피", "1001": "코스닥"}
 
-    async def get_index_chart(self, index_code: str, days: int = 60) -> ResCommonResponse:
-        """코스피/코스닥 지수의 현재값·등락과 최근 일별 종가를 조회한다.
+    # 기간별 조회 방식. KIS 기간별 지수(FHKUP03500100)는 범위와 무관하게 최대 50행만 주므로
+    # 1년은 일봉이 아니라 주봉으로 받는다(50주 ≈ 1년).
+    INDEX_CHART_PERIODS = {
+        "1D": {"kind": "minute", "interval_seconds": 600},
+        "1W": {"kind": "daily", "div": "D", "limit": 5, "lookback_days": 14},
+        "1M": {"kind": "daily", "div": "D", "limit": 22, "lookback_days": 45},
+        "1Y": {"kind": "daily", "div": "W", "limit": 50, "lookback_days": 400},
+    }
 
-        홈 화면 지수 패널이 쓰는 형태({code,name,current,change,change_rate,points})로 정규화한다.
+    async def get_index_chart(self, index_code: str, period: str = "1D") -> ResCommonResponse:
+        """코스피/코스닥 지수의 현재값·등락과 선택 기간의 종가 시리즈를 조회한다.
+
+        홈 화면 지수 패널이 쓰는 형태({code,name,period,current,change,change_rate,points})로
+        정규화한다. period="1D" 이면 각 point 에 분봉 시각("time")이 함께 담긴다.
         """
         if index_code not in self.DOMESTIC_INDEX_NAMES:
             msg = f"지원하지 않는 지수 코드: {index_code}"
             self.logger.warning(msg)
             return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=msg, data=None)
 
-        now = self.market_clock.get_current_kst_time()
-        end_date = now.strftime("%Y%m%d")
-        # 주말/휴장일을 감안해 넉넉히 조회한 뒤 days 개로 자른다.
-        start_date = (now - timedelta(days=days * 2)).strftime("%Y%m%d")
+        spec = self.INDEX_CHART_PERIODS.get(period)
+        if spec is None:
+            msg = f"지원하지 않는 지수 조회 기간: {period}"
+            self.logger.warning(msg)
+            return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=msg, data=None)
 
-        resp = await self.broker.inquire_daily_indexchartprice(
-            index_code, start_date=start_date, end_date=end_date
-        )
+        if spec["kind"] == "minute":
+            resp = await self.broker.inquire_time_indexchartprice(
+                index_code, interval_seconds=spec["interval_seconds"]
+            )
+        else:
+            now = self.market_clock.get_current_kst_time()
+            resp = await self.broker.inquire_daily_indexchartprice(
+                index_code,
+                start_date=(now - timedelta(days=spec["lookback_days"])).strftime("%Y%m%d"),
+                end_date=now.strftime("%Y%m%d"),
+                period=spec["div"],
+            )
         if resp.rt_cd != ErrorCode.SUCCESS.value:
             return resp
 
         raw = resp.data or {}
         summary = raw.get("summary") or {}
+        is_minute = spec["kind"] == "minute"
         points = []
         for candle in raw.get("candles") or []:
             date = str(candle.get("stck_bsop_date") or "")
             close = _to_float(candle.get("bstp_nmix_prpr"))
             if not date or close is None:
                 continue
-            points.append({"date": date, "close": close})
+            point = {"date": date, "close": close}
+            if is_minute:
+                point["time"] = str(candle.get("stck_cntg_hour") or "")
+            points.append(point)
 
         # KIS 는 최신순으로 주므로 차트용으로 과거→현재로 뒤집는다.
-        points.sort(key=lambda p: p["date"])
-        if len(points) > days:
-            points = points[-days:]
+        points.sort(key=lambda p: (p["date"], p.get("time", "")))
+        limit = spec.get("limit")
+        if limit and len(points) > limit:
+            points = points[-limit:]
 
         data = {
             "code": index_code,
             "name": summary.get("hts_kor_isnm") or self.DOMESTIC_INDEX_NAMES[index_code],
+            "period": period,
             "current": _to_float(summary.get("bstp_nmix_prpr")),
             "change": _to_float(summary.get("bstp_nmix_prdy_vrss")),
             "change_rate": _to_float(summary.get("bstp_nmix_prdy_ctrt")),
