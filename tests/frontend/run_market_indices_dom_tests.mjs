@@ -199,6 +199,34 @@ test("스파크라인 색은 등락률 부호를 따른다", async () => {
   assert(colors.includes("#3742fa"), "하락 지수는 하락색이어야 함");
 });
 
+test("국장 스파크라인은 x축에 날짜 눈금을 표시한다", async () => {
+  const window = await makeWindow();
+
+  await window.renderMarketIndices();
+
+  const config = window.__charts[0].config;
+  assert(config.options.scales.x.display === true, "국장 차트 x축이 표시되지 않음");
+  assert(config.data.labels.join(",") === "07/24,07/27",
+    `x축 라벨이 MM/DD 형식이어야 함 (실제 ${config.data.labels.join(",")})`);
+  assert(config.options.scales.y.display === false, "y축은 계속 숨겨야 함");
+});
+
+test("x축 눈금은 조밀해지지 않도록 개수를 제한한다", async () => {
+  const points = Array.from({ length: 60 }, (_, i) => ({
+    date: `202605${String((i % 28) + 1).padStart(2, "0")}`,
+    close: 2600 + i,
+  }));
+  const window = await makeWindow(async () => success(indexPayload({ points })));
+
+  await window.renderMarketIndices();
+
+  const ticks = window.__charts[0].config.options.scales.x.ticks;
+  assert(ticks.autoSkip === true, "x축 눈금 autoSkip 이 꺼져 있음");
+  assert(ticks.maxTicksLimit > 1 && ticks.maxTicksLimit <= 6,
+    `x축 눈금 개수 제한이 비합리적임 (실제 ${ticks.maxTicksLimit})`);
+  assert(ticks.maxRotation === 0, "좁은 카드에서 라벨이 기울면 안 됨");
+});
+
 test("국장 API 실패는 카드별 안내로 degrade 한다", async () => {
   const window = await makeWindow(async () => ({ ok: false, status: 503, json: async () => ({}) }));
 

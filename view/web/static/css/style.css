@@ -1002,7 +1002,8 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 .market-index-spark {
     margin-top: 8px;
     width: 100%;
-    max-height: 70px;
+    /* x축 날짜 눈금이 들어가므로 선 영역(70px) + 라벨 높이만큼 잡는다. */
+    max-height: 88px;
 }
 .market-index-error {
     margin: 0;

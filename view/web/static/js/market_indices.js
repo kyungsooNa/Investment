@@ -111,6 +111,11 @@ function _formatIndexChange(change, rate) {
     return { text: `${delta}(${sign}${rate.toFixed(2)}%)`.replace(' (', ' ('), className };
 }
 
+function _formatIndexDate(value) {
+    const raw = String(value || '');
+    return raw.length === 8 ? `${raw.slice(4, 6)}/${raw.slice(6, 8)}` : raw;
+}
+
 function _renderIndexSparkline(canvas, data) {
     if (typeof Chart === 'undefined' || !data.points.length) return;
 
@@ -119,7 +124,7 @@ function _renderIndexSparkline(canvas, data) {
     const chart = new Chart(canvas.getContext('2d'), {
         type: 'line',
         data: {
-            labels: data.points.map(p => p.date),
+            labels: data.points.map(p => _formatIndexDate(p.date)),
             datasets: [{
                 data: data.points.map(p => p.close),
                 borderColor: color,
@@ -134,7 +139,22 @@ function _renderIndexSparkline(canvas, data) {
             maintainAspectRatio: false,
             animation: false,
             plugins: { legend: { display: false }, tooltip: { enabled: false } },
-            scales: { x: { display: false }, y: { display: false } },
+            scales: {
+                // 좁은 카드라 눈금을 몇 개로 제한하고 라벨은 눕힌 채로 둔다.
+                x: {
+                    display: true,
+                    grid: { display: false },
+                    border: { display: false },
+                    ticks: {
+                        autoSkip: true,
+                        maxTicksLimit: 5,
+                        maxRotation: 0,
+                        minRotation: 0,
+                        font: { size: 9 },
+                    },
+                },
+                y: { display: false },
+            },
         },
     });
     window.currentCharts = window.currentCharts || [];
@@ -171,7 +191,7 @@ async function buildMarketIndexKisCard(doc, entry) {
     if (points.length) {
         const canvas = doc.createElement('canvas');
         canvas.className = 'market-index-spark';
-        canvas.height = 70;
+        canvas.height = 88;
         body.appendChild(canvas);
         _renderIndexSparkline(canvas, { points, changeRate: data.change_rate });
     }
