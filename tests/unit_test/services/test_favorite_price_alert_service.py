@@ -62,6 +62,41 @@ async def test_alerts_negative_five_percent_bucket():
 
 
 @pytest.mark.asyncio
+async def test_applies_kis_negative_sign_to_unsigned_rate():
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["005930"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("005930", price="70000", rate="5.01", sign="5")
+
+    notifications.emit.assert_awaited_once()
+    args, kwargs = notifications.emit.call_args
+    assert "-5%" in args[2]
+    assert kwargs["metadata"]["threshold_pct"] == -5
+    assert kwargs["metadata"]["rate"] == -5.01
+
+
+@pytest.mark.asyncio
+async def test_alerts_upper_limit_separately_from_twenty_five_percent_bucket():
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["005930"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("005930", price="82000", rate="25.10", sign="2")
+    await svc.handle_price_tick("005930", price="85000", rate="29.92", sign="1")
+
+    assert notifications.emit.await_count == 2
+    second_args, second_kwargs = notifications.emit.await_args_list[1]
+    assert "상한가" in second_args[2]
+    assert second_kwargs["metadata"]["alert_type"] == "favorite_upper_limit"
+    assert second_kwargs["metadata"]["is_upper_limit"] is True
+
+
+@pytest.mark.asyncio
 async def test_ignores_non_favorite_and_invalid_rate():
     repo = MagicMock()
     repo.get_all = AsyncMock(return_value=["000660"])

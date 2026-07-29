@@ -325,6 +325,35 @@ async def test_on_price_tick_schedules_favorite_price_alert(mock_stock_repo, moc
         "005930",
         price="75000",
         rate="5.12",
+        sign=None,
+        is_upper_limit=False,
+    )
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_on_price_tick_passes_sign_and_upper_limit_to_favorite_price_alert(mock_stock_repo, mock_logger):
+    alert_service = MagicMock()
+    alert_service.handle_price_tick = AsyncMock()
+    service = PriceStreamService(
+        stock_repo=mock_stock_repo,
+        logger=mock_logger,
+        favorite_price_alert_service=alert_service,
+    )
+
+    service.on_price_tick({
+        '유가증권단축종목코드': '005930',
+        '주식현재가': '85000',
+        '전일대비율': '29.92',
+        '전일대비부호': '1',
+    })
+
+    alert_service.handle_price_tick.assert_called_once_with(
+        "005930",
+        price="85000",
+        rate="29.92",
+        sign="1",
+        is_upper_limit=True,
     )
     await asyncio.sleep(0)
 
