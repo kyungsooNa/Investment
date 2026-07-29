@@ -165,3 +165,45 @@ async def test_startup_self_heal_skips_investor_report_when_already_sent_but_pre
 
     task.refresh_investor_ranking.assert_not_awaited()
     task.prewarm_period_ranking.assert_awaited_once_with("20260724")
+
+
+async def test_startup_self_heal_does_not_resend_previous_trading_date_report_before_open():
+    """다음 거래일 장전에는 전날 랭킹 리포트 복구 발송을 하지 않는다."""
+    task = _make_task()
+    mcs = MagicMock()
+    mcs.is_market_open_now = AsyncMock(return_value=False)
+    mcs.get_latest_trading_date = AsyncMock(return_value="20260730")
+    clock = MagicMock()
+    clock.get_current_kst_date_str.return_value = "20260731"
+    clock.get_seconds_until_market_close.return_value = 27_600  # 08:00 -> 15:40
+    task._mcs = mcs
+    task._market_clock = clock
+    task._load_last_ranking_report_date = MagicMock(return_value="20260729")
+    task.refresh_investor_ranking = AsyncMock()
+    task.prewarm_period_ranking = AsyncMock()
+
+    await task._period_ranking_self_heal()
+
+    task.refresh_investor_ranking.assert_not_awaited()
+    task.prewarm_period_ranking.assert_awaited_once_with("20260730")
+
+
+async def test_startup_self_heal_recovers_same_day_report_after_close():
+    """당일 장마감 이후 시작한 경우에만 누락된 랭킹 리포트를 복구한다."""
+    task = _make_task()
+    mcs = MagicMock()
+    mcs.is_market_open_now = AsyncMock(return_value=False)
+    mcs.get_latest_trading_date = AsyncMock(return_value="20260730")
+    clock = MagicMock()
+    clock.get_current_kst_date_str.return_value = "20260730"
+    clock.get_seconds_until_market_close.return_value = -3_600
+    task._mcs = mcs
+    task._market_clock = clock
+    task._load_last_ranking_report_date = MagicMock(return_value="20260729")
+    task.refresh_investor_ranking = AsyncMock()
+    task.prewarm_period_ranking = AsyncMock()
+
+    await task._period_ranking_self_heal()
+
+    task.refresh_investor_ranking.assert_awaited_once()
+    task.prewarm_period_ranking.assert_awaited_once_with("20260730")
