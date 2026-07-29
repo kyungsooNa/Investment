@@ -28,6 +28,7 @@ _VIEWER_GET_PREFIXES = (
     "/api/overseas/stock/",
     "/api/overseas/chart/",
     "/api/overseas/market-cap",
+    "/api/overseas/ranking/",
     "/api/chart/",
     "/api/indicator/",
     "/api/ranking/",
