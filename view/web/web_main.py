@@ -495,6 +495,15 @@ async def overseas_marketcap(request: Request):
         view_market="overseas_us",
     )
 
+@page_router.get("/overseas-ranking")
+async def overseas_ranking(request: Request):
+    return await render_page(
+        request,
+        "overseas_ranking.html",
+        "overseas_ranking",
+        view_market="overseas_us",
+    )
+
 @page_router.get("/ranking")
 async def ranking(request: Request):
     return await render_page(request, "ranking.html", "ranking", view_market="domestic")

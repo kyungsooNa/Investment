@@ -3,6 +3,7 @@
 """
 import asyncio
 from fastapi import APIRouter, HTTPException, Query
+from services.overseas_market_stats_service import RANKING_CATEGORIES
 from view.web.api_common import _get_ctx
 from view.web.market_mode_utils import is_market_enabled
 
@@ -36,3 +37,27 @@ async def get_overseas_top_market_cap(limit: int = Query(30, ge=1, le=500)):
         return {"rt_cd": "1", "msg1": "미국 시가총액을 조회하지 못했습니다. 잠시 후 다시 시도해주세요.", "data": None}
 
     return {"rt_cd": "0", "msg1": "미국 시가총액 조회 성공", "data": data}
+
+
+@router.get("/overseas/ranking/{category}")
+async def get_overseas_ranking(category: str, limit: int = Query(30, ge=1, le=500)):
+    """S&P 500 유니버스 기준 미국 랭킹 (rise/fall/volume/trading_value)."""
+    ctx = _get_ctx()
+    service = _require_overseas(ctx, "미국주식 랭킹")
+    if category not in RANKING_CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"category는 {', '.join(RANKING_CATEGORIES)} 중 하나여야 합니다.",
+        )
+    try:
+        data = await asyncio.wait_for(
+            service.get_ranking(category, limit=limit), timeout=30.0
+        )
+    except asyncio.TimeoutError:
+        ctx.logger.warning(f"[overseas_market] 미국 랭킹 조회 타임아웃 ({category}, 30s 초과)")
+        return {"rt_cd": "1", "msg1": "미국 랭킹 조회 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.", "data": None}
+    except Exception as exc:
+        ctx.logger.warning(f"[overseas_market] 미국 랭킹 조회 실패 ({category}): {exc}")
+        return {"rt_cd": "1", "msg1": "미국 랭킹을 조회하지 못했습니다. 잠시 후 다시 시도해주세요.", "data": None}
+
+    return {"rt_cd": "0", "msg1": "미국 랭킹 조회 성공", "data": data}

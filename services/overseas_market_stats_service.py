@@ -13,6 +13,17 @@ import logging
 import time
 from typing import Optional
 
+# 국내 랭킹의 외국인·기관·개인 수급은 KRX 전용 데이터라 미국장에서는 만들 수 없다.
+# Yahoo 스냅샷 한 건에서 유도 가능한 4종만 제공한다.
+RANKING_CATEGORIES = ("rise", "fall", "volume", "trading_value")
+
+_RANKING_SORTS = {
+    "rise": (lambda snap: snap.change_rate, True),
+    "fall": (lambda snap: snap.change_rate, False),
+    "volume": (lambda snap: snap.volume, True),
+    "trading_value": (lambda snap: snap.price * snap.volume, True),
+}
+
 
 class OverseasMarketStatsService:
     def __init__(
@@ -91,6 +102,22 @@ class OverseasMarketStatsService:
         ]
         return {"fx_rate": fx_rate, "items": items}
 
+    async def get_ranking(self, category: str, limit: int = 30) -> dict:
+        """등락률/거래량/거래대금 랭킹. 시가총액 화면과 스냅샷 캐시를 공유한다."""
+        sort = _RANKING_SORTS.get(category)
+        if sort is None:
+            raise ValueError(f"지원하지 않는 미국장 랭킹 구분: {category}")
+        key, descending = sort
+
+        snapshots, fx_rate = await self.get_snapshots()
+        ranked = sorted(snapshots, key=key, reverse=descending)[:limit]
+
+        items = [
+            self._to_item(snap, rank, fx_rate)
+            for rank, snap in enumerate(ranked, 1)
+        ]
+        return {"fx_rate": fx_rate, "items": items}
+
     def _to_item(self, snap, rank: int, fx_rate: Optional[float]) -> dict:
         meta = self._universe.get_meta(snap.symbol) if self._universe else None
         meta = meta if isinstance(meta, dict) else None
@@ -102,6 +129,7 @@ class OverseasMarketStatsService:
             "price": snap.price,
             "change_rate": snap.change_rate,
             "volume": snap.volume,
+            "trading_value_usd": int(snap.price * snap.volume),
             "market_cap_usd": snap.market_cap,
             "market_cap_krw": int(snap.market_cap * fx_rate) if fx_rate else None,
         }

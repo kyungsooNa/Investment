@@ -223,3 +223,84 @@ async def test_universe_failure_is_not_retried_every_call(provider):
     assert calls == [1]
     assert logger.warning.call_count == 1
     provider.fetch_snapshots.assert_not_awaited()
+
+
+@pytest.fixture
+def ranking_provider():
+    p = MagicMock()
+    p.fetch_snapshots = AsyncMock(return_value=[
+        _snap("AAPL", price=200.0, rate=3.0, volume=1_000, cap=3_000_000_000_000),
+        _snap("MSFT", price=100.0, rate=-2.0, volume=5_000, cap=4_000_000_000_000),
+        _snap("XOM", price=50.0, rate=1.0, volume=3_000, cap=500_000_000_000),
+    ])
+    p.fetch_usdkrw = AsyncMock(return_value=1400.0)
+    return p
+
+
+@pytest.fixture
+def ranking_service(universe, ranking_provider):
+    return OverseasMarketStatsService(
+        universe_factory=lambda: universe, provider=ranking_provider, clock=lambda: 0.0
+    )
+
+
+async def test_ranking_rise_sorts_by_change_rate_desc(ranking_service):
+    items = (await ranking_service.get_ranking("rise"))["items"]
+    assert [item["symbol"] for item in items] == ["AAPL", "XOM", "MSFT"]
+    assert [item["rank"] for item in items] == [1, 2, 3]
+
+
+async def test_ranking_fall_sorts_by_change_rate_asc(ranking_service):
+    items = (await ranking_service.get_ranking("fall"))["items"]
+    assert [item["symbol"] for item in items] == ["MSFT", "XOM", "AAPL"]
+
+
+async def test_ranking_volume_sorts_by_volume_desc(ranking_service):
+    items = (await ranking_service.get_ranking("volume"))["items"]
+    assert [item["symbol"] for item in items] == ["MSFT", "XOM", "AAPL"]
+
+
+async def test_ranking_trading_value_uses_price_times_volume(ranking_service):
+    items = (await ranking_service.get_ranking("trading_value"))["items"]
+    # MSFT 100*5000=500k, XOM 50*3000=150k, AAPL 200*1000=200k
+    assert [item["symbol"] for item in items] == ["MSFT", "AAPL", "XOM"]
+    assert items[0]["trading_value_usd"] == 500_000
+    assert items[1]["trading_value_usd"] == 200_000
+
+
+async def test_ranking_applies_limit(ranking_service):
+    items = (await ranking_service.get_ranking("rise", limit=2))["items"]
+    assert [item["symbol"] for item in items] == ["AAPL", "XOM"]
+
+
+async def test_ranking_items_carry_sector_and_price(ranking_service):
+    item = (await ranking_service.get_ranking("rise", limit=1))["items"][0]
+    assert item["name"] == "Apple Inc."
+    assert item["sector"] == "Information Technology"
+    assert item["price"] == 200.0
+    assert item["change_rate"] == 3.0
+    assert item["volume"] == 1_000
+
+
+async def test_ranking_rejects_unknown_category(ranking_service):
+    with pytest.raises(ValueError):
+        await ranking_service.get_ranking("foreign_buy")
+
+
+async def test_ranking_reuses_market_cap_snapshot_cache(ranking_service, ranking_provider):
+    """시총 화면과 랭킹 화면이 같은 스냅샷을 공유해 외부 호출이 늘지 않는다."""
+    await ranking_service.get_top_market_cap()
+    await ranking_service.get_ranking("rise")
+    await ranking_service.get_ranking("volume")
+
+    assert ranking_provider.fetch_snapshots.await_count == 1
+
+
+async def test_ranking_empty_universe_returns_empty(provider):
+    empty = MagicMock()
+    empty.all_symbols.return_value = []
+    service = OverseasMarketStatsService(
+        universe_factory=lambda: empty, provider=provider, clock=lambda: 0.0
+    )
+
+    assert (await service.get_ranking("rise")) == {"fx_rate": None, "items": []}
