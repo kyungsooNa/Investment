@@ -38,6 +38,8 @@ class StreamingService:
     BrokerAPIWrapper를 통해 실제 WebSocket API에 위임한다.
     """
 
+    ORDER_NOTICE_HEALTH_GRACE_SEC = 0.1
+
     def __init__(
         self,
         broker_api_wrapper: "BrokerAPIWrapper",
@@ -65,6 +67,7 @@ class StreamingService:
         self._PRINT_THROTTLE_SEC: float = 0.5
         self._callback = None  # 재연결 시 콜백 유실 방지용 저장
         self._connect_lock = asyncio.Lock()
+        self._order_notice_auto_subscribe_disabled = False
 
         # Observer 레지스트리: data_type → [handler, ...]
         self._handlers: Dict[str, List[Callable[[dict], None]]] = {}
@@ -132,12 +135,45 @@ class StreamingService:
             if result and self._streaming_logger:
                 self._streaming_logger.log_connect()
             if result:
-                try:
-                    await self.subscribe_order_notice()
-                except Exception as e:
-                    self.logger.warning(f"체결통보 구독 실패: {e}")
+                receive_alive_before_order_notice = self._is_websocket_receive_alive()
+                if not await self._subscribe_order_notice_safely(
+                    receive_alive_before_order_notice
+                ):
+                    return False
                 await self._subscribe_market_status_monitors()
             return result
+
+    async def _subscribe_order_notice_safely(self, receive_alive_before: bool) -> bool:
+        if self._order_notice_auto_subscribe_disabled:
+            return True
+
+        try:
+            await self.subscribe_order_notice()
+        except Exception as e:
+            self.logger.warning(f"체결통보 구독 실패: {e}")
+            return True
+
+        if not receive_alive_before:
+            return True
+
+        await asyncio.sleep(self.ORDER_NOTICE_HEALTH_GRACE_SEC)
+        if self._is_websocket_receive_alive():
+            return True
+
+        self._order_notice_auto_subscribe_disabled = True
+        self.logger.warning(
+            "체결통보 구독 후 WebSocket 수신 태스크 종료 감지. "
+            "체결통보 자동 구독을 비활성화하고 WebSocket을 재연결합니다."
+        )
+        try:
+            await self.broker.disconnect_websocket()
+        except Exception as e:
+            self.logger.warning(f"체결통보 실패 복구 중 WebSocket 해제 실패: {e}")
+
+        result = await self.broker.connect_websocket(self._callback)
+        if result and self._streaming_logger:
+            self._streaming_logger.log_connect()
+        return bool(result)
 
     def _is_websocket_receive_alive(self) -> bool:
         checker = getattr(self.broker, "is_websocket_receive_alive", None)
