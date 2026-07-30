@@ -106,6 +106,10 @@ class StockRepository:
         """최신 거래일 기준 YTD 수익률 랭킹 조회."""
         return await self._ohlcv_repo.get_ytd_return_ranking(limit=limit, market=market)
 
+    async def get_market_cap_snapshot(self, limit: int = 300, market: Optional[str] = None) -> List[Dict]:
+        """최신 거래일 기준 시가총액 상위 스냅샷 조회 (국내 히트맵용)."""
+        return await self._ohlcv_repo.get_market_cap_snapshot(limit=limit, market=market)
+
     async def update_newhigh_fields(self, trade_date: str, records: List[Dict]):
         """is_newhigh 및 is_historical_newhigh 컬럼 업데이트."""
         await self._ohlcv_repo.update_newhigh_fields(trade_date, records)

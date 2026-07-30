@@ -193,6 +193,39 @@ async def get_ytd_return_ranking(limit: int = Query(100, ge=1, le=500), market: 
     }
 
 
+@router.get("/heatmap/domestic")
+async def get_domestic_heatmap(limit: int = Query(300, ge=1, le=1000), market: Optional[str] = Query(None)):
+    """국내 히트맵용 시가총액 스냅샷.
+
+    실시간 전종목 시세 소스가 없어 장마감 후 수집된 daily_prices 스냅샷을 쓴다.
+    기준일(trade_date)을 함께 반환해 화면이 장중에도 기준 시점을 표시할 수 있게 한다.
+    """
+    ctx = _get_ctx()
+    repository = getattr(ctx, "stock_repository", None)
+    if not repository:
+        return {"rt_cd": ErrorCode.API_ERROR.value, "msg1": "StockRepository 미설정", "data": None}
+
+    rows = await repository.get_market_cap_snapshot(limit=limit, market=market)
+    items = [
+        {
+            "code": row.get("code") or "",
+            "name": row.get("name") or "",
+            "change_rate": row.get("change_rate"),
+            "market_cap": row.get("market_cap"),
+            "market": row.get("market") or "",
+        }
+        for row in rows
+    ]
+    return {
+        "rt_cd": ErrorCode.SUCCESS.value,
+        "msg1": "국내 히트맵 조회 성공" if items else "저장된 시가총액 스냅샷이 없습니다.",
+        "data": {
+            "trade_date": rows[0].get("trade_date") if rows else None,
+            "items": items,
+        },
+    }
+
+
 @router.get("/ranking/{category}")
 async def get_ranking(category: str):
     """랭킹 조회 (rise/fall/volume/trading_value/foreign_buy/foreign_sell/inst_buy/inst_sell/prsn_buy/prsn_sell)."""

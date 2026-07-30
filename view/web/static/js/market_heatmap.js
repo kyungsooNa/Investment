@@ -1,13 +1,18 @@
-/* view/web/static/js/market_heatmap.js — 홈 화면 S&P 500 섹터 히트맵(트리맵)
+/* view/web/static/js/market_heatmap.js — 홈 화면 히트맵(트리맵)
  *
- * 데이터는 미국 시가총액 화면과 같은 /api/overseas/top-market-cap 스냅샷을 쓴다.
- * (Yahoo 스냅샷 1회로 sector/change_rate/market_cap_usd 가 모두 오고, 서비스 TTL 캐시를 공유한다.)
+ * 미국: /api/overseas/top-market-cap 스냅샷을 쓴다. 미국 시가총액 화면과 같은 소스라
+ *       (Yahoo 스냅샷 1회로 sector/change_rate/market_cap_usd 가 모두 오고) TTL 캐시를 공유한다.
+ *       섹터 블록 → 종목 타일 2단으로 그린다.
+ * 국내: /api/heatmap/domestic (장마감 후 daily_prices 스냅샷). 실시간 전종목 시세 소스가 없어
+ *       종가 기준이며, 배타적 업종 분류도 아직 없어 섹터 블록 없이 시총순 타일만 그린다.
+ *
  * 타일 좌표는 % 로만 계산해 컨테이너 크기와 무관하게 반응형으로 그린다.
- *
  * 색상은 국내 화면 컨벤션(상승=빨강, 하락=파랑)을 따른다.
  */
 
 const HEATMAP_LIMIT = 500;
+// 상위 200종목이면 국내 전체 시총의 91% 를 덮으면서 가장 작은 타일도 10px 아래로 내려가지 않는다.
+const HEATMAP_DOMESTIC_LIMIT = 200;
 const HEATMAP_REFRESH_MS = 5 * 60 * 1000;
 const HEATMAP_SECTOR_HEADER_PX = 16;
 // 타일이 이보다 작으면 글자가 넘쳐 겹치므로 텍스트를 생략한다(툴팁으로만 노출).
@@ -122,7 +127,7 @@ function _squarifyTreemap(cells, rect) {
     return placed;
 }
 
-function _groupBySector(items) {
+function _overseasGroups(items) {
     const groups = new Map();
     items.forEach(raw => {
         const row = raw && typeof raw === 'object' ? raw : {};
@@ -134,9 +139,11 @@ function _groupBySector(items) {
         group.cap += cap;
         group.members.push({
             symbol: String(row.symbol ?? ''),
+            label: String(row.symbol ?? ''),
             name: String(row.name ?? ''),
             rate: _heatmapNumber(row.change_rate),
             cap,
+            capText: _heatmapCapText(cap),
         });
     });
 
@@ -145,14 +152,36 @@ function _groupBySector(items) {
     return groupList;
 }
 
+// 국내는 배타적 업종 분류가 없어(네이버 테마는 중복 소속) 섹터 블록 없이 단일 그룹으로 그린다.
+function _domesticGroups(items) {
+    const members = [];
+    items.forEach(raw => {
+        const row = raw && typeof raw === 'object' ? raw : {};
+        const cap = _heatmapNumber(row.market_cap);
+        if (cap === null || cap <= 0) return;
+        members.push({
+            symbol: String(row.code ?? ''),
+            label: String(row.name ?? ''),
+            name: String(row.name ?? ''),
+            rate: _heatmapNumber(row.change_rate),
+            cap,
+            capText: formatMarketCap(cap),
+        });
+    });
+    if (!members.length) return [];
+
+    members.sort((a, b) => b.cap - a.cap);
+    return [{ sector: null, cap: members.reduce((sum, m) => sum + m.cap, 0), members }];
+}
+
 function _heatmapTileHtml(member, box) {
     const rateText = _heatmapRateText(member.rate);
     const showLabel = box.w >= HEATMAP_MIN_LABEL_WIDTH_PCT && box.h >= HEATMAP_MIN_LABEL_HEIGHT_PCT;
     const label = showLabel
-        ? `<span class="heatmap-tile-symbol">${escapeHtml(member.symbol)}</span>`
+        ? `<span class="heatmap-tile-symbol">${escapeHtml(member.label)}</span>`
           + `<span class="heatmap-tile-rate">${escapeHtml(rateText)}</span>`
         : '';
-    const tooltip = `${member.symbol} ${member.name} | ${rateText} | ${_heatmapCapText(member.cap)}`;
+    const tooltip = `${member.symbol} ${member.name} | ${rateText} | ${member.capText}`;
     return `
         <div class="heatmap-tile"
              data-symbol="${escapeHtml(member.symbol)}"
@@ -173,33 +202,46 @@ function _heatmapSectorHtml(group, box) {
         .map(memberBox => _heatmapTileHtml(group.members[memberBox.key], memberBox))
         .join('');
 
+    // 섹터명이 없는 시장(국내)은 헤더 없이 타일이 블록 전체를 채운다.
+    const titled = Boolean(group.sector);
+    const sectorAttr = titled ? ` data-sector="${escapeHtml(group.sector)}"` : '';
+    const title = titled ? `<div class="heatmap-sector-title">${escapeHtml(group.sector)}</div>` : '';
+    const bodyTop = titled ? HEATMAP_SECTOR_HEADER_PX : 0;
+
     return `
-        <div class="heatmap-sector" data-sector="${escapeHtml(group.sector)}"
+        <div class="heatmap-sector"${sectorAttr}
              style="left:${box.x.toFixed(4)}%; top:${box.y.toFixed(4)}%; width:${box.w.toFixed(4)}%; height:${box.h.toFixed(4)}%;">
-            <div class="heatmap-sector-title">${escapeHtml(group.sector)}</div>
-            <div class="heatmap-sector-body" style="top:${HEATMAP_SECTOR_HEADER_PX}px;">${tiles}</div>
+            ${title}
+            <div class="heatmap-sector-body" style="top:${bodyTop}px;">${tiles}</div>
         </div>
     `;
 }
 
-function _renderHeatmapUpdatedAt(value) {
-    const el = document.getElementById('market-heatmap-updated-at');
-    if (!el) return;
-    const number = _heatmapNumber(value);
-    if (number === null || number <= 0) {
-        el.textContent = '최신 업데이트: --';
-        return;
-    }
+function _overseasCaption(data) {
+    const number = _heatmapNumber(data.updated_at);
+    if (number === null || number <= 0) return '최신 업데이트: --';
     const date = new Date(number * 1000);
-    el.textContent = Number.isNaN(date.getTime())
+    return Number.isNaN(date.getTime())
         ? '최신 업데이트: --'
         : `최신 업데이트: ${date.toLocaleString('ko-KR')}`;
 }
 
-function _renderMarketHeatmap(div, data) {
-    _renderHeatmapUpdatedAt(data.updated_at);
+// 장중에도 전일 종가가 보일 수 있으므로 기준일을 감추지 않는다.
+function _domesticCaption(data) {
+    const raw = String(data.trade_date || '');
+    if (!/^\d{8}$/.test(raw)) return '기준일: --';
+    return `기준일: ${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)} 종가`;
+}
 
-    const groups = _groupBySector(Array.isArray(data.items) ? data.items : []);
+function _renderHeatmapCaption(elementId, text) {
+    const el = document.getElementById(elementId);
+    if (el) el.textContent = text;
+}
+
+function _renderHeatmap(div, source, data) {
+    _renderHeatmapCaption(source.captionId, source.caption(data));
+
+    const groups = source.toGroups(Array.isArray(data.items) ? data.items : []);
     if (!groups.length) {
         div.innerHTML = '<p class="empty">조회 결과가 없습니다.</p>';
         return;
@@ -214,16 +256,37 @@ function _renderMarketHeatmap(div, data) {
     }</div>`;
 }
 
-async function loadMarketHeatmap(options = {}) {
-    const requestSequence = ++_heatmapRequestSequence;
-    const isLatestRequest = () => requestSequence === _heatmapRequestSequence;
+const HEATMAP_OVERSEAS = {
+    targetId: 'market-heatmap',
+    captionId: 'market-heatmap-updated-at',
+    url: `/api/overseas/top-market-cap?limit=${HEATMAP_LIMIT}`,
+    loadingText: 'S&P 500 히트맵 조회 중...',
+    toGroups: _overseasGroups,
+    caption: _overseasCaption,
+    sequence: 0,
+};
 
-    const div = document.getElementById('market-heatmap');
+const HEATMAP_DOMESTIC = {
+    targetId: 'domestic-heatmap',
+    captionId: 'domestic-heatmap-updated-at',
+    url: `/api/heatmap/domestic?limit=${HEATMAP_DOMESTIC_LIMIT}`,
+    loadingText: '국내 히트맵 조회 중...',
+    toGroups: _domesticGroups,
+    caption: _domesticCaption,
+    sequence: 0,
+};
+
+// 두 맵이 같은 홈 화면에 있으므로 시퀀스 가드는 소스별로 따로 센다.
+async function _loadHeatmap(source, options = {}) {
+    const requestSequence = ++source.sequence;
+    const isLatestRequest = () => requestSequence === source.sequence;
+
+    const div = document.getElementById(source.targetId);
     if (!div) return;
-    if (options.showLoading !== false) showLoading(div, 'S&P 500 히트맵 조회 중...');
+    if (options.showLoading !== false) showLoading(div, source.loadingText);
 
     try {
-        const res = await fetchWithTimeout(`/api/overseas/top-market-cap?limit=${HEATMAP_LIMIT}`, {}, 30000);
+        const res = await fetchWithTimeout(source.url, {}, 30000);
         const { json, error } = await readJsonResponse(res);
         if (!isLatestRequest()) return;
 
@@ -235,7 +298,7 @@ async function loadMarketHeatmap(options = {}) {
             showError(div, `실패: ${json.msg1 || '히트맵 조회에 실패했습니다.'}`);
             return;
         }
-        _renderMarketHeatmap(div, json.data || {});
+        _renderHeatmap(div, source, json.data || {});
     } catch (e) {
         console.error('[market-heatmap] 히트맵 조회 오류', e);
         if (!isLatestRequest()) return;
@@ -243,6 +306,14 @@ async function loadMarketHeatmap(options = {}) {
             ? '요청 시간이 초과되었습니다. 다시 시도해주세요.'
             : '히트맵을 불러오지 못했습니다. 다시 시도해주세요.');
     }
+}
+
+async function loadMarketHeatmap(options = {}) {
+    await _loadHeatmap(HEATMAP_OVERSEAS, options);
+}
+
+async function loadDomesticHeatmap(options = {}) {
+    await _loadHeatmap(HEATMAP_DOMESTIC, options);
 }
 
 async function _heatmapOverseasEnabled() {
@@ -274,12 +345,23 @@ async function initMarketHeatmap() {
     }, HEATMAP_REFRESH_MS);
 }
 
+// 국내 맵은 하루 한 번 갱신되는 종가 스냅샷이라 주기 갱신을 걸지 않는다.
+async function initDomesticHeatmap() {
+    if (!document.getElementById('domestic-heatmap-card')) return;
+    await loadDomesticHeatmap();
+}
+
+function _initHomeHeatmaps() {
+    void initMarketHeatmap();
+    void initDomesticHeatmap();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     if (window.location.pathname !== '/') return;
-    void initMarketHeatmap();
+    _initHomeHeatmaps();
 });
 
 document.addEventListener('pjax:ready', (e) => {
     if (e.detail?.path !== '/') return;
-    void initMarketHeatmap();
+    _initHomeHeatmaps();
 });

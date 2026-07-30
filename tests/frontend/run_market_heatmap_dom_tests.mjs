@@ -17,6 +17,10 @@ const SCAFFOLD = `
   <span id="market-heatmap-updated-at"></span>
   <div id="market-heatmap"></div>
 </div>
+<div class="card" id="domestic-heatmap-card">
+  <span id="domestic-heatmap-updated-at"></span>
+  <div id="domestic-heatmap"></div>
+</div>
 `;
 
 // 홈 경로('/')로 만들면 스크립트의 DOMContentLoaded 자동 초기화가 끼어들어 호출 수가 흔들린다.
@@ -258,6 +262,73 @@ test("미국장이 활성이면 카드를 노출하고 히트맵을 조회한다
     "업데이트 시각이 표시되어야 함");
 });
 
+function domesticItem(overrides) {
+  return { code: "005930", name: "삼성전자", change_rate: "-0.72", market_cap: 12101797, market: "KOSPI", ...overrides };
+}
+
+test("국내 히트맵은 섹터 블록 없이 시총순 타일만 그린다", async () => {
+  const window = makeWindow(async () => success({
+    trade_date: "20260730",
+    items: [
+      domesticItem({ code: "005930", name: "삼성전자", market_cap: 900 }),
+      domesticItem({ code: "000660", name: "SK하이닉스", market_cap: 100 }),
+    ],
+  }));
+
+  await window.loadDomesticHeatmap();
+
+  const doc = window.document;
+  const target = doc.getElementById("domestic-heatmap");
+  assert(!target.querySelector(".heatmap-sector-title"), "국내 맵에는 섹터 헤더가 없어야 함");
+  assert(target.querySelectorAll(".heatmap-tile").length === 2, "종목 타일이 렌더되어야 함");
+
+  const big = target.querySelector('.heatmap-tile[data-symbol="005930"]');
+  const small = target.querySelector('.heatmap-tile[data-symbol="000660"]');
+  const ratio = (pct(big, "width") * pct(big, "height")) / (pct(small, "width") * pct(small, "height"));
+  assert(ratio > 8.5 && ratio < 9.5, `면적비가 시총비(9:1)를 따라야 함 (실제 ${ratio.toFixed(2)})`);
+  assert(big.textContent.includes("삼성전자"), "국내 타일은 종목명을 표시해야 함");
+});
+
+test("국내 히트맵은 종가 기준일을 명시한다", async () => {
+  const window = makeWindow(async () => success({ trade_date: "20260730", items: [domesticItem({})] }));
+
+  await window.loadDomesticHeatmap();
+
+  const label = window.document.getElementById("domestic-heatmap-updated-at").textContent;
+  assert(label.includes("2026-07-30"), `기준일이 표시되어야 함 (실제 ${label})`);
+  assert(label.includes("종가"), "장중 오해를 막기 위해 종가 기준임을 밝혀야 함");
+});
+
+test("국내 히트맵의 빈 스냅샷과 응답 문자열을 안전하게 처리한다", async () => {
+  const responses = [
+    success({ trade_date: null, items: [] }),
+    success({ trade_date: "20260730", items: [domesticItem({ name: '<img id="injected-kr" src=x>' })] }),
+  ];
+  const window = makeWindow(async () => responses.shift());
+
+  await window.loadDomesticHeatmap();
+  assert(window.document.getElementById("domestic-heatmap").textContent.includes("조회 결과가 없습니다"),
+    "빈 스냅샷 안내가 표시되어야 함");
+
+  await window.loadDomesticHeatmap();
+  const target = window.document.getElementById("domestic-heatmap");
+  assert(!target.querySelector("#injected-kr"), "응답 문자열이 HTML 로 해석됨");
+  assert(target.textContent.includes('<img id="injected-kr" src=x>'), "종목명이 텍스트로 표시되어야 함");
+});
+
+test("국내 조회가 미국 히트맵을 덮어쓰지 않는다", async () => {
+  const window = makeWindow(async (url) => (url.startsWith("/api/heatmap/domestic")
+    ? success({ trade_date: "20260730", items: [domesticItem({ code: "005930" })] })
+    : success({ items: [item({ symbol: "MSFT" })] })));
+
+  await window.loadMarketHeatmap();
+  await window.loadDomesticHeatmap();
+
+  const doc = window.document;
+  assert(doc.querySelector('#market-heatmap .heatmap-tile[data-symbol="MSFT"]'), "미국 히트맵이 유지되어야 함");
+  assert(doc.querySelector('#domestic-heatmap .heatmap-tile[data-symbol="005930"]'), "국내 히트맵이 렌더되어야 함");
+});
+
 test("홈 경로에서는 로드 시 자동으로 히트맵을 초기화한다", async () => {
   const calls = [];
   makeWindow(async (url) => {
@@ -269,7 +340,8 @@ test("홈 경로에서는 로드 시 자동으로 히트맵을 초기화한다",
   await new Promise(done => setTimeout(done, 50));
 
   assert(calls.some(url => url.startsWith("/api/market-mode")), "홈 진입 시 시장 활성 여부를 확인해야 함");
-  assert(calls.some(url => url.startsWith("/api/overseas/top-market-cap")), "홈 진입 시 히트맵을 조회해야 함");
+  assert(calls.some(url => url.startsWith("/api/overseas/top-market-cap")), "홈 진입 시 미국 히트맵을 조회해야 함");
+  assert(calls.some(url => url.startsWith("/api/heatmap/domestic")), "홈 진입 시 국내 히트맵을 조회해야 함");
 });
 
 await run();

@@ -519,3 +519,52 @@ async def test_get_period_ranking_progress_no_ranking_task(web_client, mock_web_
     body = response.json()
     assert body["running"] is False
     assert body["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_domestic_heatmap(web_client, mock_web_ctx):
+    """GET /api/heatmap/domestic 은 저장된 시총 스냅샷을 기준일과 함께 반환한다."""
+    mock_web_ctx.stock_repository.get_market_cap_snapshot = AsyncMock(return_value=[
+        {"code": "005930", "name": "삼성전자", "change_rate": "-0.72", "market_cap": 12101797,
+         "trade_date": "20260730", "market": "KOSPI", "current_price": 70000},
+    ])
+
+    response = web_client.get("/api/heatmap/domestic?limit=300")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rt_cd"] == "0"
+    assert body["data"]["trade_date"] == "20260730"
+    assert body["data"]["items"] == [{
+        "code": "005930",
+        "name": "삼성전자",
+        "change_rate": "-0.72",
+        "market_cap": 12101797,
+        "market": "KOSPI",
+    }]
+    mock_web_ctx.stock_repository.get_market_cap_snapshot.assert_awaited_once_with(limit=300, market=None)
+
+
+@pytest.mark.asyncio
+async def test_get_domestic_heatmap_with_market_filter(web_client, mock_web_ctx):
+    """GET /api/heatmap/domestic?market=KOSDAQ 는 market 필터를 저장소에 전달한다."""
+    mock_web_ctx.stock_repository.get_market_cap_snapshot = AsyncMock(return_value=[])
+
+    response = web_client.get("/api/heatmap/domestic?limit=100&market=KOSDAQ")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rt_cd"] == "0"
+    assert body["data"] == {"trade_date": None, "items": []}
+    mock_web_ctx.stock_repository.get_market_cap_snapshot.assert_awaited_once_with(limit=100, market="KOSDAQ")
+
+
+@pytest.mark.asyncio
+async def test_get_domestic_heatmap_without_repository(web_client, mock_web_ctx):
+    """저장소가 없으면 실패 코드로 응답한다."""
+    mock_web_ctx.stock_repository = None
+
+    response = web_client.get("/api/heatmap/domestic")
+
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] != "0"

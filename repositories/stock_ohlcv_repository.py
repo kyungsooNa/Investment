@@ -502,6 +502,44 @@ class StockOhlcvRepository:
             self._logger.error(f"StockOhlcvRepository daily_prices 전종목 조회 실패: {e}")
             return []
 
+    async def get_market_cap_snapshot(self, limit: int = 300, market: Optional[str] = None) -> List[Dict]:
+        """최신 거래일의 시가총액 상위 종목 스냅샷 (국내 히트맵용).
+
+        정지주는 시가총액 0원 행으로 저장되므로 면적 계산에서 제외한다.
+        market: "KOSPI"/"KOSDAQ" 지정 시 해당 시장으로 필터링, None/"ALL"이면 전체.
+        """
+        try:
+            async with self._get_read_connection() as conn:
+                async with conn.execute("SELECT MAX(trade_date) FROM daily_prices") as cursor:
+                    latest_row = await cursor.fetchone()
+                latest_date = latest_row[0] if latest_row and latest_row[0] else None
+                if not latest_date:
+                    return []
+
+                market_filter = ""
+                params = [latest_date]
+                if market and market != "ALL":
+                    market_filter = "AND market = ?"
+                    params.append(market)
+                params.append(limit)
+
+                async with conn.execute(
+                    f"""
+                    SELECT * FROM daily_prices
+                    WHERE trade_date = ?
+                      AND market_cap > 0
+                      {market_filter}
+                    ORDER BY market_cap DESC
+                    LIMIT ?
+                    """,
+                    params,
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository 시가총액 스냅샷 조회 실패: {e}")
+            return []
+
     async def get_ytd_return_ranking(self, limit: int = 100, market: Optional[str] = None) -> List[Dict]:
         """최신 거래일(daily_prices)과 연초 첫 종가(ohlcv)를 비교한 YTD 수익률 랭킹.
 
