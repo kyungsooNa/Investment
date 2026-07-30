@@ -260,6 +260,14 @@
 
 주요 파일: `view/web/templates/marketcap.html`, `view/web/static/js/marketcap.js`, `view/web/static/js/overseas.js`, `view/web/static/js/common.js`, `view/web/routes/stock.py`, `view/web/bootstrap/service_container.py`, `services/market_cap_gap_service.py`, `tests/frontend/`
 
+### M-4. 한국장 히트맵(트리맵) [미국장 완료 후속, 2026-07-31]
+
+홈 화면 S&P500 히트맵은 완료(`view/web/static/js/market_heatmap.js`, `/api/overseas/top-market-cap` 스냅샷 재사용, 백엔드 변경 없음). 한국장 히트맵은 아래 제약 때문에 별도 작업으로 남긴다.
+
+- [ ] 데이터 소스 결정: KIS 시가총액 랭킹(`/api/top-market-cap`)은 **실전 전용 + 상위 30종목**이라 전체 맵에 부족. `stocks.db daily_prices`(최근일 2,583종목, `market_cap`·`change_rate` 보유)를 쓰면 전 종목 맵이 되지만 **전일 종가 기준**(장중 실시간 아님).
+- [ ] 그룹 축 결정: `stock_classifications`에는 NAVER **테마만** 있고 `category_type='industry'`는 0건. 한 종목이 여러 테마에 중복 소속이라 트리맵의 배타적 그룹 요건에 맞지 않음 → (a) 섹터 블록 없이 시총순 단일 그리드, (b) 업종 분류 수집 신규 추가, (c) 테마 대표 1개 강제 배정(해석 왜곡 위험) 중 택1.
+- [ ] 위 결정 후 신규 엔드포인트 1개(daily_prices 집계) + `market_heatmap.js` 재사용(트리맵 레이아웃·색상 스케일은 시장 무관)으로 구현.
+
 ---
 
 ## 테마/분류 데이터
