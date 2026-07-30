@@ -1569,6 +1569,58 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scheduler._entry_warmup_until, now + timedelta(minutes=5))
         run_strategy.assert_awaited_once_with(config, exits_only=True)
 
+    async def test_restore_state_after_order_cutoff_skips_exit_only(self):
+        """주문 컷오프 이후 재시작은 보유 포지션 청산 주문을 만들지 않는다."""
+        scheduler, vm, _, tm, mcs = self._make_scheduler()
+        now = datetime(2026, 7, 30, 15, 33, 53)
+        tm.get_current_kst_time.return_value = now
+        tm.get_market_close_time.return_value = datetime(2026, 7, 30, 15, 40, 0)
+        mcs.is_market_open_now.return_value = True
+        strategy = MockStrategy(name="래리윌리엄스VBO")
+        config = StrategySchedulerConfig(
+            strategy=strategy,
+            interval_minutes=5,
+            force_exit_on_close=True,
+        )
+        scheduler.register(config)
+        vm.get_holds_by_strategy.return_value = [{"code": "316140", "qty": 59}]
+        scheduler._store.load_state.return_value = {
+            "enabled_strategies": ["래리윌리엄스VBO"],
+            "current_positions": [],
+            "strategy_configs": {},
+        }
+
+        with patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as run_strategy, \
+             patch.object(scheduler, "_loop", new_callable=AsyncMock):
+            await scheduler.restore_state()
+
+        run_strategy.assert_not_awaited()
+        self.assertTrue(scheduler._running)
+
+    async def test_restore_state_before_market_open_skips_exit_only(self):
+        """장 시작 전 복원은 주문하지 않고 메인 루프가 개장 후 청산을 맡는다."""
+        scheduler, vm, _, tm, mcs = self._make_scheduler()
+        now = datetime(2026, 7, 31, 8, 30, 0)
+        tm.get_current_kst_time.return_value = now
+        tm.get_market_close_time.return_value = datetime(2026, 7, 31, 15, 40, 0)
+        mcs.is_market_open_now.return_value = False
+        strategy = MockStrategy(name="래리윌리엄스VBO")
+        config = StrategySchedulerConfig(strategy=strategy, force_exit_on_close=True)
+        scheduler.register(config)
+        vm.get_holds_by_strategy.return_value = [{"code": "316140", "qty": 59}]
+        scheduler._store.load_state.return_value = {
+            "enabled_strategies": ["래리윌리엄스VBO"],
+            "current_positions": [],
+            "strategy_configs": {},
+        }
+
+        with patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as run_strategy, \
+             patch.object(scheduler, "_loop", new_callable=AsyncMock):
+            await scheduler.restore_state()
+
+        run_strategy.assert_not_awaited()
+        self.assertTrue(scheduler._running)
+
     async def test_restore_state_file_not_found(self):
         """저장된 상태가 없을 때 복원 시도 테스트."""
         scheduler, _, _, _, _ = self._make_scheduler()
@@ -2789,7 +2841,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         oes.handle_place_sell_order.assert_called_once_with(
             "023530",
-            180000,
+            0,
             11,
             exchange=Exchange.KRX,
             source="strategy_force_exit:래리윌리엄스VBO",
@@ -2797,6 +2849,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             trace_id=ANY,
             strategy_notification=ANY,
         )
+        oes.broker_api_wrapper.get_asking_price.assert_not_awaited()
 
     async def test_force_liquidate_skips_signal_history_recovery_when_buy_order_active(self):
         """당일 BUY 주문이 아직 미체결 대기 중이면 신호 이력만으로 강제 청산하지 않는다."""
@@ -3380,7 +3433,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         mock_run.assert_awaited_once()
 
-    async def test_force_liquidate_uses_best_bid_when_orderbook_available(self):
+    async def test_force_liquidate_uses_market_order_even_when_orderbook_available(self):
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
         oes.broker_api_wrapper.get_asking_price = AsyncMock(
             return_value=ResCommonResponse(
@@ -3398,10 +3451,12 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             await scheduler._force_liquidate_strategy(config)
 
         signal = mock_exec.await_args.args[0]
-        self.assertEqual(signal.price, 12345)
+        self.assertEqual(signal.price, 0)
         self.assertEqual(signal.qty, 2)
+        self.assertIn("시장가", signal.reason)
+        oes.broker_api_wrapper.get_asking_price.assert_not_awaited()
 
-    async def test_force_liquidate_reads_nested_output1_best_bid(self):
+    async def test_force_liquidate_does_not_read_nested_output1_best_bid(self):
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
         oes.broker_api_wrapper.get_asking_price = AsyncMock(
             return_value=ResCommonResponse(
@@ -3419,8 +3474,9 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             await scheduler._force_liquidate_strategy(config)
 
         signal = mock_exec.await_args.args[0]
-        self.assertEqual(signal.price, 8560)
-        self.assertIn("지정가", signal.reason)
+        self.assertEqual(signal.price, 0)
+        self.assertIn("시장가", signal.reason)
+        oes.broker_api_wrapper.get_asking_price.assert_not_awaited()
 
     async def test_execute_force_liquidation_signal_marks_force_exit_source(self):
         scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)
@@ -3476,16 +3532,17 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         ]
 
         signal = TradeSignal(
-            code="105560", name="KB금융", action="SELL", price=185000, qty=5,
-            reason="전략 종료 강제 청산 (지정가 185,000원)", strategy_name="래리윌리엄스VBO",
+            code="105560", name="KB금융", action="SELL", price=0, qty=5,
+            reason="전략 종료 강제 청산 (시장가)", strategy_name="래리윌리엄스VBO",
         )
         await scheduler._execute_signal(signal)
         await asyncio.sleep(0)
 
         self.assertEqual(oes.handle_place_sell_order.await_count, 2)
         retry_call = oes.handle_place_sell_order.await_args_list[1]
-        self.assertEqual(retry_call.args[:3], ("105560", 185100, 5))
-        self.assertIn("서킷 브레이커 해제", retry_call.kwargs["strategy_notification"]["reason"])
+        self.assertEqual(retry_call.args[:3], ("105560", 0, 5))
+        self.assertIn("시장가", retry_call.kwargs["strategy_notification"]["reason"])
+        broker.get_asking_price.assert_not_awaited()
 
     async def test_execute_strategy_sell_reprices_to_best_bid_when_above_book(self):
         scheduler, _, oes, _, _ = self._make_scheduler(dry_run=False)

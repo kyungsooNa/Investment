@@ -311,30 +311,14 @@ class StrategyScheduler:
                 )
                 return
 
-            retry_price = 0
             retry_reason = "전략 종료 강제 청산 재시도 (서킷 브레이커 해제 후 시장가)"
-            try:
-                quote = await broker.get_asking_price(signal.code)
-                if quote and quote.rt_cd == ErrorCode.SUCCESS.value:
-                    best_bid = self._extract_best_bid(quote.data)
-                    if best_bid > 0:
-                        retry_price = best_bid
-                        retry_reason = (
-                            "전략 종료 강제 청산 재시도 "
-                            f"(서킷 브레이커 해제 후 지정가 {best_bid:,}원)"
-                        )
-            except Exception as exc:
-                self._logger.warning(
-                    f"[Scheduler] 강제 청산 재시도 호가 조회 실패, 시장가 사용: "
-                    f"code={signal.code}, error={exc}"
-                )
 
             retry_signal = TradeSignal(
                 strategy_name=signal.strategy_name,
                 code=signal.code,
                 name=signal.name,
                 action="SELL",
-                price=retry_price,
+                price=0,
                 qty=min(int(signal.qty or 0), broker_qty),
                 reason=retry_reason,
                 exchange=signal.exchange,
@@ -1527,25 +1511,14 @@ class StrategyScheduler:
             if sell_qty <= 0:
                 continue
 
-            # 최우선매수호가(bidp1) 조회 → 지정가 청산, 실패 시 시장가 fallback
-            sell_price = 0
             reason = "전략 종료 강제 청산 (시장가)"
-            try:
-                resp = await self._oes.broker_api_wrapper.get_asking_price(code)
-                if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
-                    best_bid = self._extract_best_bid(resp.data)
-                    if best_bid > 0:
-                        sell_price = best_bid
-                        reason = f"전략 종료 강제 청산 (지정가 {best_bid:,}원)"
-            except Exception as e:
-                self._logger.warning(f"[Scheduler] {code} 호가 조회 실패, 시장가로 청산: {e}")
 
             signal = TradeSignal(
                 strategy_name=name,
                 code=code,
                 name=stock_name,
                 action="SELL",
-                price=sell_price,
+                price=0,
                 qty=sell_qty,
                 reason=reason,
             )
@@ -2307,15 +2280,32 @@ class StrategyScheduler:
                 now = self._tm.get_current_kst_time()
                 for name in restored:
                     self._restore_last_run(name, now)
-                if await self._mcs.is_market_open_now():
+                market_open_now = await self._mcs.is_market_open_now()
+                if market_open_now:
                     self._entry_warmup_until = now + timedelta(minutes=self.RESTART_ENTRY_WARMUP_MINUTES)
                 self._running = True
                 self._logger.info(f"[Scheduler] 이전 상태 복원 — 자동 시작: {restored}")
 
                 # 신규 진입 유예와 무관하게 보유 포지션 청산 조건은 즉시 확인한다.
-                for cfg in self._strategies:
-                    if cfg.strategy.name in restored and self._get_strategy_holdings(cfg):
-                        await self._run_strategy(cfg, exits_only=True)
+                # 단, 주문 컷오프 이후 복원에서는 브로커가 주문을 받지 않으므로
+                # HOLD를 유지하고 다음 거래일 오버나이트 방어에 맡긴다.
+                close_time = self._tm.get_market_close_time()
+                after_order_cutoff = (
+                    isinstance(close_time, datetime)
+                    and self._is_after_order_cutoff(now, close_time)
+                )
+                if not market_open_now:
+                    self._logger.info("[Scheduler] 장 시작 전 상태 복원 청산 점검 스킵")
+                elif after_order_cutoff:
+                    self._logger.info(
+                        f"[Scheduler] 주문 컷오프 이후 상태 복원 청산 점검 스킵 "
+                        f"(now={now.strftime('%H:%M:%S')}, cutoff="
+                        f"{self._get_order_cutoff_time(close_time).strftime('%H:%M:%S')})"
+                    )
+                else:
+                    for cfg in self._strategies:
+                        if cfg.strategy.name in restored and self._get_strategy_holdings(cfg):
+                            await self._run_strategy(cfg, exits_only=True)
 
                 self._task = asyncio.create_task(self._loop())
 

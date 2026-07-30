@@ -405,8 +405,8 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
 
     # ── check_exits: EOD 강제 청산 ────────────────────────────────────
 
-    async def test_check_exits_eod_flatten(self):
-        """15:20 이후 → EOD 강제 청산 SELL 신호."""
+    async def test_check_exits_does_not_duplicate_scheduler_eod_flatten(self):
+        """15:20 이후 같은 날 EOD 청산은 스케줄러 강제청산에만 맡긴다."""
         strategy, sqs, tm = self._make_strategy(now_time=_kst(15, 20))
         today = tm.get_current_kst_time().strftime("%Y%m%d")
         # 수익권이어도 강제 청산
@@ -418,10 +418,7 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
 
         signals = await strategy.check_exits(holdings)
 
-        self.assertEqual(len(signals), 1)
-        self.assertEqual(signals[0].action, "SELL")
-        self.assertEqual(signals[0].qty, 2)
-        self.assertIn("EOD청산", signals[0].reason)
+        self.assertEqual(signals, [])
 
     # ── check_exits: 조건 미충족 → HOLD ─────────────────────────────
 
