@@ -171,6 +171,8 @@ def mock_web_ctx():
     ctx.streaming_service = AsyncMock()
     ctx.order_execution_service = AsyncMock()
     ctx.broker = AsyncMock()
+    ctx._initialize_price_subscriptions = AsyncMock()
+    ctx.start_background_tasks = MagicMock()
     ctx.virtual_trade_service = MagicMock()
     # [Fix] get_trade_amount가 연산에 사용되므로 float 반환 설정 (TypeError 방지)
     ctx.virtual_trade_service.get_trade_amount.side_effect = lambda p, q=1, **kwargs: float(p * q)

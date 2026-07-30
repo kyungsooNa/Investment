@@ -84,6 +84,7 @@ def fake_web_ctx():
     ctx.initialize_services = AsyncMock(return_value=True)
     ctx.initialize_scheduler = MagicMock()
     ctx.ensure_strategy_states_loaded = AsyncMock()
+    ctx._initialize_price_subscriptions = AsyncMock()
     ctx.start_background_tasks = MagicMock()
     ctx.shutdown = AsyncMock()
 
@@ -169,7 +170,10 @@ def test_web_main_lifespan_initializes_and_shutdowns_context(fake_web_ctx, mocke
         fake_web_ctx.scheduler.restore_state.assert_not_awaited()
         fake_web_ctx.order_execution_service.restore_state_from_broker.assert_awaited_once_with()
         fake_web_ctx.order_execution_service.reconcile_orders_with_broker.assert_awaited_once_with()
-        fake_web_ctx.start_background_tasks.assert_called_once_with()
+        fake_web_ctx._initialize_price_subscriptions.assert_awaited_once_with()
+        fake_web_ctx.start_background_tasks.assert_called_once_with(
+            schedule_price_subscriptions=False,
+        )
         assert api_common._ctx is fake_web_ctx
 
     fake_web_ctx.shutdown.assert_awaited_once_with()
@@ -368,6 +372,7 @@ def test_real_app_environment_switch_requires_real_confirmation_and_restarts_ser
     fake_web_ctx,
 ):
     fake_web_ctx.initialize_services.reset_mock()
+    fake_web_ctx._initialize_price_subscriptions.reset_mock()
     fake_web_ctx.start_background_tasks.reset_mock()
     fake_web_ctx.get_env_type.return_value = "실전투자"
 
@@ -386,4 +391,7 @@ def test_real_app_environment_switch_requires_real_confirmation_and_restarts_ser
     assert allowed.status_code == 200
     assert allowed.json() == {"success": True, "env_type": "실전투자"}
     fake_web_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=False)
-    fake_web_ctx.start_background_tasks.assert_called_once_with()
+    fake_web_ctx._initialize_price_subscriptions.assert_awaited_once_with()
+    fake_web_ctx.start_background_tasks.assert_called_once_with(
+        schedule_price_subscriptions=False,
+    )

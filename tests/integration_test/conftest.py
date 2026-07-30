@@ -499,6 +499,7 @@ def _build_mock_web_ctx(is_paper: bool = True):
 
     # initialize_services (환경 전환용)
     mock_ctx.initialize_services = AsyncMock(return_value=True)
+    mock_ctx._initialize_price_subscriptions = AsyncMock()
     mock_ctx.start_background_tasks = MagicMock()
 
     return mock_ctx
