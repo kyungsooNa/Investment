@@ -299,7 +299,7 @@ class WebAppContext:
         from view.web.bootstrap.scheduler_bootstrap import SchedulerBootstrap
         SchedulerBootstrap(self).run()
 
-    async def _initialize_price_subscriptions(self) -> None:
+    async def _initialize_price_subscriptions(self, *, rebalance: bool = True) -> None:
         """기동 시 포트폴리오(HIGH) 및 프리미엄 종목(MEDIUM) 구독을 초기화."""
         if not self.price_subscription_service:
             return
@@ -313,7 +313,11 @@ class WebAppContext:
                 code = item.get("code", "").strip()
                 if code:
                     await self.price_subscription_service.add_subscription(
-                        code, SubscriptionPriority.HIGH, "portfolio", StreamingType.UNIFIED_PRICE
+                        code,
+                        SubscriptionPriority.HIGH,
+                        "portfolio",
+                        StreamingType.UNIFIED_PRICE,
+                        rebalance=rebalance,
                     )
         except Exception as e:
             self.logger.warning(f"보유 종목 구독 초기화 실패: {e}")
@@ -336,6 +340,7 @@ class WebAppContext:
                         codes=codes,
                         category_key="strategy_premium",
                         priority=SubscriptionPriority.MEDIUM,
+                        rebalance=rebalance,
                     )
         except Exception as e:
             self.logger.warning(f"프리미엄 종목 구독 초기화 실패: {e}")
@@ -353,6 +358,7 @@ class WebAppContext:
                     codes=favorite_codes,
                     category_key="favorite",
                     priority=SubscriptionPriority.MEDIUM,
+                    rebalance=rebalance,
                 )
                 self.logger.info(f"관심종목 구독 초기화 완료: {len(favorite_codes)}개")
         except Exception as e:

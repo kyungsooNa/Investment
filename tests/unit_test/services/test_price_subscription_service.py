@@ -217,6 +217,27 @@ async def test_sync_subscriptions_calls_rebalance_once(svc, mock_streaming):
     assert mock_streaming.subscribe_unified_price.call_count == 3
 
 
+async def test_register_only_subscriptions_do_not_start_websocket(svc, mock_streaming):
+    """기동 전 구독 의도 등록은 실제 WebSocket 구독을 시작하지 않는다."""
+    await svc.add_subscription(
+        "005930",
+        SubscriptionPriority.HIGH,
+        "portfolio",
+        StreamingType.UNIFIED_PRICE,
+        rebalance=False,
+    )
+    await svc.sync_subscriptions(
+        ["000660", "080220"],
+        "favorite",
+        SubscriptionPriority.MEDIUM,
+        rebalance=False,
+    )
+
+    assert set(svc._refs) == {"005930", "000660", "080220"}
+    mock_streaming.connect_websocket.assert_not_called()
+    mock_streaming.subscribe_unified_price.assert_not_awaited()
+
+
 # ── get_status ────────────────────────────────────────────────────────────
 
 async def test_get_status_reflects_current_state(svc):

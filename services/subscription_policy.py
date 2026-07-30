@@ -107,7 +107,8 @@ class SubscriptionPolicy:
 
     async def add_subscription(
         self, code: str, priority: SubscriptionPriority, 
-        category_key: str, stream_type: StreamingType = StreamingType.UNIFIED_PRICE
+        category_key: str, stream_type: StreamingType = StreamingType.UNIFIED_PRICE,
+        *, rebalance: bool = True,
     ) -> bool:
         """
         구독을 요청합니다. 
@@ -128,7 +129,8 @@ class SubscriptionPolicy:
         }
         
         # 3. 재조정 (Rebalance)
-        await self._rebalance()
+        if rebalance:
+            await self._rebalance()
         return True
 
     async def remove_subscription(self, code: str, category_key: str) -> None:
@@ -212,6 +214,8 @@ class SubscriptionPolicy:
         category_key: str,
         priority: SubscriptionPriority,
         stream_type: StreamingType = StreamingType.UNIFIED_PRICE,
+        *,
+        rebalance: bool = True,
     ) -> None:
         """
         카테고리 전체를 새 코드 목록으로 원자적으로 교체합니다.
@@ -245,7 +249,8 @@ class SubscriptionPolicy:
                     source="program",
                 )
 
-        await self._rebalance()
+        if rebalance:
+            await self._rebalance()
 
     def is_streaming(self, code: str) -> bool:
         """해당 종목이 현재 실시간 구독 중인지 여부."""

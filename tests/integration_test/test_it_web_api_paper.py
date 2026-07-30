@@ -425,10 +425,8 @@ class TestEnvironmentPaper:
         assert body["success"] is True
         assert body["env_type"] == "실전투자"
         mock_paper_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=False)
-        mock_paper_ctx._initialize_price_subscriptions.assert_awaited_once_with()
-        mock_paper_ctx.start_background_tasks.assert_called_once_with(
-            schedule_price_subscriptions=False,
-        )
+        mock_paper_ctx._initialize_price_subscriptions.assert_awaited_once_with(rebalance=False)
+        mock_paper_ctx.start_background_tasks.assert_called_once_with()
         assert stock._status_cache is None
 
     def test_environment_change_failure(self, paper_client, mock_paper_ctx):

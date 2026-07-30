@@ -453,10 +453,8 @@ async def test_change_environment(web_client, mock_web_ctx):
     assert response.json()["success"] is True
     assert response.json()["env_type"] == "실전투자"
     mock_web_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=False)
-    mock_web_ctx._initialize_price_subscriptions.assert_awaited_once_with()
-    mock_web_ctx.start_background_tasks.assert_called_once_with(
-        schedule_price_subscriptions=False,
-    )
+    mock_web_ctx._initialize_price_subscriptions.assert_awaited_once_with(rebalance=False)
+    mock_web_ctx.start_background_tasks.assert_called_once_with()
 
 
 @pytest.mark.asyncio
@@ -478,10 +476,8 @@ async def test_change_environment_to_paper_does_not_require_confirmation(web_cli
 
     assert response.status_code == 200
     mock_web_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=True)
-    mock_web_ctx._initialize_price_subscriptions.assert_awaited_once_with()
-    mock_web_ctx.start_background_tasks.assert_called_once_with(
-        schedule_price_subscriptions=False,
-    )
+    mock_web_ctx._initialize_price_subscriptions.assert_awaited_once_with(rebalance=False)
+    mock_web_ctx.start_background_tasks.assert_called_once_with()
 
 
 @pytest.mark.asyncio
