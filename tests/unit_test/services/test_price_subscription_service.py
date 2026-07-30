@@ -163,6 +163,37 @@ async def test_drop_unhealthy_price_subscription_removes_all_price_refs(svc, moc
     mock_stock_repo.unmark_streaming.assert_called_once_with("005930")
 
 
+async def test_drop_unhealthy_price_subscription_preserves_and_reconnects_favorite(
+    svc, mock_streaming, mock_stock_repo
+):
+    """비정상 스트림을 끊어도 관심종목 의도는 보존하고 즉시 재구독한다."""
+    await svc.add_subscription(
+        "009150",
+        SubscriptionPriority.MEDIUM,
+        "favorite",
+        StreamingType.UNIFIED_PRICE,
+    )
+    await svc.add_subscription(
+        "009150",
+        SubscriptionPriority.MEDIUM,
+        "strategy_oneil",
+        StreamingType.UNIFIED_PRICE,
+    )
+    mock_streaming.reset_mock()
+    mock_stock_repo.reset_mock()
+
+    removed = await svc.drop_unhealthy_price_subscription(
+        "009150",
+        reason="stale_snapshot",
+    )
+
+    assert removed is True
+    assert set(svc._refs["009150"]) == {"favorite"}
+    assert svc.is_streaming("009150")
+    mock_streaming.unsubscribe_unified_price.assert_awaited_once_with("009150")
+    mock_streaming.subscribe_unified_price.assert_awaited_once_with("009150")
+
+
 # ── sync_subscriptions ────────────────────────────────────────────────────
 
 async def test_sync_subscriptions_atomic_replace(svc, mock_streaming):
