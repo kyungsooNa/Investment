@@ -489,6 +489,37 @@ async def test_refresh_price_from_rest_caches_snapshot(mock_deps):
 
 
 @pytest.mark.asyncio
+async def test_refresh_price_from_rest_evaluates_favorite_alert(mock_deps):
+    """체결 틱이 없어 REST로 보강한 가격도 관심종목 등락률 알림을 평가한다."""
+    ctx = WebAppContext(None)
+    ctx.stock_query_service = MagicMock()
+    ctx.stock_query_service.get_current_price = AsyncMock(return_value=MagicMock(
+        rt_cd="0",
+        data={
+            "output": {
+                "stck_prpr": "50200",
+                "prdy_vrss": "-4900",
+                "prdy_ctrt": "-8.89",
+                "prdy_vrss_sign": "5",
+                "acml_vol": "1000",
+            }
+        },
+    ))
+    ctx.price_stream_service = MagicMock()
+    ctx.favorite_price_alert_service = MagicMock()
+    ctx.favorite_price_alert_service.handle_price_tick = AsyncMock()
+
+    await ctx._refresh_price_from_rest("080220")
+
+    ctx.favorite_price_alert_service.handle_price_tick.assert_awaited_once_with(
+        "080220",
+        price="50200",
+        rate="-8.89",
+        sign="5",
+    )
+
+
+@pytest.mark.asyncio
 async def test_refresh_price_from_rest_logs_rest_failed(mock_deps):
     """REST 현재가 조회 실패 시 rest_failed 원인을 남긴다."""
     ctx = WebAppContext(None)

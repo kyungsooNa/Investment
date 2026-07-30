@@ -440,7 +440,7 @@ class WebAppContext:
                 f"실전 모드 bootstrap 차단: 전략 state load 실패 — {names}"
             )
 
-    def start_background_tasks(self):
+    def start_background_tasks(self, *, schedule_price_subscriptions: bool = True):
         """백그라운드 태스크 시작 — BackgroundScheduler에 위임."""
         from view.web.deployment_policy import is_demo_mode, is_public_mode
 
@@ -455,7 +455,8 @@ class WebAppContext:
         if self.background_scheduler:
             asyncio.create_task(self.background_scheduler.start_all())
 
-        self._schedule_price_subscription_initialization()
+        if schedule_price_subscriptions:
+            self._schedule_price_subscription_initialization()
 
     def _schedule_price_subscription_initialization(self):
         """초기 가격 구독 task를 background lifecycle에 맞춰 시작한다."""
@@ -629,6 +630,13 @@ class WebAppContext:
             sign=_get("prdy_vrss_sign", "3"),
             volume=_get("acml_vol", "0"),
         )
+        if self.favorite_price_alert_service:
+            await self.favorite_price_alert_service.handle_price_tick(
+                code,
+                price=price,
+                rate=_get("prdy_ctrt", "0.00"),
+                sign=_get("prdy_vrss_sign", "3"),
+            )
 
     async def start_program_trading(self, code: str) -> bool:
         """프로그램매매 구독 시작 (웹소켓 연결 + 구독). 이미 구독 중이면 스킵."""

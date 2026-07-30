@@ -619,5 +619,6 @@ async def change_environment(req: EnvironmentRequest):
     _status_cache_ts = 0.0
     if not success:
         raise HTTPException(status_code=500, detail="환경 전환 실패 (토큰 발급 오류)")
-    ctx.start_background_tasks()
+    await ctx._initialize_price_subscriptions()
+    ctx.start_background_tasks(schedule_price_subscriptions=False)
     return {"success": True, "env_type": ctx.get_env_type()}

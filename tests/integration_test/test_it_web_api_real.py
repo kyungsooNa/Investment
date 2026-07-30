@@ -390,7 +390,10 @@ class TestEnvironmentReal:
         assert body["success"] is True
         assert body["env_type"] == "모의투자"
         mock_real_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=True)
-        mock_real_ctx.start_background_tasks.assert_called_once()
+        mock_real_ctx._initialize_price_subscriptions.assert_awaited_once_with()
+        mock_real_ctx.start_background_tasks.assert_called_once_with(
+            schedule_price_subscriptions=False,
+        )
         assert stock._status_cache is None
 
     def test_environment_change_failure(self, real_client, mock_real_ctx):
