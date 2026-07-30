@@ -377,6 +377,18 @@ def _page_role(request: Request, ctx) -> str:
     return claims.role if claims is not None else ""
 
 
+def _no_store(response):
+    """페이지 HTML 은 캐시 버스팅 수단이 없어 항상 재검증하게 만든다.
+
+    정적 파일은 `?v=` 로 갱신을 강제하지만 문서 자체에는 그런 수단이 없다.
+    브라우저 휴리스틱 캐시에 문서가 걸리면 `?v=` 를 올려도 예전 마크업이 남아
+    새 UI 가 보이지 않는다(미국장 즐겨찾기 탭 미표시 사례). 로그인/권한부족
+    응답도 같은 이유로 캐시되면 안 된다.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 # 공통 페이지 렌더링 함수 (로그인 체크 포함)
 async def render_page(
     request: Request,
@@ -389,19 +401,19 @@ async def render_page(
     try:
         ctx = web_api._get_ctx()
     except Exception:
-        return templates.TemplateResponse(request, "login.html")
+        return _no_store(templates.TemplateResponse(request, "login.html"))
 
     if not _is_page_authorized(request, ctx):
-        return templates.TemplateResponse(request, "login.html")
+        return _no_store(templates.TemplateResponse(request, "login.html"))
 
     user_role = _page_role(request, ctx)
     if not role_allows(user_role, required_role):
-        return templates.TemplateResponse(
+        return _no_store(templates.TemplateResponse(
             request,
             "login.html",
             {"authorization_error": "이 페이지에 접근할 권한이 부족합니다."},
             status_code=403,
-        )
+        ))
 
     claims = api_common.get_session_claims(request, ctx=ctx)
     context = {
@@ -414,7 +426,7 @@ async def render_page(
     }
     if extra_context:
         context.update(extra_context)
-    return templates.TemplateResponse(request, template_name, context)
+    return _no_store(templates.TemplateResponse(request, template_name, context))
 
 # 4. 페이지 라우팅
 @page_router.get("/")

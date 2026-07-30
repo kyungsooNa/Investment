@@ -132,6 +132,48 @@ def test_overseas_static_js_exposes_manual_workflow():
     assert "loadOverseasQuote" in script
     assert "placeOverseasOrder" in script
 
+def test_pages_are_not_browser_cached(web_client, mock_web_ctx):
+    """페이지 HTML 은 캐시 버스팅 수단이 없어(정적 파일만 ?v=), no-store 로 내려야 한다.
+
+    이게 없으면 배포 후에도 브라우저 휴리스틱 캐시 때문에 예전 화면이 남는다
+    (실제로 미국장 즐겨찾기 탭이 안 보인다는 보고가 있었다).
+    """
+    mock_web_ctx.full_config = {"use_login": False}
+
+    for path, _ in PAGES:
+        response = web_client.get(path)
+
+        assert response.status_code == 200
+        assert "no-store" in response.headers.get("cache-control", ""), (
+            f"{path} 응답에 no-store 가 없어 예전 화면이 캐시될 수 있다"
+        )
+
+
+def test_login_page_is_not_browser_cached(web_client, mock_web_ctx):
+    """로그인 페이지가 캐시되면 로그인 후에도 로그인 화면이 남을 수 있다."""
+    mock_web_ctx.full_config = {"use_login": True, "auth": {"secret_key": "secret_token"}}
+    web_client.cookies.clear()
+
+    response = web_client.get("/stock")
+
+    assert response.status_code == 200
+    assert "Investment Login" in response.text
+    assert "no-store" in response.headers.get("cache-control", "")
+
+
+def test_forbidden_page_is_not_browser_cached(web_client, mock_web_ctx):
+    """권한 부족 응답이 캐시되면 권한 승급 후에도 403 화면이 남을 수 있다."""
+    auth_config = {"secret_key": "secret_token", "session_max_age_seconds": 3600}
+    mock_web_ctx.full_config = {"use_login": True, "auth": auth_config}
+    token, _ = issue_session(auth_config, "reader", role="viewer")
+    web_client.cookies.set(SESSION_COOKIE_NAME, token)
+
+    response = web_client.get("/balance")
+
+    assert response.status_code == 403
+    assert "no-store" in response.headers.get("cache-control", "")
+
+
 def test_pages_show_login_page_when_unauthorized(web_client, mock_web_ctx):
     """로그인 기능 활성화 시 토큰 없이 접근하면 로그인 페이지가 렌더링되는지 테스트"""
     # 로그인 활성화 설정
