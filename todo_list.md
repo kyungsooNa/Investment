@@ -260,13 +260,19 @@
 
 주요 파일: `view/web/templates/marketcap.html`, `view/web/static/js/marketcap.js`, `view/web/static/js/overseas.js`, `view/web/static/js/common.js`, `view/web/routes/stock.py`, `view/web/bootstrap/service_container.py`, `services/market_cap_gap_service.py`, `tests/frontend/`
 
-### M-4. 한국장 히트맵(트리맵) [미국장 완료 후속, 2026-07-31]
+### M-4. 히트맵(트리맵) [미국장·국내 1단계 완료 — 업종 축만 잔여, 2026-07-31]
 
-홈 화면 S&P500 히트맵은 완료(`view/web/static/js/market_heatmap.js`, `/api/overseas/top-market-cap` 스냅샷 재사용, 백엔드 변경 없음). 한국장 히트맵은 아래 제약 때문에 별도 작업으로 남긴다.
+홈 화면 히트맵 2종 완료. 공용 렌더러는 `view/web/static/js/market_heatmap.js`.
 
-- [ ] 데이터 소스 결정: KIS 시가총액 랭킹(`/api/top-market-cap`)은 **실전 전용 + 상위 30종목**이라 전체 맵에 부족. `stocks.db daily_prices`(최근일 2,583종목, `market_cap`·`change_rate` 보유)를 쓰면 전 종목 맵이 되지만 **전일 종가 기준**(장중 실시간 아님).
-- [ ] 그룹 축 결정: `stock_classifications`에는 NAVER **테마만** 있고 `category_type='industry'`는 0건. 한 종목이 여러 테마에 중복 소속이라 트리맵의 배타적 그룹 요건에 맞지 않음 → (a) 섹터 블록 없이 시총순 단일 그리드, (b) 업종 분류 수집 신규 추가, (c) 테마 대표 1개 강제 배정(해석 왜곡 위험) 중 택1.
-- [ ] 위 결정 후 신규 엔드포인트 1개(daily_prices 집계) + `market_heatmap.js` 재사용(트리맵 레이아웃·색상 스케일은 시장 무관)으로 구현.
+- 미국: `/api/overseas/top-market-cap` 스냅샷 재사용(섹터 블록 2단, 백엔드 변경 없음).
+- 국내: `/api/heatmap/domestic` 신규(`StockOhlcvRepository.get_market_cap_snapshot`). 상위 200종목 = 전체 시총 91% 커버.
+  - **종가 기준**: 실시간 전종목 시세 소스가 없어 daily_prices 스냅샷을 쓴다. 확인한 대안 — KIS 랭킹은 실전 전용·상위 30, `theme_trading_value_snapshots`는 84종목·가격 없음, 전종목 폴링은 budget throttle 직격. 화면에 `기준일: YYYY-MM-DD 종가` 를 상시 표기해 장중 오해를 막는다.
+  - **섹터 블록 없음**: 배타적 업종 분류가 없어 시총순 단일 그리드로 그린다.
+
+잔여 — 국내 업종 축(선택):
+- [ ] KRX 업종지수 구성종목(`pykrx.stock.get_index_portfolio_deposit_file`)으로 배타적 업종 분류를 수집한다. `StockClassificationRepository`에 `category_type='industry'`로 적재하면 저장소·조회 코드를 그대로 재사용할 수 있고, `market_heatmap.js`는 `sector` 가 채워지면 자동으로 섹터 블록을 그린다.
+  - **선행 검증 필요**: 2026-07-31 확인 시 이 환경에서 pykrx 지수 API가 빈 응답이었다(`get_index_portfolio_deposit_file('1005')` IndexError, `get_market_cap_by_ticker` 컬럼 없음). 샌드박스 네트워크 제약인지 KRX 변경인지 실런타임에서 1회 spike 검증 후 착수.
+  - NAVER 테마를 대표 1개로 강제 배정하는 안은 채택하지 않는다(종목당 평균 2.7개 소속 → 임의 규칙이 화면 해석을 왜곡).
 
 ---
 

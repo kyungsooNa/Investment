@@ -21,11 +21,29 @@ def test_home_template_hosts_heatmap_panel():
     assert "/static/js/market_heatmap.js" in template
 
 
+def test_home_template_hosts_domestic_heatmap_panel():
+    template = _home_template()
+
+    assert 'id="domestic-heatmap-card"' in template
+    assert 'id="domestic-heatmap"' in template
+    assert 'id="domestic-heatmap-updated-at"' in template
+
+
+def test_domestic_heatmap_uses_daily_snapshot_and_shows_base_date():
+    script = _heatmap_js()
+
+    # 실시간 전종목 시세 소스가 없어 장마감 후 스냅샷을 쓴다 — 기준일을 감추지 않는다.
+    assert "/api/heatmap/domestic" in script
+    assert "기준일" in script and "종가" in script
+    # 배타적 업종 분류가 없으므로 섹터 블록 없이 단일 그룹으로 그린다.
+    assert "sector: null" in script
+
+
 def test_heatmap_styles_are_defined_in_home_template():
     template = _home_template()
 
     for selector in (
-        "#market-heatmap {",
+        "#market-heatmap, #domestic-heatmap {",
         ".heatmap-canvas",
         ".heatmap-sector",
         ".heatmap-sector-title",

@@ -22,7 +22,7 @@
         .heatmap-legend { display: inline-flex; align-items: center; gap: 2px; }
         .heatmap-legend i { display: inline-block; width: 14px; height: 10px; }
         .heatmap-legend-label { margin: 0 4px; }
-        #market-heatmap { position: relative; height: 520px; }
+        #market-heatmap, #domestic-heatmap { position: relative; height: 520px; }
         .heatmap-canvas { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
         .heatmap-sector { position: absolute; }
         .heatmap-sector-title {
@@ -38,7 +38,7 @@
         }
         .heatmap-tile-symbol { font-size: 0.72rem; font-weight: 700; line-height: 1.15; }
         .heatmap-tile-rate { font-size: 0.66rem; line-height: 1.15; }
-        @media (max-width: 640px) { #market-heatmap { height: 380px; } }
+        @media (max-width: 640px) { #market-heatmap, #domestic-heatmap { height: 380px; } }
     </style>
     <div class="section">
         <div class="card">
@@ -60,6 +60,22 @@
                 </span>
             </div>
             <div id="market-heatmap"></div>
+        </div>
+    </div>
+    <div class="section">
+        <div class="card" id="domestic-heatmap-card">
+            <h2>국내 시가총액 히트맵</h2>
+            <div class="heatmap-toolbar">
+                <span id="domestic-heatmap-updated-at" class="heatmap-updated">기준일: --</span>
+                <span class="heatmap-legend">
+                    <span class="heatmap-legend-label">하락</span>
+                    <i style="background:#12386f"></i><i style="background:#2b5cb8"></i><i style="background:#4a7fd4"></i><i style="background:#84aee6"></i>
+                    <i style="background:#6b7280"></i>
+                    <i style="background:#e58080"></i><i style="background:#d64545"></i><i style="background:#b52626"></i><i style="background:#8f1a1a"></i>
+                    <span class="heatmap-legend-label">상승</span>
+                </span>
+            </div>
+            <div id="domestic-heatmap"></div>
         </div>
     </div>
     <div class="section">
@@ -139,5 +155,5 @@
 
 {% block scripts %}
 <script src="/static/js/market_indices.js?v=3"></script>
-<script src="/static/js/market_heatmap.js?v=1"></script>
+<script src="/static/js/market_heatmap.js?v=2"></script>
 {% endblock %}

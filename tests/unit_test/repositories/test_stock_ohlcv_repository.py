@@ -1024,3 +1024,65 @@ class TestCacheLoggerPaths:
         })
         repo.update_today_candle("A001", 120)
         logger.log_today_candle.assert_called_once()
+
+
+class TestGetMarketCapSnapshot:
+    """get_market_cap_snapshot: 국내 히트맵용 최신 거래일 시총 스냅샷."""
+
+    @pytest.mark.asyncio
+    async def test_returns_latest_date_ordered_by_market_cap(self, repo):
+        await repo.upsert_daily_snapshot("20260713", [_make_snapshot("OLD", market_cap=9_999_999)])
+        await repo.upsert_daily_snapshot("20260714", [
+            _make_snapshot("A001", name="중형주", market_cap=500),
+            _make_snapshot("A002", name="대형주", market_cap=900),
+            _make_snapshot("A003", name="소형주", market_cap=100),
+        ])
+
+        result = await repo.get_market_cap_snapshot(limit=10)
+
+        assert [row["code"] for row in result] == ["A002", "A001", "A003"]
+        assert all(row["trade_date"] == "20260714" for row in result)
+
+    @pytest.mark.asyncio
+    async def test_applies_limit(self, repo):
+        await repo.upsert_daily_snapshot("20260714", [
+            _make_snapshot("A001", market_cap=300),
+            _make_snapshot("A002", market_cap=200),
+            _make_snapshot("A003", market_cap=100),
+        ])
+
+        result = await repo.get_market_cap_snapshot(limit=2)
+
+        assert [row["code"] for row in result] == ["A001", "A002"]
+
+    @pytest.mark.asyncio
+    async def test_excludes_non_positive_market_cap(self, repo):
+        """정지주는 시총 0원 행으로 저장되므로 히트맵 면적 계산에서 제외한다."""
+        await repo.upsert_daily_snapshot("20260714", [
+            _make_snapshot("A001", market_cap=300),
+            _make_snapshot("HALT", market_cap=0),
+        ])
+
+        result = await repo.get_market_cap_snapshot(limit=10)
+
+        assert [row["code"] for row in result] == ["A001"]
+
+    @pytest.mark.asyncio
+    async def test_filters_by_market(self, repo):
+        await repo.upsert_daily_snapshot("20260714", [
+            _make_snapshot("A001", market_cap=300, market="KOSPI"),
+            _make_snapshot("A002", market_cap=200, market="KOSDAQ"),
+        ])
+
+        result = await repo.get_market_cap_snapshot(limit=10, market="KOSDAQ")
+
+        assert [row["code"] for row in result] == ["A002"]
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_without_snapshots(self, repo):
+        assert await repo.get_market_cap_snapshot() == []
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_on_read_error(self, repo, monkeypatch):
+        _broken_read_ctx(repo, monkeypatch)
+        assert await repo.get_market_cap_snapshot() == []
