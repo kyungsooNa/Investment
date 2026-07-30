@@ -198,6 +198,26 @@ async def test_connect_websocket_serializes_concurrent_calls(streaming_service, 
     assert await asyncio.gather(first, second) == [True, True]
     mock_broker.connect_websocket.assert_awaited_once()
 
+
+@pytest.mark.asyncio
+async def test_connect_websocket_reuses_alive_connection_without_waiting_for_connect_lock(
+    streaming_service, mock_broker
+):
+    """살아있는 수신 연결은 다른 connect 작업의 완료를 기다리지 않고 즉시 재사용한다."""
+    mock_broker.is_websocket_receive_alive.return_value = True
+    await streaming_service._connect_lock.acquire()
+    try:
+        result = await asyncio.wait_for(
+            streaming_service.connect_websocket(),
+            timeout=0.05,
+        )
+    finally:
+        streaming_service._connect_lock.release()
+
+    assert result is True
+    mock_broker.connect_websocket.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_subscribe_unsubscribe_program_trading(streaming_service, mock_broker):
     """프로그램매매 실시간 구독 및 해지 위임 테스트"""

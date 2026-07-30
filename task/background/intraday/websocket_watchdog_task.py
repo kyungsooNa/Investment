@@ -356,7 +356,7 @@ class WebSocketWatchdogTask(SchedulableTask):
                         for code in pending_pt_codes:
                             if self._streaming_logger:
                                 self._streaming_logger.log_missing_reason(code, "pt_not_active")
-                        await self._restore_all_subscriptions()
+                        await self._restore_all_subscriptions(reset_connection=False)
                         continue
                     self._reconnect_trigger_counts.clear()
 

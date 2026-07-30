@@ -127,6 +127,8 @@ class StreamingService:
         """
         if callback is not None:
             self._callback = callback
+        if self._connect_lock.locked() and self._is_websocket_receive_alive():
+            return True
         async with self._connect_lock:
             if self._is_websocket_receive_alive():
                 return True
