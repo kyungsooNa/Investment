@@ -554,7 +554,15 @@ class MarketDataService:
         if not raw or raw.rt_cd != ErrorCode.SUCCESS.value: return raw
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=self._normalize_ohlcv_rows(raw.data))
 
-    async def get_recent_daily_ohlcv(self, code: str, limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE, end_date: Optional[str] = None, start_date: Optional[str] = None, exchange: Exchange = Exchange.KRX) -> List[Dict[str, Any]]:
+    async def get_recent_daily_ohlcv(
+        self,
+        code: str,
+        limit: int = DynamicConfig.OHLCV.DAILY_ITEMCHARTPRICE_MAX_RANGE,
+        end_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        exchange: Exchange = Exchange.KRX,
+        force_refresh: bool = False,
+    ) -> List[Dict[str, Any]]:
         """
         최근 'limit'개 *거래일* 일봉을 반환.
         API는 시작/종료일 범위를 요구하므로 넉넉한 범위로 받아서 슬라이스로 limit개 보장.
@@ -571,8 +579,9 @@ class MarketDataService:
         t_start = self.pm.start_timer()
         current_ed_dt = datetime.strptime(end_date, "%Y%m%d") if end_date else self._market_clock.get_current_kst_time()
 
-        # DB-first: start_date가 지정되지 않은 경우에만 시도 (end_date가 있어도 DB 데이터 슬라이싱으로 대응)
-        if not start_date and self._stock_repo:
+        # DB-first: start_date/강제 갱신이 지정되지 않은 경우에만 시도
+        # (end_date가 있어도 DB 데이터 슬라이싱으로 대응)
+        if not start_date and not force_refresh and self._stock_repo:
             fetch_limit = 600 if end_date else limit
             stock_data = await self._stock_repo.get_stock_data(code, ohlcv_limit=fetch_limit, caller="get_recent_daily_ohlcv")
             if stock_data:

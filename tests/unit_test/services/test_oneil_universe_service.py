@@ -1775,7 +1775,7 @@ async def test_update_market_timing_emits_notifications(mock_deps):
             market=market, trend_status="rising" if is_rising else "hard_decline",
             regime_label="bull" if is_rising else "bear", snapshot_date="20260514",
             is_rising=is_rising, net_change_pct=0.0, max_daily_drop_pct=0.0,
-            ma_values=ma_values, fail_detail=fail,
+            ma_values=ma_values, fail_detail=fail, data_date="20260514",
         )
 
     service._regime_svc.classify = AsyncMock(side_effect=[
@@ -1796,6 +1796,7 @@ async def test_update_market_timing_emits_notifications(mock_deps):
     }
     assert "KOSDAQ" in call_kwargs["message"]
     assert "KOSPI" in call_kwargs["message"]
+    assert call_kwargs["message"].count("데이터 기준일: 20260514") == 2
     assert "MA decline" in call_kwargs["message"]
 
 

@@ -896,6 +896,44 @@ async def test_get_recent_daily_ohlcv_db_first_when_sufficient(trading_service_f
 
 
 @pytest.mark.asyncio
+async def test_get_recent_daily_ohlcv_force_refresh_bypasses_stale_db(trading_service_fixture, mock_deps):
+    """force_refresh=True이면 DB 건수가 충분해도 API에서 최신 일봉을 다시 조회한다."""
+    broker = mock_deps.broker
+    service = trading_service_fixture
+    mock_deps.stock_repo.get_stock_data.return_value = {
+        "ohlcv": [
+            {"date": f"2025010{i}", "open": 100, "high": 110, "low": 90, "close": 105, "volume": 1000}
+            for i in range(1, 6)
+        ],
+        "historical_complete": True,
+    }
+    broker.inquire_daily_itemchartprice.return_value = ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data=[
+            {
+                "stck_bsop_date": "20260513",
+                "stck_clpr": "120",
+                "stck_oprc": "115",
+                "stck_hgpr": "125",
+                "stck_lwpr": "110",
+                "acml_vol": "1000",
+            }
+        ],
+    )
+
+    result = await service.get_recent_daily_ohlcv(
+        "069500",
+        limit=5,
+        end_date="20260513",
+        force_refresh=True,
+    )
+
+    broker.inquire_daily_itemchartprice.assert_awaited()
+    assert result[-1]["date"] == "20260513"
+
+
+@pytest.mark.asyncio
 async def test_get_recent_daily_ohlcv_no_api_call_during_market_hours_when_db_full(trading_service_fixture, mock_deps):
     """장중(is_market_open=True) + ohlcv_update_task로 DB가 완전히 채워진 상태에서
     get_recent_daily_ohlcv 호출 시 OHLCV API(inquire_daily_itemchartprice)가 절대 호출되지 않아야 한다.
