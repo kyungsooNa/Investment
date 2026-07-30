@@ -192,7 +192,10 @@ class FavoritePriceAlertService:
 
     @staticmethod
     def _normalize_code(code) -> str:
-        return str(code or "").strip()
+        normalized = str(code or "").strip()
+        if normalized.isdigit() and len(normalized) <= 6:
+            return normalized.zfill(6)
+        return normalized
 
     @staticmethod
     def _to_float(value) -> Optional[float]:

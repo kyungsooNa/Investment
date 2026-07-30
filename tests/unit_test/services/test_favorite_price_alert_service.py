@@ -30,6 +30,20 @@ async def test_alerts_when_favorite_rate_crosses_positive_five_percent():
 
 
 @pytest.mark.asyncio
+async def test_alerts_when_saved_favorite_code_is_not_zero_padded():
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["5930"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("005930", price="75000", rate="5.12")
+
+    notifications.emit.assert_awaited_once()
+    assert notifications.emit.call_args.kwargs["metadata"]["code"] == "005930"
+
+
+@pytest.mark.asyncio
 async def test_does_not_repeat_same_five_percent_bucket_until_next_bucket():
     repo = MagicMock()
     repo.get_all = AsyncMock(return_value=["005930"])
