@@ -142,3 +142,32 @@ def test_home_groups_market_and_common_entry_points(web_client_with_fake_ctx):
     assert 'data-home-market="domestic"' in page.text
     assert 'data-home-market="overseas_us"' in page.text
     assert 'data-home-market="common"' in page.text
+
+
+def test_page_documents_are_not_browser_cached(web_client_with_fake_ctx):
+    """페이지 HTML 은 캐시 버스팅 수단이 없어 no-store 로 내려야 한다.
+
+    문서가 캐시되면 정적 파일 ?v= 를 올려도 예전 마크업이 남아 새 UI 가 안 보인다.
+    """
+    for page_path in PAGE_PATHS:
+        page = web_client_with_fake_ctx.get(page_path)
+
+        assert page.status_code == 200
+        assert "no-store" in page.headers.get("cache-control", ""), (
+            f"{page_path} 문서 응답에 no-store 가 없다"
+        )
+
+
+def test_static_assets_keep_browser_caching(web_client_with_fake_ctx):
+    """정적 파일은 ?v= 로 캐시 버스팅하므로 no-store 를 적용하지 않는다."""
+    client = web_client_with_fake_ctx
+    refs = _local_static_refs(client.get("/stock").text)
+
+    assert refs, "테스트 전제: /stock 이 정적 파일을 참조해야 한다"
+    for static_path in refs:
+        asset = client.get(static_path)
+
+        assert asset.status_code == 200
+        assert "no-store" not in asset.headers.get("cache-control", ""), (
+            f"{static_path} 에 no-store 가 붙어 정적 캐싱이 무력화됐다"
+        )
