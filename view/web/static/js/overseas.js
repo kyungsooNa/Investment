@@ -108,6 +108,11 @@ async function setOverseasTab(tabName) {
     if (tabName === 'favorite') await loadOverseasFavorites();
 }
 
+function _initialOverseasTab() {
+    if (window.location.pathname === '/overseas-favorite') return 'favorite';
+    return 'overview';
+}
+
 async function loadOverseasQuote() {
     const symbol = _overseasSymbolValue('overseas-symbol');
     const exchange = _overseasExchangeValue('overseas-exchange');
@@ -571,17 +576,19 @@ function initOverseasPage() {
     _refreshOverseasRealBanner();
     void _refreshOverseasAvailability();
     _initOverseasFavoriteAutocomplete();
+    const initialTab = _initialOverseasTab();
+    if (initialTab !== 'overview') void setOverseasTab(initialTab);
     if (!window.__overseasRealBannerTimer) {
         window.__overseasRealBannerTimer = setInterval(_refreshOverseasRealBanner, 3000);
     }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    if (window.location.pathname !== '/overseas') return;
+    if (!['/overseas', '/overseas-favorite'].includes(window.location.pathname)) return;
     initOverseasPage();
 });
 
 document.addEventListener('pjax:ready', (e) => {
-    if (e.detail?.path !== '/overseas') return;
+    if (!['/overseas', '/overseas-favorite'].includes(e.detail?.path)) return;
     initOverseasPage();
 });

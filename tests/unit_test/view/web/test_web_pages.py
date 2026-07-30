@@ -10,6 +10,7 @@ PAGES = [
     ("/balance", "balance"),
     ("/order", "order"),
     ("/overseas", "overseas"),
+    ("/overseas-favorite", "overseas_favorite"),
     ("/overseas-marketcap", "overseas_marketcap"),
     ("/overseas-ranking", "overseas_ranking"),
     ("/ranking", "ranking"),
@@ -54,9 +55,16 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert 'id="overseas-tab-overview"' in response.text
             assert 'id="overseas-tab-marketcap"' in response.text
             assert 'id="overseas-tab-orders"' in response.text
-            assert 'id="overseas-tab-favorite"' in response.text
+            assert 'id="overseas-tab-favorite"' not in response.text
             assert 'id="overseas-panel-marketcap"' in response.text
             assert 'id="overseas-panel-favorite"' in response.text
+            assert 'id="overseas-fav-symbol"' in response.text
+            assert 'id="overseas-favorite-body"' in response.text
+            assert "/static/js/overseas.js" in response.text
+        elif path == "/overseas-favorite":
+            assert "미국장 즐겨찾기" in response.text
+            assert 'id="overseas-panel-favorite"' in response.text
+            assert 'id="overseas-tab-favorite"' not in response.text
             assert 'id="overseas-fav-symbol"' in response.text
             assert 'id="overseas-favorite-body"' in response.text
             assert "/static/js/overseas.js" in response.text

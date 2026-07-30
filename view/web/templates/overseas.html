@@ -22,7 +22,6 @@
         <div class="overseas-tabs" role="tablist" aria-label="미국주식 메뉴">
             <button type="button" id="overseas-tab-overview" class="sub-tab-btn active" data-overseas-tab="overview" onclick="setOverseasTab('overview')">시장 개요</button>
             <button type="button" id="overseas-tab-marketcap" class="sub-tab-btn" data-overseas-tab="marketcap" onclick="setOverseasTab('marketcap')">주요 대형주</button>
-            {% if can_operate %}<button type="button" id="overseas-tab-favorite" class="sub-tab-btn" data-overseas-tab="favorite" onclick="setOverseasTab('favorite')">즐겨찾기</button>{% endif %}
             {% if can_operate %}<button type="button" id="overseas-tab-orders" class="sub-tab-btn" data-overseas-tab="orders" onclick="setOverseasTab('orders')">보유·주문</button>{% endif %}
         </div>
     </div>
