@@ -34,7 +34,6 @@ async def _fetch_volatility_for_signal(sqs: StockQueryService, code: str) -> Opt
 
 _ENTRY_START = time(9, 10)
 _ENTRY_CUTOFF = time(14, 0)
-_EOD_FLATTEN = time(15, 20)
 
 _RANGE_CACHE_CONCURRENCY = 10
 _EXIT_CONCURRENCY = 15
@@ -75,7 +74,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
     check_exits():
       - 오버나이트 방어: 전일 매수건 즉시 청산
       - 칼손절: 진입가 대비 -3%
-      - EOD 강제청산: 15:20 전량 시장가 매도
+      - EOD 강제청산은 StrategyScheduler의 force_exit_on_close가 전담
     """
 
     def __init__(
@@ -452,11 +451,10 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
         now = self._tm.get_current_kst_time()
         today = now.strftime("%Y%m%d")
-        is_eod = now.time() >= _EOD_FLATTEN
-        self._logger.info({"event": "check_exits_started", "holdings_count": len(holdings), "is_eod": is_eod})
+        self._logger.info({"event": "check_exits_started", "holdings_count": len(holdings)})
 
         results = await bounded_gather(
-            [self._check_single_exit(hold, today, is_eod) for hold in holdings],
+            [self._check_single_exit(hold, today) for hold in holdings],
             limit=_EXIT_CONCURRENCY,
             return_exceptions=True,
         )
@@ -473,7 +471,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         self._logger.info({"event": "check_exits_finished", "signals_found": len(signals)})
         return signals
 
-    async def _check_single_exit(self, hold: dict, today: str, is_eod: bool) -> Optional[TradeSignal]:
+    async def _check_single_exit(self, hold: dict, today: str) -> Optional[TradeSignal]:
         code = str(hold.get("code", ""))
         buy_price_raw = hold.get("buy_price", 0)
         buy_date_raw = hold.get("buy_date", "")
@@ -519,11 +517,6 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             # 칼손절: 진입가 대비 -3% (net, P0 0-9)
             if pnl_pct <= self._cfg.stop_loss_pct:
                 reason = f"칼손절(net): 매수가대비 {pnl_pct:.1f}%"
-                should_sell = True
-
-            # EOD 강제청산: 15:20
-            if not should_sell and is_eod:
-                reason = f"EOD청산: {_EOD_FLATTEN.strftime('%H:%M')} 전량 시장가"
                 should_sell = True
 
             if should_sell:
