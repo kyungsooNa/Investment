@@ -76,6 +76,48 @@ async def test_top_market_cap_includes_sector_and_krw_conversion(service):
     assert item["market_cap_krw"] == int(4_000_000_000_000 * 1400.0)
 
 
+async def test_top_market_cap_includes_cached_snapshot_updated_at(universe, provider):
+    now = [0.0]
+    wall_now = [1_800_000_000.0]
+    service = OverseasMarketStatsService(
+        universe_factory=lambda: universe,
+        provider=provider,
+        ttl_sec=300,
+        clock=lambda: now[0],
+        wall_clock=lambda: wall_now[0],
+    )
+
+    first = await service.get_top_market_cap(limit=1)
+    wall_now[0] = 1_800_000_123.0
+    now[0] = 299.0
+    second = await service.get_top_market_cap(limit=1)
+
+    assert first["updated_at"] == 1_800_000_000.0
+    assert second["updated_at"] == 1_800_000_000.0
+    assert provider.fetch_snapshots.await_count == 1
+
+
+async def test_top_market_cap_updated_at_changes_after_ttl(universe, provider):
+    now = [0.0]
+    wall_now = [1_800_000_000.0]
+    service = OverseasMarketStatsService(
+        universe_factory=lambda: universe,
+        provider=provider,
+        ttl_sec=300,
+        clock=lambda: now[0],
+        wall_clock=lambda: wall_now[0],
+    )
+
+    first = await service.get_top_market_cap(limit=1)
+    wall_now[0] = 1_800_000_400.0
+    now[0] = 301.0
+    second = await service.get_top_market_cap(limit=1)
+
+    assert first["updated_at"] == 1_800_000_000.0
+    assert second["updated_at"] == 1_800_000_400.0
+    assert provider.fetch_snapshots.await_count == 2
+
+
 async def test_krw_is_none_when_fx_unavailable(universe, provider):
     provider.fetch_usdkrw = AsyncMock(return_value=None)
     service = OverseasMarketStatsService(
@@ -150,7 +192,7 @@ async def test_empty_universe_returns_empty_without_calling_provider(provider):
 
     result = await service.get_top_market_cap()
 
-    assert result == {"fx_rate": None, "items": []}
+    assert result == {"fx_rate": None, "items": [], "updated_at": None}
     provider.fetch_snapshots.assert_not_awaited()
 
 
@@ -303,4 +345,4 @@ async def test_ranking_empty_universe_returns_empty(provider):
         universe_factory=lambda: empty, provider=provider, clock=lambda: 0.0
     )
 
-    assert (await service.get_ranking("rise")) == {"fx_rate": None, "items": []}
+    assert (await service.get_ranking("rise")) == {"fx_rate": None, "items": [], "updated_at": None}

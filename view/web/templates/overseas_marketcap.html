@@ -5,6 +5,7 @@
         <div class="card">
             <h2>미국 시가총액 상위 종목</h2>
             <p class="small">S&amp;P 500 구성종목을 시가총액(USD) 기준으로 정렬합니다.</p>
+            <p id="overseas-marketcap-updated-at" class="small">최신 업데이트: --</p>
             <div class="form-row">
                 <button class="btn ranking-tab active" data-limit="30" onclick="loadOverseasTopMarketCap(30)">상위 30</button>
                 <button class="btn ranking-tab" data-limit="50" onclick="loadOverseasTopMarketCap(50)">상위 50</button>
@@ -16,5 +17,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/overseas_marketcap.js?v=1"></script>
+<script src="/static/js/overseas_marketcap.js?v=2"></script>
 {% endblock %}

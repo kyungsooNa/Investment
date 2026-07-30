@@ -21,6 +21,7 @@ const SCAFFOLD = `
   <button class="btn ranking-tab active" data-limit="30"></button>
   <button class="btn ranking-tab" data-limit="50"></button>
   <button class="btn ranking-tab" data-limit="100"></button>
+  <span id="overseas-marketcap-updated-at"></span>
   <div id="overseas-marketcap-result"></div>
 </div>
 `;
@@ -55,8 +56,8 @@ async function makeWindow() {
   return window;
 }
 
-function okPayload(items, fxRate = 1400) {
-  return { ok: true, json: async () => ({ rt_cd: "0", msg1: "OK", data: { fx_rate: fxRate, items } }) };
+function okPayload(items, fxRate = 1400, updatedAt = 1_800_000_000) {
+  return { ok: true, json: async () => ({ rt_cd: "0", msg1: "OK", data: { fx_rate: fxRate, items, updated_at: updatedAt } }) };
 }
 
 const APPLE = {
@@ -79,6 +80,17 @@ test("시가총액 행을 순위·심볼·섹터·USD/원화로 렌더한다", a
   assert(text.includes("+1.23%"), "등락률이 소수 2자리로 표시되어야 함");
   assert(text.includes("$3.00T"), "회귀: USD 시가총액 축약 표기 실패");
   assert(text.includes("4,200조"), "회귀: 원화 환산이 조/억 표기로 표시되지 않음");
+});
+
+test("서버의 updated_at 을 최신 업데이트 시간으로 표시한다", async () => {
+  const window = await makeWindow();
+  window.fetchWithTimeout = async () => okPayload([APPLE], 1400, Date.UTC(2026, 6, 31, 13, 5, 30) / 1000);
+
+  await window.loadOverseasTopMarketCap(30);
+
+  const text = window.document.getElementById("overseas-marketcap-updated-at").textContent;
+  assert(text.includes("최신 업데이트"), "최신 업데이트 라벨이 표시되어야 함");
+  assert(text.includes("2026"), "updated_at 시간이 사용자가 읽을 수 있는 시간으로 표시되어야 함");
 });
 
 test("limit 탭 전환이 요청 쿼리와 active 클래스에 반영된다", async () => {
@@ -168,6 +180,28 @@ test("외부 문자열은 HTML 로 해석되지 않는다", async () => {
 
   assert(window.__pwned === undefined, "회귀: 종목명이 HTML 로 해석됨");
   assert(window.__pwned2 === undefined, "회귀: 섹터가 스크립트로 해석됨");
+});
+
+test("페이지 초기화 시 5분마다 현재 limit 으로 자동 갱신한다", async () => {
+  const intervals = [];
+  const dom = new JSDOM(`<!DOCTYPE html><html><body>${SCAFFOLD}</body></html>`, {
+    url: "http://localhost/overseas-marketcap",
+    runScripts: "dangerously",
+  });
+  const { window } = dom;
+  applyCommonStubs(window);
+  window.fetchWithTimeout = async () => okPayload([APPLE]);
+  window.setInterval = (fn, ms) => {
+    intervals.push({ fn, ms });
+    return intervals.length;
+  };
+
+  const script = window.document.createElement("script");
+  script.textContent = readFileSync(PAGE_JS, "utf8");
+  window.document.body.appendChild(script);
+  await flush();
+
+  assert(intervals.some((item) => item.ms === 300000), "5분 자동 갱신 타이머가 등록되어야 함");
 });
 
 await run();
