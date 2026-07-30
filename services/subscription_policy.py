@@ -56,6 +56,7 @@ class SubscriptionPolicy:
     """
 
     MAX_WS_SLOTS = 40  # KIS 웹소켓 최대 구독 한도 (PT=1슬롯, Price=1슬롯)
+    _PERSISTENT_PRICE_CATEGORIES = frozenset({"favorite"})
 
     def __init__(
         self,
@@ -156,11 +157,13 @@ class SubscriptionPolicy:
 
         REST fallback이 필요한 수준이면 해당 가격 구독은 신뢰하지 않고,
         다음 조회부터 StockRepository의 streaming TTL 우회를 타지 않도록 정리한다.
+        다만 관심종목 알림은 지속 구독 의도를 보존하고 연결만 새로 맺는다.
         """
         if not code:
             return False
 
         removed = False
+        preserved_price_ref = False
         if code in self._refs:
             price_categories = [
                 category_key
@@ -168,12 +171,15 @@ class SubscriptionPolicy:
                 if request.get("type") == StreamingType.UNIFIED_PRICE
             ]
             for category_key in price_categories:
+                if category_key in self._PERSISTENT_PRICE_CATEGORIES:
+                    preserved_price_ref = True
+                    continue
                 self._refs[code].pop(category_key, None)
                 removed = True
             if not self._refs.get(code):
                 self._refs.pop(code, None)
 
-        if self._streaming_stock_repo:
+        if self._streaming_stock_repo and code not in self._refs:
             await self._streaming_stock_repo.unmark_desired(code, StreamingType.UNIFIED_PRICE)
 
         unsubscribed = False
@@ -186,7 +192,10 @@ class SubscriptionPolicy:
             if self._streaming_stock_repo:
                 await self._streaming_stock_repo.mark_inactive(code, StreamingType.UNIFIED_PRICE)
 
-        if self._streaming_logger and not unsubscribed:
+        if preserved_price_ref:
+            await self._rebalance()
+
+        if self._streaming_logger and not unsubscribed and not preserved_price_ref:
             self._streaming_logger.log_unsubscribe(
                 code=code,
                 active_count=len(self._active_codes_price) + len(self._active_codes_pt),

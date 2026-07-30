@@ -60,6 +60,26 @@ async def test_does_not_repeat_same_five_percent_bucket_until_next_bucket():
 
 
 @pytest.mark.asyncio
+async def test_does_not_repeat_bucket_when_rate_chatters_around_threshold():
+    """5% 경계를 짧게 왕복해도 같은 구간 알림은 쿨다운 동안 한 번만 발행한다."""
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["005930"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(
+        repo,
+        notifications,
+        alert_cooldown_sec=300.0,
+    )
+
+    await svc.handle_price_tick("005930", price="70000", rate="-5.01")
+    await svc.handle_price_tick("005930", price="70050", rate="-4.99")
+    await svc.handle_price_tick("005930", price="70000", rate="-5.02")
+
+    notifications.emit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_alerts_negative_five_percent_bucket():
     repo = MagicMock()
     repo.get_all = AsyncMock(return_value=["005930"])
