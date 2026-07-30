@@ -413,7 +413,7 @@ async def test_streaming_watchdog_restores_desired_pt_when_not_active(watchdog_t
             pass
 
     svc._streaming_logger.log_missing_reason.assert_called_once_with("005930", "pt_not_active")
-    svc._restore_all_subscriptions.assert_awaited_once()
+    svc._restore_all_subscriptions.assert_awaited_once_with(reset_connection=False)
 
 
 @pytest.mark.asyncio
