@@ -1,6 +1,9 @@
 /* view/web/static/js/overseas_marketcap.js — 미국 시가총액 상위 종목 (S&P 500 유니버스) */
 
 let _overseasCapRequestSequence = 0;
+let _overseasCapCurrentLimit = 30;
+let _overseasCapRefreshTimer = null;
+const OVERSEAS_MARKETCAP_REFRESH_MS = 5 * 60 * 1000;
 
 function _capNumber(value) {
     if (value === null || value === undefined || value === '') return null;
@@ -39,8 +42,22 @@ function _capRate(value) {
     return { color, text: `${sign}${normalized.toFixed(2)}%` };
 }
 
+function _formatCapUpdatedAt(value) {
+    const number = _capNumber(value);
+    if (number === null || number <= 0) return '최신 업데이트: --';
+    const date = new Date(number * 1000);
+    if (Number.isNaN(date.getTime())) return '최신 업데이트: --';
+    return `최신 업데이트: ${date.toLocaleString('ko-KR')}`;
+}
+
+function _renderCapUpdatedAt(value) {
+    const el = document.getElementById('overseas-marketcap-updated-at');
+    if (el) el.textContent = _formatCapUpdatedAt(value);
+}
+
 function _renderOverseasMarketCap(div, data) {
     const items = Array.isArray(data.items) ? data.items : [];
+    _renderCapUpdatedAt(data.updated_at);
     if (!items.length) {
         div.innerHTML = '<p class="empty">조회 결과가 없습니다.</p>';
         return;
@@ -74,9 +91,11 @@ function _renderOverseasMarketCap(div, data) {
     `;
 }
 
-async function loadOverseasTopMarketCap(limit = 30) {
+async function loadOverseasTopMarketCap(limit = 30, options = {}) {
     const requestSequence = ++_overseasCapRequestSequence;
     const isLatestRequest = () => requestSequence === _overseasCapRequestSequence;
+    const shouldShowLoading = options.showLoading !== false;
+    _overseasCapCurrentLimit = Number(limit) || 30;
 
     document.querySelectorAll('#section-overseas-marketcap .ranking-tab').forEach(button => {
         button.classList.toggle('active', Number(button.dataset.limit) === Number(limit));
@@ -84,7 +103,7 @@ async function loadOverseasTopMarketCap(limit = 30) {
 
     const div = document.getElementById('overseas-marketcap-result');
     if (!div) return;
-    showLoading(div, '미국 시가총액 조회 중...');
+    if (shouldShowLoading) showLoading(div, '미국 시가총액 조회 중...');
 
     try {
         const res = await fetchWithTimeout(`/api/overseas/top-market-cap?limit=${encodeURIComponent(limit)}`, {}, 30000);
@@ -109,12 +128,20 @@ async function loadOverseasTopMarketCap(limit = 30) {
     }
 }
 
+function initOverseasMarketCapPage() {
+    void loadOverseasTopMarketCap(_overseasCapCurrentLimit);
+    if (_overseasCapRefreshTimer !== null) return;
+    _overseasCapRefreshTimer = setInterval(() => {
+        void loadOverseasTopMarketCap(_overseasCapCurrentLimit, { showLoading: false });
+    }, OVERSEAS_MARKETCAP_REFRESH_MS);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     if (window.location.pathname !== '/overseas-marketcap') return;
-    void loadOverseasTopMarketCap(30);
+    initOverseasMarketCapPage();
 });
 
 document.addEventListener('pjax:ready', (e) => {
     if (e.detail?.path !== '/overseas-marketcap') return;
-    void loadOverseasTopMarketCap(30);
+    initOverseasMarketCapPage();
 });

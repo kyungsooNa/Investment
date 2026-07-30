@@ -33,6 +33,7 @@ class OverseasMarketStatsService:
         logger=None,
         ttl_sec: float = 300.0,
         clock=time.monotonic,
+        wall_clock=time.time,
     ):
         # 유니버스는 첫 조회 시점에 만든다. 구성종목 DB 가 없으면 생성에 외부 다운로드가
         # 따라붙는데, 이를 웹 시작 경로에 두면 아무도 안 보는 화면 때문에 부팅이 늦어진다.
@@ -43,8 +44,10 @@ class OverseasMarketStatsService:
         self._logger = logger or logging.getLogger(__name__)
         self._ttl_sec = ttl_sec
         self._clock = clock
+        self._wall_clock = wall_clock
         self._lock = asyncio.Lock()
         self._cached_at: Optional[float] = None
+        self._updated_at: Optional[float] = None
         self._snapshots: list = []
         self._fx_rate: Optional[float] = None
 
@@ -64,11 +67,11 @@ class OverseasMarketStatsService:
         universe = self._get_universe()
         symbols = universe.all_symbols() if universe else []
         if not symbols:
-            return [], None
+            return [], None, None
 
         async with self._lock:
             if self._cached_at is not None and (self._clock() - self._cached_at) <= self._ttl_sec:
-                return self._snapshots, self._fx_rate
+                return self._snapshots, self._fx_rate, self._updated_at
 
             snapshots, fx_rate = await asyncio.gather(
                 self._provider.fetch_snapshots(symbols),
@@ -77,7 +80,8 @@ class OverseasMarketStatsService:
             self._snapshots = snapshots
             self._fx_rate = fx_rate
             self._cached_at = self._clock()
-            return self._snapshots, self._fx_rate
+            self._updated_at = self._wall_clock()
+            return self._snapshots, self._fx_rate, self._updated_at
 
     async def _fetch_fx_rate(self) -> Optional[float]:
         try:
@@ -89,7 +93,7 @@ class OverseasMarketStatsService:
 
     async def get_top_market_cap(self, limit: int = 30) -> dict:
         """시가총액 상위 종목. market_cap 이 없는 심볼은 제외한다."""
-        snapshots, fx_rate = await self.get_snapshots()
+        snapshots, fx_rate, updated_at = await self.get_snapshots()
         ranked = sorted(
             (snap for snap in snapshots if snap.market_cap > 0),
             key=lambda snap: snap.market_cap,
@@ -100,7 +104,7 @@ class OverseasMarketStatsService:
             self._to_item(snap, rank, fx_rate)
             for rank, snap in enumerate(ranked, 1)
         ]
-        return {"fx_rate": fx_rate, "items": items}
+        return {"fx_rate": fx_rate, "items": items, "updated_at": updated_at}
 
     async def get_ranking(self, category: str, limit: int = 30) -> dict:
         """등락률/거래량/거래대금 랭킹. 시가총액 화면과 스냅샷 캐시를 공유한다."""
@@ -109,14 +113,14 @@ class OverseasMarketStatsService:
             raise ValueError(f"지원하지 않는 미국장 랭킹 구분: {category}")
         key, descending = sort
 
-        snapshots, fx_rate = await self.get_snapshots()
+        snapshots, fx_rate, updated_at = await self.get_snapshots()
         ranked = sorted(snapshots, key=key, reverse=descending)[:limit]
 
         items = [
             self._to_item(snap, rank, fx_rate)
             for rank, snap in enumerate(ranked, 1)
         ]
-        return {"fx_rate": fx_rate, "items": items}
+        return {"fx_rate": fx_rate, "items": items, "updated_at": updated_at}
 
     def _to_item(self, snap, rank: int, fx_rate: Optional[float]) -> dict:
         meta = self._universe.get_meta(snap.symbol) if self._universe else None
