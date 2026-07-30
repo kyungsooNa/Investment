@@ -12,6 +12,13 @@ from repositories.stock_code_repository import StockCodeRepository
 _DEFAULT_OVERSEAS_EXCHANGE = "NASD"
 
 
+def _normalize_domestic_code(code: str) -> str:
+    normalized = str(code or "").strip()
+    if normalized.isdigit() and len(normalized) <= 6:
+        return normalized.zfill(6)
+    return normalized
+
+
 def _extract_price_rate(data) -> tuple:
     """API 응답 dict 또는 dataclass에서 (stck_prpr, prdy_ctrt) 추출."""
     if isinstance(data, dict):
@@ -40,15 +47,41 @@ class FavoriteService:
         self.overseas_stock_code_repository = overseas_stock_code_repository
 
     async def get_all(self, market: str = MARKET_DOMESTIC) -> list:
-        return await self.repository.get_all(market=market)
+        codes = await self.repository.get_all(market=market)
+        if market != MARKET_DOMESTIC:
+            return codes
+        normalized_codes = []
+        seen = set()
+        for code in codes:
+            normalized = _normalize_domestic_code(code)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            normalized_codes.append(normalized)
+        return normalized_codes
 
     async def add(self, code: str, market: str = MARKET_DOMESTIC) -> bool:
+        if market == MARKET_DOMESTIC:
+            code = _normalize_domestic_code(code)
         return await self.repository.add(code, market=market)
 
     async def remove(self, code: str, market: str = MARKET_DOMESTIC) -> bool:
+        if market == MARKET_DOMESTIC:
+            normalized = _normalize_domestic_code(code)
+            removed = await self.repository.remove(normalized, market=market)
+            if removed or normalized == str(code or "").strip():
+                return removed
+            return await self.repository.remove(str(code or "").strip(), market=market)
         return await self.repository.remove(code, market=market)
 
     async def is_favorite(self, code: str, market: str = MARKET_DOMESTIC) -> bool:
+        if market == MARKET_DOMESTIC:
+            normalized = _normalize_domestic_code(code)
+            if await self.repository.is_favorite(normalized, market=market):
+                return True
+            if normalized != str(code or "").strip():
+                return await self.repository.is_favorite(str(code or "").strip(), market=market)
+            return False
         return await self.repository.is_favorite(code, market=market)
 
     async def get_with_details(self, market: str = MARKET_DOMESTIC) -> list:
@@ -62,7 +95,7 @@ class FavoriteService:
         if market == MARKET_OVERSEAS_US:
             return await self._get_overseas_details()
 
-        codes = await self.repository.get_all(market=market)
+        codes = await self.get_all(market=market)
         if not codes:
             return []
 

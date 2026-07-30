@@ -52,13 +52,19 @@ async def test_get_all_delegates(service, mock_repo):
     mock_repo.get_all.assert_called_once_with(market="domestic")
 
 
+async def test_get_all_normalizes_domestic_codes_for_realtime_subscription(service, mock_repo):
+    mock_repo.get_all.return_value = ["5930", "000660"]
+
+    assert await service.get_all() == ["005930", "000660"]
+
+
 async def test_add_overseas_passes_market(service, mock_repo):
     assert await service.add("AAPL", market="overseas_us") is True
     mock_repo.add.assert_called_once_with("AAPL", market="overseas_us")
 
 
 async def test_add_delegates(service, mock_repo):
-    assert await service.add("005930") is True
+    assert await service.add("5930") is True
     mock_repo.add.assert_called_once_with("005930", market="domestic")
 
 
@@ -72,10 +78,26 @@ async def test_remove_delegates(service, mock_repo):
     mock_repo.remove.assert_called_once_with("005930", market="domestic")
 
 
+async def test_remove_falls_back_to_legacy_unpadded_code(service, mock_repo):
+    mock_repo.remove.side_effect = [False, True]
+
+    assert await service.remove("5930") is True
+    assert mock_repo.remove.await_args_list[0].args == ("005930",)
+    assert mock_repo.remove.await_args_list[1].args == ("5930",)
+
+
 async def test_is_favorite_delegates(service, mock_repo):
     mock_repo.is_favorite.return_value = True
     assert await service.is_favorite("005930") is True
     mock_repo.is_favorite.assert_called_once_with("005930", market="domestic")
+
+
+async def test_is_favorite_checks_legacy_unpadded_code(service, mock_repo):
+    mock_repo.is_favorite.side_effect = [False, True]
+
+    assert await service.is_favorite("5930") is True
+    assert mock_repo.is_favorite.await_args_list[0].args == ("005930",)
+    assert mock_repo.is_favorite.await_args_list[1].args == ("5930",)
 
 
 async def test_get_with_details_empty(service, mock_repo):
