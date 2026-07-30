@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from common.date_utils import previous_trading_day_str
 from common.types import ErrorCode
 from core.market_clock import MarketClock
 from services.stock_query_service import StockQueryService
@@ -46,6 +47,7 @@ class RegimeSnapshot:
     max_daily_drop_pct: float
     ma_values: List[float] = field(default_factory=list)
     fail_detail: str = ""
+    data_date: str = ""       # 판정에 사용한 마지막 확정 일봉 날짜 (YYYYMMDD)
 
 
 class MarketRegimeService:
@@ -118,10 +120,26 @@ class MarketRegimeService:
         period = self._cfg.ma_period
         days = self._cfg.rising_days
 
-        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(etf_code, limit=period + days + 5)
+        force_refresh = as_of_date is None
+        query_end_date = as_of_date
+        if force_refresh:
+            now = self._tm.get_current_kst_time()
+            query_end_date = (
+                previous_trading_day_str(now)
+                if self._tm.is_market_operating_hours()
+                else now.strftime("%Y%m%d")
+            )
+
+        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(
+            etf_code,
+            limit=period + days + 5,
+            end_date=query_end_date,
+            force_refresh=force_refresh,
+        )
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
         if as_of_date:
             ohlcv = [r for r in ohlcv if r.get("date", "") <= as_of_date]
+        data_date = ohlcv[-1].get("date", "") if ohlcv else ""
 
         if not ohlcv or len(ohlcv) < period + days:
             snap = RegimeSnapshot(
@@ -134,6 +152,7 @@ class MarketRegimeService:
                 max_daily_drop_pct=0.0,
                 ma_values=[],
                 fail_detail="insufficient data",
+                data_date=data_date,
             )
             logger.debug({
                 "event": "market_regime_check",
@@ -193,6 +212,7 @@ class MarketRegimeService:
             max_daily_drop_pct=round(max_daily_drop_pct, 3),
             ma_values=[round(v, 2) for v in ma_values],
             fail_detail=fail_detail,
+            data_date=data_date,
         )
         logger.debug({
             "event": "market_regime_check",

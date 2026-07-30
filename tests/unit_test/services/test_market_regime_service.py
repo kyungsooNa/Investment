@@ -27,6 +27,7 @@ def _make_service(closes, *, today="20260514"):
     )
     tm = MagicMock()
     tm.get_current_kst_time = MagicMock(return_value=datetime.strptime(today, "%Y%m%d"))
+    tm.is_market_operating_hours = MagicMock(return_value=False)
     cfg = MarketRegimeConfig(
         kospi_etf_code="069500",
         kosdaq_etf_code="229200",
@@ -52,6 +53,25 @@ async def test_classify_rising_returns_bull():
     assert snap.trend_status == "rising"
     assert snap.regime_label == "bull"
     assert snap.is_rising is True
+
+
+@pytest.mark.asyncio
+async def test_classify_live_forces_fresh_closed_ohlcv():
+    """실시간 국면 판정은 오래된 DB 캐시 대신 직전 확정 일봉을 강제 조회한다."""
+    closes = [100, 101, 102, 103, 104, 106, 108, 110]
+    svc, sqs = _make_service(closes)
+    svc._tm.get_current_kst_time.return_value = datetime(2026, 5, 14, 11, 21)
+    svc._tm.is_market_operating_hours.return_value = True
+
+    snap = await svc.classify("KOSPI")
+
+    sqs.get_recent_daily_ohlcv.assert_awaited_once_with(
+        "069500",
+        limit=12,
+        end_date="20260513",
+        force_refresh=True,
+    )
+    assert snap.data_date == "20260108"
 
 
 @pytest.mark.asyncio

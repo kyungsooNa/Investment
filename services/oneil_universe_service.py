@@ -1031,6 +1031,7 @@ class OneilUniverseService:
 
                 ma_str = " ➔ ".join([f"{v:.2f}" for v in snap.ma_values])
                 msg = f"• 지수: {market} ({code})\n• 상태: {status_text}\n"
+                msg += f"• 데이터 기준일: {snap.data_date or '확인 불가'}\n"
                 if not is_rising and snap.fail_detail:
                     msg += f"• 사유: {snap.fail_detail}\n"
                 msg += f"• 최근 MA({self._cfg.market_ma_period}) 추이: {ma_str}"
