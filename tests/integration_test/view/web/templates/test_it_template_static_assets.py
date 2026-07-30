@@ -19,6 +19,7 @@ PAGE_PATHS = [
     "/balance",
     "/order",
     "/overseas",
+    "/overseas-favorite",
     "/overseas-marketcap",
     "/overseas-ranking",
     "/ranking",
@@ -97,6 +98,7 @@ def test_rendered_pages_reference_served_static_assets(web_client_with_fake_ctx)
         ("/balance", "domestic"),
         ("/order", "domestic"),
         ("/overseas", "overseas_us"),
+        ("/overseas-favorite", "overseas_us"),
         ("/overseas-marketcap", "overseas_us"),
         ("/overseas-ranking", "overseas_us"),
         ("/virtual", "common"),
@@ -123,6 +125,15 @@ def test_navigation_separates_domestic_overseas_and_common_areas(web_client_with
     assert 'data-nav-market="common"' in page.text
     assert '>한국장<' in page.text
     assert '>미국장<' in page.text
+
+
+def test_overseas_favorite_uses_feature_navigation(web_client_with_fake_ctx):
+    page = web_client_with_fake_ctx.get("/overseas-favorite")
+
+    assert page.status_code == 200
+    assert 'href="/overseas-favorite" class="active">즐겨찾기</a>' in page.text
+    assert 'id="overseas-panel-favorite"' in page.text
+    assert 'id="overseas-tab-favorite"' not in page.text
 
 
 def test_stock_page_is_domestic_only(web_client_with_fake_ctx):

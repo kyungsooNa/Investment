@@ -503,6 +503,16 @@ async def order(request: Request):
 async def overseas(request: Request):
     return await render_page(request, "overseas.html", "overseas", view_market="overseas_us")
 
+@page_router.get("/overseas-favorite")
+async def overseas_favorite(request: Request):
+    return await render_page(
+        request,
+        "overseas.html",
+        "overseas_favorite",
+        view_market="overseas_us",
+        required_role=OPERATOR,
+    )
+
 @page_router.get("/overseas-marketcap")
 async def overseas_marketcap(request: Request):
     return await render_page(
