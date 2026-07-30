@@ -4,6 +4,7 @@
 import asyncio
 from fastapi import APIRouter, HTTPException, Query
 from repositories.favorite_repository import MARKET_DOMESTIC, MARKET_OVERSEAS_US
+from services.favorite_service import _normalize_domestic_code
 from view.web.api_common import _get_ctx
 
 router = APIRouter(prefix="/favorite", tags=["favorite"])
@@ -59,22 +60,23 @@ async def add_favorite(code: str, market: str = Query(MARKET_DOMESTIC)):
     _validate_market(market)
     ctx = _get_ctx()
     added = await ctx.favorite_service.add(code, market=market)
+    effective_code = _normalize_domestic_code(code) if market == MARKET_DOMESTIC else code
     if added and market == MARKET_DOMESTIC:
         alert_service = _ctx_attr(ctx, "favorite_price_alert_service")
         if alert_service:
-            await alert_service.add_favorite(code)
+            await alert_service.add_favorite(effective_code)
         price_subscription_service = _ctx_attr(ctx, "price_subscription_service")
         if price_subscription_service:
             try:
                 from services.price_subscription_service import SubscriptionPriority
                 await price_subscription_service.add_subscription(
-                    code,
+                    effective_code,
                     SubscriptionPriority.MEDIUM,
                     "favorite",
                 )
             except Exception as e:
                 ctx.logger.warning(f"관심종목 구독 추가 실패: {e}")
-    return {"success": True, "added": added, "code": code, "market": market}
+    return {"success": True, "added": added, "code": effective_code, "market": market}
 
 
 @router.delete("/{code}")
@@ -83,17 +85,20 @@ async def remove_favorite(code: str, market: str = Query(MARKET_DOMESTIC)):
     _validate_market(market)
     ctx = _get_ctx()
     removed = await ctx.favorite_service.remove(code, market=market)
+    effective_code = _normalize_domestic_code(code) if market == MARKET_DOMESTIC else code
     if removed and market == MARKET_DOMESTIC:
         alert_service = _ctx_attr(ctx, "favorite_price_alert_service")
         if alert_service:
-            await alert_service.remove_favorite(code)
+            await alert_service.remove_favorite(effective_code)
         price_subscription_service = _ctx_attr(ctx, "price_subscription_service")
         if price_subscription_service:
             try:
-                await price_subscription_service.remove_subscription(code, "favorite")
+                await price_subscription_service.remove_subscription(effective_code, "favorite")
+                if effective_code != code:
+                    await price_subscription_service.remove_subscription(code, "favorite")
             except Exception as e:
                 ctx.logger.warning(f"관심종목 구독 제거 실패: {e}")
-    return {"success": True, "removed": removed, "code": code, "market": market}
+    return {"success": True, "removed": removed, "code": effective_code, "market": market}
 
 
 @router.get("/{code}/status")

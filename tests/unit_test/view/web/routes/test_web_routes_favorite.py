@@ -88,6 +88,28 @@ async def test_add_favorite_syncs_alert_cache_and_price_subscription(web_client,
         assert args[2] == "favorite"
 
 
+async def test_add_favorite_unpadded_domestic_code_subscribes_padded_code(web_client, mock_web_ctx):
+    """POST /api/favorite/{code} - 0 없는 국내 코드는 실시간 구독에 6자리로 전달한다."""
+    with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
+        mock_web_ctx.favorite_service = MagicMock()
+        mock_web_ctx.favorite_service.add = AsyncMock(return_value=True)
+        mock_web_ctx.favorite_price_alert_service = MagicMock()
+        mock_web_ctx.favorite_price_alert_service.add_favorite = AsyncMock()
+        mock_web_ctx.price_subscription_service = MagicMock()
+        mock_web_ctx.price_subscription_service.add_subscription = AsyncMock()
+
+        response = web_client.post("/api/favorite/5930")
+        assert response.status_code == 200
+        assert response.json()["code"] == "005930"
+
+        mock_web_ctx.favorite_service.add.assert_awaited_once_with("5930", market="domestic")
+        mock_web_ctx.favorite_price_alert_service.add_favorite.assert_awaited_once_with("005930")
+        args = mock_web_ctx.price_subscription_service.add_subscription.await_args.args
+        assert args[0] == "005930"
+        assert args[1] == SubscriptionPriority.MEDIUM
+        assert args[2] == "favorite"
+
+
 async def test_remove_favorite(web_client, mock_web_ctx):
     """DELETE /api/favorite/{code} - 삭제 성공"""
     with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
@@ -132,6 +154,31 @@ async def test_remove_favorite_syncs_alert_cache_and_price_subscription(web_clie
 
         mock_web_ctx.favorite_price_alert_service.remove_favorite.assert_awaited_once_with("005930")
         mock_web_ctx.price_subscription_service.remove_subscription.assert_awaited_once_with("005930", "favorite")
+
+
+async def test_remove_favorite_unpadded_domestic_code_removes_padded_subscription(web_client, mock_web_ctx):
+    """DELETE /api/favorite/{code} - 0 없는 국내 코드는 6자리 구독을 정리한다."""
+    with patch("view.web.routes.favorite._get_ctx", return_value=mock_web_ctx):
+        mock_web_ctx.favorite_service = MagicMock()
+        mock_web_ctx.favorite_service.remove = AsyncMock(return_value=True)
+        mock_web_ctx.favorite_price_alert_service = MagicMock()
+        mock_web_ctx.favorite_price_alert_service.remove_favorite = AsyncMock()
+        mock_web_ctx.price_subscription_service = MagicMock()
+        mock_web_ctx.price_subscription_service.remove_subscription = AsyncMock()
+
+        response = web_client.delete("/api/favorite/5930")
+        assert response.status_code == 200
+        assert response.json()["code"] == "005930"
+
+        mock_web_ctx.favorite_price_alert_service.remove_favorite.assert_awaited_once_with("005930")
+        assert mock_web_ctx.price_subscription_service.remove_subscription.await_args_list[0].args == (
+            "005930",
+            "favorite",
+        )
+        assert mock_web_ctx.price_subscription_service.remove_subscription.await_args_list[1].args == (
+            "5930",
+            "favorite",
+        )
 
 
 async def test_get_favorite_list_overseas_passes_market(web_client, mock_web_ctx):
