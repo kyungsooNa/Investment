@@ -130,6 +130,7 @@ class FavoritePriceAlertService:
                 "threshold_pct": threshold_pct,
                 "dedup_key": f"favorite_price:{normalized}:{threshold_pct}",
                 "force_external": True,
+                "telegram_channel": "report",
             },
         )
         return True
@@ -154,6 +155,7 @@ class FavoritePriceAlertService:
                 "is_upper_limit": True,
                 "dedup_key": f"favorite_price:{code}:upper_limit",
                 "force_external": True,
+                "telegram_channel": "report",
             },
         )
         return True

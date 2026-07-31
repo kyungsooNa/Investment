@@ -27,6 +27,7 @@ async def test_alerts_when_favorite_rate_crosses_positive_five_percent():
     assert "75,000원" in args[3]
     assert kwargs["metadata"]["threshold_pct"] == 5
     assert kwargs["metadata"]["force_external"] is True
+    assert kwargs["metadata"]["telegram_channel"] == "report"
 
 
 @pytest.mark.asyncio

@@ -102,12 +102,23 @@ def _format_disclosure_ai_summary_html(summary_text: str) -> str:
 class TelegramNotifier:
     """Telegram 알림을 비동기적으로 전송하는 핸들러 클래스입니다."""
 
-    def __init__(self, strategy_bot_token: str, backlog_bot_token: str, chat_id: str, history_repository=None):
+    def __init__(
+        self,
+        strategy_bot_token: str,
+        backlog_bot_token: str,
+        chat_id: str,
+        history_repository=None,
+        report_bot_token: Optional[str] = None,
+    ):
         self.strategy_bot_token = strategy_bot_token
         self.backlog_bot_token = backlog_bot_token
         self.chat_id = chat_id
         self.strategy_api_url = f"https://api.telegram.org/bot{self.strategy_bot_token}/sendMessage"
         self.backlog_api_url = f"https://api.telegram.org/bot{self.backlog_bot_token}/sendMessage"
+        self.report_api_url = (
+            f"https://api.telegram.org/bot{report_bot_token}/sendMessage"
+            if report_bot_token else None
+        )
         self._history_repository = history_repository
         # 허용할 카테고리 목록 설정 (기본값: STRATEGY, BACKGROUND, SYSTEM)
         self.allowed_categories = [NotificationCategory.STRATEGY, NotificationCategory.BACKGROUND, NotificationCategory.SYSTEM]
@@ -118,9 +129,16 @@ class TelegramNotifier:
         if self.allowed_categories is not None and event.category not in self.allowed_categories:
             return
         
+        metadata = event.metadata or {}
+        is_report_channel = metadata.get("telegram_channel") == "report"
         api_url = None
-        if event.category == NotificationCategory.STRATEGY:
+        source = "backlog"
+        if is_report_channel and self.report_api_url:
+            api_url = self.report_api_url
+            source = "report"
+        elif event.category == NotificationCategory.STRATEGY:
             api_url = self.strategy_api_url
+            source = "strategy"
         elif event.category == NotificationCategory.BACKGROUND or \
             event.category == NotificationCategory.SYSTEM:
             api_url = self.backlog_api_url
@@ -181,7 +199,7 @@ class TelegramNotifier:
                         try:
                             self._history_repository.record(
                                 sent_at=event.timestamp,
-                                source="strategy" if event.category == NotificationCategory.STRATEGY else "backlog",
+                                source=source,
                                 title=event.title,
                                 message=event.message,
                                 level=event.level.value,

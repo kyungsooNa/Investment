@@ -123,6 +123,7 @@ class ConfigBootstrap:
                 strategy_bot_token=telegram_strategy_bot_token,
                 chat_id=telegram_chat_id,
                 history_repository=ctx.telegram_notification_repository,
+                report_bot_token=telegram_report_bot_token,
             )
             ctx.notification_service.register_external_handler(
                 ctx.telegram_notifier.handle_event
