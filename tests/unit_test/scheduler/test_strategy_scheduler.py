@@ -1597,6 +1597,40 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         run_strategy.assert_not_awaited()
         self.assertTrue(scheduler._running)
 
+    async def test_restore_state_in_force_exit_window_liquidates_all_holdings(self):
+        """마감 전 강제청산 구간 재시작은 즉시 전량 청산한다.
+
+        재시작 직후 일반 check_exits만 실행하면 전략별 EOD 조건을 기다리는 동안
+        다음 재시작 또는 주문 컷오프를 맞을 수 있다.
+        """
+        scheduler, vm, _, tm, mcs = self._make_scheduler()
+        now = datetime(2026, 7, 30, 15, 12, 0)
+        tm.get_current_kst_time.return_value = now
+        tm.get_market_close_time.return_value = datetime(2026, 7, 30, 15, 40, 0)
+        mcs.is_market_open_now.return_value = True
+        strategy = MockStrategy(name="래리윌리엄스VBO")
+        config = StrategySchedulerConfig(
+            strategy=strategy,
+            interval_minutes=5,
+            force_exit_on_close=True,
+        )
+        scheduler.register(config)
+        vm.get_holds_by_strategy.return_value = [{"code": "316140", "qty": 59}]
+        scheduler._store.load_state.return_value = {
+            "enabled_strategies": ["래리윌리엄스VBO"],
+            "current_positions": [],
+            "strategy_configs": {},
+        }
+
+        with patch.object(scheduler, "_run_strategy", new_callable=AsyncMock) as run_strategy, \
+             patch.object(scheduler, "_loop", new_callable=AsyncMock):
+            await scheduler.restore_state()
+
+        run_strategy.assert_awaited_once_with(
+            config, force_exit_only=True, force_exit_fraction=1.0,
+        )
+        self.assertEqual(scheduler._force_exit_progress["래리윌리엄스VBO"], 1.0)
+
     async def test_restore_state_before_market_open_skips_exit_only(self):
         """장 시작 전 복원은 주문하지 않고 메인 루프가 개장 후 청산을 맡는다."""
         scheduler, vm, _, tm, mcs = self._make_scheduler()

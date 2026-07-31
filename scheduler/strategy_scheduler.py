@@ -2305,7 +2305,26 @@ class StrategyScheduler:
                 else:
                     for cfg in self._strategies:
                         if cfg.strategy.name in restored and self._get_strategy_holdings(cfg):
-                            await self._run_strategy(cfg, exits_only=True)
+                            in_force_exit_window = (
+                                cfg.force_exit_on_close
+                                and isinstance(close_time, datetime)
+                                and now >= close_time - timedelta(
+                                    minutes=self.FORCE_EXIT_MINUTES_BEFORE
+                                )
+                            )
+                            if in_force_exit_window:
+                                # 재시작 직후에는 다음 tier 실행을 보장할 수 없다.
+                                # 따라서 당일청산 전략은 남은 수량을 즉시 전량 청산한다.
+                                self._force_exit_progress[cfg.strategy.name] = 1.0
+                                self._logger.info(
+                                    f"[Scheduler] {cfg.strategy.name}: 재시작 복원 중 "
+                                    "마감 전 강제 청산 구간 진입 — 전량 시장가 청산"
+                                )
+                                await self._run_strategy(
+                                    cfg, force_exit_only=True, force_exit_fraction=1.0
+                                )
+                            else:
+                                await self._run_strategy(cfg, exits_only=True)
 
                 self._task = asyncio.create_task(self._loop())
 
