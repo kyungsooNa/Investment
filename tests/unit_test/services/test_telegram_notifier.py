@@ -74,6 +74,34 @@ def test_init(telegram_notifier):
     assert telegram_notifier.strategy_api_url == "https://api.telegram.org/bottest_strategy_bot_token/sendMessage"
     assert telegram_notifier.backlog_api_url == "https://api.telegram.org/bottest_backlog_bot_token/sendMessage"
 
+
+@pytest.mark.asyncio
+async def test_handle_event_routes_report_channel_to_report_bot():
+    notifier = TelegramNotifier(
+        strategy_bot_token="strategy",
+        backlog_bot_token="backlog",
+        chat_id="chat",
+        report_bot_token="report",
+    )
+    event = NotificationEvent(
+        id="favorite",
+        timestamp="2026-07-31T11:00:00+09:00",
+        category=NotificationCategory.SYSTEM,
+        level=NotificationLevel.WARNING,
+        title="[관심종목] 삼성전자 +5% 상승",
+        message="005930 삼성전자 현재 75,000원, 전일대비 +5.12%",
+        metadata={"telegram_channel": "report"},
+    )
+
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        response = AsyncMock()
+        response.status = 200
+        mock_post.return_value.__aenter__.return_value = response
+
+        await notifier.handle_event(event)
+
+    assert mock_post.call_args.args[0] == notifier.report_api_url
+
 @pytest.mark.asyncio
 async def test_handle_event_success(telegram_notifier, sample_event):
     """텔레그램 메시지 전송 성공 테스트 (200 OK)"""
