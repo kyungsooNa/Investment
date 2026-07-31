@@ -44,6 +44,7 @@ class MarketStatusAlertService:
             "exchange": exchange,
             "reason": reason,
             "market_status": dict(data),
+            "telegram_channel": "report",
         }
 
         self._active_keys_by_code.setdefault(code, set()).add(dedup_key)

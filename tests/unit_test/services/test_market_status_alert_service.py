@@ -46,8 +46,10 @@ async def test_market_status_alert_service_reports_sidecar_warning():
     })
 
     args = operator_alert.report.await_args.args
+    kwargs = operator_alert.report.await_args.kwargs
     assert args[1] == "market_status:sidecar:KRX:005930"
     assert args[2] == "warning"
+    assert kwargs["metadata"]["telegram_channel"] == "report"
 
 
 @pytest.mark.asyncio
