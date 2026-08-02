@@ -599,6 +599,10 @@ async def operator_dashboard(request: Request):
 async def strategy_reports(request: Request):
     return await render_page(request, "strategy_reports.html", "strategy_reports")
 
+@page_router.get("/heatmap")
+async def heatmap(request: Request):
+    return await render_page(request, "heatmap.html", "heatmap")
+
 # 5. 로그아웃
 @page_router.get("/logout")
 async def logout(request: Request):

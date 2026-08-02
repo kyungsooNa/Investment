@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <link rel="stylesheet" href="/static/css/heatmap.css?v=1">
+    <style>
+        /* 줌은 viewport(스크롤 영역) 안에서 sizer 를 키우는 방식이라 viewport 높이가 고정돼야 한다. */
+        .heatmap-page-viewport { position: relative; overflow: auto; height: calc(100vh - 300px); min-height: 420px; }
+        .heatmap-page-sizer { position: relative; width: 100%; height: 100%; }
+        .heatmap-page-panel { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
+        .heatmap-page-tabs { margin-bottom: 12px; }
+        .heatmap-zoom { display: inline-flex; align-items: center; gap: 6px; }
+        .heatmap-zoom button {
+            min-width: 30px; padding: 3px 8px; cursor: pointer;
+            background: var(--bg-secondary); color: var(--text-primary);
+            border: 1px solid var(--border); border-radius: 5px; font-size: 0.85rem;
+        }
+        .heatmap-zoom button:hover { border-color: var(--accent, #4a90e2); }
+        #heatmap-page-zoom-level { font-size: 0.78rem; color: var(--text-secondary); min-width: 44px; text-align: center; }
+        @media (max-width: 640px) { .heatmap-page-viewport { height: calc(100vh - 340px); } }
+    </style>
+    <div class="section">
+        <div class="card">
+            <h2>시장 히트맵</h2>
+            <div class="heatmap-page-tabs" role="tablist" aria-label="히트맵 시장 선택">
+                <button type="button" id="heatmap-page-tab-domestic" class="sub-tab-btn active"
+                        onclick="setHeatmapTab('domestic')">한국</button>
+                <button type="button" id="heatmap-page-tab-overseas" class="sub-tab-btn"
+                        onclick="setHeatmapTab('overseas')">미국</button>
+            </div>
+            <div class="heatmap-toolbar">
+                <span id="heatmap-page-domestic-caption" class="heatmap-updated">기준일: --</span>
+                <span id="heatmap-page-overseas-caption" class="heatmap-updated" style="display:none;">최신 업데이트: --</span>
+                <span class="heatmap-zoom">
+                    <button type="button" onclick="zoomHeatmapPage(-1)" title="축소" aria-label="축소">−</button>
+                    <span id="heatmap-page-zoom-level">100%</span>
+                    <button type="button" onclick="zoomHeatmapPage(1)" title="확대" aria-label="확대">+</button>
+                    <button type="button" onclick="resetHeatmapPageZoom()" title="배율 초기화">초기화</button>
+                </span>
+                <span class="heatmap-legend">
+                    <span class="heatmap-legend-label">하락</span>
+                    <i style="background:#12386f"></i><i style="background:#2b5cb8"></i><i style="background:#4a7fd4"></i><i style="background:#84aee6"></i>
+                    <i style="background:#6b7280"></i>
+                    <i style="background:#e58080"></i><i style="background:#d64545"></i><i style="background:#b52626"></i><i style="background:#8f1a1a"></i>
+                    <span class="heatmap-legend-label">상승</span>
+                </span>
+            </div>
+            <div id="heatmap-page-viewport" class="heatmap-page-viewport">
+                <div id="heatmap-page-sizer" class="heatmap-page-sizer">
+                    <div id="heatmap-page-domestic" class="heatmap-page-panel"></div>
+                    <div id="heatmap-page-overseas" class="heatmap-page-panel" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/market_heatmap.js?v=3"></script>
+<script src="/static/js/heatmap_page.js?v=1"></script>
+{% endblock %}

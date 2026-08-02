@@ -17,29 +17,12 @@
         .home-menu-group { margin-top: 28px; text-align: left; }
         .home-menu-group h3 { margin-bottom: 12px; }
         .home-menu-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
-        .heatmap-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
-        .heatmap-updated, .heatmap-legend-label { font-size: 0.78rem; color: var(--text-secondary); }
-        .heatmap-legend { display: inline-flex; align-items: center; gap: 2px; }
-        .heatmap-legend i { display: inline-block; width: 14px; height: 10px; }
-        .heatmap-legend-label { margin: 0 4px; }
+        /* 타일/섹터/범례 스타일은 /static/css/heatmap.css (전용 페이지와 공용). 여기선 미리보기 높이만 정한다. */
         #market-heatmap, #domestic-heatmap { position: relative; height: 520px; }
-        .heatmap-canvas { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
-        .heatmap-sector { position: absolute; }
-        .heatmap-sector-title {
-            position: absolute; top: 0; left: 0; right: 0; height: 16px; line-height: 16px;
-            font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
-            color: var(--text-secondary); white-space: nowrap; overflow: hidden;
-        }
-        .heatmap-sector-body { position: absolute; left: 0; right: 0; bottom: 0; }
-        .heatmap-tile {
-            position: absolute; box-sizing: border-box; overflow: hidden;
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            border: 1px solid var(--bg-secondary); color: #fff;
-        }
-        .heatmap-tile-symbol { font-size: 0.72rem; font-weight: 700; line-height: 1.15; }
-        .heatmap-tile-rate { font-size: 0.66rem; line-height: 1.15; }
+        .heatmap-expand { font-size: 0.78rem; text-decoration: none; color: var(--accent, #4a90e2); white-space: nowrap; }
         @media (max-width: 640px) { #market-heatmap, #domestic-heatmap { height: 380px; } }
     </style>
+    <link rel="stylesheet" href="/static/css/heatmap.css?v=1">
     <div class="section">
         <div class="card">
             <h2>시장 지수</h2>
@@ -51,6 +34,7 @@
             <h2>S&amp;P 500 히트맵</h2>
             <div class="heatmap-toolbar">
                 <span id="market-heatmap-updated-at" class="heatmap-updated">최신 업데이트: --</span>
+                <a class="heatmap-expand" href="/heatmap">크게 보기 ↗</a>
                 <span class="heatmap-legend">
                     <span class="heatmap-legend-label">하락</span>
                     <i style="background:#12386f"></i><i style="background:#2b5cb8"></i><i style="background:#4a7fd4"></i><i style="background:#84aee6"></i>
@@ -67,6 +51,7 @@
             <h2>국내 시가총액 히트맵</h2>
             <div class="heatmap-toolbar">
                 <span id="domestic-heatmap-updated-at" class="heatmap-updated">기준일: --</span>
+                <a class="heatmap-expand" href="/heatmap">크게 보기 ↗</a>
                 <span class="heatmap-legend">
                     <span class="heatmap-legend-label">하락</span>
                     <i style="background:#12386f"></i><i style="background:#2b5cb8"></i><i style="background:#4a7fd4"></i><i style="background:#84aee6"></i>
