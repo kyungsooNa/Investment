@@ -1,4 +1,4 @@
-"""홈 화면 S&P500 히트맵의 템플릿-스크립트 배선을 잠그는 정적 계약 테스트."""
+"""히트맵 전용 페이지(/heatmap)의 템플릿-스크립트 배선을 잠그는 정적 계약 테스트."""
 
 import re
 from pathlib import Path
@@ -24,35 +24,34 @@ def _heatmap_css() -> str:
     return Path("view/web/static/css/heatmap.css").read_text(encoding="utf-8")
 
 
-def test_home_template_hosts_heatmap_panel():
+def test_home_does_not_duplicate_heatmap_panels():
+    """히트맵은 전용 페이지가 소유한다 — 홈은 조회도 폴링도 하지 않는다."""
     template = _home_template()
 
-    assert 'id="market-heatmap-card"' in template
-    assert 'id="market-heatmap"' in template
-    assert 'id="market-heatmap-updated-at"' in template
-    assert "/static/js/market_heatmap.js" in template
+    for element_id in ("market-heatmap-card", "market-heatmap", "domestic-heatmap-card", "domestic-heatmap"):
+        assert f'id="{element_id}"' not in template, f"{element_id} 가 홈에 남아 중복 조회를 유발함"
+    assert "/static/js/market_heatmap.js" not in template
+    assert "/static/css/heatmap.css" not in template
 
 
-def test_home_template_hosts_domestic_heatmap_panel():
+def test_home_menu_links_to_heatmap_page():
     template = _home_template()
 
-    assert 'id="domestic-heatmap-card"' in template
-    assert 'id="domestic-heatmap"' in template
-    assert 'id="domestic-heatmap-updated-at"' in template
+    assert 'href="/heatmap"' in template, "홈에서 전용 페이지로 갈 수 있어야 함"
 
 
 def test_domestic_heatmap_uses_daily_snapshot_and_shows_base_date():
     script = _heatmap_js()
 
     # 실시간 전종목 시세 소스가 없어 장마감 후 스냅샷을 쓴다 — 기준일을 감추지 않는다.
-    assert "/api/heatmap/domestic" in script
+    assert "/api/heatmap/domestic" in _heatmap_page_js()
     assert "기준일" in script and "종가" in script
     # 배타적 업종 분류가 없으므로 섹터 블록 없이 단일 그룹으로 그린다.
     assert "sector: null" in script
 
 
-def test_heatmap_component_styles_live_in_one_shared_stylesheet():
-    """홈 미리보기와 전용 페이지가 같은 타일을 그리므로 컴포넌트 CSS 는 한 곳에만 둔다."""
+def test_heatmap_component_styles_live_in_a_stylesheet():
+    """타일/섹터/범례 스타일은 템플릿 인라인이 아니라 스타일시트가 소유한다."""
     css = _heatmap_css()
 
     for selector in (
@@ -64,27 +63,21 @@ def test_heatmap_component_styles_live_in_one_shared_stylesheet():
         ".heatmap-legend",
         ".heatmap-toolbar",
     ):
-        assert selector in css, f"{selector} 스타일이 공용 스타일시트에 없음"
+        assert selector in css, f"{selector} 스타일이 스타일시트에 없음"
 
-    for template in (_home_template(), _heatmap_page_template()):
-        assert "/static/css/heatmap.css" in template, "히트맵 공용 스타일시트가 연결되지 않음"
-        assert ".heatmap-tile {" not in template, "컴포넌트 CSS 가 템플릿에 복제되어 있음"
-
-
-def test_home_template_hosts_heatmap_layout_only():
-    """홈은 미리보기 높이만 소유한다(타일 스타일은 공용 시트)."""
-    template = _home_template()
-
-    assert "#market-heatmap, #domestic-heatmap {" in template
+    template = _heatmap_page_template()
+    assert "/static/css/heatmap.css" in template, "히트맵 스타일시트가 연결되지 않음"
+    assert ".heatmap-tile {" not in template, "컴포넌트 CSS 가 템플릿에 복제되어 있음"
 
 
 def test_heatmap_reuses_overseas_market_cap_snapshot():
-    script = _heatmap_js()
-
     # 별도 수집 없이 미국 시가총액 화면과 같은 스냅샷(TTL 캐시 공유)을 쓴다.
-    assert "/api/overseas/top-market-cap" in script
-    assert "HEATMAP_LIMIT = 500" in script
-    # 미국장이 꺼진 run 에서는 조회 대신 카드를 감춘다.
+    page_script = _heatmap_page_js()
+    assert "/api/overseas/top-market-cap" in page_script
+    assert "HEATMAP_PAGE_OVERSEAS_LIMIT = 500" in page_script
+
+    # 미국장이 꺼진 run 에서는 조회 대신 탭을 감춘다.
+    script = _heatmap_js()
     assert "/api/market-mode" in script
     assert "overseas_us" in script
 
@@ -102,9 +95,9 @@ def test_heatmap_legend_colors_match_script_palette():
 
     palette = set(re.findall(r"color: '(#[0-9a-f]{6})'", script))
     assert len(palette) == 8, f"상승/하락 4단계 색이 정의되어야 함 (실제 {len(palette)}종)"
-    for template in (_home_template(), _heatmap_page_template()):
-        for color in palette:
-            assert color in template, f"범례에 {color} 가 빠져 스크립트와 어긋남"
+    template = _heatmap_page_template()
+    for color in palette:
+        assert color in template, f"범례에 {color} 가 빠져 스크립트와 어긋남"
 
 
 def test_heatmap_page_hosts_market_tabs_and_panels():
@@ -157,10 +150,12 @@ def test_heatmap_zoom_scales_label_threshold():
     assert re.search(r"box\.h \* zoom", script), "라벨 기준이 줌 배율을 반영하지 않음"
 
 
-def test_home_cards_link_to_heatmap_page():
-    template = _home_template()
+def test_render_script_has_no_home_wiring():
+    """홈 미리보기를 걷어낸 뒤 남은 배선은 전용 페이지가 전부 소유한다."""
+    script = _heatmap_js()
 
-    assert template.count('href="/heatmap"') >= 2, "홈의 두 히트맵 카드에서 전용 페이지로 갈 수 있어야 함"
+    for symbol in ("initMarketHeatmap", "initDomesticHeatmap", "HEATMAP_REFRESH_MS", "setInterval"):
+        assert symbol not in script, f"{symbol} 가 남아 홈 전용 배선이 잔존함"
 
 
 def test_heatmap_follows_domestic_up_red_convention():

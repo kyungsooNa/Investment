@@ -17,50 +17,11 @@
         .home-menu-group { margin-top: 28px; text-align: left; }
         .home-menu-group h3 { margin-bottom: 12px; }
         .home-menu-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
-        /* 타일/섹터/범례 스타일은 /static/css/heatmap.css (전용 페이지와 공용). 여기선 미리보기 높이만 정한다. */
-        #market-heatmap, #domestic-heatmap { position: relative; height: 520px; }
-        .heatmap-expand { font-size: 0.78rem; text-decoration: none; color: var(--accent, #4a90e2); white-space: nowrap; }
-        @media (max-width: 640px) { #market-heatmap, #domestic-heatmap { height: 380px; } }
     </style>
-    <link rel="stylesheet" href="/static/css/heatmap.css?v=1">
     <div class="section">
         <div class="card">
             <h2>시장 지수</h2>
             <div id="market-indices"></div>
-        </div>
-    </div>
-    <div class="section">
-        <div class="card" id="market-heatmap-card">
-            <h2>S&amp;P 500 히트맵</h2>
-            <div class="heatmap-toolbar">
-                <span id="market-heatmap-updated-at" class="heatmap-updated">최신 업데이트: --</span>
-                <a class="heatmap-expand" href="/heatmap">크게 보기 ↗</a>
-                <span class="heatmap-legend">
-                    <span class="heatmap-legend-label">하락</span>
-                    <i style="background:#12386f"></i><i style="background:#2b5cb8"></i><i style="background:#4a7fd4"></i><i style="background:#84aee6"></i>
-                    <i style="background:#6b7280"></i>
-                    <i style="background:#e58080"></i><i style="background:#d64545"></i><i style="background:#b52626"></i><i style="background:#8f1a1a"></i>
-                    <span class="heatmap-legend-label">상승</span>
-                </span>
-            </div>
-            <div id="market-heatmap"></div>
-        </div>
-    </div>
-    <div class="section">
-        <div class="card" id="domestic-heatmap-card">
-            <h2>국내 시가총액 히트맵</h2>
-            <div class="heatmap-toolbar">
-                <span id="domestic-heatmap-updated-at" class="heatmap-updated">기준일: --</span>
-                <a class="heatmap-expand" href="/heatmap">크게 보기 ↗</a>
-                <span class="heatmap-legend">
-                    <span class="heatmap-legend-label">하락</span>
-                    <i style="background:#12386f"></i><i style="background:#2b5cb8"></i><i style="background:#4a7fd4"></i><i style="background:#84aee6"></i>
-                    <i style="background:#6b7280"></i>
-                    <i style="background:#e58080"></i><i style="background:#d64545"></i><i style="background:#b52626"></i><i style="background:#8f1a1a"></i>
-                    <span class="heatmap-legend-label">상승</span>
-                </span>
-            </div>
-            <div id="domestic-heatmap"></div>
         </div>
     </div>
     <div class="section">
@@ -115,6 +76,10 @@
             <section class="home-menu-group" data-home-market="common">
                 <h3>공통</h3>
                 <div class="home-menu-grid">
+                <a href="/heatmap" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">🗺️</div>
+                    <div style="font-weight: 600;">시장 히트맵</div>
+                </a>
                 <a href="/virtual" class="card menu-card" style="text-decoration: none; padding: 20px; text-align: center;">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">📊</div>
                     <div style="font-weight: 600;">모의투자 기록</div>
@@ -140,5 +105,4 @@
 
 {% block scripts %}
 <script src="/static/js/market_indices.js?v=3"></script>
-<script src="/static/js/market_heatmap.js?v=2"></script>
 {% endblock %}
