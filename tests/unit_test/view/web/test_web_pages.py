@@ -19,6 +19,7 @@ PAGES = [
     ("/scheduler", "scheduler"),
     ("/program", "program"),
     ("/system", "system"),
+    ("/heatmap", "heatmap"),
 ]
 
 def test_pages_render_success_no_login(web_client, mock_web_ctx):
@@ -106,6 +107,10 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert "프로그램매매 실시간 동향" in response.text
         elif path == "/system":
             assert "시스템 상태 모니터링" in response.text
+        elif path == "/heatmap":
+            assert "시장 히트맵" in response.text
+            assert 'id="heatmap-page-viewport"' in response.text
+            assert "/static/js/heatmap_page.js" in response.text
 
 
 def test_virtual_static_js_exposes_divergence_workflow():

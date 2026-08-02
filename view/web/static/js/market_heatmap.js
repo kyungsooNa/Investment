@@ -174,9 +174,11 @@ function _domesticGroups(items) {
     return [{ sector: null, cap: members.reduce((sum, m) => sum + m.cap, 0), members }];
 }
 
-function _heatmapTileHtml(member, box) {
+// zoom 은 캔버스를 몇 배로 늘려 그리는지(전용 페이지의 확대 배율). 타일이 그만큼 커지므로
+// 라벨 생략 기준도 같이 완화해야 확대의 의미가 있다.
+function _heatmapTileHtml(member, box, zoom) {
     const rateText = _heatmapRateText(member.rate);
-    const showLabel = box.w >= HEATMAP_MIN_LABEL_WIDTH_PCT && box.h >= HEATMAP_MIN_LABEL_HEIGHT_PCT;
+    const showLabel = box.w * zoom >= HEATMAP_MIN_LABEL_WIDTH_PCT && box.h * zoom >= HEATMAP_MIN_LABEL_HEIGHT_PCT;
     const label = showLabel
         ? `<span class="heatmap-tile-symbol">${escapeHtml(member.label)}</span>`
           + `<span class="heatmap-tile-rate">${escapeHtml(rateText)}</span>`
@@ -193,13 +195,13 @@ function _heatmapTileHtml(member, box) {
     `;
 }
 
-function _heatmapSectorHtml(group, box) {
+function _heatmapSectorHtml(group, box, zoom) {
     const memberBoxes = _squarifyTreemap(
         group.members.map((member, index) => ({ key: index, weight: member.cap })),
         { x: 0, y: 0, w: 100, h: 100 },
     );
     const tiles = memberBoxes
-        .map(memberBox => _heatmapTileHtml(group.members[memberBox.key], memberBox))
+        .map(memberBox => _heatmapTileHtml(group.members[memberBox.key], memberBox, zoom))
         .join('');
 
     // 섹터명이 없는 시장(국내)은 헤더 없이 타일이 블록 전체를 채운다.
@@ -238,9 +240,11 @@ function _renderHeatmapCaption(elementId, text) {
     if (el) el.textContent = text;
 }
 
+// source.zoom 은 전용 페이지가 배율을 주입하는 훅. 홈 미리보기는 배율이 없어 1 이다.
 function _renderHeatmap(div, source, data) {
     _renderHeatmapCaption(source.captionId, source.caption(data));
 
+    const zoom = typeof source.zoom === 'function' ? source.zoom() : 1;
     const groups = source.toGroups(Array.isArray(data.items) ? data.items : []);
     if (!groups.length) {
         div.innerHTML = '<p class="empty">조회 결과가 없습니다.</p>';
@@ -252,7 +256,7 @@ function _renderHeatmap(div, source, data) {
         { x: 0, y: 0, w: 100, h: 100 },
     );
     div.innerHTML = `<div class="heatmap-canvas">${
-        sectorBoxes.map(box => _heatmapSectorHtml(groups[box.key], box)).join('')
+        sectorBoxes.map(box => _heatmapSectorHtml(groups[box.key], box, zoom)).join('')
     }</div>`;
 }
 
@@ -298,7 +302,9 @@ async function _loadHeatmap(source, options = {}) {
             showError(div, `실패: ${json.msg1 || '히트맵 조회에 실패했습니다.'}`);
             return;
         }
-        _renderHeatmap(div, source, json.data || {});
+        // 배율을 바꿀 때 재조회 없이 다시 그릴 수 있도록 마지막 응답을 소스에 남긴다.
+        source.lastData = json.data || {};
+        _renderHeatmap(div, source, source.lastData);
     } catch (e) {
         console.error('[market-heatmap] 히트맵 조회 오류', e);
         if (!isLatestRequest()) return;

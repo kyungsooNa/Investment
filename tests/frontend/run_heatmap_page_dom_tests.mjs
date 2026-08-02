@@ -1,0 +1,257 @@
+/*
+ * jsdom 기반 히트맵 전용 페이지(/heatmap) 회귀 테스트.
+ *
+ * 홈의 미리보기와 달리 전용 페이지는 (1) 한국/미국 탭 전환과 (2) 줌을 소유한다.
+ * 줌은 CSS transform 이 아니라 캔버스 크기 + 재렌더로 구현돼 있어(작은 타일의
+ * 라벨이 실제로 살아나야 함) 그 계약을 여기서 잠근다.
+ *
+ * 실행: node run_heatmap_page_dom_tests.mjs
+ */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { JSDOM } from "jsdom";
+import { applyCommonStubs, test, assert, run } from "./harness.mjs";
+
+const HEATMAP_JS = resolve(import.meta.dirname, "../../view/web/static/js/market_heatmap.js");
+const HEATMAP_PAGE_JS = resolve(import.meta.dirname, "../../view/web/static/js/heatmap_page.js");
+
+const SCAFFOLD = `
+<div class="heatmap-page-tabs">
+  <button type="button" id="heatmap-page-tab-domestic" class="sub-tab-btn active">한국</button>
+  <button type="button" id="heatmap-page-tab-overseas" class="sub-tab-btn">미국</button>
+</div>
+<div class="heatmap-toolbar">
+  <span id="heatmap-page-domestic-caption" class="heatmap-updated">기준일: --</span>
+  <span id="heatmap-page-overseas-caption" class="heatmap-updated" style="display:none;">최신 업데이트: --</span>
+  <span class="heatmap-zoom">
+    <button type="button" id="heatmap-page-zoom-out">−</button>
+    <span id="heatmap-page-zoom-level">100%</span>
+    <button type="button" id="heatmap-page-zoom-in">+</button>
+    <button type="button" id="heatmap-page-zoom-reset">초기화</button>
+  </span>
+</div>
+<div id="heatmap-page-viewport" class="heatmap-page-viewport">
+  <div id="heatmap-page-sizer" class="heatmap-page-sizer">
+    <div id="heatmap-page-domestic" class="heatmap-page-panel"></div>
+    <div id="heatmap-page-overseas" class="heatmap-page-panel" style="display:none;"></div>
+  </div>
+</div>
+`;
+
+// 전용 페이지 경로('/heatmap')로 만들면 DOMContentLoaded 자동 초기화가 끼어들어 호출 수가 흔들린다.
+// 자동 초기화는 아래 전용 테스트에서 실제 경로 창으로 검증한다.
+function makeWindow(fetchWithTimeout, url = "http://localhost/heatmap-test") {
+  const dom = new JSDOM(`<!DOCTYPE html><html><body>${SCAFFOLD}</body></html>`, {
+    url,
+    runScripts: "outside-only",
+  });
+  const { window } = dom;
+  applyCommonStubs(window);
+  window.fetchWithTimeout = fetchWithTimeout;
+  window.eval(readFileSync(HEATMAP_JS, "utf8"));
+  window.eval(readFileSync(HEATMAP_PAGE_JS, "utf8"));
+  return window;
+}
+
+function success(data) {
+  return { ok: true, json: async () => ({ rt_cd: "0", data }) };
+}
+
+function marketMode(modes) {
+  return { ok: true, json: async () => ({ enabled_market_modes: modes }) };
+}
+
+function domesticItem(overrides) {
+  return { code: "005930", name: "삼성전자", change_rate: "1.20", market_cap: 1000, market: "KOSPI", ...overrides };
+}
+
+function overseasItem(overrides) {
+  return { symbol: "AAA", name: "테스트", sector: "Technology", change_rate: 1.0, market_cap_usd: 1e11, ...overrides };
+}
+
+// 큰 종목 몇 개 + 꼬리 종목 다수 → 줌 1배에서는 라벨이 생략되는 타일이 반드시 생긴다.
+function domesticSnapshot() {
+  const items = [];
+  for (let i = 0; i < 6; i += 1) {
+    items.push(domesticItem({ code: `B${i}`, name: `대형${i}`, market_cap: 4000 - i * 100 }));
+  }
+  for (let i = 0; i < 40; i += 1) {
+    items.push(domesticItem({ code: `S${i}`, name: `소형${i}`, market_cap: 40 - i * 0.5 }));
+  }
+  return { trade_date: "20260731", items };
+}
+
+function labeledSymbols(window, targetId) {
+  return [...window.document.querySelectorAll(`#${targetId} .heatmap-tile`)]
+    .filter(tile => tile.querySelector(".heatmap-tile-symbol"))
+    .map(tile => tile.dataset.symbol);
+}
+
+function routed(handlers) {
+  return async (url) => {
+    const key = Object.keys(handlers).find(prefix => url.startsWith(prefix));
+    if (!key) throw new Error(`stub 되지 않은 요청: ${url}`);
+    return handlers[key]();
+  };
+}
+
+test("전용 페이지는 한국 히트맵부터 그리고 미국은 탭 전환 전까지 조회하지 않는다", async () => {
+  const calls = [];
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic", "overseas_us"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+    "/api/overseas/top-market-cap": () => success({ items: [overseasItem({})] }),
+  }));
+  const traced = window.fetchWithTimeout;
+  window.fetchWithTimeout = (url, ...rest) => { calls.push(url); return traced(url, ...rest); };
+
+  await window.initHeatmapPage();
+
+  const doc = window.document;
+  assert(doc.querySelectorAll("#heatmap-page-domestic .heatmap-tile").length > 0, "한국 히트맵이 그려져야 함");
+  assert(!calls.some(url => url.startsWith("/api/overseas/")), "미국 탭 전환 전에는 미국 API 를 호출하면 안 됨");
+  assert(doc.getElementById("heatmap-page-overseas").style.display === "none", "미국 패널은 감춰져 있어야 함");
+  assert(doc.getElementById("heatmap-page-tab-domestic").classList.contains("active"), "한국 탭이 활성이어야 함");
+});
+
+test("미국 탭으로 전환하면 미국 히트맵을 조회하고 패널을 바꾼다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic", "overseas_us"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+    "/api/overseas/top-market-cap": () => success({
+      items: [overseasItem({ symbol: "MSFT" })],
+      updated_at: 1767225600,
+    }),
+  }));
+
+  await window.initHeatmapPage();
+  await window.setHeatmapTab("overseas");
+
+  const doc = window.document;
+  assert(doc.querySelector('#heatmap-page-overseas .heatmap-tile[data-symbol="MSFT"]'), "미국 타일이 렌더되어야 함");
+  assert(doc.getElementById("heatmap-page-overseas").style.display !== "none", "미국 패널이 보여야 함");
+  assert(doc.getElementById("heatmap-page-domestic").style.display === "none", "한국 패널이 감춰져야 함");
+  assert(doc.getElementById("heatmap-page-tab-overseas").classList.contains("active"), "미국 탭이 활성이어야 함");
+  assert(!doc.getElementById("heatmap-page-tab-domestic").classList.contains("active"), "한국 탭 활성이 해제돼야 함");
+});
+
+test("탭마다 자기 기준 시각 캡션을 보여준다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic", "overseas_us"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+    "/api/overseas/top-market-cap": () => success({ items: [overseasItem({})], updated_at: 1767225600 }),
+  }));
+
+  await window.initHeatmapPage();
+  const doc = window.document;
+  const krCaption = doc.getElementById("heatmap-page-domestic-caption");
+  const usCaption = doc.getElementById("heatmap-page-overseas-caption");
+
+  assert(krCaption.textContent.includes("2026-07-31"), `국내 기준일이 표시되어야 함 (실제 ${krCaption.textContent})`);
+  assert(krCaption.textContent.includes("종가"), "장중 오해를 막기 위해 종가 기준임을 밝혀야 함");
+  assert(usCaption.style.display === "none", "비활성 탭 캡션은 감춰져야 함");
+
+  await window.setHeatmapTab("overseas");
+  assert(usCaption.textContent.includes("최신 업데이트"), "미국 갱신 시각이 표시되어야 함");
+  assert(krCaption.style.display === "none", "탭 전환 시 이전 캡션이 감춰져야 함");
+});
+
+test("미국장이 비활성인 run 에서는 미국 탭을 감춘다", async () => {
+  const calls = [];
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+  const traced = window.fetchWithTimeout;
+  window.fetchWithTimeout = (url, ...rest) => { calls.push(url); return traced(url, ...rest); };
+
+  await window.initHeatmapPage();
+
+  assert(window.document.getElementById("heatmap-page-tab-overseas").style.display === "none",
+    "미국장 비활성 시 탭이 감춰져야 함");
+  assert(!calls.some(url => url.startsWith("/api/overseas/")), "비활성 상태에서 미국 API 를 호출하면 안 됨");
+});
+
+test("줌을 올리면 캔버스가 커지고 작은 타일에도 라벨이 붙는다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+
+  await window.initHeatmapPage();
+  const doc = window.document;
+  const sizer = doc.getElementById("heatmap-page-sizer");
+  const before = labeledSymbols(window, "heatmap-page-domestic");
+  assert(sizer.style.width === "100%", `기본 줌은 100% 여야 함 (실제 ${sizer.style.width})`);
+  assert(before.length < doc.querySelectorAll("#heatmap-page-domestic .heatmap-tile").length,
+    "기본 줌에서 라벨이 생략된 작은 타일이 있어야 테스트가 의미를 가짐");
+
+  window.zoomHeatmapPage(2);
+
+  const zoom = Number.parseFloat(sizer.style.width);
+  assert(zoom > 100, `줌 인 시 캔버스가 커져야 함 (실제 ${sizer.style.width})`);
+  assert(sizer.style.height === sizer.style.width, "가로/세로 배율이 같아야 트리맵 비율이 유지됨");
+  assert(doc.getElementById("heatmap-page-zoom-level").textContent === `${Math.round(zoom)}%`,
+    "줌 배율 표시가 캔버스 배율과 일치해야 함");
+
+  const after = labeledSymbols(window, "heatmap-page-domestic");
+  assert(after.length > before.length,
+    `줌 인 후 라벨이 늘어야 함 (${before.length} → ${after.length})`);
+  before.forEach(symbol => assert(after.includes(symbol), `${symbol} 라벨이 줌 인 후 사라짐`));
+});
+
+test("줌 변경은 데이터를 다시 조회하지 않는다", async () => {
+  let domesticCalls = 0;
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => { domesticCalls += 1; return success(domesticSnapshot()); },
+  }));
+
+  await window.initHeatmapPage();
+  assert(domesticCalls === 1, `초기 조회는 1회여야 함 (실제 ${domesticCalls})`);
+
+  window.zoomHeatmapPage(1);
+  window.zoomHeatmapPage(1);
+  window.resetHeatmapPageZoom();
+
+  assert(domesticCalls === 1, `줌은 재조회 없이 다시 그려야 함 (실제 ${domesticCalls})`);
+});
+
+test("줌은 상·하한을 벗어나지 않고 초기화로 100% 로 돌아온다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+
+  await window.initHeatmapPage();
+  const sizer = window.document.getElementById("heatmap-page-sizer");
+
+  window.zoomHeatmapPage(-1);
+  assert(sizer.style.width === "100%", `기본 배율 아래로 축소되면 안 됨 (실제 ${sizer.style.width})`);
+
+  for (let i = 0; i < 20; i += 1) window.zoomHeatmapPage(1);
+  const maxZoom = Number.parseFloat(sizer.style.width);
+  assert(Number.isFinite(maxZoom) && maxZoom > 100, "최대 배율이 유한한 값이어야 함");
+  window.zoomHeatmapPage(1);
+  assert(Number.parseFloat(sizer.style.width) === maxZoom, "최대 배율을 넘어서면 안 됨");
+
+  window.resetHeatmapPageZoom();
+  assert(sizer.style.width === "100%", "초기화하면 100% 로 돌아와야 함");
+  assert(window.document.getElementById("heatmap-page-zoom-level").textContent === "100%",
+    "초기화 후 배율 표시도 100% 여야 함");
+});
+
+test("전용 페이지 경로에서는 로드 시 자동으로 초기화한다", async () => {
+  const calls = [];
+  makeWindow(routed({
+    "/api/market-mode": () => { calls.push("/api/market-mode"); return marketMode(["domestic"]); },
+    "/api/heatmap/domestic": () => { calls.push("/api/heatmap/domestic"); return success(domesticSnapshot()); },
+  }), "http://localhost/heatmap");
+
+  await new Promise(done => setTimeout(done, 50));
+
+  assert(calls.includes("/api/market-mode"), "진입 시 시장 활성 여부를 확인해야 함");
+  assert(calls.includes("/api/heatmap/domestic"), "진입 시 한국 히트맵을 조회해야 함");
+});
+
+await run();
