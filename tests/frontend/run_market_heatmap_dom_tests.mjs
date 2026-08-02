@@ -1,5 +1,9 @@
 /*
- * jsdom 기반 홈 화면 S&P500 히트맵(트리맵) 회귀 테스트.
+ * jsdom 기반 히트맵 렌더 라이브러리(market_heatmap.js) 회귀 테스트.
+ *
+ * market_heatmap.js 는 화면 배선 없이 "소스(source) 를 받아 트리맵을 그리는" 라이브러리다.
+ * 여기서는 그 라이브러리 자체(트리맵 기하, 색상, 이스케이프, 경합 가드)를 검증하고,
+ * 탭/줌 등 화면 배선은 run_heatmap_page_dom_tests.mjs 가 맡는다.
  *
  * 실행: node run_market_heatmap_dom_tests.mjs
  */
@@ -13,21 +17,15 @@ const HEATMAP_JS = process.env.MARKET_HEATMAP_JS_PATH
   : resolve(import.meta.dirname, "../../view/web/static/js/market_heatmap.js");
 
 const SCAFFOLD = `
-<div class="card" id="market-heatmap-card">
-  <span id="market-heatmap-updated-at"></span>
-  <div id="market-heatmap"></div>
-</div>
-<div class="card" id="domestic-heatmap-card">
-  <span id="domestic-heatmap-updated-at"></span>
-  <div id="domestic-heatmap"></div>
-</div>
+<span id="overseas-caption"></span>
+<div id="overseas-panel"></div>
+<span id="domestic-caption"></span>
+<div id="domestic-panel"></div>
 `;
 
-// 홈 경로('/')로 만들면 스크립트의 DOMContentLoaded 자동 초기화가 끼어들어 호출 수가 흔들린다.
-// 자동 초기화 자체는 아래 전용 테스트에서 홈 경로 창으로 검증한다.
-function makeWindow(fetchWithTimeout, url = "http://localhost/heatmap-test") {
+function makeWindow(fetchWithTimeout) {
   const dom = new JSDOM(`<!DOCTYPE html><html><body>${SCAFFOLD}</body></html>`, {
-    url,
+    url: "http://localhost/heatmap-test",
     runScripts: "outside-only",
   });
   const { window } = dom;
@@ -37,12 +35,33 @@ function makeWindow(fetchWithTimeout, url = "http://localhost/heatmap-test") {
   return window;
 }
 
-function success(data) {
-  return { ok: true, json: async () => ({ rt_cd: "0", data }) };
+// 화면 배선 없이 라이브러리를 직접 구동하기 위한 최소 소스.
+function overseasSource(window) {
+  return {
+    targetId: "overseas-panel",
+    captionId: "overseas-caption",
+    url: "/api/overseas/top-market-cap?limit=500",
+    loadingText: "조회 중...",
+    toGroups: window._overseasGroups,
+    caption: window._overseasCaption,
+    sequence: 0,
+  };
 }
 
-function marketMode(modes) {
-  return { ok: true, json: async () => ({ enabled_market_modes: modes }) };
+function domesticSource(window) {
+  return {
+    targetId: "domestic-panel",
+    captionId: "domestic-caption",
+    url: "/api/heatmap/domestic?limit=500",
+    loadingText: "조회 중...",
+    toGroups: window._domesticGroups,
+    caption: window._domesticCaption,
+    sequence: 0,
+  };
+}
+
+function success(data) {
+  return { ok: true, json: async () => ({ rt_cd: "0", data }) };
 }
 
 function deferred() {
@@ -75,7 +94,7 @@ test("시가총액이 큰 종목이 비례해서 큰 타일을 차지한다", as
     ],
   }));
 
-  await window.loadMarketHeatmap();
+  await window._loadHeatmap(overseasSource(window));
 
   const doc = window.document;
   const big = doc.querySelector('.heatmap-tile[data-symbol="BIG"]');
@@ -98,7 +117,7 @@ test("섹터 블록이 시총 합계 내림차순으로 렌더된다", async () 
     ],
   }));
 
-  await window.loadMarketHeatmap();
+  await window._loadHeatmap(overseasSource(window));
 
   const sectors = [...window.document.querySelectorAll(".heatmap-sector")]
     .map(el => el.dataset.sector);
@@ -120,7 +139,7 @@ test("모든 타일이 컨테이너 경계 안에 배치된다", async () => {
     ],
   }));
 
-  await window.loadMarketHeatmap();
+  await window._loadHeatmap(overseasSource(window));
 
   const boxes = [
     ...window.document.querySelectorAll(".heatmap-sector"),
@@ -149,7 +168,7 @@ test("등락 방향에 따라 색 계열과 표기 부호가 갈린다", async (
     ],
   }));
 
-  await window.loadMarketHeatmap();
+  await window._loadHeatmap(overseasSource(window));
 
   const doc = window.document;
   const bySymbol = symbol => doc.querySelector(`.heatmap-tile[data-symbol="${symbol}"]`);
@@ -174,9 +193,9 @@ test("응답 문자열을 HTML 이 아닌 텍스트로 렌더링한다", async (
     })],
   }));
 
-  await window.loadMarketHeatmap();
+  await window._loadHeatmap(overseasSource(window));
 
-  const target = window.document.getElementById("market-heatmap");
+  const target = window.document.getElementById("overseas-panel");
   assert(!target.querySelector("#injected-symbol, #injected-name, #injected-sector"),
     "응답 문자열이 HTML 로 해석됨");
   assert(target.textContent.includes('<img id="injected-symbol" src=x>'),
@@ -191,9 +210,9 @@ test("HTTP 오류는 JSON 파싱 없이 상태 안내를 표시한다", async ()
     json: async () => { jsonCalled = true; throw new Error("JSON 파싱 실패"); },
   }));
 
-  await window.loadMarketHeatmap();
+  await window._loadHeatmap(overseasSource(window));
 
-  const target = window.document.getElementById("market-heatmap");
+  const target = window.document.getElementById("overseas-panel");
   assert(jsonCalled === false, "HTTP 오류 응답은 JSON 으로 파싱하면 안 됨");
   assert(target.textContent.includes("HTTP 503"), "HTTP 상태 안내가 표시되어야 함");
 });
@@ -201,13 +220,14 @@ test("HTTP 오류는 JSON 파싱 없이 상태 안내를 표시한다", async ()
 test("빈 목록과 비정상 응답을 사용자 안내로 처리한다", async () => {
   const responses = [success({ items: [] }), { ok: true, json: async () => ({ rt_cd: "1", msg1: "수집 실패" }) }];
   const window = makeWindow(async () => responses.shift());
+  const source = overseasSource(window);
 
-  await window.loadMarketHeatmap();
-  assert(window.document.getElementById("market-heatmap").textContent.includes("조회 결과가 없습니다"),
+  await window._loadHeatmap(source);
+  assert(window.document.getElementById("overseas-panel").textContent.includes("조회 결과가 없습니다"),
     "빈 목록 안내가 표시되어야 함");
 
-  await window.loadMarketHeatmap();
-  assert(window.document.getElementById("market-heatmap").textContent.includes("수집 실패"),
+  await window._loadHeatmap(source);
+  assert(window.document.getElementById("overseas-panel").textContent.includes("수집 실패"),
     "실패 사유가 표시되어야 함");
 });
 
@@ -218,48 +238,27 @@ test("늦게 끝난 이전 요청이 최신 히트맵을 덮어쓰지 않는다"
     pending.push(request);
     return request.promise;
   });
+  const source = overseasSource(window);
 
-  const first = window.loadMarketHeatmap();
-  const second = window.loadMarketHeatmap();
+  const first = window._loadHeatmap(source);
+  const second = window._loadHeatmap(source);
   pending[1].resolve(success({ items: [item({ symbol: "NEW" })] }));
   await second;
   pending[0].resolve(success({ items: [item({ symbol: "OLD" })] }));
   await first;
 
-  const target = window.document.getElementById("market-heatmap");
+  const target = window.document.getElementById("overseas-panel");
   assert(target.querySelector('.heatmap-tile[data-symbol="NEW"]'), "최신 결과가 표시되어야 함");
   assert(!target.querySelector('.heatmap-tile[data-symbol="OLD"]'), "이전 결과가 최신 결과를 덮어씀");
 });
 
-test("미국장이 비활성인 run 에서는 히트맵 카드를 감춘다", async () => {
-  const calls = [];
+test("미국장 활성 여부를 시장 모드로 판단한다", async () => {
   const window = makeWindow(async (url) => {
-    calls.push(url);
-    if (url.startsWith("/api/market-mode")) return marketMode(["domestic"]);
-    return success({ items: [item({})] });
+    assert(url.startsWith("/api/market-mode"), `시장 모드 API 를 호출해야 함 (실제 ${url})`);
+    return { ok: true, json: async () => ({ enabled_market_modes: ["domestic"] }) };
   });
 
-  await window.initMarketHeatmap();
-
-  assert(window.document.getElementById("market-heatmap-card").style.display === "none",
-    "미국장 비활성 시 카드가 감춰져야 함");
-  assert(!calls.some(url => url.startsWith("/api/overseas/")),
-    "비활성 상태에서 시가총액 API 를 호출하면 안 됨");
-});
-
-test("미국장이 활성이면 카드를 노출하고 히트맵을 조회한다", async () => {
-  const window = makeWindow(async (url) => {
-    if (url.startsWith("/api/market-mode")) return marketMode(["domestic", "overseas_us"]);
-    return success({ items: [item({ symbol: "MSFT" })], updated_at: 1767225600 });
-  });
-
-  await window.initMarketHeatmap();
-
-  const doc = window.document;
-  assert(doc.getElementById("market-heatmap-card").style.display !== "none", "카드가 노출되어야 함");
-  assert(doc.querySelector('.heatmap-tile[data-symbol="MSFT"]'), "히트맵 타일이 렌더되어야 함");
-  assert(doc.getElementById("market-heatmap-updated-at").textContent.includes("최신 업데이트"),
-    "업데이트 시각이 표시되어야 함");
+  assert(await window._heatmapOverseasEnabled() === false, "미국장이 없으면 false 여야 함");
 });
 
 function domesticItem(overrides) {
@@ -275,10 +274,10 @@ test("국내 히트맵은 섹터 블록 없이 시총순 타일만 그린다", a
     ],
   }));
 
-  await window.loadDomesticHeatmap();
+  await window._loadHeatmap(domesticSource(window));
 
   const doc = window.document;
-  const target = doc.getElementById("domestic-heatmap");
+  const target = doc.getElementById("domestic-panel");
   assert(!target.querySelector(".heatmap-sector-title"), "국내 맵에는 섹터 헤더가 없어야 함");
   assert(target.querySelectorAll(".heatmap-tile").length === 2, "종목 타일이 렌더되어야 함");
 
@@ -292,9 +291,9 @@ test("국내 히트맵은 섹터 블록 없이 시총순 타일만 그린다", a
 test("국내 히트맵은 종가 기준일을 명시한다", async () => {
   const window = makeWindow(async () => success({ trade_date: "20260730", items: [domesticItem({})] }));
 
-  await window.loadDomesticHeatmap();
+  await window._loadHeatmap(domesticSource(window));
 
-  const label = window.document.getElementById("domestic-heatmap-updated-at").textContent;
+  const label = window.document.getElementById("domestic-caption").textContent;
   assert(label.includes("2026-07-30"), `기준일이 표시되어야 함 (실제 ${label})`);
   assert(label.includes("종가"), "장중 오해를 막기 위해 종가 기준임을 밝혀야 함");
 });
@@ -305,43 +304,29 @@ test("국내 히트맵의 빈 스냅샷과 응답 문자열을 안전하게 처�
     success({ trade_date: "20260730", items: [domesticItem({ name: '<img id="injected-kr" src=x>' })] }),
   ];
   const window = makeWindow(async () => responses.shift());
+  const source = domesticSource(window);
 
-  await window.loadDomesticHeatmap();
-  assert(window.document.getElementById("domestic-heatmap").textContent.includes("조회 결과가 없습니다"),
+  await window._loadHeatmap(source);
+  assert(window.document.getElementById("domestic-panel").textContent.includes("조회 결과가 없습니다"),
     "빈 스냅샷 안내가 표시되어야 함");
 
-  await window.loadDomesticHeatmap();
-  const target = window.document.getElementById("domestic-heatmap");
+  await window._loadHeatmap(source);
+  const target = window.document.getElementById("domestic-panel");
   assert(!target.querySelector("#injected-kr"), "응답 문자열이 HTML 로 해석됨");
   assert(target.textContent.includes('<img id="injected-kr" src=x>'), "종목명이 텍스트로 표시되어야 함");
 });
 
-test("국내 조회가 미국 히트맵을 덮어쓰지 않는다", async () => {
+test("한 소스의 조회가 다른 소스의 히트맵을 덮어쓰지 않는다", async () => {
   const window = makeWindow(async (url) => (url.startsWith("/api/heatmap/domestic")
     ? success({ trade_date: "20260730", items: [domesticItem({ code: "005930" })] })
     : success({ items: [item({ symbol: "MSFT" })] })));
 
-  await window.loadMarketHeatmap();
-  await window.loadDomesticHeatmap();
+  await window._loadHeatmap(overseasSource(window));
+  await window._loadHeatmap(domesticSource(window));
 
   const doc = window.document;
-  assert(doc.querySelector('#market-heatmap .heatmap-tile[data-symbol="MSFT"]'), "미국 히트맵이 유지되어야 함");
-  assert(doc.querySelector('#domestic-heatmap .heatmap-tile[data-symbol="005930"]'), "국내 히트맵이 렌더되어야 함");
-});
-
-test("홈 경로에서는 로드 시 자동으로 히트맵을 초기화한다", async () => {
-  const calls = [];
-  makeWindow(async (url) => {
-    calls.push(url);
-    if (url.startsWith("/api/market-mode")) return marketMode(["overseas_us"]);
-    return success({ items: [item({})] });
-  }, "http://localhost/");
-
-  await new Promise(done => setTimeout(done, 50));
-
-  assert(calls.some(url => url.startsWith("/api/market-mode")), "홈 진입 시 시장 활성 여부를 확인해야 함");
-  assert(calls.some(url => url.startsWith("/api/overseas/top-market-cap")), "홈 진입 시 미국 히트맵을 조회해야 함");
-  assert(calls.some(url => url.startsWith("/api/heatmap/domestic")), "홈 진입 시 국내 히트맵을 조회해야 함");
+  assert(doc.querySelector('#overseas-panel .heatmap-tile[data-symbol="MSFT"]'), "미국 히트맵이 유지되어야 함");
+  assert(doc.querySelector('#domestic-panel .heatmap-tile[data-symbol="005930"]'), "국내 히트맵이 렌더되어야 함");
 });
 
 await run();

@@ -1,4 +1,7 @@
-/* view/web/static/js/market_heatmap.js — 홈 화면 히트맵(트리맵)
+/* view/web/static/js/market_heatmap.js — 히트맵(트리맵) 렌더 라이브러리
+ *
+ * 화면 배선은 갖지 않는다. 소스({ targetId, captionId, url, toGroups, caption, ... })를 받아
+ * 조회 → 트리맵 계산 → 렌더까지 하며, 어떤 소스를 언제 그릴지는 화면(heatmap_page.js)이 정한다.
  *
  * 미국: /api/overseas/top-market-cap 스냅샷을 쓴다. 미국 시가총액 화면과 같은 소스라
  *       (Yahoo 스냅샷 1회로 sector/change_rate/market_cap_usd 가 모두 오고) TTL 캐시를 공유한다.
@@ -10,10 +13,6 @@
  * 색상은 국내 화면 컨벤션(상승=빨강, 하락=파랑)을 따른다.
  */
 
-const HEATMAP_LIMIT = 500;
-// 상위 200종목이면 국내 전체 시총의 91% 를 덮으면서 가장 작은 타일도 10px 아래로 내려가지 않는다.
-const HEATMAP_DOMESTIC_LIMIT = 200;
-const HEATMAP_REFRESH_MS = 5 * 60 * 1000;
 const HEATMAP_SECTOR_HEADER_PX = 16;
 // 타일이 이보다 작으면 글자가 넘쳐 겹치므로 텍스트를 생략한다(툴팁으로만 노출).
 const HEATMAP_MIN_LABEL_WIDTH_PCT = 4.5;
@@ -35,7 +34,6 @@ const HEATMAP_FLAT_COLOR = '#6b7280';
 const HEATMAP_UNKNOWN_COLOR = '#3f4650';
 
 let _heatmapRequestSequence = 0;
-let _heatmapRefreshTimer = null;
 
 function _heatmapNumber(value) {
     if (value === null || value === undefined || value === '') return null;
@@ -260,27 +258,7 @@ function _renderHeatmap(div, source, data) {
     }</div>`;
 }
 
-const HEATMAP_OVERSEAS = {
-    targetId: 'market-heatmap',
-    captionId: 'market-heatmap-updated-at',
-    url: `/api/overseas/top-market-cap?limit=${HEATMAP_LIMIT}`,
-    loadingText: 'S&P 500 히트맵 조회 중...',
-    toGroups: _overseasGroups,
-    caption: _overseasCaption,
-    sequence: 0,
-};
-
-const HEATMAP_DOMESTIC = {
-    targetId: 'domestic-heatmap',
-    captionId: 'domestic-heatmap-updated-at',
-    url: `/api/heatmap/domestic?limit=${HEATMAP_DOMESTIC_LIMIT}`,
-    loadingText: '국내 히트맵 조회 중...',
-    toGroups: _domesticGroups,
-    caption: _domesticCaption,
-    sequence: 0,
-};
-
-// 두 맵이 같은 홈 화면에 있으므로 시퀀스 가드는 소스별로 따로 센다.
+// 한 화면에 여러 맵이 있을 수 있으므로 시퀀스 가드는 소스별로 따로 센다.
 async function _loadHeatmap(source, options = {}) {
     const requestSequence = ++source.sequence;
     const isLatestRequest = () => requestSequence === source.sequence;
@@ -314,14 +292,6 @@ async function _loadHeatmap(source, options = {}) {
     }
 }
 
-async function loadMarketHeatmap(options = {}) {
-    await _loadHeatmap(HEATMAP_OVERSEAS, options);
-}
-
-async function loadDomesticHeatmap(options = {}) {
-    await _loadHeatmap(HEATMAP_DOMESTIC, options);
-}
-
 async function _heatmapOverseasEnabled() {
     try {
         const res = await fetchWithTimeout('/api/market-mode', {}, 5000);
@@ -333,41 +303,3 @@ async function _heatmapOverseasEnabled() {
     }
 }
 
-async function initMarketHeatmap() {
-    const card = document.getElementById('market-heatmap-card');
-    if (!card) return;
-
-    // 미국장이 꺼진 run 에서는 API 가 400 을 내므로, 오류 대신 카드를 감춘다.
-    if (!await _heatmapOverseasEnabled()) {
-        card.style.display = 'none';
-        return;
-    }
-    card.style.display = '';
-
-    await loadMarketHeatmap();
-    if (_heatmapRefreshTimer !== null) return;
-    _heatmapRefreshTimer = setInterval(() => {
-        void loadMarketHeatmap({ showLoading: false });
-    }, HEATMAP_REFRESH_MS);
-}
-
-// 국내 맵은 하루 한 번 갱신되는 종가 스냅샷이라 주기 갱신을 걸지 않는다.
-async function initDomesticHeatmap() {
-    if (!document.getElementById('domestic-heatmap-card')) return;
-    await loadDomesticHeatmap();
-}
-
-function _initHomeHeatmaps() {
-    void initMarketHeatmap();
-    void initDomesticHeatmap();
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    if (window.location.pathname !== '/') return;
-    _initHomeHeatmaps();
-});
-
-document.addEventListener('pjax:ready', (e) => {
-    if (e.detail?.path !== '/') return;
-    _initHomeHeatmaps();
-});
