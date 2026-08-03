@@ -10,6 +10,9 @@ class InverseEtfRegimeConfig(BaseStrategyConfig):
     KOSPI가 확인된 하락추세(bear)일 때만 -1x 인버스 ETF를 추세추종 매수해
     하락장에서 (-)베타 수익을 얻는다. long-only 7전략과 구조적으로 음의 상관.
     """
+    # 단일 1주 검증 모드가 아니라 슬리브 예산(position_size_pct)을 사용한다.
+    use_fixed_qty: bool = False
+
     # 종목 (KODEX 인버스, KOSPI200 일간 -1x). 곱버스(-2x)는 변동성 감쇠로 제외.
     inverse_etf_code: str = "114800"
     inverse_etf_name: str = "KODEX 인버스"
