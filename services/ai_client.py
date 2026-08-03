@@ -142,7 +142,7 @@ class AiClient:
         content = message.get("content")
         return (
             isinstance(content, str)
-            and content.strip().casefold() == "signal is aborted without reason"
+            and "signal is aborted without reason" in content.casefold()
         )
 
     @staticmethod
