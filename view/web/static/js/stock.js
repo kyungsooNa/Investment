@@ -3,6 +3,11 @@
 let _currentExchange = 'KRX';
 let _currentStockCode = null;
 
+// stock.js 단독 로드 환경에서도 AI 요청 타임아웃을 안전하게 표시한다.
+function isAiRequestAbort(error) {
+    return error && error.name === 'AbortError';
+}
+
 // SSE 실시간 틱 수신 → 가격·전일대비·당일시세(고가·저가) UI 업데이트
 document.addEventListener('stock-price-tick', function (e) {
     const tick = e.detail;
@@ -534,7 +539,7 @@ async function requestAiStockAnalysis(code) {
         const response = await fetchWithTimeout(
             `/api/stock/${encodeURIComponent(targetCode)}/ai-analysis`,
             { method: 'POST' },
-            45000,
+            60000,
         );
         let json = {};
         try {
@@ -571,7 +576,9 @@ async function requestAiStockAnalysis(code) {
     } catch (error) {
         console.error('[stock-ai] 분석 실패:', error);
         status.textContent = '';
-        output.textContent = error.message || 'AI 분석 요청에 실패했습니다.';
+        output.textContent = isAiRequestAbort(error)
+            ? 'AI 응답 시간이 초과되었습니다. 다시 시도해주세요.'
+            : (error.message || 'AI 분석 요청에 실패했습니다.');
         output.classList.add('error');
         output.style.display = 'block';
     } finally {
@@ -602,7 +609,7 @@ async function requestAiNewsReview(code) {
         const response = await fetchWithTimeout(
             `/api/stock/${encodeURIComponent(targetCode)}/ai-news`,
             { method: 'POST' },
-            45000,
+            60000,
         );
         let json = {};
         try {
@@ -646,7 +653,9 @@ async function requestAiNewsReview(code) {
     } catch (error) {
         console.error('[stock-news] 검토 실패:', error);
         status.textContent = '';
-        output.textContent = error.message || 'AI 뉴스 검토 요청에 실패했습니다.';
+        output.textContent = isAiRequestAbort(error)
+            ? 'AI 응답 시간이 초과되었습니다. 다시 시도해주세요.'
+            : (error.message || 'AI 뉴스 검토 요청에 실패했습니다.');
         output.classList.add('error');
         output.style.display = 'block';
     } finally {

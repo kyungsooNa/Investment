@@ -28,3 +28,11 @@ def test_overseas_template_loads_dedicated_autocomplete():
     assert 'id="overseas-autocomplete-list"' in template
     assert "/static/js/autocomplete.js" in template
     assert "/static/js/overseas_autocomplete.js" in template
+
+
+def test_ai_analysis_requests_allow_server_retry_and_hide_abort_message():
+    stock_js = Path("view/web/static/js/stock.js").read_text(encoding="utf-8")
+
+    assert stock_js.count("60000,") >= 2
+    assert "isAiRequestAbort(error)" in stock_js
+    assert "AI 응답 시간이 초과되었습니다. 다시 시도해주세요." in stock_js

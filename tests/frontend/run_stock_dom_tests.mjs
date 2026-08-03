@@ -142,7 +142,7 @@ test("AI 종목 분석은 POST로 요청하고 결과를 텍스트로 안전하�
 
   assert(requested.url === "/api/stock/005930/ai-analysis", "AI 분석 URL이 잘못됨");
   assert(requested.options.method === "POST", "AI 분석이 POST 요청이 아님");
-  assert(requested.timeout === 45000, "AI 분석 타임아웃이 45초가 아님");
+  assert(requested.timeout === 60000, "AI 분석 타임아웃이 60초가 아님");
   const output = window.document.getElementById("ai-stock-analysis-output");
   assert(output.textContent.includes("<img src=x"), "AI 결과가 텍스트로 보존되지 않음");
   assert(!output.querySelector("img"), "AI 결과가 HTML로 실행됨");
@@ -215,7 +215,7 @@ test("AI 뉴스 검토는 POST로 요청하고 기사 제목을 텍스트로 안
 
   assert(requested.url === "/api/stock/005930/ai-news", "뉴스 검토 URL이 잘못됨");
   assert(requested.options.method === "POST", "뉴스 검토가 POST 요청이 아님");
-  assert(requested.timeout === 45000, "뉴스 검토 타임아웃이 45초가 아님");
+  assert(requested.timeout === 60000, "뉴스 검토 타임아웃이 60초가 아님");
 
   const list = window.document.getElementById("ai-news-list");
   assert(list.querySelectorAll("li").length === 2, "기사 목록이 2건으로 렌더되지 않음");
