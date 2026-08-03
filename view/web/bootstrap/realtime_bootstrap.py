@@ -88,6 +88,7 @@ class RealtimeBootstrap:
             favorite_repository=ctx.favorite_repo,
             notification_service=ctx.notification_service,
             stock_code_repository=ctx.stock_code_repository,
+            state_file="data/favorite_price_alert_state.json",
             logger=ctx.logger,
         )
         ctx.price_stream_service = PriceStreamService(

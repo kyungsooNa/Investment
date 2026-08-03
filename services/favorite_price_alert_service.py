@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
+from datetime import datetime
+from typing import Callable, Optional
+from zoneinfo import ZoneInfo
 
 from services.notification_service import (
     NotificationCategory,
     NotificationLevel,
     NotificationService,
 )
+from utils.strategy_state_io import StrategyStateIO
 
 
 class FavoritePriceAlertService:
@@ -24,6 +27,8 @@ class FavoritePriceAlertService:
         threshold_step_pct: float = 5.0,
         upper_limit_rate_pct: float = 29.5,
         favorite_cache_ttl_sec: float = 30.0,
+        state_file: Optional[str] = None,
+        today_provider: Optional[Callable[[], str]] = None,
         logger=None,
     ) -> None:
         self._favorite_repository = favorite_repository
@@ -32,6 +37,9 @@ class FavoritePriceAlertService:
         self._threshold_step_pct = float(threshold_step_pct)
         self._upper_limit_rate_pct = float(upper_limit_rate_pct)
         self._favorite_cache_ttl_sec = float(favorite_cache_ttl_sec)
+        self._state_file = state_file
+        self._today_provider = today_provider or self._current_kst_date
+        self._state_date: Optional[str] = None
         self._logger = logger or logging.getLogger(__name__)
         self._favorite_codes: set[str] = set()
         self._favorite_cache_ts: float = 0.0
@@ -49,9 +57,11 @@ class FavoritePriceAlertService:
         normalized = self._normalize_code(code)
         if not normalized:
             return
+        await self._load_alert_state_for_today()
         self._favorite_codes.discard(normalized)
         self._last_alert_bucket.pop(normalized, None)
         self._upper_limit_alerted_codes.discard(normalized)
+        await self._save_alert_state()
 
     async def handle_price_tick(
         self,
@@ -72,6 +82,7 @@ class FavoritePriceAlertService:
         await self._refresh_favorites()
         if normalized not in self._favorite_codes:
             return False
+        await self._load_alert_state_for_today()
 
         rate_value = self._to_float(rate)
         if rate_value is None:
@@ -82,8 +93,11 @@ class FavoritePriceAlertService:
             if normalized in self._upper_limit_alerted_codes:
                 return False
             self._upper_limit_alerted_codes.add(normalized)
+            await self._save_alert_state()
             return await self._emit_upper_limit_alert(normalized, price, rate_value)
-        self._upper_limit_alerted_codes.discard(normalized)
+        if normalized in self._upper_limit_alerted_codes:
+            self._upper_limit_alerted_codes.discard(normalized)
+            await self._save_alert_state()
 
         bucket = self._rate_bucket(rate_value)
         if bucket == 0:
@@ -92,6 +106,7 @@ class FavoritePriceAlertService:
             return False
 
         self._last_alert_bucket[normalized] = bucket
+        await self._save_alert_state()
 
         threshold_pct = int(bucket * self._threshold_step_pct)
         name = self._stock_name(normalized)
@@ -161,6 +176,58 @@ class FavoritePriceAlertService:
             normalized for code in codes if (normalized := self._normalize_code(code))
         }
         self._favorite_cache_ts = now
+
+    async def _load_alert_state_for_today(self) -> None:
+        """당일 마지막 알림 임계치를 복원한다. 날짜가 바뀌면 이전 상태는 버린다."""
+        today = self._today_provider()
+        if self._state_date == today:
+            return
+
+        self._last_alert_bucket.clear()
+        self._upper_limit_alerted_codes.clear()
+        self._state_date = today
+        if not self._state_file:
+            return
+
+        try:
+            data = await StrategyStateIO.load(self._state_file)
+        except Exception as exc:
+            self._logger.warning(f"관심종목 알림 상태 로드 실패: {exc}")
+            return
+        if not isinstance(data, dict) or data.get("date") != today:
+            return
+
+        buckets = data.get("last_alert_bucket", {})
+        if isinstance(buckets, dict):
+            for code, bucket in buckets.items():
+                normalized = self._normalize_code(code)
+                try:
+                    if normalized:
+                        self._last_alert_bucket[normalized] = int(bucket)
+                except (TypeError, ValueError):
+                    continue
+        codes = data.get("upper_limit_alerted_codes", [])
+        if isinstance(codes, list):
+            self._upper_limit_alerted_codes = {
+                normalized for code in codes if (normalized := self._normalize_code(code))
+            }
+
+    async def _save_alert_state(self) -> None:
+        if not self._state_file or not self._state_date:
+            return
+        payload = {
+            "date": self._state_date,
+            "last_alert_bucket": self._last_alert_bucket,
+            "upper_limit_alerted_codes": sorted(self._upper_limit_alerted_codes),
+        }
+        try:
+            await StrategyStateIO.save_atomic(self._state_file, payload)
+        except Exception as exc:
+            self._logger.warning(f"관심종목 알림 상태 저장 실패: {exc}")
+
+    @staticmethod
+    def _current_kst_date() -> str:
+        return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
 
     def _rate_bucket(self, rate: float) -> int:
         bucket = int(abs(rate) // self._threshold_step_pct)
