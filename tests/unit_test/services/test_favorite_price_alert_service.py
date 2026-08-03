@@ -67,17 +67,48 @@ async def test_does_not_repeat_bucket_when_rate_chatters_around_threshold():
     repo.get_all = AsyncMock(return_value=["005930"])
     notifications = MagicMock()
     notifications.emit = AsyncMock()
-    svc = FavoritePriceAlertService(
-        repo,
-        notifications,
-        alert_cooldown_sec=300.0,
-    )
+    svc = FavoritePriceAlertService(repo, notifications)
 
     await svc.handle_price_tick("005930", price="70000", rate="-5.01")
     await svc.handle_price_tick("005930", price="70050", rate="-4.99")
     await svc.handle_price_tick("005930", price="70000", rate="-5.02")
 
     notifications.emit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_does_not_repeat_five_percent_after_retracing_without_another_alert_bucket():
+    """+5% 알림 뒤 +6%를 거쳐 +5%로 돌아와도 같은 알림을 반복하지 않는다."""
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["005930"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("005930", price="75000", rate="5.01")
+    await svc.handle_price_tick("005930", price="75600", rate="6.00")
+    await svc.handle_price_tick("005930", price="75000", rate="5.02")
+
+    notifications.emit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_realerts_five_percent_after_ten_percent_alert():
+    """+10% 알림이 끼어들면 +5% 재진입은 새 등락 단계로 한 번 알린다."""
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["005930"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("005930", price="75000", rate="5.01")
+    await svc.handle_price_tick("005930", price="78500", rate="10.01")
+    await svc.handle_price_tick("005930", price="75000", rate="5.02")
+
+    assert [
+        call.kwargs["metadata"]["threshold_pct"]
+        for call in notifications.emit.await_args_list
+    ] == [5, 10, 5]
 
 
 @pytest.mark.asyncio
