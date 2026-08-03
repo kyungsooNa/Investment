@@ -112,6 +112,28 @@ async def test_realerts_five_percent_after_ten_percent_alert():
 
 
 @pytest.mark.asyncio
+async def test_persists_alert_bucket_across_service_restart_for_same_day(tmp_path):
+    """프로세스 재시작 뒤에도 당일 동일 임계치 알림은 반복하지 않는다."""
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["009150"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    state_file = tmp_path / "favorite_alert_state.json"
+    kwargs = {
+        "state_file": str(state_file),
+        "today_provider": lambda: "20260803",
+    }
+
+    first = FavoritePriceAlertService(repo, notifications, **kwargs)
+    await first.handle_price_tick("009150", price="1200000", rate="5.08")
+
+    restarted = FavoritePriceAlertService(repo, notifications, **kwargs)
+    await restarted.handle_price_tick("009150", price="1200000", rate="5.08")
+
+    notifications.emit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_alerts_negative_five_percent_bucket():
     repo = MagicMock()
     repo.get_all = AsyncMock(return_value=["005930"])
