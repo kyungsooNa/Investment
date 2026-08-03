@@ -113,6 +113,7 @@ class SchedulerBootstrap:
         self._register(ctx.opening_position_reconcile_task, TaskPriority.HIGH)
         self._register(ctx.cache_warmup_task)
         self._register(self._optional_task("theme_intraday_leader_alert_task"))
+        self._register(self._optional_task("market_index_threshold_alert_task"))
 
     def _register_batch_tasks(self) -> None:
         ctx = self._ctx

@@ -197,6 +197,12 @@ market_status_alert:
   enabled: true
   monitor_codes: ["000000"]
 
+# 코스피·코스닥 지수의 ±5% 급변과 -8% 서킷브레이커 1단계 접근을 1분마다 사전경고한다.
+# 실제 거래소 발동 여부는 위 장운영정보 알림이 별도로 확정한다.
+market_index_alert:
+  enabled: true
+  poll_interval_sec: 60
+
 # OpenDART 관심종목 공시 알림 (API 키 발급 후 enabled=true)
 dart_disclosure:
   enabled: false

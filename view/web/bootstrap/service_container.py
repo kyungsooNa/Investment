@@ -69,6 +69,7 @@ from task.background.intraday.opening_position_reconcile_task import OpeningPosi
 from task.background.intraday.pre_market_health_check_task import PreMarketHealthCheckTask
 from task.background.intraday.program_capture_subscription_task import ProgramCaptureSubscriptionTask
 from task.background.intraday.theme_intraday_leader_alert_task import ThemeIntradayLeaderAlertTask
+from task.background.intraday.market_index_threshold_alert_task import MarketIndexThresholdAlertTask
 from view.web.bootstrap.runtime_mode import RuntimeMode
 from view.web.bootstrap.backtest_task_bootstrap import BacktestTaskBootstrap
 from view.web.bootstrap.repository_bootstrap import RepositoryBootstrap
@@ -680,6 +681,24 @@ class ServiceContainer:
                 needs_trading
                 and ctx.ranking_task is not None
                 and ctx.theme_daily_leader_service is not None
+            ) else None
+
+            index_alert_cfg = config_dict.get("market_index_alert", {})
+            index_alert_enabled = (
+                index_alert_cfg.get("enabled", True)
+                if isinstance(index_alert_cfg, dict) else True
+            )
+            ctx.market_index_threshold_alert_task = MarketIndexThresholdAlertTask(
+                broker=ctx.broker,
+                market_status_alert_service=ctx.market_status_alert_service,
+                market_clock=ctx.market_clock,
+                market_calendar_service=ctx._mcs,
+                check_interval_sec=index_alert_cfg.get("poll_interval_sec", 60),
+                logger=ctx.logger,
+            ) if (
+                needs_trading
+                and index_alert_enabled
+                and ctx.market_status_alert_service is not None
             ) else None
 
             if needs_web:
