@@ -53,6 +53,7 @@ def _make_fake_context(runtime_mode: RuntimeMode = RuntimeMode.ALL):
         "market_cap_gap_report_kr_task", "market_cap_gap_report_us_task",
         "microstructure_capture_task", "program_capture_subscription_task",
         "theme_intraday_leader_alert_task",
+        "market_index_threshold_alert_task",
         "ytd_ranking_report_task",
     ]:
         task = MagicMock()
@@ -93,11 +94,11 @@ def test_creates_foreground_even_in_batch_only_mode(patched_scheduler_deps):
 
 # ---------- mode=ALL 회귀 (현행 동작 100% 유지) ----------
 
-def test_all_mode_registers_24_tasks_to_background(patched_scheduler_deps):
+def test_all_mode_registers_25_tasks_to_background(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.ALL)
     _run(ctx)
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 24
+    assert bg.register.call_count == 25
 
 
 def test_all_mode_registers_15_tasks_to_time_dispatcher(patched_scheduler_deps):
@@ -183,6 +184,7 @@ def test_trading_only_registers_intraday_and_watchdog(patched_scheduler_deps):
         "opening_position_reconcile_task",
         "cache_warmup_task",
         "theme_intraday_leader_alert_task",
+        "market_index_threshold_alert_task",
         "websocket_watchdog_task",
     }
 
@@ -251,4 +253,4 @@ def test_skips_none_tasks(patched_scheduler_deps):
     # 둘 다 -1 감소한다.
     assert ctx.time_dispatcher.register_task.call_count == 14
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 23
+    assert bg.register.call_count == 24

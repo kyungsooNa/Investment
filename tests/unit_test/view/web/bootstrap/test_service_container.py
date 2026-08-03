@@ -25,6 +25,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "OneilUniverseService", "NaverFinanceScraperService",
     "ThemeClassificationCollectorService", "ThemeClassificationTask", "ThemeDailyLeaderReportTask",
     "ThemeIntradayLeaderAlertTask",
+    "MarketIndexThresholdAlertTask",
     "USMarketCalendarService",
     "BacktestMicrostructureCaptureService", "MicrostructureCaptureTask",
     "PremiumWatchlistGeneratorTask", "CacheWarmupTask", "LogCleanupTask",

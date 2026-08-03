@@ -47,9 +47,35 @@ async def test_market_status_alert_service_reports_sidecar_warning():
 
     args = operator_alert.report.await_args.args
     kwargs = operator_alert.report.await_args.kwargs
-    assert args[1] == "market_status:sidecar:KRX:005930"
+    assert args[1] == "market_status:sidecar:sell:KRX:005930"
     assert args[2] == "warning"
     assert kwargs["metadata"]["telegram_channel"] == "report"
+
+
+@pytest.mark.asyncio
+async def test_market_status_alert_service_distinguishes_buy_and_sell_sidecars():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        logger=MagicMock(),
+    )
+
+    await service.on_market_status({
+        "유가증권단축종목코드": "000000",
+        "거래정지사유내용": "매수 사이드카 발동",
+        "거래소구분코드": "KOSPI",
+    })
+    await service.on_market_status({
+        "유가증권단축종목코드": "000000",
+        "거래정지사유내용": "매도 사이드카 발동",
+        "거래소구분코드": "KOSPI",
+    })
+
+    assert operator_alert.report.await_count == 2
+    assert operator_alert.report.await_args_list[0].args[1] == "market_status:sidecar:buy:KOSPI:000000"
+    assert operator_alert.report.await_args_list[1].args[1] == "market_status:sidecar:sell:KOSPI:000000"
+    assert operator_alert.report.await_args_list[0].args[3] == "매수 사이드카 감지"
+    assert operator_alert.report.await_args_list[1].args[3] == "매도 사이드카 감지"
 
 
 @pytest.mark.asyncio
@@ -96,3 +122,27 @@ async def test_market_status_alert_service_resolves_active_alert_on_normal_statu
         "market_status:circuit_breaker:KRX:005930",
         "장운영정보 정상화",
     )
+
+
+@pytest.mark.asyncio
+async def test_market_status_alert_service_reports_index_thresholds_and_resolves_them():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        logger=MagicMock(),
+    )
+
+    await service.on_index_change("0001", "코스피", -8.2)
+
+    assert operator_alert.report.await_count == 2
+    assert operator_alert.report.await_args_list[0].args[1] == "market_index:move_5:down:0001"
+    assert operator_alert.report.await_args_list[0].args[2] == "warning"
+    assert operator_alert.report.await_args_list[1].args[1] == "market_index:fall_8:0001"
+    assert operator_alert.report.await_args_list[1].args[2] == "critical"
+
+    await service.on_index_change("0001", "코스피", -1.0)
+
+    assert {call.args[1] for call in operator_alert.resolve.await_args_list} == {
+        "market_index:move_5:down:0001",
+        "market_index:fall_8:0001",
+    }
