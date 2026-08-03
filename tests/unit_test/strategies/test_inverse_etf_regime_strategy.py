@@ -99,6 +99,17 @@ async def test_scan_emits_buy_when_bear_and_trend_confirmed(bear_setup):
 
 
 @pytest.mark.asyncio
+async def test_scan_sizes_entry_by_configured_portfolio_fraction(bear_setup):
+    """인버스 슬리브는 고정 1주가 아니라 기본 3% 예산으로 진입한다."""
+    strat, _, _, _, _, _ = bear_setup
+
+    sig = (await strat.scan())[0]
+
+    # 기본값: 1,000만원 × 3% ÷ 10,000원 = 30주
+    assert sig.qty == 30
+
+
+@pytest.mark.asyncio
 async def test_scan_no_signal_when_not_bear(bear_setup):
     """레짐이 베어가 아니면(상승/횡보) 진입하지 않는다 — R-2 디코릴레이션 핵심."""
     strat, _, regime, _, _, _ = bear_setup
