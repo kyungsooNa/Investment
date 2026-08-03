@@ -24,7 +24,7 @@ import sqlite3
 import threading
 import time
 from enum import Enum
-from typing import Dict, Iterable, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set
 
 
 class StreamingType(str, Enum):
@@ -231,6 +231,28 @@ class StreamingStockRepo:
                 self._pt_sources.pop(code, None)
         if stream_type == StreamingType.PROGRAM_TRADING:
             self._persist_pt_desired(code, add=False)
+
+    async def prune_orphan_pt_desired(self, owned_codes: Iterable[str]) -> List[str]:
+        """소유자가 사라진 PT desired 잔재를 제거한다.
+
+        owned_codes(구독 태스크가 영속화한 현재 배치)에 없으면서 출처가
+        program/legacy인 종목만 제거한다. 수동(manual) 구독은 보존한다.
+        재시작 시 DB에서 복원되지만 어떤 카테고리도 소유하지 않는 행이
+        pt_subscriptions에 무한 누적되는 것을 막는다.
+        """
+        owned = self._normalize_codes(owned_codes)
+        targets = sorted(
+            code for code in self._desired[StreamingType.PROGRAM_TRADING]
+            if code not in owned
+            and self._pt_sources.get(code, self.SOURCE_LEGACY) != self.SOURCE_MANUAL
+        )
+        if not targets:
+            return []
+        for code in targets:
+            await self.unmark_desired(code, StreamingType.PROGRAM_TRADING)
+        self.flush_pt_desired_sync()
+        self._logger.info(f"StreamingStockRepo: PT desired 잔재 {len(targets)}개 정리 {targets}")
+        return targets
 
     async def mark_active(self, code: str, stream_type: StreamingType) -> None:
         """브로커 구독 성공 후 활성 상태로 전환한다."""

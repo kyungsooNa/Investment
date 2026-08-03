@@ -165,6 +165,48 @@ async def test_pt_persistence_tracks_subscription_source(tmp_path, mock_logger):
     }
 
 
+@pytest.mark.asyncio
+async def test_prune_orphan_pt_desired_removes_unowned_program_and_legacy(tmp_path, mock_logger):
+    """소유자가 없는 program/legacy PT desired만 제거하고 manual은 보존한다."""
+    db_path = str(tmp_path / "test_pt.db")
+    repo = StreamingStockRepo(logger=mock_logger)
+    repo.load_pt_desired_from_db(db_path)
+
+    await repo.mark_desired("005930", StreamingType.PROGRAM_TRADING, source="manual")
+    await repo.mark_desired("000660", StreamingType.PROGRAM_TRADING, source="program")
+    await repo.mark_desired("035420", StreamingType.PROGRAM_TRADING, source="program")
+    await repo.mark_desired("080220", StreamingType.PROGRAM_TRADING, source="legacy")
+    repo.flush_pt_desired_sync()
+
+    pruned = await repo.prune_orphan_pt_desired(["000660"])
+
+    assert pruned == ["035420", "080220"]
+    assert repo.get_desired(StreamingType.PROGRAM_TRADING) == {"005930", "000660"}
+    assert repo.get_pt_subscription_sources() == {
+        "005930": "manual",
+        "000660": "program",
+    }
+
+    conn = sqlite3.connect(db_path)
+    rows = {row[0] for row in conn.execute("SELECT code FROM pt_subscriptions").fetchall()}
+    conn.close()
+    assert rows == {"005930", "000660"}
+
+
+@pytest.mark.asyncio
+async def test_prune_orphan_pt_desired_noop_when_nothing_to_remove(tmp_path, mock_logger):
+    """제거 대상이 없으면 빈 목록을 반환하고 상태를 바꾸지 않는다."""
+    db_path = str(tmp_path / "test_pt.db")
+    repo = StreamingStockRepo(logger=mock_logger)
+    repo.load_pt_desired_from_db(db_path)
+
+    await repo.mark_desired("005930", StreamingType.PROGRAM_TRADING, source="manual")
+    repo.flush_pt_desired_sync()
+
+    assert await repo.prune_orphan_pt_desired([]) == []
+    assert repo.get_desired(StreamingType.PROGRAM_TRADING) == {"005930"}
+
+
 def test_load_legacy_pt_subscription_table_migrates_source_to_legacy(tmp_path, mock_logger):
     """기존 code-only pt_subscriptions 테이블은 출처 미확인(legacy)으로 이관한다."""
     db_path = str(tmp_path / "test_pt.db")

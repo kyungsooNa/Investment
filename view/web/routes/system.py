@@ -665,12 +665,21 @@ def get_subscription_status():
     active_codes_pt = set(status.get("active_codes_pt", []))
 
     repo = getattr(ctx, "streaming_stock_repo", None)
+    pt_sources: dict = {}
     if repo is not None:
         try:
             desired_pt = repo.get_desired(StreamingType.PROGRAM_TRADING)
             desired_pt_set = _code_set(desired_pt)
+            sources = repo.get_pt_subscription_sources()
+            pt_sources = sources if isinstance(sources, dict) else {}
             if desired_pt_set is not None:
-                pending_by_priority["CRITICAL"] = desired_pt_set
+                # 수동 UI 구독은 정책(_refs)을 거치지 않으므로 CRITICAL로 직접 보강한다.
+                pending_by_priority["CRITICAL"] |= {
+                    code for code in desired_pt_set if pt_sources.get(code) == "manual"
+                }
+                # 어떤 카테고리도 소유하지 않는 PT 잔재는 LOW로 노출한다.
+                tracked = set().union(*pending_by_priority.values())
+                pending_by_priority["LOW"] |= (desired_pt_set - tracked)
 
             active_pt_set = _code_set(repo.get_active(StreamingType.PROGRAM_TRADING))
             if active_pt_set is not None:
@@ -729,6 +738,7 @@ def get_subscription_status():
                 "snapshot_at": snapshot_at,
                 "price": price,
                 "price_source": price_source,
+                "pt_source": pt_sources.get(code),
             })
         return result
 

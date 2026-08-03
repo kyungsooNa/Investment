@@ -142,10 +142,42 @@ async def test_restart_leftover_is_adopted_then_cleared_when_closed():
 
 
 @pytest.mark.asyncio
+async def test_adopt_prunes_orphan_pt_desired_with_stored_batch():
+    # 재시작 시 store 에 남은 배치를 소유 목록으로 넘겨 나머지 PT desired 잔재를 정리한다.
+    store = _FakeStore()
+    store.save_keyed("program_capture_subscribed_codes", "005930,000660")
+    repo = MagicMock()
+    repo.get_desired.return_value = set()
+    repo.get_pt_subscription_sources.return_value = {}
+    repo.prune_orphan_pt_desired = AsyncMock(return_value=["035420"])
+    task, _policy = _make_task(scheduler_store=store, streaming_stock_repo=repo)
+
+    await task._tick()
+
+    repo.prune_orphan_pt_desired.assert_awaited_once_with(["005930", "000660"])
+
+
+@pytest.mark.asyncio
+async def test_adopt_prune_failure_does_not_break_tick():
+    # 잔재 정리 실패는 경고만 남기고 이후 동기화를 막지 않는다.
+    repo = MagicMock()
+    repo.get_desired.return_value = set()
+    repo.get_pt_subscription_sources.return_value = {}
+    repo.prune_orphan_pt_desired = AsyncMock(side_effect=Exception("db down"))
+    task, policy = _make_task(streaming_stock_repo=repo)
+
+    await task._tick()
+
+    assert policy.sync_subscriptions.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_excludes_manual_pt_desired_and_caps_max_codes():
     # 수동 UI 로 이미 PT desired 인 종목은 제외 (해지/영속 상태 간섭 방지), cap 적용
     repo = MagicMock()
     repo.get_desired.return_value = {"000660"}
+    repo.get_pt_subscription_sources.return_value = {"000660": "manual"}
+    repo.prune_orphan_pt_desired = AsyncMock(return_value=[])
     universe_service = MagicMock()
     universe_service.get_watchlist = AsyncMock(
         return_value={"000660": MagicMock(), "035420": MagicMock(), "084370": MagicMock()}
@@ -166,6 +198,29 @@ async def test_excludes_manual_pt_desired_and_caps_max_codes():
         ),
         call([], PRICE_CATEGORY, SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE),
     ]
+
+
+@pytest.mark.asyncio
+async def test_program_sourced_pt_desired_is_still_a_capture_candidate():
+    # program 출처(캡처 태스크가 남긴) desired 는 후보에서 빼지 않는다 —
+    # 빼면 어떤 카테고리도 소유하지 않는 잔재로 굳어 영구 누적된다.
+    repo = MagicMock()
+    repo.get_desired.return_value = {"000660"}
+    repo.get_pt_subscription_sources.return_value = {"000660": "program"}
+    repo.prune_orphan_pt_desired = AsyncMock(return_value=[])
+    universe_service = MagicMock()
+    universe_service.get_watchlist = AsyncMock(
+        return_value={"000660": MagicMock(), "035420": MagicMock()}
+    )
+    task, policy = _make_task(
+        streaming_stock_repo=repo,
+        universe_service=universe_service,
+    )
+
+    await task._tick()
+
+    pt_call = policy.sync_subscriptions.await_args_list[0]
+    assert sorted(pt_call.args[0]) == ["000660", "005930", "035420"]
 
 
 @pytest.mark.asyncio

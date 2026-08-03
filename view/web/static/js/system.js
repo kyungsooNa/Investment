@@ -722,7 +722,7 @@ function renderSubTable() {
 
     const rows = _subData.pending_by_priority ? _subData.pending_by_priority[_subTab] || [] : [];
     if (rows.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:#888;">구독 종목 없음</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:#888;">구독 종목 없음</td></tr>`;
         const ctrl = document.getElementById('sub-table-pagination');
         if (ctrl) ctrl.innerHTML = '';
         return;
@@ -736,6 +736,10 @@ function renderSubTable() {
         const activeBadge = item.active
             ? `<span style="background:var(--success-color,#4CAF50); color:#fff; padding:2px 8px; border-radius:10px; font-size:0.82em; font-weight:bold;">구독 중</span>`
             : `<span style="background:#888; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.82em;">대기</span>`;
+        const sourceLabel = { manual: '수동', program: '캡처', legacy: '잔재' }[item.pt_source];
+        const sourceHtml = sourceLabel
+            ? `<span style="color:${item.pt_source === 'manual' ? 'var(--accent)' : '#888'};">${sourceLabel}</span>`
+            : '<span style="color:#aaa;">-</span>';
         const priceHtml = item.price != null
             ? `<span style="font-weight:bold;">${Number(item.price).toLocaleString()}원</span>`
             : '<span style="color:#aaa;">-</span>';
@@ -750,6 +754,7 @@ function renderSubTable() {
                     <a href="/stock?code=${item.code}" target="_blank" class="stock-link">${displayName}</a>
                 </td>
                 <td>${activeBadge}</td>
+                <td style="font-size:0.9em;">${sourceHtml}</td>
                 <td style="font-size:0.9em;">${priceHtml}</td>
                 <td style="font-size:0.9em; color:#888;">${received}</td>
             </tr>

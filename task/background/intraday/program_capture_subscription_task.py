@@ -6,7 +6,7 @@ import logging
 from typing import Dict, List, Optional
 
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
-from repositories.streaming_stock_repo import StreamingType
+from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
 from services.subscription_policy import SubscriptionPriority
 from task.background.capture_candidates import resolve_capture_codes
 
@@ -165,6 +165,7 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
                 )
                 self._synced_price_codes = stored_price
                 self._synced_codes = list(dict.fromkeys(stored + stored_price))
+            await self._prune_orphan_pt_desired(stored)
             self._adopted = True
 
         if await self._is_market_open_now():
@@ -217,6 +218,20 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
             self._save_codes([], self._price_state_key)
             self._logger.info(f"{self.task_name}: 장외 — 캡처 후보 순환 구독 해지")
 
+    async def _prune_orphan_pt_desired(self, owned_codes: List[str]) -> None:
+        """재시작 시 소유자가 없는 PT desired 잔재를 정리한다 (수동 구독은 보존)."""
+        if self._streaming_stock_repo is None:
+            return
+        try:
+            pruned = await self._streaming_stock_repo.prune_orphan_pt_desired(owned_codes)
+        except Exception as exc:
+            self._logger.warning(f"{self.task_name}: PT desired 잔재 정리 실패 — {exc}")
+            return
+        if pruned:
+            self._logger.info(
+                f"{self.task_name}: PT desired 잔재 {len(pruned)}종목 정리 — {pruned}"
+            )
+
     async def _is_market_open_now(self) -> bool:
         now = self._market_clock.get_current_kst_time()
         if not self._market_clock.is_market_operating_hours(now):
@@ -239,15 +254,21 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
             task_name=self.task_name,
         )
         already_desired: set = set()
+        pt_sources: dict = {}
         if self._streaming_stock_repo is not None:
             try:
                 already_desired = set(
                     self._streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)
                 )
+                pt_sources = self._streaming_stock_repo.get_pt_subscription_sources()
             except Exception as exc:
                 self._logger.warning(f"{self.task_name}: PT desired 조회 실패 — {exc}")
-        # 우리 카테고리가 이미 올린 desired는 제외 대상이 아니다 (재시작 재편입 케이스)
-        manual_desired = already_desired - set(self._synced_codes)
+        # 수동 UI 구독만 제외한다. program/legacy 출처까지 빼면 우리가 올린 desired가
+        # 후보에서 영구 제외돼 어떤 카테고리도 소유하지 않는 잔재로 굳는다.
+        manual_desired = {
+            code for code in already_desired
+            if pt_sources.get(code) == StreamingStockRepo.SOURCE_MANUAL
+        }
         return [
             code for code in codes
             if code not in manual_desired
