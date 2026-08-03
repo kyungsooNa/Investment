@@ -37,9 +37,9 @@ class RealtimeBootstrap:
             else True
         )
         monitor_codes = (
-            market_status_cfg.get("monitor_codes", ["005930"])
+            market_status_cfg.get("monitor_codes", ["000000"])
             if isinstance(market_status_cfg, dict)
-            else ["005930"]
+            else ["000000"]
         )
         ctx.market_status_alert_service = (
             MarketStatusAlertService(

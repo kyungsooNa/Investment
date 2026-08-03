@@ -25,6 +25,7 @@ def test_realtime_bootstrap_builds_streaming_chain():
         RealtimeBootstrap(ctx).run(config={}, needs_realtime=True)
 
     assert ctx.streaming_service is streaming.return_value
+    assert streaming.call_args.kwargs["market_status_monitor_codes"] == ["000000"]
     assert ctx.orderbook_snapshot_repo is orderbook_repo.return_value
     assert ctx.favorite_price_alert_service is favorite_alert.return_value
     assert price_stream.call_args.kwargs["favorite_price_alert_service"] is favorite_alert.return_value

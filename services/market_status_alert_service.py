@@ -34,15 +34,19 @@ class MarketStatusAlertService:
         code = str(data.get("유가증권단축종목코드") or data.get("종목코드") or "UNKNOWN")
         exchange = str(data.get("거래소구분코드") or data.get("EXCH_CLS_CODE") or "UNKNOWN")
         reason = str(data.get("거래정지사유내용") or "").strip()
-        dedup_key = f"market_status:{event_type}:{exchange}:{code}"
+        direction = self._classify_direction(reason)
+        direction_key = f":{direction}" if direction else ""
+        dedup_key = f"market_status:{event_type}{direction_key}:{exchange}:{code}"
         severity = "critical" if event_type == "circuit_breaker" else "warning"
-        title = "서킷브레이커 감지" if event_type == "circuit_breaker" else "사이드카 감지"
+        event_name = "서킷브레이커" if event_type == "circuit_breaker" else "사이드카"
+        title = f"{self._direction_label(direction)} {event_name} 감지".strip()
         message = f"{exchange} {code}: {reason or '장운영정보 특수 상태 감지'}"
         metadata = {
             "event_type": event_type,
             "stock_code": code,
             "exchange": exchange,
             "reason": reason,
+            "direction": direction,
             "market_status": dict(data),
             "telegram_channel": "report",
         }
@@ -78,6 +82,19 @@ class MarketStatusAlertService:
         if any(keyword.lower() in reason for keyword in self._CIRCUIT_KEYWORDS):
             return "circuit_breaker"
         return None
+
+    @staticmethod
+    def _classify_direction(reason: str) -> Optional[str]:
+        normalized = reason.lower()
+        if "매수" in reason or "buy" in normalized:
+            return "buy"
+        if "매도" in reason or "sell" in normalized:
+            return "sell"
+        return None
+
+    @staticmethod
+    def _direction_label(direction: Optional[str]) -> str:
+        return {"buy": "매수", "sell": "매도"}.get(direction, "")
 
     async def _resolve_for_code(self, data: dict[str, Any]) -> None:
         if self._operator_alert_service is None:
