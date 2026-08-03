@@ -1632,30 +1632,35 @@ def test_get_subscription_status_no_streaming_service(web_client, mock_web_ctx):
     assert data["pending_by_priority"]["HIGH"][0]["received_at"] is None
 
 
-def test_get_subscription_status_uses_program_trading_repo_as_critical_source(web_client, mock_web_ctx):
-    """CRITICAL은 PT 저장소의 현재 desired와 active 상태를 기준으로 노출된다."""
+def test_get_subscription_status_classifies_pt_desired_by_source(web_client, mock_web_ctx):
+    """CRITICAL은 수동(manual) PT 구독만, 정책이 모르는 PT 잔재는 LOW로 노출된다."""
     mock_svc = MagicMock()
     mock_svc.get_status.return_value = {
-        "active_count": 2,
+        "active_count": 1,
         "max_subscriptions": 40,
-        "active_codes_price": ["000660"],
+        "active_codes_price": [],
         "active_codes_pt": [],
-        "pending_count": 3,
+        "pending_count": 1,
         "pending_by_priority": {
-            "CRITICAL": ["000660"],  # 정책 refs에 남은 오래된 PT 종목
+            "CRITICAL": [],
             "HIGH": [],
             "MEDIUM": [],
-            "LOW": [],
+            "LOW": ["080220"],  # 캡처 태스크가 정책에 올린 종목
         },
     }
     mock_web_ctx.price_subscription_service = mock_svc
     mock_web_ctx.streaming_stock_repo = MagicMock()
     mock_web_ctx.streaming_stock_repo.get_desired.side_effect = lambda stream_type: (
-        {"005930", "080220"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+        {"005930", "080220", "000660"} if stream_type == StreamingType.PROGRAM_TRADING else set()
     )
     mock_web_ctx.streaming_stock_repo.get_active.side_effect = lambda stream_type: (
-        {"005930", "080220"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+        {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
     )
+    mock_web_ctx.streaming_stock_repo.get_pt_subscription_sources.return_value = {
+        "005930": "manual",
+        "080220": "program",
+        "000660": "legacy",  # 어떤 카테고리도 소유하지 않는 잔재
+    }
     mock_web_ctx.streaming_service.get_cached_realtime_price.return_value = None
     mock_web_ctx.stock_code_repository.get_name_by_code.side_effect = lambda c: {
         "000660": "SK하이닉스",
@@ -1667,12 +1672,17 @@ def test_get_subscription_status_uses_program_trading_repo_as_critical_source(we
 
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["active_count"] == 3
-    assert data["active_codes_pt"] == ["005930", "080220"]
-    assert data["pending_count"] == 2
+    assert data["active_codes_pt"] == ["005930"]
+    assert data["pending_count"] == 3
+
     critical = data["pending_by_priority"]["CRITICAL"]
-    assert [row["code"] for row in critical] == ["005930", "080220"]
-    assert [row["active"] for row in critical] == [True, True]
+    assert [row["code"] for row in critical] == ["005930"]
+    assert critical[0]["pt_source"] == "manual"
+    assert critical[0]["active"] is True
+
+    low = data["pending_by_priority"]["LOW"]
+    assert [row["code"] for row in low] == ["000660", "080220"]
+    assert [row["pt_source"] for row in low] == ["legacy", "program"]
 
 
 def test_get_subscription_status_ignores_repo_error(web_client, mock_web_ctx):
