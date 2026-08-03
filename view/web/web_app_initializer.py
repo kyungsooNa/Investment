@@ -137,6 +137,8 @@ class WebAppContext:
             overseas_stock_code_repository=self.overseas_stock_code_repository,
         )
         self.favorite_price_alert_service: FavoritePriceAlertService = None
+        self.overseas_favorite_price_alert_service: FavoritePriceAlertService = None
+        self.overseas_favorite_price_alert_task = None
         self.account_snapshot_cache: AccountSnapshotCache = None
         self.api_budget_limiter = ApiBudgetLimiter()
         self.risk_gate_service: RiskGateService = None

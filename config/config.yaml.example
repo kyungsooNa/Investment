@@ -203,6 +203,12 @@ market_index_alert:
   enabled: true
   poll_interval_sec: 60
 
+# 미국장 관심종목 5% 단위 등락 알림. 해외는 실시간 스트림이 없어 정규장 중
+# 해외현재가 REST 를 poll_interval_sec 주기로 조회한다(관심종목 수 × 1회/주기).
+overseas_favorite_alert:
+  enabled: true
+  poll_interval_sec: 60
+
 # OpenDART 관심종목 공시 알림 (API 키 발급 후 enabled=true)
 dart_disclosure:
   enabled: false

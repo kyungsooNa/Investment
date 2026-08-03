@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Callable, Optional
 from zoneinfo import ZoneInfo
 
+from repositories.favorite_repository import MARKET_DOMESTIC, MARKET_OVERSEAS_US
 from services.notification_service import (
     NotificationCategory,
     NotificationLevel,
@@ -24,6 +25,7 @@ class FavoritePriceAlertService:
         notification_service: Optional[NotificationService],
         stock_code_repository=None,
         *,
+        market: str = MARKET_DOMESTIC,
         threshold_step_pct: float = 5.0,
         upper_limit_rate_pct: float = 29.5,
         favorite_cache_ttl_sec: float = 30.0,
@@ -34,6 +36,7 @@ class FavoritePriceAlertService:
         self._favorite_repository = favorite_repository
         self._notification_service = notification_service
         self._stock_code_repository = stock_code_repository
+        self._market = market
         self._threshold_step_pct = float(threshold_step_pct)
         self._upper_limit_rate_pct = float(upper_limit_rate_pct)
         self._favorite_cache_ttl_sec = float(favorite_cache_ttl_sec)
@@ -168,7 +171,7 @@ class FavoritePriceAlertService:
         ):
             return
         try:
-            codes = await self._favorite_repository.get_all()
+            codes = await self._favorite_repository.get_all(market=self._market)
         except Exception as exc:
             self._logger.warning(f"관심종목 알림용 목록 조회 실패: {exc}")
             return
@@ -236,6 +239,8 @@ class FavoritePriceAlertService:
         return bucket if rate > 0 else -bucket
 
     def _is_upper_limit(self, rate: float, *, sign=None, is_upper_limit: bool = False) -> bool:
+        if self._market == MARKET_OVERSEAS_US:
+            return False  # 미국장은 상한가 제도가 없다
         if is_upper_limit:
             return True
         if str(sign or "").strip() == "1":
@@ -276,11 +281,12 @@ class FavoritePriceAlertService:
         except (TypeError, ValueError):
             return None
 
-    @classmethod
-    def _format_price(cls, value) -> str:
-        number = cls._to_float(value)
+    def _format_price(self, value) -> str:
+        number = self._to_float(value)
         if number is None:
             return "-"
+        if self._market == MARKET_OVERSEAS_US:
+            return f"${number:,.2f}"
         if number.is_integer():
             return f"{int(number):,}원"
         return f"{number:,.2f}원"

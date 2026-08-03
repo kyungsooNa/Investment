@@ -26,6 +26,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "ThemeClassificationCollectorService", "ThemeClassificationTask", "ThemeDailyLeaderReportTask",
     "ThemeIntradayLeaderAlertTask",
     "MarketIndexThresholdAlertTask",
+    "OverseasFavoritePriceAlertTask", "FavoritePriceAlertService",
     "USMarketCalendarService",
     "BacktestMicrostructureCaptureService", "MicrostructureCaptureTask",
     "PremiumWatchlistGeneratorTask", "CacheWarmupTask", "LogCleanupTask",
@@ -374,6 +375,7 @@ def test_service_container_batch_mode_skips_streaming_and_intraday_web_tasks(pat
     assert ctx.pre_market_health_check_task is None
     assert ctx.opening_position_reconcile_task is None
     assert ctx.notification_queue_task is None
+    assert ctx.overseas_favorite_price_alert_task is None
     assert ctx.after_market_reconcile_task is patched_service_container_deps["AfterMarketReconcileTask"].return_value
     assert ctx.post_market_replay_audit_task is patched_service_container_deps["PostMarketReplayAuditTask"].return_value
     assert ctx.newhigh_strategy_coverage_backtest_task is patched_service_container_deps[
@@ -415,6 +417,45 @@ def test_service_container_web_mode_keeps_realtime_and_skips_trading_batch_tasks
     assert ctx.after_market_reconcile_task is None
     assert ctx.theme_intraday_leader_alert_task is None
     assert ctx.order_execution_service is patched_service_container_deps["OrderExecutionService"].return_value
+
+
+def test_service_container_builds_overseas_favorite_price_alert_in_web_mode(patched_service_container_deps):
+    """미국장 관심종목 알림은 웹 모드에서 US 클럭 기반 서비스·폴링 태스크로 조립된다."""
+    from repositories.favorite_repository import MARKET_OVERSEAS_US
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.runtime_mode = RuntimeMode.WEB
+    ServiceContainer(ctx).run()
+
+    alert_cls = patched_service_container_deps["FavoritePriceAlertService"]
+    overseas_kwargs = next(
+        call.kwargs for call in alert_cls.call_args_list
+        if call.kwargs.get("market") == MARKET_OVERSEAS_US
+    )
+    assert overseas_kwargs["favorite_repository"] is ctx.favorite_repo
+    assert overseas_kwargs["state_file"] == "data/overseas_favorite_price_alert_state.json"
+    assert overseas_kwargs["today_provider"]() == overseas_kwargs["today_provider"]()
+
+    task_kwargs = patched_service_container_deps["OverseasFavoritePriceAlertTask"].call_args.kwargs
+    assert task_kwargs["broker"] is ctx.broker
+    assert task_kwargs["market_clock"].timezone_name == "America/New_York"
+    assert ctx.overseas_favorite_price_alert_task is (
+        patched_service_container_deps["OverseasFavoritePriceAlertTask"].return_value
+    )
+
+
+def test_service_container_disables_overseas_favorite_price_alert_via_config(patched_service_container_deps):
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.runtime_mode = RuntimeMode.WEB
+    ctx.full_config = {"overseas_favorite_alert": {"enabled": False}}
+    ServiceContainer(ctx).run()
+
+    patched_service_container_deps["OverseasFavoritePriceAlertTask"].assert_not_called()
+    assert ctx.overseas_favorite_price_alert_task is None
+    assert ctx.overseas_favorite_price_alert_service is None
 
 
 def test_service_container_trading_mode_keeps_realtime_intraday_and_skips_web_batch_tasks(patched_service_container_deps):

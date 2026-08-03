@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from repositories.favorite_repository import MARKET_DOMESTIC, MARKET_OVERSEAS_US
 from services.favorite_price_alert_service import FavoritePriceAlertService
 from services.notification_service import NotificationCategory, NotificationLevel
 
@@ -196,6 +197,56 @@ async def test_ignores_non_favorite_and_invalid_rate():
     await svc.handle_price_tick("000660", price="150000", rate="bad")
 
     notifications.emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reads_favorites_from_domestic_market_by_default():
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["005930"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("005930", price="75000", rate="5.12")
+
+    repo.get_all.assert_awaited_with(market=MARKET_DOMESTIC)
+
+
+@pytest.mark.asyncio
+async def test_alerts_overseas_favorite_with_usd_price():
+    """미국장 인스턴스는 overseas_us 관심종목을 읽고 달러 표기로 알린다."""
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["AAPL"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications, market=MARKET_OVERSEAS_US)
+
+    await svc.handle_price_tick("AAPL", price="189.5", rate="5.30")
+
+    repo.get_all.assert_awaited_with(market=MARKET_OVERSEAS_US)
+    notifications.emit.assert_awaited_once()
+    args, kwargs = notifications.emit.call_args
+    assert "AAPL" in args[2]
+    assert "+5%" in args[2]
+    assert "$189.50" in args[3]
+    assert kwargs["metadata"]["threshold_pct"] == 5
+
+
+@pytest.mark.asyncio
+async def test_overseas_market_never_emits_upper_limit_alert():
+    """미국장은 상한가 제도가 없으므로 30% 구간도 일반 임계치 알림으로 처리한다."""
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["TSLA"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications, market=MARKET_OVERSEAS_US)
+
+    await svc.handle_price_tick("TSLA", price="300", rate="30.20")
+
+    notifications.emit.assert_awaited_once()
+    metadata = notifications.emit.call_args.kwargs["metadata"]
+    assert metadata["alert_type"] == "favorite_price_threshold"
+    assert metadata["threshold_pct"] == 30
 
 
 @pytest.mark.asyncio
