@@ -222,6 +222,46 @@ async def test_transient_network_error_is_retried_then_succeeds():
     assert http_client.post.await_count == 2
 
 
+async def test_aborted_completion_is_retried_then_succeeds():
+    """Gemini가 HTTP 200으로 돌려주는 내부 중단 문구도 일시 오류로 재시도한다."""
+    http_client = AsyncMock()
+    http_client.post.side_effect = [
+        _response(_completion("signal is aborted without reason")),
+        _response(_completion("복구된 응답")),
+    ]
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="gemini-2.5-flash",
+        http_client=http_client,
+        retry_backoff_sec=0,
+    )
+
+    assert await client.complete(system="s", user="u") == "복구된 응답"
+    assert http_client.post.await_count == 2
+
+
+async def test_repeated_aborted_completion_raises_clear_error():
+    http_client = AsyncMock()
+    http_client.post.return_value = _response(
+        _completion("signal is aborted without reason")
+    )
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="gemini-2.5-flash",
+        http_client=http_client,
+        max_retries=1,
+        retry_backoff_sec=0,
+    )
+
+    with pytest.raises(AiClientError, match="일시적으로 중단") as exc_info:
+        await client.complete(system="s", user="u")
+
+    assert exc_info.value.status == "UPSTREAM_ABORTED"
+    assert http_client.post.await_count == 2
+
+
 async def test_client_error_4xx_is_not_retried():
     http_client = AsyncMock()
     http_client.post.return_value = _status_response(401)

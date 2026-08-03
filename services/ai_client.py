@@ -111,16 +111,39 @@ class AiClient:
                     url, headers=headers, json=payload, timeout=self._timeout_sec
                 )
                 response.raise_for_status()
-                return response.json()
+                response_payload = response.json()
+                if self._is_aborted_completion(response_payload):
+                    raise AiClientError(
+                        "UPSTREAM_ABORTED",
+                        "AI 공급자 응답이 일시적으로 중단되었습니다. 잠시 후 다시 시도하세요.",
+                    )
+                return response_payload
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code not in _RETRYABLE_STATUS:
                     raise
                 last_exc = exc
             except httpx.TransportError as exc:
                 last_exc = exc
+            except AiClientError as exc:
+                if exc.status != "UPSTREAM_ABORTED":
+                    raise
+                last_exc = exc
             if attempt < self._max_retries:
                 await asyncio.sleep(self._retry_backoff_sec * (2**attempt))
         raise last_exc
+
+    @staticmethod
+    def _is_aborted_completion(payload: dict) -> bool:
+        """Gemini OpenAI 호환 API의 HTTP 200 내부 중단 응답을 감지한다."""
+        choices = payload.get("choices") or []
+        if not choices:
+            return False
+        message = choices[0].get("message") or {}
+        content = message.get("content")
+        return (
+            isinstance(content, str)
+            and content.strip().casefold() == "signal is aborted without reason"
+        )
 
     @staticmethod
     def _parse(payload: dict) -> str:
