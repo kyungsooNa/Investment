@@ -76,6 +76,10 @@ async def add_favorite(code: str, market: str = Query(MARKET_DOMESTIC)):
                 )
             except Exception as e:
                 ctx.logger.warning(f"관심종목 구독 추가 실패: {e}")
+    elif added and market == MARKET_OVERSEAS_US:
+        overseas_alert_service = _ctx_attr(ctx, "overseas_favorite_price_alert_service")
+        if overseas_alert_service:
+            await overseas_alert_service.add_favorite(effective_code)
     return {"success": True, "added": added, "code": effective_code, "market": market}
 
 
@@ -98,6 +102,10 @@ async def remove_favorite(code: str, market: str = Query(MARKET_DOMESTIC)):
                     await price_subscription_service.remove_subscription(code, "favorite")
             except Exception as e:
                 ctx.logger.warning(f"관심종목 구독 제거 실패: {e}")
+    elif removed and market == MARKET_OVERSEAS_US:
+        overseas_alert_service = _ctx_attr(ctx, "overseas_favorite_price_alert_service")
+        if overseas_alert_service:
+            await overseas_alert_service.remove_favorite(effective_code)
     return {"success": True, "removed": removed, "code": effective_code, "market": market}
 
 

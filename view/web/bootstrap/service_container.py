@@ -21,7 +21,9 @@ from config.config_loader import (
 )
 from core.account_snapshot import AccountSnapshotCache
 from core.market_clock import MarketClock
+from repositories.favorite_repository import MARKET_OVERSEAS_US
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
+from services.favorite_price_alert_service import FavoritePriceAlertService
 from services.backtest_microstructure_capture import BacktestMicrostructureCaptureService
 from services.execution_flow_service import ExecutionFlowService
 from services.event_shadow_journal_service import EventShadowJournalService
@@ -70,6 +72,7 @@ from task.background.intraday.pre_market_health_check_task import PreMarketHealt
 from task.background.intraday.program_capture_subscription_task import ProgramCaptureSubscriptionTask
 from task.background.intraday.theme_intraday_leader_alert_task import ThemeIntradayLeaderAlertTask
 from task.background.intraday.market_index_threshold_alert_task import MarketIndexThresholdAlertTask
+from task.background.intraday.overseas_favorite_price_alert_task import OverseasFavoritePriceAlertTask
 from view.web.bootstrap.runtime_mode import RuntimeMode
 from view.web.bootstrap.backtest_task_bootstrap import BacktestTaskBootstrap
 from view.web.bootstrap.repository_bootstrap import RepositoryBootstrap
@@ -701,6 +704,8 @@ class ServiceContainer:
                 and ctx.market_status_alert_service is not None
             ) else None
 
+            self._build_overseas_favorite_price_alert(config_dict, needs_web=needs_web)
+
             if needs_web:
                 ctx.notification_queue_task = NotificationQueueTask(
                     notification_service=ctx.notification_service,
@@ -757,6 +762,46 @@ class ServiceContainer:
         except Exception as e:
             ctx.logger.critical(f"[ServiceBootstrap:Universe] 초기화 실패: {e}", exc_info=True)
             raise
+
+    def _build_overseas_favorite_price_alert(self, config_dict: dict, *, needs_web: bool) -> None:
+        """미국장 관심종목 5% 단위 등락 알림 조립.
+
+        해외는 실시간 스트림 경로가 없어 국내(웹소켓 틱)와 달리 REST 폴링 태스크가
+        틱을 공급한다. 알림 상태는 ET 날짜 기준으로 리셋해야 하므로 국내 인스턴스와
+        상태 파일·today_provider 를 분리한다.
+        """
+        ctx = self._ctx
+        ctx.overseas_favorite_price_alert_service = None
+        ctx.overseas_favorite_price_alert_task = None
+
+        alert_cfg = config_dict.get("overseas_favorite_alert", {})
+        if not isinstance(alert_cfg, dict):
+            alert_cfg = {}
+        if not needs_web or not alert_cfg.get("enabled", True):
+            return
+        if ctx.notification_service is None or getattr(ctx, "favorite_repo", None) is None:
+            return
+
+        us_clock = MarketClock.for_us_equities(logger=ctx.logger)
+        ctx.overseas_favorite_price_alert_service = FavoritePriceAlertService(
+            favorite_repository=ctx.favorite_repo,
+            notification_service=ctx.notification_service,
+            stock_code_repository=getattr(ctx, "overseas_stock_code_repository", None),
+            market=MARKET_OVERSEAS_US,
+            state_file="data/overseas_favorite_price_alert_state.json",
+            today_provider=us_clock.get_current_kst_date_str,
+            logger=ctx.logger,
+        )
+        ctx.overseas_favorite_price_alert_task = OverseasFavoritePriceAlertTask(
+            favorite_repository=ctx.favorite_repo,
+            broker=ctx.broker,
+            alert_service=ctx.overseas_favorite_price_alert_service,
+            market_clock=us_clock,
+            overseas_stock_code_repository=getattr(ctx, "overseas_stock_code_repository", None),
+            us_market_calendar_service=USMarketCalendarService(us_clock, logger=ctx.logger),
+            check_interval_sec=alert_cfg.get("poll_interval_sec", 60),
+            logger=ctx.logger,
+        )
 
     def _build_overseas_dryrun_pipeline(self) -> None:
         """해외 VBO dry-run 파이프라인 조립 (주문 경로 없음 — 실주문 불가).

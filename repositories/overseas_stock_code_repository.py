@@ -110,6 +110,10 @@ class OverseasStockCodeRepository:
         """심볼의 {name, exchange} 반환. 미등록이면 None."""
         return self.symbol_to_meta.get(str(symbol).upper())
 
+    def get_name_by_code(self, symbol: str) -> str | None:
+        """심볼의 종목명 반환. 미등록이면 None. (StockCodeRepository와 동일 시그니처)"""
+        return (self.get_meta(symbol) or {}).get("name")
+
     def all_symbols(self) -> list:
         """전 심볼 리스트 반환 (클라이언트 자동완성용)."""
         return [
