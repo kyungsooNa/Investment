@@ -24,7 +24,6 @@ class FavoritePriceAlertService:
         threshold_step_pct: float = 5.0,
         upper_limit_rate_pct: float = 29.5,
         favorite_cache_ttl_sec: float = 30.0,
-        alert_cooldown_sec: float = 300.0,
         logger=None,
     ) -> None:
         self._favorite_repository = favorite_repository
@@ -33,12 +32,10 @@ class FavoritePriceAlertService:
         self._threshold_step_pct = float(threshold_step_pct)
         self._upper_limit_rate_pct = float(upper_limit_rate_pct)
         self._favorite_cache_ttl_sec = float(favorite_cache_ttl_sec)
-        self._alert_cooldown_sec = float(alert_cooldown_sec)
         self._logger = logger or logging.getLogger(__name__)
         self._favorite_codes: set[str] = set()
         self._favorite_cache_ts: float = 0.0
         self._last_alert_bucket: dict[str, int] = {}
-        self._last_alert_ts_by_bucket: dict[tuple[str, int], float] = {}
         self._upper_limit_alerted_codes: set[str] = set()
 
     async def add_favorite(self, code: str) -> None:
@@ -54,8 +51,6 @@ class FavoritePriceAlertService:
             return
         self._favorite_codes.discard(normalized)
         self._last_alert_bucket.pop(normalized, None)
-        for key in [key for key in self._last_alert_ts_by_bucket if key[0] == normalized]:
-            self._last_alert_ts_by_bucket.pop(key, None)
         self._upper_limit_alerted_codes.discard(normalized)
 
     async def handle_price_tick(
@@ -92,22 +87,11 @@ class FavoritePriceAlertService:
 
         bucket = self._rate_bucket(rate_value)
         if bucket == 0:
-            self._last_alert_bucket[normalized] = 0
             return False
         if self._last_alert_bucket.get(normalized) == bucket:
             return False
 
         self._last_alert_bucket[normalized] = bucket
-        cooldown_key = (normalized, bucket)
-        now = time.monotonic()
-        last_alert_ts = self._last_alert_ts_by_bucket.get(cooldown_key, 0.0)
-        if (
-            self._alert_cooldown_sec > 0
-            and last_alert_ts > 0
-            and now - last_alert_ts < self._alert_cooldown_sec
-        ):
-            return False
-        self._last_alert_ts_by_bucket[cooldown_key] = now
 
         threshold_pct = int(bucket * self._threshold_step_pct)
         name = self._stock_name(normalized)
