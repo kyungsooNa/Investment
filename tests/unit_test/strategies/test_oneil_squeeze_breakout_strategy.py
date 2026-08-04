@@ -456,15 +456,14 @@ async def test_scan_skip_existing_position(scan_setup):
     sqs.get_current_price.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_scan_bad_market_timing(scan_setup):
-    """scan: 마켓 타이밍이 좋지 않으면 스캔 제외."""
+async def test_scan_bad_market_timing_keeps_observation_scan(scan_setup):
+    """scan: 마켓 타이밍이 좋지 않아도 관찰 스캔은 유지한다."""
     strategy, sqs, universe, _, _ = scan_setup
     universe.is_market_timing_ok.return_value = False
     
     signals = await strategy.scan()
     assert len(signals) == 0
-    # 마켓 타이밍 체크 후 탈락하므로 가격 조회 API 호출 안함
-    sqs.get_current_price.assert_not_called()
+    sqs.get_current_price.assert_called()
 
 @pytest.mark.asyncio
 async def test_scan_exception_handling(scan_setup):

@@ -150,4 +150,5 @@ async def test_oneil_pp_bgu_entry_fixture_cases(case, tmp_path, monkeypatch):
         assert "005930" not in strategy._position_state
 
     if not case["market_timing_ok"]:
-        sqs.get_current_price.assert_not_called()
+        # 시장 레짐 🔴에서도 관찰 스캔은 수행하며, 실주문은 scheduler 공통 게이트가 차단한다.
+        sqs.get_current_price.assert_called()

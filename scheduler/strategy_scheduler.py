@@ -76,6 +76,10 @@ class StrategySchedulerConfig:
     # P2 2-4: 활성 시 scan() 이후 매번 router 구독을 갱신하고 evaluate_single 결과를
     # EventShadowJournalService 에 기록 (실 주문 미발생). 기본 False — 안전한 dead code.
     event_driven_shadow: bool = False
+    # 시장 레짐은 신규 롱 진입만 차단한다. scan/check_exits 는 계속 수행하여
+    # 관찰 데이터와 청산 안전장치를 유지한다. 베어 레짐을 진입 조건으로 쓰는
+    # 인버스 전략은 False 로 명시적으로 우회한다.
+    market_timing_entry_gate: bool = True
 
 
 @dataclass(frozen=True)
@@ -843,6 +847,20 @@ class StrategyScheduler:
             holding_codes = {str(h.get('code')) for h in current_holdings if h.get('code')}
             valid_signals = [s for s in buy_signals if str(s.code) not in holding_codes]
 
+        # 시장 레짐은 탐색 단계가 아니라 실제 신규 롱 주문 직전에 적용한다.
+        # 전략이 scan() 중 position_state 를 선반영할 수 있으므로, 차단 신호는
+        # 아래에서 state 를 되돌려 실제 미보유 상태와 일치시킨다.
+        market_blocked_signals = await self._filter_market_timing_blocked_buys(cfg, valid_signals)
+        if market_blocked_signals:
+            self._rollback_rejected_buy_states(
+                cfg,
+                market_blocked_signals,
+                pre_existing_codes={str(h.get('code')).strip() for h in current_holdings if h.get('code')},
+                accepted_codes=set(),
+            )
+        blocked_codes = {id(signal) for signal in market_blocked_signals}
+        valid_signals = [signal for signal in valid_signals if id(signal) not in blocked_codes]
+
         remaining = max(cfg.max_positions - current_holds_count, 0)
         target_signals = valid_signals[:remaining]
         rejected_signals = valid_signals[remaining:]
@@ -897,8 +915,6 @@ class StrategyScheduler:
     ) -> None:
         """scan 중 선반영된 stateful 전략의 rejected BUY state를 되돌린다."""
         position_state = self._get_strategy_position_state(cfg.strategy)
-        if not position_state:
-            return
 
         removed_codes: List[str] = []
         for sig in signals:
@@ -907,6 +923,7 @@ class StrategyScheduler:
             code = str(sig.code).strip()
             if not code or code in pre_existing_codes or code in accepted_codes:
                 continue
+            cfg.strategy.discard_bought_today(code)
             if code in position_state:
                 position_state.pop(code, None)
                 removed_codes.append(code)
@@ -920,6 +937,51 @@ class StrategyScheduler:
             f"strategy={cfg.strategy.name}, codes={removed_codes}, "
             f"max_positions={cfg.max_positions}"
         )
+
+    async def _filter_market_timing_blocked_buys(
+        self,
+        cfg: StrategySchedulerConfig,
+        signals: List[TradeSignal],
+    ) -> List[TradeSignal]:
+        """시장 레짐이 🔴인 종목의 BUY만 주문 직전에 차단한다.
+
+        레짐 서비스가 주입되지 않은 기존/테스트 경로는 호환성을 위해 통과시킨다.
+        """
+        if not cfg.market_timing_entry_gate or self._market_regime_service is None:
+            return []
+
+        snapshots = {}
+        blocked: List[TradeSignal] = []
+        for signal in signals:
+            if signal.action != "BUY":
+                continue
+            try:
+                market = "KOSDAQ" if self.stock_code_repository.is_kosdaq(str(signal.code)) else "KOSPI"
+                if market not in snapshots:
+                    snapshots[market] = await self._market_regime_service.classify(
+                        market, logger=self._logger
+                    )
+                snapshot = snapshots[market]
+                if getattr(snapshot, "is_rising", False):
+                    continue
+                blocked.append(signal)
+                self._logger.info({
+                    "event": "signal_rejected",
+                    "reason": "market_timing_off",
+                    "strategy_name": signal.strategy_name or cfg.strategy.name,
+                    "code": signal.code,
+                    "name": signal.name,
+                    "action": signal.action,
+                    "market": market,
+                    "trend_status": getattr(snapshot, "trend_status", "unknown"),
+                    "message": "시장 레짐 🔴으로 신규 매수 주문 차단 (관찰 스캔은 유지)",
+                })
+            except Exception as exc:
+                self._logger.warning(
+                    f"[Scheduler] 시장 레짐 주문 게이트 조회 실패 — 매수 허용: {exc}",
+                    exc_info=True,
+                )
+        return blocked
 
     def _stamp_signals(self, signals: List[TradeSignal], strategy: LiveStrategy) -> None:
         """미stamp 신호에 created_at/signal_id/strategy_id/config_hash 부여 (scan/exit 공통)."""

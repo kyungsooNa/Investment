@@ -56,7 +56,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             self._scheduler = None
         shutil.rmtree(self.test_dir)
 
-    def _make_scheduler(self, dry_run=True, live_expansion_gate_service=None):
+    def _make_scheduler(self, dry_run=True, live_expansion_gate_service=None, market_regime_service=None):
         vm = MagicMock()
         vm.get_holds_by_strategy.return_value = []
         vm.log_buy_async = AsyncMock(return_value=True)
@@ -110,9 +110,56 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
             dry_run=dry_run,
             store=mock_store,
             live_expansion_gate_service=live_expansion_gate_service,
+            market_regime_service=market_regime_service,
         )
         self._scheduler = scheduler
         return scheduler, vm, oes, tm, mcs
+
+    async def test_run_strategy_scans_but_blocks_buy_in_bear_market_and_rolls_back_state(self):
+        """베어 국면에도 스캔은 유지하고 신규 BUY만 공통 게이트에서 차단한다."""
+        regime = MagicMock()
+        regime.classify = AsyncMock(return_value=SimpleNamespace(is_rising=False, trend_status="hard_decline"))
+        scheduler, vm, _, _, _ = self._make_scheduler(market_regime_service=regime)
+        scheduler.stock_code_repository.is_kosdaq.return_value = False
+
+        signal = TradeSignal(
+            code="005930", name="삼성전자", action="BUY", price=70000, qty=1,
+            reason="관찰 신호", strategy_name="테스트전략",
+        )
+        strategy = MockStrategy(scan_signals=[signal])
+        strategy.scan = AsyncMock(return_value=[signal])
+        strategy._position_state = {"005930": SimpleNamespace(entry_price=70000)}
+        strategy._save_state = MagicMock()
+
+        await scheduler._run_strategy(StrategySchedulerConfig(strategy=strategy, max_positions=3))
+
+        strategy.scan.assert_awaited_once()
+        vm.log_buy_async.assert_not_awaited()
+        self.assertEqual(strategy._position_state, {})
+        strategy._save_state.assert_called_once()
+        regime.classify.assert_awaited_once_with("KOSPI", logger=scheduler._logger)
+        rejection_logs = [
+            args[0] for args, _ in scheduler._logger.info.call_args_list
+            if args and isinstance(args[0], dict) and args[0].get("reason") == "market_timing_off"
+        ]
+        self.assertEqual(len(rejection_logs), 1)
+
+    async def test_run_strategy_bypasses_bear_buy_gate_when_disabled_for_inverse_strategy(self):
+        """베어 레짐을 진입 조건으로 쓰는 인버스 전략은 공통 롱 게이트를 우회한다."""
+        regime = MagicMock()
+        regime.classify = AsyncMock(return_value=SimpleNamespace(is_rising=False, trend_status="hard_decline"))
+        scheduler, vm, _, _, _ = self._make_scheduler(market_regime_service=regime)
+        signal = TradeSignal(code="114800", name="인버스", action="BUY", price=10000, qty=1,
+                             strategy_name="인버스 ETF 레짐")
+
+        await scheduler._run_strategy(StrategySchedulerConfig(
+            strategy=MockStrategy(name="인버스 ETF 레짐", scan_signals=[signal]),
+            max_positions=1,
+            market_timing_entry_gate=False,
+        ))
+
+        vm.log_buy_async.assert_awaited_once()
+        regime.classify.assert_not_awaited()
 
     def test_register_strategy(self):
         """전략 등록이 정상 동작하는지 테스트."""

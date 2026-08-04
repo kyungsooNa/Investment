@@ -68,22 +68,21 @@ def _make_strategy(universe, now_time=None):
 
 
 @pytest.mark.asyncio
-async def test_bear_regime_skips_stock_and_logs_market_timing_off():
-    """KOSDAQ 베어 → 카카오(KOSDAQ) skip 됨, 현재가 조회조차 호출되지 않음."""
+async def test_bear_regime_keeps_observation_scan():
+    """KOSDAQ 베어여도 관찰용 진입 평가는 계속한다."""
     universe = _make_universe({"KOSPI": True, "KOSDAQ": False})
     strategy, sqs = _make_strategy(universe)
 
     signals = await strategy.scan()
 
     assert signals == []
-    sqs.handle_get_current_stock_price.assert_not_called()  # 가격 조회 전에 차단
-    # 어떤 종목도 _bought_today 에 추가되지 않음 — state 변경 없음
+    sqs.handle_get_current_stock_price.assert_called()
     assert strategy._bought_today == set()
 
 
 @pytest.mark.asyncio
-async def test_bear_regime_emits_market_timing_off_log():
-    """KOSPI bull / KOSDAQ bear — KOSDAQ 종목 individual reject 로그 검증."""
+async def test_bear_regime_does_not_emit_strategy_level_rejection():
+    """시장 레짐 차단 로그는 스케줄러 공통 주문 게이트가 남긴다."""
     universe = _make_universe({"KOSPI": True, "KOSDAQ": False})
     strategy, _ = _make_strategy(universe)
     await strategy.scan()
@@ -93,9 +92,7 @@ async def test_bear_regime_emits_market_timing_off_log():
         c for c in logger.info.call_args_list
         if isinstance(c.args[0], dict) and c.args[0].get("event") == "entry_rejected"
     ]
-    assert any(c.args[0].get("reason") == "market_timing_off" for c in rejection_calls), (
-        f"market_timing_off 로그 부재. calls={[c.args[0] for c in rejection_calls]}"
-    )
+    assert not any(c.args[0].get("reason") == "market_timing_off" for c in rejection_calls)
 
 
 @pytest.mark.asyncio

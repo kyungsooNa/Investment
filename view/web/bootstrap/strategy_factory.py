@@ -224,6 +224,7 @@ class StrategyFactory:
             force_exit_on_close=False,  # 멀티데이 베어 헤지 — 오버나잇 허용
             allow_pyramiding=False,     # 1포지션 invariant
             scan_when_position_full=True,
+            market_timing_entry_gate=False,  # 베어 레짐에서 진입하는 헤지 전략
         ))
 
         ctx.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
