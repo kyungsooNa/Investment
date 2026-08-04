@@ -95,7 +95,12 @@ class OverseasVBODryRunService:
                     strategy_name=self.STRATEGY_NAME,
                     code=code,
                     signal=sig,
-                    snapshot={"exchange": ex.value, "avg_trading_value": cand.get("avg_trading_value")},
+                    snapshot={
+                        "exchange": ex.value,
+                        "avg_trading_value": cand.get("avg_trading_value"),
+                        # 청산 모델을 사후에 재계산할 수 있도록 판정 근거인 당일 봉을 남긴다.
+                        "bar": self._bar_ohlc(resp.data[-1]),
+                    },
                     signal_source=self.SIGNAL_SOURCE,
                 )
         self._logger.info({"event": "overseas_dryrun_scan", "exchange": ex.value,
@@ -142,15 +147,22 @@ class OverseasVBODryRunService:
             return None
         entry = target
         stop = entry * (1 + self._stop_loss_pct / 100.0)
-        # 당일 same-day exit(Phase 2 백테스트 모델과 동일): 당일저 <= 손절가면 손절가,
-        # 아니면 당일 종가(eod) 청산. 주문 경로 없는 would-be 청산 결과만 동봉한다.
+        # 당일 same-day exit(Phase 2 백테스트 모델과 동일). 단 일봉은 저가의 발생 시각을
+        # 담지 않으므로, 당일저 <= 손절가여도 그 저가가 돌파(진입) 전인지 후인지 알 수 없다.
+        # 특히 손절가 >= 시가인 돌파(0.5×prev_range 가 손절폭보다 큰 경우)는 진입 전
+        # 가격대만으로 조건이 성립해 손절이 강제 판정된다. 손절 확정으로 단정하지 않고
+        # 비관(손절)·낙관(종가) bracket 을 함께 남겨 집계 측이 편향을 분리하게 한다.
         low = self._f(cur.get("low"))
         close = self._f(cur.get("close"))
-        if low <= stop:
-            exit_price, exit_reason = stop, "stop"
-        else:
+        eod_pct = (close / entry - 1) * 100.0 if entry > 0 else 0.0
+        stop_pct = (stop / entry - 1) * 100.0 if entry > 0 else 0.0
+        decidable = low > stop
+        if decidable:
             exit_price, exit_reason = close, "eod"
-        realized_pct = (exit_price / entry - 1) * 100.0 if entry > 0 else 0.0
+            pessimistic = optimistic = eod_pct
+        else:
+            exit_price, exit_reason = stop, "undecided"
+            pessimistic, optimistic = stop_pct, eod_pct
         return {
             "code": code,
             "action": "BUY",
@@ -161,9 +173,17 @@ class OverseasVBODryRunService:
             "prev_range": prev_range,
             "exit_price": exit_price,
             "exit_reason": exit_reason,
-            "realized_pct": realized_pct,
+            "exit_decidable": decidable,
+            # realized_pct 는 하위호환용 비관값. 집계는 bracket 을 쓴다.
+            "realized_pct": pessimistic,
+            "realized_pct_pessimistic": pessimistic,
+            "realized_pct_optimistic": optimistic,
             "reason": "vbo_daily_breakout",
         }
+
+    @staticmethod
+    def _bar_ohlc(bar: Dict[str, Any]) -> Dict[str, Any]:
+        return {k: bar.get(k) for k in ("date", "open", "high", "low", "close")}
 
     @staticmethod
     def _f(x) -> float:

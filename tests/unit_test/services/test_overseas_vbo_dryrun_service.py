@@ -58,30 +58,74 @@ async def test_scan_emits_buy_on_breakout(svc):
 
 @pytest.mark.asyncio
 async def test_scan_emits_same_day_eod_exit(svc):
-    """돌파 후 당일저가 손절가 미터치 → 당일 종가(eod) 청산을 동봉한다(Phase 2 모델 동일)."""
+    """돌파 후 당일저가 손절가 미터치 → 판정 가능(eod) 청산. bracket 양끝이 같다."""
     # target=105, stop=105*0.97=101.85, 당일저 104 > stop → eod 청산(종가 115)
     bars = [_bar("20260511", 100, 110, 100, 105), _bar("20260512", 100, 120, 104, 115)]
     svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))
 
     signals = await svc.service.scan_dry_run(exchange=OverseasExchange.NASD)
 
+    expected = (115.0 / 105.0 - 1) * 100
     assert signals[0]["exit_reason"] == "eod"
+    assert signals[0]["exit_decidable"] is True
     assert signals[0]["exit_price"] == 115.0
-    assert signals[0]["realized_pct"] == pytest.approx((115.0 / 105.0 - 1) * 100)
+    assert signals[0]["realized_pct"] == pytest.approx(expected)
+    assert signals[0]["realized_pct_pessimistic"] == pytest.approx(expected)
+    assert signals[0]["realized_pct_optimistic"] == pytest.approx(expected)
 
 
 @pytest.mark.asyncio
-async def test_scan_emits_same_day_stop_exit(svc):
-    """돌파 후 당일저가 손절가 터치 → 손절가(stop) 청산을 동봉한다."""
-    # target=105, stop=101.85, 당일저 100 <= stop → stop 청산
+async def test_scan_marks_stop_touch_as_undecided(svc):
+    """당일저가가 손절가 이하 → 저가 시점이 진입 전/후인지 일봉만으론 판정 불가.
+
+    손절 확정으로 단정하지 않고 비관(손절)·낙관(종가) bracket 을 함께 동봉한다.
+    """
+    # target=105, stop=101.85, 당일저 100 <= stop → 판정 불가
     bars = [_bar("20260511", 100, 110, 100, 105), _bar("20260512", 100, 120, 100, 102)]
     svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))
 
     signals = await svc.service.scan_dry_run(exchange=OverseasExchange.NASD)
 
-    assert signals[0]["exit_reason"] == "stop"
-    assert signals[0]["exit_price"] == pytest.approx(101.85)
+    assert signals[0]["exit_reason"] == "undecided"
+    assert signals[0]["exit_decidable"] is False
+    assert signals[0]["realized_pct_pessimistic"] == pytest.approx(-3.0)
+    assert signals[0]["realized_pct_optimistic"] == pytest.approx((102.0 / 105.0 - 1) * 100)
+    # 하위호환: realized_pct/exit_price 는 비관(손절) 값을 유지한다.
     assert signals[0]["realized_pct"] == pytest.approx(-3.0)
+    assert signals[0]["exit_price"] == pytest.approx(101.85)
+
+
+@pytest.mark.asyncio
+async def test_scan_does_not_force_stop_when_target_far_above_open(svc):
+    """회귀: 손절가가 시가 이상이면 당일저가는 항상 손절가 이하 → 구모델은 무조건 손절.
+
+    0.5×prev_range 가 시가의 3%(손절폭) 를 넘는 돌파는 진입 전 가격대만으로 손절이
+    강제 판정돼 통계가 하향 편향됐다. 이런 건은 판정 불가로 분류돼야 한다.
+    """
+    # prev range 20 → target = 100+10 = 110, stop = 106.7 > 시가 100 → low<=stop 자동 성립
+    bars = [_bar("20260511", 100, 120, 100, 110), _bar("20260512", 100, 130, 99, 128)]
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))
+
+    signals = await svc.service.scan_dry_run(exchange=OverseasExchange.NASD)
+
+    assert signals[0]["exit_reason"] == "undecided"
+    assert signals[0]["exit_decidable"] is False
+    # 종가 128 은 진입가 110 대비 +16% — 손절 확정으로 단정하면 통째로 버려지는 구간이다.
+    assert signals[0]["realized_pct_optimistic"] == pytest.approx((128.0 / 110.0 - 1) * 100)
+
+
+@pytest.mark.asyncio
+async def test_scan_records_bar_ohlc_in_snapshot(svc):
+    """저널 snapshot 에 당일 일봉 OHLC 를 동봉해 청산 모델을 사후 재계산 가능하게 한다."""
+    bars = [_bar("20260511", 100, 110, 100, 105), _bar("20260512", 100, 120, 104, 115)]
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))
+
+    await svc.service.scan_dry_run(exchange=OverseasExchange.NASD)
+
+    snapshot = svc.journal.record.call_args.kwargs["snapshot"]
+    assert snapshot["bar"] == {
+        "date": "20260512", "open": 100, "high": 120, "low": 104, "close": 115,
+    }
 
 
 @pytest.mark.asyncio

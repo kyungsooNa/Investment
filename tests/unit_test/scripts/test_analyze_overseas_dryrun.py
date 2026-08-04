@@ -93,6 +93,68 @@ def test_load_returns_empty_when_dir_missing(tmp_path):
     assert load_dryrun_records(tmp_path / "nope", "20260601", "20260605") == []
 
 
+def test_load_extracts_exit_bracket_fields(tmp_path):
+    """판정 불가 신호의 비관·낙관 bracket 과 당일 봉을 그대로 실어 온다."""
+    shadow = tmp_path / "event_shadow"
+    rec = _rec(code="AAA", exchange="NASD", date="20260601",
+               realized_pct=-3.0, exit_reason="undecided")
+    rec["signal"].update({
+        "exit_decidable": False,
+        "realized_pct_pessimistic": -3.0,
+        "realized_pct_optimistic": 4.0,
+    })
+    rec["snapshot"]["bar"] = {"date": "20260601", "open": 100, "high": 120, "low": 95, "close": 104}
+    _write_jsonl(shadow, "20260601", [rec])
+
+    r = load_dryrun_records(shadow, "20260601", "20260601")[0]
+
+    assert r["exit_decidable"] is False
+    assert r["realized_pct_pessimistic"] == -3.0
+    assert r["realized_pct_optimistic"] == 4.0
+    assert r["bar"]["close"] == 104
+
+
+def test_load_treats_legacy_stop_records_as_undecided(tmp_path):
+    """구모델(exit_reason="stop") 레코드는 편향된 값이므로 판정 불가로 취급한다."""
+    shadow = tmp_path / "event_shadow"
+    _write_jsonl(shadow, "20260601", [
+        _rec(code="AAA", exchange="NASD", date="20260601", realized_pct=-3.0, exit_reason="stop"),
+        _rec(code="BBB", exchange="NASD", date="20260601", realized_pct=5.0, exit_reason="eod"),
+    ])
+
+    records = {r["code"]: r for r in load_dryrun_records(shadow, "20260601", "20260601")}
+
+    assert records["AAA"]["exit_decidable"] is False
+    assert records["AAA"]["realized_pct_pessimistic"] == -3.0
+    assert records["AAA"]["realized_pct_optimistic"] is None  # 종가 미기록 → 재계산 불가
+    assert records["BBB"]["exit_decidable"] is True
+    assert records["BBB"]["realized_pct_optimistic"] == 5.0
+
+
+def test_compute_reports_decidability_bracket():
+    """게이팅 근거: 판정 가능 건만의 집계와 비관·낙관 bracket 을 함께 낸다."""
+    records = [
+        {"code": "AAA", "exchange": "NASD", "trade_date": "20260601", "realized_pct": 5.0,
+         "exit_reason": "eod", "exit_decidable": True,
+         "realized_pct_pessimistic": 5.0, "realized_pct_optimistic": 5.0,
+         "qty": None, "notional_usd": None},
+        {"code": "BBB", "exchange": "NASD", "trade_date": "20260601", "realized_pct": -3.0,
+         "exit_reason": "undecided", "exit_decidable": False,
+         "realized_pct_pessimistic": -3.0, "realized_pct_optimistic": 9.0,
+         "qty": None, "notional_usd": None},
+    ]
+
+    d = compute_dryrun_report(records)["decidability"]
+
+    assert d["decided"] == 1
+    assert d["undecided"] == 1
+    assert d["undecided_ratio"] == pytest.approx(0.5)
+    assert d["decided_avg_realized_pct"] == pytest.approx(5.0)
+    assert d["decided_win_rate"] == pytest.approx(1.0)
+    assert d["pessimistic_avg_realized_pct"] == pytest.approx(1.0)
+    assert d["optimistic_avg_realized_pct"] == pytest.approx(7.0)
+
+
 # ── compute ──────────────────────────────────────────────────────────────
 
 def test_compute_totals_and_win_rate():
