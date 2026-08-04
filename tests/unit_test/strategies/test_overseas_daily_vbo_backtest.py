@@ -47,16 +47,50 @@ def test_no_entry_when_high_below_target():
     assert res["trades"] == []
 
 
-def test_stop_loss_exit():
-    bt = OverseasDailyVBOBacktest(k_value=0.5, stop_loss_pct=-3.0, round_trip_cost_pct=0.0)
-    # target=105 진입, 저 100 <= 손절가 101.85 → 손절 청산 -3%
+def test_stop_touch_is_undecided_with_bracket():
+    """저 <= 손절가는 진입 전/후 순서를 일봉으로 판정할 수 없어 bracket 으로 남긴다."""
+    # target=105 진입, 저 100 <= 손절가 101.85 → 판정 불가(비관 -3% / 낙관 종가 110)
     bars = [_PREV, _bar("20260512", 100, 120, 100, 110)]
 
+    bt = OverseasDailyVBOBacktest(k_value=0.5, stop_loss_pct=-3.0, round_trip_cost_pct=0.0)
     res = bt.run_symbol(bars)
 
     t = res["trades"][0]
-    assert t["exit_reason"] == "stop"
-    assert round(t["net_return_pct"], 4) == -3.0
+    assert t["exit_reason"] == "undecided"
+    assert t["exit_decidable"] is False
+    assert round(t["net_return_pct"], 4) == -3.0  # 하위호환: 비관값 유지
+    assert round(t["net_return_pct_optimistic"], 3) == round((110 / 105 - 1) * 100, 3)
+
+
+def test_stop_not_forced_when_stop_price_above_open():
+    """회귀: 손절가 >= 시가면 당일저가는 자동으로 손절가 이하 → 구모델은 손절 강제."""
+    # 전일 range 20 → target 110, 손절가 106.7 > 시가 100
+    bars = [_bar("20260511", 100, 120, 100, 110), _bar("20260512", 100, 130, 99, 128)]
+
+    bt = OverseasDailyVBOBacktest(k_value=0.5, stop_loss_pct=-3.0, round_trip_cost_pct=0.0)
+    res = bt.run_symbol(bars)
+
+    t = res["trades"][0]
+    assert t["exit_reason"] == "undecided"
+    assert round(t["gross_return_pct_optimistic"], 3) == round((128 / 110 - 1) * 100, 3)
+
+
+def test_summary_separates_undecided_and_optimistic_average():
+    bars = [
+        _bar("20260511", 100, 110, 100, 105),  # prev(range10) for 0512
+        _bar("20260512", 100, 120, 104, 115),  # 판정 가능: target105, eod 115
+        _bar("20260513", 100, 101, 100, 100),  # 진입 없음
+        _bar("20260514", 100, 120, 95, 110),   # 판정 불가: target100.5, 저95<=97.485
+    ]
+
+    bt = OverseasDailyVBOBacktest(k_value=0.5, stop_loss_pct=-3.0, round_trip_cost_pct=0.0)
+    s = bt.run_symbol(bars)["summary"]
+
+    assert s["total_trades"] == 2
+    assert s["decided_trades"] == 1
+    assert s["undecided_trades"] == 1
+    # 낙관 평균은 판정 불가 건을 종가 청산으로 가정한 값 — 비관 평균보다 크다.
+    assert s["avg_net_return_pct_optimistic"] > s["avg_net_return_pct"]
 
 
 def test_round_trip_cost_reduces_net_return():
@@ -84,7 +118,7 @@ def test_summary_aggregates_win_rate_and_avg():
     assert s["total_trades"] == 2
     assert s["wins"] == 1
     assert s["win_rate"] == 0.5
-    assert res["trades"][1]["exit_reason"] == "stop"
+    assert res["trades"][1]["exit_reason"] == "undecided"
 
 
 @pytest.mark.asyncio

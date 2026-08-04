@@ -6,8 +6,9 @@
 신호 자체만으로 would-be 성과를 집계할 수 있다(국내 parity 분석과 다른 점).
 
 집계 지표:
-  - totals       : 신호수 / 승·패 / win_rate / 평균·중앙·합계 realized_pct
-  - by_exit_reason : stop vs eod 청산 분포
+  - decidability : same-day 청산 판정 가능/불가 분리 + 비관·낙관 bracket (게이팅 기준)
+  - totals       : 신호수 / 승·패 / win_rate / 평균·중앙·합계 realized_pct (비관 기준)
+  - by_exit_reason : undecided vs eod 청산 분포
   - by_exchange  : 거래소별 신호수·합계 realized_pct
   - by_date      : 거래일별 신호수·합계 realized_pct
   - sizing       : 사이징 주입 신호의 would-be USD 노출(notional) 합/평균
@@ -81,6 +82,18 @@ def load_dryrun_records(
                 realized = _to_float(signal.get("realized_pct"))
                 if not code or realized is None:
                     continue
+                exit_reason = signal.get("exit_reason") or ""
+                # 구모델 레코드(exit_reason="stop")는 진입 전 저가로 손절이 강제 판정된
+                # 하향 편향값이므로 판정 불가로 취급한다. 종가를 남기지 않아 낙관값은 없다.
+                decidable = signal.get("exit_decidable")
+                if decidable is None:
+                    decidable = exit_reason == "eod"
+                pessimistic = _to_float(signal.get("realized_pct_pessimistic"))
+                optimistic = _to_float(signal.get("realized_pct_optimistic"))
+                if pessimistic is None:
+                    pessimistic = realized
+                if optimistic is None and decidable:
+                    optimistic = realized
                 out.append({
                     "code": code,
                     "exchange": snapshot.get("exchange") or "",
@@ -88,8 +101,12 @@ def load_dryrun_records(
                     "entry_price": _to_float(signal.get("entry_price")),
                     "stop_price": _to_float(signal.get("stop_price")),
                     "exit_price": _to_float(signal.get("exit_price")),
-                    "exit_reason": signal.get("exit_reason") or "",
+                    "exit_reason": exit_reason,
+                    "exit_decidable": bool(decidable),
                     "realized_pct": realized,
+                    "realized_pct_pessimistic": pessimistic,
+                    "realized_pct_optimistic": optimistic,
+                    "bar": snapshot.get("bar") or {},
                     "qty": signal.get("qty"),
                     "notional_usd": _to_float(signal.get("notional_usd")),
                     "krw_exposure": _to_float(signal.get("krw_exposure")),
@@ -106,6 +123,33 @@ def _stats(values: List[float]) -> Dict[str, Optional[float]]:
         "sum": sum(values),
         "min": min(values),
         "max": max(values),
+    }
+
+
+def _compute_decidability(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """same-day 청산 판정 가능/불가를 분리해 게이팅용 bracket 을 산출한다.
+
+    일봉은 저가 발생 시각을 담지 않아 "저 <= 손절가" 건은 손절 여부를 확정할 수 없다.
+    비관(손절 체결 가정)만 집계하면 통계가 하향 편향되므로, 판정 가능 건만의 집계와
+    비관·낙관 양끝을 함께 낸다. canary go/no-go 는 이 bracket 으로 판단한다.
+    """
+    decided = [r for r in records if r.get("exit_decidable")]
+    pessimistic = [r["realized_pct_pessimistic"] for r in records
+                   if r.get("realized_pct_pessimistic") is not None]
+    optimistic = [r["realized_pct_optimistic"] for r in records
+                  if r.get("realized_pct_optimistic") is not None]
+    decided_returns = [r["realized_pct_pessimistic"] for r in decided
+                       if r.get("realized_pct_pessimistic") is not None]
+    decided_wins = sum(1 for v in decided_returns if v > 0)
+    return {
+        "decided": len(decided),
+        "undecided": len(records) - len(decided),
+        "undecided_ratio": ((len(records) - len(decided)) / len(records)) if records else None,
+        "decided_avg_realized_pct": (sum(decided_returns) / len(decided_returns)) if decided_returns else None,
+        "decided_win_rate": (decided_wins / len(decided_returns)) if decided_returns else None,
+        "pessimistic_avg_realized_pct": (sum(pessimistic) / len(pessimistic)) if pessimistic else None,
+        "optimistic_avg_realized_pct": (sum(optimistic) / len(optimistic)) if optimistic else None,
+        "optimistic_sample": len(optimistic),
     }
 
 
@@ -146,6 +190,7 @@ def compute_dryrun_report(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
     return {
+        "decidability": _compute_decidability(records),
         "totals": {
             "signals": len(records),
             "wins": wins,
@@ -387,6 +432,26 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
     lines.append(f"| median_realized_pct | {_fmt(t['median_realized_pct'], '%')} |")
     lines.append(f"| sum_realized_pct | {_fmt(t['sum_realized_pct'], '%')} |")
     lines.append("")
+
+    dec = report.get("decidability")
+    if dec:
+        lines.append("## 청산 판정 가능성 (bracket)")
+        lines.append("")
+        lines.append(
+            "일봉은 저가 발생 시각을 담지 않아 `저 <= 손절가` 건은 손절 체결 여부를 "
+            "확정할 수 없습니다(진입 전 저가로도 성립). 비관 평균만 보면 하향 편향되므로 "
+            "판정 가능 건 집계와 비관·낙관 양끝을 함께 봅니다."
+        )
+        lines.append("")
+        lines.append("| 항목 | 값 |")
+        lines.append("|---|---:|")
+        lines.append(f"| decided / undecided | {dec['decided']} / {dec['undecided']} |")
+        lines.append(f"| undecided_ratio | {_fmt(dec['undecided_ratio'])} |")
+        lines.append(f"| decided_avg_realized_pct | {_fmt(dec['decided_avg_realized_pct'], '%')} |")
+        lines.append(f"| decided_win_rate | {_fmt(dec['decided_win_rate'])} |")
+        lines.append(f"| pessimistic_avg_realized_pct | {_fmt(dec['pessimistic_avg_realized_pct'], '%')} |")
+        lines.append(f"| optimistic_avg_realized_pct | {_fmt(dec['optimistic_avg_realized_pct'], '%')} |")
+        lines.append("")
 
     lines.append("## 청산 사유")
     lines.append("")

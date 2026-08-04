@@ -56,20 +56,26 @@ class OverseasDailyVBOBacktest:
 
             entry_price = target
             stop_price = entry_price * (1 + self._stop_loss_pct / 100.0)
-            if low <= stop_price:
-                exit_price, exit_reason = stop_price, "stop"
-            else:
-                exit_price, exit_reason = close, "eod"
+            # 일봉은 저가의 발생 시각을 담지 않아, 저 <= 손절가여도 그 저가가 진입(돌파)
+            # 전인지 후인지 판정할 수 없다. 손절가 >= 시가인 돌파는 진입 전 가격대만으로
+            # 조건이 성립해 손절이 강제 판정되므로, 확정 대신 비관·낙관 bracket 을 남긴다.
+            decidable = low > stop_price
+            exit_price = close if decidable else stop_price
+            exit_reason = "eod" if decidable else "undecided"
 
             gross = (exit_price / entry_price - 1) * 100
-            net = gross - self._cost_pct
+            gross_optimistic = (close / entry_price - 1) * 100
             trades.append({
                 "date": cur.get("date"),
                 "entry_price": entry_price,
                 "exit_price": exit_price,
                 "exit_reason": exit_reason,
+                "exit_decidable": decidable,
+                # gross/net 은 하위호환용 비관값. 낙관값은 판정 불가 건을 종가 청산으로 가정.
                 "gross_return_pct": gross,
-                "net_return_pct": net,
+                "net_return_pct": gross - self._cost_pct,
+                "gross_return_pct_optimistic": gross_optimistic,
+                "net_return_pct_optimistic": gross_optimistic - self._cost_pct,
             })
 
         return {"trades": trades, "summary": self._summarize(trades)}
@@ -108,15 +114,23 @@ class OverseasDailyVBOBacktest:
         n = len(trades)
         if n == 0:
             return {"total_trades": 0, "wins": 0, "win_rate": 0.0,
-                    "avg_net_return_pct": 0.0, "total_net_return_pct": 0.0}
+                    "avg_net_return_pct": 0.0, "total_net_return_pct": 0.0,
+                    "decided_trades": 0, "undecided_trades": 0,
+                    "avg_net_return_pct_optimistic": 0.0}
         nets = [t["net_return_pct"] for t in trades]
+        nets_optimistic = [t["net_return_pct_optimistic"] for t in trades]
         wins = sum(1 for x in nets if x > 0)
+        decided = sum(1 for t in trades if t["exit_decidable"])
         return {
             "total_trades": n,
             "wins": wins,
             "win_rate": wins / n,
             "avg_net_return_pct": sum(nets) / n,
             "total_net_return_pct": sum(nets),
+            # 판정 불가 비중이 크면 비관 평균은 하향 편향된 값이다.
+            "decided_trades": decided,
+            "undecided_trades": n - decided,
+            "avg_net_return_pct_optimistic": sum(nets_optimistic) / n,
         }
 
     @staticmethod
