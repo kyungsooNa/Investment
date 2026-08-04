@@ -652,6 +652,22 @@ class WebAppContext:
             if self.streaming_stock_repo else set()
         )
         if code in pt_desired:
+            pt_active = (
+                self.streaming_stock_repo.get_active(StreamingType.PROGRAM_TRADING)
+                if self.streaming_stock_repo else set()
+            )
+            if code in pt_active:
+                # 구버전/이관 구독을 사용자가 UI에서 다시 선택하면 수동 등록으로 확정한다.
+                if self.streaming_stock_repo:
+                    mark_result = self.streaming_stock_repo.mark_desired(
+                        code,
+                        StreamingType.PROGRAM_TRADING,
+                        source="manual",
+                    )
+                    if inspect.isawaitable(mark_result):
+                        await mark_result
+                return True
+
             # 구독 상태이지만 수신 태스크가 죽었으면 강제 재연결
             if (self.broker
                     and not self.broker.is_websocket_receive_alive()):
@@ -669,17 +685,6 @@ class WebAppContext:
                         await mark_result
                     return True
                 self.logger.info(f"[프로그램매매] {code} 재연결 실패로 구독 해제됨. 신규 구독 재시도.")
-            else:
-                # 구버전/이관 구독을 사용자가 UI에서 다시 선택하면 수동 등록으로 확정한다.
-                if self.streaming_stock_repo:
-                    mark_result = self.streaming_stock_repo.mark_desired(
-                        code,
-                        StreamingType.PROGRAM_TRADING,
-                        source="manual",
-                    )
-                    if inspect.isawaitable(mark_result):
-                        await mark_result
-                return True
 
         try:
             t_start = self.pm.start_timer()

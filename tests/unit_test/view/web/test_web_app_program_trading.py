@@ -112,6 +112,7 @@ async def test_start_program_trading_already_subscribed_alive(mock_ctx):
     """기존 desired를 UI에서 다시 선택하면 수동 출처로 승격한다."""
     code = "005930"
     mock_ctx.streaming_stock_repo.get_desired.return_value = {code}  # 이미 구독 중
+    mock_ctx.streaming_stock_repo.get_active.return_value = {code}
     mock_ctx.broker.is_websocket_receive_alive.return_value = True
 
     result = await mock_ctx.start_program_trading(code)
@@ -122,6 +123,24 @@ async def test_start_program_trading_already_subscribed_alive(mock_ctx):
         code,
         StreamingType.PROGRAM_TRADING,
         source="manual",
+    )
+
+
+@pytest.mark.asyncio
+async def test_start_program_trading_retries_desired_but_inactive_subscription(mock_ctx):
+    """desired에만 남은 종목은 수신 태스크가 살아 있어도 실제 구독을 다시 시도한다."""
+    code = "005930"
+    mock_ctx.streaming_stock_repo.get_desired.return_value = {code}
+    mock_ctx.streaming_stock_repo.get_active.return_value = set()
+    mock_ctx.broker.is_websocket_receive_alive.return_value = True
+
+    result = await mock_ctx.start_program_trading(code)
+
+    assert result is True
+    mock_ctx.streaming_service.connect_websocket.assert_awaited_once()
+    mock_ctx.streaming_service.subscribe_program_trading.assert_awaited_once_with(code)
+    mock_ctx.streaming_stock_repo.mark_active.assert_awaited_once_with(
+        code, StreamingType.PROGRAM_TRADING
     )
 
 
