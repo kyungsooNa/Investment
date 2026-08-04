@@ -70,8 +70,8 @@ def _make_strategy(universe, now_time=None, state_file=None):
 
 
 @pytest.mark.asyncio
-async def test_bear_regime_skips_stock_and_logs_market_timing_off(tmp_path):
-    """KOSDAQ 베어 → KOSDAQ 종목 skip, _check_entry 호출되지 않음."""
+async def test_bear_regime_keeps_observation_scan(tmp_path):
+    """KOSDAQ 베어여도 관찰용 진입 평가는 계속한다."""
     state_file = tmp_path / "lwcb_state.json"
     watchlist = {"035720": _make_watchlist_item("035720", "KOSDAQ", "카카오")}
     universe = _make_universe({"KOSPI": True, "KOSDAQ": False}, watchlist)
@@ -80,15 +80,14 @@ async def test_bear_regime_skips_stock_and_logs_market_timing_off(tmp_path):
     signals = await strategy.scan()
 
     assert signals == []
-    # OHLCV 조회조차 안 했어야 함 — 진입 평가 자체가 차단됨
-    sqs.get_ohlcv.assert_not_called()
+    sqs.get_ohlcv.assert_called_once()
     # state 변경 없음
     assert strategy._position_state == {}
 
 
 @pytest.mark.asyncio
-async def test_bear_regime_emits_market_timing_off_log(tmp_path):
-    """KOSDAQ 베어 → reason=market_timing_off 로그가 남는다."""
+async def test_bear_regime_does_not_emit_strategy_level_rejection(tmp_path):
+    """시장 레짐 차단 로그는 스케줄러 공통 주문 게이트가 남긴다."""
     state_file = tmp_path / "lwcb_state.json"
     watchlist = {"035720": _make_watchlist_item("035720", "KOSDAQ")}
     universe = _make_universe({"KOSPI": True, "KOSDAQ": False}, watchlist)
@@ -100,9 +99,7 @@ async def test_bear_regime_emits_market_timing_off_log(tmp_path):
         c.args[0] for c in logger.info.call_args_list
         if isinstance(c.args[0], dict) and c.args[0].get("event") == "entry_rejected"
     ]
-    assert any(r.get("reason") == "market_timing_off" for r in rejections), (
-        f"market_timing_off 로그 부재. rejects={rejections}"
-    )
+    assert not any(r.get("reason") == "market_timing_off" for r in rejections)
 
 
 @pytest.mark.asyncio

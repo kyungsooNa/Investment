@@ -100,15 +100,10 @@ class FirstPullbackStrategy(LiveStrategy):
             "KOSPI": await self._universe.is_market_timing_ok("KOSPI", caller=self.name, logger=self._logger),
             "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", caller=self.name, logger=self._logger)
         }
-        if not any(market_timing.values()):
-            self._logger.info({"event": "scan_skipped", "reason": "Bad market timing for both markets"})
-            return signals
-
         today_str = self._tm.get_current_kst_time().strftime("%Y%m%d")
         candidates = [
             (code, item) for code, item in watchlist.items()
             if code not in self._position_state
-            and market_timing.get(item.market, False)
             and today_str >= self._cooldown.get(code, "")
         ]
         await self._sqs.prefetch_prices([code for code, _ in candidates])

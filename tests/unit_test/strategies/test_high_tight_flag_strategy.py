@@ -515,14 +515,14 @@ async def test_scan_skip_existing_position(htf_scan_setup):
 
 
 @pytest.mark.asyncio
-async def test_scan_bad_market_timing(htf_scan_setup):
-    """scan: 마켓 타이밍 불량 → 스캔 제외."""
+async def test_scan_bad_market_timing_keeps_observation_scan(htf_scan_setup):
+    """scan: 마켓 타이밍 불량이어도 관찰 스캔은 유지한다."""
     strategy, sqs, universe, _, _ = htf_scan_setup
     universe.is_market_timing_ok.return_value = False
 
     signals = await strategy.scan()
     assert len(signals) == 0
-    sqs.get_recent_daily_ohlcv.assert_not_called()
+    sqs.get_recent_daily_ohlcv.assert_called()
 
 
 # ── check_exits() 테스트 ─────────────────────────────────────────────

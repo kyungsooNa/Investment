@@ -98,7 +98,7 @@
     },
     {
       "id": "20260504_reject_bad_market_timing",
-      "description": "Common fail: market timing blocks scan before price lookup",
+      "description": "Bear market timing keeps observation scan; live scheduler blocks the BUY order",
       "date": "20260504",
       "time": "12:00:00",
       "market_timing_ok": false,
@@ -115,9 +115,9 @@
       },
       "execution_strength": 150.0,
       "expected": {
-        "signal": false,
-        "entry_type": null,
-        "reason_contains": ""
+        "signal": true,
+        "entry_type": "PP",
+        "reason_contains": "PP진입"
       }
     },
     {

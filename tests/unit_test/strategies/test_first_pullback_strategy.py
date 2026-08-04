@@ -690,12 +690,12 @@ async def test_save_state_async_writes_file(mock_deps, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_scan_bad_market_timing(fp_scan_setup):
-    """마켓 타이밍 불량 시 스캔 제외."""
+async def test_scan_bad_market_timing_keeps_observation_scan(fp_scan_setup):
+    """마켓 타이밍 불량이어도 관찰 스캔은 유지한다."""
     strategy, sqs, universe, _, _ = fp_scan_setup
     universe.is_market_timing_ok.return_value = False
-    assert await strategy.scan() == []
-    sqs.get_recent_daily_ohlcv.assert_not_called()
+    assert await strategy.scan()
+    sqs.get_recent_daily_ohlcv.assert_called()
 
 
 @pytest.mark.asyncio

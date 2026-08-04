@@ -146,10 +146,6 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 "KOSPI": await self._universe.is_market_timing_ok("KOSPI", caller=self.name, logger=self._logger),
                 "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", caller=self.name, logger=self._logger),
             }
-            if not any(market_timing.values()):
-                self._logger.info({"event": "scan_skipped", "reason": "market_timing_off_both"})
-                return signals
-
         candidate_codes = [c["code"] for c in candidates if c.get("code")]
         await self._sqs.prefetch_prices(candidate_codes)
 
@@ -169,13 +165,6 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 continue
             if not self._cfg.allow_reentry and code in self._bought_today:
                 continue
-
-            # 시장 국면 게이트 (종목별) — bear regime 이면 state/주문 영향 없이 skip
-            if market_timing:
-                stock_market = stock.get("market", "")
-                if stock_market and not market_timing.get(stock_market, False):
-                    self._log_entry_rejected(log_data, "market_timing_off", f"{stock_market} 마켓 타이밍 차단")
-                    continue
 
             try:
                 # 4) 유동성·규모 필터 (OSBWatchlistItem 내장값 우선 사용)

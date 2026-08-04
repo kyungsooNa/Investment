@@ -423,12 +423,12 @@ async def test_scan_skip_existing_position(pp_scan_setup):
 
 
 @pytest.mark.asyncio
-async def test_scan_bad_market_timing(pp_scan_setup):
-    """마켓 타이밍 불량 시 스캔 제외."""
+async def test_scan_bad_market_timing_keeps_observation_scan(pp_scan_setup):
+    """마켓 타이밍 불량이어도 관찰 스캔은 유지한다."""
     strategy, sqs, universe, _, _ = pp_scan_setup
     universe.is_market_timing_ok.return_value = False
     assert await strategy.scan() == []
-    sqs.get_current_price.assert_not_called()
+    sqs.get_current_price.assert_called()
 
 
 @pytest.mark.asyncio
