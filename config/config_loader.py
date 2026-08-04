@@ -332,6 +332,10 @@ class AiAnalysisConfig(BaseModel):
     # Gemini 2.5 계열은 thinking 토큰이 max_tokens 예산을 소비하므로, 짧게 잡으면
     # 실제 요약이 잘린다. 사고 후에도 2~3문장이 완성되도록 넉넉히 둔다.
     max_tokens: int = Field(2048, ge=1, le=8192)
+    # thinking 예산 제한. 제한하지 않으면 사고 토큰이 max_tokens 를 다 써서 본문이
+    # 비결정적으로 잘린다(2026-08-04 실측: 같은 프롬프트가 1495자/714자로 잘림).
+    # 빈 값이면 파라미터를 보내지 않는다 — 미지원 provider(Ollama 등)용.
+    reasoning_effort: Literal["", "none", "low", "medium", "high"] = "low"
     disclosure_summary_enabled: bool = True
     daily_request_limit: int = Field(100, ge=0)
     disclosure_reserve: int = Field(20, ge=0)

@@ -228,6 +228,7 @@ class ServiceContainer:
                 api_key=ai_config.api_key,
                 model=ai_config.model,
                 timeout_sec=float(ai_config.timeout_sec),
+                reasoning_effort=ai_config.reasoning_effort,
                 usage_limiter=ctx.ai_usage_limiter,
             )
             ctx.ai_stock_analyzer = AiStockAnalyzer(

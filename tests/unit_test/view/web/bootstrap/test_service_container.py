@@ -190,6 +190,7 @@ def test_service_container_builds_enabled_ai_stock_analyzer(patched_service_cont
             "model": "test-model",
             "timeout_sec": 8,
             "max_tokens": 1536,
+            "reasoning_effort": "low",
             "disclosure_summary_enabled": False,
             "daily_request_limit": 100,
             "disclosure_reserve": 20,
@@ -208,6 +209,7 @@ def test_service_container_builds_enabled_ai_stock_analyzer(patched_service_cont
         api_key="test-key",
         model="test-model",
         timeout_sec=8.0,
+        reasoning_effort="low",
         usage_limiter=patched_service_container_deps["AiUsageLimiter"].return_value,
     )
     patched_service_container_deps["AiStockAnalyzer"].assert_called_once_with(
