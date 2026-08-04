@@ -222,6 +222,7 @@ async def test_get_program_trading_status(web_client, mock_web_ctx):
     """GET /api/program-trading/status 테스트"""
     mock_web_ctx.streaming_stock_repo = MagicMock()
     mock_web_ctx.streaming_stock_repo.get_desired.return_value = {"005930", "000660"}
+    mock_web_ctx.streaming_stock_repo.get_active.return_value = {"005930"}
 
     response = web_client.get("/api/program-trading/status")
     
@@ -229,6 +230,7 @@ async def test_get_program_trading_status(web_client, mock_web_ctx):
     data = response.json()
     assert data["subscribed"] is True
     assert sorted(data["codes"]) == ["000660", "005930"]
+    assert data["active_codes"] == ["005930"]
 
 
 @pytest.mark.asyncio
@@ -255,7 +257,12 @@ async def test_get_program_trading_status_without_repo(web_client, mock_web_ctx)
     response = web_client.get("/api/program-trading/status")
 
     assert response.status_code == 200
-    assert response.json() == {"subscribed": False, "codes": [], "is_market_open": False}
+    assert response.json() == {
+        "subscribed": False,
+        "codes": [],
+        "active_codes": [],
+        "is_market_open": False,
+    }
 
 
 def test_websocket_echo_endpoint(web_client):

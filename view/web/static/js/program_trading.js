@@ -36,10 +36,10 @@ function connectPtEventSource() {
         try {
             const res = await fetch('/api/program-trading/status');
             const status = await res.json();
-            const serverCodes = new Set(status.codes || []);
+            const activeCodes = new Set(status.active_codes || status.codes || []);
 
-            // 서버에 없는 종목만 추려서 구독
-            const missingCodes = Array.from(ptSubscribedCodes).filter(c => !serverCodes.has(c));
+            // 실제 수신이 활성화되지 않은 종목만 다시 구독
+            const missingCodes = Array.from(ptSubscribedCodes).filter(c => !activeCodes.has(c));
 
             if (missingCodes.length === 0) {
                 // 서버에 이미 모든 구독이 살아있음 — 재구독 불필요

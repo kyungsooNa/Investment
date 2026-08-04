@@ -66,10 +66,12 @@ async def get_program_trading_status():
     """프로그램매매 구독 상태 확인 (시장 개장 여부 포함)."""
     ctx = _get_ctx()
     codes = sorted(ctx.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if ctx.streaming_stock_repo else []
+    active_codes = sorted(ctx.streaming_stock_repo.get_active(StreamingType.PROGRAM_TRADING)) if ctx.streaming_stock_repo else []
     is_market_open = await ctx.is_market_open_now()
     return {
         "subscribed": len(codes) > 0,
         "codes": codes,
+        "active_codes": active_codes,
         "is_market_open": is_market_open,
     }
 
