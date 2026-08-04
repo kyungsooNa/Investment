@@ -53,6 +53,28 @@ async def test_market_status_alert_service_reports_sidecar_warning():
 
 
 @pytest.mark.asyncio
+async def test_market_status_alert_service_reports_kosdaq_sidecar_when_reason_uses_program_quote_stop():
+    """장운영정보가 '사이드카' 대신 프로그램매매 호가 정지 문구를 주는 경우도 감지한다."""
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        logger=MagicMock(),
+    )
+
+    await service.on_market_status({
+        "유가증권단축종목코드": "000000",
+        "거래정지여부": "N",
+        "거래정지사유내용": "코스닥시장 프로그램매매 매수호가 일시효력정지",
+        "거래소구분코드": "KOSDAQ",
+    })
+
+    args = operator_alert.report.await_args.args
+    assert args[1] == "market_status:sidecar:buy:KOSDAQ:000000"
+    assert args[2] == "warning"
+    assert args[3] == "매수 사이드카 감지"
+
+
+@pytest.mark.asyncio
 async def test_market_status_alert_service_distinguishes_buy_and_sell_sidecars():
     operator_alert = AsyncMock()
     service = MarketStatusAlertService(
