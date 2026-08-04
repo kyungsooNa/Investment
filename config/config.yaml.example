@@ -243,6 +243,10 @@ ai_analysis:
   # Gemini 2.5 계열은 thinking 토큰이 max_tokens를 소비하므로 넉넉히 (짧으면 요약이 잘림).
   # 2048은 종합 분석처럼 컨텍스트가 큰 요청에서 본문이 문장 중간에 잘리는 것이 실측됨(2026-07-21).
   max_tokens: 4096
+  # thinking 예산 제한(none/low/medium/high). 제한하지 않으면 사고 토큰이 max_tokens를
+  # 다 써서 본문이 비결정적으로 잘린다(2026-08-04 실측: 동일 프롬프트가 1495자/714자로 잘림,
+  # low 적용 시 3840자 완결 + 23.4초 -> 18.5초). 빈 값이면 파라미터 미전송(Ollama 등 미지원 provider용).
+  reasoning_effort: "low"
   disclosure_summary_enabled: true
   # Gemini 프로젝트 일일 한도보다 낮게 설정. 0이면 로컬 차단 비활성화.
   daily_request_limit: 100

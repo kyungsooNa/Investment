@@ -31,6 +31,7 @@ class AiClient:
         model: str,
         http_client: Optional[httpx.AsyncClient] = None,
         timeout_sec: float = 15.0,
+        reasoning_effort: str = "",
         usage_limiter=None,
         max_retries: int = 2,
         retry_backoff_sec: float = 0.5,
@@ -41,6 +42,7 @@ class AiClient:
         self._model = str(model or "")
         self._http_client = http_client
         self._timeout_sec = float(timeout_sec)
+        self._reasoning_effort = str(reasoning_effort or "").strip()
         self._usage_limiter = usage_limiter
         self._max_retries = max(0, int(max_retries))
         self._retry_backoff_sec = float(retry_backoff_sec)
@@ -92,6 +94,11 @@ class AiClient:
             "max_tokens": int(max_tokens),
             "temperature": float(temperature),
         }
+        # thinking 모델(Gemini 2.5 등)은 사고 토큰도 max_tokens 예산을 쓰므로,
+        # 제한하지 않으면 예산을 다 쓰고 본문이 잘린다. 미지원 provider 를 위해
+        # 빈 값이면 파라미터 자체를 보내지 않는다.
+        if self._reasoning_effort:
+            payload["reasoning_effort"] = self._reasoning_effort
         if self._usage_limiter is not None:
             await self._usage_limiter.reserve(usage_type)
         if self._http_client is not None:

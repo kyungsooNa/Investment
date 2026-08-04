@@ -41,6 +41,40 @@ async def test_complete_posts_openai_compatible_chat_request():
     assert payload["messages"][1] == {"role": "user", "content": "이 공시를 요약해줘"}
 
 
+async def test_reasoning_effort_is_sent_when_configured():
+    """thinking 예산을 제한해 max_tokens 를 본문에 남긴다 (Gemini 2.5 계열)."""
+    http_client = AsyncMock()
+    http_client.post.return_value = _response(_completion("요약입니다."))
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="gemini-2.5-flash",
+        http_client=http_client,
+        reasoning_effort="low",
+    )
+
+    await client.complete(system="s", user="u")
+
+    assert http_client.post.await_args.kwargs["json"]["reasoning_effort"] == "low"
+
+
+async def test_reasoning_effort_is_omitted_when_blank():
+    """미지원 provider(Ollama 등)에 알 수 없는 파라미터를 보내지 않는다."""
+    http_client = AsyncMock()
+    http_client.post.return_value = _response(_completion("요약입니다."))
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="llama3",
+        http_client=http_client,
+        reasoning_effort="",
+    )
+
+    await client.complete(system="s", user="u")
+
+    assert "reasoning_effort" not in http_client.post.await_args.kwargs["json"]
+
+
 async def test_trailing_slash_base_url_is_normalized():
     http_client = AsyncMock()
     http_client.post.return_value = _response(_completion("ok"))
