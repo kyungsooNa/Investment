@@ -173,6 +173,36 @@ def test_ai_stock_analysis_returns_429_when_daily_limit_is_reached(
     assert "공시" in response.json()["detail"]
 
 
+def test_ai_stock_analysis_returns_504_with_reason_on_ai_timeout(
+    web_client, mock_web_ctx
+):
+    """타임아웃은 일반 실패 문구가 아니라 원인이 드러나는 504로 알린다."""
+    from services.ai_client import AiClientError
+
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = (
+        ResCommonResponse(rt_cd="0", msg1="성공", data={"price": "70000"})
+    )
+    mock_web_ctx.stock_query_service.get_financial_ratio.return_value = (
+        ResCommonResponse(rt_cd="1", msg1="없음", data=None)
+    )
+    mock_web_ctx.stock_query_service.get_investor_trade_daily_multi.return_value = (
+        ResCommonResponse(rt_cd="1", msg1="없음", data=None)
+    )
+    mock_web_ctx.ai_stock_analyzer = MagicMock()
+    mock_web_ctx.ai_stock_analyzer.analyze = AsyncMock(
+        side_effect=AiClientError("TIMEOUT", "AI 응답이 45초 안에 도착하지 않았습니다.")
+    )
+    mock_web_ctx.minervini_stage_service = None
+    mock_web_ctx.rs_rating_service = None
+    mock_web_ctx.dart_disclosure_repository = None
+    mock_web_ctx.stock_news_collector = None
+
+    response = web_client.post("/api/stock/005930/ai-analysis")
+
+    assert response.status_code == 504
+    assert "45초" in response.json()["detail"]
+
+
 def test_ai_stock_analysis_collects_context_and_returns_source_status(
     web_client, mock_web_ctx
 ):

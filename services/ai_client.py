@@ -122,6 +122,14 @@ class AiClient:
                 if exc.response.status_code not in _RETRYABLE_STATUS:
                     raise
                 last_exc = exc
+            except httpx.TimeoutException as exc:
+                # 같은 제한 시간으로 다시 걸면 결과도 같으므로 재시도하지 않는다.
+                # (재시도하면 사용자 대기만 제한 시간의 3배로 늘어난다.)
+                raise AiClientError(
+                    "TIMEOUT",
+                    f"AI 응답이 {self._timeout_sec:.0f}초 안에 도착하지 않았습니다. "
+                    "잠시 후 다시 시도하거나 ai_analysis.timeout_sec 를 늘리세요.",
+                ) from exc
             except httpx.TransportError as exc:
                 last_exc = exc
             except AiClientError as exc:

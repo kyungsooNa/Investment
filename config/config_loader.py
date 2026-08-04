@@ -326,7 +326,9 @@ class AiAnalysisConfig(BaseModel):
     base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     api_key: str = ""
     model: str = "gemini-2.5-flash"
-    timeout_sec: float = Field(15.0, gt=0)
+    # thinking 모델은 종합 분석처럼 컨텍스트가 큰 요청에서 15초를 상시 초과한다
+    # (2026-08-04 실측 ReadTimeout). 웹 UI 대기 예산 60초 안에 단발로 끝나게 둔다.
+    timeout_sec: float = Field(45.0, gt=0)
     # Gemini 2.5 계열은 thinking 토큰이 max_tokens 예산을 소비하므로, 짧게 잡으면
     # 실제 요약이 잘린다. 사고 후에도 2~3문장이 완성되도록 넉넉히 둔다.
     max_tokens: int = Field(2048, ge=1, le=8192)
