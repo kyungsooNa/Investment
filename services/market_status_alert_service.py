@@ -136,6 +136,10 @@ class MarketStatusAlertService:
         reason = str(data.get("거래정지사유내용") or "").lower()
         if any(keyword.lower() in reason for keyword in self._SIDECAR_KEYWORDS):
             return "sidecar"
+        # 장운영정보는 거래소에 따라 '사이드카'라는 명칭 대신 프로그램매매
+        # 호가의 일시 효력정지 문구만 전달할 수 있다.
+        if "프로그램" in reason and "호가" in reason and ("정지" in reason or "효력정지" in reason):
+            return "sidecar"
         if any(keyword.lower() in reason for keyword in self._CIRCUIT_KEYWORDS):
             return "circuit_breaker"
         return None
