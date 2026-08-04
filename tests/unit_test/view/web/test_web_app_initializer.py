@@ -275,6 +275,7 @@ async def test_program_trading_subscription(mock_deps):
     ctx.streaming_stock_repo.get_desired.side_effect = (
         lambda stream_type: {"005930"} if stream_type == StreamingType.PROGRAM_TRADING else set()
     )
+    ctx.streaming_stock_repo.get_active.return_value = {"005930"}
     await ctx.start_program_trading("005930")
     assert ctx.streaming_service.subscribe_program_trading.call_count == 1
 
