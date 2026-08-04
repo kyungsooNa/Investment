@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from common.overseas_types import OverseasExchange
 from common.types import Exchange
+from services.ai_client import AiClientError
 from services.ai_signal import extract_signal
 from services.ai_usage_limiter import AiUsageLimitExceeded
 from repositories.streaming_stock_repo import StreamingType
@@ -309,6 +310,8 @@ async def get_ai_stock_analysis(code: str):
         ctx.logger.warning(
             f"[stock-ai] {code} 분석 실패: {type(exc).__name__}: {exc}"
         )
+        if isinstance(exc, AiClientError) and exc.status == "TIMEOUT":
+            raise HTTPException(status_code=504, detail=exc.message) from exc
         raise HTTPException(
             status_code=502, detail="AI 분석 요청에 실패했습니다. 잠시 후 다시 시도하세요."
         ) from exc

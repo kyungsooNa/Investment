@@ -222,6 +222,27 @@ async def test_transient_network_error_is_retried_then_succeeds():
     assert http_client.post.await_count == 2
 
 
+async def test_read_timeout_is_not_retried_and_reports_timeout_seconds():
+    """같은 제한 시간으로 다시 걸면 결과가 같으므로 타임아웃은 재시도하지 않는다."""
+    http_client = AsyncMock()
+    http_client.post.side_effect = httpx.ReadTimeout("timed out")
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="gemini-2.5-flash",
+        http_client=http_client,
+        timeout_sec=45,
+        max_retries=2,
+        retry_backoff_sec=0,
+    )
+
+    with pytest.raises(AiClientError, match="45초") as exc_info:
+        await client.complete(system="s", user="u")
+
+    assert exc_info.value.status == "TIMEOUT"
+    http_client.post.assert_awaited_once()
+
+
 async def test_aborted_completion_is_retried_then_succeeds():
     """Gemini가 HTTP 200으로 돌려주는 내부 중단 문구도 일시 오류로 재시도한다."""
     http_client = AsyncMock()

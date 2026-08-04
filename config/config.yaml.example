@@ -237,7 +237,9 @@ ai_analysis:
   base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
   api_key: ""
   model: "gemini-2.5-flash"
-  timeout_sec: 15
+  # thinking 모델은 종합 분석(현재가·재무·수급·공시·뉴스)에서 15초를 상시 초과한다(2026-08-04 실측).
+  # 웹 UI 대기 예산은 60초이므로 그 안에서 단발로 끝나도록 잡는다.
+  timeout_sec: 45
   # Gemini 2.5 계열은 thinking 토큰이 max_tokens를 소비하므로 넉넉히 (짧으면 요약이 잘림).
   # 2048은 종합 분석처럼 컨텍스트가 큰 요청에서 본문이 문장 중간에 잘리는 것이 실측됨(2026-07-21).
   max_tokens: 4096
