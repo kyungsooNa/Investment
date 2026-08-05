@@ -1,7 +1,7 @@
 # app/stock_query_service.py
 from __future__ import annotations
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from common.market_snapshot import ConclusionSnapshot, MarketSnapshot
 from common.overseas_types import OverseasExchange
 from common.types import ErrorCode, ResCommonResponse, ResTopMarketCapApiItem, ResBasicStockInfo, \
@@ -1494,3 +1494,47 @@ class StockQueryService:
             "points": points,
         }
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="지수 조회 성공", data=data)
+
+    async def get_recent_daily_index_ohlcv(
+        self,
+        index_code: str,
+        limit: int,
+        end_date: Optional[str] = None,
+    ) -> ResCommonResponse:
+        """국내 대표 지수의 최근 일봉 종가를 과거→현재 순으로 반환한다.
+
+        마켓 타이밍처럼 지수 자체의 이동평균이 필요한 소비자를 위한 경로다.
+        KIS 기간별 지수 API는 최대 50개 봉을 반환하므로, 이 메서드는 그 범위 내의
+        짧은 lookback만 지원한다.
+        """
+        if index_code not in self.DOMESTIC_INDEX_NAMES:
+            msg = f"지원하지 않는 지수 코드: {index_code}"
+            self.logger.warning(msg)
+            return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=msg, data=[])
+        if limit < 1:
+            msg = f"limit은 1 이상이어야 합니다: {limit}"
+            return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=msg, data=[])
+
+        try:
+            end_dt = datetime.strptime(end_date, "%Y%m%d") if end_date else self.market_clock.get_current_kst_time()
+        except ValueError:
+            msg = f"잘못된 end_date 형식: {end_date}"
+            return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=msg, data=[])
+
+        resp = await self.broker.inquire_daily_indexchartprice(
+            index_code,
+            start_date=(end_dt - timedelta(days=max(limit * 2 + 1, 5))).strftime("%Y%m%d"),
+            end_date=end_dt.strftime("%Y%m%d"),
+            period="D",
+        )
+        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+            return resp or ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="지수 시세 조회 실패", data=[])
+
+        rows = []
+        for candle in (resp.data or {}).get("candles") or []:
+            date = str(candle.get("stck_bsop_date") or "")
+            close = _to_float(candle.get("bstp_nmix_prpr"))
+            if date and close is not None:
+                rows.append({"date": date, "close": close})
+        rows.sort(key=lambda row: row["date"])
+        return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="지수 일봉 조회 성공", data=rows[-limit:])

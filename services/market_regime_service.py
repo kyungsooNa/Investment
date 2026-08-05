@@ -1,6 +1,6 @@
 """시장 국면 판정 서비스.
 
-KOSPI / KOSDAQ 지수 프록시 ETF의 단기 MA 추세를 4-state로 분류하고
+KOSPI / KOSDAQ 실제 지수의 단기 MA 추세를 4-state로 분류하고
 전략 게이트 및 성과 리포트가 공통으로 참조할 bull / bear / sideways 라벨로 매핑한다.
 
 분류 로직은 OneilUniverseService._check_etf_ma_rising() 에서 이관되었다.
@@ -27,8 +27,8 @@ _TREND_STATUS_TO_LABEL = {
 
 @dataclass
 class MarketRegimeConfig:
-    kospi_etf_code: str = "069500"   # KODEX 200
-    kosdaq_etf_code: str = "229200"  # KODEX 코스닥150
+    kospi_index_code: str = "0001"   # KOSPI
+    kosdaq_index_code: str = "1001"  # KOSDAQ
     ma_period: int = 20
     rising_days: int = 3
     min_net_change_pct: float = -0.10
@@ -51,7 +51,7 @@ class RegimeSnapshot:
 
 
 class MarketRegimeService:
-    """시장(KOSPI/KOSDAQ) ETF MA 추세를 분류한다."""
+    """시장(KOSPI/KOSDAQ) 지수 MA 추세를 분류한다."""
 
     def __init__(
         self,
@@ -67,11 +67,11 @@ class MarketRegimeService:
         self._cache: Dict[str, RegimeSnapshot] = {}
         self._cache_date: str = ""
 
-    def _etf_code_for(self, market: str) -> str:
+    def _index_code_for(self, market: str) -> str:
         if market == "KOSPI":
-            return self._cfg.kospi_etf_code
+            return self._cfg.kospi_index_code
         if market == "KOSDAQ":
-            return self._cfg.kosdaq_etf_code
+            return self._cfg.kosdaq_index_code
         raise ValueError(f"Unknown market: {market}")
 
     async def classify(self, market: str, logger: Optional[logging.Logger] = None) -> RegimeSnapshot:
@@ -116,13 +116,12 @@ class MarketRegimeService:
         as_of_date: Optional[str],
         logger: logging.Logger,
     ) -> RegimeSnapshot:
-        etf_code = self._etf_code_for(market)
+        index_code = self._index_code_for(market)
         period = self._cfg.ma_period
         days = self._cfg.rising_days
 
-        force_refresh = as_of_date is None
         query_end_date = as_of_date
-        if force_refresh:
+        if as_of_date is None:
             now = self._tm.get_current_kst_time()
             query_end_date = (
                 previous_trading_day_str(now)
@@ -130,11 +129,10 @@ class MarketRegimeService:
                 else now.strftime("%Y%m%d")
             )
 
-        ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(
-            etf_code,
+        ohlcv_resp = await self._sqs.get_recent_daily_index_ohlcv(
+            index_code,
             limit=period + days + 5,
             end_date=query_end_date,
-            force_refresh=force_refresh,
         )
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == ErrorCode.SUCCESS.value else []
         if as_of_date:
@@ -157,7 +155,7 @@ class MarketRegimeService:
             logger.debug({
                 "event": "market_regime_check",
                 "market": market,
-                "etf_code": etf_code,
+                "index_code": index_code,
                 "is_rising": False,
                 "trend_status": snap.trend_status,
                 "fail_detail": snap.fail_detail,
@@ -217,7 +215,7 @@ class MarketRegimeService:
         logger.debug({
             "event": "market_regime_check",
             "market": market,
-            "etf_code": etf_code,
+            "index_code": index_code,
             "is_rising": is_rising,
             "trend_status": trend_status,
             "regime_label": snap.regime_label,

@@ -22,15 +22,15 @@ def _build_ohlcv(closes):
 
 def _make_service(closes, *, today="20260514"):
     sqs = MagicMock()
-    sqs.get_recent_daily_ohlcv = AsyncMock(
+    sqs.get_recent_daily_index_ohlcv = AsyncMock(
         return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=_build_ohlcv(closes))
     )
     tm = MagicMock()
     tm.get_current_kst_time = MagicMock(return_value=datetime.strptime(today, "%Y%m%d"))
     tm.is_market_operating_hours = MagicMock(return_value=False)
     cfg = MarketRegimeConfig(
-        kospi_etf_code="069500",
-        kosdaq_etf_code="229200",
+        kospi_index_code="0001",
+        kosdaq_index_code="1001",
         ma_period=5,
         rising_days=2,
         min_net_change_pct=-0.10,
@@ -39,6 +39,20 @@ def _make_service(closes, *, today="20260514"):
     )
     svc = MarketRegimeService(stock_query_service=sqs, market_clock=tm, config=cfg)
     return svc, sqs
+
+
+@pytest.mark.asyncio
+async def test_classify_uses_actual_market_index_ohlcv():
+    """마켓 타이밍은 ETF 프록시가 아닌 KOSPI 지수(0001) 일봉으로 계산한다."""
+    closes = [100, 101, 102, 103, 104, 106, 108, 110]
+    svc, sqs = _make_service(closes)
+
+    await svc.classify("KOSPI")
+
+    sqs.get_recent_daily_index_ohlcv.assert_awaited_once_with(
+        "0001", limit=12, end_date="20260514"
+    )
+    sqs.get_recent_daily_ohlcv.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -65,11 +79,10 @@ async def test_classify_live_forces_fresh_closed_ohlcv():
 
     snap = await svc.classify("KOSPI")
 
-    sqs.get_recent_daily_ohlcv.assert_awaited_once_with(
-        "069500",
+    sqs.get_recent_daily_index_ohlcv.assert_awaited_once_with(
+        "0001",
         limit=12,
         end_date="20260513",
-        force_refresh=True,
     )
     assert snap.data_date == "20260108"
 
@@ -132,7 +145,7 @@ async def test_classify_caches_until_date_changes():
     await svc.classify("KOSPI")
     await svc.classify("KOSPI")
     await svc.classify("KOSPI")
-    assert sqs.get_recent_daily_ohlcv.call_count == 1
+    assert sqs.get_recent_daily_index_ohlcv.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -144,7 +157,7 @@ async def test_classify_recomputes_after_date_change():
     # 날짜 변경
     svc._tm.get_current_kst_time = MagicMock(return_value=datetime.strptime("20260515", "%Y%m%d"))
     await svc.classify("KOSPI")
-    assert sqs.get_recent_daily_ohlcv.call_count == 2
+    assert sqs.get_recent_daily_index_ohlcv.call_count == 2
 
 
 @pytest.mark.asyncio
