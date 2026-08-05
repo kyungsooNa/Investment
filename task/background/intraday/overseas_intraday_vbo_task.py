@@ -32,6 +32,7 @@ class OverseasIntradayVBOTask(SchedulableTask):
         broker,
         market_clock,
         us_market_calendar_service=None,
+        shadow_journal=None,
         check_interval_sec: Optional[int] = None,
         session_prepare_delay_min: int = 5,
         eod_exit_before_min: int = 10,
@@ -41,6 +42,7 @@ class OverseasIntradayVBOTask(SchedulableTask):
         self._broker = broker
         self._market_clock = market_clock
         self._us_mcs = us_market_calendar_service
+        self._journal = shadow_journal
         self._check_interval_sec = check_interval_sec or self.CHECK_INTERVAL_SEC
         self._prepare_delay_min = session_prepare_delay_min
         self._eod_exit_before_min = eod_exit_before_min
@@ -113,6 +115,7 @@ class OverseasIntradayVBOTask(SchedulableTask):
                 self._last_eod_date = today
                 self._logger.info({"event": "overseas_intraday_vbo_eod_exit",
                                    "trade_date": today, "exits": len(actions or [])})
+                self._flush_journal(today)
             return
 
         await self._vbo.prepare_session(today)
@@ -121,6 +124,20 @@ class OverseasIntradayVBOTask(SchedulableTask):
             if price is None:
                 continue
             await self._vbo.on_price(code, price)
+
+    def _flush_journal(self, trade_date: str) -> None:
+        """세션 paper 기록을 자기 거래일 파일로 내린다.
+
+        저널 버퍼는 국내 shadow·해외 dry-run 과 공유되므로, 직접 flush 하지 않으면
+        다른 태스크의 flush 시점·파일명에 기록이 딸려가거나(날짜 오배치) 그 태스크가
+        실패하면 통째로 유실된다. flush 실패는 흡수한다 — 청산은 이미 끝났다.
+        """
+        if self._journal is None:
+            return
+        try:
+            self._journal.flush_to_file(trade_date)
+        except Exception as exc:
+            self._logger.warning("%s: 저널 flush 실패 — %s", self.task_name, exc)
 
     async def _fetch_price(self, code: str) -> Optional[float]:
         try:

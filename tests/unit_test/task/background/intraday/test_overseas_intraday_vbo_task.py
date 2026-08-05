@@ -27,7 +27,8 @@ def _price(value):
     )
 
 
-def _task(*, now=None, operating=True, trading_day=True, early_close=False, watch=("AAA",)):
+def _task(*, now=None, operating=True, trading_day=True, early_close=False, watch=("AAA",),
+          journal=None):
     clock = MagicMock()
     clock.get_current_kst_time = MagicMock(return_value=now or _ny(10, 0))
     clock.get_current_kst_date_str = MagicMock(return_value="20260512")
@@ -52,11 +53,13 @@ def _task(*, now=None, operating=True, trading_day=True, early_close=False, watc
         broker=broker,
         market_clock=clock,
         us_market_calendar_service=us_mcs,
+        shadow_journal=journal,
         logger=MagicMock(),
         session_prepare_delay_min=5,
         eod_exit_before_min=10,
     )
-    return SimpleNamespace(task=task, vbo=vbo, broker=broker, clock=clock, us_mcs=us_mcs)
+    return SimpleNamespace(task=task, vbo=vbo, broker=broker, clock=clock, us_mcs=us_mcs,
+                           journal=journal)
 
 
 @pytest.mark.asyncio
@@ -109,6 +112,40 @@ async def test_tick_closes_positions_near_close_and_stops_polling():
     t.vbo.close_all.assert_awaited_once()
     assert t.vbo.close_all.await_args.kwargs["reason"] == "eod"
     t.vbo.on_price.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tick_flushes_journal_with_session_date_at_eod():
+    """paper 기록은 공유 버퍼에 쌓인다 — 세션 종료 시 자기 거래일로 직접 flush 해야
+    다른 태스크의 flush 타이밍/파일명에 의존하지 않는다."""
+    journal = MagicMock()
+    t = _task(now=_ny(15, 55), journal=journal)
+
+    await t.task._tick()
+
+    journal.flush_to_file.assert_called_once_with("20260512")
+
+
+@pytest.mark.asyncio
+async def test_tick_flushes_journal_only_once_per_day():
+    journal = MagicMock()
+    t = _task(now=_ny(15, 55), journal=journal)
+
+    await t.task._tick()
+    await t.task._tick()
+
+    assert journal.flush_to_file.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_tick_survives_journal_flush_failure():
+    journal = MagicMock()
+    journal.flush_to_file = MagicMock(side_effect=RuntimeError("disk full"))
+    t = _task(now=_ny(15, 55), journal=journal)
+
+    await t.task._tick()  # 청산은 이미 끝났으므로 flush 실패가 루프를 죽이지 않는다
+
+    t.vbo.close_all.assert_awaited_once()
 
 
 @pytest.mark.asyncio
