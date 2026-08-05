@@ -226,9 +226,18 @@
 
 주요 파일: `scripts/analyze_overseas_dryrun.py`, `services/overseas_vbo_dryrun_service.py`
 
-### Phase 5. 안전/canary [dry-run 검증 후 — O-1/O-2 완료]
+### O-3. 청산 편향 수정 + 장중 경로 + 파라미터 스윕 [완료 — #769/#776, 2026-08-05]
+
+- [x] **청산 판정 편향 제거 (#769)**: 일봉은 저가 발생 시각이 없어 `저 <= 손절가` 를 손절 확정으로 처리하면 하향 편향된다(손절가 >= 시가인 돌파는 진입 전 가격대만으로 강제 성립 — 저널 414건 중 괴리 3%+ 116건이 전부 정확히 −3.00%). `undecided` 분리 + 비관·낙관 bracket 산출, 저널에 당일 봉 OHLC 동봉.
+- [x] **장중 VBO paper 경로 (#776)**: dry-run 은 마감 후 사후 평가라 발사 대상이 없었다. REST 폴링(`OverseasIntradayVBOService`/`Task`)으로 장중 진입·청산 판정. 주문 서비스는 `live_enabled=False` 고정(자동 실주문 잠금 유지). config `overseas_stock.intraday_vbo` opt-in.
+- [x] **파라미터 스윕 (2026-08-05)**: 50종목 × 100거래일(20260312~0804), K·손절·괴리상한 27조합. **전 조합에서 낙관 상한이 음수(−0.24% ~ −0.46%)** → 비용 후 엣지 없음. 비용 0% 기준 낙관값 +0.04~+0.26% 로, 엣지가 왕복비용 0.5% 보다 작다. 괴리 상한 필터 가설은 기각(낙관값 미개선). 상세: `reports/overseas_vbo_sweep_20260805.md`
+
+주요 파일: `services/overseas_intraday_vbo_service.py`, `task/background/intraday/overseas_intraday_vbo_task.py`, `strategies/overseas_daily_vbo_backtest.py`, `scripts/{run_overseas_vbo_sweep,fetch_overseas_ohlcv}.py`
+
+### Phase 5. 안전/canary [**보류** — 스윕에서 엣지 미확인, 2026-08-05]
 
 - [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile(`OverseasReconcileService` scaffolding 존재), risk gate/kill switch/canary USD 확장, 실전 소액 canary, canary auto-fire 배선 + `live_enabled=True` 전환 — dry-run 검증 + canary 게이팅.
+  - **착수 조건 미충족**: O-3 스윕이 전 조합 음의 기댓값을 보였으므로 현 규칙으로 실주문 전환할 근거가 없다. 장중 paper(#776) 데이터로 교차검증하거나, 유니버스/규칙 자체를 바꿔 엣지를 먼저 입증해야 한다.
 
 주요 파일: `brokers/korea_investment/korea_invest_overseas_stock_api.py`, `brokers/broker_api_wrapper.py`, `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/stock_query_service.py`, `view/web/bootstrap/{service_container,strategy_factory}.py`, `config/tr_ids_config.yaml`
 

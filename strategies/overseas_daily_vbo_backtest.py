@@ -27,11 +27,15 @@ class OverseasDailyVBOBacktest:
         stop_loss_pct: float = -3.0,
         round_trip_cost_pct: float = 0.2,
         logger: Optional[logging.Logger] = None,
+        *,
+        max_gap_to_target_pct: Optional[float] = None,
     ):
         self._k = k_value
         self._stop_loss_pct = stop_loss_pct
         self._cost_pct = round_trip_cost_pct
         self._logger = logger if logger else logging.getLogger(__name__)
+        # 시가 대비 목표가 괴리(K×prev_range ÷ 시가) 상한. None 이면 필터 없음(기본).
+        self._max_gap_pct = max_gap_to_target_pct
 
     def run_symbol(self, bars: List[Dict[str, Any]]) -> Dict[str, Any]:
         """단일 종목 일봉(오름차순)에 일봉 VBO 근사를 적용해 거래/요약 반환."""
@@ -54,6 +58,10 @@ class OverseasDailyVBOBacktest:
             if high < target:
                 continue  # 돌파 미발생 → 진입 없음
 
+            gap_to_target_pct = (target - open_) / open_ * 100.0
+            if self._max_gap_pct is not None and gap_to_target_pct > self._max_gap_pct:
+                continue  # 시가에서 너무 먼 돌파 — 진입 전 되돌림 여지가 커 제외
+
             entry_price = target
             stop_price = entry_price * (1 + self._stop_loss_pct / 100.0)
             # 일봉은 저가의 발생 시각을 담지 않아, 저 <= 손절가여도 그 저가가 진입(돌파)
@@ -68,6 +76,7 @@ class OverseasDailyVBOBacktest:
             trades.append({
                 "date": cur.get("date"),
                 "entry_price": entry_price,
+                "gap_to_target_pct": gap_to_target_pct,
                 "exit_price": exit_price,
                 "exit_reason": exit_reason,
                 "exit_decidable": decidable,
