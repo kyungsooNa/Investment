@@ -1035,6 +1035,15 @@ class OneilUniverseService:
                 if not is_rising and snap.fail_detail:
                     msg += f"• 사유: {snap.fail_detail}\n"
                 msg += f"• 최근 MA({self._cfg.market_ma_period}) 추이: {ma_str}"
+                if not is_rising and snap.recovery_earliest_days is not None:
+                    msg += f"\n• 최초 전환 가능: 최소 {snap.recovery_earliest_days}거래일 후 (이후 종가 조건 충족 시)"
+                if not is_rising and snap.recovery_target_ma is not None:
+                    msg += f"\n• 전환 시 MA({self._cfg.market_ma_period}) 목표: ≥ {snap.recovery_target_ma:,.2f}"
+                if not is_rising and snap.next_close_floor is not None:
+                    msg += (
+                        f"\n• 다음 종가 하한: {snap.next_close_floor:,.2f} "
+                        f"(새 MA 급락 -{abs(self._cfg.market_ma_hard_decline_pct):.2f}% 방지)"
+                    )
                 notification_rows.append(msg)
 
         if self._notification_service and notification_rows:
