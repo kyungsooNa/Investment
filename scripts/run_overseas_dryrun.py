@@ -51,17 +51,19 @@ def resolve_exchange(value: str) -> OverseasExchange:
         raise SystemExit(f"[ERROR] 미지원 거래소: {value!r} (지원: {valid})")
 
 
-async def build_dryrun_service(
+async def build_overseas_query_stack(
     *,
     is_paper_trading: bool,
-    slot_usd: float,
-    max_qty: Optional[int],
     logger: logging.Logger,
 ):
-    """dry-run 스캔에 필요한 최소 서비스 그래프를 조립한다(주문 경로 없음).
+    """해외 조회 경로(일봉/현재가/잔고)에 필요한 읽기 전용 서비스 그래프를 조립한다.
+
+    dry-run 러너와 OHLCV 수집기(`scripts/fetch_overseas_ohlcv.py`)가 공유한다.
+    주문 경로는 조립하지 않는다.
 
     Returns:
-        (OverseasVBODryRunService, EventShadowJournalService, MarketClock(US))
+        dict(stock_query_service, candidate_service, broker, config_data,
+             config_dict, market_clock, us_clock)
     """
     from brokers.broker_api_wrapper import BrokerAPIWrapper
     from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
@@ -71,16 +73,10 @@ async def build_dryrun_service(
     from core.performance_profiler import PerformanceProfiler
     from repositories.overseas_stock_code_repository import OverseasStockCodeRepository
     from repositories.stock_code_repository import StockCodeRepository
-    from services.event_shadow_journal_service import EventShadowJournalService
     from services.indicator_service import IndicatorService
     from services.market_calendar_service import MarketCalendarService
     from services.market_data_service import MarketDataService
     from services.overseas_candidate_service import OverseasCandidateService
-    from services.overseas_position_sizing_service import (
-        OverseasPositionSizingService,
-        extract_fx_krw_per_usd,
-    )
-    from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
     from services.stock_query_service import StockQueryService
 
     config_data = load_configs()
@@ -139,17 +135,56 @@ async def build_dryrun_service(
         indicator_service=indicator_service,
     )
 
+    candidate_service = OverseasCandidateService(
+        overseas_stock_code_repository=OverseasStockCodeRepository(logger=logger),
+        stock_query_service=stock_query_service,
+        logger=logger,
+    )
+    return {
+        "stock_query_service": stock_query_service,
+        "candidate_service": candidate_service,
+        "broker": broker,
+        "config_data": config_data,
+        "config_dict": config_dict,
+        "market_clock": market_clock,
+        "us_clock": us_clock,
+    }
+
+
+async def build_dryrun_service(
+    *,
+    is_paper_trading: bool,
+    slot_usd: float,
+    max_qty: Optional[int],
+    logger: logging.Logger,
+):
+    """dry-run 스캔에 필요한 최소 서비스 그래프를 조립한다(주문 경로 없음).
+
+    Returns:
+        (OverseasVBODryRunService, EventShadowJournalService, MarketClock(US))
+    """
+    from services.event_shadow_journal_service import EventShadowJournalService
+    from services.overseas_position_sizing_service import (
+        OverseasPositionSizingService,
+        extract_fx_krw_per_usd,
+    )
+    from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
+
+    stack = await build_overseas_query_stack(
+        is_paper_trading=is_paper_trading, logger=logger,
+    )
+    stock_query_service = stack["stock_query_service"]
+    candidate_service = stack["candidate_service"]
+    broker = stack["broker"]
+    config_data = stack["config_data"]
+    us_clock = stack["us_clock"]
+
     overseas_stock_cfg = getattr(config_data, "overseas_stock", None)
     sizing_service = OverseasPositionSizingService(
         slot_usd=slot_usd if slot_usd is not None
         else getattr(overseas_stock_cfg, "dryrun_slot_usd", 1000.0),
         max_qty=max_qty if max_qty is not None
         else getattr(overseas_stock_cfg, "dryrun_max_qty", None),
-        logger=logger,
-    )
-    candidate_service = OverseasCandidateService(
-        overseas_stock_code_repository=OverseasStockCodeRepository(logger=logger),
-        stock_query_service=stock_query_service,
         logger=logger,
     )
     journal = EventShadowJournalService(log_root="logs/strategies", logger=logger)

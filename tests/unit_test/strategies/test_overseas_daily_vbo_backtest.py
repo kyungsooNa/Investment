@@ -93,6 +93,42 @@ def test_summary_separates_undecided_and_optimistic_average():
     assert s["avg_net_return_pct_optimistic"] > s["avg_net_return_pct"]
 
 
+def test_gap_to_target_cap_skips_far_breakouts():
+    """시가 대비 목표가 괴리가 상한을 넘는 돌파는 진입에서 제외한다.
+
+    dry-run 저널 414건에서 괴리가 커질수록 성과가 단조 악화했고(<1% +0.01%,
+    1-2% -0.16%, 2-3% -1.44%), 3% 이상은 청산 판정 자체가 불가했다.
+    """
+    # 전일 range 20 → target = 110, 괴리 = 10/100 = 10% > 상한 2%
+    bars = [_bar("20260511", 100, 120, 100, 110), _bar("20260512", 100, 130, 99, 128)]
+
+    bt = OverseasDailyVBOBacktest(k_value=0.5, stop_loss_pct=-3.0, round_trip_cost_pct=0.0,
+                                  max_gap_to_target_pct=2.0)
+    res = bt.run_symbol(bars)
+
+    assert res["trades"] == []
+
+
+def test_gap_to_target_cap_keeps_near_breakouts():
+    # 전일 range 10 → target = 105, 괴리 = 5% ≤ 상한 5%
+    bars = [_PREV, _bar("20260512", 100, 120, 104, 115)]
+
+    bt = OverseasDailyVBOBacktest(k_value=0.5, stop_loss_pct=-3.0, round_trip_cost_pct=0.0,
+                                  max_gap_to_target_pct=5.0)
+    res = bt.run_symbol(bars)
+
+    assert len(res["trades"]) == 1
+
+
+def test_gap_cap_none_keeps_all_breakouts():
+    """상한 미지정(기본)은 기존 동작 그대로 — 필터 없음."""
+    bars = [_bar("20260511", 100, 120, 100, 110), _bar("20260512", 100, 130, 99, 128)]
+
+    bt = OverseasDailyVBOBacktest(k_value=0.5, stop_loss_pct=-3.0, round_trip_cost_pct=0.0)
+
+    assert len(bt.run_symbol(bars)["trades"]) == 1
+
+
 def test_round_trip_cost_reduces_net_return():
     bt = OverseasDailyVBOBacktest(k_value=0.5, stop_loss_pct=-3.0, round_trip_cost_pct=0.5)
     bars = [_PREV, _bar("20260512", 100, 120, 104, 115)]
