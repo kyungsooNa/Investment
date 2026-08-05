@@ -467,6 +467,25 @@ class WebAppContext:
         if schedule_price_subscriptions:
             self._schedule_price_subscription_initialization()
 
+    async def start_background_tasks_and_wait(
+        self, *, schedule_price_subscriptions: bool = True
+    ) -> None:
+        """백그라운드 태스크를 기동 완료한 뒤 초기 가격 구독을 시작한다."""
+        from view.web.deployment_policy import is_demo_mode, is_public_mode
+
+        if is_public_mode(self) or is_demo_mode(self):
+            self.logger.info("공개/데모 모드: 백그라운드 태스크 시작을 건너뜁니다.")
+            return
+
+        if self.streaming_service:
+            self.streaming_service._callback = self._web_realtime_callback
+
+        if self.background_scheduler:
+            await self.background_scheduler.start_all()
+
+        if schedule_price_subscriptions:
+            await self._initialize_price_subscriptions()
+
     def _schedule_price_subscription_initialization(self):
         """초기 가격 구독 task를 background lifecycle에 맞춰 시작한다."""
         from view.web.bootstrap.runtime_mode import RuntimeMode

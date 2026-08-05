@@ -473,6 +473,7 @@ async def test_get_moving_average(web_client, mock_web_ctx):
 async def test_change_environment(web_client, mock_web_ctx):
     """POST /api/environment 엔드포인트 테스트"""
     mock_web_ctx.initialize_services = AsyncMock(return_value=True)
+    mock_web_ctx.start_background_tasks_and_wait = AsyncMock()
     mock_web_ctx.get_env_type.return_value = "실전투자"
 
     response = web_client.post(
@@ -484,7 +485,9 @@ async def test_change_environment(web_client, mock_web_ctx):
     assert response.json()["env_type"] == "실전투자"
     mock_web_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=False)
     mock_web_ctx._initialize_price_subscriptions.assert_awaited_once_with(rebalance=False)
-    mock_web_ctx.start_background_tasks.assert_called_once_with()
+    mock_web_ctx.start_background_tasks_and_wait.assert_awaited_once_with(
+        schedule_price_subscriptions=False
+    )
 
 
 @pytest.mark.asyncio
@@ -500,6 +503,7 @@ async def test_change_environment_to_real_requires_confirmation(web_client, mock
 @pytest.mark.asyncio
 async def test_change_environment_to_paper_does_not_require_confirmation(web_client, mock_web_ctx):
     mock_web_ctx.initialize_services = AsyncMock(return_value=True)
+    mock_web_ctx.start_background_tasks_and_wait = AsyncMock()
     mock_web_ctx.get_env_type.return_value = "paper"
 
     response = web_client.post("/api/environment", json={"is_paper": True})
@@ -507,7 +511,9 @@ async def test_change_environment_to_paper_does_not_require_confirmation(web_cli
     assert response.status_code == 200
     mock_web_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=True)
     mock_web_ctx._initialize_price_subscriptions.assert_awaited_once_with(rebalance=False)
-    mock_web_ctx.start_background_tasks.assert_called_once_with()
+    mock_web_ctx.start_background_tasks_and_wait.assert_awaited_once_with(
+        schedule_price_subscriptions=False
+    )
 
 
 @pytest.mark.asyncio
