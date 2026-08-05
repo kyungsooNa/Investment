@@ -48,8 +48,10 @@ class RegimeSnapshot:
     ma_values: List[float] = field(default_factory=list)
     fail_detail: str = ""
     data_date: str = ""       # 판정에 사용한 마지막 확정 일봉 날짜 (YYYYMMDD)
+    current_close: Optional[float] = None  # 판정 기준일 지수 종가
     recovery_earliest_days: Optional[int] = None  # 기존 급락 MA가 판정창에서 빠지는 최소 거래일
     recovery_target_ma: Optional[float] = None    # 해당 시점 3일 순변화 조건의 MA(20) 하한
+    recovery_target_close: Optional[float] = None  # 최초 전환일 종가 목표(그전 종가 현재 수준 유지 가정)
     next_close_floor: Optional[float] = None      # 다음 MA(20)의 hard decline 방지 종가 하한
 
 
@@ -205,6 +207,7 @@ class MarketRegimeService:
 
         recovery_earliest_days: Optional[int] = None
         recovery_target_ma: Optional[float] = None
+        recovery_target_close: Optional[float] = None
         next_close_floor: Optional[float] = None
         if not is_rising:
             # 다음 MA는 가장 오래된 20일 창 종가가 빠지고 다음 확정 종가가 들어온다.
@@ -225,6 +228,16 @@ class MarketRegimeService:
             # 시작한다. 마지막 MA가 이 값 이상이면 3일 순변화 조건을 충족한다.
             recovery_reference_ma = ma_values[recovery_earliest_days]
             recovery_target_ma = recovery_reference_ma * (1 + self._cfg.min_net_change_pct / 100)
+            # 최초 전환일까지 이전 종가가 현재 종가와 같다고 가정하고, 마지막 종가 하나로
+            # 목표 MA를 충족시키는 데 필요한 종가를 계산한다.
+            replacement_count = recovery_earliest_days
+            outgoing_closes = closes[-period:-period + replacement_count]
+            assumed_intermediate_closes = closes[-1] * (replacement_count - 1)
+            recovery_target_close = (
+                period * recovery_target_ma
+                - (sum(closes[-period:]) - sum(outgoing_closes))
+                - assumed_intermediate_closes
+            )
 
         snap = RegimeSnapshot(
             market=market,
@@ -237,8 +250,10 @@ class MarketRegimeService:
             ma_values=[round(v, 2) for v in ma_values],
             fail_detail=fail_detail,
             data_date=data_date,
+            current_close=round(closes[-1], 2),
             recovery_earliest_days=recovery_earliest_days,
             recovery_target_ma=round(recovery_target_ma, 2) if recovery_target_ma is not None else None,
+            recovery_target_close=round(recovery_target_close, 2) if recovery_target_close is not None else None,
             next_close_floor=round(next_close_floor, 2) if next_close_floor is not None else None,
         )
         logger.debug({

@@ -101,7 +101,7 @@ async def test_classify_hard_decline_returns_bear():
 
 @pytest.mark.asyncio
 async def test_classify_hard_decline_includes_recovery_price_guidance():
-    """급락 MA가 판정창에서 빠지는 최초 시점과 다음 종가 하한을 안내한다."""
+    """급락 MA가 판정창에서 빠지는 최초 시점과 전환 종가 목표를 안내한다."""
     closes = [200, 200, 200, 200, 200, 200, 200, 150]
     svc, _ = _make_service(closes)
 
@@ -110,6 +110,10 @@ async def test_classify_hard_decline_includes_recovery_price_guidance():
     # MA(5): 200 -> 200 -> 190. 마지막 hard decline(idx=2)은 2거래일 후 소멸한다.
     assert snap.recovery_earliest_days == 2
     assert snap.recovery_target_ma == 189.81  # 190 * (1 - 0.10%)
+    assert snap.current_close == 150
+    # 최초 전환일 전까지 현재 종가(150)를 유지한다고 가정하면,
+    # 전환일의 종가는 MA(5)를 189.81 이상으로 만들기 위해 249.05 이상이어야 한다.
+    assert snap.recovery_target_close == 249.05
     # 다음 MA가 -0.50%보다 더 급락하지 않는 종가 하한:
     # 200 + 5 * (190 * 0.995 - 190) = 195.25
     assert snap.next_close_floor == 195.25

@@ -1032,6 +1032,8 @@ class OneilUniverseService:
                 ma_str = " ➔ ".join([f"{v:.2f}" for v in snap.ma_values])
                 msg = f"• 지수: {market} ({code})\n• 상태: {status_text}\n"
                 msg += f"• 데이터 기준일: {snap.data_date or '확인 불가'}\n"
+                if snap.current_close is not None:
+                    msg += f"• 현재 지수(종가): {snap.current_close:,.2f}\n"
                 if not is_rising and snap.fail_detail:
                     msg += f"• 사유: {snap.fail_detail}\n"
                 msg += f"• 최근 MA({self._cfg.market_ma_period}) 추이: {ma_str}"
@@ -1039,6 +1041,11 @@ class OneilUniverseService:
                     msg += f"\n• 최초 전환 가능: 최소 {snap.recovery_earliest_days}거래일 후 (이후 종가 조건 충족 시)"
                 if not is_rising and snap.recovery_target_ma is not None:
                     msg += f"\n• 전환 시 MA({self._cfg.market_ma_period}) 목표: ≥ {snap.recovery_target_ma:,.2f}"
+                if not is_rising and snap.recovery_target_close is not None:
+                    msg += (
+                        f"\n• 최초 전환일 종가 목표: ≥ {snap.recovery_target_close:,.2f} "
+                        f"(그전 종가 현재 수준 유지 가정)"
+                    )
                 if not is_rising and snap.next_close_floor is not None:
                     msg += (
                         f"\n• 다음 종가 하한: {snap.next_close_floor:,.2f} "
