@@ -17,7 +17,7 @@ from utils.strategy_state_io import StrategyStateIO
 
 
 class FavoritePriceAlertService:
-    """관심종목이 전일대비율 5% 단위 구간을 새로 밟을 때 알림을 발행한다."""
+    """관심종목의 당일 등락률 최고 상승·최저 하락 임계치를 알린다."""
 
     def __init__(
         self,
@@ -46,7 +46,8 @@ class FavoritePriceAlertService:
         self._logger = logger or logging.getLogger(__name__)
         self._favorite_codes: set[str] = set()
         self._favorite_cache_ts: float = 0.0
-        self._last_alert_bucket: dict[str, int] = {}
+        self._highest_positive_alert_bucket: dict[str, int] = {}
+        self._lowest_negative_alert_bucket: dict[str, int] = {}
         self._upper_limit_alerted_codes: set[str] = set()
 
     async def add_favorite(self, code: str) -> None:
@@ -62,7 +63,8 @@ class FavoritePriceAlertService:
             return
         await self._load_alert_state_for_today()
         self._favorite_codes.discard(normalized)
-        self._last_alert_bucket.pop(normalized, None)
+        self._highest_positive_alert_bucket.pop(normalized, None)
+        self._lowest_negative_alert_bucket.pop(normalized, None)
         self._upper_limit_alerted_codes.discard(normalized)
         await self._save_alert_state()
 
@@ -105,10 +107,16 @@ class FavoritePriceAlertService:
         bucket = self._rate_bucket(rate_value)
         if bucket == 0:
             return False
-        if self._last_alert_bucket.get(normalized) == bucket:
-            return False
-
-        self._last_alert_bucket[normalized] = bucket
+        if bucket > 0:
+            highest_bucket = self._highest_positive_alert_bucket.get(normalized, 0)
+            if bucket <= highest_bucket:
+                return False
+            self._highest_positive_alert_bucket[normalized] = bucket
+        else:
+            lowest_bucket = self._lowest_negative_alert_bucket.get(normalized, 0)
+            if bucket >= lowest_bucket:
+                return False
+            self._lowest_negative_alert_bucket[normalized] = bucket
         await self._save_alert_state()
 
         threshold_pct = int(bucket * self._threshold_step_pct)
@@ -181,12 +189,13 @@ class FavoritePriceAlertService:
         self._favorite_cache_ts = now
 
     async def _load_alert_state_for_today(self) -> None:
-        """당일 마지막 알림 임계치를 복원한다. 날짜가 바뀌면 이전 상태는 버린다."""
+        """당일 알림 임계치를 복원한다. 날짜가 바뀌면 이전 상태는 버린다."""
         today = self._today_provider()
         if self._state_date == today:
             return
 
-        self._last_alert_bucket.clear()
+        self._highest_positive_alert_bucket.clear()
+        self._lowest_negative_alert_bucket.clear()
         self._upper_limit_alerted_codes.clear()
         self._state_date = today
         if not self._state_file:
@@ -200,13 +209,25 @@ class FavoritePriceAlertService:
         if not isinstance(data, dict) or data.get("date") != today:
             return
 
-        buckets = data.get("last_alert_bucket", {})
-        if isinstance(buckets, dict):
+        for field_name, target in (
+            ("highest_positive_alert_bucket", self._highest_positive_alert_bucket),
+            ("lowest_negative_alert_bucket", self._lowest_negative_alert_bucket),
+            ("last_alert_bucket", None),
+        ):
+            buckets = data.get(field_name, {})
+            if not isinstance(buckets, dict):
+                continue
             for code, bucket in buckets.items():
                 normalized = self._normalize_code(code)
                 try:
                     if normalized:
-                        self._last_alert_bucket[normalized] = int(bucket)
+                        bucket_value = int(bucket)
+                        if target is not None:
+                            target[normalized] = bucket_value
+                        elif bucket_value > 0:
+                            self._highest_positive_alert_bucket.setdefault(normalized, bucket_value)
+                        elif bucket_value < 0:
+                            self._lowest_negative_alert_bucket.setdefault(normalized, bucket_value)
                 except (TypeError, ValueError):
                     continue
         codes = data.get("upper_limit_alerted_codes", [])
@@ -220,7 +241,8 @@ class FavoritePriceAlertService:
             return
         payload = {
             "date": self._state_date,
-            "last_alert_bucket": self._last_alert_bucket,
+            "highest_positive_alert_bucket": self._highest_positive_alert_bucket,
+            "lowest_negative_alert_bucket": self._lowest_negative_alert_bucket,
             "upper_limit_alerted_codes": sorted(self._upper_limit_alerted_codes),
         }
         try:

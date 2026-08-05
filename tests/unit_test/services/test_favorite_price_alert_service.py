@@ -94,8 +94,8 @@ async def test_does_not_repeat_five_percent_after_retracing_without_another_aler
 
 
 @pytest.mark.asyncio
-async def test_realerts_five_percent_after_ten_percent_alert():
-    """+10% 알림이 끼어들면 +5% 재진입은 새 등락 단계로 한 번 알린다."""
+async def test_does_not_alert_lower_positive_threshold_after_ten_percent_alert():
+    """+10% 도달 뒤 +5% 구간으로 내려와도 상승 알림을 재발행하지 않는다."""
     repo = MagicMock()
     repo.get_all = AsyncMock(return_value=["005930"])
     notifications = MagicMock()
@@ -109,7 +109,26 @@ async def test_realerts_five_percent_after_ten_percent_alert():
     assert [
         call.kwargs["metadata"]["threshold_pct"]
         for call in notifications.emit.await_args_list
-    ] == [5, 10, 5]
+    ] == [5, 10]
+
+
+@pytest.mark.asyncio
+async def test_does_not_chatter_between_ten_and_five_percent_thresholds():
+    """+10% 경계 부근의 틱 변동은 +5% 또는 +10% 알림을 반복하지 않는다."""
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["009150"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("009150", price="1304000", rate="10.04")
+    await svc.handle_price_tick("009150", price="1303000", rate="9.96")
+    await svc.handle_price_tick("009150", price="1304000", rate="10.04")
+
+    assert [
+        call.kwargs["metadata"]["threshold_pct"]
+        for call in notifications.emit.await_args_list
+    ] == [10]
 
 
 @pytest.mark.asyncio
