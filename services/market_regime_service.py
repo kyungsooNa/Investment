@@ -48,6 +48,9 @@ class RegimeSnapshot:
     ma_values: List[float] = field(default_factory=list)
     fail_detail: str = ""
     data_date: str = ""       # 판정에 사용한 마지막 확정 일봉 날짜 (YYYYMMDD)
+    recovery_earliest_days: Optional[int] = None  # 기존 급락 MA가 판정창에서 빠지는 최소 거래일
+    recovery_target_ma: Optional[float] = None    # 해당 시점 3일 순변화 조건의 MA(20) 하한
+    next_close_floor: Optional[float] = None      # 다음 MA(20)의 hard decline 방지 종가 하한
 
 
 class MarketRegimeService:
@@ -200,6 +203,29 @@ class MarketRegimeService:
         elif max_daily_drop_pct < self._cfg.daily_dip_tolerance_pct:
             trend_status = "uptrend_under_pressure"
 
+        recovery_earliest_days: Optional[int] = None
+        recovery_target_ma: Optional[float] = None
+        next_close_floor: Optional[float] = None
+        if not is_rising:
+            # 다음 MA는 가장 오래된 20일 창 종가가 빠지고 다음 확정 종가가 들어온다.
+            # 하한은 새 hard decline을 만들지 않기 위한 값이며, 기존 급락은 판정창에서
+            # 자연스럽게 빠질 때까지 별도 거래일이 필요하다.
+            current_ma = ma_values[-1]
+            outgoing_close = closes[-period]
+            allowed_next_ma = current_ma * (1 + self._cfg.hard_decline_pct / 100)
+            next_close_floor = outgoing_close + period * (allowed_next_ma - current_ma)
+
+            hard_decline_indexes = [
+                index + 1
+                for index, change in enumerate(daily_changes_pct)
+                if change < self._cfg.hard_decline_pct
+            ]
+            recovery_earliest_days = max(hard_decline_indexes, default=1)
+            # recovery_earliest_days 뒤의 4개 MA 창은 기존 MA 중 해당 index부터
+            # 시작한다. 마지막 MA가 이 값 이상이면 3일 순변화 조건을 충족한다.
+            recovery_reference_ma = ma_values[recovery_earliest_days]
+            recovery_target_ma = recovery_reference_ma * (1 + self._cfg.min_net_change_pct / 100)
+
         snap = RegimeSnapshot(
             market=market,
             trend_status=trend_status,
@@ -211,6 +237,9 @@ class MarketRegimeService:
             ma_values=[round(v, 2) for v in ma_values],
             fail_detail=fail_detail,
             data_date=data_date,
+            recovery_earliest_days=recovery_earliest_days,
+            recovery_target_ma=round(recovery_target_ma, 2) if recovery_target_ma is not None else None,
+            next_close_floor=round(next_close_floor, 2) if next_close_floor is not None else None,
         )
         logger.debug({
             "event": "market_regime_check",

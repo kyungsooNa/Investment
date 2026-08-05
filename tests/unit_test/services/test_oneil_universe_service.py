@@ -1778,9 +1778,13 @@ async def test_update_market_timing_emits_notifications(mock_deps):
             ma_values=ma_values, fail_detail=fail, data_date="20260514",
         )
 
+    failed_snap = _snap("KOSPI", False, [3.0, 2.0, 1.0], fail="MA decline")
+    failed_snap.recovery_earliest_days = 2
+    failed_snap.recovery_target_ma = 1.5
+    failed_snap.next_close_floor = 1234.5
     service._regime_svc.classify = AsyncMock(side_effect=[
         _snap("KOSDAQ", True, [1.0, 2.0, 3.0]),
-        _snap("KOSPI", False, [3.0, 2.0, 1.0], fail="MA decline"),
+        failed_snap,
     ])
     await service._update_market_timing(caller="tester", logger=logger)
 
@@ -1798,6 +1802,8 @@ async def test_update_market_timing_emits_notifications(mock_deps):
     assert "KOSPI" in call_kwargs["message"]
     assert call_kwargs["message"].count("데이터 기준일: 20260514") == 2
     assert "MA decline" in call_kwargs["message"]
+    assert "최초 전환 가능: 최소 2거래일 후" in call_kwargs["message"]
+    assert "다음 종가 하한: 1,234.50" in call_kwargs["message"]
 
 
 def test_compute_rs_scores_rating_mode(mock_deps):

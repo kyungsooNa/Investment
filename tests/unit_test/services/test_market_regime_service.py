@@ -100,6 +100,22 @@ async def test_classify_hard_decline_returns_bear():
 
 
 @pytest.mark.asyncio
+async def test_classify_hard_decline_includes_recovery_price_guidance():
+    """급락 MA가 판정창에서 빠지는 최초 시점과 다음 종가 하한을 안내한다."""
+    closes = [200, 200, 200, 200, 200, 200, 200, 150]
+    svc, _ = _make_service(closes)
+
+    snap = await svc.classify("KOSPI")
+
+    # MA(5): 200 -> 200 -> 190. 마지막 hard decline(idx=2)은 2거래일 후 소멸한다.
+    assert snap.recovery_earliest_days == 2
+    assert snap.recovery_target_ma == 189.81  # 190 * (1 - 0.10%)
+    # 다음 MA가 -0.50%보다 더 급락하지 않는 종가 하한:
+    # 200 + 5 * (190 * 0.995 - 190) = 195.25
+    assert snap.next_close_floor == 195.25
+
+
+@pytest.mark.asyncio
 async def test_classify_weak_trend_returns_bear():
     """MA 순증감(net)이 min_net_change_pct(-0.10%) 미만이면 weak_trend → bear."""
     # 천천히 감소해 max_daily_drop_pct 은 hard_decline(-0.5%) 보다 크고
