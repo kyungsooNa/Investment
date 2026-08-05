@@ -200,7 +200,7 @@
 - [x] **익일 대사 완료 (2026-07-23)**: DB 조회로 `broker_reconciled` 고아 10종목이 07-22 이전과 동일하게 유지(증가 없음)됨을 확인 — 유출 종료.
 - [ ] 기존 고아 10종목 처리 방침 결정. 7월 4건(031980·086790·001450 ×2)은 `scripts/repair_partial_sell_ledger.py` 로 복구 가능하나 원 전략이 전부 당일청산 VBO 라 **복구 = 익일 강제청산 지시**임 — 청산 의사 결정 후 실행. 5~6월 6건은 절반 패턴이 아니라 원인 미상, 별도 조사.
 - [ ] 오염된 성과 기록 5건(trade id 251·261·263·265·269) 의심 플래그. 나머지 절반이 미청산이라 소급 재구성 불가 — 재작성하지 말 것.
-- [ ] 운영 요약 오탐 2건 수정: `_build_decision_summary` 가 `if execution_quality_section:` / `if degradation_section:` 로 **섹션 존재 여부만** 검사해 슬리피지 0%에도 "별도 경고 확인"이 뜬다. 임계 필터링된 `get_last_execution_quality_candidates()` 를 써야 한다. 같은 함수의 "신규 진입 N건" 도 당일 청산을 반영하지 않아 이미 닫힌 포지션을 관리 대상으로 표시한다. ※ 이 오탐이 이번 결함을 3주간 가렸다.
+- [x] **운영 요약 오탐 수정 완료 (2026-08-06)**: `_build_operational_decision_report`(todo 원문의 `_build_decision_summary` 는 오기)가 `if execution_quality_section:` 으로 **섹션 존재 여부만** 검사해 슬리피지 0%에도 "체결 품질 후보: 별도 경고 확인"이 상시 노출됐다 → 임계 필터링된 `get_last_execution_quality_candidates()` 로 판정하도록 교체. "신규 진입 N건" 은 당일 청산분을 제외해 잔여 관리 대상만 표시(`신규 진입 2건 (당일청산 1건) — 잔여 1건 …` / 전량 청산 시 `관리 대상 없음`). ※ `degradation_section` 은 후보 0건이면 `None` 을 반환하므로 원래부터 오탐이 아니었다 — todo 원문의 "오탐 2건" 중 성과저하 쪽은 사실과 달랐다.
 - [ ] (제안) "당일청산 전략인데 마감 후 보유 중" 직접 검출 점검 추가. 이번 결함은 장부상 정상이라 무경보였고, 발견 경로가 "고아가 이상하게 는다"는 간접 신호뿐이었다.
 
 주요 파일: `scheduler/strategy_scheduler.py`(FORCE_EXIT_TIERS/ORDER_CUTOFF), `repositories/virtual_trade_repository.py`(`_settle_hold_sale`), `services/strategy_log_report_service.py`, `scripts/repair_partial_sell_ledger.py`

@@ -9,7 +9,7 @@ import os
 import re
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 
 from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER, StrategyStatus
 from common.trade_journal_comparison import compare_trade_journals
@@ -1429,6 +1429,22 @@ class StrategyLogReportService:
         match = re.search(r"'([^']+)'", regime_decomposition_section)
         return match.group(1) if match else "단일"
 
+    def _same_day_closed_codes(self, target_date: str) -> Set[str]:
+        """target_date 에 청산된 종목코드. 진입분이 관리 대상인지 판정하는 데 쓴다."""
+        if self._virtual_trade_service is None:
+            return set()
+        try:
+            solds = self._virtual_trade_service.get_solds() or []
+        except Exception:
+            return set()
+        date_prefix = _fmt_date(target_date)
+        return {
+            str(trade.get("code") or "").strip()
+            for trade in solds
+            if str(trade.get("sell_date", "")).startswith(date_prefix)
+            and str(trade.get("code") or "").strip()
+        }
+
     def _build_operational_decision_report(
         self,
         target_date: str,
@@ -1440,14 +1456,32 @@ class StrategyLogReportService:
         overnight_exposure_section: Optional[str],
         regime_decomposition_section: Optional[str],
         degradation_section: Optional[str],
-        execution_quality_section: Optional[str],
+        execution_quality_candidates: List[dict],
         warnings_section: Optional[str],
+        same_day_closed_codes: Optional[Set[str]] = None,
     ) -> str:
         lines = [f"<b>🧭 [{_fmt_date(target_date)}] 운영 의사결정 요약</b>"]
 
-        if buy_count > 0:
-            lines.append(f"• 신규 진입 {buy_count}건 — 체결/포지션 관리 확인")
-            for entry in buy_entries:
+        # 당일 청산분은 마감 후 관리 대상이 아니다 — 진입 건수만 세면 이미 닫힌
+        # 포지션까지 "체결/포지션 관리 확인" 대상으로 표시된다.
+        closed_codes = same_day_closed_codes or set()
+        open_entries = [
+            entry for entry in buy_entries
+            if str(entry.get("code") or "").strip() not in closed_codes
+        ]
+        closed_count = buy_count - len(open_entries)
+
+        if buy_count > 0 and not open_entries:
+            lines.append(f"• 신규 진입 {buy_count}건 — 전량 당일청산, 관리 대상 없음")
+        elif buy_count > 0:
+            if closed_count > 0:
+                lines.append(
+                    f"• 신규 진입 {buy_count}건 (당일청산 {closed_count}건) — "
+                    f"잔여 {len(open_entries)}건 체결/포지션 관리 확인"
+                )
+            else:
+                lines.append(f"• 신규 진입 {buy_count}건 — 체결/포지션 관리 확인")
+            for entry in open_entries:
                 strategy = _esc(entry.get("strategy") or "전략 미상")
                 code = str(entry.get("code") or "").strip()
                 name = _esc(entry.get("name") or code or "종목 미상")
@@ -1494,7 +1528,10 @@ class StrategyLogReportService:
 
         if degradation_section:
             lines.append("• 성과 저하 후보: 별도 경고 확인")
-        if execution_quality_section:
+        # 체결 품질 섹션은 기록이 하나라도 있으면 항상 렌더된다(슬리피지 0% 포함).
+        # 섹션 존재가 아니라 임계를 넘긴 비활성화 후보 유무로 판정해야 상시 경고를
+        # 띄우지 않는다 — 상시 경고는 진짜 경고를 가린다.
+        if execution_quality_candidates:
             lines.append("• 체결 품질 후보: 별도 경고 확인")
         if warnings_section:
             lines.append("• 시스템 경고: 데이터 수신/파싱 상태 확인")
@@ -1956,7 +1993,7 @@ class StrategyLogReportService:
                 overnight_exposure_section=None,
                 regime_decomposition_section=None,
                 degradation_section=None,
-                execution_quality_section=None,
+                execution_quality_candidates=[],
                 warnings_section=None,
             )
             return (
@@ -2256,8 +2293,9 @@ class StrategyLogReportService:
             overnight_exposure_section=overnight_exposure_section,
             regime_decomposition_section=regime_decomposition_section,
             degradation_section=degradation_section,
-            execution_quality_section=execution_quality_section,
+            execution_quality_candidates=self.get_last_execution_quality_candidates(),
             warnings_section=warnings_section,
+            same_day_closed_codes=self._same_day_closed_codes(target_date),
         )
 
         if not active_sections:
