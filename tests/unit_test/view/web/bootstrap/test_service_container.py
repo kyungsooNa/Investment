@@ -667,6 +667,52 @@ def test_domestic_active_with_overseas_enabled_builds_dryrun_task(patched_servic
     assert ctx.overseas_dryrun_task is task_cls.return_value
 
 
+def test_intraday_vbo_not_built_when_disabled(patched_service_container_deps):
+    """장중 VBO 폴링 경로는 config opt-in — 기본값(enabled=false)에선 미조립."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+
+    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True):
+        ServiceContainer(ctx).run()
+
+    assert ctx.overseas_intraday_vbo_task is None
+    assert ctx.overseas_intraday_vbo_service is None
+
+
+def test_intraday_vbo_built_with_order_path_locked(patched_service_container_deps):
+    """enabled=true 면 조립하되 주문 서비스는 live_enabled=False 로 고정한다(자동 실주문 잠금)."""
+    from config.config_loader import AppConfig
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        # allow_live_trading=True 여도 자동 경로는 열리지 않아야 한다.
+        overseas_stock={"allow_live_trading": True, "intraday_vbo": {"enabled": True, "top_n": 7}},
+    )
+
+    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasOrderExecutionService", autospec=True) as order_cls, \
+         patch("view.web.bootstrap.service_container.OverseasIntradayVBOService", autospec=True) as svc_cls, \
+         patch("view.web.bootstrap.service_container.OverseasIntradayVBOTask", autospec=True) as task_cls:
+        ServiceContainer(ctx).run()
+
+    assert order_cls.call_args.kwargs["live_enabled"] is False
+    assert svc_cls.call_args.kwargs["top_n"] == 7
+    assert ctx.overseas_intraday_vbo_task is task_cls.return_value
+
+
 def test_domestic_active_without_overseas_enabled_skips_dryrun_task(patched_service_container_deps):
     """overseas_us 가 enabled 에 없으면 dry-run 태스크는 조립되지 않는다(None)."""
     from view.web.bootstrap.service_container import ServiceContainer

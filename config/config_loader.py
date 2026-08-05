@@ -463,6 +463,20 @@ class OpeningPositionReconcileConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class OverseasIntradayVBOConfig(BaseModel):
+    """미국 정규장 REST 폴링 VBO 경로. 주문은 항상 would-be(실주문 잠금 유지)."""
+    enabled: bool = False
+    poll_interval_sec: int = Field(60, gt=0)
+    top_n: int = Field(20, gt=0)
+    k_value: float = Field(0.5, gt=0)
+    stop_loss_pct: float = -3.0
+    max_positions: int = Field(5, gt=0)
+    session_prepare_delay_min: int = Field(5, ge=0)
+    eod_exit_before_min: int = Field(10, ge=0)
+
+    model_config = {"extra": "allow"}
+
+
 class OverseasStockConfig(BaseModel):
     enabled_exchanges: List[Literal["NASD", "NYSE", "AMEX"]] = Field(
         default_factory=lambda: ["NASD", "NYSE", "AMEX"]
@@ -473,6 +487,7 @@ class OverseasStockConfig(BaseModel):
     allow_live_trading: bool = False
     dryrun_slot_usd: float = Field(1000.0, gt=0)
     dryrun_max_qty: Optional[int] = Field(default=None, gt=0)
+    intraday_vbo: OverseasIntradayVBOConfig = Field(default_factory=OverseasIntradayVBOConfig)
 
     model_config = {"extra": "allow"}
 

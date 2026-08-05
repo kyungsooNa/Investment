@@ -50,6 +50,8 @@ from services.order_policy_service import OrderPolicyService
 from services.position_sizing_service import PositionSizingService
 from services.risk_gate_service import RiskGateService
 from services.overseas_candidate_service import OverseasCandidateService
+from services.overseas_intraday_vbo_service import OverseasIntradayVBOService
+from services.overseas_order_execution_service import OverseasOrderExecutionService
 from services.overseas_position_sizing_service import OverseasPositionSizingService, extract_fx_krw_per_usd
 from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
 from services.strategy_log_report_service import StrategyLogReportService
@@ -73,6 +75,7 @@ from task.background.intraday.program_capture_subscription_task import ProgramCa
 from task.background.intraday.theme_intraday_leader_alert_task import ThemeIntradayLeaderAlertTask
 from task.background.intraday.market_index_threshold_alert_task import MarketIndexThresholdAlertTask
 from task.background.intraday.overseas_favorite_price_alert_task import OverseasFavoritePriceAlertTask
+from task.background.intraday.overseas_intraday_vbo_task import OverseasIntradayVBOTask
 from view.web.bootstrap.runtime_mode import RuntimeMode
 from view.web.bootstrap.backtest_task_bootstrap import BacktestTaskBootstrap
 from view.web.bootstrap.repository_bootstrap import RepositoryBootstrap
@@ -864,4 +867,52 @@ class ServiceContainer:
             # Ticket-driven: 미국장 TimeDispatcher(time_dispatcher_us)가 NY 마감 후
             # 티켓을 발행하면 WorkerPool 이 execute() 를 호출한다(자체 AfterMarketLoop 미사용).
             worker_pool=ctx.worker_pool,
+        )
+        self._build_overseas_intraday_vbo(overseas_stock_cfg, overseas_position_sizing_service)
+
+    def _build_overseas_intraday_vbo(self, overseas_stock_cfg, position_sizing_service) -> None:
+        """해외 장중 VBO 폴링 경로 조립 (config 로 opt-in, 기본 off).
+
+        dry-run 은 마감 후 사후 평가라 발사 대상이 없다. 본 경로는 정규장 중 폴링가로
+        진입/청산을 판정해 전략이 실제로 돌게 한다. 다만 **주문 서비스는
+        `live_enabled=False` 로 고정**한다 — 해외 주문 TR 은 실전만 존재하고 Phase 5
+        (canary/kill-switch/reconcile) 가 미완이라, 자동 발사는 여전히 잠근다.
+        `allow_live_trading` 은 수동 주문 경로용이며 이 자동 경로를 열지 않는다.
+        """
+        ctx = self._ctx
+        ctx.overseas_intraday_vbo_service = None
+        ctx.overseas_intraday_vbo_task = None
+        cfg = getattr(overseas_stock_cfg, "intraday_vbo", None)
+        if not getattr(cfg, "enabled", False):
+            return
+
+        order_execution_service = OverseasOrderExecutionService(
+            broker=None,  # live_enabled=False 이므로 broker 미사용(구조적 잠금)
+            live_enabled=False,
+            journal=ctx.event_shadow_journal_service,
+            logger=ctx.logger,
+        )
+        ctx.overseas_intraday_vbo_service = OverseasIntradayVBOService(
+            candidate_service=ctx.overseas_candidate_service,
+            stock_query_service=ctx.stock_query_service,
+            order_execution_service=order_execution_service,
+            position_sizing_service=position_sizing_service,
+            logger=ctx.logger,
+            k_value=getattr(cfg, "k_value", 0.5),
+            stop_loss_pct=getattr(cfg, "stop_loss_pct", -3.0),
+            top_n=getattr(cfg, "top_n", 20),
+            max_positions=getattr(cfg, "max_positions", 5),
+        )
+        intraday_us_clock = MarketClock.for_us_equities(logger=ctx.logger)
+        ctx.overseas_intraday_vbo_task = OverseasIntradayVBOTask(
+            vbo_service=ctx.overseas_intraday_vbo_service,
+            broker=ctx.broker,
+            market_clock=intraday_us_clock,
+            us_market_calendar_service=USMarketCalendarService(
+                market_clock=intraday_us_clock, logger=ctx.logger,
+            ),
+            check_interval_sec=getattr(cfg, "poll_interval_sec", 60),
+            session_prepare_delay_min=getattr(cfg, "session_prepare_delay_min", 5),
+            eod_exit_before_min=getattr(cfg, "eod_exit_before_min", 10),
+            logger=ctx.logger,
         )

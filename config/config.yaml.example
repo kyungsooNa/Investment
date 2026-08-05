@@ -86,6 +86,21 @@ overseas_stock:
   # 해외 VBO dry-run would-be 수량 계산용 고정 USD 슬롯. 실주문 경로 없음.
   dryrun_slot_usd: 1000.0
   dryrun_max_qty:
+  # 미국 정규장 REST 폴링 VBO(장중 경로). dry-run 은 마감 후 사후 평가라 발사 대상이
+  # 없어, 장중에 실제로 도는 전략 경로를 별도로 둔다. 주문은 항상 would-be 기록만
+  # 남는다(allow_live_trading 과 무관하게 자동 경로의 실주문은 Phase 5 까지 잠금).
+  # 비용 주의: top_n × (정규장 390분 ÷ poll_interval) 만큼 해외현재가 API 를 호출한다.
+  intraday_vbo:
+    enabled: false
+    poll_interval_sec: 60
+    top_n: 20
+    k_value: 0.5
+    stop_loss_pct: -3.0
+    max_positions: 5
+    # 개장 직후엔 당일 봉(시가)이 없을 수 있어 세션 준비를 늦춘다.
+    session_prepare_delay_min: 5
+    # 마감 N분 전부터는 신규 진입 없이 EOD 청산만 수행(조기폐장일 13:00 ET 반영).
+    eod_exit_before_min: 10
 
 # 선택
 htsid: ""
