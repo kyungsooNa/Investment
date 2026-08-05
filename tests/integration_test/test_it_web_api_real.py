@@ -379,6 +379,7 @@ class TestIndicatorsReal:
 class TestEnvironmentReal:
     def test_change_to_paper_environment(self, real_client, mock_real_ctx):
         """실전 → 모의 환경 전환 성공."""
+        mock_real_ctx.start_background_tasks_and_wait = AsyncMock()
         from view.web.routes import stock
         stock._status_cache = {"env_type": "실전투자", "current_time": "cached"}
         mock_real_ctx.get_env_type.return_value = "모의투자"
@@ -391,7 +392,9 @@ class TestEnvironmentReal:
         assert body["env_type"] == "모의투자"
         mock_real_ctx.initialize_services.assert_awaited_once_with(is_paper_trading=True)
         mock_real_ctx._initialize_price_subscriptions.assert_awaited_once_with(rebalance=False)
-        mock_real_ctx.start_background_tasks.assert_called_once_with()
+        mock_real_ctx.start_background_tasks_and_wait.assert_awaited_once_with(
+            schedule_price_subscriptions=False
+        )
         assert stock._status_cache is None
 
     def test_environment_change_failure(self, real_client, mock_real_ctx):

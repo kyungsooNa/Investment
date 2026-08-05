@@ -617,6 +617,29 @@ async def test_start_background_tasks_with_restore(mock_deps):
 
 
 @pytest.mark.asyncio
+async def test_start_background_tasks_and_wait_starts_queue_before_price_subscriptions(mock_deps):
+    """초기 관심종목 가격 조회보다 외부 알림 큐가 먼저 준비되어야 한다."""
+    ctx = WebAppContext(None)
+    ctx.streaming_service = MagicMock()
+    ctx.background_scheduler = MagicMock()
+    ctx.price_subscription_service = MagicMock()
+    call_order = []
+
+    async def start_all():
+        call_order.append("background")
+
+    async def initialize_subscriptions(*, rebalance=True):
+        call_order.append("subscriptions")
+
+    ctx.background_scheduler.start_all = AsyncMock(side_effect=start_all)
+    ctx._initialize_price_subscriptions = AsyncMock(side_effect=initialize_subscriptions)
+
+    await ctx.start_background_tasks_and_wait()
+
+    assert call_order == ["background", "subscriptions"]
+
+
+@pytest.mark.asyncio
 async def test_start_background_tasks_manual_repeat_is_guarded(mock_deps):
     """웹 start hook/수동 start 연타가 들어와도 실제 task start는 한 번만 수행된다."""
     from scheduler.background_scheduler import BackgroundScheduler

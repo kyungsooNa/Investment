@@ -41,6 +41,7 @@ def mock_web_app_context_cls():
         mock_instance.scheduler.stop = AsyncMock()
         mock_instance._initialize_price_subscriptions = AsyncMock()
         mock_instance.start_background_tasks = MagicMock()
+        mock_instance.start_background_tasks_and_wait = AsyncMock()
         mock_instance.shutdown = AsyncMock()
         oes = MagicMock()
         oes.restore_state_from_broker = AsyncMock(return_value=0)
@@ -73,7 +74,9 @@ async def test_lifespan_startup_shutdown(mock_web_app_context_cls, mock_web_api_
         # lifespan 에서 직접 await 하지 않는다.
         mock_ctx.scheduler.restore_state.assert_not_awaited()
         mock_ctx._initialize_price_subscriptions.assert_awaited_once_with(rebalance=False)
-        mock_ctx.start_background_tasks.assert_called_once_with()
+        mock_ctx.start_background_tasks_and_wait.assert_awaited_once_with(
+            schedule_price_subscriptions=False
+        )
     
     # Shutdown checks
     mock_ctx.shutdown.assert_awaited_once()

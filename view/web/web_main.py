@@ -135,13 +135,13 @@ async def lifespan(app: FastAPI):
         await ctx.order_execution_service.restore_state_from_broker()
         await ctx.order_execution_service.reconcile_orders_with_broker()
 
+    # 외부 알림 큐를 먼저 기동해야 초기 관심종목 가격 평가가 텔레그램 전송 전에 유실되지 않는다.
+    await ctx.start_background_tasks_and_wait(schedule_price_subscriptions=False)
+
     # 관심종목 구독 의도는 기동 중 등록하고 실제 WebSocket 재조정은 백그라운드에서 수행한다.
     from view.web.deployment_policy import is_demo_mode, is_public_mode
     if not (is_public_mode(ctx) or is_demo_mode(ctx)):
         await ctx._initialize_price_subscriptions(rebalance=False)
-
-    # 백그라운드 태스크 시작 — StrategySchedulerTaskAdapter 가 restore_state() 호출
-    ctx.start_background_tasks()
 
     print("=== 웹 서비스 초기화 완료 ===")
     yield
