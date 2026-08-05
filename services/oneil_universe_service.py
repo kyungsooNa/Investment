@@ -84,8 +84,8 @@ class OneilUniverseService:
         # 시장 국면 분류기 — 외부 주입이 우선이고, 없으면 기존 OneilUniverseConfig 값 기준으로 자체 생성
         if market_regime_service is None:
             regime_cfg = MarketRegimeConfig(
-                kospi_etf_code=self._cfg.kospi_etf_code,
-                kosdaq_etf_code=self._cfg.kosdaq_etf_code,
+                kospi_index_code=self._cfg.kospi_index_code,
+                kosdaq_index_code=self._cfg.kosdaq_index_code,
                 ma_period=self._cfg.market_ma_period,
                 rising_days=self._cfg.market_ma_rising_days,
                 min_net_change_pct=self._cfg.market_ma_min_net_change_pct,
@@ -1011,7 +1011,7 @@ class OneilUniverseService:
         logger = logger or self._logger
         notification_rows = []
         overall_level = NotificationLevel.INFO
-        for market, code in [("KOSDAQ", self._cfg.kosdaq_etf_code), ("KOSPI", self._cfg.kospi_etf_code)]:
+        for market, code in [("KOSDAQ", self._cfg.kosdaq_index_code), ("KOSPI", self._cfg.kospi_index_code)]:
             snap = await self._regime_svc.classify(market, logger=logger)
             is_rising = snap.is_rising
             self._market_timing_cache[market] = is_rising

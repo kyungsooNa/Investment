@@ -1,4 +1,6 @@
 """홈 지수 패널용 국내 지수 조회 서비스 단위 테스트."""
+from datetime import datetime
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -164,3 +166,28 @@ async def test_index_chart_skips_unparsable_candles():
 
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert [p["date"] for p in result.data["points"]] == ["20260727"]
+
+
+@pytest.mark.asyncio
+async def test_recent_daily_index_ohlcv_normalizes_and_limits_candles():
+    broker = MagicMock()
+    broker.inquire_daily_indexchartprice = AsyncMock(return_value=_broker_response(
+        candles=[
+            {"stck_bsop_date": "20260729", "bstp_nmix_prpr": "2660.10"},
+            {"stck_bsop_date": "20260728", "bstp_nmix_prpr": "2650.20"},
+            {"stck_bsop_date": "20260727", "bstp_nmix_prpr": "2640.30"},
+        ],
+    ))
+    service = _service(broker)
+    service.market_clock.get_current_kst_time.return_value = datetime(2026, 7, 30)
+
+    result = await service.get_recent_daily_index_ohlcv("0001", limit=2, end_date="20260729")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data == [
+        {"date": "20260728", "close": 2650.20},
+        {"date": "20260729", "close": 2660.10},
+    ]
+    assert broker.inquire_daily_indexchartprice.await_args.kwargs == {
+        "start_date": "20260724", "end_date": "20260729", "period": "D"
+    }

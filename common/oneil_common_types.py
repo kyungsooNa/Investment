@@ -19,8 +19,8 @@ class OneilUniverseConfig(BaseStrategyConfig):
     squeeze_tolerance: float = 1.2  # BB 폭이 20일 최소폭의 1.2배 이내
 
     # 마켓 타이밍
-    kosdaq_etf_code: str = "229200"   # KODEX 코스닥150
-    kospi_etf_code: str = "069500"    # KODEX 200
+    kosdaq_index_code: str = "1001"   # KOSDAQ
+    kospi_index_code: str = "0001"    # KOSPI
     market_ma_period: int = 20
     market_ma_rising_days: int = 3
     market_ma_min_net_change_pct: float = -0.10

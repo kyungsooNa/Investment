@@ -18,7 +18,7 @@ from typing import Any, Dict, List
 
 from strategies.inverse_etf_regime_backtest import InverseEtfRegimeBacktest
 
-# KOSPI 레짐 판정용 지수 ETF (MarketRegimeService.kospi_etf_code 와 일치)
+# 이 독립 백테스트에서 사용하는 KOSPI 추종 ETF
 INDEX_ETF_CODE = "069500"   # KODEX 200
 INVERSE_ETF_CODE = "114800"  # KODEX 인버스 (-1x)
 
