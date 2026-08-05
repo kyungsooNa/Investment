@@ -785,16 +785,29 @@ class KoreaInvestWebSocketAPI:
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
 
     async def subscribe_market_status(self, stock_code: str):
-        """국내주식 장운영정보(H0UNMKO0)를 구독합니다."""
-        tr_id = self._env.active_config['tr_ids']['websocket'].get('unified_market_status', 'H0UNMKO0')
-        self._logger.info(f"[장운영정보] 종목 {stock_code} 구독 요청 ({tr_id})...")
-        return await self.send_realtime_request(tr_id, stock_code, tr_type="1")
+        """KRX 및 통합 장운영정보 채널을 함께 구독합니다."""
+        results = []
+        for tr_id in self._get_market_status_subscription_tr_ids():
+            self._logger.info(f"[장운영정보] 종목 {stock_code} 구독 요청 ({tr_id})...")
+            results.append(await self.send_realtime_request(tr_id, stock_code, tr_type="1"))
+        return all(results)
 
     async def unsubscribe_market_status(self, stock_code: str):
-        """국내주식 장운영정보(H0UNMKO0) 구독을 해지합니다."""
-        tr_id = self._env.active_config['tr_ids']['websocket'].get('unified_market_status', 'H0UNMKO0')
-        self._logger.info(f"[장운영정보] 종목 {stock_code} 구독 해지 요청 ({tr_id})...")
-        return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
+        """KRX 및 통합 장운영정보 채널 구독을 해지합니다."""
+        results = []
+        for tr_id in self._get_market_status_subscription_tr_ids():
+            self._logger.info(f"[장운영정보] 종목 {stock_code} 구독 해지 요청 ({tr_id})...")
+            results.append(await self.send_realtime_request(tr_id, stock_code, tr_type="2"))
+        return all(results)
+
+    def _get_market_status_subscription_tr_ids(self) -> tuple[str, ...]:
+        """KRX 우선 채널과 통합 채널을 중복 없이 반환한다."""
+        websocket_config = self._env.active_config['tr_ids']['websocket']
+        tr_ids = (
+            websocket_config.get('market_status', 'H0STMKO0'),
+            websocket_config.get('unified_market_status', 'H0UNMKO0'),
+        )
+        return tuple(dict.fromkeys(tr_ids))
 
     async def _resubscribe_all(self):
         """재연결 시 기존 구독 항목들을 다시 구독 요청합니다."""
@@ -986,9 +999,11 @@ class KoreaInvestWebSocketAPI:
         return await self.wait_for_subscription_ack(tr_id, stock_code, timeout)
 
     async def wait_for_market_status_ack(self, stock_code, timeout: float = None) -> bool:
-        """장운영정보(H0UNMKO0) 구독 ACK 확정을 기다린다."""
-        tr_id = self._env.active_config['tr_ids']['websocket'].get('unified_market_status', 'H0UNMKO0')
-        return await self.wait_for_subscription_ack(tr_id, stock_code, timeout)
+        """KRX 및 통합 장운영정보 채널의 구독 ACK 확정을 기다린다."""
+        results = []
+        for tr_id in self._get_market_status_subscription_tr_ids():
+            results.append(await self.wait_for_subscription_ack(tr_id, stock_code, timeout))
+        return all(results)
 
     async def subscribe_realtime_price(self, stock_code):
         """실시간 주식체결 데이터(현재가)를 구독합니다."""
