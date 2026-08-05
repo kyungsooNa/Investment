@@ -911,6 +911,7 @@ class ServiceContainer:
             us_market_calendar_service=USMarketCalendarService(
                 market_clock=intraday_us_clock, logger=ctx.logger,
             ),
+            shadow_journal=ctx.event_shadow_journal_service,
             check_interval_sec=getattr(cfg, "poll_interval_sec", 60),
             session_prepare_delay_min=getattr(cfg, "session_prepare_delay_min", 5),
             eod_exit_before_min=getattr(cfg, "eod_exit_before_min", 10),
