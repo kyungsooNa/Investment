@@ -38,7 +38,7 @@ class MarketStatusAlertService:
         direction = self._classify_direction(reason)
         direction_key = f":{direction}" if direction else ""
         dedup_key = f"market_status:{event_type}{direction_key}:{exchange}:{code}"
-        severity = "critical" if event_type == "circuit_breaker" else "warning"
+        severity = "critical" if event_type == "circuit_breaker" else "error"
         event_name = "서킷브레이커" if event_type == "circuit_breaker" else "사이드카"
         title = f"{self._direction_label(direction)} {event_name} 감지".strip()
         message = f"{exchange} {code}: {reason or '장운영정보 특수 상태 감지'}"
@@ -67,7 +67,10 @@ class MarketStatusAlertService:
         if self._notification_service is not None:
             from services.notification_service import NotificationCategory, NotificationLevel
 
-            level = NotificationLevel.CRITICAL if severity == "critical" else NotificationLevel.WARNING
+            level = {
+                "critical": NotificationLevel.CRITICAL,
+                "error": NotificationLevel.ERROR,
+            }.get(severity, NotificationLevel.WARNING)
             await self._notification_service.emit(
                 NotificationCategory.SYSTEM,
                 level,
@@ -86,7 +89,7 @@ class MarketStatusAlertService:
             key = f"market_index:move_5:{direction}:{index_code}"
             expected_keys.add(key)
             await self._report_index_alert(
-                key=key, severity="warning",
+                key=key, severity="error",
                 title=f"{index_name} {self._direction_label(direction)} 5% 이상 등락",
                 index_code=index_code, index_name=index_name, change_rate=change_rate,
                 threshold_pct=5.0, event_type="move_5",
@@ -127,7 +130,10 @@ class MarketStatusAlertService:
         if self._notification_service is not None:
             from services.notification_service import NotificationCategory, NotificationLevel
 
-            level = NotificationLevel.CRITICAL if severity == "critical" else NotificationLevel.WARNING
+            level = {
+                "critical": NotificationLevel.CRITICAL,
+                "error": NotificationLevel.ERROR,
+            }.get(severity, NotificationLevel.WARNING)
             await self._notification_service.emit(
                 NotificationCategory.SYSTEM, level, title, message, metadata=metadata,
             )

@@ -2792,6 +2792,20 @@ def test_handle_websocket_message_market_status_success(websocket_api_instance):
     assert result["data"]["거래정지사유내용"] == "사이드카 발동"
 
 
+def test_handle_websocket_message_krx_market_status_success(websocket_api_instance):
+    api = websocket_api_instance
+    api.on_realtime_message_callback = MagicMock()
+    data_str = "000000^N^매수 사이드카 발동^2^0^0^0^00^0^0^KOSPI"
+
+    api._handle_websocket_message(f"0|H0STMKO0|000000|{data_str}")
+
+    result = api.on_realtime_message_callback.call_args.args[0]
+    assert result["type"] == "market_status"
+    assert result["tr_id"] == "H0STMKO0"
+    assert result["data"]["유가증권단축종목코드"] == "000000"
+    assert result["data"]["거래정지사유내용"] == "매수 사이드카 발동"
+
+
 def test_is_receive_alive_true_and_false(websocket_api_instance):
     api = websocket_api_instance
     done_task = MagicMock()
@@ -2865,10 +2879,14 @@ async def test_subscribe_unsubscribe_wrappers(websocket_api_instance):
     assert mock_send.await_args_list[2].kwargs == {"tr_type": "1"}
     assert mock_send.await_args_list[3].args == ("H0UNCNT0", "005930")
     assert mock_send.await_args_list[3].kwargs == {"tr_type": "2"}
-    assert mock_send.await_args_list[4].args == ("H0UNMKO0", "005930")
+    assert mock_send.await_args_list[4].args == ("H0STMKO0", "005930")
     assert mock_send.await_args_list[4].kwargs == {"tr_type": "1"}
     assert mock_send.await_args_list[5].args == ("H0UNMKO0", "005930")
-    assert mock_send.await_args_list[5].kwargs == {"tr_type": "2"}
+    assert mock_send.await_args_list[5].kwargs == {"tr_type": "1"}
+    assert mock_send.await_args_list[6].args == ("H0STMKO0", "005930")
+    assert mock_send.await_args_list[6].kwargs == {"tr_type": "2"}
+    assert mock_send.await_args_list[7].args == ("H0UNMKO0", "005930")
+    assert mock_send.await_args_list[7].kwargs == {"tr_type": "2"}
 
 
 @pytest.mark.asyncio

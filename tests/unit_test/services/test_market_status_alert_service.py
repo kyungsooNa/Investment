@@ -31,7 +31,7 @@ async def test_market_status_alert_service_reports_circuit_breaker():
 
 
 @pytest.mark.asyncio
-async def test_market_status_alert_service_reports_sidecar_warning():
+async def test_market_status_alert_service_reports_sidecar_as_error_for_immediate_delivery():
     operator_alert = AsyncMock()
     service = MarketStatusAlertService(
         operator_alert_service=operator_alert,
@@ -48,7 +48,7 @@ async def test_market_status_alert_service_reports_sidecar_warning():
     args = operator_alert.report.await_args.args
     kwargs = operator_alert.report.await_args.kwargs
     assert args[1] == "market_status:sidecar:sell:KRX:005930"
-    assert args[2] == "warning"
+    assert args[2] == "error"
     assert kwargs["metadata"]["telegram_channel"] == "report"
 
 
@@ -70,7 +70,7 @@ async def test_market_status_alert_service_reports_kosdaq_sidecar_when_reason_us
 
     args = operator_alert.report.await_args.args
     assert args[1] == "market_status:sidecar:buy:KOSDAQ:000000"
-    assert args[2] == "warning"
+    assert args[2] == "error"
     assert args[3] == "매수 사이드카 감지"
 
 
@@ -158,7 +158,7 @@ async def test_market_status_alert_service_reports_index_thresholds_and_resolves
 
     assert operator_alert.report.await_count == 2
     assert operator_alert.report.await_args_list[0].args[1] == "market_index:move_5:down:0001"
-    assert operator_alert.report.await_args_list[0].args[2] == "warning"
+    assert operator_alert.report.await_args_list[0].args[2] == "error"
     assert operator_alert.report.await_args_list[1].args[1] == "market_index:fall_8:0001"
     assert operator_alert.report.await_args_list[1].args[2] == "critical"
 
