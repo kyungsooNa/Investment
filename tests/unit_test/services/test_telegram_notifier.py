@@ -773,6 +773,19 @@ async def test_send_premium_watchlist_report_basic(telegram_reporter):
 
 
 @pytest.mark.asyncio
+async def test_send_premium_watchlist_report_includes_ai_signal_and_reason(telegram_reporter):
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+    await telegram_reporter.send_premium_watchlist_report(
+        [{"code": "005930", "name": "삼성전자", "total_score": 80.0}], [], "20260320",
+        ai_analyses={"005930": {"signal": "상", "signal_reason": "수급이 개선되었습니다."}},
+    )
+
+    full = "".join(c[0][0] for c in telegram_reporter._send_message.call_args_list)
+    assert "AI:상" in full
+    assert "수급이 개선되었습니다." in full
+
+
+@pytest.mark.asyncio
 async def test_send_premium_watchlist_report_empty_markets(telegram_reporter):
     """send_premium_watchlist_report: KOSPI/KOSDAQ 중 하나가 빈 경우"""
     telegram_reporter._send_message = AsyncMock(return_value=True)

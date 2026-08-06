@@ -526,3 +526,28 @@ class TestTelegramReporterIntegration:
         await task_with_reporter._run_generation("20260320")
 
         mock_reporter.send_premium_watchlist_report.assert_not_awaited()
+
+    async def test_run_generation_includes_after_market_ai_analyses_in_report(
+        self, mock_universe_service, mock_mcs, mock_market_clock, mock_reporter
+    ):
+        ai_service = MagicMock()
+        ai_service.analyze = AsyncMock(return_value={
+            "000001": {"signal": "상", "signal_reason": "추세와 수급이 양호합니다."},
+        })
+        task = PremiumWatchlistGeneratorTask(
+            universe_service=mock_universe_service,
+            market_calendar_service=mock_mcs,
+            market_clock=mock_market_clock,
+            logger=MagicMock(),
+            telegram_reporter=mock_reporter,
+            premium_watchlist_ai_service=ai_service,
+        )
+
+        await task._run_generation("20260320")
+
+        ai_service.analyze.assert_awaited_once_with(
+            kospi=[_SAMPLE_KOSPI_STOCK] * 30,
+            kosdaq=[_SAMPLE_KOSDAQ_STOCK] * 20,
+            report_date="20260320",
+        )
+        assert mock_reporter.send_premium_watchlist_report.await_args.kwargs["ai_analyses"]["000001"]["signal"] == "상"

@@ -753,7 +753,7 @@ class TelegramReporter:
         return success
 
     @_serialized_report_send
-    async def send_premium_watchlist_report(self, kospi: List[Dict], kosdaq: List[Dict], report_date: str, limit: int = 30):
+    async def send_premium_watchlist_report(self, kospi: List[Dict], kosdaq: List[Dict], report_date: str, limit: int = 30, ai_analyses: Optional[Dict[str, Dict]] = None):
         """전일 기준 우량주 풀 리포트를 텔레그램으로 전송합니다."""
         title = (
             f"⭐ <b>전일 기준 우량주 리포트 ({report_date})</b>\n"
@@ -761,6 +761,8 @@ class TelegramReporter:
         )
         await self._send_message(title)
 
+        ai_analyses = ai_analyses or {}
+        premium_codes = {str(s.get("code") or "") for s in [*kospi, *kosdaq]}
         for market_label, stocks in [("KOSPI", kospi), ("KOSDAQ", kosdaq)]:
             if not stocks:
                 continue
@@ -801,6 +803,9 @@ class TelegramReporter:
                     f"점수:{score:.0f} RS:{rs_rating} "
                     f"시총:{mcap_str} 대금:{tv_str}"
                 )
+                ai = ai_analyses.get(str(code))
+                if ai:
+                    lines.append(f"   🤖 AI:{ai.get('signal', '중')} — {ai.get('signal_reason', '-')}")
 
             current = ""
             for line in lines:
@@ -812,6 +817,19 @@ class TelegramReporter:
                     current += chunk
             if current:
                 await self._send_message(current)
+
+        favorite_ai = [
+            (code, item) for code, item in ai_analyses.items()
+            if item.get("source") == "favorite" and code not in premium_codes
+        ]
+        if favorite_ai:
+            lines = ["<b>── 🤖 즐겨찾기 AI 분석 ──</b>"]
+            for code, item in favorite_ai:
+                lines.append(
+                    f"• <b>{item.get('name') or code}</b>({code}) AI:{item.get('signal', '중')} "
+                    f"— {item.get('signal_reason', '-')}"
+                )
+            await self._send_message("\n".join(lines))
 
     @_serialized_report_send
     async def send_minervini_report(self, items: List[Dict], report_date: str, limit: int = 30):

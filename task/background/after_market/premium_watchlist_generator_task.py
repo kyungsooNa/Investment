@@ -31,6 +31,7 @@ class PremiumWatchlistGeneratorTask(AfterMarketTask):
         notification_service: Optional["NotificationService"] = None,
         worker_pool=None,
         telegram_reporter: Optional["TelegramReporter"] = None,
+        premium_watchlist_ai_service=None,
     ):
         super().__init__(
             mcs=market_calendar_service,
@@ -41,6 +42,7 @@ class PremiumWatchlistGeneratorTask(AfterMarketTask):
         self._universe_service = universe_service
         self._ns = notification_service
         self._telegram_reporter = telegram_reporter
+        self._premium_watchlist_ai_service = premium_watchlist_ai_service
 
         self._is_generating: bool = False
         self._last_generated_date: Optional[str] = None
@@ -133,11 +135,18 @@ class PremiumWatchlistGeneratorTask(AfterMarketTask):
                     f"KOSPI {result.get('kospi_count')}개, KOSDAQ {result.get('kosdaq_count')}개 종목 수집 완료 (소요: {elapsed:.1f}초)"
                 )
             if self._telegram_reporter:
-                await self._telegram_reporter.send_premium_watchlist_report(
-                    kospi=result.get("kospi_stocks", []),
-                    kosdaq=result.get("kosdaq_stocks", []),
-                    report_date=trading_date,
-                )
+                report_kwargs = {
+                    "kospi": result.get("kospi_stocks", []),
+                    "kosdaq": result.get("kosdaq_stocks", []),
+                    "report_date": trading_date,
+                }
+                if self._premium_watchlist_ai_service:
+                    report_kwargs["ai_analyses"] = await self._premium_watchlist_ai_service.analyze(
+                        kospi=result.get("kospi_stocks", []),
+                        kosdaq=result.get("kosdaq_stocks", []),
+                        report_date=trading_date,
+                    )
+                await self._telegram_reporter.send_premium_watchlist_report(**report_kwargs)
         except Exception as e:
             self._logger.error(f"전일 기준 우량주 생성 실패: {e}", exc_info=True)
             if self._ns:
