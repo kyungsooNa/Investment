@@ -168,3 +168,27 @@ async def test_market_status_alert_service_reports_index_thresholds_and_resolves
         "market_index:move_5:down:0001",
         "market_index:fall_8:0001",
     }
+
+
+@pytest.mark.asyncio
+async def test_market_status_alert_service_keeps_move_5_alert_active_until_recovery_buffer():
+    """-5% 경보는 -4.5% 이상 회복 전까지 유지해 경계값 반복 알림을 막는다."""
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        logger=MagicMock(),
+    )
+
+    await service.on_index_change("0001", "코스피", -5.03)
+    await service.on_index_change("0001", "코스피", -4.90)
+
+    operator_alert.report.assert_awaited_once()
+    operator_alert.resolve.assert_not_awaited()
+
+    await service.on_index_change("0001", "코스피", -4.50)
+
+    operator_alert.resolve.assert_awaited_once_with(
+        AlertSource.MARKET_STATUS,
+        "market_index:move_5:down:0001",
+        "지수 등락률 정상화",
+    )
