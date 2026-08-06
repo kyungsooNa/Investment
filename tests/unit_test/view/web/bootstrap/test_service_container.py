@@ -711,6 +711,11 @@ def test_intraday_vbo_built_with_order_path_locked(patched_service_container_dep
     assert order_cls.call_args.kwargs["live_enabled"] is False
     assert svc_cls.call_args.kwargs["top_n"] == 7
     assert ctx.overseas_intraday_vbo_task is task_cls.return_value
+    # 장중 paper 저널은 국내 event_shadow 와 버퍼를 공유하면 안 된다 —
+    # 틱마다 flush 하므로 공유 시 남의 기록이 US 거래일 파일로 딸려간다.
+    paper_journal = order_cls.call_args.kwargs["journal"]
+    assert paper_journal is not ctx.event_shadow_journal_service
+    assert task_cls.call_args.kwargs["shadow_journal"] is paper_journal
 
 
 def test_domestic_active_without_overseas_enabled_skips_dryrun_task(patched_service_container_deps):

@@ -127,6 +127,32 @@ async def test_tick_flushes_journal_with_session_date_at_eod():
 
 
 @pytest.mark.asyncio
+async def test_tick_flushes_journal_after_each_polling_pass():
+    """paper 기록을 EOD 까지 메모리에 들고 있으면 재시작 한 번에 하루치가 사라진다.
+
+    실측(2026-08-05): 진입 2건이 EOD flush 전 프로세스 종료로 통째로 유실됐다.
+    폴링 패스마다 파일로 내려 재시작에 견디게 한다(버퍼가 비면 no-op).
+    """
+    journal = MagicMock()
+    t = _task(now=_ny(10, 0), journal=journal)
+
+    await t.task._tick()
+
+    journal.flush_to_file.assert_called_once_with("20260512")
+
+
+@pytest.mark.asyncio
+async def test_tick_polling_flush_survives_journal_failure():
+    journal = MagicMock()
+    journal.flush_to_file = MagicMock(side_effect=RuntimeError("disk full"))
+    t = _task(now=_ny(10, 0), journal=journal)
+
+    await t.task._tick()  # flush 실패가 폴링 루프를 죽이지 않는다
+
+    t.vbo.on_price.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_tick_flushes_journal_only_once_per_day():
     journal = MagicMock()
     t = _task(now=_ny(15, 55), journal=journal)

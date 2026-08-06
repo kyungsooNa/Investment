@@ -124,13 +124,16 @@ class OverseasIntradayVBOTask(SchedulableTask):
             if price is None:
                 continue
             await self._vbo.on_price(code, price)
+        # 폴링 패스마다 파일로 내린다 — EOD 까지 메모리에 들고 있으면 세션 중 재시작
+        # 한 번에 그날 기록이 통째로 사라진다(2026-08-05 실측 유실).
+        self._flush_journal(today)
 
     def _flush_journal(self, trade_date: str) -> None:
-        """세션 paper 기록을 자기 거래일 파일로 내린다.
+        """세션 paper 기록을 자기 거래일 파일로 내린다(버퍼가 비면 no-op).
 
-        저널 버퍼는 국내 shadow·해외 dry-run 과 공유되므로, 직접 flush 하지 않으면
-        다른 태스크의 flush 시점·파일명에 기록이 딸려가거나(날짜 오배치) 그 태스크가
-        실패하면 통째로 유실된다. flush 실패는 흡수한다 — 청산은 이미 끝났다.
+        저널은 이 경로 전용 인스턴스여야 한다 — 국내 shadow 와 버퍼를 공유하면
+        틱마다 flush 할 때 남의 기록이 US 거래일 파일로 딸려간다(배선에서 분리).
+        flush 실패는 흡수한다 — 다음 패스에서 다시 시도된다.
         """
         if self._journal is None:
             return

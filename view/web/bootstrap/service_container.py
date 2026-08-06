@@ -901,10 +901,14 @@ class ServiceContainer:
         if not getattr(cfg, "enabled", False):
             return
 
+        # 이 경로 전용 저널 — 국내 event_shadow 와 버퍼를 공유하면 틱마다 flush 할 때
+        # 남의 기록이 US 거래일 파일로 딸려간다. 파일은 같은 디렉토리에 append 되므로
+        # 소비 측(analyze/compare)은 signal_source 로 구분한다.
+        paper_journal = EventShadowJournalService(log_root="logs/strategies", logger=ctx.logger)
         order_execution_service = OverseasOrderExecutionService(
             broker=None,  # live_enabled=False 이므로 broker 미사용(구조적 잠금)
             live_enabled=False,
-            journal=ctx.event_shadow_journal_service,
+            journal=paper_journal,
             logger=ctx.logger,
         )
         ctx.overseas_intraday_vbo_service = OverseasIntradayVBOService(
@@ -926,7 +930,7 @@ class ServiceContainer:
             us_market_calendar_service=USMarketCalendarService(
                 market_clock=intraday_us_clock, logger=ctx.logger,
             ),
-            shadow_journal=ctx.event_shadow_journal_service,
+            shadow_journal=paper_journal,
             check_interval_sec=getattr(cfg, "poll_interval_sec", 60),
             session_prepare_delay_min=getattr(cfg, "session_prepare_delay_min", 5),
             eod_exit_before_min=getattr(cfg, "eod_exit_before_min", 10),
