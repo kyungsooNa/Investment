@@ -1075,6 +1075,25 @@ async def test_refresh_basic_ranking_success_notification(bg_service, mock_deps)
 
 
 @pytest.mark.asyncio
+async def test_refresh_basic_ranking_suppresses_success_notification_when_requested(bg_service):
+    """장중 캐시 갱신은 성공 알림 없이 수행할 수 있다."""
+    bg_service._notification_service = AsyncMock()
+    bg_service._market_data_service.get_top_rise_fall_stocks.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=[]
+    )
+    bg_service._market_data_service.get_top_volume_stocks.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=[]
+    )
+    bg_service._market_data_service.get_top_trading_value_stocks.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data=[]
+    )
+
+    await bg_service.refresh_basic_ranking(notify=False)
+
+    bg_service._notification_service.emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_refresh_investor_ranking_notification(bg_service, mock_deps):
     """투자자 랭킹 갱신 성공/실패 알림 테스트."""
     broker, mapper, _, _, _, _ = mock_deps

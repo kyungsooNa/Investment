@@ -219,8 +219,8 @@ class RankingTask(AfterMarketTask):
 
     # ── 기본 랭킹 캐시 (상승/하락/거래량/거래대금) ───────────────
 
-    async def refresh_basic_ranking(self) -> None:
-        """상승률/하락률/거래량/거래대금 랭킹을 1회 조회하여 캐시."""
+    async def refresh_basic_ranking(self, *, notify: bool = True) -> None:
+        """상승률/하락률/거래량/거래대금 랭킹을 1회 조회하여 캐시한다."""
         if not self._market_data_service:
             self._logger.warning("MarketDataService 미설정 — 기본 랭킹 캐시 스킵")
             return
@@ -246,7 +246,7 @@ class RankingTask(AfterMarketTask):
                 self._basic_ranking_updated_at = datetime.now()
                 self._logger.info(f"기본 랭킹 캐시 갱신 완료: {list(self._basic_ranking_cache.keys())}")
                 self.pm.log_timer("RankingTask.refresh_basic_ranking", t_start, threshold=1.0)
-                if self._notification_service:
+                if notify and self._notification_service:
                     await self._notification_service.emit(
                         NotificationCategory.BACKGROUND, NotificationLevel.INFO, "기본 랭킹 갱신 완료",
                         f"상승/하락/거래량/거래대금 캐시 갱신 완료",
