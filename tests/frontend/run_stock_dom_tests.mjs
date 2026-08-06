@@ -239,6 +239,97 @@ test("AI 뉴스 검토는 POST로 요청하고 기사 제목을 텍스트로 안
   );
 });
 
+test("검토한 종목으로 돌아오면 직전 결과를 복원하고 재요청하지 않는다", async () => {
+  const window = makeNewsWindow();
+  let calls = 0;
+  window.fetchWithTimeout = async () => {
+    calls += 1;
+    return {
+      ok: true,
+      json: async () => ({
+        rt_cd: "0",
+        data: {
+          analysis: "한줄 요약: 수주 모멘텀",
+          signal: "상",
+          signal_reason: "호재가 우세",
+          news_count: 1,
+          generated_at: "2026-07-20T12:00:00+09:00",
+          news: [{ title: "수주 계약", press: "연합뉴스", published_at: "2026.07.20 09:10", url: "https://x/1" }],
+        },
+      }),
+    };
+  };
+
+  await window.requestAiNewsReview("005930");
+  assert(calls === 1, "최초 검토가 요청되지 않음");
+
+  // 다른 화면을 거쳐 같은 종목으로 복귀 — 패널이 새로 그려진 상태를 흉내낸다.
+  window.document.getElementById("ai-news-output").textContent = "";
+  window.document.getElementById("ai-news-output").style.display = "none";
+  window.document.getElementById("ai-news-list").textContent = "";
+  window.document.getElementById("ai-news-status").textContent = "";
+
+  const restored = window.restoreAiNewsReview("005930");
+
+  assert(restored === true, "복원 성공을 보고하지 않음");
+  assert(calls === 1, "복원인데 AI 를 다시 호출함(한도 낭비)");
+  assert(
+    window.document.getElementById("ai-news-output").textContent.includes("수주 모멘텀"),
+    "직전 검토 본문이 복원되지 않음",
+  );
+  assert(
+    window.document.getElementById("ai-news-list").querySelectorAll("li").length === 1,
+    "직전 기사 목록이 복원되지 않음",
+  );
+  assert(
+    window.document.getElementById("ai-news-signal").textContent.includes("상"),
+    "직전 신호 배지가 복원되지 않음",
+  );
+  assert(
+    window.document.getElementById("ai-news-status").textContent.includes("이전 검토"),
+    "복원된 결과임이 표시되지 않음",
+  );
+  assert(
+    window.document.getElementById("ai-news-btn").textContent.includes("다시 검토"),
+    "재요청 버튼 라벨이 '다시 검토'가 아님",
+  );
+});
+
+test("검토 이력이 없는 종목은 복원하지 않는다", async () => {
+  const window = makeNewsWindow();
+
+  assert(window.restoreAiNewsReview("000660") === false, "이력이 없는데 복원을 보고함");
+  assert(
+    window.document.getElementById("ai-news-output").textContent === "",
+    "이력이 없는데 결과 영역이 채워짐",
+  );
+});
+
+test("복원 후 버튼을 다시 누르면 캐시를 무시하고 새로 요청한다", async () => {
+  const window = makeNewsWindow();
+  let calls = 0;
+  window.fetchWithTimeout = async () => {
+    calls += 1;
+    return {
+      ok: true,
+      json: async () => ({
+        rt_cd: "0",
+        data: { analysis: `검토 ${calls}회차`, news: [], news_count: 0, generated_at: "t" },
+      }),
+    };
+  };
+
+  await window.requestAiNewsReview("005930");
+  window.restoreAiNewsReview("005930");
+  await window.requestAiNewsReview("005930");
+
+  assert(calls === 2, "명시적 재요청이 캐시에 막힘");
+  assert(
+    window.document.getElementById("ai-news-output").textContent.includes("2회차"),
+    "재요청 결과가 반영되지 않음",
+  );
+});
+
 test("뉴스가 없으면 안내만 표시하고 결과 영역을 비운다", async () => {
   const window = makeNewsWindow();
   window.fetchWithTimeout = async () => ({
