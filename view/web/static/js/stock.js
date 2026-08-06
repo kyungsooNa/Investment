@@ -479,6 +479,9 @@ async function searchStock(codeOverride, exchangeOverride) {
         // 관심종목 버튼 초기 상태 설정
         _updateFavBtn(code);
 
+        // 이미 검토한 종목이면 직전 결과를 되살린다(재요청은 버튼으로만).
+        restoreAiNewsReview(code);
+
         // Phase 2: 증권사 API 상세 정보 백그라운드 로드
         _loadStockDetail(code);
         _loadRsRating(code);
@@ -587,6 +590,52 @@ async function requestAiStockAnalysis(code) {
     }
 }
 
+/* 종목별 직전 뉴스 검토 결과(메모리). 뉴스 목록은 몇 시간씩 그대로라 화면 왕복 중
+   재클릭으로 AI 한도가 새는 것을 막는다. 새로고침하면 사라지는 세션 캐시로 충분하며,
+   재검토는 버튼(명시적 요청)으로만 일어난다 — 서버/한도 로직은 건드리지 않는다. */
+const _aiNewsCache = {};
+
+function _renderAiNewsArticles(list, articles) {
+    list.textContent = '';
+    // 스크래핑한 외부 문자열이므로 textContent 로만 삽입한다(innerHTML 금지).
+    articles.forEach((article) => {
+        const li = document.createElement('li');
+        const link = document.createElement('a');
+        link.href = article.url || '#';
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = article.title || '(제목 없음)';
+        const meta = document.createElement('span');
+        meta.className = 'meta';
+        meta.textContent = `${article.press || ''} ${article.published_at || ''}`.trim();
+        li.appendChild(link);
+        li.appendChild(meta);
+        list.appendChild(li);
+    });
+    list.style.display = articles.length ? 'block' : 'none';
+}
+
+function restoreAiNewsReview(code) {
+    const targetCode = String(code || '').trim();
+    const cached = _aiNewsCache[targetCode];
+    if (!targetCode || !cached) return false;
+
+    const button = document.getElementById('ai-news-btn');
+    const status = document.getElementById('ai-news-status');
+    const output = document.getElementById('ai-news-output');
+    const list = document.getElementById('ai-news-list');
+    if (!button || !status || !output || !list) return false;
+
+    _renderAiNewsArticles(list, cached.articles || []);
+    status.textContent = `${cached.statusText} · 이전 검토 결과`.trim();
+    renderAiSignal('ai-news-signal', cached.signal, cached.signalReason);
+    output.textContent = String(cached.analysis || '');
+    output.classList.remove('error');
+    output.style.display = cached.analysis ? 'block' : 'none';
+    button.textContent = '다시 검토';
+    return true;
+}
+
 async function requestAiNewsReview(code) {
     const targetCode = String(code || _currentStockCode || '').trim();
     const button = document.getElementById('ai-news-btn');
@@ -625,31 +674,24 @@ async function requestAiNewsReview(code) {
         const data = json.data || {};
         const articles = Array.isArray(data.news) ? data.news : [];
 
-        // 스크래핑한 외부 문자열이므로 textContent 로만 삽입한다(innerHTML 금지).
-        articles.forEach((article) => {
-            const li = document.createElement('li');
-            const link = document.createElement('a');
-            link.href = article.url || '#';
-            link.target = '_blank';
-            link.rel = 'noopener noreferrer';
-            link.textContent = article.title || '(제목 없음)';
-            const meta = document.createElement('span');
-            meta.className = 'meta';
-            meta.textContent = `${article.press || ''} ${article.published_at || ''}`.trim();
-            li.appendChild(link);
-            li.appendChild(meta);
-            list.appendChild(li);
-        });
-        list.style.display = articles.length ? 'block' : 'none';
+        _renderAiNewsArticles(list, articles);
 
         if (!data.analysis) {
             status.textContent = json.msg1 || '최근 뉴스를 찾지 못했습니다.';
             return;
         }
-        status.textContent = `기사 ${data.news_count || articles.length}건 · 생성 시각: ${data.generated_at || ''}`.trim();
+        const statusText = `기사 ${data.news_count || articles.length}건 · 생성 시각: ${data.generated_at || ''}`.trim();
+        status.textContent = statusText;
         renderAiSignal('ai-news-signal', data.signal, data.signal_reason);
         output.textContent = String(data.analysis);
         output.style.display = 'block';
+        _aiNewsCache[targetCode] = {
+            analysis: data.analysis,
+            signal: data.signal,
+            signalReason: data.signal_reason,
+            statusText,
+            articles,
+        };
     } catch (error) {
         console.error('[stock-news] 검토 실패:', error);
         status.textContent = '';
