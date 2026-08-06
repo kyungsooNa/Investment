@@ -108,12 +108,14 @@ jobs:
         git commit -m "chore: safe update badge [skip ci]" || echo "No changes"
         git push
 
-    # 🚀 2. GitHub Pages 상세 리포트 배포 (유지)
+    # 🚀 2. GitHub Pages 상세 리포트 배포 (main 전용 — PR CI가 Pages 배포 지연에 묶이지 않도록)
     - name: Upload Pages artifact
+      if: github.ref == 'refs/heads/main'
       uses: actions/upload-pages-artifact@v3
       with:
         path: htmlcov/
 
     - name: Deploy to GitHub Pages
+      if: github.ref == 'refs/heads/main'
       id: deployment
       uses: actions/deploy-pages@v4

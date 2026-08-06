@@ -1698,3 +1698,211 @@ async def test_operational_decision_report_includes_new_entry_details(tmp_path):
     decision = svc.get_last_operational_decision_report()
     assert "신규 진입 1건 — 체결/포지션 관리 확인" in decision
     assert "FirstPullback · 삼성전자(005930) · 2주 · ₩75,000 · 09:10" in decision
+
+
+def _vts(all_trades, solds=(), holds=()):
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return list(all_trades)
+
+        def get_solds(self):
+            return list(solds)
+
+        def get_holds(self):
+            return list(holds)
+
+    return DummyVirtualTradeService()
+
+
+def _buy_trade(code, name, strategy="first_pullback", date="2026-07-16 09:10:00", status="HOLD"):
+    return {"strategy": strategy, "code": code, "name": name, "buy_price": 75000,
+            "qty": 2, "buy_date": date, "status": status, "reason": "원장 체결"}
+
+
+async def _decision_for(tmp_path, *, virtual_trade_service, patch_svc=None):
+    log_dir = tmp_path / "strategies"
+    log_dir.mkdir(exist_ok=True)
+    _write_log(
+        str(log_dir / "20260716_091000_FirstPullback.log.json"),
+        [{"timestamp": "2026-07-16 09:10:00,000", "level": "INFO",
+          "data": {"event": "scan_with_watchlist", "count": 1}}],
+    )
+    svc = StrategyLogReportService(
+        log_dir=str(log_dir), virtual_trade_service=virtual_trade_service,
+    )
+    if patch_svc:
+        patch_svc(svc)
+    await svc.generate_report("20260716")
+    return svc.get_last_operational_decision_report()
+
+
+# ── 오탐 1: 체결 품질 "별도 경고 확인" ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_execution_quality_warning_absent_when_no_threshold_candidate(tmp_path):
+    """섹션이 렌더돼도 임계 통과 후보가 없으면 경고를 띄우지 않는다.
+
+    체결 품질 섹션은 기록이 하나라도 있으면 항상 생성되므로(슬리피지 0% 포함),
+    섹션 존재만 검사하면 상시 경고가 떠 진짜 경고를 가린다.
+    """
+    def _patch(svc):
+        svc._build_execution_quality_section = lambda _records: "<b>📈 체결 품질 요약</b>\n• 정상"
+
+    decision = await _decision_for(
+        tmp_path, virtual_trade_service=_vts([_buy_trade("005930", "삼성전자")]),
+        patch_svc=_patch,
+    )
+
+    assert "체결 품질 후보" not in decision
+
+
+@pytest.mark.asyncio
+async def test_execution_quality_warning_present_when_candidate_exists(tmp_path):
+    def _patch(svc):
+        def _build(_records):
+            svc._last_execution_quality_candidates = [
+                {"strategy": "first_pullback", "reason": "슬리피지 과다"}
+            ]
+            return "<b>📈 체결 품질 요약</b>\n• ⚠️ 비활성화 후보 1개"
+        svc._build_execution_quality_section = _build
+
+    decision = await _decision_for(
+        tmp_path, virtual_trade_service=_vts([_buy_trade("005930", "삼성전자")]),
+        patch_svc=_patch,
+    )
+
+    assert "체결 품질 후보: 별도 경고 확인" in decision
+
+
+# ── 오탐 2: 신규 진입 N건이 당일 청산 미반영 ────────────────────────────
+
+@pytest.mark.asyncio
+async def test_new_entry_line_excludes_same_day_closed_positions(tmp_path):
+    """당일 청산된 진입분은 마감 후 '관리 대상'이 아니다."""
+    decision = await _decision_for(
+        tmp_path,
+        virtual_trade_service=_vts(
+            [_buy_trade("005930", "삼성전자"), _buy_trade("000660", "SK하이닉스")],
+            solds=[{"code": "005930", "name": "삼성전자",
+                    "sell_date": "2026-07-16 15:20:00", "status": "SOLD"}],
+        ),
+    )
+
+    assert "신규 진입 2건 (당일청산 1건) — 잔여 1건 체결/포지션 관리 확인" in decision
+    assert "SK하이닉스(000660)" in decision
+    assert "삼성전자(005930)" not in decision
+
+
+@pytest.mark.asyncio
+async def test_new_entry_line_reports_no_target_when_all_closed_same_day(tmp_path):
+    decision = await _decision_for(
+        tmp_path,
+        virtual_trade_service=_vts(
+            [_buy_trade("005930", "삼성전자")],
+            solds=[{"code": "005930", "name": "삼성전자",
+                    "sell_date": "2026-07-16 15:20:00", "status": "SOLD"}],
+        ),
+    )
+
+    assert "신규 진입 1건 — 전량 당일청산, 관리 대상 없음" in decision
+
+
+# ── 미검출 보완: 당일청산 미이행 직접 검출 ──────────────────────────────
+
+def _hold(code, name, strategy="래리윌리엄스VBO", buy_date="2026-07-16 09:10:00",
+          trailing_rule="same_day_eod_or_stop", qty=15):
+    return {"strategy": strategy, "code": code, "name": name, "qty": qty,
+            "buy_price": 75000, "buy_date": buy_date, "status": "HOLD",
+            "trailing_rule": trailing_rule}
+
+
+@pytest.mark.asyncio
+async def test_same_day_exit_violation_detected_when_position_survives_close(tmp_path):
+    """당일청산 규칙 포지션이 마감 후에도 HOLD 면 강제청산 미이행이다.
+
+    강제청산 절반 유출은 장부상 정상이라 무경보였고, 발견 경로가 "고아가 이상하게
+    는다"는 간접 신호뿐이었다 — 직접 검출을 세운다.
+    """
+    decision = await _decision_for(
+        tmp_path,
+        virtual_trade_service=_vts(
+            [_buy_trade("475150", "아이엠비디엑스", strategy="래리윌리엄스VBO")],
+            holds=[_hold("475150", "아이엠비디엑스")],
+        ),
+    )
+
+    assert "당일청산 미이행" in decision
+    assert "아이엠비디엑스(475150)" in decision
+
+
+@pytest.mark.asyncio
+async def test_same_day_exit_violation_absent_for_multiday_strategy(tmp_path):
+    """멀티데이 보유 전략의 오버나이트는 정상 — 경고 대상이 아니다."""
+    decision = await _decision_for(
+        tmp_path,
+        virtual_trade_service=_vts(
+            [_buy_trade("005930", "삼성전자", strategy="오닐포켓피벗")],
+            holds=[_hold("005930", "삼성전자", strategy="오닐포켓피벗", trailing_rule=None)],
+        ),
+    )
+
+    assert "당일청산 미이행" not in decision
+
+
+@pytest.mark.asyncio
+async def test_same_day_exit_violation_reports_holding_days(tmp_path):
+    """전일 이전 진입분이 남아 있으면 더 심각하다 — 보유일수를 함께 낸다."""
+    decision = await _decision_for(
+        tmp_path,
+        virtual_trade_service=_vts(
+            [], holds=[_hold("475150", "아이엠비디엑스", buy_date="2026-07-14 09:10:00")],
+        ),
+    )
+
+    assert "당일청산 미이행" in decision
+    assert "2일" in decision
+
+
+@pytest.mark.asyncio
+async def test_same_day_exit_violations_exposed_via_accessor(tmp_path):
+    log_dir = tmp_path / "strategies"
+    log_dir.mkdir(exist_ok=True)
+    _write_log(
+        str(log_dir / "20260716_091000_FirstPullback.log.json"),
+        [{"timestamp": "2026-07-16 09:10:00,000", "level": "INFO",
+          "data": {"event": "scan_with_watchlist", "count": 1}}],
+    )
+    svc = StrategyLogReportService(
+        log_dir=str(log_dir),
+        virtual_trade_service=_vts([], holds=[_hold("475150", "아이엠비디엑스")]),
+    )
+    await svc.generate_report("20260716")
+
+    violations = svc.get_last_same_day_exit_violations()
+    assert len(violations) == 1
+    assert violations[0]["code"] == "475150"
+    assert violations[0]["qty"] == 15
+
+
+@pytest.mark.asyncio
+async def test_no_violation_line_when_no_same_day_holds(tmp_path):
+    decision = await _decision_for(
+        tmp_path, virtual_trade_service=_vts([_buy_trade("005930", "삼성전자")]),
+    )
+
+    assert "당일청산 미이행" not in decision
+
+
+@pytest.mark.asyncio
+async def test_new_entry_line_ignores_other_day_sells(tmp_path):
+    """전일 청산 기록은 당일 진입 판정에 영향을 주지 않는다."""
+    decision = await _decision_for(
+        tmp_path,
+        virtual_trade_service=_vts(
+            [_buy_trade("005930", "삼성전자")],
+            solds=[{"code": "005930", "name": "삼성전자",
+                    "sell_date": "2026-07-15 15:20:00", "status": "SOLD"}],
+        ),
+    )
+
+    assert "신규 진입 1건 — 체결/포지션 관리 확인" in decision
