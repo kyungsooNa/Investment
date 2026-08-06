@@ -100,8 +100,8 @@ async def test_classify_hard_decline_returns_bear():
 
 
 @pytest.mark.asyncio
-async def test_classify_hard_decline_includes_recovery_price_guidance():
-    """급락 MA가 판정창에서 빠지는 최초 시점과 전환 종가 목표를 안내한다."""
+async def test_classify_hard_decline_includes_recovery_guidance():
+    """급락 MA가 판정창에서 빠지는 최초 시점과 다음 종가 하한을 안내한다."""
     closes = [200, 200, 200, 200, 200, 200, 200, 150]
     svc, _ = _make_service(closes)
 
@@ -109,11 +109,7 @@ async def test_classify_hard_decline_includes_recovery_price_guidance():
 
     # MA(5): 200 -> 200 -> 190. 마지막 hard decline(idx=2)은 2거래일 후 소멸한다.
     assert snap.recovery_earliest_days == 2
-    assert snap.recovery_target_ma == 189.81  # 190 * (1 - 0.10%)
     assert snap.current_close == 150
-    # 최초 전환일 전까지 현재 종가(150)를 유지한다고 가정하면,
-    # 전환일의 종가는 MA(5)를 189.81 이상으로 만들기 위해 249.05 이상이어야 한다.
-    assert snap.recovery_target_close == 249.05
     # 다음 MA가 -0.50%보다 더 급락하지 않는 종가 하한:
     # 200 + 5 * (190 * 0.995 - 190) = 195.25
     assert snap.next_close_floor == 195.25
@@ -130,6 +126,25 @@ async def test_classify_weak_trend_returns_bear():
     assert snap.trend_status == "weak_trend"
     assert snap.regime_label == "bear"
     assert snap.is_rising is False
+
+
+@pytest.mark.asyncio
+async def test_classify_recovers_after_hard_decline_window_clears():
+    """급락이 해소된 뒤 MA 비하락·종가 MA 상회·최근 상승이면 회복을 허용한다."""
+    # 마지막 세 MA(5)는 108.50 -> 108.20 -> 108.20이다.
+    # 기존 순변화 기준만 쓰면 약세지만, MA가 더 내려가지 않고 종가가 MA 위이며
+    # 최근 2일에 상승이 있으므로 회복 국면으로 판정해야 한다.
+    closes = [110, 109.5, 109, 108.5, 108, 107.5, 108, 109]
+    svc, _ = _make_service(closes)
+
+    snap = await svc.classify("KOSPI")
+
+    assert snap.net_change_pct < -0.10
+    assert snap.max_daily_drop_pct >= -0.50
+    assert snap.current_close > snap.ma_values[-1]
+    assert snap.trend_status == "recovery"
+    assert snap.regime_label == "bull"
+    assert snap.is_rising is True
 
 
 @pytest.mark.asyncio

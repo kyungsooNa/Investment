@@ -21,6 +21,7 @@ _TREND_STATUS_TO_LABEL = {
     "rising": "bull",
     "hard_decline": "bear",
     "weak_trend": "bear",
+    "recovery": "bull",
     "uptrend_under_pressure": "sideways",
 }
 
@@ -39,7 +40,7 @@ class MarketRegimeConfig:
 @dataclass
 class RegimeSnapshot:
     market: str               # "KOSPI" | "KOSDAQ"
-    trend_status: str         # rising / hard_decline / weak_trend / uptrend_under_pressure
+    trend_status: str         # rising / hard_decline / weak_trend / recovery / uptrend_under_pressure
     regime_label: str         # bull / bear / sideways
     snapshot_date: str        # YYYYMMDD
     is_rising: bool
@@ -50,8 +51,6 @@ class RegimeSnapshot:
     data_date: str = ""       # 판정에 사용한 마지막 확정 일봉 날짜 (YYYYMMDD)
     current_close: Optional[float] = None  # 판정 기준일 지수 종가
     recovery_earliest_days: Optional[int] = None  # 기존 급락 MA가 판정창에서 빠지는 최소 거래일
-    recovery_target_ma: Optional[float] = None    # 해당 시점 3일 순변화 조건의 MA(20) 하한
-    recovery_target_close: Optional[float] = None  # 최초 전환일 종가 목표(그전 종가 현재 수준 유지 가정)
     next_close_floor: Optional[float] = None      # 다음 MA(20)의 hard decline 방지 종가 하한
 
 
@@ -78,6 +77,14 @@ class MarketRegimeService:
         if market == "KOSDAQ":
             return self._cfg.kosdaq_index_code
         raise ValueError(f"Unknown market: {market}")
+
+    @staticmethod
+    def _is_recovery_ready(closes: List[float], ma_values: List[float]) -> bool:
+        """급락 해소 뒤의 회복 진입 조건을 판정한다."""
+        ma_is_not_falling = ma_values[-1] >= ma_values[-2]
+        close_is_above_ma = closes[-1] >= ma_values[-1]
+        recent_price_rise = closes[-1] > closes[-2] or closes[-2] > closes[-3]
+        return ma_is_not_falling and close_is_above_ma and recent_price_rise
 
     async def classify(self, market: str, logger: Optional[logging.Logger] = None) -> RegimeSnapshot:
         """오늘 기준 캐시된 분류를 반환. 캐시가 비어 있으면 SQS로 재계산."""
@@ -196,18 +203,19 @@ class MarketRegimeService:
             )
             trend_status = "hard_decline"
         elif net_change_pct < self._cfg.min_net_change_pct:
-            is_rising = False
-            fail_detail = (
-                f"MA trend weak: net {net_change_pct:.2f}% < {self._cfg.min_net_change_pct:.2f}% "
-                f"({first_ma:.2f} -> {last_ma:.2f})"
-            )
-            trend_status = "weak_trend"
+            if self._is_recovery_ready(closes, ma_values):
+                trend_status = "recovery"
+            else:
+                is_rising = False
+                fail_detail = (
+                    f"MA trend weak: net {net_change_pct:.2f}% < {self._cfg.min_net_change_pct:.2f}% "
+                    f"({first_ma:.2f} -> {last_ma:.2f})"
+                )
+                trend_status = "weak_trend"
         elif max_daily_drop_pct < self._cfg.daily_dip_tolerance_pct:
             trend_status = "uptrend_under_pressure"
 
         recovery_earliest_days: Optional[int] = None
-        recovery_target_ma: Optional[float] = None
-        recovery_target_close: Optional[float] = None
         next_close_floor: Optional[float] = None
         if not is_rising:
             # 다음 MA는 가장 오래된 20일 창 종가가 빠지고 다음 확정 종가가 들어온다.
@@ -224,21 +232,6 @@ class MarketRegimeService:
                 if change < self._cfg.hard_decline_pct
             ]
             recovery_earliest_days = max(hard_decline_indexes, default=1)
-            # recovery_earliest_days 뒤의 4개 MA 창은 기존 MA 중 해당 index부터
-            # 시작한다. 마지막 MA가 이 값 이상이면 3일 순변화 조건을 충족한다.
-            recovery_reference_ma = ma_values[recovery_earliest_days]
-            recovery_target_ma = recovery_reference_ma * (1 + self._cfg.min_net_change_pct / 100)
-            # 최초 전환일까지 이전 종가가 현재 종가와 같다고 가정하고, 마지막 종가 하나로
-            # 목표 MA를 충족시키는 데 필요한 종가를 계산한다.
-            replacement_count = recovery_earliest_days
-            outgoing_closes = closes[-period:-period + replacement_count]
-            assumed_intermediate_closes = closes[-1] * (replacement_count - 1)
-            recovery_target_close = (
-                period * recovery_target_ma
-                - (sum(closes[-period:]) - sum(outgoing_closes))
-                - assumed_intermediate_closes
-            )
-
         snap = RegimeSnapshot(
             market=market,
             trend_status=trend_status,
@@ -252,8 +245,6 @@ class MarketRegimeService:
             data_date=data_date,
             current_close=round(closes[-1], 2),
             recovery_earliest_days=recovery_earliest_days,
-            recovery_target_ma=round(recovery_target_ma, 2) if recovery_target_ma is not None else None,
-            recovery_target_close=round(recovery_target_close, 2) if recovery_target_close is not None else None,
             next_close_floor=round(next_close_floor, 2) if next_close_floor is not None else None,
         )
         logger.debug({
