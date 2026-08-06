@@ -308,6 +308,7 @@ _MA_PROXIMITY_LOWER_PCT = -2.0
 _MA_PROXIMITY_UPPER_PCT = 4.0
 _MA_NEAR_MISS_MAX_EXCESS_PCT = 4.0
 _MAX_EXECUTION_QUALITY_ROWS = 5
+_MAX_SAME_DAY_EXIT_VIOLATIONS_SHOWN = 5
 
 
 def _to_float(value: Any) -> Optional[float]:
@@ -491,6 +492,7 @@ class StrategyLogReportService:
         self._profitability_gate_config = profitability_gate_config
         self._last_execution_quality_candidates: List[dict] = []
         self._last_strategy_degradation_candidates: List[dict] = []
+        self._last_same_day_exit_violations: List[dict] = []
         self._last_operational_decision_report: str = ""
 
     def get_last_execution_quality_candidates(self) -> List[dict]:
@@ -500,6 +502,10 @@ class StrategyLogReportService:
     def get_last_strategy_degradation_candidates(self) -> List[dict]:
         """최근 generate_report 실행에서 산출된 전략 성과 저하 후보 목록."""
         return list(self._last_strategy_degradation_candidates)
+
+    def get_last_same_day_exit_violations(self) -> List[dict]:
+        """최근 generate_report 기준 '당일청산 규칙인데 마감 후 보유 중'인 포지션."""
+        return list(self._last_same_day_exit_violations)
 
     def get_last_operational_decision_report(self) -> str:
         """최근 generate_report 실행에서 산출된 운영 의사결정 요약."""
@@ -1429,6 +1435,83 @@ class StrategyLogReportService:
         match = re.search(r"'([^']+)'", regime_decomposition_section)
         return match.group(1) if match else "단일"
 
+    @staticmethod
+    def _format_same_day_exit_violation_lines(violations: List[dict]) -> List[str]:
+        if not violations:
+            return []
+        lines = [f"• 🚨 당일청산 미이행 {len(violations)}건 — 강제청산 실행/잔량 즉시 확인"]
+        for item in violations[:_MAX_SAME_DAY_EXIT_VIOLATIONS_SHOWN]:
+            code = str(item.get("code") or "").strip()
+            name = _esc(item.get("name") or code or "종목 미상")
+            details = [_esc(_strategy_display_label(item.get("strategy")))]
+            details.append(f"{name}({_esc(code)})" if code else name)
+            qty = _to_int(item.get("qty"), default=0)
+            if qty > 0:
+                details.append(f"잔량 {qty}주")
+            holding_days = item.get("holding_days")
+            if isinstance(holding_days, int):
+                details.append(f"보유 {holding_days}일")
+            lines.append(f"  - {' · '.join(details)}")
+        rest = len(violations) - _MAX_SAME_DAY_EXIT_VIOLATIONS_SHOWN
+        if rest > 0:
+            lines.append(f"  - 외 {rest}건")
+        return lines
+
+    def _detect_same_day_exit_violations(self, target_date: str) -> List[dict]:
+        """당일청산 규칙(`trailing_rule=same_day_*`)인데 마감 후에도 HOLD 인 포지션.
+
+        강제청산이 실행되지 않으면 장부는 정상으로 보이고(HOLD 는 유효한 상태) 아무
+        경보도 울리지 않는다. 실제로 절반 유출 결함은 3주간 "고아가 이상하게 는다"는
+        간접 신호로만 드러났다. 규칙과 상태의 모순을 직접 본다.
+
+        판정 근거는 거래 레코드에 저장된 `trailing_rule` 이다 — 스케줄러 설정
+        (`force_exit_on_close`)을 참조하지 않으므로 리포트가 전략 구성에 결합되지 않고,
+        규칙이 바뀐 뒤 진입한 건과 이전 건이 각자의 규칙으로 판정된다.
+        """
+        if self._virtual_trade_service is None:
+            return []
+        try:
+            holds = self._virtual_trade_service.get_holds() or []
+        except Exception:
+            return []
+
+        violations: List[dict] = []
+        for hold in holds:
+            rule = str(hold.get("trailing_rule") or "")
+            if not rule.startswith("same_day"):
+                continue
+            code = str(hold.get("code") or "").strip()
+            violations.append({
+                "strategy": hold.get("strategy") or "전략 미상",
+                "code": code,
+                "name": hold.get("name") or code,
+                "qty": _to_int(hold.get("qty"), default=0),
+                "buy_date": hold.get("buy_date"),
+                "trailing_rule": rule,
+                "holding_days": self._holding_days(hold.get("buy_date"), target_date),
+            })
+        return violations
+
+    @staticmethod
+    def _holding_days(buy_date: Any, target_date: str) -> Optional[int]:
+        """진입일 ~ 리포트 기준일 경과일수. 파싱 실패 시 None."""
+        raw = str(buy_date or "").strip()[:10]
+        if not raw:
+            return None
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y%m%d"):
+            try:
+                bought = datetime.strptime(raw, fmt).date()
+                break
+            except ValueError:
+                continue
+        else:
+            return None
+        try:
+            target = datetime.strptime(_fmt_date(target_date), "%Y-%m-%d").date()
+        except ValueError:
+            return None
+        return max((target - bought).days, 0)
+
     def _same_day_closed_codes(self, target_date: str) -> Set[str]:
         """target_date 에 청산된 종목코드. 진입분이 관리 대상인지 판정하는 데 쓴다."""
         if self._virtual_trade_service is None:
@@ -1459,6 +1542,7 @@ class StrategyLogReportService:
         execution_quality_candidates: List[dict],
         warnings_section: Optional[str],
         same_day_closed_codes: Optional[Set[str]] = None,
+        same_day_exit_violations: Optional[List[dict]] = None,
     ) -> str:
         lines = [f"<b>🧭 [{_fmt_date(target_date)}] 운영 의사결정 요약</b>"]
 
@@ -1511,6 +1595,10 @@ class StrategyLogReportService:
             lines.append("• 전략 확대 후보: 없음 — 표본/수익성 게이트 기준 미충족")
             if multiple_weak:
                 lines.append("• 검증 리스크: Deflated Sharpe 약함")
+
+        # 규칙과 상태의 모순 — 강제청산 미이행은 장부상 정상이라 다른 경보에 안 걸린다.
+        for line in self._format_same_day_exit_violation_lines(same_day_exit_violations or []):
+            lines.append(line)
 
         broker_count = self._extract_broker_reconciled_count(overnight_exposure_section)
         if broker_count is not None:
@@ -1981,6 +2069,8 @@ class StrategyLogReportService:
         date_prefix = f"{target_date[:4]}-{target_date[4:6]}-{target_date[6:8]}"
         self._last_execution_quality_candidates = []
         self._last_strategy_degradation_candidates = []
+        # 전략 로그가 없는 날에도 미청산 잔량은 남아 있을 수 있다 — 두 경로 모두에서 본다.
+        self._last_same_day_exit_violations = self._detect_same_day_exit_violations(target_date)
         strategy_files = self._find_strategy_files()
 
         if not strategy_files:
@@ -1995,6 +2085,7 @@ class StrategyLogReportService:
                 degradation_section=None,
                 execution_quality_candidates=[],
                 warnings_section=None,
+                same_day_exit_violations=self._last_same_day_exit_violations,
             )
             return (
                 f"<b>📊 [{_fmt_date(target_date)}] 전략 실행 요약</b>\n\n"
@@ -2296,6 +2387,7 @@ class StrategyLogReportService:
             execution_quality_candidates=self.get_last_execution_quality_candidates(),
             warnings_section=warnings_section,
             same_day_closed_codes=self._same_day_closed_codes(target_date),
+            same_day_exit_violations=self._last_same_day_exit_violations,
         )
 
         if not active_sections:

@@ -1807,6 +1807,92 @@ async def test_new_entry_line_reports_no_target_when_all_closed_same_day(tmp_pat
     assert "신규 진입 1건 — 전량 당일청산, 관리 대상 없음" in decision
 
 
+# ── 미검출 보완: 당일청산 미이행 직접 검출 ──────────────────────────────
+
+def _hold(code, name, strategy="래리윌리엄스VBO", buy_date="2026-07-16 09:10:00",
+          trailing_rule="same_day_eod_or_stop", qty=15):
+    return {"strategy": strategy, "code": code, "name": name, "qty": qty,
+            "buy_price": 75000, "buy_date": buy_date, "status": "HOLD",
+            "trailing_rule": trailing_rule}
+
+
+@pytest.mark.asyncio
+async def test_same_day_exit_violation_detected_when_position_survives_close(tmp_path):
+    """당일청산 규칙 포지션이 마감 후에도 HOLD 면 강제청산 미이행이다.
+
+    강제청산 절반 유출은 장부상 정상이라 무경보였고, 발견 경로가 "고아가 이상하게
+    는다"는 간접 신호뿐이었다 — 직접 검출을 세운다.
+    """
+    decision = await _decision_for(
+        tmp_path,
+        virtual_trade_service=_vts(
+            [_buy_trade("475150", "아이엠비디엑스", strategy="래리윌리엄스VBO")],
+            holds=[_hold("475150", "아이엠비디엑스")],
+        ),
+    )
+
+    assert "당일청산 미이행" in decision
+    assert "아이엠비디엑스(475150)" in decision
+
+
+@pytest.mark.asyncio
+async def test_same_day_exit_violation_absent_for_multiday_strategy(tmp_path):
+    """멀티데이 보유 전략의 오버나이트는 정상 — 경고 대상이 아니다."""
+    decision = await _decision_for(
+        tmp_path,
+        virtual_trade_service=_vts(
+            [_buy_trade("005930", "삼성전자", strategy="오닐포켓피벗")],
+            holds=[_hold("005930", "삼성전자", strategy="오닐포켓피벗", trailing_rule=None)],
+        ),
+    )
+
+    assert "당일청산 미이행" not in decision
+
+
+@pytest.mark.asyncio
+async def test_same_day_exit_violation_reports_holding_days(tmp_path):
+    """전일 이전 진입분이 남아 있으면 더 심각하다 — 보유일수를 함께 낸다."""
+    decision = await _decision_for(
+        tmp_path,
+        virtual_trade_service=_vts(
+            [], holds=[_hold("475150", "아이엠비디엑스", buy_date="2026-07-14 09:10:00")],
+        ),
+    )
+
+    assert "당일청산 미이행" in decision
+    assert "2일" in decision
+
+
+@pytest.mark.asyncio
+async def test_same_day_exit_violations_exposed_via_accessor(tmp_path):
+    log_dir = tmp_path / "strategies"
+    log_dir.mkdir(exist_ok=True)
+    _write_log(
+        str(log_dir / "20260716_091000_FirstPullback.log.json"),
+        [{"timestamp": "2026-07-16 09:10:00,000", "level": "INFO",
+          "data": {"event": "scan_with_watchlist", "count": 1}}],
+    )
+    svc = StrategyLogReportService(
+        log_dir=str(log_dir),
+        virtual_trade_service=_vts([], holds=[_hold("475150", "아이엠비디엑스")]),
+    )
+    await svc.generate_report("20260716")
+
+    violations = svc.get_last_same_day_exit_violations()
+    assert len(violations) == 1
+    assert violations[0]["code"] == "475150"
+    assert violations[0]["qty"] == 15
+
+
+@pytest.mark.asyncio
+async def test_no_violation_line_when_no_same_day_holds(tmp_path):
+    decision = await _decision_for(
+        tmp_path, virtual_trade_service=_vts([_buy_trade("005930", "삼성전자")]),
+    )
+
+    assert "당일청산 미이행" not in decision
+
+
 @pytest.mark.asyncio
 async def test_new_entry_line_ignores_other_day_sells(tmp_path):
     """전일 청산 기록은 당일 진입 판정에 영향을 주지 않는다."""
