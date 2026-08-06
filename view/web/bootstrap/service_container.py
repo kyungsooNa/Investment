@@ -33,6 +33,7 @@ from services.ai_usage_limiter import AiUsageLimiter
 from services.ai_analysis_service import AIAnalysisService
 from services.ai_disclosure_analyzer import AiDisclosureAnalyzer
 from services.ai_stock_analyzer import AiStockAnalyzer
+from services.premium_watchlist_ai_analysis_service import PremiumWatchlistAiAnalysisService
 from services.ai_news_analyzer import AiNewsAnalyzer
 from services.stock_news_collector_service import StockNewsCollectorService
 from services.dart_disclosure_client import DartDisclosureClient
@@ -514,6 +515,19 @@ class ServiceContainer:
                 classification_repository=getattr(ctx, "theme_classification_repository", None),
             )
             if needs_batch:
+                premium_watchlist_ai_service = None
+                if ctx.ai_stock_analyzer:
+                    premium_watchlist_ai_service = PremiumWatchlistAiAnalysisService(
+                        ai_stock_analyzer=ctx.ai_stock_analyzer,
+                        favorite_service=ctx.favorite_service,
+                        stock_code_repository=ctx.stock_code_repository,
+                        stock_query_service=ctx.stock_query_service,
+                        minervini_stage_service=getattr(ctx, "minervini_stage_service", None),
+                        rs_rating_service=getattr(ctx, "rs_rating_service", None),
+                        dart_disclosure_repository=getattr(ctx, "dart_disclosure_repository", None),
+                        stock_news_collector=getattr(ctx, "stock_news_collector", None),
+                        logger=ctx.logger,
+                    )
                 ctx.premium_watchlist_generator_task = PremiumWatchlistGeneratorTask(
                     universe_service=ctx.oneil_universe_service,
                     market_calendar_service=ctx._mcs,
@@ -522,6 +536,7 @@ class ServiceContainer:
                     logger=ctx.logger,
                     worker_pool=ctx.worker_pool,
                     telegram_reporter=getattr(ctx, 'telegram_reporter', None),
+                    premium_watchlist_ai_service=premium_watchlist_ai_service,
                 )
             else:
                 ctx.premium_watchlist_generator_task = None
