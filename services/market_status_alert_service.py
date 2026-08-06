@@ -12,6 +12,7 @@ class MarketStatusAlertService:
 
     _MOVE_5_THRESHOLD_PCT = 5.0
     _MOVE_5_RESOLVE_PCT = 4.5
+    _MOVE_5_RESOLVE_CONSECUTIVE_SAMPLES = 3
     _CIRCUIT_KEYWORDS = ("서킷", "circuit", "매매거래중단", "거래중단")
     _SIDECAR_KEYWORDS = ("사이드카", "sidecar")
 
@@ -26,6 +27,7 @@ class MarketStatusAlertService:
         self._logger = logger or logging.getLogger(__name__)
         self._active_keys_by_code: dict[str, set[str]] = {}
         self._active_index_keys_by_code: dict[str, set[str]] = {}
+        self._move_5_recovery_samples_by_code: dict[str, int] = {}
 
     async def on_market_status(self, data: dict[str, Any]) -> None:
         """StreamingService handler entrypoint."""
@@ -86,9 +88,13 @@ class MarketStatusAlertService:
         direction = "up" if change_rate >= 0 else "down"
         active_keys = self._active_index_keys_by_code.setdefault(index_code, set())
         expected_keys: set[str] = set()
+        active_move_5_keys = {
+            key for key in active_keys if key.startswith("market_index:move_5:")
+        }
 
         move_5_key = f"market_index:move_5:{direction}:{index_code}"
         if abs(change_rate) >= self._MOVE_5_THRESHOLD_PCT:
+            self._move_5_recovery_samples_by_code.pop(index_code, None)
             expected_keys.add(move_5_key)
             await self._report_index_alert(
                 key=move_5_key, severity="error",
@@ -96,10 +102,19 @@ class MarketStatusAlertService:
                 index_code=index_code, index_name=index_name, change_rate=change_rate,
                 threshold_pct=self._MOVE_5_THRESHOLD_PCT, event_type="move_5",
             )
-        elif abs(change_rate) > self._MOVE_5_RESOLVE_PCT and move_5_key in active_keys:
-            # 경계값 부근의 1분 단위 등락으로 경보/해제가 반복되지 않도록,
-            # 발동 후에는 충분히 회복할 때까지 같은 방향의 경보를 유지한다.
-            expected_keys.add(move_5_key)
+        elif active_move_5_keys:
+            if abs(change_rate) > self._MOVE_5_RESOLVE_PCT:
+                # 경계값 부근의 1분 단위 등락으로 경보/해제가 반복되지 않도록,
+                # 발동 후에는 충분히 회복할 때까지 같은 방향의 경보를 유지한다.
+                self._move_5_recovery_samples_by_code.pop(index_code, None)
+                expected_keys.update(active_move_5_keys)
+            else:
+                recovery_samples = self._move_5_recovery_samples_by_code.get(index_code, 0) + 1
+                if recovery_samples < self._MOVE_5_RESOLVE_CONSECUTIVE_SAMPLES:
+                    self._move_5_recovery_samples_by_code[index_code] = recovery_samples
+                    expected_keys.update(active_move_5_keys)
+                else:
+                    self._move_5_recovery_samples_by_code.pop(index_code, None)
         if change_rate <= -8.0:
             key = f"market_index:fall_8:{index_code}"
             expected_keys.add(key)
