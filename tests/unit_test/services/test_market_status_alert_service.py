@@ -165,14 +165,21 @@ async def test_market_status_alert_service_reports_index_thresholds_and_resolves
     await service.on_index_change("0001", "코스피", -1.0)
 
     assert {call.args[1] for call in operator_alert.resolve.await_args_list} == {
+        "market_index:fall_8:0001",
+    }
+
+    await service.on_index_change("0001", "코스피", -1.0)
+    await service.on_index_change("0001", "코스피", -1.0)
+
+    assert {call.args[1] for call in operator_alert.resolve.await_args_list} == {
         "market_index:move_5:down:0001",
         "market_index:fall_8:0001",
     }
 
 
 @pytest.mark.asyncio
-async def test_market_status_alert_service_keeps_move_5_alert_active_until_recovery_buffer():
-    """-5% 경보는 -4.5% 이상 회복 전까지 유지해 경계값 반복 알림을 막는다."""
+async def test_market_status_alert_service_resolves_move_5_after_three_recovery_samples():
+    """-5% 경보는 정상 범위가 3회 연속 관측되어야 해제한다."""
     operator_alert = AsyncMock()
     service = MarketStatusAlertService(
         operator_alert_service=operator_alert,
@@ -186,6 +193,37 @@ async def test_market_status_alert_service_keeps_move_5_alert_active_until_recov
     operator_alert.resolve.assert_not_awaited()
 
     await service.on_index_change("0001", "코스피", -4.50)
+    await service.on_index_change("0001", "코스피", -4.40)
+
+    operator_alert.resolve.assert_not_awaited()
+
+    await service.on_index_change("0001", "코스피", -4.30)
+
+    operator_alert.resolve.assert_awaited_once_with(
+        AlertSource.MARKET_STATUS,
+        "market_index:move_5:down:0001",
+        "지수 등락률 정상화",
+    )
+
+
+@pytest.mark.asyncio
+async def test_market_status_alert_service_resets_move_5_recovery_count_on_relapse():
+    """회복 확인 중 다시 -5%에 닿으면 해제 확인 횟수를 처음부터 센다."""
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        logger=MagicMock(),
+    )
+
+    await service.on_index_change("0001", "코스피", -5.03)
+    await service.on_index_change("0001", "코스피", -4.40)
+    await service.on_index_change("0001", "코스피", -5.01)
+    await service.on_index_change("0001", "코스피", -4.40)
+    await service.on_index_change("0001", "코스피", -4.30)
+
+    operator_alert.resolve.assert_not_awaited()
+
+    await service.on_index_change("0001", "코스피", -4.20)
 
     operator_alert.resolve.assert_awaited_once_with(
         AlertSource.MARKET_STATUS,
