@@ -41,9 +41,20 @@ async def test_execute_runs_both_when_not_done():
     task._basic_last_collected_date = None
     task._last_collected_date = None
 
-    task.refresh_basic_ranking = AsyncMock()
-    task.refresh_investor_ranking = AsyncMock()
-    task.prewarm_period_ranking = AsyncMock()
+    execution_order = []
+
+    async def refresh_basic():
+        execution_order.append("basic")
+
+    async def refresh_investor():
+        execution_order.append("investor")
+
+    async def prewarm_period(_date):
+        execution_order.append("period")
+
+    task.refresh_basic_ranking = AsyncMock(side_effect=refresh_basic)
+    task.refresh_investor_ranking = AsyncMock(side_effect=refresh_investor)
+    task.prewarm_period_ranking = AsyncMock(side_effect=prewarm_period)
 
     await task.execute({"date": "20250417"})
 
@@ -52,6 +63,7 @@ async def test_execute_runs_both_when_not_done():
     task.prewarm_period_ranking.assert_awaited_once_with("20250417")
     assert task._basic_last_collected_date == "20250417"
     assert task._last_collected_date == "20250417"
+    assert execution_order == ["basic", "period", "investor"]
 
 
 async def test_execute_runs_only_investor_if_basic_done():
