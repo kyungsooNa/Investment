@@ -134,6 +134,25 @@ async def test_send_ranking_report_skips_same_trading_date_after_restart(tmp_pat
     restarted_reporter.send_ranking_report.assert_not_called()
 
 
+async def test_send_period_ranking_report_sends_five_day_ranking_once(tmp_path):
+    reporter = MagicMock()
+    reporter.send_period_investor_ranking_report = AsyncMock(return_value=True)
+    task = _make_task(
+        telegram_reporter=reporter,
+        ranking_report_state_path=str(tmp_path / "ranking_report_state.json"),
+    )
+    task._period_ranking_cache[("20260722", 5)] = [
+        {"hts_kor_isnm": "SK하이닉스", "combined_period_ntby_tr_pbmn_won": "3000000000"},
+    ]
+
+    await task._send_period_ranking_report_once("20260722", 5)
+    await task._send_period_ranking_report_once("20260722", 5)
+
+    reporter.send_period_investor_ranking_report.assert_awaited_once_with(
+        task._period_ranking_cache[("20260722", 5)], report_date="20260722", days=5,
+    )
+
+
 async def test_startup_self_heal_recovers_missed_investor_report_and_period_ranking():
     task = _make_task()
     mcs = MagicMock()

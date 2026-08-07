@@ -546,13 +546,15 @@ class RankingTask(AfterMarketTask):
             directory = os.path.dirname(self._ranking_report_state_path)
             if directory:
                 os.makedirs(directory, exist_ok=True)
+            state = {}
+            try:
+                with open(self._ranking_report_state_path, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+            except FileNotFoundError:
+                pass
+            state["last_ranking_report_date"] = str(target_date)
             with open(self._ranking_report_state_path, "w", encoding="utf-8") as f:
-                json.dump(
-                    {"last_ranking_report_date": str(target_date)},
-                    f,
-                    ensure_ascii=False,
-                    indent=2,
-                )
+                json.dump(state, f, ensure_ascii=False, indent=2)
         except Exception as e:
             self._logger.warning(f"랭킹 리포트 발송 상태 저장 실패: {e}")
 
@@ -576,6 +578,53 @@ class RankingTask(AfterMarketTask):
             self._logger.info("텔레그램 랭킹 리포트 전송 완료")
         except Exception as e:
             self._logger.error(f"텔레그램 랭킹 리포트 전송 중 오류: {e}", exc_info=True)
+
+    def _load_last_period_ranking_report_date(self) -> Optional[str]:
+        try:
+            with open(self._ranking_report_state_path, "r", encoding="utf-8") as f:
+                value = json.load(f).get("last_period_ranking_report_date")
+            return str(value) if value else None
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            self._logger.warning(f"기간수급 리포트 발송 상태 로드 실패: {e}")
+            return None
+
+    def _save_last_period_ranking_report_date(self, target_date: str) -> None:
+        try:
+            directory = os.path.dirname(self._ranking_report_state_path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            state = {}
+            try:
+                with open(self._ranking_report_state_path, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+            except FileNotFoundError:
+                pass
+            state["last_period_ranking_report_date"] = str(target_date)
+            with open(self._ranking_report_state_path, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self._logger.warning(f"기간수급 리포트 발송 상태 저장 실패: {e}")
+
+    async def _send_period_ranking_report_once(self, target_date: str, days: int) -> None:
+        if not self._telegram_reporter:
+            return
+        if self._load_last_period_ranking_report_date() == str(target_date):
+            self._logger.info(f"텔레그램 기간수급 리포트 이미 전송 완료 ({target_date}) — 스킵")
+            return
+        results = self._period_ranking_cache.get((str(target_date), days), [])
+        if not results:
+            self._logger.warning(f"기간수급 리포트 전송 보류: {target_date}, {days}일 결과 없음")
+            return
+        try:
+            result = await self._telegram_reporter.send_period_investor_ranking_report(
+                results, report_date=str(target_date), days=days,
+            )
+            if result is not False:
+                self._save_last_period_ranking_report_date(target_date)
+        except Exception as e:
+            self._logger.error(f"텔레그램 기간수급 리포트 전송 중 오류: {e}", exc_info=True)
 
     @staticmethod
     def _build_ranking(results: List[Dict], pbmn_field: str, top_n: int = 30):
@@ -717,6 +766,8 @@ class RankingTask(AfterMarketTask):
         ]
         if cache_key in self._period_ranking_cache:
             self._logger.info(f"기간수급 랭킹 캐시 예열 완료: {target_date}, {warmed}일")
+            if days == self.DEFAULT_PERIOD_RANKING_DAYS:
+                await self._send_period_ranking_report_once(str(target_date), days)
         else:
             self._logger.warning(f"기간수급 랭킹 캐시 예열 미완료: {target_date}, {days}일")
 

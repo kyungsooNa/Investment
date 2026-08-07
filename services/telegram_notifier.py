@@ -402,6 +402,40 @@ class TelegramReporter:
             await self._send_message(current_message)
 
     @_serialized_report_send
+    async def send_period_investor_ranking_report(
+        self,
+        ranking_data: List[Dict],
+        report_date: str,
+        days: int = 5,
+        limit: int = 10,
+    ) -> bool:
+        """외국인·기관·프로그램 합산 기간수급 순매수 상위를 전송한다."""
+        if not ranking_data:
+            return False
+
+        ranked = sorted(
+            ranking_data,
+            key=lambda item: int(item.get("combined_period_ntby_tr_pbmn_won") or 0),
+            reverse=True,
+        )[:limit]
+        lines = [
+            f"💰 <b>{days}거래일 기간수급 순매수 ({report_date})</b>",
+            "<pre>",
+            "순 종목          외국인  기관  프로그램  합산(억)",
+        ]
+        for rank, item in enumerate(ranked, 1):
+            name = str(item.get("hts_kor_isnm") or "-")[:8]
+            foreign = int(item.get("frgn_period_ntby_tr_pbmn_won") or 0) / 100_000_000
+            institution = int(item.get("orgn_period_ntby_tr_pbmn_won") or 0) / 100_000_000
+            program = int(item.get("program_period_ntby_tr_pbmn_won") or 0) / 100_000_000
+            combined = int(item.get("combined_period_ntby_tr_pbmn_won") or 0) / 100_000_000
+            lines.append(
+                f"{rank:<2} {name:<8} {foreign:>6,.0f} {institution:>5,.0f} {program:>7,.0f} {combined:>8,.0f}"
+            )
+        lines.append("</pre>")
+        return await self._send_message("\n".join(lines))
+
+    @_serialized_report_send
     async def send_ytd_ranking_report(
         self,
         ranking_data: List[Dict],
