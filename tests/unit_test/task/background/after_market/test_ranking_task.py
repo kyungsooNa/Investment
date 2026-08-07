@@ -1698,14 +1698,28 @@ async def test_scheduler_refreshes_when_no_prior_update(bg_service, mock_deps):
     
     bg_service._basic_last_collected_date = None
     bg_service._last_collected_date = None
-    bg_service.refresh_basic_ranking = AsyncMock()
-    bg_service.refresh_investor_ranking = AsyncMock()
+    execution_order = []
+
+    async def refresh_basic():
+        execution_order.append("basic")
+
+    async def prewarm_period(_date):
+        execution_order.append("period")
+
+    async def refresh_investor():
+        execution_order.append("investor")
+
+    bg_service.refresh_basic_ranking = AsyncMock(side_effect=refresh_basic)
+    bg_service.prewarm_period_ranking = AsyncMock(side_effect=prewarm_period)
+    bg_service.refresh_investor_ranking = AsyncMock(side_effect=refresh_investor)
 
     date = await market_calendar_service.get_latest_trading_date()
     await bg_service._on_market_closed(date)
 
     bg_service.refresh_basic_ranking.assert_awaited_once()
     bg_service.refresh_investor_ranking.assert_awaited_once()
+    bg_service.prewarm_period_ranking.assert_awaited_once_with(date)
+    assert execution_order == ["basic", "period", "investor"]
 
 
 @pytest.mark.asyncio
