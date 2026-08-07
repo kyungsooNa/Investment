@@ -77,10 +77,9 @@
 **개선포인트 (미착수 — 우선순위 순)**
 
 - [x] **프론트엔드 결과 보존 완료 (2026-08-07)**: 종목별 직전 검토 결과를 메모리에 두고(`_aiNewsCache`), 검토 이력이 있는 종목 상세를 다시 열면 본문·기사목록·신호 배지를 복원한다(상태줄에 `이전 검토 결과` 표기, 버튼은 `다시 검토`). 재요청은 버튼 클릭으로만 발생하며 캐시를 무시하고 새로 호출한다 — 서버·한도 로직 무변경. 새로고침 시 사라지는 세션 캐시로 충분(뉴스 목록이 몇 시간 단위로 정체되므로).
-- [ ] **수집 결과 해시 비교로 AI 스킵** — 스크래핑은 매번 수행(무료)하되 기사 제목 집합이 직전과 같으면 AI를 건너뛰고 이전 결과 재사용. 인메모리 dict로 충분. `by_type` 실측으로 뉴스 소비가 실제로 많다고 확인된 뒤 착수.
-- [ ] **news 전용 하위 한도(`news_daily_limit`)** — 지금은 정할 근거가 없어 넣지 않았다. `GET /api/ai/usage`의 `by_type`을 며칠 실측해 stock/ranking 대비 news 비중을 본 뒤 판단한다(선구현 금지).
+- [x] ~~**수집 결과 해시 비교로 AI 스킵**~~ / ~~**news 전용 하위 한도(`news_daily_limit`)**~~ — **둘 다 드롭 (2026-08-07, `by_type` 실측 근거)**: `data/ai_usage.db` 07-19~08-07 실측에서 `news` 는 전 기간 통틀어 **5건(3일)** 에 불과했다(`stock` 최대 12/일, `disclosure` 5~15/일 — 07-20·21 만 96/100 으로 한도 근접). 두 항목 모두 "뉴스 소비가 많다고 확인되면 착수" 를 조건으로 걸어둔 것이고 그 전제가 실측으로 부정됐다. 프론트 캐시(위 항목)까지 들어간 뒤라 재클릭 낭비도 이미 막혀 있다. 뉴스 소비가 유의미해지면 재검토한다(선구현 금지).
 - [ ] **(조건부·큰 작업) 주기적 백그라운드 수집** — 관심종목 뉴스 폴링. 한도 소비가 관심종목 수 × 주기로 폭증하므로 **중요도 필터가 선행 조건**이며, 사실상 공시 파이프라인(dedup DB·재시도·다이제스트) 규모의 작업이다. 위 3개 항목 이후에 재검토.
-- [ ] **기존 진단 스크립트 리미터 미부착** — `check_ai_key.py`·`check_disclosure_ai.py`는 `AiClient`에 `usage_limiter`를 붙이지 않아 소비가 `/api/ai/usage` 집계에서 빠진다(`check_news_ai.py`는 부착됨). 저위험 정리 과제.
+- [x] **기존 진단 스크립트 리미터 부착 완료 (2026-08-07)** — `check_ai_key.py`·`check_disclosure_ai.py`가 `AiClient` 에 `usage_limiter` 를 붙이지 않아 소비가 `/api/ai/usage` 집계에서 빠지던 것을 해소(`check_news_ai.py` 패턴 준용). `check_ai_key.py` 는 클라이언트 생성을 `_build_client()` 로 분리했고, 한도 소진(`AiUsageLimitExceeded`)은 키·모델·네트워크 실패와 안내를 분리해 오진을 막는다.
 
 주요 파일: `services/stock_news_collector_service.py`, `services/ai_news_analyzer.py`, `services/ai_usage_limiter.py`, `view/web/routes/stock.py`, `view/web/routes/ai.py`, `view/web/static/js/stock.js`, `scripts/check_news_ai.py`, `tests/frontend/run_stock_dom_tests.mjs`
 

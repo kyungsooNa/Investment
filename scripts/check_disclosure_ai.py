@@ -29,6 +29,7 @@ except Exception:
 from repositories.favorite_repository import FavoriteRepository  # noqa: E402
 from services.ai_client import AiClient  # noqa: E402
 from services.ai_disclosure_analyzer import AiDisclosureAnalyzer  # noqa: E402
+from services.ai_usage_limiter import AiUsageLimiter  # noqa: E402
 from services.dart_disclosure_client import DartDisclosureClient  # noqa: E402
 from services.dart_disclosure_rule_service import DartDisclosureRuleService  # noqa: E402
 
@@ -57,15 +58,23 @@ async def _fetch(client, date, max_pages):
 
 
 def _build_ai(ai_cfg: dict):
-    """(AiClient, AiDisclosureAnalyzer) 또는 (None, None) 반환."""
+    """(AiClient, AiDisclosureAnalyzer) 또는 (None, None) 반환.
+
+    앱과 같은 usage_limiter 를 붙여 이 스크립트의 소비도 일일 한도에 집계된다.
+    """
     ai_key = str(ai_cfg.get("api_key") or "")
     if not ai_cfg.get("enabled"):
         return None, None
+    limiter = AiUsageLimiter(
+        daily_request_limit=int(ai_cfg.get("daily_request_limit", 100)),
+        disclosure_reserve=int(ai_cfg.get("disclosure_reserve", 20)),
+    )
     ai_client = AiClient(
         base_url=str(ai_cfg.get("base_url") or _DEFAULT_BASE_URL),
         api_key=ai_key,
         model=str(ai_cfg.get("model") or _DEFAULT_MODEL),
         timeout_sec=float(ai_cfg.get("timeout_sec", 15)),
+        usage_limiter=limiter,
     )
     analyzer = AiDisclosureAnalyzer(ai_client, max_tokens=int(ai_cfg.get("max_tokens", 2048)))
     return ai_client, analyzer
