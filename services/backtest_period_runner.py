@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Protocol, Sequence
+from typing import Callable, Protocol, Sequence
 
 from common.types import Exchange, OrderSide as LiveOrderSide
 from common.trade_journal_schema import normalize_backtest_decision, normalize_backtest_execution
@@ -75,6 +75,9 @@ class BacktestPeriodRunnerConfig:
     warn_market_concentration_pct: float | None = 70.0
     warn_sector_concentration_pct: float | None = 50.0
     warn_theme_concentration_pct: float | None = 50.0
+    # 라이브 StrategyScheduler 와 동일한 진입 게이트. #766 이 이 게이트를 전략에서
+    # 스케줄러로 옮겼는데 백테스트는 스케줄러를 거치지 않아 게이트가 사라졌다.
+    market_timing_entry_gate: bool = True
 
 
 @dataclass
@@ -104,6 +107,8 @@ class BacktestPeriodRunner:
         risk_gate_service: BacktestRiskGate | None = None,
         date_context_targets: Sequence[object] | None = None,
         mtm_bar_provider: MarkToMarketBarProvider | None = None,
+        market_regime_service=None,
+        market_resolver: Callable[[str], str] | None = None,
     ) -> None:
         self._strategy = strategy
         self._bar_provider = bar_provider
@@ -117,6 +122,8 @@ class BacktestPeriodRunner:
         self._risk_gate_service = risk_gate_service
         self._date_context_targets = list(date_context_targets or [])
         self._mtm_bar_provider = mtm_bar_provider
+        self._market_regime_service = market_regime_service
+        self._market_resolver = market_resolver
         self._position_excursions: dict[str, dict[str, object]] = {}
 
     async def run(self, dates: Sequence[str]) -> BacktestPeriodRunResult:
@@ -161,6 +168,9 @@ class BacktestPeriodRunner:
             signal for signal in await self._strategy.scan()
             if signal.action == "BUY"
         ]
+        buy_signals = await self._filter_market_timing_blocked_buys(
+            buy_signals, date_ymd, result
+        )
         sized_signals: list[TradeSignal] = []
         for signal in buy_signals:
             sized_signal = await self._apply_position_sizing(signal, date_ymd, result)
@@ -219,6 +229,43 @@ class BacktestPeriodRunner:
                         portfolio_warnings=decision.warnings,
                     )
                 )
+
+    async def _filter_market_timing_blocked_buys(
+        self,
+        signals: list[TradeSignal],
+        date_ymd: str,
+        result: BacktestPeriodRunResult,
+    ) -> list[TradeSignal]:
+        """레짐이 🔴인 종목의 BUY 를 진입 전에 차단한다 (라이브 스케줄러와 동일 지점).
+
+        `classify_on_date` 로 **그 거래일 기준** 레짐을 쓴다 — 오늘 레짐으로 과거를
+        판정하면 look-ahead 가 된다. 레짐 서비스/resolver 미주입 경로와 조회 실패는
+        라이브와 동일하게 통과시킨다(fail-open) — 게이트 오류로 백테스트가 조용히
+        0거래가 되는 쪽이 더 위험하다.
+        """
+        if not self._config.market_timing_entry_gate:
+            return signals
+        if self._market_regime_service is None or self._market_resolver is None:
+            return signals
+
+        snapshots: dict[str, object] = {}
+        passed: list[TradeSignal] = []
+        for signal in signals:
+            try:
+                market = self._market_resolver(str(signal.code))
+                if market not in snapshots:
+                    snapshots[market] = await self._market_regime_service.classify_on_date(
+                        market, date_ymd
+                    )
+                if getattr(snapshots[market], "is_rising", False):
+                    passed.append(signal)
+                    continue
+                result.journal_records.append(
+                    self._rejected_signal_record(signal, date_ymd, "market_timing_off")
+                )
+            except Exception:
+                passed.append(signal)
+        return passed
 
     async def _execute_signal(
         self,

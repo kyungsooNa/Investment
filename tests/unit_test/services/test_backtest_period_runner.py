@@ -662,3 +662,119 @@ async def test_period_runner_consecutive_day_buy_sell_invokes_mtm_provider_but_u
     assert mtm_provider.calls == [
         {"code": "005930", "start_ymd": "20260501", "end_ymd": "20260502"},
     ]
+
+
+# ── 마켓타이밍 게이트 parity (todo M-7) ────────────────────────────────────
+#
+# #766 이 게이트를 전략 → StrategyScheduler 로 옮기면서, 스케줄러를 거치지 않는
+# 백테스트 경로에서는 게이트가 통째로 사라졌다. 백테스트가 라이브보다 느슨하면
+# 성과가 과대평가된다.
+
+
+class _FakeRegimeSnapshot:
+    def __init__(self, is_rising: bool) -> None:
+        self.is_rising = is_rising
+        self.trend_status = "rising" if is_rising else "falling"
+
+
+class _FakeRegimeService:
+    def __init__(self, is_rising: bool = True, raises: bool = False) -> None:
+        self._is_rising = is_rising
+        self._raises = raises
+        self.calls: list[tuple[str, str]] = []
+
+    async def classify_on_date(self, market: str, date: str, logger=None):
+        self.calls.append((market, date))
+        if self._raises:
+            raise RuntimeError("index ohlcv unavailable")
+        return _FakeRegimeSnapshot(self._is_rising)
+
+
+def _gate_runner(*, regime_service, market="KOSPI", gate=True):
+    strategy = FakeStrategy()
+    provider = StaticBarProvider({
+        ("20260501", "005930", "BUY"): BacktestBar(
+            "20260501 091000", 70_000, 70_500, 69_500, 70_200, 1_000
+        ),
+    })
+    ledger = BacktestPortfolioLedger(initial_cash=1_000_000)
+    return BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=provider,
+        ledger=ledger,
+        market_regime_service=regime_service,
+        market_resolver=lambda code: market,
+        config=BacktestPeriodRunnerConfig(market_timing_entry_gate=gate),
+    )
+
+
+@pytest.mark.asyncio
+async def test_market_timing_gate_blocks_buy_when_regime_falling():
+    regime = _FakeRegimeService(is_rising=False)
+    runner = _gate_runner(regime_service=regime)
+
+    result = await runner.run(["20260501"])
+
+    assert result.execution_reports == []
+    assert [r["rejected_reason"] for r in result.journal_records] == ["market_timing_off"]
+
+
+@pytest.mark.asyncio
+async def test_market_timing_gate_allows_buy_when_regime_rising():
+    runner = _gate_runner(regime_service=_FakeRegimeService(is_rising=True))
+
+    result = await runner.run(["20260501"])
+
+    assert [report.order.side.value for report in result.execution_reports] == ["BUY"]
+
+
+@pytest.mark.asyncio
+async def test_market_timing_gate_classifies_on_backtest_date_not_today():
+    """PIT 보장 — 오늘 레짐이 아니라 그 거래일 레짐으로 판정해야 한다."""
+    regime = _FakeRegimeService(is_rising=True)
+    runner = _gate_runner(regime_service=regime)
+
+    await runner.run(["20260501"])
+
+    assert regime.calls == [("KOSPI", "20260501")]
+
+
+@pytest.mark.asyncio
+async def test_market_timing_gate_resolves_market_per_code():
+    regime = _FakeRegimeService(is_rising=False)
+    runner = _gate_runner(regime_service=regime, market="KOSDAQ")
+
+    await runner.run(["20260501"])
+
+    assert regime.calls == [("KOSDAQ", "20260501")]
+
+
+@pytest.mark.asyncio
+async def test_market_timing_gate_skipped_when_regime_service_absent():
+    """기존/테스트 경로 호환 — 레짐 서비스가 없으면 통과시킨다 (라이브와 동일)."""
+    runner = _gate_runner(regime_service=None)
+
+    result = await runner.run(["20260501"])
+
+    assert [report.order.side.value for report in result.execution_reports] == ["BUY"]
+
+
+@pytest.mark.asyncio
+async def test_market_timing_gate_can_be_disabled_by_config():
+    regime = _FakeRegimeService(is_rising=False)
+    runner = _gate_runner(regime_service=regime, gate=False)
+
+    result = await runner.run(["20260501"])
+
+    assert [report.order.side.value for report in result.execution_reports] == ["BUY"]
+    assert regime.calls == []
+
+
+@pytest.mark.asyncio
+async def test_market_timing_gate_fails_open_on_lookup_error():
+    """레짐 조회 실패로 백테스트가 조용히 0거래가 되면 안 된다 (라이브와 동일)."""
+    runner = _gate_runner(regime_service=_FakeRegimeService(raises=True))
+
+    result = await runner.run(["20260501"])
+
+    assert [report.order.side.value for report in result.execution_reports] == ["BUY"]

@@ -235,6 +235,28 @@ def _get_program_provider(stock_query_service: Any) -> Any | None:
     return getattr(market_data_service, "_broker_api_wrapper", None)
 
 
+def _build_market_resolver(logger: Any | None = None) -> Any | None:
+    """종목코드 → "KOSPI"/"KOSDAQ" resolver (마켓타이밍 게이트용).
+
+    라이브 StrategyScheduler 가 `stock_code_repository.is_kosdaq()` 로 판정하는 것과
+    동일하게 맞춘다. 저장소를 못 열면 None 을 반환해 게이트를 통과시킨다 —
+    게이트 배선 실패로 백테스트가 조용히 0거래가 되는 쪽이 더 위험하다.
+    """
+    try:
+        from repositories.stock_code_repository import StockCodeRepository
+
+        repo = StockCodeRepository()
+    except Exception as exc:
+        if logger:
+            logger.warning(f"마켓타이밍 게이트 비활성 — 종목코드 저장소 로드 실패: {exc}")
+        return None
+
+    def resolve(code: str) -> str:
+        return "KOSDAQ" if repo.is_kosdaq(str(code)) else "KOSPI"
+
+    return resolve
+
+
 def _load_pit_provider(path: str | None) -> Any | None:
     """full-records 스냅샷 JSON → PointInTimeUniverseProvider (R-1 생존편향)."""
     if not path:
@@ -1508,6 +1530,10 @@ async def _run(args: argparse.Namespace) -> None:
         microstructure_dir=args.microstructure_dir,
     )
     indicator_service = getattr(sqs, "indicator_service", None)
+    # 라이브 StrategyScheduler 의 마켓타이밍 진입 게이트를 백테스트에서도 적용한다.
+    # (#766 이 게이트를 전략 → 스케줄러로 옮겨 백테스트 경로에서 사라졌다.)
+    market_regime_service = getattr(universe_service, "_regime_svc", None)
+    market_resolver = _build_market_resolver(bootstrap_logger)
     with tempfile.TemporaryDirectory(prefix="period_backtest_") as tmp_dir:
         def make_runner(
             *,
@@ -1604,6 +1630,8 @@ async def _run(args: argparse.Namespace) -> None:
                 risk_gate_service=risk_sizing.risk_gate_service,
                 date_context_targets=[backtest_clock, replay_sqs],
                 mtm_bar_provider=mtm_bar_provider,
+                market_regime_service=market_regime_service,
+                market_resolver=market_resolver,
             )
 
         if args.walk_forward:
