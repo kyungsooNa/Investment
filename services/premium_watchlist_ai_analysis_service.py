@@ -68,6 +68,12 @@ class PremiumWatchlistAiAnalysisService:
                 }
             except Exception as exc:
                 self._logger.warning("장 마감 AI 분석 실패 (%s): %s", code, exc)
+                results[code] = {
+                    "name": name,
+                    "source": source,
+                    "signal": "-",
+                    "signal_reason": "AI 분석 요청 제한으로 다음 리포트에서 재시도합니다.",
+                }
         return results
 
     async def _build_context(self, code: str, name: str, source: str, stock: dict, report_date: str) -> dict:
