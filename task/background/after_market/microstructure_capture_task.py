@@ -11,7 +11,10 @@ from services.backtest_microstructure_quality import (
 )
 from services.notification_service import NotificationCategory, NotificationLevel
 from task.background.after_market.after_market_task_base import AfterMarketTask
-from task.background.capture_candidates import resolve_capture_codes_with_sources
+from task.background.capture_candidates import (
+    price_observed_state_key,
+    resolve_capture_codes_with_sources,
+)
 
 
 class MicrostructureCaptureTask(AfterMarketTask):
@@ -89,6 +92,35 @@ class MicrostructureCaptureTask(AfterMarketTask):
 
     def get_progress(self) -> dict:
         return dict(self._progress)
+
+    def _annotate_execution_strength_missing_reasons(
+        self, payload: dict, trade_date: str
+    ) -> None:
+        """체결강도 결손 종목을 '미구독' vs '구독했는데 무틱' 으로 분류해 기록한다.
+
+        체결강도·호가 시계열은 PRICE 체결 틱에 무임승차하므로 결손 원인이 두 가지다.
+        장중 구독 태스크가 남긴 당일 PRICE 관측 기록이 있을 때만 분류하고, 없으면
+        추측하지 않고 생략한다. (todo 1-5)
+        """
+        if self._scheduler_store is None:
+            return
+        metadata = payload.get("metadata") or {}
+        fallback_codes = metadata.get("execution_strength_fallback_codes") or []
+        if not fallback_codes:
+            return
+        try:
+            raw = self._scheduler_store.load_keyed(price_observed_state_key(trade_date))
+        except Exception as exc:
+            self._logger.warning(f"{self.task_name}: PRICE 관측 기록 로드 실패 — {exc}")
+            return
+        if not raw:
+            return
+        observed = {code for code in str(raw).split(",") if code}
+        quality = metadata.setdefault("quality", {})
+        quality["execution_strength_missing_reasons"] = {
+            code: ("subscribed_no_tick" if code in observed else "not_subscribed")
+            for code in fallback_codes
+        }
 
     def _load_last_captured_date(self) -> Optional[str]:
         if self._scheduler_store is None:
@@ -169,6 +201,9 @@ class MicrostructureCaptureTask(AfterMarketTask):
                     "orderbook_min_rows_per_code"
                 ],
             }
+            self._annotate_execution_strength_missing_reasons(
+                payload, latest_trading_date
+            )
             self._service.write_overlay_files(payload, self._output_dir)
             self._last_captured_date = latest_trading_date
             self._save_last_captured_date(latest_trading_date)

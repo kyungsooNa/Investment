@@ -8,7 +8,10 @@ from typing import Dict, List, Optional
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from repositories.streaming_stock_repo import StreamingStockRepo, StreamingType
 from services.subscription_policy import SubscriptionPriority
-from task.background.capture_candidates import resolve_capture_codes
+from task.background.capture_candidates import (
+    price_observed_state_key,
+    resolve_capture_codes,
+)
 
 
 class ProgramCaptureSubscriptionTask(SchedulableTask):
@@ -74,6 +77,9 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
         self._synced_window: Optional[str] = None
         self._candidate_count = 0
         self._adopted = False  # 프로세스 시작 후 store 잔재 재편입 1회 수행 여부
+        self._last_candidates: List[str] = []
+        self._observed_date: Optional[str] = None
+        self._observed_price_codes: set = set()
 
     @property
     def task_name(self) -> str:
@@ -173,9 +179,12 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
             now = self._market_clock.get_current_kst_time()
             rotation_window = self._rotation_window_key(today, now)
             if self._synced_window == rotation_window:
+                self._observe_price_subscribed(today)
                 return
             codes = await self._resolve_target_codes()
             self._candidate_count = len(codes)
+            self._last_candidates = list(codes)
+            self._observe_price_subscribed(today)
             codes = self._select_rotation_batch(codes, now)
             pt_codes = [code for code in codes if not self._is_preferred_stock_code(code)]
             price_codes = [code for code in codes if self._is_preferred_stock_code(code)]
@@ -217,6 +226,32 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
             self._save_codes([])
             self._save_codes([], self._price_state_key)
             self._logger.info(f"{self.task_name}: 장외 — 캡처 후보 순환 구독 해지")
+
+    def _observe_price_subscribed(self, today: str) -> None:
+        """캡처 후보 중 PRICE 구독이 실제로 활성인 종목을 당일 누적 기록한다.
+
+        체결강도·호가 시계열은 기존 PRICE 체결 틱에 무임승차하므로, 결손 종목이
+        '캡처 후보인데 PRICE 미구독' 인지 '구독했는데 무틱' 인지는 구독 상태를
+        남기지 않으면 사후 구분이 불가능하다. (todo 1-5)
+        """
+        if not self._last_candidates or self._policy is None:
+            return
+        try:
+            status = self._policy.get_status()
+        except Exception as exc:
+            self._logger.warning(f"{self.task_name}: 구독 현황 조회 실패 — {exc}")
+            return
+        active = status.get("active_codes_price") if isinstance(status, dict) else None
+        if not isinstance(active, (list, set, tuple)):
+            return
+        if self._observed_date != today:
+            self._observed_date = today
+            self._observed_price_codes = set()
+        observed = self._observed_price_codes | (set(self._last_candidates) & set(active))
+        if observed == self._observed_price_codes:
+            return
+        self._observed_price_codes = observed
+        self._save_codes(sorted(observed), price_observed_state_key(today))
 
     async def _prune_orphan_pt_desired(self, owned_codes: List[str]) -> None:
         """재시작 시 소유자가 없는 PT desired 잔재를 정리한다 (수동 구독은 보존)."""

@@ -129,6 +129,50 @@ async def test_last_captured_date_persists_across_restart(capture_service, unive
 
 
 @pytest.mark.asyncio
+async def test_es_fallback_codes_split_by_price_subscription_observation(
+    capture_service, universe_service, tmp_path
+):
+    # 체결강도 결손이 '캡처 후보인데 PRICE 미구독' 인지 '구독했는데 무틱(2-4)' 인지
+    # 구분돼야 커버리지 미달의 원인을 사후에 판정할 수 있다.
+    store = _FakeStore()
+    store.save_keyed("capture_price_observed_20260702", "000660")
+    payload = _quality_payload()
+    payload["metadata"]["execution_strength_fallback_codes"] = ["005930", "000660"]
+    capture_service.capture = AsyncMock(return_value=payload)
+
+    task = _make_task(
+        capture_service, tmp_path,
+        universe_service=universe_service, scheduler_store=store,
+    )
+    await task._on_market_closed("20260702")
+
+    written = capture_service.write_overlay_files.call_args[0][0]
+    reasons = written["metadata"]["quality"]["execution_strength_missing_reasons"]
+    assert reasons == {"005930": "not_subscribed", "000660": "subscribed_no_tick"}
+    last_quality = task.get_progress()["last_result"]["quality"]
+    assert last_quality["execution_strength_missing_reasons"] == reasons
+
+
+@pytest.mark.asyncio
+async def test_es_missing_reasons_absent_without_observation_record(
+    capture_service, universe_service, tmp_path
+):
+    # 관측 기록이 없으면(구독 태스크 미가동 등) 추측하지 않고 분류를 생략한다.
+    payload = _quality_payload()
+    payload["metadata"]["execution_strength_fallback_codes"] = ["005930"]
+    capture_service.capture = AsyncMock(return_value=payload)
+
+    task = _make_task(
+        capture_service, tmp_path,
+        universe_service=universe_service, scheduler_store=_FakeStore(),
+    )
+    await task._on_market_closed("20260702")
+
+    written = capture_service.write_overlay_files.call_args[0][0]
+    assert "execution_strength_missing_reasons" not in written["metadata"]["quality"]
+
+
+@pytest.mark.asyncio
 async def test_codes_union_holdings_first_dedup_and_capped(
     capture_service, universe_service, virtual_trade_service, tmp_path
 ):
