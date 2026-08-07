@@ -546,6 +546,28 @@ async def test_send_ytd_ranking_report(telegram_reporter):
     assert "+50.00%" in message
     assert "20260102" in message
 
+
+@pytest.mark.asyncio
+async def test_send_period_investor_ranking_report(telegram_reporter):
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+
+    sent = await telegram_reporter.send_period_investor_ranking_report(
+        [{
+            "hts_kor_isnm": "SK하이닉스",
+            "frgn_period_ntby_tr_pbmn_won": "1000000000",
+            "orgn_period_ntby_tr_pbmn_won": "2000000000",
+            "program_period_ntby_tr_pbmn_won": "3000000000",
+            "combined_period_ntby_tr_pbmn_won": "6000000000",
+        }],
+        report_date="20260807",
+    )
+
+    assert sent is True
+    message = telegram_reporter._send_message.await_args.args[0]
+    assert "5거래일 기간수급 순매수" in message
+    assert "SK하이닉스" in message
+    assert "60" in message
+
 @pytest.mark.asyncio
 async def test_send_ranking_report_splits_message(telegram_reporter):
     """리포트가 너무 길 경우 메시지를 분할해서 전송하는지 검증"""
