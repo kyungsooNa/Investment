@@ -124,6 +124,8 @@ function _formatIndexChange(change, rate) {
 
 // 분봉 응답에만 time 이 담기므로 라벨 형식은 요청한 기간이 아니라 받은 데이터를 보고 정한다.
 function _formatIndexPointLabel(point) {
+    // 서버가 1D 앞에 붙이는 전일 종가 기준점. 날짜가 없으므로 라벨을 따로 준다.
+    if (point.prev) return '전일';
     const time = String(point.time || '');
     if (time.length >= 4) return `${time.slice(0, 2)}:${time.slice(2, 4)}`;
     const date = String(point.date || '');

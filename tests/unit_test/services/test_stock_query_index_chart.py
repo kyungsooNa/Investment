@@ -81,6 +81,45 @@ async def test_index_chart_1d_uses_minute_api_and_keeps_time():
 
 
 @pytest.mark.asyncio
+async def test_index_chart_1d_prepends_previous_close_point():
+    """개장 직후 분봉이 1개뿐이어도 선이 그려지도록 전일 종가를 첫 점으로 붙인다."""
+    broker = MagicMock()
+    broker.inquire_time_indexchartprice = AsyncMock(return_value=_broker_response(
+        summary={
+            "bstp_nmix_prpr": "2650.15",
+            "bstp_nmix_prdy_vrss": "12.30",
+            "bstp_nmix_prdy_ctrt": "0.47",
+        },
+        candles=[
+            {"stck_bsop_date": "20260729", "stck_cntg_hour": "090000", "bstp_nmix_prpr": "2650.15"},
+        ],
+    ))
+
+    result = await _service(broker).get_index_chart("0001", period="1D")
+
+    points = result.data["points"]
+    assert len(points) == 2
+    # 전일 종가 = 현재값 - 전일대비. 별도 API 호출 없이 summary 로 계산한다.
+    assert points[0]["prev"] is True
+    assert points[0]["close"] == pytest.approx(2637.85)
+    assert points[1]["time"] == "090000"
+
+
+@pytest.mark.asyncio
+async def test_index_chart_daily_does_not_prepend_previous_close():
+    """일/주봉은 이미 이전 봉을 담고 있으므로 전일 종가를 덧붙이지 않는다."""
+    broker = MagicMock()
+    broker.inquire_daily_indexchartprice = AsyncMock(return_value=_broker_response(
+        summary={"bstp_nmix_prpr": "2650.15", "bstp_nmix_prdy_vrss": "12.30"},
+        candles=[{"stck_bsop_date": "20260727", "bstp_nmix_prpr": "2650.15"}],
+    ))
+
+    result = await _service(broker).get_index_chart("0001", period="1M")
+
+    assert [p.get("prev") for p in result.data["points"]] == [None]
+
+
+@pytest.mark.asyncio
 async def test_index_chart_1y_uses_weekly_candles():
     broker = MagicMock()
     broker.inquire_daily_indexchartprice = AsyncMock(return_value=_broker_response(

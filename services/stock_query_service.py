@@ -1484,12 +1484,19 @@ class StockQueryService:
         if limit and len(points) > limit:
             points = points[-limit:]
 
+        current = _to_float(summary.get("bstp_nmix_prpr"))
+        change = _to_float(summary.get("bstp_nmix_prdy_vrss"))
+        # 개장 직후에는 10분봉이 1개뿐이라 선이 그려지지 않는다. 전일 종가를 기준점으로 앞에 붙인다.
+        # (일/주봉은 이미 이전 봉을 담고 있어 필요 없고, 날짜 라벨과도 섞이면 안 된다)
+        if is_minute and current is not None and change is not None:
+            points.insert(0, {"close": current - change, "prev": True})
+
         data = {
             "code": index_code,
             "name": summary.get("hts_kor_isnm") or self.DOMESTIC_INDEX_NAMES[index_code],
             "period": period,
-            "current": _to_float(summary.get("bstp_nmix_prpr")),
-            "change": _to_float(summary.get("bstp_nmix_prdy_vrss")),
+            "current": current,
+            "change": change,
             "change_rate": _to_float(summary.get("bstp_nmix_prdy_ctrt")),
             "points": points,
         }
