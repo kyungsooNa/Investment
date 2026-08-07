@@ -302,7 +302,11 @@
 
 ### M-7. 마켓 타이밍/레짐 변경 정합성 확인 [신규 — 2026-08-07]
 
-- [ ] 08-04~06 에 레짐·타이밍 판정이 세 번 바뀌었다: 레짐 판정을 지수 기반으로 전환(#770) · risk-off 구간에도 전략 scan 유지(#766) · recovery gate 완화(#780). 셋 다 **전략이 언제 도는지**를 바꾸므로, 1-8 백테스트의 마켓 타이밍 가정과 1-6 profitability gate 의 regime 태깅 기준이 이 변경과 어긋나지 않는지 확인이 필요하다. (1-8 은 "6월 하순 MA 하락 → `market_timing_off_both` 로 스캔 차단"을 전 구간 0거래의 원인 ②로 기록하고 있는데, 그 판정 로직이 바뀌었다.)
+- [x] **확인 결과: 실제 parity 갭이었고 복원 완료 (2026-08-07)**. #766 이 마켓타이밍 게이트를 전략에서 `StrategyScheduler._filter_market_timing_blocked_buys` 로 옮겼는데, **백테스트는 스케줄러를 거치지 않는다**(`scripts/run_backtest.py`·`backtest_walk_forward.py` 에 스케줄러 참조 0건). 그 결과 08-04 이후 백테스트에서 마켓타이밍 게이트가 통째로 사라져, 라이브보다 느슨한 조건으로 성과를 산출하고 있었다 — 1-5 의 원래 동기("백테스트가 검증하는 전략 ≠ 라이브가 거래하는 전략")가 마켓타이밍 축에서 재발한 것.
+  - 복원: `BacktestPeriodRunner._filter_market_timing_blocked_buys` 를 라이브와 동일 지점(진입 신호 → 사이징 직전)에 추가. `MarketRegimeService.classify_on_date`(#770 에서 만들어졌으나 **사용처가 0건이었다**)로 **그 거래일 기준** 레짐을 쓴다 — 오늘 레짐으로 과거를 판정하면 look-ahead. 시장 판정은 라이브와 같이 `stock_code_repository.is_kosdaq()`. 레짐 서비스/resolver 미주입과 조회 실패는 라이브와 동일하게 fail-open.
+  - **1-8 blocked 사유 ② 무효화**: "6월 하순 MA 하락 → `market_timing_off_both` 로 스캔 차단"은 #766 이후 백테스트에서 발생하지 않는다(전략의 스캔 스킵 코드가 삭제됨). 이제 게이트는 스캔이 아니라 **매수 신호**를 막으므로, 전 구간 0거래의 원인은 재확인이 필요하다.
+- [ ] **잔여: 전략에 남은 죽은 마켓타이밍 호출** — #766 이 차단 코드만 지우고 조회는 남겨, `larry_williams_vbo_strategy.py` 와 `larry_williams_channel_breakout_strategy.py` 는 `is_market_timing_ok` 를 scan 마다 2회(KOSPI/KOSDAQ) 호출하고 결과를 **전혀 쓰지 않는다**. 나머지 4개 전략은 로그 필드로만 소비한다(차단 없음). 제거하면 `_update_market_timing` 의 `market_timing_updated` 로그 이벤트가 함께 사라지므로 그 로그를 쓰는 소비처 확인 후 정리한다.
+- [ ] 1-6 profitability gate 의 regime 태깅이 #770 의 지수 기반 판정과 정합한지 확인 (별도).
 
 ---
 
