@@ -121,6 +121,41 @@ async def test_market_close_clears_category_and_store():
 
 
 @pytest.mark.asyncio
+async def test_tick_records_price_subscribed_candidates_for_the_day():
+    # ES/호가 시계열은 PRICE 체결 틱에 무임승차하므로, 결손 종목이 '미구독'인지
+    # '구독했는데 무틱'인지 사후 구분하려면 당일 PRICE 활성 종목을 남겨야 한다.
+    store = _FakeStore()
+    policy = MagicMock()
+    policy.sync_subscriptions = AsyncMock()
+    policy.get_status = MagicMock(
+        return_value={"active_codes_price": ["005930", "999999"]}
+    )
+    task, _ = _make_task(scheduler_store=store, policy=policy)
+
+    await task._tick()
+
+    # 후보(005930/000660/035420) 와 PRICE 활성의 교집합만 기록 — 후보 밖 999999 는 제외
+    assert store.load_keyed("capture_price_observed_20260703") == "005930"
+
+
+@pytest.mark.asyncio
+async def test_price_observation_accumulates_on_rotation_skipped_tick():
+    # 로테이션 윈도우가 같아 재동기화를 건너뛰는 tick 에서도 관측은 누적돼야
+    # 하루 중 잠깐만 구독된 종목이 '미구독' 으로 오분류되지 않는다.
+    store = _FakeStore()
+    policy = MagicMock()
+    policy.sync_subscriptions = AsyncMock()
+    policy.get_status = MagicMock(return_value={"active_codes_price": ["005930"]})
+    task, _ = _make_task(scheduler_store=store, policy=policy)
+
+    await task._tick()
+    policy.get_status.return_value = {"active_codes_price": ["000660"]}
+    await task._tick()
+
+    assert store.load_keyed("capture_price_observed_20260703") == "000660,005930"
+
+
+@pytest.mark.asyncio
 async def test_restart_leftover_is_adopted_then_cleared_when_closed():
     # 크래시로 store 에 구독 잔재가 남은 채 장외에 재시작 →
     # 잔재를 카테고리로 재편입(sync)한 뒤 해지(sync [])해 pt_subscriptions 오염을 정리한다.

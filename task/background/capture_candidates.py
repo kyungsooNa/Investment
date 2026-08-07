@@ -14,6 +14,17 @@ from typing import Optional
 from common.types import ErrorCode
 from services.oneil_universe_service import _ETF_NAME_PREFIXES
 
+PRICE_OBSERVED_KEY_PREFIX = "capture_price_observed_"
+
+
+def price_observed_state_key(trade_date: str) -> str:
+    """당일 PRICE 구독이 관측된 캡처 후보를 저장하는 scheduler_store 키.
+
+    장중 구독 태스크가 기록하고 장마감 캡처 태스크가 읽어, 체결강도·호가 결손이
+    '미구독' 인지 '구독했는데 무틱' 인지 가른다. (todo 1-5)
+    """
+    return f"{PRICE_OBSERVED_KEY_PREFIX}{trade_date}"
+
 
 async def _fetch_ranking_codes(
     stock_query_service,
