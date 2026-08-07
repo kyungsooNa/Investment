@@ -34,6 +34,14 @@ def _chunked(lst, size):
         yield lst[i:i + size]
 
 
+def _market_counts(items):
+    counts = {}
+    for item in items:
+        market = getattr(item, "market", "") or "UNKNOWN"
+        counts[market] = counts.get(market, 0) + 1
+    return counts
+
+
 _ETF_NAME_PREFIXES = (
     "KODEX", "TIGER", "KBSTAR", "ARIRANG", "SOL", "ACE",
     "HANARO", "KOSEF", "PLUS", "TIMEFOLIO", "WON", "FOCUS",
@@ -241,11 +249,15 @@ class OneilUniverseService:
         self._watchlist = {
             item.code: item for item in sorted_items[:self._cfg.max_watchlist]
         }
+        final_items = list(self._watchlist.values())
         logger.info({
             "event": "build_watchlist_finished",
             "premium_stocks": len(self._pool_a_items),
             "daily_surge_stocks": len(pool_b_items),
-            "final_count": len(self._watchlist)
+            "final_count": len(self._watchlist),
+            "pool_a_market_counts": _market_counts(self._pool_a_items.values()),
+            "pool_b_market_counts": _market_counts(pool_b_items.values()),
+            "market_counts": _market_counts(final_items),
         })
         self.pm.log_timer("OneilUniverseService._build_watchlist", t_start, threshold=5.0)
 
