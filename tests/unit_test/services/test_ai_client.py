@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -466,3 +467,135 @@ async def test_stop_finish_reason_returns_content_unchanged():
     )
 
     assert await client.complete(system="s", user="u") == "정상 분석"
+
+
+# ── 운영 하드닝: 입력 예산 · 동시성 · 재호출 간격 · 계측 (todo X-2) ──────────
+
+
+async def test_input_budget_truncates_oversized_user_prompt():
+    """컨텍스트가 커질수록 토큰 비용이 선형으로 늘어 예산 상한이 필요하다."""
+    http_client = AsyncMock()
+    http_client.post.return_value = _response(_completion("요약"))
+    logger = MagicMock()
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="k",
+        model="m",
+        http_client=http_client,
+        max_input_chars=100,
+        logger=logger,
+    )
+
+    await client.complete(system="s", user="가" * 500)
+
+    sent = http_client.post.await_args.kwargs["json"]["messages"][1]["content"]
+    assert len(sent) <= 100
+    assert sent.startswith("가" * 50)  # 앞부분 보존 (뒤를 자른다)
+    logger.warning.assert_called_once()
+
+
+async def test_input_budget_leaves_prompt_within_budget_untouched():
+    http_client = AsyncMock()
+    http_client.post.return_value = _response(_completion("요약"))
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="k",
+        model="m",
+        http_client=http_client,
+        max_input_chars=100,
+    )
+
+    await client.complete(system="s", user="짧은 입력")
+
+    assert http_client.post.await_args.kwargs["json"]["messages"][1]["content"] == "짧은 입력"
+
+
+async def test_max_concurrent_requests_serializes_in_flight_calls():
+    """동시 호출이 provider 로 한꺼번에 나가지 않도록 서버 단위로 제한한다."""
+    in_flight = 0
+    peak = 0
+
+    async def _post(*args, **kwargs):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0)
+        in_flight -= 1
+        return _response(_completion("요약"))
+
+    http_client = AsyncMock()
+    http_client.post.side_effect = _post
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="k",
+        model="m",
+        http_client=http_client,
+        max_concurrent_requests=1,
+    )
+
+    await asyncio.gather(*(client.complete(system="s", user="u") for _ in range(4)))
+
+    assert peak == 1
+
+
+async def test_min_request_interval_paces_consecutive_requests(monkeypatch):
+    """단시간 재호출이 몰리지 않도록 최소 간격을 둔다."""
+    slept = []
+
+    async def _sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+    http_client = AsyncMock()
+    http_client.post.return_value = _response(_completion("요약"))
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="k",
+        model="m",
+        http_client=http_client,
+        min_request_interval_sec=5.0,
+    )
+
+    await client.complete(system="s", user="u")
+    await client.complete(system="s", user="u")
+
+    # 첫 호출은 대기 없음, 둘째 호출만 간격만큼 대기
+    assert len(slept) == 1
+    assert 0 < slept[0] <= 5.0
+
+
+async def test_logs_provider_model_latency_and_token_usage():
+    """provider/model·지연·토큰 사용량이 남아야 비용·성능을 사후 판단할 수 있다."""
+    payload = _completion("요약")
+    payload["usage"] = {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}
+    http_client = AsyncMock()
+    http_client.post.return_value = _response(payload)
+    logger = MagicMock()
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="k",
+        model="gemini-2.5-flash",
+        http_client=http_client,
+        logger=logger,
+    )
+
+    await client.complete(system="s", user="u", usage_type="news")
+
+    logged = " ".join(str(call) for call in logger.info.call_args_list)
+    assert "gemini-2.5-flash" in logged
+    assert "news" in logged
+    assert "150" in logged
+    assert "elapsed_ms" in logged
+
+
+async def test_instrumentation_is_optional_without_logger():
+    http_client = AsyncMock()
+    http_client.post.return_value = _response(_completion("요약"))
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="k",
+        model="m",
+        http_client=http_client,
+    )
+
+    assert await client.complete(system="s", user="u") == "요약"

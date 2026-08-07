@@ -7,7 +7,9 @@ provider 에 비의존한다.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -35,6 +37,10 @@ class AiClient:
         usage_limiter=None,
         max_retries: int = 2,
         retry_backoff_sec: float = 0.5,
+        max_concurrent_requests: int = 0,
+        min_request_interval_sec: float = 0.0,
+        max_input_chars: int = 0,
+        logger=None,
     ) -> None:
         self._base_url = str(base_url or "").rstrip("/")
         # 복사 과정에서 붙는 앞뒤 공백·개행 제거 (흔한 오염 원인)
@@ -46,6 +52,14 @@ class AiClient:
         self._usage_limiter = usage_limiter
         self._max_retries = max(0, int(max_retries))
         self._retry_backoff_sec = float(retry_backoff_sec)
+        # 운영 하드닝(todo X-2). 기본값은 전부 비활성 — 정책은 조립 지점(config)이 정한다.
+        limit = max(0, int(max_concurrent_requests))
+        self._semaphore = asyncio.Semaphore(limit) if limit else None
+        self._min_request_interval_sec = max(0.0, float(min_request_interval_sec))
+        self._max_input_chars = max(0, int(max_input_chars))
+        self._logger = logger
+        self._pace_lock = asyncio.Lock()
+        self._last_request_at: Optional[float] = None
 
     async def complete(
         self,
@@ -76,6 +90,7 @@ class AiClient:
     ) -> dict:
         """파싱 전 원본 응답 JSON을 반환한다 (진단용: finish_reason/usage 확인)."""
         url = f"{self._base_url}/chat/completions"
+        user = self._apply_input_budget(user)
         headers = {}
         if self._api_key:
             if not self._api_key.isascii():
@@ -101,10 +116,75 @@ class AiClient:
             payload["reasoning_effort"] = self._reasoning_effort
         if self._usage_limiter is not None:
             await self._usage_limiter.reserve(usage_type)
+        return await self._dispatch(url, headers, payload, usage_type)
+
+    async def _dispatch(self, url, headers, payload, usage_type: str) -> dict:
+        """동시성·재호출 간격 제한을 적용해 요청을 내보내고 계측을 남긴다."""
+        if self._semaphore is not None:
+            async with self._semaphore:
+                return await self._paced_request(url, headers, payload, usage_type)
+        return await self._paced_request(url, headers, payload, usage_type)
+
+    async def _paced_request(self, url, headers, payload, usage_type: str) -> dict:
+        await self._wait_for_pace()
+        started = time.monotonic()
         if self._http_client is not None:
-            return await self._request(self._http_client, url, headers, payload)
-        async with httpx.AsyncClient(timeout=self._timeout_sec) as client:
-            return await self._request(client, url, headers, payload)
+            response_payload = await self._request(
+                self._http_client, url, headers, payload
+            )
+        else:
+            async with httpx.AsyncClient(timeout=self._timeout_sec) as client:
+                response_payload = await self._request(client, url, headers, payload)
+        self._log_call(response_payload, usage_type, time.monotonic() - started)
+        return response_payload
+
+    async def _wait_for_pace(self) -> None:
+        """직전 요청과의 최소 간격을 보장한다 (단시간 재호출 폭주 차단)."""
+        if self._min_request_interval_sec <= 0:
+            return
+        async with self._pace_lock:
+            now = time.monotonic()
+            if self._last_request_at is not None:
+                wait = self._last_request_at + self._min_request_interval_sec - now
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                    now = time.monotonic()
+            self._last_request_at = now
+
+    def _apply_input_budget(self, user: str) -> str:
+        """입력 컨텍스트 예산을 넘으면 뒤를 자른다.
+
+        종합 분석은 재무·수급·공시·뉴스를 합치므로 소스가 늘수록 입력이 무한정
+        커진다. 조용히 넘기면 토큰 비용만 늘고 응답은 오히려 잘린다.
+        """
+        if self._max_input_chars <= 0:
+            return user
+        text = str(user or "")
+        if len(text) <= self._max_input_chars:
+            return text
+        marker = "\n…(입력 예산 초과로 이후 생략)"
+        keep = max(0, self._max_input_chars - len(marker))
+        if self._logger is not None:
+            self._logger.warning(
+                f"[AiClient] 입력 예산 초과 — {len(text)}자 → {self._max_input_chars}자로 절단"
+            )
+        return text[:keep] + marker
+
+    def _log_call(self, payload: dict, usage_type: str, elapsed_sec: float) -> None:
+        if self._logger is None:
+            return
+        usage = (payload or {}).get("usage") or {}
+        choices = (payload or {}).get("choices") or []
+        finish_reason = choices[0].get("finish_reason") if choices else None
+        self._logger.info(
+            f"[AiClient] usage_type={usage_type} model={self._model} "
+            f"host={urlparse(self._base_url).netloc} "
+            f"elapsed_ms={int(elapsed_sec * 1000)} "
+            f"prompt_tokens={usage.get('prompt_tokens')} "
+            f"completion_tokens={usage.get('completion_tokens')} "
+            f"total_tokens={usage.get('total_tokens')} "
+            f"finish_reason={finish_reason}"
+        )
 
     async def _request(self, client, url, headers, payload):
         """일시적 업스트림 오류(503 과부하 등)는 지수 백오프로 재시도한다.

@@ -339,6 +339,12 @@ class AiAnalysisConfig(BaseModel):
     disclosure_summary_enabled: bool = True
     daily_request_limit: int = Field(100, ge=0)
     disclosure_reserve: int = Field(20, ge=0)
+    # 운영 하드닝(todo X-2). 일일 한도는 총량만 막을 뿐 순간 폭주를 막지 못한다.
+    # 0 이면 각각 비활성.
+    max_concurrent_requests: int = Field(2, ge=0)
+    min_request_interval_sec: float = Field(1.0, ge=0)
+    # 종합 분석은 재무·수급·공시·뉴스를 합치므로 소스가 늘수록 입력이 무한정 커진다.
+    max_input_chars: int = Field(24000, ge=0)
 
     model_config = {"extra": "allow"}
 

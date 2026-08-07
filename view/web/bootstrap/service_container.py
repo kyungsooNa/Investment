@@ -234,6 +234,10 @@ class ServiceContainer:
                 timeout_sec=float(ai_config.timeout_sec),
                 reasoning_effort=ai_config.reasoning_effort,
                 usage_limiter=ctx.ai_usage_limiter,
+                max_concurrent_requests=int(ai_config.max_concurrent_requests),
+                min_request_interval_sec=float(ai_config.min_request_interval_sec),
+                max_input_chars=int(ai_config.max_input_chars),
+                logger=ctx.logger,
             )
             ctx.ai_stock_analyzer = AiStockAnalyzer(
                 ctx.ai_client, max_tokens=int(ai_config.max_tokens)
