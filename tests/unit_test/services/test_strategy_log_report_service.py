@@ -479,6 +479,51 @@ async def test_report_buy_signal(log_dir):
 
 
 @pytest.mark.asyncio
+async def test_report_includes_universe_coverage_warning_when_kosdaq_bull_has_few_candidates(log_dir, tmp_path):
+    """KOSDAQ 상승장인데 저장된 코스닥 후보가 적으면 리포트에 커버리지 경고를 노출한다."""
+    premium_file = tmp_path / "premium_stocks.json"
+    premium_file.write_text(json.dumps({
+        "generated_date": "20260418",
+        "generated_at": "2026-04-18T16:40:00",
+        "kospi": [{"code": "005930", "name": "삼성전자"}],
+        "kosdaq": [{"code": "144960", "name": "뉴파워프라즈마"}],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    oneil_dir = os.path.join(log_dir, "oneil_pool")
+    os.makedirs(oneil_dir, exist_ok=True)
+    _write_log(os.path.join(oneil_dir, "20260418_generate_premium_watchlist_1.log.json"), [
+        {
+            "timestamp": "2026-04-18 16:30:00,000",
+            "level": "INFO",
+            "name": "strategy.generate_premium_watchlist.oneil_pool",
+            "data": {"event": "2nd_filter_progress", "processed": 829, "total": 829, "selected": 5},
+        },
+        {
+            "timestamp": "2026-04-18 16:40:00,000",
+            "level": "INFO",
+            "name": "strategy.generate_premium_watchlist.oneil_pool",
+            "data": {"event": "2nd_filter_done", "selected": 5},
+        },
+    ])
+    _write_log(os.path.join(log_dir, "20260418_090000_TestStrategy.log.json"), [
+        {
+            "timestamp": "2026-04-18 09:00:00,000",
+            "level": "INFO",
+            "name": "strategy.TestStrategy",
+            "data": {"event": "market_timing_updated", "market": "KOSDAQ", "ok": True},
+        },
+        _make_entry("scan_with_watchlist", "", "", date="2026-04-18"),
+    ])
+
+    svc = StrategyLogReportService(log_dir=log_dir, premium_stocks_file=str(premium_file))
+    report = await svc.generate_report("20260418")
+
+    assert "유니버스 커버리지" in report
+    assert "필터 평가 829종목 → 통과 5종목 → 저장 2종목" in report
+    assert "KOSDAQ 상승인데 최종 KOSDAQ 후보 1종목" in report
+
+
+@pytest.mark.asyncio
 async def test_report_rejected_event(log_dir):
     """breakout_rejected 이벤트가 '매수 실패' 섹션에 포함된다."""
     log_path = os.path.join(log_dir, "20260418_093000_TestStrategy.log.json")

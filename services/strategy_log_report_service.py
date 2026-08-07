@@ -5,6 +5,7 @@ from collections import Counter
 import glob
 import gzip
 import html
+import json
 import os
 import re
 import time
@@ -309,6 +310,7 @@ _MA_PROXIMITY_UPPER_PCT = 4.0
 _MA_NEAR_MISS_MAX_EXCESS_PCT = 4.0
 _MAX_EXECUTION_QUALITY_ROWS = 5
 _MAX_SAME_DAY_EXIT_VIOLATIONS_SHOWN = 5
+_KOSDAQ_CANDIDATE_WARNING_MIN = 5
 
 
 def _to_float(value: Any) -> Optional[float]:
@@ -481,6 +483,7 @@ class StrategyLogReportService:
         enabled_strategy_provider: Optional[Callable[[], Optional[List[str]]]] = None,
         strategy_degradation_config: Optional[Any] = None,
         profitability_gate_config: Optional[Any] = None,
+        premium_stocks_file: str = os.path.join("data", "premium_stocks.json"),
     ):
         self._log_dir = log_dir
         self._stock_code_repo = stock_code_repo
@@ -490,6 +493,7 @@ class StrategyLogReportService:
         self._enabled_strategy_provider = enabled_strategy_provider
         self._strategy_degradation_config = strategy_degradation_config
         self._profitability_gate_config = profitability_gate_config
+        self._premium_stocks_file = premium_stocks_file
         self._last_execution_quality_candidates: List[dict] = []
         self._last_strategy_degradation_candidates: List[dict] = []
         self._last_same_day_exit_violations: List[dict] = []
@@ -570,6 +574,87 @@ class StrategyLogReportService:
                         yield entry.get('level', 'INFO'), ts, data
         except Exception:
             pass
+
+    def _load_premium_stock_counts(self, target_date: str) -> Optional[dict]:
+        if not self._premium_stocks_file or not os.path.exists(self._premium_stocks_file):
+            return None
+        try:
+            with open(self._premium_stocks_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return None
+
+        generated_date = str(data.get("generated_date") or "")
+        if generated_date and generated_date != target_date:
+            return None
+
+        kospi = data.get("kospi") if isinstance(data.get("kospi"), list) else []
+        kosdaq = data.get("kosdaq") if isinstance(data.get("kosdaq"), list) else []
+        return {
+            "generated_date": generated_date,
+            "generated_at": data.get("generated_at"),
+            "kospi_count": len(kospi),
+            "kosdaq_count": len(kosdaq),
+            "total_count": len(kospi) + len(kosdaq),
+        }
+
+    def _load_premium_generation_summary(self, target_date: str) -> dict:
+        date_prefix = _fmt_date(target_date)
+        pattern = os.path.join(self._log_dir, "**", f"{target_date}*generate_premium_watchlist*.log.json*")
+        summary = {
+            "evaluated_total": None,
+            "selected": None,
+        }
+        for fpath in glob.glob(pattern, recursive=True):
+            for _level, _ts, data in self._iter_events(fpath, date_prefix):
+                event = data.get("event")
+                if event == "2nd_filter_progress":
+                    total = _to_int(data.get("total"), default=0)
+                    if total:
+                        summary["evaluated_total"] = max(summary["evaluated_total"] or 0, total)
+                elif event == "2nd_filter_done":
+                    summary["selected"] = _to_int(data.get("selected"), default=0)
+                elif event == "save_done":
+                    summary["saved_kospi_count"] = _to_int(data.get("kospi_count"), default=0)
+                    summary["saved_kosdaq_count"] = _to_int(data.get("kosdaq_count"), default=0)
+        return summary
+
+    def _build_universe_coverage_section(
+        self,
+        target_date: str,
+        market_timing: Mapping[str, Tuple[str, bool]],
+    ) -> Tuple[Optional[str], List[str]]:
+        counts = self._load_premium_stock_counts(target_date)
+        if not counts:
+            return None, []
+
+        generation = self._load_premium_generation_summary(target_date)
+        lines = ["<b>🧺 유니버스 커버리지</b>"]
+        evaluated_total = generation.get("evaluated_total")
+        selected = generation.get("selected")
+        if evaluated_total is not None and selected is not None:
+            lines.append(
+                f"• Pool A funnel: 필터 평가 {evaluated_total:,}종목 → "
+                f"통과 {selected:,}종목 → 저장 {counts['total_count']:,}종목"
+            )
+        else:
+            lines.append(f"• Pool A 저장 후보: {counts['total_count']:,}종목")
+        lines.append(
+            f"• 저장 후보: KOSPI {counts['kospi_count']:,}개 / "
+            f"KOSDAQ {counts['kosdaq_count']:,}개"
+        )
+
+        warnings: List[str] = []
+        kosdaq_bull = bool(market_timing.get("KOSDAQ", ("", False))[1])
+        if kosdaq_bull and counts["kosdaq_count"] < _KOSDAQ_CANDIDATE_WARNING_MIN:
+            warning = (
+                f"KOSDAQ 상승인데 최종 KOSDAQ 후보 {counts['kosdaq_count']}종목 "
+                f"(경고 기준 {_KOSDAQ_CANDIDATE_WARNING_MIN}종목 미만)"
+            )
+            lines.append(f"• ⚠️ {warning}")
+            warnings.append(f"• {warning}")
+
+        return "\n".join(lines), warnings
 
     def _db_resolve(self, code: str, current_name: str) -> str:
         """종목명이 코드와 같으면 StockCodeRepository에서 이름을 조회한다."""
@@ -2361,6 +2446,11 @@ class StrategyLogReportService:
                 f"• 시가/현재가 0 수신 오류 — 총 {total}건 ({details})"
             )
 
+        universe_coverage_section, universe_warnings = self._build_universe_coverage_section(
+            target_date, market_timing
+        )
+        system_warnings.extend(universe_warnings)
+
         warnings_section = ""
         if system_warnings:
             warnings_section = "<b>⚠️ 시스템 경고</b>\n" + "\n".join(system_warnings)
@@ -2396,6 +2486,7 @@ class StrategyLogReportService:
                 section
                 for section in (
                     warnings_section,
+                    universe_coverage_section,
                     portfolio_summary,
                     divergence_section,
                     degradation_section,
@@ -2418,6 +2509,8 @@ class StrategyLogReportService:
         sections: List[str] = []
         if warnings_section:
             sections.append(warnings_section)
+        if universe_coverage_section:
+            sections.append(universe_coverage_section)
         sections.extend(active_sections)
         body = "\n\n".join(sections)
         portfolio_summary = self._build_portfolio_summary(target_date, fallback_buys)

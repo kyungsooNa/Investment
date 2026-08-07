@@ -135,6 +135,12 @@ async def test_build_watchlist_sorted_logs(service, mock_components):
     assert sorted_log["items"][0]["code"] == "A1"
     assert sorted_log["items"][1]["code"] == "B1"
 
+    finished_log = next((c[0][0] for c in logger.info.call_args_list if isinstance(c[0][0], dict) and c[0][0].get("event") == "build_watchlist_finished"), None)
+    assert finished_log is not None
+    assert finished_log["market_counts"] == {"KOSPI": 1, "KOSDAQ": 1}
+    assert finished_log["pool_a_market_counts"] == {"KOSPI": 1}
+    assert finished_log["pool_b_market_counts"] == {"KOSDAQ": 1}
+
 @pytest.mark.asyncio
 async def test_build_daily_surge_pool_parallel_execution(mock_components):
     """_build_daily_surge_pool 메서드가 후보 종목들을 병렬로 처리하여 수집하는지 검증"""
