@@ -270,6 +270,26 @@ test("1D 는 x축에 분봉 시각을 표시한다", async () => {
     `1D x축 라벨이 HH:MM 이어야 함 (실제 ${labels.join(",")})`);
 });
 
+test("1D 첫 점이 전일 종가면 x축에 '전일' 로 표시한다", async () => {
+  // 개장 직후엔 분봉이 1개뿐이라 서버가 전일 종가를 기준점으로 앞에 붙인다.
+  const window = await makeWindow(async () => success(indexPayload({
+    period: "1D",
+    points: [
+      { close: 2637.85, prev: true },
+      { date: "20260729", time: "090000", close: 2650.15 },
+    ],
+  })));
+
+  await window.renderMarketIndices();
+
+  const labels = window.__charts[0].config.data.labels;
+  assert(labels.join(",") === "전일,09:00",
+    `전일 기준점 라벨이 '전일,09:00' 이어야 함 (실제 ${labels.join(",")})`);
+  // 점이 2개가 되므로 선이 실제로 그려져야 한다.
+  assert(window.__charts[0].config.data.datasets[0].data.length === 2,
+    "전일 기준점을 포함해 2개 점이 그려져야 함");
+});
+
 test("기간 버튼을 누르면 그 기간으로 다시 조회하고 차트를 교체한다", async () => {
   const requested = [];
   const window = await makeWindow(async (url) => {
