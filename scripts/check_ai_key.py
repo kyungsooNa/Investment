@@ -22,6 +22,7 @@ except Exception:
     pass
 
 from services.ai_client import AiClient  # noqa: E402
+from services.ai_usage_limiter import AiUsageLimitExceeded, AiUsageLimiter  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
@@ -37,6 +38,24 @@ def _load_ai_config() -> dict:
     with open(config_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     return data.get("ai_analysis") or {}
+
+
+def _build_client(cfg: dict) -> AiClient:
+    """진단용 AiClient 를 만든다.
+
+    앱과 같은 usage_limiter 를 붙여 이 스크립트의 소비도 일일 한도에 집계된다.
+    """
+    limiter = AiUsageLimiter(
+        daily_request_limit=int(cfg.get("daily_request_limit", 100)),
+        disclosure_reserve=int(cfg.get("disclosure_reserve", 20)),
+    )
+    return AiClient(
+        base_url=str(cfg.get("base_url") or _DEFAULT_BASE_URL),
+        api_key=str(cfg.get("api_key") or ""),
+        model=str(cfg.get("model") or _DEFAULT_MODEL),
+        timeout_sec=20,
+        usage_limiter=limiter,
+    )
 
 
 def _mask(api_key: str) -> str:
@@ -67,12 +86,17 @@ async def _main() -> None:
     print(f"모델={model}  base_url={base_url}  키={_mask(api_key)}")
     print("AI 호출 중...")
 
-    client = AiClient(base_url=base_url, api_key=api_key, model=model, timeout_sec=20)
+    client = _build_client(cfg)
     try:
         result = await client.complete(
             system="너는 한국 주식 애널리스트다.",
             user="삼성전자 유상증자 공시를 투자자 관점에서 한 문장으로 요약해줘.",
         )
+    except AiUsageLimitExceeded as exc:
+        # 한도 소진은 키·모델·네트워크 문제가 아니므로 안내를 분리한다.
+        print(f"[중단] 일일 AI 호출 한도에 걸려 요청을 보내지 않았습니다: {exc}")
+        print("→ 한도 초기화를 기다리거나 ai_analysis.daily_request_limit 을 조정하세요.")
+        sys.exit(1)
     except Exception as exc:
         print(f"[실패] {type(exc).__name__}: {exc}")
         print("→ 키 형식(AIza)·모델명·네트워크/프록시를 확인하세요.")

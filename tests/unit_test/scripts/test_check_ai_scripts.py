@@ -1,4 +1,8 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
+
+import pytest
+
+from services.ai_usage_limiter import AiUsageLimitExceeded
 
 from scripts import check_ai_key, check_disclosure_ai, check_news_ai
 
@@ -26,8 +30,71 @@ async def test_check_ai_key_allows_empty_api_key_for_ollama(monkeypatch):
         api_key="",
         model="qwen2.5",
         timeout_sec=20,
+        usage_limiter=ANY,
     )
     ai_client.complete.assert_awaited_once()
+
+
+def test_check_ai_key_attaches_usage_limiter_so_script_usage_is_counted():
+    """스크립트가 쓴 요청도 앱과 같은 일일 한도에 집계되어야 한다."""
+    client = check_ai_key._build_client(
+        {
+            "base_url": "http://localhost:11434/v1",
+            "api_key": "",
+            "model": "qwen2.5",
+            "daily_request_limit": 100,
+            "disclosure_reserve": 20,
+        }
+    )
+
+    assert client._usage_limiter is not None
+
+
+async def test_check_ai_key_distinguishes_usage_limit_from_key_failure(
+    monkeypatch, capsys
+):
+    """한도 소진은 키·모델·네트워크 문제가 아니므로 안내가 달라야 한다."""
+    ai_client = MagicMock()
+    ai_client.complete = AsyncMock(
+        side_effect=AiUsageLimitExceeded(
+            limit_kind="interactive",
+            daily_limit=100,
+            used=80,
+            reset_at="2026-08-08T00:00:00-07:00",
+            interactive_limit=80,
+            disclosure_reserve=20,
+        )
+    )
+    monkeypatch.setattr(
+        check_ai_key,
+        "_load_ai_config",
+        lambda: {"api_key": "AIzaXXXX", "model": "gemini-2.5-flash"},
+    )
+    monkeypatch.setattr(check_ai_key, "AiClient", MagicMock(return_value=ai_client))
+
+    with pytest.raises(SystemExit):
+        await check_ai_key._main()
+
+    out = capsys.readouterr().out
+    assert "한도" in out
+    assert "키 형식" not in out
+
+
+def test_disclosure_dry_run_attaches_usage_limiter_so_script_usage_is_counted():
+    """공시 진단 소비도 /api/ai/usage 집계에 포함돼야 한다."""
+    ai_client, analyzer = check_disclosure_ai._build_ai(
+        {
+            "enabled": True,
+            "base_url": "http://localhost:11434/v1",
+            "api_key": "",
+            "model": "qwen2.5",
+            "daily_request_limit": 100,
+            "disclosure_reserve": 20,
+        }
+    )
+
+    assert analyzer is not None
+    assert ai_client._usage_limiter is not None
 
 
 def test_disclosure_dry_run_builds_ollama_analyzer_without_api_key():
