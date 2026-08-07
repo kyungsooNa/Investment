@@ -180,11 +180,11 @@ class RankingTask(AfterMarketTask):
             if needs_basic:
                 await self.refresh_basic_ranking()
                 self._basic_last_collected_date = date
+            if needs_period:
+                await self.prewarm_period_ranking(date)
             if needs_investor:
                 await self.refresh_investor_ranking()
                 self._last_collected_date = date
-            if needs_period:
-                await self.prewarm_period_ranking(date)
 
     # ── 장마감 후 자동 갱신 스케줄러 ────────────────────────────
 
@@ -211,11 +211,11 @@ class RankingTask(AfterMarketTask):
         if needs_basic:
             await self.refresh_basic_ranking()
             self._basic_last_collected_date = latest_trading_date
+        if needs_period:
+            await self.prewarm_period_ranking(latest_trading_date)
         if needs_investor:
             await self.refresh_investor_ranking()
             self._last_collected_date = latest_trading_date
-        if needs_period:
-            await self.prewarm_period_ranking(latest_trading_date)
 
     # ── 기본 랭킹 캐시 (상승/하락/거래량/거래대금) ───────────────
 
