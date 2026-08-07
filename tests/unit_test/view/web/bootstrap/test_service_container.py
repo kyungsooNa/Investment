@@ -194,6 +194,9 @@ def test_service_container_builds_enabled_ai_stock_analyzer(patched_service_cont
             "disclosure_summary_enabled": False,
             "daily_request_limit": 100,
             "disclosure_reserve": 20,
+            "max_concurrent_requests": 2,
+            "min_request_interval_sec": 1.0,
+            "max_input_chars": 24000,
         }
     }
 
@@ -204,6 +207,7 @@ def test_service_container_builds_enabled_ai_stock_analyzer(patched_service_cont
         daily_request_limit=100,
         disclosure_reserve=20,
     )
+    # 일일 한도는 총량만 막으므로 순간 폭주·입력 팽창 방어는 별도로 주입돼야 한다.
     ai_client_cls.assert_called_once_with(
         base_url="https://ai.example/v1",
         api_key="test-key",
@@ -211,6 +215,10 @@ def test_service_container_builds_enabled_ai_stock_analyzer(patched_service_cont
         timeout_sec=8.0,
         reasoning_effort="low",
         usage_limiter=patched_service_container_deps["AiUsageLimiter"].return_value,
+        max_concurrent_requests=2,
+        min_request_interval_sec=1.0,
+        max_input_chars=24000,
+        logger=ctx.logger,
     )
     patched_service_container_deps["AiStockAnalyzer"].assert_called_once_with(
         ai_client_cls.return_value,
