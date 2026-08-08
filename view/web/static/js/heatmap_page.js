@@ -6,14 +6,19 @@
  *   2) 줌 — CSS transform 이 아니라 캔버스(sizer) 자체를 키우고 다시 그린다.
  *      transform 으로 확대하면 작은 타일의 생략된 라벨이 그대로 없기 때문에,
  *      배율을 렌더에 넘겨 라벨 기준을 완화해야 확대의 의미가 있다.
+ *      버튼(중앙 고정)과 마우스 휠(커서 고정) 두 경로가 같은 배율 단계를 공유한다.
  */
 
 // 홈 미리보기(200종목)보다 넓게 잡는다 — 작은 타일은 확대로 읽을 수 있다.
 const HEATMAP_PAGE_DOMESTIC_LIMIT = 500;
 const HEATMAP_PAGE_OVERSEAS_LIMIT = 500;
 const HEATMAP_PAGE_ZOOM_STEPS = [1, 1.5, 2, 3, 4, 6, 8];
+// 휠 한 칸(Chrome deltaMode=0 기준 deltaY 100) 이 배율 한 단계다. 트랙패드는 한 번 굴려도
+// 작은 delta 를 여러 번 보내므로 누적해서 이 값을 넘을 때만 단계를 바꾼다.
+const HEATMAP_PAGE_WHEEL_STEP_DELTA = 100;
 
 let _heatmapPageZoomIndex = 0;
+let _heatmapPageWheelAccum = 0;
 
 function _heatmapPageZoom() {
     return HEATMAP_PAGE_ZOOM_STEPS[_heatmapPageZoomIndex];
@@ -94,11 +99,15 @@ function _applyHeatmapPageZoom() {
     });
 }
 
-function zoomHeatmapPage(step) {
-    const next = Math.min(
+function _heatmapPageNextZoomIndex(step) {
+    return Math.min(
         HEATMAP_PAGE_ZOOM_STEPS.length - 1,
         Math.max(0, _heatmapPageZoomIndex + step),
     );
+}
+
+function zoomHeatmapPage(step) {
+    const next = _heatmapPageNextZoomIndex(step);
     if (next === _heatmapPageZoomIndex) return;
 
     const viewport = document.getElementById('heatmap-page-viewport');
@@ -106,6 +115,67 @@ function zoomHeatmapPage(step) {
     _heatmapPageZoomIndex = next;
     _applyHeatmapPageZoom();
     _restoreHeatmapPageCenter(viewport, anchor);
+}
+
+// 휠 줌은 커서 아래 지점을 고정한다 — 중앙 기준으로 되돌리면 방금 겨눈 타일이 화면에서 벗어난다.
+function _heatmapPagePointRatio(viewport, clientX, clientY) {
+    if (!viewport || !viewport.scrollWidth || !viewport.scrollHeight) return null;
+    const rect = viewport.getBoundingClientRect();
+    const offsetX = clientX - rect.left;
+    const offsetY = clientY - rect.top;
+    return {
+        x: (viewport.scrollLeft + offsetX) / viewport.scrollWidth,
+        y: (viewport.scrollTop + offsetY) / viewport.scrollHeight,
+        offsetX,
+        offsetY,
+    };
+}
+
+function _restoreHeatmapPagePoint(viewport, anchor) {
+    if (!viewport || !anchor) return;
+    viewport.scrollLeft = Math.max(0, anchor.x * viewport.scrollWidth - anchor.offsetX);
+    viewport.scrollTop = Math.max(0, anchor.y * viewport.scrollHeight - anchor.offsetY);
+}
+
+function zoomHeatmapPageAt(step, clientX, clientY) {
+    const next = _heatmapPageNextZoomIndex(step);
+    if (next === _heatmapPageZoomIndex) return;
+
+    const viewport = document.getElementById('heatmap-page-viewport');
+    const anchor = _heatmapPagePointRatio(viewport, clientX, clientY);
+    _heatmapPageZoomIndex = next;
+    _applyHeatmapPageZoom();
+    _restoreHeatmapPagePoint(viewport, anchor);
+}
+
+// 브라우저별 스크롤 단위(0=픽셀, 1=줄, 2=페이지)를 픽셀 기준으로 맞춘다.
+function _heatmapPageWheelDelta(event) {
+    if (event.deltaMode === 1) return event.deltaY * 40;
+    if (event.deltaMode === 2) return event.deltaY * HEATMAP_PAGE_WHEEL_STEP_DELTA;
+    return event.deltaY;
+}
+
+function _onHeatmapPageWheel(event) {
+    // 히트맵 위에서 휠은 배율 조작이다 — 페이지까지 같이 스크롤되면 보던 지점이 튄다.
+    event.preventDefault();
+
+    const delta = _heatmapPageWheelDelta(event);
+    if (!delta) return;
+    // 방향을 바꾸면 반대 방향 누적은 버린다(직전 잔량 때문에 한 칸이 씹히는 것을 막는다).
+    if ((delta > 0) !== (_heatmapPageWheelAccum > 0)) _heatmapPageWheelAccum = 0;
+    _heatmapPageWheelAccum += delta;
+
+    const notches = Math.trunc(_heatmapPageWheelAccum / HEATMAP_PAGE_WHEEL_STEP_DELTA);
+    if (!notches) return;
+    _heatmapPageWheelAccum -= notches * HEATMAP_PAGE_WHEEL_STEP_DELTA;
+    zoomHeatmapPageAt(-notches, event.clientX, event.clientY);  // 휠 업(delta < 0) = 확대
+}
+
+// pjax 재진입 시 viewport 는 새 노드지만, 같은 노드에 두 번 걸리는 것도 막는다.
+function _bindHeatmapPageWheelZoom(viewport) {
+    if (viewport.dataset.wheelZoomBound === '1') return;
+    viewport.addEventListener('wheel', _onHeatmapPageWheel, { passive: false });
+    viewport.dataset.wheelZoomBound = '1';
 }
 
 function resetHeatmapPageZoom() {
@@ -119,7 +189,8 @@ function resetHeatmapPageZoom() {
 }
 
 async function initHeatmapPage() {
-    if (!document.getElementById('heatmap-page-viewport')) return;
+    const viewport = document.getElementById('heatmap-page-viewport');
+    if (!viewport) return;
 
     // pjax 재진입 시 이전 화면의 응답/배율이 남지 않도록 초기화한다.
     Object.values(HEATMAP_PAGE_SOURCES).forEach(source => {
@@ -127,7 +198,9 @@ async function initHeatmapPage() {
         source.sequence = 0;
     });
     _heatmapPageZoomIndex = 0;
+    _heatmapPageWheelAccum = 0;
     _applyHeatmapPageZoom();
+    _bindHeatmapPageWheelZoom(viewport);
 
     // 미국장이 꺼진 run 에서는 API 가 400 을 내므로 탭 자체를 감춘다.
     if (!await _heatmapOverseasEnabled()) {

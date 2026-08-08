@@ -241,6 +241,112 @@ test("줌은 상·하한을 벗어나지 않고 초기화로 100% 로 돌아온�
     "초기화 후 배율 표시도 100% 여야 함");
 });
 
+// jsdom 은 레이아웃이 없어 scrollWidth/clientWidth 가 모두 0 이다.
+// 커서 고정 계산은 아래 전용 테스트에서 크기를 가진 가짜 viewport 로 검증한다.
+function wheel(window, deltaY, options = {}) {
+  const viewport = window.document.getElementById("heatmap-page-viewport");
+  const event = new window.WheelEvent("wheel", {
+    deltaY, deltaMode: 0, clientX: 0, clientY: 0, bubbles: true, cancelable: true, ...options,
+  });
+  viewport.dispatchEvent(event);
+  return event;
+}
+
+test("마우스 휠을 위로 굴리면 확대되고 아래로 굴리면 축소된다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+
+  await window.initHeatmapPage();
+  const sizer = window.document.getElementById("heatmap-page-sizer");
+  const before = labeledSymbols(window, "heatmap-page-domestic");
+
+  // 라벨 생략 기준이 완화되는지는 버튼 줌과 같은 배율(2칸=2배)에서 비교한다.
+  wheel(window, -100);
+  wheel(window, -100);
+  const zoomedIn = Number.parseFloat(sizer.style.width);
+  assert(zoomedIn > 100, `휠 업이 확대여야 함 (실제 ${sizer.style.width})`);
+  assert(sizer.style.height === sizer.style.width, "휠 확대도 가로/세로 배율이 같아야 함");
+  assert(window.document.getElementById("heatmap-page-zoom-level").textContent === `${Math.round(zoomedIn)}%`,
+    "휠 확대 후 배율 표시가 캔버스 배율과 일치해야 함");
+  assert(labeledSymbols(window, "heatmap-page-domestic").length > before.length,
+    "휠 확대도 버튼 확대처럼 라벨을 살려야 함");
+
+  wheel(window, 100);
+  wheel(window, 100);
+  assert(sizer.style.width === "100%", `휠 다운이 축소여야 함 (실제 ${sizer.style.width})`);
+});
+
+test("휠 확대는 재조회 없이 다시 그리고 페이지 스크롤을 막는다", async () => {
+  let domesticCalls = 0;
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => { domesticCalls += 1; return success(domesticSnapshot()); },
+  }));
+
+  await window.initHeatmapPage();
+  const event = wheel(window, -100);
+
+  assert(event.defaultPrevented, "휠 줌 중에는 페이지가 같이 스크롤되지 않도록 기본 동작을 막아야 함");
+  assert(domesticCalls === 1, `휠 줌은 재조회하지 않아야 함 (실제 ${domesticCalls})`);
+});
+
+test("트랙패드의 작은 휠 delta 는 한 칸 분량이 모일 때만 배율을 바꾼다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+
+  await window.initHeatmapPage();
+  const sizer = window.document.getElementById("heatmap-page-sizer");
+
+  for (let i = 0; i < 4; i += 1) wheel(window, -10);
+  assert(sizer.style.width === "100%", `누적이 한 칸에 못 미치면 배율이 그대로여야 함 (실제 ${sizer.style.width})`);
+
+  for (let i = 0; i < 6; i += 1) wheel(window, -10);
+  assert(Number.parseFloat(sizer.style.width) > 100, "누적이 한 칸을 채우면 확대돼야 함");
+});
+
+test("휠 축소는 기본 배율 아래로 내려가지 않는다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+
+  await window.initHeatmapPage();
+  const sizer = window.document.getElementById("heatmap-page-sizer");
+
+  for (let i = 0; i < 5; i += 1) wheel(window, 100);
+  assert(sizer.style.width === "100%", `기본 배율 아래로 축소되면 안 됨 (실제 ${sizer.style.width})`);
+});
+
+test("휠 줌은 커서 아래 지점을 화면에 고정한다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+  await window.initHeatmapPage();
+
+  // 커서는 viewport 좌상단에서 (300, 100) → 콘텐츠 기준 (800, 350) = 비율 (0.4, 0.35)
+  const viewport = {
+    scrollWidth: 2000, scrollHeight: 1000,
+    clientWidth: 1000, clientHeight: 500,
+    scrollLeft: 500, scrollTop: 250,
+    getBoundingClientRect: () => ({ left: 0, top: 0 }),
+  };
+  const anchor = window._heatmapPagePointRatio(viewport, 300, 100);
+  assert(Math.abs(anchor.x - 0.4) < 1e-9 && Math.abs(anchor.y - 0.35) < 1e-9,
+    `커서 지점 비율이 어긋남 (실제 ${anchor.x}, ${anchor.y})`);
+
+  // 2배로 커진 캔버스에서도 같은 지점이 커서 위치에 남아야 한다.
+  viewport.scrollWidth = 4000;
+  viewport.scrollHeight = 2000;
+  window._restoreHeatmapPagePoint(viewport, anchor);
+  assert(viewport.scrollLeft === 0.4 * 4000 - 300, `가로 스크롤이 커서 기준으로 복원돼야 함 (실제 ${viewport.scrollLeft})`);
+  assert(viewport.scrollTop === 0.35 * 2000 - 100, `세로 스크롤이 커서 기준으로 복원돼야 함 (실제 ${viewport.scrollTop})`);
+});
+
 test("전용 페이지 경로에서는 로드 시 자동으로 초기화한다", async () => {
   const calls = [];
   makeWindow(routed({
