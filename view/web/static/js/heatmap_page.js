@@ -176,12 +176,40 @@ function _heatmapPageWheelDelta(event) {
     return event.deltaY;
 }
 
+// 스크롤바(오른쪽·아래 여백) 위인지. clientWidth/Height 는 스크롤바를 뺀 안쪽 크기라
+// 그 밖의 좁은 띠가 스크롤바 영역이다. 스크롤바가 없으면 두께가 0 이라 판정되지 않는다.
+function _heatmapPageOnScrollbar(viewport, clientX, clientY) {
+    if (!viewport || typeof viewport.getBoundingClientRect !== 'function') return false;
+    const rect = viewport.getBoundingClientRect();
+    const onVertical = viewport.offsetWidth - viewport.clientWidth > 0
+        && clientX - rect.left >= viewport.clientWidth;
+    const onHorizontal = viewport.offsetHeight - viewport.clientHeight > 0
+        && clientY - rect.top >= viewport.clientHeight;
+    return onVertical || onHorizontal;
+}
+
+// 스크롤바 위에서는 배율이 아니라 이동이 자연스럽다. Ctrl 을 누르면 좌우로 움직인다
+// (가로 스크롤바까지 커서를 내려가지 않고도 옆으로 밀 수 있게).
+function _heatmapPageWheelPan(viewport, delta, horizontal) {
+    if (horizontal) viewport.scrollLeft = Math.max(0, viewport.scrollLeft + delta);
+    else viewport.scrollTop = Math.max(0, viewport.scrollTop + delta);
+}
+
 function _onHeatmapPageWheel(event) {
     // 히트맵 위에서 휠은 배율 조작이다 — 페이지까지 같이 스크롤되면 보던 지점이 튄다.
+    // Ctrl+휠 의 브라우저 페이지 확대도 여기서 막는다.
     event.preventDefault();
 
     const delta = _heatmapPageWheelDelta(event);
     if (!delta) return;
+
+    const viewport = event.currentTarget;
+    if (_heatmapPageOnScrollbar(viewport, event.clientX, event.clientY)) {
+        // 이동은 배율 단계와 무관하므로 휠 누적에 섞지 않는다.
+        _heatmapPageWheelPan(viewport, delta, event.ctrlKey);
+        return;
+    }
+
     // 방향을 바꾸면 반대 방향 누적은 버린다(직전 잔량 때문에 한 칸이 씹히는 것을 막는다).
     if ((delta > 0) !== (_heatmapPageWheelAccum > 0)) _heatmapPageWheelAccum = 0;
     _heatmapPageWheelAccum += delta;
