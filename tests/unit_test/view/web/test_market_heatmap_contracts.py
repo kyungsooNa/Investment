@@ -128,6 +128,21 @@ def test_heatmap_page_hosts_zoom_controls():
     assert "resetHeatmapPageZoom()" in template
 
 
+def test_heatmap_page_hosts_period_control():
+    """기간은 색(등락률)의 기준 구간이라 서버 재조회가 필요하다 — 화면·스크립트·API 값이 맞아야 한다."""
+    template = _heatmap_page_template()
+    page_script = _heatmap_page_js()
+
+    assert 'id="heatmap-page-period"' in template
+    assert 'id="heatmap-page-period-wrap"' in template, "미국 탭에서 감출 대상 컨테이너가 필요함"
+    assert "setHeatmapPeriod(this.value)" in template
+
+    for period in ("1d", "1w", "1m", "3m", "6m", "1y"):
+        assert f'value="{period}"' in template, f"{period} 기간 선택지가 없음"
+        assert f"'{period}'" in page_script, f"{period} 가 스크립트 허용 목록에 없음"
+    assert "period=${_heatmapPagePeriod}" in page_script, "조회 URL 에 기간이 실리지 않음"
+
+
 def test_heatmap_page_reuses_home_render_script():
     """트리맵 계산/색상은 market_heatmap.js 한 곳에만 두고 페이지 스크립트는 배선만 한다."""
     template = _heatmap_page_template()

@@ -193,35 +193,85 @@ async def get_ytd_return_ranking(limit: int = Query(100, ge=1, le=500), market: 
     }
 
 
+# 히트맵 기간 등락률: 달력일로 물러난 뒤 그 이하 가장 가까운 거래일을 기준일로 삼는다.
+# "1d" 는 스냅샷에 이미 들어 있는 일간 등락률이라 추가 조회가 없다.
+_HEATMAP_PERIOD_DAYS = {"1d": 0, "1w": 7, "1m": 30, "3m": 91, "6m": 182, "1y": 365}
+_HEATMAP_PERIOD_LABELS = {"1d": "1일", "1w": "1주", "1m": "1개월", "3m": "3개월", "6m": "6개월", "1y": "1년"}
+
+
+def _heatmap_period_change_rate(row: dict, closes: dict):
+    """기간 등락률(%). 기준종가가 없는 종목은 None (화면에서 회색 타일)."""
+    base_close = closes.get(row.get("code"))
+    current_price = row.get("current_price")
+    if not base_close or not current_price:
+        return None
+    try:
+        return round((float(current_price) / float(base_close) - 1.0) * 100, 2)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
 @router.get("/heatmap/domestic")
-async def get_domestic_heatmap(limit: int = Query(300, ge=1, le=1000), market: Optional[str] = Query(None)):
+async def get_domestic_heatmap(
+    limit: int = Query(300, ge=1, le=1000),
+    market: Optional[str] = Query(None),
+    period: str = Query("1d"),
+):
     """국내 히트맵용 시가총액 스냅샷.
 
     실시간 전종목 시세 소스가 없어 장마감 후 수집된 daily_prices 스냅샷을 쓴다.
     기준일(trade_date)을 함께 반환해 화면이 장중에도 기준 시점을 표시할 수 있게 한다.
+    period 를 주면 등락률을 그 기간 수익률로 바꿔 반환한다(면적=시가총액은 그대로).
     """
+    if period not in _HEATMAP_PERIOD_DAYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"period는 {', '.join(_HEATMAP_PERIOD_DAYS)} 중 하나여야 합니다.",
+        )
+
     ctx = _get_ctx()
     repository = getattr(ctx, "stock_repository", None)
     if not repository:
         return {"rt_cd": ErrorCode.API_ERROR.value, "msg1": "StockRepository 미설정", "data": None}
 
     rows = await repository.get_market_cap_snapshot(limit=limit, market=market)
+
+    base_date = None
+    closes = {}
+    if period != "1d" and rows:
+        base = await repository.get_period_base_closes(period_days=_HEATMAP_PERIOD_DAYS[period])
+        base_date = (base or {}).get("base_date")
+        closes = (base or {}).get("closes") or {}
+
     items = [
         {
             "code": row.get("code") or "",
             "name": row.get("name") or "",
-            "change_rate": row.get("change_rate"),
+            "change_rate": (
+                row.get("change_rate") if period == "1d"
+                else _heatmap_period_change_rate(row, closes)
+            ),
             "market_cap": row.get("market_cap"),
             "market": row.get("market") or "",
         }
         for row in rows
     ]
+
+    if not items:
+        msg1 = "저장된 시가총액 스냅샷이 없습니다."
+    elif period != "1d" and not base_date:
+        msg1 = f"{_HEATMAP_PERIOD_LABELS[period]} 비교 데이터가 없습니다."
+    else:
+        msg1 = "국내 히트맵 조회 성공"
+
     return {
         "rt_cd": ErrorCode.SUCCESS.value,
-        "msg1": "국내 히트맵 조회 성공" if items else "저장된 시가총액 스냅샷이 없습니다.",
+        "msg1": msg1,
         "data": {
             "trade_date": rows[0].get("trade_date") if rows else None,
             "items": items,
+            "period": period,
+            "base_date": base_date,
         },
     }
 

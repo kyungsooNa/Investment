@@ -32,6 +32,14 @@ const HEATMAP_DOWN_COLORS = [
 ];
 const HEATMAP_FLAT_COLOR = '#6b7280';
 const HEATMAP_UNKNOWN_COLOR = '#3f4650';
+// 기간 등락률 응답의 캡션 표기. '1d' 는 스냅샷 일간 등락률이라 기간 표기를 붙이지 않는다.
+const HEATMAP_PERIOD_LABELS = {
+    '1w': '1주',
+    '1m': '1개월',
+    '3m': '3개월',
+    '6m': '6개월',
+    '1y': '1년',
+};
 
 let _heatmapRequestSequence = 0;
 
@@ -226,11 +234,21 @@ function _overseasCaption(data) {
         : `최신 업데이트: ${date.toLocaleString('ko-KR')}`;
 }
 
+function _heatmapDateText(value) {
+    const raw = String(value || '');
+    return /^\d{8}$/.test(raw) ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}` : null;
+}
+
 // 장중에도 전일 종가가 보일 수 있으므로 기준일을 감추지 않는다.
+// 기간(period)을 받은 응답은 색이 그 구간 등락률이므로 비교 구간을 함께 밝힌다.
 function _domesticCaption(data) {
-    const raw = String(data.trade_date || '');
-    if (!/^\d{8}$/.test(raw)) return '기준일: --';
-    return `기준일: ${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)} 종가`;
+    const latest = _heatmapDateText(data.trade_date);
+    const periodLabel = HEATMAP_PERIOD_LABELS[String(data.period || '')];
+    if (!periodLabel) return latest ? `기준일: ${latest} 종가` : '기준일: --';
+
+    const base = _heatmapDateText(data.base_date);
+    if (!base) return `${periodLabel} 비교 데이터가 없습니다`;
+    return `${periodLabel} 등락률: ${base} → ${latest || '--'} 종가`;
 }
 
 function _renderHeatmapCaption(elementId, text) {
@@ -267,8 +285,10 @@ async function _loadHeatmap(source, options = {}) {
     if (!div) return;
     if (options.showLoading !== false) showLoading(div, source.loadingText);
 
+    // 조회 조건(기간 등)이 바뀌는 소스는 url 을 함수로 준다 — 호출 시점에 평가한다.
+    const url = typeof source.url === 'function' ? source.url() : source.url;
     try {
-        const res = await fetchWithTimeout(source.url, {}, 30000);
+        const res = await fetchWithTimeout(url, {}, 30000);
         const { json, error } = await readJsonResponse(res);
         if (!isLatestRequest()) return;
 

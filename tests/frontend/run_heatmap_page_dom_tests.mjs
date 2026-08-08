@@ -23,6 +23,17 @@ const SCAFFOLD = `
 <div class="heatmap-toolbar">
   <span id="heatmap-page-domestic-caption" class="heatmap-updated">기준일: --</span>
   <span id="heatmap-page-overseas-caption" class="heatmap-updated" style="display:none;">최신 업데이트: --</span>
+  <span class="heatmap-period" id="heatmap-page-period-wrap">
+    <label for="heatmap-page-period">기간</label>
+    <select id="heatmap-page-period">
+      <option value="1d" selected>1일</option>
+      <option value="1w">1주</option>
+      <option value="1m">1개월</option>
+      <option value="3m">3개월</option>
+      <option value="6m">6개월</option>
+      <option value="1y">1년</option>
+    </select>
+  </span>
   <span class="heatmap-zoom">
     <button type="button" id="heatmap-page-zoom-out">−</button>
     <span id="heatmap-page-zoom-level">100%</span>
@@ -345,6 +356,111 @@ test("휠 줌은 커서 아래 지점을 화면에 고정한다", async () => {
   window._restoreHeatmapPagePoint(viewport, anchor);
   assert(viewport.scrollLeft === 0.4 * 4000 - 300, `가로 스크롤이 커서 기준으로 복원돼야 함 (실제 ${viewport.scrollLeft})`);
   assert(viewport.scrollTop === 0.35 * 2000 - 100, `세로 스크롤이 커서 기준으로 복원돼야 함 (실제 ${viewport.scrollTop})`);
+});
+
+test("기간을 바꾸면 그 기간으로 다시 조회하고 캡션에 비교 구간을 밝힌다", async () => {
+  const calls = [];
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success({
+      trade_date: "20260807", period: "3m", base_date: "20260508", items: domesticSnapshot().items,
+    }),
+  }));
+  const traced = window.fetchWithTimeout;
+  window.fetchWithTimeout = (url, ...rest) => { calls.push(url); return traced(url, ...rest); };
+
+  await window.initHeatmapPage();
+  await window.setHeatmapPeriod("3m");
+
+  const domesticCalls = calls.filter(url => url.startsWith("/api/heatmap/domestic"));
+  assert(domesticCalls.length === 2, `기간 변경은 재조회를 유발해야 함 (실제 ${domesticCalls.length}회)`);
+  assert(domesticCalls[domesticCalls.length - 1].includes("period=3m"),
+    `조회 URL 에 기간이 실려야 함 (실제 ${domesticCalls[domesticCalls.length - 1]})`);
+
+  const caption = window.document.getElementById("heatmap-page-domestic-caption").textContent;
+  assert(caption.includes("3개월"), `캡션에 기간이 표시돼야 함 (실제 ${caption})`);
+  assert(caption.includes("2026-05-08") && caption.includes("2026-08-07"),
+    `캡션에 비교 구간이 표시돼야 함 (실제 ${caption})`);
+  assert(window.document.querySelectorAll("#heatmap-page-domestic .heatmap-tile").length > 0,
+    "기간 변경 후에도 타일이 그려져야 함");
+});
+
+test("기간 비교 데이터가 없으면 캡션이 그 사실을 밝힌다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success({
+      trade_date: "20260807", period: "1y", base_date: null,
+      items: domesticSnapshot().items.map(item => ({ ...item, change_rate: null })),
+    }),
+  }));
+
+  await window.initHeatmapPage();
+  await window.setHeatmapPeriod("1y");
+
+  const caption = window.document.getElementById("heatmap-page-domestic-caption").textContent;
+  assert(caption.includes("1년") && caption.includes("없"), `비교 불가를 알려야 함 (실제 ${caption})`);
+  assert(window.document.querySelector('#heatmap-page-domestic .heatmap-tile[data-direction="unknown"]'),
+    "등락률을 못 낸 종목은 unknown 타일이어야 함");
+});
+
+test("기간을 바꿔도 보고 있던 배율은 유지된다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success({
+      trade_date: "20260807", period: "1m", base_date: "20260707", items: domesticSnapshot().items,
+    }),
+  }));
+
+  await window.initHeatmapPage();
+  window.zoomHeatmapPage(2);
+  const zoomed = window.document.getElementById("heatmap-page-sizer").style.width;
+
+  await window.setHeatmapPeriod("1m");
+
+  assert(window.document.getElementById("heatmap-page-sizer").style.width === zoomed,
+    `기간 변경이 배율을 되돌리면 안 됨 (실제 ${window.document.getElementById("heatmap-page-sizer").style.width})`);
+  assert(window.document.getElementById("heatmap-page-zoom-level").textContent === `${Math.round(Number.parseFloat(zoomed))}%`,
+    "배율 표시도 유지돼야 함");
+});
+
+test("미국 탭에서는 기간 선택을 감춘다 (미국 스냅샷에 기간 데이터가 없음)", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic", "overseas_us"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+    "/api/overseas/top-market-cap": () => success({ items: [overseasItem({})], updated_at: 1767225600 }),
+  }));
+
+  await window.initHeatmapPage();
+  const wrap = window.document.getElementById("heatmap-page-period-wrap");
+  assert(wrap.style.display !== "none", "한국 탭에서는 기간 선택이 보여야 함");
+
+  await window.setHeatmapTab("overseas");
+  assert(wrap.style.display === "none", "미국 탭에서는 기간 선택을 감춰야 함");
+
+  await window.setHeatmapTab("domestic");
+  assert(wrap.style.display !== "none", "한국 탭으로 돌아오면 기간 선택이 다시 보여야 함");
+});
+
+test("pjax 재진입 시 기간은 1일로 돌아온다", async () => {
+  const calls = [];
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success({
+      trade_date: "20260807", period: "3m", base_date: "20260508", items: domesticSnapshot().items,
+    }),
+  }));
+  const traced = window.fetchWithTimeout;
+  window.fetchWithTimeout = (url, ...rest) => { calls.push(url); return traced(url, ...rest); };
+
+  await window.initHeatmapPage();
+  await window.setHeatmapPeriod("3m");
+  calls.length = 0;
+  await window.initHeatmapPage();
+
+  const domesticCalls = calls.filter(url => url.startsWith("/api/heatmap/domestic"));
+  assert(domesticCalls[0].includes("period=1d"), `재진입은 1일로 시작해야 함 (실제 ${domesticCalls[0]})`);
+  assert(window.document.getElementById("heatmap-page-period").value === "1d",
+    "기간 선택 UI 도 1일로 되돌아야 함");
 });
 
 test("전용 페이지 경로에서는 로드 시 자동으로 초기화한다", async () => {
