@@ -1,12 +1,15 @@
 /* view/web/static/js/heatmap_page.js — 히트맵 전용 페이지(/heatmap)
  *
  * 트리맵 계산·색상·조회는 market_heatmap.js 를 그대로 재사용하고(먼저 로드돼야 한다),
- * 이 파일은 전용 페이지가 추가로 가지는 두 가지만 소유한다.
+ * 이 파일은 전용 페이지가 추가로 가지는 세 가지만 소유한다.
  *   1) 한국/미국 탭 전환 — 탭을 열 때 처음 한 번만 조회한다.
  *   2) 줌 — CSS transform 이 아니라 캔버스(sizer) 자체를 키우고 다시 그린다.
  *      transform 으로 확대하면 작은 타일의 생략된 라벨이 그대로 없기 때문에,
  *      배율을 렌더에 넘겨 라벨 기준을 완화해야 확대의 의미가 있다.
  *      버튼(중앙 고정)과 마우스 휠(커서 고정) 두 경로가 같은 배율 단계를 공유한다.
+ *   3) 기간 — 색(등락률)의 기준 구간. 서버가 ohlcv 기준종가로 계산하므로 재조회가 필요하다
+ *      (면적=시가총액은 기간과 무관하게 최신 스냅샷 그대로). 미국 스냅샷에는 기간 이력이
+ *      없어 국내 탭에서만 노출한다.
  */
 
 // 홈 미리보기(200종목)보다 넓게 잡는다 — 작은 타일은 확대로 읽을 수 있다.
@@ -16,9 +19,13 @@ const HEATMAP_PAGE_ZOOM_STEPS = [1, 1.5, 2, 3, 4, 6, 8];
 // 휠 한 칸(Chrome deltaMode=0 기준 deltaY 100) 이 배율 한 단계다. 트랙패드는 한 번 굴려도
 // 작은 delta 를 여러 번 보내므로 누적해서 이 값을 넘을 때만 단계를 바꾼다.
 const HEATMAP_PAGE_WHEEL_STEP_DELTA = 100;
+// 서버(/api/heatmap/domestic?period=)가 받는 값과 같아야 한다.
+const HEATMAP_PAGE_PERIODS = ['1d', '1w', '1m', '3m', '6m', '1y'];
+const HEATMAP_PAGE_DEFAULT_PERIOD = '1d';
 
 let _heatmapPageZoomIndex = 0;
 let _heatmapPageWheelAccum = 0;
+let _heatmapPagePeriod = HEATMAP_PAGE_DEFAULT_PERIOD;
 
 function _heatmapPageZoom() {
     return HEATMAP_PAGE_ZOOM_STEPS[_heatmapPageZoomIndex];
@@ -28,7 +35,8 @@ const HEATMAP_PAGE_SOURCES = {
     domestic: {
         targetId: 'heatmap-page-domestic',
         captionId: 'heatmap-page-domestic-caption',
-        url: `/api/heatmap/domestic?limit=${HEATMAP_PAGE_DOMESTIC_LIMIT}`,
+        // 기간이 바뀌면 URL 도 바뀌므로 함수로 둔다(_loadHeatmap 이 호출 시점에 평가한다).
+        url: () => `/api/heatmap/domestic?limit=${HEATMAP_PAGE_DOMESTIC_LIMIT}&period=${_heatmapPagePeriod}`,
         loadingText: '국내 히트맵 조회 중...',
         toGroups: _domesticGroups,
         caption: _domesticCaption,
@@ -63,8 +71,21 @@ async function setHeatmapTab(market) {
         if (tab) tab.classList.toggle('active', active);
     });
 
+    // 미국 스냅샷(Yahoo)은 일간 등락률만 있어 기간 선택이 의미가 없다.
+    _heatmapPageShow(document.getElementById('heatmap-page-period-wrap'), market === 'domestic');
+
     // 실패한 탭은 lastData 가 없으므로 다시 열 때 재시도된다.
     if (!source.lastData) await _loadHeatmap(source);
+}
+
+async function setHeatmapPeriod(period) {
+    if (!HEATMAP_PAGE_PERIODS.includes(period) || period === _heatmapPagePeriod) return;
+    _heatmapPagePeriod = period;
+
+    // 색 기준이 바뀌었으므로 이전 응답은 못 쓴다. 배율은 렌더 때 다시 반영되어 유지된다.
+    const source = HEATMAP_PAGE_SOURCES.domestic;
+    source.lastData = null;
+    await _loadHeatmap(source);
 }
 
 // 확대/축소 후에도 보고 있던 지점이 화면 가운데에 남도록 스크롤 비율을 유지한다.
@@ -199,6 +220,9 @@ async function initHeatmapPage() {
     });
     _heatmapPageZoomIndex = 0;
     _heatmapPageWheelAccum = 0;
+    _heatmapPagePeriod = HEATMAP_PAGE_DEFAULT_PERIOD;
+    const periodSelect = document.getElementById('heatmap-page-period');
+    if (periodSelect) periodSelect.value = HEATMAP_PAGE_DEFAULT_PERIOD;
     _applyHeatmapPageZoom();
     _bindHeatmapPageWheelZoom(viewport);
 

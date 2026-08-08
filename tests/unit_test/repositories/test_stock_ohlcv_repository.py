@@ -558,6 +558,83 @@ class TestGetYtdReturnRanking:
         assert result[0]["market_cap"] == 999_000_000
 
 
+# ── get_period_base_closes ───────────────────────────────────────────────────
+
+class TestGetPeriodBaseCloses:
+    """get_period_base_closes: 히트맵 기간 등락률의 기준일·기준종가 조회.
+
+    달력일로 물러난 목표일 '이하' 가장 가까운 거래일을 기준일로 삼는다(휴장일 대응).
+    데이터가 그만큼 축적돼 있지 않으면 기준일 없이 비운다 — 있는 것 중 가장 오래된
+    날짜로 대체하면 '1년 등락률' 이 실제로는 3개월 등락률인 수치가 되어 화면이 거짓말한다.
+    """
+
+    @pytest.mark.asyncio
+    async def test_picks_nearest_trading_day_at_or_before_target(self, repo):
+        # 최신 20260713 - 30일 = 20260613 → 그 이하 가장 가까운 거래일 20260612
+        await repo.upsert_ohlcv([
+            _make_ohlcv("A001", "20260612", close=100),
+            _make_ohlcv("A001", "20260615", close=140),  # 목표일 이후 → 기준일 후보 아님
+        ])
+        await repo.upsert_daily_snapshot("20260713", [_make_snapshot("A001", price=150)])
+
+        result = await repo.get_period_base_closes(period_days=30)
+
+        assert result["base_date"] == "20260612"
+        assert result["latest_date"] == "20260713"
+        assert result["closes"] == {"A001": 100}
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_history_does_not_reach_back(self, repo):
+        await repo.upsert_ohlcv([_make_ohlcv("A001", "20260710", close=100)])
+        await repo.upsert_daily_snapshot("20260713", [_make_snapshot("A001", price=150)])
+
+        result = await repo.get_period_base_closes(period_days=365)
+
+        assert result["base_date"] is None
+        assert result["closes"] == {}
+
+    @pytest.mark.asyncio
+    async def test_skips_date_with_no_overlapping_codes(self, repo):
+        """기준일 후보가 휴장일(채권 등 추적 종목과 겹치지 않는 코드만 존재)이면 건너뛴다."""
+        await repo.upsert_ohlcv([
+            _make_ohlcv("A001", "20260610", close=100),
+            _make_ohlcv("BOND1", "20260612", close=999),
+        ])
+        await repo.upsert_daily_snapshot("20260713", [_make_snapshot("A001", price=150)])
+
+        result = await repo.get_period_base_closes(period_days=30)
+
+        assert result["base_date"] == "20260610"
+        assert result["closes"] == {"A001": 100}
+
+    @pytest.mark.asyncio
+    async def test_excludes_non_positive_close(self, repo):
+        """정지주 등 0원 종가는 등락률 분모가 될 수 없어 제외한다."""
+        await repo.upsert_ohlcv([
+            _make_ohlcv("A001", "20260612", close=100),
+            _make_ohlcv("HALT", "20260612", close=0),
+        ])
+        await repo.upsert_daily_snapshot("20260713", [
+            _make_snapshot("A001", price=150),
+            _make_snapshot("HALT", price=0),
+        ])
+
+        result = await repo.get_period_base_closes(period_days=30)
+
+        assert result["closes"] == {"A001": 100}
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_without_snapshots(self, repo):
+        result = await repo.get_period_base_closes(period_days=30)
+        assert result == {"base_date": None, "latest_date": None, "closes": {}}
+
+    @pytest.mark.asyncio
+    async def test_exception_returns_empty(self, repo, monkeypatch):
+        _broken_read_ctx(repo, monkeypatch)
+        result = await repo.get_period_base_closes(period_days=30)
+        assert result == {"base_date": None, "latest_date": None, "closes": {}}
+
+
 # ── get_price_history ────────────────────────────────────────────────────────
 
 class TestGetPriceHistory:

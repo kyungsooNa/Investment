@@ -110,6 +110,10 @@ class StockRepository:
         """최신 거래일 기준 시가총액 상위 스냅샷 조회 (국내 히트맵용)."""
         return await self._ohlcv_repo.get_market_cap_snapshot(limit=limit, market=market)
 
+    async def get_period_base_closes(self, period_days: int) -> Dict:
+        """최신 거래일에서 period_days 달력일 이전의 종목별 기준종가 조회 (히트맵 기간 등락률용)."""
+        return await self._ohlcv_repo.get_period_base_closes(period_days=period_days)
+
     async def update_newhigh_fields(self, trade_date: str, records: List[Dict]):
         """is_newhigh 및 is_historical_newhigh 컬럼 업데이트."""
         await self._ohlcv_repo.update_newhigh_fields(trade_date, records)
