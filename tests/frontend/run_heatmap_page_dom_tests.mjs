@@ -332,6 +332,115 @@ test("휠 축소는 기본 배율 아래로 내려가지 않는다", async () =>
   assert(sizer.style.width === "100%", `기본 배율 아래로 축소되면 안 됨 (실제 ${sizer.style.width})`);
 });
 
+// jsdom 은 레이아웃이 없어 스크롤바 두께(offsetWidth - clientWidth)도 0 이다.
+// 스크롤바 위 판정은 실제 픽셀에 걸려 있으므로 viewport 에 크기를 심어 재현한다.
+function giveViewportScrollbars(window, { width = 800, height = 600, bar = 15 } = {}) {
+  const viewport = window.document.getElementById("heatmap-page-viewport");
+  const metrics = {
+    offsetWidth: width, offsetHeight: height,
+    clientWidth: width - bar, clientHeight: height - bar,
+    scrollWidth: width * 2, scrollHeight: height * 2,
+  };
+  Object.entries(metrics).forEach(([key, value]) => {
+    Object.defineProperty(viewport, key, { value, configurable: true });
+  });
+  // scrollTop/scrollLeft 는 jsdom 이 레이아웃 없이 항상 0 으로 두므로 쓰기 가능하게 바꾼다.
+  Object.defineProperty(viewport, "scrollTop", { value: 300, writable: true, configurable: true });
+  Object.defineProperty(viewport, "scrollLeft", { value: 400, writable: true, configurable: true });
+  viewport.getBoundingClientRect = () => ({ left: 0, top: 0, width, height });
+  return viewport;
+}
+
+test("세로 스크롤바 위에서는 확대가 아니라 위아래로 이동한다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+  await window.initHeatmapPage();
+  const viewport = giveViewportScrollbars(window);
+  const zoomBefore = window.document.getElementById("heatmap-page-sizer").style.width;
+
+  // clientWidth(785) 오른쪽 = 세로 스크롤바 영역
+  const event = wheel(window, 100, { clientX: 792, clientY: 300 });
+
+  assert(window.document.getElementById("heatmap-page-sizer").style.width === zoomBefore,
+    "스크롤바 위 휠은 배율을 바꾸면 안 됨");
+  assert(viewport.scrollTop === 400, `아래로 굴리면 아래로 이동해야 함 (실제 ${viewport.scrollTop})`);
+  assert(viewport.scrollLeft === 400, "세로 이동이 가로 스크롤을 건드리면 안 됨");
+  assert(event.defaultPrevented, "직접 이동시키므로 기본 스크롤은 막아야 함");
+
+  wheel(window, -100, { clientX: 792, clientY: 300 });
+  assert(viewport.scrollTop === 300, `위로 굴리면 위로 돌아와야 함 (실제 ${viewport.scrollTop})`);
+});
+
+test("가로 스크롤바 위에서도 휠은 이동이다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+  await window.initHeatmapPage();
+  const viewport = giveViewportScrollbars(window);
+  const zoomBefore = window.document.getElementById("heatmap-page-sizer").style.width;
+
+  // clientHeight(585) 아래 = 가로 스크롤바 영역
+  wheel(window, 100, { clientX: 400, clientY: 592 });
+
+  assert(window.document.getElementById("heatmap-page-sizer").style.width === zoomBefore,
+    "스크롤바 위 휠은 배율을 바꾸면 안 됨");
+  assert(viewport.scrollTop === 400, `아래로 굴리면 아래로 이동해야 함 (실제 ${viewport.scrollTop})`);
+});
+
+test("스크롤바 위에서 Ctrl+휠은 좌우로 이동한다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+  await window.initHeatmapPage();
+  const viewport = giveViewportScrollbars(window);
+  const zoomBefore = window.document.getElementById("heatmap-page-sizer").style.width;
+
+  const event = wheel(window, 100, { clientX: 792, clientY: 300, ctrlKey: true });
+
+  assert(viewport.scrollLeft === 500, `Ctrl+휠 다운은 오른쪽으로 이동해야 함 (실제 ${viewport.scrollLeft})`);
+  assert(viewport.scrollTop === 300, "가로 이동이 세로 스크롤을 건드리면 안 됨");
+  assert(window.document.getElementById("heatmap-page-sizer").style.width === zoomBefore,
+    "Ctrl+휠도 배율을 바꾸면 안 됨");
+  assert(event.defaultPrevented, "브라우저 페이지 확대(Ctrl+휠 기본동작)를 막아야 함");
+
+  wheel(window, -100, { clientX: 792, clientY: 300, ctrlKey: true });
+  assert(viewport.scrollLeft === 400, `Ctrl+휠 업은 왼쪽으로 이동해야 함 (실제 ${viewport.scrollLeft})`);
+});
+
+test("스크롤바 이동은 0 아래로 내려가지 않는다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+  await window.initHeatmapPage();
+  const viewport = giveViewportScrollbars(window);
+
+  for (let i = 0; i < 10; i += 1) wheel(window, -100, { clientX: 792, clientY: 300 });
+  assert(viewport.scrollTop === 0, `세로 이동 하한이 0 이어야 함 (실제 ${viewport.scrollTop})`);
+
+  for (let i = 0; i < 10; i += 1) wheel(window, -100, { clientX: 792, clientY: 300, ctrlKey: true });
+  assert(viewport.scrollLeft === 0, `가로 이동 하한이 0 이어야 함 (실제 ${viewport.scrollLeft})`);
+});
+
+test("스크롤바가 아닌 히트맵 본문 위에서는 그대로 확대·축소한다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+  await window.initHeatmapPage();
+  const viewport = giveViewportScrollbars(window);
+
+  wheel(window, -100, { clientX: 400, clientY: 300 });
+
+  assert(Number.parseFloat(window.document.getElementById("heatmap-page-sizer").style.width) > 100,
+    "본문 위 휠은 확대여야 함 (스크롤바 판정이 본문까지 삼키면 안 됨)");
+  assert(viewport.scrollTop !== 200, "본문 확대는 이동이 아니라 커서 고정 재계산이어야 함");
+});
+
 test("휠 줌은 커서 아래 지점을 화면에 고정한다", async () => {
   const window = makeWindow(routed({
     "/api/market-mode": () => marketMode(["domestic"]),
