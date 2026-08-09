@@ -195,8 +195,11 @@ async def get_ytd_return_ranking(limit: int = Query(100, ge=1, le=500), market: 
 
 # 히트맵 기간 등락률: 달력일로 물러난 뒤 그 이하 가장 가까운 거래일을 기준일로 삼는다.
 # "1d" 는 스냅샷에 이미 들어 있는 일간 등락률이라 추가 조회가 없다.
+# "ytd"(올해)만 달력일이 아니라 올해 첫 거래일이 기준이라 저장소에서 따로 계산한다.
 _HEATMAP_PERIOD_DAYS = {"1d": 0, "1w": 7, "1m": 30, "3m": 91, "6m": 182, "1y": 365}
-_HEATMAP_PERIOD_LABELS = {"1d": "1일", "1w": "1주", "1m": "1개월", "3m": "3개월", "6m": "6개월", "1y": "1년"}
+_HEATMAP_PERIOD_LABELS = {
+    "1d": "1일", "1w": "1주", "1m": "1개월", "3m": "3개월", "6m": "6개월", "ytd": "올해", "1y": "1년",
+}
 
 
 def _heatmap_period_change_rate(row: dict, closes: dict):
@@ -223,10 +226,10 @@ async def get_domestic_heatmap(
     기준일(trade_date)을 함께 반환해 화면이 장중에도 기준 시점을 표시할 수 있게 한다.
     period 를 주면 등락률을 그 기간 수익률로 바꿔 반환한다(면적=시가총액은 그대로).
     """
-    if period not in _HEATMAP_PERIOD_DAYS:
+    if period not in _HEATMAP_PERIOD_LABELS:
         raise HTTPException(
             status_code=400,
-            detail=f"period는 {', '.join(_HEATMAP_PERIOD_DAYS)} 중 하나여야 합니다.",
+            detail=f"period는 {', '.join(_HEATMAP_PERIOD_LABELS)} 중 하나여야 합니다.",
         )
 
     ctx = _get_ctx()
@@ -239,7 +242,10 @@ async def get_domestic_heatmap(
     base_date = None
     closes = {}
     if period != "1d" and rows:
-        base = await repository.get_period_base_closes(period_days=_HEATMAP_PERIOD_DAYS[period])
+        base = (
+            await repository.get_period_base_closes(ytd=True) if period == "ytd"
+            else await repository.get_period_base_closes(period_days=_HEATMAP_PERIOD_DAYS[period])
+        )
         base_date = (base or {}).get("base_date")
         closes = (base or {}).get("closes") or {}
 

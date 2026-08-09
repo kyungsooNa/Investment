@@ -624,6 +624,32 @@ class TestGetPeriodBaseCloses:
         assert result["closes"] == {"A001": 100}
 
     @pytest.mark.asyncio
+    async def test_ytd_uses_first_trading_day_of_year(self, repo):
+        """ytd 는 달력일이 아니라 '올해 첫 거래일' 종가를 기준으로 삼는다(YTD 랭킹과 같은 기준)."""
+        await repo.upsert_ohlcv([
+            _make_ohlcv("A001", "20251230", close=80),  # 전년 → 기준일 후보 아님
+            _make_ohlcv("A001", "20260105", close=100),
+            _make_ohlcv("A001", "20260302", close=120),
+        ])
+        await repo.upsert_daily_snapshot("20260713", [_make_snapshot("A001", price=150)])
+
+        result = await repo.get_period_base_closes(ytd=True)
+
+        assert result["base_date"] == "20260105"
+        assert result["latest_date"] == "20260713"
+        assert result["closes"] == {"A001": 100}
+
+    @pytest.mark.asyncio
+    async def test_ytd_returns_empty_without_this_year_history(self, repo):
+        await repo.upsert_ohlcv([_make_ohlcv("A001", "20251230", close=80)])
+        await repo.upsert_daily_snapshot("20260713", [_make_snapshot("A001", price=150)])
+
+        result = await repo.get_period_base_closes(ytd=True)
+
+        assert result["base_date"] is None
+        assert result["closes"] == {}
+
+    @pytest.mark.asyncio
     async def test_returns_empty_without_snapshots(self, repo):
         result = await repo.get_period_base_closes(period_days=30)
         assert result == {"base_date": None, "latest_date": None, "closes": {}}

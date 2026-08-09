@@ -31,6 +31,7 @@ const SCAFFOLD = `
       <option value="1m">1개월</option>
       <option value="3m">3개월</option>
       <option value="6m">6개월</option>
+      <option value="ytd">올해</option>
       <option value="1y">1년</option>
     </select>
   </span>
@@ -467,6 +468,90 @@ test("휠 줌은 커서 아래 지점을 화면에 고정한다", async () => {
   assert(viewport.scrollTop === 0.35 * 2000 - 100, `세로 스크롤이 커서 기준으로 복원돼야 함 (실제 ${viewport.scrollTop})`);
 });
 
+function mouse(target, type, clientX, clientY, options = {}) {
+  const view = target.ownerDocument ? target.ownerDocument.defaultView : target.defaultView;
+  const event = new view.MouseEvent(type, {
+    clientX, clientY, button: 0, bubbles: true, cancelable: true, ...options,
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
+test("히트맵을 마우스로 끌면 휴대폰처럼 상하좌우로 움직인다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+  await window.initHeatmapPage();
+  const viewport = giveViewportScrollbars(window);  // scrollLeft 400 / scrollTop 300
+
+  const down = mouse(viewport, "mousedown", 400, 300);
+  assert(down.defaultPrevented, "끄는 동안 타일 라벨이 선택되지 않도록 기본 동작을 막아야 함");
+  assert(viewport.classList.contains("heatmap-panning"), "끄는 중임을 커서로 알 수 있어야 함");
+
+  // 왼쪽·위로 끌면 화면은 그 반대(오른쪽·아래)로 이동한다 — 종이를 밀듯이.
+  mouse(window.document, "mousemove", 350, 250);
+  assert(viewport.scrollLeft === 450, `왼쪽으로 끌면 오른쪽으로 이동해야 함 (실제 ${viewport.scrollLeft})`);
+  assert(viewport.scrollTop === 350, `위로 끌면 아래로 이동해야 함 (실제 ${viewport.scrollTop})`);
+
+  // 이동량은 누적이 아니라 시작점 기준이다(중간 이동을 두 번 세면 두 배로 튄다).
+  mouse(window.document, "mousemove", 300, 200);
+  assert(viewport.scrollLeft === 500 && viewport.scrollTop === 400,
+    `이동량은 시작점 기준이어야 함 (실제 ${viewport.scrollLeft}, ${viewport.scrollTop})`);
+
+  mouse(window.document, "mouseup", 300, 200);
+  assert(!viewport.classList.contains("heatmap-panning"), "손을 떼면 끌기 상태가 풀려야 함");
+
+  mouse(window.document, "mousemove", 100, 100);
+  assert(viewport.scrollLeft === 500 && viewport.scrollTop === 400, "손을 뗀 뒤 커서 이동은 화면을 움직이면 안 됨");
+});
+
+test("끌기는 경계를 넘어가지 않는다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+  await window.initHeatmapPage();
+  const viewport = giveViewportScrollbars(window);
+
+  mouse(viewport, "mousedown", 400, 300);
+  mouse(window.document, "mousemove", 5000, 5000);
+
+  assert(viewport.scrollLeft === 0 && viewport.scrollTop === 0,
+    `왼쪽 위 끝을 넘어가면 안 됨 (실제 ${viewport.scrollLeft}, ${viewport.scrollTop})`);
+});
+
+test("스크롤바를 잡은 드래그는 브라우저 기본 동작에 맡긴다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+  await window.initHeatmapPage();
+  const viewport = giveViewportScrollbars(window);
+
+  // clientWidth(785) 오른쪽 = 세로 스크롤바 영역
+  const down = mouse(viewport, "mousedown", 792, 300);
+  assert(!down.defaultPrevented, "스크롤바 드래그는 브라우저가 처리해야 함");
+  assert(!viewport.classList.contains("heatmap-panning"), "스크롤바에서는 끌기 상태로 들어가면 안 됨");
+
+  mouse(window.document, "mousemove", 792, 200);
+  assert(viewport.scrollTop === 300, "스크롤바 드래그를 이중으로 이동시키면 안 됨");
+});
+
+test("오른쪽 버튼 드래그는 화면을 움직이지 않는다", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+  await window.initHeatmapPage();
+  const viewport = giveViewportScrollbars(window);
+
+  mouse(viewport, "mousedown", 400, 300, { button: 2 });
+  mouse(window.document, "mousemove", 300, 200);
+
+  assert(viewport.scrollLeft === 400 && viewport.scrollTop === 300, "좌클릭 드래그만 이동이어야 함");
+});
+
 test("기간을 바꾸면 그 기간으로 다시 조회하고 캡션에 비교 구간을 밝힌다", async () => {
   const calls = [];
   const window = makeWindow(routed({
@@ -492,6 +577,30 @@ test("기간을 바꾸면 그 기간으로 다시 조회하고 캡션에 비교 
     `캡션에 비교 구간이 표시돼야 함 (실제 ${caption})`);
   assert(window.document.querySelectorAll("#heatmap-page-domestic .heatmap-tile").length > 0,
     "기간 변경 후에도 타일이 그려져야 함");
+});
+
+test("올해(ytd)도 같은 경로로 조회하고 캡션에 연초부터의 구간을 밝힌다", async () => {
+  const calls = [];
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success({
+      trade_date: "20260807", period: "ytd", base_date: "20260102", items: domesticSnapshot().items,
+    }),
+  }));
+  const traced = window.fetchWithTimeout;
+  window.fetchWithTimeout = (url, ...rest) => { calls.push(url); return traced(url, ...rest); };
+
+  await window.initHeatmapPage();
+  await window.setHeatmapPeriod("ytd");
+
+  const domesticCalls = calls.filter(url => url.startsWith("/api/heatmap/domestic"));
+  assert(domesticCalls[domesticCalls.length - 1].includes("period=ytd"),
+    `조회 URL 에 기간이 실려야 함 (실제 ${domesticCalls[domesticCalls.length - 1]})`);
+
+  const caption = window.document.getElementById("heatmap-page-domestic-caption").textContent;
+  assert(caption.includes("올해"), `캡션에 기간이 표시돼야 함 (실제 ${caption})`);
+  assert(caption.includes("2026-01-02") && caption.includes("2026-08-07"),
+    `캡션에 비교 구간이 표시돼야 함 (실제 ${caption})`);
 });
 
 test("기간 비교 데이터가 없으면 캡션이 그 사실을 밝힌다", async () => {

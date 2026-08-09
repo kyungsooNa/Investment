@@ -10,6 +10,7 @@
  *   3) 기간 — 색(등락률)의 기준 구간. 서버가 ohlcv 기준종가로 계산하므로 재조회가 필요하다
  *      (면적=시가총액은 기간과 무관하게 최신 스냅샷 그대로). 미국 스냅샷에는 기간 이력이
  *      없어 국내 탭에서만 노출한다.
+ *   4) 끌어서 이동 — 확대한 화면을 휴대폰처럼 마우스로 잡아끌어 옮긴다.
  */
 
 // 홈 미리보기(200종목)보다 넓게 잡는다 — 작은 타일은 확대로 읽을 수 있다.
@@ -20,7 +21,7 @@ const HEATMAP_PAGE_ZOOM_STEPS = [1, 1.5, 2, 3, 4, 6, 8];
 // 작은 delta 를 여러 번 보내므로 누적해서 이 값을 넘을 때만 단계를 바꾼다.
 const HEATMAP_PAGE_WHEEL_STEP_DELTA = 100;
 // 서버(/api/heatmap/domestic?period=)가 받는 값과 같아야 한다.
-const HEATMAP_PAGE_PERIODS = ['1d', '1w', '1m', '3m', '6m', '1y'];
+const HEATMAP_PAGE_PERIODS = ['1d', '1w', '1m', '3m', '6m', 'ytd', '1y'];
 const HEATMAP_PAGE_DEFAULT_PERIOD = '1d';
 
 let _heatmapPageZoomIndex = 0;
@@ -227,6 +228,58 @@ function _bindHeatmapPageWheelZoom(viewport) {
     viewport.dataset.wheelZoomBound = '1';
 }
 
+// 휴대폰에서 화면을 밀듯 히트맵을 잡아끌어 옮긴다 — 확대해 놓으면 스크롤바를 찾아가는 것보다 빠르다.
+// (터치 기기는 브라우저 기본 스크롤이 이미 같은 동작이라 마우스만 다룬다.)
+const HEATMAP_PAGE_PANNING_CLASS = 'heatmap-panning';
+
+let _heatmapPagePan = null;
+
+function _onHeatmapPagePanStart(event) {
+    if (event.button !== 0) return;
+    const viewport = event.currentTarget;
+    // 스크롤바를 잡은 드래그는 브라우저 기본 동작이 이미 정확하다 — 손대면 두 배로 움직인다.
+    if (_heatmapPageOnScrollbar(viewport, event.clientX, event.clientY)) return;
+
+    _heatmapPagePan = {
+        viewport,
+        startX: event.clientX,
+        startY: event.clientY,
+        scrollLeft: viewport.scrollLeft,
+        scrollTop: viewport.scrollTop,
+    };
+    viewport.classList.add(HEATMAP_PAGE_PANNING_CLASS);
+    // 끄는 동안 타일 라벨이 텍스트로 선택되는 것을 막는다.
+    event.preventDefault();
+}
+
+// 이동량은 직전 위치가 아니라 시작점 기준이다 — 프레임을 누적하면 오차가 쌓인다.
+function _onHeatmapPagePanMove(event) {
+    const pan = _heatmapPagePan;
+    if (!pan) return;
+    pan.viewport.scrollLeft = Math.max(0, pan.scrollLeft - (event.clientX - pan.startX));
+    pan.viewport.scrollTop = Math.max(0, pan.scrollTop - (event.clientY - pan.startY));
+}
+
+function _onHeatmapPagePanEnd() {
+    if (!_heatmapPagePan) return;
+    _heatmapPagePan.viewport.classList.remove(HEATMAP_PAGE_PANNING_CLASS);
+    _heatmapPagePan = null;
+}
+
+// 이동·종료는 document 에 건다 — 커서가 히트맵 밖으로 나가도 끌기가 이어지고, 밖에서 손을 떼도 풀린다.
+let _heatmapPagePanDocumentBound = false;
+
+function _bindHeatmapPageDragPan(viewport) {
+    if (viewport.dataset.dragPanBound !== '1') {
+        viewport.addEventListener('mousedown', _onHeatmapPagePanStart);
+        viewport.dataset.dragPanBound = '1';
+    }
+    if (_heatmapPagePanDocumentBound) return;
+    document.addEventListener('mousemove', _onHeatmapPagePanMove);
+    document.addEventListener('mouseup', _onHeatmapPagePanEnd);
+    _heatmapPagePanDocumentBound = true;
+}
+
 function resetHeatmapPageZoom() {
     _heatmapPageZoomIndex = 0;
     _applyHeatmapPageZoom();
@@ -251,8 +304,10 @@ async function initHeatmapPage() {
     _heatmapPagePeriod = HEATMAP_PAGE_DEFAULT_PERIOD;
     const periodSelect = document.getElementById('heatmap-page-period');
     if (periodSelect) periodSelect.value = HEATMAP_PAGE_DEFAULT_PERIOD;
+    _heatmapPagePan = null;
     _applyHeatmapPageZoom();
     _bindHeatmapPageWheelZoom(viewport);
+    _bindHeatmapPageDragPan(viewport);
 
     // 미국장이 꺼진 run 에서는 API 가 400 을 내므로 탭 자체를 감춘다.
     if (!await _heatmapOverseasEnabled()) {

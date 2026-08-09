@@ -614,13 +614,16 @@ class StockOhlcvRepository:
             self._logger.error(f"StockOhlcvRepository YTD 수익률 랭킹 조회 실패: {e}")
             return []
 
-    async def get_period_base_closes(self, period_days: int) -> Dict[str, Any]:
+    async def get_period_base_closes(self, period_days: int = 0, ytd: bool = False) -> Dict[str, Any]:
         """최신 거래일에서 period_days 달력일 물러난 시점의 종목별 기준종가 (히트맵 기간 등락률용).
 
         목표일이 휴장일일 수 있으므로 '목표일 이하 가장 가까운 거래일'을 기준일로 삼는다.
         이력이 그만큼 축적돼 있지 않으면 기준일 없이 비운다 — 남아 있는 가장 오래된 날짜로
         대체하면 '1년 등락률' 이 실제로는 3개월 등락률인 수치가 되어 화면이 거짓말한다.
         daily_prices 는 수집 시작 시점이 늦어 기준가는 더 오래 축적된 ohlcv 에서 읽는다.
+
+        ytd=True 면 달력일 대신 '올해 첫 거래일' 을 기준일로 삼는다 (period_days 는 무시).
+        연초 첫 종가 기준은 get_ytd_return_ranking 과 같아 두 화면의 YTD 수치가 일치한다.
         """
         from datetime import datetime, timedelta
 
@@ -633,23 +636,32 @@ class StockOhlcvRepository:
                 if not latest_date:
                     return empty
 
-                target_date = (
-                    datetime.strptime(latest_date, "%Y%m%d") - timedelta(days=period_days)
-                ).strftime("%Y%m%d")
-
                 # 자릿수가 어긋난 레코드가 섞여도 8자리 날짜만 기준일 후보로 삼고,
                 # 최신 스냅샷 종목과 실제로 겹치는 코드가 있는 날짜만 채택한다(휴장일 배제).
-                async with conn.execute(
+                if ytd:
+                    base_sql = """
+                        SELECT MIN(base.date)
+                        FROM ohlcv AS base
+                        JOIN daily_prices AS latest
+                          ON latest.code = base.code AND latest.trade_date = ?
+                        WHERE base.date GLOB ?
                     """
-                    SELECT MAX(base.date)
-                    FROM ohlcv AS base
-                    JOIN daily_prices AS latest
-                      ON latest.code = base.code AND latest.trade_date = ?
-                    WHERE base.date <= ?
-                      AND base.date GLOB '[0-9][0-9][0-9][0-9][0-1][0-9][0-3][0-9]'
-                    """,
-                    (latest_date, target_date),
-                ) as cursor:
+                    base_params = (latest_date, f"{latest_date[:4]}[0-1][0-9][0-3][0-9]")
+                else:
+                    target_date = (
+                        datetime.strptime(latest_date, "%Y%m%d") - timedelta(days=period_days)
+                    ).strftime("%Y%m%d")
+                    base_sql = """
+                        SELECT MAX(base.date)
+                        FROM ohlcv AS base
+                        JOIN daily_prices AS latest
+                          ON latest.code = base.code AND latest.trade_date = ?
+                        WHERE base.date <= ?
+                          AND base.date GLOB '[0-9][0-9][0-9][0-9][0-1][0-9][0-3][0-9]'
+                    """
+                    base_params = (latest_date, target_date)
+
+                async with conn.execute(base_sql, base_params) as cursor:
                     base_row = await cursor.fetchone()
                 base_date = base_row[0] if base_row and base_row[0] else None
                 if not base_date:

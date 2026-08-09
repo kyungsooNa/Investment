@@ -137,10 +137,21 @@ def test_heatmap_page_hosts_period_control():
     assert 'id="heatmap-page-period-wrap"' in template, "미국 탭에서 감출 대상 컨테이너가 필요함"
     assert "setHeatmapPeriod(this.value)" in template
 
-    for period in ("1d", "1w", "1m", "3m", "6m", "1y"):
+    for period in ("1d", "1w", "1m", "3m", "6m", "ytd", "1y"):
         assert f'value="{period}"' in template, f"{period} 기간 선택지가 없음"
         assert f"'{period}'" in page_script, f"{period} 가 스크립트 허용 목록에 없음"
     assert "period=${_heatmapPagePeriod}" in page_script, "조회 URL 에 기간이 실리지 않음"
+
+
+def test_heatmap_page_supports_drag_panning():
+    """확대한 화면은 마우스로 끌어 옮길 수 있어야 한다 — 배선(JS)과 커서 표시(CSS)가 함께 있어야 한다."""
+    template = _heatmap_page_template()
+    page_script = _heatmap_page_js()
+
+    assert "'mousedown'" in page_script and "'mousemove'" in page_script and "'mouseup'" in page_script
+    assert "heatmap-panning" in page_script
+    assert "cursor: grab" in template, "끌 수 있다는 표시가 없음"
+    assert ".heatmap-page-viewport.heatmap-panning" in template, "끄는 중 커서 상태 스타일이 없음"
 
 
 def test_heatmap_page_reuses_home_render_script():
