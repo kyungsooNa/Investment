@@ -7,10 +7,12 @@
  *      transform 으로 확대하면 작은 타일의 생략된 라벨이 그대로 없기 때문에,
  *      배율을 렌더에 넘겨 라벨 기준을 완화해야 확대의 의미가 있다.
  *      버튼(중앙 고정)과 마우스 휠(커서 고정) 두 경로가 같은 배율 단계를 공유한다.
- *   3) 기간 — 색(등락률)의 기준 구간. 서버가 ohlcv 기준종가로 계산하므로 재조회가 필요하다
- *      (면적=시가총액은 기간과 무관하게 최신 스냅샷 그대로). 미국 스냅샷에는 기간 이력이
+ *   3) 기간·시장 — 조회 조건. 기간은 색(등락률)의 기준 구간이라 서버가 ohlcv 기준종가로
+ *      계산하고(면적=시가총액은 기간과 무관하게 최신 스냅샷 그대로), 시장(공통/코스피/코스닥)은
+ *      담기는 종목 자체를 바꾼다 — 둘 다 재조회가 필요하다. 미국 탭은 기간 이력도 시장 구분도
  *      없어 국내 탭에서만 노출한다.
  *   4) 끌어서 이동 — 확대한 화면을 휴대폰처럼 마우스로 잡아끌어 옮긴다.
+ *   5) 검색 — 재조회 없이 그려진 타일에서 종목을 짚는다(일치 강조 + 나머지 흐림 + 스크롤).
  */
 
 // 홈 미리보기(200종목)보다 넓게 잡는다 — 작은 타일은 확대로 읽을 수 있다.
@@ -23,10 +25,14 @@ const HEATMAP_PAGE_WHEEL_STEP_DELTA = 100;
 // 서버(/api/heatmap/domestic?period=)가 받는 값과 같아야 한다.
 const HEATMAP_PAGE_PERIODS = ['1d', '1w', '1m', '3m', '6m', 'ytd', '1y'];
 const HEATMAP_PAGE_DEFAULT_PERIOD = '1d';
+// 저장소가 해석하는 시장 값 — 'ALL'(공통) 은 필터 없음이다.
+const HEATMAP_PAGE_MARKETS = ['ALL', 'KOSPI', 'KOSDAQ'];
+const HEATMAP_PAGE_DEFAULT_MARKET = 'ALL';
 
 let _heatmapPageZoomIndex = 0;
 let _heatmapPageWheelAccum = 0;
 let _heatmapPagePeriod = HEATMAP_PAGE_DEFAULT_PERIOD;
+let _heatmapPageMarket = HEATMAP_PAGE_DEFAULT_MARKET;
 
 function _heatmapPageZoom() {
     return HEATMAP_PAGE_ZOOM_STEPS[_heatmapPageZoomIndex];
@@ -36,8 +42,9 @@ const HEATMAP_PAGE_SOURCES = {
     domestic: {
         targetId: 'heatmap-page-domestic',
         captionId: 'heatmap-page-domestic-caption',
-        // 기간이 바뀌면 URL 도 바뀌므로 함수로 둔다(_loadHeatmap 이 호출 시점에 평가한다).
-        url: () => `/api/heatmap/domestic?limit=${HEATMAP_PAGE_DOMESTIC_LIMIT}&period=${_heatmapPagePeriod}`,
+        // 조회 조건(기간·시장)이 바뀌면 URL 도 바뀌므로 함수로 둔다(_loadHeatmap 이 호출 시점에 평가한다).
+        url: () => `/api/heatmap/domestic?limit=${HEATMAP_PAGE_DOMESTIC_LIMIT}`
+            + `&period=${_heatmapPagePeriod}&market=${_heatmapPageMarket}`,
         loadingText: '국내 히트맵 조회 중...',
         toGroups: _domesticGroups,
         caption: _domesticCaption,
@@ -72,11 +79,14 @@ async function setHeatmapTab(market) {
         if (tab) tab.classList.toggle('active', active);
     });
 
-    // 미국 스냅샷(Yahoo)은 일간 등락률만 있어 기간 선택이 의미가 없다.
+    // 미국 스냅샷(Yahoo)은 일간 등락률만 있어 기간 선택이 의미가 없고, 시장도 S&P 500 고정이다.
     _heatmapPageShow(document.getElementById('heatmap-page-period-wrap'), market === 'domestic');
+    _heatmapPageShow(document.getElementById('heatmap-page-market-wrap'), market === 'domestic');
 
     // 실패한 탭은 lastData 가 없으므로 다시 열 때 재시도된다.
     if (!source.lastData) await _loadHeatmap(source);
+    // 탭을 바꾸면 일치 개수의 대상(보이는 패널)이 달라진다.
+    _applyHeatmapPageSearch();
 }
 
 async function setHeatmapPeriod(period) {
@@ -87,6 +97,85 @@ async function setHeatmapPeriod(period) {
     const source = HEATMAP_PAGE_SOURCES.domestic;
     source.lastData = null;
     await _loadHeatmap(source);
+    _applyHeatmapPageSearch();
+}
+
+async function setHeatmapMarket(market) {
+    if (!HEATMAP_PAGE_MARKETS.includes(market) || market === _heatmapPageMarket) return;
+    _heatmapPageMarket = market;
+
+    // 종목 구성 자체가 달라지므로 서버에서 다시 받아야 한다(면적 = 시가총액 상위 N).
+    const source = HEATMAP_PAGE_SOURCES.domestic;
+    source.lastData = null;
+    await _loadHeatmap(source);
+    _applyHeatmapPageSearch();
+}
+
+// 검색은 재조회가 아니라 이미 그려진 타일을 짚어 주는 기능이다. 일치하지 않는 종목을 지우면
+// 남은 타일이 화면을 다시 채워 면적(시가총액)이 뜻을 잃으므로, 흐리게 두고 일치만 도드라지게 한다.
+const HEATMAP_PAGE_SEARCHING_CLASS = 'heatmap-searching';
+const HEATMAP_PAGE_HIT_CLASS = 'heatmap-tile-hit';
+
+let _heatmapPageQuery = '';
+
+function _heatmapPageMatches(tile, query) {
+    const symbol = String(tile.dataset.symbol || '').toLowerCase();
+    const name = String(tile.dataset.name || '').toLowerCase();
+    return symbol.includes(query) || name.includes(query);
+}
+
+// 확대·재조회는 타일 DOM 을 통째로 새로 만든다 — 그릴 때마다 현재 검색어를 다시 입힌다.
+function _applyHeatmapPageSearch() {
+    const query = _heatmapPageQuery;
+    let hits = 0;
+
+    Object.values(HEATMAP_PAGE_SOURCES).forEach(source => {
+        const div = document.getElementById(source.targetId);
+        if (!div) return;
+        div.classList.toggle(HEATMAP_PAGE_SEARCHING_CLASS, Boolean(query));
+        div.querySelectorAll('.heatmap-tile').forEach(tile => {
+            const hit = Boolean(query) && _heatmapPageMatches(tile, query);
+            tile.classList.toggle(HEATMAP_PAGE_HIT_CLASS, hit);
+            if (hit && div.style.display !== 'none') hits += 1;
+        });
+    });
+
+    const countEl = document.getElementById('heatmap-page-search-count');
+    if (countEl) {
+        if (!query) countEl.textContent = '';
+        else countEl.textContent = hits ? `${hits}개 일치` : '일치하는 종목이 없습니다';
+    }
+    return hits;
+}
+
+// 찾은 종목이 확대된 화면 밖에 있으면 강조해도 보이지 않는다 — 첫(가장 큰) 일치로 스크롤한다.
+function _scrollHeatmapPageToFirstHit() {
+    const viewport = document.getElementById('heatmap-page-viewport');
+    if (!viewport || typeof viewport.getBoundingClientRect !== 'function') return;
+
+    const visible = Object.values(HEATMAP_PAGE_SOURCES)
+        .map(source => document.getElementById(source.targetId))
+        .find(div => div && div.style.display !== 'none');
+    const tile = visible && visible.querySelector(`.${HEATMAP_PAGE_HIT_CLASS}`);
+    if (!tile) return;
+
+    const tileRect = tile.getBoundingClientRect();
+    const viewRect = viewport.getBoundingClientRect();
+    if (!tileRect.width && !tileRect.height) return;  // 레이아웃이 없으면 스크롤할 곳도 없다
+
+    viewport.scrollLeft = Math.max(
+        0,
+        viewport.scrollLeft + (tileRect.left - viewRect.left) - (viewport.clientWidth - tileRect.width) / 2,
+    );
+    viewport.scrollTop = Math.max(
+        0,
+        viewport.scrollTop + (tileRect.top - viewRect.top) - (viewport.clientHeight - tileRect.height) / 2,
+    );
+}
+
+function searchHeatmapPage(query) {
+    _heatmapPageQuery = String(query || '').trim().toLowerCase();
+    if (_applyHeatmapPageSearch()) _scrollHeatmapPageToFirstHit();
 }
 
 // 확대/축소 후에도 보고 있던 지점이 화면 가운데에 남도록 스크롤 비율을 유지한다.
@@ -119,6 +208,7 @@ function _applyHeatmapPageZoom() {
         const div = document.getElementById(source.targetId);
         if (div && source.lastData) _renderHeatmap(div, source, source.lastData);
     });
+    _applyHeatmapPageSearch();
 }
 
 function _heatmapPageNextZoomIndex(step) {
@@ -304,6 +394,12 @@ async function initHeatmapPage() {
     _heatmapPagePeriod = HEATMAP_PAGE_DEFAULT_PERIOD;
     const periodSelect = document.getElementById('heatmap-page-period');
     if (periodSelect) periodSelect.value = HEATMAP_PAGE_DEFAULT_PERIOD;
+    _heatmapPageMarket = HEATMAP_PAGE_DEFAULT_MARKET;
+    const marketSelect = document.getElementById('heatmap-page-market');
+    if (marketSelect) marketSelect.value = HEATMAP_PAGE_DEFAULT_MARKET;
+    _heatmapPageQuery = '';
+    const searchInput = document.getElementById('heatmap-page-search');
+    if (searchInput) searchInput.value = '';
     _heatmapPagePan = null;
     _applyHeatmapPageZoom();
     _bindHeatmapPageWheelZoom(viewport);

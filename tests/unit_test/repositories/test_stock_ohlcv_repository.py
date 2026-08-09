@@ -1182,6 +1182,18 @@ class TestGetMarketCapSnapshot:
         assert [row["code"] for row in result] == ["A002"]
 
     @pytest.mark.asyncio
+    async def test_all_means_every_market(self, repo):
+        """히트맵의 '공통' 이 market="ALL" 로 내려오므로 필터 없이 전체가 나와야 한다."""
+        await repo.upsert_daily_snapshot("20260714", [
+            _make_snapshot("A001", market_cap=300, market="KOSPI"),
+            _make_snapshot("A002", market_cap=200, market="KOSDAQ"),
+        ])
+
+        result = await repo.get_market_cap_snapshot(limit=10, market="ALL")
+
+        assert [row["code"] for row in result] == ["A001", "A002"]
+
+    @pytest.mark.asyncio
     async def test_returns_empty_without_snapshots(self, repo):
         assert await repo.get_market_cap_snapshot() == []
 

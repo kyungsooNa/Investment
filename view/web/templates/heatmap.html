@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-    <link rel="stylesheet" href="/static/css/heatmap.css?v=1">
+    <link rel="stylesheet" href="/static/css/heatmap.css?v=2">
     <style>
         /* 줌은 viewport(스크롤 영역) 안에서 sizer 를 키우는 방식이라 viewport 높이가 고정돼야 한다. */
         .heatmap-page-viewport { position: relative; overflow: auto; height: calc(100vh - 300px); min-height: 420px; cursor: grab; }
@@ -19,6 +19,14 @@
             border: 1px solid var(--border); border-radius: 5px;
         }
         .heatmap-period select:hover { border-color: var(--accent, #4a90e2); }
+        .heatmap-search { display: inline-flex; align-items: center; gap: 6px; }
+        .heatmap-search input {
+            width: 150px; padding: 3px 6px; font-size: 0.85rem;
+            background: var(--bg-secondary); color: var(--text-primary);
+            border: 1px solid var(--border); border-radius: 5px;
+        }
+        .heatmap-search input:focus { outline: none; border-color: var(--accent, #4a90e2); }
+        #heatmap-page-search-count { font-size: 0.78rem; color: var(--text-secondary); }
         .heatmap-zoom button {
             min-width: 30px; padding: 3px 8px; cursor: pointer;
             background: var(--bg-secondary); color: var(--text-primary);
@@ -40,6 +48,21 @@
             <div class="heatmap-toolbar">
                 <span id="heatmap-page-domestic-caption" class="heatmap-updated">기준일: --</span>
                 <span id="heatmap-page-overseas-caption" class="heatmap-updated" style="display:none;">최신 업데이트: --</span>
+                <span class="heatmap-search" id="heatmap-page-search-wrap"
+                      title="종목명·코드로 찾습니다 (일치 종목을 강조하고 나머지는 흐리게)">
+                    <input type="search" id="heatmap-page-search" placeholder="종목명·코드 검색"
+                           oninput="searchHeatmapPage(this.value)" aria-label="히트맵 종목 검색">
+                    <span id="heatmap-page-search-count"></span>
+                </span>
+                <span class="heatmap-period" id="heatmap-page-market-wrap"
+                      title="담을 종목의 시장 (공통 = 코스피+코스닥)">
+                    <label for="heatmap-page-market">시장</label>
+                    <select id="heatmap-page-market" onchange="setHeatmapMarket(this.value)">
+                        <option value="ALL" selected>공통</option>
+                        <option value="KOSPI">코스피</option>
+                        <option value="KOSDAQ">코스닥</option>
+                    </select>
+                </span>
                 <span class="heatmap-period" id="heatmap-page-period-wrap"
                       title="타일 색을 이 기간의 등락률로 계산합니다 (면적은 시가총액 그대로)">
                     <label for="heatmap-page-period">기간</label>
@@ -79,6 +102,6 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/market_heatmap.js?v=5"></script>
-<script src="/static/js/heatmap_page.js?v=5"></script>
+<script src="/static/js/market_heatmap.js?v=6"></script>
+<script src="/static/js/heatmap_page.js?v=6"></script>
 {% endblock %}

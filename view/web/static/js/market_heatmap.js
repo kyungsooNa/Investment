@@ -194,6 +194,7 @@ function _heatmapTileHtml(member, box, zoom) {
     return `
         <div class="heatmap-tile"
              data-symbol="${escapeHtml(member.symbol)}"
+             data-name="${escapeHtml(member.name)}"
              data-direction="${_heatmapDirection(member.rate)}"
              title="${escapeHtml(tooltip)}"
              style="left:${box.x.toFixed(4)}%; top:${box.y.toFixed(4)}%; width:${box.w.toFixed(4)}%; height:${box.h.toFixed(4)}%; background-color:${_heatmapColor(member.rate)};">
