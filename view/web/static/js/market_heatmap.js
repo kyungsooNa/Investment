@@ -38,6 +38,7 @@ const HEATMAP_PERIOD_LABELS = {
     '1m': '1개월',
     '3m': '3개월',
     '6m': '6개월',
+    'ytd': '올해',
     '1y': '1년',
 };
 

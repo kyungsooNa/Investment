@@ -597,6 +597,27 @@ async def test_get_domestic_heatmap_period_without_history(web_client, mock_web_
 
 
 @pytest.mark.asyncio
+async def test_get_domestic_heatmap_ytd_uses_first_close_of_year(web_client, mock_web_ctx):
+    """period=ytd 는 달력일이 아니라 올해 첫 거래일 종가를 기준으로 저장소에 요청한다."""
+    mock_web_ctx.stock_repository.get_market_cap_snapshot = AsyncMock(return_value=[
+        {"code": "005930", "name": "삼성전자", "change_rate": "-0.72", "market_cap": 12101797,
+         "trade_date": "20260807", "market": "KOSPI", "current_price": 120000},
+    ])
+    mock_web_ctx.stock_repository.get_period_base_closes = AsyncMock(return_value={
+        "base_date": "20260102", "latest_date": "20260807", "closes": {"005930": 100000},
+    })
+
+    response = web_client.get("/api/heatmap/domestic?period=ytd")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"]["period"] == "ytd"
+    assert body["data"]["base_date"] == "20260102"
+    assert body["data"]["items"][0]["change_rate"] == 20.0
+    mock_web_ctx.stock_repository.get_period_base_closes.assert_awaited_once_with(ytd=True)
+
+
+@pytest.mark.asyncio
 async def test_get_domestic_heatmap_rejects_unknown_period(web_client, mock_web_ctx):
     """지원하지 않는 기간 문자열은 400 으로 거절한다."""
     mock_web_ctx.stock_repository.get_market_cap_snapshot = AsyncMock(return_value=[])
