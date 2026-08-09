@@ -23,6 +23,18 @@ const SCAFFOLD = `
 <div class="heatmap-toolbar">
   <span id="heatmap-page-domestic-caption" class="heatmap-updated">기준일: --</span>
   <span id="heatmap-page-overseas-caption" class="heatmap-updated" style="display:none;">최신 업데이트: --</span>
+  <span class="heatmap-search" id="heatmap-page-search-wrap">
+    <input type="search" id="heatmap-page-search" placeholder="종목명·코드 검색">
+    <span id="heatmap-page-search-count"></span>
+  </span>
+  <span class="heatmap-period" id="heatmap-page-market-wrap">
+    <label for="heatmap-page-market">시장</label>
+    <select id="heatmap-page-market">
+      <option value="ALL" selected>공통</option>
+      <option value="KOSPI">코스피</option>
+      <option value="KOSDAQ">코스닥</option>
+    </select>
+  </span>
   <span class="heatmap-period" id="heatmap-page-period-wrap">
     <label for="heatmap-page-period">기간</label>
     <select id="heatmap-page-period">
@@ -603,6 +615,68 @@ test("올해(ytd)도 같은 경로로 조회하고 캡션에 연초부터의 구
     `캡션에 비교 구간이 표시돼야 함 (실제 ${caption})`);
 });
 
+test("시장을 고르면 그 시장만 다시 조회하고 기간 선택은 유지된다", async () => {
+  const calls = [];
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success({
+      trade_date: "20260807", period: "3m", base_date: "20260508", items: domesticSnapshot().items,
+    }),
+  }));
+  const traced = window.fetchWithTimeout;
+  window.fetchWithTimeout = (url, ...rest) => { calls.push(url); return traced(url, ...rest); };
+
+  await window.initHeatmapPage();
+  const first = calls.filter(url => url.startsWith("/api/heatmap/domestic")).pop();
+  assert(first.includes("market=ALL"), `기본은 공통(ALL)이어야 함 (실제 ${first})`);
+
+  await window.setHeatmapPeriod("3m");
+  await window.setHeatmapMarket("KOSDAQ");
+
+  const domesticCalls = calls.filter(url => url.startsWith("/api/heatmap/domestic"));
+  assert(domesticCalls.length === 3, `시장 변경도 재조회를 유발해야 함 (실제 ${domesticCalls.length}회)`);
+  const last = domesticCalls[domesticCalls.length - 1];
+  assert(last.includes("market=KOSDAQ"), `조회 URL 에 시장이 실려야 함 (실제 ${last})`);
+  assert(last.includes("period=3m"), `시장을 바꿔도 기간은 유지돼야 함 (실제 ${last})`);
+  assert(window.document.querySelectorAll("#heatmap-page-domestic .heatmap-tile").length > 0,
+    "시장 변경 후에도 타일이 그려져야 함");
+});
+
+test("같은 시장을 다시 고르면 재조회하지 않는다", async () => {
+  const calls = [];
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+  const traced = window.fetchWithTimeout;
+  window.fetchWithTimeout = (url, ...rest) => { calls.push(url); return traced(url, ...rest); };
+
+  await window.initHeatmapPage();
+  await window.setHeatmapMarket("ALL");
+  await window.setHeatmapMarket("NASDAQ");  // 허용 목록 밖
+
+  assert(calls.filter(url => url.startsWith("/api/heatmap/domestic")).length === 1,
+    "같은 값·모르는 값은 재조회 대상이 아님");
+});
+
+test("미국 탭에서는 시장 선택도 감춘다 (S&P 500 고정)", async () => {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic", "overseas_us"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+    "/api/overseas/top-market-cap": () => success({ items: [overseasItem({})], updated_at: 1767225600 }),
+  }));
+
+  await window.initHeatmapPage();
+  const wrap = window.document.getElementById("heatmap-page-market-wrap");
+  assert(wrap.style.display !== "none", "한국 탭에서는 시장 선택이 보여야 함");
+
+  await window.setHeatmapTab("overseas");
+  assert(wrap.style.display === "none", "미국 탭에서는 시장 선택을 감춰야 함");
+
+  await window.setHeatmapTab("domestic");
+  assert(wrap.style.display !== "none", "한국 탭으로 돌아오면 다시 보여야 함");
+});
+
 test("기간 비교 데이터가 없으면 캡션이 그 사실을 밝힌다", async () => {
   const window = makeWindow(routed({
     "/api/market-mode": () => marketMode(["domestic"]),
@@ -659,7 +733,83 @@ test("미국 탭에서는 기간 선택을 감춘다 (미국 스냅샷에 기간
   assert(wrap.style.display !== "none", "한국 탭으로 돌아오면 기간 선택이 다시 보여야 함");
 });
 
-test("pjax 재진입 시 기간은 1일로 돌아온다", async () => {
+// 검색은 재조회가 아니라 이미 그린 타일을 짚어 주는 기능이다 — 면적(시가총액)이 유지돼야
+// 히트맵으로서 읽히므로 일치하지 않는 타일을 지우지 않고 흐리게 둔다.
+function hitSymbols(window) {
+  return [...window.document.querySelectorAll("#heatmap-page-domestic .heatmap-tile.heatmap-tile-hit")]
+    .map(tile => tile.dataset.symbol);
+}
+
+async function searchablePage() {
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+  }));
+  await window.initHeatmapPage();
+  return window;
+}
+
+test("종목명으로 검색하면 일치 타일만 강조하고 개수를 알려준다", async () => {
+  const window = await searchablePage();
+  const panel = window.document.getElementById("heatmap-page-domestic");
+
+  window.searchHeatmapPage("대형1");
+
+  assert(panel.classList.contains("heatmap-searching"), "검색 중에는 나머지를 흐리게 할 표시가 필요함");
+  assert(JSON.stringify(hitSymbols(window)) === JSON.stringify(["B1"]),
+    `이름이 일치하는 타일만 강조돼야 함 (실제 ${hitSymbols(window)})`);
+  const count = window.document.getElementById("heatmap-page-search-count").textContent;
+  assert(count.includes("1"), `일치 개수를 알려야 함 (실제 ${count})`);
+  assert(window.document.querySelectorAll("#heatmap-page-domestic .heatmap-tile").length > 40,
+    "일치하지 않는 타일도 그대로 남아야 함(면적이 히트맵의 정보다)");
+});
+
+test("코드로도 찾고 대소문자는 가리지 않는다", async () => {
+  const window = await searchablePage();
+
+  window.searchHeatmapPage("  b3 ");
+
+  assert(JSON.stringify(hitSymbols(window)) === JSON.stringify(["B3"]),
+    `코드로도 찾아야 함 (실제 ${hitSymbols(window)})`);
+});
+
+test("검색어를 비우면 강조가 풀린다", async () => {
+  const window = await searchablePage();
+  const panel = window.document.getElementById("heatmap-page-domestic");
+
+  window.searchHeatmapPage("대형1");
+  window.searchHeatmapPage("");
+
+  assert(!panel.classList.contains("heatmap-searching"), "검색을 비우면 원래 화면으로 돌아와야 함");
+  assert(hitSymbols(window).length === 0, "강조가 남으면 안 됨");
+  assert(window.document.getElementById("heatmap-page-search-count").textContent === "",
+    "안내 문구도 지워져야 함");
+});
+
+test("일치하는 종목이 없으면 그 사실을 알린다", async () => {
+  const window = await searchablePage();
+
+  window.searchHeatmapPage("없는종목");
+
+  assert(hitSymbols(window).length === 0, "일치가 없어야 함");
+  const count = window.document.getElementById("heatmap-page-search-count").textContent;
+  assert(count.includes("없"), `일치 없음을 알려야 함 (실제 ${count})`);
+});
+
+test("확대하거나 다시 조회해도 검색 강조는 유지된다", async () => {
+  const window = await searchablePage();
+
+  window.searchHeatmapPage("대형1");
+  window.zoomHeatmapPage(2);  // 재렌더 → 타일 DOM 이 통째로 바뀐다
+  assert(JSON.stringify(hitSymbols(window)) === JSON.stringify(["B1"]),
+    `확대 후에도 강조가 남아야 함 (실제 ${hitSymbols(window)})`);
+
+  await window.setHeatmapMarket("KOSPI");
+  assert(JSON.stringify(hitSymbols(window)) === JSON.stringify(["B1"]),
+    `재조회 후에도 강조가 남아야 함 (실제 ${hitSymbols(window)})`);
+});
+
+test("pjax 재진입 시 기간·시장은 기본값으로 돌아온다", async () => {
   const calls = [];
   const window = makeWindow(routed({
     "/api/market-mode": () => marketMode(["domestic"]),
@@ -672,13 +822,19 @@ test("pjax 재진입 시 기간은 1일로 돌아온다", async () => {
 
   await window.initHeatmapPage();
   await window.setHeatmapPeriod("3m");
+  await window.setHeatmapMarket("KOSPI");
   calls.length = 0;
   await window.initHeatmapPage();
 
   const domesticCalls = calls.filter(url => url.startsWith("/api/heatmap/domestic"));
   assert(domesticCalls[0].includes("period=1d"), `재진입은 1일로 시작해야 함 (실제 ${domesticCalls[0]})`);
+  assert(domesticCalls[0].includes("market=ALL"), `재진입은 공통으로 시작해야 함 (실제 ${domesticCalls[0]})`);
   assert(window.document.getElementById("heatmap-page-period").value === "1d",
     "기간 선택 UI 도 1일로 되돌아야 함");
+  assert(window.document.getElementById("heatmap-page-market").value === "ALL",
+    "시장 선택 UI 도 공통으로 되돌아야 함");
+  assert(window.document.getElementById("heatmap-page-search").value === "",
+    "검색어도 비워져야 함");
 });
 
 test("전용 페이지 경로에서는 로드 시 자동으로 초기화한다", async () => {

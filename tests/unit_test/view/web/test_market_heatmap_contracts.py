@@ -143,6 +143,37 @@ def test_heatmap_page_hosts_period_control():
     assert "period=${_heatmapPagePeriod}" in page_script, "조회 URL 에 기간이 실리지 않음"
 
 
+def test_heatmap_page_hosts_market_control():
+    """시장(공통/코스피/코스닥)은 조회 조건이라 화면·스크립트·API 값이 맞아야 한다."""
+    template = _heatmap_page_template()
+    page_script = _heatmap_page_js()
+
+    assert 'id="heatmap-page-market"' in template
+    assert 'id="heatmap-page-market-wrap"' in template, "미국 탭에서 감출 대상 컨테이너가 필요함"
+    assert "setHeatmapMarket(this.value)" in template
+
+    # 저장소가 "ALL"/"KOSPI"/"KOSDAQ" 를 그대로 해석한다(ALL=필터 없음).
+    for market in ("ALL", "KOSPI", "KOSDAQ"):
+        assert f'value="{market}"' in template, f"{market} 선택지가 없음"
+        assert f"'{market}'" in page_script, f"{market} 가 스크립트 허용 목록에 없음"
+    assert "market=${_heatmapPageMarket}" in page_script, "조회 URL 에 시장이 실리지 않음"
+
+
+def test_heatmap_page_hosts_search_control():
+    """검색은 재조회가 아니라 그려진 타일을 짚는 기능이라, 이름 매칭 근거(data-name)와 강조 CSS 가 있어야 한다."""
+    template = _heatmap_page_template()
+    page_script = _heatmap_page_js()
+    css = _heatmap_css()
+
+    assert 'id="heatmap-page-search"' in template
+    assert "searchHeatmapPage(this.value)" in template
+    assert 'id="heatmap-page-search-count"' in template, "일치 개수를 알릴 자리가 필요함"
+
+    assert "data-name=" in _heatmap_js(), "종목명 검색 근거가 타일에 실려야 함"
+    assert "dataset.name" in page_script and "dataset.symbol" in page_script, "이름·코드 둘 다로 찾아야 함"
+    assert ".heatmap-tile-hit" in css and ".heatmap-searching" in css, "강조/흐림 스타일이 스타일시트에 없음"
+
+
 def test_heatmap_page_supports_drag_panning():
     """확대한 화면은 마우스로 끌어 옮길 수 있어야 한다 — 배선(JS)과 커서 표시(CSS)가 함께 있어야 한다."""
     template = _heatmap_page_template()

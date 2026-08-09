@@ -24,3 +24,9 @@
 }
 .heatmap-tile-symbol { font-size: 0.72rem; font-weight: 700; line-height: 1.15; }
 .heatmap-tile-rate { font-size: 0.66rem; line-height: 1.15; }
+/* 검색 중: 일치하지 않는 타일은 지우지 않고 흐리게 둔다 — 면적(시가총액)이 히트맵의 정보다. */
+.heatmap-searching .heatmap-tile { opacity: 0.16; }
+.heatmap-searching .heatmap-tile-hit {
+    opacity: 1; z-index: 2;
+    outline: 2px solid #fff; outline-offset: -2px;
+}
