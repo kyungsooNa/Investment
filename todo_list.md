@@ -216,7 +216,9 @@
 
 ## 해외주식 전략 적용 (VBO 일봉)
 
-결론: 일봉 셋업형 전략만 적용 가능(해외 일봉 API 존재), 장중/실시간 전략은 불가. 첫 대상 = `LarryWilliamsVBOStrategy`. 제약: **해외 주문 TR은 실전(TTTS6036U 등)만, 모의 주문 TR 없음** → dry-run 검증 전 실주문 배선 금지. Phase 1~4(데이터 어댑터·일봉 백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금.
+결론: 일봉 셋업형 전략 + 장중 REST 폴링 경로(#776) 적용 가능 — 해외는 웹소켓/분봉이 없어 폴링이 유일한 장중 틱 소스다. 첫 대상 = `LarryWilliamsVBOStrategy`. Phase 1~4(데이터 어댑터·일봉 백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금.
+
+**정정 (2026-08-11)**: 종전 "해외 주문 TR은 실전(TTTS6036U 등)만, 모의 주문 TR 없음"은 stale이다. #606에서 모의 미지원인 주간거래 TTTS603x → 모의 검증 가능한 정규장 TTTT100xU로 전환하며 `tr_ids_config.yaml`에 real/paper 쌍이 모두 추가됐고(VTTT1002U 매수 / VTTT1006U 매도 / VTTT1004U 정정취소), `trid_provider.py`가 `is_paper_trading`으로 분기한다. 따라서 "모의가 없어 배선=실계좌 발사"라는 잠금 명분은 무효이고, 남은 유효 사유는 Phase 5 미완과 엣지 부재(아래 스윕 결과)뿐이다. 단 **모의 서버의 실제 주문 수락 여부는 아직 미검증** — `scripts/probe_overseas_paper_order.py --send`로 확인 후 이 문단을 갱신할 것.
 
 ### O-1. 미국 휴장일/조기폐장 캘린더 [완료 — #621, 2026-07-03]
 
