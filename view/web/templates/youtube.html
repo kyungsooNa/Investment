@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <style>
+        .yt-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+        .yt-form input[type="search"], .yt-form input[type="text"] {
+            width: 320px; padding: 5px 8px; font-size: 0.9rem;
+            background: var(--bg-secondary); color: var(--text-primary);
+            border: 1px solid var(--border); border-radius: 5px;
+        }
+        .yt-hint { font-size: 0.78rem; color: var(--text-secondary); }
+        .yt-digest, .yt-video-summary {
+            white-space: pre-wrap; word-break: break-word;
+            background: var(--bg-secondary); border: 1px solid var(--border);
+            border-radius: 6px; padding: 10px; font-size: 0.88rem; line-height: 1.55;
+        }
+        .yt-video-summary { font-size: 0.82rem; margin: 6px 0 12px; }
+        .yt-mentions { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+        .yt-mentions th, .yt-mentions td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+        .yt-channel { font-size: 0.78rem; color: var(--text-secondary); margin-left: 6px; }
+        #youtube-video-list { list-style: none; padding-left: 0; }
+        .warn { color: var(--warning, #d68910); font-size: 0.85rem; }
+    </style>
+
+    <div class="section" id="youtube-page">
+        <div class="card">
+            <h2>유튜브 일일 다이제스트</h2>
+            <p class="yt-hint">
+                등록한 채널의 최근 영상 자막을 모아 매일 07:30에 AI가 정리합니다.
+                <strong>출연자의 발언 집계</strong>이며 사실 확인이나 투자 판단이 아닙니다.
+            </p>
+            <div class="yt-form">
+                <button type="button" onclick="runYoutubeDigestNow()">지금 생성</button>
+                <span id="youtube-run-status" class="yt-hint"></span>
+            </div>
+            <div id="youtube-status" class="yt-hint"></div>
+        </div>
+
+        <div class="card">
+            <h3>대상 채널</h3>
+            <div class="yt-form">
+                <input type="text" id="youtube-channel-url"
+                       placeholder="https://www.youtube.com/@channel 또는 @channel"
+                       aria-label="유튜브 채널 URL 또는 핸들">
+                <button type="button" onclick="addYoutubeChannel()">추가</button>
+                <span id="youtube-channel-status" class="yt-hint"></span>
+            </div>
+            <table class="yt-mentions">
+                <thead><tr><th>채널</th><th>핸들</th><th>수집</th><th></th></tr></thead>
+                <tbody id="youtube-channel-body"><tr><td colspan="4">불러오는 중...</td></tr></tbody>
+            </table>
+        </div>
+
+        <div class="card">
+            <h3>리포트</h3>
+            <div class="yt-form">
+                <label for="youtube-report-date" class="yt-hint">날짜</label>
+                <select id="youtube-report-date" onchange="loadYoutubeReport(this.value)"></select>
+            </div>
+            <div id="youtube-report-body">불러오는 중...</div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/youtube.js?v=1"></script>
+{% endblock %}

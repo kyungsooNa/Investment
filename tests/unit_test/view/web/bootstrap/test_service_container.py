@@ -39,6 +39,8 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "DartDisclosureClient", "DartDisclosureRepository",
     "DartDisclosureRuleService", "DartDisclosureMonitorTask",
     "CustomsTradeStatClient", "NationalTradeTrendWebClient", "TradeTrendMonitorTask",
+    "YoutubeChannelRepository", "YoutubeDigestRepository",
+    "YoutubeTranscriptCollectorService", "YoutubeDigestService", "YoutubeDigestTask",
 ]
 
 REPOSITORY_BOOTSTRAP_PATCH_NAMES = [
@@ -317,6 +319,64 @@ def test_service_container_skips_ai_news_analyzer_when_disabled(
     assert ctx.stock_news_collector is patched_service_container_deps[
         "StockNewsCollectorService"
     ].return_value
+
+
+def test_service_container_builds_youtube_digest_pipeline(patched_service_container_deps):
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {
+        "ai_analysis": {
+            "enabled": True,
+            "base_url": "http://localhost:11434/v1",
+            "model": "qwen2.5",
+        }
+    }
+
+    ServiceContainer(ctx).run()
+
+    assert ctx.youtube_digest_task is patched_service_container_deps[
+        "YoutubeDigestTask"
+    ].return_value
+    assert ctx.youtube_channel_repository is not None
+    assert ctx.youtube_digest_repository is not None
+
+
+def test_service_container_skips_youtube_digest_when_ai_disabled(
+    patched_service_container_deps,
+):
+    """다이제스트의 본체가 AI 요약이라 AI 없이는 태스크를 만들지 않는다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {"ai_analysis": {"enabled": False}}
+
+    ServiceContainer(ctx).run()
+
+    assert ctx.youtube_digest_task is None
+    patched_service_container_deps["YoutubeDigestTask"].assert_not_called()
+
+
+def test_youtube_digest_chunk_stays_under_ai_input_budget(
+    patched_service_container_deps,
+):
+    """청크가 max_input_chars 를 넘으면 AiClient 가 뒤를 잘라 요약이 깨진다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {
+        "ai_analysis": {
+            "enabled": True,
+            "base_url": "http://localhost:11434/v1",
+            "model": "qwen2.5",
+            "max_input_chars": 24000,
+        }
+    }
+
+    ServiceContainer(ctx).run()
+
+    kwargs = patched_service_container_deps["YoutubeDigestService"].call_args.kwargs
+    assert kwargs["chunk_chars"] < 24000
 
 
 def test_service_container_creates_query_and_order_services(patched_service_container_deps):

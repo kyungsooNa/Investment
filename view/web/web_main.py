@@ -603,6 +603,10 @@ async def strategy_reports(request: Request):
 async def heatmap(request: Request):
     return await render_page(request, "heatmap.html", "heatmap")
 
+@page_router.get("/youtube")
+async def youtube(request: Request):
+    return await render_page(request, "youtube.html", "youtube")
+
 # 5. 로그아웃
 @page_router.get("/logout")
 async def logout(request: Request):

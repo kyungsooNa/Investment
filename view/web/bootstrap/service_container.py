@@ -88,6 +88,11 @@ from view.web.bootstrap.query_bootstrap import QueryBootstrap
 from view.web.bootstrap.realtime_bootstrap import RealtimeBootstrap
 from view.web.market_mode_utils import is_market_enabled
 from repositories.dart_disclosure_repository import DartDisclosureRepository
+from repositories.youtube_channel_repository import YoutubeChannelRepository
+from repositories.youtube_digest_repository import YoutubeDigestRepository
+from services.youtube_transcript_collector_service import YoutubeTranscriptCollectorService
+from services.youtube_digest_service import YoutubeDigestService
+from task.background.intraday.youtube_digest_task import YoutubeDigestTask
 
 if TYPE_CHECKING:  # pragma: no cover
     from view.web.web_app_initializer import WebAppContext
@@ -425,6 +430,33 @@ class ServiceContainer:
         except Exception as e:
             ctx.logger.critical(f"[ServiceBootstrap:Streaming] 초기화 실패: {e}", exc_info=True)
             raise
+
+        # 유튜브 일일 다이제스트. 채널 저장소는 UI 관리용이라 항상 만들고, 요약 태스크는
+        # 본체가 AI 라서 AI 비활성 시 만들지 않는다.
+        ctx.youtube_channel_repository = YoutubeChannelRepository()
+        ctx.youtube_digest_repository = YoutubeDigestRepository()
+        ctx.youtube_transcript_collector = YoutubeTranscriptCollectorService(logger=ctx.logger)
+        ctx.youtube_digest_service = None
+        ctx.youtube_digest_task = None
+        if ctx.ai_client is not None:
+            # 청크는 입력 예산보다 작아야 AiClient 가 뒤를 잘라내지 않는다.
+            _yt_budget = int(ai_config.max_input_chars) or 24000
+            ctx.youtube_digest_service = YoutubeDigestService(
+                ctx.ai_client,
+                stock_code_repository=ctx.stock_code_repository,
+                max_tokens=int(ai_config.max_tokens),
+                chunk_chars=max(2000, _yt_budget - 2000),
+                logger=ctx.logger,
+            )
+            ctx.youtube_digest_task = YoutubeDigestTask(
+                channel_repository=ctx.youtube_channel_repository,
+                collector=ctx.youtube_transcript_collector,
+                digest_service=ctx.youtube_digest_service,
+                digest_repository=ctx.youtube_digest_repository,
+                notification_service=ctx.notification_service,
+                market_clock=ctx.market_clock,
+                logger=ctx.logger,
+            )
 
         try:
             _ps_cfg = getattr(ctx.full_config, "position_sizing", None) or PositionSizingConfig()
