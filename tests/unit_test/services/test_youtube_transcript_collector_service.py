@@ -243,6 +243,16 @@ async def test_blocked_flag_is_false_on_a_clean_run():
     assert svc.was_blocked is False
 
 
+def test_default_request_interval_keeps_margin_against_rate_limiting():
+    """기본 간격이 좁아지면 429(구글 "Sorry...")를 맞아 그날 리포트가 통째로 날아간다.
+
+    다른 테스트는 전부 간격을 명시로 넘겨 기본값을 덮으므로 여기서만 잠긴다.
+    """
+    svc = YoutubeTranscriptCollectorService()
+
+    assert svc._request_interval_sec >= 5.0
+
+
 async def test_transcript_fetches_are_spaced_out():
     """연속 호출이 YouTube 차단을 부른다 — 영상 사이에 간격을 둬야 한다."""
     feed = _rss([(f"v{i}", f"영상{i}", _iso(1)) for i in range(3)])
