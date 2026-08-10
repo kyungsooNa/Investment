@@ -610,6 +610,9 @@ class RankingTask(AfterMarketTask):
     async def _send_period_ranking_report_once(self, target_date: str, days: int) -> None:
         if not self._telegram_reporter:
             return
+        if not await self._is_week_last_trading_day(target_date):
+            self._logger.info(f"기간수급 리포트 전송 스킵: {target_date}은 주 마지막 거래일이 아님")
+            return
         if self._load_last_period_ranking_report_date() == str(target_date):
             self._logger.info(f"텔레그램 기간수급 리포트 이미 전송 완료 ({target_date}) — 스킵")
             return
@@ -625,6 +628,21 @@ class RankingTask(AfterMarketTask):
                 self._save_last_period_ranking_report_date(target_date)
         except Exception as e:
             self._logger.error(f"텔레그램 기간수급 리포트 전송 중 오류: {e}", exc_info=True)
+
+    async def _is_week_last_trading_day(self, target_date: str) -> bool:
+        target = datetime.strptime(str(target_date), "%Y%m%d")
+        if self._mcs is None:
+            return target.weekday() == 4
+
+        try:
+            next_open_day = await self._mcs.get_next_open_day(str(target_date))
+            if not next_open_day or next_open_day == str(target_date):
+                return target.weekday() == 4
+            next_open = datetime.strptime(str(next_open_day), "%Y%m%d")
+            return next_open.isocalendar()[:2] != target.isocalendar()[:2]
+        except Exception as e:
+            self._logger.warning(f"주 마지막 거래일 판정 실패: {target_date}, {e}")
+            return target.weekday() == 4
 
     @staticmethod
     def _build_ranking(results: List[Dict], pbmn_field: str, top_n: int = 30):

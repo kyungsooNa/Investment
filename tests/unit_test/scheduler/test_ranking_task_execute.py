@@ -153,15 +153,52 @@ async def test_send_period_ranking_report_sends_five_day_ranking_once(tmp_path):
         telegram_reporter=reporter,
         ranking_report_state_path=str(tmp_path / "ranking_report_state.json"),
     )
-    task._period_ranking_cache[("20260722", 5)] = [
+    task._period_ranking_cache[("20260724", 5)] = [
         {"hts_kor_isnm": "SK하이닉스", "combined_period_ntby_tr_pbmn_won": "3000000000"},
     ]
 
-    await task._send_period_ranking_report_once("20260722", 5)
-    await task._send_period_ranking_report_once("20260722", 5)
+    await task._send_period_ranking_report_once("20260724", 5)
+    await task._send_period_ranking_report_once("20260724", 5)
 
     reporter.send_period_investor_ranking_report.assert_awaited_once_with(
-        task._period_ranking_cache[("20260722", 5)], report_date="20260722", days=5,
+        task._period_ranking_cache[("20260724", 5)], report_date="20260724", days=5,
+    )
+
+
+async def test_send_period_ranking_report_skips_before_week_last_trading_day(tmp_path):
+    reporter = MagicMock()
+    reporter.send_period_investor_ranking_report = AsyncMock(return_value=True)
+    task = _make_task(
+        telegram_reporter=reporter,
+        ranking_report_state_path=str(tmp_path / "ranking_report_state.json"),
+    )
+    task._period_ranking_cache[("20260810", 5)] = [
+        {"hts_kor_isnm": "셀트리온", "combined_period_ntby_tr_pbmn_won": "289400000000"},
+    ]
+
+    await task._send_period_ranking_report_once("20260810", 5)
+
+    reporter.send_period_investor_ranking_report.assert_not_called()
+
+
+async def test_send_period_ranking_report_sends_on_holiday_shortened_week_last_day(tmp_path):
+    reporter = MagicMock()
+    reporter.send_period_investor_ranking_report = AsyncMock(return_value=True)
+    mcs = MagicMock()
+    mcs.get_next_open_day = AsyncMock(return_value="20260727")
+    task = _make_task(
+        telegram_reporter=reporter,
+        market_calendar_service=mcs,
+        ranking_report_state_path=str(tmp_path / "ranking_report_state.json"),
+    )
+    task._period_ranking_cache[("20260723", 5)] = [
+        {"hts_kor_isnm": "SK하이닉스", "combined_period_ntby_tr_pbmn_won": "3000000000"},
+    ]
+
+    await task._send_period_ranking_report_once("20260723", 5)
+
+    reporter.send_period_investor_ranking_report.assert_awaited_once_with(
+        task._period_ranking_cache[("20260723", 5)], report_date="20260723", days=5,
     )
 
 
