@@ -36,6 +36,7 @@ class TradeTrendMonitorTask(SchedulableTask):
         self,
         *,
         customs_client,
+        national_client=None,
         repository_path: str = "data/trade_trend_state.json",
         telegram_reporter=None,
         config=None,
@@ -43,6 +44,7 @@ class TradeTrendMonitorTask(SchedulableTask):
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._client = customs_client
+        self._national_client = national_client
         self._repository = TradeTrendRepository(repository_path)
         self._reporter = telegram_reporter
         self._config = config
@@ -57,6 +59,7 @@ class TradeTrendMonitorTask(SchedulableTask):
             "last_success_at": None,
             "last_period": None,
             "sent_count": 0,
+            "national_sent_count": 0,
             "last_error": None,
         }
 
@@ -132,13 +135,21 @@ class TradeTrendMonitorTask(SchedulableTask):
             yyyymm = str(getattr(self._config, "target_month", "") or "")
             if not yyyymm:
                 yyyymm = _latest_available_month(now)
-            item_code = str(getattr(self._config, "item_code", "8542"))
-            previous_month = _month_delta(yyyymm, -1)
-            previous_year = _month_delta(yyyymm, -12)
-
             self._progress["last_checked_at"] = now.isoformat()
             self._progress["last_period"] = yyyymm
             self._progress["last_error"] = None
+
+            if bool(getattr(self._config, "national_enabled", True)):
+                await self._send_national_releases()
+
+            if not bool(getattr(self._config, "jeju_semiconductor_enabled", True)):
+                return
+            if self._client is None:
+                return
+
+            item_code = str(getattr(self._config, "item_code", "8542"))
+            previous_month = _month_delta(yyyymm, -1)
+            previous_year = _month_delta(yyyymm, -12)
 
             current = select_export_row(
                 await self._client.fetch_sido_item_month(yyyymm, item_code)
@@ -171,3 +182,15 @@ class TradeTrendMonitorTask(SchedulableTask):
                 self._repository.mark_sent(report.dedup_key)
                 self._progress["sent_count"] += 1
                 self._progress["last_success_at"] = now.isoformat()
+
+    async def _send_national_releases(self) -> None:
+        if self._national_client is None or self._reporter is None:
+            return
+        releases = await self._national_client.fetch_recent_releases()
+        for release in releases:
+            if self._repository.has_sent(release.dedup_key):
+                continue
+            sent = await self._reporter.send_national_trade_trend_report(release)
+            if sent:
+                self._repository.mark_sent(release.dedup_key)
+                self._progress["national_sent_count"] += 1
