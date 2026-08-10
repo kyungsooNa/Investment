@@ -107,6 +107,8 @@ class SchedulerBootstrap:
         self._register(ctx.notification_queue_task)
         self._register(self._optional_task("dart_disclosure_monitor_task"))
         self._register(self._optional_task("trade_trend_monitor_task"))
+        # 07:30 발행 시각은 태스크가 자체 폴링으로 판정하므로 TimeDispatcher 미등록
+        self._register(self._optional_task("youtube_digest_task"))
         # 미국장 시간대 판단은 태스크가 자체 US 클럭으로 수행하므로 TimeDispatcher 미등록
         self._register(self._optional_task("overseas_favorite_price_alert_task"))
 

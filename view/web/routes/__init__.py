@@ -28,6 +28,7 @@ from view.web.routes.kill_switch import router as kill_switch_router
 from view.web.routes.strategy_report import router as strategy_report_router
 from view.web.routes.operator_dashboard import router as operator_dashboard_router
 from view.web.routes.ai import router as ai_router
+from view.web.routes.youtube import router as youtube_router
 
 router = APIRouter(prefix="/api")
 protected_router = APIRouter(
@@ -57,4 +58,5 @@ protected_router.include_router(kill_switch_router)
 protected_router.include_router(strategy_report_router)
 protected_router.include_router(operator_dashboard_router)
 protected_router.include_router(ai_router)
+protected_router.include_router(youtube_router)
 router.include_router(protected_router)
