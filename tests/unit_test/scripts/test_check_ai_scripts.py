@@ -4,7 +4,7 @@ import pytest
 
 from services.ai_usage_limiter import AiUsageLimitExceeded
 
-from scripts import check_ai_key, check_disclosure_ai, check_news_ai
+from scripts import check_ai_key, check_disclosure_ai, check_news_ai, check_youtube_ai
 
 
 async def test_check_ai_key_allows_empty_api_key_for_ollama(monkeypatch):
@@ -170,3 +170,102 @@ async def test_news_dry_run_no_ai_flag_skips_analyzer(monkeypatch):
 
     build_ai.assert_not_called()
     collector.collect.assert_awaited_once_with("005930", limit=15)
+
+
+def test_youtube_dry_run_returns_no_digest_when_ai_disabled():
+    assert check_youtube_ai._build_ai({"enabled": False}) == (None, None)
+
+
+def test_youtube_dry_run_attaches_usage_limiter_so_script_usage_is_counted():
+    """스크립트가 쓴 요청도 앱과 같은 일일 한도에 집계되어야 한다."""
+    ai_client, digest = check_youtube_ai._build_ai(
+        {
+            "enabled": True,
+            "base_url": "http://localhost:11434/v1",
+            "api_key": "",
+            "model": "qwen2.5",
+            "daily_request_limit": 100,
+            "disclosure_reserve": 20,
+        },
+        MagicMock(),
+    )
+
+    assert digest is not None
+    assert ai_client._usage_limiter is not None
+
+
+def test_youtube_dry_run_does_not_touch_the_stock_code_db():
+    """_build_ai 가 저장소를 직접 만들면 DB 없는 환경에서 KRX 네트워크에 묶인다."""
+    repo = MagicMock()
+
+    _, digest = check_youtube_ai._build_ai(
+        {"enabled": True, "base_url": "http://x/v1", "api_key": "", "model": "m"}, repo
+    )
+
+    assert digest._code_repo is repo
+
+
+def test_youtube_dry_run_chunk_stays_under_input_budget():
+    """청크가 max_input_chars 를 넘으면 AiClient 가 뒤를 잘라 요약이 깨진다."""
+    _, digest = check_youtube_ai._build_ai(
+        {
+            "enabled": True,
+            "base_url": "http://localhost:11434/v1",
+            "api_key": "",
+            "model": "qwen2.5",
+            "max_input_chars": 24000,
+        },
+        MagicMock(),
+    )
+
+    assert digest._chunk_chars < 24000
+
+
+async def test_youtube_dry_run_skips_ai_without_flag(monkeypatch, capsys):
+    """기본 실행은 수집·집계만 하고 일일 한도를 소비하지 않는다."""
+    monkeypatch.setattr(
+        check_youtube_ai, "_load_config", lambda: {"ai_analysis": {"enabled": True}}
+    )
+    monkeypatch.setattr(check_youtube_ai.sys, "argv", ["check_youtube_ai.py"])
+    build_ai = MagicMock(return_value=(None, None))
+    monkeypatch.setattr(check_youtube_ai, "_build_ai", build_ai)
+
+    repo = MagicMock()
+    repo.seed_defaults = AsyncMock(return_value=0)
+    repo.get_all = AsyncMock(return_value=[{"channel_id": "UC" + "a" * 22, "title": "채널"}])
+    monkeypatch.setattr(check_youtube_ai, "YoutubeChannelRepository", lambda: repo)
+
+    collector = MagicMock()
+    collector.collect = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        check_youtube_ai, "YoutubeTranscriptCollectorService", lambda: collector
+    )
+    monkeypatch.setattr(check_youtube_ai, "StockCodeRepository", MagicMock())
+
+    await check_youtube_ai._main()
+
+    build_ai.assert_not_called()
+    assert "AI 요약=OFF" in capsys.readouterr().out
+
+
+async def test_youtube_dry_run_stops_early_without_channels(monkeypatch, capsys):
+    monkeypatch.setattr(
+        check_youtube_ai, "_load_config", lambda: {"ai_analysis": {"enabled": True}}
+    )
+    monkeypatch.setattr(check_youtube_ai.sys, "argv", ["check_youtube_ai.py"])
+
+    repo = MagicMock()
+    repo.seed_defaults = AsyncMock(return_value=0)
+    repo.get_all = AsyncMock(return_value=[])
+    monkeypatch.setattr(check_youtube_ai, "YoutubeChannelRepository", lambda: repo)
+
+    collector = MagicMock()
+    collector.collect = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        check_youtube_ai, "YoutubeTranscriptCollectorService", lambda: collector
+    )
+
+    await check_youtube_ai._main()
+
+    collector.collect.assert_not_awaited()
+    assert "등록된 채널이 없습니다" in capsys.readouterr().out

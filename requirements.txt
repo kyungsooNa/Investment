@@ -30,3 +30,6 @@ aiosqlite>=0.19.0
 orjson
 pytest-timeout>=2.1.0
 apscheduler>=3.10.0
+# 유튜브 자막 취득. watch 페이지의 timedtext baseUrl 은 빈 응답을 주고
+# innertube 직접 호출도 막혀 있어(2026-08-10 실측) 이 라이브러리가 유일한 동작 경로다.
+youtube-transcript-api>=1.0.0
