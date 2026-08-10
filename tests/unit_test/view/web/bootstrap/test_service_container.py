@@ -38,6 +38,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "AiNewsAnalyzer", "StockNewsCollectorService",
     "DartDisclosureClient", "DartDisclosureRepository",
     "DartDisclosureRuleService", "DartDisclosureMonitorTask",
+    "CustomsTradeStatClient", "TradeTrendMonitorTask",
 ]
 
 REPOSITORY_BOOTSTRAP_PATCH_NAMES = [
@@ -176,6 +177,52 @@ def test_service_container_skips_dart_pipeline_without_key(patched_service_conta
 
     assert ctx.dart_disclosure_monitor_task is None
     patched_service_container_deps["DartDisclosureClient"].assert_not_called()
+
+
+def test_service_container_builds_enabled_trade_trend_monitor(patched_service_container_deps):
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.runtime_mode = RuntimeMode.WEB
+    ctx.full_config = {
+        "trade_trend_monitor": {
+            "enabled": True,
+            "customs_service_key": "customs-key",
+            "request_timeout_sec": 7,
+            "sido_code": "50",
+            "sido_param_name": "searchSidoCd",
+        }
+    }
+
+    ServiceContainer(ctx).run()
+
+    client_cls = patched_service_container_deps["CustomsTradeStatClient"]
+    client_cls.assert_called_once()
+    client_kwargs = client_cls.call_args.kwargs
+    assert client_kwargs["service_key"] == "customs-key"
+    assert client_kwargs["timeout_sec"] == 7.0
+    assert client_kwargs["sido_code"] == "50"
+    task_kwargs = patched_service_container_deps["TradeTrendMonitorTask"].call_args.kwargs
+    assert task_kwargs["customs_client"] is client_cls.return_value
+    assert task_kwargs["telegram_reporter"] is ctx.telegram_reporter
+    assert ctx.trade_trend_monitor_task is patched_service_container_deps[
+        "TradeTrendMonitorTask"
+    ].return_value
+
+
+def test_service_container_skips_trade_trend_monitor_without_key(
+    patched_service_container_deps,
+):
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.runtime_mode = RuntimeMode.WEB
+    ctx.full_config = {"trade_trend_monitor": {"enabled": True, "customs_service_key": ""}}
+
+    ServiceContainer(ctx).run()
+
+    assert ctx.trade_trend_monitor_task is None
+    patched_service_container_deps["CustomsTradeStatClient"].assert_not_called()
 
 
 def test_service_container_builds_enabled_ai_stock_analyzer(patched_service_container_deps):

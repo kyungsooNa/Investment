@@ -131,6 +131,16 @@ def test_web_registers_optional_dart_disclosure_monitor(patched_scheduler_deps):
     assert "dart_disclosure_monitor" in names
 
 
+def test_web_registers_optional_trade_trend_monitor(patched_scheduler_deps):
+    ctx = _make_fake_context(RuntimeMode.WEB)
+    ctx.trade_trend_monitor_task = MagicMock(task_name="trade_trend_monitor")
+
+    _run(ctx)
+
+    names = _registered_bg_task_names(patched_scheduler_deps)
+    assert "trade_trend_monitor" in names
+
+
 def test_overseas_us_registers_dryrun_task(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.WEB)
     ctx.market_mode = "overseas_us"

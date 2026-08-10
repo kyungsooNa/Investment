@@ -106,6 +106,7 @@ class SchedulerBootstrap:
         # NotificationQueueTask 는 TimeDispatcher 등록 대상이 아님 (always-on)
         self._register(ctx.notification_queue_task)
         self._register(self._optional_task("dart_disclosure_monitor_task"))
+        self._register(self._optional_task("trade_trend_monitor_task"))
         # 미국장 시간대 판단은 태스크가 자체 US 클럭으로 수행하므로 TimeDispatcher 미등록
         self._register(self._optional_task("overseas_favorite_price_alert_task"))
 
