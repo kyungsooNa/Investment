@@ -38,7 +38,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "AiNewsAnalyzer", "StockNewsCollectorService",
     "DartDisclosureClient", "DartDisclosureRepository",
     "DartDisclosureRuleService", "DartDisclosureMonitorTask",
-    "CustomsTradeStatClient", "TradeTrendMonitorTask",
+    "CustomsTradeStatClient", "NationalTradeTrendWebClient", "TradeTrendMonitorTask",
 ]
 
 REPOSITORY_BOOTSTRAP_PATCH_NAMES = [
@@ -202,15 +202,18 @@ def test_service_container_builds_enabled_trade_trend_monitor(patched_service_co
     assert client_kwargs["service_key"] == "customs-key"
     assert client_kwargs["timeout_sec"] == 7.0
     assert client_kwargs["sido_code"] == "50"
+    national_cls = patched_service_container_deps["NationalTradeTrendWebClient"]
+    national_cls.assert_called_once()
     task_kwargs = patched_service_container_deps["TradeTrendMonitorTask"].call_args.kwargs
     assert task_kwargs["customs_client"] is client_cls.return_value
+    assert task_kwargs["national_client"] is national_cls.return_value
     assert task_kwargs["telegram_reporter"] is ctx.telegram_reporter
     assert ctx.trade_trend_monitor_task is patched_service_container_deps[
         "TradeTrendMonitorTask"
     ].return_value
 
 
-def test_service_container_skips_trade_trend_monitor_without_key(
+def test_service_container_builds_national_trade_trend_monitor_without_key(
     patched_service_container_deps,
 ):
     from view.web.bootstrap.service_container import ServiceContainer
@@ -221,8 +224,13 @@ def test_service_container_skips_trade_trend_monitor_without_key(
 
     ServiceContainer(ctx).run()
 
-    assert ctx.trade_trend_monitor_task is None
+    assert ctx.trade_trend_monitor_task is patched_service_container_deps[
+        "TradeTrendMonitorTask"
+    ].return_value
     patched_service_container_deps["CustomsTradeStatClient"].assert_not_called()
+    patched_service_container_deps["NationalTradeTrendWebClient"].assert_called_once()
+    task_kwargs = patched_service_container_deps["TradeTrendMonitorTask"].call_args.kwargs
+    assert task_kwargs["customs_client"] is None
 
 
 def test_service_container_builds_enabled_ai_stock_analyzer(patched_service_container_deps):

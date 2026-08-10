@@ -243,6 +243,8 @@ dart_disclosure:
 # 제주(기본 sido_code=50) 반도체(기본 HS 8542) 월간 수출액을 텔레그램 리포트로 발송합니다.
 trade_trend_monitor:
   enabled: false
+  national_enabled: true
+  jeju_semiconductor_enabled: true
   customs_service_key: ""
   poll_interval_sec: 3600
   request_timeout_sec: 10
@@ -251,6 +253,10 @@ trade_trend_monitor:
   sido_param_name: "searchSidoCd"
   item_code: "8542"
   target_month:
+  national_list_urls:
+    - "https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362&searchType=all&searchValue=%EC%88%98%EC%B6%9C%EC%9E%85%20%ED%98%84%ED%99%A9"
+    - "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c?searchCondition=1&searchKeyword=%EC%88%98%EC%B6%9C%EC%9E%85%20%EB%8F%99%ED%96%A5"
+  national_max_detail_pages: 5
   state_file_path: "data/trade_trend_state.json"
 
 # AI 분석 (Gemini/Groq/Ollama OpenAI 호환 엔드포인트 공통)

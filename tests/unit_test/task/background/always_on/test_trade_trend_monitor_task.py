@@ -6,6 +6,7 @@ import pytest
 
 from interfaces.schedulable_task import TaskState
 from services.trade_trend_service import TradeStatItem
+from services.trade_trend_service import NationalTradeTrendRelease
 from task.background.always_on.trade_trend_monitor_task import TradeTrendMonitorTask
 
 
@@ -49,6 +50,51 @@ async def test_tick_sends_jeju_semiconductor_report_once(tmp_path):
 
     reporter.send_jeju_semiconductor_trade_report.assert_awaited_once()
     assert task.get_progress()["sent_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_tick_sends_national_trade_releases_once(tmp_path):
+    release = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_10d",
+        title="2026년 7월 1일 ~ 7월 10일 수출입 현황 [잠정치]",
+        url="https://customs.example/10d",
+        period_label="2026년 7월 1~10일",
+        export_amount_100m_usd=298,
+        export_yoy_pct=53.9,
+        import_amount_100m_usd=235,
+        import_yoy_pct=17.4,
+        trade_balance_100m_usd=64,
+        trade_balance_label="흑자",
+    )
+    client = SimpleNamespace(
+        fetch_sido_item_month=AsyncMock(return_value=[]),
+        fetch_sido_total_month=AsyncMock(return_value=[]),
+    )
+    national_client = SimpleNamespace(fetch_recent_releases=AsyncMock(return_value=[release]))
+    reporter = SimpleNamespace(
+        send_jeju_semiconductor_trade_report=AsyncMock(return_value=True),
+        send_national_trade_trend_report=AsyncMock(return_value=True),
+    )
+    task = TradeTrendMonitorTask(
+        customs_client=client,
+        national_client=national_client,
+        repository_path=str(tmp_path / "trade_trend_state.json"),
+        telegram_reporter=reporter,
+        config=SimpleNamespace(
+            item_code="8542",
+            jeju_semiconductor_enabled=False,
+            national_enabled=True,
+        ),
+        market_clock=DummyClock(datetime(2026, 7, 11, 9, 30)),
+        logger=MagicMock(),
+    )
+
+    await task._tick()
+    await task._tick()
+
+    reporter.send_national_trade_trend_report.assert_awaited_once_with(release)
+    assert task.get_progress()["national_sent_count"] == 1
 
 
 @pytest.mark.asyncio
