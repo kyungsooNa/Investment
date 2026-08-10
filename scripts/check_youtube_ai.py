@@ -52,10 +52,12 @@ def _load_config() -> dict:
         return yaml.safe_load(f) or {}
 
 
-def _build_ai(ai_cfg: dict):
+def _build_ai(ai_cfg: dict, stock_code_repository=None):
     """(AiClient, YoutubeDigestService) 또는 (None, None) 반환.
 
     앱과 같은 usage_limiter 를 붙여 이 스크립트의 소비도 일일 한도에 집계된다.
+    종목코드 저장소는 호출자가 넘긴다 — 여기서 직접 만들면 DB가 없는 환경에서
+    pykrx 로 KRX 를 호출해 버려 이 함수가 네트워크에 묶인다.
     """
     if not ai_cfg.get("enabled"):
         return None, None
@@ -78,7 +80,7 @@ def _build_ai(ai_cfg: dict):
     budget = int(ai_cfg.get("max_input_chars", 0)) or 24000
     digest = YoutubeDigestService(
         ai_client,
-        stock_code_repository=StockCodeRepository(),
+        stock_code_repository=stock_code_repository,
         max_tokens=int(ai_cfg.get("max_tokens", 2048)),
         chunk_chars=max(2000, budget - 2000),
     )
@@ -114,7 +116,8 @@ async def _main() -> None:
         print("[안내] 등록된 채널이 없습니다.")
         return
 
-    ai_client, digest = _build_ai(ai_cfg) if args.ai else (None, None)
+    code_repo = StockCodeRepository()
+    ai_client, digest = _build_ai(ai_cfg, code_repo) if args.ai else (None, None)
     if args.ai and digest is None:
         print("[안내] config.yaml 의 ai_analysis.enabled 가 false 라 AI 요약을 건너뜁니다.")
 
@@ -146,9 +149,7 @@ async def _main() -> None:
             f"{item.get('title', '')[:50]} ({len(item.get('transcript', ''))}자)"
         )
 
-    counter = digest or YoutubeDigestService(
-        None, stock_code_repository=StockCodeRepository()
-    )
+    counter = digest or YoutubeDigestService(None, stock_code_repository=code_repo)
     print("\n[종목 언급 집계] (AI 미사용, 최장일치 스캔)")
     _print_mentions(counter.count_stock_mentions(usable))
 

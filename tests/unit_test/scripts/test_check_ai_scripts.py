@@ -186,11 +186,23 @@ def test_youtube_dry_run_attaches_usage_limiter_so_script_usage_is_counted():
             "model": "qwen2.5",
             "daily_request_limit": 100,
             "disclosure_reserve": 20,
-        }
+        },
+        MagicMock(),
     )
 
     assert digest is not None
     assert ai_client._usage_limiter is not None
+
+
+def test_youtube_dry_run_does_not_touch_the_stock_code_db():
+    """_build_ai 가 저장소를 직접 만들면 DB 없는 환경에서 KRX 네트워크에 묶인다."""
+    repo = MagicMock()
+
+    _, digest = check_youtube_ai._build_ai(
+        {"enabled": True, "base_url": "http://x/v1", "api_key": "", "model": "m"}, repo
+    )
+
+    assert digest._code_repo is repo
 
 
 def test_youtube_dry_run_chunk_stays_under_input_budget():
@@ -202,7 +214,8 @@ def test_youtube_dry_run_chunk_stays_under_input_budget():
             "api_key": "",
             "model": "qwen2.5",
             "max_input_chars": 24000,
-        }
+        },
+        MagicMock(),
     )
 
     assert digest._chunk_chars < 24000
