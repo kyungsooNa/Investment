@@ -18,6 +18,7 @@ from config.config_loader import (
     OrderPolicyConfig,
     PositionSizingConfig,
     RiskGateConfig,
+    TradeTrendMonitorConfig,
 )
 from core.account_snapshot import AccountSnapshotCache
 from core.market_clock import MarketClock
@@ -38,6 +39,7 @@ from services.ai_news_analyzer import AiNewsAnalyzer
 from services.stock_news_collector_service import StockNewsCollectorService
 from services.dart_disclosure_client import DartDisclosureClient
 from services.dart_disclosure_rule_service import DartDisclosureRuleService
+from services.trade_trend_service import CustomsTradeStatClient
 from services.minervini_stage_service import MinerviniStageService
 from services.naver_finance_scraper_service import NaverFinanceScraperService
 from services.newhigh_service import NewHighService
@@ -70,6 +72,7 @@ from task.background.after_market.theme_daily_leader_report_task import ThemeDai
 from task.background.after_market.overseas_dryrun_task import OverseasDryRunTask
 from task.background.always_on.notification_queue_task import NotificationQueueTask
 from task.background.always_on.dart_disclosure_monitor_task import DartDisclosureMonitorTask
+from task.background.always_on.trade_trend_monitor_task import TradeTrendMonitorTask
 from task.background.intraday.opening_position_reconcile_task import OpeningPositionReconcileTask
 from task.background.intraday.pre_market_health_check_task import PreMarketHealthCheckTask
 from task.background.intraday.program_capture_subscription_task import ProgramCaptureSubscriptionTask
@@ -288,6 +291,33 @@ class ServiceContainer:
                     logger=ctx.logger,
                     ai_analyzer=ctx.ai_disclosure_analyzer,
                     notification_service=ctx.notification_service,
+                )
+
+        ctx.trade_trend_monitor_task = None
+        raw_trade_trend_config = config_dict.get("trade_trend_monitor") or {}
+        trade_trend_config = TradeTrendMonitorConfig.model_validate(raw_trade_trend_config)
+        if trade_trend_config.enabled:
+            if not needs_web:
+                ctx.logger.info("수출입동향 모니터는 WEB 런타임에서만 동작합니다.")
+            elif not trade_trend_config.customs_service_key:
+                ctx.logger.warning("수출입동향 모니터가 활성화됐지만 관세청 API 키가 없어 비활성화합니다.")
+            elif getattr(ctx, "telegram_reporter", None) is None:
+                ctx.logger.warning("수출입동향 모니터가 활성화됐지만 텔레그램 리포터가 없어 비활성화합니다.")
+            else:
+                ctx.trade_trend_customs_client = CustomsTradeStatClient(
+                    service_key=trade_trend_config.customs_service_key,
+                    base_url=trade_trend_config.customs_base_url,
+                    timeout_sec=float(trade_trend_config.request_timeout_sec),
+                    sido_param_name=trade_trend_config.sido_param_name,
+                    sido_code=trade_trend_config.sido_code,
+                )
+                ctx.trade_trend_monitor_task = TradeTrendMonitorTask(
+                    customs_client=ctx.trade_trend_customs_client,
+                    repository_path=trade_trend_config.state_file_path,
+                    telegram_reporter=ctx.telegram_reporter,
+                    config=trade_trend_config,
+                    market_clock=ctx.market_clock,
+                    logger=ctx.logger,
                 )
 
         try:

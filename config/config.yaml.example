@@ -238,6 +238,21 @@ dart_disclosure:
   daily_digest_time: "19:40"
   max_pages_per_poll: 5
 
+# 수출입동향/제주 반도체 수출 모니터.
+# 관세청_시도별 품목별 수출입실적(GW) 활용신청 후 service key를 넣으면
+# 제주(기본 sido_code=50) 반도체(기본 HS 8542) 월간 수출액을 텔레그램 리포트로 발송합니다.
+trade_trend_monitor:
+  enabled: false
+  customs_service_key: ""
+  poll_interval_sec: 3600
+  request_timeout_sec: 10
+  customs_base_url: "https://openapi.customs.go.kr/openapi/service/newTradestatistics/"
+  sido_code: "50"
+  sido_param_name: "searchSidoCd"
+  item_code: "8542"
+  target_month:
+  state_file_path: "data/trade_trend_state.json"
+
 # AI 분석 (Gemini/Groq/Ollama OpenAI 호환 엔드포인트 공통)
 #   관심종목 신규 공시의 실제 DART 본문을 읽어 최종 중요도와 요약을 산출
 #   본문/AI 조회 실패 시 제목 규칙 판정으로 자동 폴백

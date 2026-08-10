@@ -315,6 +315,23 @@ class DartDisclosureConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class TradeTrendMonitorConfig(BaseModel):
+    enabled: bool = False
+    customs_service_key: str = ""
+    poll_interval_sec: int = Field(3600, ge=60)
+    request_timeout_sec: float = Field(10.0, gt=0)
+    customs_base_url: str = (
+        "https://openapi.customs.go.kr/openapi/service/newTradestatistics/"
+    )
+    sido_code: str = "50"
+    sido_param_name: str = "searchSidoCd"
+    item_code: str = "8542"
+    target_month: Optional[str] = None
+    state_file_path: str = "data/trade_trend_state.json"
+
+    model_config = {"extra": "allow"}
+
+
 class AiAnalysisConfig(BaseModel):
     """AI 분석 공통 설정 (Gemini/Groq/Ollama OpenAI 호환 엔드포인트).
 
@@ -534,6 +551,7 @@ class AppConfig(BaseModel):
     data_quality: DataQualityConfig = Field(default_factory=DataQualityConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     dart_disclosure: DartDisclosureConfig = Field(default_factory=DartDisclosureConfig)
+    trade_trend_monitor: TradeTrendMonitorConfig = Field(default_factory=TradeTrendMonitorConfig)
     ai_analysis: AiAnalysisConfig = Field(default_factory=AiAnalysisConfig)
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
     execution_quality_report: ExecutionQualityReportConfig = Field(default_factory=ExecutionQualityReportConfig)

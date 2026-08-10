@@ -10,6 +10,7 @@ import logging
 from typing import Optional, List, Dict
 from services.notification_service import NotificationEvent, NotificationCategory, NotificationLevel
 import unicodedata
+from services.trade_trend_service import format_jeju_semiconductor_report_html
 
 logger = logging.getLogger(__name__)
 
@@ -330,6 +331,11 @@ class TelegramReporter:
 
         table += "</pre>"
         return header + table
+
+    @_serialized_report_send
+    async def send_jeju_semiconductor_trade_report(self, report) -> bool:
+        """제주 반도체 수출 월간 지표를 텔레그램 리포트 채널로 전송한다."""
+        return await self._send_message(format_jeju_semiconductor_report_html(report))
 
     @_serialized_report_send
     async def send_ranking_report(self, rankings: Dict[str, List[Dict]], report_date: str):
