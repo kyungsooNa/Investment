@@ -5,11 +5,11 @@
  → VBO 일봉 진입 규칙(Phase 2) → shadow 저널 기록.
 
 **주문 경로 없음.** order_execution 의존을 갖지 않으며, "만약 진입했다면" 신호만
-shadow 저널에 남긴다. 해외 주문은 실전 TR(모의 없음)만 존재하므로, 라이브 검증
-전 단계에서 실주문이 절대 발생하지 않도록 구조적으로 차단한다.
+shadow 저널에 남긴다. 의존 자체가 없으므로 실주문이 구조적으로 발생할 수 없다.
 
-라이브 VBO(분봉/웹소켓 의존)는 해외에서 재생 불가하므로, 본 서비스는 EOD 성격의
-일봉 기반 dry-run 신호만 산출한다. 실제 스케줄러/factory 등록은 별도 단계.
+본 서비스는 EOD 성격의 일봉 기반 dry-run 신호만 산출한다(마감 후 사후 평가).
+장중 진입/청산 판정이 필요한 경로는 `OverseasIntradayVBOService`(REST 폴링, #776)가
+담당한다 — 해외는 웹소켓/분봉이 없어 폴링이 유일한 장중 틱 소스다.
 """
 import logging
 from typing import Any, Dict, List, Optional

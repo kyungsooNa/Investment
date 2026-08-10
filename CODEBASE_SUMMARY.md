@@ -99,9 +99,9 @@
 
 ### 4. 해외 주식 계층 (일봉 VBO, 자동 실주문 잠금)
 
-- 결론: 일봉 셋업형 전략만 적용 가능(해외 일봉 API만 존재), 장중/실시간 전략은 불가
+- 결론: 일봉 셋업형 전략 + 장중 REST 폴링 경로(#776) 적용 가능. 해외는 웹소켓/분봉이 없어 폴링이 유일한 장중 틱 소스다
 - `brokers/korea_investment/korea_invest_overseas_stock_api.py`
-  - 해외 주문/조회 API (해외 주문 TR은 실전만 존재, 모의 주문 TR 없음)
+  - 해외 주문/조회 API. 주문·정정취소·잔고·체결 모두 **실전/모의 TR 쌍이 존재**(#606에서 주간거래 TTTS603x → 정규장 TTTT100xU 전환 시 VTTT... 모의 쌍 추가, `trid_provider`가 `is_paper_trading`으로 분기). 단 모의 서버가 해외 주문을 실제로 수락하는지는 미검증 — `scripts/probe_overseas_paper_order.py` 참고
 - `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/overseas_candidate_service.py`, `services/overseas_stock_sync_service.py`, `services/overseas_vbo_dryrun_service.py`
 - `services/us_market_calendar_service.py`
   - 규칙 기반 NYSE 휴장일/조기폐장 캘린더 (KIS에 해외 휴장일 TR 없어 로컬 계산)

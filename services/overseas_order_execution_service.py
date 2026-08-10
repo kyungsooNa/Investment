@@ -8,8 +8,14 @@ sized 신호(수량 산출 완료) → 지정가 매수/매도 주문 경로. �
 **핵심 안전 계약 — 구조적 실주문 잠금:**
 `live_enabled=False`(기본)에서는 broker 주문 메서드를 **절대 호출하지 않고** would-be
 주문 레코드만 반환한다(`signal_source="overseas_paper"`). `live_enabled=True` 일 때만
-실호출한다. 해외 주문 TR 은 실전(모의 없음)만 존재하므로, dry-run 검증 + Phase 5
-canary/kill-switch/reconcile 가 이 플래그를 켜는 유일한 주체다.
+실호출한다. 이 플래그를 켜는 유일한 주체는 dry-run 검증 + Phase 5
+canary/kill-switch/reconcile 다.
+
+주: 과거 이 자리에 있던 "해외 주문 TR 은 실전(모의 없음)만 존재" 기술은 stale 이다.
+#606 에서 모의 미지원인 주간거래(TTTS603x) → 정규장(TTTT100xU) 으로 전환하며
+`tr_ids_config.yaml` 에 VTTT... 모의 쌍이 추가됐고 `trid_provider` 가
+`is_paper_trading` 으로 분기한다. 다만 모의 서버가 해외 주문을 실제로 수락하는지는
+미검증 — `scripts/probe_overseas_paper_order.py` 참고.
 
 스케줄러/factory 배선(자동 발사)은 Phase 5 소관 — 본 서비스는 테스트된 게이팅
 컴포넌트로만 제공된다.
