@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Investment - Web View</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="/static/css/style.css?v=15">
+    <link rel="stylesheet" href="/static/css/style.css?v=16">
     <style>
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .spinning { display: inline-block; animation: spin 1s linear infinite; opacity: 1 !important; }
@@ -103,6 +103,7 @@
         {% if can_operate %}<a href="/virtual" class="{% if active_page == 'virtual' %}active{% endif %}">모의투자 기록</a>{% endif %}
         {% if can_operate %}<a href="/scheduler" class="{% if active_page == 'scheduler' %}active{% endif %}">전략 스케줄러</a>{% endif %}
         <a href="/strategy-reports" class="{% if active_page == 'strategy_reports' %}active{% endif %}">상세 리포트</a>
+        <a href="/trade-trends" class="{% if active_page == 'trade_trends' %}active{% endif %}">수출입동향</a>
         <a href="/youtube" class="{% if active_page == 'youtube' %}active{% endif %}">유튜브 다이제스트</a>
         {% if can_operate %}<a href="/system" class="{% if active_page == 'system' %}active{% endif %}">시스템 상태</a>{% endif %}
     {% endif %}

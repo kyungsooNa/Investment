@@ -78,6 +78,9 @@ class TradeTrendMonitorTask(SchedulableTask):
     def get_progress(self) -> dict:
         return dict(self._progress)
 
+    def get_national_release_history(self) -> list[dict]:
+        return self._repository.get_national_release_history()
+
     async def start(self) -> None:
         if any(not task.done() for task in self._tasks):
             return
@@ -192,5 +195,9 @@ class TradeTrendMonitorTask(SchedulableTask):
                 continue
             sent = await self._reporter.send_national_trade_trend_report(release)
             if sent:
-                self._repository.mark_sent(release.dedup_key)
+                now = self._market_clock.get_current_kst_time()
+                self._repository.mark_national_release_sent(
+                    release,
+                    sent_at=now.isoformat(),
+                )
                 self._progress["national_sent_count"] += 1

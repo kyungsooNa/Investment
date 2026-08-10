@@ -27,6 +27,7 @@ PAGE_PATHS = [
     "/virtual",
     "/scheduler",
     "/strategy-reports",
+    "/trade-trends",
     "/program",
     "/system",
 ]
@@ -102,6 +103,7 @@ def test_rendered_pages_reference_served_static_assets(web_client_with_fake_ctx)
         ("/overseas-marketcap", "overseas_us"),
         ("/overseas-ranking", "overseas_us"),
         ("/virtual", "common"),
+        ("/trade-trends", "common"),
         ("/system", "common"),
     ],
 )
