@@ -12,6 +12,9 @@
 - 짧은 시간에 반복 호출하면 `IpBlocked` 로 IP가 막힌다(실측: 연속 실행 후 15편 전량 실패).
   그래서 (1) 영상 사이에 간격을 두고, (2) 차단은 영상별 스킵이 아니라 **배치 중단**으로
   다룬다. 차단을 스킵으로 흘리면 "오늘은 볼 영상이 없었다"는 정상 리포트처럼 보인다.
+  차단의 실체는 timedtext 엔드포인트의 **HTTP 429 + 구글 "Sorry..." 페이지**
+  ("your computer or network may be sending automated queries") 다. 영구 밴이 아니라
+  속도 제한이고, `Retry-After` 를 주지 않아 해제 시각을 알 수 없다.
 """
 from __future__ import annotations
 
@@ -71,7 +74,10 @@ class YoutubeTranscriptCollectorService:
         http_client=None,
         transcript_fetcher: Optional[Callable[[str, Sequence[str]], str]] = None,
         languages: Sequence[str] = ("ko",),
-        request_interval_sec: float = 2.0,
+        # 하루 1회 배치라 간격을 늘려도 총 소요가 문제되지 않는다. 최악(5채널 × 후보 6편)
+        # 이어도 30건 × 5초 = 2분 30초. 429 를 한 번 맞으면 그날 리포트가 통째로 날아가므로
+        # 속도보다 마진을 택한다.
+        request_interval_sec: float = 5.0,
         sleeper: Optional[Callable[[float], Any]] = None,
     ):
         self._logger = logger or logging.getLogger(__name__)
