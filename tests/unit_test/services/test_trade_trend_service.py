@@ -197,19 +197,24 @@ def test_format_national_trade_trend_report_html_includes_link_and_numbers():
         period_label="2026년 7월 1~10일",
         export_amount_100m_usd=298,
         export_yoy_pct=53.9,
+        export_mom_change_100m_usd=41,
+        export_mom_pct=15.95,
         import_amount_100m_usd=235,
         import_yoy_pct=17.4,
+        import_mom_change_100m_usd=-12,
+        import_mom_pct=-4.86,
         trade_balance_100m_usd=64,
         trade_balance_label="흑자",
+        trade_balance_mom_change_100m_usd=53,
         highlights=["반도체 수출 증가"],
     )
 
     message = format_national_trade_trend_report_html(release)
 
     assert "전국 수출입 잠정치" in message
-    assert "수출: <b>298.0억 달러</b> (+53.9%)" in message
-    assert "수입: <b>235.0억 달러</b> (+17.4%)" in message
-    assert "무역수지: <b>64.0억 달러 흑자</b>" in message
+    assert "수출: <b>298.0억 달러</b> (전년비 +53.9% / 전월비 +41.0억, +15.9%)" in message
+    assert "수입: <b>235.0억 달러</b> (전년비 +17.4% / 전월비 -12.0억, -4.9%)" in message
+    assert "무역수지: <b>64.0억 달러 흑자</b> (전월차 +53.0억)" in message
     assert "https://customs.example/10d?a=1&amp;b=2" in message
 
 
@@ -368,6 +373,42 @@ async def test_national_web_client_discovers_tradedata_links_and_reads_hwpx_atta
     assert releases[0].period_label == "2026년 8월 1~10일"
     assert releases[0].export_amount_100m_usd == pytest.approx(221)
     assert releases[0].import_yoy_pct == pytest.approx(17.8)
+
+
+@pytest.mark.asyncio
+async def test_national_web_client_calculates_previous_month_changes_for_same_phase():
+    list_html = """
+    <a href="/now">2026년 8월 1일 ~ 8월 10일 수출입 현황 [잠정치]</a>
+    <a href="/prev20">2026년 7월 1일 ~ 7월 20일 수출입 현황 [잠정치]</a>
+    <a href="/prev10">2026년 7월 1일 ~ 7월 10일 수출입 현황 [잠정치]</a>
+    """
+    now_detail = "수출은 213억 달러로 전년동기대비 45.3% 증가, 수입은 195억 달러로 23.1% 증가, 무역수지는 18억 달러 흑자"
+    prev20_detail = "수출은 549억 달러로 전년동기대비 52.3% 증가, 수입은 427억 달러로 20.0% 증가, 무역수지는 122억 달러 흑자"
+    prev10_detail = "수출은 150억 달러로 전년동기대비 10.0% 증가, 수입은 180억 달러로 5.0% 증가, 무역수지는 30억 달러 적자"
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(
+        side_effect=[
+            DummyTextResponse(list_html),
+            DummyTextResponse(now_detail),
+            DummyTextResponse(prev20_detail),
+            DummyTextResponse(prev10_detail),
+        ]
+    )
+    client = NationalTradeTrendWebClient(
+        http_client=http_client,
+        list_urls=["https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362"],
+        max_detail_pages=3,
+    )
+
+    releases = await client.fetch_recent_releases()
+
+    current = releases[0]
+    assert current.period_label == "2026년 8월 1~10일"
+    assert current.export_mom_change_100m_usd == pytest.approx(63)
+    assert current.export_mom_pct == pytest.approx(42.0)
+    assert current.import_mom_change_100m_usd == pytest.approx(15)
+    assert current.import_mom_pct == pytest.approx(8.3333, rel=1e-4)
+    assert current.trade_balance_mom_change_100m_usd == pytest.approx(48)
 
 
 @pytest.mark.asyncio
