@@ -3,6 +3,7 @@
 """
 from fastapi import APIRouter, Query
 
+from repositories.trade_trend_repository import TradeTrendRepository
 from services.trade_trend_service import NationalTradeTrendRelease
 from view.web.api_common import _get_ctx
 
@@ -72,6 +73,33 @@ def _merge_rows(*groups: list[dict]) -> list[dict]:
     )
 
 
+def _config_section(ctx, section_name: str):
+    full_config = getattr(ctx, "full_config", {}) or {}
+    if isinstance(full_config, dict):
+        return full_config.get(section_name, {}) or {}
+    return getattr(full_config, section_name, None)
+
+
+def _config_value(section, key: str, default):
+    if isinstance(section, dict):
+        return section.get(key, default)
+    return getattr(section, key, default)
+
+
+def _load_stored_national_release_history(ctx) -> list[dict]:
+    task = getattr(ctx, "trade_trend_monitor_task", None)
+    if task is not None and hasattr(task, "get_national_release_history"):
+        return task.get_national_release_history()
+
+    trade_config = _config_section(ctx, "trade_trend_monitor")
+    repository_path = _config_value(
+        trade_config,
+        "state_file_path",
+        "data/trade_trend_state.json",
+    )
+    return TradeTrendRepository(repository_path).get_national_release_history()
+
+
 @router.get("/trade-trends/national/history")
 async def get_national_trade_trend_history(
     include_recent: bool = Query(True),
@@ -79,10 +107,7 @@ async def get_national_trade_trend_history(
 ):
     """저장된 알림 이력과 공식 페이지 최신 후보를 함께 반환한다."""
     ctx = _get_ctx()
-    task = getattr(ctx, "trade_trend_monitor_task", None)
-    stored_rows = []
-    if task is not None and hasattr(task, "get_national_release_history"):
-        stored_rows = task.get_national_release_history()
+    stored_rows = _load_stored_national_release_history(ctx)
 
     recent_rows = []
     client = getattr(ctx, "national_trade_trend_client", None)
