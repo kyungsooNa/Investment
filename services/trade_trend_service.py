@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import html
+import io
 import re
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
@@ -166,6 +168,7 @@ class NationalTradeTrendWebClient:
     DEFAULT_LIST_URLS = [
         "https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362&searchType=all&searchValue=%EC%88%98%EC%B6%9C%EC%9E%85%20%ED%98%84%ED%99%A9",
         "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c?searchCondition=1&searchKeyword=%EC%88%98%EC%B6%9C%EC%9E%85%20%EB%8F%99%ED%96%A5",
+        "https://tradedata.go.kr/cts/index.do",
     ]
 
     def __init__(
@@ -196,6 +199,7 @@ class NationalTradeTrendWebClient:
             if len(releases) >= self._max_detail_pages:
                 break
             detail_text = await self._fetch_text(url)
+            detail_text = await self._append_tradedata_attachment_text(detail_text, url)
             release = parse_national_trade_release(
                 title=title,
                 url=url,
@@ -216,6 +220,31 @@ class NationalTradeTrendWebClient:
             response = await client.get(url)
             response.raise_for_status()
             return response.text
+
+    async def _fetch_bytes(self, url: str) -> bytes:
+        if self._http_client is not None:
+            response = await self._http_client.get(url, timeout=self._timeout_sec)
+            response.raise_for_status()
+            return response.content
+        async with httpx.AsyncClient(timeout=self._timeout_sec) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.content
+
+    async def _append_tradedata_attachment_text(self, detail_text: str, detail_url: str) -> str:
+        if "tradedata.go.kr" not in detail_url:
+            return detail_text
+        attachment_url = _extract_tradedata_hwpx_attachment_url(detail_text)
+        if not attachment_url:
+            return detail_text
+        try:
+            content = await self._fetch_bytes(attachment_url)
+            attachment_text = _extract_hwpx_text(content)
+        except (httpx.HTTPError, OSError, zipfile.BadZipFile):
+            return detail_text
+        if not attachment_text:
+            return detail_text
+        return f"{detail_text}\n{attachment_text}"
 
 
 def _pct(current: Optional[int], base: Optional[int]) -> Optional[float]:
@@ -277,15 +306,15 @@ def _clean_text(text: str) -> str:
 def _source_from_url(url: str) -> str:
     if "motir.go.kr" in url or "motie.go.kr" in url:
         return "motie"
-    if "customs.go.kr" in url:
+    if "customs.go.kr" in url or "tradedata.go.kr" in url:
         return "customs"
     return "unknown"
 
 
 def _phase_from_title(title: str) -> str:
-    if re.search(r"1\s*일\s*[~∼-]\s*(?:\d{1,2}\s*월\s*)?10\s*일", title):
+    if re.search(r"1\s*(?:일)?\s*[~∼-]\s*(?:\d{1,2}\s*월\s*)?10\s*일", title):
         return "customs_10d"
-    if re.search(r"1\s*일\s*[~∼-]\s*(?:\d{1,2}\s*월\s*)?20\s*일", title):
+    if re.search(r"1\s*(?:일)?\s*[~∼-]\s*(?:\d{1,2}\s*월\s*)?20\s*일", title):
         return "customs_20d"
     if "확정치" in title:
         return "customs_monthly_final"
@@ -470,8 +499,59 @@ def _extract_national_trade_links(html_text: str, base_url: str) -> list[tuple[s
             if not article_match:
                 continue
             href = f"/kor/article/ATCL3f49a5a8c/{article_match.group(1)}/view"
+        elif is_customs and "ets_f_prccMenuAdmin" in href:
+            params = _extract_tradedata_link_params(href)
+            if not params:
+                continue
+            href = (
+                "/cts/hmpg/openETS0100210Q.do"
+                f"?blbrTpcd={params['blbrTpcd']}"
+                f"&ntarSrno={params['ntarSrno']}"
+                f"&menuId={params['menuId']}"
+            )
         links.append((title, urljoin(base_url, href)))
     return links
+
+
+def _extract_tradedata_link_params(href: str) -> Optional[dict[str, str]]:
+    params = {}
+    for key in ("blbrTpcd", "ntarSrno", "menuId"):
+        match = re.search(rf"{key}\s*:\s*['\"]([^'\"]+)['\"]", href)
+        if not match:
+            return None
+        params[key] = match.group(1)
+    return params
+
+
+def _extract_tradedata_hwpx_attachment_url(detail_text: str) -> str:
+    for match in re.finditer(
+        r"<li\b[^>]*class=[\"'][^\"']*btn_download_detl[^\"']*[\"'][^>]*>.*?</li>",
+        detail_text,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        item_html = match.group(0)
+        if ".hwpx" not in item_html.lower():
+            continue
+        file_id = _attr(item_html, "data-attch-file-id")
+        if not file_id:
+            continue
+        return f"https://tradedata.go.kr/cts/filedownload/cubeFiledownload.do?attchFileId={file_id}"
+    return ""
+
+
+def _extract_hwpx_text(content: bytes) -> str:
+    if not content.startswith(b"PK"):
+        return ""
+    chunks = []
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        for name in archive.namelist():
+            if not name.endswith(".xml") or "Contents/" not in name:
+                continue
+            xml_text = archive.read(name).decode("utf-8", errors="ignore")
+            plain = _clean_text(xml_text)
+            if plain:
+                chunks.append(plain)
+    return " ".join(chunks)
 
 
 def format_jeju_semiconductor_report_html(
