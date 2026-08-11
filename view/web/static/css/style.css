@@ -512,6 +512,109 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 .summary-item .label { font-size: 0.75rem; color: var(--text-secondary); }
 .summary-item .value { font-size: 1.2rem; font-weight: 700; margin-top: 4px; }
 
+.trade-trend-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.trade-trend-summary {
+    margin-top: 12px;
+}
+
+.trade-trend-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+    gap: 12px;
+    margin: 12px 0;
+}
+
+.trade-trend-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    height: 260px;
+    padding: 12px 4px 4px;
+    overflow-x: auto;
+}
+
+.trade-trend-chart-group {
+    display: grid;
+    grid-template-rows: 1fr auto;
+    gap: 8px;
+    min-width: 72px;
+    height: 100%;
+}
+
+.trade-trend-bars {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 4px;
+    min-height: 0;
+}
+
+.trade-trend-bar {
+    width: 18px;
+    border-radius: 4px 4px 0 0;
+    display: inline-block;
+}
+
+.trade-trend-bar.export {
+    background: #e94560;
+}
+
+.trade-trend-bar.import {
+    background: #2f80ed;
+}
+
+.trade-trend-chart-label {
+    min-height: 34px;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    text-align: center;
+    line-height: 1.25;
+}
+
+.trade-trend-highlights {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.trade-trend-highlight {
+    padding: 8px 10px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.86rem;
+    line-height: 1.45;
+}
+
+.trade-trend-muted {
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+}
+
+.trade-trend-empty {
+    width: 100%;
+    align-self: center;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.trade-trend-table td {
+    vertical-align: middle;
+}
+
+@media (max-width: 760px) {
+    .trade-trend-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 .stats-box {
     background-color: #f8f9fa;
     padding: 15px;

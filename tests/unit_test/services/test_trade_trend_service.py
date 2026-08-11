@@ -259,6 +259,25 @@ async def test_national_web_client_discovers_matching_links_and_fetches_details(
 
 
 @pytest.mark.asyncio
+async def test_national_web_client_skips_customs_final_releases():
+    list_html = """
+    <a href="javascript:" data-id="10170123" class="nttInfoBtn"
+       title="2026년 6월 월간 수출입 현황 [확정치]">final</a>
+    """
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(return_value=DummyTextResponse(list_html))
+    client = NationalTradeTrendWebClient(
+        http_client=http_client,
+        list_urls=["https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362"],
+    )
+
+    releases = await client.fetch_recent_releases()
+
+    assert releases == []
+    http_client.get.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_national_web_client_discovers_motie_article_view_links():
     list_html = """
     <a href="javascript:article.view('172077');"><i>2026년 7월 수출입 동향</i></a>

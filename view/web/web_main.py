@@ -599,6 +599,10 @@ async def operator_dashboard(request: Request):
 async def strategy_reports(request: Request):
     return await render_page(request, "strategy_reports.html", "strategy_reports")
 
+@page_router.get("/trade-trends")
+async def trade_trends(request: Request):
+    return await render_page(request, "trade_trends.html", "trade_trends")
+
 @page_router.get("/heatmap")
 async def heatmap(request: Request):
     return await render_page(request, "heatmap.html", "heatmap")

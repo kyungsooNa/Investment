@@ -287,6 +287,8 @@ def _phase_from_title(title: str) -> str:
         return "customs_10d"
     if re.search(r"1\s*일\s*[~∼-]\s*(?:\d{1,2}\s*월\s*)?20\s*일", title):
         return "customs_20d"
+    if "확정치" in title:
+        return "customs_monthly_final"
     if "잠정치" in title:
         return "customs_monthly"
     return "motie_monthly"
@@ -518,6 +520,8 @@ def format_national_trade_trend_report_html(
         title = "전국 월간 수출입동향"
     elif release.phase == "customs_monthly":
         title = "전국 월간 수출입 잠정치"
+    elif release.phase == "customs_monthly_final":
+        title = "전국 월간 수출입 확정치"
     lines = [
         f"🌐 <b>{title} ({html.escape(release.period_label, quote=False)})</b>",
         f"수출: <b>{money(release.export_amount_100m_usd)}</b> ({pct(release.export_yoy_pct)})",

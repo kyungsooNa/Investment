@@ -29,6 +29,7 @@ from view.web.routes.strategy_report import router as strategy_report_router
 from view.web.routes.operator_dashboard import router as operator_dashboard_router
 from view.web.routes.ai import router as ai_router
 from view.web.routes.youtube import router as youtube_router
+from view.web.routes.trade_trend import router as trade_trend_router
 
 router = APIRouter(prefix="/api")
 protected_router = APIRouter(
@@ -59,4 +60,5 @@ protected_router.include_router(strategy_report_router)
 protected_router.include_router(operator_dashboard_router)
 protected_router.include_router(ai_router)
 protected_router.include_router(youtube_router)
+protected_router.include_router(trade_trend_router)
 router.include_router(protected_router)
