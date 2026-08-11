@@ -46,10 +46,23 @@ class TradeTrendRepository:
             for item in rows
             if isinstance(item, dict) and item.get("dedup_key")
         }
+        known_periods = {
+            (str(item.get("phase") or ""), str(item.get("period_label") or ""))
+            for item in rows
+            if isinstance(item, dict) and item.get("phase") and item.get("period_label")
+        }
         for key in sorted(self._sent_keys):
             if not key.startswith("national_trade:") or key in known:
                 continue
-            rows.append(_legacy_national_release_from_key(key))
+            legacy = _legacy_national_release_from_key(key)
+            period_key = (
+                str(legacy.get("phase") or ""),
+                str(legacy.get("period_label") or ""),
+            )
+            if period_key in known_periods:
+                continue
+            rows.append(legacy)
+            known_periods.add(period_key)
         return sorted(
             rows,
             key=lambda item: (
