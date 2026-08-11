@@ -136,31 +136,120 @@ function renderTradeTrendTable() {
 function renderTradeTrendChart(rows) {
     const chart = document.getElementById('trade-trend-chart');
     if (!chart) return;
-    const points = rows
-        .filter((row) => row.export_amount_100m_usd !== null && row.export_amount_100m_usd !== undefined)
-        .slice(0, 12)
-        .reverse();
-    if (!points.length) {
+    const phaseOrder = [
+        { key: 'customs_10d', label: '1~10일' },
+        { key: 'customs_20d', label: '1~20일' },
+        { key: 'monthly', label: '월간' },
+    ];
+    const rowsWithMonth = rows
+        .map((row) => ({ row, month: tradeMonthKey(row), phase: tradePhaseBucket(row) }))
+        .filter((item) => item.month && item.phase);
+    if (!rowsWithMonth.length) {
         chart.innerHTML = '<div class="trade-trend-empty">차트로 볼 숫자 데이터가 없습니다.</div>';
         return;
     }
-    const maxValue = Math.max(...points.map((row) => Math.max(
+
+    const latestByMonthPhase = new Map();
+    rowsWithMonth.forEach(({ row, month, phase }) => {
+        const key = `${month}:${phase}`;
+        const current = latestByMonthPhase.get(key);
+        const rowTime = `${row.published_at || ''} ${row.sent_at || ''}`;
+        const currentTime = current ? `${current.published_at || ''} ${current.sent_at || ''}` : '';
+        if (!current || rowTime >= currentTime) latestByMonthPhase.set(key, row);
+    });
+
+    const months = Array.from(new Set(rowsWithMonth.map((item) => item.month)))
+        .sort()
+        .slice(-8);
+    const visibleRows = [];
+    months.forEach((month) => {
+        phaseOrder.forEach(({ key }) => {
+            const row = latestByMonthPhase.get(`${month}:${key}`);
+            if (row) visibleRows.push(row);
+        });
+    });
+    const maxValue = Math.max(...visibleRows.map((row) => Math.max(
         Number(row.export_amount_100m_usd || 0),
         Number(row.import_amount_100m_usd || 0),
+        Number(row.semiconductor_export_amount_100m_usd || 0),
     )), 1);
-    chart.innerHTML = points.map((row) => {
-        const exportHeight = Math.max(6, Number(row.export_amount_100m_usd || 0) / maxValue * 100);
-        const importHeight = Math.max(6, Number(row.import_amount_100m_usd || 0) / maxValue * 100);
+
+    chart.innerHTML = `
+        <div class="trade-trend-chart-legend">
+            <span><i class="legend-export"></i>수출</span>
+            <span><i class="legend-import"></i>수입</span>
+            <span><i class="legend-chip"></i>반도체</span>
+        </div>
+        <div class="trade-trend-month-grid">
+            ${months.map((month) => renderTradeTrendMonth(month, phaseOrder, latestByMonthPhase, maxValue)).join('')}
+        </div>
+    `;
+}
+
+function renderTradeTrendMonth(month, phaseOrder, latestByMonthPhase, maxValue) {
+    return `
+        <div class="trade-trend-month-card">
+            <div class="trade-trend-month-title">${escapeHtml(formatTradeMonth(month))}</div>
+            <div class="trade-trend-phase-row">
+                ${phaseOrder.map(({ key, label }) => renderTradeTrendPhaseCell(label, latestByMonthPhase.get(`${month}:${key}`), maxValue)).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderTradeTrendPhaseCell(label, row, maxValue) {
+    if (!row) {
         return `
-            <div class="trade-trend-chart-group" title="${escapeAttribute(row.period_label || '')}">
-                <div class="trade-trend-bars">
-                    <span class="trade-trend-bar export" style="height:${exportHeight}%"></span>
-                    <span class="trade-trend-bar import" style="height:${importHeight}%"></span>
-                </div>
-                <div class="trade-trend-chart-label">${escapeHtml(row.period_label || '-')}</div>
+            <div class="trade-trend-phase-cell empty">
+                <div class="trade-trend-phase-label">${escapeHtml(label)}</div>
+                <div class="trade-trend-empty-mini">-</div>
             </div>
         `;
-    }).join('');
+    }
+    const exportHeight = tradeBarHeight(row.export_amount_100m_usd, maxValue);
+    const importHeight = tradeBarHeight(row.import_amount_100m_usd, maxValue);
+    const semiconductorHeight = tradeBarHeight(row.semiconductor_export_amount_100m_usd, maxValue);
+    return `
+        <div class="trade-trend-phase-cell" title="${escapeAttribute(row.period_label || '')}">
+            <div class="trade-trend-phase-label">${escapeHtml(label)}</div>
+            <div class="trade-trend-bars">
+                <span class="trade-trend-bar export" style="height:${exportHeight}%"></span>
+                <span class="trade-trend-bar import" style="height:${importHeight}%"></span>
+                <span class="trade-trend-bar chip" style="height:${semiconductorHeight}%"></span>
+            </div>
+            <div class="trade-trend-cell-metrics">
+                <strong>${tradeMoney(row.export_amount_100m_usd)}</strong>
+                <span>반도체 ${tradeMoney(row.semiconductor_export_amount_100m_usd)}</span>
+                <span>일평균 ${tradeMoney(row.export_daily_avg_100m_usd)}</span>
+                <span>조업 ${row.working_days_current ? `${Number(row.working_days_current).toFixed(1)}일` : '-'}</span>
+            </div>
+        </div>
+    `;
+}
+
+function tradeBarHeight(value, maxValue) {
+    if (value === null || value === undefined || value === '') return 0;
+    return Math.max(8, Number(value || 0) / maxValue * 100);
+}
+
+function tradeMonthKey(row) {
+    const match = String(row.period_label || '').match(/(\d{4})년\s*(\d{1,2})월/);
+    if (!match) return '';
+    return `${match[1]}-${String(match[2]).padStart(2, '0')}`;
+}
+
+function tradePhaseBucket(row) {
+    const phase = String(row.phase || '');
+    if (phase === 'customs_10d') return 'customs_10d';
+    if (phase === 'customs_20d') return 'customs_20d';
+    if (phase.includes('monthly') || phase === 'motie_monthly') return 'monthly';
+    return '';
+}
+
+function formatTradeMonth(month) {
+    const [year, monthPart] = String(month || '').split('-');
+    if (!year || !monthPart) return month || '-';
+    return `${year}.${monthPart}`;
 }
 
 function renderTradeTrendHighlights(rows) {
