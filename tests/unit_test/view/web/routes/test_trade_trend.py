@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 import view.web.api_common as api_common
 import view.web.web_main as web_main
+from repositories.trade_trend_repository import TradeTrendRepository
 from services.trade_trend_service import NationalTradeTrendRelease
 
 
@@ -79,3 +80,52 @@ def test_national_trade_trend_history_merges_stored_and_recent_rows():
     assert payload["data"]["rows"][0]["period_label"] == "2026년 8월 1~10일"
     assert payload["data"]["rows"][0]["semiconductor_export_amount_100m_usd"] == 101
     assert payload["data"]["rows"][0]["working_days_current"] == 10.0
+
+
+def test_national_trade_trend_history_reads_state_file_when_task_is_missing(tmp_path):
+    state_file = tmp_path / "trade_trend_state.json"
+    release = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_10d",
+        title="2026년 8월 1일 ~ 8월 10일 수출입 현황 [잠정치]",
+        url="https://customs.example/10d",
+        period_label="2026년 8월 1~10일",
+        export_amount_100m_usd=213,
+        export_yoy_pct=45.3,
+        export_daily_avg_100m_usd=30.4,
+        semiconductor_export_amount_100m_usd=100,
+        semiconductor_daily_avg_100m_usd=14.3,
+        working_days_current=7.0,
+        import_amount_100m_usd=195,
+        import_yoy_pct=23.1,
+        trade_balance_100m_usd=18,
+        trade_balance_label="흑자",
+        published_at="2026-08-11",
+    )
+    TradeTrendRepository(state_file).mark_national_release_sent(
+        release,
+        sent_at="2026-08-11T17:27:41+09:00",
+    )
+    ctx = SimpleNamespace(
+        full_config={
+            "use_login": False,
+            "auth": {"secret_key": "test-token"},
+            "trade_trend_monitor": {"state_file_path": str(state_file)},
+        },
+        trade_trend_monitor_task=None,
+        national_trade_trend_client=None,
+    )
+    api_common.set_ctx(ctx)
+
+    try:
+        response = TestClient(web_main.app).get(
+            "/api/trade-trends/national/history?include_recent=false"
+        )
+    finally:
+        api_common.set_ctx(None)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["stored_count"] == 1
+    assert payload["data"]["rows"][0]["period_label"] == "2026년 8월 1~10일"
+    assert payload["data"]["rows"][0]["semiconductor_export_amount_100m_usd"] == 100

@@ -83,3 +83,30 @@ def test_trade_trend_repository_backfills_legacy_national_sent_keys(tmp_path):
             "dedup_key": "national_trade:customs_20d:2026년 7월 1~20일:https://customs.example/20d",
         }
     ]
+
+
+def test_trade_trend_repository_skips_legacy_key_when_period_history_exists(tmp_path):
+    release = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_10d",
+        title="2026년 8월 1일 ~ 8월 10일 수출입 현황 [잠정치]",
+        url="https://customs.example/10d",
+        period_label="2026년 8월 1~10일",
+        export_amount_100m_usd=213,
+        import_amount_100m_usd=195,
+        trade_balance_100m_usd=18,
+        trade_balance_label="흑자",
+        published_at="2026-08-11",
+    )
+    path = tmp_path / "trade_trend_state.json"
+    repo = TradeTrendRepository(path)
+    repo.mark_sent(
+        "national_trade:customs_10d:2026년 8월 1~10일:https://tradedata.example/10d"
+    )
+    repo.mark_national_release_sent(release, sent_at="2026-08-11T17:27:41+09:00")
+
+    history = TradeTrendRepository(path).get_national_release_history()
+
+    assert len(history) == 1
+    assert history[0]["dedup_key"] == release.dedup_key
+    assert history[0]["export_amount_100m_usd"] == 213
