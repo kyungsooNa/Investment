@@ -4,7 +4,7 @@ import html
 import io
 import re
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urljoin
@@ -52,10 +52,15 @@ class NationalTradeTrendRelease:
     period_label: str
     export_amount_100m_usd: Optional[float] = None
     export_yoy_pct: Optional[float] = None
+    export_mom_change_100m_usd: Optional[float] = None
+    export_mom_pct: Optional[float] = None
     import_amount_100m_usd: Optional[float] = None
     import_yoy_pct: Optional[float] = None
+    import_mom_change_100m_usd: Optional[float] = None
+    import_mom_pct: Optional[float] = None
     trade_balance_100m_usd: Optional[float] = None
     trade_balance_label: str = ""
+    trade_balance_mom_change_100m_usd: Optional[float] = None
     published_at: str = ""
     highlights: list[str] = None
 
@@ -209,7 +214,7 @@ class NationalTradeTrendWebClient:
             if release.export_amount_100m_usd is None and release.import_amount_100m_usd is None:
                 continue
             releases.append(release)
-        return releases
+        return _attach_previous_month_changes(releases)
 
     async def _fetch_text(self, url: str) -> str:
         if self._http_client is not None:
@@ -251,6 +256,18 @@ def _pct(current: Optional[int], base: Optional[int]) -> Optional[float]:
     if current is None or base in (None, 0):
         return None
     return (current - base) / base * 100
+
+
+def _pct_float(current: Optional[float], base: Optional[float]) -> Optional[float]:
+    if current is None or base in (None, 0):
+        return None
+    return (current - base) / base * 100
+
+
+def _diff_float(current: Optional[float], base: Optional[float]) -> Optional[float]:
+    if current is None or base is None:
+        return None
+    return current - base
 
 
 def _first_export(rows: list[TradeStatItem]) -> Optional[TradeStatItem]:
@@ -335,6 +352,75 @@ def _period_from_title(title: str, phase: str) -> str:
     if phase == "customs_20d":
         return f"{year}년 {month}월 1~20일"
     return f"{year}년 {month}월"
+
+
+def _period_year_month(period_label: str) -> Optional[tuple[int, int]]:
+    match = re.search(r"(\d{4})년\s*(\d{1,2})월", period_label)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _previous_month_key(period_label: str, phase: str) -> Optional[tuple[str, int, int]]:
+    year_month = _period_year_month(period_label)
+    if year_month is None:
+        return None
+    year, month = year_month
+    month -= 1
+    if month == 0:
+        year -= 1
+        month = 12
+    return phase, year, month
+
+
+def _release_month_key(release: NationalTradeTrendRelease) -> Optional[tuple[str, int, int]]:
+    year_month = _period_year_month(release.period_label)
+    if year_month is None:
+        return None
+    year, month = year_month
+    return release.phase, year, month
+
+
+def _attach_previous_month_changes(
+    releases: list[NationalTradeTrendRelease],
+) -> list[NationalTradeTrendRelease]:
+    by_period = {
+        key: release
+        for release in releases
+        if (key := _release_month_key(release)) is not None
+    }
+    enriched = []
+    for release in releases:
+        previous = by_period.get(_previous_month_key(release.period_label, release.phase))
+        if previous is None:
+            enriched.append(release)
+            continue
+        enriched.append(
+            replace(
+                release,
+                export_mom_change_100m_usd=_diff_float(
+                    release.export_amount_100m_usd,
+                    previous.export_amount_100m_usd,
+                ),
+                export_mom_pct=_pct_float(
+                    release.export_amount_100m_usd,
+                    previous.export_amount_100m_usd,
+                ),
+                import_mom_change_100m_usd=_diff_float(
+                    release.import_amount_100m_usd,
+                    previous.import_amount_100m_usd,
+                ),
+                import_mom_pct=_pct_float(
+                    release.import_amount_100m_usd,
+                    previous.import_amount_100m_usd,
+                ),
+                trade_balance_mom_change_100m_usd=_diff_float(
+                    release.trade_balance_100m_usd,
+                    previous.trade_balance_100m_usd,
+                ),
+            )
+        )
+    return enriched
 
 
 def _float(pattern: str, text: str) -> Optional[float]:
@@ -595,6 +681,17 @@ def format_national_trade_trend_report_html(
             return "-"
         return f"{value:+.1f}%"
 
+    def diff(value: Optional[float]) -> str:
+        if value is None:
+            return "-"
+        return f"{value:+,.1f}억"
+
+    def change_text(yoy: Optional[float], mom_change: Optional[float], mom_pct: Optional[float]) -> str:
+        parts = [f"전년비 {pct(yoy)}"]
+        if mom_change is not None or mom_pct is not None:
+            parts.append(f"전월비 {diff(mom_change)}, {pct(mom_pct)}")
+        return " / ".join(parts)
+
     title = "전국 수출입 잠정치"
     if release.phase == "motie_monthly":
         title = "전국 월간 수출입동향"
@@ -604,10 +701,14 @@ def format_national_trade_trend_report_html(
         title = "전국 월간 수출입 확정치"
     lines = [
         f"🌐 <b>{title} ({html.escape(release.period_label, quote=False)})</b>",
-        f"수출: <b>{money(release.export_amount_100m_usd)}</b> ({pct(release.export_yoy_pct)})",
-        f"수입: <b>{money(release.import_amount_100m_usd)}</b> ({pct(release.import_yoy_pct)})",
+        f"수출: <b>{money(release.export_amount_100m_usd)}</b> "
+        f"({change_text(release.export_yoy_pct, release.export_mom_change_100m_usd, release.export_mom_pct)})",
+        f"수입: <b>{money(release.import_amount_100m_usd)}</b> "
+        f"({change_text(release.import_yoy_pct, release.import_mom_change_100m_usd, release.import_mom_pct)})",
         f"무역수지: <b>{money(release.trade_balance_100m_usd, include_label=True)}</b>",
     ]
+    if release.trade_balance_mom_change_100m_usd is not None:
+        lines[-1] += f" (전월차 {diff(release.trade_balance_mom_change_100m_usd)})"
     if release.highlights:
         lines += ["", *[f"• {html.escape(item, quote=False)}" for item in release.highlights[:3]]]
     lines += ["", f'<a href="{html.escape(release.url, quote=False)}">원문 보기</a>']
