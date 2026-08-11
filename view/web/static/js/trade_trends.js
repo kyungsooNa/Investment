@@ -1,5 +1,6 @@
 let tradeTrendRows = [];
 let tradeTrendFilter = 'all';
+let tradeTrendChartPhase = null;
 
 function tradeMoney(value) {
     if (value === null || value === undefined || value === '') return '-';
@@ -10,6 +11,12 @@ function tradePct(value) {
     if (value === null || value === undefined || value === '') return '-';
     const number = Number(value);
     return `${number > 0 ? '+' : ''}${number.toFixed(1)}%`;
+}
+
+function tradeDelta(value) {
+    if (value === null || value === undefined || value === '') return '-';
+    const number = Number(value);
+    return `${number > 0 ? '+' : ''}${number.toLocaleString(undefined, { maximumFractionDigits: 1 })}억`;
 }
 
 function tradeBalance(row) {
@@ -66,6 +73,8 @@ function renderTradeTrendSummary(latest) {
     document.getElementById('trade-latest-export').textContent = latest ? tradeMoney(latest.export_amount_100m_usd) : '-';
     document.getElementById('trade-latest-import').textContent = latest ? tradeMoney(latest.import_amount_100m_usd) : '-';
     document.getElementById('trade-latest-balance').textContent = latest ? tradeBalance(latest) : '-';
+    document.getElementById('trade-latest-semiconductor').textContent = latest ? tradeMoney(latest.semiconductor_export_amount_100m_usd) : '-';
+    document.getElementById('trade-latest-working-days').textContent = latest && latest.working_days_current ? `${Number(latest.working_days_current).toFixed(1)}일` : '-';
 }
 
 function filterTradeTrendRows(filter, button) {
@@ -91,7 +100,7 @@ function renderTradeTrendTable() {
     if (!tbody) return;
     const rows = filteredTradeTrendRows();
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:18px;">표시할 수출입동향이 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:18px;">표시할 수출입동향이 없습니다.</td></tr>';
         return;
     }
     tbody.innerHTML = rows.map((row) => `
@@ -103,6 +112,19 @@ function renderTradeTrendTable() {
             <td>${escapeHtml(row.published_at || '-')}</td>
             <td>${tradeMoney(row.export_amount_100m_usd)}</td>
             <td class="${Number(row.export_yoy_pct || 0) >= 0 ? 'text-red' : 'text-blue'}">${tradePct(row.export_yoy_pct)}</td>
+            <td>
+                ${tradeMoney(row.export_daily_avg_100m_usd)}
+                <div class="trade-trend-muted">${tradePct(row.export_daily_avg_mom_pct)} · 조업 ${row.working_days_current ? `${Number(row.working_days_current).toFixed(1)}일` : '-'}</div>
+            </td>
+            <td>
+                ${tradeMoney(row.semiconductor_export_amount_100m_usd)}
+                <div class="${Number(row.semiconductor_mom_pct || 0) >= 0 ? 'text-red' : 'text-blue'} trade-trend-muted">MoM ${tradeDelta(row.semiconductor_mom_change_100m_usd)} / ${tradePct(row.semiconductor_mom_pct)}</div>
+                <div class="${Number(row.semiconductor_yoy_pct || 0) >= 0 ? 'text-red' : 'text-blue'} trade-trend-muted">YoY ${tradePct(row.semiconductor_yoy_pct)}</div>
+            </td>
+            <td>
+                ${tradeMoney(row.semiconductor_daily_avg_100m_usd)}
+                <div class="${Number(row.semiconductor_daily_avg_mom_pct || 0) >= 0 ? 'text-red' : 'text-blue'} trade-trend-muted">MoM ${tradePct(row.semiconductor_daily_avg_mom_pct)}</div>
+            </td>
             <td>${tradeMoney(row.import_amount_100m_usd)}</td>
             <td class="${Number(row.import_yoy_pct || 0) >= 0 ? 'text-red' : 'text-blue'}">${tradePct(row.import_yoy_pct)}</td>
             <td><strong>${tradeBalance(row)}</strong></td>
@@ -115,31 +137,261 @@ function renderTradeTrendTable() {
 function renderTradeTrendChart(rows) {
     const chart = document.getElementById('trade-trend-chart');
     if (!chart) return;
-    const points = rows
-        .filter((row) => row.export_amount_100m_usd !== null && row.export_amount_100m_usd !== undefined)
-        .slice(0, 12)
-        .reverse();
-    if (!points.length) {
+    const model = buildTradeTrendChartModel(rows, tradeTrendChartPhase);
+    if (!model.items.length) {
         chart.innerHTML = '<div class="trade-trend-empty">차트로 볼 숫자 데이터가 없습니다.</div>';
         return;
     }
-    const maxValue = Math.max(...points.map((row) => Math.max(
-        Number(row.export_amount_100m_usd || 0),
-        Number(row.import_amount_100m_usd || 0),
+    tradeTrendChartPhase = model.selectedPhase;
+
+    chart.innerHTML = `
+        <div class="trade-trend-chart-tabs">
+            ${model.phases.map((phase) => `
+                <button type="button"
+                    class="sub-tab-btn ${phase.key === model.selectedPhase ? 'active' : ''}"
+                    onclick="selectTradeTrendChartPhase('${escapeAttribute(phase.key)}')">
+                    ${escapeHtml(phase.label)}
+                </button>
+            `).join('')}
+        </div>
+        <div class="trade-trend-chart-legend">
+            <span><i class="legend-export"></i>수출 일평균</span>
+            <span><i class="legend-chip"></i>반도체 일평균</span>
+            <span class="trade-trend-muted">수입은 보조 지표로 표시</span>
+        </div>
+        <div class="trade-trend-comparison-grid">
+            ${model.items.map((item) => renderTradeTrendComparisonCard(item, model.maxValue)).join('')}
+        </div>
+    `;
+}
+
+function selectTradeTrendChartPhase(phase) {
+    tradeTrendChartPhase = phase;
+    renderTradeTrendChart(tradeTrendRows);
+}
+
+function buildTradeTrendChartModel(rows, selectedPhase) {
+    const phases = [
+        { key: 'customs_10d', label: '1~10일' },
+        { key: 'customs_20d', label: '1~20일' },
+        { key: 'monthly', label: '월간' },
+        { key: 'quarter', label: '분기' },
+        { key: 'month_progress', label: '월 진행판' },
+    ];
+    const rowsWithMonth = rows
+        .map((row) => ({ row, month: tradeMonthKey(row), phase: tradePhaseBucket(row) }))
+        .filter((item) => item.month && item.phase);
+    if (!rowsWithMonth.length) {
+        return { phases, selectedPhase: selectedPhase || 'customs_10d', items: [], maxValue: 1 };
+    }
+
+    const availablePhases = new Set(rowsWithMonth.map((item) => item.phase));
+    if (availablePhases.has('monthly')) availablePhases.add('quarter');
+    availablePhases.add('month_progress');
+    const latestPhase = latestTradeTrendPhase(rowsWithMonth);
+    const selected = availablePhases.has(selectedPhase) ? selectedPhase : latestPhase;
+    const items = selected === 'quarter'
+        ? buildTradeTrendQuarterItems(rowsWithMonth)
+        : selected === 'month_progress'
+            ? buildTradeTrendMonthProgressItems(rowsWithMonth)
+            : buildTradeTrendPhaseItems(rowsWithMonth, selected);
+    const scaleItems = items.flatMap((item) => item.progressRows || [item]);
+    const maxValue = Math.max(...scaleItems.map((item) => Math.max(
+        Number(item.export_daily_avg_100m_usd || 0),
+        Number(item.semiconductor_daily_avg_100m_usd || 0),
     )), 1);
-    chart.innerHTML = points.map((row) => {
-        const exportHeight = Math.max(6, Number(row.export_amount_100m_usd || 0) / maxValue * 100);
-        const importHeight = Math.max(6, Number(row.import_amount_100m_usd || 0) / maxValue * 100);
-        return `
-            <div class="trade-trend-chart-group" title="${escapeAttribute(row.period_label || '')}">
-                <div class="trade-trend-bars">
-                    <span class="trade-trend-bar export" style="height:${exportHeight}%"></span>
-                    <span class="trade-trend-bar import" style="height:${importHeight}%"></span>
-                </div>
-                <div class="trade-trend-chart-label">${escapeHtml(row.period_label || '-')}</div>
+    return {
+        phases: phases.filter((phase) => availablePhases.has(phase.key)),
+        selectedPhase: selected,
+        items,
+        maxValue,
+    };
+}
+
+function latestTradeTrendPhase(rowsWithMonth) {
+    const latest = rowsWithMonth.reduce((current, item) => {
+        if (!current) return item;
+        return tradeRowTime(item.row) >= tradeRowTime(current.row) ? item : current;
+    }, null);
+    return latest ? latest.phase : 'customs_10d';
+}
+
+function buildTradeTrendPhaseItems(rowsWithMonth, phase) {
+    const latestByMonth = new Map();
+    rowsWithMonth
+        .filter((item) => item.phase === phase)
+        .forEach(({ row, month }) => {
+            const current = latestByMonth.get(month);
+            if (!current || tradeRowTime(row) >= tradeRowTime(current)) latestByMonth.set(month, row);
+        });
+    return Array.from(latestByMonth.entries())
+        .sort(([left], [right]) => left.localeCompare(right))
+        .slice(-8)
+        .map(([month, row]) => tradeTrendComparisonItem(formatTradeMonth(month), row));
+}
+
+function buildTradeTrendQuarterItems(rowsWithMonth) {
+    const monthlyRows = buildTradeTrendPhaseItems(rowsWithMonth, 'monthly')
+        .map((item) => item.row)
+        .filter(Boolean);
+    const quarters = new Map();
+    monthlyRows.forEach((row) => {
+        const month = tradeMonthKey(row);
+        const [year, monthPart] = month.split('-');
+        const quarter = Math.ceil(Number(monthPart) / 3);
+        const key = `${year} Q${quarter}`;
+        if (!quarters.has(key)) quarters.set(key, []);
+        quarters.get(key).push(row);
+    });
+    return Array.from(quarters.entries())
+        .sort(([left], [right]) => left.localeCompare(right))
+        .slice(-8)
+        .map(([label, quarterRows]) => tradeTrendQuarterItem(label, quarterRows));
+}
+
+function buildTradeTrendMonthProgressItems(rowsWithMonth) {
+    const latestByMonthPhase = new Map();
+    rowsWithMonth.forEach(({ row, month, phase }) => {
+        const key = `${month}:${phase}`;
+        const current = latestByMonthPhase.get(key);
+        if (!current || tradeRowTime(row) >= tradeRowTime(current)) latestByMonthPhase.set(key, row);
+    });
+    const months = Array.from(new Set(rowsWithMonth.map((item) => item.month)))
+        .sort()
+        .slice(-6);
+    return months.map((month) => ({
+        label: formatTradeMonth(month),
+        progressRows: ['customs_10d', 'customs_20d', 'monthly']
+            .map((phase) => latestByMonthPhase.get(`${month}:${phase}`))
+            .filter(Boolean)
+            .map((row) => tradeTrendComparisonItem(phaseLabel(row.phase), row)),
+    }));
+}
+
+function tradeTrendComparisonItem(label, row) {
+    const workingDays = Number(row.working_days_current || 0);
+    return {
+        label,
+        row,
+        period_label: row.period_label,
+        export_amount_100m_usd: row.export_amount_100m_usd,
+        import_amount_100m_usd: row.import_amount_100m_usd,
+        semiconductor_export_amount_100m_usd: row.semiconductor_export_amount_100m_usd,
+        export_daily_avg_100m_usd: tradeDailyAverage(row.export_daily_avg_100m_usd, row.export_amount_100m_usd, workingDays),
+        semiconductor_daily_avg_100m_usd: tradeDailyAverage(row.semiconductor_daily_avg_100m_usd, row.semiconductor_export_amount_100m_usd, workingDays),
+        working_days_current: row.working_days_current,
+        export_daily_avg_mom_pct: row.export_daily_avg_mom_pct,
+        semiconductor_daily_avg_mom_pct: row.semiconductor_daily_avg_mom_pct,
+    };
+}
+
+function tradeTrendQuarterItem(label, rows) {
+    const exportAmount = tradeSum(rows, 'export_amount_100m_usd');
+    const importAmount = tradeSum(rows, 'import_amount_100m_usd');
+    const semiconductorAmount = tradeSum(rows, 'semiconductor_export_amount_100m_usd');
+    const workingDays = tradeSum(rows, 'working_days_current');
+    return {
+        label,
+        period_label: `${label} 월간 확정치 누적`,
+        export_amount_100m_usd: exportAmount,
+        import_amount_100m_usd: importAmount,
+        semiconductor_export_amount_100m_usd: semiconductorAmount,
+        export_daily_avg_100m_usd: tradeDailyAverage(null, exportAmount, workingDays),
+        semiconductor_daily_avg_100m_usd: tradeDailyAverage(null, semiconductorAmount, workingDays),
+        working_days_current: workingDays,
+    };
+}
+
+function tradeDailyAverage(explicitValue, amount, workingDays) {
+    if (explicitValue !== null && explicitValue !== undefined && explicitValue !== '') {
+        return Number(explicitValue);
+    }
+    if (!workingDays || amount === null || amount === undefined || amount === '') return null;
+    return Number(amount) / Number(workingDays);
+}
+
+function tradeSum(rows, field) {
+    return rows.reduce((total, row) => total + Number(row[field] || 0), 0);
+}
+
+function tradeRowTime(row) {
+    return `${row.published_at || ''} ${row.sent_at || ''}`;
+}
+
+function renderTradeTrendComparisonCard(item, maxValue) {
+    if (item.progressRows) {
+        return renderTradeTrendProgressCard(item, maxValue);
+    }
+    const exportHeight = tradeBarHeight(item.export_daily_avg_100m_usd, maxValue);
+    const semiconductorHeight = tradeBarHeight(item.semiconductor_daily_avg_100m_usd, maxValue);
+    return `
+        <div class="trade-trend-compare-card" title="${escapeAttribute(item.period_label || '')}">
+            <div class="trade-trend-compare-head">
+                <strong>${escapeHtml(item.label)}</strong>
+                <span>조업 ${item.working_days_current ? `${Number(item.working_days_current).toFixed(1)}일` : '-'}</span>
             </div>
-        `;
-    }).join('');
+            <div class="trade-trend-bars compare">
+                <span class="trade-trend-bar export" style="height:${exportHeight}%">
+                    <em>${tradeMoney(item.export_daily_avg_100m_usd).replace(' 달러', '')}</em>
+                </span>
+                <span class="trade-trend-bar chip" style="height:${semiconductorHeight}%">
+                    <em>${tradeMoney(item.semiconductor_daily_avg_100m_usd).replace(' 달러', '')}</em>
+                </span>
+            </div>
+            <div class="trade-trend-cell-metrics">
+                <strong>수출 총액 ${tradeMoney(item.export_amount_100m_usd)}</strong>
+                <span>반도체 총액 ${tradeMoney(item.semiconductor_export_amount_100m_usd)}</span>
+                <span>수입 ${tradeMoney(item.import_amount_100m_usd)}</span>
+                <span>일평균 전월비 수출 ${tradePct(item.export_daily_avg_mom_pct)} · 반도체 ${tradePct(item.semiconductor_daily_avg_mom_pct)}</span>
+            </div>
+        </div>
+    `;
+}
+
+function renderTradeTrendProgressCard(item, maxValue) {
+    return `
+        <div class="trade-trend-progress-card">
+            <div class="trade-trend-month-title">${escapeHtml(item.label)}</div>
+            <div class="trade-trend-progress-phases">
+                ${item.progressRows.map((row) => renderTradeTrendComparisonCard(row, maxValue)).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function tradeBarHeight(value, maxValue) {
+    if (value === null || value === undefined || value === '') return 0;
+    return Math.max(8, Number(value || 0) / maxValue * 100);
+}
+
+function tradeMonthKey(row) {
+    const match = String(row.period_label || '').match(/(\d{4})년\s*(\d{1,2})월/);
+    if (!match) return '';
+    return `${match[1]}-${String(match[2]).padStart(2, '0')}`;
+}
+
+function tradePhaseBucket(row) {
+    const phase = String(row.phase || '');
+    if (phase === 'customs_10d') return 'customs_10d';
+    if (phase === 'customs_20d') return 'customs_20d';
+    if (phase.includes('monthly') || phase === 'motie_monthly') return 'monthly';
+    return '';
+}
+
+function formatTradeMonth(month) {
+    const [year, monthPart] = String(month || '').split('-');
+    if (!year || !monthPart) return month || '-';
+    return `${year}.${monthPart}`;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        buildTradeTrendChartModel,
+        latestTradeTrendPhase,
+        buildTradeTrendPhaseItems,
+        buildTradeTrendQuarterItems,
+        tradeDailyAverage,
+    };
 }
 
 function renderTradeTrendHighlights(rows) {

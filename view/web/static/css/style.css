@@ -533,31 +533,176 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 
 .trade-trend-chart {
     display: flex;
-    align-items: flex-end;
+    flex-direction: column;
     gap: 10px;
-    height: 260px;
-    padding: 12px 4px 4px;
+    min-height: 300px;
+    padding: 8px 2px 4px;
     overflow-x: auto;
 }
 
-.trade-trend-chart-group {
+.trade-trend-chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+}
+
+.trade-trend-chart-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.trade-trend-chart-legend i {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    display: inline-block;
+}
+
+.legend-export { background: #e94560; }
+.legend-import { background: #2f80ed; }
+.legend-chip { background: #12a87a; }
+
+.trade-trend-chart-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.trade-trend-comparison-grid {
     display: grid;
-    grid-template-rows: 1fr auto;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 10px;
+    min-height: 260px;
+}
+
+.trade-trend-compare-card {
+    display: grid;
+    grid-template-rows: auto minmax(120px, 1fr) auto;
     gap: 8px;
-    min-width: 72px;
-    height: 100%;
+    min-width: 0;
+    padding: 10px 8px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+
+.trade-trend-compare-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    color: var(--text-primary);
+    font-size: 0.82rem;
+}
+
+.trade-trend-compare-head span {
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+
+.trade-trend-bars.compare {
+    gap: 12px;
+    align-items: flex-end;
+    border-bottom: 1px solid var(--border);
+    padding: 0 10px;
+}
+
+.trade-trend-bars.compare .trade-trend-bar {
+    width: min(42px, 40%);
+    min-width: 28px;
+    position: relative;
+}
+
+.trade-trend-bar em {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 4px);
+    transform: translateX(-50%);
+    color: var(--text-primary);
+    font-style: normal;
+    font-size: 0.68rem;
+    white-space: nowrap;
+}
+
+.trade-trend-progress-card {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 8px;
+    min-width: 0;
+}
+
+.trade-trend-progress-phases {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.trade-trend-month-grid {
+    display: flex;
+    gap: 12px;
+    min-height: 260px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+}
+
+.trade-trend-month-card {
+    flex: 0 0 260px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 8px;
+    min-width: 260px;
+}
+
+.trade-trend-month-title {
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-align: center;
+}
+
+.trade-trend-phase-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    min-height: 0;
+}
+
+.trade-trend-phase-cell {
+    display: grid;
+    grid-template-rows: auto minmax(82px, 1fr) auto;
+    gap: 6px;
+    min-width: 0;
+    padding: 8px 6px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+
+.trade-trend-phase-cell.empty {
+    opacity: 0.5;
+}
+
+.trade-trend-phase-label {
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-align: center;
 }
 
 .trade-trend-bars {
     display: flex;
     align-items: flex-end;
     justify-content: center;
-    gap: 4px;
+    gap: 3px;
     min-height: 0;
 }
 
 .trade-trend-bar {
-    width: 18px;
+    width: 14px;
     border-radius: 4px 4px 0 0;
     display: inline-block;
 }
@@ -570,12 +715,31 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     background: #2f80ed;
 }
 
-.trade-trend-chart-label {
-    min-height: 34px;
+.trade-trend-bar.chip {
+    background: #12a87a;
+}
+
+.trade-trend-cell-metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
     font-size: 0.72rem;
     color: var(--text-secondary);
     text-align: center;
     line-height: 1.25;
+}
+
+.trade-trend-cell-metrics strong {
+    color: var(--text-primary);
+    font-size: 0.76rem;
+}
+
+.trade-trend-empty-mini {
+    align-self: center;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    text-align: center;
 }
 
 .trade-trend-highlights {
@@ -611,6 +775,10 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 
 @media (max-width: 760px) {
     .trade-trend-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .trade-trend-progress-phases {
         grid-template-columns: 1fr;
     }
 }
