@@ -1,5 +1,7 @@
 from datetime import datetime
+import io
 from unittest.mock import AsyncMock
+import zipfile
 
 import pytest
 
@@ -216,6 +218,18 @@ class DummyTextResponse:
 
     def __init__(self, text):
         self.text = text
+        self.content = text.encode("utf-8")
+
+    def raise_for_status(self):
+        return None
+
+
+class DummyBinaryResponse:
+    status_code = 200
+
+    def __init__(self, content):
+        self.content = content
+        self.text = ""
 
     def raise_for_status(self):
         return None
@@ -306,6 +320,54 @@ async def test_national_web_client_discovers_motie_article_view_links():
     assert releases[0].phase == "motie_monthly"
     assert releases[0].url == "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c/172077/view"
     assert releases[0].export_amount_100m_usd == pytest.approx(620.0)
+
+
+@pytest.mark.asyncio
+async def test_national_web_client_discovers_tradedata_links_and_reads_hwpx_attachment():
+    list_html = """
+    <a href="javascript:ets_f_prccMenuAdmin('/cts/hmpg/openETS0100210Q.do',
+        {blbrTpcd:'21', ntarSrno:'2412', menuId:'ETS_MNK_50100000'});">
+        [잠정치] 2026년 8월(1~10일) 수출입 현황
+    </a>
+    """
+    detail_html = """
+    <table><tr><th>제목</th><td><span>[ 잠정치 ]</span> 2026년 8월(1~10일) 수출입 현황</td></tr></table>
+    <li class="btn_download_detl" data-attch-file-id="%2Babc%3D">
+        <span class="ms-2">260811 26년 8월 1일 - 8월 10일 수출입현황.hwpx</span>
+    </li>
+    """
+    hwpx = io.BytesIO()
+    with zipfile.ZipFile(hwpx, "w") as archive:
+        archive.writestr(
+            "Contents/section0.xml",
+            """
+            <root>
+              <p>동기간 수출은 221억 달러로 전년동기대비 50.2% 증가, 수입은 205억 달러로 17.8% 증가했으며, 무역수지는 16억 달러 흑자</p>
+              <p>반도체 수출 증가</p>
+            </root>
+            """,
+        )
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(
+        side_effect=[
+            DummyTextResponse(list_html),
+            DummyTextResponse(detail_html),
+            DummyBinaryResponse(hwpx.getvalue()),
+        ]
+    )
+    client = NationalTradeTrendWebClient(
+        http_client=http_client,
+        list_urls=["https://tradedata.go.kr/cts/index.do"],
+    )
+
+    releases = await client.fetch_recent_releases()
+
+    assert len(releases) == 1
+    assert releases[0].source == "customs"
+    assert releases[0].phase == "customs_10d"
+    assert releases[0].period_label == "2026년 8월 1~10일"
+    assert releases[0].export_amount_100m_usd == pytest.approx(221)
+    assert releases[0].import_yoy_pct == pytest.approx(17.8)
 
 
 @pytest.mark.asyncio

@@ -332,6 +332,7 @@ class TradeTrendMonitorConfig(BaseModel):
     national_list_urls: List[str] = Field(default_factory=lambda: [
         "https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362&searchType=all&searchValue=%EC%88%98%EC%B6%9C%EC%9E%85%20%ED%98%84%ED%99%A9",
         "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c?searchCondition=1&searchKeyword=%EC%88%98%EC%B6%9C%EC%9E%85%20%EB%8F%99%ED%96%A5",
+        "https://tradedata.go.kr/cts/index.do",
     ])
     national_max_detail_pages: int = Field(5, ge=1, le=20)
     state_file_path: str = "data/trade_trend_state.json"
