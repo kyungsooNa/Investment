@@ -12,6 +12,12 @@ function tradePct(value) {
     return `${number > 0 ? '+' : ''}${number.toFixed(1)}%`;
 }
 
+function tradeDelta(value) {
+    if (value === null || value === undefined || value === '') return '-';
+    const number = Number(value);
+    return `${number > 0 ? '+' : ''}${number.toLocaleString(undefined, { maximumFractionDigits: 1 })}억`;
+}
+
 function tradeBalance(row) {
     if (row.trade_balance_100m_usd === null || row.trade_balance_100m_usd === undefined) return '-';
     const label = row.trade_balance_label ? ` ${row.trade_balance_label}` : '';
@@ -66,6 +72,8 @@ function renderTradeTrendSummary(latest) {
     document.getElementById('trade-latest-export').textContent = latest ? tradeMoney(latest.export_amount_100m_usd) : '-';
     document.getElementById('trade-latest-import').textContent = latest ? tradeMoney(latest.import_amount_100m_usd) : '-';
     document.getElementById('trade-latest-balance').textContent = latest ? tradeBalance(latest) : '-';
+    document.getElementById('trade-latest-semiconductor').textContent = latest ? tradeMoney(latest.semiconductor_export_amount_100m_usd) : '-';
+    document.getElementById('trade-latest-working-days').textContent = latest && latest.working_days_current ? `${Number(latest.working_days_current).toFixed(1)}일` : '-';
 }
 
 function filterTradeTrendRows(filter, button) {
@@ -91,7 +99,7 @@ function renderTradeTrendTable() {
     if (!tbody) return;
     const rows = filteredTradeTrendRows();
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:18px;">표시할 수출입동향이 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:18px;">표시할 수출입동향이 없습니다.</td></tr>';
         return;
     }
     tbody.innerHTML = rows.map((row) => `
@@ -103,6 +111,19 @@ function renderTradeTrendTable() {
             <td>${escapeHtml(row.published_at || '-')}</td>
             <td>${tradeMoney(row.export_amount_100m_usd)}</td>
             <td class="${Number(row.export_yoy_pct || 0) >= 0 ? 'text-red' : 'text-blue'}">${tradePct(row.export_yoy_pct)}</td>
+            <td>
+                ${tradeMoney(row.export_daily_avg_100m_usd)}
+                <div class="trade-trend-muted">${tradePct(row.export_daily_avg_mom_pct)} · 조업 ${row.working_days_current ? `${Number(row.working_days_current).toFixed(1)}일` : '-'}</div>
+            </td>
+            <td>
+                ${tradeMoney(row.semiconductor_export_amount_100m_usd)}
+                <div class="${Number(row.semiconductor_mom_pct || 0) >= 0 ? 'text-red' : 'text-blue'} trade-trend-muted">MoM ${tradeDelta(row.semiconductor_mom_change_100m_usd)} / ${tradePct(row.semiconductor_mom_pct)}</div>
+                <div class="${Number(row.semiconductor_yoy_pct || 0) >= 0 ? 'text-red' : 'text-blue'} trade-trend-muted">YoY ${tradePct(row.semiconductor_yoy_pct)}</div>
+            </td>
+            <td>
+                ${tradeMoney(row.semiconductor_daily_avg_100m_usd)}
+                <div class="${Number(row.semiconductor_daily_avg_mom_pct || 0) >= 0 ? 'text-red' : 'text-blue'} trade-trend-muted">MoM ${tradePct(row.semiconductor_daily_avg_mom_pct)}</div>
+            </td>
             <td>${tradeMoney(row.import_amount_100m_usd)}</td>
             <td class="${Number(row.import_yoy_pct || 0) >= 0 ? 'text-red' : 'text-blue'}">${tradePct(row.import_yoy_pct)}</td>
             <td><strong>${tradeBalance(row)}</strong></td>

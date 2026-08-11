@@ -27,6 +27,14 @@
                 <div class="label">무역수지</div>
                 <div class="value" id="trade-latest-balance">-</div>
             </div>
+            <div class="summary-item">
+                <div class="label">반도체</div>
+                <div class="value" id="trade-latest-semiconductor">-</div>
+            </div>
+            <div class="summary-item">
+                <div class="label">조업일수</div>
+                <div class="value" id="trade-latest-working-days">-</div>
+            </div>
         </div>
     </div>
 
@@ -59,6 +67,9 @@
                         <th>발표</th>
                         <th>수출</th>
                         <th>수출 YoY</th>
+                        <th>일평균</th>
+                        <th>반도체</th>
+                        <th>반도체 일평균</th>
                         <th>수입</th>
                         <th>수입 YoY</th>
                         <th>무역수지</th>
@@ -74,7 +85,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/trade_trends.js?v=1"></script>
+<script src="/static/js/trade_trends.js?v=2"></script>
 <script>
     loadTradeTrendHistory();
 </script>

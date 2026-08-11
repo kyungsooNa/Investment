@@ -17,6 +17,13 @@ def test_national_trade_trend_history_merges_stored_and_recent_rows():
         period_label="2026년 8월 1~10일",
         export_amount_100m_usd=301,
         export_yoy_pct=12.0,
+        export_daily_avg_100m_usd=30.1,
+        export_daily_avg_mom_pct=5.0,
+        semiconductor_export_amount_100m_usd=101,
+        semiconductor_yoy_pct=55.0,
+        semiconductor_daily_avg_100m_usd=10.1,
+        semiconductor_daily_avg_mom_pct=8.0,
+        working_days_current=10.0,
         import_amount_100m_usd=250,
         import_yoy_pct=4.0,
         trade_balance_100m_usd=51,
@@ -32,6 +39,13 @@ def test_national_trade_trend_history_merges_stored_and_recent_rows():
         "period_label": release.period_label,
         "export_amount_100m_usd": release.export_amount_100m_usd,
         "export_yoy_pct": release.export_yoy_pct,
+        "export_daily_avg_100m_usd": release.export_daily_avg_100m_usd,
+        "export_daily_avg_mom_pct": release.export_daily_avg_mom_pct,
+        "semiconductor_export_amount_100m_usd": release.semiconductor_export_amount_100m_usd,
+        "semiconductor_yoy_pct": release.semiconductor_yoy_pct,
+        "semiconductor_daily_avg_100m_usd": release.semiconductor_daily_avg_100m_usd,
+        "semiconductor_daily_avg_mom_pct": release.semiconductor_daily_avg_mom_pct,
+        "working_days_current": release.working_days_current,
         "import_amount_100m_usd": release.import_amount_100m_usd,
         "import_yoy_pct": release.import_yoy_pct,
         "trade_balance_100m_usd": release.trade_balance_100m_usd,
@@ -63,3 +77,5 @@ def test_national_trade_trend_history_merges_stored_and_recent_rows():
     assert len(payload["data"]["rows"]) == 1
     assert payload["data"]["rows"][0]["source_type"] == "sent"
     assert payload["data"]["rows"][0]["period_label"] == "2026년 8월 1~10일"
+    assert payload["data"]["rows"][0]["semiconductor_export_amount_100m_usd"] == 101
+    assert payload["data"]["rows"][0]["working_days_current"] == 10.0

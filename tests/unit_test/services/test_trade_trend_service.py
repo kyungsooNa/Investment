@@ -162,6 +162,30 @@ def test_parse_national_customs_20d_release_extracts_summary_numbers():
     assert release.dedup_key == "national_trade:customs_20d:2026년 7월 1~20일:https://customs.example/20d"
 
 
+def test_parse_national_customs_release_extracts_semiconductor_and_working_days():
+    text = """
+    ◇ 동기간 수출은 213억 달러로 전년동기대비 45.3% 증가, 수입은 195억 달러로
+    23.1% 증가했으며, 무역수지는 18억 달러 흑자를 기록했다.
+    → 동기간 (1~10일) 수출 8월 기준 역대최대 / 반도체 (100억 달러) 수출 8월 기준 역대최대
+    ※ 조업일수 [(’25) 7.0일, (’26) 7.0일] 고려 시 일평균수출액 [(’25.8.) 20.9, (’26.8.) 30.4억 달러] 45.3% 증가
+    ㅇ (주요품목) 전년동기대비 반도체 (155.4%), 석유제품 (65.3%) 등 증가
+    """
+
+    release = parse_national_trade_release(
+        title="2026년 8월 1일 ~ 8월 10일 수출입 현황 [잠정치]",
+        url="https://customs.example/10d",
+        source="customs",
+        text=text,
+    )
+
+    assert release.semiconductor_export_amount_100m_usd == pytest.approx(100)
+    assert release.semiconductor_yoy_pct == pytest.approx(155.4)
+    assert release.working_days_current == pytest.approx(7.0)
+    assert release.working_days_previous_year == pytest.approx(7.0)
+    assert release.export_daily_avg_100m_usd == pytest.approx(30.4)
+    assert release.semiconductor_daily_avg_100m_usd == pytest.approx(100 / 7)
+
+
 def test_parse_national_motie_monthly_release_extracts_summary_numbers():
     text = """
     2026년 5월 수출입 동향
@@ -199,6 +223,15 @@ def test_format_national_trade_trend_report_html_includes_link_and_numbers():
         export_yoy_pct=53.9,
         export_mom_change_100m_usd=41,
         export_mom_pct=15.95,
+        working_days_current=8.5,
+        export_daily_avg_100m_usd=35.1,
+        export_daily_avg_mom_pct=12.0,
+        semiconductor_export_amount_100m_usd=112,
+        semiconductor_yoy_pct=120.5,
+        semiconductor_mom_change_100m_usd=12,
+        semiconductor_mom_pct=12.0,
+        semiconductor_daily_avg_100m_usd=13.176,
+        semiconductor_daily_avg_mom_pct=18.0,
         import_amount_100m_usd=235,
         import_yoy_pct=17.4,
         import_mom_change_100m_usd=-12,
@@ -213,6 +246,8 @@ def test_format_national_trade_trend_report_html_includes_link_and_numbers():
 
     assert "전국 수출입 잠정치" in message
     assert "수출: <b>298.0억 달러</b> (전년비 +53.9% / 전월비 +41.0억, +15.9%)" in message
+    assert "일평균 수출: <b>35.1억 달러</b> (전월비 +12.0%, 조업 8.5일)" in message
+    assert "반도체: <b>112.0억 달러</b> (전년비 +120.5% / 전월비 +12.0억, +12.0% / 일평균 +18.0%)" in message
     assert "수입: <b>235.0억 달러</b> (전년비 +17.4% / 전월비 -12.0억, -4.9%)" in message
     assert "무역수지: <b>64.0억 달러 흑자</b> (전월차 +53.0억)" in message
     assert "https://customs.example/10d?a=1&amp;b=2" in message
@@ -409,6 +444,46 @@ async def test_national_web_client_calculates_previous_month_changes_for_same_ph
     assert current.import_mom_change_100m_usd == pytest.approx(15)
     assert current.import_mom_pct == pytest.approx(8.3333, rel=1e-4)
     assert current.trade_balance_mom_change_100m_usd == pytest.approx(48)
+
+
+@pytest.mark.asyncio
+async def test_national_web_client_calculates_semiconductor_daily_changes():
+    list_html = """
+    <a href="/now">2026년 8월 1일 ~ 8월 10일 수출입 현황 [잠정치]</a>
+    <a href="/prev">2026년 7월 1일 ~ 7월 10일 수출입 현황 [잠정치]</a>
+    """
+    now_detail = """
+    수출은 213억 달러로 전년동기대비 45.3% 증가, 수입은 195억 달러로 23.1% 증가,
+    무역수지는 18억 달러 흑자. 반도체 (100억 달러)
+    ※ 조업일수 [(’25) 7.0일, (’26) 7.0일] 고려 시 일평균수출액 [(’25.8.) 20.9, (’26.8.) 30.4억 달러]
+    """
+    prev_detail = """
+    수출은 298억 달러로 전년동기대비 53.9% 증가, 수입은 235억 달러로 17.4% 증가,
+    무역수지는 64억 달러 흑자. 반도체 (112억 달러)
+    ※ 조업일수 [(’25) 8.5일, (’26) 8.5일] 고려 시 일평균수출액 [(’25.7.) 22.8, (’26.7.) 35.1억 달러]
+    """
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(
+        side_effect=[
+            DummyTextResponse(list_html),
+            DummyTextResponse(now_detail),
+            DummyTextResponse(prev_detail),
+        ]
+    )
+    client = NationalTradeTrendWebClient(
+        http_client=http_client,
+        list_urls=["https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362"],
+        max_detail_pages=2,
+    )
+
+    releases = await client.fetch_recent_releases()
+
+    current = releases[0]
+    assert current.semiconductor_mom_change_100m_usd == pytest.approx(-12)
+    assert current.semiconductor_mom_pct == pytest.approx(-10.7142, rel=1e-4)
+    assert current.semiconductor_daily_avg_100m_usd == pytest.approx(100 / 7)
+    assert current.semiconductor_daily_avg_mom_pct == pytest.approx(8.4183, rel=1e-4)
+    assert current.export_daily_avg_mom_pct == pytest.approx(-13.3903, rel=1e-4)
 
 
 @pytest.mark.asyncio

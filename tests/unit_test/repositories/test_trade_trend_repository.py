@@ -11,6 +11,11 @@ def test_trade_trend_repository_saves_national_release_history(tmp_path):
         period_label="2026년 8월 1~10일",
         export_amount_100m_usd=301.2,
         export_yoy_pct=12.3,
+        export_daily_avg_100m_usd=30.1,
+        working_days_current=10.0,
+        semiconductor_export_amount_100m_usd=101.0,
+        semiconductor_yoy_pct=55.0,
+        semiconductor_daily_avg_100m_usd=10.1,
         import_amount_100m_usd=250.1,
         import_yoy_pct=4.5,
         trade_balance_100m_usd=51.1,
@@ -28,6 +33,8 @@ def test_trade_trend_repository_saves_national_release_history(tmp_path):
     assert loaded.get_national_release_history()[0]["period_label"] == "2026년 8월 1~10일"
     assert loaded.get_national_release_history()[0]["source_type"] == "sent"
     assert loaded.get_national_release_history()[0]["export_amount_100m_usd"] == 301.2
+    assert loaded.get_national_release_history()[0]["semiconductor_export_amount_100m_usd"] == 101.0
+    assert loaded.get_national_release_history()[0]["working_days_current"] == 10.0
     assert loaded.get_national_release_history()[0]["sent_at"] == "2026-08-11T09:30:00"
 
 
@@ -53,6 +60,8 @@ def test_trade_trend_repository_backfills_legacy_national_sent_keys(tmp_path):
             "export_yoy_pct": None,
             "export_mom_change_100m_usd": None,
             "export_mom_pct": None,
+            "export_daily_avg_100m_usd": None,
+            "export_daily_avg_mom_pct": None,
             "import_amount_100m_usd": None,
             "import_yoy_pct": None,
             "import_mom_change_100m_usd": None,
@@ -60,6 +69,14 @@ def test_trade_trend_repository_backfills_legacy_national_sent_keys(tmp_path):
             "trade_balance_100m_usd": None,
             "trade_balance_label": "",
             "trade_balance_mom_change_100m_usd": None,
+            "semiconductor_export_amount_100m_usd": None,
+            "semiconductor_yoy_pct": None,
+            "semiconductor_mom_change_100m_usd": None,
+            "semiconductor_mom_pct": None,
+            "semiconductor_daily_avg_100m_usd": None,
+            "semiconductor_daily_avg_mom_pct": None,
+            "working_days_current": None,
+            "working_days_previous_year": None,
             "published_at": "",
             "highlights": [],
             "sent_at": "",
