@@ -121,6 +121,29 @@ def test_save_and_load_keyed_value(store):
     assert store.load_keyed("last_run") == "2026-04-22 09:00:00"
 
 
+def test_claim_daily_task_allows_only_first_store(db_path, mock_logger):
+    """여러 store 인스턴스가 같은 DB를 써도 같은 태스크/날짜 claim은 1회만 성공한다."""
+    store1 = StrategySchedulerStore(db_path=db_path, logger=mock_logger)
+    store2 = StrategySchedulerStore(db_path=db_path, logger=mock_logger)
+    try:
+        assert store1.claim_daily_task("market_cap_gap_report_us", "20260811") is True
+        assert store2.claim_daily_task("market_cap_gap_report_us", "20260811") is False
+        assert store2.claim_daily_task("market_cap_gap_report_us", "20260812") is True
+    finally:
+        store1.close()
+        store2.close()
+
+
+def test_release_daily_task_allows_retry(store):
+    """실패한 daily task는 claim 해제 후 재시도할 수 있다."""
+    assert store.claim_daily_task("market_cap_gap_report_us", "20260811") is True
+    assert store.claim_daily_task("market_cap_gap_report_us", "20260811") is False
+
+    store.release_daily_task("market_cap_gap_report_us", "20260811")
+
+    assert store.claim_daily_task("market_cap_gap_report_us", "20260811") is True
+
+
 def test_migrate_csv_success(tmp_path, mock_logger, monkeypatch):
     """CSV 레거시 파일 마이그레이션 성공 테스트"""
     csv_path = tmp_path / "signal_history.csv"
