@@ -176,6 +176,95 @@ return {
     }
 
 
+def test_quarter_model_excludes_months_without_working_days():
+    """조업일수 없는 산업부 행이 섞이면 분자만 커져 일평균이 부풀려진다."""
+    result = run_trade_trends_js(
+        """
+const { buildTradeTrendChartModel } = sandbox.module.exports;
+const rows = [
+  {
+    period_label: '2025년 7월',
+    phase: 'motie_monthly',
+    published_at: '2025-08-01',
+    export_amount_100m_usd: 608,
+    import_amount_100m_usd: 540,
+    working_days_current: null
+  },
+  {
+    period_label: '2025년 8월',
+    phase: 'customs_monthly',
+    published_at: '2025-09-01',
+    export_amount_100m_usd: 600,
+    import_amount_100m_usd: 520,
+    working_days_current: 20
+  },
+  {
+    period_label: '2025년 9월',
+    phase: 'customs_monthly',
+    published_at: '2025-10-01',
+    export_amount_100m_usd: 640,
+    import_amount_100m_usd: 560,
+    working_days_current: 20
+  }
+];
+const model = buildTradeTrendChartModel(rows, 'quarter');
+const item = model.items[0];
+return {
+  label: item.label,
+  monthCount: item.month_count,
+  exportAmount: item.export_amount_100m_usd,
+  workingDays: item.working_days_current,
+  exportDaily: item.export_daily_avg_100m_usd
+};
+"""
+    )
+
+    assert result == {
+        "label": "2025 Q3 (2/3개월)",
+        "monthCount": 2,
+        "exportAmount": 1240,
+        "workingDays": 40,
+        "exportDaily": 31,
+    }
+
+
+def test_quarter_model_is_not_capped_by_the_monthly_tab_window():
+    """분기 카드는 월간 탭의 8개월 표시 상한이 아니라 8분기까지 채운다."""
+    result = run_trade_trends_js(
+        """
+const { buildTradeTrendChartModel } = sandbox.module.exports;
+const rows = [];
+for (let index = 0; index < 15; index += 1) {
+  const year = 2025 + Math.floor(index / 12);
+  const month = (index % 12) + 1;
+  rows.push({
+    period_label: `${year}년 ${month}월`,
+    phase: 'customs_monthly',
+    published_at: `${year}-${String(month).padStart(2, '0')}-28`,
+    export_amount_100m_usd: 600,
+    import_amount_100m_usd: 500,
+    semiconductor_export_amount_100m_usd: 240,
+    working_days_current: 20
+  });
+}
+const model = buildTradeTrendChartModel(rows, 'quarter');
+return {
+  monthlyLabels: buildTradeTrendChartModel(rows, 'monthly').items.length,
+  quarterLabels: model.items.map((item) => item.label)
+};
+"""
+    )
+
+    assert result["monthlyLabels"] == 8
+    assert result["quarterLabels"] == [
+        "2025 Q1",
+        "2025 Q2",
+        "2025 Q3",
+        "2025 Q4",
+        "2026 Q1",
+    ]
+
+
 def test_month_progress_model_scales_nested_phase_cards_by_daily_average():
     result = run_trade_trends_js(
         """
