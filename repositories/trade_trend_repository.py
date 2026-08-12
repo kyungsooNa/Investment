@@ -28,16 +28,42 @@ class TradeTrendRepository:
         *,
         sent_at: str = "",
     ) -> None:
+        self.save_national_release(
+            release,
+            source_type="sent",
+            sent_at=sent_at,
+        )
+
+    def save_national_release(
+        self,
+        release: NationalTradeTrendRelease,
+        *,
+        source_type: str = "backfill",
+        sent_at: str = "",
+    ) -> bool:
         self._sent_keys.add(release.dedup_key)
-        row = _national_release_to_dict(release, sent_at=sent_at)
+        row = _national_release_to_dict(
+            release,
+            source_type=source_type,
+            sent_at=sent_at,
+        )
         existing = {
             str(item.get("dedup_key")): item
             for item in self._national_release_history
             if isinstance(item, dict)
         }
+        previous = existing.get(release.dedup_key)
+        if (
+            isinstance(previous, dict)
+            and previous.get("source_type") == "sent"
+            and source_type != "sent"
+        ):
+            row["source_type"] = "sent"
+            row["sent_at"] = previous.get("sent_at", "")
         existing[release.dedup_key] = row
         self._national_release_history = list(existing.values())
         self._save()
+        return previous != row
 
     def get_national_release_history(self) -> list[dict]:
         rows = list(self._national_release_history)
@@ -101,11 +127,12 @@ class TradeTrendRepository:
 def _national_release_to_dict(
     release: NationalTradeTrendRelease,
     *,
+    source_type: str = "sent",
     sent_at: str = "",
 ) -> dict:
     return {
         "source": release.source,
-        "source_type": "sent",
+        "source_type": source_type,
         "phase": release.phase,
         "title": release.title,
         "url": release.url,
