@@ -201,6 +201,28 @@ class StrategySchedulerStore:
             row = cur.fetchone()
         return row[0] if row else None
 
+    def claim_daily_task(self, task_name: str, date_str: str) -> bool:
+        """task_name/date 조합을 원자적으로 선점한다.
+
+        여러 프로세스가 같은 SQLite DB를 공유해도 INSERT OR IGNORE의 UNIQUE
+        제약으로 최초 1개 프로세스만 True를 받는다.
+        """
+        key = f"daily_task_claim::{task_name}::{date_str}"
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO scheduler_state (key, value) VALUES (?, ?)",
+                (key, "claimed"),
+            )
+            self._conn.commit()
+            return cur.rowcount == 1
+
+    def release_daily_task(self, task_name: str, date_str: str) -> None:
+        """실패한 daily task claim을 해제해 다음 실행에서 재시도 가능하게 한다."""
+        key = f"daily_task_claim::{task_name}::{date_str}"
+        with self._lock:
+            self._conn.execute("DELETE FROM scheduler_state WHERE key = ?", (key,))
+            self._conn.commit()
+
     # ── 레거시 파일 마이그레이션 ──
 
     def _migrate_legacy_files(self) -> None:

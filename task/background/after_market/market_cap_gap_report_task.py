@@ -94,9 +94,37 @@ class MarketCapGapReportTask(AfterMarketTask):
         except Exception as exc:
             self._logger.warning(f"{self.task_name}: 마지막 전송 날짜 저장 실패 — {exc}")
 
+    def _claim_report_date(self, date_str: str) -> bool:
+        if self._scheduler_store is None:
+            return True
+        claim = getattr(self._scheduler_store, "claim_daily_task", None)
+        if claim is None:
+            return True
+        try:
+            return bool(claim(self.task_name, date_str))
+        except Exception as exc:
+            self._logger.warning(f"{self.task_name}: 일일 실행 claim 실패 — {exc}")
+            return True
+
+    def _release_report_date_claim(self, date_str: str) -> None:
+        if self._scheduler_store is None:
+            return
+        release = getattr(self._scheduler_store, "release_daily_task", None)
+        if release is None:
+            return
+        try:
+            release(self.task_name, date_str)
+        except Exception as exc:
+            self._logger.warning(f"{self.task_name}: 일일 실행 claim 해제 실패 — {exc}")
+
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         if self._last_reported_date == latest_trading_date:
             self._logger.info(f"{self.task_name}: {latest_trading_date} 이미 전송 완료 — 스킵")
+            return
+        if not self._claim_report_date(latest_trading_date):
+            self._logger.info(
+                f"{self.task_name}: {latest_trading_date} 다른 프로세스가 이미 실행 중/완료 — 스킵"
+            )
             return
 
         self._progress["running"] = True
@@ -135,5 +163,7 @@ class MarketCapGapReportTask(AfterMarketTask):
                     "시총갭 리포트 전송 실패",
                     str(exc),
                 )
+            if self._last_reported_date != latest_trading_date:
+                self._release_report_date_claim(latest_trading_date)
         finally:
             self._progress["running"] = False
