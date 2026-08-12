@@ -69,6 +69,24 @@ def test_init_with_price_stream_service(mock_broker, mock_logger, mock_market_cl
     assert service._price_stream_service == mock_price_stream
     assert mock_price_stream.on_price_tick in service._handlers.get('realtime_price', [])
 
+
+def test_init_registers_futures_contract_handler(
+    mock_broker, mock_logger, mock_market_clock, mock_market_data_service
+):
+    alert_service = MagicMock()
+    service = StreamingService(
+        broker_api_wrapper=mock_broker,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_data_service=mock_market_data_service,
+        market_status_alert_service=alert_service,
+    )
+
+    assert alert_service.on_futures_contract in service._handlers.get(
+        'realtime_futs_optn_contract', []
+    )
+
+
 @pytest.mark.asyncio
 async def test_connect_disconnect_websocket(streaming_service, mock_broker):
     """WebSocket 연결 및 해제 위임 테스트"""
@@ -158,6 +176,27 @@ async def test_connect_websocket_recovers_when_order_notice_kills_receive_task(
     assert "체결통보 구독 후 WebSocket 수신 태스크 종료" in str(
         mock_logger.warning.call_args_list
     )
+
+
+@pytest.mark.asyncio
+async def test_connect_websocket_subscribes_futures_sidecar_monitors(
+    mock_broker, mock_logger, mock_market_clock, mock_market_data_service
+):
+    mock_broker.connect_websocket.return_value = True
+    mock_broker.subscribe_index_futures_contract = AsyncMock(return_value=True)
+    mock_broker.wait_index_futures_contract_ack = AsyncMock(return_value=True)
+    service = StreamingService(
+        broker_api_wrapper=mock_broker,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_data_service=mock_market_data_service,
+        futures_sidecar_monitor_codes=["101TEST"],
+    )
+
+    assert await service.connect_websocket() is True
+
+    mock_broker.subscribe_index_futures_contract.assert_awaited_once_with("101TEST")
+    mock_broker.wait_index_futures_contract_ack.assert_awaited_once_with("101TEST", None)
 
 
 @pytest.mark.asyncio

@@ -120,6 +120,41 @@ async def test_market_status_alert_service_reports_buy_sidecar_watch_near_five_p
 
 
 @pytest.mark.asyncio
+async def test_market_status_alert_service_reports_futures_buy_sidecar_after_one_minute():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        logger=MagicMock(),
+    )
+
+    await service.on_futures_contract({
+        "선물단축종목코드": "101TEST",
+        "영업시간": "121800",
+        "선물전일대비율": "5.01",
+        "전일대비부호": "2",
+        "선물현재가": "460.00",
+    })
+    operator_alert.report.assert_not_awaited()
+
+    await service.on_futures_contract({
+        "선물단축종목코드": "101TEST",
+        "영업시간": "121900",
+        "선물전일대비율": "5.03",
+        "전일대비부호": "2",
+        "선물현재가": "460.25",
+    })
+
+    args = operator_alert.report.await_args.args
+    kwargs = operator_alert.report.await_args.kwargs
+    assert args[0] == AlertSource.MARKET_STATUS
+    assert args[1].startswith("market_futures:buy_sidecar:101TEST:")
+    assert args[2] == "error"
+    assert args[3] == "코스피200 선물 매수 사이드카 발동 조건"
+    assert kwargs["metadata"]["event_type"] == "futures_buy_sidecar"
+    assert kwargs["metadata"]["duration_sec"] == 60
+
+
+@pytest.mark.asyncio
 async def test_market_status_alert_service_ignores_normal_status():
     operator_alert = AsyncMock()
     service = MarketStatusAlertService(

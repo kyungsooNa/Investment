@@ -26,11 +26,14 @@ _EXCLUDED_METHODS = frozenset({
     "unsubscribe_order_notice",
     "subscribe_market_status",
     "unsubscribe_market_status",
+    "subscribe_index_futures_contract",
+    "unsubscribe_index_futures_contract",
     "is_websocket_receive_alive",
     # 구독 ACK 대기 — 큐/버짓에 태우면 안 되는 단순 await (budget 카테고리 미등록 → 직접 호출)
     "wait_for_unified_price_ack",
     "wait_for_program_trading_ack",
     "wait_for_market_status_ack",
+    "wait_for_index_futures_contract_ack",
 })
 
 _BUDGET_ONLY_METHOD_CATEGORIES = {
@@ -50,6 +53,8 @@ _BUDGET_ONLY_METHOD_CATEGORIES = {
     "unsubscribe_order_notice": "websocket_subscribe",
     "subscribe_market_status": "websocket_subscribe",
     "unsubscribe_market_status": "websocket_subscribe",
+    "subscribe_index_futures_contract": "websocket_subscribe",
+    "unsubscribe_index_futures_contract": "websocket_subscribe",
 }
 
 _ACCOUNT_METHODS = frozenset({
@@ -245,6 +250,20 @@ API_BUDGET_COVERAGE_MATRIX = (
     {
         "operation": "websocket_order_notice_unsubscribe",
         "method_name": "unsubscribe_order_notice",
+        "category": "websocket_subscribe",
+        "execution_path": "direct_budget_only",
+        "lane": "normal",
+    },
+    {
+        "operation": "websocket_index_futures_contract_subscribe",
+        "method_name": "subscribe_index_futures_contract",
+        "category": "websocket_subscribe",
+        "execution_path": "direct_budget_only",
+        "lane": "normal",
+    },
+    {
+        "operation": "websocket_index_futures_contract_unsubscribe",
+        "method_name": "unsubscribe_index_futures_contract",
         "category": "websocket_subscribe",
         "execution_path": "direct_budget_only",
         "lane": "normal",

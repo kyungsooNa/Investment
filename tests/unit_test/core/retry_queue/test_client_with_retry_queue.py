@@ -109,6 +109,15 @@ class FakeClient:
     async def wait_for_market_status_ack(self, stock_code: str, timeout=None) -> bool:
         return True
 
+    async def subscribe_index_futures_contract(self, futures_code: str) -> bool:
+        return True
+
+    async def unsubscribe_index_futures_contract(self, futures_code: str) -> bool:
+        return True
+
+    async def wait_for_index_futures_contract_ack(self, futures_code: str, timeout=None) -> bool:
+        return True
+
     def is_websocket_receive_alive(self) -> bool:
         return True
 
@@ -407,7 +416,14 @@ class TestExcludedMethodsBypassQueue:
 
     @pytest.mark.parametrize(
         "method_name",
-        ["subscribe_market_status", "unsubscribe_market_status", "wait_for_market_status_ack"],
+        [
+            "subscribe_market_status",
+            "unsubscribe_market_status",
+            "wait_for_market_status_ack",
+            "subscribe_index_futures_contract",
+            "unsubscribe_index_futures_contract",
+            "wait_for_index_futures_contract_ack",
+        ],
     )
     async def test_market_status_websocket_methods_bypass_queue(self, wrapped, queue, method_name):
         assert await getattr(wrapped, method_name)("000000") is True
@@ -490,9 +506,12 @@ class TestExcludedMethodsSet:
             "unsubscribe_order_notice",
             "subscribe_market_status",
             "unsubscribe_market_status",
+            "subscribe_index_futures_contract",
+            "unsubscribe_index_futures_contract",
             "is_websocket_receive_alive",
             "wait_for_program_trading_ack",
             "wait_for_market_status_ack",
+            "wait_for_index_futures_contract_ack",
         }
         assert expected.issubset(_EXCLUDED_METHODS)
 

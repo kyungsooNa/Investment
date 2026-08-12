@@ -1005,6 +1005,11 @@ class KoreaInvestWebSocketAPI:
             results.append(await self.wait_for_subscription_ack(tr_id, stock_code, timeout))
         return all(results)
 
+    async def wait_for_index_futures_contract_ack(self, futures_code, timeout: float = None) -> bool:
+        """지수선물/옵션 체결(H0IFCNT0) 구독 ACK 확정을 기다린다."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_futs_optn_contract', 'H0IFCNT0')
+        return await self.wait_for_subscription_ack(tr_id, futures_code, timeout)
+
     async def subscribe_realtime_price(self, stock_code):
         """실시간 주식체결 데이터(현재가)를 구독합니다."""
         tr_id = self._env.active_config['tr_ids']['websocket']['realtime_price']
@@ -1028,6 +1033,18 @@ class KoreaInvestWebSocketAPI:
         tr_id = self._env.active_config['tr_ids']['websocket'].get('unified_realtime_price', 'H0UNCNT0')
         self._logger.info(f"종목 {stock_code} 통합 체결가 구독 해지 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
+
+    async def subscribe_index_futures_contract(self, futures_code: str) -> bool:
+        """지수선물/옵션 체결(H0IFCNT0)을 구독합니다."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_futs_optn_contract', 'H0IFCNT0')
+        self._logger.info(f"[지수선물체결] 종목 {futures_code} 구독 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, futures_code, tr_type="1")
+
+    async def unsubscribe_index_futures_contract(self, futures_code: str) -> bool:
+        """지수선물/옵션 체결(H0IFCNT0) 구독을 해지합니다."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('realtime_futs_optn_contract', 'H0IFCNT0')
+        self._logger.info(f"[지수선물체결] 종목 {futures_code} 구독 해지 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, futures_code, tr_type="2")
 
     async def subscribe_realtime_quote(self, stock_code):
         """실시간 주식호가 데이터를 구독합니다."""
