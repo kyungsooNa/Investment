@@ -290,9 +290,15 @@ function tradeTrendQuarterItem(label, rows) {
     const importAmount = tradeSum(rows, 'import_amount_100m_usd');
     const semiconductorAmount = tradeSum(rows, 'semiconductor_export_amount_100m_usd');
     const workingDays = tradeSum(rows, 'working_days_current');
+    const monthCount = rows.length;
+    const isPartial = monthCount < 3;
     return {
-        label,
-        period_label: `${label} 월간 확정치 누적`,
+        label: isPartial ? `${label} (${monthCount}/3개월)` : label,
+        period_label: isPartial
+            ? `${label} 월간 확정치 누적 (3개월 중 ${monthCount}개월)`
+            : `${label} 월간 확정치 누적`,
+        month_count: monthCount,
+        is_partial: isPartial,
         export_amount_100m_usd: exportAmount,
         import_amount_100m_usd: importAmount,
         semiconductor_export_amount_100m_usd: semiconductorAmount,

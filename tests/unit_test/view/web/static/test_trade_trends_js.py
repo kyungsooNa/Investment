@@ -83,7 +83,7 @@ return {
     }
 
 
-def test_quarter_model_sums_monthly_rows_and_derives_working_day_average():
+def test_quarter_model_marks_partial_quarter_with_month_count():
     result = run_trade_trends_js(
         """
 const { buildTradeTrendChartModel } = sandbox.module.exports;
@@ -112,6 +112,9 @@ const item = model.items[0];
 return {
   selectedPhase: model.selectedPhase,
   label: item.label,
+  periodLabel: item.period_label,
+  monthCount: item.month_count,
+  isPartial: item.is_partial,
   exportAmount: item.export_amount_100m_usd,
   importAmount: item.import_amount_100m_usd,
   chipAmount: item.semiconductor_export_amount_100m_usd,
@@ -124,13 +127,52 @@ return {
 
     assert result == {
         "selectedPhase": "quarter",
-        "label": "2026 Q3",
+        "label": "2026 Q3 (2/3개월)",
+        "periodLabel": "2026 Q3 월간 확정치 누적 (3개월 중 2개월)",
+        "monthCount": 2,
+        "isPartial": True,
         "exportAmount": 1200,
         "importAmount": 1072,
         "chipAmount": 480,
         "workingDays": 40,
         "exportDaily": 30,
         "chipDaily": 12,
+    }
+
+
+def test_quarter_model_keeps_plain_label_when_all_three_months_present():
+    result = run_trade_trends_js(
+        """
+const { buildTradeTrendChartModel } = sandbox.module.exports;
+const rows = ['7', '8', '9'].map((month, index) => ({
+  period_label: `2026년 ${month}월`,
+  phase: 'customs_monthly',
+  published_at: `2026-1${index}-01`,
+  export_amount_100m_usd: 600,
+  import_amount_100m_usd: 500,
+  semiconductor_export_amount_100m_usd: 240,
+  working_days_current: 20
+}));
+const model = buildTradeTrendChartModel(rows, 'quarter');
+const item = model.items[0];
+return {
+  label: item.label,
+  periodLabel: item.period_label,
+  monthCount: item.month_count,
+  isPartial: item.is_partial,
+  exportAmount: item.export_amount_100m_usd,
+  workingDays: item.working_days_current
+};
+"""
+    )
+
+    assert result == {
+        "label": "2026 Q3",
+        "periodLabel": "2026 Q3 월간 확정치 누적",
+        "monthCount": 3,
+        "isPartial": False,
+        "exportAmount": 1800,
+        "workingDays": 60,
     }
 
 
