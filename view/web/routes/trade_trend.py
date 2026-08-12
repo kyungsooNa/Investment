@@ -3,10 +3,13 @@
 """
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
 from repositories.trade_trend_repository import TradeTrendRepository
-from services.trade_trend_service import NationalTradeTrendRelease
+from services.trade_trend_service import (
+    NationalTradeTrendRelease,
+    NationalTradeTrendWebClient,
+)
 from view.web.api_common import _get_ctx
 
 router = APIRouter()
@@ -112,6 +115,13 @@ def _repository_from_config(ctx) -> TradeTrendRepository:
     return TradeTrendRepository(repository_path)
 
 
+def _national_trade_trend_client(ctx):
+    client = getattr(ctx, "national_trade_trend_client", None)
+    if client is not None and hasattr(client, "fetch_releases"):
+        return client
+    return NationalTradeTrendWebClient()
+
+
 @router.get("/trade-trends/national/history")
 async def get_national_trade_trend_history(
     include_recent: bool = Query(True),
@@ -148,9 +158,7 @@ async def backfill_national_trade_trend_history(
     """공식 페이지에서 지정 연도 수출입 발표를 가져와 저장 이력에 누적한다."""
     target_year = year or datetime.now().year
     ctx = _get_ctx()
-    client = getattr(ctx, "national_trade_trend_client", None)
-    if client is None or not hasattr(client, "fetch_releases"):
-        raise HTTPException(status_code=503, detail="수출입동향 공식 페이지 클라이언트가 없습니다.")
+    client = _national_trade_trend_client(ctx)
 
     releases = await client.fetch_releases(
         year=target_year,

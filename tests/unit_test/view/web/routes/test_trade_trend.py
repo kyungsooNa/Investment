@@ -176,3 +176,51 @@ def test_national_trade_trend_backfill_saves_year_releases(tmp_path):
         max_detail_pages=20,
         list_page_count=2,
     )
+
+
+def test_national_trade_trend_backfill_builds_client_when_missing(tmp_path, monkeypatch):
+    state_file = tmp_path / "trade_trend_state.json"
+    release = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_10d",
+        title="2026년 1월 1일 ~ 1월 10일 수출입 현황 [잠정치]",
+        url="https://customs.example/jan10",
+        period_label="2026년 1월 1~10일",
+        export_amount_100m_usd=180,
+        import_amount_100m_usd=170,
+        trade_balance_100m_usd=10,
+        trade_balance_label="흑자",
+        published_at="2026-01-11",
+    )
+    fallback_client = SimpleNamespace(
+        fetch_releases=AsyncMock(return_value=[release]),
+    )
+    monkeypatch.setattr(
+        "view.web.routes.trade_trend.NationalTradeTrendWebClient",
+        lambda: fallback_client,
+    )
+    ctx = SimpleNamespace(
+        full_config={
+            "use_login": False,
+            "auth": {"secret_key": "test-token"},
+            "trade_trend_monitor": {"state_file_path": str(state_file)},
+        },
+        trade_trend_monitor_task=None,
+        national_trade_trend_client=None,
+    )
+    api_common.set_ctx(ctx)
+
+    try:
+        response = TestClient(web_main.app).post(
+            "/api/trade-trends/national/backfill?year=2026&max_detail_pages=20&list_page_count=2"
+        )
+    finally:
+        api_common.set_ctx(None)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["stored_count"] == 1
+    fallback_client.fetch_releases.assert_awaited_once_with(
+        year=2026,
+        max_detail_pages=20,
+        list_page_count=2,
+    )
