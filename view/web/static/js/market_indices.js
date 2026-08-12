@@ -132,15 +132,27 @@ function _formatIndexPointLabel(point) {
     return date.length === 8 ? `${date.slice(4, 6)}/${date.slice(6, 8)}` : date;
 }
 
+// 좁은 카드라 눈금을 솎아내되, 뒤에서부터 세어 장 마감(마지막 봉) 라벨은 항상 남긴다.
+// (Chart.js autoSkip 은 앞에서부터 세기 때문에 하루치 차트의 끝이 잘려나갔다)
+const MARKET_INDEX_MAX_TICKS = 6;
+
+function _indexTickCallback(labels) {
+    const step = Math.max(1, Math.ceil((labels.length - 1) / (MARKET_INDEX_MAX_TICKS - 1)));
+    return function (_value, index) {
+        return (labels.length - 1 - index) % step === 0 ? labels[index] : '';
+    };
+}
+
 function _renderIndexSparkline(canvas, data) {
     if (typeof Chart === 'undefined' || !data.points.length) return;
 
     // 함께 표시하는 등락률과 색이 어긋나지 않도록 등락률 기준으로 칠한다.
     const color = Number.isFinite(data.changeRate) && data.changeRate < 0 ? '#3742fa' : '#ff4757';
+    const labels = data.points.map(_formatIndexPointLabel);
     const chart = new Chart(canvas.getContext('2d'), {
         type: 'line',
         data: {
-            labels: data.points.map(_formatIndexPointLabel),
+            labels,
             datasets: [{
                 data: data.points.map(p => p.close),
                 borderColor: color,
@@ -156,14 +168,14 @@ function _renderIndexSparkline(canvas, data) {
             animation: false,
             plugins: { legend: { display: false }, tooltip: { enabled: false } },
             scales: {
-                // 좁은 카드라 눈금을 몇 개로 제한하고 라벨은 눕힌 채로 둔다.
+                // 눈금은 _indexTickCallback 이 직접 고르므로 autoSkip 이 또 솎아내면 안 된다.
                 x: {
                     display: true,
                     grid: { display: false },
                     border: { display: false },
                     ticks: {
-                        autoSkip: true,
-                        maxTicksLimit: 5,
+                        autoSkip: false,
+                        callback: _indexTickCallback(labels),
                         maxRotation: 0,
                         minRotation: 0,
                         font: { size: 9 },
@@ -244,6 +256,87 @@ async function selectMarketIndexPeriod(card, code, period) {
     }
 }
 
+// 투자자 순매수(억원) 3주체 + 등락 종목수. 네이버 지수 카드와 같은 2열 배치다.
+const MARKET_INDEX_INVESTORS = [
+    { key: 'individual', label: '개인' },
+    { key: 'foreign', label: '외국인' },
+    { key: 'institution', label: '기관' },
+];
+
+function _formatIndexNetBuy(amount) {
+    if (!Number.isFinite(amount)) return { text: '-', className: '' };
+    const sign = amount > 0 ? '+' : (amount < 0 ? '-' : '');
+    const className = amount > 0 ? 'text-red' : (amount < 0 ? 'text-blue' : '');
+    return { text: `${sign}${Math.abs(amount).toLocaleString()}`, className };
+}
+
+function _marketIndexFlowRow(doc, label, text, className) {
+    const row = doc.createElement('div');
+    row.className = 'market-index-flow-row';
+
+    const name = doc.createElement('span');
+    name.className = 'market-index-flow-label';
+    name.textContent = label;
+    row.appendChild(name);
+
+    const value = doc.createElement('span');
+    value.className = `market-index-flow-value ${className}`.trim();
+    value.textContent = text;
+    row.appendChild(value);
+
+    return row;
+}
+
+function _marketIndexFlowColumn(doc, rows) {
+    const column = doc.createElement('div');
+    column.className = 'market-index-flow-col';
+    rows.forEach(row => column.appendChild(row));
+    return column;
+}
+
+// 상·하한 종목수는 네이버처럼 괄호로 덧붙인다: 380(3)
+function _formatIndexBreadthCount(count, limitCount) {
+    return Number.isFinite(limitCount) ? `${count.toLocaleString()}(${limitCount})` : count.toLocaleString();
+}
+
+function _buildMarketIndexFlow(doc, data) {
+    const investors = data.investors;
+    const breadth = data.breadth;
+    if (!investors && !breadth) return null;
+
+    const flow = doc.createElement('div');
+    flow.className = 'market-index-flow';
+
+    if (investors) {
+        flow.appendChild(_marketIndexFlowColumn(doc, MARKET_INDEX_INVESTORS.map(investor => {
+            const amount = _formatIndexNetBuy(investors[investor.key]);
+            return _marketIndexFlowRow(doc, investor.label, amount.text, amount.className);
+        })));
+    }
+
+    if (breadth) {
+        flow.appendChild(_marketIndexFlowColumn(doc, [
+            _marketIndexFlowRow(doc, '상승', _formatIndexBreadthCount(breadth.up, breadth.upper_limit), 'text-red'),
+            _marketIndexFlowRow(doc, '보합', _formatIndexBreadthCount(breadth.unchanged), ''),
+            _marketIndexFlowRow(doc, '하락', _formatIndexBreadthCount(breadth.down, breadth.lower_limit), 'text-blue'),
+        ]));
+    }
+
+    return flow;
+}
+
+// 수급은 기간과 무관하므로 카드를 만들 때 한 번만 조회한다.
+// 실전 전용 TR 이라 모의투자에서는 막힐 수 있고, 그때는 안내 없이 영역을 통째로 뺀다.
+async function appendMarketIndexFlow(doc, card, code) {
+    const res = await fetchWithTimeout(`/api/market-index/${code}/flow`);
+    const { json, error } = await readJsonResponse(res);
+    const data = json && json.rt_cd === '0' ? json.data : null;
+    if (error || !data) return;
+
+    const flow = _buildMarketIndexFlow(doc, data);
+    if (flow) card.appendChild(flow);
+}
+
 async function buildMarketIndexKisCard(doc, entry) {
     const card = _marketIndexCardShell(doc, 'kis', entry.code, entry.label);
     card.appendChild(_buildMarketIndexPeriodBar(doc, card, entry.code));
@@ -253,6 +346,7 @@ async function buildMarketIndexKisCard(doc, entry) {
     card.appendChild(body);
 
     await selectMarketIndexPeriod(card, entry.code, MARKET_INDEX_DEFAULT_PERIOD);
+    await appendMarketIndexFlow(doc, card, entry.code);
     return card;
 }
 

@@ -15,6 +15,8 @@ class EndpointKey(str, Enum):
     DAILY_ITEMCHARTPRICE = "inquire_daily_itemchartprice"
     DAILY_INDEXCHARTPRICE = "inquire_daily_indexchartprice"
     TIME_INDEXCHARTPRICE = "inquire_time_indexchartprice"
+    INDEX_PRICE = "inquire_index_price"
+    INVESTOR_DAILY_BY_MARKET = "investor_daily_by_market"
     TIME_ITEMCHARTPRICE = "inquire_time_itemchartprice"
     TIME_DAILY_ITEMCHARTPRICE = "inquire_time_daily_itemchartprice"
     FINANCIAL_RATIO = "financial_ratio"

@@ -1,5 +1,6 @@
 # app/stock_query_service.py
 from __future__ import annotations
+import asyncio
 import time
 from datetime import datetime, timedelta
 from common.market_snapshot import ConclusionSnapshot, MarketSnapshot
@@ -1501,6 +1502,87 @@ class StockQueryService:
             "points": points,
         }
         return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="지수 조회 성공", data=data)
+
+    # 시장별 투자자매매동향은 백만원 단위로 온다. 카드에는 억원으로 표시한다.
+    _INVESTOR_FIELDS = {
+        "individual": "prsn_ntby_tr_pbmn",
+        "foreign": "frgn_ntby_tr_pbmn",
+        "institution": "orgn_ntby_tr_pbmn",
+    }
+    _BREADTH_FIELDS = {
+        "up": "ascn_issu_cnt",
+        "upper_limit": "uplm_issu_cnt",
+        "unchanged": "stnr_issu_cnt",
+        "down": "down_issu_cnt",
+        "lower_limit": "lslm_issu_cnt",
+    }
+
+    async def _index_investor_netbuy(self, index_code: str, date: str) -> Optional[dict]:
+        """개인/외국인/기관 순매수(억원). 조회 실패나 필드 누락이면 None."""
+        try:
+            resp = await self.broker.inquire_investor_daily_by_market(index_code, date=date)
+        except Exception as e:
+            self.logger.warning(f"지수 투자자 수급 조회 실패 ({index_code}): {e}")
+            return None
+        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+            return None
+
+        rows = resp.data if isinstance(resp.data, list) else []
+        if not rows or not isinstance(rows[0], dict):
+            return None
+
+        netbuy = {}
+        for key, field in self._INVESTOR_FIELDS.items():
+            amount = _to_float(rows[0].get(field))
+            if amount is None:
+                return None
+            netbuy[key] = round(amount / 100)
+        return netbuy
+
+    async def _index_breadth(self, index_code: str) -> Optional[dict]:
+        """상승/보합/하락(및 상·하한) 종목수. 조회 실패나 필드 누락이면 None."""
+        try:
+            resp = await self.broker.inquire_index_price(index_code)
+        except Exception as e:
+            self.logger.warning(f"지수 등락 종목수 조회 실패 ({index_code}): {e}")
+            return None
+        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value or not isinstance(resp.data, dict):
+            return None
+
+        breadth = {}
+        for key, field in self._BREADTH_FIELDS.items():
+            count = _to_float(resp.data.get(field))
+            if count is None:
+                return None
+            breadth[key] = int(count)
+        return breadth
+
+    async def get_index_flow(self, index_code: str) -> ResCommonResponse:
+        """코스피/코스닥의 당일 투자자 순매수와 등락 종목수를 조회한다.
+
+        기간 선택과 무관한 값이라 차트(get_index_chart)와 별도 호출로 둔다.
+        두 조회는 서로 다른 TR 이고 모의투자에서는 한쪽만 막힐 수 있어 각각 degrade 한다.
+        """
+        if index_code not in self.DOMESTIC_INDEX_NAMES:
+            msg = f"지원하지 않는 지수 코드: {index_code}"
+            self.logger.warning(msg)
+            return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=msg, data=None)
+
+        date = self.market_clock.get_current_kst_time().strftime("%Y%m%d")
+        investors, breadth = await asyncio.gather(
+            self._index_investor_netbuy(index_code, date),
+            self._index_breadth(index_code),
+        )
+
+        if investors is None and breadth is None:
+            msg = f"지수 수급 조회 실패 ({index_code})"
+            return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1=msg, data=None)
+
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="지수 수급 조회 성공",
+            data={"code": index_code, "investors": investors, "breadth": breadth},
+        )
 
     async def get_recent_daily_index_ohlcv(
         self,

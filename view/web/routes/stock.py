@@ -168,6 +168,17 @@ async def get_market_index(index_code: str, period: str = "1D"):
     return _serialize_response(resp)
 
 
+@router.get("/market-index/{index_code}/flow")
+async def get_market_index_flow(index_code: str):
+    """코스피(0001)/코스닥(1001)의 당일 투자자 순매수(억원)와 등락 종목수.
+
+    기간과 무관한 값이라 차트와 별도 엔드포인트로 둔다.
+    """
+    ctx = _get_ctx()
+    resp = await ctx.stock_query_service.get_index_flow(index_code)
+    return _serialize_response(resp)
+
+
 @router.get("/stock/{code}/stage")
 async def get_stock_stage(code: str):
     """종목의 Minervini Stage 조회 (1~4단계, 0=미계산)"""

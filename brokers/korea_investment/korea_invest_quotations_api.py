@@ -5,7 +5,7 @@ from typing import Dict, List, Union, Optional
 from pydantic import ValidationError
 from brokers.korea_investment.korea_invest_api_base import KoreaInvestApiBase
 from brokers.korea_investment.korea_invest_env import KoreaInvestApiEnv
-from brokers.korea_investment.korea_invest_params_provider import Params
+from brokers.korea_investment.korea_invest_params_provider import Params, InvestorDailyByMarketParams
 from brokers.korea_investment.korea_invest_header_provider import KoreaInvestHeaderProvider
 from brokers.korea_investment.korea_invest_url_provider import KoreaInvestUrlProvider
 from brokers.korea_investment.korea_invest_url_keys import EndpointKey
@@ -555,6 +555,86 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="지수 분봉 조회 성공",
             data={"summary": summary, "candles": candles},
+        )
+
+    async def inquire_index_price(self, index_code: str) -> ResCommonResponse:
+        """
+        국내업종(코스피 0001 / 코스닥 1001) 현재지수를 조회합니다.
+        TRID: FHPUP02100000 (실전 전용 가능성)
+        상승/보합/하락 종목수(ascn/stnr/down_issu_cnt)는 이 TR 에서만 나옵니다.
+        data 에 output 딕셔너리를 그대로 담아 반환합니다.
+        """
+        tr_id = self._trid_provider.quotations(TrIdLeaf.INDEX_PRICE)
+        params = Params.index_price(index_code)
+
+        with self._headers.temp(tr_id=tr_id):
+            response_data: ResCommonResponse = await self.call_api(
+                "GET", EndpointKey.INDEX_PRICE, params=params
+            )
+
+        if response_data.rt_cd != ErrorCode.SUCCESS.value:
+            error_msg = f"업종 현재지수 API 응답 비정상 (index_code: {index_code}), 응답: {response_data.data}"
+            self._logger.error(error_msg)
+            return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1=error_msg, data=None)
+
+        raw = response_data.data if isinstance(response_data.data, dict) else {}
+        output = raw.get("output") or {}
+        if isinstance(output, list):
+            output = output[0] if output else {}
+
+        if not output:
+            warning_msg = f"업종 현재지수 데이터가 비어있음 (index_code: {index_code})"
+            self._logger.warning(warning_msg)
+            return ResCommonResponse(rt_cd=ErrorCode.MISSING_KEY.value, msg1=warning_msg, data=None)
+
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="업종 현재지수 조회 성공",
+            data=output,
+        )
+
+    async def inquire_investor_daily_by_market(self, index_code: str, date: str = None) -> ResCommonResponse:
+        """
+        시장별(코스피/코스닥) 투자자매매동향(일별)을 조회합니다.
+        TRID: FHPTJ04040000 (실전 전용 가능성)
+        data 에 output 행 리스트(최신순)를 담아 반환합니다.
+        순매수 거래대금(prsn/frgn/orgn_ntby_tr_pbmn) 단위는 백만원입니다.
+        """
+        if index_code not in InvestorDailyByMarketParams.MARKET_DIVISIONS:
+            error_msg = f"지원하지 않는 시장 코드: {index_code}"
+            self._logger.warning(error_msg)
+            return ResCommonResponse(rt_cd=ErrorCode.INVALID_INPUT.value, msg1=error_msg, data=None)
+
+        if date is None:
+            date = datetime.now().strftime("%Y%m%d")
+
+        tr_id = self._trid_provider.quotations(TrIdLeaf.INVESTOR_DAILY_BY_MARKET)
+        params = Params.investor_daily_by_market(index_code, date)
+
+        with self._headers.temp(tr_id=tr_id):
+            response_data: ResCommonResponse = await self.call_api(
+                "GET", EndpointKey.INVESTOR_DAILY_BY_MARKET, params=params
+            )
+
+        if response_data.rt_cd != ErrorCode.SUCCESS.value:
+            error_msg = f"시장별 투자자매매동향 API 응답 비정상 (index_code: {index_code}), 응답: {response_data.data}"
+            self._logger.error(error_msg)
+            return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1=error_msg, data=None)
+
+        raw = response_data.data if isinstance(response_data.data, dict) else {}
+        rows = raw.get("output") or []
+        if not isinstance(rows, list):
+            rows = [rows]
+
+        if not rows:
+            warning_msg = f"시장별 투자자매매동향 데이터가 비어있음 (index_code: {index_code})"
+            self._logger.warning(warning_msg)
+            return ResCommonResponse(rt_cd=ErrorCode.MISSING_KEY.value, msg1=warning_msg, data=None)
+
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="시장별 투자자매매동향 조회 성공",
+            data=rows,
         )
 
     async def inquire_time_itemchartprice(

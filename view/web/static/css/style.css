@@ -1281,6 +1281,9 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     display: flex;
     flex-direction: column;
     justify-content: center;
+    /* 기본 글자색은 컨테이너가 정한다. 자식이 직접 color 를 잡으면 뒤에 정의된 탓에
+       .text-red/.text-blue 유틸리티(같은 명시도)를 덮어써 등락 색이 죽는다. */
+    color: var(--text-secondary);
 }
 .market-index-value {
     font-size: 1.35rem;
@@ -1290,13 +1293,36 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 .market-index-change {
     font-size: 0.82rem;
     margin-top: 2px;
-    color: var(--text-secondary);
 }
 .market-index-spark {
     margin-top: 8px;
     width: 100%;
     /* x축 날짜 눈금이 들어가므로 선 영역(70px) + 라벨 높이만큼 잡는다. */
     max-height: 88px;
+}
+/* 투자자 순매수(좌) + 등락 종목수(우) 2열. 한쪽만 조회되면 그 열만 붙는다. */
+.market-index-flow {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 4px 12px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 0.75rem;
+    /* 값 색은 .text-red/.text-blue 가 잡으므로 기본색은 컨테이너에 둔다. */
+    color: var(--text-primary);
+}
+.market-index-flow-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    line-height: 1.6;
+}
+.market-index-flow-label {
+    color: var(--text-secondary);
+}
+.market-index-flow-value {
+    font-weight: 600;
 }
 .market-index-error {
     margin: 0;

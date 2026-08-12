@@ -156,6 +156,14 @@ class BrokerAPIWrapper:
         return await self._client.inquire_time_indexchartprice(index_code,
                                                                interval_seconds=interval_seconds)
 
+    async def inquire_index_price(self, index_code: str) -> ResCommonResponse:
+        """국내업종 현재지수(등락 종목수 포함)를 조회합니다 (KoreaInvestApiQuotations 위임)."""
+        return await self._client.inquire_index_price(index_code)
+
+    async def inquire_investor_daily_by_market(self, index_code: str, date: str = None) -> ResCommonResponse:
+        """시장별 투자자매매동향(일별)을 조회합니다 (KoreaInvestApiQuotations 위임)."""
+        return await self._client.inquire_investor_daily_by_market(index_code, date=date)
+
     async def inquire_time_itemchartprice(
         self, *, stock_code: str, input_hour_1: str,
         pw_data_incu_yn: str = "Y", etc_cls_code: str = "0"
