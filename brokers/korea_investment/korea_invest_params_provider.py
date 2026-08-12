@@ -135,6 +135,49 @@ class TimeIndexChartPriceParams:
 
 
 @dataclass(frozen=True)
+class IndexPriceParams:
+    """국내업종 현재지수. 등락 종목수(ascn/stnr/down_issu_cnt)가 여기서만 나온다."""
+    fid_cond_mrkt_div_code: str  # 업종/지수는 "U"
+    fid_input_iscd: str  # 업종코드 (코스피 0001 / 코스닥 1001)
+
+    @classmethod
+    def index_price(cls, index_code: str):
+        return cls(fid_cond_mrkt_div_code="U", fid_input_iscd=index_code)
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class InvestorDailyByMarketParams:
+    """시장별 투자자매매동향(일별). 업종코드(0001)와 업종구분(KSP)을 함께 요구한다."""
+    # KIS 는 같은 시장을 업종코드와 업종구분 두 축으로 받는다.
+    MARKET_DIVISIONS = {"0001": "KSP", "1001": "KSQ"}
+
+    fid_cond_mrkt_div_code: str  # 업종/지수는 "U"
+    fid_input_iscd: str  # 업종코드 (코스피 0001 / 코스닥 1001)
+    fid_input_date_1: str  # 조회 일자
+    fid_input_iscd_1: str  # 업종구분 (KSP 코스피 / KSQ 코스닥)
+    fid_input_date_2: str  # 조회 일자 (KIS 스펙상 date_1 과 동일)
+    fid_input_iscd_2: str  # 업종분류코드 (업종코드와 동일)
+
+    @classmethod
+    def of(cls, index_code: str, date: str):
+        day = tm.to_yyyymmdd(date)
+        return cls(
+            fid_cond_mrkt_div_code="U",
+            fid_input_iscd=index_code,
+            fid_input_date_1=day,
+            fid_input_iscd_1=cls.MARKET_DIVISIONS[index_code],
+            fid_input_date_2=day,
+            fid_input_iscd_2=index_code,
+        )
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class TimeItemChartPriceParams:
     fid_cond_mrkt_div_code: str  # 보통 "J"
     fid_input_iscd: str  # 종목코드
@@ -792,6 +835,14 @@ class Params:
     @staticmethod
     def time_indexchartprice(index_code: str, interval_seconds: int, include_past: str = "N") -> Dict[str, str]:
         return TimeIndexChartPriceParams.time_indexchartprice(index_code, interval_seconds, include_past).to_dict()
+
+    @staticmethod
+    def index_price(index_code: str) -> Dict[str, str]:
+        return IndexPriceParams.index_price(index_code).to_dict()
+
+    @staticmethod
+    def investor_daily_by_market(index_code: str, date: str) -> Dict[str, str]:
+        return InvestorDailyByMarketParams.of(index_code, date).to_dict()
 
     @staticmethod
     def time_itemchartprice(stock_code: str, input_hour: str,

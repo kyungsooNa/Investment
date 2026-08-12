@@ -43,6 +43,19 @@ const WIDGET_SRC =
 
 const SCAFFOLD = `<div id="market-indices"></div>`;
 
+function flowPayload(overrides) {
+  return Object.assign({
+    code: "0001",
+    investors: { individual: -31912, foreign: 28357, institution: 5277 },
+    breadth: { up: 380, upper_limit: 3, unchanged: 53, down: 477, lower_limit: 0 },
+  }, overrides || {});
+}
+
+// 차트와 수급은 서로 다른 엔드포인트라 기본 스텁은 URL 로 갈라준다.
+function defaultFetch(chartData) {
+  return async (url) => success(url.includes("/flow") ? flowPayload() : (chartData || indexPayload()));
+}
+
 async function makeWindow(fetchWithTimeout) {
   const dom = new JSDOM(`<!DOCTYPE html><html><body>${SCAFFOLD}</body></html>`, {
     url: "http://localhost/",
@@ -55,7 +68,7 @@ async function makeWindow(fetchWithTimeout) {
     await new Promise(resolve => window.document.addEventListener("DOMContentLoaded", resolve));
   }
   applyCommonStubs(window);
-  window.fetchWithTimeout = fetchWithTimeout || (async () => success(indexPayload()));
+  window.fetchWithTimeout = fetchWithTimeout || defaultFetch();
   // Chart.js 는 CDN 로드라 jsdom 에서는 생성 호출만 기록한다.
   window.HTMLCanvasElement.prototype.getContext = () => ({});
   window.currentCharts = [];
@@ -212,20 +225,65 @@ test("국장 스파크라인은 x축에 날짜 눈금을 표시한다", async ()
   assert(config.options.scales.y.display === false, "y축은 계속 숨겨야 함");
 });
 
+// 눈금 콜백이 실제로 그리는 라벨만 추린다 (빈 문자열은 숨긴 눈금).
+function visibleTicks(chart) {
+  const { labels } = chart.config.data;
+  const { callback } = chart.config.options.scales.x.ticks;
+  return labels.map((_, i) => callback(i, i, labels)).filter(label => label !== "");
+}
+
 test("x축 눈금은 조밀해지지 않도록 개수를 제한한다", async () => {
   const points = Array.from({ length: 60 }, (_, i) => ({
     date: `202605${String((i % 28) + 1).padStart(2, "0")}`,
     close: 2600 + i,
   }));
-  const window = await makeWindow(async () => success(indexPayload({ points })));
+  const window = await makeWindow(defaultFetch(indexPayload({ points })));
 
   await window.renderMarketIndices();
 
-  const ticks = window.__charts[0].config.options.scales.x.ticks;
-  assert(ticks.autoSkip === true, "x축 눈금 autoSkip 이 꺼져 있음");
-  assert(ticks.maxTicksLimit > 1 && ticks.maxTicksLimit <= 6,
-    `x축 눈금 개수 제한이 비합리적임 (실제 ${ticks.maxTicksLimit})`);
+  const chart = window.__charts[0];
+  const ticks = chart.config.options.scales.x.ticks;
   assert(ticks.maxRotation === 0, "좁은 카드에서 라벨이 기울면 안 됨");
+  // 눈금 선택을 직접 하므로 Chart.js 의 autoSkip 이 겹쳐 잘라내면 안 된다.
+  assert(ticks.autoSkip === false, "직접 고른 눈금을 autoSkip 이 또 솎아냄");
+  const shown = visibleTicks(chart);
+  assert(shown.length > 3 && shown.length <= 7,
+    `x축 라벨 개수가 비합리적임 (실제 ${shown.length}개: ${shown})`);
+});
+
+test("x축 마지막 눈금은 항상 표시한다", async () => {
+  // 전일 기준점 + 09:00~15:30 10분봉 40개 = 41점 (정규장 하루치)
+  const points = [{ close: 6345.53, prev: true }];
+  for (let i = 0; i < 40; i++) {
+    const minutes = 9 * 60 + i * 10;
+    const hh = String(Math.floor(minutes / 60)).padStart(2, "0");
+    const mm = String(minutes % 60).padStart(2, "0");
+    points.push({ date: "20260812", time: `${hh}${mm}00`, close: 6400 + i });
+  }
+  const window = await makeWindow(defaultFetch(indexPayload({ period: "1D", points })));
+
+  await window.renderMarketIndices();
+
+  const chart = window.__charts[0];
+  const labels = chart.config.data.labels;
+  const { callback } = chart.config.options.scales.x.ticks;
+  assert(labels[labels.length - 1] === "15:30",
+    `마지막 라벨이 15:30 이어야 함 (실제 ${labels[labels.length - 1]})`);
+  // 기존에는 앞에서부터 솎아내느라 장 마감 시각이 잘려나갔다.
+  assert(callback(labels.length - 1, labels.length - 1, labels) === "15:30",
+    "장 마감 눈금이 표시되지 않음");
+  const shown = visibleTicks(chart);
+  assert(shown.length >= 5, `하루치 차트 눈금이 너무 적음 (실제 ${shown.length}개: ${shown})`);
+});
+
+test("점이 눈금 수보다 적으면 모든 라벨을 표시한다", async () => {
+  const window = await makeWindow(defaultFetch(minutePayload()));
+
+  await window.renderMarketIndices();
+
+  const shown = visibleTicks(window.__charts[0]);
+  assert(shown.join(",") === "09:00,09:10,09:20",
+    `점이 적으면 전부 표시해야 함 (실제 ${shown})`);
 });
 
 function minutePayload() {
@@ -253,7 +311,7 @@ test("국장 카드는 기간 선택 버튼을 갖고 기본은 1D 로 조회한
   assert(buttons.map(b => b.dataset.period).join(",") === "1D,1W,1M,1Y",
     `기간 버튼이 1D,1W,1M,1Y 여야 함 (실제 ${buttons.map(b => b.dataset.period)})`);
   assert(buttons[0].classList.contains("active"), "기본 기간 1D 가 선택 표시되어야 함");
-  assert(requested.every(u => u.includes("period=1D")),
+  assert(requested.filter(u => !u.includes("/flow")).every(u => u.includes("period=1D")),
     `기본 조회가 period=1D 여야 함 (실제 ${requested})`);
   // 미장 위젯 카드에는 기간 버튼을 붙이지 않는다(위젯이 자체 제공).
   const widget = window.document.querySelector('.market-index-card[data-kind="widget"]');
@@ -412,6 +470,98 @@ test("컨테이너가 없는 화면에서는 아무 일도 하지 않는다", as
   assert(!window.document.querySelector(".market-index-card"),
     "컨테이너가 없으면 카드를 만들면 안 됨");
   assert(!fetched, "컨테이너가 없으면 API 도 호출하면 안 됨");
+});
+
+// ── 수급 (투자자 순매수 + 등락 종목수) ──────────────────────────────────
+
+function flowOf(window, code = "0001") {
+  return window.document.querySelector(`.market-index-card[data-key="${code}"] .market-index-flow`);
+}
+
+test("국장 카드는 투자자 순매수와 등락 종목수를 함께 보여준다", async () => {
+  const requested = [];
+  const window = await makeWindow(async (url) => {
+    requested.push(url);
+    return success(url.includes("/flow") ? flowPayload() : minutePayload());
+  });
+
+  await window.renderMarketIndices();
+
+  assert(requested.some(u => u.includes("/api/market-index/0001/flow")), "코스피 수급 API 를 호출하지 않음");
+  assert(requested.some(u => u.includes("/api/market-index/1001/flow")), "코스닥 수급 API 를 호출하지 않음");
+
+  const flow = flowOf(window);
+  assert(flow, "수급 영역이 없음");
+  const text = flow.textContent;
+  ["개인", "외국인", "기관", "상승", "보합", "하락"].forEach(label => {
+    assert(text.includes(label), `수급에 '${label}' 이 없음: ${text}`);
+  });
+  assert(text.includes("-31,912"), `개인 순매수가 없음: ${text}`);
+  assert(text.includes("+28,357"), `외국인 순매수가 없음: ${text}`);
+  assert(text.includes("+5,277"), `기관 순매수가 없음: ${text}`);
+  // 상·하한 종목수는 네이버처럼 괄호로 덧붙인다.
+  assert(text.includes("380(3)"), `상승 종목수가 없음: ${text}`);
+  assert(text.includes("477(0)"), `하락 종목수가 없음: ${text}`);
+  assert(text.includes("53"), `보합 종목수가 없음: ${text}`);
+});
+
+test("순매수 부호와 등락은 상승/하락 색을 따른다", async () => {
+  const window = await makeWindow();
+
+  await window.renderMarketIndices();
+
+  const flow = flowOf(window);
+  const buy = Array.from(flow.querySelectorAll(".text-red")).map(el => el.textContent);
+  const sell = Array.from(flow.querySelectorAll(".text-blue")).map(el => el.textContent);
+  assert(buy.some(t => t.includes("28,357")), `순매수(+)는 상승색이어야 함 (실제 ${buy})`);
+  assert(sell.some(t => t.includes("31,912")), `순매도(-)는 하락색이어야 함 (실제 ${sell})`);
+  assert(buy.some(t => t.includes("380")), `상승 종목수는 상승색이어야 함 (실제 ${buy})`);
+  assert(sell.some(t => t.includes("477")), `하락 종목수는 하락색이어야 함 (실제 ${sell})`);
+});
+
+test("수급 조회가 실패하면 조용히 숨긴다", async () => {
+  const window = await makeWindow(async (url) => {
+    if (url.includes("/flow")) return { ok: false, status: 500, json: async () => ({}) };
+    return success(minutePayload());
+  });
+
+  await window.renderMarketIndices();
+
+  assert(!flowOf(window), "수급 조회 실패인데 영역이 남음");
+  const kospi = window.document.querySelector('.market-index-card[data-key="0001"]');
+  assert(!kospi.querySelector(".market-index-error"), "수급 실패로 카드에 에러 문구가 뜸");
+  assert(kospi.querySelector("canvas"), "수급 실패가 차트까지 지움");
+});
+
+test("모의투자처럼 한쪽만 막히면 나오는 쪽만 보여준다", async () => {
+  const window = await makeWindow(async (url) => success(
+    url.includes("/flow") ? flowPayload({ investors: null }) : minutePayload()
+  ));
+
+  await window.renderMarketIndices();
+
+  const flow = flowOf(window);
+  assert(flow, "등락 종목수는 살아있는데 수급 영역이 없음");
+  assert(!flow.textContent.includes("개인"), `투자자 수급이 없는데 표시됨: ${flow.textContent}`);
+  assert(flow.textContent.includes("380(3)"), `등락 종목수가 없음: ${flow.textContent}`);
+});
+
+test("기간을 바꿔도 수급은 다시 조회하지 않는다", async () => {
+  const requested = [];
+  const window = await makeWindow(async (url) => {
+    requested.push(url);
+    return success(url.includes("/flow") ? flowPayload() : minutePayload());
+  });
+  await window.renderMarketIndices();
+  const kospi = window.document.querySelector('.market-index-card[data-key="0001"]');
+  const flowCallsBefore = requested.filter(u => u.includes("/flow")).length;
+
+  await window.selectMarketIndexPeriod(kospi, "0001", "1M");
+
+  assert(requested.filter(u => u.includes("/flow")).length === flowCallsBefore,
+    "기간 전환이 수급을 재조회함 (기간과 무관한 값)");
+  // 기간 전환이 body 를 비워도 수급 영역은 남아 있어야 한다.
+  assert(flowOf(window), "기간 전환이 수급 영역을 지움");
 });
 
 await run();

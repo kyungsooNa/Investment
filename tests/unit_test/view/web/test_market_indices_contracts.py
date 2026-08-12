@@ -85,8 +85,47 @@ def test_market_indices_styles_are_defined():
         ".market-index-value",
         ".market-index-spark",
         ".market-index-period",
+        ".market-index-flow",
+        ".market-index-flow-value",
     ):
         assert selector in css, f"{selector} 스타일이 없음"
+
+
+def _css_rule_body(css: str, selector: str) -> str:
+    start = css.index(f"\n{selector} {{") + len(selector) + 3
+    return css[start:css.index("}", start)]
+
+
+def test_market_index_color_utilities_are_not_overridden():
+    """등락 색은 .text-red/.text-blue 가 잡는다.
+
+    두 유틸리티는 스타일시트 앞쪽(명시도 동일)에 있어서, 뒤에 오는 지수 카드 규칙이
+    color 를 직접 잡으면 색이 통째로 죽는다. 기본색은 컨테이너에만 둔다.
+    """
+    css = Path("view/web/static/css/style.css").read_text(encoding="utf-8")
+
+    for selector in (".market-index-change", ".market-index-flow-value"):
+        assert "color:" not in _css_rule_body(css, selector), (
+            f"{selector} 가 color 를 직접 잡으면 .text-red/.text-blue 가 무시된다"
+        )
+    for selector in (".market-index-body", ".market-index-flow"):
+        assert "color:" in _css_rule_body(css, selector), f"{selector} 에 기본 글자색이 없음"
+
+
+def test_domestic_index_flow_is_wired_to_its_own_endpoint():
+    script = _market_indices_js()
+
+    # 수급은 기간과 무관하므로 차트와 다른 엔드포인트를 쓴다.
+    assert "/flow`" in script, "수급 조회 엔드포인트가 없음"
+    for label in ("'개인'", "'외국인'", "'기관'", "'상승'", "'보합'", "'하락'"):
+        assert label in script, f"{label} 수급 항목이 없음"
+
+
+def test_market_index_flow_route_exists():
+    routes = Path("view/web/routes/stock.py").read_text(encoding="utf-8")
+
+    assert '"/market-index/{index_code}/flow"' in routes
+    assert "get_index_flow" in routes
 
 
 def test_domestic_index_period_selector_is_wired():
