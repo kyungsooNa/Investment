@@ -162,6 +162,29 @@ def test_parse_national_customs_20d_release_extracts_summary_numbers():
     assert release.dedup_key == "national_trade:customs_20d:2026년 7월 1~20일:https://customs.example/20d"
 
 
+def test_parse_national_release_ignores_semiconductor_headline_for_export_amount():
+    """제목의 '반도체 수출 400억 달러'가 본문 총수출액보다 먼저 나온다."""
+    text = """
+    2026년 6월 수출입 현황 [잠정치]
+    - 수출 및 무역수지 역대 최대 / 월수출 1천억 달러, 반도체 수출 400억 달러 최초 돌파
+    등록일 2026.07.02
+    ◇ 관세청은 1 일, 6 월 1 일~30 일 기간의 수출입 현황 잠정치를 발표 했다.
+    ◇ 수출은 1,023 억 달러 로 전년동기대비 70.9% 증가, 수입은 661 억 달러 로
+    30.1% 증가 했고, 무역수지는 361 억 달러 흑자 를 기록했다고 밝혔다.
+    """
+
+    release = parse_national_trade_release(
+        title="2026년 6월 수출입 현황 [잠정치]",
+        url="https://customs.example/monthly",
+        source="customs",
+        text=text,
+    )
+
+    assert release.export_amount_100m_usd == pytest.approx(1023)
+    assert release.import_amount_100m_usd == pytest.approx(661)
+    assert release.export_yoy_pct == pytest.approx(70.9)
+
+
 def test_parse_national_customs_release_extracts_semiconductor_and_working_days():
     text = """
     ◇ 동기간 수출은 213억 달러로 전년동기대비 45.3% 증가, 수입은 195억 달러로
@@ -556,7 +579,30 @@ async def test_national_web_client_fetches_year_releases_from_paginated_lists():
     ]
     requested_urls = [call.args[0] for call in http_client.get.await_args_list[:2]]
     assert requested_urls[0].endswith("bbsId=1362")
-    assert "pageIndex=2" in requested_urls[1]
+    assert "currPage=2" in requested_urls[1]
+
+
+@pytest.mark.asyncio
+async def test_national_web_client_uses_page_param_matching_each_list_host():
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(return_value=DummyTextResponse(""))
+    client = NationalTradeTrendWebClient(
+        http_client=http_client,
+        list_urls=[
+            "https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362",
+            "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c?searchCondition=1",
+        ],
+    )
+
+    await client.fetch_releases(year=2026, list_page_count=2)
+
+    requested_urls = [call.args[0] for call in http_client.get.await_args_list]
+    customs_urls = [url for url in requested_urls if "customs.go.kr" in url]
+    motie_urls = [url for url in requested_urls if "motir.go.kr" in url]
+    assert any("currPage=2" in url for url in customs_urls)
+    assert not any("pageIndex" in url for url in customs_urls)
+    assert any("pageIndex=2" in url for url in motie_urls)
+    assert not any("currPage" in url for url in motie_urls)
 
 
 @pytest.mark.asyncio

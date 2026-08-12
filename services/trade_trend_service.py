@@ -491,17 +491,34 @@ def _float(pattern: str, text: str) -> Optional[float]:
 
 def _trade_label_pattern(label: str) -> str:
     if label == "수출":
-        return r"수출(?!입)"
+        # 제목의 "반도체 수출 400억 달러"가 본문 총수출액보다 먼저 잡히는 것을 막는다.
+        return r"(?<!반도체)(?<!반도체 )수출(?!입)"
     if label == "수입":
         return r"(?<!수출)수입"
     return re.escape(label)
 
 
 def _extract_amount_after(label: str, text: str) -> Optional[float]:
-    return _float(
-        rf"{_trade_label_pattern(label)}[^。]{{0,180}}?([0-9]+(?:\.[0-9]+)?)\s*억\s*달러",
-        text,
+    label_pattern = _trade_label_pattern(label)
+    # 다음 지표 언급 전까지만 금액을 찾는다. 같은 라벨의 다른 언급도 경계로 둔다.
+    stop_pattern = (
+        r"(?<!수출)수입|무역수지|수출"
+        if label == "수출"
+        else r"수출(?!입)|무역수지|(?<!수출)수입"
     )
+    for label_match in re.finditer(label_pattern, text):
+        window = text[label_match.end() : label_match.end() + 180]
+        stop_match = re.search(stop_pattern, window)
+        if stop_match:
+            window = window[: stop_match.start()]
+        amount_match = re.search(r"([0-9][0-9,]*(?:\.[0-9]+)?)\s*억\s*달러", window)
+        if not amount_match:
+            continue
+        try:
+            return float(amount_match.group(1).replace(",", ""))
+        except ValueError:
+            continue
+    return None
 
 
 def _signed_pct(value: Optional[float], text: str, start: int = 0) -> Optional[float]:
@@ -609,13 +626,24 @@ def _interleave(groups: list[list[tuple[str, str]]]) -> list[tuple[str, str]]:
     return items
 
 
+_LIST_PAGE_PARAM_BY_HOST = {"www.customs.go.kr": "currPage"}
+_DEFAULT_LIST_PAGE_PARAM = "pageIndex"
+
+
+def _list_page_param(url: str) -> str:
+    """게시판마다 페이지 번호 쿼리 키가 다르다. 관세청은 pageIndex를 무시한다."""
+    host = urlsplit(url).netloc.lower()
+    return _LIST_PAGE_PARAM_BY_HOST.get(host, _DEFAULT_LIST_PAGE_PARAM)
+
+
 def _expand_list_page_urls(list_urls: list[str], list_page_count: int) -> list[str]:
     page_count = max(1, int(list_page_count or 1))
     urls = []
     for url in list_urls:
         urls.append(url)
+        page_param = _list_page_param(url)
         for page_index in range(2, page_count + 1):
-            urls.append(_with_query_param(url, "pageIndex", str(page_index)))
+            urls.append(_with_query_param(url, page_param, str(page_index)))
     return urls
 
 
