@@ -263,6 +263,18 @@ trade_trend_monitor:
   national_max_detail_pages: 5
   state_file_path: "data/trade_trend_state.json"
 
+# 유튜브 자막 수집. 서버 IP가 IpBlocked 되면 회전형 주거용 프록시를 설정한다.
+# proxy_type: "webshare"는 Webshare Residential 상품, "generic"은 다른 프록시 제공자용.
+# 인증값은 gitignore 된 config/config.yaml에만 입력하고 저장소에는 커밋하지 않는다.
+youtube_digest:
+  proxy_type: ""
+  proxy_username: ""
+  proxy_password: ""
+  proxy_http_url: ""
+  proxy_https_url: ""
+  proxy_locations: ["kr", "jp"]
+  request_interval_sec: 5
+
 # AI 분석 (Gemini/Groq/Ollama OpenAI 호환 엔드포인트 공통)
 #   관심종목 신규 공시의 실제 DART 본문을 읽어 최종 중요도와 요약을 산출
 #   본문/AI 조회 실패 시 제목 규칙 판정으로 자동 폴백

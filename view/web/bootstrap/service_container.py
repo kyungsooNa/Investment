@@ -19,6 +19,7 @@ from config.config_loader import (
     PositionSizingConfig,
     RiskGateConfig,
     TradeTrendMonitorConfig,
+    YoutubeDigestConfig,
 )
 from core.account_snapshot import AccountSnapshotCache
 from core.market_clock import MarketClock
@@ -435,7 +436,18 @@ class ServiceContainer:
         # 본체가 AI 라서 AI 비활성 시 만들지 않는다.
         ctx.youtube_channel_repository = YoutubeChannelRepository()
         ctx.youtube_digest_repository = YoutubeDigestRepository()
-        ctx.youtube_transcript_collector = YoutubeTranscriptCollectorService(logger=ctx.logger)
+        raw_youtube_config = config_dict.get("youtube_digest") or {}
+        youtube_config = YoutubeDigestConfig.model_validate(raw_youtube_config)
+        ctx.youtube_transcript_collector = YoutubeTranscriptCollectorService(
+            logger=ctx.logger,
+            proxy_type=youtube_config.proxy_type,
+            proxy_username=youtube_config.proxy_username,
+            proxy_password=youtube_config.proxy_password,
+            proxy_http_url=youtube_config.proxy_http_url,
+            proxy_https_url=youtube_config.proxy_https_url,
+            proxy_locations=tuple(youtube_config.proxy_locations),
+            request_interval_sec=float(youtube_config.request_interval_sec),
+        )
         ctx.youtube_digest_service = None
         ctx.youtube_digest_task = None
         if ctx.ai_client is not None:

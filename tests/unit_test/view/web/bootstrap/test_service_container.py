@@ -342,6 +342,36 @@ def test_service_container_builds_youtube_digest_pipeline(patched_service_contai
     assert ctx.youtube_digest_repository is not None
 
 
+def test_service_container_injects_youtube_proxy_config(patched_service_container_deps):
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {
+        "youtube_digest": {
+            "proxy_type": "webshare",
+            "proxy_username": "proxy-user",
+            "proxy_password": "proxy-pass",
+            "proxy_locations": ["kr", "jp"],
+            "request_interval_sec": 7,
+        }
+    }
+
+    ServiceContainer(ctx).run()
+
+    patched_service_container_deps[
+        "YoutubeTranscriptCollectorService"
+    ].assert_called_once_with(
+        logger=ctx.logger,
+        proxy_type="webshare",
+        proxy_username="proxy-user",
+        proxy_password="proxy-pass",
+        proxy_http_url="",
+        proxy_https_url="",
+        proxy_locations=("kr", "jp"),
+        request_interval_sec=7.0,
+    )
+
+
 def test_service_container_skips_youtube_digest_when_ai_disabled(
     patched_service_container_deps,
 ):

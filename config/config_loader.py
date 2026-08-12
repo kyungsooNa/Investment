@@ -340,6 +340,40 @@ class TradeTrendMonitorConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class YoutubeDigestConfig(BaseModel):
+    """유튜브 자막 수집 설정.
+
+    클라우드/고정 IP가 차단된 운영 환경에서는 youtube-transcript-api가 지원하는
+    회전형 프록시를 사용한다. 인증값은 gitignore 된 config.yaml에만 둔다.
+    """
+
+    proxy_type: Literal["", "webshare", "generic"] = ""
+    proxy_username: str = ""
+    proxy_password: str = ""
+    proxy_http_url: str = ""
+    proxy_https_url: str = ""
+    proxy_locations: List[str] = Field(default_factory=list)
+    request_interval_sec: float = Field(5.0, ge=0)
+
+    model_config = {"extra": "allow"}
+
+    @model_validator(mode="after")
+    def validate_proxy_settings(self):
+        if self.proxy_type == "webshare" and not (
+            self.proxy_username and self.proxy_password
+        ):
+            raise ValueError(
+                "youtube_digest webshare에는 proxy_username과 proxy_password가 필요합니다."
+            )
+        if self.proxy_type == "generic" and not (
+            self.proxy_http_url or self.proxy_https_url
+        ):
+            raise ValueError(
+                "youtube_digest generic에는 proxy_http_url 또는 proxy_https_url이 필요합니다."
+            )
+        return self
+
+
 class AiAnalysisConfig(BaseModel):
     """AI 분석 공통 설정 (Gemini/Groq/Ollama OpenAI 호환 엔드포인트).
 
@@ -560,6 +594,7 @@ class AppConfig(BaseModel):
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     dart_disclosure: DartDisclosureConfig = Field(default_factory=DartDisclosureConfig)
     trade_trend_monitor: TradeTrendMonitorConfig = Field(default_factory=TradeTrendMonitorConfig)
+    youtube_digest: YoutubeDigestConfig = Field(default_factory=YoutubeDigestConfig)
     ai_analysis: AiAnalysisConfig = Field(default_factory=AiAnalysisConfig)
     position_sizing: PositionSizingConfig = Field(default_factory=PositionSizingConfig)
     execution_quality_report: ExecutionQualityReportConfig = Field(default_factory=ExecutionQualityReportConfig)

@@ -403,6 +403,21 @@ def test_load_configs_missing_optional_field_defaults():
         assert config.cache.memory_cache_enabled is True
 
 
+def test_youtube_digest_webshare_proxy_requires_both_credentials():
+    with pytest.raises(ValueError, match="proxy_username.*proxy_password"):
+        _minimal_app_config(
+            youtube_digest={
+                "proxy_type": "webshare",
+                "proxy_username": "only-user",
+            }
+        )
+
+
+def test_youtube_digest_generic_proxy_requires_a_url():
+    with pytest.raises(ValueError, match="proxy_http_url.*proxy_https_url"):
+        _minimal_app_config(youtube_digest={"proxy_type": "generic"})
+
+
 # ── P0 0-7: operating_profile + profile-specific overrides ──────────────────
 
 

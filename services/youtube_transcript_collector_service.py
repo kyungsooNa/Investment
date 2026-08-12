@@ -79,6 +79,12 @@ class YoutubeTranscriptCollectorService:
         # 속도보다 마진을 택한다.
         request_interval_sec: float = 5.0,
         sleeper: Optional[Callable[[float], Any]] = None,
+        proxy_type: str = "",
+        proxy_username: str = "",
+        proxy_password: str = "",
+        proxy_http_url: str = "",
+        proxy_https_url: str = "",
+        proxy_locations: Sequence[str] = (),
     ):
         self._logger = logger or logging.getLogger(__name__)
         self._timeout_sec = float(timeout_sec)
@@ -87,6 +93,12 @@ class YoutubeTranscriptCollectorService:
         self._languages = tuple(languages)
         self._request_interval_sec = max(0.0, float(request_interval_sec))
         self._sleeper = sleeper or asyncio.sleep
+        self._proxy_type = str(proxy_type or "").strip().lower()
+        self._proxy_username = str(proxy_username or "")
+        self._proxy_password = str(proxy_password or "")
+        self._proxy_http_url = str(proxy_http_url or "")
+        self._proxy_https_url = str(proxy_https_url or "")
+        self._proxy_locations = tuple(proxy_locations or ())
         self.was_blocked = False
 
     # --- HTTP ---------------------------------------------------------------
@@ -166,10 +178,29 @@ class YoutubeTranscriptCollectorService:
         """youtube-transcript-api 를 지연 import 한다 (미설치 시 None)."""
         try:
             from youtube_transcript_api import YouTubeTranscriptApi
+            from youtube_transcript_api.proxies import (
+                GenericProxyConfig,
+                WebshareProxyConfig,
+            )
         except ImportError:
             return None
 
-        api = YouTubeTranscriptApi()
+        proxy_config = None
+        if self._proxy_type == "webshare":
+            kwargs = {
+                "proxy_username": self._proxy_username,
+                "proxy_password": self._proxy_password,
+            }
+            if self._proxy_locations:
+                kwargs["filter_ip_locations"] = list(self._proxy_locations)
+            proxy_config = WebshareProxyConfig(**kwargs)
+        elif self._proxy_type == "generic":
+            proxy_config = GenericProxyConfig(
+                http_url=self._proxy_http_url or None,
+                https_url=self._proxy_https_url or None,
+            )
+
+        api = YouTubeTranscriptApi(proxy_config=proxy_config)
 
         def fetch(video_id: str, languages: Sequence[str]) -> str:
             fetched = api.fetch(video_id, languages=list(languages))
