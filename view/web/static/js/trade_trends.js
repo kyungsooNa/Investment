@@ -216,7 +216,7 @@ function latestTradeTrendPhase(rowsWithMonth) {
     return latest ? latest.phase : 'customs_10d';
 }
 
-function buildTradeTrendPhaseItems(rowsWithMonth, phase) {
+function buildTradeTrendPhaseItems(rowsWithMonth, phase, monthLimit = 8) {
     const latestByMonth = new Map();
     rowsWithMonth
         .filter((item) => item.phase === phase)
@@ -226,14 +226,16 @@ function buildTradeTrendPhaseItems(rowsWithMonth, phase) {
         });
     return Array.from(latestByMonth.entries())
         .sort(([left], [right]) => left.localeCompare(right))
-        .slice(-8)
+        .slice(-monthLimit)
         .map(([month, row]) => tradeTrendComparisonItem(formatTradeMonth(month), row));
 }
 
 function buildTradeTrendQuarterItems(rowsWithMonth) {
-    const monthlyRows = buildTradeTrendPhaseItems(rowsWithMonth, 'monthly')
+    // 분기 카드 8개를 채우려면 24개월이 필요하다. 월간 탭의 8개월 상한과는 별개다.
+    // 조업일수 없는 행(산업부 발표)은 일평균 분모에 못 들어가므로 합산에서 제외한다.
+    const monthlyRows = buildTradeTrendPhaseItems(rowsWithMonth, 'monthly', 24)
         .map((item) => item.row)
-        .filter(Boolean);
+        .filter((row) => row && Number(row.working_days_current) > 0);
     const quarters = new Map();
     monthlyRows.forEach((row) => {
         const month = tradeMonthKey(row);
