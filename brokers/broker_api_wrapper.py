@@ -417,6 +417,10 @@ class BrokerAPIWrapper:
         """장운영정보 구독 ACK 확정을 기다립니다."""
         return await self._client.wait_for_market_status_ack(stock_code, timeout)
 
+    async def wait_index_futures_contract_ack(self, futures_code: str, timeout: float = None) -> bool:
+        """지수선물/옵션 체결 구독 ACK 확정을 기다립니다."""
+        return await self._client.wait_for_index_futures_contract_ack(futures_code, timeout)
+
     async def subscribe_realtime_quote(self, stock_code: str) -> Any:  # 실제 반환 값에 따라 타입 변경
         """실시간 호가 데이터 구독합니다 (KoreaInvestWebSocketAPI 위임)."""
         return await self._client.subscribe_realtime_quote(stock_code)
@@ -444,3 +448,9 @@ class BrokerAPIWrapper:
 
     async def unsubscribe_market_status(self, stock_code: str):
         return await self._client.unsubscribe_market_status(stock_code)
+
+    async def subscribe_index_futures_contract(self, futures_code: str):
+        return await self._client.subscribe_index_futures_contract(futures_code)
+
+    async def unsubscribe_index_futures_contract(self, futures_code: str):
+        return await self._client.unsubscribe_index_futures_contract(futures_code)

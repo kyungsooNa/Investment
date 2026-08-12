@@ -26,6 +26,7 @@ def test_realtime_bootstrap_builds_streaming_chain():
 
     assert ctx.streaming_service is streaming.return_value
     assert streaming.call_args.kwargs["market_status_monitor_codes"] == ["000000"]
+    assert streaming.call_args.kwargs["futures_sidecar_monitor_codes"] == []
     assert ctx.orderbook_snapshot_repo is orderbook_repo.return_value
     assert ctx.favorite_price_alert_service is favorite_alert.return_value
     assert price_stream.call_args.kwargs["favorite_price_alert_service"] is favorite_alert.return_value
@@ -33,3 +34,32 @@ def test_realtime_bootstrap_builds_streaming_chain():
     assert ctx.price_stream_service is price_stream.return_value
     assert ctx.price_subscription_service is subscriptions.return_value
     assert ctx.websocket_watchdog_task is watchdog.return_value
+
+
+def test_realtime_bootstrap_passes_futures_sidecar_monitor_codes():
+    ctx = SimpleNamespace(
+        broker=MagicMock(), logger=MagicMock(), market_clock=MagicMock(),
+        market_data_service=MagicMock(), streaming_event_logger=MagicMock(),
+        data_quality_service=MagicMock(), _mcs=MagicMock(),
+        kill_switch_service=MagicMock(), stock_repository=MagicMock(),
+        notification_service=MagicMock(), operator_alert_service=MagicMock(),
+        program_trading_stream_service=MagicMock(), pm=MagicMock(),
+        favorite_repo=MagicMock(), stock_code_repository=MagicMock(),
+    )
+    ctx.program_trading_stream_service.load_snapshot.return_value = {}
+
+    config = {
+        "market_status_alert": {
+            "monitor_codes": ["000000"],
+            "futures_monitor_codes": ["101TEST"],
+        }
+    }
+    with patch("view.web.bootstrap.realtime_bootstrap.StreamingService") as streaming, \
+         patch("view.web.bootstrap.realtime_bootstrap.OrderbookSnapshotRepository"), \
+         patch("view.web.bootstrap.realtime_bootstrap.FavoritePriceAlertService"), \
+         patch("view.web.bootstrap.realtime_bootstrap.PriceStreamService"), \
+         patch("view.web.bootstrap.realtime_bootstrap.PriceSubscriptionService"), \
+         patch("view.web.bootstrap.realtime_bootstrap.WebSocketWatchdogTask"):
+        RealtimeBootstrap(ctx).run(config=config, needs_realtime=True)
+
+    assert streaming.call_args.kwargs["futures_sidecar_monitor_codes"] == ["101TEST"]

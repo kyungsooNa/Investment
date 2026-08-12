@@ -52,6 +52,7 @@ class StreamingService:
         data_quality_service=None,
         market_status_alert_service=None,
         market_status_monitor_codes: Optional[list[str]] = None,
+        futures_sidecar_monitor_codes: Optional[list[str]] = None,
     ):
         self.broker = broker_api_wrapper
         self.logger = logger
@@ -63,6 +64,7 @@ class StreamingService:
         self._data_quality_service = data_quality_service
         self._market_status_alert_service = market_status_alert_service
         self._market_status_monitor_codes = list(market_status_monitor_codes or [])
+        self._futures_sidecar_monitor_codes = list(futures_sidecar_monitor_codes or [])
         self._last_console_print_time: float = 0.0
         self._PRINT_THROTTLE_SEC: float = 0.5
         self._callback = None  # 재연결 시 콜백 유실 방지용 저장
@@ -79,6 +81,10 @@ class StreamingService:
             self.set_price_stream_service(price_stream_service)
         if market_status_alert_service is not None:
             self.register_handler('market_status', market_status_alert_service.on_market_status)
+            self.register_handler(
+                'realtime_futs_optn_contract',
+                market_status_alert_service.on_futures_contract,
+            )
 
     # ── 의존성 주입 ───────────────────────────────────────────────
 
@@ -143,6 +149,7 @@ class StreamingService:
                 ):
                     return False
                 await self._subscribe_market_status_monitors()
+                await self._subscribe_futures_sidecar_monitors()
             return result
 
     async def _subscribe_order_notice_safely(self, receive_alive_before: bool) -> bool:
@@ -233,6 +240,30 @@ class StreamingService:
                     self.logger.warning(f"장운영정보 구독 ACK 미확정: {code}")
             except Exception as e:
                 self.logger.warning(f"장운영정보 구독 실패 ({code}): {e}")
+
+    async def subscribe_index_futures_contract(self, code: str):
+        """지수선물/옵션 체결 실시간 구독 (BrokerAPIWrapper 위임)."""
+        return await self.broker.subscribe_index_futures_contract(code)
+
+    async def unsubscribe_index_futures_contract(self, code: str):
+        """지수선물/옵션 체결 실시간 구독 해지 (BrokerAPIWrapper 위임)."""
+        return await self.broker.unsubscribe_index_futures_contract(code)
+
+    async def wait_index_futures_contract_ack(self, code: str, timeout: float = None) -> bool:
+        """지수선물/옵션 체결 구독 ACK 확정을 기다린다."""
+        waiter = getattr(self.broker, "wait_index_futures_contract_ack", None)
+        if not callable(waiter):
+            return True
+        return await waiter(code, timeout)
+
+    async def _subscribe_futures_sidecar_monitors(self) -> None:
+        for code in self._futures_sidecar_monitor_codes:
+            try:
+                sent = await self.subscribe_index_futures_contract(code)
+                if sent and not await self.wait_index_futures_contract_ack(code):
+                    self.logger.warning(f"지수선물 체결 구독 ACK 미확정: {code}")
+            except Exception as e:
+                self.logger.warning(f"지수선물 체결 구독 실패 ({code}): {e}")
 
     async def subscribe_realtime_price(self, code: str):
         """실시간 체결가 구독 (BrokerAPIWrapper 위임)."""

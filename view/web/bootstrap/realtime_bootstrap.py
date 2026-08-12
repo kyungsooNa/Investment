@@ -41,6 +41,11 @@ class RealtimeBootstrap:
             if isinstance(market_status_cfg, dict)
             else ["000000"]
         )
+        futures_monitor_codes = (
+            market_status_cfg.get("futures_monitor_codes", [])
+            if isinstance(market_status_cfg, dict)
+            else []
+        )
         ctx.market_status_alert_service = (
             MarketStatusAlertService(
                 operator_alert_service=ctx.operator_alert_service,
@@ -59,6 +64,7 @@ class RealtimeBootstrap:
             data_quality_service=ctx.data_quality_service,
             market_status_alert_service=ctx.market_status_alert_service,
             market_status_monitor_codes=monitor_codes if market_status_enabled else [],
+            futures_sidecar_monitor_codes=futures_monitor_codes if market_status_enabled else [],
         )
         ctx.event_shadow_journal_service = EventShadowJournalService(
             log_root="logs/strategies",

@@ -40,6 +40,7 @@ def websocket_api_instance():
             "websocket": {
                 "realtime_price": "H0STCNT0",
                 "realtime_quote": "H0STASP0",
+                "realtime_futs_optn_contract": "H0IFCNT0",
                 "unified_market_status": "H0UNMKO0",
                 "order_notice_real": "H0STCNI0",
                 "order_notice_paper": "H0STCNI9"
@@ -2870,6 +2871,8 @@ async def test_subscribe_unsubscribe_wrappers(websocket_api_instance):
         await api.unsubscribe_unified_price("005930")
         await api.subscribe_market_status("005930")
         await api.unsubscribe_market_status("005930")
+        await api.subscribe_index_futures_contract("101TEST")
+        await api.unsubscribe_index_futures_contract("101TEST")
 
     assert mock_send.await_args_list[0].args == ("H0STPGM0", "005930")
     assert mock_send.await_args_list[0].kwargs == {"tr_type": "1"}
@@ -2887,6 +2890,10 @@ async def test_subscribe_unsubscribe_wrappers(websocket_api_instance):
     assert mock_send.await_args_list[6].kwargs == {"tr_type": "2"}
     assert mock_send.await_args_list[7].args == ("H0UNMKO0", "005930")
     assert mock_send.await_args_list[7].kwargs == {"tr_type": "2"}
+    assert mock_send.await_args_list[8].args == ("H0IFCNT0", "101TEST")
+    assert mock_send.await_args_list[8].kwargs == {"tr_type": "1"}
+    assert mock_send.await_args_list[9].args == ("H0IFCNT0", "101TEST")
+    assert mock_send.await_args_list[9].kwargs == {"tr_type": "2"}
 
 
 @pytest.mark.asyncio

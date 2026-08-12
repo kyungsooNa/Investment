@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any, Optional
 
 from common.operator_alert_types import AlertSource
@@ -13,6 +14,10 @@ class MarketStatusAlertService:
     _MOVE_5_THRESHOLD_PCT = 5.0
     _MOVE_5_RESOLVE_PCT = 4.5
     _MOVE_5_RESOLVE_CONSECUTIVE_SAMPLES = 3
+    _BUY_SIDECAR_WATCH_THRESHOLD_PCT = 4.5
+    _BUY_SIDECAR_WATCH_RESOLVE_PCT = 4.5
+    _FUTURES_SIDECAR_THRESHOLD_PCT = 5.0
+    _FUTURES_SIDECAR_DURATION_SEC = 60
     _CIRCUIT_KEYWORDS = ("서킷", "circuit", "매매거래중단", "거래중단")
     _SIDECAR_KEYWORDS = ("사이드카", "sidecar")
 
@@ -27,7 +32,9 @@ class MarketStatusAlertService:
         self._logger = logger or logging.getLogger(__name__)
         self._active_keys_by_code: dict[str, set[str]] = {}
         self._active_index_keys_by_code: dict[str, set[str]] = {}
+        self._active_futures_keys_by_code: dict[str, set[str]] = {}
         self._move_5_recovery_samples_by_code: dict[str, int] = {}
+        self._futures_sidecar_started_sec_by_code: dict[str, int] = {}
 
     async def on_market_status(self, data: dict[str, Any]) -> None:
         """StreamingService handler entrypoint."""
@@ -91,9 +98,25 @@ class MarketStatusAlertService:
         active_move_5_keys = {
             key for key in active_keys if key.startswith("market_index:move_5:")
         }
+        active_buy_sidecar_watch_keys = {
+            key for key in active_keys if key.startswith("market_index:buy_sidecar_watch:")
+        }
+
+        buy_sidecar_watch_key = f"market_index:buy_sidecar_watch:{index_code}"
+        if change_rate >= self._BUY_SIDECAR_WATCH_THRESHOLD_PCT:
+            expected_keys.add(buy_sidecar_watch_key)
+            await self._report_index_alert(
+                key=buy_sidecar_watch_key, severity="error",
+                title=f"{index_name} 매수 사이드카 가능 구간",
+                index_code=index_code, index_name=index_name, change_rate=change_rate,
+                threshold_pct=self._BUY_SIDECAR_WATCH_THRESHOLD_PCT,
+                event_type="buy_sidecar_watch",
+            )
+        elif active_buy_sidecar_watch_keys and change_rate > self._BUY_SIDECAR_WATCH_RESOLVE_PCT:
+            expected_keys.update(active_buy_sidecar_watch_keys)
 
         move_5_key = f"market_index:move_5:{direction}:{index_code}"
-        if abs(change_rate) >= self._MOVE_5_THRESHOLD_PCT:
+        if change_rate < 0 and abs(change_rate) >= self._MOVE_5_THRESHOLD_PCT:
             self._move_5_recovery_samples_by_code.pop(index_code, None)
             expected_keys.add(move_5_key)
             await self._report_index_alert(
@@ -131,6 +154,68 @@ class MarketStatusAlertService:
                     AlertSource.MARKET_STATUS, key, "지수 등락률 정상화"
                 )
         self._active_index_keys_by_code[index_code] = expected_keys
+
+    async def on_futures_contract(self, data: dict[str, Any]) -> None:
+        """코스피200 지수선물 체결가로 매수 사이드카 발동 조건을 감시한다."""
+        code = str(data.get("선물단축종목코드") or data.get("종목코드") or "UNKNOWN")
+        rate = self._signed_rate(
+            data,
+            rate_keys=("선물전일대비율", "전일대비율"),
+            sign_keys=("전일대비부호",),
+        )
+        tick_sec = self._hhmmss_to_seconds(str(data.get("영업시간") or ""))
+        if tick_sec is None:
+            now = datetime.now()
+            tick_sec = now.hour * 3600 + now.minute * 60 + now.second
+
+        if rate is None or rate < self._FUTURES_SIDECAR_THRESHOLD_PCT:
+            self._futures_sidecar_started_sec_by_code.pop(code, None)
+            await self._resolve_futures_alerts(code)
+            return
+
+        started_sec = self._futures_sidecar_started_sec_by_code.setdefault(code, tick_sec)
+        duration_sec = tick_sec - started_sec
+        if duration_sec < 0:
+            duration_sec += 24 * 3600
+        if duration_sec < self._FUTURES_SIDECAR_DURATION_SEC:
+            return
+
+        trading_date = str(data.get("영업일자") or datetime.now().strftime("%Y%m%d"))
+        dedup_key = f"market_futures:buy_sidecar:{code}:{trading_date}"
+        self._active_futures_keys_by_code.setdefault(code, set()).add(dedup_key)
+        metadata = {
+            "event_type": "futures_buy_sidecar",
+            "futures_code": code,
+            "change_rate": rate,
+            "duration_sec": duration_sec,
+            "threshold_pct": self._FUTURES_SIDECAR_THRESHOLD_PCT,
+            "market_status": dict(data),
+            "telegram_channel": "report",
+        }
+        message = (
+            f"코스피200 선물({code}) 전일 대비 {rate:+.2f}% "
+            f"{duration_sec}초 지속"
+        )
+        if self._operator_alert_service is not None:
+            await self._operator_alert_service.report(
+                AlertSource.MARKET_STATUS,
+                dedup_key,
+                "error",
+                "코스피200 선물 매수 사이드카 발동 조건",
+                message,
+                metadata=metadata,
+            )
+            return
+        if self._notification_service is not None:
+            from services.notification_service import NotificationCategory, NotificationLevel
+
+            await self._notification_service.emit(
+                NotificationCategory.SYSTEM,
+                NotificationLevel.ERROR,
+                "코스피200 선물 매수 사이드카 발동 조건",
+                message,
+                metadata=metadata,
+            )
 
     async def _report_index_alert(
         self, *, key: str, severity: str, title: str, index_code: str,
@@ -171,6 +256,30 @@ class MarketStatusAlertService:
             return "circuit_breaker"
         return None
 
+    @classmethod
+    def _signed_rate(
+        cls,
+        data: dict[str, Any],
+        *,
+        rate_keys: tuple[str, ...],
+        sign_keys: tuple[str, ...],
+    ) -> Optional[float]:
+        rate_raw = next((data.get(key) for key in rate_keys if data.get(key) not in (None, "")), None)
+        try:
+            rate = float(str(rate_raw).replace(",", ""))
+        except (TypeError, ValueError):
+            return None
+        sign = str(next((data.get(key) for key in sign_keys if data.get(key)), "")).upper()
+        if sign in {"4", "5", "-", "D", "DOWN"}:
+            return -abs(rate)
+        return rate
+
+    @staticmethod
+    def _hhmmss_to_seconds(value: str) -> Optional[int]:
+        if len(value) != 6 or not value.isdigit():
+            return None
+        return int(value[:2]) * 3600 + int(value[2:4]) * 60 + int(value[4:])
+
     @staticmethod
     def _classify_direction(reason: str) -> Optional[str]:
         normalized = reason.lower()
@@ -196,4 +305,15 @@ class MarketStatusAlertService:
                 AlertSource.MARKET_STATUS,
                 dedup_key,
                 "장운영정보 정상화",
+            )
+
+    async def _resolve_futures_alerts(self, code: str) -> None:
+        if self._operator_alert_service is None:
+            return
+        active_keys = self._active_futures_keys_by_code.pop(code, set())
+        for dedup_key in active_keys:
+            await self._operator_alert_service.resolve(
+                AlertSource.MARKET_STATUS,
+                dedup_key,
+                "지수선물 등락률 정상화",
             )
