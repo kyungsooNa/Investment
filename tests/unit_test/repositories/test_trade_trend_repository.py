@@ -110,3 +110,53 @@ def test_trade_trend_repository_skips_legacy_key_when_period_history_exists(tmp_
     assert len(history) == 1
     assert history[0]["dedup_key"] == release.dedup_key
     assert history[0]["export_amount_100m_usd"] == 213
+
+
+def test_trade_trend_repository_backfill_saves_release_without_sent_at(tmp_path):
+    release = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_10d",
+        title="2026년 6월 1일 ~ 6월 10일 수출입 현황 [잠정치]",
+        url="https://customs.example/20260610",
+        period_label="2026년 6월 1~10일",
+        export_amount_100m_usd=250,
+        import_amount_100m_usd=210,
+        trade_balance_100m_usd=40,
+        trade_balance_label="흑자",
+        published_at="2026-06-11",
+    )
+    path = tmp_path / "trade_trend_state.json"
+    repo = TradeTrendRepository(path)
+
+    repo.save_national_release(release, source_type="backfill")
+    loaded = TradeTrendRepository(path)
+    history = loaded.get_national_release_history()
+
+    assert loaded.has_sent(release.dedup_key)
+    assert history[0]["source_type"] == "backfill"
+    assert history[0]["sent_at"] == ""
+    assert history[0]["period_label"] == "2026년 6월 1~10일"
+
+
+def test_trade_trend_repository_backfill_preserves_existing_sent_marker(tmp_path):
+    release = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_10d",
+        title="2026년 8월 1일 ~ 8월 10일 수출입 현황 [잠정치]",
+        url="https://customs.example/10d",
+        period_label="2026년 8월 1~10일",
+        export_amount_100m_usd=213,
+        import_amount_100m_usd=195,
+        trade_balance_100m_usd=18,
+        trade_balance_label="흑자",
+        published_at="2026-08-11",
+    )
+    path = tmp_path / "trade_trend_state.json"
+    repo = TradeTrendRepository(path)
+    repo.mark_national_release_sent(release, sent_at="2026-08-11T17:27:41+09:00")
+
+    repo.save_national_release(release, source_type="backfill")
+    history = TradeTrendRepository(path).get_national_release_history()
+
+    assert history[0]["source_type"] == "sent"
+    assert history[0]["sent_at"] == "2026-08-11T17:27:41+09:00"

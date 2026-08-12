@@ -523,6 +523,43 @@ async def test_national_web_client_interleaves_sources_before_detail_limit():
 
 
 @pytest.mark.asyncio
+async def test_national_web_client_fetches_year_releases_from_paginated_lists():
+    first_page = """
+    <a href="/aug">2026년 8월 1일 ~ 8월 10일 수출입 현황 [잠정치]</a>
+    """
+    second_page = """
+    <a href="/dec">2025년 12월 1일 ~ 12월 20일 수출입 현황 [잠정치]</a>
+    <a href="/jan">2026년 1월 1일 ~ 1월 10일 수출입 현황 [잠정치]</a>
+    """
+    aug_detail = "수출은 213억 달러로 전년동기대비 45.3% 증가, 수입은 195억 달러로 23.1% 증가, 무역수지는 18억 달러 흑자"
+    jan_detail = "수출은 180억 달러로 전년동기대비 12.0% 증가, 수입은 170억 달러로 10.0% 증가, 무역수지는 10억 달러 흑자"
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(
+        side_effect=[
+            DummyTextResponse(first_page),
+            DummyTextResponse(second_page),
+            DummyTextResponse(aug_detail),
+            DummyTextResponse(jan_detail),
+        ]
+    )
+    client = NationalTradeTrendWebClient(
+        http_client=http_client,
+        list_urls=["https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362"],
+        max_detail_pages=10,
+    )
+
+    releases = await client.fetch_releases(year=2026, list_page_count=2)
+
+    assert [release.period_label for release in releases] == [
+        "2026년 8월 1~10일",
+        "2026년 1월 1~10일",
+    ]
+    requested_urls = [call.args[0] for call in http_client.get.await_args_list[:2]]
+    assert requested_urls[0].endswith("bbsId=1362")
+    assert "pageIndex=2" in requested_urls[1]
+
+
+@pytest.mark.asyncio
 async def test_national_web_client_skips_unparseable_and_unrelated_motie_releases():
     list_html = """
     <a href="javascript:article.view('1');"><i>2026년 7월 수출입 동향</i></a>

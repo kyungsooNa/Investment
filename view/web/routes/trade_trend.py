@@ -1,7 +1,9 @@
 """
 수출입동향 조회 API.
 """
-from fastapi import APIRouter, Query
+from datetime import datetime
+
+from fastapi import APIRouter, HTTPException, Query
 
 from repositories.trade_trend_repository import TradeTrendRepository
 from services.trade_trend_service import NationalTradeTrendRelease
@@ -100,6 +102,16 @@ def _load_stored_national_release_history(ctx) -> list[dict]:
     return TradeTrendRepository(repository_path).get_national_release_history()
 
 
+def _repository_from_config(ctx) -> TradeTrendRepository:
+    trade_config = _config_section(ctx, "trade_trend_monitor")
+    repository_path = _config_value(
+        trade_config,
+        "state_file_path",
+        "data/trade_trend_state.json",
+    )
+    return TradeTrendRepository(repository_path)
+
+
 @router.get("/trade-trends/national/history")
 async def get_national_trade_trend_history(
     include_recent: bool = Query(True),
@@ -123,5 +135,41 @@ async def get_national_trade_trend_history(
             "latest": rows[0] if rows else None,
             "stored_count": len(stored_rows),
             "recent_count": len(recent_rows),
+        },
+    }
+
+
+@router.post("/trade-trends/national/backfill")
+async def backfill_national_trade_trend_history(
+    year: int | None = Query(None, ge=2000, le=2100),
+    max_detail_pages: int = Query(40, ge=1, le=200),
+    list_page_count: int = Query(4, ge=1, le=20),
+):
+    """공식 페이지에서 지정 연도 수출입 발표를 가져와 저장 이력에 누적한다."""
+    target_year = year or datetime.now().year
+    ctx = _get_ctx()
+    client = getattr(ctx, "national_trade_trend_client", None)
+    if client is None or not hasattr(client, "fetch_releases"):
+        raise HTTPException(status_code=503, detail="수출입동향 공식 페이지 클라이언트가 없습니다.")
+
+    releases = await client.fetch_releases(
+        year=target_year,
+        max_detail_pages=max_detail_pages,
+        list_page_count=list_page_count,
+    )
+    repository = _repository_from_config(ctx)
+    saved_count = 0
+    for release in releases:
+        if repository.save_national_release(release, source_type="backfill"):
+            saved_count += 1
+    stored_rows = repository.get_national_release_history()
+    return {
+        "success": True,
+        "data": {
+            "year": target_year,
+            "fetched_count": len(releases),
+            "saved_count": saved_count,
+            "stored_count": len(stored_rows),
+            "rows": stored_rows,
         },
     }

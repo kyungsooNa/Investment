@@ -7,7 +7,7 @@ import zipfile
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Optional
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree as ET
 
 import httpx
@@ -200,18 +200,35 @@ class NationalTradeTrendWebClient:
         self._max_detail_pages = max_detail_pages
 
     async def fetch_recent_releases(self) -> list[NationalTradeTrendRelease]:
+        return await self.fetch_releases()
+
+    async def fetch_releases(
+        self,
+        *,
+        year: Optional[int] = None,
+        max_detail_pages: Optional[int] = None,
+        list_page_count: int = 1,
+    ) -> list[NationalTradeTrendRelease]:
         releases: list[NationalTradeTrendRelease] = []
         detail_url_groups: list[list[tuple[str, str]]] = []
-        for list_url in self._list_urls:
+        for list_url in _expand_list_page_urls(self._list_urls, list_page_count):
             html_text = await self._fetch_text(list_url)
-            detail_url_groups.append(_extract_national_trade_links(html_text, list_url))
+            links = _extract_national_trade_links(html_text, list_url)
+            if year is not None:
+                links = [
+                    (title, url)
+                    for title, url in links
+                    if _period_year_from_title(title) == year
+                ]
+            detail_url_groups.append(links)
 
         seen: set[str] = set()
+        detail_limit = max_detail_pages or self._max_detail_pages
         for title, url in _interleave(detail_url_groups):
             if url in seen:
                 continue
             seen.add(url)
-            if len(releases) >= self._max_detail_pages:
+            if len(releases) >= detail_limit:
                 break
             detail_text = await self._fetch_text(url)
             detail_text = await self._append_tradedata_attachment_text(detail_text, url)
@@ -375,6 +392,13 @@ def _period_year_month(period_label: str) -> Optional[tuple[int, int]]:
     if not match:
         return None
     return int(match.group(1)), int(match.group(2))
+
+
+def _period_year_from_title(title: str) -> Optional[int]:
+    match = re.search(r"(\d{4})년", title)
+    if not match:
+        return None
+    return int(match.group(1))
 
 
 def _previous_month_key(period_label: str, phase: str) -> Optional[tuple[str, int, int]]:
@@ -583,6 +607,31 @@ def _interleave(groups: list[list[tuple[str, str]]]) -> list[tuple[str, str]]:
             if index < len(group):
                 items.append(group[index])
     return items
+
+
+def _expand_list_page_urls(list_urls: list[str], list_page_count: int) -> list[str]:
+    page_count = max(1, int(list_page_count or 1))
+    urls = []
+    for url in list_urls:
+        urls.append(url)
+        for page_index in range(2, page_count + 1):
+            urls.append(_with_query_param(url, "pageIndex", str(page_index)))
+    return urls
+
+
+def _with_query_param(url: str, key: str, value: str) -> str:
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query[key] = value
+    return urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            parts.path,
+            urlencode(query),
+            parts.fragment,
+        )
+    )
 
 
 def parse_national_trade_release(
