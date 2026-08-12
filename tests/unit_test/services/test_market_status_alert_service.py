@@ -101,6 +101,25 @@ async def test_market_status_alert_service_distinguishes_buy_and_sell_sidecars()
 
 
 @pytest.mark.asyncio
+async def test_market_status_alert_service_reports_buy_sidecar_watch_near_five_percent():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        logger=MagicMock(),
+    )
+
+    await service.on_index_change("0001", "코스피", 4.99)
+
+    args = operator_alert.report.await_args.args
+    kwargs = operator_alert.report.await_args.kwargs
+    assert args[0] == AlertSource.MARKET_STATUS
+    assert args[1] == "market_index:buy_sidecar_watch:0001"
+    assert args[2] == "error"
+    assert args[3] == "코스피 매수 사이드카 가능 구간"
+    assert kwargs["metadata"]["event_type"] == "buy_sidecar_watch"
+
+
+@pytest.mark.asyncio
 async def test_market_status_alert_service_ignores_normal_status():
     operator_alert = AsyncMock()
     service = MarketStatusAlertService(

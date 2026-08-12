@@ -88,6 +88,13 @@ class MarketIndexThresholdAlertTask(SchedulableTask):
             if change_rate is None:
                 self._logger.warning("%s: %s 등락률 누락", self.task_name, index_name)
                 continue
+            if abs(change_rate) >= 4.5:
+                self._logger.warning(
+                    "%s: %s 지수 임계 근접 — 전일 대비 %+0.2f%%",
+                    self.task_name,
+                    index_name,
+                    change_rate,
+                )
             await self._alert_service.on_index_change(index_code, index_name, change_rate)
 
     async def _is_market_open_now(self) -> bool:

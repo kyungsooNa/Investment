@@ -13,6 +13,8 @@ class MarketStatusAlertService:
     _MOVE_5_THRESHOLD_PCT = 5.0
     _MOVE_5_RESOLVE_PCT = 4.5
     _MOVE_5_RESOLVE_CONSECUTIVE_SAMPLES = 3
+    _BUY_SIDECAR_WATCH_THRESHOLD_PCT = 4.95
+    _BUY_SIDECAR_WATCH_RESOLVE_PCT = 4.5
     _CIRCUIT_KEYWORDS = ("서킷", "circuit", "매매거래중단", "거래중단")
     _SIDECAR_KEYWORDS = ("사이드카", "sidecar")
 
@@ -91,9 +93,25 @@ class MarketStatusAlertService:
         active_move_5_keys = {
             key for key in active_keys if key.startswith("market_index:move_5:")
         }
+        active_buy_sidecar_watch_keys = {
+            key for key in active_keys if key.startswith("market_index:buy_sidecar_watch:")
+        }
+
+        buy_sidecar_watch_key = f"market_index:buy_sidecar_watch:{index_code}"
+        if change_rate >= self._BUY_SIDECAR_WATCH_THRESHOLD_PCT:
+            expected_keys.add(buy_sidecar_watch_key)
+            await self._report_index_alert(
+                key=buy_sidecar_watch_key, severity="error",
+                title=f"{index_name} 매수 사이드카 가능 구간",
+                index_code=index_code, index_name=index_name, change_rate=change_rate,
+                threshold_pct=self._BUY_SIDECAR_WATCH_THRESHOLD_PCT,
+                event_type="buy_sidecar_watch",
+            )
+        elif active_buy_sidecar_watch_keys and change_rate > self._BUY_SIDECAR_WATCH_RESOLVE_PCT:
+            expected_keys.update(active_buy_sidecar_watch_keys)
 
         move_5_key = f"market_index:move_5:{direction}:{index_code}"
-        if abs(change_rate) >= self._MOVE_5_THRESHOLD_PCT:
+        if change_rate < 0 and abs(change_rate) >= self._MOVE_5_THRESHOLD_PCT:
             self._move_5_recovery_samples_by_code.pop(index_code, None)
             expected_keys.add(move_5_key)
             await self._report_index_alert(
