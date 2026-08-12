@@ -1214,6 +1214,54 @@ def test_web_realtime_callback_injects_scalar_price_and_skips_without_streaming(
     ctx._web_realtime_callback({"type": "realtime_program_trading", "data": {}})
 
 
+def test_web_realtime_callback_evaluates_favorite_alert_from_program_trading_price(mock_deps):
+    """프로그램매매 프레임에 주입된 가격도 관심종목 등락률 알림을 평가한다."""
+    ctx = WebAppContext(None)
+    ctx.streaming_service = MagicMock()
+    ctx.streaming_service.get_cached_realtime_price.return_value = {
+        "price": "85300",
+        "change": "-5100",
+        "rate": "-5.64",
+        "sign": "5",
+    }
+    data = {"type": "realtime_program_trading", "data": {"유가증권단축종목코드": "080220"}}
+
+    with patch.object(ctx, "_schedule_favorite_alert_from_program_price") as mock_schedule:
+        ctx._web_realtime_callback(data)
+
+    mock_schedule.assert_called_once_with(
+        "080220",
+        price="85300",
+        rate="-5.64",
+        sign="5",
+    )
+    ctx.streaming_service.dispatch_realtime_message.assert_called_once_with(data)
+
+
+def test_schedule_favorite_alert_from_program_price_creates_task(mock_deps):
+    """프로그램매매 가격 기반 관심종목 알림 평가는 백그라운드 태스크로 예약한다."""
+    ctx = WebAppContext(None)
+    ctx.favorite_price_alert_service = MagicMock()
+    ctx.favorite_price_alert_service.handle_price_tick = MagicMock(return_value="alert-coro")
+    loop = MagicMock()
+
+    with patch("view.web.web_app_initializer.asyncio.get_running_loop", return_value=loop):
+        ctx._schedule_favorite_alert_from_program_price(
+            "080220",
+            price="85300",
+            rate="-5.64",
+            sign="5",
+        )
+
+    ctx.favorite_price_alert_service.handle_price_tick.assert_called_once_with(
+        "080220",
+        price="85300",
+        rate="-5.64",
+        sign="5",
+    )
+    loop.create_task.assert_called_once_with("alert-coro")
+
+
 def test_emit_and_log_missing_reason_no_logger_or_price_service(mock_deps):
     """streaming logger/service 누락 및 price stream service 누락 분기를 확인한다."""
     ctx = WebAppContext(None)
