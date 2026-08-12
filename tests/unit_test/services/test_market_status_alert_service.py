@@ -108,7 +108,7 @@ async def test_market_status_alert_service_reports_buy_sidecar_watch_near_five_p
         logger=MagicMock(),
     )
 
-    await service.on_index_change("0001", "코스피", 4.99)
+    await service.on_index_change("0001", "코스피", 4.50)
 
     args = operator_alert.report.await_args.args
     kwargs = operator_alert.report.await_args.kwargs

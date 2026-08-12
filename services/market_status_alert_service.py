@@ -13,7 +13,7 @@ class MarketStatusAlertService:
     _MOVE_5_THRESHOLD_PCT = 5.0
     _MOVE_5_RESOLVE_PCT = 4.5
     _MOVE_5_RESOLVE_CONSECUTIVE_SAMPLES = 3
-    _BUY_SIDECAR_WATCH_THRESHOLD_PCT = 4.95
+    _BUY_SIDECAR_WATCH_THRESHOLD_PCT = 4.5
     _BUY_SIDECAR_WATCH_RESOLVE_PCT = 4.5
     _CIRCUIT_KEYWORDS = ("서킷", "circuit", "매매거래중단", "거래중단")
     _SIDECAR_KEYWORDS = ("사이드카", "sidecar")
