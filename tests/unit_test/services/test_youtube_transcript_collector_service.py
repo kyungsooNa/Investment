@@ -1,5 +1,6 @@
 """유튜브 자막 수집 서비스 단위 테스트 (네트워크·라이브러리 미설치와 무관하게 통과해야 함)."""
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -280,3 +281,75 @@ async def test_fetch_transcript_raises_when_library_missing():
 
     with pytest.raises(TranscriptUnavailable):
         await svc.fetch_transcript("v1")
+
+
+def test_default_fetcher_passes_webshare_proxy_to_transcript_api(monkeypatch):
+    """차단된 운영 IP 대신 회전형 프록시를 실제 자막 요청에 주입해야 한다."""
+    captured = {}
+
+    class FakeWebshareProxyConfig:
+        def __init__(self, **kwargs):
+            captured["proxy_kwargs"] = kwargs
+
+    class FakeApi:
+        def __init__(self, **kwargs):
+            captured["api_kwargs"] = kwargs
+
+        def fetch(self, video_id, languages):
+            captured["fetch"] = (video_id, languages)
+            return [SimpleNamespace(text="프록시 자막")]
+
+    monkeypatch.setattr(
+        "youtube_transcript_api.YouTubeTranscriptApi", FakeApi
+    )
+    monkeypatch.setattr(
+        "youtube_transcript_api.proxies.WebshareProxyConfig",
+        FakeWebshareProxyConfig,
+    )
+    svc = YoutubeTranscriptCollectorService(
+        proxy_type="webshare",
+        proxy_username="proxy-user",
+        proxy_password="proxy-pass",
+        proxy_locations=("kr", "jp"),
+    )
+
+    fetcher = svc._load_default_fetcher()
+
+    assert fetcher("video1", ("ko",)) == "프록시 자막"
+    assert captured["proxy_kwargs"] == {
+        "proxy_username": "proxy-user",
+        "proxy_password": "proxy-pass",
+        "filter_ip_locations": ["kr", "jp"],
+    }
+    assert captured["api_kwargs"]["proxy_config"].__class__ is FakeWebshareProxyConfig
+
+
+def test_default_fetcher_passes_generic_proxy_to_transcript_api(monkeypatch):
+    captured = {}
+
+    class FakeGenericProxyConfig:
+        def __init__(self, **kwargs):
+            captured["proxy_kwargs"] = kwargs
+
+    class FakeApi:
+        def __init__(self, **kwargs):
+            captured["api_kwargs"] = kwargs
+
+        def fetch(self, video_id, languages):
+            return [SimpleNamespace(text="일반 프록시 자막")]
+
+    monkeypatch.setattr("youtube_transcript_api.YouTubeTranscriptApi", FakeApi)
+    monkeypatch.setattr(
+        "youtube_transcript_api.proxies.GenericProxyConfig", FakeGenericProxyConfig
+    )
+    svc = YoutubeTranscriptCollectorService(
+        proxy_type="generic",
+        proxy_http_url="http://user:pass@proxy.example:8080",
+        proxy_https_url="http://user:pass@proxy.example:8080",
+    )
+
+    assert svc._load_default_fetcher()("video1", ("ko",)) == "일반 프록시 자막"
+    assert captured["proxy_kwargs"] == {
+        "http_url": "http://user:pass@proxy.example:8080",
+        "https_url": "http://user:pass@proxy.example:8080",
+    }
