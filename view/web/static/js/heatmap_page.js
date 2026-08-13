@@ -28,11 +28,17 @@ const HEATMAP_PAGE_DEFAULT_PERIOD = '1d';
 // 저장소가 해석하는 시장 값 — 'ALL'(공통) 은 필터 없음이다.
 const HEATMAP_PAGE_MARKETS = ['ALL', 'KOSPI', 'KOSDAQ'];
 const HEATMAP_PAGE_DEFAULT_MARKET = 'ALL';
+// 자동 갱신 주기. 미국 스냅샷만 대상이다 — 국내는 장마감 후 하루 한 번 수집되는
+// daily_prices 종가라 되물어도 같은 값이 온다. 서버 TTL(45초)보다 길게 잡아 매 주기가
+// 실제로 새 스냅샷을 받게 한다.
+const HEATMAP_PAGE_OVERSEAS_REFRESH_MS = 60 * 1000;
 
 let _heatmapPageZoomIndex = 0;
 let _heatmapPageWheelAccum = 0;
 let _heatmapPagePeriod = HEATMAP_PAGE_DEFAULT_PERIOD;
 let _heatmapPageMarket = HEATMAP_PAGE_DEFAULT_MARKET;
+let _heatmapPageTab = 'domestic';
+let _heatmapPageRefreshTimer = null;
 
 function _heatmapPageZoom() {
     return HEATMAP_PAGE_ZOOM_STEPS[_heatmapPageZoomIndex];
@@ -70,6 +76,7 @@ function _heatmapPageShow(el, visible) {
 async function setHeatmapTab(market) {
     const source = HEATMAP_PAGE_SOURCES[market];
     if (!source) return;
+    _heatmapPageTab = market;
 
     Object.keys(HEATMAP_PAGE_SOURCES).forEach(key => {
         const active = key === market;
@@ -380,6 +387,31 @@ function resetHeatmapPageZoom() {
     }
 }
 
+// 자동 갱신 — 보고 있는 미국 탭만 조용히(로딩 문구 없이) 갈아끼운다. 매 주기마다
+// '조회 중...' 을 띄우면 화면이 1분마다 깜빡이고 배율·검색 상태가 눈에 띄게 흔들린다.
+async function _refreshHeatmapPageTick() {
+    // pjax 로 다른 화면에 가 있으면 스스로 멈춘다 (타이머는 문서를 떠나도 계속 돈다).
+    if (!document.getElementById('heatmap-page-viewport')) {
+        _stopHeatmapPageAutoRefresh();
+        return;
+    }
+    if (document.hidden || _heatmapPageTab !== 'overseas') return;
+
+    await _loadHeatmap(HEATMAP_PAGE_SOURCES.overseas, { showLoading: false });
+    _applyHeatmapPageSearch();
+}
+
+function _stopHeatmapPageAutoRefresh() {
+    if (_heatmapPageRefreshTimer === null) return;
+    clearInterval(_heatmapPageRefreshTimer);
+    _heatmapPageRefreshTimer = null;
+}
+
+function _startHeatmapPageAutoRefresh() {
+    _stopHeatmapPageAutoRefresh();  // pjax 재진입 시 타이머가 겹쳐 걸리지 않게 한다.
+    _heatmapPageRefreshTimer = setInterval(_refreshHeatmapPageTick, HEATMAP_PAGE_OVERSEAS_REFRESH_MS);
+}
+
 async function initHeatmapPage() {
     const viewport = document.getElementById('heatmap-page-viewport');
     if (!viewport) return;
@@ -411,6 +443,7 @@ async function initHeatmapPage() {
     }
 
     await setHeatmapTab('domestic');
+    _startHeatmapPageAutoRefresh();
 }
 
 document.addEventListener('DOMContentLoaded', () => {

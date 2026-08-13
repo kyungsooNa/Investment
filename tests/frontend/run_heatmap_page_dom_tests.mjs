@@ -837,6 +837,105 @@ test("pjax 재진입 시 기간·시장은 기본값으로 돌아온다", async 
     "검색어도 비워져야 함");
 });
 
+// 자동 갱신은 분 단위라 실시간으로 기다릴 수 없다. 창의 setInterval 을 가로채 콜백을
+// 직접 굴려 계약(주기·대상·건너뛸 조건·정리)만 확인한다.
+function captureHeatmapTimer(window) {
+  const timer = { fn: null, ms: null, starts: 0, cleared: [] };
+  window.setInterval = (fn, ms) => {
+    timer.fn = fn;
+    timer.ms = ms;
+    timer.starts += 1;
+    return timer.starts;
+  };
+  window.clearInterval = (id) => { timer.cleared.push(id); };
+  return timer;
+}
+
+// jsdom 의 visibilityState 기본값은 'prerender'(= hidden true) 라 손대지 않으면
+// 자동 갱신이 늘 건너뛰어진다. 보이는 창인지를 테스트가 명시한다.
+function setPageVisible(window, visible) {
+  Object.defineProperty(window.document, "hidden", { value: !visible, configurable: true });
+}
+
+function autoRefreshPage() {
+  const calls = [];
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic", "overseas_us"]),
+    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+    "/api/overseas/top-market-cap": () => success({ items: [overseasItem({})], updated_at: 1767225600 }),
+  }));
+  const traced = window.fetchWithTimeout;
+  window.fetchWithTimeout = (url, ...rest) => { calls.push(url); return traced(url, ...rest); };
+  setPageVisible(window, true);
+  return { window, calls, timer: captureHeatmapTimer(window) };
+}
+
+function overseasCalls(calls) {
+  return calls.filter(url => url.startsWith("/api/overseas/top-market-cap"));
+}
+
+test("미국 탭을 보고 있으면 1분마다 조용히 다시 조회한다", async () => {
+  const { window, calls, timer } = autoRefreshPage();
+
+  await window.initHeatmapPage();
+  await window.setHeatmapTab("overseas");
+  const before = overseasCalls(calls).length;
+
+  assert(timer.ms === 60000, `자동 갱신 주기는 60초여야 함 (실제 ${timer.ms})`);
+  await timer.fn();
+
+  assert(overseasCalls(calls).length === before + 1,
+    `주기마다 미국 스냅샷을 다시 받아야 함 (실제 ${overseasCalls(calls).length - before}회)`);
+  const panel = window.document.getElementById("heatmap-page-overseas");
+  assert(!panel.innerHTML.includes("조회 중"), "자동 갱신이 로딩 문구로 화면을 깜빡이면 안 됨");
+  assert(panel.querySelectorAll(".heatmap-tile").length > 0, "갱신 후에도 타일이 남아야 함");
+});
+
+test("한국 탭은 자동 재조회하지 않는다 (하루 한 번 수집되는 스냅샷)", async () => {
+  const { window, calls, timer } = autoRefreshPage();
+
+  await window.initHeatmapPage();
+  calls.length = 0;
+  await timer.fn();
+
+  assert(calls.length === 0, `되물어도 같은 종가라 조회할 이유가 없음 (실제 ${calls})`);
+});
+
+test("창이 백그라운드면 자동 갱신을 건너뛴다", async () => {
+  const { window, calls, timer } = autoRefreshPage();
+
+  await window.initHeatmapPage();
+  await window.setHeatmapTab("overseas");
+  setPageVisible(window, false);
+  calls.length = 0;
+  await timer.fn();
+
+  assert(calls.length === 0, "안 보는 창 때문에 외부 API 를 계속 두드리면 안 됨");
+});
+
+test("다른 화면으로 떠나면 자동 갱신 타이머를 스스로 멈춘다", async () => {
+  const { window, calls, timer } = autoRefreshPage();
+
+  await window.initHeatmapPage();
+  await window.setHeatmapTab("overseas");
+  calls.length = 0;
+  window.document.getElementById("heatmap-page-viewport").remove();
+  await timer.fn();
+
+  assert(calls.length === 0, "떠난 화면을 위해 조회하면 안 됨");
+  assert(timer.cleared.length === 1, `타이머를 해제해야 함 (실제 ${timer.cleared.length}회)`);
+});
+
+test("pjax 재진입은 자동 갱신 타이머를 겹쳐 걸지 않는다", async () => {
+  const { window, timer } = autoRefreshPage();
+
+  await window.initHeatmapPage();
+  await window.initHeatmapPage();
+
+  assert(timer.starts === 2, `재진입마다 타이머를 다시 걸어야 함 (실제 ${timer.starts}회)`);
+  assert(timer.cleared.length === 1, `이전 타이머를 해제해야 함 (실제 ${timer.cleared.length}회)`);
+});
+
 test("전용 페이지 경로에서는 로드 시 자동으로 초기화한다", async () => {
   const calls = [];
   makeWindow(routed({

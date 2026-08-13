@@ -183,6 +183,20 @@ async def test_snapshots_refetch_after_ttl(universe, provider):
     assert provider.fetch_snapshots.await_count == 2
 
 
+async def test_default_ttl_is_shorter_than_the_screen_poll_interval(universe, provider):
+    """히트맵은 60초마다 되묻는다 — 기본 TTL 이 그보다 길면 폴링이 캐시만 되받는다."""
+    now = [0.0]
+    service = OverseasMarketStatsService(
+        universe_factory=lambda: universe, provider=provider, clock=lambda: now[0]
+    )
+
+    await service.get_top_market_cap()
+    now[0] = 60.0
+    await service.get_top_market_cap()
+
+    assert provider.fetch_snapshots.await_count == 2
+
+
 async def test_empty_universe_returns_empty_without_calling_provider(provider):
     empty = MagicMock()
     empty.all_symbols.return_value = []
