@@ -20,7 +20,7 @@
 리뷰 핵심 판단: 운영 인프라·리스크 규율(킬스위치 영속화·RiskGate·tiered force-exit·profitability gate·캐너리 사이징)은 갖춰졌다. 남은 크리티컬 패스는 **엣지(수익성) 입증**이다. 엣지의 원천으로 삼는 수급 필터(체결강도·프로그램매매)가 장중 히스토리 부재로 백테스트 검증 불가능한 상태이므로, 검증 데이터 축적을 지금 시작하는 것이 최우선이다.
 
 1. **[즉시 착수 — 엣지 검증 크리티컬 패스]**
-   - 0-2 강제청산 절반 유출 수정 **실장 검증 완료** (PR #700, 2026-07-22 tier1/tier2 flat 종료 실증 + 2026-07-23 익일 대사로 고아 미증가 확인). 남은 것은 오염된 성과 기록 5건 플래그·기존 고아 10종목 처리 방침뿐 — 엣지 검증 선행 조건은 해소.
+   - 0-2 강제청산 절반 유출 수정 **실장 검증 완료** (PR #700, 2026-07-22 tier1/tier2 flat 종료 실증 + 2026-07-23 익일 대사로 고아 미증가 확인). 오염 5건 플래그는 코드 완료(#831) — 남은 것은 프로덕션 DB 적용 실행·기존 고아 10종목 처리 방침뿐. 엣지 검증 선행 조건은 해소.
    - 1-5 장중 microstructure 캡처 **상시 가동** (blocked 해제 단계 자체가 착수 항목) — 태스크 배선 완료(#618), 코퍼스 축적 중, 1일차 품질 결함 보정 + 체결강도 장중 시계열 배선 완료(2026-07-04), QC 1주차 양호 판정 + 거래대금 랭킹 보충으로 코퍼스 폭 확대(2026-07-08)
    - 1-6 shadow/paper/소액 canary journal 축적 (운영 상시 — 무틱 블로커와 독립)
 2. **[외부 블로커 — 병행 진행]**
@@ -204,7 +204,9 @@
 - [x] **15:10 / 15:15 확인 완료 (2026-07-22)**: 래리윌리엄스VBO/475150(trade_id=271, 30주)에서 15:10:04 1차 tier 가 15주 매도 후 잔량 15주 HOLD 유지(`부분 매도 분할` 로그), 15:15:10 2차 tier 가 잔여 15주를 마저 체결해 SOLD 로 flat 종료(수익률 -2.58%). 종목당 `strategy_force_exit` 이벤트 2회 확인 — 수정 실증 완료.
 - [x] **익일 대사 완료 (2026-07-23)**: DB 조회로 `broker_reconciled` 고아 10종목이 07-22 이전과 동일하게 유지(증가 없음)됨을 확인 — 유출 종료.
 - [ ] 기존 고아 10종목 처리 방침 결정. 7월 4건(031980·086790·001450 ×2)은 `scripts/repair_partial_sell_ledger.py` 로 복구 가능하나 원 전략이 전부 당일청산 VBO 라 **복구 = 익일 강제청산 지시**임 — 청산 의사 결정 후 실행. 5~6월 6건은 절반 패턴이 아니라 원인 미상, 별도 조사.
-- [ ] 오염된 성과 기록 5건(trade id 251·261·263·265·269) 의심 플래그. 나머지 절반이 미청산이라 소급 재구성 불가 — 재작성하지 말 것.
+- [~] 오염된 성과 기록 5건(trade id 251·261·263·265·269) 의심 플래그. 나머지 절반이 미청산이라 소급 재구성 불가 — 재작성하지 말 것.
+  - **코드 완료 (#831, 2026-08-13)**: `trades.data_quality_flag` 컬럼 + `/api/virtual/history` 노출 + 매도 기록 표 ⚠ 표식. 집계 수치는 의도적으로 불변(제외하면 과거 숫자가 조용히 바뀐다).
+  - 남은 것: **프로덕션 DB 에 실제 적용** — `scripts/flag_suspect_trades.py --trade-id 251 --trade-id 261 --trade-id 263 --trade-id 265 --trade-id 269 --note "부분매도 전량기록 의심 (PR #700 이전)" --apply` (dry-run 기본, DB 는 WAL 이라 백업은 `sqlite3` backup API 로).
 - [x] **운영 요약 오탐 수정 완료 (2026-08-06)**: `_build_operational_decision_report`(todo 원문의 `_build_decision_summary` 는 오기)가 `if execution_quality_section:` 으로 **섹션 존재 여부만** 검사해 슬리피지 0%에도 "체결 품질 후보: 별도 경고 확인"이 상시 노출됐다 → 임계 필터링된 `get_last_execution_quality_candidates()` 로 판정하도록 교체. "신규 진입 N건" 은 당일 청산분을 제외해 잔여 관리 대상만 표시(`신규 진입 2건 (당일청산 1건) — 잔여 1건 …` / 전량 청산 시 `관리 대상 없음`). ※ `degradation_section` 은 후보 0건이면 `None` 을 반환하므로 원래부터 오탐이 아니었다 — todo 원문의 "오탐 2건" 중 성과저하 쪽은 사실과 달랐다.
 - [x] **"당일청산 전략인데 마감 후 보유 중" 직접 검출 추가 (2026-08-06)**: 거래 레코드의 `trailing_rule`(`same_day_*`)과 HOLD 상태의 모순을 운영 요약에서 직접 검출한다(`🚨 당일청산 미이행 N건` + 전략/종목/잔량/보유일수, `get_last_same_day_exit_violations()` 노출). 판정을 스케줄러 설정(`force_exit_on_close`)이 아니라 진입 시점에 기록된 규칙으로 하므로 리포트가 전략 구성에 결합되지 않고, 규칙 변경 전후 진입분이 각자 기준으로 판정된다. 전략 로그가 없는 날에도 검출한다(미청산 잔량은 남아 있을 수 있음).
 
@@ -245,6 +247,7 @@
 
 - [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile(`OverseasReconcileService` scaffolding 존재), risk gate/kill switch/canary USD 확장, 실전 소액 canary, canary auto-fire 배선 + `live_enabled=True` 전환 — dry-run 검증 + canary 게이팅.
   - **착수 조건 미충족**: O-3 스윕이 전 조합 음의 기댓값을 보였으므로 현 규칙으로 실주문 전환할 근거가 없다. 장중 paper(#776) 데이터로 교차검증하거나, 유니버스/규칙 자체를 바꿔 엣지를 먼저 입증해야 한다.
+  - **수동 주문 경로는 선반영 (#830, 2026-08-13)**: `POST /api/overseas/order` 가 broker 를 직접 호출해 kill-switch 와 기록을 우회하던 문제를 수정. 수동 전용 `OverseasOrderExecutionService` 인스턴스(`overseas_manual_order_service`, `live_enabled=True`) 경유로 전환했고 **자동 경로는 별도 인스턴스라 `live_enabled=False` 잠금 불변**. 취소는 리스크 축소 행위라 게이트 대상에서 제외. 기록 대상은 EventShadowJournal — `VirtualTradeRepository` 는 원화·국내 대사 원장이라 USD 편입 시 성과·대사가 오염되므로 통화 설계 결정이 선행이다(미국장 성과요약은 여전히 공백).
 
 주요 파일: `brokers/korea_investment/korea_invest_overseas_stock_api.py`, `brokers/broker_api_wrapper.py`, `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/stock_query_service.py`, `view/web/bootstrap/{service_container,strategy_factory}.py`, `config/tr_ids_config.yaml`
 
