@@ -126,6 +126,18 @@ def test_virtual_static_js_exposes_divergence_workflow():
     assert "slippage_pct" in script
 
 
+def test_virtual_static_js_marks_suspect_records():
+    """오염 의심 플래그가 붙은 매도 기록은 수익률 옆에 표식이 보여야 한다.
+
+    소급 재구성이 불가한 오염 기록(PR #700 이전 부분매도 전량기록)은 숫자를 고치지
+    않고 표식만 남긴다 — 표식이 사라지면 오염 수치가 정상 성과로 읽힌다.
+    """
+    script = Path("view/web/static/js/virtual.js").read_text(encoding="utf-8")
+
+    assert "data_quality_flag" in script
+    assert "suspectHtml" in script
+
+
 def test_stock_static_js_does_not_expose_overseas_mode():
     """stock.js는 한국장 전용이며 미국장 조회는 overseas.js가 소유한다."""
     script = Path("view/web/static/js/stock.js").read_text(encoding="utf-8")
