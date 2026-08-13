@@ -89,6 +89,7 @@ from view.web.bootstrap.query_bootstrap import QueryBootstrap
 from view.web.bootstrap.realtime_bootstrap import RealtimeBootstrap
 from view.web.market_mode_utils import is_market_enabled
 from repositories.dart_disclosure_repository import DartDisclosureRepository
+from repositories.overseas_trade_repository import OverseasTradeRepository
 from repositories.youtube_channel_repository import YoutubeChannelRepository
 from repositories.youtube_digest_repository import YoutubeDigestRepository
 from services.youtube_transcript_collector_service import YoutubeTranscriptCollectorService
@@ -868,6 +869,7 @@ class ServiceContainer:
                 ctx.overseas_vbo_dryrun_service = None
                 ctx.overseas_dryrun_task = None
                 ctx.overseas_manual_order_service = None
+                ctx.overseas_trade_repository = None
         except Exception as e:
             ctx.logger.critical(f"[ServiceBootstrap:Universe] 초기화 실패: {e}", exc_info=True)
             raise
@@ -986,6 +988,8 @@ class ServiceContainer:
         `live_enabled=False` 잠금이 그대로 유지된다.
         """
         ctx = self._ctx
+        # 미국 거래는 원화 원장(VirtualTradeRepository)이 아니라 USD 전용 원장에 남긴다.
+        ctx.overseas_trade_repository = OverseasTradeRepository()
         ctx.overseas_manual_order_service = OverseasOrderExecutionService(
             broker=ctx.broker,
             live_enabled=True,

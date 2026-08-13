@@ -131,7 +131,32 @@ async def place_overseas_order(req: OverseasOrderRequest, request: Request):
             reason="manual",
             signal={"source": "manual"},
         )
+    await _record_overseas_trade(ctx, req, resp)
     return _serialize_response(resp)
+
+
+async def _record_overseas_trade(ctx, req: OverseasOrderRequest, resp) -> None:
+    """주문이 접수된 경우에만 USD 원장에 남긴다.
+
+    거부/차단 응답을 기록하면 유령 보유가 생긴다. 해외는 체결 대사 경로가 아직 없어
+    *접수 시점* 기록이며, 미체결 지정가도 보유로 잡힐 수 있다(대사는 후속 작업).
+    """
+    if getattr(resp, "rt_cd", None) != ErrorCode.SUCCESS.value:
+        return
+    ledger = getattr(ctx, "overseas_trade_repository", None)
+    if ledger is None:
+        return
+    try:
+        if req.side == "buy":
+            await ledger.log_buy_async(
+                req.symbol, req.exchange, req.limit_price, req.qty, source="manual",
+            )
+        else:
+            await ledger.log_sell_async(
+                req.symbol, req.limit_price, qty=req.qty, reason="manual",
+            )
+    except Exception as e:  # 원장 실패가 이미 나간 주문의 결과를 가리면 안 된다
+        ctx.logger.warning(f"[overseas_order] USD 원장 기록 실패: {e}")
 
 
 @router.post("/overseas/order/cancel")

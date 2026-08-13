@@ -214,3 +214,45 @@ async def test_ranking_timeout_returns_error_payload(web_client, mock_web_ctx):
 
         assert response.status_code == 200
         assert response.json()["rt_cd"] == "1"
+
+
+async def test_trades_returns_summary_and_rows(web_client, mock_web_ctx):
+    """GET /api/overseas/trades — USD 원장 성과 요약 + 거래 목록"""
+    with patch("view.web.routes.overseas_market._get_ctx", return_value=mock_web_ctx):
+        _enable_overseas(mock_web_ctx)
+        ledger = MagicMock()
+        ledger.get_summary.return_value = {
+            "total_trades": 2, "sold_trades": 1, "win_rate": 100.0, "avg_return": 9.48,
+        }
+        ledger.get_all_trades.return_value = [
+            {"symbol": "AAPL", "status": "SOLD", "return_rate": 9.48},
+        ]
+        mock_web_ctx.overseas_trade_repository = ledger
+
+        response = web_client.get("/api/overseas/trades")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["rt_cd"] == "0"
+        assert body["data"]["summary"]["win_rate"] == 100.0
+        assert body["data"]["trades"][0]["symbol"] == "AAPL"
+
+
+async def test_trades_requires_overseas_enabled(web_client, mock_web_ctx):
+    with patch("view.web.routes.overseas_market._get_ctx", return_value=mock_web_ctx):
+        mock_web_ctx.enabled_market_modes = ["domestic"]
+        mock_web_ctx.overseas_trade_repository = MagicMock()
+
+        response = web_client.get("/api/overseas/trades")
+
+        assert response.status_code == 400
+
+
+async def test_trades_without_ledger_returns_503(web_client, mock_web_ctx):
+    with patch("view.web.routes.overseas_market._get_ctx", return_value=mock_web_ctx):
+        _enable_overseas(mock_web_ctx)
+        mock_web_ctx.overseas_trade_repository = None
+
+        response = web_client.get("/api/overseas/trades")
+
+        assert response.status_code == 503

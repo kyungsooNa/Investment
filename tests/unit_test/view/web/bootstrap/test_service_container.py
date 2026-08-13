@@ -895,6 +895,35 @@ def test_manual_overseas_order_service_wired_with_kill_switch(patched_service_co
     assert kwargs["journal_strategy_name"] == "수동매매_해외"
 
 
+def test_overseas_trade_repository_wired_when_overseas_enabled(patched_service_container_deps):
+    """미국 거래는 원화 원장(VirtualTrade)이 아니라 USD 전용 원장에 기록한다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+
+    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasOrderExecutionService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasTradeRepository", autospec=True) as repo_cls:
+        ServiceContainer(ctx).run()
+
+    assert ctx.overseas_trade_repository is repo_cls.return_value
+
+
+def test_overseas_trade_repository_absent_without_overseas_enabled(patched_service_container_deps):
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.overseas_stock_code_repository = MagicMock()
+    ServiceContainer(ctx).run()
+
+    assert ctx.overseas_trade_repository is None
+
+
 def test_manual_overseas_order_service_absent_without_overseas_enabled(patched_service_container_deps):
     """overseas_us 가 enabled 가 아니면 수동 주문 게이팅 서비스도 없다."""
     from view.web.bootstrap.service_container import ServiceContainer
