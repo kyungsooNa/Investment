@@ -485,6 +485,7 @@ async def test_refresh_price_from_rest_caches_snapshot(mock_deps):
         rate="1.45",
         sign="2",
         volume="12345",
+        evaluate_favorite_alert=False,
     )
     ctx.streaming_event_logger.log_missing_reason.assert_not_called()
 

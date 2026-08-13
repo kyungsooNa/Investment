@@ -682,6 +682,7 @@ class WebAppContext:
             rate=_get("prdy_ctrt", "0.00"),
             sign=_get("prdy_vrss_sign", "3"),
             volume=_get("acml_vol", "0"),
+            evaluate_favorite_alert=False,
         )
         if self.favorite_price_alert_service:
             await self.favorite_price_alert_service.handle_price_tick(

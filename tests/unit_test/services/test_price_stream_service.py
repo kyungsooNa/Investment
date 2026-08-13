@@ -138,6 +138,36 @@ def test_cache_price_snapshot_updates_cache_without_tick_tracking(price_stream_s
     mock_stock_repo.update_realtime_data.assert_called_once_with("005930", 71000.0, 3210, rate="0.71")
 
 
+@pytest.mark.asyncio
+async def test_cache_price_snapshot_schedules_favorite_price_alert(mock_stock_repo, mock_logger):
+    """REST 보정 스냅샷도 관심종목 임계 알림 평가로 전달한다."""
+    alert_service = MagicMock()
+    alert_service.handle_price_tick = AsyncMock()
+    service = PriceStreamService(
+        stock_repo=mock_stock_repo,
+        logger=mock_logger,
+        favorite_price_alert_service=alert_service,
+    )
+
+    service.cache_price_snapshot(
+        "080220",
+        price="91300",
+        change="4300",
+        rate="5.02",
+        sign="2",
+        volume="12345",
+    )
+
+    alert_service.handle_price_tick.assert_called_once_with(
+        "080220",
+        price="91300",
+        rate="5.02",
+        sign="2",
+        is_upper_limit=False,
+    )
+    await asyncio.sleep(0)
+
+
 def test_on_price_tick_stores_liquidity_fields(price_stream_service):
     """체결틱의 누적거래량/누적거래대금이 snapshot 에 보관된다."""
     data = {
