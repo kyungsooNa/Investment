@@ -153,10 +153,18 @@ class MarketCalendarService:
         
         return self._business_days_cache.get(date_str, False)
 
-    async def is_market_open_now(self) -> bool:
-        """현재 시점이 휴일이 아니며, 장 운영 시간(09:00~15:40) 이내인지 확인합니다."""
+    async def is_market_open_now(self, *, include_nxt: bool = False) -> bool:
+        """현재 시점이 휴일이 아니며, 장 운영 시간 이내인지 확인합니다.
+
+        include_nxt=True 이면 실시간 구독용으로 NXT 확장 시간(08:00~20:00)을 포함한다.
+        """
         # 장 운영 시간이 아니면 달력(API/캐시)을 확인할 필요도 없이 바로 False 반환 (성능 최적화)
-        if not self._market_clock.is_market_operating_hours():
+        is_operating_hours = self._market_clock.is_market_operating_hours()
+        if not is_operating_hours and include_nxt:
+            nxt_checker = getattr(self._market_clock, "is_nxt_operating_hours", None)
+            if callable(nxt_checker):
+                is_operating_hours = bool(nxt_checker())
+        if not is_operating_hours:
             return False
 
         if await self.is_business_day():
