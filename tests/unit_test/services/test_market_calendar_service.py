@@ -274,6 +274,28 @@ async def test_is_market_open_now_keeps_holiday_closed_when_latest_trading_date_
     assert await manager.is_market_open_now() is False
     manager.get_latest_trading_date.assert_awaited_once()
 
+
+@pytest.mark.asyncio
+async def test_is_market_open_now_includes_nxt_hours_for_realtime_streaming(manager, mock_deps):
+    """실시간 구독은 KRX 마감 후 NXT 애프터마켓 시간도 장중으로 처리할 수 있다."""
+    tm, _ = mock_deps
+    tm.is_market_operating_hours = MagicMock(return_value=False)
+    tm.is_nxt_operating_hours = MagicMock(return_value=True)
+    manager.is_business_day = AsyncMock(return_value=True)
+
+    assert await manager.is_market_open_now(include_nxt=True) is True
+    manager.is_business_day.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_is_market_open_now_default_excludes_nxt_hours(manager, mock_deps):
+    """기본 장중 판정은 기존 KRX 시간 의미를 유지한다."""
+    tm, _ = mock_deps
+    tm.is_market_operating_hours = MagicMock(return_value=False)
+    tm.is_nxt_operating_hours = MagicMock(return_value=True)
+
+    assert await manager.is_market_open_now() is False
+
 # ── get_next_open_time Tests ──────────────────────────────────────────
 
 def _is_weekday_side_effect(date_str):

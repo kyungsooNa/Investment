@@ -379,7 +379,7 @@ class SubscriptionPolicy:
     async def _ensure_websocket_connected_for_subscribe(self, codes: Set[str]) -> bool:
         if not codes:
             return True
-        if self._market_calendar and not await self._market_calendar.is_market_open_now():
+        if self._market_calendar and not await self._is_realtime_market_open_now():
             return True
 
         connector = getattr(self._streaming, "connect_websocket", None)
@@ -407,7 +407,7 @@ class SubscriptionPolicy:
             return False
 
     async def _do_subscribe(self, code: str, stream_type: StreamingType) -> None:
-        if self._market_calendar and not await self._market_calendar.is_market_open_now():
+        if self._market_calendar and not await self._is_realtime_market_open_now():
             self._streaming_logger.log_subscribe_pending(code=code, message="SubscriptionPolicy: 장 외 시간 — 구독 보류")
             return
         try:
@@ -494,6 +494,13 @@ class SubscriptionPolicy:
             len(self._active_codes_price)
             + len(self._active_codes_pt)
         )
+
+    async def _is_realtime_market_open_now(self) -> bool:
+        """실시간 스트리밍 구독은 NXT 확장 거래시간을 포함해 장중 여부를 판단한다."""
+        try:
+            return await self._market_calendar.is_market_open_now(include_nxt=True)
+        except TypeError:
+            return await self._market_calendar.is_market_open_now()
 
 # Backward-compatibility alias
 PriceSubscriptionService = SubscriptionPolicy

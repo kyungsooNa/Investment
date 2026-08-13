@@ -83,6 +83,7 @@ class KoreaInvestWebSocketAPI:
         self._rt_tr_cached = False
         self._rt_tr_realtime_price = None
         self._rt_tr_unified_realtime_price = None
+        self._rt_tr_nxt_realtime_price = None
         self._rt_tr_realtime_quote = None
         self._rt_program_trading_tr_ids = set()
         self._rt_market_status_tr_ids = set()
@@ -304,6 +305,9 @@ class KoreaInvestWebSocketAPI:
                 message_type = 'realtime_price'
             elif tr_id == self._rt_tr_unified_realtime_price:  # H0UNCNT0 (KRX+NXT 통합 체결)
                 parsed_data = self._parse_stock_contract_data(data_body)  # H0STCNT0와 동일 포맷
+                message_type = 'realtime_price'
+            elif tr_id == self._rt_tr_nxt_realtime_price:  # H0NXCNT0 (NXT 주식 체결)
+                parsed_data = self._parse_stock_contract_data(data_body)
                 message_type = 'realtime_price'
             elif tr_id == self._rt_tr_realtime_quote:  # H0STASP0 (주식 호가)
                 parsed_data = self._parse_stock_quote_data(data_body)
@@ -767,6 +771,7 @@ class KoreaInvestWebSocketAPI:
         ws_cfg = self._env.active_config['tr_ids']['websocket']
         self._rt_tr_realtime_price = ws_cfg['realtime_price']
         self._rt_tr_unified_realtime_price = ws_cfg.get('unified_realtime_price', 'H0UNCNT0')
+        self._rt_tr_nxt_realtime_price = ws_cfg.get('nxt_realtime_price', 'H0NXCNT0')
         self._rt_tr_realtime_quote = ws_cfg['realtime_quote']
         self._rt_program_trading_tr_ids = self._get_program_trading_tr_ids()
         self._rt_market_status_tr_ids = self._get_market_status_tr_ids()

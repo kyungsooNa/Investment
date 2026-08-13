@@ -63,6 +63,18 @@ class MarketClock:
         # [최적화 2] 무거운 datetime 조합과 타임존 연산 없이 순수 시간(time) 객체만으로 비교
         return self._open_time_obj <= now.time() <= self._close_time_obj
 
+    def is_nxt_operating_hours(self, now=None) -> bool:
+        """
+        NXT 포함 실시간 스트리밍 가능 시간(08:00~20:00) 여부를 확인합니다.
+        영업일 여부는 MarketCalendarService에서 판단합니다.
+        """
+        now = now or self.get_current_kst_time()
+
+        if now.weekday() >= 5:
+            return False
+
+        return dt_time(8, 0) <= now.time() <= dt_time(20, 0)
+
     def get_market_open_time(self, target_dt: Optional[datetime] = None) -> datetime:
         """오늘 날짜 또는 지정된 날짜 기준 시장 개장 시간(09:00) 반환"""
         now = target_dt or self.get_current_kst_time()

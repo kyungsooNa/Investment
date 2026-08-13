@@ -40,6 +40,7 @@ def websocket_api_instance():
             "websocket": {
                 "realtime_price": "H0STCNT0",
                 "realtime_quote": "H0STASP0",
+                "nxt_realtime_price": "H0NXCNT0",
                 "realtime_futs_optn_contract": "H0IFCNT0",
                 "unified_market_status": "H0UNMKO0",
                 "order_notice_real": "H0STCNI0",
@@ -472,6 +473,7 @@ def test_handle_message_caches_realtime_tr_ids(websocket_api_instance):
     assert api._rt_tr_realtime_price == "H0STCNT0"
     assert api._rt_tr_realtime_quote == "H0STASP0"
     assert api._rt_tr_unified_realtime_price == "H0UNCNT0"
+    assert api._rt_tr_nxt_realtime_price == "H0NXCNT0"
     assert "H0STPGM0" in api._rt_program_trading_tr_ids
 
 
@@ -2452,6 +2454,24 @@ def test_handle_websocket_message_unified_realtime_price(websocket_api_instance)
     assert result["data"]["유가증권단축종목코드"] == "0003"
 
 
+def test_handle_websocket_message_nxt_realtime_price(websocket_api_instance):
+    api = websocket_api_instance
+    api.on_realtime_message_callback = MagicMock()
+    data_parts = [''] * 60
+    data_parts[0] = '000660'
+    data_parts[2] = '250000'
+    message = f"0|H0NXCNT0|dummy|{'^'.join(data_parts)}"
+
+    api._handle_websocket_message(message)
+
+    api.on_realtime_message_callback.assert_called_once()
+    result = api.on_realtime_message_callback.call_args[0][0]
+    assert result["type"] == "realtime_price"
+    assert result["tr_id"] == "H0NXCNT0"
+    assert result["data"]["유가증권단축종목코드"] == "000660"
+    assert result["data"]["주식현재가"] == "250000"
+
+
 def test_handle_websocket_message_program_trading_success(websocket_api_instance):
     api = websocket_api_instance
     api.on_realtime_message_callback = MagicMock()
@@ -2704,7 +2724,7 @@ def test_tr_ids_config_yaml_websocket_required_keys():
         config = yaml.safe_load(f)
 
     websocket_cfg = config['tr_ids']['websocket']
-    required_keys = ['realtime_price', 'realtime_quote', 'realtime_program_trading']
+    required_keys = ['realtime_price', 'realtime_quote', 'nxt_realtime_price', 'realtime_program_trading']
     for key in required_keys:
         assert key in websocket_cfg, (
             f"tr_ids_config.yaml의 tr_ids.websocket.{key} 키가 누락되었습니다. "

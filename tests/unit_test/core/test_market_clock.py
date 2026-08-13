@@ -180,6 +180,21 @@ def test_is_market_open_after_close(market_clock):
     assert not market_clock.is_market_operating_hours(now=weekday_after_close)
 
 
+def test_is_nxt_operating_hours_after_krx_close(market_clock):
+    """NXT 애프터마켓 시간은 실시간 스트리밍 가능 시간으로 본다."""
+    weekday_after_krx_close = market_clock.market_timezone.localize(
+        dt.datetime(2026, 8, 12, 16, 53, 0)
+    )
+    assert market_clock.is_nxt_operating_hours(now=weekday_after_krx_close) is True
+
+
+def test_is_nxt_operating_hours_after_nxt_close(market_clock):
+    weekday_after_nxt_close = market_clock.market_timezone.localize(
+        dt.datetime(2026, 8, 12, 20, 1, 0)
+    )
+    assert market_clock.is_nxt_operating_hours(now=weekday_after_nxt_close) is False
+
+
 def test_sleep_positive_seconds(market_clock, mock_logger):
     """
     sleep 메서드 커버: seconds > 0인 경우 (라인 99-101)
