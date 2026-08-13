@@ -278,6 +278,15 @@ class PriceStreamService:
                 return True
         return False
 
+    @staticmethod
+    def _is_upper_limit_snapshot(rate, sign) -> bool:
+        if str(sign or "").strip() == "1":
+            return True
+        try:
+            return float(str(rate or "0").replace(",", "")) >= 29.5
+        except (TypeError, ValueError):
+            return False
+
     def cache_conclusion_snapshot(self, code: str, execution_strength_pct: float) -> None:
         """체결강도 REST 응답을 캐시에 저장한다."""
         if not code:
@@ -315,6 +324,7 @@ class PriceStreamService:
         high: Optional[str] = None,
         low: Optional[str] = None,
         open_price: Optional[str] = None,
+        evaluate_favorite_alert: bool = True,
     ) -> None:
         """REST 스냅샷 현재가를 최신가 캐시에 반영한다."""
         if not code or not price:
@@ -361,6 +371,23 @@ class PriceStreamService:
             self._stock_repo.update_realtime_data(code, float(price), vol_int, rate=rate)
         except Exception as e:
             self._logger.warning(f"StockRepository 현재가 스냅샷 캐시 갱신 실패: {e}")
+
+        if evaluate_favorite_alert and self._favorite_price_alert_service is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    self._favorite_price_alert_service.handle_price_tick(
+                        code,
+                        price=price,
+                        rate=rate,
+                        sign=sign,
+                        is_upper_limit=self._is_upper_limit_snapshot(rate, sign),
+                    )
+                )
+            except RuntimeError:
+                pass
+            except Exception as e:
+                self._logger.warning(f"관심종목 REST 가격 알림 평가 실패: {e}")
 
     def get_liquidity_snapshot(self, code: str) -> Optional[dict]:
         """체결틱 스냅샷에서 거래량/거래대금/수신시각을 반환한다.

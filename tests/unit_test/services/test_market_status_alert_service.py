@@ -113,11 +113,27 @@ async def test_market_status_alert_service_reports_buy_sidecar_watch_near_five_p
     args = operator_alert.report.await_args.args
     kwargs = operator_alert.report.await_args.kwargs
     assert args[0] == AlertSource.MARKET_STATUS
-    assert args[1] == "market_index:buy_sidecar_watch:0001"
+    assert args[1].startswith("market_index:buy_sidecar_watch:0001:")
     assert args[2] == "warning"
     assert args[3] == "코스피 매수 사이드카 가능 구간"
     assert kwargs["metadata"]["event_type"] == "buy_sidecar_watch"
     assert kwargs["metadata"]["force_external"] is True
+
+
+@pytest.mark.asyncio
+async def test_market_status_alert_service_reports_buy_sidecar_watch_once_per_day():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        logger=MagicMock(),
+    )
+
+    await service.on_index_change("0001", "코스피", 4.62)
+    await service.on_index_change("0001", "코스피", 4.40)
+    await service.on_index_change("0001", "코스피", 4.61)
+
+    assert operator_alert.report.await_count == 1
+    assert operator_alert.resolve.await_count == 1
 
 
 @pytest.mark.asyncio

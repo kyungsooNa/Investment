@@ -35,6 +35,7 @@ class MarketStatusAlertService:
         self._active_futures_keys_by_code: dict[str, set[str]] = {}
         self._move_5_recovery_samples_by_code: dict[str, int] = {}
         self._futures_sidecar_started_sec_by_code: dict[str, int] = {}
+        self._buy_sidecar_watch_reported_keys_by_date: dict[str, set[str]] = {}
 
     async def on_market_status(self, data: dict[str, Any]) -> None:
         """StreamingService handler entrypoint."""
@@ -102,16 +103,25 @@ class MarketStatusAlertService:
             key for key in active_keys if key.startswith("market_index:buy_sidecar_watch:")
         }
 
-        buy_sidecar_watch_key = f"market_index:buy_sidecar_watch:{index_code}"
+        trading_date = datetime.now().strftime("%Y%m%d")
+        self._reset_buy_sidecar_watch_history(trading_date)
+        buy_sidecar_watch_key = f"market_index:buy_sidecar_watch:{index_code}:{trading_date}"
         if change_rate >= self._BUY_SIDECAR_WATCH_THRESHOLD_PCT:
-            expected_keys.add(buy_sidecar_watch_key)
-            await self._report_index_alert(
-                key=buy_sidecar_watch_key, severity="warning",
-                title=f"{index_name} 매수 사이드카 가능 구간",
-                index_code=index_code, index_name=index_name, change_rate=change_rate,
-                threshold_pct=self._BUY_SIDECAR_WATCH_THRESHOLD_PCT,
-                event_type="buy_sidecar_watch",
+            reported_keys = self._buy_sidecar_watch_reported_keys_by_date.setdefault(
+                trading_date, set()
             )
+            if buy_sidecar_watch_key in active_keys:
+                expected_keys.add(buy_sidecar_watch_key)
+            elif buy_sidecar_watch_key not in reported_keys:
+                expected_keys.add(buy_sidecar_watch_key)
+                reported_keys.add(buy_sidecar_watch_key)
+                await self._report_index_alert(
+                    key=buy_sidecar_watch_key, severity="warning",
+                    title=f"{index_name} 매수 사이드카 가능 구간",
+                    index_code=index_code, index_name=index_name, change_rate=change_rate,
+                    threshold_pct=self._BUY_SIDECAR_WATCH_THRESHOLD_PCT,
+                    event_type="buy_sidecar_watch",
+                )
         elif active_buy_sidecar_watch_keys and change_rate > self._BUY_SIDECAR_WATCH_RESOLVE_PCT:
             expected_keys.update(active_buy_sidecar_watch_keys)
 
@@ -317,3 +327,12 @@ class MarketStatusAlertService:
                 dedup_key,
                 "지수선물 등락률 정상화",
             )
+
+    def _reset_buy_sidecar_watch_history(self, trading_date: str) -> None:
+        stale_dates = [
+            reported_date
+            for reported_date in self._buy_sidecar_watch_reported_keys_by_date
+            if reported_date != trading_date
+        ]
+        for reported_date in stale_dates:
+            self._buy_sidecar_watch_reported_keys_by_date.pop(reported_date, None)
