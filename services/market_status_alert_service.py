@@ -106,7 +106,7 @@ class MarketStatusAlertService:
         if change_rate >= self._BUY_SIDECAR_WATCH_THRESHOLD_PCT:
             expected_keys.add(buy_sidecar_watch_key)
             await self._report_index_alert(
-                key=buy_sidecar_watch_key, severity="error",
+                key=buy_sidecar_watch_key, severity="warning",
                 title=f"{index_name} 매수 사이드카 가능 구간",
                 index_code=index_code, index_name=index_name, change_rate=change_rate,
                 threshold_pct=self._BUY_SIDECAR_WATCH_THRESHOLD_PCT,

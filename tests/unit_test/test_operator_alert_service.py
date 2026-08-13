@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from common.operator_alert_types import AlertSource, AlertTransition
+from services.notification_service import NotificationLevel
 from services.operator_alert_service import OperatorAlertService
 
 
@@ -138,6 +139,17 @@ async def test_resolve_emits_resolved(svc, notification_service):
     call_kwargs = notification_service.emit.call_args
     meta = call_kwargs.args[4] if len(call_kwargs.args) >= 5 else call_kwargs.kwargs.get("metadata", {})
     assert meta.get("transition") == AlertTransition.RESOLVED.value
+
+
+@pytest.mark.asyncio
+async def test_resolve_emits_info_level(svc, notification_service):
+    """해제 알림은 원래 severity와 무관하게 정상화 정보로 보낸다."""
+    await svc.report(AlertSource.KILL_SWITCH, "kill_switch:global", "critical", "T", "M")
+    notification_service.emit.reset_mock()
+
+    await svc.resolve(AlertSource.KILL_SWITCH, "kill_switch:global", "운영자 해제")
+
+    assert notification_service.emit.await_args.args[1] == NotificationLevel.INFO
 
 
 @pytest.mark.asyncio

@@ -180,7 +180,10 @@ class OperatorAlertService:
 
     async def _emit(self, alert: OperatorAlert) -> None:
         """NotificationService 로 이벤트 전파. metadata에 transition/dedup_key/source 주입."""
-        level = _LEVEL_MAP.get(alert.severity, NotificationLevel.WARNING)
+        if alert.transition == AlertTransition.RESOLVED:
+            level = NotificationLevel.INFO
+        else:
+            level = _LEVEL_MAP.get(alert.severity, NotificationLevel.WARNING)
         meta = {
             **alert.metadata,
             "transition": alert.transition.value,

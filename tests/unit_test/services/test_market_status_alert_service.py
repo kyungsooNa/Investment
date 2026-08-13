@@ -114,7 +114,7 @@ async def test_market_status_alert_service_reports_buy_sidecar_watch_near_five_p
     kwargs = operator_alert.report.await_args.kwargs
     assert args[0] == AlertSource.MARKET_STATUS
     assert args[1] == "market_index:buy_sidecar_watch:0001"
-    assert args[2] == "error"
+    assert args[2] == "warning"
     assert args[3] == "코스피 매수 사이드카 가능 구간"
     assert kwargs["metadata"]["event_type"] == "buy_sidecar_watch"
 
