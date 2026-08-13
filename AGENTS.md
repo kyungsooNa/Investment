@@ -95,6 +95,7 @@ gh pr checks <PR번호> --watch
 - 머지: `gh pr merge <PR번호> --squash --delete-branch` (저장소가 squash를 허용하지 않으면 허용된 방식으로 대체)
 - 로컬 정리: `git checkout main` → `git pull origin main` → `git branch -d <작업브랜치>`
   - 원격 브랜치가 남아 있으면 `git push origin --delete <작업브랜치>`로 제거한다.
+  - 로컬에 남은 원격 추적 브랜치도 반드시 정리한다: `git fetch --prune origin` 후 `git branch -a --list "*<작업브랜치>*"`로 `remotes/origin/<작업브랜치>`가 사라졌는지 확인한다. 남아 있으면 `git branch -dr origin/<작업브랜치>`로 제거한다.
 - 정리가 끝나면 **프로세스를 처음부터 재수행한다**: 사용자가 중단을 요청하지 않았고 다음 작업이 명확하면(`todo_list.md` 등), 최신 `main`에서 새 작업 브랜치를 만들어 TDD → 테스트 → 커밋 → PR → CI → 머지 흐름을 다시 돈다. 다음 작업이 불명확하면 진행하지 않고 완료 상태와 후보를 보고한다.
 
 **3) CI 실패 시 — 수정하고 재검증한다**
