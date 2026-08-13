@@ -145,7 +145,7 @@ async def test_send_disclosure_digest_includes_one_line_summary_when_available()
     rows = [
         _stored(
             "풍문또는보도에대한해명",
-            10,
+            30,
             summary="언론의 특정 공급계약 추진 보도는 사실이 아니라고 해명했습니다.",
         )
     ]
@@ -155,6 +155,29 @@ async def test_send_disclosure_digest_includes_one_line_summary_when_available()
     assert sent is True
     message = reporter._send_message.await_args.args[0]
     assert "• 내용: 언론의 특정 공급계약 추진 보도는 사실이 아니라고 해명했습니다." in message
+
+
+async def test_send_disclosure_digest_under_30_points_uses_single_content_line():
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    rows = [
+        _stored(
+            "증권발행실적보고서",
+            10,
+            summary="미래에셋증권은 제4047회 ELB를 10.8억원 규모로 발행 완료했고 제4048회 ELB는 청약 미달로 취소되었습니다.",
+        )
+    ]
+
+    await reporter.send_disclosure_digest(rows, "20260813")
+
+    message = reporter._send_message.await_args.args[0]
+    assert (
+        "• 증권발행실적보고서: 미래에셋증권은 제4047회 ELB를 10.8억원 규모로 발행 완료했고 제4048회 ELB는 청약 미달로 취소되었습니다."
+        in message
+    )
+    assert "• 내용:" not in message
+    assert "• 중요도:" not in message
+    assert ">원문</a>" not in message
 
 
 async def test_send_disclosure_digest_uses_group_summary_and_escapes_html():
