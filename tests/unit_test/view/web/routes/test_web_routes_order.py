@@ -416,6 +416,109 @@ async def test_place_overseas_order_rejects_disabled_exchange(web_client, mock_w
     svc.place_entry.assert_not_awaited()
 
 
+def _install_overseas_ledger(ctx):
+    """미국장 전용 USD 원장 mock 을 심고 반환한다."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    ledger = MagicMock()
+    ledger.log_buy_async = AsyncMock()
+    ledger.log_sell_async = AsyncMock()
+    ctx.overseas_trade_repository = ledger
+    return ledger
+
+
+@pytest.mark.asyncio
+async def test_successful_overseas_buy_is_recorded_in_ledger(web_client, mock_web_ctx):
+    """미국 주문 체결 기록이 없으면 성과요약이 공백으로 남는다 — 성공 시 원장에 남긴다."""
+    mock_web_ctx.market_mode = "overseas_us"
+    _install_overseas_manual_service(mock_web_ctx)
+    ledger = _install_overseas_ledger(mock_web_ctx)
+
+    payload = {
+        "symbol": "AAPL", "exchange": "NASD", "side": "buy",
+        "qty": 3, "limit_price": 190.25, "currency": "USD",
+    }
+    response = web_client.post("/api/overseas/order", json=payload)
+
+    assert response.status_code == 200
+    ledger.log_buy_async.assert_awaited_once_with(
+        "AAPL", OverseasExchange.NASD, 190.25, 3, source="manual",
+    )
+
+
+@pytest.mark.asyncio
+async def test_successful_overseas_sell_is_recorded_in_ledger(web_client, mock_web_ctx):
+    mock_web_ctx.market_mode = "overseas_us"
+    _install_overseas_manual_service(mock_web_ctx)
+    ledger = _install_overseas_ledger(mock_web_ctx)
+
+    payload = {
+        "symbol": "AAPL", "exchange": "NASD", "side": "sell",
+        "qty": 2, "limit_price": 195.5, "currency": "USD",
+    }
+    response = web_client.post("/api/overseas/order", json=payload)
+
+    assert response.status_code == 200
+    ledger.log_sell_async.assert_awaited_once_with(
+        "AAPL", 195.5, qty=2, reason="manual",
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_overseas_order_is_not_recorded(web_client, mock_web_ctx):
+    """주문이 거부되면 포지션이 없다 — 기록하면 유령 보유가 생긴다."""
+    mock_web_ctx.market_mode = "overseas_us"
+    _install_overseas_manual_service(
+        mock_web_ctx,
+        resp=ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="주문 거부", data=None),
+    )
+    ledger = _install_overseas_ledger(mock_web_ctx)
+
+    payload = {
+        "symbol": "AAPL", "exchange": "NASD", "side": "buy",
+        "qty": 3, "limit_price": 190.25, "currency": "USD",
+    }
+    web_client.post("/api/overseas/order", json=payload)
+
+    ledger.log_buy_async.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_blocked_order_is_not_recorded(web_client, mock_web_ctx):
+    mock_web_ctx.market_mode = "overseas_us"
+    _install_overseas_manual_service(
+        mock_web_ctx,
+        resp=ResCommonResponse(rt_cd=ErrorCode.KILL_SWITCH_BLOCKED.value, msg1="차단", data=None),
+    )
+    ledger = _install_overseas_ledger(mock_web_ctx)
+
+    payload = {
+        "symbol": "AAPL", "exchange": "NASD", "side": "buy",
+        "qty": 3, "limit_price": 190.25, "currency": "USD",
+    }
+    web_client.post("/api/overseas/order", json=payload)
+
+    ledger.log_buy_async.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ledger_failure_does_not_mask_order_result(web_client, mock_web_ctx):
+    """원장 기록 실패가 주문 성공 응답을 가리면 안 된다(주문은 이미 나갔다)."""
+    mock_web_ctx.market_mode = "overseas_us"
+    _install_overseas_manual_service(mock_web_ctx)
+    ledger = _install_overseas_ledger(mock_web_ctx)
+    ledger.log_buy_async.side_effect = RuntimeError("disk full")
+
+    payload = {
+        "symbol": "AAPL", "exchange": "NASD", "side": "buy",
+        "qty": 3, "limit_price": 190.25, "currency": "USD",
+    }
+    response = web_client.post("/api/overseas/order", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["ord_no"] == "A12345"
+
+
 @pytest.mark.asyncio
 async def test_place_overseas_order_sell_uses_place_exit(web_client, mock_web_ctx):
     """매도는 청산 경로(place_exit)로 위임된다."""

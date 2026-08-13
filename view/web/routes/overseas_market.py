@@ -39,6 +39,29 @@ async def get_overseas_top_market_cap(limit: int = Query(30, ge=1, le=500)):
     return {"rt_cd": "0", "msg1": "미국 시가총액 조회 성공", "data": data}
 
 
+@router.get("/overseas/trades")
+async def get_overseas_trades():
+    """미국장 USD 원장의 성과 요약 + 거래 목록.
+
+    국내 `/api/virtual/*` 와 원장이 분리돼 있다 — 통화가 달라 같은 표에 섞을 수 없다.
+    """
+    ctx = _get_ctx()
+    if not is_market_enabled(ctx, "overseas_us"):
+        raise HTTPException(
+            status_code=400,
+            detail="미국주식 거래 기록은 overseas_us가 enabled된 run에서만 사용할 수 있습니다.",
+        )
+    ledger = getattr(ctx, "overseas_trade_repository", None)
+    if ledger is None:
+        raise HTTPException(status_code=503, detail="미국주식 거래 원장이 준비되지 않았습니다.")
+
+    return {
+        "rt_cd": "0",
+        "msg1": "미국주식 거래 기록 조회 성공",
+        "data": {"summary": ledger.get_summary(), "trades": ledger.get_all_trades()},
+    }
+
+
 @router.get("/overseas/ranking/{category}")
 async def get_overseas_ranking(category: str, limit: int = Query(30, ge=1, le=500)):
     """S&P 500 유니버스 기준 미국 랭킹 (rise/fall/volume/trading_value)."""
