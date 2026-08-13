@@ -247,7 +247,9 @@
 
 - [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile(`OverseasReconcileService` scaffolding 존재), risk gate/kill switch/canary USD 확장, 실전 소액 canary, canary auto-fire 배선 + `live_enabled=True` 전환 — dry-run 검증 + canary 게이팅.
   - **착수 조건 미충족**: O-3 스윕이 전 조합 음의 기댓값을 보였으므로 현 규칙으로 실주문 전환할 근거가 없다. 장중 paper(#776) 데이터로 교차검증하거나, 유니버스/규칙 자체를 바꿔 엣지를 먼저 입증해야 한다.
-  - **수동 주문 경로는 선반영 (#830, 2026-08-13)**: `POST /api/overseas/order` 가 broker 를 직접 호출해 kill-switch 와 기록을 우회하던 문제를 수정. 수동 전용 `OverseasOrderExecutionService` 인스턴스(`overseas_manual_order_service`, `live_enabled=True`) 경유로 전환했고 **자동 경로는 별도 인스턴스라 `live_enabled=False` 잠금 불변**. 취소는 리스크 축소 행위라 게이트 대상에서 제외. 기록 대상은 EventShadowJournal — `VirtualTradeRepository` 는 원화·국내 대사 원장이라 USD 편입 시 성과·대사가 오염되므로 통화 설계 결정이 선행이다(미국장 성과요약은 여전히 공백).
+  - **수동 주문 경로는 선반영 (#830, 2026-08-13)**: `POST /api/overseas/order` 가 broker 를 직접 호출해 kill-switch 와 기록을 우회하던 문제를 수정. 수동 전용 `OverseasOrderExecutionService` 인스턴스(`overseas_manual_order_service`, `live_enabled=True`) 경유로 전환했고 **자동 경로는 별도 인스턴스라 `live_enabled=False` 잠금 불변**. 취소는 리스크 축소 행위라 게이트 대상에서 제외. 주문 저널은 EventShadowJournal(`journal_strategy_name="수동매매_해외"`).
+  - **USD 전용 원장 Phase 1 (#833, 2026-08-13)**: 통화 설계는 **별도 원장**으로 확정(사용자 결정) — `repositories/overseas_trade_repository.py` + `GET /api/overseas/trades`. `VirtualTradeRepository` 는 원화·국내 대사 원장이라 USD 편입 시 성과·대사가 오염되므로 영구 분리한다. 부분매도 lot 분할과 미국 비용 모델(0.25%/side)을 처음부터 적용했다.
+    - 남은 것: **기록 시점이 체결이 아니라 주문 접수** — 미체결 지정가도 HOLD 로 잡힌다. `get_overseas_order_history` 기반 체결 대사 + UI 성과 요약이 Phase 2.
 
 주요 파일: `brokers/korea_investment/korea_invest_overseas_stock_api.py`, `brokers/broker_api_wrapper.py`, `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/stock_query_service.py`, `view/web/bootstrap/{service_container,strategy_factory}.py`, `config/tr_ids_config.yaml`
 
