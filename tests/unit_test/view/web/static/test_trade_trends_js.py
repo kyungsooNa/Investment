@@ -31,6 +31,9 @@ process.stdout.write(JSON.stringify(result));
         check=True,
         capture_output=True,
         text=True,
+        # node 는 항상 UTF-8 로 쓴다. 지정하지 않으면 Windows 로케일(cp949)로 디코딩돼
+        # 한글이 담긴 결과에서 reader 스레드가 죽고 stdout 이 None 이 된다.
+        encoding="utf-8",
         cwd=ROOT,
     )
     return json.loads(result.stdout)
