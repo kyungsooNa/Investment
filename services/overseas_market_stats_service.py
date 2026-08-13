@@ -31,7 +31,10 @@ class OverseasMarketStatsService:
         universe_factory,
         provider,
         logger=None,
-        ttl_sec: float = 300.0,
+        # 히트맵이 60초마다 되묻는다 — TTL 이 그 주기 이상이면 폴링이 캐시만 되받아
+        # 화면이 실제로는 최대 2주기만큼 늦어진다. 갱신은 요청이 올 때만 일어나므로
+        # 짧게 잡아도 외부 호출은 '화면을 열어둔 시간'에만 발생한다.
+        ttl_sec: float = 45.0,
         clock=time.monotonic,
         wall_clock=time.time,
     ):
