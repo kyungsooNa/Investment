@@ -19,6 +19,11 @@ canary/kill-switch/reconcile 다.
 
 스케줄러/factory 배선(자동 발사)은 Phase 5 소관 — 본 서비스는 테스트된 게이팅
 컴포넌트로만 제공된다.
+
+웹 수동 주문 라우트(`POST /api/overseas/order`)도 kill-switch/저널 게이팅을 얻기 위해
+이 서비스를 재사용한다(`live_enabled=True` 전용 인스턴스). 자동 전략 경로는 별도
+인스턴스라 `live_enabled=False` 잠금이 그대로 유지된다. 저널 기록이 섞이지 않도록
+`journal_strategy_name` 으로 경로를 구분한다.
 """
 from __future__ import annotations
 
@@ -41,6 +46,7 @@ class OverseasOrderExecutionService:
         default_exchange: OverseasExchange = OverseasExchange.NASD,
         journal=None,
         kill_switch=None,
+        journal_strategy_name: str = "LarryWilliamsVBO_overseas",
         logger: Optional[logging.Logger] = None,
     ) -> None:
         # broker 는 live_enabled=True 일 때만 필요. paper 모드에선 None 허용(구조적 잠금).
@@ -48,6 +54,8 @@ class OverseasOrderExecutionService:
         self._live_enabled = bool(live_enabled)
         self._default_exchange = default_exchange
         self._journal = journal
+        # 저널 상 경로 구분(자동 VBO / 수동 주문). 소비 측이 섞어 읽지 않도록 한다.
+        self._journal_strategy_name = journal_strategy_name
         # live 실주문 직전 차단 게이트(check_orders_allowed). paper 모드는 실주문이 없어 미적용.
         self._kill_switch = kill_switch
         self._logger = logger or logging.getLogger(__name__)
@@ -175,7 +183,7 @@ class OverseasOrderExecutionService:
             order["signal"] = signal
         try:
             self._journal.record(
-                strategy_name="LarryWilliamsVBO_overseas",
+                strategy_name=self._journal_strategy_name,
                 code=symbol,
                 signal=order,
                 snapshot={"exchange": ex.value},

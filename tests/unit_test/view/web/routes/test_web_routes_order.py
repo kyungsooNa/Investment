@@ -270,13 +270,27 @@ async def test_place_order_market_price_lookup_exception(web_client, mock_web_ct
     mock_web_ctx.virtual_trade_service.log_buy.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_place_overseas_limit_order_calls_broker(web_client, mock_web_ctx):
-    """POST /api/overseas/order는 해외 mode에서 수동 지정가 주문만 브로커에 위임한다."""
-    mock_web_ctx.market_mode = "overseas_us"
-    mock_web_ctx.broker.place_overseas_limit_order.return_value = ResCommonResponse(
-        rt_cd="0", msg1="Order Placed", data={"ord_no": "A12345"}
+def _install_overseas_manual_service(ctx, resp=None):
+    """수동 해외주문은 kill-switch/저널 게이팅을 거쳐야 하므로 라우트가 직접 broker를
+    호출하지 않는다. 게이팅 서비스를 mock 으로 심고 반환한다."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    svc = MagicMock()
+    svc.place_entry = AsyncMock(
+        return_value=resp or ResCommonResponse(rt_cd="0", msg1="Order Placed", data={"ord_no": "A12345"})
     )
+    svc.place_exit = AsyncMock(
+        return_value=resp or ResCommonResponse(rt_cd="0", msg1="Order Placed", data={"ord_no": "A12345"})
+    )
+    ctx.overseas_manual_order_service = svc
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_place_overseas_limit_order_goes_through_gating_service(web_client, mock_web_ctx):
+    """POST /api/overseas/order는 broker 직접 호출이 아니라 게이팅 서비스를 경유한다."""
+    mock_web_ctx.market_mode = "overseas_us"
+    svc = _install_overseas_manual_service(mock_web_ctx)
 
     payload = {
         "symbol": "AAPL",
@@ -290,18 +304,20 @@ async def test_place_overseas_limit_order_calls_broker(web_client, mock_web_ctx)
 
     assert response.status_code == 200
     assert response.json()["data"]["ord_no"] == "A12345"
-    mock_web_ctx.broker.place_overseas_limit_order.assert_awaited_once_with(
-        symbol="AAPL",
+    svc.place_entry.assert_awaited_once_with(
+        code="AAPL",
         exchange=OverseasExchange.NASD,
-        side="buy",
         qty=3,
         limit_price=190.25,
+        signal={"source": "manual"},
     )
+    mock_web_ctx.broker.place_overseas_limit_order.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_place_overseas_order_requires_overseas_mode(web_client, mock_web_ctx):
     """overseas_us가 enabled되지 않은 run에서는 해외 주문 endpoint가 닫혀 있어야 한다."""
+    svc = _install_overseas_manual_service(mock_web_ctx)
     payload = {
         "symbol": "AAPL",
         "exchange": "NASD",
@@ -313,7 +329,7 @@ async def test_place_overseas_order_requires_overseas_mode(web_client, mock_web_
     response = web_client.post("/api/overseas/order", json=payload)
 
     assert response.status_code == 400
-    mock_web_ctx.broker.place_overseas_limit_order.assert_not_awaited()
+    svc.place_entry.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -321,9 +337,7 @@ async def test_place_overseas_order_allowed_when_domestic_active_but_overseas_en
     """국내 active run에서도 overseas_us가 enabled이면 해외 수동 지정가 주문을 허용한다."""
     mock_web_ctx.market_mode = "domestic"
     mock_web_ctx.enabled_market_modes = ["domestic", "overseas_us"]
-    mock_web_ctx.broker.place_overseas_limit_order.return_value = ResCommonResponse(
-        rt_cd="0", msg1="Order Placed", data={"ord_no": "A12345"}
-    )
+    svc = _install_overseas_manual_service(mock_web_ctx)
 
     payload = {
         "symbol": "AAPL",
@@ -336,12 +350,12 @@ async def test_place_overseas_order_allowed_when_domestic_active_but_overseas_en
     response = web_client.post("/api/overseas/order", json=payload)
 
     assert response.status_code == 200
-    mock_web_ctx.broker.place_overseas_limit_order.assert_awaited_once_with(
-        symbol="AAPL",
+    svc.place_entry.assert_awaited_once_with(
+        code="AAPL",
         exchange=OverseasExchange.NASD,
-        side="buy",
         qty=1,
         limit_price=190.0,
+        signal={"source": "manual"},
     )
 
 
@@ -357,6 +371,7 @@ async def test_place_overseas_real_order_requires_allow_live_trading(web_client,
     mock_web_ctx.full_config["overseas_stock"] = {
         "allow_live_trading": False,
     }
+    svc = _install_overseas_manual_service(mock_web_ctx)
 
     payload = {
         "symbol": "AAPL",
@@ -372,7 +387,7 @@ async def test_place_overseas_real_order_requires_allow_live_trading(web_client,
     assert response.status_code == 200
     assert response.json()["rt_cd"] == ErrorCode.ORDER_POLICY_BLOCKED.value
     assert response.json()["data"]["rule"] == "overseas_live_trading_disabled"
-    mock_web_ctx.broker.place_overseas_limit_order.assert_not_awaited()
+    svc.place_entry.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -385,6 +400,7 @@ async def test_place_overseas_order_rejects_disabled_exchange(web_client, mock_w
         auth=SimpleNamespace(secret_key="secret"),
         overseas_stock=SimpleNamespace(enabled_exchanges=["NYSE"]),
     )
+    svc = _install_overseas_manual_service(mock_web_ctx)
 
     payload = {
         "symbol": "AAPL",
@@ -397,6 +413,81 @@ async def test_place_overseas_order_rejects_disabled_exchange(web_client, mock_w
     response = web_client.post("/api/overseas/order", json=payload)
 
     assert response.status_code == 400
+    svc.place_entry.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_place_overseas_order_sell_uses_place_exit(web_client, mock_web_ctx):
+    """매도는 청산 경로(place_exit)로 위임된다."""
+    mock_web_ctx.market_mode = "overseas_us"
+    svc = _install_overseas_manual_service(mock_web_ctx)
+
+    payload = {
+        "symbol": "AAPL",
+        "exchange": "NASD",
+        "side": "sell",
+        "qty": 2,
+        "limit_price": 195.5,
+        "currency": "USD",
+    }
+    response = web_client.post("/api/overseas/order", json=payload)
+
+    assert response.status_code == 200
+    svc.place_exit.assert_awaited_once_with(
+        code="AAPL",
+        exchange=OverseasExchange.NASD,
+        qty=2,
+        limit_price=195.5,
+        reason="manual",
+        signal={"source": "manual"},
+    )
+    svc.place_entry.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_place_overseas_order_blocked_by_kill_switch(web_client, mock_web_ctx):
+    """kill-switch 차단 응답을 라우트가 그대로 전달한다(국내 주문과 동일한 규율)."""
+    mock_web_ctx.market_mode = "overseas_us"
+    _install_overseas_manual_service(
+        mock_web_ctx,
+        resp=ResCommonResponse(
+            rt_cd=ErrorCode.KILL_SWITCH_BLOCKED.value,
+            msg1="Kill Switch 활성 — 일일 손실 한도 초과",
+            data=None,
+        ),
+    )
+
+    payload = {
+        "symbol": "AAPL",
+        "exchange": "NASD",
+        "side": "buy",
+        "qty": 1,
+        "limit_price": 190.0,
+        "currency": "USD",
+    }
+    response = web_client.post("/api/overseas/order", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] == ErrorCode.KILL_SWITCH_BLOCKED.value
+
+
+@pytest.mark.asyncio
+async def test_place_overseas_order_without_service_returns_503(web_client, mock_web_ctx):
+    """게이팅 서비스가 없으면 broker 로 우회하지 않고 503 으로 실패한다."""
+    mock_web_ctx.market_mode = "overseas_us"
+    mock_web_ctx.overseas_manual_order_service = None
+
+    payload = {
+        "symbol": "AAPL",
+        "exchange": "NASD",
+        "side": "buy",
+        "qty": 1,
+        "limit_price": 190.0,
+        "currency": "USD",
+    }
+    response = web_client.post("/api/overseas/order", json=payload)
+
+    assert response.status_code == 503
     mock_web_ctx.broker.place_overseas_limit_order.assert_not_awaited()
 
 
@@ -415,6 +506,7 @@ async def test_place_overseas_real_order_requires_confirmation_when_live_allowed
             enabled_exchanges=["NASD", "NYSE", "AMEX"],
         ),
     )
+    svc = _install_overseas_manual_service(mock_web_ctx)
 
     payload = {
         "symbol": "AAPL",
@@ -428,7 +520,7 @@ async def test_place_overseas_real_order_requires_confirmation_when_live_allowed
     response = web_client.post("/api/overseas/order", json=payload)
 
     assert response.status_code == 400
-    mock_web_ctx.broker.place_overseas_limit_order.assert_not_awaited()
+    svc.place_entry.assert_not_awaited()
 
 
 @pytest.mark.asyncio

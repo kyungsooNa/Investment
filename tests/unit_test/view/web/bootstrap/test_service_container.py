@@ -871,6 +871,67 @@ def test_intraday_vbo_built_with_order_path_locked(patched_service_container_dep
     assert task_cls.call_args.kwargs["shadow_journal"] is paper_journal
 
 
+def test_manual_overseas_order_service_wired_with_kill_switch(patched_service_container_deps):
+    """수동 해외주문 경로는 kill-switch 게이트를 거쳐야 한다 — 라우트가 broker 를 직접
+    호출하면 킬스위치가 우회되므로 게이팅 서비스를 배선한다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+
+    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasOrderExecutionService", autospec=True) as order_cls:
+        ServiceContainer(ctx).run()
+
+    assert ctx.overseas_manual_order_service is order_cls.return_value
+    kwargs = order_cls.call_args.kwargs
+    assert kwargs["live_enabled"] is True  # 수동 주문은 실제로 발사되는 경로
+    assert kwargs["kill_switch"] is ctx.kill_switch_service
+    assert kwargs["broker"] is ctx.broker
+    assert kwargs["journal_strategy_name"] == "수동매매_해외"
+
+
+def test_manual_overseas_order_service_absent_without_overseas_enabled(patched_service_container_deps):
+    """overseas_us 가 enabled 가 아니면 수동 주문 게이팅 서비스도 없다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.overseas_stock_code_repository = MagicMock()
+    ServiceContainer(ctx).run()
+
+    assert ctx.overseas_manual_order_service is None
+
+
+def test_manual_order_service_does_not_unlock_automatic_path(patched_service_container_deps):
+    """수동 경로가 live_enabled=True 여도 자동 VBO 경로는 잠금(False)을 유지한다."""
+    from config.config_loader import AppConfig
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={"allow_live_trading": True, "intraday_vbo": {"enabled": True}},
+    )
+
+    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasOrderExecutionService", autospec=True) as order_cls, \
+         patch("view.web.bootstrap.service_container.OverseasIntradayVBOService", autospec=True), \
+         patch("view.web.bootstrap.service_container.OverseasIntradayVBOTask", autospec=True):
+        ServiceContainer(ctx).run()
+
+    live_flags = [c.kwargs["live_enabled"] for c in order_cls.call_args_list]
+    assert live_flags == [True, False]  # [수동, 자동] — 자동은 잠금 유지
+
+
 def test_domestic_active_without_overseas_enabled_skips_dryrun_task(patched_service_container_deps):
     """overseas_us 가 enabled 에 없으면 dry-run 태스크는 조립되지 않는다(None)."""
     from view.web.bootstrap.service_container import ServiceContainer

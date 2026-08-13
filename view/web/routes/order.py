@@ -87,7 +87,11 @@ async def place_order(req: OrderRequest, request: Request):
 
 @router.post("/overseas/order")
 async def place_overseas_order(req: OverseasOrderRequest, request: Request):
-    """해외주식 수동 지정가 주문. v1은 미국 3시장 + USD 지정가만 지원한다."""
+    """해외주식 수동 지정가 주문. v1은 미국 3시장 + USD 지정가만 지원한다.
+
+    kill-switch 차단과 저널 기록을 얻기 위해 broker 직접 호출이 아니라
+    `overseas_manual_order_service` 를 경유한다(국내 주문의 OrderExecutionService 대응).
+    """
     ctx = _get_ctx()
     if not is_market_enabled(ctx, "overseas_us"):
         raise HTTPException(status_code=400, detail="해외주식 주문은 overseas_us가 enabled된 run에서만 사용할 수 있습니다.")
@@ -106,13 +110,27 @@ async def place_overseas_order(req: OverseasOrderRequest, request: Request):
         if req.real_order_confirmation != "REAL":
             raise HTTPException(status_code=400, detail="실전 주문 확인 문자열이 필요합니다.")
 
-    resp = await ctx.broker.place_overseas_limit_order(
-        symbol=req.symbol,
-        exchange=req.exchange,
-        side=req.side,
-        qty=req.qty,
-        limit_price=req.limit_price,
-    )
+    service = getattr(ctx, "overseas_manual_order_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="해외주식 주문 서비스가 준비되지 않았습니다.")
+
+    if req.side == "buy":
+        resp = await service.place_entry(
+            code=req.symbol,
+            exchange=req.exchange,
+            qty=req.qty,
+            limit_price=req.limit_price,
+            signal={"source": "manual"},
+        )
+    else:
+        resp = await service.place_exit(
+            code=req.symbol,
+            exchange=req.exchange,
+            qty=req.qty,
+            limit_price=req.limit_price,
+            reason="manual",
+            signal={"source": "manual"},
+        )
     return _serialize_response(resp)
 
 
