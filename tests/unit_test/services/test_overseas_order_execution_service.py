@@ -192,3 +192,26 @@ async def test_journal_records_order_when_provided():
     kwargs = journal.record.call_args.kwargs
     assert kwargs["code"] == "AAPL"
     assert kwargs["signal_source"] == OverseasOrderExecutionService.SIGNAL_SOURCE_PAPER
+
+
+@pytest.mark.asyncio
+async def test_journal_defaults_to_vbo_strategy_name():
+    """기본 저널 전략명은 VBO 자동 경로 이름 — 회귀 잠금."""
+    journal = MagicMock()
+    svc = OverseasOrderExecutionService(None, live_enabled=False, journal=journal)
+    await svc.place_entry(code="AAPL", qty=6, limit_price=150.0)
+    assert journal.record.call_args.kwargs["strategy_name"] == "LarryWilliamsVBO_overseas"
+
+
+@pytest.mark.asyncio
+async def test_journal_strategy_name_override():
+    """수동 주문 경로가 자기 이름으로 기록할 수 있어야 한다(자동 VBO 기록과 혼동 방지)."""
+    journal = MagicMock()
+    svc = OverseasOrderExecutionService(
+        _broker(), live_enabled=True, journal=journal,
+        journal_strategy_name="수동매매_해외",
+    )
+    await svc.place_entry(code="AAPL", qty=6, limit_price=150.0)
+    kwargs = journal.record.call_args.kwargs
+    assert kwargs["strategy_name"] == "수동매매_해외"
+    assert kwargs["signal_source"] == OverseasOrderExecutionService.SIGNAL_SOURCE_LIVE

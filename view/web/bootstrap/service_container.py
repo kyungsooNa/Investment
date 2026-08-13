@@ -867,6 +867,7 @@ class ServiceContainer:
                 ctx.overseas_candidate_service = None
                 ctx.overseas_vbo_dryrun_service = None
                 ctx.overseas_dryrun_task = None
+                ctx.overseas_manual_order_service = None
         except Exception as e:
             ctx.logger.critical(f"[ServiceBootstrap:Universe] 초기화 실패: {e}", exc_info=True)
             raise
@@ -915,19 +916,21 @@ class ServiceContainer:
         """해외 VBO dry-run 파이프라인 조립 (주문 경로 없음 — 실주문 불가).
 
         overseas_us active 분기와 국내 active 공존 경로가 공유한다.
-        `overseas_stock_code_repository` 가 없으면 no-op. shadow 저널은 realtime 경로에서
-        만든 인스턴스를 재사용하고, 없으면(overseas active 등) 새로 만든다.
+        `overseas_stock_code_repository` 가 없으면 dry-run 부분은 no-op(수동 주문 게이팅
+        서비스는 종목코드 저장소와 무관하므로 그 전에 배선한다). shadow 저널은 realtime
+        경로에서 만든 인스턴스를 재사용하고, 없으면(overseas active 등) 새로 만든다.
         """
         ctx = self._ctx
         ctx.overseas_candidate_service = None
         ctx.overseas_vbo_dryrun_service = None
         ctx.overseas_dryrun_task = None
-        if getattr(ctx, "overseas_stock_code_repository", None) is None:
-            return
         if getattr(ctx, "event_shadow_journal_service", None) is None:
             ctx.event_shadow_journal_service = EventShadowJournalService(
                 log_root="logs/strategies", logger=ctx.logger,
             )
+        self._build_overseas_manual_order_service()
+        if getattr(ctx, "overseas_stock_code_repository", None) is None:
+            return
         overseas_stock_cfg = getattr(ctx.full_config, "overseas_stock", None)
         overseas_position_sizing_service = OverseasPositionSizingService(
             slot_usd=getattr(overseas_stock_cfg, "dryrun_slot_usd", 1000.0),
@@ -973,6 +976,24 @@ class ServiceContainer:
             worker_pool=ctx.worker_pool,
         )
         self._build_overseas_intraday_vbo(overseas_stock_cfg, overseas_position_sizing_service)
+
+    def _build_overseas_manual_order_service(self) -> None:
+        """웹 수동 해외주문(`POST /api/overseas/order`) 전용 게이팅 서비스 배선.
+
+        라우트가 broker 를 직접 호출하면 kill-switch 와 저널 기록을 우회한다(국내 수동
+        주문은 `OrderExecutionService` 경유라 둘 다 걸린다). 수동 주문은 원래 발사되는
+        경로이므로 `live_enabled=True` 이며, **자동 전략 경로는 별도 인스턴스**라
+        `live_enabled=False` 잠금이 그대로 유지된다.
+        """
+        ctx = self._ctx
+        ctx.overseas_manual_order_service = OverseasOrderExecutionService(
+            broker=ctx.broker,
+            live_enabled=True,
+            journal=ctx.event_shadow_journal_service,
+            kill_switch=getattr(ctx, "kill_switch_service", None),
+            journal_strategy_name="수동매매_해외",
+            logger=ctx.logger,
+        )
 
     def _build_overseas_intraday_vbo(self, overseas_stock_cfg, position_sizing_service) -> None:
         """해외 장중 VBO 폴링 경로 조립 (config 로 opt-in, 기본 off).
