@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 _DISCLOSURE_AI_SUMMARY_MAX_CHARS = 1000
 _DISCLOSURE_DIGEST_SUMMARY_MAX_CHARS = 160
+_DISCLOSURE_DIGEST_BRIEF_SCORE_THRESHOLD = 30
 _DISCLOSURE_DIGEST_PREVIEW_LIMIT = 3
 _DISCLOSURE_MASS_REPORT_TYPES = (
     "임원주요주주특정증권등소유상황보고서",
@@ -60,16 +61,22 @@ def _disclosure_digest_group_key(item, index: int) -> tuple[str, ...]:
 
 def _disclosure_digest_summary_line(items) -> str:
     for item in items:
-        summary = str(getattr(item, "summary", "") or "").strip()
-        if not summary:
-            continue
-        summary = " ".join(summary.split())
-        if len(summary) > _DISCLOSURE_DIGEST_SUMMARY_MAX_CHARS:
-            summary = (
-                summary[: _DISCLOSURE_DIGEST_SUMMARY_MAX_CHARS - 1].rstrip() + "…"
-            )
-        return f"• 내용: {html.escape(summary, quote=False)}\n"
+        summary = _disclosure_digest_summary_text(item)
+        if summary:
+            return f"• 내용: {html.escape(summary, quote=False)}\n"
     return ""
+
+
+def _disclosure_digest_summary_text(item) -> str:
+    summary = str(getattr(item, "summary", "") or "").strip()
+    if not summary:
+        return ""
+    summary = " ".join(summary.split())
+    if len(summary) > _DISCLOSURE_DIGEST_SUMMARY_MAX_CHARS:
+        summary = (
+            summary[: _DISCLOSURE_DIGEST_SUMMARY_MAX_CHARS - 1].rstrip() + "…"
+        )
+    return summary
 
 
 def _serialized_report_send(func):
@@ -765,6 +772,18 @@ class TelegramReporter:
             if len(group) == 1:
                 importance = group[0].importance
                 report_name = html.escape(str(disclosure.report_name), quote=False)
+                if int(importance.score) < _DISCLOSURE_DIGEST_BRIEF_SCORE_THRESHOLD:
+                    summary = _disclosure_digest_summary_text(group[0])
+                    content = report_name
+                    if summary:
+                        content = (
+                            f"{report_name}: {html.escape(summary, quote=False)}"
+                        )
+                    parts.append(
+                        f"\n<b>{company} ({stock_code})</b>\n"
+                        f"• {content}\n"
+                    )
+                    continue
                 summary_line = _disclosure_digest_summary_line(group)
                 parts.append(
                     f"\n<b>{company} ({stock_code})</b>\n"
