@@ -200,6 +200,64 @@ async def test_handle_event_escapes_dynamic_html_text(telegram_notifier):
 
 
 @pytest.mark.asyncio
+async def test_handle_event_formats_market_pre_alert_as_warning_even_if_error_level(telegram_notifier):
+    """시장 사전경고는 외부 라우팅 때문에 ERROR로 들어와도 장애처럼 보이지 않게 표시한다."""
+    event = NotificationEvent(
+        id="sidecar-watch",
+        timestamp="2026-08-13T09:14:12+09:00",
+        category=NotificationCategory.SYSTEM,
+        level=NotificationLevel.ERROR,
+        title="코스피 매수 사이드카 가능 구간",
+        message="코스피(0001) 전일 대비 +4.63%",
+        metadata={
+            "source": "MARKET_STATUS",
+            "event_type": "buy_sidecar_watch",
+            "pre_alert": True,
+        },
+    )
+
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
+
+        await telegram_notifier.handle_event(event)
+
+    text = mock_post.call_args.kwargs["json"]["text"]
+    assert text.startswith("⚠️ ")
+    assert not text.startswith("❌ ")
+
+
+@pytest.mark.asyncio
+async def test_handle_event_formats_resolved_market_alert_as_recovered_even_if_error_level(telegram_notifier):
+    """시장 상태 해제 알림은 기존 severity가 ERROR였어도 복구 상태로 표시한다."""
+    event = NotificationEvent(
+        id="sidecar-watch-resolved",
+        timestamp="2026-08-13T09:15:13+09:00",
+        category=NotificationCategory.SYSTEM,
+        level=NotificationLevel.ERROR,
+        title="코스피 매수 사이드카 가능 구간 해제",
+        message="지수 등락률 정상화",
+        metadata={
+            "source": "MARKET_STATUS",
+            "event_type": "buy_sidecar_watch",
+            "transition": "RESOLVED",
+        },
+    )
+
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
+
+        await telegram_notifier.handle_event(event)
+
+    text = mock_post.call_args.kwargs["json"]["text"]
+    assert text.startswith("✅ ")
+    assert not text.startswith("❌ ")
+
+
+@pytest.mark.asyncio
 async def test_handle_event_backlog_bot(telegram_notifier, background_event):
     """BACKGROUND 카테고리 이벤트가 backlog_bot_token API URL로 전송되는지 테스트"""
     with patch("aiohttp.ClientSession.post") as mock_post:

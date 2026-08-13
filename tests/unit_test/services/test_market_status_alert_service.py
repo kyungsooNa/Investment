@@ -117,6 +117,7 @@ async def test_market_status_alert_service_reports_buy_sidecar_watch_near_five_p
     assert args[2] == "warning"
     assert args[3] == "코스피 매수 사이드카 가능 구간"
     assert kwargs["metadata"]["event_type"] == "buy_sidecar_watch"
+    assert kwargs["metadata"]["force_external"] is True
 
 
 @pytest.mark.asyncio

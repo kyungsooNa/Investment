@@ -225,7 +225,7 @@ class MarketStatusAlertService:
             "event_type": event_type, "index_code": index_code,
             "index_name": index_name, "change_rate": change_rate,
             "threshold_pct": threshold_pct, "pre_alert": True,
-            "telegram_channel": "report",
+            "telegram_channel": "report", "force_external": True,
         }
         message = f"{index_name}({index_code}) 전일 대비 {change_rate:+.2f}%"
         if self._operator_alert_service is not None:

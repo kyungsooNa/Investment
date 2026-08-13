@@ -23,6 +23,12 @@ _DISCLOSURE_DIGEST_PREVIEW_LIMIT = 3
 _DISCLOSURE_MASS_REPORT_TYPES = (
     "임원주요주주특정증권등소유상황보고서",
 )
+_MARKET_PRE_ALERT_EVENT_TYPES = {
+    "buy_sidecar_watch",
+    "move_5",
+    "fall_8",
+    "futures_buy_sidecar",
+}
 
 
 def _normalize_disclosure_report_type(value: str) -> str:
@@ -80,6 +86,23 @@ def _telegram_html_to_parts(text: str) -> tuple[str, str]:
     if not lines:
         return "Telegram 알림", ""
     return lines[0], "\n".join(lines[1:])
+
+
+def _level_emoji_for_event(event: NotificationEvent) -> str:
+    metadata = event.metadata or {}
+    if str(metadata.get("transition") or "").upper() == "RESOLVED":
+        return "✅"
+    if (
+        metadata.get("source") == "MARKET_STATUS"
+        and metadata.get("event_type") in _MARKET_PRE_ALERT_EVENT_TYPES
+    ):
+        return "⚠️"
+    return {
+        "info": "ℹ️",
+        "warning": "⚠️",
+        "error": "❌",
+        "critical": "🚨"
+    }.get(event.level.value.lower(), "🔔")
 
 
 def _format_disclosure_ai_summary_html(summary_text: str) -> str:
@@ -149,13 +172,7 @@ class TelegramNotifier:
         else:
             return
         
-        # 특정 레벨(예: info, warning, error, critical)에 따라 이모지나 포맷을 다르게 할 수 있습니다.
-        level_emoji = {
-            "info": "ℹ️",
-            "warning": "⚠️",
-            "error": "❌",
-            "critical": "🚨"
-        }.get(event.level.value.lower(), "🔔")
+        level_emoji = _level_emoji_for_event(event)
 
         # 메타데이터에 수익률(return_rate) 정보가 있으면 메시지 본문에 이모지와 함께 삽입
         message_body = event.message
