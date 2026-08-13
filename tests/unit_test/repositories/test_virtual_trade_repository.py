@@ -1386,3 +1386,38 @@ def test_get_holds_by_strategy_broken_regime_json_returns_none(virutal_trade_rep
     holds = repo.get_holds_by_strategy("전략A")
 
     assert holds[0]["market_regime"] is None
+
+
+def test_data_quality_flag_column_is_migrated(temp_db, mock_market_clock):
+    """컬럼이 없는 기존 DB 도 data_quality_flag 를 얻는다(idempotent 마이그레이션)."""
+    legacy = sqlite3.connect(temp_db)
+    legacy.execute(
+        "CREATE TABLE trades ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, strategy TEXT NOT NULL, code TEXT NOT NULL, "
+        "buy_date TEXT NOT NULL, buy_price REAL NOT NULL, qty INTEGER NOT NULL DEFAULT 1, "
+        "sell_date TEXT, sell_price REAL, return_rate REAL NOT NULL DEFAULT 0.0, "
+        "status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '')"
+    )
+    legacy.commit()
+    legacy.close()
+
+    repo = VirtualTradeRepository(db_path=temp_db, market_clock=mock_market_clock)
+
+    columns = {row[1] for row in repo._db.execute("PRAGMA table_info(trades)").fetchall()}
+    assert "data_quality_flag" in columns
+
+
+def test_get_all_trades_exposes_data_quality_flag(virutal_trade_repository):
+    """오염 의심 플래그는 웹 응답까지 실려 나가야 표식으로 보인다(미설정 시 None)."""
+    repo = virutal_trade_repository
+    repo.log_buy("전략A", "005930", 70000)
+    repo.log_buy("전략A", "000020", 5000)
+    repo._db.execute(
+        "UPDATE trades SET data_quality_flag='부분매도 전량기록 의심' WHERE code='005930'"
+    )
+    repo._db.commit()
+
+    by_code = {t["code"]: t for t in repo.get_all_trades()}
+
+    assert by_code["005930"]["data_quality_flag"] == "부분매도 전량기록 의심"
+    assert by_code["000020"]["data_quality_flag"] is None

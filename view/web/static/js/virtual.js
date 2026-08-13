@@ -932,6 +932,11 @@ function renderVirtualSoldTable() {
         const curPrice = item.current_price ? Number(item.current_price).toLocaleString() : '';
         const days = calcDaysHeld(item.buy_date, item.sell_date);
 
+        // 소급 재구성이 불가한 오염 기록 — 수치는 그대로 두고 신뢰하지 말라는 표식만 붙인다.
+        const suspectHtml = item.data_quality_flag
+            ? ` <span title="기록 오염 의심: ${item.data_quality_flag}" style="cursor:help;">⚠</span>`
+            : '';
+
         const cacheAge = item.cache_ts ? Math.floor(Date.now() / 1000 - item.cache_ts) : 0;
         const isOldCache = item.is_cached && cacheAge > 60;
         const cacheStyle = isOldCache ? 'color: #ff4d4d; opacity: 1; font-weight: bold;' : 'opacity: 0.6;';
@@ -960,7 +965,7 @@ function renderVirtualSoldTable() {
                 </td>
                 <td>${buyPrice}</td>
                 <td>${sellPrice}<div style="font-size:0.8em; color:var(--text-secondary);">${curPrice}${cacheLabel}${forceBtn}</div></td>
-                <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong>${costHtml}${holdRorHtml}</td>
+                <td class="${rorClass}"><strong>${ror.toFixed(2)}%</strong>${suspectHtml}${costHtml}${holdRorHtml}</td>
                 <td>${days}일<div style="font-size:0.8em; color:var(--text-secondary);">${buyDate} ~ ${sellDate}</div></td>
             </tr>
         `);

@@ -53,7 +53,8 @@ LIVE_STRATEGY_STATE_FILES = {
 _SELECT_TRADES = (
     "SELECT strategy, code, buy_date, buy_price, qty, sell_date, sell_price, return_rate, status, reason, "
     "volatility_20d_annualized, config_hash, invalidation_price, stop_loss_price, target_price, "
-    "entry_reason, trailing_rule, expected_holding_period_days, confidence, required_data, market_regime "
+    "entry_reason, trailing_rule, expected_holding_period_days, confidence, required_data, market_regime, "
+    "data_quality_flag "
     "FROM trades ORDER BY id"
 )
 _INSERT_TRADE = (
@@ -194,6 +195,11 @@ class VirtualTradeRepository:
         if "market_regime" not in existing:
             with self._db:
                 self._db.execute("ALTER TABLE trades ADD COLUMN market_regime TEXT")
+        # 0-2: 소급 재구성이 불가한 오염 기록의 의심 표식. 수치를 재작성하지 않고
+        # 이 컬럼으로만 표시한다(설정은 scripts/flag_suspect_trades.py).
+        if "data_quality_flag" not in existing:
+            with self._db:
+                self._db.execute("ALTER TABLE trades ADD COLUMN data_quality_flag TEXT")
 
     # ---- 레거시 데이터 마이그레이션 (CSV/JSON → SQLite, 최초 1회) ----
 
