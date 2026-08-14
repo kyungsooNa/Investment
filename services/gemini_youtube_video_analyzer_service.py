@@ -32,12 +32,14 @@ class GeminiYoutubeVideoAnalyzerService:
         model: str = "gemini-2.5-flash",
         http_client: Optional[httpx.AsyncClient] = None,
         timeout_sec: float = 60.0,
+        usage_limiter=None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._api_key = str(api_key or "").strip()
         self._model = str(model or "gemini-2.5-flash")
         self._http_client = http_client
         self._timeout_sec = float(timeout_sec)
+        self._usage_limiter = usage_limiter
         self._logger = logger or logging.getLogger(__name__)
 
     async def build_digest(
@@ -111,6 +113,8 @@ class GeminiYoutubeVideoAnalyzerService:
             ],
         }
         headers = {"x-goog-api-key": self._api_key}
+        if self._usage_limiter is not None:
+            await self._usage_limiter.reserve("youtube")
         if self._http_client is not None:
             response = await self._http_client.post(
                 _INTERACTIONS_URL,
