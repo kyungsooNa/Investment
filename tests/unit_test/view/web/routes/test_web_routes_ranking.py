@@ -685,7 +685,7 @@ async def test_get_domestic_heatmap_uses_live_snapshot_during_market_hours(web_c
     assert body["data"]["items"][0]["change_rate"] == "2.43"
     assert body["data"]["trade_date"] == "20260814"
     mock_web_ctx.naver_market_snapshot_service.get_snapshot.assert_awaited_once_with(
-        limit=300, market=None
+        limit=300, market=None, allowed_codes=None
     )
     assert not mock_web_ctx.stock_repository.get_market_cap_snapshot.called
 
@@ -745,12 +745,29 @@ async def test_get_domestic_heatmap_falls_back_when_live_snapshot_raises(web_cli
 
 
 @pytest.mark.asyncio
+async def test_get_domestic_heatmap_live_snapshot_reuses_the_stored_universe(web_client, mock_web_ctx):
+    """장중 소스(네이버)는 ETF·우선주까지 싣는다. 장외와 같은 종목 집합을 그려야 하므로
+    저장소가 가진 유니버스로 잘라 넘긴다."""
+    mock_web_ctx.is_market_open_now = AsyncMock(return_value=True)
+    mock_web_ctx.naver_market_snapshot_service = _naver_service([_LIVE_ROW])
+    mock_web_ctx.stock_repository.get_snapshot_codes = AsyncMock(return_value={"005930", "000660"})
+
+    web_client.get("/api/heatmap/domestic?limit=300")
+
+    mock_web_ctx.naver_market_snapshot_service.get_snapshot.assert_awaited_once_with(
+        limit=300, market=None, allowed_codes={"005930", "000660"}
+    )
+
+
+@pytest.mark.asyncio
 async def test_get_domestic_heatmap_live_snapshot_honours_market_filter(web_client, mock_web_ctx):
     mock_web_ctx.is_market_open_now = AsyncMock(return_value=True)
     mock_web_ctx.naver_market_snapshot_service = _naver_service([_LIVE_ROW])
 
+    mock_web_ctx.stock_repository.get_snapshot_codes = AsyncMock(return_value={"005930"})
+
     web_client.get("/api/heatmap/domestic?limit=100&market=KOSDAQ")
 
     mock_web_ctx.naver_market_snapshot_service.get_snapshot.assert_awaited_once_with(
-        limit=100, market="KOSDAQ"
+        limit=100, market="KOSDAQ", allowed_codes={"005930"}
     )

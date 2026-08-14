@@ -168,6 +168,8 @@ def mock_web_ctx():
     # 국내 히트맵의 장중 소스. MagicMock 이 자동 생성한 truthy 목이 조용히 끼어들지 않도록
     # 기본은 '미배선'으로 두고, 필요한 테스트만 명시적으로 채운다.
     ctx.naver_market_snapshot_service = None
+    # 유니버스 조회는 await 대상이라 기본을 깔아둔다(빈 집합 = 필터 없음).
+    ctx.stock_repository.get_snapshot_codes = AsyncMock(return_value=set())
 
     # 하위 서비스 Mocking
     ctx.stock_query_service = AsyncMock()

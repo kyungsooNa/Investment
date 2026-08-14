@@ -59,16 +59,30 @@ class NaverMarketSnapshotService:
         self._cached_at: dict[int, float] = {}
         self._cached_pages: dict[int, int] = {}
 
-    async def get_snapshot(self, limit: int, market: Optional[str] = None) -> list[dict]:
-        """시총 상위 종목 스냅샷. market 이 None/'ALL' 이면 코스피+코스닥을 합쳐 정렬한다."""
+    async def get_snapshot(
+        self, limit: int, market: Optional[str] = None, allowed_codes: Optional[set] = None
+    ) -> list[dict]:
+        """시총 상위 종목 스냅샷. market 이 None/'ALL' 이면 코스피+코스닥을 합쳐 정렬한다.
+
+        allowed_codes 를 주면 그 유니버스로 먼저 거른 뒤 상위 limit 을 자른다. 네이버 시총
+        페이지는 ETF·ETN·우선주까지 싣기 때문에, 히트맵이 장외에 그리던 종목 집합과
+        같게 맞추려면 이 필터가 필요하다. 자른 뒤에 거르면 limit 을 못 채운다.
+        """
         wanted = self._target_sosoks(market)
         if not wanted:
             return []
 
-        pages = min(-(-limit // _PAGE_SIZE), self._MAX_PAGES)
+        # 걸러낼 종목이 섞여 있으므로 limit 만큼의 페이지로는 모자랄 수 있다. 필터가 있으면
+        # 여유를 두고 받는다(실측상 상위 500 중 약 22% 가 ETF·ETN 이었다).
+        needed = limit * 2 if allowed_codes is not None else limit
+        pages = min(-(-needed // _PAGE_SIZE), self._MAX_PAGES)
+
         collected: list[dict] = []
         for sosok in wanted:
-            collected.extend(await self._market_rows(sosok, pages))
+            rows = await self._market_rows(sosok, pages)
+            if allowed_codes is not None:
+                rows = [row for row in rows if row["code"] in allowed_codes]
+            collected.extend(rows)
 
         collected.sort(key=lambda row: row["market_cap"], reverse=True)
         return collected[:limit]

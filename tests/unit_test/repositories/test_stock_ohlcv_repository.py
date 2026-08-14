@@ -1129,6 +1129,38 @@ class TestCacheLoggerPaths:
         logger.log_today_candle.assert_called_once()
 
 
+class TestGetSnapshotCodes:
+    """get_snapshot_codes: 히트맵이 그리는 종목 집합(장중 실시간 소스를 같은 유니버스로 자르는 데 쓴다)."""
+
+    @pytest.mark.asyncio
+    async def test_returns_codes_of_the_latest_trade_date_only(self, repo):
+        await repo.upsert_daily_snapshot("20260713", [_make_snapshot("OLD", market_cap=100)])
+        await repo.upsert_daily_snapshot("20260714", [
+            _make_snapshot("A001", market_cap=300),
+            _make_snapshot("A002", market_cap=200),
+        ])
+
+        codes = await repo.get_snapshot_codes()
+
+        assert codes == {"A001", "A002"}
+
+    @pytest.mark.asyncio
+    async def test_keeps_halted_stocks_so_the_universe_is_not_narrowed(self, repo):
+        """시총 0원(정지주)은 면적 계산에서만 빠질 뿐 유니버스에서 빼는 대상은 아니다."""
+        await repo.upsert_daily_snapshot("20260714", [
+            _make_snapshot("A001", market_cap=300),
+            _make_snapshot("HALT", market_cap=0),
+        ])
+
+        codes = await repo.get_snapshot_codes()
+
+        assert codes == {"A001", "HALT"}
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_set_when_nothing_collected(self, repo):
+        assert await repo.get_snapshot_codes() == set()
+
+
 class TestGetMarketCapSnapshot:
     """get_market_cap_snapshot: 국내 히트맵용 최신 거래일 시총 스냅샷."""
 
