@@ -59,6 +59,41 @@ class PriceStreamService:
         self._tick_ingest_quality_reject: Dict[str, int] = {}
         self._tick_ingest_dispatched: Dict[str, int] = {}
         self._tick_ingest_malformed: Dict[str, int] = {}
+        self._background_tasks: set[asyncio.Task] = set()
+
+    def _schedule_background_task(self, coro_factory, *args, **kwargs) -> None:
+        coro = None
+        try:
+            loop = asyncio.get_running_loop()
+            coro = coro_factory(*args, **kwargs)
+            task = loop.create_task(coro)
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+        except RuntimeError:
+            if coro is not None:
+                coro.close()
+        except Exception:
+            if coro is not None:
+                coro.close()
+            raise
+
+    async def shutdown(self, timeout: float = 2.0) -> None:
+        """Wait for fire-and-forget side effect tasks before the event loop closes."""
+        if not self._background_tasks:
+            return
+        tasks = set(self._background_tasks)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            self._background_tasks.difference_update(tasks)
 
     def set_event_router(self, event_router) -> None:
         """Late injection 용. WebAppContext 조립 순서 문제로 생성자에 주입 못한 경우 사용."""
@@ -125,14 +160,14 @@ class PriceStreamService:
                 )
                 if self._notification_service is not None:
                     try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(self._notification_service.emit(
+                        self._schedule_background_task(
+                            self._notification_service.emit,
                             NotificationCategory.SYSTEM,
                             NotificationLevel.ERROR,
                             "실시간 체결가 품질 검증 실패",
                             f"{result.code or stock_code}: {result.reason}",
                             metadata=result.to_dict(),
-                        ))
+                        )
                     except RuntimeError:
                         pass
                 self._tick_ingest_quality_reject[stock_code] = (
@@ -223,15 +258,13 @@ class PriceStreamService:
 
         if self._favorite_price_alert_service is not None:
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(
-                    self._favorite_price_alert_service.handle_price_tick(
-                        stock_code,
-                        price=current_price,
-                        rate=realtime_data.get('전일대비율'),
-                        sign=realtime_data.get('전일대비부호'),
-                        is_upper_limit=self._is_upper_limit_tick(realtime_data),
-                    )
+                self._schedule_background_task(
+                    self._favorite_price_alert_service.handle_price_tick,
+                    stock_code,
+                    price=current_price,
+                    rate=realtime_data.get('전일대비율'),
+                    sign=realtime_data.get('전일대비부호'),
+                    is_upper_limit=self._is_upper_limit_tick(realtime_data),
                 )
             except RuntimeError:
                 pass
@@ -240,14 +273,14 @@ class PriceStreamService:
 
         if self._event_router is not None:
             try:
-                loop = asyncio.get_running_loop()
                 snapshot = dict(self._latest_prices[stock_code])
                 snapshot["code"] = stock_code
                 snapshot["snapshot_ts"] = now_ts
-                loop.create_task(
-                    self._event_router.on_price_tick(
-                        stock_code, snapshot, snapshot_ts=now_ts
-                    )
+                self._schedule_background_task(
+                    self._event_router.on_price_tick,
+                    stock_code,
+                    snapshot,
+                    snapshot_ts=now_ts,
                 )
                 self._tick_ingest_dispatched[stock_code] = (
                     self._tick_ingest_dispatched.get(stock_code, 0) + 1
@@ -374,15 +407,13 @@ class PriceStreamService:
 
         if evaluate_favorite_alert and self._favorite_price_alert_service is not None:
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(
-                    self._favorite_price_alert_service.handle_price_tick(
-                        code,
-                        price=price,
-                        rate=rate,
-                        sign=sign,
-                        is_upper_limit=self._is_upper_limit_snapshot(rate, sign),
-                    )
+                self._schedule_background_task(
+                    self._favorite_price_alert_service.handle_price_tick,
+                    code,
+                    price=price,
+                    rate=rate,
+                    sign=sign,
+                    is_upper_limit=self._is_upper_limit_snapshot(rate, sign),
                 )
             except RuntimeError:
                 pass
