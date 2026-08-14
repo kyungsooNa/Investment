@@ -7,6 +7,7 @@ from repositories.period_ranking_repository import PeriodRankingRepository
 from repositories.sp500_repository import SP500Repository
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
 from services.market_cap_gap_service import MarketCapGapService, YahooUsMarketCapProvider
+from services.naver_market_snapshot_service import NaverMarketSnapshotService
 from services.overseas_market_stats_service import OverseasMarketStatsService
 from services.stock_query_service import StockQueryService
 from view.web.market_mode_utils import is_market_enabled
@@ -63,6 +64,7 @@ class QueryBootstrap:
                 self._build_market_cap_gap_tasks(config, needs_batch)
 
             self._build_overseas_market_stats()
+            self._build_domestic_live_snapshot(is_overseas_us)
 
             ctx.stock_query_service = StockQueryService(
                 market_data_service=ctx.market_data_service,
@@ -81,6 +83,16 @@ class QueryBootstrap:
                 exc_info=True,
             )
             raise
+
+    def _build_domestic_live_snapshot(self, is_overseas_us: bool) -> None:
+        """국내 히트맵의 장중 시세 소스 (네이버 시총 페이지).
+
+        국내장 run 에서만 만든다. 미국장 전용 run 은 이 화면을 쓰지 않는다.
+        """
+        ctx = self._ctx
+        ctx.naver_market_snapshot_service = (
+            None if is_overseas_us else NaverMarketSnapshotService(logger=ctx.logger)
+        )
 
     def _build_overseas_market_stats(self) -> None:
         """미국장 시가총액/랭킹 화면용 통계 서비스.

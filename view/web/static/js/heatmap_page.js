@@ -387,17 +387,25 @@ function resetHeatmapPageZoom() {
     }
 }
 
-// 자동 갱신 — 보고 있는 미국 탭만 조용히(로딩 문구 없이) 갈아끼운다. 매 주기마다
+// 자동 갱신 — 보고 있는 탭만 조용히(로딩 문구 없이) 갈아끼운다. 매 주기마다
 // '조회 중...' 을 띄우면 화면이 1분마다 깜빡이고 배율·검색 상태가 눈에 띄게 흔들린다.
+//
+// 국내는 서버가 장중에만 실시간 스냅샷을 주고 장외에는 daily_prices 종가를 준다.
+// 종가 응답(realtime=false)에는 되물어도 같은 값이 오므로 폴링하지 않는다.
+function _heatmapPageWorthRefreshing(market) {
+    if (market === 'overseas') return true;
+    return Boolean(HEATMAP_PAGE_SOURCES.domestic.lastData?.realtime);
+}
+
 async function _refreshHeatmapPageTick() {
     // pjax 로 다른 화면에 가 있으면 스스로 멈춘다 (타이머는 문서를 떠나도 계속 돈다).
     if (!document.getElementById('heatmap-page-viewport')) {
         _stopHeatmapPageAutoRefresh();
         return;
     }
-    if (document.hidden || _heatmapPageTab !== 'overseas') return;
+    if (document.hidden || !_heatmapPageWorthRefreshing(_heatmapPageTab)) return;
 
-    await _loadHeatmap(HEATMAP_PAGE_SOURCES.overseas, { showLoading: false });
+    await _loadHeatmap(HEATMAP_PAGE_SOURCES[_heatmapPageTab], { showLoading: false });
     _applyHeatmapPageSearch();
 }
 

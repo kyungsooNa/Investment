@@ -246,11 +246,23 @@ function _heatmapDateText(value) {
 function _domesticCaption(data) {
     const latest = _heatmapDateText(data.trade_date);
     const periodLabel = HEATMAP_PERIOD_LABELS[String(data.period || '')];
-    if (!periodLabel) return latest ? `기준일: ${latest} 종가` : '기준일: --';
+    // 장중에는 서버가 실시간 스냅샷을 준다(realtime). 같은 화면이 종가일 때와 구분되지 않으면
+    // 언제 기준인지 알 수 없으므로 표기를 나눈다.
+    const nowText = data.realtime ? _heatmapClockText() : null;
+    if (!periodLabel) {
+        if (nowText) return `실시간 ${nowText} 기준`;
+        return latest ? `기준일: ${latest} 종가` : '기준일: --';
+    }
 
     const base = _heatmapDateText(data.base_date);
     if (!base) return `${periodLabel} 비교 데이터가 없습니다`;
+    if (nowText) return `${periodLabel} 등락률: ${base} 종가 → 실시간 ${nowText}`;
     return `${periodLabel} 등락률: ${base} → ${latest || '--'} 종가`;
+}
+
+function _heatmapClockText() {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 }
 
 function _renderHeatmapCaption(elementId, text) {

@@ -638,7 +638,9 @@ async def test_get_domestic_heatmap_with_market_filter(web_client, mock_web_ctx)
     assert response.status_code == 200
     body = response.json()
     assert body["rt_cd"] == "0"
-    assert body["data"] == {"trade_date": None, "items": [], "period": "1d", "base_date": None}
+    assert body["data"] == {
+        "trade_date": None, "items": [], "period": "1d", "base_date": None, "realtime": False,
+    }
     mock_web_ctx.stock_repository.get_market_cap_snapshot.assert_awaited_once_with(limit=100, market="KOSDAQ")
 
 
@@ -651,3 +653,104 @@ async def test_get_domestic_heatmap_without_repository(web_client, mock_web_ctx)
 
     assert response.status_code == 200
     assert response.json()["rt_cd"] != "0"
+
+
+def _naver_service(rows=None, error=None):
+    """장중 스냅샷 서비스 대역. rows 를 주면 그대로, error 를 주면 던진다."""
+    service = AsyncMock()
+    if error is not None:
+        service.get_snapshot.side_effect = error
+    else:
+        service.get_snapshot.return_value = rows or []
+    return service
+
+
+_LIVE_ROW = {
+    "code": "005930", "name": "삼성전자", "change_rate": "2.43", "market_cap": 16048035,
+    "market": "KOSPI", "current_price": 274500, "trade_date": "20260814",
+}
+
+
+@pytest.mark.asyncio
+async def test_get_domestic_heatmap_uses_live_snapshot_during_market_hours(web_client, mock_web_ctx):
+    """장중에는 daily_prices 종가 대신 네이버 실시간 스냅샷을 쓴다."""
+    mock_web_ctx.is_market_open_now = AsyncMock(return_value=True)
+    mock_web_ctx.naver_market_snapshot_service = _naver_service([_LIVE_ROW])
+
+    response = web_client.get("/api/heatmap/domestic?limit=300")
+
+    body = response.json()
+    assert body["rt_cd"] == "0"
+    assert body["data"]["realtime"] is True
+    assert body["data"]["items"][0]["change_rate"] == "2.43"
+    assert body["data"]["trade_date"] == "20260814"
+    mock_web_ctx.naver_market_snapshot_service.get_snapshot.assert_awaited_once_with(
+        limit=300, market=None
+    )
+    assert not mock_web_ctx.stock_repository.get_market_cap_snapshot.called
+
+
+@pytest.mark.asyncio
+async def test_get_domestic_heatmap_uses_stored_snapshot_outside_market_hours(web_client, mock_web_ctx):
+    """장외에는 네이버도 종가만 주므로 긁지 않고 저장소를 쓴다."""
+    mock_web_ctx.is_market_open_now = AsyncMock(return_value=False)
+    mock_web_ctx.naver_market_snapshot_service = _naver_service([_LIVE_ROW])
+    mock_web_ctx.stock_repository.get_market_cap_snapshot = AsyncMock(return_value=[{
+        "code": "005930", "name": "삼성전자", "change_rate": "4.89", "market_cap": 15668027,
+        "market": "KOSPI", "current_price": 268000, "trade_date": "20260813",
+    }])
+
+    response = web_client.get("/api/heatmap/domestic?limit=300")
+
+    body = response.json()
+    assert body["data"]["realtime"] is False
+    assert body["data"]["trade_date"] == "20260813"
+    assert not mock_web_ctx.naver_market_snapshot_service.get_snapshot.called
+
+
+@pytest.mark.asyncio
+async def test_get_domestic_heatmap_falls_back_when_live_snapshot_is_empty(web_client, mock_web_ctx):
+    """마크업이 바뀌어 파싱이 0행이 되어도 화면이 비면 안 된다."""
+    mock_web_ctx.is_market_open_now = AsyncMock(return_value=True)
+    mock_web_ctx.naver_market_snapshot_service = _naver_service([])
+    mock_web_ctx.stock_repository.get_market_cap_snapshot = AsyncMock(return_value=[{
+        "code": "005930", "name": "삼성전자", "change_rate": "4.89", "market_cap": 15668027,
+        "market": "KOSPI", "current_price": 268000, "trade_date": "20260813",
+    }])
+
+    response = web_client.get("/api/heatmap/domestic?limit=300")
+
+    body = response.json()
+    assert body["data"]["realtime"] is False
+    assert len(body["data"]["items"]) == 1
+    assert mock_web_ctx.stock_repository.get_market_cap_snapshot.called
+
+
+@pytest.mark.asyncio
+async def test_get_domestic_heatmap_falls_back_when_live_snapshot_raises(web_client, mock_web_ctx):
+    """스크래핑이 터져도 장마감 스냅샷으로 화면을 살린다."""
+    mock_web_ctx.is_market_open_now = AsyncMock(return_value=True)
+    mock_web_ctx.naver_market_snapshot_service = _naver_service(error=RuntimeError("네이버 응답 없음"))
+    mock_web_ctx.stock_repository.get_market_cap_snapshot = AsyncMock(return_value=[{
+        "code": "005930", "name": "삼성전자", "change_rate": "4.89", "market_cap": 15668027,
+        "market": "KOSPI", "current_price": 268000, "trade_date": "20260813",
+    }])
+
+    response = web_client.get("/api/heatmap/domestic?limit=300")
+
+    body = response.json()
+    assert body["rt_cd"] == "0"
+    assert body["data"]["realtime"] is False
+    assert len(body["data"]["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_domestic_heatmap_live_snapshot_honours_market_filter(web_client, mock_web_ctx):
+    mock_web_ctx.is_market_open_now = AsyncMock(return_value=True)
+    mock_web_ctx.naver_market_snapshot_service = _naver_service([_LIVE_ROW])
+
+    web_client.get("/api/heatmap/domestic?limit=100&market=KOSDAQ")
+
+    mock_web_ctx.naver_market_snapshot_service.get_snapshot.assert_awaited_once_with(
+        limit=100, market="KOSDAQ"
+    )

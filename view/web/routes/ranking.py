@@ -214,6 +214,26 @@ def _heatmap_period_change_rate(row: dict, closes: dict):
         return None
 
 
+async def _domestic_heatmap_rows(ctx, repository, *, limit: int, market: Optional[str]):
+    """(행 목록, 실시간 여부). 장중에는 네이버 스냅샷, 장외에는 daily_prices 종가를 쓴다.
+
+    장외에 네이버를 긁어봐야 같은 종가가 오므로 요청을 아낀다. 장중이라도 스크래핑이
+    비거나 터지면 저장소로 되돌아간다 — 마크업 변경으로 화면이 통째로 비는 것보다
+    하루 지난 종가라도 그리는 편이 낫다.
+    """
+    service = getattr(ctx, "naver_market_snapshot_service", None)
+    if service is not None and await ctx.is_market_open_now():
+        try:
+            rows = await service.get_snapshot(limit=limit, market=market)
+        except Exception as exc:
+            ctx.logger.warning(f"국내 히트맵 장중 스냅샷 실패 — 저장소로 폴백: {exc}")
+        else:
+            if rows:
+                return rows, True
+
+    return await repository.get_market_cap_snapshot(limit=limit, market=market), False
+
+
 @router.get("/heatmap/domestic")
 async def get_domestic_heatmap(
     limit: int = Query(300, ge=1, le=1000),
@@ -237,7 +257,7 @@ async def get_domestic_heatmap(
     if not repository:
         return {"rt_cd": ErrorCode.API_ERROR.value, "msg1": "StockRepository 미설정", "data": None}
 
-    rows = await repository.get_market_cap_snapshot(limit=limit, market=market)
+    rows, realtime = await _domestic_heatmap_rows(ctx, repository, limit=limit, market=market)
 
     base_date = None
     closes = {}
@@ -278,6 +298,7 @@ async def get_domestic_heatmap(
             "items": items,
             "period": period,
             "base_date": base_date,
+            "realtime": realtime,
         },
     }
 
