@@ -857,11 +857,11 @@ function setPageVisible(window, visible) {
   Object.defineProperty(window.document, "hidden", { value: !visible, configurable: true });
 }
 
-function autoRefreshPage() {
+function autoRefreshPage({ realtime = false } = {}) {
   const calls = [];
   const window = makeWindow(routed({
     "/api/market-mode": () => marketMode(["domestic", "overseas_us"]),
-    "/api/heatmap/domestic": () => success(domesticSnapshot()),
+    "/api/heatmap/domestic": () => success({ ...domesticSnapshot(), realtime }),
     "/api/overseas/top-market-cap": () => success({ items: [overseasItem({})], updated_at: 1767225600 }),
   }));
   const traced = window.fetchWithTimeout;
@@ -891,14 +891,41 @@ test("미국 탭을 보고 있으면 1분마다 조용히 다시 조회한다", 
   assert(panel.querySelectorAll(".heatmap-tile").length > 0, "갱신 후에도 타일이 남아야 함");
 });
 
-test("한국 탭은 자동 재조회하지 않는다 (하루 한 번 수집되는 스냅샷)", async () => {
-  const { window, calls, timer } = autoRefreshPage();
+test("국내 캡션은 실시간인지 종가인지를 밝힌다", async () => {
+  const live = autoRefreshPage({ realtime: true });
+  await live.window.initHeatmapPage();
+  const liveText = live.window.document.getElementById("heatmap-page-domestic-caption").textContent;
+  assert(liveText.includes("실시간"), `장중이면 실시간임을 알려야 함 (실제 ${liveText})`);
+  assert(!liveText.includes("종가"), `실시간인데 종가라고 하면 안 됨 (실제 ${liveText})`);
+
+  const closed = autoRefreshPage({ realtime: false });
+  await closed.window.initHeatmapPage();
+  const closedText = closed.window.document.getElementById("heatmap-page-domestic-caption").textContent;
+  assert(closedText.includes("종가"), `장외면 종가 기준임을 알려야 함 (실제 ${closedText})`);
+});
+
+test("국내가 실시간 응답이면 한국 탭도 조용히 다시 조회한다", async () => {
+  const { window, calls, timer } = autoRefreshPage({ realtime: true });
 
   await window.initHeatmapPage();
   calls.length = 0;
   await timer.fn();
 
-  assert(calls.length === 0, `되물어도 같은 종가라 조회할 이유가 없음 (실제 ${calls})`);
+  const domestic = calls.filter(url => url.startsWith("/api/heatmap/domestic"));
+  assert(domestic.length === 1, `장중이면 국내도 갱신해야 함 (실제 ${domestic.length}회)`);
+  const panel = window.document.getElementById("heatmap-page-domestic");
+  assert(!panel.innerHTML.includes("조회 중"), "자동 갱신이 화면을 깜빡이면 안 됨");
+  assert(panel.querySelectorAll(".heatmap-tile").length > 0, "갱신 후에도 타일이 남아야 함");
+});
+
+test("국내가 종가 응답이면 한국 탭은 자동 재조회하지 않는다", async () => {
+  const { window, calls, timer } = autoRefreshPage({ realtime: false });
+
+  await window.initHeatmapPage();
+  calls.length = 0;
+  await timer.fn();
+
+  assert(calls.length === 0, `장외엔 되물어도 같은 종가라 조회할 이유가 없음 (실제 ${calls})`);
 });
 
 test("창이 백그라운드면 자동 갱신을 건너뛴다", async () => {

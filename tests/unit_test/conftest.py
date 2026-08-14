@@ -165,7 +165,10 @@ def mock_web_ctx():
     ctx.initialized = True
     ctx.market_mode = "domestic"
     ctx.enabled_market_modes = ["domestic"]
-    
+    # 국내 히트맵의 장중 소스. MagicMock 이 자동 생성한 truthy 목이 조용히 끼어들지 않도록
+    # 기본은 '미배선'으로 두고, 필요한 테스트만 명시적으로 채운다.
+    ctx.naver_market_snapshot_service = None
+
     # 하위 서비스 Mocking
     ctx.stock_query_service = AsyncMock()
     ctx.streaming_service = AsyncMock()
