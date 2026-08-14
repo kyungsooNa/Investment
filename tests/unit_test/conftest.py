@@ -170,6 +170,8 @@ def mock_web_ctx():
     ctx.naver_market_snapshot_service = None
     # 유니버스 조회는 await 대상이라 기본을 깔아둔다(빈 집합 = 필터 없음).
     ctx.stock_repository.get_snapshot_codes = AsyncMock(return_value=set())
+    # 업종 분류도 await 대상. 기본은 '분류 없음' 이라 sector 가 None 으로 나온다.
+    ctx.stock_classification_repository.get_code_category_map = AsyncMock(return_value={})
 
     # 하위 서비스 Mocking
     ctx.stock_query_service = AsyncMock()

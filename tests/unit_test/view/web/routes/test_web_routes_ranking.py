@@ -541,6 +541,7 @@ async def test_get_domestic_heatmap(web_client, mock_web_ctx):
         "change_rate": "-0.72",
         "market_cap": 12101797,
         "market": "KOSPI",
+        "sector": None,
     }]
     # 기본은 일간 등락률이므로 기간 기준가를 조회하지 않는다.
     assert body["data"]["period"] == "1d"
@@ -653,6 +654,42 @@ async def test_get_domestic_heatmap_without_repository(web_client, mock_web_ctx)
 
     assert response.status_code == 200
     assert response.json()["rt_cd"] != "0"
+
+
+@pytest.mark.asyncio
+async def test_get_domestic_heatmap_attaches_industry_sector(web_client, mock_web_ctx):
+    """업종 분류가 있으면 item 에 sector 를 붙인다(화면이 섹터 블록으로 묶는다)."""
+    mock_web_ctx.stock_repository.get_market_cap_snapshot = AsyncMock(return_value=[
+        {"code": "005930", "name": "삼성전자", "change_rate": "1.0", "market_cap": 100,
+         "trade_date": "20260814", "market": "KOSPI", "current_price": 1},
+        {"code": "999999", "name": "미분류주", "change_rate": "1.0", "market_cap": 50,
+         "trade_date": "20260814", "market": "KOSPI", "current_price": 1},
+    ])
+    mock_web_ctx.stock_classification_repository.get_code_category_map = AsyncMock(
+        return_value={"005930": "반도체와반도체장비"}
+    )
+
+    body = web_client.get("/api/heatmap/domestic").json()
+
+    items = {item["code"]: item for item in body["data"]["items"]}
+    assert items["005930"]["sector"] == "반도체와반도체장비"
+    assert items["999999"]["sector"] is None, "분류가 없는 종목은 None (화면이 기타로 묶는다)"
+    mock_web_ctx.stock_classification_repository.get_code_category_map.assert_awaited_with("industry")
+
+
+@pytest.mark.asyncio
+async def test_get_domestic_heatmap_without_classification_repository(web_client, mock_web_ctx):
+    """분류 저장소가 없으면 sector 없이 기존처럼 단일 그리드로 그린다."""
+    mock_web_ctx.stock_classification_repository = None
+    mock_web_ctx.stock_repository.get_market_cap_snapshot = AsyncMock(return_value=[
+        {"code": "005930", "name": "삼성전자", "change_rate": "1.0", "market_cap": 100,
+         "trade_date": "20260814", "market": "KOSPI", "current_price": 1},
+    ])
+
+    body = web_client.get("/api/heatmap/domestic").json()
+
+    assert body["rt_cd"] == "0"
+    assert body["data"]["items"][0]["sector"] is None
 
 
 def _naver_service(rows=None, error=None):

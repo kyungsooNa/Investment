@@ -40,13 +40,21 @@ def test_home_menu_links_to_heatmap_page():
     assert 'href="/heatmap"' in template, "홈에서 전용 페이지로 갈 수 있어야 함"
 
 
-def test_domestic_heatmap_uses_daily_snapshot_and_shows_base_date():
+def test_domestic_heatmap_shows_whether_it_is_live_or_a_close():
     script = _heatmap_js()
 
-    # 실시간 전종목 시세 소스가 없어 장마감 후 스냅샷을 쓴다 — 기준일을 감추지 않는다.
+    # 장중에는 실시간, 장외에는 장마감 종가다 — 어느 쪽인지 화면이 밝힌다.
     assert "/api/heatmap/domestic" in _heatmap_page_js()
     assert "기준일" in script and "종가" in script
-    # 배타적 업종 분류가 없으므로 섹터 블록 없이 단일 그룹으로 그린다.
+    assert "실시간" in script
+
+
+def test_domestic_heatmap_groups_by_industry_when_available():
+    """업종 분류가 채워지면 섹터 블록, 수집 전이면 단일 그리드."""
+    script = _heatmap_js()
+
+    assert "_groupBySector" in script
+    # 분류 수집 전에는 어느 종목에도 sector 가 없어 예전처럼 단일 그룹으로 떨어져야 한다.
     assert "sector: null" in script
 
 

@@ -252,6 +252,27 @@ class StockClassificationRepository:
             }
         return result
 
+    async def get_code_category_map(self, category_type: str) -> Dict[str, str]:
+        """{종목코드: normalized_name}. 히트맵이 종목마다 업종을 붙일 때 쓴다.
+
+        get_groups() 를 뒤집어 쓰면 매 요청마다 수천 건짜리 그룹 구조를 재구성해야 한다.
+        업종은 배타적이라 코드당 그룹이 하나이므로 이 형태가 맞다.
+        """
+        await self._ensure_locks()
+        async with self._read_conn_lock:
+            try:
+                conn = await self._get_read_conn()
+                async with conn.execute(
+                    "SELECT code, normalized_name FROM stock_classifications "
+                    "WHERE category_type = ?",
+                    (category_type,),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+            except Exception as e:
+                self._logger.error(f"StockClassificationRepository.get_code_category_map 실패: {e}")
+                return {}
+        return {code: name for code, name in rows if code and name}
+
     async def get_latest_collected_at(self) -> Optional[str]:
         """가장 최근 collected_at 값 반환. 데이터가 없으면 None."""
         await self._ensure_locks()
