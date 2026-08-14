@@ -6,6 +6,65 @@ from services.market_status_alert_service import MarketStatusAlertService
 
 
 @pytest.mark.asyncio
+async def test_market_status_alert_service_reports_stock_vi_trigger():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        logger=MagicMock(),
+    )
+
+    await service.on_market_status({
+        "유가증권단축종목코드": "080220",
+        "거래정지여부": "N",
+        "거래정지사유내용": "",
+        "VI적용구분코드": "1",
+        "거래소구분코드": "KRX",
+    })
+
+    operator_alert.report.assert_awaited_once()
+    args = operator_alert.report.await_args.args
+    kwargs = operator_alert.report.await_args.kwargs
+    assert args[0] == AlertSource.MARKET_STATUS
+    assert args[1] == "market_status:stock_vi:KRX:080220"
+    assert args[2] == "error"
+    assert args[3] == "개별종목 VI 발동 감지"
+    assert "080220" in args[4]
+    assert kwargs["metadata"]["event_type"] == "stock_vi"
+    assert kwargs["metadata"]["vi_code"] == "1"
+    assert kwargs["metadata"]["telegram_channel"] == "report"
+
+
+@pytest.mark.asyncio
+async def test_market_status_alert_service_resolves_stock_vi_on_normal_status():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        logger=MagicMock(),
+    )
+
+    await service.on_market_status({
+        "유가증권단축종목코드": "080220",
+        "거래정지여부": "N",
+        "거래정지사유내용": "",
+        "VI적용구분코드": "1",
+        "거래소구분코드": "KRX",
+    })
+    await service.on_market_status({
+        "유가증권단축종목코드": "080220",
+        "거래정지여부": "N",
+        "거래정지사유내용": "",
+        "VI적용구분코드": "0",
+        "거래소구분코드": "KRX",
+    })
+
+    operator_alert.resolve.assert_awaited_once_with(
+        AlertSource.MARKET_STATUS,
+        "market_status:stock_vi:KRX:080220",
+        "장운영정보 정상화",
+    )
+
+
+@pytest.mark.asyncio
 async def test_market_status_alert_service_reports_circuit_breaker():
     operator_alert = AsyncMock()
     service = MarketStatusAlertService(
