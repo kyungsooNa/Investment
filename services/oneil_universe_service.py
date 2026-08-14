@@ -99,6 +99,7 @@ class OneilUniverseService:
                 min_net_change_pct=self._cfg.market_ma_min_net_change_pct,
                 daily_dip_tolerance_pct=self._cfg.market_ma_daily_dip_tolerance_pct,
                 hard_decline_pct=self._cfg.market_ma_hard_decline_pct,
+                recovery_close_buffer_pct=self._cfg.market_ma_recovery_close_buffer_pct,
             )
             market_regime_service = MarketRegimeService(
                 stock_query_service=stock_query_service,
@@ -1053,7 +1054,8 @@ class OneilUniverseService:
                     msg += f"\n• 최초 전환 가능: 최소 {snap.recovery_earliest_days}거래일 후 (이후 종가 조건 충족 시)"
                 if not is_rising and snap.recovery_earliest_days is not None:
                     msg += (
-                        f"\n• 회복 전환 조건: 급락 구간 해소 후 MA({self._cfg.market_ma_period}) 비하락, "
+                        f"\n• 회복 전환 조건: 급락 구간 해소 후 MA({self._cfg.market_ma_period}) 비하락 "
+                        f"또는 종가가 MA 대비 +{self._cfg.market_ma_recovery_close_buffer_pct:.1f}% 이상, "
                         f"종가가 MA 위, 최근 2거래일 중 1일 이상 상승"
                     )
                 if not is_rising and snap.next_close_floor is not None:
