@@ -1,7 +1,11 @@
-"""LarryWilliamsCB 전략의 시장 국면 게이트 단위 테스트.
+"""LarryWilliamsCB 전략과 시장 국면의 관계를 잠그는 단위 테스트.
 
-- bear regime → 종목 skip, entry_rejected/reason=market_timing_off
-- bull regime → 기존 로직 진행
+#766 이 마켓타이밍 차단을 스케줄러 공통 주문 게이트로 옮긴 뒤로, 이 전략은 레짐에 따라
+스캔을 바꾸지 않는다. 그래서 여기서 잠그는 것은 '차단'이 아니라 **차단하지 않음**이다.
+
+- bear regime 이어도 관찰용 진입 평가는 계속한다
+- 전략 수준의 entry_rejected/market_timing_off 는 남기지 않는다
+- 마켓타이밍을 조회하지도 않는다
 """
 import os
 import tempfile
@@ -114,3 +118,15 @@ async def test_bull_regime_proceeds_to_entry_check(tmp_path):
     sqs.get_ohlcv.return_value = MagicMock(rt_cd="0", data=[{"close": 100}])
     await strategy.scan()
     sqs.get_ohlcv.assert_awaited()  # 게이트 통과 → 진입 평가 시작
+
+
+@pytest.mark.asyncio
+async def test_scan_does_not_query_market_timing_at_all(tmp_path):
+    """마켓타이밍 판정은 스케줄러 공통 주문 게이트가 한다 — 전략은 조회하지 않는다."""
+    watchlist = {"035720": _make_watchlist_item("035720", "KOSDAQ", "카카오")}
+    universe = _make_universe({"KOSPI": True, "KOSDAQ": False}, watchlist)
+    strategy, _ = _make_strategy(universe, state_file=str(tmp_path / "lwcb_state.json"))
+
+    await strategy.scan()
+
+    universe.is_market_timing_ok.assert_not_called()

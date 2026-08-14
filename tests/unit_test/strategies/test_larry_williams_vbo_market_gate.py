@@ -1,8 +1,12 @@
-"""LarryWilliamsVBO 전략의 시장 국면 게이트 단위 테스트.
+"""LarryWilliamsVBO 전략과 시장 국면의 관계를 잠그는 단위 테스트.
 
-- bear regime → 종목 skip, entry_rejected/reason=market_timing_off
-- bull regime → 기존 로직 진행 (게이트 통과)
-- universe_service 없음 → 게이트 우회 (fallback 호환)
+#766 이 마켓타이밍 차단을 스케줄러 공통 주문 게이트로 옮긴 뒤로, 이 전략은 레짐에 따라
+스캔을 바꾸지 않는다. 그래서 여기서 잠그는 것은 '차단'이 아니라 **차단하지 않음**이다.
+
+- bear regime 이어도 관찰용 진입 평가는 계속한다
+- 전략 수준의 entry_rejected/market_timing_off 는 남기지 않는다
+- 마켓타이밍을 조회하지도 않는다
+- universe_service 없음 → fallback 경로 호환
 """
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -140,3 +144,18 @@ async def test_universe_none_bypasses_market_gate():
     # universe 없으면 게이트 미수행 — 가격 조회까지 도달
     await strategy.scan()
     sqs.handle_get_current_stock_price.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scan_does_not_query_market_timing_at_all():
+    """마켓타이밍 판정은 스케줄러 공통 주문 게이트가 한다 — 전략은 조회하지 않는다.
+
+    #766 이 차단 코드를 스케줄러로 옮기면서 전략에는 결과를 쓰지 않는 조회만 남았다.
+    조회가 남아 있으면 '이 전략이 마켓타이밍을 본다'고 코드가 거짓말을 한다.
+    """
+    universe = _make_universe({"KOSPI": True, "KOSDAQ": False})
+    strategy, _ = _make_strategy(universe)
+
+    await strategy.scan()
+
+    universe.is_market_timing_ok.assert_not_called()
