@@ -168,6 +168,36 @@ async def test_cache_price_snapshot_schedules_favorite_price_alert(mock_stock_re
     await asyncio.sleep(0)
 
 
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_pending_favorite_price_alert_task(mock_stock_repo, mock_logger):
+    finished = asyncio.Event()
+
+    class SlowFavoriteAlert:
+        async def handle_price_tick(self, *args, **kwargs):
+            await asyncio.sleep(0.01)
+            finished.set()
+
+    service = PriceStreamService(
+        stock_repo=mock_stock_repo,
+        logger=mock_logger,
+        favorite_price_alert_service=SlowFavoriteAlert(),
+    )
+
+    service.cache_price_snapshot(
+        "080220",
+        price="91300",
+        change="4300",
+        rate="5.02",
+        sign="2",
+        volume="12345",
+    )
+
+    await service.shutdown()
+
+    assert finished.is_set()
+    assert service._background_tasks == set()
+
+
 def test_on_price_tick_stores_liquidity_fields(price_stream_service):
     """체결틱의 누적거래량/누적거래대금이 snapshot 에 보관된다."""
     data = {

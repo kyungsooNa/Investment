@@ -518,6 +518,8 @@ class WebAppContext:
             await self.background_scheduler.shutdown()
         if self.program_trading_stream_service:
             await self.program_trading_stream_service.shutdown()
+        if self.price_stream_service:
+            await self.price_stream_service.shutdown()
         if self.broker:
             await self.broker.stop()
         if self.stock_repository:
