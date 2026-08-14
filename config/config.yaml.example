@@ -276,6 +276,9 @@ youtube_digest:
   proxy_https_url: ""
   proxy_locations: ["kr", "jp"]
   request_interval_sec: 5
+  # youtube-transcript-api 가 IpBlocked/RequestBlocked 를 맞으면 Gemini API에
+  # 공개 YouTube URL을 직접 넘겨 대체 리포트를 만든다. Gemini quota를 쓰므로 opt-in.
+  gemini_fallback_enabled: false
 
 # AI 분석 (Gemini/Groq/Ollama OpenAI 호환 엔드포인트 공통)
 #   관심종목 신규 공시의 실제 DART 본문을 읽어 최종 중요도와 요약을 산출

@@ -354,6 +354,7 @@ class YoutubeDigestConfig(BaseModel):
     proxy_https_url: str = ""
     proxy_locations: List[str] = Field(default_factory=list)
     request_interval_sec: float = Field(5.0, ge=0)
+    gemini_fallback_enabled: bool = False
 
     model_config = {"extra": "allow"}
 

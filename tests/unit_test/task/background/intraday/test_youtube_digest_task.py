@@ -38,6 +38,7 @@ def _task(
     collect_result=None,
     was_blocked=False,
     digest_result=None,
+    gemini_fallback_result=None,
     channels=None,
 ):
     channel_repo = MagicMock()
@@ -59,6 +60,10 @@ def _task(
     digest_repo.save = AsyncMock()
     notifier = MagicMock()
     notifier.emit = AsyncMock()
+    gemini_fallback = None
+    if gemini_fallback_result is not None:
+        gemini_fallback = MagicMock()
+        gemini_fallback.build_digest = AsyncMock(return_value=gemini_fallback_result)
 
     task = YoutubeDigestTask(
         channel_repository=channel_repo,
@@ -67,6 +72,7 @@ def _task(
         digest_repository=digest_repo,
         notification_service=notifier,
         market_clock=clock or _clock(7, 30),
+        gemini_fallback_service=gemini_fallback,
     )
     return task, {
         "channel_repo": channel_repo,
@@ -74,6 +80,7 @@ def _task(
         "digest_service": digest_service,
         "digest_repo": digest_repo,
         "notifier": notifier,
+        "gemini_fallback": gemini_fallback,
     }
 
 
@@ -230,6 +237,45 @@ async def test_ip_block_is_retried_once_before_giving_up():
     await task.run_once()  # 두 번째도 차단
     clock.get_current_kst_time.return_value = _KST.localize(datetime(2026, 8, 10, 10, 0))
     assert await task._should_run_now() is False  # 포기
+
+
+async def test_ip_block_uses_gemini_fallback_when_configured():
+    """Gemini fallback 이 켜져 있으면 IP 차단을 빈 리포트로 끝내지 않는다."""
+    fallback = _ok_digest(
+        video_count=1,
+        mentions=[],
+        videos=[{
+            "video_id": "v1",
+            "title": "영상",
+            "channel_title": "채널",
+            "url": "https://www.youtube.com/watch?v=v1",
+            "published": "2026-08-10T07:00:00+00:00",
+            "summary": "Gemini 요약",
+        }],
+        digest_text="Gemini fallback 리포트",
+        source="gemini_video_url",
+    )
+    task, deps = _task(
+        collect_result=[{
+            "video_id": "v1",
+            "title": "영상",
+            "channel_title": "채널",
+            "url": "https://www.youtube.com/watch?v=v1",
+            "published": "2026-08-10T07:00:00+00:00",
+            "skip_reason": "blocked",
+            "transcript": "",
+        }],
+        was_blocked=True,
+        gemini_fallback_result=fallback,
+    )
+
+    await task.run_once()
+
+    deps["gemini_fallback"].build_digest.assert_awaited_once()
+    deps["digest_repo"].save.assert_awaited_once()
+    saved = deps["digest_repo"].save.await_args.args[0]
+    assert saved["source"] == "gemini_video_url"
+    assert task.get_progress()["last_report_date"] == "20260810"
 
 
 async def test_no_usable_video_notifies_without_calling_ai():

@@ -13,6 +13,7 @@ _CREATE_DIGESTS = """
 CREATE TABLE IF NOT EXISTS youtube_digests (
     report_date          TEXT PRIMARY KEY,
     digest_text          TEXT NOT NULL DEFAULT '',
+    source               TEXT NOT NULL DEFAULT 'transcript',
     video_count          INTEGER NOT NULL DEFAULT 0,
     failed_summary_count INTEGER NOT NULL DEFAULT 0,
     created_at           TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
@@ -58,9 +59,20 @@ class YoutubeDigestRepository:
     async def _setup(self, conn: aiosqlite.Connection) -> None:
         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute(_CREATE_DIGESTS)
+        await self._ensure_source_column(conn)
         await conn.execute(_CREATE_MENTIONS)
         await conn.execute(_CREATE_VIDEOS)
         await conn.commit()
+
+    async def _ensure_source_column(self, conn: aiosqlite.Connection) -> None:
+        async with conn.execute("PRAGMA table_info(youtube_digests)") as cur:
+            rows = await cur.fetchall()
+        columns = {row[1] for row in rows}
+        if "source" not in columns:
+            await conn.execute(
+                "ALTER TABLE youtube_digests"
+                " ADD COLUMN source TEXT NOT NULL DEFAULT 'transcript'"
+            )
 
     async def save(self, payload: dict) -> None:
         """하루치 리포트를 저장한다. 같은 날짜가 있으면 통째로 교체한다."""
@@ -77,11 +89,12 @@ class YoutubeDigestRepository:
             )
             await conn.execute(
                 "INSERT OR REPLACE INTO youtube_digests"
-                " (report_date, digest_text, video_count, failed_summary_count)"
-                " VALUES (?, ?, ?, ?)",
+                " (report_date, digest_text, source, video_count, failed_summary_count)"
+                " VALUES (?, ?, ?, ?, ?)",
                 (
                     report_date,
                     str(payload.get("digest_text") or ""),
+                    str(payload.get("source") or "transcript"),
                     int(payload.get("video_count") or 0),
                     int(payload.get("failed_summary_count") or 0),
                 ),
@@ -126,7 +139,7 @@ class YoutubeDigestRepository:
         async with aiosqlite.connect(self._db_path) as conn:
             await self._setup(conn)
             async with conn.execute(
-                "SELECT report_date, digest_text, video_count, failed_summary_count,"
+                "SELECT report_date, digest_text, source, video_count, failed_summary_count,"
                 " created_at FROM youtube_digests WHERE report_date = ?",
                 (report_date,),
             ) as cur:
@@ -148,9 +161,10 @@ class YoutubeDigestRepository:
         return {
             "report_date": row[0],
             "digest_text": row[1],
-            "video_count": row[2],
-            "failed_summary_count": row[3],
-            "created_at": row[4],
+            "source": row[2],
+            "video_count": row[3],
+            "failed_summary_count": row[4],
+            "created_at": row[5],
             "mentions": [
                 {"name": m[0], "code": m[1], "count": m[2], "video_count": m[3]}
                 for m in mention_rows
@@ -173,7 +187,7 @@ class YoutubeDigestRepository:
         async with aiosqlite.connect(self._db_path) as conn:
             await self._setup(conn)
             async with conn.execute(
-                "SELECT report_date, video_count, failed_summary_count, created_at"
+                "SELECT report_date, source, video_count, failed_summary_count, created_at"
                 " FROM youtube_digests ORDER BY report_date DESC LIMIT ?",
                 (max(1, int(limit)),),
             ) as cur:
@@ -181,9 +195,10 @@ class YoutubeDigestRepository:
         return [
             {
                 "report_date": row[0],
-                "video_count": row[1],
-                "failed_summary_count": row[2],
-                "created_at": row[3],
+                "source": row[1],
+                "video_count": row[2],
+                "failed_summary_count": row[3],
+                "created_at": row[4],
             }
             for row in rows
         ]
