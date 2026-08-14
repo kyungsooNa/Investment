@@ -55,6 +55,47 @@ async def test_analyze_returns_structured_result_and_passes_document_text():
     assert '"event_key"' in user_prompt
 
 
+async def test_periodic_report_prompt_requires_balanced_half_year_review():
+    ai_client = MagicMock()
+    ai_client.complete = AsyncMock(
+        return_value=(
+            '{"summary":"무디스 등급 상향, 자사주 소각, HBM4E 샘플 공급이 긍정적입니다.",'
+            '"score":75,"reasons":["신용등급 및 신제품 긍정 재료"],'
+            '"event_key":"정기보고서|2026반기"}'
+        )
+    )
+    analyzer = AiDisclosureAnalyzer(ai_client, logger=MagicMock())
+    disclosure = DartDisclosure(
+        corp_class="Y",
+        corp_name="SK하이닉스",
+        corp_code="00164779",
+        stock_code="000660",
+        report_name="반기보고서 (2026.06)",
+        receipt_no="20260814000001",
+        filer_name="SK하이닉스",
+        receipt_date="20260814",
+        remarks="유",
+    )
+
+    result = await analyzer.analyze(
+        disclosure,
+        DisclosureImportance(30, "NORMAL", ["정기보고서"]),
+        (
+            "무디스 A3 상향, 자기주식 소각, HBM4E 샘플 공급. "
+            "상반기 연결재무제표와 우발채무 내용은 별도 표에 기재."
+        ),
+    )
+
+    assert result.importance.score == 60
+    assert result.importance.level == "MEDIUM"
+    assert "정기보고서 핵심 점검 항목 누락으로 HIGH 제한" in result.importance.reasons
+    user_prompt = ai_client.complete.await_args.kwargs["user"]
+    assert "정기보고서 점검 기준" in user_prompt
+    assert "상반기 실적" in user_prompt
+    assert "신주 발행·자기주식" in user_prompt
+    assert "우발채무·소송" in user_prompt
+
+
 async def test_analyze_returns_none_when_ai_fails():
     ai_client = MagicMock()
     ai_client.complete = AsyncMock(side_effect=AiClientError("NETWORK", "timeout"))
