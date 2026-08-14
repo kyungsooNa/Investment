@@ -281,19 +281,23 @@
 
 주요 파일: `view/web/templates/marketcap.html`, `view/web/static/js/marketcap.js`, `view/web/static/js/overseas.js`, `view/web/static/js/common.js`, `view/web/routes/stock.py`, `view/web/bootstrap/service_container.py`, `services/market_cap_gap_service.py`, `tests/frontend/`
 
-### M-4. 히트맵(트리맵) [미국장·국내 1단계 완료 — 업종 축만 잔여, 2026-07-31]
+### M-4. 히트맵(트리맵) [미국·국내 장중 실시간 완료 — 업종 축만 잔여, 2026-08-14]
 
 홈 화면 히트맵 2종 완료. 공용 렌더러는 `view/web/static/js/market_heatmap.js`.
 
-- 미국: `/api/overseas/top-market-cap` 스냅샷 재사용(섹터 블록 2단, 백엔드 변경 없음).
-- 국내: `/api/heatmap/domestic` 신규(`StockOhlcvRepository.get_market_cap_snapshot`). 상위 200종목 = 전체 시총 91% 커버.
-  - **종가 기준**: 실시간 전종목 시세 소스가 없어 daily_prices 스냅샷을 쓴다. 확인한 대안 — KIS 랭킹은 실전 전용·상위 30, `theme_trading_value_snapshots`는 84종목·가격 없음, 전종목 폴링은 budget throttle 직격. 화면에 `기준일: YYYY-MM-DD 종가` 를 상시 표기해 장중 오해를 막는다.
+- 미국: `/api/overseas/top-market-cap` 스냅샷 재사용(섹터 블록 2단). 화면이 60초로 폴링하고 서버 TTL 45초 (#834).
+- 국내: `/api/heatmap/domestic`. **장중에는 네이버 시총 페이지 실시간, 장외에는 daily_prices 종가** (#841).
+  - 응답의 `realtime` 으로 캡션이 `실시간 HH:MM 기준` / `기준일 … 종가` 를 구분하고, 실시간일 때만 60초 폴링한다.
+  - 스크래핑이 비거나 터지면 저장소로 폴백한다(화면이 통째로 비지 않게).
   - **섹터 블록 없음**: 배타적 업종 분류가 없어 시총순 단일 그리드로 그린다.
 
 잔여 — 국내 업종 축(선택):
-- [ ] KRX 업종지수 구성종목(`pykrx.stock.get_index_portfolio_deposit_file`)으로 배타적 업종 분류를 수집한다. `StockClassificationRepository`에 `category_type='industry'`로 적재하면 저장소·조회 코드를 그대로 재사용할 수 있고, `market_heatmap.js`는 `sector` 가 채워지면 자동으로 섹터 블록을 그린다.
-  - **선행 검증 필요**: 2026-07-31 확인 시 이 환경에서 pykrx 지수 API가 빈 응답이었다(`get_index_portfolio_deposit_file('1005')` IndexError, `get_market_cap_by_ticker` 컬럼 없음). 샌드박스 네트워크 제약인지 KRX 변경인지 실런타임에서 1회 spike 검증 후 착수.
+- [ ] 배타적 업종 분류를 수집해 `StockClassificationRepository`에 `category_type='industry'`로 적재한다. `market_heatmap.js`는 `sector` 가 채워지면 자동으로 섹터 블록을 그린다.
+  - **소스를 다시 정해야 한다.** 기존 계획이던 `pykrx.stock.get_index_portfolio_deposit_file` 은 쓸 수 없다. 2026-08-14 실측으로 원인이 규명됐다 — pykrx 는 `data.krx.co.kr/comm/bldAttendant/getJsonData.cmd` 를 치는데 KRX 가 이를 막아 세션 쿠키를 세워도 `LOGOUT` 을 돌려준다. 샌드박스 제약도 pykrx 버전 문제도 아니라 **업그레이드로 해결되지 않는다**. (같은 이유로 FDR 의 비캐시 경로도 죽어 있고, FDR `StockListing('KRX')` 은 GitHub 일별 CSV 캐시라 장중 값이 아니다.)
+  - 후보: 네이버 업종 페이지(`sise_group.naver?type=upjong`). 시총 페이지에는 업종 컬럼이 없어 별도 수집이 필요하다.
   - NAVER 테마를 대표 1개로 강제 배정하는 안은 채택하지 않는다(종목당 평균 2.7개 소속 → 임의 규칙이 화면 해석을 왜곡).
+
+관련 — `PykrxKoreanMarketCapProvider`(`services/market_cap_gap_service.py`)도 같은 차단으로 무력화 상태다. `_fetch_local_db` 가 먼저 채우므로 데이터가 틀리진 않지만, 부족분에 대해 8회 warning 만 남기고 빈손으로 반환한다.
 
 ### M-5. 알림 파이프라인 신뢰성 [신규 — 2026-08-07, 반복 수정 집중 신호]
 
