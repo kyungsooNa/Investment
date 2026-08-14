@@ -189,6 +189,42 @@ async def test_partial_page_failure_still_returns_what_was_collected():
     assert [r["code"] for r in rows] == ["005930", "000660"], "한 페이지가 죽어도 화면이 비면 안 됨"
 
 
+async def test_allowed_codes_narrows_the_universe_to_the_stored_one():
+    """네이버 시총 페이지는 ETF·ETN·우선주까지 싣는다. 히트맵 유니버스(daily_prices)에
+    없는 종목이 장중에만 끼어들면 화면 구성이 장외와 달라지므로 걸러낸다."""
+    page = _page(
+        _row("069500", "KODEX 200", "40,000", "+1.00%", "60,000"),
+        _row("005930", "삼성전자", "274,500", "+2.43%", "16,048,035"),
+    )
+    service = _service({(0, 1): page})
+
+    rows = await service.get_snapshot(limit=10, market="KOSPI", allowed_codes={"005930"})
+
+    assert [r["code"] for r in rows] == ["005930"]
+
+
+async def test_allowed_codes_filters_before_slicing_the_limit():
+    """자른 뒤에 거르면 limit 을 못 채운다 — 거르고 나서 잘라야 한다."""
+    page = _page(
+        _row("069500", "KODEX 200", "40,000", "+1.00%", "9,000,000"),
+        _row("005930", "삼성전자", "274,500", "+2.43%", "8,000,000"),
+        _row("000660", "SK하이닉스", "1,688,000", "+5.96%", "7,000,000"),
+    )
+    service = _service({(0, 1): page})
+
+    rows = await service.get_snapshot(limit=2, market="KOSPI", allowed_codes={"005930", "000660"})
+
+    assert [r["code"] for r in rows] == ["005930", "000660"]
+
+
+async def test_allowed_codes_none_keeps_everything():
+    service = _service({(0, 1): KOSPI_PAGE})
+
+    rows = await service.get_snapshot(limit=10, market="KOSPI", allowed_codes=None)
+
+    assert len(rows) == 2
+
+
 async def test_returns_empty_when_markup_no_longer_parses():
     """마크업이 바뀌면 조용히 빈 목록이 된다 — 라우트가 저장소로 폴백할 수 있어야 한다."""
     service = _service({(0, 1): "<html><body>개편된 페이지</body></html>"})

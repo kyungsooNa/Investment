@@ -224,7 +224,12 @@ async def _domestic_heatmap_rows(ctx, repository, *, limit: int, market: Optiona
     service = getattr(ctx, "naver_market_snapshot_service", None)
     if service is not None and await ctx.is_market_open_now():
         try:
-            rows = await service.get_snapshot(limit=limit, market=market)
+            # 장중 소스는 ETF·ETN·우선주까지 싣는다. 장마감 스냅샷이 담는 종목 집합으로
+            # 잘라, 장이 열리고 닫힐 때 화면 구성이 바뀌지 않게 한다.
+            allowed = await repository.get_snapshot_codes()
+            rows = await service.get_snapshot(
+                limit=limit, market=market, allowed_codes=allowed or None
+            )
         except Exception as exc:
             ctx.logger.warning(f"국내 히트맵 장중 스냅샷 실패 — 저장소로 폴백: {exc}")
         else:

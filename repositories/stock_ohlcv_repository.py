@@ -502,6 +502,27 @@ class StockOhlcvRepository:
             self._logger.error(f"StockOhlcvRepository daily_prices 전종목 조회 실패: {e}")
             return []
 
+    async def get_snapshot_codes(self) -> set:
+        """최신 거래일 스냅샷이 담고 있는 종목코드 집합.
+
+        히트맵이 장중에 쓰는 외부 소스(네이버)는 ETF·ETN·우선주까지 싣는다. 장외와 같은
+        종목 집합을 그리려면 이 유니버스로 잘라야 한다. 정지주(시총 0원)도 유니버스에는
+        남긴다 — 면적 계산에서만 빠질 뿐이다.
+        """
+        try:
+            async with self._get_read_connection() as conn:
+                async with conn.execute(
+                    """
+                    SELECT code FROM daily_prices
+                    WHERE trade_date = (SELECT MAX(trade_date) FROM daily_prices)
+                    """
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                return {row[0] for row in rows if row[0]}
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository 스냅샷 종목코드 조회 실패: {e}")
+            return set()
+
     async def get_market_cap_snapshot(self, limit: int = 300, market: Optional[str] = None) -> List[Dict]:
         """최신 거래일의 시가총액 상위 종목 스냅샷 (국내 히트맵용).
 

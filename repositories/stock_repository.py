@@ -110,6 +110,10 @@ class StockRepository:
         """최신 거래일 기준 시가총액 상위 스냅샷 조회 (국내 히트맵용)."""
         return await self._ohlcv_repo.get_market_cap_snapshot(limit=limit, market=market)
 
+    async def get_snapshot_codes(self) -> set:
+        """최신 거래일 스냅샷의 종목코드 집합 (히트맵 장중 소스를 같은 유니버스로 자를 때 쓴다)."""
+        return await self._ohlcv_repo.get_snapshot_codes()
+
     async def get_period_base_closes(self, period_days: int = 0, ytd: bool = False) -> Dict:
         """최신 거래일에서 period_days 달력일 이전(ytd=True 면 올해 첫 거래일)의 종목별 기준종가 조회."""
         return await self._ohlcv_repo.get_period_base_closes(period_days=period_days, ytd=ytd)
