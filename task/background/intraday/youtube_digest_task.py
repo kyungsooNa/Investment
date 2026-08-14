@@ -51,6 +51,7 @@ class YoutubeDigestTask(SchedulableTask):
         notification_service=None,
         market_clock=None,
         logger: Optional[logging.Logger] = None,
+        gemini_fallback_service=None,
     ) -> None:
         self._channel_repo = channel_repository
         self._collector = collector
@@ -59,6 +60,7 @@ class YoutubeDigestTask(SchedulableTask):
         self._ns = notification_service
         self._market_clock = market_clock
         self._logger = logger or logging.getLogger(__name__)
+        self._gemini_fallback_service = gemini_fallback_service
         self._state = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
         self._last_run_date: Optional[str] = None
@@ -175,6 +177,8 @@ class YoutubeDigestTask(SchedulableTask):
                 max_videos_per_channel=self.MAX_VIDEOS_PER_CHANNEL,
             )
             if getattr(self._collector, "was_blocked", False):
+                if await self._try_gemini_fallback(items, report_date, now):
+                    return
                 await self._handle_block(report_date, now)
                 return
 
@@ -239,6 +243,45 @@ class YoutubeDigestTask(SchedulableTask):
             " 오늘 리포트는 생성되지 않습니다.",
         )
         self._mark_done(report_date, now)
+
+    async def _try_gemini_fallback(
+        self, items: list[dict], report_date: str, now
+    ) -> bool:
+        if self._gemini_fallback_service is None:
+            return False
+        videos = [item for item in (items or []) if item.get("url")]
+        if not videos:
+            self._logger.warning("[YoutubeDigest] Gemini fallback 대상 영상이 없습니다.")
+            return False
+        try:
+            result = await self._gemini_fallback_service.build_digest(
+                videos, report_date=report_date
+            )
+        except Exception as e:
+            self._last_error = f"blocked; gemini fallback failed: {e}"
+            self._logger.warning(f"[YoutubeDigest] Gemini fallback 실패: {e}")
+            return False
+        if not result or result.rt_cd != ErrorCode.SUCCESS.value:
+            message = getattr(result, "msg1", "응답 없음") if result else "응답 없음"
+            self._last_error = f"blocked; gemini fallback failed: {message}"
+            self._logger.warning(f"[YoutubeDigest] Gemini fallback 리포트 생성 실패: {message}")
+            return False
+
+        payload = dict(result.data or {})
+        payload.setdefault("source", "gemini_video_url")
+        await self._digest_repo.save(payload)
+        self._last_report_date = report_date
+        await self._emit(
+            NotificationLevel.INFO,
+            "유튜브 다이제스트",
+            self._format_message(payload),
+        )
+        self._logger.info(
+            f"[YoutubeDigest] Gemini fallback 리포트 완료: {report_date} "
+            f"영상 {payload.get('video_count')}편"
+        )
+        self._mark_done(report_date, now)
+        return True
 
     def _mark_done(self, report_date: str, now) -> None:
         self._last_run_date = report_date

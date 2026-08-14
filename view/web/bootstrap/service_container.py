@@ -92,6 +92,9 @@ from repositories.dart_disclosure_repository import DartDisclosureRepository
 from repositories.overseas_trade_repository import OverseasTradeRepository
 from repositories.youtube_channel_repository import YoutubeChannelRepository
 from repositories.youtube_digest_repository import YoutubeDigestRepository
+from services.gemini_youtube_video_analyzer_service import (
+    GeminiYoutubeVideoAnalyzerService,
+)
 from services.youtube_transcript_collector_service import YoutubeTranscriptCollectorService
 from services.youtube_digest_service import YoutubeDigestService
 from task.background.intraday.youtube_digest_task import YoutubeDigestTask
@@ -451,6 +454,7 @@ class ServiceContainer:
         )
         ctx.youtube_digest_service = None
         ctx.youtube_digest_task = None
+        ctx.youtube_gemini_fallback_service = None
         if ctx.ai_client is not None:
             # 청크는 입력 예산보다 작아야 AiClient 가 뒤를 잘라내지 않는다.
             _yt_budget = int(ai_config.max_input_chars) or 24000
@@ -461,6 +465,17 @@ class ServiceContainer:
                 chunk_chars=max(2000, _yt_budget - 2000),
                 logger=ctx.logger,
             )
+            if (
+                youtube_config.gemini_fallback_enabled
+                and ai_config.provider.lower() == "gemini"
+                and ai_config.api_key
+            ):
+                ctx.youtube_gemini_fallback_service = GeminiYoutubeVideoAnalyzerService(
+                    api_key=ai_config.api_key,
+                    model=ai_config.model,
+                    timeout_sec=float(ai_config.timeout_sec),
+                    logger=ctx.logger,
+                )
             ctx.youtube_digest_task = YoutubeDigestTask(
                 channel_repository=ctx.youtube_channel_repository,
                 collector=ctx.youtube_transcript_collector,
@@ -469,6 +484,7 @@ class ServiceContainer:
                 notification_service=ctx.notification_service,
                 market_clock=ctx.market_clock,
                 logger=ctx.logger,
+                gemini_fallback_service=ctx.youtube_gemini_fallback_service,
             )
 
         try:

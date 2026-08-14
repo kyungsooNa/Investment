@@ -42,12 +42,23 @@ async def test_save_then_get_roundtrip(repo):
     stored = await repo.get("20260810")
 
     assert stored["report_date"] == "20260810"
+    assert stored["source"] == "transcript"
     assert stored["digest_text"] == "오늘의 공통 화두는 반도체다."
     assert stored["video_count"] == 2
     assert stored["failed_summary_count"] == 0
     assert [m["name"] for m in stored["mentions"]] == ["삼성전자", "SK하이닉스"]
     assert stored["mentions"][0]["code"] == "005930"
     assert stored["videos"][0]["summary"] == "v1 요약"
+
+
+async def test_save_then_get_preserves_gemini_fallback_source(repo):
+    await repo.save(_payload(source="gemini_video_url", mentions=[]))
+
+    stored = await repo.get("20260810")
+    recent = await repo.list_recent()
+
+    assert stored["source"] == "gemini_video_url"
+    assert recent[0]["source"] == "gemini_video_url"
 
 
 async def test_get_returns_none_for_missing_date(repo):
