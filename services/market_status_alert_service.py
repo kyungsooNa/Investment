@@ -20,6 +20,7 @@ class MarketStatusAlertService:
     _FUTURES_SIDECAR_DURATION_SEC = 60
     _CIRCUIT_KEYWORDS = ("서킷", "circuit", "매매거래중단", "거래중단")
     _SIDECAR_KEYWORDS = ("사이드카", "sidecar")
+    _NORMAL_VI_CODES = {"", "0", "N", "NONE", "NORMAL"}
 
     def __init__(
         self,
@@ -50,16 +51,18 @@ class MarketStatusAlertService:
         direction = self._classify_direction(reason)
         direction_key = f":{direction}" if direction else ""
         dedup_key = f"market_status:{event_type}{direction_key}:{exchange}:{code}"
-        severity = "critical" if event_type == "circuit_breaker" else "error"
-        event_name = "서킷브레이커" if event_type == "circuit_breaker" else "사이드카"
+        severity = self._severity_for_event(event_type)
+        event_name = self._event_name(event_type)
         title = f"{self._direction_label(direction)} {event_name} 감지".strip()
-        message = f"{exchange} {code}: {reason or '장운영정보 특수 상태 감지'}"
+        message = self._format_event_message(event_type, exchange, code, reason, data)
         metadata = {
             "event_type": event_type,
             "stock_code": code,
             "exchange": exchange,
             "reason": reason,
             "direction": direction,
+            "vi_code": str(data.get("VI적용구분코드") or ""),
+            "after_hours_vi_code": str(data.get("시간외단일가VI적용구분코드") or ""),
             "market_status": dict(data),
             "telegram_channel": "report",
         }
@@ -255,6 +258,8 @@ class MarketStatusAlertService:
             )
 
     def _classify_event(self, data: dict[str, Any]) -> Optional[str]:
+        if self._is_stock_vi_active(data):
+            return "stock_vi"
         reason = str(data.get("거래정지사유내용") or "").lower()
         if any(keyword.lower() in reason for keyword in self._SIDECAR_KEYWORDS):
             return "sidecar"
@@ -265,6 +270,38 @@ class MarketStatusAlertService:
         if any(keyword.lower() in reason for keyword in self._CIRCUIT_KEYWORDS):
             return "circuit_breaker"
         return None
+
+    @classmethod
+    def _is_stock_vi_active(cls, data: dict[str, Any]) -> bool:
+        vi_code = str(data.get("VI적용구분코드") or "").strip().upper()
+        return vi_code not in cls._NORMAL_VI_CODES
+
+    @staticmethod
+    def _severity_for_event(event_type: str) -> str:
+        if event_type == "circuit_breaker":
+            return "critical"
+        return "error"
+
+    @staticmethod
+    def _event_name(event_type: str) -> str:
+        return {
+            "circuit_breaker": "서킷브레이커",
+            "sidecar": "사이드카",
+            "stock_vi": "개별종목 VI 발동",
+        }.get(event_type, "장운영정보 특수 상태")
+
+    @staticmethod
+    def _format_event_message(
+        event_type: str,
+        exchange: str,
+        code: str,
+        reason: str,
+        data: dict[str, Any],
+    ) -> str:
+        if event_type == "stock_vi":
+            vi_code = str(data.get("VI적용구분코드") or "").strip()
+            return f"{exchange} {code}: VI적용구분코드={vi_code or 'UNKNOWN'}"
+        return f"{exchange} {code}: {reason or '장운영정보 특수 상태 감지'}"
 
     @classmethod
     def _signed_rate(
