@@ -56,6 +56,40 @@ async def test_build_digest_summarizes_public_youtube_urls():
     }
 
 
+async def test_build_digest_reserves_ai_usage_before_each_video_request():
+    http = AsyncMock()
+    http.post = AsyncMock(return_value=_Response({"output_text": "요약"}))
+    limiter = AsyncMock()
+    limiter.reserve = AsyncMock()
+    svc = GeminiYoutubeVideoAnalyzerService(
+        api_key="test-key",
+        http_client=http,
+        usage_limiter=limiter,
+    )
+
+    await svc.build_digest([_video("v1"), _video("v2")], report_date="20260810")
+
+    assert limiter.reserve.await_count == 2
+    limiter.reserve.assert_any_await("youtube")
+
+
+async def test_build_digest_does_not_call_gemini_when_usage_limit_blocks():
+    http = AsyncMock()
+    http.post = AsyncMock(return_value=_Response({"output_text": "요약"}))
+    limiter = AsyncMock()
+    limiter.reserve = AsyncMock(side_effect=RuntimeError("daily limit"))
+    svc = GeminiYoutubeVideoAnalyzerService(
+        api_key="test-key",
+        http_client=http,
+        usage_limiter=limiter,
+    )
+
+    result = await svc.build_digest([_video()], report_date="20260810")
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    http.post.assert_not_awaited()
+
+
 async def test_build_digest_reports_empty_when_no_video_url():
     svc = GeminiYoutubeVideoAnalyzerService(api_key="test-key", http_client=AsyncMock())
 
