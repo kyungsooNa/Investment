@@ -323,7 +323,12 @@
 - [x] **확인 결과: 실제 parity 갭이었고 복원 완료 (2026-08-07)**. #766 이 마켓타이밍 게이트를 전략에서 `StrategyScheduler._filter_market_timing_blocked_buys` 로 옮겼는데, **백테스트는 스케줄러를 거치지 않는다**(`scripts/run_backtest.py`·`backtest_walk_forward.py` 에 스케줄러 참조 0건). 그 결과 08-04 이후 백테스트에서 마켓타이밍 게이트가 통째로 사라져, 라이브보다 느슨한 조건으로 성과를 산출하고 있었다 — 1-5 의 원래 동기("백테스트가 검증하는 전략 ≠ 라이브가 거래하는 전략")가 마켓타이밍 축에서 재발한 것.
   - 복원: `BacktestPeriodRunner._filter_market_timing_blocked_buys` 를 라이브와 동일 지점(진입 신호 → 사이징 직전)에 추가. `MarketRegimeService.classify_on_date`(#770 에서 만들어졌으나 **사용처가 0건이었다**)로 **그 거래일 기준** 레짐을 쓴다 — 오늘 레짐으로 과거를 판정하면 look-ahead. 시장 판정은 라이브와 같이 `stock_code_repository.is_kosdaq()`. 레짐 서비스/resolver 미주입과 조회 실패는 라이브와 동일하게 fail-open.
   - **1-8 blocked 사유 ② 무효화**: "6월 하순 MA 하락 → `market_timing_off_both` 로 스캔 차단"은 #766 이후 백테스트에서 발생하지 않는다(전략의 스캔 스킵 코드가 삭제됨). 이제 게이트는 스캔이 아니라 **매수 신호**를 막으므로, 전 구간 0거래의 원인은 재확인이 필요하다.
-- [ ] **잔여: 전략에 남은 죽은 마켓타이밍 호출** — #766 이 차단 코드만 지우고 조회는 남겨, `larry_williams_vbo_strategy.py` 와 `larry_williams_channel_breakout_strategy.py` 는 `is_market_timing_ok` 를 scan 마다 2회(KOSPI/KOSDAQ) 호출하고 결과를 **전혀 쓰지 않는다**. 나머지 4개 전략은 로그 필드로만 소비한다(차단 없음). 제거하면 `_update_market_timing` 의 `market_timing_updated` 로그 이벤트가 함께 사라지므로 그 로그를 쓰는 소비처 확인 후 정리한다.
+- [x] **잔여: 전략에 남은 죽은 마켓타이밍 호출 — 제거 완료 (#844)**. `larry_williams_vbo_strategy.py`·`larry_williams_channel_breakout_strategy.py` 의 미사용 `is_market_timing_ok` 조회를 걷어냈다.
+  - **전제 정정**: "scan 마다 2회 호출"은 낭비가 아니었다. `is_market_timing_ok` 는 `_market_timing_date != today` 일 때만 계산하는 **하루 1회 캐시**라 이후는 dict 조회다. 제거 이유는 성능이 아니라 코드가 "이 전략은 시장 국면을 본다"고 거짓말하는 것을 없애기 위함.
+  - **우려했던 로그 소실은 발생하지 않는다**: 유니버스 서비스는 전 전략이 공유하는 단일 인스턴스(`ctx.oneil_universe_service`)라 나머지 5개 전략의 첫 호출이 `market_timing_updated` 를 그대로 발생시키고, 소비처(`strategy_log_report_service`)는 시장별 최신 이벤트만 본다.
+  - 남은 좁은 경우 — **이 두 전략만 켜진 날**에는 이벤트·일간 알림이 나지 않는다. 일간 알림이 전략 스캔의 캐시 미스에 얹혀 있는 구조가 원인이다(아래 별도 항목).
+  - `oneil_pocket_pivot_strategy.py:728` 은 실제 게이트로 쓰므로 유지.
+- [ ] (파생) 마켓타이밍 일간 알림·`market_timing_updated` 로그가 **전략 스캔의 캐시 미스에 얹혀 있다**. 어떤 전략이 먼저 스캔하느냐에 따라 발신 주체가 바뀌고, 전략 구성에 따라 아예 안 나갈 수 있다. 지수 레짐은 전략과 무관한 시장 사실이므로 배치/태스크로 옮기는 것이 맞다.
 - [ ] 1-6 profitability gate 의 regime 태깅이 #770 의 지수 기반 판정과 정합한지 확인 (별도).
 
 ---
