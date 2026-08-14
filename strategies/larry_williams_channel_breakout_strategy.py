@@ -97,11 +97,7 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
 
         self._logger.info({"event": "scan_with_watchlist", "count": len(watchlist)})
 
-        # 시장 국면 게이트 — state 변경 전 차단
-        market_timing = {
-            "KOSPI": await self._universe.is_market_timing_ok("KOSPI", caller=self.name, logger=self._logger),
-            "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", caller=self.name, logger=self._logger),
-        }
+        # 시장 국면 판정은 스케줄러 공통 주문 게이트가 한다(#766). 전략은 조회하지 않는다.
         today_str = now.strftime("%Y%m%d")
         candidates = []
         for code, item in watchlist.items():

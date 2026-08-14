@@ -139,13 +139,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             return signals
         self._logger.info({"event": "pool_b_loaded", "count": len(candidates)})
 
-        # 2-1) 시장 국면 게이트 — universe 가 있을 때만 수행 (state 변경 전)
-        market_timing: Dict[str, bool] = {}
-        if self._universe is not None:
-            market_timing = {
-                "KOSPI": await self._universe.is_market_timing_ok("KOSPI", caller=self.name, logger=self._logger),
-                "KOSDAQ": await self._universe.is_market_timing_ok("KOSDAQ", caller=self.name, logger=self._logger),
-            }
+        # 시장 국면 판정은 스케줄러 공통 주문 게이트가 한다(#766). 전략은 조회하지 않는다.
         candidate_codes = [c["code"] for c in candidates if c.get("code")]
         await self._sqs.prefetch_prices(candidate_codes)
 
