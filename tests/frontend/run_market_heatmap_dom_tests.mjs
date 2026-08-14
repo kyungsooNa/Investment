@@ -329,4 +329,56 @@ test("한 소스의 조회가 다른 소스의 히트맵을 덮어쓰지 않는�
   assert(doc.querySelector('#domestic-panel .heatmap-tile[data-symbol="005930"]'), "국내 히트맵이 렌더되어야 함");
 });
 
+// 업종(sector)이 채워지면 미국 맵처럼 섹터 블록으로 묶는다. 네이버 업종은 배타적이라
+// (2026-08-14 실측: 두 업종 이상 소속 0건) 종목 하나가 한 블록에만 들어간다.
+test("국내 히트맵은 업종이 오면 섹터 블록으로 묶는다", async () => {
+  const window = makeWindow(async () => success({
+    trade_date: "20260814",
+    items: [
+      domesticItem({ code: "005930", name: "삼성전자", sector: "반도체와반도체장비", market_cap: 500 }),
+      domesticItem({ code: "000660", name: "SK하이닉스", sector: "반도체와반도체장비", market_cap: 400 }),
+      domesticItem({ code: "005380", name: "현대차", sector: "자동차", market_cap: 300 }),
+    ],
+  }));
+
+  await window._loadHeatmap(domesticSource(window));
+
+  const target = window.document.getElementById("domestic-panel");
+  const sectors = [...target.querySelectorAll(".heatmap-sector")].map(el => el.dataset.sector);
+  assert(
+    JSON.stringify(sectors) === JSON.stringify(["반도체와반도체장비", "자동차"]),
+    `섹터가 시총 합계순이어야 함 (실제 ${sectors.join(", ")})`,
+  );
+  assert(target.querySelectorAll(".heatmap-tile").length === 3, "종목 타일은 그대로 3개");
+});
+
+test("업종이 없는 종목은 기타로 묶는다", async () => {
+  const window = makeWindow(async () => success({
+    trade_date: "20260814",
+    items: [
+      domesticItem({ code: "005930", sector: "반도체와반도체장비", market_cap: 500 }),
+      domesticItem({ code: "999999", name: "미분류주", sector: null, market_cap: 100 }),
+    ],
+  }));
+
+  await window._loadHeatmap(domesticSource(window));
+
+  const sectors = [...window.document.querySelectorAll("#domestic-panel .heatmap-sector")]
+    .map(el => el.dataset.sector);
+  assert(sectors.includes("기타"), `미분류는 기타로 (실제 ${sectors.join(", ")})`);
+});
+
+test("업종이 하나도 없으면 예전처럼 단일 그리드로 그린다", async () => {
+  const window = makeWindow(async () => success({
+    trade_date: "20260814",
+    items: [domesticItem({ code: "005930" }), domesticItem({ code: "000660", market_cap: 100 })],
+  }));
+
+  await window._loadHeatmap(domesticSource(window));
+
+  const target = window.document.getElementById("domestic-panel");
+  assert(!target.querySelector(".heatmap-sector-title"), "분류 수집 전에는 섹터 헤더가 없어야 함");
+  assert(target.querySelectorAll(".heatmap-tile").length === 2, "타일은 그대로 그려져야 함");
+});
+
 await run();

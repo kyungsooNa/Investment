@@ -1,9 +1,9 @@
 # services/theme_classification_collector_service.py
 """
-네이버 금융 테마 분류를 스크래핑하여 StockClassificationRepository에 적재하는 서비스.
+네이버 금융 그룹 분류(테마·업종)를 스크래핑하여 StockClassificationRepository에 적재하는 서비스.
 
-- 목록: finance.naver.com/sise/sise_group.naver?type=theme  → 테마명 + detail no
-- 상세: finance.naver.com/sise/sise_group_detail.naver?type=theme&no=N → 구성종목(code, name)
+- 목록: finance.naver.com/sise/sise_group.naver?type={theme|upjong}  → 그룹명 + detail no
+- 상세: finance.naver.com/sise/sise_group_detail.naver?type={...}&no=N → 구성종목(code, name)
 - 개별 실패는 warning 후 skip(부분 성공 허용). 파싱은 정적 메서드로 분리해 테스트 가능.
 - HTML 구조 변경 시 깨질 수 있으므로 graceful degrade(예외 흡수, 0 반환)를 유지한다.
 """
@@ -22,8 +22,8 @@ if TYPE_CHECKING:
     from repositories.stock_classification_repository import StockClassificationRepository
 
 _BASE = "https://finance.naver.com"
-_LIST_URL = _BASE + "/sise/sise_group.naver?type=theme"
-_DETAIL_URL = _BASE + "/sise/sise_group_detail.naver?type=theme&no={no}"
+_LIST_URL = _BASE + "/sise/sise_group.naver?type={group_type}"
+_DETAIL_URL = _BASE + "/sise/sise_group_detail.naver?type={group_type}&no={no}"
 _DEFAULT_ALIAS_CONFIG = os.path.join("config", "theme_aliases.yaml")
 
 _RE_DETAIL_NO = re.compile(r"no=(\d+)")
@@ -31,10 +31,15 @@ _RE_CODE = re.compile(r"code=(\d{6})")
 
 
 class ThemeClassificationCollectorService:
-    """네이버 테마 분류 수집기 (NAVER, category_type=theme)."""
+    """네이버 그룹 분류 수집기 (NAVER) — 테마(category_type=theme)와 업종(industry).
+
+    두 분류는 URL 의 type 값만 다르고 목록·상세 마크업이 같아 파서를 공유한다.
+    파서를 복제하면 네이버가 마크업을 바꿀 때 한쪽만 고쳐지는 일이 생긴다.
+    """
 
     SOURCE = "NAVER"
     CATEGORY_TYPE = "theme"
+    INDUSTRY_CATEGORY_TYPE = "industry"
 
     def __init__(
         self,
@@ -56,35 +61,55 @@ class ThemeClassificationCollectorService:
 
     async def collect_naver_themes(self) -> int:
         """네이버 테마 전체를 수집·저장하고 저장한 레코드 수를 반환한다."""
+        return await self._collect_groups("theme", self.CATEGORY_TYPE, use_aliases=True)
+
+    async def collect_naver_industries(self) -> int:
+        """네이버 업종 전체를 수집·저장하고 저장한 레코드 수를 반환한다.
+
+        업종은 테마와 달리 **배타적**이다(2026-08-14 실측: 두 업종 이상에 속한 종목 0건).
+        그래서 히트맵의 섹터 블록처럼 '종목 하나 = 그룹 하나'를 전제하는 화면에 바로 쓸 수 있다.
+        alias 는 테마명을 묶기 위한 개념이라 업종에는 적용하지 않는다 — 적용하면 분류가 뒤섞인다.
+        """
+        return await self._collect_groups("upjong", self.INDUSTRY_CATEGORY_TYPE, use_aliases=False)
+
+    async def _collect_groups(self, group_type: str, category_type: str, *, use_aliases: bool) -> int:
+        """네이버 그룹(테마/업종) 분류를 수집해 (SOURCE, category_type) 으로 통째 교체한다."""
         try:
-            list_html = await self._fetch_html(_LIST_URL)
-            themes = self._parse_theme_list(list_html)
+            list_html = await self._fetch_html(_LIST_URL.format(group_type=group_type))
+            groups = self._parse_theme_list(list_html)
         except Exception as e:
-            self._logger.warning({"event": "theme_list_fetch_failed", "error": str(e)})
+            self._logger.warning({"event": "group_list_fetch_failed", "type": group_type, "error": str(e)})
             return 0
 
-        if not themes:
-            self._logger.warning({"event": "theme_list_empty"})
+        if not groups:
+            self._logger.warning({"event": "group_list_empty", "type": group_type})
             return 0
 
-        await self._sync_aliases()
-        alias_map = await self._repo.get_alias_map(self.SOURCE)
+        if use_aliases:
+            await self._sync_aliases()
+            alias_map = await self._repo.get_alias_map(self.SOURCE)
+        else:
+            alias_map = {}
         collected_at = datetime.now().isoformat(timespec="seconds")
         records: List[dict] = []
 
-        for no, raw_name in themes:
+        for no, raw_name in groups:
             try:
-                detail_html = await self._fetch_html(_DETAIL_URL.format(no=no))
+                detail_html = await self._fetch_html(
+                    _DETAIL_URL.format(group_type=group_type, no=no)
+                )
                 members = self._parse_theme_members(detail_html)
             except Exception as e:
-                self._logger.warning({"event": "theme_detail_fetch_failed", "no": no, "error": str(e)})
+                self._logger.warning(
+                    {"event": "group_detail_fetch_failed", "type": group_type, "no": no, "error": str(e)}
+                )
                 continue
 
             normalized = alias_map.get(raw_name, raw_name)
             for code, name in members:
                 records.append({
                     "source": self.SOURCE,
-                    "category_type": self.CATEGORY_TYPE,
+                    "category_type": category_type,
                     "group_name": raw_name,
                     "normalized_name": normalized,
                     "code": code,
@@ -97,9 +122,11 @@ class ThemeClassificationCollectorService:
         if not records:
             return 0
         saved = await self._repo.replace_source_classifications(
-            self.SOURCE, self.CATEGORY_TYPE, records
+            self.SOURCE, category_type, records
         )
-        self._logger.info({"event": "theme_collect_done", "themes": len(themes), "records": saved})
+        self._logger.info(
+            {"event": "group_collect_done", "type": group_type, "groups": len(groups), "records": saved}
+        )
         return saved
 
     async def _sync_aliases(self) -> None:

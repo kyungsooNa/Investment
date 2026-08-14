@@ -44,6 +44,7 @@ class ThemeClassificationTask(AfterMarketTask):
             "running": False,
             "last_collected_at": None,
             "record_count": 0,
+            "industry_record_count": 0,
             "status": None,
             "last_error": None,
         }
@@ -77,6 +78,9 @@ class ThemeClassificationTask(AfterMarketTask):
         try:
             count = await self._collector.collect_naver_themes()
             self._progress["record_count"] = count
+            # 업종은 같은 사이트·같은 주기라 한 번의 실행에서 이어서 수집한다. 실패해도
+            # 테마 결과는 남긴다 — 둘은 서로 독립적인 분류다.
+            self._progress["industry_record_count"] = await self._collect_industries()
             self._progress["last_collected_at"] = await self._repo.get_latest_collected_at()
             self._progress["status"] = "done"
         except Exception as e:
@@ -85,6 +89,14 @@ class ThemeClassificationTask(AfterMarketTask):
             self._logger.error({"event": "theme_collect_error", "error": str(e)})
         finally:
             self._progress["running"] = False
+
+    async def _collect_industries(self) -> int:
+        try:
+            return await self._collector.collect_naver_industries()
+        except Exception as e:
+            self._progress["last_error"] = f"업종 수집 실패: {e}"
+            self._logger.error({"event": "industry_collect_error", "error": str(e)})
+            return 0
 
     async def _is_fresh(self) -> bool:
         """최근 수집 시각이 refresh_interval_days 이내면 True."""

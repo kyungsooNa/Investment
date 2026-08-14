@@ -160,12 +160,17 @@ function _overseasGroups(items) {
 }
 
 // 국내는 배타적 업종 분류가 없어(네이버 테마는 중복 소속) 섹터 블록 없이 단일 그룹으로 그린다.
+// 업종(sector)은 장마감 배치가 채운다. 아직 수집 전이면 어느 종목에도 없으므로
+// 예전처럼 시총순 단일 그리드로 그린다 — 섹터 블록은 분류가 생긴 뒤에만 의미가 있다.
 function _domesticGroups(items) {
     const members = [];
+    let hasSector = false;
     items.forEach(raw => {
         const row = raw && typeof raw === 'object' ? raw : {};
         const cap = _heatmapNumber(row.market_cap);
         if (cap === null || cap <= 0) return;
+        const sector = row.sector ? String(row.sector) : null;
+        if (sector) hasSector = true;
         members.push({
             symbol: String(row.code ?? ''),
             label: String(row.name ?? ''),
@@ -173,12 +178,32 @@ function _domesticGroups(items) {
             rate: _heatmapNumber(row.change_rate),
             cap,
             capText: formatMarketCap(cap),
+            sector,
         });
     });
     if (!members.length) return [];
 
     members.sort((a, b) => b.cap - a.cap);
-    return [{ sector: null, cap: members.reduce((sum, m) => sum + m.cap, 0), members }];
+    if (!hasSector) {
+        return [{ sector: null, cap: members.reduce((sum, m) => sum + m.cap, 0), members }];
+    }
+    return _groupBySector(members);
+}
+
+// 미국 맵과 같은 모양(섹터 합계 내림차순, 블록 안에서도 시총 내림차순)으로 묶는다.
+function _groupBySector(members) {
+    const groups = new Map();
+    members.forEach(member => {
+        const sector = member.sector || '기타';
+        if (!groups.has(sector)) groups.set(sector, { sector, cap: 0, members: [] });
+        const group = groups.get(sector);
+        group.cap += member.cap;
+        group.members.push(member);
+    });
+
+    const groupList = [...groups.values()].sort((a, b) => b.cap - a.cap);
+    groupList.forEach(group => group.members.sort((a, b) => b.cap - a.cap));
+    return groupList;
 }
 
 // zoom 은 캔버스를 몇 배로 늘려 그리는지(전용 페이지의 확대 배율). 타일이 그만큼 커지므로

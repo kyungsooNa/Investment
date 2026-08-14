@@ -161,3 +161,38 @@ async def test_replace_source_empty_keeps_existing(repo):
     assert n == 0
     groups = await repo.get_groups(("theme",))
     assert {m["code"] for m in groups["로봇"]["members"]} == {"005930"}
+
+
+# ── get_code_category_map: 종목 → 그룹 역방향 조회 ─────────────
+# 히트맵이 종목마다 업종을 붙일 때 쓴다. get_groups() 를 뒤집어 쓰면 매 요청마다
+# 2500건짜리 그룹 구조를 재구성해야 한다.
+
+@pytest.mark.asyncio
+async def test_code_category_map_returns_code_to_group(repo):
+    await repo.upsert_classifications([
+        _rec("NAVER", "005930", "삼성전자", group="반도체와반도체장비",
+             normalized="반도체와반도체장비", cat="industry"),
+        _rec("NAVER", "035720", "카카오", group="양방향미디어와서비스",
+             normalized="양방향미디어와서비스", cat="industry"),
+    ])
+
+    assert await repo.get_code_category_map("industry") == {
+        "005930": "반도체와반도체장비",
+        "035720": "양방향미디어와서비스",
+    }
+
+
+@pytest.mark.asyncio
+async def test_code_category_map_ignores_other_category_types(repo):
+    await repo.upsert_classifications([
+        _rec("NAVER", "005930", "삼성전자", group="반도체와반도체장비",
+             normalized="반도체와반도체장비", cat="industry"),
+        _rec("NAVER", "005930", "삼성전자", group="로봇", normalized="로봇", cat="theme"),
+    ])
+
+    assert await repo.get_code_category_map("industry") == {"005930": "반도체와반도체장비"}
+
+
+@pytest.mark.asyncio
+async def test_code_category_map_empty_when_not_collected(repo):
+    assert await repo.get_code_category_map("industry") == {}

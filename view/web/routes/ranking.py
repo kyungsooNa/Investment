@@ -1,6 +1,7 @@
 """
 랭킹/시가총액 관련 API 엔드포인트 (ranking.html, marketcap.html).
 """
+import time
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -197,6 +198,9 @@ async def get_ytd_return_ranking(limit: int = Query(100, ge=1, le=500), market: 
 # "1d" 는 스냅샷에 이미 들어 있는 일간 등락률이라 추가 조회가 없다.
 # "ytd"(올해)만 달력일이 아니라 올해 첫 거래일이 기준이라 저장소에서 따로 계산한다.
 _HEATMAP_PERIOD_DAYS = {"1d": 0, "1w": 7, "1m": 30, "3m": 91, "6m": 182, "1y": 365}
+# 업종 분류 캐시 TTL — 장마감 배치가 하루 1회 갱신하므로 매 폴링마다 다시 읽을 이유가 없다.
+# 캐시 자체는 모듈 전역이 아니라 ctx 에 얹는다(전역이면 테스트 사이로 값이 샌다).
+_INDUSTRY_CACHE_TTL_SEC = 600
 _HEATMAP_PERIOD_LABELS = {
     "1d": "1일", "1w": "1주", "1m": "1개월", "3m": "3개월", "6m": "6개월", "ytd": "올해", "1y": "1년",
 }
@@ -212,6 +216,30 @@ def _heatmap_period_change_rate(row: dict, closes: dict):
         return round((float(current_price) / float(base_close) - 1.0) * 100, 2)
     except (TypeError, ValueError, ZeroDivisionError):
         return None
+
+
+async def _domestic_industry_map(ctx) -> dict:
+    """{종목코드: 업종명}. 분류는 장마감 배치가 하루 1회 갱신하는 정적 데이터라 캐시한다."""
+    repo = getattr(ctx, "stock_classification_repository", None)
+    if repo is None:
+        return {}
+
+    now = time.monotonic()
+    cache = getattr(ctx, "_heatmap_industry_cache", None)
+    if isinstance(cache, tuple) and (now - cache[0]) <= _INDUSTRY_CACHE_TTL_SEC:
+        return cache[1]
+
+    try:
+        mapping = await repo.get_code_category_map("industry") or {}
+    except Exception as exc:
+        ctx.logger.warning(f"국내 히트맵 업종 분류 조회 실패 — 섹터 없이 그린다: {exc}")
+        return {}
+
+    try:
+        ctx._heatmap_industry_cache = (now, mapping)
+    except Exception:  # pragma: no cover - ctx 가 속성 설정을 막는 경우
+        pass
+    return mapping
 
 
 async def _domestic_heatmap_rows(ctx, repository, *, limit: int, market: Optional[str]):
@@ -274,6 +302,7 @@ async def get_domestic_heatmap(
         base_date = (base or {}).get("base_date")
         closes = (base or {}).get("closes") or {}
 
+    industries = await _domestic_industry_map(ctx)
     items = [
         {
             "code": row.get("code") or "",
@@ -284,6 +313,7 @@ async def get_domestic_heatmap(
             ),
             "market_cap": row.get("market_cap"),
             "market": row.get("market") or "",
+            "sector": industries.get(row.get("code")),
         }
         for row in rows
     ]

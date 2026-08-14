@@ -148,3 +148,66 @@ async def test_collect_without_alias_config_skips_alias_upsert(repo):
     saved = await svc.collect_naver_themes()
     assert saved == 1
     repo.upsert_aliases.assert_not_called()
+
+
+# ── 업종(upjong) 수집 ────────────────────────────────────────
+# 업종 페이지는 테마 페이지와 URL 패턴·마크업이 같아 같은 파서를 쓴다.
+# 다른 점은 type=upjong, category_type='industry', 그리고 alias 미적용이다.
+
+@pytest.mark.asyncio
+async def test_collect_industries_uses_upjong_urls(repo):
+    svc = ThemeClassificationCollectorService(repo, logger=MagicMock(), request_delay=0)
+    svc._fetch_html = AsyncMock(side_effect=[
+        _list_html([("278", "반도체와반도체장비")]),
+        _detail_html([("005930", "삼성전자")]),
+    ])
+
+    await svc.collect_naver_industries()
+
+    urls = [call.args[0] for call in svc._fetch_html.call_args_list]
+    assert all("type=upjong" in url for url in urls), f"업종 URL 이어야 함: {urls}"
+    assert "no=278" in urls[1]
+
+
+@pytest.mark.asyncio
+async def test_collect_industries_stores_industry_category(repo):
+    svc = ThemeClassificationCollectorService(repo, logger=MagicMock(), request_delay=0)
+    svc._fetch_html = AsyncMock(side_effect=[
+        _list_html([("278", "반도체와반도체장비")]),
+        _detail_html([("005930", "삼성전자"), ("000660", "SK하이닉스")]),
+    ])
+
+    saved = await svc.collect_naver_industries()
+
+    assert saved == 2
+    src, cat, recs = repo.replace_source_classifications.call_args[0]
+    assert (src, cat) == ("NAVER", "industry")
+    assert recs[0]["category_type"] == "industry"
+    assert recs[0]["group_name"] == "반도체와반도체장비"
+    assert [r["code"] for r in recs] == ["005930", "000660"]
+
+
+@pytest.mark.asyncio
+async def test_collect_industries_does_not_apply_theme_aliases(repo):
+    """alias 는 테마 전용 개념이다. 업종명을 테마 alias 로 바꾸면 분류가 뒤섞인다."""
+    repo.get_alias_map = AsyncMock(return_value={"반도체와반도체장비": "2차전지"})
+    svc = ThemeClassificationCollectorService(repo, logger=MagicMock(), request_delay=0)
+    svc._fetch_html = AsyncMock(side_effect=[
+        _list_html([("278", "반도체와반도체장비")]),
+        _detail_html([("005930", "삼성전자")]),
+    ])
+
+    await svc.collect_naver_industries()
+
+    recs = repo.replace_source_classifications.call_args[0][2]
+    assert recs[0]["normalized_name"] == "반도체와반도체장비"
+    repo.upsert_aliases.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_collect_industries_empty_list_returns_zero(repo):
+    svc = ThemeClassificationCollectorService(repo, logger=MagicMock(), request_delay=0)
+    svc._fetch_html = AsyncMock(return_value="<html>개편된 페이지</html>")
+
+    assert await svc.collect_naver_industries() == 0
+    repo.replace_source_classifications.assert_not_called()
