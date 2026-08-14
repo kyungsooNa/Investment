@@ -35,6 +35,7 @@ class MarketRegimeConfig:
     min_net_change_pct: float = -0.10
     daily_dip_tolerance_pct: float = -0.20
     hard_decline_pct: float = -0.50
+    recovery_close_buffer_pct: float = 3.00
 
 
 @dataclass
@@ -78,13 +79,15 @@ class MarketRegimeService:
             return self._cfg.kosdaq_index_code
         raise ValueError(f"Unknown market: {market}")
 
-    @staticmethod
-    def _is_recovery_ready(closes: List[float], ma_values: List[float]) -> bool:
+    def _is_recovery_ready(self, closes: List[float], ma_values: List[float]) -> bool:
         """급락 해소 뒤의 회복 진입 조건을 판정한다."""
         ma_is_not_falling = ma_values[-1] >= ma_values[-2]
         close_is_above_ma = closes[-1] >= ma_values[-1]
+        close_is_strongly_above_ma = closes[-1] >= ma_values[-1] * (
+            1 + self._cfg.recovery_close_buffer_pct / 100
+        )
         recent_price_rise = closes[-1] > closes[-2] or closes[-2] > closes[-3]
-        return ma_is_not_falling and close_is_above_ma and recent_price_rise
+        return (ma_is_not_falling or close_is_strongly_above_ma) and close_is_above_ma and recent_price_rise
 
     async def classify(self, market: str, logger: Optional[logging.Logger] = None) -> RegimeSnapshot:
         """오늘 기준 캐시된 분류를 반환. 캐시가 비어 있으면 SQS로 재계산."""

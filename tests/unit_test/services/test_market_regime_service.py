@@ -148,6 +148,40 @@ async def test_classify_recovers_after_hard_decline_window_clears():
 
 
 @pytest.mark.asyncio
+async def test_classify_recovers_when_close_strongly_reclaims_falling_ma():
+    """MA가 아직 하락 중이어도 종가가 MA 위로 강하게 회복하면 회복 국면으로 본다."""
+    closes = [7000, 7000, 7000] + [6450] * 17 + [6750, 6800, 6850]
+    sqs = MagicMock()
+    sqs.get_recent_daily_index_ohlcv = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=_build_ohlcv(closes))
+    )
+    tm = MagicMock()
+    tm.get_current_kst_time = MagicMock(return_value=datetime.strptime("20260514", "%Y%m%d"))
+    tm.is_market_operating_hours = MagicMock(return_value=False)
+    cfg = MarketRegimeConfig(
+        kospi_index_code="0001",
+        kosdaq_index_code="1001",
+        ma_period=20,
+        rising_days=3,
+        min_net_change_pct=-0.10,
+        daily_dip_tolerance_pct=-0.20,
+        hard_decline_pct=-0.50,
+        recovery_close_buffer_pct=3.00,
+    )
+    svc = MarketRegimeService(stock_query_service=sqs, market_clock=tm, config=cfg)
+
+    snap = await svc.classify("KOSPI")
+
+    assert snap.net_change_pct < -0.10
+    assert snap.max_daily_drop_pct >= -0.50
+    assert snap.ma_values[-1] < snap.ma_values[-2]
+    assert snap.current_close >= snap.ma_values[-1] * 1.03
+    assert snap.trend_status == "recovery"
+    assert snap.regime_label == "bull"
+    assert snap.is_rising is True
+
+
+@pytest.mark.asyncio
 async def test_classify_uptrend_under_pressure_returns_sideways():
     """순증감은 양호하지만 일일 dip 이 -0.2% 미만 ~ -0.5% 이상이면 uptrend_under_pressure → sideways."""
     # 평균 MA가 약간 상승하면서 중간에 한 번 -0.3% 정도 일일 하락 유도

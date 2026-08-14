@@ -26,6 +26,7 @@ class OneilUniverseConfig(BaseStrategyConfig):
     market_ma_min_net_change_pct: float = -0.10
     market_ma_daily_dip_tolerance_pct: float = -0.20
     market_ma_hard_decline_pct: float = -0.50
+    market_ma_recovery_close_buffer_pct: float = 3.00
 
     # V2 스코어링
     rs_period_days: int = 63
