@@ -47,6 +47,7 @@ const SCAFFOLD = `
       <option value="1y">1년</option>
     </select>
   </span>
+  <button type="button" id="heatmap-page-refresh">새로고침</button>
   <span class="heatmap-zoom">
     <button type="button" id="heatmap-page-zoom-out">−</button>
     <span id="heatmap-page-zoom-level">100%</span>
@@ -961,6 +962,86 @@ test("pjax 재진입은 자동 갱신 타이머를 겹쳐 걸지 않는다", asy
 
   assert(timer.starts === 2, `재진입마다 타이머를 다시 걸어야 함 (실제 ${timer.starts}회)`);
   assert(timer.cleared.length === 1, `이전 타이머를 해제해야 함 (실제 ${timer.cleared.length}회)`);
+});
+
+// 수동 새로고침 — 자동 갱신과 달리 '지금 보고 싶다'는 사용자 의사이므로
+// 종가(realtime=false) 상태에서도 동작해야 한다.
+
+test("새로고침 버튼은 보고 있는 탭을 다시 조회한다", async () => {
+  const { window, calls } = autoRefreshPage({ realtime: true });
+
+  await window.initHeatmapPage();
+  calls.length = 0;
+  await window.refreshHeatmapPage();
+
+  const domestic = calls.filter(url => url.startsWith("/api/heatmap/domestic"));
+  assert(domestic.length === 1, `국내 탭을 다시 조회해야 함 (실제 ${domestic.length}회)`);
+  assert(window.document.querySelectorAll("#heatmap-page-domestic .heatmap-tile").length > 0,
+    "갱신 후에도 타일이 남아야 함");
+});
+
+test("종가 상태여도 새로고침 버튼은 조회한다", async () => {
+  const { window, calls, timer } = autoRefreshPage({ realtime: false });
+
+  await window.initHeatmapPage();
+  calls.length = 0;
+  await timer.fn();
+  assert(calls.length === 0, "자동 갱신은 종가에서 건너뛴다(전제)");
+
+  await window.refreshHeatmapPage();
+  assert(calls.filter(url => url.startsWith("/api/heatmap/domestic")).length === 1,
+    "수동은 사용자 의사이므로 종가여도 다시 조회해야 함");
+});
+
+test("미국 탭에서 새로고침하면 미국만 조회한다", async () => {
+  const { window, calls } = autoRefreshPage({ realtime: true });
+
+  await window.initHeatmapPage();
+  await window.setHeatmapTab("overseas");
+  calls.length = 0;
+  await window.refreshHeatmapPage();
+
+  assert(overseasCalls(calls).length === 1, "미국 스냅샷을 다시 받아야 함");
+  assert(!calls.some(url => url.startsWith("/api/heatmap/domestic")),
+    "보고 있지 않은 국내 탭을 조회할 이유가 없음");
+});
+
+test("새로고침 중에는 버튼을 잠가 중복 요청을 막는다", async () => {
+  let release;
+  const gate = new Promise(done => { release = done; });
+  let served = 0;
+  const window = makeWindow(routed({
+    "/api/market-mode": () => marketMode(["domestic"]),
+    // 첫 조회(초기화)는 바로 응답하고, 두 번째(수동 새로고침)만 붙잡아 '조회 중' 상태를 만든다.
+    "/api/heatmap/domestic": async () => {
+      served += 1;
+      if (served > 1) await gate;
+      return success({ ...domesticSnapshot(), realtime: true });
+    },
+  }));
+  setPageVisible(window, true);
+
+  await window.initHeatmapPage();
+  const button = window.document.getElementById("heatmap-page-refresh");
+  assert(!button.disabled, "평소에는 눌릴 수 있어야 함");
+
+  const pending = window.refreshHeatmapPage();
+  assert(button.disabled, "조회 중에는 잠겨야 함");
+  release();
+  await pending;
+  assert(!button.disabled, "끝나면 다시 눌릴 수 있어야 함");
+});
+
+test("수동 새로고침은 자동 갱신 타이머를 다시 건다", async () => {
+  const { window, timer } = autoRefreshPage({ realtime: true });
+
+  await window.initHeatmapPage();
+  const startsAfterInit = timer.starts;
+  await window.refreshHeatmapPage();
+
+  assert(timer.starts === startsAfterInit + 1,
+    `방금 받아왔으므로 다음 자동 갱신까지 한 주기를 새로 세야 함 (실제 ${timer.starts - startsAfterInit})`);
+  assert(timer.cleared.length >= 1, "이전 타이머는 해제돼야 함");
 });
 
 test("전용 페이지 경로에서는 로드 시 자동으로 초기화한다", async () => {
