@@ -45,7 +45,7 @@ class MarketStatusAlertService:
             await self._resolve_for_code(data)
             return
 
-        code = str(data.get("유가증권단축종목코드") or data.get("종목코드") or "UNKNOWN")
+        code = self._normalize_code(data.get("유가증권단축종목코드") or data.get("종목코드")) or "UNKNOWN"
         exchange = str(data.get("거래소구분코드") or data.get("EXCH_CLS_CODE") or "UNKNOWN")
         reason = str(data.get("거래정지사유내용") or "").strip()
         direction = self._classify_direction(reason)
@@ -170,7 +170,7 @@ class MarketStatusAlertService:
 
     async def on_futures_contract(self, data: dict[str, Any]) -> None:
         """코스피200 지수선물 체결가로 매수 사이드카 발동 조건을 감시한다."""
-        code = str(data.get("선물단축종목코드") or data.get("종목코드") or "UNKNOWN")
+        code = self._normalize_code(data.get("선물단축종목코드") or data.get("종목코드")) or "UNKNOWN"
         rate = self._signed_rate(
             data,
             rate_keys=("선물전일대비율", "전일대비율"),
@@ -340,10 +340,22 @@ class MarketStatusAlertService:
     def _direction_label(direction: Optional[str]) -> str:
         return {"buy": "매수", "sell": "매도", "up": "상승", "down": "하락"}.get(direction, "")
 
+    @staticmethod
+    def _normalize_code(code) -> str:
+        """종목코드를 6자리로 맞춘다 (`FavoritePriceAlertService._normalize_code` 와 같은 규칙).
+
+        dedup 키에 코드가 그대로 박히므로, 발동과 해제가 다른 표기로 오면 키가 어긋나
+        알림이 해제되지 않고 재발동한다. 선물코드처럼 숫자가 아닌 값은 건드리지 않는다.
+        """
+        normalized = str(code or "").strip()
+        if normalized.isdigit() and len(normalized) <= 6:
+            return normalized.zfill(6)
+        return normalized
+
     async def _resolve_for_code(self, data: dict[str, Any]) -> None:
         if self._operator_alert_service is None:
             return
-        code = str(data.get("유가증권단축종목코드") or data.get("종목코드") or "")
+        code = self._normalize_code(data.get("유가증권단축종목코드") or data.get("종목코드"))
         if not code:
             return
         active_keys = self._active_keys_by_code.pop(code, set())

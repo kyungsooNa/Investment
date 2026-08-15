@@ -360,3 +360,65 @@ async def test_market_status_alert_service_resets_move_5_recovery_count_on_relap
         "market_index:move_5:down:0001",
         "지수 등락률 정상화",
     )
+
+
+# ── 종목코드 정규화 계약 ──────────────────────────────────────
+# 관심종목 알림에서 두 번(#755·#771) 고쳤던 것과 같은 결함 계열이다. dedup 키에 코드가
+# 그대로 박히므로, 발동과 해제가 다른 표기로 오면 키가 어긋나 알림이 해제되지 않고 재발동한다.
+
+@pytest.mark.asyncio
+async def test_dedup_key_uses_zero_padded_stock_code():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(operator_alert_service=operator_alert, logger=MagicMock())
+
+    await service.on_market_status({
+        "유가증권단축종목코드": "5930",           # 선행 0 이 빠진 표기
+        "거래정지여부": "Y",
+        "거래정지사유내용": "서킷브레이커 발동으로 매매거래중단",
+        "거래소구분코드": "KRX",
+    })
+
+    assert operator_alert.report.await_args.args[1] == "market_status:circuit_breaker:KRX:005930"
+    assert operator_alert.report.await_args.kwargs["metadata"]["stock_code"] == "005930"
+
+
+@pytest.mark.asyncio
+async def test_alert_resolves_even_when_the_code_arrives_padded_differently():
+    """짧은 코드로 발동하고 패딩된 코드로 정상화가 와도 해제돼야 한다."""
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(operator_alert_service=operator_alert, logger=MagicMock())
+
+    await service.on_market_status({
+        "유가증권단축종목코드": "5930",
+        "거래정지여부": "Y",
+        "거래정지사유내용": "서킷브레이커 발동으로 매매거래중단",
+        "거래소구분코드": "KRX",
+    })
+    await service.on_market_status({
+        "유가증권단축종목코드": "005930",        # 같은 종목, 다른 표기
+        "거래정지여부": "N",
+        "거래정지사유내용": "",
+        "거래소구분코드": "KRX",
+    })
+
+    operator_alert.resolve.assert_awaited_once_with(
+        AlertSource.MARKET_STATUS,
+        "market_status:circuit_breaker:KRX:005930",
+        "장운영정보 정상화",
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_numeric_codes_are_left_alone():
+    """선물 코드·미상(UNKNOWN) 처럼 숫자가 아닌 값은 건드리지 않는다."""
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(operator_alert_service=operator_alert, logger=MagicMock())
+
+    await service.on_market_status({
+        "종목코드": "K200F",
+        "거래정지여부": "Y",
+        "거래정지사유내용": "서킷브레이커 발동으로 매매거래중단",
+        "거래소구분코드": "KRX",
+    })
+
+    assert operator_alert.report.await_args.args[1] == "market_status:circuit_breaker:KRX:K200F"
