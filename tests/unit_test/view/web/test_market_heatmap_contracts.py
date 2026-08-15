@@ -233,3 +233,16 @@ def test_heatmap_follows_domestic_up_red_convention():
         assert int(hex_color[0:2], 16) > int(hex_color[4:6], 16), f"#{hex_color} 는 상승 색으로 부적절"
     for hex_color in re.findall(r"#([0-9a-f]{6})", down_block):
         assert int(hex_color[4:6], 16) > int(hex_color[0:2], 16), f"#{hex_color} 는 하락 색으로 부적절"
+
+
+def test_heatmap_page_hosts_a_manual_refresh_button():
+    """자동 갱신(60초)과 별개로 즉시 다시 조회할 수단이 있어야 한다."""
+    template = _heatmap_page_template()
+    page_script = _heatmap_page_js()
+
+    assert 'id="heatmap-page-refresh"' in template
+    assert "refreshHeatmapPage()" in template
+    assert "async function refreshHeatmapPage" in page_script
+    # 연타로 중복 요청이 나가지 않도록 조회 중에는 잠근다.
+    assert "button.disabled = true" in page_script
+    assert ".heatmap-refresh:disabled" in template, "잠긴 상태가 보이지 않으면 연타하게 된다"

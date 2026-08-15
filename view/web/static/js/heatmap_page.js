@@ -39,6 +39,7 @@ let _heatmapPagePeriod = HEATMAP_PAGE_DEFAULT_PERIOD;
 let _heatmapPageMarket = HEATMAP_PAGE_DEFAULT_MARKET;
 let _heatmapPageTab = 'domestic';
 let _heatmapPageRefreshTimer = null;
+let _heatmapPageRefreshing = false;
 
 function _heatmapPageZoom() {
     return HEATMAP_PAGE_ZOOM_STEPS[_heatmapPageZoomIndex];
@@ -407,6 +408,28 @@ async function _refreshHeatmapPageTick() {
 
     await _loadHeatmap(HEATMAP_PAGE_SOURCES[_heatmapPageTab], { showLoading: false });
     _applyHeatmapPageSearch();
+}
+
+// 수동 새로고침 — 자동 갱신과 두 가지가 다르다.
+//  1) 종가(realtime=false) 상태에서도 조회한다. 자동은 값이 안 바뀌어 건너뛰지만
+//     버튼을 누른 건 '지금 보고 싶다'는 사용자 의사다.
+//  2) 방금 받아왔으므로 다음 자동 갱신까지 한 주기를 새로 센다.
+async function refreshHeatmapPage() {
+    if (_heatmapPageRefreshing) return;
+    const source = HEATMAP_PAGE_SOURCES[_heatmapPageTab];
+    if (!source) return;
+
+    _heatmapPageRefreshing = true;
+    const button = document.getElementById('heatmap-page-refresh');
+    if (button) button.disabled = true;
+    try {
+        await _loadHeatmap(source, { showLoading: false });
+        _applyHeatmapPageSearch();
+        _startHeatmapPageAutoRefresh();
+    } finally {
+        _heatmapPageRefreshing = false;
+        if (button) button.disabled = false;
+    }
 }
 
 function _stopHeatmapPageAutoRefresh() {
