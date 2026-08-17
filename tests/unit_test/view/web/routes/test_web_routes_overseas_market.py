@@ -4,6 +4,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from common.types import ResCommonResponse
+
 
 def _enable_overseas(ctx):
     ctx.enabled_market_modes = ["domestic", "overseas_us"]
@@ -254,5 +256,75 @@ async def test_trades_without_ledger_returns_503(web_client, mock_web_ctx):
         mock_web_ctx.overseas_trade_repository = None
 
         response = web_client.get("/api/overseas/trades")
+
+        assert response.status_code == 503
+
+
+def _install_fill_reconcile(ctx, data=None):
+    from unittest.mock import AsyncMock
+
+    service = MagicMock()
+    service.reconcile = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="해외 체결 대사 완료",
+        data=data or {
+            "applied": False, "checked": 1,
+            "counts": {"ok": 1, "partial": 0, "unfilled": 0, "unknown": 0},
+            "diffs": [],
+        },
+    ))
+    ctx.overseas_fill_reconcile_service = service
+    return service
+
+
+async def test_reconcile_defaults_to_dry_run(web_client, mock_web_ctx):
+    """apply 를 명시하지 않으면 원장을 건드리지 않는 판정만 돈다."""
+    with patch("view.web.routes.overseas_market._get_ctx", return_value=mock_web_ctx):
+        _enable_overseas(mock_web_ctx)
+        service = _install_fill_reconcile(mock_web_ctx)
+
+        response = web_client.post(
+            "/api/overseas/trades/reconcile?start_date=20260813&end_date=20260813"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["rt_cd"] == "0"
+        assert service.reconcile.await_args.kwargs["apply"] is False
+
+
+async def test_reconcile_passes_apply_flag(web_client, mock_web_ctx):
+    with patch("view.web.routes.overseas_market._get_ctx", return_value=mock_web_ctx):
+        _enable_overseas(mock_web_ctx)
+        service = _install_fill_reconcile(mock_web_ctx)
+
+        web_client.post(
+            "/api/overseas/trades/reconcile"
+            "?start_date=20260813&end_date=20260813&exchange=NYSE&apply=true"
+        )
+
+        kwargs = service.reconcile.await_args.kwargs
+        assert kwargs["apply"] is True
+        assert kwargs["exchange"] == "NYSE"
+
+
+async def test_reconcile_requires_overseas_enabled(web_client, mock_web_ctx):
+    with patch("view.web.routes.overseas_market._get_ctx", return_value=mock_web_ctx):
+        mock_web_ctx.enabled_market_modes = ["domestic"]
+        _install_fill_reconcile(mock_web_ctx)
+
+        response = web_client.post(
+            "/api/overseas/trades/reconcile?start_date=20260813&end_date=20260813"
+        )
+
+        assert response.status_code == 400
+
+
+async def test_reconcile_without_service_returns_503(web_client, mock_web_ctx):
+    with patch("view.web.routes.overseas_market._get_ctx", return_value=mock_web_ctx):
+        _enable_overseas(mock_web_ctx)
+        mock_web_ctx.overseas_fill_reconcile_service = None
+
+        response = web_client.post(
+            "/api/overseas/trades/reconcile?start_date=20260813&end_date=20260813"
+        )
 
         assert response.status_code == 503

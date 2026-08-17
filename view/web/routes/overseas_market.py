@@ -62,6 +62,34 @@ async def get_overseas_trades():
     }
 
 
+@router.post("/overseas/trades/reconcile")
+async def reconcile_overseas_trades(
+    start_date: str = Query(..., min_length=8, max_length=8),
+    end_date: str = Query(..., min_length=8, max_length=8),
+    exchange: str = Query("NASD"),
+    apply: bool = Query(False),
+):
+    """USD 원장 HOLD lot 을 브로커 체결내역과 대조한다.
+
+    원장은 *주문 접수* 시점 기록이라 미체결 지정가도 보유로 잡힌다. `apply=true` 일 때만
+    원장을 보정하고, 기본은 판정만 반환한다.
+    """
+    ctx = _get_ctx()
+    if not is_market_enabled(ctx, "overseas_us"):
+        raise HTTPException(
+            status_code=400,
+            detail="미국주식 체결 대사는 overseas_us가 enabled된 run에서만 사용할 수 있습니다.",
+        )
+    service = getattr(ctx, "overseas_fill_reconcile_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="미국주식 체결 대사 서비스가 준비되지 않았습니다.")
+
+    resp = await service.reconcile(
+        start_date=start_date, end_date=end_date, exchange=exchange, apply=apply,
+    )
+    return {"rt_cd": resp.rt_cd, "msg1": resp.msg1, "data": resp.data}
+
+
 @router.get("/overseas/ranking/{category}")
 async def get_overseas_ranking(category: str, limit: int = Query(30, ge=1, le=500)):
     """S&P 500 유니버스 기준 미국 랭킹 (rise/fall/volume/trading_value)."""
