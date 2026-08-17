@@ -249,9 +249,10 @@
   - **착수 조건 미충족**: O-3 스윕이 전 조합 음의 기댓값을 보였으므로 현 규칙으로 실주문 전환할 근거가 없다. 장중 paper(#776) 데이터로 교차검증하거나, 유니버스/규칙 자체를 바꿔 엣지를 먼저 입증해야 한다.
   - **수동 주문 경로는 선반영 (#830, 2026-08-13)**: `POST /api/overseas/order` 가 broker 를 직접 호출해 kill-switch 와 기록을 우회하던 문제를 수정. 수동 전용 `OverseasOrderExecutionService` 인스턴스(`overseas_manual_order_service`, `live_enabled=True`) 경유로 전환했고 **자동 경로는 별도 인스턴스라 `live_enabled=False` 잠금 불변**. 취소는 리스크 축소 행위라 게이트 대상에서 제외. 주문 저널은 EventShadowJournal(`journal_strategy_name="수동매매_해외"`).
   - **USD 전용 원장 Phase 1 (#833, 2026-08-13)**: 통화 설계는 **별도 원장**으로 확정(사용자 결정) — `repositories/overseas_trade_repository.py` + `GET /api/overseas/trades`. `VirtualTradeRepository` 는 원화·국내 대사 원장이라 USD 편입 시 성과·대사가 오염되므로 영구 분리한다. 부분매도 lot 분할과 미국 비용 모델(0.25%/side)을 처음부터 적용했다.
-    - 남은 것: **기록 시점이 체결이 아니라 주문 접수** — 미체결 지정가도 HOLD 로 잡힌다. `get_overseas_order_history` 기반 체결 대사 + UI 성과 요약이 Phase 2.
+  - **USD 원장 Phase 2 — 체결 대사 (2026-08-17)**: 기록 시점이 주문 접수라 미체결 지정가도 HOLD 로 잡히던 것을 `OverseasFillReconcileService`(브로커 체결내역 `inquire_overseas_ccnl` 대조)로 사후 보정한다. `POST /api/overseas/trades/reconcile` — 기본은 판정만, `apply=true` 일 때만 원장 변경. 보정은 **줄이는 방향만**(미체결 → `CANCELED` 표시로 행 유지, 부분체결 → 체결분으로 qty 축소)이고 매칭 실패는 `unfilled` 가 아니라 `unknown` 무조작이다 — 판정 불가를 미체결로 단정하면 실제 보유가 원장에서 사라진다. lot 단위 매칭을 위해 원장에 `order_no` 컬럼을 추가했다(같은 심볼 lot 이 여러 개면 수량 총합으로는 구분 불가). `get_summary()` 는 CANCELED 를 total 에서 제외한다.
+    - 남은 것: **UI 성과 요약** — `GET /api/overseas/trades` 를 소비하는 화면이 없어 `get_summary()` 가 노출되지 않는다. 대사 결과(`unknown`/`CANCELED`) 표시도 함께.
 
-주요 파일: `brokers/korea_investment/korea_invest_overseas_stock_api.py`, `brokers/broker_api_wrapper.py`, `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/stock_query_service.py`, `view/web/bootstrap/{service_container,strategy_factory}.py`, `config/tr_ids_config.yaml`
+주요 파일: `brokers/korea_investment/korea_invest_overseas_stock_api.py`, `brokers/broker_api_wrapper.py`, `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/overseas_fill_reconcile_service.py`, `services/stock_query_service.py`, `repositories/overseas_trade_repository.py`, `view/web/routes/{order,overseas_market}.py`, `view/web/bootstrap/{service_container,strategy_factory}.py`, `config/tr_ids_config.yaml`
 
 ---
 

@@ -138,8 +138,9 @@ async def place_overseas_order(req: OverseasOrderRequest, request: Request):
 async def _record_overseas_trade(ctx, req: OverseasOrderRequest, resp) -> None:
     """주문이 접수된 경우에만 USD 원장에 남긴다.
 
-    거부/차단 응답을 기록하면 유령 보유가 생긴다. 해외는 체결 대사 경로가 아직 없어
-    *접수 시점* 기록이며, 미체결 지정가도 보유로 잡힐 수 있다(대사는 후속 작업).
+    거부/차단 응답을 기록하면 유령 보유가 생긴다. 해외는 실시간 체결 경로가 없어
+    *접수 시점* 기록이며, 미체결 지정가도 일단 보유로 잡힌다 — 사후 보정은
+    `OverseasFillReconcileService` 가 하고, 그 매칭 키가 여기서 남기는 주문번호다.
     """
     if getattr(resp, "rt_cd", None) != ErrorCode.SUCCESS.value:
         return
@@ -150,6 +151,7 @@ async def _record_overseas_trade(ctx, req: OverseasOrderRequest, resp) -> None:
         if req.side == "buy":
             await ledger.log_buy_async(
                 req.symbol, req.exchange, req.limit_price, req.qty, source="manual",
+                order_no=str(getattr(resp.data, "broker_order_no", "") or ""),
             )
         else:
             await ledger.log_sell_async(

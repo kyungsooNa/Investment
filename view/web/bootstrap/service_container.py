@@ -90,6 +90,7 @@ from view.web.bootstrap.realtime_bootstrap import RealtimeBootstrap
 from view.web.market_mode_utils import is_market_enabled
 from repositories.dart_disclosure_repository import DartDisclosureRepository
 from repositories.overseas_trade_repository import OverseasTradeRepository
+from services.overseas_fill_reconcile_service import OverseasFillReconcileService
 from repositories.youtube_channel_repository import YoutubeChannelRepository
 from repositories.youtube_digest_repository import YoutubeDigestRepository
 from services.gemini_youtube_video_analyzer_service import (
@@ -887,6 +888,7 @@ class ServiceContainer:
                 ctx.overseas_dryrun_task = None
                 ctx.overseas_manual_order_service = None
                 ctx.overseas_trade_repository = None
+                ctx.overseas_fill_reconcile_service = None
         except Exception as e:
             ctx.logger.critical(f"[ServiceBootstrap:Universe] 초기화 실패: {e}", exc_info=True)
             raise
@@ -1007,6 +1009,13 @@ class ServiceContainer:
         ctx = self._ctx
         # 미국 거래는 원화 원장(VirtualTradeRepository)이 아니라 USD 전용 원장에 남긴다.
         ctx.overseas_trade_repository = OverseasTradeRepository()
+        # 원장은 주문 접수 시점 기록이라 미체결 지정가도 HOLD 로 잡힌다 — 브로커 체결내역
+        # 대조로 사후 보정한다(`POST /api/overseas/trades/reconcile`).
+        ctx.overseas_fill_reconcile_service = OverseasFillReconcileService(
+            trade_repository=ctx.overseas_trade_repository,
+            stock_query_service=ctx.stock_query_service,
+            logger=ctx.logger,
+        )
         ctx.overseas_manual_order_service = OverseasOrderExecutionService(
             broker=ctx.broker,
             live_enabled=True,

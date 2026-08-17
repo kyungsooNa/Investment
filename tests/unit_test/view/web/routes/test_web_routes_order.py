@@ -442,8 +442,32 @@ async def test_successful_overseas_buy_is_recorded_in_ledger(web_client, mock_we
 
     assert response.status_code == 200
     ledger.log_buy_async.assert_awaited_once_with(
-        "AAPL", OverseasExchange.NASD, 190.25, 3, source="manual",
+        "AAPL", OverseasExchange.NASD, 190.25, 3, source="manual", order_no="",
     )
+
+
+@pytest.mark.asyncio
+async def test_overseas_buy_records_broker_order_no(web_client, mock_web_ctx):
+    """주문번호가 없으면 체결 대사가 lot 을 매칭하지 못한다 — 응답의 ODNO 를 원장에 남긴다."""
+    from common.overseas_types import OverseasOrderReport
+
+    mock_web_ctx.market_mode = "overseas_us"
+    _install_overseas_manual_service(
+        mock_web_ctx,
+        resp=ResCommonResponse(rt_cd="0", msg1="Order Placed", data=OverseasOrderReport(
+            symbol="AAPL", exchange=OverseasExchange.NASD, side="buy", qty=3,
+            limit_price="190.25", broker_order_no="0001234",
+        )),
+    )
+    ledger = _install_overseas_ledger(mock_web_ctx)
+
+    payload = {
+        "symbol": "AAPL", "exchange": "NASD", "side": "buy",
+        "qty": 3, "limit_price": 190.25, "currency": "USD",
+    }
+    web_client.post("/api/overseas/order", json=payload)
+
+    assert ledger.log_buy_async.await_args.kwargs["order_no"] == "0001234"
 
 
 @pytest.mark.asyncio

@@ -127,3 +127,115 @@ def test_sold_row_stores_net_return(repo):
 
     sold = [t for t in repo.get_all_trades() if t["status"] == "SOLD"][0]
     assert sold["return_rate"] == pytest.approx(9.48, abs=0.01)
+
+
+# --- 체결 대사 (Phase 2) ---
+#
+# 기록 시점이 *주문 접수* 이라 미체결 지정가도 HOLD 로 잡힌다. 대사가 lot 단위로
+# 성립하려면 주문번호가 있어야 한다 — 같은 심볼의 lot 이 여러 개면 수량 총합만으로는
+# 어느 lot 이 미체결인지 구분할 수 없다.
+
+
+def test_log_buy_stores_order_no(repo):
+    repo.log_buy("AAPL", OverseasExchange.NASD, 190.0, 3, source="manual", order_no="0001234")
+
+    assert repo.get_holds()[0]["order_no"] == "0001234"
+
+
+def test_order_no_defaults_to_empty(repo):
+    """주문번호 없이 기록된 lot 도 유효하다(대사 대상에서 빠질 뿐)."""
+    repo.log_buy("AAPL", OverseasExchange.NASD, 190.0, 3)
+
+    assert repo.get_holds()[0]["order_no"] == ""
+
+
+def test_mark_canceled_removes_from_holds_without_deleting_row(repo):
+    """미체결 lot 은 행을 지우지 않고 CANCELED 로 표시한다 — 기록 파괴 금지."""
+    repo.log_buy("AAPL", OverseasExchange.NASD, 190.0, 3, order_no="0001234")
+    trade_id = repo.get_holds()[0]["id"]
+
+    repo.mark_canceled(trade_id, reason="fill_reconcile: 미체결")
+
+    assert repo.get_holds() == []
+    rows = repo.get_all_trades()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "CANCELED"
+    assert rows[0]["reason"] == "fill_reconcile: 미체결"
+
+
+def test_mark_canceled_ignores_non_hold_row(repo):
+    """이미 청산된 lot 을 취소로 뒤집으면 실현 성과가 사라진다."""
+    repo.log_buy("AAPL", OverseasExchange.NASD, 100.0, 1)
+    repo.log_sell("AAPL", 110.0)
+    trade_id = repo.get_all_trades()[0]["id"]
+
+    assert repo.mark_canceled(trade_id, reason="fill_reconcile: 미체결") is False
+    assert repo.get_all_trades()[0]["status"] == "SOLD"
+
+
+def test_adjust_qty_shrinks_partially_filled_lot(repo):
+    repo.log_buy("AAPL", OverseasExchange.NASD, 190.0, 5, order_no="0001234")
+    trade_id = repo.get_holds()[0]["id"]
+
+    assert repo.adjust_qty(trade_id, 2, reason="fill_reconcile: 부분체결") is True
+
+    holds = repo.get_holds()
+    assert holds[0]["qty"] == 2
+    assert holds[0]["reason"] == "fill_reconcile: 부분체결"
+
+
+def test_adjust_qty_rejects_increase(repo):
+    """대사는 과다 기록을 줄이는 방향만 허용한다 — 늘리면 없는 보유를 만든다."""
+    repo.log_buy("AAPL", OverseasExchange.NASD, 190.0, 2, order_no="0001234")
+    trade_id = repo.get_holds()[0]["id"]
+
+    assert repo.adjust_qty(trade_id, 5, reason="fill_reconcile") is False
+    assert repo.get_holds()[0]["qty"] == 2
+
+
+def test_adjust_qty_to_zero_marks_canceled(repo):
+    repo.log_buy("AAPL", OverseasExchange.NASD, 190.0, 2, order_no="0001234")
+    trade_id = repo.get_holds()[0]["id"]
+
+    assert repo.adjust_qty(trade_id, 0, reason="fill_reconcile: 미체결") is True
+
+    assert repo.get_holds() == []
+    assert repo.get_all_trades()[0]["status"] == "CANCELED"
+
+
+def test_summary_excludes_canceled_lots(repo):
+    """취소 lot 이 total 에 남으면 성과 분모가 부풀려진다."""
+    repo.log_buy("AAPL", OverseasExchange.NASD, 100.0, 1)
+    repo.log_buy("MSFT", OverseasExchange.NASD, 100.0, 1, order_no="0009999")
+    repo.mark_canceled(repo.get_holds()[1]["id"], reason="fill_reconcile: 미체결")
+
+    summary = repo.get_summary()
+
+    assert summary["total_trades"] == 1
+    assert summary["canceled_trades"] == 1
+
+
+def test_existing_db_without_order_no_is_migrated(tmp_path):
+    """order_no 도입 이전 DB 도 재기동 시 그대로 열려야 한다."""
+    import sqlite3
+
+    db_path = str(tmp_path / "legacy.db")
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        "CREATE TABLE overseas_trades ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT NOT NULL, exchange TEXT NOT NULL,"
+        "currency TEXT NOT NULL DEFAULT 'USD', buy_date TEXT NOT NULL, buy_price REAL NOT NULL,"
+        "qty INTEGER NOT NULL, sell_date TEXT, sell_price REAL,"
+        "return_rate REAL NOT NULL DEFAULT 0.0, status TEXT NOT NULL,"
+        "reason TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '');"
+        "INSERT INTO overseas_trades (symbol, exchange, buy_date, buy_price, qty, status) "
+        "VALUES ('AAPL', 'NASD', '2026-08-13 10:00:00', 190.0, 3, 'HOLD');"
+    )
+    conn.commit()
+    conn.close()
+
+    repo = OverseasTradeRepository(db_path=db_path)
+
+    holds = repo.get_holds()
+    assert len(holds) == 1
+    assert holds[0]["order_no"] == ""
