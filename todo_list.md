@@ -220,7 +220,7 @@
 
 결론: 일봉 셋업형 전략 + 장중 REST 폴링 경로(#776) 적용 가능 — 해외는 웹소켓/분봉이 없어 폴링이 유일한 장중 틱 소스다. 첫 대상 = `LarryWilliamsVBOStrategy`. Phase 1~4(데이터 어댑터·일봉 백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금.
 
-**정정 (2026-08-11)**: 종전 "해외 주문 TR은 실전(TTTS6036U 등)만, 모의 주문 TR 없음"은 stale이다. #606에서 모의 미지원인 주간거래 TTTS603x → 모의 검증 가능한 정규장 TTTT100xU로 전환하며 `tr_ids_config.yaml`에 real/paper 쌍이 모두 추가됐고(VTTT1002U 매수 / VTTT1006U 매도 / VTTT1004U 정정취소), `trid_provider.py`가 `is_paper_trading`으로 분기한다. 따라서 "모의가 없어 배선=실계좌 발사"라는 잠금 명분은 무효이고, 남은 유효 사유는 Phase 5 미완과 엣지 부재(아래 스윕 결과)뿐이다. 단 **모의 서버의 실제 주문 수락 여부는 아직 미검증** — `scripts/probe_overseas_paper_order.py --send`로 확인 후 이 문단을 갱신할 것.
+**정정 (2026-08-11)**: 종전 "해외 주문 TR은 실전(TTTS6036U 등)만, 모의 주문 TR 없음"은 stale이다. #606에서 모의 미지원인 주간거래 TTTS603x → 모의 검증 가능한 정규장 TTTT100xU로 전환하며 `tr_ids_config.yaml`에 real/paper 쌍이 모두 추가됐고(VTTT1002U 매수 / VTTT1006U 매도 / VTTT1004U 정정취소), `trid_provider.py`가 `is_paper_trading`으로 분기한다. 따라서 "모의가 없어 배선=실계좌 발사"라는 잠금 명분은 무효이고, 남은 유효 사유는 Phase 5 미완과 엣지 부재(아래 스윕 결과)뿐이다. 단 **모의 서버의 실제 주문 수락 여부는 아직 미검증** — `scripts/probe_overseas_paper_order.py --send`로 확인 후 이 문단을 갱신할 것. (2026-08-17: 전송 없는 안전장치 검사는 4개 전부 통과 — base_url `openapivts`, 모의 계좌, 매수 `VTTT1002U`, 정정취소 `VTTT1004U`, 프로브가 현재가의 절반으로 체결 불가. 남은 것은 `--send` 1회 실행뿐이다.)
 
 ### O-1. 미국 휴장일/조기폐장 캘린더 [완료 — #621, 2026-07-03]
 
@@ -240,13 +240,17 @@
 - [x] **청산 판정 편향 제거 (#769)**: 일봉은 저가 발생 시각이 없어 `저 <= 손절가` 를 손절 확정으로 처리하면 하향 편향된다(손절가 >= 시가인 돌파는 진입 전 가격대만으로 강제 성립 — 저널 414건 중 괴리 3%+ 116건이 전부 정확히 −3.00%). `undecided` 분리 + 비관·낙관 bracket 산출, 저널에 당일 봉 OHLC 동봉.
 - [x] **장중 VBO paper 경로 (#776)**: dry-run 은 마감 후 사후 평가라 발사 대상이 없었다. REST 폴링(`OverseasIntradayVBOService`/`Task`)으로 장중 진입·청산 판정. 주문 서비스는 `live_enabled=False` 고정(자동 실주문 잠금 유지). config `overseas_stock.intraday_vbo` opt-in.
 - [x] **파라미터 스윕 (2026-08-05)**: 50종목 × 100거래일(20260312~0804), K·손절·괴리상한 27조합. **전 조합에서 낙관 상한이 음수(−0.24% ~ −0.46%)** → 비용 후 엣지 없음. 비용 0% 기준 낙관값 +0.04~+0.26% 로, 엣지가 왕복비용 0.5% 보다 작다. 괴리 상한 필터 가설은 기각(낙관값 미개선). 상세: `reports/overseas_vbo_sweep_20260805.md`
+- [x] **장중 paper vs 일봉 교차검증 (2026-08-17)**: 08-05~08-17 실측(`reports/overseas_intraday_vs_daily_20260817.md`). matched 13건에서 **진입 슬리피지 평균 +0.462%**, 장중 실현(비용후) 평균 **−0.268%**, 같은 구간 일봉 낙관 평균 +0.870% → **일봉 낙관이 실행 대비 1.138%p 과대**. 08-05 스윕의 "비용 0% 기준 낙관 +0.04~+0.26%" 는 이 슬리피지를 얹으면 음수로 내려간다 — **엣지 미확인 결론이 실측으로 강화됐다.**
+  - **한계(단독 해석 금지)**: matched n=13(약 9거래일)이라 통계적 결론이 아니다. 장중 청산 사유가 eod 12 / stop 1 로 **손절 경로는 사실상 미검증**이다.
+  - **daily_only 165건은 기계적 실패가 아니라 유니버스 크기 차이**다 — 장중은 config `top_n: 10`, 일봉 스윕은 50종목. 같은 축으로 비교하려면 top_n 을 올려야 하고, 그러면 콜 수가 약 4배(현재 10종 × 120초 ≈ 1,950콜/일)가 된다.
+- [ ] **(사용자 결정 대기) 장중 유니버스 상향**: config 주석의 "첫 가동일에 진입 기록 확인 후 `top_n`/`poll` 상향" 조건은 충족됐다(진입 13건 = 당일 봉 시가 수신 정상). 다만 **기댓값이 음수인 전략에 API 부하를 4배 늘리는 판단**이라 자동 진행하지 않았다. 올리면 matched 표본이 커져 위 한계가 해소되고, 안 올리면 현 결론(엣지 없음)으로 Phase 5 를 계속 보류한다.
 
-주요 파일: `services/overseas_intraday_vbo_service.py`, `task/background/intraday/overseas_intraday_vbo_task.py`, `strategies/overseas_daily_vbo_backtest.py`, `scripts/{run_overseas_vbo_sweep,fetch_overseas_ohlcv}.py`
+주요 파일: `services/overseas_intraday_vbo_service.py`, `task/background/intraday/overseas_intraday_vbo_task.py`, `strategies/overseas_daily_vbo_backtest.py`, `scripts/{run_overseas_vbo_sweep,fetch_overseas_ohlcv,compare_overseas_intraday_vs_daily}.py`
 
 ### Phase 5. 안전/canary [**보류** — 스윕에서 엣지 미확인, 2026-08-05]
 
 - [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile(`OverseasReconcileService` scaffolding 존재), risk gate/kill switch/canary USD 확장, 실전 소액 canary, canary auto-fire 배선 + `live_enabled=True` 전환 — dry-run 검증 + canary 게이팅.
-  - **착수 조건 미충족**: O-3 스윕이 전 조합 음의 기댓값을 보였으므로 현 규칙으로 실주문 전환할 근거가 없다. 장중 paper(#776) 데이터로 교차검증하거나, 유니버스/규칙 자체를 바꿔 엣지를 먼저 입증해야 한다.
+  - **착수 조건 미충족 (2026-08-17 재확인)**: O-3 스윕이 전 조합 음의 기댓값을 보였고, 장중 paper 교차검증(위 O-3)에서 일봉 낙관이 실행 대비 1.138%p 과대임이 실측됐다 — 현 규칙으로 실주문 전환할 근거가 없다. 남은 경로는 **유니버스/규칙 자체를 바꿔 엣지를 먼저 입증**하는 것뿐이다.
   - **수동 주문 경로는 선반영 (#830, 2026-08-13)**: `POST /api/overseas/order` 가 broker 를 직접 호출해 kill-switch 와 기록을 우회하던 문제를 수정. 수동 전용 `OverseasOrderExecutionService` 인스턴스(`overseas_manual_order_service`, `live_enabled=True`) 경유로 전환했고 **자동 경로는 별도 인스턴스라 `live_enabled=False` 잠금 불변**. 취소는 리스크 축소 행위라 게이트 대상에서 제외. 주문 저널은 EventShadowJournal(`journal_strategy_name="수동매매_해외"`).
   - **USD 전용 원장 Phase 1 (#833, 2026-08-13)**: 통화 설계는 **별도 원장**으로 확정(사용자 결정) — `repositories/overseas_trade_repository.py` + `GET /api/overseas/trades`. `VirtualTradeRepository` 는 원화·국내 대사 원장이라 USD 편입 시 성과·대사가 오염되므로 영구 분리한다. 부분매도 lot 분할과 미국 비용 모델(0.25%/side)을 처음부터 적용했다.
   - **USD 원장 Phase 2 — 체결 대사 (2026-08-17)**: 기록 시점이 주문 접수라 미체결 지정가도 HOLD 로 잡히던 것을 `OverseasFillReconcileService`(브로커 체결내역 `inquire_overseas_ccnl` 대조)로 사후 보정한다. `POST /api/overseas/trades/reconcile` — 기본은 판정만, `apply=true` 일 때만 원장 변경. 보정은 **줄이는 방향만**(미체결 → `CANCELED` 표시로 행 유지, 부분체결 → 체결분으로 qty 축소)이고 매칭 실패는 `unfilled` 가 아니라 `unknown` 무조작이다 — 판정 불가를 미체결로 단정하면 실제 보유가 원장에서 사라진다. lot 단위 매칭을 위해 원장에 `order_no` 컬럼을 추가했다(같은 심볼 lot 이 여러 개면 수량 총합으로는 구분 불가). `get_summary()` 는 CANCELED 를 total 에서 제외한다.
