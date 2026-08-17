@@ -47,6 +47,7 @@ const SCAFFOLD = `
       <option value="1y">1년</option>
     </select>
   </span>
+  <span id="heatmap-page-overseas-interval" class="heatmap-updated" style="display:none;"></span>
   <button type="button" id="heatmap-page-refresh">새로고침</button>
   <span class="heatmap-zoom">
     <button type="button" id="heatmap-page-zoom-out">−</button>
@@ -1042,6 +1043,32 @@ test("수동 새로고침은 자동 갱신 타이머를 다시 건다", async ()
   assert(timer.starts === startsAfterInit + 1,
     `방금 받아왔으므로 다음 자동 갱신까지 한 주기를 새로 세야 함 (실제 ${timer.starts - startsAfterInit})`);
   assert(timer.cleared.length >= 1, "이전 타이머는 해제돼야 함");
+});
+
+// 자동 갱신 주기 표기 — 미국 탭은 60초마다 스스로 갱신되지만, 그 사실이 화면에 없으면
+// 멈춘 화면과 구분되지 않아 새로고침 버튼을 누르게 된다.
+
+test("미국 탭은 자동 갱신 주기를 표기한다", async () => {
+  const { window } = autoRefreshPage({ realtime: true });
+
+  await window.initHeatmapPage();
+  await window.setHeatmapTab("overseas");
+
+  const label = window.document.getElementById("heatmap-page-overseas-interval");
+  assert(label.style.display !== "none", "미국 탭에서는 보여야 함");
+  assert(/60/.test(label.textContent), `주기(초)가 표기돼야 함 (실제 "${label.textContent}")`);
+});
+
+test("국내 탭에서는 갱신 주기 표기를 감춘다", async () => {
+  const { window } = autoRefreshPage({ realtime: true });
+
+  await window.initHeatmapPage();
+  await window.setHeatmapTab("overseas");
+  await window.setHeatmapTab("domestic");
+
+  const label = window.document.getElementById("heatmap-page-overseas-interval");
+  assert(label.style.display === "none",
+    "국내는 종가면 폴링을 건너뛴다 — 같은 주기를 약속하면 거짓이 된다");
 });
 
 test("전용 페이지 경로에서는 로드 시 자동으로 초기화한다", async () => {

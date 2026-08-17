@@ -246,3 +246,14 @@ def test_heatmap_page_hosts_a_manual_refresh_button():
     # 연타로 중복 요청이 나가지 않도록 조회 중에는 잠근다.
     assert "button.disabled = true" in page_script
     assert ".heatmap-refresh:disabled" in template, "잠긴 상태가 보이지 않으면 연타하게 된다"
+
+
+def test_heatmap_page_shows_us_auto_refresh_interval():
+    """미국 탭은 자동 갱신되는데 주기가 화면에 없으면 정지한 화면과 구분되지 않는다."""
+    template = _heatmap_page_template()
+    page_script = _heatmap_page_js()
+
+    assert 'id="heatmap-page-overseas-interval"' in template
+    # 주기 문구를 하드코딩하면 상수를 바꿀 때 표기만 남아 거짓이 된다.
+    assert "HEATMAP_PAGE_OVERSEAS_REFRESH_MS" in page_script
+    assert "heatmap-page-overseas-interval" in page_script
