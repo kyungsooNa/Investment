@@ -74,6 +74,14 @@ function _heatmapPageShow(el, visible) {
     if (el) el.style.display = visible ? '' : 'none';
 }
 
+// 자동 갱신 주기 표기 — 미국 탭은 스스로 갱신되지만 그 사실이 화면에 없으면 멈춘 화면과
+// 구분되지 않는다. 문구를 상수에서 만들어 주기를 바꿔도 표기가 따라오게 한다.
+function _renderHeatmapPageInterval() {
+    const el = document.getElementById('heatmap-page-overseas-interval');
+    if (!el) return;
+    el.textContent = `${Math.round(HEATMAP_PAGE_OVERSEAS_REFRESH_MS / 1000)}초마다 자동 갱신`;
+}
+
 async function setHeatmapTab(market) {
     const source = HEATMAP_PAGE_SOURCES[market];
     if (!source) return;
@@ -90,6 +98,9 @@ async function setHeatmapTab(market) {
     // 미국 스냅샷(Yahoo)은 일간 등락률만 있어 기간 선택이 의미가 없고, 시장도 S&P 500 고정이다.
     _heatmapPageShow(document.getElementById('heatmap-page-period-wrap'), market === 'domestic');
     _heatmapPageShow(document.getElementById('heatmap-page-market-wrap'), market === 'domestic');
+    // 주기 표기는 미국 탭에만 둔다 — 국내는 종가 응답이면 폴링을 건너뛰므로 같은 주기를
+    // 약속하면 거짓이 된다.
+    _heatmapPageShow(document.getElementById('heatmap-page-overseas-interval'), market === 'overseas');
 
     // 실패한 탭은 lastData 가 없으므로 다시 열 때 재시도된다.
     if (!source.lastData) await _loadHeatmap(source);
@@ -465,6 +476,7 @@ async function initHeatmapPage() {
     if (searchInput) searchInput.value = '';
     _heatmapPagePan = null;
     _applyHeatmapPageZoom();
+    _renderHeatmapPageInterval();
     _bindHeatmapPageWheelZoom(viewport);
     _bindHeatmapPageDragPan(viewport);
 
