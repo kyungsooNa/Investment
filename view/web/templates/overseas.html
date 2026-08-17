@@ -134,6 +134,14 @@
             </div>
         </div>
         <div id="overseas-orders-result"></div>
+
+        <div class="card">
+            <h2>USD 거래 기록 <span style="font-size:0.7em; color:#aaa;">원화 원장과 분리된 미국장 전용</span></h2>
+            <div class="form-row">
+                <button class="btn" onclick="loadOverseasTrades()">거래 기록 새로고침</button>
+            </div>
+        </div>
+        <div id="overseas-trades-result"></div>
     </section>{% endif %}
 </div>
 {% endblock %}
@@ -141,5 +149,5 @@
 {% block scripts %}
 <script src="/static/js/autocomplete.js?v=2"></script>
 <script src="/static/js/overseas_autocomplete.js?v=1"></script>
-<script src="/static/js/overseas.js?v=6"></script>
+<script src="/static/js/overseas.js?v=7"></script>
 {% endblock %}
