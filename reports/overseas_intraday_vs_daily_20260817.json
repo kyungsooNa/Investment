@@ -1,0 +1,23 @@
+{
+  "config": {
+    "shadow_dir": "logs/strategies/event_shadow",
+    "date_from": "20260805",
+    "date_to": "20260817",
+    "cost_pct": 0.5
+  },
+  "report": {
+    "matched": 13,
+    "daily_only": 165,
+    "intraday_only": 1,
+    "unclosed": 4,
+    "avg_entry_slippage_pct": 0.4624761072686646,
+    "avg_intraday_net_pct": -0.2683736956109039,
+    "avg_daily_optimistic_pct": 0.8700379544078044,
+    "avg_daily_pessimistic_pct": 0.7265204218252456,
+    "optimistic_minus_intraday_pct": 1.1384116500187083,
+    "by_exit_reason": {
+      "eod": 12,
+      "stop": 1
+    }
+  }
+}
