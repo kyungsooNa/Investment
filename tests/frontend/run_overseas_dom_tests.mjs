@@ -44,6 +44,7 @@ const SCAFFOLD = `
 <div id="overseas-order-result"></div>
 <div id="overseas-orders-result"></div>
 <div id="overseas-trades-result"></div>
+<div id="overseas-reconcile-result"></div>
 `;
 
 function makeWindow() {
@@ -591,6 +592,160 @@ test("보유·주문 탭을 열면 USD 원장을 함께 불러온다", async () 
 
   assert(calls.some((url) => url.startsWith("/api/overseas/trades")),
     `탭을 열면 원장을 조회해야 함 (실제 ${JSON.stringify(calls)})`);
+});
+
+// 체결 대사 실행 UI — 원장은 주문 접수 시점 기록이라 미체결이 섞인다. 대사 구간·거래소를
+// 손으로 넣게 하면 구간 밖 lot 이 조용히 판정불가로 빠지므로 원장 HOLD lot 에서 끌어낸다.
+
+function reconcileResponse(counts, diffs, applied = false) {
+  return {
+    ok: true,
+    json: async () => ({
+      rt_cd: "0",
+      data: { applied, checked: diffs.length, counts, diffs },
+    }),
+  };
+}
+
+const NO_DIFF_COUNTS = { ok: 1, partial: 0, unfilled: 0, unknown: 0 };
+
+function reconcileWindow(holds, onReconcile) {
+  const window = makeWindow();
+  const calls = [];
+  window.confirm = () => true;
+  window.fetchWithTimeout = async (url, options = {}) => {
+    calls.push(url);
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    if (url.startsWith("/api/overseas/trades/reconcile")) {
+      return onReconcile ? onReconcile(url, options) : reconcileResponse(NO_DIFF_COUNTS, []);
+    }
+    return tradesResponse(SAMPLE_SUMMARY, holds);
+  };
+  return { window, calls };
+}
+
+test("대사는 원장 HOLD lot 의 매수일부터 오늘까지를 구간으로 잡는다", async () => {
+  const { window, calls } = reconcileWindow([
+    tradeRow({ id: 1, buy_date: "2026-08-11 22:30:00" }),
+    tradeRow({ id: 2, buy_date: "2026-08-13 23:10:00" }),
+    // 청산분은 대사 대상이 아니므로 구간을 앞으로 끌면 안 된다.
+    tradeRow({ id: 3, buy_date: "2026-01-02 10:00:00", status: "SOLD" }),
+  ]);
+
+  await window.reconcileOverseasTrades();
+
+  const call = calls.find((url) => url.startsWith("/api/overseas/trades/reconcile"));
+  assert(call.includes("start_date=20260811"), `가장 오래된 HOLD 매수일이어야 함 (실제 ${call})`);
+  assert(/end_date=\d{8}/.test(call), `종료일이 YYYYMMDD 여야 함 (실제 ${call})`);
+});
+
+test("대사 기본 호출은 apply=false 다", async () => {
+  const { window, calls } = reconcileWindow([tradeRow({})]);
+
+  await window.reconcileOverseasTrades();
+
+  const call = calls.find((url) => url.startsWith("/api/overseas/trades/reconcile"));
+  assert(call.includes("apply=false"), `기본은 판정만이어야 함 (실제 ${call})`);
+});
+
+test("HOLD lot 의 거래소마다 각각 대사한다", async () => {
+  const { window, calls } = reconcileWindow([
+    tradeRow({ id: 1, exchange: "NASD" }),
+    tradeRow({ id: 2, exchange: "NYSE", symbol: "BRK" }),
+  ]);
+
+  await window.reconcileOverseasTrades();
+
+  const reconciles = calls.filter((url) => url.startsWith("/api/overseas/trades/reconcile"));
+  assert(reconciles.some((url) => url.includes("exchange=NASD")), "NASD 를 대사해야 함");
+  assert(reconciles.some((url) => url.includes("exchange=NYSE")),
+    `거래소를 하나만 고르면 나머지가 판정되지 않는다 (실제 ${JSON.stringify(reconciles)})`);
+});
+
+test("HOLD lot 이 없으면 대사 API 를 호출하지 않는다", async () => {
+  const { window, calls } = reconcileWindow([tradeRow({ status: "SOLD" })]);
+
+  await window.reconcileOverseasTrades();
+
+  assert(!calls.some((url) => url.startsWith("/api/overseas/trades/reconcile")),
+    "대사할 보유가 없으면 브로커를 부를 이유가 없음");
+  assert(window.document.getElementById("overseas-reconcile-result").textContent.includes("없"),
+    "이유가 화면에 남아야 함");
+});
+
+test("대사 판정 결과를 행으로 렌더한다", async () => {
+  const { window } = reconcileWindow([tradeRow({})], () => reconcileResponse(
+    { ok: 0, partial: 0, unfilled: 1, unknown: 0 },
+    [{ trade_id: 1, symbol: "AAPL", order_no: "0001234", ledger_qty: 3, filled_qty: 0,
+       verdict: "unfilled", corrected: false }],
+  ));
+
+  await window.reconcileOverseasTrades();
+
+  const text = window.document.getElementById("overseas-reconcile-result").textContent;
+  assert(text.includes("AAPL"), "판정 대상이 보여야 함");
+  assert(text.includes("미체결"), `판정이 한글로 보여야 함 (실제 "${text.slice(0, 200)}")`);
+});
+
+test("보정 대상이 없으면 '보정 적용' 버튼을 내주지 않는다", async () => {
+  const { window } = reconcileWindow([tradeRow({})], () => reconcileResponse(
+    { ok: 1, partial: 0, unfilled: 0, unknown: 0 },
+    [{ trade_id: 1, symbol: "AAPL", order_no: "0001234", ledger_qty: 3, filled_qty: 3,
+       verdict: "ok", corrected: false }],
+  ));
+
+  await window.reconcileOverseasTrades();
+
+  assert(window.document.querySelector("[data-overseas-reconcile-apply]") === null,
+    "고칠 게 없는데 원장 변경 버튼을 노출하면 안 됨");
+});
+
+test("판정불가만 있으면 '보정 적용' 버튼을 내주지 않는다", async () => {
+  const { window } = reconcileWindow([tradeRow({ order_no: "" })], () => reconcileResponse(
+    { ok: 0, partial: 0, unfilled: 0, unknown: 1 },
+    [{ trade_id: 1, symbol: "AAPL", order_no: "", ledger_qty: 3, filled_qty: null,
+       verdict: "unknown", corrected: false }],
+  ));
+
+  await window.reconcileOverseasTrades();
+
+  assert(window.document.querySelector("[data-overseas-reconcile-apply]") === null,
+    "unknown 은 무조작 대상이라 적용할 보정이 없음");
+});
+
+test("보정 적용은 confirm 을 거부하면 호출하지 않는다", async () => {
+  const { window, calls } = reconcileWindow([tradeRow({})], () => reconcileResponse(
+    { ok: 0, partial: 0, unfilled: 1, unknown: 0 },
+    [{ trade_id: 1, symbol: "AAPL", order_no: "0001234", ledger_qty: 3, filled_qty: 0,
+       verdict: "unfilled", corrected: false }],
+  ));
+
+  await window.reconcileOverseasTrades();
+  window.confirm = () => false;
+  calls.length = 0;
+  await window.reconcileOverseasTrades(true);
+
+  assert(!calls.some((url) => url.includes("apply=true")),
+    "회귀: confirm 거부에도 원장이 변경됨");
+});
+
+test("보정을 적용하면 apply=true 로 부르고 원장을 다시 읽는다", async () => {
+  const { window, calls } = reconcileWindow([tradeRow({})], (url) => reconcileResponse(
+    { ok: 0, partial: 0, unfilled: 1, unknown: 0 },
+    [{ trade_id: 1, symbol: "AAPL", order_no: "0001234", ledger_qty: 3, filled_qty: 0,
+       verdict: "unfilled", corrected: url.includes("apply=true") }],
+    url.includes("apply=true"),
+  ));
+
+  await window.reconcileOverseasTrades();
+  calls.length = 0;
+  await window.reconcileOverseasTrades(true);
+
+  assert(calls.some((url) => url.includes("apply=true")), "보정 요청이 나가야 함");
+  assert(calls.filter((url) => url === "/api/overseas/trades").length >= 1,
+    "보정 후 원장 표가 낡은 채로 남으면 안 됨");
 });
 
 await run();

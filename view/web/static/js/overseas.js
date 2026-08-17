@@ -482,6 +482,137 @@ async function loadOverseasTrades() {
     }
 }
 
+// 체결 대사 실행 — 원장은 주문 접수 시점 기록이라 미체결이 HOLD 로 섞인다.
+// 조회 구간과 거래소를 사용자에게 입력받지 않고 원장 HOLD lot 에서 끌어낸다: 손으로 넣으면
+// 구간 밖 lot 이 조용히 '판정불가' 로 빠지고, 거래소를 하나만 고르면 나머지는 아예 판정되지
+// 않는다. 둘 다 화면상 '대사 끝남' 으로 보이는 실패라 눈에 띄지 않는다.
+const OVERSEAS_VERDICT_LABELS = {
+    ok: '일치', partial: '부분체결', unfilled: '미체결', unknown: '판정불가',
+};
+// 보정 대상은 이 둘뿐이다 — unknown 은 무조작이 계약이다(미체결로 단정하면 실제 보유가 사라진다).
+const OVERSEAS_CORRECTABLE_VERDICTS = ['unfilled', 'partial'];
+
+let _overseasReconcileBusy = false;
+
+function _overseasTodayYmd() {
+    const now = new Date();
+    return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
+        + `${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function _overseasHoldWindow(trades) {
+    const holds = trades.filter(trade => String(trade.status) === 'HOLD');
+    // 청산분의 매수일까지 끌어오면 구간만 넓어지고 판정 대상은 그대로다.
+    const dates = holds
+        .map(trade => String(trade.buy_date || '').slice(0, 10).replace(/-/g, ''))
+        .filter(date => /^\d{8}$/.test(date))
+        .sort();
+    const exchanges = [...new Set(
+        holds.map(trade => String(trade.exchange || '').toUpperCase()).filter(Boolean),
+    )];
+    if (!dates.length || !exchanges.length) return null;
+    return { startDate: dates[0], endDate: _overseasTodayYmd(), exchanges };
+}
+
+function _overseasVerdictLabel(verdict) {
+    return OVERSEAS_VERDICT_LABELS[String(verdict || '')] || String(verdict || '-');
+}
+
+function _renderOverseasReconcile(resultDiv, counts, diffs, applied) {
+    const correctable = OVERSEAS_CORRECTABLE_VERDICTS
+        .reduce((sum, verdict) => sum + (Number(counts[verdict]) || 0), 0);
+    const body = diffs.map(diff => `
+        <tr>
+            <td>${escapeHtml(diff.symbol || '-')}</td>
+            <td>${escapeHtml(diff.order_no || '-')}</td>
+            <td>${_formatNumber(diff.ledger_qty)}</td>
+            <td>${diff.filled_qty === null || diff.filled_qty === undefined ? '-' : _formatNumber(diff.filled_qty)}</td>
+            <td>${escapeHtml(_overseasVerdictLabel(diff.verdict))}</td>
+            <td>${diff.corrected ? '보정됨' : '-'}</td>
+        </tr>
+    `).join('');
+    // unknown 은 '이상' 이 아니라 '판정할 수 없었음' 이다 — 사유를 같이 적어야 오해가 없다.
+    const unknownNote = (Number(counts.unknown) || 0) > 0
+        ? '<p style="color:#aaa;">판정불가는 주문번호가 없거나(대사 도입 이전 기록) 조회 구간 밖인 주문입니다 — 원장을 건드리지 않습니다.</p>'
+        : '';
+    const applyButton = (!applied && correctable > 0)
+        ? '<div class="form-row"><button class="btn btn-sell" data-overseas-reconcile-apply>보정 적용</button></div>'
+        : '';
+    resultDiv.innerHTML = `
+        <div class="card">
+            <h3>체결 대사 ${applied ? '<span style="color:#aaa;font-size:0.85rem;">원장 보정 완료</span>'
+                : '<span style="color:#aaa;font-size:0.85rem;">판정만 — 원장 변경 없음</span>'}</h3>
+            <p>일치 ${Number(counts.ok) || 0}건 · 부분체결 ${Number(counts.partial) || 0}건
+               · 미체결 ${Number(counts.unfilled) || 0}건 · 판정불가 ${Number(counts.unknown) || 0}건</p>
+            ${unknownNote}
+            <table class="data-table">
+                <thead><tr><th>심볼</th><th>주문번호</th><th>원장수량</th><th>체결수량</th><th>판정</th><th>보정</th></tr></thead>
+                <tbody>${body || '<tr><td colspan="6">판정 대상이 없습니다.</td></tr>'}</tbody>
+            </table>
+            ${applyButton}
+        </div>
+    `;
+    const applyEl = resultDiv.querySelector('[data-overseas-reconcile-apply]');
+    if (applyEl) applyEl.addEventListener('click', () => reconcileOverseasTrades(true));
+}
+
+async function reconcileOverseasTrades(apply = false) {
+    const resultDiv = document.getElementById('overseas-reconcile-result');
+    if (!resultDiv || _overseasReconcileBusy) return;
+    if (apply && !confirm('미체결 lot 은 취소로 표시되고 부분체결 lot 은 체결분으로 줄어듭니다. 적용할까요?')) return;
+
+    _overseasReconcileBusy = true;
+    showLoading(resultDiv, apply ? '원장 보정 중...' : '체결 대사 중...');
+    try {
+        if (!await _ensureOverseasEnabled()) {
+            showError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
+            return;
+        }
+        const ledgerRes = await fetchWithTimeout('/api/overseas/trades', {}, 12000);
+        const ledger = await readJsonResponse(ledgerRes);
+        if (ledger.error || ledger.json.rt_cd !== '0') {
+            showError(resultDiv, `원장 조회 실패: ${ledger.error || ledger.json.msg1 || ledgerRes.status}`);
+            return;
+        }
+        const window_ = _overseasHoldWindow(
+            Array.isArray(ledger.json.data?.trades) ? ledger.json.data.trades : [],
+        );
+        if (!window_) {
+            resultDiv.innerHTML = '<div class="card"><p>대사할 보유 기록이 없습니다.</p></div>';
+            return;
+        }
+
+        const counts = { ok: 0, partial: 0, unfilled: 0, unknown: 0 };
+        const diffs = [];
+        for (const exchange of window_.exchanges) {
+            const url = '/api/overseas/trades/reconcile'
+                + `?start_date=${window_.startDate}&end_date=${window_.endDate}`
+                + `&exchange=${encodeURIComponent(exchange)}&apply=${apply ? 'true' : 'false'}`;
+            const res = await fetchWithTimeout(url, { method: 'POST' }, 20000);
+            const { json, error } = await readJsonResponse(res);
+            if (error || json.rt_cd !== '0') {
+                // 한 거래소가 실패하면 나머지 판정만 보여주고 실패를 감추지 않는다.
+                showError(resultDiv, `${exchange} 대사 실패: ${error || json.msg1 || res.status}`);
+                return;
+            }
+            const data = json.data || {};
+            Object.keys(counts).forEach(key => {
+                counts[key] += Number(data.counts?.[key]) || 0;
+            });
+            if (Array.isArray(data.diffs)) diffs.push(...data.diffs);
+        }
+
+        _renderOverseasReconcile(resultDiv, counts, diffs, apply);
+        // 보정했으면 위쪽 성과 요약이 낡는다.
+        if (apply) await loadOverseasTrades();
+    } catch (e) {
+        console.error('[overseas] 통신 오류', e);
+        showError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
+    } finally {
+        _overseasReconcileBusy = false;
+    }
+}
+
 async function cancelOverseasOrder(orderNo, symbol, exchange, qty) {
     if (!orderNo) {
         alert('주문번호가 없습니다.');
