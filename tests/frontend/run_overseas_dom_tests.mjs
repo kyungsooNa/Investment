@@ -43,6 +43,7 @@ const SCAFFOLD = `
 <input id="overseas-order-price" type="number">
 <div id="overseas-order-result"></div>
 <div id="overseas-orders-result"></div>
+<div id="overseas-trades-result"></div>
 `;
 
 function makeWindow() {
@@ -476,6 +477,120 @@ test("삭제 버튼은 해당 심볼만 DELETE 하고 행을 제거한다", asyn
   const body = window.document.getElementById("overseas-favorite-body").textContent;
   assert(!body.includes("AAPL"), "삭제한 행이 사라져야 함");
   assert(body.includes("MSFT"), "다른 행은 남아야 함");
+});
+
+// USD 거래 원장 — 원화 원장(/api/virtual/*)과 분리돼 있어 성과 요약을 볼 화면이 여기뿐이다.
+
+function tradesResponse(summary, trades) {
+  return {
+    ok: true,
+    json: async () => ({ rt_cd: "0", data: { summary, trades } }),
+  };
+}
+
+const SAMPLE_SUMMARY = {
+  total_trades: 2, sold_trades: 1, win_rate: 100.0, avg_return: 9.48, canceled_trades: 0,
+};
+
+function tradeRow(overrides) {
+  return {
+    id: 1, symbol: "AAPL", exchange: "NASD", currency: "USD",
+    buy_date: "2026-08-13 10:00:00", buy_price: 190.0, qty: 3,
+    sell_date: null, sell_price: null, return_rate: 0.0,
+    status: "HOLD", reason: "", source: "manual", order_no: "0001234",
+    ...overrides,
+  };
+}
+
+test("loadOverseasTrades 가 성과 요약과 거래 행을 렌더한다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return tradesResponse(SAMPLE_SUMMARY, [
+      tradeRow({}),
+      tradeRow({ id: 2, symbol: "MSFT", status: "SOLD", sell_price: 210.0, return_rate: 9.48 }),
+    ]);
+  };
+
+  await window.loadOverseasTrades();
+
+  const text = window.document.getElementById("overseas-trades-result").textContent;
+  assert(text.includes("9.48"), "평균 수익률이 보여야 함");
+  assert(text.includes("100"), "승률이 보여야 함");
+  assert(text.includes("AAPL") && text.includes("MSFT"), "거래 행이 보여야 함");
+});
+
+test("취소(CANCELED) lot 은 보유와 구분되게 표시한다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return tradesResponse(
+      { ...SAMPLE_SUMMARY, total_trades: 1, canceled_trades: 1 },
+      [tradeRow({ status: "CANCELED", reason: "fill_reconcile: 미체결" })],
+    );
+  };
+
+  await window.loadOverseasTrades();
+
+  const text = window.document.getElementById("overseas-trades-result").textContent;
+  assert(text.includes("취소"), `취소 상태가 드러나야 함 (실제 "${text.slice(0, 200)}")`);
+});
+
+test("거래 기록이 비면 안내 문구를 보여준다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return tradesResponse(
+      { total_trades: 0, sold_trades: 0, win_rate: 0.0, avg_return: 0.0, canceled_trades: 0 }, [],
+    );
+  };
+
+  await window.loadOverseasTrades();
+
+  const text = window.document.getElementById("overseas-trades-result").textContent;
+  assert(text.includes("없"), `빈 상태 안내가 있어야 함 (실제 "${text.slice(0, 200)}")`);
+});
+
+test("원장의 외부 문자열은 HTML 로 해석되지 않는다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return tradesResponse(SAMPLE_SUMMARY, [
+      tradeRow({ symbol: "<img src=x onerror=alert(1)>" }),
+    ]);
+  };
+
+  await window.loadOverseasTrades();
+
+  const result = window.document.getElementById("overseas-trades-result");
+  assert(result.querySelector("img") === null, "주입된 태그가 엘리먼트로 살아나면 안 됨");
+  assert(result.textContent.includes("<img"), "문자열 자체는 그대로 보여야 함");
+});
+
+test("보유·주문 탭을 열면 USD 원장을 함께 불러온다", async () => {
+  const window = makeWindow();
+  const calls = [];
+  window.fetchWithTimeout = async (url) => {
+    calls.push(url);
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return tradesResponse(SAMPLE_SUMMARY, [tradeRow({})]);
+  };
+
+  await window.setOverseasTab("orders");
+  await flush();
+
+  assert(calls.some((url) => url.startsWith("/api/overseas/trades")),
+    `탭을 열면 원장을 조회해야 함 (실제 ${JSON.stringify(calls)})`);
 });
 
 await run();

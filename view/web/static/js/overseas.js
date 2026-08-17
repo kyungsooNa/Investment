@@ -106,6 +106,8 @@ async function setOverseasTab(tabName) {
 
     if (tabName === 'marketcap') await loadOverseasMarketCap();
     if (tabName === 'favorite') await loadOverseasFavorites();
+    // 잔고·미체결은 브로커 호출이라 버튼으로 두지만, 원장은 로컬 DB 읽기라 바로 보여준다.
+    if (tabName === 'orders') await loadOverseasTrades();
 }
 
 function _initialOverseasTab() {
@@ -402,6 +404,78 @@ async function loadOverseasOrders() {
                 Number(button.dataset.qty || 0),
             ));
         });
+    } catch (e) {
+        console.error('[overseas] 통신 오류', e);
+        showError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
+    }
+}
+
+// USD 거래 원장 — 국내 /api/virtual/* 과 분리돼 있다(통화가 달라 같은 표에 섞을 수 없다).
+// 원장은 주문 접수 시점 기록이라 미체결도 일단 보유로 잡히고, 체결 대사에서 미체결로
+// 확인된 lot 은 지워지지 않고 CANCELED 로 남는다 — 보유와 구분돼 보여야 오해가 없다.
+const OVERSEAS_TRADE_STATUS_LABELS = { HOLD: '보유', SOLD: '청산', CANCELED: '취소' };
+
+function _overseasTradeStatusLabel(status) {
+    return OVERSEAS_TRADE_STATUS_LABELS[String(status || '')] || String(status || '-');
+}
+
+function _overseasReturnCell(trade) {
+    if (String(trade.status) !== 'SOLD') return '-';
+    const rate = Number(trade.return_rate) || 0;
+    // 국내 관례(상승=빨강)를 따른다.
+    const color = rate > 0 ? '#e74c3c' : (rate < 0 ? '#3498db' : '');
+    return `<span style="color:${color}">${rate.toFixed(2)}%</span>`;
+}
+
+async function loadOverseasTrades() {
+    const resultDiv = document.getElementById('overseas-trades-result');
+    if (!resultDiv) return;
+    showLoading(resultDiv, '거래 기록 조회 중...');
+
+    try {
+        if (!await _ensureOverseasEnabled()) {
+            showError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
+            return;
+        }
+        const res = await fetchWithTimeout('/api/overseas/trades', {}, 12000);
+        const { json, error } = await readJsonResponse(res);
+        if (error || json.rt_cd !== '0') {
+            showError(resultDiv, `거래 기록 조회 실패: ${error || json.msg1 || res.status}`);
+            return;
+        }
+        const data = json.data || {};
+        const summary = data.summary || {};
+        const trades = Array.isArray(data.trades) ? data.trades : [];
+
+        const canceled = Number(summary.canceled_trades) || 0;
+        // 취소분은 total 에서 이미 빠져 있다(성과 분모 오염 방지) — 별도로만 밝힌다.
+        const canceledNote = canceled > 0
+            ? ` <span style="color:#aaa;">· 대사 취소 ${canceled}건(집계 제외)</span>`
+            : '';
+        const body = trades.map(trade => `
+            <tr${String(trade.status) === 'CANCELED' ? ' style="opacity:0.55;"' : ''}>
+                <td>${escapeHtml(trade.symbol || '-')}</td>
+                <td>${escapeHtml(trade.exchange || '-')}</td>
+                <td>${escapeHtml(trade.buy_date || '-')}</td>
+                <td>${_formatUsd(trade.buy_price)}</td>
+                <td>${_formatNumber(trade.qty)}</td>
+                <td>${escapeHtml(trade.sell_date || '-')}</td>
+                <td>${trade.sell_price ? _formatUsd(trade.sell_price) : '-'}</td>
+                <td>${_overseasReturnCell(trade)}</td>
+                <td>${escapeHtml(_overseasTradeStatusLabel(trade.status))}</td>
+            </tr>
+        `).join('');
+        resultDiv.innerHTML = `
+            <div class="card">
+                <h3>USD 성과 요약 <span style="color:#aaa;font-size:0.85rem;">비용 0.25%/side 반영</span></h3>
+                <p>총 ${_formatNumber(summary.total_trades)}건 · 청산 ${_formatNumber(summary.sold_trades)}건
+                   · 승률 ${Number(summary.win_rate) || 0}% · 평균 수익률 ${Number(summary.avg_return) || 0}%${canceledNote}</p>
+                <table class="data-table">
+                    <thead><tr><th>심볼</th><th>거래소</th><th>매수일</th><th>매수가</th><th>수량</th><th>매도일</th><th>매도가</th><th>수익률</th><th>상태</th></tr></thead>
+                    <tbody>${body || '<tr><td colspan="9">거래 기록이 없습니다.</td></tr>'}</tbody>
+                </table>
+            </div>
+        `;
     } catch (e) {
         console.error('[overseas] 통신 오류', e);
         showError(resultDiv, e.name === 'AbortError' ? '요청 시간이 초과되었습니다.' : '통신 오류가 발생했습니다.');
