@@ -286,9 +286,10 @@ class FavoritePriceAlertService:
         except Exception:
             return code
 
-    @staticmethod
-    def _normalize_code(code) -> str:
+    def _normalize_code(self, code) -> str:
         normalized = str(code or "").strip()
+        if self._market == MARKET_OVERSEAS_US:
+            return normalized.upper()
         if normalized.isdigit() and len(normalized) <= 6:
             return normalized.zfill(6)
         return normalized

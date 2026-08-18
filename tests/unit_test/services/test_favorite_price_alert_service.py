@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -249,6 +250,51 @@ async def test_alerts_overseas_favorite_with_usd_price():
     assert "+5%" in args[2]
     assert "$189.50" in args[3]
     assert kwargs["metadata"]["threshold_pct"] == 5
+
+
+@pytest.mark.asyncio
+async def test_alerts_overseas_favorite_when_saved_symbol_is_lowercase():
+    """미국장 관심 심볼은 저장/틱 대소문자 차이와 무관하게 같은 종목으로 본다."""
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["aapl"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications, market=MARKET_OVERSEAS_US)
+
+    await svc.handle_price_tick("AAPL", price="189.5", rate="5.30")
+
+    notifications.emit.assert_awaited_once()
+    assert notifications.emit.call_args.kwargs["metadata"]["code"] == "AAPL"
+
+
+@pytest.mark.asyncio
+async def test_restored_overseas_alert_state_normalizes_symbol_case(tmp_path):
+    """재시작 복원 상태도 미국장 심볼 대소문자를 정규화해 중복 알림을 막는다."""
+    state_file = tmp_path / "favorite_alert_state.json"
+    state_file.write_text(
+        json.dumps({
+            "date": "20260818",
+            "highest_positive_alert_bucket": {"aapl": 1},
+            "lowest_negative_alert_bucket": {},
+            "upper_limit_alerted_codes": [],
+        }),
+        encoding="utf-8",
+    )
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["AAPL"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(
+        repo,
+        notifications,
+        market=MARKET_OVERSEAS_US,
+        state_file=str(state_file),
+        today_provider=lambda: "20260818",
+    )
+
+    await svc.handle_price_tick("AAPL", price="189.5", rate="5.30")
+
+    notifications.emit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
