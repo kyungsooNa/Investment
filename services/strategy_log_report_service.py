@@ -309,6 +309,7 @@ _MA_PROXIMITY_LOWER_PCT = -2.0
 _MA_PROXIMITY_UPPER_PCT = 4.0
 _MA_NEAR_MISS_MAX_EXCESS_PCT = 4.0
 _MAX_EXECUTION_QUALITY_ROWS = 5
+_MAX_CANDIDATE_LIQUIDITY_ROWS = 5
 _MAX_SAME_DAY_EXIT_VIOLATIONS_SHOWN = 5
 _KOSDAQ_CANDIDATE_WARNING_MIN = 5
 
@@ -336,6 +337,13 @@ def _format_krw(value: Any, *, force_integer: bool = False) -> str:
     if force_integer or amount.is_integer():
         return f"₩{int(round(amount)):,}"
     return f"₩{amount:,.2f}"
+
+
+def _format_eok_won(value: Any) -> str:
+    amount = _to_float(value)
+    if amount is None or amount <= 0:
+        return "N/A"
+    return f"{amount / 100_000_000:.0f}억"
 
 
 def _first_number(data: dict, *keys: str) -> Optional[float]:
@@ -1991,6 +1999,153 @@ class StrategyLogReportService:
 
         return "\n".join(lines)
 
+    def _build_candidate_liquidity_section(self, records: List[dict]) -> Optional[str]:
+        """후보군 유동성/capacity 관찰 섹션.
+
+        전략 로그가 후보별 `avg_trading_value_5d`와 주문금액을 제공할 때만 노출한다.
+        값이 없는 기존 전략 로그는 조용히 생략해 리포트 노이즈를 만들지 않는다.
+        """
+        records = self._latest_candidate_liquidity_records(records)
+        if not records:
+            return None
+
+        by_strategy: Dict[str, List[dict]] = {}
+        for record in records:
+            by_strategy.setdefault(record["strategy"], []).append(record)
+
+        rows = []
+        for strategy, items in by_strategy.items():
+            avg_tv_values = [
+                item["avg_trading_value_5d"]
+                for item in items
+                if item.get("avg_trading_value_5d") is not None
+            ]
+            participation_values = [
+                item["order_to_avg_trading_value_pct"]
+                for item in items
+                if item.get("order_to_avg_trading_value_pct") is not None
+            ]
+            if not avg_tv_values:
+                continue
+            rows.append({
+                "strategy": strategy,
+                "count": len(avg_tv_values),
+                "avg_tv": sum(avg_tv_values) / len(avg_tv_values),
+                "p25_tv": self._percentile(avg_tv_values, 25),
+                "min_tv": min(avg_tv_values),
+                "avg_participation": (
+                    sum(participation_values) / len(participation_values)
+                    if participation_values else None
+                ),
+                "max_participation": max(participation_values) if participation_values else None,
+            })
+
+        if not rows:
+            return None
+        rows.sort(key=lambda row: (row["avg_tv"], row["strategy"]))
+
+        lines = ["<b>📏 후보 유동성/capacity 관찰</b>"]
+        for row in rows[:_MAX_CANDIDATE_LIQUIDITY_ROWS]:
+            participation = ""
+            if row["avg_participation"] is not None and row["max_participation"] is not None:
+                participation = (
+                    f", 주문/5일대금 평균 {row['avg_participation']:.2f}%, "
+                    f"최대 {row['max_participation']:.2f}%"
+                )
+            lines.append(
+                f"• {_esc(row['strategy'])}: {row['count']}종목, "
+                f"5일평균대금 평균 {_format_eok_won(row['avg_tv'])}, "
+                f"P25 {_format_eok_won(row['p25_tv'])}, "
+                f"최소 {_format_eok_won(row['min_tv'])}{participation}"
+            )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _latest_candidate_liquidity_records(records: List[dict]) -> List[dict]:
+        latest: Dict[Tuple[str, str], dict] = {}
+        anonymous: List[dict] = []
+        for idx, record in enumerate(records):
+            code = str(record.get("code") or "").strip()
+            if not code:
+                anonymous.append({**record, "_idx": idx})
+                continue
+            key = (str(record.get("strategy") or ""), code)
+            prev = latest.get(key)
+            if prev is None or str(record.get("timestamp", "")) >= str(prev.get("timestamp", "")):
+                latest[key] = record
+        return [*latest.values(), *anonymous]
+
+    def _extract_candidate_liquidity_records(
+        self,
+        strategy: str,
+        timestamp: str,
+        data: Mapping[str, Any],
+        name_map: Mapping[str, str],
+    ) -> List[dict]:
+        payloads: List[Mapping[str, Any]] = []
+        candidates = data.get("candidates")
+        if isinstance(candidates, list):
+            payloads.extend(item for item in candidates if isinstance(item, Mapping))
+        else:
+            payloads.append(data)
+
+        records: List[dict] = []
+        for payload in payloads:
+            merged = self._merge_candidate_payload(payload)
+            avg_tv = _first_number(
+                merged,
+                "avg_trading_value_5d",
+                "avg_5d_tv",
+                "trading_value_5d",
+                "avg_trading_value",
+            )
+            if avg_tv is None or avg_tv <= 0:
+                continue
+            code = str(merged.get("code") or data.get("code") or "").strip()
+            order_amount = self._candidate_order_amount_won(merged)
+            participation = (
+                order_amount / avg_tv * 100
+                if order_amount is not None and order_amount > 0
+                else None
+            )
+            records.append({
+                "timestamp": timestamp,
+                "strategy": strategy,
+                "code": code,
+                "name": name_map.get(code) or merged.get("name") or data.get("name") or code,
+                "avg_trading_value_5d": avg_tv,
+                "order_amount_won": order_amount,
+                "order_to_avg_trading_value_pct": participation,
+            })
+        return records
+
+    @staticmethod
+    def _merge_candidate_payload(payload: Mapping[str, Any]) -> dict:
+        merged = dict(payload)
+        for nested_key in ("metrics", "watchlist_item"):
+            nested = payload.get(nested_key)
+            if isinstance(nested, Mapping):
+                merged.update({k: v for k, v in nested.items() if k not in merged})
+        return merged
+
+    @staticmethod
+    def _candidate_order_amount_won(payload: Mapping[str, Any]) -> Optional[float]:
+        amount = _first_number(
+            dict(payload),
+            "planned_order_amount_won",
+            "order_amount_won",
+            "max_order_amount_won",
+            "signal_amount_won",
+            "amount_won",
+        )
+        if amount is not None:
+            return amount
+        qty = _first_number(dict(payload), "qty", "order_qty", "planned_qty")
+        price = _first_number(dict(payload), "price", "current_price", "entry_price")
+        if qty is None or price is None or qty <= 0 or price <= 0:
+            return None
+        return qty * price
+
     @staticmethod
     def _latest_execution_quality_records(records: List[dict]) -> List[dict]:
         latest: Dict[str, dict] = {}
@@ -2186,6 +2341,7 @@ class StrategyLogReportService:
         # 전략 로직과 무관한 데이터 수신/파싱 오류를 따로 집계
         data_errors_by_strategy: Dict[str, int] = {}
         execution_quality_records: List[dict] = []
+        candidate_liquidity_records: List[dict] = []
 
         for name, files in sorted(strategy_files.items()):
             bought: Dict[str, dict] = {}
@@ -2195,6 +2351,7 @@ class StrategyLogReportService:
             name_map: Dict[str, str] = {}
             early_guard_skipped: set[str] = set()
             data_error_count: int = 0
+            strategy_candidate_liquidity_records: List[dict] = []
 
             for fpath in sorted(files):
                 for _level, ts, data in self._iter_events(fpath, date_prefix):
@@ -2203,6 +2360,10 @@ class StrategyLogReportService:
 
                     if code and data.get('name'):
                         name_map[code] = data['name']
+
+                    strategy_candidate_liquidity_records.extend(
+                        self._extract_candidate_liquidity_records(name, ts, data, name_map)
+                    )
 
                     if event == 'scan_with_watchlist':
                         scan_count = max(scan_count, data.get('count', 0))
@@ -2314,6 +2475,8 @@ class StrategyLogReportService:
 
             if not self._is_strategy_enabled_for_report(name, enabled_strategy_keys):
                 continue
+
+            candidate_liquidity_records.extend(strategy_candidate_liquidity_records)
 
             if data_error_count > 0:
                 data_errors_by_strategy[name] = data_error_count
@@ -2459,6 +2622,7 @@ class StrategyLogReportService:
         degradation_section = self._build_strategy_degradation_section(target_date)
         journal_accumulation_section = self._build_standard_journal_accumulation_section(target_date)
         profitability_gate_section = self._build_profitability_gate_section(target_date)
+        candidate_liquidity_section = self._build_candidate_liquidity_section(candidate_liquidity_records)
         volatility_section = self._build_volatility_section(strategy_summaries)
         signal_metadata_section = self._build_signal_metadata_section(strategy_summaries)
         multiple_testing_section = self._build_multiple_testing_section(target_date)
@@ -2493,6 +2657,7 @@ class StrategyLogReportService:
                     journal_accumulation_section,
                     profitability_gate_section,
                     execution_quality_section,
+                    candidate_liquidity_section,
                     volatility_section,
                     signal_metadata_section,
                     multiple_testing_section,
@@ -2526,6 +2691,8 @@ class StrategyLogReportService:
             body += f"\n\n{profitability_gate_section}"
         if execution_quality_section:
             body += f"\n\n{execution_quality_section}"
+        if candidate_liquidity_section:
+            body += f"\n\n{candidate_liquidity_section}"
         if volatility_section:
             body += f"\n\n{volatility_section}"
         if signal_metadata_section:

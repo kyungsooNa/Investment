@@ -372,7 +372,7 @@
 
 ### R-6. 비용 모델 — capacity/시장충격 [관찰]
 
-- [ ] (관찰) 전략별 후보 종목 평균 거래대금 분포 + 주문 규모 대비 시장충격 추정을 리포트에 노출할지 검토. (`max_top_of_book_participation_pct` 이미 존재)
+- [x] **후보 유동성/capacity 관찰 섹션 추가 (2026-08-19)**: 전략 로그에 후보별 `avg_trading_value_5d` 와 주문금액(`planned_order_amount_won`/`order_amount_won` 또는 qty×price)이 실리면 일일 전략 리포트가 전략별 5일 평균 거래대금 평균/P25/최소와 주문금액 대비 5일 평균 거래대금 비율(평균/최대)을 노출한다. 기존 `max_top_of_book_participation_pct` 는 실주문 최우선호가 차단으로 유지하고, 이 항목은 후보군 liquidity/capacity 관찰용으로만 둔다.
 
 ### 보류 — 정책 합의 후 재승격
 
