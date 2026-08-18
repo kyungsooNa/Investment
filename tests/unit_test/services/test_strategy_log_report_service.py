@@ -1446,6 +1446,51 @@ async def test_report_marks_incomplete_fill_quality_strategy(log_dir):
     assert "비활성화 후보" in report
 
 
+@pytest.mark.asyncio
+async def test_report_includes_candidate_liquidity_capacity_observation(log_dir):
+    """후보 로그에 유동성/주문금액이 있으면 capacity 관찰 섹션을 노출한다."""
+    log_path = os.path.join(log_dir, "20260418_093000_CapacityStrategy.log.json")
+    _write_log(log_path, [
+        {
+            "timestamp": "2026-04-18 09:30:00,000",
+            "level": "INFO",
+            "name": "strategy.CapacityStrategy",
+            "data": {
+                "event": "scan_with_watchlist",
+                "count": 3,
+                "candidates": [
+                    {
+                        "code": "000001",
+                        "name": "대형후보",
+                        "avg_trading_value_5d": 20_000_000_000,
+                        "planned_order_amount_won": 100_000_000,
+                    },
+                    {
+                        "code": "000002",
+                        "name": "중형후보",
+                        "avg_trading_value_5d": 10_000_000_000,
+                        "planned_order_amount_won": 100_000_000,
+                    },
+                    {
+                        "code": "000003",
+                        "name": "얇은후보",
+                        "avg_trading_value_5d": 5_000_000_000,
+                        "planned_order_amount_won": 100_000_000,
+                    },
+                ],
+            },
+        }
+    ])
+
+    svc = StrategyLogReportService(log_dir=log_dir)
+    report = await svc.generate_report("20260418")
+
+    assert "후보 유동성/capacity 관찰" in report
+    assert "CapacityStrategy: 3종목" in report
+    assert "5일평균대금 평균 117억, P25 75억, 최소 50억" in report
+    assert "주문/5일대금 평균 1.17%, 최대 2.00%" in report
+
+
 # ── _build_metric_str ─────────────────────────────────────────────
 
 def test_build_metric_str_low_execution_strength():
