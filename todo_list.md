@@ -346,7 +346,7 @@
 
 ### T-0. StockEasy 섹터RS taxonomy 참고 (선택)
 
-- [ ] StockEasy 종합 RS 화면(`stockeasy.intellio.kr/stock-analysis`)의 섹터/테마 분류를 네이버 테마 alias/표시명 후보 참고자료로 정리한다. StockEasy 자체를 무단 수집 소스로 고정하지 말고, 실제 구성종목 데이터는 네이버 등 수집 가능한 source에 귀속한다.
+- [x] **StockEasy 섹터RS taxonomy 참고자료 정리 (2026-08-19)**: StockEasy 종합 RS 화면(`stockeasy.intellio.kr/stock-analysis`)의 섹터/테마 분류를 네이버 테마 alias/표시명 후보 참고자료(`docs/theme_taxonomy_reference.md`)로 정리했다. StockEasy 자체는 자동 수집 원천이나 구성종목 truth source 로 고정하지 않고, 실제 구성종목 데이터는 네이버 등 수집 가능한 source 에 귀속한다.
   - 주요 후보: 반도체소재, 지주사, 메모리, 비메모리/팹리스, 전력기기, 반도체장비, 보험, 건설, 테스트소켓, 유통, 로봇/자동화, 미용기기, 산업기계, 완성차, SW/AI, 자동차부품, 증권, 우주항공, 배터리셀, 통신, 원자력, 양극재, 신재생, 전자장비, 조선기자재, 조선, 타이어, 바이오신약, 방위산업, 음극재/소재, 은행, 정유/화학, 철강/비철, 의료기기, 해운, 여행/레저, 음식료, 패션/의류, 제약, 인터넷/플랫폼, 유틸리티, 리츠/부동산, 게임, CDMO, 화장품, 엔터/미디어.
 
 ---
