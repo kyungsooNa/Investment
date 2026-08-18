@@ -302,25 +302,17 @@ class SubscriptionPolicy:
             is_pt = any(req["type"] == StreamingType.PROGRAM_TRADING for req in requests)
             is_price = any(req["type"] == StreamingType.UNIFIED_PRICE for req in requests)
 
-            slots_needed = 0
-            if is_pt:
-                slots_needed += 1  # H0STPGM0 only; price is supplied by independent subscription/REST fallback.
-            elif is_price:
-                slots_needed += 1
-
-            if available_slots >= slots_needed:
-                if is_pt:
-                    desired_pt.add(code)
-                elif is_price:
-                    desired_price.add(code)
-                available_slots -= slots_needed
-            else:
-                # 슬롯 부족 시: Price만이라도 가능한지 확인
-                if is_price and not is_pt and available_slots >= 1:
-                    desired_price.add(code)
-                    available_slots -= 1
-                else:
-                    break
+            allocated = False
+            if is_pt and available_slots >= 1:
+                desired_pt.add(code)
+                available_slots -= 1
+                allocated = True
+            if is_price and available_slots >= 1:
+                desired_price.add(code)
+                available_slots -= 1
+                allocated = True
+            if not allocated:
+                break
 
         # 3. 변경 대상 추출 (타입별 분리)
         to_unsubscribe_price = self._active_codes_price - desired_price
@@ -344,8 +336,12 @@ class SubscriptionPolicy:
             await self._do_subscribe(code, StreamingType.PROGRAM_TRADING)
 
         # 5. [기존 로직 복원] 한도 초과(Dropped) 경고 로그
-        total_requested = len(self._refs)
-        total_fulfilled = len(desired_price | desired_pt)
+        total_requested = sum(
+            int(any(req["type"] == StreamingType.UNIFIED_PRICE for req in cats.values()))
+            + int(any(req["type"] == StreamingType.PROGRAM_TRADING for req in cats.values()))
+            for cats in self._refs.values()
+        )
+        total_fulfilled = len(desired_price) + len(desired_pt)
         dropped = total_requested - total_fulfilled
 
         if dropped > 0:

@@ -262,6 +262,63 @@ async def test_rebalance_program_trading_subscribes_only_program_tick(
 
 
 @pytest.mark.asyncio
+async def test_rebalance_allows_same_code_program_and_price_when_both_requested(
+    policy, mock_streaming, mock_streaming_stock_repo
+):
+    """같은 종목에 PT와 PRICE 요청이 모두 있으면 두 스트림을 각각 활성화한다."""
+    policy.MAX_WS_SLOTS = 2
+    policy._refs = {
+        "005930": {
+            "program_capture": {
+                "priority": SubscriptionPriority.LOW,
+                "type": StreamingType.PROGRAM_TRADING,
+            },
+            "program_capture_price": {
+                "priority": SubscriptionPriority.LOW,
+                "type": StreamingType.UNIFIED_PRICE,
+            },
+        }
+    }
+
+    await policy._rebalance()
+
+    mock_streaming.subscribe_program_trading.assert_awaited_once_with("005930")
+    mock_streaming.subscribe_unified_price.assert_awaited_once_with("005930")
+    assert "005930" in policy._active_codes_pt
+    assert "005930" in policy._active_codes_price
+    mock_streaming_stock_repo.mark_active.assert_any_await("005930", StreamingType.PROGRAM_TRADING)
+    mock_streaming_stock_repo.mark_active.assert_any_await("005930", StreamingType.UNIFIED_PRICE)
+    assert policy._calculate_used_slots() == 2
+
+
+@pytest.mark.asyncio
+async def test_rebalance_prefers_program_when_dual_stream_code_has_one_slot(
+    policy, mock_streaming
+):
+    """동일 종목 dual stream 요청이 1슬롯만 받을 수 있으면 PT를 우선 보존한다."""
+    policy.MAX_WS_SLOTS = 1
+    policy._refs = {
+        "005930": {
+            "program_capture": {
+                "priority": SubscriptionPriority.LOW,
+                "type": StreamingType.PROGRAM_TRADING,
+            },
+            "program_capture_price": {
+                "priority": SubscriptionPriority.LOW,
+                "type": StreamingType.UNIFIED_PRICE,
+            },
+        }
+    }
+
+    await policy._rebalance()
+
+    mock_streaming.subscribe_program_trading.assert_awaited_once_with("005930")
+    mock_streaming.subscribe_unified_price.assert_not_awaited()
+    assert "005930" in policy._active_codes_pt
+    assert "005930" not in policy._active_codes_price
+
+
+@pytest.mark.asyncio
 async def test_rebalance_connects_websocket_before_subscribe(policy, mock_streaming):
     """장중 신규 구독은 WebSocket 연결을 먼저 보장한 뒤 subscribe를 보낸다."""
     policy._refs = {

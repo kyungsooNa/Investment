@@ -82,9 +82,15 @@ async def test_open_tick_syncs_candidates_low_priority_pt_and_persists():
             ["005930", "000660", "035420"], CATEGORY,
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
-        call([], PRICE_CATEGORY, SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE),
+        call(
+            ["005930", "000660", "035420"],
+            PRICE_CATEGORY,
+            SubscriptionPriority.LOW,
+            StreamingType.UNIFIED_PRICE,
+        ),
     ]
     assert store.load_keyed("program_capture_subscribed_codes") == "005930,000660,035420"
+    assert store.load_keyed("price_capture_subscribed_codes") == "005930,000660,035420"
     assert task.get_progress()["synced_date"] == "20260703"
 
 
@@ -231,7 +237,12 @@ async def test_excludes_manual_pt_desired_and_caps_max_codes():
             ["035420", "084370"], CATEGORY,
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
-        call([], PRICE_CATEGORY, SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE),
+        call(
+            ["035420", "084370"],
+            PRICE_CATEGORY,
+            SubscriptionPriority.LOW,
+            StreamingType.UNIFIED_PRICE,
+        ),
     ]
 
 
@@ -286,7 +297,7 @@ async def test_preferred_stocks_use_price_only_instead_of_program_subscription()
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
         call(
-            ["000885", "005935", "051915"], PRICE_CATEGORY,
+            ["005930", "000885", "005935", "000660", "051915"], PRICE_CATEGORY,
             SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE,
         ),
     ]
@@ -365,12 +376,22 @@ async def test_rotates_capture_batch_every_thirty_minutes():
             ["000010", "000020", "000030"], CATEGORY,
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
-        call([], PRICE_CATEGORY, SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE),
+        call(
+            ["000010", "000020", "000030"],
+            PRICE_CATEGORY,
+            SubscriptionPriority.LOW,
+            StreamingType.UNIFIED_PRICE,
+        ),
         call(
             ["000040", "000050", "000060"], CATEGORY,
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
-        call([], PRICE_CATEGORY, SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE),
+        call(
+            ["000040", "000050", "000060"],
+            PRICE_CATEGORY,
+            SubscriptionPriority.LOW,
+            StreamingType.UNIFIED_PRICE,
+        ),
     ]
     assert task.get_progress()["candidate_count"] == 7
 
@@ -396,7 +417,7 @@ async def test_preferred_stock_in_rotation_batch_uses_price_only_subscription():
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
         call(
-            ["005935"], PRICE_CATEGORY,
+            ["005935", "000660"], PRICE_CATEGORY,
             SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE,
         ),
     ]
