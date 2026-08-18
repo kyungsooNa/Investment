@@ -23,6 +23,7 @@
 | 관심종목 미국장 등락률 | `overseas_us` 관심 심볼이 ±5% 단위 bucket을 새로 돌파 | 심볼별 최고 상승 bucket, 최저 하락 bucket | `favorite_alert_state.json` 당일 bucket | `test_favorite_price_alert_service.py`, `test_overseas_favorite_price_alert_task.py` |
 | 시장 안전장치/사이드카 | 거래정지·VI·futures sidecar 조건 감지 | `market_status:*` / `market_futures:*` dedup key | active key set 기반 resolve 경로 | `test_market_status_alert_service.py` |
 | 지수 임계 알림 | 설정된 지수 threshold crossing | threshold key 및 hysteresis/cooldown | 태스크 상태 파일 | `test_market_index_threshold_alert_task.py` |
+| 마켓타이밍 일간 갱신 | 한국장 장전 window에서 KOSPI/KOSDAQ 레짐을 일 1회 갱신 | 태스크의 `last_checked_date` | 없음(일중 프로세스 기준 1회, 재시작 시 장전 window 내 재발행 가능) | `test_market_timing_daily_update_task.py`, `test_oneil_universe_service.py` |
 | 운영자 알림 | source/dedup_key 단위 NEW/ESCALATED/RESOLVED 전이 | `OperatorAlertService` active map | operator alert state file | `test_operator_alert_service.py` |
 
 ## 추가 전 체크리스트

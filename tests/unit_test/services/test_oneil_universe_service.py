@@ -1037,6 +1037,43 @@ async def test_is_market_timing_ok_caching(mock_deps):
         mock_update.assert_awaited_once()
         assert service._market_timing_date == "20250102"
 
+
+async def test_is_market_timing_ok_refreshes_cache_without_daily_alert_emit(mock_deps):
+    """전략 조회는 캐시만 데우고 일간 발행은 dedicated task가 담당한다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    notification = AsyncMock()
+    service = OneilUniverseService(
+        sqs, indicator, mapper, tm, logger=logger, notification_service=notification
+    )
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 10, 0, 0)
+
+    await service.is_market_timing_ok("KOSPI", caller="StrategyA", logger=logger)
+
+    notification.emit.assert_not_awaited()
+    assert logger.info.call_count == 0
+
+
+async def test_refresh_market_timing_emits_daily_event_with_task_caller(mock_deps):
+    """일간 마켓타이밍 이벤트 발행은 전략명이 아니라 태스크명을 caller로 쓴다."""
+    _, sqs, indicator, mapper, tm, logger = mock_deps
+    notification = AsyncMock()
+    service = OneilUniverseService(
+        sqs, indicator, mapper, tm, logger=logger, notification_service=notification
+    )
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 1, 8, 40, 0)
+
+    result = await service.refresh_market_timing(
+        caller="market_timing_daily_update", logger=logger
+    )
+
+    assert set(result) == {"KOSDAQ", "KOSPI"}
+    notification.emit.assert_awaited_once()
+    assert notification.emit.await_args.kwargs["title"] == (
+        "[market_timing_daily_update] 마켓 타이밍 갱신"
+    )
+    assert logger.info.call_count == 2
+
+
 def test_calc_turnover_ratio_zero_cap(mock_deps):
     """_calc_turnover_ratio: 시가총액 0일 때 0 반환 (ZeroDivisionError 방지)."""
     item = OSBWatchlistItem(

@@ -187,15 +187,26 @@ class OneilUniverseService:
     async def is_market_timing_ok(self, market: str, caller: str = "", logger: Optional[logging.Logger] = None) -> bool:
         """해당 시장(KOSPI/KOSDAQ)의 마켓 타이밍이 매수 적합한지 확인.
 
-        MarketRegimeService 위임 + 일일 1회 알림 emit (기존 동작 보존).
+        MarketRegimeService 위임. 일간 알림/로그 발행은 MarketTimingDailyUpdateTask가 담당한다.
         """
         logger = logger or self._logger
         today = self._tm.get_current_kst_time().strftime("%Y%m%d")
         if self._market_timing_date != today:
-            await self._update_market_timing(caller=caller, logger=logger)
+            await self._update_market_timing(caller=caller, logger=logger, emit_events=False)
             self._market_timing_date = today
 
         return self._market_timing_cache.get(market, False)
+
+    async def refresh_market_timing(
+        self,
+        caller: str = "",
+        logger: Optional[logging.Logger] = None,
+    ) -> Dict[str, bool]:
+        """Refresh market timing and emit the daily market-level event."""
+        today = self._tm.get_current_kst_time().strftime("%Y%m%d")
+        await self._update_market_timing(caller=caller, logger=logger, emit_events=True)
+        self._market_timing_date = today
+        return dict(self._market_timing_cache)
 
     # ── 워치리스트 빌드 ────────────────────────────────────────────
 
@@ -1020,7 +1031,13 @@ class OneilUniverseService:
                 triggered = True
         return triggered
 
-    async def _update_market_timing(self, caller: str = "", logger: Optional[logging.Logger] = None):
+    async def _update_market_timing(
+        self,
+        caller: str = "",
+        logger: Optional[logging.Logger] = None,
+        *,
+        emit_events: bool = True,
+    ):
         logger = logger or self._logger
         notification_rows = []
         overall_level = NotificationLevel.INFO
@@ -1029,14 +1046,15 @@ class OneilUniverseService:
             is_rising = snap.is_rising
             self._market_timing_cache[market] = is_rising
 
-            logger.info({
-                "event": "market_timing_updated",
-                "market": market,
-                "ok": is_rising,
-                "fail_reason": snap.fail_detail if not is_rising else "",
-            })
+            if emit_events:
+                logger.info({
+                    "event": "market_timing_updated",
+                    "market": market,
+                    "ok": is_rising,
+                    "fail_reason": snap.fail_detail if not is_rising else "",
+                })
 
-            if self._notification_service:
+            if emit_events and self._notification_service:
                 status_text = "🟢 매수 적합 (우상향)" if is_rising else "🔴 매수 부적합 (추세 꺾임)"
                 level = NotificationLevel.INFO if is_rising else NotificationLevel.WARNING
                 if level == NotificationLevel.WARNING:
@@ -1065,7 +1083,7 @@ class OneilUniverseService:
                     )
                 notification_rows.append(msg)
 
-        if self._notification_service and notification_rows:
+        if emit_events and self._notification_service and notification_rows:
             title = "마켓 타이밍 갱신"
             if caller:
                 title = f"[{caller}] {title}"

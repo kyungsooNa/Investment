@@ -26,6 +26,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "ThemeClassificationCollectorService", "ThemeClassificationTask", "ThemeDailyLeaderReportTask",
     "ThemeIntradayLeaderAlertTask",
     "MarketIndexThresholdAlertTask",
+    "MarketTimingDailyUpdateTask",
     "OverseasFavoritePriceAlertTask", "FavoritePriceAlertService",
     "USMarketCalendarService",
     "BacktestMicrostructureCaptureService", "MicrostructureCaptureTask",
@@ -630,6 +631,9 @@ def test_service_container_trading_mode_keeps_realtime_intraday_and_skips_web_ba
     assert ctx.cache_warmup_task is patched_service_container_deps["CacheWarmupTask"].return_value
     assert ctx.theme_intraday_leader_alert_task is patched_service_container_deps[
         "ThemeIntradayLeaderAlertTask"
+    ].return_value
+    assert ctx.market_timing_daily_update_task is patched_service_container_deps[
+        "MarketTimingDailyUpdateTask"
     ].return_value
 
     patched_service_container_deps["NotificationQueueTask"].assert_not_called()
