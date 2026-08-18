@@ -125,6 +125,7 @@ class BacktestPeriodRunner:
         self._market_regime_service = market_regime_service
         self._market_resolver = market_resolver
         self._position_excursions: dict[str, dict[str, object]] = {}
+        self._regime_snapshot_cache: dict[tuple[str, str], object] = {}
 
     async def run(self, dates: Sequence[str]) -> BacktestPeriodRunResult:
         result = BacktestPeriodRunResult(
@@ -156,11 +157,17 @@ class BacktestPeriodRunner:
 
             report = await self._execute_signal(signal, date_ymd, side=OrderSide.SELL, order=order)
             sell_metrics = self._sell_realized_metrics(report)
+            market_regime = self._position_market_regime(report.order.code)
             self._ledger.apply_execution(report)
             self._forget_position_excursion_if_closed(report)
             result.execution_reports.append(report)
             result.journal_records.append(
-                self._execution_record(report, realized_metrics=sell_metrics, signal=signal)
+                self._execution_record(
+                    report,
+                    realized_metrics=sell_metrics,
+                    signal=signal,
+                    market_regime=market_regime,
+                )
             )
 
     async def _run_entries(self, date_ymd: str, result: BacktestPeriodRunResult) -> None:
@@ -213,12 +220,18 @@ class BacktestPeriodRunner:
                 )
                 continue
 
+            market_regime = await self._market_regime_for_signal(signal, date_ymd)
             report = await self._execute_signal(signal, date_ymd, side=OrderSide.BUY, order=decision.order)
             self._ledger.apply_execution(report)
-            self._remember_position_excursion(report, date_ymd)
+            self._remember_position_excursion(report, date_ymd, market_regime=market_regime)
             result.execution_reports.append(report)
             result.journal_records.append(
-                self._execution_record(report, signal=signal, portfolio_warnings=decision.warnings)
+                self._execution_record(
+                    report,
+                    signal=signal,
+                    portfolio_warnings=decision.warnings,
+                    market_regime=market_regime,
+                )
             )
             if report.filled_qty <= 0:
                 result.journal_records.append(
@@ -254,9 +267,7 @@ class BacktestPeriodRunner:
             try:
                 market = self._market_resolver(str(signal.code))
                 if market not in snapshots:
-                    snapshots[market] = await self._market_regime_service.classify_on_date(
-                        market, date_ymd
-                    )
+                    snapshots[market] = await self._get_regime_snapshot(market, date_ymd)
                 if getattr(snapshots[market], "is_rising", False):
                     passed.append(signal)
                     continue
@@ -266,6 +277,38 @@ class BacktestPeriodRunner:
             except Exception:
                 passed.append(signal)
         return passed
+
+    async def _get_regime_snapshot(self, market: str, date_ymd: str):
+        cache_key = (date_ymd, market)
+        if cache_key not in self._regime_snapshot_cache:
+            self._regime_snapshot_cache[cache_key] = await self._market_regime_service.classify_on_date(
+                market, date_ymd
+            )
+        return self._regime_snapshot_cache[cache_key]
+
+    async def _market_regime_for_signal(self, signal: TradeSignal, date_ymd: str) -> dict | None:
+        if self._market_regime_service is None or self._market_resolver is None:
+            return None
+        try:
+            stock_market = self._market_resolver(str(signal.code))
+        except Exception:
+            stock_market = None
+
+        labels: dict[str, str | None] = {}
+        for market, key in (("KOSPI", "kospi"), ("KOSDAQ", "kosdaq")):
+            try:
+                snap = await self._get_regime_snapshot(market, date_ymd)
+                labels[key] = getattr(snap, "regime_label", None)
+            except Exception:
+                labels[key] = None
+
+        if labels.get("kospi") is None and labels.get("kosdaq") is None and stock_market is None:
+            return None
+        return {
+            "kospi": labels.get("kospi"),
+            "kosdaq": labels.get("kosdaq"),
+            "stock_market": stock_market,
+        }
 
     async def _execute_signal(
         self,
@@ -416,9 +459,11 @@ class BacktestPeriodRunner:
         realized_metrics: dict | None = None,
         signal: TradeSignal | None = None,
         portfolio_warnings: Sequence[str] = (),
+        market_regime: dict | None = None,
     ) -> dict:
         record = normalize_backtest_execution(
             report,
+            market_regime=market_regime,
             volatility_20d_annualized=(
                 signal.volatility_20d_annualized if signal is not None else None
             ),
@@ -443,6 +488,8 @@ class BacktestPeriodRunner:
         self,
         report: BacktestExecutionReport,
         buy_ymd: str,
+        *,
+        market_regime: dict | None = None,
     ) -> None:
         if report.order.side != OrderSide.BUY or report.filled_qty <= 0:
             return
@@ -451,7 +498,13 @@ class BacktestPeriodRunner:
             "mfe": _max_optional(current.get("mfe"), report.mfe),
             "mae": _min_optional(current.get("mae"), report.mae),
             "buy_ymd": current.get("buy_ymd", buy_ymd),
+            "market_regime": current.get("market_regime", market_regime),
         }
+
+    def _position_market_regime(self, code: str) -> dict | None:
+        current = self._position_excursions.get(code, {})
+        regime = current.get("market_regime") if isinstance(current, dict) else None
+        return dict(regime) if isinstance(regime, dict) else None
 
     def _forget_position_excursion_if_closed(self, report: BacktestExecutionReport) -> None:
         position = self._ledger.positions.get(report.order.code)

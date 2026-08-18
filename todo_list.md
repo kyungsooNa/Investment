@@ -336,7 +336,7 @@
   - 남은 좁은 경우 — **이 두 전략만 켜진 날**에는 이벤트·일간 알림이 나지 않는다. 일간 알림이 전략 스캔의 캐시 미스에 얹혀 있는 구조가 원인이다(아래 별도 항목).
   - `oneil_pocket_pivot_strategy.py:728` 은 실제 게이트로 쓰므로 유지.
 - [x] **마켓타이밍 일간 알림·로그 태스크 분리 (2026-08-18)**: `MarketTimingDailyUpdateTask`를 추가해 KOSPI/KOSDAQ 일간 `market_timing_updated` 로그와 외부 알림을 장전 태스크가 담당하게 했다. 전략의 `is_market_timing_ok()` 호출은 캐시만 데우고 발행하지 않으므로, 어떤 전략이 먼저 스캔하느냐에 따라 발신 주체가 바뀌거나 전략 구성 때문에 알림이 빠지는 경로를 막았다.
-- [ ] 1-6 profitability gate 의 regime 태깅이 #770 의 지수 기반 판정과 정합한지 확인 (별도).
+- [x] **profitability gate regime 태깅 정합성 확인·보정 (2026-08-19)**: 실측 결과 백테스트 마켓타이밍 게이트는 #770 의 `MarketRegimeService.classify_on_date()` 를 쓰지만, 체결 journal 에는 해당 날짜의 `market_regime` 이 전달되지 않아 profitability gate 의 regime 분해 표본이 비는 경로가 있었다. `BacktestPeriodRunner` 가 BUY 시점의 KOSPI/KOSDAQ 지수 regime snapshot 과 종목 시장(`stock_market`)을 journal 에 남기고, SOLD record 에도 매수 시점 regime 을 이어가도록 보정했다. 이제 profitability gate 의 regime bucket 입력이 백테스트 게이트 판정과 같은 날짜 기준을 쓴다.
 
 ---
 

@@ -672,22 +672,30 @@ async def test_period_runner_consecutive_day_buy_sell_invokes_mtm_provider_but_u
 
 
 class _FakeRegimeSnapshot:
-    def __init__(self, is_rising: bool) -> None:
+    def __init__(self, is_rising: bool, regime_label: str | None = None) -> None:
         self.is_rising = is_rising
         self.trend_status = "rising" if is_rising else "falling"
+        self.regime_label = regime_label or ("bull" if is_rising else "bear")
 
 
 class _FakeRegimeService:
-    def __init__(self, is_rising: bool = True, raises: bool = False) -> None:
+    def __init__(
+        self,
+        is_rising: bool = True,
+        raises: bool = False,
+        labels_by_market: dict[str, str] | None = None,
+    ) -> None:
         self._is_rising = is_rising
         self._raises = raises
+        self._labels_by_market = labels_by_market or {}
         self.calls: list[tuple[str, str]] = []
 
     async def classify_on_date(self, market: str, date: str, logger=None):
         self.calls.append((market, date))
         if self._raises:
             raise RuntimeError("index ohlcv unavailable")
-        return _FakeRegimeSnapshot(self._is_rising)
+        label = self._labels_by_market.get(market)
+        return _FakeRegimeSnapshot(self._is_rising, regime_label=label)
 
 
 def _gate_runner(*, regime_service, market="KOSPI", gate=True):
@@ -729,6 +737,42 @@ async def test_market_timing_gate_allows_buy_when_regime_rising():
 
 
 @pytest.mark.asyncio
+async def test_backtest_sold_record_keeps_entry_date_index_regime_snapshot():
+    """Profitability gate 입력용 SOLD record 는 entry date 의 지수 regime 태그를 보존한다."""
+    strategy = FakeStrategy()
+    provider = StaticBarProvider({
+        ("20260501", "005930", "BUY"): BacktestBar(
+            "20260501 091000", 70_000, 70_500, 69_500, 70_200, 1_000
+        ),
+        ("20260502", "005930", "SELL"): BacktestBar(
+            "20260502 100000", 77_000, 77_500, 76_500, 77_100, 1_000
+        ),
+    })
+    regime = _FakeRegimeService(
+        is_rising=True,
+        labels_by_market={"KOSPI": "bull", "KOSDAQ": "bear"},
+    )
+    runner = BacktestPeriodRunner(
+        strategy=strategy,
+        bar_provider=provider,
+        ledger=BacktestPortfolioLedger(initial_cash=1_000_000),
+        market_regime_service=regime,
+        market_resolver=lambda code: "KOSPI",
+    )
+
+    result = await runner.run(["20260501", "20260502"])
+
+    sold_record = next(r for r in result.journal_records if r["status"] == "SOLD")
+    assert sold_record["market_regime"] == {
+        "kospi": "bull",
+        "kosdaq": "bear",
+        "stock_market": "KOSPI",
+    }
+    assert ("KOSPI", "20260501") in regime.calls
+    assert ("KOSDAQ", "20260501") in regime.calls
+
+
+@pytest.mark.asyncio
 async def test_market_timing_gate_classifies_on_backtest_date_not_today():
     """PIT 보장 — 오늘 레짐이 아니라 그 거래일 레짐으로 판정해야 한다."""
     regime = _FakeRegimeService(is_rising=True)
@@ -736,7 +780,7 @@ async def test_market_timing_gate_classifies_on_backtest_date_not_today():
 
     await runner.run(["20260501"])
 
-    assert regime.calls == [("KOSPI", "20260501")]
+    assert set(regime.calls) == {("KOSPI", "20260501"), ("KOSDAQ", "20260501")}
 
 
 @pytest.mark.asyncio
@@ -767,7 +811,7 @@ async def test_market_timing_gate_can_be_disabled_by_config():
     result = await runner.run(["20260501"])
 
     assert [report.order.side.value for report in result.execution_reports] == ["BUY"]
-    assert regime.calls == []
+    assert set(regime.calls) == {("KOSPI", "20260501"), ("KOSDAQ", "20260501")}
 
 
 @pytest.mark.asyncio
