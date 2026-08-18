@@ -19,6 +19,10 @@ def _normalize_domestic_code(code: str) -> str:
     return normalized
 
 
+def _normalize_overseas_symbol(code: str) -> str:
+    return str(code or "").strip().upper()
+
+
 def _extract_price_rate(data) -> tuple:
     """API 응답 dict 또는 dataclass에서 (stck_prpr, prdy_ctrt) 추출."""
     if isinstance(data, dict):
@@ -48,6 +52,16 @@ class FavoriteService:
 
     async def get_all(self, market: str = MARKET_DOMESTIC) -> list:
         codes = await self.repository.get_all(market=market)
+        if market == MARKET_OVERSEAS_US:
+            normalized_symbols = []
+            seen = set()
+            for code in codes:
+                normalized = _normalize_overseas_symbol(code)
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                normalized_symbols.append(normalized)
+            return normalized_symbols
         if market != MARKET_DOMESTIC:
             return codes
         normalized_codes = []
@@ -63,6 +77,8 @@ class FavoriteService:
     async def add(self, code: str, market: str = MARKET_DOMESTIC) -> bool:
         if market == MARKET_DOMESTIC:
             code = _normalize_domestic_code(code)
+        elif market == MARKET_OVERSEAS_US:
+            code = _normalize_overseas_symbol(code)
         return await self.repository.add(code, market=market)
 
     async def remove(self, code: str, market: str = MARKET_DOMESTIC) -> bool:
@@ -72,11 +88,24 @@ class FavoriteService:
             if removed or normalized == str(code or "").strip():
                 return removed
             return await self.repository.remove(str(code or "").strip(), market=market)
+        if market == MARKET_OVERSEAS_US:
+            normalized = _normalize_overseas_symbol(code)
+            removed = await self.repository.remove(normalized, market=market)
+            if removed or normalized == str(code or "").strip():
+                return removed
+            return await self.repository.remove(str(code or "").strip(), market=market)
         return await self.repository.remove(code, market=market)
 
     async def is_favorite(self, code: str, market: str = MARKET_DOMESTIC) -> bool:
         if market == MARKET_DOMESTIC:
             normalized = _normalize_domestic_code(code)
+            if await self.repository.is_favorite(normalized, market=market):
+                return True
+            if normalized != str(code or "").strip():
+                return await self.repository.is_favorite(str(code or "").strip(), market=market)
+            return False
+        if market == MARKET_OVERSEAS_US:
+            normalized = _normalize_overseas_symbol(code)
             if await self.repository.is_favorite(normalized, market=market):
                 return True
             if normalized != str(code or "").strip():
@@ -199,7 +228,7 @@ class FavoriteService:
         해외는 실시간 스트림/일봉 스냅샷 경로가 없어 해외 현재가 API만 사용한다.
         RS Rating·Minervini Stage는 국내 데이터 기반이라 항상 None이다.
         """
-        symbols = await self.repository.get_all(market=MARKET_OVERSEAS_US)
+        symbols = await self.get_all(market=MARKET_OVERSEAS_US)
         if not symbols:
             return []
 

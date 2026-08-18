@@ -63,6 +63,11 @@ async def test_add_overseas_passes_market(service, mock_repo):
     mock_repo.add.assert_called_once_with("AAPL", market="overseas_us")
 
 
+async def test_add_overseas_normalizes_symbol_to_uppercase(service, mock_repo):
+    assert await service.add("aapl", market="overseas_us") is True
+    mock_repo.add.assert_called_once_with("AAPL", market="overseas_us")
+
+
 async def test_add_delegates(service, mock_repo):
     assert await service.add("5930") is True
     mock_repo.add.assert_called_once_with("005930", market="domestic")
@@ -328,6 +333,29 @@ async def test_get_with_details_overseas_uses_overseas_price(
             "minervini_stage": None,
         }
     ]
+
+
+async def test_get_with_details_overseas_normalizes_symbol_case(
+    mock_repo, mock_stock_code_repo, mock_overseas_code_repo
+):
+    mock_repo.get_all.return_value = ["aapl"]
+    mock_query = AsyncMock()
+    mock_query.get_overseas_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="정상", data=DummyOverseasSummary(190.5, 1.23)
+    )
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_query_service=mock_query,
+        overseas_stock_code_repository=mock_overseas_code_repo,
+    )
+
+    result = await svc.get_with_details(market="overseas_us")
+
+    mock_overseas_code_repo.get_meta.assert_called_once_with("AAPL")
+    mock_query.get_overseas_price.assert_awaited_once_with("AAPL", exchange="NASD")
+    assert result[0]["code"] == "AAPL"
 
 
 async def test_get_with_details_overseas_without_meta_falls_back(

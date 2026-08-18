@@ -70,6 +70,20 @@ async def test_uses_exchange_from_overseas_stock_code_repository():
 
 
 @pytest.mark.asyncio
+async def test_normalizes_saved_symbol_case_before_fetching_and_alerting():
+    broker = MagicMock()
+    broker.get_overseas_price = AsyncMock(return_value=_price_response(189.5, 5.3))
+    task, _, alert_service = _build_task(symbols=["aapl"], broker=broker)
+
+    await task._tick()
+
+    broker.get_overseas_price.assert_awaited_once_with("AAPL", exchange="NASD")
+    alert_service.handle_price_tick.assert_awaited_once_with(
+        "AAPL", price=189.5, rate=5.3
+    )
+
+
+@pytest.mark.asyncio
 async def test_skips_polling_outside_us_market_hours():
     broker = MagicMock()
     broker.get_overseas_price = AsyncMock()

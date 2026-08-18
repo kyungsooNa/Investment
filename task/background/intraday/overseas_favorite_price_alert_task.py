@@ -83,6 +83,9 @@ class OverseasFavoritePriceAlertTask(SchedulableTask):
             return
         symbols = await self._favorite_repository.get_all(market=MARKET_OVERSEAS_US)
         for symbol in symbols:
+            symbol = self._normalize_symbol(symbol)
+            if not symbol:
+                continue
             price, rate = await self._fetch_price_rate(symbol)
             if rate is None:
                 continue
@@ -107,6 +110,10 @@ class OverseasFavoritePriceAlertTask(SchedulableTask):
             return self.DEFAULT_EXCHANGE
         meta = self._overseas_stock_code_repository.get_meta(symbol)
         return (meta or {}).get("exchange") or self.DEFAULT_EXCHANGE
+
+    @staticmethod
+    def _normalize_symbol(symbol) -> str:
+        return str(symbol or "").strip().upper()
 
     def _is_market_open_now(self) -> bool:
         now = self._market_clock.get_current_kst_time()
