@@ -90,6 +90,15 @@ def test_korean_particles_do_not_block_match():
     assert mentions[0]["count"] == 2
 
 
+def test_right_boundary_blocks_match_inside_following_word():
+    """종목명 뒤에 다른 단어가 바로 붙으면 종목 언급으로 보지 않는다."""
+    svc = _service()
+
+    mentions = svc.count_stock_mentions([_item("v1", "삼성전자서비스센터 이야기를 합니다.")])
+
+    assert mentions == []
+
+
 def test_ambiguous_common_word_names_are_excluded():
     """'코리아'는 일반명사처럼 쓰여 카운트가 무의미해진다."""
     svc = _service()
@@ -247,6 +256,21 @@ async def test_digest_prompt_forbids_trading_instructions():
 
     system = ai.complete.await_args.kwargs["system"]
     assert "매수" in system and "지시" in system
+
+
+async def test_digest_prompt_requires_uncertain_claims_section():
+    """뉴스성 주장·목표가·거시 수치는 확인 필요로 분리해야 한다."""
+    ai = MagicMock()
+    ai.complete = AsyncMock(side_effect=["영상 요약", "종합"])
+    svc = _service(ai)
+
+    await svc.build_digest([_item("v1", "삼성전자 목표가 32만원")], report_date="20260810")
+
+    system = ai.complete.await_args.kwargs["system"]
+    assert "목표가" in system
+    assert "거시 수치" in system
+    assert "뉴스성 주장" in system
+    assert "확인이 필요한 주장" in system
 
 
 async def test_ai_calls_are_tagged_with_usage_type():

@@ -40,6 +40,11 @@ _MIN_NAME_LEN = 3
 
 _RE_SPACE = re.compile(r"\s+")
 
+# 종목명 바로 뒤에 붙어도 자연스러운 1글자 조사. 뒤에 다른 낱말 글자가 계속되면
+# "삼성전자서비스" 같은 복합어일 가능성이 높아 종목 언급으로 보지 않는다.
+_ONE_CHAR_PARTICLES = frozenset("은는이가을를의에도만와과로")
+_RIGHT_BOUNDARY_SUFFIXES = ("입니다", "이다", "였다", "이고", "이며", "인데", "이지만")
+
 _VIDEO_SYSTEM_PROMPT = (
     "너는 한국 주식 유튜브 방송의 자동생성 자막을 정리하는 보조자다. "
     "자막은 음성인식 결과라 종목명·숫자에 오탈자가 섞여 있다. "
@@ -60,6 +65,9 @@ _DIGEST_SYSTEM_PROMPT = (
     "입력으로 주어진 종목 언급 횟수는 자막에서 기계적으로 센 값이다. "
     "횟수가 많다고 유망하다는 뜻이 아니므로 그렇게 해석하지 않는다. "
     "이것은 발언 집계이지 투자 권유가 아니다. 매수·매도 지시를 하지 않는다. "
+    "시장 전망은 사실처럼 단정하지 말고 '전망', '주장', '해석'으로 표현한다. "
+    "목표가, 거시 수치, MOU·계약·실적 같은 뉴스성 주장, 전사 오류로 보이는 "
+    "고유명사는 반드시 '확인이 필요한 주장'에 넣는다. "
     "한국어로 '오늘의 공통 화두', '많이 언급된 종목', '엇갈리는 시각', "
     "'단독 언급', '확인이 필요한 주장' 순서의 짧은 섹션으로 답한다."
 )
@@ -121,7 +129,7 @@ class YoutubeDigestService:
         return "".join(chars), origins
 
     def _scan_longest_match(self, text: str, index: Mapping[str, str]) -> Counter:
-        """좌→우 최장일치 스캔 + 좌측 경계 검사."""
+        """좌→우 최장일치 스캔 + 좌우 경계 검사."""
         counts: Counter = Counter()
         source = text or ""
         compacted, origins = self._compact(source)
@@ -132,7 +140,11 @@ class YoutubeDigestService:
             matched = 0
             for size in range(window, _MIN_NAME_LEN - 1, -1):
                 candidate = compacted[position : position + size]
-                if candidate in index and self._has_left_boundary(source, origins[position]):
+                if (
+                    candidate in index
+                    and self._has_left_boundary(source, origins[position])
+                    and self._has_right_boundary(source, origins[position + size - 1])
+                ):
                     counts[candidate] += 1
                     matched = size
                     break
@@ -145,6 +157,22 @@ class YoutubeDigestService:
         if origin == 0:
             return True
         return not source[origin - 1].isalnum()
+
+    @staticmethod
+    def _has_right_boundary(source: str, origin: int) -> bool:
+        """직후 글자가 다른 낱말이면 종목명 접두어 오검출로 본다."""
+        next_pos = origin + 1
+        if next_pos >= len(source):
+            return True
+        if source.startswith(_RIGHT_BOUNDARY_SUFFIXES, next_pos):
+            return True
+        next_char = source[next_pos]
+        if not next_char.isalnum():
+            return True
+        if next_char in _ONE_CHAR_PARTICLES:
+            after_particle = next_pos + 1
+            return after_particle >= len(source) or not source[after_particle].isalnum()
+        return False
 
     def count_stock_mentions(self, items: Sequence[Mapping[str, Any]]) -> list[dict]:
         """자막에서 종목 언급 횟수와 언급 영상 수를 집계한다."""
