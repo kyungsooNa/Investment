@@ -79,6 +79,7 @@ from task.background.intraday.pre_market_health_check_task import PreMarketHealt
 from task.background.intraday.program_capture_subscription_task import ProgramCaptureSubscriptionTask
 from task.background.intraday.theme_intraday_leader_alert_task import ThemeIntradayLeaderAlertTask
 from task.background.intraday.market_index_threshold_alert_task import MarketIndexThresholdAlertTask
+from task.background.intraday.market_timing_daily_update_task import MarketTimingDailyUpdateTask
 from task.background.intraday.overseas_favorite_price_alert_task import OverseasFavoritePriceAlertTask
 from task.background.intraday.overseas_intraday_vbo_task import OverseasIntradayVBOTask
 from view.web.bootstrap.runtime_mode import RuntimeMode
@@ -829,6 +830,15 @@ class ServiceContainer:
                 needs_trading
                 and index_alert_enabled
                 and ctx.market_status_alert_service is not None
+            ) else None
+            ctx.market_timing_daily_update_task = MarketTimingDailyUpdateTask(
+                universe_service=ctx.oneil_universe_service,
+                market_clock=ctx.market_clock,
+                market_calendar_service=ctx._mcs,
+                logger=ctx.logger,
+            ) if (
+                needs_trading
+                and ctx.oneil_universe_service is not None
             ) else None
 
             self._build_overseas_favorite_price_alert(config_dict, needs_web=needs_web)
