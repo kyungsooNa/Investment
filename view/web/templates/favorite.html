@@ -16,6 +16,8 @@
             </div>
             <button class="btn" onclick="addFavoriteFromInput()">★ 추가</button>
             <button class="btn" onclick="loadFavoriteList()" style="margin-left:4px;">새로고침</button>
+            <span id="favorite-updated" style="color:var(--text-secondary); font-size:0.85rem;"
+                  title="이 목록은 주기적으로 스스로 다시 조회합니다 (창을 보고 있는 동안에만)">최근 업데이트: --</span>
         </div>
     </div>
 
@@ -66,5 +68,5 @@
     }
 </script>
 <script src="/static/js/autocomplete.js?v=1"></script>
-<script src="/static/js/favorite.js?v=6"></script>
+<script src="/static/js/favorite.js?v=7"></script>
 {% endblock %}

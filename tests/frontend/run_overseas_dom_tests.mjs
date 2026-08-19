@@ -29,6 +29,7 @@ const SCAFFOLD = `
 <section id="overseas-panel-favorite" hidden>
   <input id="overseas-fav-symbol" type="text">
   <ul id="overseas-fav-autocomplete-list"></ul>
+  <span id="overseas-favorite-updated">최근 업데이트: --</span>
   <table><tbody id="overseas-favorite-body"></tbody></table>
 </section>
 <section id="overseas-panel-orders" hidden></section>
@@ -478,6 +479,128 @@ test("삭제 버튼은 해당 심볼만 DELETE 하고 행을 제거한다", asyn
   const body = window.document.getElementById("overseas-favorite-body").textContent;
   assert(!body.includes("AAPL"), "삭제한 행이 사라져야 함");
   assert(body.includes("MSFT"), "다른 행은 남아야 함");
+});
+
+// 즐겨찾기는 열어둔 채로 시세를 지켜보는 화면이라 스스로 다시 조회한다. 다만 국내와 달리
+// 실시간 스트림이 없어 심볼 수만큼 해외 시세 API 를 부르므로, 보고 있을 때만 돌아야 한다.
+
+function favoriteAutoRefreshWindow(pages) {
+  const window = makeWindow();
+  const calls = [];
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    calls.push(url);
+    const page = pages[Math.min(calls.length - 1, pages.length - 1)];
+    if (page instanceof Error) throw page;
+    return { ok: true, status: 200, json: async () => page };
+  };
+  return { window, calls };
+}
+
+// initOverseasPage 는 실전 배너 타이머(3초)도 건다 — 주기로 즐겨찾기 타이머만 골라낸다.
+function captureIntervals(window) {
+  const entries = [];
+  const cleared = [];
+  window.setInterval = (fn, ms) => {
+    entries.push({ fn, ms });
+    return entries.length;
+  };
+  window.clearInterval = (id) => { cleared.push(id); };
+  return {
+    entries,
+    cleared,
+    favorite: () => [...entries].reverse().find(entry => entry.ms === 60000),
+  };
+}
+
+function setPageVisible(window, visible) {
+  Object.defineProperty(window.document, "hidden", { value: !visible, configurable: true });
+}
+
+const APPLE = [{ code: "AAPL", name: "Apple Inc.", exchange: "NASD", price: 190.5, rate: 1.23 }];
+const MSFT = [{ code: "MSFT", name: "Microsoft", exchange: "NASD", price: 410, rate: 0.4 }];
+
+test("즐겨찾기 목록을 그리면 최근 업데이트 시각을 표기한다", async () => {
+  const { window } = favoriteAutoRefreshWindow([APPLE]);
+
+  await window.loadOverseasFavorites();
+  await flush();
+
+  const label = window.document.getElementById("overseas-favorite-updated").textContent;
+  assert(/최근 업데이트: .*\d/.test(label), `갱신 시각이 표기돼야 함 (실제 "${label}")`);
+  assert(/\b60\b/.test(label), `자동 갱신 주기(초)도 함께 알려야 함 (실제 "${label}")`);
+});
+
+test("즐겨찾기 탭을 보고 있으면 주기마다 조용히 다시 조회한다", async () => {
+  const { window, calls } = favoriteAutoRefreshWindow([APPLE, MSFT]);
+  const timers = captureIntervals(window);
+  setPageVisible(window, true);
+
+  window.initOverseasPage();
+  await window.setOverseasTab("favorite");
+  await flush();
+
+  const timer = timers.favorite();
+  assert(timer, "즐겨찾기 자동 갱신 주기는 60초여야 함");
+
+  const before = calls.length;
+  await timer.fn();
+
+  assert(calls.length === before + 1, `주기마다 목록을 다시 받아야 함 (실제 ${calls.length - before}회)`);
+  const body = window.document.getElementById("overseas-favorite-body");
+  assert(body.textContent.includes("MSFT"), "새로 받은 목록으로 갈아끼워야 함");
+  assert(!body.innerHTML.includes("로딩 중"), "자동 갱신이 로딩 문구로 화면을 깜빡이면 안 됨");
+});
+
+test("다른 탭을 보고 있으면 즐겨찾기를 되묻지 않는다", async () => {
+  const { window, calls } = favoriteAutoRefreshWindow([APPLE]);
+  const timers = captureIntervals(window);
+  setPageVisible(window, true);
+
+  window.initOverseasPage();
+  await window.setOverseasTab("favorite");
+  await window.setOverseasTab("overview");
+  await flush();
+
+  const before = calls.length;
+  await timers.favorite().fn();
+
+  assert(calls.length === before, "안 보는 탭 때문에 심볼 수만큼 해외 시세를 부르면 안 됨");
+});
+
+test("창이 백그라운드면 즐겨찾기 자동 갱신을 건너뛴다", async () => {
+  const { window, calls } = favoriteAutoRefreshWindow([APPLE]);
+  const timers = captureIntervals(window);
+  setPageVisible(window, false);
+
+  window.initOverseasPage();
+  await window.setOverseasTab("favorite");
+  await flush();
+
+  const before = calls.length;
+  await timers.favorite().fn();
+
+  assert(calls.length === before, "안 보는 창 때문에 계속 조회하면 안 됨");
+});
+
+test("즐겨찾기 자동 갱신 실패는 보고 있던 목록을 지우지 않는다", async () => {
+  const { window } = favoriteAutoRefreshWindow([APPLE, new Error("network")]);
+  const timers = captureIntervals(window);
+  setPageVisible(window, true);
+
+  window.initOverseasPage();
+  await window.setOverseasTab("favorite");
+  await flush();
+  const stamp = window.document.getElementById("overseas-favorite-updated").textContent;
+
+  await timers.favorite().fn();
+
+  const body = window.document.getElementById("overseas-favorite-body").textContent;
+  assert(body.includes("AAPL"), "한 번 실패했다고 보고 있던 시세를 지우면 안 됨");
+  assert(window.document.getElementById("overseas-favorite-updated").textContent === stamp,
+    "갱신 시각이 멈춰 있는 것으로 실패를 알린다");
 });
 
 // USD 거래 원장 — 원화 원장(/api/virtual/*)과 분리돼 있어 성과 요약을 볼 화면이 여기뿐이다.

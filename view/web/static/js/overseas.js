@@ -669,6 +669,12 @@ async function cancelOverseasOrder(orderNo, symbol, exchange, qty) {
 
 let _overseasFavoriteData = [];
 
+// 자동 갱신 주기. 국내(30초)와 달리 실시간 스트림이 없어 심볼 수만큼 해외 현재가 API 를
+// 부르므로 넉넉히 잡고, 보고 있는 탭일 때만 돈다.
+const OVERSEAS_FAVORITE_REFRESH_MS = 60 * 1000;
+
+let _overseasFavoriteRefreshTimer = null;
+
 function _initOverseasFavoriteAutocomplete() {
     if (typeof StockAutocomplete !== 'function') return;
     if (!document.getElementById('overseas-fav-symbol')) return;
@@ -719,20 +725,70 @@ function renderOverseasFavoriteTable() {
     });
 }
 
-async function loadOverseasFavorites() {
+// showLoading:false 는 자동 갱신용이다 — 매 주기마다 '로딩 중'으로 비우면 화면이 깜빡이고,
+// 한 번 실패했다고 보고 있던 시세까지 지우면 손해가 더 크다.
+async function loadOverseasFavorites(options = {}) {
     const tbody = document.getElementById('overseas-favorite-body');
     if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">로딩 중...</td></tr>';
+    const silent = options.showLoading === false;
+    if (!silent) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">로딩 중...</td></tr>';
 
     try {
         const res = await fetchWithTimeout('/api/favorite?market=overseas_us', {}, 12000);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         _overseasFavoriteData = await res.json() || [];
         renderOverseasFavoriteTable();
+        _renderOverseasFavoriteUpdatedAt(new Date());
     } catch (e) {
         console.error('[overseas] 즐겨찾기 조회 오류', e);
+        // 자동 갱신 실패는 멈춘 갱신 시각으로 드러난다.
+        if (silent) return;
         tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#ff6b6b;">불러오기 실패: ${escapeHtml(e.message)}</td></tr>`;
     }
+}
+
+// 값이 그대로인 것과 갱신이 멈춘 것을 화면에서 구분할 수 있어야 한다.
+function _renderOverseasFavoriteUpdatedAt(when) {
+    const el = document.getElementById('overseas-favorite-updated');
+    if (!el) return;
+    el.textContent = `최근 업데이트: ${when.toLocaleTimeString('ko-KR')}`
+        + ` (${Math.round(OVERSEAS_FAVORITE_REFRESH_MS / 1000)}초마다 자동 갱신)`;
+}
+
+async function _overseasFavoriteRefreshTick() {
+    // pjax 로 다른 화면에 가 있으면 스스로 멈춘다 (타이머는 문서를 떠나도 계속 돈다).
+    if (!document.getElementById('overseas-favorite-body')) {
+        _stopOverseasFavoriteAutoRefresh();
+        return;
+    }
+    const panel = document.getElementById('overseas-panel-favorite');
+    // 안 보는 창/탭 때문에 심볼 수만큼 해외 시세를 부를 이유가 없다.
+    if (document.hidden || !panel || panel.hidden) return;
+    await loadOverseasFavorites({ showLoading: false });
+}
+
+function _stopOverseasFavoriteAutoRefresh() {
+    if (_overseasFavoriteRefreshTimer === null) return;
+    clearInterval(_overseasFavoriteRefreshTimer);
+    _overseasFavoriteRefreshTimer = null;
+}
+
+function _startOverseasFavoriteAutoRefresh() {
+    _stopOverseasFavoriteAutoRefresh();  // pjax 재진입 시 타이머가 겹쳐 걸리지 않게 한다.
+    _overseasFavoriteRefreshTimer = setInterval(_overseasFavoriteRefreshTick, OVERSEAS_FAVORITE_REFRESH_MS);
+}
+
+// 브라우저는 숨은 탭의 타이머를 늦추고, 위 tick 도 숨은 동안은 건너뛴다 — 돌아왔을 때
+// 다음 주기까지 기다리면 화면이 몇 분 전 시세인 채로 남는다. 복귀 즉시 한 번 당겨 받는다.
+let _overseasFavoriteVisibilityBound = false;
+
+function _bindOverseasFavoriteVisibility() {
+    if (_overseasFavoriteVisibilityBound) return;
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) return;
+        void _overseasFavoriteRefreshTick();
+    });
+    _overseasFavoriteVisibilityBound = true;
 }
 
 async function addOverseasFavorite() {
@@ -781,6 +837,8 @@ function initOverseasPage() {
     _refreshOverseasRealBanner();
     void _refreshOverseasAvailability();
     _initOverseasFavoriteAutocomplete();
+    _bindOverseasFavoriteVisibility();
+    _startOverseasFavoriteAutoRefresh();
     const initialTab = _initialOverseasTab();
     if (initialTab !== 'overview') void setOverseasTab(initialTab);
     if (!window.__overseasRealBannerTimer) {

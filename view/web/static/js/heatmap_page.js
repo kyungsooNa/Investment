@@ -454,6 +454,19 @@ function _startHeatmapPageAutoRefresh() {
     _heatmapPageRefreshTimer = setInterval(_refreshHeatmapPageTick, HEATMAP_PAGE_OVERSEAS_REFRESH_MS);
 }
 
+// 브라우저는 숨은 탭의 타이머를 늦추고, 위 tick 도 숨은 동안은 건너뛴다 — 돌아왔을 때
+// 다음 주기까지 기다리면 화면이 몇 분 전 값인 채로 남는다. 복귀 즉시 한 번 당겨 받는다.
+let _heatmapPageVisibilityBound = false;
+
+function _bindHeatmapPageVisibility() {
+    if (_heatmapPageVisibilityBound) return;
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) return;
+        void _refreshHeatmapPageTick();
+    });
+    _heatmapPageVisibilityBound = true;
+}
+
 async function initHeatmapPage() {
     const viewport = document.getElementById('heatmap-page-viewport');
     if (!viewport) return;
@@ -479,6 +492,7 @@ async function initHeatmapPage() {
     _renderHeatmapPageInterval();
     _bindHeatmapPageWheelZoom(viewport);
     _bindHeatmapPageDragPan(viewport);
+    _bindHeatmapPageVisibility();
 
     // 미국장이 꺼진 run 에서는 API 가 400 을 내므로 탭 자체를 감춘다.
     if (!await _heatmapOverseasEnabled()) {
