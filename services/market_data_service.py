@@ -108,7 +108,10 @@ class MarketDataService:
     async def get_current_price(self, stock_code, exchange: Exchange = Exchange.KRX, count_stats: bool = True, caller: str = "unknown", force_fresh: bool = False) -> ResCommonResponse:
         if _is_overseas_exchange(exchange):
             return await self._get_overseas_current_price(stock_code, exchange)
-        if not force_fresh:
+        # 단기 캐시/DB 스냅샷은 종목코드 단위(KRX 기준)라 거래소를 구분하지 못한다.
+        # KRX 외 거래소(NXT/통합) 요청은 읽기·쓰기 모두 우회하고 API 결과를 그대로 쓴다.
+        is_exchange_specific = exchange != Exchange.KRX
+        if not force_fresh and not is_exchange_specific:
             # 1. StockRepository 단기 캐시 확인 (웹소켓 틱 갱신 또는 최근 API 조회 결과)
             if self._stock_repo:
                 cached_data = self._stock_repo.get_current_price(stock_code, max_age_sec=3.0, count_stats=count_stats, caller=caller)
@@ -145,8 +148,8 @@ class MarketDataService:
         if invalid:
             return invalid
 
-        # 3. 조회 결과를 StockRepository에 갱신
-        if resp and resp.rt_cd == ErrorCode.SUCCESS.value and self._stock_repo:
+        # 3. 조회 결과를 StockRepository에 갱신 (KRX 응답만 — 거래소별 값은 캐시를 오염시킨다)
+        if resp and resp.rt_cd == ErrorCode.SUCCESS.value and self._stock_repo and not is_exchange_specific:
             self._stock_repo.set_current_price(stock_code, resp.data)
 
         return resp

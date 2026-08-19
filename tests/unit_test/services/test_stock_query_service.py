@@ -212,6 +212,69 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.stockQueryService._price_lookup_stats["snapshot_hit"], before + 1)
 
+    async def test_get_current_price_nxt_bypasses_fresh_snapshot(self):
+        """exchange=NXT → snapshot 캐시(종목코드 단위)를 우회하고 REST로 직행."""
+        from common.types import Exchange
+        snap = self._make_fresh_snap(price="75000")
+        self._setup_sqs_with_pss(snap=snap)
+
+        await self.stockQueryService.get_current_price("005930", exchange=Exchange.NXT)
+
+        self.mock_market_data_service.get_current_price.assert_awaited_once()
+        kwargs = self.mock_market_data_service.get_current_price.await_args.kwargs
+        self.assertEqual(kwargs["exchange"], Exchange.NXT)
+        self.assertTrue(kwargs["force_fresh"])
+
+    async def test_get_current_price_un_bypasses_fresh_snapshot(self):
+        """exchange=UN(통합)도 거래소별 값이 필요하므로 snapshot 우회."""
+        from common.types import Exchange
+        snap = self._make_fresh_snap(price="75000")
+        self._setup_sqs_with_pss(snap=snap)
+
+        await self.stockQueryService.get_current_price("005930", exchange=Exchange.UN)
+
+        self.mock_market_data_service.get_current_price.assert_awaited_once()
+        self.assertTrue(self.mock_market_data_service.get_current_price.await_args.kwargs["force_fresh"])
+
+    async def test_get_current_price_krx_still_uses_fresh_snapshot(self):
+        """기본 KRX 경로는 기존대로 snapshot hit 유지 (회귀 방지)."""
+        from common.types import Exchange
+        snap = self._make_fresh_snap(price="75000")
+        self._setup_sqs_with_pss(snap=snap)
+
+        result = await self.stockQueryService.get_current_price("005930", exchange=Exchange.KRX)
+
+        self.mock_market_data_service.get_current_price.assert_not_awaited()
+        self.assertEqual(result.data["output"].stck_prpr, "75000")
+
+    async def test_get_current_price_nxt_does_not_backfill_snapshot(self):
+        """NXT 응답을 종목코드 단위 snapshot에 backfill하면 KRX 값이 오염되므로 금지."""
+        from common.types import Exchange
+        mock_pss = self._setup_sqs_with_pss(snap=None)
+        self.mock_market_data_service.get_current_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="정상",
+            data={"output": self._create_dummy_stock_info({"stck_prpr": "252000"})},
+        )
+
+        await self.stockQueryService.get_current_price("005930", exchange=Exchange.NXT)
+
+        mock_pss.cache_price_snapshot.assert_not_called()
+
+    async def test_get_current_price_krx_still_backfills_snapshot(self):
+        """KRX 응답은 기존대로 snapshot backfill 유지 (회귀 방지)."""
+        from common.types import Exchange
+        mock_pss = self._setup_sqs_with_pss(snap=None)
+        self.mock_market_data_service.get_current_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="정상",
+            data={"output": self._create_dummy_stock_info({"stck_prpr": "252000"})},
+        )
+
+        await self.stockQueryService.get_current_price("005930", exchange=Exchange.KRX)
+
+        mock_pss.cache_price_snapshot.assert_called_once()
+
     async def test_get_current_price_stale_snapshot_falls_back_to_rest(self):
         """stale snapshot (age > threshold) → REST fallback."""
         from common.types import Exchange

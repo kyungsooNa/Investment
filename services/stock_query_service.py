@@ -58,6 +58,7 @@ class StockQueryService:
             "force_fresh_bypass": 0,
             "full_output_required": 0,
             "stream_unavailable_fallback": 0,
+            "exchange_specific_bypass": 0,
             "conclusion_hit": 0,
             "conclusion_stale_fallback": 0,
             "conclusion_missing_fallback": 0,
@@ -225,7 +226,14 @@ class StockQueryService:
         if force_fresh:
             self._count_price_lookup("force_fresh_bypass", count_stats)
 
-        if not force_fresh and self.price_stream_service is not None:
+        # snapshot 캐시는 종목코드 단위라 거래소를 구분하지 못한다.
+        # KRX 외 거래소(NXT/통합) 요청은 해당 거래소 시세를 받아야 하므로 REST로 직행한다.
+        is_exchange_specific = exchange != Exchange.KRX
+        if is_exchange_specific and not force_fresh:
+            self._count_price_lookup("exchange_specific_bypass", count_stats)
+            fallback_force_fresh = True
+
+        if not is_exchange_specific and not force_fresh and self.price_stream_service is not None:
             snap = self.price_stream_service.get_cached_price(stock_code)
             if snap is None:
                 # 구독 중이나 tick 미수신 → REST fallback
@@ -262,7 +270,7 @@ class StockQueryService:
                             "caller": caller,
                             "reason": "full_output_required",
                         })
-        elif not force_fresh:
+        elif not is_exchange_specific and not force_fresh:
             self._count_price_lookup("stream_unavailable_fallback", count_stats)
 
         self._count_price_lookup("rest_fallback", count_stats)
@@ -290,7 +298,9 @@ class StockQueryService:
                     )
 
         # REST 성공 응답을 snapshot 캐시에 backfill (다음 동일 종목 조회 hit 유도)
+        # 단, KRX 외 거래소 응답은 종목코드 단위 캐시를 오염시키므로 backfill하지 않는다.
         if (self.price_stream_service is not None
+                and not is_exchange_specific
                 and resp is not None
                 and resp.rt_cd == ErrorCode.SUCCESS.value):
             try:

@@ -120,6 +120,12 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
             if "new_hgpr_lwpr_cls_code" not in response_data_dict:
                 response_data_dict["new_hgpr_lwpr_cls_code"] = "-"
 
+            # NXT 미거래 종목은 KIS가 전 필드 0인 응답을 준다. 0원을 시세로 표시하지 않도록 실패 처리.
+            if market_code == "NX" and str(response_data_dict.get("stck_prpr") or "0") == "0":
+                msg = f"{stock_code} NXT 시세 없음 (미거래 종목)"
+                self._logger.warning(msg)
+                return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1=msg, data=None)
+
             response.data['output'] = ResStockFullInfoApiOutput.from_dict(response_data_dict)
         except (KeyError, ValidationError, TypeError) as e:
             error_msg = f"현재가 응답 데이터 파싱 실패: {stock_code}, 오류: {e}"
