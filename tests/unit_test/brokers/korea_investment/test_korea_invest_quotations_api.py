@@ -187,6 +187,45 @@ async def test_get_current_price_accepts_single_item_output_list(mock_quotations
 
 
 @pytest.mark.asyncio
+async def test_get_current_price_nxt_zero_payload_is_error(mock_quotations):
+    """NXT 미거래 종목은 KIS가 전 필드 0인 응답을 준다 → 0원으로 표시하지 않고 실패로 반환.
+
+    실전 로그 확인: 067310 NX 조회가 stck_prpr="0", prdy_vrss="0"로 응답 (2026-08-19 08:55).
+    """
+    from common.types import Exchange
+
+    output = _BASE_DUMMY_DATA.copy()
+    output.update({"stck_prpr": "0", "prdy_vrss": "0", "prdy_ctrt": "0.00", "acml_vol": "0"})
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상 처리",
+        data={"output": output},
+    ))
+
+    result = await mock_quotations.get_current_price("067310", exchange=Exchange.NXT)
+
+    assert result.rt_cd != ErrorCode.SUCCESS.value
+    assert "NXT" in result.msg1
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_krx_zero_payload_is_passed_through(mock_quotations):
+    """KRX(J) 0원 응답은 거래정지 종목 등 기존 소비처가 처리하므로 그대로 통과시킨다."""
+    output = _BASE_DUMMY_DATA.copy()
+    output.update({"stck_prpr": "0", "prdy_vrss": "0", "prdy_ctrt": "0.00", "acml_vol": "0"})
+    mock_quotations.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상 처리",
+        data={"output": output},
+    ))
+
+    result = await mock_quotations.get_current_price("067310")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data["output"].stck_prpr == "0"
+
+
+@pytest.mark.asyncio
 async def test_get_current_price_nxt_includes_fid_input_date_1(mock_quotations):
     """NXT(exchange=NXT) 현재가 조회는 KIS가 요구하는 fid_input_date_1을 포함해야 한다.
 

@@ -97,6 +97,58 @@ async def test_get_current_price_uses_cache_by_default(trading_service_fixture, 
 
 
 @pytest.mark.asyncio
+async def test_get_current_price_nxt_skips_code_keyed_cache(trading_service_fixture, mock_deps):
+    """exchange=NXT는 종목코드 단위 캐시(KRX 값)를 쓰지 않고 broker API를 호출한다."""
+    from common.types import Exchange
+    service = trading_service_fixture
+    mock_deps.stock_repo.get_current_price.return_value = {"stck_prpr": "268500", "code": "005930"}
+    broker_resp = ResCommonResponse(rt_cd="0", msg1="정상", data={"output": {"stck_prpr": "252000"}})
+    mock_deps.broker.get_current_price.return_value = broker_resp
+
+    result = await service.get_current_price("005930", exchange=Exchange.NXT)
+
+    mock_deps.broker.get_current_price.assert_awaited_once()
+    assert result == broker_resp
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_nxt_skips_db_snapshot_outside_krx_hours(trading_service_fixture, mock_deps):
+    """KRX 장 마감 시간대라도 NXT 요청은 DB 스냅샷 대신 broker API를 호출한다."""
+    from common.types import Exchange
+    service = trading_service_fixture
+    service._mcs = AsyncMock()
+    service._mcs.is_market_open_now.return_value = False  # KRX 기준 장 마감 (예: 08:30 NXT 프리마켓)
+    service._mcs.get_latest_trading_date.return_value = "20260818"
+
+    mock_deps.stock_repo.get_current_price.return_value = None
+    mock_deps.stock_repo.get_latest_daily_snapshot.return_value = {
+        "output": {"stck_prpr": "268500"}, "_trade_date": "20260818"
+    }
+    broker_resp = ResCommonResponse(rt_cd="0", msg1="정상", data={"output": {"stck_prpr": "252000"}})
+    mock_deps.broker.get_current_price.return_value = broker_resp
+
+    result = await service.get_current_price("005930", exchange=Exchange.NXT)
+
+    mock_deps.stock_repo.get_latest_daily_snapshot.assert_not_awaited()
+    mock_deps.broker.get_current_price.assert_awaited_once()
+    assert result == broker_resp
+
+
+@pytest.mark.asyncio
+async def test_get_current_price_nxt_does_not_write_code_keyed_cache(trading_service_fixture, mock_deps):
+    """NXT 응답을 종목코드 단위 캐시에 쓰면 KRX 조회가 오염되므로 저장하지 않는다."""
+    from common.types import Exchange
+    service = trading_service_fixture
+    mock_deps.stock_repo.get_current_price.return_value = None
+    broker_resp = ResCommonResponse(rt_cd="0", msg1="정상", data={"output": {"stck_prpr": "252000"}})
+    mock_deps.broker.get_current_price.return_value = broker_resp
+
+    await service.get_current_price("005930", exchange=Exchange.NXT)
+
+    mock_deps.stock_repo.set_current_price.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_get_current_price_data_quality_invalid_response_not_cached(trading_service_fixture, mock_deps):
     service = trading_service_fixture
     service._data_quality_service = DataQualityService()
