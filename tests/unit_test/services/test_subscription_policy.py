@@ -441,3 +441,49 @@ async def test_do_unsubscribe_success_and_exception(policy, mock_streaming, mock
     await policy._do_unsubscribe("B", StreamingType.PROGRAM_TRADING)
     # 구체화된 에러 로깅 검증
     mock_streaming_logger.log_unsubscribe_failure.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_rebalance_reserves_slots_for_registrations_policy_does_not_own(policy, mock_streaming):
+    """정책이 소유하지 않은 KIS 등록(장운영정보·체결통보 등)만큼 가용 슬롯이 줄어든다.
+
+    2026-08-19 장애: 정책은 30/40 이라 믿었지만 KIS 는 이미 41/41 이라
+    이후 모든 구독이 MAX SUBSCRIBE OVER 로 거절됐다.
+    """
+    mock_streaming.get_subscription_ledger = MagicMock(return_value={
+        "total": 11,
+        "price_codes": set(),
+        "program_trading_codes": set(),
+    })
+    codes = [f"{i:06d}" for i in range(40)]
+
+    await policy.sync_subscriptions(codes, "portfolio", SubscriptionPriority.HIGH)
+
+    assert len(policy._active_codes_price) == SubscriptionPolicy.MAX_WS_SLOTS - 11
+
+
+@pytest.mark.asyncio
+async def test_rebalance_releases_broker_registrations_policy_no_longer_wants(policy, mock_streaming):
+    """정책이 원하지 않는데 KIS 에 남아 있는 등록(고아)을 회수한다."""
+    mock_streaming.get_subscription_ledger = MagicMock(return_value={
+        "total": 3,
+        "price_codes": {"111111"},
+        "program_trading_codes": {"222222"},
+    })
+
+    await policy.add_subscription("005930", SubscriptionPriority.HIGH, "portfolio")
+
+    mock_streaming.unsubscribe_unified_price.assert_any_await("111111")
+    mock_streaming.unsubscribe_program_trading.assert_any_await("222222")
+
+
+@pytest.mark.asyncio
+async def test_subscribe_order_follows_priority_not_set_iteration(policy, mock_streaming):
+    """슬롯 경합 시 우선순위 높은 종목이 먼저 구독 요청된다."""
+    for code in ("000001", "000002", "000003", "000004"):
+        await policy.add_subscription(code, SubscriptionPriority.LOW, "ui_view", rebalance=False)
+    await policy.add_subscription("999998", SubscriptionPriority.HIGH, "portfolio", rebalance=False)
+    await policy.add_subscription("999999", SubscriptionPriority.HIGH, "portfolio")
+
+    requested = [c.args[0] for c in mock_streaming.subscribe_unified_price.await_args_list]
+    assert requested == ["999998", "999999", "000001", "000002", "000003", "000004"]

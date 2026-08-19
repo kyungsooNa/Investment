@@ -3052,3 +3052,23 @@ async def test_hard_error_discards_stale_subscription_membership(websocket_api_i
     assert ("H0UNCNT0", "005930") not in api._subscribed_items
     confirmed = await api.wait_for_subscription_ack("H0UNCNT0", "005930", timeout=0.05)
     assert confirmed is False
+
+
+@pytest.mark.asyncio
+async def test_get_subscription_ledger_classifies_price_pt_and_others(websocket_api_instance):
+    """KIS 등록 원장을 체결가/프로그램매매/기타로 분류한다 — 슬롯 회계의 진실 소스."""
+    api = websocket_api_instance
+    api._subscribed_items = {
+        ("H0UNCNT0", "005930"),
+        ("H0UNCNT0", "000660"),
+        ("H0STPGM0", "005930"),
+        ("H0STMKO0", "000000"),   # 장운영정보 — 정책이 모르지만 KIS 한도는 소비한다
+        ("H0UNMKO0", "000000"),
+        ("H0STCNI9", "@0173312"),  # 체결통보
+    }
+
+    ledger = api.get_subscription_ledger()
+
+    assert ledger["total"] == 6
+    assert ledger["price_codes"] == {"005930", "000660"}
+    assert ledger["program_trading_codes"] == {"005930"}

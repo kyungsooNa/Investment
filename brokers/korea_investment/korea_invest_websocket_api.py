@@ -814,6 +814,21 @@ class KoreaInvestWebSocketAPI:
         )
         return tuple(dict.fromkeys(tr_ids))
 
+    def get_subscription_ledger(self) -> dict:
+        """현재 KIS 에 등록된 실시간 구독 원장을 반환한다 (슬롯 회계용).
+
+        total 은 등록된 (tr_id, tr_key) 전체 수다. 장운영정보·체결통보처럼 구독 정책이
+        관리하지 않는 등록도 KIS 한도를 동일하게 소비하므로 함께 센다.
+        """
+        websocket_config = self._env.active_config.get('tr_ids', {}).get('websocket', {})
+        price_tr_id = websocket_config.get('unified_realtime_price', 'H0UNCNT0')
+        pt_tr_ids = self._get_program_trading_tr_ids()
+        return {
+            "total": len(self._subscribed_items),
+            "price_codes": {key for tr_id, key in self._subscribed_items if tr_id == price_tr_id},
+            "program_trading_codes": {key for tr_id, key in self._subscribed_items if tr_id in pt_tr_ids},
+        }
+
     async def _resubscribe_all(self):
         """재연결 시 기존 구독 항목들을 다시 구독 요청합니다."""
         items = list(self._subscribed_items)

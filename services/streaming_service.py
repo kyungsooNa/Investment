@@ -217,6 +217,10 @@ class StreamingService:
             return True
         return await waiter(code, timeout)
 
+    def get_subscription_ledger(self) -> dict:
+        """KIS 실등록 구독 원장 (BrokerAPIWrapper 위임)."""
+        return self.broker.get_subscription_ledger()
+
     async def subscribe_market_status(self, code: str):
         """장운영정보 실시간 구독 (BrokerAPIWrapper 위임)."""
         return await self.broker.subscribe_market_status(code)
