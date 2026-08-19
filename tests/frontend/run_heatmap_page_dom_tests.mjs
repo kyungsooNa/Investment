@@ -942,6 +942,26 @@ test("창이 백그라운드면 자동 갱신을 건너뛴다", async () => {
   assert(calls.length === 0, "안 보는 창 때문에 외부 API 를 계속 두드리면 안 됨");
 });
 
+// 백그라운드 동안 건너뛴 주기는 그대로 지연이 된다 — 브라우저가 숨은 탭의 타이머를
+// 늦추기까지 해서, 돌아왔을 때 화면이 몇 분 전 값인 채로 다음 주기를 기다리게 된다.
+test("백그라운드에서 돌아오면 다음 주기를 기다리지 않고 갱신한다", async () => {
+  const { window, calls, timer } = autoRefreshPage();
+
+  await window.initHeatmapPage();
+  await window.setHeatmapTab("overseas");
+  setPageVisible(window, false);
+  calls.length = 0;
+  await timer.fn();
+  assert(calls.length === 0, "숨은 동안은 건너뛴다(전제)");
+
+  setPageVisible(window, true);
+  window.document.dispatchEvent(new window.Event("visibilitychange"));
+  await new Promise(done => setTimeout(done, 0));
+
+  assert(overseasCalls(calls).length === 1,
+    `돌아온 즉시 한 번 갱신해야 함 (실제 ${overseasCalls(calls).length}회)`);
+});
+
 test("다른 화면으로 떠나면 자동 갱신 타이머를 스스로 멈춘다", async () => {
   const { window, calls, timer } = autoRefreshPage();
 

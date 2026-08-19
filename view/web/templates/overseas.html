@@ -73,6 +73,8 @@
                 </div>
                 <button class="btn" data-overseas-required onclick="addOverseasFavorite()">★ 추가</button>
                 <button class="btn" data-overseas-required onclick="loadOverseasFavorites()">새로고침</button>
+                <span id="overseas-favorite-updated" style="color:var(--text-secondary); font-size:0.85rem;"
+                      title="이 목록은 주기적으로 스스로 다시 조회합니다 (즐겨찾기 탭을 보고 있는 동안에만)">최근 업데이트: --</span>
             </div>
         </div>
         <div class="card">
@@ -154,5 +156,5 @@
 {% block scripts %}
 <script src="/static/js/autocomplete.js?v=2"></script>
 <script src="/static/js/overseas_autocomplete.js?v=1"></script>
-<script src="/static/js/overseas.js?v=8"></script>
+<script src="/static/js/overseas.js?v=9"></script>
 {% endblock %}

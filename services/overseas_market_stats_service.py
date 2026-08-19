@@ -76,13 +76,17 @@ class OverseasMarketStatsService:
             if self._cached_at is not None and (self._clock() - self._cached_at) <= self._ttl_sec:
                 return self._snapshots, self._fx_rate, self._updated_at
 
+            # TTL 은 수집 '완료'가 아니라 '시작'부터 잰다. 완료 시각으로 재면 수집이
+            # 느린 날일수록 남은 TTL 이 화면 폴링 주기 안쪽으로 밀려들어와, 60초마다
+            # 되묻는데도 같은 스냅샷만 돌아오는 주기가 생긴다.
+            started = self._clock()
             snapshots, fx_rate = await asyncio.gather(
                 self._provider.fetch_snapshots(symbols),
                 self._fetch_fx_rate(),
             )
             self._snapshots = snapshots
             self._fx_rate = fx_rate
-            self._cached_at = self._clock()
+            self._cached_at = started
             self._updated_at = self._wall_clock()
             return self._snapshots, self._fx_rate, self._updated_at
 

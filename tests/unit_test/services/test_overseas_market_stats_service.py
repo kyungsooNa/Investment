@@ -197,6 +197,30 @@ async def test_default_ttl_is_shorter_than_the_screen_poll_interval(universe, pr
     assert provider.fetch_snapshots.await_count == 2
 
 
+async def test_ttl_window_covers_the_collection_time(universe, provider):
+    """TTL 기준점은 수집 '완료'가 아니라 '시작'이다.
+
+    완료 시각으로 재면 느린 수집(500종목 배치)일수록 남은 TTL 이 화면 폴링 주기
+    안쪽으로 밀려들어와, 60초마다 되묻는데도 같은 스냅샷만 되받는 날이 생긴다.
+    """
+    now = [0.0]
+
+    async def _slow_fetch(_symbols):
+        now[0] += 20.0  # 외부 배치 조회가 느린 날
+        return [_snap("AAPL")]
+
+    provider.fetch_snapshots = AsyncMock(side_effect=_slow_fetch)
+    service = OverseasMarketStatsService(
+        universe_factory=lambda: universe, provider=provider, ttl_sec=45.0, clock=lambda: now[0]
+    )
+
+    await service.get_top_market_cap()  # 0초 시작 → 20초 완료
+    now[0] = 60.0  # 화면의 다음 폴링
+    await service.get_top_market_cap()
+
+    assert provider.fetch_snapshots.await_count == 2
+
+
 async def test_empty_universe_returns_empty_without_calling_provider(provider):
     empty = MagicMock()
     empty.all_symbols.return_value = []
