@@ -514,3 +514,29 @@ async def test_reconcile_with_broker_force_closes_each_missing_hold_row(virtual_
         "unknown_in_broker": [],
         "quantity_mismatches": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_reconcile_with_broker_can_block_force_close_for_paper_rollover(virtual_trade_service, mock_repo):
+    """모의계좌 롤오버 의심 시 기존 HOLD를 0원 강제청산하지 않고 보고만 한다."""
+    mock_repo.get_holds.return_value = [
+        {"code": "005930", "strategy": "S1", "qty": 1},
+        {"code": "000660", "strategy": "S2", "qty": 3},
+    ]
+    mock_repo.log_sell_async = AsyncMock()
+    test_logger = MagicMock()
+
+    result = await virtual_trade_service.reconcile_with_broker(
+        actual_holdings=[],
+        logger=test_logger,
+        allow_force_close=False,
+    )
+
+    mock_repo.log_sell_async.assert_not_awaited()
+    assert result == {
+        "force_closed": [],
+        "force_close_blocked": ["005930", "000660"],
+        "unknown_in_broker": [],
+        "quantity_mismatches": [],
+    }
+    test_logger.warning.assert_called_once()
