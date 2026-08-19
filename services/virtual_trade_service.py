@@ -235,7 +235,13 @@ class VirtualTradeService:
     def _load_data(self): return self._repo._load_data()
     def _save_data(self, data: dict): return self._repo._save_data(data)
 
-    async def reconcile_with_broker(self, actual_holdings: list, logger=None) -> dict:
+    async def reconcile_with_broker(
+        self,
+        actual_holdings: list,
+        logger=None,
+        *,
+        allow_force_close: bool = True,
+    ) -> dict:
         """실제 증권사 잔고와 로컬 DB를 비교하여 불일치를 처리한다.
 
         - 로컬 HOLD인데 실제 잔고 없음 → 해당 code의 로컬 HOLD row를 강제 종결 + 경고
@@ -262,15 +268,25 @@ class VirtualTradeService:
         local_positions = _normalize_local_holds(local_holds)
 
         force_closed = []
+        force_close_blocked = []
         for hold in local_holds:
             code = str(hold.get("code", "")).strip()
             if code and broker_positions.get(code, 0) <= 0:
+                if not allow_force_close:
+                    force_close_blocked.append(code)
+                    continue
                 _log.warning(
                     f"[Reconciliation] 로컬 HOLD이나 실제 잔고 없음 → 강제 종결: "
                     f"{code} (strategy={hold.get('strategy')})"
                 )
                 await self.log_sell_async(code, 0, reason=_FORCE_CLOSE_REASON)
                 force_closed.append(code)
+
+        if force_close_blocked:
+            _log.warning(
+                f"[Reconciliation] 로컬 HOLD이나 실제 잔고 없음 → 자동 강제 종결 보류: "
+                f"{force_close_blocked}"
+            )
 
         local_codes = set(local_positions)
         broker_codes = set(broker_positions)
@@ -339,6 +355,8 @@ class VirtualTradeService:
             "unknown_in_broker": unknown_in_broker,
             "quantity_mismatches": quantity_mismatches,
         }
+        if force_close_blocked:
+            result["force_close_blocked"] = force_close_blocked
         if quantity_synced:
             result["quantity_synced"] = quantity_synced
         if broker_inserted:

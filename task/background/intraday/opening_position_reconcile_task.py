@@ -135,6 +135,7 @@ class OpeningPositionReconcileTask(SchedulableTask):
             if mismatch_count:
                 message = (
                     f"force_closed={len(result.get('force_closed') or [])} "
+                    f"force_close_blocked={len(result.get('force_close_blocked') or [])} "
                     f"unknown={len(result.get('unknown_in_broker') or [])} "
                     f"qty_mismatch={len(result.get('quantity_mismatches') or [])}"
                 )

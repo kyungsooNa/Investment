@@ -535,6 +535,8 @@ class OpeningPositionReconcileConfig(BaseModel):
     check_interval_sec: int = 30
     open_delay_sec: int = 60
     run_window_min: int = 10
+    block_force_close_on_paper_rollover: bool = True
+    paper_account_rollover_state_file_path: str = "data/paper_account_reconcile_state.json"
 
     model_config = {"extra": "allow"}
 

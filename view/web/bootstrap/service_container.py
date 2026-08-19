@@ -898,6 +898,18 @@ class ServiceContainer:
                     broker=ctx.broker,
                     virtual_trade_service=ctx.virtual_trade_service,
                     market_clock=ctx.market_clock,
+                    is_paper_trading=bool(getattr(ctx.env, "is_paper_trading", False)),
+                    paper_account_number=getattr(ctx.env, "paper_stock_account_number", None),
+                    paper_account_rollover_state_file_path=getattr(
+                        reconcile_cfg,
+                        "paper_account_rollover_state_file_path",
+                        "data/paper_account_reconcile_state.json",
+                    ),
+                    block_force_close_on_paper_rollover=getattr(
+                        reconcile_cfg,
+                        "block_force_close_on_paper_rollover",
+                        True,
+                    ),
                     logger=ctx.logger,
                 )
                 ctx.opening_position_reconcile_task = OpeningPositionReconcileTask(

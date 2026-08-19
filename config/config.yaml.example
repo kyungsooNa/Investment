@@ -25,6 +25,14 @@ paper_account_expiry_alert:
   check_interval_sec: 3600
   state_file_path: "data/paper_account_expiry_alert_state.json"
 
+opening_position_reconcile:
+  enabled: true
+  check_interval_sec: 30
+  open_delay_sec: 60
+  run_window_min: 10
+  block_force_close_on_paper_rollover: true
+  paper_account_rollover_state_file_path: "data/paper_account_reconcile_state.json"
+
 # 실전/모의 선택 (true: 모의, false: 실전)
 is_paper_trading: true
 

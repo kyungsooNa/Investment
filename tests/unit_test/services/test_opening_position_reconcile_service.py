@@ -133,3 +133,86 @@ async def test_opening_reconcile_flags_broker_reconciled_holds_older_than_thresh
 
     virtual_trade_service.get_holds_by_strategy.assert_called_once_with("broker_reconciled")
     assert result["stale_broker_reconciled"] == [{"code": "006110", "days_held": 54}]
+
+
+@pytest.mark.asyncio
+async def test_opening_reconcile_blocks_force_close_when_paper_account_changes(tmp_path):
+    broker = MagicMock()
+    broker.get_account_balance = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output1": []})
+    )
+    virtual_trade_service = MagicMock()
+    virtual_trade_service.get_holds.return_value = [{"code": "005930", "strategy": "S1", "qty": 1}]
+    virtual_trade_service.reconcile_with_broker = AsyncMock(
+        return_value={
+            "force_closed": [],
+            "force_close_blocked": ["005930"],
+            "unknown_in_broker": [],
+            "quantity_mismatches": [],
+        }
+    )
+    virtual_trade_service.get_holds_by_strategy.return_value = []
+    state_file = tmp_path / "paper_reconcile_state.json"
+    state_file.write_text('{"paper_account_number": "OLD-123"}', encoding="utf-8")
+    service = OpeningPositionReconcileService(
+        broker=broker,
+        virtual_trade_service=virtual_trade_service,
+        is_paper_trading=True,
+        paper_account_number="NEW-456",
+        paper_account_rollover_state_file_path=str(state_file),
+        logger=MagicMock(),
+    )
+
+    result = await service.reconcile_once()
+
+    virtual_trade_service.reconcile_with_broker.assert_awaited_once_with(
+        [],
+        logger=service._logger,
+        allow_force_close=False,
+    )
+    assert result["force_closed"] == []
+    assert result["force_close_blocked"] == ["005930"]
+    assert result["mismatch_count"] == 1
+    assert result["paper_account_rollover"] == {
+        "detected": True,
+        "reason": "account_changed",
+        "previous_account_number": "***-123",
+        "current_account_number": "***-456",
+        "local_hold_count": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_opening_reconcile_blocks_force_close_for_empty_paper_balance_without_prior_state(tmp_path):
+    broker = MagicMock()
+    broker.get_account_balance = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output1": []})
+    )
+    virtual_trade_service = MagicMock()
+    virtual_trade_service.get_holds.return_value = [{"code": "005930", "strategy": "S1", "qty": 1}]
+    virtual_trade_service.reconcile_with_broker = AsyncMock(
+        return_value={
+            "force_closed": [],
+            "force_close_blocked": ["005930"],
+            "unknown_in_broker": [],
+            "quantity_mismatches": [],
+        }
+    )
+    virtual_trade_service.get_holds_by_strategy.return_value = []
+    service = OpeningPositionReconcileService(
+        broker=broker,
+        virtual_trade_service=virtual_trade_service,
+        is_paper_trading=True,
+        paper_account_number="NEW-001",
+        paper_account_rollover_state_file_path=str(tmp_path / "paper_reconcile_state.json"),
+        logger=MagicMock(),
+    )
+
+    result = await service.reconcile_once()
+
+    virtual_trade_service.reconcile_with_broker.assert_awaited_once_with(
+        [],
+        logger=service._logger,
+        allow_force_close=False,
+    )
+    assert result["paper_account_rollover"]["reason"] == "empty_paper_balance_with_local_holds"
