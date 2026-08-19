@@ -114,6 +114,7 @@ class SchedulerBootstrap:
 
     def _register_trading_tasks(self) -> None:
         ctx = self._ctx
+        self._register(self._optional_task("paper_account_expiry_alert_task"))
         self._register(ctx.pre_market_health_check_task)
         self._register(ctx.opening_position_reconcile_task, TaskPriority.HIGH)
         self._register(ctx.cache_warmup_task)

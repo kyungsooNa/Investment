@@ -260,6 +260,16 @@ class OrderExecutionConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class PaperAccountExpiryAlertConfig(BaseModel):
+    enabled: bool = True
+    expires_at: Optional[str] = None
+    warning_days: int = Field(default=7, ge=0, le=31)
+    check_interval_sec: int = Field(default=3600, ge=60)
+    state_file_path: str = "data/paper_account_expiry_alert_state.json"
+
+    model_config = {"extra": "allow"}
+
+
 class DataQualityConfig(BaseModel):
     enabled: bool = True
     max_tick_age_sec: float = 30.0
@@ -591,6 +601,9 @@ class AppConfig(BaseModel):
     risk_gate: RiskGateConfig = Field(default_factory=RiskGateConfig)
     order_policy: OrderPolicyConfig = Field(default_factory=OrderPolicyConfig)
     order_execution: OrderExecutionConfig = Field(default_factory=OrderExecutionConfig)
+    paper_account_expiry_alert: PaperAccountExpiryAlertConfig = Field(
+        default_factory=PaperAccountExpiryAlertConfig
+    )
     data_quality: DataQualityConfig = Field(default_factory=DataQualityConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     dart_disclosure: DartDisclosureConfig = Field(default_factory=DartDisclosureConfig)

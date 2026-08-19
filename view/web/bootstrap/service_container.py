@@ -16,6 +16,7 @@ from config.config_loader import (
     AiAnalysisConfig,
     DartDisclosureConfig,
     OrderPolicyConfig,
+    PaperAccountExpiryAlertConfig,
     PositionSizingConfig,
     RiskGateConfig,
     TradeTrendMonitorConfig,
@@ -51,6 +52,7 @@ from task.background.after_market.theme_classification_task import ThemeClassifi
 from services.opening_position_reconcile_service import OpeningPositionReconcileService
 from services.order_execution_service import OrderExecutionService
 from services.order_policy_service import OrderPolicyService
+from services.paper_account_expiry_alert_service import PaperAccountExpiryAlertService
 from services.position_sizing_service import PositionSizingService
 from services.risk_gate_service import RiskGateService
 from services.overseas_candidate_service import OverseasCandidateService
@@ -76,6 +78,7 @@ from task.background.always_on.dart_disclosure_monitor_task import DartDisclosur
 from task.background.always_on.trade_trend_monitor_task import TradeTrendMonitorTask
 from task.background.intraday.opening_position_reconcile_task import OpeningPositionReconcileTask
 from task.background.intraday.pre_market_health_check_task import PreMarketHealthCheckTask
+from task.background.intraday.paper_account_expiry_alert_task import PaperAccountExpiryAlertTask
 from task.background.intraday.program_capture_subscription_task import ProgramCaptureSubscriptionTask
 from task.background.intraday.theme_intraday_leader_alert_task import ThemeIntradayLeaderAlertTask
 from task.background.intraday.market_index_threshold_alert_task import MarketIndexThresholdAlertTask
@@ -401,8 +404,30 @@ class ServiceContainer:
                     notification_service=ctx.notification_service,
                     logger=ctx.logger,
                 )
+                expiry_cfg = PaperAccountExpiryAlertConfig.model_validate(
+                    config_dict.get("paper_account_expiry_alert") or {}
+                )
+                ctx.paper_account_expiry_alert_task = (
+                    PaperAccountExpiryAlertTask(
+                        alert_service=PaperAccountExpiryAlertService(
+                            expires_at=expiry_cfg.expires_at,
+                            warning_days=expiry_cfg.warning_days,
+                            notification_service=ctx.notification_service,
+                            market_clock=ctx.market_clock,
+                            state_file=expiry_cfg.state_file_path,
+                            logger=ctx.logger,
+                        ),
+                        env=ctx.env,
+                        market_clock=ctx.market_clock,
+                        logger=ctx.logger,
+                        check_interval_sec=expiry_cfg.check_interval_sec,
+                    )
+                    if expiry_cfg.enabled
+                    else None
+                )
             else:
                 ctx.pre_market_health_check_task = None
+                ctx.paper_account_expiry_alert_task = None
 
             if needs_batch:
                 ctx.daily_price_collector_task = DailyPriceCollectorTask(
@@ -594,6 +619,7 @@ class ServiceContainer:
                 ctx.newhigh_strategy_coverage_backtest_task = None
                 ctx.after_market_reconcile_task = None
                 ctx.opening_position_reconcile_task = None
+                ctx.paper_account_expiry_alert_task = None
                 ctx.microstructure_capture_task = None
                 ctx.theme_intraday_leader_alert_task = None
                 if needs_web:
