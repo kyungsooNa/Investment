@@ -294,7 +294,16 @@ class SubscriptionPolicy:
         desired_price: Set[str] = set()
         desired_pt: Set[str] = set()
 
-        available_slots = max(0, self.MAX_WS_SLOTS - self._external_reserved_slots)
+        ledger = self._get_broker_ledger()
+        if ledger is None:
+            reserved = self._external_reserved_slots
+        else:
+            # 정책이 소유하지 않는 등록(장운영정보/체결통보 등)도 KIS 한도를 소비한다.
+            reserved = max(
+                0,
+                ledger["total"] - len(ledger["price_codes"]) - len(ledger["program_trading_codes"]),
+            )
+        available_slots = max(0, self.MAX_WS_SLOTS - reserved)
 
         # 2. 슬롯 할당 (Greedy)
         for code in ranked_codes:
@@ -315,24 +324,32 @@ class SubscriptionPolicy:
                 break
 
         # 3. 변경 대상 추출 (타입별 분리)
-        to_unsubscribe_price = self._active_codes_price - desired_price
+        # 브로커에 등록돼 있으나 정책이 원하지 않는 종목(고아)도 해지 대상에 포함한다.
+        # 정책 장부만 초기화되고 KIS 등록은 남는 경로가 있어, 회수하지 않으면 슬롯이 영구 소모된다.
+        registered_price = ledger["price_codes"] if ledger else set()
+        registered_pt = ledger["program_trading_codes"] if ledger else set()
+
+        to_unsubscribe_price = (self._active_codes_price | registered_price) - desired_price
         to_subscribe_price = desired_price - self._active_codes_price
-        
-        to_unsubscribe_pt = self._active_codes_pt - desired_pt
+
+        to_unsubscribe_pt = (self._active_codes_pt | registered_pt) - desired_pt
         to_subscribe_pt = desired_pt - self._active_codes_pt
 
         # 4. 실제 구독/해지 수행
-        for code in to_unsubscribe_price:
+        for code in sorted(to_unsubscribe_price):
             await self._do_unsubscribe(code, StreamingType.UNIFIED_PRICE)
-        for code in to_unsubscribe_pt:
+        for code in sorted(to_unsubscribe_pt):
             await self._do_unsubscribe(code, StreamingType.PROGRAM_TRADING)
 
         if not await self._ensure_websocket_connected_for_subscribe(to_subscribe_price | to_subscribe_pt):
             return
 
-        for code in to_subscribe_price:
+        # 슬롯이 모자라 브로커가 일부를 거절하더라도 우선순위 높은 종목이 먼저 자리를 잡도록
+        # ranked_codes 순서를 그대로 따른다 (set 순회는 비결정적이라 LOW 가 먼저 채갈 수 있다).
+        subscribe_rank = {code: i for i, code in enumerate(ranked_codes)}
+        for code in sorted(to_subscribe_price, key=lambda c: subscribe_rank.get(c, len(ranked_codes))):
             await self._do_subscribe(code, StreamingType.UNIFIED_PRICE)
-        for code in to_subscribe_pt:
+        for code in sorted(to_subscribe_pt, key=lambda c: subscribe_rank.get(c, len(ranked_codes))):
             await self._do_subscribe(code, StreamingType.PROGRAM_TRADING)
 
         # 5. [기존 로직 복원] 한도 초과(Dropped) 경고 로그
@@ -479,11 +496,39 @@ class SubscriptionPolicy:
             if self._streaming_logger:
                 self._streaming_logger.log_unsubscribe_failure(code=code, reason=str(e))
 
+    def _get_broker_ledger(self) -> Optional[dict]:
+        """브로커가 보고하는 실제 KIS 등록 원장. 제공하지 않으면 None.
+
+        정책 내부 장부(_active_codes_*)는 재연결·직접 구독 경로에서 실제 등록과
+        어긋날 수 있으므로, 가능하면 브로커 원장을 슬롯 회계의 진실 소스로 쓴다.
+        """
+        getter = getattr(self._streaming, "get_subscription_ledger", None)
+        if not callable(getter):
+            return None
+        try:
+            ledger = getter()
+        except Exception as e:
+            self._logger.warning(f"SubscriptionPolicy: 구독 원장 조회 실패 — 내부 장부 사용 ({e})")
+            return None
+        if not isinstance(ledger, dict):
+            return None
+        try:
+            return {
+                "total": int(ledger["total"]),
+                "price_codes": set(ledger["price_codes"]),
+                "program_trading_codes": set(ledger["program_trading_codes"]),
+            }
+        except (KeyError, TypeError, ValueError):
+            return None
+
     def _calculate_used_slots(self) -> int:
         """
         현재 사용 중인 웹소켓 슬롯 개수를 계산합니다.
         (일반 호가/체결(Price) = 1슬롯, 프로그램 매매(PT) = 1슬롯)
         """
+        ledger = self._get_broker_ledger()
+        if ledger is not None:
+            return ledger["total"]
         return (
             self._external_reserved_slots
             +

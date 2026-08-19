@@ -1603,3 +1603,34 @@ async def test_force_reconnect_logs_active_pt_count(watchdog_task, mock_price_su
         total=1,
     )
     
+
+
+@pytest.mark.asyncio
+async def test_restore_without_connection_reset_keeps_policy_active_state():
+    """연결을 리셋하지 않는 복원은 정책 장부를 비우지 않는다.
+
+    2026-08-19 장애: 살아있는 소켓에서 clear_active_state() 를 호출해
+    KIS 등록 6건이 정책이 추적하지 못하는 고아 슬롯으로 남았다.
+    """
+    streaming_service = MagicMock()
+    streaming_service.connect_websocket = AsyncMock(return_value=True)
+    mcs = AsyncMock()
+    mcs.is_market_open_now = AsyncMock(return_value=True)
+    price_svc = MagicMock()
+    price_svc.clear_active_state = MagicMock()
+    price_svc._rebalance = AsyncMock()
+    price_svc._refs = {"005930": 1}
+    price_svc._active_codes_price = {"005930"}
+
+    svc = WebSocketWatchdogTask(
+        streaming_service=streaming_service,
+        market_calendar_service=mcs,
+        streaming_stock_repo=None,
+        price_subscription_service=price_svc,
+        streaming_logger=None,
+    )
+
+    await svc._restore_all_subscriptions(reset_connection=False)
+
+    price_svc.clear_active_state.assert_not_called()
+    price_svc._rebalance.assert_awaited_once()

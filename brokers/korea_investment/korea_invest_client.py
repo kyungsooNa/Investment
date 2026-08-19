@@ -374,6 +374,9 @@ class KoreaInvestApiClient:
     async def unsubscribe_program_trading(self, stock_code: str):
         return await self._websocketAPI.unsubscribe_program_trading(stock_code)
 
+    def get_subscription_ledger(self) -> dict:
+        return self._websocketAPI.get_subscription_ledger()
+
     async def subscribe_market_status(self, stock_code: str):
         return await self._websocketAPI.subscribe_market_status(stock_code)
 

@@ -615,7 +615,10 @@ class WebSocketWatchdogTask(SchedulableTask):
             reserve = getattr(self._price_subscription_service, "set_external_reserved_slots", None)
             if callable(reserve):
                 reserve(reserved_slots)
-            self._price_subscription_service.clear_active_state()
+            # 연결을 실제로 끊는 복원에서만 정책 장부를 비운다. 살아있는 소켓에서 비우면
+            # KIS 에 남은 등록이 정책이 추적하지 못하는 고아 슬롯이 된다.
+            if reset_connection:
+                self._price_subscription_service.clear_active_state()
 
         # 시작 단계에서 먼저 등록된 가격 구독을 비우고 하나의 슬롯 계획으로 다시 구성한다.
         if self._streaming_service and reset_connection:
