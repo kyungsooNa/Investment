@@ -16,6 +16,15 @@ paper_stock_account_number: "모의_계좌번호"
 paper_url: "https://openapivts.koreainvestment.com:29443"
 paper_websocket_url: "ws://ops.koreainvestment.com:31000"
 
+# 모의투자 계좌는 3개월마다 재신청이 필요합니다.
+# KIS Developers > 모의투자 > 나의계좌 > 투자기간 종료일을 넣으세요.
+paper_account_expiry_alert:
+  enabled: true
+  expires_at: null  # 예: "2026-11-19"
+  warning_days: 7
+  check_interval_sec: 3600
+  state_file_path: "data/paper_account_expiry_alert_state.json"
+
 # 실전/모의 선택 (true: 모의, false: 실전)
 is_paper_trading: true
 

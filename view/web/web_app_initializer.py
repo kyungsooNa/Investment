@@ -38,6 +38,7 @@ from interfaces.schedulable_task import TaskPriority
 from task.background.intraday.strategy_scheduler_task_adapter import StrategySchedulerTaskAdapter
 from task.background.intraday.websocket_watchdog_task import WebSocketWatchdogTask
 from task.background.intraday.pre_market_health_check_task import PreMarketHealthCheckTask
+from task.background.intraday.paper_account_expiry_alert_task import PaperAccountExpiryAlertTask
 from task.background.intraday.opening_position_reconcile_task import OpeningPositionReconcileTask
 from task.background.after_market.ranking_task import RankingTask
 from task.background.after_market.minervini_update_task import MinerviniUpdateTask
@@ -152,6 +153,7 @@ class WebAppContext:
         self.minervini_update_task: MinerviniUpdateTask = None
         self.websocket_watchdog_task: WebSocketWatchdogTask = None
         self.pre_market_health_check_task: PreMarketHealthCheckTask = None
+        self.paper_account_expiry_alert_task: PaperAccountExpiryAlertTask = None
         self.opening_position_reconcile_task: OpeningPositionReconcileTask = None
         self.after_market_reconcile_task: AfterMarketReconcileTask = None
         self.daily_price_collector_task: DailyPriceCollectorTask = None
