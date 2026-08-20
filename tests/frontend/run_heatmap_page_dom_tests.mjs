@@ -877,7 +877,13 @@ function overseasCalls(calls) {
 }
 
 test("미국 탭을 보고 있으면 1분마다 조용히 다시 조회한다", async () => {
+  const fetchOptions = [];
   const { window, calls, timer } = autoRefreshPage();
+  const traced = window.fetchWithTimeout;
+  window.fetchWithTimeout = (url, options, ...rest) => {
+    fetchOptions.push(options || {});
+    return traced(url, options, ...rest);
+  };
 
   await window.initHeatmapPage();
   await window.setHeatmapTab("overseas");
@@ -888,6 +894,8 @@ test("미국 탭을 보고 있으면 1분마다 조용히 다시 조회한다", 
 
   assert(overseasCalls(calls).length === before + 1,
     `주기마다 미국 스냅샷을 다시 받아야 함 (실제 ${overseasCalls(calls).length - before}회)`);
+  assert(fetchOptions.at(-1).cache === "no-store",
+    "자동 갱신은 브라우저 HTTP 캐시를 우회해야 함");
   const panel = window.document.getElementById("heatmap-page-overseas");
   assert(!panel.innerHTML.includes("조회 중"), "자동 갱신이 로딩 문구로 화면을 깜빡이면 안 됨");
   assert(panel.querySelectorAll(".heatmap-tile").length > 0, "갱신 후에도 타일이 남아야 함");

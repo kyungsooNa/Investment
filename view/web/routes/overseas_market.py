@@ -2,12 +2,17 @@
 미국장 시가총액/랭킹 API 엔드포인트 (overseas_marketcap.html).
 """
 import asyncio
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from services.overseas_market_stats_service import RANKING_CATEGORIES
 from view.web.api_common import _get_ctx
 from view.web.market_mode_utils import is_market_enabled
 
 router = APIRouter(tags=["overseas-market"])
+
+
+def _disable_http_cache(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
 
 
 def _require_overseas(ctx, what: str):
@@ -23,8 +28,12 @@ def _require_overseas(ctx, what: str):
 
 
 @router.get("/overseas/top-market-cap")
-async def get_overseas_top_market_cap(limit: int = Query(30, ge=1, le=500)):
+async def get_overseas_top_market_cap(
+    response: Response,
+    limit: int = Query(30, ge=1, le=500),
+):
     """S&P 500 유니버스 기준 미국 시가총액 상위 종목."""
+    _disable_http_cache(response)
     ctx = _get_ctx()
     service = _require_overseas(ctx, "미국주식 시가총액")
     try:

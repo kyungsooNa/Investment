@@ -327,7 +327,7 @@ async function _loadHeatmap(source, options = {}) {
     // 조회 조건(기간 등)이 바뀌는 소스는 url 을 함수로 준다 — 호출 시점에 평가한다.
     const url = typeof source.url === 'function' ? source.url() : source.url;
     try {
-        const res = await fetchWithTimeout(url, {}, 30000);
+        const res = await fetchWithTimeout(url, { cache: 'no-store' }, 30000);
         const { json, error } = await readJsonResponse(res);
         if (!isLatestRequest()) return;
 
