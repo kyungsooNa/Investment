@@ -35,6 +35,22 @@ async def test_top_market_cap_returns_items(web_client, mock_web_ctx):
         mock_web_ctx.overseas_market_stats_service.get_top_market_cap.assert_awaited_once_with(limit=10)
 
 
+async def test_top_market_cap_disables_http_cache(web_client, mock_web_ctx):
+    """자동 갱신 화면이 같은 URL을 호출해도 HTTP 캐시가 이전 스냅샷을 돌려주면 안 된다."""
+    with patch("view.web.routes.overseas_market._get_ctx", return_value=mock_web_ctx):
+        _enable_overseas(mock_web_ctx)
+        mock_web_ctx.overseas_market_stats_service = MagicMock()
+        mock_web_ctx.overseas_market_stats_service.get_top_market_cap = AsyncMock(
+            return_value={"fx_rate": None, "items": [], "updated_at": 1787148000}
+        )
+
+        response = web_client.get("/api/overseas/top-market-cap?limit=10")
+
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["pragma"] == "no-cache"
+
+
 async def test_top_market_cap_defaults_limit_to_30(web_client, mock_web_ctx):
     with patch("view.web.routes.overseas_market._get_ctx", return_value=mock_web_ctx):
         _enable_overseas(mock_web_ctx)
