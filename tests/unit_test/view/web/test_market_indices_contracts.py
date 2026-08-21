@@ -121,6 +121,20 @@ def test_domestic_index_flow_is_wired_to_its_own_endpoint():
         assert label in script, f"{label} 수급 항목이 없음"
 
 
+def test_market_indices_rerenders_after_pjax_navigation():
+    script = _market_indices_js()
+
+    assert "pjax:ready" in script
+    assert "renderMarketIndices" in script
+
+
+def test_domestic_index_card_does_not_block_on_flow_query():
+    script = _market_indices_js()
+
+    assert "appendMarketIndexFlow(doc, card, entry.code).catch" in script
+    assert "await appendMarketIndexFlow(doc, card, entry.code)" not in script
+
+
 def test_market_index_flow_route_exists():
     routes = Path("view/web/routes/stock.py").read_text(encoding="utf-8")
 

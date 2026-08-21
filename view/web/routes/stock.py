@@ -164,7 +164,14 @@ async def get_market_index(index_code: str, period: str = "1D"):
     period: 1D(10분봉) / 1W / 1M / 1Y
     """
     ctx = _get_ctx()
-    resp = await ctx.stock_query_service.get_index_chart(index_code, period=period)
+    try:
+        resp = await asyncio.wait_for(
+            ctx.stock_query_service.get_index_chart(index_code, period=period),
+            timeout=12.0,
+        )
+    except asyncio.TimeoutError:
+        ctx.logger.warning(f"[stock] 지수 차트 조회 타임아웃 ({index_code}, {period}, 12s 초과)")
+        return {"rt_cd": "1", "msg1": "지수 API 응답 시간이 초과되었습니다.", "data": None}
     return _serialize_response(resp)
 
 
@@ -175,7 +182,14 @@ async def get_market_index_flow(index_code: str):
     기간과 무관한 값이라 차트와 별도 엔드포인트로 둔다.
     """
     ctx = _get_ctx()
-    resp = await ctx.stock_query_service.get_index_flow(index_code)
+    try:
+        resp = await asyncio.wait_for(
+            ctx.stock_query_service.get_index_flow(index_code),
+            timeout=12.0,
+        )
+    except asyncio.TimeoutError:
+        ctx.logger.warning(f"[stock] 지수 수급 조회 타임아웃 ({index_code}, 12s 초과)")
+        return {"rt_cd": "1", "msg1": "지수 수급 API 응답 시간이 초과되었습니다.", "data": None}
     return _serialize_response(resp)
 
 

@@ -346,7 +346,7 @@ async function buildMarketIndexKisCard(doc, entry) {
     card.appendChild(body);
 
     await selectMarketIndexPeriod(card, entry.code, MARKET_INDEX_DEFAULT_PERIOD);
-    await appendMarketIndexFlow(doc, card, entry.code);
+    appendMarketIndexFlow(doc, card, entry.code).catch(() => {});
     return card;
 }
 
@@ -383,3 +383,4 @@ async function renderMarketIndices() {
 }
 
 document.addEventListener('DOMContentLoaded', renderMarketIndices);
+document.addEventListener('pjax:ready', renderMarketIndices);

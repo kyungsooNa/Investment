@@ -119,6 +119,36 @@ async def test_get_stock_detail_timeout(web_client, mock_web_ctx):
     assert "초과" in json_resp["msg1"]
 
 
+@pytest.mark.asyncio
+async def test_get_market_index_timeout(web_client, mock_web_ctx):
+    """GET /api/market-index/{index_code}은 타임아웃 시 에러 응답을 반환한다."""
+    import asyncio
+
+    mock_web_ctx.stock_query_service.get_index_chart.side_effect = asyncio.TimeoutError()
+
+    response = web_client.get("/api/market-index/0001?period=1D")
+
+    assert response.status_code == 200
+    json_resp = response.json()
+    assert json_resp["rt_cd"] == "1"
+    assert "초과" in json_resp["msg1"]
+
+
+@pytest.mark.asyncio
+async def test_get_market_index_flow_timeout(web_client, mock_web_ctx):
+    """GET /api/market-index/{index_code}/flow는 타임아웃 시 에러 응답을 반환한다."""
+    import asyncio
+
+    mock_web_ctx.stock_query_service.get_index_flow.side_effect = asyncio.TimeoutError()
+
+    response = web_client.get("/api/market-index/0001/flow")
+
+    assert response.status_code == 200
+    json_resp = response.json()
+    assert json_resp["rt_cd"] == "1"
+    assert "초과" in json_resp["msg1"]
+
+
 def test_ai_stock_analysis_requires_enabled_ai(web_client, mock_web_ctx):
     mock_web_ctx.ai_stock_analyzer = None
 
