@@ -263,6 +263,7 @@ class PriceStreamService:
                     stock_code,
                     price=current_price,
                     rate=realtime_data.get('전일대비율'),
+                    change=realtime_data.get('전일대비'),
                     sign=realtime_data.get('전일대비부호'),
                     is_upper_limit=self._is_upper_limit_tick(realtime_data),
                 )
@@ -412,6 +413,7 @@ class PriceStreamService:
                     code,
                     price=price,
                     rate=rate,
+                    change=change,
                     sign=sign,
                     is_upper_limit=self._is_upper_limit_snapshot(rate, sign),
                 )

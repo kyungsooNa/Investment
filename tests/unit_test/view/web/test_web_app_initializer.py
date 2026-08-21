@@ -516,6 +516,7 @@ async def test_refresh_price_from_rest_evaluates_favorite_alert(mock_deps):
     ctx.favorite_price_alert_service.handle_price_tick.assert_awaited_once_with(
         "080220",
         price="50200",
+        change="-4900",
         rate="-8.89",
         sign="5",
     )
@@ -1233,6 +1234,7 @@ def test_web_realtime_callback_evaluates_favorite_alert_from_program_trading_pri
     mock_schedule.assert_called_once_with(
         "080220",
         price="85300",
+        change="-5100",
         rate="-5.64",
         sign="5",
     )
@@ -1250,6 +1252,7 @@ def test_schedule_favorite_alert_from_program_price_creates_task(mock_deps):
         ctx._schedule_favorite_alert_from_program_price(
             "080220",
             price="85300",
+            change="-5100",
             rate="-5.64",
             sign="5",
         )
@@ -1257,6 +1260,7 @@ def test_schedule_favorite_alert_from_program_price_creates_task(mock_deps):
     ctx.favorite_price_alert_service.handle_price_tick.assert_called_once_with(
         "080220",
         price="85300",
+        change="-5100",
         rate="-5.64",
         sign="5",
     )

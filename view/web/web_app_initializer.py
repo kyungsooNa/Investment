@@ -547,6 +547,7 @@ class WebAppContext:
                         self._schedule_favorite_alert_from_program_price(
                             code,
                             price=item.get('price'),
+                            change=item.get('change'),
                             rate=item.get('rate'),
                             sign=item.get('sign'),
                         )
@@ -559,7 +560,7 @@ class WebAppContext:
         if self.streaming_service:
             self.streaming_service.dispatch_realtime_message(data)
 
-    def _schedule_favorite_alert_from_program_price(self, code: str, *, price, rate, sign) -> None:
+    def _schedule_favorite_alert_from_program_price(self, code: str, *, price, change, rate, sign) -> None:
         """프로그램매매 프레임에 보강된 가격으로 관심종목 등락률 알림을 평가한다."""
         if not code or price is None or rate is None or not self.favorite_price_alert_service:
             return
@@ -569,6 +570,7 @@ class WebAppContext:
                 self.favorite_price_alert_service.handle_price_tick(
                     code,
                     price=price,
+                    change=change,
                     rate=rate,
                     sign=sign,
                 )
@@ -692,6 +694,7 @@ class WebAppContext:
             await self.favorite_price_alert_service.handle_price_tick(
                 code,
                 price=price,
+                change=_get("prdy_vrss", "0"),
                 rate=_get("prdy_ctrt", "0.00"),
                 sign=_get("prdy_vrss_sign", "3"),
             )
