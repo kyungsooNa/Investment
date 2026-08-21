@@ -252,6 +252,24 @@ async function searchStock(codeOverride, exchangeOverride) {
                     margin: 0.4rem 0; display: flex; justify-content: space-between;
                 }
                  .stock-info-box .detail-group p strong { color: var(--text-secondary); }
+                .stock-info-box .detail-group p.day-range-row {
+                    align-items: center; gap: 0.6rem; margin: 0.45rem 0;
+                    padding: 0.35rem 0.6rem; border-radius: 6px; border-left: 4px solid transparent;
+                }
+                .stock-info-box .detail-group p.day-range-row.high {
+                    background-color: rgba(233, 69, 96, 0.12); border-left-color: #e94560;
+                }
+                .stock-info-box .detail-group p.day-range-row.low {
+                    background-color: rgba(30, 144, 255, 0.12); border-left-color: #1e90ff;
+                }
+                .stock-info-box .detail-group p.day-range-row strong { font-weight: 700; white-space: nowrap; }
+                .stock-info-box .detail-group p.day-range-row.high strong { color: #e94560; }
+                .stock-info-box .detail-group p.day-range-row.low strong { color: #1e90ff; }
+                .stock-info-box .detail-group .day-range-val {
+                    font-size: 1.25rem; font-weight: 700; line-height: 1.2;
+                }
+                .stock-info-box .detail-group p.day-range-row.high .day-range-val { color: #e94560; }
+                .stock-info-box .detail-group p.day-range-row.low .day-range-val { color: #1e90ff; }
                  .stock-info-box .price.text-red { color: #e94560; }
                  .stock-info-box .price.text-blue { color: #1e90ff; }
                  .fav-star-btn {
@@ -396,8 +414,8 @@ async function searchStock(codeOverride, exchangeOverride) {
                     <div class="detail-group">
                         <h4>📊 당일 시세</h4>
                         <p><strong>시가:</strong> <span>${fnum(data.open)}</span></p>
-                        <p><strong>고가:</strong> <span id="rt-high">${fnum(data.high)}</span></p>
-                        <p><strong>저가:</strong> <span id="rt-low">${fnum(data.low)}</span></p>
+                        <p class="day-range-row high"><strong>고가:</strong> <span id="rt-high" class="day-range-val">${fnum(data.high)}</span></p>
+                        <p class="day-range-row low"><strong>저가:</strong> <span id="rt-low" class="day-range-val">${fnum(data.low)}</span></p>
                         <p><strong>기준가:</strong> <span>${fnum(data.prev_close)}</span></p>
                     </div>
                     <div class="detail-group">
