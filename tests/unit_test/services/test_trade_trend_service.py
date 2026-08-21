@@ -434,6 +434,52 @@ async def test_national_web_client_discovers_tradedata_links_and_reads_hwpx_atta
 
 
 @pytest.mark.asyncio
+async def test_national_web_client_coalesces_same_period_from_customs_and_tradedata():
+    customs_list_html = """
+    <a href="javascript:" data-id="10173983" data-url="official" class="nttInfoBtn"
+       title="2026년 8월 1일 ~ 8월 20일 수출입 현황 [잠정치]">
+        2026년 8월 1일 ~ 8월 20일 수출입 현황 [잠정치]
+    </a>
+    """
+    tradedata_list_html = """
+    <a href="javascript:ets_f_prccMenuAdmin('/cts/hmpg/openETS0100210Q.do',
+        {blbrTpcd:'21', ntarSrno:'2414', menuId:'ETS_MNK_50100000'});">
+        [잠정치] 2026년 8월(1~20일) 수출입 현황
+    </a>
+    """
+    detail_html = """
+    동기간 수출은 552억 달러로 전년동기대비 56.0% 증가, 수입은 412억 달러로
+    19.0% 증가했으며, 무역수지는 140억 달러 흑자
+    """
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(
+        side_effect=[
+            DummyTextResponse(customs_list_html),
+            DummyTextResponse(tradedata_list_html),
+            DummyTextResponse(detail_html),
+            DummyTextResponse(detail_html),
+        ]
+    )
+    client = NationalTradeTrendWebClient(
+        http_client=http_client,
+        list_urls=[
+            "https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362",
+            "https://tradedata.go.kr/cts/index.do",
+        ],
+        max_detail_pages=5,
+    )
+
+    releases = await client.fetch_recent_releases()
+
+    assert len(releases) == 1
+    assert releases[0].period_label == "2026년 8월 1~20일"
+    assert releases[0].url == (
+        "https://www.customs.go.kr/kcs/na/ntt/selectNttInfo.do"
+        "?bbsId=1362&mi=2891&nttSn=10173983&nttSnUrl=official"
+    )
+
+
+@pytest.mark.asyncio
 async def test_national_web_client_calculates_previous_month_changes_for_same_phase():
     list_html = """
     <a href="/now">2026년 8월 1일 ~ 8월 10일 수출입 현황 [잠정치]</a>

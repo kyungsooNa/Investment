@@ -241,7 +241,7 @@ class NationalTradeTrendWebClient:
             if release.export_amount_100m_usd is None and release.import_amount_100m_usd is None:
                 continue
             releases.append(release)
-        return _attach_previous_month_changes(releases)
+        return _attach_previous_month_changes(_coalesce_duplicate_period_releases(releases))
 
     async def _fetch_text(self, url: str) -> str:
         if self._http_client is not None:
@@ -477,6 +477,32 @@ def _attach_previous_month_changes(
             )
         )
     return enriched
+
+
+def _coalesce_duplicate_period_releases(
+    releases: list[NationalTradeTrendRelease],
+) -> list[NationalTradeTrendRelease]:
+    by_period: dict[tuple[str, str], NationalTradeTrendRelease] = {}
+    order: list[tuple[str, str]] = []
+    for release in releases:
+        key = (release.phase, release.period_label)
+        if key not in by_period:
+            by_period[key] = release
+            order.append(key)
+            continue
+        if _release_preference_score(release) > _release_preference_score(by_period[key]):
+            by_period[key] = release
+    return [by_period[key] for key in order]
+
+
+def _release_preference_score(release: NationalTradeTrendRelease) -> int:
+    if "www.customs.go.kr" in release.url:
+        return 3
+    if "motir.go.kr" in release.url or "motie.go.kr" in release.url:
+        return 2
+    if "tradedata.go.kr" in release.url:
+        return 1
+    return 0
 
 
 def _float(pattern: str, text: str) -> Optional[float]:
