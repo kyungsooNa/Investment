@@ -116,9 +116,9 @@ class FavoriteService:
     async def get_with_details(self, market: str = MARKET_DOMESTIC) -> list:
         """관심종목 목록에 종목명·현재가·등락률을 포함하여 반환.
 
-        1단계: StockRepository 메모리 캐시 (stock_price_repository, 즉시)
-        2단계: StockRepository DB 스냅샷 (장마감 후 일봉 데이터)
-        3단계: 개별 current_price API 호출 (5초 timeout, 실전/모의 공통)
+        1단계: StockQueryService 현재가 조회 (신선 WebSocket snapshot 우선, REST fallback)
+        2단계: StockRepository 메모리 캐시 (stock_price_repository, 즉시)
+        3단계: StockRepository DB 스냅샷 (장마감 후 일봉 데이터)
         stock_query_service 없으면 종목명만 반환 (graceful degradation).
         """
         if market == MARKET_OVERSEAS_US:
@@ -143,34 +143,7 @@ class FavoriteService:
 
         missing = list(codes)
 
-        # 1단계: 메모리 캐시 (TTL 무제한 — 장마감 후 마지막 틱도 활용)
-        if self.stock_repository:
-            still_missing = []
-            for code in missing:
-                cached = self.stock_repository.get_current_price(code, max_age_sec=float("inf"), count_stats=False)
-                if cached:
-                    price, rate = _extract_price_rate(cached)
-                    result[code]["price"] = price
-                    result[code]["rate"] = rate
-                else:
-                    still_missing.append(code)
-            missing = still_missing
-
-        # 2단계: DB 스냅샷 (장마감 후 일봉)
-        if missing and self.stock_repository:
-            still_missing = []
-            snapshot_tasks = [self.stock_repository.get_latest_daily_snapshot(code) for code in missing]
-            snapshots = await asyncio.gather(*snapshot_tasks, return_exceptions=True)
-            for code, snap in zip(missing, snapshots):
-                if isinstance(snap, Exception) or not snap:
-                    still_missing.append(code)
-                    continue
-                price, rate = _extract_price_rate(snap)
-                result[code]["price"] = price
-                result[code]["rate"] = rate
-            missing = still_missing
-
-        # 3단계: 개별 API 호출 (5초 timeout)
+        # 1단계: StockQueryService 현재가 조회 (5초 timeout)
         if missing and self.stock_query_service:
             async def _fetch(code):
                 try:
@@ -183,12 +156,43 @@ class FavoriteService:
                 except Exception:
                     return None
 
+            still_missing = []
             responses = await asyncio.gather(*[_fetch(c) for c in missing])
             for code, resp in zip(missing, responses):
                 if resp and resp.rt_cd == "0" and resp.data:
                     price, rate = _extract_price_rate(resp.data)
                     result[code]["price"] = price
                     result[code]["rate"] = rate
+                else:
+                    still_missing.append(code)
+            missing = still_missing
+
+        # 2단계: 메모리 캐시 (서비스 미주입/조회 실패 시 graceful fallback)
+        if missing and self.stock_repository:
+            still_missing = []
+            for code in missing:
+                cached = self.stock_repository.get_current_price(code, max_age_sec=3.0, count_stats=False)
+                if cached:
+                    price, rate = _extract_price_rate(cached)
+                    result[code]["price"] = price
+                    result[code]["rate"] = rate
+                else:
+                    still_missing.append(code)
+            missing = still_missing
+
+        # 3단계: DB 스냅샷 (장마감 후 일봉)
+        if missing and self.stock_repository:
+            still_missing = []
+            snapshot_tasks = [self.stock_repository.get_latest_daily_snapshot(code) for code in missing]
+            snapshots = await asyncio.gather(*snapshot_tasks, return_exceptions=True)
+            for code, snap in zip(missing, snapshots):
+                if isinstance(snap, Exception) or not snap:
+                    still_missing.append(code)
+                    continue
+                price, rate = _extract_price_rate(snap)
+                result[code]["price"] = price
+                result[code]["rate"] = rate
+            missing = still_missing
 
         # 4단계: RS Rating 점수 조회 및 병합
         if self.rs_rating_service:

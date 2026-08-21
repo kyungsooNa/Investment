@@ -138,6 +138,36 @@ async def test_get_with_details_with_price(mock_repo, mock_stock_code_repo):
     assert result[0]["rate"] == "1.5"
 
 
+async def test_get_with_details_prefers_stock_query_over_stale_repository_cache(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    mock_repo.get_all.return_value = ["005935"]
+    mock_stock_repo.get_current_price.return_value = {
+        "output": {"stck_shrn_iscd": "005935", "stck_prpr": "205000", "prdy_ctrt": "7.22"}
+    }
+    mock_query = AsyncMock()
+    mock_query.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK",
+        data={"output": {"stck_shrn_iscd": "005935", "stck_prpr": "206500", "prdy_ctrt": "8.01"}},
+    )
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_query_service=mock_query,
+        stock_repository=mock_stock_repo,
+    )
+
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] == "206500"
+    assert result[0]["rate"] == "8.01"
+    mock_query.get_current_price.assert_awaited_once_with(
+        "005935", count_stats=False, caller="FavoriteService"
+    )
+    mock_stock_repo.get_current_price.assert_not_called()
+
+
 async def test_get_with_details_price_api_failure(mock_repo, mock_stock_code_repo):
     """stock_query_service 예외 발생 시 price=None으로 graceful degradation."""
     mock_repo.get_all.return_value = ["005930"]
@@ -187,7 +217,7 @@ async def test_get_with_details_step1_memory_cache_hit(mock_repo, mock_stock_cod
     assert len(result) == 1
     assert result[0]["price"] == "70000"
     assert result[0]["rate"] == "2.5"
-    mock_stock_repo.get_current_price.assert_called_once_with("005930", max_age_sec=float("inf"), count_stats=False)
+    mock_stock_repo.get_current_price.assert_called_once_with("005930", max_age_sec=3.0, count_stats=False)
     mock_stock_repo.get_latest_daily_snapshot.assert_not_called()
 
 
