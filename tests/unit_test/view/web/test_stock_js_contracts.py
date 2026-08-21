@@ -36,3 +36,19 @@ def test_ai_analysis_requests_allow_server_retry_and_hide_abort_message():
     assert stock_js.count("60000,") >= 2
     assert "isAiRequestAbort(error)" in stock_js
     assert "AI 응답 시간이 초과되었습니다. 다시 시도해주세요." in stock_js
+
+
+def test_daily_price_high_low_are_visually_emphasized():
+    """당일 시세의 고가·저가는 강조 마크업과 전용 스타일을 갖는다."""
+    stock_js = Path("view/web/static/js/stock.js").read_text(encoding="utf-8")
+
+    # 강조 마크업 (고가=상승색, 저가=하락색 행)
+    assert 'class="day-range-row high"' in stock_js
+    assert 'class="day-range-row low"' in stock_js
+    assert 'id="rt-high" class="day-range-val"' in stock_js
+    assert 'id="rt-low" class="day-range-val"' in stock_js
+
+    # 강조 스타일 정의
+    assert ".stock-info-box .detail-group p.day-range-row.high" in stock_js
+    assert ".stock-info-box .detail-group p.day-range-row.low" in stock_js
+    assert ".stock-info-box .detail-group .day-range-val" in stock_js
