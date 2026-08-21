@@ -50,7 +50,7 @@ class PriceStreamService:
         self._orderbook_recorder = orderbook_recorder
         self._latest_prices: Dict[str, dict] = {}
         self._latest_conclusions: Dict[str, dict] = {}  # code → conclusion snapshot dict
-        self._sse_queues: Dict[str, List[asyncio.Queue]] = {}  # code → SSE 구독 큐 목록
+        self._sse_queues: Dict[tuple, List[asyncio.Queue]] = {}  # (code, exchange) → SSE 구독 큐 목록
         self._last_tick_ts: Dict[str, float] = {}
         self._last_any_tick_ts: float = 0.0
         self._subscription_requested_ts: Dict[str, float] = {}
@@ -140,6 +140,13 @@ class PriceStreamService:
         if not stock_code or not current_price:
             key = str(stock_code).strip() if stock_code else "__unknown__"
             self._tick_ingest_malformed[key] = self._tick_ingest_malformed.get(key, 0) + 1
+            return
+
+        exchange = self._tick_exchange(realtime_data)
+        if exchange != 'UN':
+            # 거래소 지정 틱(KRX/NXT)은 화면 표시 전용이다. 종목코드 단위 공유 캐시·저장소는
+            # 통합(H0UNCNT0) 기준이므로 오염시키지 않고 같은 거래소 SSE 큐로만 전달한다.
+            self._fanout_sse_tick(stock_code, exchange, self._build_sse_tick(stock_code, realtime_data))
             return
 
         self._tick_ingest_received[stock_code] = self._tick_ingest_received.get(stock_code, 0) + 1
@@ -238,23 +245,7 @@ class PriceStreamService:
         except Exception as e:
             self._logger.warning(f"StockRepository 실시간 틱 캐시 갱신 실패: {e}")
 
-        if stock_code in self._sse_queues:
-            tick = {
-                "code": stock_code,
-                "price": float(current_price),
-                "volume": vol_int,
-                "change": realtime_data.get('전일대비', '0'),
-                "rate": realtime_data.get('전일대비율', '0.00'),
-                "sign": realtime_data.get('전일대비부호', '3'),
-                "open": _sf(realtime_data.get('주식시가', '')) or 0.0,
-                "high": _sf(realtime_data.get('주식최고가', '')) or 0.0,
-                "low": _sf(realtime_data.get('주식최저가', '')) or 0.0,
-            }
-            for q in self._sse_queues[stock_code]:
-                try:
-                    q.put_nowait(tick)
-                except asyncio.QueueFull:
-                    pass
+        self._fanout_sse_tick(stock_code, 'UN', self._build_sse_tick(stock_code, realtime_data))
 
         if self._favorite_price_alert_service is not None:
             try:
@@ -485,16 +476,56 @@ class PriceStreamService:
 
         return sorted(stale_codes)
 
-    def create_subscriber_queue(self, code: str) -> asyncio.Queue:
+    @staticmethod
+    def _tick_exchange(realtime_data: dict) -> str:
+        """틱이 어느 거래소 스트림에서 왔는지 반환한다 (태그가 없으면 통합)."""
+        exchange = str(realtime_data.get('_exchange') or 'UN').upper()
+        return exchange if exchange in ('KRX', 'NXT', 'UN') else 'UN'
+
+    @staticmethod
+    def _build_sse_tick(stock_code: str, realtime_data: dict) -> dict:
+        """SSE로 내보낼 틱 payload를 구성한다."""
+        def _num(val, default=0.0) -> float:
+            try:
+                return float(val) if val and val != 'N/A' else default
+            except (ValueError, TypeError):
+                return default
+
+        return {
+            "code": stock_code,
+            "price": _num(realtime_data.get('주식현재가')),
+            "volume": int(_num(realtime_data.get('누적거래량'))),
+            "change": realtime_data.get('전일대비', '0'),
+            "rate": realtime_data.get('전일대비율', '0.00'),
+            "sign": realtime_data.get('전일대비부호', '3'),
+            "open": _num(realtime_data.get('주식시가')),
+            "high": _num(realtime_data.get('주식최고가')),
+            "low": _num(realtime_data.get('주식최저가')),
+        }
+
+    def _fanout_sse_tick(self, code: str, exchange: str, tick: dict) -> None:
+        """해당 종목·거래소를 보고 있는 SSE 구독자에게만 틱을 전달한다."""
+        for q in self._sse_queues.get((code, exchange), []):
+            try:
+                q.put_nowait(tick)
+            except asyncio.QueueFull:
+                pass
+
+    def create_subscriber_queue(self, code: str, exchange: str = 'UN') -> asyncio.Queue:
         """SSE 클라이언트용 큐를 생성하고 등록한다."""
         queue: asyncio.Queue = asyncio.Queue()
-        self._sse_queues.setdefault(code, []).append(queue)
+        self._sse_queues.setdefault((code, exchange), []).append(queue)
         return queue
 
-    def remove_subscriber_queue(self, code: str, queue: asyncio.Queue) -> None:
+    def remove_subscriber_queue(self, code: str, queue: asyncio.Queue, exchange: str = 'UN') -> None:
         """SSE 클라이언트 큐를 제거한다. 구독자가 없으면 항목 삭제."""
-        queues = self._sse_queues.get(code, [])
+        key = (code, exchange)
+        queues = self._sse_queues.get(key, [])
         if queue in queues:
             queues.remove(queue)
         if not queues:
-            self._sse_queues.pop(code, None)
+            self._sse_queues.pop(key, None)
+
+    def subscriber_count(self, code: str, exchange: str = 'UN') -> int:
+        """해당 종목·거래소의 SSE 구독자 수를 반환한다."""
+        return len(self._sse_queues.get((code, exchange), []))

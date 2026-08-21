@@ -283,6 +283,22 @@ class StreamingService:
             self._price_stream_service.clear_subscription_state(code)
         return result
 
+    async def subscribe_exchange_price(self, code: str, exchange: str) -> bool:
+        """거래소 지정 체결가(KRX=H0STCNT0 / NXT=H0NXCNT0)를 구독한다 — 화면 표시 전용.
+
+        통합(H0UNCNT0) 구독은 PriceSubscriptionService 정책이 관리하고, 이 경로는
+        SSE 연결이 살아있는 동안에만 유지되는 별도 구독이다.
+        """
+        if exchange == "NXT":
+            return await self.broker.subscribe_nxt_price(code)
+        return await self.broker.subscribe_realtime_price(code)
+
+    async def unsubscribe_exchange_price(self, code: str, exchange: str) -> bool:
+        """거래소 지정 체결가 구독을 해지한다."""
+        if exchange == "NXT":
+            return await self.broker.unsubscribe_nxt_price(code)
+        return await self.broker.unsubscribe_realtime_price(code)
+
     async def subscribe_order_notice(self):
         """국내주식 체결통보 구독 (BrokerAPIWrapper 위임)."""
         return await self.broker.subscribe_order_notice()

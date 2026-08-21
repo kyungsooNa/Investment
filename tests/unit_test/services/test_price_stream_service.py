@@ -273,23 +273,23 @@ def test_create_subscriber_queue(price_stream_service):
     """큐 생성 후 해당 종목코드로 등록되는지 검증"""
     q = price_stream_service.create_subscriber_queue('005930')
     assert isinstance(q, asyncio.Queue)
-    assert q in price_stream_service._sse_queues['005930']
+    assert q in price_stream_service._sse_queues[('005930', 'UN')]
 
 
 def test_create_subscriber_queue_multiple(price_stream_service):
     """동일 종목에 복수의 큐 등록 가능한지 검증"""
     q1 = price_stream_service.create_subscriber_queue('005930')
     q2 = price_stream_service.create_subscriber_queue('005930')
-    assert len(price_stream_service._sse_queues['005930']) == 2
-    assert q1 in price_stream_service._sse_queues['005930']
-    assert q2 in price_stream_service._sse_queues['005930']
+    assert len(price_stream_service._sse_queues[('005930', 'UN')]) == 2
+    assert q1 in price_stream_service._sse_queues[('005930', 'UN')]
+    assert q2 in price_stream_service._sse_queues[('005930', 'UN')]
 
 
 def test_remove_subscriber_queue_cleans_up_empty_key(price_stream_service):
     """마지막 큐 제거 시 종목코드 항목이 삭제되는지 검증"""
     q = price_stream_service.create_subscriber_queue('005930')
     price_stream_service.remove_subscriber_queue('005930', q)
-    assert '005930' not in price_stream_service._sse_queues
+    assert ('005930', 'UN') not in price_stream_service._sse_queues
 
 
 def test_remove_subscriber_queue_keeps_remaining(price_stream_service):
@@ -297,7 +297,7 @@ def test_remove_subscriber_queue_keeps_remaining(price_stream_service):
     q1 = price_stream_service.create_subscriber_queue('005930')
     q2 = price_stream_service.create_subscriber_queue('005930')
     price_stream_service.remove_subscriber_queue('005930', q1)
-    assert price_stream_service._sse_queues['005930'] == [q2]
+    assert price_stream_service._sse_queues[('005930', 'UN')] == [q2]
 
 
 def test_remove_subscriber_queue_nonexistent_no_error(price_stream_service):
@@ -497,3 +497,51 @@ def test_on_price_tick_invalid_quality_not_cached(mock_stock_repo, mock_logger):
     assert svc.get_cached_price("005930") is None
     mock_stock_repo.update_realtime_data.assert_not_called()
     mock_logger.warning.assert_called()
+
+
+def test_exchange_specific_tick_only_feeds_matching_sse_queue(price_stream_service, mock_stock_repo):
+    """거래소 지정(KRX/NXT) 틱은 공유 캐시를 건드리지 않고 같은 거래소 SSE 큐로만 전달된다."""
+    krx_queue = price_stream_service.create_subscriber_queue('005930', exchange='KRX')
+    un_queue = price_stream_service.create_subscriber_queue('005930', exchange='UN')
+
+    price_stream_service.on_price_tick({
+        '유가증권단축종목코드': '005930',
+        '주식현재가': '70000',
+        '누적거래량': '1000',
+        '_exchange': 'KRX',
+    })
+
+    assert krx_queue.qsize() == 1
+    assert krx_queue.get_nowait()["price"] == 70000.0
+    assert un_queue.qsize() == 0
+    assert price_stream_service._latest_prices == {}
+    mock_stock_repo.update_realtime_data.assert_not_called()
+
+
+def test_unified_tick_does_not_feed_exchange_specific_queue(price_stream_service, mock_stock_repo):
+    """통합(UN) 틱은 기존 동작(캐시·저장소 갱신)을 유지하고 거래소 지정 큐로는 가지 않는다."""
+    krx_queue = price_stream_service.create_subscriber_queue('005930', exchange='KRX')
+    un_queue = price_stream_service.create_subscriber_queue('005930', exchange='UN')
+
+    price_stream_service.on_price_tick({
+        '유가증권단축종목코드': '005930',
+        '주식현재가': '70000',
+        '누적거래량': '1000',
+    })
+
+    assert un_queue.qsize() == 1
+    assert krx_queue.qsize() == 0
+    assert price_stream_service._latest_prices['005930']['price'] == '70000'
+    mock_stock_repo.update_realtime_data.assert_called_once()
+
+
+def test_subscriber_count_tracks_exchange_scope(price_stream_service):
+    """SSE 구독자 수는 거래소 단위로 집계된다 (구독 생성·해지 판단 근거)."""
+    assert price_stream_service.subscriber_count('005930', exchange='KRX') == 0
+
+    q = price_stream_service.create_subscriber_queue('005930', exchange='KRX')
+    assert price_stream_service.subscriber_count('005930', exchange='KRX') == 1
+    assert price_stream_service.subscriber_count('005930', exchange='UN') == 0
+
+    price_stream_service.remove_subscriber_queue('005930', q, exchange='KRX')
+    assert price_stream_service.subscriber_count('005930', exchange='KRX') == 0

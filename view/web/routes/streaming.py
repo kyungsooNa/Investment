@@ -59,8 +59,8 @@ def get_streaming_status():
 
 
 @router.get("/streaming/price/{code}")
-async def stream_stock_price(code: str, request: Request):
-    """SSE: 특정 종목 실시간 체결가를 브라우저로 스트리밍."""
+async def stream_stock_price(code: str, request: Request, exchange: str = "UN"):
+    """SSE: 특정 종목 실시간 체결가를 브라우저로 스트리밍. exchange=KRX|NXT|UN 선택 가능."""
     ctx = _get_ctx()
     stream_svc = getattr(ctx, "price_stream_service", None)
     sub_svc = getattr(ctx, "price_subscription_service", None)
@@ -68,10 +68,23 @@ async def stream_stock_price(code: str, request: Request):
     if not stream_svc:
         raise HTTPException(status_code=503, detail="PriceStreamService가 초기화되지 않았습니다")
 
-    queue = stream_svc.create_subscriber_queue(code)
+    exch = exchange.upper()
+    if exch not in ("KRX", "NXT", "UN"):
+        exch = "UN"
+    exchange_svc = getattr(ctx, "streaming_service", None) if exch != "UN" else None
+
+    queue = stream_svc.create_subscriber_queue(code, exchange=exch)
     category = f"sse_ui_{id(queue)}"
-    if sub_svc:
-        await sub_svc.add_subscription(code, SubscriptionPriority.LOW, category, StreamingType.UNIFIED_PRICE)
+    if exch == "UN":
+        if sub_svc:
+            await sub_svc.add_subscription(code, SubscriptionPriority.LOW, category, StreamingType.UNIFIED_PRICE)
+    elif exchange_svc and stream_svc.subscriber_count(code, exchange=exch) == 1:
+        # 통합 구독은 SubscriptionPolicy(40슬롯)가 관리한다. 거래소 지정 스트림은 화면 표시 전용이라
+        # 같은 종목·거래소의 첫 구독자일 때만 열고 마지막 구독자가 떠날 때 닫는다.
+        try:
+            await exchange_svc.subscribe_exchange_price(code, exch)
+        except Exception as e:
+            ctx.logger.warning(f"[streaming] 거래소 지정 구독 실패 ({code}/{exch}): {e}")
 
     async def event_generator():
         try:
@@ -89,8 +102,14 @@ async def stream_stock_price(code: str, request: Request):
         except asyncio.CancelledError:
             pass
         finally:
-            stream_svc.remove_subscriber_queue(code, queue)
-            if sub_svc:
-                await sub_svc.remove_subscription(code, category)
+            stream_svc.remove_subscriber_queue(code, queue, exchange=exch)
+            if exch == "UN":
+                if sub_svc:
+                    await sub_svc.remove_subscription(code, category)
+            elif exchange_svc and stream_svc.subscriber_count(code, exchange=exch) == 0:
+                try:
+                    await exchange_svc.unsubscribe_exchange_price(code, exch)
+                except Exception as e:
+                    ctx.logger.warning(f"[streaming] 거래소 지정 구독 해지 실패 ({code}/{exch}): {e}")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

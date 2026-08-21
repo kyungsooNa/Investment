@@ -3072,3 +3072,34 @@ async def test_get_subscription_ledger_classifies_price_pt_and_others(websocket_
     assert ledger["total"] == 6
     assert ledger["price_codes"] == {"005930", "000660"}
     assert ledger["program_trading_codes"] == {"005930"}
+
+
+@pytest.mark.parametrize("tr_id,expected_exchange", [
+    ("H0STCNT0", "KRX"),
+    ("H0NXCNT0", "NXT"),
+    ("H0UNCNT0", "UN"),
+])
+def test_realtime_price_tick_carries_exchange_tag(websocket_api_instance, tr_id, expected_exchange):
+    """체결 틱은 어느 거래소 스트림에서 왔는지 태그를 함께 전달한다."""
+    api = websocket_api_instance
+    api.on_realtime_message_callback = MagicMock()
+
+    api._handle_websocket_message(_make_realtime_price_message(tr_id))
+
+    called = api.on_realtime_message_callback.call_args[0][0]
+    assert called['type'] == 'realtime_price'
+    assert called['data']['_exchange'] == expected_exchange
+
+
+@pytest.mark.asyncio
+async def test_subscribe_nxt_price_uses_nxt_tr_id(websocket_api_instance):
+    """NXT 체결가 구독/해지는 H0NXCNT0을 사용한다."""
+    api = websocket_api_instance
+    api.send_realtime_request = AsyncMock(return_value=True)
+
+    assert await api.subscribe_nxt_price("005930") is True
+    api.send_realtime_request.assert_awaited_once_with("H0NXCNT0", "005930", tr_type="1")
+
+    api.send_realtime_request.reset_mock()
+    await api.unsubscribe_nxt_price("005930")
+    api.send_realtime_request.assert_awaited_once_with("H0NXCNT0", "005930", tr_type="2")
