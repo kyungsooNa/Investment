@@ -36,6 +36,27 @@ opening_position_reconcile:
 # 실전/모의 선택 (true: 모의, false: 실전)
 is_paper_trading: true
 
+# 키움증권 REST API
+# 키움 REST API 포털에서 API 사용신청 후 App Key / Secret을 발급받아 입력하세요.
+# 운영(real)과 모의투자(paper)는 키가 다르므로 사용할 환경별로 각각 발급/등록합니다.
+kiwoom:
+  is_paper_trading: true
+  paper:
+    app_key: ""
+    app_secret: ""
+    account_no: ""
+    base_url: "https://mockapi.kiwoom.com"
+    websocket_url: "wss://mockapi.kiwoom.com:10000"
+  real:
+    app_key: ""
+    app_secret: ""
+    account_no: ""
+    base_url: "https://api.kiwoom.com"
+    websocket_url: "wss://api.kiwoom.com:10000"
+  token:
+    paper_path: "config/token_kiwoom_paper.json"
+    real_path: "config/token_kiwoom_real.json"
+
 # 외부 공개 정책. 모든 값은 누락 시 fail-close 기본값을 사용합니다.
 deployment:
   public_mode: false

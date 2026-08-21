@@ -389,6 +389,38 @@ def test_initialization_success(mock_stock_mapper, mock_client, mock_env, mock_l
     assert wrapper._stock_mapper is mock_stock_mapper.return_value  # _stock_mapper가 mock_stock_mapper 인스턴스를 참조하는지 확인
 
 
+def test_initialization_success_for_kiwoom(mock_env, mock_logger, mock_market_clock, mock_mcs):
+    """kiwoom 브로커 선택 시 KiwoomApiClient가 생성되고 공통 래퍼가 적용되는지 검증합니다."""
+    with patch(f"{wrapper_module.__name__}.StockCodeRepository"), \
+         patch(f"{wrapper_module.__name__}.KiwoomApiClient") as mock_client_class, \
+         patch(f"{wrapper_module.__name__}.cache_wrap_client", side_effect=lambda c, *a, **kw: c) as mock_cache, \
+         patch(f"{wrapper_module.__name__}.retry_queue_wrap_client", side_effect=lambda c, *a, **kw: c) as mock_retry:
+
+        wrapper = BrokerAPIWrapper(
+            broker="kiwoom",
+            env=mock_env,
+            logger=mock_logger,
+            market_clock=mock_market_clock,
+            market_calendar_service=mock_mcs,
+        )
+
+        mock_client_class.assert_called_once_with(
+            mock_env,
+            mock_logger,
+            mock_market_clock,
+            mock_mcs,
+            streaming_logger=None,
+        )
+        mock_retry.assert_called_once()
+        mock_cache.assert_called_once()
+        assert wrapper._client is mock_client_class.return_value
+
+
+def test_initialization_kiwoom_requires_env(mock_logger):
+    with pytest.raises(ValueError, match="Kiwoom API"):
+        BrokerAPIWrapper(broker="kiwoom", env=None, logger=mock_logger)
+
+
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
 @patch(f"{wrapper_module.__name__}.StockCodeRepository")
 def test_initialization_with_injected_stock_code_repository(mock_stock_mapper, mock_client, mock_env, mock_logger, mock_market_clock):
