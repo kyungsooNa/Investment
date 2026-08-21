@@ -161,8 +161,8 @@ async def test_stream_price_yields_tick_and_cleanup():
             events.append(chunk)
 
     assert any(f"data: {json.dumps(tick_data)}" in e for e in events)
-    mock_stream_svc.create_subscriber_queue.assert_called_once_with("005930")
-    mock_stream_svc.remove_subscriber_queue.assert_called_once_with("005930", real_queue)
+    mock_stream_svc.create_subscriber_queue.assert_called_once_with("005930", exchange="UN")
+    mock_stream_svc.remove_subscriber_queue.assert_called_once_with("005930", real_queue, exchange="UN")
     mock_sub_svc.remove_subscription.assert_awaited_once()
 
 
@@ -220,4 +220,65 @@ async def test_stream_price_works_without_sub_svc():
         async for _ in response.body_iterator:
             pass
 
-    mock_stream_svc.remove_subscriber_queue.assert_called_once_with("005930", real_queue)
+    mock_stream_svc.remove_subscriber_queue.assert_called_once_with("005930", real_queue, exchange="UN")
+
+
+async def test_stream_price_exchange_specific_uses_exchange_stream():
+    """KRX/NXT 탭 SSE는 통합 구독 정책 대신 거래소 지정 스트림을 직접 구독·해지한다."""
+    real_queue = asyncio.Queue()
+    mock_stream_svc = MagicMock()
+    mock_stream_svc.create_subscriber_queue.return_value = real_queue
+    mock_stream_svc.subscriber_count.side_effect = [1, 0]
+    mock_sub_svc = AsyncMock()
+    mock_streaming_svc = AsyncMock()
+
+    ctx = MagicMock()
+    ctx.price_stream_service = mock_stream_svc
+    ctx.price_subscription_service = mock_sub_svc
+    ctx.streaming_service = mock_streaming_svc
+
+    mock_request = MagicMock()
+    mock_request.is_disconnected = AsyncMock(return_value=True)
+
+    with patch("view.web.routes.streaming._get_ctx", return_value=ctx), \
+         patch("view.web.routes.streaming.SSE_KEEPALIVE_TIMEOUT_SEC", 0.01), \
+         patch("asyncio.wait_for", new_callable=AsyncMock) as mock_wait_for:
+        mock_wait_for.side_effect = asyncio.TimeoutError()
+
+        response = await stream_stock_price("005930", mock_request, exchange="KRX")
+        async for _ in response.body_iterator:
+            pass
+
+    mock_stream_svc.create_subscriber_queue.assert_called_once_with("005930", exchange="KRX")
+    mock_streaming_svc.subscribe_exchange_price.assert_awaited_once_with("005930", "KRX")
+    mock_streaming_svc.unsubscribe_exchange_price.assert_awaited_once_with("005930", "KRX")
+    mock_sub_svc.add_subscription.assert_not_awaited()
+
+
+async def test_stream_price_exchange_specific_shares_one_subscription():
+    """같은 종목·거래소에 구독자가 남아 있으면 스트림 구독을 유지한다."""
+    real_queue = asyncio.Queue()
+    mock_stream_svc = MagicMock()
+    mock_stream_svc.create_subscriber_queue.return_value = real_queue
+    mock_stream_svc.subscriber_count.side_effect = [2, 1]
+    mock_streaming_svc = AsyncMock()
+
+    ctx = MagicMock()
+    ctx.price_stream_service = mock_stream_svc
+    ctx.price_subscription_service = AsyncMock()
+    ctx.streaming_service = mock_streaming_svc
+
+    mock_request = MagicMock()
+    mock_request.is_disconnected = AsyncMock(return_value=True)
+
+    with patch("view.web.routes.streaming._get_ctx", return_value=ctx), \
+         patch("view.web.routes.streaming.SSE_KEEPALIVE_TIMEOUT_SEC", 0.01), \
+         patch("asyncio.wait_for", new_callable=AsyncMock) as mock_wait_for:
+        mock_wait_for.side_effect = asyncio.TimeoutError()
+
+        response = await stream_stock_price("005930", mock_request, exchange="NXT")
+        async for _ in response.body_iterator:
+            pass
+
+    mock_streaming_svc.subscribe_exchange_price.assert_not_awaited()
+    mock_streaming_svc.unsubscribe_exchange_price.assert_not_awaited()

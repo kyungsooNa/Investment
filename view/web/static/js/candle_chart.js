@@ -568,11 +568,10 @@ function subscribeRealtimePrice(code) {
         priceEventSource = null;
     }
 
-    // 실시간 틱은 통합(H0UNCNT0) 체결가라 KRX/NXT 탭에 반영하면 통합 시세로 움직인다.
+    // 선택한 거래소의 체결 스트림만 구독한다 (KRX=H0STCNT0 / NXT=H0NXCNT0 / 통합=H0UNCNT0).
     const exch = (typeof _currentExchange !== 'undefined') ? _currentExchange : 'UN';
-    if (exch !== 'UN') return;
 
-    priceEventSource = new EventSource(`/api/streaming/price/${code}`);
+    priceEventSource = new EventSource(`/api/streaming/price/${code}?exchange=${exch}`);
 
     priceEventSource.onmessage = function (event) {
         const tick = JSON.parse(event.data);

@@ -302,12 +302,15 @@ class KoreaInvestWebSocketAPI:
             # --- 주식 관련 실시간 데이터 파싱 ---
             if tr_id == self._rt_tr_realtime_price:  # H0STCNT0 (주식 체결)
                 parsed_data = self._parse_stock_contract_data(data_body)
+                parsed_data['_exchange'] = 'KRX'
                 message_type = 'realtime_price'
             elif tr_id == self._rt_tr_unified_realtime_price:  # H0UNCNT0 (KRX+NXT 통합 체결)
                 parsed_data = self._parse_stock_contract_data(data_body)  # H0STCNT0와 동일 포맷
+                parsed_data['_exchange'] = 'UN'
                 message_type = 'realtime_price'
             elif tr_id == self._rt_tr_nxt_realtime_price:  # H0NXCNT0 (NXT 주식 체결)
                 parsed_data = self._parse_stock_contract_data(data_body)
+                parsed_data['_exchange'] = 'NXT'
                 message_type = 'realtime_price'
             elif tr_id == self._rt_tr_realtime_quote:  # H0STASP0 (주식 호가)
                 parsed_data = self._parse_stock_quote_data(data_body)
@@ -1052,6 +1055,18 @@ class KoreaInvestWebSocketAPI:
         """실시간 통합 체결가(H0UNCNT0) 구독을 해지합니다."""
         tr_id = self._env.active_config['tr_ids']['websocket'].get('unified_realtime_price', 'H0UNCNT0')
         self._logger.info(f"종목 {stock_code} 통합 체결가 구독 해지 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
+
+    async def subscribe_nxt_price(self, stock_code: str) -> bool:
+        """실시간 NXT 체결가(H0NXCNT0)를 구독합니다."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('nxt_realtime_price', 'H0NXCNT0')
+        self._logger.info(f"종목 {stock_code} NXT 체결가 구독 요청 ({tr_id})...")
+        return await self.send_realtime_request(tr_id, stock_code, tr_type="1")
+
+    async def unsubscribe_nxt_price(self, stock_code: str) -> bool:
+        """실시간 NXT 체결가(H0NXCNT0) 구독을 해지합니다."""
+        tr_id = self._env.active_config['tr_ids']['websocket'].get('nxt_realtime_price', 'H0NXCNT0')
+        self._logger.info(f"종목 {stock_code} NXT 체결가 구독 해지 ({tr_id})...")
         return await self.send_realtime_request(tr_id, stock_code, tr_type="2")
 
     async def subscribe_index_futures_contract(self, futures_code: str) -> bool:
