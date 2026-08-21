@@ -1,6 +1,7 @@
 # user_api/broker_api_wrapper.py
 
 from brokers.korea_investment.korea_invest_client import KoreaInvestApiClient
+from brokers.kiwoom.kiwoom_client import KiwoomApiClient
 from repositories.stock_code_repository import StockCodeRepository
 from typing import Any, List, Optional, TYPE_CHECKING
 from common.types import ResCommonResponse, Exchange, ErrorCode
@@ -54,8 +55,20 @@ class BrokerAPIWrapper:
                 env, logger, market_clock, market_calendar_service,
                 streaming_logger=streaming_logger,
             )
+        elif broker == "kiwoom":
+            if env is None:
+                raise ValueError("Kiwoom API를 사용하려면 env 인스턴스가 필요합니다.")
+
+            self._client = KiwoomApiClient(
+                env, logger, market_clock, market_calendar_service,
+                streaming_logger=streaming_logger,
+            )
+        else:
+            raise NotImplementedError(f"지원되지 않는 증권사: {broker}")
+
+        if broker in ("korea_investment", "kiwoom"):
             # RetryQueue는 Cache 안쪽에 위치: 캐시 히트 시 Queue를 거치지 않고,
-            # 캐시 miss 후 실제 API 호출 실패 시에만 KoreaInvestApiClient를 직접 재시도
+            # 캐시 miss 후 실제 API 호출 실패 시에만 브로커 클라이언트를 직접 재시도
             self._api_budget_limiter = self._api_budget_limiter or ApiBudgetLimiter()
             self._retry_queue = ApiRequestQueue(logger=logger)
             self._client = retry_queue_wrap_client(
@@ -71,9 +84,6 @@ class BrokerAPIWrapper:
                 config=cache_config,
                 market_calendar_service=market_calendar_service
             )
-
-        else:
-            raise NotImplementedError(f"지원되지 않는 증권사: {broker}")
 
     async def stop(self):
         """이벤트 루프 종료 전 대기 중인 재시도 태스크를 정리합니다."""
