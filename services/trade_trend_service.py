@@ -44,6 +44,25 @@ class JejuSemiconductorTradeReport:
 
 
 @dataclass(frozen=True)
+class JejuRegionTradeMonth:
+    period: str
+    export_amount_usd: int
+    import_amount_usd: int
+    trade_balance_usd: int
+    export_mom_pct: Optional[float] = None
+    export_yoy_pct: Optional[float] = None
+    import_mom_pct: Optional[float] = None
+    import_yoy_pct: Optional[float] = None
+
+    @property
+    def period_label(self) -> str:
+        key = _period_key(self.period)
+        if not key:
+            return self.period
+        return f"{int(key[:4])}년 {int(key[4:])}월"
+
+
+@dataclass(frozen=True)
 class NationalTradeTrendRelease:
     source: str
     phase: str
@@ -159,6 +178,17 @@ class CustomsTradeStatClient:
         params = {
             "searchBgnDe": yyyymm,
             "searchEndDe": yyyymm,
+            self._sido_param_name: self._sido_code,
+            "serviceKey": self._service_key,
+        }
+        return await self._get("getsidotradeList", params)
+
+    async def fetch_sido_total_range(
+        self, begin_yyyymm: str, end_yyyymm: str
+    ) -> list[TradeStatItem]:
+        params = {
+            "searchBgnDe": begin_yyyymm,
+            "searchEndDe": end_yyyymm,
             self._sido_param_name: self._sido_code,
             "serviceKey": self._service_key,
         }
@@ -343,6 +373,64 @@ def build_jeju_semiconductor_report(
 
 def select_export_row(rows: list[TradeStatItem]) -> Optional[TradeStatItem]:
     return _first_export(rows)
+
+
+def _period_key(period: str) -> str:
+    """관세청 기간 표기("2026.05")를 "202605" 형태로 정규화한다."""
+    match = re.match(r"\s*(\d{4})\D*(\d{1,2})", str(period or ""))
+    if not match:
+        return ""
+    return f"{int(match.group(1)):04d}{int(match.group(2)):02d}"
+
+
+def shift_yyyymm(yyyymm: str, delta_months: int) -> str:
+    year = int(yyyymm[:4])
+    month = int(yyyymm[4:6]) + delta_months
+    year += (month - 1) // 12
+    month = (month - 1) % 12 + 1
+    return f"{year:04d}{month:02d}"
+
+
+def build_jeju_region_trade_series(
+    rows: list[TradeStatItem],
+) -> list[JejuRegionTradeMonth]:
+    """월별 제주지역 수출입 실적에 전월비·전년동월비를 붙여 최신순으로 반환한다."""
+    by_key: dict[str, TradeStatItem] = {}
+    for row in rows:
+        key = _period_key(row.period)
+        if key:
+            by_key[key] = row
+
+    series: list[JejuRegionTradeMonth] = []
+    for key in sorted(by_key, reverse=True):
+        row = by_key[key]
+        previous_month = by_key.get(shift_yyyymm(key, -1))
+        previous_year = by_key.get(shift_yyyymm(key, -12))
+        series.append(
+            JejuRegionTradeMonth(
+                period=row.period,
+                export_amount_usd=row.export_amount_usd,
+                import_amount_usd=row.import_amount_usd,
+                trade_balance_usd=row.trade_balance_usd,
+                export_mom_pct=_pct(
+                    row.export_amount_usd,
+                    previous_month.export_amount_usd if previous_month else None,
+                ),
+                export_yoy_pct=_pct(
+                    row.export_amount_usd,
+                    previous_year.export_amount_usd if previous_year else None,
+                ),
+                import_mom_pct=_pct(
+                    row.import_amount_usd,
+                    previous_month.import_amount_usd if previous_month else None,
+                ),
+                import_yoy_pct=_pct(
+                    row.import_amount_usd,
+                    previous_year.import_amount_usd if previous_year else None,
+                ),
+            )
+        )
+    return series
 
 
 def _clean_text(text: str) -> str:

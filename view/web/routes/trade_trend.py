@@ -7,8 +7,11 @@ from fastapi import APIRouter, Query
 
 from repositories.trade_trend_repository import TradeTrendRepository
 from services.trade_trend_service import (
+    JejuRegionTradeMonth,
     NationalTradeTrendRelease,
     NationalTradeTrendWebClient,
+    build_jeju_region_trade_series,
+    shift_yyyymm,
 )
 from view.web.api_common import _get_ctx
 
@@ -179,5 +182,56 @@ async def backfill_national_trade_trend_history(
             "saved_count": saved_count,
             "stored_count": len(stored_rows),
             "rows": stored_rows,
+        },
+    }
+
+
+def _jeju_month_to_dict(month: JejuRegionTradeMonth) -> dict:
+    return {
+        "period": month.period,
+        "period_label": month.period_label,
+        "export_amount_usd": month.export_amount_usd,
+        "import_amount_usd": month.import_amount_usd,
+        "trade_balance_usd": month.trade_balance_usd,
+        "export_mom_pct": month.export_mom_pct,
+        "export_yoy_pct": month.export_yoy_pct,
+        "import_mom_pct": month.import_mom_pct,
+        "import_yoy_pct": month.import_yoy_pct,
+    }
+
+
+@router.get("/trade-trends/jeju/region")
+async def get_jeju_region_trade_trend(
+    months: int = Query(12, ge=1, le=60),
+):
+    """관세청 시도별 통계로 제주지역 월별 수출입 동향을 반환한다."""
+    ctx = _get_ctx()
+    client = getattr(ctx, "trade_trend_customs_client", None)
+    if client is None:
+        return {
+            "success": True,
+            "data": {
+                "rows": [],
+                "latest": None,
+                "available": False,
+                "message": "관세청 수출입통계 API 키가 설정되지 않아 제주지역 동향을 조회할 수 없습니다.",
+            },
+        }
+
+    # 지역별 월간 통계는 익월 중순 이후 확정되므로 전월을 최신 기준으로 본다.
+    end_month = shift_yyyymm(datetime.now().strftime("%Y%m"), -1)
+    # 표시 구간 전체에 전년동월비를 붙이려면 12개월치를 더 받아야 한다.
+    begin_month = shift_yyyymm(end_month, -(months - 1 + 12))
+
+    stat_rows = await client.fetch_sido_total_range(begin_month, end_month)
+    rows = [_jeju_month_to_dict(item) for item in build_jeju_region_trade_series(stat_rows)][:months]
+    return {
+        "success": True,
+        "data": {
+            "rows": rows,
+            "latest": rows[0] if rows else None,
+            "available": True,
+            "begin_month": begin_month,
+            "end_month": end_month,
         },
     }

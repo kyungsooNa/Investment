@@ -7,6 +7,7 @@ import pytest
 
 from services.trade_trend_service import (
     CustomsTradeStatClient,
+    build_jeju_region_trade_series,
     NationalTradeTrendRelease,
     NationalTradeTrendWebClient,
     TradeStatItem,
@@ -109,6 +110,95 @@ async def test_customs_client_calls_sido_item_endpoint_with_configured_params():
     assert params["searchItemCd"] == "8542"
     assert params["searchSidoCd"] == "50"
     assert params["serviceKey"] == "test-key"
+
+
+JEJU_TOTAL_RANGE_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<response>
+  <header>
+    <resultCode>00</resultCode>
+    <resultMsg>NORMAL SERVICE.</resultMsg>
+  </header>
+  <body>
+    <items>
+      <item>
+        <year>2025.05</year>
+        <statKor>제주</statKor>
+        <hsCode>-</hsCode>
+        <expDlr>10000000</expDlr>
+        <impDlr>8000000</impDlr>
+        <balPayments>2000000</balPayments>
+      </item>
+      <item>
+        <year>2026.04</year>
+        <statKor>제주</statKor>
+        <hsCode>-</hsCode>
+        <expDlr>20000000</expDlr>
+        <impDlr>9000000</impDlr>
+        <balPayments>11000000</balPayments>
+      </item>
+      <item>
+        <year>2026.05</year>
+        <statKor>제주</statKor>
+        <hsCode>-</hsCode>
+        <expDlr>25000000</expDlr>
+        <impDlr>9900000</impDlr>
+        <balPayments>15100000</balPayments>
+      </item>
+    </items>
+  </body>
+</response>
+"""
+
+
+class DummyRangeResponse:
+    status_code = 200
+    text = JEJU_TOTAL_RANGE_XML
+
+    def raise_for_status(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_customs_client_fetches_sido_total_range_with_period_range():
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(return_value=DummyRangeResponse())
+    client = CustomsTradeStatClient(
+        service_key="test-key",
+        http_client=http_client,
+        base_url="https://example.test/openapi/service/newTradestatistics",
+        sido_param_name="searchSidoCd",
+        sido_code="50",
+    )
+
+    rows = await client.fetch_sido_total_range("202505", "202605")
+
+    assert [row.period for row in rows] == ["2025.05", "2026.04", "2026.05"]
+    url = http_client.get.await_args.args[0]
+    params = http_client.get.await_args.kwargs["params"]
+    assert url.endswith("/getsidotradeList")
+    assert params["searchBgnDe"] == "202505"
+    assert params["searchEndDe"] == "202605"
+    assert params["searchSidoCd"] == "50"
+    assert "searchItemCd" not in params
+
+
+def test_build_jeju_region_trade_series_calculates_mom_and_yoy():
+    rows = parse_customs_trade_xml(JEJU_TOTAL_RANGE_XML)
+
+    series = build_jeju_region_trade_series(rows)
+
+    assert [item.period for item in series] == ["2026.05", "2026.04", "2025.05"]
+    latest = series[0]
+    assert latest.export_amount_usd == 25000000
+    assert latest.import_amount_usd == 9900000
+    assert latest.trade_balance_usd == 15100000
+    assert latest.export_mom_pct == pytest.approx(25.0)
+    assert latest.export_yoy_pct == pytest.approx(150.0)
+    assert latest.import_mom_pct == pytest.approx(10.0)
+    assert latest.import_yoy_pct == pytest.approx(23.75)
+    # 직전월/전년동월 데이터가 없는 구간은 None 으로 둔다.
+    assert series[-1].export_mom_pct is None
+    assert series[-1].export_yoy_pct is None
 
 
 def test_build_jeju_semiconductor_report_calculates_mom_yoy_and_share():
