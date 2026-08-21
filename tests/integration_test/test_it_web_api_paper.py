@@ -58,7 +58,7 @@ class TestStockPricePaper:
 
         # 서비스가 올바른 종목코드로 호출되었는지 검증
         from common.types import Exchange
-        mock_paper_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with("005930", caller="stock.py - get_stock_price", exchange=Exchange.KRX)
+        mock_paper_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with("005930", caller="stock.py - get_stock_price", exchange=Exchange.KRX, force_fresh=True)
 
     def test_get_stock_price_api_error(self, paper_client, mock_paper_ctx):
         """API 오류 시 에러 응답을 반환한다."""

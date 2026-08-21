@@ -1,6 +1,6 @@
 /* view/web/static/js/stock.js — 종목 조회 (searchStock) */
 
-let _currentExchange = 'KRX';
+let _currentExchange = 'UN';
 let _currentStockCode = null;
 
 // stock.js 단독 로드 환경에서도 AI 요청 타임아웃을 안전하게 표시한다.

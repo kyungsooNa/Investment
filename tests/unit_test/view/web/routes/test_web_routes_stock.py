@@ -44,6 +44,45 @@ async def test_get_stock_price(web_client, mock_web_ctx):
         "005930",
         caller="stock.py - get_stock_price",
         exchange=Exchange.KRX,
+        force_fresh=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_stock_price_krx_bypasses_unified_cache(web_client, mock_web_ctx):
+    """KRX/NXT 요청은 통합 틱으로 갱신되는 캐시를 우회해 해당 거래소 시세만 사용한다."""
+    from common.types import Exchange
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={"code": "005930", "price": 70000}
+    )
+
+    response = web_client.get("/api/stock/005930?exchange=NXT")
+
+    assert response.status_code == 200
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with(
+        "005930",
+        caller="stock.py - get_stock_price",
+        exchange=Exchange.NXT,
+        force_fresh=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_stock_price_unified_exchange_allows_cache(web_client, mock_web_ctx):
+    """통합(UN) 요청은 통합 틱 캐시와 정합하므로 force_fresh를 강제하지 않는다."""
+    from common.types import Exchange
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Success", data={"code": "005930", "price": 70000}
+    )
+
+    response = web_client.get("/api/stock/005930?exchange=UN")
+
+    assert response.status_code == 200
+    mock_web_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with(
+        "005930",
+        caller="stock.py - get_stock_price",
+        exchange=Exchange.UN,
+        force_fresh=False,
     )
 
 

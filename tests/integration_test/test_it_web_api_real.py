@@ -59,7 +59,7 @@ class TestStockPriceReal:
         assert body["data"]["prdy_vrss"] == "1200"
         assert body["data"]["prdy_ctrt"] == "1.73"
         from common.types import Exchange
-        mock_real_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with("005930", caller="stock.py - get_stock_price", exchange=Exchange.KRX)
+        mock_real_ctx.stock_query_service.handle_get_current_stock_price.assert_awaited_once_with("005930", caller="stock.py - get_stock_price", exchange=Exchange.KRX, force_fresh=True)
         
     def test_get_stock_price_error(self, real_client, mock_real_ctx):
         """실전 모드 API 오류 시 에러 응답."""

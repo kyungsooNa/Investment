@@ -332,6 +332,7 @@ def test_real_app_stock_price_api_uses_service_and_foreground(
         "005930",
         caller="stock.py - get_stock_price",
         exchange=Exchange.KRX,
+        force_fresh=True,
     )
     fake_web_ctx.pm.log_timer.assert_called_with("get_stock_price(005930)", "timer-token")
     assert fake_web_ctx.foreground_scheduler.enter_count == 1

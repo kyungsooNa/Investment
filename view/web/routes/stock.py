@@ -462,8 +462,15 @@ async def get_stock_price(code: str, exchange: str = Query("KRX")):
         exchange_enum = Exchange.KRX
     t_start = ctx.pm.start_timer()
     try:
+        # 종목코드 단위 캐시는 통합(H0UNCNT0) 틱으로 갱신되므로 KRX/NXT 요청에는 통합 시세가 섞인다.
+        # 통합(UN) 요청만 캐시를 허용하고, 거래소를 특정한 요청은 해당 거래소 REST 시세를 새로 조회한다.
         resp = await asyncio.wait_for(
-            ctx.stock_query_service.handle_get_current_stock_price(code, caller="stock.py - get_stock_price", exchange=exchange_enum),
+            ctx.stock_query_service.handle_get_current_stock_price(
+                code,
+                caller="stock.py - get_stock_price",
+                exchange=exchange_enum,
+                force_fresh=exchange_enum != Exchange.UN,
+            ),
             timeout=12.0,
         )
     except asyncio.TimeoutError:
