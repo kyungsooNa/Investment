@@ -74,6 +74,7 @@ class FavoritePriceAlertService:
         *,
         price,
         rate,
+        change=None,
         sign=None,
         is_upper_limit: bool = False,
     ) -> bool:
@@ -92,7 +93,9 @@ class FavoritePriceAlertService:
         rate_value = self._to_float(rate)
         if rate_value is None:
             return False
-        rate_value = self._apply_kis_sign(rate_value, sign)
+        rate_value = self._resolve_signed_rate(normalized, rate_value, rate, sign, change)
+        if rate_value is None:
+            return False
 
         if self._is_upper_limit(rate_value, sign=sign, is_upper_limit=is_upper_limit):
             if normalized in self._upper_limit_alerted_codes:
@@ -136,7 +139,9 @@ class FavoritePriceAlertService:
                 "code": normalized,
                 "name": name,
                 "price": self._to_float(price),
+                "change": self._to_float(change),
                 "rate": rate_value,
+                "sign": None if sign is None else str(sign),
                 "threshold_pct": threshold_pct,
                 "dedup_key": f"favorite_price:{normalized}:{threshold_pct}",
                 "force_external": True,
@@ -276,6 +281,33 @@ class FavoritePriceAlertService:
             return -rate
         if sign_value in {"1", "2"} and rate < 0:
             return abs(rate)
+        return rate
+
+    def _resolve_signed_rate(self, code: str, rate: float, raw_rate, sign, change=None) -> Optional[float]:
+        """KIS의 절대 등락률 + 별도 부호 형식에서 부호 누락 오판을 방지한다."""
+        sign_value = str(sign or "").strip()
+        if sign_value:
+            return self._apply_kis_sign(rate, sign_value)
+
+        raw_text = str(raw_rate or "").strip()
+        if raw_text.startswith(("+", "-")):
+            return rate
+
+        change_value = self._to_float(change)
+        if change_value is not None:
+            if change_value < 0 and rate > 0:
+                return -rate
+            if change_value > 0 and rate < 0:
+                return abs(rate)
+            if change_value == 0:
+                return 0.0
+
+        if (
+            self._market == MARKET_DOMESTIC
+            and rate > 0
+            and self._lowest_negative_alert_bucket.get(code, 0) < 0
+        ):
+            return -rate
         return rate
 
     def _stock_name(self, code: str) -> str:

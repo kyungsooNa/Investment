@@ -162,6 +162,7 @@ async def test_cache_price_snapshot_schedules_favorite_price_alert(mock_stock_re
         "080220",
         price="91300",
         rate="5.02",
+        change="4300",
         sign="2",
         is_upper_limit=False,
     )
@@ -385,6 +386,7 @@ async def test_on_price_tick_schedules_favorite_price_alert(mock_stock_repo, moc
         "005930",
         price="75000",
         rate="5.12",
+        change=None,
         sign=None,
         is_upper_limit=False,
     )
@@ -412,6 +414,7 @@ async def test_on_price_tick_passes_sign_and_upper_limit_to_favorite_price_alert
         "005930",
         price="85000",
         rate="29.92",
+        change=None,
         sign="1",
         is_upper_limit=True,
     )

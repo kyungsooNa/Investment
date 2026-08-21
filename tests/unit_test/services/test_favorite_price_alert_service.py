@@ -188,6 +188,44 @@ async def test_applies_kis_negative_sign_to_unsigned_rate():
 
 
 @pytest.mark.asyncio
+async def test_applies_negative_change_to_unsigned_rate_without_sign():
+    """부호 코드가 누락돼도 전일대비 금액이 음수이면 하락 알림으로 판단한다."""
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["009150"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("009150", price="1325000", change="-71000", rate="5.09")
+
+    notifications.emit.assert_awaited_once()
+    args, kwargs = notifications.emit.call_args
+    assert "-5%" in args[2]
+    assert "전일대비 -5.09%" in args[3]
+    assert kwargs["metadata"]["rate"] == -5.09
+    assert kwargs["metadata"]["change"] == -71000.0
+    assert kwargs["metadata"]["threshold_pct"] == -5
+
+
+@pytest.mark.asyncio
+async def test_does_not_flip_prior_negative_bucket_to_positive_without_explicit_sign():
+    """부호 없는 양수 등락률은 기존 하락 상태를 상승 알림으로 뒤집지 않는다."""
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["009150"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("009150", price="1326000", rate="5.01", sign="5")
+    await svc.handle_price_tick("009150", price="1325000", rate="5.09", sign=None)
+
+    notifications.emit.assert_awaited_once()
+    args, kwargs = notifications.emit.call_args
+    assert "-5%" in args[2]
+    assert kwargs["metadata"]["threshold_pct"] == -5
+
+
+@pytest.mark.asyncio
 async def test_alerts_upper_limit_separately_from_twenty_five_percent_bucket():
     repo = MagicMock()
     repo.get_all = AsyncMock(return_value=["005930"])
