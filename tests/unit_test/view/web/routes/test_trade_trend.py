@@ -1,12 +1,18 @@
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
 from fastapi.testclient import TestClient
 
 import view.web.api_common as api_common
 import view.web.web_main as web_main
 from repositories.trade_trend_repository import TradeTrendRepository
-from services.trade_trend_service import NationalTradeTrendRelease
+from services.trade_trend_service import (
+    NationalTradeTrendRelease,
+    TradeStatItem,
+    shift_yyyymm,
+)
 
 
 def test_national_trade_trend_history_merges_stored_and_recent_rows():
@@ -224,3 +230,62 @@ def test_national_trade_trend_backfill_builds_client_when_missing(tmp_path, monk
         max_detail_pages=20,
         list_page_count=2,
     )
+
+
+def test_jeju_region_trade_returns_series_from_customs_client():
+    rows = [
+        TradeStatItem("2025.05", "제주", "-", 10000000, 8000000, 2000000),
+        TradeStatItem("2026.04", "제주", "-", 20000000, 9000000, 11000000),
+        TradeStatItem("2026.05", "제주", "-", 25000000, 9900000, 15100000),
+    ]
+    customs_client = SimpleNamespace(
+        fetch_sido_total_range=AsyncMock(return_value=rows),
+    )
+    ctx = SimpleNamespace(
+        full_config={"use_login": False, "auth": {"secret_key": "test-token"}},
+        trade_trend_customs_client=customs_client,
+    )
+    api_common.set_ctx(ctx)
+
+    try:
+        response = TestClient(web_main.app).get("/api/trade-trends/jeju/region?months=2")
+    finally:
+        api_common.set_ctx(None)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["data"]["available"] is True
+    assert len(payload["data"]["rows"]) == 2
+    latest = payload["data"]["latest"]
+    assert latest["period"] == "2026.05"
+    assert latest["period_label"] == "2026년 5월"
+    assert latest["export_amount_usd"] == 25000000
+    assert latest["export_mom_pct"] == pytest.approx(25.0)
+    assert latest["export_yoy_pct"] == pytest.approx(150.0)
+
+    begin, end = customs_client.fetch_sido_total_range.await_args.args
+    expected_end = shift_yyyymm(datetime.now().strftime("%Y%m"), -1)
+    assert end == expected_end
+    # 표시 2개월 + 전년동월 비교용 12개월을 함께 받아온다.
+    assert begin == shift_yyyymm(expected_end, -13)
+
+
+def test_jeju_region_trade_reports_unavailable_without_customs_client():
+    ctx = SimpleNamespace(
+        full_config={"use_login": False, "auth": {"secret_key": "test-token"}},
+        trade_trend_customs_client=None,
+    )
+    api_common.set_ctx(ctx)
+
+    try:
+        response = TestClient(web_main.app).get("/api/trade-trends/jeju/region")
+    finally:
+        api_common.set_ctx(None)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["data"]["available"] is False
+    assert payload["data"]["rows"] == []
+    assert payload["data"]["latest"] is None

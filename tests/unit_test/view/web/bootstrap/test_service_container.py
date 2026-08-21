@@ -236,6 +236,25 @@ def test_service_container_builds_national_trade_trend_monitor_without_key(
     assert task_kwargs["customs_client"] is None
 
 
+def test_service_container_builds_customs_client_for_web_when_monitor_disabled(
+    patched_service_container_deps,
+):
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.runtime_mode = RuntimeMode.WEB
+    ctx.full_config = {
+        "trade_trend_monitor": {"enabled": False, "customs_service_key": "customs-key"}
+    }
+
+    ServiceContainer(ctx).run()
+
+    client_cls = patched_service_container_deps["CustomsTradeStatClient"]
+    client_cls.assert_called_once()
+    assert ctx.trade_trend_customs_client is client_cls.return_value
+    assert ctx.trade_trend_monitor_task is None
+
+
 def test_service_container_builds_enabled_ai_stock_analyzer(patched_service_container_deps):
     from view.web.bootstrap.service_container import ServiceContainer
 

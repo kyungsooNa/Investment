@@ -312,3 +312,22 @@ return {
         "nestedCount": 2,
         "maxValue": 31.2,
     }
+
+
+def test_jeju_region_money_formats_usd_as_million_unit():
+    result = run_trade_trends_js(
+        """
+const { formatJejuMillionUsd } = sandbox.module.exports;
+return {
+  amount: formatJejuMillionUsd(25000000),
+  small: formatJejuMillionUsd(123456),
+  empty: formatJejuMillionUsd(null)
+};
+"""
+    )
+
+    assert result == {
+        "amount": "25.0백만 달러",
+        "small": "0.1백만 달러",
+        "empty": "-",
+    }

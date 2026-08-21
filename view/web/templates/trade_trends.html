@@ -38,6 +38,50 @@
         </div>
     </div>
 
+    <div class="card">
+        <div class="trade-trend-toolbar">
+            <div>
+                <h2>제주지역 수출입동향</h2>
+                <div id="jeju-trade-status" class="trade-trend-muted">조회 대기 중</div>
+            </div>
+            <button class="btn btn-secondary" onclick="loadJejuRegionTrade()">새로고침</button>
+        </div>
+        <div class="summary-bar trade-trend-summary">
+            <div class="summary-item">
+                <div class="label">최신 월</div>
+                <div class="value" id="jeju-latest-period">-</div>
+            </div>
+            <div class="summary-item">
+                <div class="label">수출</div>
+                <div class="value" id="jeju-latest-export">-</div>
+            </div>
+            <div class="summary-item">
+                <div class="label">수입</div>
+                <div class="value" id="jeju-latest-import">-</div>
+            </div>
+            <div class="summary-item">
+                <div class="label">무역수지</div>
+                <div class="value" id="jeju-latest-balance">-</div>
+            </div>
+        </div>
+        <div class="table-container">
+            <table class="data-table trade-trend-table">
+                <thead>
+                    <tr>
+                        <th>기간</th>
+                        <th>수출</th>
+                        <th>수출 MoM</th>
+                        <th>수출 YoY</th>
+                        <th>수입</th>
+                        <th>수입 YoY</th>
+                        <th>무역수지</th>
+                    </tr>
+                </thead>
+                <tbody id="jeju-trade-body"></tbody>
+            </table>
+        </div>
+    </div>
+
     <div class="trade-trend-grid">
         <div class="card trade-trend-chart-card">
             <h2>최근 흐름</h2>
@@ -85,8 +129,9 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/trade_trends.js?v=4"></script>
+<script src="/static/js/trade_trends.js?v=5"></script>
 <script>
     loadTradeTrendHistory();
+    loadJejuRegionTrade();
 </script>
 {% endblock %}

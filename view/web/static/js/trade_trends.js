@@ -1,4 +1,5 @@
 let tradeTrendRows = [];
+let jejuRegionRows = [];
 let tradeTrendFilter = 'all';
 let tradeTrendChartPhase = null;
 
@@ -399,7 +400,65 @@ if (typeof module !== 'undefined' && module.exports) {
         buildTradeTrendPhaseItems,
         buildTradeTrendQuarterItems,
         tradeDailyAverage,
+        formatJejuMillionUsd,
     };
+}
+
+function formatJejuMillionUsd(value) {
+    if (value === null || value === undefined || value === '') return '-';
+    return `${(Number(value) / 1000000).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}백만 달러`;
+}
+
+async function loadJejuRegionTrade() {
+    const status = document.getElementById('jeju-trade-status');
+    if (status) status.textContent = '조회 중';
+    try {
+        const res = await fetch('/api/trade-trends/jeju/region?months=12');
+        const payload = await res.json();
+        if (!res.ok || !payload.success) {
+            throw new Error(payload.detail || '제주지역 수출입동향 조회 실패');
+        }
+        jejuRegionRows = payload.data.rows || [];
+        renderJejuRegionSummary(payload.data.latest);
+        renderJejuRegionTable();
+        if (status) {
+            status.textContent = payload.data.available
+                ? `최근 ${jejuRegionRows.length}개월`
+                : (payload.data.message || '조회할 수 없습니다.');
+        }
+    } catch (error) {
+        if (status) status.textContent = `조회 실패: ${error.message}`;
+        jejuRegionRows = [];
+        renderJejuRegionSummary(null);
+        renderJejuRegionTable();
+    }
+}
+
+function renderJejuRegionSummary(latest) {
+    document.getElementById('jeju-latest-period').textContent = latest ? latest.period_label : '-';
+    document.getElementById('jeju-latest-export').textContent = latest ? formatJejuMillionUsd(latest.export_amount_usd) : '-';
+    document.getElementById('jeju-latest-import').textContent = latest ? formatJejuMillionUsd(latest.import_amount_usd) : '-';
+    document.getElementById('jeju-latest-balance').textContent = latest ? formatJejuMillionUsd(latest.trade_balance_usd) : '-';
+}
+
+function renderJejuRegionTable() {
+    const tbody = document.getElementById('jeju-trade-body');
+    if (!tbody) return;
+    if (!jejuRegionRows.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:18px;">표시할 제주지역 수출입동향이 없습니다.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = jejuRegionRows.map((row) => `
+        <tr>
+            <td><strong>${escapeHtml(row.period_label || row.period || '-')}</strong></td>
+            <td>${formatJejuMillionUsd(row.export_amount_usd)}</td>
+            <td class="${Number(row.export_mom_pct || 0) >= 0 ? 'text-red' : 'text-blue'}">${tradePct(row.export_mom_pct)}</td>
+            <td class="${Number(row.export_yoy_pct || 0) >= 0 ? 'text-red' : 'text-blue'}">${tradePct(row.export_yoy_pct)}</td>
+            <td>${formatJejuMillionUsd(row.import_amount_usd)}</td>
+            <td class="${Number(row.import_yoy_pct || 0) >= 0 ? 'text-red' : 'text-blue'}">${tradePct(row.import_yoy_pct)}</td>
+            <td><strong>${formatJejuMillionUsd(row.trade_balance_usd)}</strong></td>
+        </tr>
+    `).join('');
 }
 
 function renderTradeTrendHighlights(rows) {

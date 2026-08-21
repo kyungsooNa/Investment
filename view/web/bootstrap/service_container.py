@@ -311,33 +311,37 @@ class ServiceContainer:
         ctx.trade_trend_monitor_task = None
         raw_trade_trend_config = config_dict.get("trade_trend_monitor") or {}
         trade_trend_config = TradeTrendMonitorConfig.model_validate(raw_trade_trend_config)
+        # 제주지역 수출입동향 웹 조회는 모니터 활성화 여부와 무관하게 관세청 키만 있으면 쓴다.
+        ctx.trade_trend_customs_client = None
+        if needs_web and trade_trend_config.customs_service_key:
+            ctx.trade_trend_customs_client = CustomsTradeStatClient(
+                service_key=trade_trend_config.customs_service_key,
+                base_url=trade_trend_config.customs_base_url,
+                timeout_sec=float(trade_trend_config.request_timeout_sec),
+                sido_param_name=trade_trend_config.sido_param_name,
+                sido_code=trade_trend_config.sido_code,
+            )
         if trade_trend_config.enabled:
             if not needs_web:
                 ctx.logger.info("수출입동향 모니터는 WEB 런타임에서만 동작합니다.")
             elif getattr(ctx, "telegram_reporter", None) is None:
                 ctx.logger.warning("수출입동향 모니터가 활성화됐지만 텔레그램 리포터가 없어 비활성화합니다.")
             else:
-                ctx.trade_trend_customs_client = None
+                monitor_customs_client = None
                 if trade_trend_config.jeju_semiconductor_enabled:
                     if not trade_trend_config.customs_service_key:
                         ctx.logger.warning(
                             "제주 반도체 수출 모니터는 관세청 API 키가 없어 스킵합니다."
                         )
                     else:
-                        ctx.trade_trend_customs_client = CustomsTradeStatClient(
-                            service_key=trade_trend_config.customs_service_key,
-                            base_url=trade_trend_config.customs_base_url,
-                            timeout_sec=float(trade_trend_config.request_timeout_sec),
-                            sido_param_name=trade_trend_config.sido_param_name,
-                            sido_code=trade_trend_config.sido_code,
-                        )
+                        monitor_customs_client = ctx.trade_trend_customs_client
                 ctx.national_trade_trend_client = NationalTradeTrendWebClient(
                     list_urls=list(trade_trend_config.national_list_urls),
                     timeout_sec=float(trade_trend_config.request_timeout_sec),
                     max_detail_pages=int(trade_trend_config.national_max_detail_pages),
                 )
                 ctx.trade_trend_monitor_task = TradeTrendMonitorTask(
-                    customs_client=ctx.trade_trend_customs_client,
+                    customs_client=monitor_customs_client,
                     national_client=ctx.national_trade_trend_client,
                     repository_path=trade_trend_config.state_file_path,
                     telegram_reporter=ctx.telegram_reporter,
