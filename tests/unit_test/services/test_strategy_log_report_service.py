@@ -90,10 +90,10 @@ def test_service_helper_branches_for_summaries_and_quality_labels():
     summary = svc._build_rejected_reason_summary(rejected)
     assert "기타(3종목)" in summary
 
-    assert svc._format_order_type_counts({}) == "N/A"
-    assert svc._format_order_type_counts({"market": 2, "custom": 1, "limit": 0}) == "시장가 2/custom 1"
+    assert svc._execution_quality_builder._format_order_type_counts({}) == "N/A"
+    assert svc._execution_quality_builder._format_order_type_counts({"market": 2, "custom": 1, "limit": 0}) == "시장가 2/custom 1"
 
-    reasons = svc._quality_threshold_reasons(
+    reasons = svc._execution_quality_builder._quality_threshold_reasons(
         avg_slip=0.2,
         p95_slip=0.3,
         avg_latency=1.0,
@@ -132,24 +132,24 @@ def test_execution_quality_record_period_and_label_edges():
     )
     svc = StrategyLogReportService(log_dir=".", execution_quality_config=cfg)
 
-    latest = svc._latest_execution_quality_records([
+    latest = svc._execution_quality_builder._latest_execution_quality_records([
         {"order_key": "A", "timestamp": "2026-04-01 09:00:00", "value": 1},
         {"order_key": "A", "timestamp": "2026-04-03 09:00:00", "value": 2},
         {"timestamp": "2026-04-03 09:01:00", "value": 3},
     ])
     assert {item["value"] for item in latest} == {2, 3}
-    assert svc._execution_quality_period_label("bad") == ""
-    assert svc._execution_quality_period_for_items([
+    assert svc._execution_quality_builder._execution_quality_period_label("bad") == ""
+    assert svc._execution_quality_builder._execution_quality_period_for_items([
         {"timestamp": "2026-04-01 10:00:00"},
         {"timestamp": "2026-04-03 10:00:00"},
     ]) == "4-2 전후 혼합"
 
-    assert svc._execution_quality_label({"count": 1, "avg_slip": 10.0}) == ""
-    candidate = svc._execution_quality_label({"count": 2, "avg_slip": 1.5})
+    assert svc._execution_quality_builder._execution_quality_label({"count": 1, "avg_slip": 10.0}) == ""
+    candidate = svc._execution_quality_builder._execution_quality_label({"count": 2, "avg_slip": 1.5})
     assert "비활성화 자동 OFF" in candidate
 
     cfg.candidate_avg_slippage_pct = 2.0
-    warn = svc._execution_quality_label({"count": 2, "avg_slip": 0.8})
+    warn = svc._execution_quality_builder._execution_quality_label({"count": 2, "avg_slip": 0.8})
     assert "경고" in warn
 
 
@@ -1836,7 +1836,9 @@ async def test_execution_quality_warning_absent_when_no_threshold_candidate(tmp_
     섹션 존재만 검사하면 상시 경고가 떠 진짜 경고를 가린다.
     """
     def _patch(svc):
-        svc._build_execution_quality_section = lambda _records: "<b>📈 체결 품질 요약</b>\n• 정상"
+        svc._execution_quality_builder.build_execution_quality_section = (
+            lambda _records: "<b>📈 체결 품질 요약</b>\n• 정상"
+        )
 
     decision = await _decision_for(
         tmp_path, virtual_trade_service=_vts([_buy_trade("005930", "삼성전자")]),
@@ -1850,11 +1852,11 @@ async def test_execution_quality_warning_absent_when_no_threshold_candidate(tmp_
 async def test_execution_quality_warning_present_when_candidate_exists(tmp_path):
     def _patch(svc):
         def _build(_records):
-            svc._last_execution_quality_candidates = [
+            svc._execution_quality_builder._last_candidates = [
                 {"strategy": "first_pullback", "reason": "슬리피지 과다"}
             ]
             return "<b>📈 체결 품질 요약</b>\n• ⚠️ 비활성화 후보 1개"
-        svc._build_execution_quality_section = _build
+        svc._execution_quality_builder.build_execution_quality_section = _build
 
     decision = await _decision_for(
         tmp_path, virtual_trade_service=_vts([_buy_trade("005930", "삼성전자")]),
