@@ -224,7 +224,11 @@ data/position_sizing_state.json
 # Windows artifact
 nul
 
-.claude
+# Claude 에이전트 설정: 개인 설정은 무시하되, 팀 공유 파일(원격 세션 startup hook)은 추적한다.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/settings.local.json
 
 search_results.txt
 Changes.md
