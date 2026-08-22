@@ -110,8 +110,8 @@ def test_load_filters_signal_source_and_date_range(tmp_path):
     assert aaa["exit_reason"] == "eod"
 
 
-def test_load_multi_source_keeps_pp_bgu_cb_rsi2_without_same_day_realized(tmp_path):
-    """PP/BGU/CB/RSI2는 same-day realized_pct가 없어도 전략별/멀티데이 분석 대상으로 로드한다."""
+def test_load_multi_source_keeps_pp_bgu_cb_rsi2_osb_without_same_day_realized(tmp_path):
+    """PP/BGU/CB/RSI2/OSB는 same-day realized_pct가 없어도 전략별/멀티데이 분석 대상으로 로드한다."""
     shadow = tmp_path / "event_shadow"
     _write_jsonl(shadow, "20260601", [
         _rec(code="VBO", exchange="NASD", date="20260601", realized_pct=2.0, exit_reason="eod"),
@@ -119,6 +119,7 @@ def test_load_multi_source_keeps_pp_bgu_cb_rsi2_without_same_day_realized(tmp_pa
         _entry_rec(code="BGA", strategy="O'NeilBGU_overseas", signal_source="overseas_bgu_dryrun"),
         _entry_rec(code="CBA", strategy="LarryWilliamsCB_overseas", signal_source="overseas_cb_dryrun"),
         _entry_rec(code="RSA", strategy="RSI2Pullback_overseas", signal_source="overseas_rsi2_dryrun"),
+        _entry_rec(code="OSA", strategy="O'NeilOSB_overseas", signal_source="overseas_osb_dryrun"),
     ])
 
     records = load_dryrun_records_multi_source(
@@ -131,11 +132,12 @@ def test_load_multi_source_keeps_pp_bgu_cb_rsi2_without_same_day_realized(tmp_pa
             "overseas_bgu_dryrun",
             "overseas_cb_dryrun",
             "overseas_rsi2_dryrun",
+            "overseas_osb_dryrun",
         ],
     )
 
-    assert [r["code"] for r in records] == ["VBO", "PPA", "BGA", "CBA", "RSA"]
-    assert {r["strategy_label"] for r in records} == {"VBO", "PP", "BGU", "CB", "RSI2"}
+    assert [r["code"] for r in records] == ["VBO", "PPA", "BGA", "CBA", "RSA", "OSA"]
+    assert {r["strategy_label"] for r in records} == {"VBO", "PP", "BGU", "CB", "RSI2", "OSB"}
     pp = next(r for r in records if r["strategy_label"] == "PP")
     assert pp["realized_pct"] is None
     assert pp["entry_price"] == 100.0

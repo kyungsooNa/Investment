@@ -2,7 +2,7 @@
 
 해외 dry-run suite 가 shadow journal 에 남긴 신호는 실주문 없는 "만약 진입했다면"
 가정 신호다. VBO 는 same-day exit 결과(`exit_price`/`exit_reason`/`realized_pct`)가
-동봉되며, PP/BGU/CB/RSI2 는 진입가/손절가를 기준으로 멀티데이 OHLCV 재구성에서
+동봉되며, PP/BGU/CB/RSI2/OSB 는 진입가/손절가를 기준으로 멀티데이 OHLCV 재구성에서
 성과를 산출한다.
 
 집계 지표:
@@ -37,6 +37,7 @@ DEFAULT_SIGNAL_SOURCES = [
     "overseas_bgu_dryrun",
     "overseas_cb_dryrun",
     "overseas_rsi2_dryrun",
+    "overseas_osb_dryrun",
 ]
 DEFAULT_ROUND_TRIP_COST_PCT = 0.5
 DEFAULT_COST_MODEL = "commission_only"
@@ -60,6 +61,8 @@ def _strategy_label(raw_strategy: str = "", signal_source: str = "", reason: str
         return "PP"
     if "RSI2" in text or "rsi2" in text or "overseas_rsi2" in text:
         return "RSI2"
+    if "OSB" in text or "squeeze_breakout" in text or "overseas_osb" in text:
+        return "OSB"
     if "VBO" in text or "vbo" in text or signal_source == "overseas_dryrun":
         return "VBO"
     return "기타"
@@ -614,7 +617,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--all-sources",
         action="store_true",
-        help="VBO/PP/BGU/CB/RSI2 dry-run signal_source를 모두 분석한다.",
+        help="VBO/PP/BGU/CB/RSI2/OSB dry-run signal_source를 모두 분석한다.",
     )
     parser.add_argument("--ohlcv-dir", default=None,
                         help="멀티데이 회고 재구성용 per-code 일봉 디렉토리(<CODE>.jsonl). 지정 시 multiday 섹션 추가.")
