@@ -15,6 +15,7 @@ from scripts.analyze_overseas_dryrun import (
     compute_dryrun_report,
     compute_multiday_report,
     format_markdown_report,
+    load_dryrun_records_multi_source,
     load_dryrun_records,
     load_ohlcv_dir,
     main,
@@ -60,6 +61,26 @@ def _rec(*, code: str, exchange: str, date: str, realized_pct: float,
     }
 
 
+def _entry_rec(*, code: str, strategy: str, signal_source: str, date: str = "20260601",
+               entry_price: float = 100.0, stop_price: float = 95.0) -> dict:
+    return {
+        "recorded_at": 1_700_000_000.0,
+        "strategy": strategy,
+        "code": code,
+        "signal_source": signal_source,
+        "signal": {
+            "strategy": strategy,
+            "code": code,
+            "action": "BUY",
+            "date": date,
+            "entry_price": entry_price,
+            "stop_price": stop_price,
+            "entry_reason": signal_source,
+        },
+        "snapshot": {"exchange": "NASD", "bar": {"date": date, "close": entry_price}},
+    }
+
+
 # ── load ─────────────────────────────────────────────────────────────────
 
 def test_load_filters_signal_source_and_date_range(tmp_path):
@@ -87,6 +108,36 @@ def test_load_filters_signal_source_and_date_range(tmp_path):
     assert aaa["trade_date"] == "20260601"
     assert aaa["realized_pct"] == 5.0
     assert aaa["exit_reason"] == "eod"
+
+
+def test_load_multi_source_keeps_pp_bgu_cb_without_same_day_realized(tmp_path):
+    """PP/BGU/CB는 same-day realized_pct가 없어도 전략별/멀티데이 분석 대상으로 로드한다."""
+    shadow = tmp_path / "event_shadow"
+    _write_jsonl(shadow, "20260601", [
+        _rec(code="VBO", exchange="NASD", date="20260601", realized_pct=2.0, exit_reason="eod"),
+        _entry_rec(code="PPA", strategy="O'NeilPP_overseas", signal_source="overseas_pp_dryrun"),
+        _entry_rec(code="BGA", strategy="O'NeilBGU_overseas", signal_source="overseas_bgu_dryrun"),
+        _entry_rec(code="CBA", strategy="LarryWilliamsCB_overseas", signal_source="overseas_cb_dryrun"),
+    ])
+
+    records = load_dryrun_records_multi_source(
+        shadow,
+        "20260601",
+        "20260601",
+        signal_sources=[
+            "overseas_dryrun",
+            "overseas_pp_dryrun",
+            "overseas_bgu_dryrun",
+            "overseas_cb_dryrun",
+        ],
+    )
+
+    assert [r["code"] for r in records] == ["VBO", "PPA", "BGA", "CBA"]
+    assert {r["strategy_label"] for r in records} == {"VBO", "PP", "BGU", "CB"}
+    pp = next(r for r in records if r["strategy_label"] == "PP")
+    assert pp["realized_pct"] is None
+    assert pp["entry_price"] == 100.0
+    assert pp["stop_price"] == 95.0
 
 
 def test_load_returns_empty_when_dir_missing(tmp_path):
@@ -178,6 +229,27 @@ def test_compute_totals_and_win_rate():
     assert t["sum_realized_pct"] == pytest.approx(3.0)
 
 
+def test_compute_strategy_breakdown_counts_unrealized_records():
+    records = [
+        {"code": "AAA", "strategy_label": "VBO", "exchange": "NASD", "trade_date": "20260601",
+         "realized_pct": 5.0, "exit_reason": "eod", "qty": None, "notional_usd": None},
+        {"code": "BBB", "strategy_label": "PP", "exchange": "NASD", "trade_date": "20260601",
+         "realized_pct": None, "exit_reason": "", "qty": None, "notional_usd": None},
+        {"code": "CCC", "strategy_label": "BGU", "exchange": "NASD", "trade_date": "20260601",
+         "realized_pct": None, "exit_reason": "", "qty": None, "notional_usd": None},
+    ]
+
+    report = compute_dryrun_report(records)
+
+    assert report["totals"]["signals"] == 3
+    assert report["totals"]["realized_sample"] == 1
+    assert report["by_strategy"]["VBO"]["signals"] == 1
+    assert report["by_strategy"]["VBO"]["realized_sample"] == 1
+    assert report["by_strategy"]["PP"]["signals"] == 1
+    assert report["by_strategy"]["PP"]["realized_sample"] == 0
+    assert report["by_strategy"]["BGU"]["signals"] == 1
+
+
 def test_compute_by_exit_reason_and_exchange():
     records = [
         {"code": "AAA", "exchange": "NASD", "trade_date": "20260601",
@@ -252,8 +324,9 @@ def test_format_markdown_smoke():
         "entry_price_assumption": "daily_breakout_target",
     }
     md = format_markdown_report(report)
-    assert "Overseas VBO Dry-run" in md
+    assert "Overseas Dry-run" in md
     assert "win_rate" in md
+    assert "전략별" in md
     assert "가정/주의" in md
     assert "왕복 비용 0.500%" in md
     assert "일봉 기반 would-be 진입가" in md
@@ -364,6 +437,29 @@ def test_compute_multiday_report_aggregates_and_gap():
     assert gap["same_day_avg_realized_pct"] == pytest.approx(2.0)
     assert gap["multiday_avg_gross_pct"] == pytest.approx(8.0)
     assert gap["gap_pct"] == pytest.approx(6.0)
+
+
+def test_compute_multiday_report_groups_by_strategy():
+    records = [
+        {"code": "AAA", "strategy_label": "PP", "exchange": "NASD", "trade_date": "20260601",
+         "entry_price": 100.0, "stop_price": 95.0, "realized_pct": None, "exit_reason": ""},
+        {"code": "BBB", "strategy_label": "BGU", "exchange": "NASD", "trade_date": "20260601",
+         "entry_price": 50.0, "stop_price": 45.0, "realized_pct": None, "exit_reason": ""},
+    ]
+    ohlcv = {
+        "AAA": [_bar("20260601", 100, 103, 99, 102), _bar("20260602", 102, 110, 101, 108)],
+        "BBB": [_bar("20260601", 50, 52, 49, 51), _bar("20260602", 51, 55, 50, 55)],
+    }
+
+    report = compute_multiday_report(
+        records, ohlcv, trailing_stop_pct=None, time_stop_days=None, cost_pct=0.0,
+    )
+
+    assert report["reconstructed_count"] == 2
+    assert report["by_strategy"]["PP"]["count"] == 1
+    assert report["by_strategy"]["PP"]["avg_net_return_pct"] == pytest.approx(8.0)
+    assert report["by_strategy"]["BGU"]["count"] == 1
+    assert report["by_strategy"]["BGU"]["avg_net_return_pct"] == pytest.approx(10.0)
 
 
 def test_compute_multiday_report_counts_unmatched():
