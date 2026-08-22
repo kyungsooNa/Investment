@@ -208,6 +208,7 @@ class WebAppContext:
         self.overseas_candidate_service = None
         self.overseas_vbo_dryrun_service = None
         self.overseas_pp_dryrun_service = None
+        self.overseas_bgu_dryrun_service = None
         self.overseas_dryrun_task = None
         self._last_missing_reason_log_ts: dict[tuple[str, str], float] = {}
         self._last_rest_price_refresh_ts: dict[str, float] = {}

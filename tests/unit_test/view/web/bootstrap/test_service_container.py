@@ -783,8 +783,8 @@ def test_service_container_wires_overseas_dryrun_position_sizing(patched_service
     assert callable(fx_provider)
 
 
-def test_service_container_wires_overseas_pp_into_dryrun_suite(patched_service_container_deps):
-    """해외 dry-run 태스크는 VBO와 PP 서비스를 함께 실행하는 suite 를 주입받는다."""
+def test_service_container_wires_overseas_oneil_services_into_dryrun_suite(patched_service_container_deps):
+    """해외 dry-run 태스크는 VBO, PP, BGU 서비스를 함께 실행하는 suite 를 주입받는다."""
     from config.config_loader import AppConfig
     from view.web.bootstrap.service_container import ServiceContainer
 
@@ -801,6 +801,7 @@ def test_service_container_wires_overseas_pp_into_dryrun_suite(patched_service_c
          patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True) as candidate_cls, \
          patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True) as vbo_cls, \
          patch("view.web.bootstrap.service_container.OverseasPocketPivotDryRunService", autospec=True) as pp_cls, \
+         patch("view.web.bootstrap.service_container.OverseasBuyableGapUpDryRunService", autospec=True) as bgu_cls, \
          patch("view.web.bootstrap.service_container.OverseasDryRunSuiteService", autospec=True) as suite_cls, \
          patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True) as task_cls:
         ServiceContainer(ctx).run()
@@ -809,12 +810,17 @@ def test_service_container_wires_overseas_pp_into_dryrun_suite(patched_service_c
     assert pp_kwargs["candidate_service"] is candidate_cls.return_value
     assert pp_kwargs["position_sizing_service"] is sizing_cls.return_value
     assert callable(pp_kwargs["fx_provider"])
+    bgu_kwargs = bgu_cls.call_args.kwargs
+    assert bgu_kwargs["candidate_service"] is candidate_cls.return_value
+    assert bgu_kwargs["position_sizing_service"] is sizing_cls.return_value
+    assert callable(bgu_kwargs["fx_provider"])
     suite_cls.assert_called_once_with(
-        [vbo_cls.return_value, pp_cls.return_value],
+        [vbo_cls.return_value, pp_cls.return_value, bgu_cls.return_value],
         logger=ctx.logger,
     )
     assert task_cls.call_args.kwargs["dryrun_service"] is suite_cls.return_value
     assert ctx.overseas_pp_dryrun_service is pp_cls.return_value
+    assert ctx.overseas_bgu_dryrun_service is bgu_cls.return_value
 
 
 def test_service_container_wires_overseas_dryrun_us_market_clock(patched_service_container_deps):
