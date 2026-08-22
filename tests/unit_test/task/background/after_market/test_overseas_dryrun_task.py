@@ -80,7 +80,7 @@ async def test_on_market_closed_runs_scan_and_flushes():
 
 
 @pytest.mark.asyncio
-async def test_on_market_closed_notification_groups_vbo_pp_bgu_cb_signals():
+async def test_on_market_closed_notification_groups_vbo_pp_bgu_cb_rsi2_osb_signals():
     signals = [
         {"code": "AAA", "action": "BUY", "reason": "vbo_daily_breakout"},
         {"code": "BBB", "name": "Beta", "strategy": "O'NeilPP_overseas", "action": "BUY"},
@@ -88,6 +88,7 @@ async def test_on_market_closed_notification_groups_vbo_pp_bgu_cb_signals():
         {"code": "DDD", "strategy": "O'NeilBGU_overseas", "action": "BUY"},
         {"code": "EEE", "strategy": "LarryWilliamsCB_overseas", "action": "BUY"},
         {"code": "FFF", "strategy": "RSI2Pullback_overseas", "action": "BUY"},
+        {"code": "GGG", "strategy": "O'NeilOSB_overseas", "action": "BUY"},
     ]
     task, _, _, notification_service, logger = _make_task(signals=signals)
 
@@ -99,8 +100,8 @@ async def test_on_market_closed_notification_groups_vbo_pp_bgu_cb_signals():
             "market_date": "20260706",
             "market_date_text": "2026-07-06",
             "exchange": "NASD",
-            "signals": 6,
-            "summary": {"VBO": 1, "PP": 2, "BGU": 1, "CB": 1, "RSI2": 1},
+            "signals": 7,
+            "summary": {"VBO": 1, "PP": 2, "BGU": 1, "CB": 1, "RSI2": 1, "OSB": 1},
         }
     )
     notification_service.emit.assert_awaited_once_with(
@@ -108,12 +109,13 @@ async def test_on_market_closed_notification_groups_vbo_pp_bgu_cb_signals():
         NotificationLevel.INFO,
         "해외 dry-run 완료",
         (
-            "미국 거래일 2026-07-06 기준 dry-run 리포트: 총 6개 신호\n"
+            "미국 거래일 2026-07-06 기준 dry-run 리포트: 총 7개 신호\n"
             "- VBO: 1개 (AAA)\n"
             "- PP: 2개 (Beta, CCC)\n"
             "- BGU: 1개 (DDD)\n"
             "- CB: 1개 (EEE)\n"
-            "- RSI2: 1개 (FFF)"
+            "- RSI2: 1개 (FFF)\n"
+            "- OSB: 1개 (GGG)"
         ),
     )
 

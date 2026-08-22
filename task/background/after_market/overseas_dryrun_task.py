@@ -1,7 +1,7 @@
 # task/background/after_market/overseas_dryrun_task.py
 """해외 dry-run after-market 태스크.
 
-해외 dry-run suite 의 일봉 기반 신호(VBO/PP/BGU/CB/RSI2) 산출을 after-market 스케줄러에
+해외 dry-run suite 의 일봉 기반 신호(VBO/PP/BGU/CB/RSI2/OSB) 산출을 after-market 스케줄러에
 얹어 매일 1회 실행하고, shadow 저널을 파일로 flush 한다.
 
 트리거는 미국장 전용 TimeDispatcher(time_dispatcher_us)가 담당한다 — NY 정규장
@@ -104,6 +104,8 @@ class OverseasDryRunTask(AfterMarketTask):
             return "PP"
         if "RSI2" in strategy or "rsi2" in reason:
             return "RSI2"
+        if "OSB" in strategy or "squeeze_breakout" in reason:
+            return "OSB"
         if "VBO" in strategy or "vbo" in reason:
             return "VBO"
         return "기타"
@@ -119,7 +121,7 @@ class OverseasDryRunTask(AfterMarketTask):
             if name:
                 names_by_label[label].append(name)
 
-        ordered_labels = [label for label in ("VBO", "PP", "BGU", "CB", "RSI2", "기타") if counts.get(label)]
+        ordered_labels = [label for label in ("VBO", "PP", "BGU", "CB", "RSI2", "OSB", "기타") if counts.get(label)]
         summary = {label: counts[label] for label in ordered_labels}
         lines = []
         for label in ordered_labels:

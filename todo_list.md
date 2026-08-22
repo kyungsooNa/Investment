@@ -30,7 +30,7 @@
 4. **[데이터·정책 대기]**
    - 1-8 백테스트 재실행 (CLI 노출 완료 #619 — PIT 후보/valid 캡처 코퍼스 대기. 2026-07-03 파일럿의 마켓타이밍 스캔 차단 사유는 #766/#770/#844 후속으로 무효화되어, 0거래 원인은 재확인 필요)
    - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (dry-run 검증 후 — O-1 #621/O-2 완료)
-   - O-4 해외 dry-run 신규 3전략(PP/BGU/CB) would-be 성과 축적 → 전략별 엣지 판정 (신규 2026-08-22, 5거래일+ 축적 대기)
+   - O-4 해외 dry-run 확장 전략(PP/BGU/CB/RSI2/OSB) would-be 성과 축적 → 전략별 엣지 판정 (신규 2026-08-22, 5거래일+ 축적 대기)
 5. **[조건부·저위험 상시]**
    - Pool B 완화 (**캡처 우회 적용 2026-07-08 — 트레이딩 완화는 시장 회복 후 재판단**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · X-4 주기적 뉴스 수집(조건부·큰 작업) · M-5 시세 갱신/캐시 키 계열 재발 관찰 · T-0/R-6 (선택/관찰)
 6. **[실계좌 장중에서만 확인 가능 — 코드 완료]**
@@ -222,9 +222,9 @@
 
 ---
 
-## 해외주식 전략 적용 (VBO/PP/BGU/CB/RSI2 일봉 dry-run)
+## 해외주식 전략 적용 (VBO/PP/BGU/CB/RSI2/OSB 일봉 dry-run)
 
-결론: 일봉 셋업형 전략 + 장중 REST 폴링 경로(#776) 적용 가능 — 해외는 웹소켓/분봉이 없어 폴링이 유일한 장중 틱 소스다. 첫 장중 대상 = `LarryWilliamsVBOStrategy`. After-market dry-run suite 는 VBO/PP/BGU/CB/RSI2를 함께 기록·알림·분석한다. Phase 1~4(데이터 어댑터·일봉 백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금.
+결론: 일봉 셋업형 전략 + 장중 REST 폴링 경로(#776) 적용 가능 — 해외는 웹소켓/분봉이 없어 폴링이 유일한 장중 틱 소스다. 첫 장중 대상 = `LarryWilliamsVBOStrategy`. After-market dry-run suite 는 VBO/PP/BGU/CB/RSI2/OSB를 함께 기록·알림·분석한다. Phase 1~4(데이터 어댑터·일봉 백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금.
 
 **정정 (2026-08-11)**: 종전 "해외 주문 TR은 실전(TTTS6036U 등)만, 모의 주문 TR 없음"은 stale이다. #606에서 모의 미지원인 주간거래 TTTS603x → 모의 검증 가능한 정규장 TTTT100xU로 전환하며 `tr_ids_config.yaml`에 real/paper 쌍이 모두 추가됐고(VTTT1002U 매수 / VTTT1006U 매도 / VTTT1004U 정정취소), `trid_provider.py`가 `is_paper_trading`으로 분기한다. 따라서 "모의가 없어 배선=실계좌 발사"라는 잠금 명분은 무효이고, 남은 유효 사유는 Phase 5 미완과 엣지 부재(아래 스윕 결과)뿐이다. 단 **모의 서버의 실제 주문 수락 여부는 아직 미검증** — `scripts/probe_overseas_paper_order.py --send`로 확인 후 이 문단을 갱신할 것. (2026-08-17: 전송 없는 안전장치 검사는 4개 전부 통과 — base_url `openapivts`, 모의 계좌, 매수 `VTTT1002U`, 정정취소 `VTTT1004U`, 프로브가 현재가의 절반으로 체결 불가. 남은 것은 `--send` 1회 실행뿐이다.)
 
@@ -238,11 +238,12 @@
 
 - [x] `scripts/analyze_overseas_dryrun.py`의 왕복 비용 기본값 0.2%를 미국주식 온라인 기본 수수료 0.25%/side 기준 0.5%로 보정 (2026-07-04). 환전 스프레드·SEC/TAF 등 매도 제비용은 별도이므로 리포트에 `commission_only` 가정으로 명시.
 - [x] 일봉 기반 would-be 진입가의 낙관 편향(장중 실체결가 대비 유리하게 잡힘)을 dry-run Markdown 리포트 `가정/주의` 섹션에 명시.
-- [x] **분석기 다전략 확장 (2026-08-22)**: `scripts/analyze_overseas_dryrun.py --all-sources`가 VBO/PP/BGU/CB/RSI2 shadow source를 함께 읽고, 당일 실현손익이 없는 PP/BGU/CB/RSI2 신호도 표본에서 누락하지 않는다. JSON/Markdown 리포트와 멀티데이 리포트에 전략별 신호 수·실현 표본·승률/평균 수익률 집계를 추가했다.
+- [x] **분석기 다전략 확장 (2026-08-22)**: `scripts/analyze_overseas_dryrun.py --all-sources`가 VBO/PP/BGU/CB/RSI2/OSB shadow source를 함께 읽고, 당일 실현손익이 없는 PP/BGU/CB/RSI2/OSB 신호도 표본에서 누락하지 않는다. JSON/Markdown 리포트와 멀티데이 리포트에 전략별 신호 수·실현 표본·승률/평균 수익률 집계를 추가했다.
 - [x] **누적 표본 1차 점검 (2026-08-22)**: 20260722~20260821 shadow journal 통합 리포트(`reports/overseas_dryrun_all_sources_20260722_20260821.md`)를 생성했다. 현재 누적분은 VBO 523건뿐이며 PP/BGU/CB source는 아직 0건이다. VBO는 비용후 평균 −1.054%, 멀티데이 재구성 평균 −1.624%로 Phase 5 근거가 없고, PP/BGU/CB는 전략 불가 판정이 아니라 **표본 미축적** 상태다.
 - [x] **RSI2 dry-run 추가 (2026-08-22)**: 돌파류와 다른 평균회귀 축을 보기 위해 해외 RSI2 Pullback dry-run을 suite에 추가했다. 국내 Minervini Stage2는 해외에 같은 데이터 소스가 없어 일봉 `close > 200MA` 장기 상승추세로 대체하고, RSI(2) ≤ 10 종가 신호를 기록한다. 실주문 경로 없음.
+- [x] **OSB dry-run 추가 (2026-08-23)**: 국내 `OneilSqueezeBreakoutStrategy` 중 해외 일봉으로 재현 가능한 스퀴즈 + 20일 고점 돌파 + 거래량 폭증 + 캔들 품질 조건을 suite에 추가했다. 국내 전용 프로그램 순매수·체결강도·마켓타이밍 필터는 신호 metadata의 `excluded_filters`로 명시하고 실주문 경로는 두지 않는다.
 
-주요 파일: `scripts/analyze_overseas_dryrun.py`, `services/overseas_{vbo,pocket_pivot,buyable_gap_up,channel_breakout,rsi2}_dryrun_service.py`, `services/overseas_dryrun_suite_service.py`, `task/background/after_market/overseas_dryrun_task.py`
+주요 파일: `scripts/analyze_overseas_dryrun.py`, `services/overseas_{vbo,pocket_pivot,buyable_gap_up,channel_breakout,rsi2,squeeze_breakout}_dryrun_service.py`, `services/overseas_dryrun_suite_service.py`, `task/background/after_market/overseas_dryrun_task.py`
 
 ### O-3. 청산 편향 수정 + 장중 경로 + 파라미터 스윕 [완료 — #769/#776, 2026-08-05]
 
