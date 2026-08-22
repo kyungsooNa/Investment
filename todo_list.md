@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-08-21 (현재가 거래소 분리 후속 M-8 등재. 이전: 2026-08-18 08-07 이후 머지분과 문서 상태 대조 — 완료된 후속은 정리하고, 실제 남은 실행 항목만 유지. 이전 갱신: 2026-08-07 07-24~08-07 머지분 대조)
+최종 업데이트: 2026-08-22 (08-18 이후 머지분 #853~#877 대조 — 미등재 작업축 2건 신규 등재(K-1 키움 브로커 연동 · O-4 해외 dry-run 3전략 확대), M-2 줄수 계측 갱신, M-5 재발 신호 추가. 이전: 2026-08-21 현재가 거래소 분리 후속 M-8 등재. 이전: 2026-08-18 08-07 이후 머지분과 문서 상태 대조 — 완료된 후속은 정리하고, 실제 남은 실행 항목만 유지. 이전 갱신: 2026-08-07 07-24~08-07 머지분 대조)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -15,7 +15,7 @@
 
 ---
 
-## 우선 처리 순서 (2026-08-18 문서 점검 반영)
+## 우선 처리 순서 (2026-08-22 문서 점검 반영)
 
 리뷰 핵심 판단: 운영 인프라·리스크 규율(킬스위치 영속화·RiskGate·tiered force-exit·profitability gate·캐너리 사이징)은 갖춰졌다. 남은 크리티컬 패스는 **엣지(수익성) 입증**이다. 엣지의 원천으로 삼는 수급 필터(체결강도·프로그램매매)가 장중 히스토리 부재로 백테스트 검증 불가능한 상태이므로, 검증 데이터 축적을 지금 시작하는 것이 최우선이다.
 
@@ -30,8 +30,13 @@
 4. **[데이터·정책 대기]**
    - 1-8 백테스트 재실행 (CLI 노출 완료 #619 — PIT 후보/valid 캡처 코퍼스 대기. 2026-07-03 파일럿의 마켓타이밍 스캔 차단 사유는 #766/#770/#844 후속으로 무효화되어, 0거래 원인은 재확인 필요)
    - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (dry-run 검증 후 — O-1 #621/O-2 완료)
+   - O-4 해외 dry-run 신규 3전략(PP/BGU/CB) would-be 성과 축적 → 전략별 엣지 판정 (신규 2026-08-22, 5거래일+ 축적 대기)
 5. **[조건부·저위험 상시]**
-   - Pool B 완화 (**캡처 우회 적용 2026-07-08 — 트레이딩 완화는 시장 회복 후 재판단**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · X-4 주기적 뉴스 수집(조건부·큰 작업) · M-5 알림 회귀 커버리지 · M-7 마켓타이밍 알림/태깅 후속 · T-0/R-6 (선택/관찰)
+   - Pool B 완화 (**캡처 우회 적용 2026-07-08 — 트레이딩 완화는 시장 회복 후 재판단**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시) · X-4 주기적 뉴스 수집(조건부·큰 작업) · M-5 시세 갱신/캐시 키 계열 재발 관찰 · T-0/R-6 (선택/관찰)
+6. **[실계좌 장중에서만 확인 가능 — 코드 완료]**
+   - M-8 현재가 거래소 분리(KRX/NXT) 4건 실계좌 확인 (#871/#872, 2026-08-21 등재 이후 진전 없음)
+7. **[착수 결정 대기 — 새 작업축]**
+   - K-1 키움 REST 연동 Phase 4~7 (스켈레톤 #866 까지 머지, 이후는 미착수 · 외부 키 발급 선행 필요). 크리티컬 패스(엣지 입증) 아래이나, 2-4 무틱의 유일한 자체 우회로 후보이기도 하다.
 
 ---
 
@@ -249,6 +254,16 @@
 
 주요 파일: `services/overseas_intraday_vbo_service.py`, `task/background/intraday/overseas_intraday_vbo_task.py`, `strategies/overseas_daily_vbo_backtest.py`, `scripts/{run_overseas_vbo_sweep,fetch_overseas_ohlcv,compare_overseas_intraday_vs_daily}.py`
 
+### O-4. dry-run 전략 3종 확대 후속 [신규 등재 — 2026-08-22, #874/#875/#876/#877]
+
+해외 dry-run 이 VBO 단일에서 4전략으로 늘었는데 todo 에는 미등재였다. `O'NeilPP_overseas`(#874) · `O'NeilBGU_overseas`(#875) · `LarryWilliamsCB_overseas`(#877) 를 `OverseasDryRunSuiteService` 가 한 after-market 태스크에서 합성 실행하고, 완료 알림은 전략 라벨(VBO/PP/BGU/CB)별 신호 수·예시 종목을 요약한다(#876). 주문 경로는 없다(dry-run 서비스는 `order_execution` 의존을 갖지 않는다).
+
+- [ ] **전략별 would-be 성과 축적·판정** — 분석 경로는 #878 로 갖춰졌다(`--all-sources`/`DEFAULT_SIGNAL_SOURCES` 로 VBO·PP·BGU·CB 저널을 함께 읽고 `by_strategy` 집계, 당일 실현손익 없는 신호도 표본 유지). 남은 것은 5거래일+ 축적 후 O-3 와 같은 기준(왕복비용 0.5%, 비관·낙관 bracket)으로 전략별 엣지를 판정하는 것뿐이다.
+- [ ] **일봉 낙관 편향 보정치는 VBO 에서만 실측됐다** — O-3 교차검증의 진입 슬리피지 +0.462%p·낙관 과대 1.138%p 는 VBO 장중 paper(`OverseasIntradayVBOService`) 대조로 얻은 값이고, 신규 3전략에는 장중 paper 경로가 없다(`services/overseas_intraday_*` 는 VBO 뿐). 세 전략의 일봉 dry-run 수치를 실행 기대값으로 그대로 읽지 말 것 — 최소한 VBO 편향폭을 하한 보정으로 얹어 해석한다.
+- ※ Phase 5(실주문 전환) 착수 조건은 불변이다. 전략 수가 는 것은 **후보 확대이지 엣지 입증이 아니다.**
+
+주요 파일: `services/overseas_dryrun_suite_service.py`, `services/overseas_{pocket_pivot,buyable_gap_up,channel_breakout}_dryrun_service.py`, `task/background/after_market/overseas_dryrun_task.py`, `scripts/analyze_overseas_dryrun.py`
+
 ### Phase 5. 안전/canary [**보류** — 스윕에서 엣지 미확인, 2026-08-05]
 
 - [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile(`OverseasReconcileService` scaffolding 존재), risk gate/kill switch/canary USD 확장, 실전 소액 canary, canary auto-fire 배선 + `live_enabled=True` 전환 — dry-run 검증 + canary 게이팅.
@@ -281,7 +296,8 @@
 
 - [x] `docs/backtest.md`(본문은 #619 슬리피지/스프레드 CLI까지 이미 반영, 날짜만 동기화)·`CODEBASE_SUMMARY.md`(bootstrap 분해 진전·EventShadowManager 분리·해외/테마 계층·브로커 계층 계측 4곳 반영) 갱신 완료 (2026-07-05).
 - [x] **`service_container.py` 비대화 경고 해소 — bootstrap 분해 + 의존성 경계 테스트 추가 (2026-07-12)**: #659(서비스↔전략 의존성 경계 강제, `oneil_common_types.py`를 `strategies/`→`common/`으로 이관, `test_architecture_dependencies.py` 신규) · #660(`backtest_task_bootstrap.py` 추출) · #661(`repository_bootstrap.py` 추출) · #662(`market_data_bootstrap.py` 추출) · #663(`query_bootstrap.py` 추출) · #664(`realtime_bootstrap.py` 추출) 6개 PR로 `service_container.py`가 962→**710줄**로 감소, 07-05까지의 증가 추세 반전.
-- 감시(조치 아님, 2026-07-18 실측): `scheduler/strategy_scheduler.py` 2,153→**2,426줄**(+273) / `services/strategy_log_report_service.py` 2,144→**2,298줄**(+154, 07-08 "정체" 판정 이후 증가 재개) / `view/web/bootstrap/service_container.py` #659~664 분해로 710줄까지 감소 후 **746줄**로 재증가(+36) — 분해는 3-4 재승격과 함께 진행.
+- [x] **해외 조립 분해 (2026-08-22)**: `service_container.py` 의 해외(미국장) 조립 4경로(관심종목 등락 알림 · dry-run 파이프라인 · 수동 주문 게이팅 · 장중 VBO 폴링, 220줄)를 `view/web/bootstrap/overseas_bootstrap.py`(`OverseasBootstrap`)로 이관했다 — **1,174→936줄**. #659~664 와 같은 bootstrap 추출 패턴이고 조립 순서·조건·후주입은 불변, 자동 경로 `live_enabled=False` 잠금과 수동 경로 `live_enabled=True` 의 인스턴스 분리도 그대로다(이제 이 파일이 유일한 조립 지점). 테스트는 patch 대상 모듈만 이관하되 양쪽 모듈이 공유하는 `USMarketCalendarService` 는 **`overseas_bootstrap.<이름>` 접두 키**로 등록했다 — 같은 키로 두 번 패치하면 나중 것이 앞의 것을 덮어써 어느 모듈의 mock 인지 알 수 없어지기 때문.
+- 감시(조치 아님, 2026-08-22 실측 — 07-18 이후 갱신되지 않아 실제 증가폭이 문서에 반영되지 않고 있었다): `scheduler/strategy_scheduler.py` 2,426→**2,499줄**(+73, 08-18 이후 정체) / `services/strategy_log_report_service.py` 2,298→**2,716줄**(+418, 08-18 2,549 → 08-21 2,716 로 증가 가속) / `view/web/bootstrap/service_container.py` 746→1,174줄(+428; 08-18 1,078 → 08-21 1,126)까지 늘어 **#659~664 분해로 얻은 962→710 감소가 상쇄되고 분해 이전(962줄)보다 커졌다가**, 위 해외 분해로 **936줄**로 내렸다. 다만 신규 서비스 조립이 계속 이 파일에 쌓이는 구조 자체는 그대로라 분해만으로는 재발을 막지 못한다 — 다음 증가 시엔 조립 지점 규약(신규 서비스군은 전용 bootstrap 모듈에 넣는다)을 함께 정할 것. 남은 god class 분해는 3-4 재승격과 함께 진행.
 
 ### M-3. 시가총액/미국주식 UI 하드닝 후속 [#653 코드리뷰 xhigh, 2026-07-11]
 
@@ -321,6 +337,7 @@
 - 실측 집계(07-24~08-07 커밋): 관심종목 알림 8건(구독 복원 · 코드 정규화 2건 · startup fallback · 중복 제거 2건 · 임계 상태 영속화 · 신뢰성), 지수 임계 알림 3건(플래핑 · 복구 안정화 · 히스테리시스), 시장 안전장치/사이드카 3건, PT 재구독 3건.
 - [x] **정규화·재시작 복원 회귀 커버리지 보강 (2026-08-18)**: 관심종목 알림 서비스의 기존 국내 zero-pad 계약에 더해 미국장 심볼 대소문자 정규화를 추가했다. 저장소에 `aapl`처럼 소문자로 남은 관심 심볼도 관심종목 저장/상세조회·브로커 조회·알림 판정·상태 복원에서는 `AAPL`로 통일한다. 재시작 상태 파일의 소문자 bucket이 당일 중복 알림을 막는지까지 테스트로 고정했다.
 - [x] **알림 계약 문서화 (2026-08-18)**: 알림 종류별 발신 조건 · 중복 억제 · 재시작 복원 정책을 `docs/notification_alert_contracts.md`에 정리했다. 새 알림 추가 시 입력 키 정규화, `dedup_key`, 외부 전파 metadata, 상태 복원 테스트를 체크리스트로 확인한다.
+- [ ] **(신규 2026-08-22) 인접 계열에서 같은 신호 재발 — 관찰 항목**: 08-18 문서화 이후 나흘(08-19~08-22)에 **시세 갱신·캐시 키·구독 슬롯 계열 수정 7건**이 다시 몰렸다 — #858 NXT 현재가가 종목코드 키 KRX 캐시로 제공 · #859 웹소켓 슬롯 계정이 KIS 등록분과 drift · #860 공통 페이지 지수 조회 hang · #863 즐겨찾기 자동 갱신·미국 히트맵 폴링 정지 · #864 히트맵 자동 갱신이 캐시를 우회 · #865 즐겨찾기 알림 부호 처리 · #867 즐겨찾기 가격 stale. M-5 가 정리한 것은 **알림** 계약이고, 이번 재발은 그 앞단인 **시세 캐시 키·갱신 주기·슬롯 회계** 계약이다(#871/#872 의 거래소 분리도 같은 축이며 M-8 미검증 항목이 남아 있다). 조치는 아직 열지 않는다 — 다음 문서 점검에서 이 계열 수정이 계속 쌓이면 캐시 키(코드 vs 코드+거래소)·갱신 주체·슬롯 회계 계약을 알림 계약과 같은 방식으로 문서화·테스트 고정하는 항목으로 승격한다.
 
 ### M-6. 공개 배포 표면 안전 기준 [완료 — 2026-08-18]
 
@@ -355,9 +372,26 @@
 
 ---
 
+## K. 브로커 확장
+
+### K-1. 키움 REST API 연동 [신규 등재 — 2026-08-22, 계획 문서 + 스켈레톤 #866]
+
+`docs/kiwoom_api_integration_plan.md`(Phase 0~9)와 스켈레톤이 머지됐는데 todo 에는 미등재였다. 현재 머지 범위는 **환경/토큰/HTTP base + wrapper 진입점**뿐이다 — `brokers/kiwoom/{kiwoom_env,kiwoom_token_provider,kiwoom_api_base,kiwoom_client}.py`, `BrokerAPIWrapper(broker="kiwoom")` 분기, `config.yaml.example` 의 `kiwoom.paper/real` 블록, 단위·통합 테스트.
+
+- 현 상태의 안전성: `KiwoomApiClient` 는 시세·계좌·주문 전 메서드가 `ErrorCode.API_ERROR` + "기능 미구현" 을 돌려주는 골격이고, `BrokerBootstrap` 은 `broker=` 를 넘기지 않아 앱 조립 경로에서 키움이 선택되지 않는다. **조용히 잘못된 값이 흐르는 경로는 없다.**
+- [ ] Phase 4~6: 시세·계좌·주문 API 구현. 서비스 계층에는 `ResCommonResponse`/공통 도메인 타입으로 변환해 넘기고, 키움 전용 기능은 공통 인터페이스에 끼워 넣지 말고 `capabilities`/브로커별 확장으로 분리(계획서 방침).
+- [ ] Phase 7: `KiwoomClient` 완성 + wrapper 연결 → 계획서의 1차 완료 기준(토큰·현재가/일봉/분봉·잔고/예수금·매수/매도 mock 테스트 + 단위·통합 전체 통과) 충족.
+- [ ] 외부 선행 조건(**사용자 액션**): 키움 계좌 · `openapi.kiwoom.com` API 사용신청(실전/모의 키 별도) · 모의투자 신청 · 실전 호출 IP 등록 확인 → `config/config.yaml` 의 `kiwoom.paper/real` 입력. 이게 없으면 Phase 4 이후는 mock 테스트까지만 진행 가능하고 스모크 테스트는 막힌다.
+- [ ] Phase 8~9(2차): WebSocket · 조건검색 등 키움 특화 기능 — 1차 완료 후 재판단.
+- ※ 우선순위: 크리티컬 패스는 여전히 **엣지(수익성) 입증**이라 K-1 은 그 아래다. 다만 2-4 무틱(≈55%)이 KIS측 계정·상품군 단위 미전송으로 확정돼 자체 코드로 해소 불가이므로, **키움 실시간이 대체 틱 소스가 되는지**는 2-4 의 유일한 자체 우회로로서 평가 가치가 있다(계획서 2차 범위). 이 각도를 세우려면 Phase 8 까지 가야 하므로 착수 결정 시 범위를 그렇게 잡을지 먼저 정할 것.
+
+주요 파일: `docs/kiwoom_api_integration_plan.md`, `brokers/kiwoom/`, `brokers/broker_api_wrapper.py`, `view/web/bootstrap/broker_bootstrap.py`, `config/config.yaml.example`
+
+---
+
 ## 테마/분류 데이터
 
-네이버 테마(주 소스)는 `ThemeClassificationTask` 자동 수집 가동 중(BATCH 모드 장마감 후, 기본 7일 간격). 수동 트리거 `POST /api/background/theme-classification/force-update`. 분류 데이터는 네이버 단일 소스로 충분 — 키움 등 추가 소스 연동 계획 없음(T-1 드롭). 멀티소스 병합 인프라는 `StockClassificationRepository`에 잔존하나 신규 소스 연결 계획 없음.
+네이버 테마(주 소스)는 `ThemeClassificationTask` 자동 수집 가동 중(BATCH 모드 장마감 후, 기본 7일 간격). 수동 트리거 `POST /api/background/theme-classification/force-update`. 분류 데이터는 네이버 단일 소스로 충분 — 키움 등 추가 소스 연동 계획 없음(T-1 드롭). ※ 이 드롭은 **분류 데이터 소스** 이야기이며, K-1 의 키움 **브로커 REST** 연동과는 별개 축이다. 멀티소스 병합 인프라는 `StockClassificationRepository`에 잔존하나 신규 소스 연결 계획 없음.
 
 ### T-0. StockEasy 섹터RS taxonomy 참고 (선택)
 
@@ -391,7 +425,7 @@
 
 ### 보류 — 정책 합의 후 재승격
 
-- [ ] **3-4 active strategy lifecycle 7단계 분해**(`get_watchlist`/`filter_candidates`/`evaluate_entries_bounded`/`evaluate_exits_bounded`/`emit_metrics`) — 현재 `scan`/`check_exits`에 묻혀 있어 대형 리팩토링. checklist 테스트는 적용 완료. 공통 흐름이 더 쌓이면 재승격. (M-2의 god class 줄수 계측이 재승격 근거 — `strategy_scheduler.py` 2,152줄.)
+- [ ] **3-4 active strategy lifecycle 7단계 분해**(`get_watchlist`/`filter_candidates`/`evaluate_entries_bounded`/`evaluate_exits_bounded`/`emit_metrics`) — 현재 `scan`/`check_exits`에 묻혀 있어 대형 리팩토링. checklist 테스트는 적용 완료. 공통 흐름이 더 쌓이면 재승격. (M-2의 god class 줄수 계측이 재승격 근거 — `strategy_scheduler.py` 2,499줄, 2026-08-22 실측.)
 - [ ] 기타 정책/임계값 결정: RiskGate 실패 주문 cap 정책 / 전략별 min trading value·market cap 하한 / 매도 RiskGate 우회 / volatility hard gate / 성과 저하 자동 해제·수량 축소 / 레거시 전략 백테스트 통합 여부.
 
 주요 파일: `interfaces/live_strategy.py`, `tests/unit_test/strategies/test_live_strategy_lifecycle_contract.py`
