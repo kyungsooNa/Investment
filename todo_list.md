@@ -258,7 +258,7 @@
 
 해외 dry-run 이 VBO 단일에서 4전략으로 늘었는데 todo 에는 미등재였다. `O'NeilPP_overseas`(#874) · `O'NeilBGU_overseas`(#875) · `LarryWilliamsCB_overseas`(#877) 를 `OverseasDryRunSuiteService` 가 한 after-market 태스크에서 합성 실행하고, 완료 알림은 전략 라벨(VBO/PP/BGU/CB)별 신호 수·예시 종목을 요약한다(#876). 주문 경로는 없다(dry-run 서비스는 `order_execution` 의존을 갖지 않는다).
 
-- [ ] **전략별 would-be 성과 축적·판정** — 세 전략은 각자 다른 `signal_source`(`overseas_pp_dryrun`/`overseas_bgu_dryrun`/`overseas_cb_dryrun`)로 저널을 남기고 분석 CLI 가 `--signal-source` 를 받으므로 **전략별 리포트는 지금도 산출 가능**하다. 남은 것은 5거래일+ 축적 후 O-3 와 같은 기준(왕복비용 0.5%, 비관·낙관 bracket)으로 엣지를 판정하는 것뿐이다.
+- [ ] **전략별 would-be 성과 축적·판정** — 분석 경로는 #878 로 갖춰졌다(`--all-sources`/`DEFAULT_SIGNAL_SOURCES` 로 VBO·PP·BGU·CB 저널을 함께 읽고 `by_strategy` 집계, 당일 실현손익 없는 신호도 표본 유지). 남은 것은 5거래일+ 축적 후 O-3 와 같은 기준(왕복비용 0.5%, 비관·낙관 bracket)으로 전략별 엣지를 판정하는 것뿐이다.
 - [ ] **일봉 낙관 편향 보정치는 VBO 에서만 실측됐다** — O-3 교차검증의 진입 슬리피지 +0.462%p·낙관 과대 1.138%p 는 VBO 장중 paper(`OverseasIntradayVBOService`) 대조로 얻은 값이고, 신규 3전략에는 장중 paper 경로가 없다(`services/overseas_intraday_*` 는 VBO 뿐). 세 전략의 일봉 dry-run 수치를 실행 기대값으로 그대로 읽지 말 것 — 최소한 VBO 편향폭을 하한 보정으로 얹어 해석한다.
 - ※ Phase 5(실주문 전환) 착수 조건은 불변이다. 전략 수가 는 것은 **후보 확대이지 엣지 입증이 아니다.**
 
