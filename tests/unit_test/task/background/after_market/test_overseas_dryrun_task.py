@@ -34,8 +34,8 @@ def _make_task(exchange=OverseasExchange.NASD, signals=None):
 
 def test_task_metadata():
     task, _, _, _, _ = _make_task()
-    assert task.task_name == "overseas_vbo_dryrun"
-    assert task._scheduler_label == "OverseasVBODryRun"
+    assert task.task_name == "overseas_dryrun"
+    assert task._scheduler_label == "OverseasDryRun"
     assert task.priority == TaskPriority.LOW
 
 

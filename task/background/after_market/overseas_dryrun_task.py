@@ -1,8 +1,8 @@
 # task/background/after_market/overseas_dryrun_task.py
-"""해외 dry-run after-market 태스크 (Phase 3c).
+"""해외 dry-run after-market 태스크.
 
-해외 dry-run suite 의 일봉 기반 신호 산출을 after-market 스케줄러에 얹어 매일 1회
-실행하고, shadow 저널을 파일로 flush 한다.
+해외 dry-run suite 의 일봉 기반 신호(VBO/PP/BGU/CB) 산출을 after-market 스케줄러에
+얹어 매일 1회 실행하고, shadow 저널을 파일로 flush 한다.
 
 트리거는 미국장 전용 TimeDispatcher(time_dispatcher_us)가 담당한다 — NY 정규장
 마감(16:00 ET) 감지 후 task delay(30분)만큼 대기해 16:30 ET 효과로 티켓을 발행하면
@@ -58,11 +58,11 @@ class OverseasDryRunTask(AfterMarketTask):
 
     @property
     def task_name(self) -> str:
-        return "overseas_vbo_dryrun"
+        return "overseas_dryrun"
 
     @property
     def _scheduler_label(self) -> str:
-        return "OverseasVBODryRun"
+        return "OverseasDryRun"
 
     # ── 트리거 표기용 메타데이터 (16:30 ET) ──
     # Ticket-driven 모드(worker_pool 주입)에서는 스케줄링에 사용되지 않으며,
