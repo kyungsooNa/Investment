@@ -60,6 +60,8 @@ from services.overseas_intraday_vbo_service import OverseasIntradayVBOService
 from services.overseas_order_execution_service import OverseasOrderExecutionService
 from services.overseas_position_sizing_service import OverseasPositionSizingService, extract_fx_krw_per_usd
 from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
+from services.overseas_pocket_pivot_dryrun_service import OverseasPocketPivotDryRunService
+from services.overseas_dryrun_suite_service import OverseasDryRunSuiteService
 from services.strategy_log_report_service import StrategyLogReportService
 from task.background.after_market.after_market_reconcile_task import AfterMarketReconcileTask
 from task.background.after_market.cache_warmup_task import CacheWarmupTask
@@ -937,6 +939,7 @@ class ServiceContainer:
             else:
                 ctx.overseas_candidate_service = None
                 ctx.overseas_vbo_dryrun_service = None
+                ctx.overseas_pp_dryrun_service = None
                 ctx.overseas_dryrun_task = None
                 ctx.overseas_manual_order_service = None
                 ctx.overseas_trade_repository = None
@@ -996,6 +999,7 @@ class ServiceContainer:
         ctx = self._ctx
         ctx.overseas_candidate_service = None
         ctx.overseas_vbo_dryrun_service = None
+        ctx.overseas_pp_dryrun_service = None
         ctx.overseas_dryrun_task = None
         if getattr(ctx, "event_shadow_journal_service", None) is None:
             ctx.event_shadow_journal_service = EventShadowJournalService(
@@ -1032,11 +1036,23 @@ class ServiceContainer:
             position_sizing_service=overseas_position_sizing_service,
             fx_provider=_overseas_fx_provider,
         )
+        ctx.overseas_pp_dryrun_service = OverseasPocketPivotDryRunService(
+            candidate_service=ctx.overseas_candidate_service,
+            stock_query_service=ctx.stock_query_service,
+            shadow_journal=ctx.event_shadow_journal_service,
+            logger=ctx.logger,
+            position_sizing_service=overseas_position_sizing_service,
+            fx_provider=_overseas_fx_provider,
+        )
+        overseas_dryrun_suite = OverseasDryRunSuiteService(
+            [ctx.overseas_vbo_dryrun_service, ctx.overseas_pp_dryrun_service],
+            logger=ctx.logger,
+        )
         # 미국 정규장 마감(16:00 ET) 직후 트리거. O-1: 규칙 기반 NYSE 캘린더를
         # 주입해 미국 휴장일에는 실행을 스킵한다 (기존: 주말 필터만).
         dryrun_us_clock = MarketClock.for_us_equities(logger=ctx.logger)
         ctx.overseas_dryrun_task = OverseasDryRunTask(
-            dryrun_service=ctx.overseas_vbo_dryrun_service,
+            dryrun_service=overseas_dryrun_suite,
             shadow_journal=ctx.event_shadow_journal_service,
             market_calendar_service=USMarketCalendarService(
                 market_clock=dryrun_us_clock, logger=ctx.logger,
