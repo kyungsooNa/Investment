@@ -783,6 +783,40 @@ def test_service_container_wires_overseas_dryrun_position_sizing(patched_service
     assert callable(fx_provider)
 
 
+def test_service_container_wires_overseas_pp_into_dryrun_suite(patched_service_container_deps):
+    """해외 dry-run 태스크는 VBO와 PP 서비스를 함께 실행하는 suite 를 주입받는다."""
+    from config.config_loader import AppConfig
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.market_mode = "overseas_us"
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        market_mode="overseas_us",
+        overseas_stock={"dryrun_slot_usd": 750.0, "dryrun_max_qty": 4},
+    )
+    ctx.overseas_stock_code_repository = MagicMock()
+
+    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True) as sizing_cls, \
+         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True) as candidate_cls, \
+         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True) as vbo_cls, \
+         patch("view.web.bootstrap.service_container.OverseasPocketPivotDryRunService", autospec=True) as pp_cls, \
+         patch("view.web.bootstrap.service_container.OverseasDryRunSuiteService", autospec=True) as suite_cls, \
+         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True) as task_cls:
+        ServiceContainer(ctx).run()
+
+    pp_kwargs = pp_cls.call_args.kwargs
+    assert pp_kwargs["candidate_service"] is candidate_cls.return_value
+    assert pp_kwargs["position_sizing_service"] is sizing_cls.return_value
+    assert callable(pp_kwargs["fx_provider"])
+    suite_cls.assert_called_once_with(
+        [vbo_cls.return_value, pp_cls.return_value],
+        logger=ctx.logger,
+    )
+    assert task_cls.call_args.kwargs["dryrun_service"] is suite_cls.return_value
+    assert ctx.overseas_pp_dryrun_service is pp_cls.return_value
+
+
 def test_service_container_wires_overseas_dryrun_us_market_clock(patched_service_container_deps):
     """overseas_us dry-run 태스크는 미국장 cron으로, 한국 캘린더/티켓 큐 없이 배선한다."""
     from config.config_loader import AppConfig
