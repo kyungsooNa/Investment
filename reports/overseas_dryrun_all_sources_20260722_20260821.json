@@ -1,0 +1,222 @@
+{
+  "decidability": {
+    "decided": 260,
+    "undecided": 263,
+    "undecided_ratio": 0.502868068833652,
+    "decided_avg_realized_pct": 0.9149675693928552,
+    "decided_win_rate": 0.5769230769230769,
+    "pessimistic_avg_realized_pct": -1.0537446117741067,
+    "optimistic_avg_realized_pct": 0.32555691466220066,
+    "optimistic_sample": 401
+  },
+  "totals": {
+    "signals": 523,
+    "realized_sample": 523,
+    "wins": 150,
+    "losses": 373,
+    "win_rate": 0.28680688336520077,
+    "avg_realized_pct": -1.0537446117741067,
+    "median_realized_pct": -2.9999999999999916,
+    "sum_realized_pct": -551.1084319578578,
+    "min_realized_pct": -3.0000000000000138,
+    "max_realized_pct": 63.561400806500124
+  },
+  "by_exit_reason": {
+    "stop": 122,
+    "eod": 260,
+    "undecided": 141
+  },
+  "by_strategy": {
+    "VBO": {
+      "signals": 523,
+      "realized_sample": 523,
+      "wins": 150,
+      "sum_realized_pct": -551.1084319578578
+    }
+  },
+  "by_exchange": {
+    "NASD": {
+      "signals": 523,
+      "wins": 150,
+      "sum_realized_pct": -551.1084319578578
+    }
+  },
+  "by_date": {
+    "20260722": {
+      "signals": 29,
+      "wins": 11,
+      "sum_realized_pct": -28.487169324210917
+    },
+    "20260723": {
+      "signals": 23,
+      "wins": 6,
+      "sum_realized_pct": -27.113221146933792
+    },
+    "20260727": {
+      "signals": 12,
+      "wins": 7,
+      "sum_realized_pct": 1.3522699707203443
+    },
+    "20260728": {
+      "signals": 21,
+      "wins": 2,
+      "sum_realized_pct": -36.25623978147706
+    },
+    "20260729": {
+      "signals": 19,
+      "wins": 3,
+      "sum_realized_pct": -25.32811672437509
+    },
+    "20260730": {
+      "signals": 33,
+      "wins": 5,
+      "sum_realized_pct": -56.52091256236209
+    },
+    "20260731": {
+      "signals": 18,
+      "wins": 8,
+      "sum_realized_pct": -15.777262662313063
+    },
+    "20260803": {
+      "signals": 30,
+      "wins": 6,
+      "sum_realized_pct": -55.03457951965972
+    },
+    "20260804": {
+      "signals": 34,
+      "wins": 14,
+      "sum_realized_pct": -26.66275259821759
+    },
+    "20260805": {
+      "signals": 14,
+      "wins": 2,
+      "sum_realized_pct": -35.21903397531325
+    },
+    "20260806": {
+      "signals": 34,
+      "wins": 9,
+      "sum_realized_pct": -51.984851571105054
+    },
+    "20260807": {
+      "signals": 15,
+      "wins": 5,
+      "sum_realized_pct": -13.419902383985406
+    },
+    "20260810": {
+      "signals": 22,
+      "wins": 9,
+      "sum_realized_pct": -15.85623853794069
+    },
+    "20260811": {
+      "signals": 58,
+      "wins": 15,
+      "sum_realized_pct": -89.03779201500257
+    },
+    "20260812": {
+      "signals": 23,
+      "wins": 3,
+      "sum_realized_pct": -38.98275079403316
+    },
+    "20260813": {
+      "signals": 37,
+      "wins": 16,
+      "sum_realized_pct": -8.019515753600896
+    },
+    "20260814": {
+      "signals": 12,
+      "wins": 3,
+      "sum_realized_pct": -14.961540783624336
+    },
+    "20260817": {
+      "signals": 21,
+      "wins": 3,
+      "sum_realized_pct": -29.291997726411008
+    },
+    "20260818": {
+      "signals": 18,
+      "wins": 2,
+      "sum_realized_pct": -34.37590273612759
+    },
+    "20260819": {
+      "signals": 23,
+      "wins": 15,
+      "sum_realized_pct": 81.07442508428409
+    },
+    "20260820": {
+      "signals": 10,
+      "wins": 1,
+      "sum_realized_pct": -20.866411404055764
+    },
+    "20260821": {
+      "signals": 17,
+      "wins": 5,
+      "sum_realized_pct": -10.338935012113692
+    }
+  },
+  "sizing": {
+    "sized_count": 523,
+    "total_notional_usd": 433259.2431,
+    "avg_notional_usd": 828.4116,
+    "fx_sized_count": 0,
+    "total_krw_exposure": 0.0,
+    "avg_krw_exposure": null
+  },
+  "config": {
+    "date_from": "20260722",
+    "date_to": "20260821",
+    "signal_source": [
+      "overseas_dryrun",
+      "overseas_pp_dryrun",
+      "overseas_bgu_dryrun",
+      "overseas_cb_dryrun"
+    ],
+    "shadow_dir": "logs/strategies/event_shadow",
+    "round_trip_cost_pct": 0.5,
+    "cost_model": "commission_only",
+    "entry_price_assumption": "daily_breakout_target",
+    "ohlcv_dir": "data\\overseas_ohlcv"
+  },
+  "multiday": {
+    "reconstructed_count": 188,
+    "unmatched_count": 335,
+    "wins": 42,
+    "losses": 146,
+    "win_rate": 0.22340425531914893,
+    "avg_holding_days": 1.0106382978723405,
+    "net_return_pct": {
+      "avg": -1.6237272458931098,
+      "median": -3.5000000000000027,
+      "sum": -305.26072222790464,
+      "min": -9.97400120994365,
+      "max": 23.86374648278299
+    },
+    "gross_return_pct": {
+      "avg": -1.1237272458931096,
+      "median": -3.0000000000000027,
+      "sum": -211.26072222790458,
+      "min": -9.47400120994365,
+      "max": 24.36374648278299
+    },
+    "by_exit_reason": {
+      "stop": 136,
+      "trailing": 2,
+      "terminal": 50
+    },
+    "by_strategy": {
+      "VBO": {
+        "count": 188,
+        "avg_net_return_pct": -1.6237272458931098
+      }
+    },
+    "same_day_vs_multiday": {
+      "same_day_avg_realized_pct": -1.2222690265623097,
+      "multiday_avg_gross_pct": -1.1237272458931096,
+      "gap_pct": 0.09854178066920016
+    },
+    "params": {
+      "trailing_stop_pct": 8.0,
+      "time_stop_days": 20,
+      "round_trip_cost_pct": 0.5
+    }
+  }
+}
