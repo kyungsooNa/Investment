@@ -421,6 +421,29 @@ def test_initialization_kiwoom_requires_env(mock_logger):
         BrokerAPIWrapper(broker="kiwoom", env=None, logger=mock_logger)
 
 
+@pytest.mark.parametrize("broker", ["korea_investment", "kiwoom"])
+@patch(f"{wrapper_module.__name__}.StockCodeRepository")
+def test_invalid_env_rejected_before_stock_code_repository(mock_repo, broker, mock_logger):
+    """env 검증은 종목코드 저장소 생성보다 먼저다.
+
+    저장소 생성자는 DB 파일이 없으면 KRX 를 조회하고 파일을 만든다 — 잘못된 인자로
+    호출됐을 때 그 부작용을 먼저 일으키면, 거부돼야 할 호출이 네트워크 상태에 따라
+    다른 예외로 실패한다(오프라인이면 ValueError 자체가 나오지 않는다).
+    """
+    with pytest.raises(ValueError, match="env 인스턴스가 필요합니다"):
+        BrokerAPIWrapper(broker=broker, env=None, logger=mock_logger)
+
+    mock_repo.assert_not_called()
+
+
+@patch(f"{wrapper_module.__name__}.StockCodeRepository")
+def test_unsupported_broker_rejected_before_stock_code_repository(mock_repo, mock_logger):
+    with pytest.raises(NotImplementedError, match="지원되지 않는 증권사"):
+        BrokerAPIWrapper(broker="unknown_broker", env=MagicMock(), logger=mock_logger)
+
+    mock_repo.assert_not_called()
+
+
 @patch(f"{wrapper_module.__name__}.KoreaInvestApiClient")
 @patch(f"{wrapper_module.__name__}.StockCodeRepository")
 def test_initialization_with_injected_stock_code_repository(mock_stock_mapper, mock_client, mock_env, mock_logger, mock_market_clock):

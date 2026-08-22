@@ -36,7 +36,6 @@ class BrokerAPIWrapper:
         self._broker = broker
         self._logger = logger
         self._client = None
-        self._stock_mapper = stock_code_repository if stock_code_repository is not None else StockCodeRepository(logger=logger)
         self.env = env
         self._retry_queue: ApiRequestQueue | None = None
         self._api_budget_limiter = api_budget_limiter
@@ -65,6 +64,13 @@ class BrokerAPIWrapper:
             )
         else:
             raise NotImplementedError(f"지원되지 않는 증권사: {broker}")
+
+        # 저장소 생성은 인자 검증 뒤에 둔다 — 생성자가 DB 파일이 없으면 KRX 조회와
+        # 파일 생성을 수행하므로, 거부될 호출이 그 부작용을 먼저 일으키면 안 된다.
+        self._stock_mapper = (
+            stock_code_repository if stock_code_repository is not None
+            else StockCodeRepository(logger=logger)
+        )
 
         if broker in ("korea_investment", "kiwoom"):
             # RetryQueue는 Cache 안쪽에 위치: 캐시 히트 시 Queue를 거치지 않고,
