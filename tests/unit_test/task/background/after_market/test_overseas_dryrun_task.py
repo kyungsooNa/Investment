@@ -1,4 +1,4 @@
-"""해외 VBO dry-run after-market 태스크 테스트 (Phase 3c).
+"""해외 dry-run after-market 태스크 테스트 (Phase 3c).
 
 미국장 after-market 스케줄러(16:30 ET 트리거)에 등록해 매일 1회 dry-run 신호를
 산출·flush 한다. 주문 경로 없음(서비스에 order 의존 부재).
@@ -12,9 +12,11 @@ from interfaces.schedulable_task import TaskPriority
 from common.overseas_types import OverseasExchange
 
 
-def _make_task(exchange=OverseasExchange.NASD):
+def _make_task(exchange=OverseasExchange.NASD, signals=None):
     dryrun = MagicMock()
-    dryrun.scan_dry_run = AsyncMock(return_value=[{"code": "AAA", "action": "BUY"}])
+    dryrun.scan_dry_run = AsyncMock(return_value=signals if signals is not None else [
+        {"code": "AAA", "action": "BUY", "reason": "vbo_daily_breakout"},
+    ])
     journal = MagicMock()
     logger = MagicMock()
     notification_service = AsyncMock()
@@ -66,13 +68,49 @@ async def test_on_market_closed_runs_scan_and_flushes():
             "market_date_text": "2026-07-06",
             "exchange": "NASD",
             "signals": 1,
+            "summary": {"VBO": 1},
         }
     )
     notification_service.emit.assert_awaited_once_with(
         NotificationCategory.BACKGROUND,
         NotificationLevel.INFO,
-        "해외 VBO dry-run 완료",
-        "미국 거래일 2026-07-06 기준 dry-run 리포트: 1개 신호",
+        "해외 dry-run 완료",
+        "미국 거래일 2026-07-06 기준 dry-run 리포트: 총 1개 신호\n- VBO: 1개 (AAA)",
+    )
+
+
+@pytest.mark.asyncio
+async def test_on_market_closed_notification_groups_vbo_pp_bgu_signals():
+    signals = [
+        {"code": "AAA", "action": "BUY", "reason": "vbo_daily_breakout"},
+        {"code": "BBB", "name": "Beta", "strategy": "O'NeilPP_overseas", "action": "BUY"},
+        {"code": "CCC", "strategy": "O'NeilPP_overseas", "action": "BUY"},
+        {"code": "DDD", "strategy": "O'NeilBGU_overseas", "action": "BUY"},
+    ]
+    task, _, _, notification_service, logger = _make_task(signals=signals)
+
+    await task._on_market_closed("20260706")
+
+    logger.info.assert_any_call(
+        {
+            "event": "overseas_dryrun_done",
+            "market_date": "20260706",
+            "market_date_text": "2026-07-06",
+            "exchange": "NASD",
+            "signals": 4,
+            "summary": {"VBO": 1, "PP": 2, "BGU": 1},
+        }
+    )
+    notification_service.emit.assert_awaited_once_with(
+        NotificationCategory.BACKGROUND,
+        NotificationLevel.INFO,
+        "해외 dry-run 완료",
+        (
+            "미국 거래일 2026-07-06 기준 dry-run 리포트: 총 4개 신호\n"
+            "- VBO: 1개 (AAA)\n"
+            "- PP: 2개 (Beta, CCC)\n"
+            "- BGU: 1개 (DDD)"
+        ),
     )
 
 
