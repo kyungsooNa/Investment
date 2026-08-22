@@ -27,7 +27,6 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "ThemeIntradayLeaderAlertTask",
     "MarketIndexThresholdAlertTask",
     "MarketTimingDailyUpdateTask",
-    "OverseasFavoritePriceAlertTask", "FavoritePriceAlertService",
     "USMarketCalendarService",
     "BacktestMicrostructureCaptureService", "MicrostructureCaptureTask",
     "PremiumWatchlistGeneratorTask", "CacheWarmupTask", "LogCleanupTask",
@@ -72,6 +71,14 @@ BACKTEST_BOOTSTRAP_PATCH_NAMES = [
     "NewHighStrategyCoverageBacktestService", "NewHighStrategyCoverageBacktestTask",
 ]
 
+# 해외 조립은 `OverseasBootstrap` 으로 이관됐다. `USMarketCalendarService` 처럼 양쪽 모듈이
+# 모두 참조하는 이름이 있으므로 해외 쪽 mock 은 `overseas_bootstrap.<이름>` 키로 등록한다
+# — 같은 키로 넣으면 나중 것이 앞의 것을 덮어써서 어느 모듈의 mock 인지 알 수 없다.
+OVERSEAS_BOOTSTRAP_PATCH_NAMES = [
+    "OverseasFavoritePriceAlertTask", "FavoritePriceAlertService",
+    "USMarketCalendarService",
+]
+
 
 @pytest.fixture
 def patched_service_container_deps():
@@ -99,6 +106,10 @@ def patched_service_container_deps():
     targets.extend(
         (name, patch(f"view.web.bootstrap.realtime_bootstrap.{name}", autospec=True))
         for name in REALTIME_BOOTSTRAP_PATCH_NAMES
+    )
+    targets.extend(
+        (f"overseas_bootstrap.{name}", patch(f"view.web.bootstrap.overseas_bootstrap.{name}", autospec=True))
+        for name in OVERSEAS_BOOTSTRAP_PATCH_NAMES
     )
     with contextlib.ExitStack() as stack:
         mocks = {name: stack.enter_context(p) for name, p in targets}
@@ -603,7 +614,7 @@ def test_service_container_builds_overseas_favorite_price_alert_in_web_mode(patc
     ctx.runtime_mode = RuntimeMode.WEB
     ServiceContainer(ctx).run()
 
-    alert_cls = patched_service_container_deps["FavoritePriceAlertService"]
+    alert_cls = patched_service_container_deps["overseas_bootstrap.FavoritePriceAlertService"]
     overseas_kwargs = next(
         call.kwargs for call in alert_cls.call_args_list
         if call.kwargs.get("market") == MARKET_OVERSEAS_US
@@ -612,11 +623,11 @@ def test_service_container_builds_overseas_favorite_price_alert_in_web_mode(patc
     assert overseas_kwargs["state_file"] == "data/overseas_favorite_price_alert_state.json"
     assert overseas_kwargs["today_provider"]() == overseas_kwargs["today_provider"]()
 
-    task_kwargs = patched_service_container_deps["OverseasFavoritePriceAlertTask"].call_args.kwargs
+    task_kwargs = patched_service_container_deps["overseas_bootstrap.OverseasFavoritePriceAlertTask"].call_args.kwargs
     assert task_kwargs["broker"] is ctx.broker
     assert task_kwargs["market_clock"].timezone_name == "America/New_York"
     assert ctx.overseas_favorite_price_alert_task is (
-        patched_service_container_deps["OverseasFavoritePriceAlertTask"].return_value
+        patched_service_container_deps["overseas_bootstrap.OverseasFavoritePriceAlertTask"].return_value
     )
 
 
@@ -628,7 +639,7 @@ def test_service_container_disables_overseas_favorite_price_alert_via_config(pat
     ctx.full_config = {"overseas_favorite_alert": {"enabled": False}}
     ServiceContainer(ctx).run()
 
-    patched_service_container_deps["OverseasFavoritePriceAlertTask"].assert_not_called()
+    patched_service_container_deps["overseas_bootstrap.OverseasFavoritePriceAlertTask"].assert_not_called()
     assert ctx.overseas_favorite_price_alert_task is None
     assert ctx.overseas_favorite_price_alert_service is None
 
@@ -764,10 +775,10 @@ def test_service_container_wires_overseas_dryrun_position_sizing(patched_service
     )
     ctx.overseas_stock_code_repository = MagicMock()
 
-    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True) as sizing_cls, \
-         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True) as candidate_cls, \
-         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True) as dryrun_cls, \
-         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True):
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True) as sizing_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True) as candidate_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True) as dryrun_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True):
         ServiceContainer(ctx).run()
 
     sizing_cls.assert_called_once_with(
@@ -797,14 +808,14 @@ def test_service_container_wires_overseas_oneil_services_into_dryrun_suite(patch
     )
     ctx.overseas_stock_code_repository = MagicMock()
 
-    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True) as sizing_cls, \
-         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True) as candidate_cls, \
-         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True) as vbo_cls, \
-         patch("view.web.bootstrap.service_container.OverseasPocketPivotDryRunService", autospec=True) as pp_cls, \
-         patch("view.web.bootstrap.service_container.OverseasBuyableGapUpDryRunService", autospec=True) as bgu_cls, \
-         patch("view.web.bootstrap.service_container.OverseasChannelBreakoutDryRunService", autospec=True) as cb_cls, \
-         patch("view.web.bootstrap.service_container.OverseasDryRunSuiteService", autospec=True) as suite_cls, \
-         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True) as task_cls:
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True) as sizing_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True) as candidate_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True) as vbo_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasPocketPivotDryRunService", autospec=True) as pp_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasBuyableGapUpDryRunService", autospec=True) as bgu_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasChannelBreakoutDryRunService", autospec=True) as cb_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunSuiteService", autospec=True) as suite_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True) as task_cls:
         ServiceContainer(ctx).run()
 
     pp_kwargs = pp_cls.call_args.kwargs
@@ -844,15 +855,15 @@ def test_service_container_wires_overseas_dryrun_us_market_clock(patched_service
     )
     ctx.overseas_stock_code_repository = MagicMock()
 
-    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True) as task_cls:
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True) as task_cls:
         ServiceContainer(ctx).run()
 
     task_kwargs = task_cls.call_args.kwargs
     # O-1: 규칙 기반 NYSE 캘린더가 주입된다 (미국 휴장일 스킵).
-    us_calendar = patched_service_container_deps["USMarketCalendarService"].return_value
+    us_calendar = patched_service_container_deps["overseas_bootstrap.USMarketCalendarService"].return_value
     assert task_kwargs["market_calendar_service"] is us_calendar
     # 미국 정규장 클럭 주입 (America/New_York)
     assert task_kwargs["market_clock"].timezone_name == "America/New_York"
@@ -867,7 +878,8 @@ def test_service_container_wires_overseas_dryrun_us_market_clock(patched_service
         if c.kwargs.get("db_path") == "data/time_dispatcher_state_us.db"
     ]
     assert len(td_us_calls) == 1
-    assert td_us_calls[0].kwargs["mcs"] is us_calendar
+    # TimeDispatcher(us) 는 컨테이너 쪽에서 만들므로 그 모듈의 캘린더 mock 을 본다.
+    assert td_us_calls[0].kwargs["mcs"] is patched_service_container_deps["USMarketCalendarService"].return_value
     assert td_us_calls[0].kwargs["market_clock"].timezone_name == "America/New_York"
 
 
@@ -879,10 +891,10 @@ def test_domestic_active_with_overseas_enabled_builds_dryrun_task(patched_servic
     ctx.enabled_market_modes = ["domestic", "overseas_us"]
     ctx.overseas_stock_code_repository = MagicMock()
 
-    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True) as task_cls:
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True) as task_cls:
         ServiceContainer(ctx).run()
 
     # 국내 active 서비스가 살아 있으면서(국내 fail-close 아님) 해외 dry-run 태스크도 조립된다.
@@ -898,10 +910,10 @@ def test_intraday_vbo_not_built_when_disabled(patched_service_container_deps):
     ctx.enabled_market_modes = ["domestic", "overseas_us"]
     ctx.overseas_stock_code_repository = MagicMock()
 
-    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True):
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True):
         ServiceContainer(ctx).run()
 
     assert ctx.overseas_intraday_vbo_task is None
@@ -922,13 +934,13 @@ def test_intraday_vbo_built_with_order_path_locked(patched_service_container_dep
         overseas_stock={"allow_live_trading": True, "intraday_vbo": {"enabled": True, "top_n": 7}},
     )
 
-    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasOrderExecutionService", autospec=True) as order_cls, \
-         patch("view.web.bootstrap.service_container.OverseasIntradayVBOService", autospec=True) as svc_cls, \
-         patch("view.web.bootstrap.service_container.OverseasIntradayVBOTask", autospec=True) as task_cls:
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasOrderExecutionService", autospec=True) as order_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOService", autospec=True) as svc_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOTask", autospec=True) as task_cls:
         ServiceContainer(ctx).run()
 
     assert order_cls.call_args.kwargs["live_enabled"] is False
@@ -950,11 +962,11 @@ def test_manual_overseas_order_service_wired_with_kill_switch(patched_service_co
     ctx.enabled_market_modes = ["domestic", "overseas_us"]
     ctx.overseas_stock_code_repository = MagicMock()
 
-    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasOrderExecutionService", autospec=True) as order_cls:
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasOrderExecutionService", autospec=True) as order_cls:
         ServiceContainer(ctx).run()
 
     assert ctx.overseas_manual_order_service is order_cls.return_value
@@ -973,12 +985,12 @@ def test_overseas_trade_repository_wired_when_overseas_enabled(patched_service_c
     ctx.enabled_market_modes = ["domestic", "overseas_us"]
     ctx.overseas_stock_code_repository = MagicMock()
 
-    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasOrderExecutionService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasTradeRepository", autospec=True) as repo_cls:
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasOrderExecutionService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasTradeRepository", autospec=True) as repo_cls:
         ServiceContainer(ctx).run()
 
     assert ctx.overseas_trade_repository is repo_cls.return_value
@@ -1018,13 +1030,13 @@ def test_manual_order_service_does_not_unlock_automatic_path(patched_service_con
         overseas_stock={"allow_live_trading": True, "intraday_vbo": {"enabled": True}},
     )
 
-    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasOrderExecutionService", autospec=True) as order_cls, \
-         patch("view.web.bootstrap.service_container.OverseasIntradayVBOService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasIntradayVBOTask", autospec=True):
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasOrderExecutionService", autospec=True) as order_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOTask", autospec=True):
         ServiceContainer(ctx).run()
 
     live_flags = [c.kwargs["live_enabled"] for c in order_cls.call_args_list]
@@ -1060,10 +1072,10 @@ async def test_overseas_fx_provider_extracts_rate_from_balance(patched_service_c
         return_value=SimpleNamespace(data={"output2": {"frst_bltn_exrt": "1357.5"}})
     )
 
-    with patch("view.web.bootstrap.service_container.OverseasPositionSizingService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasCandidateService", autospec=True), \
-         patch("view.web.bootstrap.service_container.OverseasVBODryRunService", autospec=True) as dryrun_cls, \
-         patch("view.web.bootstrap.service_container.OverseasDryRunTask", autospec=True):
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True) as dryrun_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True):
         ServiceContainer(ctx).run()
 
     fx_provider = dryrun_cls.call_args.kwargs["fx_provider"]
