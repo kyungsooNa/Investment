@@ -62,6 +62,7 @@ from services.overseas_position_sizing_service import OverseasPositionSizingServ
 from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
 from services.overseas_pocket_pivot_dryrun_service import OverseasPocketPivotDryRunService
 from services.overseas_buyable_gap_up_dryrun_service import OverseasBuyableGapUpDryRunService
+from services.overseas_channel_breakout_dryrun_service import OverseasChannelBreakoutDryRunService
 from services.overseas_dryrun_suite_service import OverseasDryRunSuiteService
 from services.strategy_log_report_service import StrategyLogReportService
 from task.background.after_market.after_market_reconcile_task import AfterMarketReconcileTask
@@ -942,6 +943,7 @@ class ServiceContainer:
                 ctx.overseas_vbo_dryrun_service = None
                 ctx.overseas_pp_dryrun_service = None
                 ctx.overseas_bgu_dryrun_service = None
+                ctx.overseas_cb_dryrun_service = None
                 ctx.overseas_dryrun_task = None
                 ctx.overseas_manual_order_service = None
                 ctx.overseas_trade_repository = None
@@ -1003,6 +1005,7 @@ class ServiceContainer:
         ctx.overseas_vbo_dryrun_service = None
         ctx.overseas_pp_dryrun_service = None
         ctx.overseas_bgu_dryrun_service = None
+        ctx.overseas_cb_dryrun_service = None
         ctx.overseas_dryrun_task = None
         if getattr(ctx, "event_shadow_journal_service", None) is None:
             ctx.event_shadow_journal_service = EventShadowJournalService(
@@ -1055,11 +1058,21 @@ class ServiceContainer:
             position_sizing_service=overseas_position_sizing_service,
             fx_provider=_overseas_fx_provider,
         )
+        ctx.overseas_cb_dryrun_service = OverseasChannelBreakoutDryRunService(
+            candidate_service=ctx.overseas_candidate_service,
+            stock_query_service=ctx.stock_query_service,
+            indicator_service=ctx.indicator_service,
+            shadow_journal=ctx.event_shadow_journal_service,
+            logger=ctx.logger,
+            position_sizing_service=overseas_position_sizing_service,
+            fx_provider=_overseas_fx_provider,
+        )
         overseas_dryrun_suite = OverseasDryRunSuiteService(
             [
                 ctx.overseas_vbo_dryrun_service,
                 ctx.overseas_pp_dryrun_service,
                 ctx.overseas_bgu_dryrun_service,
+                ctx.overseas_cb_dryrun_service,
             ],
             logger=ctx.logger,
         )

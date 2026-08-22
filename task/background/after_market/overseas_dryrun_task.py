@@ -98,6 +98,8 @@ class OverseasDryRunTask(AfterMarketTask):
         reason = str(signal.get("reason") or signal.get("entry_reason") or "")
         if "BGU" in strategy or "buyable_gap_up" in reason:
             return "BGU"
+        if "CB" in strategy or "channel_breakout" in reason:
+            return "CB"
         if "PP" in strategy or "pocket_pivot" in reason:
             return "PP"
         if "VBO" in strategy or "vbo" in reason:
@@ -115,7 +117,7 @@ class OverseasDryRunTask(AfterMarketTask):
             if name:
                 names_by_label[label].append(name)
 
-        ordered_labels = [label for label in ("VBO", "PP", "BGU", "기타") if counts.get(label)]
+        ordered_labels = [label for label in ("VBO", "PP", "BGU", "CB", "기타") if counts.get(label)]
         summary = {label: counts[label] for label in ordered_labels}
         lines = []
         for label in ordered_labels:
