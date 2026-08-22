@@ -2,8 +2,8 @@
 
 해외 dry-run suite 가 shadow journal 에 남긴 신호는 실주문 없는 "만약 진입했다면"
 가정 신호다. VBO 는 same-day exit 결과(`exit_price`/`exit_reason`/`realized_pct`)가
-동봉되며, PP/BGU/CB 는 진입가/손절가를 기준으로 멀티데이 OHLCV 재구성에서 성과를
-산출한다.
+동봉되며, PP/BGU/CB/RSI2 는 진입가/손절가를 기준으로 멀티데이 OHLCV 재구성에서
+성과를 산출한다.
 
 집계 지표:
   - decidability : same-day 청산 판정 가능/불가 분리 + 비관·낙관 bracket (게이팅 기준)
@@ -36,6 +36,7 @@ DEFAULT_SIGNAL_SOURCES = [
     "overseas_pp_dryrun",
     "overseas_bgu_dryrun",
     "overseas_cb_dryrun",
+    "overseas_rsi2_dryrun",
 ]
 DEFAULT_ROUND_TRIP_COST_PCT = 0.5
 DEFAULT_COST_MODEL = "commission_only"
@@ -57,6 +58,8 @@ def _strategy_label(raw_strategy: str = "", signal_source: str = "", reason: str
         return "CB"
     if "PP" in text or "pocket_pivot" in text or "overseas_pp" in text:
         return "PP"
+    if "RSI2" in text or "rsi2" in text or "overseas_rsi2" in text:
+        return "RSI2"
     if "VBO" in text or "vbo" in text or signal_source == "overseas_dryrun":
         return "VBO"
     return "기타"
@@ -602,7 +605,7 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="해외 VBO dry-run shadow would-be 성과 분석",
+        description="해외 dry-run shadow would-be 성과 분석",
     )
     parser.add_argument("--shadow-dir", default="logs/strategies/event_shadow")
     parser.add_argument("--date-from", required=True, help="YYYYMMDD")
@@ -611,7 +614,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--all-sources",
         action="store_true",
-        help="VBO/PP/BGU/CB dry-run signal_source를 모두 분석한다.",
+        help="VBO/PP/BGU/CB/RSI2 dry-run signal_source를 모두 분석한다.",
     )
     parser.add_argument("--ohlcv-dir", default=None,
                         help="멀티데이 회고 재구성용 per-code 일봉 디렉토리(<CODE>.jsonl). 지정 시 multiday 섹션 추가.")
