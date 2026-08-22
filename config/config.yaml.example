@@ -121,7 +121,8 @@ overseas_stock:
   manual_order_only: true
   # 실전 해외 주문은 기본 차단. 운영 검증 후 별도 승인으로만 true 전환.
   allow_live_trading: false
-  # 해외 VBO dry-run would-be 수량 계산용 고정 USD 슬롯. 실주문 경로 없음.
+  # 해외 dry-run suite(VBO/PP/BGU/CB) would-be 수량 계산용 고정 USD 슬롯.
+  # 실주문 경로 없음.
   dryrun_slot_usd: 1000.0
   dryrun_max_qty:
   # 미국 정규장 REST 폴링 VBO(장중 경로). dry-run 은 마감 후 사후 평가라 발사 대상이

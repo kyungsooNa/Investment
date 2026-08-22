@@ -993,7 +993,7 @@ class ServiceContainer:
         )
 
     def _build_overseas_dryrun_pipeline(self) -> None:
-        """해외 VBO dry-run 파이프라인 조립 (주문 경로 없음 — 실주문 불가).
+        """해외 VBO/PP/BGU/CB dry-run 파이프라인 조립 (주문 경로 없음 — 실주문 불가).
 
         overseas_us active 분기와 국내 active 공존 경로가 공유한다.
         `overseas_stock_code_repository` 가 없으면 dry-run 부분은 no-op(수동 주문 게이팅
