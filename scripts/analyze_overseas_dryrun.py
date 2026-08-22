@@ -1,9 +1,9 @@
-"""CLI: 해외 VBO dry-run shadow would-be 성과 분석 (해외 Phase 5 선행).
+"""CLI: 해외 dry-run shadow would-be 성과 분석 (해외 Phase 5 선행).
 
-`OverseasVBODryRunService` 가 `signal_source="overseas_dryrun"` 로 남긴 신호는
-실주문 없는 "만약 진입했다면" 가정 신호다. 각 신호엔 same-day exit 결과
-(`exit_price`/`exit_reason`/`realized_pct`)가 동봉돼 있어, 별도 SELL 매칭 없이
-신호 자체만으로 would-be 성과를 집계할 수 있다(국내 parity 분석과 다른 점).
+해외 dry-run suite 가 shadow journal 에 남긴 신호는 실주문 없는 "만약 진입했다면"
+가정 신호다. VBO 는 same-day exit 결과(`exit_price`/`exit_reason`/`realized_pct`)가
+동봉되며, PP/BGU/CB 는 진입가/손절가를 기준으로 멀티데이 OHLCV 재구성에서 성과를
+산출한다.
 
 집계 지표:
   - decidability : same-day 청산 판정 가능/불가 분리 + 비관·낙관 bracket (게이팅 기준)
@@ -31,6 +31,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 _SIGNAL_SOURCE = "overseas_dryrun"
+DEFAULT_SIGNAL_SOURCES = [
+    "overseas_dryrun",
+    "overseas_pp_dryrun",
+    "overseas_bgu_dryrun",
+    "overseas_cb_dryrun",
+]
 DEFAULT_ROUND_TRIP_COST_PCT = 0.5
 DEFAULT_COST_MODEL = "commission_only"
 DEFAULT_ENTRY_PRICE_ASSUMPTION = "daily_breakout_target"
@@ -43,11 +49,38 @@ def _to_float(value: Any) -> Optional[float]:
         return None
 
 
+def _strategy_label(raw_strategy: str = "", signal_source: str = "", reason: str = "") -> str:
+    text = " ".join([raw_strategy or "", signal_source or "", reason or ""])
+    if "BGU" in text or "buyable_gap_up" in text or "overseas_bgu" in text:
+        return "BGU"
+    if "CB" in text or "channel_breakout" in text or "overseas_cb" in text:
+        return "CB"
+    if "PP" in text or "pocket_pivot" in text or "overseas_pp" in text:
+        return "PP"
+    if "VBO" in text or "vbo" in text or signal_source == "overseas_dryrun":
+        return "VBO"
+    return "기타"
+
+
 def load_dryrun_records(
     shadow_dir: Path | str,
     date_from: str,
     date_to: str,
     signal_source: str = _SIGNAL_SOURCE,
+) -> List[Dict[str, Any]]:
+    return load_dryrun_records_multi_source(
+        shadow_dir=shadow_dir,
+        date_from=date_from,
+        date_to=date_to,
+        signal_sources=[signal_source],
+    )
+
+
+def load_dryrun_records_multi_source(
+    shadow_dir: Path | str,
+    date_from: str,
+    date_to: str,
+    signal_sources: List[str],
 ) -> List[Dict[str, Any]]:
     """`<shadow_dir>/YYYYMMDD.jsonl` 들을 스캔해 dry-run 신호를 정규화 dict 로 반환.
 
@@ -57,6 +90,7 @@ def load_dryrun_records(
     shadow_dir = Path(shadow_dir)
     if not shadow_dir.exists():
         return []
+    source_set = set(signal_sources or [])
 
     out: List[Dict[str, Any]] = []
     for path in sorted(shadow_dir.glob("*.jsonl")):
@@ -74,13 +108,14 @@ def load_dryrun_records(
                     raw = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if (raw.get("signal_source") or "") != signal_source:
+                signal_source = raw.get("signal_source") or ""
+                if source_set and signal_source not in source_set:
                     continue
                 signal = raw.get("signal") or {}
                 snapshot = raw.get("snapshot") or {}
                 code = raw.get("code") or signal.get("code") or ""
                 realized = _to_float(signal.get("realized_pct"))
-                if not code or realized is None:
+                if not code:
                     continue
                 exit_reason = signal.get("exit_reason") or ""
                 # 구모델 레코드(exit_reason="stop")는 진입 전 저가로 손절이 강제 판정된
@@ -94,8 +129,13 @@ def load_dryrun_records(
                     pessimistic = realized
                 if optimistic is None and decidable:
                     optimistic = realized
+                strategy = raw.get("strategy") or signal.get("strategy") or ""
+                reason = signal.get("reason") or signal.get("entry_reason") or ""
                 out.append({
                     "code": code,
+                    "strategy": strategy,
+                    "strategy_label": _strategy_label(strategy, signal_source, reason),
+                    "signal_source": signal_source,
                     "exchange": snapshot.get("exchange") or "",
                     "trade_date": str(signal.get("date") or stem),
                     "entry_price": _to_float(signal.get("entry_price")),
@@ -133,18 +173,19 @@ def _compute_decidability(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     비관(손절 체결 가정)만 집계하면 통계가 하향 편향되므로, 판정 가능 건만의 집계와
     비관·낙관 양끝을 함께 낸다. canary go/no-go 는 이 bracket 으로 판단한다.
     """
-    decided = [r for r in records if r.get("exit_decidable")]
-    pessimistic = [r["realized_pct_pessimistic"] for r in records
+    realized_records = [r for r in records if r.get("realized_pct") is not None]
+    decided = [r for r in realized_records if r.get("exit_decidable")]
+    pessimistic = [r["realized_pct_pessimistic"] for r in realized_records
                    if r.get("realized_pct_pessimistic") is not None]
-    optimistic = [r["realized_pct_optimistic"] for r in records
+    optimistic = [r["realized_pct_optimistic"] for r in realized_records
                   if r.get("realized_pct_optimistic") is not None]
     decided_returns = [r["realized_pct_pessimistic"] for r in decided
                        if r.get("realized_pct_pessimistic") is not None]
     decided_wins = sum(1 for v in decided_returns if v > 0)
     return {
         "decided": len(decided),
-        "undecided": len(records) - len(decided),
-        "undecided_ratio": ((len(records) - len(decided)) / len(records)) if records else None,
+        "undecided": len(realized_records) - len(decided),
+        "undecided_ratio": ((len(realized_records) - len(decided)) / len(realized_records)) if realized_records else None,
         "decided_avg_realized_pct": (sum(decided_returns) / len(decided_returns)) if decided_returns else None,
         "decided_win_rate": (decided_wins / len(decided_returns)) if decided_returns else None,
         "pessimistic_avg_realized_pct": (sum(pessimistic) / len(pessimistic)) if pessimistic else None,
@@ -160,23 +201,35 @@ def compute_dryrun_report(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     rstats = _stats(returns)
 
     by_exit_reason: Dict[str, int] = {}
+    by_strategy: Dict[str, Dict[str, Any]] = {}
     by_exchange: Dict[str, Dict[str, Any]] = {}
     by_date: Dict[str, Dict[str, Any]] = {}
     for r in records:
+        realized = r.get("realized_pct")
+        label = r.get("strategy_label") or _strategy_label(r.get("strategy", ""), r.get("signal_source", ""), r.get("exit_reason", ""))
+        s_b = by_strategy.setdefault(label, {"signals": 0, "realized_sample": 0, "wins": 0, "sum_realized_pct": 0.0})
+        s_b["signals"] += 1
+        if realized is not None:
+            s_b["realized_sample"] += 1
+            s_b["wins"] += 1 if realized > 0 else 0
+            s_b["sum_realized_pct"] += realized
+
         reason = r.get("exit_reason") or "unknown"
         by_exit_reason[reason] = by_exit_reason.get(reason, 0) + 1
 
         ex = r.get("exchange") or "unknown"
         ex_b = by_exchange.setdefault(ex, {"signals": 0, "wins": 0, "sum_realized_pct": 0.0})
         ex_b["signals"] += 1
-        ex_b["wins"] += 1 if r["realized_pct"] > 0 else 0
-        ex_b["sum_realized_pct"] += r["realized_pct"]
+        if realized is not None:
+            ex_b["wins"] += 1 if realized > 0 else 0
+            ex_b["sum_realized_pct"] += realized
 
         d = r.get("trade_date") or "unknown"
         d_b = by_date.setdefault(d, {"signals": 0, "wins": 0, "sum_realized_pct": 0.0})
         d_b["signals"] += 1
-        d_b["wins"] += 1 if r["realized_pct"] > 0 else 0
-        d_b["sum_realized_pct"] += r["realized_pct"]
+        if realized is not None:
+            d_b["wins"] += 1 if realized > 0 else 0
+            d_b["sum_realized_pct"] += realized
 
     notionals = [r["notional_usd"] for r in records if r.get("notional_usd") is not None]
     krw_exposures = [r["krw_exposure"] for r in records if r.get("krw_exposure") is not None]
@@ -193,6 +246,7 @@ def compute_dryrun_report(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "decidability": _compute_decidability(records),
         "totals": {
             "signals": len(records),
+            "realized_sample": len(returns),
             "wins": wins,
             "losses": losses,
             "win_rate": (wins / len(returns)) if returns else None,
@@ -203,6 +257,7 @@ def compute_dryrun_report(records: List[Dict[str, Any]]) -> Dict[str, Any]:
             "max_realized_pct": rstats["max"],
         },
         "by_exit_reason": by_exit_reason,
+        "by_strategy": dict(sorted(by_strategy.items())),
         "by_exchange": dict(sorted(by_exchange.items())),
         "by_date": dict(sorted(by_date.items())),
         "sizing": sizing,
@@ -327,6 +382,7 @@ def compute_multiday_report(
     holding_days: List[int] = []
     same_day_matched: List[float] = []
     by_exit_reason: Dict[str, int] = {}
+    by_strategy_values: Dict[str, List[float]] = {}
     unmatched = 0
 
     for r in records:
@@ -349,6 +405,8 @@ def compute_multiday_report(
             unmatched += 1
             continue
         nets.append(result["net_return_pct"])
+        label = r.get("strategy_label") or _strategy_label(r.get("strategy", ""), r.get("signal_source", ""))
+        by_strategy_values.setdefault(label, []).append(result["net_return_pct"])
         grosses.append(result["gross_return_pct"])
         holding_days.append(result["holding_days"])
         reason = result["exit_reason"] or "unknown"
@@ -375,6 +433,13 @@ def compute_multiday_report(
         "net_return_pct": nstats,
         "gross_return_pct": gstats,
         "by_exit_reason": by_exit_reason,
+        "by_strategy": {
+            label: {
+                "count": len(values),
+                "avg_net_return_pct": (sum(values) / len(values)) if values else None,
+            }
+            for label, values in sorted(by_strategy_values.items())
+        },
         "same_day_vs_multiday": {
             "same_day_avg_realized_pct": same_day_avg,
             "multiday_avg_gross_pct": multiday_avg,
@@ -392,7 +457,7 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
     cfg = report.get("config", {})
     t = report["totals"]
     lines: List[str] = []
-    lines.append("# Overseas VBO Dry-run Would-be Performance")
+    lines.append("# Overseas Dry-run Would-be Performance")
     lines.append("")
     if cfg:
         lines.append(
@@ -426,12 +491,26 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
     lines.append("| 항목 | 값 |")
     lines.append("|---|---:|")
     lines.append(f"| signals | {t['signals']} |")
+    lines.append(f"| realized_sample | {t.get('realized_sample', t['signals'])} |")
     lines.append(f"| wins / losses | {t['wins']} / {t['losses']} |")
     lines.append(f"| win_rate | {_fmt(t['win_rate'])} |")
     lines.append(f"| avg_realized_pct | {_fmt(t['avg_realized_pct'], '%')} |")
     lines.append(f"| median_realized_pct | {_fmt(t['median_realized_pct'], '%')} |")
     lines.append(f"| sum_realized_pct | {_fmt(t['sum_realized_pct'], '%')} |")
     lines.append("")
+
+    by_strategy = report.get("by_strategy", {})
+    if by_strategy:
+        lines.append("## 전략별")
+        lines.append("")
+        lines.append("| strategy | signals | realized_sample | wins | sum_realized_pct |")
+        lines.append("|---|---:|---:|---:|---:|")
+        for label, b in by_strategy.items():
+            lines.append(
+                f"| {label} | {b['signals']} | {b.get('realized_sample', 0)} | "
+                f"{b.get('wins', 0)} | {_fmt(b.get('sum_realized_pct'), '%')} |"
+            )
+        lines.append("")
 
     dec = report.get("decidability")
     if dec:
@@ -510,6 +589,13 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
         for reason, cnt in sorted(md.get("by_exit_reason", {}).items()):
             lines.append(f"| {reason} | {cnt} |")
         lines.append("")
+        by_strategy_md = md.get("by_strategy", {})
+        if by_strategy_md:
+            lines.append("| strategy | count | avg_net_return_pct |")
+            lines.append("| --- | ---: | ---: |")
+            for label, b in by_strategy_md.items():
+                lines.append(f"| {label} | {b.get('count', 0)} | {_fmt(b.get('avg_net_return_pct'), '%')} |")
+            lines.append("")
 
     return "\n".join(lines)
 
@@ -522,6 +608,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--date-from", required=True, help="YYYYMMDD")
     parser.add_argument("--date-to", required=True, help="YYYYMMDD")
     parser.add_argument("--signal-source", default=_SIGNAL_SOURCE)
+    parser.add_argument(
+        "--all-sources",
+        action="store_true",
+        help="VBO/PP/BGU/CB dry-run signal_source를 모두 분석한다.",
+    )
     parser.add_argument("--ohlcv-dir", default=None,
                         help="멀티데이 회고 재구성용 per-code 일봉 디렉토리(<CODE>.jsonl). 지정 시 multiday 섹션 추가.")
     parser.add_argument("--trailing-stop-pct", type=float, default=8.0,
@@ -538,17 +629,27 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
 
-    records = load_dryrun_records(
-        shadow_dir=Path(args.shadow_dir),
-        date_from=args.date_from,
-        date_to=args.date_to,
-        signal_source=args.signal_source,
-    )
+    if args.all_sources:
+        records = load_dryrun_records_multi_source(
+            shadow_dir=Path(args.shadow_dir),
+            date_from=args.date_from,
+            date_to=args.date_to,
+            signal_sources=DEFAULT_SIGNAL_SOURCES,
+        )
+        signal_source_config: Any = DEFAULT_SIGNAL_SOURCES
+    else:
+        records = load_dryrun_records(
+            shadow_dir=Path(args.shadow_dir),
+            date_from=args.date_from,
+            date_to=args.date_to,
+            signal_source=args.signal_source,
+        )
+        signal_source_config = args.signal_source
     report = compute_dryrun_report(records)
     report["config"] = {
         "date_from": args.date_from,
         "date_to": args.date_to,
-        "signal_source": args.signal_source,
+        "signal_source": signal_source_config,
         "shadow_dir": str(args.shadow_dir),
         "round_trip_cost_pct": args.cost_pct,
         "cost_model": DEFAULT_COST_MODEL,
