@@ -82,6 +82,22 @@ test("시가총액 행을 순위·심볼·섹터·USD/원화로 렌더한다", a
   assert(text.includes("4,200조"), "회귀: 원화 환산이 조/억 표기로 표시되지 않음");
 });
 
+test("심볼·종목명을 미국장 현재가 화면 링크로 렌더한다", async () => {
+  const window = await makeWindow();
+  window.fetchWithTimeout = async () => okPayload([APPLE]);
+
+  await window.loadOverseasTopMarketCap(30);
+
+  const link = window.document.querySelector("#overseas-marketcap-result a.stock-link");
+  assert(link, "회귀: 종목 셀이 현재가 화면으로 가는 링크가 아님");
+  assert(
+    link.getAttribute("href") === "/overseas-stock?symbol=AAPL",
+    `회귀: 링크가 /overseas-stock 심볼 조회로 가지 않음 (${link.getAttribute("href")})`,
+  );
+  assert(link.textContent.includes("AAPL"), "링크에 심볼이 포함되어야 함");
+  assert(link.textContent.includes("Apple Inc."), "회귀: 종목명이 링크 밖에 남아 클릭되지 않음");
+});
+
 test("서버의 updated_at 을 최신 업데이트 시간으로 표시한다", async () => {
   const window = await makeWindow();
   window.fetchWithTimeout = async () => okPayload([APPLE], 1400, Date.UTC(2026, 6, 31, 13, 5, 30) / 1000);

@@ -129,6 +129,21 @@ function escapeHtml(value) {
     })[char]);
 }
 
+/**
+ * 미국장 종목 라벨을 현재가 화면(/overseas-stock) 링크로 감싼다.
+ * 국내 목록의 `/stock?code=` 링크와 같은 규약(stock-link, 새 탭)이다.
+ * `innerHtml` 은 호출부에서 이미 이스케이프한 조각이고, 거래소를 모르면 생략한다
+ * (현재가 화면이 심볼 목록에서 채운다).
+ */
+function overseasStockLink(symbol, innerHtml, exchange) {
+    const ticker = String(symbol ?? '').trim().toUpperCase();
+    if (!ticker) return innerHtml;
+    const market = String(exchange ?? '').trim().toUpperCase();
+    const query = `symbol=${encodeURIComponent(ticker)}`
+        + (market ? `&exchange=${encodeURIComponent(market)}` : '');
+    return `<a href="/overseas-stock?${query}" target="_blank" class="stock-link">${innerHtml}</a>`;
+}
+
 function showError(targetEl, message) {
     if (targetEl) targetEl.innerHTML = `<p class="error">${escapeHtml(message)}</p>`;
 }

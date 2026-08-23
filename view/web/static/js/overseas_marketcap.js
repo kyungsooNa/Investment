@@ -71,7 +71,7 @@ function _renderOverseasMarketCap(div, data) {
         return `
             <tr>
                 <td>${escapeHtml(row.rank)}</td>
-                <td><strong>${escapeHtml(row.symbol)}</strong> <span style="color:#888; font-size:0.85rem;">${escapeHtml(row.name)}</span></td>
+                <td>${overseasStockLink(row.symbol, `<strong>${escapeHtml(row.symbol)}</strong> <span style="color:#888; font-size:0.85rem;">${escapeHtml(row.name)}</span>`)}</td>
                 <td>${escapeHtml(row.sector || '-')}</td>
                 <td>${_capUsdPrice(row.price)} <small class="${rate.color}">(${rate.text})</small></td>
                 <td>${_capUsdAmount(row.market_cap_usd)}</td>

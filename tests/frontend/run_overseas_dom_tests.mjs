@@ -871,4 +871,120 @@ test("보정을 적용하면 apply=true 로 부르고 원장을 다시 읽는다
     "보정 후 원장 표가 낡은 채로 남으면 안 됨");
 });
 
+/* ── 종목 클릭 → 미국장 현재가 화면(/overseas-stock) 이동 ── */
+
+function stockLinks(containerId, window) {
+  return Array.from(
+    window.document.getElementById(containerId).querySelectorAll("a.stock-link"),
+  ).map((a) => ({ href: a.getAttribute("href"), text: a.textContent.trim() }));
+}
+
+test("주요 대형주 표의 심볼·종목명이 현재가 화면 링크다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return { ok: true, json: async () => ({
+      rt_cd: "0",
+      data: { fx_rate: 1400, items: [{ symbol: "NVDA", name: "NVIDIA", market_cap_usd: 3e12, market_cap_krw: 4.2e15 }] },
+    }) };
+  };
+
+  await window.loadOverseasMarketCap();
+
+  const links = stockLinks("overseas-marketcap-result", window);
+  assert(links.length === 2, `회귀: 심볼/종목명 셀이 링크가 아님 (${links.length}개)`);
+  assert(links.every((l) => l.href === "/overseas-stock?symbol=NVDA"),
+    `회귀: 현재가 화면 링크가 아님 (${JSON.stringify(links)})`);
+});
+
+test("잔고 표의 심볼·종목명은 조회한 거래소를 붙여 현재가 화면으로 간다", async () => {
+  const window = makeWindow();
+  const orderSel = window.document.getElementById("overseas-order-exchange");
+  orderSel.insertAdjacentHTML("beforeend", '<option value="NYSE">NYSE</option>');
+  orderSel.value = "NYSE";
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return { ok: true, json: async () => ({
+      rt_cd: "0",
+      data: { output1: [{ ovrs_pdno: "BRK", ovrs_item_name: "Berkshire", ovrs_cblc_qty: "2", now_pric2: "500.00" }] },
+    }) };
+  };
+
+  await window.loadOverseasBalance();
+
+  const links = stockLinks("overseas-balance-result", window);
+  assert(links.length === 2, `회귀: 잔고 심볼/종목명 셀이 링크가 아님 (${links.length}개)`);
+  assert(links.every((l) => l.href === "/overseas-stock?symbol=BRK&exchange=NYSE"),
+    `회귀: 잔고 링크에 거래소가 빠짐 (${JSON.stringify(links)})`);
+});
+
+test("즐겨찾기 행의 심볼·종목명은 해당 거래소로 현재가 화면에 간다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    if (url.includes("/api/favorite")) {
+      return { ok: true, json: async () => ([
+        { code: "BRK", name: "Berkshire", exchange: "NYSE", price: 500.0, rate: -0.5 },
+      ]) };
+    }
+    return { ok: false, json: async () => ({}) };
+  };
+
+  await window.loadOverseasFavorites();
+
+  const links = stockLinks("overseas-favorite-body", window);
+  assert(links.length === 2, `회귀: 즐겨찾기 심볼/종목명 셀이 링크가 아님 (${links.length}개)`);
+  assert(links.every((l) => l.href === "/overseas-stock?symbol=BRK&exchange=NYSE"),
+    `회귀: 즐겨찾기 링크가 거래소를 잃음 (${JSON.stringify(links)})`);
+  // 삭제 버튼은 계속 동작해야 한다 (링크가 행 액션을 가리면 안 됨).
+  assert(window.document.querySelector("#overseas-favorite-body [data-overseas-fav-remove]"),
+    "삭제 버튼이 남아 있어야 함");
+});
+
+test("USD 거래 기록의 심볼은 기록된 거래소로 현재가 화면에 간다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return tradesResponse(SAMPLE_SUMMARY, [tradeRow({ symbol: "BRK", exchange: "NYSE" })]);
+  };
+
+  await window.loadOverseasTrades();
+
+  const links = stockLinks("overseas-trades-result", window);
+  assert(links.length === 1, `회귀: 거래 기록 심볼이 링크가 아님 (${links.length}개)`);
+  assert(links[0].href === "/overseas-stock?symbol=BRK&exchange=NYSE",
+    `회귀: 거래 기록 링크가 잘못됨 (${links[0].href})`);
+});
+
+test("종목명이 HTML 을 담고 있어도 링크 안에서 문자열로만 남는다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return { ok: true, json: async () => ({
+      rt_cd: "0",
+      data: { fx_rate: 1400, items: [{
+        symbol: '"><img src=x onerror="window.__pwned=1">',
+        name: "<script>window.__pwned2=1</script>",
+        market_cap_usd: 1e9, market_cap_krw: 1.4e12,
+      }] },
+    }) };
+  };
+
+  await window.loadOverseasMarketCap();
+  await flush();
+
+  assert(window.__pwned === undefined, "회귀: 심볼이 링크 속성을 탈출해 HTML 로 해석됨");
+  assert(window.__pwned2 === undefined, "회귀: 종목명이 스크립트로 해석됨");
+});
+
 await run();

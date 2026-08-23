@@ -228,8 +228,8 @@ async function loadOverseasMarketCap() {
         const rows = items.map((item, index) => `
             <tr>
                 <td>${index + 1}</td>
-                <td>${escapeHtml(item.symbol || '-')}</td>
-                <td>${escapeHtml(item.name || '-')}</td>
+                <td>${overseasStockLink(item.symbol, escapeHtml(item.symbol || '-'))}</td>
+                <td>${overseasStockLink(item.symbol, escapeHtml(item.name || '-'))}</td>
                 <td>${_formatUsdMarketCap(item.market_cap_usd)}</td>
                 <td>${_formatKrwMarketCap(item.market_cap_krw)}</td>
             </tr>
@@ -272,14 +272,17 @@ async function loadOverseasBalance() {
         }
         const data = json.data || {};
         const rows = Array.isArray(data.output1) ? data.output1 : (Array.isArray(data) ? data : []);
-        const body = rows.map(row => `
-            <tr>
-                <td>${escapeHtml(row.ovrs_pdno || row.pdno || row.symbol || '-')}</td>
-                <td>${escapeHtml(row.ovrs_item_name || row.prdt_name || row.name || '-')}</td>
-                <td>${_formatNumber(row.ovrs_cblc_qty || row.hldg_qty || row.qty)}</td>
-                <td>${_formatUsd(row.now_pric2 || row.price || row.ovrs_now_pric1)}</td>
-            </tr>
-        `).join('');
+        const body = rows.map(row => {
+            const symbol = row.ovrs_pdno || row.pdno || row.symbol || '';
+            return `
+                <tr>
+                    <td>${overseasStockLink(symbol, escapeHtml(symbol || '-'), exchange)}</td>
+                    <td>${overseasStockLink(symbol, escapeHtml(row.ovrs_item_name || row.prdt_name || row.name || '-'), exchange)}</td>
+                    <td>${_formatNumber(row.ovrs_cblc_qty || row.hldg_qty || row.qty)}</td>
+                    <td>${_formatUsd(row.now_pric2 || row.price || row.ovrs_now_pric1)}</td>
+                </tr>
+            `;
+        }).join('');
         resultDiv.innerHTML = `
             <div class="card">
                 <h3>미국주식 잔고 <span style="color:#aaa;font-size:0.85rem;">${escapeHtml(exchange)} USD</span></h3>
@@ -454,7 +457,7 @@ async function loadOverseasTrades() {
             : '';
         const body = trades.map(trade => `
             <tr${String(trade.status) === 'CANCELED' ? ' style="opacity:0.55;"' : ''}>
-                <td>${escapeHtml(trade.symbol || '-')}</td>
+                <td>${overseasStockLink(trade.symbol, escapeHtml(trade.symbol || '-'), trade.exchange)}</td>
                 <td>${escapeHtml(trade.exchange || '-')}</td>
                 <td>${escapeHtml(trade.buy_date || '-')}</td>
                 <td>${_formatUsd(trade.buy_price)}</td>
@@ -701,8 +704,8 @@ function _buildOverseasFavoriteRow(item) {
     const rateStr = Number.isFinite(rate) ? `${rate > 0 ? '+' : ''}${rate.toFixed(2)}%` : '-';
     const symbol = escapeHtml(item.code || '');
     return `<tr>
-        <td style="font-weight:bold;">${symbol}</td>
-        <td>${escapeHtml(item.name || '-')}</td>
+        <td style="font-weight:bold;">${overseasStockLink(item.code, symbol, item.exchange)}</td>
+        <td>${overseasStockLink(item.code, escapeHtml(item.name || '-'), item.exchange)}</td>
         <td>${escapeHtml(item.exchange || '-')}</td>
         <td class="${rateClass}">${_formatUsd(item.price)}</td>
         <td class="${rateClass}">${rateStr}</td>

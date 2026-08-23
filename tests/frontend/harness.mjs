@@ -70,6 +70,18 @@ function formatMarketCap(val) {
   return num.toLocaleString() + '억';
 }
 
+/**
+ * 미국장 종목 라벨을 /overseas-stock 링크로 감싼다. innerHtml 은 호출부가 이미 이스케이프한 조각.
+ */
+function overseasStockLink(symbol, innerHtml, exchange) {
+  const ticker = String(symbol ?? '').trim().toUpperCase();
+  if (!ticker) return innerHtml;
+  const market = String(exchange ?? '').trim().toUpperCase();
+  const query = `symbol=${encodeURIComponent(ticker)}`
+    + (market ? `&exchange=${encodeURIComponent(market)}` : '');
+  return `<a href="/overseas-stock?${query}" target="_blank" class="stock-link">${innerHtml}</a>`;
+}
+
 async function readJsonResponse(res) {
   if (!res.ok) return { json: null, error: `HTTP ${res.status}` };
   try {
@@ -91,6 +103,7 @@ export function applyCommonStubs(window) {
   window.formatTradingValue = formatTradingValue;
   window.formatMarketCap = formatMarketCap;
   window.readJsonResponse = readJsonResponse;
+  window.overseasStockLink = overseasStockLink;
   window.showError = (el, message) => { if (el) el.innerHTML = `<p class="error">${escapeHtml(message)}</p>`; };
   window.showLoading = (el, message) => { if (el) el.innerHTML = `<p class="loading">${escapeHtml(message)}</p>`; };
 }

@@ -148,15 +148,50 @@ function _initOverseasStockAutocomplete() {
     if (typeof _ensureOverseasStocksLoaded === 'function') _ensureOverseasStocksLoaded();
 }
 
+/** 목록에서 넘어온 링크는 거래소가 빠질 수 있다 — 심볼 목록에서 채운다. */
+function _resolveOverseasStockExchange(symbol) {
+    const stocks = window.ALL_OVERSEAS_STOCKS;
+    if (!Array.isArray(stocks)) return '';
+    const found = stocks.find(stock => String(stock?.s || '').toUpperCase() === symbol);
+    return found ? String(found.e || '').trim().toUpperCase() : '';
+}
+
+/** 셀렉트에 있는 거래소만 반영한다. 없는 값이면 기본값을 그대로 둔다. */
+function _applyOverseasStockExchange(exchange) {
+    const select = document.getElementById('overseas-stock-exchange');
+    if (!select || !exchange) return '';
+    if (!Array.from(select.options).some(option => option.value === exchange)) return '';
+    select.value = exchange;
+    return exchange;
+}
+
+function _searchOverseasStockFromLink(symbol, exchange) {
+    const resolved = _applyOverseasStockExchange(exchange || _resolveOverseasStockExchange(symbol));
+    void searchOverseasStock(symbol, resolved || undefined);
+}
+
 function initOverseasStockPage() {
     _initOverseasStockAutocomplete();
 
-    const symbol = new URLSearchParams(window.location.search).get('symbol');
-    if (symbol) {
-        const input = document.getElementById('overseas-stock-symbol');
-        if (input) input.value = symbol.toUpperCase();
-        void searchOverseasStock(symbol);
+    const params = new URLSearchParams(window.location.search);
+    const symbol = (params.get('symbol') || '').trim().toUpperCase();
+    if (!symbol) return;
+
+    const input = document.getElementById('overseas-stock-symbol');
+    if (input) input.value = symbol;
+
+    const exchange = (params.get('exchange') || '').trim().toUpperCase();
+    if (!exchange && !Array.isArray(window.ALL_OVERSEAS_STOCKS)) {
+        // 거래소를 모르는 링크는 심볼 목록이 와야 판단할 수 있다. 목록 로드는 실패해도
+        // 같은 이벤트로 끝나므로(빈 목록) 조회가 영영 걸리지 않는 일은 없다.
+        document.addEventListener(
+            'all-overseas-stocks-ready',
+            () => _searchOverseasStockFromLink(symbol, ''),
+            { once: true },
+        );
+        return;
     }
+    _searchOverseasStockFromLink(symbol, exchange);
 }
 
 document.addEventListener('DOMContentLoaded', () => {

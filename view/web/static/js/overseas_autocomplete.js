@@ -28,7 +28,11 @@ function _ensureOverseasStocksLoaded() {
                 { detail: window.ALL_OVERSEAS_STOCKS },
             ));
         })
-        .catch(() => { window.ALL_OVERSEAS_STOCKS = []; })
+        .catch(() => {
+            // 목록을 기다리는 화면(링크 진입한 현재가 조회)이 영영 멈추지 않도록 실패도 알린다.
+            window.ALL_OVERSEAS_STOCKS = [];
+            document.dispatchEvent(new CustomEvent('all-overseas-stocks-ready', { detail: [] }));
+        })
         .finally(() => { _overseasStocksLoading = false; });
 }
 
