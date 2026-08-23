@@ -1,11 +1,26 @@
 # Overseas Dry-run Would-be Performance
 
-- date: `20260722 ~ 20260821`  signal_source: `['overseas_dryrun', 'overseas_pp_dryrun', 'overseas_bgu_dryrun', 'overseas_cb_dryrun']`  shadow_dir: `logs/strategies/event_shadow`
+- date: `20260722 ~ 20260821`  signal_source: `['overseas_dryrun', 'overseas_pp_dryrun', 'overseas_bgu_dryrun', 'overseas_cb_dryrun', 'overseas_rsi2_dryrun', 'overseas_osb_dryrun']`  shadow_dir: `logs\strategies\event_shadow`
 
 ## 가정/주의
 
 - 왕복 비용 0.500% (`commission_only`): 미국주식 온라인 기본 수수료 0.25%/side를 왕복으로 반영한 값이며, 환전 스프레드·SEC/TAF 등 매도 제비용은 별도입니다.
 - 일봉 기반 would-be 진입가: 당일 intraday 체결 경로가 아니라 `open + K * prev_range` 목표가 체결을 가정하므로 실제 장중 체결가보다 낙관적일 수 있습니다.
+
+## 엣지 판정
+
+- overall_decision: `NO_GO`
+- trading_days: 22 / 5
+- min_strategy_sample: 5, min_avg_return_pct: 0.000%
+
+| strategy | status | signals | sample | avg_return_pct | basis |
+|---|---|---:|---:|---:|---|
+| VBO | FAIL_NEGATIVE_EDGE | 523 | 188 | -1.624% | multiday_net |
+| PP | NO_SIGNALS | 0 | 0 | — | same_day_realized |
+| BGU | NO_SIGNALS | 0 | 0 | — | same_day_realized |
+| CB | NO_SIGNALS | 0 | 0 | — | same_day_realized |
+| RSI2 | NO_SIGNALS | 0 | 0 | — | same_day_realized |
+| OSB | NO_SIGNALS | 0 | 0 | — | same_day_realized |
 
 ## 전체 집계
 

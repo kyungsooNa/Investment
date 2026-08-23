@@ -168,13 +168,21 @@
       "overseas_dryrun",
       "overseas_pp_dryrun",
       "overseas_bgu_dryrun",
-      "overseas_cb_dryrun"
+      "overseas_cb_dryrun",
+      "overseas_rsi2_dryrun",
+      "overseas_osb_dryrun"
     ],
-    "shadow_dir": "logs/strategies/event_shadow",
+    "shadow_dir": "logs\\strategies\\event_shadow",
     "round_trip_cost_pct": 0.5,
     "cost_model": "commission_only",
     "entry_price_assumption": "daily_breakout_target",
-    "ohlcv_dir": "data\\overseas_ohlcv"
+    "ohlcv_dir": "data\\overseas_ohlcv",
+    "edge_judgement": {
+      "enabled": true,
+      "min_trading_days": 5,
+      "min_strategy_sample": 5,
+      "min_avg_return_pct": 0.0
+    }
   },
   "multiday": {
     "reconstructed_count": 188,
@@ -217,6 +225,57 @@
       "trailing_stop_pct": 8.0,
       "time_stop_days": 20,
       "round_trip_cost_pct": 0.5
+    }
+  },
+  "edge_judgement": {
+    "overall_decision": "NO_GO",
+    "trading_days": 22,
+    "min_trading_days": 5,
+    "min_strategy_sample": 5,
+    "min_avg_return_pct": 0.0,
+    "strategies": {
+      "VBO": {
+        "status": "FAIL_NEGATIVE_EDGE",
+        "signals": 523,
+        "sample": 188,
+        "avg_return_pct": -1.6237272458931098,
+        "avg_return_basis": "multiday_net"
+      },
+      "PP": {
+        "status": "NO_SIGNALS",
+        "signals": 0,
+        "sample": 0,
+        "avg_return_pct": null,
+        "avg_return_basis": "same_day_realized"
+      },
+      "BGU": {
+        "status": "NO_SIGNALS",
+        "signals": 0,
+        "sample": 0,
+        "avg_return_pct": null,
+        "avg_return_basis": "same_day_realized"
+      },
+      "CB": {
+        "status": "NO_SIGNALS",
+        "signals": 0,
+        "sample": 0,
+        "avg_return_pct": null,
+        "avg_return_basis": "same_day_realized"
+      },
+      "RSI2": {
+        "status": "NO_SIGNALS",
+        "signals": 0,
+        "sample": 0,
+        "avg_return_pct": null,
+        "avg_return_basis": "same_day_realized"
+      },
+      "OSB": {
+        "status": "NO_SIGNALS",
+        "signals": 0,
+        "sample": 0,
+        "avg_return_pct": null,
+        "avg_return_basis": "same_day_realized"
+      }
     }
   }
 }
