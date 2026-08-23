@@ -1,6 +1,9 @@
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from interfaces.schedulable_task import TaskPriority, TaskState
 
 from common.types import ErrorCode, ResCommonResponse
 from repositories.favorite_repository import MARKET_OVERSEAS_US
@@ -141,3 +144,122 @@ async def test_skips_symbol_when_change_rate_is_missing():
     await task._tick()
 
     alert_service.handle_price_tick.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_skips_blank_symbols_without_calling_broker():
+    broker = MagicMock()
+    broker.get_overseas_price = AsyncMock(return_value=_price_response(189.5, 5.3))
+    task, _, alert_service = _build_task(symbols=["", "   ", None, "AAPL"], broker=broker)
+
+    await task._tick()
+
+    broker.get_overseas_price.assert_awaited_once_with("AAPL", exchange="NASD")
+    alert_service.handle_price_tick.assert_awaited_once()
+
+
+def test_exchange_falls_back_to_default_without_code_repository():
+    task = OverseasFavoritePriceAlertTask(
+        favorite_repository=MagicMock(),
+        broker=MagicMock(),
+        alert_service=MagicMock(),
+        market_clock=MagicMock(),
+        logger=MagicMock(),
+    )
+
+    assert task._exchange_of("AAPL") == OverseasFavoritePriceAlertTask.DEFAULT_EXCHANGE
+
+
+def test_market_open_check_treats_missing_calendar_as_trading_day():
+    market_clock = MagicMock()
+    market_clock.is_market_operating_hours.return_value = True
+    task = OverseasFavoritePriceAlertTask(
+        favorite_repository=MagicMock(),
+        broker=MagicMock(),
+        alert_service=MagicMock(),
+        market_clock=market_clock,
+        logger=MagicMock(),
+    )
+
+    assert task._is_market_open_now() is True
+
+
+@pytest.mark.asyncio
+async def test_loop_runs_tick_logs_error_and_exits_on_cancel():
+    task, _, _ = _build_task(symbols=[], broker=MagicMock())
+    task._logger = MagicMock()
+    task._tick = AsyncMock(side_effect=[None, RuntimeError("boom"), asyncio.CancelledError()])
+
+    with patch(
+        "task.background.intraday.overseas_favorite_price_alert_task.asyncio.sleep",
+        new_callable=AsyncMock,
+    ):
+        await task._loop()
+
+    assert task._tick.await_count == 3
+    task._logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_loop_skips_tick_while_suspended():
+    task, _, _ = _build_task(symbols=[], broker=MagicMock())
+    task._tick = AsyncMock()
+    task._state = TaskState.SUSPENDED
+    sleep_mock = AsyncMock(side_effect=[None, asyncio.CancelledError()])
+
+    with patch(
+        "task.background.intraday.overseas_favorite_price_alert_task.asyncio.sleep",
+        sleep_mock,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await task._loop()
+
+    task._tick.assert_not_awaited()
+    assert task.state == TaskState.SUSPENDED
+
+
+@pytest.mark.asyncio
+async def test_start_is_idempotent_and_stop_clears_background_task():
+    task, _, _ = _build_task(symbols=[], broker=MagicMock())
+
+    await task.start()
+    first_task = task._task
+    await task.start()
+    assert task._task is first_task
+
+    await task.stop()
+
+    assert task._task is None
+    assert task.state == TaskState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_stop_without_start_only_marks_stopped():
+    task, _, _ = _build_task(symbols=[], broker=MagicMock())
+
+    await task.stop()
+
+    assert task._task is None
+    assert task.state == TaskState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_suspend_and_resume_toggle_state_and_progress():
+    task, _, _ = _build_task(symbols=[], broker=MagicMock())
+
+    await task.suspend()
+    assert task.state == TaskState.SUSPENDED
+    assert task.get_progress() == {"running": False}
+
+    await task.resume()
+    assert task.state == TaskState.IDLE
+
+    await task.resume()
+    assert task.state == TaskState.IDLE
+
+
+def test_task_identity_exposes_name_and_priority():
+    task, _, _ = _build_task(symbols=[], broker=MagicMock())
+
+    assert task.task_name == "overseas_favorite_price_alert"
+    assert task.priority == TaskPriority.HIGH
