@@ -398,7 +398,12 @@
   - **주문번호 없는 성공 응답은 성공으로 통과시키지 않는다**(PARSING_ERROR) — 통과시키면 이후 체결 대사가 조용히 빈다.
   - 취소는 스펙대로 `cncl_qty="0"` 이 잔량 전부 취소다. 테스트는 실제 주문을 호출하지 않는다(계획서 Phase 6 검증 기준).
 - [x] **Phase 4~6 완료로 `KiwoomApiClient` 의 REST `_unsupported` 경로는 모두 해소됐다.** WebSocket 계열은 Phase 8 미착수라 여전히 골격이며, "성공한 척하지 않는다"(`connect_websocket`/`subscribe_realtime_price` 가 False 반환)를 테스트로 고정했다 — 무틱을 정상으로 오인하지 않기 위함. 서비스 계층에는 `ResCommonResponse`/공통 도메인 타입으로 변환해 넘기고, 키움 전용 기능은 공통 인터페이스에 끼워 넣지 말고 `capabilities`/브로커별 확장으로 분리(계획서 방침).
-- [ ] Phase 7: `KiwoomClient` 완성 + wrapper 연결 → 계획서의 1차 완료 기준(토큰·현재가/일봉/분봉·잔고/예수금·매수/매도 mock 테스트 + 단위·통합 전체 통과) 충족.
+- [~] **Phase 7 배선 검증 완료 (2026-08-23, 앱 조립 잠금 유지)**: wrapper 분기 자체는 스켈레톤(#866)에 이미 있었으므로 남은 실질 작업은 **전 계층 통과 검증**이었다. `tests/integration_test/brokers/test_it_kiwoom_wrapper_pipeline.py` 가 httpx 만 mock 하고 `BrokerAPIWrapper("kiwoom") → ClientWithCache → ClientWithRetryQueue → KiwoomApiClient → 하위 API → KiwoomApiBase` 를 실제로 통과시킨다(현재가·분봉·잔고+예수금 병합·주문).
+  - **주문이 재시도 큐를 타지 않는다는 것을 구조로 고정했다** — 호출 횟수만 세면 비즈니스 오류가 애초에 재시도 대상이 아니라 통과해버리므로, 래퍼가 큐 경로(`queued`)를 반환하지 않는지를 본다. `place_stock_order` 를 `_EXCLUDED_METHODS` 에서 빼고 돌려 실제로 실패하는 것을 확인했다. 재시도되면 중복 주문이 난다.
+  - `_METHOD_BUDGET_CATEGORIES` 미등록 메서드(`get_intraday_minutes`)는 기본값 `quotation` 으로 떨어져 budget 우회 구멍은 없음을 확인했다.
+  - **`BrokerBootstrap` 잠금 유지** — 여전히 `broker=` 를 넘기지 않아 앱 조립 경로에서 키움이 선택되지 않는다. 이 잠금이 풀리는 것을 테스트로 감시한다(`test_broker_bootstrap_does_not_select_kiwoom`). 실계좌 스모크 검증 전까지 운영 경로에 넣지 않는다.
+  - ⚠️ **1차 완료 선언은 보류한다.** 계획서 완료 기준의 mock 항목은 모두 충족했으나 **실제 키움 서버 응답을 한 번도 보지 못했다** — 전부 공식 스펙 예시 기반이다. 스펙만으로도 함정 4건(부호 접두·0 좌측패딩·종목코드 `A` 접두·매핑 유실)이 나왔으므로 실 응답에서 추가 발견 가능성이 높다. 아래 키 발급 후 스모크가 끝나야 1차 완료다.
+- [ ] ~~Phase 7~~ 1차 완료 판정 (스모크 후)  — 계획서의 1차 완료 기준(토큰·현재가/일봉/분봉·잔고/예수금·매수/매도 mock 테스트 + 단위·통합 전체 통과) 충족.
 - [ ] 외부 선행 조건(**사용자 액션**): 키움 계좌 · `openapi.kiwoom.com` API 사용신청(실전/모의 키 별도) · 모의투자 신청 · 실전 호출 IP 등록 확인 → `config/config.yaml` 의 `kiwoom.paper/real` 입력. 이게 없으면 Phase 4 이후는 mock 테스트까지만 진행 가능하고 스모크 테스트는 막힌다.
 - [ ] Phase 8~9(2차): WebSocket · 조건검색 등 키움 특화 기능 — 1차 완료 후 재판단.
 - ※ 우선순위: 크리티컬 패스는 여전히 **엣지(수익성) 입증**이라 K-1 은 그 아래다. 다만 2-4 무틱(≈55%)이 KIS측 계정·상품군 단위 미전송으로 확정돼 자체 코드로 해소 불가이므로, **키움 실시간이 대체 틱 소스가 되는지**는 2-4 의 유일한 자체 우회로로서 평가 가치가 있다(계획서 2차 범위). 이 각도를 세우려면 Phase 8 까지 가야 하므로 착수 결정 시 범위를 그렇게 잡을지 먼저 정할 것.
