@@ -39,6 +39,7 @@ DEFAULT_SIGNAL_SOURCES = [
     "overseas_rsi2_dryrun",
     "overseas_osb_dryrun",
 ]
+DEFAULT_STRATEGY_LABELS = ["VBO", "PP", "BGU", "CB", "RSI2", "OSB"]
 DEFAULT_ROUND_TRIP_COST_PCT = 0.5
 DEFAULT_COST_MODEL = "commission_only"
 DEFAULT_ENTRY_PRICE_ASSUMPTION = "daily_breakout_target"
@@ -270,6 +271,88 @@ def compute_dryrun_report(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def compute_edge_judgement(
+    report: Dict[str, Any],
+    *,
+    min_trading_days: int = 5,
+    min_strategy_sample: int = 5,
+    min_avg_return_pct: float = 0.0,
+    strategy_labels: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """해외 dry-run 누적 리포트에 canary 후보/보류 판정을 붙인다.
+
+    기본 판정은 보수적이다. 최소 거래일과 전략별 평가 표본이 모두 충족된 뒤,
+    비용 반영 평균 수익률이 0%를 초과해야만 `PASS_CANDIDATE` 로 둔다. 멀티데이
+    재구성 섹션이 있으면 해당 net 수익률을 우선하고, 없으면 same-day realized
+    표본을 사용한다.
+    """
+    labels = strategy_labels or DEFAULT_STRATEGY_LABELS
+    by_date = report.get("by_date") or {}
+    by_strategy = report.get("by_strategy") or {}
+    multiday_by_strategy = ((report.get("multiday") or {}).get("by_strategy") or {})
+    trading_days = len(by_date)
+
+    strategy_results: Dict[str, Dict[str, Any]] = {}
+    pass_count = 0
+    wait_count = 0
+    for label in labels:
+        same_day = by_strategy.get(label) or {}
+        multiday = multiday_by_strategy.get(label) or {}
+        signals = int(same_day.get("signals") or 0)
+
+        avg_return = None
+        sample = 0
+        basis = "same_day_realized"
+        if multiday:
+            sample = int(multiday.get("count") or 0)
+            avg_return = _to_float(multiday.get("avg_net_return_pct"))
+            basis = "multiday_net"
+        else:
+            sample = int(same_day.get("realized_sample") or 0)
+            if sample > 0:
+                avg_return = _to_float(same_day.get("sum_realized_pct"))
+                if avg_return is not None:
+                    avg_return = avg_return / sample
+
+        if signals <= 0:
+            status = "NO_SIGNALS"
+        elif trading_days < min_trading_days:
+            status = "WAIT_DAYS"
+            wait_count += 1
+        elif sample < min_strategy_sample:
+            status = "WAIT_SAMPLE"
+            wait_count += 1
+        elif avg_return is not None and avg_return > min_avg_return_pct:
+            status = "PASS_CANDIDATE"
+            pass_count += 1
+        else:
+            status = "FAIL_NEGATIVE_EDGE"
+
+        strategy_results[label] = {
+            "status": status,
+            "signals": signals,
+            "sample": sample,
+            "avg_return_pct": avg_return,
+            "avg_return_basis": basis,
+        }
+
+    if pass_count > 0:
+        overall = "CANARY_CANDIDATE"
+    elif wait_count > 0 or trading_days < min_trading_days:
+        overall = "WAIT_DATA"
+    else:
+        overall = "NO_GO"
+
+    return {
+        "overall_decision": overall,
+        "trading_days": trading_days,
+        "min_trading_days": min_trading_days,
+        "min_strategy_sample": min_strategy_sample,
+        "min_avg_return_pct": min_avg_return_pct,
+        "strategies": strategy_results,
+    }
+
+
 def _f0(value: Any) -> float:
     """float 변환 실패 시 0.0(봉 OHLC 파싱용)."""
     try:
@@ -492,6 +575,30 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
     def _fmt(v: Optional[float], suffix: str = "") -> str:
         return f"{v:.3f}{suffix}" if isinstance(v, (int, float)) else "—"
 
+    judgement = report.get("edge_judgement")
+    if judgement:
+        lines.append("## 엣지 판정")
+        lines.append("")
+        lines.append(f"- overall_decision: `{judgement.get('overall_decision')}`")
+        lines.append(
+            f"- trading_days: {judgement.get('trading_days', 0)} / "
+            f"{judgement.get('min_trading_days', 0)}"
+        )
+        lines.append(
+            f"- min_strategy_sample: {judgement.get('min_strategy_sample', 0)}, "
+            f"min_avg_return_pct: {_fmt(judgement.get('min_avg_return_pct'), '%')}"
+        )
+        lines.append("")
+        lines.append("| strategy | status | signals | sample | avg_return_pct | basis |")
+        lines.append("|---|---|---:|---:|---:|---|")
+        for label, b in (judgement.get("strategies") or {}).items():
+            lines.append(
+                f"| {label} | {b.get('status')} | {b.get('signals', 0)} | "
+                f"{b.get('sample', 0)} | {_fmt(b.get('avg_return_pct'), '%')} | "
+                f"{b.get('avg_return_basis', '')} |"
+            )
+        lines.append("")
+
     lines.append("## 전체 집계")
     lines.append("")
     lines.append("| 항목 | 값 |")
@@ -627,6 +734,14 @@ def build_parser() -> argparse.ArgumentParser:
                         help="멀티데이 time stop 보유일수(회고 가정값)")
     parser.add_argument("--cost-pct", type=float, default=DEFAULT_ROUND_TRIP_COST_PCT,
                         help="멀티데이 왕복 비용 %% (net 산출). 기본값 0.5%%는 미국주식 온라인 수수료 0.25%%/side 왕복 가정.")
+    parser.add_argument("--no-edge-judgement", action="store_true",
+                        help="5거래일/표본/평균수익률 기반 canary 후보 판정 섹션을 생략한다.")
+    parser.add_argument("--min-trading-days", type=int, default=5,
+                        help="엣지 판정에 필요한 최소 거래일 수.")
+    parser.add_argument("--min-strategy-sample", type=int, default=5,
+                        help="전략별 엣지 판정에 필요한 최소 평가 표본 수.")
+    parser.add_argument("--min-avg-return-pct", type=float, default=0.0,
+                        help="canary 후보 판정에 필요한 최소 평균 수익률(%%).")
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-markdown", default=None)
     return parser
@@ -671,6 +786,20 @@ def main(argv: Optional[List[str]] = None) -> int:
             cost_pct=args.cost_pct,
         )
         report["config"]["ohlcv_dir"] = str(args.ohlcv_dir)
+
+    if not args.no_edge_judgement:
+        report["edge_judgement"] = compute_edge_judgement(
+            report,
+            min_trading_days=args.min_trading_days,
+            min_strategy_sample=args.min_strategy_sample,
+            min_avg_return_pct=args.min_avg_return_pct,
+        )
+        report["config"]["edge_judgement"] = {
+            "enabled": True,
+            "min_trading_days": args.min_trading_days,
+            "min_strategy_sample": args.min_strategy_sample,
+            "min_avg_return_pct": args.min_avg_return_pct,
+        }
 
     if args.output_json:
         out_json = Path(args.output_json)

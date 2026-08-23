@@ -239,6 +239,7 @@
 - [x] `scripts/analyze_overseas_dryrun.py`의 왕복 비용 기본값 0.2%를 미국주식 온라인 기본 수수료 0.25%/side 기준 0.5%로 보정 (2026-07-04). 환전 스프레드·SEC/TAF 등 매도 제비용은 별도이므로 리포트에 `commission_only` 가정으로 명시.
 - [x] 일봉 기반 would-be 진입가의 낙관 편향(장중 실체결가 대비 유리하게 잡힘)을 dry-run Markdown 리포트 `가정/주의` 섹션에 명시.
 - [x] **분석기 다전략 확장 (2026-08-22)**: `scripts/analyze_overseas_dryrun.py --all-sources`가 VBO/PP/BGU/CB/RSI2/OSB shadow source를 함께 읽고, 당일 실현손익이 없는 PP/BGU/CB/RSI2/OSB 신호도 표본에서 누락하지 않는다. JSON/Markdown 리포트와 멀티데이 리포트에 전략별 신호 수·실현 표본·승률/평균 수익률 집계를 추가했다.
+- [x] **성과 판정 자동화 (2026-08-23)**: `scripts/analyze_overseas_dryrun.py`가 기본으로 `edge_judgement`를 생성해 5거래일 미만(`WAIT_DAYS`), 전략별 표본 부족(`WAIT_SAMPLE`), 비용후 평균 수익률 음수/0 이하(`FAIL_NEGATIVE_EDGE`), canary 후보(`PASS_CANDIDATE`)를 분리한다. 전체 판정은 `WAIT_DATA` / `NO_GO` / `CANARY_CANDIDATE`로 JSON·Markdown에 함께 노출한다.
 - [x] **누적 표본 1차 점검 (2026-08-22)**: 20260722~20260821 shadow journal 통합 리포트(`reports/overseas_dryrun_all_sources_20260722_20260821.md`)를 생성했다. 현재 누적분은 VBO 523건뿐이며 PP/BGU/CB source는 아직 0건이다. VBO는 비용후 평균 −1.054%, 멀티데이 재구성 평균 −1.624%로 Phase 5 근거가 없고, PP/BGU/CB는 전략 불가 판정이 아니라 **표본 미축적** 상태다.
 - [x] **RSI2 dry-run 추가 (2026-08-22)**: 돌파류와 다른 평균회귀 축을 보기 위해 해외 RSI2 Pullback dry-run을 suite에 추가했다. 국내 Minervini Stage2는 해외에 같은 데이터 소스가 없어 일봉 `close > 200MA` 장기 상승추세로 대체하고, RSI(2) ≤ 10 종가 신호를 기록한다. 실주문 경로 없음.
 - [x] **OSB dry-run 추가 (2026-08-23)**: 국내 `OneilSqueezeBreakoutStrategy` 중 해외 일봉으로 재현 가능한 스퀴즈 + 20일 고점 돌파 + 거래량 폭증 + 캔들 품질 조건을 suite에 추가했다. 국내 전용 프로그램 순매수·체결강도·마켓타이밍 필터는 신호 metadata의 `excluded_filters`로 명시하고 실주문 경로는 두지 않는다.
@@ -261,7 +262,7 @@
 
 해외 dry-run 이 VBO 단일에서 4전략으로 늘었는데 todo 에는 미등재였다. `O'NeilPP_overseas`(#874) · `O'NeilBGU_overseas`(#875) · `LarryWilliamsCB_overseas`(#877) 를 `OverseasDryRunSuiteService` 가 한 after-market 태스크에서 합성 실행하고, 완료 알림은 전략 라벨(VBO/PP/BGU/CB)별 신호 수·예시 종목을 요약한다(#876). 주문 경로는 없다(dry-run 서비스는 `order_execution` 의존을 갖지 않는다).
 
-- [ ] **전략별 would-be 성과 축적·판정** — 분석 경로는 #878 로 갖춰졌다(`--all-sources`/`DEFAULT_SIGNAL_SOURCES` 로 VBO·PP·BGU·CB 저널을 함께 읽고 `by_strategy` 집계, 당일 실현손익 없는 신호도 표본 유지). 남은 것은 5거래일+ 축적 후 O-3 와 같은 기준(왕복비용 0.5%, 비관·낙관 bracket)으로 전략별 엣지를 판정하는 것뿐이다.
+- [ ] **전략별 would-be 성과 축적·판정** — 분석 경로는 `--all-sources`/`DEFAULT_SIGNAL_SOURCES` 와 `edge_judgement` 로 갖춰졌다(VBO·PP·BGU·CB·RSI2·OSB 저널 집계, 당일 실현손익 없는 신호도 표본 유지). 남은 것은 5거래일+ 실제 표본 축적 후 O-3 와 같은 기준(왕복비용 0.5%, 비관·낙관 bracket)으로 출력된 전략별 판정을 확인하는 것이다.
 - [ ] **일봉 낙관 편향 보정치는 VBO 에서만 실측됐다** — O-3 교차검증의 진입 슬리피지 +0.462%p·낙관 과대 1.138%p 는 VBO 장중 paper(`OverseasIntradayVBOService`) 대조로 얻은 값이고, 신규 3전략에는 장중 paper 경로가 없다(`services/overseas_intraday_*` 는 VBO 뿐). 세 전략의 일봉 dry-run 수치를 실행 기대값으로 그대로 읽지 말 것 — 최소한 VBO 편향폭을 하한 보정으로 얹어 해석한다.
 - ※ Phase 5(실주문 전환) 착수 조건은 불변이다. 전략 수가 는 것은 **후보 확대이지 엣지 입증이 아니다.**
 

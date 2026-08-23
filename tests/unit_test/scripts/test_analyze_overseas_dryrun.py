@@ -12,6 +12,7 @@ import pytest
 
 from scripts.analyze_overseas_dryrun import (
     build_parser,
+    compute_edge_judgement,
     compute_dryrun_report,
     compute_multiday_report,
     format_markdown_report,
@@ -315,6 +316,54 @@ def test_compute_empty_records():
     assert report["totals"]["win_rate"] is None
 
 
+# ── edge judgement ───────────────────────────────────────────────────────────
+
+def test_compute_edge_judgement_waits_for_min_trading_days():
+    report = compute_dryrun_report([
+        {"code": "AAA", "strategy_label": "VBO", "exchange": "NASD", "trade_date": "20260601",
+         "realized_pct": 1.0, "exit_reason": "eod", "qty": None, "notional_usd": None},
+    ])
+
+    judgement = compute_edge_judgement(report, min_trading_days=5, min_strategy_sample=1)
+
+    assert judgement["overall_decision"] == "WAIT_DATA"
+    assert judgement["trading_days"] == 1
+    assert judgement["strategies"]["VBO"]["status"] == "WAIT_DAYS"
+
+
+def test_compute_edge_judgement_flags_negative_edge_after_sample():
+    records = [
+        {"code": f"A{i}", "strategy_label": "VBO", "exchange": "NASD", "trade_date": f"2026060{i}",
+         "realized_pct": -0.5, "exit_reason": "eod", "qty": None, "notional_usd": None}
+        for i in range(1, 6)
+    ]
+    report = compute_dryrun_report(records)
+
+    judgement = compute_edge_judgement(report, min_trading_days=5, min_strategy_sample=5)
+
+    assert judgement["overall_decision"] == "NO_GO"
+    assert judgement["strategies"]["VBO"]["status"] == "FAIL_NEGATIVE_EDGE"
+    assert judgement["strategies"]["VBO"]["avg_return_pct"] == pytest.approx(-0.5)
+
+
+def test_compute_edge_judgement_uses_multiday_net_returns_for_non_vbo():
+    records = [
+        {"code": f"P{i}", "strategy_label": "PP", "exchange": "NASD", "trade_date": f"2026060{i}",
+         "realized_pct": None, "exit_reason": "", "qty": None, "notional_usd": None}
+        for i in range(1, 6)
+    ]
+    report = compute_dryrun_report(records)
+    report["multiday"] = {
+        "by_strategy": {"PP": {"count": 5, "avg_net_return_pct": 0.8}},
+    }
+
+    judgement = compute_edge_judgement(report, min_trading_days=5, min_strategy_sample=5)
+
+    assert judgement["overall_decision"] == "CANARY_CANDIDATE"
+    assert judgement["strategies"]["PP"]["status"] == "PASS_CANDIDATE"
+    assert judgement["strategies"]["PP"]["avg_return_basis"] == "multiday_net"
+
+
 # ── markdown / main ────────────────────────────────────────────────────────
 
 def test_format_markdown_smoke():
@@ -336,10 +385,33 @@ def test_format_markdown_smoke():
     assert "일봉 기반 would-be 진입가" in md
 
 
+def test_format_markdown_includes_edge_judgement():
+    report = compute_dryrun_report([
+        {"code": f"A{i}", "strategy_label": "VBO", "exchange": "NASD", "trade_date": f"2026060{i}",
+         "realized_pct": -0.5, "exit_reason": "eod", "qty": None, "notional_usd": None}
+        for i in range(1, 6)
+    ])
+    report["edge_judgement"] = compute_edge_judgement(report, min_trading_days=5, min_strategy_sample=5)
+
+    md = format_markdown_report(report)
+
+    assert "엣지 판정" in md
+    assert "NO_GO" in md
+    assert "FAIL_NEGATIVE_EDGE" in md
+
+
 def test_parser_defaults_to_us_online_round_trip_commission():
     args = build_parser().parse_args(["--date-from", "20260601", "--date-to", "20260605"])
 
     assert args.cost_pct == pytest.approx(0.5)
+
+
+def test_parser_enables_edge_judgement_by_default():
+    args = build_parser().parse_args(["--date-from", "20260601", "--date-to", "20260605"])
+
+    assert args.no_edge_judgement is False
+    assert args.min_trading_days == 5
+    assert args.min_strategy_sample == 5
 
 
 # ── multiday 회고 재구성 ─────────────────────────────────────────────────────
@@ -524,3 +596,4 @@ def test_main_writes_json(tmp_path):
     report = json.loads(out_json.read_text(encoding="utf-8"))
     assert report["totals"]["signals"] == 2
     assert report["totals"]["wins"] == 1
+    assert report["edge_judgement"]["overall_decision"] == "WAIT_DATA"
