@@ -1,6 +1,6 @@
-"""KiwoomApiClient 가 시세 메서드를 quotations API 로 위임하는지 확인한다.
+"""KiwoomApiClient 가 시세·계좌 메서드를 각 API 로 위임하는지 확인한다.
 
-Phase 4 범위는 시세뿐이므로 계좌·주문은 여전히 "기능 미구현" 을 돌려줘야 한다 —
+Phase 4~5 범위는 시세·계좌뿐이므로 주문은 여전히 "기능 미구현" 을 돌려줘야 한다 —
 골격이 조용히 잘못된 값을 흘리지 않는다는 현재의 안전 속성을 유지하기 위함이다.
 """
 from unittest.mock import AsyncMock, MagicMock
@@ -15,6 +15,7 @@ def _client():
     env.get_access_token = AsyncMock(return_value="tok")
     client = KiwoomApiClient(env, logger=MagicMock())
     client._quotations = MagicMock()
+    client._account = MagicMock()
     return client
 
 
@@ -63,12 +64,22 @@ class TestQuotationDelegation:
         )
 
 
+class TestAccountDelegation:
+    async def test_get_account_balance_delegates(self):
+        client = _client()
+        client._account.get_account_balance = AsyncMock(return_value=_ok({"output1": []}))
+
+        result = await client.get_account_balance(exchange=Exchange.NXT)
+
+        assert result.rt_cd == ErrorCode.SUCCESS.value
+        client._account.get_account_balance.assert_awaited_once_with(exchange=Exchange.NXT)
+
+
 class TestStillUnimplemented:
-    async def test_account_and_order_remain_unsupported(self):
+    async def test_order_remains_unsupported(self):
         client = _client()
 
         for coro in (
-            client.get_account_balance(),
             client.place_stock_order("005930", "1000", "1", True),
             client.cancel_stock_order(),
         ):

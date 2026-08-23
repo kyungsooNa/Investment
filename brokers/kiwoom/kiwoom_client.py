@@ -1,6 +1,7 @@
 import logging
 from typing import Optional, TYPE_CHECKING
 
+from brokers.kiwoom.kiwoom_account_api import KiwoomAccountApi
 from brokers.kiwoom.kiwoom_quotations_api import KiwoomQuotationsApi
 from common.types import ErrorCode, Exchange, ResCommonResponse
 
@@ -19,6 +20,7 @@ class KiwoomApiClient:
         self._mcs = market_calendar_service
         self._streaming_logger = streaming_logger
         self._quotations = KiwoomQuotationsApi(env, logger=self._logger, market_clock=market_clock)
+        self._account = KiwoomAccountApi(env, logger=self._logger, market_clock=market_clock)
 
     def _unsupported(self, feature: str) -> ResCommonResponse:
         return ResCommonResponse(
@@ -49,7 +51,7 @@ class KiwoomApiClient:
         )
 
     async def get_account_balance(self, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
-        return self._unsupported("get_account_balance")
+        return await self._account.get_account_balance(exchange=exchange)
 
     async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool,
                                 exchange: Exchange = Exchange.KRX) -> ResCommonResponse:

@@ -389,7 +389,11 @@
   - 실측 함정 2건: ① 키움 시세 값은 **부호 접두**가 붙는다(`+70100`/`-69500`) — OHLC·현재가는 절대값 정규화, 전일대비는 부호 보존. ② `ResStockFullInfoApiOutput` 에 **없는 키로 매핑하면 pydantic 이 조용히 버린다** — 실제로 `hts_kor_isnm`(종목명)·`roe` 를 매핑했다가 값이 소리 없이 유실되는 것을 확인했고, 매핑 대상이 모델에 실재하는지 검사하는 테스트로 고정했다. 종목명은 KIS 경로와 동일하게 `StockCodeRepository` 담당.
   - 키움에는 KIS `inquire-price` 대응 API 가 없어 현재가도 ka10001 로 처리하되, data 형태는 KIS 계약(`{'output': ...}`)에 맞췄다. 주/월/년봉은 별도 api-id 라 명시적으로 거절한다(1차 범위는 일봉).
   - `BrokerBootstrap` 은 여전히 `broker=` 를 넘기지 않아 앱 조립 경로 영향 없음. 계좌·주문은 `_unsupported` 유지(테스트로 고정).
-- [ ] Phase 5~6: 계좌·주문 API 구현. 서비스 계층에는 `ResCommonResponse`/공통 도메인 타입으로 변환해 넘기고, 키움 전용 기능은 공통 인터페이스에 끼워 넣지 말고 `capabilities`/브로커별 확장으로 분리(계획서 방침).
+- [~] **Phase 5 계좌 API 완료 (2026-08-23)**: `kiwoom_account_api.py` 가 kt00018(계좌평가잔고내역) + kt00001(예수금상세현황)을 합쳐 KIS `get_account_balance` 계약(`{"output1": [...], "output2": [{...}]}`)으로 변환한다. 소비처(`order_execution_service`·`fill_reconciliation_service`·`balance.js`)가 KIS 필드명을 직접 읽으므로 브로커 교체 시에도 그대로 동작해야 한다.
+  - 실측 함정 2건: ① 금액·수량이 **0 좌측패딩**으로 온다(`000000025789890`, 부호는 앞에 `-00000000196888`) — 평문 정수로 정규화. ② **종목코드에 `A` 접두**가 붙는다(`A005930`) — 떼지 않으면 `pdno` 로 종목을 찾지 못한다.
+  - 예수금은 별도 API 라 실패해도 잔고 조회는 살린다(전량매도 같은 output1 소비 경로가 막히지 않게). 단 모르는 예수금을 0 으로 채우지 않고 **키 자체를 넣지 않는다**. ⚠️ 현재 `balance.js` 가 `summary.dnca_tot_amt || 0` 로 읽어 화면에는 0원으로 보인다 — 예수금 장애를 화면에서 구분하려면 프런트 후속 작업 필요.
+  - 계좌번호는 body 에 없다 — 키움은 토큰(appkey)에 계좌가 묶여 있어 KIS 의 `CANO`/`ACNT_PRDT_CD` 에 해당하는 자리가 없다(계획서 "계좌번호를 KiwoomEnv 에서 공급" 항목은 이 API 들에는 해당 없음).
+- [ ] Phase 6: 주문 API 구현. 서비스 계층에는 `ResCommonResponse`/공통 도메인 타입으로 변환해 넘기고, 키움 전용 기능은 공통 인터페이스에 끼워 넣지 말고 `capabilities`/브로커별 확장으로 분리(계획서 방침).
 - [ ] Phase 7: `KiwoomClient` 완성 + wrapper 연결 → 계획서의 1차 완료 기준(토큰·현재가/일봉/분봉·잔고/예수금·매수/매도 mock 테스트 + 단위·통합 전체 통과) 충족.
 - [ ] 외부 선행 조건(**사용자 액션**): 키움 계좌 · `openapi.kiwoom.com` API 사용신청(실전/모의 키 별도) · 모의투자 신청 · 실전 호출 IP 등록 확인 → `config/config.yaml` 의 `kiwoom.paper/real` 입력. 이게 없으면 Phase 4 이후는 mock 테스트까지만 진행 가능하고 스모크 테스트는 막힌다.
 - [ ] Phase 8~9(2차): WebSocket · 조건검색 등 키움 특화 기능 — 1차 완료 후 재판단.
