@@ -1,6 +1,7 @@
 import logging
 from typing import Optional, TYPE_CHECKING
 
+from brokers.kiwoom.kiwoom_quotations_api import KiwoomQuotationsApi
 from common.types import ErrorCode, Exchange, ResCommonResponse
 
 if TYPE_CHECKING:
@@ -17,6 +18,7 @@ class KiwoomApiClient:
         self.market_clock = market_clock
         self._mcs = market_calendar_service
         self._streaming_logger = streaming_logger
+        self._quotations = KiwoomQuotationsApi(env, logger=self._logger, market_clock=market_clock)
 
     def _unsupported(self, feature: str) -> ResCommonResponse:
         return ResCommonResponse(
@@ -26,15 +28,25 @@ class KiwoomApiClient:
         )
 
     async def get_stock_info_by_code(self, stock_code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
-        return self._unsupported("get_stock_info_by_code")
+        return await self._quotations.get_stock_info_by_code(stock_code, exchange=exchange)
 
     async def get_current_price(self, code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
-        return self._unsupported("get_current_price")
+        return await self._quotations.get_current_price(code, exchange=exchange)
 
     async def inquire_daily_itemchartprice(self, stock_code: str, start_date: str, end_date: str,
                                            fid_period_div_code: str = "D",
                                            exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
-        return self._unsupported("inquire_daily_itemchartprice")
+        return await self._quotations.inquire_daily_itemchartprice(
+            stock_code, start_date, end_date,
+            fid_period_div_code=fid_period_div_code, exchange=exchange,
+        )
+
+    async def get_intraday_minutes(self, stock_code: str, tick_scope: str = "1",
+                                   base_date: str = "",
+                                   exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
+        return await self._quotations.get_intraday_minutes(
+            stock_code, tick_scope=tick_scope, base_date=base_date, exchange=exchange,
+        )
 
     async def get_account_balance(self, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         return self._unsupported("get_account_balance")
