@@ -138,9 +138,14 @@ class MarketRegimeService:
         query_end_date = as_of_date
         if as_of_date is None:
             now = self._tm.get_current_kst_time()
+            before_open = False
+            try:
+                before_open = now < self._tm.get_market_open_time(now)
+            except Exception:
+                before_open = False
             query_end_date = (
                 previous_trading_day_str(now)
-                if self._tm.is_market_operating_hours()
+                if self._tm.is_market_operating_hours() or before_open
                 else now.strftime("%Y%m%d")
             )
 
