@@ -1,7 +1,7 @@
-"""KiwoomApiClient 가 시세·계좌 메서드를 각 API 로 위임하는지 확인한다.
+"""KiwoomApiClient 가 시세·계좌·주문 메서드를 각 API 로 위임하는지 확인한다.
 
-Phase 4~5 범위는 시세·계좌뿐이므로 주문은 여전히 "기능 미구현" 을 돌려줘야 한다 —
-골격이 조용히 잘못된 값을 흘리지 않는다는 현재의 안전 속성을 유지하기 위함이다.
+Phase 4~6 으로 REST 경로는 모두 구현됐다. WebSocket 계열은 아직 골격이라
+조용히 성공을 반환하지 않는다는 점을 함께 고정한다.
 """
 from unittest.mock import AsyncMock, MagicMock
 
@@ -16,6 +16,7 @@ def _client():
     client = KiwoomApiClient(env, logger=MagicMock())
     client._quotations = MagicMock()
     client._account = MagicMock()
+    client._trading = MagicMock()
     return client
 
 
@@ -75,14 +76,35 @@ class TestAccountDelegation:
         client._account.get_account_balance.assert_awaited_once_with(exchange=Exchange.NXT)
 
 
-class TestStillUnimplemented:
-    async def test_order_remains_unsupported(self):
+class TestTradingDelegation:
+    async def test_place_stock_order_delegates(self):
+        client = _client()
+        client._trading.place_stock_order = AsyncMock(return_value=_ok({"output": {"ODNO": "1"}}))
+
+        result = await client.place_stock_order("005930", 70000, 1, True, exchange=Exchange.NXT)
+
+        assert result.data["output"]["ODNO"] == "1"
+        client._trading.place_stock_order.assert_awaited_once_with(
+            "005930", 70000, 1, True, exchange=Exchange.NXT,
+        )
+
+    async def test_cancel_stock_order_delegates(self):
+        client = _client()
+        client._trading.cancel_stock_order = AsyncMock(return_value=_ok({"output": {"ODNO": "2"}}))
+
+        await client.cancel_stock_order(broker_order_no="9", stock_code="005930", order_qty=1)
+
+        client._trading.cancel_stock_order.assert_awaited_once_with(
+            broker_order_no="9", stock_code="005930", order_qty=1,
+        )
+
+
+class TestWebsocketStillSkeleton:
+    async def test_websocket_paths_do_not_claim_success(self):
+        """Phase 8 미착수 — 실시간 경로가 성공한 척하면 무틱을 정상으로 오인한다."""
         client = _client()
 
-        for coro in (
-            client.place_stock_order("005930", "1000", "1", True),
-            client.cancel_stock_order(),
-        ):
-            result = await coro
-            assert result.rt_cd == ErrorCode.API_ERROR.value
-            assert "기능 미구현" in result.msg1
+        assert client.is_websocket_receive_alive() is False
+        assert await client.connect_websocket() is False
+        assert await client.subscribe_realtime_price("005930") is False
+        assert client.get_subscription_ledger() == {}
