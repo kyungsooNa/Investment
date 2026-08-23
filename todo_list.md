@@ -385,7 +385,11 @@
 `docs/kiwoom_api_integration_plan.md`(Phase 0~9)와 스켈레톤이 머지됐는데 todo 에는 미등재였다. 현재 머지 범위는 **환경/토큰/HTTP base + wrapper 진입점**뿐이다 — `brokers/kiwoom/{kiwoom_env,kiwoom_token_provider,kiwoom_api_base,kiwoom_client}.py`, `BrokerAPIWrapper(broker="kiwoom")` 분기, `config.yaml.example` 의 `kiwoom.paper/real` 블록, 단위·통합 테스트.
 
 - 현 상태의 안전성: `KiwoomApiClient` 는 시세·계좌·주문 전 메서드가 `ErrorCode.API_ERROR` + "기능 미구현" 을 돌려주는 골격이고, `BrokerBootstrap` 은 `broker=` 를 넘기지 않아 앱 조립 경로에서 키움이 선택되지 않는다. **조용히 잘못된 값이 흐르는 경로는 없다.**
-- [ ] Phase 4~6: 시세·계좌·주문 API 구현. 서비스 계층에는 `ResCommonResponse`/공통 도메인 타입으로 변환해 넘기고, 키움 전용 기능은 공통 인터페이스에 끼워 넣지 말고 `capabilities`/브로커별 확장으로 분리(계획서 방침).
+- [~] **Phase 4 시세 API 완료 (2026-08-23)**: `kiwoom_quotations_api.py`(+`kiwoom_url_provider`/`kiwoom_params_provider`) 로 현재가·일봉·분봉을 구현하고 `KiwoomApiClient` 에 위임 연결했다. 스펙은 추측하지 않고 **키움 공식 저장소 `Kiwoom-Securities/kiwoom-rest-api` 의 `kiwoom/_data/kiwoom_api_spec.json`(337 API)** 에서 확인했다 — ka10001 `POST /api/dostk/stkinfo` · ka10081/ka10080 `POST /api/dostk/chart`, 응답 배열 키 `stk_dt_pole_chart_qry`/`stk_min_pole_chart_qry`.
+  - 실측 함정 2건: ① 키움 시세 값은 **부호 접두**가 붙는다(`+70100`/`-69500`) — OHLC·현재가는 절대값 정규화, 전일대비는 부호 보존. ② `ResStockFullInfoApiOutput` 에 **없는 키로 매핑하면 pydantic 이 조용히 버린다** — 실제로 `hts_kor_isnm`(종목명)·`roe` 를 매핑했다가 값이 소리 없이 유실되는 것을 확인했고, 매핑 대상이 모델에 실재하는지 검사하는 테스트로 고정했다. 종목명은 KIS 경로와 동일하게 `StockCodeRepository` 담당.
+  - 키움에는 KIS `inquire-price` 대응 API 가 없어 현재가도 ka10001 로 처리하되, data 형태는 KIS 계약(`{'output': ...}`)에 맞췄다. 주/월/년봉은 별도 api-id 라 명시적으로 거절한다(1차 범위는 일봉).
+  - `BrokerBootstrap` 은 여전히 `broker=` 를 넘기지 않아 앱 조립 경로 영향 없음. 계좌·주문은 `_unsupported` 유지(테스트로 고정).
+- [ ] Phase 5~6: 계좌·주문 API 구현. 서비스 계층에는 `ResCommonResponse`/공통 도메인 타입으로 변환해 넘기고, 키움 전용 기능은 공통 인터페이스에 끼워 넣지 말고 `capabilities`/브로커별 확장으로 분리(계획서 방침).
 - [ ] Phase 7: `KiwoomClient` 완성 + wrapper 연결 → 계획서의 1차 완료 기준(토큰·현재가/일봉/분봉·잔고/예수금·매수/매도 mock 테스트 + 단위·통합 전체 통과) 충족.
 - [ ] 외부 선행 조건(**사용자 액션**): 키움 계좌 · `openapi.kiwoom.com` API 사용신청(실전/모의 키 별도) · 모의투자 신청 · 실전 호출 IP 등록 확인 → `config/config.yaml` 의 `kiwoom.paper/real` 입력. 이게 없으면 Phase 4 이후는 mock 테스트까지만 진행 가능하고 스모크 테스트는 막힌다.
 - [ ] Phase 8~9(2차): WebSocket · 조건검색 등 키움 특화 기능 — 1차 완료 후 재판단.
