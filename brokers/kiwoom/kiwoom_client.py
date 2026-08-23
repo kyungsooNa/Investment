@@ -3,6 +3,7 @@ from typing import Optional, TYPE_CHECKING
 
 from brokers.kiwoom.kiwoom_account_api import KiwoomAccountApi
 from brokers.kiwoom.kiwoom_quotations_api import KiwoomQuotationsApi
+from brokers.kiwoom.kiwoom_trading_api import KiwoomTradingApi
 from common.types import ErrorCode, Exchange, ResCommonResponse
 
 if TYPE_CHECKING:
@@ -21,6 +22,7 @@ class KiwoomApiClient:
         self._streaming_logger = streaming_logger
         self._quotations = KiwoomQuotationsApi(env, logger=self._logger, market_clock=market_clock)
         self._account = KiwoomAccountApi(env, logger=self._logger, market_clock=market_clock)
+        self._trading = KiwoomTradingApi(env, logger=self._logger, market_clock=market_clock)
 
     def _unsupported(self, feature: str) -> ResCommonResponse:
         return ResCommonResponse(
@@ -55,10 +57,12 @@ class KiwoomApiClient:
 
     async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool,
                                 exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
-        return self._unsupported("place_stock_order")
+        return await self._trading.place_stock_order(
+            stock_code, order_price, order_qty, is_buy, exchange=exchange,
+        )
 
     async def cancel_stock_order(self, **kwargs) -> ResCommonResponse:
-        return self._unsupported("cancel_stock_order")
+        return await self._trading.cancel_stock_order(**kwargs)
 
     def is_websocket_receive_alive(self) -> bool:
         return False
