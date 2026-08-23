@@ -212,6 +212,11 @@ body {
     background: #2980b9;
 }
 
+.market-context-badge.overseas {
+    color: #fff;
+    background: #8e44ad;
+}
+
 @media (max-width: 640px) {
     .header {
         align-items: flex-start;

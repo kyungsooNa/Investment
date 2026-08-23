@@ -503,6 +503,16 @@ async def order(request: Request):
 async def overseas(request: Request):
     return await render_page(request, "overseas.html", "overseas", view_market="overseas_us")
 
+@page_router.get("/overseas-stock")
+async def overseas_stock(request: Request):
+    # 심볼 리스트는 클라이언트에서 /api/overseas/stocks/list + localStorage로 관리
+    return await render_page(
+        request,
+        "overseas_stock.html",
+        "overseas_stock",
+        view_market="overseas_us",
+    )
+
 @page_router.get("/overseas-favorite")
 async def overseas_favorite(request: Request):
     return await render_page(
