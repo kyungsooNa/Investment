@@ -80,6 +80,22 @@ test("랭킹 행을 순위·심볼·섹터·등락률·거래량·거래대금�
   assert(text.includes("$2.47B"), "회귀: 거래대금 축약 표기 실패");
 });
 
+test("심볼·종목명을 미국장 현재가 화면 링크로 렌더한다", async () => {
+  const window = await makeWindow();
+  window.fetchWithTimeout = async () => okPayload([APPLE]);
+
+  await window.loadOverseasRanking("rise");
+
+  const link = window.document.querySelector("#overseas-ranking-result a.stock-link");
+  assert(link, "회귀: 종목 셀이 현재가 화면으로 가는 링크가 아님");
+  assert(
+    link.getAttribute("href") === "/overseas-stock?symbol=AAPL",
+    `회귀: 링크가 /overseas-stock 심볼 조회로 가지 않음 (${link.getAttribute("href")})`,
+  );
+  assert(link.textContent.includes("AAPL"), "링크에 심볼이 포함되어야 함");
+  assert(link.textContent.includes("Apple Inc."), "회귀: 종목명이 링크 밖에 남아 클릭되지 않음");
+});
+
 test("카테고리 탭이 요청 경로와 active 클래스에 반영된다", async () => {
   const window = await makeWindow();
   const urls = [];
