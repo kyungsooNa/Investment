@@ -1,11 +1,14 @@
 """유튜브 일일 다이제스트 스케줄 태스크 단위 테스트."""
+import asyncio
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytz
 
 from common.types import ErrorCode, ResCommonResponse
+from interfaces.schedulable_task import TaskPriority, TaskState
+from services.notification_service import NotificationLevel
 from task.background.intraday.youtube_digest_task import YoutubeDigestTask
 
 _KST = pytz.timezone("Asia/Seoul")
@@ -337,3 +340,151 @@ def test_progress_exposes_required_keys():
 
     assert "running" in progress
     assert "last_report_date" in progress
+
+
+# --- Gemini fallback 실패 경로 ---------------------------------------------
+
+
+async def test_gemini_fallback_is_skipped_when_service_not_configured():
+    task, _ = _task()
+
+    assert await task._try_gemini_fallback([{"url": "u"}], "20260810", _clock(7, 30)) is False
+
+
+async def test_gemini_fallback_warns_when_no_video_has_url():
+    task, deps = _task(gemini_fallback_result=_ok_digest())
+
+    assert await task._try_gemini_fallback([{"video_id": "v1"}], "20260810", None) is False
+    deps["gemini_fallback"].build_digest.assert_not_awaited()
+
+
+async def test_gemini_fallback_records_error_when_service_raises():
+    task, deps = _task(gemini_fallback_result=_ok_digest())
+    deps["gemini_fallback"].build_digest = AsyncMock(side_effect=RuntimeError("gemini down"))
+
+    ok = await task._try_gemini_fallback([{"url": "u"}], "20260810", None)
+
+    assert ok is False
+    assert "gemini down" in task.get_progress()["last_error"]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        None,
+        ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="fallback 실패", data=None),
+    ],
+)
+async def test_gemini_fallback_records_error_on_unsuccessful_response(result):
+    task, deps = _task(gemini_fallback_result=_ok_digest())
+    deps["gemini_fallback"].build_digest = AsyncMock(return_value=result)
+
+    ok = await task._try_gemini_fallback([{"url": "u"}], "20260810", None)
+
+    assert ok is False
+    assert "gemini fallback failed" in task.get_progress()["last_error"]
+    deps["digest_repo"].save.assert_not_awaited()
+
+
+# --- 라이프사이클 / 루프 ----------------------------------------------------
+
+
+async def test_should_run_now_requires_market_clock():
+    task, _ = _task()
+    task._market_clock = None
+
+    assert await task._should_run_now() is False
+
+
+async def test_emit_is_a_noop_without_notification_service():
+    task, deps = _task()
+    task._ns = None
+
+    await task._emit(NotificationLevel.INFO, "제목", "본문")
+
+    deps["notifier"].emit.assert_not_awaited()
+
+
+async def test_task_identity_and_priority():
+    task, _ = _task()
+
+    assert task.task_name == "youtube_digest"
+    assert task.priority == TaskPriority.LOW
+
+
+async def test_suspend_only_applies_while_running_and_resume_restores_idle():
+    task, _ = _task()
+
+    await task.suspend()
+    assert task.state == TaskState.IDLE
+
+    task._state = TaskState.RUNNING
+    await task.suspend()
+    assert task.state == TaskState.SUSPENDED
+
+    await task.resume()
+    assert task.state == TaskState.IDLE
+
+    await task.resume()
+    assert task.state == TaskState.IDLE
+
+
+async def test_restart_after_stop_resets_state_to_idle():
+    task, _ = _task()
+
+    await task.stop()
+    assert task.state == TaskState.STOPPED
+
+    await task.start()
+    assert task.state == TaskState.IDLE
+    await task.start()
+    assert len(task._tasks) == 1
+
+    await task.stop()
+
+
+async def test_loop_runs_once_when_due_then_logs_error_and_exits_on_cancel():
+    task, _ = _task()
+    task._logger = MagicMock()
+    task._should_run_now = AsyncMock(
+        side_effect=[True, RuntimeError("boom"), asyncio.CancelledError()]
+    )
+    task.run_once = AsyncMock()
+
+    with patch(
+        "task.background.intraday.youtube_digest_task.asyncio.sleep", new_callable=AsyncMock
+    ):
+        await task._loop()
+
+    task.run_once.assert_awaited_once()
+    assert task.state == TaskState.IDLE
+    task._logger.error.assert_called_once()
+
+
+async def test_loop_skips_run_while_suspended():
+    task, _ = _task()
+    task._should_run_now = AsyncMock()
+    task.run_once = AsyncMock()
+    task._state = TaskState.SUSPENDED
+
+    with patch(
+        "task.background.intraday.youtube_digest_task.asyncio.sleep",
+        AsyncMock(side_effect=[None, asyncio.CancelledError()]),
+    ):
+        await task._loop()
+
+    task._should_run_now.assert_not_awaited()
+    task.run_once.assert_not_awaited()
+
+
+async def test_loop_does_not_run_when_not_due():
+    task, _ = _task()
+    task._should_run_now = AsyncMock(side_effect=[False, asyncio.CancelledError()])
+    task.run_once = AsyncMock()
+
+    with patch(
+        "task.background.intraday.youtube_digest_task.asyncio.sleep", new_callable=AsyncMock
+    ):
+        await task._loop()
+
+    task.run_once.assert_not_awaited()

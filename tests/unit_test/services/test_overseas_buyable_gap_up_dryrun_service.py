@@ -134,3 +134,53 @@ async def test_scan_includes_qty_when_sizing_injected():
     assert signals[0]["notional_usd"] == 535.0
     assert sizing.size.call_args.kwargs["limit_price_usd"] == signals[0]["entry_price"]
     assert not hasattr(service, "_order_execution_service")
+
+
+@pytest.mark.asyncio
+async def test_scan_copies_fx_fields_from_sizing_result(svc):
+    """사이징이 환율/원화 노출을 돌려주면 신호에 그대로 옮겨 담는다."""
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(_bgu_bars()))
+    sizing = MagicMock()
+    sizing.size = MagicMock(return_value={
+        "qty": 2,
+        "notional_usd": 200.0,
+        "fx_krw_per_usd": 1380.0,
+        "krw_exposure": 276_000.0,
+    })
+    svc.service._sizing_service = sizing
+    svc.service._fx_provider = AsyncMock(return_value=1380.0)
+
+    signals = await svc.service.scan_dry_run()
+
+    assert signals[0]["qty"] == 2
+    assert signals[0]["fx_krw_per_usd"] == 1380.0
+    assert signals[0]["krw_exposure"] == 276_000.0
+    assert sizing.size.call_args.kwargs["fx_krw_per_usd"] == 1380.0
+
+
+@pytest.mark.asyncio
+async def test_scan_omits_fx_fields_when_sizing_returns_none(svc):
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(_bgu_bars()))
+    sizing = MagicMock()
+    sizing.size = MagicMock(return_value={
+        "qty": 2,
+        "notional_usd": 200.0,
+        "fx_krw_per_usd": None,
+        "krw_exposure": None,
+    })
+    svc.service._sizing_service = sizing
+
+    signals = await svc.service.scan_dry_run()
+
+    assert "fx_krw_per_usd" not in signals[0]
+    assert "krw_exposure" not in signals[0]
+
+
+@pytest.mark.asyncio
+async def test_scan_can_skip_shadow_journal_recording(svc):
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(_bgu_bars()))
+
+    signals = await svc.service.scan_dry_run(record=False)
+
+    assert len(signals) == 1
+    svc.journal.record.assert_not_called()

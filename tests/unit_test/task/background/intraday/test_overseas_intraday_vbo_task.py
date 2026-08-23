@@ -3,13 +3,16 @@
 미국 정규장에서만 동작하며(휴장/장외 no-op), 개장 후 준비 지연이 지나면 세션을
 준비하고 감시 종목을 폴링한다. 마감 임박에는 진입 대신 EOD 청산만 수행한다.
 """
+import asyncio
+
 import pytest
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytz
 
+from interfaces.schedulable_task import TaskPriority, TaskState
 from task.background.intraday.overseas_intraday_vbo_task import OverseasIntradayVBOTask
 from common.types import ErrorCode, ResCommonResponse
 
@@ -200,3 +203,119 @@ async def test_task_name_and_progress():
 
     assert t.task.task_name == "overseas_intraday_vbo"
     assert t.task.get_progress()["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_tick_runs_without_us_calendar_service():
+    t = _task()
+    t.task._us_mcs = None
+
+    await t.task._tick()
+
+    t.vbo.prepare_session.assert_awaited_once_with("20260512")
+    assert t.task._close_minute("20260512") == 16 * 60
+
+
+@pytest.mark.parametrize("close_str", ["", None, "이른마감", "13:xx"])
+def test_close_minute_falls_back_to_default_for_unusable_close_time(close_str):
+    t = _task()
+    t.us_mcs.get_close_time_str = MagicMock(return_value=close_str)
+
+    assert t.task._close_minute("20260512") == 16 * 60
+
+
+@pytest.mark.asyncio
+async def test_fetch_price_returns_none_when_broker_raises():
+    t = _task()
+    t.broker.get_overseas_price = AsyncMock(side_effect=RuntimeError("timeout"))
+
+    assert await t.task._fetch_price("AAA") is None
+    t.task._logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="fail", data=None),
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=SimpleNamespace(price=None)),
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=SimpleNamespace(price="없음")),
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=SimpleNamespace(price=0)),
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=SimpleNamespace(price=-1.0)),
+    ],
+)
+async def test_fetch_price_rejects_unusable_responses(response):
+    t = _task()
+    t.broker.get_overseas_price = AsyncMock(return_value=response)
+
+    assert await t.task._fetch_price("AAA") is None
+
+
+@pytest.mark.asyncio
+async def test_loop_runs_tick_logs_error_and_exits_on_cancel():
+    t = _task()
+    t.task._tick = AsyncMock(side_effect=[None, RuntimeError("boom"), asyncio.CancelledError()])
+
+    with patch(
+        "task.background.intraday.overseas_intraday_vbo_task.asyncio.sleep",
+        new_callable=AsyncMock,
+    ):
+        await t.task._loop()
+
+    assert t.task._tick.await_count == 3
+    t.task._logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_loop_skips_tick_while_suspended():
+    t = _task()
+    t.task._tick = AsyncMock()
+    t.task._state = TaskState.SUSPENDED
+    sleep_mock = AsyncMock(side_effect=[None, asyncio.CancelledError()])
+
+    with patch("task.background.intraday.overseas_intraday_vbo_task.asyncio.sleep", sleep_mock):
+        with pytest.raises(asyncio.CancelledError):
+            await t.task._loop()
+
+    t.task._tick.assert_not_awaited()
+    assert t.task.state == TaskState.SUSPENDED
+
+
+@pytest.mark.asyncio
+async def test_start_is_idempotent_and_stop_clears_background_task():
+    t = _task()
+
+    await t.task.start()
+    first = t.task._task
+    await t.task.start()
+    assert t.task._task is first
+
+    await t.task.stop()
+
+    assert t.task._task is None
+    assert t.task.state == TaskState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_stop_without_start_only_marks_stopped():
+    t = _task()
+
+    await t.task.stop()
+
+    assert t.task._task is None
+    assert t.task.state == TaskState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_suspend_and_resume_toggle_state():
+    t = _task()
+
+    await t.task.suspend()
+    assert t.task.state == TaskState.SUSPENDED
+
+    await t.task.resume()
+    assert t.task.state == TaskState.IDLE
+
+    await t.task.resume()
+    assert t.task.state == TaskState.IDLE
+    assert t.task.priority == TaskPriority.NORMAL
