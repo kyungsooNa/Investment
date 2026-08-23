@@ -1,5 +1,7 @@
 """Gemini YouTube URL fallback 분석 서비스 단위 테스트."""
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from common.types import ErrorCode
 from services.gemini_youtube_video_analyzer_service import (
@@ -112,3 +114,120 @@ async def test_build_digest_keeps_going_when_one_video_fails():
     assert result.data["video_count"] == 1
     assert result.data["failed_summary_count"] == 1
     assert result.data["videos"][0]["video_id"] == "v2"
+
+
+async def test_build_digest_fails_when_api_key_missing():
+    svc = GeminiYoutubeVideoAnalyzerService(api_key="", http_client=AsyncMock())
+
+    result = await svc.build_digest([_video()], report_date="20260810")
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert result.data is None
+
+
+async def test_build_digest_fails_when_api_key_has_non_ascii_characters():
+    svc = GeminiYoutubeVideoAnalyzerService(api_key="키-한글", http_client=AsyncMock())
+
+    result = await svc.build_digest([_video()], report_date="20260810")
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+
+
+async def test_build_digest_reports_empty_when_video_list_is_none():
+    svc = GeminiYoutubeVideoAnalyzerService(api_key="test-key", http_client=AsyncMock())
+
+    result = await svc.build_digest(None, report_date="20260810")
+
+    assert result.rt_cd == ErrorCode.EMPTY_VALUES.value
+
+
+async def test_summarize_url_uses_own_http_client_when_none_injected(monkeypatch):
+    posted = {}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            posted["init"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers=None, json=None, timeout=None):
+            posted["url"] = url
+            posted["headers"] = headers
+            return _Response({"output_text": "자체 클라이언트 요약"})
+
+    monkeypatch.setattr(
+        "services.gemini_youtube_video_analyzer_service.httpx.AsyncClient", FakeClient
+    )
+    svc = GeminiYoutubeVideoAnalyzerService(api_key="test-key")
+
+    result = await svc.build_digest([_video()], report_date="20260810")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data["videos"][0]["summary"] == "자체 클라이언트 요약"
+    assert posted["url"].endswith("/v1beta/interactions")
+    assert posted["headers"]["x-goog-api-key"] == "test-key"
+
+
+async def test_build_digest_falls_back_to_step_texts_when_output_text_missing():
+    http = AsyncMock()
+    http.post = AsyncMock(return_value=_Response({
+        "steps": [
+            {"content": [{"text": " 첫 문단 "}, {"text": ""}, {"no_text": 1}]},
+            {"content": "리스트 아님"},
+            "스텝 아님",
+            {"content": [{"text": "둘째 문단"}]},
+        ]
+    }))
+    svc = GeminiYoutubeVideoAnalyzerService(api_key="test-key", http_client=http)
+
+    result = await svc.build_digest([_video()], report_date="20260810")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data["videos"][0]["summary"] == "첫 문단\n둘째 문단"
+
+
+async def test_build_digest_fails_when_response_body_is_empty():
+    http = AsyncMock()
+    http.post = AsyncMock(return_value=_Response({"output_text": "   "}))
+    svc = GeminiYoutubeVideoAnalyzerService(api_key="test-key", http_client=http)
+
+    result = await svc.build_digest([_video()], report_date="20260810")
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+
+
+async def test_build_digest_fails_on_http_error_status():
+    http = AsyncMock()
+    http.post = AsyncMock(return_value=_Response({}, status_code=500))
+    svc = GeminiYoutubeVideoAnalyzerService(api_key="test-key", http_client=http)
+
+    result = await svc.build_digest([_video()], report_date="20260810")
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+
+
+@pytest.mark.parametrize("steps", ["문자열", None, {}, 3])
+def test_extract_text_from_steps_returns_empty_for_non_list(steps):
+    assert GeminiYoutubeVideoAnalyzerService._extract_text_from_steps(steps) == ""
+
+
+def test_parse_response_returns_empty_string_summary_for_non_dict_payload():
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value=["not", "a", "dict"])
+
+    with pytest.raises(ValueError):
+        GeminiYoutubeVideoAnalyzerService._parse_response(response)
+
+
+def test_format_digest_text_uses_fallback_labels():
+    text = GeminiYoutubeVideoAnalyzerService._format_digest_text([
+        {"video_id": "v9", "summary": "요약"},
+    ])
+
+    assert "[채널] v9" in text
+    assert text.endswith("요약")
