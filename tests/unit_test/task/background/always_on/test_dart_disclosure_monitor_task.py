@@ -1,7 +1,9 @@
+import asyncio
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from interfaces.schedulable_task import TaskState
 from repositories.dart_disclosure_repository import StoredDisclosure
 from services.ai_disclosure_analyzer import AiDisclosureAnalysis
 from services.dart_disclosure_client import DartDisclosure, DartDisclosurePage
@@ -342,3 +344,236 @@ async def test_actual_content_analysis_can_promote_low_title_to_immediate_alert(
         promoted,
         ai_summary="하이브리드 본더 공장과 미국 법인 설립을 추진합니다.",
     )
+
+
+# --- 라이프사이클 / 루프 ----------------------------------------------------
+
+
+async def test_start_is_idempotent_and_stop_clears_running_flag():
+    deps = _make_task([])
+
+    await deps.task.start()
+    await deps.task.start()
+    assert len(deps.task._tasks) == 1
+    assert deps.task.state == TaskState.RUNNING
+    assert deps.task.get_progress()["running"] is True
+
+    await deps.task.stop()
+
+    assert deps.task.state == TaskState.STOPPED
+    assert deps.task._tasks == []
+    assert deps.task.get_progress()["running"] is False
+
+
+async def test_suspend_only_applies_while_running_and_resume_restores_running():
+    deps = _make_task([])
+
+    await deps.task.suspend()
+    assert deps.task.state == TaskState.IDLE
+
+    deps.task._state = TaskState.RUNNING
+    await deps.task.suspend()
+    assert deps.task.state == TaskState.SUSPENDED
+
+    await deps.task.resume()
+    assert deps.task.state == TaskState.RUNNING
+
+    await deps.task.resume()
+    assert deps.task.state == TaskState.RUNNING
+
+
+async def test_loop_records_tick_error_and_emits_operational_alert():
+    notifier = MagicMock()
+    notifier.emit = AsyncMock()
+    deps = _make_task([], notification_service=notifier)
+    deps.task._state = TaskState.RUNNING
+    deps.task._tick = AsyncMock(side_effect=RuntimeError("boom"))
+
+    with patch(
+        "task.background.always_on.dart_disclosure_monitor_task.asyncio.sleep",
+        AsyncMock(side_effect=[asyncio.CancelledError()]),
+    ):
+        await deps.task._loop()
+
+    assert deps.task.get_progress()["last_error"] == "RuntimeError: boom"
+    notifier.emit.assert_awaited_once()
+
+
+async def test_loop_skips_tick_when_not_running():
+    deps = _make_task([])
+    deps.task._state = TaskState.SUSPENDED
+    deps.task._tick = AsyncMock()
+
+    with patch(
+        "task.background.always_on.dart_disclosure_monitor_task.asyncio.sleep",
+        AsyncMock(side_effect=asyncio.CancelledError()),
+    ):
+        await deps.task._loop()
+
+    deps.task._tick.assert_not_awaited()
+
+
+async def test_tick_is_skipped_while_a_previous_tick_holds_the_lock():
+    deps = _make_task([_disclosure()])
+    lock = deps.task._get_tick_lock()
+    assert deps.task._get_tick_lock() is lock
+
+    await lock.acquire()
+    try:
+        await deps.task._tick()
+    finally:
+        lock.release()
+
+    deps.favorites.get_all.assert_not_awaited()
+
+
+# --- 운영 알림 --------------------------------------------------------------
+
+
+async def test_operational_alert_is_a_noop_without_notification_service():
+    deps = _make_task([])
+
+    await deps.task._emit_operational_alert("제목", "본문")
+
+
+async def test_operational_alert_failure_is_logged_and_absorbed():
+    notifier = MagicMock()
+    notifier.emit = AsyncMock(side_effect=RuntimeError("notify down"))
+    deps = _make_task([], notification_service=notifier)
+
+    await deps.task._emit_operational_alert("제목", "본문")
+
+    deps.task._logger.error.assert_called_once()
+
+
+# --- 페이지네이션 -----------------------------------------------------------
+
+
+async def test_fetch_recent_stops_when_all_receipts_are_already_known():
+    deps = _make_task([_disclosure()])
+    page = DartDisclosurePage([_disclosure()], 1, 100, 1, 3)
+    deps.client.fetch_disclosures = AsyncMock(return_value=page)
+    deps.repo.get_known_receipt_nos = AsyncMock(return_value={"20260714000001"})
+
+    collected = await deps.task._fetch_recent("20260714")
+
+    assert len(collected) == 1
+    assert deps.client.fetch_disclosures.await_count == 1
+
+
+async def test_fetch_recent_walks_pages_until_last_page():
+    deps = _make_task([_disclosure()])
+    first = DartDisclosurePage([_disclosure(receipt_no="1")], 1, 100, 2, 2)
+    second = DartDisclosurePage([_disclosure(receipt_no="2")], 2, 100, 2, 2)
+    deps.client.fetch_disclosures = AsyncMock(side_effect=[first, second])
+
+    collected = await deps.task._fetch_recent("20260714")
+
+    assert len(collected) == 2
+    assert deps.client.fetch_disclosures.await_count == 2
+
+
+# --- AI 본문 분석 -----------------------------------------------------------
+
+
+async def test_actual_content_analysis_returns_none_without_analyzer():
+    deps = _make_task([_disclosure()])
+
+    result = await deps.task._analyze_actual_content(
+        _disclosure(), DisclosureImportance(score=10, level="LOW", reasons=[])
+    )
+
+    assert result is None
+
+
+async def test_actual_content_analysis_returns_none_when_text_lookup_fails():
+    analyzer = MagicMock()
+    analyzer.analyze = AsyncMock()
+    deps = _make_task([_disclosure()], ai_analyzer=analyzer)
+    deps.client.fetch_disclosure_text = AsyncMock(side_effect=RuntimeError("본문 없음"))
+
+    result = await deps.task._analyze_actual_content(
+        _disclosure(), DisclosureImportance(score=10, level="LOW", reasons=[])
+    )
+
+    assert result is None
+    analyzer.analyze.assert_not_awaited()
+    deps.task._logger.warning.assert_called_once()
+
+
+async def test_actual_content_analysis_returns_none_for_empty_document():
+    analyzer = MagicMock()
+    analyzer.analyze = AsyncMock()
+    deps = _make_task([_disclosure()], ai_analyzer=analyzer)
+    deps.client.fetch_disclosure_text = AsyncMock(return_value="")
+
+    result = await deps.task._analyze_actual_content(
+        _disclosure(), DisclosureImportance(score=10, level="LOW", reasons=[])
+    )
+
+    assert result is None
+    analyzer.analyze.assert_not_awaited()
+
+
+# --- 중요도 병합 ------------------------------------------------------------
+
+
+def test_merge_importance_prefers_higher_score_and_unions_reasons_on_tie():
+    low = DisclosureImportance(score=40, level="LOW", reasons=["규칙"])
+    high = DisclosureImportance(score=80, level="HIGH", reasons=["AI"])
+
+    assert DartDisclosureMonitorTask._merge_importance(low, high) is high
+    assert DartDisclosureMonitorTask._merge_importance(high, low) is high
+
+    same_a = DisclosureImportance(score=50, level="MID", reasons=["규칙", "공통"])
+    same_b = DisclosureImportance(score=50, level="MID", reasons=["공통", "AI"])
+    merged = DartDisclosureMonitorTask._merge_importance(same_a, same_b)
+    assert merged.score == 50
+    assert merged.reasons == ["규칙", "공통", "AI"]
+
+
+# --- 다이제스트 / 폴링 간격 --------------------------------------------------
+
+
+async def test_digest_is_skipped_when_disabled_or_before_configured_time():
+    deps = _make_task([])
+    deps.task._config.daily_digest_enabled = False
+
+    await deps.task._send_digest_if_due(datetime(2026, 7, 14, 20, 0), "20260714")
+    deps.repo.get_pending_digest.assert_not_awaited()
+
+    deps.task._config.daily_digest_enabled = True
+    await deps.task._send_digest_if_due(datetime(2026, 7, 14, 10, 0), "20260714")
+    deps.repo.get_pending_digest.assert_not_awaited()
+
+
+async def test_digest_stays_pending_when_send_fails():
+    deps = _make_task([])
+    pending = [StoredDisclosure(_disclosure(), DisclosureImportance(50, "MID", []))]
+    deps.repo.get_pending_digest = AsyncMock(return_value=pending)
+    deps.reporter.send_disclosure_digest = AsyncMock(return_value=False)
+
+    await deps.task._send_digest_if_due(datetime(2026, 7, 14, 20, 0), "20260714")
+
+    deps.repo.mark_digest_sent.assert_not_awaited()
+    assert deps.task.get_progress()["pending_digest_count"] == 1
+
+
+def test_off_hours_interval_is_used_outside_the_active_window():
+    deps = _make_task([])
+
+    assert deps.task._interval_for(datetime(2026, 7, 14, 3, 0)) == 1800
+    assert deps.task._interval_for(datetime(2026, 7, 14, 10, 0)) == 300
+
+
+def test_interval_ignores_unparsable_digest_time():
+    deps = _make_task([])
+    deps.task._config.daily_digest_time = "저녁"
+
+    assert deps.task._interval_for(datetime(2026, 7, 14, 10, 0)) == 300
+
+
+def test_interval_is_not_shortened_after_digest_time():
+    deps = _make_task([])
+
+    assert deps.task._interval_for(datetime(2026, 7, 14, 19, 50)) == 1800

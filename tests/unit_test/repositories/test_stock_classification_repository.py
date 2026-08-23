@@ -5,7 +5,7 @@
 - 빈 테이블 graceful (예외 없이 빈 결과)
 """
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from repositories.stock_classification_repository import StockClassificationRepository
 
@@ -196,3 +196,98 @@ async def test_code_category_map_ignores_other_category_types(repo):
 @pytest.mark.asyncio
 async def test_code_category_map_empty_when_not_collected(repo):
     assert await repo.get_code_category_map("industry") == {}
+
+
+@pytest.mark.asyncio
+async def test_empty_batches_are_a_noop(repo):
+    assert await repo.upsert_classifications([]) == 0
+    assert await repo.upsert_aliases([]) == 0
+
+
+@pytest.mark.asyncio
+async def test_get_groups_without_category_types_returns_empty(repo):
+    assert await repo.get_groups(category_types=()) == {}
+
+
+@pytest.mark.asyncio
+async def test_get_groups_can_be_filtered_by_source(repo):
+    await repo.upsert_classifications([
+        _rec("NAVER", "005930", "삼성전자"),
+        _rec("KRX", "000660", "SK하이닉스"),
+    ])
+
+    only_naver = await repo.get_groups(sources=("NAVER",))
+
+    assert [m["code"] for m in only_naver["로봇"]["members"]] == ["005930"]
+    assert only_naver["로봇"]["sources"] == ["NAVER"]
+
+
+@pytest.mark.asyncio
+async def test_get_latest_collected_at_returns_max_and_none_when_empty(repo):
+    assert await repo.get_latest_collected_at() is None
+
+    await repo.upsert_classifications([
+        _rec("NAVER", "005930", "삼성전자", at="2026-06-20T18:00:00"),
+        _rec("NAVER", "000660", "SK하이닉스", at="2026-06-21T18:00:00"),
+    ])
+
+    assert await repo.get_latest_collected_at() == "2026-06-21T18:00:00"
+
+
+@pytest.mark.asyncio
+async def test_close_releases_both_connections(repo):
+    await repo.upsert_classifications([_rec("NAVER", "005930", "삼성전자")])
+    await repo.get_groups()
+    assert repo._write_conn is not None
+    assert repo._read_conn is not None
+
+    await repo.close()
+
+    assert repo._write_conn is None
+    assert repo._read_conn is None
+
+    await repo.close()  # 두 번 호출해도 안전해야 한다
+
+
+def test_init_failure_is_logged_without_raising(tmp_path):
+    logger = MagicMock()
+
+    with patch(
+        "repositories.stock_classification_repository.sqlite3.connect",
+        side_effect=RuntimeError("DB 초기화 실패"),
+    ):
+        StockClassificationRepository(db_path=str(tmp_path / "x.db"), logger=logger)
+
+    logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method_name, args, expected",
+    [
+        ("upsert_classifications", ([_rec("NAVER", "005930", "삼성전자")],), 0),
+        (
+            "replace_source_classifications",
+            ("NAVER", "theme", [_rec("NAVER", "005930", "삼성전자")]),
+            0,
+        ),
+        (
+            "upsert_aliases",
+            ([{"source": "NAVER", "raw_name": "로보틱스", "normalized_name": "로봇"}],),
+            0,
+        ),
+        ("get_alias_map", ("NAVER",), {}),
+        ("get_groups", (), {}),
+        ("get_code_category_map", ("industry",), {}),
+        ("get_latest_collected_at", (), None),
+    ],
+)
+async def test_db_errors_are_logged_and_return_fallback_values(repo, method_name, args, expected):
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("DB 연결 끊김")
+
+    repo._get_write_conn = _boom
+    repo._get_read_conn = _boom
+
+    assert await getattr(repo, method_name)(*args) == expected
+    repo._logger.error.assert_called_once()

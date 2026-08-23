@@ -1,8 +1,10 @@
+import asyncio
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from interfaces.schedulable_task import TaskState
 from repositories.streaming_stock_repo import StreamingType
 from services.subscription_policy import SubscriptionPriority
 from task.background.intraday.program_capture_subscription_task import (
@@ -421,3 +423,213 @@ async def test_preferred_stock_in_rotation_batch_uses_price_only_subscription():
             SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE,
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_tick_is_noop_without_market_clock():
+    task, policy = _make_task(market_clock=None)
+
+    await task._tick()
+
+    policy.sync_subscriptions.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "code, expected",
+    [
+        ("005935", True),
+        ("005930", False),
+        ("00593", False),
+        ("00593A", False),
+        ("", False),
+    ],
+)
+def test_preferred_stock_code_detection(code, expected):
+    assert ProgramCaptureSubscriptionTask._is_preferred_stock_code(code) is expected
+
+
+@pytest.mark.asyncio
+async def test_market_open_check_returns_false_when_calendar_raises():
+    task, _ = _make_task(market_calendar_service=MagicMock())
+    task._mcs.is_business_day = AsyncMock(side_effect=RuntimeError("calendar down"))
+
+    assert await task._is_market_open_now() is False
+
+
+@pytest.mark.asyncio
+async def test_market_open_check_passes_without_calendar_service():
+    task, _ = _make_task(market_calendar_service=None)
+
+    assert await task._is_market_open_now() is True
+
+
+def test_stored_codes_return_empty_without_scheduler_store():
+    task, _ = _make_task(scheduler_store=None)
+
+    assert task._load_stored_codes() == []
+    task._save_codes(["005930"])  # 스토어가 없어도 예외 없이 무시한다
+
+
+def test_stored_codes_survive_store_failures():
+    store = MagicMock()
+    store.load_keyed = MagicMock(side_effect=RuntimeError("load 실패"))
+    store.save_keyed = MagicMock(side_effect=RuntimeError("save 실패"))
+    task, _ = _make_task(scheduler_store=store)
+
+    assert task._load_stored_codes() == []
+    task._save_codes(["005930"])
+
+    assert task._logger.warning.call_count == 2
+
+
+def test_stored_codes_are_empty_for_blank_payload():
+    store = _FakeStore()
+    store.save_keyed(ProgramCaptureSubscriptionTask.CATEGORY_KEY, "")
+    task, _ = _make_task(scheduler_store=store)
+
+    assert task._load_stored_codes(ProgramCaptureSubscriptionTask.CATEGORY_KEY) == []
+
+
+@pytest.mark.asyncio
+async def test_prune_orphan_pt_desired_is_skipped_without_repository():
+    task, _ = _make_task(streaming_stock_repo=None)
+
+    await task._prune_orphan_pt_desired(["005930"])
+
+
+@pytest.mark.asyncio
+async def test_prune_orphan_pt_desired_logs_pruned_codes():
+    repo = MagicMock()
+    repo.prune_orphan_pt_desired = AsyncMock(return_value=["000660"])
+    task, _ = _make_task(streaming_stock_repo=repo)
+
+    await task._prune_orphan_pt_desired(["005930"])
+
+    task._logger.info.assert_called()
+    assert "000660" in str(task._logger.info.call_args)
+
+
+def test_price_observation_is_skipped_without_candidates_or_policy():
+    task, _ = _make_task()
+
+    task._observe_price_subscribed("20260703")  # 후보 없음 → no-op
+
+    task._last_candidates = ["005930"]
+    task._policy = None
+    task._observe_price_subscribed("20260703")
+
+
+def test_price_observation_survives_status_lookup_failure():
+    task, policy = _make_task()
+    task._last_candidates = ["005930"]
+    policy.get_status = MagicMock(side_effect=RuntimeError("status 실패"))
+
+    task._observe_price_subscribed("20260703")
+
+    task._logger.warning.assert_called_once()
+
+
+@pytest.mark.parametrize("status", [None, {"active_codes_price": None}, {"active_codes_price": "005930"}])
+def test_price_observation_ignores_malformed_status(status):
+    task, policy = _make_task()
+    task._last_candidates = ["005930"]
+    policy.get_status = MagicMock(return_value=status)
+
+    task._observe_price_subscribed("20260703")
+
+    assert task._observed_price_codes == set()
+
+
+def test_price_observation_skips_save_when_nothing_changed():
+    store = MagicMock()
+    store.save_keyed = MagicMock()
+    store.load_keyed = MagicMock(return_value=None)
+    task, policy = _make_task(scheduler_store=store)
+    task._last_candidates = ["005930"]
+    policy.get_status = MagicMock(return_value={"active_codes_price": ["999999"]})
+
+    task._observe_price_subscribed("20260703")
+
+    store.save_keyed.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_codes_survives_pt_desired_lookup_failure():
+    repo = MagicMock()
+    repo.get_desired = MagicMock(side_effect=RuntimeError("desired 실패"))
+    task, _ = _make_task(streaming_stock_repo=repo)
+
+    codes = await task._resolve_target_codes()
+
+    assert "005930" in codes
+    task._logger.warning.assert_called()
+
+
+def test_rotation_batch_returns_all_codes_when_under_limit():
+    task, _ = _make_task(max_codes=5)
+    now = datetime(2026, 7, 3, 10, 0)
+
+    assert task._select_rotation_batch(["A", "B"], now) == ["A", "B"]
+
+
+def test_rotation_window_key_is_clamped_before_open():
+    task, _ = _make_task()
+    before_open = datetime(2026, 7, 3, 8, 0)
+
+    assert task._rotation_window_key("20260703", before_open).endswith(":0")
+    assert task._select_rotation_batch(["A", "B", "C"], before_open)[0] == "A"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_start_stop_suspend_resume():
+    task, _ = _make_task()
+
+    await task.stop()
+    assert task.state == TaskState.STOPPED
+
+    await task.start()
+    assert task.state == TaskState.IDLE
+    await task.start()
+    assert len(task._tasks) == 1
+
+    task._state = TaskState.RUNNING
+    await task.suspend()
+    assert task.state == TaskState.SUSPENDED
+    await task.resume()
+    assert task.state == TaskState.IDLE
+    await task.resume()
+    assert task.state == TaskState.IDLE
+
+    await task.stop()
+    assert task._tasks == []
+
+
+@pytest.mark.asyncio
+async def test_loop_runs_tick_logs_error_and_exits_on_cancel():
+    task, _ = _make_task()
+    task._tick = AsyncMock(side_effect=[None, RuntimeError("boom"), asyncio.CancelledError()])
+
+    with patch(
+        "task.background.intraday.program_capture_subscription_task.asyncio.sleep",
+        new_callable=AsyncMock,
+    ):
+        await task._loop()
+
+    assert task._tick.await_count == 3
+    task._logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_loop_skips_tick_while_suspended():
+    task, _ = _make_task()
+    task._tick = AsyncMock()
+    task._state = TaskState.SUSPENDED
+
+    with patch(
+        "task.background.intraday.program_capture_subscription_task.asyncio.sleep",
+        AsyncMock(side_effect=[None, asyncio.CancelledError()]),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await task._loop()
+
+    task._tick.assert_not_awaited()
