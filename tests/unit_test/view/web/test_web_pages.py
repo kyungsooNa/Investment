@@ -10,6 +10,7 @@ PAGES = [
     ("/balance", "balance"),
     ("/order", "order"),
     ("/overseas", "overseas"),
+    ("/overseas-stock", "overseas_stock"),
     ("/overseas-favorite", "overseas_favorite"),
     ("/overseas-marketcap", "overseas_marketcap"),
     ("/overseas-ranking", "overseas_ranking"),
@@ -62,6 +63,16 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert 'id="overseas-fav-symbol"' in response.text
             assert 'id="overseas-favorite-body"' in response.text
             assert "/static/js/overseas.js" in response.text
+        elif path == "/overseas-stock":
+            assert "미국 종목 현재가 조회" in response.text
+            assert 'id="overseas-stock-symbol"' in response.text
+            assert 'id="overseas-stock-exchange"' in response.text
+            assert 'id="overseas-stock-result"' in response.text
+            assert 'id="stock-chart-card"' in response.text
+            assert "/static/js/overseas_stock.js" in response.text
+            # 한국장 전용 입력/조회 경로가 섞이면 안 된다.
+            assert 'id="stock-code-input"' not in response.text
+            assert "/static/js/stock.js" not in response.text
         elif path == "/overseas-favorite":
             assert "미국장 즐겨찾기" in response.text
             assert 'id="overseas-panel-favorite"' in response.text
@@ -156,6 +167,17 @@ def test_overseas_static_js_exposes_manual_workflow():
     assert "/api/overseas/order" in script
     assert "loadOverseasQuote" in script
     assert "placeOverseasOrder" in script
+
+def test_overseas_stock_static_js_exposes_quote_workflow():
+    """overseas_stock.js가 미국장 현재가 조회와 일봉 차트를 담당해야 한다."""
+    script = Path("view/web/static/js/overseas_stock.js").read_text(encoding="utf-8")
+
+    assert "/api/overseas/stock/" in script
+    assert "searchOverseasStock" in script
+    assert "loadAndRenderOverseasStockChart" in script
+    # 국내 종목 조회 API 를 끌어다 쓰면 한국장 화면과 경로가 뒤섞인다.
+    assert "/api/stock/" not in script
+
 
 def test_pages_are_not_browser_cached(web_client, mock_web_ctx):
     """페이지 HTML 은 캐시 버스팅 수단이 없어(정적 파일만 ?v=), no-store 로 내려야 한다.

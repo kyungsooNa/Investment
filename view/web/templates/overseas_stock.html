@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block head_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial/dist/chartjs-chart-financial.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
+{% endblock %}
+
+{% block content %}
+    <div id="section-overseas-stock" class="section">
+        <div class="card">
+            <div class="page-title-row">
+                <h2>미국 종목 현재가 조회</h2>
+                <span id="overseas-stock-market-label" class="market-context-badge overseas">미국장</span>
+            </div>
+            <div id="overseas-stock-row" class="form-row" style="position: relative;">
+                <label>심볼/종목명</label>
+                <input type="text" id="overseas-stock-symbol" placeholder="예: AAPL / Apple" maxlength="12" autocomplete="off">
+                <button class="btn" onclick="searchOverseasStock()">조회</button>
+                <ul id="overseas-stock-autocomplete-list" class="autocomplete-list"></ul>
+            </div>
+            <div class="form-row">
+                <label>거래소</label>
+                <select id="overseas-stock-exchange">
+                    <option value="NASD">NASDAQ</option>
+                    <option value="NYSE">NYSE</option>
+                    <option value="AMEX">AMEX</option>
+                </select>
+            </div>
+        </div>
+        <div id="overseas-stock-result"></div>
+        <div class="card" id="stock-chart-card" style="display: none; margin-top: 16px;">
+            <div id="chart-controls-area" style="text-align: right; margin-bottom: 10px; min-height: 24px;"></div>
+            <div style="position: relative; height: 650px; width: 100%;">
+                <canvas id="stockChart"></canvas>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/candle_chart.js?v=6"></script>
+<script src="/static/js/autocomplete.js?v=2"></script>
+<script src="/static/js/overseas_autocomplete.js?v=1"></script>
+<script src="/static/js/overseas_stock.js?v=1"></script>
+{% endblock %}
