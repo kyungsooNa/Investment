@@ -146,10 +146,11 @@ class FavoriteService:
     async def get_with_details(self, market: str = MARKET_DOMESTIC) -> list:
         """관심종목 목록에 종목명·현재가·등락률을 포함하여 반환.
 
-        1단계: StockQueryService 현재가 조회 (신선 WebSocket snapshot 우선, REST fallback)
-        2단계: StockRepository 메모리 캐시 (stock_price_repository, 즉시)
-        3단계: StockRepository DB 스냅샷 (장마감 후 일봉 데이터)
-        stock_query_service 없으면 종목명만 반환 (graceful degradation).
+        조회 소스는 장 운영 여부에 따라 순서가 바뀐다.
+        장중: StockQueryService(신선 WebSocket snapshot 우선, REST fallback)
+              → 메모리 캐시 → DB 일봉 스냅샷
+        장외: DB 일봉 스냅샷(최근 거래일) → StockQueryService → 메모리 캐시
+        모든 소스가 비면 종목명만 반환 (graceful degradation).
         """
         if market == MARKET_OVERSEAS_US:
             return await self._get_overseas_details()
@@ -173,53 +174,22 @@ class FavoriteService:
 
         missing = list(codes)
 
-        # 1단계: StockQueryService 현재가 조회 (5초 timeout)
-        if missing and self.stock_query_service:
-            async def _fetch(code):
-                try:
-                    return await asyncio.wait_for(
-                        self.stock_query_service.get_current_price(
-                            code, count_stats=False, caller="FavoriteService"
-                        ),
-                        timeout=5.0,
-                    )
-                except Exception:
-                    return None
+        # 장이 닫혀 있으면 최근 거래일 일봉을 먼저 쓴다.
+        # 장 시작 전·비거래일의 현재가 API 는 전일 종가에 등락률 0.00 을 얹어 돌려주므로,
+        # 라이브 값을 그대로 쓰면 직전 세션 등락률이 뜨는 종목과 한 표에 섞인다.
+        if await self._is_market_open():
+            stages = (self._fill_from_query_service,
+                      self._fill_from_memory_cache,
+                      self._fill_from_daily_snapshot)
+        else:
+            stages = (self._fill_from_daily_snapshot,
+                      self._fill_from_query_service,
+                      self._fill_from_memory_cache)
 
-            still_missing = []
-            responses = await asyncio.gather(*[_fetch(c) for c in missing])
-            for code, resp in zip(missing, responses):
-                if not (resp and resp.rt_cd == "0" and resp.data
-                        and _apply_price_rate(result[code], resp.data)):
-                    still_missing.append(code)
-            missing = still_missing
-
-        # 2단계: 메모리 캐시 (서비스 미주입/조회 실패 시 graceful fallback)
-        if missing and self.stock_repository:
-            still_missing = []
-            for code in missing:
-                cached = self.stock_repository.get_current_price(code, max_age_sec=3.0, count_stats=False)
-                if not (cached and _apply_price_rate(result[code], cached)):
-                    still_missing.append(code)
-            missing = still_missing
-
-        # 3단계: DB 스냅샷 (장마감 후 일봉)
-        # 최근 거래일보다 오래된 스냅샷은 현재가/등락률로 쓰지 않는다 (MarketDataService와 동일 기준).
-        if missing and self.stock_repository:
-            latest_trading_date = await self._get_latest_trading_date()
-            still_missing = []
-            snapshot_tasks = [self.stock_repository.get_latest_daily_snapshot(code) for code in missing]
-            snapshots = await asyncio.gather(*snapshot_tasks, return_exceptions=True)
-            for code, snap in zip(missing, snapshots):
-                if isinstance(snap, Exception) or not snap:
-                    still_missing.append(code)
-                    continue
-                if latest_trading_date and _snapshot_trade_date(snap) != latest_trading_date:
-                    still_missing.append(code)
-                    continue
-                if not _apply_price_rate(result[code], snap):
-                    still_missing.append(code)
-            missing = still_missing
+        for stage in stages:
+            if not missing:
+                break
+            missing = await stage(result, missing)
 
         # 4단계: RS Rating 점수 조회 및 병합
         if self.rs_rating_service:
@@ -252,6 +222,75 @@ class FavoriteService:
                     result[code]["minervini_stage"] = stage
 
         return list(result.values())
+
+    async def _fill_from_query_service(self, result: dict, missing: list) -> list:
+        """StockQueryService 현재가 조회 (종목당 5초 timeout)."""
+        if not self.stock_query_service:
+            return missing
+
+        async def _fetch(code):
+            try:
+                return await asyncio.wait_for(
+                    self.stock_query_service.get_current_price(
+                        code, count_stats=False, caller="FavoriteService"
+                    ),
+                    timeout=5.0,
+                )
+            except Exception:
+                return None
+
+        still_missing = []
+        responses = await asyncio.gather(*[_fetch(c) for c in missing])
+        for code, resp in zip(missing, responses):
+            if not (resp and resp.rt_cd == "0" and resp.data
+                    and _apply_price_rate(result[code], resp.data)):
+                still_missing.append(code)
+        return still_missing
+
+    async def _fill_from_memory_cache(self, result: dict, missing: list) -> list:
+        """StockRepository 메모리 캐시 (서비스 미주입/조회 실패 시 graceful fallback)."""
+        if not self.stock_repository:
+            return missing
+
+        still_missing = []
+        for code in missing:
+            cached = self.stock_repository.get_current_price(code, max_age_sec=3.0, count_stats=False)
+            if not (cached and _apply_price_rate(result[code], cached)):
+                still_missing.append(code)
+        return still_missing
+
+    async def _fill_from_daily_snapshot(self, result: dict, missing: list) -> list:
+        """DB 일봉 스냅샷.
+
+        최근 거래일보다 오래된 스냅샷은 현재가/등락률로 쓰지 않는다
+        (MarketDataService.get_current_price 와 동일 기준).
+        """
+        if not self.stock_repository:
+            return missing
+
+        latest_trading_date = await self._get_latest_trading_date()
+        still_missing = []
+        snapshot_tasks = [self.stock_repository.get_latest_daily_snapshot(code) for code in missing]
+        snapshots = await asyncio.gather(*snapshot_tasks, return_exceptions=True)
+        for code, snap in zip(missing, snapshots):
+            if isinstance(snap, Exception) or not snap:
+                still_missing.append(code)
+                continue
+            if latest_trading_date and _snapshot_trade_date(snap) != latest_trading_date:
+                still_missing.append(code)
+                continue
+            if not _apply_price_rate(result[code], snap):
+                still_missing.append(code)
+        return still_missing
+
+    async def _is_market_open(self) -> bool:
+        """장 운영 중 여부. 캘린더 서비스가 없거나 실패하면 True (라이브 우선, 기존 동작)."""
+        if not self.market_calendar_service:
+            return True
+        try:
+            return bool(await self.market_calendar_service.is_market_open_now())
+        except Exception:
+            return True
 
     async def _get_latest_trading_date(self):
         """최근 거래일(YYYYMMDD). 캘린더 서비스가 없거나 실패하면 None (검증 생략)."""
