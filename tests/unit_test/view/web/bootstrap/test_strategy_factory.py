@@ -67,9 +67,11 @@ def test_strategy_factory_creates_scheduler(patched_factory_deps):
     from view.web.bootstrap.strategy_factory import StrategyFactory
 
     ctx = _make_fake_context()
+    ctx.strategy_schedulers = {}
     StrategyFactory(ctx).build()
 
     assert ctx.scheduler is patched_factory_deps["StrategyScheduler"].return_value
+    assert ctx.strategy_schedulers["domestic"] is ctx.scheduler
 
 
 def test_strategy_factory_wires_live_expansion_gate_with_journal_provider(patched_factory_deps):
@@ -148,10 +150,11 @@ def test_strategy_factory_registers_adapter_to_background_scheduler(patched_fact
     from view.web.bootstrap.strategy_factory import StrategyFactory
 
     ctx = _make_fake_context()
+    ctx.strategy_schedulers = {}
     StrategyFactory(ctx).build()
 
     patched_factory_deps["StrategySchedulerTaskAdapter"].assert_called_once_with(
-        ctx.scheduler, market_clock=ctx.market_clock
+        ctx.scheduler, market_clock=ctx.market_clock, market="domestic"
     )
     ctx.background_scheduler.register.assert_called_once_with(
         patched_factory_deps["StrategySchedulerTaskAdapter"].return_value

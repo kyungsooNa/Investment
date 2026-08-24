@@ -146,6 +146,10 @@ class WebAppContext:
         self.order_policy_service: OrderPolicyService = None
         self.execution_flow_service: ExecutionFlowService = None
         self.position_sizing_service: PositionSizingService = None
+        self.strategy_schedulers: dict[str, StrategyScheduler | None] = {
+            "domestic": None,
+            "overseas_us": None,
+        }
         self.scheduler: StrategyScheduler = None
         self.oneil_universe_service: OneilUniverseService = None
         self.ranking_task: RankingTask = None
@@ -415,6 +419,36 @@ class WebAppContext:
         from view.web.bootstrap.strategy_factory import StrategyFactory
         StrategyFactory(self).build()
 
+    def set_strategy_scheduler(self, market: str, scheduler: StrategyScheduler | None) -> None:
+        """시장별 StrategyScheduler 슬롯을 갱신한다."""
+        market_key = str(market or "domestic")
+        self.strategy_schedulers[market_key] = scheduler
+        if market_key == "domestic":
+            self.scheduler = scheduler
+
+    def get_strategy_scheduler(self, market: str = "domestic") -> StrategyScheduler | None:
+        """시장별 StrategyScheduler를 반환한다. 기존 ctx.scheduler는 국내장 alias로 유지한다."""
+        market_key = str(market or "domestic")
+        scheduler = self.strategy_schedulers.get(market_key)
+        if scheduler is None and market_key == "domestic":
+            return self.scheduler
+        return scheduler
+
+    def iter_strategy_schedulers(self):
+        """등록된 시장별 StrategyScheduler를 (market, scheduler) 순서쌍으로 반환한다."""
+        seen: set[int] = set()
+        for market, scheduler in self.strategy_schedulers.items():
+            if scheduler is None:
+                continue
+            ident = id(scheduler)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            yield market, scheduler
+        scheduler = self.scheduler
+        if scheduler is not None and id(scheduler) not in seen:
+            yield "domestic", scheduler
+
     async def ensure_strategy_states_loaded(self):
         """등록된 전략 중 `load_state()` 를 가진 전략의 state 를 명시적으로 await 로드한다.
 
@@ -428,26 +462,28 @@ class WebAppContext:
           실전에서는 stale/유실 state 로 신규 주문이 나가는 위험이 더 크다.
         - env 미설정: 보수적으로 fail-OPEN 동작.
         """
-        if self.scheduler is None:
+        schedulers = list(self.iter_strategy_schedulers())
+        if not schedulers:
             return
         is_paper = True
         if self.env is not None:
             is_paper = bool(getattr(self.env, "is_paper_trading", True))
         failed: list[tuple[str, BaseException]] = []
-        for cfg in getattr(self.scheduler, "_strategies", []):
-            strategy = getattr(cfg, "strategy", None)
-            load_fn = getattr(strategy, "load_state", None)
-            if load_fn is None:
-                continue
-            try:
-                await load_fn()
-            except Exception as exc:
-                name = getattr(strategy, "name", "?")
-                if self.logger:
-                    self.logger.error(
-                        f"[WebAppContext] strategy.load_state() 실패 ({name}): {exc}"
-                    )
-                failed.append((name, exc))
+        for market, scheduler in schedulers:
+            for cfg in getattr(scheduler, "_strategies", []):
+                strategy = getattr(cfg, "strategy", None)
+                load_fn = getattr(strategy, "load_state", None)
+                if load_fn is None:
+                    continue
+                try:
+                    await load_fn()
+                except Exception as exc:
+                    name = getattr(strategy, "name", "?")
+                    if self.logger:
+                        self.logger.error(
+                            f"[WebAppContext] strategy.load_state() 실패 ({market}:{name}): {exc}"
+                        )
+                    failed.append((f"{market}:{name}", exc))
         if failed and not is_paper:
             names = ", ".join(name for name, _ in failed)
             raise RuntimeError(

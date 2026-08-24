@@ -25,6 +25,7 @@ async def test_scheduler_status_includes_overseas_market_task_without_domestic_s
     )
     ctx = SimpleNamespace(
         scheduler=None,
+        strategy_schedulers={"domestic": None, "overseas_us": None},
         background_scheduler=background_scheduler,
         enabled_market_modes=["domestic", "overseas_us"],
     )
@@ -36,6 +37,7 @@ async def test_scheduler_status_includes_overseas_market_task_without_domestic_s
 
     assert status["running"] is False
     assert status["strategies"] == []
+    assert [item["market"] for item in status["schedulers"]] == ["domestic", "overseas_us"]
     assert status["market_tasks"] == [
         {
             "name": "overseas_intraday_vbo",

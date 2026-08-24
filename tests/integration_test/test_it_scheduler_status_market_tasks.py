@@ -14,6 +14,7 @@ class _OverseasIntradayVBOTask:
 
 def test_it_scheduler_status_exposes_overseas_market_tasks(paper_client, mock_paper_ctx):
     mock_paper_ctx.scheduler = None
+    mock_paper_ctx.strategy_schedulers = {"domestic": None, "overseas_us": None}
     mock_paper_ctx.enabled_market_modes = ["domestic", "overseas_us"]
     mock_paper_ctx.background_scheduler = MagicMock()
     mock_paper_ctx.background_scheduler.get_task.side_effect = (
@@ -28,6 +29,7 @@ def test_it_scheduler_status_exposes_overseas_market_tasks(paper_client, mock_pa
     body = response.json()
     assert body["running"] is False
     assert body["strategies"] == []
+    assert [item["market"] for item in body["schedulers"]] == ["domestic", "overseas_us"]
     assert body["market_tasks"][0]["name"] == "overseas_intraday_vbo"
     assert body["market_tasks"][0]["market"] == "overseas_us"
     assert body["market_tasks"][0]["running"] is True
