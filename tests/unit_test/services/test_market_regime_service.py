@@ -26,8 +26,11 @@ def _make_service(closes, *, today="20260514"):
         return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=_build_ohlcv(closes))
     )
     tm = MagicMock()
-    tm.get_current_kst_time = MagicMock(return_value=datetime.strptime(today, "%Y%m%d"))
+    tm.get_current_kst_time = MagicMock(return_value=datetime.strptime(today, "%Y%m%d").replace(hour=16))
     tm.is_market_operating_hours = MagicMock(return_value=False)
+    tm.get_market_open_time = MagicMock(
+        return_value=datetime.strptime(today, "%Y%m%d").replace(hour=9)
+    )
     cfg = MarketRegimeConfig(
         kospi_index_code="0001",
         kosdaq_index_code="1001",
@@ -85,6 +88,24 @@ async def test_classify_live_forces_fresh_closed_ohlcv():
         end_date="20260513",
     )
     assert snap.data_date == "20260108"
+
+
+@pytest.mark.asyncio
+async def test_classify_before_open_uses_previous_trading_day():
+    """개장 전 일간 마켓 타이밍은 당일 미확정 일봉 대신 직전 확정 일봉까지만 조회한다."""
+    closes = [100, 101, 102, 103, 104, 106, 108, 110]
+    svc, sqs = _make_service(closes)
+    svc._tm.get_current_kst_time.return_value = datetime(2026, 8, 24, 8, 40)
+    svc._tm.is_market_operating_hours.return_value = False
+    svc._tm.get_market_open_time.return_value = datetime(2026, 8, 24, 9, 0)
+
+    await svc.classify("KOSPI")
+
+    sqs.get_recent_daily_index_ohlcv.assert_awaited_once_with(
+        "0001",
+        limit=12,
+        end_date="20260821",
+    )
 
 
 @pytest.mark.asyncio
