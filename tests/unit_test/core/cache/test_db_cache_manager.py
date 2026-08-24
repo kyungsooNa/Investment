@@ -523,3 +523,66 @@ def test_del_closes_connection(tmp_path):
     
     mgr.__del__()
     mgr._conn.close.assert_called_once()
+
+def test_deserialize_skips_classes_that_are_neither_pydantic_nor_dataclass(tmp_path):
+    """등록 목록에 일반 클래스가 섞여 있어도 건너뛰고 원본 dict 를 돌려준다."""
+    class PlainClass:
+        pass
+
+    mgr = _mk_manager(str(tmp_path), classes=[PlainClass])
+
+    assert mgr._deserialize({"a": 1, "b": 2}) == {"a": 1, "b": 2}
+
+
+def test_deserialize_uses_model_validate_for_pydantic_res_common_response(tmp_path):
+    class ResCommonResponse(BaseModel):
+        rt_cd: str
+        data: Any = None
+
+    mgr = _mk_manager(str(tmp_path), classes=[ResCommonResponse])
+
+    result = mgr._deserialize({"rt_cd": "0", "data": {"x": 1}})
+
+    assert isinstance(result, ResCommonResponse)
+    assert result.rt_cd == "0"
+
+
+def test_deserialize_absorbs_errors_raised_while_probing_a_class(tmp_path):
+    class Exploding:
+        @classmethod
+        def __subclasshook__(cls, other):
+            raise RuntimeError("probe 실패")
+
+    mgr = _mk_manager(str(tmp_path), classes=[Exploding, DataClassDummy])
+
+    result = mgr._deserialize({"a": 1, "b": 2})
+
+    assert isinstance(result, DataClassDummy)
+
+
+def test_delete_and_clear_emit_debug_logs(tmp_path):
+    logger = MagicMock()
+    mgr = _mk_manager(str(tmp_path))
+    mgr.set_logger(logger)
+    mgr.set("k", {"v": 1}, save_to_file=True)
+
+    mgr.delete("k")
+    mgr.clear()
+
+    messages = [call.args[0] for call in logger.debug.call_args_list]
+    assert any("DB cache 삭제됨: k" in m for m in messages)
+    assert any("전체 DB cache 삭제됨" in m for m in messages)
+
+
+def test_exists_reports_presence_and_absorbs_errors(tmp_path):
+    logger = MagicMock()
+    mgr = _mk_manager(str(tmp_path))
+    mgr.set_logger(logger)
+    mgr.set("k", {"v": 1}, save_to_file=True)
+
+    assert mgr.exists("k") is True
+    assert mgr.exists("없는키") is False
+
+    with patch.object(mgr, "_get_connection", side_effect=RuntimeError("DB 잠김")):
+        assert mgr.exists("k") is False
+    logger.debug.assert_called()

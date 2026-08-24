@@ -165,3 +165,51 @@ async def test_sold_lots_are_not_reconciled(repo):
 
     assert resp.data["checked"] == 0
     assert repo.get_all_trades()[0]["status"] == "SOLD"
+
+
+def test_filled_qty_by_order_sums_rows_and_skips_unusable_ones():
+    from services.overseas_fill_reconcile_service import OverseasFillReconcileService as Svc
+
+    totals = Svc._filled_qty_by_order({
+        "output": [
+            {"odno": "0001", "ft_ccld_qty": "3"},
+            {"odno": "0001", "ft_ccld_qty": "2"},
+            {"odno": "", "ft_ccld_qty": "9"},
+            "행 아님",
+            {"odno": "0002", "ft_ccld_qty": "수량아님"},
+        ]
+    })
+
+    assert totals["0001"] == 5
+    assert totals["0002"] == 0
+    assert "" not in totals
+
+
+def test_filled_qty_by_order_accepts_a_bare_row_list():
+    from services.overseas_fill_reconcile_service import OverseasFillReconcileService as Svc
+
+    assert Svc._filled_qty_by_order([{"odno": "0001", "ft_ccld_qty": "4"}]) == {"0001": 4}
+
+
+@pytest.mark.parametrize("payload", [None, "문자열", 7, {"output": "리스트 아님"}])
+def test_filled_qty_by_order_returns_empty_for_unusable_payloads(payload):
+    from services.overseas_fill_reconcile_service import OverseasFillReconcileService as Svc
+
+    assert Svc._filled_qty_by_order(payload) == {}
+
+
+def test_first_key_returns_the_first_non_blank_value():
+    from services.overseas_fill_reconcile_service import _first_key
+
+    assert _first_key({"a": "", "b": "  ", "c": "값"}, ("a", "b", "c")) == "값"
+    assert _first_key({"a": ""}, ("a", "missing")) == ""
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [("1,050", 1050), ("3.9", 3), (None, 0), ("", 0), ("수량아님", 0), (object(), 0)],
+)
+def test_to_int_coercion(raw, expected):
+    from services.overseas_fill_reconcile_service import _to_int
+
+    assert _to_int(raw) == expected

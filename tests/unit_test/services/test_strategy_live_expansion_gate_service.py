@@ -232,3 +232,104 @@ def test_live_expansion_gate_real_overrides_tighten_min_trades():
     assert decision.allowed is False
     assert decision.reason == "profitability_gate_insufficient_sample"
     assert "insufficient_trades" in decision.details["blocking_reasons"]
+
+
+def test_disabled_gate_allows_everything_without_touching_the_journal():
+    calls = []
+
+    def _provider():
+        calls.append(1)
+        return []
+
+    service = StrategyLiveExpansionGateService(
+        journal_records_provider=_provider,
+        is_paper_trading_fn=lambda: False,
+        enabled=False,
+    )
+
+    decision = service.check_strategy("S1")
+
+    assert decision.allowed is True
+    assert decision.reason == "gate_disabled"
+    assert calls == []
+
+
+def test_gate_blocks_when_the_journal_provider_is_not_wired():
+    service = StrategyLiveExpansionGateService(
+        journal_records_provider=None,
+        is_paper_trading_fn=lambda: False,
+    )
+
+    decision = service.check_strategy("S1")
+
+    assert decision.allowed is False
+    assert decision.reason == "profitability_gate_unavailable"
+
+
+def test_journal_evaluation_error_blocks_and_is_logged():
+    from unittest.mock import MagicMock
+
+    logger = MagicMock()
+
+    def _boom():
+        raise RuntimeError("저널 손상")
+
+    service = StrategyLiveExpansionGateService(
+        journal_records_provider=_boom,
+        is_paper_trading_fn=lambda: False,
+        logger=logger,
+    )
+
+    decision = service.check_strategy("S1")
+
+    assert decision.allowed is False
+    assert decision.reason == "profitability_gate_error"
+    assert decision.details["error"] == "저널 손상"
+    logger.warning.assert_called_once()
+
+
+def test_journal_evaluation_error_without_logger_still_blocks():
+    def _boom():
+        raise RuntimeError("저널 손상")
+
+    service = StrategyLiveExpansionGateService(
+        journal_records_provider=_boom,
+        is_paper_trading_fn=lambda: False,
+    )
+
+    assert service.check_strategy("S1").reason == "profitability_gate_error"
+
+
+def test_paper_mode_probe_failure_is_treated_as_real_mode():
+    """모드 판정이 실패하면 보수적으로 real 로 간주해 게이트를 건다."""
+    def _boom():
+        raise RuntimeError("env 미초기화")
+
+    service = StrategyLiveExpansionGateService(
+        journal_records_provider=None,
+        is_paper_trading_fn=_boom,
+    )
+
+    assert service.check_strategy("S1").reason == "profitability_gate_unavailable"
+
+
+def test_coerce_config_accepts_none_dataclass_and_duck_typed_objects():
+    from types import SimpleNamespace
+
+    from services.strategy_live_expansion_gate_service import _coerce_config
+
+    assert isinstance(_coerce_config(None), StrategyProfitabilityGateConfig)
+
+    existing = StrategyProfitabilityGateConfig()
+    assert _coerce_config(existing) is existing
+
+    coerced = _coerce_config(SimpleNamespace(min_trades=42))
+    assert coerced.min_trades == 42
+
+
+def test_apply_real_overrides_ignores_objects_without_matching_fields():
+    from types import SimpleNamespace
+
+    base = StrategyProfitabilityGateConfig()
+
+    assert _apply_real_overrides(base, SimpleNamespace(무관한필드=1)) is base

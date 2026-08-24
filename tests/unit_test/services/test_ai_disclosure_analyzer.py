@@ -1,5 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from services.ai_client import AiClientError
 from services.ai_disclosure_analyzer import AiDisclosureAnalyzer
 from services.dart_disclosure_client import DartDisclosure
@@ -116,3 +118,50 @@ async def test_analyze_returns_none_when_ai_returns_invalid_json():
     result = await analyzer.analyze(_disclosure(), _importance(), "공시 본문")
 
     assert result is None
+
+
+def test_parse_analysis_strips_a_json_code_fence():
+    analysis = AiDisclosureAnalyzer._parse_analysis(
+        '```json\n{"summary": "요약", "score": 80, "reasons": ["근거"], "event_key": "k"}\n```'
+    )
+
+    assert analysis.summary == "요약"
+    assert analysis.importance.score == 80
+    assert analysis.event_key == "k"
+
+
+def test_parse_analysis_rejects_blank_summary():
+    with pytest.raises(ValueError, match="summary가 비어"):
+        AiDisclosureAnalyzer._parse_analysis('{"summary": "   ", "score": 50, "reasons": []}')
+
+
+def test_parse_analysis_rejects_non_list_reasons():
+    with pytest.raises(ValueError, match="reasons가 배열이 아닙니다"):
+        AiDisclosureAnalyzer._parse_analysis(
+            '{"summary": "요약", "score": 50, "reasons": "근거 문자열"}'
+        )
+
+
+def test_parse_analysis_fills_a_default_reason_when_all_entries_are_blank():
+    analysis = AiDisclosureAnalyzer._parse_analysis(
+        '{"summary": "요약", "score": 50, "reasons": ["", "  "]}'
+    )
+
+    assert analysis.importance.reasons == ["공시 본문 기반 AI 판정"]
+
+
+def test_parse_analysis_clamps_score_into_range():
+    high = AiDisclosureAnalyzer._parse_analysis('{"summary": "s", "score": 400, "reasons": ["r"]}')
+    low = AiDisclosureAnalyzer._parse_analysis('{"summary": "s", "score": -10, "reasons": ["r"]}')
+
+    assert high.importance.score == 100
+    assert low.importance.score == 0
+
+
+@pytest.mark.parametrize(
+    "score, level",
+    [(100, "CRITICAL"), (90, "CRITICAL"), (89, "HIGH"), (70, "HIGH"),
+     (69, "MEDIUM"), (50, "MEDIUM"), (49, "NORMAL"), (30, "NORMAL"), (29, "LOW"), (0, "LOW")],
+)
+def test_level_thresholds(score, level):
+    assert AiDisclosureAnalyzer._level(score) == level

@@ -108,3 +108,37 @@ async def test_industry_failure_does_not_lose_the_theme_result():
     assert task.get_progress()["record_count"] == 12
     assert task.get_progress()["industry_record_count"] == 0
     assert "업종" in str(task.get_progress()["last_error"]) or task.get_progress()["last_error"]
+
+
+@pytest.mark.asyncio
+async def test_theme_collect_failure_is_recorded_as_error_status():
+    collector = MagicMock()
+    collector.collect_naver_themes = AsyncMock(side_effect=RuntimeError("네이버 차단"))
+    repo = MagicMock()
+    repo.get_latest_collected_at = AsyncMock(return_value=None)
+    task = _make_task(collector, repo)
+
+    await task._collect()
+
+    progress = task.get_progress()
+    assert progress["status"] == "error"
+    assert progress["last_error"] == "네이버 차단"
+    assert progress["running"] is False
+    task._logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_unparsable_last_collected_at_is_treated_as_stale():
+    collector = MagicMock()
+    repo = MagicMock()
+    repo.get_latest_collected_at = AsyncMock(return_value="언젠가")
+    task = _make_task(collector, repo)
+
+    assert await task._is_fresh() is False
+
+
+def test_scheduler_label_is_stable():
+    task = _make_task(MagicMock(), MagicMock())
+
+    assert task.task_name == "theme_classification"
+    assert task._scheduler_label == "ThemeClassificationTask"

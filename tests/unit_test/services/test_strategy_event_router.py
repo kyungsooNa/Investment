@@ -524,3 +524,67 @@ async def test_continuous_crossing_ticks_evaluated_but_signal_publish_debounced(
     # t=100.00 (init publish) + t=100.60 (gap 0.60 >= debounce 0.5 → 재발행)
     assert len(published) == 2
     assert sink.publish.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_unknown_code_is_a_no_op():
+    router = StrategyEventRouter(market_clock=_market_clock())
+
+    router.unsubscribe("999999", "VBO")
+
+    assert router.subscribers_for("999999") == []
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_keeps_the_other_strategies_on_the_same_code():
+    router = StrategyEventRouter(market_clock=_market_clock())
+    router.subscribe("005930", strategy_name="VBO", evaluator=AsyncMock())
+    router.subscribe("005930", strategy_name="OSB", evaluator=AsyncMock())
+
+    router.unsubscribe("005930", "VBO")
+
+    assert router.subscribers_for("005930") == ["OSB"]
+
+
+@pytest.mark.asyncio
+async def test_on_price_tick_without_a_code_returns_empty():
+    router = StrategyEventRouter(market_clock=_market_clock())
+
+    assert await router.on_price_tick("", {"price": "10000"}) == []
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_error_blocks_dispatch_conservatively():
+    ks = MagicMock()
+    ks.check_strategies_allowed = AsyncMock(side_effect=RuntimeError("게이트 오류"))
+    logger = MagicMock()
+    router = StrategyEventRouter(market_clock=_market_clock(), kill_switch_service=ks, logger=logger)
+    evaluator = AsyncMock(return_value=_signal("005930", "VBO"))
+    router.subscribe("005930", strategy_name="VBO", evaluator=evaluator)
+
+    assert await router.on_price_tick("005930", {"price": "10000"}) == []
+    evaluator.assert_not_awaited()
+    logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_may_return_a_bare_boolean():
+    ks = MagicMock()
+    ks.check_strategies_allowed = AsyncMock(return_value=True)
+    router = StrategyEventRouter(market_clock=_market_clock(), kill_switch_service=ks)
+    router.subscribe("005930", strategy_name="VBO",
+                     evaluator=AsyncMock(return_value=_signal("005930", "VBO")))
+
+    assert len(await router.on_price_tick("005930", {"price": "10000"})) == 1
+
+
+@pytest.mark.asyncio
+async def test_market_clock_without_any_open_check_blocks_dispatch():
+    mc = MagicMock(spec=[])
+    logger = MagicMock()
+    router = StrategyEventRouter(market_clock=mc, logger=logger)
+    router.subscribe("005930", strategy_name="VBO",
+                     evaluator=AsyncMock(return_value=_signal("005930", "VBO")))
+
+    assert await router.on_price_tick("005930", {"price": "10000"}) == []
+    logger.warning.assert_called_once()

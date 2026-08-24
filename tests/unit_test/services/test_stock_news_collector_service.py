@@ -5,6 +5,8 @@
 """
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from services.stock_news_collector_service import StockNewsCollectorService
 
 
@@ -239,3 +241,81 @@ async def test_collect_respects_page_cap():
 
     assert fetch.await_count == 5
     assert len(rows) == 10
+
+
+async def test_collect_logs_when_the_page_parses_to_no_articles():
+    logger = MagicMock()
+    service = StockNewsCollectorService(logger=logger)
+    with patch.object(
+        StockNewsCollectorService, "_fetch_html", new=AsyncMock(return_value="<html></html>")
+    ):
+        rows = await service.collect("005930")
+
+    assert rows == []
+    logger.info.assert_called_once()
+    assert logger.info.call_args.args[0]["event"] == "stock_news_empty"
+
+
+def test_parse_returns_empty_when_soup_construction_fails():
+    with patch(
+        "services.stock_news_collector_service.BeautifulSoup",
+        side_effect=RuntimeError("parser 없음"),
+    ):
+        assert StockNewsCollectorService._parse_news_list("<table></table>") == []
+
+
+async def test_fetch_html_decodes_euc_kr_body():
+    service = StockNewsCollectorService()
+
+    class _Response:
+        status = 200
+
+        async def text(self, encoding=None, errors=None):
+            assert encoding == "euc-kr"
+            return "본문"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _Session:
+        def get(self, *args, **kwargs):
+            return _Response()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    with patch("services.stock_news_collector_service.aiohttp.ClientSession", _Session):
+        assert await service._fetch_html("https://example", {}) == "본문"
+
+
+async def test_fetch_html_raises_on_non_200_status():
+    service = StockNewsCollectorService()
+
+    class _Response:
+        status = 503
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _Session:
+        def get(self, *args, **kwargs):
+            return _Response()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    with patch("services.stock_news_collector_service.aiohttp.ClientSession", _Session):
+        with pytest.raises(RuntimeError, match="HTTP 503"):
+            await service._fetch_html("https://example", {})

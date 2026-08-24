@@ -108,3 +108,59 @@ def test_summary_aggregates():
     assert s["wins"] == 0
     assert s["win_rate"] == 0.0
     assert "avg_net_return_pct" in s and "total_net_return_pct" in s
+
+
+def test_trailing_stop_exits_after_the_peak_pulls_back():
+    eng = MultiDayDailyBreakoutBacktest(
+        breakout_lookback=5, stop_loss_pct=-20.0, trailing_stop_pct=8.0, time_stop_days=None
+    )
+    bars = _flat(5, 1000)
+    # 진입 @1010, hard stop 은 808 로 멀리 둔다.
+    bars.append(_bar("2025-01-06", 1000, 1005, 995, 1010))
+    # 고점 1100 갱신 → 트레일링 라인 1012. 이 봉의 저가는 라인 위라 아직 미청산.
+    bars.append(_bar("2025-01-07", 1020, 1100, 1050, 1090))
+    # 저가가 1012 를 관통, 시가는 라인 위 → 트레일링 가격 체결
+    bars.append(_bar("2025-01-08", 1030, 1040, 990, 1000))
+
+    res = eng.run_symbol(bars)
+
+    trade = res["trades"][0]
+    assert trade["exit_reason"] == "trailing"
+    assert trade["exit_price"] == 1012.0
+
+
+def test_trailing_stop_gap_through_fills_at_open():
+    eng = MultiDayDailyBreakoutBacktest(
+        breakout_lookback=5, stop_loss_pct=-20.0, trailing_stop_pct=8.0, time_stop_days=None
+    )
+    bars = _flat(5, 1000)
+    bars.append(_bar("2025-01-06", 1000, 1005, 995, 1010))
+    bars.append(_bar("2025-01-07", 1020, 1100, 1050, 1090))
+    # 시가가 이미 트레일링 라인(1012) 아래 → 시가 체결
+    bars.append(_bar("2025-01-08", 980, 990, 950, 960))
+
+    trade = eng.run_symbol(bars)["trades"][0]
+
+    assert trade["exit_reason"] == "trailing"
+    assert trade["exit_price"] == 980
+
+
+def test_trailing_stop_is_ignored_while_it_sits_below_the_hard_stop():
+    """이익 구간에 들어가기 전에는 트레일링이 hard stop 을 앞지르지 않는다."""
+    eng = MultiDayDailyBreakoutBacktest(
+        breakout_lookback=5, stop_loss_pct=-5.0, trailing_stop_pct=20.0, time_stop_days=None
+    )
+    bars = _flat(5, 1000)
+    bars.append(_bar("2025-01-06", 1050, 1120, 1040, 1100))
+    bars.append(_bar("2025-01-07", 1080, 1085, 1000, 1010))
+
+    trade = eng.run_symbol(bars)["trades"][0]
+
+    assert trade["exit_reason"] == "stop"
+
+
+def test_float_coercion_defaults_to_zero():
+    assert MultiDayDailyBreakoutBacktest._f(None) == 0.0
+    assert MultiDayDailyBreakoutBacktest._f("1200") == 1200.0
+    assert MultiDayDailyBreakoutBacktest._f("가격") == 0.0
+    assert MultiDayDailyBreakoutBacktest._f(object()) == 0.0
