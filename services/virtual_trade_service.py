@@ -141,23 +141,37 @@ class VirtualTradeService:
         df = self._repo._read()
         total_trades = len(df)
         sold_df = df[df['status'] == 'SOLD']
-        
-        if sold_df.empty:
-            return {"total_trades": total_trades, "win_rate": 0, "avg_return": 0}
+
+        if 'reason' in sold_df.columns:
+            reason_series = sold_df['reason'].fillna('').astype(str)
+            force_closed_count = int((reason_series == _FORCE_CLOSE_REASON).sum())
+            natural_sold_df = sold_df[reason_series != _FORCE_CLOSE_REASON]
+        else:
+            force_closed_count = 0
+            natural_sold_df = sold_df
+
+        if natural_sold_df.empty:
+            return {
+                "total_trades": total_trades,
+                "win_rate": 0,
+                "avg_return": 0,
+                "force_closed_count": force_closed_count,
+            }
 
         if apply_cost:
-            returns = sold_df.apply(lambda row: self.calculate_return(row['buy_price'], row['sell_price'], row['qty'], True), axis=1)
+            returns = natural_sold_df.apply(lambda row: self.calculate_return(row['buy_price'], row['sell_price'], row['qty'], True), axis=1)
         else:
-            returns = sold_df['return_rate']
+            returns = natural_sold_df['return_rate']
 
         win_trades = len(returns[returns > 0])
-        win_rate = (win_trades / len(sold_df) * 100)
+        win_rate = (win_trades / len(natural_sold_df) * 100)
         avg_return = returns.mean()
 
         return {
             "total_trades": total_trades,
             "win_rate": round(win_rate, 1),
-            "avg_return": round(avg_return, 2)
+            "avg_return": round(avg_return, 2),
+            "force_closed_count": force_closed_count,
         }
 
     def get_daily_change(self, strategy: str, current_return: float, *, _data: dict | None = None) -> tuple[float | None, str | None]:

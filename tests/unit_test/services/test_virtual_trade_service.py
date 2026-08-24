@@ -99,6 +99,38 @@ def test_get_summary(virtual_trade_service, mock_repo):
     assert res_default == res_cost
 
 
+def test_get_summary_excludes_reconciled_force_close(virtual_trade_service, mock_repo):
+    """대사 강제종결은 웹 요약 승률/평균수익률에서 제외하고 별도 카운트한다."""
+    df = pd.DataFrame([
+        {
+            'status': 'SOLD',
+            'buy_price': 1000,
+            'sell_price': 1200,
+            'qty': 1,
+            'return_rate': 20.0,
+            'reason': '',
+        },
+        {
+            'status': 'SOLD',
+            'buy_price': 1000,
+            'sell_price': 0,
+            'qty': 1,
+            'return_rate': -100.0,
+            'reason': 'reconciled_force_close',
+        },
+    ])
+    mock_repo._read.return_value = df
+
+    res = virtual_trade_service.get_summary(apply_cost=False)
+
+    assert res == {
+        "total_trades": 2,
+        "win_rate": 100.0,
+        "avg_return": 20.0,
+        "force_closed_count": 1,
+    }
+
+
 def test_get_daily_change(virtual_trade_service, mock_repo, mock_clock):
     """get_daily_change 일일 수익률 변화 로직 테스트"""
     # 데이터 부족 시 None 반환
