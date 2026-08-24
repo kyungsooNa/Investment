@@ -308,6 +308,11 @@ class StrategyScheduler:
                 return
 
             positions = await self._get_broker_position_map_for_force_exit()
+            if positions is None:
+                self._logger.error(
+                    f"[Scheduler] 강제 청산 재시도 취소(잔고 확인 실패): code={signal.code}"
+                )
+                return
             broker_qty = positions.get(str(signal.code), 0)
             if broker_qty <= 0:
                 self._logger.warning(
@@ -1601,8 +1606,30 @@ class StrategyScheduler:
         }
 
         broker_positions = await self._get_broker_position_map_for_force_exit()
-        if not broker_positions:
+        if broker_positions is None:
             return list(merged.values())
+
+        broker_capped: Dict[str, dict] = {}
+        for code, hold in merged.items():
+            broker_qty = broker_positions.get(code, 0)
+            if broker_qty <= 0:
+                self._logger.warning(
+                    f"[Scheduler] force-exit local HOLD skipped because broker has no position: "
+                    f"strategy={strategy_name}, code={code}, local_qty={hold.get('qty')}"
+                )
+                continue
+
+            local_qty = self._parse_position_qty(hold.get("qty"))
+            sell_qty = min(local_qty, broker_qty) if local_qty > 0 else broker_qty
+            capped = dict(hold)
+            capped["qty"] = sell_qty
+            broker_capped[code] = capped
+            if local_qty != sell_qty:
+                self._logger.warning(
+                    f"[Scheduler] force-exit local HOLD qty capped by broker position: "
+                    f"strategy={strategy_name}, code={code}, local_qty={local_qty}, broker_qty={broker_qty}"
+                )
+        merged = broker_capped
 
         today_prefix = self._current_signal_date_prefix()
         candidate_codes = {
@@ -1689,20 +1716,20 @@ class StrategyScheduler:
 
         return True
 
-    async def _get_broker_position_map_for_force_exit(self) -> Dict[str, int]:
+    async def _get_broker_position_map_for_force_exit(self) -> Optional[Dict[str, int]]:
         try:
             broker = getattr(self._oes, "broker_api_wrapper", None)
             if broker is None:
-                return {}
+                return None
             resp = await broker.get_account_balance()
             if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
-                return {}
+                return None
             data = resp.data or {}
             holdings = data.get("output1") if isinstance(data, dict) else None
             return self._normalize_broker_position_map(holdings or [])
         except Exception as e:
             self._logger.warning(f"[Scheduler] force-exit broker balance lookup failed: {e}")
-            return {}
+            return None
 
     @staticmethod
     def _normalize_broker_position_map(holdings: list) -> Dict[str, int]:
