@@ -438,3 +438,103 @@ async def test_get_with_details_overseas_empty(mock_repo, mock_stock_code_repo):
         stock_code_repository=mock_stock_code_repo,
     )
     assert await svc.get_with_details(market="overseas_us") == []
+
+
+async def test_get_with_details_falls_back_when_query_service_returns_empty_price(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    """1단계 응답이 rt_cd=0이어도 현재가가 비어 있으면 다음 단계로 폴백해야 한다."""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_query = AsyncMock()
+    mock_query.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="성공", data={"output": {"stck_prpr": "", "prdy_ctrt": ""}}
+    )
+    mock_stock_repo.get_current_price.return_value = {
+        "output": {"stck_prpr": "70000", "prdy_ctrt": "2.5"}
+    }
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_query_service=mock_query,
+        stock_repository=mock_stock_repo,
+    )
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] == "70000"
+    assert result[0]["rate"] == "2.5"
+
+
+async def test_get_with_details_keeps_price_but_retries_when_rate_missing(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    """등락률이 없는 불완전 응답은 다음 단계에서 완전한 값으로 대체되어야 한다."""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_query = AsyncMock()
+    mock_query.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="성공", data={"output": {"stck_prpr": "69000"}}
+    )
+    mock_stock_repo.get_current_price.return_value = {
+        "output": {"stck_prpr": "70000", "prdy_ctrt": "2.5"}
+    }
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_query_service=mock_query,
+        stock_repository=mock_stock_repo,
+    )
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] == "70000"
+    assert result[0]["rate"] == "2.5"
+
+
+async def test_get_with_details_skips_outdated_daily_snapshot(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    """최근 거래일보다 오래된 일봉 스냅샷은 현재가/등락률로 쓰지 않는다."""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_stock_repo.get_current_price.return_value = None
+    mock_stock_repo.get_latest_daily_snapshot.return_value = {
+        "output": {"stck_prpr": "71000", "prdy_ctrt": "1.2"},
+        "_trade_date": "20260814",
+    }
+    mock_mcs = MagicMock()
+    mock_mcs.get_latest_trading_date = AsyncMock(return_value="20260821")
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_repository=mock_stock_repo,
+        market_calendar_service=mock_mcs,
+    )
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] is None
+    assert result[0]["rate"] is None
+
+
+async def test_get_with_details_uses_daily_snapshot_of_latest_trading_date(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    """최근 거래일 일봉 스냅샷은 그대로 사용한다."""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_stock_repo.get_current_price.return_value = None
+    mock_stock_repo.get_latest_daily_snapshot.return_value = {
+        "output": {"stck_prpr": "71000", "prdy_ctrt": "1.2"},
+        "_trade_date": "20260821",
+    }
+    mock_mcs = MagicMock()
+    mock_mcs.get_latest_trading_date = AsyncMock(return_value="20260821")
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_repository=mock_stock_repo,
+        market_calendar_service=mock_mcs,
+    )
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] == "71000"
+    assert result[0]["rate"] == "1.2"

@@ -33,6 +33,34 @@ def _extract_price_rate(data) -> tuple:
     return getattr(data, "stck_prpr", None), getattr(data, "prdy_ctrt", None)
 
 
+def _apply_price_rate(entry: dict, data) -> bool:
+    """추출한 (현재가, 등락률)을 entry에 반영하고 완전한 값인지 여부를 반환.
+
+    현재가가 비어 있으면 반영하지 않는다(다음 단계에서 다시 조회).
+    현재가만 있고 등락률이 없으면 값은 남기되 미완료로 보고, 이후 단계가
+    현재가·등락률을 함께 가진 소스를 찾으면 통째로 덮어쓴다.
+    """
+    price, rate = _extract_price_rate(data)
+    if price in (None, ""):
+        return False
+    entry["price"] = price
+    entry["rate"] = rate
+    return rate not in (None, "")
+
+
+def _snapshot_trade_date(snap) -> str:
+    """일봉 스냅샷의 기준 거래일(YYYYMMDD)을 반환."""
+    if not isinstance(snap, dict):
+        return ""
+    trade_date = snap.get("_trade_date")
+    if trade_date:
+        return str(trade_date)
+    output = snap.get("output")
+    if isinstance(output, dict):
+        return str(output.get("stck_bsop_date") or "")
+    return str(getattr(output, "stck_bsop_date", "") or "")
+
+
 class FavoriteService:
     def __init__(
         self,
@@ -42,6 +70,7 @@ class FavoriteService:
         stock_repository=None,
         rs_rating_service=None,
         overseas_stock_code_repository=None,
+        market_calendar_service=None,
     ):
         self.repository = repository
         self.stock_code_repository = stock_code_repository
@@ -49,6 +78,7 @@ class FavoriteService:
         self.stock_repository = stock_repository
         self.rs_rating_service = rs_rating_service
         self.overseas_stock_code_repository = overseas_stock_code_repository
+        self.market_calendar_service = market_calendar_service
 
     async def get_all(self, market: str = MARKET_DOMESTIC) -> list:
         codes = await self.repository.get_all(market=market)
@@ -159,11 +189,8 @@ class FavoriteService:
             still_missing = []
             responses = await asyncio.gather(*[_fetch(c) for c in missing])
             for code, resp in zip(missing, responses):
-                if resp and resp.rt_cd == "0" and resp.data:
-                    price, rate = _extract_price_rate(resp.data)
-                    result[code]["price"] = price
-                    result[code]["rate"] = rate
-                else:
+                if not (resp and resp.rt_cd == "0" and resp.data
+                        and _apply_price_rate(result[code], resp.data)):
                     still_missing.append(code)
             missing = still_missing
 
@@ -172,16 +199,14 @@ class FavoriteService:
             still_missing = []
             for code in missing:
                 cached = self.stock_repository.get_current_price(code, max_age_sec=3.0, count_stats=False)
-                if cached:
-                    price, rate = _extract_price_rate(cached)
-                    result[code]["price"] = price
-                    result[code]["rate"] = rate
-                else:
+                if not (cached and _apply_price_rate(result[code], cached)):
                     still_missing.append(code)
             missing = still_missing
 
         # 3단계: DB 스냅샷 (장마감 후 일봉)
+        # 최근 거래일보다 오래된 스냅샷은 현재가/등락률로 쓰지 않는다 (MarketDataService와 동일 기준).
         if missing and self.stock_repository:
+            latest_trading_date = await self._get_latest_trading_date()
             still_missing = []
             snapshot_tasks = [self.stock_repository.get_latest_daily_snapshot(code) for code in missing]
             snapshots = await asyncio.gather(*snapshot_tasks, return_exceptions=True)
@@ -189,9 +214,11 @@ class FavoriteService:
                 if isinstance(snap, Exception) or not snap:
                     still_missing.append(code)
                     continue
-                price, rate = _extract_price_rate(snap)
-                result[code]["price"] = price
-                result[code]["rate"] = rate
+                if latest_trading_date and _snapshot_trade_date(snap) != latest_trading_date:
+                    still_missing.append(code)
+                    continue
+                if not _apply_price_rate(result[code], snap):
+                    still_missing.append(code)
             missing = still_missing
 
         # 4단계: RS Rating 점수 조회 및 병합
@@ -225,6 +252,15 @@ class FavoriteService:
                     result[code]["minervini_stage"] = stage
 
         return list(result.values())
+
+    async def _get_latest_trading_date(self):
+        """최근 거래일(YYYYMMDD). 캘린더 서비스가 없거나 실패하면 None (검증 생략)."""
+        if not self.market_calendar_service:
+            return None
+        try:
+            return await self.market_calendar_service.get_latest_trading_date()
+        except Exception:
+            return None
 
     async def _get_overseas_details(self) -> list:
         """미국장 관심종목에 종목명·거래소·현재가·등락률을 붙여 반환.

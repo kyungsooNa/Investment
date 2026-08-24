@@ -57,6 +57,7 @@ def test_wiring_phase_wires_indicator_and_favorite_collaborators():
     assert ctx.favorite_service.stock_repository is ctx.stock_repository
     assert ctx.favorite_service.rs_rating_service is ctx.rs_rating_service
     assert ctx.favorite_service.minervini_stage_service is ctx.minervini_stage_service
+    assert ctx.favorite_service.market_calendar_service is ctx._mcs
 
 
 def test_wiring_phase_links_minervini_circular_pair():

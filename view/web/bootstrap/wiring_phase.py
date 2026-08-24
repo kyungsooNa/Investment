@@ -35,6 +35,7 @@ class WiringPhase:
         ctx.favorite_service.stock_query_service = ctx.stock_query_service
         ctx.favorite_service.stock_repository = ctx.stock_repository
         ctx.favorite_service.rs_rating_service = getattr(ctx, "rs_rating_service", None)
+        ctx.favorite_service.market_calendar_service = getattr(ctx, "_mcs", None)
         ctx.favorite_service.minervini_stage_service = getattr(
             ctx, "minervini_stage_service", None
         )
