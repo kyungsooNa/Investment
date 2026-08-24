@@ -46,6 +46,7 @@ class LarryWilliamsVBOConfig(BaseStrategyConfig):
     min_market_cap: int = 200_000_000_000         # 시가총액 하한 (2,000억)
     confidence_threshold: float = 120.0           # 스냅샷 체결강도 하한 (%)
     program_buy_ratio: float = 0.10               # 프로그램 순매수 / 거래대금 하한
+    max_entry_extension_pct: float = 2.0          # Target 대비 최대 추격 진입 허용폭 (%)
     stop_loss_pct: float = -3.0                   # 칼손절 기준 (%)
     allow_reentry: bool = False                   # 당일 동일 종목 재진입 금지
 
@@ -208,6 +209,9 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                     )
                     continue
 
+                if not self._passes_entry_extension_filter(current, target, log_data):
+                    continue
+
                 # 7) 스냅샷 체결강도 >= 120%
                 cgld = await self._get_execution_strength(code)
                 log_data["execution_strength"] = cgld
@@ -365,6 +369,10 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         target = open_price + rng * self._cfg.k_value
         if current < target:
             stats["reject_below_target"] += 1
+            return None
+
+        if not self._passes_entry_extension_filter(current, target, {}, emit_log=False):
+            stats["reject_entry_extension_too_high"] += 1
             return None
 
         stats["signal"] += 1
@@ -727,6 +735,33 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             self._logger.warning({"event": "program_filter_error", "code": log_data.get("code"), "error": str(e)})
             return False
 
+        return True
+
+    def _passes_entry_extension_filter(
+        self,
+        current: int,
+        target: float,
+        log_data: dict,
+        *,
+        emit_log: bool = True,
+    ) -> bool:
+        """Target 대비 과도하게 벌어진 추격 진입을 차단한다."""
+        max_pct = self._cfg.max_entry_extension_pct
+        if max_pct is None or max_pct <= 0:
+            return True
+        if target <= 0:
+            return True
+
+        extension_pct = (current - target) / target * 100.0
+        log_data["entry_extension_pct"] = round(extension_pct, 2)
+        if extension_pct > max_pct:
+            if emit_log:
+                self._log_entry_rejected(
+                    log_data,
+                    "entry_extension_too_high",
+                    f"목표가 대비 추격폭({extension_pct:.2f}%) > {max_pct:.2f}%",
+                )
+            return False
         return True
 
     def _log_entry_rejected(self, log_data: dict, reason: str, message: str) -> None:

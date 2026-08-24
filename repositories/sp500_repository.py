@@ -11,9 +11,14 @@ TABLE_NAME = "sp500"
 def _write_minimal_db(db_path: str, logger=None):
     """빈/손상된 DB 대신 최소 유효 DB를 써서 앱이 시작되도록 합니다."""
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    if os.path.exists(db_path):
+        try:
+            os.remove(db_path)
+        except Exception:
+            pass
     conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA journal_mode=WAL")
     try:
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
         conn.execute(
             f"CREATE TABLE {TABLE_NAME} (심볼 TEXT, 종목명 TEXT, 섹터 TEXT)"
@@ -95,8 +100,8 @@ class SP500Repository:
 
     def _read_df(self):
         conn = sqlite3.connect(self._db_path)
-        conn.execute("PRAGMA journal_mode=WAL")
         try:
+            conn.execute("PRAGMA journal_mode=WAL")
             return pd.read_sql(f"SELECT * FROM {TABLE_NAME}", conn, dtype={"심볼": str})
         finally:
             conn.close()

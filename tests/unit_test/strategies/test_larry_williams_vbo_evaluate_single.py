@@ -33,12 +33,14 @@ def _market_clock(hh: int, mm: int):
     return mc
 
 
-def _make_strategy(hh: int = 10, mm: int = 0) -> LarryWilliamsVBOStrategy:
+def _make_strategy(hh: int = 10, mm: int = 0, **cfg_kwargs) -> LarryWilliamsVBOStrategy:
+    cfg = {"k_value": 0.5}
+    cfg.update(cfg_kwargs)
     s = LarryWilliamsVBOStrategy(
         stock_query_service=MagicMock(),
         market_clock=_market_clock(hh, mm),
         universe_service=None,
-        config=LarryWilliamsVBOConfig(k_value=0.5),
+        config=LarryWilliamsVBOConfig(**cfg),
         logger=MagicMock(),
     )
     return s
@@ -74,6 +76,18 @@ async def test_evaluate_single_returns_none_when_below_target():
 
     sig = await s.evaluate_single("005930", snapshot)
     assert sig is None
+
+
+@pytest.mark.asyncio
+async def test_evaluate_single_returns_none_when_entry_too_far_above_target():
+    s = _make_strategy(10, 0, max_entry_extension_pct=2.0)
+    _seed(s, "005930", range_value=1000.0)
+    snapshot = {"open": 70000.0, "price": "72000"}  # target = 70500, +2.13%
+
+    sig = await s.evaluate_single("005930", snapshot)
+
+    assert sig is None
+    assert s._shadow_eval_stats["005930"]["reject_entry_extension_too_high"] == 1
 
 
 @pytest.mark.asyncio
