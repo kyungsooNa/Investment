@@ -422,3 +422,156 @@ async def test_non_numeric_codes_are_left_alone():
     })
 
     assert operator_alert.report.await_args.args[1] == "market_status:circuit_breaker:KRX:K200F"
+
+
+# --- notification_service 폴백 경로 -----------------------------------------
+
+
+def _notify_service(**kwargs):
+    notifier = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=None,
+        notification_service=notifier,
+        logger=MagicMock(),
+        **kwargs,
+    )
+    return service, notifier
+
+
+@pytest.mark.asyncio
+async def test_market_status_alerts_fall_back_to_the_notification_service():
+    service, notifier = _notify_service()
+
+    await service.on_market_status({
+        "유가증권단축종목코드": "080220",
+        "거래정지여부": "N",
+        "VI적용구분코드": "1",
+        "거래소구분코드": "KRX",
+    })
+
+    notifier.emit.assert_awaited_once()
+    assert notifier.emit.await_args.args[2] == "개별종목 VI 발동 감지"
+
+
+@pytest.mark.asyncio
+async def test_index_alerts_fall_back_to_the_notification_service():
+    service, notifier = _notify_service()
+
+    await service.on_index_change("0001", "코스피", -8.5)
+
+    notifier.emit.assert_awaited()
+    titles = [call.args[2] for call in notifier.emit.await_args_list]
+    assert any("코스피" in title for title in titles)
+
+
+@pytest.mark.asyncio
+async def test_futures_sidecar_alert_falls_back_to_the_notification_service():
+    service, notifier = _notify_service()
+
+    await service.on_futures_contract({
+        "선물단축종목코드": "101TEST", "영업시간": "121800",
+        "선물전일대비율": "5.01", "전일대비부호": "2", "선물현재가": "460.00",
+    })
+    await service.on_futures_contract({
+        "선물단축종목코드": "101TEST", "영업시간": "121900",
+        "선물전일대비율": "5.03", "전일대비부호": "2", "선물현재가": "460.25",
+    })
+
+    notifier.emit.assert_awaited_once()
+    assert "선물 매수 사이드카" in notifier.emit.await_args.args[2]
+
+
+# --- 선물 틱 경계 -----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_futures_tick_without_a_business_time_uses_the_wall_clock():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert, logger=MagicMock()
+    )
+
+    await service.on_futures_contract({
+        "선물단축종목코드": "101TEST", "영업시간": "",
+        "선물전일대비율": "5.01", "전일대비부호": "2",
+    })
+
+    # 첫 틱은 시작 시각만 기록하고 알림은 내지 않는다.
+    operator_alert.report.assert_not_awaited()
+    assert "101TEST" in service._futures_sidecar_started_sec_by_code
+
+
+@pytest.mark.asyncio
+async def test_futures_rate_below_threshold_clears_the_watch_and_resolves():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert, logger=MagicMock()
+    )
+    service._futures_sidecar_started_sec_by_code["101TEST"] = 0
+    service._active_futures_keys_by_code["101TEST"] = {"market_futures:buy_sidecar:101TEST:1"}
+
+    await service.on_futures_contract({
+        "선물단축종목코드": "101TEST", "영업시간": "121900",
+        "선물전일대비율": "0.5", "전일대비부호": "2",
+    })
+
+    assert "101TEST" not in service._futures_sidecar_started_sec_by_code
+    operator_alert.resolve.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_futures_duration_wraps_across_midnight():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert, logger=MagicMock()
+    )
+    # 시작 시각이 23:59:00, 현재 틱이 00:00:30 → 90초 경과로 계산돼야 한다.
+    service._futures_sidecar_started_sec_by_code["101TEST"] = 23 * 3600 + 59 * 60
+
+    await service.on_futures_contract({
+        "선물단축종목코드": "101TEST", "영업시간": "000030",
+        "선물전일대비율": "5.01", "전일대비부호": "2",
+    })
+
+    assert operator_alert.report.await_args.kwargs["metadata"]["duration_sec"] == 90
+
+
+@pytest.mark.asyncio
+async def test_resolvers_are_noops_without_an_operator_alert_service():
+    service, _ = _notify_service()
+
+    await service._resolve_for_code({"유가증권단축종목코드": "080220"})
+    await service._resolve_futures_alerts("101TEST")
+
+
+# --- 값 파싱 헬퍼 -----------------------------------------------------------
+
+
+def test_signed_rate_parser_handles_signs_and_unusable_values():
+    service = MarketStatusAlertService(operator_alert_service=None, logger=MagicMock())
+    parse = service._signed_rate
+
+    assert parse({"전일대비율": "1,234.5"}, rate_keys=("전일대비율",), sign_keys=("부호",)) == 1234.5
+    assert parse(
+        {"전일대비율": "3.3", "부호": "5"}, rate_keys=("전일대비율",), sign_keys=("부호",)
+    ) == -3.3
+    assert parse({"전일대비율": "숫자아님"}, rate_keys=("전일대비율",), sign_keys=()) is None
+    assert parse({}, rate_keys=("전일대비율",), sign_keys=()) is None
+
+
+def test_business_time_parser_rejects_malformed_values():
+    service = MarketStatusAlertService(operator_alert_service=None, logger=MagicMock())
+
+    assert service._hhmmss_to_seconds("121900") == 12 * 3600 + 19 * 60
+    assert service._hhmmss_to_seconds("1219") is None
+    assert service._hhmmss_to_seconds("12190X") is None
+
+
+def test_buy_sidecar_watch_history_is_reset_per_trading_date():
+    service = MarketStatusAlertService(operator_alert_service=None, logger=MagicMock())
+    service._buy_sidecar_watch_reported_keys_by_date["20260731"] = {"어제키"}
+    service._buy_sidecar_watch_reported_keys_by_date["20260801"] = {"오늘키"}
+
+    service._reset_buy_sidecar_watch_history("20260801")
+
+    assert set(service._buy_sidecar_watch_reported_keys_by_date) == {"20260801"}
