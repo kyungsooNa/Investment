@@ -330,6 +330,68 @@ async def test_handle_place_sell_order_trading_service_failure(handler, mock_bro
 
 
 @pytest.mark.asyncio
+async def test_force_exit_sell_failure_with_no_position_reconciles_strategy_hold(
+    handler,
+    mock_broker_api_wrapper,
+):
+    """강제청산 SELL이 '잔고/보유 없음'으로 거절되면 해당 전략 HOLD를 강제 대사한다."""
+    virtual_trade_service = AsyncMock()
+    handler._virtual_trade_service = virtual_trade_service
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value,
+        msg1="Business Error: 모의투자 잔고내역이 없습니다.",
+        data=None,
+    )
+
+    result = await handler.handle_place_sell_order(
+        "011200",
+        0,
+        45,
+        source="strategy_force_exit:larry_williams_vbo",
+    )
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+    virtual_trade_service.log_order_failure_async.assert_awaited_once_with(
+        "SELL",
+        "011200",
+        0,
+        45,
+        "Business Error: 모의투자 잔고내역이 없습니다.",
+    )
+    virtual_trade_service.log_sell_by_strategy_async.assert_awaited_once_with(
+        "larry_williams_vbo",
+        "011200",
+        0,
+        reason="reconciled_force_close",
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_force_exit_sell_failure_does_not_reconcile_local_hold(
+    handler,
+    mock_broker_api_wrapper,
+):
+    """일반 전략 SELL 실패는 로컬 HOLD를 자동 강제종결하지 않는다."""
+    virtual_trade_service = AsyncMock()
+    handler._virtual_trade_service = virtual_trade_service
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.API_ERROR.value,
+        msg1="거래정지",
+        data=None,
+    )
+
+    await handler.handle_place_sell_order(
+        "011200",
+        0,
+        45,
+        source="strategy:larry_williams_vbo",
+    )
+
+    virtual_trade_service.log_order_failure_async.assert_awaited_once()
+    virtual_trade_service.log_sell_by_strategy_async.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_strategy_sell_failure_does_not_emit_duplicate_system_notification(
     handler,
     mock_broker_api_wrapper,

@@ -11,6 +11,7 @@ from core.loggers.trace_context import trace_scope, get_trace_id, new_trace_id
 from core.performance_profiler import PerformanceProfiler
 from core.market_clock import MarketClock
 from repositories.streaming_stock_repo import StreamingType
+from repositories.virtual_trade_repository import _FORCE_CLOSE_REASON
 from services.notification_service import NotificationService, NotificationCategory, NotificationLevel
 from services.market_calendar_service import MarketCalendarService
 from services.price_subscription_service import SubscriptionPriority
@@ -298,6 +299,56 @@ class OrderExecutionService:
     @staticmethod
     def _is_reconcile_source(source: str) -> bool:
         return (source or "").startswith("reconcile:")
+
+    @staticmethod
+    def _is_force_exit_source(source: str) -> bool:
+        return str(source or "").startswith("strategy_force_exit:")
+
+    @staticmethod
+    def _is_no_broker_position_sell_failure(message: str) -> bool:
+        text = str(message or "")
+        return any(
+            marker in text
+            for marker in (
+                "잔고내역이 없습니다",
+                "잔고 내역이 없습니다",
+                "보유수량",
+                "보유 수량",
+                "매도가능수량",
+                "매도 가능 수량",
+                "insufficient position",
+                "no position",
+            )
+        )
+
+    async def _reconcile_force_exit_sell_failure_if_no_position(
+        self,
+        *,
+        stock_code: str,
+        source: str,
+        message: str,
+    ) -> None:
+        if (
+            not self._virtual_trade_service
+            or not self._is_force_exit_source(source)
+            or not self._is_no_broker_position_sell_failure(message)
+        ):
+            return
+
+        strategy_name, is_strategy = self._strategy_name_from_source(source)
+        if not is_strategy or not strategy_name:
+            return
+
+        self.logger.warning(
+            f"[Reconciliation] 강제청산 SELL 실패가 브로커 잔고 없음으로 확인되어 로컬 HOLD를 강제 종결: "
+            f"strategy={strategy_name}, code={stock_code}, msg={message}"
+        )
+        await self._virtual_trade_service.log_sell_by_strategy_async(
+            strategy_name,
+            stock_code,
+            0,
+            reason=_FORCE_CLOSE_REASON,
+        )
 
     async def _persist_virtual_trade_for_terminal_report(self, context, report):
         return await self._fill_reconciliation._persist_virtual_trade_for_terminal_report(context, report)
@@ -609,6 +660,11 @@ class OrderExecutionService:
                     f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
                 if self._virtual_trade_service:
                     await self._virtual_trade_service.log_order_failure_async("SELL", stock_code, price, qty, msg1)
+                    await self._reconcile_force_exit_sell_failure_if_no_position(
+                        stock_code=stock_code,
+                        source=source,
+                        message=msg1,
+                    )
                 if self._notification_service and not self._is_strategy_source(source):
                     await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "매도 주문 실패",
                                         f"{stock_code} - {msg1}",
