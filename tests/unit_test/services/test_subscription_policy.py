@@ -487,3 +487,159 @@ async def test_subscribe_order_follows_priority_not_set_iteration(policy, mock_s
 
     requested = [c.args[0] for c in mock_streaming.subscribe_unified_price.await_args_list]
     assert requested == ["999998", "999999", "000001", "000002", "000003", "000004"]
+
+
+# --- drop_unhealthy_price_subscription 경계 -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_drop_unhealthy_price_subscription_rejects_a_blank_code(policy):
+    assert await policy.drop_unhealthy_price_subscription("") is False
+
+
+@pytest.mark.asyncio
+async def test_drop_unhealthy_price_subscription_clears_desire_when_no_ref_remains(
+    policy, mock_streaming_stock_repo, mock_stock_repo, mock_streaming_logger
+):
+    """참조가 남지 않으면 desired 를 내리고, 활성 구독이 아니면 streaming 표시만 정리한다."""
+    result = await policy.drop_unhealthy_price_subscription("005930")
+
+    assert result is False
+    mock_streaming_stock_repo.unmark_desired.assert_awaited_once()
+    mock_stock_repo.unmark_streaming.assert_called_once_with("005930")
+    mock_streaming_stock_repo.mark_inactive.assert_awaited_once()
+    mock_streaming_logger.log_unsubscribe.assert_called_once()
+
+
+# --- 브로커 구독 원장 ------------------------------------------------------
+
+
+def test_broker_ledger_is_none_when_the_streaming_service_does_not_expose_one(policy):
+    policy._streaming = MagicMock(spec=[])
+
+    assert policy._get_broker_ledger() is None
+
+
+def test_broker_ledger_lookup_failure_falls_back_to_the_internal_book(policy):
+    policy._streaming.get_subscription_ledger = MagicMock(side_effect=RuntimeError("원장 오류"))
+
+    assert policy._get_broker_ledger() is None
+    policy._logger.warning.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "ledger",
+    [
+        "원장 아님",
+        {"total": "숫자아님", "price_codes": [], "program_trading_codes": []},
+        {"price_codes": [], "program_trading_codes": []},   # total 누락
+    ],
+)
+def test_malformed_broker_ledgers_are_ignored(policy, ledger):
+    policy._streaming.get_subscription_ledger = MagicMock(return_value=ledger)
+
+    assert policy._get_broker_ledger() is None
+
+
+def test_used_slots_prefer_the_broker_ledger_when_available(policy):
+    policy._active_codes_price = {"005930", "000660"}
+    policy._streaming.get_subscription_ledger = MagicMock(return_value={
+        "total": 7, "price_codes": ["005930"], "program_trading_codes": [],
+    })
+
+    assert policy._calculate_used_slots() == 7
+
+
+# --- 실시간 장중 판정 ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_realtime_open_check_falls_back_for_calendars_without_the_nxt_flag(policy):
+    calls = []
+
+    async def _is_open(**kwargs):
+        calls.append(kwargs)
+        if kwargs:
+            raise TypeError("include_nxt 미지원")
+        return True
+
+    policy._market_calendar.is_market_open_now = _is_open
+
+    assert await policy._is_realtime_market_open_now() is True
+    assert calls == [{"include_nxt": True}, {}]
+
+
+# --- 웹소켓 연결 보장 ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_websocket_connect_guard_passes_for_an_empty_code_set(policy):
+    assert await policy._ensure_websocket_connected_for_subscribe(set()) is True
+
+
+@pytest.mark.asyncio
+async def test_websocket_connect_guard_passes_outside_market_hours(policy):
+    policy._market_calendar.is_market_open_now = AsyncMock(return_value=False)
+
+    assert await policy._ensure_websocket_connected_for_subscribe({"005930"}) is True
+
+
+@pytest.mark.asyncio
+async def test_websocket_connect_guard_passes_when_no_connector_is_exposed(policy):
+    policy._streaming = MagicMock(spec=[])
+
+    assert await policy._ensure_websocket_connected_for_subscribe({"005930"}) is True
+
+
+@pytest.mark.asyncio
+async def test_websocket_connect_failure_blocks_the_subscription(
+    policy, mock_streaming_logger
+):
+    policy._streaming.connect_websocket = AsyncMock(return_value=False)
+
+    assert await policy._ensure_websocket_connected_for_subscribe({"005930"}) is False
+    mock_streaming_logger.log_subscribe_failure.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_websocket_connect_error_blocks_the_subscription(
+    policy, mock_streaming_logger
+):
+    policy._streaming.connect_websocket = AsyncMock(side_effect=RuntimeError("연결 실패"))
+
+    assert await policy._ensure_websocket_connected_for_subscribe({"005930"}) is False
+    mock_streaming_logger.log_subscribe_failure.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_drop_unhealthy_price_subscription_removes_transient_refs_and_unsubscribes(
+    policy, mock_streaming
+):
+    policy._refs["005930"] = {
+        "strategy": {"type": StreamingType.UNIFIED_PRICE, "priority": SubscriptionPriority.HIGH},
+    }
+    policy._active_codes_price = {"005930"}
+
+    result = await policy.drop_unhealthy_price_subscription("005930")
+
+    assert result is True
+    assert "005930" not in policy._refs
+    mock_streaming.unsubscribe_unified_price.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_drop_unhealthy_price_subscription_preserves_favorite_intent(
+    policy, mock_streaming_logger
+):
+    """관심종목 구독 의도는 남기고 연결만 새로 맺도록 rebalance 로 넘긴다."""
+    policy._refs["005930"] = {
+        "favorite": {"type": StreamingType.UNIFIED_PRICE, "priority": SubscriptionPriority.HIGH},
+    }
+    policy._rebalance = AsyncMock()
+
+    result = await policy.drop_unhealthy_price_subscription("005930")
+
+    assert result is False
+    assert "favorite" in policy._refs["005930"]
+    policy._rebalance.assert_awaited_once()
+    mock_streaming_logger.log_unsubscribe.assert_not_called()

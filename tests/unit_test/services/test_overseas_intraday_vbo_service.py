@@ -204,3 +204,118 @@ async def test_service_has_no_direct_broker_dependency():
     """실주문 잠금은 OverseasOrderExecutionService 가 단독으로 관장한다."""
     s = _svc()
     assert not hasattr(s.service, "_broker")
+
+
+@pytest.mark.asyncio
+async def test_prepare_session_skips_candidates_without_a_code():
+    deps = _svc(candidates=[{"name": "코드없음"}])
+
+    assert await deps.service.prepare_session("20260512") == 0
+    deps.sqs.get_recent_daily_ohlcv.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_setup_build_absorbs_an_ohlcv_lookup_error():
+    deps = _svc()
+    deps.sqs.get_recent_daily_ohlcv = AsyncMock(side_effect=RuntimeError("조회 실패"))
+
+    assert await deps.service.prepare_session("20260512") == 0
+    deps.service._logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bars",
+    [
+        None,                                                  # 실패 응답
+        [],                                                    # 빈 데이터
+        [_bar("20260512", 100, 101, 99, 100)],                 # 봉 1개
+        # 전일 range 0
+        [_bar("20260511", 100, 100, 100, 100), _bar("20260512", 100, 101, 99, 100)],
+        # 당일 시가 0
+        [_bar("20260511", 100, 110, 100, 105), _bar("20260512", 0, 101, 99, 100)],
+    ],
+)
+async def test_setup_is_skipped_for_unusable_bars(bars):
+    deps = _svc()
+    deps.sqs.get_recent_daily_ohlcv = AsyncMock(
+        return_value=_fail() if bars is None else _ok(bars)
+    )
+
+    assert await deps.service.prepare_session("20260512") == 0
+
+
+@pytest.mark.asyncio
+async def test_watch_codes_lists_the_prepared_setups():
+    deps = _svc()
+    await deps.service.prepare_session("20260512")
+
+    assert deps.service.watch_codes() == ["AAA"]
+
+
+@pytest.mark.asyncio
+async def test_non_positive_price_ticks_are_ignored():
+    deps = _svc()
+    await deps.service.prepare_session("20260512")
+
+    assert await deps.service.on_price("AAA", 0) is None
+    assert await deps.service.on_price("AAA", "가격아님") is None
+
+
+@pytest.mark.asyncio
+async def test_ticks_for_unwatched_codes_are_ignored():
+    deps = _svc()
+    await deps.service.prepare_session("20260512")
+
+    assert await deps.service.on_price("ZZZ", 200.0) is None
+
+
+@pytest.mark.asyncio
+async def test_a_held_position_ignores_ticks_above_the_stop():
+    deps = _svc()
+    await deps.service.prepare_session("20260512")
+    await deps.service.on_price("AAA", 106.0)
+
+    assert await deps.service.on_price("AAA", 105.0) is None
+
+
+@pytest.mark.asyncio
+async def test_rejected_exit_keeps_the_position(caplog):
+    deps = _svc()
+    await deps.service.prepare_session("20260512")
+    await deps.service.on_price("AAA", 106.0)
+    deps.orders.place_exit = AsyncMock(return_value=_fail())
+
+    assert await deps.service.on_price("AAA", 1.0) is None
+    assert "AAA" in deps.service.get_state()["positions"]
+
+
+@pytest.mark.asyncio
+async def test_exit_is_a_noop_for_a_code_that_is_not_held():
+    deps = _svc()
+
+    assert await deps.service._exit("AAA", 100.0, reason="stop") is None
+
+
+def test_sizing_errors_and_unparsable_quantities_block_entry():
+    sizing = MagicMock()
+    sizing.size = MagicMock(side_effect=RuntimeError("사이징 실패"))
+    deps = _svc(sizing=sizing)
+
+    assert deps.service._resolve_qty(100.0) == 0
+    deps.service._logger.warning.assert_called_once()
+
+    sizing.size = MagicMock(return_value={"qty": "수량아님"})
+    assert deps.service._resolve_qty(100.0) == 0
+
+    sizing.size = MagicMock(return_value={})
+    assert deps.service._resolve_qty(100.0) == 0
+
+
+def test_float_coercion_defaults_to_zero():
+    from services.overseas_intraday_vbo_service import OverseasIntradayVBOService as Svc
+
+    assert Svc._f(None) == 0.0
+    assert Svc._f("120") == 120.0
+    assert Svc._f("가격") == 0.0
+    assert Svc._f(object()) == 0.0

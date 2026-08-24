@@ -5,7 +5,7 @@
 - 상세 페이지 실패 시 해당 테마만 skip(부분 성공)
 """
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.theme_classification_collector_service import ThemeClassificationCollectorService
 
@@ -211,3 +211,118 @@ async def test_collect_industries_empty_list_returns_zero(repo):
 
     assert await svc.collect_naver_industries() == 0
     repo.replace_source_classifications.assert_not_called()
+
+
+def _svc(repo, **kwargs):
+    kwargs.setdefault("logger", MagicMock())
+    kwargs.setdefault("request_delay", 0)
+    return ThemeClassificationCollectorService(repo, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_request_delay_is_awaited_between_detail_pages(repo):
+    svc = _svc(repo, request_delay=0.01)
+    svc._fetch_html = AsyncMock(side_effect=[
+        _list_html([("1", "2차전지")]),
+        _detail_html([("247540", "에코프로비엠")]),
+    ])
+
+    with patch(
+        "services.theme_classification_collector_service.asyncio.sleep",
+        new_callable=AsyncMock,
+    ) as sleep_mock:
+        await svc.collect_naver_themes()
+
+    sleep_mock.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_alias_config_load_failure_is_logged_and_skipped(tmp_path, repo):
+    cfg = tmp_path / "theme_aliases.yaml"
+    cfg.write_text("aliases: [불완전한 yaml", encoding="utf-8")
+    svc = _svc(repo, alias_config_path=str(cfg))
+    svc._fetch_html = AsyncMock(side_effect=[
+        _list_html([("1", "2차전지")]),
+        _detail_html([("247540", "에코프로비엠")]),
+    ])
+
+    await svc.collect_naver_themes()
+
+    repo.upsert_aliases.assert_not_awaited()
+    svc._logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", ["aliases: 문자열\n", "리스트\n", "aliases:\n  2차전지: 리스트아님\n"])
+async def test_alias_config_with_unusable_shape_yields_no_aliases(tmp_path, repo, payload):
+    cfg = tmp_path / "theme_aliases.yaml"
+    cfg.write_text(payload, encoding="utf-8")
+    svc = _svc(repo, alias_config_path=str(cfg))
+
+    assert svc._load_alias_config() == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_html_decodes_euc_kr_and_raises_on_error_status(repo):
+    svc = _svc(repo)
+
+    class _Response:
+        def __init__(self, status):
+            self.status = status
+
+        async def text(self, encoding=None, errors=None):
+            assert encoding == "euc-kr"
+            return "본문"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _Session:
+        def __init__(self, status):
+            self._status = status
+
+        def get(self, *args, **kwargs):
+            return _Response(self._status)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    with patch(
+        "services.theme_classification_collector_service.aiohttp.ClientSession",
+        lambda *a, **k: _Session(200),
+    ):
+        assert await svc._fetch_html("https://example") == "본문"
+
+    with patch(
+        "services.theme_classification_collector_service.aiohttp.ClientSession",
+        lambda *a, **k: _Session(503),
+    ):
+        with pytest.raises(RuntimeError, match="HTTP 503"):
+            await svc._fetch_html("https://example")
+
+
+def test_theme_list_parser_ignores_anchors_without_a_group_number():
+    html = '<a href="/sise/sise_group_detail.naver?type=theme">번호없음</a>'
+
+    assert ThemeClassificationCollectorService._parse_theme_list(html) == []
+
+
+def test_theme_list_parser_ignores_anchors_without_text():
+    html = '<a href="/sise/sise_group_detail.naver?type=theme&no=1"></a>'
+
+    assert ThemeClassificationCollectorService._parse_theme_list(html) == []
+
+
+def test_theme_member_parser_ignores_anchors_without_a_code_or_text():
+    html = (
+        '<a href="/item/main.naver?code=">코드없음</a>'
+        '<a href="/item/main.naver?code=005930"></a>'
+    )
+
+    assert ThemeClassificationCollectorService._parse_theme_members(html) == []

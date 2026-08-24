@@ -179,3 +179,122 @@ async def test_fetch_disclosure_text_uses_real_viewer_section_parameters():
         "length": "6248",
         "dtd": "dart4.xsd",
     }
+
+
+async def test_fetch_disclosure_text_rejects_a_blank_receipt_no():
+    http_client = AsyncMock()
+    client = DartDisclosureClient("secret", http_client=http_client)
+
+    assert await client.fetch_disclosure_text("  ") == ""
+    http_client.get.assert_not_awaited()
+
+
+async def test_fetch_disclosure_text_falls_back_to_the_dcm_no_when_sections_are_absent():
+    """뷰어 섹션 목록을 못 찾으면 dcmNo 하나로 단일 섹션을 구성한다."""
+    http_client = AsyncMock()
+    main = _text_response('viewDoc("20260720000120", "11480001", "0", "0", "0", "HTML", "");')
+    viewer = _text_response("<html><body>본문 텍스트</body></html>")
+    http_client.get.side_effect = [main, viewer]
+    client = DartDisclosureClient("secret", http_client=http_client)
+
+    assert "본문 텍스트" in await client.fetch_disclosure_text("20260720000120")
+
+
+async def test_fetch_disclosure_text_stops_once_the_char_budget_is_reached():
+    http_client = AsyncMock()
+    main = _text_response('viewDoc("20260720000120", "11480001", "0", "0", "0", "HTML", "");')
+    viewer = _text_response("<html><body>" + ("가" * 500) + "</body></html>")
+    http_client.get.side_effect = [main, viewer, viewer]
+    client = DartDisclosureClient("secret", http_client=http_client)
+
+    text = await client.fetch_disclosure_text("20260720000120", max_chars=100)
+
+    assert len(text) <= 100
+
+
+async def test_network_errors_are_retried_once_then_reported_without_the_key():
+    import httpx
+
+    http_client = AsyncMock()
+    http_client.get.side_effect = httpx.ConnectError("연결 실패")
+    client = DartDisclosureClient("secret", http_client=http_client)
+
+    with pytest.raises(DartApiError) as excinfo:
+        await client.fetch_disclosures("20260720")
+
+    assert http_client.get.await_count == 2
+    assert "secret" not in str(excinfo.value)
+
+
+async def test_client_opens_its_own_http_session_when_none_is_injected():
+    from unittest.mock import patch
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return _response({"status": "013", "message": "no data"})
+
+    with patch("services.dart_disclosure_client.httpx.AsyncClient", _Client):
+        page = await DartDisclosureClient("secret").fetch_disclosures("20260720")
+
+    assert page.items == []
+
+
+async def test_fetch_disclosure_text_opens_its_own_http_session_when_none_is_injected():
+    from unittest.mock import patch
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return _text_response("<html>문서 생성 중</html>")
+
+    with patch("services.dart_disclosure_client.httpx.AsyncClient", _Client):
+        assert await DartDisclosureClient("secret").fetch_disclosure_text("2026072") == ""
+
+
+def test_response_decoder_falls_back_to_the_text_attribute_without_bytes():
+    response = MagicMock()
+    response.content = None
+    response.text = "본문"
+
+    assert DartDisclosureClient._decode_response_text(response) == "본문"
+
+
+def test_response_decoder_honours_a_utf8_meta_charset():
+    response = MagicMock()
+    response.content = '<meta charset="utf-8">한글 본문'.encode("utf-8")
+    response.encoding = None
+
+    assert "한글 본문" in DartDisclosureClient._decode_response_text(response)
+
+
+def test_response_decoder_normalizes_an_euc_kr_response_encoding():
+    response = MagicMock()
+    response.content = "한글 본문".encode("cp949")
+    response.encoding = "EUC-KR"
+
+    assert DartDisclosureClient._decode_response_text(response) == "한글 본문"
+
+
+def test_response_decoder_falls_back_to_cp949_when_utf8_fails():
+    response = MagicMock()
+    response.content = "한글 본문".encode("cp949")
+    response.encoding = ""
+
+    assert DartDisclosureClient._decode_response_text(response) == "한글 본문"

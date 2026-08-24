@@ -232,3 +232,119 @@ async def test_returns_empty_when_markup_no_longer_parses():
     rows = await service.get_snapshot(limit=10, market="KOSPI")
 
     assert rows == []
+
+
+async def test_unknown_market_name_fetches_nothing():
+    calls = []
+    service = _service({}, calls)
+
+    assert await service.get_snapshot(limit=10, market="NASDAQ") == []
+    assert calls == []
+
+
+async def test_rows_duplicated_across_pages_are_kept_once():
+    pages = {
+        (0, 1): _page(_row("005930", "삼성전자", "70,000", "+1.00%", "400,000")),
+        (0, 2): _page(_row("005930", "삼성전자", "70,000", "+1.00%", "400,000")),
+    }
+    service = _service(pages)
+
+    rows = await service.get_snapshot(limit=200, market="KOSPI")
+
+    assert [r["code"] for r in rows] == ["005930"]
+
+
+async def test_rows_with_unparsable_numbers_are_dropped():
+    pages = {
+        (0, 1): _page(
+            _row("005930", "삼성전자", "가격없음", "+1.00%", "400,000"),
+            _row("000660", "SK하이닉스", "200,000", "등락없음", "150,000"),
+            _row("035420", "NAVER", "180,000", "+0.50%", "시총없음"),
+            _row("005380", "현대차", "250,000", "+0.30%", "50,000"),
+        ),
+    }
+    service = _service(pages)
+
+    rows = await service.get_snapshot(limit=10, market="KOSPI")
+
+    assert [r["code"] for r in rows] == ["005380"]
+
+
+async def test_rows_without_enough_number_cells_are_dropped():
+    html = (
+        '<table class="type_2"><tr>'
+        '<td><a class="tltle" href="/item/main.naver?code=005930">삼성전자</a></td>'
+        '<td class="number">70,000</td>'
+        '</tr></table>'
+    )
+    service = _service({(0, 1): html})
+
+    assert await service.get_snapshot(limit=10, market="KOSPI") == []
+
+
+def test_number_and_rate_parsers_reject_unusable_text():
+    from services.naver_market_snapshot_service import _to_int, _to_rate
+
+    assert _to_int("70,000") == 70000
+    assert _to_int("가격없음") is None
+    assert _to_int(None) is None
+
+    assert _to_rate("+2.43%") == "2.43"
+    assert _to_rate("-1.20%") == "-1.20"
+    assert _to_rate("등락없음") is None
+
+
+def test_default_today_provider_returns_a_kst_date_string():
+    from services.naver_market_snapshot_service import NaverMarketSnapshotService
+
+    today = NaverMarketSnapshotService._today_kst()
+
+    assert len(today) == 8 and today.isdigit()
+
+
+async def test_default_page_fetcher_decodes_euc_kr_and_raises_on_error_status():
+    from unittest.mock import patch
+
+    from services.naver_market_snapshot_service import NaverMarketSnapshotService
+
+    service = NaverMarketSnapshotService()
+
+    class _Response:
+        def __init__(self, status):
+            self.status = status
+
+        async def text(self, encoding=None):
+            assert encoding == "euc-kr"
+            return "<html></html>"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _Session:
+        def __init__(self, status):
+            self._status = status
+
+        def get(self, *args, **kwargs):
+            return _Response(self._status)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    with patch(
+        "services.naver_market_snapshot_service.aiohttp.ClientSession",
+        lambda *a, **k: _Session(200),
+    ):
+        assert await service._fetch_page(0, 1) == "<html></html>"
+
+    with patch(
+        "services.naver_market_snapshot_service.aiohttp.ClientSession",
+        lambda *a, **k: _Session(503),
+    ):
+        with pytest.raises(RuntimeError, match="HTTP 503"):
+            await service._fetch_page(0, 1)
