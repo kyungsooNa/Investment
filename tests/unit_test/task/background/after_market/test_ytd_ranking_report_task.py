@@ -180,3 +180,117 @@ async def test_startup_recovery_and_close_execution_do_not_send_duplicate():
     )
 
     reporter.send_ytd_ranking_report.assert_awaited_once()
+
+
+def test_scheduler_label_and_task_name_are_stable():
+    task, _, _ = _make_task()
+
+    assert task.task_name == "ytd_ranking_report"
+    assert task._scheduler_label == "YtdRankingReportTask"
+
+
+def test_state_helpers_are_noops_without_a_scheduler_store():
+    task, _, _ = _make_task(store=None)
+
+    assert task._load_last_reported_date() is None
+    task._save_last_reported_date("20260717")
+
+
+def test_state_helpers_absorb_scheduler_store_failures():
+    store = MagicMock()
+    store.load_keyed.side_effect = RuntimeError("로드 실패")
+    store.save_keyed.side_effect = RuntimeError("저장 실패")
+    task, _, _ = _make_task(store=store)
+
+    assert task._load_last_reported_date() is None
+    task._save_last_reported_date("20260717")
+
+    assert task._logger.warning.call_count >= 2
+
+
+def test_already_reported_check_tolerates_a_corrupt_saved_date():
+    task, _, _ = _make_task()
+    task._last_reported_date = "날짜아님"
+
+    assert task._already_reported_this_week("20260717") is False
+
+
+@pytest.mark.asyncio
+async def test_without_a_calendar_service_only_friday_counts_as_week_end():
+    task, _, _ = _make_task()
+    task._mcs = None
+
+    assert await task._is_last_trading_day_of_week("20260717") is True   # 금요일
+    assert await task._is_last_trading_day_of_week("20260716") is False  # 목요일
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_open", ["", None, "20260717"])
+async def test_unresolvable_next_open_day_blocks_the_report(next_open):
+    task, _, reporter = _make_task(next_open=next_open)
+
+    await task._on_market_closed("20260717")
+
+    reporter.send_ytd_ranking_report.assert_not_awaited()
+    task._logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_missing_telegram_reporter_skips_with_a_warning():
+    task, repository, _ = _make_task()
+    task._telegram_reporter = None
+
+    await task._on_market_closed("20260717")
+
+    repository.get_ytd_return_ranking.assert_not_awaited()
+    task._logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_send_failure_is_logged_and_clears_the_running_flag():
+    task, repository, _ = _make_task()
+    repository.get_ytd_return_ranking = AsyncMock(side_effect=RuntimeError("조회 실패"))
+
+    await task._on_market_closed("20260717")
+
+    task._logger.error.assert_called_once()
+    assert task.get_progress()["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_recovery_absorbs_repository_errors():
+    task, repository, _ = _make_task()
+    repository.get_ytd_return_ranking = AsyncMock(side_effect=RuntimeError("조회 실패"))
+
+    await task._recover_missed_report()
+
+    task._logger.error.assert_called_once()
+    assert task.get_progress()["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_recovery_stops_when_there_is_no_snapshot():
+    task, repository, reporter = _make_task(rows=[])
+
+    await task._recover_missed_report()
+
+    reporter.send_ytd_ranking_report.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recovery_stops_when_the_snapshot_has_no_date():
+    task, _, reporter = _make_task(rows=[{"code": "005930", "latest_date": ""}])
+
+    await task._recover_missed_report()
+
+    reporter.send_ytd_ranking_report.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_start_hook_is_skipped_without_a_telegram_reporter():
+    task, _, _ = _make_task()
+    task._telegram_reporter = None
+
+    await task._on_start_hook()
+
+    assert task._tasks == []

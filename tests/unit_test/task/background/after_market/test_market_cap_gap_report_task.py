@@ -189,3 +189,87 @@ def test_kr_close_task_uses_korean_close_trigger(service, reporter):
     assert task._loop_timezone == "Asia/Seoul"
     assert task._loop_cron_hour == 15
     assert task._loop_cron_minute == 50
+
+
+def _task(service, reporter, **overrides):
+    kwargs = dict(
+        market_cap_gap_service=service,
+        telegram_reporter=reporter,
+        session="kr_close",
+        logger=MagicMock(),
+    )
+    kwargs.update(overrides)
+    return MarketCapGapReportTask(**kwargs)
+
+
+def test_unknown_session_is_rejected(service, reporter):
+    with pytest.raises(ValueError, match="kr_close 또는 us_close"):
+        _task(service, reporter, session="jp_close")
+
+
+def test_scheduler_label_carries_the_session(service, reporter):
+    assert _task(service, reporter)._scheduler_label == "MarketCapGapReport:kr_close"
+    assert (
+        _task(service, reporter, session="us_close")._scheduler_label
+        == "MarketCapGapReport:us_close"
+    )
+
+
+def test_state_helpers_are_noops_without_a_scheduler_store(service, reporter):
+    task = _task(service, reporter, scheduler_store=None)
+
+    assert task._load_last_reported_date() is None
+    task._save_last_reported_date("20260625")
+    assert task._claim_report_date("20260625") is True
+    task._release_report_date_claim("20260625")
+
+
+def test_state_helpers_absorb_scheduler_store_failures(service, reporter):
+    store = MagicMock()
+    store.load_keyed.side_effect = RuntimeError("로드 실패")
+    store.save_keyed.side_effect = RuntimeError("저장 실패")
+    store.claim_daily_task.side_effect = RuntimeError("claim 실패")
+    store.release_daily_task.side_effect = RuntimeError("release 실패")
+    task = _task(service, reporter, scheduler_store=store)
+
+    assert task._load_last_reported_date() is None
+    task._save_last_reported_date("20260625")
+    # claim 실패 시에는 보수적으로 진행을 허용한다(리포트 누락 방지).
+    assert task._claim_report_date("20260625") is True
+    task._release_report_date_claim("20260625")
+
+    # 생성자에서의 초기 로드 실패까지 포함해 모든 실패가 warning 으로 남는다.
+    assert task._logger.warning.call_count >= 4
+
+
+def test_claim_helpers_tolerate_stores_without_daily_task_support(service, reporter):
+    store = MagicMock(spec=["load_keyed", "save_keyed"])
+    task = _task(service, reporter, scheduler_store=store)
+
+    assert task._claim_report_date("20260625") is True
+    task._release_report_date_claim("20260625")
+
+
+@pytest.mark.asyncio
+async def test_success_emits_an_info_notification(service, reporter):
+    notifier = MagicMock()
+    notifier.emit = AsyncMock()
+    task = _task(service, reporter, notification_service=notifier)
+
+    await task._on_market_closed("20260625")
+
+    notifier.emit.assert_awaited_once()
+    assert "전송 완료" in notifier.emit.await_args.args[2]
+
+
+@pytest.mark.asyncio
+async def test_failure_emits_an_error_notification(service, reporter):
+    notifier = MagicMock()
+    notifier.emit = AsyncMock()
+    service.build_report = AsyncMock(side_effect=RuntimeError("시총 조회 실패"))
+    task = _task(service, reporter, notification_service=notifier)
+
+    await task._on_market_closed("20260625")
+
+    notifier.emit.assert_awaited_once()
+    assert task.get_progress()["last_reported_date"] != "20260625"

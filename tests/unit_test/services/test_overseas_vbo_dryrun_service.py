@@ -322,3 +322,96 @@ async def test_scan_skips_fx_when_no_sizing_service():
     await service.scan_dry_run(exchange=OverseasExchange.NASD)
 
     fx_provider.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scan_skips_candidates_without_a_code(svc):
+    svc.candidate_service.get_candidates = AsyncMock(return_value=[{"name": "코드없음"}])
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock()
+
+    assert await svc.service.scan_dry_run() == []
+    svc.sqs.get_recent_daily_ohlcv.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scan_logs_and_skips_when_the_ohlcv_lookup_raises(svc):
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(side_effect=RuntimeError("조회 실패"))
+
+    assert await svc.service.scan_dry_run() == []
+    svc.service._logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        None,
+        ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="fail", data=None),
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=[]),
+    ],
+)
+async def test_scan_skips_unusable_ohlcv_responses(svc, response):
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=response)
+
+    assert await svc.service.scan_dry_run() == []
+
+
+@pytest.mark.asyncio
+async def test_scan_skips_when_only_one_bar_is_available(svc):
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(
+        return_value=_ohlcv([_bar("20260512", 100, 120, 95, 110)])
+    )
+
+    assert await svc.service.scan_dry_run() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "prev_bar, cur_bar",
+    [
+        # 전일 range 가 0 이면 target 을 만들 수 없다.
+        (("20260511", 100, 100, 100, 100), ("20260512", 100, 130, 95, 120)),
+        # 당일 시가가 0 이면 판정하지 않는다.
+        (("20260511", 100, 120, 90, 110), ("20260512", 0, 130, 95, 120)),
+    ],
+)
+async def test_scan_skips_bars_that_cannot_form_a_target(svc, prev_bar, cur_bar):
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(
+        return_value=_ohlcv([_bar(*prev_bar), _bar(*cur_bar)])
+    )
+
+    assert await svc.service.scan_dry_run() == []
+
+
+@pytest.mark.asyncio
+async def test_fx_rate_is_none_without_sizing_or_provider(svc):
+    assert await svc.service._resolve_fx_rate() is None
+
+
+@pytest.mark.asyncio
+async def test_fx_provider_error_is_logged_and_yields_none(svc):
+    svc.service._sizing_service = MagicMock()
+    svc.service._fx_provider = AsyncMock(side_effect=RuntimeError("환율 실패"))
+
+    assert await svc.service._resolve_fx_rate() is None
+    svc.service._logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw, expected", [(1380.5, 1380.5), ("1400", 1400.0), (None, None), ("환율없음", None), (0, None)]
+)
+async def test_fx_rate_accepts_only_positive_numbers(svc, raw, expected):
+    svc.service._sizing_service = MagicMock()
+    svc.service._fx_provider = AsyncMock(return_value=raw)
+
+    assert await svc.service._resolve_fx_rate() == expected
+
+
+def test_float_coercion_defaults_to_zero():
+    from services.overseas_vbo_dryrun_service import OverseasVBODryRunService as Svc
+
+    assert Svc._f(None) == 0.0
+    assert Svc._f("120") == 120.0
+    assert Svc._f("가격") == 0.0
+    assert Svc._f(object()) == 0.0

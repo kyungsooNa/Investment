@@ -218,3 +218,90 @@ def test_register_external_handler(manager):
     manager.register_external_handler(handler)
     assert len(manager._external_handlers) == 1
     assert manager._external_handlers[0] == handler
+
+@pytest.mark.asyncio
+async def test_emit_survives_a_subscriber_queue_that_cannot_be_drained(manager):
+    """가득 찬 구독자 큐에서 drop 마저 실패해도 emit 은 다른 구독자로 계속 진행한다."""
+    broken = MagicMock()
+    broken.put_nowait = MagicMock(side_effect=asyncio.QueueFull())
+    broken.get_nowait = MagicMock(side_effect=RuntimeError("drain 실패"))
+    healthy = asyncio.Queue(maxsize=5)
+    manager._subscriber_queues.extend([broken, healthy])
+
+    event = await manager.emit(
+        NotificationCategory.SYSTEM, NotificationLevel.ERROR, "에러", "메시지"
+    )
+
+    assert json.loads(healthy.get_nowait())["id"] == event.id
+
+
+@pytest.mark.asyncio
+async def test_emit_survives_an_external_queue_that_cannot_be_drained(manager):
+    manager.register_external_handler(AsyncMock())
+    broken = MagicMock()
+    broken.put_nowait = MagicMock(side_effect=asyncio.QueueFull())
+    broken.get_nowait = MagicMock(side_effect=RuntimeError("drain 실패"))
+    manager._external_handler_queue = broken
+
+    event = await manager.emit(
+        NotificationCategory.SYSTEM, NotificationLevel.ERROR, "에러", "메시지"
+    )
+
+    assert event is not None
+
+
+@pytest.mark.asyncio
+async def test_external_dedup_passes_events_without_a_dedup_key(manager):
+    manager.register_external_handler(AsyncMock())
+
+    await manager.emit(
+        NotificationCategory.SYSTEM, NotificationLevel.ERROR, "제목", "본문",
+    )
+
+    assert manager.external_handler_queue.qsize() == 1
+
+
+@pytest.mark.asyncio
+async def test_external_dedup_blocks_a_repeat_of_the_same_key_and_severity(manager):
+    manager.register_external_handler(AsyncMock())
+    metadata = {"dedup_key": "kill_switch:global", "transition": "trip"}
+
+    await manager.emit(
+        NotificationCategory.SYSTEM, NotificationLevel.CRITICAL, "제목", "본문",
+        metadata=dict(metadata),
+    )
+    await manager.emit(
+        NotificationCategory.SYSTEM, NotificationLevel.CRITICAL, "제목", "본문",
+        metadata=dict(metadata),
+    )
+
+    assert manager.external_handler_queue.qsize() == 1
+
+
+@pytest.mark.asyncio
+async def test_external_dedup_allows_a_different_severity_for_the_same_key(manager):
+    manager.register_external_handler(AsyncMock())
+
+    await manager.emit(
+        NotificationCategory.SYSTEM, NotificationLevel.WARNING, "제목", "본문",
+        metadata={"dedup_key": "risk_gate:S1"},
+    )
+    await manager.emit(
+        NotificationCategory.SYSTEM, NotificationLevel.CRITICAL, "제목", "본문",
+        metadata={"dedup_key": "risk_gate:S1"},
+    )
+
+    assert manager.external_handler_queue.qsize() == 2
+
+
+@pytest.mark.asyncio
+async def test_external_dedup_cache_drops_entries_older_than_an_hour(manager):
+    manager.register_external_handler(AsyncMock())
+    manager._ext_dedup_seen[("오래된키", "CRITICAL")] = -10_000.0
+
+    await manager.emit(
+        NotificationCategory.SYSTEM, NotificationLevel.CRITICAL, "제목", "본문",
+        metadata={"dedup_key": "새키"},
+    )
+
+    assert ("오래된키", "CRITICAL") not in manager._ext_dedup_seen
