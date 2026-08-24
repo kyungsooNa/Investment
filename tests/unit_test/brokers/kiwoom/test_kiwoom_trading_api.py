@@ -117,6 +117,15 @@ class TestGuards:
         result = await api.place_stock_order("005930", 70000, 1, is_buy=True)
 
         assert result.rt_cd != ErrorCode.SUCCESS.value
+    async def test_non_integer_quantity_or_price_is_rejected(self):
+        api = _make_api()
+
+        result = await api.place_stock_order("005930", "가격", "수량", True)
+
+        assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+        assert "정수가 아닙니다" in result.msg1
+        api.call_api.assert_not_awaited()
+
 
 
 class TestCancelOrder:
@@ -144,3 +153,34 @@ class TestCancelOrder:
         await api.cancel_stock_order(broker_order_no="0000139", stock_code="005930", order_qty=0)
 
         assert api.call_api.call_args.kwargs["data"]["cncl_qty"] == "0"
+
+    async def test_cancel_without_broker_order_no_is_rejected(self):
+        api = _make_api()
+
+        result = await api.cancel_stock_order(broker_order_no="", stock_code="005930")
+
+        assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+        assert "원주문번호" in result.msg1
+        api.call_api.assert_not_awaited()
+
+    async def test_cancel_with_non_integer_quantity_is_rejected(self):
+        api = _make_api()
+
+        result = await api.cancel_stock_order(
+            broker_order_no="0000139", stock_code="005930", order_qty="전부",
+        )
+
+        assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+        assert "정수가 아닙니다" in result.msg1
+        api.call_api.assert_not_awaited()
+
+    async def test_cancel_with_negative_quantity_is_rejected(self):
+        api = _make_api()
+
+        result = await api.cancel_stock_order(
+            broker_order_no="0000139", stock_code="005930", order_qty=-1,
+        )
+
+        assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+        assert "0 이상" in result.msg1
+        api.call_api.assert_not_awaited()

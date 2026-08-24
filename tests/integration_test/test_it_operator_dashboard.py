@@ -238,3 +238,66 @@ async def test_escalation_emits_second_time(alert_svc, notif):
     await alert_svc.report(AlertSource.KILL_SWITCH, "kill_switch:global", "warning", "T", "M")
     await alert_svc.report(AlertSource.KILL_SWITCH, "kill_switch:global", "critical", "T2", "M2")
     assert notif.emit.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_alerts_since_filter_drops_older_entries(web_app, alert_svc):
+    await alert_svc.report(AlertSource.KILL_SWITCH, "kill_switch:global", "critical", "T", "M")
+
+    ctx = _make_ctx(alert_svc)
+    api_common.set_ctx(ctx)
+    try:
+        with TestClient(web_app, **authenticated_client_options(ctx)) as c:
+            future = c.get("/api/operator/alerts?since=2999-01-01T00:00:00")
+            past = c.get("/api/operator/alerts?since=2000-01-01T00:00:00")
+    finally:
+        api_common.set_ctx(None)
+
+    assert future.json()["total"] == 0
+    assert past.json()["total"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_alerts_returns_empty_when_service_is_not_wired(web_app):
+    ctx = _make_ctx(None)
+    ctx.operator_alert_service = None
+    api_common.set_ctx(ctx)
+    try:
+        with TestClient(web_app, **authenticated_client_options(ctx)) as c:
+            r = c.get("/api/operator/alerts")
+    finally:
+        api_common.set_ctx(None)
+
+    assert r.status_code == 200
+    assert r.json() == {"alerts": [], "total": 0}
+
+
+@pytest.mark.asyncio
+async def test_resolve_without_service_returns_503(web_app):
+    ctx = _make_ctx(None)
+    ctx.operator_alert_service = None
+    api_common.set_ctx(ctx)
+    try:
+        with TestClient(web_app, **authenticated_client_options(ctx)) as c:
+            r = c.post("/api/operator/alerts/kill_switch%3Aglobal/resolve")
+    finally:
+        api_common.set_ctx(None)
+
+    assert r.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_resolve_maps_non_kill_switch_keys_to_risk_gate(web_app, alert_svc):
+    await alert_svc.report(
+        AlertSource.RISK_GATE, "risk_gate:daily_cap:S1:005930", "block", "T", "M",
+    )
+    ctx = _make_ctx(alert_svc)
+    api_common.set_ctx(ctx)
+    try:
+        with TestClient(web_app, **authenticated_client_options(ctx)) as c:
+            r = c.post("/api/operator/alerts/risk_gate%3Adaily_cap%3AS1%3A005930/resolve")
+    finally:
+        api_common.set_ctx(None)
+
+    assert r.json()["resolved"] is True
+    assert "risk_gate:daily_cap:S1:005930" not in alert_svc._active

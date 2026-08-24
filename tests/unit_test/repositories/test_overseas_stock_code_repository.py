@@ -172,3 +172,42 @@ def test_recovery_continues_when_remove_fails(mock_save, mock_remove, mock_logge
     assert repo.symbol_to_meta["AAPL"]["name"] == "Apple Inc"
     # 삭제 실패 에러가 로깅되어야 한다.
     assert any("삭제 실패" in str(c.args[0]) for c in mock_logger.error.call_args_list)
+
+
+def test_default_db_path_points_at_project_data_dir():
+    with patch("repositories.overseas_stock_code_repository.os.path.exists", return_value=True), \
+         patch.object(OverseasStockCodeRepository, "_load_data"):
+        repo = OverseasStockCodeRepository()
+
+    assert repo._db_path.endswith(os.path.join("data", "overseas_stock_code_list.db"))
+
+
+def test_get_meta_is_case_insensitive_and_returns_none_for_unknown(test_db):
+    repo = OverseasStockCodeRepository(db_path=test_db)
+
+    assert repo.get_meta("aapl") == {"name": "Apple Inc", "exchange": "NASD"}
+    assert repo.get_meta("NOPE") is None
+
+
+def test_get_name_by_code_mirrors_meta_lookup(test_db):
+    repo = OverseasStockCodeRepository(db_path=test_db)
+
+    assert repo.get_name_by_code("NVDA") == "NVIDIA Corp"
+    assert repo.get_name_by_code("NOPE") is None
+
+
+@patch("repositories.overseas_stock_code_repository.save_overseas_stock_code_list")
+def test_recovery_that_returns_minimal_db_again_falls_back(mock_save, mock_logger, tmp_path):
+    """갱신이 성공해도 결과가 최소 DB면 최소 DB 경로로 마무리한다."""
+    db_path = str(tmp_path / "overseas.db")
+    _create_test_db(db_path, data={"심볼": [], "종목명": [], "거래소": []})
+
+    def _fake_save(force_update=False):
+        _create_test_db(db_path, data={
+            "심볼": ["(NONE)"], "종목명": ["(구성종목 없음)"], "거래소": [""],
+        })
+
+    mock_save.side_effect = _fake_save
+    repo = OverseasStockCodeRepository(db_path=db_path, logger=mock_logger)
+
+    assert [item["s"] for item in repo.all_symbols()] == ["(NONE)"]

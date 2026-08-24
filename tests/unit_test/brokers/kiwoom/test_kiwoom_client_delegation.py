@@ -108,3 +108,23 @@ class TestWebsocketStillSkeleton:
         assert await client.connect_websocket() is False
         assert await client.subscribe_realtime_price("005930") is False
         assert client.get_subscription_ledger() == {}
+
+    async def test_remaining_websocket_paths_are_inert(self):
+        """해지 계열은 True 를 돌려주되(idempotent no-op), 구독은 성공을 주장하지 않는다."""
+        client = _client()
+
+        assert await client.disconnect_websocket() is True
+        assert await client.unsubscribe_realtime_price("005930") is True
+        assert await client.subscribe_realtime_quote("005930") is False
+        assert await client.unsubscribe_realtime_quote("005930") is True
+
+
+class TestUnsupportedFeature:
+    def test_unsupported_marks_broker_and_feature_in_payload(self):
+        client = _client()
+
+        result = client._unsupported("호가조회")
+
+        assert result.rt_cd == ErrorCode.API_ERROR.value
+        assert "호가조회" in result.msg1
+        assert result.data == {"broker": "kiwoom", "feature": "호가조회"}

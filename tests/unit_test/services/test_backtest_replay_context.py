@@ -77,3 +77,16 @@ def test_apply_backtest_snapshot_context_replaces_clock_and_stock_query_service(
 
     assert target._sqs is replay_sqs
     assert target._tm is clock
+
+
+def test_set_backtest_datetime_converts_aware_datetime_to_market_timezone():
+    import pytz
+
+    clock = BacktestMarketClock()
+    utc_noon = pytz.UTC.localize(datetime(2026, 3, 2, 3, 0, 0))
+
+    clock.set_backtest_datetime(utc_noon)
+
+    now = clock.get_current_kst_time()
+    assert now.tzinfo is not None
+    assert (now.hour, now.minute) == (12, 0)

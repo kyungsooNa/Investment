@@ -114,3 +114,34 @@ def test_direct_rows_constructor_normalizes(tmp_path):
     # 입력이 정렬돼 있지 않아도 date 오름차순으로 반환
     assert [r["date"] for r in rows] == ["20260310", "20260312"]
     assert rows[0]["close"] == 1.0
+
+
+def test_unparsable_numbers_and_blank_codes_are_dropped():
+    store = DelistedOhlcvStore({
+        "": [{"date": "2026-03-10", "close": "1000", "volume": "10"}],
+        "   ": [{"date": "2026-03-10", "close": "1000", "volume": "10"}],
+        "900100": [
+            {"date": "2026-03-10", "open": "가격", "high": "-", "low": "",
+             "close": "1,050", "volume": "50,000"},
+        ],
+    })
+
+    rows = store.get_daily_rows("900100")
+
+    assert store.codes() == {"900100"}
+    assert rows[0]["close"] == 1050
+    assert rows[0]["volume"] == 50000
+    assert rows[0]["open"] is None
+
+
+def test_from_backfill_dir_ignores_missing_dir_and_unusable_filenames(tmp_path):
+    assert DelistedOhlcvStore.from_backfill_dir(tmp_path / "absent").codes() == set()
+
+    backfill = tmp_path / "backfill"
+    backfill.mkdir()
+    (backfill / "900100.csv").write_text(_CSV, encoding="utf-8")
+    (backfill / "  .csv").write_text(_CSV, encoding="utf-8")
+
+    store = DelistedOhlcvStore.from_backfill_dir(backfill)
+
+    assert store.codes() == {"900100"}

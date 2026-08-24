@@ -189,3 +189,44 @@ def test_committed_20260512_replay_fixture_shape_is_stable():
         len(payload["ohlcv"][code]) == 60
         for code in payload["metadata"]["codes"]
     )
+
+
+def test_export_fixture_missing_db_file_raises(tmp_path):
+    exporter = BacktestReplayFixtureExporter(tmp_path / "absent.db")
+
+    with pytest.raises(FileNotFoundError, match="backtest replay DB not found"):
+        exporter.export_fixture(trade_date="20260512")
+
+
+def test_export_fixture_without_qualifying_sample_codes_raises(tmp_path):
+    db_path = tmp_path / "stocks.db"
+    _create_db(db_path)
+    exporter = BacktestReplayFixtureExporter(
+        db_path,
+        min_trading_value=10_000_000_000_000,  # 어떤 종목도 통과하지 못하는 임계
+        min_ohlcv_days=3,
+        sample_code_count=1,
+    )
+
+    with pytest.raises(ValueError, match="replay fixture codes not found"):
+        exporter.export_fixture(trade_date="20260512")
+
+
+def test_export_fixture_without_ohlcv_rows_raises(tmp_path):
+    db_path = tmp_path / "stocks.db"
+    _create_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM ohlcv WHERE code = ?", ("000001",))
+    exporter = BacktestReplayFixtureExporter(db_path)
+
+    with pytest.raises(ValueError, match="ohlcv rows not found"):
+        exporter.export_fixture(trade_date="20260512", codes=["000001", "000002"])
+
+
+def test_in_clause_sql_rejects_empty_values():
+    from services.backtest_replay_fixture_exporter import _in_clause_sql
+
+    assert _in_clause_sql("code IN ({})", ["a", "b"]) == "code IN (?,?)"
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        _in_clause_sql("code IN ({})", [])
