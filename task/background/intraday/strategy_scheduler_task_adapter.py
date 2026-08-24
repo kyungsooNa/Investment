@@ -19,13 +19,21 @@ class StrategySchedulerTaskAdapter(SchedulableTask):
     전략에서 발생하는 매수/매도 주문은 foreground 우선순위로 실행된다.
     """
 
-    def __init__(self, scheduler: StrategyScheduler, market_clock: Optional["MarketClock"] = None):
+    def __init__(
+        self,
+        scheduler: StrategyScheduler,
+        market_clock: Optional["MarketClock"] = None,
+        market: str = "",
+    ):
         self._scheduler = scheduler
         self._market_clock = market_clock
+        self._market = str(market or "").strip()
         self._state: TaskState = TaskState.IDLE
 
     @property
     def task_name(self) -> str:
+        if self._market:
+            return f"{self._market}_strategy_scheduler"
         return "strategy_scheduler"
 
     @property

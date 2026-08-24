@@ -21,7 +21,11 @@ function fetchSchedulerJson(url, options = {}, timeoutMs = 8000) {
 }
 
 function syncSchedulerRealtimeState(data) {
-    if (data && data.running) {
+    const schedulers = (data && data.schedulers) || [];
+    const marketTasks = (data && data.market_tasks) || [];
+    const hasRunningScheduler = data && (data.running || schedulers.some(item => item.running));
+    const hasRunningMarketTask = marketTasks.some(task => task.running || task.state === 'running');
+    if (hasRunningScheduler || hasRunningMarketTask) {
         if (!schedulerPollingId) {
             startSchedulerPolling();
         }
@@ -70,12 +74,13 @@ async function loadSchedulerStatus() {
 function renderSchedulerStatus(data) {
     const badge = document.getElementById('scheduler-status-badge');
     const info = document.getElementById('scheduler-info');
-    const strategiesDiv = document.getElementById('scheduler-strategies');
 
+    const schedulers = data.schedulers || [data];
     const marketTasks = data.market_tasks || [];
+    const hasRunningScheduler = schedulers.some(item => item.running);
     const hasRunningMarketTask = marketTasks.some(task => task.running || task.state === 'running');
 
-    if (data.running) {
+    if (hasRunningScheduler) {
         badge.textContent = '실행 중';
         badge.className = 'badge open';
     } else if (hasRunningMarketTask) {
@@ -86,18 +91,61 @@ function renderSchedulerStatus(data) {
         badge.className = 'badge closed';
     }
 
-    const dryLabel = data.running
-        ? (data.dry_run ? '국내 자동전략 dry-run: CSV만 기록' : '국내 자동전략 실제 주문 실행')
-        : '국내 자동전략 정지';
-    info.textContent = dryLabel;
+    const activeSchedulers = schedulers.filter(item => item.running).length;
+    const activeMarketTasks = marketTasks.filter(task => task.running || task.state === 'running').length;
+    info.textContent = `전략 스케줄러 ${activeSchedulers}/${schedulers.length} 실행 | 시장 태스크 ${activeMarketTasks}/${marketTasks.length} 실행`;
+    renderSchedulerSections(schedulers);
     renderMarketTasks(marketTasks);
+}
 
-    if (!data.strategies || data.strategies.length === 0) {
-        strategiesDiv.innerHTML = '<div class="card"><span>등록된 전략이 없습니다.</span></div>';
+function jsString(value) {
+    return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function renderSchedulerSections(schedulers) {
+    const strategiesDiv = document.getElementById('scheduler-strategies');
+    if (!strategiesDiv) return;
+
+    if (!schedulers || schedulers.length === 0) {
+        strategiesDiv.innerHTML = '<div class="card"><span>등록된 전략 스케줄러가 없습니다.</span></div>';
         return;
     }
 
-    strategiesDiv.innerHTML = data.strategies.map(s => {
+    strategiesDiv.innerHTML = schedulers.map(section => renderSchedulerSection(section)).join('');
+}
+
+function renderSchedulerSection(section) {
+    const market = section.market || 'domestic';
+    const marketLabel = section.market_label || market;
+    const runningBadge = section.running
+        ? '<span class="badge open">실행 중</span>'
+        : '<span class="badge closed">정지</span>';
+    const modeText = section.has_scheduler
+        ? (section.dry_run ? 'dry-run: CSV만 기록' : '실제 주문 실행')
+        : '스케줄러 미구성';
+    const strategies = section.strategies || [];
+
+    let bodyHtml = '';
+    if (!section.has_scheduler) {
+        bodyHtml = '<div class="card"><span>이 시장의 StrategyScheduler가 아직 구성되지 않았습니다.</span></div>';
+    } else if (strategies.length === 0) {
+        bodyHtml = '<div class="card"><span>등록된 전략이 없습니다.</span></div>';
+    } else {
+        bodyHtml = strategies.map(s => renderStrategyCard(s, market)).join('');
+    }
+
+    return `
+    <section style="margin-bottom:16px;">
+        <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
+            <h4 style="margin:0;color:var(--text-primary);">${escapeHtml(marketLabel)}</h4>
+            ${runningBadge}
+            <span class="badge paper">${escapeHtml(modeText)}</span>
+        </div>
+        ${bodyHtml}
+    </section>`;
+}
+
+function renderStrategyCard(s, market) {
         const displayName = s.display_name || s.name;
         const enabledBadge = s.enabled
             ? '<span class="badge open">활성</span>'
@@ -107,10 +155,10 @@ function renderSchedulerStatus(data) {
             : '';
         const adminAllowed = typeof window.hasRequiredRole !== 'function'
             || window.hasRequiredRole('admin');
-        const positionBadge = `<span class="badge ${s.current_holds >= s.max_positions ? 'closed' : 'paper'}" style="cursor:${adminAllowed ? 'pointer' : 'default'};" ${adminAllowed ? `onclick="updateMaxPositions('${s.name}', ${s.max_positions})"` : ''} title="${adminAllowed ? '클릭하여 최대 포지션 수 변경' : 'admin 권한 필요'}">포지션 ${s.current_holds}/${s.max_positions} ✏️</span>`;
+        const positionBadge = `<span class="badge ${s.current_holds >= s.max_positions ? 'closed' : 'paper'}" style="cursor:${adminAllowed ? 'pointer' : 'default'};" ${adminAllowed ? `onclick="updateMaxPositions('${jsString(s.name)}', ${s.max_positions}, '${jsString(market)}')"` : ''} title="${adminAllowed ? '클릭하여 최대 포지션 수 변경' : 'admin 권한 필요'}">포지션 ${s.current_holds}/${s.max_positions} ✏️</span>`;
         const toggleBtn = s.enabled
-            ? `<button class="btn btn-sell" data-required-role="admin" ${adminAllowed ? '' : 'disabled'} style="padding:4px 12px;font-size:0.85em;" onclick="stopStrategy('${s.name}')">정지</button>`
-            : `<button class="btn btn-buy" data-required-role="admin" ${adminAllowed ? '' : 'disabled'} style="padding:4px 12px;font-size:0.85em;" onclick="startStrategy('${s.name}')">시작</button>`;
+            ? `<button class="btn btn-sell" data-required-role="admin" ${adminAllowed ? '' : 'disabled'} style="padding:4px 12px;font-size:0.85em;" onclick="stopStrategy('${jsString(s.name)}', '${jsString(market)}')">정지</button>`
+            : `<button class="btn btn-buy" data-required-role="admin" ${adminAllowed ? '' : 'disabled'} style="padding:4px 12px;font-size:0.85em;" onclick="startStrategy('${jsString(s.name)}', '${jsString(market)}')">시작</button>`;
         // 보유 종목 리스트 렌더링
         let holdingsHtml = '';
         if (s.holdings && s.holdings.length > 0) {
@@ -142,7 +190,6 @@ function renderSchedulerStatus(data) {
                 실행 주기: ${s.interval_minutes}분 | 마지막 실행: ${s.last_run || '-'}
             </div>
         </div>`;
-    }).join('');
 }
 
 function renderMarketTasks(tasks) {
@@ -208,9 +255,9 @@ async function stopScheduler() {
     }
 }
 
-async function startStrategy(name) {
+async function startStrategy(name, market = 'domestic') {
     try {
-        const data = await fetchSchedulerJson(`/api/scheduler/strategy/${encodeURIComponent(name)}/start`, { method: 'POST' });
+        const data = await fetchSchedulerJson(`/api/scheduler/strategy/${encodeURIComponent(name)}/start?market=${encodeURIComponent(market)}`, { method: 'POST' });
         if (data.success) {
             refreshSchedulerStatusSoon();
         }
@@ -219,9 +266,9 @@ async function startStrategy(name) {
     }
 }
 
-async function stopStrategy(name) {
+async function stopStrategy(name, market = 'domestic') {
     try {
-        const data = await fetchSchedulerJson(`/api/scheduler/strategy/${encodeURIComponent(name)}/stop`, { method: 'POST' });
+        const data = await fetchSchedulerJson(`/api/scheduler/strategy/${encodeURIComponent(name)}/stop?market=${encodeURIComponent(market)}`, { method: 'POST' });
         if (data.success) {
             refreshSchedulerStatusSoon();
         }
@@ -230,7 +277,7 @@ async function stopStrategy(name) {
     }
 }
 
-async function updateMaxPositions(name, currentMax) {
+async function updateMaxPositions(name, currentMax, market = 'domestic') {
     const newVal = prompt(`'${name}' 전략의 최대 보유 포지션 수를 입력하세요:`, currentMax);
     if (newVal === null) return; // Cancelled
     
@@ -241,7 +288,7 @@ async function updateMaxPositions(name, currentMax) {
     }
 
     try {
-        const data = await fetchSchedulerJson(`/api/scheduler/strategy/${encodeURIComponent(name)}/max-positions`, {
+        const data = await fetchSchedulerJson(`/api/scheduler/strategy/${encodeURIComponent(name)}/max-positions?market=${encodeURIComponent(market)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ max_positions: parsed })

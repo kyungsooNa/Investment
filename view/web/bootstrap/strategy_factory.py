@@ -37,7 +37,7 @@ class StrategyFactory:
             ctx.logger.info(
                 "[StrategyFactory] market_mode=overseas_us — 해외주식 v1은 자동전략을 비활성화합니다."
             )
-            ctx.scheduler = None
+            self._set_scheduler("overseas_us", None)
             return
         if not (ctx.runtime_mode & RuntimeMode.TRADING):
             ctx.logger.info(
@@ -45,7 +45,7 @@ class StrategyFactory:
                 ctx.runtime_mode,
             )
             return
-        ctx.scheduler = StrategyScheduler(
+        scheduler = StrategyScheduler(
             virtual_trade_service=ctx.virtual_trade_service,
             order_execution_service=ctx.order_execution_service,
             stock_query_service=ctx.stock_query_service,
@@ -75,6 +75,7 @@ class StrategyFactory:
                 logger=ctx.logger,
             ),
         )
+        self._set_scheduler("domestic", scheduler)
 
         # 오닐 스퀴즈 돌파 전략 등록
         osb_strategy = OneilSqueezeBreakoutStrategy(
@@ -83,7 +84,7 @@ class StrategyFactory:
             market_clock=ctx.market_clock,
             logger=get_strategy_logger('OneilSqueezeBreakout'),
         )
-        ctx.scheduler.register(StrategySchedulerConfig(
+        scheduler.register(StrategySchedulerConfig(
             strategy=osb_strategy,
             interval_minutes=3,
             max_positions=5,
@@ -104,7 +105,7 @@ class StrategyFactory:
             market_clock=ctx.market_clock,
             logger=get_strategy_logger('OneilPocketPivot'),
         )
-        ctx.scheduler.register(StrategySchedulerConfig(
+        scheduler.register(StrategySchedulerConfig(
             strategy=pp_strategy,
             interval_minutes=3,
             max_positions=5,
@@ -122,7 +123,7 @@ class StrategyFactory:
             market_clock=ctx.market_clock,
             logger=get_strategy_logger('HighTightFlag'),
         )
-        ctx.scheduler.register(StrategySchedulerConfig(
+        scheduler.register(StrategySchedulerConfig(
             strategy=htf_strategy,
             interval_minutes=3,
             max_positions=5,
@@ -139,7 +140,7 @@ class StrategyFactory:
             market_clock=ctx.market_clock,
             logger=get_strategy_logger('FirstPullback'),
         )
-        ctx.scheduler.register(StrategySchedulerConfig(
+        scheduler.register(StrategySchedulerConfig(
             strategy=fp_strategy,
             interval_minutes=3,
             max_positions=5,
@@ -157,7 +158,7 @@ class StrategyFactory:
             logger=get_strategy_logger('LarryWilliamsVBO'),
             trade_history_provider=ctx.virtual_trade_service.get_all_trades,
         )
-        ctx.scheduler.register(StrategySchedulerConfig(
+        scheduler.register(StrategySchedulerConfig(
             strategy=vbo_strategy,
             interval_minutes=5,
             max_positions=3,
@@ -176,7 +177,7 @@ class StrategyFactory:
             market_clock=ctx.market_clock,
             logger=get_strategy_logger('RSI2Pullback'),
         )
-        ctx.scheduler.register(StrategySchedulerConfig(
+        scheduler.register(StrategySchedulerConfig(
             strategy=rsi2_strategy,
             interval_minutes=5,
             max_positions=5,
@@ -194,7 +195,7 @@ class StrategyFactory:
             market_clock=ctx.market_clock,
             logger=get_strategy_logger('LarryWilliamsCB'),
         )
-        ctx.scheduler.register(StrategySchedulerConfig(
+        scheduler.register(StrategySchedulerConfig(
             strategy=lwcb_strategy,
             interval_minutes=5,
             max_positions=5,
@@ -215,7 +216,7 @@ class StrategyFactory:
             market_clock=ctx.market_clock,
             logger=get_strategy_logger('InverseEtfRegime'),
         )
-        ctx.scheduler.register(StrategySchedulerConfig(
+        scheduler.register(StrategySchedulerConfig(
             strategy=inverse_etf_strategy,
             interval_minutes=5,
             max_positions=1,            # 단일 종목 슬리브
@@ -230,6 +231,22 @@ class StrategyFactory:
         ctx.logger.info("웹 앱: 전략 스케줄러 초기화 완료 (수동 시작 대기)")
 
         # StrategyScheduler를 BackgroundScheduler에 어댑터로 등록
-        if ctx.background_scheduler and ctx.scheduler:
-            adapter = StrategySchedulerTaskAdapter(ctx.scheduler, market_clock=ctx.market_clock)
+        if ctx.background_scheduler and scheduler:
+            adapter = StrategySchedulerTaskAdapter(
+                scheduler,
+                market_clock=ctx.market_clock,
+                market="domestic",
+            )
             ctx.background_scheduler.register(adapter)
+
+    def _set_scheduler(self, market: str, scheduler) -> None:
+        ctx = self._ctx
+        setter = getattr(ctx, "set_strategy_scheduler", None)
+        if callable(setter):
+            setter(market, scheduler)
+            return
+        schedulers = getattr(ctx, "strategy_schedulers", None)
+        if isinstance(schedulers, dict):
+            schedulers[market] = scheduler
+        if market == "domestic":
+            ctx.scheduler = scheduler

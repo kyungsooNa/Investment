@@ -10,11 +10,14 @@ from urllib.parse import quote
 @pytest.mark.asyncio
 async def test_scheduler_endpoints(web_client, mock_web_ctx):
     """스케줄러 관련 엔드포인트 테스트"""
+    mock_web_ctx.strategy_schedulers = {"domestic": mock_web_ctx.scheduler}
+
     # Status
     mock_web_ctx.scheduler.get_status = MagicMock(return_value={"running": False})
     response = web_client.get("/api/scheduler/status")
     assert response.status_code == 200
     assert response.json()["running"] is False
+    assert response.json()["schedulers"][0]["market"] == "domestic"
 
     # Start
     response = web_client.post("/api/scheduler/start")
@@ -138,6 +141,7 @@ async def test_scheduler_strategy_control_with_larry_williams_cb(web_client, moc
 async def test_scheduler_not_initialized(web_client, mock_web_ctx):
     """스케줄러 미초기화 상태 테스트"""
     mock_web_ctx.scheduler = None
+    mock_web_ctx.strategy_schedulers = {"domestic": None, "overseas_us": None}
 
     assert web_client.get("/api/scheduler/status").json()["running"] is False
     assert web_client.post("/api/scheduler/start").status_code == 503
@@ -145,6 +149,34 @@ async def test_scheduler_not_initialized(web_client, mock_web_ctx):
     assert web_client.post("/api/scheduler/strategy/A/start").status_code == 503
     assert web_client.post("/api/scheduler/strategy/A/stop").status_code == 503
     assert web_client.get("/api/scheduler/history").json()["history"] == []
+
+
+@pytest.mark.asyncio
+async def test_scheduler_market_query_uses_requested_scheduler(web_client, mock_web_ctx):
+    """market 파라미터로 국내/미국장 전략 스케줄러를 분리 조회한다."""
+    domestic_scheduler = MagicMock()
+    domestic_scheduler.get_status.return_value = {"running": False, "strategies": []}
+    overseas_scheduler = MagicMock()
+    overseas_scheduler.get_status.return_value = {
+        "running": True,
+        "dry_run": True,
+        "strategies": [{"name": "USVBO", "holdings": []}],
+    }
+    mock_web_ctx.scheduler = domestic_scheduler
+    mock_web_ctx.strategy_schedulers = {
+        "domestic": domestic_scheduler,
+        "overseas_us": overseas_scheduler,
+    }
+
+    response = web_client.get("/api/scheduler/status?market=overseas_us")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["market"] == "overseas_us"
+    assert data["running"] is True
+    assert data["strategies"][0]["market"] == "overseas_us"
+    assert [item["market"] for item in data["schedulers"]] == ["domestic", "overseas_us"]
+    overseas_scheduler.get_status.assert_called()
 
 @pytest.mark.asyncio
 async def test_scheduler_strategy_control_failure(web_client, mock_web_ctx):

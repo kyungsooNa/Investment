@@ -33,6 +33,12 @@ def test_task_name(adapter):
     assert adapter.task_name == "strategy_scheduler"
 
 
+def test_market_scoped_task_name(mock_strategy_scheduler):
+    adapter = StrategySchedulerTaskAdapter(mock_strategy_scheduler, market="domestic")
+
+    assert adapter.task_name == "domestic_strategy_scheduler"
+
+
 def test_priority(adapter):
     assert adapter.priority == TaskPriority.NORMAL
 
