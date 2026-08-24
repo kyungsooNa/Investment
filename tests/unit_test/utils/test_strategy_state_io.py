@@ -163,3 +163,76 @@ async def test_flush_pending_awaits_scheduled_saves(tmp_path: Path):
 async def test_flush_pending_noop_when_empty():
     """pending 이 비어 있으면 즉시 반환."""
     await StrategyStateIO.flush_pending()  # 예외 없이 종료
+
+
+def test_lock_for_outside_an_event_loop_creates_and_caches_a_lock(tmp_path: Path):
+    """부트스트랩처럼 loop 밖에서 불려도 lock 을 만들어 캐시한다."""
+    path = str(tmp_path / "state.json")
+
+    lock = StrategyStateIO._lock_for(path)
+
+    assert lock is StrategyStateIO._lock_for(path)
+
+
+@pytest.mark.asyncio
+async def test_lock_bound_to_a_stale_loop_is_replaced(tmp_path: Path):
+    """다른 loop 에 묶인 캐시 lock 은 폐기하고 새로 만든다."""
+    path = str(tmp_path / "state.json")
+    stale = asyncio.Lock()
+    stale._get_loop = lambda: object()  # 현재 loop 와 다른 loop 로 위장
+    StrategyStateIO._locks[path] = stale
+
+    fresh = StrategyStateIO._lock_for(path)
+
+    assert fresh is not stale
+    assert StrategyStateIO._locks[path] is fresh
+
+
+@pytest.mark.asyncio
+async def test_lock_loop_probe_failure_falls_back_to_the_private_attribute(tmp_path: Path):
+    path = str(tmp_path / "state.json")
+    stale = asyncio.Lock()
+
+    def _boom():
+        raise RuntimeError("loop 조회 실패")
+
+    stale._get_loop = _boom
+    stale._loop = object()  # fallback 경로에서 읽는 값 — 현재 loop 와 다르다
+    StrategyStateIO._locks[path] = stale
+
+    assert StrategyStateIO._lock_for(path) is not stale
+
+
+@pytest.mark.asyncio
+async def test_save_atomic_reraises_unrelated_release_errors(tmp_path: Path):
+    target = tmp_path / "state.json"
+    lock = StrategyStateIO._lock_for(str(target))
+    orig_release = lock.release
+
+    def release_then_raise():
+        orig_release()
+        raise RuntimeError("다른 이유의 실패")
+
+    lock.release = release_then_raise
+    try:
+        with pytest.raises(RuntimeError, match="다른 이유의 실패"):
+            await StrategyStateIO.save_atomic(str(target), {"v": 1})
+    finally:
+        lock.release = orig_release
+
+
+def test_flush_pending_outside_an_event_loop_returns_quietly():
+    """loop 밖에서 호출되면(종료 경로) 조용히 반환한다."""
+    async def _noop():
+        return None
+
+    loop = asyncio.new_event_loop()
+    try:
+        task = loop.create_task(_noop())
+        StrategyStateIO._pending.add(task)
+        # coroutine 을 실제로 돌려 경고를 남기지 않는다.
+        loop.run_until_complete(asyncio.sleep(0))
+        asyncio.run(StrategyStateIO.flush_pending())
+    finally:
+        loop.close()
+        StrategyStateIO._pending.clear()

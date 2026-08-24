@@ -111,3 +111,51 @@ def test_hold_with_unparseable_date_still_counted():
     row = summary["open_holds"]["by_strategy"][0]
     assert row["count"] == 1
     assert row["max_holding_days"] == 0
+
+
+def test_non_mapping_records_and_blank_strategies_are_dropped():
+    records = [
+        "레코드 아님",
+        None,
+        {"status": "HOLD", "strategy": "", "code": "005930", "signal_time": "2026-05-01"},
+        {"status": "HOLD", "strategy": "   ", "code": "000660", "signal_time": "2026-05-01"},
+    ]
+
+    summary = compute_overnight_exposure_summary(records, today="2026-05-05")
+
+    assert summary["open_holds"]["total"] == 0
+    assert summary["open_holds"]["by_strategy"] == []
+
+
+def test_date_parser_accepts_iso_and_compact_forms_and_rejects_junk():
+    from datetime import date
+
+    from services.overnight_exposure_service import _parse_date
+
+    assert _parse_date("2026-05-01") == date(2026, 5, 1)
+    assert _parse_date("2026-05-01 09:30:00") == date(2026, 5, 1)
+    assert _parse_date("20260501") == date(2026, 5, 1)
+    assert _parse_date("20261345") is None      # 8자리지만 유효 날짜가 아님
+    assert _parse_date("2026-13-45") is None
+    assert _parse_date("봄철") is None
+    assert _parse_date("") is None
+    assert _parse_date(None) is None
+
+
+def test_meta_get_returns_none_without_a_mapping_metadata():
+    from services.overnight_exposure_service import _meta_get
+
+    assert _meta_get({"metadata": {"buy_date": "2026-05-01"}}, "buy_date") == "2026-05-01"
+    assert _meta_get({"metadata": "문자열"}, "buy_date") is None
+    assert _meta_get({}, "buy_date") is None
+
+
+def test_float_coercion_rejects_blank_and_unparsable_values():
+    from services.overnight_exposure_service import _to_float
+
+    assert _to_float("1.5") == 1.5
+    assert _to_float(2) == 2.0
+    assert _to_float(None) is None
+    assert _to_float("") is None
+    assert _to_float("숫자아님") is None
+    assert _to_float(object()) is None

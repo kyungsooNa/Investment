@@ -158,3 +158,63 @@ async def test_with_sources_max_codes_cap_reflected_in_split():
     )
     assert codes == ["000001", "000002", "100001"]
     assert sources == {"base": ["000001", "000002"], "ranking_supplement": ["100001"]}
+
+
+async def test_ranking_lookup_failure_is_logged_and_yields_no_supplement():
+    sqs = MagicMock()
+    sqs.get_top_trading_value_stocks = AsyncMock(side_effect=RuntimeError("실전 전용"))
+    logger = MagicMock()
+
+    codes = await resolve_capture_codes(
+        virtual_trade_service=_make_virtual_trade_service(["005930"]),
+        universe_service=None,
+        stock_query_service=sqs,
+        max_codes=None,
+        logger=logger,
+        task_name="test",
+    )
+
+    assert codes == ["005930"]
+    logger.warning.assert_called_once()
+    assert "거래대금 랭킹 조회 실패" in logger.warning.call_args.args[0]
+
+
+async def test_ranking_rows_may_be_objects_instead_of_dicts():
+    from types import SimpleNamespace
+
+    sqs = _make_stock_query_service([
+        SimpleNamespace(mksc_shrn_iscd="005930", hts_kor_isnm="삼성전자"),
+        SimpleNamespace(mksc_shrn_iscd="", stck_shrn_iscd="000660", hts_kor_isnm="SK하이닉스"),
+        SimpleNamespace(mksc_shrn_iscd="", stck_shrn_iscd="", hts_kor_isnm="코드없음"),
+        SimpleNamespace(mksc_shrn_iscd="069500", hts_kor_isnm="KODEX 200"),
+    ])
+
+    codes = await resolve_capture_codes(
+        virtual_trade_service=None,
+        universe_service=None,
+        stock_query_service=sqs,
+        max_codes=None,
+        logger=MagicMock(),
+        task_name="test",
+    )
+
+    # ETF(KODEX) 와 코드 없는 행은 제외된다.
+    assert codes == ["005930", "000660"]
+
+
+async def test_holdings_lookup_failure_is_logged_and_skipped():
+    vts = MagicMock()
+    vts.get_holds.side_effect = RuntimeError("원장 손상")
+    logger = MagicMock()
+
+    codes = await resolve_capture_codes(
+        virtual_trade_service=vts,
+        universe_service=_make_universe_service(["000660"]),
+        stock_query_service=None,
+        max_codes=None,
+        logger=logger,
+        task_name="test",
+    )
+
+    assert codes == ["000660"]
+    assert "보유 종목 조회 실패" in logger.warning.call_args.args[0]

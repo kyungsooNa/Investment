@@ -145,3 +145,54 @@ async def test_exclude_code_skips_added_delisted_and_delegates():
     wl = await wrap.get_watchlist()
     assert "900100" not in wl
     assert "900100" in wrap._base.excluded  # base 에도 위임
+
+
+@pytest.mark.asyncio
+async def test_avg_trading_value_returns_none_for_failed_response():
+    from unittest.mock import AsyncMock, MagicMock
+
+    sqs = MagicMock()
+    sqs.get_recent_daily_ohlcv = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="fail", data=None)
+    )
+    wrapper = PointInTimeAugmentedUniverse(
+        MagicMock(),
+        pit_provider=PointInTimeUniverseProvider([]),
+        sqs=sqs,
+        clock=_FakeClock("20260301"),
+        item_factory=lambda **kw: kw,
+    )
+
+    assert await wrapper._avg_trading_value("900100", "20260301") is None
+
+
+@pytest.mark.asyncio
+async def test_avg_trading_value_accepts_a_bare_row_list():
+    """ResCommonResponse 로 감싸지 않은 raw 행 리스트도 그대로 받는다."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    sqs = MagicMock()
+    sqs.get_recent_daily_ohlcv = AsyncMock(return_value=[
+        {"close": "1,000", "volume": "10,000"},
+        {"close": "1000", "volume": "10000"},
+        "행 아님",
+    ])
+    wrapper = PointInTimeAugmentedUniverse(
+        MagicMock(),
+        pit_provider=PointInTimeUniverseProvider([]),
+        sqs=sqs,
+        clock=_FakeClock("20260301"),
+        item_factory=lambda **kw: kw,
+    )
+
+    assert await wrapper._avg_trading_value("900100", "20260301") == 10_000_000
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [(None, 0), ("", 0), ("-", 0), ("1,050", 1050), ("숫자아님", 0), (object(), 0), (7.9, 7)],
+)
+def test_safe_int_coercion(value, expected):
+    from services.point_in_time_universe_wrapper import _safe_int
+
+    assert _safe_int(value) == expected

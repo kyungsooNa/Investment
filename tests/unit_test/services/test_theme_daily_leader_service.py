@@ -562,3 +562,126 @@ async def test_theme_requires_two_liquid_advancers_and_half_breadth():
     resp = await svc.build_daily_theme_report(rankings, "20260714")
 
     assert resp.data == []
+
+
+# --- 값 변환 헬퍼 -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [(None, 0.0), ("", 0.0), ("1,050.5", 1050.5), (7, 7.0), ("숫자아님", 0.0), (object(), 0.0)],
+)
+def test_float_coercion(raw, expected):
+    from services.theme_daily_leader_service import _to_float
+
+    assert _to_float(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [(None, 0), ("", 0), ("1,050", 1050), ("7.9", 7), ("숫자아님", 0), (object(), 0)],
+)
+def test_int_coercion(raw, expected):
+    from services.theme_daily_leader_service import _to_int
+
+    assert _to_int(raw) == expected
+
+
+def test_field_getter_supports_dicts_and_objects():
+    from types import SimpleNamespace
+
+    from services.theme_daily_leader_service import _get
+
+    assert _get({"a": 1}, "a") == 1
+    assert _get({"a": 1}, "b", "기본") == "기본"
+    assert _get(SimpleNamespace(a=1), "a") == 1
+    assert _get(SimpleNamespace(), "b", "기본") == "기본"
+
+
+# --- 예외 및 설정 경로 ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unexpected_error_is_reported_as_unknown_error():
+    service, repo = _service({})
+    repo.get_groups = AsyncMock(side_effect=RuntimeError("분류 DB 오류"))
+
+    result = await service.build_daily_theme_report({"all_stocks": []}, report_date="20260801")
+
+    assert result.rt_cd == ErrorCode.UNKNOWN_ERROR.value
+    assert "분류 DB 오류" in result.msg1
+    service._logger.exception.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_report_is_empty_without_ranking_rows():
+    service, _ = _service({"반도체": {"sources": ["NAVER"], "members": [_member("005930", "삼성전자")]}})
+
+    result = await service.build_daily_theme_report({"all_stocks": []}, report_date="20260801")
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data == []
+
+
+def test_exclusion_config_is_empty_without_a_path():
+    service, _ = _service({})
+
+    assert service._load_theme_member_exclusions("") == {}
+    assert service._load_theme_member_exclusions("없는파일.yaml") == {}
+
+
+def test_exclusion_config_load_failure_is_logged_and_ignored(tmp_path):
+    service, _ = _service({})
+    broken = tmp_path / "exclusions.yaml"
+    broken.write_text("exclusions: [불완전한 yaml", encoding="utf-8")
+
+    assert service._load_theme_member_exclusions(str(broken)) == {}
+    service._logger.warning.assert_called_once()
+
+
+def test_exclusion_config_is_read_from_yaml(tmp_path):
+    service, _ = _service({})
+    cfg = tmp_path / "exclusions.yaml"
+    cfg.write_text(
+        "exclusions:\n  반도체:\n    codes: ['005930']\n    names: ['삼성전자']\n",
+        encoding="utf-8",
+    )
+
+    loaded = service._load_theme_member_exclusions(str(cfg))
+
+    assert loaded["반도체"]["codes"] == {"005930"}
+    assert loaded["반도체"]["names"] == {"삼성전자"}
+
+
+def test_exclusion_normalizer_ignores_unusable_shapes():
+    service, _ = _service({})
+    normalize = service._normalize_theme_member_exclusions
+
+    assert normalize(None) == {}
+    assert normalize("설정 아님") == {}
+    assert normalize({"반도체": "규칙 아님"}) == {}
+    assert normalize({"반도체": {"codes": ["005930", ""], "names": []}}) == {
+        "반도체": {"codes": {"005930"}, "names": set()}
+    }
+
+
+def test_report_time_parser_accepts_datetime_and_string():
+    from datetime import datetime
+
+    service, _ = _service({})
+
+    parsed = service._parse_report_time(datetime(2026, 8, 1, 10, 30, 45, 500))
+    assert (parsed.second, parsed.microsecond) == (0, 0)
+
+    assert service._parse_report_time("20260801 10:30") == datetime(2026, 8, 1, 10, 30)
+
+
+def test_liquidity_bonus_is_zero_below_the_threshold():
+    service, _ = _service({})
+    cls = type(service)
+
+    assert cls._build_liquidity_bonus(1, 10.0) == 0.0
+    # 저탄력(5% 미만) 테마는 보너스를 1.5 로 제한한다.
+    huge = cls.MIN_LIQUID_THEME_TRADING_VALUE_WON * 10_000
+    assert cls._build_liquidity_bonus(huge, 1.0) == 1.5
+    assert cls._build_liquidity_bonus(huge, 9.0) > 1.5

@@ -109,3 +109,65 @@ async def test_passes_overseas_exchange_to_ohlcv(svc):
     # 일봉 조회가 해외 거래소 인자로 위임되는지 (Phase 1-1 어댑터 경유)
     _, kwargs = svc.sqs.get_recent_daily_ohlcv.await_args
     assert kwargs.get("exchange") == OverseasExchange.NASD
+
+
+@pytest.mark.asyncio
+async def test_empty_universe_returns_no_candidates(svc):
+    svc.repo.all_symbols.return_value = []
+
+    assert await svc.service.get_candidates(OverseasExchange.NASD) == []
+    svc.sqs.get_recent_daily_ohlcv.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_universe_load_failure_is_logged_and_yields_no_candidates(svc):
+    svc.repo.all_symbols.side_effect = RuntimeError("DB 손상")
+
+    assert await svc.service.get_candidates(OverseasExchange.NASD) == []
+    svc.service._logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_universe_is_capped_at_max_universe(svc):
+    svc.service._max_universe = 2
+
+    result = await svc.service.get_candidates(OverseasExchange.NASD, min_avg_trading_value=0)
+
+    assert len(result) <= 2
+
+
+@pytest.mark.asyncio
+async def test_scoring_exception_is_logged_and_the_symbol_is_dropped(svc):
+    async def _boom(symbol, limit=5, end_date=None, exchange=None):
+        raise RuntimeError("스코어링 실패")
+
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(side_effect=_boom)
+
+    assert await svc.service.get_candidates(OverseasExchange.NASD) == []
+    svc.service._logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        None,
+        ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="fail", data=None),
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=[]),
+    ],
+)
+async def test_unusable_ohlcv_response_drops_the_symbol(svc, response):
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=response)
+
+    assert await svc.service.get_candidates(OverseasExchange.NASD) == []
+
+
+@pytest.mark.asyncio
+async def test_bars_without_positive_price_or_volume_drop_the_symbol(svc):
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(
+        return_value=ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=_bars(0.0, 0),
+        )
+    )
+
+    assert await svc.service.get_candidates(OverseasExchange.NASD) == []

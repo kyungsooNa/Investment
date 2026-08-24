@@ -63,3 +63,27 @@ def test_does_not_match_longer_words_after_value():
 def test_handles_empty_and_none():
     assert extract_signal("") == (None, None, "")
     assert extract_signal(None) == (None, None, "")
+
+
+def test_blank_lines_do_not_consume_the_scan_budget():
+    """빈 줄은 스캔 카운트에 넣지 않아, 앞이 비어 있어도 신호를 찾는다."""
+    text = "\n\n   \n신호: 상\n신호 근거: 수급 개선\n본문"
+
+    assert extract_signal(text) == ("상", "수급 개선", "본문")
+
+
+def test_blank_lines_between_signal_and_reason_are_skipped():
+    text = "신호: 중\n\n   \n신호 근거: 관망\n본문"
+
+    assert extract_signal(text) == ("중", "관망", "본문")
+
+
+def test_reason_search_gives_up_after_two_non_blank_lines():
+    """신호 줄 뒤 2줄 안에 근거가 없으면 근거 없이 본문을 보존한다."""
+    text = "신호: 하\n첫 줄\n둘째 줄\n신호 근거: 늦은 근거\n본문"
+
+    signal, reason, rest = extract_signal(text)
+
+    assert signal == "하"
+    assert reason is None
+    assert "신호 근거: 늦은 근거" in rest

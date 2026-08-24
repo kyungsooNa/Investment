@@ -78,3 +78,66 @@ def test_record_for_and_all_codes():
 def test_accepts_yyyy_mm_dd_query_format():
     p = PointInTimeUniverseProvider.from_records_dicts(_records())
     assert p.listed_codes_as_of("2026-03-14") == p.listed_codes_as_of("20260314")
+
+
+def test_rejects_mapping_without_symbol_and_non_mapping_items():
+    provider = PointInTimeUniverseProvider([
+        {"name": "심볼없음", "listing_date": "2020-01-01", "source": "current"},
+        {"symbol": "", "name": "빈심볼", "market": "KOSPI", "source": "current"},
+        "문자열 레코드",
+        None,
+        42,
+        {"symbol": "005930", "name": "삼성전자", "market": "KOSPI",
+         "listing_date": "1975-06-11", "delisting_date": "", "source": "current"},
+    ])
+
+    assert provider.all_codes() == {"005930"}
+
+
+def test_record_whose_symbol_normalizes_to_blank_is_dropped():
+    provider = PointInTimeUniverseProvider([
+        {"symbol": "   ", "name": "공백심볼", "market": "KOSDAQ",
+         "listing_date": "2020-01-01", "source": "current"},
+    ])
+
+    assert provider.all_codes() == set()
+
+
+def test_delisted_record_wins_over_current_on_symbol_collision():
+    """생존편향 방지 — 같은 심볼이 겹치면 상폐 이력을 남긴다."""
+    provider = PointInTimeUniverseProvider([
+        {"symbol": "900100", "name": "현재", "market": "KOSDAQ",
+         "listing_date": "2020-01-01", "delisting_date": "", "source": "current"},
+        {"symbol": "900100", "name": "상폐", "market": "KOSDAQ",
+         "listing_date": "2020-01-01", "delisting_date": "2026-03-15", "source": "delisted"},
+    ])
+
+    assert provider.record_for("900100").source == "delisted"
+
+
+def test_first_delisted_record_is_not_overwritten_by_current():
+    provider = PointInTimeUniverseProvider([
+        {"symbol": "900100", "name": "상폐", "market": "KOSDAQ",
+         "listing_date": "2020-01-01", "delisting_date": "2026-03-15", "source": "delisted"},
+        {"symbol": "900100", "name": "현재", "market": "KOSDAQ",
+         "listing_date": "2020-01-01", "delisting_date": "", "source": "current"},
+    ])
+
+    assert provider.record_for("900100").source == "delisted"
+
+
+def test_unparsable_query_date_returns_empty_sets():
+    provider = PointInTimeUniverseProvider(_records())
+
+    assert provider.listed_codes_as_of("날짜아님") == set()
+    assert provider.delisted_codes_as_of("") == set()
+
+
+def test_from_records_dicts_is_an_alias_of_the_constructor():
+    provider = PointInTimeUniverseProvider.from_records_dicts(_records())
+
+    assert "005930" in provider.all_codes()
+
+
+def test_from_snapshot_payload_tolerates_missing_records_key():
+    assert PointInTimeUniverseProvider.from_snapshot_payload({}).all_codes() == set()

@@ -4,6 +4,7 @@ FavoriteService 단위 테스트.
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 from common.types import ResCommonResponse
+from repositories.favorite_repository import MARKET_DOMESTIC, MARKET_OVERSEAS_US
 from services.favorite_service import FavoriteService, _extract_price_rate
 
 
@@ -627,3 +628,105 @@ async def test_get_with_details_falls_back_to_live_when_market_closed_and_no_sna
     assert result[0]["price"] == "71000"
     assert result[0]["rate"] == "0.00"
     mock_query.get_current_price.assert_called_once()
+
+
+# --- 해외 심볼 정규화 경로 --------------------------------------------------
+
+
+async def test_get_all_normalizes_and_dedupes_overseas_symbols(service, mock_repo):
+    mock_repo.get_all = AsyncMock(return_value=["aapl", "AAPL", "  msft  ", "", None])
+
+    assert await service.get_all(market=MARKET_OVERSEAS_US) == ["AAPL", "MSFT"]
+
+
+async def test_get_all_leaves_other_markets_untouched(service, mock_repo):
+    mock_repo.get_all = AsyncMock(return_value=["aapl", "aapl"])
+
+    assert await service.get_all(market="JP") == ["aapl", "aapl"]
+
+
+async def test_remove_overseas_falls_back_to_the_stored_raw_symbol(service, mock_repo):
+    mock_repo.remove = AsyncMock(side_effect=[False, True])
+
+    assert await service.remove("aapl", market=MARKET_OVERSEAS_US) is True
+    assert [c.args[0] for c in mock_repo.remove.await_args_list] == ["AAPL", "aapl"]
+
+
+async def test_remove_overseas_stops_when_the_normalized_symbol_matches(service, mock_repo):
+    mock_repo.remove = AsyncMock(return_value=False)
+
+    assert await service.remove("AAPL", market=MARKET_OVERSEAS_US) is False
+    assert mock_repo.remove.await_count == 1
+
+
+async def test_remove_other_markets_pass_the_code_through(service, mock_repo):
+    await service.remove("aapl", market="JP")
+
+    mock_repo.remove.assert_awaited_once_with("aapl", market="JP")
+
+
+async def test_is_favorite_of_a_blank_code_asks_the_repository_once(service, mock_repo):
+    """빈 코드는 정규화 결과도 빈 문자열이라 재조회 없이 한 번만 묻는다."""
+    assert await service.is_favorite("") is False
+    mock_repo.is_favorite.assert_awaited_once_with("", market=MARKET_DOMESTIC)
+
+
+async def test_is_favorite_overseas_checks_the_normalized_symbol_first(service, mock_repo):
+    mock_repo.is_favorite = AsyncMock(return_value=True)
+
+    assert await service.is_favorite("aapl", market=MARKET_OVERSEAS_US) is True
+    mock_repo.is_favorite.assert_awaited_once_with("AAPL", market=MARKET_OVERSEAS_US)
+
+
+async def test_is_favorite_overseas_falls_back_to_the_stored_raw_symbol(service, mock_repo):
+    mock_repo.is_favorite = AsyncMock(side_effect=[False, True])
+
+    assert await service.is_favorite("aapl", market=MARKET_OVERSEAS_US) is True
+    assert [c.args[0] for c in mock_repo.is_favorite.await_args_list] == ["AAPL", "aapl"]
+
+
+async def test_is_favorite_overseas_returns_false_when_the_symbol_is_already_normalized(
+    service, mock_repo
+):
+    mock_repo.is_favorite = AsyncMock(return_value=False)
+
+    assert await service.is_favorite("AAPL", market=MARKET_OVERSEAS_US) is False
+    assert mock_repo.is_favorite.await_count == 1
+
+
+async def test_is_favorite_other_markets_pass_the_code_through(service, mock_repo):
+    await service.is_favorite("aapl", market="JP")
+
+    mock_repo.is_favorite.assert_awaited_once_with("aapl", market="JP")
+
+
+# --- 스냅샷 거래일 추출 -----------------------------------------------------
+
+
+def test_snapshot_trade_date_reads_the_explicit_field_first():
+    from services.favorite_service import _snapshot_trade_date
+
+    assert _snapshot_trade_date({"_trade_date": "20260801"}) == "20260801"
+
+
+def test_snapshot_trade_date_reads_the_output_payload():
+    from services.favorite_service import _snapshot_trade_date
+
+    assert _snapshot_trade_date({"output": {"stck_bsop_date": "20260801"}}) == "20260801"
+    assert _snapshot_trade_date({"output": DummyOutput("1", "2")}) == ""
+
+
+def test_snapshot_trade_date_is_blank_for_non_dict_snapshots():
+    from services.favorite_service import _snapshot_trade_date
+
+    assert _snapshot_trade_date(None) == ""
+    assert _snapshot_trade_date("스냅샷 아님") == ""
+
+
+def test_domestic_code_normalizer_only_pads_short_numeric_codes():
+    from services.favorite_service import _normalize_domestic_code
+
+    assert _normalize_domestic_code("5930") == "005930"
+    assert _normalize_domestic_code("005930") == "005930"
+    assert _normalize_domestic_code("AAPL") == "AAPL"
+    assert _normalize_domestic_code("1234567") == "1234567"

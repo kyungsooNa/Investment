@@ -51,3 +51,14 @@ def test_filters_nonpositive_and_none_then_recounts():
 def test_invalid_lookback_raises():
     with pytest.raises(ValueError):
         annualized_return_std([100.0, 101.0], lookback=1)
+
+
+def test_non_numeric_closes_are_dropped_before_the_lookback_check():
+    """문자열/객체처럼 float 변환이 실패하는 값은 표본에서 제외한다."""
+    closes = [100.0, "가격없음", 101.0, object(), 102.0]
+
+    # 유효 종가 3개 뿐이라 lookback+1 을 채우지 못한다.
+    assert annualized_return_std(closes, lookback=3) is None
+
+    padded = [100.0, "가격없음", 101.0, object(), 102.0, 103.0]
+    assert annualized_return_std(padded, lookback=3) is not None

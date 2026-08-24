@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from view.web.bootstrap.repository_bootstrap import RepositoryBootstrap
 
 
@@ -20,3 +22,20 @@ def test_repository_bootstrap_builds_profiler_cache_and_stock_repository():
     assert ctx.pm is profiler.return_value
     assert ctx.stock_repository is stock_repository.return_value
     assert result is cache_store.return_value
+
+
+def test_cache_store_failure_is_logged_as_critical_and_reraised():
+    ctx = SimpleNamespace(logger=MagicMock(), pm=None, stock_repository=None)
+    bootstrap = RepositoryBootstrap(ctx)
+
+    with patch(
+        "view.web.bootstrap.repository_bootstrap.CacheStore",
+        side_effect=RuntimeError("캐시 초기화 실패"),
+    ):
+        with pytest.raises(RuntimeError, match="캐시 초기화 실패"):
+            bootstrap.run({})
+
+    ctx.logger.critical.assert_called_once()
+    assert "초기화 실패" in ctx.logger.critical.call_args.args[0]
+    # 프로파일러는 예외 전에 이미 붙어 있어야 한다.
+    assert ctx.pm is not None

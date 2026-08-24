@@ -190,3 +190,78 @@ async def test_scan_can_skip_shadow_journal_recording(svc):
 
     assert len(signals) == 1
     svc.journal.record.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scan_skips_when_history_is_too_short(svc):
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(_osb_bars()[-10:]))
+
+    assert await svc.service.scan_dry_run() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("current_close, current_volume", [(0.0, 220_000), (122.0, 0)])
+async def test_scan_skips_when_current_bar_has_no_price_or_volume(
+    svc, current_close, current_volume
+):
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(
+        _osb_bars(current_close=current_close, current_volume=current_volume)
+    ))
+
+    assert await svc.service.scan_dry_run() == []
+
+
+@pytest.mark.asyncio
+async def test_scan_skips_when_history_contains_non_positive_closes(svc):
+    bars = _osb_bars()
+    bars[-5]["close"] = 0.0
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))
+
+    assert await svc.service.scan_dry_run() == []
+
+
+@pytest.mark.asyncio
+async def test_scan_skips_when_price_extends_far_past_the_breakout_level(svc):
+    """돌파는 했지만 max_extension_pct 를 넘겨 추격 매수가 되는 구간은 거른다."""
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(
+        _osb_bars(current_close=200.0)
+    ))
+
+    assert await svc.service.scan_dry_run() == []
+
+
+@pytest.mark.asyncio
+async def test_scan_skips_when_history_volume_is_missing(svc):
+    bars = _osb_bars()
+    for bar in bars[-6:-1]:
+        bar["volume"] = 0
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))
+
+    assert await svc.service.scan_dry_run() == []
+
+
+def test_bollinger_width_is_zero_without_positive_values():
+    from services.overseas_squeeze_breakout_dryrun_service import (
+        OverseasSqueezeBreakoutDryRunService as Svc,
+    )
+
+    assert Svc._bb_width([]) == 0.0
+    assert Svc._bb_width([0.0, -1.0]) == 0.0
+    assert Svc._bb_width([100.0, 110.0, 90.0]) > 0.0
+
+
+@pytest.mark.asyncio
+async def test_scan_skips_when_the_band_is_not_compressed(svc):
+    """직전 구간 대비 밴드가 좁아지지 않았으면(스퀴즈 아님) 돌파해도 진입하지 않는다."""
+    bars = []
+    # 앞 20봉: 매우 좁은 밴드 → 이후 구간의 최소 폭 기준을 낮게 만든다.
+    for i in range(20):
+        bars.append(_bar(f"202604{i + 1:02d}", 100.0, 120.0, 99.0, 100.0, 100_000))
+    # 뒤 20봉: 크게 흔들려 현재 밴드 폭이 최소 폭을 훌쩍 넘는다.
+    for i in range(20):
+        close = 90.0 if i % 2 == 0 else 130.0
+        bars.append(_bar(f"202605{i + 1:02d}", close, 131.0, 89.0, close, 100_000))
+    bars.append(_bar("20260610", 119.0, 123.0, 118.0, 122.0, 220_000))
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(bars))
+
+    assert await svc.service.scan_dry_run() == []

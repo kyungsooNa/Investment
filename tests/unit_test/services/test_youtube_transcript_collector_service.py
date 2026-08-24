@@ -353,3 +353,90 @@ def test_default_fetcher_passes_generic_proxy_to_transcript_api(monkeypatch):
         "http_url": "http://user:pass@proxy.example:8080",
         "https_url": "http://user:pass@proxy.example:8080",
     }
+
+
+async def test_get_opens_its_own_http_client_when_none_is_injected(monkeypatch):
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url, headers=None):
+            return _FakeResponse("<html>본문</html>")
+
+    monkeypatch.setattr(
+        "services.youtube_transcript_collector_service.httpx.AsyncClient", _Client
+    )
+    svc = YoutubeTranscriptCollectorService(request_interval_sec=0)
+
+    assert await svc._get("https://example") == "<html>본문</html>"
+
+
+async def test_resolve_channel_rejects_input_without_a_handle():
+    svc = _service({})
+
+    assert await svc.resolve_channel("https://youtube.com/watch?v=v1") is None
+    assert await svc.resolve_channel("") is None
+
+
+async def test_resolve_channel_returns_none_when_the_page_request_fails():
+    svc = _service({"https://www.youtube.com/@": _FakeResponse("", status_code=503)})
+
+    assert await svc.resolve_channel("@테스트채널") is None
+
+
+def test_default_fetcher_is_none_when_the_library_is_not_installed(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name.startswith("youtube_transcript_api"):
+            raise ImportError("미설치")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+    svc = YoutubeTranscriptCollectorService(request_interval_sec=0)
+
+    assert svc._load_default_fetcher() is None
+
+
+async def test_blocked_exception_names_are_reported_as_a_block():
+    class IpBlocked(Exception):
+        pass
+
+    from services import youtube_transcript_collector_service as module
+
+    def _fetcher(video_id, languages):
+        raise IpBlocked("요청 차단")
+
+    svc = _service({}, fetcher=_fetcher)
+    module._BLOCKED_EXCEPTIONS = set(module._BLOCKED_EXCEPTIONS) | {"IpBlocked"}
+    try:
+        with pytest.raises(TranscriptBlocked):
+            await svc.fetch_transcript("v1")
+    finally:
+        module._BLOCKED_EXCEPTIONS = {
+            n for n in module._BLOCKED_EXCEPTIONS if n != "IpBlocked"
+        }
+
+
+async def test_other_exceptions_are_reported_as_unavailable():
+    def _fetcher(video_id, languages):
+        raise RuntimeError("일시 오류")
+
+    svc = _service({}, fetcher=_fetcher)
+
+    with pytest.raises(TranscriptUnavailable):
+        await svc.fetch_transcript("v1")
+
+
+async def test_channels_without_an_id_are_skipped():
+    svc = _service({})
+
+    assert await svc.collect([{"title": "채널ID 없음"}]) == []

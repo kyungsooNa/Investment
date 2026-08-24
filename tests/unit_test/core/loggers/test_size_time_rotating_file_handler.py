@@ -177,3 +177,58 @@ def test_sort_backup_files_with_invalid_suffix(tmp_path):
     assert not (tmp_path / "test_sort_1a.log").exists()
     assert not (tmp_path / "test_sort_1.log").exists()
     assert (tmp_path / "test_sort_2.log").exists()
+
+
+def test_append_to_latest_reuses_the_newest_file_under_the_size_cap(tmp_path):
+    log_file = tmp_path / "app.log"
+    latest = tmp_path / "app_2.log"
+    latest.write_text("작은 로그", encoding="utf-8")
+
+    handler = SizeTimeRotatingFileHandler(
+        str(log_file), maxBytes=1_000_000, append_to_latest=True
+    )
+    try:
+        assert handler.baseFilename.endswith("app_2.log")
+    finally:
+        handler.close()
+
+
+def test_append_to_latest_starts_a_new_file_once_the_cap_is_exceeded(tmp_path):
+    log_file = tmp_path / "app.log"
+    (tmp_path / "app_2.log").write_text("x" * 200, encoding="utf-8")
+
+    handler = SizeTimeRotatingFileHandler(
+        str(log_file), maxBytes=100, append_to_latest=True
+    )
+    try:
+        assert handler.baseFilename.endswith("app_3.log")
+    finally:
+        handler.close()
+
+
+def test_append_to_latest_treats_an_unreadable_latest_file_as_empty(tmp_path, monkeypatch):
+    log_file = tmp_path / "app.log"
+    (tmp_path / "app_2.log").touch()
+    monkeypatch.setattr(
+        "core.loggers.size_time_rotating_file_handler.os.path.getsize",
+        lambda _path: (_ for _ in ()).throw(OSError("stat 실패")),
+    )
+
+    handler = SizeTimeRotatingFileHandler(
+        str(log_file), maxBytes=100, append_to_latest=True
+    )
+    try:
+        assert handler.baseFilename.endswith("app_2.log")
+    finally:
+        handler.close()
+
+
+def test_append_to_latest_without_size_cap_always_reuses_the_newest_file(tmp_path):
+    log_file = tmp_path / "app.log"
+    (tmp_path / "app_2.log").write_text("x" * 5000, encoding="utf-8")
+
+    handler = SizeTimeRotatingFileHandler(str(log_file), maxBytes=0, append_to_latest=True)
+    try:
+        assert handler.baseFilename.endswith("app_2.log")
+    finally:
+        handler.close()

@@ -194,3 +194,72 @@ async def test_momentum_strategy_backtest_no_lookup_raises():
 
     with pytest.raises(ValueError):
         await strategy.run(["035420"])
+
+
+@pytest.mark.asyncio
+async def test_run_skips_codes_without_a_price_summary():
+    broker = AsyncMock()
+    broker.get_price_summary = AsyncMock(return_value=None)
+    logger = MagicMock()
+    strategy = MomentumStrategy(
+        broker=broker, min_change_rate=10.0, min_follow_through=3.0,
+        min_follow_through_time=10, mode="live", logger=logger,
+    )
+
+    result = await strategy.run(["005930"])
+
+    assert result["follow_through"] == []
+    assert result["not_follow_through"] == []
+    logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_skips_codes_whose_summary_has_no_payload():
+    broker = AsyncMock()
+    broker.get_price_summary = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="정상", data=None)
+    )
+    logger = MagicMock()
+    strategy = MomentumStrategy(
+        broker=broker, min_change_rate=10.0, min_follow_through=3.0,
+        min_follow_through_time=10, mode="live", logger=logger,
+    )
+
+    result = await strategy.run(["005930"])
+
+    assert result["follow_through"] == []
+    logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_backtest_lookup_returning_none_is_replaced_with_zero():
+    broker = AsyncMock()
+    broker.get_price_summary = AsyncMock(return_value=ResCommonResponse(
+        rt_cd="0", msg1="정상",
+        data={"symbol": "005930", "open": 10000, "current": 11000, "change_rate": 10.0},
+    ))
+    broker.get_name_by_code = AsyncMock(return_value="삼성전자")
+    logger = MagicMock()
+    strategy = MomentumStrategy(
+        broker=broker, min_change_rate=10.0, min_follow_through=3.0,
+        min_follow_through_time=10, mode="backtest",
+        backtest_lookup=lambda code, data, minutes: None,
+        logger=logger,
+    )
+
+    result = await strategy.run(["005930"])
+
+    assert result["not_follow_through"][0]["code"] == "005930"
+    assert logger.warning.called
+
+
+def test_target_date_is_taken_from_the_first_parsable_signal_time():
+    from strategies.momentum_strategy import _target_date_from_records
+
+    assert _target_date_from_records([
+        {"signal_time": ""},
+        {"signal_time": "날짜아님"},
+        {"signal_time": "2026-05-01 09:30:00"},
+    ]) == "20260501"
+    assert _target_date_from_records([]) == ""
+    assert _target_date_from_records([{"signal_time": None}]) == ""

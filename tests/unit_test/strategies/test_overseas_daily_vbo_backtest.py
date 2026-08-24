@@ -176,3 +176,67 @@ async def test_run_backtest_fetches_via_overseas_adapter_and_aggregates():
     assert kwargs.get("exchange") == OverseasExchange.NASD
     assert res["summary"]["total_trades"] == 1
     assert res["per_symbol"]["AAPL"]["summary"]["total_trades"] == 1
+
+
+def test_bars_without_prior_range_or_open_are_skipped():
+    bt = OverseasDailyVBOBacktest(k_value=0.5)
+    bars = [
+        _bar("20260510", 100, 100, 100, 100),   # 전일 range 0
+        _bar("20260511", 100, 130, 90, 120),
+        _bar("20260512", 0, 130, 90, 120),      # 당일 시가 0
+    ]
+
+    assert bt.run_symbol(bars)["trades"] == []
+
+
+def test_non_dict_bars_are_ignored():
+    bt = OverseasDailyVBOBacktest(k_value=0.5)
+
+    assert bt.run_symbol(["행 아님", None, 7])["trades"] == []
+    assert bt.run_symbol(None)["trades"] == []
+
+
+@pytest.mark.asyncio
+async def test_run_backtest_skips_symbols_whose_fetch_raises():
+    bt = OverseasDailyVBOBacktest(k_value=0.5, stop_loss_pct=-3.0, round_trip_cost_pct=0.0)
+    bt._logger = MagicMock()
+    sqs = MagicMock()
+    sqs.get_ohlcv_range = AsyncMock(side_effect=RuntimeError("해외 조회 실패"))
+
+    res = await bt.run_backtest(
+        sqs, symbols=["AAPL"], exchange=OverseasExchange.NASD,
+        start_date="20260501", end_date="20260512",
+    )
+
+    assert res["per_symbol"] == {}
+    assert res["trades"] == []
+    bt._logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        None,
+        ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="fail", data=None),
+        ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=[]),
+    ],
+)
+async def test_run_backtest_skips_symbols_with_unusable_responses(response):
+    bt = OverseasDailyVBOBacktest(k_value=0.5)
+    sqs = MagicMock()
+    sqs.get_ohlcv_range = AsyncMock(return_value=response)
+
+    res = await bt.run_backtest(
+        sqs, symbols=["AAPL"], exchange=OverseasExchange.NASD,
+        start_date="20260501", end_date="20260512",
+    )
+
+    assert res["per_symbol"] == {}
+
+
+def test_float_coercion_defaults_to_zero():
+    assert OverseasDailyVBOBacktest._f(None) == 0.0
+    assert OverseasDailyVBOBacktest._f("120") == 120.0
+    assert OverseasDailyVBOBacktest._f("가격") == 0.0
+    assert OverseasDailyVBOBacktest._f(object()) == 0.0

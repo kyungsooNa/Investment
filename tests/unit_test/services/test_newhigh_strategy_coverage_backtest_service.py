@@ -141,3 +141,85 @@ async def test_run_skips_paper_mode():
     assert result.skipped is True
     assert result.skip_reason == "historical_intraday_unavailable_in_paper"
     repo.save_run.assert_not_called()
+
+
+def test_debug_runner_factory_is_required():
+    """조립 루트가 러너를 넘기지 않으면 조용히 도는 대신 즉시 실패한다."""
+    with pytest.raises(ValueError, match="debug_runner_factory"):
+        NewHighStrategyCoverageBacktestService(
+            stock_repository=MagicMock(),
+            stock_query_service=AsyncMock(),
+            universe_service=MagicMock(),
+            indicator_service=MagicMock(),
+            market_clock=MarketClock(),
+            backtest_journal_repository=MagicMock(),
+            debug_runner_factory=None,
+            env=SimpleNamespace(is_paper_trading=False),
+            logger=MagicMock(),
+        )
+
+
+def test_extract_codes_normalizes_dedupes_and_drops_blanks():
+    from services.newhigh_strategy_coverage_backtest_service import _extract_codes
+
+    assert _extract_codes(None) == []
+    assert _extract_codes([
+        {"code": "5930"},
+        {"code": "005930"},   # 위와 같은 종목 → 중복 제거
+        {"code": ""},
+        "660",
+        None,
+    ]) == ["005930", "000660"]
+
+
+def test_normalize_code_zero_fills_only_short_numeric_codes():
+    from services.newhigh_strategy_coverage_backtest_service import _normalize_code
+
+    assert _normalize_code("5930") == "005930"
+    assert _normalize_code("005930") == "005930"
+    assert _normalize_code("AAPL") == "AAPL"
+    assert _normalize_code(None) == ""
+
+
+@pytest.mark.parametrize(
+    "record, expected",
+    [
+        ({"metadata": {"newhigh_coverage_status": "custom"}}, "custom"),
+        ({"status": "SIGNAL"}, "bought"),
+        ({"side": "buy"}, "bought"),
+        ({"rejected_reason": "data_unavailable: ohlcv"}, "data_unavailable"),
+        ({"rejected_reason": "missing_from_universe"}, "missing_from_universe"),
+        ({"rejected_reason": "no_signal"}, "no_signal"),
+        ({"rejected_reason": "기타 사유"}, "rejected"),
+        ({}, "rejected"),
+    ],
+)
+def test_coverage_status_classification(record, expected):
+    from services.newhigh_strategy_coverage_backtest_service import _coverage_status
+
+    assert _coverage_status(record) == expected
+
+
+@pytest.mark.asyncio
+async def test_records_outside_the_candidate_set_are_dropped():
+    """후보에 없는 코드가 저널에 섞여 와도 커버리지 집계에 넣지 않는다."""
+    service, _, _ = _make_service()
+
+    annotated = service._annotate_and_fill_records(
+        records=[{"code": "999999", "status": "SIGNAL"}, {"code": "005930", "status": "SIGNAL"}],
+        candidate_codes=["005930"],
+        strategy_key="newhigh",
+        strategy_name="신고가",
+        signal_time="2026-05-12 09:00:00",
+        target_date="20260512",
+    )
+
+    assert [r["code"] for r in annotated] == ["005930"]
+
+
+def test_paper_mode_probe_reads_the_env_flag():
+    service, _, _ = _make_service(env=SimpleNamespace(is_paper_trading=True))
+    assert service._is_paper_mode() is True
+
+    service, _, _ = _make_service(env=SimpleNamespace())
+    assert service._is_paper_mode() is False
