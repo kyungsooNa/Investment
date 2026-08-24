@@ -538,3 +538,92 @@ async def test_get_with_details_uses_daily_snapshot_of_latest_trading_date(
 
     assert result[0]["price"] == "71000"
     assert result[0]["rate"] == "1.2"
+
+
+def _mcs(latest_trading_date="20260821", market_open=False):
+    mcs = MagicMock()
+    mcs.get_latest_trading_date = AsyncMock(return_value=latest_trading_date)
+    mcs.is_market_open_now = AsyncMock(return_value=market_open)
+    return mcs
+
+
+async def test_get_with_details_prefers_daily_snapshot_when_market_closed(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    """장 시작 전·비거래일에는 라이브 0.00% 대신 직전 세션 일봉 등락률을 쓴다."""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_query = AsyncMock()
+    # 장전 KIS 현재가 API 응답: 전일 종가 + 등락률 0.00
+    mock_query.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="성공", data={"output": {"stck_prpr": "71000", "prdy_ctrt": "0.00"}}
+    )
+    mock_stock_repo.get_latest_daily_snapshot.return_value = {
+        "output": {"stck_prpr": "71000", "prdy_ctrt": "4.03"},
+        "_trade_date": "20260821",
+    }
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_query_service=mock_query,
+        stock_repository=mock_stock_repo,
+        market_calendar_service=_mcs(market_open=False),
+    )
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] == "71000"
+    assert result[0]["rate"] == "4.03"
+    mock_query.get_current_price.assert_not_called()
+
+
+async def test_get_with_details_prefers_live_price_while_market_open(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    """장중에는 일봉 스냅샷이 있어도 라이브 현재가를 우선한다."""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_query = AsyncMock()
+    mock_query.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="성공", data={"output": {"stck_prpr": "72500", "prdy_ctrt": "2.11"}}
+    )
+    mock_stock_repo.get_latest_daily_snapshot.return_value = {
+        "output": {"stck_prpr": "71000", "prdy_ctrt": "4.03"},
+        "_trade_date": "20260821",
+    }
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_query_service=mock_query,
+        stock_repository=mock_stock_repo,
+        market_calendar_service=_mcs(market_open=True),
+    )
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] == "72500"
+    assert result[0]["rate"] == "2.11"
+    mock_stock_repo.get_latest_daily_snapshot.assert_not_called()
+
+
+async def test_get_with_details_falls_back_to_live_when_market_closed_and_no_snapshot(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    """장이 닫혀 있어도 최근 거래일 스냅샷이 없으면 라이브 값으로 폴백한다."""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_query = AsyncMock()
+    mock_query.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="성공", data={"output": {"stck_prpr": "71000", "prdy_ctrt": "0.00"}}
+    )
+    mock_stock_repo.get_latest_daily_snapshot.return_value = None
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_query_service=mock_query,
+        stock_repository=mock_stock_repo,
+        market_calendar_service=_mcs(market_open=False),
+    )
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] == "71000"
+    assert result[0]["rate"] == "0.00"
+    mock_query.get_current_price.assert_called_once()
