@@ -186,6 +186,48 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         signals = await strategy.scan()
         self.assertEqual(signals, [])
 
+    async def test_scan_rejects_entry_too_far_above_target(self):
+        """목표가 대비 추격 폭이 2%를 초과하면 BUY 신호 없음."""
+        strategy, sqs, _ = self._make_strategy(k_value=0.5, max_entry_extension_pct=2.0)
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        strategy._load_pool_b = AsyncMock(return_value=[{
+            "code": "005930", "name": "삼성전자", "market": "",
+            "market_cap": 500_000_000_000, "avg_5d_tv": 50_000_000_000,
+        }])
+        # Range=2000, Target=71000, current=72500 → 목표가 대비 +2.11%
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=72500, open_price=70000,
+            pgtr_ntby_qty=700_000, acml_tr_pbmn=50_000_000_000,
+        )
+        sqs.get_stock_conclusion.return_value = _conclusion_resp(130.0)
+
+        signals = await strategy.scan()
+
+        self.assertEqual(signals, [])
+        sqs.get_stock_conclusion.assert_not_awaited()
+
+    async def test_scan_allows_entry_within_target_extension(self):
+        """목표가 대비 추격 폭이 2% 이하면 기존 VBO BUY 신호를 유지한다."""
+        strategy, sqs, _ = self._make_strategy(k_value=0.5, max_entry_extension_pct=2.0)
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
+        strategy._load_pool_b = AsyncMock(return_value=[{
+            "code": "005930", "name": "삼성전자", "market": "",
+            "market_cap": 500_000_000_000, "avg_5d_tv": 50_000_000_000,
+        }])
+        # Range=2000, Target=71000, current=72400 → 목표가 대비 +1.97%
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=72400, open_price=70000,
+            pgtr_ntby_qty=700_000, acml_tr_pbmn=50_000_000_000,
+        )
+        sqs.get_stock_conclusion.return_value = _conclusion_resp(130.0)
+
+        signals = await strategy.scan()
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].code, "005930")
+
     async def test_scan_uses_intraday_open_fallback_when_current_price_open_is_zero(self):
         """상세 현재가의 시가가 0이면 당일 첫 분봉 시가로 VBO 타깃을 계산한다."""
         strategy, sqs, _ = self._make_strategy(now_time=_kst(10, 0), k_value=0.5)

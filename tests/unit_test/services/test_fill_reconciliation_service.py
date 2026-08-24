@@ -259,6 +259,52 @@ async def test_strategy_final_notification_labels_average_fill_price_and_total_a
 
 
 @pytest.mark.asyncio
+async def test_strategy_final_notification_does_not_display_overfilled_ratio(
+    broker, fsm, reporter, fixed_now
+):
+    notification = AsyncMock()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        notification_service=notification,
+    )
+    ctx = fsm.register(_make_context(
+        order_key="KRX:011200:BUY",
+        stock_code="011200",
+        side=OrderSide.BUY,
+        source="strategy:래리윌리엄스VBO",
+        price=22550,
+        qty=88,
+        strategy_notification={
+            "strategy_name": "래리윌리엄스VBO",
+            "stock_name": "HMM",
+            "code": "011200",
+            "action": "BUY",
+            "price": 22550,
+            "qty": 88,
+            "reason": "VBO돌파",
+        },
+    ))
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED, broker_order_no="B0001")
+
+    await svc.apply_execution_report(OrderExecutionReport(
+        broker_order_no="B0001", stock_code="011200", side=OrderSide.BUY,
+        fill_qty=89, fill_price=22550, cumulative_filled_qty=89, remaining_qty=0,
+    ))
+
+    notification.emit.assert_awaited_once()
+    args, kwargs = notification.emit.await_args
+    message = args[3]
+    assert "주문: 22,550원 × 89주" in message
+    assert "평균체결가: 22,550원 × 89/89주" in message
+    assert "89/88주" not in message
+    assert kwargs["metadata"]["qty"] == 89
+    assert kwargs["metadata"]["requested_qty"] == 88
+
+
+@pytest.mark.asyncio
 async def test_apply_execution_report_rejected_emits_failure_notification(
     broker, fsm, reporter, fixed_now
 ):

@@ -285,6 +285,7 @@ class FillReconciliationService:
             stock_name = strategy_notification.get("stock_name") or context.stock_code
             requested_price = strategy_notification.get("price") or context.price
             requested_qty = strategy_notification.get("qty") or context.qty
+            display_order_qty = self._display_order_qty(context, requested_qty)
             reason = strategy_notification.get("reason") or ""
             if context.side == OrderSide.SELL:
                 actual_return_rate = self._calculate_return_rate(
@@ -300,7 +301,7 @@ class FillReconciliationService:
             if context.state == OrderState.FILLED:
                 level = NotificationLevel.CRITICAL
                 title = f"[{strategy_name}] {stock_name} {side_label} 체결 완료"
-                status_line = f"상태: 체결 완료({context.filled_qty}/{context.qty}주)"
+                status_line = f"상태: 체결 완료({context.filled_qty}/{display_order_qty}주)"
             else:
                 level = NotificationLevel.ERROR
                 title = f"[{strategy_name}] {stock_name} {side_label} 실패"
@@ -310,8 +311,8 @@ class FillReconciliationService:
             fill_total_text = self._format_fill_total_won(context, displayed_fill_price)
             message = (
                 f"종목: {stock_name}({context.stock_code})\n"
-                f"주문: {requested_price_text} × {requested_qty}주\n"
-                f"평균체결가: {fill_price_text} × {context.filled_qty}/{context.qty}주\n"
+                f"주문: {requested_price_text} × {display_order_qty}주\n"
+                f"평균체결가: {fill_price_text} × {context.filled_qty}/{display_order_qty}주\n"
                 f"총체결금액: {fill_total_text}\n"
                 f"사유: {reason}\n"
                 f"{status_line}"
@@ -319,6 +320,8 @@ class FillReconciliationService:
             if context.state != OrderState.FILLED and metadata.get("reason"):
                 message = f"{message}\n실패: {metadata['reason']}"
             metadata.update(strategy_notification)
+            metadata["requested_qty"] = requested_qty
+            metadata["qty"] = display_order_qty
 
         try:
             await self._notification_service.emit(
@@ -331,6 +334,16 @@ class FillReconciliationService:
             self._terminal_notification_sent.add(dedup_key)
         except Exception as exc:  # noqa: BLE001 - 알림 실패가 주문 상태 반영을 막지 않도록 격리
             self.logger.warning(f"주문 terminal 알림 발행 실패: {exc}")
+
+    @staticmethod
+    def _display_order_qty(context: OrderContext, requested_qty) -> int:
+        try:
+            requested = int(requested_qty or 0)
+        except (TypeError, ValueError):
+            requested = 0
+        if context.state == OrderState.FILLED:
+            return max(context.qty, context.filled_qty, requested)
+        return max(context.qty, requested)
 
     # ── 가상매매 영구 기록 (terminal report 시) ──────────────────────
     async def _persist_virtual_trade_for_terminal_report(
