@@ -13,9 +13,53 @@ class UpdateMaxPositionsRequest(BaseModel):
     max_positions: int
 
 
+_MARKET_TASK_DEFINITIONS = (
+    {
+        "name": "overseas_intraday_vbo",
+        "display_name": "미국장 장중 VBO",
+        "market": "overseas_us",
+        "market_label": "미국장",
+        "mode": "paper",
+        "live_trading": False,
+    },
+    {
+        "name": "overseas_dryrun",
+        "display_name": "미국장 마감 후 Dry-run",
+        "market": "overseas_us",
+        "market_label": "미국장",
+        "mode": "dry-run",
+        "live_trading": False,
+    },
+)
+
+
 def _save_scheduler_state_later(ctx) -> None:
     """상태 저장은 응답 경로를 막지 않도록 백그라운드에서 수행한다."""
     asyncio.create_task(asyncio.to_thread(ctx.scheduler._save_scheduler_state))
+
+
+def _market_task_status(ctx) -> list[dict]:
+    """StrategyScheduler 밖에서 도는 시장별 전략성 태스크를 상태 API에 노출한다."""
+    background_scheduler = getattr(ctx, "background_scheduler", None)
+    if background_scheduler is None:
+        return []
+
+    items = []
+    for definition in _MARKET_TASK_DEFINITIONS:
+        task = background_scheduler.get_task(definition["name"])
+        if task is None:
+            continue
+        state = getattr(task, "state", None)
+        state_value = getattr(state, "value", state)
+        progress = task.get_progress() if hasattr(task, "get_progress") else {}
+        items.append({
+            **definition,
+            "state": state_value,
+            "running": state_value == "running" or bool(progress.get("running")),
+            "priority": int(getattr(task, "priority", 0)),
+            "progress": progress,
+        })
+    return items
 
 
 @router.get("/scheduler/status")
@@ -23,9 +67,14 @@ async def get_scheduler_status():
     """스케줄러 상태 조회."""
     ctx = _get_ctx()
     if not ctx.scheduler:
-        return {"running": False, "strategies": []}
+        return {
+            "running": False,
+            "strategies": [],
+            "market_tasks": _market_task_status(ctx),
+        }
     
     status = await asyncio.to_thread(ctx.scheduler.get_status)
+    status["market_tasks"] = _market_task_status(ctx)
     
     # [BugFix] 보유 종목명 보정
     mapper = getattr(ctx, 'stock_code_repository', None)

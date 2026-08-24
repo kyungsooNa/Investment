@@ -72,16 +72,25 @@ function renderSchedulerStatus(data) {
     const info = document.getElementById('scheduler-info');
     const strategiesDiv = document.getElementById('scheduler-strategies');
 
+    const marketTasks = data.market_tasks || [];
+    const hasRunningMarketTask = marketTasks.some(task => task.running || task.state === 'running');
+
     if (data.running) {
         badge.textContent = '실행 중';
+        badge.className = 'badge open';
+    } else if (hasRunningMarketTask) {
+        badge.textContent = '시장 태스크 실행';
         badge.className = 'badge open';
     } else {
         badge.textContent = '정지';
         badge.className = 'badge closed';
     }
 
-    const dryLabel = data.dry_run ? 'dry-run: CSV만 기록' : '실제 주문 실행';
+    const dryLabel = data.running
+        ? (data.dry_run ? '국내 자동전략 dry-run: CSV만 기록' : '국내 자동전략 실제 주문 실행')
+        : '국내 자동전략 정지';
     info.textContent = dryLabel;
+    renderMarketTasks(marketTasks);
 
     if (!data.strategies || data.strategies.length === 0) {
         strategiesDiv.innerHTML = '<div class="card"><span>등록된 전략이 없습니다.</span></div>';
@@ -131,6 +140,47 @@ function renderSchedulerStatus(data) {
             ${holdingsHtml}
             <div style="margin-top:8px;color:var(--text-secondary);font-size:0.9em;">
                 실행 주기: ${s.interval_minutes}분 | 마지막 실행: ${s.last_run || '-'}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function renderMarketTasks(tasks) {
+    const marketTasksDiv = document.getElementById('scheduler-market-tasks');
+    if (!marketTasksDiv) return;
+
+    if (!tasks || tasks.length === 0) {
+        marketTasksDiv.innerHTML = '<div class="card"><span>등록된 시장별 백그라운드 전략이 없습니다.</span></div>';
+        return;
+    }
+
+    marketTasksDiv.innerHTML = tasks.map(task => {
+        const running = task.running || task.state === 'running';
+        const stateBadge = running
+            ? '<span class="badge open">실행 중</span>'
+            : '<span class="badge closed">대기</span>';
+        const modeBadge = task.live_trading
+            ? '<span class="badge closed">실주문</span>'
+            : '<span class="badge paper">관찰/Paper</span>';
+        const progress = task.progress || {};
+        const watchCount = progress.watch_count ?? progress.watch ?? progress.candidates;
+        const progressText = watchCount != null
+            ? `감시 ${Number(watchCount).toLocaleString()}개`
+            : `상태 ${escapeHtml(task.state || '-')}`;
+
+        return `
+        <div class="card" style="margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <h3 style="margin:0;color:var(--text-primary);">${escapeHtml(task.display_name || task.name)}</h3>
+                    <span class="badge paper">${escapeHtml(task.market_label || task.market || '시장')}</span>
+                    ${stateBadge}
+                    ${modeBadge}
+                </div>
+                <span class="badge paper">${escapeHtml(task.mode || 'background')}</span>
+            </div>
+            <div style="margin-top:8px;color:var(--text-secondary);font-size:0.9em;">
+                ${progressText} | 실주문 자동매매: ${task.live_trading ? '허용' : '잠금'}
             </div>
         </div>`;
     }).join('');

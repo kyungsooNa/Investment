@@ -12,8 +12,11 @@
             </div>
         </div>
 
-        <h3 style="margin:16px 0 8px; color:var(--text-primary);">등록된 전략</h3>
+        <h3 style="margin:16px 0 8px; color:var(--text-primary);">국내 자동전략</h3>
         <div id="scheduler-strategies"></div>
+
+        <h3 style="margin:16px 0 8px; color:var(--text-primary);">시장별 백그라운드 전략</h3>
+        <div id="scheduler-market-tasks"></div>
 
         <h3 style="margin:24px 0 8px; color:var(--text-primary);">시그널 실행 이력</h3>
         <div id="scheduler-history-tabs" class="sub-nav-container" style="margin-bottom:12px;"></div>
@@ -39,7 +42,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/scheduler.js?v=6"></script>
+<script src="/static/js/scheduler.js?v=7"></script>
 <script>
     loadSchedulerStatus();
 </script>
