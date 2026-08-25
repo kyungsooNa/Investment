@@ -730,6 +730,19 @@ def get_subscription_status():
                 else:
                     received_at = price_info.get("received_at")
                 price = price_info.get("price")
+            is_manual_pt = pt_sources.get(code) == "manual"
+            if price_source == "websocket":
+                alert_status = "live_price"
+                alert_status_label = "실시간 평가"
+            elif price_source == "rest_snapshot":
+                alert_status = "rest_snapshot"
+                alert_status_label = "REST 스냅샷"
+            elif is_manual_pt:
+                alert_status = "manual_pt_rest_recovery"
+                alert_status_label = "수동 PT REST 보강"
+            else:
+                alert_status = "waiting_price"
+                alert_status_label = "가격 대기"
             result.append({
                 "code": code,
                 "name": name,
@@ -739,6 +752,8 @@ def get_subscription_status():
                 "price": price,
                 "price_source": price_source,
                 "pt_source": pt_sources.get(code),
+                "alert_status": alert_status,
+                "alert_status_label": alert_status_label,
             })
         return result
 

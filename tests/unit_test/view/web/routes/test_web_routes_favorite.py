@@ -84,7 +84,7 @@ async def test_add_favorite_syncs_alert_cache_and_price_subscription(web_client,
         mock_web_ctx.price_subscription_service.add_subscription.assert_awaited_once()
         args = mock_web_ctx.price_subscription_service.add_subscription.await_args.args
         assert args[0] == "005930"
-        assert args[1] == SubscriptionPriority.MEDIUM
+        assert args[1] == SubscriptionPriority.HIGH
         assert args[2] == "favorite"
 
 
@@ -106,7 +106,7 @@ async def test_add_favorite_unpadded_domestic_code_subscribes_padded_code(web_cl
         mock_web_ctx.favorite_price_alert_service.add_favorite.assert_awaited_once_with("005930")
         args = mock_web_ctx.price_subscription_service.add_subscription.await_args.args
         assert args[0] == "005930"
-        assert args[1] == SubscriptionPriority.MEDIUM
+        assert args[1] == SubscriptionPriority.HIGH
         assert args[2] == "favorite"
 
 
@@ -300,7 +300,7 @@ async def test_get_favorite_list_with_subscription(web_client, mock_web_ctx):
         _, kwargs = mock_sub_svc.sync_subscriptions.call_args
         assert kwargs["codes"] == ["005930"]
         assert kwargs["category_key"] == "favorite"
-        assert kwargs["priority"] == SubscriptionPriority.MEDIUM
+        assert kwargs["priority"] == SubscriptionPriority.HIGH
 
 
 async def test_get_favorite_list_subscription_exception(web_client, mock_web_ctx):

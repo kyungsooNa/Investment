@@ -879,7 +879,7 @@ async def test_initialize_price_subscriptions_premium_no_dict_leakage(mock_deps,
 
 @pytest.mark.asyncio
 async def test_initialize_price_subscriptions_restores_favorites(mock_deps):
-    """기동 시 기존 관심종목을 알림용 MEDIUM 우선순위 가격 구독으로 복원한다."""
+    """기동 시 기존 관심종목을 알림용 HIGH 우선순위 가격 구독으로 복원한다."""
     from services.price_subscription_service import SubscriptionPriority
 
     ctx = WebAppContext(None)
@@ -901,7 +901,7 @@ async def test_initialize_price_subscriptions_restores_favorites(mock_deps):
     assert len(favorite_calls) == 1
     call_kwargs = favorite_calls[0].kwargs
     assert call_kwargs["codes"] == ["005930", "000660"]
-    assert call_kwargs["priority"] == SubscriptionPriority.MEDIUM
+    assert call_kwargs["priority"] == SubscriptionPriority.HIGH
 
 
 def test_get_cache_stats_delegates_and_handles_missing_repo(mock_deps):

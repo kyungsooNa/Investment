@@ -35,7 +35,7 @@ async def get_favorite_list(market: str = Query(MARKET_DOMESTIC)):
     ctx = _get_ctx()
     result = await ctx.favorite_service.get_with_details(market=market)
 
-    # 페이지 접속 시 알림용 MEDIUM 우선순위로 SSE 구독 등록 (백그라운드). 해외는 실시간 스트림 대상이 아니다.
+    # 페이지 접속 시 알림용 HIGH 우선순위로 SSE 구독 등록 (백그라운드). 해외는 실시간 스트림 대상이 아니다.
     if market == MARKET_DOMESTIC and getattr(ctx, "price_subscription_service", None) and result:
         async def _subscribe():
             try:
@@ -44,7 +44,7 @@ async def get_favorite_list(market: str = Query(MARKET_DOMESTIC)):
                 await ctx.price_subscription_service.sync_subscriptions(
                     codes=codes,
                     category_key="favorite",
-                    priority=SubscriptionPriority.MEDIUM,
+                    priority=SubscriptionPriority.HIGH,
                 )
             except Exception as e:
                 ctx.logger.warning(f"관심종목 구독 등록 실패: {e}")
@@ -71,7 +71,7 @@ async def add_favorite(code: str, market: str = Query(MARKET_DOMESTIC)):
                 from services.price_subscription_service import SubscriptionPriority
                 await price_subscription_service.add_subscription(
                     effective_code,
-                    SubscriptionPriority.MEDIUM,
+                    SubscriptionPriority.HIGH,
                     "favorite",
                 )
             except Exception as e:
