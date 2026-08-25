@@ -986,6 +986,33 @@ def test_schedule_rest_price_refresh_creates_task_and_cleans_up(mock_deps):
     assert "005930" not in ctx._pending_rest_price_refresh_tasks
 
 
+def test_schedule_rest_price_refresh_allows_manual_pt_without_price_subscription(mock_deps):
+    """수동 PT 종목은 체결가 구독이 없어도 REST 보강으로 관심종목 알림을 평가한다."""
+    from repositories.streaming_stock_repo import StreamingType
+
+    ctx = WebAppContext(None)
+    ctx.stock_query_service = MagicMock()
+    ctx.price_stream_service = MagicMock()
+    ctx.streaming_service = MagicMock()
+    ctx.streaming_service.is_subscribed_realtime_price.return_value = False
+    ctx.streaming_stock_repo = MagicMock()
+    ctx.streaming_stock_repo.get_desired.return_value = {"080220"}
+    ctx.streaming_stock_repo.get_pt_subscription_sources.return_value = {
+        "080220": "manual",
+    }
+    ctx._refresh_price_from_rest = MagicMock(return_value="refresh-coro")
+    fake_task = MagicMock()
+    fake_task.done.return_value = False
+
+    with patch("view.web.web_app_initializer.time.monotonic", return_value=100.0), \
+         patch("view.web.web_app_initializer.asyncio.create_task", return_value=fake_task) as mock_create_task:
+        ctx._schedule_rest_price_refresh("080220")
+
+    ctx.streaming_stock_repo.get_desired.assert_called_with(StreamingType.PROGRAM_TRADING)
+    ctx._refresh_price_from_rest.assert_called_once_with("080220")
+    mock_create_task.assert_called_once_with("refresh-coro")
+
+
 def test_schedule_rest_price_refresh_skips_unready_and_cooldown(mock_deps):
     """필수 의존성 누락, 미구독, cooldown 상태에서는 REST 보강 task를 만들지 않는다."""
     ctx = WebAppContext(None)

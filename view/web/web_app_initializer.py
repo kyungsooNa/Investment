@@ -656,7 +656,11 @@ class WebAppContext:
             or not self.stock_query_service
             or not self.price_stream_service
             or not self.streaming_service
-            or not self.streaming_service.is_subscribed_realtime_price(code)
+        ):
+            return
+        if (
+            not self.streaming_service.is_subscribed_realtime_price(code)
+            and not self._is_manual_program_trading_subscription(code)
         ):
             return
 
@@ -678,6 +682,18 @@ class WebAppContext:
                 self._pending_rest_price_refresh_tasks.pop(stock_code, None)
 
         task.add_done_callback(_cleanup)
+
+    def _is_manual_program_trading_subscription(self, code: str) -> bool:
+        if not code or not self.streaming_stock_repo:
+            return False
+        try:
+            if code not in self.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING):
+                return False
+            source_getter = getattr(self.streaming_stock_repo, "get_pt_subscription_sources", None)
+            sources = source_getter() if callable(source_getter) else {}
+            return isinstance(sources, dict) and sources.get(code) == "manual"
+        except Exception:
+            return False
 
     async def _refresh_price_from_rest(self, code: str) -> None:
         """REST 현재가 조회로 가격 캐시를 보강하고 실패 시 원인을 기록한다."""
