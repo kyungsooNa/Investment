@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock, patch, call
 from view.web.web_app_initializer import WebAppContext
 from pydantic import BaseModel
 import contextlib
@@ -1070,6 +1070,62 @@ async def test_start_program_trading_does_not_require_companion_price_subscripti
     ctx.streaming_service.subscribe_unified_price.assert_not_awaited()
     ctx.streaming_service.unsubscribe_program_trading.assert_not_awaited()
     ctx.streaming_service.unsubscribe_unified_price.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_start_program_trading_preempts_program_pt_when_manual_hits_capacity(mock_deps):
+    """수동 PT가 한도에 막히면 낮은 우선순위 program PT를 해지하고 재시도한다."""
+    from repositories.streaming_stock_repo import StreamingType
+
+    ctx = WebAppContext(None)
+    ctx.pm = MagicMock()
+    ctx.pm.start_timer.return_value = 0.0
+    ctx.logger = MagicMock()
+    ctx.price_subscription_service = None
+    ctx.streaming_stock_repo = MagicMock()
+    ctx.streaming_stock_repo.get_desired.return_value = set()
+    ctx.streaming_stock_repo.get_active.side_effect = (
+        lambda stream_type: {"111111", "222222"}
+        if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    ctx.streaming_stock_repo.get_pt_subscription_sources.return_value = {
+        "111111": "manual",
+        "222222": "program",
+    }
+    ctx.streaming_stock_repo.get_pt_capacity_pending.return_value = set()
+    ctx.streaming_stock_repo.set_pt_capacity_pending = MagicMock()
+    ctx.streaming_stock_repo.mark_desired = AsyncMock()
+    ctx.streaming_stock_repo.mark_active = AsyncMock()
+    ctx.streaming_stock_repo.mark_inactive = AsyncMock()
+    ctx.streaming_service = MagicMock()
+    ctx.streaming_service.connect_websocket = AsyncMock(return_value=True)
+    ctx.streaming_service.subscribe_program_trading = AsyncMock(
+        side_effect=[False, True]
+    )
+    ctx.streaming_service.wait_program_trading_ack = AsyncMock(return_value=True)
+    ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
+    ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
+
+    result = await ctx.start_program_trading("005930")
+
+    assert result is True
+    ctx.streaming_service.unsubscribe_program_trading.assert_awaited_once_with("222222")
+    ctx.streaming_stock_repo.mark_inactive.assert_any_call(
+        "222222", StreamingType.PROGRAM_TRADING
+    )
+    assert ctx.streaming_service.subscribe_program_trading.await_args_list == [
+        call("005930"),
+        call("005930"),
+    ]
+    ctx.streaming_stock_repo.mark_desired.assert_called_with(
+        "005930",
+        StreamingType.PROGRAM_TRADING,
+        source="manual",
+    )
+    ctx.streaming_stock_repo.mark_active.assert_any_call(
+        "005930", StreamingType.PROGRAM_TRADING
+    )
+    ctx.streaming_stock_repo.set_pt_capacity_pending.assert_called_once_with({"222222"})
 
 
 @pytest.mark.asyncio
