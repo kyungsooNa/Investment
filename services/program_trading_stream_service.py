@@ -360,6 +360,26 @@ class ProgramTradingStreamService:
             return set()
         return {str(code) for code in codes} if isinstance(codes, (set, list, tuple)) else set()
 
+    def _get_active_program_codes(self) -> set[str]:
+        if not self._streaming_stock_repo:
+            return set()
+        try:
+            from repositories.streaming_stock_repo import StreamingType
+
+            codes = self._streaming_stock_repo.get_active(StreamingType.PROGRAM_TRADING)
+        except Exception as e:
+            self.logger.warning(f"프로그램매매 active 목록 조회 실패: {e}")
+            return set()
+        return {str(code) for code in codes} if isinstance(codes, (set, list, tuple)) else set()
+
+    @staticmethod
+    def _format_no_tick_body(code: str, capacity_pending: set[str], active_codes: set[str]) -> str:
+        if code in capacity_pending:
+            return "구독 대기 (WebSocket 한도)"
+        if code in active_codes:
+            return "구독 active, tick 없음"
+        return "구독 대기 (ACK 미확정)"
+
     def _sort_codes_by_subscription_source(
         self,
         codes: list[str],
@@ -434,6 +454,7 @@ class ProgramTradingStreamService:
         self._ensure_current_day_history()
         sources = self._get_pt_subscription_sources()
         capacity_pending = self._get_pt_capacity_pending()
+        active_codes = self._get_active_program_codes()
         ordered_codes = self._sort_codes_by_subscription_source(codes, sources)
         lines = [
             "<b>프로그램매매 구독 Tick 상태</b>",
@@ -445,10 +466,7 @@ class ProgramTradingStreamService:
             label = self._format_stock_label(code)
             history = self._pt_history.get(code) or []
             if not history:
-                body = (
-                    "구독 대기 (WebSocket 한도)"
-                    if code in capacity_pending else "수신 없음"
-                )
+                body = self._format_no_tick_body(code, capacity_pending, active_codes)
                 lines.append(self._format_tick_alert_line(code, label, body, sources))
                 continue
 
@@ -480,6 +498,7 @@ class ProgramTradingStreamService:
         self._ensure_current_day_history()
         sources = self._get_pt_subscription_sources()
         capacity_pending = self._get_pt_capacity_pending()
+        active_codes = self._get_active_program_codes()
         ordered_codes = self._sort_codes_by_subscription_source(codes, sources)
         lines = [
             "<b>프로그램매매 구독 Tick 상태</b>",
@@ -491,10 +510,7 @@ class ProgramTradingStreamService:
             label = self._format_stock_label(code)
             history = self._pt_history.get(code) or []
             if not history:
-                body = (
-                    "구독 대기 (WebSocket 한도)"
-                    if code in capacity_pending else "수신 없음"
-                )
+                body = self._format_no_tick_body(code, capacity_pending, active_codes)
                 lines.append(self._format_tick_alert_line(code, label, body, sources))
                 continue
 

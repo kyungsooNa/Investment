@@ -250,6 +250,9 @@ async def test_program_trading_subscription(mock_deps):
     ctx.streaming_service.wait_unified_price_ack = AsyncMock(return_value=True)
     ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
     ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
+    ctx.price_subscription_service = MagicMock()
+    ctx.price_subscription_service.add_subscription = AsyncMock(return_value=True)
+    ctx.price_subscription_service.remove_subscription = AsyncMock()
 
     # streaming_stock_repo mock
     ctx.streaming_stock_repo = MagicMock()
@@ -264,6 +267,7 @@ async def test_program_trading_subscription(mock_deps):
     ctx.streaming_service.connect_websocket.assert_awaited_once()
     ctx.streaming_service.subscribe_program_trading.assert_awaited_with("005930")
     ctx.streaming_service.subscribe_unified_price.assert_not_awaited()
+    ctx.price_subscription_service.add_subscription.assert_awaited()
     ctx.streaming_stock_repo.mark_desired.assert_called_with(
         "005930",
         StreamingType.PROGRAM_TRADING,
@@ -281,6 +285,9 @@ async def test_program_trading_subscription(mock_deps):
 
     # 3. 구독 해지
     await ctx.stop_program_trading("005930")
+    ctx.price_subscription_service.remove_subscription.assert_awaited_with(
+        "005930", "manual_program_trading_price"
+    )
     ctx.streaming_service.unsubscribe_program_trading.assert_awaited_with("005930")
     ctx.streaming_stock_repo.unmark_desired.assert_called_with("005930", StreamingType.PROGRAM_TRADING)
     ctx.streaming_stock_repo.mark_inactive.assert_any_call("005930", StreamingType.PROGRAM_TRADING)
@@ -1073,8 +1080,8 @@ async def test_start_program_trading_reconnect_existing_desired(mock_deps):
 
 
 @pytest.mark.asyncio
-async def test_start_program_trading_does_not_require_companion_price_subscription(mock_deps):
-    """PT 구독 성공은 companion 체결가 구독 없이도 성공으로 처리한다."""
+async def test_start_program_trading_ignores_companion_price_subscription_failure(mock_deps):
+    """PT 구독 성공은 알림용 체결가 정책 등록 실패 여부와 무관하게 성공으로 처리한다."""
     ctx = WebAppContext(None)
     ctx.pm = MagicMock()
     ctx.pm.start_timer.return_value = 0.0
@@ -1090,11 +1097,13 @@ async def test_start_program_trading_does_not_require_companion_price_subscripti
     ctx.streaming_service.subscribe_unified_price = AsyncMock(return_value=False)
     ctx.streaming_service.unsubscribe_program_trading = AsyncMock()
     ctx.streaming_service.unsubscribe_unified_price = AsyncMock()
+    ctx.price_subscription_service = MagicMock()
+    ctx.price_subscription_service.add_subscription = AsyncMock(side_effect=RuntimeError("price down"))
 
     result = await ctx.start_program_trading("005930")
 
     assert result is True
-    ctx.streaming_service.subscribe_unified_price.assert_not_awaited()
+    ctx.price_subscription_service.add_subscription.assert_awaited_once()
     ctx.streaming_service.unsubscribe_program_trading.assert_not_awaited()
     ctx.streaming_service.unsubscribe_unified_price.assert_not_awaited()
 

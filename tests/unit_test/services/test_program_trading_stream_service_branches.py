@@ -142,7 +142,7 @@ async def test_format_last_tick_report_async_with_and_without_history(svc):
     svc._get_latest_program_snapshot = AsyncMock(return_value={"순매수거래대금": "100000000"})
     report = await svc._format_last_tick_report_async(["005930", "000660"])
     assert "REST보정" in report
-    assert "수신 없음" in report  # 000660 은 history 없음
+    assert "구독 대기 (ACK 미확정)" in report  # 000660 은 history 없음
 
 
 def test_format_last_tick_report_sync(svc):
@@ -150,7 +150,7 @@ def test_format_last_tick_report_sync(svc):
     svc._last_tick_ts_by_code = {"005930": time.time()}
     report = svc._format_last_tick_report(["005930", "000660"])
     assert "원" in report
-    assert "수신 없음" in report
+    assert "구독 대기 (ACK 미확정)" in report
 
 
 # --- 텔레그램 전송 ---
