@@ -530,7 +530,7 @@ async def test_send_subscribed_last_tick_alert_sends_last_tick_for_desired_codes
     assert "누적 순매수대금:123.5억" in message
     assert "순매수대금:12,345,600,000" not in message
     assert "SK하이닉스" in message
-    assert "수신 없음" in message
+    assert "구독 대기 (ACK 미확정)" in message
 
 
 @pytest.mark.asyncio
@@ -656,7 +656,7 @@ async def test_format_last_tick_report_discards_previous_day_memory(manager):
 
     message = await manager._format_last_tick_report_async(["005930"])
 
-    assert "[기존] 005930: 수신 없음" in message
+    assert "[기존] 005930: 구독 대기 (ACK 미확정)" in message
     assert "70,000원" not in message
     assert manager._last_tick_ts_by_code == {}
     assert manager.last_data_ts == 0.0
@@ -673,6 +673,25 @@ async def test_format_last_tick_report_marks_capacity_pending(manager):
     message = await manager._format_last_tick_report_async(["005930"])
 
     assert "구독 대기 (WebSocket 한도)" in message
+    assert "수신 없음" not in message
+
+
+@pytest.mark.asyncio
+async def test_format_last_tick_report_distinguishes_pt_active_without_tick(manager):
+    """수신 이력이 없는 PT 종목도 active 여부를 구분해 운영 원인을 좁힌다."""
+    mock_ssr = MagicMock()
+    mock_ssr.get_pt_subscription_sources.return_value = {
+        "005930": "manual",
+        "080220": "manual",
+    }
+    mock_ssr.get_pt_capacity_pending.return_value = set()
+    mock_ssr.get_active.return_value = {"080220"}
+    manager.wire_streaming_stock_repo(mock_ssr)
+
+    message = await manager._format_last_tick_report_async(["005930", "080220"])
+
+    assert "[수동] 005930: 구독 대기 (ACK 미확정)" in message
+    assert "[수동] 080220: 구독 active, tick 없음" in message
     assert "수신 없음" not in message
 
 

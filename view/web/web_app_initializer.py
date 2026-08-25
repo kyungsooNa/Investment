@@ -775,6 +775,7 @@ class WebAppContext:
                     )
                     if inspect.isawaitable(mark_result):
                         await mark_result
+                await self._ensure_manual_program_trading_price_subscription(code)
                 return True
 
             # 구독 상태이지만 수신 태스크가 죽었으면 강제 재연결
@@ -792,6 +793,7 @@ class WebAppContext:
                     )
                     if inspect.isawaitable(mark_result):
                         await mark_result
+                    await self._ensure_manual_program_trading_price_subscription(code)
                     return True
                 self.logger.info(f"[프로그램매매] {code} 재연결 실패로 구독 해제됨. 신규 구독 재시도.")
 
@@ -823,6 +825,7 @@ class WebAppContext:
                         source="manual",
                     )
                     await self.streaming_stock_repo.mark_active(code, StreamingType.PROGRAM_TRADING)
+                await self._ensure_manual_program_trading_price_subscription(code)
                 self.logger.info(f"프로그램매매 신규 구독 성공: {code}")
                 return True
             else:
@@ -833,6 +836,36 @@ class WebAppContext:
 
         except Exception as e:
             self.logger.error(f"프로그램매매 구독 중 예외 발생 ({code}): {e}", exc_info=True)
+            return False
+
+    async def _ensure_manual_program_trading_price_subscription(self, code: str) -> None:
+        """수동 PT 종목의 관심 알림용 체결가 구독을 HIGH 우선순위로 보장한다."""
+        if not code or not self.price_subscription_service:
+            return
+        try:
+            from services.price_subscription_service import SubscriptionPriority
+
+            await self.price_subscription_service.add_subscription(
+                code,
+                SubscriptionPriority.HIGH,
+                "manual_program_trading_price",
+                StreamingType.UNIFIED_PRICE,
+            )
+        except Exception as e:
+            self.logger.warning(f"수동 프로그램매매 체결가 구독 보강 실패 ({code}): {e}")
+
+    async def _remove_manual_program_trading_price_subscription(self, code: str) -> bool:
+        """수동 PT 해지 시 companion 체결가 구독을 제거한다."""
+        if not code or not self.price_subscription_service:
+            return False
+        try:
+            await self.price_subscription_service.remove_subscription(
+                code,
+                "manual_program_trading_price",
+            )
+            return True
+        except Exception as e:
+            self.logger.warning(f"수동 프로그램매매 체결가 구독 해제 실패 ({code}): {e}")
             return False
 
     async def _preempt_lower_priority_pt_for_manual(self, target_code: str) -> bool:
@@ -909,9 +942,10 @@ class WebAppContext:
     async def stop_program_trading(self, code: str):
         """특정 종목 프로그램매매 구독 해지."""
         if self.streaming_stock_repo and code in self.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING):
+            companion_removed = await self._remove_manual_program_trading_price_subscription(code)
             await self.streaming_service.unsubscribe_program_trading(code)
             keep_price = self._has_independent_price_subscription(code)
-            if not keep_price:
+            if not keep_price and not companion_removed:
                 await self.streaming_service.unsubscribe_unified_price(code)
             await self.streaming_stock_repo.unmark_desired(code, StreamingType.PROGRAM_TRADING)
             await self.streaming_stock_repo.mark_inactive(code, StreamingType.PROGRAM_TRADING)
@@ -922,9 +956,10 @@ class WebAppContext:
         """모든 프로그램매매 구독 해지."""
         codes = sorted(self.streaming_stock_repo.get_desired(StreamingType.PROGRAM_TRADING)) if self.streaming_stock_repo else []
         for code in codes:
+            companion_removed = await self._remove_manual_program_trading_price_subscription(code)
             await self.streaming_service.unsubscribe_program_trading(code)
             keep_price = self._has_independent_price_subscription(code)
-            if not keep_price:
+            if not keep_price and not companion_removed:
                 await self.streaming_service.unsubscribe_unified_price(code)
             if self.streaming_stock_repo:
                 await self.streaming_stock_repo.unmark_desired(code, StreamingType.PROGRAM_TRADING)
