@@ -150,7 +150,7 @@ class SchedulerBootstrap:
     def _register_overseas_tasks(self) -> None:
         # 해외 dry-run (주문 경로 없음). 미구성 시 _register 가 no-op.
         # 미국장 TimeDispatcher(time_dispatcher_us)에 등록 → NY 마감 후 delay 만큼 대기 뒤
-        # 티켓 발행(task_config 의 overseas_vbo_dryrun delay 로 16:30 ET 효과 트리거).
+        # 티켓 발행(task_config 의 overseas_dryrun delay 로 16:30 ET 효과 트리거).
         self._register(
             self._optional_task("overseas_dryrun_task"),
             TaskPriority.LOW,

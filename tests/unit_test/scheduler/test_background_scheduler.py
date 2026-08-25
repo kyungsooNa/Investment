@@ -102,6 +102,23 @@ async def test_shutdown_stops_idle_task_with_active_background_loop(scheduler):
 
 
 @pytest.mark.asyncio
+async def test_shutdown_stops_idle_task_with_single_active_background_loop(scheduler):
+    """OverseasIntradayVBOTask처럼 단수 _task 루프를 쓰는 태스크도 종료한다."""
+    t1 = _make_mock_task("idle_single_loop", TaskState.IDLE)
+    pending = asyncio.create_task(asyncio.sleep(60))
+    t1._task = pending
+    scheduler.register(t1)
+
+    try:
+        await scheduler.shutdown()
+    finally:
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+
+    t1.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_suspend_all(scheduler):
     t1 = _make_mock_task("t1", TaskState.RUNNING)
     t2 = _make_mock_task("t2", TaskState.IDLE)  # idle → 스킵

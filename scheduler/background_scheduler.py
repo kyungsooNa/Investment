@@ -219,9 +219,10 @@ class BackgroundScheduler:
     @staticmethod
     def _has_active_internal_tasks(task: SchedulableTask) -> bool:
         internal_tasks = getattr(task, "_tasks", None)
-        if not internal_tasks:
-            return False
-        return any(not internal_task.done() for internal_task in internal_tasks)
+        if internal_tasks and any(not internal_task.done() for internal_task in internal_tasks):
+            return True
+        internal_task = getattr(task, "_task", None)
+        return internal_task is not None and not internal_task.done()
 
     async def suspend_all(self) -> None:
         """실행 중인 모든 태스크를 일시 중지한다 (WorkerPool 포함)."""

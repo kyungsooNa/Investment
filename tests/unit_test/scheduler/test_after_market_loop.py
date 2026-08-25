@@ -308,3 +308,10 @@ class TestLoadAfterMarketDelays:
             delays = _load_after_market_delays()
             assert delays == {"cached_task": 120}
             mock_file.assert_not_called()
+
+    def test_default_config_uses_actual_overseas_dryrun_task_name(self):
+        """기본 설정의 미국장 dry-run 지연 키는 실제 task_name과 일치해야 한다."""
+        delays = _load_after_market_delays()
+
+        assert delays["overseas_dryrun"] == 30 * 60
+        assert "overseas_vbo_dryrun" not in delays
