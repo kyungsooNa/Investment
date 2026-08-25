@@ -4,6 +4,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse
 
 from repositories.trade_trend_repository import TradeTrendRepository
 from services.trade_trend_service import (
@@ -223,7 +224,26 @@ async def get_jeju_region_trade_trend(
     # 표시 구간 전체에 전년동월비를 붙이려면 12개월치를 더 받아야 한다.
     begin_month = shift_yyyymm(end_month, -(months - 1 + 12))
 
-    stat_rows = await client.fetch_sido_total_range(begin_month, end_month)
+    try:
+        stat_rows = await client.fetch_sido_total_range(begin_month, end_month)
+    except Exception as exc:
+        logger = getattr(ctx, "logger", None)
+        if logger is not None:
+            logger.warning(f"[trade_trend] 제주지역 수출입동향 조회 실패: {exc}")
+        return JSONResponse(
+            status_code=502,
+            content={
+                "success": False,
+                "detail": "제주지역 수출입동향 조회 실패",
+                "data": {
+                    "rows": [],
+                    "latest": None,
+                    "available": False,
+                    "message": "관세청 수출입통계 API 응답을 처리하지 못했습니다.",
+                },
+            },
+        )
+
     rows = [_jeju_month_to_dict(item) for item in build_jeju_region_trade_series(stat_rows)][:months]
     return {
         "success": True,

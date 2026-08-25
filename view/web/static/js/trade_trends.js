@@ -40,12 +40,27 @@ function sourceLabel(row) {
     return '공식 최신';
 }
 
+async function readTradeTrendPayload(res) {
+    try {
+        const payload = await res.json();
+        if (payload && typeof payload === 'object') {
+            return { payload, error: null };
+        }
+        return { payload: null, error: '응답 형식이 올바르지 않습니다.' };
+    } catch (_) {
+        return { payload: null, error: res.ok ? '응답을 처리하지 못했습니다.' : `HTTP ${res.status}` };
+    }
+}
+
 async function loadTradeTrendHistory() {
     const status = document.getElementById('trade-trend-status');
     if (status) status.textContent = '조회 중';
     try {
         const res = await fetch('/api/trade-trends/national/history?include_recent=true&limit=120');
-        const payload = await res.json();
+        const { payload, error } = await readTradeTrendPayload(res);
+        if (error) {
+            throw new Error(error);
+        }
         if (!res.ok || !payload.success) {
             throw new Error(payload.detail || '수출입동향 조회 실패');
         }
@@ -400,6 +415,7 @@ if (typeof module !== 'undefined' && module.exports) {
         buildTradeTrendPhaseItems,
         buildTradeTrendQuarterItems,
         tradeDailyAverage,
+        readTradeTrendPayload,
         formatJejuMillionUsd,
     };
 }
@@ -414,7 +430,10 @@ async function loadJejuRegionTrade() {
     if (status) status.textContent = '조회 중';
     try {
         const res = await fetch('/api/trade-trends/jeju/region?months=12');
-        const payload = await res.json();
+        const { payload, error } = await readTradeTrendPayload(res);
+        if (error) {
+            throw new Error(error);
+        }
         if (!res.ok || !payload.success) {
             throw new Error(payload.detail || '제주지역 수출입동향 조회 실패');
         }
