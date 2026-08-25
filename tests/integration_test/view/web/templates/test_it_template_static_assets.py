@@ -27,6 +27,7 @@ PAGE_PATHS = [
     "/marketcap",
     "/virtual",
     "/scheduler",
+    "/overseas-scheduler",
     "/strategy-reports",
     "/trade-trends",
     "/program",
@@ -104,6 +105,8 @@ def test_rendered_pages_reference_served_static_assets(web_client_with_fake_ctx)
         ("/overseas-favorite", "overseas_us"),
         ("/overseas-marketcap", "overseas_us"),
         ("/overseas-ranking", "overseas_us"),
+        ("/scheduler", "domestic"),
+        ("/overseas-scheduler", "overseas_us"),
         ("/virtual", "common"),
         ("/trade-trends", "common"),
         ("/system", "common"),
@@ -129,6 +132,20 @@ def test_navigation_separates_domestic_overseas_and_common_areas(web_client_with
     assert 'data-nav-market="common"' in page.text
     assert '>한국장<' in page.text
     assert '>미국장<' in page.text
+
+
+def test_strategy_scheduler_navigation_is_split_by_market(web_client_with_fake_ctx):
+    """전략 스케줄러는 공통이 아니라 한국장/미국장 상단 탭 아래로 분리된다."""
+    domestic = web_client_with_fake_ctx.get("/scheduler")
+    overseas = web_client_with_fake_ctx.get("/overseas-scheduler")
+    common = web_client_with_fake_ctx.get("/virtual")
+
+    assert domestic.status_code == 200
+    assert overseas.status_code == 200
+    assert common.status_code == 200
+    assert 'href="/scheduler" class="active">전략 스케줄러</a>' in domestic.text
+    assert 'href="/overseas-scheduler" class="active">전략 스케줄러</a>' in overseas.text
+    assert "전략 스케줄러</a>" not in common.text
 
 
 def test_overseas_favorite_uses_feature_navigation(web_client_with_fake_ctx):

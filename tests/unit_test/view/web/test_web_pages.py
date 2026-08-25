@@ -18,6 +18,7 @@ PAGES = [
     ("/marketcap", "marketcap"),
     ("/virtual", "virtual"),
     ("/scheduler", "scheduler"),
+    ("/overseas-scheduler", "overseas_scheduler"),
     ("/program", "program"),
     ("/system", "system"),
     ("/heatmap", "heatmap"),
@@ -113,7 +114,11 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert "<th>체결수량</th>" in response.text
             assert "<th>슬리피지</th>" in response.text
         elif path == "/scheduler":
-            assert "전략 스케줄러" in response.text
+            assert "한국장 전략 스케줄러" in response.text
+            assert "SCHEDULER_MARKET = 'domestic'" in response.text
+        elif path == "/overseas-scheduler":
+            assert "미국장 전략 스케줄러" in response.text
+            assert "SCHEDULER_MARKET = 'overseas_us'" in response.text
         elif path == "/program":
             assert "프로그램매매 실시간 동향" in response.text
         elif path == "/system":

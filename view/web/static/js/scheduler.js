@@ -6,6 +6,16 @@ let currentSchedulerFilter = '전체';
 let schedulerEventSource = null;
 let schedulerStatusInFlight = false;
 
+/** 페이지가 담당하는 시장. 상단 탭(한국장/미국장)별로 페이지가 분리되어 있다. */
+function schedulerMarket() {
+    return window.SCHEDULER_MARKET || 'domestic';
+}
+
+function schedulerUrl(path) {
+    const sep = path.includes('?') ? '&' : '?';
+    return `${path}${sep}market=${encodeURIComponent(schedulerMarket())}`;
+}
+
 function fetchSchedulerJson(url, options = {}, timeoutMs = 8000) {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -21,9 +31,8 @@ function fetchSchedulerJson(url, options = {}, timeoutMs = 8000) {
 }
 
 function syncSchedulerRealtimeState(data) {
-    const schedulers = (data && data.schedulers) || [];
     const marketTasks = (data && data.market_tasks) || [];
-    const hasRunningScheduler = data && (data.running || schedulers.some(item => item.running));
+    const hasRunningScheduler = Boolean(data && data.running);
     const hasRunningMarketTask = marketTasks.some(task => task.running || task.state === 'running');
     if (hasRunningScheduler || hasRunningMarketTask) {
         if (!schedulerPollingId) {
@@ -46,8 +55,8 @@ async function loadSchedulerStatus() {
     let statusData = null;
     try {
         // 두 요청을 동시에 시작 (병렬)
-        const statusPromise  = fetchSchedulerJson('/api/scheduler/status');
-        const historyPromise = fetchSchedulerJson('/api/scheduler/history');
+        const statusPromise  = fetchSchedulerJson(schedulerUrl('/api/scheduler/status'));
+        const historyPromise = fetchSchedulerJson(schedulerUrl('/api/scheduler/history'));
 
         // status가 도착하는 즉시 렌더링 — history를 기다리지 않음
         statusData = await statusPromise;
@@ -75,7 +84,7 @@ function renderSchedulerStatus(data) {
     const badge = document.getElementById('scheduler-status-badge');
     const info = document.getElementById('scheduler-info');
 
-    const schedulers = data.schedulers || [data];
+    const schedulers = [data];
     const marketTasks = data.market_tasks || [];
     const hasRunningScheduler = schedulers.some(item => item.running);
     const hasRunningMarketTask = marketTasks.some(task => task.running || task.state === 'running');
@@ -235,7 +244,7 @@ function renderMarketTasks(tasks) {
 
 async function startScheduler() {
     try {
-        const data = await fetchSchedulerJson('/api/scheduler/start', { method: 'POST' });
+        const data = await fetchSchedulerJson(schedulerUrl('/api/scheduler/start'), { method: 'POST' });
         if (data.success) {
             refreshSchedulerStatusSoon();
         }
@@ -246,7 +255,7 @@ async function startScheduler() {
 
 async function stopScheduler() {
     try {
-        const data = await fetchSchedulerJson('/api/scheduler/stop', { method: 'POST' });
+        const data = await fetchSchedulerJson(schedulerUrl('/api/scheduler/stop'), { method: 'POST' });
         if (data.success) {
             refreshSchedulerStatusSoon();
         }
@@ -255,7 +264,7 @@ async function stopScheduler() {
     }
 }
 
-async function startStrategy(name, market = 'domestic') {
+async function startStrategy(name, market = schedulerMarket()) {
     try {
         const data = await fetchSchedulerJson(`/api/scheduler/strategy/${encodeURIComponent(name)}/start?market=${encodeURIComponent(market)}`, { method: 'POST' });
         if (data.success) {
@@ -266,7 +275,7 @@ async function startStrategy(name, market = 'domestic') {
     }
 }
 
-async function stopStrategy(name, market = 'domestic') {
+async function stopStrategy(name, market = schedulerMarket()) {
     try {
         const data = await fetchSchedulerJson(`/api/scheduler/strategy/${encodeURIComponent(name)}/stop?market=${encodeURIComponent(market)}`, { method: 'POST' });
         if (data.success) {
@@ -277,7 +286,7 @@ async function stopStrategy(name, market = 'domestic') {
     }
 }
 
-async function updateMaxPositions(name, currentMax, market = 'domestic') {
+async function updateMaxPositions(name, currentMax, market = schedulerMarket()) {
     const newVal = prompt(`'${name}' 전략의 최대 보유 포지션 수를 입력하세요:`, currentMax);
     if (newVal === null) return; // Cancelled
     
@@ -398,7 +407,7 @@ function stopSchedulerPolling() {
 
 function connectSchedulerSSE() {
     if (schedulerEventSource) return;
-    schedulerEventSource = new EventSource('/api/scheduler/stream');
+    schedulerEventSource = new EventSource(schedulerUrl('/api/scheduler/stream'));
     schedulerEventSource.onmessage = function(event) {
         try {
             const signal = JSON.parse(event.data);
@@ -408,7 +417,7 @@ function connectSchedulerSSE() {
             }
             filterSchedulerHistory(currentSchedulerFilter);
 
-            fetchSchedulerJson('/api/scheduler/status')
+            fetchSchedulerJson(schedulerUrl('/api/scheduler/status'))
                 .then(data => {
                     renderSchedulerStatus(data);
                     syncSchedulerRealtimeState(data);
