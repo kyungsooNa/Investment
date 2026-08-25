@@ -291,7 +291,7 @@ def test_jeju_region_trade_reports_unavailable_without_customs_client():
     assert payload["data"]["latest"] is None
 
 
-def test_jeju_region_trade_returns_json_error_when_customs_client_fails():
+def test_jeju_region_trade_reports_unavailable_when_customs_client_fails():
     customs_client = SimpleNamespace(
         fetch_sido_total_range=AsyncMock(side_effect=RuntimeError("Internal Server Error")),
     )
@@ -309,11 +309,11 @@ def test_jeju_region_trade_returns_json_error_when_customs_client_fails():
     finally:
         api_common.set_ctx(None)
 
-    assert response.status_code == 502
+    assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
     payload = response.json()
-    assert payload["success"] is False
-    assert payload["detail"] == "제주지역 수출입동향 조회 실패"
+    assert payload["success"] is True
     assert payload["data"]["available"] is False
     assert payload["data"]["rows"] == []
     assert payload["data"]["latest"] is None
+    assert payload["data"]["message"] == "관세청 수출입통계 API 연결 실패로 제주지역 동향을 일시적으로 조회할 수 없습니다."
