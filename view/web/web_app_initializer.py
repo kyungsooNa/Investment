@@ -792,6 +792,11 @@ class WebAppContext:
             sub_pt_success = sub_pt_sent
             if sub_pt_sent:
                 sub_pt_success = await self.streaming_service.wait_program_trading_ack(code)
+            if not sub_pt_success and await self._preempt_lower_priority_pt_for_manual(code):
+                sub_pt_sent = await self.streaming_service.subscribe_program_trading(code)
+                sub_pt_success = sub_pt_sent
+                if sub_pt_sent:
+                    sub_pt_success = await self.streaming_service.wait_program_trading_ack(code)
             self.pm.log_timer(f"subscribe_program_trading({code})", t_sub_pt)
 
             if sub_pt_success:
@@ -812,6 +817,57 @@ class WebAppContext:
 
         except Exception as e:
             self.logger.error(f"프로그램매매 구독 중 예외 발생 ({code}): {e}", exc_info=True)
+            return False
+
+    async def _preempt_lower_priority_pt_for_manual(self, target_code: str) -> bool:
+        """수동 PT 구독을 위해 낮은 우선순위 PT 슬롯을 하나 회수한다."""
+        if not self.streaming_stock_repo or not self.streaming_service:
+            return False
+
+        try:
+            active_pt = set(self.streaming_stock_repo.get_active(StreamingType.PROGRAM_TRADING))
+        except Exception:
+            return False
+
+        source_getter = getattr(self.streaming_stock_repo, "get_pt_subscription_sources", None)
+        sources = source_getter() if callable(source_getter) else {}
+        if not isinstance(sources, dict):
+            sources = {}
+
+        evict_rank = {"legacy": 0, "program": 1}
+        candidates = sorted(
+            (
+                code for code in active_pt
+                if code != target_code and sources.get(code) != "manual"
+            ),
+            key=lambda code: (evict_rank.get(sources.get(code), 0), code),
+        )
+        if not candidates:
+            return False
+
+        victim = candidates[0]
+        try:
+            await self.streaming_service.unsubscribe_program_trading(victim)
+            if not self._has_independent_price_subscription(victim):
+                await self.streaming_service.unsubscribe_unified_price(victim)
+            await self.streaming_stock_repo.mark_inactive(victim, StreamingType.PROGRAM_TRADING)
+            pending_getter = getattr(self.streaming_stock_repo, "get_pt_capacity_pending", None)
+            pending = pending_getter() if callable(pending_getter) else set()
+            pending = set(pending or set())
+            pending.add(victim)
+            pending.discard(target_code)
+            setter = getattr(self.streaming_stock_repo, "set_pt_capacity_pending", None)
+            if callable(setter):
+                setter(pending)
+            self.logger.info(
+                f"[프로그램매매] 수동 구독 슬롯 확보: {victim} 해지 후 {target_code} 재시도"
+            )
+            return True
+        except Exception as e:
+            self.logger.warning(
+                f"[프로그램매매] 수동 구독 슬롯 확보 실패 ({target_code}): {e}",
+                exc_info=True,
+            )
             return False
 
     def _has_independent_price_subscription(self, code: str) -> bool:
