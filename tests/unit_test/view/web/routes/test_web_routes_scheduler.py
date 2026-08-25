@@ -286,3 +286,68 @@ async def test_update_strategy_max_positions_no_scheduler(web_client, mock_web_c
     response = web_client.post("/api/scheduler/strategy/전략A/max-positions", json=payload)
 
     assert response.status_code == 503
+
+
+class _OverseasVBOTask:
+    task_name = "overseas_intraday_vbo"
+
+    def __init__(self):
+        from interfaces.schedulable_task import TaskPriority, TaskState
+        self.priority = TaskPriority.NORMAL
+        self.state = TaskState.RUNNING
+
+    def get_progress(self):
+        return {"running": True, "watch_count": 3}
+
+
+def _attach_overseas_task(ctx):
+    ctx.background_scheduler = MagicMock()
+    ctx.background_scheduler.get_task.side_effect = (
+        lambda name: _OverseasVBOTask() if name == "overseas_intraday_vbo" else None
+    )
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_status_market_query_filters_market_tasks(web_client, mock_web_ctx):
+    """market 쿼리가 주어지면 시장 태스크도 해당 시장만 반환한다."""
+    mock_web_ctx.scheduler.get_status = MagicMock(return_value={"running": False, "strategies": []})
+    mock_web_ctx.strategy_schedulers = {"domestic": mock_web_ctx.scheduler, "overseas_us": None}
+    _attach_overseas_task(mock_web_ctx)
+
+    overseas = web_client.get("/api/scheduler/status?market=overseas_us").json()
+    assert [task["name"] for task in overseas["market_tasks"]] == ["overseas_intraday_vbo"]
+
+    domestic = web_client.get("/api/scheduler/status?market=domestic").json()
+    assert domestic["market_tasks"] == []
+
+
+@pytest.mark.asyncio
+async def test_scheduler_status_without_market_keeps_all_market_tasks(web_client, mock_web_ctx):
+    """market 미지정 호출은 기존처럼 전체 시장 태스크를 반환한다."""
+    mock_web_ctx.scheduler.get_status = MagicMock(return_value={"running": False, "strategies": []})
+    mock_web_ctx.strategy_schedulers = {"domestic": mock_web_ctx.scheduler, "overseas_us": None}
+    _attach_overseas_task(mock_web_ctx)
+
+    data = web_client.get("/api/scheduler/status").json()
+    assert [task["name"] for task in data["market_tasks"]] == ["overseas_intraday_vbo"]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_start_stop_uses_requested_market(web_client, mock_web_ctx):
+    """전체 시작/정지도 market 쿼리로 시장별 스케줄러를 제어한다."""
+    overseas_scheduler = MagicMock()
+    overseas_scheduler.start = AsyncMock()
+    overseas_scheduler.stop = AsyncMock()
+    mock_web_ctx.strategy_schedulers = {
+        "domestic": mock_web_ctx.scheduler,
+        "overseas_us": overseas_scheduler,
+    }
+
+    assert web_client.post("/api/scheduler/start?market=overseas_us").status_code == 200
+    overseas_scheduler.start.assert_awaited_once()
+    mock_web_ctx.scheduler.start.assert_not_awaited()
+
+    assert web_client.post("/api/scheduler/stop?market=overseas_us").status_code == 200
+    overseas_scheduler.stop.assert_awaited_once()
+    mock_web_ctx.scheduler.stop.assert_not_awaited()

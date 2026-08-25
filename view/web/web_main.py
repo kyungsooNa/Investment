@@ -564,6 +564,19 @@ async def scheduler(request: Request):
         request,
         "scheduler.html",
         "scheduler",
+        extra_context={"scheduler_market": "domestic", "scheduler_market_label": "한국장"},
+        view_market="domestic",
+        required_role=OPERATOR,
+    )
+
+@page_router.get("/overseas-scheduler")
+async def overseas_scheduler(request: Request):
+    return await render_page(
+        request,
+        "scheduler.html",
+        "overseas_scheduler",
+        extra_context={"scheduler_market": "overseas_us", "scheduler_market_label": "미국장"},
+        view_market="overseas_us",
         required_role=OPERATOR,
     )
 

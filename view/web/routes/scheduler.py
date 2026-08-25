@@ -131,7 +131,9 @@ async def get_scheduler_status(market: str | None = None):
     selected_market = market or "domestic"
     status = await asyncio.to_thread(_status_for_market, ctx, selected_market)
     status["schedulers"] = await asyncio.to_thread(_all_scheduler_statuses, ctx)
-    status["market_tasks"] = _market_task_status(ctx)
+    # market 을 명시한 호출(시장별 스케줄러 페이지)은 해당 시장 태스크만 본다.
+    if market is None:
+        status["market_tasks"] = _market_task_status(ctx)
     
     # [BugFix] 보유 종목명 보정
     mapper = getattr(ctx, 'stock_code_repository', None)
@@ -148,10 +150,10 @@ async def get_scheduler_status(market: str | None = None):
 
 
 @router.post("/scheduler/start")
-async def start_scheduler():
+async def start_scheduler(market: str = "domestic"):
     """스케줄러 시작 (상태 저장 — 재시작 시 자동 복원)."""
     ctx = _get_ctx()
-    scheduler = _get_strategy_scheduler(ctx)
+    scheduler = _get_strategy_scheduler(ctx, market)
     if not scheduler:
         raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
     await scheduler.start()
@@ -160,10 +162,10 @@ async def start_scheduler():
 
 
 @router.post("/scheduler/stop")
-async def stop_scheduler():
+async def stop_scheduler(market: str = "domestic"):
     """스케줄러 정지 (수동 정지 — 재시작 시 자동 실행 안 함)."""
     ctx = _get_ctx()
-    scheduler = _get_strategy_scheduler(ctx)
+    scheduler = _get_strategy_scheduler(ctx, market)
     if not scheduler:
         raise HTTPException(status_code=503, detail="스케줄러가 초기화되지 않았습니다")
     await scheduler.stop(save_state=False)

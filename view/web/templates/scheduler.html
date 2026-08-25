@@ -3,7 +3,7 @@
 {% block content %}
     <div id="section-scheduler" class="section">
         <div class="card">
-            <h2>전략 스케줄러</h2>
+            <h2>{{ scheduler_market_label|default("한국장") }} 전략 스케줄러</h2>
             <div class="form-row" style="align-items:center;gap:10px;">
                 <span id="scheduler-status-badge" class="badge closed">정지</span>
                 <span id="scheduler-info" style="color:var(--text-secondary);font-size:0.9em;">스케줄러가 초기화되지 않았습니다.</span>
@@ -12,10 +12,10 @@
             </div>
         </div>
 
-        <h3 style="margin:16px 0 8px; color:var(--text-primary);">시장별 전략 스케줄러</h3>
+        <h3 style="margin:16px 0 8px; color:var(--text-primary);">전략 스케줄러</h3>
         <div id="scheduler-strategies"></div>
 
-        <h3 style="margin:16px 0 8px; color:var(--text-primary);">시장별 백그라운드 전략</h3>
+        <h3 style="margin:16px 0 8px; color:var(--text-primary);">백그라운드 전략</h3>
         <div id="scheduler-market-tasks"></div>
 
         <h3 style="margin:24px 0 8px; color:var(--text-primary);">시그널 실행 이력</h3>
@@ -42,8 +42,9 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/scheduler.js?v=8"></script>
+<script src="/static/js/scheduler.js?v=9"></script>
 <script>
+    window.SCHEDULER_MARKET = '{{ scheduler_market|default("domestic") }}';
     loadSchedulerStatus();
 </script>
 {% endblock %}
