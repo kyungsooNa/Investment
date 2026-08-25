@@ -213,6 +213,74 @@ test("스파크라인 색은 등락률 부호를 따른다", async () => {
   assert(colors.includes("#3742fa"), "하락 지수는 하락색이어야 함");
 });
 
+// 기준선(1D 는 전일 종가 = 당일 시가 기준선) 위/아래 색 분리 검증용 페이로드.
+// 09:00 에 기준선 아래로 출발했다가 09:20 에 기준선 위로 올라선 하루다.
+function crossingPayload() {
+  return indexPayload({
+    period: "1D",
+    current: 2652.0,
+    change: 2.0,
+    change_rate: 0.08,
+    points: [
+      { close: 2650.0, prev: true },
+      { date: "20260729", time: "090000", close: 2640.1 },
+      { date: "20260729", time: "091000", close: 2645.0 },
+      { date: "20260729", time: "092000", close: 2652.0 },
+    ],
+  });
+}
+
+// segment.borderColor 는 Chart.js 가 구간마다 부르는 콜백이라 직접 호출해 색을 얻는다.
+function segmentColorAt(chart, index) {
+  const dataset = chart.config.data.datasets[0];
+  const values = dataset.data;
+  return dataset.segment.borderColor({
+    p0: { parsed: { y: values[index - 1] } },
+    p1: { parsed: { y: values[index] } },
+  });
+}
+
+test("스파크라인은 기준선 위 구간을 빨강, 아래 구간을 파랑으로 그린다", async () => {
+  const window = await makeWindow(defaultFetch(crossingPayload()));
+
+  await window.renderMarketIndices();
+
+  const chart = window.__charts[0];
+  assert(segmentColorAt(chart, 1) === "#3742fa", "기준선 아래로 내려간 구간은 파랑이어야 함");
+  assert(segmentColorAt(chart, 2) === "#3742fa", "기준선 아래에 머무는 구간은 파랑이어야 함");
+  assert(segmentColorAt(chart, 3) === "#ff4757", "기준선 위로 올라선 구간은 빨강이어야 함");
+});
+
+test("스파크라인은 기준선을 경계로 위아래 영역을 다른 색으로 채운다", async () => {
+  const window = await makeWindow(defaultFetch(crossingPayload()));
+
+  await window.renderMarketIndices();
+
+  const { fill } = window.__charts[0].config.data.datasets[0];
+  assert(fill && fill.target && fill.target.value === 2650.0,
+    `채움 기준선은 첫 점(전일 종가)이어야 함 (실제 ${JSON.stringify(fill)})`);
+  assert(fill.above.includes("255, 71, 87"), `기준선 위는 상승색 영역이어야 함 (실제 ${fill.above})`);
+  assert(fill.below.includes("55, 66, 250"), `기준선 아래는 하락색 영역이어야 함 (실제 ${fill.below})`);
+});
+
+test("일봉 기간도 구간 첫 종가를 기준선으로 삼는다", async () => {
+  const window = await makeWindow(defaultFetch(indexPayload({
+    points: [
+      { date: "20260724", close: 2637.85 },
+      { date: "20260725", close: 2630.0 },
+      { date: "20260727", close: 2650.15 },
+    ],
+  })));
+
+  await window.renderMarketIndices();
+
+  const chart = window.__charts[0];
+  assert(chart.config.data.datasets[0].fill.target.value === 2637.85,
+    "일봉 차트 기준선은 구간 첫 종가여야 함");
+  assert(segmentColorAt(chart, 1) === "#3742fa", "구간 첫 종가보다 낮은 구간은 파랑이어야 함");
+  assert(segmentColorAt(chart, 2) === "#ff4757", "구간 첫 종가보다 높은 구간은 빨강이어야 함");
+});
+
 test("국장 스파크라인은 x축에 날짜 눈금을 표시한다", async () => {
   const window = await makeWindow();
 
