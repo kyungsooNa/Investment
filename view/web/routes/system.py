@@ -37,7 +37,7 @@ _SCHEDULE_TYPES = {
     "daily_theme_leader_report": "after_market",
     "market_cap_gap_report_kr": "after_market",
     "market_cap_gap_report_us": "after_market",
-    "overseas_vbo_dryrun": "after_market",
+    "overseas_dryrun": "after_market",
     "after_market_reconcile": "after_market",
     "post_market_replay_audit": "after_market",
     "newhigh_strategy_coverage_backtest": "after_market",

@@ -537,7 +537,7 @@ def test_get_background_status_includes_us_cron_trigger(web_client, mock_web_ctx
 
     mock_web_ctx.background_scheduler = MagicMock()
     mock_web_ctx.background_scheduler.get_all_status.return_value = [
-        {"name": "overseas_vbo_dryrun", "state": "idle", "priority": 100},
+        {"name": "overseas_dryrun", "state": "idle", "priority": 100},
     ]
     mock_web_ctx.background_scheduler.get_task.return_value = mock_task
 
@@ -545,7 +545,7 @@ def test_get_background_status_includes_us_cron_trigger(web_client, mock_web_ctx
 
     assert response.status_code == 200
     item = response.json()["data"][0]
-    assert item["name"] == "overseas_vbo_dryrun"
+    assert item["name"] == "overseas_dryrun"
     assert item["schedule_type"] == "after_market"
     assert item["trigger"] == {
         "timezone": "America/New_York",
