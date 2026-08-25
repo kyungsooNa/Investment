@@ -1244,7 +1244,9 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 }
 .market-indices-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    /* auto-fill: 카드 수가 트랙 수보다 적어도 남는 트랙을 비워 둔다.
+       auto-fit 이면 국장(2개)·원자재(3개) 카드만 행 전체로 늘어나 미장 카드와 크기가 어긋났다. */
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
     gap: 12px;
 }
 .market-index-card {
