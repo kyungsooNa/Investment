@@ -289,3 +289,31 @@ def test_jeju_region_trade_reports_unavailable_without_customs_client():
     assert payload["data"]["available"] is False
     assert payload["data"]["rows"] == []
     assert payload["data"]["latest"] is None
+
+
+def test_jeju_region_trade_returns_json_error_when_customs_client_fails():
+    customs_client = SimpleNamespace(
+        fetch_sido_total_range=AsyncMock(side_effect=RuntimeError("Internal Server Error")),
+    )
+    ctx = SimpleNamespace(
+        full_config={"use_login": False, "auth": {"secret_key": "test-token"}},
+        trade_trend_customs_client=customs_client,
+        logger=SimpleNamespace(warning=lambda *args, **kwargs: None),
+    )
+    api_common.set_ctx(ctx)
+
+    try:
+        response = TestClient(web_main.app, raise_server_exceptions=False).get(
+            "/api/trade-trends/jeju/region"
+        )
+    finally:
+        api_common.set_ctx(None)
+
+    assert response.status_code == 502
+    assert response.headers["content-type"].startswith("application/json")
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["detail"] == "제주지역 수출입동향 조회 실패"
+    assert payload["data"]["available"] is False
+    assert payload["data"]["rows"] == []
+    assert payload["data"]["latest"] is None
