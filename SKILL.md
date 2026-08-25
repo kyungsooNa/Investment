@@ -111,6 +111,19 @@ Read(file_path)  # 전체 읽기
 
 ---
 
+## 규칙 6. PR 머지 전 최신 main 반영
+
+PR을 생성하고 CI가 통과했더라도, 로컬 `main` 또는 원격 `origin/main`이 PR 생성 이후 갱신되었으면 바로 머지하지 않는다.
+
+1. `git fetch origin main`으로 최신 `origin/main`을 확인한다.
+2. PR 브랜치가 최신 `origin/main` 뒤에 있으면 `git rebase origin/main`으로 갱신한다.
+3. rebase 결과를 push하고 CI를 다시 확인한다.
+4. 갱신된 PR의 CI가 통과한 뒤에만 merge한다.
+
+**Why:** 오래된 base 위에서 통과한 CI만 믿고 머지하면 최신 `main`과 합쳐진 실제 상태에서 회귀가 생길 수 있다.
+
+---
+
 ## 체크리스트
 
 작업 시작 전 다음을 확인한다:
@@ -124,3 +137,4 @@ Read(file_path)  # 전체 읽기
   - [ ] Changes Specification
   - [ ] Test Update Specification
   - [ ] Execution Notes
+- [ ] PR 머지 전 최신 `origin/main`을 확인하고, 뒤처졌으면 rebase 후 CI를 다시 확인했는가?

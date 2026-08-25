@@ -92,6 +92,7 @@ gh pr checks <PR번호> --watch
 
 **2) 모든 체크 통과 시 — 머지하고 정리한다**
 - draft PR이면 먼저 ready로 전환한다: `gh pr ready <PR번호>`
+- 머지 전 로컬 `main`/원격 `origin/main` 최신 여부를 확인한다: `git fetch origin main` 후 PR 브랜치가 최신 `origin/main` 뒤에 있으면 바로 머지하지 말고 `git rebase origin/main`으로 갱신한 뒤 push하고 CI를 다시 확인한다.
 - 머지: `gh pr merge <PR번호> --squash --delete-branch` (저장소가 squash를 허용하지 않으면 허용된 방식으로 대체)
 - 로컬 정리: `git checkout main` → `git pull origin main` → `git branch -d <작업브랜치>`
   - 원격 브랜치가 남아 있으면 `git push origin --delete <작업브랜치>`로 제거한다.
