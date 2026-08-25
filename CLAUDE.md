@@ -252,6 +252,9 @@ httpx, websockets, pycryptodome, fastapi, uvicorn, jinja2, pandas, PyYAML, pytz,
 - 한글 메뉴/메시지, 영문 코드/변수명
 - 테스트 파일명: `test_*.py` (단위), `test_it_*.py` (통합)
 - config.yaml, token_*.json은 git에 포함하지 않음
+- **정적 자산 캐시버스팅**: `view/web/static/**` 의 JS/CSS 를 고치면 템플릿의 `?v=N` 도 올리고
+  `python scripts/update_asset_versions.py` 로 잠금(`view/web/asset_versions.json`)을 갱신한다.
+  누락 시 브라우저가 옛 파일을 계속 받는다 (`tests/unit_test/view/web/test_static_asset_versions.py` 가 검사)
 
 ---
 

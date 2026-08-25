@@ -1,0 +1,130 @@
+{
+  "css/heatmap.css": {
+    "version": 2,
+    "sha256": "10cf455d299e0426f41e9e1292c636cee1fe5de28adf9dc037fed2bebe4d4889"
+  },
+  "css/style.css": {
+    "version": 17,
+    "sha256": "da61e433cf55813431d3f1ba145ef8cf60d52c83a305d458f815b2acc4554233"
+  },
+  "js/autocomplete.js": {
+    "version": 2,
+    "sha256": "7467909c8b56f6f5837142a00de80794522829f7dd2950f54764d690b3ad6e10"
+  },
+  "js/balance.js": {
+    "version": 2,
+    "sha256": "45bfd050d416ef50583a601d654e94aa0016f23c64b1e96fbec7878c57cb747b"
+  },
+  "js/candle_chart.js": {
+    "version": 6,
+    "sha256": "35a94d5d12ab878788277e15234c38a3abf0a739f775726cebd4178fb6a303d6"
+  },
+  "js/common.js": {
+    "version": 12,
+    "sha256": "0f0515a51002e2db7ea1450ec839b408279d431fcc96df93c8b0e116511f81f2"
+  },
+  "js/favorite.js": {
+    "version": 7,
+    "sha256": "3c1f90dfdc64ff4c34e3f8086fde2e917564a965fbe90bb94e197aeafea9b88d"
+  },
+  "js/heatmap_page.js": {
+    "version": 7,
+    "sha256": "b9681d5fb2a969e2be6fd44ef5862f37a4e83cd1bd1d30a0e71ae101465b4ffc"
+  },
+  "js/kill_switch.js": {
+    "version": 4,
+    "sha256": "e1f5d044d91a17d6303243d24ecc2b034d6f36d38bee51bf7d298edcc950f56a"
+  },
+  "js/market_heatmap.js": {
+    "version": 6,
+    "sha256": "851f0af216300901fa0ed169890d8dd9d13ad72d1f2b174f4ff26320fa93761e"
+  },
+  "js/market_indices.js": {
+    "version": 6,
+    "sha256": "7fb609169d7ec691060eaada4df8c8294b12e6890efecaf0ffbeb829da49cfd2"
+  },
+  "js/marketcap.js": {
+    "version": 3,
+    "sha256": "19b9c3d254a11a6188adcaa7da60e5ce19c51442b3b9330dfa1f4b50189051a3"
+  },
+  "js/notifications.js": {
+    "version": 2,
+    "sha256": "5b6d0b7cd9e5ec0ff78594d8703cfa6d3f9305db8e5fa4f12e750017ce20b4f5"
+  },
+  "js/operator_dashboard.js": {
+    "version": 1,
+    "sha256": "ca1abff1811bcca5730b9c99696a5019bdfc297758414cbd405ead7a1a380755"
+  },
+  "js/order.js": {
+    "version": 2,
+    "sha256": "94d0a0bce9a4549bd3793b7fc2baadf0c40bcae9c68e78ba653b35106e8fc1dc"
+  },
+  "js/overseas.js": {
+    "version": 10,
+    "sha256": "a32a251ab0f8b862527e78454519d6df44a3a5700fd66f04944975d097f9c4b8"
+  },
+  "js/overseas_autocomplete.js": {
+    "version": 2,
+    "sha256": "87efd9e96ee90607beb0510939070de1e9bfa9f32170a0f529b6cfc9b102d225"
+  },
+  "js/overseas_marketcap.js": {
+    "version": 3,
+    "sha256": "b161830bcc4840c6b032c0dea82536a0d8552fc80348a256c7484001a4283170"
+  },
+  "js/overseas_ranking.js": {
+    "version": 2,
+    "sha256": "3a4d63c78e54c29ad9fc48b443b9466c46a14a0662cf47dafd2d6072e8631156"
+  },
+  "js/overseas_stock.js": {
+    "version": 2,
+    "sha256": "294d0b05f4890a0ec4b2c809abf0aa73d9b16737f2f699693ce26148aa0685cf"
+  },
+  "js/pagination.js": {
+    "version": 1,
+    "sha256": "b603f2780bba66db991a5a1e3b5cc06ad01aac23be51af9b11f924ce650f825b"
+  },
+  "js/program_chart.js": {
+    "version": 1,
+    "sha256": "d995be859cf0d7bddefeb0c84879d690c444da9d2916e3f6f87bb3a46d129e65"
+  },
+  "js/program_trading.js": {
+    "version": 2,
+    "sha256": "f843605edcf4062f4a9442c895cb536ac07ec565ec4ff3829dffa68d23d30e12"
+  },
+  "js/ranking.js": {
+    "version": 9,
+    "sha256": "7511e54cdbc3748a59bcea795214891c8a9fbae705969ed99cd033cf3fc8a7bb"
+  },
+  "js/scheduler.js": {
+    "version": 8,
+    "sha256": "7bf46621182281da6c9f9209827fc21b0464d5b9d0891eeb8d0b6c65b29af1d6"
+  },
+  "js/stock.js": {
+    "version": 17,
+    "sha256": "4131dc54fafd5b68de0325c472d42856acfcffcfc74ca5ddd67b4ee8e4b38b00"
+  },
+  "js/strategy_reports.js": {
+    "version": 3,
+    "sha256": "52f74c58ee708dcf3fe3809637e9572d2a4453d417887bb1b03c59c135301b78"
+  },
+  "js/system.js": {
+    "version": 23,
+    "sha256": "4f4bcae5ab8f4374ca87aa103196a93b64cf6d9eb7d874179c9471e168b5cff4"
+  },
+  "js/trade_trends.js": {
+    "version": 5,
+    "sha256": "99f5d07e452a6239bd47b8411a35d3dc524658ab30450547810cba7f4f189660"
+  },
+  "js/virtual.js": {
+    "version": 4,
+    "sha256": "cf568d99d87727af46878de1b01c83dbe594b0d621a4a0c3a8d65c0078331627"
+  },
+  "js/virtual_chart.js": {
+    "version": 9,
+    "sha256": "6d9e99130be6844482914bd43278874a272631d1e56e6e52a73b6f2e959a09a6"
+  },
+  "js/youtube.js": {
+    "version": 1,
+    "sha256": "b1e3b02bf5145bb4e2cf5f7a7076d9880100ffdbfb291c6f0167a142efb0fc0f"
+  }
+}
