@@ -328,11 +328,21 @@ class SubscriptionPolicy:
         # 정책 장부만 초기화되고 KIS 등록은 남는 경로가 있어, 회수하지 않으면 슬롯이 영구 소모된다.
         registered_price = ledger["price_codes"] if ledger else set()
         registered_pt = ledger["program_trading_codes"] if ledger else set()
+        registered_pt_policy_owned = registered_pt
+        if registered_pt and self._streaming_stock_repo:
+            source_getter = getattr(self._streaming_stock_repo, "get_pt_subscription_sources", None)
+            if callable(source_getter):
+                sources = source_getter()
+                if isinstance(sources, dict):
+                    registered_pt_policy_owned = {
+                        code for code in registered_pt
+                        if sources.get(code) != StreamingStockRepo.SOURCE_MANUAL
+                    }
 
         to_unsubscribe_price = (self._active_codes_price | registered_price) - desired_price
         to_subscribe_price = desired_price - self._active_codes_price
 
-        to_unsubscribe_pt = (self._active_codes_pt | registered_pt) - desired_pt
+        to_unsubscribe_pt = (self._active_codes_pt | registered_pt_policy_owned) - desired_pt
         to_subscribe_pt = desired_pt - self._active_codes_pt
 
         # 4. 실제 구독/해지 수행

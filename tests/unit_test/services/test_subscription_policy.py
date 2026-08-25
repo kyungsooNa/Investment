@@ -478,6 +478,27 @@ async def test_rebalance_releases_broker_registrations_policy_no_longer_wants(po
 
 
 @pytest.mark.asyncio
+async def test_rebalance_preserves_manual_program_trading_from_broker_ledger(
+    policy, mock_streaming, mock_streaming_stock_repo
+):
+    """수동 PT 구독은 워치독 소유이므로 가격 정책 리밸런스가 해지하지 않는다."""
+    mock_streaming.get_subscription_ledger = MagicMock(return_value={
+        "total": 2,
+        "price_codes": set(),
+        "program_trading_codes": {"005930", "222222"},
+    })
+    mock_streaming_stock_repo.get_pt_subscription_sources.return_value = {
+        "005930": "manual",
+        "222222": "program",
+    }
+
+    await policy.add_subscription("000660", SubscriptionPriority.HIGH, "portfolio")
+
+    mock_streaming.unsubscribe_program_trading.assert_awaited_once_with("222222")
+    assert call("005930") not in mock_streaming.unsubscribe_program_trading.await_args_list
+
+
+@pytest.mark.asyncio
 async def test_subscribe_order_follows_priority_not_set_iteration(policy, mock_streaming):
     """슬롯 경합 시 우선순위 높은 종목이 먼저 구독 요청된다."""
     for code in ("000001", "000002", "000003", "000004"):
