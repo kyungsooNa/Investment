@@ -143,11 +143,26 @@ function _indexTickCallback(labels) {
     };
 }
 
+// 기준선 위는 상승색, 아래는 하락색. 영역은 같은 색을 옅게 깐다.
+const MARKET_INDEX_UP_COLOR = '#ff4757';
+const MARKET_INDEX_DOWN_COLOR = '#3742fa';
+const MARKET_INDEX_UP_FILL = 'rgba(255, 71, 87, 0.14)';
+const MARKET_INDEX_DOWN_FILL = 'rgba(55, 66, 250, 0.14)';
+
+function _indexBaselineColor(value, baseline) {
+    return value < baseline ? MARKET_INDEX_DOWN_COLOR : MARKET_INDEX_UP_COLOR;
+}
+
 function _renderIndexSparkline(canvas, data) {
     if (typeof Chart === 'undefined' || !data.points.length) return;
 
     // 함께 표시하는 등락률과 색이 어긋나지 않도록 등락률 기준으로 칠한다.
-    const color = Number.isFinite(data.changeRate) && data.changeRate < 0 ? '#3742fa' : '#ff4757';
+    const color = Number.isFinite(data.changeRate) && data.changeRate < 0
+        ? MARKET_INDEX_DOWN_COLOR
+        : MARKET_INDEX_UP_COLOR;
+    // 시가 기준선: 1D 는 서버가 앞에 붙인 전일 종가, 그 밖의 기간은 구간 첫 종가.
+    // 구간이 기준선을 넘나들면 선과 영역 색도 그 지점에서 갈린다.
+    const baseline = data.points[0].close;
     const labels = data.points.map(_formatIndexPointLabel);
     const chart = new Chart(canvas.getContext('2d'), {
         type: 'line',
@@ -156,9 +171,17 @@ function _renderIndexSparkline(canvas, data) {
             datasets: [{
                 data: data.points.map(p => p.close),
                 borderColor: color,
+                // Chart.js 는 구간 단위로만 색을 바꾸므로 구간이 도착한 값으로 판단한다.
+                segment: {
+                    borderColor: ctx => _indexBaselineColor(ctx.p1.parsed.y, baseline),
+                },
                 borderWidth: 1.5,
                 pointRadius: 0,
-                fill: false,
+                fill: {
+                    target: { value: baseline },
+                    above: MARKET_INDEX_UP_FILL,
+                    below: MARKET_INDEX_DOWN_FILL,
+                },
                 tension: 0.15,
             }],
         },
