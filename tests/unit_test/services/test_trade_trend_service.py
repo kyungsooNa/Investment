@@ -3,6 +3,7 @@ import io
 from unittest.mock import AsyncMock
 import zipfile
 
+import httpx
 import pytest
 
 from services.trade_trend_service import (
@@ -50,6 +51,57 @@ CUSTOMS_XML = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+CUSTOMS_SIDO_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<response>
+  <header>
+    <resultCode>00</resultCode>
+    <resultMsg>NORMAL SERVICE.</resultMsg>
+  </header>
+  <body>
+    <items>
+      <item>
+        <priodTitle>2026.05</priodTitle>
+        <sidoNm>제주</sidoNm>
+        <expUsdAmt>25000000</expUsdAmt>
+        <impUsdAmt>9900000</impUsdAmt>
+        <cmtrBlncAmt>15100000</cmtrBlncAmt>
+      </item>
+    </items>
+  </body>
+</response>
+"""
+
+
+CUSTOMS_SIDO_ITEM_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<response>
+  <header>
+    <resultCode>00</resultCode>
+    <resultMsg>NORMAL SERVICE.</resultMsg>
+  </header>
+  <body>
+    <items>
+      <item>
+        <priodTitle>2026.05</priodTitle>
+        <korePrlstNm>집적회로 반도체</korePrlstNm>
+        <hsSgn>8542</hsSgn>
+        <expUsdAmt>46585000</expUsdAmt>
+        <impUsdAmt>1000</impUsdAmt>
+        <cmtrBlncAmt>46584000</cmtrBlncAmt>
+      </item>
+      <item>
+        <priodTitle>2026.05</priodTitle>
+        <korePrlstNm>기타</korePrlstNm>
+        <hsSgn>9999</hsSgn>
+        <expUsdAmt>1</expUsdAmt>
+        <impUsdAmt>2</impUsdAmt>
+        <cmtrBlncAmt>-1</cmtrBlncAmt>
+      </item>
+    </items>
+  </body>
+</response>
+"""
+
+
 def test_parse_customs_trade_xml_skips_total_row_and_parses_amounts():
     rows = parse_customs_trade_xml(CUSTOMS_XML)
 
@@ -67,10 +119,40 @@ def test_parse_customs_trade_xml_skips_total_row_and_parses_amounts():
     ]
 
 
+def test_parse_customs_trade_xml_parses_current_sido_fields():
+    rows = parse_customs_trade_xml(CUSTOMS_SIDO_XML)
+
+    assert rows == [
+        TradeStatItem(
+            period="2026.05",
+            item_name="제주",
+            item_code="",
+            export_amount_usd=25000000,
+            import_amount_usd=9900000,
+            trade_balance_usd=15100000,
+            export_weight=0,
+            import_weight=0,
+        )
+    ]
+
+
 def test_parse_customs_trade_xml_raises_on_api_error():
     xml = "<response><header><resultCode>99</resultCode><resultMsg>bad key</resultMsg></header></response>"
 
     with pytest.raises(ValueError, match="bad key"):
+        parse_customs_trade_xml(xml)
+
+
+def test_parse_customs_trade_xml_raises_on_gateway_auth_error():
+    xml = (
+        "<OpenAPI_ServiceResponse><cmmMsgHeader>"
+        "<errMsg>SERVICE_KEY_IS_NOT_REGISTERED_ERROR</errMsg>"
+        "<returnAuthMsg>등록되지 않은 서비스키</returnAuthMsg>"
+        "<returnReasonCode>30</returnReasonCode>"
+        "</cmmMsgHeader></OpenAPI_ServiceResponse>"
+    )
+
+    with pytest.raises(ValueError, match="30.*등록되지 않은 서비스키"):
         parse_customs_trade_xml(xml)
 
 
@@ -90,26 +172,32 @@ class DummyHttpClient:
 @pytest.mark.asyncio
 async def test_customs_client_calls_sido_item_endpoint_with_configured_params():
     http_client = DummyHttpClient()
+    http_client.get = AsyncMock(return_value=type("Response", (), {
+        "text": CUSTOMS_SIDO_ITEM_XML,
+        "raise_for_status": lambda self: None,
+    })())
     client = CustomsTradeStatClient(
-        service_key="test-key",
+        service_key="encoded%2Fkey",
         http_client=http_client,
-        base_url="https://example.test/openapi/service/newTradestatistics",
-        sido_param_name="searchSidoCd",
+        base_url="https://example.test/sidotrade",
+        item_base_url="https://example.test/sidoitemtrade",
+        sido_param_name="sidoCd",
         sido_code="50",
     )
 
     rows = await client.fetch_sido_item_month("202605", "8542")
 
+    assert len(rows) == 1
     assert rows[0].export_amount_usd == 46585000
     http_client.get.assert_awaited_once()
     url = http_client.get.await_args.args[0]
     params = http_client.get.await_args.kwargs["params"]
-    assert url.endswith("/getsidoitemtradeList")
-    assert params["searchBgnDe"] == "202605"
-    assert params["searchEndDe"] == "202605"
-    assert params["searchItemCd"] == "8542"
-    assert params["searchSidoCd"] == "50"
-    assert params["serviceKey"] == "test-key"
+    assert url.endswith("/getSidoitemtradeList")
+    assert params["strtYymm"] == "202605"
+    assert params["endYymm"] == "202605"
+    assert "searchItemCd" not in params
+    assert params["sidoCd"] == "50"
+    assert params["serviceKey"] == "encoded/key"
 
 
 JEJU_TOTAL_RANGE_XML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -152,7 +240,7 @@ JEJU_TOTAL_RANGE_XML = """<?xml version="1.0" encoding="UTF-8"?>
 
 class DummyRangeResponse:
     status_code = 200
-    text = JEJU_TOTAL_RANGE_XML
+    text = CUSTOMS_SIDO_XML
 
     def raise_for_status(self):
         return None
@@ -165,21 +253,47 @@ async def test_customs_client_fetches_sido_total_range_with_period_range():
     client = CustomsTradeStatClient(
         service_key="test-key",
         http_client=http_client,
-        base_url="https://example.test/openapi/service/newTradestatistics",
-        sido_param_name="searchSidoCd",
+        base_url="https://example.test/sidotrade",
+        sido_param_name="sidoCd",
         sido_code="50",
     )
 
     rows = await client.fetch_sido_total_range("202505", "202605")
 
-    assert [row.period for row in rows] == ["2025.05", "2026.04", "2026.05"]
+    assert [row.period for row in rows] == ["2026.05"]
     url = http_client.get.await_args.args[0]
     params = http_client.get.await_args.kwargs["params"]
-    assert url.endswith("/getsidotradeList")
-    assert params["searchBgnDe"] == "202505"
-    assert params["searchEndDe"] == "202605"
-    assert params["searchSidoCd"] == "50"
+    assert url.endswith("/getSidotradeList")
+    assert params["strtYymm"] == "202505"
+    assert params["endYymm"] == "202605"
+    assert params["sidoCd"] == "50"
     assert "searchItemCd" not in params
+
+
+@pytest.mark.asyncio
+async def test_customs_client_surfaces_gateway_error_body_before_http_status():
+    response = type("Response", (), {
+        "text": (
+            "<OpenAPI_ServiceResponse><cmmMsgHeader>"
+            "<errMsg>SERVICE_KEY_IS_NOT_REGISTERED_ERROR</errMsg>"
+            "<returnAuthMsg>등록되지 않은 서비스키</returnAuthMsg>"
+            "<returnReasonCode>30</returnReasonCode>"
+            "</cmmMsgHeader></OpenAPI_ServiceResponse>"
+        ),
+        "raise_for_status": lambda self: (_ for _ in ()).throw(
+            httpx.HTTPStatusError(
+                "403 Forbidden",
+                request=httpx.Request("GET", "https://example.test"),
+                response=httpx.Response(403),
+            )
+        ),
+    })()
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(return_value=response)
+    client = CustomsTradeStatClient(service_key="test-key", http_client=http_client)
+
+    with pytest.raises(ValueError, match="SERVICE_KEY_IS_NOT_REGISTERED_ERROR"):
+        await client.fetch_sido_total_month("202607")
 
 
 def test_build_jeju_region_trade_series_calculates_mom_and_yoy():

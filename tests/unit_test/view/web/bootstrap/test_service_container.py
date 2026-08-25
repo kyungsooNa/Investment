@@ -203,8 +203,10 @@ def test_service_container_builds_enabled_trade_trend_monitor(patched_service_co
             "enabled": True,
             "customs_service_key": "customs-key",
             "request_timeout_sec": 7,
+            "customs_base_url": "https://example.test/sidotrade/",
+            "customs_item_base_url": "https://example.test/sidoitemtrade/",
             "sido_code": "50",
-            "sido_param_name": "searchSidoCd",
+            "sido_param_name": "sidoCd",
         }
     }
 
@@ -214,6 +216,8 @@ def test_service_container_builds_enabled_trade_trend_monitor(patched_service_co
     client_cls.assert_called_once()
     client_kwargs = client_cls.call_args.kwargs
     assert client_kwargs["service_key"] == "customs-key"
+    assert client_kwargs["base_url"] == "https://example.test/sidotrade/"
+    assert client_kwargs["item_base_url"] == "https://example.test/sidoitemtrade/"
     assert client_kwargs["timeout_sec"] == 7.0
     assert client_kwargs["sido_code"] == "50"
     national_cls = patched_service_container_deps["NationalTradeTrendWebClient"]

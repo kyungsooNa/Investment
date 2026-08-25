@@ -317,3 +317,32 @@ def test_jeju_region_trade_reports_unavailable_when_customs_client_fails():
     assert payload["data"]["rows"] == []
     assert payload["data"]["latest"] is None
     assert payload["data"]["message"] == "관세청 수출입통계 API 연결 실패로 제주지역 동향을 일시적으로 조회할 수 없습니다."
+
+
+def test_jeju_region_trade_reports_api_key_permission_error():
+    customs_client = SimpleNamespace(
+        fetch_sido_total_range=AsyncMock(
+            side_effect=ValueError(
+                "관세청 수출입통계 API 오류: 30 SERVICE_KEY_IS_NOT_REGISTERED_ERROR"
+            )
+        ),
+    )
+    ctx = SimpleNamespace(
+        full_config={"use_login": False, "auth": {"secret_key": "test-token"}},
+        trade_trend_customs_client=customs_client,
+        logger=SimpleNamespace(warning=lambda *args, **kwargs: None),
+    )
+    api_common.set_ctx(ctx)
+
+    try:
+        response = TestClient(web_main.app, raise_server_exceptions=False).get(
+            "/api/trade-trends/jeju/region"
+        )
+    finally:
+        api_common.set_ctx(None)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["data"]["available"] is False
+    assert payload["data"]["message"] == "관세청 시도별 수출입실적 API 키 권한을 확인해 주세요."

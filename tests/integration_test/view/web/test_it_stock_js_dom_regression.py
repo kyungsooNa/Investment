@@ -8,6 +8,8 @@ node 또는 jsdom 미설치 시에는 skip 한다(설치: `cd tests/frontend && 
 """
 import shutil
 import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _FRONTEND_DIR = _REPO_ROOT / "tests" / "frontend"
 _RUNNERS = sorted(_FRONTEND_DIR.glob("run_*_dom_tests.mjs"))
+_LOCK_PATH = Path(tempfile.gettempdir()) / "investment-jsdom-regression.lock"
 
 
 def _skip_if_unavailable():
@@ -25,19 +28,51 @@ def _skip_if_unavailable():
 
 
 @pytest.mark.parametrize("runner", _RUNNERS, ids=lambda p: p.name)
+@pytest.mark.timeout(1080)
 def test_js_dom_regression_suite(runner):
     _skip_if_unavailable()
 
-    result = subprocess.run(
-        ["node", str(runner)],
-        cwd=str(_REPO_ROOT),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=120,
-    )
+    _acquire_jsdom_lock()
+    try:
+        result = subprocess.run(
+            ["node", str(runner)],
+            cwd=str(_REPO_ROOT),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+    finally:
+        _release_jsdom_lock()
     assert result.returncode == 0, (
         f"jsdom 회귀 테스트 실패 ({runner.name})\n"
         f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
     )
+
+
+def _acquire_jsdom_lock(timeout_sec: float = 900.0, stale_sec: float = 240.0) -> None:
+    deadline = time.monotonic() + timeout_sec
+    while True:
+        try:
+            fd = _LOCK_PATH.open("x")
+        except FileExistsError:
+            try:
+                if time.time() - _LOCK_PATH.stat().st_mtime > stale_sec:
+                    _LOCK_PATH.unlink()
+                    continue
+            except FileNotFoundError:
+                continue
+            if time.monotonic() >= deadline:
+                pytest.fail("jsdom 회귀 테스트 실행 락 획득 timeout")
+            time.sleep(0.1)
+        else:
+            fd.close()
+            return
+
+
+def _release_jsdom_lock() -> None:
+    try:
+        _LOCK_PATH.unlink()
+    except FileNotFoundError:
+        pass

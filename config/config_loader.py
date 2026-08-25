@@ -332,11 +332,10 @@ class TradeTrendMonitorConfig(BaseModel):
     customs_service_key: str = ""
     poll_interval_sec: int = Field(3600, ge=60)
     request_timeout_sec: float = Field(10.0, gt=0)
-    customs_base_url: str = (
-        "https://openapi.customs.go.kr/openapi/service/newTradestatistics/"
-    )
+    customs_base_url: str = "https://apis.data.go.kr/1220000/sidotrade/"
+    customs_item_base_url: str = "https://apis.data.go.kr/1220000/sidoitemtrade/"
     sido_code: str = "50"
-    sido_param_name: str = "searchSidoCd"
+    sido_param_name: str = "sidoCd"
     item_code: str = "8542"
     target_month: Optional[str] = None
     national_list_urls: List[str] = Field(default_factory=lambda: [
