@@ -1579,6 +1579,49 @@ def test_get_subscription_status_rest_snapshot_does_not_imply_active(web_client,
     assert row["received_at"] is None
     assert row["snapshot_at"] == 1784752211.0
     assert row["price_source"] == "rest_snapshot"
+    assert row["alert_status"] == "rest_snapshot"
+
+
+def test_get_subscription_status_reports_manual_pt_alert_recovery_path(web_client, mock_web_ctx):
+    """수동 PT 종목은 체결가가 없어도 REST 보강으로 알림 평가 가능 상태를 노출한다."""
+    mock_svc = MagicMock()
+    mock_svc.get_status.return_value = {
+        "active_count": 1,
+        "max_subscriptions": 40,
+        "active_codes_price": [],
+        "active_codes_pt": [],
+        "pending_count": 0,
+        "pending_by_priority": {
+            "CRITICAL": [],
+            "HIGH": [],
+            "MEDIUM": [],
+            "LOW": [],
+        },
+    }
+    mock_web_ctx.price_subscription_service = mock_svc
+    mock_web_ctx.streaming_stock_repo = MagicMock()
+    mock_web_ctx.streaming_stock_repo.get_desired.side_effect = lambda stream_type: (
+        {"080220"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    mock_web_ctx.streaming_stock_repo.get_active.side_effect = lambda stream_type: (
+        {"080220"} if stream_type == StreamingType.PROGRAM_TRADING else set()
+    )
+    mock_web_ctx.streaming_stock_repo.get_pt_subscription_sources.return_value = {
+        "080220": "manual",
+    }
+    mock_web_ctx.streaming_service.get_cached_realtime_price.return_value = None
+    mock_web_ctx.stock_code_repository.get_name_by_code.return_value = "제주반도체"
+
+    response = web_client.get("/api/subscriptions/status")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    row = data["pending_by_priority"]["CRITICAL"][0]
+    assert row["code"] == "080220"
+    assert row["active"] is True
+    assert row["pt_source"] == "manual"
+    assert row["alert_status"] == "manual_pt_rest_recovery"
+    assert row["alert_status_label"] == "수동 PT REST 보강"
 
 
 def test_get_subscription_status_inactive_code(web_client, mock_web_ctx):

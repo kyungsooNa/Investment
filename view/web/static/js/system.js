@@ -722,7 +722,7 @@ function renderSubTable() {
 
     const rows = _subData.pending_by_priority ? _subData.pending_by_priority[_subTab] || [] : [];
     if (rows.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:#888;">구독 종목 없음</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#888;">구독 종목 없음</td></tr>`;
         const ctrl = document.getElementById('sub-table-pagination');
         if (ctrl) ctrl.innerHTML = '';
         return;
@@ -743,6 +743,13 @@ function renderSubTable() {
         const priceHtml = item.price != null
             ? `<span style="font-weight:bold;">${Number(item.price).toLocaleString()}원</span>`
             : '<span style="color:#aaa;">-</span>';
+        const alertColor = {
+            live_price: 'var(--success-color,#4CAF50)',
+            rest_snapshot: 'var(--primary-color,#2196F3)',
+            manual_pt_rest_recovery: 'var(--warning-color,#f59e0b)',
+            waiting_price: '#888'
+        }[item.alert_status] || '#888';
+        const alertHtml = `<span style="color:${alertColor}; font-weight:600;">${item.alert_status_label || '-'}</span>`;
         const received = item.received_at
             ? formatTimestamp(item.received_at)
             : item.snapshot_at
@@ -756,6 +763,7 @@ function renderSubTable() {
                 <td>${activeBadge}</td>
                 <td style="font-size:0.9em;">${sourceHtml}</td>
                 <td style="font-size:0.9em;">${priceHtml}</td>
+                <td style="font-size:0.9em;">${alertHtml}</td>
                 <td style="font-size:0.9em; color:#888;">${received}</td>
             </tr>
         `;
