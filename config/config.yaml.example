@@ -292,9 +292,10 @@ trade_trend_monitor:
   customs_service_key: ""
   poll_interval_sec: 3600
   request_timeout_sec: 10
-  customs_base_url: "https://openapi.customs.go.kr/openapi/service/newTradestatistics/"
+  customs_base_url: "https://apis.data.go.kr/1220000/sidotrade/"
+  customs_item_base_url: "https://apis.data.go.kr/1220000/sidoitemtrade/"
   sido_code: "50"
-  sido_param_name: "searchSidoCd"
+  sido_param_name: "sidoCd"
   item_code: "8542"
   target_month:
   national_list_urls:

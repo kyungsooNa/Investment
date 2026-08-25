@@ -304,6 +304,7 @@ class ServiceContainer:
             ctx.trade_trend_customs_client = CustomsTradeStatClient(
                 service_key=trade_trend_config.customs_service_key,
                 base_url=trade_trend_config.customs_base_url,
+                item_base_url=trade_trend_config.customs_item_base_url,
                 timeout_sec=float(trade_trend_config.request_timeout_sec),
                 sido_param_name=trade_trend_config.sido_param_name,
                 sido_code=trade_trend_config.sido_code,

@@ -200,6 +200,20 @@ def _jeju_month_to_dict(month: JejuRegionTradeMonth) -> dict:
     }
 
 
+def _jeju_region_unavailable_message(exc: Exception) -> str:
+    error_text = str(exc)
+    if (
+        "SERVICE_KEY_IS_NOT_REGISTERED_ERROR" in error_text
+        or "SERVICE_ACCESS_DENIED_ERROR" in error_text
+        or "PERMISSION_DENIED" in error_text
+        or "DEADLINE_HAS_EXPIRED_ERROR" in error_text
+        or " 30 " in f" {error_text} "
+        or " 31 " in f" {error_text} "
+    ):
+        return "관세청 시도별 수출입실적 API 키 권한을 확인해 주세요."
+    return "관세청 수출입통계 API 연결 실패로 제주지역 동향을 일시적으로 조회할 수 없습니다."
+
+
 @router.get("/trade-trends/jeju/region")
 async def get_jeju_region_trade_trend(
     months: int = Query(12, ge=1, le=60),
@@ -235,7 +249,7 @@ async def get_jeju_region_trade_trend(
                 "rows": [],
                 "latest": None,
                 "available": False,
-                "message": "관세청 수출입통계 API 연결 실패로 제주지역 동향을 일시적으로 조회할 수 없습니다.",
+                "message": _jeju_region_unavailable_message(exc),
             },
         }
 

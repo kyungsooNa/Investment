@@ -7,7 +7,7 @@ import zipfile
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Optional
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree as ET
 
 import httpx
@@ -105,6 +105,14 @@ def _text(item: ET.Element, tag: str, default: str = "") -> str:
     return node.text.strip()
 
 
+def _first_text(item: ET.Element, *tags: str, default: str = "") -> str:
+    for tag in tags:
+        value = _text(item, tag, "")
+        if value:
+            return value
+    return default
+
+
 def _int_text(item: ET.Element, tag: str) -> int:
     raw = _text(item, tag, "0").replace(",", "")
     try:
@@ -113,26 +121,45 @@ def _int_text(item: ET.Element, tag: str) -> int:
         return 0
 
 
+def _first_int_text(item: ET.Element, *tags: str) -> int:
+    for tag in tags:
+        value = _text(item, tag, "")
+        if value:
+            return _int_text(item, tag)
+    return 0
+
+
 def parse_customs_trade_xml(xml_text: str) -> list[TradeStatItem]:
     root = ET.fromstring(xml_text)
     result_code = root.findtext("./header/resultCode", default="")
     if result_code and result_code != "00":
         result_msg = root.findtext("./header/resultMsg", default="UNKNOWN ERROR")
         raise ValueError(f"관세청 수출입통계 API 오류: {result_code} {result_msg}")
+    gateway_error_code = root.findtext("./cmmMsgHeader/returnReasonCode", default="")
+    if gateway_error_code:
+        gateway_error_name = root.findtext("./cmmMsgHeader/errMsg", default="")
+        gateway_error_msg = root.findtext(
+            "./cmmMsgHeader/returnAuthMsg",
+            default=gateway_error_name or "UNKNOWN ERROR",
+        )
+        raise ValueError(
+            f"관세청 수출입통계 API 오류: {gateway_error_code} "
+            f"{gateway_error_name} {gateway_error_msg}"
+        )
 
     rows: list[TradeStatItem] = []
     for item in root.findall(".//item"):
-        period = _text(item, "year")
+        period = _first_text(item, "year", "priodTitle")
         if not period or period == "총계":
             continue
         rows.append(
             TradeStatItem(
                 period=period,
-                item_name=_text(item, "statKor"),
-                item_code=_text(item, "hsCode"),
-                export_amount_usd=_int_text(item, "expDlr"),
-                import_amount_usd=_int_text(item, "impDlr"),
-                trade_balance_usd=_int_text(item, "balPayments"),
+                item_name=_first_text(item, "statKor", "sidoNm", "korePrlstNm"),
+                item_code=_first_text(item, "hsCode", "hsSgn"),
+                export_amount_usd=_first_int_text(item, "expDlr", "expUsdAmt"),
+                import_amount_usd=_first_int_text(item, "impDlr", "impUsdAmt"),
+                trade_balance_usd=_first_int_text(item, "balPayments", "cmtrBlncAmt"),
                 export_weight=_int_text(item, "expWgt"),
                 import_weight=_int_text(item, "impWgt"),
             )
@@ -140,10 +167,20 @@ def parse_customs_trade_xml(xml_text: str) -> list[TradeStatItem]:
     return rows
 
 
+def _raise_customs_gateway_error_if_present(xml_text: str) -> None:
+    if "<cmmMsgHeader>" not in xml_text:
+        return
+    try:
+        parse_customs_trade_xml(xml_text)
+    except ET.ParseError:
+        return
+
+
 class CustomsTradeStatClient:
     """관세청 GW 수출입통계 API 클라이언트."""
 
-    DEFAULT_BASE_URL = "https://openapi.customs.go.kr/openapi/service/newTradestatistics/"
+    DEFAULT_BASE_URL = "https://apis.data.go.kr/1220000/sidotrade/"
+    DEFAULT_ITEM_BASE_URL = "https://apis.data.go.kr/1220000/sidoitemtrade/"
 
     def __init__(
         self,
@@ -151,12 +188,16 @@ class CustomsTradeStatClient:
         service_key: str,
         http_client=None,
         base_url: str = DEFAULT_BASE_URL,
+        item_base_url: str = DEFAULT_ITEM_BASE_URL,
         timeout_sec: float = 10.0,
-        sido_param_name: str = "searchSidoCd",
+        sido_param_name: str = "sidoCd",
         sido_code: str = "50",
     ) -> None:
-        self._service_key = service_key
+        self._service_key = unquote(service_key)
         self._base_url = base_url if base_url.endswith("/") else f"{base_url}/"
+        self._item_base_url = (
+            item_base_url if item_base_url.endswith("/") else f"{item_base_url}/"
+        )
         self._timeout_sec = timeout_sec
         self._http_client = http_client
         self._sido_param_name = sido_param_name
@@ -166,43 +207,55 @@ class CustomsTradeStatClient:
         self, yyyymm: str, item_code: str
     ) -> list[TradeStatItem]:
         params = {
-            "searchBgnDe": yyyymm,
-            "searchEndDe": yyyymm,
-            "searchItemCd": item_code,
+            "strtYymm": yyyymm,
+            "endYymm": yyyymm,
             self._sido_param_name: self._sido_code,
             "serviceKey": self._service_key,
         }
-        return await self._get("getsidoitemtradeList", params)
+        rows = await self._get(
+            "getSidoitemtradeList",
+            params,
+            base_url=self._item_base_url,
+        )
+        return [row for row in rows if not item_code or row.item_code.startswith(item_code)]
 
     async def fetch_sido_total_month(self, yyyymm: str) -> list[TradeStatItem]:
         params = {
-            "searchBgnDe": yyyymm,
-            "searchEndDe": yyyymm,
+            "strtYymm": yyyymm,
+            "endYymm": yyyymm,
             self._sido_param_name: self._sido_code,
             "serviceKey": self._service_key,
         }
-        return await self._get("getsidotradeList", params)
+        return await self._get("getSidotradeList", params)
 
     async def fetch_sido_total_range(
         self, begin_yyyymm: str, end_yyyymm: str
     ) -> list[TradeStatItem]:
         params = {
-            "searchBgnDe": begin_yyyymm,
-            "searchEndDe": end_yyyymm,
+            "strtYymm": begin_yyyymm,
+            "endYymm": end_yyyymm,
             self._sido_param_name: self._sido_code,
             "serviceKey": self._service_key,
         }
-        return await self._get("getsidotradeList", params)
+        return await self._get("getSidotradeList", params)
 
-    async def _get(self, operation: str, params: dict) -> list[TradeStatItem]:
-        url = urljoin(self._base_url, operation)
+    async def _get(
+        self,
+        operation: str,
+        params: dict,
+        *,
+        base_url: str | None = None,
+    ) -> list[TradeStatItem]:
+        url = urljoin(base_url or self._base_url, operation)
         if self._http_client is not None:
             response = await self._http_client.get(url, params=params, timeout=self._timeout_sec)
+            _raise_customs_gateway_error_if_present(response.text)
             response.raise_for_status()
             return parse_customs_trade_xml(response.text)
 
         async with httpx.AsyncClient(timeout=self._timeout_sec) as client:
             response = await client.get(url, params=params)
+            _raise_customs_gateway_error_if_present(response.text)
             response.raise_for_status()
             return parse_customs_trade_xml(response.text)
 

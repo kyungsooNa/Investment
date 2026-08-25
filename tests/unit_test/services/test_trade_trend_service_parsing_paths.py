@@ -302,7 +302,7 @@ async def test_customs_client_range_and_item_queries_carry_the_sido_code():
     await client.fetch_sido_item_month("202605", "8542")
 
     for call in http_client.get.await_args_list:
-        assert call.kwargs["params"]["searchSidoCd"] == "50"
+        assert call.kwargs["params"]["sidoCd"] == "50"
 
 
 @pytest.mark.asyncio
