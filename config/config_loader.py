@@ -336,7 +336,7 @@ class TradeTrendMonitorConfig(BaseModel):
     customs_item_base_url: str = "https://apis.data.go.kr/1220000/sidoitemtrade/"
     sido_code: str = "50"
     sido_param_name: str = "sidoCd"
-    item_code: str = "8542"
+    item_code: str = "85"
     target_month: Optional[str] = None
     national_list_urls: List[str] = Field(default_factory=lambda: [
         "https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362&searchType=all&searchValue=%EC%88%98%EC%B6%9C%EC%9E%85%20%ED%98%84%ED%99%A9",

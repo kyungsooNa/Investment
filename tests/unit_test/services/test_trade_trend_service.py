@@ -200,6 +200,26 @@ async def test_customs_client_calls_sido_item_endpoint_with_configured_params():
     assert params["serviceKey"] == "encoded/key"
 
 
+@pytest.mark.asyncio
+async def test_customs_client_falls_back_to_hs_chapter_when_detail_code_is_unavailable():
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(return_value=type("Response", (), {
+        "text": CUSTOMS_SIDO_ITEM_XML.replace("<hsSgn>8542</hsSgn>", "<hsSgn>85</hsSgn>"),
+        "raise_for_status": lambda self: None,
+    })())
+    client = CustomsTradeStatClient(
+        service_key="test-key",
+        http_client=http_client,
+        item_base_url="https://example.test/sidoitemtrade",
+    )
+
+    rows = await client.fetch_sido_item_month("202605", "8542")
+
+    assert len(rows) == 1
+    assert rows[0].item_code == "85"
+    assert rows[0].export_amount_usd == 46585000
+
+
 JEJU_TOTAL_RANGE_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <response>
   <header>
