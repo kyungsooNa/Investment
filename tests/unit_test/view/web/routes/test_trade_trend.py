@@ -232,7 +232,7 @@ def test_national_trade_trend_backfill_builds_client_when_missing(tmp_path, monk
     )
 
 
-def test_jeju_region_trade_returns_series_from_customs_client():
+def test_jeju_region_trade_returns_series_from_customs_client(tmp_path):
     expected_end = shift_yyyymm(datetime.now().strftime("%Y%m"), -1)
     previous_month = shift_yyyymm(expected_end, -1)
     previous_year = shift_yyyymm(expected_end, -12)
@@ -270,7 +270,13 @@ def test_jeju_region_trade_returns_series_from_customs_client():
         fetch_sido_total_month=AsyncMock(side_effect=fetch_sido_total_month),
     )
     ctx = SimpleNamespace(
-        full_config={"use_login": False, "auth": {"secret_key": "test-token"}},
+        full_config={
+            "use_login": False,
+            "auth": {"secret_key": "test-token"},
+            "trade_trend_monitor": {
+                "state_file_path": str(tmp_path / "trade_trend_state.json"),
+            },
+        },
         trade_trend_customs_client=customs_client,
     )
     api_common.set_ctx(ctx)
@@ -301,6 +307,131 @@ def test_jeju_region_trade_returns_series_from_customs_client():
     assert len(requested_months) == 14
 
 
+def test_jeju_region_trade_uses_cached_months(tmp_path):
+    expected_end = shift_yyyymm(datetime.now().strftime("%Y%m"), -1)
+    previous_month = shift_yyyymm(expected_end, -1)
+    previous_year = shift_yyyymm(expected_end, -12)
+    state_file = tmp_path / "trade_trend_state.json"
+    repo = TradeTrendRepository(state_file)
+    repo.save_customs_trade_items(
+        "sido_total",
+        previous_year,
+        [
+            TradeStatItem(
+                f"{previous_year[:4]}.{previous_year[4:]}",
+                "제주",
+                "-",
+                10000000,
+                8000000,
+                2000000,
+            )
+        ],
+    )
+    repo.save_customs_trade_items(
+        "sido_total",
+        previous_month,
+        [
+            TradeStatItem(
+                f"{previous_month[:4]}.{previous_month[4:]}",
+                "제주",
+                "-",
+                20000000,
+                9000000,
+                11000000,
+            )
+        ],
+    )
+    repo.save_customs_trade_items(
+        "sido_total",
+        expected_end,
+        [
+            TradeStatItem(
+                f"{expected_end[:4]}.{expected_end[4:]}",
+                "제주",
+                "-",
+                25000000,
+                9900000,
+                15100000,
+            )
+        ],
+    )
+    customs_client = SimpleNamespace(
+        fetch_sido_total_month=AsyncMock(return_value=[]),
+    )
+    ctx = SimpleNamespace(
+        full_config={
+            "use_login": False,
+            "auth": {"secret_key": "test-token"},
+            "trade_trend_monitor": {"state_file_path": str(state_file)},
+        },
+        trade_trend_customs_client=customs_client,
+    )
+    api_common.set_ctx(ctx)
+
+    try:
+        response = TestClient(web_main.app).get("/api/trade-trends/jeju/region?months=2")
+    finally:
+        api_common.set_ctx(None)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["available"] is True
+    assert payload["data"]["latest"]["export_amount_usd"] == 25000000
+    assert customs_client.fetch_sido_total_month.await_count == 11
+    requested_months = [
+        call.args[0]
+        for call in customs_client.fetch_sido_total_month.await_args_list
+    ]
+    assert previous_year not in requested_months
+    assert previous_month not in requested_months
+    assert expected_end not in requested_months
+
+
+def test_jeju_region_trade_refresh_bypasses_cached_months(tmp_path):
+    expected_end = shift_yyyymm(datetime.now().strftime("%Y%m"), -1)
+    state_file = tmp_path / "trade_trend_state.json"
+    TradeTrendRepository(state_file).save_customs_trade_items(
+        "sido_total",
+        expected_end,
+        [
+            TradeStatItem(
+                f"{expected_end[:4]}.{expected_end[4:]}",
+                "제주",
+                "-",
+                1,
+                1,
+                0,
+            )
+        ],
+    )
+    customs_client = SimpleNamespace(
+        fetch_sido_total_month=AsyncMock(return_value=[]),
+    )
+    ctx = SimpleNamespace(
+        full_config={
+            "use_login": False,
+            "auth": {"secret_key": "test-token"},
+            "trade_trend_monitor": {"state_file_path": str(state_file)},
+        },
+        trade_trend_customs_client=customs_client,
+    )
+    api_common.set_ctx(ctx)
+
+    try:
+        response = TestClient(web_main.app).get(
+            "/api/trade-trends/jeju/region?months=1&refresh=true"
+        )
+    finally:
+        api_common.set_ctx(None)
+
+    assert response.status_code == 200
+    requested_months = [
+        call.args[0]
+        for call in customs_client.fetch_sido_total_month.await_args_list
+    ]
+    assert expected_end in requested_months
+
+
 def test_jeju_region_trade_reports_unavailable_without_customs_client():
     ctx = SimpleNamespace(
         full_config={"use_login": False, "auth": {"secret_key": "test-token"}},
@@ -321,12 +452,18 @@ def test_jeju_region_trade_reports_unavailable_without_customs_client():
     assert payload["data"]["latest"] is None
 
 
-def test_jeju_region_trade_reports_unavailable_when_customs_client_fails():
+def test_jeju_region_trade_reports_unavailable_when_customs_client_fails(tmp_path):
     customs_client = SimpleNamespace(
         fetch_sido_total_month=AsyncMock(side_effect=RuntimeError("Internal Server Error")),
     )
     ctx = SimpleNamespace(
-        full_config={"use_login": False, "auth": {"secret_key": "test-token"}},
+        full_config={
+            "use_login": False,
+            "auth": {"secret_key": "test-token"},
+            "trade_trend_monitor": {
+                "state_file_path": str(tmp_path / "trade_trend_state.json"),
+            },
+        },
         trade_trend_customs_client=customs_client,
         logger=SimpleNamespace(warning=lambda *args, **kwargs: None),
     )
@@ -349,7 +486,7 @@ def test_jeju_region_trade_reports_unavailable_when_customs_client_fails():
     assert payload["data"]["message"] == "관세청 수출입통계 API 연결 실패로 제주지역 동향을 일시적으로 조회할 수 없습니다."
 
 
-def test_jeju_region_trade_reports_api_key_permission_error():
+def test_jeju_region_trade_reports_api_key_permission_error(tmp_path):
     customs_client = SimpleNamespace(
         fetch_sido_total_month=AsyncMock(
             side_effect=ValueError(
@@ -358,7 +495,13 @@ def test_jeju_region_trade_reports_api_key_permission_error():
         ),
     )
     ctx = SimpleNamespace(
-        full_config={"use_login": False, "auth": {"secret_key": "test-token"}},
+        full_config={
+            "use_login": False,
+            "auth": {"secret_key": "test-token"},
+            "trade_trend_monitor": {
+                "state_file_path": str(tmp_path / "trade_trend_state.json"),
+            },
+        },
         trade_trend_customs_client=customs_client,
         logger=SimpleNamespace(warning=lambda *args, **kwargs: None),
     )

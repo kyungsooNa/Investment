@@ -226,6 +226,7 @@ def _iter_yyyymm(begin_yyyymm: str, end_yyyymm: str) -> list[str]:
 @router.get("/trade-trends/jeju/region")
 async def get_jeju_region_trade_trend(
     months: int = Query(12, ge=1, le=60),
+    refresh: bool = Query(False),
 ):
     """관세청 시도별 통계로 제주지역 월별 수출입 동향을 반환한다."""
     ctx = _get_ctx()
@@ -247,9 +248,16 @@ async def get_jeju_region_trade_trend(
     begin_month = shift_yyyymm(end_month, -(months - 1 + 12))
 
     try:
+        repository = _repository_from_config(ctx)
         stat_rows = []
         for month in _iter_yyyymm(begin_month, end_month):
-            stat_rows.extend(await client.fetch_sido_total_month(month))
+            cached_rows = (
+                None if refresh else repository.get_customs_trade_items("sido_total", month)
+            )
+            if cached_rows is None:
+                cached_rows = await client.fetch_sido_total_month(month)
+                repository.save_customs_trade_items("sido_total", month, cached_rows)
+            stat_rows.extend(cached_rows)
     except Exception as exc:
         logger = getattr(ctx, "logger", None)
         if logger is not None:

@@ -1,4 +1,4 @@
-from services.trade_trend_service import NationalTradeTrendRelease
+from services.trade_trend_service import NationalTradeTrendRelease, TradeStatItem
 from repositories.trade_trend_repository import TradeTrendRepository
 
 
@@ -160,3 +160,27 @@ def test_trade_trend_repository_backfill_preserves_existing_sent_marker(tmp_path
 
     assert history[0]["source_type"] == "sent"
     assert history[0]["sent_at"] == "2026-08-11T17:27:41+09:00"
+
+
+def test_trade_trend_repository_saves_customs_trade_cache(tmp_path):
+    path = tmp_path / "trade_trend_state.json"
+    repo = TradeTrendRepository(path)
+    rows = [
+        TradeStatItem(
+            "2026.07",
+            "제주",
+            "-",
+            167678,
+            83536,
+            84143,
+            export_weight=11,
+            import_weight=22,
+        )
+    ]
+
+    repo.save_customs_trade_items("sido_total", "202607", rows)
+    loaded = TradeTrendRepository(path)
+
+    cached = loaded.get_customs_trade_items("sido_total", "202607")
+    assert cached == rows
+    assert loaded.get_customs_trade_items("sido_total", "202606") is None

@@ -44,7 +44,7 @@
                 <h2>제주지역 수출입동향</h2>
                 <div id="jeju-trade-status" class="trade-trend-muted">조회 대기 중</div>
             </div>
-            <button class="btn btn-secondary" onclick="loadJejuRegionTrade()">새로고침</button>
+            <button class="btn btn-secondary" onclick="loadJejuRegionTrade(true)">새로고침</button>
         </div>
         <div class="summary-bar trade-trend-summary">
             <div class="summary-item">
@@ -129,7 +129,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/trade_trends.js?v=5"></script>
+<script src="/static/js/trade_trends.js?v=6"></script>
 <script>
     loadTradeTrendHistory();
     loadJejuRegionTrade();

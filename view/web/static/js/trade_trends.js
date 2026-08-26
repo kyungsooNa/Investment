@@ -425,11 +425,12 @@ function formatJejuMillionUsd(value) {
     return `${(Number(value) / 1000000).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}백만 달러`;
 }
 
-async function loadJejuRegionTrade() {
+async function loadJejuRegionTrade(forceRefresh = false) {
     const status = document.getElementById('jeju-trade-status');
     if (status) status.textContent = '조회 중';
     try {
-        const res = await fetch('/api/trade-trends/jeju/region?months=12');
+        const refreshParam = forceRefresh ? '&refresh=true' : '';
+        const res = await fetch(`/api/trade-trends/jeju/region?months=12${refreshParam}`);
         const { payload, error } = await readTradeTrendPayload(res);
         if (error) {
             throw new Error(error);

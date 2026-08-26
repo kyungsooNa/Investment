@@ -9,6 +9,8 @@ import pytest
 from services.trade_trend_service import (
     CustomsTradeStatClient,
     build_jeju_region_trade_series,
+    format_jeju_semiconductor_report_html,
+    JejuSemiconductorTradeReport,
     NationalTradeTrendRelease,
     NationalTradeTrendWebClient,
     TradeStatItem,
@@ -310,6 +312,25 @@ async def test_customs_client_normalizes_year_only_sido_total_month_period():
 
 
 @pytest.mark.asyncio
+async def test_customs_client_normalizes_year_only_sido_item_month_period():
+    response = type("Response", (), {
+        "text": CUSTOMS_SIDO_ITEM_XML.replace("2026.05", "2026"),
+        "raise_for_status": lambda self: None,
+    })()
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(return_value=response)
+    client = CustomsTradeStatClient(
+        service_key="test-key",
+        http_client=http_client,
+        item_base_url="https://example.test/sidoitemtrade",
+    )
+
+    rows = await client.fetch_sido_item_month("202607", "8542")
+
+    assert [row.period for row in rows] == ["2026.07"]
+
+
+@pytest.mark.asyncio
 async def test_customs_client_splits_sido_total_range_to_api_limit():
     first_response = type("Response", (), {
         "text": CUSTOMS_SIDO_XML.replace("2026.05", "2026.06"),
@@ -402,6 +423,26 @@ def test_build_jeju_semiconductor_report_calculates_mom_yoy_and_share():
     assert report.yoy_pct == pytest.approx(365.85)
     assert report.jeju_export_share_pct == pytest.approx(73.2584)
     assert report.dedup_key == "jeju_semiconductor:2026.05:46585000"
+
+
+def test_format_jeju_report_uses_the_api_item_name():
+    text = format_jeju_semiconductor_report_html(
+        JejuSemiconductorTradeReport(
+            period="2026.07",
+            export_amount_usd=90623,
+            previous_month_export_amount_usd=70000,
+            previous_year_export_amount_usd=18000,
+            mom_pct=29.461,
+            yoy_pct=403.461,
+            jeju_total_export_amount_usd=221000,
+            jeju_export_share_pct=41.005,
+            fetched_at="2026-08-26T00:00:00",
+            item_name="전기기기와 그 부분품",
+        )
+    )
+
+    assert "제주 전기기기와 그 부분품 수출" in text
+    assert "제주 반도체 수출" not in text
 
 
 def test_parse_national_customs_20d_release_extracts_summary_numbers():
