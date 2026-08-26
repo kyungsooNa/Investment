@@ -2,7 +2,7 @@
 //
 // 국장(코스피/코스닥)은 KIS API + Chart.js 로 직접 그린다.
 //   - TradingView 무료 임베드는 KRX 심볼을 전부 차단한다("이 심볼은 트레이딩뷰에서만 쓸 수 있습니다").
-// 미장/원자재는 TradingView mini-symbol-overview 위젯을 쓴다.
+// 미장/원자재/가상자산/채권은 TradingView mini-symbol-overview 위젯을 쓴다.
 //   - KIS Open API 가 SOX/VIX/달러인덱스/금/유가 시세를 제공하지 않는다.
 //   - 거래소 실지수(SP:SPX, NASDAQ:NDX, CBOE:VIX ...)도 임베드가 차단되므로
 //     실제로 시세가 그려지는 CFD/ETF 심볼만 쓴다.
@@ -34,6 +34,24 @@ const MARKET_INDEX_GROUPS = [
             { label: '금', symbol: 'TVC:GOLD' },
             { label: 'WTI 유가', symbol: 'TVC:USOIL' },
             { label: '메모리 반도체 ETF', symbol: 'CBOE:DRAM' },
+        ],
+    },
+    {
+        title: '가상자산',
+        kind: 'widget',
+        entries: [
+            { label: '비트코인', symbol: 'BITSTAMP:BTCUSD' },
+            { label: '이더리움', symbol: 'BITSTAMP:ETHUSD' },
+        ],
+    },
+    {
+        // 국채 금리 지표(TVC:US02Y/US10Y)도 임베드가 차단되므로 만기 구간 ETF 로 대체한다.
+        // ETF 는 가격이라 금리와 방향이 반대다 — 오르면 해당 구간 금리가 내렸다는 뜻.
+        title: '채권',
+        kind: 'widget',
+        entries: [
+            { label: '미국채 2년 ETF (SHY)', symbol: 'NASDAQ:SHY' },
+            { label: '미국채 10년 ETF (IEF)', symbol: 'NASDAQ:IEF' },
         ],
     },
 ];

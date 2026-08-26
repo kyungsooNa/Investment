@@ -31,6 +31,9 @@ const EXPECTED_GROUPS = [
     ],
   },
   { title: "원자재", kind: "widget", keys: ["TVC:GOLD", "TVC:USOIL", "CBOE:DRAM"] },
+  { title: "가상자산", kind: "widget", keys: ["BITSTAMP:BTCUSD", "BITSTAMP:ETHUSD"] },
+  // 국채 금리(TVC:US02Y/US10Y)는 임베드가 차단되므로 만기 구간 ETF 로 대체한다.
+  { title: "채권", kind: "widget", keys: ["NASDAQ:SHY", "NASDAQ:IEF"] },
 ];
 
 const BLOCKED_SYMBOLS = [
@@ -111,7 +114,7 @@ function expectedGroupsOf(window) {
   return groups;
 }
 
-test("국장·미장·원자재 그룹이 순서대로 렌더링된다", async () => {
+test("국장·미장·원자재·가상자산·채권 그룹이 순서대로 렌더링된다", async () => {
   const window = await makeWindow();
 
   await window.renderMarketIndices();
@@ -156,13 +159,13 @@ test("임베드가 차단되는 거래소 실지수 심볼을 쓰지 않는다",
   });
 });
 
-test("미장·원자재 카드는 TradingView 위젯 스크립트를 심는다", async () => {
+test("미장·원자재·가상자산·채권 카드는 TradingView 위젯 스크립트를 심는다", async () => {
   const window = await makeWindow();
 
   await window.renderMarketIndices();
 
   const widgetCards = window.document.querySelectorAll('.market-index-card[data-kind="widget"]');
-  assert(widgetCards.length === 8, `위젯 카드는 8개여야 함 (실제 ${widgetCards.length}개)`);
+  assert(widgetCards.length === 12, `위젯 카드는 12개여야 함 (실제 ${widgetCards.length}개)`);
 
   for (const card of widgetCards) {
     const script = card.querySelector(".tradingview-widget-container script");
@@ -486,8 +489,8 @@ test("국장 API 실패는 카드별 안내로 degrade 한다", async () => {
   const kospi = window.document.querySelector('.market-index-card[data-key="0001"]');
   assert(kospi.querySelector(".market-index-error"), "국장 카드에 실패 안내가 없음");
   assert(!kospi.querySelector("canvas"), "실패한 카드에 차트를 그리면 안 됨");
-  // 국장이 실패해도 미장/원자재 위젯은 살아 있어야 한다.
-  assert(window.document.querySelectorAll('.market-index-card[data-kind="widget"]').length === 8,
+  // 국장이 실패해도 미장/원자재/가상자산/채권 위젯은 살아 있어야 한다.
+  assert(window.document.querySelectorAll('.market-index-card[data-kind="widget"]').length === 12,
     "국장 실패가 위젯 카드까지 없앰");
 });
 
