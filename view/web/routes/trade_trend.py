@@ -214,6 +214,15 @@ def _jeju_region_unavailable_message(exc: Exception) -> str:
     return "관세청 수출입통계 API 연결 실패로 제주지역 동향을 일시적으로 조회할 수 없습니다."
 
 
+def _iter_yyyymm(begin_yyyymm: str, end_yyyymm: str) -> list[str]:
+    months = []
+    cursor = begin_yyyymm
+    while cursor <= end_yyyymm:
+        months.append(cursor)
+        cursor = shift_yyyymm(cursor, 1)
+    return months
+
+
 @router.get("/trade-trends/jeju/region")
 async def get_jeju_region_trade_trend(
     months: int = Query(12, ge=1, le=60),
@@ -238,7 +247,9 @@ async def get_jeju_region_trade_trend(
     begin_month = shift_yyyymm(end_month, -(months - 1 + 12))
 
     try:
-        stat_rows = await client.fetch_sido_total_range(begin_month, end_month)
+        stat_rows = []
+        for month in _iter_yyyymm(begin_month, end_month):
+            stat_rows.extend(await client.fetch_sido_total_month(month))
     except Exception as exc:
         logger = getattr(ctx, "logger", None)
         if logger is not None:

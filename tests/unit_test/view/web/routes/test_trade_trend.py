@@ -233,13 +233,41 @@ def test_national_trade_trend_backfill_builds_client_when_missing(tmp_path, monk
 
 
 def test_jeju_region_trade_returns_series_from_customs_client():
-    rows = [
-        TradeStatItem("2025.05", "제주", "-", 10000000, 8000000, 2000000),
-        TradeStatItem("2026.04", "제주", "-", 20000000, 9000000, 11000000),
-        TradeStatItem("2026.05", "제주", "-", 25000000, 9900000, 15100000),
-    ]
+    expected_end = shift_yyyymm(datetime.now().strftime("%Y%m"), -1)
+    previous_month = shift_yyyymm(expected_end, -1)
+    previous_year = shift_yyyymm(expected_end, -12)
+
+    async def fetch_sido_total_month(yyyymm):
+        rows_by_month = {
+            previous_year: TradeStatItem(
+                f"{previous_year[:4]}.{previous_year[4:]}",
+                "제주",
+                "-",
+                10000000,
+                8000000,
+                2000000,
+            ),
+            previous_month: TradeStatItem(
+                f"{previous_month[:4]}.{previous_month[4:]}",
+                "제주",
+                "-",
+                20000000,
+                9000000,
+                11000000,
+            ),
+            expected_end: TradeStatItem(
+                f"{expected_end[:4]}.{expected_end[4:]}",
+                "제주",
+                "-",
+                25000000,
+                9900000,
+                15100000,
+            ),
+        }
+        return [rows_by_month[yyyymm]] if yyyymm in rows_by_month else []
+
     customs_client = SimpleNamespace(
-        fetch_sido_total_range=AsyncMock(return_value=rows),
+        fetch_sido_total_month=AsyncMock(side_effect=fetch_sido_total_month),
     )
     ctx = SimpleNamespace(
         full_config={"use_login": False, "auth": {"secret_key": "test-token"}},
@@ -258,17 +286,19 @@ def test_jeju_region_trade_returns_series_from_customs_client():
     assert payload["data"]["available"] is True
     assert len(payload["data"]["rows"]) == 2
     latest = payload["data"]["latest"]
-    assert latest["period"] == "2026.05"
-    assert latest["period_label"] == "2026년 5월"
+    assert latest["period"] == f"{expected_end[:4]}.{expected_end[4:]}"
+    assert latest["period_label"] == f"{int(expected_end[:4])}년 {int(expected_end[4:])}월"
     assert latest["export_amount_usd"] == 25000000
     assert latest["export_mom_pct"] == pytest.approx(25.0)
     assert latest["export_yoy_pct"] == pytest.approx(150.0)
 
-    begin, end = customs_client.fetch_sido_total_range.await_args.args
-    expected_end = shift_yyyymm(datetime.now().strftime("%Y%m"), -1)
-    assert end == expected_end
-    # 표시 2개월 + 전년동월 비교용 12개월을 함께 받아온다.
-    assert begin == shift_yyyymm(expected_end, -13)
+    requested_months = [
+        call.args[0]
+        for call in customs_client.fetch_sido_total_month.await_args_list
+    ]
+    assert requested_months[0] == shift_yyyymm(expected_end, -13)
+    assert requested_months[-1] == expected_end
+    assert len(requested_months) == 14
 
 
 def test_jeju_region_trade_reports_unavailable_without_customs_client():
@@ -293,7 +323,7 @@ def test_jeju_region_trade_reports_unavailable_without_customs_client():
 
 def test_jeju_region_trade_reports_unavailable_when_customs_client_fails():
     customs_client = SimpleNamespace(
-        fetch_sido_total_range=AsyncMock(side_effect=RuntimeError("Internal Server Error")),
+        fetch_sido_total_month=AsyncMock(side_effect=RuntimeError("Internal Server Error")),
     )
     ctx = SimpleNamespace(
         full_config={"use_login": False, "auth": {"secret_key": "test-token"}},
@@ -321,7 +351,7 @@ def test_jeju_region_trade_reports_unavailable_when_customs_client_fails():
 
 def test_jeju_region_trade_reports_api_key_permission_error():
     customs_client = SimpleNamespace(
-        fetch_sido_total_range=AsyncMock(
+        fetch_sido_total_month=AsyncMock(
             side_effect=ValueError(
                 "관세청 수출입통계 API 오류: 30 SERVICE_KEY_IS_NOT_REGISTERED_ERROR"
             )

@@ -278,16 +278,63 @@ async def test_customs_client_fetches_sido_total_range_with_period_range():
         sido_code="50",
     )
 
-    rows = await client.fetch_sido_total_range("202505", "202605")
+    rows = await client.fetch_sido_total_range("202506", "202605")
 
     assert [row.period for row in rows] == ["2026.05"]
     url = http_client.get.await_args.args[0]
     params = http_client.get.await_args.kwargs["params"]
     assert url.endswith("/getSidotradeList")
-    assert params["strtYymm"] == "202505"
+    assert params["strtYymm"] == "202506"
     assert params["endYymm"] == "202605"
     assert params["sidoCd"] == "50"
     assert "searchItemCd" not in params
+
+
+@pytest.mark.asyncio
+async def test_customs_client_normalizes_year_only_sido_total_month_period():
+    response = type("Response", (), {
+        "text": CUSTOMS_SIDO_XML.replace("2026.05", "2026"),
+        "raise_for_status": lambda self: None,
+    })()
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(return_value=response)
+    client = CustomsTradeStatClient(
+        service_key="test-key",
+        http_client=http_client,
+        base_url="https://example.test/sidotrade",
+    )
+
+    rows = await client.fetch_sido_total_month("202607")
+
+    assert [row.period for row in rows] == ["2026.07"]
+
+
+@pytest.mark.asyncio
+async def test_customs_client_splits_sido_total_range_to_api_limit():
+    first_response = type("Response", (), {
+        "text": CUSTOMS_SIDO_XML.replace("2026.05", "2026.06"),
+        "raise_for_status": lambda self: None,
+    })()
+    second_response = type("Response", (), {
+        "text": CUSTOMS_SIDO_XML.replace("2026.05", "2026.07"),
+        "raise_for_status": lambda self: None,
+    })()
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(side_effect=[first_response, second_response])
+    client = CustomsTradeStatClient(
+        service_key="test-key",
+        http_client=http_client,
+        base_url="https://example.test/sidotrade",
+    )
+
+    rows = await client.fetch_sido_total_range("202507", "202607")
+
+    assert [row.period for row in rows] == ["2026.06", "2026.07"]
+    requested_ranges = [
+        (call.kwargs["params"]["strtYymm"], call.kwargs["params"]["endYymm"])
+        for call in http_client.get.await_args_list
+    ]
+    assert requested_ranges == [("202507", "202606"), ("202607", "202607")]
 
 
 @pytest.mark.asyncio

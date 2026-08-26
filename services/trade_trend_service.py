@@ -142,6 +142,43 @@ def _filter_item_rows(rows: list[TradeStatItem], item_code: str) -> list[TradeSt
     return []
 
 
+def _month_index(yyyymm: str) -> int:
+    return int(yyyymm[:4]) * 12 + int(yyyymm[4:6]) - 1
+
+
+def _split_yyyymm_ranges(
+    begin_yyyymm: str,
+    end_yyyymm: str,
+    *,
+    max_months: int = 12,
+) -> list[tuple[str, str]]:
+    ranges = []
+    cursor = begin_yyyymm
+    end_index = _month_index(end_yyyymm)
+    while _month_index(cursor) <= end_index:
+        chunk_end = min(
+            shift_yyyymm(cursor, max_months - 1),
+            end_yyyymm,
+            key=_month_index,
+        )
+        ranges.append((cursor, chunk_end))
+        cursor = shift_yyyymm(chunk_end, 1)
+    return ranges
+
+
+def _with_requested_month_period(
+    rows: list[TradeStatItem],
+    yyyymm: str,
+) -> list[TradeStatItem]:
+    normalized_period = f"{yyyymm[:4]}.{yyyymm[4:6]}"
+    return [
+        replace(row, period=normalized_period)
+        if not _period_key(row.period)
+        else row
+        for row in rows
+    ]
+
+
 def parse_customs_trade_xml(xml_text: str) -> list[TradeStatItem]:
     root = ET.fromstring(xml_text)
     result_code = root.findtext("./header/resultCode", default="")
@@ -239,18 +276,22 @@ class CustomsTradeStatClient:
             self._sido_param_name: self._sido_code,
             "serviceKey": self._service_key,
         }
-        return await self._get("getSidotradeList", params)
+        rows = await self._get("getSidotradeList", params)
+        return _with_requested_month_period(rows, yyyymm)
 
     async def fetch_sido_total_range(
         self, begin_yyyymm: str, end_yyyymm: str
     ) -> list[TradeStatItem]:
-        params = {
-            "strtYymm": begin_yyyymm,
-            "endYymm": end_yyyymm,
-            self._sido_param_name: self._sido_code,
-            "serviceKey": self._service_key,
-        }
-        return await self._get("getSidotradeList", params)
+        rows: list[TradeStatItem] = []
+        for chunk_begin, chunk_end in _split_yyyymm_ranges(begin_yyyymm, end_yyyymm):
+            params = {
+                "strtYymm": chunk_begin,
+                "endYymm": chunk_end,
+                self._sido_param_name: self._sido_code,
+                "serviceKey": self._service_key,
+            }
+            rows.extend(await self._get("getSidotradeList", params))
+        return rows
 
     async def _get(
         self,
