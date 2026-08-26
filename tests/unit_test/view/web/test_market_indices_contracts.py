@@ -1,5 +1,6 @@
 """홈 화면 시장 지수 패널의 템플릿-스크립트 배선을 잠그는 정적 계약 테스트."""
 
+import re
 from pathlib import Path
 
 # 미장/원자재는 TradingView 위젯. 거래소 실지수는 무료 임베드가 차단하므로
@@ -15,11 +16,13 @@ EXPECTED_WIDGET_SYMBOLS = [
     "CBOE:DRAM",
     "BITSTAMP:BTCUSD",
     "BITSTAMP:ETHUSD",
-    "NASDAQ:SHY",
-    "NASDAQ:IEF",
+    "FRED:DGS10",
+    "FRED:DGS2",
 ]
 
 # 위젯에서 "이 심볼은 트레이딩뷰에서만 쓸 수 있습니다"로 막히는 심볼 (회귀 방지)
+# 국채 금리(US10Y/US02Y)는 2026-08-26 재실측 — mini-symbol-overview·symbol-overview·
+# advanced-chart 세 위젯 타입 모두 차단. 금리는 FRED:DGS10/DGS2 로 표시한다.
 BLOCKED_WIDGET_SYMBOLS = [
     "KRX:KOSPI",
     "KRX:KOSDAQ",
@@ -144,6 +147,47 @@ def test_market_index_flow_route_exists():
 
     assert '"/market-index/{index_code}/flow"' in routes
     assert "get_index_flow" in routes
+
+
+# 홈에 그룹이 5개 쌓이므로 카드가 높으면 한 화면에 몇 줄 못 본다.
+MARKET_INDEX_BODY_HEIGHT_BUDGET_PX = 120
+
+
+def _body_height_px(css: str) -> int:
+    match = re.search(r"height:\s*(\d+)px", _css_rule_body(css, ".market-index-body"))
+    assert match, ".market-index-body 에 height 가 없음"
+    return int(match.group(1))
+
+
+def test_market_index_card_body_height_is_within_budget():
+    css = Path("view/web/static/css/style.css").read_text(encoding="utf-8")
+
+    height = _body_height_px(css)
+    assert height <= MARKET_INDEX_BODY_HEIGHT_BUDGET_PX, (
+        f".market-index-body 가 {height}px — 예산 {MARKET_INDEX_BODY_HEIGHT_BUDGET_PX}px 초과. "
+        "카드를 키우려면 예산도 함께 올리고 한 화면에 들어오는지 확인할 것"
+    )
+
+
+def test_widget_height_matches_kis_card_body_height():
+    """세 그룹이 같은 그리드를 쓰므로 한쪽만 바뀌면 행이 들쭉날쭉해진다 (#916 부류)."""
+    css = Path("view/web/static/css/style.css").read_text(encoding="utf-8")
+
+    match = re.search(r"height:\s*(\d+),", _market_indices_js())
+    assert match, "위젯 설정에 height 가 없음"
+    assert int(match.group(1)) == _body_height_px(css), (
+        "위젯 height 와 .market-index-body height 가 어긋나면 카드 높이가 달라진다"
+    )
+
+
+def test_sparkline_fits_inside_card_body():
+    css = Path("view/web/static/css/style.css").read_text(encoding="utf-8")
+
+    match = re.search(r"max-height:\s*(\d+)px", _css_rule_body(css, ".market-index-spark"))
+    assert match, ".market-index-spark 에 max-height 가 없음"
+    assert int(match.group(1)) < _body_height_px(css), (
+        "스파크라인이 본문보다 크면 값·등락률 자리가 없다"
+    )
 
 
 def test_domestic_index_period_selector_is_wired():

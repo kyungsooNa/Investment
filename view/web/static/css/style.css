@@ -1232,7 +1232,7 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 
 /* 홈 시장 지수 패널 */
 .market-index-group + .market-index-group {
-    margin-top: 18px;
+    margin-top: 12px;
 }
 .market-index-group-title {
     font-size: 0.9rem;
@@ -1246,20 +1246,20 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     display: grid;
     /* auto-fill: 카드 수가 트랙 수보다 적어도 남는 트랙을 비워 둔다.
        auto-fit 이면 국장(2개)·원자재(3개) 카드만 행 전체로 늘어나 미장 카드와 크기가 어긋났다. */
-    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
     gap: 12px;
 }
 .market-index-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 10px 12px;
+    padding: 8px 10px;
 }
 .market-index-label {
     font-size: 0.85rem;
     font-weight: 600;
     color: var(--text-secondary);
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 .market-index-period-bar {
     display: flex;
@@ -1284,7 +1284,7 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     border-color: var(--accent);
 }
 .market-index-body {
-    height: 150px;
+    height: 108px;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -1293,7 +1293,7 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     color: var(--text-secondary);
 }
 .market-index-value {
-    font-size: 1.35rem;
+    font-size: 1.15rem;
     font-weight: 700;
     color: var(--text-primary);
 }
@@ -1302,18 +1302,18 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     margin-top: 2px;
 }
 .market-index-spark {
-    margin-top: 8px;
+    margin-top: 6px;
     width: 100%;
-    /* x축 날짜 눈금이 들어가므로 선 영역(70px) + 라벨 높이만큼 잡는다. */
-    max-height: 88px;
+    /* x축 날짜 눈금이 들어가므로 선 영역(45px) + 라벨 높이만큼 잡는다. */
+    max-height: 60px;
 }
 /* 투자자 순매수(좌) + 등락 종목수(우) 2열. 한쪽만 조회되면 그 열만 붙는다. */
 .market-index-flow {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
     gap: 4px 12px;
-    margin-top: 8px;
-    padding-top: 8px;
+    margin-top: 6px;
+    padding-top: 6px;
     border-top: 1px solid var(--border);
     font-size: 0.75rem;
     /* 값 색은 .text-red/.text-blue 가 잡으므로 기본색은 컨테이너에 둔다. */
@@ -1333,7 +1333,7 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 }
 .market-index-error {
     margin: 0;
-    padding: 40px 0;
+    padding: 24px 0;
     text-align: center;
     font-size: 0.8rem;
     color: var(--text-secondary);

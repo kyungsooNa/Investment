@@ -32,8 +32,8 @@ const EXPECTED_GROUPS = [
   },
   { title: "원자재", kind: "widget", keys: ["TVC:GOLD", "TVC:USOIL", "CBOE:DRAM"] },
   { title: "가상자산", kind: "widget", keys: ["BITSTAMP:BTCUSD", "BITSTAMP:ETHUSD"] },
-  // 국채 금리(TVC:US02Y/US10Y)는 임베드가 차단되므로 만기 구간 ETF 로 대체한다.
-  { title: "채권", kind: "widget", keys: ["NASDAQ:SHY", "NASDAQ:IEF"] },
+  // 국채 금리 지표(TVC:US02Y/US10Y)는 임베드가 차단되고 FRED 공개데이터는 열린다(2026-08-26 실측).
+  { title: "채권", kind: "widget", keys: ["FRED:DGS10", "FRED:DGS2"] },
 ];
 
 const BLOCKED_SYMBOLS = [
