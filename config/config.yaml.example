@@ -282,9 +282,9 @@ dart_disclosure:
   daily_digest_time: "19:40"
   max_pages_per_poll: 5
 
-# 수출입동향/제주 반도체 수출 모니터.
+# 수출입동향/제주 HS 85 수출 모니터.
 # 관세청_시도별 품목별 수출입실적(GW) 활용신청 후 service key를 넣으면
-# 제주(기본 sido_code=50) 반도체(기본 HS 8542) 월간 수출액을 텔레그램 리포트로 발송합니다.
+# 제주(기본 sido_code=50) 전기기기류(기본 HS 85) 월간 수출액을 텔레그램 리포트로 발송합니다.
 trade_trend_monitor:
   enabled: false
   national_enabled: true
@@ -296,7 +296,7 @@ trade_trend_monitor:
   customs_item_base_url: "https://apis.data.go.kr/1220000/sidoitemtrade/"
   sido_code: "50"
   sido_param_name: "sidoCd"
-  item_code: "8542"
+  item_code: "85"
   target_month:
   national_list_urls:
     - "https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362&searchType=all&searchValue=%EC%88%98%EC%B6%9C%EC%9E%85%20%ED%98%84%ED%99%A9"

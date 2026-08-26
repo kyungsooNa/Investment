@@ -129,6 +129,19 @@ def _first_int_text(item: ET.Element, *tags: str) -> int:
     return 0
 
 
+def _filter_item_rows(rows: list[TradeStatItem], item_code: str) -> list[TradeStatItem]:
+    code = str(item_code or "").strip()
+    if not code:
+        return rows
+    exact_or_child = [row for row in rows if row.item_code.startswith(code)]
+    if exact_or_child:
+        return exact_or_child
+    if len(code) > 2:
+        chapter_code = code[:2]
+        return [row for row in rows if row.item_code == chapter_code]
+    return []
+
+
 def parse_customs_trade_xml(xml_text: str) -> list[TradeStatItem]:
     root = ET.fromstring(xml_text)
     result_code = root.findtext("./header/resultCode", default="")
@@ -217,7 +230,7 @@ class CustomsTradeStatClient:
             params,
             base_url=self._item_base_url,
         )
-        return [row for row in rows if not item_code or row.item_code.startswith(item_code)]
+        return _filter_item_rows(rows, item_code)
 
     async def fetch_sido_total_month(self, yyyymm: str) -> list[TradeStatItem]:
         params = {
