@@ -13,6 +13,10 @@ EXPECTED_WIDGET_SYMBOLS = [
     "TVC:GOLD",
     "TVC:USOIL",
     "CBOE:DRAM",
+    "BITSTAMP:BTCUSD",
+    "BITSTAMP:ETHUSD",
+    "NASDAQ:SHY",
+    "NASDAQ:IEF",
 ]
 
 # 위젯에서 "이 심볼은 트레이딩뷰에서만 쓸 수 있습니다"로 막히는 심볼 (회귀 방지)
@@ -28,7 +32,7 @@ BLOCKED_WIDGET_SYMBOLS = [
     "TVC:US02Y",
 ]
 
-EXPECTED_GROUP_TITLES = ["국장", "미장", "원자재"]
+EXPECTED_GROUP_TITLES = ["국장", "미장", "원자재", "가상자산", "채권"]
 
 
 def _market_indices_js() -> str:
