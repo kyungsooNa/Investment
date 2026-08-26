@@ -1,8 +1,8 @@
 """장 시작 전 유튜브 채널 일일 다이제스트를 생성·저장·발송하는 태스크.
 
-`TimeDispatcher` 를 쓰지 않는다. 그쪽은 `_is_after_market_close()` 로 장 마감
-이후에만 발행하도록 되어 있어 07:30 을 표현할 수 없다. 대신 장 시작 전 작업의
-선례인 `PreMarketHealthCheckTask` 처럼 자체 폴링 + 날짜 dedup 으로 게이팅한다.
+운영 환경에서는 `TimeDispatcher` 의 daily fixed-time 티켓을 WorkerPool 이 소비해
+실행한다. WorkerPool 이 주입되지 않은 테스트/폴백 환경에서는 기존 자체 폴링 +
+날짜 dedup 게이팅을 유지한다.
 
 운영 규칙 두 가지:
 
@@ -52,6 +52,7 @@ class YoutubeDigestTask(SchedulableTask):
         market_clock=None,
         logger: Optional[logging.Logger] = None,
         gemini_fallback_service=None,
+        worker_pool=None,
     ) -> None:
         self._channel_repo = channel_repository
         self._collector = collector
@@ -61,6 +62,8 @@ class YoutubeDigestTask(SchedulableTask):
         self._market_clock = market_clock
         self._logger = logger or logging.getLogger(__name__)
         self._gemini_fallback_service = gemini_fallback_service
+        self._worker_pool = worker_pool
+        self._registered = False
         self._state = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
         self._last_run_date: Optional[str] = None
@@ -85,6 +88,13 @@ class YoutubeDigestTask(SchedulableTask):
     # --- 라이프사이클 -------------------------------------------------------
 
     async def start(self) -> None:
+        if self._worker_pool is not None:
+            if not self._registered:
+                self._worker_pool.register(self.task_name, self.execute)
+                self._registered = True
+            if self._state == TaskState.STOPPED:
+                self._state = TaskState.IDLE
+            return
         if any(not task.done() for task in self._tasks):
             return
         if self._state == TaskState.STOPPED:
@@ -92,6 +102,11 @@ class YoutubeDigestTask(SchedulableTask):
         self._tasks.append(asyncio.create_task(self._loop()))
 
     async def stop(self) -> None:
+        if self._worker_pool is not None and self._registered:
+            unregister = getattr(self._worker_pool, "unregister", None)
+            if unregister is not None:
+                unregister(self.task_name)
+            self._registered = False
         for task in self._tasks:
             if not task.done():
                 task.cancel()
@@ -226,6 +241,9 @@ class YoutubeDigestTask(SchedulableTask):
             self._last_error = str(e)
             self._logger.error(f"[YoutubeDigest] 실행 실패: {e}", exc_info=True)
             self._mark_done(report_date, now)
+
+    async def execute(self, payload: dict) -> None:
+        await self.run_once()
 
     async def _handle_block(self, report_date: str, now) -> None:
         self._last_error = "blocked"

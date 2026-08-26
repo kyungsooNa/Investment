@@ -505,6 +505,7 @@ class ServiceContainer:
                 market_clock=ctx.market_clock,
                 logger=ctx.logger,
                 gemini_fallback_service=ctx.youtube_gemini_fallback_service,
+                worker_pool=ctx.worker_pool,
             )
 
         try:

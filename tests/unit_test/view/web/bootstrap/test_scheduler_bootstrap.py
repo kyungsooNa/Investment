@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from interfaces.schedulable_task import TaskPriority
 from view.web.bootstrap.runtime_mode import RuntimeMode
 
 
@@ -56,9 +57,10 @@ def _make_fake_context(runtime_mode: RuntimeMode = RuntimeMode.ALL):
         "market_index_threshold_alert_task",
         "market_timing_daily_update_task",
         "ytd_ranking_report_task",
+        "youtube_digest_task",
     ]:
         task = MagicMock()
-        task.task_name = name
+        task.task_name = "youtube_digest" if name == "youtube_digest_task" else name
         setattr(ctx, name, task)
     ctx.price_subscription_service = None  # _initialize_price_subscriptions 에서 즉시 종료
     ctx._initialize_price_subscriptions = MagicMock()
@@ -95,17 +97,31 @@ def test_creates_foreground_even_in_batch_only_mode(patched_scheduler_deps):
 
 # ---------- mode=ALL 회귀 (현행 동작 100% 유지) ----------
 
-def test_all_mode_registers_26_tasks_to_background(patched_scheduler_deps):
+def test_all_mode_registers_27_tasks_to_background(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.ALL)
     _run(ctx)
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 26
+    assert bg.register.call_count == 27
 
 
 def test_all_mode_registers_15_tasks_to_time_dispatcher(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.ALL)
     _run(ctx)
     assert ctx.time_dispatcher.register_task.call_count == 15
+
+
+def test_web_registers_youtube_digest_as_daily_time_ticket(patched_scheduler_deps):
+    ctx = _make_fake_context(RuntimeMode.WEB)
+
+    _run(ctx)
+
+    ctx.time_dispatcher.register_daily_task.assert_called_once_with(
+        "youtube_digest",
+        TaskPriority.LOW,
+        hour=7,
+        minute=30,
+        catchup_window_sec=6 * 3600,
+    )
 
 
 # ---------- mode 별 task 등록 ----------
@@ -119,7 +135,11 @@ def test_web_only_registers_notification_and_watchdog(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.WEB)
     _run(ctx)
     names = _registered_bg_task_names(patched_scheduler_deps)
-    assert names == {"notification_queue_task", "websocket_watchdog_task"}
+    assert names == {
+        "notification_queue_task",
+        "youtube_digest",
+        "websocket_watchdog_task",
+    }
 
 
 def test_web_registers_optional_dart_disclosure_monitor(patched_scheduler_deps):
@@ -265,4 +285,4 @@ def test_skips_none_tasks(patched_scheduler_deps):
     # 둘 다 -1 감소한다.
     assert ctx.time_dispatcher.register_task.call_count == 14
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 25
+    assert bg.register.call_count == 26
