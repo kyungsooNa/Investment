@@ -45,13 +45,15 @@ const MARKET_INDEX_GROUPS = [
         ],
     },
     {
-        // 국채 금리 지표(TVC:US02Y/US10Y)도 임베드가 차단되므로 만기 구간 ETF 로 대체한다.
-        // ETF 는 가격이라 금리와 방향이 반대다 — 오르면 해당 구간 금리가 내렸다는 뜻.
+        // 국채는 금리(%)를 그대로 보여준다. TVC 금리 지표(US02Y/US10Y)는 mini-symbol-overview·
+        // symbol-overview·advanced-chart 세 위젯 타입 모두에서 차단되는 것을 2026-08-26 에
+        // 재실측했고, 연준 공개데이터인 FRED 는 열린다(DGS10 4.7 · DGS2 4.24 렌더 확인).
+        // FRED 는 일 1회 갱신이라 dateRange '1D' 로는 그릴 점이 없어 12M 을 준다.
         title: '채권',
         kind: 'widget',
         entries: [
-            { label: '미국채 2년 ETF (SHY)', symbol: 'NASDAQ:SHY' },
-            { label: '미국채 10년 ETF (IEF)', symbol: 'NASDAQ:IEF' },
+            { label: '미국채 10년 금리', symbol: 'FRED:DGS10', dateRange: '12M' },
+            { label: '미국채 2년 금리', symbol: 'FRED:DGS2', dateRange: '12M' },
         ],
     },
 ];
@@ -108,9 +110,9 @@ function buildMarketIndexWidgetCard(doc, entry) {
     script.textContent = JSON.stringify({
         symbol: entry.symbol,
         width: '100%',
-        height: 150,
+        height: 108,
         locale: 'kr',
-        dateRange: '1D',
+        dateRange: entry.dateRange || '1D',
         colorTheme: 'light',
         isTransparent: true,
         autosize: false,
@@ -291,7 +293,7 @@ async function selectMarketIndexPeriod(card, code, period) {
     if (points.length) {
         const canvas = doc.createElement('canvas');
         canvas.className = 'market-index-spark';
-        canvas.height = 88;
+        canvas.height = 60;
         body.appendChild(canvas);
         card._indexChart = _renderIndexSparkline(canvas, { points, changeRate: data.change_rate });
     }
