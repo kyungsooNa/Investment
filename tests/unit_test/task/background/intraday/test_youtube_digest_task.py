@@ -147,6 +147,20 @@ async def test_report_is_pushed_to_telegram():
     assert metadata["force_external"] is True
 
 
+async def test_partial_summary_failures_emit_warning_alert():
+    """리포트는 성공해도 일부 영상 요약이 빠졌으면 운영자가 알아야 한다."""
+    task, deps = _task(digest_result=_ok_digest(video_count=13, failed_summary_count=4))
+
+    await task.run_once()
+
+    assert deps["notifier"].emit.await_count == 2
+    warning_call = deps["notifier"].emit.await_args_list[1]
+    assert warning_call.args[1] == NotificationLevel.WARNING
+    assert "일부 요약 실패" in warning_call.args[2]
+    assert "4/13" in warning_call.args[3]
+    assert warning_call.kwargs["metadata"]["force_external"] is True
+
+
 async def test_only_enabled_channels_are_collected():
     task, deps = _task()
 

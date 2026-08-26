@@ -216,6 +216,7 @@ class YoutubeDigestTask(SchedulableTask):
                 "유튜브 다이제스트",
                 self._format_message(result.data),
             )
+            await self._emit_partial_failure_warning(result.data)
             self._logger.info(
                 f"[YoutubeDigest] 리포트 완료: {report_date} "
                 f"영상 {result.data.get('video_count')}편"
@@ -299,6 +300,19 @@ class YoutubeDigestTask(SchedulableTask):
             message,
             # 웹 알림함에만 쌓이면 아침에 못 본다. 텔레그램까지 확실히 보낸다.
             metadata={"force_external": True},
+        )
+
+    async def _emit_partial_failure_warning(self, data: dict) -> None:
+        failed = int((data or {}).get("failed_summary_count") or 0)
+        if failed <= 0:
+            return
+        total = int((data or {}).get("video_count") or 0)
+        ratio = (failed / total * 100.0) if total > 0 else 0.0
+        await self._emit(
+            NotificationLevel.WARNING,
+            "유튜브 다이제스트 - 일부 요약 실패",
+            f"{data.get('report_date')}: 영상 요약 {failed}/{total}편 실패"
+            f" ({ratio:.1f}%). 리포트에서 해당 영상의 맥락이 누락됐습니다.",
         )
 
     @staticmethod
