@@ -269,6 +269,7 @@
 해외 dry-run 이 VBO 단일에서 4전략으로 늘었는데 todo 에는 미등재였다. `O'NeilPP_overseas`(#874) · `O'NeilBGU_overseas`(#875) · `LarryWilliamsCB_overseas`(#877) 를 `OverseasDryRunSuiteService` 가 한 after-market 태스크에서 합성 실행하고, 완료 알림은 전략 라벨(VBO/PP/BGU/CB)별 신호 수·예시 종목을 요약한다(#876). 주문 경로는 없다(dry-run 서비스는 `order_execution` 의존을 갖지 않는다).
 
 - [ ] **전략별 would-be 성과 축적·판정** — 분석 경로는 `--all-sources`/`DEFAULT_SIGNAL_SOURCES` 와 `edge_judgement` 로 갖춰졌다(VBO·PP·BGU·CB·RSI2·OSB 저널 집계, 당일 실현손익 없는 신호도 표본 유지). 남은 것은 5거래일+ 실제 표본 축적 후 O-3 와 같은 기준(왕복비용 0.5%, 비관·낙관 bracket)으로 출력된 전략별 판정을 확인하는 것이다.
+- [x] **전략별 실행 여부 가시화 (2026-08-26)** — 표본 축적을 기다리는 축인데, 전략이 **실제로 돌았는지**를 확인할 신호가 없었다. `OverseasDryRunSuiteService` 가 서비스 예외를 삼키고 `continue` 했고(로그만), 완료 알림은 신호가 나온 라벨만 나열해 **0건 전략과 매일 죽는 전략과 배선 누락이 모두 "부재"로 똑같이 보였다**. suite 에 `last_run_report`(전략별 `ok`/`signals`/`error`)를 추가하고, 태스크가 이를 라벨 목록의 기준으로 삼아 `- PP: 0개` / `- CB: 실행 실패 (사유)` 까지 남기도록 했다. 실패가 있으면 알림 레벨을 WARNING 으로 올리고 `overseas_dryrun_strategy_failed` 를 전략별로 로깅한다. 리포트를 못 주는 서비스는 기존 신호 기반 요약으로 폴백한다.
 - [ ] **일봉 낙관 편향 보정치는 VBO 에서만 실측됐다** — O-3 교차검증의 진입 슬리피지 +0.462%p·낙관 과대 1.138%p 는 VBO 장중 paper(`OverseasIntradayVBOService`) 대조로 얻은 값이고, 신규 3전략에는 장중 paper 경로가 없다(`services/overseas_intraday_*` 는 VBO 뿐). 세 전략의 일봉 dry-run 수치를 실행 기대값으로 그대로 읽지 말 것 — 최소한 VBO 편향폭을 하한 보정으로 얹어 해석한다.
 - ※ Phase 5(실주문 전환) 착수 조건은 불변이다. 전략 수가 는 것은 **후보 확대이지 엣지 입증이 아니다.**
 

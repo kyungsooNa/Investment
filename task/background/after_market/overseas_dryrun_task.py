@@ -110,8 +110,21 @@ class OverseasDryRunTask(AfterMarketTask):
             return "VBO"
         return "기타"
 
+    @staticmethod
+    def _normalize_run_report(report) -> list[dict]:
+        """suite 가 준 전략별 실행 결과만 걸러낸다.
+
+        리포트를 못 주는 dry-run 서비스(단일 서비스 직결·구형 대역)도 있으므로,
+        형식이 맞지 않으면 빈 리스트로 떨어뜨려 기존 신호 기반 요약으로 되돌아간다.
+        """
+        if not isinstance(report, list):
+            return []
+        return [e for e in report if isinstance(e, dict) and e.get("strategy")]
+
     @classmethod
-    def _summarize_signals(cls, signals: list[dict]) -> tuple[dict[str, int], str]:
+    def _summarize_signals(
+        cls, signals: list[dict], run_report: list[dict] | None = None,
+    ) -> tuple[dict[str, int], str]:
         counts: Counter[str] = Counter()
         names_by_label: dict[str, list[str]] = defaultdict(list)
         for sig in signals or []:
@@ -121,18 +134,38 @@ class OverseasDryRunTask(AfterMarketTask):
             if name:
                 names_by_label[label].append(name)
 
-        ordered_labels = [label for label in ("VBO", "PP", "BGU", "CB", "RSI2", "OSB", "기타") if counts.get(label)]
-        summary = {label: counts[label] for label in ordered_labels}
+        # 실행 결과가 있으면 그것이 라벨 목록의 기준이다 — 0건 전략도 남겨야
+        # "설정에서 빠졌다"와 "오늘 신호가 없었다"가 구분된다.
+        failures = {
+            cls._strategy_label(e): str(e.get("error") or "unknown")
+            for e in (run_report or []) if not e.get("ok")
+        }
+        ordered_labels: list[str] = []
+        for entry in run_report or []:
+            label = cls._strategy_label(entry)
+            if label not in ordered_labels:
+                ordered_labels.append(label)
+        # 리포트에 없는 라벨(기타 등)의 신호도 누락시키지 않는다.
+        for label in ("VBO", "PP", "BGU", "CB", "RSI2", "OSB", "기타"):
+            if counts.get(label) and label not in ordered_labels:
+                ordered_labels.append(label)
+
+        summary = {label: counts.get(label, 0) for label in ordered_labels}
         lines = []
         for label in ordered_labels:
+            if label in failures:
+                lines.append(f"- {label}: 실행 실패 ({failures[label]})")
+                continue
             examples = ", ".join(names_by_label[label][:3])
             suffix = f" ({examples})" if examples else ""
-            lines.append(f"- {label}: {counts[label]}개{suffix}")
+            lines.append(f"- {label}: {counts.get(label, 0)}개{suffix}")
         return summary, "\n".join(lines)
 
     @classmethod
-    def _format_notification_body(cls, market_date_text: str, signals: list[dict]) -> str:
-        _, detail = cls._summarize_signals(signals)
+    def _format_notification_body(
+        cls, market_date_text: str, signals: list[dict], run_report: list[dict] | None = None,
+    ) -> str:
+        _, detail = cls._summarize_signals(signals, run_report)
         total = len(signals or [])
         body = f"미국 거래일 {market_date_text} 기준 dry-run 리포트: 총 {total}개 신호"
         if detail:
@@ -156,7 +189,21 @@ class OverseasDryRunTask(AfterMarketTask):
             return
         try:
             signals = await self._dryrun_service.scan_dry_run(self._exchange)
-            summary, _ = self._summarize_signals(signals or [])
+            run_report = self._normalize_run_report(
+                getattr(self._dryrun_service, "last_run_report", None)
+            )
+            summary, _ = self._summarize_signals(signals or [], run_report)
+            failed = [e for e in run_report if not e.get("ok")]
+            for entry in failed:
+                self._logger.warning(
+                    {
+                        "event": "overseas_dryrun_strategy_failed",
+                        "market_date": latest_trading_date,
+                        "exchange": exchange_value,
+                        "strategy": entry.get("strategy"),
+                        "error": str(entry.get("error") or "unknown"),
+                    }
+                )
             if self._journal is not None:
                 self._journal.flush_to_file(latest_trading_date)
             self._logger.info(
@@ -172,9 +219,11 @@ class OverseasDryRunTask(AfterMarketTask):
             if self._notification_service:
                 await self._notification_service.emit(
                     NotificationCategory.BACKGROUND,
-                    NotificationLevel.INFO,
-                    "해외 dry-run 완료",
-                    self._format_notification_body(market_date_text, signals or []),
+                    NotificationLevel.WARNING if failed else NotificationLevel.INFO,
+                    "해외 dry-run 완료 (일부 전략 실패)" if failed else "해외 dry-run 완료",
+                    self._format_notification_body(
+                        market_date_text, signals or [], run_report,
+                    ),
                 )
             self._last_run_date = latest_trading_date  # 성공 시에만 dedup 마킹 → 실패 시 재시도
         except Exception as e:
