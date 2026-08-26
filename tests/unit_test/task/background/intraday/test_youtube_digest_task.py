@@ -43,6 +43,7 @@ def _task(
     digest_result=None,
     gemini_fallback_result=None,
     channels=None,
+    worker_pool=None,
 ):
     channel_repo = MagicMock()
     channel_repo.get_all = AsyncMock(
@@ -76,6 +77,7 @@ def _task(
         notification_service=notifier,
         market_clock=clock or _clock(7, 30),
         gemini_fallback_service=gemini_fallback,
+        worker_pool=worker_pool,
     )
     return task, {
         "channel_repo": channel_repo,
@@ -345,6 +347,25 @@ async def test_start_and_stop_clean_up_the_loop():
     await task.stop()
 
     assert task.state.name == "STOPPED"
+
+
+async def test_start_registers_worker_handler_without_polling_loop():
+    worker_pool = MagicMock()
+    task, _ = _task(worker_pool=worker_pool)
+
+    await task.start()
+
+    worker_pool.register.assert_called_once_with("youtube_digest", task.execute)
+    assert task.state == TaskState.IDLE
+    assert task._tasks == []
+
+
+async def test_execute_runs_digest_once_from_ticket_payload():
+    task, deps = _task()
+
+    await task.execute({"date": "20260810", "scheduled_time": "07:30"})
+
+    deps["digest_repo"].save.assert_awaited_once()
 
 
 def test_progress_exposes_required_keys():

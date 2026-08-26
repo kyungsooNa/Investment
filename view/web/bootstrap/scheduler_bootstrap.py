@@ -98,6 +98,32 @@ class SchedulerBootstrap:
                 )
         ctx.background_scheduler.register(task)
 
+    def _register_daily(
+        self,
+        task,
+        priority: TaskPriority,
+        *,
+        hour: int,
+        minute: int,
+        catchup_window_sec: int,
+        market: str = "domestic",
+    ) -> None:
+        if not task:
+            return
+        ctx = self._ctx
+        dispatcher = ctx.time_dispatcher
+        if market == "overseas_us":
+            dispatcher = getattr(ctx, "time_dispatcher_us", None)
+        if dispatcher is not None:
+            dispatcher.register_daily_task(
+                task.task_name,
+                priority,
+                hour=hour,
+                minute=minute,
+                catchup_window_sec=catchup_window_sec,
+            )
+        ctx.background_scheduler.register(task)
+
     def _optional_task(self, attr_name: str):
         return getattr(self._ctx, "__dict__", {}).get(attr_name)
 
@@ -107,8 +133,13 @@ class SchedulerBootstrap:
         self._register(ctx.notification_queue_task)
         self._register(self._optional_task("dart_disclosure_monitor_task"))
         self._register(self._optional_task("trade_trend_monitor_task"))
-        # 07:30 발행 시각은 태스크가 자체 폴링으로 판정하므로 TimeDispatcher 미등록
-        self._register(self._optional_task("youtube_digest_task"))
+        self._register_daily(
+            self._optional_task("youtube_digest_task"),
+            TaskPriority.LOW,
+            hour=7,
+            minute=30,
+            catchup_window_sec=6 * 3600,
+        )
         # 미국장 시간대 판단은 태스크가 자체 US 클럭으로 수행하므로 TimeDispatcher 미등록
         self._register(self._optional_task("overseas_favorite_price_alert_task"))
 

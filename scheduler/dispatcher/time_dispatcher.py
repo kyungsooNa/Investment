@@ -17,6 +17,7 @@ import logging
 import os
 import sqlite3
 import time
+from datetime import timedelta
 from typing import Dict, Optional, Set, TYPE_CHECKING
 
 from interfaces.schedulable_task import TaskPriority
@@ -47,6 +48,7 @@ class TimeDispatcher:
         self._logger = logger or logging.getLogger(__name__)
         self._task_schedule: Dict[str, int] = {}   # task_name → priority
         self._task_delays: Dict[str, int] = {}     # task_name → delay_sec
+        self._daily_task_schedule: Dict[str, dict] = {}
         self._task_dispatched_dates: Dict[str, Optional[str]] = {}  # task_name → last dispatched date
         self._last_non_trading_log_key: Optional[str] = None
         self._running = False
@@ -100,9 +102,34 @@ class TimeDispatcher:
             f"[TimeDispatcher] 태스크 등록: {task_name} (priority={priority}, delay={delay_sec}s)"
         )
 
+    def register_daily_task(
+        self,
+        task_name: str,
+        priority: int = TaskPriority.LOW,
+        *,
+        hour: int,
+        minute: int,
+        catchup_window_sec: int = POLL_INTERVAL,
+    ) -> None:
+        """매일 특정 시각 이후 catchup 창 안에서 티켓을 발행할 태스크를 등록한다."""
+        task_name = str(task_name)
+        self._daily_task_schedule[task_name] = {
+            "priority": priority,
+            "hour": int(hour),
+            "minute": int(minute),
+            "catchup_window_sec": int(catchup_window_sec),
+        }
+        self._task_dispatched_dates[task_name] = self._load_task_date(task_name)
+        self._logger.info(
+            f"[TimeDispatcher] daily 태스크 등록: {task_name} "
+            f"(priority={priority}, at={int(hour):02d}:{int(minute):02d}, "
+            f"catchup={int(catchup_window_sec)}s)"
+        )
+
     def unregister_task(self, task_name: str) -> None:
         self._task_schedule.pop(task_name, None)
         self._task_delays.pop(task_name, None)
+        self._daily_task_schedule.pop(task_name, None)
         self._task_dispatched_dates.pop(task_name, None)
 
     async def run(self) -> None:
@@ -131,6 +158,8 @@ class TimeDispatcher:
 
     async def _maybe_dispatch(self) -> None:
         """조건 충족 시 미발행 태스크 티켓만 선별하여 발행한다."""
+        await self._maybe_dispatch_daily_tasks()
+
         if self._market_clock.is_market_operating_hours():
             return
 
@@ -191,6 +220,57 @@ class TimeDispatcher:
             self._pending_publish_tasks.add(t)
             t.add_done_callback(self._pending_publish_tasks.discard)
 
+    async def _maybe_dispatch_daily_tasks(self) -> None:
+        if not self._daily_task_schedule:
+            return
+        now = self._market_clock.get_current_kst_time()
+        today_str = self._market_clock.get_current_kst_date_str()
+        if not today_str:
+            return
+
+        for task_name, schedule in list(self._daily_task_schedule.items()):
+            if self._task_dispatched_dates.get(task_name) == today_str:
+                continue
+            due_at = now.replace(
+                hour=schedule["hour"],
+                minute=schedule["minute"],
+                second=0,
+                microsecond=0,
+            )
+            catchup_window = max(0, int(schedule.get("catchup_window_sec", self.POLL_INTERVAL)))
+            if not (due_at <= now < due_at + timedelta(seconds=catchup_window)):
+                continue
+
+            self._task_dispatched_dates[task_name] = today_str
+            self._save_task_date(task_name, today_str)
+            scheduled_time = f"{schedule['hour']:02d}:{schedule['minute']:02d}"
+            t = asyncio.create_task(
+                self._publish_daily_task(
+                    task_name,
+                    int(schedule["priority"]),
+                    today_str,
+                    scheduled_time,
+                )
+            )
+            self._pending_publish_tasks.add(t)
+            t.add_done_callback(self._pending_publish_tasks.discard)
+
+    async def _publish_daily_task(
+        self, task_name: str, priority: int, date: str, scheduled_time: str
+    ) -> None:
+        ticket = Ticket(
+            priority=priority,
+            task_name=task_name,
+            payload={"date": date, "scheduled_time": scheduled_time},
+        )
+        published = await self._broker.publish(ticket)
+        if published:
+            self._logger.info(
+                f"[TimeDispatcher] daily 티켓 발행: {task_name} ({date} {scheduled_time})"
+            )
+        else:
+            self._logger.warning(f"[TimeDispatcher] 티켓 발행 실패 (큐 포화): {task_name}")
+
     async def _publish_after_delay(self, task_name: str, priority: int, date: str, delay_sec: float) -> None:
         """delay_sec(초) 대기 후 티켓을 발행한다."""
         if delay_sec > 0:
@@ -222,6 +302,17 @@ class TimeDispatcher:
                     "last_dispatched_date": self._task_dispatched_dates.get(name),
                 }
                 for name, priority in self._task_schedule.items()
+            ],
+            "daily_registered_tasks": [
+                {
+                    "name": name,
+                    "priority": config["priority"],
+                    "hour": config["hour"],
+                    "minute": config["minute"],
+                    "catchup_window_sec": config["catchup_window_sec"],
+                    "last_dispatched_date": self._task_dispatched_dates.get(name),
+                }
+                for name, config in self._daily_task_schedule.items()
             ],
         }
 

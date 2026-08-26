@@ -33,6 +33,16 @@ def _make_clock(*, is_operating: bool, is_after_close: bool, weekday: int = 1, d
     return clock
 
 
+def _make_daily_clock(*, hour: int, minute: int, date_str: str = "20260810"):
+    clock = MagicMock()
+    clock.is_market_operating_hours.return_value = False
+    clock.get_current_kst_date_str.return_value = date_str
+    now = datetime(2026, 8, 10, hour, minute)
+    clock.get_current_kst_time.return_value = now
+    clock.get_seconds_until_market_close.return_value = 3600
+    return clock
+
+
 def _make_dispatcher(
     is_operating: bool,
     latest_date: str | None,
@@ -527,3 +537,75 @@ async def test_stop_cancels_pending_publish_tasks(db_path):
     results = await asyncio.gather(*pending, return_exceptions=True)
 
     assert any(isinstance(result, asyncio.CancelledError) for result in results)
+
+
+# ── 고정 시각 daily ticket TC ────────────────────────────────────────────────
+
+async def test_daily_task_publishes_at_fixed_time_before_market_close(db_path):
+    broker = MessageBroker()
+    dispatcher = TimeDispatcher(
+        broker=broker,
+        market_clock=_make_daily_clock(hour=7, minute=30),
+        mcs=MagicMock(),
+        db_path=db_path,
+    )
+    dispatcher.register_daily_task(
+        "youtube_digest", priority=100, hour=7, minute=30, catchup_window_sec=6 * 3600
+    )
+
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+
+    assert broker.qsize == 1
+    ticket = await broker.consume()
+    broker.task_done()
+    assert ticket.task_name == "youtube_digest"
+    assert ticket.payload == {"date": "20260810", "scheduled_time": "07:30"}
+
+
+async def test_daily_task_does_not_publish_before_fixed_time(db_path):
+    broker = MessageBroker()
+    dispatcher = TimeDispatcher(
+        broker=broker,
+        market_clock=_make_daily_clock(hour=7, minute=29),
+        mcs=MagicMock(),
+        db_path=db_path,
+    )
+    dispatcher.register_daily_task(
+        "youtube_digest", priority=100, hour=7, minute=30, catchup_window_sec=6 * 3600
+    )
+
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+
+    assert broker.empty is True
+
+
+async def test_daily_task_deduplicates_after_restart(db_path):
+    dispatcher = TimeDispatcher(
+        broker=MessageBroker(),
+        market_clock=_make_daily_clock(hour=7, minute=30),
+        mcs=MagicMock(),
+        db_path=db_path,
+    )
+    dispatcher.register_daily_task(
+        "youtube_digest", priority=100, hour=7, minute=30, catchup_window_sec=6 * 3600
+    )
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+
+    broker2 = MessageBroker()
+    dispatcher2 = TimeDispatcher(
+        broker=broker2,
+        market_clock=_make_daily_clock(hour=8, minute=0),
+        mcs=MagicMock(),
+        db_path=db_path,
+    )
+    dispatcher2.register_daily_task(
+        "youtube_digest", priority=100, hour=7, minute=30, catchup_window_sec=6 * 3600
+    )
+
+    await dispatcher2._maybe_dispatch()
+    await _drain(dispatcher2)
+
+    assert broker2.empty is True
