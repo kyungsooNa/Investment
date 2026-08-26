@@ -122,7 +122,7 @@
   - 미확정: 07-23→07-27 사이 교집합을 좁힌 변화(즐겨찾기 알림 구독 복원 PR이 07-29~08-04 집중, 슬롯 경합 의심)와 07-24 캡처 산출물 자체 부재·07-29 시계열 전손은 **로그 로테이션으로 사후 규명 불가**. 결손이 '미구독'인지 '구독했는데 무틱(2-4)'인지도 구독 상태 기록이 없어 구분 불가였다.
   - [x] **계측 배선 (2026-08-07)**: 장중 구독 태스크가 캡처 후보 ∩ PRICE 활성 종목을 `capture_price_observed_{YYYYMMDD}`에 당일 누적 기록(로테이션 미변경 tick 에서도 누적)하고, 장마감 캡처가 이를 읽어 체결강도 결손을 `metadata.quality.execution_strength_missing_reasons`(`not_subscribed` / `subscribed_no_tick`)로 분류한다. 관측 기록이 없으면 추측하지 않고 생략. `empty_minute_reasons` 와 같은 패턴.
   - [x] **미구독 vs 무틱 비중 확인 및 1차 수정 (2026-08-18)**: 08-18 산출물에서 `execution_strength_missing_reasons`는 `not_subscribed` 16건, `subscribed_no_tick` 3건으로 미구독이 지배적이었다. 이에 캡처 로테이션 후보 전체에 LOW PRICE 구독을 함께 요청하도록 변경하고, `SubscriptionPolicy`가 같은 종목의 PT+PRICE 요청을 독립 슬롯으로 동시에 유지하도록 보정했다. PT-only 요청은 기존처럼 PRICE를 자동 부착하지 않아 수동/기존 PT 구독 의미는 유지한다.
-  - [ ] **남은 검증**: 변경 반영 후 다음 장중 캡처에서 ES/orderbook DB coverage가 임계 이상으로 회복되는지 확인. 아직 실제 장중 틱 유입 전이므로 `valid_for_backtest=true` 최종 판정은 다음 16:05 캡처 산출물로 확정한다.
+  - [x] **남은 검증 완료 (2026-08-26)**: 변경 반영 후 08-19~08-26 6거래일 캡처를 `scripts.analyze_backtest_microstructure_quality --date-from 20260819 --fail-on-gate`로 확인했다. 전체 `quality_gate_passed=true`, intraday/program overlay 100%, program_db 88.4%, ES DB 71.7%, orderbook DB 68.8%, stale minute 0. 08-18은 변경 반영 전 결함일로 남아 있어 08-18부터 묶으면 실패하는 것이 정상이다.
   - ※ 남은 한계: 체결강도 시계열 커버리지가 "PRICE 구독 중 + 유틱" 종목으로 제한(무틱 ~55% — 2-4 해소 시 개선, 미커버는 EOD 스칼라 폴백; 랭킹 보충분도 PRICE 미구독이면 EOD 스칼라). 남은 것: base 종목 기준 fallback 발생 여부 일일 관찰(신기준선), QC 게이트 coverage 정의 재조정.
 - [blocked — 캡처 코퍼스 축적 후] 실제 replay fixture를 통과 케이스까지 확장 → replay overlay.
 - [ ] 한국장 실전 microstructure fixture(bid/ask book·잔량·체결강도·프로그램매매 overlay)로 체결 모델 보정 + 시장가/최유리/지정가별 fill quality가 live journal과 얼마나 벌어지는지 리포트.
