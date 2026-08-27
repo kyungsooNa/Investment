@@ -47,6 +47,8 @@ class OverseasOrderExecutionService:
         default_exchange: OverseasExchange = OverseasExchange.NASD,
         journal=None,
         kill_switch=None,
+        risk_gate=None,
+        open_position_count_provider=None,
         notification_service=None,
         journal_strategy_name: str = "LarryWilliamsVBO_overseas",
         logger: Optional[logging.Logger] = None,
@@ -57,6 +59,10 @@ class OverseasOrderExecutionService:
         self._default_exchange = default_exchange
         self._journal = journal
         self._notification_service = notification_service
+        # 해외 전용 리스크 게이트(USD→KRW 환산 후 RiskGateConfig 한도 적용).
+        # kill_switch 와 마찬가지로 live 실주문 직전에만 적용된다.
+        self._risk_gate = risk_gate
+        self._open_position_count_provider = open_position_count_provider
         # 저널 상 경로 구분(자동 VBO / 수동 주문). 소비 측이 섞어 읽지 않도록 한다.
         self._journal_strategy_name = journal_strategy_name
         # live 실주문 직전 차단 게이트(check_orders_allowed). paper 모드는 실주문이 없어 미적용.
@@ -126,6 +132,9 @@ class OverseasOrderExecutionService:
             blocked = await self._kill_switch_block(symbol, side)
             if blocked is not None:
                 return blocked
+            blocked = await self._risk_gate_block(symbol, side, int(qty), limit_price)
+            if blocked is not None:
+                return blocked
             resp = await self._broker.place_overseas_limit_order(
                 symbol=symbol, exchange=ex, side=side, qty=int(qty), limit_price=limit_str,
             )
@@ -133,6 +142,29 @@ class OverseasOrderExecutionService:
         self._record_journal(symbol, ex, side, int(qty), limit_str, signal, exit_reason, resp)
         await self._emit_order_notification(symbol, ex, side, int(qty), limit_str, signal, exit_reason, resp)
         return resp
+
+    async def _risk_gate_block(
+        self, symbol: str, side: str, qty: int, limit_price: float,
+    ) -> Optional[ResCommonResponse]:
+        """live 실주문 직전 리스크 게이트. 차단이면 응답 반환, 통과면 None.
+
+        매도는 게이트 내부에서 항상 통과된다 — 청산을 막으면 포지션이 갇힌다.
+        """
+        if self._risk_gate is None:
+            return None
+        open_count = 0
+        if self._open_position_count_provider is not None:
+            try:
+                open_count = int(self._open_position_count_provider() or 0)
+            except Exception as e:
+                self._logger.warning({"event": "overseas_open_position_count_error",
+                                      "code": symbol, "error": str(e)})
+                open_count = 0
+        return await self._risk_gate.validate_order(
+            symbol=symbol, side=side, qty=qty, limit_price_usd=self._to_float(limit_price),
+            open_position_count=open_count,
+            strategy_name=self._journal_strategy_name,
+        )
 
     async def _kill_switch_block(self, symbol: str, side: str) -> Optional[ResCommonResponse]:
         """live 실주문 직전 kill-switch 차단 확인. 차단이면 응답 반환, 통과면 None."""

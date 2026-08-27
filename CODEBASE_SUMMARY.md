@@ -125,6 +125,33 @@
     (오전 실거래량 절대 하한, 오후 multiplier 가산). 조기폐장(13:00 ET) 반영
   - 한계: 폴링 간격(60초) 사이의 고/저는 관측되지 않아, 캔들 상대위치를 쓰는 OSB/PP 는
     dry-run(완성봉) 결과와 완전히 일치하지 않는다 (해외는 분봉이 없어 대안 없음)
+
+### 4-1. 해외 실전 전환 준비 (P0)
+
+실주문 전환은 `live_enabled=True` 플래그 하나지만, 그 전에 갖춰야 할 안전장치가
+국내와 달리 비어 있었다. `docs/canary_procedure.md` 의 진입 조건이 기대하는 컴포넌트를
+해외 경로에 배선한 것이 P0 작업이다.
+
+- **P0-1 포지션 영속화** (`overseas_intraday_strategy_base`, `state_file`)
+  - paper 는 in-memory 로 충분했지만 실주문에서는 장중 재시작 한 번에 보유·손절가가
+    사라져 실계좌 포지션이 방치된다. `StrategyStateIO`(atomic + per-file lock) 재사용
+  - **전일 미청산 포지션은 버리지 않는다** — 저장 날짜가 달라도 복원 후 경고. 조용히
+    잊으면 손절 없는 오버나이트가 된다. `entered_today` 만 날짜 바뀌면 초기화
+- **P0-2 Kill Switch 자동 경로 배선** — 기존엔 수동 주문 경로에만 있었다
+- **P0-3 `services/overseas_risk_gate_service.py`**
+  - 국내 `RiskGateService` 는 원화 한도·국내 Exchange·AccountSnapshotCache 결합이라
+    재사용 불가. USD 주문금액을 **환율로 원화 환산**해 같은 `RiskGateConfig` 한도
+    (canary/real_limited overlay 포함)를 적용한다. USD 를 원화 한도와 직접 비교하면
+    $1,000 이 1,000원으로 읽혀 게이트가 무력화된다
+  - 매도(청산)는 절대 막지 않는다. 환율 미확인은 매수 fail-closed
+  - 동시 보유 한도는 **전 전략 합계** 기준 (전략별로 세면 한도가 배로 늘어난다)
+- **P0-4 청산 지정가 재시도** — 해외는 지정가만 지원해 시장가 폴백이 없다.
+  거부 시 -0.3% → -1.0% 로 낮춰 재시도하고, 끝내 실패하면 **포지션을 지우지 않고**
+  error 로그를 남긴다(실계좌엔 남아 있으므로 다음 틱에 재시도돼야 한다)
+
+남은 것: 개장 대사(해외판 opening reconcile), 체결 대사 자동화(현재 수동 라우트),
+리스크 기반 사이징(현재 고정 USD 슬롯), 모의 서버 해외주문 수락 검증
+(`scripts/probe_overseas_paper_order.py`)
 - `strategies/inverse_etf_regime_strategy.py` / `inverse_etf_regime_backtest.py`
   - KOSPI bear 국면 전용 인버스 ETF 추세추종 슬리브. factory 배선 `enabled=False`(shadow/paper 관찰 중)
 - Phase 1~4(데이터 어댑터·백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금 — dry-run 검증 후 canary 단계로 진행 예정
