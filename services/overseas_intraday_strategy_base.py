@@ -15,16 +15,19 @@
 broker 의존을 갖지 않으며, live_enabled=False 인 주문 서비스를 주입받으면
 would-be 주문만 저널에 남는다.
 
-한계: 포지션 상태는 in-memory 다. 장중 재시작 시 보유가 소실돼 EOD 청산 기록이
-누락될 수 있다(paper 경로라 실포지션 영향은 없음).
+포지션 상태는 `state_file` 주입 시 파일로 영속화된다(P0-1). 실주문 경로에서는
+장중 재시작에 보유·손절가가 사라지면 실계좌 포지션이 방치되므로 필수다.
+미주입이면 in-memory 로만 동작한다(기존 paper 배선 호환).
 """
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from common.overseas_types import OverseasExchange
 from common.types import ErrorCode
+from utils.strategy_state_io import StrategyStateIO
 
 
 class OverseasIntradayStrategyBase:
@@ -32,6 +35,9 @@ class OverseasIntradayStrategyBase:
     MARKET = "US"
     HISTORY_LIMIT = 60
     EVENT_PREFIX = "overseas_intraday"
+    # 청산 지정가 재시도 슬리피지(%). 해외는 지정가만 지원하므로 마지막 폴링가로는
+    # 미체결이 날 수 있고, 그대로 두면 손절/EOD 가 오버나이트로 넘어간다.
+    EXIT_RETRY_SLIPPAGE_PCT = (-0.3, -1.0)
 
     def __init__(
         self,
@@ -48,6 +54,7 @@ class OverseasIntradayStrategyBase:
         max_positions: int = 5,
         exchange: OverseasExchange = OverseasExchange.NASD,
         market_timing_gate: bool = True,
+        state_file: Optional[str] = None,
     ) -> None:
         self._candidate_service = candidate_service
         self._sqs = stock_query_service
@@ -62,10 +69,18 @@ class OverseasIntradayStrategyBase:
         self._max_positions = max_positions
         self._default_exchange = exchange
 
+        self._state_file = state_file
+        self._state_loaded = False
+
         self._session_date: Optional[str] = None
         self._watch: Dict[str, Dict[str, Any]] = {}
         self._positions: Dict[str, Dict[str, Any]] = {}
         self._entered_today: set[str] = set()
+
+    @classmethod
+    def default_state_file(cls, root: str = "data") -> str:
+        slug = re.sub(r"[^A-Za-z0-9_.-]", "_", cls.STRATEGY_NAME)
+        return f"{root}/overseas_intraday_{slug}_state.json"
 
     # ── 전략별 구현부 ───────────────────────────────────────────────────
 
@@ -105,8 +120,10 @@ class OverseasIntradayStrategyBase:
         self, trade_date: str, exchange: Optional[OverseasExchange] = None,
     ) -> int:
         """당일 감시 목록을 만든다. 같은 거래일 재호출은 no-op. 반환: 감시 종목 수."""
-        if self._session_date == trade_date:
+        if self._session_date == trade_date and self._state_loaded:
             return len(self._watch)
+
+        await self._restore_state(trade_date)
 
         ex = exchange or self._default_exchange
         candidates = await self._candidate_service.get_candidates(ex, top_n=self._top_n)
@@ -124,14 +141,112 @@ class OverseasIntradayStrategyBase:
 
         self._session_date = trade_date
         self._watch = watch
-        self._positions = {}
-        self._entered_today = set()
         self._logger.info({
             "event": f"{self.EVENT_PREFIX}_session", "strategy": self.STRATEGY_NAME,
             "trade_date": trade_date, "exchange": ex.value,
             "candidates": len(candidates or []), "watch": len(watch),
+            "restored_positions": len(self._positions),
         })
+        self._persist_state()
         return len(watch)
+
+    # ── 상태 영속화 (P0-1) ──────────────────────────────────────────────
+
+    async def _restore_state(self, trade_date: str) -> None:
+        """저장된 포지션/진입이력을 복원한다.
+
+        **전일 포지션은 버리지 않는다** — 저장된 세션 날짜가 오늘이 아니어도 보유는
+        그대로 복원하고 경고를 남긴다. 전일 EOD 청산이 실패했다면 실계좌에는 그
+        포지션이 남아 있으므로, 시스템이 잊으면 손절도 청산도 돌지 않는다.
+        반면 `entered_today`(당일 재진입 방지)는 날이 바뀌면 초기화한다.
+        """
+        self._state_loaded = True
+        self._positions = {}
+        self._entered_today = set()
+        if not self._state_file:
+            return
+        try:
+            data = await StrategyStateIO.load(self._state_file)
+        except Exception as e:
+            self._logger.warning({"event": f"{self.EVENT_PREFIX}_state_load_failed",
+                                  "strategy": self.STRATEGY_NAME,
+                                  "file": self._state_file, "error": str(e)})
+            return
+        if not isinstance(data, dict):
+            return
+
+        saved_date = str(data.get("session_date") or "")
+        positions = data.get("positions") or {}
+        if isinstance(positions, dict):
+            for code, held in positions.items():
+                restored = self._deserialize_position(held)
+                if restored is not None:
+                    self._positions[str(code)] = restored
+
+        if saved_date == trade_date:
+            entered = data.get("entered_today") or []
+            if isinstance(entered, list):
+                self._entered_today = {str(c) for c in entered}
+        elif self._positions:
+            self._logger.warning({
+                "event": f"{self.EVENT_PREFIX}_stale_positions_restored",
+                "strategy": self.STRATEGY_NAME, "saved_date": saved_date,
+                "trade_date": trade_date, "codes": sorted(self._positions),
+                "detail": "전일 청산되지 않은 보유가 있다 — 실계좌 확인 필요",
+            })
+
+    def _deserialize_position(self, held) -> Optional[Dict[str, Any]]:
+        if not isinstance(held, dict):
+            return None
+        try:
+            exchange = OverseasExchange(str(held.get("exchange") or self._default_exchange.value))
+        except ValueError:
+            exchange = self._default_exchange
+        qty = int(self._f(held.get("qty")))
+        entry = self._f(held.get("entry_price"))
+        if qty <= 0 or entry <= 0:
+            return None
+        return {
+            "qty": qty,
+            "entry_price": entry,
+            "stop_price": self._f(held.get("stop_price")),
+            "last_price": self._f(held.get("last_price")) or entry,
+            "exchange": exchange,
+        }
+
+    def _serialize_state(self) -> Dict[str, Any]:
+        return {
+            "strategy": self.STRATEGY_NAME,
+            "session_date": self._session_date,
+            "positions": {
+                code: {
+                    "qty": held["qty"],
+                    "entry_price": held["entry_price"],
+                    "stop_price": held["stop_price"],
+                    "last_price": held.get("last_price"),
+                    "exchange": held["exchange"].value if hasattr(held["exchange"], "value")
+                    else str(held["exchange"]),
+                }
+                for code, held in self._positions.items()
+            },
+            "entered_today": sorted(self._entered_today),
+        }
+
+    def _persist_state(self) -> None:
+        """백그라운드 atomic save. 저장 실패가 매매를 막지 않도록 예외는 흡수한다."""
+        if not self._state_file:
+            return
+        try:
+            StrategyStateIO.schedule_save(self._state_file, self._serialize_state())
+        except Exception as e:
+            self._logger.warning({"event": f"{self.EVENT_PREFIX}_state_save_failed",
+                                  "strategy": self.STRATEGY_NAME, "error": str(e)})
+
+    async def flush_state(self) -> None:
+        """대기 중인 상태 저장을 모두 반영한다(graceful shutdown / 테스트용)."""
+        if not self._state_file:
+            return
+        await StrategyStateIO.flush_pending()
 
     async def _prepare_one(
         self, code: str, trade_date: str, exchange: OverseasExchange,
@@ -295,6 +410,7 @@ class OverseasIntradayStrategyBase:
             "last_price": price, "exchange": setup["exchange"],
         }
         self._entered_today.add(code)
+        self._persist_state()
         return signal
 
     async def _exit(self, code: str, price: float, *, reason: str) -> Optional[Dict[str, Any]]:
@@ -312,17 +428,50 @@ class OverseasIntradayStrategyBase:
             "exit_reason": reason,
             "realized_pct": (price / entry - 1) * 100.0 if entry > 0 else 0.0,
         }
-        resp = await self._orders.place_exit(
-            code=code, qty=held["qty"], limit_price=price, reason=reason,
-            exchange=held["exchange"], signal=signal,
-        )
-        if getattr(resp, "rt_cd", None) != ErrorCode.SUCCESS.value:
-            self._logger.warning({"event": f"{self.EVENT_PREFIX}_exit_rejected",
-                                  "strategy": self.STRATEGY_NAME, "code": code,
-                                  "reason": reason, "msg": getattr(resp, "msg1", "")})
+        filled_price = await self._place_exit_with_retry(code, held, price, reason, signal)
+        if filled_price is None:
+            # 포지션을 지우지 않는다 — 실계좌엔 그대로 남아 있으므로 다음 틱/EOD 에
+            # 다시 시도돼야 한다. 조용히 잊으면 손절 없는 오버나이트가 된다.
+            self._logger.error({
+                "event": f"{self.EVENT_PREFIX}_exit_failed",
+                "strategy": self.STRATEGY_NAME, "code": code, "reason": reason,
+                "detail": "청산 주문이 모두 거부됐다 — 실계좌 포지션 확인 필요",
+            })
             return None
+        signal["exit_price"] = filled_price
+        entry = held["entry_price"]
+        signal["realized_pct"] = (filled_price / entry - 1) * 100.0 if entry > 0 else 0.0
         self._positions.pop(code, None)
+        self._persist_state()
         return signal
+
+    async def _place_exit_with_retry(
+        self, code: str, held: Dict[str, Any], price: float, reason: str,
+        signal: Dict[str, Any],
+    ) -> Optional[float]:
+        """청산 지정가를 단계적으로 낮춰 재시도한다. 성사된 지정가를 반환(실패 None).
+
+        해외는 지정가 주문만 지원해 국내처럼 시장가 폴백이 없다. 마지막 폴링가는
+        60초 전 가격일 수 있어 급락 구간에서는 체결되지 않으므로, 거부되면
+        슬리피지를 허용한 지정가로 다시 낸다.
+        """
+        attempts = [price] + [
+            price * (1 + pct / 100.0) for pct in self.EXIT_RETRY_SLIPPAGE_PCT
+        ]
+        for attempt_no, limit_price in enumerate(attempts):
+            resp = await self._orders.place_exit(
+                code=code, qty=held["qty"], limit_price=limit_price, reason=reason,
+                exchange=held["exchange"], signal=signal,
+            )
+            if getattr(resp, "rt_cd", None) == ErrorCode.SUCCESS.value:
+                return limit_price
+            self._logger.warning({
+                "event": f"{self.EVENT_PREFIX}_exit_rejected",
+                "strategy": self.STRATEGY_NAME, "code": code, "reason": reason,
+                "attempt": attempt_no + 1, "limit_price": limit_price,
+                "msg": getattr(resp, "msg1", ""),
+            })
+        return None
 
     async def close_all(self, *, reason: str = "eod") -> List[Dict[str, Any]]:
         """보유 전량을 마지막 폴링가로 청산한다(마감 전 EOD 청산용)."""

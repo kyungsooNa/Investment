@@ -285,3 +285,77 @@ async def test_rejected_live_order_does_not_emit_trade_notification():
     await svc.place_entry(code="AAPL", qty=3, limit_price=150.25)
 
     notification_service.emit.assert_not_awaited()
+
+
+# ── 리스크 게이트 / kill switch 연동 (P0-2, P0-3) ────────────────────────
+
+def _live_service(*, risk_gate=None, kill_switch=None, open_positions=0):
+    from unittest.mock import AsyncMock as _AM, MagicMock as _MM
+    from services.overseas_order_execution_service import OverseasOrderExecutionService
+    broker = _MM()
+    broker.place_overseas_limit_order = _AM(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=None))
+    svc = OverseasOrderExecutionService(
+        broker=broker, live_enabled=True, kill_switch=kill_switch, risk_gate=risk_gate,
+        open_position_count_provider=lambda: open_positions, logger=_MM(),
+    )
+    return svc, broker
+
+
+@pytest.mark.asyncio
+async def test_risk_gate_blocks_live_entry_before_broker_call():
+    from unittest.mock import AsyncMock as _AM, MagicMock as _MM
+    gate = _MM()
+    gate.validate_order = _AM(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.RISK_GATE_BLOCKED.value, msg1="1회 주문 금액 한도 초과", data=None))
+    svc, broker = _live_service(risk_gate=gate)
+
+    resp = await svc.place_entry(code="AAA", qty=10, limit_price=100.0, signal={})
+
+    assert resp.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
+    broker.place_overseas_limit_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_risk_gate_receives_open_position_count():
+    from unittest.mock import AsyncMock as _AM, MagicMock as _MM
+    gate = _MM()
+    gate.validate_order = _AM(return_value=None)
+    svc, _ = _live_service(risk_gate=gate, open_positions=3)
+
+    await svc.place_entry(code="AAA", qty=1, limit_price=100.0, signal={})
+
+    assert gate.validate_order.await_args.kwargs["open_position_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_paper_mode_never_consults_risk_gate():
+    """paper 는 실주문이 없으므로 게이트를 태우지 않는다(관측 신호가 줄면 안 된다)."""
+    from unittest.mock import AsyncMock as _AM, MagicMock as _MM
+    from services.overseas_order_execution_service import OverseasOrderExecutionService
+    gate = _MM()
+    gate.validate_order = _AM(return_value=None)
+    svc = OverseasOrderExecutionService(
+        broker=None, live_enabled=False, risk_gate=gate, logger=_MM())
+
+    resp = await svc.place_entry(code="AAA", qty=1, limit_price=100.0, signal={})
+
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+    gate.validate_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_is_checked_before_risk_gate():
+    """kill switch 가 먼저다 — 계좌 보호가 한도 검증보다 우선한다."""
+    from unittest.mock import AsyncMock as _AM, MagicMock as _MM
+    ks = _MM()
+    ks.check_orders_allowed = _AM(return_value=(False, "연속 API 오류"))
+    gate = _MM()
+    gate.validate_order = _AM(return_value=None)
+    svc, broker = _live_service(risk_gate=gate, kill_switch=ks)
+
+    resp = await svc.place_entry(code="AAA", qty=1, limit_price=100.0, signal={})
+
+    assert resp.rt_cd == ErrorCode.KILL_SWITCH_BLOCKED.value
+    gate.validate_order.assert_not_awaited()
+    broker.place_overseas_limit_order.assert_not_awaited()

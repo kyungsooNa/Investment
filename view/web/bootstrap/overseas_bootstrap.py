@@ -34,6 +34,7 @@ from services.overseas_intraday_vbo_service import OverseasIntradayVBOService
 from services.overseas_order_execution_service import OverseasOrderExecutionService
 from services.overseas_pocket_pivot_dryrun_service import OverseasPocketPivotDryRunService
 from services.overseas_position_sizing_service import OverseasPositionSizingService, extract_fx_krw_per_usd
+from services.overseas_risk_gate_service import OverseasRiskGateService
 from services.overseas_rsi2_dryrun_service import OverseasRSI2DryRunService
 from services.overseas_squeeze_breakout_dryrun_service import OverseasSqueezeBreakoutDryRunService
 from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
@@ -218,6 +219,19 @@ class OverseasBootstrap:
         )
         self._build_intraday_strategies(overseas_stock_cfg, overseas_position_sizing_service)
 
+    def _fx_provider(self):
+        """USD/KRW 환율 조회 async callable. 리스크 게이트의 원화 환산에 쓴다."""
+        ctx = self._ctx
+
+        async def _provider():
+            try:
+                resp = await ctx.broker.get_overseas_balance()
+            except Exception:
+                return None
+            return extract_fx_krw_per_usd(getattr(resp, "data", None))
+
+        return _provider
+
     def _build_market_regime(self) -> None:
         """미국장 국면 판정 서비스 + 개장 전 일일 갱신 태스크 조립.
 
@@ -311,13 +325,35 @@ class OverseasBootstrap:
         # 남의 기록이 US 거래일 파일로 딸려간다. 파일은 같은 디렉토리에 append 되므로
         # 소비 측(analyze/compare)은 signal_source 로 구분한다.
         paper_journal = EventShadowJournalService(log_root="logs/strategies", logger=ctx.logger)
+
+        # P0-2/P0-3: 자동 경로에도 kill-switch 와 리스크 게이트를 배선한다. paper 에서는
+        # live 분기를 타지 않아 무해하고, live 전환 시 배선 누락으로 무방비가 되는 것을 막는다.
+        strategy_services: list = []
+        overseas_risk_gate = OverseasRiskGateService(
+            config=getattr(ctx.full_config, "risk_gate", None),
+            fx_provider=self._fx_provider(),
+            operating_profile=str(getattr(ctx.full_config, "operating_profile", "canary")),
+            is_real_mode_provider=lambda: not bool(
+                getattr(getattr(ctx, "env", None), "is_paper_trading", True)
+            ),
+            kill_switch=getattr(ctx, "kill_switch_service", None),
+            logger=ctx.logger,
+        )
+
+        def _open_position_count() -> int:
+            return sum(len(svc.get_state().get("positions") or {}) for svc in strategy_services)
+
         order_execution_service = OverseasOrderExecutionService(
             broker=None,  # live_enabled=False 이므로 broker 미사용(구조적 잠금)
             live_enabled=False,
             journal=paper_journal,
+            kill_switch=getattr(ctx, "kill_switch_service", None),
+            risk_gate=overseas_risk_gate,
+            open_position_count_provider=_open_position_count,
             notification_service=ctx.notification_service,
             logger=ctx.logger,
         )
+        ctx.overseas_risk_gate_service = overseas_risk_gate
         intraday_us_clock = MarketClock.for_us_equities(logger=ctx.logger)
         us_calendar = USMarketCalendarService(
             market_clock=intraday_us_clock, logger=ctx.logger,
@@ -337,14 +373,18 @@ class OverseasBootstrap:
             logger=ctx.logger,
         )
 
-        def _opts(cfg):
-            return dict(
+        def _opts(cfg, service_cls=None):
+            opts = dict(
                 top_n=getattr(cfg, "top_n", 20),
                 max_positions=getattr(cfg, "max_positions", 5),
                 market_timing_gate=getattr(cfg, "market_timing_gate", True),
             )
+            # P0-1: 장중 재시작에 보유·손절가가 사라지면 실계좌 포지션이 방치된다.
+            if service_cls is not None:
+                opts["state_file"] = service_cls.default_state_file()
+            return opts
 
-        services = []
+        services = strategy_services
         if getattr(vbo_cfg, "enabled", False):
             # VBO 는 공통 베이스 이전에 만들어진 독립 구현이라 생성자 인자가 다르다.
             ctx.overseas_intraday_vbo_service = OverseasIntradayVBOService(
@@ -363,35 +403,35 @@ class OverseasBootstrap:
         cb_cfg = getattr(overseas_stock_cfg, "intraday_channel_breakout", None)
         if getattr(cb_cfg, "enabled", False):
             ctx.overseas_intraday_cb_service = OverseasIntradayChannelBreakoutService(
-                indicator_service=ctx.indicator_service, **common, **_opts(cb_cfg),
+                indicator_service=ctx.indicator_service, **common, **_opts(cb_cfg, OverseasIntradayChannelBreakoutService),
             )
             services.append(ctx.overseas_intraday_cb_service)
 
         rsi2_cfg = getattr(overseas_stock_cfg, "intraday_rsi2", None)
         if getattr(rsi2_cfg, "enabled", False):
             ctx.overseas_intraday_rsi2_service = OverseasIntradayRSI2Service(
-                us_market_calendar_service=us_calendar, **common, **_opts(rsi2_cfg),
+                us_market_calendar_service=us_calendar, **common, **_opts(rsi2_cfg, OverseasIntradayRSI2Service),
             )
             services.append(ctx.overseas_intraday_rsi2_service)
 
         bgu_cfg = getattr(overseas_stock_cfg, "intraday_buyable_gap_up", None)
         if getattr(bgu_cfg, "enabled", False):
             ctx.overseas_intraday_bgu_service = OverseasIntradayBuyableGapUpService(
-                **common, **_opts(bgu_cfg),
+                **common, **_opts(bgu_cfg, OverseasIntradayBuyableGapUpService),
             )
             services.append(ctx.overseas_intraday_bgu_service)
 
         osb_cfg = getattr(overseas_stock_cfg, "intraday_squeeze_breakout", None)
         if getattr(osb_cfg, "enabled", False):
             ctx.overseas_intraday_osb_service = OverseasIntradaySqueezeBreakoutService(
-                **common, **_opts(osb_cfg),
+                **common, **_opts(osb_cfg, OverseasIntradaySqueezeBreakoutService),
             )
             services.append(ctx.overseas_intraday_osb_service)
 
         pp_cfg = getattr(overseas_stock_cfg, "intraday_pocket_pivot", None)
         if getattr(pp_cfg, "enabled", False):
             ctx.overseas_intraday_pp_service = OverseasIntradayPocketPivotService(
-                **common, **_opts(pp_cfg),
+                **common, **_opts(pp_cfg, OverseasIntradayPocketPivotService),
             )
             services.append(ctx.overseas_intraday_pp_service)
 

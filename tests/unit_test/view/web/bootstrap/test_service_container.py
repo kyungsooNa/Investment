@@ -1167,6 +1167,76 @@ def test_intraday_strategies_receive_market_timing_gate(patched_service_containe
     assert ctx.overseas_intraday_pp_service._market_timing_gate is False
 
 
+def test_intraday_auto_path_gets_kill_switch_and_risk_gate(patched_service_container_deps):
+    """P0-2/P0-3: live 전환 시 무방비가 되지 않도록 자동 경로에도 게이트를 배선한다."""
+    from config.config_loader import AppConfig
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.kill_switch_service = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={"intraday_channel_breakout": {"enabled": True}},
+    )
+
+    _run_with_overseas(ctx)
+
+    orders = ctx.overseas_intraday_cb_service._orders
+    assert orders._kill_switch is ctx.kill_switch_service
+    assert orders._risk_gate is ctx.overseas_risk_gate_service
+    # 게이트를 붙여도 자동 실주문 잠금은 그대로다
+    assert orders._live_enabled is False
+
+
+def test_intraday_strategies_get_distinct_state_files(patched_service_container_deps):
+    """P0-1: 전략별 상태 파일이 분리돼야 서로의 포지션을 덮어쓰지 않는다."""
+    from config.config_loader import AppConfig
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={
+            "intraday_channel_breakout": {"enabled": True},
+            "intraday_pocket_pivot": {"enabled": True},
+        },
+    )
+
+    _run_with_overseas(ctx)
+
+    cb_file = ctx.overseas_intraday_cb_service._state_file
+    pp_file = ctx.overseas_intraday_pp_service._state_file
+    assert cb_file and pp_file and cb_file != pp_file
+
+
+def test_open_position_count_spans_all_strategies(patched_service_container_deps):
+    """동시 보유 한도는 전략 합계 기준이어야 한다 — 전략별로 세면 한도가 배로 늘어난다."""
+    from config.config_loader import AppConfig
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={
+            "intraday_channel_breakout": {"enabled": True},
+            "intraday_pocket_pivot": {"enabled": True},
+        },
+    )
+
+    _run_with_overseas(ctx)
+
+    cb = ctx.overseas_intraday_cb_service
+    pp = ctx.overseas_intraday_pp_service
+    cb._positions = {"AAA": {}}
+    pp._positions = {"BBB": {}, "CCC": {}}
+
+    provider = cb._orders._open_position_count_provider
+    assert provider() == 3
+
+
 def test_manual_overseas_order_service_wired_with_kill_switch(patched_service_container_deps):
     """수동 해외주문 경로는 kill-switch 게이트를 거쳐야 한다 — 라우트가 broker 를 직접
     호출하면 킬스위치가 우회되므로 게이팅 서비스를 배선한다."""

@@ -49,6 +49,7 @@ class OverseasIntradayChannelBreakoutService(OverseasIntradayStrategyBase):
         max_positions: int = 5,
         exchange: OverseasExchange = OverseasExchange.NASD,
         market_timing_gate: bool = True,
+        state_file: Optional[str] = None,
     ) -> None:
         super().__init__(
             candidate_service=candidate_service,
@@ -63,6 +64,7 @@ class OverseasIntradayChannelBreakoutService(OverseasIntradayStrategyBase):
             max_positions=max_positions,
             exchange=exchange,
             market_timing_gate=market_timing_gate,
+            state_file=state_file,
         )
         self._indicator = indicator_service
         self._cfg = config or OverseasIntradayChannelBreakoutConfig()
