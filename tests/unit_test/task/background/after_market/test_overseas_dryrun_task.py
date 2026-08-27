@@ -156,3 +156,129 @@ def test_task_has_no_order_dependency():
     task, _, _, _, _ = _make_task()
     assert not hasattr(task, "_order_execution_service")
     assert not hasattr(task, "_order_service")
+
+
+def _make_task_with_report(signals, run_report):
+    """suite 의 last_run_report 를 노출하는 dry-run 서비스 대역으로 태스크를 만든다."""
+    dryrun = MagicMock()
+    dryrun.scan_dry_run = AsyncMock(return_value=signals)
+    dryrun.last_run_report = run_report
+    notification_service = AsyncMock()
+    logger = MagicMock()
+    task = OverseasDryRunTask(
+        dryrun_service=dryrun,
+        shadow_journal=MagicMock(),
+        market_calendar_service=MagicMock(),
+        market_clock=MagicMock(),
+        logger=logger,
+        notification_service=notification_service,
+        exchange=OverseasExchange.NASD,
+    )
+    return task, notification_service, logger
+
+
+@pytest.mark.asyncio
+async def test_notification_lists_strategies_that_ran_with_zero_signals():
+    """0건도 리포트에 남긴다 — 빠진 전략이 '설정 없음'인지 '신호 없음'인지 구분 불가였다."""
+    task, notification_service, logger = _make_task_with_report(
+        signals=[{"code": "AAA", "reason": "vbo_daily_breakout"}],
+        run_report=[
+            {"strategy": "LarryWilliamsVBO_overseas", "ok": True, "signals": 1, "error": None},
+            {"strategy": "O'NeilPP_overseas", "ok": True, "signals": 0, "error": None},
+        ],
+    )
+
+    await task._on_market_closed("20260706")
+
+    notification_service.emit.assert_awaited_once_with(
+        NotificationCategory.BACKGROUND,
+        NotificationLevel.INFO,
+        "해외 dry-run 완료",
+        (
+            "미국 거래일 2026-07-06 기준 dry-run 리포트: 총 1개 신호\n"
+            "- VBO: 1개 (AAA)\n"
+            "- PP: 0개"
+        ),
+    )
+    logger.info.assert_any_call(
+        {
+            "event": "overseas_dryrun_done",
+            "market_date": "20260706",
+            "market_date_text": "2026-07-06",
+            "exchange": "NASD",
+            "signals": 1,
+            "summary": {"VBO": 1, "PP": 0},
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_notification_marks_failed_strategy_and_escalates_level():
+    """죽은 전략은 0건과 다르게 보여야 하고, 알림 레벨도 올라가야 한다."""
+    task, notification_service, logger = _make_task_with_report(
+        signals=[{"code": "AAA", "reason": "vbo_daily_breakout"}],
+        run_report=[
+            {"strategy": "LarryWilliamsVBO_overseas", "ok": True, "signals": 1, "error": None},
+            {"strategy": "O'NeilPP_overseas", "ok": False, "signals": 0, "error": "boom"},
+        ],
+    )
+
+    await task._on_market_closed("20260706")
+
+    notification_service.emit.assert_awaited_once_with(
+        NotificationCategory.BACKGROUND,
+        NotificationLevel.WARNING,
+        "해외 dry-run 완료 (일부 전략 실패)",
+        (
+            "미국 거래일 2026-07-06 기준 dry-run 리포트: 총 1개 신호\n"
+            "- VBO: 1개 (AAA)\n"
+            "- PP: 실행 실패 (boom)"
+        ),
+    )
+    logger.warning.assert_any_call(
+        {
+            "event": "overseas_dryrun_strategy_failed",
+            "market_date": "20260706",
+            "exchange": "NASD",
+            "strategy": "O'NeilPP_overseas",
+            "error": "boom",
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_report_without_strategy_names_falls_back_to_signal_summary():
+    """리포트를 못 주는 서비스(구형 대역)는 기존 신호 기반 요약을 그대로 쓴다."""
+    task, notification_service, _ = _make_task_with_report(
+        signals=[{"code": "AAA", "reason": "vbo_daily_breakout"}],
+        run_report=[],
+    )
+
+    await task._on_market_closed("20260706")
+
+    notification_service.emit.assert_awaited_once_with(
+        NotificationCategory.BACKGROUND,
+        NotificationLevel.INFO,
+        "해외 dry-run 완료",
+        "미국 거래일 2026-07-06 기준 dry-run 리포트: 총 1개 신호\n- VBO: 1개 (AAA)",
+    )
+
+
+@pytest.mark.asyncio
+async def test_signal_label_missing_from_run_report_is_still_listed():
+    """리포트에 없는 라벨(기타 등)의 신호도 누락하지 않는다."""
+    task, notification_service, _ = _make_task_with_report(
+        signals=[
+            {"code": "AAA", "reason": "vbo_daily_breakout"},
+            {"code": "ZZZ", "strategy": "Unknown_overseas"},
+        ],
+        run_report=[
+            {"strategy": "LarryWilliamsVBO_overseas", "ok": True, "signals": 1, "error": None},
+        ],
+    )
+
+    await task._on_market_closed("20260706")
+
+    body = notification_service.emit.await_args[0][3]
+    assert "- VBO: 1개 (AAA)" in body
+    assert "- 기타: 1개 (ZZZ)" in body
