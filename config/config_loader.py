@@ -550,6 +550,8 @@ class OverseasIntradayVBOConfig(BaseModel):
     max_positions: int = Field(5, gt=0)
     session_prepare_delay_min: int = Field(5, ge=0)
     eod_exit_before_min: int = Field(10, ge=0)
+    # 미국장 국면(QQQ 프록시 MA 추세)이 하락이면 신규 진입을 막는다. 청산은 무관.
+    market_timing_gate: bool = True
 
     model_config = {"extra": "allow"}
 

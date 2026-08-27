@@ -123,6 +123,18 @@ class MarketRegimeService:
         """백테스트용 히스토리컬 분류 (캐시 미사용)."""
         return await self._compute(market, snapshot_date=date, as_of_date=date, logger=logger or self._logger)
 
+    def _previous_trading_day(self, now) -> str:
+        """직전 영업일(YYYYMMDD). 해외 서브클래스가 자체 거래 캘린더로 재정의한다."""
+        return previous_trading_day_str(now)
+
+    async def _fetch_ohlcv(self, index_code: str, *, limit: int, end_date: Optional[str]):
+        """판정용 일봉 조회. 해외 서브클래스가 해외 일봉 API로 재정의한다."""
+        return await self._sqs.get_recent_daily_index_ohlcv(
+            index_code,
+            limit=limit,
+            end_date=end_date,
+        )
+
     async def _compute(
         self,
         market: str,
@@ -144,12 +156,12 @@ class MarketRegimeService:
             except Exception:
                 before_open = False
             query_end_date = (
-                previous_trading_day_str(now)
+                self._previous_trading_day(now)
                 if self._tm.is_market_operating_hours() or before_open
                 else now.strftime("%Y%m%d")
             )
 
-        ohlcv_resp = await self._sqs.get_recent_daily_index_ohlcv(
+        ohlcv_resp = await self._fetch_ohlcv(
             index_code,
             limit=period + days + 5,
             end_date=query_end_date,

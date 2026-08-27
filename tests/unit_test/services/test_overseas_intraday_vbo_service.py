@@ -25,7 +25,8 @@ def _fail():
     return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="rejected", data=None)
 
 
-def _svc(*, candidates=None, bars=None, max_positions=5, sizing=None):
+def _svc(*, candidates=None, bars=None, max_positions=5, sizing=None,
+         regime=None, market_timing_gate=True):
     candidate_service = MagicMock()
     candidate_service.get_candidates = AsyncMock(return_value=candidates if candidates is not None else [
         {"code": "AAA", "name": "Aaa", "exchange": "NASD", "avg_trading_value": 10_000_000.0},
@@ -48,8 +49,11 @@ def _svc(*, candidates=None, bars=None, max_positions=5, sizing=None):
         k_value=0.5,
         stop_loss_pct=-3.0,
         max_positions=max_positions,
+        market_regime_service=regime,
+        market_timing_gate=market_timing_gate,
     )
-    return SimpleNamespace(service=service, candidate_service=candidate_service, sqs=sqs, orders=orders)
+    return SimpleNamespace(service=service, candidate_service=candidate_service, sqs=sqs,
+                           orders=orders, regime=regime)
 
 
 # ── 세션 준비 ────────────────────────────────────────────────────────────
@@ -319,3 +323,119 @@ def test_float_coercion_defaults_to_zero():
     assert Svc._f("120") == 120.0
     assert Svc._f("가격") == 0.0
     assert Svc._f(object()) == 0.0
+
+
+# ── 마켓타이밍 게이트 ────────────────────────────────────────────────────
+
+def _regime(*, is_rising=True, error=None):
+    """USMarketRegimeService 스텁. error 를 주면 classify 가 예외를 던진다."""
+    svc = MagicMock()
+    if error is not None:
+        svc.classify = AsyncMock(side_effect=error)
+    else:
+        svc.classify = AsyncMock(return_value=SimpleNamespace(
+            market="US",
+            is_rising=is_rising,
+            regime_label="bull" if is_rising else "bear",
+            fail_detail="" if is_rising else "MA hard decline: -1.20% < -0.50%",
+        ))
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_bear_regime_blocks_entry_on_breakout():
+    """돌파해도 미국장이 하락 국면이면 신규 진입하지 않는다."""
+    s = _svc(regime=_regime(is_rising=False))
+    await s.service.prepare_session("20260512")
+
+    assert await s.service.on_price("AAA", 106.0) is None
+    s.orders.place_entry.assert_not_awaited()
+    assert s.service.get_state()["positions"] == {}
+
+
+@pytest.mark.asyncio
+async def test_bull_regime_allows_entry():
+    s = _svc(regime=_regime(is_rising=True))
+    await s.service.prepare_session("20260512")
+
+    action = await s.service.on_price("AAA", 106.0)
+
+    assert action["action"] == "BUY"
+    s.orders.place_entry.assert_awaited_once()
+    s.regime.classify.assert_awaited_with("US")
+
+
+@pytest.mark.asyncio
+async def test_regime_lookup_failure_is_fail_closed():
+    """국면 조회가 실패하면 진입을 막는다 — 모르는 상태로 발사하지 않는다."""
+    s = _svc(regime=_regime(error=RuntimeError("조회 실패")))
+    await s.service.prepare_session("20260512")
+
+    assert await s.service.on_price("AAA", 106.0) is None
+    s.orders.place_entry.assert_not_awaited()
+    s.service._logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_gate_disabled_ignores_bear_regime():
+    s = _svc(regime=_regime(is_rising=False), market_timing_gate=False)
+    await s.service.prepare_session("20260512")
+
+    assert await s.service.on_price("AAA", 106.0) is not None
+    s.orders.place_entry.assert_awaited_once()
+    s.regime.classify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_no_regime_service_keeps_existing_behavior():
+    """게이트 미배선 환경(regime=None)에서는 기존과 동일하게 진입한다."""
+    s = _svc()
+    await s.service.prepare_session("20260512")
+
+    assert await s.service.on_price("AAA", 106.0) is not None
+    s.orders.place_entry.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stop_loss_exit_runs_even_in_bear_regime():
+    """게이트는 신규 진입만 막는다 — 보유분 손절은 국면과 무관하게 실행된다."""
+    regime = _regime(is_rising=True)
+    s = _svc(regime=regime)
+    await s.service.prepare_session("20260512")
+    await s.service.on_price("AAA", 106.0)
+
+    regime.classify = AsyncMock(return_value=SimpleNamespace(
+        market="US", is_rising=False, regime_label="bear", fail_detail="추세 꺾임",
+    ))
+    action = await s.service.on_price("AAA", 100.0)  # stop = 106 * 0.97 = 102.82
+
+    assert action["action"] == "SELL"
+    assert action["exit_reason"] == "stop"
+    s.orders.place_exit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_eod_close_all_runs_even_in_bear_regime():
+    regime = _regime(is_rising=True)
+    s = _svc(regime=regime)
+    await s.service.prepare_session("20260512")
+    await s.service.on_price("AAA", 106.0)
+
+    regime.classify = AsyncMock(return_value=SimpleNamespace(
+        market="US", is_rising=False, regime_label="bear", fail_detail="추세 꺾임",
+    ))
+    actions = await s.service.close_all(reason="eod")
+
+    assert len(actions) == 1
+    assert actions[0]["exit_reason"] == "eod"
+
+
+@pytest.mark.asyncio
+async def test_gate_not_consulted_when_price_below_target():
+    """돌파 전에는 국면을 조회하지 않는다 — 틱마다 불필요한 판정을 돌리지 않는다."""
+    s = _svc(regime=_regime(is_rising=True))
+    await s.service.prepare_session("20260512")
+
+    await s.service.on_price("AAA", 104.9)
+
+    s.regime.classify.assert_not_awaited()

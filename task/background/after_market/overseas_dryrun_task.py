@@ -43,6 +43,7 @@ class OverseasDryRunTask(AfterMarketTask):
         notification_service=None,
         worker_pool=None,
         exchange: OverseasExchange = OverseasExchange.NASD,
+        market_regime_service=None,
     ) -> None:
         super().__init__(
             mcs=market_calendar_service,
@@ -54,6 +55,9 @@ class OverseasDryRunTask(AfterMarketTask):
         self._journal = shadow_journal
         self._notification_service = notification_service
         self._exchange = exchange
+        # 국면 라벨은 **기록 전용**이다. dry-run 은 관측 데이터라 국면으로 차단하지
+        # 않는다 — 차단하면 bear 구간이 통째로 비어 게이트의 사후 검증이 불가능해진다.
+        self._regime = market_regime_service
         self._last_run_date: Optional[str] = None
 
     @property
@@ -164,13 +168,26 @@ class OverseasDryRunTask(AfterMarketTask):
     @classmethod
     def _format_notification_body(
         cls, market_date_text: str, signals: list[dict], run_report: list[dict] | None = None,
+        regime_label: str | None = None,
     ) -> str:
         _, detail = cls._summarize_signals(signals, run_report)
         total = len(signals or [])
         body = f"미국 거래일 {market_date_text} 기준 dry-run 리포트: 총 {total}개 신호"
+        if regime_label:
+            body = f"{body}\n시장 국면: {regime_label} (기록 전용 — dry-run 은 차단하지 않음)"
         if detail:
             body = f"{body}\n{detail}"
         return body
+
+    async def _regime_label(self) -> Optional[str]:
+        """당일 미국장 국면 라벨. 조회 실패는 흡수한다 — dry-run 스캔을 막지 않는다."""
+        if self._regime is None:
+            return None
+        try:
+            return (await self._regime.classify(self._regime.MARKET)).regime_label
+        except Exception as e:
+            self._logger.warning({"event": "overseas_dryrun_regime_error", "error": str(e)})
+            return None
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         market_date_text = self._format_market_date(latest_trading_date)
@@ -188,6 +205,7 @@ class OverseasDryRunTask(AfterMarketTask):
             )
             return
         try:
+            regime_label = await self._regime_label()
             signals = await self._dryrun_service.scan_dry_run(self._exchange)
             run_report = self._normalize_run_report(
                 getattr(self._dryrun_service, "last_run_report", None)
@@ -206,23 +224,24 @@ class OverseasDryRunTask(AfterMarketTask):
                 )
             if self._journal is not None:
                 self._journal.flush_to_file(latest_trading_date)
-            self._logger.info(
-                {
-                    "event": "overseas_dryrun_done",
-                    "market_date": latest_trading_date,
-                    "market_date_text": market_date_text,
-                    "exchange": exchange_value,
-                    "signals": len(signals or []),
-                    "summary": summary,
-                }
-            )
+            done_log = {
+                "event": "overseas_dryrun_done",
+                "market_date": latest_trading_date,
+                "market_date_text": market_date_text,
+                "exchange": exchange_value,
+                "signals": len(signals or []),
+                "summary": summary,
+            }
+            if regime_label:
+                done_log["regime"] = regime_label
+            self._logger.info(done_log)
             if self._notification_service:
                 await self._notification_service.emit(
                     NotificationCategory.BACKGROUND,
                     NotificationLevel.WARNING if failed else NotificationLevel.INFO,
                     "해외 dry-run 완료 (일부 전략 실패)" if failed else "해외 dry-run 완료",
                     self._format_notification_body(
-                        market_date_text, signals or [], run_report,
+                        market_date_text, signals or [], run_report, regime_label,
                     ),
                 )
             self._last_run_date = latest_trading_date  # 성공 시에만 dedup 마킹 → 실패 시 재시도

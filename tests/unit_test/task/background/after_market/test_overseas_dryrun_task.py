@@ -282,3 +282,71 @@ async def test_signal_label_missing_from_run_report_is_still_listed():
     body = notification_service.emit.await_args[0][3]
     assert "- VBO: 1개 (AAA)" in body
     assert "- 기타: 1개 (ZZZ)" in body
+
+
+# ── 시장 국면 라벨 (기록 전용) ───────────────────────────────────────────
+
+def _regime(*, label="bull", error=None):
+    svc = MagicMock()
+    svc.MARKET = "US"
+    if error is not None:
+        svc.classify = AsyncMock(side_effect=error)
+    else:
+        svc.classify = AsyncMock(return_value=MagicMock(regime_label=label))
+    return svc
+
+
+def _make_task_with_regime(regime):
+    dryrun = MagicMock()
+    dryrun.scan_dry_run = AsyncMock(return_value=[
+        {"code": "AAA", "action": "BUY", "reason": "vbo_daily_breakout"},
+    ])
+    notification_service = AsyncMock()
+    task = OverseasDryRunTask(
+        dryrun_service=dryrun,
+        shadow_journal=MagicMock(),
+        market_calendar_service=MagicMock(),
+        market_clock=MagicMock(),
+        logger=MagicMock(),
+        notification_service=notification_service,
+        market_regime_service=regime,
+    )
+    return task, dryrun, notification_service
+
+
+@pytest.mark.asyncio
+async def test_regime_label_is_recorded_in_notification_and_log():
+    regime = _regime(label="bear")
+    task, dryrun, notif = _make_task_with_regime(regime)
+
+    await task._on_market_closed("20260706")
+
+    # 라벨은 기록만 — 스캔은 국면과 무관하게 실행된다
+    dryrun.scan_dry_run.assert_awaited_once()
+    body = notif.emit.await_args.args[3]
+    assert "시장 국면: bear" in body
+    logged = [c.args[0] for c in task._logger.info.call_args_list
+              if isinstance(c.args[0], dict) and c.args[0].get("event") == "overseas_dryrun_done"]
+    assert logged and logged[0]["regime"] == "bear"
+
+
+@pytest.mark.asyncio
+async def test_regime_lookup_failure_does_not_block_dryrun():
+    """국면 조회 실패가 dry-run 수집을 막아서는 안 된다."""
+    task, dryrun, notif = _make_task_with_regime(_regime(error=RuntimeError("조회 실패")))
+
+    await task._on_market_closed("20260706")
+
+    dryrun.scan_dry_run.assert_awaited_once()
+    notif.emit.assert_awaited_once()
+    assert "시장 국면" not in notif.emit.await_args.args[3]
+    task._logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_without_regime_service_notification_is_unchanged():
+    task, _, _, notif, _ = _make_task()
+
+    await task._on_market_closed("20260706")
+
+    assert "시장 국면" not in notif.emit.await_args.args[3]

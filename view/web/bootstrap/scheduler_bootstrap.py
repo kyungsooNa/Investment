@@ -189,6 +189,8 @@ class SchedulerBootstrap:
         )
         # 장중 VBO 폴링(연속 루프) — 마감 이벤트가 아니므로 TimeDispatcher 미등록.
         self._register(self._optional_task("overseas_intraday_vbo_task"))
+        # 미국장 마켓타이밍 일일 갱신 — 태스크가 자체 US 클럭으로 개장 전 창을 판단한다.
+        self._register(self._optional_task("us_market_timing_daily_update_task"))
 
     def _register_websocket_watchdog(self) -> None:
         # WebSocket watchdog 은 TimeDispatcher 등록 대상이 아님 (continuous monitor).

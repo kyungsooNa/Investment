@@ -105,6 +105,13 @@
 - `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/overseas_candidate_service.py`, `services/overseas_stock_sync_service.py`, `services/overseas_vbo_dryrun_service.py`
 - `services/us_market_calendar_service.py`
   - 규칙 기반 NYSE 휴장일/조기폐장 캘린더 (KIS에 해외 휴장일 TR 없어 로컬 계산)
+- `services/us_market_regime_service.py` + `task/background/intraday/us_market_timing_daily_update_task.py`
+  - 미국장 마켓타이밍. KIS에 해외 지수 TR이 없어 **프록시 ETF(QQQ/NASD) 일봉**으로
+    국내 `MarketRegimeService` 와 동일한 MA 추세 로직을 돌린다(상속, 데이터 소스·캘린더만 교체)
+  - 게이트 소비처는 **장중 VBO 신규 진입 1곳** — bear/조회실패면 진입 차단(fail-closed).
+    손절·EOD 청산은 국면과 무관하게 항상 동작. `intraday_vbo.market_timing_gate: false` 로 해제
+  - 마감 후 dry-run 6종은 **차단하지 않고 국면 라벨만 기록** (bear 구간이 비면 게이트 사후 검증 불가)
+  - 개장 30분 전 창에서 하루 1회 갱신 + 알림 (국내 `market_timing_daily_update` 와 동일 패턴)
 - `strategies/inverse_etf_regime_strategy.py` / `inverse_etf_regime_backtest.py`
   - KOSPI bear 국면 전용 인버스 ETF 추세추종 슬리브. factory 배선 `enabled=False`(shadow/paper 관찰 중)
 - Phase 1~4(데이터 어댑터·백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금 — dry-run 검증 후 canary 단계로 진행 예정

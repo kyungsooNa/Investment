@@ -140,6 +140,9 @@ overseas_stock:
     session_prepare_delay_min: 5
     # 마감 N분 전부터는 신규 진입 없이 EOD 청산만 수행(조기폐장일 13:00 ET 반영).
     eod_exit_before_min: 10
+    # 미국장 국면 게이트. QQQ(NASD) 일봉 MA 추세가 하락이면 신규 진입을 차단한다.
+    # 국면 조회 실패 시에도 진입하지 않는다(fail-closed). 손절/EOD 청산은 항상 동작.
+    market_timing_gate: true
 
 # 선택
 htsid: ""

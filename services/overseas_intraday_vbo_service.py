@@ -28,6 +28,7 @@ from common.types import ErrorCode
 
 class OverseasIntradayVBOService:
     STRATEGY_NAME = "LarryWilliamsVBO_overseas_intraday"
+    MARKET = "US"
 
     def __init__(
         self,
@@ -42,6 +43,8 @@ class OverseasIntradayVBOService:
         top_n: int = 20,
         max_positions: int = 5,
         exchange: OverseasExchange = OverseasExchange.NASD,
+        market_regime_service=None,
+        market_timing_gate: bool = True,
     ) -> None:
         self._candidate_service = candidate_service
         self._sqs = stock_query_service
@@ -53,6 +56,9 @@ class OverseasIntradayVBOService:
         self._top_n = top_n
         self._max_positions = max_positions
         self._default_exchange = exchange
+        # 미국장 국면 게이트. 미주입이면 게이트 없이 기존 동작을 유지한다.
+        self._regime = market_regime_service
+        self._market_timing_gate = market_timing_gate
 
         self._session_date: Optional[str] = None
         self._watch: Dict[str, Dict[str, Any]] = {}
@@ -156,11 +162,38 @@ class OverseasIntradayVBOService:
             return None
         if px < setup["target"]:
             return None
+        if not await self._is_regime_ok(code):
+            return None
         if len(self._positions) >= self._max_positions:
             self._logger.info({"event": "overseas_intraday_vbo_entry_blocked", "code": code,
                                "reason": "max_positions", "max_positions": self._max_positions})
             return None
         return await self._enter(code, px, setup)
+
+    async def _is_regime_ok(self, code: str) -> bool:
+        """미국장 국면이 신규 진입에 적합한지 판정한다.
+
+        돌파가 확인된 뒤에만 호출된다(틱마다 판정을 돌리지 않기 위함). 국면 판정은
+        `USMarketRegimeService` 가 거래일 단위로 캐시하므로 하루 1회만 조회가 나간다.
+        조회 실패는 **fail-closed** — 국면을 모르는 채로 발사하지 않는다.
+        청산(손절/EOD)은 이 게이트를 거치지 않는다.
+        """
+        if self._regime is None or not self._market_timing_gate:
+            return True
+        try:
+            snap = await self._regime.classify(self.MARKET)
+        except Exception as e:
+            self._logger.warning({"event": "overseas_intraday_vbo_regime_error",
+                                  "code": code, "error": str(e)})
+            return False
+        if snap.is_rising:
+            return True
+        self._logger.info({
+            "event": "overseas_intraday_vbo_entry_blocked", "code": code,
+            "reason": "market_timing", "regime": snap.regime_label,
+            "fail_detail": snap.fail_detail,
+        })
+        return False
 
     async def _enter(self, code: str, price: float, setup: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         qty = self._resolve_qty(price)
