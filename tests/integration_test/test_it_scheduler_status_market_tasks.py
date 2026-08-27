@@ -4,7 +4,7 @@ from interfaces.schedulable_task import TaskPriority, TaskState
 
 
 class _OverseasIntradayVBOTask:
-    task_name = "overseas_intraday_vbo"
+    task_name = "overseas_intraday"
     priority = TaskPriority.NORMAL
     state = TaskState.RUNNING
 
@@ -19,7 +19,7 @@ def test_it_scheduler_status_exposes_overseas_market_tasks(paper_client, mock_pa
     mock_paper_ctx.background_scheduler = MagicMock()
     mock_paper_ctx.background_scheduler.get_task.side_effect = (
         lambda name: _OverseasIntradayVBOTask()
-        if name == "overseas_intraday_vbo"
+        if name == "overseas_intraday"
         else None
     )
 
@@ -30,7 +30,7 @@ def test_it_scheduler_status_exposes_overseas_market_tasks(paper_client, mock_pa
     assert body["running"] is False
     assert body["strategies"] == []
     assert [item["market"] for item in body["schedulers"]] == ["domestic", "overseas_us"]
-    assert body["market_tasks"][0]["name"] == "overseas_intraday_vbo"
+    assert body["market_tasks"][0]["name"] == "overseas_intraday"
     assert body["market_tasks"][0]["market"] == "overseas_us"
     assert body["market_tasks"][0]["running"] is True
     assert body["market_tasks"][0]["live_trading"] is False

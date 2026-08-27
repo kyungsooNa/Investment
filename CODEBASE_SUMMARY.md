@@ -112,6 +112,19 @@
     손절·EOD 청산은 국면과 무관하게 항상 동작. `intraday_vbo.market_timing_gate: false` 로 해제
   - 마감 후 dry-run 6종은 **차단하지 않고 국면 라벨만 기록** (bear 구간이 비면 게이트 사후 검증 불가)
   - 개장 30분 전 창에서 하루 1회 갱신 + 알림 (국내 `market_timing_daily_update` 와 동일 패턴)
+- `services/overseas_intraday_strategy_base.py` + `overseas_intraday_{cb,rsi2,bgu,osb,pp}_service`
+  - **장중 승격 전략 6종**(VBO/CB/RSI2/BGU/OSB/PP). dry-run 은 마감 후 완성봉 사후 평가라
+    발사 대상이 없어, 같은 규칙을 장중 폴링으로 재현한 라이브(paper) 경로
+  - 전 전략이 `OverseasIntradayTask` **하나의 폴링 패스**를 공유한다 — 감시 심볼 합집합을
+    만들어 **심볼당 1회만** 조회하고 해당 심볼을 보는 전략에만 fan-out (전략별 태스크는
+    겹치는 심볼을 전략 수만큼 중복 조회해 API 예산을 태운다)
+  - 전략별 config opt-in (`overseas_stock.intraday_*.enabled`, 기본 전부 false)
+- `services/us_session_volume_service.py`
+  - 당일 거래량이 장중에 확정되지 않는 문제를 국내와 같은 방식으로 해결: 누적거래량
+    (`tvol`)을 세션 경과 비율로 나눠 종일 거래량 환산 + 시간대별 허들 차등
+    (오전 실거래량 절대 하한, 오후 multiplier 가산). 조기폐장(13:00 ET) 반영
+  - 한계: 폴링 간격(60초) 사이의 고/저는 관측되지 않아, 캔들 상대위치를 쓰는 OSB/PP 는
+    dry-run(완성봉) 결과와 완전히 일치하지 않는다 (해외는 분봉이 없어 대안 없음)
 - `strategies/inverse_etf_regime_strategy.py` / `inverse_etf_regime_backtest.py`
   - KOSPI bear 국면 전용 인버스 ETF 추세추종 슬리브. factory 배선 `enabled=False`(shadow/paper 관찰 중)
 - Phase 1~4(데이터 어댑터·백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금 — dry-run 검증 후 canary 단계로 진행 예정

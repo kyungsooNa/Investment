@@ -21,6 +21,15 @@ from services.overseas_candidate_service import OverseasCandidateService
 from services.overseas_channel_breakout_dryrun_service import OverseasChannelBreakoutDryRunService
 from services.overseas_dryrun_suite_service import OverseasDryRunSuiteService
 from services.overseas_fill_reconcile_service import OverseasFillReconcileService
+from services.overseas_intraday_buyable_gap_up_service import OverseasIntradayBuyableGapUpService
+from services.overseas_intraday_channel_breakout_service import (
+    OverseasIntradayChannelBreakoutService,
+)
+from services.overseas_intraday_pocket_pivot_service import OverseasIntradayPocketPivotService
+from services.overseas_intraday_rsi2_service import OverseasIntradayRSI2Service
+from services.overseas_intraday_squeeze_breakout_service import (
+    OverseasIntradaySqueezeBreakoutService,
+)
 from services.overseas_intraday_vbo_service import OverseasIntradayVBOService
 from services.overseas_order_execution_service import OverseasOrderExecutionService
 from services.overseas_pocket_pivot_dryrun_service import OverseasPocketPivotDryRunService
@@ -30,9 +39,10 @@ from services.overseas_squeeze_breakout_dryrun_service import OverseasSqueezeBre
 from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
 from services.us_market_calendar_service import USMarketCalendarService
 from services.us_market_regime_service import USMarketRegimeService
+from services.us_session_volume_service import USSessionVolumeService
 from task.background.after_market.overseas_dryrun_task import OverseasDryRunTask
 from task.background.intraday.overseas_favorite_price_alert_task import OverseasFavoritePriceAlertTask
-from task.background.intraday.overseas_intraday_vbo_task import OverseasIntradayVBOTask
+from task.background.intraday.overseas_intraday_task import OverseasIntradayTask
 from task.background.intraday.us_market_timing_daily_update_task import USMarketTimingDailyUpdateTask
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -206,7 +216,7 @@ class OverseasBootstrap:
             # 국면은 기록 전용 — dry-run 은 관측 데이터라 차단하지 않는다.
             market_regime_service=ctx.us_market_regime_service,
         )
-        self._build_intraday_vbo(overseas_stock_cfg, overseas_position_sizing_service)
+        self._build_intraday_strategies(overseas_stock_cfg, overseas_position_sizing_service)
 
     def _build_market_regime(self) -> None:
         """미국장 국면 판정 서비스 + 개장 전 일일 갱신 태스크 조립.
@@ -261,8 +271,8 @@ class OverseasBootstrap:
             logger=ctx.logger,
         )
 
-    def _build_intraday_vbo(self, overseas_stock_cfg, position_sizing_service) -> None:
-        """해외 장중 VBO 폴링 경로 조립 (config 로 opt-in, 기본 off).
+    def _build_intraday_strategies(self, overseas_stock_cfg, position_sizing_service) -> None:
+        """해외 장중 전략 폴링 경로 조립 (전략별 config 로 opt-in, 기본 전부 off).
 
         dry-run 은 마감 후 사후 평가라 발사 대상이 없다. 본 경로는 정규장 중 폴링가로
         진입/청산을 판정해 전략이 실제로 돌게 한다. 다만 **주문 서비스는
@@ -270,14 +280,31 @@ class OverseasBootstrap:
         (canary/kill-switch/reconcile) 가 미완이라, 자동 발사는 여전히 잠근다.
         `allow_live_trading` 은 수동 주문 경로용이며 이 자동 경로를 열지 않는다.
 
+        전략 6종은 **하나의 태스크·하나의 폴링 패스**를 공유한다 — 전략마다 태스크를
+        두면 겹치는 심볼을 전략 수만큼 중복 조회한다. 주문 서비스와 paper 저널도
+        공유하므로 전략을 켜도 늘어나는 것은 판정 비용뿐이다.
+
         신규 진입은 `USMarketRegimeService` 국면 게이트를 통과해야 한다
-        (`market_timing_gate: false` 로 해제 가능). 손절/EOD 청산은 게이트 대상이 아니다.
+        (전략별 `market_timing_gate: false` 로 해제 가능). 손절/EOD 청산은 게이트 대상이 아니다.
         """
         ctx = self._ctx
         ctx.overseas_intraday_vbo_service = None
-        ctx.overseas_intraday_vbo_task = None
-        cfg = getattr(overseas_stock_cfg, "intraday_vbo", None)
-        if not getattr(cfg, "enabled", False):
+        ctx.overseas_intraday_cb_service = None
+        ctx.overseas_intraday_rsi2_service = None
+        ctx.overseas_intraday_bgu_service = None
+        ctx.overseas_intraday_osb_service = None
+        ctx.overseas_intraday_pp_service = None
+        ctx.overseas_intraday_task = None
+
+        vbo_cfg = getattr(overseas_stock_cfg, "intraday_vbo", None)
+        enabled_any = getattr(vbo_cfg, "enabled", False) or any(
+            getattr(getattr(overseas_stock_cfg, attr, None), "enabled", False)
+            for attr in (
+                "intraday_channel_breakout", "intraday_rsi2", "intraday_buyable_gap_up",
+                "intraday_squeeze_breakout", "intraday_pocket_pivot",
+            )
+        )
+        if not enabled_any:
             return
 
         # 이 경로 전용 저널 — 국내 event_shadow 와 버퍼를 공유하면 틱마다 flush 할 때
@@ -291,30 +318,91 @@ class OverseasBootstrap:
             notification_service=ctx.notification_service,
             logger=ctx.logger,
         )
-        ctx.overseas_intraday_vbo_service = OverseasIntradayVBOService(
+        intraday_us_clock = MarketClock.for_us_equities(logger=ctx.logger)
+        us_calendar = USMarketCalendarService(
+            market_clock=intraday_us_clock, logger=ctx.logger,
+        )
+        session_volume_service = USSessionVolumeService(
+            us_market_calendar_service=us_calendar, logger=ctx.logger,
+        )
+
+        common = dict(
             candidate_service=ctx.overseas_candidate_service,
             stock_query_service=ctx.stock_query_service,
             order_execution_service=order_execution_service,
+            session_volume_service=session_volume_service,
+            market_clock=intraday_us_clock,
             position_sizing_service=position_sizing_service,
-            logger=ctx.logger,
-            k_value=getattr(cfg, "k_value", 0.5),
-            stop_loss_pct=getattr(cfg, "stop_loss_pct", -3.0),
-            top_n=getattr(cfg, "top_n", 20),
-            max_positions=getattr(cfg, "max_positions", 5),
             market_regime_service=ctx.us_market_regime_service,
-            market_timing_gate=getattr(cfg, "market_timing_gate", True),
+            logger=ctx.logger,
         )
-        intraday_us_clock = MarketClock.for_us_equities(logger=ctx.logger)
-        ctx.overseas_intraday_vbo_task = OverseasIntradayVBOTask(
-            vbo_service=ctx.overseas_intraday_vbo_service,
+
+        def _opts(cfg):
+            return dict(
+                top_n=getattr(cfg, "top_n", 20),
+                max_positions=getattr(cfg, "max_positions", 5),
+                market_timing_gate=getattr(cfg, "market_timing_gate", True),
+            )
+
+        services = []
+        if getattr(vbo_cfg, "enabled", False):
+            # VBO 는 공통 베이스 이전에 만들어진 독립 구현이라 생성자 인자가 다르다.
+            ctx.overseas_intraday_vbo_service = OverseasIntradayVBOService(
+                candidate_service=ctx.overseas_candidate_service,
+                stock_query_service=ctx.stock_query_service,
+                order_execution_service=order_execution_service,
+                position_sizing_service=position_sizing_service,
+                logger=ctx.logger,
+                k_value=getattr(vbo_cfg, "k_value", 0.5),
+                stop_loss_pct=getattr(vbo_cfg, "stop_loss_pct", -3.0),
+                market_regime_service=ctx.us_market_regime_service,
+                **_opts(vbo_cfg),
+            )
+            services.append(ctx.overseas_intraday_vbo_service)
+
+        cb_cfg = getattr(overseas_stock_cfg, "intraday_channel_breakout", None)
+        if getattr(cb_cfg, "enabled", False):
+            ctx.overseas_intraday_cb_service = OverseasIntradayChannelBreakoutService(
+                indicator_service=ctx.indicator_service, **common, **_opts(cb_cfg),
+            )
+            services.append(ctx.overseas_intraday_cb_service)
+
+        rsi2_cfg = getattr(overseas_stock_cfg, "intraday_rsi2", None)
+        if getattr(rsi2_cfg, "enabled", False):
+            ctx.overseas_intraday_rsi2_service = OverseasIntradayRSI2Service(
+                us_market_calendar_service=us_calendar, **common, **_opts(rsi2_cfg),
+            )
+            services.append(ctx.overseas_intraday_rsi2_service)
+
+        bgu_cfg = getattr(overseas_stock_cfg, "intraday_buyable_gap_up", None)
+        if getattr(bgu_cfg, "enabled", False):
+            ctx.overseas_intraday_bgu_service = OverseasIntradayBuyableGapUpService(
+                **common, **_opts(bgu_cfg),
+            )
+            services.append(ctx.overseas_intraday_bgu_service)
+
+        osb_cfg = getattr(overseas_stock_cfg, "intraday_squeeze_breakout", None)
+        if getattr(osb_cfg, "enabled", False):
+            ctx.overseas_intraday_osb_service = OverseasIntradaySqueezeBreakoutService(
+                **common, **_opts(osb_cfg),
+            )
+            services.append(ctx.overseas_intraday_osb_service)
+
+        pp_cfg = getattr(overseas_stock_cfg, "intraday_pocket_pivot", None)
+        if getattr(pp_cfg, "enabled", False):
+            ctx.overseas_intraday_pp_service = OverseasIntradayPocketPivotService(
+                **common, **_opts(pp_cfg),
+            )
+            services.append(ctx.overseas_intraday_pp_service)
+
+        ctx.overseas_intraday_task = OverseasIntradayTask(
+            strategy_services=services,
             broker=ctx.broker,
             market_clock=intraday_us_clock,
-            us_market_calendar_service=USMarketCalendarService(
-                market_clock=intraday_us_clock, logger=ctx.logger,
-            ),
+            us_market_calendar_service=us_calendar,
             shadow_journal=paper_journal,
-            check_interval_sec=getattr(cfg, "poll_interval_sec", 60),
-            session_prepare_delay_min=getattr(cfg, "session_prepare_delay_min", 5),
-            eod_exit_before_min=getattr(cfg, "eod_exit_before_min", 10),
+            check_interval_sec=getattr(vbo_cfg, "poll_interval_sec", 60),
+            session_prepare_delay_min=getattr(vbo_cfg, "session_prepare_delay_min", 5),
+            eod_exit_before_min=getattr(vbo_cfg, "eod_exit_before_min", 10),
             logger=ctx.logger,
         )

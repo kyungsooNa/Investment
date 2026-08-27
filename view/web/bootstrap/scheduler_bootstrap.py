@@ -187,8 +187,9 @@ class SchedulerBootstrap:
             TaskPriority.LOW,
             market="overseas_us",
         )
-        # 장중 VBO 폴링(연속 루프) — 마감 이벤트가 아니므로 TimeDispatcher 미등록.
-        self._register(self._optional_task("overseas_intraday_vbo_task"))
+        # 장중 전략 폴링(연속 루프) — 마감 이벤트가 아니므로 TimeDispatcher 미등록.
+        # 전략 6종이 이 태스크 하나를 공유한다(심볼당 1회 조회).
+        self._register(self._optional_task("overseas_intraday_task"))
         # 미국장 마켓타이밍 일일 갱신 — 태스크가 자체 US 클럭으로 개장 전 창을 판단한다.
         self._register(self._optional_task("us_market_timing_daily_update_task"))
 

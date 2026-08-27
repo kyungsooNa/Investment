@@ -15,8 +15,8 @@ class UpdateMaxPositionsRequest(BaseModel):
 
 _MARKET_TASK_DEFINITIONS = (
     {
-        "name": "overseas_intraday_vbo",
-        "display_name": "미국장 장중 VBO",
+        "name": "overseas_intraday",
+        "display_name": "미국장 장중 전략",
         "market": "overseas_us",
         "market_label": "미국장",
         "mode": "paper",

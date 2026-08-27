@@ -556,6 +556,16 @@ class OverseasIntradayVBOConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class OverseasIntradayStrategyConfig(BaseModel):
+    """장중 승격된 개별 전략의 공통 스위치. 기본 off — VBO 와 동일하게 opt-in."""
+    enabled: bool = False
+    top_n: int = Field(20, gt=0)
+    max_positions: int = Field(5, gt=0)
+    market_timing_gate: bool = True
+
+    model_config = {"extra": "allow"}
+
+
 class OverseasStockConfig(BaseModel):
     enabled_exchanges: List[Literal["NASD", "NYSE", "AMEX"]] = Field(
         default_factory=lambda: ["NASD", "NYSE", "AMEX"]
@@ -567,6 +577,17 @@ class OverseasStockConfig(BaseModel):
     dryrun_slot_usd: float = Field(1000.0, gt=0)
     dryrun_max_qty: Optional[int] = Field(default=None, gt=0)
     intraday_vbo: OverseasIntradayVBOConfig = Field(default_factory=OverseasIntradayVBOConfig)
+    # 장중 승격 전략 5종 (VBO 외). 폴링 패스는 공유하므로 심볼 조회는 늘지 않는다.
+    intraday_channel_breakout: OverseasIntradayStrategyConfig = Field(
+        default_factory=OverseasIntradayStrategyConfig)
+    intraday_rsi2: OverseasIntradayStrategyConfig = Field(
+        default_factory=OverseasIntradayStrategyConfig)
+    intraday_buyable_gap_up: OverseasIntradayStrategyConfig = Field(
+        default_factory=OverseasIntradayStrategyConfig)
+    intraday_squeeze_breakout: OverseasIntradayStrategyConfig = Field(
+        default_factory=OverseasIntradayStrategyConfig)
+    intraday_pocket_pivot: OverseasIntradayStrategyConfig = Field(
+        default_factory=OverseasIntradayStrategyConfig)
 
     model_config = {"extra": "allow"}
 

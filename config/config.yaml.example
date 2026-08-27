@@ -144,6 +144,37 @@ overseas_stock:
     # 국면 조회 실패 시에도 진입하지 않는다(fail-closed). 손절/EOD 청산은 항상 동작.
     market_timing_gate: true
 
+  # 장중 승격 전략 5종. VBO 와 같은 폴링 패스를 공유하므로 켜도 심볼 조회는 늘지 않는다.
+  # 거래량 조건은 누적거래량(tvol)을 장중 경과 비율로 환산해 판정한다(국내와 동일 방식).
+  intraday_channel_breakout:
+    enabled: false
+    top_n: 20
+    max_positions: 5
+    market_timing_gate: true
+  # RSI2 는 종가 기반이라 마감 15분 전부터 폴링가를 종가 대용으로 판정한다.
+  intraday_rsi2:
+    enabled: false
+    top_n: 20
+    max_positions: 5
+    market_timing_gate: true
+  intraday_buyable_gap_up:
+    enabled: false
+    top_n: 20
+    max_positions: 5
+    market_timing_gate: true
+  # OSB/PP 는 캔들 상대위치를 쓰는데, 장중에는 폴링으로 관측된 세션 고/저만 알 수 있다
+  # (해외는 분봉이 없다) — dry-run(완성봉) 결과와 완전히 일치하지 않는다.
+  intraday_squeeze_breakout:
+    enabled: false
+    top_n: 20
+    max_positions: 5
+    market_timing_gate: true
+  intraday_pocket_pivot:
+    enabled: false
+    top_n: 20
+    max_positions: 5
+    market_timing_gate: true
+
 # 선택
 htsid: ""
 custtype: "P"
