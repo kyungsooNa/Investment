@@ -29,9 +29,11 @@ from services.overseas_rsi2_dryrun_service import OverseasRSI2DryRunService
 from services.overseas_squeeze_breakout_dryrun_service import OverseasSqueezeBreakoutDryRunService
 from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
 from services.us_market_calendar_service import USMarketCalendarService
+from services.us_market_regime_service import USMarketRegimeService
 from task.background.after_market.overseas_dryrun_task import OverseasDryRunTask
 from task.background.intraday.overseas_favorite_price_alert_task import OverseasFavoritePriceAlertTask
 from task.background.intraday.overseas_intraday_vbo_task import OverseasIntradayVBOTask
+from task.background.intraday.us_market_timing_daily_update_task import USMarketTimingDailyUpdateTask
 
 if TYPE_CHECKING:  # pragma: no cover
     from view.web.web_app_initializer import WebAppContext
@@ -98,6 +100,7 @@ class OverseasBootstrap:
         ctx.overseas_rsi2_dryrun_service = None
         ctx.overseas_osb_dryrun_service = None
         ctx.overseas_dryrun_task = None
+        self._build_market_regime()
         if getattr(ctx, "event_shadow_journal_service", None) is None:
             ctx.event_shadow_journal_service = EventShadowJournalService(
                 log_root="logs/strategies", logger=ctx.logger,
@@ -200,8 +203,35 @@ class OverseasBootstrap:
             # Ticket-driven: 미국장 TimeDispatcher(time_dispatcher_us)가 NY 마감 후
             # 티켓을 발행하면 WorkerPool 이 execute() 를 호출한다(자체 AfterMarketLoop 미사용).
             worker_pool=ctx.worker_pool,
+            # 국면은 기록 전용 — dry-run 은 관측 데이터라 차단하지 않는다.
+            market_regime_service=ctx.us_market_regime_service,
         )
         self._build_intraday_vbo(overseas_stock_cfg, overseas_position_sizing_service)
+
+    def _build_market_regime(self) -> None:
+        """미국장 국면 판정 서비스 + 개장 전 일일 갱신 태스크 조립.
+
+        KIS 에 해외 지수 TR 이 없어 프록시 ETF(QQQ/NASD) 일봉으로 국내와 동일한 MA
+        추세 로직을 돌린다. 소비처는 장중 VBO 신규 진입 게이트이며, 마감 후 dry-run
+        은 라벨만 기록한다(차단 없음 — 게이트의 사후 검증용 관측 데이터 보존).
+        """
+        ctx = self._ctx
+        us_clock = MarketClock.for_us_equities(logger=ctx.logger)
+        us_calendar = USMarketCalendarService(us_clock, logger=ctx.logger)
+        ctx.us_market_regime_service = USMarketRegimeService(
+            stock_query_service=ctx.stock_query_service,
+            market_clock=us_clock,
+            logger=ctx.logger,
+            us_market_calendar_service=us_calendar,
+            notification_service=ctx.notification_service,
+        )
+        # 알림이 없으면 태스크가 할 일이 없다 — 국면 캐시는 거래일이 바뀌면 자동 갱신된다.
+        ctx.us_market_timing_daily_update_task = USMarketTimingDailyUpdateTask(
+            us_market_regime_service=ctx.us_market_regime_service,
+            market_clock=us_clock,
+            us_market_calendar_service=us_calendar,
+            logger=ctx.logger,
+        ) if ctx.notification_service is not None else None
 
     def _build_manual_order_service(self) -> None:
         """웹 수동 해외주문(`POST /api/overseas/order`) 전용 게이팅 서비스 배선.
@@ -239,6 +269,9 @@ class OverseasBootstrap:
         `live_enabled=False` 로 고정**한다 — 해외 주문 TR 은 실전만 존재하고 Phase 5
         (canary/kill-switch/reconcile) 가 미완이라, 자동 발사는 여전히 잠근다.
         `allow_live_trading` 은 수동 주문 경로용이며 이 자동 경로를 열지 않는다.
+
+        신규 진입은 `USMarketRegimeService` 국면 게이트를 통과해야 한다
+        (`market_timing_gate: false` 로 해제 가능). 손절/EOD 청산은 게이트 대상이 아니다.
         """
         ctx = self._ctx
         ctx.overseas_intraday_vbo_service = None
@@ -268,6 +301,8 @@ class OverseasBootstrap:
             stop_loss_pct=getattr(cfg, "stop_loss_pct", -3.0),
             top_n=getattr(cfg, "top_n", 20),
             max_positions=getattr(cfg, "max_positions", 5),
+            market_regime_service=ctx.us_market_regime_service,
+            market_timing_gate=getattr(cfg, "market_timing_gate", True),
         )
         intraday_us_clock = MarketClock.for_us_equities(logger=ctx.logger)
         ctx.overseas_intraday_vbo_task = OverseasIntradayVBOTask(

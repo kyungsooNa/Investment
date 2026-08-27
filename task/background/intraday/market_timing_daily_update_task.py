@@ -91,6 +91,10 @@ class MarketTimingDailyUpdateTask(SchedulableTask):
             except Exception as exc:
                 self._logger.error("%s: loop error - %s", self.task_name, exc, exc_info=True)
 
+    async def _check_business_day(self, date_key: str) -> bool:
+        """거래일 판정. 해외 서브클래스가 동기 캘린더로 재정의한다."""
+        return await self._mcs.is_business_day(date_key)
+
     async def _should_run_now(self) -> bool:
         if not self._market_clock:
             return False
@@ -100,7 +104,7 @@ class MarketTimingDailyUpdateTask(SchedulableTask):
             return False
         if self._mcs is not None:
             try:
-                if not await self._mcs.is_business_day(date_key):
+                if not await self._check_business_day(date_key):
                     return False
             except Exception as exc:
                 self._logger.warning("%s: business day check failed - %s", self.task_name, exc)
@@ -113,7 +117,7 @@ class MarketTimingDailyUpdateTask(SchedulableTask):
         date_key = now.strftime("%Y%m%d")
         if self._mcs is not None:
             try:
-                if not await self._mcs.is_business_day(date_key):
+                if not await self._check_business_day(date_key):
                     self._last_result = {"ok": True, "skipped": "non_business_day", "date": date_key}
                     return self._last_result
             except Exception as exc:

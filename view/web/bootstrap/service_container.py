@@ -933,6 +933,8 @@ class ServiceContainer:
                 ctx.overseas_manual_order_service = None
                 ctx.overseas_trade_repository = None
                 ctx.overseas_fill_reconcile_service = None
+                ctx.us_market_regime_service = None
+                ctx.us_market_timing_daily_update_task = None
         except Exception as e:
             ctx.logger.critical(f"[ServiceBootstrap:Universe] 초기화 실패: {e}", exc_info=True)
             raise

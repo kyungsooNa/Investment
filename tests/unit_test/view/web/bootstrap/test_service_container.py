@@ -976,6 +976,77 @@ def test_intraday_vbo_built_with_order_path_locked(patched_service_container_dep
     assert task_cls.call_args.kwargs["shadow_journal"] is paper_journal
 
 
+def test_intraday_vbo_gets_market_timing_gate(patched_service_container_deps):
+    """장중 VBO 신규 진입은 미국장 국면 게이트를 거쳐야 한다."""
+    from config.config_loader import AppConfig
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={"intraday_vbo": {"enabled": True}},
+    )
+
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasOrderExecutionService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOService", autospec=True) as svc_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOTask", autospec=True):
+        ServiceContainer(ctx).run()
+
+    assert svc_cls.call_args.kwargs["market_regime_service"] is ctx.us_market_regime_service
+    assert svc_cls.call_args.kwargs["market_timing_gate"] is True
+    assert ctx.us_market_regime_service is not None
+
+
+def test_intraday_vbo_gate_can_be_disabled_by_config(patched_service_container_deps):
+    from config.config_loader import AppConfig
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={"intraday_vbo": {"enabled": True, "market_timing_gate": False}},
+    )
+
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasOrderExecutionService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOService", autospec=True) as svc_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOTask", autospec=True):
+        ServiceContainer(ctx).run()
+
+    assert svc_cls.call_args.kwargs["market_timing_gate"] is False
+
+
+def test_us_market_timing_daily_update_task_wired(patched_service_container_deps):
+    """미국장 마켓타이밍 일일 알림 태스크가 조립·등록되어야 한다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True) as dryrun_cls:
+        ServiceContainer(ctx).run()
+
+    assert ctx.us_market_timing_daily_update_task is not None
+    assert ctx.us_market_timing_daily_update_task.task_name == "us_market_timing_daily_update"
+    # dry-run 은 차단이 아니라 기록 전용으로 국면을 받는다.
+    assert dryrun_cls.call_args.kwargs["market_regime_service"] is ctx.us_market_regime_service
+
+
 def test_manual_overseas_order_service_wired_with_kill_switch(patched_service_container_deps):
     """수동 해외주문 경로는 kill-switch 게이트를 거쳐야 한다 — 라우트가 broker 를 직접
     호출하면 킬스위치가 우회되므로 게이팅 서비스를 배선한다."""
