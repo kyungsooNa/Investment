@@ -32,6 +32,7 @@ from typing import Any, Dict, Optional
 
 from common.overseas_types import OverseasExchange, OverseasOrderReport
 from common.types import ErrorCode, ResCommonResponse
+from services.notification_service import NotificationCategory, NotificationLevel
 
 
 class OverseasOrderExecutionService:
@@ -46,6 +47,7 @@ class OverseasOrderExecutionService:
         default_exchange: OverseasExchange = OverseasExchange.NASD,
         journal=None,
         kill_switch=None,
+        notification_service=None,
         journal_strategy_name: str = "LarryWilliamsVBO_overseas",
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -54,6 +56,7 @@ class OverseasOrderExecutionService:
         self._live_enabled = bool(live_enabled)
         self._default_exchange = default_exchange
         self._journal = journal
+        self._notification_service = notification_service
         # 저널 상 경로 구분(자동 VBO / 수동 주문). 소비 측이 섞어 읽지 않도록 한다.
         self._journal_strategy_name = journal_strategy_name
         # live 실주문 직전 차단 게이트(check_orders_allowed). paper 모드는 실주문이 없어 미적용.
@@ -128,6 +131,7 @@ class OverseasOrderExecutionService:
             )
 
         self._record_journal(symbol, ex, side, int(qty), limit_str, signal, exit_reason, resp)
+        await self._emit_order_notification(symbol, ex, side, int(qty), limit_str, signal, exit_reason, resp)
         return resp
 
     async def _kill_switch_block(self, symbol: str, side: str) -> Optional[ResCommonResponse]:
@@ -191,6 +195,56 @@ class OverseasOrderExecutionService:
             )
         except Exception as e:  # 저널 실패가 주문 결과를 가리지 않도록 흡수
             self._logger.warning({"event": "overseas_order_journal_error", "error": str(e)})
+
+    async def _emit_order_notification(
+        self, symbol: str, ex: OverseasExchange, side: str, qty: int,
+        limit_str: str, signal: Optional[Dict[str, Any]], exit_reason: Optional[str],
+        resp: ResCommonResponse,
+    ) -> None:
+        if self._notification_service is None:
+            return
+        if getattr(resp, "rt_cd", None) != ErrorCode.SUCCESS.value:
+            return
+
+        signal = signal or {}
+        source = self.SIGNAL_SOURCE_LIVE if self._live_enabled else self.SIGNAL_SOURCE_PAPER
+        action = str(signal.get("action") or side).upper()
+        strategy = str(signal.get("strategy") or self._journal_strategy_name)
+        title = f"미국장 VBO {action} {symbol}"
+        mode_label = "live" if self._live_enabled else "paper"
+        message = f"{symbol} {side.upper()} {qty}주 @ {limit_str} ({ex.value}, {mode_label})"
+        if exit_reason:
+            message += f"\n청산 사유: {exit_reason}"
+        reason = signal.get("reason")
+        if reason:
+            message += f"\n사유: {reason}"
+
+        metadata: Dict[str, Any] = {
+            "market": "overseas_us",
+            "strategy": strategy,
+            "code": symbol,
+            "exchange": ex.value,
+            "side": side,
+            "qty": qty,
+            "limit_price": limit_str,
+            "signal_source": source,
+            "force_external": True,
+        }
+        if exit_reason:
+            metadata["exit_reason"] = exit_reason
+        if signal.get("realized_pct") is not None:
+            metadata["return_rate"] = self._to_float(signal.get("realized_pct"))
+
+        try:
+            await self._notification_service.emit(
+                NotificationCategory.STRATEGY,
+                NotificationLevel.WARNING,
+                title,
+                message,
+                metadata=metadata,
+            )
+        except Exception as e:
+            self._logger.warning({"event": "overseas_order_notification_error", "error": str(e)})
 
     @staticmethod
     def decide_daily_exit(

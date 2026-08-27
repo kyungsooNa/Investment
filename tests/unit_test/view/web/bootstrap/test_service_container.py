@@ -1064,6 +1064,8 @@ def test_manual_order_service_does_not_unlock_automatic_path(patched_service_con
 
     live_flags = [c.kwargs["live_enabled"] for c in order_cls.call_args_list]
     assert live_flags == [True, False]  # [수동, 자동] — 자동은 잠금 유지
+    for call in order_cls.call_args_list:
+        assert call.kwargs["notification_service"] is ctx.notification_service
 
 
 def test_domestic_active_without_overseas_enabled_skips_dryrun_task(patched_service_container_deps):

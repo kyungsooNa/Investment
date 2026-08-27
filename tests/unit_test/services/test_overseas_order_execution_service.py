@@ -10,6 +10,7 @@ import pytest
 
 from common.overseas_types import OverseasExchange, OverseasOrderReport
 from common.types import ErrorCode, ResCommonResponse
+from services.notification_service import NotificationCategory, NotificationLevel
 from services.overseas_order_execution_service import OverseasOrderExecutionService
 
 
@@ -215,3 +216,72 @@ async def test_journal_strategy_name_override():
     kwargs = journal.record.call_args.kwargs
     assert kwargs["strategy_name"] == "수동매매_해외"
     assert kwargs["signal_source"] == OverseasOrderExecutionService.SIGNAL_SOURCE_LIVE
+
+
+# ── 알림 연동 ────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_successful_paper_entry_emits_trade_notification():
+    notification_service = MagicMock()
+    notification_service.emit = AsyncMock()
+    svc = OverseasOrderExecutionService(
+        None, live_enabled=False, notification_service=notification_service
+    )
+
+    await svc.place_entry(
+        code="AAPL",
+        qty=3,
+        limit_price=150.25,
+        signal={"strategy": "LarryWilliamsVBO_overseas_intraday", "reason": "vbo_intraday_breakout"},
+    )
+
+    notification_service.emit.assert_awaited_once()
+    category, level, title, message = notification_service.emit.await_args.args[:4]
+    metadata = notification_service.emit.await_args.kwargs["metadata"]
+    assert category == NotificationCategory.STRATEGY
+    assert level == NotificationLevel.WARNING
+    assert "미국장 VBO BUY" in title
+    assert "AAPL" in message
+    assert metadata["force_external"] is True
+    assert metadata["signal_source"] == OverseasOrderExecutionService.SIGNAL_SOURCE_PAPER
+    assert metadata["strategy"] == "LarryWilliamsVBO_overseas_intraday"
+
+
+@pytest.mark.asyncio
+async def test_successful_paper_exit_emits_trade_notification_with_return_rate():
+    notification_service = MagicMock()
+    notification_service.emit = AsyncMock()
+    svc = OverseasOrderExecutionService(
+        None, live_enabled=False, notification_service=notification_service
+    )
+
+    await svc.place_exit(
+        code="AAPL",
+        qty=3,
+        limit_price=153.0,
+        reason="eod",
+        signal={
+            "strategy": "LarryWilliamsVBO_overseas_intraday",
+            "action": "SELL",
+            "realized_pct": 2.0,
+        },
+    )
+
+    metadata = notification_service.emit.await_args.kwargs["metadata"]
+    assert metadata["side"] == "sell"
+    assert metadata["exit_reason"] == "eod"
+    assert metadata["return_rate"] == 2.0
+
+
+@pytest.mark.asyncio
+async def test_rejected_live_order_does_not_emit_trade_notification():
+    notification_service = MagicMock()
+    notification_service.emit = AsyncMock()
+    broker = _broker(ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="rejected", data=None))
+    svc = OverseasOrderExecutionService(
+        broker, live_enabled=True, notification_service=notification_service
+    )
+
+    await svc.place_entry(code="AAPL", qty=3, limit_price=150.25)
+
+    notification_service.emit.assert_not_awaited()
