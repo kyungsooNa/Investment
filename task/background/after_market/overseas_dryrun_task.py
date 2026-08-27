@@ -125,6 +125,43 @@ class OverseasDryRunTask(AfterMarketTask):
             return []
         return [e for e in report if isinstance(e, dict) and e.get("strategy")]
 
+    @staticmethod
+    def _fmt_price(value) -> str:
+        try:
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return "-"
+
+    @staticmethod
+    def _fmt_qty(value) -> str:
+        try:
+            qty = int(value)
+        except (TypeError, ValueError):
+            return "-"
+        return str(qty) if qty > 0 else "-"
+
+    @classmethod
+    def _format_pp_detail(cls, signal: dict) -> str:
+        if signal.get("entry_price") is None:
+            return ""
+        name = str(signal.get("name") or signal.get("code") or "").strip()
+        code = str(signal.get("code") or "").strip()
+        label = f"{name}({code})" if name and code and name != code else (name or code)
+        supporting_ma = str(signal.get("supporting_ma") or "").strip()
+        ma_text = f" / {supporting_ma}MA" if supporting_ma else ""
+        try:
+            volume_ratio = float(signal.get("volume_ratio"))
+            volume_text = f" / 거래량 {volume_ratio:.2f}x"
+        except (TypeError, ValueError):
+            volume_text = ""
+        return (
+            f"  · {label} 진입 {cls._fmt_price(signal.get('entry_price'))}"
+            f" / 수량 {cls._fmt_qty(signal.get('qty'))}"
+            f" / 손절 {cls._fmt_price(signal.get('stop_price'))}"
+            f" / 목표 {cls._fmt_price(signal.get('target_price'))}"
+            f"{ma_text}{volume_text}"
+        )
+
     @classmethod
     def _summarize_signals(
         cls, signals: list[dict], run_report: list[dict] | None = None,
@@ -163,6 +200,13 @@ class OverseasDryRunTask(AfterMarketTask):
             examples = ", ".join(names_by_label[label][:3])
             suffix = f" ({examples})" if examples else ""
             lines.append(f"- {label}: {counts.get(label, 0)}개{suffix}")
+            if label == "PP":
+                details = [
+                    cls._format_pp_detail(sig)
+                    for sig in signals or []
+                    if cls._strategy_label(sig) == "PP"
+                ]
+                lines.extend(detail for detail in details if detail)
         return summary, "\n".join(lines)
 
     @classmethod

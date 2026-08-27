@@ -350,3 +350,34 @@ async def test_without_regime_service_notification_is_unchanged():
     await task._on_market_closed("20260706")
 
     assert "시장 국면" not in notif.emit.await_args.args[3]
+
+
+@pytest.mark.asyncio
+async def test_notification_includes_pp_signal_details_when_available():
+    """PP는 종목명만으로 매수 후보 판단이 어려우므로 진입/손절/목표 정보를 함께 보여준다."""
+    task, notification_service, _ = _make_task_with_report(
+        signals=[
+            {
+                "strategy": "O'NeilPP_overseas",
+                "code": "QCOM",
+                "name": "Qualcomm Inc",
+                "action": "BUY",
+                "entry_price": 164.74,
+                "qty": 6,
+                "stop_price": 158.67278,
+                "target_price": 189.451,
+                "supporting_ma": "10",
+                "volume_ratio": 0.9749090549866847,
+                "reason": "PP진입(10MA지지, 거래량 0.97x 하락최대대비)",
+            },
+        ],
+        run_report=[
+            {"strategy": "O'NeilPP_overseas", "ok": True, "signals": 1, "error": None},
+        ],
+    )
+
+    await task._on_market_closed("20260827")
+
+    body = notification_service.emit.await_args[0][3]
+    assert "- PP: 1개 (Qualcomm Inc)" in body
+    assert "  · Qualcomm Inc(QCOM) 진입 164.74 / 수량 6 / 손절 158.67 / 목표 189.45 / 10MA / 거래량 0.97x" in body
