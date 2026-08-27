@@ -192,6 +192,13 @@ class SchedulerBootstrap:
         self._register(self._optional_task("overseas_intraday_task"))
         # 미국장 마켓타이밍 일일 갱신 — 태스크가 자체 US 클럭으로 개장 전 창을 판단한다.
         self._register(self._optional_task("us_market_timing_daily_update_task"))
+        # 개장 대사(연속 루프, 자체 US 클럭) / 체결 대사(미국장 TimeDispatcher).
+        self._register(self._optional_task("overseas_opening_reconcile_task"), TaskPriority.HIGH)
+        self._register(
+            self._optional_task("overseas_fill_reconcile_task"),
+            TaskPriority.LOW,
+            market="overseas_us",
+        )
 
     def _register_websocket_watchdog(self) -> None:
         # WebSocket watchdog 은 TimeDispatcher 등록 대상이 아님 (continuous monitor).
