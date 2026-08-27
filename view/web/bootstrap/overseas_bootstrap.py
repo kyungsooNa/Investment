@@ -34,6 +34,7 @@ from services.overseas_intraday_vbo_service import OverseasIntradayVBOService
 from services.overseas_order_execution_service import OverseasOrderExecutionService
 from services.overseas_pocket_pivot_dryrun_service import OverseasPocketPivotDryRunService
 from services.overseas_position_sizing_service import OverseasPositionSizingService, extract_fx_krw_per_usd
+from services.overseas_reconcile_service import OverseasReconcileService
 from services.overseas_risk_gate_service import OverseasRiskGateService
 from services.overseas_rsi2_dryrun_service import OverseasRSI2DryRunService
 from services.overseas_squeeze_breakout_dryrun_service import OverseasSqueezeBreakoutDryRunService
@@ -42,6 +43,10 @@ from services.us_market_calendar_service import USMarketCalendarService
 from services.us_market_regime_service import USMarketRegimeService
 from services.us_session_volume_service import USSessionVolumeService
 from task.background.after_market.overseas_dryrun_task import OverseasDryRunTask
+from task.background.after_market.overseas_fill_reconcile_task import OverseasFillReconcileTask
+from task.background.intraday.overseas_opening_reconcile_task import (
+    OverseasOpeningReconcileTask,
+)
 from task.background.intraday.overseas_favorite_price_alert_task import OverseasFavoritePriceAlertTask
 from task.background.intraday.overseas_intraday_task import OverseasIntradayTask
 from task.background.intraday.us_market_timing_daily_update_task import USMarketTimingDailyUpdateTask
@@ -123,6 +128,13 @@ class OverseasBootstrap:
         overseas_position_sizing_service = OverseasPositionSizingService(
             slot_usd=getattr(overseas_stock_cfg, "dryrun_slot_usd", 1000.0),
             max_qty=getattr(overseas_stock_cfg, "dryrun_max_qty", None),
+            # P1-4: 총자산과 손절가를 아는 경로(장중)는 리스크 기반으로, 모르는 경로
+            # (dry-run)는 고정 슬롯으로 자동 폴백한다.
+            sizing_config=getattr(ctx.full_config, "position_sizing", None),
+            operating_profile=str(getattr(ctx.full_config, "operating_profile", "canary")),
+            is_real_mode_provider=lambda: not bool(
+                getattr(getattr(ctx, "env", None), "is_paper_trading", True)
+            ),
             logger=ctx.logger,
         )
         ctx.overseas_candidate_service = OverseasCandidateService(
@@ -275,6 +287,17 @@ class OverseasBootstrap:
             stock_query_service=ctx.stock_query_service,
             logger=ctx.logger,
         )
+        us_clock = MarketClock.for_us_equities(logger=ctx.logger)
+        # P1-3: 지금까지 수동 라우트에서만 호출돼 사람이 누르지 않으면 원장이 틀린 채로
+        # 쌓였다. 마감 후 하루 1회 자동 실행한다.
+        ctx.overseas_fill_reconcile_task = OverseasFillReconcileTask(
+            reconcile_service=ctx.overseas_fill_reconcile_service,
+            market_calendar_service=USMarketCalendarService(us_clock, logger=ctx.logger),
+            market_clock=us_clock,
+            logger=ctx.logger,
+            notification_service=ctx.notification_service,
+            worker_pool=getattr(ctx, "worker_pool", None),
+        )
         ctx.overseas_manual_order_service = OverseasOrderExecutionService(
             broker=ctx.broker,
             live_enabled=True,
@@ -309,6 +332,7 @@ class OverseasBootstrap:
         ctx.overseas_intraday_osb_service = None
         ctx.overseas_intraday_pp_service = None
         ctx.overseas_intraday_task = None
+        ctx.overseas_opening_reconcile_task = None
 
         vbo_cfg = getattr(overseas_stock_cfg, "intraday_vbo", None)
         enabled_any = getattr(vbo_cfg, "enabled", False) or any(
@@ -435,6 +459,15 @@ class OverseasBootstrap:
             )
             services.append(ctx.overseas_intraday_pp_service)
 
+        ctx.overseas_opening_reconcile_task = OverseasOpeningReconcileTask(
+            reconcile_service=OverseasReconcileService(logger=ctx.logger),
+            strategy_services=services,
+            broker=ctx.broker,
+            market_clock=intraday_us_clock,
+            us_market_calendar_service=us_calendar,
+            notification_service=ctx.notification_service,
+            logger=ctx.logger,
+        )
         ctx.overseas_intraday_task = OverseasIntradayTask(
             strategy_services=services,
             broker=ctx.broker,

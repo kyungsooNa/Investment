@@ -766,7 +766,11 @@ def test_service_container_does_not_wire_minervini_circular_pair(patched_service
 
 
 def test_service_container_wires_overseas_dryrun_position_sizing(patched_service_container_deps):
-    """overseas_us 모드의 VBO dry-run 에 고정 USD 슬롯 사이징을 주입한다."""
+    """overseas_us 모드의 VBO dry-run 에 사이징을 주입한다.
+
+    P1-4 이후 리스크 기반 파라미터도 함께 넘어가지만, dry-run 은 총자산/손절가를
+    모르므로 실제로는 고정 슬롯으로 폴백한다.
+    """
     from config.config_loader import AppConfig
     from view.web.bootstrap.service_container import ServiceContainer
 
@@ -785,11 +789,14 @@ def test_service_container_wires_overseas_dryrun_position_sizing(patched_service
          patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True):
         ServiceContainer(ctx).run()
 
-    sizing_cls.assert_called_once_with(
-        slot_usd=750.0,
-        max_qty=4,
-        logger=ctx.logger,
-    )
+    sizing_kwargs = sizing_cls.call_args.kwargs
+    assert sizing_kwargs["slot_usd"] == 750.0
+    assert sizing_kwargs["max_qty"] == 4
+    assert sizing_kwargs["logger"] is ctx.logger
+    # P1-4: 리스크 기반 사이징용 config/프로파일도 함께 주입된다
+    assert sizing_kwargs["sizing_config"] is ctx.full_config.position_sizing
+    assert sizing_kwargs["operating_profile"] == ctx.full_config.operating_profile
+    assert callable(sizing_kwargs["is_real_mode_provider"])
     dryrun_kwargs = dryrun_cls.call_args.kwargs
     assert dryrun_kwargs["candidate_service"] is candidate_cls.return_value
     assert dryrun_kwargs["position_sizing_service"] is sizing_cls.return_value
@@ -1235,6 +1242,56 @@ def test_open_position_count_spans_all_strategies(patched_service_container_deps
 
     provider = cb._orders._open_position_count_provider
     assert provider() == 3
+
+
+def test_fill_reconcile_task_is_wired_even_without_intraday(patched_service_container_deps):
+    """체결 대사는 수동 주문 원장에도 필요하다 — 장중 전략과 무관하게 배선된다."""
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+
+    _run_with_overseas(ctx)
+
+    task = ctx.overseas_fill_reconcile_task
+    assert task is not None
+    assert task.task_name == "overseas_fill_reconcile"
+    assert task._service is ctx.overseas_fill_reconcile_service
+
+
+def test_opening_reconcile_task_sees_all_intraday_strategies(patched_service_container_deps):
+    """개장 대사는 전략 합산 포지션을 봐야 한다 — 일부만 보면 drift 오탐이 난다."""
+    from config.config_loader import AppConfig
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={
+            "intraday_channel_breakout": {"enabled": True},
+            "intraday_pocket_pivot": {"enabled": True},
+        },
+    )
+
+    _run_with_overseas(ctx)
+
+    task = ctx.overseas_opening_reconcile_task
+    assert task is not None
+    assert len(task._strategies) == 2
+    # 같은 전략 인스턴스를 봐야 한다(리스트는 각자 복사본)
+    assert task._strategies == ctx.overseas_intraday_task._strategies
+    assert ctx.overseas_intraday_cb_service in task._strategies
+    assert ctx.overseas_intraday_pp_service in task._strategies
+
+
+def test_no_opening_reconcile_task_without_intraday_strategies(patched_service_container_deps):
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+
+    _run_with_overseas(ctx)
+
+    assert ctx.overseas_opening_reconcile_task is None
 
 
 def test_manual_overseas_order_service_wired_with_kill_switch(patched_service_container_deps):

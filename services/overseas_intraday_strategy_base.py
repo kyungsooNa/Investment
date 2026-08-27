@@ -55,6 +55,7 @@ class OverseasIntradayStrategyBase:
         exchange: OverseasExchange = OverseasExchange.NASD,
         market_timing_gate: bool = True,
         state_file: Optional[str] = None,
+        account_equity_provider=None,
     ) -> None:
         self._candidate_service = candidate_service
         self._sqs = stock_query_service
@@ -71,6 +72,8 @@ class OverseasIntradayStrategyBase:
 
         self._state_file = state_file
         self._state_loaded = False
+        # 리스크 기반 사이징용 총자산(USD) 제공자. 미주입이면 고정 슬롯 폴백.
+        self._account_equity_provider = account_equity_provider
 
         self._session_date: Optional[str] = None
         self._watch: Dict[str, Dict[str, Any]] = {}
@@ -381,10 +384,12 @@ class OverseasIntradayStrategyBase:
     async def _enter(
         self, code: str, price: float, setup: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
-        qty = self._resolve_qty(price)
+        # 손절가를 먼저 구한다 — 리스크 기반 사이징의 분모(손절 거리)이므로
+        # 수량 뒤에 계산하면 고정 슬롯으로만 살 수 있다.
+        stop_price = self._stop_price(setup, price)
+        qty = self._resolve_qty(price, stop_price=stop_price)
         if qty <= 0:
             return None
-        stop_price = self._stop_price(setup, price)
         signal = {
             "strategy": self.STRATEGY_NAME,
             "code": code,
@@ -500,12 +505,36 @@ class OverseasIntradayStrategyBase:
             trade_date=self._session_date or "",
         )
 
-    def _resolve_qty(self, price: float) -> int:
-        """사이징 미주입 시 1주(최소 단위)로 진입한다."""
+    def _account_equity(self) -> Optional[float]:
+        """총자산(USD). 조회 실패는 None 으로 흡수해 고정 슬롯 폴백을 태운다."""
+        if self._account_equity_provider is None:
+            return None
+        try:
+            equity = self._account_equity_provider()
+        except Exception as e:
+            self._logger.warning({"event": f"{self.EVENT_PREFIX}_equity_error",
+                                  "strategy": self.STRATEGY_NAME, "error": str(e)})
+            return None
+        try:
+            equity = float(equity) if equity is not None else None
+        except (TypeError, ValueError):
+            return None
+        return equity if (equity and equity > 0) else None
+
+    def _resolve_qty(self, price: float, stop_price: Optional[float] = None) -> int:
+        """사이징 미주입 시 1주(최소 단위)로 진입한다.
+
+        총자산은 `account_equity_provider` 로 주입된 경우에만 넘긴다 — 없으면
+        사이징 서비스가 고정 슬롯으로 폴백한다.
+        """
         if self._sizing_service is None:
             return 1
         try:
-            sized = self._sizing_service.size(limit_price_usd=price)
+            sized = self._sizing_service.size(
+                limit_price_usd=price,
+                stop_price_usd=stop_price,
+                account_equity_usd=self._account_equity(),
+            )
         except Exception as e:
             self._logger.warning({"event": f"{self.EVENT_PREFIX}_sizing_error",
                                   "strategy": self.STRATEGY_NAME, "error": str(e)})

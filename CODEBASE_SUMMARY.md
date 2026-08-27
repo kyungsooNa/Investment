@@ -149,9 +149,30 @@
   거부 시 -0.3% → -1.0% 로 낮춰 재시도하고, 끝내 실패하면 **포지션을 지우지 않고**
   error 로그를 남긴다(실계좌엔 남아 있으므로 다음 틱에 재시도돼야 한다)
 
-남은 것: 개장 대사(해외판 opening reconcile), 체결 대사 자동화(현재 수동 라우트),
-리스크 기반 사이징(현재 고정 USD 슬롯), 모의 서버 해외주문 수락 검증
-(`scripts/probe_overseas_paper_order.py`)
+### 4-2. 해외 실전 전환 준비 (P1)
+
+- **P1-2 `task/background/intraday/overseas_opening_reconcile_task.py`**
+  - `OverseasReconcileService`(로컬 포지션 vs 브로커 잔고 drift)는 있었으나 **아무도
+    호출하지 않았다**. 개장 +3~30분 창에서 하루 1회 대사하고 drift 를 알린다
+  - 로컬 포지션은 **전 전략 합산** — 브로커 잔고는 전략을 구분하지 않으므로 전략별로
+    비교하면 수량 불일치 오탐이 난다
+  - **비교만 하고 자동 보정은 하지 않는다**. 잘못 맞추면 없는 포지션을 만들거나 실보유를 지운다
+  - 잔고 조회 실패는 drift 로 단정하지 않는다(조회 불가 ≠ 미보유)
+- **P1-3 `task/background/after_market/overseas_fill_reconcile_task.py`**
+  - `OverseasFillReconcileService` 가 수동 라우트에서만 호출돼 사람이 누르지 않으면
+    원장이 틀린 채로 쌓였다. 마감 후(17:00 ET, dry-run 16:30 뒤) 자동 실행
+  - 조회 실패·예외 시 거래일을 마킹하지 않아 재시도된다
+- **P1-4 리스크 기반 사이징** (`overseas_position_sizing_service`)
+  - 고정 슬롯은 손절이 -2% 든 -10% 든 같은 수량을 사서 주당 리스크가 요동친다.
+    리스크 예산 ÷ 손절 거리로 산출하고 단일 종목 비중 상한을 적용한다
+  - **총자산·손절가를 모르면 고정 슬롯으로 폴백**한다 — dry-run 경로는 총자산을 모르고,
+    폴백이 없으면 관측 신호가 통째로 사라진다
+  - 주의: canary(리스크 0.25% / 비중 1.5%)에서는 `진입가 ÷ 손절거리 > 6` 이면 항상
+    비중 상한이 리스크 예산보다 먼저 걸린다
+  - `_enter` 는 손절가를 **수량 산출 전에** 계산한다(분모가 손절 거리이므로)
+
+남은 것: 모의 서버 해외주문 수락 검증 (`scripts/probe_overseas_paper_order.py`) —
+TR 쌍은 있으나 모의 서버가 해외 주문을 실제로 수락하는지 미검증
 - `strategies/inverse_etf_regime_strategy.py` / `inverse_etf_regime_backtest.py`
   - KOSPI bear 국면 전용 인버스 ETF 추세추종 슬리브. factory 배선 `enabled=False`(shadow/paper 관찰 중)
 - Phase 1~4(데이터 어댑터·백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금 — dry-run 검증 후 canary 단계로 진행 예정
