@@ -36,7 +36,7 @@ class JejuSemiconductorTradeReport:
     jeju_total_export_amount_usd: Optional[int]
     jeju_export_share_pct: Optional[float]
     fetched_at: str
-    item_name: str = "제주 반도체"
+    item_name: str = "전기기기류"
 
     @property
     def dedup_key(self) -> str:
@@ -267,7 +267,7 @@ class CustomsTradeStatClient:
             params,
             base_url=self._item_base_url,
         )
-        return _filter_item_rows(rows, item_code)
+        return _with_requested_month_period(_filter_item_rows(rows, item_code), yyyymm)
 
     async def fetch_sido_total_month(self, yyyymm: str) -> list[TradeStatItem]:
         params = {
@@ -474,7 +474,7 @@ def build_jeju_semiconductor_report(
         jeju_total_export_amount_usd=total_amount,
         jeju_export_share_pct=share,
         fetched_at=fetched_at.isoformat(),
-        item_name=current.item_name or "제주 반도체",
+        item_name=current.item_name or "전기기기류",
     )
 
 
@@ -1029,16 +1029,17 @@ def format_jeju_semiconductor_report_html(
             return "-"
         return f"{value:+.1f}%"
 
+    item_name = html.escape(report.item_name or "전기기기류", quote=False)
     return "\n".join(
         [
-            f"📦 <b>제주 반도체 수출 ({html.escape(report.period, quote=False)})</b>",
+            f"📦 <b>제주 {item_name} 수출 ({html.escape(report.period, quote=False)})</b>",
             f"수출액: <b>{money(report.export_amount_usd)}</b>",
             f"전월비: {pct(report.mom_pct)} / 전년비: {pct(report.yoy_pct)}",
             f"제주 전체 수출 내 비중: {pct(report.jeju_export_share_pct)}",
             f"전월: {money(report.previous_month_export_amount_usd)}",
             f"전년동월: {money(report.previous_year_export_amount_usd)}",
             "",
-            "※ 지역 통관 통계이므로 제주반도체 매출과 1:1 대응하지 않습니다.",
+            "※ 지역 통관 통계이며 세부 반도체 품목만 분리되지 않을 수 있습니다.",
         ]
     )
 

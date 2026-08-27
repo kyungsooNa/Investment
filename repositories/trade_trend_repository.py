@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Union
 
-from services.trade_trend_service import NationalTradeTrendRelease
+from services.trade_trend_service import NationalTradeTrendRelease, TradeStatItem
 
 
 class TradeTrendRepository:
@@ -13,6 +13,7 @@ class TradeTrendRepository:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._sent_keys: set[str] = set()
         self._national_release_history: list[dict] = []
+        self._customs_trade_cache: dict[str, list[dict]] = {}
         self._load()
 
     def has_sent(self, key: str) -> bool:
@@ -99,6 +100,41 @@ class TradeTrendRepository:
             reverse=True,
         )
 
+    def get_customs_trade_items(
+        self,
+        dataset: str,
+        yyyymm: str,
+    ) -> list[TradeStatItem] | None:
+        raw_rows = self._customs_trade_cache.get(_customs_trade_cache_key(dataset, yyyymm))
+        if raw_rows is None:
+            return None
+        return [
+            TradeStatItem(
+                period=str(item.get("period") or ""),
+                item_name=str(item.get("item_name") or ""),
+                item_code=str(item.get("item_code") or ""),
+                export_amount_usd=int(item.get("export_amount_usd") or 0),
+                import_amount_usd=int(item.get("import_amount_usd") or 0),
+                trade_balance_usd=int(item.get("trade_balance_usd") or 0),
+                export_weight=int(item.get("export_weight") or 0),
+                import_weight=int(item.get("import_weight") or 0),
+            )
+            for item in raw_rows
+            if isinstance(item, dict)
+        ]
+
+    def save_customs_trade_items(
+        self,
+        dataset: str,
+        yyyymm: str,
+        rows: list[TradeStatItem],
+    ) -> None:
+        self._customs_trade_cache[_customs_trade_cache_key(dataset, yyyymm)] = [
+            _customs_trade_item_to_dict(row)
+            for row in rows
+        ]
+        self._save()
+
     def _load(self) -> None:
         if not self._path.exists():
             return
@@ -112,11 +148,19 @@ class TradeTrendRepository:
             self._national_release_history = [
                 item for item in raw_history if isinstance(item, dict)
             ]
+        raw_customs_cache = payload.get("customs_trade_cache", {})
+        if isinstance(raw_customs_cache, dict):
+            self._customs_trade_cache = {
+                str(key): value
+                for key, value in raw_customs_cache.items()
+                if isinstance(value, list)
+            }
 
     def _save(self) -> None:
         payload = {
             "sent_keys": sorted(self._sent_keys),
             "national_release_history": self.get_national_release_history(),
+            "customs_trade_cache": self._customs_trade_cache,
         }
         self._path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
@@ -162,6 +206,23 @@ def _national_release_to_dict(
         "highlights": list(release.highlights or []),
         "sent_at": sent_at,
         "dedup_key": release.dedup_key,
+    }
+
+
+def _customs_trade_cache_key(dataset: str, yyyymm: str) -> str:
+    return f"{dataset}:{yyyymm}"
+
+
+def _customs_trade_item_to_dict(item: TradeStatItem) -> dict:
+    return {
+        "period": item.period,
+        "item_name": item.item_name,
+        "item_code": item.item_code,
+        "export_amount_usd": item.export_amount_usd,
+        "import_amount_usd": item.import_amount_usd,
+        "trade_balance_usd": item.trade_balance_usd,
+        "export_weight": item.export_weight,
+        "import_weight": item.import_weight,
     }
 
 

@@ -52,3 +52,12 @@ def test_daily_price_high_low_are_visually_emphasized():
     assert ".stock-info-box .detail-group p.day-range-row.high" in stock_js
     assert ".stock-info-box .detail-group p.day-range-row.low" in stock_js
     assert ".stock-info-box .detail-group .day-range-val" in stock_js
+
+
+def test_trade_trends_page_uses_cached_jeju_load_and_refresh_bypass():
+    trade_trends_js = Path("view/web/static/js/trade_trends.js").read_text(encoding="utf-8")
+    template = Path("view/web/templates/trade_trends.html").read_text(encoding="utf-8")
+
+    assert "loadJejuRegionTrade(forceRefresh = false)" in trade_trends_js
+    assert "refresh=true" in trade_trends_js
+    assert "loadJejuRegionTrade(true)" in template
