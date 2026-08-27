@@ -9,7 +9,7 @@ from view.web.routes.scheduler import get_scheduler_status
 
 
 class _Task:
-    task_name = "overseas_intraday_vbo"
+    task_name = "overseas_intraday"
     priority = TaskPriority.NORMAL
     state = TaskState.RUNNING
 
@@ -21,7 +21,7 @@ class _Task:
 async def test_scheduler_status_includes_overseas_market_task_without_domestic_scheduler():
     background_scheduler = MagicMock()
     background_scheduler.get_task.side_effect = (
-        lambda name: _Task() if name == "overseas_intraday_vbo" else None
+        lambda name: _Task() if name == "overseas_intraday" else None
     )
     ctx = SimpleNamespace(
         scheduler=None,
@@ -40,8 +40,8 @@ async def test_scheduler_status_includes_overseas_market_task_without_domestic_s
     assert [item["market"] for item in status["schedulers"]] == ["domestic", "overseas_us"]
     assert status["market_tasks"] == [
         {
-            "name": "overseas_intraday_vbo",
-            "display_name": "미국장 장중 VBO",
+            "name": "overseas_intraday",
+            "display_name": "미국장 장중 전략",
             "market": "overseas_us",
             "market_label": "미국장",
             "mode": "paper",

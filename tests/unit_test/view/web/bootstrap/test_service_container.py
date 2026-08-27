@@ -939,7 +939,7 @@ def test_intraday_vbo_not_built_when_disabled(patched_service_container_deps):
          patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True):
         ServiceContainer(ctx).run()
 
-    assert ctx.overseas_intraday_vbo_task is None
+    assert ctx.overseas_intraday_task is None
     assert ctx.overseas_intraday_vbo_service is None
 
 
@@ -963,12 +963,12 @@ def test_intraday_vbo_built_with_order_path_locked(patched_service_container_dep
          patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True), \
          patch("view.web.bootstrap.overseas_bootstrap.OverseasOrderExecutionService", autospec=True) as order_cls, \
          patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOService", autospec=True) as svc_cls, \
-         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOTask", autospec=True) as task_cls:
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayTask", autospec=True) as task_cls:
         ServiceContainer(ctx).run()
 
     assert order_cls.call_args.kwargs["live_enabled"] is False
     assert svc_cls.call_args.kwargs["top_n"] == 7
-    assert ctx.overseas_intraday_vbo_task is task_cls.return_value
+    assert ctx.overseas_intraday_task is task_cls.return_value
     # 장중 paper 저널은 국내 event_shadow 와 버퍼를 공유하면 안 된다 —
     # 틱마다 flush 하므로 공유 시 남의 기록이 US 거래일 파일로 딸려간다.
     paper_journal = order_cls.call_args.kwargs["journal"]
@@ -995,7 +995,7 @@ def test_intraday_vbo_gets_market_timing_gate(patched_service_container_deps):
          patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True), \
          patch("view.web.bootstrap.overseas_bootstrap.OverseasOrderExecutionService", autospec=True), \
          patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOService", autospec=True) as svc_cls, \
-         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOTask", autospec=True):
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayTask", autospec=True):
         ServiceContainer(ctx).run()
 
     assert svc_cls.call_args.kwargs["market_regime_service"] is ctx.us_market_regime_service
@@ -1021,7 +1021,7 @@ def test_intraday_vbo_gate_can_be_disabled_by_config(patched_service_container_d
          patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True), \
          patch("view.web.bootstrap.overseas_bootstrap.OverseasOrderExecutionService", autospec=True), \
          patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOService", autospec=True) as svc_cls, \
-         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOTask", autospec=True):
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayTask", autospec=True):
         ServiceContainer(ctx).run()
 
     assert svc_cls.call_args.kwargs["market_timing_gate"] is False
@@ -1045,6 +1045,126 @@ def test_us_market_timing_daily_update_task_wired(patched_service_container_deps
     assert ctx.us_market_timing_daily_update_task.task_name == "us_market_timing_daily_update"
     # dry-run 은 차단이 아니라 기록 전용으로 국면을 받는다.
     assert dryrun_cls.call_args.kwargs["market_regime_service"] is ctx.us_market_regime_service
+
+
+def _overseas_patches():
+    from unittest.mock import patch as _p
+    return [
+        _p("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True),
+        _p("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True),
+        _p("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True),
+        _p("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True),
+    ]
+
+
+def _run_with_overseas(ctx):
+    from contextlib import ExitStack
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    with ExitStack() as stack:
+        for pt in _overseas_patches():
+            stack.enter_context(pt)
+        ServiceContainer(ctx).run()
+
+
+def test_intraday_strategies_share_a_single_polling_task(patched_service_container_deps):
+    """전략마다 태스크를 두면 겹치는 심볼을 중복 조회한다 — 태스크는 하나여야 한다."""
+    from config.config_loader import AppConfig
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={
+            "intraday_vbo": {"enabled": True},
+            "intraday_channel_breakout": {"enabled": True},
+            "intraday_rsi2": {"enabled": True},
+            "intraday_buyable_gap_up": {"enabled": True},
+            "intraday_squeeze_breakout": {"enabled": True},
+            "intraday_pocket_pivot": {"enabled": True},
+        },
+    )
+
+    _run_with_overseas(ctx)
+
+    task = ctx.overseas_intraday_task
+    assert task is not None
+    assert len(task._strategies) == 6
+    # 주문 서비스와 paper 저널도 전 전략이 공유한다
+    assert len({id(s._orders) for s in task._strategies}) == 1
+
+
+def test_each_intraday_strategy_is_opt_in(patched_service_container_deps):
+    from config.config_loader import AppConfig
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={"intraday_rsi2": {"enabled": True}},
+    )
+
+    _run_with_overseas(ctx)
+
+    assert ctx.overseas_intraday_rsi2_service is not None
+    assert ctx.overseas_intraday_vbo_service is None
+    assert ctx.overseas_intraday_cb_service is None
+    assert len(ctx.overseas_intraday_task._strategies) == 1
+
+
+def test_no_intraday_task_when_all_strategies_disabled(patched_service_container_deps):
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+
+    _run_with_overseas(ctx)
+
+    assert ctx.overseas_intraday_task is None
+    assert ctx.overseas_intraday_pp_service is None
+
+
+def test_intraday_strategies_keep_order_path_locked(patched_service_container_deps):
+    """전략을 늘려도 자동 실주문 잠금(live_enabled=False)은 유지된다."""
+    from config.config_loader import AppConfig
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        # allow_live_trading=True 여도 자동 경로는 열리지 않아야 한다.
+        overseas_stock={"allow_live_trading": True,
+                        "intraday_squeeze_breakout": {"enabled": True}},
+    )
+
+    _run_with_overseas(ctx)
+
+    orders = ctx.overseas_intraday_osb_service._orders
+    assert orders._live_enabled is False
+    assert orders._broker is None
+
+
+def test_intraday_strategies_receive_market_timing_gate(patched_service_container_deps):
+    from config.config_loader import AppConfig
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={
+            "intraday_channel_breakout": {"enabled": True},
+            "intraday_pocket_pivot": {"enabled": True, "market_timing_gate": False},
+        },
+    )
+
+    _run_with_overseas(ctx)
+
+    assert ctx.overseas_intraday_cb_service._regime is ctx.us_market_regime_service
+    assert ctx.overseas_intraday_cb_service._market_timing_gate is True
+    assert ctx.overseas_intraday_pp_service._market_timing_gate is False
 
 
 def test_manual_overseas_order_service_wired_with_kill_switch(patched_service_container_deps):
@@ -1130,7 +1250,7 @@ def test_manual_order_service_does_not_unlock_automatic_path(patched_service_con
          patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True), \
          patch("view.web.bootstrap.overseas_bootstrap.OverseasOrderExecutionService", autospec=True) as order_cls, \
          patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOService", autospec=True), \
-         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOTask", autospec=True):
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayTask", autospec=True):
         ServiceContainer(ctx).run()
 
     live_flags = [c.kwargs["live_enabled"] for c in order_cls.call_args_list]

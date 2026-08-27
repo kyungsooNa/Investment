@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytz
 
 from interfaces.schedulable_task import TaskPriority, TaskState
-from task.background.intraday.overseas_intraday_vbo_task import OverseasIntradayVBOTask
+from task.background.intraday.overseas_intraday_task import OverseasIntradayTask
 from common.types import ErrorCode, ResCommonResponse
 
 _NY = pytz.timezone("America/New_York")
@@ -51,8 +51,8 @@ def _task(*, now=None, operating=True, trading_day=True, early_close=False, watc
     broker = MagicMock()
     broker.get_overseas_price = AsyncMock(return_value=_price(106.0))
 
-    task = OverseasIntradayVBOTask(
-        vbo_service=vbo,
+    task = OverseasIntradayTask(
+        strategy_services=[vbo],
         broker=broker,
         market_clock=clock,
         us_market_calendar_service=us_mcs,
@@ -103,7 +103,7 @@ async def test_tick_prepares_session_and_polls_watch_codes():
     t.vbo.prepare_session.assert_awaited_once()
     assert t.vbo.prepare_session.await_args.args[0] == "20260512"
     t.broker.get_overseas_price.assert_awaited_once()
-    t.vbo.on_price.assert_awaited_once_with("AAA", 106.0)
+    t.vbo.on_price.assert_awaited_once_with("AAA", 106.0, volume=None)
 
 
 @pytest.mark.asyncio
@@ -201,7 +201,7 @@ async def test_tick_skips_symbol_when_price_fetch_fails():
 async def test_task_name_and_progress():
     t = _task()
 
-    assert t.task.task_name == "overseas_intraday_vbo"
+    assert t.task.task_name == "overseas_intraday"
     assert t.task.get_progress()["running"] is False
 
 
@@ -225,11 +225,11 @@ def test_close_minute_falls_back_to_default_for_unusable_close_time(close_str):
 
 
 @pytest.mark.asyncio
-async def test_fetch_price_returns_none_when_broker_raises():
+async def test_fetch_tick_returns_none_when_broker_raises():
     t = _task()
     t.broker.get_overseas_price = AsyncMock(side_effect=RuntimeError("timeout"))
 
-    assert await t.task._fetch_price("AAA") is None
+    assert await t.task._fetch_tick("AAA") is None
     t.task._logger.warning.assert_called_once()
 
 
@@ -244,11 +244,11 @@ async def test_fetch_price_returns_none_when_broker_raises():
         ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=SimpleNamespace(price=-1.0)),
     ],
 )
-async def test_fetch_price_rejects_unusable_responses(response):
+async def test_fetch_tick_rejects_unusable_responses(response):
     t = _task()
     t.broker.get_overseas_price = AsyncMock(return_value=response)
 
-    assert await t.task._fetch_price("AAA") is None
+    assert await t.task._fetch_tick("AAA") is None
 
 
 @pytest.mark.asyncio
@@ -257,7 +257,7 @@ async def test_loop_runs_tick_logs_error_and_exits_on_cancel():
     t.task._tick = AsyncMock(side_effect=[None, RuntimeError("boom"), asyncio.CancelledError()])
 
     with patch(
-        "task.background.intraday.overseas_intraday_vbo_task.asyncio.sleep",
+        "task.background.intraday.overseas_intraday_task.asyncio.sleep",
         new_callable=AsyncMock,
     ):
         await t.task._loop()
@@ -273,7 +273,7 @@ async def test_loop_skips_tick_while_suspended():
     t.task._state = TaskState.SUSPENDED
     sleep_mock = AsyncMock(side_effect=[None, asyncio.CancelledError()])
 
-    with patch("task.background.intraday.overseas_intraday_vbo_task.asyncio.sleep", sleep_mock):
+    with patch("task.background.intraday.overseas_intraday_task.asyncio.sleep", sleep_mock):
         with pytest.raises(asyncio.CancelledError):
             await t.task._loop()
 
@@ -319,3 +319,125 @@ async def test_suspend_and_resume_toggle_state():
     await t.task.resume()
     assert t.task.state == TaskState.IDLE
     assert t.task.priority == TaskPriority.NORMAL
+
+
+# ── 다중 전략 fan-out ────────────────────────────────────────────────────
+
+def _strategy(name, watch):
+    svc = MagicMock()
+    svc.STRATEGY_NAME = name
+    svc.prepare_session = AsyncMock(return_value=len(watch))
+    svc.watch_codes = MagicMock(return_value=list(watch))
+    svc.on_price = AsyncMock(return_value=None)
+    svc.close_all = AsyncMock(return_value=[])
+    return svc
+
+
+def _multi_task(services, *, now=None, price=106.0, volume=900_000.0):
+    clock = MagicMock()
+    clock.get_current_kst_time = MagicMock(return_value=now or _ny(10, 0))
+    clock.get_current_kst_date_str = MagicMock(return_value="20260512")
+    clock.is_market_operating_hours = MagicMock(return_value=True)
+    clock.get_market_open_time = MagicMock(return_value=_ny(9, 30))
+    us_mcs = MagicMock()
+    us_mcs.is_trading_day = MagicMock(return_value=True)
+    us_mcs.get_close_time_str = MagicMock(return_value="16:00")
+    broker = MagicMock()
+    broker.get_overseas_price = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="ok",
+        data=SimpleNamespace(price=price, volume=volume)))
+    task = OverseasIntradayTask(
+        strategy_services=services, broker=broker, market_clock=clock,
+        us_market_calendar_service=us_mcs, logger=MagicMock(),
+        session_prepare_delay_min=5, eod_exit_before_min=10,
+    )
+    return SimpleNamespace(task=task, broker=broker)
+
+
+@pytest.mark.asyncio
+async def test_overlapping_symbol_is_fetched_once_and_fanned_out():
+    """전략마다 조회하면 API 예산을 전략 수만큼 태운다 — 심볼당 1회만 조회한다."""
+    a = _strategy("A", ["AAA", "BBB"])
+    b = _strategy("B", ["BBB", "CCC"])
+    t = _multi_task([a, b])
+
+    await t.task._tick()
+
+    fetched = sorted(c.args[0] for c in t.broker.get_overseas_price.call_args_list)
+    assert fetched == ["AAA", "BBB", "CCC"]          # BBB 를 두 번 조회하지 않는다
+    assert t.broker.get_overseas_price.await_count == 3
+
+    a_codes = sorted(c.args[0] for c in a.on_price.call_args_list)
+    b_codes = sorted(c.args[0] for c in b.on_price.call_args_list)
+    assert a_codes == ["AAA", "BBB"]                 # 자기가 보는 심볼만 받는다
+    assert b_codes == ["BBB", "CCC"]
+
+
+@pytest.mark.asyncio
+async def test_tick_passes_volume_to_strategies():
+    a = _strategy("A", ["AAA"])
+    t = _multi_task([a], volume=1_234_000.0)
+
+    await t.task._tick()
+
+    assert a.on_price.await_args.kwargs["volume"] == pytest.approx(1_234_000.0)
+
+
+@pytest.mark.asyncio
+async def test_missing_volume_is_passed_as_none():
+    """거래량이 없으면 None 으로 넘겨 전략이 fail-closed 판정하게 한다."""
+    a = _strategy("A", ["AAA"])
+    t = _multi_task([a], volume=0)
+
+    await t.task._tick()
+
+    assert a.on_price.await_args.kwargs["volume"] is None
+
+
+@pytest.mark.asyncio
+async def test_one_failing_strategy_does_not_stop_the_others():
+    a = _strategy("A", ["AAA"])
+    a.on_price = AsyncMock(side_effect=RuntimeError("전략 폭발"))
+    b = _strategy("B", ["AAA"])
+    t = _multi_task([a, b])
+
+    await t.task._tick()
+
+    b.on_price.assert_awaited_once()
+    t.task._logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_failing_prepare_session_does_not_stop_the_others():
+    a = _strategy("A", ["AAA"])
+    a.prepare_session = AsyncMock(side_effect=RuntimeError("세션 준비 실패"))
+    a.watch_codes = MagicMock(return_value=[])
+    b = _strategy("B", ["BBB"])
+    t = _multi_task([a, b])
+
+    await t.task._tick()
+
+    b.on_price.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_eod_closes_every_strategy():
+    a = _strategy("A", ["AAA"])
+    b = _strategy("B", ["BBB"])
+    t = _multi_task([a, b], now=_ny(15, 55))
+
+    await t.task._tick()
+
+    a.close_all.assert_awaited_once()
+    b.close_all.assert_awaited_once()
+    a.on_price.assert_not_awaited()
+
+
+def test_progress_reports_wired_strategies():
+    t = _multi_task([_strategy("A", ["AAA"]), _strategy("B", ["BBB"])])
+    assert t.task.get_progress()["strategies"] == ["A", "B"]
+
+
+def test_task_name_is_strategy_agnostic():
+    t = _multi_task([_strategy("A", ["AAA"])])
+    assert t.task.task_name == "overseas_intraday"

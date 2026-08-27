@@ -289,7 +289,7 @@ async def test_update_strategy_max_positions_no_scheduler(web_client, mock_web_c
 
 
 class _OverseasVBOTask:
-    task_name = "overseas_intraday_vbo"
+    task_name = "overseas_intraday"
 
     def __init__(self):
         from interfaces.schedulable_task import TaskPriority, TaskState
@@ -303,7 +303,7 @@ class _OverseasVBOTask:
 def _attach_overseas_task(ctx):
     ctx.background_scheduler = MagicMock()
     ctx.background_scheduler.get_task.side_effect = (
-        lambda name: _OverseasVBOTask() if name == "overseas_intraday_vbo" else None
+        lambda name: _OverseasVBOTask() if name == "overseas_intraday" else None
     )
     ctx.enabled_market_modes = ["domestic", "overseas_us"]
 
@@ -316,7 +316,7 @@ async def test_scheduler_status_market_query_filters_market_tasks(web_client, mo
     _attach_overseas_task(mock_web_ctx)
 
     overseas = web_client.get("/api/scheduler/status?market=overseas_us").json()
-    assert [task["name"] for task in overseas["market_tasks"]] == ["overseas_intraday_vbo"]
+    assert [task["name"] for task in overseas["market_tasks"]] == ["overseas_intraday"]
 
     domestic = web_client.get("/api/scheduler/status?market=domestic").json()
     assert domestic["market_tasks"] == []
@@ -330,7 +330,7 @@ async def test_scheduler_status_without_market_keeps_all_market_tasks(web_client
     _attach_overseas_task(mock_web_ctx)
 
     data = web_client.get("/api/scheduler/status").json()
-    assert [task["name"] for task in data["market_tasks"]] == ["overseas_intraday_vbo"]
+    assert [task["name"] for task in data["market_tasks"]] == ["overseas_intraday"]
 
 
 @pytest.mark.asyncio
