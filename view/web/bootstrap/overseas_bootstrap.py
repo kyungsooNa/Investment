@@ -226,6 +226,7 @@ class OverseasBootstrap:
             live_enabled=True,
             journal=ctx.event_shadow_journal_service,
             kill_switch=getattr(ctx, "kill_switch_service", None),
+            notification_service=ctx.notification_service,
             journal_strategy_name="수동매매_해외",
             logger=ctx.logger,
         )
@@ -254,6 +255,7 @@ class OverseasBootstrap:
             broker=None,  # live_enabled=False 이므로 broker 미사용(구조적 잠금)
             live_enabled=False,
             journal=paper_journal,
+            notification_service=ctx.notification_service,
             logger=ctx.logger,
         )
         ctx.overseas_intraday_vbo_service = OverseasIntradayVBOService(
