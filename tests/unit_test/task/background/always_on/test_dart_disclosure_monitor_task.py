@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from interfaces.schedulable_task import TaskState
 from repositories.dart_disclosure_repository import StoredDisclosure
 from services.ai_disclosure_analyzer import AiDisclosureAnalysis
-from services.dart_disclosure_client import DartDisclosure, DartDisclosurePage
+from services.dart_disclosure_client import DartApiError, DartDisclosure, DartDisclosurePage
 from services.dart_disclosure_rule_service import DisclosureImportance
 from task.background.always_on.dart_disclosure_monitor_task import DartDisclosureMonitorTask
 
@@ -397,6 +397,26 @@ async def test_loop_records_tick_error_and_emits_operational_alert():
 
     assert deps.task.get_progress()["last_error"] == "RuntimeError: boom"
     notifier.emit.assert_awaited_once()
+
+
+async def test_loop_records_dart_network_error_without_operational_alert():
+    notifier = MagicMock()
+    notifier.emit = AsyncMock()
+    deps = _make_task([], notification_service=notifier)
+    deps.task._state = TaskState.RUNNING
+    deps.task._tick = AsyncMock(side_effect=DartApiError("NETWORK", "ReadTimeout"))
+
+    with patch(
+        "task.background.always_on.dart_disclosure_monitor_task.asyncio.sleep",
+        AsyncMock(side_effect=[asyncio.CancelledError()]),
+    ):
+        await deps.task._loop()
+
+    assert deps.task.get_progress()["last_error"] == (
+        "DartApiError: OpenDART API 오류 (NETWORK): ReadTimeout"
+    )
+    deps.task._logger.warning.assert_called_once()
+    notifier.emit.assert_not_awaited()
 
 
 async def test_loop_skips_tick_when_not_running():

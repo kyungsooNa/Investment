@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from repositories.dart_disclosure_repository import StoredDisclosure
 from services.ai_disclosure_analyzer import AiDisclosureAnalysis
+from services.dart_disclosure_client import DartApiError
 from services.dart_disclosure_rule_service import DisclosureImportance
 from services.notification_service import NotificationCategory, NotificationLevel
 
@@ -108,6 +109,21 @@ class DartDisclosureMonitorTask(SchedulableTask):
                 if self._state == TaskState.RUNNING:
                     try:
                         await self._tick()
+                    except DartApiError as exc:
+                        self._progress["last_error"] = f"{type(exc).__name__}: {exc}"
+                        if exc.status == "NETWORK":
+                            self._logger.warning(
+                                f"{self.task_name}: OpenDART 네트워크 오류로 이번 폴링을 건너뜁니다 — {exc}"
+                            )
+                        else:
+                            self._logger.error(
+                                f"{self.task_name}: 공시 조회 실패 — {exc}", exc_info=True
+                            )
+                            await self._emit_operational_alert(
+                                "공시 모니터 처리 실패",
+                                f"{type(exc).__name__}: {exc}",
+                                {"task": self.task_name},
+                            )
                     except Exception as exc:
                         self._progress["last_error"] = f"{type(exc).__name__}: {exc}"
                         self._logger.error(
