@@ -43,6 +43,7 @@ _EXIT_CONCURRENCY = 15
 class LarryWilliamsVBOConfig(BaseStrategyConfig):
     k_value: float = 0.5                          # Range 승수 (0.3~0.7 권장)
     min_5d_trading_value: int = 10_000_000_000    # 5일 평균 거래대금 하한 (100억)
+    min_intraday_trading_value: int = 10_000_000_000  # 장중 보강 후보 당일 거래대금 하한 (100억)
     min_market_cap: int = 200_000_000_000         # 시가총액 하한 (2,000억)
     confidence_threshold: float = 120.0           # 스냅샷 체결강도 하한 (%)
     program_buy_ratio: float = 0.10               # 프로그램 순매수 / 거래대금 하한
@@ -63,8 +64,8 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
 
     scan():
       1. 시간대 가드 (09:10 ~ 14:00)
-      2. Pool B 로드 (OneilUniverseService 사용 시 get_watchlist(), 없으면 거래대금 상위 fallback)
-      3. 유동성/규모 필터 (5일 평균 거래대금 100억, 시총 2,000억)
+      2. Pool B 로드 (OneilUniverseService watchlist + 장중 랭킹 보강 후보)
+      3. 유동성/규모 필터 (5일 평균 거래대금 100억 또는 당일 거래대금 100억, 시총 2,000억)
          — OSBWatchlistItem의 avg_trading_value_5d / market_cap 직접 활용
       4. Target = Today_Open + (Range × K) 계산
       5. 현재가 >= Target 확인
@@ -536,43 +537,100 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
     async def _load_pool_b(self) -> List[dict]:
         """Pool B 로드.
 
-        OneilUniverseService가 주입된 경우: get_watchlist()로 OSBWatchlistItem 목록 반환.
-          - avg_trading_value_5d, market_cap이 이미 계산된 상태로 제공됨.
-        없는 경우: get_top_trading_value_stocks() fallback.
+        OneilUniverseService watchlist를 기본 후보로 쓰되, 장중 랭킹 후보를 항상
+        병합한다. 전일 스퀴즈/우량주 풀에서 빠진 신고가 거래대금 폭발 종목을
+        VBO 평가 단계까지 올리기 위한 보강 경로다.
         """
+        result_by_code: Dict[str, dict] = {}
         if self._universe is not None:
             try:
                 watchlist = await self._universe.get_watchlist(logger=self._logger)
-                result = []
                 for item in watchlist.values():
-                    result.append({
+                    result_by_code[item.code] = {
                         "code": item.code,
                         "name": item.name,
                         "market": getattr(item, "market", ""),
                         "market_cap": item.market_cap,          # 원 단위
                         "avg_5d_tv": item.avg_trading_value_5d, # 원 단위
-                    })
-                return result
+                        "source": getattr(item, "source", "universe"),
+                    }
             except Exception as e:
                 self._logger.warning({"event": "pool_b_universe_error", "error": str(e)})
-                return []
 
-        # fallback: 거래대금 상위 종목
-        resp = await self._sqs.get_top_trading_value_stocks()
-        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+        for item in await self._load_intraday_rank_candidates():
+            result_by_code.setdefault(item["code"], item)
+
+        if not result_by_code:
             self._logger.warning({"event": "pool_b_load_failed"})
-            return []
-        result = []
-        for item in (resp.data or []):
-            code = item.get("mksc_shrn_iscd") or item.get("stck_shrn_iscd") or ""
-            if code:
-                result.append({
-                    "code": code,
-                    "name": item.get("hts_kor_isnm", code),
-                    "market_cap": int(item.get("stck_avls", "0") or "0"),
-                    "avg_5d_tv": 0,  # fallback 시 미제공 → validity filter에서 fail-closed reject
-                })
-        return result
+        return list(result_by_code.values())
+
+    async def _load_intraday_rank_candidates(self) -> List[dict]:
+        """거래대금/상승률/거래량 랭킹에서 장중 보강 후보를 수집한다."""
+        responses = await bounded_gather(
+            [
+                self._sqs.get_top_trading_value_stocks(),
+                self._sqs.get_top_rise_fall_stocks(rise=True),
+                self._sqs.get_top_volume_stocks(),
+            ],
+            limit=3,
+            return_exceptions=True,
+        )
+
+        result_by_code: Dict[str, dict] = {}
+        for resp in responses:
+            if isinstance(resp, Exception) or not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                continue
+            for raw in (resp.data or []):
+                candidate = self._rank_item_to_candidate(raw)
+                if candidate:
+                    result_by_code.setdefault(candidate["code"], candidate)
+        return list(result_by_code.values())
+
+    def _rank_item_to_candidate(self, raw) -> Optional[dict]:
+        raw_code = self._get_field(raw, "mksc_shrn_iscd") or self._get_field(raw, "stck_shrn_iscd")
+        if not raw_code:
+            return None
+        code = str(raw_code).zfill(6)
+        name = self._get_field(raw, "hts_kor_isnm") or code
+        if not code:
+            return None
+
+        market_cap = self._parse_market_cap(raw)
+        current_trading_value = self._to_int(
+            self._get_field(raw, "acml_tr_pbmn") or self._get_field(raw, "acc_tr_pbmn")
+        )
+        return {
+            "code": code,
+            "name": name,
+            "market": self._get_field(raw, "market") or "",
+            "market_cap": market_cap,
+            "avg_5d_tv": 0,
+            "current_trading_value": current_trading_value,
+            "source": "intraday_rank",
+        }
+
+    @staticmethod
+    def _to_int(value) -> int:
+        try:
+            return int(float(str(value).replace(",", "")))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _get_field(raw, key: str):
+        if isinstance(raw, dict):
+            return raw.get(key)
+        return getattr(raw, key, None)
+
+    def _parse_market_cap(self, raw: dict) -> int:
+        value = self._to_int(
+            self._get_field(raw, "hts_avls")
+            or self._get_field(raw, "stck_avls")
+            or self._get_field(raw, "stck_llam")
+        )
+        if value <= 0:
+            return 0
+        return value if value > 100_000_000 else value * 100_000_000
 
     async def _refresh_range_cache(self, today: str, codes: List[str]) -> None:
         """전일 고저 Range를 일봉 API로 선취하여 캐시에 저장한다 (당일 1회).
@@ -621,6 +679,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         """
         market_cap = stock.get("market_cap", 0) or 0
         avg_5d_tv = stock.get("avg_5d_tv", 0) or 0
+        current_trading_value = stock.get("current_trading_value", 0) or 0
 
         if market_cap > 0 and market_cap < self._cfg.min_market_cap:
             self._log_entry_rejected(
@@ -629,6 +688,13 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 f"시총({market_cap:,}) < {self._cfg.min_market_cap:,}",
             )
             return False
+
+        if (
+            stock.get("source") == "intraday_rank"
+            and current_trading_value >= self._cfg.min_intraday_trading_value
+        ):
+            log_data["current_trading_value"] = current_trading_value
+            return True
 
         if avg_5d_tv <= 0:
             self._log_entry_rejected(

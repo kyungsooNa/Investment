@@ -58,6 +58,12 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
                        **cfg_kwargs) -> tuple:
         sqs = MagicMock(spec=StockQueryService)
         sqs.get_top_trading_value_stocks = AsyncMock()
+        sqs.get_top_rise_fall_stocks = AsyncMock(return_value=ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[]
+        ))
+        sqs.get_top_volume_stocks = AsyncMock(return_value=ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=[]
+        ))
         sqs.get_recent_daily_ohlcv = AsyncMock()
         sqs.handle_get_current_stock_price = AsyncMock()
         sqs.prefetch_prices = AsyncMock(return_value=0)
@@ -545,7 +551,7 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         signals = await strategy.scan()
 
         universe.get_watchlist.assert_called_once()
-        sqs.get_top_trading_value_stocks.assert_not_called()   # fallback 미사용
+        sqs.get_top_trading_value_stocks.assert_awaited_once()   # 장중 랭킹 보강 후보 병합
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0].code, "005930")
         self.assertEqual(signals[0].action, "BUY")
@@ -656,16 +662,17 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
             {"code": "UNKNOWN_TV_NONE"},
         ))
 
-    async def test_load_pool_b_returns_empty_when_universe_raises(self):
+    async def test_load_pool_b_falls_back_to_intraday_ranks_when_universe_raises(self):
         strategy, sqs, _ = self._make_strategy()
         universe = MagicMock()
         universe.get_watchlist = AsyncMock(side_effect=RuntimeError("universe down"))
         strategy._universe = universe
+        sqs.get_top_trading_value_stocks.return_value = self._pool_b()
 
         result = await strategy._load_pool_b()
 
-        self.assertEqual(result, [])
-        sqs.get_top_trading_value_stocks.assert_not_called()
+        self.assertEqual([item["code"] for item in result], ["005930"])
+        sqs.get_top_trading_value_stocks.assert_awaited_once()
 
     async def test_refresh_range_cache_skips_empty_rows_and_logs_exceptions(self):
         strategy, sqs, _ = self._make_strategy()
@@ -828,6 +835,46 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(signals, [])
         self.assertEqual(peak, concurrency_limit)
+
+    async def test_load_pool_b_merges_intraday_new_high_rank_candidate_when_universe_misses(self):
+        """Universe 후보에서 빠진 신고가/거래대금 종목도 VBO 후보에 보강한다."""
+        strategy, sqs, _ = self._make_strategy()
+        universe = MagicMock()
+        universe.get_watchlist = AsyncMock(return_value={})
+        strategy._universe = universe
+        sqs.get_top_trading_value_stocks.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="OK",
+            data=[{
+                "mksc_shrn_iscd": "241710",
+                "hts_kor_isnm": "코스메카코리아",
+                "hts_avls": "16469",
+                "acml_tr_pbmn": "30300000000",
+            }],
+        )
+
+        candidates = await strategy._load_pool_b()
+
+        by_code = {item["code"]: item for item in candidates}
+        self.assertIn("241710", by_code)
+        self.assertEqual(by_code["241710"]["source"], "intraday_rank")
+        self.assertEqual(by_code["241710"]["current_trading_value"], 30_300_000_000)
+
+    def test_intraday_rank_candidate_can_pass_validity_with_current_trading_value(self):
+        """장중 보강 후보는 5일 평균 미제공이어도 당일 거래대금으로 유동성 확인한다."""
+        strategy, _, _ = self._make_strategy()
+
+        self.assertTrue(strategy._passes_validity_filter(
+            {
+                "code": "241710",
+                "name": "코스메카코리아",
+                "source": "intraday_rank",
+                "market_cap": 1_646_900_000_000,
+                "avg_5d_tv": 0,
+                "current_trading_value": 30_300_000_000,
+            },
+            {},
+        ))
 
 
 if __name__ == "__main__":
