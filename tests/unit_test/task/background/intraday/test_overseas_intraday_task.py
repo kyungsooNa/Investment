@@ -15,6 +15,7 @@ import pytz
 from interfaces.schedulable_task import TaskPriority, TaskState
 from task.background.intraday.overseas_intraday_task import OverseasIntradayTask
 from common.types import ErrorCode, ResCommonResponse
+from services.overseas_intraday_vbo_service import OverseasIntradayVBOService
 
 _NY = pytz.timezone("America/New_York")
 
@@ -381,6 +382,29 @@ async def test_tick_passes_volume_to_strategies():
     await t.task._tick()
 
     assert a.on_price.await_args.kwargs["volume"] == pytest.approx(1_234_000.0)
+
+
+@pytest.mark.asyncio
+async def test_tick_can_drive_real_vbo_strategy_with_volume_payload():
+    """실제 VBO 서비스도 공용 폴링 태스크의 volume 인자 계약을 받아야 한다."""
+    vbo = OverseasIntradayVBOService(
+        candidate_service=MagicMock(),
+        stock_query_service=MagicMock(),
+        order_execution_service=MagicMock(),
+        logger=MagicMock(),
+    )
+    vbo.prepare_session = AsyncMock(return_value=1)
+    vbo.watch_codes = MagicMock(return_value=["AAA"])
+    vbo._watch = {"AAA": {"target": 105.0, "prev_range": 10.0, "exchange": "NASD"}}
+    vbo._session_date = "20260512"
+    vbo._orders.place_entry = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data={})
+    )
+    t = _multi_task([vbo], price=106.0, volume=1_234_000.0)
+
+    await t.task._tick()
+
+    assert vbo._orders.place_entry.await_count == 1
 
 
 @pytest.mark.asyncio

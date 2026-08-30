@@ -144,7 +144,7 @@ class OverseasIntradayVBOService:
 
     # ── 틱 판정 ─────────────────────────────────────────────────────────
 
-    async def on_price(self, code: str, price: float) -> Optional[Dict[str, Any]]:
+    async def on_price(self, code: str, price: float, *, volume: Optional[float] = None) -> Optional[Dict[str, Any]]:
         """폴링가 1건을 판정해 주문까지 수행한다. 주문이 없으면 None."""
         px = self._f(price)
         if px <= 0:
