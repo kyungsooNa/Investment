@@ -1,6 +1,6 @@
 # Quote / Subscription Contracts
 
-최종 업데이트: 2026-08-26
+최종 업데이트: 2026-08-30 (계약 가드 테스트 신설로 '다음 단계' 해소)
 
 시세 조회·실시간 구독 경로를 추가하거나 수정할 때 반복 확인할 공통 계약이다.
 `docs/notification_alert_contracts.md`(알림 계약)와 같은 목적의 문서로, 대상 계층만 다르다 —
@@ -184,12 +184,26 @@ KIS 웹소켓 한도는 `MAX_WS_SLOTS = 40`, Price 1슬롯 · PT(프로그램매
 | 슬롯 회계 / 우선순위 | `tests/unit_test/services/test_subscription_policy.py` |
 | PT 구독 수명주기 | `tests/unit_test/services/test_program_trading_stream_service.py` |
 | 정적자산 캐시버스팅 | `tests/unit_test/view/web/test_static_asset_versions.py` |
+| **위 계약 전체(구조 가드)** | `tests/unit_test/services/test_quote_subscription_contract_guard.py` |
 
-## 다음 단계 (M-9 잔여)
+위 표의 앞 5개는 **현재 경로의 동작**을 덮는다. 마지막 가드는 **구조**를 건다 —
+새 경로가 계약을 어기면 동작 테스트는 전부 통과하지만 가드가 실패한다.
 
-이 문서는 M-9 의 첫 항목이다. 남은 것:
+## 가드 테스트 (2026-08-30 신설)
 
-- 계약을 **테스트로 고정** — 문서만으로는 M-2 의 수기 줄수 계측처럼 낡는다.
-  `test_assembly_point_guard.py`(#888)·`test_static_asset_versions.py`(#915) 가 이 저장소의
-  "계약을 테스트로 거는" 패턴이므로 그 형식을 따른다.
-- 위 체크리스트를 신규 경로 추가 시 실제로 밟게 하는 배선(리뷰 체크리스트 또는 가드 테스트).
+`tests/unit_test/services/test_quote_subscription_contract_guard.py` 가 위 체크리스트를
+신규 경로 추가 시 실제로 밟게 하는 배선이다. 고정 대상:
+
+| 계약 | 고정한 것 |
+| --- | --- |
+| 1 | 공유 현재가 캐시 쓰기 모듈 allowlist · 거래소 지정 틱 조기 반환이 공유 저장소 쓰기보다 앞인지 |
+| 2 | 장중/장외 폴백 단계 순서 · 모든 `_fill_from_*` 가 `_apply_price_rate` 를 거치는지 · 3상태 |
+| 3 | `MAX_WS_SLOTS`·우선순위 4단계 · 정책 밖 직접 구독 allowlist · `set_external_reserved_slots` 호출처 · 원장 우선 |
+| — | 이 문서의 '관련 테스트' 표가 실재하는 파일을 가리키는지 |
+
+**실패는 "코드가 틀렸다" 가 아니라 "계약을 확인하고 목록을 갱신하라" 는 뜻이다.**
+실패 메시지에 계약 요지와 이 문서 경로가 함께 실린다.
+
+가드의 주된 실패 모드는 *아무것도 안 잡는 가드*라, detector 를 합성 위반 소스로 검증하는
+케이스를 같은 파일에 넣었다. 도입 시에도 실제 코드를 일시 변형해(새 캐시 쓰기 1건 ·
+장외 폴백 순서 뒤집기 1건) 가드가 실제로 실패하는 것을 확인한 뒤 원복했다.
