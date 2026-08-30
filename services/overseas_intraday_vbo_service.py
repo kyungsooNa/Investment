@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 
 from common.overseas_types import OverseasExchange
 from common.types import ErrorCode
+from services.indicator_service import IndicatorService
 
 
 class OverseasIntradayVBOService:
@@ -45,6 +46,13 @@ class OverseasIntradayVBOService:
         exchange: OverseasExchange = OverseasExchange.NASD,
         market_regime_service=None,
         market_timing_gate: bool = True,
+        indicator_service: Optional[IndicatorService] = None,
+        macd_filter_enabled: bool = False,
+        macd_fast_period: int = 12,
+        macd_slow_period: int = 26,
+        macd_signal_period: int = 9,
+        macd_min_histogram: float = 0.0,
+        macd_histogram_rising_bars: int = 2,
     ) -> None:
         self._candidate_service = candidate_service
         self._sqs = stock_query_service
@@ -59,6 +67,13 @@ class OverseasIntradayVBOService:
         # 미국장 국면 게이트. 미주입이면 게이트 없이 기존 동작을 유지한다.
         self._regime = market_regime_service
         self._market_timing_gate = market_timing_gate
+        self._indicator = indicator_service or IndicatorService()
+        self._macd_filter_enabled = macd_filter_enabled
+        self._macd_fast_period = macd_fast_period
+        self._macd_slow_period = macd_slow_period
+        self._macd_signal_period = macd_signal_period
+        self._macd_min_histogram = macd_min_histogram
+        self._macd_histogram_rising_bars = macd_histogram_rising_bars
 
         self._session_date: Optional[str] = None
         self._watch: Dict[str, Dict[str, Any]] = {}
@@ -107,7 +122,7 @@ class OverseasIntradayVBOService:
         self, code: str, trade_date: str, exchange: OverseasExchange,
     ) -> Optional[Dict[str, Any]]:
         try:
-            resp = await self._sqs.get_recent_daily_ohlcv(code, limit=2, exchange=exchange)
+            resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._ohlcv_limit(), exchange=exchange)
         except Exception as e:
             self._logger.warning({"event": "overseas_intraday_vbo_ohlcv_error",
                                   "code": code, "error": str(e)})
@@ -124,12 +139,18 @@ class OverseasIntradayVBOService:
         open_ = self._f(cur.get("open"))
         if prev_range <= 0 or open_ <= 0:
             return None
-        return {
+        macd_metrics = self._evaluate_macd_filter(rows[:-1])
+        if macd_metrics is None:
+            return None
+        setup = {
             "open": open_,
             "prev_range": prev_range,
             "target": open_ + self._k * prev_range,
             "exchange": exchange,
         }
+        if macd_metrics:
+            setup.update(macd_metrics)
+        return setup
 
     def watch_codes(self) -> List[str]:
         return list(self._watch.keys())
@@ -211,6 +232,13 @@ class OverseasIntradayVBOService:
             "prev_range": setup["prev_range"],
             "reason": "vbo_intraday_breakout",
         }
+        if setup.get("macd_filter_enabled"):
+            signal.update({
+                "macd_filter_enabled": True,
+                "macd": setup.get("macd"),
+                "macd_signal": setup.get("macd_signal"),
+                "macd_histogram": setup.get("macd_histogram"),
+            })
         resp = await self._orders.place_entry(
             code=code, qty=qty, limit_price=price,
             exchange=setup["exchange"], signal=signal,
@@ -276,6 +304,56 @@ class OverseasIntradayVBOService:
             return int(sized.get("qty") or 0)
         except (TypeError, ValueError):
             return 0
+
+    def _evaluate_macd_filter(self, confirmed_rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not self._macd_filter_enabled:
+            return {}
+        metrics = self._indicator.calc_macd_sync(
+            confirmed_rows,
+            fast_period=self._macd_fast_period,
+            slow_period=self._macd_slow_period,
+            signal_period=self._macd_signal_period,
+        )
+        if not metrics:
+            return None
+        histogram = metrics.get("histogram")
+        if histogram is None or histogram < self._macd_min_histogram:
+            return None
+        if self._macd_histogram_rising_bars > 0 and not self._histogram_is_rising(confirmed_rows):
+            return None
+        return {
+            "macd_filter_enabled": True,
+            "macd": metrics.get("macd"),
+            "macd_signal": metrics.get("signal"),
+            "macd_histogram": histogram,
+        }
+
+    def _histogram_is_rising(self, rows: List[Dict[str, Any]]) -> bool:
+        needed = self._macd_histogram_rising_bars + 1
+        min_len = self._macd_slow_period + self._macd_signal_period - 1 + self._macd_histogram_rising_bars
+        if len(rows) < min_len:
+            return False
+        values = []
+        for i in range(needed, 0, -1):
+            metrics = self._indicator.calc_macd_sync(
+                rows[:-i + 1] if i > 1 else rows,
+                fast_period=self._macd_fast_period,
+                slow_period=self._macd_slow_period,
+                signal_period=self._macd_signal_period,
+            )
+            histogram = metrics.get("histogram") if metrics else None
+            if histogram is None:
+                return False
+            values.append(histogram)
+        return all(cur > prev for prev, cur in zip(values, values[1:]))
+
+    def _ohlcv_limit(self) -> int:
+        if not self._macd_filter_enabled:
+            return 2
+        return max(
+            2,
+            self._macd_slow_period + self._macd_signal_period + self._macd_histogram_rising_bars,
+        )
 
     @staticmethod
     def _f(x) -> float:

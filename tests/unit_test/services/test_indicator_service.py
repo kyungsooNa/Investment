@@ -322,6 +322,66 @@ async def test_get_moving_average_not_enough_data(indicator_service):
         assert item["ma"] is None
 
 
+# ── MACD 테스트 ─────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_macd_with_preloaded_data(indicator_service):
+    """MACD: ohlcv_data 직접 전달 시 API 호출 없이 macd/signal/histogram 시계열을 반환한다."""
+    service, mock_sqs = indicator_service
+    data = _make_ohlcv(n=60, base_close=10000, spread=200)
+
+    result = await service.get_macd("005930", ohlcv_data=data)
+
+    mock_sqs.get_ohlcv.assert_not_called()
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert len(result.data) == 60
+    latest = result.data[-1]
+    assert latest["code"] == "005930"
+    assert latest["date"] == data[-1]["date"]
+    assert latest["macd"] is not None
+    assert latest["signal"] is not None
+    assert latest["histogram"] is not None
+
+
+@pytest.mark.asyncio
+async def test_get_macd_exclude_today_drops_last_bar(indicator_service):
+    """MACD: 라이브 호출용 exclude_today=True 면 당일 미확정 봉을 제외한다."""
+    service, mock_sqs = indicator_service
+    data = _make_ohlcv(n=60, base_close=10000, spread=200)
+    data.append({"date": "20250305", "open": 12000, "high": 15000, "low": 11000, "close": 15000, "volume": 1000})
+    mock_sqs.get_ohlcv.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=data
+    )
+
+    incl = await service.get_macd("005930", exclude_today=False)
+    excl = await service.get_macd("005930", exclude_today=True)
+
+    assert incl.rt_cd == ErrorCode.SUCCESS.value
+    assert excl.rt_cd == ErrorCode.SUCCESS.value
+    assert len(excl.data) == len(incl.data) - 1
+    assert excl.data[-1]["date"] == data[-2]["date"]
+    assert incl.data[-1]["date"] == "20250305"
+
+
+def test_calc_macd_sync_returns_latest_metrics(indicator_service):
+    """이미 확보한 OHLCV로 전략 게이트가 사용할 최신 MACD 값을 동기 계산한다."""
+    service, _ = indicator_service
+    data = _make_ohlcv(n=60, base_close=10000, spread=200)
+
+    result = service.calc_macd_sync(data)
+
+    assert set(result.keys()) == {"macd", "signal", "histogram"}
+    assert result["macd"] is not None
+    assert result["signal"] is not None
+    assert result["histogram"] is not None
+
+
+def test_calc_macd_sync_insufficient_data_returns_empty(indicator_service):
+    service, _ = indicator_service
+
+    assert service.calc_macd_sync(_make_ohlcv(n=20)) == {}
+
+
 # ═══════════════════════════════════════════════════════
 # RS (상대강도) 테스트
 # ═══════════════════════════════════════════════════════

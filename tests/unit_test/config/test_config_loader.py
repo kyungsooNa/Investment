@@ -141,6 +141,12 @@ def test_app_config_defaults_to_paper_trading_when_omitted():
     assert config.overseas_stock.allow_live_trading is False
     assert config.overseas_stock.dryrun_slot_usd == 1000.0
     assert config.overseas_stock.dryrun_max_qty is None
+    assert config.overseas_stock.vbo_macd_filter.enabled is False
+    assert config.overseas_stock.vbo_macd_filter.fast_period == 12
+    assert config.overseas_stock.vbo_macd_filter.slow_period == 26
+    assert config.overseas_stock.vbo_macd_filter.signal_period == 9
+    assert config.overseas_stock.vbo_macd_filter.min_histogram == 0.0
+    assert config.overseas_stock.vbo_macd_filter.histogram_rising_bars == 2
 
 
 def test_app_config_accepts_overseas_us_market_mode():
@@ -175,6 +181,43 @@ def test_app_config_accepts_overseas_dryrun_sizing_values():
 
     assert config.overseas_stock.dryrun_slot_usd == 500.0
     assert config.overseas_stock.dryrun_max_qty == 3
+
+
+def test_app_config_accepts_overseas_vbo_macd_filter_values():
+    config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={
+            "vbo_macd_filter": {
+                "enabled": True,
+                "fast_period": 8,
+                "slow_period": 21,
+                "signal_period": 5,
+                "min_histogram": 0.25,
+                "histogram_rising_bars": 1,
+            },
+        },
+    )
+
+    macd = config.overseas_stock.vbo_macd_filter
+    assert macd.enabled is True
+    assert macd.fast_period == 8
+    assert macd.slow_period == 21
+    assert macd.signal_period == 5
+    assert macd.min_histogram == 0.25
+    assert macd.histogram_rising_bars == 1
+
+
+def test_app_config_rejects_invalid_overseas_vbo_macd_period_order():
+    with pytest.raises(ValidationError):
+        AppConfig(
+            web={"host": "localhost", "port": 8080},
+            overseas_stock={
+                "vbo_macd_filter": {
+                    "fast_period": 26,
+                    "slow_period": 12,
+                },
+            },
+        )
 
 
 def test_app_config_rejects_invalid_market_mode():
