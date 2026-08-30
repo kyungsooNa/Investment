@@ -4,8 +4,8 @@
     "sha256": "10cf455d299e0426f41e9e1292c636cee1fe5de28adf9dc037fed2bebe4d4889"
   },
   "css/style.css": {
-    "version": 19,
-    "sha256": "3c80e0a79d5e5272b22d1fe4931932df99d190af6365af2ab3550b0276c65c0f"
+    "version": 20,
+    "sha256": "eb60f3cd21f601581d5aeb594421e002d30e609100fe9c6c0e27ecef90c003c2"
   },
   "js/autocomplete.js": {
     "version": 2,
@@ -40,8 +40,8 @@
     "sha256": "851f0af216300901fa0ed169890d8dd9d13ad72d1f2b174f4ff26320fa93761e"
   },
   "js/market_indices.js": {
-    "version": 8,
-    "sha256": "c1a134adef365d3fd69c7e85ad0cce9185315a05ff81900ef54637cc19c80ce7"
+    "version": 9,
+    "sha256": "df0189fb55b9170aa34f61eccdcfc02ba9fa02cf1e9da29dfda0f3d07c1d6026"
   },
   "js/marketcap.js": {
     "version": 3,

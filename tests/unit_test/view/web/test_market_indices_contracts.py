@@ -3,8 +3,8 @@
 import re
 from pathlib import Path
 
-# 미장/원자재는 TradingView 위젯. 거래소 실지수는 무료 임베드가 차단하므로
-# 실제로 시세가 그려지는 CFD/ETF 심볼만 쓴다.
+# 미장/원자재는 TradingView 차트 포함 위젯. 거래소 실지수는 무료 임베드가 차단하므로
+# 실제로 시세와 그래프가 그려지는 CFD/ETF 심볼만 쓴다.
 EXPECTED_WIDGET_SYMBOLS = [
     "CAPITALCOM:US100",
     "CAPITALCOM:US500",
@@ -56,7 +56,9 @@ def test_market_indices_js_covers_all_widget_symbols():
 
     for symbol in EXPECTED_WIDGET_SYMBOLS:
         assert symbol in script, f"{symbol} 지수 설정이 없음"
-    assert "embed-widget-mini-symbol-overview.js" in script
+    assert "embed-widget-symbol-overview.js" in script
+    assert "embed-widget-mini-symbol-overview.js" not in script
+    assert "chartOnly: false" in script
 
 
 def test_market_indices_js_avoids_blocked_widget_symbols():
@@ -149,8 +151,8 @@ def test_market_index_flow_route_exists():
     assert "get_index_flow" in routes
 
 
-# 홈에 그룹이 5개 쌓이므로 카드가 높으면 한 화면에 몇 줄 못 본다.
-MARKET_INDEX_BODY_HEIGHT_BUDGET_PX = 120
+# 차트 포함 위젯은 일정 높이가 필요하지만, 홈 첫 화면이 과하게 길어지지 않도록 상한을 둔다.
+MARKET_INDEX_BODY_HEIGHT_BUDGET_PX = 220
 
 
 def _body_height_px(css: str) -> int:

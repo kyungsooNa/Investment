@@ -1284,7 +1284,7 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     border-color: var(--accent);
 }
 .market-index-body {
-    height: 108px;
+    height: 180px;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -1304,8 +1304,8 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 .market-index-spark {
     margin-top: 6px;
     width: 100%;
-    /* x축 날짜 눈금이 들어가므로 선 영역(45px) + 라벨 높이만큼 잡는다. */
-    max-height: 60px;
+    /* x축 날짜 눈금이 들어가므로 선 영역과 라벨 높이를 함께 잡는다. */
+    max-height: 120px;
 }
 /* 투자자 순매수(좌) + 등락 종목수(우) 2열. 한쪽만 조회되면 그 열만 붙는다. */
 .market-index-flow {
