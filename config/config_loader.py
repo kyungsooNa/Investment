@@ -556,6 +556,24 @@ class OverseasIntradayVBOConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class OverseasVBOMACDFilterConfig(BaseModel):
+    """해외 VBO dry-run/장중 공용 MACD 실험 필터. 기본 off."""
+    enabled: bool = False
+    fast_period: int = Field(12, gt=0)
+    slow_period: int = Field(26, gt=0)
+    signal_period: int = Field(9, gt=0)
+    min_histogram: float = 0.0
+    histogram_rising_bars: int = Field(2, ge=0)
+
+    model_config = {"extra": "allow"}
+
+    @model_validator(mode="after")
+    def validate_fast_slower_than_slow(self):
+        if self.fast_period >= self.slow_period:
+            raise ValueError("vbo_macd_filter.fast_period 는 slow_period 보다 작아야 합니다.")
+        return self
+
+
 class OverseasIntradayStrategyConfig(BaseModel):
     """장중 승격된 개별 전략의 공통 스위치. 기본 off — VBO 와 동일하게 opt-in."""
     enabled: bool = False
@@ -576,6 +594,7 @@ class OverseasStockConfig(BaseModel):
     allow_live_trading: bool = False
     dryrun_slot_usd: float = Field(1000.0, gt=0)
     dryrun_max_qty: Optional[int] = Field(default=None, gt=0)
+    vbo_macd_filter: OverseasVBOMACDFilterConfig = Field(default_factory=OverseasVBOMACDFilterConfig)
     intraday_vbo: OverseasIntradayVBOConfig = Field(default_factory=OverseasIntradayVBOConfig)
     # 장중 승격 전략 5종 (VBO 외). 폴링 패스는 공유하므로 심볼 조회는 늘지 않는다.
     intraday_channel_breakout: OverseasIntradayStrategyConfig = Field(

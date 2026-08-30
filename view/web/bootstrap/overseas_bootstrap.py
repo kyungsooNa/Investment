@@ -156,8 +156,10 @@ class OverseasBootstrap:
             stock_query_service=ctx.stock_query_service,
             shadow_journal=ctx.event_shadow_journal_service,
             logger=ctx.logger,
+            indicator_service=ctx.indicator_service,
             position_sizing_service=overseas_position_sizing_service,
             fx_provider=_overseas_fx_provider,
+            **self._vbo_macd_filter_opts(overseas_stock_cfg),
         )
         ctx.overseas_pp_dryrun_service = OverseasPocketPivotDryRunService(
             candidate_service=ctx.overseas_candidate_service,
@@ -420,6 +422,8 @@ class OverseasBootstrap:
                 k_value=getattr(vbo_cfg, "k_value", 0.5),
                 stop_loss_pct=getattr(vbo_cfg, "stop_loss_pct", -3.0),
                 market_regime_service=ctx.us_market_regime_service,
+                indicator_service=ctx.indicator_service,
+                **self._vbo_macd_filter_opts(overseas_stock_cfg),
                 **_opts(vbo_cfg),
             )
             services.append(ctx.overseas_intraday_vbo_service)
@@ -479,3 +483,14 @@ class OverseasBootstrap:
             eod_exit_before_min=getattr(vbo_cfg, "eod_exit_before_min", 10),
             logger=ctx.logger,
         )
+
+    def _vbo_macd_filter_opts(self, overseas_stock_cfg) -> dict:
+        cfg = getattr(overseas_stock_cfg, "vbo_macd_filter", None)
+        return {
+            "macd_filter_enabled": getattr(cfg, "enabled", False),
+            "macd_fast_period": getattr(cfg, "fast_period", 12),
+            "macd_slow_period": getattr(cfg, "slow_period", 26),
+            "macd_signal_period": getattr(cfg, "signal_period", 9),
+            "macd_min_histogram": getattr(cfg, "min_histogram", 0.0),
+            "macd_histogram_rising_bars": getattr(cfg, "histogram_rising_bars", 2),
+        }

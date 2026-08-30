@@ -315,6 +315,35 @@ class IndicatorService:
             exclude_today=exclude_today,
         )
 
+    async def get_macd(
+        self,
+        stock_code: str,
+        fast_period: int = 12,
+        slow_period: int = 26,
+        signal_period: int = 9,
+        candle_type: str = "D",
+        ohlcv_data: Optional[List[Dict]] = None,
+        exclude_today: bool = False,
+    ) -> ResCommonResponse:
+        """MACD 조회.
+
+        응답 data: List[{"code", "date", "close", "macd", "signal", "histogram"}].
+        exclude_today=True 면 당일 미확정 봉을 제외해 라이브 전략 필터 흔들림을 줄인다.
+        """
+        if not self._valid_macd_periods(fast_period, slow_period, signal_period):
+            return ResCommonResponse(
+                rt_cd=ErrorCode.INVALID_INPUT.value,
+                msg1="MACD 기간은 0보다 커야 하며 fast < slow 여야 합니다",
+                data=None,
+            )
+
+        data, err_resp = await self._get_ohlcv_data(stock_code, candle_type, ohlcv_data=ohlcv_data)
+        if err_resp:
+            return err_resp
+
+        effective_data = data[:-1] if exclude_today and len(data) >= 1 else data
+        return self._calculate_macd_full(stock_code, effective_data, fast_period, slow_period, signal_period)
+
     async def get_moving_average(
         self,
         stock_code: str,
@@ -558,6 +587,31 @@ class IndicatorService:
         return df
 
     @staticmethod
+    def _valid_macd_periods(fast_period: int, slow_period: int, signal_period: int) -> bool:
+        return fast_period > 0 and slow_period > 0 and signal_period > 0 and fast_period < slow_period
+
+    @staticmethod
+    def _compute_macd(
+        df: pd.DataFrame,
+        fast_period: int = 12,
+        slow_period: int = 26,
+        signal_period: int = 9,
+    ) -> pd.DataFrame:
+        """MACD 계산 및 컬럼 추가."""
+        fast_ema = df["close"].ewm(
+            span=fast_period, adjust=False, min_periods=fast_period
+        ).mean()
+        slow_ema = df["close"].ewm(
+            span=slow_period, adjust=False, min_periods=slow_period
+        ).mean()
+        df["macd"] = fast_ema - slow_ema
+        df["macd_signal"] = df["macd"].ewm(
+            span=signal_period, adjust=False, min_periods=signal_period
+        ).mean()
+        df["macd_histogram"] = df["macd"] - df["macd_signal"]
+        return df
+
+    @staticmethod
     def _compute_atr(df: pd.DataFrame, period: int, target_col: str = "atr") -> pd.DataFrame:
         """ATR(Average True Range) 계산 — Wilder's RMA (ewm alpha=1/period)"""
         for col in ("high", "low"):
@@ -636,6 +690,38 @@ class IndicatorService:
         except Exception as e:
             self._record_calc_error("rs_sync", e)
             return 0.0
+
+    def calc_macd_sync(
+        self,
+        ohlcv_data: List[Dict],
+        fast_period: int = 12,
+        slow_period: int = 26,
+        signal_period: int = 9,
+    ) -> Dict:
+        """이미 확보한 OHLCV 데이터로 최신 MACD 값을 동기 계산합니다.
+
+        반환: {"macd": float, "signal": float, "histogram": float}
+        계산 실패 또는 데이터 부족 시 빈 dict 반환 — 전략에서 fail-closed 로 사용한다.
+        """
+        try:
+            if not self._valid_macd_periods(fast_period, slow_period, signal_period):
+                return {}
+            if len(ohlcv_data) < slow_period + signal_period - 1:
+                return {}
+            resp = self._calculate_macd_full("", ohlcv_data, fast_period, slow_period, signal_period)
+            if resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
+                return {}
+            latest = resp.data[-1]
+            if latest.get("macd") is None or latest.get("signal") is None or latest.get("histogram") is None:
+                return {}
+            return {
+                "macd": latest["macd"],
+                "signal": latest["signal"],
+                "histogram": latest["histogram"],
+            }
+        except Exception as e:
+            self._record_calc_error("macd_sync", e)
+            return {}
 
     def calc_adx_sync(
         self,
@@ -732,6 +818,44 @@ class IndicatorService:
             return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=results)
         except Exception as e:
             self._record_calc_error("atr", e, stock_code)
+            return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
+
+    def _calculate_macd_full(
+        self,
+        stock_code,
+        data,
+        fast_period,
+        slow_period,
+        signal_period,
+    ) -> ResCommonResponse:
+        """MACD 시계열 전체 계산 (내부용)"""
+        try:
+            if not self._valid_macd_periods(fast_period, slow_period, signal_period):
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.INVALID_INPUT.value,
+                    msg1="MACD 기간은 0보다 커야 하며 fast < slow 여야 합니다",
+                    data=None,
+                )
+            df = self._to_dataframe(data)
+            if df.empty:
+                return ResCommonResponse(rt_cd=ErrorCode.EMPTY_VALUES.value, msg1="데이터 없음", data=None)
+
+            df = self._compute_macd(df, fast_period, slow_period, signal_period)
+
+            results = [
+                {
+                    "code": stock_code,
+                    "date": str(row.date),
+                    "close": self._safe_float(row.close),
+                    "macd": self._safe_float(row.macd),
+                    "signal": self._safe_float(row.macd_signal),
+                    "histogram": self._safe_float(row.macd_histogram),
+                }
+                for row in df.itertuples(index=False)
+            ]
+            return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data=results)
+        except Exception as e:
+            self._record_calc_error("macd", e, stock_code)
             return ResCommonResponse(rt_cd=ErrorCode.UNKNOWN_ERROR.value, msg1=str(e), data=None)
 
     def _calculate_moving_average_full(self, stock_code, data, period, method) -> ResCommonResponse:

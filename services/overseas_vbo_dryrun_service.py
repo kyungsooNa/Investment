@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from common.overseas_types import OverseasExchange
 from common.types import ErrorCode
+from services.indicator_service import IndicatorService
 
 
 class OverseasVBODryRunService:
@@ -34,6 +35,13 @@ class OverseasVBODryRunService:
         exchange: OverseasExchange = OverseasExchange.NASD,
         position_sizing_service=None,
         fx_provider=None,
+        indicator_service: Optional[IndicatorService] = None,
+        macd_filter_enabled: bool = False,
+        macd_fast_period: int = 12,
+        macd_slow_period: int = 26,
+        macd_signal_period: int = 9,
+        macd_min_histogram: float = 0.0,
+        macd_histogram_rising_bars: int = 2,
     ):
         self._candidate_service = candidate_service
         self._sqs = stock_query_service
@@ -47,6 +55,13 @@ class OverseasVBODryRunService:
         # USD/KRW 환율 조회용 async callable(`() -> Optional[float]`). 사이징이 있을 때만
         # scan당 1회 호출해 KRW 환산 노출을 동봉한다. 미주입/실패/비양수 시 KRW 생략.
         self._fx_provider = fx_provider
+        self._indicator = indicator_service or IndicatorService()
+        self._macd_filter_enabled = macd_filter_enabled
+        self._macd_fast_period = macd_fast_period
+        self._macd_slow_period = macd_slow_period
+        self._macd_signal_period = macd_signal_period
+        self._macd_min_histogram = macd_min_histogram
+        self._macd_histogram_rising_bars = macd_histogram_rising_bars
 
     async def scan_dry_run(
         self,
@@ -69,7 +84,7 @@ class OverseasVBODryRunService:
             if not code:
                 continue
             try:
-                resp = await self._sqs.get_recent_daily_ohlcv(code, limit=3, exchange=ex)
+                resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._ohlcv_limit(), exchange=ex)
             except Exception as e:
                 self._logger.warning({"event": "overseas_dryrun_ohlcv_error", "code": code, "error": str(e)})
                 continue
@@ -145,6 +160,9 @@ class OverseasVBODryRunService:
         target = open_ + self._k * prev_range
         if high < target:
             return None
+        macd_metrics = self._evaluate_macd_filter(rows)
+        if macd_metrics is None:
+            return None
         entry = target
         stop = entry * (1 + self._stop_loss_pct / 100.0)
         # 당일 same-day exit(Phase 2 백테스트 모델과 동일). 단 일봉은 저가의 발생 시각을
@@ -163,7 +181,7 @@ class OverseasVBODryRunService:
         else:
             exit_price, exit_reason = stop, "undecided"
             pessimistic, optimistic = stop_pct, eod_pct
-        return {
+        signal = {
             "code": code,
             "action": "BUY",
             "date": cur.get("date"),
@@ -180,10 +198,62 @@ class OverseasVBODryRunService:
             "realized_pct_optimistic": optimistic,
             "reason": "vbo_daily_breakout",
         }
+        if macd_metrics:
+            signal.update(macd_metrics)
+        return signal
+
+    def _evaluate_macd_filter(self, rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not self._macd_filter_enabled:
+            return {}
+        macd_rows = self._indicator.calc_macd_sync(
+            rows,
+            fast_period=self._macd_fast_period,
+            slow_period=self._macd_slow_period,
+            signal_period=self._macd_signal_period,
+        )
+        if not macd_rows:
+            return None
+        histogram = macd_rows.get("histogram")
+        if histogram is None or histogram < self._macd_min_histogram:
+            return None
+        if self._macd_histogram_rising_bars > 0 and not self._histogram_is_rising(rows):
+            return None
+        return {
+            "macd_filter_enabled": True,
+            "macd": macd_rows.get("macd"),
+            "macd_signal": macd_rows.get("signal"),
+            "macd_histogram": histogram,
+        }
+
+    def _histogram_is_rising(self, rows: List[Dict[str, Any]]) -> bool:
+        needed = self._macd_histogram_rising_bars + 1
+        if len(rows) < self._macd_slow_period + self._macd_signal_period - 1 + self._macd_histogram_rising_bars:
+            return False
+        values = []
+        for i in range(needed, 0, -1):
+            metrics = self._indicator.calc_macd_sync(
+                rows[:-i + 1] if i > 1 else rows,
+                fast_period=self._macd_fast_period,
+                slow_period=self._macd_slow_period,
+                signal_period=self._macd_signal_period,
+            )
+            histogram = metrics.get("histogram") if metrics else None
+            if histogram is None:
+                return False
+            values.append(histogram)
+        return all(cur > prev for prev, cur in zip(values, values[1:]))
 
     @staticmethod
     def _bar_ohlc(bar: Dict[str, Any]) -> Dict[str, Any]:
         return {k: bar.get(k) for k in ("date", "open", "high", "low", "close")}
+
+    def _ohlcv_limit(self) -> int:
+        if not self._macd_filter_enabled:
+            return 3
+        return max(
+            3,
+            self._macd_slow_period + self._macd_signal_period - 1 + self._macd_histogram_rising_bars,
+        )
 
     @staticmethod
     def _f(x) -> float:

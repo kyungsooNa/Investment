@@ -22,6 +22,16 @@ def _ohlcv(bars):
     return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=bars)
 
 
+def _macd_breakout_bars(n=60):
+    bars = []
+    for i in range(n - 2):
+        close = 100 + i
+        bars.append(_bar(f"202604{i+1:02d}", close, close + 2, close - 2, close))
+    bars.append(_bar("20260511", 150, 160, 140, 155))
+    bars.append(_bar("20260512", 150, 170, 148, 166))
+    return bars
+
+
 @pytest.fixture
 def svc():
     candidate_service = MagicMock()
@@ -137,6 +147,37 @@ async def test_scan_no_signal_when_no_breakout(svc):
 
     assert signals == []
     svc.journal.record.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scan_macd_filter_enabled_fetches_enough_bars_and_blocks_weak_histogram(svc):
+    """MACD 필터 ON이면 추가 일봉을 조회하고 히스토그램 조건 미달 신호를 막는다."""
+    svc.service._macd_filter_enabled = True
+    svc.service._macd_min_histogram = 999.0
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(_macd_breakout_bars()))
+
+    signals = await svc.service.scan_dry_run(exchange=OverseasExchange.NASD)
+
+    assert signals == []
+    _, kwargs = svc.sqs.get_recent_daily_ohlcv.await_args
+    assert kwargs["limit"] > 3
+    svc.journal.record.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scan_macd_filter_enabled_records_metrics_when_passing(svc):
+    """MACD 필터 통과 시 would-be 신호에 판정 지표를 동봉한다."""
+    svc.service._macd_filter_enabled = True
+    svc.service._macd_min_histogram = -999.0
+    svc.service._macd_histogram_rising_bars = 0
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(_macd_breakout_bars()))
+
+    signals = await svc.service.scan_dry_run(exchange=OverseasExchange.NASD)
+
+    assert len(signals) == 1
+    assert signals[0]["macd_filter_enabled"] is True
+    assert signals[0]["macd_histogram"] is not None
+    assert signals[0]["macd_signal"] is not None
 
 
 @pytest.mark.asyncio

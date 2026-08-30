@@ -125,6 +125,16 @@ overseas_stock:
   # 실주문 경로 없음.
   dryrun_slot_usd: 1000.0
   dryrun_max_qty:
+  # 해외 VBO 공용 MACD 실험 필터(dry-run/장중 VBO 모두 적용). 기본 off.
+  # 켜면 VBO 돌파 신호 중 MACD histogram 이 0 이상이고 최근 2봉 개선되는 종목만 통과한다.
+  vbo_macd_filter:
+    enabled: false
+    fast_period: 12
+    slow_period: 26
+    signal_period: 9
+    min_histogram: 0.0
+    histogram_rising_bars: 2
+
   # 미국 정규장 REST 폴링 VBO(장중 경로). dry-run 은 마감 후 사후 평가라 발사 대상이
   # 없어, 장중에 실제로 도는 전략 경로를 별도로 둔다. 주문은 항상 would-be 기록만
   # 남는다(allow_live_trading 과 무관하게 자동 경로의 실주문은 Phase 5 까지 잠금).

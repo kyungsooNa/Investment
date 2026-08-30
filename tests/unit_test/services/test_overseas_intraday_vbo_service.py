@@ -21,12 +21,22 @@ def _ok(data=None):
     return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=data)
 
 
+def _macd_setup_bars(n=60):
+    bars = []
+    for i in range(n - 2):
+        close = 100 + i
+        bars.append(_bar(f"202604{i+1:02d}", close, close + 2, close - 2, close))
+    bars.append(_bar("20260511", 150, 160, 140, 155))
+    bars.append(_bar("20260512", 150, 151, 149, 150))
+    return bars
+
+
 def _fail():
     return ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="rejected", data=None)
 
 
 def _svc(*, candidates=None, bars=None, max_positions=5, sizing=None,
-         regime=None, market_timing_gate=True):
+         regime=None, market_timing_gate=True, **service_kwargs):
     candidate_service = MagicMock()
     candidate_service.get_candidates = AsyncMock(return_value=candidates if candidates is not None else [
         {"code": "AAA", "name": "Aaa", "exchange": "NASD", "avg_trading_value": 10_000_000.0},
@@ -51,6 +61,7 @@ def _svc(*, candidates=None, bars=None, max_positions=5, sizing=None,
         max_positions=max_positions,
         market_regime_service=regime,
         market_timing_gate=market_timing_gate,
+        **service_kwargs,
     )
     return SimpleNamespace(service=service, candidate_service=candidate_service, sqs=sqs,
                            orders=orders, regime=regime)
@@ -77,6 +88,41 @@ async def test_prepare_session_skips_symbol_without_today_bar():
 
     assert watched == 0
     assert s.service.get_state()["watch"] == {}
+
+
+@pytest.mark.asyncio
+async def test_prepare_session_macd_filter_fetches_enough_bars_and_blocks_weak_histogram():
+    """MACD 필터 ON이면 장중 감시 등록 전에 히스토그램 조건을 fail-closed 로 본다."""
+    s = _svc(
+        bars=_macd_setup_bars(),
+        macd_filter_enabled=True,
+        macd_min_histogram=999.0,
+    )
+
+    watched = await s.service.prepare_session("20260512", exchange=OverseasExchange.NASD)
+
+    assert watched == 0
+    _, kwargs = s.sqs.get_recent_daily_ohlcv.await_args
+    assert kwargs["limit"] > 2
+    assert s.service.get_state()["watch"] == {}
+
+
+@pytest.mark.asyncio
+async def test_prepare_session_macd_filter_keeps_metrics_when_passing():
+    """MACD 필터 통과 시 setup에 지표를 보존하고 이후 주문 신호에 실어 보낸다."""
+    s = _svc(
+        bars=_macd_setup_bars(),
+        macd_filter_enabled=True,
+        macd_min_histogram=-999.0,
+        macd_histogram_rising_bars=0,
+    )
+    await s.service.prepare_session("20260512", exchange=OverseasExchange.NASD)
+
+    action = await s.service.on_price("AAA", 161.0)
+
+    assert action["action"] == "BUY"
+    assert action["macd_filter_enabled"] is True
+    assert action["macd_histogram"] is not None
 
 
 @pytest.mark.asyncio
