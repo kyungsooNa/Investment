@@ -1,6 +1,6 @@
 # Investment Trading App - 남은 To-Do
 
-최종 업데이트: 2026-08-26 (M-9 계약 문서 `docs/quote_subscription_contracts.md` 신설 — 캐시 키/폴백 체인/슬롯 회계 3개 계약 + 추가 전 체크리스트. 잔여는 테스트 고정. 같은 날 앞선 갱신: 08-22 이후 머지분 #878~#923 대조 — **M-5 재발 신호 승격 판정: 조건 충족**(4일간 시세·구독 계열 9건, M-9 신설), 미등재 작업축 4건 신규 등재(S-1 스케줄러 시장 분리 · D-1 관세/무역 데이터 · D-2 YouTube 다이제스트 · M-10 해외 현재가 페이지), 0-2 강제청산 계열 재발 3건 기록, 커버리지 캠페인 완료 기록. 이전: 2026-08-22 08-18 이후 머지분 #853~#877 대조 — 미등재 작업축 2건 신규 등재(K-1 키움 브로커 연동 · O-4 해외 dry-run 3전략 확대), M-2 줄수 계측 갱신, M-5 재발 신호 추가. 이전: 2026-08-21 현재가 거래소 분리 후속 M-8 등재. 이전: 2026-08-18 08-07 이후 머지분과 문서 상태 대조 — 완료된 후속은 정리하고, 실제 남은 실행 항목만 유지. 이전 갱신: 2026-08-07 07-24~08-07 머지분 대조)
+최종 업데이트: 2026-08-30 (08-26 이후 머지분 #925~#938 대조 — 14건 중 **8건이 해외(미국장) 계열**: 장중 전략 6종 승격(#932)·미국장 마켓타이밍 게이트(#931)·실전 전환 P0 4건(#934)/P1 3건(#935)을 O-5/O-6 로 신규 등재하고 Phase 5 착수 조건을 갱신했다. 함께: **Phase 5 잠금 사유가 코드에서 stale** 인 것을 등재, **#936 이 '캡처 전용' 이던 랭킹 보충을 국내 VBO 트레이딩 후보 경로로 넘긴 정책 변경**을 Pool B 에 등재(시총 하한 우회 경로 포함), D-1 관세 계열 관찰 갱신(수렴 판정), M-11 홈 지수 카드 축 신규 등재, M-2 계측 갱신. 검증: 이 점검 시점 단위 9,808건·통합 299건 전부 통과. 이전: 2026-08-26 (M-9 계약 문서 `docs/quote_subscription_contracts.md` 신설 — 캐시 키/폴백 체인/슬롯 회계 3개 계약 + 추가 전 체크리스트. 잔여는 테스트 고정. 같은 날 앞선 갱신: 08-22 이후 머지분 #878~#923 대조 — **M-5 재발 신호 승격 판정: 조건 충족**(4일간 시세·구독 계열 9건, M-9 신설), 미등재 작업축 4건 신규 등재(S-1 스케줄러 시장 분리 · D-1 관세/무역 데이터 · D-2 YouTube 다이제스트 · M-10 해외 현재가 페이지), 0-2 강제청산 계열 재발 3건 기록, 커버리지 캠페인 완료 기록. 이전: 2026-08-22 08-18 이후 머지분 #853~#877 대조 — 미등재 작업축 2건 신규 등재(K-1 키움 브로커 연동 · O-4 해외 dry-run 3전략 확대), M-2 줄수 계측 갱신, M-5 재발 신호 추가. 이전: 2026-08-21 현재가 거래소 분리 후속 M-8 등재. 이전: 2026-08-18 08-07 이후 머지분과 문서 상태 대조 — 완료된 후속은 정리하고, 실제 남은 실행 항목만 유지. 이전 갱신: 2026-08-07 07-24~08-07 머지분 대조)
 
 이 문서는 **현재 남은 실행 항목**만 추린 목록이다. 완료된 구현 상세·완료 체크·과거 세션 요약은 git/PR과 리포트 파일로 추적하고 본 문서에서 제거한다.
 
@@ -15,27 +15,30 @@
 
 ---
 
-## 우선 처리 순서 (2026-08-26 문서 점검 반영)
+## 우선 처리 순서 (2026-08-30 문서 점검 반영)
 
 리뷰 핵심 판단: 운영 인프라·리스크 규율(킬스위치 영속화·RiskGate·tiered force-exit·profitability gate·캐너리 사이징)은 갖춰졌다. 남은 크리티컬 패스는 **엣지(수익성) 입증**이다. 엣지의 원천으로 삼는 수급 필터(체결강도·프로그램매매)가 장중 히스토리 부재로 백테스트 검증 불가능한 상태이므로, 검증 데이터 축적을 지금 시작하는 것이 최우선이다.
+
+**2026-08-30 갱신 — 리스크의 성격이 바뀌었다(우선순위는 불변).** 나흘간 머지 14건 중 8건이 해외 계열이고, 그 내용이 실전 전환 안전장치(포지션 영속화·kill switch 배선·USD 리스크게이트·청산 재시도·개장/체결 대사 자동화·리스크 기반 사이징)다. 즉 **해외 실주문을 막던 것이 "인프라 부재"에서 "엣지 미입증" 하나로 좁혀졌다.** 크리티컬 패스는 그대로 엣지 입증이지만, 이제 잠금이 플래그 한 줄뿐이고 **코드에 적힌 잠금 사유는 이미 사실과 다르다**(Phase 5 항목 참조) — 문서가 아니라 코드를 읽고 판단하는 사람이 잠금을 풀 수 있는 상태다. 같은 기간 국내에서는 #936 이 2026-07-08 에 "캡처 전용, 주문 경로 불변" 으로 한정했던 랭킹 보충을 **VBO 트레이딩 후보 경로로 넘겼다**(Pool B 항목 참조).
 
 1. **[즉시 착수 — 엣지 검증 크리티컬 패스]**
    - 0-2 강제청산 절반 유출 수정 **실장 검증 완료** (PR #700, 2026-07-22 tier1/tier2 flat 종료 실증 + 2026-07-23 익일 대사로 고아 미증가 확인). 오염 5건 플래그는 코드 완료(#831) — 남은 것은 프로덕션 DB 적용 실행·기존 고아 10종목 처리 방침뿐. 엣지 검증 선행 조건은 해소.
    - 1-5 장중 microstructure 캡처 **상시 가동** (blocked 해제 단계 자체가 착수 항목) — 태스크 배선 완료(#618), 코퍼스 축적 중, 1일차 품질 결함 보정 + 체결강도 장중 시계열 배선 완료(2026-07-04), QC 1주차 양호 판정 + 거래대금 랭킹 보충으로 코퍼스 폭 확대(2026-07-08)
    - 1-6 shadow/paper/소액 canary journal 축적 (운영 상시 — 무틱 블로커와 독립)
+   - **(신규 2026-08-30) Pool B 랭킹 보충의 트레이딩 경로 편입(#936) 검증** — 07-08 결정("캡처 전용, 주문 경로 불변")을 넘긴 변경이고 실계좌 주문 경로라 위 축적보다 먼저 판단한다. 상세는 Pool B 항목.
 2. **[외부 블로커 — 병행 진행]**
    - 2-4 WebSocket 무틱 — KIS 에스컬레이션 **접수 대기** (패키지 준비 완료 #630, 남은 액션은 실제 접수뿐; 무틱 보통주만 — ETF/우선주는 무틱 수용으로 종결)
 3. **[확대·전환 전 필수 게이트]**
    - 0-1 실전 체결필드 fixture · 2-2 KIS 유량 한도 실측 (실전 전환 직전, 외부 의존)
 4. **[데이터·정책 대기]**
    - 1-8 백테스트 재실행 (CLI 노출 완료 #619 — PIT 후보/valid 캡처 코퍼스 대기. 2026-07-03 파일럿의 마켓타이밍 스캔 차단 사유는 #766/#770/#844 후속으로 무효화되어, 0거래 원인은 재확인 필요)
-   - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (dry-run 검증 후 — O-1 #621/O-2 완료)
-   - O-4 해외 dry-run 확장 전략(PP/BGU/CB/RSI2/OSB) would-be 성과 축적 → 전략별 엣지 판정 (신규 2026-08-22, 5거래일+ 축적 대기)
-5. **[착수 가능 — 외부 의존 없음, 2026-08-26 승격]**
+   - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (**안전장치는 #934/#935 로 완료 — 남은 것은 엣지 입증과 canary 배선뿐**, O-6 참조)
+   - O-4 해외 dry-run 확장 전략(PP/BGU/CB/RSI2/OSB) would-be 성과 축적 → 전략별 엣지 판정. **#932 로 5종에 장중 paper 경로가 생겨 O-3 방식 교차검증(일봉 낙관 편향 실측)을 전략별로 돌릴 수 있게 됐다** — 남은 것은 표본. 저장소의 최신 통합 리포트는 아직 `20260722_20260821` 이라 08-22 이후 축적분은 재집계 필요(저비용).
+5. **[착수 가능 — 외부 의존 없음]** (2026-08-30 확인: 문서는 #926 으로 완료, **테스트 고정은 미착수** — `docs/quote_subscription_contracts.md` 를 참조하는 테스트 0건)
    - **M-9 시세 갱신/캐시 키/구독 슬롯 계약 고정** — M-5 관찰 조건 충족(4일간 9건)으로 승격. 위 1~4번이 전부 외부 데이터·실계좌·사용자 결정에 막혀 있는 동안 **자체적으로 진행 가능한 유일한 실질 항목**이다. 알림 계약(`docs/notification_alert_contracts.md`) 이 같은 방식으로 재발을 잦아들게 한 선례가 있다.
 6. **[조건부·저위험 상시]**
    - Pool B 완화 (**캡처 우회 적용 2026-07-08 — 트레이딩 완화는 시장 회복 후 재판단**) · 2-6 핫패스 (보류) · 3-4 lifecycle 분해 (정책 합의 시 — S-1 시장 분리 구조를 전제로) · X-4 주기적 뉴스 수집(조건부·큰 작업) · T-0/R-6 (선택/관찰)
-   - **관찰만 (조치 열지 않음)**: 0-2 강제청산 계열 재발 3건 · D-1 관세 API 계약 안정성 — 둘 다 다음 점검에서 계속 쌓이면 M-9 방식으로 승격
+   - **관찰만 (조치 열지 않음)**: 0-2 강제청산 계열 재발 3건(08-26 이후 추가 0건 — 잦아드는 중) · D-1 관세 API 계열(08-30 판정: **수렴 쪽 — 승격 보류**, 근거는 D-1 항목)
    - **판단 대기 (저비용)**: M-2 커버리지 회귀 방지 가드 · S-1 시장별 시작/정지 교차 경로 테스트 · D-2 다이제스트 AI 한도 소비 확인
 7. **[실계좌 장중에서만 확인 가능 — 코드 완료]**
    - M-8 현재가 거래소 분리(KRX/NXT) 4건 실계좌 확인 (#871/#872, 2026-08-21 등재 이후 진전 없음)
@@ -50,6 +53,8 @@
 ### X-1. OpenDART API 인증키 발급 및 공시 모니터 활성화 [완료 — 실운영 확인 2026-07-23]
 
 - [x] API 키 발급·`config.yaml` 저장(`enabled: true`) · 재시작 후 `data/dart_disclosures.db` 생성·태스크 실행 · 실제 수신 검증 — `data/dart_disclosures.db`가 07-20~07-22 3거래일 762건(삼성전자·SK하이닉스 등)을 스코어링·AI요약과 함께 실시간 축적 중임을 DB 조회로 확인. X-2~X-4가 이 경로 위에서 이미 구현·검증됨.
+
+- [x] **네트워크 오류 소음 분리 (2026-08-29, #937)** — `DartApiError.status == "NETWORK"` 는 warning 로그 + 이번 폴링만 건너뛰고(운영 알림 없음), 그 외 API 오류는 기존대로 error + 운영 알림을 낸다. 두 경우 모두 `progress.last_error` 에는 남으므로 상태 조회에서는 보인다 — 일시적 네트워크 장애가 상시 태스크의 운영 알림을 채우던 것만 걷어낸 것이다. 남은 실행 항목 없음.
 
 ### X-2. AI 분석 (1차 공시 요약 / 2차 종목 분석 — 완료)
 
@@ -228,9 +233,9 @@
 
 ---
 
-## 해외주식 전략 적용 (VBO/PP/BGU/CB/RSI2/OSB 일봉 dry-run)
+## 해외주식 전략 적용 (VBO/PP/BGU/CB/RSI2/OSB — 일봉 dry-run + 장중 폴링 paper)
 
-결론: 일봉 셋업형 전략 + 장중 REST 폴링 경로(#776) 적용 가능 — 해외는 웹소켓/분봉이 없어 폴링이 유일한 장중 틱 소스다. 첫 장중 대상 = `LarryWilliamsVBOStrategy`. After-market dry-run suite 는 VBO/PP/BGU/CB/RSI2/OSB를 함께 기록·알림·분석한다. Phase 1~4(데이터 어댑터·일봉 백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금.
+결론: 일봉 셋업형 전략 + 장중 REST 폴링 경로(#776) 적용 가능 — 해외는 웹소켓/분봉이 없어 폴링이 유일한 장중 틱 소스다. After-market dry-run suite 는 VBO/PP/BGU/CB/RSI2/OSB를 함께 기록·알림·분석하고, **2026-08-28(#932) 부터 같은 6종이 장중 폴링 경로에서도 돈다**(전 전략 `enabled: false` 기본, 하나의 태스크·하나의 폴링 패스 공유). Phase 1~4(데이터 어댑터·일봉 백테스트·dry-run·주문/사이징) 완료, 자동 전략 경로 `live_enabled=False` 잠금 유지.
 
 **정정 (2026-08-11)**: 종전 "해외 주문 TR은 실전(TTTS6036U 등)만, 모의 주문 TR 없음"은 stale이다. #606에서 모의 미지원인 주간거래 TTTS603x → 모의 검증 가능한 정규장 TTTT100xU로 전환하며 `tr_ids_config.yaml`에 real/paper 쌍이 모두 추가됐고(VTTT1002U 매수 / VTTT1006U 매도 / VTTT1004U 정정취소), `trid_provider.py`가 `is_paper_trading`으로 분기한다. 따라서 "모의가 없어 배선=실계좌 발사"라는 잠금 명분은 무효이고, 남은 유효 사유는 Phase 5 미완과 엣지 부재(아래 스윕 결과)뿐이다. 단 **모의 서버의 실제 주문 수락 여부는 아직 미검증** — `scripts/probe_overseas_paper_order.py --send`로 확인 후 이 문단을 갱신할 것. (2026-08-17: 전송 없는 안전장치 검사는 4개 전부 통과 — base_url `openapivts`, 모의 계좌, 매수 `VTTT1002U`, 정정취소 `VTTT1004U`, 프로브가 현재가의 절반으로 체결 불가. 남은 것은 `--send` 1회 실행뿐이다.)
 
@@ -261,6 +266,7 @@
   - **한계(단독 해석 금지)**: matched n=13(약 9거래일)이라 통계적 결론이 아니다. 장중 청산 사유가 eod 12 / stop 1 로 **손절 경로는 사실상 미검증**이다.
   - **daily_only 165건은 기계적 실패가 아니라 유니버스 크기 차이**다 — 장중은 config `top_n: 10`, 일봉 스윕은 50종목. 같은 축으로 비교하려면 top_n 을 올려야 하고, 그러면 콜 수가 약 4배(현재 10종 × 120초 ≈ 1,950콜/일)가 된다.
 - [ ] **(사용자 결정 대기) 장중 유니버스 상향**: config 주석의 "첫 가동일에 진입 기록 확인 후 `top_n`/`poll` 상향" 조건은 충족됐다(진입 13건 = 당일 봉 시가 수신 정상). 다만 **기댓값이 음수인 전략에 API 부하를 4배 늘리는 판단**이라 자동 진행하지 않았다. 올리면 matched 표본이 커져 위 한계가 해소되고, 안 올리면 현 결론(엣지 없음)으로 Phase 5 를 계속 보류한다.
+  - **비용 구조 정정 (2026-08-30, #932)**: 이 판단은 이제 VBO 단독 비용이 아니다. 6종이 **감시 심볼 합집합을 심볼당 1회만** 조회하는 단일 폴링 패스를 공유하므로, 콜 수는 전략 수가 아니라 **합집합 크기**에 비례한다. 즉 `top_n` 상향의 한계비용은 겹치는 심볼이 많을수록 작아지고, 반대로 전략마다 다른 종목을 보면 커진다 — 상향 판단 전에 실제 합집합 크기를 먼저 재보는 것이 맞다(현재 예시 config 는 전략별 `top_n: 20`).
 
 주요 파일: `services/overseas_intraday_vbo_service.py`, `task/background/intraday/overseas_intraday_vbo_task.py`, `strategies/overseas_daily_vbo_backtest.py`, `scripts/{run_overseas_vbo_sweep,fetch_overseas_ohlcv,compare_overseas_intraday_vs_daily}.py`
 
@@ -269,21 +275,52 @@
 해외 dry-run 이 VBO 단일에서 4전략으로 늘었는데 todo 에는 미등재였다. `O'NeilPP_overseas`(#874) · `O'NeilBGU_overseas`(#875) · `LarryWilliamsCB_overseas`(#877) 를 `OverseasDryRunSuiteService` 가 한 after-market 태스크에서 합성 실행하고, 완료 알림은 전략 라벨(VBO/PP/BGU/CB)별 신호 수·예시 종목을 요약한다(#876). 주문 경로는 없다(dry-run 서비스는 `order_execution` 의존을 갖지 않는다).
 
 - [ ] **전략별 would-be 성과 축적·판정** — 분석 경로는 `--all-sources`/`DEFAULT_SIGNAL_SOURCES` 와 `edge_judgement` 로 갖춰졌다(VBO·PP·BGU·CB·RSI2·OSB 저널 집계, 당일 실현손익 없는 신호도 표본 유지). 남은 것은 5거래일+ 실제 표본 축적 후 O-3 와 같은 기준(왕복비용 0.5%, 비관·낙관 bracket)으로 출력된 전략별 판정을 확인하는 것이다.
-- [x] **전략별 실행 여부 가시화 (2026-08-26)** — 표본 축적을 기다리는 축인데, 전략이 **실제로 돌았는지**를 확인할 신호가 없었다. `OverseasDryRunSuiteService` 가 서비스 예외를 삼키고 `continue` 했고(로그만), 완료 알림은 신호가 나온 라벨만 나열해 **0건 전략과 매일 죽는 전략과 배선 누락이 모두 "부재"로 똑같이 보였다**. suite 에 `last_run_report`(전략별 `ok`/`signals`/`error`)를 추가하고, 태스크가 이를 라벨 목록의 기준으로 삼아 `- PP: 0개` / `- CB: 실행 실패 (사유)` 까지 남기도록 했다. 실패가 있으면 알림 레벨을 WARNING 으로 올리고 `overseas_dryrun_strategy_failed` 를 전략별로 로깅한다. 리포트를 못 주는 서비스는 기존 신호 기반 요약으로 폴백한다.
-- [ ] **일봉 낙관 편향 보정치는 VBO 에서만 실측됐다** — O-3 교차검증의 진입 슬리피지 +0.462%p·낙관 과대 1.138%p 는 VBO 장중 paper(`OverseasIntradayVBOService`) 대조로 얻은 값이고, 신규 3전략에는 장중 paper 경로가 없다(`services/overseas_intraday_*` 는 VBO 뿐). 세 전략의 일봉 dry-run 수치를 실행 기대값으로 그대로 읽지 말 것 — 최소한 VBO 편향폭을 하한 보정으로 얹어 해석한다.
+- [x] **전략별 실행 여부 가시화 (2026-08-26, #929)** — 표본 축적을 기다리는 축인데, 전략이 **실제로 돌았는지**를 확인할 신호가 없었다. `OverseasDryRunSuiteService` 가 서비스 예외를 삼키고 `continue` 했고(로그만), 완료 알림은 신호가 나온 라벨만 나열해 **0건 전략과 매일 죽는 전략과 배선 누락이 모두 "부재"로 똑같이 보였다**. suite 에 `last_run_report`(전략별 `ok`/`signals`/`error`)를 추가하고, 태스크가 이를 라벨 목록의 기준으로 삼아 `- PP: 0개` / `- CB: 실행 실패 (사유)` 까지 남기도록 했다. 실패가 있으면 알림 레벨을 WARNING 으로 올리고 `overseas_dryrun_strategy_failed` 를 전략별로 로깅한다. 리포트를 못 주는 서비스는 기존 신호 기반 요약으로 폴백한다.
+- [~] **일봉 낙관 편향 보정치는 VBO 에서만 실측됐다 — 다른 전략도 실측 가능해졌다 (2026-08-30 갱신)**: O-3 교차검증의 진입 슬리피지 +0.462%p·낙관 과대 1.138%p 는 VBO 장중 paper 대조로 얻은 값이다. "신규 3전략에는 장중 paper 경로가 없다" 던 기록은 **#932 로 무효** — CB/RSI2/BGU/OSB/PP 전부 `services/overseas_intraday_*_service.py` 를 갖췄다. 따라서 남은 것은 경로가 아니라 표본이고, 전략별로 `compare_overseas_intraday_vs_daily` 와 같은 대조를 돌릴 수 있다.
+  - 그때까지는 **여전히 일봉 수치를 실행 기대값으로 읽지 말 것** — 전략별 실측이 나오기 전에는 VBO 편향폭(1.138%p)을 하한 보정으로 얹어 해석한다.
+  - ⚠ 주의: OSB/PP 는 캔들 상대위치를 쓰는데 장중 경로는 60초 폴링이라 봉 사이 고/저가 관측되지 않는다(#932 문서화된 한계). 이 두 전략은 dry-run 과 장중 paper 가 원리상 완전히 일치하지 않으므로, 괴리를 전부 실행 슬리피지로 귀속하면 과대 해석이 된다.
 - ※ Phase 5(실주문 전환) 착수 조건은 불변이다. 전략 수가 는 것은 **후보 확대이지 엣지 입증이 아니다.**
 
 주요 파일: `services/overseas_dryrun_suite_service.py`, `services/overseas_{pocket_pivot,buyable_gap_up,channel_breakout}_dryrun_service.py`, `task/background/after_market/overseas_dryrun_task.py`, `scripts/analyze_overseas_dryrun.py`
 
-### Phase 5. 안전/canary [**보류** — 스윕에서 엣지 미확인, 2026-08-05]
+### O-5. 미국장 장중 전략 6종 승격 + 마켓타이밍 게이트 [신규 등재 — 2026-08-30, #930/#931/#932/#933/#938]
 
-- [ ] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile(`OverseasReconcileService` scaffolding 존재), risk gate/kill switch/canary USD 확장, 실전 소액 canary, canary auto-fire 배선 + `live_enabled=True` 전환 — dry-run 검증 + canary 게이팅.
+미등재 상태로 5건이 머지돼 이번 점검에서 등재한다. dry-run 은 마감 후 완성봉 사후 평가라 발사 대상이 없어, 같은 규칙을 장중 폴링으로 재현한 paper 경로를 VBO 외 5종(CB/RSI2/BGU/OSB/PP)까지 넓혔다.
+
+- **#932 장중 5종 승격 + 세션 거래량 환산**: 승격을 막던 이유("당일 거래량이 장중에 확정되지 않는다")는 구조적 제약이 아니라 미구현이었다 — 국내가 쓰는 누적거래량 환산(경과 비율 + 시간대별 허들)을 `services/us_session_volume_service.py` 로 해외에 옮겼다. 전략 공통부는 `overseas_intraday_strategy_base.py` 가 갖고 전략은 세션 상수 산출·진입 판정만 구현한다.
+- **전 전략이 하나의 폴링 패스를 공유한다** — 감시 심볼 합집합으로 심볼당 1회 조회 후 fan-out. 전략별 태스크였다면 겹치는 심볼을 전략 수만큼 중복 조회했다(전략당 약 7,800콜/세션). 이 구조가 O-3 의 `top_n` 상향 비용 판단을 바꾼다(O-3 참조).
+- **#931 미국장 마켓타이밍 게이트**: KIS 에 해외 지수 TR 이 없어 프록시 ETF(QQQ/NASD) 일봉으로 국내와 같은 MA 로직을 돌린다(`USMarketRegimeService` 가 `MarketRegimeService` 를 상속, 데이터 소스·캘린더만 교체). 소비처는 **장중 신규 진입 1곳**뿐이고 fail-closed. 손절·EOD 청산은 국면과 무관하게 동작한다. dry-run 6종은 차단하지 않고 국면 라벨만 기록한다 — 차단하면 bear 구간 표본이 통째로 비어 게이트의 사후 검증이 불가능해지기 때문.
+- [ ] **프록시 대체의 유효성 확인** — QQQ(나스닥100)는 다우/러셀 계열 종목의 국면을 대표하지 않는다. 현재 감시 유니버스가 나스닥 대형주에 얼마나 치우쳐 있는지에 따라 게이트가 엉뚱한 종목을 막거나 통과시킬 수 있다. 표본이 쌓이면 **게이트 판정과 실제 결과의 정합성**(bear 라벨 구간의 dry-run 성과가 실제로 나쁜지)을 dry-run 국면 라벨로 사후 검증한다 — 라벨 기록은 #931 이 이미 남기고 있다.
+- **운영 가시성 (#930/#933)**: 해외 주문 실행에 알림을 붙이고(#930), PP dry-run 알림에 판정 근거를 실었다(#933). 자동 경로가 paper 라 지금 나가는 알림은 **would-be 기록**이지, 실체결 알림이 아니라는 점에 유의한다.
+- ※ 잔여 리스크 신호: #932 직후 #938(장중 VBO 거래량 계약 불일치 — `on_price` 시그니처에 `volume` 누락)이 났다. 공통 base 로 6종을 묶으면서 전략별 인터페이스가 어긋난 사례이므로, 이후 전략 추가 시 base 계약 준수를 테스트로 확인할 것.
+
+주요 파일: `services/overseas_intraday_strategy_base.py`, `services/overseas_intraday_{vbo,channel_breakout,rsi2,buyable_gap_up,squeeze_breakout,pocket_pivot}_service.py`, `services/us_session_volume_service.py`, `services/us_market_regime_service.py`, `task/background/intraday/overseas_intraday_task.py`, `task/background/intraday/us_market_timing_daily_update_task.py`
+
+### O-6. 해외 실전 전환 안전장치 P0/P1 [신규 등재 — 2026-08-30, #934/#935]
+
+`docs/canary_procedure.md` 의 진입 조건이 기대하는데 해외 경로에만 없던 컴포넌트 7건을 배선했다. **자동 경로 `live_enabled=False` 잠금은 두 PR 모두에서 유지**되고, 조립부(`overseas_bootstrap.py`)는 자동 경로에 `broker=None` 까지 넘겨 구조적으로 잠근다.
+
+- P0-1 포지션 영속화(`StrategyStateIO` 재사용, 전일 미청산 포지션은 버리지 않고 경고 복원) · P0-2 kill switch 자동 경로 배선 · P0-3 `OverseasRiskGateService`(USD→원화 환산 후 동일 한도, 매도 무차단, 환율 미확인 시 매수 fail-closed, 동시 보유 한도는 전 전략 합계) · P0-4 청산 지정가 재시도(−0.3%→−1.0%, 끝내 실패해도 포지션을 지우지 않음)
+- P1-2 개장 대사 자동화(비교만, 자동 보정 없음) · P1-3 체결 대사 자동화(17:00 ET) · P1-4 리스크 기반 사이징(총자산·손절가 미상이면 고정 슬롯 폴백)
+- [ ] **paper 에서는 검증되지 않는 항목이 남는다** — 리스크게이트·kill switch·청산 재시도는 `live_enabled=False` 에서 live 분기를 타지 않는다. 즉 이 7건은 **단위 테스트로만 검증된 상태**이고 실주문 경로에서 한 번도 돌지 않았다. canary 진입 시 첫 거래일에 이 경로들이 실제로 발동/차단하는지 확인 항목을 별도로 둘 것(국내 0-1 의 "실전 첫날 소액 검증" 과 같은 성격).
+- [ ] **환율 소스의 실패 모드 확인** — P0-3 은 환율 미확인을 매수 fail-closed 로 처리한다. 환율 조회가 자주 실패하면 게이트가 아니라 **가동 중단**으로 나타난다. canary 전에 환율 조회 실패율을 관찰할 것.
+- ※ 이 7건은 Phase 5 의 안전 항목을 대부분 소진했다 — 남은 것은 canary 자동 발사 배선과 `live_enabled=True` 전환뿐이고, 그 둘은 **엣지 입증에 종속**이다(Phase 5 참조).
+
+주요 파일: `services/overseas_risk_gate_service.py`, `services/overseas_intraday_strategy_base.py`, `services/overseas_position_sizing_service.py`, `task/background/intraday/overseas_opening_reconcile_task.py`, `task/background/after_market/overseas_fill_reconcile_task.py`, `view/web/bootstrap/overseas_bootstrap.py`
+
+### Phase 5. 안전/canary [**보류 — 사유가 하나로 좁혀졌다**, 2026-08-30 갱신]
+
+- [~] **Phase 5 안전/canary**: `get_overseas_balance`/`ccnl` reconcile · risk gate/kill switch/canary USD 확장 · 실전 소액 canary · canary auto-fire 배선 + `live_enabled=True` 전환.
+  - **안전 항목은 #934/#935 로 완료** (O-6). 남은 것은 **canary auto-fire 배선 + `live_enabled=True` 전환** 둘뿐이고, 둘 다 엣지 입증에 종속이라 지금 착수 대상이 아니다.
   - **착수 조건 미충족 (2026-08-17 재확인)**: O-3 스윕이 전 조합 음의 기댓값을 보였고, 장중 paper 교차검증(위 O-3)에서 일봉 낙관이 실행 대비 1.138%p 과대임이 실측됐다 — 현 규칙으로 실주문 전환할 근거가 없다. 남은 경로는 **유니버스/규칙 자체를 바꿔 엣지를 먼저 입증**하는 것뿐이다.
   - **수동 주문 경로는 선반영 (#830, 2026-08-13)**: `POST /api/overseas/order` 가 broker 를 직접 호출해 kill-switch 와 기록을 우회하던 문제를 수정. 수동 전용 `OverseasOrderExecutionService` 인스턴스(`overseas_manual_order_service`, `live_enabled=True`) 경유로 전환했고 **자동 경로는 별도 인스턴스라 `live_enabled=False` 잠금 불변**. 취소는 리스크 축소 행위라 게이트 대상에서 제외. 주문 저널은 EventShadowJournal(`journal_strategy_name="수동매매_해외"`).
   - **USD 전용 원장 Phase 1 (#833, 2026-08-13)**: 통화 설계는 **별도 원장**으로 확정(사용자 결정) — `repositories/overseas_trade_repository.py` + `GET /api/overseas/trades`. `VirtualTradeRepository` 는 원화·국내 대사 원장이라 USD 편입 시 성과·대사가 오염되므로 영구 분리한다. 부분매도 lot 분할과 미국 비용 모델(0.25%/side)을 처음부터 적용했다.
   - **USD 원장 Phase 2 — 체결 대사 (2026-08-17)**: 기록 시점이 주문 접수라 미체결 지정가도 HOLD 로 잡히던 것을 `OverseasFillReconcileService`(브로커 체결내역 `inquire_overseas_ccnl` 대조)로 사후 보정한다. `POST /api/overseas/trades/reconcile` — 기본은 판정만, `apply=true` 일 때만 원장 변경. 보정은 **줄이는 방향만**(미체결 → `CANCELED` 표시로 행 유지, 부분체결 → 체결분으로 qty 축소)이고 매칭 실패는 `unfilled` 가 아니라 `unknown` 무조작이다 — 판정 불가를 미체결로 단정하면 실제 보유가 원장에서 사라진다. lot 단위 매칭을 위해 원장에 `order_no` 컬럼을 추가했다(같은 심볼 lot 이 여러 개면 수량 총합으로는 구분 불가). `get_summary()` 는 CANCELED 를 total 에서 제외한다.
   - **USD 원장 Phase 2 — UI 성과 요약 (2026-08-17)**: `GET /api/overseas/trades` 를 소비하는 화면이 없어 `get_summary()` 가 노출되지 않던 것을 해소. 미국장 `보유·주문` 탭에 성과 요약(총/청산/승률/평균수익률) + 거래 목록을 붙였다. 원장은 로컬 DB 읽기라 탭 진입 시 자동 로드한다(잔고·미체결은 브로커 호출이라 버튼 유지). CANCELED lot 은 흐리게 + `취소` 라벨로 보유와 구분하고, 취소 건수는 "집계 제외"로 따로 밝힌다.
   - **USD 원장 Phase 2 — 대사 실행 UI (2026-08-18)**: `보유·주문` 탭 `체결 대사` 버튼. 조회 구간·거래소를 입력받지 않고 **원장 HOLD lot 에서 끌어낸다** — 손으로 넣으면 구간 밖 lot 이 조용히 `판정불가` 로 빠지고 거래소를 하나만 고르면 나머지가 아예 판정되지 않는데, 둘 다 화면상 '대사 끝남' 으로 보이는 실패다. 기본은 판정만이고 보정 대상(`unfilled`/`partial`)이 있을 때만 `보정 적용` 버튼이 나오며 confirm 을 거친다. `unknown` 은 버튼을 띄우지 않는다(무조작이 계약). Phase 2 종결.
+- [ ] **(신규 2026-08-30 — 우선) 잠금 사유가 코드에서 stale 하다**: `view/web/bootstrap/overseas_bootstrap.py:_build_intraday_strategies` docstring 은 잠금 근거를 두 가지로 적는데 **둘 다 이제 사실이 아니다** — ① "해외 주문 TR 은 실전만 존재" 는 #606 에서 모의 쌍이 추가돼 2026-08-11 에 이 문서가 이미 정정한 내용이고, ② "Phase 5(canary/kill-switch/reconcile) 가 미완" 은 #934/#935 로 kill-switch·reconcile 이 배선되며 대부분 해소됐다. 실제 잠금 사유(**스윕·교차검증에서 음의 기댓값**)는 코드 어디에도 적혀 있지 않고 이 문서와 `reports/` 에만 있다.
+  - 위험: 코드를 읽고 판단하는 사람에게는 **적힌 두 사유가 모두 충족된 것처럼 보이고**, 잠금 해제는 플래그 한 줄이다. 동작 변경이 아니라 **주석 정정**만 필요한 항목이다.
+  - 같은 성격의 사례가 국내에도 있다 — Pool B 항목의 `_passes_validity_filter` docstring("fallback 시 fail-closed")이 #936 이후 실제 동작과 어긋난다. 근거가 바뀐 docstring 을 훑을 때 함께 볼 것.
 
 주요 파일: `brokers/korea_investment/korea_invest_overseas_stock_api.py`, `brokers/broker_api_wrapper.py`, `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/overseas_fill_reconcile_service.py`, `services/stock_query_service.py`, `repositories/overseas_trade_repository.py`, `view/web/routes/{order,overseas_market}.py`, `view/web/bootstrap/{service_container,strategy_factory}.py`, `config/tr_ids_config.yaml`
 
@@ -311,6 +348,10 @@
 - [x] **체결 품질 섹션 분리 (2026-08-22)**: `strategy_log_report_service.py` 의 체결 품질·후보 유동성 섹션과 그 헬퍼(최신 레코드 선별·기간 라벨·임계 판정, 446줄)를 `services/strategy_execution_quality_report.py`(`ExecutionQualityReportBuilder`)로 이관했다 — **2,716→2,243줄**. 두 모듈이 함께 쓰는 포맷 헬퍼(`_esc`/`_to_float`/`_format_eok_won`/`_first_number`)와 행 수 상수는 `services/strategy_report_format.py` 로 빼 단방향 의존(format ← service·builder)을 만들었다. 비활성화 후보 상태는 빌더가 소유하되 서비스의 `get_last_execution_quality_candidates()` 는 그대로라 소비처(`strategy_log_report_task`)는 무변경.
 - 감시(조치 아님, 2026-08-22 실측 — 07-18 이후 갱신되지 않아 실제 증가폭이 문서에 반영되지 않고 있었다): `scheduler/strategy_scheduler.py` 2,426→**2,499줄**(+73, 08-18 이후 정체) / `services/strategy_log_report_service.py` 2,298→2,716줄(+418, 08-18 2,549 → 08-21 2,716 로 증가 가속) 후 위 분리로 **2,243줄** / `view/web/bootstrap/service_container.py` 746→1,174줄(+428; 08-18 1,078 → 08-21 1,126)까지 늘어 **#659~664 분해로 얻은 962→710 감소가 상쇄되고 분해 이전(962줄)보다 커졌다가**, 위 해외 분해로 **936줄**로 내렸다. 다만 신규 서비스 조립이 계속 이 파일에 쌓이는 구조 자체는 그대로라 분해만으로는 재발을 막지 못한다 — 다음 증가 시엔 조립 지점 규약(신규 서비스군은 전용 bootstrap 모듈에 넣는다)을 함께 정할 것. 남은 god class 분해는 3-4 재승격과 함께 진행.
 - [x] **조립 지점 규약을 테스트로 고정 (2026-08-23)**: 위 감시 항목이 수기 계측이라 07-18~08-22 한 달간 갱신되지 않았던 문제를 해소한다. `tests/unit_test/view/web/bootstrap/test_assembly_point_guard.py` 가 `service_container.py` 의 **services/task import 개수(53 → 예산 56)** 와 **줄수(936 → 예산 980)** 를 고정하고, 초과 시 "신규 서비스군은 `view/web/bootstrap/<이름>_bootstrap.py` 로 분리한다(#659~664 · overseas_bootstrap 패턴)" 를 실패 메시지로 안내한다. 줄수보다 import 개수가 조립 누적의 직접 신호라 두 지표를 함께 건다(줄수만 보면 주석·docstring 이 신호를 흐린다). 예산을 올리려면 이 문서의 계측도 함께 갱신해야 하므로 문서 동기화가 강제된다. `strategy_scheduler.py`·`strategy_log_report_service.py` 는 조립 지점이 아니라 이번 가드 대상에서 제외 — 3-4 재승격 시 함께 판단한다.
+- **계측 갱신 (2026-08-30 실측)**: `service_container.py` 936→**943줄 / services·task import 53개**(예산 980줄·56개 — 가드는 아직 여유가 있다) · `scheduler/strategy_scheduler.py` 2,499→**2,526줄** · `strategy_log_report_service.py` 2,243줄(변동 없음).
+- [ ] **(신규 2026-08-30) 가드의 사각지대 — 조립이 `overseas_bootstrap.py` 로 옮겨가 그대로 쌓이고 있다**: 08-22 추출 당시 220줄이던 파일이 #931/#932/#934/#935 를 거치며 **481줄 / services·task import 30개**가 됐다(9일 만에 2.2배). `service_container.py` 의 예산이 지켜진 이유의 상당 부분이 "해외 조립이 저기로 갔기 때문" 이라 **가드가 측정하는 곳과 실제로 누적되는 곳이 어긋났다**. #888 이 고정한 것은 파일 하나이지 규약이 아니다.
+  - 판단할 것: 가드를 `view/web/bootstrap/*_bootstrap.py` 전체(파일별 예산)로 넓힐지, 아니면 해외 조립을 다시 쪼갤지(장중 전략 / dry-run / 대사·주문 3덩이). 비용은 전자가 낮다.
+- [ ] **(신규 2026-08-30) `CODEBASE_SUMMARY.md` 헤더가 본문보다 낡았다**: 본문은 #931/#932/#934/#935 가 4-1·4-2 절까지 갱신했는데 헤더는 `최종 업데이트: 2026-08-21` 이고 규모 실측도 `406개 파일 / ~101,300 LoC · 단위 421 · 통합 35` 로 남아 있다. 2026-08-30 실측(`git ls-files` 기준, `tests/`·`scripts/` 제외): **프로덕션 399개 파일 / 98,349 LoC, 테스트 단위 462개 · 통합 34개 파일**. ※ 측정 기준이 다를 수 있으므로 갱신 시 계산식을 함께 남길 것.
 
 - [x] **커버리지 캠페인 완료 (2026-08-26 기록, #894/#895/#905)**: 70% 미만 6개 파일(#894) → 80% 미만 22개 파일(#895) → **90% 미만 0개 / 전체 95.19%**(#905)로 단계적으로 해소했다. M-2 의 구조 감시와 같은 축(코드 품질 상시)이라 여기에 기록한다.
 - [ ] **커버리지 회귀 방지 가드 판단** — 95.19% 는 수기 캠페인으로 도달한 값이라 M-2 의 줄수 계측이 한 달간 낡았던 것과 같은 방식으로 침식될 수 있다. `.coveragerc` 에 `fail_under` 를 걸지, 아니면 `test_assembly_point_guard.py`(#888) 처럼 예산 테스트로 고정할지 판단한다. CI 가 이미 `--cov-report=xml` 을 만들고 있어 붙이는 비용은 낮다.
@@ -408,11 +449,22 @@ M-5 가 관찰 항목으로 걸어둔 승격 조건("다음 문서 점검에서 
   - **계약 3 슬롯 회계** (#906~#910 축): 진실 소스는 **브로커 원장**이고 내부 장부는 폴백이다. `CRITICAL`(PT)은 밀어내기 대신 **거절**한다 — 조용한 강등은 진단이 불가능하기 때문. 정책 밖 구독은 `set_external_reserved_slots` 로 예약분에 반영해야 한다.
 - [x] **신규 구독·시세 경로 체크리스트 (2026-08-26)** — 위 문서의 "추가 전 체크리스트" 9항목으로 붙였다(캐시 키 축·우회 계측·폴백 판정·부분 값·기준일 일관성·슬롯 포함 여부·슬롯 회수·우선순위·정적자산).
 - [ ] **계약을 테스트로 고정** — 문서만으로는 M-2 의 수기 계측처럼 낡는다. `test_assembly_point_guard.py`(#888)·`test_static_asset_versions.py`(#915) 가 이미 이 저장소의 "계약을 테스트로 거는" 패턴이므로 그 형식을 따른다.
+  - **2026-08-30 확인: 미착수** — `docs/quote_subscription_contracts.md` 를 참조하는 테스트는 0건이고, 08-26 이후 이 계열 신규 수정도 0건이다(재발이 멈춘 것인지 관심이 해외로 옮겨간 것인지는 아직 구분 불가 — 해외 8건이 같은 기간을 채웠다). **1~4번이 외부 의존으로 막혀 있는 동안 자체 진행 가능한 항목이라는 위치는 그대로다.**
 - ※ 범위 주의: M-8 의 실계좌 확인 4건과 겹치는 부분(거래소 지정 구독의 슬롯 회계)은 **문서·테스트 고정까지만** 여기서 하고, 실계좌 실측은 M-8 에 남긴다.
 
 ### M-10. 미국장 현재가 전용 페이지 [신규 등재 — 2026-08-26, #885/#893]
 
 `view/web/templates/overseas_stock.html` + `overseas_stock.js` 로 미국장 현재가 화면을 분리하고, 미국장 목록의 종목명(심볼) 클릭 시 이 화면으로 이동하도록 연결했다(#893). jsdom 회귀(`run_overseas_stock_dom_tests.mjs`) 동반. 기능은 완료 상태이고 남은 실행 항목은 없다 — M-3(시가총액/미국주식 UI 하드닝)과 같은 성격의 완료 축으로 기록만 남긴다.
+
+### M-11. 홈 시장지수 카드 [신규 등재 — 2026-08-30, #911/#913/#916/#923/#927]
+
+홈 화면 지수 카드가 5건에 걸쳐 확장·조정됐는데 todo 미등재였다 — M-3/M-10 과 같은 성격의 UI 축이라 **완료 축 기록**으로 남긴다. 남은 실행 항목은 없다.
+
+- #911 스파크라인을 시가 기준으로 색칠 · #916 국내 카드 크기를 해외와 일치 · #923 암호화폐·국채 그룹 추가 · #927 국채를 ETF 가격에서 **금리(%)** 로 교체 + 카드 세로 압축 · #913 캐시버스팅 v6.
+- **보존 가치 있는 실측 (2026-08-30 기준, #927)**: TradingView 임베드에서 `TVC:US10Y`/`TVC:US02Y` 는 위젯 3종(mini-symbol-overview·symbol-overview·advanced-chart) **전부 차단**되고 `FRED:DGS10`/`FRED:DGS2` 는 렌더된다(대조군 `NASDAQ:SOXX`·`TVC:GOLD` 정상 → 환경 문제 아님). FRED 는 일 1회 갱신이라 `dateRange: '1D'` 로는 그릴 점이 없어 항목별 dateRange 가 필요하다. **같은 심볼을 다시 시도하기 전에 이 기록을 볼 것.**
+- ※ 정적자산 축(#913)은 M-9 계약 4(캐시버스팅)가 이미 `asset_versions.json` + `test_static_asset_versions.py` 로 고정한 경로다 — #927 도 같은 잠금을 갱신했다. 이 하위 축은 구조로 해소된 상태가 유지되고 있다.
+
+주요 파일: `view/web/static/js/market_indices.js`, `view/web/static/css/style.css`, `view/web/asset_versions.json`, `tests/frontend/run_market_indices_dom_tests.mjs`, `tests/unit_test/view/web/test_market_indices_contracts.py`
 
 ---
 
@@ -424,6 +476,7 @@ M-5 가 관찰 항목으로 걸어둔 승격 조건("다음 문서 점검에서 
 
 - #904 스케줄러 자체를 시장별로 분리 · #903 미국장 태스크 상태 노출 · #918 페이지를 상단 시장 탭(한국장/미국장)으로 분리(`/scheduler` 국내 전용 + `/overseas-scheduler` 신설, `?market=` 전파) · #919 미국장 태스크 배선 수정.
 - [ ] **#919 가 배선 수정이라는 점이 잔여 리스크 신호다** — 분리 직후 배선 결함이 한 번 났으므로, 두 시장의 태스크 등록·시작·정지 경로가 서로를 침범하지 않는지 통합 테스트로 고정할지 판단한다. (현재 `test_it_scheduler_status_market_tasks.py` 가 상태 조회는 덮지만 시작/정지 교차 경로는 미확인.)
+  - **2026-08-30 갱신 — 판단 근거가 강해졌다**: 분리 이후에도 미국장 태스크 배선이 계속 바뀌고 있다. #932 가 `overseas_intraday_vbo_task` → `overseas_intraday_task` 로 태스크를 통합·개명했고, #935 가 개장 대사·체결 대사 태스크 2건을 `scheduler_bootstrap` 에 추가했다. **분리 직후 결함 1건(#919) + 그 위에 태스크 3건 변경**이면 교차 경로를 테스트로 고정할 값이 처음 등재 때보다 크다. 저비용 항목이라 M-9 테스트 고정과 함께 묶어 진행할 만하다.
 - ※ 3-4 lifecycle 분해와 대상 파일(`scheduler/strategy_scheduler.py`)이 겹친다. 3-4 재승격 시 이 분리 구조를 전제로 범위를 잡을 것.
 
 ---
@@ -432,12 +485,13 @@ M-5 가 관찰 항목으로 걸어둔 승격 조건("다음 문서 점검에서 
 
 이번 점검에서 발견한 **todo 미등재 신규 데이터 축 2건**. 둘 다 기존 섹션(P/M/X)에 속하지 않아 새 섹션으로 연다.
 
-### D-1. 관세청 / 무역 통계 [신규 등재 — 2026-08-26, #912/#914/#917/#922]
+### D-1. 관세청 / 무역 통계 [신규 등재 — 2026-08-26, #912/#914/#917/#922 · +#925/#928]
 
 `services/trade_trend_service.py`(1,082줄) + `view/web/routes/trade_trend.py`(266줄) + `trade_trends.html`. 관세청 수출입 통계를 수집·표시한다.
 
 - 머지 4건 중 **3건이 외부 장애·스펙 대응**이다: #912 API 실패 처리 · #914 제주 무역 업스트림 장애를 unavailable 로 · #917 관세청 시도 무역 API 엔드포인트 수정 · #922 HS 코드 chapter 폴백.
-- [ ] **외부 API 계약 안정성 판단** — 짧은 기간에 엔드포인트 수정 1건 + 장애 처리 2건 + 폴백 1건이 났다. 업스트림이 불안정한 것인지 초기 통합 과정의 정상적 수렴인지, 다음 점검에서 이 계열 수정이 더 쌓이는지로 판정한다(M-5 와 같은 관찰 방식). **지금은 조치를 열지 않는다.**
+- [x] **외부 API 계약 안정성 판단 — 수렴 쪽, 승격 보류 (2026-08-30)**: 판정 근거는 **분포이지 총량이 아니다.** 누적 6건(#912/#914/#917/#922/#925/#928)이지만 시간축을 보면 08-25~08-26 이틀에 4건이 몰렸고, 이후 #925(제주 월별 API 처리)·#928(캐싱, 장애 대응 아님) 뒤 **08-28~08-30 3일간 0건**이다. 초기 통합의 정상적 수렴 형태이고, M-5→M-9 승격을 정당화했던 "빈도가 줄지 않는다" 조건에 해당하지 않는다.
+  - 다음 판정 기준(더 구체화): **새 엔드포인트를 추가하지 않은 상태에서** 기존 경로의 장애·스펙 수정이 다시 나오면 그때 승격한다. 새 엔드포인트를 붙이면서 나는 수정은 수렴 과정으로 계산한다.
 - [ ] 전략·매매 경로와의 연결 여부 미정 — 현재는 조회 화면 전용이다. 매매 신호로 쓸 계획이 있는지 결정 대기.
 
 ### D-2. YouTube 다이제스트 [신규 등재 — 2026-08-26, #920/#921]
@@ -497,12 +551,17 @@ M-5 가 관찰 항목으로 걸어둔 승격 조건("다음 문서 점검에서 
 
 ## 조건부 / 정책 결정 대기
 
-### Pool B 튜닝 (후보 부족 지속 — **트레이딩 완화는 보류, 캡처는 랭킹 보충으로 우회** 2026-07-08)
+### Pool B 튜닝 (후보 부족 지속 — **2026-08-28 #936 으로 트레이딩 경로에도 랭킹 보충이 들어왔다**)
 
 - **기근 지속**: 07-02 KOSPI 1/KOSDAQ 0 → 07-03 0/0 → 07-07 1/1 → 07-08 1/0. 양시장 MA 하락 구간이라 마켓 타이밍 게이트가 어차피 스캔을 차단 중 — 하락장에서 Stage 2+RS 필터가 마르는 것은 설계상 자연스러운 면이 있어, 완화가 실익(추가 진입 기회)으로 이어지는지는 시장 회복 국면의 후보 수로 판단할 것.
 - **funnel 실측 (2026-07-08, 프리미엄 배치 3일 07-02/07/08 동일 패턴)**: 1차 통과 812~839종목 → **거래대금 100억 필터에서 596~620종목(73%) 탈락** → 통과 ~216종목 중 **정배열(current>ma20>ma50)에서 201종목(93%) 탈락** → 52주고가·스퀴즈 → 최종 1~2종목. what-if: 100억→50억 완화 시 +98~110종목이 정배열 관문으로 진행하나 최종 생존 추정 +2~7종목/일에 그침.
 - **결정 (2026-07-08)**: 트레이딩 필터 완화는 보류 — 마켓타이밍 차단 중이라 진입 실익이 없고, 기근이 물고 있던 캡처 코퍼스 폭·1-8 PIT 후보 문제는 1-5 캡처 전용 랭킹 보충(주문 경로 불변)으로 우회 해결.
-- [ ] (시장 회복 후 재판단) 거래대금 기준 완화 — Pool B 장중 임계 50억→30억 및 프리미엄 배치 임계 100억→50억(기근의 실측 관문은 배치 100억 쪽).
+- **정책 변경 (2026-08-28, #936 — 이번 점검에서 발견·등재)**: `LarryWilliamsVBOStrategy._load_pool_b` 가 universe watchlist 에 **장중 랭킹 후보(거래대금·상승률·거래량 상위)를 항상 병합**하고, `_passes_validity_filter` 는 `source == "intraday_rank"` 이고 당일 거래대금이 `min_intraday_trading_value`(기본 100억) 이상이면 통과시킨다. 07-08 결정의 "랭킹 보충은 캡처 전용, **주문 경로 불변**" 이라는 범위를 넘긴 변경이다 — 07-08 이 우회로 미뤄둔 트레이딩 완화가 다른 형태로 들어온 셈이라 여기에 등재한다.
+  - 판단: 기근(1~2종목/일)이 계속되는 한 방향 자체는 합리적이다. 문제는 **완화의 범위가 어디까지인지 문서에 없다**는 점이다.
+- [ ] **(신규 2026-08-30, 우선) 랭킹 보충 후보의 시총 하한 우회 확인** — `_passes_validity_filter` 의 시총 검사는 `if market_cap > 0 and market_cap < min` 이라 **`market_cap == 0` 이면 통과**한다. 랭킹 응답에 `hts_avls`/`stck_avls`/`stck_llam` 이 없으면 `_parse_market_cap` 이 0 을 돌려주고, 그 다음 `intraday_rank` 조기 통과가 걸려 **시총 2,000억 하한이 한 번도 적용되지 않은 채** VBO 진입 평가까지 간다. 종전 fallback 경로는 `avg_5d_tv <= 0` fail-closed 가 backstop 이었는데, 조기 통과가 그 backstop 보다 앞에 있다.
+  - 확인할 것: 세 랭킹 API 응답이 각각 시총 필드를 싣는지(특히 `get_top_volume_stocks`). 안 싣는다면 fail-closed(시총 미상 = 거절)로 되돌릴지, 별도 조회로 채울지 결정한다. **실계좌 주문 경로라 결정 전까지는 관찰이 아니라 확인 대상이다.**
+  - 함께: `_passes_validity_filter` docstring 이 아직 "fallback 시: avg_5d_tv 미제공이면 fail-closed로 차단한다" 라고 적혀 있어 새 경로와 어긋난다.
+- [ ] (시장 회복 후 재판단) 거래대금 기준 완화 — Pool B 장중 임계 50억→30억 및 프리미엄 배치 임계 100억→50억(기근의 실측 관문은 배치 100억 쪽). ※ #936 이 "당일 거래대금 100억" 이라는 **다른 축의 완화**를 먼저 넣었으므로, 이 항목을 재개할 때는 두 완화가 중복 적용되는지 함께 볼 것.
 - [ ] (시장 회복 후 재판단) 정배열 조건을 Pool B 전용 `current > ma_20d` 중심으로 완화 검토.
 
 ### R-2. 전략 상관 / 단일 regime 집중 [엣지 도입 — Phase 1~3 완료, Phase 4 데이터 대기]
@@ -538,6 +597,8 @@ M-5 가 관찰 항목으로 걸어둔 승격 조건("다음 문서 점검에서 
 - [x] 장애·데이터 지연·websocket 끊김·reconcile 실패 시 신규 주문 차단 또는 경고 전환.
 - [x] 킬스위치 상태(연속손실·일손실 카운터)는 atomic JSON으로 영속화되어 재시작 시 유지된다.
 - [x] 공개 배포 표면은 public/demo mode, exact-origin CORS, 페이지 `Cache-Control: no-store`, 공개 모드 위험 API 차단 기준에 묶여 있다.
+- [~] 해외(미국장) **자동** 전략 경로는 `live_enabled=False` + 자동 인스턴스에 `broker=None` 으로 구조적으로 잠겨 있고, 수동 주문 경로(`live_enabled=True`)와 별도 인스턴스다. 조립 지점은 `view/web/bootstrap/overseas_bootstrap.py` 하나다.
+  - 진행 필요: 잠금은 유효하나 **코드에 적힌 잠금 사유가 stale** 하다(Phase 5 항목). 안전장치(risk gate·kill switch·청산 재시도)는 배선됐지만 `live_enabled=False` 라 **실주문 경로에서 한 번도 발동한 적이 없다**(O-6).
 - [~] 전략 성과는 수수료·세금·슬리피지 반영 순수익 기준으로 추적된다.
   - 진행 필요: `MomentumStrategy` 등 비활성/레거시 독립 백테스트 경로까지 동일 체결 리포트/장부 통합할지 결정.
 
