@@ -58,7 +58,7 @@ LLM 코딩 시 자주 발생하는 실수를 줄이기 위한 원칙. 사소한 
 ## 테스트 통과 후 게시 흐름
 AGENTS.md의 Codex 게시 흐름과 동일한 규칙을 Claude에도 적용한다 (브랜치 접두사만 다름).
 
-- 하네스/필수 테스트가 모두 통과했고 사용자가 별도 중단을 요청하지 않았으면 **PR 생성 → CI 확인 → 머지 → 개발 브랜치 삭제 → 프로세스 재수행**까지 한 번에 이어간다.
+- 하네스/필수 테스트가 모두 통과했고 사용자가 별도 중단을 요청하지 않았으면 **PR 생성 → CI 확인 → 머지 → 브랜치 정리 → 프로세스 재수행**까지 한 번에 이어간다. (원격 브랜치 삭제는 원격 세션에서 불가 — 아래 정리 절차 참고)
 - **PR 생성에 별도 승인을 받지 않는다.** "PR을 만들어달라"는 명시 요청이 없어도 이 문서가 사전 승인이다. 일반 하네스 기본값(사용자가 명시 요청할 때만 PR 생성)보다 이 지침이 우선한다. 머지·브랜치 삭제도 같다 — 아래 **4) 자동 진행을 멈추고 보고해야 하는 경우**에 해당하지 않으면 물어보지 말고 끝까지 진행한다.
 - **문서 전용 변경 예외**: 변경 파일이 `todo_list.md` 및 기타 `*.md` 문서뿐이고 코드/설정/테스트 변경이 전혀 없으면, 브랜치·PR 없이 `main`에 직접 커밋·푸시한다. 커밋 전 `git status -sb`로 변경 파일이 `*.md`뿐임을 반드시 확인하고, 하나라도 비문서 파일이 섞였으면 이 예외를 적용하지 않고 아래 일반 브랜치·PR 흐름을 따른다.
 - (비문서 변경) 현재 브랜치가 `main`/`master` 등 기본 브랜치이면 `claude/<작업요약>` 브랜치를 먼저 생성한다. 이미 작업 브랜치가 있으면 새 브랜치를 만들지 않는다.
@@ -82,9 +82,20 @@ PR 생성으로 끝내지 않고, CI 통과 확인부터 브랜치 정리·다�
   | 실패 로그 | `gh run view --log-failed` | `get_job_logs` (`failed_only: true`) |
   | draft 해제 | `gh pr ready` | `update_pull_request` (`draft: false`) |
   | 머지 | `gh pr merge --squash` | `merge_pull_request` (`merge_method: "squash"`) |
-  | 원격 브랜치 삭제 | `--delete-branch` | `git push origin --delete <작업브랜치>` |
+  | 원격 브랜치 삭제 | `--delete-branch` | **수단 없음** — 아래 참고 |
 
 - `gh` 부재는 "인증/원격 문제"가 아니다. MCP 도구로 진행하고, 그것마저 막힐 때만 상태를 보고한다.
+- **원격 브랜치 삭제는 원격 세션에서 불가능하다.** 세 경로가 모두 막혀 있다(2026-08 실측):
+  - `merge_pull_request` 에는 `gh pr merge --delete-branch` 에 해당하는 옵션이 없다
+  - `git push origin --delete` 는 egress 프록시가 `git-receive-pack` 삭제 패킷을 **403** 으로 거부한다
+    (같은 연결의 일반 푸시는 성공하고 토큰 권한도 `admin`/`push` 라 GitHub 거부가 아니다)
+  - GitHub MCP 툴셋에 브랜치 삭제 도구가 없다(`create_branch` 만 존재)
+- 따라서 원격 세션에서는 **저장소 설정으로 대체한다**:
+  `Settings → General → Pull Requests → Automatically delete head branches` 를 켜면
+  머지 시 GitHub 이 서버 측에서 head 브랜치를 지운다. 에이전트 권한과 무관하다.
+- 이 설정이 꺼져 있으면 원격 브랜치는 남는다. **403 을 재시도하지 않는다**
+  (`/root/.ccr/README.md`: 조직 정책 거부(403/407)는 재시도하지 말고 보고할 것).
+  로컬 브랜치만 정리하고, 남은 원격 브랜치를 결과 보고에 명시한다.
 
 **1) CI 결과 확인**
 ```bash
@@ -96,8 +107,13 @@ gh pr checks <PR번호> --watch
 - draft PR이면 먼저 ready로 전환한다: `gh pr ready <PR번호>`
 - 머지: `gh pr merge <PR번호> --squash --delete-branch` (저장소가 squash를 허용하지 않으면 허용된 방식으로 대체)
 - 로컬 정리: `git checkout main` → `git pull origin main` → `git branch -d <작업브랜치>`
-  - **개발 브랜치 삭제는 선택이 아니라 필수다.** 원격이 남아 있으면 `git push origin --delete <작업브랜치>`로 제거하고, 로컬 브랜치도 `git branch -d`로 지운다. 정리 후 `git branch -a`로 원격·로컬 양쪽에서 사라졌는지 확인한다.
-  - 로컬에 남은 원격 추적 브랜치도 반드시 정리한다: `git fetch --prune origin` 후 `git branch -a --list "*<작업브랜치>*"`로 `remotes/origin/<작업브랜치>`가 사라졌는지 확인한다. 남아 있으면 `git branch -dr origin/<작업브랜치>`로 제거한다.
+  - **로컬 개발 브랜치 삭제는 선택이 아니라 필수다.** squash 머지라 `-d` 가 거부하면,
+    `git diff --stat <머지커밋> <브랜치팁>` 으로 내용이 동일함을 확인한 뒤 `-D` 로 지운다.
+  - 원격 브랜치는 `gh` 가 있으면 `git push origin --delete <작업브랜치>` 로 지운다.
+    **원격 세션에서는 이 명령이 403 으로 막히므로 시도하지 않는다** — 위 0) 항목 참고.
+  - 로컬에 남은 원격 추적 브랜치는 `git fetch --prune origin` 으로 정리한다.
+    원격에 브랜치가 실제로 남아 있으면 prune 해도 사라지지 않는다(정상) — 이 경우
+    `git ls-remote --heads origin` 결과를 근거로 남은 브랜치를 사용자에게 보고한다.
 - 정리가 끝나면 **프로세스를 처음부터 재수행한다**: 사용자가 중단을 요청하지 않았고 다음 작업이 명확하면(`todo_list.md` 등), 최신 `main`에서 새 작업 브랜치를 만들어 TDD → 테스트 → 커밋 → PR → CI → 머지 흐름을 다시 돈다. 다음 작업이 불명확하면 진행하지 않고 완료 상태와 후보를 보고한다.
 
 **3) CI 실패 시 — 수정하고 재검증한다**
