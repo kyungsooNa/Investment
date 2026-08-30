@@ -1,7 +1,7 @@
 /*
  * jsdom 기반 홈 화면 지수 패널 회귀 테스트.
  *
- * 국장은 KIS API(/api/market-index/*) + Chart.js, 미장/원자재는 TradingView 위젯으로
+ * 국장은 KIS API(/api/market-index/*) + Chart.js, 미장/원자재는 TradingView 차트 포함 위젯으로
  * 렌더링 경로가 다르므로 두 경로를 모두 검증한다.
  *
  * 실행: node run_market_indices_dom_tests.mjs
@@ -42,7 +42,7 @@ const BLOCKED_SYMBOLS = [
 ];
 
 const WIDGET_SRC =
-  "https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js";
+  "https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js";
 
 const SCAFFOLD = `<div id="market-indices"></div>`;
 
@@ -159,7 +159,7 @@ test("임베드가 차단되는 거래소 실지수 심볼을 쓰지 않는다",
   });
 });
 
-test("미장·원자재·가상자산·채권 카드는 TradingView 위젯 스크립트를 심는다", async () => {
+test("미장·원자재·가상자산·채권 카드는 TradingView 차트 포함 위젯 스크립트를 심는다", async () => {
   const window = await makeWindow();
 
   await window.renderMarketIndices();
@@ -172,8 +172,11 @@ test("미장·원자재·가상자산·채권 카드는 TradingView 위젯 스�
     assert(script, `${card.dataset.key} 카드에 위젯 스크립트가 없음`);
     assert(script.src === WIDGET_SRC, `${card.dataset.key} 위젯 src 가 다름: ${script.src}`);
     const config = JSON.parse(script.textContent);
-    assert(config.symbol === card.dataset.key,
-      `${card.dataset.key} 위젯 설정 symbol 이 다름: ${config.symbol}`);
+    assert(Array.isArray(config.symbols), `${card.dataset.key} 위젯 설정 symbols 가 없음`);
+    assert(config.symbols.flat().some(item => String(item).includes(card.dataset.key)),
+      `${card.dataset.key} 위젯 설정에 심볼이 없음: ${JSON.stringify(config.symbols)}`);
+    assert(config.chartOnly === false, "위젯은 값과 그래프를 함께 보여야 함");
+    assert(config.hideDateRanges === true, "좁은 카드에서는 위젯 기간 버튼을 숨겨야 함");
     assert(config.colorTheme === "light", "위젯 테마는 앱과 동일한 light 여야 함");
   }
 });

@@ -2,10 +2,10 @@
 //
 // 국장(코스피/코스닥)은 KIS API + Chart.js 로 직접 그린다.
 //   - TradingView 무료 임베드는 KRX 심볼을 전부 차단한다("이 심볼은 트레이딩뷰에서만 쓸 수 있습니다").
-// 미장/원자재/가상자산/채권은 TradingView mini-symbol-overview 위젯을 쓴다.
+// 미장/원자재/가상자산/채권은 TradingView symbol-overview 위젯을 쓴다.
 //   - KIS Open API 가 SOX/VIX/달러인덱스/금/유가 시세를 제공하지 않는다.
 //   - 거래소 실지수(SP:SPX, NASDAQ:NDX, CBOE:VIX ...)도 임베드가 차단되므로
-//     실제로 시세가 그려지는 CFD/ETF 심볼만 쓴다.
+//     실제로 시세와 그래프가 그려지는 CFD/ETF 심볼만 쓴다.
 
 const MARKET_INDEX_GROUPS = [
     {
@@ -70,7 +70,7 @@ const MARKET_INDEX_PERIODS = [
 const MARKET_INDEX_DEFAULT_PERIOD = '1D';
 
 const MARKET_INDEX_WIDGET_SRC =
-    'https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js';
+    'https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js';
 
 const MARKET_INDEX_LOAD_ERROR = '지수 데이터를 불러오지 못했습니다.';
 
@@ -108,14 +108,32 @@ function buildMarketIndexWidgetCard(doc, entry) {
     script.async = true;
     script.src = MARKET_INDEX_WIDGET_SRC;
     script.textContent = JSON.stringify({
-        symbol: entry.symbol,
+        symbols: [[entry.label, `${entry.symbol}|${entry.dateRange || '1D'}`]],
+        chartOnly: false,
         width: '100%',
-        height: 108,
+        height: 180,
         locale: 'kr',
-        dateRange: entry.dateRange || '1D',
         colorTheme: 'light',
         isTransparent: true,
         autosize: false,
+        showVolume: false,
+        showMA: false,
+        hideDateRanges: true,
+        hideMarketStatus: false,
+        hideSymbolLogo: false,
+        scalePosition: 'right',
+        scaleMode: 'Normal',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontSize: '10',
+        noTimeScale: false,
+        valuesTracking: '1',
+        changeMode: 'price-and-percent',
+        chartType: 'area',
+        maLineColor: '#2962FF',
+        maLineWidth: 1,
+        maLength: 9,
+        lineWidth: 1.5,
+        lineType: 0,
         largeChartUrl: '',
     });
     script.addEventListener('error', () => {
