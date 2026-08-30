@@ -1,8 +1,9 @@
 """OverseasBootstrap — 해외(미국장) 서비스·태스크 조립을 전담한다.
 
-`ServiceContainer.run()` 에서 옮겨온 4개 조립 경로를 담는다 — 관심종목 등락 알림,
+`ServiceContainer.run()` 에서 옮겨온 조립 경로를 담는다 — 관심종목 등락 알림,
 dry-run 파이프라인(전략 6종 + suite + after-market 태스크), 수동 주문 게이팅 서비스,
-장중 VBO 폴링 경로. 조립 순서·조건·후주입은 이관 전과 동일하다.
+장중 폴링 경로(전략 6종이 태스크 하나를 공유), 리스크게이트·대사 태스크.
+조립 순서·조건·후주입은 이관 전과 동일하다.
 
 **자동 전략 경로의 `live_enabled=False` 잠금은 이 파일이 유일한 조립 지점이다** —
 수동 주문 서비스(`live_enabled=True`)와 별도 인스턴스라는 분리가 여기서 유지된다.
@@ -315,9 +316,22 @@ class OverseasBootstrap:
 
         dry-run 은 마감 후 사후 평가라 발사 대상이 없다. 본 경로는 정규장 중 폴링가로
         진입/청산을 판정해 전략이 실제로 돌게 한다. 다만 **주문 서비스는
-        `live_enabled=False` 로 고정**한다 — 해외 주문 TR 은 실전만 존재하고 Phase 5
-        (canary/kill-switch/reconcile) 가 미완이라, 자동 발사는 여전히 잠근다.
-        `allow_live_trading` 은 수동 주문 경로용이며 이 자동 경로를 열지 않는다.
+        `live_enabled=False` 로 고정**한다. `allow_live_trading` 은 수동 주문 경로용이며
+        이 자동 경로를 열지 않는다.
+
+        **잠금 사유 (2026-08-30 갱신 — 종전 사유 두 가지는 모두 낡았다)**:
+        ① "해외 주문 TR 은 실전만 존재" 는 사실이 아니다. #606 에서 정규장 TR 로 바꾸며
+        모의 쌍(VTTT1002U/VTTT1006U/VTTT1004U)이 추가됐고 `trid_provider` 가
+        `is_paper_trading` 으로 분기한다. ② "Phase 5(canary/kill-switch/reconcile) 미완"
+        도 아니다 — #934(영속화·kill switch·USD 리스크게이트·청산 재시도)와
+        #935(개장/체결 대사 자동화·리스크 기반 사이징)로 안전장치는 배선됐다.
+
+        **실제로 남은 잠금 사유는 하나, 엣지가 입증되지 않은 것이다.** 일봉 파라미터
+        스윕은 전 조합에서 비용 후 음의 기댓값이었고(`reports/overseas_vbo_sweep_20260805.md`),
+        장중 paper 교차검증에서 일봉 낙관이 실행 대비 1.138%p 과대임이 실측됐다
+        (`reports/overseas_intraday_vs_daily_20260817.md`). 그래서 이 플래그를 여는 조건은
+        "안전장치가 갖춰졌는가" 가 아니라 **"전략별 would-be 성과가 왕복비용(0.5%)을
+        넘겼는가"** 다. todo_list.md 의 O-4·O-6·Phase 5 항목을 함께 볼 것.
 
         전략 6종은 **하나의 태스크·하나의 폴링 패스**를 공유한다 — 전략마다 태스크를
         두면 겹치는 심볼을 전략 수만큼 중복 조회한다. 주문 서비스와 paper 저널도
