@@ -681,6 +681,46 @@ test("거래 기록이 비면 안내 문구를 보여준다", async () => {
   assert(text.includes("없"), `빈 상태 안내가 있어야 함 (실제 "${text.slice(0, 200)}")`);
 });
 
+// USD 원장이 비는 흔한 이유는 "아직 아무것도 안 샀다" 가 아니라 "이 원장에 쓰는 경로가
+// 웹 수동주문 하나뿐" 이라는 것이다. 자동 전략은 would-be 저널로만 남고, 국내 모의투자는
+// 원화 원장이다. 0% 수치만 띄우면 집계가 고장난 것처럼 읽힌다.
+test("빈 원장에는 무엇이 집계되는지까지 안내한다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return tradesResponse(
+      { total_trades: 0, sold_trades: 0, win_rate: 0.0, avg_return: 0.0, canceled_trades: 0 }, [],
+    );
+  };
+
+  await window.loadOverseasTrades();
+
+  const text = window.document.getElementById("overseas-trades-result").textContent;
+  assert(text.includes("수동"), `수동 주문만 집계된다는 안내가 있어야 함 (실제 "${text.slice(0, 300)}")`);
+  assert(text.includes("자동 전략"), `자동 전략이 빠진다는 안내가 있어야 함 (실제 "${text.slice(0, 300)}")`);
+  assert(!text.includes("승률"), `기록이 없으면 0% 성과 수치는 노이즈다 (실제 "${text.slice(0, 300)}")`);
+});
+
+test("overseas_us 비활성이면 활성화 방법까지 안내한다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["domestic"] }) };
+    }
+    throw new Error("비활성 상태에서 원장을 호출하면 안 된다");
+  };
+
+  await window.loadOverseasTrades();
+
+  const text = window.document.getElementById("overseas-trades-result").textContent;
+  assert(
+    text.includes("enabled_market_modes"),
+    `무엇을 켜야 하는지 설정 키까지 알려줘야 함 (실제 "${text}")`,
+  );
+});
+
 test("원장의 외부 문자열은 HTML 로 해석되지 않는다", async () => {
   const window = makeWindow();
   window.fetchWithTimeout = async (url) => {

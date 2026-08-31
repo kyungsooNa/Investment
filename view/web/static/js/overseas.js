@@ -430,6 +430,21 @@ function _overseasReturnCell(trade) {
     return `<span style="color:${color}">${rate.toFixed(2)}%</span>`;
 }
 
+// 이 원장에 쓰는 경로는 웹 수동주문(`POST /api/overseas/order`) 하나뿐이라 비어 있는 것이
+// 정상인 경우가 많다. 무엇이 집계되고 무엇이 빠지는지 밝히지 않으면 0% 수치가 집계 고장으로
+// 읽힌다 — 그래서 기록이 없을 때는 수치 대신 범위를 보여준다.
+function _overseasEmptyLedgerCard() {
+    return `
+        <div class="card">
+            <h3>USD 성과 요약</h3>
+            <p>아직 기록된 미국장 거래가 없습니다.</p>
+            <p class="small">이 원장에는 <b>웹에서 낸 수동 미국주식 주문</b>(매수·매도)만 집계됩니다.
+               자동 전략(dry-run·장중 폴링)은 would-be 주문만 저널에 남기고 원장에 쓰지 않으며,
+               국내 모의투자 기록은 원화 원장으로 분리돼 있습니다.</p>
+        </div>
+    `;
+}
+
 async function loadOverseasTrades() {
     const resultDiv = document.getElementById('overseas-trades-result');
     if (!resultDiv) return;
@@ -437,7 +452,11 @@ async function loadOverseasTrades() {
 
     try {
         if (!await _ensureOverseasEnabled()) {
-            showError(resultDiv, 'overseas_us가 enabled되어 있지 않습니다.');
+            showError(
+                resultDiv,
+                '미국장 기능이 비활성화되어 있습니다. config.yaml 의 enabled_market_modes 에'
+                + ' "overseas_us" 를 추가하고 서버를 재시작하세요.',
+            );
             return;
         }
         const res = await fetchWithTimeout('/api/overseas/trades', {}, 12000);
@@ -449,6 +468,11 @@ async function loadOverseasTrades() {
         const data = json.data || {};
         const summary = data.summary || {};
         const trades = Array.isArray(data.trades) ? data.trades : [];
+
+        if (trades.length === 0) {
+            resultDiv.innerHTML = _overseasEmptyLedgerCard();
+            return;
+        }
 
         const canceled = Number(summary.canceled_trades) || 0;
         // 취소분은 total 에서 이미 빠져 있다(성과 분모 오염 방지) — 별도로만 밝힌다.
