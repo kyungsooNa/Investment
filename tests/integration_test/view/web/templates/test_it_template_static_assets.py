@@ -37,6 +37,10 @@ STATIC_REF_RE = re.compile(
     r"""<(?:script|link)\b[^>]*(?:src|href)=["']([^"']+)["']""",
     re.IGNORECASE,
 )
+HOME_GROUP_RE = re.compile(
+    r"""<section class="home-menu-group" data-home-market="(?P<market>[^"]+)">(?P<body>.*?)</section>""",
+    re.DOTALL,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -76,6 +80,13 @@ def _local_static_refs(html):
     return sorted(refs)
 
 
+def _home_group(html, market):
+    for match in HOME_GROUP_RE.finditer(html):
+        if match.group("market") == market:
+            return match.group("body")
+    return ""
+
+
 def test_rendered_pages_reference_served_static_assets(web_client_with_fake_ctx):
     """렌더링된 HTML의 로컬 static 참조가 실제 앱에서 200으로 응답해야 한다."""
     client = web_client_with_fake_ctx
@@ -107,7 +118,7 @@ def test_rendered_pages_reference_served_static_assets(web_client_with_fake_ctx)
         ("/overseas-ranking", "overseas_us"),
         ("/scheduler", "domestic"),
         ("/overseas-scheduler", "overseas_us"),
-        ("/virtual", "common"),
+        ("/virtual", "domestic"),
         ("/trade-trends", "common"),
         ("/system", "common"),
     ],
@@ -138,7 +149,7 @@ def test_strategy_scheduler_navigation_is_split_by_market(web_client_with_fake_c
     """전략 스케줄러는 공통이 아니라 한국장/미국장 상단 탭 아래로 분리된다."""
     domestic = web_client_with_fake_ctx.get("/scheduler")
     overseas = web_client_with_fake_ctx.get("/overseas-scheduler")
-    common = web_client_with_fake_ctx.get("/virtual")
+    common = web_client_with_fake_ctx.get("/")
 
     assert domestic.status_code == 200
     assert overseas.status_code == 200
@@ -146,6 +157,18 @@ def test_strategy_scheduler_navigation_is_split_by_market(web_client_with_fake_c
     assert 'href="/scheduler" class="active">전략 스케줄러</a>' in domestic.text
     assert 'href="/overseas-scheduler" class="active">전략 스케줄러</a>' in overseas.text
     assert "전략 스케줄러</a>" not in common.text
+
+
+def test_virtual_page_navigation_belongs_to_domestic_market(web_client_with_fake_ctx):
+    domestic = web_client_with_fake_ctx.get("/virtual")
+    common = web_client_with_fake_ctx.get("/")
+
+    assert domestic.status_code == 200
+    assert common.status_code == 200
+    assert 'data-view-market="domestic"' in domestic.text
+    assert 'href="/virtual" class="active">모의투자 기록</a>' in domestic.text
+    assert 'href="/virtual"' in _home_group(common.text, "domestic")
+    assert 'href="/virtual"' not in _home_group(common.text, "common")
 
 
 def test_overseas_favorite_uses_feature_navigation(web_client_with_fake_ctx):
