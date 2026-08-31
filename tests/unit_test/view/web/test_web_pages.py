@@ -1,5 +1,6 @@
 import pytest
 from pathlib import Path
+import re
 from unittest.mock import MagicMock
 from view.web.security import SESSION_COOKIE_NAME, issue_session
 
@@ -23,6 +24,17 @@ PAGES = [
     ("/system", "system"),
     ("/heatmap", "heatmap"),
 ]
+HOME_GROUP_RE = re.compile(
+    r"""<section class="home-menu-group" data-home-market="(?P<market>[^"]+)">(?P<body>.*?)</section>""",
+    re.DOTALL,
+)
+
+
+def _home_group(html, market):
+    for match in HOME_GROUP_RE.finditer(html):
+        if match.group("market") == market:
+            return match.group("body")
+    return ""
 
 def test_pages_render_success_no_login(web_client, mock_web_ctx):
     """로그인 기능이 비활성화된 경우 모든 페이지가 정상 렌더링되는지 테스트"""
@@ -102,6 +114,8 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert "시가총액 상위 종목" in response.text
         elif path == "/virtual":
             assert "모의투자(전략 검증) 결과" in response.text
+            assert 'data-view-market="domestic"' in response.text
+            assert 'href="/virtual" class="active">모의투자 기록</a>' in response.text
             assert 'id="apply-cost-chk" onchange="loadVirtualHistory()" checked' in response.text
             assert 'id="virtual-divergence-summary"' in response.text
             assert 'id="virtual-backtest-run-select"' in response.text
@@ -140,6 +154,16 @@ def test_virtual_static_js_exposes_divergence_workflow():
     assert "compareVirtualDivergence" in script
     assert "filled_qty" in script
     assert "slippage_pct" in script
+
+
+def test_common_navigation_does_not_show_domestic_virtual_page(web_client, mock_web_ctx):
+    mock_web_ctx.full_config = {"use_login": False}
+
+    response = web_client.get("/")
+
+    assert response.status_code == 200
+    assert 'href="/virtual"' in _home_group(response.text, "domestic")
+    assert 'href="/virtual"' not in _home_group(response.text, "common")
 
 
 def test_virtual_static_js_marks_suspect_records():

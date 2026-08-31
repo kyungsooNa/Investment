@@ -555,6 +555,7 @@ async def virtual(request: Request):
         request,
         "virtual.html",
         "virtual",
+        view_market="domestic",
         required_role=OPERATOR,
     )
 
