@@ -13,6 +13,7 @@ from common.types import (
 )
 from core.loggers.trace_context import trace_scope
 from services.notification_service import NotificationCategory, NotificationLevel
+from services.virtual_trade_market_guard import is_domestic_virtual_trade_code
 
 
 class FillReconciliationService:
@@ -358,6 +359,12 @@ class FillReconciliationService:
         if context.virtual_recorded_qty >= context.filled_qty:
             return context
         if self._is_reconcile_source(context.source):
+            return self._fsm.mark_virtual_trade_recorded(context, context.filled_qty)
+        if not is_domestic_virtual_trade_code(context.stock_code):
+            self.logger.warning(
+                f"국내 가상매매 원장 기록 스킵: 국내 종목코드가 아님 "
+                f"(code={context.stock_code}, order={context.order_key})"
+            )
             return self._fsm.mark_virtual_trade_recorded(context, context.filled_qty)
 
         strategy_name, is_strategy_source = self._strategy_name_from_source(context.source)

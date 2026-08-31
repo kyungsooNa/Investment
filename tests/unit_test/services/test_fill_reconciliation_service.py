@@ -751,6 +751,25 @@ async def test_persist_records_buy_via_virtual_trade(broker, fsm, reporter, fixe
 
 
 @pytest.mark.asyncio
+async def test_persist_skips_non_domestic_symbol_for_virtual_trade(broker, fsm, reporter, fixed_now):
+    vts = AsyncMock()
+    svc = _make_service(broker=broker, fsm=fsm, reporter=reporter, fixed_now=fixed_now, virtual_trade_service=vts)
+    ctx = fsm.register(_make_context(
+        order_key="KRX:AAPL:BUY",
+        stock_code="AAPL",
+        source="manual:수동매매",
+    ))
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED)
+    filled = fsm.transition(ctx.order_key, OrderState.FILLED, filled_qty=3)
+
+    report = OrderExecutionReport(broker_order_no="X", stock_code="AAPL", side=OrderSide.BUY, fill_price=190)
+    result = await svc._persist_virtual_trade_for_terminal_report(filled, report)
+
+    vts.log_buy_async.assert_not_awaited()
+    assert result.virtual_recorded_qty == 3
+
+
+@pytest.mark.asyncio
 async def test_persist_records_buy_signal_metadata_via_virtual_trade(broker, fsm, reporter, fixed_now):
     vts = AsyncMock()
     svc = _make_service(broker=broker, fsm=fsm, reporter=reporter, fixed_now=fixed_now, virtual_trade_service=vts)

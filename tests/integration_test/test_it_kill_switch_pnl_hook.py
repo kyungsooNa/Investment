@@ -156,10 +156,10 @@ async def test_sell_fill_to_kill_switch_trip_blocks_orders(
 ):
     """연속 손실 2회 → KS trip → check_orders_allowed() 차단."""
     # 1번째 매도 손실
-    virtual_trade_repo.log_buy("MomentumStrategy", "005930_1", 70000)
+    virtual_trade_repo.log_buy("MomentumStrategy", "005930", 70000)
     ctx1 = OrderContext(
-        order_key="sell_005930_1",
-        stock_code="005930_1",
+        order_key="sell_005930",
+        stock_code="005930",
         side=OrderSide.SELL,
         state=OrderState.FILLED,
         price=70000,
@@ -170,7 +170,7 @@ async def test_sell_fill_to_kill_switch_trip_blocks_orders(
     )
     report1 = OrderExecutionReport(
         broker_order_no="ORD_IT_001",
-        stock_code="005930_1",
+        stock_code="005930",
         side=OrderSide.SELL,
         event_state=OrderState.FILLED,
         fill_qty=1,
