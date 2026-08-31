@@ -98,6 +98,7 @@
         <a href="/overseas-stock" class="{% if active_page == 'overseas_stock' %}active{% endif %}">현재가</a>
         <a href="/overseas" class="{% if active_page == 'overseas' %}active{% endif %}">미국장 개요·거래</a>
         {% if can_operate %}<a href="/overseas-favorite" class="{% if active_page == 'overseas_favorite' %}active{% endif %}">즐겨찾기</a>{% endif %}
+        {% if can_operate %}<a href="/overseas-virtual" class="{% if active_page == 'overseas_virtual' %}active{% endif %}">모의투자 기록</a>{% endif %}
         <a href="/overseas-marketcap" class="{% if active_page == 'overseas_marketcap' %}active{% endif %}">시가총액</a>
         <a href="/overseas-ranking" class="{% if active_page == 'overseas_ranking' %}active{% endif %}">랭킹</a>
         {% if can_operate %}<a href="/overseas-scheduler" class="{% if active_page == 'overseas_scheduler' %}active{% endif %}">전략 스케줄러</a>{% endif %}

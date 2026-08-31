@@ -21,6 +21,7 @@ PAGE_PATHS = [
     "/overseas",
     "/overseas-stock",
     "/overseas-favorite",
+    "/overseas-virtual",
     "/overseas-marketcap",
     "/overseas-ranking",
     "/ranking",
@@ -114,6 +115,7 @@ def test_rendered_pages_reference_served_static_assets(web_client_with_fake_ctx)
         ("/overseas", "overseas_us"),
         ("/overseas-stock", "overseas_us"),
         ("/overseas-favorite", "overseas_us"),
+        ("/overseas-virtual", "overseas_us"),
         ("/overseas-marketcap", "overseas_us"),
         ("/overseas-ranking", "overseas_us"),
         ("/scheduler", "domestic"),
@@ -178,6 +180,15 @@ def test_overseas_favorite_uses_feature_navigation(web_client_with_fake_ctx):
     assert 'href="/overseas-favorite" class="active">즐겨찾기</a>' in page.text
     assert 'id="overseas-panel-favorite"' in page.text
     assert 'id="overseas-tab-favorite"' not in page.text
+
+
+def test_overseas_virtual_page_uses_feature_navigation(web_client_with_fake_ctx):
+    page = web_client_with_fake_ctx.get("/overseas-virtual")
+
+    assert page.status_code == 200
+    assert 'href="/overseas-virtual" class="active">모의투자 기록</a>' in page.text
+    assert 'id="overseas-trades-result"' in page.text
+    assert 'id="overseas-panel-orders"' not in page.text
 
 
 def test_stock_page_is_domestic_only(web_client_with_fake_ctx):
