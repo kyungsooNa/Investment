@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div id="section-overseas-virtual" class="section">
+    <div class="card">
+        <h2>미국장 모의투자 기록</h2>
+        <p class="small">USD 원장 기준 성과입니다. 한국장 모의투자 기록과 분리되어 집계됩니다.</p>
+        <div class="form-row">
+            <button class="btn" onclick="loadOverseasTrades()">거래 기록 새로고침</button>
+            <button class="btn" data-overseas-required onclick="reconcileOverseasTrades()"
+                    title="원장 보유분을 브로커 체결내역과 대조합니다. 누르는 것만으로는 원장이 바뀌지 않습니다(판정만).">
+                체결 대사
+            </button>
+        </div>
+    </div>
+    <div id="overseas-trades-result"></div>
+    <div id="overseas-reconcile-result"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/autocomplete.js?v=2"></script>
+<script src="/static/js/overseas_autocomplete.js?v=2"></script>
+<script src="/static/js/overseas.js?v=11"></script>
+{% endblock %}

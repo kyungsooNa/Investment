@@ -523,6 +523,16 @@ async def overseas_favorite(request: Request):
         required_role=OPERATOR,
     )
 
+@page_router.get("/overseas-virtual")
+async def overseas_virtual(request: Request):
+    return await render_page(
+        request,
+        "overseas_virtual.html",
+        "overseas_virtual",
+        view_market="overseas_us",
+        required_role=OPERATOR,
+    )
+
 @page_router.get("/overseas-marketcap")
 async def overseas_marketcap(request: Request):
     return await render_page(

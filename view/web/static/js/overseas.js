@@ -842,6 +842,10 @@ function initOverseasPage() {
     _initOverseasFavoriteAutocomplete();
     _bindOverseasFavoriteVisibility();
     _startOverseasFavoriteAutoRefresh();
+    if (window.location.pathname === '/overseas-virtual') {
+        void loadOverseasTrades();
+        return;
+    }
     const initialTab = _initialOverseasTab();
     if (initialTab !== 'overview') void setOverseasTab(initialTab);
     if (!window.__overseasRealBannerTimer) {
@@ -849,12 +853,14 @@ function initOverseasPage() {
     }
 }
 
+const OVERSEAS_PAGE_PATHS = ['/overseas', '/overseas-favorite', '/overseas-virtual'];
+
 document.addEventListener('DOMContentLoaded', () => {
-    if (!['/overseas', '/overseas-favorite'].includes(window.location.pathname)) return;
+    if (!OVERSEAS_PAGE_PATHS.includes(window.location.pathname)) return;
     initOverseasPage();
 });
 
 document.addEventListener('pjax:ready', (e) => {
-    if (!['/overseas', '/overseas-favorite'].includes(e.detail?.path)) return;
+    if (!OVERSEAS_PAGE_PATHS.includes(e.detail?.path)) return;
     initOverseasPage();
 });

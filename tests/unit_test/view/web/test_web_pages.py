@@ -13,6 +13,7 @@ PAGES = [
     ("/overseas", "overseas"),
     ("/overseas-stock", "overseas_stock"),
     ("/overseas-favorite", "overseas_favorite"),
+    ("/overseas-virtual", "overseas_virtual"),
     ("/overseas-marketcap", "overseas_marketcap"),
     ("/overseas-ranking", "overseas_ranking"),
     ("/ranking", "ranking"),
@@ -92,6 +93,13 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert 'id="overseas-tab-favorite"' not in response.text
             assert 'id="overseas-fav-symbol"' in response.text
             assert 'id="overseas-favorite-body"' in response.text
+            assert "/static/js/overseas.js" in response.text
+        elif path == "/overseas-virtual":
+            assert "미국장 모의투자 기록" in response.text
+            assert 'data-view-market="overseas_us"' in response.text
+            assert 'href="/overseas-virtual" class="active">모의투자 기록</a>' in response.text
+            assert 'id="overseas-trades-result"' in response.text
+            assert 'id="overseas-panel-orders"' not in response.text
             assert "/static/js/overseas.js" in response.text
         elif path == "/overseas-marketcap":
             assert "미국 시가총액 상위 종목" in response.text
@@ -196,6 +204,7 @@ def test_overseas_static_js_exposes_manual_workflow():
     assert "/api/overseas/order" in script
     assert "loadOverseasQuote" in script
     assert "placeOverseasOrder" in script
+    assert "/overseas-virtual" in script
 
 def test_overseas_stock_static_js_exposes_quote_workflow():
     """overseas_stock.js가 미국장 현재가 조회와 일봉 차트를 담당해야 한다."""
