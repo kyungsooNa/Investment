@@ -26,6 +26,7 @@ from services.broker_order_submitter import BrokerOrderSubmitter
 from services.order_state_machine import OrderStateMachine
 from services.fill_reconciliation_service import FillReconciliationService
 from services.order_submission_coordinator import OrderSubmissionCoordinator
+from services.virtual_trade_market_guard import is_domestic_virtual_trade_code
 
 
 class ClearanceMode(str, Enum):
@@ -593,7 +594,7 @@ class OrderExecutionService:
                 msg1 = buy_order_result.msg1 if buy_order_result else '응답 없음'
                 self.logger.error(
                     f"주식 매수 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
-                if self._virtual_trade_service:
+                if self._virtual_trade_service and is_domestic_virtual_trade_code(stock_code):
                     await self._virtual_trade_service.log_order_failure_async("BUY", stock_code, price, qty, msg1)
                 if self._notification_service and not self._is_strategy_source(source):
                     await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "매수 주문 실패",
@@ -658,7 +659,7 @@ class OrderExecutionService:
                 msg1 = sell_order_result.msg1 if sell_order_result else '응답 없음'
                 self.logger.error(
                     f"주식 매도 주문 실패: 종목={stock_code}, 결과={{'rt_cd': '{rt_cd}', 'msg1': '{msg1}'}}")
-                if self._virtual_trade_service:
+                if self._virtual_trade_service and is_domestic_virtual_trade_code(stock_code):
                     await self._virtual_trade_service.log_order_failure_async("SELL", stock_code, price, qty, msg1)
                     await self._reconcile_force_exit_sell_failure_if_no_position(
                         stock_code=stock_code,

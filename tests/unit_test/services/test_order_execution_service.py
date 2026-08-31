@@ -293,6 +293,34 @@ async def test_handle_place_buy_order_trading_service_failure(handler, mock_brok
     assert result.rt_cd == "1"
     assert result.msg1 == "잔고 부족"
 
+
+@pytest.mark.asyncio
+async def test_non_domestic_buy_failure_does_not_write_domestic_virtual_journal(
+    mock_broker_api_wrapper,
+    mock_logger,
+    mock_market_clock,
+    mock_market_calendar_service,
+):
+    virtual_trade_service = AsyncMock()
+    handler_instance = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        market_clock=mock_market_clock,
+        market_calendar_service=mock_market_calendar_service,
+        virtual_trade_service=virtual_trade_service,
+    )
+    mock_broker_api_wrapper.place_stock_order.return_value = ResCommonResponse(
+        rt_cd="1",
+        msg1="해외 티커는 국내 주문 불가",
+        data=None,
+    )
+
+    result = await handler_instance.handle_place_buy_order("AAPL", 190, 1)
+
+    assert result.rt_cd == "1"
+    virtual_trade_service.log_order_failure_async.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_handle_place_sell_order_success(handler, mock_broker_api_wrapper, mock_logger, mock_notification_service):
     """handle_place_sell_order 매도 주문 실행 성공 테스트."""
