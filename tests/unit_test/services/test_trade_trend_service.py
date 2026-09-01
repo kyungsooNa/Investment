@@ -8,6 +8,7 @@ import pytest
 
 from services.trade_trend_service import (
     CustomsTradeStatClient,
+    _attach_previous_month_changes,
     build_jeju_region_trade_series,
     format_jeju_semiconductor_report_html,
     JejuSemiconductorTradeReport,
@@ -547,6 +548,23 @@ def test_parse_national_motie_monthly_release_extracts_summary_numbers():
     assert release.trade_balance_label == "흑자"
 
 
+def test_parse_national_motie_monthly_release_extracts_daily_avg_phrase():
+    text = """
+    2026년 7월 수출입 동향
+    7월 수출은 전년 동월 대비 62.8% 증가한 988.9억 달러로 집계됐다.
+    조업일수를 고려한 일평균 수출은 69.6% 증가한 41.2억 달러로 3개월 연속 40억 달러를 상회했다.
+    """
+
+    release = parse_national_trade_release(
+        title="2026년 7월 수출입 동향",
+        url="https://motie.example/monthly",
+        source="motie",
+        text=text,
+    )
+
+    assert release.export_daily_avg_100m_usd == pytest.approx(41.2)
+
+
 def test_parse_national_monthly_release_extracts_mom_from_monthly_table():
     text = """
     8월 수출은 983.0억 달러로 전년동기대비 68.7% 증가, 수입은 635.0억 달러로
@@ -619,6 +637,41 @@ def test_format_national_trade_trend_report_html_includes_link_and_numbers():
     assert "수입: <b>235.0억 달러</b> (전년비 +17.4% / 전월비 -12.0억, -4.9%)" in message
     assert "무역수지: <b>64.0억 달러 흑자</b> (전월차 +53.0억)" in message
     assert "https://customs.example/10d?a=1&amp;b=2" in message
+
+
+def test_attach_previous_month_changes_uses_daily_avg_from_motie_fallback():
+    current = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_monthly",
+        title="2026년 8월 수출입 현황 [잠정치]",
+        url="https://customs.example/aug",
+        period_label="2026년 8월",
+        export_amount_100m_usd=983.0,
+        export_daily_avg_100m_usd=44.7,
+    )
+    customs_final = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_monthly_final",
+        title="2026년 7월 월간 수출입 현황 [확정치]",
+        url="https://customs.example/jul-final",
+        period_label="2026년 7월",
+        export_amount_100m_usd=990.0,
+    )
+    motie_monthly = NationalTradeTrendRelease(
+        source="motie",
+        phase="motie_monthly",
+        title="2026년 7월 수출입 동향",
+        url="https://motie.example/jul",
+        period_label="2026년 7월",
+        export_amount_100m_usd=988.9,
+        export_daily_avg_100m_usd=41.2,
+    )
+
+    enriched = _attach_previous_month_changes([current, customs_final, motie_monthly])
+
+    assert enriched[0].export_mom_change_100m_usd == pytest.approx(-7.0)
+    assert enriched[0].export_mom_pct == pytest.approx(-0.7070, abs=1e-4)
+    assert enriched[0].export_daily_avg_mom_pct == pytest.approx(8.4951, rel=1e-4)
 
 
 class DummyTextResponse:
@@ -759,6 +812,31 @@ async def test_national_web_client_skips_customs_attachment_when_detail_has_mont
 
     assert result == detail_html
     http_client.get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_national_web_client_appends_motie_pdf_attachment_text(monkeypatch):
+    detail_html = """
+    <a href="javascript:location.href='/attach/down/a/b/c'">2026년 7월 수출입동향.pdf</a>
+    """
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock(return_value=DummyBinaryResponse(b"%PDF fake"))
+    monkeypatch.setattr(
+        "services.trade_trend_service._extract_pdf_text",
+        lambda content: "조업일수를 고려한 일평균 수출은 69.6% 증가한 41.2억 달러",
+    )
+    client = NationalTradeTrendWebClient(http_client=http_client)
+
+    result = await client._append_motie_attachment_text(
+        detail_html,
+        "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c/172077/view",
+    )
+
+    assert "41.2억 달러" in result
+    http_client.get.assert_awaited_once_with(
+        "https://www.motir.go.kr/attach/down/a/b/c",
+        timeout=10.0,
+    )
 
 
 @pytest.mark.asyncio

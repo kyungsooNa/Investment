@@ -368,6 +368,7 @@ class NationalTradeTrendWebClient:
             if len(releases) >= detail_limit:
                 break
             detail_text = await self._fetch_text(url)
+            detail_text = await self._append_motie_attachment_text(detail_text, url)
             detail_text = await self._append_tradedata_attachment_text(detail_text, url)
             detail_text = await self._append_customs_attachment_text(detail_text, url)
             release = parse_national_trade_release(
@@ -411,6 +412,36 @@ class NationalTradeTrendWebClient:
             content = await self._fetch_bytes(attachment_url)
             attachment_text = _extract_hwpx_text(content)
         except (httpx.HTTPError, OSError, zipfile.BadZipFile):
+            return detail_text
+        if not attachment_text:
+            return detail_text
+        return f"{detail_text}\n{attachment_text}"
+
+    async def _append_motie_attachment_text(self, detail_text: str, detail_url: str) -> str:
+        if "motir.go.kr" not in detail_url and "motie.go.kr" not in detail_url:
+            return detail_text
+        attachment_url = _extract_motie_pdf_attachment_url(detail_text, detail_url)
+        if not attachment_url:
+            return detail_text
+        try:
+            if self._http_client is not None:
+                content = await self._fetch_bytes(attachment_url)
+            else:
+                headers = {
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": detail_url,
+                    "Accept": "text/html,application/pdf,*/*",
+                }
+                async with httpx.AsyncClient(
+                    timeout=self._timeout_sec,
+                    headers=headers,
+                ) as client:
+                    await client.get(detail_url)
+                    response = await client.get(attachment_url)
+                    response.raise_for_status()
+                    content = response.content
+            attachment_text = _extract_pdf_text(content)
+        except (httpx.HTTPError, OSError):
             return detail_text
         if not attachment_text:
             return detail_text
@@ -665,17 +696,27 @@ def _attach_previous_month_changes(
     }
     enriched = []
     for release in releases:
-        previous = next(
-            (
-                by_period[key]
-                for key in _previous_month_keys(release.period_label, release.phase)
-                if key in by_period
-            ),
-            None,
-        )
+        previous_candidates = [
+            by_period[key]
+            for key in _previous_month_keys(release.period_label, release.phase)
+            if key in by_period
+        ]
+        previous = previous_candidates[0] if previous_candidates else None
         if previous is None:
             enriched.append(release)
             continue
+        previous_daily = _first_release_with_value(
+            previous_candidates,
+            "export_daily_avg_100m_usd",
+        )
+        previous_semiconductor = _first_release_with_value(
+            previous_candidates,
+            "semiconductor_export_amount_100m_usd",
+        )
+        previous_semiconductor_daily = _first_release_with_value(
+            previous_candidates,
+            "semiconductor_daily_avg_100m_usd",
+        )
         enriched.append(
             replace(
                 release,
@@ -697,7 +738,9 @@ def _attach_previous_month_changes(
                     release.export_daily_avg_mom_pct,
                     _pct_float(
                         release.export_daily_avg_100m_usd,
-                        previous.export_daily_avg_100m_usd,
+                        previous_daily.export_daily_avg_100m_usd
+                        if previous_daily is not None
+                        else None,
                     ),
                 ),
                 import_mom_change_100m_usd=_value_or_fallback(
@@ -725,26 +768,46 @@ def _attach_previous_month_changes(
                     release.semiconductor_mom_change_100m_usd,
                     _diff_float(
                         release.semiconductor_export_amount_100m_usd,
-                        previous.semiconductor_export_amount_100m_usd,
+                        previous_semiconductor.semiconductor_export_amount_100m_usd
+                        if previous_semiconductor is not None
+                        else None,
                     ),
                 ),
                 semiconductor_mom_pct=_value_or_fallback(
                     release.semiconductor_mom_pct,
                     _pct_float(
                         release.semiconductor_export_amount_100m_usd,
-                        previous.semiconductor_export_amount_100m_usd,
+                        previous_semiconductor.semiconductor_export_amount_100m_usd
+                        if previous_semiconductor is not None
+                        else None,
                     ),
                 ),
                 semiconductor_daily_avg_mom_pct=_value_or_fallback(
                     release.semiconductor_daily_avg_mom_pct,
                     _pct_float(
                         release.semiconductor_daily_avg_100m_usd,
-                        previous.semiconductor_daily_avg_100m_usd,
+                        previous_semiconductor_daily.semiconductor_daily_avg_100m_usd
+                        if previous_semiconductor_daily is not None
+                        else None,
                     ),
                 ),
             )
         )
     return enriched
+
+
+def _first_release_with_value(
+    releases: list[NationalTradeTrendRelease],
+    field_name: str,
+) -> Optional[NationalTradeTrendRelease]:
+    return next(
+        (
+            release
+            for release in releases
+            if getattr(release, field_name) is not None
+        ),
+        None,
+    )
 
 
 def _coalesce_duplicate_period_releases(
@@ -872,6 +935,11 @@ def _extract_export_daily_avg(text: str) -> Optional[float]:
         r"일평균수출액\s*\[[^\]]*,\s*\([^)]*\)\s*([0-9]+(?:\.[0-9]+)?)\s*억\s*달러",
         text,
     )
+    if not match:
+        phrase_match = re.search(r"일평균\s*수출(?:액)?(?:은|액은)?", text)
+        if phrase_match:
+            window = text[phrase_match.end() : phrase_match.end() + 120]
+            match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*억\s*달러", window)
     if not match:
         return None
     return float(match.group(1))
@@ -1154,6 +1222,26 @@ def _extract_tradedata_hwpx_attachment_url(detail_text: str) -> str:
     return ""
 
 
+def _extract_motie_pdf_attachment_url(detail_text: str, detail_url: str) -> str:
+    for match in re.finditer(
+        r"(<a\b[^>]*>)(.*?)</a>",
+        detail_text,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        tag = match.group(1)
+        href = _attr(tag, "href")
+        label = _clean_text(match.group(2))
+        if ".pdf" not in f"{href} {label}".lower():
+            continue
+        location_match = re.search(r"location\.href\s*=\s*['\"]([^'\"]+)['\"]", href)
+        if location_match:
+            href = location_match.group(1)
+        if not href or href.startswith("javascript:"):
+            continue
+        return urljoin(detail_url, href)
+    return ""
+
+
 def _extract_customs_hwpx_attachment_url(detail_text: str, detail_url: str) -> str:
     for match in re.finditer(
         r"(<a\b[^>]*>)(.*?)</a>",
@@ -1192,6 +1280,21 @@ def _extract_hwpx_text(content: bytes) -> str:
             if plain:
                 chunks.append(plain)
     return " ".join(chunks)
+
+
+def _extract_pdf_text(content: bytes) -> str:
+    if not content.startswith(b"%PDF"):
+        return ""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return ""
+
+    try:
+        reader = PdfReader(io.BytesIO(content))
+        return _clean_text(" ".join(page.extract_text() or "" for page in reader.pages))
+    except Exception:
+        return ""
 
 
 def format_jeju_semiconductor_report_html(
