@@ -741,6 +741,27 @@ async def test_national_web_client_uses_customs_final_month_for_monthly_daily_mo
 
 
 @pytest.mark.asyncio
+async def test_national_web_client_skips_customs_attachment_when_detail_has_monthly_summary():
+    detail_html = """
+    8월 수출은 983.0억 달러로 전년동기대비 68.7% 증가했다.
+    ※ 조업일수 [(’25) 22.5일, (’26) 22.0일] 고려 시 일평균수출액 [(’25.8.) 25.9, (’26.8.) 44.7억 달러]
+    월별 수출입현황 > (단위 : 백만 달러, %)
+    <a href="/common/nttFileDownload.do?fileKey=abc123" title="2026년 8월 수출입 현황.hwpx 다운로드">hwpx</a>
+    """
+    http_client = DummyHttpClient()
+    http_client.get = AsyncMock()
+    client = NationalTradeTrendWebClient(http_client=http_client)
+
+    result = await client._append_customs_attachment_text(
+        detail_html,
+        "https://www.customs.go.kr/kcs/na/ntt/selectNttInfo.do?nttSn=1",
+    )
+
+    assert result == detail_html
+    http_client.get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_national_web_client_discovers_motie_article_view_links():
     list_html = """
     <a href="javascript:article.view('172077');"><i>2026년 7월 수출입 동향</i></a>
