@@ -424,6 +424,20 @@ async def test_trade_reports_delegate_to_the_shared_formatters(reporter, mocker)
     assert _sent(reporter) == ["제주", "전국"]
 
 
+@pytest.mark.asyncio
+async def test_jeju_trade_pending_report_mentions_period_item_and_reason(reporter):
+    assert await reporter.send_jeju_trade_pending_report(
+        "202608",
+        "85",
+        "제주 2026.08 전기기기류 수출입 API 데이터가 아직 0건입니다.",
+    ) is True
+
+    body = _sent(reporter)[0]
+    assert "제주 수출입 데이터 대기 (2026.08)" in body
+    assert "품목코드: 85" in body
+    assert "아직 0건" in body
+
+
 # --- 알림 이력 저장 실패 격리 --------------------------------------------------
 
 @pytest.mark.asyncio

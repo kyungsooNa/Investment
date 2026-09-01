@@ -58,6 +58,8 @@ class TradeTrendMonitorTask(SchedulableTask):
             "last_checked_at": None,
             "last_success_at": None,
             "last_period": None,
+            "last_jeju_status": None,
+            "last_jeju_message": None,
             "sent_count": 0,
             "national_sent_count": 0,
             "last_error": None,
@@ -158,7 +160,10 @@ class TradeTrendMonitorTask(SchedulableTask):
                 await self._client.fetch_sido_item_month(yyyymm, item_code)
             )
             if current is None:
+                await self._handle_missing_jeju_trade_data(yyyymm, item_code)
                 return
+            self._progress["last_jeju_status"] = "available"
+            self._progress["last_jeju_message"] = None
             prev = select_export_row(
                 await self._client.fetch_sido_item_month(previous_month, item_code)
             )
@@ -186,6 +191,24 @@ class TradeTrendMonitorTask(SchedulableTask):
                 self._progress["sent_count"] += 1
                 self._progress["last_success_at"] = now.isoformat()
 
+    async def _handle_missing_jeju_trade_data(self, yyyymm: str, item_code: str) -> None:
+        period = f"{yyyymm[:4]}.{yyyymm[4:6]}"
+        item_name = _item_label(item_code)
+        message = f"제주 {period} {item_name} 수출입 API 데이터가 아직 0건입니다."
+        self._progress["last_jeju_status"] = "pending"
+        self._progress["last_jeju_message"] = message
+        self._logger.info("%s: %s", self.task_name, message)
+
+        pending_key = f"jeju_trade_pending:{period}:{item_code}"
+        if self._repository.has_sent(pending_key):
+            return
+        sender = getattr(self._reporter, "send_jeju_trade_pending_report", None)
+        if sender is None:
+            return
+        sent = await sender(yyyymm, item_code, message)
+        if sent:
+            self._repository.mark_sent(pending_key)
+
     async def _send_national_releases(self) -> None:
         if self._national_client is None or self._reporter is None:
             return
@@ -201,3 +224,11 @@ class TradeTrendMonitorTask(SchedulableTask):
                     sent_at=now.isoformat(),
                 )
                 self._progress["national_sent_count"] += 1
+
+
+def _item_label(item_code: str) -> str:
+    labels = {
+        "85": "전기기기류",
+        "8542": "집적회로 반도체",
+    }
+    return labels.get(str(item_code), f"품목 {item_code}")

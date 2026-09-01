@@ -209,12 +209,30 @@ async def test_tick_stops_when_current_month_row_is_missing(tmp_path):
         fetch_sido_item_month=AsyncMock(return_value=[]),
         fetch_sido_total_month=AsyncMock(return_value=[]),
     )
-    task = _task(tmp_path, client=client, config=SimpleNamespace(national_enabled=False))
+    reporter = SimpleNamespace(
+        send_jeju_trade_pending_report=AsyncMock(return_value=True),
+    )
+    task = _task(
+        tmp_path,
+        client=client,
+        reporter=reporter,
+        config=SimpleNamespace(national_enabled=False, item_code="85"),
+    )
 
     await task._tick()
+    await task._tick()
 
-    assert client.fetch_sido_item_month.await_count == 1
+    assert client.fetch_sido_item_month.await_count == 2
     client.fetch_sido_total_month.assert_not_awaited()
+    reporter.send_jeju_trade_pending_report.assert_awaited_once_with(
+        "202605",
+        "85",
+        "제주 2026.05 전기기기류 수출입 API 데이터가 아직 0건입니다.",
+    )
+    assert task.get_progress()["last_jeju_status"] == "pending"
+    assert task.get_progress()["last_jeju_message"] == (
+        "제주 2026.05 전기기기류 수출입 API 데이터가 아직 0건입니다."
+    )
 
 
 @pytest.mark.asyncio
