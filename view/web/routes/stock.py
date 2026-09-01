@@ -27,6 +27,18 @@ _status_cache = None
 _status_cache_ts = 0.0
 _STATUS_CACHE_TTL = 5.0
 
+_OVERSEAS_STOCK_FEATURE_COVERAGE = {
+    "market": "overseas_us",
+    "supported": ["현재가", "일봉 차트", "관심종목", "수동 주문/취소", "USD 거래 원장"],
+    "unsupported": [
+        "국내장 종목 상세/재무 지표",
+        "국내장 수급/프로그램",
+        "국내장 AI 종합 분석",
+        "국내장 AI 뉴스 검토",
+        "실시간 호가/체결 WebSocket",
+    ],
+}
+
 
 class MarketModeRequest(BaseModel):
     market_mode: str
@@ -526,7 +538,10 @@ async def get_overseas_stock_price(symbol: str, exchange: str = Query("NASD")):
     except asyncio.TimeoutError:
         ctx.logger.warning(f"[stock] 해외 현재가 조회 타임아웃 ({symbol}, 10s 초과)")
         return {"rt_cd": "1", "msg1": "해외주식 API 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.", "data": None}
-    return _serialize_response(resp)
+    result = _serialize_response(resp)
+    if result.get("rt_cd") == "0" and isinstance(result.get("data"), dict):
+        result["data"]["feature_coverage"] = _OVERSEAS_STOCK_FEATURE_COVERAGE
+    return result
 
 
 @router.get("/overseas/chart/{symbol}")

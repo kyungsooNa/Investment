@@ -37,6 +37,11 @@ function _overseasStockDiff(diff, rate) {
     return sign + Math.abs(n).toFixed(2);
 }
 
+function _overseasStockFeatureList(items) {
+    if (!Array.isArray(items) || items.length === 0) return '-';
+    return items.map(item => escapeHtml(item)).join(', ');
+}
+
 async function _overseasStockEnabled() {
     const res = await fetchWithTimeout('/api/market-mode', {}, 5000);
     if (!res.ok) return false;
@@ -56,6 +61,9 @@ function _renderOverseasStockCard(resultDiv, data, symbol, exchange) {
     const raw = (data && typeof data.raw === 'object' && data.raw) ? data.raw : {};
     const rate = Number(data.change_rate);
     const rateClass = rate > 0 ? 'text-red' : (rate < 0 ? 'text-blue' : '');
+    const coverage = (data && typeof data.feature_coverage === 'object' && data.feature_coverage)
+        ? data.feature_coverage
+        : {};
 
     resultDiv.innerHTML = `
         <div class="card stock-info-box">
@@ -78,6 +86,11 @@ function _renderOverseasStockCard(resultDiv, data, symbol, exchange) {
                     <h4>조회 정보</h4>
                     <p><strong>거래소</strong> <span>${escapeHtml(data.exchange || exchange)}</span></p>
                     <p><strong>기준일</strong> <span>${escapeHtml(data.timestamp || '-')}</span></p>
+                </div>
+                <div class="detail-group">
+                    <h4>지원 기능</h4>
+                    <p><strong>사용 가능</strong> <span>${_overseasStockFeatureList(coverage.supported)}</span></p>
+                    <p><strong>미지원 기능</strong> <span>${_overseasStockFeatureList(coverage.unsupported)}</span></p>
                 </div>
             </div>
         </div>
