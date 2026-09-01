@@ -681,22 +681,63 @@ async def test_national_web_client_discovers_matching_links_and_fetches_details(
 
 
 @pytest.mark.asyncio
-async def test_national_web_client_skips_customs_final_releases():
+async def test_national_web_client_uses_customs_final_month_for_monthly_daily_mom():
     list_html = """
+    <a href="javascript:" data-id="10180200" class="nttInfoBtn"
+       title="2026년 8월 수출입 현황 [잠정치]">now</a>
     <a href="javascript:" data-id="10170123" class="nttInfoBtn"
-       title="2026년 6월 월간 수출입 현황 [확정치]">final</a>
+       title="2026년 7월 월간 수출입 현황 [확정치]">final</a>
     """
+    now_detail = """
+    8월 수출은 983.0억 달러로 전년동기대비 68.7% 증가, 수입은 635.0억 달러로 22.5% 증가,
+    무역수지는 347.0억 달러 흑자를 기록했다.
+    ※ 조업일수 [(’25) 22.5일, (’26) 22.0일] 고려 시 일평균수출액 [(’25.8.) 25.9, (’26.8.) 44.7억 달러]
+    월별 수출입현황 > (단위 : 백만 달러, %)
+    구 분 1월 2월 3월 4월 5월 6월 7월 8월 누계
+    수출 2025 금액 49,177 52,292 58,065 58,036 57,261 59,834 60,724 58,259 465,648
+    2026 금액 65,844 67,643 87,333 85,752 87,576 101,956 98,959 98,255 693,318
+    수입 2025 금액 51,172 48,329 53,341 53,233 50,345 50,826 54,210 51,857 413,313
+    2026 금액 57,143 51,934 60,753 62,105 60,748 66,052 68,567 63,507 490,810
+    무역 수지 2025 금액 -1,995 3,964 4,724 4,803 6,916 9,008 6,514 6,403 40,793
+    2026 금액 8,700 15,709 26,580 23,647 26,828 35,905 30,392 34,748 202,507
+    """
+    final_detail = """
+    7월 수출은 989.0억 달러로 전년동기대비 63.0% 증가, 수입은 685.7억 달러로 26.5% 증가,
+    무역수지는 303.9억 달러 흑자를 기록했다.
+    <a href="/common/nttFileDownload.do?fileKey=abc123" title="2026년 7월 월간 수출입 현황(확정치).hwpx 다운로드">hwpx</a>
+    """
+    hwpx = io.BytesIO()
+    with zipfile.ZipFile(hwpx, "w") as archive:
+        archive.writestr(
+            "Contents/section0.xml",
+            """
+            <root>
+              <p>※ 조업일수 [(’25) 24.0일, (’26) 24.0일] 고려 시 일평균수출액 [(’25.7.) 25.3, (’26.7.) 41.2억 달러]</p>
+            </root>
+            """,
+        )
     http_client = DummyHttpClient()
-    http_client.get = AsyncMock(return_value=DummyTextResponse(list_html))
+    http_client.get = AsyncMock(
+        side_effect=[
+            DummyTextResponse(list_html),
+            DummyTextResponse(now_detail),
+            DummyTextResponse(final_detail),
+            DummyBinaryResponse(hwpx.getvalue()),
+        ]
+    )
     client = NationalTradeTrendWebClient(
         http_client=http_client,
         list_urls=["https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362"],
+        max_detail_pages=2,
     )
 
     releases = await client.fetch_recent_releases()
 
-    assert releases == []
-    http_client.get.assert_awaited_once()
+    current = releases[0]
+    assert current.period_label == "2026년 8월"
+    assert current.export_mom_change_100m_usd == pytest.approx(-7.04)
+    assert current.export_mom_pct == pytest.approx(-0.7114, rel=1e-4)
+    assert current.export_daily_avg_mom_pct == pytest.approx(8.4951, rel=1e-4)
 
 
 @pytest.mark.asyncio

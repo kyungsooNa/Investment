@@ -369,6 +369,7 @@ class NationalTradeTrendWebClient:
                 break
             detail_text = await self._fetch_text(url)
             detail_text = await self._append_tradedata_attachment_text(detail_text, url)
+            detail_text = await self._append_customs_attachment_text(detail_text, url)
             release = parse_national_trade_release(
                 title=title,
                 url=url,
@@ -415,6 +416,21 @@ class NationalTradeTrendWebClient:
             return detail_text
         return f"{detail_text}\n{attachment_text}"
 
+    async def _append_customs_attachment_text(self, detail_text: str, detail_url: str) -> str:
+        if "customs.go.kr" not in detail_url:
+            return detail_text
+        attachment_url = _extract_customs_hwpx_attachment_url(detail_text, detail_url)
+        if not attachment_url:
+            return detail_text
+        try:
+            content = await self._fetch_bytes(attachment_url)
+            attachment_text = _extract_hwpx_text(content)
+        except (httpx.HTTPError, OSError, zipfile.BadZipFile):
+            return detail_text
+        if not attachment_text:
+            return detail_text
+        return f"{detail_text}\n{attachment_text}"
+
 
 def _pct(current: Optional[int], base: Optional[int]) -> Optional[float]:
     if current is None or base in (None, 0):
@@ -432,6 +448,13 @@ def _diff_float(current: Optional[float], base: Optional[float]) -> Optional[flo
     if current is None or base is None:
         return None
     return current - base
+
+
+def _value_or_fallback(
+    value: Optional[float],
+    fallback: Optional[float],
+) -> Optional[float]:
+    return value if value is not None else fallback
 
 
 def _safe_div_float(value: Optional[float], divisor: Optional[float]) -> Optional[float]:
@@ -608,6 +631,20 @@ def _previous_month_key(period_label: str, phase: str) -> Optional[tuple[str, in
     return phase, year, month
 
 
+def _previous_month_keys(period_label: str, phase: str) -> list[tuple[str, int, int]]:
+    key = _previous_month_key(period_label, phase)
+    if key is None:
+        return []
+    _, year, month = key
+    if phase == "customs_monthly":
+        return [key, ("customs_monthly_final", year, month), ("motie_monthly", year, month)]
+    if phase == "customs_monthly_final":
+        return [key, ("customs_monthly", year, month), ("motie_monthly", year, month)]
+    if phase == "motie_monthly":
+        return [key, ("customs_monthly_final", year, month), ("customs_monthly", year, month)]
+    return [key]
+
+
 def _release_month_key(release: NationalTradeTrendRelease) -> Optional[tuple[str, int, int]]:
     year_month = _period_year_month(release.period_label)
     if year_month is None:
@@ -626,48 +663,82 @@ def _attach_previous_month_changes(
     }
     enriched = []
     for release in releases:
-        previous = by_period.get(_previous_month_key(release.period_label, release.phase))
+        previous = next(
+            (
+                by_period[key]
+                for key in _previous_month_keys(release.period_label, release.phase)
+                if key in by_period
+            ),
+            None,
+        )
         if previous is None:
             enriched.append(release)
             continue
         enriched.append(
             replace(
                 release,
-                export_mom_change_100m_usd=_diff_float(
-                    release.export_amount_100m_usd,
-                    previous.export_amount_100m_usd,
+                export_mom_change_100m_usd=_value_or_fallback(
+                    release.export_mom_change_100m_usd,
+                    _diff_float(
+                        release.export_amount_100m_usd,
+                        previous.export_amount_100m_usd,
+                    ),
                 ),
-                export_mom_pct=_pct_float(
-                    release.export_amount_100m_usd,
-                    previous.export_amount_100m_usd,
+                export_mom_pct=_value_or_fallback(
+                    release.export_mom_pct,
+                    _pct_float(
+                        release.export_amount_100m_usd,
+                        previous.export_amount_100m_usd,
+                    ),
                 ),
-                export_daily_avg_mom_pct=_pct_float(
-                    release.export_daily_avg_100m_usd,
-                    previous.export_daily_avg_100m_usd,
+                export_daily_avg_mom_pct=_value_or_fallback(
+                    release.export_daily_avg_mom_pct,
+                    _pct_float(
+                        release.export_daily_avg_100m_usd,
+                        previous.export_daily_avg_100m_usd,
+                    ),
                 ),
-                import_mom_change_100m_usd=_diff_float(
-                    release.import_amount_100m_usd,
-                    previous.import_amount_100m_usd,
+                import_mom_change_100m_usd=_value_or_fallback(
+                    release.import_mom_change_100m_usd,
+                    _diff_float(
+                        release.import_amount_100m_usd,
+                        previous.import_amount_100m_usd,
+                    ),
                 ),
-                import_mom_pct=_pct_float(
-                    release.import_amount_100m_usd,
-                    previous.import_amount_100m_usd,
+                import_mom_pct=_value_or_fallback(
+                    release.import_mom_pct,
+                    _pct_float(
+                        release.import_amount_100m_usd,
+                        previous.import_amount_100m_usd,
+                    ),
                 ),
-                trade_balance_mom_change_100m_usd=_diff_float(
-                    release.trade_balance_100m_usd,
-                    previous.trade_balance_100m_usd,
+                trade_balance_mom_change_100m_usd=_value_or_fallback(
+                    release.trade_balance_mom_change_100m_usd,
+                    _diff_float(
+                        release.trade_balance_100m_usd,
+                        previous.trade_balance_100m_usd,
+                    ),
                 ),
-                semiconductor_mom_change_100m_usd=_diff_float(
-                    release.semiconductor_export_amount_100m_usd,
-                    previous.semiconductor_export_amount_100m_usd,
+                semiconductor_mom_change_100m_usd=_value_or_fallback(
+                    release.semiconductor_mom_change_100m_usd,
+                    _diff_float(
+                        release.semiconductor_export_amount_100m_usd,
+                        previous.semiconductor_export_amount_100m_usd,
+                    ),
                 ),
-                semiconductor_mom_pct=_pct_float(
-                    release.semiconductor_export_amount_100m_usd,
-                    previous.semiconductor_export_amount_100m_usd,
+                semiconductor_mom_pct=_value_or_fallback(
+                    release.semiconductor_mom_pct,
+                    _pct_float(
+                        release.semiconductor_export_amount_100m_usd,
+                        previous.semiconductor_export_amount_100m_usd,
+                    ),
                 ),
-                semiconductor_daily_avg_mom_pct=_pct_float(
-                    release.semiconductor_daily_avg_100m_usd,
-                    previous.semiconductor_daily_avg_100m_usd,
+                semiconductor_daily_avg_mom_pct=_value_or_fallback(
+                    release.semiconductor_daily_avg_mom_pct,
+                    _pct_float(
+                        release.semiconductor_daily_avg_100m_usd,
+                        previous.semiconductor_daily_avg_100m_usd,
+                    ),
                 ),
             )
         )
@@ -1022,7 +1093,9 @@ def _extract_national_trade_links(html_text: str, base_url: str) -> list[tuple[s
             title = title_attr
         if not title:
             continue
-        is_customs = "수출입 현황" in title and "잠정치" in title
+        is_customs = "수출입 현황" in title and (
+            "잠정치" in title or "확정치" in title
+        )
         is_motie = re.fullmatch(r"\d{4}년\s*\d{1,2}월\s*수출입\s*동향", title) is not None
         if not (is_customs or is_motie):
             continue
@@ -1076,6 +1149,26 @@ def _extract_tradedata_hwpx_attachment_url(detail_text: str) -> str:
         if not file_id:
             continue
         return f"https://tradedata.go.kr/cts/filedownload/cubeFiledownload.do?attchFileId={file_id}"
+    return ""
+
+
+def _extract_customs_hwpx_attachment_url(detail_text: str, detail_url: str) -> str:
+    for match in re.finditer(
+        r"(<a\b[^>]*>)(.*?)</a>",
+        detail_text,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        tag = match.group(1)
+        href = _attr(tag, "href")
+        title = _attr(tag, "title")
+        label = _clean_text(match.group(2))
+        if not href:
+            continue
+        if ".hwpx" not in f"{title} {label}".lower():
+            continue
+        if "nttFileDownload.do" not in href:
+            continue
+        return urljoin(detail_url, href)
     return ""
 
 
