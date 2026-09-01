@@ -419,6 +419,8 @@ class NationalTradeTrendWebClient:
     async def _append_customs_attachment_text(self, detail_text: str, detail_url: str) -> str:
         if "customs.go.kr" not in detail_url:
             return detail_text
+        if _customs_detail_has_monthly_summary_text(detail_text):
+            return detail_text
         attachment_url = _extract_customs_hwpx_attachment_url(detail_text, detail_url)
         if not attachment_url:
             return detail_text
@@ -1170,6 +1172,11 @@ def _extract_customs_hwpx_attachment_url(detail_text: str, detail_url: str) -> s
             continue
         return urljoin(detail_url, href)
     return ""
+
+
+def _customs_detail_has_monthly_summary_text(detail_text: str) -> bool:
+    cleaned_text = _clean_text(detail_text)
+    return "일평균수출액" in cleaned_text and "월별 수출입현황" in cleaned_text
 
 
 def _extract_hwpx_text(content: bytes) -> str:
