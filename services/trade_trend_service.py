@@ -804,6 +804,63 @@ def _extract_export_daily_avg(text: str) -> Optional[float]:
     return float(match.group(1))
 
 
+def _number_tokens(text: str) -> list[float]:
+    numbers = []
+    for match in re.finditer(r"-?\d[\d,]*(?:\.\d+)?", text):
+        numbers.append(float(match.group(0).replace(",", "")))
+    return numbers
+
+
+def _monthly_table_label_pattern(label: str) -> str:
+    if label == "무역수지":
+        return r"무역\s*수지"
+    return re.escape(label)
+
+
+def _extract_monthly_table_amounts(
+    label: str,
+    period_label: str,
+    text: str,
+) -> tuple[Optional[float], Optional[float]]:
+    year_month = _period_year_month(period_label)
+    if year_month is None:
+        return None, None
+    year, month = year_month
+    if "월별 수출입현황" not in text:
+        return None, None
+
+    row_pattern = _monthly_table_label_pattern(label)
+    segment = text[text.find("월별 수출입현황") :]
+    match = re.search(
+        rf"{row_pattern}\s+{year - 1}\s+금액\s+(.+?)\s+{year}\s+금액\s+(.+?)(?=\s+증감률|\s+수출|\s+수입|\s+무역\s*수지|\s+\*)",
+        segment,
+    )
+    if not match:
+        return None, None
+
+    previous_year_amounts = _number_tokens(match.group(1))
+    current_year_amounts = _number_tokens(match.group(2))
+    if len(current_year_amounts) < month:
+        return None, None
+    current = current_year_amounts[month - 1] / 100
+    if month > 1:
+        previous = current_year_amounts[month - 2] / 100
+    elif len(previous_year_amounts) >= 12:
+        previous = previous_year_amounts[11] / 100
+    else:
+        return current, None
+    return current, previous
+
+
+def _extract_monthly_table_mom(
+    label: str,
+    period_label: str,
+    text: str,
+) -> tuple[Optional[float], Optional[float]]:
+    current, previous = _extract_monthly_table_amounts(label, period_label, text)
+    return _diff_float(current, previous), _pct_float(current, previous)
+
+
 def _extract_balance(text: str) -> tuple[Optional[float], str]:
     match = re.search(r"무역수지(?:는)?\s*([0-9]+(?:\.[0-9]+)?)\s*억\s*달러\s*(흑자|적자)", text)
     if not match:
@@ -898,6 +955,22 @@ def parse_national_trade_release(
     balance_amount, balance_label = _extract_balance(cleaned_text)
     working_days_current, working_days_previous_year = _extract_working_days(cleaned_text)
     semiconductor_amount = _extract_semiconductor_amount(cleaned_text)
+    period_label = _period_from_title(cleaned_title, phase)
+    export_mom_change, export_mom_pct = _extract_monthly_table_mom(
+        "수출",
+        period_label,
+        cleaned_text,
+    )
+    import_mom_change, import_mom_pct = _extract_monthly_table_mom(
+        "수입",
+        period_label,
+        cleaned_text,
+    )
+    trade_balance_mom_change, _ = _extract_monthly_table_mom(
+        "무역수지",
+        period_label,
+        cleaned_text,
+    )
     published = ""
     published_match = re.search(r"등록일\s*\|?\s*(\d{4}[.-]\d{2}[.-]\d{2})", cleaned_text)
     if published_match:
@@ -907,15 +980,20 @@ def parse_national_trade_release(
         phase=phase,
         title=cleaned_title,
         url=url,
-        period_label=_period_from_title(cleaned_title, phase),
+        period_label=period_label,
         export_amount_100m_usd=export_amount,
         export_yoy_pct=_extract_yoy_after("수출", cleaned_text),
+        export_mom_change_100m_usd=export_mom_change,
+        export_mom_pct=export_mom_pct,
         export_daily_avg_100m_usd=_extract_export_daily_avg(cleaned_text)
         or _safe_div_float(export_amount, working_days_current),
         import_amount_100m_usd=import_amount,
         import_yoy_pct=_extract_yoy_after("수입", cleaned_text),
+        import_mom_change_100m_usd=import_mom_change,
+        import_mom_pct=import_mom_pct,
         trade_balance_100m_usd=balance_amount,
         trade_balance_label=balance_label,
+        trade_balance_mom_change_100m_usd=trade_balance_mom_change,
         semiconductor_export_amount_100m_usd=semiconductor_amount,
         semiconductor_yoy_pct=_extract_semiconductor_yoy(cleaned_text),
         semiconductor_daily_avg_100m_usd=_safe_div_float(

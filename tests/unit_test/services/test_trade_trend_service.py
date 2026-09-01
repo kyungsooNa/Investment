@@ -547,6 +547,39 @@ def test_parse_national_motie_monthly_release_extracts_summary_numbers():
     assert release.trade_balance_label == "흑자"
 
 
+def test_parse_national_monthly_release_extracts_mom_from_monthly_table():
+    text = """
+    8월 수출은 983.0억 달러로 전년동기대비 68.7% 증가, 수입은 635.0억 달러로
+    22.5% 증가했으며, 무역수지는 347.0억 달러 흑자를 기록했다.
+    월별 수출입현황 > (단위 : 백만 달러, %)
+    구 분 1월 2월 3월 4월 5월 6월 7월 8월 9월 10월 11월 12월 누계
+    수출 2025 금액 49,177 52,292 58,065 58,036 57,261 59,834 60,724 58,259 65,904 59,512 60,753 69,514 709,330
+    증감률 △ 10.1 0.4 2.7 3.4 △ 1.3 4.3 5.7 1.1 12.6 3.5 7.9 13.3 3.8
+    2026 금액 65,844 67,643 87,333 85,752 87,576 101,956 98,959 98,255 693,318
+    증감률 33.9 29.4 50.4 47.8 52.9 70.4 63.0 68.7 52.8
+    수입 2025 금액 51,172 48,329 53,341 53,233 50,345 50,826 54,210 51,857 56,420 53,511 51,285 57,368 631,895
+    증감률 △ 6.1 0.2 2.4 △ 2.9 △ 5.2 3.5 0.7 △ 4.1 8.3 △ 1.5 1.1 4.6 0.02
+    2026 금액 57,143 51,934 60,753 62,105 60,748 66,052 68,567 63,507 490,810
+    증감률 11.7 7.5 13.9 16.7 20.7 30.0 26.5 22.5 18.8
+    무역 수지 2025 금액 -1,995 3,964 4,724 4,803 6,916 9,008 6,514 6,403 9,485 6,001 9,468 12,146 77,435
+    2026 금액 8,700 15,709 26,580 23,647 26,828 35,905 30,392 34,748 202,507
+    * 증감률은 전년동기대비 수치임.
+    """
+
+    release = parse_national_trade_release(
+        title="2026년 8월 수출입 현황 [잠정치]",
+        url="https://customs.example/monthly",
+        source="customs",
+        text=text,
+    )
+
+    assert release.export_mom_change_100m_usd == pytest.approx(-7.04)
+    assert release.export_mom_pct == pytest.approx(-0.7114, rel=1e-4)
+    assert release.import_mom_change_100m_usd == pytest.approx(-50.6)
+    assert release.import_mom_pct == pytest.approx(-7.3795, rel=1e-4)
+    assert release.trade_balance_mom_change_100m_usd == pytest.approx(43.56)
+
+
 def test_format_national_trade_trend_report_html_includes_link_and_numbers():
     release = NationalTradeTrendRelease(
         source="customs",
