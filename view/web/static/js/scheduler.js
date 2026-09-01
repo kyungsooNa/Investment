@@ -83,6 +83,8 @@ async function loadSchedulerStatus() {
 function renderSchedulerStatus(data) {
     const badge = document.getElementById('scheduler-status-badge');
     const info = document.getElementById('scheduler-info');
+    const startBtn = document.getElementById('scheduler-start-btn');
+    const stopBtn = document.getElementById('scheduler-stop-btn');
 
     const schedulers = [data];
     const marketTasks = data.market_tasks || [];
@@ -102,7 +104,16 @@ function renderSchedulerStatus(data) {
 
     const activeSchedulers = schedulers.filter(item => item.running).length;
     const activeMarketTasks = marketTasks.filter(task => task.running || task.state === 'running').length;
-    info.textContent = `전략 스케줄러 ${activeSchedulers}/${schedulers.length} 실행 | 시장 태스크 ${activeMarketTasks}/${marketTasks.length} 실행`;
+    const canControl = data.can_control_scheduler !== false;
+    if (startBtn) startBtn.style.display = canControl ? '' : 'none';
+    if (stopBtn) stopBtn.style.display = canControl ? '' : 'none';
+
+    if (data.status_note) {
+        const kind = data.scheduler_kind === 'market_tasks' ? '태스크 기반' : '미구성';
+        info.textContent = `${kind} | ${data.status_note} | 시장 태스크 ${activeMarketTasks}/${marketTasks.length} 실행`;
+    } else {
+        info.textContent = `전략 스케줄러 ${activeSchedulers}/${schedulers.length} 실행 | 시장 태스크 ${activeMarketTasks}/${marketTasks.length} 실행`;
+    }
     renderSchedulerSections(schedulers);
     renderMarketTasks(marketTasks);
 }
@@ -131,12 +142,14 @@ function renderSchedulerSection(section) {
         : '<span class="badge closed">정지</span>';
     const modeText = section.has_scheduler
         ? (section.dry_run ? 'dry-run: CSV만 기록' : '실제 주문 실행')
-        : '스케줄러 미구성';
+        : (section.scheduler_kind === 'market_tasks' ? '태스크 기반' : '스케줄러 미구성');
     const strategies = section.strategies || [];
 
     let bodyHtml = '';
     if (!section.has_scheduler) {
-        bodyHtml = '<div class="card"><span>이 시장의 StrategyScheduler가 아직 구성되지 않았습니다.</span></div>';
+        const message = section.status_note
+            || '이 시장의 StrategyScheduler가 아직 구성되지 않았습니다.';
+        bodyHtml = `<div class="card"><span>${escapeHtml(message)}</span></div>`;
     } else if (strategies.length === 0) {
         bodyHtml = '<div class="card"><span>등록된 전략이 없습니다.</span></div>';
     } else {

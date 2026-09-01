@@ -323,6 +323,22 @@ async def test_scheduler_status_market_query_filters_market_tasks(web_client, mo
 
 
 @pytest.mark.asyncio
+async def test_overseas_scheduler_status_explains_task_only_surface(web_client, mock_web_ctx):
+    """미국장 스케줄러는 StrategyScheduler가 없어도 태스크 기반 표면임을 명시한다."""
+    mock_web_ctx.scheduler.get_status = MagicMock(return_value={"running": False, "strategies": []})
+    mock_web_ctx.strategy_schedulers = {"domestic": mock_web_ctx.scheduler, "overseas_us": None}
+    _attach_overseas_task(mock_web_ctx)
+
+    data = web_client.get("/api/scheduler/status?market=overseas_us").json()
+
+    assert data["market"] == "overseas_us"
+    assert data["scheduler_kind"] == "market_tasks"
+    assert data["can_control_scheduler"] is False
+    assert "백그라운드 전략" in data["status_note"]
+    assert "실주문 자동매매는 잠금" in data["status_note"]
+
+
+@pytest.mark.asyncio
 async def test_scheduler_status_without_market_keeps_all_market_tasks(web_client, mock_web_ctx):
     """market 미지정 호출은 기존처럼 전체 시장 태스크를 반환한다."""
     mock_web_ctx.scheduler.get_status = MagicMock(return_value={"running": False, "strategies": []})
