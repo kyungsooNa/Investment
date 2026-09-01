@@ -365,6 +365,25 @@ class TelegramReporter:
         return await self._send_message(format_jeju_semiconductor_report_html(report))
 
     @_serialized_report_send
+    async def send_jeju_trade_pending_report(
+        self,
+        yyyymm: str,
+        item_code: str,
+        message: str,
+    ) -> bool:
+        """제주 수출입 월간 데이터가 아직 비어 있을 때 월 1회 상태를 알린다."""
+        period = f"{yyyymm[:4]}.{yyyymm[4:6]}" if len(str(yyyymm)) == 6 else str(yyyymm)
+        text = "\n".join(
+            [
+                f"📦 <b>제주 수출입 데이터 대기 ({html.escape(period, quote=False)})</b>",
+                html.escape(message, quote=False),
+                f"품목코드: {html.escape(str(item_code), quote=False)}",
+                "전국 월간 수출입은 발표됐지만, 제주 시도별 API 데이터는 아직 내려오지 않았습니다.",
+            ]
+        )
+        return await self._send_message(text)
+
+    @_serialized_report_send
     async def send_national_trade_trend_report(self, release) -> bool:
         """전국 수출입 잠정치/월간 동향을 텔레그램 리포트 채널로 전송한다."""
         return await self._send_message(format_national_trade_trend_report_html(release))
