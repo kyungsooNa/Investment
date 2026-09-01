@@ -113,6 +113,21 @@ def _scheduler_status_payload(ctx, market: str, scheduler) -> dict:
     status["market_label"] = _MARKET_LABELS.get(market, market)
     status["has_scheduler"] = scheduler is not None
     status["market_tasks"] = _market_task_status(ctx, market)
+    if scheduler is not None:
+        status["scheduler_kind"] = "strategy_scheduler"
+        status["can_control_scheduler"] = True
+        status["status_note"] = ""
+    elif status["market_tasks"]:
+        status["scheduler_kind"] = "market_tasks"
+        status["can_control_scheduler"] = False
+        status["status_note"] = (
+            f"{status['market_label']}은 백그라운드 전략 태스크 상태만 표시합니다. "
+            "실주문 자동매매는 잠금 상태입니다."
+        )
+    else:
+        status["scheduler_kind"] = "unconfigured"
+        status["can_control_scheduler"] = False
+        status["status_note"] = "스케줄러가 초기화되지 않았습니다."
     return status
 
 
