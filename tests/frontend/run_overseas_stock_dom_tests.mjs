@@ -64,6 +64,11 @@ function quoteResponse(overrides = {}) {
       volume: 51234567,
       timestamp: "20260220",
       raw: { base: "190.12", diff: "2.38", sign: "2", tvol: "51234567", tamt: "9876543210", pvol: "48000000" },
+      feature_coverage: {
+        market: "overseas_us",
+        supported: ["현재가", "일봉 차트"],
+        unsupported: ["국내장 종목 상세/재무 지표", "국내장 수급/프로그램", "국내장 AI 종합 분석", "국내장 AI 뉴스 검토"],
+      },
       ...overrides,
     },
   };
@@ -92,6 +97,11 @@ test("searchOverseasStock 이 현재가 요약과 raw(전일종가/대비/거래
   assert(html.includes("2.38"), "회귀: 전일대비(raw.diff) 미표시");
   assert(html.includes("51,234,567"), "거래량 표시 실패");
   assert(html.includes("9,876,543,210"), "회귀: 거래대금(raw.tamt) 미표시");
+  assert(html.includes("지원 기능"), "지원 기능 섹션이 표시되지 않음");
+  assert(html.includes("현재가"), "지원 기능 목록이 표시되지 않음");
+  assert(html.includes("미지원 기능"), "미지원 기능 섹션이 표시되지 않음");
+  assert(html.includes("국내장 종목 상세/재무 지표"), "국내장 대비 미지원 기능이 표시되지 않음");
+  assert(html.includes("국내장 AI 종합 분석"), "국내장 AI 미지원 안내가 표시되지 않음");
 });
 
 test("조회 성공 시 같은 심볼/거래소로 일봉 차트를 그린다", async () => {

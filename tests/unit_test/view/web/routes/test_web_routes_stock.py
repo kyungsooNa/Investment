@@ -702,7 +702,12 @@ async def test_get_overseas_stock_price_calls_service(web_client, mock_web_ctx):
     response = web_client.get("/api/overseas/stock/AAPL?exchange=NASD")
 
     assert response.status_code == 200
-    assert response.json()["data"]["symbol"] == "AAPL"
+    data = response.json()["data"]
+    assert data["symbol"] == "AAPL"
+    assert data["feature_coverage"]["market"] == "overseas_us"
+    assert "현재가" in data["feature_coverage"]["supported"]
+    assert "국내장 종목 상세/재무 지표" in data["feature_coverage"]["unsupported"]
+    assert "국내장 AI 종합 분석" in data["feature_coverage"]["unsupported"]
     mock_web_ctx.stock_query_service.get_overseas_price.assert_awaited_once_with(
         "AAPL", exchange=OverseasExchange.NASD
     )
