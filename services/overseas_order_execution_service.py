@@ -50,6 +50,7 @@ class OverseasOrderExecutionService:
         risk_gate=None,
         open_position_count_provider=None,
         notification_service=None,
+        trade_repository=None,
         journal_strategy_name: str = "LarryWilliamsVBO_overseas",
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -63,6 +64,8 @@ class OverseasOrderExecutionService:
         # kill_switch 와 마찬가지로 live 실주문 직전에만 적용된다.
         self._risk_gate = risk_gate
         self._open_position_count_provider = open_position_count_provider
+        # USD 원장. 주입되면 접수 성공한 주문을 lot 으로 남긴다(미주입이면 무동작).
+        self._ledger = trade_repository
         # 저널 상 경로 구분(자동 VBO / 수동 주문). 소비 측이 섞어 읽지 않도록 한다.
         self._journal_strategy_name = journal_strategy_name
         # live 실주문 직전 차단 게이트(check_orders_allowed). paper 모드는 실주문이 없어 미적용.
@@ -140,6 +143,7 @@ class OverseasOrderExecutionService:
             )
 
         self._record_journal(symbol, ex, side, int(qty), limit_str, signal, exit_reason, resp)
+        await self._record_ledger(symbol, ex, side, int(qty), limit_price, signal, exit_reason, resp)
         await self._emit_order_notification(symbol, ex, side, int(qty), limit_str, signal, exit_reason, resp)
         return resp
 
@@ -227,6 +231,58 @@ class OverseasOrderExecutionService:
             )
         except Exception as e:  # 저널 실패가 주문 결과를 가리지 않도록 흡수
             self._logger.warning({"event": "overseas_order_journal_error", "error": str(e)})
+
+    def _ledger_source(self, signal: Optional[Dict[str, Any]]) -> str:
+        """원장에 남길 출처. 주문별 전략명이 있으면 그것을 쓴다.
+
+        자동 경로는 주문 서비스 인스턴스 하나를 전략 6종이 공유하므로
+        `journal_strategy_name`(인스턴스 값)만으로는 전략을 구분할 수 없다.
+        """
+        strategy = str((signal or {}).get("strategy") or "").strip()
+        return strategy or self._journal_strategy_name
+
+    async def _record_ledger(
+        self, symbol: str, ex: OverseasExchange, side: str, qty: int,
+        limit_price: Any, signal: Optional[Dict[str, Any]], exit_reason: Optional[str],
+        resp: ResCommonResponse,
+    ) -> None:
+        """접수된 주문을 USD 원장에 남긴다(미주입이면 무동작).
+
+        이 기록이 없으면 자동 전략은 저널·알림만 남고 미국장 모의투자 화면이 비어 있다.
+        거부/차단 응답은 기록하지 않는다 — 유령 보유가 생긴다. 해외는 실시간 체결 경로가
+        없어 *접수 시점* 기록이며, 미체결 지정가 보정은 `OverseasFillReconcileService` 가
+        `order_no` 로 매칭해 사후에 한다.
+
+        청산은 `source` 로 좁혀 **같은 출처의 lot 만** 닫는다. 원장에는 수동주문 lot 도
+        함께 쌓이므로, 심볼만으로 닫으면 전략 청산이 수동 보유를 대신 청산한다.
+        """
+        if self._ledger is None:
+            return
+        if getattr(resp, "rt_cd", None) != ErrorCode.SUCCESS.value:
+            return
+        source = self._ledger_source(signal)
+        try:
+            if side == "buy":
+                await self._ledger.log_buy_async(
+                    symbol, ex, self._to_float(limit_price), qty,
+                    source=source,
+                    order_no=str(getattr(getattr(resp, "data", None), "broker_order_no", "") or ""),
+                )
+            else:
+                result = await self._ledger.log_sell_async(
+                    symbol, self._to_float(limit_price), qty=qty,
+                    reason=exit_reason or "", source=source,
+                )
+                if int(getattr(result, "sold_qty", 0) or 0) <= 0:
+                    # 청산은 났는데 닫을 lot 이 없다 = 매수 기록이 유실된 상태다.
+                    # 조용히 넘기면 원장이 계속 비어 보인다.
+                    self._logger.warning({
+                        "event": "overseas_order_ledger_sell_unmatched", "code": symbol,
+                        "source": source, "qty": qty,
+                    })
+        except Exception as e:  # 원장 실패가 이미 나간 주문의 결과를 가리면 안 된다
+            self._logger.warning({"event": "overseas_order_ledger_error",
+                                  "code": symbol, "side": side, "error": str(e)})
 
     async def _emit_order_notification(
         self, symbol: str, ex: OverseasExchange, side: str, qty: int,

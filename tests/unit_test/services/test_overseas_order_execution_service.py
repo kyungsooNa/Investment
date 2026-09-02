@@ -359,3 +359,117 @@ async def test_kill_switch_is_checked_before_risk_gate():
     assert resp.rt_cd == ErrorCode.KILL_SWITCH_BLOCKED.value
     gate.validate_order.assert_not_awaited()
     broker.place_overseas_limit_order.assert_not_awaited()
+
+
+# ── USD 원장 기록 ────────────────────────────────────────────────────────────
+#
+# 자동 전략(paper)이 낸 주문은 지금까지 저널·알림에만 남고 원장(`OverseasTradeRepository`)에
+# 쓰이지 않아, 미국장 모의투자 화면이 항상 비어 있었다. 원장 기록은 주문 경로의 초크포인트인
+# 이 서비스가 담당한다 — VBO(독립 구현)와 베이스 상속 전략 5종이 모두 여기를 지난다.
+
+def _ledger():
+    ledger = MagicMock()
+    ledger.log_buy_async = AsyncMock(return_value=None)
+    ledger.log_sell_async = AsyncMock(return_value=MagicMock(sold_qty=3))
+    return ledger
+
+
+@pytest.mark.asyncio
+async def test_paper_entry_is_recorded_in_ledger():
+    ledger = _ledger()
+    svc = OverseasOrderExecutionService(
+        None, live_enabled=False, trade_repository=ledger,
+        journal_strategy_name="OverseasIntradayVBO",
+    )
+
+    await svc.place_entry(code="aapl", qty=3, limit_price=190.5,
+                          exchange=OverseasExchange.NASD, signal={"strategy": "OverseasIntradayVBO"})
+
+    ledger.log_buy_async.assert_awaited_once()
+    args, kwargs = ledger.log_buy_async.await_args
+    assert args[0] == "AAPL"
+    assert args[1] == OverseasExchange.NASD
+    assert args[2] == 190.5
+    assert args[3] == 3
+    assert kwargs["source"] == "OverseasIntradayVBO"
+
+
+@pytest.mark.asyncio
+async def test_paper_exit_is_recorded_in_ledger_with_source_filter():
+    """청산은 같은 전략이 남긴 lot 만 닫아야 한다 — 수동 보유를 대신 닫으면 안 된다."""
+    ledger = _ledger()
+    svc = OverseasOrderExecutionService(None, live_enabled=False, trade_repository=ledger)
+
+    await svc.place_exit(code="AAPL", qty=3, limit_price=200.0, reason="eod",
+                         signal={"strategy": "OverseasIntradayVBO"})
+
+    ledger.log_sell_async.assert_awaited_once()
+    args, kwargs = ledger.log_sell_async.await_args
+    assert args[0] == "AAPL"
+    assert args[1] == 200.0
+    assert kwargs["qty"] == 3
+    assert kwargs["reason"] == "eod"
+    assert kwargs["source"] == "OverseasIntradayVBO"
+
+
+@pytest.mark.asyncio
+async def test_ledger_source_falls_back_to_journal_strategy_name():
+    """자동 인스턴스는 전략 6종이 공유하므로 주문별 전략명은 signal 에서 온다.
+
+    signal 에 전략명이 없으면 인스턴스 기본값으로 남긴다 — 빈 출처로 쌓이면
+    전략별 성과를 나눌 수 없다.
+    """
+    ledger = _ledger()
+    svc = OverseasOrderExecutionService(
+        None, live_enabled=False, trade_repository=ledger,
+        journal_strategy_name="LarryWilliamsVBO_overseas",
+    )
+
+    await svc.place_entry(code="AAPL", qty=1, limit_price=100.0, signal={})
+
+    assert ledger.log_buy_async.await_args.kwargs["source"] == "LarryWilliamsVBO_overseas"
+
+
+@pytest.mark.asyncio
+async def test_rejected_order_is_not_recorded_in_ledger():
+    """거부된 주문을 기록하면 유령 보유가 생긴다."""
+    ledger = _ledger()
+    svc = OverseasOrderExecutionService(None, live_enabled=False, trade_repository=ledger)
+
+    await svc.place_entry(code="AAPL", qty=0, limit_price=100.0, signal={})
+
+    ledger.log_buy_async.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ledger_failure_does_not_break_the_order_result():
+    """원장 실패가 이미 나간 주문의 결과를 가리면 안 된다."""
+    ledger = _ledger()
+    ledger.log_buy_async = AsyncMock(side_effect=RuntimeError("db locked"))
+    svc = OverseasOrderExecutionService(
+        None, live_enabled=False, trade_repository=ledger, logger=MagicMock())
+
+    resp = await svc.place_entry(code="AAPL", qty=1, limit_price=100.0, signal={})
+
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+
+
+@pytest.mark.asyncio
+async def test_no_ledger_injected_is_noop():
+    """원장 미주입 인스턴스(수동 주문 경로)는 그대로 동작한다."""
+    svc = OverseasOrderExecutionService(None, live_enabled=False)
+    resp = await svc.place_entry(code="AAPL", qty=1, limit_price=100.0, signal={})
+    assert resp.rt_cd == ErrorCode.SUCCESS.value
+
+
+@pytest.mark.asyncio
+async def test_live_entry_records_broker_order_no():
+    """체결 대사의 매칭 키는 브로커 주문번호다 — live 기록에서 빠지면 대사가 불가능하다."""
+    ledger = _ledger()
+    broker = _broker()
+    svc = OverseasOrderExecutionService(
+        broker, live_enabled=True, trade_repository=ledger)
+
+    await svc.place_entry(code="AAPL", qty=6, limit_price=150.0, signal={})
+
+    assert ledger.log_buy_async.await_args.kwargs["order_no"] == "0001234"

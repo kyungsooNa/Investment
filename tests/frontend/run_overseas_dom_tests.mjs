@@ -684,6 +684,45 @@ test("거래 기록이 비면 안내 문구를 보여준다", async () => {
 // USD 원장이 비는 흔한 이유는 "아직 아무것도 안 샀다" 가 아니라 "이 원장에 쓰는 경로가
 // 웹 수동주문 하나뿐" 이라는 것이다. 자동 전략은 would-be 저널로만 남고, 국내 모의투자는
 // 원화 원장이다. 0% 수치만 띄우면 집계가 고장난 것처럼 읽힌다.
+test("거래 행에 출처(수동/전략)를 표시한다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return tradesResponse(SAMPLE_SUMMARY, [
+      tradeRow({}),
+      tradeRow({ id: 2, symbol: "MSFT", source: "OverseasIntradayVBO" }),
+    ]);
+  };
+
+  await window.loadOverseasTrades();
+
+  const text = window.document.getElementById("overseas-trades-result").textContent;
+  assert(text.includes("수동"), `수동 주문 행의 출처가 보여야 함 (실제 "${text.slice(0, 300)}")`);
+  assert(
+    text.includes("OverseasIntradayVBO"),
+    `전략 주문 행의 전략명이 보여야 함 (실제 "${text.slice(0, 300)}")`,
+  );
+});
+
+test("출처 문자열은 HTML 로 해석되지 않는다", async () => {
+  const window = makeWindow();
+  window.fetchWithTimeout = async (url) => {
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return tradesResponse(SAMPLE_SUMMARY, [
+      tradeRow({ source: "<img src=x onerror=alert(1)>" }),
+    ]);
+  };
+
+  await window.loadOverseasTrades();
+
+  const result = window.document.getElementById("overseas-trades-result");
+  assert(result.querySelector("img") === null, "출처가 HTML 로 렌더되면 안 됨");
+});
+
 test("빈 원장에는 무엇이 집계되는지까지 안내한다", async () => {
   const window = makeWindow();
   window.fetchWithTimeout = async (url) => {
@@ -698,8 +737,11 @@ test("빈 원장에는 무엇이 집계되는지까지 안내한다", async () =
   await window.loadOverseasTrades();
 
   const text = window.document.getElementById("overseas-trades-result").textContent;
-  assert(text.includes("수동"), `수동 주문만 집계된다는 안내가 있어야 함 (실제 "${text.slice(0, 300)}")`);
-  assert(text.includes("자동 전략"), `자동 전략이 빠진다는 안내가 있어야 함 (실제 "${text.slice(0, 300)}")`);
+  assert(text.includes("수동"), `수동 주문이 집계된다는 안내가 있어야 함 (실제 "${text.slice(0, 300)}")`);
+  assert(
+    text.includes("intraday_"),
+    `전략을 켜야 기록이 쌓인다는 설정 키 안내가 있어야 함 (실제 "${text.slice(0, 300)}")`,
+  );
   assert(!text.includes("승률"), `기록이 없으면 0% 성과 수치는 노이즈다 (실제 "${text.slice(0, 300)}")`);
 });
 

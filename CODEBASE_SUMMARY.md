@@ -103,6 +103,12 @@
 - `brokers/korea_investment/korea_invest_overseas_stock_api.py`
   - 해외 주문/조회 API. 주문·정정취소·잔고·체결 모두 **실전/모의 TR 쌍이 존재**(#606에서 주간거래 TTTS603x → 정규장 TTTT100xU 전환 시 VTTT... 모의 쌍 추가, `trid_provider`가 `is_paper_trading`으로 분기). 단 모의 서버가 해외 주문을 실제로 수락하는지는 미검증 — `scripts/probe_overseas_paper_order.py` 참고
 - `services/overseas_order_execution_service.py`, `services/overseas_position_sizing_service.py`, `services/overseas_reconcile_service.py`, `services/overseas_candidate_service.py`, `services/overseas_stock_sync_service.py`, `services/overseas_vbo_dryrun_service.py`
+- **USD 원장 기록 경로**: `OverseasTradeRepository`(`data/OverseasTradeRepository/overseas_trade.db`)에
+  쓰는 곳은 두 군데뿐이다 — 웹 수동주문 라우트(`view/web/routes/order.py::_record_overseas_trade`)와
+  `OverseasOrderExecutionService`(자동 전략 경로에만 `trade_repository` 주입). **수동 서비스에는
+  주입하지 않는다** — 라우트가 이미 기록하므로 이중기록이 된다. `source` 컬럼이 수동(`manual`)과
+  전략명을 가르고, 청산은 `log_sell(source=...)` 로 같은 출처 lot 만 닫는다. 마감 후 dry-run 은
+  주문 경로가 없어 원장이 아니라 저널에만 남는다
 - `services/us_market_calendar_service.py`
   - 규칙 기반 NYSE 휴장일/조기폐장 캘린더 (KIS에 해외 휴장일 TR 없어 로컬 계산)
 - `services/us_market_regime_service.py` + `task/background/intraday/us_market_timing_daily_update_task.py`

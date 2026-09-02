@@ -430,19 +430,30 @@ function _overseasReturnCell(trade) {
     return `<span style="color:${color}">${rate.toFixed(2)}%</span>`;
 }
 
-// 이 원장에 쓰는 경로는 웹 수동주문(`POST /api/overseas/order`) 하나뿐이라 비어 있는 것이
-// 정상인 경우가 많다. 무엇이 집계되고 무엇이 빠지는지 밝히지 않으면 0% 수치가 집계 고장으로
-// 읽힌다 — 그래서 기록이 없을 때는 수치 대신 범위를 보여준다.
+// 원장이 비어 있는 것이 정상인 경우가 많다(전략 미가동·신호 없음). 무엇이 집계되고 무엇이
+// 빠지는지 밝히지 않으면 0% 수치가 집계 고장으로 읽힌다 — 그래서 기록이 없을 때는 수치 대신
+// 범위를 보여준다.
 function _overseasEmptyLedgerCard() {
     return `
         <div class="card">
             <h3>USD 성과 요약</h3>
             <p>아직 기록된 미국장 거래가 없습니다.</p>
-            <p class="small">이 원장에는 <b>웹에서 낸 수동 미국주식 주문</b>(매수·매도)만 집계됩니다.
-               자동 전략(dry-run·장중 폴링)은 would-be 주문만 저널에 남기고 원장에 쓰지 않으며,
+            <p class="small">이 원장에는 <b>웹에서 낸 수동 미국주식 주문</b>과
+               <b>장중 폴링 전략(paper)의 진입·청산</b>이 집계됩니다.
+               전략 기록이 없다면 config.yaml 의 <code>overseas_stock.intraday_*</code> 가
+               모두 <code>enabled: false</code> 이거나 당일 진입 신호가 없었던 것입니다.
+               마감 후 dry-run 은 사후 평가라 주문 경로가 없어 저널에만 남고,
                국내 모의투자 기록은 원화 원장으로 분리돼 있습니다.</p>
         </div>
     `;
+}
+
+// 원장에는 수동주문과 전략 주문이 함께 쌓인다 — 어느 쪽 기록인지 구분되지 않으면
+// 전략 성과를 읽을 수 없다. `source` 는 전략명(자동) 또는 "manual"(수동)이다.
+function _overseasSourceLabel(source) {
+    const text = String(source || '').trim();
+    if (!text) return '-';
+    return text === 'manual' ? '수동' : text;
 }
 
 async function loadOverseasTrades() {
@@ -490,6 +501,7 @@ async function loadOverseasTrades() {
                 <td>${trade.sell_price ? _formatUsd(trade.sell_price) : '-'}</td>
                 <td>${_overseasReturnCell(trade)}</td>
                 <td>${escapeHtml(_overseasTradeStatusLabel(trade.status))}</td>
+                <td>${escapeHtml(_overseasSourceLabel(trade.source))}</td>
             </tr>
         `).join('');
         resultDiv.innerHTML = `
@@ -498,8 +510,8 @@ async function loadOverseasTrades() {
                 <p>총 ${_formatNumber(summary.total_trades)}건 · 청산 ${_formatNumber(summary.sold_trades)}건
                    · 승률 ${Number(summary.win_rate) || 0}% · 평균 수익률 ${Number(summary.avg_return) || 0}%${canceledNote}</p>
                 <table class="data-table">
-                    <thead><tr><th>심볼</th><th>거래소</th><th>매수일</th><th>매수가</th><th>수량</th><th>매도일</th><th>매도가</th><th>수익률</th><th>상태</th></tr></thead>
-                    <tbody>${body || '<tr><td colspan="9">거래 기록이 없습니다.</td></tr>'}</tbody>
+                    <thead><tr><th>심볼</th><th>거래소</th><th>매수일</th><th>매수가</th><th>수량</th><th>매도일</th><th>매도가</th><th>수익률</th><th>상태</th><th>구분</th></tr></thead>
+                    <tbody>${body || '<tr><td colspan="10">거래 기록이 없습니다.</td></tr>'}</tbody>
                 </table>
             </div>
         `;
