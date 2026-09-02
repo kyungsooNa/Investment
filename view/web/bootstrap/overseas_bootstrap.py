@@ -383,6 +383,10 @@ class OverseasBootstrap:
         def _open_position_count() -> int:
             return sum(len(svc.get_state().get("positions") or {}) for svc in strategy_services)
 
+        # 자동 전략 주문을 USD 원장에도 남긴다 — 종전에는 원장에 쓰는 경로가 웹 수동주문
+        # 하나뿐이라, 전략이 돌아 알림·저널이 쌓여도 미국장 모의투자 화면은 늘 비어 있었다.
+        # 수동 주문 서비스에는 주입하지 않는다: 라우트(`_record_overseas_trade`)가 이미
+        # 기록하므로 주입하면 같은 주문이 두 번 쌓인다.
         order_execution_service = OverseasOrderExecutionService(
             broker=None,  # live_enabled=False 이므로 broker 미사용(구조적 잠금)
             live_enabled=False,
@@ -391,6 +395,7 @@ class OverseasBootstrap:
             risk_gate=overseas_risk_gate,
             open_position_count_provider=_open_position_count,
             notification_service=ctx.notification_service,
+            trade_repository=getattr(ctx, "overseas_trade_repository", None),
             logger=ctx.logger,
         )
         ctx.overseas_risk_gate_service = overseas_risk_gate

@@ -239,3 +239,57 @@ def test_existing_db_without_order_no_is_migrated(tmp_path):
     holds = repo.get_holds()
     assert len(holds) == 1
     assert holds[0]["order_no"] == ""
+
+
+# ── source 필터 매도 (자동 전략 lot 과 수동 lot 분리) ─────────────────────────
+
+def test_log_sell_source_filter_only_closes_matching_lots(tmp_path):
+    """전략 청산이 같은 심볼의 수동 lot 을 대신 닫으면 안 된다.
+
+    원장이 심볼만으로 오래된 lot 부터 닫으므로, 자동 전략 기록이 들어오기 시작하면
+    수동 보유가 전략 청산에 휩쓸린다.
+    """
+    repo = OverseasTradeRepository(db_path=str(tmp_path / "t.db"))
+    repo.log_buy("AAPL", OverseasExchange.NASD, 100.0, 2, source="manual")
+    repo.log_buy("AAPL", OverseasExchange.NASD, 110.0, 3, source="OverseasIntradayVBO")
+
+    result = repo.log_sell("AAPL", 120.0, reason="eod", source="OverseasIntradayVBO")
+
+    assert result.sold_qty == 3
+    holds = repo.get_holds()
+    assert len(holds) == 1
+    assert holds[0]["source"] == "manual"
+    assert holds[0]["qty"] == 2
+
+
+def test_log_sell_without_source_filter_keeps_existing_behavior(tmp_path):
+    repo = OverseasTradeRepository(db_path=str(tmp_path / "t.db"))
+    repo.log_buy("AAPL", OverseasExchange.NASD, 100.0, 2, source="manual")
+    repo.log_buy("AAPL", OverseasExchange.NASD, 110.0, 3, source="OverseasIntradayVBO")
+
+    result = repo.log_sell("AAPL", 120.0, reason="manual")
+
+    assert result.sold_qty == 5
+    assert repo.get_holds() == []
+
+
+def test_log_sell_source_filter_with_no_matching_lot_is_noop(tmp_path):
+    repo = OverseasTradeRepository(db_path=str(tmp_path / "t.db"))
+    repo.log_buy("AAPL", OverseasExchange.NASD, 100.0, 2, source="manual")
+
+    result = repo.log_sell("AAPL", 120.0, reason="eod", source="OverseasIntradayVBO")
+
+    assert result.sold_qty == 0
+    assert len(repo.get_holds()) == 1
+
+
+@pytest.mark.asyncio
+async def test_log_sell_async_forwards_source(tmp_path):
+    repo = OverseasTradeRepository(db_path=str(tmp_path / "t.db"))
+    repo.log_buy("AAPL", OverseasExchange.NASD, 100.0, 2, source="manual")
+    repo.log_buy("AAPL", OverseasExchange.NASD, 110.0, 3, source="OverseasIntradayVBO")
+
+    result = await repo.log_sell_async("AAPL", 120.0, reason="eod", source="OverseasIntradayVBO")
+
+    assert result.sold_qty == 3
+    assert repo.get_holds()[0]["source"] == "manual"

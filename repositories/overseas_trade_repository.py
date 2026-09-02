@@ -114,20 +114,27 @@ class OverseasTradeRepository:
                 ),
             )
 
-    def log_sell(self, symbol: str, price, qty: int | None = None, reason: str = "") -> OverseasSellResult:
+    def log_sell(self, symbol: str, price, qty: int | None = None, reason: str = "",
+                 source: str | None = None) -> OverseasSellResult:
         """보유 lot 을 오래된 것부터 청산한다.
 
         `qty` 미지정이면 전량. 지정 수량이 lot 수량보다 작으면 **체결분만 SOLD 로
         분리하고 잔량은 HOLD 로 남긴다** — 잔량이 사라지면 관리 주체가 없어진다.
+
+        `source` 를 주면 그 출처의 lot 만 청산한다. 원장에 수동주문과 자동 전략 기록이
+        함께 쌓이므로, 심볼만으로 오래된 lot 부터 닫으면 전략 청산이 같은 심볼의 수동
+        보유를 대신 닫는다. None 이면 출처를 가리지 않는다(기존 동작).
         """
         symbol = str(symbol).upper()
         sell_price = float(price)
         sold_date = self._now().strftime("%Y-%m-%d %H:%M:%S")
 
-        holds = self._db.execute(
-            "SELECT * FROM overseas_trades WHERE symbol=? AND status='HOLD' ORDER BY id",
-            (symbol,),
-        ).fetchall()
+        sql = "SELECT * FROM overseas_trades WHERE symbol=? AND status='HOLD'"
+        params: tuple = (symbol,)
+        if source is not None:
+            sql += " AND source=?"
+            params += (str(source),)
+        holds = self._db.execute(sql + " ORDER BY id", params).fetchall()
         if not holds:
             return OverseasSellResult(sold_qty=0)
 
@@ -179,8 +186,8 @@ class OverseasTradeRepository:
         await asyncio.to_thread(self.log_buy, symbol, exchange, price, qty, source, order_no)
 
     async def log_sell_async(self, symbol: str, price, qty: int | None = None,
-                             reason: str = "") -> OverseasSellResult:
-        return await asyncio.to_thread(self.log_sell, symbol, price, qty, reason)
+                             reason: str = "", source: str | None = None) -> OverseasSellResult:
+        return await asyncio.to_thread(self.log_sell, symbol, price, qty, reason, source)
 
     # ---- 체결 대사 보정 ----
     #

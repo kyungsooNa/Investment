@@ -1455,3 +1455,42 @@ def test_service_container_disables_execution_strength_capture_via_config(
     assert ctx.execution_strength_repo is None
     kwargs = patched_service_container_deps["PriceStreamService"].call_args.kwargs
     assert kwargs["execution_strength_recorder"] is None
+
+
+def test_intraday_auto_path_records_into_usd_ledger(patched_service_container_deps):
+    """자동 전략 주문이 USD 원장에 남아야 미국장 모의투자 화면이 채워진다.
+
+    종전에는 원장에 쓰는 경로가 웹 수동주문 하나뿐이라, 전략이 돌아 알림·저널이 남아도
+    `/api/overseas/trades` 는 항상 비어 있었다.
+    """
+    from config.config_loader import AppConfig
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={"intraday_vbo": {"enabled": True}},
+    )
+
+    _run_with_overseas(ctx)
+
+    orders = ctx.overseas_intraday_vbo_service._orders
+    assert orders._ledger is ctx.overseas_trade_repository
+
+
+def test_manual_order_service_does_not_double_write_ledger(patched_service_container_deps):
+    """수동 주문은 라우트가 이미 원장에 기록한다 — 서비스에도 주입하면 이중기록이 된다."""
+    from config.config_loader import AppConfig
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={"intraday_vbo": {"enabled": True}},
+    )
+
+    _run_with_overseas(ctx)
+
+    assert ctx.overseas_manual_order_service._ledger is None

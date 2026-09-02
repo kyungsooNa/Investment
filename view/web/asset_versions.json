@@ -60,8 +60,8 @@
     "sha256": "94d0a0bce9a4549bd3793b7fc2baadf0c40bcae9c68e78ba653b35106e8fc1dc"
   },
   "js/overseas.js": {
-    "version": 12,
-    "sha256": "d7062bcfe2852eee4368205bed4609e9dcaa7fa952b6d040af5a02b28df3a892"
+    "version": 13,
+    "sha256": "02dac201646d1962cc2ee111d634f37b578f3c5b3862b7eb833e20978bc380bb"
   },
   "js/overseas_autocomplete.js": {
     "version": 2,
