@@ -171,6 +171,28 @@ async def test_alerts_negative_five_percent_bucket():
 
 
 @pytest.mark.asyncio
+async def test_nxt_alert_marks_title_and_metadata_source():
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["080220"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick(
+        "080220",
+        price="72600",
+        rate="-6.20",
+        sign="5",
+        price_source="nxt_tick",
+    )
+
+    notifications.emit.assert_awaited_once()
+    args, kwargs = notifications.emit.call_args
+    assert "[NXT]" in args[2]
+    assert kwargs["metadata"]["price_source"] == "nxt_tick"
+
+
+@pytest.mark.asyncio
 async def test_applies_kis_negative_sign_to_unsigned_rate():
     repo = MagicMock()
     repo.get_all = AsyncMock(return_value=["005930"])

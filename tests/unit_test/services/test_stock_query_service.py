@@ -445,6 +445,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             high=None,
             low=None,
             open_price=None,
+            evaluate_favorite_alert=False,
         )
 
     async def test_get_current_price_force_fresh_passed_through(self):
@@ -507,6 +508,7 @@ class TestDataHandlers(unittest.IsolatedAsyncioTestCase):
             high="81000",
             low="79000",
             open_price="79500",
+            evaluate_favorite_alert=False,
         )
 
     async def test_handle_get_current_stock_price_allow_snapshot_uses_basic_fields(self):

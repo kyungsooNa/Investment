@@ -518,6 +518,41 @@ def test_exchange_specific_tick_only_feeds_matching_sse_queue(price_stream_servi
     mock_stock_repo.update_realtime_data.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_nxt_tick_schedules_favorite_price_alert_without_shared_cache(mock_stock_repo, mock_logger):
+    """NXT 체결 틱은 종목코드 단위 공유 캐시는 오염시키지 않고 관심종목 알림만 평가한다."""
+    alert_service = MagicMock()
+    alert_service.handle_price_tick = AsyncMock()
+    service = PriceStreamService(
+        stock_repo=mock_stock_repo,
+        logger=mock_logger,
+        favorite_price_alert_service=alert_service,
+    )
+
+    service.on_price_tick({
+        '유가증권단축종목코드': '080220',
+        '주식현재가': '72600',
+        '전일대비': '-4800',
+        '전일대비율': '-6.20',
+        '전일대비부호': '5',
+        '누적거래량': '968118',
+        '_exchange': 'NXT',
+    })
+
+    alert_service.handle_price_tick.assert_called_once_with(
+        "080220",
+        price="72600",
+        rate="-6.20",
+        change="-4800",
+        sign="5",
+        is_upper_limit=False,
+        price_source="nxt_tick",
+    )
+    assert service.get_cached_price("080220") is None
+    mock_stock_repo.update_realtime_data.assert_not_called()
+    await asyncio.sleep(0)
+
+
 def test_unified_tick_does_not_feed_exchange_specific_queue(price_stream_service, mock_stock_repo):
     """통합(UN) 틱은 기존 동작(캐시·저장소 갱신)을 유지하고 거래소 지정 큐로는 가지 않는다."""
     krx_queue = price_stream_service.create_subscriber_queue('005930', exchange='KRX')

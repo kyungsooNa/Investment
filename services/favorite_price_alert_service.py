@@ -77,6 +77,7 @@ class FavoritePriceAlertService:
         change=None,
         sign=None,
         is_upper_limit: bool = False,
+        price_source: str = "realtime_tick",
     ) -> bool:
         """실시간 현재가 틱을 평가하고 알림 발행 여부를 반환한다."""
         normalized = self._normalize_code(code)
@@ -128,11 +129,12 @@ class FavoritePriceAlertService:
         signed_threshold = self._format_signed_pct(threshold_pct)
         signed_rate = self._format_signed_pct(rate_value)
         formatted_price = self._format_price(price)
+        title_prefix = "[관심종목][NXT]" if price_source == "nxt_tick" else "[관심종목]"
 
         await self._notification_service.emit(
             NotificationCategory.SYSTEM,
             NotificationLevel.WARNING,
-            f"[관심종목] {name} {signed_threshold} {direction}",
+            f"{title_prefix} {name} {signed_threshold} {direction}",
             f"{normalized} {name} 현재 {formatted_price}, 전일대비 {signed_rate}",
             metadata={
                 "alert_type": "favorite_price_threshold",
@@ -142,6 +144,7 @@ class FavoritePriceAlertService:
                 "change": self._to_float(change),
                 "rate": rate_value,
                 "sign": None if sign is None else str(sign),
+                "price_source": price_source,
                 "threshold_pct": threshold_pct,
                 "dedup_key": f"favorite_price:{normalized}:{threshold_pct}",
                 "force_external": True,

@@ -322,6 +322,7 @@ class StockQueryService:
                         high=_opt(output.stck_hgpr),
                         low=_opt(output.stck_lwpr),
                         open_price=_opt(output.stck_oprc),
+                        evaluate_favorite_alert=False,
                     )
                 elif isinstance(output, dict):
                     self.price_stream_service.cache_price_snapshot(
@@ -335,6 +336,7 @@ class StockQueryService:
                         high=_opt(output.get("stck_hgpr")),
                         low=_opt(output.get("stck_lwpr")),
                         open_price=_opt(output.get("stck_oprc")),
+                        evaluate_favorite_alert=False,
                     )
             except Exception as e:
                 self.logger.debug({"event": "snapshot_backfill_skipped", "code": stock_code, "error": str(e)})
