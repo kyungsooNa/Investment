@@ -147,6 +147,22 @@ class PriceStreamService:
             # 거래소 지정 틱(KRX/NXT)은 화면 표시 전용이다. 종목코드 단위 공유 캐시·저장소는
             # 통합(H0UNCNT0) 기준이므로 오염시키지 않고 같은 거래소 SSE 큐로만 전달한다.
             self._fanout_sse_tick(stock_code, exchange, self._build_sse_tick(stock_code, realtime_data))
+            if exchange == 'NXT' and self._favorite_price_alert_service is not None:
+                try:
+                    self._schedule_background_task(
+                        self._favorite_price_alert_service.handle_price_tick,
+                        stock_code,
+                        price=current_price,
+                        rate=realtime_data.get('전일대비율'),
+                        change=realtime_data.get('전일대비'),
+                        sign=realtime_data.get('전일대비부호'),
+                        is_upper_limit=False,
+                        price_source="nxt_tick",
+                    )
+                except RuntimeError:
+                    pass
+                except Exception as e:
+                    self._logger.warning(f"NXT 관심종목 가격 알림 평가 실패: {e}")
             return
 
         self._tick_ingest_received[stock_code] = self._tick_ingest_received.get(stock_code, 0) + 1
