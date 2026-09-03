@@ -292,3 +292,27 @@ async def test_stop_exit_runs_in_bear_regime():
     action = await s.service.on_price("AAA", 95.0, volume=900_000)
 
     assert action["exit_reason"] == "stop"
+
+
+# ── 빈 세션 재시도 (공통 베이스) ──────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_prepare_session_retries_while_watch_is_empty():
+    """후보/일봉이 늦게 준비돼 감시목록이 비면 다음 패스에서 다시 만든다."""
+    s = _svc(adx=18.0)
+    assert await s.service.prepare_session(TRADE_DATE) == 0
+
+    s.indicator.calc_adx_sync = MagicMock(return_value={"adx": 30.0, "adx_rising": True})
+
+    assert await s.service.prepare_session(TRADE_DATE) == 1
+
+
+@pytest.mark.asyncio
+async def test_prepare_session_empty_retry_is_bounded():
+    s = _svc(adx=18.0)
+    limit = OverseasIntradayChannelBreakoutService.EMPTY_SESSION_RETRY_PASSES
+
+    for _ in range(limit + 3):
+        assert await s.service.prepare_session(TRADE_DATE) == 0
+
+    assert s.candidate_service.get_candidates.await_count == limit

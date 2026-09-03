@@ -99,4 +99,39 @@ test("한국장 일반 스케줄러는 기존 제어 버튼을 유지한다", as
     "한국장 StrategyScheduler는 정지 버튼을 유지해야 함");
 });
 
+test("장중 태스크가 idle 이어도 마지막 폴링 패스의 사유를 보여준다", async () => {
+  const window = makeWindow();
+
+  window.renderSchedulerStatus({
+    market: "overseas_us",
+    market_label: "미국장",
+    running: false,
+    has_scheduler: false,
+    scheduler_kind: "market_tasks",
+    can_control_scheduler: false,
+    status_note: "미국장은 백그라운드 전략 태스크 상태만 표시합니다.",
+    strategies: [],
+    market_tasks: [{
+      name: "overseas_intraday",
+      display_name: "미국장 장중 전략",
+      market: "overseas_us",
+      market_label: "미국장",
+      mode: "paper",
+      live_trading: false,
+      state: "idle",
+      running: false,
+      progress: {
+        watch_count: 0,
+        phase: "polling",
+        phase_detail: "감시 종목이 0개입니다 — 후보 조회 실패이거나 당일 셋업 조건을 만족한 종목이 없습니다.",
+      },
+    }],
+  });
+
+  const text = window.document.body.textContent;
+  assert(text.includes("감시 0개"), `감시 종목 수를 보여줘야 함 (실제 "${text}")`);
+  assert(text.includes("감시 종목이 0개입니다"),
+    `idle 사유(phase_detail)를 보여줘야 함 (실제 "${text}")`);
+});
+
 await run();

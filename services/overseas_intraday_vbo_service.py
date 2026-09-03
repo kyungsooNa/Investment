@@ -30,6 +30,10 @@ from services.indicator_service import IndicatorService
 class OverseasIntradayVBOService:
     STRATEGY_NAME = "LarryWilliamsVBO_overseas_intraday"
     MARKET = "US"
+    # 감시목록이 빈 채로 latch 되면 그날 전략이 통째로 죽는다. VBO 는 당일 시가가
+    # 필요해 개장 직후 당일 봉이 없으면 전 종목이 제외되므로 특히 잘 걸린다 —
+    # 빈 결과는 고정하지 않고 폴링 패스 기준 이 횟수까지 다시 만들어 본다.
+    EMPTY_SESSION_RETRY_PASSES = 10
 
     def __init__(
         self,
@@ -79,6 +83,8 @@ class OverseasIntradayVBOService:
         self._watch: Dict[str, Dict[str, Any]] = {}
         self._positions: Dict[str, Dict[str, Any]] = {}
         self._entered_today: set[str] = set()
+        self._empty_attempt_date: Optional[str] = None
+        self._empty_attempts = 0
 
     # ── 세션 ────────────────────────────────────────────────────────────
 
@@ -92,9 +98,20 @@ class OverseasIntradayVBOService:
         당일 봉이 아직 없는 종목은 시가를 알 수 없으므로 감시에서 제외한다
         (fail-closed — 추정 시가로 진입하지 않는다). 같은 거래일에 두 번 호출되면
         두 번째부터는 no-op 이다.
+
+        **단, 감시목록이 비었으면 no-op 으로 넘기지 않는다** — 감시가 0개면 그날
+        진입 판정이 아예 돌지 않는데, 개장 직후엔 당일 봉이 아직 없어 전 종목이
+        제외되는 일이 실제로 있다. 이를 고정하면 전략이 하루 통째로 죽으므로
+        `EMPTY_SESSION_RETRY_PASSES` 회까지 다음 폴링 패스에서 다시 만든다.
         """
-        if self._session_date == trade_date:
+        if self._empty_attempt_date != trade_date:
+            self._empty_attempt_date = trade_date
+            self._empty_attempts = 0
+        if self._session_date == trade_date and (
+            self._watch or self._empty_attempts >= self.EMPTY_SESSION_RETRY_PASSES
+        ):
             return len(self._watch)
+        self._empty_attempts += 1
 
         ex = exchange or self._default_exchange
         candidates = await self._candidate_service.get_candidates(ex, top_n=self._top_n)
@@ -108,13 +125,17 @@ class OverseasIntradayVBOService:
             if setup:
                 watch[code] = setup
 
+        # 보유·당일진입 이력 초기화는 **거래일이 실제로 바뀔 때만** 한다.
+        # 재시도 패스에서 지우면 손절·EOD 청산이 돌 대상을 잃는다.
+        if self._session_date != trade_date:
+            self._positions = {}
+            self._entered_today = set()
         self._session_date = trade_date
         self._watch = watch
-        self._positions = {}
-        self._entered_today = set()
         self._logger.info({
             "event": "overseas_intraday_vbo_session", "trade_date": trade_date,
             "exchange": ex.value, "candidates": len(candidates or []), "watch": len(watch),
+            "attempt": self._empty_attempts,
         })
         return len(watch)
 

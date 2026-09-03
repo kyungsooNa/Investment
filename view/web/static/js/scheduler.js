@@ -236,6 +236,11 @@ function renderMarketTasks(tasks) {
         const progressText = watchCount != null
             ? `감시 ${Number(watchCount).toLocaleString()}개`
             : `상태 ${escapeHtml(task.state || '-')}`;
+        // 태스크는 폴링 사이에 대부분 idle 로 돌아온다 — 상태값만으로는 장 마감·휴장·
+        // 감시목록 0개가 전부 똑같이 보이므로, 마지막 패스가 무엇을 했는지 함께 적는다.
+        const phaseDetail = progress.phase_detail
+            ? ` | ${escapeHtml(progress.phase_detail)}`
+            : '';
 
         return `
         <div class="card" style="margin-bottom:8px;">
@@ -249,7 +254,7 @@ function renderMarketTasks(tasks) {
                 <span class="badge paper">${escapeHtml(task.mode || 'background')}</span>
             </div>
             <div style="margin-top:8px;color:var(--text-secondary);font-size:0.9em;">
-                ${progressText} | 실주문 자동매매: ${task.live_trading ? '허용' : '잠금'}
+                ${progressText} | 실주문 자동매매: ${task.live_trading ? '허용' : '잠금'}${phaseDetail}
             </div>
         </div>`;
     }).join('');
