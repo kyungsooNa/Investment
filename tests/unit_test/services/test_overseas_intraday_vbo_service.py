@@ -485,3 +485,48 @@ async def test_gate_not_consulted_when_price_below_target():
     await s.service.on_price("AAA", 104.9)
 
     s.regime.classify.assert_not_awaited()
+
+
+# ── 빈 세션 재시도 ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_prepare_session_retries_while_watch_is_empty():
+    """감시목록이 비면 latch 하지 않는다 — 당일 봉이 늦게 올라오면 다음 패스에서 잡는다."""
+    s = _svc(bars=[_bar("20260508", 100, 110, 100, 105), _bar("20260511", 100, 110, 100, 105)])
+
+    assert await s.service.prepare_session("20260512", exchange=OverseasExchange.NASD) == 0
+
+    s.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ok([
+        _bar("20260511", 100, 110, 100, 105), _bar("20260512", 100, 101, 99, 100),
+    ]))
+
+    assert await s.service.prepare_session("20260512", exchange=OverseasExchange.NASD) == 1
+    assert s.service.get_state()["watch"]["AAA"]["target"] == pytest.approx(105.0)
+
+
+@pytest.mark.asyncio
+async def test_prepare_session_empty_retry_is_bounded():
+    """재시도는 무제한이 아니다 — 상한을 넘으면 그날은 더 조회하지 않는다."""
+    s = _svc(bars=[_bar("20260508", 100, 110, 100, 105), _bar("20260511", 100, 110, 100, 105)])
+    limit = OverseasIntradayVBOService.EMPTY_SESSION_RETRY_PASSES
+
+    for _ in range(limit + 3):
+        assert await s.service.prepare_session("20260512", exchange=OverseasExchange.NASD) == 0
+
+    assert s.candidate_service.get_candidates.await_count == limit
+
+
+@pytest.mark.asyncio
+async def test_prepare_session_retry_keeps_open_positions():
+    """재시도 패스가 보유/당일진입 이력을 지우면 손절·EOD 청산이 사라진다."""
+    s = _svc()
+    await s.service.prepare_session("20260512", exchange=OverseasExchange.NASD)
+    await s.service.on_price("AAA", 106.0)
+    assert s.service.get_state()["positions"]
+
+    # 감시목록을 비워 재시도 조건을 만든 뒤 같은 거래일로 다시 호출한다.
+    s.service._watch = {}
+    await s.service.prepare_session("20260512", exchange=OverseasExchange.NASD)
+
+    assert "AAA" in s.service.get_state()["positions"]
+    assert "AAA" in s.service.get_state()["entered_today"]

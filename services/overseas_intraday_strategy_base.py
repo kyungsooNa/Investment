@@ -38,6 +38,11 @@ class OverseasIntradayStrategyBase:
     # 청산 지정가 재시도 슬리피지(%). 해외는 지정가만 지원하므로 마지막 폴링가로는
     # 미체결이 날 수 있고, 그대로 두면 손절/EOD 가 오버나이트로 넘어간다.
     EXIT_RETRY_SLIPPAGE_PCT = (-0.3, -1.0)
+    # 감시목록이 빈 채로 latch 되면 그날 전략은 통째로 죽는다(진입 후보가 0개).
+    # 개장 직후에는 당일 봉이 아직 안 올라오거나 후보 조회가 일시 실패하는 일이
+    # 실제로 있어 `session_prepare_delay_min` 만으로는 부족하다. 빈 결과는 고정하지
+    # 않고 폴링 패스 기준 이 횟수까지 다시 만들어 본다(1패스 = 기본 60초).
+    EMPTY_SESSION_RETRY_PASSES = 10
 
     def __init__(
         self,
@@ -79,6 +84,9 @@ class OverseasIntradayStrategyBase:
         self._watch: Dict[str, Dict[str, Any]] = {}
         self._positions: Dict[str, Dict[str, Any]] = {}
         self._entered_today: set[str] = set()
+        self._restored_date: Optional[str] = None
+        self._empty_attempt_date: Optional[str] = None
+        self._empty_attempts = 0
 
     @classmethod
     def default_state_file(cls, root: str = "data") -> str:
@@ -122,11 +130,26 @@ class OverseasIntradayStrategyBase:
     async def prepare_session(
         self, trade_date: str, exchange: Optional[OverseasExchange] = None,
     ) -> int:
-        """당일 감시 목록을 만든다. 같은 거래일 재호출은 no-op. 반환: 감시 종목 수."""
-        if self._session_date == trade_date and self._state_loaded:
-            return len(self._watch)
+        """당일 감시 목록을 만든다. 같은 거래일 재호출은 no-op. 반환: 감시 종목 수.
 
-        await self._restore_state(trade_date)
+        **빈 감시목록은 latch 하지 않는다** — 감시가 0개면 그날 진입 판정 자체가
+        돌지 않으므로, 개장 직후의 일시적 실패(당일 봉 미생성·후보 조회 실패)를
+        고정하면 전략이 하루 통째로 죽는다. `EMPTY_SESSION_RETRY_PASSES` 회까지
+        다음 폴링 패스에서 다시 만든다. 상태 복원은 거래일당 1회만 수행한다 —
+        재시도 패스마다 복원하면 그 사이 청산된 보유가 파일에서 되살아난다.
+        """
+        if self._empty_attempt_date != trade_date:
+            self._empty_attempt_date = trade_date
+            self._empty_attempts = 0
+        if self._session_date == trade_date and self._state_loaded and (
+            self._watch or self._empty_attempts >= self.EMPTY_SESSION_RETRY_PASSES
+        ):
+            return len(self._watch)
+        self._empty_attempts += 1
+
+        if self._restored_date != trade_date:
+            await self._restore_state(trade_date)
+            self._restored_date = trade_date
 
         ex = exchange or self._default_exchange
         candidates = await self._candidate_service.get_candidates(ex, top_n=self._top_n)
@@ -149,6 +172,7 @@ class OverseasIntradayStrategyBase:
             "trade_date": trade_date, "exchange": ex.value,
             "candidates": len(candidates or []), "watch": len(watch),
             "restored_positions": len(self._positions),
+            "attempt": self._empty_attempts,
         })
         self._persist_state()
         return len(watch)

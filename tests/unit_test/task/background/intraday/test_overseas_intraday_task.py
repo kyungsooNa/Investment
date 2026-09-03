@@ -465,3 +465,68 @@ def test_progress_reports_wired_strategies():
 def test_task_name_is_strategy_agnostic():
     t = _multi_task([_strategy("A", ["AAA"])])
     assert t.task.task_name == "overseas_intraday"
+
+
+# ── 진행 상태 진단 ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_progress_reports_closed_phase_outside_us_session():
+    s = _task(operating=False)
+
+    await s.task._tick()
+
+    progress = s.task.get_progress()
+    assert progress["phase"] == "closed"
+    assert progress["phase_detail"]
+    assert progress["watch_count"] is None
+
+
+@pytest.mark.asyncio
+async def test_progress_reports_holiday_phase():
+    s = _task(trading_day=False)
+
+    await s.task._tick()
+
+    assert s.task.get_progress()["phase"] == "holiday"
+
+
+@pytest.mark.asyncio
+async def test_progress_reports_warmup_phase_before_prepare_delay():
+    s = _task(now=_ny(9, 31))
+
+    await s.task._tick()
+
+    assert s.task.get_progress()["phase"] == "warmup"
+
+
+@pytest.mark.asyncio
+async def test_progress_reports_watch_count_while_polling():
+    s = _task(watch=("AAA", "BBB"))
+
+    await s.task._tick()
+
+    progress = s.task.get_progress()
+    assert progress["phase"] == "polling"
+    assert progress["watch_count"] == 2
+    assert progress["session_date"] == "20260512"
+
+
+@pytest.mark.asyncio
+async def test_progress_flags_empty_watch_as_actionable_detail():
+    """감시 0개는 '전략이 아무것도 하지 않는' 상태다 — 사유가 화면에 보여야 한다."""
+    s = _task(watch=())
+
+    await s.task._tick()
+
+    progress = s.task.get_progress()
+    assert progress["watch_count"] == 0
+    assert "감시" in progress["phase_detail"]
+
+
+@pytest.mark.asyncio
+async def test_progress_reports_eod_phase():
+    s = _task(now=_ny(15, 55))
+
+    await s.task._tick()
+
+    assert s.task.get_progress()["phase"] == "eod"

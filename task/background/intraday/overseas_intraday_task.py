@@ -55,6 +55,13 @@ class OverseasIntradayTask(SchedulableTask):
         self._state = TaskState.IDLE
         self._task: Optional[asyncio.Task] = None
         self._last_eod_date: Optional[str] = None
+        # 마지막 폴링 패스가 무엇을 했는지 — 화면에서 "왜 아무 일도 없는지" 를
+        # 구분하기 위한 진단값. 폴링 루프는 대부분 IDLE 로 되돌아오므로 상태값만
+        # 봐서는 장 마감·휴장·감시목록 0개·배선 누락이 전부 똑같이 보인다.
+        self._phase = "init"
+        self._phase_detail = "아직 실행되지 않았습니다."
+        self._watch_count: Optional[int] = None
+        self._session_date: Optional[str] = None
 
     @property
     def task_name(self) -> str:
@@ -72,7 +79,15 @@ class OverseasIntradayTask(SchedulableTask):
         return {
             "running": self._state == TaskState.RUNNING,
             "strategies": [getattr(s, "STRATEGY_NAME", type(s).__name__) for s in self._strategies],
+            "phase": self._phase,
+            "phase_detail": self._phase_detail,
+            "watch_count": self._watch_count,
+            "session_date": self._session_date,
         }
+
+    def _set_phase(self, phase: str, detail: str) -> None:
+        self._phase = phase
+        self._phase_detail = detail
 
     async def start(self) -> None:
         if self._task is None or self._task.done():
@@ -110,11 +125,17 @@ class OverseasIntradayTask(SchedulableTask):
         now = self._market_clock.get_current_kst_time()
         today = self._market_clock.get_current_kst_date_str()
         if not self._market_clock.is_market_operating_hours(now):
+            self._set_phase("closed", "미국 정규장 시간이 아닙니다 (09:30~16:00 ET).")
             return
         if self._us_mcs is not None and not self._us_mcs.is_trading_day(today):
+            self._set_phase("holiday", f"{today}는 미국장 휴장일입니다.")
             return
         if self._minutes_of_day(now) < self._prepare_ready_minute(now):
             # 개장 직후에는 당일 봉(시가)이 아직 없을 수 있어 세션 준비를 미룬다.
+            self._set_phase(
+                "warmup",
+                f"개장 후 {self._prepare_delay_min}분 세션 준비 대기 중입니다.",
+            )
             return
 
         if self._is_eod_window(now, today):
@@ -127,6 +148,8 @@ class OverseasIntradayTask(SchedulableTask):
                 self._logger.info({"event": "overseas_intraday_eod_exit",
                                    "trade_date": today, "exits": exits})
                 self._flush_journal(today)
+            self._set_phase(
+                "eod", f"마감 {self._eod_exit_before_min}분 전 — 신규 진입 없이 EOD 청산 구간입니다.")
             return
 
         # 감시 심볼 합집합 → 심볼당 1회 조회 → 그 심볼을 보는 전략에만 fan-out
@@ -135,6 +158,19 @@ class OverseasIntradayTask(SchedulableTask):
             await self._safe(svc, svc.prepare_session(today), "prepare_session")
             for code in svc.watch_codes():
                 watchers.setdefault(code, []).append(svc)
+
+        self._session_date = today
+        self._watch_count = len(watchers)
+        if watchers:
+            self._set_phase("polling", f"감시 {len(watchers)}개 종목을 폴링 중입니다.")
+        else:
+            # 감시 0개는 "전략이 켜져 있는데 아무것도 하지 않는" 상태다. 후보 조회
+            # 실패·당일 봉 미생성·전략 조건 미달이 모두 여기로 모이므로 화면에 남긴다.
+            self._set_phase(
+                "polling",
+                "감시 종목이 0개입니다 — 후보 조회 실패이거나 당일 셋업 조건을 "
+                "만족한 종목이 없습니다.",
+            )
 
         for code, services in watchers.items():
             tick = await self._fetch_tick(code)
