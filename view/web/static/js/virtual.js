@@ -3,6 +3,7 @@
 let allVirtualData = [];
 let summaryAgg = {};
 let cumulativeReturns = {};
+let todayReturns = {};
 let virtualCounts = {};
 let dailyChanges = {};
 let weeklyChanges = {};
@@ -84,6 +85,7 @@ async function loadVirtualHistory(forceCode = null) {
             allVirtualData = body.trades || [];
             summaryAgg = body.summary_agg || {};
             cumulativeReturns = body.cumulative_returns || {};
+            todayReturns = body.today_returns || {};
             virtualCounts = body.counts || {};
             dailyChanges = body.daily_changes || {};
             weeklyChanges = body.weekly_changes || {};
@@ -99,6 +101,7 @@ async function loadVirtualHistory(forceCode = null) {
             allVirtualData = [];
             summaryAgg = {};
             cumulativeReturns = {};
+            todayReturns = {};
             virtualCounts = {};
             dailyChanges = {};
             weeklyChanges = {};
@@ -556,12 +559,14 @@ function applyVirtualFilter() {
     }
 
     let dailyChange, weeklyChange, dailyRefDate, weeklyRefDate, firstDate;
+    let todayReturn;
     let profitFactor, expectancy;
     const toShortDate = (d) => d ? d.slice(2).replace(/-/g, '') : '';
     const todayShort = toShortDate(new Date().toISOString().slice(0, 10));
 
     if (isAll) {
         weeklyChange = weeklyChanges['ALL'];
+        todayReturn = todayReturns['ALL'];
         dailyRefDate = dailyRefDates['ALL'];
         weeklyRefDate = weeklyRefDates['ALL'];
         firstDate = firstDates['ALL'];
@@ -570,6 +575,7 @@ function applyVirtualFilter() {
     } else if (selectedArray.length === 1) {
         dailyChange = dailyChanges[selectedArray[0]];
         weeklyChange = weeklyChanges[selectedArray[0]];
+        todayReturn = todayReturns[selectedArray[0]];
         dailyRefDate = dailyRefDates[selectedArray[0]];
         weeklyRefDate = weeklyRefDates[selectedArray[0]];
         firstDate = firstDates[selectedArray[0]];
@@ -582,9 +588,16 @@ function applyVirtualFilter() {
         let totalBuyForWeight = 0;
         let weightedDaily = 0, weightedWeekly = 0;
         let hasDaily = false, hasWeekly = false;
+        let todayBaseAmount = 0, todayPnl = 0, todayEvalAmount = 0;
         selectedArray.forEach(strat => {
             const agg = summaryAgg[strat];
             const buyAmt = agg ? (agg.buy_sum || 0) : 0;
+            const tr = todayReturns[strat];
+            if (tr) {
+                todayBaseAmount += tr.base_amount || 0;
+                todayEvalAmount += tr.eval_amount || 0;
+                todayPnl += tr.pnl || 0;
+            }
             if (buyAmt <= 0) return;
 
             const dc = dailyChanges[strat];
@@ -601,6 +614,12 @@ function applyVirtualFilter() {
         });
         dailyChange = (hasDaily && totalBuyForWeight > 0) ? weightedDaily / totalBuyForWeight : null;
         weeklyChange = (hasWeekly && totalBuyForWeight > 0) ? weightedWeekly / totalBuyForWeight : null;
+        todayReturn = {
+            base_amount: todayBaseAmount,
+            eval_amount: todayEvalAmount,
+            pnl: todayPnl,
+            return_rate: todayBaseAmount > 0 ? (todayPnl / todayBaseAmount) * 100 : 0,
+        };
 
         const fDates = selectedArray.map(s => firstDates[s]).filter(Boolean).sort();
         firstDate = fDates[0];
@@ -702,6 +721,18 @@ function applyVirtualFilter() {
                 <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">누적 수익률 <span style="color:#707080; font-size:0.85em;">${cumDateLabel}</span></div>
                 <strong class="${colorClass(cumulativeReturn)}" style="font-size: 1.35em; font-weight: 800 !important;">
                     ${signPrefix(cumulativeReturn)}${cumulativeReturn.toFixed(2)}%
+                </strong>
+            </div>
+            <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4); cursor: help;"
+                 title="${(() => {
+                    const tr = todayReturn || {};
+                    const base = Number(tr.base_amount || 0).toLocaleString();
+                    const pnl = Number(tr.pnl || 0).toLocaleString();
+                    return '오늘 발생한 손익 기준\n오늘 매수분: 매수가 기준\n기존 보유/오늘 매도분: 전일 종가 기준\n\n기준금액: ' + base + '원\n당일손익: ' + pnl + '원';
+                 })()}">
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">당일 수익률</div>
+                <strong class="${todayReturn ? colorClass(todayReturn.return_rate || 0) : ''}" style="font-size: 1.35em; font-weight: 800 !important;">
+                    ${todayReturn ? signPrefix(todayReturn.return_rate || 0) + Number(todayReturn.return_rate || 0).toFixed(2) + '%' : '-'}
                 </strong>
             </div>
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
