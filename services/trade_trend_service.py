@@ -95,7 +95,49 @@ class NationalTradeTrendRelease:
 
     @property
     def dedup_key(self) -> str:
-        return f"national_trade:{self.phase}:{self.period_label}:{self.url}"
+        return (
+            f"national_trade:{self.phase}:{self.period_label}:"
+            f"{canonicalize_national_trade_url(self.url)}"
+        )
+
+
+def canonicalize_national_trade_url(url: str) -> str:
+    """게시판 목록 파라미터 차이로 같은 보도자료가 중복 발송되는 것을 막는다."""
+    if not url:
+        return url
+    parts = urlsplit(url)
+    host = parts.netloc.lower()
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    drop_keys = {"mno", "pageIndex", "currPage", "searchCondition", "searchKeyword"}
+
+    if "motir.go.kr" in host or "motie.go.kr" in host:
+        query = [(key, value) for key, value in query if key not in drop_keys]
+    elif "customs.go.kr" in host:
+        query = [
+            (key, value)
+            for key, value in query
+            if key not in {"currPage", "pageIndex", "searchType", "searchValue"}
+        ]
+
+    return urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            parts.path,
+            urlencode(query),
+            "",
+        )
+    )
+
+
+def canonicalize_national_trade_dedup_key(key: str) -> str:
+    if not key.startswith("national_trade:"):
+        return key
+    parts = key.split(":", 3)
+    if len(parts) != 4:
+        return key
+    prefix, phase, period_label, url = parts
+    return f"{prefix}:{phase}:{period_label}:{canonicalize_national_trade_url(url)}"
 
 
 def _text(item: ET.Element, tag: str, default: str = "") -> str:

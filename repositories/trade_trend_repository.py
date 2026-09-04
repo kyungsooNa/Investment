@@ -4,7 +4,11 @@ import json
 from pathlib import Path
 from typing import Union
 
-from services.trade_trend_service import NationalTradeTrendRelease, TradeStatItem
+from services.trade_trend_service import (
+    NationalTradeTrendRelease,
+    TradeStatItem,
+    canonicalize_national_trade_dedup_key,
+)
 
 
 class TradeTrendRepository:
@@ -142,12 +146,27 @@ class TradeTrendRepository:
             payload = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return
-        self._sent_keys = set(str(key) for key in payload.get("sent_keys", []))
+        self._sent_keys = set(
+            canonicalize_national_trade_dedup_key(str(key))
+            for key in payload.get("sent_keys", [])
+        )
         raw_history = payload.get("national_release_history", [])
         if isinstance(raw_history, list):
-            self._national_release_history = [
-                item for item in raw_history if isinstance(item, dict)
-            ]
+            history_by_key = {}
+            for item in raw_history:
+                if not isinstance(item, dict):
+                    continue
+                row = dict(item)
+                key = canonicalize_national_trade_dedup_key(
+                    str(row.get("dedup_key") or "")
+                )
+                if key:
+                    row["dedup_key"] = key
+                    self._sent_keys.add(key)
+                    history_by_key[key] = row
+                    continue
+                self._national_release_history.append(row)
+            self._national_release_history.extend(history_by_key.values())
         raw_customs_cache = payload.get("customs_trade_cache", {})
         if isinstance(raw_customs_cache, dict):
             self._customs_trade_cache = {

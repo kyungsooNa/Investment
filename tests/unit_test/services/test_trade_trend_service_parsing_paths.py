@@ -127,6 +127,20 @@ def test_release_preference_score_ranks_the_official_sources_first(url, expected
     assert mod._release_preference_score(_release(url=url)) == expected
 
 
+def test_national_release_dedup_key_ignores_board_paging_query_params():
+    release = _release(
+        source="motie",
+        phase="motie_monthly",
+        url="https://www.motir.go.kr/kor/article/ATCL3f49a5a8c/172077/view?mno=&pageIndex=1",
+        period_label="2026년 7월",
+    )
+
+    assert release.dedup_key == (
+        "national_trade:motie_monthly:2026년 7월:"
+        "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c/172077/view"
+    )
+
+
 def test_lower_ranked_duplicate_release_does_not_replace_the_preferred_one():
     preferred = _release(url="https://www.customs.go.kr/a")
     duplicate = _release(url="https://tradedata.go.kr/a")
