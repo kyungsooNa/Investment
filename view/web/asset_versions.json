@@ -116,8 +116,8 @@
     "sha256": "53219830d1784cadcf84399ed6c763fcf4b0e8a9328dd0e208cf2684fe51bbea"
   },
   "js/virtual.js": {
-    "version": 4,
-    "sha256": "cf568d99d87727af46878de1b01c83dbe594b0d621a4a0c3a8d65c0078331627"
+    "version": 5,
+    "sha256": "96f1b79ab5a86e8c9db57fa8ad7da26d379b664e870ef4147f726a09fd355470"
   },
   "js/virtual_chart.js": {
     "version": 9,
