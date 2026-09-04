@@ -46,11 +46,11 @@ class OverseasOrderExecutionService:
         live_enabled: bool = False,
         default_exchange: OverseasExchange = OverseasExchange.NASD,
         journal=None,
+        trade_repository=None,
         kill_switch=None,
         risk_gate=None,
         open_position_count_provider=None,
         notification_service=None,
-        trade_repository=None,
         journal_strategy_name: str = "LarryWilliamsVBO_overseas",
         logger: Optional[logging.Logger] = None,
     ) -> None:
