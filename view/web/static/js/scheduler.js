@@ -97,6 +97,10 @@ function renderSchedulerStatus(data) {
     } else if (hasRunningMarketTask) {
         badge.textContent = '시장 태스크 실행';
         badge.className = 'badge open';
+    } else if (data.scheduler_kind === 'market_tasks' && marketTasks.some(isMarketTaskArmed)) {
+        // 태스크 기반 시장에서 `정지` 는 오해다 — 폴링 루프는 살아 있고 대기 중일 뿐이다.
+        badge.textContent = '태스크 가동 중';
+        badge.className = 'badge open';
     } else {
         badge.textContent = '정지';
         badge.className = 'badge closed';
@@ -104,18 +108,33 @@ function renderSchedulerStatus(data) {
 
     const activeSchedulers = schedulers.filter(item => item.running).length;
     const activeMarketTasks = marketTasks.filter(task => task.running || task.state === 'running').length;
+    const armedMarketTasks = marketTasks.filter(isMarketTaskArmed).length;
     const canControl = data.can_control_scheduler !== false;
     if (startBtn) startBtn.style.display = canControl ? '' : 'none';
     if (stopBtn) stopBtn.style.display = canControl ? '' : 'none';
 
     if (data.status_note) {
         const kind = data.scheduler_kind === 'market_tasks' ? '태스크 기반' : '미구성';
-        info.textContent = `${kind} | ${data.status_note} | 시장 태스크 ${activeMarketTasks}/${marketTasks.length} 실행`;
+        info.textContent = `${kind} | ${data.status_note} | ${marketTaskSummary(marketTasks, armedMarketTasks, activeMarketTasks)}`;
     } else {
-        info.textContent = `전략 스케줄러 ${activeSchedulers}/${schedulers.length} 실행 | 시장 태스크 ${activeMarketTasks}/${marketTasks.length} 실행`;
+        info.textContent = `전략 스케줄러 ${activeSchedulers}/${schedulers.length} 실행 | ${marketTaskSummary(marketTasks, armedMarketTasks, activeMarketTasks)}`;
     }
     renderSchedulerSections(schedulers);
     renderMarketTasks(marketTasks);
+}
+
+// 시장 태스크는 폴링/티켓 사이에 idle 로 돌아온다 — `실행 중` 만 세면 정상 가동을
+// "0개 실행" 으로 보여줘 멈춘 것처럼 읽힌다. 가동(armed)과 실행 중을 함께 적는다.
+function isMarketTaskArmed(task) {
+    if (task.armed === undefined || task.armed === null) {
+        return !!(task.running || task.state === 'running');
+    }
+    return !!task.armed;
+}
+
+function marketTaskSummary(tasks, armed, active) {
+    if (!tasks || tasks.length === 0) return '시장 태스크 없음';
+    return `시장 태스크 ${armed}/${tasks.length} 가동 (실행 중 ${active})`;
 }
 
 function jsString(value) {
@@ -225,9 +244,12 @@ function renderMarketTasks(tasks) {
 
     marketTasksDiv.innerHTML = tasks.map(task => {
         const running = task.running || task.state === 'running';
+        const armed = isMarketTaskArmed(task);
         const stateBadge = running
             ? '<span class="badge open">실행 중</span>'
-            : '<span class="badge closed">대기</span>';
+            : (armed
+                ? '<span class="badge paper">가동 중(대기)</span>'
+                : '<span class="badge closed">미기동</span>');
         const modeBadge = task.live_trading
             ? '<span class="badge closed">실주문</span>'
             : '<span class="badge paper">관찰/Paper</span>';

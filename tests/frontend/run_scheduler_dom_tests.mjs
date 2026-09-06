@@ -134,4 +134,87 @@ test("장중 태스크가 idle 이어도 마지막 폴링 패스의 사유를 �
     `idle 사유(phase_detail)를 보여줘야 함 (실제 "${text}")`);
 });
 
+test("가동 중인 태스크는 idle 이어도 '정지'/'0개 실행'으로 보이지 않는다", async () => {
+  const window = makeWindow();
+
+  window.renderSchedulerStatus({
+    market: "overseas_us",
+    market_label: "미국장",
+    running: false,
+    has_scheduler: false,
+    scheduler_kind: "market_tasks",
+    can_control_scheduler: false,
+    status_note: "미국장은 백그라운드 전략 태스크 상태만 표시합니다.",
+    strategies: [],
+    market_tasks: [
+      {
+        name: "overseas_intraday",
+        display_name: "미국장 장중 전략",
+        market: "overseas_us",
+        market_label: "미국장",
+        mode: "paper",
+        live_trading: false,
+        state: "idle",
+        running: false,
+        armed: true,
+        progress: { watch_count: 0, phase: "closed", phase_detail: "주말 — 미국장 휴장입니다." },
+      },
+      {
+        name: "overseas_dryrun",
+        display_name: "미국장 마감 후 Dry-run",
+        market: "overseas_us",
+        market_label: "미국장",
+        mode: "dry-run",
+        live_trading: false,
+        state: "idle",
+        running: false,
+        armed: true,
+        progress: { phase_detail: "16:30 ET 하루 1회 실행 — 아직 실행 이력이 없습니다." },
+      },
+    ],
+  });
+
+  const text = window.document.body.textContent;
+  const badge = window.document.getElementById("scheduler-status-badge");
+  assert(badge.textContent === "태스크 가동 중",
+    `가동 중인 태스크가 있으면 '정지'가 아니어야 함 (실제 "${badge.textContent}")`);
+  assert(text.includes("2/2 가동"), `가동 수를 세어 보여줘야 함 (실제 "${text}")`);
+  assert(text.includes("가동 중(대기)"), `카드 배지가 미기동과 구분돼야 함 (실제 "${text}")`);
+  assert(text.includes("주말 — 미국장 휴장입니다."), `주말 사유를 보여줘야 함 (실제 "${text}")`);
+  assert(text.includes("16:30 ET 하루 1회 실행"), `dry-run 트리거 시각을 보여줘야 함 (실제 "${text}")`);
+});
+
+test("기동되지 않은 태스크는 '미기동'으로 구분한다", async () => {
+  const window = makeWindow();
+
+  window.renderSchedulerStatus({
+    market: "overseas_us",
+    market_label: "미국장",
+    running: false,
+    has_scheduler: false,
+    scheduler_kind: "market_tasks",
+    can_control_scheduler: false,
+    status_note: "미국장은 백그라운드 전략 태스크 상태만 표시합니다.",
+    strategies: [],
+    market_tasks: [{
+      name: "overseas_intraday",
+      display_name: "미국장 장중 전략",
+      market: "overseas_us",
+      market_label: "미국장",
+      mode: "paper",
+      live_trading: false,
+      state: "idle",
+      running: false,
+      armed: false,
+      progress: { phase_detail: "아직 실행되지 않았습니다." },
+    }],
+  });
+
+  const text = window.document.body.textContent;
+  const badge = window.document.getElementById("scheduler-status-badge");
+  assert(text.includes("미기동"), `미기동 배지를 보여줘야 함 (실제 "${text}")`);
+  assert(text.includes("0/1 가동"), `가동 0 을 보여줘야 함 (실제 "${text}")`);
+  assert(badge.textContent === "정지", `가동 태스크가 없으면 정지여야 함 (실제 "${badge.textContent}")`);
+});
+
 await run();

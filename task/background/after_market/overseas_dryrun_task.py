@@ -88,7 +88,20 @@ class OverseasDryRunTask(AfterMarketTask):
         return TaskPriority.LOW
 
     def get_progress(self) -> dict:
-        return {"last_run_date": self._last_run_date}
+        return {
+            "last_run_date": self._last_run_date,
+            "armed": self.is_armed,
+            "phase_detail": self._phase_detail(),
+        }
+
+    def _phase_detail(self) -> str:
+        """화면에 왜 idle 인지 적는다 — 하루 1회 태스크는 대부분의 시간이 대기다."""
+        if not self.is_armed:
+            return "트리거가 등록되지 않았습니다 — 태스크가 기동되지 않았습니다."
+        trigger = f"{self._loop_cron_hour:02d}:{self._loop_cron_minute:02d} ET 하루 1회 실행"
+        if self._last_run_date:
+            return f"{trigger} — 마지막 실행 이력 {self._format_market_date(self._last_run_date)}"
+        return f"{trigger} — 아직 실행 이력이 없습니다."
 
     @staticmethod
     def _format_market_date(yyyymmdd: str) -> str:

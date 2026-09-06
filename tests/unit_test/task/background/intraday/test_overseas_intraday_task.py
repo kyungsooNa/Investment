@@ -530,3 +530,45 @@ async def test_progress_reports_eod_phase():
     await s.task._tick()
 
     assert s.task.get_progress()["phase"] == "eod"
+
+
+# ── 가동 여부 / 휴장 구분 ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_progress_armed_is_false_before_start_and_true_after():
+    """`대기` 와 `미기동` 은 다르다 — 루프가 살아있는지를 화면이 구분할 수 있어야 한다."""
+    s = _task(operating=False)
+    assert s.task.get_progress()["armed"] is False
+
+    await s.task.start()
+    try:
+        assert s.task.get_progress()["armed"] is True
+    finally:
+        await s.task.stop()
+
+    assert s.task.get_progress()["armed"] is False
+
+
+@pytest.mark.asyncio
+async def test_progress_names_weekend_instead_of_generic_off_hours():
+    """주말은 '정규장 시간이 아님' 이 아니라 휴장이다 — 문구가 고장처럼 읽히면 안 된다."""
+    # 2026-05-16 은 토요일.
+    s = _task(now=_ny(12, 0, day=16), operating=False)
+
+    await s.task._tick()
+
+    progress = s.task.get_progress()
+    assert progress["phase"] == "closed"
+    assert "주말" in progress["phase_detail"]
+
+
+@pytest.mark.asyncio
+async def test_progress_off_hours_detail_includes_current_et_time():
+    """평일 장외는 현재 ET 시각을 함께 보여줘야 판단할 수 있다."""
+    s = _task(now=_ny(7, 5), operating=False)
+
+    await s.task._tick()
+
+    detail = s.task.get_progress()["phase_detail"]
+    assert "07:05" in detail
+    assert "ET" in detail

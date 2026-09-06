@@ -83,6 +83,9 @@ class OverseasIntradayTask(SchedulableTask):
             "phase_detail": self._phase_detail,
             "watch_count": self._watch_count,
             "session_date": self._session_date,
+            # 폴링 루프는 패스 사이에 IDLE 로 돌아오므로 `running` 만 보면 가동 중인
+            # 태스크와 아예 기동되지 않은 태스크가 똑같이 보인다.
+            "armed": self._task is not None and not self._task.done(),
         }
 
     def _set_phase(self, phase: str, detail: str) -> None:
@@ -125,7 +128,15 @@ class OverseasIntradayTask(SchedulableTask):
         now = self._market_clock.get_current_kst_time()
         today = self._market_clock.get_current_kst_date_str()
         if not self._market_clock.is_market_operating_hours(now):
-            self._set_phase("closed", "미국 정규장 시간이 아닙니다 (09:30~16:00 ET).")
+            # 주말과 평일 장외를 갈라 적는다 — 둘 다 "정규장 시간이 아님" 으로 뭉뚱그리면
+            # 토·일에도 고장처럼 읽힌다. 평일은 현재 ET 시각을 함께 실어 판단을 돕는다.
+            if now.weekday() >= 5:
+                self._set_phase("closed", "주말 — 미국장 휴장입니다. 다음 개장은 월요일 09:30 ET 입니다.")
+            else:
+                self._set_phase(
+                    "closed",
+                    f"미국 정규장 시간이 아닙니다 (09:30~16:00 ET, 현재 {now.strftime('%H:%M')} ET).",
+                )
             return
         if self._us_mcs is not None and not self._us_mcs.is_trading_day(today):
             self._set_phase("holiday", f"{today}는 미국장 휴장일입니다.")
