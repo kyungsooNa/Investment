@@ -218,6 +218,71 @@ async def test_journal_strategy_name_override():
     assert kwargs["signal_source"] == OverseasOrderExecutionService.SIGNAL_SOURCE_LIVE
 
 
+# ── USD 거래 원장 연동 (선택) ────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_trade_repository_records_successful_paper_entry():
+    trade_repository = MagicMock()
+    trade_repository.log_buy_async = AsyncMock()
+    svc = OverseasOrderExecutionService(
+        None,
+        live_enabled=False,
+        trade_repository=trade_repository,
+        journal_strategy_name="LarryWilliamsVBO_overseas_intraday",
+    )
+
+    await svc.place_entry(code="msft", qty=1, limit_price=502.46)
+
+    trade_repository.log_buy_async.assert_awaited_once_with(
+        "MSFT",
+        OverseasExchange.NASD,
+        502.46,
+        1,
+        source="LarryWilliamsVBO_overseas_intraday",
+        order_no="",
+    )
+
+
+@pytest.mark.asyncio
+async def test_trade_repository_records_successful_paper_exit():
+    trade_repository = MagicMock()
+    trade_repository.log_sell_async = AsyncMock()
+    svc = OverseasOrderExecutionService(
+        None,
+        live_enabled=False,
+        trade_repository=trade_repository,
+        journal_strategy_name="LarryWilliamsVBO_overseas_intraday",
+    )
+
+    await svc.place_exit(code="MSFT", qty=1, limit_price=498.0, reason="stop")
+
+    trade_repository.log_sell_async.assert_awaited_once_with(
+        "MSFT",
+        498.0,
+        qty=1,
+        reason="stop",
+        source="LarryWilliamsVBO_overseas_intraday",
+    )
+
+
+@pytest.mark.asyncio
+async def test_trade_repository_skips_rejected_live_order():
+    trade_repository = MagicMock()
+    trade_repository.log_buy_async = AsyncMock()
+    trade_repository.log_sell_async = AsyncMock()
+    broker = _broker(ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="rejected", data=None))
+    svc = OverseasOrderExecutionService(
+        broker,
+        live_enabled=True,
+        trade_repository=trade_repository,
+    )
+
+    await svc.place_entry(code="AAPL", qty=3, limit_price=150.25)
+
+    trade_repository.log_buy_async.assert_not_awaited()
+    trade_repository.log_sell_async.assert_not_awaited()
+
+
 # ── 알림 연동 ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

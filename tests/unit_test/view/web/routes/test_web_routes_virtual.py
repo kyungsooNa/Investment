@@ -991,6 +991,69 @@ def test_aggregate_virtual_data_empty_and_exception_path():
     assert result["counts"] == {}
 
 
+def test_aggregate_virtual_data_reports_today_returns_by_strategy():
+    """당일 수익률은 오늘 발생한 손익만 전략별로 집계한다."""
+    from view.web.routes.virtual import _aggregate_virtual_data
+
+    vm = MagicMock()
+    vm.get_trade_amount.side_effect = lambda price, qty=1, **kwargs: float(price * qty)
+    vm.save_daily_snapshot.return_value = None
+    vm._load_data.return_value = {}
+    vm.get_daily_change.return_value = (None, None)
+    vm.get_weekly_change.return_value = (None, None)
+
+    trades = [
+        # 오늘 매수 후 보유: 1000 -> 1100, +100
+        mock_trade(
+            code="A",
+            strategy="S1",
+            buy_date="2026-09-04 09:10:00",
+            buy_price=1000,
+            current_price=1100,
+            qty=1,
+            status="HOLD",
+        ),
+        # 이전 매수 후 오늘 매도: 전일종가 1900 -> 매도가 2100, +200
+        mock_trade(
+            code="B",
+            strategy="S1",
+            buy_date="2026-09-03 09:10:00",
+            buy_price=1800,
+            sell_date="2026-09-04 10:20:00",
+            sell_price=2100,
+            current_price=2200,
+            daily_change_rate=15.79,
+            qty=1,
+            status="SOLD",
+        ),
+        # 이전 매수 후 보유: 전일종가 500 -> 현재가 450, -50
+        mock_trade(
+            code="C",
+            strategy="S2",
+            buy_date="2026-09-03 09:10:00",
+            buy_price=500,
+            current_price=450,
+            daily_change_rate=-10.0,
+            qty=1,
+            status="HOLD",
+        ),
+    ]
+
+    with patch("view.web.routes.virtual.datetime") as dt:
+        dt.now.return_value.strftime.return_value = "2026-09-04"
+        result = _aggregate_virtual_data(trades, vm, False)
+
+    assert result["today_returns"]["S1"]["pnl"] == 300
+    assert result["today_returns"]["S1"]["base_amount"] == 2900
+    assert result["today_returns"]["S1"]["return_rate"] == 10.34
+    assert result["today_returns"]["S2"]["pnl"] == -50
+    assert result["today_returns"]["S2"]["base_amount"] == 500
+    assert result["today_returns"]["S2"]["return_rate"] == -10.0
+    assert result["today_returns"]["ALL"]["pnl"] == 250
+    assert result["today_returns"]["ALL"]["base_amount"] == 3400
+    assert result["today_returns"]["ALL"]["return_rate"] == 7.35
+
+
 def test_sanitize_for_json_replaces_nan_and_inf():
     """NaN/Infinity 값이 0.0으로 치환되는지 검증."""
     from view.web.routes.virtual import _sanitize_for_json

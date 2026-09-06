@@ -197,6 +197,39 @@ async def test_sync_program_trading_subscriptions_marks_program_source(policy, m
         source="program",
     )
 
+
+@pytest.mark.asyncio
+async def test_sync_program_trading_removal_clears_pt_desired_when_price_ref_remains(
+    policy, mock_streaming_stock_repo
+):
+    """PT 회전에서 빠진 종목은 PRICE 캡처 참조가 남아도 PT desired 에서 제거한다."""
+    policy._refs = {
+        "005930": {
+            "microstructure_capture": {
+                "priority": SubscriptionPriority.LOW,
+                "type": StreamingType.PROGRAM_TRADING,
+            },
+            "microstructure_capture_price": {
+                "priority": SubscriptionPriority.LOW,
+                "type": StreamingType.UNIFIED_PRICE,
+            },
+        },
+    }
+
+    await policy.sync_subscriptions(
+        ["000660"],
+        "microstructure_capture",
+        SubscriptionPriority.LOW,
+        StreamingType.PROGRAM_TRADING,
+    )
+
+    assert "microstructure_capture" not in policy._refs["005930"]
+    assert "microstructure_capture_price" in policy._refs["005930"]
+    mock_streaming_stock_repo.unmark_desired.assert_any_await(
+        "005930",
+        StreamingType.PROGRAM_TRADING,
+    )
+
 def test_is_streaming_and_get_status(policy):
     """스트리밍 여부 판별 및 구독 현황 조회 로직 검증"""
     policy._active_codes_price = {"005930"}

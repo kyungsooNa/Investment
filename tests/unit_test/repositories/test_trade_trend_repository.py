@@ -112,6 +112,73 @@ def test_trade_trend_repository_skips_legacy_key_when_period_history_exists(tmp_
     assert history[0]["export_amount_100m_usd"] == 213
 
 
+def test_trade_trend_repository_normalizes_national_sent_keys_on_load(tmp_path):
+    path = tmp_path / "trade_trend_state.json"
+    path.write_text(
+        (
+            '{"sent_keys":["national_trade:motie_monthly:2026년 7월:'
+            'https://www.motir.go.kr/kor/article/ATCL3f49a5a8c/172077/view?mno=&pageIndex=1"]}'
+        ),
+        encoding="utf-8",
+    )
+    release = NationalTradeTrendRelease(
+        source="motie",
+        phase="motie_monthly",
+        title="2026년 7월 수출입 동향",
+        url="https://www.motir.go.kr/kor/article/ATCL3f49a5a8c/172077/view",
+        period_label="2026년 7월",
+        export_amount_100m_usd=988.9,
+    )
+
+    repo = TradeTrendRepository(path)
+
+    assert repo.has_sent(release.dedup_key)
+
+
+def test_trade_trend_repository_merges_national_history_by_canonical_key(tmp_path):
+    path = tmp_path / "trade_trend_state.json"
+    path.write_text(
+        """
+        {
+          "sent_keys": [],
+          "national_release_history": [
+            {
+              "source": "motie",
+              "source_type": "sent",
+              "phase": "motie_monthly",
+              "title": "2026년 7월 수출입 동향",
+              "url": "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c/172077/view",
+              "period_label": "2026년 7월",
+              "export_amount_100m_usd": 988.9,
+              "sent_at": "2026-09-01T16:37:56+09:00",
+              "dedup_key": "national_trade:motie_monthly:2026년 7월:https://www.motir.go.kr/kor/article/ATCL3f49a5a8c/172077/view"
+            },
+            {
+              "source": "motie",
+              "source_type": "sent",
+              "phase": "motie_monthly",
+              "title": "2026년 7월 수출입 동향",
+              "url": "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c/172077/view?mno=&pageIndex=1",
+              "period_label": "2026년 7월",
+              "export_amount_100m_usd": 988.9,
+              "sent_at": "2026-09-04T10:20:54+09:00",
+              "dedup_key": "national_trade:motie_monthly:2026년 7월:https://www.motir.go.kr/kor/article/ATCL3f49a5a8c/172077/view?mno=&pageIndex=1"
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    history = TradeTrendRepository(path).get_national_release_history()
+
+    assert len(history) == 1
+    assert history[0]["dedup_key"] == (
+        "national_trade:motie_monthly:2026년 7월:"
+        "https://www.motir.go.kr/kor/article/ATCL3f49a5a8c/172077/view"
+    )
+
+
 def test_trade_trend_repository_backfill_saves_release_without_sent_at(tmp_path):
     release = NationalTradeTrendRelease(
         source="customs",

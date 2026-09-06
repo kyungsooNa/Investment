@@ -136,22 +136,34 @@ class SubscriptionPolicy:
     async def remove_subscription(self, code: str, category_key: str) -> None:
         """특정 카테고리에서 종목 구독을 해제합니다."""
         if code in self._refs:
+            removed = self._refs[code].get(category_key)
+            removed_stream_type = removed.get("type") if isinstance(removed, dict) else None
             self._refs[code].pop(category_key, None)
             if not self._refs[code]:
                 del self._refs[code]
-                if self._streaming_stock_repo:
-                    await self._streaming_stock_repo.unmark_desired(code, StreamingType.UNIFIED_PRICE)
+            if (
+                self._streaming_stock_repo
+                and removed_stream_type is not None
+                and not self._has_stream_type_ref(code, removed_stream_type)
+            ):
+                await self._streaming_stock_repo.unmark_desired(code, removed_stream_type)
         await self._rebalance()
 
     async def remove_category(self, category_key: str) -> None:
         """카테고리 전체의 구독을 한 번에 해제합니다 (전략 종료 시 사용)."""
         codes_in_category = [c for c, cats in self._refs.items() if category_key in cats]
         for code in codes_in_category:
+            removed = self._refs[code].get(category_key)
+            removed_stream_type = removed.get("type") if isinstance(removed, dict) else None
             self._refs[code].pop(category_key, None)
             if not self._refs[code]:
                 del self._refs[code]
-                if self._streaming_stock_repo:
-                    await self._streaming_stock_repo.unmark_desired(code, StreamingType.UNIFIED_PRICE)
+            if (
+                self._streaming_stock_repo
+                and removed_stream_type is not None
+                and not self._has_stream_type_ref(code, removed_stream_type)
+            ):
+                await self._streaming_stock_repo.unmark_desired(code, removed_stream_type)
         await self._rebalance()
 
     async def drop_unhealthy_price_subscription(self, code: str, reason: str = "unhealthy_stream") -> bool:
@@ -240,7 +252,7 @@ class SubscriptionPolicy:
 
         if self._streaming_stock_repo:
             for code in removed_codes:
-                if code not in self._refs:
+                if not self._has_stream_type_ref(code, stream_type):
                     await self._streaming_stock_repo.unmark_desired(code, stream_type)
             for code in added_codes:
                 await self._streaming_stock_repo.mark_desired(
@@ -279,6 +291,13 @@ class SubscriptionPolicy:
         }
 
     # ── Internal rebalance logic ────────────────────────────────────
+
+    def _has_stream_type_ref(self, code: str, stream_type: StreamingType) -> bool:
+        return any(
+            request.get("type") == stream_type
+            for request in self._refs.get(code, {}).values()
+            if isinstance(request, dict)
+        )
 
     async def _rebalance(self) -> None:
         """
