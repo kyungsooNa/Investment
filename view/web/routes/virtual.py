@@ -419,6 +419,7 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
             "daily_ref_dates": {}, "weekly_ref_dates": {},
             "first_dates": {}, "counts": {},
             "profit_factors": {}, "expectancies": {},
+            "today_returns": {},
         }
 
     try:
@@ -427,7 +428,7 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
         for col, default in [('status', 'HOLD'), ('sell_date', None)]:
             if col not in df.columns:
                 df[col] = default
-        for col, default in [('qty', 1), ('buy_price', 0), ('current_price', 0), ('sell_price', 0)]:
+        for col, default in [('qty', 1), ('buy_price', 0), ('current_price', 0), ('sell_price', 0), ('daily_change_rate', 0)]:
             if col not in df.columns:
                 df[col] = default
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(default)
@@ -513,6 +514,73 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
                 "today_sell": int(df.loc[mask, 'is_today_sell'].sum()),
             }
 
+        # 전략별 당일 수익률: 오늘 매수분은 매수가, 기존 보유분은 전일 종가를 기준으로 한다.
+        def infer_prev_close(row):
+            cur = float(row.get('current_price', 0) or 0)
+            rate = float(row.get('daily_change_rate', 0) or 0)
+            if cur <= 0 or rate <= -100:
+                return None
+            return round(cur / (1 + rate / 100.0))
+
+        today_stats = {"ALL": {"base_amount": 0.0, "eval_amount": 0.0, "pnl": 0.0}}
+        for row in df.to_dict('records'):
+            strat = row.get('strategy')
+            if not strat:
+                continue
+
+            qty = float(row.get('qty', 1) or 1)
+            buy_price = float(row.get('buy_price', 0) or 0)
+            if qty <= 0 or buy_price <= 0:
+                continue
+
+            is_today_buy = bool(row.get('is_today_buy'))
+            is_today_sell = bool(row.get('is_today_sell'))
+            status = row.get('status')
+
+            if status == 'SOLD':
+                if not is_today_sell:
+                    continue
+                eval_price = float(row.get('sell_price', 0) or 0)
+            else:
+                eval_price = float(row.get('current_price', 0) or 0)
+            if eval_price <= 0:
+                continue
+
+            base_price = buy_price if is_today_buy else infer_prev_close(row)
+            if not base_price or base_price <= 0:
+                continue
+
+            base_amount = vm.get_trade_amount(
+                base_price,
+                qty,
+                is_sell=not is_today_buy,
+                apply_cost=apply_cost,
+            )
+            eval_amount = vm.get_trade_amount(
+                eval_price,
+                qty,
+                is_sell=True,
+                apply_cost=apply_cost,
+            )
+            pnl = eval_amount - base_amount
+
+            for key in ("ALL", strat):
+                bucket = today_stats.setdefault(key, {"base_amount": 0.0, "eval_amount": 0.0, "pnl": 0.0})
+                bucket["base_amount"] += float(base_amount)
+                bucket["eval_amount"] += float(eval_amount)
+                bucket["pnl"] += float(pnl)
+
+        today_returns = {
+            key: {
+                "base_amount": round(value["base_amount"]),
+                "eval_amount": round(value["eval_amount"]),
+                "pnl": round(value["pnl"]),
+                "return_rate": round((value["pnl"] / value["base_amount"]) * 100, 2)
+                if value["base_amount"] > 0 else 0.0,
+            }
+            for key, value in today_stats.items()
+        }
+
         # Profit Factor & Expectancy
         def calc_metrics(sub_df):
             gains  = sub_df[sub_df['pnl'] >= 0]['pnl']
@@ -550,7 +618,7 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
         summary_agg = {}
         strategy_returns = {}
         daily_changes = weekly_changes = daily_ref_dates = weekly_ref_dates = {}
-        first_dates = counts = profit_factors = expectancies = {}
+        first_dates = counts = profit_factors = expectancies = today_returns = {}
 
     return {
         "summary_agg":       summary_agg,
@@ -563,6 +631,7 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
         "counts":            counts,
         "profit_factors":    profit_factors,
         "expectancies":      expectancies,
+        "today_returns":     today_returns,
     }
 
 
@@ -652,6 +721,7 @@ async def _get_virtual_history_impl(ctx, force_code, apply_cost):
             if trade['code'] in price_map:
                 cur, daily_rate, cached, ts = price_map[trade['code']]
                 trade['current_price'] = cur
+                trade['daily_change_rate'] = daily_rate
                 trade['is_cached'] = cached
                 trade['cache_ts'] = ts
                 
@@ -659,7 +729,6 @@ async def _get_virtual_history_impl(ctx, force_code, apply_cost):
                 qty = float(trade.get('qty', 1) or 1)
                 
                 if trade['status'] == 'HOLD':
-                    trade['daily_change_rate'] = daily_rate
                     trade['return_rate'] = vm.calculate_return(bp, cur, qty, apply_cost=apply_cost)
             
             if trade['status'] == 'SOLD':
