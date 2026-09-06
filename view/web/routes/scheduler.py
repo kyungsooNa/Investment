@@ -63,6 +63,11 @@ def _market_task_status(ctx, market: str | None = None) -> list[dict]:
             **definition,
             "state": state_value,
             "running": state_value == "running" or bool(progress.get("running")),
+            # `running` 은 실행 순간에만 참이라, 이것만으로는 '가동 중 대기' 와
+            # '미기동' 이 구분되지 않는다. 태스크가 알려주면 그 값을 쓰고,
+            # 알려주지 않으면 종전대로 running 을 따른다.
+            "armed": bool(progress.get("armed", state_value == "running"
+                                       or bool(progress.get("running")))),
             "priority": int(getattr(task, "priority", 0)),
             "progress": progress,
         })

@@ -48,6 +48,7 @@ async def test_scheduler_status_includes_overseas_market_task_without_domestic_s
             "live_trading": False,
             "state": "running",
             "running": True,
+            "armed": True,
             "priority": 50,
             "progress": {"running": True, "watch_count": 10},
         }

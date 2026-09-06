@@ -381,3 +381,41 @@ async def test_notification_includes_pp_signal_details_when_available():
     body = notification_service.emit.await_args[0][3]
     assert "- PP: 1개 (Qualcomm Inc)" in body
     assert "  · Qualcomm Inc(QCOM) 진입 164.74 / 수량 6 / 손절 158.67 / 목표 189.45 / 10MA / 거래량 0.97x" in body
+
+
+# ── 진행 상태 진단 ────────────────────────────────────────────────────────
+
+def test_progress_reports_not_armed_before_start():
+    """Ticket-driven 태스크는 핸들러 등록 전까지 트리거가 걸려 있지 않다."""
+    task, _, _, _, _ = _make_task()
+
+    progress = task.get_progress()
+
+    assert progress["armed"] is False
+    assert "등록" in progress["phase_detail"]
+
+
+@pytest.mark.asyncio
+async def test_progress_reports_armed_and_trigger_time_after_start():
+    task, _, _, _, _ = _make_task()
+    task._worker_pool = MagicMock()
+
+    await task.start()
+
+    progress = task.get_progress()
+    assert progress["armed"] is True
+    assert "16:30 ET" in progress["phase_detail"]
+    assert "실행 이력" in progress["phase_detail"]
+
+
+@pytest.mark.asyncio
+async def test_progress_reports_last_run_date_once_it_has_run():
+    task, _, _, _, _ = _make_task()
+    task._worker_pool = MagicMock()
+    await task.start()
+
+    await task._on_market_closed("20260706")
+
+    progress = task.get_progress()
+    assert progress["last_run_date"] == "20260706"
+    assert "2026-07-06" in progress["phase_detail"]

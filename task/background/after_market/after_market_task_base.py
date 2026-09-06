@@ -70,6 +70,18 @@ class AfterMarketTask(SchedulableTask, ABC):
     def priority(self) -> TaskPriority:
         return TaskPriority.LOW
 
+    @property
+    def is_armed(self) -> bool:
+        """트리거가 실제로 걸려 있는지. state 는 실행 순간에만 RUNNING 이라, 이 값이
+        없으면 '하루 1회 실행을 대기 중' 과 '기동되지 않음' 이 똑같이 IDLE 로 보인다.
+
+        Ticket-driven(worker_pool 주입)은 핸들러 등록 여부, 폴백 루프 모드는
+        살아있는 스케줄러 태스크 유무가 기준이다.
+        """
+        if self._worker_pool is not None:
+            return self._registered
+        return any(not task.done() for task in self._tasks)
+
     async def stop(self) -> None:
         self._logger.info(f"{self.task_name} 종료 시작: {len(self._tasks)}개 태스크")
         for task in self._tasks:

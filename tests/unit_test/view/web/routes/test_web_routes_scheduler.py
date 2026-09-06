@@ -367,3 +367,51 @@ async def test_scheduler_start_stop_uses_requested_market(web_client, mock_web_c
     assert web_client.post("/api/scheduler/stop?market=overseas_us").status_code == 200
     overseas_scheduler.stop.assert_awaited_once()
     mock_web_ctx.scheduler.stop.assert_not_awaited()
+
+
+class _IdleButArmedTask:
+    task_name = "overseas_intraday"
+
+    def __init__(self, armed=True):
+        from interfaces.schedulable_task import TaskPriority, TaskState
+        self.priority = TaskPriority.NORMAL
+        self.state = TaskState.IDLE
+        self._armed = armed
+
+    def get_progress(self):
+        return {"running": False, "armed": self._armed, "watch_count": 0,
+                "phase": "closed", "phase_detail": "주말 — 미국장 휴장입니다."}
+
+
+@pytest.mark.asyncio
+async def test_market_task_status_exposes_armed_flag(web_client, mock_web_ctx):
+    """폴링 사이의 idle 과 아예 기동되지 않은 상태를 화면이 구분할 수 있어야 한다."""
+    mock_web_ctx.scheduler.get_status = MagicMock(return_value={"running": False, "strategies": []})
+    mock_web_ctx.strategy_schedulers = {"domestic": mock_web_ctx.scheduler, "overseas_us": None}
+    mock_web_ctx.background_scheduler = MagicMock()
+    mock_web_ctx.background_scheduler.get_task.side_effect = (
+        lambda name: _IdleButArmedTask() if name == "overseas_intraday" else None
+    )
+    mock_web_ctx.enabled_market_modes = ["domestic", "overseas_us"]
+
+    data = web_client.get("/api/scheduler/status?market=overseas_us").json()
+
+    task = data["market_tasks"][0]
+    assert task["running"] is False
+    assert task["armed"] is True
+    assert task["progress"]["phase_detail"] == "주말 — 미국장 휴장입니다."
+
+
+@pytest.mark.asyncio
+async def test_market_task_status_marks_unstarted_task_as_not_armed(web_client, mock_web_ctx):
+    mock_web_ctx.scheduler.get_status = MagicMock(return_value={"running": False, "strategies": []})
+    mock_web_ctx.strategy_schedulers = {"domestic": mock_web_ctx.scheduler, "overseas_us": None}
+    mock_web_ctx.background_scheduler = MagicMock()
+    mock_web_ctx.background_scheduler.get_task.side_effect = (
+        lambda name: _IdleButArmedTask(armed=False) if name == "overseas_intraday" else None
+    )
+    mock_web_ctx.enabled_market_modes = ["domestic", "overseas_us"]
+
+    data = web_client.get("/api/scheduler/status?market=overseas_us").json()
+
+    assert data["market_tasks"][0]["armed"] is False
