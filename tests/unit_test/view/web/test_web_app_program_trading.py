@@ -64,10 +64,7 @@ async def test_start_program_trading_success(mock_ctx):
     assert result is True
     mock_ctx.streaming_service.subscribe_program_trading.assert_called_once_with(code)
     mock_ctx.streaming_service.subscribe_unified_price.assert_not_called()
-    mock_ctx.price_subscription_service.add_subscription.assert_awaited_once()
-    price_args = mock_ctx.price_subscription_service.add_subscription.await_args.args
-    assert price_args[0] == code
-    assert price_args[2] == "manual_program_trading_price"
+    mock_ctx.price_subscription_service.add_subscription.assert_not_awaited()
     mock_ctx.streaming_stock_repo.mark_desired.assert_called_once_with(
         code,
         StreamingType.PROGRAM_TRADING,
@@ -77,17 +74,16 @@ async def test_start_program_trading_success(mock_ctx):
 
 
 @pytest.mark.asyncio
-async def test_start_program_trading_ignores_companion_price_failure(mock_ctx):
-    """PT 구독이 성공하면 companion 체결가 실패 여부와 무관하게 성공한다."""
+async def test_start_program_trading_does_not_add_companion_price_subscription(mock_ctx):
+    """PT 구독이 성공해도 companion 체결가 구독은 추가하지 않는다."""
     code = "005930"
     mock_ctx.streaming_stock_repo.get_desired.return_value = set()
     mock_ctx.streaming_service.subscribe_program_trading.return_value = True
-    mock_ctx.streaming_service.subscribe_unified_price.return_value = False
 
     result = await mock_ctx.start_program_trading(code)
 
     assert result is True
-    mock_ctx.price_subscription_service.add_subscription.assert_awaited_once()
+    mock_ctx.price_subscription_service.add_subscription.assert_not_awaited()
     mock_ctx.streaming_stock_repo.mark_desired.assert_called_once_with(
         code,
         StreamingType.PROGRAM_TRADING,
@@ -108,9 +104,7 @@ async def test_stop_program_trading_keeps_independent_price_subscription(mock_ct
 
     await mock_ctx.stop_program_trading(code)
 
-    mock_ctx.price_subscription_service.remove_subscription.assert_awaited_once_with(
-        code, "manual_program_trading_price"
-    )
+    mock_ctx.price_subscription_service.remove_subscription.assert_not_awaited()
     mock_ctx.streaming_service.unsubscribe_program_trading.assert_called_once_with(code)
     mock_ctx.streaming_service.unsubscribe_unified_price.assert_not_called()
     mock_ctx.streaming_stock_repo.mark_inactive.assert_any_call(code, StreamingType.PROGRAM_TRADING)
@@ -129,7 +123,7 @@ async def test_start_program_trading_already_subscribed_alive(mock_ctx):
 
     assert result is True
     mock_ctx.streaming_service.connect_websocket.assert_not_called()
-    mock_ctx.price_subscription_service.add_subscription.assert_awaited_once()
+    mock_ctx.price_subscription_service.add_subscription.assert_not_awaited()
     mock_ctx.streaming_stock_repo.mark_desired.assert_awaited_once_with(
         code,
         StreamingType.PROGRAM_TRADING,

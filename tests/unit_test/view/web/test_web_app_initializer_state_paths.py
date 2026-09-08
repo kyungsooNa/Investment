@@ -291,27 +291,3 @@ async def test_subscription_task_is_not_scheduled_twice():
     ctx._schedule_price_subscription_initialization()
 
     assert ctx._price_subscription_init_task is pending
-
-
-# --- 독립 구독 판정 -----------------------------------------------------------
-
-def test_blank_code_has_no_independent_subscription():
-    assert _ctx(streaming_stock_repo=None)._has_independent_price_subscription("") is False
-
-
-def test_repo_lookup_failure_falls_through_to_the_reference_map():
-    repo = MagicMock()
-    repo.get_desired.side_effect = RuntimeError("repo 오류")
-    ctx = _ctx(streaming_stock_repo=repo, price_subscription_service=SimpleNamespace(
-        _refs={"005930": {"portfolio": {"type": StreamingType.UNIFIED_PRICE}}}
-    ))
-
-    assert ctx._has_independent_price_subscription("005930") is True
-
-
-def test_no_independent_subscription_without_a_matching_reference():
-    ctx = _ctx(streaming_stock_repo=None, price_subscription_service=SimpleNamespace(
-        _refs={"005930": {"pt": {"type": StreamingType.PROGRAM_TRADING}}}
-    ))
-
-    assert ctx._has_independent_price_subscription("005930") is False

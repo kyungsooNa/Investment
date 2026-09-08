@@ -167,7 +167,7 @@ async def test_restore_program_trading_success(watchdog_task, mock_deps):
 
     assert svc._streaming_service.connect_websocket.call_count == 1
     assert svc._streaming_service.subscribe_program_trading.call_count == 2
-    assert svc._streaming_service.subscribe_unified_price.call_count == 2
+    svc._streaming_service.subscribe_unified_price.assert_not_awaited()
     svc._streaming_logger.log_subscription_recovery_done.assert_called_once()
 
 
@@ -644,7 +644,7 @@ async def test_force_reconnect_program_trading(watchdog_task, mock_deps):
     svc._streaming_service.disconnect_websocket.assert_awaited_once()
     assert svc._streaming_service.connect_websocket.call_count == 1
     assert svc._streaming_service.subscribe_program_trading.call_count == 2
-    assert svc._streaming_service.subscribe_unified_price.call_count == 2
+    svc._streaming_service.subscribe_unified_price.assert_not_awaited()
     svc._streaming_logger.log_force_reconnect_done.assert_called_once_with("manual")
 
 
@@ -1398,7 +1398,7 @@ async def test_streaming_logger_calls_on_restore_and_reconnect(watchdog_task, mo
     mock_streaming_logger.log_reconnect.assert_called_once()
     mock_streaming_logger.log_subscription_recovery_start.assert_called_once()
     mock_streaming_logger.log_pt_subscribe.assert_called_once()
-    mock_streaming_logger.log_price_subscribe.assert_called_once()
+    mock_streaming_logger.log_price_subscribe.assert_not_called()
     mock_streaming_logger.log_subscription_recovery_done.assert_called_once()
     mock_streaming_logger.log_restore.assert_called_once()
 
@@ -1481,7 +1481,6 @@ async def test_restore_sequence_accounts_for_pt_slots(watchdog_task, mock_price_
         # 3. 검증: PT 마킹이 먼저 발생하고, 그 다음 rebalance가 호출되어야 함
         expected_calls = [
             call.mark_active("005930", StreamingType.PROGRAM_TRADING),
-            call.mark_active("005930", StreamingType.UNIFIED_PRICE),
             call.rebalance()
         ]
         manager.assert_has_calls(expected_calls, any_order=False)
