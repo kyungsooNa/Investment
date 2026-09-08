@@ -239,7 +239,10 @@ def _journal_source(record: Mapping[str, Any]) -> str:
 
 
 def _strategy_display_label(value: Any) -> str:
-    return STRATEGY_IDENTITY_RESOLVER.to_display(str(value or ""))
+    raw = str(value or "")
+    canonical = _strategy_report_key(raw)
+    strategy_id = _STRATEGY_CANONICAL_TO_ID.get(canonical)
+    return STRATEGY_IDENTITY_RESOLVER.to_display(strategy_id or raw)
 
 
 def _is_data_error_reason(reason: str) -> bool:
@@ -1496,19 +1499,33 @@ class StrategyLogReportService:
         match = re.search(r"'([^']+)'", regime_decomposition_section)
         return match.group(1) if match else "단일"
 
-    @staticmethod
-    def _format_same_day_exit_violation_lines(violations: List[dict]) -> List[str]:
+    def _format_same_day_exit_violation_lines(self, violations: List[dict]) -> List[str]:
         if not violations:
             return []
-        lines = [f"• 🚨 당일청산 미이행 {len(violations)}건 — 강제청산 실행/잔량 즉시 확인"]
+        total_exposure = sum(
+            float(item.get("exposure_amount") or 0)
+            for item in violations
+        )
+        lines = [
+            f"• 🚨 당일청산 미이행 {len(violations)}건 (리포트 생성 시점 원장 HOLD 기준) "
+            "— 강제청산 실행/잔량 즉시 확인"
+        ]
+        if total_exposure > 0:
+            lines.append(
+                f"  - 총 매입원금 노출 약 {_format_krw(total_exposure, force_integer=True)}"
+            )
         for item in violations[:_MAX_SAME_DAY_EXIT_VIOLATIONS_SHOWN]:
             code = str(item.get("code") or "").strip()
-            name = _esc(item.get("name") or code or "종목 미상")
+            current_name = str(item.get("name") or code or "종목 미상")
+            name = _esc(self._db_resolve(code, current_name) if code else current_name)
             details = [_esc(_strategy_display_label(item.get("strategy")))]
             details.append(f"{name}({_esc(code)})" if code else name)
             qty = _to_int(item.get("qty"), default=0)
             if qty > 0:
                 details.append(f"잔량 {qty}주")
+            exposure = _format_krw(item.get("exposure_amount"), force_integer=True)
+            if exposure:
+                details.append(f"노출 {exposure}")
             holding_days = item.get("holding_days")
             if isinstance(holding_days, int):
                 details.append(f"보유 {holding_days}일")
@@ -1516,6 +1533,7 @@ class StrategyLogReportService:
         rest = len(violations) - _MAX_SAME_DAY_EXIT_VIOLATIONS_SHOWN
         if rest > 0:
             lines.append(f"  - 외 {rest}건")
+        lines.append("  - 완료 기준: 주문 접수·체결 후 실보유 0주 확인 전 미해결")
         return lines
 
     def _detect_same_day_exit_violations(self, target_date: str) -> List[dict]:
@@ -1542,11 +1560,15 @@ class StrategyLogReportService:
             if not rule.startswith("same_day"):
                 continue
             code = str(hold.get("code") or "").strip()
+            qty = _to_int(hold.get("qty"), default=0)
+            buy_price = _to_float(hold.get("buy_price"))
             violations.append({
                 "strategy": hold.get("strategy") or "전략 미상",
                 "code": code,
                 "name": hold.get("name") or code,
-                "qty": _to_int(hold.get("qty"), default=0),
+                "qty": qty,
+                "buy_price": buy_price,
+                "exposure_amount": buy_price * qty if buy_price and qty > 0 else None,
                 "buy_date": hold.get("buy_date"),
                 "trailing_rule": rule,
                 "holding_days": self._holding_days(hold.get("buy_date"), target_date),
@@ -1665,6 +1687,7 @@ class StrategyLogReportService:
         if broker_count is not None:
             lines.append(
                 f"• 즉시 점검: broker_reconciled 보유 {broker_count}종목의 전략 귀속/청산 책임"
+                " 및 당일청산 미이행 건과의 중복 여부"
             )
         else:
             open_hold_count = self._extract_open_hold_count(overnight_exposure_section)
@@ -1685,7 +1708,11 @@ class StrategyLogReportService:
         if warnings_section:
             lines.append("• 시스템 경고: 데이터 수신/파싱 상태 확인")
 
-        if pass_strategies and not (broker_count or regime_label or multiple_weak):
+        if same_day_exit_violations:
+            lines.append(
+                "• 다음 행동: 신규 진입 일시 중지, 강제청산 후 실보유 0주 확인"
+            )
+        elif pass_strategies and not (broker_count or regime_label or multiple_weak):
             lines.append("• 다음 행동: 통과 전략만 소액 확대 검토")
         else:
             lines.append("• 다음 행동: 신규매수 기준 유지, 점검 항목 해결 전 전략 확대 보류")

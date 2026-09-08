@@ -1809,7 +1809,9 @@ def _buy_trade(code, name, strategy="first_pullback", date="2026-07-16 09:10:00"
             "qty": 2, "buy_date": date, "status": status, "reason": "원장 체결"}
 
 
-async def _decision_for(tmp_path, *, virtual_trade_service, patch_svc=None):
+async def _decision_for(
+    tmp_path, *, virtual_trade_service, patch_svc=None, stock_code_repo=None,
+):
     log_dir = tmp_path / "strategies"
     log_dir.mkdir(exist_ok=True)
     _write_log(
@@ -1818,7 +1820,9 @@ async def _decision_for(tmp_path, *, virtual_trade_service, patch_svc=None):
           "data": {"event": "scan_with_watchlist", "count": 1}}],
     )
     svc = StrategyLogReportService(
-        log_dir=str(log_dir), virtual_trade_service=virtual_trade_service,
+        log_dir=str(log_dir),
+        virtual_trade_service=virtual_trade_service,
+        stock_code_repo=stock_code_repo,
     )
     if patch_svc:
         patch_svc(svc)
@@ -1925,6 +1929,38 @@ async def test_same_day_exit_violation_detected_when_position_survives_close(tmp
 
     assert "당일청산 미이행" in decision
     assert "아이엠비디엑스(475150)" in decision
+
+
+@pytest.mark.asyncio
+async def test_same_day_exit_violation_reports_exposure_and_zero_position_completion_rule(tmp_path):
+    """원장 잔량만으로 종료 처리하지 않고 실보유 0주 확인까지 요구한다."""
+    class DummyStockCodeRepository:
+        def get_name_by_code(self, code):
+            return {"403870": "HPSP"}.get(code)
+
+    decision = await _decision_for(
+        tmp_path,
+        stock_code_repo=DummyStockCodeRepository(),
+        virtual_trade_service=_vts(
+            [_buy_trade("403870", "403870", strategy="LarryWilliamsVBO")],
+            holds=[_hold(
+                "403870",
+                "403870",
+                strategy="LarryWilliamsVBO",
+                qty=36,
+            ) | {"buy_price": 54900}],
+        ),
+    )
+
+    assert "원장 HOLD 기준" in decision
+    assert "총 매입원금 노출 약 ₩1,976,400" in decision
+    assert "래리윌리엄스VBO" in decision
+    assert "LarryWilliamsVBO ·" not in decision
+    assert "HPSP(403870)" in decision
+    assert "잔량 36주" in decision
+    assert "노출 ₩1,976,400" in decision
+    assert "실보유 0주 확인 전 미해결" in decision
+    assert "신규 진입 일시 중지" in decision
 
 
 @pytest.mark.asyncio
