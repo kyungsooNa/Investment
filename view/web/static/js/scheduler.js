@@ -88,23 +88,10 @@ function renderSchedulerStatus(data) {
 
     const schedulers = [data];
     const marketTasks = data.market_tasks || [];
-    const hasRunningScheduler = schedulers.some(item => item.running);
-    const hasRunningMarketTask = marketTasks.some(task => task.running || task.state === 'running');
 
-    if (hasRunningScheduler) {
-        badge.textContent = '실행 중';
-        badge.className = 'badge open';
-    } else if (hasRunningMarketTask) {
-        badge.textContent = '시장 태스크 실행';
-        badge.className = 'badge open';
-    } else if (data.scheduler_kind === 'market_tasks' && marketTasks.some(isMarketTaskArmed)) {
-        // 태스크 기반 시장에서 `정지` 는 오해다 — 폴링 루프는 살아 있고 대기 중일 뿐이다.
-        badge.textContent = '태스크 가동 중';
-        badge.className = 'badge open';
-    } else {
-        badge.textContent = '정지';
-        badge.className = 'badge closed';
-    }
+    const badgeState = schedulerBadgeState(data);
+    badge.textContent = badgeState.text;
+    badge.className = badgeState.className;
 
     const activeSchedulers = schedulers.filter(item => item.running).length;
     const activeMarketTasks = marketTasks.filter(task => task.running || task.state === 'running').length;
@@ -121,6 +108,22 @@ function renderSchedulerStatus(data) {
     }
     renderSchedulerSections(schedulers);
     renderMarketTasks(marketTasks);
+}
+
+// 태스크 기반 시장은 StrategyScheduler 가 없어 `running` 이 항상 false 다 — 상단 배지와
+// 섹션 헤더가 서로 다른 판정을 쓰면 한쪽만 `정지` 로 남아 멈춘 것처럼 읽힌다.
+function schedulerBadgeState(section) {
+    const tasks = section.market_tasks || [];
+    if (section.running) {
+        return { text: '실행 중', className: 'badge open' };
+    }
+    if (tasks.some(task => task.running || task.state === 'running')) {
+        return { text: '시장 태스크 실행', className: 'badge open' };
+    }
+    if (section.scheduler_kind === 'market_tasks' && tasks.some(isMarketTaskArmed)) {
+        return { text: '태스크 가동 중', className: 'badge open' };
+    }
+    return { text: '정지', className: 'badge closed' };
 }
 
 // 시장 태스크는 폴링/티켓 사이에 idle 로 돌아온다 — `실행 중` 만 세면 정상 가동을
@@ -156,9 +159,8 @@ function renderSchedulerSections(schedulers) {
 function renderSchedulerSection(section) {
     const market = section.market || 'domestic';
     const marketLabel = section.market_label || market;
-    const runningBadge = section.running
-        ? '<span class="badge open">실행 중</span>'
-        : '<span class="badge closed">정지</span>';
+    const sectionBadge = schedulerBadgeState(section);
+    const runningBadge = `<span class="${sectionBadge.className}">${sectionBadge.text}</span>`;
     const modeText = section.has_scheduler
         ? (section.dry_run ? 'dry-run: CSV만 기록' : '실제 주문 실행')
         : (section.scheduler_kind === 'market_tasks' ? '태스크 기반' : '스케줄러 미구성');
