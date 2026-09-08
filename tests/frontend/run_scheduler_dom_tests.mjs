@@ -184,6 +184,70 @@ test("가동 중인 태스크는 idle 이어도 '정지'/'0개 실행'으로 보
   assert(text.includes("16:30 ET 하루 1회 실행"), `dry-run 트리거 시각을 보여줘야 함 (실제 "${text}")`);
 });
 
+test("섹션 헤더 배지도 가동 중인 태스크를 '정지'로 표시하지 않는다", async () => {
+  const window = makeWindow();
+
+  window.renderSchedulerStatus({
+    market: "overseas_us",
+    market_label: "미국장",
+    running: false,
+    has_scheduler: false,
+    scheduler_kind: "market_tasks",
+    can_control_scheduler: false,
+    status_note: "미국장은 백그라운드 전략 태스크 상태만 표시합니다.",
+    strategies: [],
+    market_tasks: [{
+      name: "overseas_intraday",
+      display_name: "미국장 장중 전략",
+      market: "overseas_us",
+      market_label: "미국장",
+      mode: "paper",
+      live_trading: false,
+      state: "idle",
+      running: false,
+      armed: true,
+      progress: { watch_count: 10, phase: "polling", phase_detail: "감시 10개 종목을 폴링 중입니다." },
+    }],
+  });
+
+  const sectionBadge = window.document
+    .getElementById("scheduler-strategies").querySelector(".badge");
+  assert(sectionBadge.textContent === "태스크 가동 중",
+    `섹션 헤더도 상단 배지와 같은 판정이어야 함 (실제 "${sectionBadge.textContent}")`);
+});
+
+test("가동 태스크가 없는 태스크 기반 시장 섹션은 '정지'를 유지한다", async () => {
+  const window = makeWindow();
+
+  window.renderSchedulerStatus({
+    market: "overseas_us",
+    market_label: "미국장",
+    running: false,
+    has_scheduler: false,
+    scheduler_kind: "market_tasks",
+    can_control_scheduler: false,
+    status_note: "미국장은 백그라운드 전략 태스크 상태만 표시합니다.",
+    strategies: [],
+    market_tasks: [{
+      name: "overseas_intraday",
+      display_name: "미국장 장중 전략",
+      market: "overseas_us",
+      market_label: "미국장",
+      mode: "paper",
+      live_trading: false,
+      state: "idle",
+      running: false,
+      armed: false,
+      progress: { phase_detail: "아직 실행되지 않았습니다." },
+    }],
+  });
+
+  const sectionBadge = window.document
+    .getElementById("scheduler-strategies").querySelector(".badge");
+  assert(sectionBadge.textContent === "정지",
+    `가동 태스크가 없으면 섹션도 정지여야 함 (실제 "${sectionBadge.textContent}")`);
+});
+
 test("기동되지 않은 태스크는 '미기동'으로 구분한다", async () => {
   const window = makeWindow();
 
