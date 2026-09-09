@@ -322,6 +322,7 @@ dart_disclosure:
   active_end_time: "19:30"
   request_timeout_sec: 5
   immediate_alert_score: 70
+  minimum_alert_score: 31  # 30점 이하는 알림과 일일 요약에서 제외
   daily_digest_enabled: true
   daily_digest_time: "19:40"
   max_pages_per_poll: 5

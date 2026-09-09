@@ -8,6 +8,7 @@ def test_dart_disclosure_config_defaults_are_safe():
     assert config.api_key == ""
     assert config.poll_interval_sec == 300
     assert config.immediate_alert_score == 70
+    assert config.minimum_alert_score == 31
 
 
 def test_app_config_accepts_dart_disclosure_section():

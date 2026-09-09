@@ -318,6 +318,7 @@ class DartDisclosureConfig(BaseModel):
     active_end_time: str = "19:30"
     request_timeout_sec: float = Field(5.0, gt=0)
     immediate_alert_score: int = Field(70, ge=0, le=100)
+    minimum_alert_score: int = Field(31, ge=0, le=100)
     daily_digest_enabled: bool = True
     daily_digest_time: str = "19:40"
     max_pages_per_poll: int = Field(5, ge=1, le=100)

@@ -75,6 +75,7 @@ def _make_task(
         active_start_time="07:00",
         active_end_time="19:30",
         immediate_alert_score=70,
+        minimum_alert_score=31,
         daily_digest_enabled=True,
         daily_digest_time="19:40",
         max_pages_per_poll=5,
@@ -113,6 +114,20 @@ async def test_first_tick_baselines_matching_disclosures_without_alert_flood():
     deps.reporter.send_disclosure_alert.assert_not_awaited()
     deps.reporter.send_disclosure_digest.assert_awaited_once()
     deps.repo.mark_digest_sent.assert_awaited_once()
+
+
+async def test_first_tick_excludes_disclosures_at_or_below_30_from_digest():
+    disclosure = _disclosure(report_name="분기보고서 (2026.03)")
+    deps = _make_task([disclosure], initialized=False)
+    deps.rules.evaluate.return_value = DisclosureImportance(
+        30, "NORMAL", ["정기보고서"]
+    )
+
+    await deps.task._tick()
+
+    deps.repo.save_detected.assert_awaited_once()
+    deps.reporter.send_disclosure_digest.assert_not_awaited()
+    deps.repo.mark_digest_sent.assert_not_awaited()
 
 
 async def test_new_favorite_disclosure_is_saved_and_immediately_reported():
@@ -280,7 +295,7 @@ async def test_failed_telegram_send_emits_operational_alert_for_retry():
 
 async def test_digest_is_sent_once_at_configured_time():
     disclosure = _disclosure(report_name="분기보고서 (2026.03)")
-    importance = DisclosureImportance(30, "NORMAL", ["정기보고서"])
+    importance = DisclosureImportance(31, "NORMAL", ["정기보고서"])
     deps = _make_task([], now=datetime(2026, 7, 14, 19, 40, 0))
     deps.repo.get_pending_digest.return_value = [StoredDisclosure(disclosure, importance)]
 
@@ -288,6 +303,9 @@ async def test_digest_is_sent_once_at_configured_time():
 
     deps.reporter.send_disclosure_digest.assert_awaited_once_with(
         [StoredDisclosure(disclosure, importance)], "20260714"
+    )
+    deps.repo.get_pending_digest.assert_awaited_once_with(
+        "20260714", minimum_score=31, immediate_threshold=70
     )
     deps.repo.mark_digest_sent.assert_awaited_once()
 

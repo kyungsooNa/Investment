@@ -224,7 +224,8 @@ class DartDisclosureMonitorTask(SchedulableTask):
                     inserted,
                 )
                 if not initialized and inserted:
-                    baseline_items.append(StoredDisclosure(disclosure, importance))
+                    if importance.score >= self._minimum_alert_score():
+                        baseline_items.append(StoredDisclosure(disclosure, importance))
 
             if not initialized:
                 await self._repository.mark_initialized()
@@ -256,7 +257,10 @@ class DartDisclosureMonitorTask(SchedulableTask):
         return collected
 
     async def _send_pending_immediate(self, now: datetime) -> None:
-        threshold = int(getattr(self._config, "immediate_alert_score", 70))
+        threshold = max(
+            int(getattr(self._config, "immediate_alert_score", 70)),
+            self._minimum_alert_score(),
+        )
         pending = await self._repository.get_pending_immediate(threshold)
         for item in pending:
             receipt_no = item.disclosure.receipt_no
@@ -372,7 +376,9 @@ class DartDisclosureMonitorTask(SchedulableTask):
             return
         threshold = int(getattr(self._config, "immediate_alert_score", 70))
         pending = await self._repository.get_pending_digest(
-            date, immediate_threshold=threshold
+            date,
+            minimum_score=self._minimum_alert_score(),
+            immediate_threshold=threshold,
         )
         self._progress["pending_digest_count"] = len(pending)
         if not pending:
@@ -383,6 +389,9 @@ class DartDisclosureMonitorTask(SchedulableTask):
                 [item.disclosure.receipt_no for item in pending], now
             )
             self._progress["pending_digest_count"] = 0
+
+    def _minimum_alert_score(self) -> int:
+        return int(getattr(self._config, "minimum_alert_score", 31))
 
     def _interval_for(self, now: datetime) -> int:
         hhmm = now.strftime("%H:%M")
