@@ -89,11 +89,26 @@ async def test_digest_rows_are_marked_after_send(tmp_path, disclosure, importanc
     normal_importance = DisclosureImportance(score=30, level="NORMAL", reasons=["정기보고서"])
     await repo.save_detected(disclosure, normal_importance)
 
-    pending = await repo.get_pending_digest("20260714", immediate_threshold=70)
-    assert len(pending) == 1
+    pending = await repo.get_pending_digest(
+        "20260714", minimum_score=31, immediate_threshold=70
+    )
+    assert pending == []
 
-    await repo.mark_digest_sent([disclosure.receipt_no], datetime(2026, 7, 14, 19, 40, 0))
-    assert await repo.get_pending_digest("20260714", immediate_threshold=70) == []
+    included = disclosure.__class__(
+        **{**disclosure.__dict__, "receipt_no": "20260714001235"}
+    )
+    await repo.save_detected(
+        included, DisclosureImportance(score=31, level="NORMAL", reasons=["일반 공시"])
+    )
+    pending = await repo.get_pending_digest(
+        "20260714", minimum_score=31, immediate_threshold=70
+    )
+    assert [item.disclosure.receipt_no for item in pending] == [included.receipt_no]
+
+    await repo.mark_digest_sent([included.receipt_no], datetime(2026, 7, 14, 19, 40, 0))
+    assert await repo.get_pending_digest(
+        "20260714", minimum_score=31, immediate_threshold=70
+    ) == []
 
 
 async def test_get_recent_by_stock_code_filters_and_orders(tmp_path, disclosure, importance):

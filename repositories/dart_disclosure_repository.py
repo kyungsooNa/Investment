@@ -175,15 +175,18 @@ class DartDisclosureRepository:
             await conn.commit()
 
     async def get_pending_digest(
-        self, receipt_date: str, *, immediate_threshold: int
+        self, receipt_date: str, *, minimum_score: int, immediate_threshold: int
     ) -> list[StoredDisclosure]:
         return await self._query_stored(
             """
             SELECT * FROM disclosures
-            WHERE receipt_date = ? AND importance_score < ? AND digest_sent_at IS NULL
+            WHERE receipt_date = ?
+              AND importance_score >= ?
+              AND importance_score < ?
+              AND digest_sent_at IS NULL
             ORDER BY importance_score DESC, rcept_no ASC
             """,
-            (receipt_date, int(immediate_threshold)),
+            (receipt_date, int(minimum_score), int(immediate_threshold)),
         )
 
     async def mark_digest_sent(self, receipt_nos: Iterable[str], sent_at: datetime) -> None:
