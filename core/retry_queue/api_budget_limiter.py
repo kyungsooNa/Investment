@@ -58,6 +58,18 @@ DEFAULT_API_EMERGENCY_RATE_LIMITS_PER_SEC = {
 DEFAULT_API_GLOBAL_RATE_LIMIT_PER_SEC = 8.0
 DEFAULT_API_EMERGENCY_GLOBAL_RATE_LIMIT_PER_SEC = 2.0
 
+# 모의(VTS) 서버는 실전보다 한도가 낮다. 2026-09-09 미국장 실측(해외시세 7,676콜)에서
+# 같은 1초에 몰린 콜 수별 거부율이 1콜 11% / 2콜 50% / 3콜 57% 로 나왔다 — 위 실전
+# 기준값(3/s·동시 2)은 모의에서 지속 가능한 속도의 약 3배다. 그 결과 절반 가까이가
+# rate limit 으로 버려지고 RetryQueue 가 같은 요청을 다시 쏴서 부하를 오히려 키운다.
+# 거부된 콜은 예산만 태우고 데이터를 주지 않으므로, 낮추는 쪽이 실효 처리량이 더 높다.
+PAPER_API_BUDGET_LIMITS = {
+    "quotation_overseas": 1,
+}
+PAPER_API_RATE_LIMITS_PER_SEC = {
+    "quotation_overseas": 1.0,
+}
+
 
 @dataclass
 class _LaneState:
@@ -100,6 +112,7 @@ class ApiBudgetLimiter:
         emergency_global_rate_limit_per_sec: float = DEFAULT_API_EMERGENCY_GLOBAL_RATE_LIMIT_PER_SEC,
         default_limit: int = 4,
         default_rate_limit_per_sec: float = 8.0,
+        paper_trading: bool = False,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -109,12 +122,19 @@ class ApiBudgetLimiter:
         self._monotonic = monotonic
         self._global_lane = self._new_lane(1, global_rate_limit_per_sec)
         self._emergency_global_lane = self._new_lane(1, emergency_global_rate_limit_per_sec)
-        configured = dict(DEFAULT_API_BUDGET_LIMITS if limits is None else limits)
-        configured_rates = dict(
-            DEFAULT_API_RATE_LIMITS_PER_SEC
-            if rate_limits_per_sec is None
-            else rate_limits_per_sec
-        )
+        # 명시 인자가 있으면 그것이 이긴다 — 모의 완화는 기본값에만 적용한다.
+        if limits is None:
+            configured = dict(DEFAULT_API_BUDGET_LIMITS)
+            if paper_trading:
+                configured.update(PAPER_API_BUDGET_LIMITS)
+        else:
+            configured = dict(limits)
+        if rate_limits_per_sec is None:
+            configured_rates = dict(DEFAULT_API_RATE_LIMITS_PER_SEC)
+            if paper_trading:
+                configured_rates.update(PAPER_API_RATE_LIMITS_PER_SEC)
+        else:
+            configured_rates = dict(rate_limits_per_sec)
         self._emergency_limits = dict(
             DEFAULT_API_EMERGENCY_LIMITS if emergency_limits is None else emergency_limits
         )

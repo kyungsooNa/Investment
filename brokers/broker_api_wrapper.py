@@ -75,7 +75,10 @@ class BrokerAPIWrapper:
         if broker in ("korea_investment", "kiwoom"):
             # RetryQueue는 Cache 안쪽에 위치: 캐시 히트 시 Queue를 거치지 않고,
             # 캐시 miss 후 실제 API 호출 실패 시에만 브로커 클라이언트를 직접 재시도
-            self._api_budget_limiter = self._api_budget_limiter or ApiBudgetLimiter()
+            # 모의 서버는 실전보다 호출 한도가 낮다 — 해외 시세 lane 을 그에 맞게 조인다.
+            self._api_budget_limiter = self._api_budget_limiter or ApiBudgetLimiter(
+                paper_trading=bool(getattr(env, "is_paper_trading", False)),
+            )
             self._retry_queue = ApiRequestQueue(logger=logger)
             self._client = retry_queue_wrap_client(
                 self._client,

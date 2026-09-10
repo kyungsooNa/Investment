@@ -587,3 +587,54 @@ async def test_emergency_rate_bucket_is_independent_of_normal_rate_bucket():
 
     # 첫 호출 대기 0 + normal 두번째 0.5 + emergency 첫 0 + emergency 두번째 0.5
     assert sleeps == [0.5, 0.5]
+
+
+# ── 모의(VTS) 서버 전용 해외 시세 한도 ──────────────────────────────────────
+#
+# 기본 카테고리 한도는 개인 실전 계좌(10/s 가정)를 기준으로 잡혀 있다. 모의 서버는
+# 한도가 더 낮아, 2026-09-09 미국장 실측(해외시세 7,676콜)에서 1콜/초 실패 11% /
+# 2콜/초 50% / 3콜/초 57% 로 나왔다. 실전 기준값(3/s·동시 2)을 그대로 쓰면 절반 가까이가
+# rate limit 거부로 버려지고 RetryQueue 가 그만큼 다시 쏴서 부하를 더한다.
+
+def _overseas(limiter):
+    return limiter.snapshot()["quotation_overseas"]
+
+
+def test_paper_trading_tightens_overseas_quotation_budget():
+    limiter = ApiBudgetLimiter(paper_trading=True)
+
+    lane = _overseas(limiter)
+    assert lane["rate_limit_per_sec"] == 1.0
+    assert lane["limit"] == 1, "동시 2면 같은 초에 두 콜이 겹쳐 거부율이 뛴다"
+
+
+def test_real_trading_keeps_the_documented_defaults():
+    limiter = ApiBudgetLimiter()
+
+    lane = _overseas(limiter)
+    assert lane["rate_limit_per_sec"] == 3.0
+    assert lane["limit"] == 2
+
+
+def test_paper_override_touches_only_overseas_quotation():
+    paper = ApiBudgetLimiter(paper_trading=True).snapshot()
+    real = ApiBudgetLimiter().snapshot()
+
+    for category in real:
+        if category == "quotation_overseas":
+            continue
+        assert paper[category]["limit"] == real[category]["limit"], category
+        assert paper[category]["rate_limit_per_sec"] == real[category]["rate_limit_per_sec"], category
+
+
+def test_explicit_limits_win_over_the_paper_override():
+    """호출자가 명시한 값이 있으면 모의 여부와 무관하게 그것을 쓴다."""
+    limiter = ApiBudgetLimiter(
+        {"quotation_overseas": 5},
+        rate_limits_per_sec={"quotation_overseas": 7.0},
+        paper_trading=True,
+    )
+
+    lane = _overseas(limiter)
+    assert lane["limit"] == 5
+    assert lane["rate_limit_per_sec"] == 7.0
