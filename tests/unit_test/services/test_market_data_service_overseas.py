@@ -7,7 +7,7 @@ overseas exchange 인자를 받으면 get_overseas_dailyprice 로 위임하고
 """
 import pytest
 from types import SimpleNamespace
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 from services.market_data_service import MarketDataService
@@ -184,3 +184,82 @@ async def test_normalize_handles_both_domestic_and_overseas_keys(mds):
 
     assert d_rows[0] == {"date": "20260101", "open": 10.0, "high": 12.0, "low": 9.0, "close": 11.0, "volume": 300}
     assert o_rows[0] == {"date": "20260102", "open": 10.0, "high": 12.0, "low": 9.0, "close": 11.0, "volume": 300}
+
+
+# ══════════════ 해외 일봉 분할 수집 ══════════════
+#
+# KIS 해외 일봉 TR 은 start_date 를 무시하고 end_date 기준 마지막 ~100봉만 돌려준다
+# (2026-08 실측, scripts/fetch_overseas_ohlcv.py). 국내 경로에는 100일 단위로 끊어
+# 반복 호출하는 루프가 있지만 해외 경로에는 없어, 200MA 처럼 100봉을 넘는 지표는
+# 어떤 종목에서도 계산되지 않았다.
+
+_PAGE_ANCHOR = datetime(2026, 5, 13)
+
+
+def _paged_dailyprice(*, total_days: int, page: int = 100):
+    """end_date 기준 마지막 `page` 봉만 돌려주는 KIS 해외 일봉 동작을 모사한다."""
+    calendar = sorted(
+        (_PAGE_ANCHOR - timedelta(days=i)).strftime("%Y%m%d") for i in range(total_days)
+    )
+
+    def _handler(symbol, *, exchange=None, start_date="", end_date="", period="D"):
+        available = [d for d in calendar if d <= end_date]
+        rows = [
+            {"xymd": d, "open": "10", "high": "11", "low": "9", "clos": "10", "tvol": "1"}
+            for d in available[-page:]
+        ]
+        return _overseas_resp(rows)
+
+    return _handler
+
+
+@pytest.mark.asyncio
+async def test_get_recent_daily_ohlcv_overseas_pages_back_beyond_one_response(mds):
+    """limit 이 1회 응답 상한을 넘으면 end_date 를 과거로 옮겨가며 이어붙인다."""
+    mds.broker.get_overseas_dailyprice.side_effect = _paged_dailyprice(total_days=400)
+
+    rows = await mds.service.get_recent_daily_ohlcv("AAPL", limit=250, exchange=OverseasExchange.NASD)
+
+    assert len(rows) == 250
+    assert rows == sorted(rows, key=lambda r: r["date"])
+    assert rows[-1]["date"] == "20260513"
+    assert mds.broker.get_overseas_dailyprice.await_count == 3
+
+    # 두 번째 호출부터는 직전 페이지의 최고(最古) 봉 하루 전을 end_date 로 쓴다.
+    ends = [c.kwargs["end_date"] for c in mds.broker.get_overseas_dailyprice.await_args_list]
+    assert ends[0] == "20260513"
+    assert ends[1] < ends[0]
+    assert ends[2] < ends[1]
+
+
+@pytest.mark.asyncio
+async def test_get_recent_daily_ohlcv_overseas_uses_one_call_within_a_page(mds):
+    """100봉 안에서 끝나는 기존 호출자(VBO/CB/BGU/OSB/PP)는 호출 수가 늘지 않는다."""
+    mds.broker.get_overseas_dailyprice.side_effect = _paged_dailyprice(total_days=400)
+
+    rows = await mds.service.get_recent_daily_ohlcv("AAPL", limit=60, exchange=OverseasExchange.NASD)
+
+    assert len(rows) == 60
+    assert mds.broker.get_overseas_dailyprice.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_get_recent_daily_ohlcv_overseas_stops_when_history_exhausted(mds):
+    """상장 이력이 짧아 더 과거가 없으면 빈 페이지에서 멈춘다 (무한 루프 방지)."""
+    mds.broker.get_overseas_dailyprice.side_effect = _paged_dailyprice(total_days=150)
+
+    rows = await mds.service.get_recent_daily_ohlcv("AAPL", limit=400, exchange=OverseasExchange.NASD)
+
+    assert len(rows) == 150
+    assert mds.broker.get_overseas_dailyprice.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_get_recent_daily_ohlcv_overseas_caps_page_count(mds):
+    """예산 보호 — 아무리 긴 limit 이라도 페이지 수에 상한을 둔다."""
+    mds.broker.get_overseas_dailyprice.side_effect = _paged_dailyprice(total_days=3000)
+
+    rows = await mds.service.get_recent_daily_ohlcv("AAPL", limit=2000, exchange=OverseasExchange.NASD)
+
+    assert mds.broker.get_overseas_dailyprice.await_count == MarketDataService.OVERSEAS_DAILY_MAX_PAGES
+    assert len(rows) == 100 * MarketDataService.OVERSEAS_DAILY_MAX_PAGES

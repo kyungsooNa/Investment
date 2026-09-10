@@ -5,8 +5,9 @@ RSI2 는 거래량을 쓰지 않고 **종가**만으로 판정한다. 장중에�
 그 이전 틱은 무시한다 — 장중 가격으로 RSI 를 돌리면 종가 기준 신호와 달라진다.
 
 Minervini Stage 2 대체로 `close > 추세MA` 를 쓰는 것은 dry-run 과 동일하다.
-추세MA 가 200 이 아니라 50 인 이유도 dry-run 과 같다 — KIS 해외 일봉은 1회 호출로
-마지막 100봉만 반환하므로 200MA 는 최소 이력 조건을 영원히 넘지 못한다.
+추세MA 200 을 채우려면 `MarketDataService` 의 해외 일봉 분할 수집이 필요하다
+(1회 응답은 ~100봉). 그래서 HISTORY_LIMIT 이 한 페이지를 넘는다 — 세션 준비에서
+심볼당 여러 번 조회한다는 뜻이므로 top_n 을 키울 때 예산을 함께 봐야 한다.
 """
 from __future__ import annotations
 
@@ -23,9 +24,9 @@ from services.overseas_intraday_strategy_base import OverseasIntradayStrategyBas
 class OverseasIntradayRSI2Config:
     rsi_period: int = 2
     rsi_threshold: float = 10.0
-    trend_ma_period: int = 50
+    trend_ma_period: int = 200
     hard_stop_pct: float = -5.0
-    min_history_days: int = 52
+    min_history_days: int = 202
     # 마감 N분 전부터 폴링가를 종가 대용으로 사용한다.
     close_proxy_window_min: int = 15
 
@@ -33,7 +34,7 @@ class OverseasIntradayRSI2Config:
 class OverseasIntradayRSI2Service(OverseasIntradayStrategyBase):
     STRATEGY_NAME = "RSI2Pullback_overseas_intraday"
     EVENT_PREFIX = "overseas_intraday_rsi2"
-    HISTORY_LIMIT = 60
+    HISTORY_LIMIT = 210
 
     def __init__(self, *args, config: Optional[OverseasIntradayRSI2Config] = None,
                  us_market_calendar_service=None, **kwargs) -> None:
