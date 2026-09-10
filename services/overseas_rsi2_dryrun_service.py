@@ -2,8 +2,13 @@
 
 국내 `RSI2PullbackStrategy` 의 일봉 기반 평균회귀 아이디어 중 해외 데이터로
 재현 가능한 부분만 적용한다. Minervini Stage 2 는 해외에 같은 소스가 없으므로
-장기 상승추세(`close > 200MA`)로 대체한다. 주문 경로는 없고 shadow 저널에
+장기 상승추세(`close > 추세MA`)로 대체한다. 주문 경로는 없고 shadow 저널에
 would-be 신호만 기록한다.
+
+**추세MA 는 50 이다 — 200 이 아니다.** KIS 해외 일봉은 1회 호출로 end_date 기준
+마지막 100봉만 반환하므로(`scripts/fetch_overseas_ohlcv.py` 실측), 200MA 를 쓰면
+어떤 종목도 최소 이력 조건을 넘지 못해 영구 0건이 된다. 분할 수집으로 200봉을
+확보하기 전까지는 100봉 안에 들어오는 추세 필터만 성립한다.
 """
 from __future__ import annotations
 
@@ -19,10 +24,10 @@ from common.types import ErrorCode
 class OverseasRSI2Config:
     rsi_period: int = 2
     rsi_threshold: float = 10.0
-    trend_ma_period: int = 200
+    trend_ma_period: int = 50
     take_profit_ma_period: int = 5
     hard_stop_pct: float = -5.0
-    min_history_days: int = 202
+    min_history_days: int = 52
 
 
 class OverseasRSI2DryRunService:
@@ -143,8 +148,8 @@ class OverseasRSI2DryRunService:
             return None
         cur = rows[-1]
         current = closes[-1]
-        ma_200d = sum(closes[-self._cfg.trend_ma_period:]) / self._cfg.trend_ma_period
-        if current <= ma_200d:
+        trend_ma = sum(closes[-self._cfg.trend_ma_period:]) / self._cfg.trend_ma_period
+        if current <= trend_ma:
             return None
 
         rsi2 = self._rsi(closes, self._cfg.rsi_period)
@@ -164,14 +169,15 @@ class OverseasRSI2DryRunService:
             "entry_reason": "overseas_rsi2_pullback",
             "rsi2": rsi2,
             "rsi_threshold": self._cfg.rsi_threshold,
-            "ma_200d": ma_200d,
+            "trend_ma": trend_ma,
+            "trend_ma_period": self._cfg.trend_ma_period,
             "ma_5d": ma_5d,
             "target_ma_period": self._cfg.take_profit_ma_period,
             "stop_price": stop_price,
             "confidence": confidence,
             "reason": (
                 f"RSI2진입(RSI({self._cfg.rsi_period})={rsi2:.2f} <= "
-                f"{self._cfg.rsi_threshold:.1f}, 종가>200MA)"
+                f"{self._cfg.rsi_threshold:.1f}, 종가>{self._cfg.trend_ma_period}MA)"
             ),
         }
 

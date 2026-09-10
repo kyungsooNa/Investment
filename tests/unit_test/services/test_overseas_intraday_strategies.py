@@ -69,7 +69,7 @@ def _build(cls, rows, *, now=None, **kwargs):
 # ══════════════════ RSI2 ══════════════════
 
 def _rsi2_rows(n=205, *, tail=None):
-    """상승 추세(200MA 위) + 마지막 며칠 급락으로 RSI(2) 를 낮춘다."""
+    """상승 추세(추세MA 위) + 마지막 며칠 급락으로 RSI(2) 를 낮춘다."""
     rows = [_bar(f"{20250101 + i}", 100 + i * 0.5, 100 + i * 0.5, 100 + i * 0.5,
                  100 + i * 0.5) for i in range(n)]
     if tail:
@@ -90,12 +90,12 @@ async def test_rsi2_only_evaluates_in_close_window():
 
 
 @pytest.mark.asyncio
-async def test_rsi2_enters_near_close_when_rsi_is_low_and_above_200ma():
+async def test_rsi2_enters_near_close_when_rsi_is_low_and_above_trend_ma():
     rows = _rsi2_rows(tail=[210, 209, 208])
     s = _build(OverseasIntradayRSI2Service, rows, now=_at(15, 50))
     await s.service.prepare_session(TRADE_DATE)
 
-    action = await s.service.on_price("AAA", 190.0, volume=1_000_000)
+    action = await s.service.on_price("AAA", 205.0, volume=1_000_000)
 
     assert action is not None
     assert action["action"] == "BUY"
@@ -103,12 +103,12 @@ async def test_rsi2_enters_near_close_when_rsi_is_low_and_above_200ma():
 
 
 @pytest.mark.asyncio
-async def test_rsi2_skips_when_below_200ma():
+async def test_rsi2_skips_when_below_trend_ma():
     rows = _rsi2_rows(tail=[210, 209, 208])
     s = _build(OverseasIntradayRSI2Service, rows, now=_at(15, 50))
     await s.service.prepare_session(TRADE_DATE)
 
-    # 200MA 한참 아래 → 추세 조건 실패
+    # 추세MA 한참 아래 → 추세 조건 실패
     assert await s.service.on_price("AAA", 50.0, volume=1_000_000) is None
 
 
@@ -126,6 +126,26 @@ async def test_rsi2_skips_when_rsi_not_oversold():
 async def test_rsi2_requires_long_history():
     s = _build(OverseasIntradayRSI2Service, _rsi2_rows(n=50), now=_at(15, 50))
     assert await s.service.prepare_session(TRADE_DATE) == 0
+
+
+@pytest.mark.asyncio
+async def test_rsi2_history_limit_within_overseas_daily_ceiling():
+    """KIS 해외 일봉은 1회 호출로 마지막 100봉이 상한이다 — 더 요구하면 영구 0건이 된다."""
+    assert OverseasIntradayRSI2Service.HISTORY_LIMIT <= 100
+
+
+@pytest.mark.asyncio
+async def test_rsi2_enters_with_only_ceiling_history():
+    """실제로 받을 수 있는 100봉만으로 세션 상수와 진입 판정이 성립해야 한다."""
+    rows = _rsi2_rows(n=100, tail=[210, 209, 208])
+    s = _build(OverseasIntradayRSI2Service, rows, now=_at(15, 50))
+
+    assert await s.service.prepare_session(TRADE_DATE) == 1
+
+    action = await s.service.on_price("AAA", 190.0, volume=1_000_000)
+
+    assert action is not None
+    assert action["action"] == "BUY"
 
 
 # ══════════════════ Buyable Gap-Up ══════════════════
