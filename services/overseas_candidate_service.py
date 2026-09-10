@@ -9,6 +9,7 @@ OverseasStockCodeRepository(전 심볼) + 일봉 거래대금 필터로 watchlis
 """
 import asyncio
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from common.overseas_types import OverseasExchange
@@ -27,6 +28,8 @@ class OverseasCandidateService:
         top_n: int = 50,
         max_universe: int = 300,
         concurrency: int = 10,
+        cache_ttl_sec: float = 3600.0,
+        monotonic=time.monotonic,
     ):
         self._repo = overseas_stock_code_repository
         self._sqs = stock_query_service
@@ -36,6 +39,14 @@ class OverseasCandidateService:
         self._top_n = top_n
         self._max_universe = max_universe
         self._concurrency = concurrency
+        # 유니버스 스캔(최대 300종목 일봉)은 호출자마다 반복되면 그대로 곱해진다.
+        # 장중 전략 6종이 각자 prepare_session 을 돌리면 한 세션 준비에 스캔이 11회
+        # 나가 dailyprice 가 7,000콜을 넘고 절반이 rate limit 으로 거부됐다(2026-09-10).
+        # 점수는 최근 5일 평균 거래대금이라 한 시간 안에서는 사실상 바뀌지 않으므로,
+        # 점수 매긴 유니버스를 재사용하고 호출자별 필터만 뒤에 적용한다.
+        self._cache_ttl_sec = cache_ttl_sec
+        self._monotonic = monotonic
+        self._scored_cache: Dict[str, tuple] = {}
 
     async def get_candidates(
         self,
@@ -52,6 +63,21 @@ class OverseasCandidateService:
         min_tv = self._min_avg_trading_value if min_avg_trading_value is None else min_avg_trading_value
         cap = self._top_n if top_n is None else top_n
 
+        scored_universe = await self._scored_universe(exchange, symbols)
+
+        candidates = [c for c in scored_universe if c["avg_trading_value"] >= min_tv]
+        candidates.sort(key=lambda c: c["avg_trading_value"], reverse=True)
+        return candidates[:cap] if cap else candidates
+
+    async def _scored_universe(
+        self, exchange: OverseasExchange, symbols: Optional[List[str]],
+    ) -> List[Dict[str, Any]]:
+        """거래대금 점수를 매긴 유니버스. TTL 안이면 직전 스캔 결과를 그대로 쓴다."""
+        cache_key = f"{exchange.value}:{','.join(symbols) if symbols else '*'}"
+        cached = self._scored_cache.get(cache_key)
+        if cached is not None and (self._monotonic() - cached[0]) < self._cache_ttl_sec:
+            return list(cached[1])
+
         meta = self._resolve_universe(exchange, symbols)
         if not meta:
             return []
@@ -61,7 +87,7 @@ class OverseasCandidateService:
         async def _score(entry: Dict[str, str]) -> Optional[Dict[str, Any]]:
             async with sem:
                 avg_tv = await self._avg_trading_value(entry["code"], exchange)
-            if avg_tv is None or avg_tv < min_tv:
+            if avg_tv is None:
                 return None
             return {
                 "code": entry["code"],
@@ -72,16 +98,18 @@ class OverseasCandidateService:
 
         scored = await asyncio.gather(*[_score(e) for e in meta], return_exceptions=True)
 
-        candidates: List[Dict[str, Any]] = []
+        universe: List[Dict[str, Any]] = []
         for r in scored:
             if isinstance(r, Exception):
                 self._logger.warning({"event": "overseas_candidate_error", "error": str(r)})
                 continue
             if r:
-                candidates.append(r)
+                universe.append(r)
 
-        candidates.sort(key=lambda c: c["avg_trading_value"], reverse=True)
-        return candidates[:cap] if cap else candidates
+        # 전량 실패를 캐시하면 TTL 내내 후보가 0으로 굳는다 — 다음 호출에서 다시 훑는다.
+        if universe:
+            self._scored_cache[cache_key] = (self._monotonic(), list(universe))
+        return universe
 
     def _resolve_universe(
         self, exchange: OverseasExchange, symbols: Optional[List[str]]
