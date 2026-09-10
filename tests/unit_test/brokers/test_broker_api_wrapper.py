@@ -956,3 +956,37 @@ async def test_cancel_stock_order_delegation(mock_env, mock_logger, mock_market_
 
         mock_client.cancel_stock_order.assert_awaited_once_with(broker_order_no="A0001", order_qty=6)
         assert result == {"rt_cd": "0", "msg1": "취소 요청 성공"}
+
+
+# ── 모의 환경일 때 해외 시세 예산이 조여지는가 ──────────────────────────────
+
+def _make_wrapper(*, is_paper: bool, mock_logger, mock_market_clock):
+    env = MagicMock()
+    env.get_full_config.return_value = {
+        'base_url': 'http://mock-base-url.com', 'api_key': 'k',
+        'api_secret_key': 's', 'access_token': 't', 'custtype': 'P',
+    }
+    env.is_paper_trading = is_paper
+    with patch.object(wrapper_module, "KoreaInvestApiClient", MagicMock()), \
+         patch.object(wrapper_module, "StockCodeRepository", MagicMock()):
+        return BrokerAPIWrapper(
+            broker="korea_investment", env=env,
+            logger=mock_logger, market_clock=mock_market_clock,
+        )
+
+
+def test_paper_env_gets_the_tightened_overseas_budget(mock_logger, mock_market_clock):
+    """모의 서버 한도는 실전보다 낮다 — env 를 보고 limiter 를 조여야 한다."""
+    wrapper = _make_wrapper(is_paper=True, mock_logger=mock_logger, mock_market_clock=mock_market_clock)
+
+    lane = wrapper._api_budget_limiter.snapshot()["quotation_overseas"]
+    assert lane["rate_limit_per_sec"] == 1.0
+    assert lane["limit"] == 1
+
+
+def test_real_env_keeps_the_default_overseas_budget(mock_logger, mock_market_clock):
+    wrapper = _make_wrapper(is_paper=False, mock_logger=mock_logger, mock_market_clock=mock_market_clock)
+
+    lane = wrapper._api_budget_limiter.snapshot()["quotation_overseas"]
+    assert lane["rate_limit_per_sec"] == 3.0
+    assert lane["limit"] == 2
