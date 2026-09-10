@@ -1628,3 +1628,36 @@ async def test_ensure_strategy_states_loaded_no_env_defaults_to_fail_open(mock_d
 
     await ctx.ensure_strategy_states_loaded()  # raise 없어야 함
     failing.assert_awaited_once()
+
+
+# ── 모의 여부가 정해진 뒤에 API 예산을 구성하는가 ───────────────────────────
+#
+# ApiBudgetLimiter 를 __init__ 에서 인자 없이 만들면 실전 기준 한도(해외 3.0/s·동시 2)로
+# 굳는다. 모드는 initialize_services 인자로 들어오므로, 그 뒤에 구성해야 모의 서버용
+# 완화(1.0/s·동시 1)가 실제 배선에 반영된다. 웹앱은 이 limiter 를 브로커에 주입하므로
+# 여기서 놓치면 BrokerAPIWrapper 쪽 기본값은 영영 쓰이지 않는다.
+
+@pytest.mark.asyncio
+async def test_paper_mode_builds_the_paper_api_budget(mock_deps):
+    ctx = WebAppContext(None)
+    ctx.env = MagicMock()
+    ctx._bootstrap_broker = AsyncMock(return_value=False)  # 예산 구성 직후 조기 반환
+
+    await ctx.initialize_services(is_paper_trading=True)
+
+    lane = ctx.api_budget_limiter.snapshot()["quotation_overseas"]
+    assert lane["rate_limit_per_sec"] == 1.0
+    assert lane["limit"] == 1
+
+
+@pytest.mark.asyncio
+async def test_real_mode_keeps_the_live_api_budget(mock_deps):
+    ctx = WebAppContext(None)
+    ctx.env = MagicMock()
+    ctx._bootstrap_broker = AsyncMock(return_value=False)
+
+    await ctx.initialize_services(is_paper_trading=False)
+
+    lane = ctx.api_budget_limiter.snapshot()["quotation_overseas"]
+    assert lane["rate_limit_per_sec"] == 3.0
+    assert lane["limit"] == 2
