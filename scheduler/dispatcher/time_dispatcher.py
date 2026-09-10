@@ -210,9 +210,12 @@ class TimeDispatcher:
         elapsed_since_close = max(0.0, -self._market_clock.get_seconds_until_market_close())
 
         for task_name, priority in tasks_to_dispatch:
-            # 재시작 후 중복 발행 방지를 위해 asyncio.create_task 전에 DB 저장
+            # 인메모리 표시는 즉시 — 폴링 루프가 대기 중에 다시 돌아도 중복 예약을 막는다.
+            # 반면 DB 저장은 실제 발행에 성공한 뒤에만 한다(_publish_after_delay).
+            # delay_sec 가 큰 태스크는 감지와 발행 사이가 길어(overseas_dryrun=1800s),
+            # 그 창에서 죽었을 때 '발행됨'이 먼저 적혀 있으면 재기동 후 dedup 이 그
+            # 거래일을 영영 건너뛴다. 실제로 거래일 20260908 해외 dry-run 이 그렇게 유실됐다.
             self._task_dispatched_dates[task_name] = latest_trading_date
-            self._save_task_date(task_name, latest_trading_date)
             delay = max(0.0, self._task_delays.get(task_name, 0) - elapsed_since_close)
             t = asyncio.create_task(
                 self._publish_after_delay(task_name, priority, latest_trading_date, delay)
@@ -242,7 +245,6 @@ class TimeDispatcher:
                 continue
 
             self._task_dispatched_dates[task_name] = today_str
-            self._save_task_date(task_name, today_str)
             scheduled_time = f"{schedule['hour']:02d}:{schedule['minute']:02d}"
             t = asyncio.create_task(
                 self._publish_daily_task(
@@ -265,6 +267,7 @@ class TimeDispatcher:
         )
         published = await self._broker.publish(ticket)
         if published:
+            self._save_task_date(task_name, date)
             self._logger.info(
                 f"[TimeDispatcher] daily 티켓 발행: {task_name} ({date} {scheduled_time})"
             )
@@ -279,6 +282,9 @@ class TimeDispatcher:
         ticket = Ticket(priority=priority, task_name=task_name, payload={"date": date})
         published = await self._broker.publish(ticket)
         if published:
+            # 발행에 성공한 뒤에만 영속화한다 — 여기까지 오지 못하고 죽었다면
+            # 재기동 후 같은 거래일이 다시 발행되어야 한다.
+            self._save_task_date(task_name, date)
             self._logger.info(f"[TimeDispatcher] 티켓 발행: {task_name} ({date})")
         else:
             self._logger.warning(f"[TimeDispatcher] 티켓 발행 실패 (큐 포화): {task_name}")

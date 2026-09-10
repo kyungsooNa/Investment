@@ -609,3 +609,81 @@ async def test_daily_task_deduplicates_after_restart(db_path):
     await _drain(dispatcher2)
 
     assert broker2.empty is True
+
+
+# ── 지연 발행 중 프로세스 종료 시 유실 방지 ──────────────────────────────────
+#
+# delay_sec 가 큰 태스크(overseas_dryrun=1800s)는 "감지 → 대기 → 발행" 사이가 길다.
+# 그 창에서 프로세스가 죽었는데 DB에 '발행됨'이 먼저 적혀 있으면, 재기동 후
+# dedup(_maybe_dispatch의 task별 제외)이 그 거래일을 영영 건너뛴다.
+# 실제로 2026-09-09 05:11 종료로 거래일 20260908 해외 dry-run 이 통째로 유실됐다.
+
+
+async def _cancel_pending(dispatcher) -> None:
+    """지연 발행 대기 중 프로세스가 죽는 상황을 모사한다."""
+    for task in list(dispatcher._pending_publish_tasks):
+        task.cancel()
+    await _drain(dispatcher)
+
+
+async def test_delayed_dispatch_not_persisted_until_ticket_is_published(db_path):
+    dispatcher, broker = _make_dispatcher(is_operating=False, latest_date="20250417", db_path=db_path)
+    dispatcher.register_task("overseas_dryrun", priority=100, delay_sec=1800)
+
+    await dispatcher._maybe_dispatch()
+    await _cancel_pending(dispatcher)
+
+    assert broker.qsize == 0, "대기 중 취소됐으므로 티켓은 나가지 않았다"
+    assert dispatcher._load_task_date("overseas_dryrun") is None, \
+        "발행되지 않은 거래일이 DB에 '발행됨'으로 남으면 재기동 후 영영 스킵된다"
+
+
+async def test_delayed_dispatch_retried_after_restart_when_it_never_published(db_path):
+    dispatcher, broker = _make_dispatcher(is_operating=False, latest_date="20250417", db_path=db_path)
+    dispatcher.register_task("overseas_dryrun", priority=100, delay_sec=1800)
+    await dispatcher._maybe_dispatch()
+    await _cancel_pending(dispatcher)
+    assert broker.qsize == 0
+
+    # 재기동은 실제 마감보다 한참 뒤 → 남은 delay 는 이미 다 지났다
+    dispatcher2, broker2 = _make_dispatcher(is_operating=False, latest_date="20250417", db_path=db_path)
+    dispatcher2._market_clock.get_seconds_until_market_close.return_value = -7200
+    dispatcher2.register_task("overseas_dryrun", priority=100, delay_sec=1800)
+
+    await dispatcher2._maybe_dispatch()
+    await _drain(dispatcher2)
+
+    assert broker2.qsize == 1
+    ticket = await broker2.consume()
+    assert ticket.task_name == "overseas_dryrun"
+    assert ticket.payload["date"] == "20250417"
+    assert dispatcher2._load_task_date("overseas_dryrun") == "20250417"
+
+
+async def test_no_duplicate_scheduling_while_delayed_publish_is_pending(db_path):
+    """DB 저장을 미뤄도 프로세스 안에서는 중복 예약이 없어야 한다 —
+    폴링 루프가 대기 중에 다시 돌아도 예약은 1건이다(선저장의 원래 목적)."""
+    dispatcher, broker = _make_dispatcher(is_operating=False, latest_date="20250417", db_path=db_path)
+    dispatcher.register_task("overseas_dryrun", priority=100, delay_sec=1800)
+
+    await dispatcher._maybe_dispatch()
+    await dispatcher._maybe_dispatch()
+    await dispatcher._maybe_dispatch()
+
+    assert len(dispatcher._pending_publish_tasks) == 1
+    await _cancel_pending(dispatcher)
+    assert broker.qsize == 0
+
+
+async def test_daily_task_not_persisted_until_ticket_is_published(db_path):
+    """daily 경로도 같은 순서 문제를 갖는다 — 큐 포화로 발행이 실패하면 DB에 남기지 않는다."""
+    dispatcher, _ = _make_dispatcher(is_operating=False, latest_date="20260810", db_path=db_path)
+    dispatcher._market_clock = _make_daily_clock(hour=7, minute=30)
+    dispatcher._broker = MagicMock()
+    dispatcher._broker.publish = AsyncMock(return_value=False)  # 큐 포화
+    dispatcher.register_daily_task("youtube_digest", priority=100, hour=7, minute=30)
+
+    await dispatcher._maybe_dispatch_daily_tasks()
+    await _drain(dispatcher)
+
+    assert dispatcher._load_task_date("youtube_digest") is None
