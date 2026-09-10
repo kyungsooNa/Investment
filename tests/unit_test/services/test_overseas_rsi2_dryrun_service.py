@@ -21,22 +21,6 @@ def _ohlcv(bars):
     return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=bars)
 
 
-# KIS 해외 일봉은 1회 호출로 end_date 기준 마지막 100봉만 반환한다(2026-08 실측,
-# scripts/fetch_overseas_ohlcv.py 참고). 이보다 긴 이력을 요구하면 실운영에서 영구 0건이 된다.
-OVERSEAS_DAILY_BAR_CEILING = 100
-
-
-def _ceiling_bars():
-    """실제 상한(100봉)만으로 구성한 얕은 눌림목 시나리오 — 마지막 종가는 추세선 위."""
-    bars = []
-    for i in range(1, 99):
-        price = 80.0 + 0.5 * i
-        bars.append(_bar(f"2026{i:04d}", price - 0.2, price + 0.3, price - 0.3, price, 10_000))
-    bars.append(_bar("20260908", 129.0, 129.2, 127.5, 128.0, 12_000))
-    bars.append(_bar("20260909", 128.0, 128.3, 126.5, 127.0, 13_000))
-    return bars
-
-
 def _rsi2_bars(*, last_close=178.0, last_open=180.0):
     bars = []
     price = 80.0
@@ -86,29 +70,16 @@ async def test_scan_emits_buy_on_rsi2_pullback(svc):
 
 
 @pytest.mark.asyncio
-async def test_scan_requests_history_within_overseas_daily_ceiling(svc):
-    """해외 일봉 상한(100봉)보다 많이 요구하면 어떤 종목도 판정에 도달하지 못한다."""
-    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(_ceiling_bars()))
+async def test_scan_requests_the_full_trend_window(svc):
+    """추세MA 전 구간을 요구해야 한다 — 해외 일봉 1회 응답(~100봉)을 넘는 값이라
+    `MarketDataService` 의 분할 수집이 이를 채워준다. 요구를 줄이면 200MA 가 아니다."""
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(_rsi2_bars()))
 
     await svc.service.scan_dry_run(exchange=OverseasExchange.NASD)
 
     requested = svc.sqs.get_recent_daily_ohlcv.call_args.kwargs["limit"]
-    assert requested <= OVERSEAS_DAILY_BAR_CEILING
-
-
-@pytest.mark.asyncio
-async def test_scan_emits_buy_with_only_ceiling_history(svc):
-    """실제로 받을 수 있는 100봉만으로 추세 필터와 RSI 판정이 성립해야 한다."""
-    svc.sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv(_ceiling_bars()))
-
-    signals = await svc.service.scan_dry_run(exchange=OverseasExchange.NASD)
-
-    assert len(signals) == 1
-    sig = signals[0]
-    assert sig["rsi2"] <= 10.0
-    assert sig["entry_price"] == 127.0
-    assert sig["trend_ma"] < 127.0
-    assert sig["trend_ma_period"] == 50
+    assert requested >= 202
+    assert svc.service._cfg.trend_ma_period == 200
 
 
 @pytest.mark.asyncio

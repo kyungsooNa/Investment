@@ -35,6 +35,10 @@ class MarketDataService:
     """
     시장 데이터(현재가, 호가, OHLCV, 랭킹 등) 조회를 전담하는 서비스입니다.
     """
+    # 해외 일봉 1회 응답 상한을 넘는 이력은 end_date 를 과거로 옮겨 이어붙인다.
+    # 페이지 수 상한은 API 예산 보호용 — 5페이지면 약 500봉(2년치)이다.
+    OVERSEAS_DAILY_MAX_PAGES = 5
+
     def __init__(self, broker_api_wrapper: BrokerAPIWrapper, env: KoreaInvestApiEnv, logger=None,
                  market_clock: MarketClock = None, cache_store: Optional[CacheStore] = None,
                  market_calendar_service: Optional[MarketCalendarService] = None, performance_profiler: Optional[PerformanceProfiler] = None,
@@ -693,12 +697,45 @@ class MarketDataService:
 
     async def _get_overseas_recent_daily_ohlcv(self, symbol: str, limit: int,
                                                end_date: Optional[str], exchange) -> List[Dict[str, Any]]:
-        """해외 최근 limit개 일봉을 반환(오름차순). 실패 시 빈 리스트."""
-        resp = await self._get_overseas_ohlcv_range(symbol, "D", None, end_date, exchange)
-        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+        """해외 최근 limit개 일봉을 반환(오름차순). 실패 시 빈 리스트.
+
+        KIS 해외 일봉 TR 은 start_date 를 무시하고 end_date 기준 마지막 ~100봉만
+        돌려준다(2026-08 실측). limit 이 그보다 크면 end_date 를 직전 페이지의 최고
+        (最古) 봉 하루 전으로 옮겨가며 이어붙인다 — 국내 경로가 100일 단위로 끊어
+        반복 호출하는 것과 같은 이유다. 100봉 안에서 끝나는 호출자는 첫 페이지에서
+        바로 반환하므로 호출 수가 늘지 않는다.
+        """
+        merged: Dict[str, Dict[str, Any]] = {}
+        cursor = end_date
+        for _ in range(self.OVERSEAS_DAILY_MAX_PAGES):
+            resp = await self._get_overseas_ohlcv_range(symbol, "D", None, cursor, exchange)
+            if not resp or resp.rt_cd != ErrorCode.SUCCESS.value:
+                break
+            before = len(merged)
+            for r in (resp.data or []):
+                if r.get("date"):
+                    merged[r["date"]] = r
+            # 더 과거가 없으면 같은 페이지가 반복된다 — 진전이 없으면 멈춘다.
+            if len(merged) == before:
+                break
+            if limit and len(merged) >= limit:
+                break
+            cursor = self._prev_day_str(min(merged))
+            if cursor is None:
+                break
+
+        if not merged:
             return []
-        rows = resp.data or []
+        rows = sorted(merged.values(), key=lambda x: x["date"])
         return rows[-limit:] if limit and len(rows) > limit else rows
+
+    @staticmethod
+    def _prev_day_str(date_str: str) -> Optional[str]:
+        """YYYYMMDD 하루 전. 다음 페이지의 end_date 로 쓴다."""
+        try:
+            return (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+        except (TypeError, ValueError):
+            return None
 
     async def get_intraday_minutes_today(self, *, stock_code: str, input_hour_1: str) -> ResCommonResponse:
         """

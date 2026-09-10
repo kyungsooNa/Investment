@@ -16,7 +16,10 @@ from services.overseas_intraday_buyable_gap_up_service import (
     OverseasIntradayBuyableGapUpService,
 )
 from services.overseas_intraday_pocket_pivot_service import OverseasIntradayPocketPivotService
-from services.overseas_intraday_rsi2_service import OverseasIntradayRSI2Service
+from services.overseas_intraday_rsi2_service import (
+    OverseasIntradayRSI2Config,
+    OverseasIntradayRSI2Service,
+)
 from services.overseas_intraday_squeeze_breakout_service import (
     OverseasIntradaySqueezeBreakoutService,
 )
@@ -129,23 +132,11 @@ async def test_rsi2_requires_long_history():
 
 
 @pytest.mark.asyncio
-async def test_rsi2_history_limit_within_overseas_daily_ceiling():
-    """KIS 해외 일봉은 1회 호출로 마지막 100봉이 상한이다 — 더 요구하면 영구 0건이 된다."""
-    assert OverseasIntradayRSI2Service.HISTORY_LIMIT <= 100
-
-
-@pytest.mark.asyncio
-async def test_rsi2_enters_with_only_ceiling_history():
-    """실제로 받을 수 있는 100봉만으로 세션 상수와 진입 판정이 성립해야 한다."""
-    rows = _rsi2_rows(n=100, tail=[210, 209, 208])
-    s = _build(OverseasIntradayRSI2Service, rows, now=_at(15, 50))
-
-    assert await s.service.prepare_session(TRADE_DATE) == 1
-
-    action = await s.service.on_price("AAA", 190.0, volume=1_000_000)
-
-    assert action is not None
-    assert action["action"] == "BUY"
+async def test_rsi2_history_limit_covers_trend_window():
+    """추세MA 전 구간을 받아와야 한다 — 해외 일봉 1회 응답(~100봉)을 넘으므로
+    `MarketDataService` 의 분할 수집이 이를 채운다. 줄이면 세션이 통째로 비게 된다."""
+    cfg = OverseasIntradayRSI2Config()
+    assert OverseasIntradayRSI2Service.HISTORY_LIMIT >= cfg.min_history_days
 
 
 # ══════════════════ Buyable Gap-Up ══════════════════
