@@ -171,3 +171,81 @@ async def test_bars_without_positive_price_or_volume_drop_the_symbol(svc):
     )
 
     assert await svc.service.get_candidates(OverseasExchange.NASD) == []
+
+
+# ── 유니버스 스캔 재사용 ────────────────────────────────────────────────────
+#
+# get_candidates 는 유니버스 전 종목(최대 300)의 일봉을 훑는다. 전략마다 독립 호출하면
+# 그 스캔이 전략 수만큼 곱해진다 — 2026-09-10 미국장에서 장중 전략 6종을 켠 뒤
+# 세션 준비 한 번에 dailyprice 7,345콜이 나가 53%가 rate limit 으로 거부됐다.
+# 같은 거래소·같은 유니버스라면 점수는 동일하므로 스캔 결과를 재사용한다.
+
+
+@pytest.mark.asyncio
+async def test_universe_is_scanned_once_across_repeated_calls(svc):
+    await svc.service.get_candidates(exchange=OverseasExchange.NASD)
+    first = svc.sqs.get_recent_daily_ohlcv.await_count
+    assert first > 0
+
+    await svc.service.get_candidates(exchange=OverseasExchange.NASD)
+
+    assert svc.sqs.get_recent_daily_ohlcv.await_count == first, \
+        "두 번째 호출은 캐시된 점수를 써야 한다 — 전략 수만큼 유니버스를 다시 훑으면 안 된다"
+
+
+@pytest.mark.asyncio
+async def test_cached_scan_still_honours_per_caller_filters(svc):
+    """캐시는 '점수 매긴 유니버스'다 — 호출자별 top_n/최소거래대금은 그대로 적용된다."""
+    await svc.service.get_candidates(exchange=OverseasExchange.NASD)
+    scanned = svc.sqs.get_recent_daily_ohlcv.await_count
+
+    top1 = await svc.service.get_candidates(exchange=OverseasExchange.NASD, top_n=1)
+    loose = await svc.service.get_candidates(
+        exchange=OverseasExchange.NASD, min_avg_trading_value=1.0,
+    )
+
+    assert [c["code"] for c in top1] == ["CCC"]
+    assert [c["code"] for c in loose] == ["CCC", "AAA", "BBB"]
+    assert svc.sqs.get_recent_daily_ohlcv.await_count == scanned
+
+
+@pytest.mark.asyncio
+async def test_scan_is_refreshed_after_ttl(svc):
+    clock = {"now": 1000.0}
+    svc.service._monotonic = lambda: clock["now"]
+
+    await svc.service.get_candidates(exchange=OverseasExchange.NASD)
+    scanned = svc.sqs.get_recent_daily_ohlcv.await_count
+
+    clock["now"] += svc.service._cache_ttl_sec + 1
+    await svc.service.get_candidates(exchange=OverseasExchange.NASD)
+
+    assert svc.sqs.get_recent_daily_ohlcv.await_count > scanned
+
+
+@pytest.mark.asyncio
+async def test_explicit_symbols_do_not_share_the_universe_cache(svc):
+    await svc.service.get_candidates(exchange=OverseasExchange.NASD)
+    scanned = svc.sqs.get_recent_daily_ohlcv.await_count
+
+    result = await svc.service.get_candidates(
+        exchange=OverseasExchange.NASD, symbols=["ZZZ"], min_avg_trading_value=1.0,
+    )
+
+    assert [c["code"] for c in result] == ["ZZZ"]
+    assert svc.sqs.get_recent_daily_ohlcv.await_count > scanned
+
+
+@pytest.mark.asyncio
+async def test_empty_scan_is_not_cached(svc):
+    """조회가 통째로 실패한 결과를 캐시하면 그 세션 내내 후보가 0으로 굳는다."""
+    svc.sqs.get_recent_daily_ohlcv = AsyncMock(
+        return_value=ResCommonResponse(rt_cd=ErrorCode.API_ERROR.value, msg1="fail", data=None)
+    )
+
+    assert await svc.service.get_candidates(exchange=OverseasExchange.NASD) == []
+    failed = svc.sqs.get_recent_daily_ohlcv.await_count
+
+    await svc.service.get_candidates(exchange=OverseasExchange.NASD)
+
+    assert svc.sqs.get_recent_daily_ohlcv.await_count > failed
