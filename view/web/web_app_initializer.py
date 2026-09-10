@@ -281,6 +281,9 @@ class WebAppContext:
             return True
 
         self.env.set_trading_mode(is_paper_trading)
+        # 모의 서버는 실전보다 호출 한도가 낮다. __init__ 시점엔 모드를 모르므로
+        # 여기서 다시 구성해야 완화값이 실제 배선(브로커·스케줄러)에 반영된다.
+        self.api_budget_limiter = ApiBudgetLimiter(paper_trading=is_paper_trading)
         if not await self._bootstrap_broker(is_paper_trading):
             return False
         try:
