@@ -71,6 +71,7 @@ from task.background.intraday.pre_market_health_check_task import PreMarketHealt
 from task.background.intraday.paper_account_expiry_alert_task import PaperAccountExpiryAlertTask
 from task.background.intraday.program_capture_subscription_task import ProgramCaptureSubscriptionTask
 from task.background.intraday.theme_intraday_leader_alert_task import ThemeIntradayLeaderAlertTask
+from task.background.intraday.intraday_volume_surge_alert_task import IntradayVolumeSurgeAlertTask
 from task.background.intraday.market_index_threshold_alert_task import MarketIndexThresholdAlertTask
 from task.background.intraday.market_timing_daily_update_task import MarketTimingDailyUpdateTask
 from view.web.bootstrap.runtime_mode import RuntimeMode
@@ -615,6 +616,7 @@ class ServiceContainer:
                 ctx.paper_account_expiry_alert_task = None
                 ctx.microstructure_capture_task = None
                 ctx.theme_intraday_leader_alert_task = None
+                ctx.intraday_volume_surge_alert_task = None
                 if needs_web:
                     ctx.notification_queue_task = NotificationQueueTask(
                         notification_service=ctx.notification_service,
@@ -831,6 +833,25 @@ class ServiceContainer:
                 needs_trading
                 and ctx.ranking_task is not None
                 and ctx.theme_daily_leader_service is not None
+            ) else None
+
+            volume_surge_cfg = config_dict.get("intraday_volume_surge_alert", {})
+            volume_surge_enabled = (
+                volume_surge_cfg.get("enabled", True)
+                if isinstance(volume_surge_cfg, dict) else True
+            )
+            ctx.intraday_volume_surge_alert_task = IntradayVolumeSurgeAlertTask(
+                ranking_task=ctx.ranking_task,
+                stock_query_service=ctx.stock_query_service,
+                telegram_reporter=getattr(ctx, "telegram_reporter", None),
+                market_calendar_service=ctx._mcs,
+                market_clock=ctx.market_clock,
+                logger=ctx.logger,
+            ) if (
+                needs_trading
+                and volume_surge_enabled
+                and ctx.ranking_task is not None
+                and ctx.stock_query_service is not None
             ) else None
 
             index_alert_cfg = config_dict.get("market_index_alert", {})

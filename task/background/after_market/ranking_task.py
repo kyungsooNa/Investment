@@ -112,6 +112,7 @@ class RankingTask(AfterMarketTask):
         self._basic_ranking_cache: Dict[str, ResCommonResponse] = {}
         self._basic_ranking_updated_at: Optional[datetime] = None
         self._basic_last_collected_date: Optional[str] = None
+        self._basic_ranking_refresh_lock = asyncio.Lock()
 
         # 진행률 상태
         self._progress: Dict = {
@@ -219,42 +220,52 @@ class RankingTask(AfterMarketTask):
 
     # ── 기본 랭킹 캐시 (상승/하락/거래량/거래대금) ───────────────
 
-    async def refresh_basic_ranking(self, *, notify: bool = True) -> None:
+    async def refresh_basic_ranking(
+        self, *, notify: bool = True, min_interval_sec: int = 0
+    ) -> None:
         """상승률/하락률/거래량/거래대금 랭킹을 1회 조회하여 캐시한다."""
         if not self._market_data_service:
             self._logger.warning("MarketDataService 미설정 — 기본 랭킹 캐시 스킵")
             return
 
-        async with self._running_state():
-            t_start = self.pm.start_timer()
-            self._logger.info("기본 랭킹 캐시 갱신 시작 (상승/하락/거래량/거래대금)")
-            try:
-                rise_resp, fall_resp, vol_resp, tv_resp = await asyncio.gather(
-                    self._market_data_service.get_top_rise_fall_stocks(True),
-                    self._market_data_service.get_top_rise_fall_stocks(False),
-                    self._market_data_service.get_top_volume_stocks(),
-                    self._market_data_service.get_top_trading_value_stocks(),
-                    return_exceptions=True,
-                )
-                for key, resp in [("rise", rise_resp), ("fall", fall_resp),
-                                  ("volume", vol_resp), ("trading_value", tv_resp)]:
-                    if isinstance(resp, Exception):
-                        self._logger.error(f"기본 랭킹 '{key}' 조회 실패: {resp}")
-                    else:
-                        self._basic_ranking_cache[key] = resp
-
-                self._basic_ranking_updated_at = datetime.now()
-                self._logger.info(f"기본 랭킹 캐시 갱신 완료: {list(self._basic_ranking_cache.keys())}")
-                self.pm.log_timer("RankingTask.refresh_basic_ranking", t_start, threshold=1.0)
-                if notify and self._notification_service:
-                    await self._notification_service.emit(
-                        NotificationCategory.BACKGROUND, NotificationLevel.INFO, "기본 랭킹 갱신 완료",
-                        f"상승/하락/거래량/거래대금 캐시 갱신 완료",
+        async with self._basic_ranking_refresh_lock:
+            if (
+                min_interval_sec > 0
+                and self._basic_ranking_updated_at is not None
+                and (datetime.now() - self._basic_ranking_updated_at).total_seconds()
+                < min_interval_sec
+            ):
+                return
+            async with self._running_state():
+                t_start = self.pm.start_timer()
+                self._logger.info("기본 랭킹 캐시 갱신 시작 (상승/하락/거래량/거래대금)")
+                try:
+                    rise_resp, fall_resp, vol_resp, tv_resp = await asyncio.gather(
+                        self._market_data_service.get_top_rise_fall_stocks(True),
+                        self._market_data_service.get_top_rise_fall_stocks(False),
+                        self._market_data_service.get_top_volume_stocks(),
+                        self._market_data_service.get_top_trading_value_stocks(),
+                        return_exceptions=True,
                     )
-            except Exception as e:
-                self._logger.error(f"기본 랭킹 캐시 갱신 실패: {e}", exc_info=True)
-                if self._notification_service:
-                    await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "기본 랭킹 갱신 실패", str(e))
+                    for key, resp in [("rise", rise_resp), ("fall", fall_resp),
+                                      ("volume", vol_resp), ("trading_value", tv_resp)]:
+                        if isinstance(resp, Exception):
+                            self._logger.error(f"기본 랭킹 '{key}' 조회 실패: {resp}")
+                        else:
+                            self._basic_ranking_cache[key] = resp
+
+                    self._basic_ranking_updated_at = datetime.now()
+                    self._logger.info(f"기본 랭킹 캐시 갱신 완료: {list(self._basic_ranking_cache.keys())}")
+                    self.pm.log_timer("RankingTask.refresh_basic_ranking", t_start, threshold=1.0)
+                    if notify and self._notification_service:
+                        await self._notification_service.emit(
+                            NotificationCategory.BACKGROUND, NotificationLevel.INFO, "기본 랭킹 갱신 완료",
+                            f"상승/하락/거래량/거래대금 캐시 갱신 완료",
+                        )
+                except Exception as e:
+                    self._logger.error(f"기본 랭킹 캐시 갱신 실패: {e}", exc_info=True)
+                    if self._notification_service:
+                        await self._notification_service.emit(NotificationCategory.SYSTEM, NotificationLevel.ERROR, "기본 랭킹 갱신 실패", str(e))
 
     def get_progress(self) -> Dict:
         """태스크 진행률 반환 (SchedulableTask 인터페이스 구현)."""

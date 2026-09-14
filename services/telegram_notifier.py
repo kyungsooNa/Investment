@@ -384,6 +384,35 @@ class TelegramReporter:
         return await self._send_message(text)
 
     @_serialized_report_send
+    async def send_intraday_volume_surge_alert(
+        self, alerts: List[Dict], captured_at: str
+    ) -> bool:
+        """당일 거래량 급증 종목을 관찰용 리포트 채널에 전송한다."""
+        if not alerts:
+            return False
+        lines = [f"🔥 <b>장중 거래량 급증 ({html.escape(captured_at, quote=False)})</b>"]
+        for item in alerts:
+            name = html.escape(str(item.get("name") or item.get("code") or ""), quote=False)
+            code = html.escape(str(item.get("code") or ""), quote=False)
+            price = int(item.get("price") or 0)
+            change_rate = float(item.get("change_rate") or 0)
+            ratio = float(item.get("projected_volume_ratio") or 0)
+            trading_value = int(item.get("trading_value") or 0) / 100_000_000
+            tier = int(item.get("tier") or 0)
+            trend_filter = html.escape(str(item.get("trend_filter") or "확인 불가"), quote=False)
+            lines.extend(
+                [
+                    "",
+                    f"<b>{name} ({code}) · {tier}배 단계</b>",
+                    f"현재 {price:,}원 ({change_rate:+.2f}%)",
+                    f"예상 일거래량 {ratio:.1f}배 · 누적 거래대금 {trading_value:,.0f}억원",
+                    f"오닐 추세 필터: {trend_filter}",
+                ]
+            )
+        lines.extend(["", "※ 관찰 알림이며 자동 매수 신호가 아닙니다."])
+        return await self._send_message("\n".join(lines))
+
+    @_serialized_report_send
     async def send_national_trade_trend_report(self, release) -> bool:
         """전국 수출입 잠정치/월간 동향을 텔레그램 리포트 채널로 전송한다."""
         return await self._send_message(format_national_trade_trend_report_html(release))
