@@ -731,6 +731,37 @@ async def test_refresh_basic_ranking(mock_deps):
     assert bg._basic_ranking_updated_at is not None
 
 
+@pytest.mark.asyncio
+async def test_refresh_basic_ranking_reuses_fresh_cache(mock_deps):
+    """여러 장중 알림 태스크가 동시에 조회해도 랭킹 API는 한 번만 호출한다."""
+    broker, mapper, env, logger, market_clock, _ = mock_deps
+    market_data_service = MagicMock()
+    market_data_service.get_top_rise_fall_stocks = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    )
+    market_data_service.get_top_volume_stocks = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    )
+    market_data_service.get_top_trading_value_stocks = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[])
+    )
+    bg = RankingTask(
+        broker_api_wrapper=broker,
+        stock_code_repository=mapper,
+        env=env,
+        logger=logger,
+        market_clock=market_clock,
+        market_data_service=market_data_service,
+    )
+
+    await bg.refresh_basic_ranking(notify=False, min_interval_sec=45)
+    await bg.refresh_basic_ranking(notify=False, min_interval_sec=45)
+
+    assert market_data_service.get_top_rise_fall_stocks.await_count == 2
+    assert market_data_service.get_top_volume_stocks.await_count == 1
+    assert market_data_service.get_top_trading_value_stocks.await_count == 1
+
+
 def test_get_basic_ranking_cache_miss(bg_service):
     """캐시 없으면 None 반환."""
     assert bg_service.get_basic_ranking_cache("rise") is None

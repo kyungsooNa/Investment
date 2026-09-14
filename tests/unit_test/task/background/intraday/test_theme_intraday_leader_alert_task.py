@@ -101,7 +101,9 @@ async def test_open_tick_sends_intraday_theme_report_for_current_hourly_slot():
 
     await deps.task._tick()
 
-    deps.ranking_task.refresh_basic_ranking.assert_awaited_once_with(notify=False)
+    deps.ranking_task.refresh_basic_ranking.assert_awaited_once_with(
+        notify=False, min_interval_sec=45
+    )
     rankings = deps.theme_service.build_intraday_theme_report.await_args.args[0]
     assert rankings["report_date"] == "20260706"
     assert rankings["program_all_stocks"] == []
@@ -336,7 +338,9 @@ async def test_build_rankings_supports_sync_refresh_hook():
 
     rankings = await deps.task._build_intraday_rankings("20260706 10:10")
 
-    deps.ranking_task.refresh_basic_ranking.assert_called_once_with(notify=False)
+    deps.ranking_task.refresh_basic_ranking.assert_called_once_with(
+        notify=False, min_interval_sec=45
+    )
     assert len(rankings["all_stocks"]) == 2
 
 

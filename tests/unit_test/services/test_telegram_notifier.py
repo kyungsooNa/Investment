@@ -437,6 +437,32 @@ async def test_handle_event_return_rate_none_keeps_message_body(telegram_notifie
 def telegram_reporter():
     return TelegramReporter(report_bot_token="test_token", chat_id="test_chat_id")
 
+
+@pytest.mark.asyncio
+async def test_send_intraday_volume_surge_alert_formats_observation_notice(telegram_reporter):
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+
+    sent = await telegram_reporter.send_intraday_volume_surge_alert(
+        [{
+            "code": "052690",
+            "name": "한전기술",
+            "price": 99800,
+            "change_rate": 7.31,
+            "projected_volume_ratio": 5.4,
+            "trading_value": 12_300_000_000,
+            "tier": 5,
+            "trend_filter": "정배열 미충족",
+        }],
+        "20260825 10:30",
+    )
+
+    assert sent is True
+    message = telegram_reporter._send_message.await_args.args[0]
+    assert "한전기술 (052690) · 5배 단계" in message
+    assert "예상 일거래량 5.4배" in message
+    assert "정배열 미충족" in message
+    assert "자동 매수 신호가 아닙니다" in message
+
 @pytest.mark.asyncio
 async def test_reporter_send_message(telegram_reporter):
     """TelegramReporter._send_message 메서드 동작 검증"""

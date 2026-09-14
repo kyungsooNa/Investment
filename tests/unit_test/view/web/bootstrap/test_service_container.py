@@ -24,7 +24,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "OrderPolicyService", "DeferredOrderQueue", "OrderExecutionService",
     "OneilUniverseService", "NaverFinanceScraperService",
     "ThemeClassificationCollectorService", "ThemeClassificationTask", "ThemeDailyLeaderReportTask",
-    "ThemeIntradayLeaderAlertTask",
+    "ThemeIntradayLeaderAlertTask", "IntradayVolumeSurgeAlertTask",
     "MarketIndexThresholdAlertTask",
     "MarketTimingDailyUpdateTask",
     "USMarketCalendarService",
@@ -597,6 +597,7 @@ def test_service_container_web_mode_keeps_realtime_and_skips_trading_batch_tasks
     patched_service_container_deps["AfterMarketReconcileTask"].assert_not_called()
     patched_service_container_deps["ThemeDailyLeaderReportTask"].assert_not_called()
     patched_service_container_deps["ThemeIntradayLeaderAlertTask"].assert_not_called()
+    patched_service_container_deps["IntradayVolumeSurgeAlertTask"].assert_not_called()
     patched_service_container_deps["PostMarketReplayAuditTask"].assert_not_called()
 
     assert ctx.pre_market_health_check_task is None
@@ -606,6 +607,7 @@ def test_service_container_web_mode_keeps_realtime_and_skips_trading_batch_tasks
     assert ctx.ohlcv_update_task is None
     assert ctx.after_market_reconcile_task is None
     assert ctx.theme_intraday_leader_alert_task is None
+    assert ctx.intraday_volume_surge_alert_task is None
     assert ctx.order_execution_service is patched_service_container_deps["OrderExecutionService"].return_value
 
 
@@ -666,6 +668,9 @@ def test_service_container_trading_mode_keeps_realtime_intraday_and_skips_web_ba
     assert ctx.theme_intraday_leader_alert_task is patched_service_container_deps[
         "ThemeIntradayLeaderAlertTask"
     ].return_value
+    assert ctx.intraday_volume_surge_alert_task is patched_service_container_deps[
+        "IntradayVolumeSurgeAlertTask"
+    ].return_value
     assert ctx.market_timing_daily_update_task is patched_service_container_deps[
         "MarketTimingDailyUpdateTask"
     ].return_value
@@ -688,6 +693,9 @@ def test_service_container_trading_mode_keeps_realtime_intraday_and_skips_web_ba
     assert ctx.theme_daily_leader_report_task is None
     assert ctx.theme_intraday_leader_alert_task is patched_service_container_deps[
         "ThemeIntradayLeaderAlertTask"
+    ].return_value
+    assert ctx.intraday_volume_surge_alert_task is patched_service_container_deps[
+        "IntradayVolumeSurgeAlertTask"
     ].return_value
     assert ctx.strategy_log_report_task is None
     assert ctx.post_market_replay_audit_task is None
@@ -721,6 +729,11 @@ def test_service_container_creates_universe_and_tasks(patched_service_container_
     ].call_args.kwargs
     assert intraday_theme_kwargs["ranking_task"] is ctx.ranking_task
     assert intraday_theme_kwargs["theme_daily_leader_service"] is ctx.theme_daily_leader_service
+    volume_surge_kwargs = patched_service_container_deps[
+        "IntradayVolumeSurgeAlertTask"
+    ].call_args.kwargs
+    assert volume_surge_kwargs["ranking_task"] is ctx.ranking_task
+    assert volume_surge_kwargs["stock_query_service"] is ctx.stock_query_service
     assert ctx.strategy_log_report_task is patched_service_container_deps["StrategyLogReportTask"].return_value
     assert ctx.market_cap_gap_service is patched_service_container_deps["MarketCapGapService"].build_default.return_value
     assert patched_service_container_deps["MarketCapGapReportTask"].call_count == 2

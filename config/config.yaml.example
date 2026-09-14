@@ -306,6 +306,12 @@ market_index_alert:
   enabled: true
   poll_interval_sec: 60
 
+# 장중 거래량/거래대금/상승률 랭킹을 1분마다 확인한다. 20일 평균 대비 예상
+# 일거래량 3배 이상이면서 누적 거래대금 100억원 이상이면 3·5·10배 단계별로 알린다.
+# 관찰 전용이며 자동 주문이나 전략 필터 완화에는 사용하지 않는다.
+intraday_volume_surge_alert:
+  enabled: true
+
 # 미국장 관심종목 5% 단위 등락 알림. 해외는 실시간 스트림이 없어 정규장 중
 # 해외현재가 REST 를 poll_interval_sec 주기로 조회한다(관심종목 수 × 1회/주기).
 overseas_favorite_alert:

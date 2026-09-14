@@ -211,7 +211,7 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
     async def _build_intraday_rankings(self, slot_label: str) -> Dict[str, Any]:
         refresh = getattr(self._ranking_task, "refresh_basic_ranking", None)
         if callable(refresh):
-            result = refresh(notify=False)
+            result = refresh(notify=False, min_interval_sec=45)
             if inspect.isawaitable(result):
                 await result
 
