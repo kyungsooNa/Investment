@@ -98,7 +98,8 @@ class OverseasFavoritePriceAlertTask(SchedulableTask):
                 timeout=self.FETCH_TIMEOUT_SEC,
             )
         except Exception as exc:
-            self._logger.warning("%s: %s 현재가 조회 예외 — %s", self.task_name, symbol, exc)
+            detail = str(exc) or type(exc).__name__
+            self._logger.warning("%s: %s 현재가 조회 예외 — %s", self.task_name, symbol, detail)
             return None, None
         if response.rt_cd != ErrorCode.SUCCESS.value:
             self._logger.warning("%s: %s 현재가 조회 실패 — %s", self.task_name, symbol, response.msg1)
