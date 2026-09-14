@@ -68,6 +68,11 @@ const MARKET_INDEX_PERIODS = [
 ];
 
 const MARKET_INDEX_DEFAULT_PERIOD = '1D';
+const MARKET_INDEX_REFRESH_MS = 5 * 60 * 1000;
+
+let _marketIndexRefreshTimer = null;
+let _marketIndexRefreshing = false;
+let _marketIndexVisibilityBound = false;
 
 const MARKET_INDEX_WIDGET_SRC =
     'https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js';
@@ -395,7 +400,11 @@ async function appendMarketIndexFlow(doc, card, code) {
     if (error || !data) return;
 
     const flow = _buildMarketIndexFlow(doc, data);
-    if (flow) card.appendChild(flow);
+    if (!flow) return;
+
+    const current = card.querySelector('.market-index-flow');
+    if (current) current.replaceWith(flow);
+    else card.appendChild(flow);
 }
 
 async function buildMarketIndexKisCard(doc, entry) {
@@ -443,5 +452,60 @@ async function renderMarketIndices() {
     sections.forEach(section => target.appendChild(section));
 }
 
-document.addEventListener('DOMContentLoaded', renderMarketIndices);
-document.addEventListener('pjax:ready', renderMarketIndices);
+async function _refreshMarketIndicesTick() {
+    const target = document.getElementById('market-indices');
+    if (!target) {
+        _stopMarketIndicesAutoRefresh();
+        return;
+    }
+    if (document.hidden || _marketIndexRefreshing) return;
+
+    _marketIndexRefreshing = true;
+    try {
+        const cards = Array.from(target.querySelectorAll('.market-index-card[data-kind="kis"]'));
+        await Promise.all(cards.map(async card => {
+            const code = card.dataset.key;
+            const active = card.querySelector('.market-index-period.active');
+            const period = active?.dataset.period || MARKET_INDEX_DEFAULT_PERIOD;
+            await Promise.all([
+                selectMarketIndexPeriod(card, code, period),
+                appendMarketIndexFlow(document, card, code),
+            ]);
+        }));
+    } finally {
+        _marketIndexRefreshing = false;
+    }
+}
+
+function _stopMarketIndicesAutoRefresh() {
+    if (_marketIndexRefreshTimer === null) return;
+    clearInterval(_marketIndexRefreshTimer);
+    _marketIndexRefreshTimer = null;
+}
+
+function _startMarketIndicesAutoRefresh() {
+    _stopMarketIndicesAutoRefresh();
+    _marketIndexRefreshTimer = setInterval(_refreshMarketIndicesTick, MARKET_INDEX_REFRESH_MS);
+}
+
+function _bindMarketIndicesVisibility() {
+    if (_marketIndexVisibilityBound) return;
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) return;
+        void _refreshMarketIndicesTick();
+    });
+    _marketIndexVisibilityBound = true;
+}
+
+async function initMarketIndices() {
+    if (!document.getElementById('market-indices')) {
+        _stopMarketIndicesAutoRefresh();
+        return;
+    }
+    _bindMarketIndicesVisibility();
+    await renderMarketIndices();
+    _startMarketIndicesAutoRefresh();
+}
+
+document.addEventListener('DOMContentLoaded', () => { void initMarketIndices(); });
+document.addEventListener('pjax:ready', () => { void initMarketIndices(); });

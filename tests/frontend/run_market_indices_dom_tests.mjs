@@ -546,6 +546,63 @@ test("컨테이너가 없는 화면에서는 아무 일도 하지 않는다", as
   assert(!fetched, "컨테이너가 없으면 API 도 호출하면 안 됨");
 });
 
+test("홈 화면이 열려 있으면 국내 지수와 수급을 5분마다 현재 기간으로 갱신한다", async () => {
+  const requested = [];
+  const window = await makeWindow(async (url) => {
+    requested.push(url);
+    return success(url.includes("/flow") ? flowPayload() : minutePayload());
+  });
+  let refreshTick = null;
+  let refreshMs = null;
+  window.setInterval = (callback, milliseconds) => {
+    refreshTick = callback;
+    refreshMs = milliseconds;
+    return 42;
+  };
+  Object.defineProperty(window.document, "hidden", { configurable: true, value: false });
+
+  await window.initMarketIndices();
+  const kospi = window.document.querySelector('.market-index-card[data-key="0001"]');
+  await window.selectMarketIndexPeriod(kospi, "0001", "1M");
+  requested.length = 0;
+
+  await refreshTick();
+
+  assert(refreshMs === 5 * 60 * 1000, `자동 갱신 간격은 5분이어야 함 (실제 ${refreshMs})`);
+  assert(requested.some(u => u.includes("/api/market-index/0001?period=1M")),
+    "코스피가 사용자가 선택한 기간으로 갱신되지 않음");
+  assert(requested.some(u => u.includes("/api/market-index/1001?period=1D")),
+    "코스닥이 현재 기간으로 갱신되지 않음");
+  assert(requested.filter(u => u.includes("/flow")).length === 2,
+    "5분 갱신 때 코스피·코스닥 수급도 다시 조회해야 함");
+  assert(window.document.querySelectorAll('.market-index-card[data-kind="widget"]').length === 12,
+    "자동 갱신이 TradingView 위젯을 다시 만들면 안 됨");
+});
+
+test("홈 화면이 숨겨져 있거나 닫혔으면 자동 갱신 요청을 보내지 않는다", async () => {
+  const requested = [];
+  const window = await makeWindow(async (url) => {
+    requested.push(url);
+    return success(url.includes("/flow") ? flowPayload() : minutePayload());
+  });
+  let refreshTick = null;
+  let clearedTimer = null;
+  window.setInterval = callback => { refreshTick = callback; return 73; };
+  window.clearInterval = timer => { clearedTimer = timer; };
+
+  await window.initMarketIndices();
+  requested.length = 0;
+  Object.defineProperty(window.document, "hidden", { configurable: true, value: true });
+  await refreshTick();
+  assert(requested.length === 0, "숨은 탭에서 지수 API 를 호출함");
+
+  Object.defineProperty(window.document, "hidden", { configurable: true, value: false });
+  window.document.getElementById("market-indices").remove();
+  await refreshTick();
+  assert(requested.length === 0, "홈 화면을 떠난 뒤 지수 API 를 호출함");
+  assert(clearedTimer === 73, "홈 화면을 떠나면 자동 갱신 타이머를 해제해야 함");
+});
+
 // ── 수급 (투자자 순매수 + 등락 종목수) ──────────────────────────────────
 
 function flowOf(window, code = "0001") {
