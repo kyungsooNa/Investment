@@ -136,6 +136,19 @@ async def test_continues_remaining_symbols_when_one_lookup_fails():
 
 
 @pytest.mark.asyncio
+async def test_timeout_warning_includes_exception_type_when_message_is_empty():
+    broker = MagicMock()
+    broker.get_overseas_price = AsyncMock(side_effect=asyncio.TimeoutError())
+    logger = MagicMock()
+    task, _, _ = _build_task(symbols=["AAPL"], broker=broker)
+    task._logger = logger
+
+    await task._tick()
+
+    assert logger.warning.call_args.args[-1] == "TimeoutError"
+
+
+@pytest.mark.asyncio
 async def test_skips_symbol_when_change_rate_is_missing():
     broker = MagicMock()
     broker.get_overseas_price = AsyncMock(return_value=_price_response(189.5, None))

@@ -180,6 +180,31 @@ def test_overseas_us_registers_dryrun_task(patched_scheduler_deps):
     assert "overseas_dryrun" not in kst_dispatched
 
 
+def test_overseas_opening_reconcile_is_not_registered_with_time_dispatcher(
+    patched_scheduler_deps,
+):
+    """개장 대사는 자체 루프 태스크이므로 마감 티켓을 발행하면 안 된다."""
+    ctx = _make_fake_context(RuntimeMode.WEB)
+    ctx.market_mode = "overseas_us"
+    ctx.time_dispatcher_us = MagicMock()
+    ctx.overseas_opening_reconcile_task = MagicMock(
+        task_name="overseas_opening_reconcile"
+    )
+
+    _run(ctx)
+
+    names = _registered_bg_task_names(patched_scheduler_deps)
+    us_dispatched = [
+        call.args[0] for call in ctx.time_dispatcher_us.register_task.call_args_list
+    ]
+    kst_dispatched = [
+        call.args[0] for call in ctx.time_dispatcher.register_task.call_args_list
+    ]
+    assert "overseas_opening_reconcile" in names
+    assert "overseas_opening_reconcile" not in us_dispatched
+    assert "overseas_opening_reconcile" not in kst_dispatched
+
+
 def test_domestic_mode_does_not_register_overseas_task(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.WEB)  # market_mode 미설정 → domestic, overseas 미활성
     ctx.overseas_dryrun_task = MagicMock(task_name="overseas_dryrun")
