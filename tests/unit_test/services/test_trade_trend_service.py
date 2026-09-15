@@ -65,9 +65,9 @@ CUSTOMS_SIDO_XML = """<?xml version="1.0" encoding="UTF-8"?>
       <item>
         <priodTitle>2026.05</priodTitle>
         <sidoNm>제주</sidoNm>
-        <expUsdAmt>25000000</expUsdAmt>
-        <impUsdAmt>9900000</impUsdAmt>
-        <cmtrBlncAmt>15100000</cmtrBlncAmt>
+        <expUsdAmt>25000</expUsdAmt>
+        <impUsdAmt>9900</impUsdAmt>
+        <cmtrBlncAmt>15100</cmtrBlncAmt>
       </item>
     </items>
   </body>
@@ -87,9 +87,9 @@ CUSTOMS_SIDO_ITEM_XML = """<?xml version="1.0" encoding="UTF-8"?>
         <priodTitle>2026.05</priodTitle>
         <korePrlstNm>집적회로 반도체</korePrlstNm>
         <hsSgn>8542</hsSgn>
-        <expUsdAmt>46585000</expUsdAmt>
-        <impUsdAmt>1000</impUsdAmt>
-        <cmtrBlncAmt>46584000</cmtrBlncAmt>
+        <expUsdAmt>46585</expUsdAmt>
+        <impUsdAmt>1</impUsdAmt>
+        <cmtrBlncAmt>46584</cmtrBlncAmt>
       </item>
       <item>
         <priodTitle>2026.05</priodTitle>
@@ -135,6 +135,28 @@ def test_parse_customs_trade_xml_parses_current_sido_fields():
             trade_balance_usd=15100000,
             export_weight=0,
             import_weight=0,
+        )
+    ]
+
+
+def test_parse_customs_trade_xml_converts_current_sido_thousand_usd_to_usd():
+    xml = """<response><header><resultCode>00</resultCode></header><body><items><item>
+        <priodTitle>2026.08</priodTitle>
+        <korePrlstNm>전기기기와 그 부분품</korePrlstNm>
+        <hsSgn>85</hsSgn>
+        <expUsdAmt>49,505</expUsdAmt>
+        <impUsdAmt>3,582</impUsdAmt>
+        <cmtrBlncAmt>45,923</cmtrBlncAmt>
+    </item></items></body></response>"""
+
+    assert parse_customs_trade_xml(xml) == [
+        TradeStatItem(
+            period="2026.08",
+            item_name="전기기기와 그 부분품",
+            item_code="85",
+            export_amount_usd=49_505_000,
+            import_amount_usd=3_582_000,
+            trade_balance_usd=45_923_000,
         )
     ]
 
@@ -444,6 +466,8 @@ def test_format_jeju_report_uses_the_api_item_name():
 
     assert "제주 전기기기와 그 부분품 수출" in text
     assert "제주 반도체 수출" not in text
+    assert "제주 전체 수출 내 비중: 41.0%" in text
+    assert "제주 전체 수출 내 비중: +41.0%" not in text
 
 
 def test_parse_national_customs_20d_release_extracts_summary_numbers():
@@ -598,6 +622,34 @@ def test_parse_national_monthly_release_extracts_mom_from_monthly_table():
     assert release.trade_balance_mom_change_100m_usd == pytest.approx(43.56)
 
 
+def test_parse_national_10d_release_prefers_exact_table_amounts():
+    text = """
+    (9.1.∼9.10.) 수출 350억 달러, 수입 246억 달러로 전년동기대비
+    수출 82.6% 증가, 수입 20.7% 증가
+    < 9월(1일∼10일) 수출입실적 (통관기준 잠정치) > (단위 : 백만 달러, %)
+    구분 2025년 2026년 당 월 연간누계 전 월 당 월 연간누계
+    수 출 (전년동기대비 증감률) 19,154 472,802 21,286 34,973 728,561
+    (3.7) (0.9) (45.2) (82.6) (54.1)
+    수 입 (전년동기대비 증감률) 20,383 433,696 19,488 24,606 515,570
+    (11.0) (△1.0) (23.0) (20.7) (18.9)
+    무역수지 -1,229 39,107 1,798 10,367 212,990
+    ※ 조업일수 [(’25) 8.5일, (’26) 8.5일]
+    """
+
+    release = parse_national_trade_release(
+        title="2026년 9월 1일 ~ 9월 10일 수출입 현황 [잠정치]",
+        url="https://customs.example/sep",
+        source="customs",
+        text=text,
+    )
+
+    assert release.export_amount_100m_usd == pytest.approx(349.73)
+    assert release.import_amount_100m_usd == pytest.approx(246.06)
+    assert release.trade_balance_100m_usd == pytest.approx(103.67)
+    assert release.export_daily_avg_100m_usd == pytest.approx(349.73 / 8.5)
+    assert release.import_daily_avg_100m_usd == pytest.approx(246.06 / 8.5)
+
+
 def test_format_national_trade_trend_report_html_includes_link_and_numbers():
     release = NationalTradeTrendRelease(
         source="customs",
@@ -622,6 +674,15 @@ def test_format_national_trade_trend_report_html_includes_link_and_numbers():
         import_yoy_pct=17.4,
         import_mom_change_100m_usd=-12,
         import_mom_pct=-4.86,
+        import_daily_avg_100m_usd=27.65,
+        import_daily_avg_mom_pct=4.1,
+        semiconductor_import_amount_100m_usd=49.5,
+        semiconductor_import_yoy_pct=91.5,
+        semiconductor_import_mom_change_100m_usd=9.9,
+        semiconductor_import_mom_pct=24.9,
+        semiconductor_import_daily_avg_100m_usd=5.82,
+        semiconductor_import_daily_avg_mom_pct=2.8,
+        semiconductor_export_share_pct=47.1,
         trade_balance_100m_usd=64,
         trade_balance_label="흑자",
         trade_balance_mom_change_100m_usd=53,
@@ -635,6 +696,9 @@ def test_format_national_trade_trend_report_html_includes_link_and_numbers():
     assert "일평균 수출: <b>35.1억 달러</b> (전월비 +12.0%, 조업 8.5일)" in message
     assert "반도체: <b>112.0억 달러</b> (전년비 +120.5% / 전월비 +12.0억, +12.0% / 일평균 +18.0%)" in message
     assert "수입: <b>235.0억 달러</b> (전년비 +17.4% / 전월비 -12.0억, -4.9%)" in message
+    assert "일평균 수입: <b>27.6억 달러</b> (전월비 +4.1%, 조업 8.5일)" in message
+    assert "반도체 수입: <b>49.5억 달러</b> (전년비 +91.5% / 전월비 +9.9억, +24.9% / 일평균 +2.8%)" in message
+    assert "반도체 수출 비중: <b>47.1%</b>" in message
     assert "무역수지: <b>64.0억 달러 흑자</b> (전월차 +53.0억)" in message
     assert "https://customs.example/10d?a=1&amp;b=2" in message
 
@@ -672,6 +736,52 @@ def test_attach_previous_month_changes_uses_daily_avg_from_motie_fallback():
     assert enriched[0].export_mom_change_100m_usd == pytest.approx(-7.0)
     assert enriched[0].export_mom_pct == pytest.approx(-0.7070, abs=1e-4)
     assert enriched[0].export_daily_avg_mom_pct == pytest.approx(8.4951, rel=1e-4)
+
+
+def test_attach_previous_month_changes_calculates_all_10d_daily_averages():
+    current = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_10d",
+        title="2026년 9월 1일 ~ 9월 10일 수출입 현황 [잠정치]",
+        url="https://customs.example/sep",
+        period_label="2026년 9월 1~10일",
+        export_amount_100m_usd=349.73,
+        import_amount_100m_usd=246.06,
+        semiconductor_export_amount_100m_usd=164.83,
+        semiconductor_import_amount_100m_usd=49.47,
+        working_days_current=8.5,
+        export_daily_avg_100m_usd=349.73 / 8.5,
+        import_daily_avg_100m_usd=246.06 / 8.5,
+        semiconductor_daily_avg_100m_usd=164.83 / 8.5,
+        semiconductor_import_daily_avg_100m_usd=49.47 / 8.5,
+    )
+    previous = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_10d",
+        title="2026년 8월 1일 ~ 8월 10일 수출입 현황 [잠정치]",
+        url="https://customs.example/aug",
+        period_label="2026년 8월 1~10일",
+        export_amount_100m_usd=212.63,
+        import_amount_100m_usd=194.66,
+        semiconductor_export_amount_100m_usd=99.52,
+        semiconductor_import_amount_100m_usd=39.62,
+        working_days_current=7.0,
+        export_daily_avg_100m_usd=212.63 / 7.0,
+        import_daily_avg_100m_usd=194.66 / 7.0,
+        semiconductor_daily_avg_100m_usd=99.52 / 7.0,
+        semiconductor_import_daily_avg_100m_usd=39.62 / 7.0,
+    )
+
+    release = _attach_previous_month_changes([current, previous])[0]
+
+    assert release.export_mom_pct == pytest.approx(64.48, abs=0.01)
+    assert release.export_daily_avg_mom_pct == pytest.approx(35.45, abs=0.01)
+    assert release.import_mom_pct == pytest.approx(26.41, abs=0.01)
+    assert release.import_daily_avg_mom_pct == pytest.approx(4.10, abs=0.01)
+    assert release.semiconductor_mom_pct == pytest.approx(65.62, abs=0.01)
+    assert release.semiconductor_daily_avg_mom_pct == pytest.approx(36.40, abs=0.01)
+    assert release.semiconductor_import_mom_pct == pytest.approx(24.86, abs=0.01)
+    assert release.semiconductor_import_daily_avg_mom_pct == pytest.approx(2.83, abs=0.01)
 
 
 class DummyTextResponse:

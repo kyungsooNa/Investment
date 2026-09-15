@@ -740,11 +740,18 @@ class WebSocketWatchdogTask(SchedulableTask):
             if self._streaming_logger:
                 self._streaming_logger.log_force_reconnect_start(trigger, pt_codes)
 
+            disconnected = False
             try:
                 await self._streaming_service.disconnect_websocket()
+                disconnected = True
             except Exception as e:
                 if self._streaming_logger:
                     self._streaming_logger.log_force_reconnect_disconnect_error(str(e))
+
+            # 소켓 해제가 확인된 뒤에는 이전 활성 장부도 비워야 _rebalance()가
+            # 새 연결에 H0UNCNT0 구독을 다시 전송한다.
+            if disconnected and self._price_subscription_service:
+                self._price_subscription_service.clear_active_state()
 
             await self._restore_all_subscriptions(reset_connection=False)
 

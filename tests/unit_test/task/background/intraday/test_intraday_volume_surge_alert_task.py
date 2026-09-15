@@ -14,12 +14,15 @@ def _response(data):
     return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="success", data=data)
 
 
-def _make_task(*, now=None, cumulative_volume=600_000, trading_value=12_000_000_000):
+def _make_task(
+    *, now=None, cumulative_volume=600_000, trading_value=12_000_000_000,
+    current_price=99_800,
+):
     now = now or datetime(2026, 8, 25, 10, 30)
     stock = {
         "stck_shrn_iscd": "052690",
         "hts_kor_isnm": "한전기술",
-        "stck_prpr": "99800",
+        "stck_prpr": str(current_price),
         "prdy_ctrt": "7.31",
         "acml_vol": str(cumulative_volume),
         "acml_tr_pbmn": str(trading_value),
@@ -30,7 +33,10 @@ def _make_task(*, now=None, cumulative_volume=600_000, trading_value=12_000_000_
         [stock] if category in {"rise", "volume", "trading_value"} else []
     )
     rows = [
-        {"date": f"202608{day:02d}", "close": str(94_000 + day * 100), "volume": "100000"}
+        {"date": f"202607{day:02d}", "close": "80000", "volume": "100000"}
+        for day in range(1, 31)
+    ] + [
+        {"date": f"202608{day:02d}", "close": "95000", "volume": "100000"}
         for day in range(1, 21)
     ]
     stock_query_service = MagicMock()
@@ -60,7 +66,7 @@ def _make_task(*, now=None, cumulative_volume=600_000, trading_value=12_000_000_
 
 
 @pytest.mark.asyncio
-async def test_alerts_when_projected_volume_is_three_times_and_value_is_over_10b():
+async def test_alerts_only_for_aligned_stock_with_projected_volume_at_least_ten_times():
     deps = _make_task()
 
     await deps.task._tick()
@@ -71,9 +77,9 @@ async def test_alerts_when_projected_volume_is_three_times_and_value_is_over_10b
     deps.telegram_reporter.send_intraday_volume_surge_alert.assert_awaited_once()
     alerts = deps.telegram_reporter.send_intraday_volume_surge_alert.await_args.args[0]
     assert alerts[0]["code"] == "052690"
-    assert alerts[0]["tier"] >= 3
-    assert alerts[0]["projected_volume_ratio"] >= 3.0
-    assert alerts[0]["trend_filter"] == "정배열 미충족"
+    assert alerts[0]["tier"] == 10
+    assert alerts[0]["projected_volume_ratio"] >= 10.0
+    assert alerts[0]["trend_filter"] == "정배열 충족"
 
 
 @pytest.mark.asyncio
@@ -86,22 +92,36 @@ async def test_does_not_alert_below_minimum_trading_value():
 
 
 @pytest.mark.asyncio
-async def test_alerts_only_when_ratio_crosses_a_higher_tier():
-    deps = _make_task(cumulative_volume=80_000)
+async def test_alerts_only_once_per_stock_per_day():
+    deps = _make_task(cumulative_volume=300_000)
 
     await deps.task._tick()
     await deps.task._tick()
     deps.telegram_reporter.send_intraday_volume_surge_alert.assert_awaited_once()
 
     stock = deps.ranking_task.get_basic_ranking_cache("volume").data[0]
-    # 같은 종목이 장중 5배 단계로 상승한 상황을 만든다.
-    stock["acml_vol"] = "130000"
-    deps.ranking_task.get_basic_ranking_cache.side_effect = lambda category: _response(
-        [stock] if category in {"rise", "volume", "trading_value"} else []
-    )
+    stock["acml_vol"] = "900000"
     await deps.task._tick()
 
-    assert deps.telegram_reporter.send_intraday_volume_surge_alert.await_count == 2
+    assert deps.telegram_reporter.send_intraday_volume_surge_alert.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_does_not_alert_before_0905():
+    deps = _make_task(now=datetime(2026, 8, 25, 9, 4))
+
+    await deps.task._tick()
+
+    deps.telegram_reporter.send_intraday_volume_surge_alert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_does_not_alert_when_trend_is_not_aligned():
+    deps = _make_task(current_price=85_000)
+
+    await deps.task._tick()
+
+    deps.telegram_reporter.send_intraday_volume_surge_alert.assert_not_awaited()
 
 
 @pytest.mark.asyncio
