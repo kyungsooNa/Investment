@@ -93,16 +93,18 @@ def test_initialization_with_default_path(mock_logger):
 @patch('repositories.stock_code_repository.save_stock_code_list')
 def test_initialization_file_not_found(mock_save_stock_code_list, mock_logger, tmp_path):
     """
-    DB 파일을 찾지 못하고 생성에도 실패했을 때 예외가 발생하는지 테스트합니다.
+    DB 파일을 찾지 못하고 생성에도 실패해도 최소 DB로 기동되는지 테스트합니다.
+
+    콜드 스타트에서 KRX 다운로드가 실패해도 앱 기동 자체를 막지 않아야 한다.
     """
     db_path = str(tmp_path / "nonexistent" / "stock_code_list.db")
     error_message = "File generation failed"
     mock_save_stock_code_list.side_effect = FileNotFoundError(error_message)
 
-    with pytest.raises(FileNotFoundError):
-        StockCodeRepository(db_path=db_path, logger=mock_logger)
+    mapper = StockCodeRepository(db_path=db_path, logger=mock_logger)
 
-    mock_logger.error.assert_called_once_with(f"❌ 종목코드 매핑 DB 파일 생성 실패: {error_message}")
+    assert mapper.code_to_name == {"000000": "(종목목록 없음)"}
+    mock_logger.error.assert_any_call(f"❌ 종목코드 매핑 DB 파일 생성 실패: {error_message}")
 
 
 def test_get_name_by_code(test_db, mock_logger):
@@ -132,13 +134,14 @@ def test_get_code_by_name(test_db, mock_logger):
 @patch('repositories.stock_code_repository.save_stock_code_list')
 def test_initialization_file_not_found_without_logger(mock_save, tmp_path):
     """
-    DB 로드 실패 시 logger가 없더라도 정상적으로 예외가 발생하는지 테스트합니다.
+    DB 로드 실패 시 logger가 없더라도 최소 DB로 기동되는지 테스트합니다.
     """
     db_path = str(tmp_path / "nonexistent" / "stock_code_list.db")
     mock_save.side_effect = FileNotFoundError("파일 없음")
 
-    with pytest.raises(FileNotFoundError):
-        StockCodeRepository(db_path=db_path, logger=None)
+    mapper = StockCodeRepository(db_path=db_path, logger=None)
+
+    assert mapper.code_to_name == {"000000": "(종목목록 없음)"}
 
 
 # --- 추가 테스트 케이스 (Coverage 향상) ---

@@ -51,7 +51,8 @@ class StockCodeRepository:
             except Exception as e:
                 if self.logger:
                     self.logger.error(f"❌ 종목코드 매핑 DB 파일 생성 실패: {e}")
-                raise e
+                # 여기서 raise 하면 콜드 스타트에 KRX 다운로드가 실패했을 때 앱 기동
+                # 자체가 막힌다. _load_data() 의 최소 DB 폴백으로 넘겨 기동은 시킨다.
 
         self._load_data()
 

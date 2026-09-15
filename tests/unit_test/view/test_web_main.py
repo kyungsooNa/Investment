@@ -83,6 +83,33 @@ async def test_lifespan_startup_shutdown(mock_web_app_context_cls, mock_web_api_
     mock_ctx.scheduler.stop.assert_awaited_once_with(save_state=True)
 
 @pytest.mark.asyncio
+async def test_lifespan_reports_failure_when_services_not_initialized(
+    mock_web_app_context_cls, mock_web_api_module, capsys
+):
+    """브로커 부트스트랩 실패(initialize_services=False)를 '완료'로 보고하지 않는다."""
+    mock_ctx = mock_web_app_context_cls.return_value
+    mock_ctx.initialize_services = AsyncMock(return_value=False)
+
+    async with lifespan(app):
+        pass
+
+    out = capsys.readouterr().out
+    assert "웹 서비스 초기화 완료" not in out
+    assert "초기화 실패" in out
+
+
+@pytest.mark.asyncio
+async def test_lifespan_reports_success_when_services_initialized(
+    mock_web_app_context_cls, mock_web_api_module, capsys
+):
+    """정상 초기화 시에는 기존 완료 배너를 그대로 출력한다."""
+    async with lifespan(app):
+        pass
+
+    assert "웹 서비스 초기화 완료" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
 async def test_lifespan_shutdown_scheduler_not_running(mock_web_app_context_cls, mock_web_api_module):
     """스케줄러가 실행 중이 아닐 때 shutdown 시 stop 호출 안함 테스트"""
     mock_ctx = mock_web_app_context_cls.return_value

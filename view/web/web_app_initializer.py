@@ -196,7 +196,10 @@ class WebAppContext:
         self.ai_disclosure_analyzer = None
         self.ai_stock_analyzer = None
         self.initialized = False
-        self.pm: PerformanceProfiler = None
+        # 브로커 부트스트랩이 실패하면 RepositoryBootstrap 이 실행되지 않는다.
+        # 그때도 ctx.pm 을 쓰는 라우트가 AttributeError 로 500 을 내지 않도록
+        # 비활성 기본 인스턴스를 둔다 (정상 경로에서는 config 기반으로 덮어쓴다).
+        self.pm: PerformanceProfiler = PerformanceProfiler()
 
         # 프로그램매매 실시간 데이터 서비스
         self.program_trading_stream_service = ProgramTradingStreamService(

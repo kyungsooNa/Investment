@@ -71,6 +71,20 @@ def test_initialization(mock_deps):
     assert ctx.initialized is False
 
 
+def test_performance_profiler_available_before_service_bootstrap(mock_deps):
+    """브로커 부트스트랩이 실패해 ServiceContainer 가 못 돌아도 ctx.pm 은 살아 있어야 한다.
+
+    RepositoryBootstrap 이 config 기반 인스턴스로 덮어쓰기 전까지 ctx.pm 이 None 이면
+    ctx.pm.start_timer() / profile_async() 를 쓰는 라우트가 500(AttributeError)을 낸다.
+    """
+    from core.performance_profiler import PerformanceProfiler
+
+    ctx = WebAppContext(MagicMock())
+
+    assert isinstance(ctx.pm, PerformanceProfiler)
+    assert ctx.pm.enabled is False
+
+
 def test_runtime_mode_defaults_to_all(mock_deps):
     """runtime_mode 미지정 시 default = ALL (현행 동작 회귀 방지)."""
     from view.web.bootstrap.runtime_mode import RuntimeMode
