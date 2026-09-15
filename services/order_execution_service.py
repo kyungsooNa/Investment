@@ -5,7 +5,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Dict, Optional
-from common.types import ErrorCode, ResCommonResponse, Exchange, OrderContext, OrderSide, OrderState, OrderExecutionReport
+from common.types import ErrorCode, ResCommonResponse, Exchange, KRX_AFTER_MARKET_ORDER_DVSNS, OrderContext, OrderSide, OrderState, OrderExecutionReport
 from core.api_priority import emergency_scope
 from core.loggers.trace_context import trace_scope, get_trace_id, new_trace_id
 from core.performance_profiler import PerformanceProfiler
@@ -518,6 +518,7 @@ class OrderExecutionService:
         exchange: Exchange = Exchange.KRX,
         source: str = "default",
         finalize_immediately: bool = True,
+        order_dvsn: Optional[str] = None,
         *,
         trace_id: Optional[str] = None,
         intent_id: Optional[str] = None,
@@ -548,11 +549,27 @@ class OrderExecutionService:
                     msg1=msg,
                     data={"rule": "overseas_strategy_buy_blocked"},
                 )
-            if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
+            is_after_market_order = order_dvsn in KRX_AFTER_MARKET_ORDER_DVSNS
+            if is_after_market_order and not self.market_clock.is_krx_after_market_hours():
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.MARKET_CLOSED.value,
+                    msg1="KRX 애프터마켓 주문은 영업일 16:00~20:00에만 제출할 수 있습니다.",
+                    data=None,
+                )
+            if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now(
+                include_krx_after_market=is_after_market_order,
+            ):
                 self.logger.warning("시장이 닫혀 있어 매수 주문을 제출하지 못했습니다.")
                 return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
             # Fallback if market_calendar_service is not available (though it should be)
-            elif not self.market_calendar_service and not self.market_clock.is_market_operating_hours():
+            elif (
+                not self.market_calendar_service
+                and not self.market_clock.is_market_operating_hours()
+                and not (
+                    is_after_market_order
+                    and self.market_clock.is_krx_after_market_hours()
+                )
+            ):
                 return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
             buy_order_result: ResCommonResponse = await self._submit_order_with_fsm(
@@ -563,6 +580,7 @@ class OrderExecutionService:
                 side=OrderSide.BUY,
                 source=source,
                 finalize_immediately=finalize_immediately,
+                order_dvsn=order_dvsn,
                 trace_id=current_trace,
                 intent_id=intent_id,
                 volatility_20d_annualized=volatility_20d_annualized,
@@ -611,6 +629,7 @@ class OrderExecutionService:
         exchange: Exchange = Exchange.KRX,
         source: str = "default",
         finalize_immediately: bool = True,
+        order_dvsn: Optional[str] = None,
         *,
         trace_id: Optional[str] = None,
         intent_id: Optional[str] = None,
@@ -622,11 +641,27 @@ class OrderExecutionService:
         current_trace = trace_id or get_trace_id() or new_trace_id("MANUAL")
         with trace_scope(current_trace):
             t_start = self.pm.start_timer()
-            if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now():
+            is_after_market_order = order_dvsn in KRX_AFTER_MARKET_ORDER_DVSNS
+            if is_after_market_order and not self.market_clock.is_krx_after_market_hours():
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.MARKET_CLOSED.value,
+                    msg1="KRX 애프터마켓 주문은 영업일 16:00~20:00에만 제출할 수 있습니다.",
+                    data=None,
+                )
+            if self.market_calendar_service and not await self.market_calendar_service.is_market_open_now(
+                include_krx_after_market=is_after_market_order,
+            ):
                 self.logger.warning("시장이 닫혀 있어 매도 주문을 제출하지 못했습니다.")
                 return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
             # Fallback if market_calendar_service is not available
-            elif not self.market_calendar_service and not self.market_clock.is_market_operating_hours():
+            elif (
+                not self.market_calendar_service
+                and not self.market_clock.is_market_operating_hours()
+                and not (
+                    is_after_market_order
+                    and self.market_clock.is_krx_after_market_hours()
+                )
+            ):
                 return ResCommonResponse(rt_cd=ErrorCode.MARKET_CLOSED.value, msg1="장 마감 시간에는 주문할 수 없습니다.", data=None)
 
             sell_order_result: ResCommonResponse = await self._submit_order_with_fsm(
@@ -637,6 +672,7 @@ class OrderExecutionService:
                 side=OrderSide.SELL,
                 source=source,
                 finalize_immediately=finalize_immediately,
+                order_dvsn=order_dvsn,
                 trace_id=current_trace,
                 intent_id=intent_id,
                 invalidation_price=invalidation_price,
@@ -681,6 +717,7 @@ class OrderExecutionService:
         exchange: Exchange = Exchange.KRX,
         source: str = "manual:수동매매",
         finalize_immediately: bool = True,
+        order_dvsn: Optional[str] = None,
     ):
         """
         사용자 입력을 받아 주식 매수 주문을 처리합니다.
@@ -703,6 +740,7 @@ class OrderExecutionService:
             exchange=exchange,
             source=source,
             finalize_immediately=finalize_immediately,
+            order_dvsn=order_dvsn,
         )
 
     async def handle_sell_stock(
@@ -713,6 +751,7 @@ class OrderExecutionService:
         exchange: Exchange = Exchange.KRX,
         source: str = "manual:수동매매",
         finalize_immediately: bool = True,
+        order_dvsn: Optional[str] = None,
     ):
         """
         사용자 입력을 받아 주식 매도 주문을 처리합니다.
@@ -734,6 +773,7 @@ class OrderExecutionService:
             exchange=exchange,
             source=source,
             finalize_immediately=finalize_immediately,
+            order_dvsn=order_dvsn,
         )
 
     async def sell_all_stocks(

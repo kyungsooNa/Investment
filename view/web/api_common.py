@@ -272,6 +272,7 @@ class OrderRequest(BaseModel):
     price: str
     qty: str
     side: str  # "buy" or "sell"
+    order_dvsn: str | None = None  # KRX 애프터마켓: 41~47
     real_order_confirmation: str | None = None
 
 

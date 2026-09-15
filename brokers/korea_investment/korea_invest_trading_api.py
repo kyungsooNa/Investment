@@ -14,7 +14,7 @@ from brokers.korea_investment.korea_invest_url_keys import EndpointKey
 from brokers.korea_investment.korea_invest_trid_provider import KoreaInvestTrIdProvider
 from utils.korea_invest_price_utils import adjust_price
 from typing import Optional
-from common.types import ResCommonResponse, ErrorCode, Exchange
+from common.types import ResCommonResponse, ErrorCode, Exchange, KRX_AFTER_MARKET_ORDER_DVSNS
 
 
 class KoreaInvestApiTrading(KoreaInvestApiBase):
@@ -74,15 +74,30 @@ class KoreaInvestApiTrading(KoreaInvestApiBase):
             self._logger.exception(f"Hashkey API 호출 중 알 수 없는 오류: {e}")
             return None
 
-    async def place_stock_order(self, stock_code, order_price, order_qty,
-                                is_buy: bool, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:  # async def로 변경됨
+    async def place_stock_order(
+        self,
+        stock_code,
+        order_price,
+        order_qty,
+        is_buy: bool,
+        exchange: Exchange = Exchange.KRX,
+        order_dvsn: Optional[str] = None,
+    ) -> ResCommonResponse:  # async def로 변경됨
         full_config = self._env.active_config
 
         tr_id = self._trid_provider.trading_order_cash(is_buy)  # 모드에 따라 자동
 
-        order_dvsn = '00' if int(order_price) > 0 else '01'  # 00: 지정가, 01: 시장가
+        order_dvsn = str(order_dvsn or ('00' if int(order_price) > 0 else '01'))
 
-        if order_dvsn == '00':  # 지정가일 때만 호가단위 보정
+        if order_dvsn in KRX_AFTER_MARKET_ORDER_DVSNS and exchange != Exchange.KRX:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.INVALID_INPUT.value,
+                msg1="KRX 애프터마켓 주문유형(41~47)은 KRX 거래소에서만 사용할 수 있습니다.",
+                data=None,
+            )
+
+        if order_dvsn in {'00', '41', '42', '43'} and int(order_price) > 0:
+            # 지정가격을 받는 일반장·애프터마켓 주문만 호가단위를 보정한다.
             adjusted = adjust_price(int(order_price))
             if adjusted != int(order_price):
                 self._logger.info(f"호가단위 보정: {order_price} → {adjusted}")

@@ -65,21 +65,25 @@ async def place_order(req: OrderRequest, request: Request):
             raise HTTPException(status_code=400, detail="실전 주문 확인 문자열이 필요합니다.")
 
     # 1. 실제/모의 투자 주문 전송
+    order_kwargs = {
+        "source": "manual:수동매매",
+        "finalize_immediately": False,
+    }
+    if req.order_dvsn:
+        order_kwargs["order_dvsn"] = req.order_dvsn
     if req.side == "buy":
         resp = await ctx.order_execution_service.handle_buy_stock(
             req.code,
             req.qty,
             req.price,
-            source="manual:수동매매",
-            finalize_immediately=False,
+            **order_kwargs,
         )
     elif req.side == "sell":
         resp = await ctx.order_execution_service.handle_sell_stock(
             req.code,
             req.qty,
             req.price,
-            source="manual:수동매매",
-            finalize_immediately=False,
+            **order_kwargs,
         )
     ctx.pm.log_timer("place_order", t_start)
     return _serialize_response(resp)

@@ -63,6 +63,16 @@ def test_is_market_operating_false_after_hours(mock_get_time):
     manager = MarketClock()
     assert manager.is_market_operating_hours() is False
 
+
+def test_is_krx_after_market_hours_only_allows_1600_to_2000_on_weekdays():
+    manager = MarketClock()
+    kst = pytz.timezone("Asia/Seoul")
+
+    assert manager.is_krx_after_market_hours(kst.localize(datetime(2026, 9, 14, 16, 0))) is True
+    assert manager.is_krx_after_market_hours(kst.localize(datetime(2026, 9, 14, 20, 0))) is True
+    assert manager.is_krx_after_market_hours(kst.localize(datetime(2026, 9, 14, 15, 59))) is False
+    assert manager.is_krx_after_market_hours(kst.localize(datetime(2026, 9, 19, 16, 0))) is False
+
 @patch("core.market_clock.logging.getLogger")
 def test_init_default_values(mock_logger):
     """

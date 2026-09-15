@@ -97,6 +97,51 @@ async def test_place_stock_order_buy_success():
 
 
 @pytest.mark.asyncio
+async def test_place_stock_order_uses_explicit_krx_after_market_order_code():
+    api = make_api()
+    api._env.active_config.update({
+        "custtype": "P",
+        "stock_account_number": "12345678",
+    })
+    api._trid_provider.trading_order_cash.return_value = "TTTC0802U"
+    api._get_hashkey = AsyncMock(return_value="mocked_hash")
+    api.call_api = AsyncMock(return_value=ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value, msg1="주문 성공", data={}
+    ))
+
+    result = await api.place_stock_order(
+        stock_code="005930",
+        order_price=70000,
+        order_qty=1,
+        is_buy=True,
+        exchange=Exchange.KRX,
+        order_dvsn="41",
+    )
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    body = api._get_hashkey.await_args.args[0]
+    assert body["ORD_DVSN"] == "41"
+    assert body["EXCG_ID_DVSN_CD"] == "KRX"
+
+
+@pytest.mark.asyncio
+async def test_place_stock_order_rejects_after_market_code_for_nxt():
+    api = make_api()
+
+    result = await api.place_stock_order(
+        stock_code="005930",
+        order_price=70000,
+        order_qty=1,
+        is_buy=True,
+        exchange=Exchange.NXT,
+        order_dvsn="41",
+    )
+
+    assert result.rt_cd == ErrorCode.INVALID_INPUT.value
+    assert "KRX 애프터마켓" in result.msg1
+
+
+@pytest.mark.asyncio
 async def test_cancel_stock_order_builds_order_rvsecncl_request():
     api = make_api()
     api._env.active_config.update({

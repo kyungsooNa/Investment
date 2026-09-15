@@ -75,6 +75,13 @@ class MarketClock:
 
         return dt_time(8, 0) <= now.time() <= dt_time(20, 0)
 
+    def is_krx_after_market_hours(self, now=None) -> bool:
+        """KRX 애프터마켓 운영 시간(평일 16:00~20:00) 여부를 반환합니다."""
+        now = now or self.get_current_kst_time()
+        if now.weekday() >= 5:
+            return False
+        return dt_time(16, 0) <= now.time() <= dt_time(20, 0)
+
     def get_market_open_time(self, target_dt: Optional[datetime] = None) -> datetime:
         """오늘 날짜 또는 지정된 날짜 기준 시장 개장 시간(09:00) 반환"""
         now = target_dt or self.get_current_kst_time()

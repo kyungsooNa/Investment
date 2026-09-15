@@ -40,6 +40,7 @@ async function placeOrder(side) {
     const code = document.getElementById('order-code').value;
     const qty = document.getElementById('order-qty').value;
     const price = document.getElementById('order-price').value;
+    const orderDvsn = document.getElementById('order-dvsn').value || null;
 
     if(!code || !qty || !price) {
         alert("모든 필드를 입력하세요.");
@@ -86,6 +87,7 @@ async function placeOrder(side) {
                 qty,
                 price,
                 side,
+                order_dvsn: orderDvsn,
                 real_order_confirmation: realOrderConfirmation
             })
         });
