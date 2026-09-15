@@ -110,8 +110,11 @@ class KoreaInvestApiClient:
 
     # --- Trading API delegation ---
     async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool,
-                                exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
-        return await self._trading.place_stock_order(stock_code, order_price, order_qty, is_buy, exchange=exchange)
+                                exchange: Exchange = Exchange.KRX, order_dvsn: str | None = None) -> ResCommonResponse:
+        kwargs = {"exchange": exchange}
+        if order_dvsn is not None:
+            kwargs["order_dvsn"] = order_dvsn
+        return await self._trading.place_stock_order(stock_code, order_price, order_qty, is_buy, **kwargs)
 
     async def cancel_stock_order(self, **kwargs) -> ResCommonResponse:
         return await self._trading.cancel_stock_order(**kwargs)

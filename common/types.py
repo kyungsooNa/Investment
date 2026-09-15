@@ -14,6 +14,9 @@ class Exchange(str, Enum):
     UN = "UN"     # 통합시세 (KRX+NXT, 시세 조회 전용)
 
 
+KRX_AFTER_MARKET_ORDER_DVSNS = frozenset({"41", "42", "43", "44", "45", "46", "47"})
+
+
 # API 응답 결과의 성공/실패를 나타내는 Enum
 class ErrorCode(Enum):
     SUCCESS = "0"

@@ -20,6 +20,19 @@
                 <input type="number" id="order-price" placeholder="가격 (원)" min="0" onkeydown="if(event.key==='Enter') document.querySelector('.btn-buy').focus()">
             </div>
             <div class="form-row">
+                <label>주문유형</label>
+                <select id="order-dvsn">
+                    <option value="">정규장</option>
+                    <option value="41">KRX 애프터 지정가</option>
+                    <option value="42">KRX 애프터 지정가 IOC</option>
+                    <option value="43">KRX 애프터 지정가 FOK</option>
+                    <option value="44">KRX 애프터 최유리 지정가</option>
+                    <option value="45">KRX 애프터 최유리 IOC</option>
+                    <option value="46">KRX 애프터 최유리 FOK</option>
+                    <option value="47">KRX 애프터 최우선 지정가</option>
+                </select>
+            </div>
+            <div class="form-row">
                 <button class="btn btn-buy" onclick="placeOrder('buy')">매수</button>
                 <button class="btn btn-sell" onclick="placeOrder('sell')">매도</button>
             </div>

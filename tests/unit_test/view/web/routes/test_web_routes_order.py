@@ -52,6 +52,26 @@ async def test_place_order_buy(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+async def test_place_order_forwards_krx_after_market_order_code(web_client, mock_web_ctx):
+    mock_web_ctx.order_execution_service.handle_buy_stock.return_value = ResCommonResponse(
+        rt_cd="0", msg1="Order Placed", data={"ord_no": "12345"}
+    )
+
+    response = web_client.post("/api/order", json={
+        "code": "005930", "price": "70000", "qty": "10", "side": "buy",
+        "order_dvsn": "41",
+    })
+
+    assert response.status_code == 200
+    mock_web_ctx.order_execution_service.handle_buy_stock.assert_awaited_once_with(
+        "005930", "10", "70000",
+        source="manual:수동매매",
+        finalize_immediately=False,
+        order_dvsn="41",
+    )
+
+
+@pytest.mark.asyncio
 async def test_place_order_sell(web_client, mock_web_ctx):
     """POST /api/order (매도) 엔드포인트 테스트"""
     mock_web_ctx.order_execution_service.handle_sell_stock.return_value = ResCommonResponse(

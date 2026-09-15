@@ -326,7 +326,7 @@ class BrokerAPIWrapper:
 
     # --- KoreaInvestApiClient / Trading API delegation ---
     async def place_stock_order(self, stock_code, order_price, order_qty, is_buy: bool,
-                                exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
+                                exchange: Exchange = Exchange.KRX, order_dvsn: str | None = None) -> ResCommonResponse:
         """범용 주식 주문을 실행합니다 (KoreaInvestApiTrading 위임)."""
         if self._cb_is_open():
             remaining_seconds = max(
@@ -343,7 +343,10 @@ class BrokerAPIWrapper:
                 msg1=f"서킷 브레이커 개방 — {remaining}분 후 재시도",
                 data={"retry_after_seconds": remaining_seconds},
             )
-        resp = await self._client.place_stock_order(stock_code, order_price, order_qty, is_buy, exchange=exchange)
+        kwargs = {"exchange": exchange}
+        if order_dvsn is not None:
+            kwargs["order_dvsn"] = order_dvsn
+        resp = await self._client.place_stock_order(stock_code, order_price, order_qty, is_buy, **kwargs)
         rt_cd = getattr(resp, 'rt_cd', None) if resp else None
         if rt_cd == ErrorCode.SUCCESS.value:
             self._cb_record_success()

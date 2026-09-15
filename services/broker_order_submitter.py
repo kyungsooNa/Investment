@@ -58,6 +58,7 @@ class BrokerOrderSubmitter:
         *,
         is_buy: bool,
         exchange: Exchange = Exchange.KRX,
+        order_dvsn: Optional[str] = None,
         order_key: Optional[str] = None,
     ) -> ResCommonResponse:
         """재시도 가능한 오류에 대해 주문 API를 재시도.
@@ -67,7 +68,7 @@ class BrokerOrderSubmitter:
         last_result: Optional[ResCommonResponse] = None
         for attempt in range(1, self._max_retries + 1):
             result: ResCommonResponse = await self._execute_via_broker(
-                stock_code, price, qty, is_buy=is_buy, exchange=exchange
+                stock_code, price, qty, is_buy=is_buy, exchange=exchange, order_dvsn=order_dvsn
             )
             if result and result.rt_cd == ErrorCode.SUCCESS.value:
                 if order_key and self._is_order_key_active(order_key):
@@ -149,6 +150,7 @@ class BrokerOrderSubmitter:
         *,
         is_buy: bool,
         exchange: Exchange = Exchange.KRX,
+        order_dvsn: Optional[str] = None,
     ) -> ResCommonResponse:
         action_str = "매수" if is_buy else "매도"
         self.logger.info(
@@ -156,9 +158,10 @@ class BrokerOrderSubmitter:
             f"종목: {stock_code}, 수량: {qty}, 가격: {price}"
         )
         try:
-            result = await self._broker_api_wrapper.place_stock_order(
-                stock_code, price, qty, is_buy=is_buy, exchange=exchange
-            )
+            kwargs = {"is_buy": is_buy, "exchange": exchange}
+            if order_dvsn is not None:
+                kwargs["order_dvsn"] = order_dvsn
+            result = await self._broker_api_wrapper.place_stock_order(stock_code, price, qty, **kwargs)
             if self._kill_switch:
                 if result and result.rt_cd == ErrorCode.SUCCESS.value:
                     await self._kill_switch.record_api_success()
