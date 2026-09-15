@@ -23,8 +23,9 @@ class IntradayVolumeSurgeAlertTask(SchedulableTask):
 
     CHECK_INTERVAL_SEC = 60
     MIN_TRADING_VALUE = 10_000_000_000
-    VOLUME_TIERS = (3, 5, 10)
+    VOLUME_TIERS = (10,)
     MARKET_MINUTES = 390
+    ALERT_START_MINUTES = 9 * 60 + 5
     MAX_CANDIDATES = 50
     _ETF_NAME_MARKERS = ("ETF", "ETN", "KODEX", "TIGER", "KOSEF", "KBSTAR", "ACE ", "SOL ")
 
@@ -121,6 +122,8 @@ class IntradayVolumeSurgeAlertTask(SchedulableTask):
         if not await self._is_market_open_now():
             return
         now = self._market_clock.get_current_kst_time()
+        if now.hour * 60 + now.minute < self.ALERT_START_MINUTES:
+            return
         trading_date = now.strftime("%Y%m%d")
         if self._trading_date != trading_date:
             self._trading_date = trading_date
@@ -219,6 +222,8 @@ class IntradayVolumeSurgeAlertTask(SchedulableTask):
         ma20 = baseline.get("ma20", 0)
         ma50 = baseline.get("ma50", 0)
         trend_filter = "정배열 충족" if current_price > ma20 > ma50 > 0 else "정배열 미충족"
+        if trend_filter != "정배열 충족":
+            return None
         return {
             "code": code,
             "name": name,

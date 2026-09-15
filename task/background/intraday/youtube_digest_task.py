@@ -342,5 +342,6 @@ class YoutubeDigestTask(SchedulableTask):
         return (
             f"{data.get('report_date')} · 영상 {data.get('video_count')}편\n"
             f"많이 언급: {top}\n\n"
+            "📌 AI 핵심 요약\n"
             f"{data.get('digest_text') or ''}"
         )

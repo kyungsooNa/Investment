@@ -149,6 +149,15 @@ async def test_report_is_pushed_to_telegram():
     assert metadata["force_external"] is True
 
 
+def test_notification_marks_ai_digest_as_key_summary():
+    message = YoutubeDigestTask._format_message(
+        _ok_digest(digest_text="## 핵심 요약\n> 금리 이벤트 전 변동성 주의").data
+    )
+
+    assert "📌 AI 핵심 요약" in message
+    assert message.index("📌 AI 핵심 요약") < message.index("## 핵심 요약")
+
+
 async def test_partial_summary_failures_emit_warning_alert():
     """리포트는 성공해도 일부 영상 요약이 빠졌으면 운영자가 알아야 한다."""
     task, deps = _task(digest_result=_ok_digest(video_count=13, failed_summary_count=4))

@@ -1,3 +1,5 @@
+import json
+
 from services.trade_trend_service import NationalTradeTrendRelease, TradeStatItem
 from repositories.trade_trend_repository import TradeTrendRepository
 
@@ -66,6 +68,8 @@ def test_trade_trend_repository_backfills_legacy_national_sent_keys(tmp_path):
             "import_yoy_pct": None,
             "import_mom_change_100m_usd": None,
             "import_mom_pct": None,
+            "import_daily_avg_100m_usd": None,
+            "import_daily_avg_mom_pct": None,
             "trade_balance_100m_usd": None,
             "trade_balance_label": "",
             "trade_balance_mom_change_100m_usd": None,
@@ -75,6 +79,13 @@ def test_trade_trend_repository_backfills_legacy_national_sent_keys(tmp_path):
             "semiconductor_mom_pct": None,
             "semiconductor_daily_avg_100m_usd": None,
             "semiconductor_daily_avg_mom_pct": None,
+            "semiconductor_import_amount_100m_usd": None,
+            "semiconductor_import_yoy_pct": None,
+            "semiconductor_import_mom_change_100m_usd": None,
+            "semiconductor_import_mom_pct": None,
+            "semiconductor_import_daily_avg_100m_usd": None,
+            "semiconductor_import_daily_avg_mom_pct": None,
+            "semiconductor_export_share_pct": None,
             "working_days_current": None,
             "working_days_previous_year": None,
             "published_at": "",
@@ -251,3 +262,40 @@ def test_trade_trend_repository_saves_customs_trade_cache(tmp_path):
     cached = loaded.get_customs_trade_items("sido_total", "202607")
     assert cached == rows
     assert loaded.get_customs_trade_items("sido_total", "202606") is None
+
+
+def test_trade_trend_repository_migrates_legacy_thousand_usd_cache_once(tmp_path):
+    path = tmp_path / "trade_trend_state.json"
+    path.write_text(
+        json.dumps(
+            {
+                "customs_trade_cache": {
+                    "sido_total:202608": [
+                        {
+                            "period": "2026.08",
+                            "item_name": "제주",
+                            "item_code": "",
+                            "export_amount_usd": 66220,
+                            "import_amount_usd": 30247,
+                            "trade_balance_usd": 35973,
+                        }
+                    ]
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    repo = TradeTrendRepository(path)
+    migrated = repo.get_customs_trade_items("sido_total", "202608")
+    repo.save_customs_trade_items("sido_total", "202608", migrated)
+    reloaded = TradeTrendRepository(path).get_customs_trade_items(
+        "sido_total",
+        "202608",
+    )
+
+    assert migrated[0].export_amount_usd == 66_220_000
+    assert migrated[0].import_amount_usd == 30_247_000
+    assert migrated[0].trade_balance_usd == 35_973_000
+    assert reloaded == migrated

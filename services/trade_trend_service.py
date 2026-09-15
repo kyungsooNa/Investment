@@ -79,6 +79,8 @@ class NationalTradeTrendRelease:
     import_yoy_pct: Optional[float] = None
     import_mom_change_100m_usd: Optional[float] = None
     import_mom_pct: Optional[float] = None
+    import_daily_avg_100m_usd: Optional[float] = None
+    import_daily_avg_mom_pct: Optional[float] = None
     trade_balance_100m_usd: Optional[float] = None
     trade_balance_label: str = ""
     trade_balance_mom_change_100m_usd: Optional[float] = None
@@ -88,6 +90,13 @@ class NationalTradeTrendRelease:
     semiconductor_mom_pct: Optional[float] = None
     semiconductor_daily_avg_100m_usd: Optional[float] = None
     semiconductor_daily_avg_mom_pct: Optional[float] = None
+    semiconductor_import_amount_100m_usd: Optional[float] = None
+    semiconductor_import_yoy_pct: Optional[float] = None
+    semiconductor_import_mom_change_100m_usd: Optional[float] = None
+    semiconductor_import_mom_pct: Optional[float] = None
+    semiconductor_import_daily_avg_100m_usd: Optional[float] = None
+    semiconductor_import_daily_avg_mom_pct: Optional[float] = None
+    semiconductor_export_share_pct: Optional[float] = None
     working_days_current: Optional[float] = None
     working_days_previous_year: Optional[float] = None
     published_at: str = ""
@@ -171,6 +180,18 @@ def _first_int_text(item: ET.Element, *tags: str) -> int:
     return 0
 
 
+def _usd_amount_text(
+    item: ET.Element,
+    legacy_dollar_tag: str,
+    current_thousand_usd_tag: str,
+) -> int:
+    if _text(item, legacy_dollar_tag, ""):
+        return _int_text(item, legacy_dollar_tag)
+    if _text(item, current_thousand_usd_tag, ""):
+        return _int_text(item, current_thousand_usd_tag) * 1_000
+    return 0
+
+
 def _filter_item_rows(rows: list[TradeStatItem], item_code: str) -> list[TradeStatItem]:
     code = str(item_code or "").strip()
     if not code:
@@ -249,9 +270,13 @@ def parse_customs_trade_xml(xml_text: str) -> list[TradeStatItem]:
                 period=period,
                 item_name=_first_text(item, "statKor", "sidoNm", "korePrlstNm"),
                 item_code=_first_text(item, "hsCode", "hsSgn"),
-                export_amount_usd=_first_int_text(item, "expDlr", "expUsdAmt"),
-                import_amount_usd=_first_int_text(item, "impDlr", "impUsdAmt"),
-                trade_balance_usd=_first_int_text(item, "balPayments", "cmtrBlncAmt"),
+                export_amount_usd=_usd_amount_text(item, "expDlr", "expUsdAmt"),
+                import_amount_usd=_usd_amount_text(item, "impDlr", "impUsdAmt"),
+                trade_balance_usd=_usd_amount_text(
+                    item,
+                    "balPayments",
+                    "cmtrBlncAmt",
+                ),
                 export_weight=_int_text(item, "expWgt"),
                 import_weight=_int_text(item, "impWgt"),
             )
@@ -759,6 +784,18 @@ def _attach_previous_month_changes(
             previous_candidates,
             "semiconductor_daily_avg_100m_usd",
         )
+        previous_import_daily = _first_release_with_value(
+            previous_candidates,
+            "import_daily_avg_100m_usd",
+        )
+        previous_semiconductor_import = _first_release_with_value(
+            previous_candidates,
+            "semiconductor_import_amount_100m_usd",
+        )
+        previous_semiconductor_import_daily = _first_release_with_value(
+            previous_candidates,
+            "semiconductor_import_daily_avg_100m_usd",
+        )
         enriched.append(
             replace(
                 release,
@@ -799,6 +836,15 @@ def _attach_previous_month_changes(
                         previous.import_amount_100m_usd,
                     ),
                 ),
+                import_daily_avg_mom_pct=_value_or_fallback(
+                    release.import_daily_avg_mom_pct,
+                    _pct_float(
+                        release.import_daily_avg_100m_usd,
+                        previous_import_daily.import_daily_avg_100m_usd
+                        if previous_import_daily is not None
+                        else None,
+                    ),
+                ),
                 trade_balance_mom_change_100m_usd=_value_or_fallback(
                     release.trade_balance_mom_change_100m_usd,
                     _diff_float(
@@ -830,6 +876,33 @@ def _attach_previous_month_changes(
                         release.semiconductor_daily_avg_100m_usd,
                         previous_semiconductor_daily.semiconductor_daily_avg_100m_usd
                         if previous_semiconductor_daily is not None
+                        else None,
+                    ),
+                ),
+                semiconductor_import_mom_change_100m_usd=_value_or_fallback(
+                    release.semiconductor_import_mom_change_100m_usd,
+                    _diff_float(
+                        release.semiconductor_import_amount_100m_usd,
+                        previous_semiconductor_import.semiconductor_import_amount_100m_usd
+                        if previous_semiconductor_import is not None
+                        else None,
+                    ),
+                ),
+                semiconductor_import_mom_pct=_value_or_fallback(
+                    release.semiconductor_import_mom_pct,
+                    _pct_float(
+                        release.semiconductor_import_amount_100m_usd,
+                        previous_semiconductor_import.semiconductor_import_amount_100m_usd
+                        if previous_semiconductor_import is not None
+                        else None,
+                    ),
+                ),
+                semiconductor_import_daily_avg_mom_pct=_value_or_fallback(
+                    release.semiconductor_import_daily_avg_mom_pct,
+                    _pct_float(
+                        release.semiconductor_import_daily_avg_100m_usd,
+                        previous_semiconductor_import_daily.semiconductor_import_daily_avg_100m_usd
+                        if previous_semiconductor_import_daily is not None
                         else None,
                     ),
                 ),
@@ -962,6 +1035,27 @@ def _extract_semiconductor_yoy(text: str) -> Optional[float]:
     return None
 
 
+def _extract_semiconductor_import_yoy(text: str) -> Optional[float]:
+    section_start = text.find("수입현황")
+    if section_start < 0:
+        return None
+    return _extract_semiconductor_yoy(text[section_start:])
+
+
+def _extract_semiconductor_import_amount(text: str) -> Optional[float]:
+    return _float(
+        r"반도체\s*수입(?:액)?(?:은|는)?\s*([0-9]+(?:\.[0-9]+)?)\s*억\s*달러",
+        text,
+    )
+
+
+def _extract_semiconductor_export_share(text: str) -> Optional[float]:
+    return _float(
+        r"반도체\s*수출\s*비중(?:은|이)?\s*([0-9]+(?:\.[0-9]+)?)\s*%",
+        text,
+    )
+
+
 def _extract_working_days(text: str) -> tuple[Optional[float], Optional[float]]:
     match = re.search(
         r"조업일수\s*\[\s*\([^)]*\)\s*([0-9]+(?:\.[0-9]+)?)\s*일\s*,\s*\([^)]*\)\s*([0-9]+(?:\.[0-9]+)?)\s*일",
@@ -1042,6 +1136,32 @@ def _extract_monthly_table_mom(
 ) -> tuple[Optional[float], Optional[float]]:
     current, previous = _extract_monthly_table_amounts(label, period_label, text)
     return _diff_float(current, previous), _pct_float(current, previous)
+
+
+def _extract_10d_table_amounts(
+    label: str,
+    text: str,
+) -> tuple[Optional[float], Optional[float]]:
+    table_start = text.find("수출입실적")
+    if table_start < 0:
+        table_start = text.find("구분")
+    if table_start < 0:
+        return None, None
+    table_end = text.find("조업일수", table_start)
+    segment = text[table_start : table_end if table_end >= 0 else table_start + 1800]
+    row_label = {
+        "수출": r"수\s*출",
+        "수입": r"수\s*입",
+        "무역수지": r"무역\s*수지",
+    }[label]
+    next_label = r"(?=\s+수\s*입|\s+무역\s*수지|\s+※|$)"
+    match = re.search(rf"{row_label}(?:\s*\([^)]*\))?\s+(.+?){next_label}", segment)
+    if not match:
+        return None, None
+    amounts = _number_tokens(match.group(1))
+    if len(amounts) < 4:
+        return None, None
+    return amounts[3] / 100, amounts[2] / 100
 
 
 def _extract_balance(text: str) -> tuple[Optional[float], str]:
@@ -1154,6 +1274,24 @@ def parse_national_trade_release(
         period_label,
         cleaned_text,
     )
+    has_exact_interim_amount = False
+    if phase in {"customs_10d", "customs_20d"}:
+        exact_export, previous_export = _extract_10d_table_amounts("수출", cleaned_text)
+        exact_import, previous_import = _extract_10d_table_amounts("수입", cleaned_text)
+        exact_balance, previous_balance = _extract_10d_table_amounts("무역수지", cleaned_text)
+        has_exact_interim_amount = exact_export is not None
+        export_amount = _value_or_fallback(exact_export, export_amount)
+        import_amount = _value_or_fallback(exact_import, import_amount)
+        balance_amount = _value_or_fallback(exact_balance, balance_amount)
+        export_mom_change = _diff_float(export_amount, previous_export)
+        export_mom_pct = _pct_float(export_amount, previous_export)
+        import_mom_change = _diff_float(import_amount, previous_import)
+        import_mom_pct = _pct_float(import_amount, previous_import)
+        trade_balance_mom_change = _diff_float(balance_amount, previous_balance)
+    semiconductor_import_amount = _extract_semiconductor_import_amount(cleaned_text)
+    export_daily_avg = _extract_export_daily_avg(cleaned_text)
+    if has_exact_interim_amount:
+        export_daily_avg = _safe_div_float(export_amount, working_days_current)
     published = ""
     published_match = re.search(r"등록일\s*\|?\s*(\d{4}[.-]\d{2}[.-]\d{2})", cleaned_text)
     if published_match:
@@ -1168,12 +1306,13 @@ def parse_national_trade_release(
         export_yoy_pct=_extract_yoy_after("수출", cleaned_text),
         export_mom_change_100m_usd=export_mom_change,
         export_mom_pct=export_mom_pct,
-        export_daily_avg_100m_usd=_extract_export_daily_avg(cleaned_text)
+        export_daily_avg_100m_usd=export_daily_avg
         or _safe_div_float(export_amount, working_days_current),
         import_amount_100m_usd=import_amount,
         import_yoy_pct=_extract_yoy_after("수입", cleaned_text),
         import_mom_change_100m_usd=import_mom_change,
         import_mom_pct=import_mom_pct,
+        import_daily_avg_100m_usd=_safe_div_float(import_amount, working_days_current),
         trade_balance_100m_usd=balance_amount,
         trade_balance_label=balance_label,
         trade_balance_mom_change_100m_usd=trade_balance_mom_change,
@@ -1183,6 +1322,13 @@ def parse_national_trade_release(
             semiconductor_amount,
             working_days_current,
         ),
+        semiconductor_import_amount_100m_usd=semiconductor_import_amount,
+        semiconductor_import_yoy_pct=_extract_semiconductor_import_yoy(cleaned_text),
+        semiconductor_import_daily_avg_100m_usd=_safe_div_float(
+            semiconductor_import_amount,
+            working_days_current,
+        ),
+        semiconductor_export_share_pct=_extract_semiconductor_export_share(cleaned_text),
         working_days_current=working_days_current,
         working_days_previous_year=working_days_previous_year,
         published_at=published,
@@ -1352,13 +1498,18 @@ def format_jeju_semiconductor_report_html(
             return "-"
         return f"{value:+.1f}%"
 
+    def share_pct(value: Optional[float]) -> str:
+        if value is None:
+            return "-"
+        return f"{value:.1f}%"
+
     item_name = html.escape(report.item_name or "전기기기류", quote=False)
     return "\n".join(
         [
             f"📦 <b>제주 {item_name} 수출 ({html.escape(report.period, quote=False)})</b>",
             f"수출액: <b>{money(report.export_amount_usd)}</b>",
             f"전월비: {pct(report.mom_pct)} / 전년비: {pct(report.yoy_pct)}",
-            f"제주 전체 수출 내 비중: {pct(report.jeju_export_share_pct)}",
+            f"제주 전체 수출 내 비중: {share_pct(report.jeju_export_share_pct)}",
             f"전월: {money(report.previous_month_export_amount_usd)}",
             f"전년동월: {money(report.previous_year_export_amount_usd)}",
             "",
@@ -1434,11 +1585,47 @@ def format_national_trade_trend_report_html(
             if semiconductor_parts
             else f"반도체: <b>{money(release.semiconductor_export_amount_100m_usd)}</b>"
         )
-    lines += [
+    if release.semiconductor_export_share_pct is not None:
+        lines.append(f"반도체 수출 비중: <b>{release.semiconductor_export_share_pct:.1f}%</b>")
+    lines.append(
         f"수입: <b>{money(release.import_amount_100m_usd)}</b> "
-        f"({change_text(release.import_yoy_pct, release.import_mom_change_100m_usd, release.import_mom_pct)})",
-        f"무역수지: <b>{money(release.trade_balance_100m_usd, include_label=True)}</b>",
-    ]
+        f"({change_text(release.import_yoy_pct, release.import_mom_change_100m_usd, release.import_mom_pct)})"
+    )
+    if release.import_daily_avg_100m_usd is not None:
+        working_days = (
+            f", 조업 {release.working_days_current:.1f}일"
+            if release.working_days_current is not None
+            else ""
+        )
+        lines.append(
+            f"일평균 수입: <b>{money(release.import_daily_avg_100m_usd)}</b> "
+            f"(전월비 {pct(release.import_daily_avg_mom_pct)}{working_days})"
+        )
+    if release.semiconductor_import_amount_100m_usd is not None:
+        semiconductor_import_parts = []
+        if release.semiconductor_import_yoy_pct is not None:
+            semiconductor_import_parts.append(
+                f"전년비 {pct(release.semiconductor_import_yoy_pct)}"
+            )
+        if (
+            release.semiconductor_import_mom_change_100m_usd is not None
+            or release.semiconductor_import_mom_pct is not None
+        ):
+            semiconductor_import_parts.append(
+                f"전월비 {diff(release.semiconductor_import_mom_change_100m_usd)}, "
+                f"{pct(release.semiconductor_import_mom_pct)}"
+            )
+        if release.semiconductor_import_daily_avg_mom_pct is not None:
+            semiconductor_import_parts.append(
+                f"일평균 {pct(release.semiconductor_import_daily_avg_mom_pct)}"
+            )
+        line = f"반도체 수입: <b>{money(release.semiconductor_import_amount_100m_usd)}</b>"
+        if semiconductor_import_parts:
+            line += f" ({' / '.join(semiconductor_import_parts)})"
+        lines.append(line)
+    lines.append(
+        f"무역수지: <b>{money(release.trade_balance_100m_usd, include_label=True)}</b>"
+    )
     if release.trade_balance_mom_change_100m_usd is not None:
         lines[-1] += f" (전월차 {diff(release.trade_balance_mom_change_100m_usd)})"
     if release.highlights:

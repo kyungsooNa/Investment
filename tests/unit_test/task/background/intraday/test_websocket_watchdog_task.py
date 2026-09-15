@@ -1356,7 +1356,7 @@ async def test_streaming_watchdog_price_only_no_data_gap_check(watchdog_task, mo
 
 @pytest.mark.asyncio
 async def test_force_reconnect_with_price_subs(watchdog_task, mock_price_subscription_service):
-    """PT 종목이 없어도 Price Subscription이 있으면 강제 재연결을 수행하는지 검증."""
+    """강제 재연결은 가격 활성 장부를 비워 실제 재구독을 보장한다."""
     svc = watchdog_task
     svc._streaming_stock_repo.get_desired.return_value = set()
     svc._price_subscription_service = mock_price_subscription_service
@@ -1366,6 +1366,7 @@ async def test_force_reconnect_with_price_subs(watchdog_task, mock_price_subscri
     await svc.force_reconnect(trigger="manual")
 
     svc._streaming_service.disconnect_websocket.assert_awaited_once()
+    mock_price_subscription_service.clear_active_state.assert_called_once()
     svc._restore_all_subscriptions.assert_awaited_once()
 
 

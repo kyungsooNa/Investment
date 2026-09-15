@@ -273,6 +273,23 @@ async def test_digest_prompt_requires_uncertain_claims_section():
     assert "확인이 필요한 주장" in system
 
 
+async def test_digest_prompt_requires_notification_summary_first():
+    """긴 상세 내용보다 알림용 핵심 결론·기회·위험이 먼저 보여야 한다."""
+    ai = MagicMock()
+    ai.complete = AsyncMock(side_effect=["영상 요약", "종합"])
+    svc = _service(ai)
+
+    await svc.build_digest(
+        [_item("v1", "삼성전자와 금리 이야기")], report_date="20260810"
+    )
+
+    system = ai.complete.await_args.kwargs["system"]
+    assert "핵심 요약" in system
+    assert "주요 기회" in system
+    assert "주요 위험" in system
+    assert system.index("핵심 요약") < system.index("오늘의 공통 화두")
+
+
 async def test_ai_calls_are_tagged_with_usage_type():
     """/api/ai/usage 집계에 유튜브 소비가 잡혀야 한다."""
     ai = MagicMock()

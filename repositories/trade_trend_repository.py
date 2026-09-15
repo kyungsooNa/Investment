@@ -11,6 +11,9 @@ from services.trade_trend_service import (
 )
 
 
+_CUSTOMS_TRADE_CACHE_AMOUNT_UNIT = "usd"
+
+
 class TradeTrendRepository:
     def __init__(self, path: Union[str, Path] = "data/trade_trend_state.json") -> None:
         self._path = Path(path)
@@ -174,12 +177,17 @@ class TradeTrendRepository:
                 for key, value in raw_customs_cache.items()
                 if isinstance(value, list)
             }
+            if payload.get("customs_trade_cache_amount_unit") != _CUSTOMS_TRADE_CACHE_AMOUNT_UNIT:
+                self._customs_trade_cache = _migrate_customs_trade_cache_to_usd(
+                    self._customs_trade_cache
+                )
 
     def _save(self) -> None:
         payload = {
             "sent_keys": sorted(self._sent_keys),
             "national_release_history": self.get_national_release_history(),
             "customs_trade_cache": self._customs_trade_cache,
+            "customs_trade_cache_amount_unit": _CUSTOMS_TRADE_CACHE_AMOUNT_UNIT,
         }
         self._path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
@@ -210,6 +218,8 @@ def _national_release_to_dict(
         "import_yoy_pct": release.import_yoy_pct,
         "import_mom_change_100m_usd": release.import_mom_change_100m_usd,
         "import_mom_pct": release.import_mom_pct,
+        "import_daily_avg_100m_usd": release.import_daily_avg_100m_usd,
+        "import_daily_avg_mom_pct": release.import_daily_avg_mom_pct,
         "trade_balance_100m_usd": release.trade_balance_100m_usd,
         "trade_balance_label": release.trade_balance_label,
         "trade_balance_mom_change_100m_usd": release.trade_balance_mom_change_100m_usd,
@@ -219,6 +229,13 @@ def _national_release_to_dict(
         "semiconductor_mom_pct": release.semiconductor_mom_pct,
         "semiconductor_daily_avg_100m_usd": release.semiconductor_daily_avg_100m_usd,
         "semiconductor_daily_avg_mom_pct": release.semiconductor_daily_avg_mom_pct,
+        "semiconductor_import_amount_100m_usd": release.semiconductor_import_amount_100m_usd,
+        "semiconductor_import_yoy_pct": release.semiconductor_import_yoy_pct,
+        "semiconductor_import_mom_change_100m_usd": release.semiconductor_import_mom_change_100m_usd,
+        "semiconductor_import_mom_pct": release.semiconductor_import_mom_pct,
+        "semiconductor_import_daily_avg_100m_usd": release.semiconductor_import_daily_avg_100m_usd,
+        "semiconductor_import_daily_avg_mom_pct": release.semiconductor_import_daily_avg_mom_pct,
+        "semiconductor_export_share_pct": release.semiconductor_export_share_pct,
         "working_days_current": release.working_days_current,
         "working_days_previous_year": release.working_days_previous_year,
         "published_at": release.published_at,
@@ -230,6 +247,28 @@ def _national_release_to_dict(
 
 def _customs_trade_cache_key(dataset: str, yyyymm: str) -> str:
     return f"{dataset}:{yyyymm}"
+
+
+def _migrate_customs_trade_cache_to_usd(
+    cache: dict[str, list[dict]],
+) -> dict[str, list[dict]]:
+    amount_fields = (
+        "export_amount_usd",
+        "import_amount_usd",
+        "trade_balance_usd",
+    )
+    migrated = {}
+    for key, rows in cache.items():
+        migrated_rows = []
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            row = dict(item)
+            for field in amount_fields:
+                row[field] = int(row.get(field) or 0) * 1_000
+            migrated_rows.append(row)
+        migrated[key] = migrated_rows
+    return migrated
 
 
 def _customs_trade_item_to_dict(item: TradeStatItem) -> dict:
@@ -264,6 +303,8 @@ def _legacy_national_release_from_key(key: str) -> dict:
         "import_yoy_pct": None,
         "import_mom_change_100m_usd": None,
         "import_mom_pct": None,
+        "import_daily_avg_100m_usd": None,
+        "import_daily_avg_mom_pct": None,
         "trade_balance_100m_usd": None,
         "trade_balance_label": "",
         "trade_balance_mom_change_100m_usd": None,
@@ -273,6 +314,13 @@ def _legacy_national_release_from_key(key: str) -> dict:
         "semiconductor_mom_pct": None,
         "semiconductor_daily_avg_100m_usd": None,
         "semiconductor_daily_avg_mom_pct": None,
+        "semiconductor_import_amount_100m_usd": None,
+        "semiconductor_import_yoy_pct": None,
+        "semiconductor_import_mom_change_100m_usd": None,
+        "semiconductor_import_mom_pct": None,
+        "semiconductor_import_daily_avg_100m_usd": None,
+        "semiconductor_import_daily_avg_mom_pct": None,
+        "semiconductor_export_share_pct": None,
         "working_days_current": None,
         "working_days_previous_year": None,
         "published_at": "",
