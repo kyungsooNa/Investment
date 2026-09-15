@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
 
     # 2. 환경 설정 로드 및 서비스 초기화
     ctx.load_config_and_env()
-    await ctx.initialize_services(is_paper_trading=True) # 기본 모의투자 설정
+    services_ready = await ctx.initialize_services(is_paper_trading=True) # 기본 모의투자 설정
 
     # 3. web_api에 완성된 ctx 연결 (이게 없어서 503 에러가 났던 것임)
     web_api.set_ctx(ctx)
@@ -143,7 +143,12 @@ async def lifespan(app: FastAPI):
     if not (is_public_mode(ctx) or is_demo_mode(ctx)):
         await ctx._initialize_price_subscriptions(rebalance=False)
 
-    print("=== 웹 서비스 초기화 완료 ===")
+    if services_ready:
+        print("=== 웹 서비스 초기화 완료 ===")
+    else:
+        # 토큰 발급/브로커 부트스트랩 실패. 기동은 시키되 완료로 보고하지 않는다.
+        print("=== 웹 서비스 초기화 실패 — 브로커 미연결 상태로 기동합니다 "
+              "(웹 UI 상단 배지에서 환경 전환으로 재시도) ===")
     yield
 
     # 종료 시 정리 (데이터 Flush)
