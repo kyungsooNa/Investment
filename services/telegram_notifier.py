@@ -396,7 +396,15 @@ class TelegramReporter:
             code = html.escape(str(item.get("code") or ""), quote=False)
             price = int(item.get("price") or 0)
             change_rate = float(item.get("change_rate") or 0)
-            ratio = float(item.get("projected_volume_ratio") or 0)
+            cumulative_ratio = float(item.get("cumulative_volume_ratio") or 0)
+            projected_ratio = float(item.get("projected_volume_ratio") or 0)
+            avg_volume = int(item.get("avg_volume_20") or 0)
+            elapsed_minutes = int(item.get("elapsed_minutes") or 0)
+            market_progress_percent = float(item.get("market_progress_percent") or 0)
+            baseline_description = html.escape(
+                str(item.get("volume_baseline_description") or "최근 20거래일 평균 거래량 기준 (전일 거래량 기준 아님)"),
+                quote=False,
+            )
             trading_value = int(item.get("trading_value") or 0) / 100_000_000
             tier = int(item.get("tier") or 0)
             trend_filter = html.escape(str(item.get("trend_filter") or "확인 불가"), quote=False)
@@ -405,7 +413,11 @@ class TelegramReporter:
                     "",
                     f"<b>{name} ({code}) · {tier}배 단계</b>",
                     f"현재 {price:,}원 ({change_rate:+.2f}%)",
-                    f"예상 일거래량 {ratio:.1f}배 · 누적 거래대금 {trading_value:,.0f}억원",
+                    f"{tier}배 단계: 장 마감 예상 거래량이 기준의 {tier}배 이상",
+                    f"누적 거래량 {cumulative_ratio:.1f}배 ({int(item.get('cumulative_volume') or 0):,}주 / 기준 {avg_volume:,}주)",
+                    f"장 마감 예상 거래량 {projected_ratio:.1f}배 · 장 경과 {elapsed_minutes}/390분 ({market_progress_percent:.1f}%)",
+                    f"기준: {baseline_description} · 누적 거래대금 {trading_value:,.0f}억원",
+                    "예상치는 현재까지의 분당 거래 속도가 장 마감까지 유지된다고 가정",
                     f"오닐 추세 필터: {trend_filter}",
                 ]
             )

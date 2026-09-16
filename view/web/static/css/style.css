@@ -1161,6 +1161,7 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     color: var(--text-primary);
 }
 .notif-message {
+    white-space: pre-wrap;
     font-size: 0.78rem;
     color: var(--text-secondary);
     line-height: 1.4;

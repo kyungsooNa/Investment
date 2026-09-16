@@ -675,11 +675,24 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         """시가총액 / 5일 평균 거래대금 필터.
 
         OSBWatchlistItem 기반(universe_service 사용 시): market_cap, avg_5d_tv 직접 사용.
-        fallback 시: avg_5d_tv 미제공이면 fail-closed로 차단한다.
+        장중 랭킹 보강 후보는 시총과 5일 평균 거래대금이 미제공될 수 있으나,
+        최소 시총이 설정된 경우 시총 미상은 fail-closed로 차단한다.
         """
         market_cap = stock.get("market_cap", 0) or 0
         avg_5d_tv = stock.get("avg_5d_tv", 0) or 0
         current_trading_value = stock.get("current_trading_value", 0) or 0
+
+        if (
+            stock.get("source") == "intraday_rank"
+            and self._cfg.min_market_cap > 0
+            and market_cap <= 0
+        ):
+            self._log_entry_rejected(
+                log_data,
+                "market_cap_unknown",
+                "장중 랭킹 후보의 시가총액 미제공",
+            )
+            return False
 
         if market_cap > 0 and market_cap < self._cfg.min_market_cap:
             self._log_entry_rejected(
