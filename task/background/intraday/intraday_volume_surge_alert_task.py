@@ -213,7 +213,8 @@ class IntradayVolumeSurgeAlertTask(SchedulableTask):
             return None
         elapsed_minutes = max(1, (now.hour * 60 + now.minute) - (9 * 60))
         progress = min(1.0, elapsed_minutes / self.MARKET_MINUTES)
-        projected_ratio = cumulative_volume / progress / avg_volume
+        cumulative_ratio = cumulative_volume / avg_volume
+        projected_ratio = cumulative_ratio / progress
         tier = max((value for value in self.VOLUME_TIERS if projected_ratio >= value), default=0)
         if tier <= self._sent_tiers.get(code, 0):
             return None
@@ -231,7 +232,11 @@ class IntradayVolumeSurgeAlertTask(SchedulableTask):
             "change_rate": self._to_float(stock.get("prdy_ctrt")),
             "cumulative_volume": cumulative_volume,
             "avg_volume_20": int(avg_volume),
+            "cumulative_volume_ratio": round(cumulative_ratio, 2),
             "projected_volume_ratio": round(projected_ratio, 2),
+            "elapsed_minutes": elapsed_minutes,
+            "market_progress_percent": round(progress * 100, 1),
+            "volume_baseline_description": "최근 20거래일 평균 거래량 기준 (전일 거래량 기준 아님)",
             "trading_value": trading_value,
             "tier": tier,
             "trend_filter": trend_filter,

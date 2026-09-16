@@ -448,7 +448,11 @@ async def test_send_intraday_volume_surge_alert_formats_observation_notice(teleg
             "name": "한전기술",
             "price": 99800,
             "change_rate": 7.31,
+            "cumulative_volume_ratio": 1.25,
             "projected_volume_ratio": 5.4,
+            "avg_volume_20": 100000,
+            "elapsed_minutes": 90,
+            "market_progress_percent": 23.1,
             "trading_value": 12_300_000_000,
             "tier": 5,
             "trend_filter": "정배열 미충족",
@@ -459,7 +463,10 @@ async def test_send_intraday_volume_surge_alert_formats_observation_notice(teleg
     assert sent is True
     message = telegram_reporter._send_message.await_args.args[0]
     assert "한전기술 (052690) · 5배 단계" in message
-    assert "예상 일거래량 5.4배" in message
+    assert "누적 거래량 1.2배" in message
+    assert "장 마감 예상 거래량 5.4배" in message
+    assert "최근 20거래일 평균 거래량 기준 (전일 거래량 기준 아님)" in message
+    assert "장 경과 90/390분 (23.1%)" in message
     assert "정배열 미충족" in message
     assert "자동 매수 신호가 아닙니다" in message
 

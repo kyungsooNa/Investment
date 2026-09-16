@@ -876,6 +876,20 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
             {},
         ))
 
+    def test_intraday_rank_candidate_rejects_unknown_market_cap(self):
+        """시총 하한이 있는 장중 보강 후보는 시총 미상일 때 우회하지 않는다."""
+        strategy, _, _ = self._make_strategy(min_market_cap=200_000_000_000)
+        self.assertFalse(strategy._passes_validity_filter(
+            {
+                "code": "UNKNOWN_CAP",
+                "source": "intraday_rank",
+                "market_cap": 0,
+                "avg_5d_tv": 0,
+                "current_trading_value": 30_300_000_000,
+            },
+            {},
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()

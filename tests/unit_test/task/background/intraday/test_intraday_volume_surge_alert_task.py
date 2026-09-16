@@ -83,6 +83,33 @@ async def test_alerts_only_for_aligned_stock_with_projected_volume_at_least_ten_
 
 
 @pytest.mark.asyncio
+async def test_ten_times_tier_uses_projected_volume_not_current_cumulative_volume():
+    """10배 단계는 현재 누적 배수가 아니라 장 마감 예상 배수의 경계값으로 판정한다."""
+    deps = _make_task(
+        now=datetime(2026, 8, 25, 10, 30),
+        cumulative_volume=230_769,
+    )
+
+    below_threshold = await deps.task._evaluate(
+        deps.task._collect_candidates()[0], deps.clock.get_current_kst_time()
+    )
+
+    assert below_threshold is None
+
+    stock = deps.ranking_task.get_basic_ranking_cache("volume").data[0]
+    stock["acml_vol"] = "230770"
+    at_threshold = await deps.task._evaluate(
+        deps.task._collect_candidates()[0], deps.clock.get_current_kst_time()
+    )
+
+    assert at_threshold["tier"] == 10
+    assert at_threshold["cumulative_volume_ratio"] == 2.31
+    assert at_threshold["projected_volume_ratio"] == 10.0
+    assert at_threshold["elapsed_minutes"] == 90
+    assert at_threshold["market_progress_percent"] == 23.1
+
+
+@pytest.mark.asyncio
 async def test_does_not_alert_below_minimum_trading_value():
     deps = _make_task(trading_value=9_999_999_999)
 

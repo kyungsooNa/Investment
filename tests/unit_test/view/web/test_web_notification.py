@@ -69,9 +69,11 @@ def test_get_today_telegram_notifications(mock_get_ctx, client, mock_ctx):
 def test_web_notification_center_exposes_today_telegram_filter():
     template = Path("view/web/templates/base.html").read_text(encoding="utf-8")
     script = Path("view/web/static/js/notifications.js").read_text(encoding="utf-8")
+    stylesheet = Path("view/web/static/css/style.css").read_text(encoding="utf-8")
 
     assert "filterNotifications('TELEGRAM')" in template
     assert "/api/notifications/telegram/today?count=200" in script
+    assert ".notif-message {\n    white-space: pre-wrap;" in stylesheet
 
 @pytest.mark.asyncio
 @patch("view.web.routes.notification._get_ctx")
