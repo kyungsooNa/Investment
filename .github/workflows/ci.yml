@@ -58,7 +58,17 @@ jobs:
     - name: Run tests with coverage
       run: |
         # XML(뱃지용)과 HTML(웹배포용) 리포트를 모두 생성합니다.
-        pytest tests --cov=. --cov-report=xml:coverage.xml --cov-report=html:htmlcov --cov-report=term-missing
+        # --cov-fail-under: 커버리지 회귀 방지 하한 (M-2).
+        #   #894/#895/#905 캠페인으로 도달한 값이 수기 관리라 조용히 침식될 수 있어
+        #   하한을 CI 에 건다. 하한을 내리려면 왜 내리는지 todo_list.md M-2 에 남길 것.
+        #   ⚠ 이 하한이 보는 값은 아래 뱃지의 line-rate 가 아니다. .coveragerc 가
+        #   branch=True 라 --cov-fail-under 는 line+branch 합산값과 비교한다 —
+        #   2026-09-17 실측으로 합산 94.69% / line-rate 96.21% 다. 뱃지 숫자를 보고
+        #   하한을 96 으로 올리면 통과할 수 없다.
+        #   .coveragerc 가 아니라 여기에 두는 이유: [report] fail_under 는 부분 실행
+        #   커버리지에도 걸려 2.integration_test_with_coverage.bat(통합만 실행)이
+        #   항상 실패한다. 하한은 전체 스위트를 도는 이 게이트에만 의미가 있다.
+        pytest tests --cov=. --cov-fail-under=94 --cov-report=xml:coverage.xml --cov-report=html:htmlcov --cov-report=term-missing
 
     # 🚀 1. README 뱃지 강제 업데이트 (파이썬 사용)
     - name: Force Update README Badge
