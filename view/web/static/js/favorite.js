@@ -38,7 +38,7 @@ async function loadFavoriteList(options = {}) {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const items = await resp.json();
 
-            _favoriteData = items || [];
+            _favoriteData = _mergeFavoriteItems(_favoriteData, items, new Date().toISOString());
             renderFavoriteTable();
             _renderFavoriteUpdatedAt(new Date());
     } catch (e) {
@@ -46,6 +46,43 @@ async function loadFavoriteList(options = {}) {
         if (silent) return;
         tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:#ff6b6b;">불러오기 실패: ${e.message}</td></tr>`;
     }
+}
+
+// 서버가 실시간 시세를 못 받아오는 주기가 섞인다 (REST 가 KIS 호출 한도에 밀리거나,
+// 웹소켓 구독 슬롯 밖 종목의 메모리 캐시가 만료되거나). 그 한 번 때문에 화면에 떠 있던
+// 가격까지 지우지 않는다 — 직전 값을 승계하고 stale 로 표시한다.
+function _mergeFavoriteItems(prev, next, nowIso) {
+    const prevByCode = {};
+    (prev || []).forEach(item => { if (item && item.code) prevByCode[item.code] = item; });
+
+    return (next || []).map(item => {
+        if (!item) return item;
+        if (item.price != null) {
+            // 신선한 값에 수신 시각을 찍어 둔다 — 다음 주기에 값을 잃었을 때
+            // '언제 기준 가격인지'를 말할 수 있어야 한다.
+            return item.price_as_of ? item : Object.assign({}, item, { price_as_of: nowIso });
+        }
+        const previous = prevByCode[item.code];
+        if (!previous || previous.price == null) return item;
+        return Object.assign({}, item, {
+            price: previous.price,
+            rate: previous.rate,
+            price_as_of: previous.price_as_of || null,
+            price_stale: true,
+        });
+    });
+}
+
+function _formatAsOf(asOf) {
+    if (!asOf) return '';
+    const text = String(asOf);
+    if (text.includes('T')) {
+        const when = new Date(text);
+        if (!isNaN(when.getTime())) {
+            return when.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+        }
+    }
+    return text;
 }
 
 // 값이 그대로인 것과 갱신이 멈춘 것을 화면에서 구분할 수 있어야 한다.
@@ -125,6 +162,14 @@ function _buildRow(item) {
     const rateStr = item.rate != null ? `${rate > 0 ? '+' : ''}${parseFloat(item.rate).toFixed(2)}%` : '-';
     const priceStr = item.price != null ? Number(item.price).toLocaleString() + '원' : '-';
 
+    // 오래된 값을 현재가로 착각하면 매매 판단이 틀어진다 — 흐리게 + 기준 시각을 함께 건다.
+    const isStale = !!item.price_stale && item.price != null;
+    const asOfText = _formatAsOf(item.price_as_of);
+    const staleAttrs = isStale
+        ? ` style="opacity:0.55;" title="실시간 시세를 받지 못해 마지막으로 확인된 값입니다`
+          + (asOfText ? ` (${asOfText} 기준)` : '') + `"`
+        : '';
+
     const rsVal = item.rs_rating ? item.rs_rating : '-';
     let rsColor = '#1e90ff'; // 파랑
     if (item.rs_rating >= 80) rsColor = '#e94560'; // 빨강
@@ -143,8 +188,8 @@ function _buildRow(item) {
         <td><a href="/stock?code=${item.code}" style="color:var(--accent); font-weight:bold; text-decoration:none;">${item.name} <span style="font-weight:normal; font-size:0.85rem; color:#888;">(${item.code})</span></a></td>
         <td style="text-align:center;">${stageBadge}</td>
         <td style="text-align:center;">${rsBadge}</td>
-        <td class="${rateClass}">${priceStr}</td>
-        <td class="${rateClass}">${rateStr}</td>
+        <td class="${rateClass}"${staleAttrs}>${priceStr}</td>
+        <td class="${rateClass}"${staleAttrs}>${rateStr}</td>
         <td><button class="btn btn-sm" onclick="removeFavorite('${item.code}')">삭제</button></td>
     </tr>`;
 }

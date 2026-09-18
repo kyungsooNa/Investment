@@ -480,3 +480,20 @@ class TestStockPriceRepository:
         assert price_repo.is_streaming("005930") is False
         price_repo._cache_logger.log_streaming_mark.assert_called_once()
         price_repo._cache_logger.log_streaming_unmark.assert_called_once()
+
+    def test_get_price_updated_at_reports_when_the_price_was_stored(self, price_repo):
+        """만료된 캐시 값을 stale 로 내보낼 때 '언제 기준인지' 를 말할 수 있어야 한다."""
+        before = time.time()
+        price_repo.set_current_price("005930", {"output": {"stck_prpr": "70000"}})
+
+        updated_at = price_repo.get_price_updated_at("005930")
+
+        assert updated_at is not None
+        assert before <= updated_at <= time.time()
+
+    def test_get_price_updated_at_is_none_without_a_stored_price(self, price_repo):
+        """가격이 없는 코드·빈 엔트리는 기준 시각도 없다."""
+        assert price_repo.get_price_updated_at("000660") is None
+
+        price_repo._price_cache.put("000660", {})
+        assert price_repo.get_price_updated_at("000660") is None

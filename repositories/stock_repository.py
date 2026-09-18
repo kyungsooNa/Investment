@@ -54,6 +54,10 @@ class StockRepository:
             code, max_age_sec=max_age_sec, count_stats=count_stats, caller=caller
         )
 
+    def get_price_updated_at(self, code: str) -> Optional[float]:
+        """캐시된 현재가가 저장된 시각(epoch)을 반환합니다. TTL 무관."""
+        return self._price_repo.get_price_updated_at(code)
+
     # ── OHLCV 캐시/DB ──────────────────────────────────────────────────────────
 
     async def get_stock_data(self, code: str, ohlcv_limit: int = 600,
