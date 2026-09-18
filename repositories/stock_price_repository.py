@@ -76,6 +76,18 @@ class StockPriceRepository:
             self._cache_logger.log_price_miss(code, caller, "not_found")
         return None
 
+    def get_price_updated_at(self, code: str) -> Optional[float]:
+        """캐시된 현재가가 저장된 시각(epoch)을 반환합니다. 없으면 None.
+
+        TTL이 지난 값을 stale로 내보낼 때 '언제 기준인지'를 함께 알리기 위한 조회라
+        만료 여부를 따지지 않고, 통계에도 잡지 않습니다.
+        """
+        cached = self._price_cache.get(code, count_stats=False, item_type="price_updated_at")
+        if not cached or "current_price_data" not in cached:
+            return None
+        updated_at = cached.get("price_updated_at")
+        return updated_at if isinstance(updated_at, (int, float)) else None
+
     def update_current_price(self, code: str, current_price: float, volume: int = 0, rate=None):
         """WebSocket 틱 데이터로 현재가 캐시를 즉시 갱신합니다.
 

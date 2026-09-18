@@ -2,6 +2,10 @@
 관심종목 서비스 - 비즈니스 로직 담당.
 """
 import asyncio
+from datetime import datetime
+
+import pytz
+
 from repositories.favorite_repository import (
     FavoriteRepository,
     MARKET_DOMESTIC,
@@ -10,6 +14,7 @@ from repositories.favorite_repository import (
 from repositories.stock_code_repository import StockCodeRepository
 
 _DEFAULT_OVERSEAS_EXCHANGE = "NASD"
+_KST = pytz.timezone("Asia/Seoul")
 
 
 def _normalize_domestic_code(code: str) -> str:
@@ -46,6 +51,24 @@ def _apply_price_rate(entry: dict, data) -> bool:
     entry["price"] = price
     entry["rate"] = rate
     return rate not in (None, "")
+
+
+def _as_of_from_epoch(timestamp) -> str:
+    """캐시 저장 시각(epoch)을 KST ISO8601 문자열로. 못 쓰는 값이면 None."""
+    if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)) or timestamp <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(float(timestamp), tz=_KST).isoformat(timespec="seconds")
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _as_of_from_trade_date(trade_date) -> str:
+    """일봉 거래일(YYYYMMDD)을 YYYY-MM-DD 로. 형식이 다르면 None."""
+    text = str(trade_date or "").strip()
+    if len(text) != 8 or not text.isdigit():
+        return None
+    return f"{text[:4]}-{text[4:6]}-{text[6:]}"
 
 
 def _snapshot_trade_date(snap) -> str:
@@ -150,7 +173,8 @@ class FavoriteService:
         장중: StockQueryService(신선 WebSocket snapshot 우선, REST fallback)
               → 메모리 캐시 → DB 일봉 스냅샷
         장외: DB 일봉 스냅샷(최근 거래일) → StockQueryService → 메모리 캐시
-        모든 소스가 비면 종목명만 반환 (graceful degradation).
+        위 소스가 모두 비면 마지막으로 알고 있는 값을 신선도 검증 없이 쓰고
+        price_stale/price_as_of 로 표시한다. 그것조차 없으면 종목명만 반환.
         """
         if market == MARKET_OVERSEAS_US:
             return await self._get_overseas_details()
@@ -166,6 +190,8 @@ class FavoriteService:
                 "name": self.stock_code_repository.get_name_by_code(code) or code,
                 "price": None,
                 "rate": None,
+                "price_stale": False,
+                "price_as_of": None,
                 "rs_rating": None,
                 "minervini_stage": None,
             }
@@ -186,7 +212,8 @@ class FavoriteService:
                       self._fill_from_query_service,
                       self._fill_from_memory_cache)
 
-        for stage in stages:
+        # 마지막으로 알고 있는 값은 장중·장외 공통 최종 단계다.
+        for stage in stages + (self._fill_from_last_known,):
             if not missing:
                 break
             missing = await stage(result, missing)
@@ -282,6 +309,65 @@ class FavoriteService:
             if not _apply_price_rate(result[code], snap):
                 still_missing.append(code)
         return still_missing
+
+    async def _fill_from_last_known(self, result: dict, missing: list) -> list:
+        """마지막으로 알고 있는 값을 신선도 검증 없이 쓰고 stale 로 표시한다.
+
+        장중에는 일봉 스냅샷이 항상 전일자라 거래일 검증에 걸려 버려지고, 메모리 캐시는
+        WebSocket 구독 밖 종목이면 3초 TTL 에 걸린다. 그래서 REST 가 한 번 밀리면
+        (429 백오프가 종목당 timeout 을 넘긴다) 화면에서 가격이 통째로 사라진다.
+        기준 시각을 붙인 옛 값이 빈 칸보다 낫다.
+        """
+        if not self.stock_repository:
+            return missing
+
+        still_missing = []
+        for code in missing:
+            entry = result[code]
+            if entry["price"] not in (None, ""):
+                # 살아있는 소스가 가격은 채웠고 등락률만 비어 남은 경우 — stale 이 아니다.
+                continue
+
+            as_of = None
+            cached = self.stock_repository.get_current_price(
+                code, max_age_sec=float("inf"), count_stats=False
+            )
+            if cached:
+                _apply_price_rate(entry, cached)
+                if entry["price"] not in (None, ""):
+                    as_of = _as_of_from_epoch(self._price_updated_at(code))
+
+            if entry["price"] in (None, ""):
+                snap = await self._last_daily_snapshot(code)
+                if snap:
+                    _apply_price_rate(entry, snap)
+                    if entry["price"] not in (None, ""):
+                        as_of = _as_of_from_trade_date(_snapshot_trade_date(snap))
+
+            if entry["price"] in (None, ""):
+                still_missing.append(code)
+                continue
+
+            entry["price_stale"] = True
+            entry["price_as_of"] = as_of
+        return still_missing
+
+    def _price_updated_at(self, code: str):
+        """캐시 저장 시각. 저장소가 제공하지 않으면 None (가격 자체는 그대로 쓴다)."""
+        getter = getattr(self.stock_repository, "get_price_updated_at", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter(code)
+        except Exception:
+            return None
+
+    async def _last_daily_snapshot(self, code: str):
+        """거래일 검증 없는 일봉 스냅샷 조회. 실패는 값 없음으로 취급한다."""
+        try:
+            return await self.stock_repository.get_latest_daily_snapshot(code)
+        except Exception:
+            return None
 
     async def _is_market_open(self) -> bool:
         """장 운영 중 여부. 캘린더 서비스가 없거나 실패하면 True (라이브 우선, 기존 동작)."""

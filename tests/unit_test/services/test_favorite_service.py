@@ -494,7 +494,7 @@ async def test_get_with_details_keeps_price_but_retries_when_rate_missing(
 async def test_get_with_details_skips_outdated_daily_snapshot(
     mock_repo, mock_stock_code_repo, mock_stock_repo
 ):
-    """최근 거래일보다 오래된 일봉 스냅샷은 현재가/등락률로 쓰지 않는다."""
+    """오래된 일봉 스냅샷은 신선한 값으로는 쓰지 않고, 최종 폴백에서만 stale 로 쓴다."""
     mock_repo.get_all.return_value = ["005930"]
     mock_stock_repo.get_current_price.return_value = None
     mock_stock_repo.get_latest_daily_snapshot.return_value = {
@@ -512,8 +512,10 @@ async def test_get_with_details_skips_outdated_daily_snapshot(
     )
     result = await svc.get_with_details()
 
-    assert result[0]["price"] is None
-    assert result[0]["rate"] is None
+    assert result[0]["price"] == "71000"
+    assert result[0]["rate"] == "1.2"
+    assert result[0]["price_stale"] is True
+    assert result[0]["price_as_of"] == "2026-08-14"
 
 
 async def test_get_with_details_uses_daily_snapshot_of_latest_trading_date(
@@ -730,3 +732,154 @@ def test_domestic_code_normalizer_only_pads_short_numeric_codes():
     assert _normalize_domestic_code("005930") == "005930"
     assert _normalize_domestic_code("AAPL") == "AAPL"
     assert _normalize_domestic_code("1234567") == "1234567"
+
+
+# ── 최종 폴백: 마지막으로 알고 있는 가격 (stale) ────────────────────────────────
+
+def _cache_that_is_only_stale(price_data):
+    """신선도 검증(max_age_sec=3.0)에는 걸리고 무제한 조회에만 응답하는 캐시."""
+    def _side_effect(code, max_age_sec=3.0, **kwargs):
+        return price_data if max_age_sec == float("inf") else None
+    return _side_effect
+
+
+async def test_get_with_details_falls_back_to_the_last_known_cached_price(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    """모든 신선한 소스가 실패하면 만료된 캐시 값이라도 stale 로 표시해 내보낸다."""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_stock_repo.get_current_price.side_effect = _cache_that_is_only_stale(
+        {"output": {"stck_prpr": "71000", "prdy_ctrt": "1.2"}}
+    )
+    mock_stock_repo.get_price_updated_at.return_value = 1789000000.0
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_repository=mock_stock_repo,
+        market_calendar_service=_mcs(market_open=True),
+    )
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] == "71000"
+    assert result[0]["rate"] == "1.2"
+    assert result[0]["price_stale"] is True
+    assert "T" in result[0]["price_as_of"]
+
+
+async def test_get_with_details_marks_a_live_price_as_fresh(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    """살아있는 소스가 값을 채우면 stale 단계에 들어가지 않는다."""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_query = AsyncMock()
+    mock_query.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="성공", data={"output": {"stck_prpr": "72000", "prdy_ctrt": "2.5"}}
+    )
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_query_service=mock_query,
+        stock_repository=mock_stock_repo,
+        market_calendar_service=_mcs(market_open=True),
+    )
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] == "72000"
+    assert result[0]["price_stale"] is False
+    assert result[0]["price_as_of"] is None
+
+
+async def test_get_with_details_falls_back_to_an_outdated_snapshot_as_stale(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    """캐시까지 비면 거래일이 지난 일봉 스냅샷을 기준일과 함께 쓴다."""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_stock_repo.get_current_price.return_value = None
+    mock_stock_repo.get_latest_daily_snapshot.return_value = {
+        "output": {"stck_prpr": "70500", "prdy_ctrt": "-0.7"},
+        "_trade_date": "20260814",
+    }
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_repository=mock_stock_repo,
+        market_calendar_service=_mcs(latest_trading_date="20260918", market_open=True),
+    )
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] == "70500"
+    assert result[0]["rate"] == "-0.7"
+    assert result[0]["price_stale"] is True
+    assert result[0]["price_as_of"] == "2026-08-14"
+
+
+async def test_get_with_details_keeps_the_row_when_even_the_last_known_price_is_gone(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    """마지막으로 알고 있는 값조차 없으면 종목명만 남긴다 (stale 로 위장하지 않는다)."""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_stock_repo.get_current_price.return_value = None
+    mock_stock_repo.get_latest_daily_snapshot.return_value = None
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_repository=mock_stock_repo,
+        market_calendar_service=_mcs(market_open=True),
+    )
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] is None
+    assert result[0]["price_stale"] is False
+    assert result[0]["price_as_of"] is None
+
+
+async def test_get_with_details_serves_a_stale_price_without_a_usable_timestamp(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    """기준 시각을 못 구해도 가격 자체는 내보낸다 (시각은 없으면 없는 대로)."""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_stock_repo.get_current_price.side_effect = _cache_that_is_only_stale(
+        {"output": {"stck_prpr": "71000", "prdy_ctrt": "1.2"}}
+    )
+    mock_stock_repo.get_price_updated_at.side_effect = AttributeError("미구현")
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_repository=mock_stock_repo,
+        market_calendar_service=_mcs(market_open=True),
+    )
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] == "71000"
+    assert result[0]["price_stale"] is True
+    assert result[0]["price_as_of"] is None
+
+
+async def test_get_with_details_does_not_mark_a_live_price_stale_when_the_rate_is_missing(
+    mock_repo, mock_stock_code_repo, mock_stock_repo
+):
+    """등락률만 비어 재조회 대상으로 남은 라이브 가격은 stale 이 아니다."""
+    mock_repo.get_all.return_value = ["005930"]
+    mock_query = AsyncMock()
+    mock_query.get_current_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="성공", data={"output": {"stck_prpr": "72000", "prdy_ctrt": None}}
+    )
+    mock_stock_repo.get_current_price.return_value = None
+    mock_stock_repo.get_latest_daily_snapshot.return_value = None
+
+    svc = FavoriteService(
+        repository=mock_repo,
+        stock_code_repository=mock_stock_code_repo,
+        stock_query_service=mock_query,
+        stock_repository=mock_stock_repo,
+        market_calendar_service=_mcs(market_open=True),
+    )
+    result = await svc.get_with_details()
+
+    assert result[0]["price"] == "72000"
+    assert result[0]["price_stale"] is False
