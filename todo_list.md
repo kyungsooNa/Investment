@@ -36,8 +36,8 @@
    - 1-8 백테스트 재실행 (CLI 노출 완료 #619 — PIT 후보/valid 캡처 코퍼스 대기. 2026-07-03 파일럿의 마켓타이밍 스캔 차단 사유는 #766/#770/#844 후속으로 무효화되어, 0거래 원인은 재확인 필요)
    - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (**안전장치는 #934/#935 로 완료 — 남은 것은 엣지 입증과 canary 배선뿐**, O-6 참조)
    - O-4 해외 dry-run 확장 전략(PP/BGU/CB/RSI2/OSB) would-be 성과 축적 → 전략별 엣지 판정. **#932 로 5종에 장중 paper 경로가 생겨 O-3 방식 교차검증(일봉 낙관 편향 실측)을 전략별로 돌릴 수 있게 됐다** — 남은 것은 표본. 저장소의 최신 통합 리포트는 아직 `20260722_20260821` 이라 08-22 이후 축적분은 재집계 필요(저비용).
-5. **[착수 가능 — 외부 의존 없음]** (**2026-09-17 재충전 → ②는 같은 날 완료, ①만 남는다.** ①은 운영 환경의 캡처 산출물이 있어야 판정할 수 있어 원격 세션에서는 진행 불가다.)
-   - **① 캡처 후보 PRICE 동반구독 회수(#964)의 코퍼스 영향 확인·결정** — 1-5 가 08-18 에 넣고 08-26 에 '해결' 로 닫은 **ES/호가 커버리지 보장**을 #964 가 되돌렸다(`price_codes = 우선주만`). 08-07 에 기록한 구조적 원인("ES·호가는 PRICE 틱에 무임승차하는데 보통주 후보엔 PT만 붙는다")이 그대로 복원된 상태다. 코퍼스 `valid_for_backtest` 판정 → 1-8 해제 조건에 직결하므로 **관찰이 아니라 확인 대상**이다. 상세·선택지는 1-5 항목.
+5. **[착수 가능 — 외부 의존 없음]** (**2026-09-21 기준 등재 항목 완료.**)
+   - **① 캡처 후보 PRICE 동반구독 회수(#964)의 코퍼스 영향 확인·결정 — 2026-09-21 완료** — 09-09~09-18 8거래일 전부 품질 게이트 실패와 ES/호가 커버리지 하락을 확인하고 캡처 후보 전체의 LOW PRICE 동반구독을 복원했다. 상세는 1-5 항목.
    - **② 알림 계약표 갱신 + 계약 가드 신설 (M-5 → M-9 패턴 적용) — 2026-09-17 완료** — `docs/notification_alert_contracts.md` 의 계약표 7행이 08-18 이후 추가된 알림 5종을 담지 않는다. 그 사각지대에서 #950(중복 첨부 문구)·#957(release dedup 키 정규화)이 실제로 재발했다 — **M-5 가 문서화로 잦아들게 한 바로 그 실패 모드**다. M-9 는 문서에 더해 구조 가드(`test_quote_subscription_contract_guard.py`)까지 걸었는데 알림 쪽엔 가드가 없다(실측: `grep notification_alert_contracts tests/` 0건). 상세는 M-5 항목.
    - **M-9 시세 갱신/캐시 키/구독 슬롯 계약 고정** — M-5 관찰 조건 충족(4일간 9건)으로 승격. 위 1~4번이 전부 외부 데이터·실계좌·사용자 결정에 막혀 있는 동안 **자체적으로 진행 가능한 유일한 실질 항목**이다. 알림 계약(`docs/notification_alert_contracts.md`) 이 같은 방식으로 재발을 잦아들게 한 선례가 있다.
      - **2026-08-30 완료**: 문서(#926) + 계약 가드 테스트(`test_quote_subscription_contract_guard.py`). 상세는 M-9 항목.
@@ -140,12 +140,11 @@
   - [x] **미구독 vs 무틱 비중 확인 및 1차 수정 (2026-08-18)**: 08-18 산출물에서 `execution_strength_missing_reasons`는 `not_subscribed` 16건, `subscribed_no_tick` 3건으로 미구독이 지배적이었다. 이에 캡처 로테이션 후보 전체에 LOW PRICE 구독을 함께 요청하도록 변경하고, `SubscriptionPolicy`가 같은 종목의 PT+PRICE 요청을 독립 슬롯으로 동시에 유지하도록 보정했다. PT-only 요청은 기존처럼 PRICE를 자동 부착하지 않아 수동/기존 PT 구독 의미는 유지한다.
   - [x] **남은 검증 완료 (2026-08-26)**: 변경 반영 후 08-19~08-26 6거래일 캡처를 `scripts.analyze_backtest_microstructure_quality --date-from 20260819 --fail-on-gate`로 확인했다. 전체 `quality_gate_passed=true`, intraday/program overlay 100%, program_db 88.4%, ES DB 71.7%, orderbook DB 68.8%, stale minute 0. 08-18은 변경 반영 전 결함일로 남아 있어 08-18부터 묶으면 실패하는 것이 정상이다.
   - ※ 남은 한계: 체결강도 시계열 커버리지가 "PRICE 구독 중 + 유틱" 종목으로 제한(무틱 ~55% — 2-4 해소 시 개선, 미커버는 EOD 스칼라 폴백; 랭킹 보충분도 PRICE 미구독이면 EOD 스칼라). 남은 것: base 종목 기준 fallback 발생 여부 일일 관찰(신기준선), QC 게이트 coverage 정의 재조정.
-- [ ] **(신규 2026-09-17, 최우선) #964 가 08-18 의 ES/호가 커버리지 보장을 되돌렸다 — 코퍼스 영향 확인·정책 결정**: 위 08-07 항목이 '미구독 지배(not_subscribed 16 vs subscribed_no_tick 3)' 를 근거로 **캡처 로테이션 후보 전체에 LOW PRICE 를 동반 구독**하게 고쳤고, 08-19~08-26 6거래일 `quality_gate_passed=true` 로 닫았다. #964(2026-09-08, `codex/program-pt-single-slot`)가 그 동반 구독을 걷어냈다 — `price_codes = [code for code in codes if self._is_preferred_stock_code(code)]` 로 **PRICE 는 우선주 전용**이 되고, 워치독의 PT 복원 경로에서도 PRICE 동반 구독·`mark_active` 가 함께 빠졌다.
-  - PR 본문(요약 3줄)은 슬롯 정책만 말하고 **캡처 QC·코퍼스 유효성은 언급하지 않는다** — 08-07~08-26 의 진단·수정·검증 맥락과 연결되지 않은 채 머지됐다. 태스크 클래스 docstring 첫 줄은 여전히 "PT·체결강도·최우선 호가 시계열을 축적한다" 이고, 보통주에 대해서는 이제 사실이 아니다(안전 설계 절은 #964 가 갱신했다).
-  - **조용히 깨지지는 않는다** — `_observe_price_subscribed` 와 `execution_strength_missing_reasons`(`not_subscribed`/`subscribed_no_tick`) 계측은 그대로라, 영향이 있으면 QC 산출물에 `not_subscribed` 로 나타난다. 즉 **이 항목의 1단계는 코드 수정이 아니라 09-09 이후 캡처 산출물 확인**이다.
-  - 확인 절차: `python -m scripts.analyze_backtest_microstructure_quality --date-from 20260909 --fail-on-gate` 로 `execution_strength_db_coverage_pct` · `orderbook_db_coverage_pct` · `valid_for_backtest` 를 09-08 이전 기준선(ES 71.7% / 호가 68.8% / 전부 pass)과 대조한다. (원격 세션에는 `data/` 산출물이 없어 **운영 환경에서만 판정 가능**하다.)
-  - 결과별 선택지 — ① 커버리지가 임계 아래로 내려갔다면: 슬롯 경제(#964 의 목적)와 코퍼스 유효성이 충돌하므로 **캡처 카테고리에 한해** PRICE 동반 구독을 되살릴지, 아니면 로테이션 묶음을 줄여 슬롯을 벌지 사용자 결정이 필요하다. ② 기준선을 유지한다면 08-18 의 동반 구독이 애초에 불필요했다는 뜻이므로 **08-07 의 구조적 원인 기록을 정정**하고 QC 임계를 재조정한다. 둘 중 무엇이든 `ProgramCaptureSubscriptionTask` 의 목적 서술과 실제 보장 범위를 일치시킨다.
-  - ⚠ 이 항목은 1-8 해제 조건 (a)(`valid_for_backtest=true` 코퍼스 축적)의 전제라 **엣지 검증 크리티컬 패스에 직접 얹혀 있다.**
+- [x] **(2026-09-17 등재 → 2026-09-21 완료) #964 가 되돌린 ES/호가 커버리지 보장 복원**: 위 08-07 항목이 '미구독 지배(not_subscribed 16 vs subscribed_no_tick 3)' 를 근거로 **캡처 로테이션 후보 전체에 LOW PRICE 를 동반 구독**하게 고쳤고, 08-19~08-26 6거래일 `quality_gate_passed=true` 로 닫았다. #964(2026-09-08, `codex/program-pt-single-slot`)가 그 동반 구독을 걷어내 PRICE를 우선주 전용으로 만들었다.
+  - PR 본문(요약 3줄)은 슬롯 정책만 말하고 **캡처 QC·코퍼스 유효성은 언급하지 않았다** — 08-07~08-26 의 진단·수정·검증 맥락과 연결되지 않은 채 머지됐다. 복원 시 태스크 docstring의 안전 설계도 후보 전체 PRICE 보장을 명시하도록 바로잡았다.
+  - **영향 확인**: `python -m scripts.analyze_backtest_microstructure_quality --date-from 20260909 --date-to 20260918 --fail-on-gate` 결과, 8거래일 전부 실패했다. ES DB 커버리지는 종전 통과 기준선 71.7%에서 45.0%로, 호가 DB 커버리지는 68.8%에서 35.1%로 하락했다. intraday와 program overlay는 100%라 실패 축도 PRICE 의존 데이터로 한정됐다.
+  - **정책 결정·수정**: 코퍼스 유효성을 우선해 `ProgramCaptureSubscriptionTask`가 회전 배치 전체를 LOW PRICE로 동반 구독하도록 복원했다. 우선주는 프로그램매매 tick이 없으므로 기존대로 PT에서는 제외하고 PRICE만 구독한다. 재시작 시에도 저장된 PRICE 후보 전체를 복원한다. 슬롯 압박은 코퍼스 계약을 제거하지 않고 로테이션 크기로 조정한다.
+  - 후속: 변경 반영 뒤 새 캡처에서 품질 게이트 재통과를 확인해야 한다. 그 전까지 1-8 해제 조건 (a)는 충족된 것으로 보지 않는다.
 - [blocked — 캡처 코퍼스 축적 후] 실제 replay fixture를 통과 케이스까지 확장 → replay overlay.
 - [ ] 한국장 실전 microstructure fixture(bid/ask book·잔량·체결강도·프로그램매매 overlay)로 체결 모델 보정 + 시장가/최유리/지정가별 fill quality가 live journal과 얼마나 벌어지는지 리포트.
 
