@@ -85,14 +85,14 @@ async def test_open_tick_syncs_candidates_low_priority_pt_and_persists():
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
         call(
-            [],
+            ["005930", "000660", "035420"],
             PRICE_CATEGORY,
             SubscriptionPriority.LOW,
             StreamingType.UNIFIED_PRICE,
         ),
     ]
     assert store.load_keyed("program_capture_subscribed_codes") == "005930,000660,035420"
-    assert store.load_keyed("price_capture_subscribed_codes") == ""
+    assert store.load_keyed("price_capture_subscribed_codes") == "005930,000660,035420"
     assert task.get_progress()["synced_date"] == "20260703"
 
 
@@ -240,7 +240,7 @@ async def test_excludes_manual_pt_desired_and_caps_max_codes():
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
         call(
-            [],
+            ["035420", "084370"],
             PRICE_CATEGORY,
             SubscriptionPriority.LOW,
             StreamingType.UNIFIED_PRICE,
@@ -272,8 +272,8 @@ async def test_program_sourced_pt_desired_is_still_a_capture_candidate():
 
 
 @pytest.mark.asyncio
-async def test_preferred_stocks_use_price_only_instead_of_program_subscription():
-    """프로그램매매 tick이 없는 우선주는 PRICE 캡처로 분리한다."""
+async def test_all_candidates_use_price_while_preferred_stocks_skip_program_subscription():
+    """모든 후보는 PRICE로 캡처하고 프로그램매매 tick이 없는 우선주는 PT를 생략한다."""
     universe_service = MagicMock()
     universe_service.get_watchlist = AsyncMock(
         return_value={
@@ -299,7 +299,7 @@ async def test_preferred_stocks_use_price_only_instead_of_program_subscription()
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
         call(
-            ["000885", "005935", "051915"], PRICE_CATEGORY,
+            ["005930", "000885", "005935", "000660", "051915"], PRICE_CATEGORY,
             SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE,
         ),
     ]
@@ -325,8 +325,8 @@ async def test_restart_does_not_restore_preferred_stock_subscription():
 
 
 @pytest.mark.asyncio
-async def test_restart_restores_only_preferred_stocks_from_price_capture_store():
-    """구버전 PRICE companion 저장 잔재는 일반주를 다시 가격 구독으로 복원하지 않는다."""
+async def test_restart_restores_all_candidates_from_price_capture_store():
+    """재시작 시 저장된 PRICE companion 후보 전체를 복원한다."""
     store = _FakeStore()
     store.save_keyed("price_capture_subscribed_codes", "005930,005935")
     task, policy = _make_task(scheduler_store=store, market_clock=_clock(open_now=False))
@@ -335,7 +335,7 @@ async def test_restart_restores_only_preferred_stocks_from_price_capture_store()
 
     assert policy.sync_subscriptions.await_args_list == [
         call(
-            ["005935"], PRICE_CATEGORY,
+            ["005930", "005935"], PRICE_CATEGORY,
             SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE,
         ),
         call([], CATEGORY, SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING),
@@ -398,7 +398,7 @@ async def test_rotates_capture_batch_every_thirty_minutes():
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
         call(
-            [],
+            ["000010", "000020", "000030"],
             PRICE_CATEGORY,
             SubscriptionPriority.LOW,
             StreamingType.UNIFIED_PRICE,
@@ -408,7 +408,7 @@ async def test_rotates_capture_batch_every_thirty_minutes():
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
         call(
-            [],
+            ["000040", "000050", "000060"],
             PRICE_CATEGORY,
             SubscriptionPriority.LOW,
             StreamingType.UNIFIED_PRICE,
@@ -438,7 +438,7 @@ async def test_preferred_stock_in_rotation_batch_uses_price_only_subscription():
             SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
         ),
         call(
-            ["005935"], PRICE_CATEGORY,
+            ["005935", "000660"], PRICE_CATEGORY,
             SubscriptionPriority.LOW, StreamingType.UNIFIED_PRICE,
         ),
     ]

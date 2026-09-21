@@ -24,7 +24,8 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
     안전 설계:
       - SubscriptionPriority.LOW → 트레이딩용 price 구독(HIGH/MEDIUM)을 밀어내지
         않으며, 30분마다 제한된 묶음을 순환한다.
-      - 일반 후보는 PT만 구독하고, 프로그램매매 tick이 없는 우선주는 PRICE 전용으로 수집한다.
+      - 모든 후보에 PRICE를 동반 구독해 체결강도·최우선 호가 커버리지를 보장하고,
+        프로그램매매 tick이 없는 우선주는 PRICE 전용으로 수집한다.
       - 수동 UI로 이미 PT desired인 종목은 대상에서 제외해 해지/영속 상태 간섭을 막는다.
       - 구독 목록을 scheduler_store에 영속화 — 크래시 잔재를 재시작 시 카테고리로
         재편입한 뒤 해지해 pt_subscriptions 영구 오염을 방지한다.
@@ -187,7 +188,7 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
             self._observe_price_subscribed(today)
             codes = self._select_rotation_batch(codes, now)
             pt_codes = [code for code in codes if not self._is_preferred_stock_code(code)]
-            price_codes = [code for code in codes if self._is_preferred_stock_code(code)]
+            price_codes = list(codes)
             await self._policy.sync_subscriptions(
                 pt_codes, self.CATEGORY_KEY,
                 SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
@@ -335,7 +336,7 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
         if state_key in (None, self._state_key):
             return [code for code in codes if not self._is_preferred_stock_code(code)]
         if state_key == self._price_state_key:
-            return [code for code in codes if self._is_preferred_stock_code(code)]
+            return codes
         return codes
 
     def _save_codes(self, codes: List[str], state_key: Optional[str] = None) -> None:
