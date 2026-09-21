@@ -13,6 +13,32 @@ from services.trade_trend_service import (
 
 _CUSTOMS_TRADE_CACHE_AMOUNT_UNIT = "usd"
 
+_NATIONAL_RELEASE_ENRICHMENT_FIELDS = (
+    "export_mom_change_100m_usd",
+    "export_mom_pct",
+    "export_daily_avg_100m_usd",
+    "export_daily_avg_mom_pct",
+    "import_mom_change_100m_usd",
+    "import_mom_pct",
+    "import_daily_avg_100m_usd",
+    "import_daily_avg_mom_pct",
+    "trade_balance_mom_change_100m_usd",
+    "semiconductor_export_amount_100m_usd",
+    "semiconductor_yoy_pct",
+    "semiconductor_mom_change_100m_usd",
+    "semiconductor_mom_pct",
+    "semiconductor_daily_avg_100m_usd",
+    "semiconductor_daily_avg_mom_pct",
+    "semiconductor_import_amount_100m_usd",
+    "semiconductor_import_yoy_pct",
+    "semiconductor_import_mom_change_100m_usd",
+    "semiconductor_import_mom_pct",
+    "semiconductor_import_daily_avg_100m_usd",
+    "semiconductor_import_daily_avg_mom_pct",
+    "semiconductor_export_share_pct",
+    "working_days_current",
+)
+
 
 class TradeTrendRepository:
     def __init__(self, path: Union[str, Path] = "data/trade_trend_state.json") -> None:
@@ -29,6 +55,28 @@ class TradeTrendRepository:
     def mark_sent(self, key: str) -> None:
         self._sent_keys.add(key)
         self._save()
+
+    def should_send_national_release(
+        self,
+        release: NationalTradeTrendRelease,
+    ) -> bool:
+        if not self.has_sent(release.dedup_key):
+            return True
+        previous = next(
+            (
+                item
+                for item in self._national_release_history
+                if item.get("dedup_key") == release.dedup_key
+            ),
+            None,
+        )
+        if not previous or previous.get("source_type") != "sent":
+            return False
+        current = _national_release_to_dict(release)
+        return any(
+            previous.get(field) is None and current.get(field) is not None
+            for field in _NATIONAL_RELEASE_ENRICHMENT_FIELDS
+        )
 
     def mark_national_release_sent(
         self,
