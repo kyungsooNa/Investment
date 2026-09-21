@@ -214,7 +214,7 @@ class TradeTrendMonitorTask(SchedulableTask):
             return
         releases = await self._national_client.fetch_recent_releases()
         for release in releases:
-            if self._repository.has_sent(release.dedup_key):
+            if not self._repository.should_send_national_release(release):
                 continue
             sent = await self._reporter.send_national_trade_trend_report(release)
             if sent:

@@ -1,7 +1,8 @@
 import asyncio
+from dataclasses import replace
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -100,6 +101,57 @@ async def test_tick_sends_national_trade_releases_once(tmp_path):
 
     reporter.send_national_trade_trend_report.assert_awaited_once_with(release)
     assert task.get_progress()["national_sent_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_national_release_is_resent_once_when_semiconductor_data_is_completed(tmp_path):
+    partial = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_20d",
+        title="2026년 9월 1일 ~ 9월 20일 수출입 현황 [잠정치]",
+        url="https://customs.example/20d",
+        period_label="2026년 9월 1~20일",
+        export_amount_100m_usd=714.09,
+        export_yoy_pct=78.3,
+        import_amount_100m_usd=484.43,
+        import_yoy_pct=26.7,
+        semiconductor_export_amount_100m_usd=341.28,
+        semiconductor_yoy_pct=259.4,
+    )
+    completed = replace(
+        partial,
+        semiconductor_mom_change_100m_usd=80.96,
+        semiconductor_mom_pct=31.1,
+        semiconductor_daily_avg_mom_pct=18.4,
+        semiconductor_import_amount_100m_usd=87.42,
+        semiconductor_import_yoy_pct=88.8,
+        semiconductor_import_mom_change_100m_usd=12.72,
+        semiconductor_import_mom_pct=17.0,
+        semiconductor_import_daily_avg_mom_pct=5.7,
+    )
+    national_client = SimpleNamespace(
+        fetch_recent_releases=AsyncMock(
+            side_effect=[[partial], [completed], [completed]],
+        )
+    )
+    reporter = SimpleNamespace(
+        send_national_trade_trend_report=AsyncMock(return_value=True),
+    )
+    task = _task(tmp_path, national_client=national_client, reporter=reporter)
+
+    await task._send_national_releases()
+    await task._send_national_releases()
+    await task._send_national_releases()
+
+    assert reporter.send_national_trade_trend_report.await_args_list == [
+        call(partial),
+        call(completed),
+    ]
+    assert task.get_progress()["national_sent_count"] == 2
+    history = task.get_national_release_history()
+    assert len(history) == 1
+    assert history[0]["semiconductor_import_amount_100m_usd"] == 87.42
+    assert history[0]["semiconductor_import_mom_pct"] == 17.0
 
 
 @pytest.mark.asyncio
