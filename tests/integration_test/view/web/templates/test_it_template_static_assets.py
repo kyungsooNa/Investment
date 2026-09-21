@@ -147,6 +147,19 @@ def test_navigation_separates_domestic_overseas_and_common_areas(web_client_with
     assert '>미국장<' in page.text
 
 
+def test_navigation_uses_left_sidebar_layout(web_client_with_fake_ctx):
+    page = web_client_with_fake_ctx.get("/stock")
+
+    assert page.status_code == 200
+    assert '<div class="app-layout">' in page.text
+    assert '<aside class="sidebar" aria-label="주 내비게이션">' in page.text
+
+    stylesheet = Path("view/web/static/css/style.css").read_text(encoding="utf-8")
+    assert "grid-template-columns: 220px minmax(0, 1fr);" in stylesheet
+    assert ".sidebar" in stylesheet
+    assert "flex-direction: column;" in stylesheet
+
+
 def test_strategy_scheduler_navigation_is_split_by_market(web_client_with_fake_ctx):
     """전략 스케줄러는 공통이 아니라 한국장/미국장 상단 탭 아래로 분리된다."""
     domestic = web_client_with_fake_ctx.get("/scheduler")

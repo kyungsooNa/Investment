@@ -156,21 +156,37 @@ body {
 .badge.ks-tripped { background: #f38ba8; color: #1e1e2e; cursor: pointer; animation: ks-pulse 1.2s ease-in-out infinite; }
 @keyframes ks-pulse { 0%,100% { opacity:1; } 50% { opacity:0.55; } }
 
+/* Left navigation layout */
+.app-layout {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    min-height: calc(100vh - 53px);
+}
+
+.sidebar {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    min-height: 100vh;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+}
+
 /* Market navigation */
 .market-nav {
     display: flex;
+    flex-direction: column;
     gap: 6px;
-    padding: 8px 24px 0;
+    padding: 16px 14px;
     background: var(--bg-secondary);
-    overflow-x: auto;
+    border-bottom: 1px solid var(--border);
 }
 
 .market-nav a {
     color: var(--text-secondary);
-    padding: 8px 18px;
+    padding: 9px 12px;
     border: 1px solid var(--border);
-    border-bottom: none;
-    border-radius: 8px 8px 0 0;
+    border-radius: 6px;
     text-decoration: none;
     white-space: nowrap;
     font-size: 0.9rem;
@@ -187,9 +203,9 @@ body {
 /* Feature navigation */
 .nav {
     display: flex;
+    flex-direction: column;
+    padding: 10px 0;
     background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border);
-    overflow-x: auto;
 }
 
 .page-title-row {
@@ -230,11 +246,6 @@ body {
         justify-content: flex-end;
     }
 
-    .market-nav {
-        padding-left: 14px;
-        padding-right: 14px;
-    }
-
     .nav button, .nav a {
         padding: 10px 14px;
     }
@@ -247,7 +258,7 @@ body {
     padding: 12px 20px;
     cursor: pointer;
     font-size: 0.9rem;
-    border-bottom: 2px solid transparent;
+    border-left: 3px solid transparent;
     white-space: nowrap;
     transition: all 0.2s;
     text-decoration: none;
@@ -258,11 +269,54 @@ body {
 .nav button:hover, .nav a:hover { color: var(--text-primary); }
 .nav button.active, .nav a.active {
     color: var(--accent);
-    border-bottom-color: var(--accent);
+    background: var(--bg-primary);
+    border-left-color: var(--accent);
 }
 
 /* Main */
-.main { padding: 20px; max-width: 1200px; margin: 0 auto; }
+.main { width: 100%; padding: 20px; max-width: 1200px; margin: 0 auto; }
+
+@media (max-width: 760px) {
+    .app-layout {
+        display: block;
+        min-height: 0;
+    }
+
+    .sidebar {
+        position: static;
+        min-height: 0;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .market-nav {
+        flex-direction: row;
+        padding: 8px 14px 0;
+        overflow-x: auto;
+    }
+
+    .market-nav a {
+        padding: 8px 14px;
+        border-bottom: none;
+        border-radius: 8px 8px 0 0;
+    }
+
+    .nav {
+        flex-direction: row;
+        padding: 0;
+        overflow-x: auto;
+    }
+
+    .nav button, .nav a {
+        border-left: none;
+        border-bottom: 2px solid transparent;
+    }
+
+    .nav button.active, .nav a.active {
+        background: none;
+        border-bottom-color: var(--accent);
+    }
+}
 
 .section { display: none; }
 .section.active { display: block; }
