@@ -35,7 +35,7 @@
 4. **[데이터·정책 대기]**
    - 1-8 백테스트 재실행 (CLI 노출 완료 #619 — PIT 후보/valid 캡처 코퍼스 대기. 2026-07-03 파일럿의 마켓타이밍 스캔 차단 사유는 #766/#770/#844 후속으로 무효화되어, 0거래 원인은 재확인 필요)
    - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (**안전장치는 #934/#935 로 완료 — 남은 것은 엣지 입증과 canary 배선뿐**, O-6 참조)
-   - O-4 해외 dry-run 확장 전략(PP/BGU/CB/RSI2/OSB) would-be 성과 축적 → 전략별 엣지 판정. **#932 로 5종에 장중 paper 경로가 생겨 O-3 방식 교차검증(일봉 낙관 편향 실측)을 전략별로 돌릴 수 있게 됐다** — 남은 것은 표본. 저장소의 최신 통합 리포트는 아직 `20260722_20260821` 이라 08-22 이후 축적분은 재집계 필요(저비용).
+   - O-4 해외 dry-run 확장 전략(PP/BGU/CB/RSI2/OSB) would-be 성과 축적 → 전략별 엣지 판정. **2026-09-21 재집계 완료**: 08-24~09-21 통합 리포트에서 RSI2만 일봉 재구성 기준 canary 후보였으나 장중 교차표본이 1건뿐이라 전환은 보류한다. 상세는 O-4 항목.
 5. **[착수 가능 — 외부 의존 없음]** (**2026-09-21 기준 등재 항목 완료.**)
    - **① 캡처 후보 PRICE 동반구독 회수(#964)의 코퍼스 영향 확인·결정 — 2026-09-21 완료** — 09-09~09-18 8거래일 전부 품질 게이트 실패와 ES/호가 커버리지 하락을 확인하고 캡처 후보 전체의 LOW PRICE 동반구독을 복원했다. 상세는 1-5 항목.
    - **② 알림 계약표 갱신 + 계약 가드 신설 (M-5 → M-9 패턴 적용) — 2026-09-17 완료** — `docs/notification_alert_contracts.md` 의 계약표 7행이 08-18 이후 추가된 알림 5종을 담지 않는다. 그 사각지대에서 #950(중복 첨부 문구)·#957(release dedup 키 정규화)이 실제로 재발했다 — **M-5 가 문서화로 잦아들게 한 바로 그 실패 모드**다. M-9 는 문서에 더해 구조 가드(`test_quote_subscription_contract_guard.py`)까지 걸었는데 알림 쪽엔 가드가 없다(실측: `grep notification_alert_contracts tests/` 0건). 상세는 M-5 항목.
@@ -274,6 +274,8 @@
 - [x] **분석기 다전략 확장 (2026-08-22)**: `scripts/analyze_overseas_dryrun.py --all-sources`가 VBO/PP/BGU/CB/RSI2/OSB shadow source를 함께 읽고, 당일 실현손익이 없는 PP/BGU/CB/RSI2/OSB 신호도 표본에서 누락하지 않는다. JSON/Markdown 리포트와 멀티데이 리포트에 전략별 신호 수·실현 표본·승률/평균 수익률 집계를 추가했다.
 - [x] **성과 판정 자동화 (2026-08-23)**: `scripts/analyze_overseas_dryrun.py`가 기본으로 `edge_judgement`를 생성해 5거래일 미만(`WAIT_DAYS`), 전략별 표본 부족(`WAIT_SAMPLE`), 비용후 평균 수익률 음수/0 이하(`FAIL_NEGATIVE_EDGE`), canary 후보(`PASS_CANDIDATE`)를 분리한다. 전체 판정은 `WAIT_DATA` / `NO_GO` / `CANARY_CANDIDATE`로 JSON·Markdown에 함께 노출한다.
 - [x] **누적 표본 1차 점검 (2026-08-22)**: 20260722~20260821 shadow journal 통합 리포트(`reports/overseas_dryrun_all_sources_20260722_20260821.md`)를 생성했다. 현재 누적분은 VBO 523건뿐이며 PP/BGU/CB source는 아직 0건이다. VBO는 비용후 평균 −1.054%, 멀티데이 재구성 평균 −1.624%로 Phase 5 근거가 없고, PP/BGU/CB는 전략 불가 판정이 아니라 **표본 미축적** 상태다.
+- [x] **08-22 이후 재집계 (2026-09-21)**: 20260824~20260921 shadow journal 18거래일을 최신 일봉으로 재구성해 `reports/overseas_dryrun_all_sources_20260824_20260921.md`를 생성했다. 비용 0.5% 반영 멀티데이 결과는 VBO 391건 **−1.873%**, PP 24건 **−2.792%**, RSI2 59건 **+0.762%**, OSB 1건 **−7.400%**이며 BGU/CB는 신호가 없다. 자동 판정은 RSI2 때문에 `CANARY_CANDIDATE`지만, 이는 일봉 재구성 판정이다.
+  - RSI2 장중 paper 교차표본은 NVDA 1건뿐이다. 일봉 진입가 218.4282 대비 장중 진입가 218.615로 슬리피지 **+0.086%**, 장중 실현 −0.016%에서 왕복비용 0.5%를 빼면 **−0.516%**다. 표본 1건으로 일봉 +0.762%를 반증하거나 확정할 수 없으므로 canary 전환은 보류하고 장중 왕복 표본을 더 축적한다.
 - [x] **RSI2 dry-run 추가 (2026-08-22)**: 돌파류와 다른 평균회귀 축을 보기 위해 해외 RSI2 Pullback dry-run을 suite에 추가했다. 국내 Minervini Stage2는 해외에 같은 데이터 소스가 없어 일봉 `close > 200MA` 장기 상승추세로 대체하고, RSI(2) ≤ 10 종가 신호를 기록한다. 실주문 경로 없음.
 - [x] **OSB dry-run 추가 (2026-08-23)**: 국내 `OneilSqueezeBreakoutStrategy` 중 해외 일봉으로 재현 가능한 스퀴즈 + 20일 고점 돌파 + 거래량 폭증 + 캔들 품질 조건을 suite에 추가했다. 국내 전용 프로그램 순매수·체결강도·마켓타이밍 필터는 신호 metadata의 `excluded_filters`로 명시하고 실주문 경로는 두지 않는다.
 
@@ -296,7 +298,7 @@
 
 해외 dry-run 이 VBO 단일에서 4전략으로 늘었는데 todo 에는 미등재였다. `O'NeilPP_overseas`(#874) · `O'NeilBGU_overseas`(#875) · `LarryWilliamsCB_overseas`(#877) 를 `OverseasDryRunSuiteService` 가 한 after-market 태스크에서 합성 실행하고, 완료 알림은 전략 라벨(VBO/PP/BGU/CB)별 신호 수·예시 종목을 요약한다(#876). 주문 경로는 없다(dry-run 서비스는 `order_execution` 의존을 갖지 않는다).
 
-- [ ] **전략별 would-be 성과 축적·판정** — 분석 경로는 `--all-sources`/`DEFAULT_SIGNAL_SOURCES` 와 `edge_judgement` 로 갖춰졌다(VBO·PP·BGU·CB·RSI2·OSB 저널 집계, 당일 실현손익 없는 신호도 표본 유지). 남은 것은 5거래일+ 실제 표본 축적 후 O-3 와 같은 기준(왕복비용 0.5%, 비관·낙관 bracket)으로 출력된 전략별 판정을 확인하는 것이다.
+- [~] **전략별 would-be 성과 축적·판정** — 2026-09-21 재집계에서 VBO·PP는 비용후 음수, RSI2는 일봉 기준 양수, OSB는 표본 부족, BGU·CB는 무신호로 갈렸다. 남은 것은 RSI2를 포함한 장중 paper 왕복 표본 축적과 일봉 낙관 편향 교차검증이다.
 - [x] **전략별 실행 여부 가시화 (2026-08-26, #929)** — 표본 축적을 기다리는 축인데, 전략이 **실제로 돌았는지**를 확인할 신호가 없었다. `OverseasDryRunSuiteService` 가 서비스 예외를 삼키고 `continue` 했고(로그만), 완료 알림은 신호가 나온 라벨만 나열해 **0건 전략과 매일 죽는 전략과 배선 누락이 모두 "부재"로 똑같이 보였다**. suite 에 `last_run_report`(전략별 `ok`/`signals`/`error`)를 추가하고, 태스크가 이를 라벨 목록의 기준으로 삼아 `- PP: 0개` / `- CB: 실행 실패 (사유)` 까지 남기도록 했다. 실패가 있으면 알림 레벨을 WARNING 으로 올리고 `overseas_dryrun_strategy_failed` 를 전략별로 로깅한다. 리포트를 못 주는 서비스는 기존 신호 기반 요약으로 폴백한다.
 - [~] **일봉 낙관 편향 보정치는 VBO 에서만 실측됐다 — 다른 전략도 실측 가능해졌다 (2026-08-30 갱신)**: O-3 교차검증의 진입 슬리피지 +0.462%p·낙관 과대 1.138%p 는 VBO 장중 paper 대조로 얻은 값이다. "신규 3전략에는 장중 paper 경로가 없다" 던 기록은 **#932 로 무효** — CB/RSI2/BGU/OSB/PP 전부 `services/overseas_intraday_*_service.py` 를 갖췄다. 따라서 남은 것은 경로가 아니라 표본이고, 전략별로 `compare_overseas_intraday_vs_daily` 와 같은 대조를 돌릴 수 있다.
   - 그때까지는 **여전히 일봉 수치를 실행 기대값으로 읽지 말 것** — 전략별 실측이 나오기 전에는 VBO 편향폭(1.138%p)을 하한 보정으로 얹어 해석한다.

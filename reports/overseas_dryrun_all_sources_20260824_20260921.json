@@ -1,0 +1,291 @@
+{
+  "decidability": {
+    "decided": 259,
+    "undecided": 132,
+    "undecided_ratio": 0.3375959079283887,
+    "decided_avg_realized_pct": 0.5268940507207229,
+    "decided_win_rate": 0.555984555984556,
+    "pessimistic_avg_realized_pct": -0.663770948499572,
+    "optimistic_avg_realized_pct": 0.3591114867289321,
+    "optimistic_sample": 391
+  },
+  "totals": {
+    "signals": 475,
+    "realized_sample": 391,
+    "wins": 144,
+    "losses": 247,
+    "win_rate": 0.36828644501278773,
+    "avg_realized_pct": -0.663770948499572,
+    "median_realized_pct": -0.6997327316437763,
+    "sum_realized_pct": -259.53444086333263,
+    "min_realized_pct": -3.0000000000000138,
+    "max_realized_pct": 10.936316297010595
+  },
+  "by_exit_reason": {
+    "undecided": 132,
+    "eod": 259,
+    "unknown": 84
+  },
+  "by_strategy": {
+    "OSB": {
+      "signals": 1,
+      "realized_sample": 0,
+      "wins": 0,
+      "sum_realized_pct": 0.0
+    },
+    "PP": {
+      "signals": 24,
+      "realized_sample": 0,
+      "wins": 0,
+      "sum_realized_pct": 0.0
+    },
+    "RSI2": {
+      "signals": 59,
+      "realized_sample": 0,
+      "wins": 0,
+      "sum_realized_pct": 0.0
+    },
+    "VBO": {
+      "signals": 391,
+      "realized_sample": 391,
+      "wins": 144,
+      "sum_realized_pct": -259.53444086333263
+    }
+  },
+  "by_exchange": {
+    "NASD": {
+      "signals": 475,
+      "wins": 144,
+      "sum_realized_pct": -259.53444086333263
+    }
+  },
+  "by_date": {
+    "20260824": {
+      "signals": 17,
+      "wins": 7,
+      "sum_realized_pct": -8.730656656101608
+    },
+    "20260825": {
+      "signals": 17,
+      "wins": 4,
+      "sum_realized_pct": -20.422730857822007
+    },
+    "20260826": {
+      "signals": 24,
+      "wins": 11,
+      "sum_realized_pct": -3.386308193775191
+    },
+    "20260827": {
+      "signals": 20,
+      "wins": 10,
+      "sum_realized_pct": -5.475518349426015
+    },
+    "20260828": {
+      "signals": 18,
+      "wins": 5,
+      "sum_realized_pct": -12.803521188158816
+    },
+    "20260831": {
+      "signals": 20,
+      "wins": 9,
+      "sum_realized_pct": -3.797482781857842
+    },
+    "20260901": {
+      "signals": 25,
+      "wins": 6,
+      "sum_realized_pct": -28.87371366900876
+    },
+    "20260902": {
+      "signals": 23,
+      "wins": 9,
+      "sum_realized_pct": -12.087599847759492
+    },
+    "20260903": {
+      "signals": 32,
+      "wins": 11,
+      "sum_realized_pct": -28.348970634156476
+    },
+    "20260904": {
+      "signals": 27,
+      "wins": 6,
+      "sum_realized_pct": -27.69214585025276
+    },
+    "20260909": {
+      "signals": 16,
+      "wins": 5,
+      "sum_realized_pct": -17.219562533759103
+    },
+    "20260910": {
+      "signals": 44,
+      "wins": 11,
+      "sum_realized_pct": -31.2690035896726
+    },
+    "20260911": {
+      "signals": 34,
+      "wins": 10,
+      "sum_realized_pct": -21.918192871020498
+    },
+    "20260914": {
+      "signals": 48,
+      "wins": 14,
+      "sum_realized_pct": -28.585398856765824
+    },
+    "20260915": {
+      "signals": 22,
+      "wins": 1,
+      "sum_realized_pct": -14.259856412376847
+    },
+    "20260916": {
+      "signals": 28,
+      "wins": 5,
+      "sum_realized_pct": -7.700101238835332
+    },
+    "20260917": {
+      "signals": 17,
+      "wins": 5,
+      "sum_realized_pct": -11.211416028291755
+    },
+    "20260918": {
+      "signals": 43,
+      "wins": 15,
+      "sum_realized_pct": 24.247738695707746
+    }
+  },
+  "sizing": {
+    "sized_count": 475,
+    "total_notional_usd": 389311.9263,
+    "avg_notional_usd": 819.6041,
+    "fx_sized_count": 0,
+    "total_krw_exposure": 0.0,
+    "avg_krw_exposure": null
+  },
+  "config": {
+    "date_from": "20260824",
+    "date_to": "20260921",
+    "signal_source": [
+      "overseas_dryrun",
+      "overseas_pp_dryrun",
+      "overseas_bgu_dryrun",
+      "overseas_cb_dryrun",
+      "overseas_rsi2_dryrun",
+      "overseas_osb_dryrun"
+    ],
+    "shadow_dir": "logs/strategies/event_shadow",
+    "round_trip_cost_pct": 0.5,
+    "cost_model": "commission_only",
+    "entry_price_assumption": "daily_breakout_target",
+    "ohlcv_dir": "data/overseas_ohlcv",
+    "edge_judgement": {
+      "enabled": true,
+      "min_trading_days": 5,
+      "min_strategy_sample": 5,
+      "min_avg_return_pct": 0.0
+    }
+  },
+  "multiday": {
+    "reconstructed_count": 475,
+    "unmatched_count": 0,
+    "wins": 126,
+    "losses": 349,
+    "win_rate": 0.26526315789473687,
+    "avg_holding_days": 2.4357894736842107,
+    "net_return_pct": {
+      "avg": -1.6036923036942383,
+      "median": -3.5000000000000027,
+      "sum": -761.7538442547632,
+      "min": -11.063288101575118,
+      "max": 19.342313976421977
+    },
+    "gross_return_pct": {
+      "avg": -1.1036923036942383,
+      "median": -3.0000000000000027,
+      "sum": -524.2538442547632,
+      "min": -10.563288101575118,
+      "max": 19.842313976421977
+    },
+    "by_exit_reason": {
+      "stop": 297,
+      "terminal": 135,
+      "trailing": 43
+    },
+    "by_strategy": {
+      "OSB": {
+        "count": 1,
+        "avg_net_return_pct": -7.3996301492156515
+      },
+      "PP": {
+        "count": 24,
+        "avg_net_return_pct": -2.7917997380448107
+      },
+      "RSI2": {
+        "count": 59,
+        "avg_net_return_pct": 0.7619559858712206
+      },
+      "VBO": {
+        "count": 391,
+        "avg_net_return_pct": -1.872906454114768
+      }
+    },
+    "same_day_vs_multiday": {
+      "same_day_avg_realized_pct": -0.663770948499572,
+      "multiday_avg_gross_pct": -1.1036923036942383,
+      "gap_pct": -0.43992135519466635
+    },
+    "params": {
+      "trailing_stop_pct": 8.0,
+      "time_stop_days": 20,
+      "round_trip_cost_pct": 0.5
+    }
+  },
+  "edge_judgement": {
+    "overall_decision": "CANARY_CANDIDATE",
+    "trading_days": 18,
+    "min_trading_days": 5,
+    "min_strategy_sample": 5,
+    "min_avg_return_pct": 0.0,
+    "strategies": {
+      "VBO": {
+        "status": "FAIL_NEGATIVE_EDGE",
+        "signals": 391,
+        "sample": 391,
+        "avg_return_pct": -1.872906454114768,
+        "avg_return_basis": "multiday_net"
+      },
+      "PP": {
+        "status": "FAIL_NEGATIVE_EDGE",
+        "signals": 24,
+        "sample": 24,
+        "avg_return_pct": -2.7917997380448107,
+        "avg_return_basis": "multiday_net"
+      },
+      "BGU": {
+        "status": "NO_SIGNALS",
+        "signals": 0,
+        "sample": 0,
+        "avg_return_pct": null,
+        "avg_return_basis": "same_day_realized"
+      },
+      "CB": {
+        "status": "NO_SIGNALS",
+        "signals": 0,
+        "sample": 0,
+        "avg_return_pct": null,
+        "avg_return_basis": "same_day_realized"
+      },
+      "RSI2": {
+        "status": "PASS_CANDIDATE",
+        "signals": 59,
+        "sample": 59,
+        "avg_return_pct": 0.7619559858712206,
+        "avg_return_basis": "multiday_net"
+      },
+      "OSB": {
+        "status": "WAIT_SAMPLE",
+        "signals": 1,
+        "sample": 1,
+        "avg_return_pct": -7.3996301492156515,
+        "avg_return_basis": "multiday_net"
+      }
+    }
+  }
+}
