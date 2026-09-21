@@ -438,6 +438,15 @@ async def render_page(
 async def index(request: Request):
     return await render_page(request, "index.html", "home")
 
+@page_router.get("/domestic")
+async def domestic(request: Request):
+    return await render_page(
+        request,
+        "domestic.html",
+        "domestic_home",
+        view_market="domestic",
+    )
+
 @page_router.get("/stock")
 async def stock(request: Request):
     # 종목 리스트는 클라이언트에서 /api/stocks/list + localStorage로 관리

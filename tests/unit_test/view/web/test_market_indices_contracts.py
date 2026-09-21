@@ -51,6 +51,16 @@ def test_home_template_hosts_market_indices_panel():
     assert "chart.js" in template
 
 
+def test_domestic_home_hosts_domestic_only_market_indices_panel():
+    template = Path("view/web/templates/domestic.html").read_text(encoding="utf-8")
+    script = _market_indices_js()
+
+    assert 'id="market-indices" data-market-scope="domestic"' in template
+    assert "/static/js/market_indices.js" in template
+    assert "target.dataset.marketScope" in script
+    assert "group.kind === 'kis'" in script
+
+
 def test_market_indices_js_covers_all_widget_symbols():
     script = _market_indices_js()
 

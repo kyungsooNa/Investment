@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block head_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
+
+{% block content %}
+<section class="section domestic-dashboard" aria-labelledby="domestic-dashboard-title">
+    <div class="domestic-dashboard-header">
+        <div>
+            <h2 id="domestic-dashboard-title">한국장 시장 현황</h2>
+            <p class="small">코스피·코스닥 지수와 투자자 수급을 확인하세요.</p>
+        </div>
+        <form class="domestic-search-form" onsubmit="return submitDomesticStockSearch(event)">
+            <label class="sr-only" for="domestic-stock-search">종목코드 또는 종목명</label>
+            <div class="domestic-search-control">
+                <input type="search" id="domestic-stock-search"
+                       placeholder="종목명 또는 코드 검색" autocomplete="off">
+                <button type="submit" class="btn">조회</button>
+                <ul id="domestic-stock-autocomplete" class="autocomplete-list"></ul>
+            </div>
+            <p id="domestic-stock-search-error" class="domestic-search-error" role="alert"></p>
+        </form>
+    </div>
+
+    <div class="card domestic-market-card">
+        <div id="market-indices" data-market-scope="domestic"></div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/autocomplete.js?v=2"></script>
+<script src="/static/js/domestic_home.js?v=1"></script>
+<script src="/static/js/market_indices.js?v=11"></script>
+{% endblock %}

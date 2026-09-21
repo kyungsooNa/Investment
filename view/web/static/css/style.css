@@ -276,6 +276,58 @@ body {
 /* Main */
 .main { width: 100%; padding: 20px; max-width: 1200px; margin: 0 auto; }
 
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.domestic-dashboard-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 16px;
+}
+
+.domestic-dashboard-header h2 { margin-bottom: 6px; }
+
+.domestic-search-form {
+    width: min(100%, 380px);
+}
+
+.domestic-search-control {
+    position: relative;
+    display: flex;
+    gap: 8px;
+}
+
+.domestic-search-control input {
+    min-width: 0;
+    flex: 1;
+}
+
+.domestic-search-control .autocomplete-list {
+    top: calc(100% + 4px);
+    left: 0;
+    right: 58px;
+}
+
+.domestic-search-error {
+    min-height: 18px;
+    margin-top: 4px;
+    color: var(--negative);
+    font-size: 0.78rem;
+}
+
+.domestic-market-card { padding-top: 16px; }
+
 @media (max-width: 760px) {
     .app-layout {
         display: block;
@@ -316,6 +368,13 @@ body {
         background: none;
         border-bottom-color: var(--accent);
     }
+
+    .domestic-dashboard-header {
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .domestic-search-form { width: 100%; }
 }
 
 .section { display: none; }

@@ -444,8 +444,12 @@ async function renderMarketIndices() {
     const target = document.getElementById('market-indices');
     if (!target) return;
 
+    const groups = target.dataset.marketScope === 'domestic'
+        ? MARKET_INDEX_GROUPS.filter(group => group.kind === 'kis')
+        : MARKET_INDEX_GROUPS;
+
     const sections = await Promise.all(
-        MARKET_INDEX_GROUPS.map(group => buildMarketIndexGroup(document, group))
+        groups.map(group => buildMarketIndexGroup(document, group))
     );
 
     target.innerHTML = '';
