@@ -4,8 +4,8 @@
     "sha256": "10cf455d299e0426f41e9e1292c636cee1fe5de28adf9dc037fed2bebe4d4889"
   },
   "css/style.css": {
-    "version": 22,
-    "sha256": "9657fca446d8fb8d3da13cfcb5c915593522457b4c61f61328a8b7befea405b7"
+    "version": 23,
+    "sha256": "7128c837539622abe50ad66f62700b367979bb4ac992b4bdb0b3f588841e8f92"
   },
   "js/autocomplete.js": {
     "version": 2,
@@ -22,6 +22,10 @@
   "js/common.js": {
     "version": 12,
     "sha256": "0f0515a51002e2db7ea1450ec839b408279d431fcc96df93c8b0e116511f81f2"
+  },
+  "js/domestic_home.js": {
+    "version": 1,
+    "sha256": "d6284c34b0e4be76d968498d5590cb878eda8129d18e113d66ebfec60d3143a7"
   },
   "js/favorite.js": {
     "version": 8,
@@ -40,8 +44,8 @@
     "sha256": "851f0af216300901fa0ed169890d8dd9d13ad72d1f2b174f4ff26320fa93761e"
   },
   "js/market_indices.js": {
-    "version": 10,
-    "sha256": "c5289c1c62d9fe04b91867109826fef58c5638d796dd1e79a8ea10b0f1f232a9"
+    "version": 11,
+    "sha256": "1ac7bb598548d53229befa958708d7595a7daa5fee669fce4807b1e42ea86886"
   },
   "js/marketcap.js": {
     "version": 3,
@@ -100,8 +104,8 @@
     "sha256": "9b18a3307c29431bc31f18f6c76d1195f8cca0e689acd900ae12dbf9feb0608a"
   },
   "js/stock.js": {
-    "version": 17,
-    "sha256": "4131dc54fafd5b68de0325c472d42856acfcffcfc74ca5ddd67b4ee8e4b38b00"
+    "version": 18,
+    "sha256": "a9b8341d8ae716a665890164118a3dd9e91dbcd9849c5bf29a2f1aaf79d0fc45"
   },
   "js/strategy_reports.js": {
     "version": 3,

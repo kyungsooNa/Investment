@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Investment - Web View</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="/static/css/style.css?v=22">
+    <link rel="stylesheet" href="/static/css/style.css?v=23">
     <style>
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .spinning { display: inline-block; animation: spin 1s linear infinite; opacity: 1 !important; }
@@ -80,13 +80,14 @@
 <div class="app-layout">
     <aside class="sidebar" aria-label="주 내비게이션">
         <nav class="market-nav" aria-label="시장 선택">
-            <a href="/stock" data-nav-market="domestic" class="{% if view_market == 'domestic' %}active{% endif %}">한국장</a>
+            <a href="/domestic" data-nav-market="domestic" class="{% if view_market == 'domestic' %}active{% endif %}">한국장</a>
             <a href="/overseas" data-nav-market="overseas_us" class="{% if view_market == 'overseas_us' %}active{% endif %}">미국장</a>
             <a href="/" data-nav-market="common" class="{% if view_market == 'common' %}active{% endif %}">공통</a>
         </nav>
 
         <nav class="nav" aria-label="기능 메뉴">
             {% if view_market == 'domestic' %}
+                <a href="/domestic" class="{% if active_page == 'domestic_home' %}active{% endif %}">홈</a>
                 <a href="/stock" class="{% if active_page == 'stock' %}active{% endif %}">현재가</a>
                 {% if can_operate %}<a href="/favorite" class="{% if active_page == 'favorite' %}active{% endif %}">즐겨찾기</a>{% endif %}
                 {% if can_operate %}<a href="/balance" class="{% if active_page == 'balance' %}active{% endif %}">계좌 잔고</a>{% endif %}

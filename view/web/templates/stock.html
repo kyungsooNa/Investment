@@ -35,7 +35,7 @@
 <script src="/static/js/candle_chart.js?v=6"></script>
 <script>
     // 종목 리스트: localStorage에서 즉시 복원, 없으면 API 로드 후 저장
-    var ALL_STOCKS = (function() {
+    window.ALL_STOCKS = (function() {
         try {
             var cached = localStorage.getItem('all_stocks_v2');
             if (cached) return JSON.parse(cached);
@@ -55,16 +55,5 @@
     }
 </script>
 <script src="/static/js/autocomplete.js?v=2"></script>
-<script src="/static/js/stock.js?v=17"></script>
-<script>
-    (function() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const code = urlParams.get('code');
-        if (code) {
-            const input = document.getElementById('stock-code-input');
-            if (input) input.value = code;
-            searchStock(code);
-        }
-    })();
-</script>
+<script src="/static/js/stock.js?v=18"></script>
 {% endblock %}

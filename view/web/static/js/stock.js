@@ -49,47 +49,48 @@ function changeExchange(exchange, btn) {
     }
 }
 
-/* ── 종목명 자동완성 (autocomplete.js 모듈 사용) ── */
-StockAutocomplete({
-    inputId: 'stock-code-input',
-    listId: 'stock-autocomplete-list',
-    onSelect: function(code) {
-        const input = document.getElementById('stock-code-input');
-        if (input) input.value = code;
-        searchStock(code);
-    },
-    onConfirm: function() { searchStock(); }
-});
+/* ── 종목명 자동완성 + URL 종목코드 자동조회 ── */
+function initStockPage() {
+    const input = document.getElementById('stock-code-input');
+    if (!input) return;
 
-/* ── Pjax 재방문 시 자동완성 재초기화 ── */
-document.addEventListener('pjax:ready', (e) => {
-    if (e.detail?.path !== '/stock') return;
-    StockAutocomplete({
-        inputId: 'stock-code-input',
-        listId: 'stock-autocomplete-list',
-        onSelect: function(code) {
-            const input = document.getElementById('stock-code-input');
-            if (input) input.value = code;
-            searchStock(code);
-        },
-        onConfirm: function() { searchStock(); }
-    });
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    if (code) {
+    if (input.dataset.autocompleteReady !== 'true') {
+        input.dataset.autocompleteReady = 'true';
+        StockAutocomplete({
+            inputId: 'stock-code-input',
+            listId: 'stock-autocomplete-list',
+            onSelect: function(code) {
+                input.value = code;
+                searchStock(code);
+            },
+            onConfirm: function() { searchStock(); }
+        });
+    }
+
+    const code = new URLSearchParams(window.location.search).get('code');
+    if (code && input.dataset.loadedCode !== code) {
+        input.dataset.loadedCode = code;
+        input.value = code;
         searchStock(code);
     }
+}
+
+document.addEventListener('pjax:ready', (e) => {
+    if (e.detail?.path !== '/stock') return;
+    initStockPage();
 });
 
 document.addEventListener('DOMContentLoaded', () => {
-    if (window.location.pathname !== '/stock') return;
-    
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    if (code) {
-        searchStock(code);
-    }
+    if (window.location.pathname === '/stock') initStockPage();
 });
+
+/*
+ * stock.js가 PJAX 전환 중 처음 로드되면 history 갱신 전이므로 pjax:ready가 초기화한다.
+ * 일반 페이지 로드 후 지연 로드된 경우에는 DOMContentLoaded가 이미 끝났을 수 있다.
+ */
+if (document.readyState !== 'loading' && window.location.pathname === '/stock') {
+    initStockPage();
+}
 
 /**
  * 입력값을 종목코드로 변환. 6자리 숫자면 그대로, 아니면 ALL_STOCKS에서 탐색.

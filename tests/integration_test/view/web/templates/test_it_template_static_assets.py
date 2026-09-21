@@ -14,6 +14,7 @@ import view.web.web_main as web_main
 
 PAGE_PATHS = [
     "/",
+    "/domestic",
     "/stock",
     "/favorite",
     "/balance",
@@ -108,6 +109,7 @@ def test_rendered_pages_reference_served_static_assets(web_client_with_fake_ctx)
 @pytest.mark.parametrize(
     ("page_path", "expected_market"),
     [
+        ("/domestic", "domestic"),
         ("/stock", "domestic"),
         ("/favorite", "domestic"),
         ("/balance", "domestic"),
@@ -145,6 +147,17 @@ def test_navigation_separates_domestic_overseas_and_common_areas(web_client_with
     assert 'data-nav-market="common"' in page.text
     assert '>한국장<' in page.text
     assert '>미국장<' in page.text
+
+
+def test_domestic_market_navigation_opens_domestic_home(web_client_with_fake_ctx):
+    page = web_client_with_fake_ctx.get("/domestic")
+
+    assert page.status_code == 200
+    assert 'href="/domestic" data-nav-market="domestic" class="active">한국장</a>' in page.text
+    assert 'href="/domestic" class="active">홈</a>' in page.text
+    assert 'href="/stock" class="">현재가</a>' in page.text
+    assert 'id="domestic-stock-search"' in page.text
+    assert 'id="market-indices" data-market-scope="domestic"' in page.text
 
 
 def test_navigation_uses_left_sidebar_layout(web_client_with_fake_ctx):

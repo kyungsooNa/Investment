@@ -7,6 +7,7 @@ from view.web.security import SESSION_COOKIE_NAME, issue_session
 # 페이지별 라우트와 예상되는 active_page 값 매핑
 PAGES = [
     ("/", "home"),
+    ("/domestic", "domestic_home"),
     ("/stock", "stock"),
     ("/balance", "balance"),
     ("/order", "order"),
@@ -55,6 +56,11 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
         # 각 페이지별 특징적인 요소 확인
         if path == "/":
             assert "Investment" in response.text
+        elif path == "/domestic":
+            assert "한국장 시장 현황" in response.text
+            assert 'id="domestic-stock-search"' in response.text
+            assert 'id="market-indices" data-market-scope="domestic"' in response.text
+            assert "/static/js/domestic_home.js" in response.text
         elif path == "/stock":
             assert "종목 현재가 조회" in response.text
             assert 'id="stock-market-label"' in response.text
@@ -172,6 +178,23 @@ def test_common_navigation_does_not_show_domestic_virtual_page(web_client, mock_
     assert response.status_code == 200
     assert 'href="/virtual"' in _home_group(response.text, "domestic")
     assert 'href="/virtual"' not in _home_group(response.text, "common")
+
+
+def test_domestic_home_search_redirect_contract():
+    script = Path("view/web/static/js/domestic_home.js").read_text(encoding="utf-8")
+
+    assert "StockAutocomplete" in script
+    assert "submitDomesticStockSearch" in script
+    assert "`/stock?code=${encodeURIComponent(code)}`" in script
+    assert "navigatePjax" in script
+
+
+def test_stock_template_has_single_query_driven_initialization_path():
+    template = Path("view/web/templates/stock.html").read_text(encoding="utf-8")
+    script = Path("view/web/static/js/stock.js").read_text(encoding="utf-8")
+
+    assert "new URLSearchParams(window.location.search)" not in template
+    assert "input.dataset.loadedCode !== code" in script
 
 
 def test_virtual_static_js_marks_suspect_records():
