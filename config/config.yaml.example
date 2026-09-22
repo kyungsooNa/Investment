@@ -207,6 +207,8 @@ kill_switch:
 risk_gate:
   enabled: true
   max_order_amount_won: 10000000
+  # 1주 가격만 주문 상한을 넘는 고가주는 이 배수 이내에서 1주 허용 (1.0이면 예외 없음)
+  single_share_order_cap_multiplier: 1.5
   max_daily_order_amount_won: 50000000
   max_pending_orders: 10
   max_total_exposure_pct: 95.0

@@ -175,7 +175,16 @@ class RiskGateService:
                 # 1회 주문 금액 한도는 신규 노출을 늘리는 BUY에만 적용한다.
                 # SELL은 손절/익절 청산 경로라 금액 한도로 막으면 리스크가 더 커질 수 있다.
                 effective_max_order_amount = self._effective_max_order_amount_won()
-                if side == OrderSide.BUY and order_amount > effective_max_order_amount:
+                single_share_exception = self._is_single_share_order_cap_exception(
+                    order_amount=order_amount,
+                    qty=qty,
+                    max_order_amount=effective_max_order_amount,
+                )
+                if (
+                    side == OrderSide.BUY
+                    and order_amount > effective_max_order_amount
+                    and not single_share_exception
+                ):
                     return self._blocked(
                         "max_order_amount",
                         "주문 금액 초과",
@@ -399,6 +408,22 @@ class RiskGateService:
         if self._is_real_mode() and self._operating_profile == "canary":
             return self._cfg.canary_overrides.max_order_amount_won
         return self._cfg.max_order_amount_won
+
+    def _is_single_share_order_cap_exception(
+        self,
+        *,
+        order_amount: int,
+        qty: int,
+        max_order_amount: int,
+    ) -> bool:
+        multiplier = float(
+            getattr(self._cfg, "single_share_order_cap_multiplier", 1.0) or 1.0
+        )
+        return (
+            qty == 1
+            and max_order_amount > 0
+            and max_order_amount < order_amount <= max_order_amount * multiplier
+        )
 
     async def _resolve_market_buy_reference_price(
         self,
