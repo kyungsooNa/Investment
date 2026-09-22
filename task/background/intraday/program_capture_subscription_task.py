@@ -186,7 +186,8 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
             self._candidate_count = len(codes)
             self._last_candidates = list(codes)
             self._observe_price_subscribed(today)
-            codes = self._select_rotation_batch(codes, now)
+            batch_limit = self._get_available_batch_limit()
+            codes = self._select_rotation_batch(codes, now, max_codes=batch_limit)
             pt_codes = [code for code in codes if not self._is_preferred_stock_code(code)]
             price_codes = list(codes)
             await self._policy.sync_subscriptions(
@@ -314,13 +315,30 @@ class ProgramCaptureSubscriptionTask(SchedulableTask):
         market_minutes = max(0, now.hour * 60 + now.minute - 9 * 60)
         return f"{date}:{market_minutes // self._rotation_interval_minutes}"
 
-    def _select_rotation_batch(self, codes: List[str], now) -> List[str]:
-        if len(codes) <= self._max_codes:
+    def _get_available_batch_limit(self) -> int:
+        """PRICE+PT 두 슬롯을 쓰는 일반주 기준으로 안전한 캡처 수를 계산한다."""
+        budget_getter = getattr(self._policy, "get_replacement_slot_budget", None)
+        if not callable(budget_getter):
+            return self._max_codes
+        try:
+            slot_budget = budget_getter({self.CATEGORY_KEY, self.PRICE_CATEGORY_KEY})
+        except Exception as exc:
+            self._logger.warning(f"{self.task_name}: 구독 슬롯 예산 조회 실패 — {exc}")
+            return self._max_codes
+        if not isinstance(slot_budget, int) or isinstance(slot_budget, bool):
+            return self._max_codes
+        return min(self._max_codes, max(0, slot_budget // 2))
+
+    def _select_rotation_batch(self, codes: List[str], now, max_codes: Optional[int] = None) -> List[str]:
+        limit = self._max_codes if max_codes is None else max(0, max_codes)
+        if limit == 0:
+            return []
+        if len(codes) <= limit:
             return list(codes)
         market_minutes = max(0, now.hour * 60 + now.minute - 9 * 60)
         window = market_minutes // self._rotation_interval_minutes
-        start = (window * self._max_codes) % len(codes)
-        return [codes[(start + offset) % len(codes)] for offset in range(self._max_codes)]
+        start = (window * limit) % len(codes)
+        return [codes[(start + offset) % len(codes)] for offset in range(limit)]
 
     def _load_stored_codes(self, state_key: Optional[str] = None) -> List[str]:
         if self._scheduler_store is None:
