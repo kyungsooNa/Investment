@@ -153,30 +153,41 @@ class YahooUsMarketCapProvider:
     _COOKIE_URL = "https://fc.yahoo.com"
     _CRUMB_URL = "https://query1.finance.yahoo.com/v1/test/getcrumb"
     _CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+    _SNAPSHOT_CONCURRENCY = 4
 
     def __init__(self, logger=None, timeout_sec: float = 10.0):
         self._logger = logger or logging.getLogger(__name__)
         self._timeout_sec = timeout_sec
 
     async def _fetch_raw(self, symbols: Iterable[str]) -> list[dict]:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        async with httpx.AsyncClient(timeout=self._timeout_sec, headers=headers, follow_redirects=True) as client:
+            rows, _ = await self._fetch_raw_with_client(symbols, client)
+        return rows
+
+    async def _fetch_raw_with_client(
+        self,
+        symbols: Iterable[str],
+        client: httpx.AsyncClient,
+        crumb: Optional[str] = None,
+    ) -> tuple[list[dict], Optional[str]]:
         params = {
             "symbols": ",".join(str(symbol).upper() for symbol in symbols),
             "lang": "en-US",
             "region": "US",
         }
-        headers = {"User-Agent": "Mozilla/5.0"}
-        async with httpx.AsyncClient(timeout=self._timeout_sec, headers=headers, follow_redirects=True) as client:
-            response = await client.get(self._QUOTE_URL, params=params)
-            if response.status_code in (401, 403):
-                crumb = await self._fetch_crumb(client)
-                if crumb:
-                    params = dict(params)
-                    params["crumb"] = crumb
-                    response = await client.get(self._QUOTE_URL, params=params)
-            response.raise_for_status()
-            payload = response.json()
+        if crumb:
+            params["crumb"] = crumb
+        response = await client.get(self._QUOTE_URL, params=params)
+        if response.status_code in (401, 403):
+            crumb = await self._fetch_crumb(client)
+            if crumb:
+                params["crumb"] = crumb
+                response = await client.get(self._QUOTE_URL, params=params)
+        response.raise_for_status()
+        payload = response.json()
         result = payload.get("quoteResponse", {}).get("result", [])
-        return result if isinstance(result, list) else []
+        return (result if isinstance(result, list) else []), crumb
 
     async def _fetch_crumb(self, client: httpx.AsyncClient) -> Optional[str]:
         try:
@@ -251,14 +262,37 @@ class YahooUsMarketCapProvider:
         if not wanted:
             return []
 
-        snapshots: list[UsQuoteSnapshot] = []
-        for start in range(0, len(wanted), chunk_size):
-            chunk = wanted[start:start + chunk_size]
+        chunks = [wanted[start:start + chunk_size] for start in range(0, len(wanted), chunk_size)]
+        headers = {"User-Agent": "Mozilla/5.0"}
+        semaphore = asyncio.Semaphore(self._SNAPSHOT_CONCURRENCY)
+
+        async with httpx.AsyncClient(
+            timeout=self._timeout_sec, headers=headers, follow_redirects=True
+        ) as client:
+            first_chunk = chunks[0]
             try:
-                rows = await self._fetch_raw(chunk)
+                first_rows, crumb = await self._fetch_raw_with_client(first_chunk, client)
             except Exception as exc:
-                self._logger.warning(f"미국 시세 스냅샷 chunk 조회 실패({chunk[0]}~): {exc}")
-                continue
+                self._logger.warning(f"미국 시세 스냅샷 chunk 조회 실패({first_chunk[0]}~): {exc}")
+                first_rows, crumb = [], None
+
+            async def _fetch_chunk(chunk: list[str]) -> list[dict]:
+                async with semaphore:
+                    try:
+                        rows, _ = await self._fetch_raw_with_client(chunk, client, crumb)
+                        return rows
+                    except Exception as exc:
+                        self._logger.warning(
+                            f"미국 시세 스냅샷 chunk 조회 실패({chunk[0]}~): {exc}"
+                        )
+                        return []
+
+            remaining_rows = await asyncio.gather(
+                *(_fetch_chunk(chunk) for chunk in chunks[1:])
+            )
+
+        snapshots: list[UsQuoteSnapshot] = []
+        for rows in [first_rows, *remaining_rows]:
             for row in rows:
                 snapshot = self._to_snapshot(row)
                 if snapshot:
