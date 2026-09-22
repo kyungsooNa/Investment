@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from datetime import datetime
 from types import SimpleNamespace
@@ -413,6 +414,75 @@ async def test_fetch_snapshots_splits_symbols_into_chunks(monkeypatch):
 
     assert [len(chunk) for chunk in calls] == [2, 2, 1]
     assert {snap.symbol for snap in snapshots} == set(symbols)
+
+
+@pytest.mark.asyncio
+async def test_fetch_snapshots_reuses_auth_and_fetches_chunks_concurrently(monkeypatch):
+    client_count = 0
+    crumb_calls = 0
+    active_quote_calls = 0
+    max_active_quote_calls = 0
+    concurrent_quotes_ready = asyncio.Event()
+
+    class FakeResponse:
+        def __init__(self, status_code=200, payload=None, text=""):
+            self.status_code = status_code
+            self._payload = payload or {}
+            self.text = text
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"status={self.status_code}")
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            nonlocal client_count
+            client_count += 1
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, params=None):
+            nonlocal crumb_calls, active_quote_calls, max_active_quote_calls
+            params = params or {}
+            if "fc.yahoo.com" in url:
+                return FakeResponse()
+            if "getcrumb" in url:
+                crumb_calls += 1
+                return FakeResponse(text="shared-crumb")
+
+            if not params.get("crumb"):
+                return FakeResponse(status_code=401)
+            assert params["crumb"] == "shared-crumb"
+
+            active_quote_calls += 1
+            max_active_quote_calls = max(max_active_quote_calls, active_quote_calls)
+            if params["symbols"] != "S0,S1":
+                if active_quote_calls >= 2:
+                    concurrent_quotes_ready.set()
+                await concurrent_quotes_ready.wait()
+            active_quote_calls -= 1
+            rows = [
+                {"symbol": symbol, "regularMarketPrice": 1.0, "marketCap": 1}
+                for symbol in params["symbols"].split(",")
+            ]
+            return FakeResponse(payload={"quoteResponse": {"result": rows}})
+
+    monkeypatch.setattr("services.market_cap_gap_service.httpx.AsyncClient", FakeClient)
+
+    symbols = [f"S{i}" for i in range(6)]
+    snapshots = await YahooUsMarketCapProvider().fetch_snapshots(symbols, chunk_size=2)
+
+    assert {snapshot.symbol for snapshot in snapshots} == set(symbols)
+    assert client_count == 1
+    assert crumb_calls == 1
+    assert max_active_quote_calls > 1
 
 
 @pytest.mark.asyncio
