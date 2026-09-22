@@ -532,6 +532,79 @@ async def test_rebalance_preserves_manual_program_trading_from_broker_ledger(
 
 
 @pytest.mark.asyncio
+async def test_rebalance_reserves_manual_program_trading_slots(
+    policy, mock_streaming, mock_streaming_stock_repo
+):
+    """수동 PT도 KIS 슬롯을 쓰므로 정책의 신규 배정 가능량에서 제외한다."""
+    policy.MAX_WS_SLOTS = 4
+    mock_streaming.get_subscription_ledger = MagicMock(return_value={
+        "total": 2,
+        "price_codes": set(),
+        "program_trading_codes": {"005930"},
+    })
+    mock_streaming_stock_repo.get_pt_subscription_sources.return_value = {
+        "005930": "manual",
+    }
+    for code in ("000001", "000002", "000003"):
+        policy._refs[code] = {
+            "portfolio": {
+                "priority": SubscriptionPriority.HIGH,
+                "type": StreamingType.UNIFIED_PRICE,
+            }
+        }
+
+    await policy._rebalance()
+
+    subscribed = {call.args[0] for call in mock_streaming.subscribe_unified_price.await_args_list}
+    assert subscribed == {"000001", "000002"}
+
+
+def test_replacement_slot_budget_includes_only_reclaimable_capture_streams(
+    policy, mock_streaming, mock_streaming_stock_repo
+):
+    """캡처 교체 예산은 빈 슬롯과 캡처 전용 활성 슬롯만 포함한다."""
+    policy.MAX_WS_SLOTS = 6
+    policy._refs = {
+        "111111": {
+            "microstructure_capture": {
+                "priority": SubscriptionPriority.LOW,
+                "type": StreamingType.PROGRAM_TRADING,
+            },
+            "microstructure_capture_price": {
+                "priority": SubscriptionPriority.LOW,
+                "type": StreamingType.UNIFIED_PRICE,
+            },
+        },
+        "222222": {
+            "microstructure_capture_price": {
+                "priority": SubscriptionPriority.LOW,
+                "type": StreamingType.UNIFIED_PRICE,
+            },
+            "portfolio": {
+                "priority": SubscriptionPriority.HIGH,
+                "type": StreamingType.UNIFIED_PRICE,
+            },
+        },
+    }
+    mock_streaming.get_subscription_ledger = MagicMock(return_value={
+        "total": 6,
+        "price_codes": {"111111", "222222", "333333"},
+        "program_trading_codes": {"111111", "005930"},
+    })
+    mock_streaming_stock_repo.get_pt_subscription_sources.return_value = {
+        "111111": "program",
+        "005930": "manual",
+    }
+
+    budget = policy.get_replacement_slot_budget({
+        "microstructure_capture",
+        "microstructure_capture_price",
+    })
+
+    assert budget == 2
+
+
+@pytest.mark.asyncio
 async def test_subscribe_order_follows_priority_not_set_iteration(policy, mock_streaming):
     """슬롯 경합 시 우선순위 높은 종목이 먼저 구독 요청된다."""
     for code in ("000001", "000002", "000003", "000004"):

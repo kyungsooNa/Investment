@@ -290,6 +290,46 @@ class SubscriptionPolicy:
             },
         }
 
+    def get_replacement_slot_budget(self, category_keys: Set[str]) -> int:
+        """카테고리 교체 시 사용할 수 있는 슬롯 수를 반환한다.
+
+        현재 빈 슬롯에 더해, 지정 카테고리만 참조하는 활성 스트림은 이번
+        교체에서 회수할 수 있으므로 예산에 포함한다. 다른 카테고리와 공유하는
+        스트림과 수동 PT 구독은 회수 대상으로 계산하지 않는다.
+        """
+        target_categories = set(category_keys)
+        ledger = self._get_broker_ledger()
+        if ledger is None:
+            used_slots = self._calculate_used_slots()
+            registered_price = set(self._active_codes_price)
+            registered_pt = set(self._active_codes_pt)
+        else:
+            used_slots = ledger["total"]
+            registered_price = ledger["price_codes"]
+            registered_pt = ledger["program_trading_codes"]
+
+        manual_pt_codes = self._get_manual_pt_codes(registered_pt)
+
+        def _is_exclusively_owned(code: str, stream_type: StreamingType) -> bool:
+            owners = {
+                category
+                for category, request in self._refs.get(code, {}).items()
+                if isinstance(request, dict) and request.get("type") == stream_type
+            }
+            return bool(owners) and owners <= target_categories
+
+        replaceable = sum(
+            _is_exclusively_owned(code, StreamingType.UNIFIED_PRICE)
+            for code in registered_price
+        )
+        replaceable += sum(
+            code not in manual_pt_codes
+            and _is_exclusively_owned(code, StreamingType.PROGRAM_TRADING)
+            for code in registered_pt
+        )
+        free_slots = max(0, self.MAX_WS_SLOTS - used_slots)
+        return min(self.MAX_WS_SLOTS, free_slots + replaceable)
+
     # ── Internal rebalance logic ────────────────────────────────────
 
     def _has_stream_type_ref(self, code: str, stream_type: StreamingType) -> bool:
@@ -318,10 +358,11 @@ class SubscriptionPolicy:
             reserved = self._external_reserved_slots
         else:
             # 정책이 소유하지 않는 등록(장운영정보/체결통보 등)도 KIS 한도를 소비한다.
+            manual_pt_codes = self._get_manual_pt_codes(ledger["program_trading_codes"])
             reserved = max(
                 0,
                 ledger["total"] - len(ledger["price_codes"]) - len(ledger["program_trading_codes"]),
-            )
+            ) + len(manual_pt_codes)
         available_slots = max(0, self.MAX_WS_SLOTS - reserved)
 
         # 2. 슬롯 할당 (Greedy)
@@ -347,16 +388,7 @@ class SubscriptionPolicy:
         # 정책 장부만 초기화되고 KIS 등록은 남는 경로가 있어, 회수하지 않으면 슬롯이 영구 소모된다.
         registered_price = ledger["price_codes"] if ledger else set()
         registered_pt = ledger["program_trading_codes"] if ledger else set()
-        registered_pt_policy_owned = registered_pt
-        if registered_pt and self._streaming_stock_repo:
-            source_getter = getattr(self._streaming_stock_repo, "get_pt_subscription_sources", None)
-            if callable(source_getter):
-                sources = source_getter()
-                if isinstance(sources, dict):
-                    registered_pt_policy_owned = {
-                        code for code in registered_pt
-                        if sources.get(code) != StreamingStockRepo.SOURCE_MANUAL
-                    }
+        registered_pt_policy_owned = registered_pt - self._get_manual_pt_codes(registered_pt)
 
         to_unsubscribe_price = (self._active_codes_price | registered_price) - desired_price
         to_subscribe_price = desired_price - self._active_codes_price
@@ -549,6 +581,20 @@ class SubscriptionPolicy:
             }
         except (KeyError, TypeError, ValueError):
             return None
+
+    def _get_manual_pt_codes(self, registered_pt: Set[str]) -> Set[str]:
+        if not registered_pt or not self._streaming_stock_repo:
+            return set()
+        source_getter = getattr(self._streaming_stock_repo, "get_pt_subscription_sources", None)
+        if not callable(source_getter):
+            return set()
+        sources = source_getter()
+        if not isinstance(sources, dict):
+            return set()
+        return {
+            code for code in registered_pt
+            if sources.get(code) == StreamingStockRepo.SOURCE_MANUAL
+        }
 
     def _calculate_used_slots(self) -> int:
         """

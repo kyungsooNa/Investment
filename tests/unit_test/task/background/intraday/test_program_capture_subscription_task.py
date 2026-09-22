@@ -249,6 +249,42 @@ async def test_excludes_manual_pt_desired_and_caps_max_codes():
 
 
 @pytest.mark.asyncio
+async def test_capture_batch_shrinks_to_replacement_slot_budget():
+    """남은 WebSocket 슬롯이 적으면 캡처 배치를 2슬롯/종목 기준으로 축소한다."""
+    policy = MagicMock()
+    policy.sync_subscriptions = AsyncMock()
+    policy.get_replacement_slot_budget.return_value = 5
+    universe_service = MagicMock()
+    universe_service.get_watchlist = AsyncMock(
+        return_value={f"{code:06d}": MagicMock() for code in range(10, 80, 10)}
+    )
+    virtual_trade_service = MagicMock()
+    virtual_trade_service.get_holds = MagicMock(return_value=[])
+    task, _ = _make_task(
+        policy=policy,
+        universe_service=universe_service,
+        virtual_trade_service=virtual_trade_service,
+        max_codes=10,
+    )
+
+    await task._tick()
+
+    policy.get_replacement_slot_budget.assert_called_once_with({CATEGORY, PRICE_CATEGORY})
+    assert policy.sync_subscriptions.await_args_list == [
+        call(
+            ["000050", "000060"], CATEGORY,
+            SubscriptionPriority.LOW, StreamingType.PROGRAM_TRADING,
+        ),
+        call(
+            ["000050", "000060"],
+            PRICE_CATEGORY,
+            SubscriptionPriority.LOW,
+            StreamingType.UNIFIED_PRICE,
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_program_sourced_pt_desired_is_still_a_capture_candidate():
     # program 출처(캡처 태스크가 남긴) desired 는 후보에서 빼지 않는다 —
     # 빼면 어떤 카테고리도 소유하지 않는 잔재로 굳어 영구 누적된다.
