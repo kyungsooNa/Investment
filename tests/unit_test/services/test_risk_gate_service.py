@@ -265,6 +265,29 @@ async def test_order_amount_over_limit_blocks_buy():
 
 
 @pytest.mark.asyncio
+async def test_single_share_within_order_cap_multiplier_is_allowed():
+    svc, _, _ = _service(config=RiskGateConfig(max_order_amount_won=2_000_000))
+
+    result = await svc.validate_order(
+        "298040", 2_984_000, 1, OrderSide.BUY, Exchange.KRX, 0
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_single_share_over_order_cap_multiplier_is_blocked():
+    svc, _, _ = _service(config=RiskGateConfig(max_order_amount_won=2_000_000))
+
+    result = await svc.validate_order(
+        "298040", 3_000_001, 1, OrderSide.BUY, Exchange.KRX, 0
+    )
+
+    assert result.rt_cd == ErrorCode.RISK_GATE_BLOCKED.value
+    assert result.data["rule"] == "max_order_amount"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stock_code", "price", "qty", "strategy_name"),
     [

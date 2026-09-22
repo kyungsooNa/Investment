@@ -196,6 +196,7 @@ class PositionSizingService:
 
         # 7. 주문 직전 hard-block 정책과 같은 한도도 미리 수량에 반영
         max_order_amount_qty = self._calc_max_order_amount_qty(price)
+        single_share_order_cap_exception = self._is_single_share_order_cap_exception(price)
         top_of_book_qty = await self._calc_top_of_book_qty(signal, price, exchange)
 
         # 7-1. R-3: 포트폴리오 총위험(heat) 한도. 스냅샷에 종목별 stop 이 없으므로
@@ -241,6 +242,8 @@ class PositionSizingService:
                 reason = "portfolio_heat_exhausted"
             else:
                 reason = "cash_short"
+        elif single_share_order_cap_exception and final_qty == 1:
+            reason = "single_share_order_cap_exception"
         elif signal.qty is not None and final_qty == signal.qty:
             reason = "ok"
         else:
@@ -300,7 +303,18 @@ class PositionSizingService:
         max_amount = int(getattr(self._risk_gate_config, "max_order_amount_won", 0) or 0)
         if max_amount <= 0:
             return None
+        if self._is_single_share_order_cap_exception(price):
+            return 1
         return math.floor(max_amount / price)
+
+    def _is_single_share_order_cap_exception(self, price: int) -> bool:
+        if not self._risk_gate_config or price <= 0:
+            return False
+        max_amount = int(getattr(self._risk_gate_config, "max_order_amount_won", 0) or 0)
+        multiplier = float(
+            getattr(self._risk_gate_config, "single_share_order_cap_multiplier", 1.0) or 1.0
+        )
+        return max_amount > 0 and max_amount < price <= max_amount * multiplier
 
     def _calc_portfolio_heat_qty(
         self,

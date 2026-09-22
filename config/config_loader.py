@@ -189,6 +189,7 @@ class RiskGateCanaryOverrides(BaseModel):
 class RiskGateConfig(BaseModel):
     enabled: bool = True
     max_order_amount_won: int = 2_000_000
+    single_share_order_cap_multiplier: float = 1.5
     max_daily_order_amount_won: int = 50_000_000
     max_pending_orders: int = 10
     max_total_exposure_pct: float = 95.0
