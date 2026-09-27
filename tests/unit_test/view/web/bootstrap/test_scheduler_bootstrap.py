@@ -111,6 +111,26 @@ def test_all_mode_registers_15_tasks_to_time_dispatcher(patched_scheduler_deps):
     assert ctx.time_dispatcher.register_task.call_count == 15
 
 
+def test_batch_tasks_use_safe_outage_recovery_policy(patched_scheduler_deps):
+    ctx = _make_fake_context(RuntimeMode.BATCH)
+
+    _run(ctx)
+
+    calls = {
+        call.args[0]: (
+            call.kwargs.get("catchup_latest", False),
+            call.kwargs.get("catchup_missed", False),
+        )
+        for call in ctx.time_dispatcher.register_task.call_args_list
+    }
+    assert calls["ranking_task"] == (True, False)
+    assert calls["daily_price_collector_task"] == (True, False)
+    assert calls["ohlcv_update_task"] == (True, False)
+    assert calls["post_market_replay_audit_task"] == (False, True)
+    assert calls["after_market_reconcile_task"] == (False, False)
+    assert calls["log_cleanup_task"] == (False, False)
+
+
 def test_web_registers_youtube_digest_as_daily_time_ticket(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.WEB)
 
@@ -178,6 +198,12 @@ def test_overseas_us_registers_dryrun_task(patched_scheduler_deps):
     kst_dispatched = [c.args[0] for c in ctx.time_dispatcher.register_task.call_args_list]
     assert "overseas_dryrun" in us_dispatched
     assert "overseas_dryrun" not in kst_dispatched
+    dryrun_call = next(
+        call for call in ctx.time_dispatcher_us.register_task.call_args_list
+        if call.args[0] == "overseas_dryrun"
+    )
+    assert dryrun_call.kwargs["catchup_latest"] is True
+    assert dryrun_call.kwargs["catchup_missed"] is False
 
 
 def test_overseas_opening_reconcile_is_not_registered_with_time_dispatcher(

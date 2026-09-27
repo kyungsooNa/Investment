@@ -2,6 +2,8 @@ import importlib
 import os
 from unittest.mock import patch
 
+from main import should_open_browser
+
 from runtime_entrypoint import (
     RUNTIME_MODE_ENV,
     configure_runtime,
@@ -52,3 +54,15 @@ def test_named_runtime_helpers_delegate_to_expected_modes(monkeypatch):
 def test_top_level_runtime_modules_import_cleanly():
     for module_name in ["web_app", "trading_runtime", "batch_runtime", "admin_runtime"]:
         importlib.import_module(module_name)
+
+
+def test_should_open_browser_can_be_disabled_for_unattended_startup(monkeypatch):
+    monkeypatch.setenv("OPEN_BROWSER", "0")
+
+    assert should_open_browser() is False
+
+
+def test_should_open_browser_defaults_to_enabled(monkeypatch):
+    monkeypatch.delenv("OPEN_BROWSER", raising=False)
+
+    assert should_open_browser() is True

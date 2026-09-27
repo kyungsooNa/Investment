@@ -5,6 +5,13 @@ from datetime import datetime
 from core.logger import Logger, get_log_timestamp, shutdown_logging  # 타임스탬프 함수 임포트
 from config.config_loader import load_configs
 
+
+def should_open_browser() -> bool:
+    """무인 실행에서는 브라우저 자동 실행을 끌 수 있게 한다."""
+    value = os.getenv("OPEN_BROWSER", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
 def enable_crash_dump(log_dir="logs/common"):
     if not os.path.exists(log_dir):
         os.makedirs(log_dir, exist_ok=True)
@@ -53,7 +60,8 @@ def run_web():
 
     print(f"\n[Web] http://{host}:{port} 에서 접속 가능")
     print("[Web] 환경 전환은 웹 UI 상단 배지를 클릭하세요.")
-    threading.Thread(target=open_browser, daemon=True).start()
+    if should_open_browser():
+        threading.Thread(target=open_browser, daemon=True).start()
     uvicorn.run(app, host=host, port=port)
 
 

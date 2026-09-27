@@ -157,6 +157,120 @@ async def test_no_ticket_on_non_trading_day_even_if_previous_trading_date_missin
     assert broker.empty is True
 
 
+async def test_catchup_task_publishes_all_missed_trading_dates_before_today(db_path):
+    """복구 기동 시 opt-in 배치 태스크는 마지막 발행일 이후 거래일을 순서대로 보충한다."""
+    dispatcher, broker = _make_dispatcher(
+        is_operating=False,
+        latest_date="20260925",
+        db_path=db_path,
+        is_after_close=False,
+        weekday=0,
+        date_str="20260928",
+    )
+    dispatcher._mcs.is_business_day = AsyncMock(
+        side_effect=lambda date: date in {"20260923", "20260924", "20260925"}
+    )
+    dispatcher._save_task_date("REPLAY_AUDIT", "20260922")
+    dispatcher.register_task(
+        "REPLAY_AUDIT",
+        priority=100,
+        catchup_missed=True,
+    )
+
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+
+    tickets = []
+    while not broker.empty:
+        ticket = await broker.consume()
+        broker.task_done()
+        tickets.append(ticket)
+
+    assert [ticket.payload["date"] for ticket in tickets] == [
+        "20260923",
+        "20260924",
+        "20260925",
+    ]
+    assert all(ticket.payload["catchup"] is True for ticket in tickets)
+    assert dispatcher._load_task_date("REPLAY_AUDIT") == "20260925"
+
+
+async def test_latest_catchup_task_publishes_only_latest_trading_date(db_path):
+    """현재 시세 기반 작업은 과거 날짜를 재생하지 않고 최신 거래일만 한 번 복구한다."""
+    dispatcher, broker = _make_dispatcher(
+        is_operating=False,
+        latest_date="20260925",
+        db_path=db_path,
+        is_after_close=False,
+        weekday=0,
+        date_str="20260928",
+    )
+    dispatcher._save_task_date("DAILY_PRICE", "20260922")
+    dispatcher.register_task("DAILY_PRICE", priority=100, catchup_latest=True)
+
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+
+    assert broker.qsize == 1
+    ticket = await broker.consume()
+    broker.task_done()
+    assert ticket.payload == {"date": "20260925", "catchup": True}
+    assert dispatcher._load_task_date("DAILY_PRICE") == "20260925"
+
+
+async def test_missed_date_catchup_supports_synchronous_market_calendar(db_path):
+    dispatcher, _ = _make_dispatcher(
+        is_operating=False,
+        latest_date="20260925",
+        db_path=db_path,
+    )
+    dispatcher._mcs.is_business_day = MagicMock(
+        side_effect=lambda date: date in {"20260923", "20260924", "20260925"}
+    )
+
+    dates = await dispatcher._get_missed_trading_dates("20260922", "20260925")
+
+    assert dates == ["20260923", "20260924", "20260925"]
+
+
+async def test_regular_task_still_skips_previous_trading_date_before_today(db_path):
+    """주문·계좌성 태스크는 명시적 opt-in 없이는 과거 날짜로 재실행하지 않는다."""
+    dispatcher, broker = _make_dispatcher(
+        is_operating=False,
+        latest_date="20260925",
+        db_path=db_path,
+        is_after_close=False,
+        weekday=0,
+        date_str="20260928",
+    )
+    dispatcher._save_task_date("ACCOUNT_RECONCILE", "20260922")
+    dispatcher.register_task("ACCOUNT_RECONCILE", priority=10)
+
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+
+    assert broker.empty is True
+    assert dispatcher._load_task_date("ACCOUNT_RECONCILE") == "20260922"
+
+
+async def test_catchup_task_does_not_repeat_already_dispatched_latest_date(db_path):
+    dispatcher, broker = _make_dispatcher(
+        is_operating=False,
+        latest_date="20260925",
+        db_path=db_path,
+        is_after_close=False,
+        weekday=0,
+        date_str="20260928",
+    )
+    dispatcher._save_task_date("REPLAY_AUDIT", "20260925")
+    dispatcher.register_task("REPLAY_AUDIT", priority=100, catchup_missed=True)
+
+    await dispatcher._maybe_dispatch()
+    await _drain(dispatcher)
+
+    assert broker.empty is True
+
+
 async def test_us_holiday_20260703_skips_ticket_and_logs_clear_reason(db_path):
     """2026-07-03 미국 독립기념일 관측휴장에는 7/2 기준 dry-run을 발행하지 않는다."""
     dispatcher, broker = _make_dispatcher(
@@ -341,6 +455,8 @@ async def test_unregister_task_removes_registered_state(db_path):
 
     assert "TASK_A" not in dispatcher._task_schedule
     assert "TASK_A" not in dispatcher._task_delays
+    assert "TASK_A" not in dispatcher._task_catchup_latest
+    assert "TASK_A" not in dispatcher._task_catchup_missed
     assert "TASK_A" not in dispatcher._task_dispatched_dates
 
 
@@ -401,6 +517,8 @@ def test_get_status_handles_market_clock_exception(db_path):
             "name": "TASK_A",
             "priority": 100,
             "delay_sec": 7,
+            "catchup_latest": False,
+            "catchup_missed": False,
             "last_dispatched_date": "20250416",
         }
     ]
