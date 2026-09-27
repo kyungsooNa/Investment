@@ -155,3 +155,17 @@ pytest --cov=. --cov-report=term-missing --cov-report=html --cov-config=.coverag
 | **디버그**     | 브레이크포인트 찍고 **F5** | - |
 
 PyCharm에서 쓰던 **Conda py310** 을 Cursor에서도 인터프리터로 선택하면, 같은 환경으로 실행·테스트할 수 있습니다.
+
+## 4. 서버 재부팅 후 자동 복구
+
+관리자 PowerShell에서 아래 스크립트를 한 번 실행하면 Windows 부팅 시 앱을 자동으로
+시작하고, 프로세스가 종료되면 30초 뒤 재시작한다. 설치만 하고 즉시 앱을 시작하지
+않으려면 `-StartNow`를 생략한다.
+
+```powershell
+.\scripts\install_startup_task.ps1 -StartNow
+```
+
+예약 작업은 `SYSTEM` 계정으로 실행되며 브라우저는 열지 않는다. 앱을 의도적으로
+중지할 때는 먼저 `Stop-ScheduledTask -TaskName InvestmentApp`을 실행해야 watchdog이
+프로세스를 다시 시작하지 않는다.

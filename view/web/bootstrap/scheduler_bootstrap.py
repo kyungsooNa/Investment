@@ -83,7 +83,13 @@ class SchedulerBootstrap:
         )
 
     def _register(
-        self, task, priority: TaskPriority | None = None, market: str = "domestic"
+        self,
+        task,
+        priority: TaskPriority | None = None,
+        market: str = "domestic",
+        *,
+        catchup_latest: bool = False,
+        catchup_missed: bool = False,
     ) -> None:
         if not task:
             return
@@ -94,7 +100,11 @@ class SchedulerBootstrap:
                 dispatcher = getattr(ctx, "time_dispatcher_us", None)
             if dispatcher is not None:
                 dispatcher.register_task(
-                    task.task_name, priority, delay_sec=self._delays.get(task.task_name, 0)
+                    task.task_name,
+                    priority,
+                    delay_sec=self._delays.get(task.task_name, 0),
+                    catchup_latest=catchup_latest,
+                    catchup_missed=catchup_missed,
                 )
         ctx.background_scheduler.register(task)
 
@@ -156,23 +166,35 @@ class SchedulerBootstrap:
 
     def _register_batch_tasks(self) -> None:
         ctx = self._ctx
-        self._register(ctx.ranking_task, TaskPriority.LOW)
-        self._register(self._optional_task("ytd_ranking_report_task"), TaskPriority.LOW)
+        self._register(ctx.ranking_task, TaskPriority.LOW, catchup_latest=True)
+        self._register(
+            self._optional_task("ytd_ranking_report_task"),
+            TaskPriority.LOW,
+            catchup_latest=True,
+        )
         # 자체 AfterMarketLoop 사용: 한국장/미국장 각각의 cron timezone이 필요해
         # KST TimeDispatcher에는 등록하지 않는다.
         self._register(self._optional_task("market_cap_gap_report_kr_task"))
         self._register(self._optional_task("market_cap_gap_report_us_task"))
-        self._register(ctx.minervini_update_task, TaskPriority.LOW)
-        self._register(ctx.daily_price_collector_task, TaskPriority.LOW)
-        self._register(ctx.ohlcv_update_task, TaskPriority.LOW)
-        self._register(ctx.premium_watchlist_generator_task, TaskPriority.LOW)
-        self._register(ctx.newhigh_task, TaskPriority.LOW)
-        self._register(ctx.theme_classification_task, TaskPriority.LOW)
-        self._register(self._optional_task("theme_daily_leader_report_task"), TaskPriority.LOW)
+        self._register(ctx.minervini_update_task, TaskPriority.LOW, catchup_latest=True)
+        self._register(ctx.daily_price_collector_task, TaskPriority.LOW, catchup_latest=True)
+        self._register(ctx.ohlcv_update_task, TaskPriority.LOW, catchup_latest=True)
+        self._register(ctx.premium_watchlist_generator_task, TaskPriority.LOW, catchup_latest=True)
+        self._register(ctx.newhigh_task, TaskPriority.LOW, catchup_latest=True)
+        self._register(ctx.theme_classification_task, TaskPriority.LOW, catchup_latest=True)
+        self._register(
+            self._optional_task("theme_daily_leader_report_task"),
+            TaskPriority.LOW,
+            catchup_latest=True,
+        )
         self._register(ctx.log_cleanup_task, TaskPriority.MAINTENANCE)
-        self._register(ctx.post_market_replay_audit_task, TaskPriority.LOW)
-        self._register(self._optional_task("newhigh_strategy_coverage_backtest_task"), TaskPriority.LOW)
-        self._register(ctx.strategy_log_report_task, TaskPriority.LOW)
+        self._register(ctx.post_market_replay_audit_task, TaskPriority.LOW, catchup_missed=True)
+        self._register(
+            self._optional_task("newhigh_strategy_coverage_backtest_task"),
+            TaskPriority.LOW,
+            catchup_missed=True,
+        )
+        self._register(ctx.strategy_log_report_task, TaskPriority.LOW, catchup_missed=True)
         self._register(ctx.after_market_reconcile_task, TaskPriority.LOW)
         # 자체 AfterMarketLoop 사용 (KST 16:05): market_cap_gap 과 동일 패턴.
         self._register(self._optional_task("microstructure_capture_task"))
@@ -187,6 +209,7 @@ class SchedulerBootstrap:
             self._optional_task("overseas_dryrun_task"),
             TaskPriority.LOW,
             market="overseas_us",
+            catchup_latest=True,
         )
         # 장중 전략 폴링(연속 루프) — 마감 이벤트가 아니므로 TimeDispatcher 미등록.
         # 전략 6종이 이 태스크 하나를 공유한다(심볼당 1회 조회).
@@ -199,6 +222,7 @@ class SchedulerBootstrap:
             self._optional_task("overseas_fill_reconcile_task"),
             TaskPriority.LOW,
             market="overseas_us",
+            catchup_missed=True,
         )
 
     def _register_websocket_watchdog(self) -> None:

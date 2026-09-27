@@ -182,5 +182,7 @@ def test_it_scheduler_bootstrap_registers_replay_audit_batch_task_with_delay():
         "post_market_replay_audit",
         TaskPriority.LOW,
         delay_sec=30,
+        catchup_latest=False,
+        catchup_missed=True,
     )
     MockBackground.return_value.register.assert_called_once_with(ctx.post_market_replay_audit_task)
