@@ -155,6 +155,7 @@ class StrategyFactory:
             stock_query_service=ctx.stock_query_service,
             market_clock=ctx.market_clock,
             universe_service=ctx.oneil_universe_service,
+            stock_repository=getattr(ctx, "stock_repository", None),
             logger=get_strategy_logger('LarryWilliamsVBO'),
             trade_history_provider=ctx.virtual_trade_service.get_all_trades,
         )

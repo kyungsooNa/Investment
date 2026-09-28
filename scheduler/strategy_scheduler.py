@@ -1133,20 +1133,25 @@ class StrategyScheduler:
             f"@ {signal.price:,}원 | {signal.reason}"
         )
 
-        # 기록용 가격 결정 (시장가 0원인 경우 현재가 조회 시도하여 기록 정확도 향상)
+        # 기록용 가격 및 매수 시점 등락률 결정. 전략 직전 조회가 캐시에 남아 있으면
+        # 추가 REST 호출 없이 사용하고, 시장가(0원)는 같은 응답으로 기록 가격도 보정한다.
         log_price = signal.price
-        if log_price == 0:
+        current_change_rate = None
+        if signal.action == "BUY" or log_price == 0:
             try:
-                # StockQueryService를 통해 현재가 조회
                 resp = await self._sqs.get_current_price(signal.code, caller="StrategyScheduler")
                 if resp and resp.rt_cd == ErrorCode.SUCCESS.value:
                     data = resp.data
                     output = data.get("output") if isinstance(data, dict) else getattr(data, "output", None)
                     if output:
                         val = output.get("stck_prpr") if isinstance(output, dict) else getattr(output, "stck_prpr", 0)
-                        log_price = int(val)
+                        if log_price == 0:
+                            log_price = int(float(val or 0))
+                        rate = output.get("prdy_ctrt") if isinstance(output, dict) else getattr(output, "prdy_ctrt", None)
+                        if rate not in (None, ""):
+                            current_change_rate = float(rate)
             except Exception:
-                pass  # 조회 실패 시 0원으로 기록 유지
+                pass  # 조회/파싱 실패 시 기존 가격을 유지하고 등락률 표기만 생략
 
         # 종목명 보정 (이름이 비어있거나, 종목 코드와 동일하게 들어온 경우)
         if not signal.name or signal.name == signal.code:
@@ -1259,7 +1264,9 @@ class StrategyScheduler:
                             "source": f"strategy:{signal.strategy_name}",
                             "finalize_immediately": False,
                             "trace_id": tid,
-                            "strategy_notification": self._strategy_notification_payload(signal, log_price),
+                            "strategy_notification": self._strategy_notification_payload(
+                                signal, log_price, current_change_rate=current_change_rate
+                            ),
                         }
                         buy_order_kwargs.update(self._virtual_trade_log_kwargs(signal))
                         buy_order_kwargs.update(self._market_regime_log_kwargs(
@@ -1445,8 +1452,13 @@ class StrategyScheduler:
                 })
 
     @staticmethod
-    def _strategy_notification_payload(signal: TradeSignal, log_price: int) -> dict:
-        return {
+    def _strategy_notification_payload(
+        signal: TradeSignal,
+        log_price: int,
+        *,
+        current_change_rate: Optional[float] = None,
+    ) -> dict:
+        payload = {
             "strategy_name": signal.strategy_name,
             "stock_name": signal.name,
             "code": signal.code,
@@ -1455,6 +1467,9 @@ class StrategyScheduler:
             "qty": signal.qty,
             "reason": signal.reason,
         }
+        if current_change_rate is not None:
+            payload["current_change_rate"] = current_change_rate
+        return payload
 
     @staticmethod
     def _virtual_trade_log_kwargs(signal: TradeSignal) -> dict:

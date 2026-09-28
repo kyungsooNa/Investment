@@ -332,7 +332,7 @@ async def test_virtual_trade_recording_is_skipped_for_non_recordable_states(
         (OrderState.SUBMITTED, 10, False, None),         # 경고 임계 미만
         (OrderState.SUBMITTED, 100, False, NotificationLevel.WARNING),
         (OrderState.SUBMITTED, 1000, False, NotificationLevel.CRITICAL),
-        (OrderState.PARTIAL_FILLED, 1000, True, NotificationLevel.WARNING),  # 모의는 경고까지
+        (OrderState.PARTIAL_FILLED, 1000, True, NotificationLevel.CRITICAL),
     ],
 )
 def test_stuck_order_alert_level(service, state, age, paper, expected):
