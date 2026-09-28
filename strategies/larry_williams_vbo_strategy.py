@@ -150,18 +150,34 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             return signals
         self._logger.info({"event": "pool_b_loaded", "count": len(candidates)})
 
+        # 3) 유동성·규모 필터를 먼저 적용해 후속 API 조회와 shadow 구독을 줄인다.
+        runtime_candidates: List[dict] = []
+        for stock in candidates:
+            code = stock.get("code", "")
+            if not code:
+                continue
+            log_data = {"code": code, "name": stock.get("name", code)}
+            try:
+                if self._passes_validity_filter(stock, log_data):
+                    runtime_candidates.append(stock)
+            except Exception as e:
+                self._logger.error({
+                    "event": "scan_error", "strategy_name": self.name,
+                    "code": code, "error": str(e),
+                }, exc_info=True)
+
         # 시장 국면 판정은 스케줄러 공통 주문 게이트가 한다(#766). 전략은 조회하지 않는다.
-        candidate_codes = [c["code"] for c in candidates if c.get("code")]
+        candidate_codes = [c["code"] for c in runtime_candidates]
         await self._sqs.prefetch_prices(candidate_codes)
 
-        # 3) 전일 Range 캐시 갱신 (당일 1회)
+        # 4) 전일 Range 캐시 갱신 (당일 1회)
         await self._refresh_range_cache(today, candidate_codes)
 
-        # P2 2-4: event-driven shadow 구독 대상 — 본 scan 의 pool B 멤버십 = 구독 후보.
+        # P2 2-4: event-driven shadow 구독 대상 — 규모·유동성 필터 통과 종목만 구독 후보.
         # evaluate_single 내부에서 range/time/bought_today 등 세부 게이트를 다시 확인한다.
         self._current_candidate_codes_set = set(candidate_codes)
 
-        for stock in candidates:
+        for stock in runtime_candidates:
             code: str = stock.get("code", "")
             name: str = stock.get("name", code)
             log_data = {"code": code, "name": name}
@@ -172,10 +188,6 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 continue
 
             try:
-                # 4) 유동성·규모 필터 (OSBWatchlistItem 내장값 우선 사용)
-                if not self._passes_validity_filter(stock, log_data):
-                    continue
-
                 # 5) 현재가/시가 조회
                 price_resp = await self._sqs.handle_get_current_stock_price(
                     code,
