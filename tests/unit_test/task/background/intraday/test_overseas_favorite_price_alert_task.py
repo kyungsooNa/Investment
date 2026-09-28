@@ -148,6 +148,11 @@ async def test_timeout_warning_includes_exception_type_when_message_is_empty():
     assert logger.warning.call_args.args[-1] == "TimeoutError"
 
 
+def test_price_fetch_timeout_allows_for_shared_paper_api_queue():
+    """VTS 해외시세는 초당 1건이라 장중 전략과 공유할 때 5초 제한은 너무 짧다."""
+    assert OverseasFavoritePriceAlertTask.FETCH_TIMEOUT_SEC >= 15.0
+
+
 @pytest.mark.asyncio
 async def test_skips_symbol_when_change_rate_is_missing():
     broker = MagicMock()

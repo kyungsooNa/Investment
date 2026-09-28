@@ -27,7 +27,9 @@ from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 
 class OverseasIntradayTask(SchedulableTask):
     CHECK_INTERVAL_SEC = 60
-    FETCH_TIMEOUT_SEC = 5.0
+    # 모의(VTS) 해외시세 큐는 초당 1건이며 관심종목 태스크와 lane 을 공유한다.
+    # 5초 제한은 정상적으로 대기 중인 요청까지 취소하므로 한 번의 공유 큐 묶음을 허용한다.
+    FETCH_TIMEOUT_SEC = 15.0
     DEFAULT_CLOSE_TIME = "16:00"
 
     def __init__(
@@ -165,6 +167,7 @@ class OverseasIntradayTask(SchedulableTask):
 
         # 감시 심볼 합집합 → 심볼당 1회 조회 → 그 심볼을 보는 전략에만 fan-out
         watchers: dict[str, list] = {}
+        self._set_phase("preparing", "장중 전략 후보와 세션 데이터를 준비 중입니다.")
         for svc in self._strategies:
             await self._safe(svc, svc.prepare_session(today), "prepare_session")
             for code in svc.watch_codes():

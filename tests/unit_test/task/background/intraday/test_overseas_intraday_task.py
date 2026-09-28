@@ -108,6 +108,27 @@ async def test_tick_prepares_session_and_polls_watch_codes():
 
 
 @pytest.mark.asyncio
+async def test_tick_reports_preparing_phase_while_session_is_built():
+    """오래 걸리는 후보 준비 중 상태가 이전 warmup 문구로 남으면 장애처럼 보인다."""
+    t = _task(now=_ny(10, 0))
+
+    async def _prepare(_today):
+        progress = t.task.get_progress()
+        assert progress["phase"] == "preparing"
+        assert "후보" in progress["phase_detail"]
+        return 1
+
+    t.vbo.prepare_session.side_effect = _prepare
+
+    await t.task._tick()
+
+
+def test_price_fetch_timeout_allows_for_shared_paper_api_queue():
+    """VTS 해외시세는 초당 1건이라 관심종목과 공유할 때 5초 제한은 정상 요청도 끊는다."""
+    assert OverseasIntradayTask.FETCH_TIMEOUT_SEC >= 15.0
+
+
+@pytest.mark.asyncio
 async def test_tick_closes_positions_near_close_and_stops_polling():
     t = _task(now=_ny(15, 55))
 

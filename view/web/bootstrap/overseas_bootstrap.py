@@ -349,6 +349,7 @@ class OverseasBootstrap:
         ctx.overseas_intraday_pp_service = None
         ctx.overseas_intraday_task = None
         ctx.overseas_opening_reconcile_task = None
+        ctx.overseas_intraday_candidate_service = None
 
         vbo_cfg = getattr(overseas_stock_cfg, "intraday_vbo", None)
         enabled_any = getattr(vbo_cfg, "enabled", False) or any(
@@ -360,6 +361,32 @@ class OverseasBootstrap:
         )
         if not enabled_any:
             return
+
+        # `OverseasStockCodeRepository` 는 거래소별 시총 내림차순으로 저장된다. 장중은
+        # 개장 후 수 분 안에 첫 폴링을 시작해야 하므로 300종목 전수 일봉 스캔 대신
+        # 시총 상위 50종목 안에서 거래대금 후보를 고른다. top_n 을 50보다 크게 설정한
+        # 경우에는 요청한 수만큼은 보존한다. 마감 후 dry-run 은 기존 300종목 서비스를
+        # 계속 써서 관측 범위를 줄이지 않는다.
+        intraday_configs = [
+            vbo_cfg,
+            getattr(overseas_stock_cfg, "intraday_channel_breakout", None),
+            getattr(overseas_stock_cfg, "intraday_rsi2", None),
+            getattr(overseas_stock_cfg, "intraday_buyable_gap_up", None),
+            getattr(overseas_stock_cfg, "intraday_squeeze_breakout", None),
+            getattr(overseas_stock_cfg, "intraday_pocket_pivot", None),
+        ]
+        enabled_top_ns = [
+            int(getattr(cfg, "top_n", 20))
+            for cfg in intraday_configs
+            if cfg is not None and getattr(cfg, "enabled", False)
+        ]
+        intraday_max_universe = max([50, *enabled_top_ns])
+        ctx.overseas_intraday_candidate_service = OverseasCandidateService(
+            overseas_stock_code_repository=ctx.overseas_stock_code_repository,
+            stock_query_service=ctx.stock_query_service,
+            logger=ctx.logger,
+            max_universe=intraday_max_universe,
+        )
 
         # 이 경로 전용 저널 — 국내 event_shadow 와 버퍼를 공유하면 틱마다 flush 할 때
         # 남의 기록이 US 거래일 파일로 딸려간다. 파일은 같은 디렉토리에 append 되므로
@@ -408,7 +435,7 @@ class OverseasBootstrap:
         )
 
         common = dict(
-            candidate_service=ctx.overseas_candidate_service,
+            candidate_service=ctx.overseas_intraday_candidate_service,
             stock_query_service=ctx.stock_query_service,
             order_execution_service=order_execution_service,
             session_volume_service=session_volume_service,
@@ -433,7 +460,7 @@ class OverseasBootstrap:
         if getattr(vbo_cfg, "enabled", False):
             # VBO 는 공통 베이스 이전에 만들어진 독립 구현이라 생성자 인자가 다르다.
             ctx.overseas_intraday_vbo_service = OverseasIntradayVBOService(
-                candidate_service=ctx.overseas_candidate_service,
+                candidate_service=ctx.overseas_intraday_candidate_service,
                 stock_query_service=ctx.stock_query_service,
                 order_execution_service=order_execution_service,
                 position_sizing_service=position_sizing_service,
