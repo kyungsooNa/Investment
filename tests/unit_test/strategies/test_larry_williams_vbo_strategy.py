@@ -241,6 +241,42 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
             "005930", caller=strategy.name, allow_snapshot=False
         )
 
+    async def test_scan_prefilters_invalid_candidates_before_runtime_data_requests(self):
+        """규모·유동성 탈락 종목은 가격 선취·Range 조회·shadow 구독 후보에서 제외한다."""
+        strategy, sqs, _ = self._make_strategy(
+            min_market_cap=200_000_000_000,
+            min_5d_trading_value=10_000_000_000,
+        )
+        strategy._load_pool_b = AsyncMock(return_value=[
+            {
+                "code": "LOWCAP",
+                "name": "저시총",
+                "market_cap": 100_000_000_000,
+                "avg_5d_tv": 20_000_000_000,
+            },
+            {
+                "code": "VALID",
+                "name": "유효종목",
+                "market_cap": 300_000_000_000,
+                "avg_5d_tv": 20_000_000_000,
+            },
+        ])
+        strategy._refresh_range_cache = AsyncMock()
+        sqs.handle_get_current_stock_price.return_value = ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value,
+            msg1="price unavailable",
+        )
+
+        signals = await strategy.scan()
+
+        self.assertEqual(signals, [])
+        sqs.prefetch_prices.assert_awaited_once_with(["VALID"])
+        strategy._refresh_range_cache.assert_awaited_once_with("20260115", ["VALID"])
+        self.assertEqual(strategy.current_candidate_codes(), ["VALID"])
+        sqs.handle_get_current_stock_price.assert_awaited_once_with(
+            "VALID", caller=strategy.name, allow_snapshot=False
+        )
+
     # ── Target 미달 → 거절 ────────────────────────────────────────────
 
     async def test_scan_rejects_below_target(self):
@@ -624,7 +660,10 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
 
     async def test_range_cache_refreshes_on_date_change(self):
         """날짜가 바뀌면 Range 캐시를 새로 로드한다."""
-        strategy, sqs, tm = self._make_strategy(now_time=_kst(10, 0, "2026-01-15"))
+        strategy, sqs, tm = self._make_strategy(
+            now_time=_kst(10, 0, "2026-01-15"),
+            min_intraday_trading_value=0,
+        )
         sqs.get_top_trading_value_stocks.return_value = self._pool_b()
         sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
         sqs.handle_get_current_stock_price.return_value = _price_resp(
