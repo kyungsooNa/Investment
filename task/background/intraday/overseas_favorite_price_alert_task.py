@@ -14,7 +14,9 @@ class OverseasFavoritePriceAlertTask(SchedulableTask):
     """미국장은 실시간 스트림 경로가 없어 해외현재가 REST 조회로 등락률을 감시한다."""
 
     CHECK_INTERVAL_SEC = 60
-    FETCH_TIMEOUT_SEC = 5.0
+    # 장중 전략과 동일한 VTS 해외시세 큐를 공유한다. 초당 1건 제한에서 5초는
+    # 정상 대기 요청까지 끊으므로 관심종목 한 묶음이 빠져나갈 시간을 허용한다.
+    FETCH_TIMEOUT_SEC = 15.0
     DEFAULT_EXCHANGE = "NASD"
 
     def __init__(self, *, favorite_repository, broker, alert_service, market_clock,

@@ -996,6 +996,39 @@ def test_intraday_vbo_built_with_order_path_locked(patched_service_container_dep
     assert task_cls.call_args.kwargs["shadow_journal"] is paper_journal
 
 
+def test_intraday_uses_bounded_candidate_universe(patched_service_container_deps):
+    """장중 준비가 300종목 전수 스캔으로 개장 후 수십 분 지연되면 안 된다.
+
+    마감 후 dry-run은 기존 300종목 후보 서비스를 유지하고, 시간 민감한 장중 경로만
+    시총순 상위 50종목으로 제한한 별도 후보 서비스를 공유한다.
+    """
+    from config.config_loader import AppConfig
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={"intraday_vbo": {"enabled": True, "top_n": 10}},
+    )
+    dryrun_candidates = MagicMock(name="dryrun_candidates")
+    intraday_candidates = MagicMock(name="intraday_candidates")
+
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True) as candidate_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOService", autospec=True) as svc_cls:
+        candidate_cls.side_effect = [dryrun_candidates, intraday_candidates]
+        ServiceContainer(ctx).run()
+
+    assert candidate_cls.call_count == 2
+    assert "max_universe" not in candidate_cls.call_args_list[0].kwargs
+    assert candidate_cls.call_args_list[1].kwargs["max_universe"] == 50
+    assert svc_cls.call_args.kwargs["candidate_service"] is intraday_candidates
+
+
 def test_intraday_vbo_gets_market_timing_gate(patched_service_container_deps):
     """장중 VBO 신규 진입은 미국장 국면 게이트를 거쳐야 한다."""
     from config.config_loader import AppConfig
