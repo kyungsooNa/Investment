@@ -138,6 +138,38 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(candidates[0]["market_cap"], 500_000_000_000)
         stock_repository.get_latest_daily_snapshot.assert_awaited_once_with("005930")
 
+    async def test_intraday_rank_excludes_etf_etn_before_market_cap_enrichment(self):
+        """주식 VBO는 ETF/ETN을 DB·가격 조회 전에 후보에서 제거한다."""
+        stock_repository = MagicMock()
+        stock_repository.get_latest_daily_snapshot = AsyncMock(return_value={
+            "output": {"hts_avls": "5000"},
+        })
+        sqs = MagicMock(spec=StockQueryService)
+        sqs.get_top_trading_value_stocks = AsyncMock(return_value=ResCommonResponse(
+            rt_cd="0",
+            msg1="OK",
+            data=[
+                {"mksc_shrn_iscd": "069500", "hts_kor_isnm": "KODEX 200", "stck_avls": ""},
+                {"mksc_shrn_iscd": "Q530107", "hts_kor_isnm": "삼성 인버스 2X 코스닥150 선물 ETN", "stck_avls": ""},
+                {"mksc_shrn_iscd": "0010S0", "hts_kor_isnm": "와이즈플래닛컴퍼니", "stck_avls": ""},
+            ],
+        ))
+        sqs.get_top_rise_fall_stocks = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[]))
+        sqs.get_top_volume_stocks = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[]))
+        tm = MagicMock()
+        tm.get_current_kst_time.return_value = _kst(10, 0)
+        strategy = LarryWilliamsVBOStrategy(
+            stock_query_service=sqs,
+            market_clock=tm,
+            stock_repository=stock_repository,
+            logger=MagicMock(),
+        )
+
+        candidates = await strategy._load_pool_b()
+
+        self.assertEqual([item["code"] for item in candidates], ["0010S0"])
+        stock_repository.get_latest_daily_snapshot.assert_awaited_once_with("0010S0")
+
     def _pool_b(self, code: str = "005930", name: str = "삼성전자",
                 stck_avls: str = "500000000000") -> ResCommonResponse:
         return ResCommonResponse(

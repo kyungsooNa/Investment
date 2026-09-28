@@ -39,6 +39,12 @@ _ENTRY_CUTOFF = time(14, 0)
 _RANGE_CACHE_CONCURRENCY = 10
 _EXIT_CONCURRENCY = 15
 
+_ETF_ETN_NAME_PREFIXES = (
+    "KODEX", "TIGER", "KBSTAR", "ARIRANG", "SOL", "ACE",
+    "HANARO", "KOSEF", "PLUS", "TIMEFOLIO", "WON", "FOCUS",
+    "VITA", "TREX", "MASTER", "WOORI", "KINDEX", "RISE",
+)
+
 
 @dataclass
 class LarryWilliamsVBOConfig(BaseStrategyConfig):
@@ -624,6 +630,14 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         name = self._get_field(raw, "hts_kor_isnm") or code
         if not code:
             return None
+        if self._is_etf_or_etn_name(name):
+            self._logger.debug({
+                "event": "candidate_skipped",
+                "code": code,
+                "name": name,
+                "reason": "etf_etn_excluded",
+            })
+            return None
 
         market_cap = self._parse_market_cap(raw)
         current_trading_value = self._to_int(
@@ -638,6 +652,15 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             "current_trading_value": current_trading_value,
             "source": "intraday_rank",
         }
+
+    @staticmethod
+    def _is_etf_or_etn_name(name: str) -> bool:
+        normalized = str(name or "").strip().upper()
+        return (
+            any(normalized.startswith(prefix) for prefix in _ETF_ETN_NAME_PREFIXES)
+            or " ETF" in normalized
+            or " ETN" in normalized
+        )
 
     @staticmethod
     def _to_int(value) -> int:
