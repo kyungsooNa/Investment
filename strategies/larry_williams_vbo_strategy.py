@@ -19,6 +19,7 @@ from utils.transaction_cost_utils import TransactionCostUtils
 from utils.volatility_utils import annualized_return_std
 
 if TYPE_CHECKING:
+    from repositories.stock_repository import StockRepository
     from services.oneil_universe_service import OneilUniverseService
 
 
@@ -84,6 +85,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         stock_query_service: StockQueryService,
         market_clock: MarketClock,
         universe_service: Optional["OneilUniverseService"] = None,
+        stock_repository: Optional["StockRepository"] = None,
         config: Optional[LarryWilliamsVBOConfig] = None,
         logger: Optional[logging.Logger] = None,
         trade_history_provider: Optional[Callable[[], list[dict]]] = None,
@@ -91,6 +93,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         self._sqs = stock_query_service
         self._tm = market_clock
         self._universe = universe_service
+        self._stock_repository = stock_repository
         self._cfg = config or LarryWilliamsVBOConfig()
         self._logger = logger or get_strategy_logger("LarryWilliamsVBO")
         self._trade_history_provider = trade_history_provider
@@ -560,9 +563,36 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         for item in await self._load_intraday_rank_candidates():
             result_by_code.setdefault(item["code"], item)
 
+        await self._enrich_missing_market_caps(result_by_code)
+
         if not result_by_code:
             self._logger.warning({"event": "pool_b_load_failed"})
         return list(result_by_code.values())
+
+    async def _enrich_missing_market_caps(self, candidates: Dict[str, dict]) -> None:
+        """장중 랭킹 응답에 시총이 없으면 최근 일봉 DB 값으로 보강한다."""
+        if self._stock_repository is None:
+            return
+        missing = [
+            item for item in candidates.values()
+            if item.get("source") == "intraday_rank" and not item.get("market_cap")
+        ]
+        if not missing:
+            return
+        snapshots = await bounded_gather(
+            [self._stock_repository.get_latest_daily_snapshot(item["code"]) for item in missing],
+            limit=_RANGE_CACHE_CONCURRENCY,
+            return_exceptions=True,
+        )
+        for item, snapshot in zip(missing, snapshots):
+            if isinstance(snapshot, Exception) or not isinstance(snapshot, dict):
+                continue
+            output = snapshot.get("output")
+            raw = output if isinstance(output, dict) else snapshot
+            market_cap = self._parse_market_cap(raw)
+            if market_cap > 0:
+                item["market_cap"] = market_cap
+                item["market_cap_source"] = "latest_daily_snapshot"
 
     async def _load_intraday_rank_candidates(self) -> List[dict]:
         """거래대금/상승률/거래량 랭킹에서 장중 보강 후보를 수집한다."""

@@ -315,9 +315,14 @@ class FillReconciliationService:
                 f"주문: {requested_price_text} × {display_order_qty}주\n"
                 f"평균체결가: {fill_price_text} × {context.filled_qty}/{display_order_qty}주\n"
                 f"총체결금액: {fill_total_text}\n"
-                f"사유: {reason}\n"
-                f"{status_line}"
             )
+            if context.side == OrderSide.BUY:
+                try:
+                    change_rate = float(strategy_notification.get("current_change_rate"))
+                    message += f"매수 시 등락률: {change_rate:+.2f}%\n"
+                except (TypeError, ValueError):
+                    pass
+            message += f"사유: {reason}\n{status_line}"
             if context.state != OrderState.FILLED and metadata.get("reason"):
                 message = f"{message}\n실패: {metadata['reason']}"
             metadata.update(strategy_notification)
@@ -558,7 +563,7 @@ class FillReconciliationService:
             return None
         if age_sec < self._stuck_order_warning_sec:
             return None
-        if not self._is_paper_trading() and age_sec >= self._stuck_order_critical_sec:
+        if age_sec >= self._stuck_order_critical_sec:
             return NotificationLevel.CRITICAL
         return NotificationLevel.WARNING
 
@@ -576,7 +581,9 @@ class FillReconciliationService:
                 alert_level = self._get_stuck_order_alert_level(context, age_sec)
                 if alert_level is None:
                     continue
-                if context.last_stuck_alert_level == alert_level.value:
+                already_alerted = context.last_stuck_alert_level == alert_level.value
+                retry_paper_cancel = self._is_paper_trading() and alert_level == NotificationLevel.CRITICAL
+                if already_alerted and not retry_paper_cancel:
                     continue
 
                 age_text = f"{age_sec:.0f}s"
@@ -588,12 +595,13 @@ class FillReconciliationService:
                     f"source={context.source}, state={context.state.value}, age={age_text}"
                 )
 
-                if alert_level == NotificationLevel.CRITICAL:
-                    self.logger.critical(message)
-                else:
-                    self.logger.warning(message)
+                if not already_alerted:
+                    if alert_level == NotificationLevel.CRITICAL:
+                        self.logger.critical(message)
+                    else:
+                        self.logger.warning(message)
 
-                if self._notification_service:
+                if self._notification_service and not already_alerted:
                     await self._notification_service.emit(
                         NotificationCategory.TRADE,
                         alert_level,
@@ -615,18 +623,36 @@ class FillReconciliationService:
                     )
 
                 if alert_level == NotificationLevel.CRITICAL:
-                    today = now.strftime("%Y%m%d")
-                    poll_applied = await self._poll_single_order_context(context, today, today)
-                    if poll_applied > 0:
-                        self.logger.info(
-                            f"stuck order 상태 보정 완료(polling): order_key={context.order_key}, "
-                            f"applied={poll_applied}"
-                        )
+                    if self._is_paper_trading():
+                        cancel_result = await self.cancel_order(broker_order_no=context.broker_order_no)
+                        if cancel_result and cancel_result.rt_cd == ErrorCode.SUCCESS.value:
+                            canceled = self._fsm.transition(
+                                context.order_key,
+                                OrderState.CANCELED,
+                                error_message="모의주문 장기 미체결 자동 취소",
+                            )
+                            await self._emit_terminal_order_notification(canceled)
+                            self.logger.warning(
+                                f"stuck paper order 자동 취소 완료: order_key={context.order_key}"
+                            )
+                        else:
+                            self.logger.warning(
+                                f"stuck paper order 자동 취소 실패(다음 주기 재시도): "
+                                f"order_key={context.order_key}"
+                            )
                     else:
-                        self.logger.warning(
-                            f"stuck order polling 결과 모호(상태 전이 없음): "
-                            f"order_key={context.order_key}"
-                        )
+                        today = now.strftime("%Y%m%d")
+                        poll_applied = await self._poll_single_order_context(context, today, today)
+                        if poll_applied > 0:
+                            self.logger.info(
+                                f"stuck order 상태 보정 완료(polling): order_key={context.order_key}, "
+                                f"applied={poll_applied}"
+                            )
+                        else:
+                            self.logger.warning(
+                                f"stuck order polling 결과 모호(상태 전이 없음): "
+                                f"order_key={context.order_key}"
+                            )
 
             # polling 이 상태를 terminal 로 전이했을 수 있으므로 재조회 후 갱신
             current_context = self._fsm.lookup(context.order_key)

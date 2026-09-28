@@ -106,6 +106,38 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(signals, [])
         history.assert_called_once_with()
 
+    async def test_intraday_rank_candidate_uses_latest_db_market_cap_when_api_omits_it(self):
+        stock_repository = MagicMock()
+        stock_repository.get_latest_daily_snapshot = AsyncMock(return_value={
+            "output": {"hts_avls": "5000"},
+        })
+        sqs = MagicMock(spec=StockQueryService)
+        sqs.get_top_trading_value_stocks = AsyncMock(return_value=self._pool_b(stck_avls=""))
+        sqs.get_top_rise_fall_stocks = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[]))
+        sqs.get_top_volume_stocks = AsyncMock(return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[]))
+        sqs.prefetch_prices = AsyncMock(return_value=0)
+        sqs.get_recent_daily_ohlcv = AsyncMock(return_value=_ohlcv_resp(110_000, 100_000))
+        sqs.handle_get_current_stock_price = AsyncMock(return_value=_price_resp(106_000, 100_000))
+        sqs.get_stock_conclusion = AsyncMock(return_value=_conclusion_resp(150.0))
+        tm = MagicMock()
+        tm.get_current_kst_time.return_value = _kst(10, 0)
+        strategy = LarryWilliamsVBOStrategy(
+            stock_query_service=sqs,
+            market_clock=tm,
+            stock_repository=stock_repository,
+            config=LarryWilliamsVBOConfig(
+                min_market_cap=200_000_000_000,
+                min_5d_trading_value=0,
+                min_intraday_trading_value=0,
+            ),
+            logger=MagicMock(),
+        )
+
+        candidates = await strategy._load_pool_b()
+
+        self.assertEqual(candidates[0]["market_cap"], 500_000_000_000)
+        stock_repository.get_latest_daily_snapshot.assert_awaited_once_with("005930")
+
     def _pool_b(self, code: str = "005930", name: str = "삼성전자",
                 stck_avls: str = "500000000000") -> ResCommonResponse:
         return ResCommonResponse(

@@ -236,6 +236,7 @@ async def test_strategy_final_notification_labels_average_fill_price_and_total_a
             "price": 12940,
             "qty": 154,
             "reason": "RSI(2)=6.57 ≤ 10.0, Stage 2, 정상비중 진입",
+            "current_change_rate": 7.31,
         },
     ))
     fsm.transition(ctx.order_key, OrderState.SUBMITTED, broker_order_no="B0001")
@@ -254,8 +255,35 @@ async def test_strategy_final_notification_labels_average_fill_price_and_total_a
     message = args[3]
     assert "평균체결가: 12,931.62원 × 154/154주" in message
     assert "총체결금액: 1,991,470원" in message
+    assert "매수 시 등락률: +7.31%" in message
     assert "체결: 12931.623376623376원" not in message
     assert kwargs["metadata"]["fill_price"] == pytest.approx(12931.623376623376)
+
+
+@pytest.mark.asyncio
+async def test_paper_stuck_order_is_canceled_after_critical_timeout(
+    broker, fsm, reporter, fixed_now
+):
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        paper=True,
+    )
+    entered_at = fixed_now - timedelta(seconds=181)
+    ctx = fsm.register(_make_context(
+        state=OrderState.SUBMITTED,
+        broker_order_no="P0001",
+        remaining_qty=10,
+        created_at=entered_at,
+        state_entered_at=entered_at,
+    ))
+
+    await svc.check_stuck_orders_once(now=fixed_now)
+
+    broker.cancel_stock_order.assert_awaited_once()
+    assert fsm.lookup(ctx.order_key).state == OrderState.CANCELED
 
 
 @pytest.mark.asyncio

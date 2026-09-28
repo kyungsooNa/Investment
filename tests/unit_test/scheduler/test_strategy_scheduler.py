@@ -77,7 +77,11 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
 
         sqs = MagicMock()
         sqs.get_current_price = AsyncMock(
-            return_value=ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="OK", data={"output": {"stck_prpr": "60000"}})
+            return_value=ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="OK",
+                data={"output": {"stck_prpr": "60000", "prdy_ctrt": "7.31"}},
+            )
         )
 
         scm = MagicMock()
@@ -615,6 +619,7 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["strategy_name"], "테스트전략")
         self.assertEqual(payload["stock_name"], "삼성전자")
         self.assertEqual(payload["reason"], "테스트")
+        self.assertEqual(payload["current_change_rate"], 7.31)
 
     async def test_run_strategy_scan_respects_max_positions(self):
         """max_positions에 도달하면 스캔을 스킵하는지 테스트."""
