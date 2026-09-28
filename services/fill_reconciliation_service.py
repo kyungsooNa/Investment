@@ -14,6 +14,7 @@ from common.types import (
 from core.loggers.trace_context import trace_scope
 from services.notification_service import NotificationCategory, NotificationLevel
 from services.virtual_trade_market_guard import is_domestic_virtual_trade_code
+from utils.transaction_cost_utils import TransactionCostUtils
 
 
 class FillReconciliationService:
@@ -289,12 +290,36 @@ class FillReconciliationService:
             display_order_qty = self._display_order_qty(context, requested_qty)
             reason = strategy_notification.get("reason") or ""
             if context.side == OrderSide.SELL:
+                buy_price = strategy_notification.get("buy_price")
                 actual_return_rate = self._calculate_return_rate(
-                    strategy_notification.get("buy_price"),
+                    buy_price,
                     fill_price,
                 )
                 if actual_return_rate is not None:
                     strategy_notification["return_rate"] = actual_return_rate
+                    try:
+                        buy_price_value = float(buy_price)
+                        fill_price_value = float(fill_price)
+                        filled_qty = int(context.filled_qty)
+                        if fill_price_value > 0 and filled_qty > 0:
+                            strategy_notification["net_pnl_won"] = (
+                                TransactionCostUtils.calculate_net_pnl_won(
+                                    buy_price_value,
+                                    fill_price_value,
+                                    filled_qty,
+                                )
+                            )
+                            strategy_notification["net_return_rate"] = round(
+                                TransactionCostUtils.get_return_rate(
+                                    buy_price_value,
+                                    fill_price_value,
+                                    filled_qty,
+                                    apply_cost=True,
+                                ),
+                                2,
+                            )
+                    except (TypeError, ValueError):
+                        pass
             try:
                 requested_price_text = f"{int(requested_price):,}원"
             except (TypeError, ValueError):
@@ -322,6 +347,16 @@ class FillReconciliationService:
                     message += f"매수 시 등락률: {change_rate:+.2f}%\n"
                 except (TypeError, ValueError):
                     pass
+            elif context.side == OrderSide.SELL:
+                buy_price_text = self._format_won(strategy_notification.get("buy_price"))
+                net_pnl_won = strategy_notification.get("net_pnl_won")
+                net_return_rate = strategy_notification.get("net_return_rate")
+                if buy_price_text != "N/A":
+                    message += f"매수가: {buy_price_text}\n"
+                if net_pnl_won is not None:
+                    message += f"실현손익(비용 반영): {int(net_pnl_won):+,}원\n"
+                if net_return_rate is not None:
+                    message += f"순수익률: {float(net_return_rate):+.2f}%\n"
             message += f"사유: {reason}\n{status_line}"
             if context.state != OrderState.FILLED and metadata.get("reason"):
                 message = f"{message}\n실패: {metadata['reason']}"

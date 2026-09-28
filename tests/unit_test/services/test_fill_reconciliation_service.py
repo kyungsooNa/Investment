@@ -204,9 +204,54 @@ async def test_apply_execution_report_filled_emits_strategy_final_notification(
     assert args[2] == "[LarryWilliamsCB] 롯데쇼핑 매도 체결 완료"
     assert "체결 완료" in args[3]
     assert "칼손절" in args[3]
+    assert "매수가: 170,000원" in args[3]
+    assert "실현손익(비용 반영): +88,923원" in args[3]
+    assert "순수익률: +5.23%" in args[3]
     assert kwargs["metadata"]["strategy_name"] == "LarryWilliamsCB"
     assert kwargs["metadata"]["return_rate"] == pytest.approx(5.47)
+    assert kwargs["metadata"]["net_pnl_won"] == 88_923
+    assert kwargs["metadata"]["net_return_rate"] == pytest.approx(5.23)
     assert kwargs["metadata"]["state"] == OrderState.FILLED.value
+
+
+@pytest.mark.asyncio
+async def test_strategy_sell_notification_formats_realized_loss(
+    broker, fsm, reporter, fixed_now
+):
+    notification = AsyncMock()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        notification_service=notification,
+    )
+    ctx = fsm.register(_make_context(
+        order_key="KRX:035420:SELL",
+        stock_code="035420",
+        side=OrderSide.SELL,
+        source="strategy_force_exit:래리윌리엄스VBO",
+        qty=5,
+        strategy_notification={
+            "strategy_name": "래리윌리엄스VBO",
+            "stock_name": "NAVER",
+            "price": 198000,
+            "qty": 5,
+            "buy_price": 200000,
+            "reason": "전략 종료 강제 청산 (시장가)",
+        },
+    ))
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED, broker_order_no="B0002")
+
+    await svc.apply_execution_report(OrderExecutionReport(
+        broker_order_no="B0002", stock_code="035420", side=OrderSide.SELL,
+        fill_qty=5, fill_price=197900, cumulative_filled_qty=5, remaining_qty=0,
+    ))
+
+    message = notification.emit.await_args.args[3]
+    assert "매수가: 200,000원" in message
+    assert "실현손익(비용 반영): -12,758원" in message
+    assert "순수익률: -1.28%" in message
 
 
 @pytest.mark.asyncio
