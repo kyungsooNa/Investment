@@ -76,6 +76,33 @@ class TelegramNotificationRepository:
             for row in rows
         ]
 
+    def get_recent(self, count: int = 200) -> list[dict]:
+        """한국 날짜 경계와 무관하게 최근 발송 성공 이력을 반환한다."""
+        with sqlite3.connect(self._db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT id, sent_at, source, title, message, level
+                FROM telegram_notifications
+                ORDER BY sent_at DESC, id DESC
+                LIMIT ?
+                """,
+                (count,),
+            ).fetchall()
+
+        return [
+            {
+                "id": f"telegram-{row['id']}",
+                "timestamp": row["sent_at"],
+                "category": "TELEGRAM",
+                "level": row["level"],
+                "title": row["title"],
+                "message": row["message"],
+                "metadata": {"source": row["source"]},
+            }
+            for row in rows
+        ]
+
     def list_reports(self, limit: int = 200) -> list[dict]:
         """상세 리포트 보관함에 표시할 Telegram 발송 이력을 반환한다."""
         with sqlite3.connect(self._db_path) as conn:
