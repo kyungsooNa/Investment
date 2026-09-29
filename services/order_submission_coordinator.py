@@ -392,14 +392,27 @@ class OrderSubmissionCoordinator:
                 exchange=exchange,
                 order_dvsn=order_dvsn,
                 order_key=order_key,
+                source=source,
             )
 
             latest = self._fsm.lookup(order_key)
             if result and result.rt_cd == ErrorCode.SUCCESS.value:
-                if latest and latest.state == OrderState.SUBMITTED:
+                reconciled_ambiguous_sell = bool(
+                    isinstance(result.data, dict)
+                    and result.data.get("reconciled_ambiguous_sell")
+                )
+                if latest and latest.state == OrderState.SUBMITTED and not reconciled_ambiguous_sell:
                     self._fsm.register_post_submit_fast_poll(order_key)
-                if self._resolve_finalize(finalize_immediately) and latest and latest.state == OrderState.SUBMITTED:
-                    self._fsm.transition(order_key, OrderState.FILLED, filled_qty=qty)
+                if latest and latest.state == OrderState.SUBMITTED:
+                    if reconciled_ambiguous_sell:
+                        self._fsm.transition(
+                            order_key,
+                            OrderState.FILLED,
+                            filled_qty=qty,
+                            average_fill_price=price,
+                        )
+                    elif self._resolve_finalize(finalize_immediately):
+                        self._fsm.transition(order_key, OrderState.FILLED, filled_qty=qty)
                 return result
 
             if latest and latest.state == OrderState.PENDING_SUBMIT:

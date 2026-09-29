@@ -373,7 +373,7 @@ async def test_force_exit_sell_failure_with_no_position_reconciles_strategy_hold
 
     result = await handler.handle_place_sell_order(
         "011200",
-        0,
+        220_000,
         45,
         source="strategy_force_exit:larry_williams_vbo",
     )
@@ -382,15 +382,56 @@ async def test_force_exit_sell_failure_with_no_position_reconciles_strategy_hold
     virtual_trade_service.log_order_failure_async.assert_awaited_once_with(
         "SELL",
         "011200",
-        0,
+        220_000,
         45,
         "Business Error: 모의투자 잔고내역이 없습니다.",
     )
     virtual_trade_service.log_sell_by_strategy_async.assert_awaited_once_with(
         "larry_williams_vbo",
         "011200",
-        0,
+        220_000,
+        45,
         reason="reconciled_force_close",
+    )
+
+
+@pytest.mark.asyncio
+async def test_force_exit_sell_timeout_then_no_position_is_success_and_uses_reference_price(
+    handler,
+    mock_broker_api_wrapper,
+):
+    """최초 매도 결과가 불명확한 뒤 잔고 없음이면 실패/0원 기록을 만들지 않는다."""
+    virtual_trade_service = AsyncMock()
+    handler._virtual_trade_service = virtual_trade_service
+    mock_broker_api_wrapper.place_stock_order.side_effect = [
+        ResCommonResponse(
+            rt_cd=ErrorCode.NETWORK_ERROR.value,
+            msg1="매도 주문 처리 중 예외 발생: timeout",
+            data=None,
+        ),
+        ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value,
+            msg1="Business Error: 모의투자 잔고내역이 없습니다.",
+            data=None,
+        ),
+    ]
+
+    result = await handler.handle_place_sell_order(
+        "298040",
+        2_805_000,
+        1,
+        source="strategy_force_exit:larry_williams_vbo",
+    )
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data["reconciled_ambiguous_sell"] is True
+    virtual_trade_service.log_order_failure_async.assert_not_awaited()
+    virtual_trade_service.log_sell_by_strategy_async.assert_awaited_once_with(
+        "larry_williams_vbo",
+        "298040",
+        2_805_000,
+        1,
+        reason="reconciled_ambiguous_sell",
     )
 
 

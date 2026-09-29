@@ -60,16 +60,38 @@ class BrokerOrderSubmitter:
         exchange: Exchange = Exchange.KRX,
         order_dvsn: Optional[str] = None,
         order_key: Optional[str] = None,
+        source: str = "default",
     ) -> ResCommonResponse:
         """재시도 가능한 오류에 대해 주문 API를 재시도.
         - FAIL (비즈니스 거부): 즉시 REJECTED, 재시도 없음.
         - RETRY (일시적 오류): 지수 백오프, 최대 self._max_retries 회.
         """
         last_result: Optional[ResCommonResponse] = None
+        had_ambiguous_attempt = False
         for attempt in range(1, self._max_retries + 1):
             result: ResCommonResponse = await self._execute_via_broker(
                 stock_code, price, qty, is_buy=is_buy, exchange=exchange, order_dvsn=order_dvsn
             )
+            if self._is_reconciled_force_exit_sell(
+                result,
+                is_buy=is_buy,
+                source=source,
+                had_ambiguous_attempt=had_ambiguous_attempt,
+            ):
+                original_message = result.msg1
+                self.logger.warning(
+                    f"강제청산 매도 대사 성공 — 이전 주문 결과 불명확 후 브로커 잔고 없음 확인: "
+                    f"stock_code={stock_code}, qty={qty}, msg={original_message}"
+                )
+                result = ResCommonResponse(
+                    rt_cd=ErrorCode.SUCCESS.value,
+                    msg1="이전 강제청산 매도가 체결된 것으로 대사되었습니다.",
+                    data={
+                        "reconciled_ambiguous_sell": True,
+                        "confirmation": "no_broker_position",
+                        "original_message": original_message,
+                    },
+                )
             if result and result.rt_cd == ErrorCode.SUCCESS.value:
                 if order_key and self._is_order_key_active(order_key):
                     broker_no = (
@@ -77,7 +99,15 @@ class BrokerOrderSubmitter:
                         if self._extract_broker_order_no_fn
                         else None
                     )
-                    if broker_no is None and self._on_missing_broker_order_no_fn is not None:
+                    is_reconciled_sell = bool(
+                        isinstance(result.data, dict)
+                        and result.data.get("reconciled_ambiguous_sell")
+                    )
+                    if (
+                        broker_no is None
+                        and not is_reconciled_sell
+                        and self._on_missing_broker_order_no_fn is not None
+                    ):
                         self.logger.warning(
                             f"주문번호 추출 실패 — stock_code={stock_code}, order_key={order_key}, "
                             f"rt_cd={result.rt_cd}, msg1={result.msg1}, raw_data={result.data!r}"
@@ -98,6 +128,8 @@ class BrokerOrderSubmitter:
             last_result = result
 
             outcome = classify(result)
+            if outcome == RequestOutcome.RETRY and self._is_ambiguous_order_result(result):
+                had_ambiguous_attempt = True
 
             if outcome == RequestOutcome.FAIL:
                 self.logger.warning(
@@ -141,6 +173,40 @@ class BrokerOrderSubmitter:
                 continue
             break
         return last_result
+
+    @staticmethod
+    def _is_ambiguous_order_result(result: Optional[ResCommonResponse]) -> bool:
+        if not result:
+            return True
+        if result.rt_cd in (ErrorCode.NETWORK_ERROR.value, ErrorCode.UNKNOWN_ERROR.value):
+            return True
+        message = str(result.msg1 or "").lower()
+        return any(marker in message for marker in ("timeout", "timed out", "예외 발생"))
+
+    @staticmethod
+    def _is_reconciled_force_exit_sell(
+        result: Optional[ResCommonResponse],
+        *,
+        is_buy: bool,
+        source: str,
+        had_ambiguous_attempt: bool,
+    ) -> bool:
+        if is_buy or not had_ambiguous_attempt or not str(source or "").startswith("strategy_force_exit:"):
+            return False
+        message = str(result.msg1 if result else "")
+        return any(
+            marker in message
+            for marker in (
+                "잔고내역이 없습니다",
+                "잔고 내역이 없습니다",
+                "보유수량",
+                "보유 수량",
+                "매도가능수량",
+                "매도 가능 수량",
+                "insufficient position",
+                "no position",
+            )
+        )
 
     async def _execute_via_broker(
         self,
