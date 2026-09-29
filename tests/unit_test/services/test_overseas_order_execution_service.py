@@ -313,6 +313,33 @@ async def test_successful_paper_entry_emits_trade_notification():
 
 
 @pytest.mark.asyncio
+async def test_paper_entry_notification_uses_actual_strategy_and_us_trade_date():
+    notification_service = MagicMock()
+    notification_service.emit = AsyncMock()
+    svc = OverseasOrderExecutionService(
+        None, live_enabled=False, notification_service=notification_service
+    )
+
+    await svc.place_entry(
+        code="META",
+        qty=1,
+        limit_price=717.365,
+        signal={
+            "strategy": "RSI2Pullback_overseas_intraday",
+            "action": "BUY",
+            "date": "20260928",
+            "reason": "rsi2_intraday_pullback",
+        },
+    )
+
+    _, _, title, message = notification_service.emit.await_args.args[:4]
+    metadata = notification_service.emit.await_args.kwargs["metadata"]
+    assert title == "미국장 RSI2 BUY META"
+    assert "미국 거래일: 2026-09-28" in message
+    assert metadata["trade_date"] == "20260928"
+
+
+@pytest.mark.asyncio
 async def test_successful_paper_exit_emits_trade_notification_with_return_rate():
     notification_service = MagicMock()
     notification_service.emit = AsyncMock()

@@ -94,7 +94,7 @@ function filterNotifications(category) {
         btn.classList.toggle('active', btn.dataset.category === category);
     });
     if (category === 'TELEGRAM') {
-        fetch('/api/notifications/telegram/today?count=200')
+        fetch('/api/notifications/telegram/recent?count=200')
             .then(r => r.json())
             .then(data => {
                 _telegramNotifications = data.notifications || [];
@@ -118,7 +118,7 @@ function renderNotifications() {
     }
 
     if (items.length === 0) {
-        const message = _notifCurrentFilter === 'TELEGRAM' ? '오늘 발송된 Telegram 알림이 없습니다.' : '알림이 없습니다.';
+        const message = _notifCurrentFilter === 'TELEGRAM' ? '최근 발송된 Telegram 알림이 없습니다.' : '알림이 없습니다.';
         list.innerHTML = `<div class="notification-empty">${message}</div>`;
         return;
     }

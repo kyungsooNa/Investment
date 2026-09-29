@@ -49,6 +49,32 @@ def test_get_by_date_applies_count_limit(tmp_path):
     assert [item["title"] for item in items] == ["리포트 2", "리포트 1"]
 
 
+def test_get_recent_returns_latest_notifications_across_kst_date_boundary(tmp_path):
+    repository = TelegramNotificationRepository(tmp_path / "telegram_notifications.db")
+    repository.record(
+        sent_at="2026-09-28T22:55:13+09:00",
+        source="strategy",
+        title="미국장 VBO BUY NVDA",
+        message="미국 거래일: 2026-09-28",
+        level="warning",
+    )
+    repository.record(
+        sent_at="2026-09-29T04:46:51+09:00",
+        source="strategy",
+        title="미국장 RSI2 BUY META",
+        message="미국 거래일: 2026-09-28",
+        level="warning",
+    )
+
+    items = repository.get_recent(count=10)
+
+    assert [item["title"] for item in items] == [
+        "미국장 RSI2 BUY META",
+        "미국장 VBO BUY NVDA",
+    ]
+    assert all(item["category"] == "TELEGRAM" for item in items)
+
+
 def test_list_reports_and_get_report_for_archive(tmp_path):
     repository = TelegramNotificationRepository(tmp_path / "telegram_notifications.db")
     repository.record(

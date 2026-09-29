@@ -66,13 +66,27 @@ def test_get_today_telegram_notifications(mock_get_ctx, client, mock_ctx):
     )
 
 
-def test_web_notification_center_exposes_today_telegram_filter():
+@patch("view.web.routes.notification._get_ctx")
+def test_get_recent_telegram_notifications(mock_get_ctx, client, mock_ctx):
+    mock_get_ctx.return_value = mock_ctx
+    expected = [{"id": "telegram-2", "category": "TELEGRAM", "title": "미국장 RSI2 BUY META"}]
+    mock_ctx.telegram_notification_repository.get_recent.return_value = expected
+
+    response = client.get("/notifications/telegram/recent?count=100")
+
+    assert response.status_code == 200
+    assert response.json() == {"notifications": expected}
+    mock_ctx.telegram_notification_repository.get_recent.assert_called_once_with(count=100)
+
+
+def test_web_notification_center_exposes_recent_telegram_filter():
     template = Path("view/web/templates/base.html").read_text(encoding="utf-8")
     script = Path("view/web/static/js/notifications.js").read_text(encoding="utf-8")
     stylesheet = Path("view/web/static/css/style.css").read_text(encoding="utf-8")
 
     assert "filterNotifications('TELEGRAM')" in template
-    assert "/api/notifications/telegram/today?count=200" in script
+    assert "/api/notifications/telegram/recent?count=200" in script
+    assert "최근 발송된 Telegram 알림이 없습니다." in script
     assert ".notif-message {\n    white-space: pre-wrap;" in stylesheet
 
 @pytest.mark.asyncio

@@ -298,9 +298,12 @@ class OverseasOrderExecutionService:
         source = self.SIGNAL_SOURCE_LIVE if self._live_enabled else self.SIGNAL_SOURCE_PAPER
         action = str(signal.get("action") or side).upper()
         strategy = str(signal.get("strategy") or self._journal_strategy_name)
-        title = f"미국장 VBO {action} {symbol}"
+        title = f"미국장 {self._strategy_label(strategy)} {action} {symbol}"
         mode_label = "live" if self._live_enabled else "paper"
         message = f"{symbol} {side.upper()} {qty}주 @ {limit_str} ({ex.value}, {mode_label})"
+        trade_date = str(signal.get("date") or signal.get("trade_date") or "").strip()
+        if len(trade_date) == 8 and trade_date.isdigit():
+            message += f"\n미국 거래일: {trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}"
         if exit_reason:
             message += f"\n청산 사유: {exit_reason}"
         reason = signal.get("reason")
@@ -322,6 +325,8 @@ class OverseasOrderExecutionService:
             metadata["exit_reason"] = exit_reason
         if signal.get("realized_pct") is not None:
             metadata["return_rate"] = self._to_float(signal.get("realized_pct"))
+        if trade_date:
+            metadata["trade_date"] = trade_date
 
         try:
             await self._notification_service.emit(
@@ -333,6 +338,21 @@ class OverseasOrderExecutionService:
             )
         except Exception as e:
             self._logger.warning({"event": "overseas_order_notification_error", "error": str(e)})
+
+    @staticmethod
+    def _strategy_label(strategy: str) -> str:
+        labels = (
+            ("LarryWilliamsVBO", "VBO"),
+            ("RSI2Pullback", "RSI2"),
+            ("LarryWilliamsCB", "CB"),
+            ("O'NeilBGU", "BGU"),
+            ("O'NeilOSB", "OSB"),
+            ("O'NeilPP", "PP"),
+        )
+        for prefix, label in labels:
+            if strategy.startswith(prefix):
+                return label
+        return strategy.removesuffix("_overseas_intraday").removesuffix("_overseas")
 
     @staticmethod
     def decide_daily_exit(
