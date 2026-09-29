@@ -225,6 +225,96 @@ async def test_submit_retries_on_transient_error_then_succeeds(mock_broker, mock
 
 
 @pytest.mark.asyncio
+async def test_force_exit_sell_treats_no_position_after_ambiguous_attempt_as_reconciled_success(
+    mock_broker,
+    mock_market_clock,
+):
+    """강제청산 매도의 불명확 응답 뒤 잔고 없음은 최초 주문 체결로 대사한다."""
+    mock_broker.place_stock_order.side_effect = [
+        ResCommonResponse(
+            rt_cd=ErrorCode.NETWORK_ERROR.value,
+            msg1="매도 주문 처리 중 예외 발생: timeout",
+            data=None,
+        ),
+        ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value,
+            msg1="Business Error: 모의투자 잔고내역이 없습니다.",
+            data=None,
+        ),
+    ]
+    submitter = _make_submitter(broker=mock_broker, market_clock=mock_market_clock)
+
+    result = await submitter.submit_with_retry(
+        "298040",
+        0,
+        1,
+        is_buy=False,
+        exchange=Exchange.KRX,
+        source="strategy_force_exit:larry_williams_vbo",
+    )
+
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data["reconciled_ambiguous_sell"] is True
+    assert result.data["confirmation"] == "no_broker_position"
+    assert mock_broker.place_stock_order.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_regular_sell_does_not_reconcile_no_position_after_retry(
+    mock_broker,
+    mock_market_clock,
+):
+    mock_broker.place_stock_order.side_effect = [
+        ResCommonResponse(rt_cd=ErrorCode.NETWORK_ERROR.value, msg1="timeout", data=None),
+        ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value,
+            msg1="Business Error: 모의투자 잔고내역이 없습니다.",
+            data=None,
+        ),
+    ]
+    submitter = _make_submitter(broker=mock_broker, market_clock=mock_market_clock)
+
+    result = await submitter.submit_with_retry(
+        "298040",
+        0,
+        1,
+        is_buy=False,
+        exchange=Exchange.KRX,
+        source="strategy:larry_williams_vbo",
+    )
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+
+
+@pytest.mark.asyncio
+async def test_force_exit_sell_does_not_reconcile_after_explicit_retry_limit_rejection(
+    mock_broker,
+    mock_market_clock,
+):
+    """명시적 재시도 응답은 주문 결과 불명확으로 간주하지 않는다."""
+    mock_broker.place_stock_order.side_effect = [
+        ResCommonResponse(rt_cd=ErrorCode.RETRY_LIMIT.value, msg1="처리량 제한", data=None),
+        ResCommonResponse(
+            rt_cd=ErrorCode.API_ERROR.value,
+            msg1="Business Error: 모의투자 잔고내역이 없습니다.",
+            data=None,
+        ),
+    ]
+    submitter = _make_submitter(broker=mock_broker, market_clock=mock_market_clock)
+
+    result = await submitter.submit_with_retry(
+        "298040",
+        0,
+        1,
+        is_buy=False,
+        exchange=Exchange.KRX,
+        source="strategy_force_exit:larry_williams_vbo",
+    )
+
+    assert result.rt_cd == ErrorCode.API_ERROR.value
+
+
+@pytest.mark.asyncio
 async def test_submit_exhausts_retries_returns_last_failure(mock_broker, mock_market_clock):
     mock_broker.place_stock_order.return_value = ResCommonResponse(
         rt_cd=ErrorCode.RETRY_LIMIT.value, msg1="재시도 한도 초과", data=None

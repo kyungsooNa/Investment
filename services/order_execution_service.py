@@ -326,6 +326,8 @@ class OrderExecutionService:
         self,
         *,
         stock_code: str,
+        price: int,
+        qty: int,
         source: str,
         message: str,
     ) -> None:
@@ -347,7 +349,8 @@ class OrderExecutionService:
         await self._virtual_trade_service.log_sell_by_strategy_async(
             strategy_name,
             stock_code,
-            0,
+            price,
+            qty,
             reason=_FORCE_CLOSE_REASON,
         )
 
@@ -680,6 +683,22 @@ class OrderExecutionService:
                 strategy_notification=strategy_notification,
             )
             if sell_order_result and sell_order_result.rt_cd == ErrorCode.SUCCESS.value:
+                if (
+                    self._virtual_trade_service
+                    and is_domestic_virtual_trade_code(stock_code)
+                    and isinstance(sell_order_result.data, dict)
+                    and sell_order_result.data.get("reconciled_ambiguous_sell")
+                    and self._is_force_exit_source(source)
+                ):
+                    strategy_name, is_strategy = self._strategy_name_from_source(source)
+                    if is_strategy and strategy_name:
+                        await self._virtual_trade_service.log_sell_by_strategy_async(
+                            strategy_name,
+                            stock_code,
+                            price,
+                            qty,
+                            reason="reconciled_ambiguous_sell",
+                        )
                 self.logger.info(
                     f"주식 매도 주문 접수: 종목={stock_code}, 수량={qty}, 결과={{'rt_cd': '{sell_order_result.rt_cd}', 'msg1': '{sell_order_result.msg1}'}}")
                 if self._price_sub_svc:
@@ -699,6 +718,8 @@ class OrderExecutionService:
                     await self._virtual_trade_service.log_order_failure_async("SELL", stock_code, price, qty, msg1)
                     await self._reconcile_force_exit_sell_failure_if_no_position(
                         stock_code=stock_code,
+                        price=price,
+                        qty=qty,
                         source=source,
                         message=msg1,
                     )
