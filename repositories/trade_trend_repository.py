@@ -60,21 +60,28 @@ class TradeTrendRepository:
         self,
         release: NationalTradeTrendRelease,
     ) -> bool:
-        if not self.has_sent(release.dedup_key):
-            return True
-        previous = next(
-            (
-                item
-                for item in self._national_release_history
-                if item.get("dedup_key") == release.dedup_key
-            ),
-            None,
-        )
-        if not previous or previous.get("source_type") != "sent":
+        previous_releases = [
+            item
+            for item in self._national_release_history
+            if item.get("dedup_key") == release.dedup_key
+            or (
+                item.get("phase") == release.phase
+                and item.get("period_label") == release.period_label
+            )
+        ]
+        if not previous_releases:
+            return not self.has_sent(release.dedup_key)
+        sent_releases = [
+            item
+            for item in previous_releases
+            if item.get("source_type") == "sent"
+        ]
+        if not sent_releases:
             return False
         current = _national_release_to_dict(release)
         return any(
-            previous.get(field) is None and current.get(field) is not None
+            current.get(field) is not None
+            and all(previous.get(field) is None for previous in sent_releases)
             for field in _NATIONAL_RELEASE_ENRICHMENT_FIELDS
         )
 

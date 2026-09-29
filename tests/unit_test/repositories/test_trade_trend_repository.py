@@ -40,6 +40,58 @@ def test_trade_trend_repository_saves_national_release_history(tmp_path):
     assert loaded.get_national_release_history()[0]["sent_at"] == "2026-08-11T09:30:00"
 
 
+def test_trade_trend_repository_skips_same_period_release_from_different_url(tmp_path):
+    tradedata_release = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_10d",
+        title="[잠정치] 2026년 9월(1~10일) 수출입 현황",
+        url="https://tradedata.go.kr/cts/release/2416",
+        period_label="2026년 9월 1~10일",
+        export_amount_100m_usd=349.7,
+        semiconductor_export_amount_100m_usd=165.0,
+    )
+    customs_release = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_10d",
+        title="2026년 9월 1일 ~ 9월 10일 수출입 현황 [잠정치]",
+        url="https://www.customs.go.kr/kcs/release/10176444",
+        period_label="2026년 9월 1~10일",
+        export_amount_100m_usd=349.7,
+        semiconductor_export_amount_100m_usd=165.0,
+    )
+    repo = TradeTrendRepository(tmp_path / "trade_trend_state.json")
+    repo.mark_national_release_sent(
+        tradedata_release,
+        sent_at="2026-09-11T09:05:44+09:00",
+    )
+
+    assert repo.should_send_national_release(customs_release) is False
+
+
+def test_trade_trend_repository_resends_same_period_when_different_url_adds_data(tmp_path):
+    partial = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_10d",
+        title="[잠정치] 2026년 9월(1~10일) 수출입 현황",
+        url="https://tradedata.go.kr/cts/release/2416",
+        period_label="2026년 9월 1~10일",
+        export_amount_100m_usd=349.7,
+    )
+    enriched = NationalTradeTrendRelease(
+        source="customs",
+        phase="customs_10d",
+        title="2026년 9월 1일 ~ 9월 10일 수출입 현황 [잠정치]",
+        url="https://www.customs.go.kr/kcs/release/10176444",
+        period_label="2026년 9월 1~10일",
+        export_amount_100m_usd=349.7,
+        semiconductor_export_amount_100m_usd=165.0,
+    )
+    repo = TradeTrendRepository(tmp_path / "trade_trend_state.json")
+    repo.mark_national_release_sent(partial, sent_at="2026-09-11T09:05:44+09:00")
+
+    assert repo.should_send_national_release(enriched) is True
+
+
 def test_trade_trend_repository_backfills_legacy_national_sent_keys(tmp_path):
     path = tmp_path / "trade_trend_state.json"
     path.write_text(
