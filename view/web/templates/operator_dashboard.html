@@ -26,10 +26,35 @@
             <div style="font-weight:600;margin-top:4px;">WebSocket WD</div>
             <div id="wd-badge" style="margin-top:6px;font-size:0.85rem;color:#888;">조회 중…</div>
         </div>
-        <div class="card" style="padding:16px;text-align:center;opacity:0.4;">
+        <div class="card" style="padding:16px;text-align:center;" id="card-strategy-readiness">
             <div style="font-size:1.4rem;">📊</div>
-            <div style="font-weight:600;margin-top:4px;">Data Quality</div>
-            <div style="margin-top:6px;font-size:0.85rem;color:#888;">준비 중</div>
+            <div style="font-weight:600;margin-top:4px;">전략 검증</div>
+            <div id="readiness-card-badge" style="margin-top:6px;font-size:0.85rem;color:#888;">조회 중…</div>
+        </div>
+    </div>
+
+    <!-- 전략 검증 준비도 -->
+    <div class="card" style="padding:20px 12px;margin-bottom:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;">
+            <h3 style="margin:0;">📊 전략 검증 준비도</h3>
+            <span id="readiness-summary" style="font-size:0.85rem;color:#888;">조회 중…</span>
+        </div>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>전략</th>
+                        <th>판정</th>
+                        <th>SOLD 표본</th>
+                        <th>진행률</th>
+                        <th>설정 버전</th>
+                        <th>차단 사유</th>
+                    </tr>
+                </thead>
+                <tbody id="strategy-readiness-body">
+                    <tr><td colspan="6" style="text-align:center;color:#888;">로딩 중…</td></tr>
+                </tbody>
+            </table>
         </div>
     </div>
 
@@ -94,5 +119,5 @@
 .transition-resolved  { color:#43a047; font-weight:700; }
 </style>
 
-<script src="/static/js/operator_dashboard.js?v=1"></script>
+<script src="/static/js/operator_dashboard.js?v=2"></script>
 {% endblock %}

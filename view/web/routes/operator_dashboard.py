@@ -6,9 +6,24 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from services.strategy_validation_readiness_service import build_strategy_validation_readiness
 from view.web.api_common import _get_ctx
 
 router = APIRouter()
+
+
+@router.get("/operator/strategy-readiness")
+async def get_strategy_validation_readiness():
+    """표준 journal 표본·profitability gate·replay 캡처 준비도를 반환한다."""
+    ctx = _get_ctx()
+    trade_service = getattr(ctx, "virtual_trade_service", None)
+    records = trade_service.get_standard_journal_records() if trade_service else []
+    full_config = getattr(ctx, "full_config", None)
+    if isinstance(full_config, dict):
+        gate_config = full_config.get("strategy_profitability_gate")
+    else:
+        gate_config = getattr(full_config, "strategy_profitability_gate", None)
+    return build_strategy_validation_readiness(records, gate_config)
 
 
 @router.get("/operator/status")
