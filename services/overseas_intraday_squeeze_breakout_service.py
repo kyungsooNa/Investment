@@ -31,6 +31,7 @@ class OverseasIntradaySqueezeBreakoutConfig:
 
 class OverseasIntradaySqueezeBreakoutService(OverseasIntradayStrategyBase):
     STRATEGY_NAME = "O'NeilOSB_overseas_intraday"
+    STRATEGY_VERSION = "1"
     EVENT_PREFIX = "overseas_intraday_osb"
 
     def __init__(self, *args, config: Optional[OverseasIntradaySqueezeBreakoutConfig] = None,

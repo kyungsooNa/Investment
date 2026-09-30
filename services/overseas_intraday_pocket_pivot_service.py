@@ -27,6 +27,7 @@ class OverseasIntradayPocketPivotConfig:
 
 class OverseasIntradayPocketPivotService(OverseasIntradayStrategyBase):
     STRATEGY_NAME = "O'NeilPP_overseas_intraday"
+    STRATEGY_VERSION = "1"
     EVENT_PREFIX = "overseas_intraday_pp"
 
     def __init__(self, *args, config: Optional[OverseasIntradayPocketPivotConfig] = None,

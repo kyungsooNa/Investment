@@ -44,7 +44,9 @@ CREATE TABLE IF NOT EXISTS overseas_trades (
     status      TEXT    NOT NULL,
     reason      TEXT    NOT NULL DEFAULT '',
     source      TEXT    NOT NULL DEFAULT '',
-    order_no    TEXT    NOT NULL DEFAULT ''
+    order_no    TEXT    NOT NULL DEFAULT '',
+    config_hash TEXT    NOT NULL DEFAULT '',
+    strategy_version TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_overseas_trades_symbol_status
     ON overseas_trades(symbol, status);
@@ -53,7 +55,7 @@ CREATE INDEX IF NOT EXISTS idx_overseas_trades_symbol_status
 _COLUMNS = (
     "id", "symbol", "exchange", "currency", "buy_date", "buy_price", "qty",
     "sell_date", "sell_price", "return_rate", "status", "reason", "source",
-    "order_no",
+    "order_no", "config_hash", "strategy_version",
 )
 
 
@@ -82,16 +84,24 @@ class OverseasTradeRepository:
     def _ensure_columns(self) -> None:
         """기존 DB에 신규 컬럼이 없으면 ALTER TABLE 로 추가 (idempotent)."""
         existing = {row[1] for row in self._db.execute("PRAGMA table_info(overseas_trades)").fetchall()}
-        if "order_no" not in existing:
-            with self._db:
+        additions = {
+            "order_no": "TEXT NOT NULL DEFAULT ''",
+            "config_hash": "TEXT NOT NULL DEFAULT ''",
+            "strategy_version": "TEXT NOT NULL DEFAULT ''",
+        }
+        with self._db:
+            for column, definition in additions.items():
+                if column in existing:
+                    continue
                 self._db.execute(
-                    "ALTER TABLE overseas_trades ADD COLUMN order_no TEXT NOT NULL DEFAULT ''"
+                    f"ALTER TABLE overseas_trades ADD COLUMN {column} {definition}"
                 )
 
     # ---- 기록 ----
 
     def log_buy(self, symbol: str, exchange, price, qty: int, source: str = "",
-                order_no: str = "") -> None:
+                order_no: str = "", config_hash: str = "",
+                strategy_version: str = "") -> None:
         """매수 lot 을 추가한다. 같은 심볼을 다시 사도 평단 병합 없이 별도 lot 으로 둔다
         (진입가별 청산 추적을 잃지 않기 위해).
 
@@ -101,8 +111,9 @@ class OverseasTradeRepository:
         with self._db:
             self._db.execute(
                 "INSERT INTO overseas_trades "
-                "(symbol, exchange, currency, buy_date, buy_price, qty, status, source, order_no) "
-                "VALUES (?, ?, 'USD', ?, ?, ?, 'HOLD', ?, ?)",
+                "(symbol, exchange, currency, buy_date, buy_price, qty, status, source, "
+                "order_no, config_hash, strategy_version) "
+                "VALUES (?, ?, 'USD', ?, ?, ?, 'HOLD', ?, ?, ?, ?)",
                 (
                     str(symbol).upper(),
                     self._exchange_value(exchange),
@@ -111,6 +122,8 @@ class OverseasTradeRepository:
                     int(qty),
                     source,
                     str(order_no or ""),
+                    str(config_hash or ""),
+                    str(strategy_version or ""),
                 ),
             )
 
@@ -167,12 +180,14 @@ class OverseasTradeRepository:
                     self._db.execute(
                         "INSERT INTO overseas_trades "
                         "(symbol, exchange, currency, buy_date, buy_price, qty, sell_date, "
-                        "sell_price, return_rate, status, reason, source, order_no) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SOLD', ?, ?, ?)",
+                        "sell_price, return_rate, status, reason, source, order_no, config_hash, "
+                        "strategy_version) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SOLD', ?, ?, ?, ?, ?)",
                         (
                             row["symbol"], row["exchange"], row["currency"], row["buy_date"],
                             row["buy_price"], take, sold_date, sell_price, rate, reason,
-                            row["source"], row["order_no"],
+                            row["source"], row["order_no"], row["config_hash"],
+                            row["strategy_version"],
                         ),
                     )
                 sold_qty += take
@@ -182,8 +197,12 @@ class OverseasTradeRepository:
         return OverseasSellResult(sold_qty=sold_qty, return_rates=tuple(rates))
 
     async def log_buy_async(self, symbol: str, exchange, price, qty: int, source: str = "",
-                            order_no: str = "") -> None:
-        await asyncio.to_thread(self.log_buy, symbol, exchange, price, qty, source, order_no)
+                            order_no: str = "", config_hash: str = "",
+                            strategy_version: str = "") -> None:
+        await asyncio.to_thread(
+            self.log_buy, symbol, exchange, price, qty, source, order_no,
+            config_hash, strategy_version,
+        )
 
     async def log_sell_async(self, symbol: str, price, qty: int | None = None,
                              reason: str = "", source: str | None = None) -> OverseasSellResult:

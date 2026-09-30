@@ -30,6 +30,7 @@ class OverseasIntradayChannelBreakoutConfig:
 
 class OverseasIntradayChannelBreakoutService(OverseasIntradayStrategyBase):
     STRATEGY_NAME = "LarryWilliamsCB_overseas_intraday"
+    STRATEGY_VERSION = "1"
     EVENT_PREFIX = "overseas_intraday_cb"
 
     def __init__(

@@ -33,6 +33,7 @@ class OverseasIntradayRSI2Config:
 
 class OverseasIntradayRSI2Service(OverseasIntradayStrategyBase):
     STRATEGY_NAME = "RSI2Pullback_overseas_intraday"
+    STRATEGY_VERSION = "1"
     EVENT_PREFIX = "overseas_intraday_rsi2"
     HISTORY_LIMIT = 210
 

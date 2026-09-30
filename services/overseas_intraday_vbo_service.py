@@ -29,6 +29,7 @@ from services.indicator_service import IndicatorService
 
 class OverseasIntradayVBOService:
     STRATEGY_NAME = "LarryWilliamsVBO_overseas_intraday"
+    STRATEGY_VERSION = "1"
     MARKET = "US"
     # 감시목록이 빈 채로 latch 되면 그날 전략이 통째로 죽는다. VBO 는 당일 시가가
     # 필요해 개장 직후 당일 봉이 없으면 전 종목이 제외되므로 특히 잘 걸린다 —

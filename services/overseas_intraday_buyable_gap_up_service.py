@@ -26,6 +26,7 @@ class OverseasIntradayBuyableGapUpConfig:
 
 class OverseasIntradayBuyableGapUpService(OverseasIntradayStrategyBase):
     STRATEGY_NAME = "O'NeilBGU_overseas_intraday"
+    STRATEGY_VERSION = "1"
     EVENT_PREFIX = "overseas_intraday_bgu"
 
     def __init__(self, *args, config: Optional[OverseasIntradayBuyableGapUpConfig] = None,
