@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock
 from datetime import datetime
 
@@ -15,6 +16,14 @@ from services.backtest_replay_adapter import (
     StockQueryBacktestReplayService,
     StockQueryDailyMtmBarProvider,
     StockQueryIntradayReplayBarProvider,
+)
+
+
+REAL_CAPTURE_FIXTURE_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "backtest"
+    / "microstructure_20260929"
 )
 
 
@@ -211,6 +220,33 @@ async def test_replay_provider_prefers_date_quality_sidecar_over_stale_manifest(
 
     assert bar.bid == 71_000
     assert bar.ask == 71_100
+
+
+@pytest.mark.asyncio
+async def test_replay_provider_uses_quality_gated_real_capture_fixture():
+    """2026-09-29 실캡처 일부가 분봉+호가 replay 체결 입력으로 재생된다."""
+    capture = json.loads(
+        (REAL_CAPTURE_FIXTURE_DIR / "replay_microstructure_20260929.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = capture["intraday_minutes"]["011200"]
+    provider = StockQueryIntradayReplayBarProvider(
+        sqs,
+        microstructure_dir=REAL_CAPTURE_FIXTURE_DIR,
+    )
+
+    bar = await provider.get_bar(
+        signal=_signal(code="011200", price=21_300),
+        date_ymd="20260929",
+        side="BUY",
+        execution_policy="next_bar",
+    )
+
+    assert bar.timestamp == "20260929 090100"
+    assert (bar.open, bar.high, bar.low, bar.close) == (21_200, 21_350, 21_200, 21_300)
+    assert (bar.bid, bar.ask) == (21_300, 21_350)
 
 
 @pytest.mark.asyncio

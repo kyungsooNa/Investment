@@ -1,0 +1,31 @@
+{
+  "011200": [
+    {
+      "time": "090025",
+      "ask_price": 21350,
+      "bid_price": 21300,
+      "ask_qty": 1329,
+      "bid_qty": 1063,
+      "total_ask_qty": 6733,
+      "total_bid_qty": 2918
+    },
+    {
+      "time": "090127",
+      "ask_price": 21350,
+      "bid_price": 21300,
+      "ask_qty": 10937,
+      "bid_qty": 1,
+      "total_ask_qty": 105575,
+      "total_bid_qty": 71298
+    },
+    {
+      "time": "090230",
+      "ask_price": 21300,
+      "bid_price": 21250,
+      "ask_qty": 3353,
+      "bid_qty": 756,
+      "total_ask_qty": 93947,
+      "total_bid_qty": 81164
+    }
+  ]
+}
