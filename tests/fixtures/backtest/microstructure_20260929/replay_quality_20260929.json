@@ -1,0 +1,14 @@
+{
+  "valid_for_backtest": true,
+  "passed": true,
+  "issues": [],
+  "warnings": [
+    "execution_strength_db_coverage_below_target",
+    "orderbook_db_coverage_below_target"
+  ],
+  "intraday_coverage_pct": 100.0,
+  "program_overlay_coverage_pct": 100.0,
+  "program_db_coverage_pct": 69.23076923076923,
+  "execution_strength_db_coverage_pct": 65.38461538461539,
+  "orderbook_db_coverage_pct": 65.38461538461539
+}

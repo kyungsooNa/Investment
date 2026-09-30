@@ -1,0 +1,47 @@
+{
+  "metadata": {
+    "schema_version": 1,
+    "capture_type": "backtest_microstructure_overlay",
+    "trade_date": "20260929",
+    "codes": ["011200"],
+    "fixture_provenance": "data/backtest_microstructure/replay_microstructure_20260929.json",
+    "quality_gate": {
+      "valid_for_backtest": true,
+      "passed": true
+    }
+  },
+  "intraday_minutes": {
+    "011200": [
+      {
+        "stck_bsop_date": "20260929",
+        "stck_cntg_hour": "090000",
+        "stck_prpr": "21250",
+        "stck_oprc": "21350",
+        "stck_hgpr": "21350",
+        "stck_lwpr": "21200",
+        "cntg_vol": "10387",
+        "acml_tr_pbmn": "821538600"
+      },
+      {
+        "stck_bsop_date": "20260929",
+        "stck_cntg_hour": "090100",
+        "stck_prpr": "21300",
+        "stck_oprc": "21200",
+        "stck_hgpr": "21350",
+        "stck_lwpr": "21200",
+        "cntg_vol": "11071",
+        "acml_tr_pbmn": "1057358300"
+      },
+      {
+        "stck_bsop_date": "20260929",
+        "stck_cntg_hour": "090200",
+        "stck_prpr": "21300",
+        "stck_oprc": "21300",
+        "stck_hgpr": "21300",
+        "stck_lwpr": "21250",
+        "cntg_vol": "2447",
+        "acml_tr_pbmn": "1109430300"
+      }
+    ]
+  }
+}
