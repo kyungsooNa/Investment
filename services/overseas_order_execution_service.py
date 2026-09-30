@@ -298,17 +298,27 @@ class OverseasOrderExecutionService:
         source = self.SIGNAL_SOURCE_LIVE if self._live_enabled else self.SIGNAL_SOURCE_PAPER
         action = str(signal.get("action") or side).upper()
         strategy = str(signal.get("strategy") or self._journal_strategy_name)
-        title = f"미국장 {self._strategy_label(strategy)} {action} {symbol}"
-        mode_label = "live" if self._live_enabled else "paper"
-        message = f"{symbol} {side.upper()} {qty}주 @ {limit_str} ({ex.value}, {mode_label})"
+        side_label = "매수" if action == "BUY" else "매도"
+        title = f"[{self._strategy_label(strategy)}] {symbol} {side_label} 주문 접수"
+        mode_label = "실전투자" if self._live_enabled else "모의투자"
+        message_lines = [
+            f"종목: {symbol}",
+            f"주문: {self._format_usd(limit_str)} × {qty}주",
+            f"거래소: {ex.value}",
+            f"모드: {mode_label}",
+        ]
         trade_date = str(signal.get("date") or signal.get("trade_date") or "").strip()
         if len(trade_date) == 8 and trade_date.isdigit():
-            message += f"\n미국 거래일: {trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}"
+            message_lines.append(
+                f"미국 거래일: {trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}"
+            )
         if exit_reason:
-            message += f"\n청산 사유: {exit_reason}"
+            message_lines.append(f"청산 사유: {exit_reason}")
         reason = signal.get("reason")
         if reason:
-            message += f"\n사유: {reason}"
+            message_lines.append(f"사유: {reason}")
+        message_lines.append("상태: 주문 접수(체결 미확정)")
+        message = "\n".join(message_lines)
 
         metadata: Dict[str, Any] = {
             "market": "overseas_us",
@@ -331,7 +341,7 @@ class OverseasOrderExecutionService:
         try:
             await self._notification_service.emit(
                 NotificationCategory.STRATEGY,
-                NotificationLevel.WARNING,
+                NotificationLevel.CRITICAL,
                 title,
                 message,
                 metadata=metadata,
@@ -390,3 +400,13 @@ class OverseasOrderExecutionService:
         if f == int(f):
             return str(int(f)) if not isinstance(x, float) else str(f)
         return str(f)
+
+    @staticmethod
+    def _format_usd(x) -> str:
+        value = OverseasOrderExecutionService._to_float(x)
+        text = f"{value:,.4f}".rstrip("0").rstrip(".")
+        if "." not in text:
+            text += ".00"
+        elif len(text.rsplit(".", 1)[1]) == 1:
+            text += "0"
+        return f"${text}"

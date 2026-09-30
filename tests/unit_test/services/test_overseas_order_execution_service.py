@@ -304,9 +304,16 @@ async def test_successful_paper_entry_emits_trade_notification():
     category, level, title, message = notification_service.emit.await_args.args[:4]
     metadata = notification_service.emit.await_args.kwargs["metadata"]
     assert category == NotificationCategory.STRATEGY
-    assert level == NotificationLevel.WARNING
-    assert "미국장 VBO BUY" in title
-    assert "AAPL" in message
+    assert level == NotificationLevel.CRITICAL
+    assert title == "[VBO] AAPL 매수 주문 접수"
+    assert message == (
+        "종목: AAPL\n"
+        "주문: $150.25 × 3주\n"
+        "거래소: NASD\n"
+        "모드: 모의투자\n"
+        "사유: vbo_intraday_breakout\n"
+        "상태: 주문 접수(체결 미확정)"
+    )
     assert metadata["force_external"] is True
     assert metadata["signal_source"] == OverseasOrderExecutionService.SIGNAL_SOURCE_PAPER
     assert metadata["strategy"] == "LarryWilliamsVBO_overseas_intraday"
@@ -334,8 +341,18 @@ async def test_paper_entry_notification_uses_actual_strategy_and_us_trade_date()
 
     _, _, title, message = notification_service.emit.await_args.args[:4]
     metadata = notification_service.emit.await_args.kwargs["metadata"]
-    assert title == "미국장 RSI2 BUY META"
+    assert title == "[RSI2] META 매수 주문 접수"
+    assert message.startswith(
+        "종목: META\n"
+        "주문: $717.365 × 1주\n"
+        "거래소: NASD\n"
+        "모드: 모의투자\n"
+    )
     assert "미국 거래일: 2026-09-28" in message
+    assert message.endswith(
+        "사유: rsi2_intraday_pullback\n"
+        "상태: 주문 접수(체결 미확정)"
+    )
     assert metadata["trade_date"] == "20260928"
 
 
@@ -359,7 +376,18 @@ async def test_successful_paper_exit_emits_trade_notification_with_return_rate()
         },
     )
 
+    _, level, title, message = notification_service.emit.await_args.args[:4]
     metadata = notification_service.emit.await_args.kwargs["metadata"]
+    assert level == NotificationLevel.CRITICAL
+    assert title == "[VBO] AAPL 매도 주문 접수"
+    assert message == (
+        "종목: AAPL\n"
+        "주문: $153.00 × 3주\n"
+        "거래소: NASD\n"
+        "모드: 모의투자\n"
+        "청산 사유: eod\n"
+        "상태: 주문 접수(체결 미확정)"
+    )
     assert metadata["side"] == "sell"
     assert metadata["exit_reason"] == "eod"
     assert metadata["return_rate"] == 2.0
