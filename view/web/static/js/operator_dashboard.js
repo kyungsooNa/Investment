@@ -30,6 +30,69 @@ function shortKey(key) {
     return key.length > 40 ? key.slice(0, 38) + '…' : key;
 }
 
+function escapeReadinessHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function readinessStatusBadge(status) {
+    const labels = {
+        pass: ['badge-ok', '통과'],
+        fail: ['badge-crit', '실패'],
+        insufficient_sample: ['badge-warn', '표본 부족'],
+    };
+    const [className, label] = labels[status] || ['badge-warn', status || '미확인'];
+    return `<span class="${className}">${escapeReadinessHtml(label)}</span>`;
+}
+
+function renderStrategyReadiness(data) {
+    const summary = data.summary || {};
+    const strategies = data.strategies || [];
+    const summaryEl = document.getElementById('readiness-summary');
+    const body = document.getElementById('strategy-readiness-body');
+    const cardBadge = document.getElementById('readiness-card-badge');
+    const card = document.getElementById('card-strategy-readiness');
+
+    summaryEl.textContent = `유효 캡처 ${summary.valid_capture_days || 0}일 · 최신 ${summary.latest_valid_capture_date || '-'}`;
+    if ((summary.fail_count || 0) > 0) {
+        cardBadge.innerHTML = '<span class="badge-crit">실패 전략 있음</span>';
+        card.style.borderLeft = '4px solid #e53935';
+    } else if ((summary.insufficient_sample_count || 0) > 0 || !strategies.length) {
+        cardBadge.innerHTML = '<span class="badge-warn">검증 진행 중</span>';
+        card.style.borderLeft = '4px solid #fb8c00';
+    } else {
+        cardBadge.innerHTML = '<span class="badge-ok">전략 통과</span>';
+        card.style.borderLeft = '';
+    }
+
+    if (!strategies.length) {
+        body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888;">표준 저널 데이터 없음</td></tr>';
+        return;
+    }
+    body.innerHTML = strategies.map(item => {
+        const cohorts = (item.config_cohorts || []).map(cohort => {
+            const hash = cohort.config_hash === '<missing>' ? '미기록' : cohort.config_hash;
+            return `${escapeReadinessHtml(hash)} (${cohort.sold_count})`;
+        }).join(', ');
+        const mixed = item.mixed_config ? ' ⚠️' : '';
+        const reasons = (item.blocking_reasons || []).map(escapeReadinessHtml).join(', ') || '-';
+        return `
+            <tr>
+                <td>${escapeReadinessHtml(item.strategy)}</td>
+                <td>${readinessStatusBadge(item.status)}</td>
+                <td>${item.sold_trades} / ${item.min_trades}</td>
+                <td>${item.progress_pct}%</td>
+                <td>${cohorts || '-'}${mixed}</td>
+                <td>${reasons}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
 async function resolveAlert(dedupKey) {
     if (!confirm(`차단 키 "${dedupKey}"를 수동 해제할까요?`)) return;
     try {
@@ -143,14 +206,17 @@ function renderHistory(alerts) {
 
 async function loadStatus() {
     try {
-        const [statusRes, histRes] = await Promise.all([
+        const [statusRes, histRes, readinessRes] = await Promise.all([
             fetch('/api/operator/status'),
             fetch('/api/operator/alerts?limit=50'),
+            fetch('/api/operator/strategy-readiness'),
         ]);
         const status = await statusRes.json();
         const hist = await histRes.json();
+        const readiness = await readinessRes.json();
 
         renderSubsystemCards(status);
+        renderStrategyReadiness(readiness);
         renderActiveAlerts(status.active_alerts || []);
         renderHistory(hist.alerts || []);
     } catch (e) {

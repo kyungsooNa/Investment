@@ -59,6 +59,8 @@ def _make_ctx(operator_alert_svc, ks_is_tripped=False):
     mock_ctx.operator_alert_service = operator_alert_svc
     mock_ctx.kill_switch_service = MagicMock()
     mock_ctx.kill_switch_service.get_status.return_value = _make_ks_status(ks_is_tripped)
+    mock_ctx.virtual_trade_service.get_standard_journal_records.return_value = []
+    mock_ctx.full_config["strategy_profitability_gate"] = None
     return mock_ctx
 
 
@@ -122,6 +124,30 @@ def test_status_shows_kill_switch_tripped(client_tripped):
     data = r.json()
     assert data["kill_switch"]["is_tripped"] is True
     assert data["summary"]["has_kill_switch"] is True
+
+
+def test_strategy_readiness_exposes_journal_progress_and_gate(client):
+    c, _ = client
+    ctx = api_common._ctx
+    ctx.virtual_trade_service.get_standard_journal_records.return_value = [
+        {
+            "strategy": "alpha",
+            "status": "SOLD",
+            "net_return": 1.0,
+            "net_pnl": 1000,
+            "config_hash": "abc123def456",
+            "signal_time": "2026-09-30T09:01:00+09:00",
+        }
+    ]
+
+    r = c.get("/api/operator/strategy-readiness")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["summary"]["strategy_count"] == 1
+    assert data["strategies"][0]["strategy"] == "alpha"
+    assert data["strategies"][0]["sold_trades"] == 1
+    assert data["strategies"][0]["config_cohorts"][0]["config_hash"] == "abc123def456"
 
 
 @pytest.mark.asyncio
