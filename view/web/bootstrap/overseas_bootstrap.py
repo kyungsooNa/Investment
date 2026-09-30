@@ -39,6 +39,7 @@ from services.overseas_reconcile_service import OverseasReconcileService
 from services.overseas_risk_gate_service import OverseasRiskGateService
 from services.overseas_rsi2_dryrun_service import OverseasRSI2DryRunService
 from services.overseas_squeeze_breakout_dryrun_service import OverseasSqueezeBreakoutDryRunService
+from services.overseas_strategy_metadata_service import build_overseas_intraday_strategy_metadata
 from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
 from services.us_market_calendar_service import USMarketCalendarService
 from services.us_market_regime_service import USMarketRegimeService
@@ -423,6 +424,7 @@ class OverseasBootstrap:
             open_position_count_provider=_open_position_count,
             notification_service=ctx.notification_service,
             trade_repository=getattr(ctx, "overseas_trade_repository", None),
+            strategy_metadata=build_overseas_intraday_strategy_metadata(overseas_stock_cfg),
             logger=ctx.logger,
         )
         ctx.overseas_risk_gate_service = overseas_risk_gate

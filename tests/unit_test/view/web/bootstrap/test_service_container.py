@@ -1523,6 +1523,9 @@ def test_intraday_auto_path_records_into_usd_ledger(patched_service_container_de
 
     orders = ctx.overseas_intraday_vbo_service._orders
     assert orders._ledger is ctx.overseas_trade_repository
+    metadata = orders._strategy_metadata["LarryWilliamsVBO_overseas_intraday"]
+    assert len(metadata["config_hash"]) == 12
+    assert metadata["strategy_version"] == "1"
 
 
 def test_manual_order_service_does_not_double_write_ledger(patched_service_container_deps):

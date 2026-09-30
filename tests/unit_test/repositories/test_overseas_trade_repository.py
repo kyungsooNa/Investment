@@ -142,6 +142,22 @@ def test_log_buy_stores_order_no(repo):
     assert repo.get_holds()[0]["order_no"] == "0001234"
 
 
+def test_log_buy_stores_strategy_config_metadata(repo):
+    repo.log_buy(
+        "AAPL",
+        OverseasExchange.NASD,
+        190.0,
+        3,
+        source="LarryWilliamsVBO_overseas_intraday",
+        config_hash="abc123def456",
+        strategy_version="1",
+    )
+
+    trade = repo.get_all_trades()[0]
+    assert trade["config_hash"] == "abc123def456"
+    assert trade["strategy_version"] == "1"
+
+
 def test_order_no_defaults_to_empty(repo):
     """주문번호 없이 기록된 lot 도 유효하다(대사 대상에서 빠질 뿐)."""
     repo.log_buy("AAPL", OverseasExchange.NASD, 190.0, 3)
@@ -239,6 +255,32 @@ def test_existing_db_without_order_no_is_migrated(tmp_path):
     holds = repo.get_holds()
     assert len(holds) == 1
     assert holds[0]["order_no"] == ""
+    assert holds[0]["config_hash"] == ""
+    assert holds[0]["strategy_version"] == ""
+
+
+def test_partial_sell_preserves_strategy_config_metadata(repo):
+    repo.log_buy(
+        "AAPL",
+        OverseasExchange.NASD,
+        190.0,
+        3,
+        source="LarryWilliamsVBO_overseas_intraday",
+        config_hash="abc123def456",
+        strategy_version="1",
+    )
+
+    repo.log_sell(
+        "AAPL",
+        200.0,
+        qty=1,
+        source="LarryWilliamsVBO_overseas_intraday",
+    )
+
+    trades = repo.get_all_trades()
+    assert len(trades) == 2
+    assert {trade["config_hash"] for trade in trades} == {"abc123def456"}
+    assert {trade["strategy_version"] for trade in trades} == {"1"}
 
 
 # ── source 필터 매도 (자동 전략 lot 과 수동 lot 분리) ─────────────────────────

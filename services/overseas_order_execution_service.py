@@ -52,6 +52,7 @@ class OverseasOrderExecutionService:
         open_position_count_provider=None,
         notification_service=None,
         journal_strategy_name: str = "LarryWilliamsVBO_overseas",
+        strategy_metadata: Optional[Dict[str, Dict[str, str]]] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         # broker 는 live_enabled=True 일 때만 필요. paper 모드에선 None 허용(구조적 잠금).
@@ -68,6 +69,10 @@ class OverseasOrderExecutionService:
         self._ledger = trade_repository
         # 저널 상 경로 구분(자동 VBO / 수동 주문). 소비 측이 섞어 읽지 않도록 한다.
         self._journal_strategy_name = journal_strategy_name
+        self._strategy_metadata = {
+            str(name): dict(metadata)
+            for name, metadata in (strategy_metadata or {}).items()
+        }
         # live 실주문 직전 차단 게이트(check_orders_allowed). paper 모드는 실주문이 없어 미적용.
         self._kill_switch = kill_switch
         self._logger = logger or logging.getLogger(__name__)
@@ -221,6 +226,7 @@ class OverseasOrderExecutionService:
             order["exit_reason"] = exit_reason
         if signal:
             order["signal"] = signal
+        order.update(self._resolve_strategy_metadata(signal))
         try:
             self._journal.record(
                 strategy_name=self._journal_strategy_name,
@@ -240,6 +246,22 @@ class OverseasOrderExecutionService:
         """
         strategy = str((signal or {}).get("strategy") or "").strip()
         return strategy or self._journal_strategy_name
+
+    def _resolve_strategy_metadata(
+        self, signal: Optional[Dict[str, Any]],
+    ) -> Dict[str, str]:
+        """주문 신호의 명시값을 우선하고 등록된 전략 메타데이터로 보완한다."""
+        signal = signal or {}
+        strategy = self._ledger_source(signal)
+        registered = self._strategy_metadata.get(strategy, {})
+        metadata: Dict[str, str] = {}
+        for key in ("config_hash", "strategy_version"):
+            value = signal.get(key)
+            if value in (None, ""):
+                value = registered.get(key)
+            if value not in (None, ""):
+                metadata[key] = str(value)
+        return metadata
 
     async def _record_ledger(
         self, symbol: str, ex: OverseasExchange, side: str, qty: int,
@@ -261,12 +283,19 @@ class OverseasOrderExecutionService:
         if getattr(resp, "rt_cd", None) != ErrorCode.SUCCESS.value:
             return
         source = self._ledger_source(signal)
+        metadata = self._resolve_strategy_metadata(signal)
         try:
             if side == "buy":
+                metadata_kwargs = {
+                    key: metadata[key]
+                    for key in ("config_hash", "strategy_version")
+                    if metadata.get(key)
+                }
                 await self._ledger.log_buy_async(
                     symbol, ex, self._to_float(limit_price), qty,
                     source=source,
                     order_no=str(getattr(getattr(resp, "data", None), "broker_order_no", "") or ""),
+                    **metadata_kwargs,
                 )
             else:
                 result = await self._ledger.log_sell_async(

@@ -515,6 +515,38 @@ async def test_paper_entry_is_recorded_in_ledger():
 
 
 @pytest.mark.asyncio
+async def test_paper_entry_records_registered_strategy_metadata_in_ledger_and_journal():
+    ledger = _ledger()
+    journal = MagicMock()
+    svc = OverseasOrderExecutionService(
+        None,
+        live_enabled=False,
+        trade_repository=ledger,
+        journal=journal,
+        strategy_metadata={
+            "OverseasIntradayVBO": {
+                "config_hash": "abc123def456",
+                "strategy_version": "1",
+            }
+        },
+    )
+
+    await svc.place_entry(
+        code="AAPL",
+        qty=3,
+        limit_price=190.5,
+        signal={"strategy": "OverseasIntradayVBO"},
+    )
+
+    ledger_kwargs = ledger.log_buy_async.await_args.kwargs
+    assert ledger_kwargs["config_hash"] == "abc123def456"
+    assert ledger_kwargs["strategy_version"] == "1"
+    journal_signal = journal.record.call_args.kwargs["signal"]
+    assert journal_signal["config_hash"] == "abc123def456"
+    assert journal_signal["strategy_version"] == "1"
+
+
+@pytest.mark.asyncio
 async def test_paper_exit_is_recorded_in_ledger_with_source_filter():
     """청산은 같은 전략이 남긴 lot 만 닫아야 한다 — 수동 보유를 대신 닫으면 안 된다."""
     ledger = _ledger()

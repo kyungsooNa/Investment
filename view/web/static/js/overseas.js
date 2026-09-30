@@ -502,6 +502,7 @@ async function loadOverseasTrades() {
                 <td>${_overseasReturnCell(trade)}</td>
                 <td>${escapeHtml(_overseasTradeStatusLabel(trade.status))}</td>
                 <td>${escapeHtml(_overseasSourceLabel(trade.source))}</td>
+                <td>${escapeHtml(trade.strategy_version || '-')} / ${escapeHtml(trade.config_hash || '-')}</td>
             </tr>
         `).join('');
         resultDiv.innerHTML = `
@@ -510,8 +511,8 @@ async function loadOverseasTrades() {
                 <p>총 ${_formatNumber(summary.total_trades)}건 · 청산 ${_formatNumber(summary.sold_trades)}건
                    · 승률 ${Number(summary.win_rate) || 0}% · 평균 수익률 ${Number(summary.avg_return) || 0}%${canceledNote}</p>
                 <table class="data-table">
-                    <thead><tr><th>심볼</th><th>거래소</th><th>매수일</th><th>매수가</th><th>수량</th><th>매도일</th><th>매도가</th><th>수익률</th><th>상태</th><th>구분</th></tr></thead>
-                    <tbody>${body || '<tr><td colspan="10">거래 기록이 없습니다.</td></tr>'}</tbody>
+                    <thead><tr><th>심볼</th><th>거래소</th><th>매수일</th><th>매수가</th><th>수량</th><th>매도일</th><th>매도가</th><th>수익률</th><th>상태</th><th>구분</th><th>버전 / 설정</th></tr></thead>
+                    <tbody>${body || '<tr><td colspan="11">거래 기록이 없습니다.</td></tr>'}</tbody>
                 </table>
             </div>
         `;
