@@ -59,6 +59,7 @@ from task.background.after_market.log_cleanup_task import LogCleanupTask
 from task.background.after_market.microstructure_capture_task import MicrostructureCaptureTask
 from task.background.after_market.minervini_update_task import MinerviniUpdateTask
 from task.background.after_market.newhigh_task import NewHighTask
+from task.background.after_market.operational_backup_task import OperationalBackupTask
 from task.background.after_market.ohlcv_update_task import OhlcvUpdateTask
 from task.background.after_market.premium_watchlist_generator_task import PremiumWatchlistGeneratorTask
 from task.background.after_market.strategy_log_report_task import StrategyLogReportTask
@@ -686,6 +687,12 @@ class ServiceContainer:
                 ctx.cache_warmup_task = None
 
             if needs_batch:
+                ctx.operational_backup_task = OperationalBackupTask(
+                    mcs=ctx._mcs,
+                    market_clock=ctx.market_clock,
+                    logger=ctx.logger,
+                    worker_pool=ctx.worker_pool,
+                )
                 ctx.log_cleanup_task = LogCleanupTask(
                     log_dir=ctx.logger.log_dir,
                     delete_days=30,
@@ -809,6 +816,7 @@ class ServiceContainer:
                     program_capture_sub_enabled and ctx.price_subscription_service
                 ) else None
             else:
+                ctx.operational_backup_task = None
                 ctx.log_cleanup_task = None
                 ctx.newhigh_task = None
                 ctx.newhigh_service = None

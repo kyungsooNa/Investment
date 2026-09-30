@@ -24,6 +24,7 @@ after_market_tasks:
     newhigh: 21                  # NewHighTask — daily_price_collector 완료(21분) + 여유
     minervini_update: 21        # MinerviniUpdateTask — 장 마감 21분 후
     전일기준주도주_생성: 50        # PremiumWatchlistGeneratorTask — 장 마감 50분 후
+    operational_backup: 60       # OperationalBackupTask — 주요 운영 원장/상태 백업 및 복원 검증
     log_cleanup: 300              # LogCleanupTask — 장 마감 300분(5시간) 후
     # 미국장 배치(time_dispatcher_us 가 NY 16:00 마감 감지 후 적용) — 16:30 ET 효과 트리거
     overseas_dryrun: 30          # OverseasDryRunTask — 미국장 마감 30분 후
