@@ -199,3 +199,20 @@ def test_contract_doc_references_existing_tests():
         f"계약 문서가 없는 테스트 파일을 가리킵니다: {missing}. "
         f"테스트를 옮기거나 이름을 바꿨다면 계약표도 함께 갱신하십시오. {_DOC_HINT}"
     )
+
+
+def test_national_trade_contract_pins_same_event_and_enrichment_resend_semantics():
+    """국가 무역 릴리스의 sender 내부 의미 계약이 문서에서 빠지지 않아야 한다."""
+    doc = _read(CONTRACT_DOC)
+    required = {
+        "`(phase, period_label)`",
+        "URL보다 우선",
+        "과거 발송 레코드 전체에 없던 보강 필드",
+        "한 번만 재발송",
+        "test_trade_trend_repository_resends_same_event_only_once_for_new_enrichment",
+    }
+    missing = sorted(item for item in required if item not in doc)
+    assert not missing, (
+        f"국가 무역 릴리스의 동일 사건/보강 재발송 계약이 빠졌습니다: {missing}. "
+        f"{_DOC_HINT}"
+    )
