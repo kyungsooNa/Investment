@@ -29,7 +29,7 @@ SERVICE_CONTAINER_PATCH_NAMES = [
     "MarketTimingDailyUpdateTask",
     "USMarketCalendarService",
     "BacktestMicrostructureCaptureService", "MicrostructureCaptureTask",
-    "PremiumWatchlistGeneratorTask", "CacheWarmupTask", "LogCleanupTask",
+    "PremiumWatchlistGeneratorTask", "CacheWarmupTask", "OperationalBackupTask", "LogCleanupTask",
     "NewHighTask", "NewHighService", "StrategyLogReportTask",
     "StrategyLogReportService", "NotificationQueueTask",
     "AfterMarketReconcileTask", "OpeningPositionReconcileTask",
@@ -566,6 +566,7 @@ def test_service_container_batch_mode_skips_streaming_and_intraday_web_tasks(pat
     assert ctx.opening_position_reconcile_task is None
     assert ctx.notification_queue_task is None
     assert ctx.overseas_favorite_price_alert_task is None
+    assert ctx.operational_backup_task is patched_service_container_deps["OperationalBackupTask"].return_value
     assert ctx.after_market_reconcile_task is patched_service_container_deps["AfterMarketReconcileTask"].return_value
     assert ctx.post_market_replay_audit_task is patched_service_container_deps["PostMarketReplayAuditTask"].return_value
     assert ctx.newhigh_strategy_coverage_backtest_task is patched_service_container_deps[

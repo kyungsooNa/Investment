@@ -45,7 +45,7 @@ def _make_fake_context(runtime_mode: RuntimeMode = RuntimeMode.ALL):
     for name in [
         "ranking_task", "minervini_update_task", "daily_price_collector_task",
         "ohlcv_update_task", "premium_watchlist_generator_task", "newhigh_task",
-        "log_cleanup_task", "strategy_log_report_task", "theme_classification_task",
+        "operational_backup_task", "log_cleanup_task", "strategy_log_report_task", "theme_classification_task",
         "theme_daily_leader_report_task",
         "opening_position_reconcile_task", "after_market_reconcile_task",
         "post_market_replay_audit_task", "newhigh_strategy_coverage_backtest_task",
@@ -98,17 +98,17 @@ def test_creates_foreground_even_in_batch_only_mode(patched_scheduler_deps):
 
 # ---------- mode=ALL 회귀 (현행 동작 100% 유지) ----------
 
-def test_all_mode_registers_28_tasks_to_background(patched_scheduler_deps):
+def test_all_mode_registers_29_tasks_to_background(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.ALL)
     _run(ctx)
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 28
+    assert bg.register.call_count == 29
 
 
-def test_all_mode_registers_15_tasks_to_time_dispatcher(patched_scheduler_deps):
+def test_all_mode_registers_16_tasks_to_time_dispatcher(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.ALL)
     _run(ctx)
-    assert ctx.time_dispatcher.register_task.call_count == 15
+    assert ctx.time_dispatcher.register_task.call_count == 16
 
 
 def test_batch_tasks_use_safe_outage_recovery_policy(patched_scheduler_deps):
@@ -128,6 +128,7 @@ def test_batch_tasks_use_safe_outage_recovery_policy(patched_scheduler_deps):
     assert calls["ohlcv_update_task"] == (True, False)
     assert calls["post_market_replay_audit_task"] == (False, True)
     assert calls["after_market_reconcile_task"] == (False, False)
+    assert calls["operational_backup_task"] == (False, False)
     assert calls["log_cleanup_task"] == (False, False)
 
 
@@ -281,7 +282,7 @@ def test_batch_only_registers_after_market_tasks_no_watchdog(patched_scheduler_d
     expected = {
         "ranking_task", "minervini_update_task", "daily_price_collector_task",
         "ohlcv_update_task", "premium_watchlist_generator_task", "newhigh_task",
-        "log_cleanup_task", "post_market_replay_audit_task",
+        "operational_backup_task", "log_cleanup_task", "post_market_replay_audit_task",
         "newhigh_strategy_coverage_backtest_task",
         "strategy_log_report_task", "after_market_reconcile_task",
         "theme_classification_task", "theme_daily_leader_report_task",
@@ -336,6 +337,6 @@ def test_skips_none_tasks(patched_scheduler_deps):
     _run(ctx)
     # opening_position_reconcile_task 는 TRADING 그룹 + TimeDispatcher 등록 대상이었으므로
     # 둘 다 -1 감소한다.
-    assert ctx.time_dispatcher.register_task.call_count == 14
+    assert ctx.time_dispatcher.register_task.call_count == 15
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 27
+    assert bg.register.call_count == 28
