@@ -37,7 +37,6 @@ _DOC_HINT = f"계약과 목록을 함께 확인할 것: {CONTRACT_DOC.relative_t
 CONTRACTED_ALERT_SENDERS = {
     "send_national_trade_trend_report",
     "send_jeju_semiconductor_trade_report",
-    "send_jeju_trade_pending_report",
     "send_intraday_volume_surge_alert",
     "send_disclosure_alert",
     "send_disclosure_digest",

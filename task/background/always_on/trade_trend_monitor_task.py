@@ -199,16 +199,6 @@ class TradeTrendMonitorTask(SchedulableTask):
         self._progress["last_jeju_message"] = message
         self._logger.info("%s: %s", self.task_name, message)
 
-        pending_key = f"jeju_trade_pending:{period}:{item_code}"
-        if self._repository.has_sent(pending_key):
-            return
-        sender = getattr(self._reporter, "send_jeju_trade_pending_report", None)
-        if sender is None:
-            return
-        sent = await sender(yyyymm, item_code, message)
-        if sent:
-            self._repository.mark_sent(pending_key)
-
     async def _send_national_releases(self) -> None:
         if self._national_client is None or self._reporter is None:
             return
