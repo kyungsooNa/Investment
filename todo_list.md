@@ -154,8 +154,9 @@
 
 주요 파일: `services/backtest_execution_simulator.py`, `services/backtest_replay_context.py`, `services/backtest_microstructure_capture.py`, `repositories/execution_strength_repo.py`, `scripts/run_backtest.py`, `tests/fixtures/backtest/`
 
-### 1-8. 현행 전략 버전 백테스트 재실행 [blocked — PIT 후보/valid 캡처 코퍼스 대기, 2026-08-18 정리]
+### 1-8. 현행 전략 버전 백테스트 재실행 [파일럿 실행 가능 — walk-forward 데이터 대기]
 
+- [x] **유효 캡처 파일럿 캠페인 러너 추가 (2026-10-01)** — 원본 replay 파일에서 품질 게이트를 매번 재계산해 stale manifest를 우회하고, 통과 날짜의 `metadata.candidate_sources.base`만 날짜별 PIT 후보로 재생한다. 활성 7전략을 독립 실행해 체결·거부 사유·0거래 상태를 한 JSON으로 집계하며, 20/5/5 walk-forward는 유효일 30개 미만이면 자동 대기 처리한다. (`scripts/run_validation_campaign.py`)
 - [x] 슬리피지/스프레드 CLI 노출 (#619) — `--market-slippage-pct`(MARKET/STOP 체결)·`--spread-pct`. LIMIT 체결엔 미적용(시뮬레이터 의미론).
 - [blocked] 활성 전략 전체 walk-forward + Monte Carlo 재실행 + 민감도 표 — **2026-07-03 파일럿(VBO 6/15-30, PP 6/1-12) 결과 전 구간 0거래**였고, 현시점에는 PIT 후보/valid 캡처 코퍼스가 부족해 재실행 실익이 제한적이다.
   - 원인 ①: 백테스트 유니버스가 **현재 시점** `data/premium_stocks.json`(PIT 아님) — 2026-07-03 재생성 기준 KOSPI 0종목/KOSDAQ 0종목이라 어떤 과거 구간을 돌려도 후보가 없다.
