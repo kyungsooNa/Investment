@@ -79,6 +79,12 @@ def _parse_args() -> argparse.Namespace:
         dest="microstructure_dir",
         help="유효한 replay_orderbook_intraday_YYYYMMDD.json 디렉터리",
     )
+    parser.add_argument(
+        "--captured-candidate-dir",
+        default=None,
+        dest="captured_candidate_dir",
+        help="replay metadata.candidate_sources.base를 날짜별 PIT 후보군으로 사용",
+    )
     parser.add_argument("--output", default="console", choices=["console", "json"])
     parser.add_argument("--output-file", default=None, dest="output_file")
     parser.add_argument(
@@ -325,6 +331,28 @@ def _wrap_pit_universe(
         clock=backtest_clock,
         item_factory=_make_osb_pit_item_factory(),
         min_avg_trading_value_5d=min_trading_value,
+    )
+
+
+def _wrap_captured_candidate_universe(
+    base_universe: Any,
+    *,
+    replay_dir: str,
+    replay_sqs: Any,
+    backtest_clock: Any,
+) -> Any:
+    from services.captured_candidate_universe import (
+        CapturedCandidateProvider,
+        CapturedCandidateUniverse,
+    )
+
+    return CapturedCandidateUniverse(
+        base_universe,
+        provider=CapturedCandidateProvider.from_replay_dir(replay_dir),
+        sqs=replay_sqs,
+        clock=backtest_clock,
+        item_factory=_make_osb_pit_item_factory(),
+        source="base",
     )
 
 
@@ -1503,6 +1531,7 @@ async def _run(args: argparse.Namespace) -> None:
 
     delisted_ohlcv_store = _load_delisted_ohlcv_store(args.delisted_ohlcv_dir)
     pit_provider = _load_pit_provider(args.pit_universe)
+    captured_candidate_dir = getattr(args, "captured_candidate_dir", None)
     if pit_provider is not None:
         print("[INFO] point-in-time universe(상폐 종목 합류) 활성화 — 생존편향 비교 모드")
         if delisted_ohlcv_store is None:
@@ -1568,6 +1597,13 @@ async def _run(args: argparse.Namespace) -> None:
                     backtest_clock=backtest_clock,
                     min_trading_value=args.pit_min_trading_value,
                 )
+            if captured_candidate_dir and variant is None:
+                variant_universe = _wrap_captured_candidate_universe(
+                    variant_universe,
+                    replay_dir=captured_candidate_dir,
+                    replay_sqs=replay_sqs,
+                    backtest_clock=backtest_clock,
+                )
             strategy = _build_backtest_strategy(
                 strategy_key=args.strategy,
                 replay_sqs=replay_sqs,
@@ -1600,6 +1636,7 @@ async def _run(args: argparse.Namespace) -> None:
                 "market_slippage_pct": args.market_slippage_pct,
                 "spread_pct": args.spread_pct,
                 "microstructure_dir": args.microstructure_dir,
+                "captured_candidate_dir": captured_candidate_dir,
                 "use_risk_sizing": args.use_risk_sizing,
                 "output": args.output,
                 "walk_forward": segment is not None,
