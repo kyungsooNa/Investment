@@ -262,7 +262,7 @@ async def test_tick_stops_when_current_month_row_is_missing(tmp_path):
         fetch_sido_total_month=AsyncMock(return_value=[]),
     )
     reporter = SimpleNamespace(
-        send_jeju_trade_pending_report=AsyncMock(return_value=True),
+        send_jeju_semiconductor_trade_report=AsyncMock(return_value=True),
     )
     task = _task(
         tmp_path,
@@ -276,11 +276,8 @@ async def test_tick_stops_when_current_month_row_is_missing(tmp_path):
 
     assert client.fetch_sido_item_month.await_count == 2
     client.fetch_sido_total_month.assert_not_awaited()
-    reporter.send_jeju_trade_pending_report.assert_awaited_once_with(
-        "202605",
-        "85",
-        "제주 2026.05 전기기기류 수출입 API 데이터가 아직 0건입니다.",
-    )
+    # 데이터가 없으면 텔레그램으로 보내지 않는다 — 상태만 progress 에 남긴다.
+    reporter.send_jeju_semiconductor_trade_report.assert_not_awaited()
     assert task.get_progress()["last_jeju_status"] == "pending"
     assert task.get_progress()["last_jeju_message"] == (
         "제주 2026.05 전기기기류 수출입 API 데이터가 아직 0건입니다."
