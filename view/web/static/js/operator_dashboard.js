@@ -93,6 +93,39 @@ function renderStrategyReadiness(data) {
     }).join('');
 }
 
+function renderBackupHealth(data) {
+    const badge = document.getElementById('backup-health-badge');
+    const card = document.getElementById('card-backup-health');
+    const summary = document.getElementById('backup-health-summary');
+    const body = document.getElementById('backup-history-body');
+    const labels = {
+        healthy: ['badge-ok', '정상'],
+        stale: ['badge-warn', '오래됨'],
+        failed: ['badge-crit', '검증 실패'],
+        missing: ['badge-warn', '백업 없음'],
+    };
+    const [className, label] = labels[data.status] || ['badge-warn', '미확인'];
+    badge.innerHTML = `<span class="${className}">${label}</span>`;
+    card.style.borderLeft = data.status === 'healthy' ? '' : `4px solid ${data.status === 'failed' ? '#e53935' : '#fb8c00'}`;
+    const latest = data.latest || {};
+    summary.textContent = latest.backup_id ? `최신 ${latest.backup_id} · ${latest.verified_count || 0}개 검증` : '백업 이력 없음';
+    const history = data.history || [];
+    if (!history.length) {
+        body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888;">백업 이력 없음</td></tr>';
+        return;
+    }
+    body.innerHTML = history.map(item => `
+        <tr>
+            <td>${escapeReadinessHtml(item.backup_id)}</td>
+            <td>${escapeReadinessHtml(item.created_at || '-')}</td>
+            <td>${item.status === 'passed' ? '<span class="badge-ok">통과</span>' : '<span class="badge-crit">실패</span>'}</td>
+            <td>${item.file_count || 0}</td>
+            <td>${item.verified_count || 0}</td>
+            <td>${escapeReadinessHtml((item.missing_sources || []).join(', ') || '-')}</td>
+        </tr>
+    `).join('');
+}
+
 async function resolveAlert(dedupKey) {
     if (!confirm(`차단 키 "${dedupKey}"를 수동 해제할까요?`)) return;
     try {
@@ -206,17 +239,20 @@ function renderHistory(alerts) {
 
 async function loadStatus() {
     try {
-        const [statusRes, histRes, readinessRes] = await Promise.all([
+        const [statusRes, histRes, readinessRes, backupRes] = await Promise.all([
             fetch('/api/operator/status'),
             fetch('/api/operator/alerts?limit=50'),
             fetch('/api/operator/strategy-readiness'),
+            fetch('/api/operator/backup-health'),
         ]);
         const status = await statusRes.json();
         const hist = await histRes.json();
         const readiness = await readinessRes.json();
+        const backupHealth = await backupRes.json();
 
         renderSubsystemCards(status);
         renderStrategyReadiness(readiness);
+        renderBackupHealth(backupHealth);
         renderActiveAlerts(status.active_alerts || []);
         renderHistory(hist.alerts || []);
     } catch (e) {

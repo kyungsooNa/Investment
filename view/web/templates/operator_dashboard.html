@@ -31,6 +31,28 @@
             <div style="font-weight:600;margin-top:4px;">전략 검증</div>
             <div id="readiness-card-badge" style="margin-top:6px;font-size:0.85rem;color:#888;">조회 중…</div>
         </div>
+        <div class="card" style="padding:16px;text-align:center;" id="card-backup-health">
+            <div style="font-size:1.4rem;">💾</div>
+            <div style="font-weight:600;margin-top:4px;">운영 백업</div>
+            <div id="backup-health-badge" style="margin-top:6px;font-size:0.85rem;color:#888;">조회 중…</div>
+        </div>
+    </div>
+
+    <!-- 운영 백업 건강도 -->
+    <div class="card" style="padding:20px 12px;margin-bottom:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;">
+            <h3 style="margin:0;">💾 운영 백업 이력</h3>
+            <span id="backup-health-summary" style="font-size:0.85rem;color:#888;">조회 중…</span>
+        </div>
+        <div class="table-container">
+            <table class="data-table">
+                <thead><tr><th>백업 ID</th><th>생성 시각</th><th>상태</th><th>파일</th><th>검증</th><th>누락 소스</th></tr></thead>
+                <tbody id="backup-history-body">
+                    <tr><td colspan="6" style="text-align:center;color:#888;">로딩 중…</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p style="font-size:0.8rem;color:#888;margin:10px 0 0;">복원은 서버 CLI에서 확인 ID와 별도 복구 경로를 지정한 경우에만 가능합니다.</p>
     </div>
 
     <!-- 전략 검증 준비도 -->
@@ -119,5 +141,5 @@
 .transition-resolved  { color:#43a047; font-weight:700; }
 </style>
 
-<script src="/static/js/operator_dashboard.js?v=2"></script>
+<script src="/static/js/operator_dashboard.js?v=3"></script>
 {% endblock %}

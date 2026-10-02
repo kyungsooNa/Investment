@@ -4,12 +4,24 @@ Kill Switch / Risk Gate 차단 상태와 최근 전이 이력을 한 곳에서 �
 """
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 
+from services.operational_backup_service import OperationalBackupService
 from services.strategy_validation_readiness_service import build_strategy_validation_readiness
 from view.web.api_common import _get_ctx
 
 router = APIRouter()
+
+
+@router.get("/operator/backup-health")
+async def get_operational_backup_health():
+    """최근 운영 백업의 검증 상태와 이력을 반환한다."""
+    ctx = _get_ctx()
+    task = getattr(ctx, "operational_backup_task", None)
+    service = getattr(task, "_backup_service", None) or OperationalBackupService()
+    return await asyncio.to_thread(service.get_health)
 
 
 @router.get("/operator/strategy-readiness")

@@ -7,7 +7,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -144,6 +144,113 @@ class OperationalBackupService:
                     continue
                 verified += 1
         return {"passed": not errors, "verified_count": verified, "errors": errors}
+
+    def get_health(self, *, history_limit: int = 10, stale_after_hours: int = 26) -> dict:
+        """최근 백업 manifest를 읽어 운영 대시보드용 건강도를 반환한다."""
+        history: list[dict] = []
+        if self._backup_root.is_dir():
+            candidates = sorted(
+                (
+                    path for path in self._backup_root.iterdir()
+                    if path.is_dir() and _BACKUP_DIR_PATTERN.fullmatch(path.name)
+                ),
+                reverse=True,
+            )
+            for backup_dir in candidates[:max(int(history_limit), 1)]:
+                summary = self._manifest_summary(backup_dir)
+                history.append(summary)
+
+        latest = history[0] if history else None
+        if latest is None:
+            status = "missing"
+        elif latest.get("status") != "passed":
+            status = "failed"
+        else:
+            try:
+                created_at = datetime.fromisoformat(str(latest["created_at"]))
+                current = self._now().astimezone(created_at.tzinfo) if created_at.tzinfo else self._now()
+                status = "stale" if current - created_at > timedelta(hours=stale_after_hours) else "healthy"
+            except (KeyError, TypeError, ValueError):
+                status = "failed"
+        return {
+            "status": status,
+            "latest": latest,
+            "history": history,
+            "stale_after_hours": stale_after_hours,
+        }
+
+    def restore_backup(
+        self,
+        backup_id: str,
+        *,
+        confirm_backup_id: str,
+        destination_dir: str | Path,
+    ) -> dict:
+        """검증된 백업을 비어 있는 별도 복구 디렉터리에 복원한다.
+
+        라이브 data_dir 덮어쓰기는 의도적으로 지원하지 않는다. 운영자는 복구
+        결과를 점검한 뒤 별도 배포 절차로 반영해야 한다.
+        """
+        if backup_id != confirm_backup_id:
+            raise ValueError("백업 확인 ID가 일치하지 않습니다")
+        if not _BACKUP_DIR_PATTERN.fullmatch(backup_id):
+            raise ValueError("유효하지 않은 백업 ID입니다")
+
+        backup_dir = (self._backup_root / backup_id).resolve()
+        if backup_dir.parent != self._backup_root.resolve() or not backup_dir.is_dir():
+            raise ValueError("백업 ID를 찾을 수 없습니다")
+        verification = self.verify_backup(backup_dir)
+        if not verification["passed"]:
+            raise ValueError("복원 전 백업 검증에 실패했습니다")
+
+        destination = Path(destination_dir).resolve()
+        data_root = self._data_dir.resolve()
+        if destination == data_root or self._is_within(destination, data_root):
+            raise ValueError("라이브 data_dir 내부에는 복원할 수 없습니다")
+        if destination.exists() and any(destination.iterdir()):
+            raise ValueError("복원 대상 디렉터리는 비어 있어야 합니다")
+        destination.mkdir(parents=True, exist_ok=True)
+
+        manifest = json.loads((backup_dir / "manifest.json").read_text(encoding="utf-8"))
+        restored = 0
+        for entry in manifest.get("files", []):
+            source = (backup_dir / Path(str(entry["backup_path"]))).resolve()
+            target = (destination / Path(str(entry["source"]))).resolve()
+            if not self._is_within(source, backup_dir) or not self._is_within(target, destination):
+                raise ValueError("복원 경로 검증에 실패했습니다")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            restored += 1
+        return {
+            "status": "restored",
+            "backup_id": backup_id,
+            "destination_dir": str(destination),
+            "restored_count": restored,
+            "verification": verification,
+        }
+
+    @staticmethod
+    def _manifest_summary(backup_dir: Path) -> dict:
+        try:
+            manifest = json.loads((backup_dir / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            return {
+                "backup_id": backup_dir.name,
+                "status": "failed",
+                "file_count": 0,
+                "verified_count": 0,
+                "error": f"manifest_invalid: {exc}",
+            }
+        verification = manifest.get("restore_verification") or {}
+        return {
+            "backup_id": backup_dir.name,
+            "created_at": manifest.get("created_at"),
+            "status": manifest.get("status", "failed"),
+            "file_count": len(manifest.get("files") or []),
+            "verified_count": verification.get("verified_count", 0),
+            "missing_sources": manifest.get("missing_sources") or [],
+            "errors": verification.get("errors") or [],
+        }
 
     def _safe_source(self, relative: str) -> Path:
         source = (self._data_dir / relative).resolve()
