@@ -18,14 +18,27 @@ def main() -> int:
     parser.add_argument("--data-dir", default="data")
     parser.add_argument("--backup-root")
     parser.add_argument("--retention-count", type=int, default=14)
+    parser.add_argument("--restore-backup-id")
+    parser.add_argument("--confirm-backup-id")
+    parser.add_argument("--restore-dir")
     args = parser.parse_args()
-    result = OperationalBackupService(
+    service = OperationalBackupService(
         data_dir=args.data_dir,
         backup_root=args.backup_root,
         retention_count=args.retention_count,
-    ).create_backup()
+    )
+    if args.restore_backup_id:
+        if not args.confirm_backup_id or not args.restore_dir:
+            parser.error("복원에는 --confirm-backup-id와 --restore-dir가 필요합니다")
+        result = service.restore_backup(
+            args.restore_backup_id,
+            confirm_backup_id=args.confirm_backup_id,
+            destination_dir=args.restore_dir,
+        )
+    else:
+        result = service.create_backup()
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if result.get("status") == "passed" else 1
+    return 0 if result.get("status") in {"passed", "restored"} else 1
 
 
 if __name__ == "__main__":

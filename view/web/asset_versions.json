@@ -56,8 +56,8 @@
     "sha256": "75e8bc69a56e286a78f3dbf7e259bdbf8098bd70caf7cf0aef7905033a33e117"
   },
   "js/operator_dashboard.js": {
-    "version": 2,
-    "sha256": "1eeeb5565fe91a77d627a8b2d8406f2c1bc73375f705e85060b9602a6cd78530"
+    "version": 3,
+    "sha256": "4524a188bbe6f80f822b1443f7257ab191a75047385b7824b9e1f1eb4aa17b21"
   },
   "js/order.js": {
     "version": 2,

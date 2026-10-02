@@ -690,6 +690,7 @@ class ServiceContainer:
                 ctx.operational_backup_task = OperationalBackupTask(
                     mcs=ctx._mcs,
                     market_clock=ctx.market_clock,
+                    notification_service=ctx.notification_service,
                     logger=ctx.logger,
                     worker_pool=ctx.worker_pool,
                 )

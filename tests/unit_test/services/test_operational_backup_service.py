@@ -114,3 +114,81 @@ def test_create_backup_prunes_only_old_timestamped_backup_directories(tmp_path):
 
     assert backups == ["20260930_163000", "20261001_163000"]
     assert keep_file.exists()
+
+
+def test_get_health_reports_latest_verified_backup_and_history(tmp_path):
+    data_dir = tmp_path / "data"
+    state_path = data_dir / "kill_switch_state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("{}", encoding="utf-8")
+    now = datetime(2026, 10, 1, 18, 0, 0)
+    service = OperationalBackupService(
+        data_dir=data_dir,
+        sqlite_relative_paths=(),
+        json_globs=("kill_switch_state.json",),
+        now_provider=lambda: now,
+    )
+    service.create_backup()
+
+    health = service.get_health(history_limit=5, stale_after_hours=26)
+
+    assert health["status"] == "healthy"
+    assert health["latest"]["backup_id"] == "20261001_180000"
+    assert health["latest"]["verified_count"] == 1
+    assert health["history"][0]["status"] == "passed"
+
+
+def test_restore_backup_requires_matching_confirmation_and_empty_staging_dir(tmp_path):
+    data_dir = tmp_path / "data"
+    state_path = data_dir / "kill_switch_state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text('{"tripped": true}', encoding="utf-8")
+    service = OperationalBackupService(
+        data_dir=data_dir,
+        sqlite_relative_paths=(),
+        json_globs=("kill_switch_state.json",),
+        now_provider=lambda: datetime(2026, 10, 1, 18, 0, 0),
+    )
+    service.create_backup()
+
+    import pytest
+    with pytest.raises(ValueError, match="확인 ID"):
+        service.restore_backup(
+            "20261001_180000",
+            confirm_backup_id="wrong",
+            destination_dir=tmp_path / "restore",
+        )
+
+    result = service.restore_backup(
+        "20261001_180000",
+        confirm_backup_id="20261001_180000",
+        destination_dir=tmp_path / "restore",
+    )
+
+    assert result["status"] == "restored"
+    assert result["restored_count"] == 1
+    assert json.loads((tmp_path / "restore" / "kill_switch_state.json").read_text(encoding="utf-8")) == {
+        "tripped": True
+    }
+
+
+def test_restore_backup_refuses_live_data_directory(tmp_path):
+    data_dir = tmp_path / "data"
+    state_path = data_dir / "kill_switch_state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("{}", encoding="utf-8")
+    service = OperationalBackupService(
+        data_dir=data_dir,
+        sqlite_relative_paths=(),
+        json_globs=("kill_switch_state.json",),
+        now_provider=lambda: datetime(2026, 10, 1, 18, 0, 0),
+    )
+    service.create_backup()
+
+    import pytest
+    with pytest.raises(ValueError, match="라이브 data_dir"):
+        service.restore_backup(
+            "20261001_180000",
+            confirm_backup_id="20261001_180000",
+            destination_dir=data_dir,
+        )

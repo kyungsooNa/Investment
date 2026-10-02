@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -31,8 +31,18 @@ async def test_operational_backup_task_logs_failed_restore_verification():
         "restore_verification": {"passed": False, "errors": [{"reason": "checksum_mismatch"}]},
     }
     logger = MagicMock()
-    task = OperationalBackupTask(backup_service=service, mcs=None, market_clock=None, logger=logger)
+    notification_service = MagicMock()
+    notification_service.emit = AsyncMock()
+    task = OperationalBackupTask(
+        backup_service=service,
+        notification_service=notification_service,
+        mcs=None,
+        market_clock=None,
+        logger=logger,
+    )
 
     await task._on_market_closed("20261001")
 
     logger.error.assert_called_once()
+    notification_service.emit.assert_awaited_once()
+    assert notification_service.emit.await_args.args[2] == "운영 백업 검증 실패"
