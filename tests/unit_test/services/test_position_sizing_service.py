@@ -316,6 +316,24 @@ async def test_qty_none_sizing_determines_result():
 
 
 @pytest.mark.asyncio
+async def test_position_size_multiplier_reduces_risk_and_position_budgets():
+    snap = _make_snapshot(total_equity=10_000_000, available_cash=10_000_000)
+    cfg = _make_config(per_trade_risk_pct=1.0, default_stop_loss_pct=-5.0,
+                       min_stop_distance_pct=0.0, max_per_position_pct=100.0)
+    svc, _, _ = _make_service(snap, cfg=cfg)
+    signal = TradeSignal(
+        code="005930", name="삼성전자", action="BUY",
+        price=10_000, qty=None, reason="risk-off", strategy_name="test",
+        position_size_multiplier=0.5,
+    )
+
+    qty, reason = await svc.adjust_buy_qty(signal)
+
+    assert qty == 100
+    assert reason == "risk_limited"
+
+
+@pytest.mark.asyncio
 async def test_qty_none_sizing_disabled_returns_zero():
     """qty=None + sizing 비활성화 → (0, 'sizing_disabled') — 주문 skip."""
     svc, _, _ = _make_service(_make_snapshot(), cfg=_make_config(enabled=False))

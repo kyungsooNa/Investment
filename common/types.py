@@ -73,6 +73,7 @@ class TradeSignal(BaseModel):
     trailing_rule: str | None = None  # trailing stop 정책 식별자 또는 JSON 문자열.
     expected_holding_period_days: int | None = None  # 기대 보유 기간(일). 사후 분석용.
     confidence: float | None = None  # 신호 confidence (0.0 ~ 1.0). 정의는 전략별 자유.
+    position_size_multiplier: float | None = None  # 계좌 기반 사이징 결과에 적용할 비중 배율 (0.0~1.0).
     required_data: list[str] | None = None  # 신호 평가에 사용된 필수 데이터 키 목록 (재현/감사용).
     config_hash: str | None = None  # 신호 생성 시점 전략 config 의 12자 hex hash (P3-4 설정 변경 통제). scheduler 가 scan/check_exits 직후 stamp.
 

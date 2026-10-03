@@ -462,6 +462,11 @@ def test_rsi2_ablation_preset_contains_universe_rsi2_mean_reversion_variant():
     variant = by_name.get("universe_rsi2_mean_reversion")
     assert variant is not None
     assert variant.universe_overrides.get("universe_type") == "rsi2_mean_reversion"
+    assert variant.config_overrides.get("require_minervini_stage2") is False
+
+    generic_variant = by_name.get("universe_generic_liquidity")
+    assert generic_variant is not None
+    assert generic_variant.config_overrides.get("require_minervini_stage2") is False
 
 
 def test_vbo_ablation_preset_contains_universe_vbo_volatility_variant():

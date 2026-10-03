@@ -176,14 +176,18 @@ class PositionSizingService:
 
         # 2. 1주당 리스크(KRW) 산정
         per_share_risk = await self._get_per_share_risk_krw(signal, price)
+        size_multiplier = self._signal_size_multiplier(signal)
 
         # 3. risk_qty (Penbold Fixed Fractional)
-        total_risk_krw = total_equity * self._effective_per_trade_risk_pct() / 100
+        total_risk_krw = (
+            total_equity * self._effective_per_trade_risk_pct() / 100 * size_multiplier
+        )
         risk_qty = math.floor(total_risk_krw / per_share_risk) if per_share_risk > 0 else 0
 
         # 4. cap_qty (단일 종목 비중 상한 — 기존 보유분 차감)
         weight_budget = max(
-            total_equity * self._effective_max_per_position_pct() / 100 - current_position_value,
+            total_equity * self._effective_max_per_position_pct() / 100 * size_multiplier
+            - current_position_value,
             0,
         )
         cap_qty = math.floor(weight_budget / price) if price > 0 else 0
@@ -277,6 +281,16 @@ class PositionSizingService:
             f"signal_qty={signal.qty} → final={final_qty} ({reason})"
         )
         return final_qty, reason
+
+    @staticmethod
+    def _signal_size_multiplier(signal: TradeSignal) -> float:
+        raw = getattr(signal, "position_size_multiplier", None)
+        if raw is None:
+            return 1.0
+        try:
+            return max(0.0, min(float(raw), 1.0))
+        except (TypeError, ValueError):
+            return 1.0
 
     # ── 내부 ──────────────────────────────────────────────────────
 

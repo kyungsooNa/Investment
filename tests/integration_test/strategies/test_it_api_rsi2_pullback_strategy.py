@@ -11,11 +11,11 @@ from services.oneil_universe_service import OneilUniverseService
 from common.types import ResCommonResponse
 
 
-def _make_rsi2_oversold_ohlcv(code, days=31, base_close=10000):
-    """어제 confirmed RSI(2) ≤ 10 + 오늘 미확정 양봉 반등 시나리오.
+def _make_rsi2_oversold_ohlcv(code, days=205, base_close=10000):
+    """오늘 임시 일봉까지 RSI(2) ≤ 10을 유지하는 시나리오.
 
-    P0 0-8: exclude_today=True 인 production 라이브 코드는 어제 confirmed RSI 로 trigger.
-    오늘 인트라데이 양봉이 RSI 를 흔들어도 신호 안정성이 유지된다.
+    production은 당일 임시 일봉을 포함해 이미 반등이 완료된 종목을
+    전일 RSI만으로 매수하지 않는다.
 
     IndicatorService._to_dataframe 가 plain dict (date/open/high/low/close/volume)을
     기대하므로 그 포맷으로 반환한다.
@@ -36,9 +36,9 @@ def _make_rsi2_oversold_ohlcv(code, days=31, base_close=10000):
             price = int(prev * 0.97)
             vol = 900000
         else:
-            # 오늘 (미확정) — 강한 양봉 +5% 반등 (인트라데이 노이즈로 RSI 반등)
+            # 오늘(미확정)도 -1% 추가 조정 → 현재 RSI(2) 과매도 유지
             prev = rows[-1]["close"]
-            price = int(prev * 1.05)
+            price = int(prev * 0.99)
             vol = 700000
         rows.append({
             "date": date_str,

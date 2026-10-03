@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from dataclasses import asdict
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Dict, List, Optional, Tuple
 
 from interfaces.live_strategy import LiveStrategy
@@ -151,14 +151,59 @@ class RSI2PullbackStrategy(LiveStrategy):
             })
             return None
 
-        # Phase 1-2: 일봉 RSI(2) 조회 — P0 0-8: 당일 미확정 봉 제외 (인트라데이 RSI 깜빡임 방지)
-        rsi_resp = await self._indicator.get_rsi(code, period=self._cfg.rsi_period, candle_type="D", exclude_today=True)
+        # 현재가를 먼저 확정한 뒤, 당일 임시 일봉을 포함한 지표로 종가 베팅을 판정한다.
+        cp_resp = await self._sqs.get_current_price(code, caller=self.name)
+        current = self._extract_current_price(cp_resp)
+        if current <= 0:
+            self._logger.info({
+                "event": "entry_rejected",
+                "code": code,
+                "name": item.name,
+                "reason": "invalid_current_price",
+                "current": current,
+            })
+            return None
+
+        rsi_resp, ma200_resp, ma5_resp = await asyncio.gather(
+            self._indicator.get_rsi(
+                code, period=self._cfg.rsi_period, candle_type="D", exclude_today=False,
+            ),
+            self._indicator.get_moving_average(
+                code, period=self._cfg.trend_break_ma_period,
+                candle_type="D", exclude_today=False,
+            ),
+            self._indicator.get_moving_average(
+                code, period=self._cfg.take_profit_ma_period,
+                candle_type="D", exclude_today=False,
+            ),
+        )
         if not rsi_resp or rsi_resp.rt_cd != "0" or not rsi_resp.data:
             self._logger.info({
                 "event": "entry_rejected",
                 "code": code,
                 "name": item.name,
                 "reason": "rsi_unavailable",
+            })
+            return None
+
+        ma200 = self._latest_ma(ma200_resp)
+        ma5 = self._latest_ma(ma5_resp)
+        if ma200 is None or ma5 is None:
+            self._logger.info({
+                "event": "entry_rejected", "code": code, "name": item.name,
+                "reason": "entry_ma_unavailable", "ma200": ma200, "ma5": ma5,
+            })
+            return None
+        if current <= ma200:
+            self._logger.info({
+                "event": "entry_rejected", "code": code, "name": item.name,
+                "reason": "current_below_200ma", "current": current, "ma200": ma200,
+            })
+            return None
+        if current >= ma5:
+            self._logger.info({
+                "event": "entry_rejected", "code": code, "name": item.name,
+                "reason": "mean_reversion_already_completed", "current": current, "ma5": ma5,
             })
             return None
         latest_rsi = rsi_resp.data[-1].get("rsi")
@@ -175,19 +220,6 @@ class RSI2PullbackStrategy(LiveStrategy):
 
         # Phase 2: 마켓 타이밍 기반 비중 결정
         risk_off = not market_timing.get(item.market, False)
-
-        # 현재가 조회
-        cp_resp = await self._sqs.get_current_price(code, caller=self.name)
-        current = self._extract_current_price(cp_resp)
-        if current <= 0:
-            self._logger.info({
-                "event": "entry_rejected",
-                "code": code,
-                "name": item.name,
-                "reason": "invalid_current_price",
-                "current": current,
-            })
-            return None
 
         qty = self._calculate_qty(current, risk_off=risk_off)
         if qty <= 0:
@@ -235,6 +267,7 @@ class RSI2PullbackStrategy(LiveStrategy):
             trailing_rule=f"take_profit_ma_{self._cfg.take_profit_ma_period}",
             expected_holding_period_days=self._cfg.take_profit_ma_period,
             confidence=confidence,
+            position_size_multiplier=(self._cfg.risk_off_position_ratio if risk_off else 1.0),
             required_data=[
                 "watchlist_item",
                 "rsi",
@@ -289,14 +322,23 @@ class RSI2PullbackStrategy(LiveStrategy):
         if buy_price <= 0:
             buy_price = current
 
-        # 200MA / 5MA 조회 (병렬) — P0 0-8: 당일 미확정 봉 제외 (MA exit 트리거 인트라데이 흔들림 방지)
-        ma_resps = await asyncio.gather(
-            self._indicator.get_moving_average(code, period=self._cfg.trend_break_ma_period, candle_type="D", exclude_today=True),
-            self._indicator.get_moving_average(code, period=self._cfg.take_profit_ma_period, candle_type="D", exclude_today=True),
-            return_exceptions=True,
+        # 보호성 조건(200MA/하드스탑)은 장중 계속 평가하되,
+        # 평균회귀 5MA 청산은 종가 베팅 구간에서만 평가한다.
+        now = self._tm.get_current_kst_time()
+        cutoff_minutes = self._cfg.entry_cutoff_hour * 60 + self._cfg.entry_cutoff_minute
+        in_close_window = now.hour * 60 + now.minute >= cutoff_minutes
+        ma200_resp = await self._indicator.get_moving_average(
+            code, period=self._cfg.trend_break_ma_period,
+            candle_type="D", exclude_today=False,
         )
-        ma200 = self._latest_ma(ma_resps[0])
-        ma5 = self._latest_ma(ma_resps[1])
+        ma200 = self._latest_ma(ma200_resp)
+        ma5 = None
+        if in_close_window:
+            ma5_resp = await self._indicator.get_moving_average(
+                code, period=self._cfg.take_profit_ma_period,
+                candle_type="D", exclude_today=False,
+            )
+            ma5 = self._latest_ma(ma5_resp)
 
         # P0 0-9: 비용 반영 net 수익률 — backtest 와 동일 기준으로 stop trigger.
         pnl_pct = TransactionCostUtils.net_return_pct(buy_price, current)
@@ -308,9 +350,9 @@ class RSI2PullbackStrategy(LiveStrategy):
         # 2) 하드 스탑: 진입가 대비 -5% (net, P0 0-9)
         elif pnl_pct <= self._cfg.hard_stop_pct:
             reason = f"하드 스탑 손절: PnL(net) {pnl_pct:.2f}% ≤ {self._cfg.hard_stop_pct}%"
-        # 3) 빠른 복귀 익절: 종가가 5MA 터치
+        # 3) 빠른 복귀 청산: 마감 구간의 현재가가 당일 포함 5MA 터치
         elif ma5 is not None and current >= ma5:
-            reason = f"5MA 터치 익절: 현재가 {current} ≥ 5MA {ma5:.0f}"
+            reason = f"5MA 터치 청산: 현재가 {current} ≥ 5MA {ma5:.0f}"
 
         if not reason:
             return (None, False)
@@ -328,7 +370,10 @@ class RSI2PullbackStrategy(LiveStrategy):
         state = self._position_state.pop(code, None)
         state_dirty = state is not None
         if "손절" in reason or "스탑" in reason:
-            unblock = (date.today() + timedelta(days=self._cfg.cooldown_days)).strftime("%Y%m%d")
+            unblock = (
+                self._tm.get_current_kst_time().date()
+                + timedelta(days=self._cfg.cooldown_days)
+            ).strftime("%Y%m%d")
             self._cooldown[code] = unblock
             state_dirty = True
 

@@ -821,24 +821,25 @@ class TestRSI2PullbackScan:
         from strategies.oneil_common_types import OSBWatchlistItem
         from services.indicator_service import IndicatorService
 
-        # P0 0-8: 어제까지 confirmed RSI(2) ≤ 10 + 오늘(마지막 봉) 미확정 양봉 반등 시나리오.
-        # exclude_today=True 인 production 라이브 코드는 어제 confirmed RSI 로 trigger.
+        # 오늘 임시 일봉까지 RSI(2) ≤ 10을 유지하는 시나리오.
+        # MA200 재검증에 필요한 200일 이상의 데이터를 제공한다.
         # base_dt 를 mock_tm.today (2026-03-09) 와 동기화하여 마지막 봉이 "오늘 미확정" 을 모방.
         base_dt = datetime(2026, 3, 9)
         ohlcv = []
-        for i in range(31):
-            dt = base_dt - timedelta(days=30 - i)
+        days = 205
+        for i in range(days):
+            dt = base_dt - timedelta(days=days - 1 - i)
             date_str = dt.strftime("%Y%m%d")
-            if i < 28:
+            if i < days - 3:
                 price = int(10000 * (1.0 + 0.005 * i))
-            elif i < 30:
+            elif i < days - 1:
                 # 어제까지 confirmed 2영업일 큰 음봉 (-3%)
                 prev = ohlcv[-1]["close"]
                 price = int(prev * 0.97)
             else:
-                # 오늘 (미확정) — 강한 양봉 +5% 반등 (인트라데이 노이즈)
+                # 오늘(미확정)도 -1% 추가 조정 → 현재 RSI(2) 과매도 유지
                 prev = ohlcv[-1]["close"]
-                price = int(prev * 1.05)
+                price = int(prev * 0.99)
             ohlcv.append({
                 "date": date_str,
                 "open": price - 50, "high": price + 100,

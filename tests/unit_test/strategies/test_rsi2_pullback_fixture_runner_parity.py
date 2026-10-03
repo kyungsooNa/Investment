@@ -83,6 +83,14 @@ def _rsi_response(value: float) -> ResCommonResponse:
     )
 
 
+def _ma_response(value: float) -> ResCommonResponse:
+    return ResCommonResponse(
+        rt_cd="0",
+        msg1="OK",
+        data=[{"code": "005930", "date": "20260507", "ma": value}],
+    )
+
+
 def _market_clock(case: dict):
     now = datetime.strptime(f"{case['date']} {case['time']}", "%Y%m%d %H:%M:%S")
     tm = MagicMock()
@@ -109,7 +117,11 @@ def _strategy_for_case(case: dict, tmp_path, logger: logging.Logger):
 
     indicator = MagicMock()
     indicator.get_rsi = AsyncMock(return_value=_rsi_response(float(case["rsi"])))
-    indicator.get_moving_average = AsyncMock()
+    indicator.get_moving_average = AsyncMock(
+        side_effect=lambda _code, period, **_kwargs: (
+            _ma_response(9500.0) if period == 200 else _ma_response(10100.0)
+        )
+    )
 
     return RSI2PullbackStrategy(
         stock_query_service=sqs,
