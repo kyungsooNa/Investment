@@ -74,6 +74,25 @@ class StrategyProfitabilityGateConfig:
     ablation_max_variant_outperformance_pct: Optional[float] = None
 
 
+_FORCE_CLOSE_REASON = "reconciled_force_close"
+
+
+def sold_sample_exclusion(record: Mapping[str, Any]) -> Optional[str]:
+    """gate SOLD 표본에서 뺄 행의 사유 (M-13).
+
+    잔고 대사 강제종결(sell_price=0)은 실체결이 아니고, data_quality_flag 행은
+    수치를 믿을 수 없다고 표시된 기록이다. 둘 다 표본·지표에서 빼고 건수만 노출한다.
+    """
+    metadata = record.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    if str(record.get("data_quality_flag") or metadata.get("data_quality_flag") or "").strip():
+        return "data_quality_flag"
+    reason = record.get("decision_reason") or metadata.get("reason")
+    if str(reason or "") == _FORCE_CLOSE_REASON:
+        return "force_closed"
+    return None
+
+
 def evaluate_strategy_profitability_gate(
     records: Iterable[Mapping[str, Any]],
     config: StrategyProfitabilityGateConfig | None = None,
@@ -86,11 +105,23 @@ def evaluate_strategy_profitability_gate(
     """Evaluate whether each strategy clears the live-expansion baseline."""
     cfg = config or StrategyProfitabilityGateConfig()
     all_records = list(records)
-    sold_records = [
+    sold_candidates = [
         record for record in all_records
         if str(record.get("status") or "").upper() == "SOLD"
         and str(record.get("strategy") or "").strip()
     ]
+    excluded_sold: dict[str, dict[str, int]] = {}
+    sold_records = []
+    for record in sold_candidates:
+        exclusion = sold_sample_exclusion(record)
+        if exclusion is None:
+            sold_records.append(record)
+            continue
+        counts = excluded_sold.setdefault(
+            str(record.get("strategy") or "").strip(),
+            {"force_closed": 0, "data_quality_flag": 0},
+        )
+        counts[exclusion] += 1
     strategy_names = sorted({str(record.get("strategy") or "").strip() for record in sold_records})
     by_strategy: dict[str, dict[str, Any]] = {}
 
@@ -175,6 +206,7 @@ def evaluate_strategy_profitability_gate(
         "entry_pressure": entry_pressure,
         "cooldown": cooldown,
         "strategies": by_strategy,
+        "excluded_sold": excluded_sold,
     }
 
 

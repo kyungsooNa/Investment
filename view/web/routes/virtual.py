@@ -6,6 +6,7 @@ import logging
 import math
 import time
 from fastapi import APIRouter, Body
+from common.strategy_identity import STRATEGY_IDENTITY_RESOLVER
 from common.trade_journal_comparison import compare_trade_journals
 from repositories.backtest_journal_repository import BacktestJournalRepository
 from view.web.api_common import _get_ctx, _PRICE_CACHE
@@ -655,6 +656,10 @@ async def _get_virtual_history_impl(ctx, force_code, apply_cost):
         return {"trades": [], "weekly_changes": {}}
 
     trades = [t for t in vm.get_all_trades(apply_cost=apply_cost) if t.get('status') != 'FAILED']
+    # 레거시 표시명 행을 전략 ID로 묶어 gate 와 같은 표본 단위로 집계한다 (M-13).
+    for trade in trades:
+        if trade.get('strategy'):
+            trade['strategy'] = STRATEGY_IDENTITY_RESOLVER.to_id(trade['strategy'])
 
     # ---------------------------------------------------------
     # 1~3단계: 종목명 및 현재가 Enrichment (기존 로직 유지 - API 통신)

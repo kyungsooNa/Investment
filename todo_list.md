@@ -555,11 +555,10 @@ M-10/M-11 과 같은 성격의 **완료 축 기록**이다. 남은 실행 항목
 
 - #943 국내 모의매매 저널에 국내 코드만 들어가도록 가드(`is_domestic_virtual_trade_code`) · #944 국내 화면을 한국장 아래로 이동 · #945 미국장 전용 모의매매 페이지 신설 · #946 USD 성과 요약이 빈 이유를 화면에 설명 · #960 전략별 **당일** 수익률 표시.
 - ※ 이 분리가 Phase 5 의 "원장은 통화별로 영구 분리" 결정을 화면까지 밀어낸 것이다 — #946 이 설명 문구로 덮었던 "자동 전략 기록이 원장에 안 남는다" 는 원인은 #954 가 실제로 고쳤다(Phase 5 항목).
-- [~] 1-6 의 **표준 journal 축적 진행률**과 이 화면의 집계가 같은 표본을 보는지 확인 — **2026-10-03 확인: 같은 `trades` 행을 읽지만 세 경로가 같은 행을 다르게 센다.** 수정은 gate 의미 변경이라 정책 결정 대기.
+- [x] 1-6 의 **표준 journal 축적 진행률**과 이 화면의 집계가 같은 표본을 보는지 확인 — **2026-10-03 확인: 같은 `trades` 행을 읽지만 세 경로가 같은 행을 다르게 센다.** → **같은 날 정합화 완료**: gate·readiness 는 `sold_sample_exclusion()` 으로 강제종결·오염 플래그 SOLD 행을 표본·지표에서 빼고 전략별 `excluded_sold` 건수로 노출(운영자 대시보드 SOLD 칸에 표시), 화면은 `/api/virtual/history`·`/api/virtual/strategies` 에서 전략명을 `STRATEGY_IDENTITY_RESOLVER.to_id` 로 정규화한다. 강제종결 비율 기반 차단 규칙은 넣지 않았다(건수 노출만). ③ 오염 플래그 제외는 0-2 의 `flag_suspect_trades.py --apply` 를 운영 DB 에 실행해야 효력이 생긴다.
   - ① 전략명: gate·readiness 는 `normalize_virtual_trade` 가 레거시 표시명 4쌍(래리윌리엄스VBO→larry_williams_vbo 등)을 합치지만, 화면(`/api/virtual/history` 집계)은 원본 `strategy` 로 묶는다 — 화면은 전략별 표본을 **두 줄로 쪼개 적게** 보여준다.
   - ② 강제종결(`reason=reconciled_force_close`, sell_price=0): 화면 요약은 승률·평균에서 제외, 화면 전략별 집계는 eval_price 를 매수가로 대체해 **0%**, gate 는 SOLD 로 세고 **−100%**(net_pnl 전액 손실)로 집계한다 — gate 표본 수는 부풀고 PF/MDD 는 과대 손실로 왜곡된다.
   - ③ 오염 플래그(`data_quality_flag`, 0-2/#831): 어느 경로도 소비하지 않는다 — 표준 journal 에 필드가 실리지 않아 gate 가 플래그 거래를 그대로 쓴다.
-  - 결정 필요: gate 표본에서 ②·③을 제외할지(제외 시 SOLD 표본 수 감소). 화면 ①은 별칭 정규화만 맞추면 되는 표시 문제다.
   - 원 확인 요청: 화면은 원장(`VirtualTradeRepository`/`OverseasTradeRepository`), gate 는 `get_standard_journal_records` 로 소스가 다르다. 진행률을 화면으로 읽다가 gate 기준과 어긋나면 오판한다.
 
 주요 파일: `repositories/virtual_trade_repository.py`, `repositories/overseas_trade_repository.py`, `services/virtual_trade_market_guard.py`, `view/web/routes/virtual.py`, `view/web/templates/{virtual,overseas_virtual}.html`

@@ -1421,3 +1421,16 @@ def test_get_all_trades_exposes_data_quality_flag(virutal_trade_repository):
 
     assert by_code["005930"]["data_quality_flag"] == "부분매도 전량기록 의심"
     assert by_code["000020"]["data_quality_flag"] is None
+
+
+def test_get_all_strategies_merges_legacy_display_names(virutal_trade_repository):
+    """레거시 표시명 행과 ID 행이 화면 탭에서 한 전략으로 합쳐진다 (M-13)."""
+    repo = virutal_trade_repository
+    with repo._db:
+        for name in ("래리윌리엄스VBO", "larry_williams_vbo"):
+            repo._db.execute(
+                "INSERT INTO trades (strategy, code, buy_date, buy_price, qty, status) VALUES (?, ?, ?, ?, ?, ?)",
+                (name, "005930", "2025-01-01 09:00:00", 1000, 1, "SOLD"),
+            )
+
+    assert repo.get_all_strategies() == ["larry_williams_vbo"]

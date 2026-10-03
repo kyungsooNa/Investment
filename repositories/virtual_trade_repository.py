@@ -1334,7 +1334,7 @@ class VirtualTradeRepository:
         trade_rows = self._db.execute(
             "SELECT DISTINCT strategy FROM trades WHERE strategy != '' AND strategy != 'ALL' AND status != 'FAILED'"
         ).fetchall()
-        strategies.update(row[0] for row in trade_rows if row and row[0])
+        strategies.update(self._resolver.to_id(row[0]) for row in trade_rows if row and row[0])
 
         if "ALL" in strategies:
             strategies.remove("ALL")

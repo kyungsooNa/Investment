@@ -687,3 +687,34 @@ def test_profitability_gate_blocks_when_regime_balance_required_and_incomplete()
     assert s1["passed"] is False
     assert "regime_balance_incomplete" in s1["blocking_reasons"]
     assert "regime_balance_incomplete" not in s1["warnings"]
+
+
+# --- M-13: 실체결이 아닌 SOLD 행은 gate 표본에서 제외하고 건수만 노출한다 ---
+
+def _force_closed(strategy: str = "S1") -> dict:
+    record = _sold(-700000, -100.0, strategy=strategy)
+    record["decision_reason"] = "reconciled_force_close"
+    return record
+
+
+def _flagged(strategy: str = "S1") -> dict:
+    record = _sold(5000, 5.0, strategy=strategy)
+    record["metadata"] = {"data_quality_flag": "부분매도 전량기록 의심"}
+    return record
+
+
+def test_profitability_gate_excludes_force_closed_and_flagged_sold_records():
+    cfg = StrategyProfitabilityGateConfig(min_trades=2)
+    records = [_sold(1000, 1.0), _sold(2000, 2.0), _force_closed(), _flagged()]
+
+    result = evaluate_strategy_profitability_gate(records, cfg)
+
+    assert result["strategies"]["S1"]["metrics"]["trade_count"] == 2
+    assert result["excluded_sold"] == {"S1": {"force_closed": 1, "data_quality_flag": 1}}
+
+
+def test_profitability_gate_reports_strategy_with_only_excluded_records():
+    result = evaluate_strategy_profitability_gate([_force_closed("S2")], StrategyProfitabilityGateConfig())
+
+    assert "S2" not in result["strategies"]
+    assert result["excluded_sold"] == {"S2": {"force_closed": 1, "data_quality_flag": 0}}
