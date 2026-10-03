@@ -12,6 +12,7 @@ from common.types import Exchange
 from services.ai_client import AiClientError
 from services.ai_signal import extract_signal
 from services.ai_usage_limiter import AiUsageLimitExceeded
+from view.web.bootstrap.startup_health import report_startup_health
 from repositories.streaming_stock_repo import StreamingType
 from services.market_cap_gap_service import MarketCapGapService
 from services.price_subscription_service import SubscriptionPriority
@@ -664,6 +665,12 @@ async def change_environment(req: EnvironmentRequest):
     if not req.is_paper and req.real_mode_confirmation != "REAL":
         raise HTTPException(status_code=400, detail="실전 모드 전환 확인 문자열이 필요합니다.")
     success = await ctx.initialize_services(is_paper_trading=req.is_paper)
+    await report_startup_health(
+        ctx.operator_alert_service,
+        ctx.stock_code_repository,
+        services_ready=success,
+        logger=ctx.logger,
+    )
     # 환경 전환 시 상태 캐시 무효화
     _status_cache = None
     _status_cache_ts = 0.0

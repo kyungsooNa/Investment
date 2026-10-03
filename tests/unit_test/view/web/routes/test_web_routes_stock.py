@@ -560,6 +560,25 @@ async def test_change_environment(web_client, mock_web_ctx):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("success", [True, False])
+async def test_change_environment_updates_startup_health_alerts(web_client, mock_web_ctx, success):
+    """환경 전환 재시도 결과로 기동 브로커 알림을 해제/보고한다 (M-12)."""
+    mock_web_ctx.initialize_services = AsyncMock(return_value=success)
+    mock_web_ctx.start_background_tasks_and_wait = AsyncMock()
+    mock_web_ctx.get_env_type.return_value = "모의투자"
+
+    with patch("view.web.routes.stock.report_startup_health", new_callable=AsyncMock) as mock_report:
+        web_client.post("/api/environment", json={"is_paper": True})
+
+    mock_report.assert_awaited_once_with(
+        mock_web_ctx.operator_alert_service,
+        mock_web_ctx.stock_code_repository,
+        services_ready=success,
+        logger=mock_web_ctx.logger,
+    )
+
+
+@pytest.mark.asyncio
 async def test_change_environment_to_real_requires_confirmation(web_client, mock_web_ctx):
     mock_web_ctx.initialize_services = AsyncMock(return_value=True)
 

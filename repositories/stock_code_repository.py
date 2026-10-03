@@ -39,6 +39,8 @@ class StockCodeRepository:
             root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
             db_path = os.path.join(root, "data", "stock_code_list.db")
         self._db_path = db_path
+        # KRX 목록을 못 받아 최소 DB로 뜬 상태 — 기동 시 운영자 알림 판단에 쓴다 (M-12)
+        self.is_minimal_fallback = False
 
         # DB 파일이 없으면 생성 시도
         if not os.path.exists(db_path):
@@ -108,6 +110,7 @@ class StockCodeRepository:
                 if self.logger:
                     self.logger.warning("갱신 실패. 최소 DB로 앱을 시작합니다.")
                 _write_minimal_db(self._db_path, self.logger)
+                self.is_minimal_fallback = True
                 conn = sqlite3.connect(self._db_path)
                 conn.execute("PRAGMA journal_mode=WAL")
                 try:

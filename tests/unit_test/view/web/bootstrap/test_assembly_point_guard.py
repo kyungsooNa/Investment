@@ -48,6 +48,7 @@ MODULE_BUDGETS = {
     "runtime_mode.py": (90, 2),
     "scheduler_bootstrap.py": (250, 2),
     "service_container.py": (MAX_LINES, MAX_ASSEMBLY_IMPORTS),
+    "startup_health.py": (60, 2),
     "strategy_factory.py": (300, 4),
     "wiring_phase.py": (140, 2),
 }
