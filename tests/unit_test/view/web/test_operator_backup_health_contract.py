@@ -11,7 +11,7 @@ def test_operator_dashboard_contains_backup_health_surface():
 
     assert 'id="backup-health-badge"' in template
     assert 'id="backup-history-body"' in template
-    assert "/static/js/operator_dashboard.js?v=3" in template
+    assert "/static/js/operator_dashboard.js?v=4" in template
 
 
 def test_operator_dashboard_fetches_and_renders_backup_health():

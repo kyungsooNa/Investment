@@ -76,3 +76,19 @@ def test_build_readiness_reports_malformed_quality_files_without_failing(tmp_pat
     assert result["summary"]["quality_file_error_count"] == 1
     assert result["summary"]["valid_capture_days"] == 0
 
+
+
+def test_readiness_sold_trades_match_gate_sample_exclusions(tmp_path):
+    force_closed = _record("S1", net_return=-100.0, net_pnl=-700000)
+    force_closed["decision_reason"] = "reconciled_force_close"
+    flagged = _record("S1")
+    flagged["metadata"] = {"data_quality_flag": "의심"}
+
+    result = build_strategy_validation_readiness(
+        [_record("S1"), force_closed, flagged],
+        replay_dir=tmp_path,
+    )
+
+    row = result["strategies"][0]
+    assert row["sold_trades"] == 1
+    assert row["excluded_sold"] == {"force_closed": 1, "data_quality_flag": 1}

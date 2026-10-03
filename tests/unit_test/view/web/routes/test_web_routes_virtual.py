@@ -363,6 +363,32 @@ async def test_get_virtual_history_sold_hold_return_rate(web_client, mock_web_ct
 
 
 @pytest.mark.asyncio
+async def test_get_virtual_history_merges_legacy_strategy_names(web_client, mock_web_ctx):
+    """레거시 표시명 거래를 전략 ID로 묶어 gate 와 같은 표본 단위로 집계한다 (M-13)."""
+    web_api._PRICE_CACHE.clear()
+    mock_web_ctx.virtual_trade_service.get_all_trades.return_value = [
+        mock_trade(code="000660", status="SOLD", buy_price=1000, sell_price=1100,
+                   sell_date="2025-01-05 15:00:00", strategy="래리윌리엄스VBO"),
+        mock_trade(code="005930", status="SOLD", buy_price=1000, sell_price=1200,
+                   sell_date="2025-01-06 15:00:00", strategy="larry_williams_vbo"),
+    ]
+    mock_web_ctx.virtual_trade_service.calculate_return.side_effect = \
+        lambda bp, sp, qty=1, apply_cost=False: round((sp - bp) / bp * 100, 2)
+    mock_web_ctx.stock_query_service.get_multi_price = AsyncMock(
+        return_value=ResCommonResponse(rt_cd="0", msg1="OK", data=[]))
+    mock_web_ctx.virtual_trade_service.save_daily_snapshot = MagicMock()
+    mock_web_ctx.virtual_trade_service._load_data.return_value = {}
+    mock_web_ctx.virtual_trade_service.get_daily_change.return_value = (0.0, None)
+    mock_web_ctx.virtual_trade_service.get_weekly_change.return_value = (0.0, None)
+
+    response = web_client.get("/api/virtual/history")
+
+    assert response.status_code == 200
+    assert {t["strategy"] for t in response.json()["trades"]} == {"larry_williams_vbo"}
+    web_api._PRICE_CACHE.clear()
+
+
+@pytest.mark.asyncio
 async def test_get_virtual_history_force_update(web_client, mock_web_ctx):
     """GET /api/virtual/history force_code 테스트"""
     web_api._PRICE_CACHE.clear()
