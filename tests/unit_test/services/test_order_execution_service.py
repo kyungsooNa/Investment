@@ -4002,3 +4002,70 @@ async def test_sell_all_stocks_market_closed_blocks_all_modes(
 
     assert result.rt_cd == ErrorCode.MARKET_CLOSED.value
     mock_broker_api_wrapper.get_account_balance.assert_not_awaited()
+
+
+# --- KRX 애프터마켓(시간외 단일가) 범위 계약 (todo 0-3) ---
+# 시간외 단일가는 수동 주문 전용이다. 자동 전략·강제청산 source 가 시간외 주문 구분을
+# 들고 와도 브로커 호출 전에 막고, 일반 주문은 장 운영 판정에 시간외를 포함하지 않는다.
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["strategy:LarryWilliamsVBO", "strategy_force_exit:tier2"])
+async def test_strategy_buy_with_krx_after_market_dvsn_is_blocked(
+    handler, mock_broker_api_wrapper, mock_market_clock, source
+):
+    mock_market_clock.is_krx_after_market_hours.return_value = True
+
+    result = await handler.handle_place_buy_order("005930", 70000, 1, source=source, order_dvsn="41")
+
+    assert result.rt_cd == ErrorCode.ORDER_POLICY_BLOCKED.value
+    assert result.data == {"rule": "krx_after_market_strategy_blocked"}
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["strategy:LarryWilliamsVBO", "strategy_force_exit:tier2"])
+async def test_strategy_sell_with_krx_after_market_dvsn_is_blocked(
+    handler, mock_broker_api_wrapper, mock_market_clock, source
+):
+    mock_market_clock.is_krx_after_market_hours.return_value = True
+
+    result = await handler.handle_place_sell_order("005930", 70000, 1, source=source, order_dvsn="41")
+
+    assert result.rt_cd == ErrorCode.ORDER_POLICY_BLOCKED.value
+    assert result.data == {"rule": "krx_after_market_strategy_blocked"}
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_manual_krx_after_market_buy_outside_window_is_market_closed(
+    handler, mock_broker_api_wrapper, mock_market_clock
+):
+    mock_market_clock.is_krx_after_market_hours.return_value = False
+
+    result = await handler.handle_place_buy_order("005930", 70000, 1, order_dvsn="41")
+
+    assert result.rt_cd == ErrorCode.MARKET_CLOSED.value
+    mock_broker_api_wrapper.place_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_manual_krx_after_market_buy_includes_after_market_in_open_check(
+    handler, mock_market_clock, mock_market_calendar_service
+):
+    mock_market_clock.is_krx_after_market_hours.return_value = True
+
+    await handler.handle_place_buy_order("005930", 70000, 1, order_dvsn="41")
+
+    mock_market_calendar_service.is_market_open_now.assert_awaited_once_with(include_krx_after_market=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order_dvsn", [None, "00", "01"])
+async def test_regular_orders_exclude_after_market_from_open_check(
+    handler, mock_market_calendar_service, order_dvsn
+):
+    await handler.handle_place_buy_order("005930", 70000, 1, source="strategy:LarryWilliamsVBO", order_dvsn=order_dvsn)
+    await handler.handle_place_sell_order("005930", 70000, 1, source="strategy_force_exit:tier2", order_dvsn=order_dvsn)
+
+    for awaited in mock_market_calendar_service.is_market_open_now.await_args_list:
+        assert awaited.kwargs == {"include_krx_after_market": False}
