@@ -237,6 +237,20 @@ class OrderExecutionService:
     def _is_overseas_mode(self) -> bool:
         return self._market_mode == "overseas_us"
 
+    def _block_strategy_after_market_order(self, stock_code, source: str, order_dvsn) -> Optional[ResCommonResponse]:
+        """KRX 애프터마켓(시간외 단일가)은 수동 주문 전용 — 전략/강제청산 source 는 브로커 호출 전에 막는다."""
+        if order_dvsn not in KRX_AFTER_MARKET_ORDER_DVSNS or not self._is_strategy_source(source):
+            return None
+        self.logger.warning(
+            f"[OrderPolicy] KRX after-market strategy order blocked: stock_code={stock_code}, "
+            f"source={source}, order_dvsn={order_dvsn}"
+        )
+        return ResCommonResponse(
+            rt_cd=ErrorCode.ORDER_POLICY_BLOCKED.value,
+            msg1="KRX 애프터마켓 주문은 수동 주문에서만 허용됩니다.",
+            data={"rule": "krx_after_market_strategy_blocked"},
+        )
+
     def _log_real_order_preview(self, **kwargs) -> None:
         return self._submission_coordinator._log_real_order_preview(**kwargs)
 
@@ -552,6 +566,9 @@ class OrderExecutionService:
                     msg1=msg,
                     data={"rule": "overseas_strategy_buy_blocked"},
                 )
+            blocked = self._block_strategy_after_market_order(stock_code, source, order_dvsn)
+            if blocked:
+                return blocked
             is_after_market_order = order_dvsn in KRX_AFTER_MARKET_ORDER_DVSNS
             if is_after_market_order and not self.market_clock.is_krx_after_market_hours():
                 return ResCommonResponse(
@@ -644,6 +661,9 @@ class OrderExecutionService:
         current_trace = trace_id or get_trace_id() or new_trace_id("MANUAL")
         with trace_scope(current_trace):
             t_start = self.pm.start_timer()
+            blocked = self._block_strategy_after_market_order(stock_code, source, order_dvsn)
+            if blocked:
+                return blocked
             is_after_market_order = order_dvsn in KRX_AFTER_MARKET_ORDER_DVSNS
             if is_after_market_order and not self.market_clock.is_krx_after_market_hours():
                 return ResCommonResponse(
