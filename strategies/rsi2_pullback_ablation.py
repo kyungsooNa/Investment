@@ -50,6 +50,7 @@ RSI2_PULLBACK_ABLATION_PRESET = AblationPreset(
                 "proximity). RSI2 가 O'Neil 우량주 외 mean-reversion 후보를 잡을 "
                 "수 있는지 측정한다."
             ),
+            config_overrides={"require_minervini_stage2": False},
             universe_overrides={"universe_type": "generic_liquidity"},
         ),
         AblationVariant(
@@ -61,6 +62,7 @@ RSI2_PULLBACK_ABLATION_PRESET = AblationPreset(
                 "도달 빈도가 충분한 후보를 사전 선별해 mean-reversion edge 가 "
                 "있는 종목만 남기는지 측정한다."
             ),
+            config_overrides={"require_minervini_stage2": False},
             universe_overrides={"universe_type": "rsi2_mean_reversion"},
         ),
     ),

@@ -81,6 +81,9 @@ def scan_setup(mock_deps, watchlist_item_stage2):
     universe.get_watchlist.return_value = {"005930": watchlist_item_stage2}
     universe.is_market_timing_ok.return_value = True
     indicator.get_rsi.return_value = _rsi_resp(8.0)  # ≤ 10
+    indicator.get_moving_average.side_effect = lambda *args, **kwargs: (
+        _ma_resp(9000.0) if kwargs.get("period") == 200 else _ma_resp(10500.0)
+    )
     sqs.get_current_price.return_value = _price_resp("10000")
 
     # 15:15 (cutoff 15:10 통과)
@@ -103,6 +106,49 @@ async def test_scan_emits_buy_signal_when_all_conditions_met(scan_setup):
     assert sig.code == "005930"
     assert sig.strategy_name == "RSI2눌림목"
     assert "RSI" in sig.reason
+
+
+@pytest.mark.asyncio
+async def test_scan_uses_current_session_rsi_and_trend_mas(scan_setup):
+    """종가 베팅은 당일 임시 일봉을 포함한 RSI/MA로 현재 상태를 판정한다."""
+    strategy, _, _, indicator, _, _ = scan_setup
+
+    await strategy.scan()
+
+    assert indicator.get_rsi.await_count == 1
+    assert indicator.get_rsi.await_args.args == ("005930",)
+    assert indicator.get_rsi.await_args.kwargs == {
+        "period": 2, "candle_type": "D", "exclude_today": False,
+    }
+    ma_calls = indicator.get_moving_average.await_args_list
+    assert any(call.kwargs == {
+        "period": 200, "candle_type": "D", "exclude_today": False,
+    } for call in ma_calls)
+    assert any(call.kwargs == {
+        "period": 5, "candle_type": "D", "exclude_today": False,
+    } for call in ma_calls)
+
+
+@pytest.mark.asyncio
+async def test_scan_rejects_when_current_price_breaks_200ma(scan_setup):
+    strategy, sqs, _, indicator, _, _ = scan_setup
+    sqs.get_current_price.return_value = _price_resp("8900")
+    indicator.get_moving_average.side_effect = lambda *args, **kwargs: (
+        _ma_resp(9000.0) if kwargs.get("period") == 200 else _ma_resp(10500.0)
+    )
+
+    assert await strategy.scan() == []
+
+
+@pytest.mark.asyncio
+async def test_scan_rejects_after_price_already_reclaims_5ma(scan_setup):
+    strategy, sqs, _, indicator, _, _ = scan_setup
+    sqs.get_current_price.return_value = _price_resp("10600")
+    indicator.get_moving_average.side_effect = lambda *args, **kwargs: (
+        _ma_resp(9000.0) if kwargs.get("period") == 200 else _ma_resp(10500.0)
+    )
+
+    assert await strategy.scan() == []
 
 
 @pytest.mark.asyncio
@@ -159,6 +205,7 @@ async def test_scan_market_timing_off_marks_risk_off(scan_setup):
     signals = await strategy.scan()
     assert len(signals) == 1
     assert "축소비중" in signals[0].reason
+    assert signals[0].position_size_multiplier == 0.5
     state = strategy._position_state["005930"]
     assert state.risk_off_entry is True
 
@@ -209,6 +256,7 @@ def exit_setup(mock_deps):
     strategy._position_state = {}
     strategy._cooldown = {}
     strategy._save_state = MagicMock()
+    tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 15, 15, 0)
     return strategy, sqs, indicator
 
 
@@ -227,6 +275,46 @@ async def test_check_exits_take_profit_on_5ma_touch(exit_setup):
     assert signals[0].action == "SELL"
     assert "5MA 터치" in signals[0].reason
     assert signals[0].qty == 5
+    ma5_call = next(
+        call for call in indicator.get_moving_average.await_args_list
+        if call.kwargs.get("period") == 5
+    )
+    assert ma5_call.kwargs["exclude_today"] is False
+
+
+@pytest.mark.asyncio
+async def test_check_exits_does_not_use_5ma_before_close_window(exit_setup):
+    strategy, sqs, indicator = exit_setup
+    strategy._tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+    sqs.get_current_price.return_value = _price_resp("10500")
+    indicator.get_moving_average.side_effect = lambda *args, **kwargs: (
+        _ma_resp(9000.0) if kwargs.get("period") == 200 else _ma_resp(10400.0)
+    )
+
+    signals = await strategy.check_exits([
+        {"code": "005930", "name": "삼성전자", "buy_price": 10000, "qty": 5}
+    ])
+
+    assert signals == []
+    assert all(
+        call.kwargs.get("period") != 5
+        for call in indicator.get_moving_average.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_check_exits_hard_stop_still_runs_before_close_window(exit_setup):
+    strategy, sqs, indicator = exit_setup
+    strategy._tm.get_current_kst_time.return_value = datetime(2025, 1, 2, 10, 0, 0)
+    sqs.get_current_price.return_value = _price_resp("9500")
+    indicator.get_moving_average.return_value = _ma_resp(9000.0)
+
+    signals = await strategy.check_exits([
+        {"code": "005930", "name": "삼성전자", "buy_price": 10000, "qty": 5}
+    ])
+
+    assert len(signals) == 1
+    assert "하드 스탑" in signals[0].reason
 
 
 @pytest.mark.asyncio
@@ -283,6 +371,7 @@ async def test_check_exits_trend_break_below_200ma(exit_setup):
     assert "추세 붕괴" in signals[0].reason
     # 손절성 청산이므로 쿨다운에 등록
     assert "005930" in strategy._cooldown
+    assert strategy._cooldown["005930"] == "20250104"
 
 
 @pytest.mark.asyncio

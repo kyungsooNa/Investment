@@ -223,6 +223,28 @@ def test_parse_args_accepts_backtest_time(monkeypatch):
     assert args.backtest_time == "09:30:00"
 
 
+def test_parse_args_defaults_rsi2_backtest_to_close_window(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_backtest", "--strategy", "rsi2_pullback", "--dates", "20260501"],
+    )
+
+    args = _parse_args()
+
+    assert args.backtest_time == "15:20:00"
+
+
+def test_parse_args_keeps_noon_default_for_other_strategies(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_backtest", "--strategy", "oneil_pocket_pivot", "--dates", "20260501"],
+    )
+
+    args = _parse_args()
+
+    assert args.backtest_time == "12:00:00"
+
+
 @pytest.mark.parametrize("strategy_key", ACTIVE_BACKTEST_STRATEGIES)
 def test_parse_args_accepts_active_backtest_strategies(monkeypatch, strategy_key):
     monkeypatch.setattr(

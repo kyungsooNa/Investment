@@ -48,9 +48,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-positions", type=int, default=None, dest="max_positions")
     parser.add_argument(
         "--backtest-time",
-        default="12:00:00",
+        default=None,
         dest="backtest_time",
-        help="전략과 유니버스가 참조할 과거 장중 시각 HH:MM:SS (default: 12:00:00)",
+        help="전략과 유니버스가 참조할 과거 장중 시각 HH:MM:SS (RSI2: 15:20, 기타: 12:00)",
     )
     parser.add_argument(
         "--execution-bar-policy",
@@ -214,7 +214,10 @@ def _parse_args() -> argparse.Namespace:
         dest="pit_min_trading_value",
         help="상폐 후보 합류 시 5일 평균 거래대금 하한(원). 0이면 전략 자체 필터에 위임.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.backtest_time is None:
+        args.backtest_time = "15:20:00" if args.strategy == "rsi2_pullback" else "12:00:00"
+    return args
 
 
 def _build_dates(args: argparse.Namespace) -> list[str]:
