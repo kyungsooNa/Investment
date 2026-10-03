@@ -197,6 +197,7 @@ def test_load_data_empty_db_recovery_success(mock_save, mock_logger, tmp_path):
 
     mock_save.assert_called_once_with(force_update=True)
     assert mapper.code_to_name['005930'] == '삼성전자'
+    assert mapper.is_minimal_fallback is False
     
     ## DB 복구 과정에서 관련 로그가 info, warning, error 중 하나로 정상적으로 남았는지 유연하게 검사합니다.
     assert mock_logger.info.called or mock_logger.warning.called or mock_logger.error.called
@@ -223,6 +224,7 @@ def test_load_data_empty_db_recovery_fail_minimal(mock_save, mock_write_minimal,
 
     mock_write_minimal.assert_called_once()
     assert mapper.code_to_name['000000'] == '(종목목록 없음)'
+    assert mapper.is_minimal_fallback is True
     assert any("최소 DB" in call.args[0] for call in mock_logger.warning.call_args_list)
 
 

@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 
 # 프로젝트 내부 모듈 임포트
 from view.web.web_app_initializer import WebAppContext
+from view.web.bootstrap.startup_health import report_startup_health
 import view.web.web_api as web_api
 import view.web.api_common as api_common
 from view.web.authorization import ADMIN, OPERATOR, VIEWER, role_allows
@@ -142,6 +143,13 @@ async def lifespan(app: FastAPI):
     from view.web.deployment_policy import is_demo_mode, is_public_mode
     if not (is_public_mode(ctx) or is_demo_mode(ctx)):
         await ctx._initialize_price_subscriptions(rebalance=False)
+
+    await report_startup_health(
+        ctx.operator_alert_service,
+        ctx.stock_code_repository,
+        services_ready=services_ready,
+        logger=ctx.logger,
+    )
 
     if services_ready:
         print("=== 웹 서비스 초기화 완료 ===")

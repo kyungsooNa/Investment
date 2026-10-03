@@ -544,7 +544,7 @@ M-5 가 관찰 항목으로 걸어둔 승격 조건("다음 문서 점검에서 
 - #972 API budget 을 **거래 모드(실전/모의)가 확정된 뒤에** 만든다 — 그 전에 만들면 모드별 한도가 잘못 잡힌다. #970(모의 서버 해외 시세 budget 축소)과 같은 시기 변경이라 함께 볼 것.
 - #976 외부 의존(종목코드 저장소 등) 실패에도 웹 기동이 죽지 않게 한다.
 - #992 Windows 예약 작업 기반 무인 재기동과 장마감 태스크 catch-up 정책을 추가했다. 장애 뒤 재시작은 최신 거래일 1회 또는 누락 거래일별 복구로 태스크마다 명시하며, 미등록 태스크는 종전처럼 자동 소급하지 않는다.
-- [ ] **기동 시 degrade 상태가 화면·로그에서 드러나는지 확인** — #976 은 '죽지 않는다' 를 만든 변경이다. 조용히 degrade 로 뜨면 **비어 있는 유니버스로 전략이 도는** 상태를 못 알아챈다(1-5 의 "empty 를 무거래로 오인" 과 같은 실패 모드). 기동 시 어떤 의존이 빠진 채 떴는지 운영자 알림·스케줄러 화면 중 한 곳에는 남는지 확인한다.
+- [x] **기동 시 degrade 상태가 화면·로그에서 드러나는지 확인 — 2026-10-03 완료**: 확인 결과 브로커 초기화 실패는 콘솔 배너뿐, 종목코드 DB 최소 폴백(= 유니버스 빈 상태)은 logger.warning 뿐이었다. `view/web/bootstrap/startup_health.py` 가 기동(lifespan)과 `/api/environment` 재시도 직후 두 상태를 운영자 알림(`AlertSource.STARTUP`, 대시보드 active alert + 텔레그램)으로 올리고, 정상이면 지난 기동의 알림을 해제한다(`startup:stock_code_db` error / `startup:broker` critical). 원 확인 요청: #976 은 '죽지 않는다' 를 만든 변경이다. 조용히 degrade 로 뜨면 **비어 있는 유니버스로 전략이 도는** 상태를 못 알아챈다(1-5 의 "empty 를 무거래로 오인" 과 같은 실패 모드). 기동 시 어떤 의존이 빠진 채 떴는지 운영자 알림·스케줄러 화면 중 한 곳에는 남는지 확인한다.
 - ※ M-2 의 조립 지점 가드(`test_assembly_point_guard.py`)는 **크기**를 재지 **순서**를 재지 않는다. #972 같은 순서 결함은 그 가드로 잡히지 않는다.
 
 주요 파일: `view/web/web_app_initializer.py`, `view/web/web_main.py`, `repositories/stock_code_repository.py`, `core/retry_queue/api_budget_limiter.py`
@@ -555,7 +555,12 @@ M-10/M-11 과 같은 성격의 **완료 축 기록**이다. 남은 실행 항목
 
 - #943 국내 모의매매 저널에 국내 코드만 들어가도록 가드(`is_domestic_virtual_trade_code`) · #944 국내 화면을 한국장 아래로 이동 · #945 미국장 전용 모의매매 페이지 신설 · #946 USD 성과 요약이 빈 이유를 화면에 설명 · #960 전략별 **당일** 수익률 표시.
 - ※ 이 분리가 Phase 5 의 "원장은 통화별로 영구 분리" 결정을 화면까지 밀어낸 것이다 — #946 이 설명 문구로 덮었던 "자동 전략 기록이 원장에 안 남는다" 는 원인은 #954 가 실제로 고쳤다(Phase 5 항목).
-- [ ] 1-6 의 **표준 journal 축적 진행률**과 이 화면의 집계가 같은 표본을 보는지 확인 — 화면은 원장(`VirtualTradeRepository`/`OverseasTradeRepository`), gate 는 `get_standard_journal_records` 로 소스가 다르다. 진행률을 화면으로 읽다가 gate 기준과 어긋나면 오판한다.
+- [~] 1-6 의 **표준 journal 축적 진행률**과 이 화면의 집계가 같은 표본을 보는지 확인 — **2026-10-03 확인: 같은 `trades` 행을 읽지만 세 경로가 같은 행을 다르게 센다.** 수정은 gate 의미 변경이라 정책 결정 대기.
+  - ① 전략명: gate·readiness 는 `normalize_virtual_trade` 가 레거시 표시명 4쌍(래리윌리엄스VBO→larry_williams_vbo 등)을 합치지만, 화면(`/api/virtual/history` 집계)은 원본 `strategy` 로 묶는다 — 화면은 전략별 표본을 **두 줄로 쪼개 적게** 보여준다.
+  - ② 강제종결(`reason=reconciled_force_close`, sell_price=0): 화면 요약은 승률·평균에서 제외, 화면 전략별 집계는 eval_price 를 매수가로 대체해 **0%**, gate 는 SOLD 로 세고 **−100%**(net_pnl 전액 손실)로 집계한다 — gate 표본 수는 부풀고 PF/MDD 는 과대 손실로 왜곡된다.
+  - ③ 오염 플래그(`data_quality_flag`, 0-2/#831): 어느 경로도 소비하지 않는다 — 표준 journal 에 필드가 실리지 않아 gate 가 플래그 거래를 그대로 쓴다.
+  - 결정 필요: gate 표본에서 ②·③을 제외할지(제외 시 SOLD 표본 수 감소). 화면 ①은 별칭 정규화만 맞추면 되는 표시 문제다.
+  - 원 확인 요청: 화면은 원장(`VirtualTradeRepository`/`OverseasTradeRepository`), gate 는 `get_standard_journal_records` 로 소스가 다르다. 진행률을 화면으로 읽다가 gate 기준과 어긋나면 오판한다.
 
 주요 파일: `repositories/virtual_trade_repository.py`, `repositories/overseas_trade_repository.py`, `services/virtual_trade_market_guard.py`, `view/web/routes/virtual.py`, `view/web/templates/{virtual,overseas_virtual}.html`
 

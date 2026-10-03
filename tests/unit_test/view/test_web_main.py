@@ -99,6 +99,27 @@ async def test_lifespan_reports_failure_when_services_not_initialized(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("services_ready", [True, False])
+async def test_lifespan_reports_startup_health_to_operator_alerts(
+    mock_web_app_context_cls, mock_web_api_module, services_ready
+):
+    """기동 degrade(브로커 미연결·종목코드 최소 DB)를 운영자 알림으로 남긴다 (M-12)."""
+    mock_ctx = mock_web_app_context_cls.return_value
+    mock_ctx.initialize_services = AsyncMock(return_value=services_ready)
+
+    with patch("view.web.web_main.report_startup_health", new_callable=AsyncMock) as mock_report:
+        async with lifespan(app):
+            pass
+
+    mock_report.assert_awaited_once_with(
+        mock_ctx.operator_alert_service,
+        mock_ctx.stock_code_repository,
+        services_ready=services_ready,
+        logger=mock_ctx.logger,
+    )
+
+
+@pytest.mark.asyncio
 async def test_lifespan_reports_success_when_services_initialized(
     mock_web_app_context_cls, mock_web_api_module, capsys
 ):
