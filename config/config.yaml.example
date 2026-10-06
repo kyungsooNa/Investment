@@ -154,7 +154,9 @@ overseas_stock:
     # 국면 조회 실패 시에도 진입하지 않는다(fail-closed). 손절/EOD 청산은 항상 동작.
     market_timing_gate: true
 
-  # 장중 승격 전략 5종. VBO 와 같은 폴링 패스를 공유하므로 켜도 심볼 조회는 늘지 않는다.
+  # 장중 승격 전략 5종. VBO 와 같은 폴링 패스를 공유하며 심볼당 1회만 조회한다.
+  # 각 전략은 유동성 상위 top_n×2 풀에서 전략명·거래일별로 top_n 개를 선택한다.
+  # 따라서 모든 top_n 이 같다면 전체 감시 합집합은 최대 top_n×2 종목이다.
   # 거래량 조건은 누적거래량(tvol)을 장중 경과 비율로 환산해 판정한다(국내와 동일 방식).
   intraday_channel_breakout:
     enabled: false

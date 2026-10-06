@@ -115,7 +115,13 @@ class OverseasIntradayVBOService:
         self._empty_attempts += 1
 
         ex = exchange or self._default_exchange
-        candidates = await self._candidate_service.get_candidates(ex, top_n=self._top_n)
+        candidates = await self._candidate_service.get_candidates(
+            ex,
+            top_n=self._top_n,
+            selection_key=self.STRATEGY_NAME,
+            selection_date=trade_date,
+            selection_pool_size=self._top_n * 2,
+        )
 
         watch: Dict[str, Dict[str, Any]] = {}
         for cand in candidates or []:
