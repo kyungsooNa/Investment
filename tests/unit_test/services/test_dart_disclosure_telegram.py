@@ -58,6 +58,22 @@ async def test_send_disclosure_alert_includes_ai_summary_block_when_provided():
     assert "전환사채 발행 &lt;주의&gt;" in message
 
 
+async def test_send_disclosure_alert_includes_ai_investment_impact_score():
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    stored = _stored("단일판매ㆍ공급계약체결", 85)
+
+    await reporter.send_disclosure_alert(
+        stored.disclosure,
+        stored.importance,
+        ai_summary="대규모 공급계약으로 생산능력 확대가 기대됩니다.",
+        ai_impact_score=3,
+    )
+
+    message = reporter._send_message.await_args.args[0]
+    assert "<b>AI 투자 영향:</b> +3 / +5 (긍정)" in message
+
+
 async def test_send_disclosure_alert_emphasizes_key_labels():
     reporter = TelegramReporter("token", "chat")
     reporter._send_message = AsyncMock(return_value=True)

@@ -44,7 +44,7 @@ class DartDisclosureMonitorTask(SchedulableTask):
         self._logger = logger or logging.getLogger(__name__)
         self._ai_analyzer = ai_analyzer
         self._notification_service = notification_service
-        self._ai_summary_cache: Dict[str, Optional[str]] = {}
+        self._ai_analysis_cache: Dict[str, Optional[AiDisclosureAnalysis]] = {}
         self._state = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
         self._tick_lock: Optional[asyncio.Lock] = None
@@ -204,9 +204,7 @@ class DartDisclosureMonitorTask(SchedulableTask):
                         )
                         event_key = analysis.event_key
                         ai_summary = analysis.summary
-                    self._ai_summary_cache[disclosure.receipt_no] = (
-                        ai_summary
-                    )
+                    self._ai_analysis_cache[disclosure.receipt_no] = analysis
                 inserted = await self._repository.save_detected(
                     disclosure,
                     importance,
@@ -264,17 +262,17 @@ class DartDisclosureMonitorTask(SchedulableTask):
         pending = await self._repository.get_pending_immediate(threshold)
         for item in pending:
             receipt_no = item.disclosure.receipt_no
-            if receipt_no in self._ai_summary_cache:
-                ai_summary = self._ai_summary_cache[receipt_no]
+            if receipt_no in self._ai_analysis_cache:
+                analysis = self._ai_analysis_cache[receipt_no]
             else:
-                ai_summary = None
+                analysis = None
                 if self._ai_analyzer is not None:
                     analysis = await self._analyze_actual_content(
                         item.disclosure, item.importance
                     )
-                    if analysis is not None:
-                        ai_summary = analysis.summary
-                    self._ai_summary_cache[receipt_no] = ai_summary
+                    self._ai_analysis_cache[receipt_no] = analysis
+            ai_summary = analysis.summary if analysis is not None else None
+            ai_impact_score = analysis.impact_score if analysis is not None else None
             self._logger.info(
                 "%s: 텔레그램 발송 시작 receipt_no=%s stock_code=%s score=%s",
                 self.task_name,
@@ -283,8 +281,11 @@ class DartDisclosureMonitorTask(SchedulableTask):
                 item.importance.score,
             )
             try:
+                alert_kwargs = {"ai_summary": ai_summary}
+                if ai_impact_score is not None:
+                    alert_kwargs["ai_impact_score"] = ai_impact_score
                 sent = await self._reporter.send_disclosure_alert(
-                    item.disclosure, item.importance, ai_summary=ai_summary
+                    item.disclosure, item.importance, **alert_kwargs
                 )
             except Exception as exc:
                 sent = False
@@ -299,7 +300,7 @@ class DartDisclosureMonitorTask(SchedulableTask):
                 await self._repository.mark_immediate_sent(
                     receipt_no, now
                 )
-                self._ai_summary_cache.pop(receipt_no, None)
+                self._ai_analysis_cache.pop(receipt_no, None)
                 self._progress["sent_count"] += 1
                 self._logger.info(
                     "%s: 텔레그램 발송 완료 receipt_no=%s", self.task_name, receipt_no

@@ -756,7 +756,13 @@ class TelegramReporter:
             await self._send_message(current)
 
     @_serialized_report_send
-    async def send_disclosure_alert(self, disclosure, importance, ai_summary: Optional[str] = None) -> bool:
+    async def send_disclosure_alert(
+        self,
+        disclosure,
+        importance,
+        ai_summary: Optional[str] = None,
+        ai_impact_score: Optional[int] = None,
+    ) -> bool:
         """관심종목 중요 공시 한 건을 즉시 전송한다.
 
         ai_summary 가 주어지면 규칙 판정 위에 AI 요약 블록을 덧붙인다. None 이면
@@ -776,7 +782,14 @@ class TelegramReporter:
                     summary_text[: _DISCLOSURE_AI_SUMMARY_MAX_CHARS - 1].rstrip() + "…"
                 )
             ai_summary_html = _format_disclosure_ai_summary_html(summary_text)
-            ai_block = f"🤖 <b>AI 요약</b>\n{ai_summary_html}\n\n"
+            ai_block = f"🤖 <b>AI 요약</b>\n{ai_summary_html}\n"
+            if ai_impact_score is not None:
+                impact_score = max(-5, min(5, int(ai_impact_score)))
+                impact_label = "긍정" if impact_score > 0 else "부정" if impact_score < 0 else "중립"
+                ai_block += (
+                    f"<b>AI 투자 영향:</b> {impact_score:+d} / +5 ({impact_label})\n"
+                )
+            ai_block += "\n"
         message = (
             "🚨 <b>관심종목 중요 공시</b>\n\n"
             f"<b>{company} ({stock_code})</b>\n"

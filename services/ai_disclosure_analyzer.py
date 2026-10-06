@@ -18,7 +18,10 @@ _SYSTEM_PROMPT = (
     "90점 이상은 존속·거래·감사 등 치명적 사건, 80점대는 대규모 희석·구조개편, "
     "70점대는 구체적인 실적·수주·신제품·공장·시장진출 계획, 50점대는 중간 영향, "
     "30점 이하는 정기·안내성 정보다. 동일한 경제적 사건의 여러 문서를 묶을 수 있게 "
-    "상품종류·회차·금액 등 본문 식별자를 정규화한 event_key를 만든다. 확실한 식별자가 "
+    "상품종류·회차·금액 등 본문 식별자를 정규화한 event_key를 만든다. 또한 단기 주가 예측이 아닌 "
+    "공시 내용의 기업가치 영향 참고치로 investment_impact_score를 -5~+5 정수로 평가한다. "
+    "-5는 존속·재무·대규모 희석 등 매우 부정적, 0은 중립·불확실·혼재, +5는 실적·수주·투자 "
+    "확정 등 매우 긍정적 영향이다. 확실한 식별자가 "
     "없으면 event_key는 빈 문자열로 둔다. 반드시 JSON 객체만 반환한다."
 )
 
@@ -36,6 +39,7 @@ class AiDisclosureAnalysis:
     summary: str
     importance: DisclosureImportance
     event_key: str = ""
+    impact_score: Optional[int] = None
 
 
 class AiDisclosureAnalyzer:
@@ -89,7 +93,7 @@ class AiDisclosureAnalyzer:
             f"{str(document_text or '')[:16_000]}\n"
             "[공시 원문 끝]\n\n"
             f"{AiDisclosureAnalyzer._periodic_report_instruction(disclosure)}"
-            '다음 형식으로 반환: {"summary":"...", "score":75, '
+            '다음 형식으로 반환: {"summary":"...", "score":75, "impact_score":3, '
             '"reasons":["구체적 근거 1","구체적 근거 2"], '
             '"event_key":"사건종류|회차·계약상대 등 식별자|금액·기준일"}\n'
             "event_key는 같은 기업의 동일 경제적 사건 문서에서 완전히 같은 값이어야 "
@@ -134,6 +138,7 @@ class AiDisclosureAnalyzer:
             summary=analysis.summary,
             importance=importance,
             event_key=analysis.event_key,
+            impact_score=analysis.impact_score,
         )
 
     @staticmethod
@@ -172,10 +177,14 @@ class AiDisclosureAnalyzer:
             reasons=reasons,
         )
         event_key = str(payload.get("event_key") or "").strip()[:300]
+        impact_score = payload.get("impact_score")
+        if impact_score is not None:
+            impact_score = max(-5, min(5, int(impact_score)))
         return AiDisclosureAnalysis(
             summary=summary,
             importance=importance,
             event_key=event_key,
+            impact_score=impact_score,
         )
 
     @staticmethod

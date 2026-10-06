@@ -178,7 +178,7 @@ async def test_ai_summary_is_attached_to_immediate_alert_when_analyzer_present()
     importance = DisclosureImportance(85, "HIGH", ["자금조달·주식 희석 관련 공시"])
     analyzer = MagicMock()
     analyzer.analyze = AsyncMock(
-        return_value=AiDisclosureAnalysis("전환사채 발행 요약", importance)
+        return_value=AiDisclosureAnalysis("전환사채 발행 요약", importance, impact_score=-3)
     )
     deps = _make_task([disclosure], initialized=True, ai_analyzer=analyzer)
     deps.repo.get_pending_immediate.return_value = [StoredDisclosure(disclosure, importance)]
@@ -187,7 +187,7 @@ async def test_ai_summary_is_attached_to_immediate_alert_when_analyzer_present()
 
     analyzer.analyze.assert_awaited_once_with(disclosure, importance, "공시 실제 본문")
     deps.reporter.send_disclosure_alert.assert_awaited_once_with(
-        disclosure, importance, ai_summary="전환사채 발행 요약"
+        disclosure, importance, ai_summary="전환사채 발행 요약", ai_impact_score=-3
     )
 
 
