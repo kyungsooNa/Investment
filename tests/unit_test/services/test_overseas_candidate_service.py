@@ -78,6 +78,61 @@ async def test_top_n_caps_result(svc):
 
 
 @pytest.mark.asyncio
+async def test_strategy_date_rotation_selects_from_larger_liquid_pool():
+    """전략 6종이 모두 거래대금 Top N만 받으면 매일 같은 종목만 매매한다."""
+    repo = MagicMock()
+    repo.all_symbols.return_value = [
+        {"s": f"S{i:02d}", "n": f"Stock {i:02d}", "e": "NASD"}
+        for i in range(20)
+    ]
+    sqs = MagicMock()
+
+    async def _ohlcv(symbol, limit=5, end_date=None, exchange=None):
+        rank = int(symbol[1:])
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="ok",
+            data=_bars(100.0, 20_000 - rank * 100),
+        )
+
+    sqs.get_recent_daily_ohlcv = AsyncMock(side_effect=_ohlcv)
+    service = OverseasCandidateService(repo, sqs, logger=MagicMock())
+
+    vbo = await service.get_candidates(
+        OverseasExchange.NASD,
+        min_avg_trading_value=0,
+        top_n=10,
+        selection_key="VBO",
+        selection_date="20261006",
+        selection_pool_size=20,
+    )
+    rsi2 = await service.get_candidates(
+        OverseasExchange.NASD,
+        min_avg_trading_value=0,
+        top_n=10,
+        selection_key="RSI2",
+        selection_date="20261006",
+        selection_pool_size=20,
+    )
+    next_day = await service.get_candidates(
+        OverseasExchange.NASD,
+        min_avg_trading_value=0,
+        top_n=10,
+        selection_key="VBO",
+        selection_date="20261007",
+        selection_pool_size=20,
+    )
+
+    assert len(vbo) == len(rsi2) == len(next_day) == 10
+    assert {item["code"] for item in vbo} != {item["code"] for item in rsi2}
+    assert {item["code"] for item in vbo} != {item["code"] for item in next_day}
+    assert {item["code"] for item in vbo + rsi2 + next_day} <= {
+        f"S{i:02d}" for i in range(20)
+    }
+    assert sqs.get_recent_daily_ohlcv.await_count == 20
+
+
+@pytest.mark.asyncio
 async def test_explicit_symbols_override_repo(svc):
     result = await svc.service.get_candidates(
         exchange=OverseasExchange.NASD, symbols=["AAA"], min_avg_trading_value=0.0,

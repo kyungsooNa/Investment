@@ -8,6 +8,7 @@ OverseasStockCodeRepository(전 심볼) + 일봉 거래대금 필터로 watchlis
 배선(VBO 주입)은 Phase 3. 본 서비스는 후보 리스트 산출만 담당한다.
 """
 import asyncio
+import hashlib
 import logging
 import time
 from typing import Any, Dict, List, Optional
@@ -55,10 +56,15 @@ class OverseasCandidateService:
         symbols: Optional[List[str]] = None,
         min_avg_trading_value: Optional[float] = None,
         top_n: Optional[int] = None,
+        selection_key: Optional[str] = None,
+        selection_date: Optional[str] = None,
+        selection_pool_size: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """거래대금 필터를 통과한 해외 후보를 내림차순으로 반환한다.
+        """거래대금 필터를 통과한 해외 후보를 반환한다.
 
-        반환: [{"code","name","exchange","avg_trading_value"}], avg_trading_value 내림차순.
+        기본 반환은 avg_trading_value 내림차순이다. ``selection_*`` 을 주면 유동성
+        상위 pool 안에서 전략·거래일별 창을 골라 여러 전략이 매일 같은 Top N만
+        공유하는 편중을 줄인다.
         """
         min_tv = self._min_avg_trading_value if min_avg_trading_value is None else min_avg_trading_value
         cap = self._top_n if top_n is None else top_n
@@ -67,7 +73,30 @@ class OverseasCandidateService:
 
         candidates = [c for c in scored_universe if c["avg_trading_value"] >= min_tv]
         candidates.sort(key=lambda c: c["avg_trading_value"], reverse=True)
+        if selection_key and selection_date and cap:
+            pool_size = max(cap, int(selection_pool_size or cap))
+            pool = candidates[:pool_size]
+            if len(pool) > cap:
+                start = self._selection_start(selection_key, selection_date, len(pool))
+                rotated = pool[start:] + pool[:start]
+                return rotated[:cap]
         return candidates[:cap] if cap else candidates
+
+    @staticmethod
+    def _selection_start(selection_key: str, selection_date: str, pool_size: int) -> int:
+        """전략·거래일별 시작점을 안정적으로 정한다.
+
+        Python ``hash`` 는 프로세스마다 달라 재현할 수 없으므로 SHA-256을 쓴다.
+        날짜 숫자를 별도로 더해 연속 거래일이 같은 창을 고르는 것도 피한다.
+        """
+        key_offset = int(hashlib.sha256(selection_key.encode("utf-8")).hexdigest()[:8], 16)
+        try:
+            date_offset = int(selection_date)
+        except (TypeError, ValueError):
+            date_offset = int(
+                hashlib.sha256(str(selection_date).encode("utf-8")).hexdigest()[:8], 16
+            )
+        return (key_offset + date_offset) % pool_size
 
     async def _scored_universe(
         self, exchange: OverseasExchange, symbols: Optional[List[str]],

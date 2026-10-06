@@ -130,6 +130,20 @@ async def test_prepare_session_is_idempotent_for_same_date():
     assert s.candidate_service.get_candidates.await_count == 1
 
 
+@pytest.mark.asyncio
+async def test_prepare_session_requests_strategy_specific_rotating_candidates():
+    s = _svc()
+
+    await s.service.prepare_session(TRADE_DATE)
+
+    assert s.candidate_service.get_candidates.await_args.kwargs == {
+        "top_n": s.service._top_n,
+        "selection_key": s.service.STRATEGY_NAME,
+        "selection_date": TRADE_DATE,
+        "selection_pool_size": s.service._top_n * 2,
+    }
+
+
 # ── 진입 ─────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
