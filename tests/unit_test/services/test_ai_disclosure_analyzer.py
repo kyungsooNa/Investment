@@ -32,6 +32,7 @@ async def test_analyze_returns_structured_result_and_passes_document_text():
         return_value=(
             '```json\n{"summary":"하이브리드 본더 공장과 미국 법인을 추진합니다.",'
             '"score":75,"reasons":["신제품 및 생산능력 확대"],'
+            '"impact_score":3,'
             '"event_key":"공장투자|하이브리드본더|2027상반기"}\n```'
         )
     )
@@ -47,6 +48,7 @@ async def test_analyze_returns_structured_result_and_passes_document_text():
     assert result.importance.score == 75
     assert result.importance.level == "HIGH"
     assert result.importance.reasons == ["신제품 및 생산능력 확대"]
+    assert result.impact_score == 3
     assert result.event_key == "공장투자|하이브리드본더|2027상반기"
     user_prompt = ai_client.complete.await_args.kwargs["user"]
     assert "삼성전자" in user_prompt
@@ -55,6 +57,7 @@ async def test_analyze_returns_structured_result_and_passes_document_text():
     assert "하이브리드 본더 전용 공장" in user_prompt
     assert ai_client.complete.await_args.kwargs["usage_type"] == "disclosure"
     assert '"event_key"' in user_prompt
+    assert '"impact_score"' in user_prompt
 
 
 async def test_periodic_report_prompt_requires_balanced_half_year_review():
@@ -156,6 +159,18 @@ def test_parse_analysis_clamps_score_into_range():
 
     assert high.importance.score == 100
     assert low.importance.score == 0
+
+
+def test_parse_analysis_clamps_investment_impact_score_into_minus_five_to_five():
+    positive = AiDisclosureAnalyzer._parse_analysis(
+        '{"summary":"s", "score":50, "impact_score":20, "reasons":["r"]}'
+    )
+    negative = AiDisclosureAnalyzer._parse_analysis(
+        '{"summary":"s", "score":50, "impact_score":-20, "reasons":["r"]}'
+    )
+
+    assert positive.impact_score == 5
+    assert negative.impact_score == -5
 
 
 @pytest.mark.parametrize(
