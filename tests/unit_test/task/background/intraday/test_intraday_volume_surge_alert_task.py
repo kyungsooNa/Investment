@@ -16,7 +16,7 @@ def _response(data):
 
 def _make_task(
     *, now=None, cumulative_volume=600_000, trading_value=12_000_000_000,
-    current_price=99_800,
+    current_price=99_800, classification_repository=None,
 ):
     now = now or datetime(2026, 8, 25, 10, 30)
     stock = {
@@ -54,6 +54,7 @@ def _make_task(
         telegram_reporter=telegram_reporter,
         market_calendar_service=mcs,
         market_clock=clock,
+        stock_classification_repository=classification_repository,
         logger=MagicMock(),
     )
     return SimpleNamespace(
@@ -67,7 +68,15 @@ def _make_task(
 
 @pytest.mark.asyncio
 async def test_alerts_only_for_aligned_stock_with_projected_volume_at_least_ten_times():
-    deps = _make_task()
+    classification_repository = MagicMock()
+    classification_repository.get_code_category_map = AsyncMock(
+        return_value={"052690": "기타 엔지니어링 서비스업"}
+    )
+    classification_repository.get_groups = AsyncMock(return_value={
+        "원자력발전": {"members": [{"code": "052690", "name": "한전기술"}]},
+        "전력설비": {"members": [{"code": "052690", "name": "한전기술"}]},
+    })
+    deps = _make_task(classification_repository=classification_repository)
 
     await deps.task._tick()
 
@@ -80,6 +89,11 @@ async def test_alerts_only_for_aligned_stock_with_projected_volume_at_least_ten_
     assert alerts[0]["tier"] == 10
     assert alerts[0]["projected_volume_ratio"] >= 10.0
     assert alerts[0]["trend_filter"] == "정배열 충족"
+    assert alerts[0]["stock_description"] == (
+        "업종 기타 엔지니어링 서비스업 · 관련 테마 원자력발전, 전력설비"
+    )
+    classification_repository.get_code_category_map.assert_awaited_once_with("industry")
+    classification_repository.get_groups.assert_awaited_once_with(category_types=("theme",))
 
 
 @pytest.mark.asyncio

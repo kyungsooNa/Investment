@@ -389,10 +389,17 @@ class TelegramReporter:
             trading_value = int(item.get("trading_value") or 0) / 100_000_000
             tier = int(item.get("tier") or 0)
             trend_filter = html.escape(str(item.get("trend_filter") or "확인 불가"), quote=False)
+            stock_description = html.escape(
+                str(item.get("stock_description") or ""), quote=False
+            )
+            description_lines = (
+                [f"종목 설명: {stock_description}"] if stock_description else []
+            )
             lines.extend(
                 [
                     "",
                     f"<b>{name} ({code}) · {tier}배 단계</b>",
+                    *description_lines,
                     f"현재 {price:,}원 ({change_rate:+.2f}%)",
                     f"{tier}배 단계: 장 마감 예상 거래량이 기준의 {tier}배 이상",
                     f"누적 거래량 {cumulative_ratio:.1f}배 ({int(item.get('cumulative_volume') or 0):,}주 / 기준 {avg_volume:,}주)",

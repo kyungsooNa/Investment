@@ -37,6 +37,7 @@ class IntradayVolumeSurgeAlertTask(SchedulableTask):
         telegram_reporter=None,
         market_calendar_service: Optional["MarketCalendarService"] = None,
         market_clock: Optional["MarketClock"] = None,
+        stock_classification_repository=None,
         check_interval_sec: Optional[int] = None,
         logger=None,
     ) -> None:
@@ -45,11 +46,14 @@ class IntradayVolumeSurgeAlertTask(SchedulableTask):
         self._telegram_reporter = telegram_reporter
         self._mcs = market_calendar_service
         self._market_clock = market_clock
+        self._stock_classification_repository = stock_classification_repository
         self._check_interval_sec = check_interval_sec or self.CHECK_INTERVAL_SEC
         self._logger = logger or logging.getLogger(__name__)
         self._state = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
         self._baseline_cache: Dict[str, Dict[str, float]] = {}
+        self._stock_description_cache: Dict[str, str] = {}
+        self._stock_descriptions_loaded = False
         self._sent_tiers: Dict[str, int] = {}
         self._trading_date: Optional[str] = None
         self._progress: Dict[str, Any] = {
@@ -128,8 +132,11 @@ class IntradayVolumeSurgeAlertTask(SchedulableTask):
         if self._trading_date != trading_date:
             self._trading_date = trading_date
             self._baseline_cache.clear()
+            self._stock_description_cache.clear()
+            self._stock_descriptions_loaded = False
             self._sent_tiers.clear()
 
+        await self._load_stock_descriptions()
         await self._refresh_rankings()
         candidates = self._collect_candidates()
         self._progress["scanned_count"] = len(candidates)
@@ -225,7 +232,7 @@ class IntradayVolumeSurgeAlertTask(SchedulableTask):
         trend_filter = "정배열 충족" if current_price > ma20 > ma50 > 0 else "정배열 미충족"
         if trend_filter != "정배열 충족":
             return None
-        return {
+        alert = {
             "code": code,
             "name": name,
             "price": current_price,
@@ -241,6 +248,50 @@ class IntradayVolumeSurgeAlertTask(SchedulableTask):
             "tier": tier,
             "trend_filter": trend_filter,
         }
+        stock_description = self._stock_description_cache.get(code)
+        if stock_description:
+            alert["stock_description"] = stock_description
+        return alert
+
+    async def _load_stock_descriptions(self) -> None:
+        if self._stock_descriptions_loaded:
+            return
+        self._stock_descriptions_loaded = True
+        repo = self._stock_classification_repository
+        if repo is None:
+            return
+
+        try:
+            industry_map = await repo.get_code_category_map("industry")
+        except Exception as exc:
+            self._logger.warning(f"{self.task_name}: 업종 분류 조회 실패 — {exc}")
+            industry_map = {}
+
+        themes_by_code: Dict[str, List[str]] = {}
+        try:
+            groups = await repo.get_groups(category_types=("theme",))
+            for theme, group in sorted((groups or {}).items()):
+                members = group.get("members", []) if isinstance(group, dict) else []
+                for member in members:
+                    code = str(member.get("code") or "") if isinstance(member, dict) else ""
+                    if code:
+                        themes_by_code.setdefault(code, []).append(str(theme))
+        except Exception as exc:
+            self._logger.warning(f"{self.task_name}: 테마 분류 조회 실패 — {exc}")
+
+        for code in set(industry_map) | set(themes_by_code):
+            parts = []
+            industry = str(industry_map.get(code) or "").strip()
+            if industry:
+                parts.append(f"업종 {industry}")
+            themes = themes_by_code.get(code, [])
+            if themes:
+                displayed = ", ".join(themes[:3])
+                if len(themes) > 3:
+                    displayed += f" 외 {len(themes) - 3}개"
+                parts.append(f"관련 테마 {displayed}")
+            if parts:
+                self._stock_description_cache[code] = " · ".join(parts)
 
     async def _get_baseline(self, code: str, now: datetime) -> Dict[str, float]:
         if code in self._baseline_cache:

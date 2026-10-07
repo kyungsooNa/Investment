@@ -456,6 +456,7 @@ async def test_send_intraday_volume_surge_alert_formats_observation_notice(teleg
             "trading_value": 12_300_000_000,
             "tier": 5,
             "trend_filter": "정배열 미충족",
+            "stock_description": "업종 전기·전자 & 반도체 · 관련 테마 원전, AI",
         }],
         "20260825 10:30",
     )
@@ -468,6 +469,7 @@ async def test_send_intraday_volume_surge_alert_formats_observation_notice(teleg
     assert "최근 20거래일 평균 거래량 기준 (전일 거래량 기준 아님)" in message
     assert "장 경과 90/390분 (23.1%)" in message
     assert "정배열 미충족" in message
+    assert "종목 설명: 업종 전기·전자 &amp; 반도체 · 관련 테마 원전, AI" in message
     assert "자동 매수 신호가 아닙니다" in message
 
 @pytest.mark.asyncio
