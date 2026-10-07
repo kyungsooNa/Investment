@@ -33,6 +33,7 @@ def test_role_hierarchy(actual, required, allowed):
         ("/api/order", "POST", OPERATOR),
         ("/api/operator/alerts/x/resolve", "POST", OPERATOR),
         ("/api/system/shutdown", "POST", ADMIN),
+        ("/api/system/update-and-restart", "POST", ADMIN),
         ("/api/background/ranking/force-update", "POST", ADMIN),
         ("/api/scheduler/start", "POST", ADMIN),
         ("/api/position-sizing/limits", "GET", ADMIN),

@@ -159,8 +159,13 @@
             <h3 style="margin-top: 0; margin-bottom: 12px;">🖥️ 서버 제어</h3>
             <p style="font-size: 0.9rem; color: var(--text-secondary, #888); margin: 0 0 12px;">
                 <strong>재수행</strong>은 새 프로세스를 띄운 뒤 현재 프로세스를 종료합니다(웹 모드로 자동 복귀).
+                <strong>최신화 후 재수행</strong>은 로컬 변경이 없을 때 Git 최신 코드를 fast-forward로 반영한 뒤 재시작합니다.
                 <strong>종료</strong>는 프로세스를 내리며, 이후 터미널에서 <code>python main.py --web</code> 으로 다시 실행해야 합니다.
             </p>
+            <button id="btn-update-restart-server" class="btn" data-required-role="admin" onclick="updateAndRestartServer(this)"
+                    style="background: var(--success-color, #4caf50); color: #fff; height: 36px; margin-right: 8px;">
+                Git 최신화 후 재수행
+            </button>
             <button id="btn-restart-server" class="btn" data-required-role="admin" onclick="restartServer(this)"
                     style="background: var(--primary-color, #1976d2); color: #fff; height: 36px; margin-right: 8px;">
                 프로세스 재수행
@@ -176,5 +181,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/system.js?v=23"></script>
+<script src="/static/js/system.js?v=24"></script>
 {% endblock %}
