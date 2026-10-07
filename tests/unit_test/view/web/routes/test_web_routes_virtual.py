@@ -1080,6 +1080,66 @@ def test_aggregate_virtual_data_reports_today_returns_by_strategy():
     assert result["today_returns"]["ALL"]["return_rate"] == 7.35
 
 
+def test_aggregate_virtual_data_groups_entry_lots_and_excludes_invalid_force_close():
+    """분할 lot은 한 진입 신호로, 0원 강제정산은 성과 표본 밖으로 집계한다."""
+    from view.web.routes.virtual import _aggregate_virtual_data
+
+    vm = MagicMock()
+    vm.get_trade_amount.side_effect = lambda price, qty=1, **kwargs: float(price * qty)
+    vm.save_daily_snapshot.return_value = None
+    vm._load_data.return_value = {}
+    vm.get_daily_change.return_value = (None, None)
+    vm.get_weekly_change.return_value = (None, None)
+
+    trades = [
+        # 같은 진입의 분할 lot: +200원, -100원 => 신호 하나의 손익 +100원
+        mock_trade(
+            code="A", strategy="larry_williams_vbo", config_hash="cfg-old",
+            buy_date="2026-09-28 09:13:21", buy_price=1000, qty=1,
+            status="SOLD", sell_date="2026-09-29 10:00:00", sell_price=1200,
+        ),
+        mock_trade(
+            code="A", strategy="larry_williams_vbo", config_hash="cfg-old",
+            buy_date="2026-09-28 09:13:21", buy_price=1000, qty=1,
+            status="SOLD", sell_date="2026-09-30 10:00:00", sell_price=900,
+        ),
+        # 개선 설정의 별도 신호: -100원
+        mock_trade(
+            code="B", strategy="larry_williams_vbo", config_hash="cfg-new",
+            buy_date="2026-10-01 09:20:00", buy_price=1000, qty=1,
+            status="SOLD", sell_date="2026-10-02 10:00:00", sell_price=900,
+        ),
+        # 성과가 아니라 데이터 정합성 보정 기록
+        mock_trade(
+            code="C", strategy="larry_williams_vbo", config_hash="cfg-old",
+            buy_date="2026-09-27 09:20:00", buy_price=1000, qty=1,
+            status="SOLD", sell_date="2026-09-27 15:20:00", sell_price=0,
+            reason="reconciled_force_close",
+        ),
+    ]
+
+    result = _aggregate_virtual_data(trades, vm, False)
+
+    expectancy = result["expectancies"]["larry_williams_vbo"]
+    assert expectancy["wins"] == 1
+    assert expectancy["losses"] == 1
+    assert expectancy["signal_count"] == 2
+    assert expectancy["win_rate"] == 50.0
+    assert result["profit_factors"]["larry_williams_vbo"]["value"] == 1.0
+    assert result["summary_agg"]["larry_williams_vbo"] == {
+        "buy_sum": 3000.0,
+        "eval_sum": 3000.0,
+    }
+
+    cohorts = result["performance_cohorts"]["larry_williams_vbo"]
+    assert [cohort["config_hash"] for cohort in cohorts] == ["cfg-new", "cfg-old"]
+    assert cohorts[0]["signal_count"] == 1
+    assert cohorts[0]["win_rate"] == 0.0
+    assert cohorts[1]["signal_count"] == 1
+    assert cohorts[1]["win_rate"] == 100.0
+    assert cohorts[1]["avg_return"] == 5.0
+
+
 def test_sanitize_for_json_replaces_nan_and_inf():
     """NaN/Infinity 값이 0.0으로 치환되는지 검증."""
     from view.web.routes.virtual import _sanitize_for_json

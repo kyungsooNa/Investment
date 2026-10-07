@@ -140,15 +140,21 @@ class VirtualTradeService:
     def get_summary(self, apply_cost: bool = True) -> dict:
         df = self._repo._read()
         total_trades = len(df)
-        sold_df = df[df['status'] == 'SOLD']
+        sold_df = df[df['status'] == 'SOLD'].copy()
 
         if 'reason' in sold_df.columns:
             reason_series = sold_df['reason'].fillna('').astype(str)
-            force_closed_count = int((reason_series == _FORCE_CLOSE_REASON).sum())
-            natural_sold_df = sold_df[reason_series != _FORCE_CLOSE_REASON]
+            invalid_mask = reason_series == _FORCE_CLOSE_REASON
         else:
-            force_closed_count = 0
-            natural_sold_df = sold_df
+            invalid_mask = pd.Series(False, index=sold_df.index)
+        sell_prices = (
+            pd.to_numeric(sold_df['sell_price'], errors='coerce').fillna(0)
+            if 'sell_price' in sold_df.columns
+            else pd.Series(0, index=sold_df.index, dtype=float)
+        )
+        invalid_mask |= sell_prices <= 0
+        force_closed_count = int(invalid_mask.sum())
+        natural_sold_df = sold_df[~invalid_mask].copy()
 
         if natural_sold_df.empty:
             return {
@@ -156,15 +162,30 @@ class VirtualTradeService:
                 "win_rate": 0,
                 "avg_return": 0,
                 "force_closed_count": force_closed_count,
+                "signal_count": 0,
             }
 
-        if apply_cost:
-            returns = natural_sold_df.apply(lambda row: self.calculate_return(row['buy_price'], row['sell_price'], row['qty'], True), axis=1)
+        natural_sold_df['buy_amt'] = natural_sold_df.apply(
+            lambda row: self.get_trade_amount(row['buy_price'], row.get('qty', 1), is_sell=False, apply_cost=apply_cost),
+            axis=1,
+        )
+        natural_sold_df['eval_amt'] = natural_sold_df.apply(
+            lambda row: self.get_trade_amount(row['sell_price'], row.get('qty', 1), is_sell=True, apply_cost=apply_cost),
+            axis=1,
+        )
+
+        required_group_cols = ['strategy', 'code', 'buy_date', 'buy_price']
+        if all(col in natural_sold_df.columns for col in required_group_cols):
+            grouped = natural_sold_df.groupby(required_group_cols, dropna=False, as_index=False).agg(
+                buy_amt=('buy_amt', 'sum'),
+                eval_amt=('eval_amt', 'sum'),
+            )
         else:
-            returns = natural_sold_df['return_rate']
+            grouped = natural_sold_df[['buy_amt', 'eval_amt']].copy()
+        returns = (grouped['eval_amt'] - grouped['buy_amt']) / grouped['buy_amt'] * 100
 
         win_trades = len(returns[returns > 0])
-        win_rate = (win_trades / len(natural_sold_df) * 100)
+        win_rate = (win_trades / len(grouped) * 100)
         avg_return = returns.mean()
 
         return {
@@ -172,6 +193,7 @@ class VirtualTradeService:
             "win_rate": round(win_rate, 1),
             "avg_return": round(avg_return, 2),
             "force_closed_count": force_closed_count,
+            "signal_count": len(grouped),
         }
 
     def get_daily_change(self, strategy: str, current_return: float, *, _data: dict | None = None) -> tuple[float | None, str | None]:

@@ -55,6 +55,7 @@ class LarryWilliamsVBOConfig(BaseStrategyConfig):
     confidence_threshold: float = 120.0           # 스냅샷 체결강도 하한 (%)
     program_buy_ratio: float = 0.10               # 프로그램 순매수 / 거래대금 하한
     max_entry_extension_pct: float = 2.0          # Target 대비 최대 추격 진입 허용폭 (%)
+    max_annualized_volatility: float = 0.70        # 20일 연환산 변동성 상한 (70%)
     stop_loss_pct: float = -3.0                   # 칼손절 기준 (%)
     allow_reentry: bool = False                   # 당일 동일 종목 재진입 금지
 
@@ -78,7 +79,8 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
       5. 현재가 >= Target 확인
       6. 스냅샷 체결강도 >= 120%
       7. 프로그램 순매수 >= 거래대금 × 10% AND 양수(+)
-      8. BUY TradeSignal 반환
+      8. 20일 연환산 변동성 <= 70% (조회 실패 시 fail-open)
+      9. BUY TradeSignal 반환
 
     check_exits():
       - 오버나이트 방어: 전일 매수건 즉시 청산
@@ -249,12 +251,25 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                 if not self._passes_program_buy_filter(data, log_data):
                     continue
 
+                volatility = await _fetch_volatility_for_signal(self._sqs, code)
+                log_data["volatility_20d_annualized"] = volatility
+                if (
+                    self._cfg.max_annualized_volatility > 0
+                    and volatility is not None
+                    and volatility > self._cfg.max_annualized_volatility
+                ):
+                    self._log_entry_rejected(
+                        log_data,
+                        "annualized_volatility_too_high",
+                        f"20일 연환산 변동성({volatility:.1%}) > {self._cfg.max_annualized_volatility:.1%}",
+                    )
+                    continue
+
                 # BUY 신호 생성
                 reason = (
                     f"VBO돌파: Open({open_price:,})+Range({rng:.0f})×K{self._cfg.k_value}"
                     f"=Target({round(target):,}) / 현재({current:,}) / 체결강도({cgld:.1f}%)"
                 )
-                volatility = await _fetch_volatility_for_signal(self._sqs, code)
                 signals.append(TradeSignal(
                     code=code, name=name, action="BUY", price=current,
                     reason=reason, strategy_name=self.name,
@@ -272,6 +287,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                         "execution_strength",
                         "program_buy",
                         "liquidity_filter",
+                        "volatility_20d_annualized",
                     ],
                     volatility_20d_annualized=volatility,
                 ))

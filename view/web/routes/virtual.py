@@ -420,6 +420,7 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
             "daily_ref_dates": {}, "weekly_ref_dates": {},
             "first_dates": {}, "counts": {},
             "profit_factors": {}, "expectancies": {},
+            "performance_cohorts": {},
             "today_returns": {},
         }
 
@@ -444,15 +445,23 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
         df['eval_amt'] = df.apply(lambda x: vm.get_trade_amount(x['eval_price'], x['qty'], is_sell=True,  apply_cost=apply_cost), axis=1)
         df['pnl'] = df['eval_amt'] - df['buy_amt']
 
+        if 'reason' not in df.columns:
+            df['reason'] = ''
+        invalid_sold_mask = (
+            (df['status'] == 'SOLD')
+            & ((df['sell_price'] <= 0) | (df['reason'].fillna('').astype(str) == 'reconciled_force_close'))
+        )
+        return_df = df[~invalid_sold_mask]
+
         strategies = [s for s in df['strategy'].dropna().unique() if s]
 
         # 전략별 누적수익률
-        summary_agg = {"ALL": {"buy_sum": float(df['buy_amt'].sum()), "eval_sum": float(df['eval_amt'].sum())}}
+        summary_agg = {"ALL": {"buy_sum": float(return_df['buy_amt'].sum()), "eval_sum": float(return_df['eval_amt'].sum())}}
         for strat in strategies:
-            mask = df['strategy'] == strat
+            mask = return_df['strategy'] == strat
             summary_agg[strat] = {
-                "buy_sum":  float(df.loc[mask, 'buy_amt'].sum()),
-                "eval_sum": float(df.loc[mask, 'eval_amt'].sum()),
+                "buy_sum":  float(return_df.loc[mask, 'buy_amt'].sum()),
+                "eval_sum": float(return_df.loc[mask, 'eval_amt'].sum()),
             }
         strategy_returns = {
             k: (round(((v["eval_sum"] - v["buy_sum"]) / v["buy_sum"]) * 100, 2) if v["buy_sum"] > 0 else 0.0)
@@ -583,9 +592,36 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
         }
 
         # Profit Factor & Expectancy
+        # 한 번의 진입이 여러 lot으로 나뉘어 저장될 수 있으므로 row가 아니라
+        # (전략, 종목, 진입시각, 진입가, 설정 해시) 단위의 신호로 평가한다.
+        for col, default in [('config_hash', ''), ('code', ''), ('buy_date', '')]:
+            if col not in df.columns:
+                df[col] = default
+
+        performance_mask = (df['buy_price'] > 0) & ~invalid_sold_mask
+        performance_mask &= ~((df['status'] == 'HOLD') & (df['current_price'] <= 0))
+        performance_df = df[performance_mask].copy()
+        performance_df['config_hash'] = performance_df['config_hash'].fillna('').astype(str)
+
+        signal_group_cols = ['strategy', 'code', 'buy_date', 'buy_price', 'config_hash']
+        signal_df = (
+            performance_df.groupby(signal_group_cols, dropna=False, as_index=False)
+            .agg(
+                buy_amt=('buy_amt', 'sum'),
+                eval_amt=('eval_amt', 'sum'),
+                pnl=('pnl', 'sum'),
+            )
+        )
+        if not signal_df.empty:
+            signal_df['return_rate'] = np.where(
+                signal_df['buy_amt'] > 0,
+                signal_df['pnl'] / signal_df['buy_amt'] * 100,
+                0.0,
+            )
+
         def calc_metrics(sub_df):
-            gains  = sub_df[sub_df['pnl'] >= 0]['pnl']
-            losses = sub_df[sub_df['pnl'] <  0]['pnl']
+            gains  = sub_df[sub_df['pnl'] > 0]['pnl']
+            losses = sub_df[sub_df['pnl'] <= 0]['pnl']
             tot_g, tot_l = float(gains.sum()), abs(float(losses.sum()))
             wins, loss_c = len(gains), len(losses)
             tot_c = wins + loss_c
@@ -593,7 +629,7 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
                 "value": (round(tot_g / tot_l, 2) if tot_l > 0 else (None if tot_g > 0 else 0.0)),
                 "total_gain": round(tot_g), "total_loss": round(tot_l),
             }
-            exp = {"value": 0.0, "win_rate": 0.0, "avg_gain": 0, "avg_loss": 0, "wins": 0, "losses": 0}
+            exp = {"value": 0.0, "win_rate": 0.0, "avg_gain": 0, "avg_loss": 0, "wins": 0, "losses": 0, "signal_count": 0}
             if tot_c > 0:
                 w_rate, l_rate = wins / tot_c, loss_c / tot_c
                 avg_g = tot_g / wins      if wins   > 0 else 0
@@ -602,24 +638,44 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
                     "value": round((w_rate * avg_g) - (l_rate * avg_l), 0),
                     "win_rate": round(w_rate * 100, 1),
                     "avg_gain": round(avg_g), "avg_loss": round(avg_l),
-                    "wins": wins, "losses": loss_c,
+                    "wins": wins, "losses": loss_c, "signal_count": tot_c,
                 })
             return pf, exp
 
-        valid_df = df[df['buy_price'] > 0]
         profit_factors, expectancies = {}, {}
-        pf_all, exp_all = calc_metrics(valid_df)
+        pf_all, exp_all = calc_metrics(signal_df)
         profit_factors["ALL"], expectancies["ALL"] = pf_all, exp_all
         for strat in strategies:
-            pf_s, exp_s = calc_metrics(valid_df[valid_df['strategy'] == strat])
+            pf_s, exp_s = calc_metrics(signal_df[signal_df['strategy'] == strat])
             profit_factors[strat], expectancies[strat] = pf_s, exp_s
+
+        performance_cohorts = {}
+        if not signal_df.empty:
+            for strat, strat_df in signal_df.groupby('strategy', dropna=False):
+                cohorts = []
+                for config_hash, cohort_df in strat_df.groupby('config_hash', dropna=False):
+                    pf, exp = calc_metrics(cohort_df)
+                    cohorts.append({
+                        "config_hash": str(config_hash) if str(config_hash) else "미기록",
+                        "signal_count": int(len(cohort_df)),
+                        "win_rate": exp["win_rate"],
+                        "avg_return": round(float(cohort_df['return_rate'].mean()), 2),
+                        "profit_factor": pf["value"],
+                        "first_entry": str(cohort_df['buy_date'].min()),
+                        "last_entry": str(cohort_df['buy_date'].max()),
+                    })
+                performance_cohorts[str(strat)] = sorted(
+                    cohorts,
+                    key=lambda cohort: cohort["last_entry"],
+                    reverse=True,
+                )
 
     except Exception as e:
         logger.error(f"[WebAPI] virtual/history Pandas 집계 오류: {e}")
         summary_agg = {}
         strategy_returns = {}
         daily_changes = weekly_changes = daily_ref_dates = weekly_ref_dates = {}
-        first_dates = counts = profit_factors = expectancies = today_returns = {}
+        first_dates = counts = profit_factors = expectancies = performance_cohorts = today_returns = {}
 
     return {
         "summary_agg":       summary_agg,
@@ -632,6 +688,7 @@ def _aggregate_virtual_data(trades, vm, apply_cost):
         "counts":            counts,
         "profit_factors":    profit_factors,
         "expectancies":      expectancies,
+        "performance_cohorts": performance_cohorts,
         "today_returns":     today_returns,
     }
 
