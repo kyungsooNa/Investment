@@ -106,6 +106,11 @@ class OverseasStockCodeRepository:
             for _, row in self.df.iterrows()
         }
 
+    def reload(self):
+        """원자적으로 교체된 DB를 다시 읽어 메모리 인덱스를 갱신한다."""
+        self.df = self._read_df()
+        self._build_index()
+
     def get_meta(self, symbol: str) -> dict | None:
         """심볼의 {name, exchange} 반환. 미등록이면 None."""
         return self.symbol_to_meta.get(str(symbol).upper())

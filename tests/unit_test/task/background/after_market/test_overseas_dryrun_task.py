@@ -12,7 +12,7 @@ from interfaces.schedulable_task import TaskPriority
 from common.overseas_types import OverseasExchange
 
 
-def _make_task(exchange=OverseasExchange.NASD, signals=None):
+def _make_task(exchange=OverseasExchange.NASD, signals=None, universe_refresh=None):
     dryrun = MagicMock()
     dryrun.scan_dry_run = AsyncMock(return_value=signals if signals is not None else [
         {"code": "AAA", "action": "BUY", "reason": "vbo_daily_breakout"},
@@ -28,8 +28,41 @@ def _make_task(exchange=OverseasExchange.NASD, signals=None):
         logger=logger,
         notification_service=notification_service,
         exchange=exchange,
+        universe_refresh=universe_refresh,
     )
     return task, dryrun, journal, notification_service, logger
+
+
+@pytest.mark.asyncio
+async def test_refreshes_universe_before_scan():
+    events = []
+    refresh = AsyncMock(side_effect=lambda: events.append("refresh"))
+    task, dryrun, _, _, _ = _make_task(universe_refresh=refresh)
+    dryrun.scan_dry_run = AsyncMock(
+        side_effect=lambda _exchange: events.append("scan") or []
+    )
+    await task._on_market_closed("20260706")
+
+    refresh.assert_awaited_once()
+    assert events == ["refresh", "scan"]
+
+
+@pytest.mark.asyncio
+async def test_universe_refresh_failure_does_not_block_scan():
+    refresh = AsyncMock(side_effect=RuntimeError("refresh failed"))
+    task, dryrun, _, _, logger = _make_task(universe_refresh=refresh)
+
+    await task._on_market_closed("20260706")
+
+    dryrun.scan_dry_run.assert_awaited_once()
+    logger.warning.assert_any_call(
+        {
+            "event": "overseas_universe_refresh_error",
+            "market_date": "20260706",
+            "error": "refresh failed",
+        },
+        exc_info=True,
+    )
 
 
 def test_task_metadata():
