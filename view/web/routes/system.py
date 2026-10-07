@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from repositories.streaming_stock_repo import StreamingType
 from view.web.api_common import _get_ctx
@@ -391,6 +392,8 @@ def get_data_quality_history(
 # ── 서버 프로세스 종료 (UI 종료 버튼) ────────────────────────────────────
 
 _SHUTDOWN_DELAY_SEC = 0.5
+_GIT_TIMEOUT_SEC = 60
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _terminate_process() -> None:
@@ -465,6 +468,54 @@ async def restart_server():
     """웹 서버 프로세스를 재수행(재시작)한다. 새 프로세스가 뜬 뒤 현재 프로세스는 종료된다."""
     _schedule_restart()
     return {"success": True, "message": "서버를 재시작합니다. 잠시 후 새 프로세스로 다시 연결됩니다."}
+
+
+def _run_git(*args: str) -> subprocess.CompletedProcess:
+    """프로젝트 루트에서 고정된 Git 명령을 실행한다."""
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=_PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GIT_TIMEOUT_SEC,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("Git 명령을 실행할 수 없습니다.") from exc
+
+
+def _pull_latest_code() -> None:
+    """추적 파일이 깨끗할 때 현재 브랜치를 fast-forward 방식으로만 최신화한다."""
+    status = _run_git("status", "--porcelain", "--untracked-files=no")
+    if status.returncode != 0:
+        raise RuntimeError("Git 상태 확인에 실패했습니다.")
+    if status.stdout.strip():
+        raise RuntimeError("로컬 변경이 있어 업데이트할 수 없습니다.")
+
+    pull = _run_git("pull", "--ff-only")
+    if pull.returncode != 0:
+        raise RuntimeError("Git 최신화에 실패했습니다.")
+
+
+@router.post("/system/update-and-restart")
+async def update_and_restart_server():
+    """현재 브랜치를 안전하게 최신화한 뒤 웹 서버를 재시작한다."""
+    try:
+        await asyncio.to_thread(_pull_latest_code)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"코드 업데이트에 실패했습니다. 서버는 계속 실행됩니다. ({exc})",
+        ) from exc
+
+    _schedule_restart()
+    return {
+        "success": True,
+        "message": "최신 코드를 반영했습니다. 잠시 후 새 프로세스로 다시 연결됩니다.",
+    }
 
 
 # 1. 동기(def) 함수를 비동기(async def) 함수로 변경하여 이벤트 루프 데드락 방지

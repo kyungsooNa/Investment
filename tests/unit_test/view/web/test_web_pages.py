@@ -151,6 +151,8 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert "프로그램매매 실시간 동향" in response.text
         elif path == "/system":
             assert "시스템 상태 모니터링" in response.text
+            assert 'id="btn-update-restart-server"' in response.text
+            assert 'onclick="updateAndRestartServer(this)"' in response.text
         elif path == "/heatmap":
             assert "시장 히트맵" in response.text
             assert 'id="heatmap-page-viewport"' in response.text
@@ -168,6 +170,13 @@ def test_virtual_static_js_exposes_divergence_workflow():
     assert "compareVirtualDivergence" in script
     assert "filled_qty" in script
     assert "slippage_pct" in script
+
+
+def test_system_static_js_exposes_update_and_restart_workflow():
+    script = Path("view/web/static/js/system.js").read_text(encoding="utf-8")
+
+    assert "function updateAndRestartServer" in script
+    assert "'/api/system/update-and-restart'" in script
 
 
 def test_common_navigation_does_not_show_domestic_virtual_page(web_client, mock_web_ctx):

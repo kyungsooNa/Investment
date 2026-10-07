@@ -46,6 +46,7 @@ _ADMIN_UNSAFE_EXACT = frozenset(
     {
         "/api/system/shutdown",
         "/api/system/restart",
+        "/api/system/update-and-restart",
         "/api/environment",
         "/api/market-mode",
         "/api/balance/sell_all",

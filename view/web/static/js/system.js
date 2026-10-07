@@ -878,6 +878,29 @@ async function savePositionSizingLimits() {
 }
 
 // ── 서버 프로세스 재수행(재시작) ─────────────────────────────
+async function updateAndRestartServer(btn) {
+    if (!confirm('Git 원격의 최신 코드를 반영한 뒤 웹 서버를 재시작합니다.\n추적 중인 로컬 변경이 있으면 업데이트하지 않습니다.\n\n계속하시겠습니까?')) return;
+    const msgEl = document.getElementById('shutdown-msg');
+    if (btn) btn.disabled = true;
+    if (msgEl) { msgEl.textContent = 'Git 최신 코드 확인 및 반영 중...'; msgEl.style.color = 'var(--text-secondary, #888)'; }
+    try {
+        const res = await fetch('/api/system/update-and-restart', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success) {
+            if (msgEl) { msgEl.textContent = '최신 코드를 반영했습니다. 잠시 후 새 프로세스로 다시 연결됩니다.'; msgEl.style.color = 'var(--success-color, #4caf50)'; }
+            if (typeof showToast === 'function') showToast('Git 최신화 및 서버 재시작을 요청했습니다.', 'success');
+        } else {
+            if (btn) btn.disabled = false;
+            if (msgEl) { msgEl.textContent = '업데이트 실패: ' + (data.detail || JSON.stringify(data)); msgEl.style.color = 'var(--danger-color, #f44336)'; }
+        }
+    } catch (e) {
+        // 업데이트 완료 후 현재 프로세스가 종료되면 응답 연결이 먼저 끊길 수 있다.
+        console.error('[system] Git 최신화 및 재시작 요청 오류', e);
+        if (msgEl) { msgEl.textContent = '서버가 재시작 중입니다. 잠시 후 새로고침하세요.'; msgEl.style.color = 'var(--success-color, #4caf50)'; }
+        if (typeof showToast === 'function') showToast('서버 재시작을 기다리는 중입니다.', 'success');
+    }
+}
+
 async function restartServer(btn) {
     if (!confirm('웹 서버 프로세스를 재시작합니다.\n새 프로세스가 뜬 뒤 현재 프로세스는 종료되며, 잠시 후 다시 연결됩니다.\n\n계속하시겠습니까?')) return;
     const msgEl = document.getElementById('shutdown-msg');

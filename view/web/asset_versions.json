@@ -112,8 +112,8 @@
     "sha256": "52f74c58ee708dcf3fe3809637e9572d2a4453d417887bb1b03c59c135301b78"
   },
   "js/system.js": {
-    "version": 23,
-    "sha256": "4f4bcae5ab8f4374ca87aa103196a93b64cf6d9eb7d874179c9471e168b5cff4"
+    "version": 24,
+    "sha256": "256984dd1072ee6c0f7733ec82e626aa97ad645d41fa6b20946fecb16b1028e4"
   },
   "js/trade_trends.js": {
     "version": 6,

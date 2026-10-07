@@ -248,6 +248,57 @@ def test_restart_schedules_a_delayed_restart(web_client, mocker):
     timer.assert_called_once_with(mod._SHUTDOWN_DELAY_SEC, mod._restart_process)
 
 
+def test_update_and_restart_pulls_latest_code_before_scheduling_restart(web_client, mocker):
+    pull_latest = mocker.patch("view.web.routes.system._pull_latest_code")
+    schedule_restart = mocker.patch("view.web.routes.system._schedule_restart")
+
+    response = web_client.post("/api/system/update-and-restart")
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    pull_latest.assert_called_once_with()
+    schedule_restart.assert_called_once_with()
+
+
+def test_update_and_restart_keeps_server_running_when_git_update_fails(web_client, mocker):
+    mocker.patch(
+        "view.web.routes.system._pull_latest_code",
+        side_effect=RuntimeError("git pull failed"),
+    )
+    schedule_restart = mocker.patch("view.web.routes.system._schedule_restart")
+
+    response = web_client.post("/api/system/update-and-restart")
+
+    assert response.status_code == 409
+    assert "업데이트에 실패" in response.json()["detail"]
+    schedule_restart.assert_not_called()
+
+
+def test_pull_latest_code_refuses_tracked_local_changes(mocker):
+    run = mocker.patch("view.web.routes.system.subprocess.run")
+    run.return_value.returncode = 0
+    run.return_value.stdout = " M view/web/routes/system.py\n"
+
+    with pytest.raises(RuntimeError, match="로컬 변경"):
+        mod._pull_latest_code()
+
+    assert run.call_count == 1
+    assert run.call_args.args[0] == ["git", "status", "--porcelain", "--untracked-files=no"]
+
+
+def test_pull_latest_code_uses_fast_forward_only(mocker):
+    run = mocker.patch("view.web.routes.system.subprocess.run")
+    run.side_effect = [
+        SimpleNamespace(returncode=0, stdout="", stderr=""),
+        SimpleNamespace(returncode=0, stdout="Already up to date.\n", stderr=""),
+    ]
+
+    mod._pull_latest_code()
+
+    assert run.call_args_list[1].args[0] == ["git", "pull", "--ff-only"]
+    assert run.call_args_list[1].kwargs["cwd"] == mod._PROJECT_ROOT
+
+
 def test_restart_keeps_the_current_process_when_the_spawn_fails(mocker):
     mocker.patch("view.web.routes.system._spawn_restarted_process",
                  side_effect=OSError("실행 불가"))
