@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sqlite3
+import tempfile
 from datetime import datetime
 import pandas as pd
 import FinanceDataReader as fdr
@@ -57,13 +58,22 @@ def save_overseas_stock_code_list(force_update=False):
     """
     if not force_update and not _needs_update():
         logger.info("✅ 해외 종목: 최근 7일 이내에 이미 업데이트됨. 업데이트 생략.")
-        return
+        return False
 
+    temp_db_path = None
     try:
         logger.info("🔄 FinanceDataReader를 통해 해외(NASDAQ/NYSE/AMEX) 종목 목록을 다운로드합니다...")
         frames = []
         for market, exchange in _MARKET_TO_EXCHANGE.items():
-            df_market = fdr.StockListing(market)[["Symbol", "Name"]].copy()
+            df_market = fdr.StockListing(market).copy()
+            if "MarketCap" in df_market.columns:
+                df_market["MarketCap"] = pd.to_numeric(
+                    df_market["MarketCap"], errors="coerce"
+                ).fillna(0)
+                df_market = df_market.sort_values("MarketCap", ascending=False)
+            else:
+                logger.warning(f"⚠️ {market} 목록에 MarketCap이 없어 제공 순서를 유지합니다.")
+            df_market = df_market[["Symbol", "Name"]]
             df_market["거래소"] = exchange
             frames.append(df_market)
 
@@ -75,7 +85,11 @@ def save_overseas_stock_code_list(force_update=False):
         df = df.drop_duplicates(subset=["심볼"], keep="first")
 
         os.makedirs(DATA_DIR, exist_ok=True)
-        conn = sqlite3.connect(DB_FILE_PATH)
+        fd, temp_db_path = tempfile.mkstemp(
+            prefix=".overseas_stock_code_list_", suffix=".db", dir=DATA_DIR,
+        )
+        os.close(fd)
+        conn = sqlite3.connect(temp_db_path)
         try:
             df.to_sql(TABLE_NAME, conn, if_exists="replace", index=False)
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_overseas_symbol ON {TABLE_NAME}(심볼)")
@@ -83,12 +97,18 @@ def save_overseas_stock_code_list(force_update=False):
         finally:
             conn.close()
 
+        os.replace(temp_db_path, DB_FILE_PATH)
+        temp_db_path = None
         _save_metadata()
         logger.info(f"🟢 {len(df)}개 해외 종목 저장 완료 (FDR 사용): {DB_FILE_PATH}")
+        return True
 
     except Exception as e:
         logger.error(f"❌ 해외 종목 데이터 업데이트 실패: {e}")
         raise
+    finally:
+        if temp_db_path and os.path.exists(temp_db_path):
+            os.remove(temp_db_path)
 
 
 def load_overseas_stock_code_list():

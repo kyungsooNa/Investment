@@ -927,6 +927,35 @@ def test_service_container_wires_overseas_dryrun_us_market_clock(patched_service
     assert td_us_calls[0].kwargs["market_clock"].timezone_name == "America/New_York"
 
 
+@pytest.mark.asyncio
+async def test_overseas_dryrun_refresh_reloads_repository_and_candidate_cache(
+    patched_service_container_deps,
+):
+    from config.config_loader import AppConfig
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.market_mode = "overseas_us"
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        market_mode="overseas_us",
+        overseas_stock={"dryrun_slot_usd": 1000.0},
+    )
+    ctx.overseas_stock_code_repository = MagicMock()
+
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True) as candidate_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True) as task_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.save_overseas_stock_code_list", return_value=True) as sync:
+        ServiceContainer(ctx).run()
+        await task_cls.call_args.kwargs["universe_refresh"]()
+
+    sync.assert_called_once_with(force_update=False)
+    ctx.overseas_stock_code_repository.reload.assert_called_once_with()
+    candidate_cls.return_value.clear_cache.assert_called_once_with()
+
+
 def test_domestic_active_with_overseas_enabled_builds_dryrun_task(patched_service_container_deps):
     """active=domestic 이라도 enabled_market_modes 에 overseas_us 가 있으면 dry-run 태스크를 공존 조립한다."""
     from view.web.bootstrap.service_container import ServiceContainer

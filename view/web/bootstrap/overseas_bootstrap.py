@@ -10,6 +10,7 @@ dry-run 파이프라인(전략 6종 + suite + after-market 태스크), 수동 �
 """
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from core.market_clock import MarketClock
@@ -39,6 +40,7 @@ from services.overseas_reconcile_service import OverseasReconcileService
 from services.overseas_risk_gate_service import OverseasRiskGateService
 from services.overseas_rsi2_dryrun_service import OverseasRSI2DryRunService
 from services.overseas_squeeze_breakout_dryrun_service import OverseasSqueezeBreakoutDryRunService
+from services.overseas_stock_sync_service import save_overseas_stock_code_list
 from services.overseas_strategy_metadata_service import build_overseas_intraday_strategy_metadata
 from services.overseas_vbo_dryrun_service import OverseasVBODryRunService
 from services.us_market_calendar_service import USMarketCalendarService
@@ -218,6 +220,15 @@ class OverseasBootstrap:
         # 미국 정규장 마감(16:00 ET) 직후 트리거. O-1: 규칙 기반 NYSE 캘린더를
         # 주입해 미국 휴장일에는 실행을 스킵한다 (기존: 주말 필터만).
         dryrun_us_clock = MarketClock.for_us_equities(logger=ctx.logger)
+
+        async def _refresh_overseas_universe():
+            updated = await asyncio.to_thread(
+                save_overseas_stock_code_list, force_update=False,
+            )
+            if updated:
+                ctx.overseas_stock_code_repository.reload()
+                ctx.overseas_candidate_service.clear_cache()
+
         ctx.overseas_dryrun_task = OverseasDryRunTask(
             dryrun_service=overseas_dryrun_suite,
             shadow_journal=ctx.event_shadow_journal_service,
@@ -232,6 +243,7 @@ class OverseasBootstrap:
             worker_pool=ctx.worker_pool,
             # 국면은 기록 전용 — dry-run 은 관측 데이터라 차단하지 않는다.
             market_regime_service=ctx.us_market_regime_service,
+            universe_refresh=_refresh_overseas_universe,
         )
         self._build_intraday_strategies(overseas_stock_cfg, overseas_position_sizing_service)
 

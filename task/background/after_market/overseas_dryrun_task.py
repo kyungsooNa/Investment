@@ -44,6 +44,7 @@ class OverseasDryRunTask(AfterMarketTask):
         worker_pool=None,
         exchange: OverseasExchange = OverseasExchange.NASD,
         market_regime_service=None,
+        universe_refresh=None,
     ) -> None:
         super().__init__(
             mcs=market_calendar_service,
@@ -58,6 +59,7 @@ class OverseasDryRunTask(AfterMarketTask):
         # 국면 라벨은 **기록 전용**이다. dry-run 은 관측 데이터라 국면으로 차단하지
         # 않는다 — 차단하면 bear 구간이 통째로 비어 게이트의 사후 검증이 불가능해진다.
         self._regime = market_regime_service
+        self._universe_refresh = universe_refresh
         self._last_run_date: Optional[str] = None
 
     @property
@@ -262,6 +264,18 @@ class OverseasDryRunTask(AfterMarketTask):
             )
             return
         try:
+            if self._universe_refresh is not None:
+                try:
+                    await self._universe_refresh()
+                except Exception as e:
+                    self._logger.warning(
+                        {
+                            "event": "overseas_universe_refresh_error",
+                            "market_date": latest_trading_date,
+                            "error": str(e),
+                        },
+                        exc_info=True,
+                    )
             regime_label = await self._regime_label()
             signals = await self._dryrun_service.scan_dry_run(self._exchange)
             run_report = self._normalize_run_report(

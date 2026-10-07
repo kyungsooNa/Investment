@@ -122,10 +122,22 @@ async def test_strategy_date_rotation_selects_from_larger_liquid_pool():
         selection_date="20261007",
         selection_pool_size=20,
     )
+    vbo_repeat = await service.get_candidates(
+        OverseasExchange.NASD,
+        min_avg_trading_value=0,
+        top_n=10,
+        selection_key="VBO",
+        selection_date="20261006",
+        selection_pool_size=20,
+    )
 
-    assert len(vbo) == len(rsi2) == len(next_day) == 10
-    assert {item["code"] for item in vbo} != {item["code"] for item in rsi2}
-    assert {item["code"] for item in vbo} != {item["code"] for item in next_day}
+    assert len(vbo) == len(rsi2) == len(next_day) == len(vbo_repeat) == 10
+    vbo_codes = {item["code"] for item in vbo}
+    rsi2_codes = {item["code"] for item in rsi2}
+    next_day_codes = {item["code"] for item in next_day}
+    assert [item["code"] for item in vbo_repeat] == [item["code"] for item in vbo]
+    assert len(vbo_codes & rsi2_codes) <= 7
+    assert len(vbo_codes & next_day_codes) <= 7
     assert {item["code"] for item in vbo + rsi2 + next_day} <= {
         f"S{i:02d}" for i in range(20)
     }

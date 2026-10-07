@@ -27,9 +27,13 @@ def setup_and_teardown(tmp_path, mocker):
 
 def _fake_listing(market):
     data = {
-        "NASDAQ": {"Symbol": ["AAPL", "NVDA"], "Name": ["Apple Inc", "NVIDIA Corp"]},
-        "NYSE": {"Symbol": ["LLY"], "Name": ["Eli Lilly and Co"]},
-        "AMEX": {"Symbol": ["IMO"], "Name": ["Imperial Oil Ltd"]},
+        "NASDAQ": {
+            "Symbol": ["AAPL", "NVDA"],
+            "Name": ["Apple Inc", "NVIDIA Corp"],
+            "MarketCap": [2_000, 3_000],
+        },
+        "NYSE": {"Symbol": ["LLY"], "Name": ["Eli Lilly and Co"], "MarketCap": [1_000]},
+        "AMEX": {"Symbol": ["IMO"], "Name": ["Imperial Oil Ltd"], "MarketCap": [500]},
     }[market]
     df = pd.DataFrame(data)
     df["IndustryCode"] = "0"
@@ -56,6 +60,33 @@ def test_force_update_saves_files(mock_listing):
     assert aapl["거래소"] == "NASD"
     assert df[df["심볼"] == "LLY"].iloc[0]["거래소"] == "NYSE"
     assert df[df["심볼"] == "IMO"].iloc[0]["거래소"] == "AMEX"
+
+
+@patch("FinanceDataReader.StockListing", side_effect=_fake_listing)
+def test_saves_each_exchange_in_market_cap_descending_order(mock_listing):
+    svc.save_overseas_stock_code_list(force_update=True)
+
+    df = svc.load_overseas_stock_code_list()
+
+    assert list(df[df["거래소"] == "NASD"]["심볼"]) == ["NVDA", "AAPL"]
+
+
+@patch("FinanceDataReader.StockListing", side_effect=_fake_listing)
+def test_failed_database_write_preserves_existing_database(mock_listing, mocker):
+    svc.save_overseas_stock_code_list(force_update=True)
+    original = svc.load_overseas_stock_code_list().copy()
+
+    def _destructive_failure(_df, _name, conn, **_kwargs):
+        conn.execute(f"DROP TABLE IF EXISTS {svc.TABLE_NAME}")
+        conn.commit()
+        raise RuntimeError("write failed")
+
+    mocker.patch.object(pd.DataFrame, "to_sql", autospec=True, side_effect=_destructive_failure)
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        svc.save_overseas_stock_code_list(force_update=True)
+
+    pd.testing.assert_frame_equal(svc.load_overseas_stock_code_list(), original)
 
 
 @patch("FinanceDataReader.StockListing", side_effect=_fake_listing)

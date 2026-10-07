@@ -63,7 +63,7 @@ class OverseasCandidateService:
         """거래대금 필터를 통과한 해외 후보를 반환한다.
 
         기본 반환은 avg_trading_value 내림차순이다. ``selection_*`` 을 주면 유동성
-        상위 pool 안에서 전략·거래일별 창을 골라 여러 전략이 매일 같은 Top N만
+        상위 pool 을 유동성 구간으로 나눠 전략·거래일별 종목을 골라 같은 Top N만
         공유하는 편중을 줄인다.
         """
         min_tv = self._min_avg_trading_value if min_avg_trading_value is None else min_avg_trading_value
@@ -77,26 +77,27 @@ class OverseasCandidateService:
             pool_size = max(cap, int(selection_pool_size or cap))
             pool = candidates[:pool_size]
             if len(pool) > cap:
-                start = self._selection_start(selection_key, selection_date, len(pool))
-                rotated = pool[start:] + pool[:start]
-                return rotated[:cap]
+                return self._select_diversified(pool, cap, selection_key, selection_date)
         return candidates[:cap] if cap else candidates
 
     @staticmethod
-    def _selection_start(selection_key: str, selection_date: str, pool_size: int) -> int:
-        """전략·거래일별 시작점을 안정적으로 정한다.
+    def _select_diversified(
+        pool: List[Dict[str, Any]], cap: int, selection_key: str, selection_date: str,
+    ) -> List[Dict[str, Any]]:
+        """유동성 순위를 고르게 덮는 구간별 표본을 재현 가능하게 고른다."""
+        selected = []
+        for bucket_no in range(cap):
+            start = bucket_no * len(pool) // cap
+            end = (bucket_no + 1) * len(pool) // cap
+            bucket = pool[start:end]
+            digest = hashlib.sha256(
+                f"{selection_key}|{selection_date}|{bucket_no}".encode("utf-8")
+            ).hexdigest()
+            selected.append(bucket[int(digest[:8], 16) % len(bucket)])
+        return selected
 
-        Python ``hash`` 는 프로세스마다 달라 재현할 수 없으므로 SHA-256을 쓴다.
-        날짜 숫자를 별도로 더해 연속 거래일이 같은 창을 고르는 것도 피한다.
-        """
-        key_offset = int(hashlib.sha256(selection_key.encode("utf-8")).hexdigest()[:8], 16)
-        try:
-            date_offset = int(selection_date)
-        except (TypeError, ValueError):
-            date_offset = int(
-                hashlib.sha256(str(selection_date).encode("utf-8")).hexdigest()[:8], 16
-            )
-        return (key_offset + date_offset) % pool_size
+    def clear_cache(self) -> None:
+        self._scored_cache.clear()
 
     async def _scored_universe(
         self, exchange: OverseasExchange, symbols: Optional[List[str]],
