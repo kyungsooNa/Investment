@@ -1,6 +1,6 @@
 import unittest
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytz
 
@@ -240,6 +240,33 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         sqs.handle_get_current_stock_price.assert_awaited_once_with(
             "005930", caller=strategy.name, allow_snapshot=False
         )
+
+    async def test_scan_rejects_extreme_annualized_volatility(self):
+        """극단적 변동성 종목은 돌파·수급 조건을 통과해도 신규 진입하지 않는다."""
+        strategy, sqs, _ = self._make_strategy(max_annualized_volatility=0.70)
+        strategy._load_pool_b = AsyncMock(return_value=[{
+            "code": "005930", "name": "삼성전자", "market": "",
+            "market_cap": 500_000_000_000, "avg_5d_tv": 50_000_000_000,
+        }])
+        sqs.get_recent_daily_ohlcv.return_value = _ohlcv_resp(high=72000, low=70000)
+        sqs.handle_get_current_stock_price.return_value = _price_resp(
+            current=72000, open_price=70000,
+            pgtr_ntby_qty=700_000, acml_tr_pbmn=50_000_000_000,
+        )
+        sqs.get_stock_conclusion.return_value = _conclusion_resp(130.0)
+
+        with patch(
+            "strategies.larry_williams_vbo_strategy._fetch_volatility_for_signal",
+            new=AsyncMock(return_value=0.85),
+        ):
+            signals = await strategy.scan()
+
+        self.assertEqual(signals, [])
+        self.assertTrue(any(
+            call.args[0].get("reason") == "annualized_volatility_too_high"
+            for call in strategy._logger.info.call_args_list
+            if call.args and isinstance(call.args[0], dict)
+        ))
 
     async def test_scan_prefilters_invalid_candidates_before_runtime_data_requests(self):
         """규모·유동성 탈락 종목은 가격 선취·Range 조회·shadow 구독 후보에서 제외한다."""

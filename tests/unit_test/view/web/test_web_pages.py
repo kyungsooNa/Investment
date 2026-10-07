@@ -209,6 +209,15 @@ def test_virtual_static_js_marks_suspect_records():
     assert "suspectHtml" in script
 
 
+def test_virtual_static_js_shows_config_hash_performance_cohorts():
+    """전략 개선 전후를 설정 해시별 진입 신호 성과로 비교할 수 있어야 한다."""
+    script = Path("view/web/static/js/virtual.js").read_text(encoding="utf-8")
+
+    assert "performance_cohorts" in script
+    assert "설정별 성과" in script
+    assert "진입 신호" in script
+
+
 def test_stock_static_js_does_not_expose_overseas_mode():
     """stock.js는 한국장 전용이며 미국장 조회는 overseas.js가 소유한다."""
     script = Path("view/web/static/js/stock.js").read_text(encoding="utf-8")

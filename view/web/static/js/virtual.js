@@ -12,6 +12,7 @@ let weeklyRefDates = {};
 let firstDates = {};
 let profitFactors = {};
 let expectancies = {};
+let performanceCohorts = {};
 let virtualHoldSortState = { key: null, dir: 'asc' };
 let virtualSoldSortState = { key: null, dir: 'asc' };
 let selectedVirtualStrategies = new Set(['ALL']);
@@ -94,6 +95,7 @@ async function loadVirtualHistory(forceCode = null) {
             firstDates = body.first_dates || {};
             profitFactors = body.profit_factors || {};
             expectancies = body.expectancies || {};
+            performanceCohorts = body.performance_cohorts || {};
             console.log('[Virtual] data count:', allVirtualData.length, 'sample:', allVirtualData[0]);
         } else {
             const errText = await listRes.text();
@@ -110,6 +112,7 @@ async function loadVirtualHistory(forceCode = null) {
             firstDates = {};
             profitFactors = {};
             expectancies = {};
+            performanceCohorts = {};
         }
 
         const defaultStrategies = ['수동매매'];
@@ -658,9 +661,9 @@ function applyVirtualFilter() {
             const lr = multiLosses / multiTotal;
             const ag = multiWins > 0 ? multiGainSum / multiWins : 0;
             const al = multiLosses > 0 ? multiLossSum / multiLosses : 0;
-            expectancy = { value: Math.round((wr * ag) - (lr * al)), win_rate: Math.round(wr * 1000) / 10, avg_gain: Math.round(ag), avg_loss: Math.round(al), wins: multiWins, losses: multiLosses };
+            expectancy = { value: Math.round((wr * ag) - (lr * al)), win_rate: Math.round(wr * 1000) / 10, avg_gain: Math.round(ag), avg_loss: Math.round(al), wins: multiWins, losses: multiLosses, signal_count: multiTotal };
         } else {
-            expectancy = { value: 0, win_rate: 0, avg_gain: 0, avg_loss: 0, wins: 0, losses: 0 };
+            expectancy = { value: 0, win_rate: 0, avg_gain: 0, avg_loss: 0, wins: 0, losses: 0, signal_count: 0 };
         }
     }
 
@@ -695,6 +698,26 @@ function applyVirtualFilter() {
 
     const colorClass = (val) => val > 0 ? 'text-positive' : (val < 0 ? 'text-negative' : '');
     const signPrefix = (val) => val > 0 ? '+' : '';
+    const signalCount = expectancy && typeof expectancy === 'object'
+        ? Number(expectancy.signal_count ?? ((expectancy.wins || 0) + (expectancy.losses || 0)))
+        : totalTrades;
+    const selectedCohorts = !isAll && selectedArray.length === 1
+        ? (performanceCohorts[selectedArray[0]] || [])
+        : [];
+    const cohortHtml = selectedCohorts.length > 0 ? `
+        <div style="margin-top: 10px; padding: 10px 14px; background:#080808; border:1px solid #30363d; border-radius:8px; text-align:left;">
+            <div style="font-size:0.82em; color:#a0a0b0; font-weight:700; margin-bottom:6px;">설정별 성과 · 분할 lot을 합친 진입 신호 기준</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                ${selectedCohorts.map((cohort, index) => {
+                    const pf = cohort.profit_factor == null ? '&infin;' : Number(cohort.profit_factor || 0).toFixed(2);
+                    const avgReturn = Number(cohort.avg_return || 0);
+                    return `<div style="padding:7px 10px; border:1px solid ${index === 0 ? '#e94560' : '#30363d'}; border-radius:7px; min-width:210px; color:#fff;">
+                        <div style="font-size:0.78em; color:#aaa;">${index === 0 ? '최신 · ' : ''}${escapeVirtualHtml(cohort.config_hash)}</div>
+                        <div style="font-size:0.86em; margin-top:3px;">진입 신호 <strong>${Number(cohort.signal_count || 0)}</strong>건 · 승률 <strong>${Number(cohort.win_rate || 0).toFixed(1)}%</strong> · 평균 <strong class="${colorClass(avgReturn)}">${signPrefix(avgReturn)}${avgReturn.toFixed(2)}%</strong> · PF <strong>${pf}</strong></div>
+                    </div>`;
+                }).join('')}
+            </div>
+        </div>` : '';
 
     const summaryBox = document.getElementById('virtual-summary-box');
     if (!summaryBox) { console.error('[Virtual] virtual-summary-box not found'); return; }
@@ -707,8 +730,8 @@ function applyVirtualFilter() {
         </div>
         <div style="display: flex; justify-content: center; align-items: center; gap: 12px; flex-wrap: wrap;">
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 125px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
-                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">총 거래</div>
-                <div style="color: #ffffff !important;"><strong style="font-size: 1.35em;">${totalTrades}</strong> <span style="font-size: 1em;">건</span></div>
+                <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">진입 신호</div>
+                <div style="color: #ffffff !important;"><strong style="font-size: 1.35em;">${signalCount}</strong> <span style="font-size: 1em;">건</span></div>
             </div>
             <div style="background-color: #000000 !important; color: #ffffff !important; padding: 12px 18px; border-radius: 10px; border: 1px solid #30363d; min-width: 160px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
                 <div style="font-size: 0.85em; color: #a0a0b0 !important; margin-bottom: 4px; font-weight: 600;">포지션 현황</div>
@@ -791,6 +814,7 @@ function applyVirtualFilter() {
                 })()}
             </div>
         </div>
+        ${cohortHtml}
     `;
 
     currentVirtualHoldData = holdData;

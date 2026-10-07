@@ -128,7 +128,40 @@ def test_get_summary_excludes_reconciled_force_close(virtual_trade_service, mock
         "win_rate": 100.0,
         "avg_return": 20.0,
         "force_closed_count": 1,
+        "signal_count": 1,
     }
+
+
+def test_get_summary_groups_split_entry_lots_and_excludes_zero_sell(virtual_trade_service, mock_repo):
+    """요약 승률은 row가 아니라 진입 신호 단위이며 0원 매도는 무효 표본이다."""
+    mock_repo._read.return_value = pd.DataFrame([
+        {
+            'strategy': 'larry_williams_vbo', 'code': 'A',
+            'buy_date': '2026-09-28 09:13:21', 'buy_price': 1000,
+            'status': 'SOLD', 'sell_price': 1200, 'qty': 1, 'return_rate': 20.0,
+            'reason': '',
+        },
+        {
+            'strategy': 'larry_williams_vbo', 'code': 'A',
+            'buy_date': '2026-09-28 09:13:21', 'buy_price': 1000,
+            'status': 'SOLD', 'sell_price': 900, 'qty': 1, 'return_rate': -10.0,
+            'reason': '',
+        },
+        {
+            'strategy': 'larry_williams_vbo', 'code': 'B',
+            'buy_date': '2026-10-01 09:20:00', 'buy_price': 1000,
+            'status': 'SOLD', 'sell_price': 0, 'qty': 1, 'return_rate': -100.0,
+            'reason': '',
+        },
+    ])
+
+    result = virtual_trade_service.get_summary(apply_cost=False)
+
+    assert result["total_trades"] == 3
+    assert result["signal_count"] == 1
+    assert result["win_rate"] == 100.0
+    assert result["avg_return"] == 5.0
+    assert result["force_closed_count"] == 1
 
 
 def test_get_daily_change(virtual_trade_service, mock_repo, mock_clock):
