@@ -735,6 +735,7 @@ def test_service_container_creates_universe_and_tasks(patched_service_container_
     ].call_args.kwargs
     assert volume_surge_kwargs["ranking_task"] is ctx.ranking_task
     assert volume_surge_kwargs["stock_query_service"] is ctx.stock_query_service
+    assert volume_surge_kwargs["stock_classification_repository"] is ctx.theme_classification_repository
     assert ctx.strategy_log_report_task is patched_service_container_deps["StrategyLogReportTask"].return_value
     assert ctx.market_cap_gap_service is patched_service_container_deps["MarketCapGapService"].build_default.return_value
     assert patched_service_container_deps["MarketCapGapReportTask"].call_count == 2

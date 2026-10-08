@@ -856,7 +856,7 @@ class ServiceContainer:
                 market_calendar_service=ctx._mcs,
                 market_clock=ctx.market_clock,
                 stock_classification_repository=getattr(
-                    ctx, "stock_classification_repository", None
+                    ctx, "theme_classification_repository", None
                 ),
                 logger=ctx.logger,
             ) if (
