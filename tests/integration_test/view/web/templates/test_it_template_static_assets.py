@@ -149,13 +149,15 @@ def test_navigation_separates_domestic_overseas_and_common_areas(web_client_with
     assert '>미국장<' in page.text
 
 
-def test_domestic_market_navigation_opens_domestic_home(web_client_with_fake_ctx):
+def test_domestic_market_navigation_opens_home_without_stock_menu(
+    web_client_with_fake_ctx,
+):
     page = web_client_with_fake_ctx.get("/domestic")
 
     assert page.status_code == 200
     assert 'href="/domestic" data-nav-market="domestic" class="active">한국장</a>' in page.text
     assert 'href="/domestic" class="active">홈</a>' in page.text
-    assert 'href="/stock" class="">현재가</a>' in page.text
+    assert 'href="/stock"' not in page.text
     assert 'id="domestic-stock-search"' in page.text
     assert 'id="market-indices" data-market-scope="domestic"' in page.text
 
