@@ -51,7 +51,8 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
         assert "<title>Investment - Web View</title>" in response.text
         
         # 네비게이션 바 활성화 상태 확인
-        assert f'href="{path}" class="active"' in response.text
+        if path != "/stock":
+            assert f'href="{path}" class="active"' in response.text
 
         # 각 페이지별 특징적인 요소 확인
         if path == "/":
@@ -196,6 +197,21 @@ def test_domestic_home_search_redirect_contract():
     assert "submitDomesticStockSearch" in script
     assert "`/stock?code=${encodeURIComponent(code)}`" in script
     assert "navigatePjax" in script
+
+
+def test_domestic_navigation_hides_stock_page_but_search_route_remains_available(
+    web_client, mock_web_ctx
+):
+    mock_web_ctx.full_config = {"use_login": False}
+
+    domestic_response = web_client.get("/domestic")
+    stock_response = web_client.get("/stock?code=005930")
+
+    assert domestic_response.status_code == 200
+    assert 'href="/stock"' not in domestic_response.text
+    assert stock_response.status_code == 200
+    assert "종목 현재가 조회" in stock_response.text
+    assert 'href="/stock"' not in stock_response.text
 
 
 def test_stock_template_has_single_query_driven_initialization_path():
