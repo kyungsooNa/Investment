@@ -328,6 +328,52 @@ body {
 
 .domestic-market-card { padding-top: 16px; }
 
+.domestic-theme-card { margin-top: 16px; }
+
+.domestic-theme-card-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.domestic-theme-card-header h3 { margin: 0; }
+.domestic-theme-card-header a { margin-left: auto; }
+
+.domestic-theme-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.domestic-theme-item {
+    display: flex;
+    gap: 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--border);
+}
+
+.domestic-theme-rank {
+    min-width: 20px;
+    color: var(--text-secondary);
+}
+
+.domestic-theme-body { flex: 1; min-width: 0; }
+
+.domestic-theme-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 4px 12px;
+}
+
+.domestic-theme-leaders {
+    margin-top: 4px;
+    font-size: 0.9em;
+}
+
+.domestic-theme-sep { margin: 0 6px; color: var(--text-secondary); }
+
 @media (max-width: 760px) {
     .app-layout {
         display: block;
@@ -1098,9 +1144,9 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
 }
 
 .market-filter.active {
-    background-color: var(--text-secondary, #888) !important;
+    background-color: var(--text-secondary) !important;
     color: white !important;
-    border-color: var(--text-secondary, #888) !important;
+    border-color: var(--text-secondary) !important;
     font-weight: bold !important;
 }
 

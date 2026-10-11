@@ -26,11 +26,20 @@
     <div class="card domestic-market-card">
         <div id="market-indices" data-market-scope="domestic"></div>
     </div>
+
+    <div class="card domestic-theme-card">
+        <div class="domestic-theme-card-header">
+            <h3>당일 주도 테마</h3>
+            <span id="domestic-theme-updated" class="small"></span>
+            <a href="/ranking" class="small">전체 보기</a>
+        </div>
+        <div id="domestic-theme-leaders"><p class="small">불러오는 중...</p></div>
+    </div>
 </section>
 {% endblock %}
 
 {% block scripts %}
 <script src="/static/js/autocomplete.js?v=2"></script>
-<script src="/static/js/domestic_home.js?v=1"></script>
+<script src="/static/js/domestic_home.js?v=2"></script>
 <script src="/static/js/market_indices.js?v=11"></script>
 {% endblock %}
