@@ -62,6 +62,7 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert 'id="domestic-stock-search"' in response.text
             assert 'id="market-indices" data-market-scope="domestic"' in response.text
             assert "/static/js/domestic_home.js" in response.text
+            assert 'id="domestic-theme-leaders"' in response.text
         elif path == "/stock":
             assert "종목 현재가 조회" in response.text
             assert 'id="stock-market-label"' in response.text
@@ -197,6 +198,13 @@ def test_domestic_home_search_redirect_contract():
     assert "submitDomesticStockSearch" in script
     assert "`/stock?code=${encodeURIComponent(code)}`" in script
     assert "navigatePjax" in script
+
+
+def test_domestic_home_theme_leaders_contract():
+    script = Path("view/web/static/js/domestic_home.js").read_text(encoding="utf-8")
+
+    assert "/api/ranking/themes/intraday" in script
+    assert "loadDomesticThemeLeaders" in script
 
 
 def test_domestic_navigation_hides_stock_page_but_search_route_remains_available(
