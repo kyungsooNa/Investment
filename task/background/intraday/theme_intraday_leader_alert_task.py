@@ -32,6 +32,7 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
         telegram_reporter=None,
         market_calendar_service: Optional["MarketCalendarService"] = None,
         market_clock: Optional["MarketClock"] = None,
+        report_repository=None,
         check_interval_sec: Optional[int] = None,
         alert_interval_sec: Optional[int] = None,
         alert_grace_sec: Optional[int] = None,
@@ -42,6 +43,7 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
         self._telegram_reporter = telegram_reporter
         self._mcs = market_calendar_service
         self._market_clock = market_clock
+        self._report_repository = report_repository
         self._check_interval_sec = check_interval_sec or self.CHECK_INTERVAL_SEC
         self._alert_interval_sec = alert_interval_sec or self.ALERT_INTERVAL_SEC
         self._alert_grace_sec = alert_grace_sec or self.ALERT_GRACE_SEC
@@ -74,6 +76,7 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
             return
         if self._state == TaskState.STOPPED:
             self._state = TaskState.IDLE
+        await self._restore_latest_report()
         self._tasks.append(asyncio.create_task(self._loop()))
 
     async def stop(self) -> None:
@@ -101,6 +104,17 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
             "captured_at": self._latest_report.get("captured_at"),
             "data": [dict(item) for item in self._latest_report.get("data", [])],
         }
+
+    async def _restore_latest_report(self) -> None:
+        if self._report_repository is None or self._market_clock is None:
+            return
+        try:
+            report_date = self._market_clock.get_current_kst_time().strftime("%Y%m%d")
+            report = await self._report_repository.get_latest_intraday_report(report_date)
+            if report:
+                self._latest_report = report
+        except Exception as exc:
+            self._logger.warning(f"{self.task_name}: 저장된 주도테마 복원 실패 — {exc}")
 
     async def _loop(self) -> None:
         while True:
@@ -207,6 +221,11 @@ class ThemeIntradayLeaderAlertTask(SchedulableTask):
 
         theme_data = theme_resp.data or []
         self._latest_report = {"captured_at": captured_at, "data": theme_data}
+        if self._report_repository is not None:
+            try:
+                await self._report_repository.save_latest_intraday_report(self._latest_report)
+            except Exception as exc:
+                self._logger.warning(f"{self.task_name}: 주도테마 저장 실패 — {exc}")
 
     async def _build_intraday_rankings(self, slot_label: str) -> Dict[str, Any]:
         refresh = getattr(self._ranking_task, "refresh_basic_ranking", None)

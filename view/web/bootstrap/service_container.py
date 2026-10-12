@@ -837,6 +837,7 @@ class ServiceContainer:
                 telegram_reporter=getattr(ctx, 'telegram_reporter', None),
                 market_calendar_service=ctx._mcs,
                 market_clock=ctx.market_clock,
+                report_repository=ctx.theme_trading_value_snapshot_repository,
                 logger=ctx.logger,
             ) if (
                 needs_trading

@@ -730,6 +730,7 @@ def test_service_container_creates_universe_and_tasks(patched_service_container_
     ].call_args.kwargs
     assert intraday_theme_kwargs["ranking_task"] is ctx.ranking_task
     assert intraday_theme_kwargs["theme_daily_leader_service"] is ctx.theme_daily_leader_service
+    assert intraday_theme_kwargs["report_repository"] is ctx.theme_trading_value_snapshot_repository
     volume_surge_kwargs = patched_service_container_deps[
         "IntradayVolumeSurgeAlertTask"
     ].call_args.kwargs
