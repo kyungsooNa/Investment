@@ -1,6 +1,7 @@
 """장중 종목별 누적 거래대금 스냅샷 저장소."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -33,6 +34,15 @@ class ThemeTradingValueSnapshotRepository:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_theme_tv_code_time "
                 "ON theme_trading_value_snapshots(code, captured_at DESC)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS theme_intraday_reports (
+                    report_date TEXT PRIMARY KEY,
+                    captured_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                )
+                """
             )
 
     @staticmethod
@@ -85,3 +95,26 @@ class ThemeTradingValueSnapshotRepository:
             async with conn.execute(sql, params) as cursor:
                 rows = await cursor.fetchall()
         return {str(code): int(value) for code, value in rows}
+
+    async def save_latest_intraday_report(self, report: Dict) -> None:
+        captured_at = str(report.get("captured_at") or "")
+        report_date = captured_at[:8]
+        if len(report_date) != 8:
+            return
+        payload = json.dumps(report, ensure_ascii=False)
+        async with aiosqlite.connect(self._db_path) as conn:
+            await conn.execute(
+                "INSERT OR REPLACE INTO theme_intraday_reports "
+                "(report_date, captured_at, payload_json) VALUES (?, ?, ?)",
+                (report_date, captured_at, payload),
+            )
+            await conn.commit()
+
+    async def get_latest_intraday_report(self, report_date: str) -> Dict | None:
+        async with aiosqlite.connect(self._db_path) as conn:
+            async with conn.execute(
+                "SELECT payload_json FROM theme_intraday_reports WHERE report_date = ?",
+                (str(report_date),),
+            ) as cursor:
+                row = await cursor.fetchone()
+        return json.loads(row[0]) if row else None

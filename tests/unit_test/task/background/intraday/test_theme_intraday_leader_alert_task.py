@@ -35,7 +35,10 @@ def _make_response(data):
     )
 
 
-def _make_task(*, now=None, open_now=True, basic_rankings=None, service_response=None):
+def _make_task(
+    *, now=None, open_now=True, basic_rankings=None, service_response=None,
+    report_repository=None,
+):
     clock = _Clock(now or datetime(2026, 7, 6, 10, 10, 0), open_now=open_now)
     ranking_task = MagicMock()
     ranking_task.refresh_basic_ranking = AsyncMock()
@@ -83,6 +86,7 @@ def _make_task(*, now=None, open_now=True, basic_rankings=None, service_response
         telegram_reporter=telegram_reporter,
         market_calendar_service=mcs,
         market_clock=clock,
+        report_repository=report_repository,
         logger=MagicMock(),
     )
     return SimpleNamespace(
@@ -209,6 +213,69 @@ async def test_latest_report_is_refreshed_each_minute_without_extra_telegram():
     latest = deps.task.get_latest_report()
     assert latest["captured_at"] == "20260706 10:14"
     assert latest["data"][0]["normalized_name"] == "반도체"
+
+
+@pytest.mark.asyncio
+async def test_start_restores_same_day_latest_report_from_repository():
+    repository = MagicMock()
+    repository.get_latest_intraday_report = AsyncMock(return_value={
+        "captured_at": "20260706 15:39",
+        "data": [{"normalized_name": "반도체", "leaders": []}],
+    })
+    deps = _make_task(
+        now=datetime(2026, 7, 6, 22, 0, 0),
+        open_now=False,
+        report_repository=repository,
+    )
+    deps.task._loop = AsyncMock()
+
+    await deps.task.start()
+    await asyncio.sleep(0)
+
+    repository.get_latest_intraday_report.assert_awaited_once_with("20260706")
+    assert deps.task.get_latest_report()["captured_at"] == "20260706 15:39"
+    await deps.task.stop()
+
+
+@pytest.mark.asyncio
+async def test_refresh_persists_latest_report():
+    repository = MagicMock()
+    repository.save_latest_intraday_report = AsyncMock()
+    deps = _make_task(report_repository=repository)
+
+    await deps.task._tick()
+
+    repository.save_latest_intraday_report.assert_awaited_once_with({
+        "captured_at": "20260706 10:10",
+        "data": [{"normalized_name": "반도체", "leaders": []}],
+    })
+
+
+@pytest.mark.asyncio
+async def test_restore_failure_does_not_prevent_task_start():
+    repository = MagicMock()
+    repository.get_latest_intraday_report = AsyncMock(side_effect=RuntimeError("db error"))
+    deps = _make_task(report_repository=repository)
+    deps.task._loop = AsyncMock()
+
+    await deps.task.start()
+    await asyncio.sleep(0)
+
+    deps.task._logger.warning.assert_called_once()
+    assert deps.task.get_latest_report() == {"captured_at": None, "data": []}
+    await deps.task.stop()
+
+
+@pytest.mark.asyncio
+async def test_persist_failure_keeps_refreshed_report_available():
+    repository = MagicMock()
+    repository.save_latest_intraday_report = AsyncMock(side_effect=RuntimeError("db error"))
+    deps = _make_task(report_repository=repository)
+
+    await deps.task._tick()
+
+    assert deps.task.get_latest_report()["captured_at"] == "20260706 10:10"
+    deps.task._logger.warning.assert_called_once()
 
 
 @pytest.mark.asyncio

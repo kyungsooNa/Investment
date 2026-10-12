@@ -30,3 +30,17 @@ async def test_does_not_use_previous_trading_day_as_three_minute_baseline(tmp_pa
     values = await repo.get_values_at_or_before(datetime(2026, 7, 15, 9, 0), ["A"])
 
     assert values == {}
+
+
+@pytest.mark.asyncio
+async def test_latest_intraday_report_round_trip_for_requested_date(tmp_path):
+    repo = ThemeTradingValueSnapshotRepository(tmp_path / "theme_snapshots.db")
+    report = {
+        "captured_at": "20261012 15:39",
+        "data": [{"normalized_name": "반도체", "leaders": [{"code": "005930"}]}],
+    }
+
+    await repo.save_latest_intraday_report(report)
+
+    assert await repo.get_latest_intraday_report("20261012") == report
+    assert await repo.get_latest_intraday_report("20261013") is None
