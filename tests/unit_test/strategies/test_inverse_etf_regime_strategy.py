@@ -17,10 +17,16 @@ from core.market_clock import MarketClock
 
 # ── 헬퍼 ──────────────────────────────────────────────────────────
 
-def _price_resp(current="10000"):
+def _price_resp(current="10000", *, open_price=None, ask_price=None):
+    open_price = current if open_price is None else open_price
+    ask_price = current if ask_price is None else ask_price
     return ResCommonResponse(
         rt_cd="0", msg1="OK",
-        data={"output": {"stck_prpr": current}},
+        data={"output": {
+            "stck_prpr": current,
+            "stck_oprc": open_price,
+            "dmrs_val": ask_price,
+        }},
     )
 
 
@@ -107,6 +113,42 @@ async def test_scan_sizes_entry_by_configured_portfolio_fraction(bear_setup):
 
     # 기본값: 1,000만원 × 3% ÷ 10,000원 = 30주
     assert sig.qty == 30
+
+
+@pytest.mark.asyncio
+async def test_scan_rejects_pre_open_snapshot_without_open_price(bear_setup):
+    """시가가 아직 0이면 전일 현재가 스냅샷으로 주문하지 않는다."""
+    strat, sqs, _, indicator, _, _ = bear_setup
+    indicator.get_moving_average.return_value = _ma_resp(1004.0)
+    sqs.get_current_price.return_value = _price_resp(
+        "1075", open_price="0", ask_price="1112"
+    )
+
+    assert await strat.scan() == []
+    assert strat._position_state == {}
+
+
+@pytest.mark.asyncio
+async def test_scan_uses_best_ask_and_waits_for_fill_before_registering_position(bear_setup):
+    """매수 지정가는 매도1호가를 쓰고, 신호 생성만으로 보유 상태를 만들지 않는다."""
+    strat, sqs, _, indicator, _, _ = bear_setup
+    indicator.get_moving_average.return_value = _ma_resp(1004.0)
+    sqs.get_current_price.return_value = _price_resp(
+        "1075", open_price="1100", ask_price="1112"
+    )
+    strat._cfg = InverseEtfRegimeConfig(
+        total_portfolio_krw=300_000,
+        position_size_pct=100,
+        min_qty=1,
+        use_fixed_qty=False,
+    )
+
+    sig = (await strat.scan())[0]
+
+    assert sig.price == 1112
+    assert sig.qty == 269
+    assert strat._position_state == {}
+    strat._save_state.assert_not_called()
 
 
 @pytest.mark.asyncio

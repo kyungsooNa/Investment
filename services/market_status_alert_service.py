@@ -36,6 +36,7 @@ class MarketStatusAlertService:
         self._active_futures_keys_by_code: dict[str, set[str]] = {}
         self._move_5_recovery_samples_by_code: dict[str, int] = {}
         self._futures_sidecar_started_sec_by_code: dict[str, int] = {}
+        self._futures_sidecar_direction_by_code: dict[str, str] = {}
         self._buy_sidecar_watch_reported_keys_by_date: dict[str, set[str]] = {}
 
     async def on_market_status(self, data: dict[str, Any]) -> None:
@@ -169,7 +170,7 @@ class MarketStatusAlertService:
         self._active_index_keys_by_code[index_code] = expected_keys
 
     async def on_futures_contract(self, data: dict[str, Any]) -> None:
-        """코스피200 지수선물 체결가로 매수 사이드카 발동 조건을 감시한다."""
+        """코스피200 지수선물 체결가로 매수·매도 사이드카 조건을 감시한다."""
         code = self._normalize_code(data.get("선물단축종목코드") or data.get("종목코드")) or "UNKNOWN"
         rate = self._signed_rate(
             data,
@@ -181,11 +182,23 @@ class MarketStatusAlertService:
             now = datetime.now()
             tick_sec = now.hour * 3600 + now.minute * 60 + now.second
 
-        if rate is None or rate < self._FUTURES_SIDECAR_THRESHOLD_PCT:
+        direction = None
+        if rate is not None and rate >= self._FUTURES_SIDECAR_THRESHOLD_PCT:
+            direction = "buy"
+        elif rate is not None and rate <= -self._FUTURES_SIDECAR_THRESHOLD_PCT:
+            direction = "sell"
+
+        if direction is None:
             self._futures_sidecar_started_sec_by_code.pop(code, None)
+            self._futures_sidecar_direction_by_code.pop(code, None)
             await self._resolve_futures_alerts(code)
             return
 
+        previous_direction = self._futures_sidecar_direction_by_code.get(code)
+        if previous_direction is not None and previous_direction != direction:
+            self._futures_sidecar_started_sec_by_code[code] = tick_sec
+            await self._resolve_futures_alerts(code)
+        self._futures_sidecar_direction_by_code[code] = direction
         started_sec = self._futures_sidecar_started_sec_by_code.setdefault(code, tick_sec)
         duration_sec = tick_sec - started_sec
         if duration_sec < 0:
@@ -194,10 +207,13 @@ class MarketStatusAlertService:
             return
 
         trading_date = str(data.get("영업일자") or datetime.now().strftime("%Y%m%d"))
-        dedup_key = f"market_futures:buy_sidecar:{code}:{trading_date}"
+        direction_label = "매수" if direction == "buy" else "매도"
+        event_type = f"futures_{direction}_sidecar"
+        dedup_key = f"market_futures:{direction}_sidecar:{code}:{trading_date}"
         self._active_futures_keys_by_code.setdefault(code, set()).add(dedup_key)
         metadata = {
-            "event_type": "futures_buy_sidecar",
+            "event_type": event_type,
+            "direction": direction,
             "futures_code": code,
             "change_rate": rate,
             "duration_sec": duration_sec,
@@ -214,7 +230,7 @@ class MarketStatusAlertService:
                 AlertSource.MARKET_STATUS,
                 dedup_key,
                 "error",
-                "코스피200 선물 매수 사이드카 발동 조건",
+                f"코스피200 선물 {direction_label} 사이드카 발동 조건",
                 message,
                 metadata=metadata,
             )
@@ -225,7 +241,7 @@ class MarketStatusAlertService:
             await self._notification_service.emit(
                 NotificationCategory.SYSTEM,
                 NotificationLevel.ERROR,
-                "코스피200 선물 매수 사이드카 발동 조건",
+                f"코스피200 선물 {direction_label} 사이드카 발동 조건",
                 message,
                 metadata=metadata,
             )

@@ -29,6 +29,7 @@ _MARKET_PRE_ALERT_EVENT_TYPES = {
     "move_5",
     "fall_8",
     "futures_buy_sidecar",
+    "futures_sell_sidecar",
 }
 
 

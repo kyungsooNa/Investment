@@ -115,9 +115,21 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             return []
 
         cp_resp = await self._sqs.get_current_price(code, caller=self.name)
-        current = self._extract_current_price(cp_resp)
+        current, open_price, ask_price = self._extract_entry_quote(cp_resp)
         if current <= 0:
             self._logger.info({"event": "entry_rejected", "code": code, "reason": "invalid_current_price"})
+            return []
+        if open_price <= 0:
+            self._logger.info({
+                "event": "entry_rejected", "code": code, "reason": "market_not_open",
+                "current": current,
+            })
+            return []
+        if ask_price <= 0:
+            self._logger.info({
+                "event": "entry_rejected", "code": code, "reason": "ask_price_unavailable",
+                "current": current,
+            })
             return []
         if current <= ma:
             self._logger.info({
@@ -126,30 +138,23 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             })
             return []
 
-        qty = self._calculate_qty(current)
+        qty = self._calculate_qty(ask_price)
         if qty <= 0:
             self._logger.info({"event": "entry_rejected", "code": code, "reason": "zero_qty"})
             return []
 
-        # 포지션 등록 (고점 = 진입가)
-        self._position_state[code] = InverseEtfPositionState(
-            entry_price=current,
-            entry_date=today_str,
-            peak_price=current,
-        )
-        self._save_state()
-
-        stop_loss_price = current * (1 + self._cfg.hard_stop_pct / 100)
+        stop_loss_price = ask_price * (1 + self._cfg.hard_stop_pct / 100)
         reason_msg = (
             f"베어 레짐({regime.trend_status}) + 추세확인(현재가 {current} > {self._cfg.trend_ma_period}MA "
             f"{ma:.0f}) 진입"
         )
         self._logger.info({
             "event": "entry_signal_generated", "code": code, "name": name,
-            "current": current, "qty": qty, "regime": regime.regime_label,
+            "current": current, "ask_price": ask_price, "qty": qty,
+            "regime": regime.regime_label,
         })
         return [TradeSignal(
-            code=code, name=name, action="BUY", price=current, qty=qty,
+            code=code, name=name, action="BUY", price=ask_price, qty=qty,
             reason=reason_msg, strategy_name=self.name,
             entry_reason="inverse_etf_bear_regime",
             invalidation_price=round(stop_loss_price, 2),
@@ -280,6 +285,32 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             return int(getattr(out, "stck_prpr", 0) or 0)
         except (TypeError, ValueError):
             return 0
+
+    @staticmethod
+    def _extract_entry_quote(resp) -> tuple[int, int, int]:
+        """진입 판단용 현재가·시가·매도1호가를 추출한다."""
+        if not resp or getattr(resp, "rt_cd", "") != "0":
+            return 0, 0, 0
+        data = getattr(resp, "data", None)
+        out = data.get("output") if isinstance(data, dict) else data
+        if not out:
+            return 0, 0, 0
+
+        def value(*keys: str) -> int:
+            try:
+                if isinstance(out, dict):
+                    raw = next((out.get(key) for key in keys if out.get(key) not in (None, "")), 0)
+                else:
+                    raw = next(
+                        (getattr(out, key, None) for key in keys
+                         if getattr(out, key, None) not in (None, "")),
+                        0,
+                    )
+                return int(raw or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        return value("stck_prpr"), value("stck_oprc"), value("dmrs_val", "askp1")
 
     @staticmethod
     def _latest_ma(resp) -> Optional[float]:

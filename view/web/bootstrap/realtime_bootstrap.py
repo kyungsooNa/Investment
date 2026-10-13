@@ -1,5 +1,7 @@
 """실시간 스트리밍, 가격 구독 및 watchdog 조립."""
 
+import calendar
+from datetime import date, datetime
 from typing import Any, TYPE_CHECKING
 
 from repositories.execution_strength_repo import ExecutionStrengthRepository
@@ -36,16 +38,29 @@ class RealtimeBootstrap:
             if isinstance(market_status_cfg, dict)
             else True
         )
-        monitor_codes = (
-            market_status_cfg.get("monitor_codes", ["000000"])
+        configured_monitor_codes = (
+            market_status_cfg.get("monitor_codes", ["005930"])
             if isinstance(market_status_cfg, dict)
-            else ["000000"]
+            else ["005930"]
         )
-        futures_monitor_codes = (
+        monitor_codes = [
+            str(code).strip()
+            for code in (configured_monitor_codes or [])
+            if str(code).strip().isdigit()
+            and len(str(code).strip()) == 6
+            and str(code).strip() != "000000"
+        ] or ["005930"]
+        configured_futures_codes = (
             market_status_cfg.get("futures_monitor_codes", [])
             if isinstance(market_status_cfg, dict)
             else []
         )
+        futures_monitor_codes = [
+            str(code).strip() for code in (configured_futures_codes or []) if str(code).strip()
+        ]
+        if not futures_monitor_codes:
+            default_futures_code = self._default_kospi200_futures_code(datetime.now().date())
+            futures_monitor_codes = [default_futures_code] if default_futures_code else []
         ctx.market_status_alert_service = (
             MarketStatusAlertService(
                 operator_alert_service=ctx.operator_alert_service,
@@ -153,3 +168,28 @@ class RealtimeBootstrap:
         ctx.price_subscription_service = None
         ctx.websocket_watchdog_task = None
         ctx.market_status_alert_service = None
+
+    @staticmethod
+    def _default_kospi200_futures_code(as_of: date) -> str | None:
+        """빈 설정일 때 사용할 코스피200 최근월물 단축코드를 계산한다."""
+        contract_year = as_of.year
+        contract_month = next((month for month in (3, 6, 9, 12) if month >= as_of.month), 3)
+
+        if as_of.month == contract_month:
+            thursdays = [
+                week[calendar.THURSDAY]
+                for week in calendar.monthcalendar(contract_year, contract_month)
+                if week[calendar.THURSDAY]
+            ]
+            expiry = date(contract_year, contract_month, thursdays[1])
+            if as_of > expiry:
+                if contract_month == 12:
+                    contract_year += 1
+                    contract_month = 3
+                else:
+                    contract_month += 3
+
+        year_offset = contract_year - 2010
+        if not 0 <= year_offset <= 99:
+            return None
+        return f"A0{year_offset:02d}{contract_month:02d}"
