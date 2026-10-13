@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 from view.web.bootstrap.realtime_bootstrap import RealtimeBootstrap
@@ -16,7 +17,10 @@ def test_realtime_bootstrap_builds_streaming_chain():
     )
     ctx.program_trading_stream_service.load_snapshot.return_value = {}
 
-    with patch("view.web.bootstrap.realtime_bootstrap.StreamingService") as streaming, \
+    with patch.object(
+             RealtimeBootstrap, "_default_kospi200_futures_code", return_value="101AUTO"
+         ), \
+         patch("view.web.bootstrap.realtime_bootstrap.StreamingService") as streaming, \
          patch("view.web.bootstrap.realtime_bootstrap.OrderbookSnapshotRepository") as orderbook_repo, \
          patch("view.web.bootstrap.realtime_bootstrap.FavoritePriceAlertService") as favorite_alert, \
          patch("view.web.bootstrap.realtime_bootstrap.PriceStreamService") as price_stream, \
@@ -25,8 +29,8 @@ def test_realtime_bootstrap_builds_streaming_chain():
         RealtimeBootstrap(ctx).run(config={}, needs_realtime=True)
 
     assert ctx.streaming_service is streaming.return_value
-    assert streaming.call_args.kwargs["market_status_monitor_codes"] == ["000000"]
-    assert streaming.call_args.kwargs["futures_sidecar_monitor_codes"] == []
+    assert streaming.call_args.kwargs["market_status_monitor_codes"] == ["005930"]
+    assert streaming.call_args.kwargs["futures_sidecar_monitor_codes"] == ["101AUTO"]
     assert ctx.orderbook_snapshot_repo is orderbook_repo.return_value
     assert ctx.favorite_price_alert_service is favorite_alert.return_value
     assert price_stream.call_args.kwargs["favorite_price_alert_service"] is favorite_alert.return_value
@@ -63,3 +67,12 @@ def test_realtime_bootstrap_passes_futures_sidecar_monitor_codes():
         RealtimeBootstrap(ctx).run(config=config, needs_realtime=True)
 
     assert streaming.call_args.kwargs["futures_sidecar_monitor_codes"] == ["101TEST"]
+
+
+def test_default_kospi200_futures_code_rolls_after_quarterly_expiry():
+    resolve = RealtimeBootstrap._default_kospi200_futures_code
+
+    assert resolve(date(2026, 6, 10)) == "A01606"
+    assert resolve(date(2026, 6, 12)) == "A01609"
+    assert resolve(date(2026, 10, 13)) == "A01612"
+    assert resolve(date(2026, 12, 11)) == "A01703"

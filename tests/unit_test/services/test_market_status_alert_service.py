@@ -481,6 +481,31 @@ async def test_futures_sidecar_alert_falls_back_to_the_notification_service():
     assert "선물 매수 사이드카" in notifier.emit.await_args.args[2]
 
 
+@pytest.mark.asyncio
+async def test_futures_sell_sidecar_alerts_after_a_five_percent_drop_for_60_seconds():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert, logger=MagicMock()
+    )
+
+    await service.on_futures_contract({
+        "선물단축종목코드": "101TEST", "영업시간": "121800",
+        "선물전일대비율": "5.01", "전일대비부호": "5", "선물현재가": "414.00",
+    })
+    await service.on_futures_contract({
+        "선물단축종목코드": "101TEST", "영업시간": "121900",
+        "선물전일대비율": "5.03", "전일대비부호": "5", "선물현재가": "413.75",
+    })
+
+    args = operator_alert.report.await_args.args
+    metadata = operator_alert.report.await_args.kwargs["metadata"]
+    assert args[1].startswith("market_futures:sell_sidecar:101TEST:")
+    assert args[3] == "코스피200 선물 매도 사이드카 발동 조건"
+    assert metadata["event_type"] == "futures_sell_sidecar"
+    assert metadata["direction"] == "sell"
+    assert metadata["change_rate"] == -5.03
+
+
 # --- 선물 틱 경계 -----------------------------------------------------------
 
 

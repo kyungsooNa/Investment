@@ -229,6 +229,33 @@ async def test_handle_event_formats_market_pre_alert_as_warning_even_if_error_le
 
 
 @pytest.mark.asyncio
+async def test_handle_event_formats_futures_sell_sidecar_as_market_warning(telegram_notifier):
+    event = NotificationEvent(
+        id="futures-sell-sidecar",
+        timestamp="2026-10-13T09:15:00+09:00",
+        category=NotificationCategory.SYSTEM,
+        level=NotificationLevel.ERROR,
+        title="코스피200 선물 매도 사이드카 발동 조건",
+        message="코스피200 선물 전일 대비 -5.03% 60초 지속",
+        metadata={
+            "source": "MARKET_STATUS",
+            "event_type": "futures_sell_sidecar",
+        },
+    )
+
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_post.return_value.__aenter__.return_value = mock_response
+
+        await telegram_notifier.handle_event(event)
+
+    text = mock_post.call_args.kwargs["json"]["text"]
+    assert text.startswith("⚠️ ")
+    assert not text.startswith("❌ ")
+
+
+@pytest.mark.asyncio
 async def test_handle_event_formats_resolved_market_alert_as_recovered_even_if_error_level(telegram_notifier):
     """시장 상태 해제 알림은 기존 severity가 ERROR였어도 복구 상태로 표시한다."""
     event = NotificationEvent(
