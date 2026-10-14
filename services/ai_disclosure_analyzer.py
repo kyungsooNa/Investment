@@ -32,6 +32,14 @@ _PERIODIC_REPORT_REQUIRED_TERMS = (
     ("시장 반응", ("주가", "시장 반응", "하락", "상승", "급락", "급등", "고점")),
     ("재무·리스크", ("연결재무제표", "설비투자", "현금흐름", "차입", "우발채무", "소송", "리스크", "위험")),
 )
+_SHORT_TERM_BORROWING_KEYWORD = "단기차입금증가"
+_OBJECTIVE_GROWTH_EVIDENCE_TERMS = (
+    "단일판매ㆍ공급계약",
+    "단일판매공급계약",
+    "확정 수주",
+    "수주계약 체결",
+    "공급계약 체결",
+)
 
 
 @dataclass(frozen=True)
@@ -63,7 +71,12 @@ class AiDisclosureAnalyzer:
                 max_tokens=self._max_tokens,
                 usage_type="disclosure",
             )
-            return self._apply_report_type_guard(disclosure, self._parse_analysis(raw))
+            analysis = self._apply_report_type_guard(
+                disclosure, self._parse_analysis(raw)
+            )
+            return self._apply_investment_impact_guard(
+                disclosure, document_text, analysis
+            )
         except Exception as exc:
             self._logger.warning(
                 f"AI 공시 분석 실패 — 제목 규칙으로 폴백: {type(exc).__name__}: {exc}"
@@ -93,11 +106,25 @@ class AiDisclosureAnalyzer:
             f"{str(document_text or '')[:16_000]}\n"
             "[공시 원문 끝]\n\n"
             f"{AiDisclosureAnalyzer._periodic_report_instruction(disclosure)}"
-            '다음 형식으로 반환: {"summary":"...", "score":75, "impact_score":3, '
+            f"{AiDisclosureAnalyzer._short_term_borrowing_instruction(disclosure)}"
+            '다음 형식으로 반환: {"summary":"...", "score":75, "impact_score":0, '
             '"reasons":["구체적 근거 1","구체적 근거 2"], '
             '"event_key":"사건종류|회차·계약상대 등 식별자|금액·기준일"}\n'
             "event_key는 같은 기업의 동일 경제적 사건 문서에서 완전히 같은 값이어야 "
             "하며, 문서 제목·접수번호는 넣지 않는다. 동일성을 확신할 수 없으면 \"\"."
+        )
+
+    @classmethod
+    def _short_term_borrowing_instruction(cls, disclosure: DartDisclosure) -> str:
+        if not cls._is_short_term_borrowing(disclosure.report_name):
+            return ""
+        return (
+            "[단기차입금 평가 기준]\n"
+            "- 차입 증가는 이자·상환 부담이므로 투자 영향 기본값을 부정적으로 둔다.\n"
+            "- 매출 증가·수요 증가라는 회사 설명만으로 가점하지 않는다.\n"
+            "- 별도 공시된 확정 수주·공급계약 등 객관적 근거가 본문에 있을 때만 성장 가점을 준다.\n"
+            "- 자기자본 대비 10% 이상이면 재무 부담을 추가 반영하고, 20% 이상이면 더 크게 감점한다.\n"
+            "- 중요도 점수와 투자 영향 점수를 분리해 평가한다.\n\n"
         )
 
     @classmethod
@@ -153,6 +180,74 @@ class AiDisclosureAnalyzer:
             if any(term.lower() in text.lower() for term in terms):
                 matched_categories += 1
         return matched_categories >= 3
+
+    @classmethod
+    def _apply_investment_impact_guard(
+        cls,
+        disclosure: DartDisclosure,
+        document_text: str,
+        analysis: AiDisclosureAnalysis,
+    ) -> AiDisclosureAnalysis:
+        if (
+            not cls._is_short_term_borrowing(disclosure.report_name)
+            or analysis.impact_score is None
+        ):
+            return analysis
+
+        text = str(document_text or "")
+        equity_ratio = cls._extract_equity_ratio(text)
+        ceiling = None
+        reason = ""
+        if equity_ratio is not None and equity_ratio >= 20:
+            ceiling = -2
+            reason = "자기자본 대비 20% 이상인 단기차입으로 투자 영향 상한 조정"
+        elif equity_ratio is not None and equity_ratio >= 10:
+            ceiling = -1
+            reason = "자기자본 대비 10% 이상인 단기차입으로 투자 영향 상한 조정"
+        elif not cls._has_objective_growth_evidence(text):
+            ceiling = 0
+            reason = "확정 수주·공급계약 근거가 없는 단기차입으로 긍정 영향 상한 조정"
+
+        if ceiling is None or analysis.impact_score <= ceiling:
+            return analysis
+
+        reasons = list(dict.fromkeys([*analysis.importance.reasons, reason]))
+        importance = DisclosureImportance(
+            score=analysis.importance.score,
+            level=analysis.importance.level,
+            reasons=reasons,
+        )
+        return AiDisclosureAnalysis(
+            summary=analysis.summary,
+            importance=importance,
+            event_key=analysis.event_key,
+            impact_score=ceiling,
+        )
+
+    @staticmethod
+    def _is_short_term_borrowing(report_name: str) -> bool:
+        normalized = re.sub(r"[\sㆍ·\-_/\[\]()]", "", str(report_name or ""))
+        return _SHORT_TERM_BORROWING_KEYWORD in normalized
+
+    @staticmethod
+    def _has_objective_growth_evidence(document_text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", str(document_text or ""))
+        compact = re.sub(r"[\sㆍ·\-_/\[\]()]", "", normalized)
+        return any(
+            term in normalized or re.sub(r"[\sㆍ·\-_/\[\]()]", "", term) in compact
+            for term in _OBJECTIVE_GROWTH_EVIDENCE_TERMS
+        )
+
+    @staticmethod
+    def _extract_equity_ratio(document_text: str) -> Optional[float]:
+        match = re.search(
+            r"자기자본\s*대비(?:\s*비율)?\s*(?:\(\s*%\s*\))?\s*[:：]?\s*"
+            r"([0-9][0-9,]*(?:\.[0-9]+)?)",
+            str(document_text or ""),
+        )
+        if match is None:
+            return None
+        return float(match.group(1).replace(",", ""))
 
     @classmethod
     def _parse_analysis(cls, raw: str) -> AiDisclosureAnalysis:
