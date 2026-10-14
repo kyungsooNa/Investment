@@ -77,9 +77,17 @@ def apply_backtest_snapshot_context(
     """Patch existing services to use replay data and the backtest clock.
 
     This is intentionally small and explicit: current O'Neil services keep the
-    StockQueryService and MarketClock as `_sqs` and `_tm`.
+    StockQueryService and MarketClock as `_sqs` and `_tm`, while the universe
+    owns its market-regime service as `_regime_svc`.
     """
     if hasattr(target, "_sqs"):
         setattr(target, "_sqs", stock_query_service)
     if hasattr(target, "_tm"):
         setattr(target, "_tm", market_clock)
+    regime_service = getattr(target, "_regime_svc", None)
+    if regime_service is not None and regime_service is not target:
+        apply_backtest_snapshot_context(
+            regime_service,
+            stock_query_service=stock_query_service,
+            market_clock=market_clock,
+        )

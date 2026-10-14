@@ -99,6 +99,7 @@ async def bootstrap_pp_strategy(
         logger=logger,
         market_clock=market_clock,
         indicator_service=indicator_service,
+        broker_api_wrapper=broker,
     )
     universe_service = OneilUniverseService(
         stock_query_service=stock_query_service,

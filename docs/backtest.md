@@ -616,6 +616,16 @@ python -m scripts.run_backtest --strategy oneil_pocket_pivot --start-date 202605
 
 현재 `--output-file`은 CLI 결과 파일을 별도로 저장하는 옵션이다. 이 옵션을 쓰지 않아도 백테스트 run은 `data/backtest_journals`에 표준 journal로 저장된다.
 
+### 유효 캡처 캠페인 실행
+
+```powershell
+python -m scripts.run_validation_campaign --output-file data/validation_campaign.json
+```
+
+캠페인 러너는 원본 캡처의 품질 게이트를 다시 계산하고, 통과한 날짜의 `metadata.candidate_sources.base`만 PIT 후보로 사용해 활성 전략 7개를 독립 실행한다. 결과에는 전략별 체결·거부·0거래 요약과 20/5/5 walk-forward 준비도가 포함된다. 유효일이 30개 미만이면 walk-forward는 실행하지 않고 `waiting_for_more_valid_dates`로 기록한다.
+
+`zero_trade_reason=no_signal_or_candidate_observed`는 period journal만으로 신호 부재와 후보 부재를 구분할 수 없을 때 쓰는 보수적 상태다. 정확한 원인 판정에는 캡처 metadata의 PIT 후보 수와 전략별 candidate funnel을 함께 확인해야 한다.
+
 ## 출력 해석
 
 console 출력 예:

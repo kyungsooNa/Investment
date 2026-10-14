@@ -9,7 +9,7 @@ const COMMON_JS = resolve(import.meta.dirname, "../../view/web/static/js/common.
 
 /* common.js 전체를 실행하면 navigatePjax 스텁을 덮어쓰므로, 홈이 쓰는 유틸 함수만 추출한다. */
 function extractCommonFunction(name) {
-  const source = readFileSync(COMMON_JS, "utf8");
+  const source = readFileSync(COMMON_JS, "utf8").replace(/\r\n/g, "\n");
   const start = source.indexOf(`function ${name}(`);
   const end = source.indexOf("\n}\n", start);
   assert(start >= 0 && end > start, `common.js 에서 ${name} 를 찾지 못함`);

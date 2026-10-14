@@ -79,6 +79,32 @@ def test_apply_backtest_snapshot_context_replaces_clock_and_stock_query_service(
     assert target._tm is clock
 
 
+def test_apply_backtest_snapshot_context_updates_nested_market_regime_service():
+    class MarketRegimeService:
+        def __init__(self) -> None:
+            self._sqs = object()
+            self._tm = object()
+
+    class Target:
+        def __init__(self) -> None:
+            self._sqs = object()
+            self._tm = object()
+            self._regime_svc = MarketRegimeService()
+
+    target = Target()
+    replay_sqs = object()
+    clock = BacktestMarketClock()
+
+    apply_backtest_snapshot_context(
+        target,
+        stock_query_service=replay_sqs,
+        market_clock=clock,
+    )
+
+    assert target._regime_svc._sqs is replay_sqs
+    assert target._regime_svc._tm is clock
+
+
 def test_set_backtest_datetime_converts_aware_datetime_to_market_timezone():
     import pytz
 
