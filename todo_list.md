@@ -162,11 +162,12 @@
 
 - [x] **유효 캡처 파일럿 캠페인 러너 추가 (2026-10-01)** — 원본 replay 파일에서 품질 게이트를 매번 재계산해 stale manifest를 우회하고, 통과 날짜의 `metadata.candidate_sources.base`만 날짜별 PIT 후보로 재생한다. 활성 7전략을 독립 실행해 체결·거부 사유·0거래 상태를 한 JSON으로 집계하며, 20/5/5 walk-forward는 유효일 30개 미만이면 자동 대기 처리한다. (`scripts/run_validation_campaign.py`)
 - [x] **로컬 유효 코퍼스 파일럿 실행·재진단 (2026-10-15)** — 유효 19거래일, 활성 7전략 모두 실행 완료. 전 전략 BUY/SELL/REJECTED 0건. PIT base 후보는 18/19일, 후보-일 관측 112건이므로 후보 부재가 아니라 후보 이후 신호/필터 단계로 원인을 좁혔다. 다만 period journal에 후보별 탈락 사유가 없어 정확한 필터 귀속은 아직 불가능하다. (`reports/validation_campaign_20261015.md`)
+- [x] **PIT 후보 관측 계측 (2026-10-15)** — plan에 날짜별 base 후보 수·후보가 있는 날짜 수·후보-일 합계를 기록하고, 후보가 있는데 신호/거부가 0건인 경우를 `no_signal_observed`로 분리했다. 남은 관측 공백은 전략별 주요 필터 candidate funnel이다.
 - [x] 슬리피지/스프레드 CLI 노출 (#619) — `--market-slippage-pct`(MARKET/STOP 체결)·`--spread-pct`. LIMIT 체결엔 미적용(시뮬레이터 의미론).
 - [blocked] 활성 전략 전체 walk-forward + Monte Carlo 재실행 + 민감도 표 — 2026-10-15 기준 유효일 19개로 최소 30개(20/5/5)에 11개 부족하다.
   - 과거 원인 ①은 이번 파일럿에서 무효화: 2026-07-03에는 **현재 시점** `data/premium_stocks.json`(PIT 아님)이 비어 후보가 없었지만, 2026-10-15 캠페인은 캡처의 날짜별 PIT base 후보를 사용했고 18/19일에 후보가 있었다.
   - 과거 원인 ②도 무효화: 6월 하순 양시장 MA 하락 → 마켓 타이밍 게이트가 스캔을 차단한다는 설명은 #766 이후 맞지 않는다. 현재 게이트는 스캔이 아니라 **매수 신호**를 막으며, 백테스트 쪽 parity는 #770/#844 후속으로 복원됐다.
-  - 남은 조건: walk-forward에는 유효 캡처 11거래일을 더 축적해야 한다. 0거래의 필터별 원인을 밝히려면 period run에 후보 수와 candidate funnel 계측을 추가해야 한다. 랭킹 보충분은 필터 통과 후보가 아닌 유동성 상위 종목이므로 계속 제외하고 `metadata.candidate_sources.base`만 PIT 후보로 해석한다.
+  - 남은 조건: walk-forward에는 유효 캡처 11거래일을 더 축적해야 한다. 0거래의 필터별 원인을 밝히려면 period run에 candidate funnel 계측을 추가해야 한다. 랭킹 보충분은 필터 통과 후보가 아닌 유동성 상위 종목이므로 계속 제외하고 `metadata.candidate_sources.base`만 PIT 후보로 해석한다.
   - 실행 메모: 첫 런이 REST 지배적(12거래일 ≈ 18~23분), **캐시 워밍 후 변형 런 ≈ 1분** — 후보만 갖춰지면 민감도 그리드는 저렴.
 
 주요 파일: `scripts/run_backtest.py`, `services/backtest_walk_forward.py`, `docs/backtest.md`, `data/backtest_*.json`

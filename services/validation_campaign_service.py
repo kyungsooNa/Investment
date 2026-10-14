@@ -5,6 +5,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Callable, Iterable
 
+from services.captured_candidate_universe import CapturedCandidateProvider
+
 
 class ValidationCampaignService:
     def __init__(
@@ -42,6 +44,11 @@ class ValidationCampaignService:
             for key, value in (quality.get("totals") or {}).items()
             if not isinstance(value, dict)
         }
+        candidate_provider = CapturedCandidateProvider.from_replay_dir(self._replay_dir)
+        candidate_counts = {
+            date: len(candidate_provider.codes_as_of(date, source="base"))
+            for date in valid_dates
+        }
         return {
             "replay_dir": str(self._replay_dir),
             "valid_dates": valid_dates,
@@ -49,6 +56,12 @@ class ValidationCampaignService:
             "strategy_count": len(self._strategies),
             "strategies": list(self._strategies),
             "quality_totals": quality_totals,
+            "candidate_observability": {
+                "source": "base",
+                "dates_with_candidates": sum(count > 0 for count in candidate_counts.values()),
+                "candidate_date_observations": sum(candidate_counts.values()),
+                "by_date": candidate_counts,
+            },
             "walk_forward": {
                 "ready": walk_forward_ready,
                 "required_dates": self._walk_forward_required,
@@ -65,10 +78,19 @@ class ValidationCampaignService:
             raise RuntimeError("strategy_runner가 필요합니다")
 
         rows: list[dict] = []
+        candidate_observations = int(
+            plan["candidate_observability"]["candidate_date_observations"]
+        )
         for strategy in self._strategies:
             try:
                 payload = self._runner(strategy, plan["valid_dates"], self._replay_dir)
-                rows.append(self._summarize(strategy, payload))
+                rows.append(
+                    self._summarize(
+                        strategy,
+                        payload,
+                        candidate_observations=candidate_observations,
+                    )
+                )
             except Exception as exc:
                 rows.append({"strategy": strategy, "status": "failed", "error": str(exc)})
         return {
@@ -83,7 +105,12 @@ class ValidationCampaignService:
         }
 
     @staticmethod
-    def _summarize(strategy: str, payload: dict) -> dict:
+    def _summarize(
+        strategy: str,
+        payload: dict,
+        *,
+        candidate_observations: int = 0,
+    ) -> dict:
         executions = payload.get("execution_reports") or []
         journal = payload.get("journal_records") or []
         buys = [row for row in executions if row.get("side") == "BUY" and int(row.get("filled_qty") or 0) > 0]
@@ -98,6 +125,8 @@ class ValidationCampaignService:
             zero_reason = None
         elif reasons:
             zero_reason = "all_observed_signals_rejected"
+        elif candidate_observations > 0:
+            zero_reason = "no_signal_observed"
         else:
             zero_reason = "no_signal_or_candidate_observed"
         portfolio = payload.get("portfolio") or {}
