@@ -101,6 +101,76 @@ async def test_periodic_report_prompt_requires_balanced_half_year_review():
     assert "우발채무·소송" in user_prompt
 
 
+async def test_short_term_borrowing_without_objective_growth_evidence_is_not_positive():
+    ai_client = MagicMock()
+    ai_client.complete = AsyncMock(
+        return_value=(
+            '{"summary":"매출 증가에 따른 운영자금 확보 목적입니다.",'
+            '"score":75,"impact_score":2,'
+            '"reasons":["수요 증가에 따른 원재료 구매"],'
+            '"event_key":"단기차입|금융기관|450억원"}'
+        )
+    )
+    analyzer = AiDisclosureAnalyzer(ai_client, logger=MagicMock())
+    disclosure = DartDisclosure(
+        corp_class="K",
+        corp_name="제주반도체",
+        corp_code="00447487",
+        stock_code="080220",
+        report_name="단기차입금증가결정",
+        receipt_no="20261014000001",
+        filer_name="제주반도체",
+        receipt_date="20261014",
+        remarks="코",
+    )
+
+    result = await analyzer.analyze(
+        disclosure,
+        DisclosureImportance(75, "HIGH", ["대규모 단기차입"]),
+        (
+            "매출증가(수요증가)에 따른 운영자금(원재료의 구매 등) 확보. "
+            "단기차입금 증가금액 45,000,000,000원, 자기자본 대비 19.81%."
+        ),
+    )
+
+    assert result.impact_score == -1
+    assert "자기자본 대비 10% 이상인 단기차입으로 투자 영향 상한 조정" in result.importance.reasons
+    user_prompt = ai_client.complete.await_args.kwargs["user"]
+    assert "단기차입금 평가 기준" in user_prompt
+    assert "매출 증가·수요 증가라는 회사 설명만으로 가점하지 않는다" in user_prompt
+
+
+async def test_short_term_borrowing_with_confirmed_contract_is_not_neutral_capped():
+    ai_client = MagicMock()
+    ai_client.complete = AsyncMock(
+        return_value=(
+            '{"summary":"확정 공급계약 이행을 위한 운영자금입니다.",'
+            '"score":75,"impact_score":2,"reasons":["공급계약 이행"],'
+            '"event_key":"단기차입|금융기관|50억원"}'
+        )
+    )
+    analyzer = AiDisclosureAnalyzer(ai_client, logger=MagicMock())
+    disclosure = DartDisclosure(
+        corp_class="K",
+        corp_name="테스트회사",
+        corp_code="00000000",
+        stock_code="000000",
+        report_name="단기차입금증가결정",
+        receipt_no="20261014000002",
+        filer_name="테스트회사",
+        receipt_date="20261014",
+        remarks="코",
+    )
+
+    result = await analyzer.analyze(
+        disclosure,
+        DisclosureImportance(60, "MEDIUM", ["단기차입"]),
+        "2026년 10월 1일 체결한 단일판매ㆍ공급계약 이행을 위한 원재료 구매 자금.",
+    )
+
+    assert result.impact_score == 2
+
+
 async def test_analyze_returns_none_when_ai_fails():
     ai_client = MagicMock()
     ai_client.complete = AsyncMock(side_effect=AiClientError("NETWORK", "timeout"))
