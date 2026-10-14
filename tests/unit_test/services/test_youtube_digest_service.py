@@ -236,14 +236,18 @@ async def test_build_digest_keeps_going_when_one_video_summary_fails():
     assert result.data["failed_summary_count"] == 1
 
 
-async def test_build_digest_reports_error_when_final_call_fails():
+async def test_build_digest_saves_partial_report_when_final_call_fails():
     ai = MagicMock()
     ai.complete = AsyncMock(side_effect=["v1 요약", RuntimeError("upstream 503")])
     svc = _service(ai)
 
     result = await svc.build_digest([_item("v1", "삼성전자")], report_date="20260810")
 
-    assert result.rt_cd == ErrorCode.API_ERROR.value
+    assert result.rt_cd == ErrorCode.SUCCESS.value
+    assert result.data["source"] == "transcript_partial"
+    assert result.data["failed_summary_count"] == 0
+    assert "종합 요약 실패" in result.data["digest_text"]
+    assert "v1 요약" in result.data["digest_text"]
 
 
 async def test_digest_prompt_forbids_trading_instructions():

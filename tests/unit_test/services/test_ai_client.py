@@ -213,10 +213,15 @@ async def test_usage_limit_block_prevents_http_request():
     http_client.post.assert_not_awaited()
 
 
-def _status_response(status_code):
+def _status_response(status_code, *, headers=None):
     """실제 httpx.Response 로 raise_for_status 동작을 그대로 재현한다."""
     request = httpx.Request("POST", "https://example.com/v1/chat/completions")
-    return httpx.Response(status_code, request=request, json={"error": "upstream"})
+    return httpx.Response(
+        status_code,
+        request=request,
+        headers=headers,
+        json={"error": "upstream"},
+    )
 
 
 async def test_transient_503_is_retried_then_succeeds():
@@ -418,6 +423,56 @@ async def test_backoff_grows_exponentially_between_attempts(monkeypatch):
         await client.complete(system="s", user="u")
 
     assert slept == [0.5, 1.0]
+
+
+async def test_429_honors_retry_after_instead_of_short_generic_backoff(monkeypatch):
+    slept = []
+
+    async def _fake_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", _fake_sleep)
+    http_client = AsyncMock()
+    http_client.post.side_effect = [
+        _status_response(429, headers={"Retry-After": "45"}),
+        _response(_completion("복구")),
+    ]
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="m",
+        http_client=http_client,
+        max_retries=1,
+        retry_backoff_sec=0.5,
+    )
+
+    assert await client.complete(system="s", user="u") == "복구"
+    assert slept == [45.0]
+
+
+async def test_429_without_retry_after_uses_rate_limit_cooldown(monkeypatch):
+    slept = []
+
+    async def _fake_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", _fake_sleep)
+    http_client = AsyncMock()
+    http_client.post.side_effect = [
+        _status_response(429),
+        _response(_completion("복구")),
+    ]
+    client = AiClient(
+        base_url="https://example.com/v1",
+        api_key="secret",
+        model="m",
+        http_client=http_client,
+        max_retries=1,
+        retry_backoff_sec=0.5,
+    )
+
+    assert await client.complete(system="s", user="u") == "복구"
+    assert slept == [30.0]
 
 
 async def test_length_finish_reason_appends_truncation_notice():

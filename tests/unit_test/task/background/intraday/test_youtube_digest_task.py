@@ -172,6 +172,22 @@ async def test_partial_summary_failures_emit_warning_alert():
     assert warning_call.kwargs["metadata"]["force_external"] is True
 
 
+async def test_partial_digest_fallback_emits_warning_alert():
+    task, deps = _task(
+        digest_result=_ok_digest(
+            source="transcript_partial",
+            digest_text="## 부분 리포트",
+        )
+    )
+
+    await task.run_once()
+
+    assert deps["notifier"].emit.await_count == 2
+    warning_call = deps["notifier"].emit.await_args_list[1]
+    assert warning_call.args[1] == NotificationLevel.WARNING
+    assert "종합 요약 실패" in warning_call.args[3]
+
+
 async def test_only_enabled_channels_are_collected():
     task, deps = _task()
 
@@ -265,6 +281,44 @@ async def test_ip_block_is_retried_once_before_giving_up():
     await task.run_once()  # 두 번째도 차단
     clock.get_current_kst_time.return_value = _KST.localize(datetime(2026, 8, 10, 10, 0))
     assert await task._should_run_now() is False  # 포기
+
+
+async def test_worker_mode_actually_runs_the_delayed_block_retry():
+    """티켓 모드에는 폴링 루프가 없으므로 태스크가 재시도를 직접 예약해야 한다."""
+    worker_pool = MagicMock()
+    task, deps = _task(worker_pool=worker_pool)
+    retry_started = asyncio.Event()
+    release_retry = asyncio.Event()
+    attempts = 0
+
+    async def collect(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            deps["collector"].was_blocked = True
+            return [{"video_id": "v1", "skip_reason": "blocked", "transcript": ""}]
+        deps["collector"].was_blocked = False
+        return [{"video_id": "v1", "skip_reason": None, "transcript": "본문"}]
+
+    async def delayed_sleep(seconds):
+        assert seconds == task.RETRY_AFTER_BLOCK_MIN * 60
+        retry_started.set()
+        await release_retry.wait()
+
+    deps["collector"].collect.side_effect = collect
+    with patch(
+        "task.background.intraday.youtube_digest_task.asyncio.sleep",
+        side_effect=delayed_sleep,
+    ):
+        await task.run_once()
+        await retry_started.wait()
+        assert deps["collector"].collect.await_count == 1
+
+        release_retry.set()
+        await asyncio.gather(*task._tasks)
+
+    assert deps["collector"].collect.await_count == 2
+    deps["digest_repo"].save.assert_awaited_once()
 
 
 async def test_ip_block_uses_gemini_fallback_when_configured():

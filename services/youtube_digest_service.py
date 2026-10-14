@@ -293,17 +293,17 @@ class YoutubeDigestService:
             )
         except Exception as e:
             self._logger.error(f"유튜브 다이제스트 종합 요약 실패: {e}")
-            return ResCommonResponse(
-                rt_cd=ErrorCode.API_ERROR.value,
-                msg1=f"AI 종합 요약 실패: {e}",
-                data=None,
-            )
+            digest_text = self._format_partial_digest(videos)
+            source = "transcript_partial"
+        else:
+            source = "transcript"
 
         return ResCommonResponse(
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="정상처리 되었습니다.",
             data={
                 "report_date": report_date,
+                "source": source,
                 "video_count": len(videos),
                 "failed_summary_count": failed,
                 "mentions": mentions,
@@ -311,3 +311,20 @@ class YoutubeDigestService:
                 "digest_text": str(digest_text or "").strip(),
             },
         )
+
+    @staticmethod
+    def _format_partial_digest(videos: Sequence[Mapping[str, Any]]) -> str:
+        """종합 AI 호출 실패 시 이미 성공한 영상별 요약을 잃지 않는다."""
+        lines = [
+            "## 부분 리포트",
+            "",
+            "> AI 종합 요약 실패로 영상별 요약을 그대로 제공합니다.",
+        ]
+        for video in videos:
+            summary = str(video.get("summary") or "").strip()
+            if not summary:
+                continue
+            channel = video.get("channel_title") or "채널"
+            title = video.get("title") or video.get("video_id") or "영상"
+            lines.extend(["", f"### [{channel}] {title}", "", summary])
+        return "\n".join(lines).strip()

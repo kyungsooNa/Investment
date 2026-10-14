@@ -15,6 +15,7 @@ import httpx
 
 # 업스트림 과부하/속도제한 등 재시도로 회복 가능한 상태 코드
 _RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
+_RATE_LIMIT_BACKOFF_SEC = 30.0
 
 
 class AiClientError(RuntimeError):
@@ -224,8 +225,20 @@ class AiClient:
                     raise
                 last_exc = exc
             if attempt < self._max_retries:
-                await asyncio.sleep(self._retry_backoff_sec * (2**attempt))
+                await asyncio.sleep(self._retry_delay(attempt, last_exc))
         raise last_exc
+
+    def _retry_delay(self, attempt: int, exc: Exception | None) -> float:
+        generic_delay = self._retry_backoff_sec * (2**attempt)
+        if not isinstance(exc, httpx.HTTPStatusError):
+            return generic_delay
+        if exc.response.status_code != 429:
+            return generic_delay
+        retry_after = exc.response.headers.get("Retry-After", "").strip()
+        try:
+            return max(0.0, float(retry_after))
+        except ValueError:
+            return max(generic_delay, _RATE_LIMIT_BACKOFF_SEC * (2**attempt))
 
     @staticmethod
     def _is_aborted_completion(payload: dict) -> bool:
