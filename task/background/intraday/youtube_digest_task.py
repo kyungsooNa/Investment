@@ -253,6 +253,8 @@ class YoutubeDigestTask(SchedulableTask):
             self._logger.warning(
                 f"[YoutubeDigest] YouTube 차단 — {self.RETRY_AFTER_BLOCK_MIN}분 뒤 재시도합니다."
             )
+            if self._worker_pool is not None:
+                self._schedule_block_retry(report_date)
             return
         self._logger.error("[YoutubeDigest] YouTube 차단이 계속돼 오늘 리포트를 포기합니다.")
         await self._emit(
@@ -262,6 +264,27 @@ class YoutubeDigestTask(SchedulableTask):
             " 오늘 리포트는 생성되지 않습니다.",
         )
         self._mark_done(report_date, now)
+
+    def _schedule_block_retry(self, report_date: str) -> None:
+        """폴링 루프가 없는 WorkerPool 모드에서 차단 재시도를 실제로 예약한다."""
+        self._tasks = [task for task in self._tasks if not task.done()]
+        if any(
+            not task.done() and task.get_name() == "youtube-digest-block-retry"
+            for task in self._tasks
+        ):
+            return
+        self._tasks.append(
+            asyncio.create_task(
+                self._run_block_retry_after_delay(report_date),
+                name="youtube-digest-block-retry",
+            )
+        )
+
+    async def _run_block_retry_after_delay(self, report_date: str) -> None:
+        await asyncio.sleep(self.RETRY_AFTER_BLOCK_MIN * 60)
+        if self._state == TaskState.STOPPED or self._last_run_date == report_date:
+            return
+        await self.run_once()
 
     async def _try_gemini_fallback(
         self, items: list[dict], report_date: str, now
@@ -322,15 +345,21 @@ class YoutubeDigestTask(SchedulableTask):
 
     async def _emit_partial_failure_warning(self, data: dict) -> None:
         failed = int((data or {}).get("failed_summary_count") or 0)
-        if failed <= 0:
+        digest_partial = (data or {}).get("source") == "transcript_partial"
+        if failed <= 0 and not digest_partial:
             return
         total = int((data or {}).get("video_count") or 0)
         ratio = (failed / total * 100.0) if total > 0 else 0.0
+        detail = (
+            "AI 종합 요약 실패로 영상별 요약을 묶은 부분 리포트를 저장했습니다."
+            if digest_partial
+            else f"영상 요약 {failed}/{total}편 실패 ({ratio:.1f}%). "
+            "리포트에서 해당 영상의 맥락이 누락됐습니다."
+        )
         await self._emit(
             NotificationLevel.WARNING,
             "유튜브 다이제스트 - 일부 요약 실패",
-            f"{data.get('report_date')}: 영상 요약 {failed}/{total}편 실패"
-            f" ({ratio:.1f}%). 리포트에서 해당 영상의 맥락이 누락됐습니다.",
+            f"{data.get('report_date')}: {detail}",
         )
 
     @staticmethod
