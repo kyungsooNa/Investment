@@ -1,3 +1,5 @@
+import json
+
 from services.validation_campaign_service import ValidationCampaignService
 
 
@@ -80,3 +82,39 @@ def test_campaign_labels_zero_trade_without_claiming_unknown_root_cause(tmp_path
     strategy = result["strategies"][0]
     assert strategy["zero_trade"] is True
     assert strategy["zero_trade_reason"] == "no_signal_or_candidate_observed"
+
+
+def test_campaign_distinguishes_signal_absence_when_pit_candidates_exist(tmp_path):
+    capture = {
+        "metadata": {
+            "trade_date": "20260929",
+            "candidate_sources": {
+                "base": ["000001", "000002", "000002"],
+                "ranking_supplement": ["100001"],
+            },
+        }
+    }
+    (tmp_path / "replay_microstructure_20260929.json").write_text(
+        json.dumps(capture),
+        encoding="utf-8",
+    )
+    service = ValidationCampaignService(
+        replay_dir=tmp_path,
+        strategies=("empty",),
+        quality_report_provider=lambda _: _quality_report(["20260929"]),
+        strategy_runner=lambda *_: {
+            "execution_reports": [],
+            "journal_records": [],
+            "portfolio": {},
+        },
+    )
+
+    result = service.run()
+
+    assert result["plan"]["candidate_observability"] == {
+        "source": "base",
+        "dates_with_candidates": 1,
+        "candidate_date_observations": 2,
+        "by_date": {"20260929": 2},
+    }
+    assert result["strategies"][0]["zero_trade_reason"] == "no_signal_observed"
