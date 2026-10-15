@@ -42,6 +42,7 @@ MODULE_BUDGETS = {
     "config_bootstrap.py": (180, 9),
     "market_data_bootstrap.py": (170, 8),
     "overseas_bootstrap.py": (560, 33),
+    "overseas_growth_strategy_bootstrap.py": (80, 3),
     "query_bootstrap.py": (205, 9),
     "realtime_bootstrap.py": (200, 10),
     "repository_bootstrap.py": (80, 2),

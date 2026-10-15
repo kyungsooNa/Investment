@@ -1168,6 +1168,7 @@ def test_intraday_strategies_share_a_single_polling_task(patched_service_contain
             "intraday_buyable_gap_up": {"enabled": True},
             "intraday_squeeze_breakout": {"enabled": True},
             "intraday_pocket_pivot": {"enabled": True},
+            "intraday_minervini_stage2": {"enabled": True},
         },
     )
 
@@ -1175,7 +1176,7 @@ def test_intraday_strategies_share_a_single_polling_task(patched_service_contain
 
     task = ctx.overseas_intraday_task
     assert task is not None
-    assert len(task._strategies) == 6
+    assert len(task._strategies) == 7
     # 주문 서비스와 paper 저널도 전 전략이 공유한다
     assert len({id(s._orders) for s in task._strategies}) == 1
 
@@ -1197,6 +1198,32 @@ def test_each_intraday_strategy_is_opt_in(patched_service_container_deps):
     assert ctx.overseas_intraday_vbo_service is None
     assert ctx.overseas_intraday_cb_service is None
     assert len(ctx.overseas_intraday_task._strategies) == 1
+
+
+def test_minervini_stage2_intraday_strategy_is_opt_in_and_order_locked(
+    patched_service_container_deps,
+):
+    from config.config_loader import AppConfig
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={
+            "allow_live_trading": True,
+            "default_exchange": "NYSE",
+            "intraday_minervini_stage2": {"enabled": True},
+        },
+    )
+
+    _run_with_overseas(ctx)
+
+    service = ctx.overseas_intraday_minervini_stage2_service
+    assert service is not None
+    assert service in ctx.overseas_intraday_task._strategies
+    assert service._default_exchange.value == "NYSE"
+    assert service._orders._live_enabled is False
 
 
 def test_no_intraday_task_when_all_strategies_disabled(patched_service_container_deps):

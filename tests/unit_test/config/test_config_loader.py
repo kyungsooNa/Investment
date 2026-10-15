@@ -147,6 +147,7 @@ def test_app_config_defaults_to_paper_trading_when_omitted():
     assert config.overseas_stock.vbo_macd_filter.signal_period == 9
     assert config.overseas_stock.vbo_macd_filter.min_histogram == 0.0
     assert config.overseas_stock.vbo_macd_filter.histogram_rising_bars == 2
+    assert config.overseas_stock.intraday_minervini_stage2.enabled is False
 
 
 def test_app_config_accepts_overseas_us_market_mode():

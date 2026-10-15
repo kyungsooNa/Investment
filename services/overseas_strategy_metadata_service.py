@@ -8,6 +8,9 @@ from services.overseas_intraday_pocket_pivot_service import OverseasIntradayPock
 from services.overseas_intraday_rsi2_service import OverseasIntradayRSI2Service
 from services.overseas_intraday_squeeze_breakout_service import OverseasIntradaySqueezeBreakoutService
 from services.overseas_intraday_vbo_service import OverseasIntradayVBOService
+from services.overseas_intraday_minervini_stage2_service import (
+    OverseasIntradayMinerviniStage2Service,
+)
 
 
 def build_overseas_intraday_strategy_metadata(overseas_stock_cfg) -> dict[str, dict[str, str]]:
@@ -25,6 +28,7 @@ def build_overseas_intraday_strategy_metadata(overseas_stock_cfg) -> dict[str, d
         (OverseasIntradayBuyableGapUpService, getattr(overseas_stock_cfg, "intraday_buyable_gap_up", None)),
         (OverseasIntradaySqueezeBreakoutService, getattr(overseas_stock_cfg, "intraday_squeeze_breakout", None)),
         (OverseasIntradayPocketPivotService, getattr(overseas_stock_cfg, "intraday_pocket_pivot", None)),
+        (OverseasIntradayMinerviniStage2Service, getattr(overseas_stock_cfg, "intraday_minervini_stage2", None)),
     )
     return {
         service_cls.STRATEGY_NAME: {

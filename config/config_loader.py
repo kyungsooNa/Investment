@@ -598,7 +598,7 @@ class OverseasStockConfig(BaseModel):
     dryrun_max_qty: Optional[int] = Field(default=None, gt=0)
     vbo_macd_filter: OverseasVBOMACDFilterConfig = Field(default_factory=OverseasVBOMACDFilterConfig)
     intraday_vbo: OverseasIntradayVBOConfig = Field(default_factory=OverseasIntradayVBOConfig)
-    # 장중 승격 전략 5종 (VBO 외). 폴링 패스는 공유하므로 심볼 조회는 늘지 않는다.
+    # 장중 승격 전략 6종 (VBO 외). 폴링 패스는 공유하므로 심볼 조회는 늘지 않는다.
     intraday_channel_breakout: OverseasIntradayStrategyConfig = Field(
         default_factory=OverseasIntradayStrategyConfig)
     intraday_rsi2: OverseasIntradayStrategyConfig = Field(
@@ -608,6 +608,8 @@ class OverseasStockConfig(BaseModel):
     intraday_squeeze_breakout: OverseasIntradayStrategyConfig = Field(
         default_factory=OverseasIntradayStrategyConfig)
     intraday_pocket_pivot: OverseasIntradayStrategyConfig = Field(
+        default_factory=OverseasIntradayStrategyConfig)
+    intraday_minervini_stage2: OverseasIntradayStrategyConfig = Field(
         default_factory=OverseasIntradayStrategyConfig)
 
     model_config = {"extra": "allow"}

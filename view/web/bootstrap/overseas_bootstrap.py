@@ -2,7 +2,7 @@
 
 `ServiceContainer.run()` 에서 옮겨온 조립 경로를 담는다 — 관심종목 등락 알림,
 dry-run 파이프라인(전략 6종 + suite + after-market 태스크), 수동 주문 게이팅 서비스,
-장중 폴링 경로(전략 6종이 태스크 하나를 공유), 리스크게이트·대사 태스크.
+장중 폴링 경로(전략 7종이 태스크 하나를 공유), 리스크게이트·대사 태스크.
 조립 순서·조건·후주입은 이관 전과 동일하다.
 
 **자동 전략 경로의 `live_enabled=False` 잠금은 이 파일이 유일한 조립 지점이다** —
@@ -27,7 +27,6 @@ from services.overseas_intraday_buyable_gap_up_service import OverseasIntradayBu
 from services.overseas_intraday_channel_breakout_service import (
     OverseasIntradayChannelBreakoutService,
 )
-from services.overseas_intraday_pocket_pivot_service import OverseasIntradayPocketPivotService
 from services.overseas_intraday_rsi2_service import OverseasIntradayRSI2Service
 from services.overseas_intraday_squeeze_breakout_service import (
     OverseasIntradaySqueezeBreakoutService,
@@ -54,6 +53,7 @@ from task.background.intraday.overseas_opening_reconcile_task import (
 from task.background.intraday.overseas_favorite_price_alert_task import OverseasFavoritePriceAlertTask
 from task.background.intraday.overseas_intraday_task import OverseasIntradayTask
 from task.background.intraday.us_market_timing_daily_update_task import USMarketTimingDailyUpdateTask
+from view.web.bootstrap.overseas_growth_strategy_bootstrap import OverseasGrowthStrategyBootstrap
 
 if TYPE_CHECKING:  # pragma: no cover
     from view.web.web_app_initializer import WebAppContext
@@ -346,7 +346,7 @@ class OverseasBootstrap:
         "안전장치가 갖춰졌는가" 가 아니라 **"전략별 would-be 성과가 왕복비용(0.5%)을
         넘겼는가"** 다. todo_list.md 의 O-4·O-6·Phase 5 항목을 함께 볼 것.
 
-        전략 6종은 **하나의 태스크·하나의 폴링 패스**를 공유한다 — 전략마다 태스크를
+        전략 7종은 **하나의 태스크·하나의 폴링 패스**를 공유한다 — 전략마다 태스크를
         두면 겹치는 심볼을 전략 수만큼 중복 조회한다. 주문 서비스와 paper 저널도
         공유하므로 전략을 켜도 늘어나는 것은 판정 비용뿐이다.
 
@@ -354,12 +354,13 @@ class OverseasBootstrap:
         (전략별 `market_timing_gate: false` 로 해제 가능). 손절/EOD 청산은 게이트 대상이 아니다.
         """
         ctx = self._ctx
+        growth_bootstrap = OverseasGrowthStrategyBootstrap(ctx, overseas_stock_cfg)
+        growth_bootstrap.reset()
         ctx.overseas_intraday_vbo_service = None
         ctx.overseas_intraday_cb_service = None
         ctx.overseas_intraday_rsi2_service = None
         ctx.overseas_intraday_bgu_service = None
         ctx.overseas_intraday_osb_service = None
-        ctx.overseas_intraday_pp_service = None
         ctx.overseas_intraday_task = None
         ctx.overseas_opening_reconcile_task = None
         ctx.overseas_intraday_candidate_service = None
@@ -370,6 +371,7 @@ class OverseasBootstrap:
             for attr in (
                 "intraday_channel_breakout", "intraday_rsi2", "intraday_buyable_gap_up",
                 "intraday_squeeze_breakout", "intraday_pocket_pivot",
+                "intraday_minervini_stage2",
             )
         )
         if not enabled_any:
@@ -387,6 +389,7 @@ class OverseasBootstrap:
             getattr(overseas_stock_cfg, "intraday_buyable_gap_up", None),
             getattr(overseas_stock_cfg, "intraday_squeeze_breakout", None),
             getattr(overseas_stock_cfg, "intraday_pocket_pivot", None),
+            getattr(overseas_stock_cfg, "intraday_minervini_stage2", None),
         ]
         enabled_top_ns = [
             int(getattr(cfg, "top_n", 20))
@@ -516,12 +519,7 @@ class OverseasBootstrap:
             )
             services.append(ctx.overseas_intraday_osb_service)
 
-        pp_cfg = getattr(overseas_stock_cfg, "intraday_pocket_pivot", None)
-        if getattr(pp_cfg, "enabled", False):
-            ctx.overseas_intraday_pp_service = OverseasIntradayPocketPivotService(
-                **common, **_opts(pp_cfg, OverseasIntradayPocketPivotService),
-            )
-            services.append(ctx.overseas_intraday_pp_service)
+        growth_bootstrap.append_enabled(services, common, _opts)
 
         ctx.overseas_opening_reconcile_task = OverseasOpeningReconcileTask(
             reconcile_service=OverseasReconcileService(logger=ctx.logger),
