@@ -154,7 +154,7 @@ overseas_stock:
     # 국면 조회 실패 시에도 진입하지 않는다(fail-closed). 손절/EOD 청산은 항상 동작.
     market_timing_gate: true
 
-  # 장중 승격 전략 5종. VBO 와 같은 폴링 패스를 공유하며 심볼당 1회만 조회한다.
+  # 장중 승격 전략 6종. VBO 와 같은 폴링 패스를 공유하며 심볼당 1회만 조회한다.
   # 각 전략은 유동성 상위 top_n×2 풀에서 전략명·거래일별로 top_n 개를 선택한다.
   # 따라서 모든 top_n 이 같다면 전체 감시 합집합은 최대 top_n×2 종목이다.
   # 거래량 조건은 누적거래량(tvol)을 장중 경과 비율로 환산해 판정한다(국내와 동일 방식).
@@ -182,6 +182,13 @@ overseas_stock:
     max_positions: 5
     market_timing_gate: true
   intraday_pocket_pivot:
+    enabled: false
+    top_n: 20
+    max_positions: 5
+    market_timing_gate: true
+  # 최근 10거래일 내 Stage 2 전환 + 20일 고점 돌파. 미국 RS Rating 공급원이 없어
+  # Stage 구조·유동성·미국장 국면으로 선별하며 자동 주문은 would-be 로만 기록한다.
+  intraday_minervini_stage2:
     enabled: false
     top_n: 20
     max_positions: 5
