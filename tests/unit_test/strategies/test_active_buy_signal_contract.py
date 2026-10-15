@@ -15,6 +15,9 @@ ACTIVE_BUY_SIGNAL_FILES = {
     "larry_williams_vbo": PROJECT_ROOT
     / "strategies"
     / "larry_williams_vbo_strategy.py",
+    "minervini_stage2_transition": PROJECT_ROOT
+    / "strategies"
+    / "minervini_stage2_transition_strategy.py",
     "oneil_pocket_pivot": PROJECT_ROOT
     / "strategies"
     / "oneil_pocket_pivot_strategy.py",

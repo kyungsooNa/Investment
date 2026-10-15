@@ -29,6 +29,7 @@ STRATEGY_DISPLAY_MAP: dict[str, str] = {
     "inverse_etf_regime": "인버스ETF레짐",
     "larry_williams_cb": "LarryWilliamsCB",
     "larry_williams_vbo": "래리윌리엄스VBO",
+    "minervini_stage2_transition": "미너비니Stage2전환",
     "oneil_pocket_pivot": "오닐PP/BGU",
     "oneil_squeeze_breakout": "오닐스퀴즈돌파",
     "program_buy_follow": "프로그램매수추종",
@@ -49,7 +50,7 @@ class StrategyStatus(str, Enum):
 
 
 # 출처: view/web/bootstrap/strategy_factory.py 의 build() 본문에서
-#       ctx.scheduler.register(...) 가 호출되는 8개 = ACTIVE.
+#       ctx.scheduler.register(...) 가 호출되는 전략 = ACTIVE.
 #       나머지 3개 (program_buy_follow / traditional_volume_breakout /
 #       volume_breakout_live) 는 코드는 있으나 자동 register 안 됨 = EXPERIMENTAL.
 STRATEGY_STATUS_MAP: dict[str, StrategyStatus] = {
@@ -58,6 +59,7 @@ STRATEGY_STATUS_MAP: dict[str, StrategyStatus] = {
     "inverse_etf_regime": StrategyStatus.ACTIVE,
     "larry_williams_cb": StrategyStatus.ACTIVE,
     "larry_williams_vbo": StrategyStatus.ACTIVE,
+    "minervini_stage2_transition": StrategyStatus.ACTIVE,
     "oneil_pocket_pivot": StrategyStatus.ACTIVE,
     "oneil_squeeze_breakout": StrategyStatus.ACTIVE,
     "rsi2_pullback": StrategyStatus.ACTIVE,

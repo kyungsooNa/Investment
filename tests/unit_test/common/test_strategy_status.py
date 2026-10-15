@@ -1,7 +1,7 @@
 """STRATEGY_STATUS_MAP — P3-4 활성/실험/레거시 registry (1차 대안).
 
-Phase 1 매핑 잠금된 11개 전략을 status 별로 분류한다:
-- StrategyFactory.build() 가 자동 register 하는 8개 = ACTIVE
+매핑에 등록된 전략을 status 별로 분류한다:
+- StrategyFactory.build() 가 자동 register 하는 9개 = ACTIVE
 - 수동/백테스트 용도로 코드는 있으나 자동 register 안 되는 3개 = EXPERIMENTAL
 - 1차에서는 LEGACY 없음 (디렉터리 이동 없이 metadata 만 추가)
 
@@ -25,6 +25,7 @@ ACTIVE_IDS = {
     "inverse_etf_regime",
     "larry_williams_cb",
     "larry_williams_vbo",
+    "minervini_stage2_transition",
     "oneil_pocket_pivot",
     "oneil_squeeze_breakout",
     "rsi2_pullback",

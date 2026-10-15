@@ -33,6 +33,11 @@ _ACTIVE_STRATEGIES: List[tuple] = [
         "larry_williams_cb",
     ),
     ("strategies.larry_williams_vbo_strategy", "LarryWilliamsVBOStrategy", "larry_williams_vbo"),
+    (
+        "strategies.minervini_stage2_transition_strategy",
+        "MinerviniStage2TransitionStrategy",
+        "minervini_stage2_transition",
+    ),
     ("strategies.oneil_pocket_pivot_strategy", "OneilPocketPivotStrategy", "oneil_pocket_pivot"),
     ("strategies.oneil_squeeze_breakout_strategy", "OneilSqueezeBreakoutStrategy", "oneil_squeeze_breakout"),
     ("strategies.program_buy_follow_strategy", "ProgramBuyFollowStrategy", "program_buy_follow"),

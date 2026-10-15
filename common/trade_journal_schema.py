@@ -85,6 +85,7 @@ _LEGACY_STRATEGY_NAME_ALIASES = {
     "LarryWilliamsCB": "larry_williams_cb",
     "RSI2눌림목": "rsi2_pullback",
     "첫눌림목": "first_pullback",
+    "미너비니Stage2전환": "minervini_stage2_transition",
 }
 
 

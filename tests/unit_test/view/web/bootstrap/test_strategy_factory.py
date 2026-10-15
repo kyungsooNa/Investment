@@ -18,6 +18,7 @@ STRATEGY_CLASS_NAMES = [
     "HighTightFlagStrategy",
     "FirstPullbackStrategy",
     "LarryWilliamsVBOStrategy",
+    "MinerviniStage2TransitionStrategy",
     "RSI2PullbackStrategy",
     "LarryWilliamsChannelBreakoutStrategy",
     "InverseEtfRegimeStrategy",
@@ -59,6 +60,7 @@ def _make_fake_context(runtime_mode: RuntimeMode = RuntimeMode.ALL):
     ctx.position_sizing_service = MagicMock()
     ctx.indicator_service = MagicMock()
     ctx.oneil_universe_service = MagicMock()
+    ctx.minervini_stage_service = MagicMock()
     ctx.background_scheduler = MagicMock()
     return ctx
 
@@ -92,13 +94,32 @@ def test_strategy_factory_wires_live_expansion_gate_with_journal_provider(patche
     assert gate._enabled is True
 
 
-def test_strategy_factory_registers_eight_strategies(patched_factory_deps):
+def test_strategy_factory_registers_nine_strategies(patched_factory_deps):
     from view.web.bootstrap.strategy_factory import StrategyFactory
 
     ctx = _make_fake_context()
     StrategyFactory(ctx).build()
 
-    assert ctx.scheduler.register.call_count == 8
+    assert ctx.scheduler.register.call_count == 9
+
+
+def test_strategy_factory_registers_minervini_stage2_transition_disabled(patched_factory_deps):
+    from view.web.bootstrap.strategy_factory import StrategyFactory
+
+    ctx = _make_fake_context()
+    StrategyFactory(ctx).build()
+
+    strategy_cls = patched_factory_deps["MinerviniStage2TransitionStrategy"]
+    kwargs = strategy_cls.call_args.kwargs
+    assert kwargs["stock_query_service"] is ctx.stock_query_service
+    assert kwargs["minervini_stage_service"] is ctx.minervini_stage_service
+    assert kwargs["market_clock"] is ctx.market_clock
+    strategy = strategy_cls.return_value
+    configs = [call.args[0] for call in ctx.scheduler.register.call_args_list]
+    cfg = next(item for item in configs if item.strategy is strategy)
+    assert cfg.enabled is False
+    assert cfg.max_positions == 5
+    assert cfg.force_exit_on_close is False
 
 
 def test_strategy_factory_registers_inverse_etf_sleeve_disabled(patched_factory_deps):
@@ -207,5 +228,5 @@ def test_strategy_factory_builds_when_trading_enabled_via_combination(patched_fa
     StrategyFactory(ctx).build()
 
     assert ctx.scheduler is patched_factory_deps["StrategyScheduler"].return_value
-    assert ctx.scheduler.register.call_count == 8
+    assert ctx.scheduler.register.call_count == 9
     patched_factory_deps["StrategySchedulerTaskAdapter"].assert_called_once()

@@ -5,7 +5,7 @@ property 가 도입됐다. Phase 2 는 risk_gate/kill_switch/virtual_trade journ
 사용처를 strategy_id 기준으로 마이그레이션한다.
 
 Resolver 는 양방향 변환과 미지값 passthrough 를 담당한다. 이 테스트는
-- Phase 1 의 10개 활성 전략 ID/display 잠금
+- 등록 전략 ID/display 잠금
 - 미지값 passthrough 동작 잠금
 을 책임진다.
 """
@@ -27,6 +27,7 @@ PHASE1_PAIRS = [
     ("inverse_etf_regime", "인버스ETF레짐"),
     ("larry_williams_cb", "LarryWilliamsCB"),
     ("larry_williams_vbo", "래리윌리엄스VBO"),
+    ("minervini_stage2_transition", "미너비니Stage2전환"),
     ("oneil_pocket_pivot", "오닐PP/BGU"),
     ("oneil_squeeze_breakout", "오닐스퀴즈돌파"),
     ("program_buy_follow", "프로그램매수추종"),
