@@ -297,6 +297,15 @@ async def test_market_status_alert_service_reports_index_thresholds_and_resolves
     assert {call.args[1] for call in operator_alert.resolve.await_args_list} == {
         "market_index:fall_8:0001",
     }
+    fall_8_resolve = next(
+        call
+        for call in operator_alert.resolve.await_args_list
+        if call.args[1] == "market_index:fall_8:0001"
+    )
+    assert fall_8_resolve.args[2] == (
+        "지수 등락률 정상화\n"
+        "등락률: -8.20% → -1.00%"
+    )
 
     await service.on_index_change("0001", "코스피", -1.0)
     await service.on_index_change("0001", "코스피", -1.0)
@@ -332,7 +341,7 @@ async def test_market_status_alert_service_resolves_move_5_after_three_recovery_
     operator_alert.resolve.assert_awaited_once_with(
         AlertSource.MARKET_STATUS,
         "market_index:move_5:down:0001",
-        "지수 등락률 정상화",
+        "지수 등락률 정상화\n등락률: -5.03% → -4.30%",
     )
 
 
@@ -358,7 +367,7 @@ async def test_market_status_alert_service_resets_move_5_recovery_count_on_relap
     operator_alert.resolve.assert_awaited_once_with(
         AlertSource.MARKET_STATUS,
         "market_index:move_5:down:0001",
-        "지수 등락률 정상화",
+        "지수 등락률 정상화\n등락률: -5.03% → -4.20%",
     )
 
 

@@ -34,6 +34,7 @@ class MarketStatusAlertService:
         self._active_keys_by_code: dict[str, set[str]] = {}
         self._active_index_keys_by_code: dict[str, set[str]] = {}
         self._active_futures_keys_by_code: dict[str, set[str]] = {}
+        self._index_alert_initial_rate_by_key: dict[str, float] = {}
         self._move_5_recovery_samples_by_code: dict[str, int] = {}
         self._futures_sidecar_started_sec_by_code: dict[str, int] = {}
         self._futures_sidecar_direction_by_code: dict[str, str] = {}
@@ -164,8 +165,14 @@ class MarketStatusAlertService:
 
         if self._operator_alert_service is not None:
             for key in active_keys - expected_keys:
+                initial_rate = self._index_alert_initial_rate_by_key.pop(key, change_rate)
                 await self._operator_alert_service.resolve(
-                    AlertSource.MARKET_STATUS, key, "지수 등락률 정상화"
+                    AlertSource.MARKET_STATUS,
+                    key,
+                    (
+                        "지수 등락률 정상화\n"
+                        f"등락률: {initial_rate:+.2f}% → {change_rate:+.2f}%"
+                    ),
                 )
         self._active_index_keys_by_code[index_code] = expected_keys
 
@@ -250,6 +257,7 @@ class MarketStatusAlertService:
         self, *, key: str, severity: str, title: str, index_code: str,
         index_name: str, change_rate: float, threshold_pct: float, event_type: str,
     ) -> None:
+        self._index_alert_initial_rate_by_key.setdefault(key, change_rate)
         metadata = {
             "event_type": event_type, "index_code": index_code,
             "index_name": index_name, "change_rate": change_rate,
