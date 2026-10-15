@@ -1,6 +1,6 @@
 """StrategyFactory — `WebAppContext.initialize_scheduler()` 본문을 전담한다.
 
-StrategyScheduler 생성과 7개 활성 전략 등록, BackgroundScheduler 에
+StrategyScheduler 생성과 활성 전략 등록, BackgroundScheduler 에
 StrategySchedulerTaskAdapter 등록까지 담당한다.
 """
 from __future__ import annotations
@@ -14,6 +14,7 @@ from strategies.high_tight_flag_strategy import HighTightFlagStrategy
 from strategies.inverse_etf_regime_strategy import InverseEtfRegimeStrategy
 from strategies.larry_williams_channel_breakout_strategy import LarryWilliamsChannelBreakoutStrategy
 from strategies.larry_williams_vbo_strategy import LarryWilliamsVBOStrategy
+from strategies.minervini_stage2_transition_strategy import MinerviniStage2TransitionStrategy
 from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
 from strategies.rsi2_pullback_strategy import RSI2PullbackStrategy
@@ -204,6 +205,24 @@ class StrategyFactory:
             enabled=False,              # 수동 활성화 대기
             force_exit_on_close=False,  # 스윙 포지션 — 오버나잇 허용
             allow_pyramiding=False,     # 1종목 1포지션 invariant
+            scan_when_position_full=True,
+        ))
+
+        # 미너비니 Stage 2 신규 전환 + 20일 신고가 돌파 전략 등록
+        minervini_stage2_strategy = MinerviniStage2TransitionStrategy(
+            stock_query_service=ctx.stock_query_service,
+            minervini_stage_service=getattr(ctx, "minervini_stage_service", None),
+            market_clock=ctx.market_clock,
+            logger=get_strategy_logger('MinerviniStage2Transition'),
+        )
+        scheduler.register(StrategySchedulerConfig(
+            strategy=minervini_stage2_strategy,
+            interval_minutes=5,
+            max_positions=5,
+            order_qty=1,
+            enabled=False,              # 검증 후 수동 활성화
+            force_exit_on_close=False,  # Stage 2 추세를 보유하는 스윙 전략
+            allow_pyramiding=False,
             scan_when_position_full=True,
         ))
 

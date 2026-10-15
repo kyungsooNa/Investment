@@ -28,6 +28,7 @@ from strategies.larry_williams_channel_breakout_strategy import (
     LarryWilliamsChannelBreakoutStrategy,
 )
 from strategies.larry_williams_vbo_strategy import LarryWilliamsVBOStrategy
+from strategies.minervini_stage2_transition_strategy import MinerviniStage2TransitionStrategy
 from strategies.oneil_pocket_pivot_strategy import OneilPocketPivotStrategy
 from strategies.oneil_squeeze_breakout_strategy import OneilSqueezeBreakoutStrategy
 from strategies.rsi2_pullback_strategy import RSI2PullbackStrategy
@@ -90,6 +91,15 @@ def _factory_inverse() -> LiveStrategy:
     )
 
 
+def _factory_minervini_stage2() -> LiveStrategy:
+    return MinerviniStage2TransitionStrategy(
+        stock_query_service=MagicMock(),
+        minervini_stage_service=MagicMock(),
+        market_clock=MagicMock(),
+        logger=MagicMock(),
+    )
+
+
 ACTIVE_STRATEGY_FACTORIES: list[tuple[str, Callable[[], LiveStrategy]]] = [
     ("oneil_pocket_pivot", _factory_pp),
     ("high_tight_flag", _factory_htf),
@@ -99,6 +109,7 @@ ACTIVE_STRATEGY_FACTORIES: list[tuple[str, Callable[[], LiveStrategy]]] = [
     ("larry_williams_channel_breakout", _factory_cb),
     ("larry_williams_vbo", _factory_vbo),
     ("inverse_etf_regime", _factory_inverse),
+    ("minervini_stage2_transition", _factory_minervini_stage2),
 ]
 
 
