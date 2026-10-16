@@ -48,6 +48,7 @@ class MinerviniStage2TransitionStrategy(LiveStrategy):
         self._tm = market_clock
         self._cfg = config or MinerviniStage2TransitionConfig()
         self._logger = logger or logging.getLogger(__name__)
+        self._current_candidate_codes_set: set[str] = set()
 
     @property
     def name(self) -> str:
@@ -58,6 +59,7 @@ class MinerviniStage2TransitionStrategy(LiveStrategy):
         return "minervini_stage2_transition"
 
     async def scan(self) -> List[TradeSignal]:
+        self._current_candidate_codes_set.clear()
         if self._stage_service is None:
             self._logger.warning("Minervini Stage service unavailable; entry scan skipped")
             return []
@@ -75,6 +77,7 @@ class MinerviniStage2TransitionStrategy(LiveStrategy):
         ]
         candidates.sort(key=lambda item: self._number(item.get("rs_rating")), reverse=True)
         candidates = candidates[:self._cfg.max_candidates]
+        self._current_candidate_codes_set = {str(item["code"]) for item in candidates}
 
         prefetch = getattr(self._sqs, "prefetch_prices", None)
         if callable(prefetch):
@@ -104,12 +107,30 @@ class MinerviniStage2TransitionStrategy(LiveStrategy):
         )
         current, trading_value = self._extract_quote(current_response)
         rows = self._ascending_rows(ohlcv_response)
-        if current <= 0 or trading_value < self._cfg.min_trading_value or len(rows) < 200:
+        if current <= 0:
+            self._log_entry_rejected(item, "price_unavailable")
+            return None
+        if trading_value < self._cfg.min_trading_value:
+            self._log_entry_rejected(
+                item,
+                "low_trading_value",
+                trading_value=trading_value,
+                min_trading_value=self._cfg.min_trading_value,
+            )
+            return None
+        if len(rows) < 200:
+            self._log_entry_rejected(
+                item,
+                "insufficient_ohlcv",
+                ohlcv_count=len(rows),
+                min_ohlcv_count=200,
+            )
             return None
 
         closes = [self._price(row, "close", "stck_clpr") for row in rows]
         lows = [self._price(row, "low", "stck_lwpr") for row in rows]
         if any(value <= 0 for value in closes) or any(value <= 0 for value in lows):
+            self._log_entry_rejected(item, "invalid_ohlcv")
             return None
 
         stages = self._stage_service.classify_stage_series(
@@ -118,14 +139,37 @@ class MinerviniStage2TransitionStrategy(LiveStrategy):
             rs_rating=int(self._number(item.get("rs_rating"))),
         )
         if not self._has_recent_stage2_transition(stages):
+            self._log_entry_rejected(
+                item,
+                "no_recent_stage2_transition",
+                transition_lookback_days=self._cfg.transition_lookback_days,
+            )
             return None
 
         recent = rows[-self._cfg.breakout_lookback_days:]
         pivot = max(self._price(row, "high", "stck_hgpr") for row in recent)
-        if pivot <= 0 or current <= pivot:
+        if pivot <= 0:
+            self._log_entry_rejected(item, "invalid_breakout_pivot")
+            return None
+        if current <= pivot:
+            self._log_entry_rejected(
+                item,
+                "below_breakout_pivot",
+                current=current,
+                pivot=pivot,
+                breakout_lookback_days=self._cfg.breakout_lookback_days,
+            )
             return None
         extension_pct = (current / pivot - 1.0) * 100.0
         if extension_pct > self._cfg.max_breakout_extension_pct:
+            self._log_entry_rejected(
+                item,
+                "breakout_over_extended",
+                current=current,
+                pivot=pivot,
+                extension_pct=round(extension_pct, 2),
+                max_extension_pct=self._cfg.max_breakout_extension_pct,
+            )
             return None
 
         stop_price = current * (1.0 + self._cfg.hard_stop_pct / 100.0)
@@ -160,6 +204,18 @@ class MinerviniStage2TransitionStrategy(LiveStrategy):
                 "trading_value",
             ],
         )
+
+    def current_candidate_codes(self) -> List[str]:
+        return sorted(self._current_candidate_codes_set)
+
+    def _log_entry_rejected(self, item: dict, reason: str, **metrics: Any) -> None:
+        self._logger.info({
+            "event": "entry_rejected",
+            "code": str(item.get("code") or ""),
+            "name": str(item.get("name") or item.get("code") or ""),
+            "reason": reason,
+            **metrics,
+        })
 
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
         results = await asyncio.gather(
