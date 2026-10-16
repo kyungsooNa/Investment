@@ -92,12 +92,32 @@ async def test_scan_rejects_stage2_that_did_not_transition_recently():
 
     assert await strategy.scan() == []
 
+    assert strategy.current_candidate_codes() == ["005930"]
+    strategy._logger.info.assert_any_call({
+        "event": "entry_rejected",
+        "code": "005930",
+        "name": "삼성전자",
+        "reason": "no_recent_stage2_transition",
+        "transition_lookback_days": 10,
+    })
+
 
 @pytest.mark.asyncio
 async def test_scan_rejects_breakout_more_than_five_percent_above_pivot():
     strategy, _, _ = _build_strategy(stages=[1] * 255 + [2] * 5, price=127)
 
     assert await strategy.scan() == []
+
+    strategy._logger.info.assert_any_call({
+        "event": "entry_rejected",
+        "code": "005930",
+        "name": "삼성전자",
+        "reason": "breakout_over_extended",
+        "current": 127,
+        "pivot": 120,
+        "extension_pct": pytest.approx(5.83, abs=0.01),
+        "max_extension_pct": 5.0,
+    })
 
 
 @pytest.mark.asyncio
@@ -109,6 +129,27 @@ async def test_scan_rejects_illiquid_or_small_cap_stage2_candidate():
     stage_service.get_stage2_list.return_value.data[0]["market_cap"] = 40_000
     sqs.get_current_price.return_value = _current_price(121, trading_value=29_999_999_999)
     assert await strategy.scan() == []
+    assert strategy.current_candidate_codes() == ["005930"]
+    strategy._logger.info.assert_any_call({
+        "event": "entry_rejected",
+        "code": "005930",
+        "name": "삼성전자",
+        "reason": "low_trading_value",
+        "trading_value": 29_999_999_999,
+        "min_trading_value": 30_000_000_000,
+    })
+
+
+@pytest.mark.asyncio
+async def test_scan_clears_candidate_codes_when_stage2_source_is_empty():
+    strategy, _, stage_service = _build_strategy(stages=[2] * 260, price=121)
+    await strategy.scan()
+    assert strategy.current_candidate_codes() == ["005930"]
+
+    stage_service.get_stage2_list.return_value.data = []
+
+    assert await strategy.scan() == []
+    assert strategy.current_candidate_codes() == []
 
 
 @pytest.mark.asyncio
