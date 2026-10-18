@@ -61,6 +61,16 @@ def test_domestic_home_hosts_domestic_only_market_indices_panel():
     assert "group.kind === 'kis'" in script
 
 
+def test_overseas_stock_hosts_overseas_only_market_indices_panel():
+    template = Path("view/web/templates/overseas_stock.html").read_text(encoding="utf-8")
+    script = _market_indices_js()
+
+    assert 'id="market-indices" data-market-scope="overseas"' in template
+    assert "/static/js/market_indices.js" in template
+    assert "target.dataset.marketScope === 'overseas'" in script
+    assert "group.kind === 'widget'" in script
+
+
 def test_market_indices_js_covers_all_widget_symbols():
     script = _market_indices_js()
 

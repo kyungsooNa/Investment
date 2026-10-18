@@ -125,6 +125,34 @@ test("조회 성공 시 같은 심볼/거래소로 일봉 차트를 그린다", 
   assert(window.__chartCalls[0][1] === "NYSE", "회귀: 선택한 거래소가 차트에 전달되지 않음");
 });
 
+test("종목명을 직접 검색하면 심볼과 거래소를 해석해 현재가를 조회한다", async () => {
+  const window = makeWindow();
+  window.ALL_OVERSEAS_STOCKS = [
+    { s: "AAPL", n: "Apple Inc.", e: "NASD" },
+    { s: "BRK", n: "Berkshire Hathaway", e: "NYSE" },
+  ];
+  const urls = [];
+  window.fetchWithTimeout = async (url) => {
+    urls.push(url);
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return { ok: true, json: async () => quoteResponse() };
+  };
+  window.document.getElementById("overseas-stock-symbol").value = "Apple Inc.";
+
+  await window.searchOverseasStock();
+
+  assert(window.document.getElementById("overseas-stock-symbol").value === "AAPL",
+    "종목명이 심볼로 치환되지 않음");
+  assert(window.document.getElementById("overseas-stock-exchange").value === "NASD",
+    "종목의 거래소가 선택되지 않음");
+  assert(urls.some((url) => url.includes("/api/overseas/stock/AAPL") && url.includes("exchange=NASD")),
+    `회귀: 종목명 문자열을 심볼로 잘못 조회함 (${JSON.stringify(urls)})`);
+  assert(window.document.getElementById("overseas-stock-result").innerHTML.includes("$192.50"),
+    "종목명 검색 후 현재가 정보가 표시되지 않음");
+});
+
 test("심볼이 비어 있으면 브로커를 호출하지 않는다", async () => {
   const window = makeWindow();
   const calls = [];

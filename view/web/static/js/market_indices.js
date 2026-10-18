@@ -446,7 +446,9 @@ async function renderMarketIndices() {
 
     const groups = target.dataset.marketScope === 'domestic'
         ? MARKET_INDEX_GROUPS.filter(group => group.kind === 'kis')
-        : MARKET_INDEX_GROUPS;
+        : target.dataset.marketScope === 'overseas'
+            ? MARKET_INDEX_GROUPS.filter(group => group.kind === 'widget')
+            : MARKET_INDEX_GROUPS;
 
     const sections = await Promise.all(
         groups.map(group => buildMarketIndexGroup(document, group))
