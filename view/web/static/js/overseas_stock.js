@@ -57,6 +57,40 @@ function _closeOverseasStockAutocomplete() {
     }
 }
 
+/** 심볼뿐 아니라 종목명 입력도 목록에서 심볼/거래소로 해석한다. */
+function _resolveOverseasStockInput(raw, exchange) {
+    const query = String(raw || '').trim();
+    const stocks = window.ALL_OVERSEAS_STOCKS;
+    if (!Array.isArray(stocks) || stocks.length === 0) {
+        return { symbol: query.toUpperCase(), exchange };
+    }
+
+    const upper = query.toUpperCase();
+    const lower = query.toLowerCase();
+    const exactSymbol = stocks.find(stock => String(stock?.s || '').toUpperCase() === upper);
+    if (exactSymbol) {
+        return {
+            symbol: String(exactSymbol.s).toUpperCase(),
+            exchange: String(exactSymbol.e || exchange).toUpperCase(),
+        };
+    }
+
+    const exactName = stocks.find(stock => String(stock?.n || '').toLowerCase() === lower);
+    const matches = exactName
+        ? [exactName]
+        : stocks.filter(stock => String(stock?.n || '').toLowerCase().includes(lower));
+    if (matches.length === 1) {
+        return {
+            symbol: String(matches[0].s || '').toUpperCase(),
+            exchange: String(matches[0].e || exchange).toUpperCase(),
+        };
+    }
+    if (matches.length > 1) {
+        return { error: `'${query}'에 해당하는 종목이 ${matches.length}개 있습니다. 자동완성에서 선택해주세요.` };
+    }
+    return { symbol: upper, exchange };
+}
+
 function _renderOverseasStockCard(resultDiv, data, symbol, exchange) {
     const raw = (data && typeof data.raw === 'object' && data.raw) ? data.raw : {};
     const rate = Number(data.change_rate);
@@ -98,19 +132,27 @@ function _renderOverseasStockCard(resultDiv, data, symbol, exchange) {
 }
 
 async function searchOverseasStock(symbolOverride, exchangeOverride) {
-    const symbol = String(symbolOverride || _overseasStockSymbolInput()).trim().toUpperCase();
-    const exchange = exchangeOverride || _overseasStockExchange();
+    const raw = String(symbolOverride || _overseasStockSymbolInput()).trim();
     const resultDiv = document.getElementById('overseas-stock-result');
     const chartCard = document.getElementById('stock-chart-card');
 
-    if (!symbol) {
+    if (!raw) {
         alert('심볼을 입력하세요.');
         return;
     }
     _closeOverseasStockAutocomplete();
 
+    const resolved = _resolveOverseasStockInput(raw, exchangeOverride || _overseasStockExchange());
+    if (resolved.error) {
+        if (resultDiv) showError(resultDiv, resolved.error);
+        return;
+    }
+    const symbol = resolved.symbol;
+    const exchange = resolved.exchange;
+
     const input = document.getElementById('overseas-stock-symbol');
     if (input) input.value = symbol;
+    _applyOverseasStockExchange(exchange);
     if (chartCard) chartCard.style.display = 'none';
     if (!resultDiv) return;
     showLoading(resultDiv, '종목 정보 조회 중...');

@@ -91,6 +91,8 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert 'id="overseas-stock-exchange"' in response.text
             assert 'id="overseas-stock-result"' in response.text
             assert 'id="stock-chart-card"' in response.text
+            assert 'id="market-indices" data-market-scope="overseas"' in response.text
+            assert "/static/js/market_indices.js" in response.text
             assert "/static/js/overseas_stock.js" in response.text
             # 한국장 전용 입력/조회 경로가 섞이면 안 된다.
             assert 'id="stock-code-input"' not in response.text
