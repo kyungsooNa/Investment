@@ -22,6 +22,7 @@ class MinerviniStage2TransitionConfig:
     min_rs_rating: int = 80
     min_market_cap_100m: int = 30_000
     min_trading_value: int = 30_000_000_000
+    liquidity_lookback_days: int = 20
     max_candidates: int = 30
     transition_lookback_days: int = 10
     breakout_lookback_days: int = 20
@@ -110,20 +111,22 @@ class MinerviniStage2TransitionStrategy(LiveStrategy):
         if current <= 0:
             self._log_entry_rejected(item, "price_unavailable")
             return None
-        if trading_value < self._cfg.min_trading_value:
-            self._log_entry_rejected(
-                item,
-                "low_trading_value",
-                trading_value=trading_value,
-                min_trading_value=self._cfg.min_trading_value,
-            )
-            return None
         if len(rows) < 200:
             self._log_entry_rejected(
                 item,
                 "insufficient_ohlcv",
                 ohlcv_count=len(rows),
                 min_ohlcv_count=200,
+            )
+            return None
+        average_daily_trading_value = self._average_daily_trading_value(rows)
+        if max(trading_value, average_daily_trading_value) < self._cfg.min_trading_value:
+            self._log_entry_rejected(
+                item,
+                "low_trading_value",
+                trading_value=trading_value,
+                average_daily_trading_value=average_daily_trading_value,
+                min_trading_value=self._cfg.min_trading_value,
             )
             return None
 
@@ -216,6 +219,15 @@ class MinerviniStage2TransitionStrategy(LiveStrategy):
             "reason": reason,
             **metrics,
         })
+
+    def _average_daily_trading_value(self, rows: list[dict]) -> float:
+        values = []
+        for row in rows[-self._cfg.liquidity_lookback_days:]:
+            close = self._price(row, "close", "stck_clpr")
+            volume = self._number(row.get("volume") or row.get("acml_vol"))
+            if close > 0 and volume > 0:
+                values.append(close * volume)
+        return sum(values) / len(values) if values else 0.0
 
     async def check_exits(self, holdings: List[dict]) -> List[TradeSignal]:
         results = await asyncio.gather(

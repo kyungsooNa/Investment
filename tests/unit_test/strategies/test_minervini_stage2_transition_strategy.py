@@ -136,8 +136,27 @@ async def test_scan_rejects_illiquid_or_small_cap_stage2_candidate():
         "name": "삼성전자",
         "reason": "low_trading_value",
         "trading_value": 29_999_999_999,
+        "average_daily_trading_value": pytest.approx(11_495_000),
         "min_trading_value": 30_000_000_000,
     })
+
+
+@pytest.mark.asyncio
+async def test_scan_uses_recent_average_trading_value_before_intraday_value_accumulates():
+    rows = _daily_rows()
+    for row in rows[-20:]:
+        row["volume"] = 300_000_000
+    strategy, sqs, _ = _build_strategy(
+        stages=[1] * 255 + [2] * 5,
+        price=121,
+        rows=rows,
+    )
+    sqs.get_current_price.return_value = _current_price(121, trading_value=1_000_000_000)
+
+    signals = await strategy.scan()
+
+    assert len(signals) == 1
+    assert signals[0].strategy_id == "minervini_stage2_transition"
 
 
 @pytest.mark.asyncio
@@ -217,6 +236,7 @@ def test_config_defaults_keep_stage2_transition_selective():
     assert config.max_breakout_extension_pct == 5.0
     assert config.min_market_cap_100m == 30_000
     assert config.min_trading_value == 30_000_000_000
+    assert config.liquidity_lookback_days == 20
     assert config.take_profit_pct == 4.0
     assert config.hard_stop_pct == -5.0
     assert config.max_holding_days == 5

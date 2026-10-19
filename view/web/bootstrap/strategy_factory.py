@@ -217,7 +217,7 @@ class StrategyFactory:
         )
         scheduler.register(StrategySchedulerConfig(
             strategy=minervini_stage2_strategy,
-            interval_minutes=5,
+            interval_minutes=10,
             max_positions=5,
             order_qty=1,
             enabled=False,              # 검증 후 수동 활성화
