@@ -419,6 +419,39 @@ class TelegramReporter:
         return await self._send_message(format_national_trade_trend_report_html(release))
 
     @_serialized_report_send
+    async def send_daily_investor_flow_report(
+        self,
+        flows: Dict[str, Dict[str, int]],
+        report_date: str,
+    ) -> bool:
+        """코스피·코스닥의 개인/외국인/기관 당일 순매수를 억원 단위로 전송한다."""
+        def signed(value) -> str:
+            try:
+                return f"{int(value):+,}"
+            except (TypeError, ValueError):
+                return "-"
+
+        lines = [
+            f"📊 <b>당일 투자자 수급 ({html.escape(report_date, quote=False)})</b>",
+            "<pre>",
+            "시장       개인      외국인       기관",
+            "-------------------------------------",
+        ]
+        for key, label in (("kospi", "코스피"), ("kosdaq", "코스닥")):
+            values = flows.get(key) or {}
+            lines.append(
+                f"{label:<5} "
+                f"{signed(values.get('individual')):>9} "
+                f"{signed(values.get('foreign')):>9} "
+                f"{signed(values.get('institution')):>9}"
+            )
+        lines.extend([
+            "</pre>",
+            "단위: 억원 · + 순매수 / - 순매도",
+        ])
+        return await self._send_message("\n".join(lines))
+
+    @_serialized_report_send
     async def send_ranking_report(self, rankings: Dict[str, List[Dict]], report_date: str):
         """
         다양한 랭킹 정보를 하나의 리포트로 묶어 텔레그램에 전송합니다.

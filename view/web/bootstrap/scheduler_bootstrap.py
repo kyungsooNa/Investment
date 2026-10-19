@@ -168,6 +168,11 @@ class SchedulerBootstrap:
         ctx = self._ctx
         self._register(ctx.ranking_task, TaskPriority.LOW, catchup_latest=True)
         self._register(
+            self._optional_task("daily_investor_flow_report_task"),
+            TaskPriority.LOW,
+            catchup_latest=True,
+        )
+        self._register(
             self._optional_task("ytd_ranking_report_task"),
             TaskPriority.LOW,
             catchup_latest=True,

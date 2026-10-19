@@ -646,6 +646,30 @@ async def test_send_ranking_report_combined_ranking(telegram_reporter):
 
 
 @pytest.mark.asyncio
+async def test_send_daily_investor_flow_report(telegram_reporter):
+    telegram_reporter._send_message = AsyncMock(return_value=True)
+
+    sent = await telegram_reporter.send_daily_investor_flow_report(
+        {
+            "kospi": {"individual": -12393, "foreign": 947, "institution": 10378},
+            "kosdaq": {"individual": 783, "foreign": -1618, "institution": 68},
+        },
+        "20261019",
+    )
+
+    assert sent is True
+    message = telegram_reporter._send_message.await_args.args[0]
+    assert "당일 투자자 수급" in message
+    assert "코스피" in message and "코스닥" in message
+    assert "-12,393" in message
+    assert "+947" in message
+    assert "+10,378" in message
+    assert "-1,618" in message
+    assert "단위: 억원" in message
+    assert "+ 순매수 / - 순매도" in message
+
+
+@pytest.mark.asyncio
 async def test_send_ytd_ranking_report(telegram_reporter):
     telegram_reporter._send_message = AsyncMock(return_value=True)
     rows = [{
