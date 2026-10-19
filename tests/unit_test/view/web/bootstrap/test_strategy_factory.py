@@ -118,6 +118,7 @@ def test_strategy_factory_registers_minervini_stage2_transition_disabled(patched
     configs = [call.args[0] for call in ctx.scheduler.register.call_args_list]
     cfg = next(item for item in configs if item.strategy is strategy)
     assert cfg.enabled is False
+    assert cfg.interval_minutes == 10
     assert cfg.max_positions == 5
     assert cfg.force_exit_on_close is False
 
