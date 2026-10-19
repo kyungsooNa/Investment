@@ -210,6 +210,40 @@ async def test_start_all_with_worker_pool_and_time_dispatcher():
 
 
 @pytest.mark.asyncio
+async def test_time_dispatcher_starts_after_task_handlers_are_ready(monkeypatch):
+    """시작 직후 catch-up 티켓이 핸들러 등록 전에 소비되면 유실된다."""
+    events = []
+    worker_pool = MagicMock()
+    worker_pool.start = AsyncMock(side_effect=lambda: events.append("worker"))
+
+    dispatcher = MagicMock()
+    dispatcher.run = AsyncMock()
+    task = _make_mock_task("ticket_task", TaskState.IDLE)
+
+    async def start_task():
+        events.append("handler_ready")
+
+    task.start = AsyncMock(side_effect=start_task)
+
+    def capture_create_task(coro, *, name=None):
+        events.append("dispatcher_scheduled")
+        coro.close()
+        return MagicMock()
+
+    monkeypatch.setattr(asyncio, "create_task", capture_create_task)
+    scheduler = BackgroundScheduler(
+        logger=MagicMock(),
+        worker_pool=worker_pool,
+        time_dispatcher=dispatcher,
+    )
+    scheduler.register(task)
+
+    await scheduler.start_all()
+
+    assert events.index("handler_ready") < events.index("dispatcher_scheduled")
+
+
+@pytest.mark.asyncio
 async def test_shutdown_with_worker_pool_and_time_dispatcher():
     """shutdown 시 time_dispatcher 중지 → 태스크 종료 → worker_pool.shutdown 순서."""
     mock_worker_pool = MagicMock()

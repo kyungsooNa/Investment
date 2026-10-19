@@ -80,7 +80,8 @@ class BackgroundScheduler:
     async def start_all(self) -> None:
         """등록된 모든 태스크를 시작한다.
 
-        Ticket-driven 인프라(WorkerPool, TimeDispatcher)가 주입된 경우 먼저 시작한다.
+        WorkerPool을 먼저 시작하고 모든 태스크 핸들러가 준비된 뒤 TimeDispatcher를 시작한다.
+        시작 직후 발행되는 catch-up 티켓이 미등록 핸들러로 소비되는 것을 막기 위함이다.
         """
         lock = self._get_start_lock()
         if self._starting or lock.locked():
@@ -102,17 +103,10 @@ class BackgroundScheduler:
         t_start = self._pm.start_timer()
         self._logger.info(f"[BackgroundScheduler] 전체 시작: {len(self._tasks)}개 태스크")
 
-        # Ticket-driven 인프라 시작
+        # WorkerPool을 먼저 시작하되 TimeDispatcher는 태스크 핸들러 등록 뒤 시작한다.
         if self._worker_pool is not None:
             await self._worker_pool.start()
             self._logger.info("[BackgroundScheduler] WorkerPool 시작 완료")
-        for idx, dispatcher in enumerate(self._time_dispatchers):
-            t = asyncio.create_task(dispatcher.run(), name=f"time-dispatcher-{idx}")
-            self._infra_tasks.append(t)
-        if self._time_dispatchers:
-            self._logger.info(
-                f"[BackgroundScheduler] TimeDispatcher {len(self._time_dispatchers)}개 시작 완료"
-            )
         if self._api_budget_limiter is not None and self._pm.enabled:
             t = asyncio.create_task(self._budget_snapshot_loop(), name="budget-snapshot-logger")
             self._infra_tasks.append(t)
@@ -131,6 +125,14 @@ class BackgroundScheduler:
                     self._logger.info(f"[BackgroundScheduler] '{name}' 시작 완료")
                 except Exception as e:
                     self._logger.error(f"[BackgroundScheduler] '{name}' 시작 실패: {e}", exc_info=True)
+
+        for idx, dispatcher in enumerate(self._time_dispatchers):
+            t = asyncio.create_task(dispatcher.run(), name=f"time-dispatcher-{idx}")
+            self._infra_tasks.append(t)
+        if self._time_dispatchers:
+            self._logger.info(
+                f"[BackgroundScheduler] TimeDispatcher {len(self._time_dispatchers)}개 시작 완료"
+            )
         self._pm.log_timer("BackgroundScheduler.start_all", t_start)
 
     async def _budget_snapshot_loop(self) -> None:
