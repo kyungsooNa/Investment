@@ -45,6 +45,7 @@ CONTRACTED_ALERT_SENDERS = {
 # 정기 리포트 — 스케줄 1회 발송이라 사건 단위 중복 억제 계약이 없다.
 # 여기에 넣는다는 것은 "이 발신은 dedup 키가 필요 없다" 는 판단을 남기는 것이다.
 PERIODIC_REPORT_SENDERS = {
+    "send_daily_investor_flow_report",
     "send_ranking_report",
     "send_period_investor_ranking_report",
     "send_ytd_ranking_report",

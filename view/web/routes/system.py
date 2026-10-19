@@ -29,6 +29,7 @@ _SCHEDULE_TYPES = {
     "strategy_scheduler":  "intraday",
     "intraday_theme_leader_alert": "intraday",
     "ranking_refresh":     "after_market",
+    "daily_investor_flow_report": "after_market",
     "daily_price_collector": "after_market",
     "minervini_update":     "after_market",
     "ohlcv_update":        "after_market",
