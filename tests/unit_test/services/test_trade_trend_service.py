@@ -1111,6 +1111,52 @@ async def test_national_web_client_calculates_previous_month_changes_for_same_ph
 
 
 @pytest.mark.asyncio
+async def test_national_web_client_prioritizes_previous_month_same_phase_within_detail_limit():
+    list_html = """
+    <a href="/oct20">2026년 10월 1일 ~ 10월 20일 수출입 현황 [잠정치]</a>
+    <a href="/sep-final">2026년 9월 월간 수출입 현황 [확정치]</a>
+    <a href="/oct10">2026년 10월 1일 ~ 10월 10일 수출입 현황 [잠정치]</a>
+    <a href="/sep-monthly">2026년 9월 수출입 현황 [잠정치]</a>
+    <a href="/sep20">2026년 9월 1일 ~ 9월 20일 수출입 현황 [잠정치]</a>
+    """
+    details = {
+        "/oct20": """
+        수출은 616.12억 달러로 전년동기대비 105.4% 증가, 수입은 471.17억 달러로
+        42.8% 증가, 무역수지는 144.95억 달러 흑자.
+        ※ 조업일수 [(’25) 10.5일, (’26) 13.0일]
+        """,
+        "/sep20": """
+        수출은 714.09억 달러로 전년동기대비 78.3% 증가, 수입은 484.43억 달러로
+        26.7% 증가, 무역수지는 229.66억 달러 흑자.
+        ※ 조업일수 [(’25) 16.5일, (’26) 15.5일]
+        """,
+        "/sep-final": "수출은 700억 달러, 수입은 500억 달러, 무역수지는 200억 달러 흑자",
+        "/oct10": "수출은 261억 달러, 수입은 220억 달러, 무역수지는 41억 달러 흑자",
+        "/sep-monthly": "수출은 701억 달러, 수입은 501억 달러, 무역수지는 200억 달러 흑자",
+    }
+    http_client = DummyHttpClient()
+
+    async def get_response(url, **_kwargs):
+        if "selectNttList" in url:
+            return DummyTextResponse(list_html)
+        path = "/" + url.rsplit("/", 1)[-1]
+        return DummyTextResponse(details[path])
+
+    http_client.get = AsyncMock(side_effect=get_response)
+    client = NationalTradeTrendWebClient(
+        http_client=http_client,
+        list_urls=["https://www.customs.go.kr/kcs/na/ntt/selectNttList.do?mi=2891&bbsId=1362"],
+        max_detail_pages=4,
+    )
+
+    releases = await client.fetch_recent_releases()
+
+    current = releases[0]
+    assert current.export_daily_avg_mom_pct == pytest.approx(2.87, abs=0.01)
+    assert current.import_daily_avg_mom_pct == pytest.approx(15.97, abs=0.01)
+
+
+@pytest.mark.asyncio
 async def test_national_web_client_calculates_semiconductor_daily_changes():
     list_html = """
     <a href="/now">2026년 8월 1일 ~ 8월 10일 수출입 현황 [잠정치]</a>

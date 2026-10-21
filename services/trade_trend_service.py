@@ -428,7 +428,11 @@ class NationalTradeTrendWebClient:
 
         seen: set[str] = set()
         detail_limit = max_detail_pages or self._max_detail_pages
-        for title, url in _interleave(detail_url_groups):
+        detail_links = _prioritize_previous_month_same_phase(
+            _interleave(detail_url_groups),
+            detail_limit,
+        )
+        for title, url in detail_links:
             if url in seen:
                 continue
             seen.add(url)
@@ -1205,6 +1209,41 @@ def _interleave(groups: list[list[tuple[str, str]]]) -> list[tuple[str, str]]:
             if index < len(group):
                 items.append(group[index])
     return items
+
+
+def _prioritize_previous_month_same_phase(
+    links: list[tuple[str, str]],
+    detail_limit: int,
+) -> list[tuple[str, str]]:
+    """최신 발표의 전월 일평균 비교에 필요한 같은 구간 자료를 먼저 조회한다."""
+    if len(links) < 2 or detail_limit < 2:
+        return links
+
+    latest_title = _clean_text(links[0][0])
+    latest_phase = _phase_from_title(latest_title)
+    previous_key = _previous_month_key(
+        _period_from_title(latest_title, latest_phase),
+        latest_phase,
+    )
+    if previous_key is None:
+        return links
+
+    for index, (title, _url) in enumerate(links[1:], start=1):
+        cleaned_title = _clean_text(title)
+        phase = _phase_from_title(cleaned_title)
+        year_month = _period_year_month(_period_from_title(cleaned_title, phase))
+        if year_month is None or (phase, *year_month) != previous_key:
+            continue
+        if index < detail_limit:
+            return links
+        insert_at = detail_limit - 1
+        return [
+            *links[:insert_at],
+            links[index],
+            *links[insert_at:index],
+            *links[index + 1 :],
+        ]
+    return links
 
 
 _LIST_PAGE_PARAM_BY_HOST = {"www.customs.go.kr": "currPage"}
