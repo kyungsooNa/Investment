@@ -176,7 +176,11 @@ test("미장·원자재·가상자산·채권 카드는 TradingView 차트 포�
     assert(config.symbols.flat().some(item => String(item).includes(card.dataset.key)),
       `${card.dataset.key} 위젯 설정에 심볼이 없음: ${JSON.stringify(config.symbols)}`);
     assert(config.chartOnly === false, "위젯은 값과 그래프를 함께 보여야 함");
-    assert(config.hideDateRanges === true, "좁은 카드에서는 위젯 기간 버튼을 숨겨야 함");
+    // 180px 에서는 헤더(값·등락)가 높이를 다 먹어 그래프가 한 줄로 찌그러졌다.
+    assert(config.height >= 300, `위젯 높이가 그래프를 그리기에 부족함: ${config.height}`);
+    assert(config.hideDateRanges === false, "국장 카드처럼 기간 버튼을 보여야 함");
+    assert(config.scalePosition === "no", "좁은 카드에서는 y축 눈금을 빼 그래프 폭을 확보해야 함");
+    assert(config.hideSymbolLogo === true, "카드 제목과 겹치는 심볼 로고는 숨겨야 함");
     assert(config.colorTheme === "light", "위젯 테마는 앱과 동일한 light 여야 함");
   }
 });
