@@ -191,14 +191,18 @@ def test_market_index_card_body_height_is_within_budget():
     )
 
 
-def test_widget_height_matches_kis_card_body_height():
-    """세 그룹이 같은 그리드를 쓰므로 한쪽만 바뀌면 행이 들쭉날쭉해진다 (#916 부류)."""
+def test_widget_height_leaves_room_for_graph_below_header():
+    """위젯 height 는 헤더(값·등락)·기간 버튼까지 포함한다.
+
+    국장 본문 높이(180px)에 맞추면 헤더가 높이를 다 먹어 그래프가 한 줄로 찌그러졌다.
+    그룹마다 그리드가 따로라 국장 카드와 높이가 달라도 행이 어긋나지 않는다.
+    """
     css = Path("view/web/static/css/style.css").read_text(encoding="utf-8")
 
     match = re.search(r"height:\s*(\d+),", _market_indices_js())
     assert match, "위젯 설정에 height 가 없음"
-    assert int(match.group(1)) == _body_height_px(css), (
-        "위젯 height 와 .market-index-body height 가 어긋나면 카드 높이가 달라진다"
+    assert int(match.group(1)) >= _body_height_px(css) + 120, (
+        "위젯 height 가 국장 본문 높이 수준이면 그래프 영역이 남지 않는다"
     )
 
 

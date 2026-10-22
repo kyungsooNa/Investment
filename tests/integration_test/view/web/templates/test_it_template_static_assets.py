@@ -162,6 +162,14 @@ def test_domestic_market_navigation_opens_home_without_stock_menu(
     assert 'id="market-indices" data-market-scope="domestic"' in page.text
 
 
+def test_overseas_market_navigation_names_main_page_home(web_client_with_fake_ctx):
+    page = web_client_with_fake_ctx.get("/overseas-stock")
+
+    assert page.status_code == 200
+    assert 'href="/overseas-stock" class="active">홈</a>' in page.text
+    assert '>현재가</a>' not in page.text
+
+
 def test_navigation_uses_left_sidebar_layout(web_client_with_fake_ctx):
     page = web_client_with_fake_ctx.get("/stock")
 
