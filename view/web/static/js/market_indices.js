@@ -6,11 +6,15 @@
 //   - KIS Open API 가 SOX/VIX/달러인덱스/금/유가 시세를 제공하지 않는다.
 //   - 거래소 실지수(SP:SPX, NASDAQ:NDX, CBOE:VIX ...)도 임베드가 차단되므로
 //     실제로 시세와 그래프가 그려지는 CFD/ETF 심볼만 쓴다.
+//
+// scope 는 그룹을 그릴 화면(#market-indices 의 data-market-scope)이다.
+//   domestic=한국장 홈, overseas=미국장 홈, macro=공통 홈(두 시장 모두에 영향을 주는 글로벌 매크로).
 
 const MARKET_INDEX_GROUPS = [
     {
         title: '국장',
         kind: 'kis',
+        scope: 'domestic',
         entries: [
             { label: '코스피', code: '0001' },
             { label: '코스닥', code: '1001' },
@@ -19,17 +23,18 @@ const MARKET_INDEX_GROUPS = [
     {
         title: '미장',
         kind: 'widget',
+        scope: 'overseas',
         entries: [
             { label: '나스닥100', symbol: 'CAPITALCOM:US100' },
             { label: 'S&P500', symbol: 'CAPITALCOM:US500' },
             { label: '반도체 ETF (SOX 추종)', symbol: 'NASDAQ:SOXX' },
             { label: 'VIX 변동성', symbol: 'CAPITALCOM:VIX' },
-            { label: '달러인덱스', symbol: 'CAPITALCOM:DXY' },
         ],
     },
     {
         title: '원자재',
         kind: 'widget',
+        scope: 'macro',
         entries: [
             { label: '금', symbol: 'TVC:GOLD' },
             { label: 'WTI 유가', symbol: 'TVC:USOIL' },
@@ -39,6 +44,7 @@ const MARKET_INDEX_GROUPS = [
     {
         title: '가상자산',
         kind: 'widget',
+        scope: 'macro',
         entries: [
             { label: '비트코인', symbol: 'BITSTAMP:BTCUSD' },
             { label: '이더리움', symbol: 'BITSTAMP:ETHUSD' },
@@ -49,9 +55,12 @@ const MARKET_INDEX_GROUPS = [
         // symbol-overview·advanced-chart 세 위젯 타입 모두에서 차단되는 것을 2026-08-26 에
         // 재실측했고, 연준 공개데이터인 FRED 는 열린다(DGS10 4.7 · DGS2 4.24 렌더 확인).
         // FRED 는 일 1회 갱신이라 dateRange '1D' 로는 그릴 점이 없어 12M 을 준다.
-        title: '채권',
+        // 달러인덱스는 미국 주식 지표가 아니라 금리와 같이 보는 매크로 지표라 여기에 둔다.
+        title: '달러·채권',
         kind: 'widget',
+        scope: 'macro',
         entries: [
+            { label: '달러인덱스', symbol: 'CAPITALCOM:DXY' },
             { label: '미국채 10년 금리', symbol: 'FRED:DGS10', dateRange: '12M' },
             { label: '미국채 2년 금리', symbol: 'FRED:DGS2', dateRange: '12M' },
         ],
@@ -589,11 +598,10 @@ async function renderMarketIndices() {
     const target = document.getElementById('market-indices');
     if (!target) return;
 
-    const groups = target.dataset.marketScope === 'domestic'
-        ? MARKET_INDEX_GROUPS.filter(group => group.kind === 'kis')
-        : target.dataset.marketScope === 'overseas'
-            ? MARKET_INDEX_GROUPS.filter(group => group.kind === 'widget')
-            : MARKET_INDEX_GROUPS;
+    const scope = target.dataset.marketScope;
+    const groups = scope
+        ? MARKET_INDEX_GROUPS.filter(group => group.scope === scope)
+        : MARKET_INDEX_GROUPS;
 
     const sections = await Promise.all(
         groups.map(group => buildMarketIndexGroup(document, group))

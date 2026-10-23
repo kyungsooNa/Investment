@@ -35,7 +35,7 @@ BLOCKED_WIDGET_SYMBOLS = [
     "TVC:US02Y",
 ]
 
-EXPECTED_GROUP_TITLES = ["국장", "미장", "원자재", "가상자산", "채권"]
+EXPECTED_GROUP_TITLES = ["국장", "미장", "원자재", "가상자산", "달러·채권"]
 
 
 def _market_indices_js() -> str:
@@ -45,10 +45,10 @@ def _market_indices_js() -> str:
 def test_home_template_hosts_market_indices_panel():
     template = Path("view/web/templates/index.html").read_text(encoding="utf-8")
 
-    assert 'id="market-indices"' in template
+    # 공통 홈은 한국장/미국장 화면과 겹치지 않게 글로벌 매크로(원자재·가상자산·달러·채권)만 보여준다.
+    assert 'id="market-indices" data-market-scope="macro"' in template
+    assert "글로벌 매크로" in template
     assert "/static/js/market_indices.js" in template
-    # 국장 스파크라인은 Chart.js 를 쓴다.
-    assert "chart.js" in template
 
 
 def test_domestic_home_hosts_domestic_only_market_indices_panel():
@@ -58,7 +58,6 @@ def test_domestic_home_hosts_domestic_only_market_indices_panel():
     assert 'id="market-indices" data-market-scope="domestic"' in template
     assert "/static/js/market_indices.js" in template
     assert "target.dataset.marketScope" in script
-    assert "group.kind === 'kis'" in script
 
 
 def test_overseas_stock_hosts_overseas_only_market_indices_panel():
@@ -67,8 +66,7 @@ def test_overseas_stock_hosts_overseas_only_market_indices_panel():
 
     assert 'id="market-indices" data-market-scope="overseas"' in template
     assert "/static/js/market_indices.js" in template
-    assert "target.dataset.marketScope === 'overseas'" in script
-    assert "group.kind === 'widget'" in script
+    assert "target.dataset.marketScope" in script
 
 
 def test_market_indices_js_covers_all_widget_symbols():
