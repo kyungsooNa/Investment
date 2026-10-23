@@ -699,4 +699,104 @@ test("기간을 바꿔도 수급은 다시 조회하지 않는다", async () => 
   assert(flowOf(window), "기간 전환이 수급 영역을 지움");
 });
 
+function flowHistoryPayload(overrides) {
+  return Object.assign({
+    code: "0001",
+    date: "20261023",
+    points: [
+      { time: "0935", individual: 598, foreign: -3888, institution: 3504 },
+      { time: "0940", individual: 610, foreign: -3900, institution: 3480 },
+    ],
+  }, overrides || {});
+}
+
+function flowHistoryFetch(requested, history) {
+  return async (url) => {
+    requested.push(url);
+    if (url.includes("/flow/history")) return success(history || flowHistoryPayload());
+    return success(url.includes("/flow") ? flowPayload() : minutePayload());
+  };
+}
+
+function flowChartsOf(window) {
+  return window.__charts.filter(chart => chart.config.data.datasets.length === 3);
+}
+
+test("국장 카드의 수급 차트 버튼은 시간별 개인·외국인·기관 순매수를 3선 차트로 그린다", async () => {
+  const requested = [];
+  const window = await makeWindow(flowHistoryFetch(requested));
+  await window.renderMarketIndices();
+  const kospi = window.document.querySelector('.market-index-card[data-key="0001"]');
+  const button = kospi.querySelector(".market-index-flowchart-toggle");
+  assert(button, "수급 차트 버튼이 없음");
+  assert(!requested.some(u => u.includes("/flow/history")), "버튼을 누르기 전에는 시간별 수급을 조회하지 않아야 함");
+
+  button.click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert(requested.some(u => u.includes("/api/market-index/0001/flow/history")),
+    `시간별 수급 API 를 호출하지 않음 (실제 ${requested})`);
+  const charts = flowChartsOf(window);
+  assert(charts.length === 1, `수급 차트가 1개 그려져야 함 (실제 ${charts.length})`);
+  const { data } = charts[0].config;
+  assert(JSON.stringify(data.labels) === JSON.stringify(["09:35", "09:40"]), `x축 시각이 다름: ${data.labels}`);
+  assert(JSON.stringify(data.datasets.map(d => d.label)) === JSON.stringify(["개인", "외국인", "기관"]),
+    `범례가 다름: ${data.datasets.map(d => d.label)}`);
+  assert(JSON.stringify(data.datasets[1].data) === JSON.stringify([-3888, -3900]),
+    `외국인 순매수 시계열이 다름: ${data.datasets[1].data}`);
+  assert(button.getAttribute("aria-expanded") === "true", "열린 상태가 aria-expanded 에 반영되지 않음");
+  // 수급 영역은 버튼보다 위에 그대로 남는다.
+  assert(kospi.querySelector(".market-index-flow"), "차트를 열면서 수급 요약이 사라짐");
+});
+
+test("수급 차트 버튼을 다시 누르면 차트를 닫고 파기한다", async () => {
+  const requested = [];
+  const window = await makeWindow(flowHistoryFetch(requested));
+  await window.renderMarketIndices();
+  const kospi = window.document.querySelector('.market-index-card[data-key="0001"]');
+
+  await window.toggleMarketIndexFlowChart(kospi, "0001");
+  await window.toggleMarketIndexFlowChart(kospi, "0001");
+
+  const [chart] = flowChartsOf(window);
+  assert(chart && chart.destroyed, "닫을 때 차트를 파기하지 않음");
+  assert(kospi.querySelector(".market-index-flowchart-panel").hidden, "닫았는데 차트 영역이 보임");
+  assert(kospi.querySelector(".market-index-flowchart-toggle").getAttribute("aria-expanded") === "false",
+    "닫힌 상태가 aria-expanded 에 반영되지 않음");
+});
+
+test("수집된 시간별 수급이 없으면 차트 대신 안내를 보여준다", async () => {
+  const requested = [];
+  const window = await makeWindow(flowHistoryFetch(requested, flowHistoryPayload({ points: [] })));
+  await window.renderMarketIndices();
+  const kospi = window.document.querySelector('.market-index-card[data-key="0001"]');
+
+  await window.toggleMarketIndexFlowChart(kospi, "0001");
+
+  assert(flowChartsOf(window).length === 0, "기록이 없는데 차트를 그림");
+  const panel = kospi.querySelector(".market-index-flowchart-panel");
+  assert(panel.textContent.includes("수급 기록이 없습니다"), `안내 문구가 없음: ${panel.textContent}`);
+});
+
+test("열려 있는 수급 차트는 5분 자동 갱신 때 다시 그린다", async () => {
+  const requested = [];
+  const window = await makeWindow(flowHistoryFetch(requested));
+  let refreshTick = null;
+  window.setInterval = (callback) => { refreshTick = callback; return 7; };
+  Object.defineProperty(window.document, "hidden", { configurable: true, value: false });
+  await window.initMarketIndices();
+  const kospi = window.document.querySelector('.market-index-card[data-key="0001"]');
+  await window.toggleMarketIndexFlowChart(kospi, "0001");
+  requested.length = 0;
+
+  await refreshTick();
+
+  assert(requested.filter(u => u.includes("/0001/flow/history")).length === 1,
+    `열린 코스피 수급 차트를 갱신하지 않음 (실제 ${requested})`);
+  assert(!requested.some(u => u.includes("/1001/flow/history")), "닫힌 코스닥 수급 차트까지 조회함");
+  const charts = flowChartsOf(window);
+  assert(charts.length === 2 && charts[0].destroyed && !charts[1].destroyed, "갱신 때 이전 차트를 교체하지 않음");
+  assert(kospi.querySelectorAll(".market-index-flowchart").length === 1, "갱신이 수급 차트 영역을 중복 생성함");
+});
+
 await run();

@@ -77,6 +77,7 @@ from task.background.intraday.market_index_threshold_alert_task import MarketInd
 from task.background.intraday.market_timing_daily_update_task import MarketTimingDailyUpdateTask
 from view.web.bootstrap.runtime_mode import RuntimeMode
 from view.web.bootstrap.backtest_task_bootstrap import BacktestTaskBootstrap
+from view.web.bootstrap.index_flow_bootstrap import build_index_flow
 from view.web.bootstrap.repository_bootstrap import RepositoryBootstrap
 from view.web.bootstrap.market_data_bootstrap import MarketDataBootstrap
 from view.web.bootstrap.query_bootstrap import QueryBootstrap
@@ -884,6 +885,7 @@ class ServiceContainer:
                 and index_alert_enabled
                 and ctx.market_status_alert_service is not None
             ) else None
+            build_index_flow(ctx, needs_trading=needs_trading)
             ctx.market_timing_daily_update_task = MarketTimingDailyUpdateTask(
                 universe_service=ctx.oneil_universe_service,
                 market_clock=ctx.market_clock,

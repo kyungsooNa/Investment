@@ -185,6 +185,8 @@ class WebAppContext:
         self.notification_service: NotificationService = None
         self.market_status_alert_service = None
         self.market_index_threshold_alert_task = None
+        self.index_flow_history_service = None
+        self.index_flow_sampler_task = None
         self.telegram_notification_repository = None
         self.strategy_diagnostic_report_repository = None
         self.notification_queue_task: NotificationQueueTask = None
