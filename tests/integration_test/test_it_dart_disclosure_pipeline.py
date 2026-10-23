@@ -160,6 +160,100 @@ async def test_it_zero_stripped_favorite_codes_match_dart_six_digit_codes(tmp_pa
     assert await repository.get_pending_immediate(70) == []
 
 
+async def test_it_ai_failure_is_retried_and_existing_disclosure_is_promoted(tmp_path):
+    receipt_no = "20260714800002"
+
+    def handler(request: httpx.Request):
+        if request.url.host == "opendart.fss.or.kr":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "000",
+                    "message": "정상",
+                    "page_no": 1,
+                    "page_count": 100,
+                    "total_count": 1,
+                    "total_page": 1,
+                    "list": [
+                        {
+                            "corp_cls": "Y",
+                            "corp_name": "SK하이닉스",
+                            "corp_code": "00164779",
+                            "stock_code": "000660",
+                            "report_nm": "풍문또는보도에대한해명",
+                            "rcept_no": receipt_no,
+                            "flr_nm": "SK하이닉스",
+                            "rcept_dt": "20260714",
+                            "rm": "",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/dsaf001/main.do":
+            return httpx.Response(
+                200,
+                text=f'viewDoc("{receipt_no}", "11482555", "0", "0", "0", "HTML", "");',
+            )
+        if request.url.path == "/report/viewer.do":
+            return httpx.Response(
+                200,
+                text="<html><body>대규모 생산시설 투자 계획을 검토하고 있습니다.</body></html>",
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    favorites = FavoriteRepository(tmp_path / "favorites.db")
+    await favorites.add("000660")
+    repository = DartDisclosureRepository(tmp_path / "dart.db")
+    await repository.mark_initialized()
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    ai_client = MagicMock()
+    ai_client.complete = AsyncMock(
+        side_effect=[
+            RuntimeError("429 Too Many Requests"),
+            (
+                '{"summary":"대규모 생산시설 투자를 검토 중입니다.",'
+                '"score":75,"reasons":["대규모 생산시설 투자 계획"],'
+                '"event_key":"생산시설투자|검토|"}'
+            ),
+        ]
+    )
+    config = SimpleNamespace(
+        poll_interval_sec=300,
+        off_hours_interval_sec=1800,
+        active_start_time="07:00",
+        active_end_time="19:30",
+        immediate_alert_score=70,
+        daily_digest_enabled=True,
+        daily_digest_time="19:40",
+        max_pages_per_poll=5,
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        task = DartDisclosureMonitorTask(
+            client=DartDisclosureClient("test-key", http_client=http_client),
+            repository=repository,
+            favorite_repository=favorites,
+            rule_service=DartDisclosureRuleService(),
+            telegram_reporter=reporter,
+            config=config,
+            market_clock=_Clock(),
+            logger=MagicMock(),
+            ai_analyzer=AiDisclosureAnalyzer(ai_client),
+        )
+        await task._tick()
+        assert reporter._send_message.await_count == 0
+
+        await task._tick()
+
+    stored = await repository.get_by_receipt(receipt_no)
+    assert stored is not None
+    assert stored.importance.score == 75
+    assert stored.summary == "대규모 생산시설 투자를 검토 중입니다."
+    assert ai_client.complete.await_count == 2
+    assert reporter._send_message.await_count == 1
+
+
 async def test_it_actual_body_promotes_generic_title_to_immediate_alert(tmp_path):
     receipt_no = "20260720800314"
 

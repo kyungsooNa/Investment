@@ -181,6 +181,7 @@ class DartDisclosureMonitorTask(SchedulableTask):
             baseline_items = []
             for disclosure in matching:
                 if await self._repository.has_receipt(disclosure.receipt_no):
+                    await self._retry_missing_ai_analysis(disclosure)
                     continue
                 preliminary = self._rules.evaluate(disclosure)
                 self._logger.info(
@@ -239,6 +240,36 @@ class DartDisclosureMonitorTask(SchedulableTask):
                 await self._send_pending_immediate(now)
 
             self._progress["last_success_at"] = now.isoformat()
+
+    async def _retry_missing_ai_analysis(self, disclosure) -> None:
+        if self._ai_analyzer is None:
+            return
+        stored = await self._repository.get_by_receipt(disclosure.receipt_no)
+        if stored is None or stored.summary:
+            return
+        analysis = await self._analyze_actual_content(
+            disclosure, stored.importance
+        )
+        if analysis is None:
+            return
+        importance = self._merge_importance(
+            stored.importance, analysis.importance
+        )
+        await self._repository.update_analysis(
+            disclosure.receipt_no,
+            importance,
+            event_key=analysis.event_key,
+            summary=analysis.summary,
+        )
+        self._ai_analysis_cache[disclosure.receipt_no] = analysis
+        self._logger.info(
+            "%s: AI 공시 재분석 완료 receipt_no=%s stock_code=%s score=%s level=%s",
+            self.task_name,
+            disclosure.receipt_no,
+            disclosure.stock_code,
+            importance.score,
+            importance.level,
+        )
 
     async def _fetch_recent(self, date: str) -> list:
         collected = []

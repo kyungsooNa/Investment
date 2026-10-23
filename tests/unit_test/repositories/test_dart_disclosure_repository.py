@@ -49,6 +49,31 @@ async def test_ai_summary_round_trips(tmp_path, disclosure, importance):
     assert rows[0].summary == "풍문 보도는 사실이 아니며 구체적으로 확정된 사항이 없습니다."
 
 
+async def test_update_analysis_promotes_existing_rule_fallback(
+    tmp_path, disclosure, importance
+):
+    repo = DartDisclosureRepository(tmp_path / "dart.db")
+    fallback = DisclosureImportance(10, "LOW", ["일반 공시"])
+    await repo.save_detected(disclosure, fallback)
+
+    stored = await repo.get_by_receipt(disclosure.receipt_no)
+    assert stored is not None
+    assert stored.summary == ""
+
+    await repo.update_analysis(
+        disclosure.receipt_no,
+        importance,
+        event_key="자금조달|전환사채|100억원",
+        summary="전환사채 발행을 결정했습니다.",
+    )
+
+    updated = await repo.get_by_receipt(disclosure.receipt_no)
+    assert updated is not None
+    assert updated.importance == importance
+    assert updated.event_key == "자금조달|전환사채|100억원"
+    assert updated.summary == "전환사채 발행을 결정했습니다."
+
+
 async def test_get_known_receipt_nos_checks_page_in_one_query(tmp_path, disclosure, importance):
     repo = DartDisclosureRepository(tmp_path / "dart.db")
     await repo.save_detected(disclosure, importance)
