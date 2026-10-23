@@ -51,8 +51,10 @@ def _make_task(
     repo.is_initialized = AsyncMock(return_value=initialized)
     repo.mark_initialized = AsyncMock()
     repo.has_receipt = AsyncMock(return_value=False)
+    repo.get_by_receipt = AsyncMock(return_value=None)
     repo.get_known_receipt_nos = AsyncMock(return_value=set())
     repo.save_detected = AsyncMock(return_value=True)
+    repo.update_analysis = AsyncMock()
     repo.get_pending_immediate = AsyncMock(return_value=[])
     repo.mark_immediate_sent = AsyncMock()
     repo.increment_send_retry = AsyncMock()
@@ -205,6 +207,52 @@ async def test_ai_analyzer_failure_falls_back_to_rule_only_alert():
         disclosure, importance, ai_summary=None
     )
     deps.repo.mark_immediate_sent.assert_awaited_once()
+
+
+async def test_existing_rule_fallback_is_reanalyzed_and_promoted_after_ai_recovers():
+    disclosure = _disclosure(report_name="풍문또는보도에대한해명")
+    fallback = DisclosureImportance(10, "LOW", ["일반 공시"])
+    promoted = DisclosureImportance(75, "HIGH", ["대규모 투자 계획"])
+    analyzer = MagicMock()
+    analyzer.analyze = AsyncMock(
+        return_value=AiDisclosureAnalysis(
+            "대규모 생산시설 투자를 검토하고 있습니다.",
+            promoted,
+            "생산시설투자|검토|",
+        )
+    )
+    deps = _make_task([disclosure], initialized=True, ai_analyzer=analyzer)
+    deps.repo.has_receipt.return_value = True
+    deps.repo.get_by_receipt.return_value = StoredDisclosure(disclosure, fallback)
+    promoted_row = StoredDisclosure(
+        disclosure,
+        promoted,
+        event_key="생산시설투자|검토|",
+        summary="대규모 생산시설 투자를 검토하고 있습니다.",
+    )
+    deps.repo.get_pending_immediate.side_effect = (
+        lambda _threshold: [promoted_row]
+        if deps.repo.update_analysis.await_count
+        else []
+    )
+
+    await deps.task._tick()
+
+    deps.repo.save_detected.assert_not_awaited()
+    analyzer.analyze.assert_awaited_once_with(
+        disclosure, fallback, "공시 실제 본문"
+    )
+    deps.repo.update_analysis.assert_awaited_once_with(
+        disclosure.receipt_no,
+        promoted,
+        event_key="생산시설투자|검토|",
+        summary="대규모 생산시설 투자를 검토하고 있습니다.",
+    )
+    deps.reporter.send_disclosure_alert.assert_awaited_once_with(
+        disclosure,
+        promoted,
+        ai_summary="대규모 생산시설 투자를 검토하고 있습니다.",
+    )
 
 
 async def test_telegram_retry_reuses_ai_summary_without_second_ai_call():

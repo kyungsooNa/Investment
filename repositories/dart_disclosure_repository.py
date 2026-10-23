@@ -125,6 +125,41 @@ class DartDisclosureRepository:
             ) as cur:
                 return await cur.fetchone() is not None
 
+    async def get_by_receipt(self, receipt_no: str) -> StoredDisclosure | None:
+        rows = await self._query_stored(
+            "SELECT * FROM disclosures WHERE rcept_no = ? LIMIT 1",
+            (str(receipt_no),),
+        )
+        return rows[0] if rows else None
+
+    async def update_analysis(
+        self,
+        receipt_no: str,
+        importance: DisclosureImportance,
+        *,
+        event_key: str = "",
+        summary: str = "",
+    ) -> None:
+        async with aiosqlite.connect(self._db_path) as conn:
+            await self._setup(conn)
+            await conn.execute(
+                """
+                UPDATE disclosures
+                SET importance_score = ?, importance_level = ?,
+                    importance_reasons = ?, event_key = ?, ai_summary = ?
+                WHERE rcept_no = ?
+                """,
+                (
+                    importance.score,
+                    importance.level,
+                    json.dumps(importance.reasons, ensure_ascii=False),
+                    str(event_key or "")[:300],
+                    str(summary or "").strip()[:1000],
+                    str(receipt_no),
+                ),
+            )
+            await conn.commit()
+
     async def get_known_receipt_nos(self, receipt_nos: Iterable[str]) -> set[str]:
         receipt_nos = list(dict.fromkeys(str(value) for value in receipt_nos if value))
         if not receipt_nos:
