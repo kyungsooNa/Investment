@@ -1,9 +1,5 @@
 {% extends "base.html" %}
 
-{% block head_scripts %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-{% endblock %}
-
 {% block content %}
     <style>
         .menu-card {
@@ -20,8 +16,8 @@
     </style>
     <div class="section">
         <div class="card">
-            <h2>시장 지수</h2>
-            <div id="market-indices"></div>
+            <h2>글로벌 매크로</h2>
+            <div id="market-indices" data-market-scope="macro"></div>
         </div>
     </div>
     <div class="section">
@@ -116,5 +112,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/market_indices.js?v=14"></script>
+<script src="/static/js/market_indices.js?v=15"></script>
 {% endblock %}

@@ -170,6 +170,14 @@ def test_overseas_market_navigation_names_main_page_home(web_client_with_fake_ct
     assert '>현재가</a>' not in page.text
 
 
+def test_common_home_shows_global_macro_indices_only(web_client_with_fake_ctx):
+    page = web_client_with_fake_ctx.get("/")
+
+    assert page.status_code == 200
+    assert 'id="market-indices" data-market-scope="macro"' in page.text
+    assert "글로벌 매크로" in page.text
+
+
 def test_navigation_uses_left_sidebar_layout(web_client_with_fake_ctx):
     page = web_client_with_fake_ctx.get("/stock")
 

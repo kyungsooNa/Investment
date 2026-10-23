@@ -27,13 +27,13 @@ const EXPECTED_GROUPS = [
       "CAPITALCOM:US500",
       "NASDAQ:SOXX",
       "CAPITALCOM:VIX",
-      "CAPITALCOM:DXY",
     ],
   },
   { title: "원자재", kind: "widget", keys: ["TVC:GOLD", "TVC:USOIL", "CBOE:DRAM"] },
   { title: "가상자산", kind: "widget", keys: ["BITSTAMP:BTCUSD", "BITSTAMP:ETHUSD"] },
   // 국채 금리 지표(TVC:US02Y/US10Y)는 임베드가 차단되고 FRED 공개데이터는 열린다(2026-08-26 실측).
-  { title: "채권", kind: "widget", keys: ["FRED:DGS10", "FRED:DGS2"] },
+  // 달러인덱스는 미국 주식 지표가 아니라 금리와 같이 보는 매크로 지표라 채권과 묶는다.
+  { title: "달러·채권", kind: "widget", keys: ["CAPITALCOM:DXY", "FRED:DGS10", "FRED:DGS2"] },
 ];
 
 const BLOCKED_SYMBOLS = [
@@ -59,8 +59,8 @@ function defaultFetch(chartData) {
   return async (url) => success(url.includes("/flow") ? flowPayload() : (chartData || indexPayload()));
 }
 
-async function makeWindow(fetchWithTimeout) {
-  const dom = new JSDOM(`<!DOCTYPE html><html><body>${SCAFFOLD}</body></html>`, {
+async function makeWindow(fetchWithTimeout, scaffold = SCAFFOLD) {
+  const dom = new JSDOM(`<!DOCTYPE html><html><body>${scaffold}</body></html>`, {
     url: "http://localhost/",
     runScripts: "outside-only",
   });
@@ -797,6 +797,36 @@ test("열려 있는 수급 차트는 5분 자동 갱신 때 다시 그린다", a
   const charts = flowChartsOf(window);
   assert(charts.length === 2 && charts[0].destroyed && !charts[1].destroyed, "갱신 때 이전 차트를 교체하지 않음");
   assert(kospi.querySelectorAll(".market-index-flowchart").length === 1, "갱신이 수급 차트 영역을 중복 생성함");
+});
+
+// 화면별로 자기 그룹만: 한국장=국장, 미국장=미장, 공통 홈=글로벌 매크로(원자재·가상자산·달러·채권).
+const SCOPED_GROUPS = {
+  domestic: ["국장"],
+  overseas: ["미장"],
+  macro: ["원자재", "가상자산", "달러·채권"],
+};
+
+Object.entries(SCOPED_GROUPS).forEach(([scope, titles]) => {
+  test(`data-market-scope="${scope}" 화면은 ${titles.join("·")} 그룹만 그린다`, async () => {
+    const window = await makeWindow(undefined, `<div id="market-indices" data-market-scope="${scope}"></div>`);
+
+    await window.renderMarketIndices();
+
+    const rendered = groupsOf(window).map(g => g.querySelector(".market-index-group-title").textContent.trim());
+    assert(JSON.stringify(rendered) === JSON.stringify(titles),
+      `${scope} 화면 그룹이 다름 (기대 ${titles}, 실제 ${rendered})`);
+  });
+});
+
+test("미국장 화면의 미장 그룹은 주식 지표(나스닥100·S&P500·SOX·VIX)만 담는다", async () => {
+  const window = await makeWindow(undefined, '<div id="market-indices" data-market-scope="overseas"></div>');
+
+  await window.renderMarketIndices();
+
+  const keys = Array.from(window.document.querySelectorAll(".market-index-card")).map(c => c.dataset.key);
+  assert(JSON.stringify(keys) === JSON.stringify(
+    ["CAPITALCOM:US100", "CAPITALCOM:US500", "NASDAQ:SOXX", "CAPITALCOM:VIX"]),
+    `미장 카드가 다름: ${keys}`);
 });
 
 await run();
