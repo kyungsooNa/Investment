@@ -206,6 +206,10 @@ window.__pjaxNavigating = false;
 const _loadedScripts = new Set(
     Array.from(document.querySelectorAll('script[src]')).map(s => s.src)
 );
+// common.js 는 <head> 에서 돌아 본문 끝 페이지 스크립트를 위에서 못 본다. 파싱이 끝나면 마저 등록한다.
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('script[src]').forEach(s => _loadedScripts.add(s.src));
+});
 
 // Chart.js 인스턴스 전역 레지스트리 — 페이지 전환 전 .destroy() 호출
 window.currentCharts = window.currentCharts || [];
@@ -229,6 +233,21 @@ async function loadHeadScripts(doc) {
         _loadedScripts.add(normalizedSrc);
         try { await loadScript(headScript.src); } catch (e) { console.error('Head script load failed:', headScript.src, e); }
     }
+}
+
+// 배포로 ?v= 가 바뀐 스크립트를 옛 버전 위에 덧로드하면 전역 const 재선언 SyntaxError 로 죽고
+// 옛 함수가 계속 그린다. 이미 로드한 경로의 다른 버전이 필요하면 PJAX 대신 새로 연다.
+function hasChangedScriptVersion(doc) {
+    const loadedByPath = new Map();
+    _loadedScripts.forEach(src => {
+        const url = new URL(src, location.href);
+        loadedByPath.set(url.origin + url.pathname, url.href);
+    });
+    return Array.from(doc.querySelectorAll('script[src]')).some(script => {
+        const url = new URL(script.getAttribute('src'), location.href);
+        const loaded = loadedByPath.get(url.origin + url.pathname);
+        return loaded !== undefined && loaded !== url.href;
+    });
 }
 
 async function executePageScripts(container) {
@@ -285,6 +304,10 @@ async function navigatePjax(href) {
         const newFeatureNav = doc.querySelector('nav.nav');
         if (!newMain || !newMarketNav || !newFeatureNav) {
             throw new Error('page layout not found');
+        }
+        if (hasChangedScriptVersion(doc)) {
+            window.location.href = href;
+            return;
         }
 
         const pageMain = document.querySelector('#page-main');
