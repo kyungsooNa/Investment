@@ -40,6 +40,7 @@ MODULE_BUDGETS = {
     "backtest_task_bootstrap.py": (110, 6),
     "broker_bootstrap.py": (90, 2),
     "config_bootstrap.py": (180, 9),
+    "index_flow_bootstrap.py": (40, 2),
     "market_data_bootstrap.py": (170, 8),
     "overseas_bootstrap.py": (560, 33),
     "overseas_growth_strategy_bootstrap.py": (80, 3),

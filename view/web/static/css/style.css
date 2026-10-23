@@ -1498,3 +1498,33 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     font-size: 0.8rem;
     color: var(--text-secondary);
 }
+/* 지수 카드 수급 시간차트 (개인·외국인·기관 누적 순매수) */
+.market-index-flowchart {
+    margin-top: 6px;
+}
+.market-index-flowchart-toggle {
+    width: 100%;
+    padding: 3px 0;
+    font-family: inherit;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+}
+.market-index-flowchart-toggle:hover { color: var(--text-primary); }
+.market-index-flowchart-toggle.active {
+    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+}
+.market-index-flowchart-caption {
+    margin-top: 6px;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+}
+.market-index-flowchart-canvas {
+    position: relative;
+    height: 160px;
+}

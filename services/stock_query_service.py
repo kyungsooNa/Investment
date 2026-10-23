@@ -1596,6 +1596,11 @@ class StockQueryService:
             data={"code": index_code, "investors": investors, "breadth": breadth},
         )
 
+    async def get_index_investor_netbuy(self, index_code: str) -> Optional[dict]:
+        """당일 누적 개인/외국인/기관 순매수(억원). 장중 수급 시간차트의 표본으로 쓴다."""
+        date = self.market_clock.get_current_kst_time().strftime("%Y%m%d")
+        return await self._index_investor_netbuy(index_code, date)
+
     async def get_recent_daily_index_ohlcv(
         self,
         index_code: str,

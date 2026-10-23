@@ -141,3 +141,14 @@ async def test_index_flow_survives_broker_exception():
     assert result.rt_cd == ErrorCode.SUCCESS.value
     assert result.data["breadth"] is None
     assert result.data["investors"]["individual"] == -31912
+
+
+@pytest.mark.asyncio
+async def test_index_investor_netbuy_returns_today_cumulative_eok():
+    broker = _broker()
+
+    result = await _service(broker).get_index_investor_netbuy("1001")
+
+    assert result == {"individual": -31912, "foreign": 28357, "institution": 5277}
+    broker.inquire_investor_daily_by_market.assert_awaited_once_with("1001", date="20260812")
+    broker.inquire_index_price.assert_not_awaited()

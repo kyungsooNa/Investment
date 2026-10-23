@@ -206,6 +206,16 @@ async def get_market_index_flow(index_code: str):
     return _serialize_response(resp)
 
 
+@router.get("/market-index/{index_code}/flow/history")
+async def get_market_index_flow_history(index_code: str):
+    """코스피(0001)/코스닥(1001)의 장중 투자자 누적 순매수(억원) 시간별 표본. 수급 시간차트용."""
+    ctx = _get_ctx()
+    service = getattr(ctx, "index_flow_history_service", None)
+    if service is None:
+        return {"rt_cd": "1", "msg1": "지수 수급 기록 서비스가 비활성화되어 있습니다.", "data": None}
+    return _serialize_response(service.get_history(index_code))
+
+
 @router.get("/stock/{code}/stage")
 async def get_stock_stage(code: str):
     """종목의 Minervini Stage 조회 (1~4단계, 0=미계산)"""

@@ -188,6 +188,35 @@ async def test_get_market_index_flow_timeout(web_client, mock_web_ctx):
     assert "초과" in json_resp["msg1"]
 
 
+def test_get_market_index_flow_history_returns_samples(web_client, mock_web_ctx):
+    """GET /api/market-index/{index_code}/flow/history 는 장중 수급 표본 시계열을 그대로 내려준다."""
+    from common.types import ErrorCode, ResCommonResponse
+
+    mock_web_ctx.index_flow_history_service.get_history.return_value = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="ok",
+        data={"code": "0001", "date": "20261023",
+              "points": [{"time": "0935", "individual": 1, "foreign": -2, "institution": 3}]},
+    )
+
+    response = web_client.get("/api/market-index/0001/flow/history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rt_cd"] == "0"
+    assert body["data"]["points"][0]["time"] == "0935"
+    mock_web_ctx.index_flow_history_service.get_history.assert_called_once_with("0001")
+
+
+def test_get_market_index_flow_history_without_service(web_client, mock_web_ctx):
+    mock_web_ctx.index_flow_history_service = None
+
+    body = web_client.get("/api/market-index/0001/flow/history").json()
+
+    assert body["rt_cd"] == "1"
+    assert body["data"] is None
+
+
 def test_ai_stock_analysis_requires_enabled_ai(web_client, mock_web_ctx):
     mock_web_ctx.ai_stock_analyzer = None
 

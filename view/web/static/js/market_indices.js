@@ -406,7 +406,149 @@ async function appendMarketIndexFlow(doc, card, code) {
 
     const current = card.querySelector('.market-index-flow');
     if (current) current.replaceWith(flow);
-    else card.appendChild(flow);
+    // 수급 차트 버튼은 요약 아래에 둔다 (insertBefore 의 기준이 없으면 끝에 붙는다).
+    else card.insertBefore(flow, card.querySelector('.market-index-flowchart'));
+}
+
+// 수급 시간차트. KIS 가 시간별 이력을 주지 않아 서버가 장중 5분마다 누적 순매수를 표본으로 남긴다.
+const MARKET_INDEX_FLOW_SERIES = [
+    { key: 'individual', label: '개인', color: '#f08c00' },
+    { key: 'foreign', label: '외국인', color: '#7048e8' },
+    { key: 'institution', label: '기관', color: '#2f9e44' },
+];
+const MARKET_INDEX_FLOW_EMPTY = '아직 수집된 수급 기록이 없습니다.';
+
+function _buildMarketIndexFlowChart(doc, card, code) {
+    const wrap = doc.createElement('div');
+    wrap.className = 'market-index-flowchart';
+
+    const button = doc.createElement('button');
+    button.type = 'button';
+    button.className = 'market-index-flowchart-toggle';
+    button.textContent = '수급 차트';
+    button.setAttribute('aria-expanded', 'false');
+    button.addEventListener('click', () => { void toggleMarketIndexFlowChart(card, code); });
+    wrap.appendChild(button);
+
+    const panel = doc.createElement('div');
+    panel.className = 'market-index-flowchart-panel';
+    panel.hidden = true;
+    wrap.appendChild(panel);
+
+    return wrap;
+}
+
+function _destroyMarketIndexFlowChart(card) {
+    if (!card._flowChart) return;
+    try { card._flowChart.destroy(); } catch (_) { /* 이미 파기된 차트 */ }
+    if (window.currentCharts) {
+        window.currentCharts = window.currentCharts.filter(chart => chart !== card._flowChart);
+    }
+    card._flowChart = null;
+}
+
+function _marketIndexFlowChartMessage(doc, text) {
+    const message = doc.createElement('p');
+    message.className = 'market-index-error';
+    message.textContent = text;
+    return message;
+}
+
+async function loadMarketIndexFlowChart(card, code) {
+    const doc = card.ownerDocument;
+    const panel = card.querySelector('.market-index-flowchart-panel');
+    const res = await fetchWithTimeout(`/api/market-index/${code}/flow/history`);
+    const { json, error } = await readJsonResponse(res);
+    const data = json && json.rt_cd === '0' ? json.data : null;
+
+    _destroyMarketIndexFlowChart(card);
+    panel.innerHTML = '';
+    if (error || !data) {
+        panel.appendChild(_marketIndexFlowChartMessage(doc, MARKET_INDEX_LOAD_ERROR));
+        return;
+    }
+    const points = Array.isArray(data.points) ? data.points : [];
+    if (!points.length) {
+        panel.appendChild(_marketIndexFlowChartMessage(doc, MARKET_INDEX_FLOW_EMPTY));
+        return;
+    }
+
+    const caption = doc.createElement('div');
+    caption.className = 'market-index-flowchart-caption';
+    const date = String(data.date || '');
+    caption.textContent = date.length === 8
+        ? `누적 순매수 (억원) · ${date.slice(4, 6)}/${date.slice(6, 8)}`
+        : '누적 순매수 (억원)';
+    panel.appendChild(caption);
+
+    const box = doc.createElement('div');
+    box.className = 'market-index-flowchart-canvas';
+    const canvas = doc.createElement('canvas');
+    box.appendChild(canvas);
+    panel.appendChild(box);
+    if (typeof Chart === 'undefined') return;
+
+    const labels = points.map(_formatIndexPointLabel);
+    card._flowChart = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels,
+            datasets: MARKET_INDEX_FLOW_SERIES.map(series => ({
+                label: series.label,
+                data: points.map(p => p[series.key]),
+                borderColor: series.color,
+                backgroundColor: series.color,
+                borderWidth: 1.5,
+                pointRadius: 0,
+                tension: 0.15,
+            })),
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: true, labels: { boxWidth: 10, font: { size: 10 } } },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => `${ctx.dataset.label} ${_formatIndexNetBuy(ctx.parsed.y).text}`,
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: {
+                        autoSkip: false,
+                        callback: _indexTickCallback(labels),
+                        maxRotation: 0,
+                        minRotation: 0,
+                        font: { size: 9 },
+                    },
+                },
+                y: { ticks: { font: { size: 9 } } },
+            },
+        },
+    });
+    window.currentCharts = window.currentCharts || [];
+    window.currentCharts.push(card._flowChart);
+}
+
+async function toggleMarketIndexFlowChart(card, code) {
+    const button = card.querySelector('.market-index-flowchart-toggle');
+    const panel = card.querySelector('.market-index-flowchart-panel');
+    const open = panel.hidden;
+
+    panel.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+    button.classList.toggle('active', open);
+    if (open) {
+        await loadMarketIndexFlowChart(card, code);
+    } else {
+        _destroyMarketIndexFlowChart(card);
+        panel.innerHTML = '';
+    }
 }
 
 async function buildMarketIndexKisCard(doc, entry) {
@@ -416,6 +558,7 @@ async function buildMarketIndexKisCard(doc, entry) {
     const body = doc.createElement('div');
     body.className = 'market-index-body';
     card.appendChild(body);
+    card.appendChild(_buildMarketIndexFlowChart(doc, card, entry.code));
 
     await selectMarketIndexPeriod(card, entry.code, MARKET_INDEX_DEFAULT_PERIOD);
     appendMarketIndexFlow(doc, card, entry.code).catch(() => {});
@@ -475,9 +618,11 @@ async function _refreshMarketIndicesTick() {
             const code = card.dataset.key;
             const active = card.querySelector('.market-index-period.active');
             const period = active?.dataset.period || MARKET_INDEX_DEFAULT_PERIOD;
+            const flowChartOpen = card.querySelector('.market-index-flowchart-panel')?.hidden === false;
             await Promise.all([
                 selectMarketIndexPeriod(card, code, period),
                 appendMarketIndexFlow(document, card, code),
+                flowChartOpen ? loadMarketIndexFlowChart(card, code) : null,
             ]);
         }));
     } finally {
