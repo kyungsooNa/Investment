@@ -162,6 +162,14 @@ def test_domestic_market_navigation_opens_home_without_stock_menu(
     assert 'id="market-indices" data-market-scope="domestic"' in page.text
 
 
+def test_overseas_market_navigation_opens_home(web_client_with_fake_ctx):
+    """상단 미국장 버튼은 한국장처럼 홈(/overseas-stock)으로 들어간다 (개요·거래 아님)."""
+    page = web_client_with_fake_ctx.get("/overseas-stock")
+
+    assert page.status_code == 200
+    assert 'href="/overseas-stock" data-nav-market="overseas_us" class="active">미국장</a>' in page.text
+
+
 def test_overseas_market_navigation_names_main_page_home(web_client_with_fake_ctx):
     page = web_client_with_fake_ctx.get("/overseas-stock")
 

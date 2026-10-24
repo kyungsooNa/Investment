@@ -829,4 +829,16 @@ test("미국장 화면의 미장 그룹은 주식 지표(나스닥100·S&P500·S
     `미장 카드가 다름: ${keys}`);
 });
 
+test("가상자산 위젯은 1D 대신 1M 으로 연다 (24시간 자산은 1D 그래프가 왼쪽 한 점으로만 그려진다)", async () => {
+  const window = await makeWindow();
+
+  await window.renderMarketIndices();
+
+  ["BITSTAMP:BTCUSD", "BITSTAMP:ETHUSD"].forEach(key => {
+    const card = window.document.querySelector(`.market-index-card[data-key="${key}"]`);
+    const config = JSON.parse(card.querySelector(".tradingview-widget-container script").textContent);
+    assert(config.symbols[0][1] === `${key}|1M`, `${key} 기본 기간이 1M 이 아님: ${config.symbols[0][1]}`);
+  });
+});
+
 await run();
