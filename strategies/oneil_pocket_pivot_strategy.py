@@ -126,13 +126,16 @@ class OneilPocketPivotStrategy(LiveStrategy):
 
     async def _check_entry(self, code, item, progress, market_timing_cache=None) -> Optional[TradeSignal]:
         """진입 조건 검사: PP 또는 BGU → 스마트머니 → 체결강도."""
+        self._logger.debug({"event": "candidate_evaluated", "code": code})
         # 1. 현재가 데이터 조회
         resp = await self._sqs.get_current_price(code, caller=self.name)
         if not resp or resp.rt_cd != "0":
+            self._logger.info({"event": "entry_rejected", "code": code, "reason": "price_unavailable"})
             return None
 
         out = resp.data.get("output") if isinstance(resp.data, dict) else None
         if not out:
+            self._logger.info({"event": "entry_rejected", "code": code, "reason": "price_unavailable"})
             return None
 
         if isinstance(out, dict):

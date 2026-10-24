@@ -159,6 +159,7 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
             if not code:
                 continue
             log_data = {"code": code, "name": stock.get("name", code)}
+            self._logger.debug({"event": "candidate_evaluated", "code": code})
             try:
                 if self._passes_validity_filter(stock, log_data):
                     runtime_candidates.append(stock)

@@ -139,6 +139,7 @@ class RSI2PullbackStrategy(LiveStrategy):
 
     async def _check_entry(self, code, item, market_timing) -> Optional[TradeSignal]:
         """진입 조건 검사: Stage 2 → RSI(2) ≤ 10 → 시각 → 비중 결정."""
+        self._logger.debug({"event": "candidate_evaluated", "code": code})
         # Phase 1-1: Stage 2 확인 (universe가 사전 분류)
         if self._cfg.require_minervini_stage2 and item.minervini_stage != _MINERVINI_STAGE_2:
             self._logger.info({

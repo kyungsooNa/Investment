@@ -676,6 +676,7 @@ def _result_to_payload(result) -> dict[str, Any]:
             for report in result.execution_reports
         ],
         "journal_records": result.journal_records,
+        "scan_diagnostics": getattr(result, "scan_diagnostics", []),
         "portfolio": result.portfolio,
         "saved_journal_run": getattr(result, "saved_journal_run", {}),
         "execution_bar_policy": getattr(result, "execution_bar_policy", ""),
