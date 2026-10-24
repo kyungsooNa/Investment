@@ -46,8 +46,9 @@ const MARKET_INDEX_GROUPS = [
         kind: 'widget',
         scope: 'macro',
         entries: [
-            { label: '비트코인', symbol: 'BITSTAMP:BTCUSD' },
-            { label: '이더리움', symbol: 'BITSTAMP:ETHUSD' },
+            // 24시간 자산은 위젯 1D 그래프가 왼쪽 한 점으로만 그려진다(거래소 무관, 2026-10-24 실측).
+            { label: '비트코인', symbol: 'BITSTAMP:BTCUSD', dateRange: '1M' },
+            { label: '이더리움', symbol: 'BITSTAMP:ETHUSD', dateRange: '1M' },
         ],
     },
     {
