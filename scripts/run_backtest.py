@@ -50,7 +50,7 @@ def _parse_args() -> argparse.Namespace:
         "--backtest-time",
         default=None,
         dest="backtest_time",
-        help="전략과 유니버스가 참조할 과거 장중 시각 HH:MM:SS (RSI2: 15:20, 기타: 12:00)",
+        help="전략과 유니버스가 참조할 과거 장중 시각 HH:MM:SS (RSI2/채널 돌파: 15:20, 기타: 12:00)",
     )
     parser.add_argument(
         "--execution-bar-policy",
@@ -216,7 +216,8 @@ def _parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
     if args.backtest_time is None:
-        args.backtest_time = "15:20:00" if args.strategy == "rsi2_pullback" else "12:00:00"
+        close_window_strategies = {"rsi2_pullback", "larry_williams_channel_breakout"}
+        args.backtest_time = "15:20:00" if args.strategy in close_window_strategies else "12:00:00"
     return args
 
 
