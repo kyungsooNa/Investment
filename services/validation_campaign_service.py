@@ -141,6 +141,7 @@ class ValidationCampaignService:
             "realized_net_pnl": float(portfolio.get("realized_net_pnl") or 0),
             "zero_trade": zero_trade,
             "zero_trade_reason": zero_reason,
+            "scan_diagnostics": payload.get("scan_diagnostics") or [],
         }
 
     @staticmethod

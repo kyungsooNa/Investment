@@ -124,13 +124,16 @@ class FirstPullbackStrategy(LiveStrategy):
 
     async def _check_entry(self, code, item, progress, market_timing_cache=None) -> Optional[TradeSignal]:
         """진입 조건 검사: Phase 1 → 2 → 3 순서로 필터링."""
+        self._logger.debug({"event": "candidate_evaluated", "code": code})
         # ── 현재가 데이터 선행 조회 (OHLCV 캐시 활용 위해) ──
         resp = await self._sqs.get_current_price(code, caller=self.name)
         if not resp or resp.rt_cd != "0":
+            self._logger.info({"event": "entry_rejected", "code": code, "reason": "price_unavailable"})
             return None
 
         out = resp.data.get("output") if isinstance(resp.data, dict) else None
         if not out:
+            self._logger.info({"event": "entry_rejected", "code": code, "reason": "price_unavailable"})
             return None
 
         if isinstance(out, dict):
