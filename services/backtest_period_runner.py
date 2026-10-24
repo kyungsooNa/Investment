@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from enum import Enum
+import logging
 from typing import Callable, Protocol, Sequence
 
 from common.types import Exchange, OrderSide as LiveOrderSide
@@ -24,6 +25,8 @@ from services.backtest_execution_simulator import (
     OrderType,
 )
 from services.portfolio_concentration_service import compute_portfolio_concentration_summary
+from services.backtest_scan_diagnostics import SCAN_EVENTS, summarize_scan
+from common.rejection_collector import RejectionCollector
 
 
 class BacktestBarProvider(Protocol):
@@ -89,6 +92,7 @@ class BacktestPeriodRunResult:
     journal_records: list[dict] = field(default_factory=list)
     portfolio: dict = field(default_factory=dict)
     saved_journal_run: dict = field(default_factory=dict)
+    scan_diagnostics: list[dict] = field(default_factory=list)
 
 
 class BacktestPeriodRunner:
@@ -171,8 +175,15 @@ class BacktestPeriodRunner:
             )
 
     async def _run_entries(self, date_ymd: str, result: BacktestPeriodRunResult) -> None:
+        logger = getattr(self._strategy, "_logger", None)
+        if isinstance(logger, logging.Logger):
+            with RejectionCollector(logger=logger, captured_events=SCAN_EVENTS) as collector:
+                signals = await self._strategy.scan()
+            result.scan_diagnostics.append(summarize_scan(date_ymd, self._strategy.name, collector.events, signals))
+        else:
+            signals = await self._strategy.scan()
         buy_signals = [
-            signal for signal in await self._strategy.scan()
+            signal for signal in signals
             if signal.action == "BUY"
         ]
         buy_signals = await self._filter_market_timing_blocked_buys(
@@ -602,7 +613,7 @@ class BacktestPeriodRunner:
                 setter(date_ymd)
 
     def _persist_journal(self, result: BacktestPeriodRunResult) -> None:
-        if self._backtest_journal_repository is None or not result.journal_records:
+        if self._backtest_journal_repository is None or not (result.journal_records or result.scan_diagnostics):
             return
         metadata = {
             "dates": result.dates,
@@ -612,6 +623,7 @@ class BacktestPeriodRunner:
             "execution_bar_policy": _execution_bar_policy_value(self._config.execution_bar_policy),
             "portfolio": result.portfolio,
             **self._metadata,
+            "scan_diagnostics": result.scan_diagnostics,
         }
         result.saved_journal_run = self._backtest_journal_repository.save_run(
             result.journal_records,

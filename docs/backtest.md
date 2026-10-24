@@ -40,6 +40,23 @@
 
 아직 모든 전략의 완성형 성과 리포트 저장까지 끝난 상태는 아니다. 현재는 replay 기반 실행과 포트폴리오/체결 검증 골격이 연결된 상태다.
 
+### 기간 실행의 후보 진단 (2026-10-24)
+
+기간 실행 JSON과 validation campaign의 전략별 결과에 `scan_diagnostics`가 포함된다.
+날짜·전략별로 watchlist 크기(`watchlist_candidates`, 미관측 시 null), 실제 평가 진입 종목
+(`evaluated_codes`), BUY 신호 수, 종목·사유별 중복을 제거한 `reason_counts`,
+스캔 전체 생략 사유(`scan_skip_reasons`), 설명되지 않은 평가 종목(`unexplained_codes`)을 기록한다.
+`observed_pass_counts`는 기존 로그가 명시한 통과 이벤트만 센다.
+
+한 종목에서 PP/BGU 등 여러 조건을 검사하므로 사유별 건수 합계를 탈락 종목 수로 해석하면 안 된다.
+입력 watchlist와 실제 평가 종목 수도 보유·쿨다운·시간 게이트에 따라 다를 수 있다.
+`price_unavailable` 등 데이터 결손은 패턴 미충족 사유와 구분하며, 로그가 없는 반환은
+추정하지 않고 미설명 후보로 남긴다. 필터 전체의 통과율을 보장하는 계측은 아니다.
+
+진단은 거래 journal과 분리되어 REJECTED 수·손익·Monte Carlo 표본을 바꾸지 않는다.
+거래가 0건이어도 journal run의 metadata에 진단을 저장한다. logger가 없는 외부 전략은
+진단을 수집하지 않으며, 스캔 종료 또는 예외 발생 시 logger 레벨과 핸들러를 복원한다.
+
 ## 진행 완료
 
 ### 표준 journal 기반

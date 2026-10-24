@@ -136,6 +136,7 @@ class LarryWilliamsChannelBreakoutStrategy(LiveStrategy):
 
     async def _check_entry(self, code: str, item) -> Optional[TradeSignal]:
         """진입 조건 검사: RS → ADX → 채널 상단 돌파 → 거래량 → 신호 생성."""
+        self._logger.debug({"event": "candidate_evaluated", "code": code})
         # OHLCV 한 번 조회 후 ADX/채널 계산에 공유
         ohlcv_resp = await self._sqs.get_ohlcv(code, period="D", caller=self.name)
         if not ohlcv_resp or ohlcv_resp.rt_cd != "0" or not ohlcv_resp.data:

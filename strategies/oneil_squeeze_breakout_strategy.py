@@ -135,11 +135,16 @@ class OneilSqueezeBreakoutStrategy(LiveStrategy):
         return signals
 
     async def _check_breakout(self, code, item, progress, market_timing_cache=None) -> Optional[TradeSignal]:
+        self._logger.debug({"event": "candidate_evaluated", "code": code})
         # 1. 기본 시세 조회
         resp = await self._sqs.get_current_price(code, caller=self.name)
-        if not resp or resp.rt_cd != "0": return None
+        if not resp or resp.rt_cd != "0":
+            self._logger.info({"event": "entry_rejected", "code": code, "reason": "price_unavailable"})
+            return None
         out = resp.data.get("output")
-        if not out: return None
+        if not out:
+            self._logger.info({"event": "entry_rejected", "code": code, "reason": "price_unavailable"})
+            return None
 
         # 데이터 추출 (dict/object 호환)
         def get_val(key, default=0):

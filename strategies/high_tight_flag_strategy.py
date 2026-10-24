@@ -129,6 +129,7 @@ class HighTightFlagStrategy(LiveStrategy):
 
     async def _check_htf_setup(self, code, item, progress, market_timing_cache=None) -> Optional[TradeSignal]:
         """HTF 패턴 감지 + 실시간 돌파 확인."""
+        self._logger.debug({"event": "candidate_evaluated", "code": code})
         # 1. OHLCV 조회 (깃대 40일 + 깃발 최대 25일 = 65일)
         ohlcv_resp = await self._sqs.get_recent_daily_ohlcv(code, limit=65)
         ohlcv = ohlcv_resp.data if ohlcv_resp and ohlcv_resp.rt_cd == "0" else []
