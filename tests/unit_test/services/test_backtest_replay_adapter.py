@@ -592,6 +592,52 @@ async def test_stock_query_replay_falls_back_when_capture_date_is_unavailable(tm
 
 
 @pytest.mark.asyncio
+async def test_stock_query_replay_uses_local_daily_rows_for_captured_date(tmp_path):
+    _write_microstructure_capture(tmp_path / "replay_microstructure_20260501.json")
+    sqs = AsyncMock()
+    local_ohlcv = AsyncMock()
+    local_ohlcv.get_ohlcv_until.return_value = [
+        {"date": "20260429", "close": 69000},
+        {"date": "20260430", "close": 70000},
+    ]
+    replay = StockQueryBacktestReplayService(
+        sqs,
+        microstructure_dir=tmp_path,
+        local_ohlcv_provider=local_ohlcv,
+    )
+    replay.set_backtest_date("20260501")
+
+    response = await replay.get_recent_daily_ohlcv("005930", limit=2)
+
+    assert response.rt_cd == ErrorCode.SUCCESS.value
+    assert [row["date"] for row in response.data] == ["20260429", "20260430"]
+    local_ohlcv.get_ohlcv_until.assert_awaited_once_with(
+        "005930", end_date="20260501", limit=2
+    )
+    sqs.get_recent_daily_ohlcv.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stock_query_replay_does_not_fetch_remote_daily_rows_for_captured_date(tmp_path):
+    _write_microstructure_capture(tmp_path / "replay_microstructure_20260501.json")
+    sqs = AsyncMock()
+    local_ohlcv = AsyncMock()
+    local_ohlcv.get_ohlcv_until.return_value = []
+    replay = StockQueryBacktestReplayService(
+        sqs,
+        microstructure_dir=tmp_path,
+        local_ohlcv_provider=local_ohlcv,
+    )
+    replay.set_backtest_date("20260501")
+
+    response = await replay.get_recent_daily_ohlcv("000660", limit=60)
+
+    assert response.rt_cd == ErrorCode.EMPTY_VALUES.value
+    assert response.data == []
+    sqs.get_recent_daily_ohlcv.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_stock_query_replay_rejects_malformed_existing_capture(tmp_path):
     capture_path = tmp_path / "replay_microstructure_20260501.json"
     capture_path.write_text(

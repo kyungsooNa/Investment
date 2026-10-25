@@ -445,6 +445,18 @@ async def test_stock_repository_get_ohlcv_summary(repo):
         err_summary = await repo.get_ohlcv_summary("005930")
     assert err_summary["count"] == 0
 
+
+@pytest.mark.asyncio
+async def test_stock_repository_get_ohlcv_until_proxy(repo):
+    repo._ohlcv_repo.get_ohlcv_until = AsyncMock(return_value=[{"date": "20250102"}])
+
+    rows = await repo.get_ohlcv_until("005930", end_date="20250102", limit=60)
+
+    assert rows == [{"date": "20250102"}]
+    repo._ohlcv_repo.get_ohlcv_until.assert_awaited_once_with(
+        "005930", end_date="20250102", limit=60
+    )
+
 @pytest.mark.asyncio
 async def test_stock_repository_get_ohlcv_max_trading_days(repo):
     await repo.upsert_ohlcv([

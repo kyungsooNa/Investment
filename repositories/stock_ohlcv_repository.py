@@ -224,6 +224,29 @@ class StockOhlcvRepository:
             self._logger.error(f"StockOhlcvRepository OHLCV 조회 실패 ({code}): {e}")
             return None
 
+    async def get_ohlcv_until(
+        self,
+        code: str,
+        *,
+        end_date: str,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        """기준일 이하의 최근 일봉을 날짜 오름차순으로 반환한다."""
+        try:
+            async with self._get_read_connection() as conn:
+                async with conn.execute(
+                    "SELECT * FROM ("
+                    "SELECT date, open, high, low, close, volume FROM ohlcv "
+                    "WHERE code = ? AND date <= ? ORDER BY date DESC LIMIT ?"
+                    ") ORDER BY date ASC",
+                    (code, end_date, limit),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository 기준일 OHLCV 조회 실패 ({code}): {e}")
+            return []
+
     def update_today_candle(self, code: str, current_price: float, volume: int = 0):
         """
         WebSocket 틱 데이터로 당일 OHLCV 캔들을 갱신합니다.

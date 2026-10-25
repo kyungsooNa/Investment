@@ -65,6 +65,20 @@ class StockRepository:
         """메모리 캐시 또는 DB에서 OHLCV 데이터를 반환합니다."""
         return await self._ohlcv_repo.get_stock_data(code, ohlcv_limit=ohlcv_limit, caller=caller)
 
+    async def get_ohlcv_until(
+        self,
+        code: str,
+        *,
+        end_date: str,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        """기준일 이하의 최근 일봉을 로컬 DB에서 반환합니다."""
+        return await self._ohlcv_repo.get_ohlcv_until(
+            code,
+            end_date=end_date,
+            limit=limit,
+        )
+
     async def upsert_ohlcv(self, records: List[Dict]):
         """여러 종목의 일봉(OHLCV) 데이터를 일괄 upsert 후 해당 종목 캐시 무효화."""
         await self._ohlcv_repo.upsert_ohlcv(records)
