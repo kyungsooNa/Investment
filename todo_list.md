@@ -154,7 +154,8 @@
   - **정책 결정·수정**: 코퍼스 유효성을 우선해 `ProgramCaptureSubscriptionTask`가 회전 배치 전체를 LOW PRICE로 동반 구독하도록 복원했다. 우선주는 프로그램매매 tick이 없으므로 기존대로 PT에서는 제외하고 PRICE만 구독한다. 재시작 시에도 저장된 PRICE 후보 전체를 복원한다. 슬롯 압박은 코퍼스 계약을 제거하지 않고 로테이션 크기로 조정한다.
   - 후속: 변경 반영 뒤 새 캡처에서 품질 게이트 재통과를 확인해야 한다. 그 전까지 1-8 해제 조건 (a)는 충족된 것으로 보지 않는다.
 - [x] **실제 replay fixture 통과 케이스 확장 (2026-09-30)** — 유효 캡처 12거래일 중 최신 20260929 산출물에서 실제 분봉 3행·호가 3행·품질 sidecar를 최소 fixture로 추출했다. `StockQueryIntradayReplayBarProvider`가 quality-gated 날짜에서 다음 봉 체결 정책과 시점 이전 최신 호가(bid/ask)를 함께 재생하는 회귀 테스트로 고정했다. 원본 출처는 fixture metadata에 기록했다.
-- [ ] 한국장 실전 microstructure fixture(bid/ask book·잔량·체결강도·프로그램매매 overlay)로 체결 모델 보정 + 시장가/최유리/지정가별 fill quality가 live journal과 얼마나 벌어지는지 리포트.
+- [blocked] 한국장 실전 microstructure fixture(bid/ask book·잔량·체결강도·프로그램매매 overlay)로 체결 모델 보정 + 시장가/최유리/지정가별 fill quality가 live journal과 얼마나 벌어지는지 리포트.
+  - **2026-10-26 데이터 점검**: 실캡처 코퍼스는 존재하지만 로컬 `ExecutionQuality`/`execution_quality` 실체결 로그는 0건이다. 가상매매 DB도 주문유형별 예상가·실체결가·최초 체결지연을 보존하지 않아 대체 표본으로 쓸 수 없다. 시장가·최유리·지정가별 실체결 로그가 쌓이기 전에는 슬리피지·스프레드 정책을 보정하지 않는다.
 
 주요 파일: `services/backtest_execution_simulator.py`, `services/backtest_replay_context.py`, `services/backtest_microstructure_capture.py`, `repositories/execution_strength_repo.py`, `scripts/run_backtest.py`, `tests/fixtures/backtest/`
 
