@@ -367,17 +367,18 @@ async def test_replay_provider_returns_last_bar_when_limit_is_not_reached():
 
 
 @pytest.mark.asyncio
-async def test_replay_provider_enforces_signal_required_data_keys():
+async def test_replay_provider_does_not_treat_signal_audit_data_as_minute_fields():
     sqs = AsyncMock()
     sqs.get_day_intraday_minutes_list.return_value = [
         {"stck_bsop_date": "20260501", "stck_cntg_hour": "090000", "stck_prpr": "70000"},
     ]
     provider = StockQueryIntradayReplayBarProvider(sqs)
     signal = _signal(price=70_000)
-    signal.required_data = ["execution_strength"]
+    signal.required_data = ["current_price", "execution_strength", "daily_ohlcv"]
 
-    with pytest.raises(ValueError, match="required replay data missing"):
-        await provider.get_bar(signal=signal, date_ymd="20260501", side="BUY")
+    bar = await provider.get_bar(signal=signal, date_ymd="20260501", side="BUY")
+
+    assert bar.close == 70_000
 
 
 @pytest.mark.asyncio

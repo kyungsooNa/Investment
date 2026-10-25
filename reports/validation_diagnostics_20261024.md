@@ -79,10 +79,11 @@ CLI는 RSI2에만 15:20을 적용하고 채널 돌파에는 12:00 기본값을 �
 - RSI2: `not_stage2` 148, `rsi_unavailable` 5
 - Channel Breakout: `rs_rating_below_min` 148, `adx_not_rising` 5
 
-VBO는 `20260928`의 `010950`에서 BUY 신호가 생성됐지만 체결 replay 필수 데이터
-(`pool_b_candidate`, `current_price`, `previous_day_range`, `program_buy`, `liquidity_filter`,
-`volatility_20d_annualized`)가 없어 fail-closed로 종료됐다. 따라서 전체 재진단은 아직 완료로
-간주하지 않으며, 다음 선행 작업은 VBO 신호와 체결 replay 데이터 계약을 맞추는 것이다.
+후속 계약 대조에서 `TradeSignal.required_data`는 신호 평가에 사용한 데이터의 감사 목록인데,
+체결 provider가 이를 분봉 원시 컬럼명으로 재검증하고 있음을 확인했다. 이 검증을 제거하고
+분봉 자체가 없을 때의 fail-closed는 유지했다. 26일·7전략 전체 재실행은 7개 모두 완료, 실패 0,
+0거래 전략 6개로 종료됐다. VBO는 매수 체결 3건, 매도 체결 1건, 기간 종료 시 미청산 2건,
+실현 순손익 약 -7,656원을 기록했다. 따라서 종전의 VBO 실패와 전 전략 0거래 진단은 정정한다.
 walk-forward는 유효일 26/30으로 계속 대기한다. 결과 파일은
 `data/validation_campaign_20261025.json`이다.
 

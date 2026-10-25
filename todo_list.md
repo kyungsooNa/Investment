@@ -164,12 +164,12 @@
 - [x] **로컬 유효 코퍼스 파일럿 실행·재진단 (2026-10-15)** — 유효 19거래일, 활성 7전략 모두 실행 완료. 전 전략 BUY/SELL/REJECTED 0건. PIT base 후보는 18/19일, 후보-일 관측 112건이므로 후보 부재가 아니라 후보 이후 신호/필터 단계로 원인을 좁혔다. 다만 period journal에 후보별 탈락 사유가 없어 정확한 필터 귀속은 아직 불가능하다. (`reports/validation_campaign_20261015.md`)
 - [x] **PIT 후보 관측 계측 (2026-10-15)** — plan에 날짜별 base 후보 수·후보가 있는 날짜 수·후보-일 합계를 기록하고, 후보가 있는데 신호/거부가 0건인 경우를 `no_signal_observed`로 분리했다. 남은 관측 공백은 전략별 주요 필터 candidate funnel이다.
 - [x] **후보 평가 진단 계측 (2026-10-24)** — 기간 실행·캠페인 결과에 날짜별 실제 평가 종목, 관측 필터 사유, 스캔 생략 사유, 미설명 후보를 기록한다. 거래 0건이어도 저장하며 주문 거부·손익 표본과 분리한다. 전체 필터 통과율은 추정하지 않는다. (`reports/validation_diagnostics_20261024.md`)
-- [ ] **계측 후 전체 재진단** — 캡처 분봉·시점 일치 체결강도와 로컬 기준일 일봉을 신호 평가에 배선했다(2026-10-25). 동일 PP 단일일 실행은 약 60초→15.6초, 26일·7전략 캠페인은 442.74초에 종료됐다. 6전략은 완료했으나 모두 체결 0건이고, VBO는 `20260928/010950` BUY 신호 뒤 체결 replay 필수 데이터(`pool_b_candidate`, `current_price`, `previous_day_range`, `program_buy`, `liquidity_filter`, `volatility_20d_annualized`) 누락으로 fail-closed 실패했다. 전체 재진단 완료로 간주하지 않는다. 다음 선행 작업은 VBO 신호·체결 replay 데이터 계약 정합화다. (`reports/validation_diagnostics_20261024.md`)
+- [x] **계측 후 전체 재진단 완료 (2026-10-25)** — 캡처 분봉·시점 일치 체결강도와 로컬 기준일 일봉을 신호 평가에 배선했다. 동일 PP 단일일 실행은 약 60초→15.6초로 단축됐다. `TradeSignal.required_data` 감사 목록을 분봉 원시 컬럼으로 오인하던 체결 replay 계약 오류도 수정했다. 최종 26일·7전략 캠페인은 7개 모두 완료, 실패 0, 0거래 전략 6개였고, VBO는 매수 체결 3건·매도 체결 1건·미청산 2건·실현 순손익 약 -7,656원을 기록했다. 남은 블로커는 유효 캡처 26/30인 walk-forward 데이터뿐이다. (`reports/validation_diagnostics_20261024.md`)
 - [x] 슬리피지/스프레드 CLI 노출 (#619) — `--market-slippage-pct`(MARKET/STOP 체결)·`--spread-pct`. LIMIT 체결엔 미적용(시뮬레이터 의미론).
 - [blocked] 활성 전략 전체 walk-forward + Monte Carlo 재실행 + 민감도 표 — 2026-10-24 기준 유효일 26개로 최소 30개(20/5/5)에 4개 부족하다.
   - 과거 원인 ①은 이번 파일럿에서 무효화: 2026-07-03에는 **현재 시점** `data/premium_stocks.json`(PIT 아님)이 비어 후보가 없었지만, 2026-10-15 캠페인은 캡처의 날짜별 PIT base 후보를 사용했고 18/19일에 후보가 있었다.
   - 과거 원인 ②도 무효화: 6월 하순 양시장 MA 하락 → 마켓 타이밍 게이트가 스캔을 차단한다는 설명은 #766 이후 맞지 않는다. 현재 게이트는 스캔이 아니라 **매수 신호**를 막으며, 백테스트 쪽 parity는 #770/#844 후속으로 복원됐다.
-  - 남은 조건: walk-forward에는 유효 캡처 4거래일을 더 축적해야 한다. 분봉·일봉 replay 배선과 채널 돌파 실행 시각 문제는 2026-10-25 해소했다. 먼저 VBO 체결 replay 필수 데이터 누락을 정리한다. 랭킹 보충분은 필터 통과 후보가 아닌 유동성 상위 종목이므로 계속 제외하고 `metadata.candidate_sources.base`만 PIT 후보로 해석한다.
+  - 남은 조건: walk-forward에는 유효 캡처 4거래일을 더 축적해야 한다. 분봉·일봉 replay 배선, 채널 돌파 실행 시각, VBO의 `required_data` 계약 오류는 2026-10-25 해소했다. 랭킹 보충분은 필터 통과 후보가 아닌 유동성 상위 종목이므로 계속 제외하고 `metadata.candidate_sources.base`만 PIT 후보로 해석한다.
   - 실행 메모: 첫 런이 REST 지배적(12거래일 ≈ 18~23분), **캐시 워밍 후 변형 런 ≈ 1분** — 후보만 갖춰지면 민감도 그리드는 저렴.
 
 주요 파일: `scripts/run_backtest.py`, `services/backtest_walk_forward.py`, `docs/backtest.md`, `data/backtest_*.json`
