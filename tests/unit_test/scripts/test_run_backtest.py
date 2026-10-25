@@ -21,6 +21,7 @@ from scripts.run_backtest import (
     _format_walk_forward_console,
     _format_walk_forward_json,
     _get_program_provider,
+    _get_stock_repository,
     _parse_args,
     _run_profitability_gate_for_result,
     _run_profitability_gate_for_walk_forward,
@@ -877,6 +878,13 @@ def test_get_program_provider_uses_market_data_broker_when_available():
     sqs = SimpleNamespace(market_data_service=SimpleNamespace(_broker_api_wrapper=broker))
 
     assert _get_program_provider(sqs) is broker
+
+
+def test_get_stock_repository_uses_market_data_repository_when_available():
+    repository = object()
+    sqs = SimpleNamespace(market_data_service=SimpleNamespace(_stock_repo=repository))
+
+    assert _get_stock_repository(sqs) is repository
 
 
 def test_build_replay_bar_providers_wires_intraday_and_daily_mtm_providers():

@@ -32,6 +32,7 @@ class StockQueryBacktestReplayService:
         session: str = "REGULAR",
         delisted_ohlcv_store: Any | None = None,
         microstructure_dir: str | Path | None = None,
+        local_ohlcv_provider: Any | None = None,
     ) -> None:
         self._stock_query_service = stock_query_service
         self._program_provider = program_provider
@@ -40,6 +41,7 @@ class StockQueryBacktestReplayService:
         # R-1 생존편향: primary sqs 에 없는 상폐 종목 일봉을 fallback 제공(opt-in).
         self._delisted_ohlcv_store = delisted_ohlcv_store
         self._microstructure_dir = Path(microstructure_dir) if microstructure_dir else None
+        self._local_ohlcv_provider = local_ohlcv_provider
         self._backtest_date: str | None = None
         self._row_cache: dict[tuple[str, str, str, str], list[dict]] = {}
         self._program_cache: dict[tuple[str, str], dict] = {}
@@ -133,6 +135,37 @@ class StockQueryBacktestReplayService:
         end_date: str | None = None,
     ) -> ResCommonResponse:
         replay_end_date = end_date or self._backtest_date
+        captured_date = self._backtest_date or replay_end_date
+        capture_exists = bool(captured_date and self._load_capture(captured_date) is not None)
+        local_getter = getattr(self._local_ohlcv_provider, "get_ohlcv_until", None)
+        if capture_exists and callable(local_getter):
+            rows = await local_getter(
+                stock_code,
+                end_date=replay_end_date,
+                limit=limit,
+            )
+            if rows:
+                return ResCommonResponse(
+                    rt_cd=ErrorCode.SUCCESS.value,
+                    msg1="backtest replay local ohlcv",
+                    data=rows,
+                )
+            if self._delisted_ohlcv_store is not None:
+                rows = self._delisted_ohlcv_store.get_daily_rows(
+                    stock_code, limit=limit, end_date=replay_end_date,
+                )
+                if rows:
+                    return ResCommonResponse(
+                        rt_cd=ErrorCode.SUCCESS.value,
+                        msg1="backtest replay delisted ohlcv",
+                        data=rows,
+                    )
+            return ResCommonResponse(
+                rt_cd=ErrorCode.EMPTY_VALUES.value,
+                msg1=f"local daily rows not found: {stock_code} {replay_end_date}",
+                data=[],
+            )
+
         response = await self._stock_query_service.get_recent_daily_ohlcv(
             stock_code,
             limit=limit,

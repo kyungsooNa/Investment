@@ -61,6 +61,22 @@ def _make_snapshot(
     }
 
 
+@pytest.mark.asyncio
+async def test_get_ohlcv_until_returns_latest_rows_at_or_before_end_date(repo):
+    await repo.upsert_ohlcv([
+        {"code": "A001", "date": "20260101", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1},
+        {"code": "A001", "date": "20260102", "open": 11, "high": 12, "low": 10, "close": 11, "volume": 2},
+        {"code": "A001", "date": "20260103", "open": 12, "high": 13, "low": 11, "close": 12, "volume": 3},
+        {"code": "A001", "date": "20260104", "open": 13, "high": 14, "low": 12, "close": 13, "volume": 4},
+        {"code": "B001", "date": "20260103", "open": 99, "high": 99, "low": 99, "close": 99, "volume": 9},
+    ])
+
+    rows = await repo.get_ohlcv_until("A001", end_date="20260103", limit=2)
+
+    assert [row["date"] for row in rows] == ["20260102", "20260103"]
+    assert [row["close"] for row in rows] == [11, 12]
+
+
 class TestGetMinerviniStage2Stocks:
     """get_minervini_stage2_stocks: Stage2 필터링 및 rs_rating 정렬 검증."""
 

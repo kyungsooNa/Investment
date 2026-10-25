@@ -63,6 +63,29 @@ CLI는 RSI2에만 15:20을 적용하고 채널 돌파에는 12:00 기본값을 �
 사용할 수 있으므로, 이번 변경만으로 전체 7전략 캠페인을 완전 오프라인으로 보장하지 않는다.
 채널 돌파 기본 실행 시각은 별도 후속에서 15:20으로 정정했다.
 
+## 2026-10-25 로컬 일봉 재생과 전체 재진단
+
+캡처 날짜의 `get_recent_daily_ohlcv()`를 로컬 `stocks.db`의 기준일 이하 최근 N개 조회로
+고정했다. 로컬 데이터가 없으면 외부 API로 보충하지 않는다. 동일 PP 단일일 실행은 약 60초에서
+15.6초로 줄었고, 26일·7전략 캠페인은 442.74초에 종료됐다.
+
+캠페인 결과는 7전략 중 6개 완료, VBO 1개 실패였다. 완료한 6개 전략은 모두 체결 0건이며,
+관측된 주요 탈락 사유는 다음과 같다.
+
+- PP/BGU: `no_ma_proximity` 77, `poor_candle_quality` 26, 미설명 후보 50
+- O'Neil Squeeze: `over_extended` 127, `low_execution_strength` 21
+- High Tight Flag: `pattern_not_detected` 150
+- First Pullback: `no_surge_history` 90, `pullback_out_of_range` 39, 미설명 후보 21
+- RSI2: `not_stage2` 148, `rsi_unavailable` 5
+- Channel Breakout: `rs_rating_below_min` 148, `adx_not_rising` 5
+
+VBO는 `20260928`의 `010950`에서 BUY 신호가 생성됐지만 체결 replay 필수 데이터
+(`pool_b_candidate`, `current_price`, `previous_day_range`, `program_buy`, `liquidity_filter`,
+`volatility_20d_annualized`)가 없어 fail-closed로 종료됐다. 따라서 전체 재진단은 아직 완료로
+간주하지 않으며, 다음 선행 작업은 VBO 신호와 체결 replay 데이터 계약을 맞추는 것이다.
+walk-forward는 유효일 26/30으로 계속 대기한다. 결과 파일은
+`data/validation_campaign_20261025.json`이다.
+
 ## 로컬 검증
 
 - 관련 테스트 278개 통과, 이후 공통 계층 이동·로그 레벨 수정 관련 26개 통과.

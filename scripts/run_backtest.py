@@ -245,6 +245,11 @@ def _get_program_provider(stock_query_service: Any) -> Any | None:
     return getattr(market_data_service, "_broker_api_wrapper", None)
 
 
+def _get_stock_repository(stock_query_service: Any) -> Any | None:
+    market_data_service = getattr(stock_query_service, "market_data_service", None)
+    return getattr(market_data_service, "_stock_repo", None)
+
+
 def _build_market_resolver(logger: Any | None = None) -> Any | None:
     """종목코드 → "KOSPI"/"KOSDAQ" resolver (마켓타이밍 게이트용).
 
@@ -1555,6 +1560,7 @@ async def _run(args: argparse.Namespace) -> None:
         market_clock=backtest_clock,
         delisted_ohlcv_store=delisted_ohlcv_store,
         microstructure_dir=args.microstructure_dir,
+        local_ohlcv_provider=_get_stock_repository(sqs),
     )
     apply_backtest_snapshot_context(
         universe_service,
