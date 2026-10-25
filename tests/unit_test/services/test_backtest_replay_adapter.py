@@ -593,6 +593,48 @@ async def test_stock_query_replay_falls_back_when_capture_date_is_unavailable(tm
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "kwargs"),
+    [
+        ("get_top_trading_value_stocks", {}),
+        ("get_top_rise_fall_stocks", {"rise": True}),
+        ("get_top_volume_stocks", {}),
+    ],
+)
+async def test_stock_query_replay_blocks_live_rankings_for_captured_date(
+    tmp_path, method_name, kwargs
+):
+    _write_microstructure_capture(tmp_path / "replay_microstructure_20260501.json")
+    sqs = AsyncMock()
+    replay = StockQueryBacktestReplayService(sqs, microstructure_dir=tmp_path)
+    replay.set_backtest_date("20260501")
+
+    response = await getattr(replay, method_name)(**kwargs)
+
+    assert response.rt_cd == ErrorCode.SUCCESS.value
+    assert response.data == []
+    getattr(sqs, method_name).assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stock_query_replay_delegates_live_ranking_without_capture(tmp_path):
+    sqs = AsyncMock()
+    expected = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="ok",
+        data=[{"code": "005930"}],
+    )
+    sqs.get_top_volume_stocks.return_value = expected
+    replay = StockQueryBacktestReplayService(sqs, microstructure_dir=tmp_path)
+    replay.set_backtest_date("20260502")
+
+    response = await replay.get_top_volume_stocks(limit=20)
+
+    assert response is expected
+    sqs.get_top_volume_stocks.assert_awaited_once_with(limit=20)
+
+
+@pytest.mark.asyncio
 async def test_stock_query_replay_uses_local_daily_rows_for_captured_date(tmp_path):
     _write_microstructure_capture(tmp_path / "replay_microstructure_20260501.json")
     sqs = AsyncMock()

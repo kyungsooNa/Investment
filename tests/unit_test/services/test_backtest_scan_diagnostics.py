@@ -26,7 +26,16 @@ class DiagnosticStrategy:
         return []
 
     async def scan(self):
-        self._logger.info({"event": "scan_with_watchlist", "count": 4})
+        self._logger.info({
+            "event": "scan_with_watchlist",
+            "count": 4,
+            "source_counts": {"pool_a": 1, "intraday_rank": 3},
+        })
+        self._logger.info({
+            "event": "pool_b_filtered",
+            "count": 2,
+            "source_counts": {"pool_a": 1, "intraday_rank": 1},
+        })
         for code in ("A", "B", "C"):
             self._logger.debug({"event": "candidate_evaluated", "code": code})
         for event in ("breakout_rejected", "entry_rejected"):
@@ -52,6 +61,9 @@ async def test_zero_trade_diagnostics_persist_without_contaminating_journal(tmp_
     assert [row["date"] for row in rows] == ["20261001", "20261002"]
     assert rows[0]["evaluated_candidates"] == 3
     assert rows[0]["watchlist_candidates"] == 4
+    assert rows[0]["candidate_source_counts"] == {"pool_a": 1, "intraday_rank": 3}
+    assert rows[0]["eligible_candidates"] == 2
+    assert rows[0]["eligible_candidate_source_counts"] == {"pool_a": 1, "intraday_rank": 1}
     assert rows[0]["reason_counts"] == {"not_in_squeeze": 1, "price_unavailable": 1}
     assert rows[0]["unexplained_codes"] == ["C"]
     assert rows[0]["buy_signals"] == 0

@@ -150,7 +150,13 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
         candidates = await self._load_pool_b()
         if not candidates:
             return signals
-        self._logger.info({"event": "pool_b_loaded", "count": len(candidates)})
+        self._logger.info({
+            "event": "pool_b_loaded",
+            "count": len(candidates),
+            "source_counts": dict(sorted(Counter(
+                str(stock.get("source") or "unknown") for stock in candidates
+            ).items())),
+        })
 
         # 3) 유동성·규모 필터를 먼저 적용해 후속 API 조회와 shadow 구독을 줄인다.
         runtime_candidates: List[dict] = []
@@ -168,6 +174,13 @@ class LarryWilliamsVBOStrategy(LiveStrategy):
                     "event": "scan_error", "strategy_name": self.name,
                     "code": code, "error": str(e),
                 }, exc_info=True)
+        self._logger.info({
+            "event": "pool_b_filtered",
+            "count": len(runtime_candidates),
+            "source_counts": dict(sorted(Counter(
+                str(stock.get("source") or "unknown") for stock in runtime_candidates
+            ).items())),
+        })
 
         # 시장 국면 판정은 스케줄러 공통 주문 게이트가 한다(#766). 전략은 조회하지 않는다.
         candidate_codes = [c["code"] for c in runtime_candidates]

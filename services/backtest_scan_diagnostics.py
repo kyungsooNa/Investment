@@ -6,11 +6,13 @@ from common.rejection_collector import RejectionLogHandler
 
 SCAN_EVENTS = RejectionLogHandler.CAPTURED_EVENTS | {
     "candidate_evaluated", "scan_with_watchlist", "pool_b_loaded",
+    "pool_b_filtered",
     "breakout_rejected", "breakout_skipped", "candidate_skipped",
     "scan_error", "entry_signal_generated", "smart_money_passed", "bgu_matched",
 }
 NON_REJECTION_EVENTS = {
     "candidate_evaluated", "scan_with_watchlist", "pool_b_loaded",
+    "pool_b_filtered",
     "buy_signal_generated", "entry_signal_generated", "smart_money_passed", "bgu_matched",
 }
 
@@ -23,10 +25,18 @@ def summarize_scan(date, strategy, events, signals):
     explained = {code for code, _ in reasons} | signal_codes
     watchlist_counts = [event.details.get("count") for event in events
                        if event.event in {"scan_with_watchlist", "pool_b_loaded"}]
+    source_counts = [event.details.get("source_counts") for event in events
+                     if event.event in {"scan_with_watchlist", "pool_b_loaded"}]
+    filtered = [event for event in events if event.event == "pool_b_filtered"]
     return {
         "date": date,
         "strategy": strategy,
         "watchlist_candidates": watchlist_counts[-1] if watchlist_counts else None,
+        "candidate_source_counts": source_counts[-1] if source_counts else {},
+        "eligible_candidates": filtered[-1].details.get("count") if filtered else None,
+        "eligible_candidate_source_counts": (
+            filtered[-1].details.get("source_counts") or {} if filtered else {}
+        ),
         "evaluated_candidates": len(evaluated),
         "evaluated_codes": sorted(evaluated),
         "buy_signals": sum(signal.action == "BUY" for signal in signals),
