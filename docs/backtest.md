@@ -155,6 +155,7 @@
 - `current_bar` 정책에서는 신호 가격이 닿는 첫 분봉을 체결 후보 봉으로 제공한다.
 - `next_bar` 정책에서는 신호 가격이 닿는 신호 봉 다음 분봉을 체결 후보 봉으로 제공한다.
 - 신호 가격이 닿지 않으면 마지막 분봉을 반환해 simulator가 미체결을 판단하게 한다.
+- `TradeSignal.required_data`는 신호 평가에 사용한 데이터의 감사 목록이며 분봉 원시 컬럼 계약이 아니다. 체결 provider는 이를 분봉 필드로 재검증하지 않고, 체결에 필요한 분봉 자체가 없을 때만 fail-closed한다.
   - 종목, 날짜, 세션 단위로 분봉을 캐시한다.
   - `--microstructure-dir`을 지정하면 품질 manifest에서 valid인 날짜의 `replay_orderbook_intraday_YYYYMMDD.json`을 읽어 해당 분봉 시각 이전의 가장 가까운 bid/ask를 주입한다. 120초를 초과한 스냅샷과 미래 스냅샷은 사용하지 않으며, 유효 호가가 없을 때만 `--spread-pct`로 폴백한다.
 

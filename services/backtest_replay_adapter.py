@@ -555,7 +555,6 @@ class StockQueryIntradayReplayBarProvider:
         )
         self._max_orderbook_age_sec = max(0, int(max_orderbook_age_sec))
         self._cache: dict[tuple[str, str, str], list[BacktestBar]] = {}
-        self._row_cache: dict[tuple[str, str, str], list[dict]] = {}
         self._orderbook_cache: dict[tuple[str, str], list[dict]] = {}
         self._quality_manifest: dict | None = None
         self._date_quality_cache: dict[str, bool | None] = {}
@@ -576,7 +575,6 @@ class StockQueryIntradayReplayBarProvider:
         bars = await self._get_bars(signal.code, date_ymd)
         if not bars:
             raise ValueError(f"intraday rows not found: {signal.code} {date_ymd}")
-        self._validate_required_data(signal=signal, date_ymd=date_ymd)
 
         target_price = float(signal.price or 0)
         normalized_side = str(side or signal.action or "").upper()
@@ -600,7 +598,6 @@ class StockQueryIntradayReplayBarProvider:
         if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
             rows = []
         rows = [row for row in rows if isinstance(row, dict)]
-        self._row_cache[key] = rows
 
         orderbook_rows = self._load_orderbook_rows(code, date_ymd)
         bars = [
@@ -617,27 +614,6 @@ class StockQueryIntradayReplayBarProvider:
         bars.sort(key=lambda bar: bar.timestamp)
         self._cache[key] = bars
         return bars
-
-    def _validate_required_data(self, *, signal: TradeSignal, date_ymd: str) -> None:
-        required = [
-            str(key).strip()
-            for key in (getattr(signal, "required_data", None) or [])
-            if str(key).strip()
-        ]
-        if not required:
-            return
-        key = (signal.code, date_ymd, self._session)
-        rows = self._row_cache.get(key, [])
-        missing = [
-            field
-            for field in required
-            if not any(row.get(field) not in (None, "", "-") for row in rows)
-        ]
-        if missing:
-            raise ValueError(
-                f"required replay data missing: code={signal.code} date={date_ymd} "
-                f"fields={missing}"
-            )
 
     def _row_to_bar(
         self,
