@@ -1545,14 +1545,16 @@ async def _run(args: argparse.Namespace) -> None:
                 "상폐 종목 일봉 fallback 불가로 후보 평가가 제한됩니다."
             )
 
-    replay_sqs = StockQueryBacktestReplayService(
-        sqs,
-        program_provider=_get_program_provider(sqs),
-        delisted_ohlcv_store=delisted_ohlcv_store,
-    )
     backtest_clock = BacktestMarketClock.from_clock(
         market_clock,
         default_time=args.backtest_time,
+    )
+    replay_sqs = StockQueryBacktestReplayService(
+        sqs,
+        program_provider=_get_program_provider(sqs),
+        market_clock=backtest_clock,
+        delisted_ohlcv_store=delisted_ohlcv_store,
+        microstructure_dir=args.microstructure_dir,
     )
     apply_backtest_snapshot_context(
         universe_service,

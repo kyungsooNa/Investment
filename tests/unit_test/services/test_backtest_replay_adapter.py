@@ -27,6 +27,55 @@ REAL_CAPTURE_FIXTURE_DIR = (
 )
 
 
+def _write_microstructure_capture(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "metadata": {"trade_date": "20260501"},
+                "intraday_minutes": {
+                    "005930": [
+                        {
+                            "stck_bsop_date": "20260501",
+                            "stck_cntg_hour": "090000",
+                            "stck_prpr": "70000",
+                            "stck_oprc": "69900",
+                            "stck_hgpr": "70100",
+                            "stck_lwpr": "69800",
+                            "stck_sdpr": "69000",
+                            "cntg_vol": "10",
+                        },
+                        {
+                            "stck_bsop_date": "20260501",
+                            "stck_cntg_hour": "090100",
+                            "stck_prpr": "70100",
+                            "stck_hgpr": "70200",
+                            "stck_lwpr": "69900",
+                            "cntg_vol": "20",
+                        },
+                        {
+                            "stck_bsop_date": "20260501",
+                            "stck_cntg_hour": "090200",
+                            "stck_prpr": "70200",
+                            "stck_hgpr": "70300",
+                            "stck_lwpr": "70000",
+                            "cntg_vol": "30",
+                        },
+                    ]
+                },
+                "execution_strength_intraday": {
+                    "005930": [
+                        {"time": "090030", "strength": 101.5},
+                        {"time": "090130", "strength": 202.5},
+                    ]
+                },
+                "program_trades": {"005930": {"program_net_buy_qty": 99999}},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _signal(code="005930", price=70_000, qty=1, action="BUY"):
     return TradeSignal(
         code=code,
@@ -448,6 +497,115 @@ async def test_stock_query_backtest_replay_service_replays_execution_strength_fr
     assert response.rt_cd == "0"
     assert response.data["output"] == [{"tday_rltv": "132.4"}]
     sqs.get_stock_conclusion.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stock_query_replay_uses_captured_minutes_and_point_in_time_strength(tmp_path):
+    _write_microstructure_capture(tmp_path / "replay_microstructure_20260501.json")
+    sqs = AsyncMock()
+    clock = BacktestMarketClock()
+    clock.set_backtest_datetime(datetime(2026, 5, 1, 9, 1, 0))
+    replay = StockQueryBacktestReplayService(
+        sqs,
+        market_clock=clock,
+        microstructure_dir=tmp_path,
+    )
+    replay.set_backtest_date("20260501")
+
+    price = await replay.get_current_price("005930")
+    conclusion = await replay.get_stock_conclusion("005930")
+    rows = await replay.get_day_intraday_minutes_list("005930")
+
+    assert price.data["output"]["stck_prpr"] == "70100"
+    assert price.data["output"]["pgtr_ntby_qty"] == "0"
+    assert conclusion.data["output"] == [{"tday_rltv": "101.5"}]
+    assert [row["stck_cntg_hour"] for row in rows] == ["090000", "090100"]
+    sqs.get_day_intraday_minutes_list.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stock_query_replay_handles_current_price_view_without_live_service(tmp_path):
+    _write_microstructure_capture(tmp_path / "replay_microstructure_20260501.json")
+    sqs = AsyncMock()
+    clock = BacktestMarketClock()
+    clock.set_backtest_datetime(datetime(2026, 5, 1, 9, 1, 0))
+    replay = StockQueryBacktestReplayService(
+        sqs,
+        market_clock=clock,
+        microstructure_dir=tmp_path,
+    )
+    replay.set_backtest_date("20260501")
+
+    response = await replay.handle_get_current_stock_price(
+        "005930",
+        caller="LarryWilliamsVBO",
+        allow_snapshot=False,
+    )
+
+    assert response.rt_cd == ErrorCode.SUCCESS.value
+    assert response.data == {
+        "code": "005930",
+        "price": "70100",
+        "change": "1100",
+        "rate": "1.59",
+        "sign": "+",
+        "acml_tr_pbmn": "2102000",
+        "acml_vol": "30",
+        "pgtr_ntby_qty": "0",
+        "open": "69900",
+        "high": "70200",
+        "low": "69800",
+        "prev_close": "69000",
+    }
+    sqs.handle_get_current_stock_price.assert_not_awaited()
+    sqs.get_day_intraday_minutes_list.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stock_query_replay_does_not_fall_back_for_code_missing_from_capture(tmp_path):
+    _write_microstructure_capture(tmp_path / "replay_microstructure_20260501.json")
+    sqs = AsyncMock()
+    replay = StockQueryBacktestReplayService(sqs, microstructure_dir=tmp_path)
+    replay.set_backtest_date("20260501")
+
+    response = await replay.get_current_price("000660")
+
+    assert response.rt_cd == ErrorCode.EMPTY_VALUES.value
+    sqs.get_day_intraday_minutes_list.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stock_query_replay_falls_back_when_capture_date_is_unavailable(tmp_path):
+    sqs = AsyncMock()
+    sqs.get_day_intraday_minutes_list.return_value = [
+        {"stck_bsop_date": "20260502", "stck_cntg_hour": "090000", "stck_prpr": "80000"}
+    ]
+    replay = StockQueryBacktestReplayService(sqs, microstructure_dir=tmp_path)
+    replay.set_backtest_date("20260502")
+
+    response = await replay.get_current_price("005930")
+
+    assert response.data["output"]["stck_prpr"] == "80000"
+    sqs.get_day_intraday_minutes_list.assert_awaited_once_with(
+        "005930", date_ymd="20260502", session="REGULAR"
+    )
+
+
+@pytest.mark.asyncio
+async def test_stock_query_replay_rejects_malformed_existing_capture(tmp_path):
+    capture_path = tmp_path / "replay_microstructure_20260501.json"
+    capture_path.write_text(
+        json.dumps({"intraday_minutes": ["invalid"]}),
+        encoding="utf-8",
+    )
+    sqs = AsyncMock()
+    replay = StockQueryBacktestReplayService(sqs, microstructure_dir=tmp_path)
+    replay.set_backtest_date("20260501")
+
+    with pytest.raises(ValueError, match="invalid microstructure replay capture"):
+        await replay.get_current_price("005930")
+
+    sqs.get_day_intraday_minutes_list.assert_not_awaited()
 
 
 @pytest.mark.asyncio
