@@ -31,6 +31,7 @@ class StockQueryBacktestReplayService:
         market_clock: Any | None = None,
         session: str = "REGULAR",
         delisted_ohlcv_store: Any | None = None,
+        microstructure_dir: str | Path | None = None,
     ) -> None:
         self._stock_query_service = stock_query_service
         self._program_provider = program_provider
@@ -38,9 +39,11 @@ class StockQueryBacktestReplayService:
         self._session = session
         # R-1 생존편향: primary sqs 에 없는 상폐 종목 일봉을 fallback 제공(opt-in).
         self._delisted_ohlcv_store = delisted_ohlcv_store
+        self._microstructure_dir = Path(microstructure_dir) if microstructure_dir else None
         self._backtest_date: str | None = None
         self._row_cache: dict[tuple[str, str, str, str], list[dict]] = {}
         self._program_cache: dict[tuple[str, str], dict] = {}
+        self._capture_cache: dict[str, dict | None] = {}
 
     def set_backtest_date(self, date_ymd: str) -> None:
         self._backtest_date = str(date_ymd)
@@ -60,6 +63,44 @@ class StockQueryBacktestReplayService:
             rt_cd=ErrorCode.SUCCESS.value,
             msg1="backtest replay current price",
             data={"output": output},
+        )
+
+    async def handle_get_current_stock_price(
+        self,
+        stock_code: str,
+        caller: str = "unknown",
+        exchange: Any = None,
+        force_fresh: bool = False,
+        allow_snapshot: bool = False,
+    ) -> ResCommonResponse:
+        del caller, exchange, force_fresh, allow_snapshot
+        response = await self.get_current_price(stock_code)
+        if response.rt_cd != ErrorCode.SUCCESS.value:
+            return ResCommonResponse(
+                rt_cd=response.rt_cd,
+                msg1=response.msg1,
+                data={"code": stock_code},
+            )
+
+        output = (response.data or {}).get("output", {})
+        sign = {"2": "+", "5": "-"}.get(str(output.get("prdy_vrss_sign", "3")), "")
+        return ResCommonResponse(
+            rt_cd=ErrorCode.SUCCESS.value,
+            msg1="backtest replay current price view",
+            data={
+                "code": stock_code,
+                "price": str(output.get("stck_prpr", "0")),
+                "change": str(output.get("prdy_vrss", "0")),
+                "rate": str(output.get("prdy_ctrt", "0")),
+                "sign": sign,
+                "acml_tr_pbmn": str(output.get("acml_tr_pbmn", "0")),
+                "acml_vol": str(output.get("acml_vol", "0")),
+                "pgtr_ntby_qty": str(output.get("pgtr_ntby_qty", "0")),
+                "open": str(output.get("stck_oprc", "0")),
+                "high": str(output.get("stck_hgpr", "0")),
+                "low": str(output.get("stck_lwpr", "0")),
+                "prev_close": str(output.get("stck_sdpr", "0")),
+            },
         )
 
     async def get_stock_conclusion(self, stock_code: str) -> ResCommonResponse:
@@ -125,10 +166,13 @@ class StockQueryBacktestReplayService:
             kwargs["date_ymd"] = self._backtest_date
         if "session" not in kwargs:
             kwargs["session"] = self._session
-        rows = await self._stock_query_service.get_day_intraday_minutes_list(stock_code, **kwargs)
+        date_ymd = str(kwargs.get("date_ymd") or self._backtest_date or "")
+        session = str(kwargs.get("session") or self._session)
+        rows = self._captured_intraday_rows(stock_code, date_ymd, session=session)
+        if rows is None:
+            rows = await self._stock_query_service.get_day_intraday_minutes_list(stock_code, **kwargs)
         if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
             return []
-        date_ymd = str(kwargs.get("date_ymd") or self._backtest_date or "")
         return self._normalize_and_cutoff_rows(
             [dict(row) for row in rows if isinstance(row, dict)],
             date_ymd=date_ymd,
@@ -269,8 +313,8 @@ class StockQueryBacktestReplayService:
             * (self._to_int(self._first(row, "stck_prpr", "prpr", "close", "price")) or 0)
             for row in rows
         )
-        prev_close = self._to_int(
-            self._first(latest, "stck_sdpr", "sdpr", "prev_close", "prdy_clpr")
+        prev_close = self._first_valid_int(
+            rows, "stck_sdpr", "sdpr", "prev_close", "prdy_clpr"
         ) or latest_close
         diff = latest_close - prev_close
         program_qty = (
@@ -299,11 +343,13 @@ class StockQueryBacktestReplayService:
         if key in self._row_cache:
             return self._row_cache[key]
 
-        rows = await self._stock_query_service.get_day_intraday_minutes_list(
-            stock_code,
-            date_ymd=date_ymd,
-            session=self._session,
-        )
+        rows = self._captured_intraday_rows(stock_code, date_ymd, session=self._session)
+        if rows is None:
+            rows = await self._stock_query_service.get_day_intraday_minutes_list(
+                stock_code,
+                date_ymd=date_ymd,
+                session=self._session,
+            )
         if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
             rows = []
         normalized = self._normalize_and_cutoff_rows(
@@ -313,6 +359,70 @@ class StockQueryBacktestReplayService:
         normalized.sort(key=lambda row: str(self._first(row, "stck_bsop_date", "date") or date_ymd) + str(self._first(row, "stck_cntg_hour", "time") or ""))
         self._row_cache[key] = normalized
         return normalized
+
+    def _captured_intraday_rows(
+        self,
+        stock_code: str,
+        date_ymd: str,
+        *,
+        session: str,
+    ) -> list[dict] | None:
+        payload = self._load_capture(date_ymd)
+        if payload is None:
+            return None
+        metadata = payload.get("metadata") or {}
+        captured_session = str(metadata.get("session") or "REGULAR")
+        if captured_session.upper() != str(session).upper():
+            return None
+
+        minute_rows = (payload.get("intraday_minutes") or {}).get(stock_code) or []
+        strength_rows = (
+            (payload.get("execution_strength_intraday") or {}).get(stock_code) or []
+        )
+        strength_points = sorted(
+            (
+                str(row.get("time") or "").zfill(6),
+                row.get("strength"),
+            )
+            for row in strength_rows
+            if isinstance(row, dict) and row.get("time") not in (None, "")
+        )
+        strength_times = [point[0] for point in strength_points]
+        result: list[dict] = []
+        for raw_row in minute_rows:
+            if not isinstance(raw_row, dict):
+                continue
+            row = dict(raw_row)
+            row_time = str(
+                self._first(row, "stck_cntg_hour", "cntg_hour", "time") or ""
+            ).zfill(6)
+            strength_index = bisect_right(strength_times, row_time) - 1
+            if strength_index >= 0:
+                row["execution_strength"] = strength_points[strength_index][1]
+            result.append(row)
+        return result
+
+    def _load_capture(self, date_ymd: str) -> dict | None:
+        if self._microstructure_dir is None:
+            return None
+        if date_ymd in self._capture_cache:
+            return self._capture_cache[date_ymd]
+        path = self._microstructure_dir / f"replay_microstructure_{date_ymd}.json"
+        if not path.exists():
+            self._capture_cache[date_ymd] = None
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"invalid microstructure replay capture: {path}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"invalid microstructure replay capture: {path}")
+        for field in ("metadata", "intraday_minutes", "execution_strength_intraday"):
+            value = payload.get(field)
+            if value is not None and not isinstance(value, dict):
+                raise ValueError(f"invalid microstructure replay capture: {path}")
+        self._capture_cache[date_ymd] = payload
+        return payload
 
     def _normalize_and_cutoff_rows(self, rows: list[dict], *, date_ymd: str) -> list[dict]:
         cutoff = self._cutoff_hhmmss()

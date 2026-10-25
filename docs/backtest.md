@@ -160,6 +160,7 @@
 
 - `StockQueryBacktestReplayService`를 추가했다.
 - 전략 내부의 `get_current_price()` 호출을 과거 분봉 기반 현재가 응답으로 바꾼다.
+- Larry Williams VBO가 사용하는 `handle_get_current_stock_price()`도 같은 과거 분봉에서 뷰 응답을 만든다.
 - 전략 내부의 `get_stock_conclusion()` 호출을 과거 분봉 기반 체결강도 응답으로 바꾼다.
 - `get_recent_daily_ohlcv()` 호출은 현재 백테스트 날짜를 `end_date`로 주입한다.
 - 일별 프로그램매매 순매수 수량을 `pgtr_ntby_qty`에 보강한다.
@@ -611,6 +612,16 @@ python -m scripts.capture_backtest_microstructure --date 20260512 --codes 000660
   ```powershell
   python -m scripts.run_backtest --strategy larry_williams_vbo --dates 20260721 --microstructure-dir data/backtest_microstructure
   ```
+
+`--microstructure-dir`을 지정하면 신호 평가도 날짜별 `replay_microstructure_YYYYMMDD.json`의
+분봉과 장중 체결강도 시계열을 사용한다. 체결강도는 각 분봉 시각 이하의 최신 값만 결합하고,
+백테스트 시각 이후 분봉은 제외한다. 해당 날짜의 캡처 파일이 있으면 그 파일을 권위 원본으로
+간주하므로 캡처에 없는 종목은 원격 분봉 조회로 폴백하지 않는다. 날짜 파일 자체가 없을 때만
+기존 지정일 분봉 조회를 사용하며, 형식이 잘못된 파일은 즉시 실패한다.
+
+현재 `program_trades`는 날짜별 최종값이므로 장중 신호 평가에 주입하지 않는다. 시점별 프로그램
+순매수 시계열이 확보되기 전까지 이 값은 기존 일별 provider 경로를 사용하며, 따라서 프로그램
+필터까지 포함한 완전 오프라인 재생은 아직 지원하지 않는다.
 
 캡처 파일을 실제 replay fixture에 결합한다.
 
