@@ -234,6 +234,23 @@ def test_parse_args_defaults_rsi2_backtest_to_close_window(monkeypatch):
     assert args.backtest_time == "15:20:00"
 
 
+def test_parse_args_defaults_channel_breakout_to_close_window(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_backtest",
+            "--strategy",
+            "larry_williams_channel_breakout",
+            "--dates",
+            "20260501",
+        ],
+    )
+
+    args = _parse_args()
+
+    assert args.backtest_time == "15:20:00"
+
+
 def test_parse_args_keeps_noon_default_for_other_strategies(monkeypatch):
     monkeypatch.setattr(
         "sys.argv",
