@@ -309,6 +309,25 @@ class StockQueryBacktestReplayService:
             source="backtest_replay",
         ), None
 
+    async def get_top_trading_value_stocks(self, *args, **kwargs) -> ResCommonResponse:
+        return await self._get_rank_response("get_top_trading_value_stocks", *args, **kwargs)
+
+    async def get_top_rise_fall_stocks(self, *args, **kwargs) -> ResCommonResponse:
+        return await self._get_rank_response("get_top_rise_fall_stocks", *args, **kwargs)
+
+    async def get_top_volume_stocks(self, *args, **kwargs) -> ResCommonResponse:
+        return await self._get_rank_response("get_top_volume_stocks", *args, **kwargs)
+
+    async def _get_rank_response(self, method_name: str, *args, **kwargs) -> ResCommonResponse:
+        if self._backtest_date and self._load_capture(self._backtest_date) is not None:
+            return ResCommonResponse(
+                rt_cd=ErrorCode.SUCCESS.value,
+                msg1="live ranking disabled for captured backtest replay",
+                data=[],
+            )
+        method = getattr(self._stock_query_service, method_name)
+        return await method(*args, **kwargs)
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stock_query_service, name)
 

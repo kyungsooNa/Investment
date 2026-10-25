@@ -82,18 +82,29 @@ CLI는 RSI2에만 15:20을 적용하고 채널 돌파에는 12:00 기본값을 �
 후속 계약 대조에서 `TradeSignal.required_data`는 신호 평가에 사용한 데이터의 감사 목록인데,
 체결 provider가 이를 분봉 원시 컬럼명으로 재검증하고 있음을 확인했다. 이 검증을 제거하고
 분봉 자체가 없을 때의 fail-closed는 유지했다. 26일·7전략 전체 재실행은 7개 모두 완료, 실패 0,
-0거래 전략 6개로 종료됐다. VBO는 매수 체결 3건, 매도 체결 1건, 기간 종료 시 미청산 2건,
-실현 순손익 약 -7,656원을 기록했다. 따라서 종전의 VBO 실패와 전 전략 0거래 진단은 정정한다.
+0거래 전략 6개로 종료됐다. 이 최초 결과는 VBO의 장중 랭킹 API가 replay adapter의 위임 경로를
+통해 현재 시점 응답을 과거 날짜에 사용했으므로 최종 성과 근거에서는 제외한다.
 walk-forward는 유효일 26/30으로 계속 대기한다. 결과 파일은
 `data/validation_campaign_20261025.json`이다.
 
+## 2026-10-26 VBO 현재 시점 랭킹 누출 제거
+
+VBO 후보 출처를 `pool_b_loaded`와 `pool_b_filtered` 진단에 기록해 캡처 후보와 장중 랭킹
+보충 후보를 분리했다. 이 과정에서 캡처 날짜에도 거래대금·상승률·거래량 랭킹 세 API가
+원본 라이브 서비스로 위임되는 시점 오염을 발견했다. 캡처 파일이 권위 원본인 날짜에는 세
+랭킹을 빈 성공 응답으로 고정하고, 캡처 파일이 없는 기존 실행만 원본 서비스 위임을 유지했다.
+
+동일 26거래일 VBO 재실행 결과는 매수 체결 2건, 매도 체결 1건, 미청산 1건, 실현 순손익
+약 -7,656원이었다. 최초 실행의 매수 3건·미청산 2건 중 추가 1건은 현재 시점 랭킹 누출에
+의존한 결과였다. 26일간 로드 후보 153건과 정적 필터 통과 후보 138건은 모두 캡처 기반
+`pool_a`였고 `intraday_rank` 후보는 0건이었다. 따라서 이 replay는 실시간 랭킹 보충의
+실효성을 검증하는 근거가 아니라, 랭킹 보충을 섞지 않은 PIT base 기준선이다. 결과 파일은
+`data/validation_vbo_pool_sources_20261025.json`이다.
+
 ## 로컬 검증
 
-- 관련 테스트 278개 통과, 이후 공통 계층 이동·로그 레벨 수정 관련 26개 통과.
-- 최종 전체 단위 테스트: 10,183 passed, 1 failed.
-  실패는 `test_krx_after_market_scope_guard.py::test_only_manual_order_path_enables_krx_after_market`
-  실행 중 xdist worker 종료였다. 동일 가드는 단독 실행에서 통과했다.
+- replay adapter·VBO·진단 관련 테스트: 90 passed.
+- 최종 전체 단위 테스트: 10,199 passed.
 - 최종 전체 통합 테스트: 323 passed.
-- 재현: `python -m pytest tests/unit_test -v` / 단독 확인:
-  `python -m pytest tests/unit_test/services/test_krx_after_market_scope_guard.py -v -n0`.
-- 전체 단위 스위트의 로컬 워커 종료는 PR CI `build-and-test`에서 최종 확인한다.
+- 재현: `python -m pytest tests/unit_test -v` /
+  `python -m pytest tests/integration_test -v`.

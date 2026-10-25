@@ -280,12 +280,14 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
                 "name": "저시총",
                 "market_cap": 100_000_000_000,
                 "avg_5d_tv": 20_000_000_000,
+                "source": "intraday_rank",
             },
             {
                 "code": "VALID",
                 "name": "유효종목",
                 "market_cap": 300_000_000_000,
                 "avg_5d_tv": 20_000_000_000,
+                "source": "pool_b",
             },
         ])
         strategy._refresh_range_cache = AsyncMock()
@@ -303,6 +305,18 @@ class TestLarryWilliamsVBOStrategy(unittest.IsolatedAsyncioTestCase):
         sqs.handle_get_current_stock_price.assert_awaited_once_with(
             "VALID", caller=strategy.name, allow_snapshot=False
         )
+        pool_loaded = next(
+            call.args[0]
+            for call in strategy._logger.info.call_args_list
+            if call.args and call.args[0].get("event") == "pool_b_loaded"
+        )
+        pool_filtered = next(
+            call.args[0]
+            for call in strategy._logger.info.call_args_list
+            if call.args and call.args[0].get("event") == "pool_b_filtered"
+        )
+        self.assertEqual(pool_loaded["source_counts"], {"intraday_rank": 1, "pool_b": 1})
+        self.assertEqual(pool_filtered["source_counts"], {"pool_b": 1})
 
     # ── Target 미달 → 거절 ────────────────────────────────────────────
 
