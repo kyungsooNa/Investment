@@ -25,10 +25,11 @@ const MARKET_INDEX_GROUPS = [
         kind: 'widget',
         scope: 'overseas',
         entries: [
-            { label: '나스닥100', symbol: 'CAPITALCOM:US100' },
-            { label: 'S&P500', symbol: 'CAPITALCOM:US500' },
-            { label: '반도체 ETF (SOX 추종)', symbol: 'NASDAQ:SOXX' },
-            { label: 'VIX 변동성', symbol: 'CAPITALCOM:VIX' },
+            // 위젯 1D 그래프가 왼쪽 한 점으로만 그려져 월간 범위로 연다(2026-10-26 실측).
+            { label: '나스닥100', symbol: 'CAPITALCOM:US100', dateRange: '1M' },
+            { label: 'S&P500', symbol: 'CAPITALCOM:US500', dateRange: '1M' },
+            { label: '반도체 ETF (SOX 추종)', symbol: 'NASDAQ:SOXX', dateRange: '1M' },
+            { label: 'VIX 변동성', symbol: 'CAPITALCOM:VIX', dateRange: '1M' },
         ],
     },
     {
