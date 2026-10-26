@@ -423,6 +423,9 @@ class FillReconciliationService:
             if context.side == OrderSide.BUY:
                 buy_log_kwargs = {
                     "volatility_20d_annualized": context.volatility_20d_annualized,
+                    "journal_source": (
+                        "broker_paper" if self._is_paper_trading() else "broker_live"
+                    ),
                 }
                 for key in (
                     "config_hash",

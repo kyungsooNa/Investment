@@ -824,6 +824,38 @@ async def test_persist_records_buy_via_virtual_trade(broker, fsm, reporter, fixe
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("paper", "expected_source"),
+    [(True, "broker_paper"), (False, "broker_live")],
+)
+async def test_persist_records_broker_environment_as_journal_source(
+    broker, fsm, reporter, fixed_now, paper, expected_source,
+):
+    vts = AsyncMock()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        virtual_trade_service=vts,
+        paper=paper,
+    )
+    ctx = fsm.register(_make_context(source="strategy:momentum"))
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED)
+    filled = fsm.transition(ctx.order_key, OrderState.FILLED, filled_qty=10)
+
+    report = OrderExecutionReport(
+        broker_order_no="X",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        fill_price=70500,
+    )
+    await svc._persist_virtual_trade_for_terminal_report(filled, report)
+
+    assert vts.log_buy_async.await_args.kwargs["journal_source"] == expected_source
+
+
+@pytest.mark.asyncio
 async def test_persist_skips_non_domestic_symbol_for_virtual_trade(broker, fsm, reporter, fixed_now):
     vts = AsyncMock()
     svc = _make_service(broker=broker, fsm=fsm, reporter=reporter, fixed_now=fixed_now, virtual_trade_service=vts)
@@ -882,6 +914,7 @@ async def test_persist_records_buy_signal_metadata_via_virtual_trade(broker, fsm
         confidence=0.75,
         required_data=["daily_ohlcv", "execution_strength"],
         market_regime={"kospi": "bull", "kosdaq": "sideways", "stock_market": "KOSPI"},
+        journal_source="broker_live",
     )
 
 

@@ -491,6 +491,7 @@ async def test_log_buy_async_thread_execution(virutal_trade_repository):
             None, None, None, None, None,  # volatility, config_hash, invalidation, stop_loss, target
             None, None, None, None, None,  # entry_reason, trailing_rule, expected_holding, confidence, required_data
             None,  # market_regime (R-2)
+            None,  # journal_source (1-6)
         )
 
 @pytest.mark.asyncio
@@ -1405,6 +1406,37 @@ def test_data_quality_flag_column_is_migrated(temp_db, mock_market_clock):
 
     columns = {row[1] for row in repo._db.execute("PRAGMA table_info(trades)").fetchall()}
     assert "data_quality_flag" in columns
+
+
+def test_journal_source_column_is_migrated(temp_db, mock_market_clock):
+    """기존 DB도 이후 체결의 paper/live 출처를 저장할 컬럼을 얻는다."""
+    legacy = sqlite3.connect(temp_db)
+    legacy.execute(
+        "CREATE TABLE trades ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, strategy TEXT NOT NULL, code TEXT NOT NULL, "
+        "buy_date TEXT NOT NULL, buy_price REAL NOT NULL, qty INTEGER NOT NULL DEFAULT 1, "
+        "sell_date TEXT, sell_price REAL, return_rate REAL NOT NULL DEFAULT 0.0, "
+        "status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '')"
+    )
+    legacy.commit()
+    legacy.close()
+
+    repo = VirtualTradeRepository(db_path=temp_db, market_clock=mock_market_clock)
+
+    columns = {row[1] for row in repo._db.execute("PRAGMA table_info(trades)").fetchall()}
+    assert "journal_source" in columns
+
+
+def test_standard_journal_uses_persisted_execution_source(virutal_trade_repository):
+    """신규 broker 체결은 저장 시점의 paper/live 출처를 표준 journal에 보존한다."""
+    repo = virutal_trade_repository
+    repo.log_buy("전략A", "005930", 70000, journal_source="broker_paper")
+    repo.log_buy("전략A", "000020", 5000)
+
+    by_code = {record["code"]: record for record in repo.get_standard_journal_records()}
+
+    assert by_code["005930"]["source"] == "broker_paper"
+    assert by_code["000020"]["source"] == "virtual_trade"
 
 
 def test_get_all_trades_exposes_data_quality_flag(virutal_trade_repository):

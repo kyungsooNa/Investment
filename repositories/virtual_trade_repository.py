@@ -54,15 +54,16 @@ _SELECT_TRADES = (
     "SELECT strategy, code, buy_date, buy_price, qty, sell_date, sell_price, return_rate, status, reason, "
     "volatility_20d_annualized, config_hash, invalidation_price, stop_loss_price, target_price, "
     "entry_reason, trailing_rule, expected_holding_period_days, confidence, required_data, market_regime, "
-    "data_quality_flag "
+    "data_quality_flag, journal_source "
     "FROM trades ORDER BY id"
 )
 _INSERT_TRADE = (
     "INSERT INTO trades "
     "(strategy, code, buy_date, buy_price, qty, sell_date, sell_price, return_rate, status, reason, "
     "volatility_20d_annualized, config_hash, invalidation_price, stop_loss_price, target_price, "
-    "entry_reason, trailing_rule, expected_holding_period_days, confidence, required_data, market_regime) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "entry_reason, trailing_rule, expected_holding_period_days, confidence, required_data, market_regime, "
+    "journal_source) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 _DDL = """
 CREATE TABLE IF NOT EXISTS trades (
@@ -87,7 +88,8 @@ CREATE TABLE IF NOT EXISTS trades (
     expected_holding_period_days INTEGER,
     confidence REAL,
     required_data TEXT,
-    market_regime TEXT
+    market_regime TEXT,
+    journal_source TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_trades_strategy_code_status ON trades(strategy, code, status);
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -200,6 +202,9 @@ class VirtualTradeRepository:
         if "data_quality_flag" not in existing:
             with self._db:
                 self._db.execute("ALTER TABLE trades ADD COLUMN data_quality_flag TEXT")
+        if "journal_source" not in existing:
+            with self._db:
+                self._db.execute("ALTER TABLE trades ADD COLUMN journal_source TEXT")
 
     # ---- 레거시 데이터 마이그레이션 (CSV/JSON → SQLite, 최초 1회) ----
 
@@ -312,7 +317,7 @@ class VirtualTradeRepository:
                 _opt_float('invalidation_price'), _opt_float('stop_loss_price'), _opt_float('target_price'),
                 _opt_str('entry_reason'), _opt_str('trailing_rule'),
                 _opt_int('expected_holding_period_days'), _opt_float('confidence'),
-                _opt_str('required_data'), _opt_str('market_regime'),
+                _opt_str('required_data'), _opt_str('market_regime'), _opt_str('journal_source'),
             ))
         with self._db:
             self._db.execute("DELETE FROM trades")
@@ -499,7 +504,8 @@ class VirtualTradeRepository:
                 expected_holding_period_days: int | None = None,
                 confidence: float | None = None,
                 required_data: list | None = None,
-                market_regime: dict | None = None):
+                market_regime: dict | None = None,
+                journal_source: str | None = None):
         """가상 매수 기록. 동일 전략+종목 중복 매수 방지.
 
         volatility_20d_annualized: 신호 생성 직전 20거래일 수익률 std × √252. 리포트 집계용.
@@ -533,7 +539,7 @@ class VirtualTradeRepository:
                      volatility_20d_annualized, config_hash,
                      invalidation_price, stop_loss_price, target_price,
                      entry_reason, trailing_rule, expected_holding_period_days,
-                     confidence, required_data_json, market_regime_json))
+                     confidence, required_data_json, market_regime_json, journal_source))
             logger.info(f"[가상매매] {strategy_id}/{code} 매수 기록 (가격: {current_price}, 수량: {qty})")
 
     async def log_buy_async(self, strategy_name: str, code: str, current_price, qty: int = 1,
@@ -547,13 +553,14 @@ class VirtualTradeRepository:
                             expected_holding_period_days: int | None = None,
                             confidence: float | None = None,
                             required_data: list | None = None,
-                            market_regime: dict | None = None):
+                            market_regime: dict | None = None,
+                            journal_source: str | None = None):
         """log_buy의 비동기 래퍼 (스레드 실행)."""
         await asyncio.to_thread(
             self.log_buy, strategy_name, code, current_price, qty, volatility_20d_annualized, config_hash,
             invalidation_price, stop_loss_price, target_price,
             entry_reason, trailing_rule, expected_holding_period_days, confidence, required_data,
-            market_regime
+            market_regime, journal_source
         )
 
     def _settle_hold_sale(self, trade_id: int, held_qty, sold_qty, current_price,
@@ -740,7 +747,7 @@ class VirtualTradeRepository:
                 self._db.execute(_INSERT_TRADE,
                     (strategy_label, code, fail_date, price, qty, None, None, 0.0, "FAILED", reason,
                      None, None, None, None, None,
-                     None, None, None, None, None, None))
+                     None, None, None, None, None, None, None))
             logger.warning(f"[가상매매] {action} 주문 실패 기록: {code} @ {price}원 x {qty}주 — {reason}")
 
     async def log_order_failure_async(self, action: str, code: str, price, qty: int, reason: str, strategy_name: str = ""):
@@ -793,7 +800,13 @@ class VirtualTradeRepository:
 
     def get_standard_journal_records(self) -> list[dict]:
         """백테스트/실거래 비교용 표준 journal schema로 전체 거래를 반환한다."""
-        return [normalize_virtual_trade(record) for record in self.get_all_trades(apply_cost=False)]
+        return [
+            normalize_virtual_trade(
+                record,
+                source=str(record.get("journal_source") or "virtual_trade"),
+            )
+            for record in self.get_all_trades(apply_cost=False)
+        ]
 
     def get_solds(self, apply_cost: bool = True) -> list:
         """전체 SOLD 포지션 반환."""
