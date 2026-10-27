@@ -25,11 +25,10 @@ const MARKET_INDEX_GROUPS = [
         kind: 'widget',
         scope: 'overseas',
         entries: [
-            // 위젯 1D 그래프가 왼쪽 한 점으로만 그려져 월간 범위로 연다(2026-10-26 실측).
-            { label: '나스닥100', symbol: 'CAPITALCOM:US100', dateRange: '1M' },
-            { label: 'S&P500', symbol: 'CAPITALCOM:US500', dateRange: '1M' },
-            { label: '반도체 ETF (SOX 추종)', symbol: 'NASDAQ:SOXX', dateRange: '1M' },
-            { label: 'VIX 변동성', symbol: 'CAPITALCOM:VIX', dateRange: '1M' },
+            { label: '나스닥100', symbol: 'CAPITALCOM:US100' },
+            { label: 'S&P500', symbol: 'CAPITALCOM:US500' },
+            { label: '반도체 ETF (SOX 추종)', symbol: 'NASDAQ:SOXX' },
+            { label: 'VIX 변동성', symbol: 'CAPITALCOM:VIX' },
         ],
     },
     {
@@ -135,6 +134,9 @@ function buildMarketIndexWidgetCard(doc, entry) {
         autosize: false,
         showVolume: false,
         showMA: false,
+        // TradingView 기본값에 맡기면 1D 가 일봉 한 점으로 해석되는 심볼이 있다.
+        // 기간마다 봉 간격을 명시해 1D 는 실제 당일 1분봉 선으로 그린다.
+        dateRanges: ['1d|1', '1m|30', '3m|60', '12m|1D'],
         // 국장 카드처럼 기간 버튼을 두고, 좁은 카드 폭은 y축 눈금·로고를 빼서 그래프에 준다.
         hideDateRanges: false,
         hideMarketStatus: true,

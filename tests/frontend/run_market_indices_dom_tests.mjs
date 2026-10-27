@@ -829,7 +829,7 @@ test("미국장 화면의 미장 그룹은 주식 지표(나스닥100·S&P500·S
     `미장 카드가 다름: ${keys}`);
 });
 
-test("미장 위젯은 1D 대신 1M 으로 연다 (1D 그래프가 왼쪽 한 점으로만 그려진다)", async () => {
+test("미장 위젯은 1D 를 1분봉으로 열어 당일 선을 그린다", async () => {
   const window = await makeWindow();
 
   await window.renderMarketIndices();
@@ -837,7 +837,10 @@ test("미장 위젯은 1D 대신 1M 으로 연다 (1D 그래프가 왼쪽 한 �
   ["CAPITALCOM:US100", "CAPITALCOM:US500", "NASDAQ:SOXX", "CAPITALCOM:VIX"].forEach(key => {
     const card = window.document.querySelector(`.market-index-card[data-key="${key}"]`);
     const config = JSON.parse(card.querySelector(".tradingview-widget-container script").textContent);
-    assert(config.symbols[0][1] === `${key}|1M`, `${key} 기본 기간이 1M 이 아님: ${config.symbols[0][1]}`);
+    assert(config.symbols[0][1] === `${key}|1D`, `${key} 기본 기간이 1D 가 아님: ${config.symbols[0][1]}`);
+    assert(JSON.stringify(config.dateRanges) === JSON.stringify([
+      "1d|1", "1m|30", "3m|60", "12m|1D",
+    ]), `${key} 기간별 봉 간격이 잘못됨: ${JSON.stringify(config.dateRanges)}`);
   });
 });
 
