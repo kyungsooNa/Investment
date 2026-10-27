@@ -94,6 +94,34 @@ def test_order_execution_service_uses_configured_submit_retry_policy(
     assert handler_instance._broker_submitter.retry_delay_sec == 7
 
 
+@pytest.mark.parametrize(
+    ("paper", "profile", "expected"),
+    [
+        (True, "canary", "broker_paper"),
+        (False, "canary", "broker_canary"),
+        (False, "real_limited", "broker_real_limited"),
+        (False, "real_full", "broker_real_full"),
+        (False, "unknown", "broker_live"),
+        (False, None, "broker_live"),
+    ],
+)
+def test_journal_source_preserves_live_operating_profile(
+    mock_broker_api_wrapper,
+    mock_logger,
+    paper,
+    profile,
+    expected,
+):
+    mock_broker_api_wrapper.env.is_paper_trading = paper
+    service = OrderExecutionService(
+        broker_api_wrapper=mock_broker_api_wrapper,
+        logger=mock_logger,
+        operating_profile=profile,
+    )
+
+    assert service._journal_source() == expected
+
+
 @pytest.mark.asyncio
 async def test_data_quality_blocks_order_before_broker_call(
     mock_broker_api_wrapper,

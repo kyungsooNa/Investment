@@ -73,7 +73,8 @@ class OrderExecutionService:
                  deferred_order_queue=None,
                  order_max_retries: int = _ORDER_MAX_RETRIES,
                  order_retry_delay_sec: int = _ORDER_RETRY_DELAY_SEC,
-                 market_mode: str = "domestic"):
+                 market_mode: str = "domestic",
+                 operating_profile: Optional[str] = None):
         self.broker_api_wrapper = broker_api_wrapper
         self.logger = logger
         self.market_clock = market_clock
@@ -89,6 +90,7 @@ class OrderExecutionService:
         self._data_quality = data_quality_service
         self._execution_quality_config = execution_quality_config or ExecutionQualityReportConfig()
         self._market_mode = str(market_mode or "domestic")
+        self._operating_profile = str(operating_profile or "").strip().lower()
         self._order_max_retries = self._validate_order_max_retries(order_max_retries)
         self._order_retry_delay_sec = self._validate_order_retry_delay_sec(order_retry_delay_sec)
         self._exec_quality_reporter = ExecutionQualityReporter(
@@ -121,6 +123,7 @@ class OrderExecutionService:
             notification_service=notification_service,
             now_provider=self._get_now,
             is_paper_trading_fn=self._is_paper_trading_mode,
+            journal_source_fn=self._journal_source,
             stuck_order_warning_sec=self._STUCK_ORDER_WARNING_SEC,
             stuck_order_critical_sec=self._STUCK_ORDER_CRITICAL_SEC,
         )
@@ -228,6 +231,13 @@ class OrderExecutionService:
     def _is_paper_trading_mode(self) -> bool:
         env = getattr(self.broker_api_wrapper, "env", None)
         return getattr(env, "is_paper_trading", True)
+
+    def _journal_source(self) -> str:
+        if self._is_paper_trading_mode():
+            return "broker_paper"
+        if self._operating_profile in {"canary", "real_limited", "real_full"}:
+            return f"broker_{self._operating_profile}"
+        return "broker_live"
 
     @staticmethod
     def _is_strategy_source(source: str) -> bool:

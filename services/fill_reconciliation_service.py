@@ -45,6 +45,7 @@ class FillReconciliationService:
         notification_service=None,
         now_provider: Optional[Callable[[], datetime]] = None,
         is_paper_trading_fn: Optional[Callable[[], bool]] = None,
+        journal_source_fn: Optional[Callable[[], str]] = None,
         stuck_order_warning_sec: int = 60,
         stuck_order_critical_sec: int = 180,
     ) -> None:
@@ -59,6 +60,9 @@ class FillReconciliationService:
         self._notification_service = notification_service
         self._now: Callable[[], datetime] = now_provider or datetime.now
         self._is_paper_trading: Callable[[], bool] = is_paper_trading_fn or (lambda: False)
+        self._journal_source: Callable[[], str] = journal_source_fn or (
+            lambda: "broker_paper" if self._is_paper_trading() else "broker_live"
+        )
         self._stuck_order_warning_sec = stuck_order_warning_sec
         self._stuck_order_critical_sec = stuck_order_critical_sec
 
@@ -423,9 +427,7 @@ class FillReconciliationService:
             if context.side == OrderSide.BUY:
                 buy_log_kwargs = {
                     "volatility_20d_annualized": context.volatility_20d_annualized,
-                    "journal_source": (
-                        "broker_paper" if self._is_paper_trading() else "broker_live"
-                    ),
+                    "journal_source": self._journal_source(),
                 }
                 for key in (
                     "config_hash",

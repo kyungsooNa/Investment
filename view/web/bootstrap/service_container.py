@@ -596,6 +596,7 @@ class ServiceContainer:
                     OrderExecutionService._ORDER_RETRY_DELAY_SEC,
                 ),
                 market_mode=getattr(ctx, "market_mode", "domestic"),
+                operating_profile=_config_value(ctx.full_config, "operating_profile", None),
             )
             # NOTE: streaming_service.register_handler("signing_notice", ...) is performed by WiringPhase.
         except Exception as e:
