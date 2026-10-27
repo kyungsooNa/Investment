@@ -6,8 +6,8 @@ from pathlib import Path
 # 미장/원자재는 TradingView 차트 포함 위젯. 거래소 실지수는 무료 임베드가 차단하므로
 # 실제로 시세와 그래프가 그려지는 CFD/ETF 심볼만 쓴다.
 EXPECTED_WIDGET_SYMBOLS = [
-    "CAPITALCOM:US100",
-    "CAPITALCOM:US500",
+    "CAPITALCOM:NAS100",
+    "FOREXCOM:SPXUSD",
     "NASDAQ:SOXX",
     "CAPITALCOM:VIX",
     "CAPITALCOM:DXY",
@@ -75,6 +75,7 @@ def test_market_indices_js_covers_all_widget_symbols():
     for symbol in EXPECTED_WIDGET_SYMBOLS:
         assert symbol in script, f"{symbol} 지수 설정이 없음"
     assert "embed-widget-symbol-overview.js" in script
+    assert "embed-widget-advanced-chart.js" in script
     assert "embed-widget-mini-symbol-overview.js" not in script
     assert "chartOnly: false" in script
 

@@ -25,10 +25,10 @@ const MARKET_INDEX_GROUPS = [
         kind: 'widget',
         scope: 'overseas',
         entries: [
-            { label: '나스닥100', symbol: 'CAPITALCOM:US100' },
-            { label: 'S&P500', symbol: 'CAPITALCOM:US500' },
-            { label: '반도체 ETF (SOX 추종)', symbol: 'NASDAQ:SOXX' },
-            { label: 'VIX 변동성', symbol: 'CAPITALCOM:VIX' },
+            { label: '나스닥100', symbol: 'CAPITALCOM:NAS100', intraday: true },
+            { label: 'S&P500', symbol: 'FOREXCOM:SPXUSD', intraday: true },
+            { label: '반도체 ETF (SOX 추종)', symbol: 'NASDAQ:SOXX', intraday: true },
+            { label: 'VIX 변동성', symbol: 'CAPITALCOM:VIX', intraday: true },
         ],
     },
     {
@@ -86,6 +86,8 @@ let _marketIndexVisibilityBound = false;
 
 const MARKET_INDEX_WIDGET_SRC =
     'https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js';
+const MARKET_INDEX_ADVANCED_WIDGET_SRC =
+    'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
 
 const MARKET_INDEX_LOAD_ERROR = '지수 데이터를 불러오지 못했습니다.';
 
@@ -111,6 +113,8 @@ function _marketIndexError(doc) {
 }
 
 function buildMarketIndexWidgetCard(doc, entry) {
+    if (entry.intraday) return buildMarketIndexIntradayCard(doc, entry);
+
     const card = _marketIndexCardShell(doc, 'widget', entry.symbol, entry.label);
 
     const container = doc.createElement('div');
@@ -162,6 +166,52 @@ function buildMarketIndexWidgetCard(doc, entry) {
     });
     container.appendChild(script);
 
+    card.appendChild(container);
+    return card;
+}
+
+function buildMarketIndexIntradayCard(doc, entry) {
+    const card = _marketIndexCardShell(doc, 'widget', entry.symbol, entry.label);
+    card.dataset.scope = 'intraday';
+
+    const container = doc.createElement('div');
+    container.className = 'tradingview-widget-container market-index-intraday-chart';
+    const slot = doc.createElement('div');
+    slot.className = 'tradingview-widget-container__widget';
+    container.appendChild(slot);
+
+    const script = doc.createElement('script');
+    script.async = true;
+    script.src = MARKET_INDEX_ADVANCED_WIDGET_SRC;
+    script.textContent = JSON.stringify({
+        symbol: entry.symbol,
+        interval: '5',
+        range: '1D',
+        timezone: 'America/New_York',
+        style: '1',
+        width: '100%',
+        height: 320,
+        autosize: false,
+        locale: 'kr',
+        theme: 'light',
+        backgroundColor: 'rgba(255, 255, 255, 0)',
+        gridColor: 'rgba(46, 46, 46, 0.06)',
+        hide_top_toolbar: true,
+        hide_side_toolbar: true,
+        hide_legend: false,
+        hide_volume: true,
+        withdateranges: false,
+        allow_symbol_change: false,
+        save_image: false,
+        calendar: false,
+        details: false,
+        hotlist: false,
+    });
+    script.addEventListener('error', () => {
+        container.innerHTML = '';
+        container.appendChild(_marketIndexError(doc));
+    });
+    container.appendChild(script);
     card.appendChild(container);
     return card;
 }
