@@ -4,6 +4,8 @@
 엔진은 데이터 소스 무관(`run(index_bars, inverse_bars)`)이며 합성 봉으로
 레짐 게이팅·청산 우선순위·ETF 비용 모델·MDD·기간 분해를 검증한다.
 """
+import pytest
+
 from strategies.inverse_etf_regime_backtest import InverseEtfRegimeBacktest
 
 
@@ -107,6 +109,31 @@ def test_exit_on_trailing_stop():
     result = bt.run(index, inverse)
     reasons = [t["exit_reason"] for t in result["trades"]]
     assert "trailing" in reasons
+
+
+def test_partial_profit_sells_half_and_trails_the_remainder():
+    """+10%에서 절반을 익절하고 잔량 수익률을 최종 청산가와 가중 합산한다."""
+    bt = InverseEtfRegimeBacktest(
+        stop_loss_pct=-20.0,
+        trailing_stop_pct=8.0,
+        take_profit_pct=10.0,
+        partial_sell_ratio=0.5,
+        trend_ma_period=5,
+        regime_ma_period=5,
+        round_trip_cost_pct=0.0,
+    )
+    index = _down_index(n=20)
+    inverse = _bars([5000 + 50 * k for k in range(10)] + [6000, 5900, 5500])
+
+    trade = bt.run(index, inverse)["trades"][0]
+
+    assert trade["partial_exit_price"] == pytest.approx(trade["entry_price"] * 1.10)
+    assert trade["partial_exit_fraction"] == 0.5
+    expected = (
+        0.5 * (trade["partial_exit_price"] / trade["entry_price"] - 1)
+        + 0.5 * (trade["exit_price"] / trade["entry_price"] - 1)
+    ) * 100
+    assert trade["gross_return_pct"] == pytest.approx(expected)
 
 
 # ── ETF 비용 모델 ─────────────────────────────────────────────────

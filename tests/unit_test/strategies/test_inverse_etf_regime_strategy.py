@@ -262,6 +262,48 @@ async def test_exit_on_trailing_stop_from_peak(bear_setup):
 
 
 @pytest.mark.asyncio
+async def test_partial_profit_sells_half_once_and_keeps_runner(bear_setup):
+    """순수익률 +12% 도달 시 절반만 익절하고 잔량 추적 상태를 유지한다."""
+    strat, sqs, regime, _, _, _ = bear_setup
+    regime.classify.return_value = _regime("bear")
+    sqs.get_current_price.return_value = _price_resp("11400")
+    strat._position_state = {
+        "114800": InverseEtfPositionState(entry_price=10000, entry_date="20250101", peak_price=11000)
+    }
+
+    signals = await strat.check_exits([_hold(buy_price=10000, qty=10)])
+
+    assert len(signals) == 1
+    assert signals[0].action == "SELL"
+    assert signals[0].qty == 5
+    assert "부분익절" in signals[0].reason
+    assert strat._position_state["114800"].partial_exit_done is True
+    assert "114800" not in strat._cooldown
+
+    signals = await strat.check_exits([_hold(buy_price=10000, qty=5)])
+    assert signals == []
+
+
+@pytest.mark.asyncio
+async def test_full_exit_sets_cooldown_and_blocks_same_cycle_reentry(bear_setup):
+    """트레일링 전량청산도 쿨다운을 기록해 같은 실행 주기의 재매수를 막는다."""
+    strat, sqs, regime, _, _, _ = bear_setup
+    regime.classify.return_value = _regime("bear")
+    sqs.get_current_price.return_value = _price_resp("11000")
+    strat._position_state = {
+        "114800": InverseEtfPositionState(entry_price=10000, entry_date="20250101", peak_price=12000)
+    }
+
+    signals = await strat.check_exits([_hold(buy_price=10000)])
+
+    assert len(signals) == 1
+    assert strat._cooldown["114800"] == "20250104"
+    regime.classify.reset_mock()
+    assert await strat.scan() == []
+    regime.classify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_no_exit_when_bear_and_above_stops(bear_setup):
     """베어 유지 + 스탑/트레일링 미도달이면 보유 지속."""
     strat, sqs, regime, _, _, _ = bear_setup
@@ -464,7 +506,7 @@ async def test_hard_stop_exit_starts_a_cooldown(bear_setup):
 
 
 @pytest.mark.asyncio
-async def test_regime_release_exit_does_not_start_a_cooldown(bear_setup):
+async def test_regime_release_exit_starts_a_cooldown(bear_setup):
     strat, sqs, regime, _, _, _ = bear_setup
     regime.classify.return_value = _regime("bull")
     sqs.get_current_price.return_value = _price_resp("10000")
@@ -475,7 +517,7 @@ async def test_regime_release_exit_does_not_start_a_cooldown(bear_setup):
     signals = await strat.check_exits([_hold()])
 
     assert "레짐 해제" in signals[0].reason
-    assert strat._cooldown == {}
+    assert strat._cooldown["114800"] == "20250104"
 
 
 # ── 상태 저장/복원 ────────────────────────────────────────────────
@@ -508,13 +550,16 @@ def test_apply_loaded_state_tolerates_missing_sections(strategy):
 
 def test_payload_round_trips_positions_and_cooldown(strategy):
     strategy._position_state = {
-        "114800": InverseEtfPositionState(entry_price=10000, entry_date="20250102", peak_price=10500)
+        "114800": InverseEtfPositionState(
+            entry_price=10000, entry_date="20250102", peak_price=10500, partial_exit_done=True
+        )
     }
     strategy._cooldown = {"114800": "20250110"}
 
     payload = strategy._payload()
 
     assert payload["positions"]["114800"]["peak_price"] == 10500
+    assert payload["positions"]["114800"]["partial_exit_done"] is True
     assert payload["cooldown"] == {"114800": "20250110"}
 
 
