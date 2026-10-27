@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from dataclasses import asdict
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Dict, List, Optional, Tuple
 
 from interfaces.live_strategy import LiveStrategy
@@ -39,6 +39,7 @@ class InverseEtfRegimeStrategy(LiveStrategy):
       1. 레짐 해제: regime_market 이 bear 에서 이탈 → 즉시 청산(헤지 종료)
       2. 하드 스탑: 진입가 대비 net -5%
       3. 트레일링 스톱: 보유 중 고점 대비 -8%
+      4. 위 청산 조건이 없고 net +12% 도달: 50% 1회 부분익절
 
     long-only 7전략이 죽는 하락 구간에서만 켜지므로 구조적으로 음의 상관을 갖는다.
     실행은 일봉 셋업 + REST 가격으로 WS 틱에 비의존(ETF 무틱 블로커 우회).
@@ -229,7 +230,6 @@ class InverseEtfRegimeStrategy(LiveStrategy):
         pnl_pct = TransactionCostUtils.net_return_pct(buy_price, current)
         peak_drawdown_pct = (current - state.peak_price) / state.peak_price * 100 if state.peak_price else 0.0
         reason: Optional[str] = None
-        is_stop_loss = False
 
         # 1) 레짐 해제: bear 이탈 → 헤지 종료
         if not regime_is_bear:
@@ -237,7 +237,6 @@ class InverseEtfRegimeStrategy(LiveStrategy):
         # 2) 하드 스탑: 진입가 대비 net 손절
         elif pnl_pct <= self._cfg.hard_stop_pct:
             reason = f"하드 스탑 손절: PnL(net) {pnl_pct:.2f}% ≤ {self._cfg.hard_stop_pct}%"
-            is_stop_loss = True
         # 3) 트레일링 스톱: 고점 대비 하락
         elif peak_drawdown_pct <= self._cfg.trailing_stop_pct:
             reason = (
@@ -246,7 +245,31 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             )
 
         if not reason:
-            return (None, state_dirty)
+            holding_qty = int(hold.get("qty", 1) or 1)
+            if not state.partial_exit_done and pnl_pct >= self._cfg.take_profit_pct:
+                sell_qty = max(1, int(holding_qty * self._cfg.partial_sell_ratio))
+                if sell_qty < holding_qty:
+                    state.partial_exit_done = True
+                    self._logger.info({
+                        "event": "partial_profit_signal", "code": code,
+                        "pnl_pct": round(pnl_pct, 2), "pnl_basis": "net",
+                        "sell_qty": sell_qty, "holding_qty": holding_qty,
+                    })
+                    return (
+                        TradeSignal(
+                            code=code, name=hold.get("name", code), action="SELL",
+                            price=current, qty=sell_qty,
+                            reason=(
+                                f"부분익절: PnL(net) {pnl_pct:.2f}% ≥ {self._cfg.take_profit_pct}% "
+                                f"({sell_qty}/{holding_qty}주)"
+                            ),
+                            strategy_name=self.name,
+                        ),
+                        True,
+                    )
+                reason = f"전량익절: PnL(net) {pnl_pct:.2f}% (잔고 {holding_qty}주)"
+            else:
+                return (None, state_dirty)
 
         holding_qty = int(hold.get("qty", 1) or 1)
         self._logger.info({
@@ -256,9 +279,10 @@ class InverseEtfRegimeStrategy(LiveStrategy):
 
         self._position_state.pop(code, None)
         state_dirty = True
-        if is_stop_loss:
-            unblock = (date.today() + timedelta(days=self._cfg.cooldown_days)).strftime("%Y%m%d")
-            self._cooldown[code] = unblock
+        unblock = (
+            self._tm.get_current_kst_time().date() + timedelta(days=self._cfg.cooldown_days)
+        ).strftime("%Y%m%d")
+        self._cooldown[code] = unblock
 
         return (
             TradeSignal(

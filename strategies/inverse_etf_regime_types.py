@@ -26,12 +26,14 @@ class InverseEtfRegimeConfig(BaseStrategyConfig):
     # 청산
     hard_stop_pct: float = -5.0       # 진입가 대비 net 손절(%)
     trailing_stop_pct: float = -8.0   # 고점 대비 트레일링 스톱(%)
+    take_profit_pct: float = 12.0     # 순수익률 기준 1회 부분익절 발동(%)
+    partial_sell_ratio: float = 0.5   # 부분익절 시 보유 수량의 50% 매도
 
     # 자금 관리 (디버시파이어이므로 소형 슬롯)
     total_portfolio_krw: int = 10_000_000
     position_size_pct: float = 3.0
     min_qty: int = 1
-    cooldown_days: int = 2             # 손절 후 재진입 차단 일수
+    cooldown_days: int = 2             # 전량 청산 후 재진입 차단 일수
 
 
 @dataclass
@@ -40,3 +42,4 @@ class InverseEtfPositionState:
     entry_price: int                   # 진입가
     entry_date: str                    # 진입일 (YYYYMMDD)
     peak_price: int                    # 보유 중 기록한 최고가 (트레일링 기준)
+    partial_exit_done: bool = False    # +12% 1회 부분익절 실행 여부
