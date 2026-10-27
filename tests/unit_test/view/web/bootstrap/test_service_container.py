@@ -157,6 +157,19 @@ def test_service_container_creates_core_services(patched_service_container_deps)
     assert ctx.data_quality_service is patched_service_container_deps["DataQualityService"].return_value
 
 
+def test_service_container_wires_shadow_standard_journal_provider(patched_service_container_deps):
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ServiceContainer(ctx).run()
+
+    report_kwargs = patched_service_container_deps["StrategyLogReportService"].call_args.kwargs
+    assert (
+        report_kwargs["shadow_journal_provider"]
+        is ctx.event_shadow_journal_service.get_standard_journal_records
+    )
+
+
 def test_service_container_builds_enabled_dart_disclosure_pipeline(patched_service_container_deps):
     from view.web.bootstrap.service_container import ServiceContainer
 

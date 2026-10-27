@@ -459,6 +459,7 @@ class StrategyLogReportService:
         virtual_trade_service: Optional[Any] = None,
         execution_quality_config: Optional[Any] = None,
         backtest_journal_provider: Optional[Callable[[str], List[dict]]] = None,
+        shadow_journal_provider: Optional[Callable[[], List[dict]]] = None,
         enabled_strategy_provider: Optional[Callable[[], Optional[List[str]]]] = None,
         strategy_degradation_config: Optional[Any] = None,
         profitability_gate_config: Optional[Any] = None,
@@ -470,6 +471,7 @@ class StrategyLogReportService:
         self._execution_quality_config = execution_quality_config
         self._execution_quality_builder = ExecutionQualityReportBuilder(execution_quality_config)
         self._backtest_journal_provider = backtest_journal_provider
+        self._shadow_journal_provider = shadow_journal_provider
         self._enabled_strategy_provider = enabled_strategy_provider
         self._strategy_degradation_config = strategy_degradation_config
         self._profitability_gate_config = profitability_gate_config
@@ -1137,12 +1139,17 @@ class StrategyLogReportService:
         profitability gate 는 표본이 부족하면 차단 사유만 보여주므로, 이 섹션은
         운영자가 소스별/전략별 표본 축적 속도를 별도로 확인하기 위한 요약이다.
         """
-        if not self._virtual_trade_service:
-            return None
-        try:
-            records = self._virtual_trade_service.get_standard_journal_records() or []
-        except Exception:
-            return None
+        records = []
+        if self._virtual_trade_service:
+            try:
+                records.extend(self._virtual_trade_service.get_standard_journal_records() or [])
+            except Exception:
+                pass
+        if self._shadow_journal_provider:
+            try:
+                records.extend(self._shadow_journal_provider() or [])
+            except Exception:
+                pass
         if not records:
             return None
 

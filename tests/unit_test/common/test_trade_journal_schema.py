@@ -6,6 +6,7 @@ from common.trade_journal_schema import (
     normalize_backtest_decision,
     normalize_backtest_execution,
     normalize_backtest_trade,
+    normalize_shadow_signal,
     normalize_virtual_trade,
 )
 from services.backtest_execution_simulator import (
@@ -199,6 +200,36 @@ def test_normalize_backtest_decision_records_rejected_reason():
     assert normalized["decision_reason"] == ""
     assert normalized["rejected_reason"] == "추세 지속 실패"
     assert normalized["cost"] == 0.0
+
+
+def test_normalize_shadow_signal_records_signal_without_execution_pnl():
+    normalized = normalize_shadow_signal({
+        "recorded_at": 1770000000.25,
+        "strategy": "래리윌리엄스VBO",
+        "code": "005930",
+        "signal_source": "event_shadow_exit",
+        "signal": {
+            "action": "SELL",
+            "price": 73100,
+            "qty": 3,
+            "reason": "트레일링 스톱 관찰",
+        },
+        "snapshot": {"price": "73100"},
+    })
+
+    assert tuple(normalized.keys()) == STANDARD_TRADE_JOURNAL_FIELDS
+    assert normalized["source"] == "event_shadow_exit"
+    assert normalized["strategy"] == "larry_williams_vbo"
+    assert normalized["code"] == "005930"
+    assert normalized["signal_time"] == "1770000000.25"
+    assert normalized["decision_reason"] == "트레일링 스톱 관찰"
+    assert normalized["side"] == "SELL"
+    assert normalized["order_price"] == 73100.0
+    assert normalized["qty"] == 3
+    assert normalized["status"] == "SIGNAL"
+    assert normalized["fill_price"] is None
+    assert normalized["net_pnl"] is None
+    assert normalized["net_return"] is None
 
 
 def test_normalize_backtest_execution_records_fill_report():
