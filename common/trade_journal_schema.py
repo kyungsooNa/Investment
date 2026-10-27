@@ -250,6 +250,42 @@ def normalize_backtest_decision(
     )
 
 
+def normalize_shadow_signal(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize an event-shadow observation without implying execution or PnL."""
+    signal = record.get("signal")
+    if not isinstance(signal, Mapping):
+        signal = {}
+    snapshot = record.get("snapshot")
+    if not isinstance(snapshot, Mapping):
+        snapshot = {}
+    action = str(signal.get("action") or "").upper()
+
+    return _ordered_record(
+        source=str(record.get("signal_source") or "event_shadow"),
+        strategy=_canonical_strategy_name(record.get("strategy")),
+        code=str(record.get("code") or ""),
+        signal_time=str(record.get("recorded_at") or ""),
+        decision_reason=str(signal.get("reason") or ""),
+        rejected_reason="",
+        side=action,
+        order_price=_to_float(signal.get("price") or snapshot.get("price")),
+        fill_price=None,
+        qty=_to_int(signal.get("qty"), default=1),
+        status="SIGNAL",
+        cost=0.0,
+        gross_pnl=None,
+        net_pnl=None,
+        gross_return=None,
+        net_return=None,
+        mfe=None,
+        mae=None,
+        market_regime=_resolve_market_regime(signal, None),
+        volatility_20d_annualized=_resolve_volatility(signal, None),
+        config_hash=signal.get("config_hash"),
+        metadata={k: _json_safe(v) for k, v in dict(record).items()},
+    )
+
+
 def normalize_backtest_execution(
     report: Any,
     *,

@@ -749,7 +749,7 @@ class ServiceContainer:
                     report_service=StrategyLogReportService(
                         log_dir=os.path.join(ctx.logger.log_dir, "strategies"),
                         stock_code_repo=ctx.stock_code_repository,
-                        virtual_trade_service=ctx.virtual_trade_service,
+                        virtual_trade_service=ctx.virtual_trade_service, shadow_journal_provider=getattr(ctx.event_shadow_journal_service, "get_standard_journal_records", None),
                         backtest_journal_provider=ctx.backtest_journal_repository.load_records_for_date,
                         execution_quality_config=getattr(ctx.full_config, "execution_quality_report", None),
                         strategy_degradation_config=getattr(

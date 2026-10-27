@@ -134,3 +134,40 @@ def test_record_ignores_missing_required_fields(tmp_path, logger):
     svc.record(strategy_name="VBO", code="", signal={}, snapshot={})
 
     assert svc.get_records() == []
+
+
+def test_standard_journal_reads_persisted_and_buffered_signals_only(tmp_path, logger):
+    svc = EventShadowJournalService(log_root=tmp_path, logger=logger)
+    svc.record(
+        strategy_name="VBO",
+        code="005930",
+        signal={"action": "BUY", "price": 70000, "qty": 2, "reason": "진입 관찰"},
+        snapshot={"price": "70000"},
+    )
+    svc.record(
+        strategy_name="VBO",
+        code="005930",
+        signal={"action": "BUY", "price": 70100, "qty": 2, "reason": "같은 날 반복 관찰"},
+        snapshot={"price": "70100"},
+    )
+    svc.record_status(strategy_name="VBO", event="subscriptions_refreshed")
+    svc.flush_to_file(date_str="20261026")
+    svc.record(
+        strategy_name="VBO",
+        code="005930",
+        signal={"action": "SELL", "price": 71000, "qty": 2, "reason": "청산 관찰"},
+        snapshot={"price": "71000"},
+        signal_source="event_shadow_exit",
+    )
+
+    records = svc.get_standard_journal_records()
+
+    assert len(records) == 2
+    assert [record["source"] for record in records] == [
+        "event_shadow",
+        "event_shadow_exit",
+    ]
+    assert [record["side"] for record in records] == ["BUY", "SELL"]
+    assert all(record["status"] == "SIGNAL" for record in records)
+    assert all(record["net_pnl"] is None for record in records)
+    assert records[0]["decision_reason"] == "진입 관찰"

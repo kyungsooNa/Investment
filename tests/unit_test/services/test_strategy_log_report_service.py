@@ -6,6 +6,7 @@ import tempfile
 import time
 import pytest
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from services.strategy_log_report_service import (
     StrategyLogReportService,
@@ -1149,6 +1150,57 @@ async def test_report_includes_standard_journal_accumulation_section(log_dir):
     assert "전체 3건 / SOLD 1건 / 진행중 2건" in report
     assert "source: paper 2건, event_shadow 1건" in report
     assert "S1: SOLD 1/3건" in report
+
+
+@pytest.mark.asyncio
+async def test_report_adds_shadow_provider_only_to_journal_accumulation(log_dir):
+    class DummyVirtualTradeService:
+        def get_all_trades(self):
+            return []
+
+        def get_solds(self):
+            return []
+
+        def get_holds(self):
+            return []
+
+        def get_standard_journal_records(self):
+            return [{
+                "source": "broker_paper",
+                "strategy": "S1",
+                "code": "000001",
+                "status": "SOLD",
+                "signal_time": "2026-10-27 10:00:00",
+                "net_pnl": 100.0,
+                "net_return": 1.0,
+            }]
+
+    shadow_provider = MagicMock(return_value=[{
+        "source": "event_shadow",
+        "strategy": "S2",
+        "code": "000002",
+        "status": "SIGNAL",
+        "signal_time": "1770000000.0",
+        "net_pnl": None,
+        "net_return": None,
+    }])
+    scan_entry = _make_entry("scan_with_watchlist", "", "", date="2026-10-27")
+    scan_entry["data"]["count"] = 1
+    _write_log(os.path.join(log_dir, "20261027_093000_FirstPullback.log.json"), [scan_entry])
+
+    svc = StrategyLogReportService(
+        log_dir=log_dir,
+        virtual_trade_service=DummyVirtualTradeService(),
+        shadow_journal_provider=shadow_provider,
+        profitability_gate_config=SimpleNamespace(min_trades=1),
+    )
+    report = await svc.generate_report("20261027")
+
+    assert "전체 2건 / SOLD 1건 / 진행중 1건" in report
+    assert "source: broker_paper 1건, event_shadow 1건" in report
+    assert "S1: 통과" in report
+    assert "S2:" not in report.split("💹 전략별 수익성 게이트", 1)[1].split("\n\n", 1)[0]
+    shadow_provider.assert_called_once_with()
 
 
 @pytest.mark.asyncio
