@@ -23,8 +23,8 @@ const EXPECTED_GROUPS = [
     // 거래소 실지수(SP:SPX, NASDAQ:NDX, CBOE:VIX ...)는 무료 임베드에서 차단되므로
     // 실제로 시세가 그려지는 CFD/ETF 심볼만 쓴다.
     keys: [
-      "CAPITALCOM:US100",
-      "CAPITALCOM:US500",
+      "CAPITALCOM:NAS100",
+      "FOREXCOM:SPXUSD",
       "NASDAQ:SOXX",
       "CAPITALCOM:VIX",
     ],
@@ -43,6 +43,8 @@ const BLOCKED_SYMBOLS = [
 
 const WIDGET_SRC =
   "https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js";
+const ADVANCED_WIDGET_SRC =
+  "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
 
 const SCAFFOLD = `<div id="market-indices"></div>`;
 
@@ -170,6 +172,7 @@ test("미장·원자재·가상자산·채권 카드는 TradingView 차트 포�
   for (const card of widgetCards) {
     const script = card.querySelector(".tradingview-widget-container script");
     assert(script, `${card.dataset.key} 카드에 위젯 스크립트가 없음`);
+    if (card.dataset.scope === "intraday") continue;
     assert(script.src === WIDGET_SRC, `${card.dataset.key} 위젯 src 가 다름: ${script.src}`);
     const config = JSON.parse(script.textContent);
     assert(Array.isArray(config.symbols), `${card.dataset.key} 위젯 설정 symbols 가 없음`);
@@ -183,6 +186,25 @@ test("미장·원자재·가상자산·채권 카드는 TradingView 차트 포�
     assert(config.hideSymbolLogo === true, "카드 제목과 겹치는 심볼 로고는 숨겨야 함");
     assert(config.colorTheme === "light", "위젯 테마는 앱과 동일한 light 여야 함");
   }
+});
+
+test("미장 지표는 뉴욕 시간 기준 5분봉 캔들로 당일 흐름을 그린다", async () => {
+  const window = await makeWindow(undefined, '<div id="market-indices" data-market-scope="overseas"></div>');
+
+  await window.renderMarketIndices();
+
+  ["CAPITALCOM:NAS100", "FOREXCOM:SPXUSD", "NASDAQ:SOXX", "CAPITALCOM:VIX"].forEach(key => {
+    const card = window.document.querySelector(`.market-index-card[data-key="${key}"]`);
+    assert(card.dataset.scope === "intraday", `${key} 카드가 장중 차트로 표시되지 않음`);
+    const script = card.querySelector(".tradingview-widget-container script");
+    assert(script.src === ADVANCED_WIDGET_SRC, `${key} 고급 차트 src 가 다름: ${script.src}`);
+    const config = JSON.parse(script.textContent);
+    assert(config.symbol === key, `${key} 차트 심볼이 다름: ${config.symbol}`);
+    assert(config.interval === "5", `${key} 차트가 5분봉이 아님: ${config.interval}`);
+    assert(config.range === "1D", `${key} 차트 범위가 당일이 아님: ${config.range}`);
+    assert(config.timezone === "America/New_York", `${key} 차트 시간대가 뉴욕이 아님: ${config.timezone}`);
+    assert(config.style === "1", `${key} 차트가 캔들 형식이 아님: ${config.style}`);
+  });
 });
 
 test("국장 카드는 KIS API 를 조회해 값과 차트를 그린다", async () => {
@@ -825,23 +847,8 @@ test("미국장 화면의 미장 그룹은 주식 지표(나스닥100·S&P500·S
 
   const keys = Array.from(window.document.querySelectorAll(".market-index-card")).map(c => c.dataset.key);
   assert(JSON.stringify(keys) === JSON.stringify(
-    ["CAPITALCOM:US100", "CAPITALCOM:US500", "NASDAQ:SOXX", "CAPITALCOM:VIX"]),
+    ["CAPITALCOM:NAS100", "FOREXCOM:SPXUSD", "NASDAQ:SOXX", "CAPITALCOM:VIX"]),
     `미장 카드가 다름: ${keys}`);
-});
-
-test("미장 위젯은 1D 를 1분봉으로 열어 당일 선을 그린다", async () => {
-  const window = await makeWindow();
-
-  await window.renderMarketIndices();
-
-  ["CAPITALCOM:US100", "CAPITALCOM:US500", "NASDAQ:SOXX", "CAPITALCOM:VIX"].forEach(key => {
-    const card = window.document.querySelector(`.market-index-card[data-key="${key}"]`);
-    const config = JSON.parse(card.querySelector(".tradingview-widget-container script").textContent);
-    assert(config.symbols[0][1] === `${key}|1D`, `${key} 기본 기간이 1D 가 아님: ${config.symbols[0][1]}`);
-    assert(JSON.stringify(config.dateRanges) === JSON.stringify([
-      "1d|1", "1m|30", "3m|60", "12m|1D",
-    ]), `${key} 기간별 봉 간격이 잘못됨: ${JSON.stringify(config.dateRanges)}`);
-  });
 });
 
 test("가상자산 위젯은 1D 대신 1M 으로 연다 (24시간 자산은 1D 그래프가 왼쪽 한 점으로만 그려진다)", async () => {
