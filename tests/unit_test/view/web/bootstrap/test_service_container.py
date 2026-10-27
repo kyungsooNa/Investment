@@ -449,11 +449,16 @@ def test_service_container_creates_query_and_order_services(patched_service_cont
     from view.web.bootstrap.service_container import ServiceContainer
 
     ctx = _make_fake_context()
+    ctx.full_config["operating_profile"] = "canary"
     ServiceContainer(ctx).run()
 
     assert ctx.stock_query_service is patched_service_container_deps["StockQueryService"].return_value
     assert ctx.order_execution_service is patched_service_container_deps["OrderExecutionService"].return_value
     assert ctx.risk_gate_service is patched_service_container_deps["RiskGateService"].return_value
+    assert (
+        patched_service_container_deps["OrderExecutionService"].call_args.kwargs["operating_profile"]
+        == "canary"
+    )
 
 
 def test_service_container_creates_theme_leader_service(patched_service_container_deps):

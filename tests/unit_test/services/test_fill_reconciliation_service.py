@@ -856,6 +856,40 @@ async def test_persist_records_broker_environment_as_journal_source(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "profile_source",
+    ["broker_canary", "broker_real_limited", "broker_real_full"],
+)
+async def test_persist_records_live_operating_profile_as_journal_source(
+    broker, fsm, reporter, fixed_now, profile_source,
+):
+    """실계좌 기록은 운영 프로필을 보존해 canary와 확대 단계를 구분한다."""
+    vts = AsyncMock()
+    svc = _make_service(
+        broker=broker,
+        fsm=fsm,
+        reporter=reporter,
+        fixed_now=fixed_now,
+        paper=False,
+        virtual_trade_service=vts,
+        journal_source_fn=lambda: profile_source,
+    )
+    ctx = fsm.register(_make_context(source="strategy:momentum"))
+    fsm.transition(ctx.order_key, OrderState.SUBMITTED)
+    filled = fsm.transition(ctx.order_key, OrderState.FILLED, filled_qty=10)
+
+    report = OrderExecutionReport(
+        broker_order_no="X",
+        stock_code="005930",
+        side=OrderSide.BUY,
+        fill_price=70500,
+    )
+    await svc._persist_virtual_trade_for_terminal_report(filled, report)
+
+    assert vts.log_buy_async.await_args.kwargs["journal_source"] == profile_source
+
+
+@pytest.mark.asyncio
 async def test_persist_skips_non_domestic_symbol_for_virtual_trade(broker, fsm, reporter, fixed_now):
     vts = AsyncMock()
     svc = _make_service(broker=broker, fsm=fsm, reporter=reporter, fixed_now=fixed_now, virtual_trade_service=vts)
