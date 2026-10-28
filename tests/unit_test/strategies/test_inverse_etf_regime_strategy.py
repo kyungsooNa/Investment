@@ -17,7 +17,7 @@ from core.market_clock import MarketClock
 
 # ── 헬퍼 ──────────────────────────────────────────────────────────
 
-def _price_resp(current="10000", *, open_price=None, ask_price=None):
+def _price_resp(current="10000", *, open_price=None, ask_price=None, change_rate="1.0"):
     open_price = current if open_price is None else open_price
     ask_price = current if ask_price is None else ask_price
     return ResCommonResponse(
@@ -26,6 +26,7 @@ def _price_resp(current="10000", *, open_price=None, ask_price=None):
             "stck_prpr": current,
             "stck_oprc": open_price,
             "dmrs_val": ask_price,
+            "prdy_ctrt": change_rate,
         }},
     )
 
@@ -84,7 +85,7 @@ def bear_setup(strategy, mock_deps):
     sqs, regime, indicator, tm, logger = mock_deps
     regime.classify.return_value = _regime("bear")
     indicator.get_moving_average.return_value = _ma_resp(9500.0)  # current(10000) > MA
-    sqs.get_current_price.return_value = _price_resp("10000")
+    sqs.get_current_price.return_value = _price_resp("10000", open_price="9900")
     return strategy, sqs, regime, indicator, tm, logger
 
 
@@ -134,7 +135,7 @@ async def test_scan_uses_best_ask_and_waits_for_fill_before_registering_position
     strat, sqs, _, indicator, _, _ = bear_setup
     indicator.get_moving_average.return_value = _ma_resp(1004.0)
     sqs.get_current_price.return_value = _price_resp(
-        "1075", open_price="1100", ask_price="1112"
+        "1075", open_price="1050", ask_price="1112"
     )
     strat._cfg = InverseEtfRegimeConfig(
         total_portfolio_krw=300_000,
@@ -149,6 +150,33 @@ async def test_scan_uses_best_ask_and_waits_for_fill_before_registering_position
     assert sig.qty == 269
     assert strat._position_state == {}
     strat._save_state.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scan_rejects_inverse_falling_below_open(bear_setup):
+    """일봉 약세 레짐이어도 인버스가 장중 시가 아래면 반등장 역행 매수를 막는다."""
+    strat, sqs, _, indicator, _, logger = bear_setup
+    indicator.get_moving_average.return_value = _ma_resp(1107.0)
+    sqs.get_current_price.return_value = _price_resp(
+        "1193", open_price="1250", ask_price="1194", change_rate="-4.86"
+    )
+
+    assert await strat.scan() == []
+    assert any(
+        call.args and call.args[0].get("reason") == "intraday_trend_not_confirmed"
+        for call in logger.info.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_scan_rejects_inverse_with_negative_daily_return(bear_setup):
+    """현재가가 시가 위라도 전일 대비 하락 중이면 인버스 진입을 막는다."""
+    strat, sqs, _, _, _, _ = bear_setup
+    sqs.get_current_price.return_value = _price_resp(
+        "10000", open_price="9900", ask_price="10010", change_rate="-0.50"
+    )
+
+    assert await strat.scan() == []
 
 
 @pytest.mark.asyncio
@@ -243,6 +271,40 @@ async def test_exit_on_hard_stop(bear_setup):
     assert len(signals) == 1
     assert signals[0].action == "SELL"
     assert "스탑" in signals[0].reason or "손절" in signals[0].reason
+
+
+@pytest.mark.asyncio
+async def test_exit_when_intraday_inverse_trend_is_invalidated(bear_setup):
+    """베어 일봉 캐시가 남아도 시가 아래·당일 -2% 이하면 하드 스탑 전에 청산한다."""
+    strat, sqs, regime, _, _, _ = bear_setup
+    regime.classify.return_value = _regime("bear")
+    sqs.get_current_price.return_value = _price_resp(
+        "9700", open_price="9800", change_rate="-3.0"
+    )
+    strat._position_state = {
+        "114800": InverseEtfPositionState(entry_price=10000, entry_date="20250101", peak_price=10000)
+    }
+
+    signals = await strat.check_exits([_hold(buy_price=10000)])
+
+    assert len(signals) == 1
+    assert signals[0].action == "SELL"
+    assert "장중 추세 무효화" in signals[0].reason
+
+
+@pytest.mark.asyncio
+async def test_no_intraday_exit_for_minor_pullback(bear_setup):
+    """시가 아래라도 당일 하락이 -2% 미만이면 작은 흔들림으로 청산하지 않는다."""
+    strat, sqs, regime, _, _, _ = bear_setup
+    regime.classify.return_value = _regime("bear")
+    sqs.get_current_price.return_value = _price_resp(
+        "9900", open_price="9950", change_rate="-1.5"
+    )
+    strat._position_state = {
+        "114800": InverseEtfPositionState(entry_price=10000, entry_date="20250101", peak_price=10000)
+    }
+
+    assert await strat.check_exits([_hold(buy_price=10000)]) == []
 
 
 @pytest.mark.asyncio
