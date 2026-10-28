@@ -436,3 +436,20 @@ async def test_marks_upper_limit_alert_as_catch_up_when_first_observed_tick_is_u
     assert "상한가" in args[2]
     assert "첫 시세 확인" in args[3]
     assert kwargs["metadata"]["catch_up"] is True
+
+
+@pytest.mark.asyncio
+async def test_next_day_gap_alert_is_not_catch_up_when_process_kept_running():
+    """프로세스가 계속 떠 있었다면 다음 날 첫 틱은 실제 관측값이라 catch-up 이 아니다."""
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["000660"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    today = {"value": "20261027"}
+    svc = FavoritePriceAlertService(repo, notifications, today_provider=lambda: today["value"])
+
+    await svc.handle_price_tick("000660", price="1340000", rate="1.20")
+    today["value"] = "20261028"
+    await svc.handle_price_tick("000660", price="1410000", rate="5.22")
+
+    assert notifications.emit.call_args.kwargs["metadata"]["catch_up"] is False

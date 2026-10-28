@@ -49,7 +49,7 @@ class FavoritePriceAlertService:
         self._highest_positive_alert_bucket: dict[str, int] = {}
         self._lowest_negative_alert_bucket: dict[str, int] = {}
         self._upper_limit_alerted_codes: set[str] = set()
-        # 이 프로세스에서 당일 시세를 한 번이라도 평가한 종목. 첫 틱에서 발행된 알림은
+        # 이 프로세스에서 시세를 한 번이라도 평가한 종목. 첫 틱에서 발행된 알림은
         # 재시작/신규 등록 전에 이미 넘은 임계치일 수 있어 돌파 시각이 아님을 표시한다.
         self._observed_codes: set[str] = set()
 
@@ -218,7 +218,6 @@ class FavoritePriceAlertService:
         self._highest_positive_alert_bucket.clear()
         self._lowest_negative_alert_bucket.clear()
         self._upper_limit_alerted_codes.clear()
-        self._observed_codes.clear()
         self._state_date = today
         if not self._state_file:
             return
