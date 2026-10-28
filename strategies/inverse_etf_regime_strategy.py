@@ -33,13 +33,15 @@ class InverseEtfRegimeStrategy(LiveStrategy):
     진입 (scan):
       - 레짐 게이트: MarketRegimeService 가 regime_market 을 'bear'(hard_decline)로 분류
       - 추세 확인: 인버스 ETF 현재가 > trend_ma_period MA (당일봉 제외)
+      - 장중 확인: 현재가 > 시가, 전일 대비 등락률 > 0%
       - 단일 종목·에피소드 1회 (position_state 보유 중이면 미진입)
 
     청산 (check_exits), 우선순위:
       1. 레짐 해제: regime_market 이 bear 에서 이탈 → 즉시 청산(헤지 종료)
       2. 하드 스탑: 진입가 대비 net -5%
-      3. 트레일링 스톱: 보유 중 고점 대비 -8%
-      4. 위 청산 조건이 없고 net +12% 도달: 50% 1회 부분익절
+      3. 장중 추세 무효화: 시가 아래이면서 당일 -2% 이하
+      4. 트레일링 스톱: 보유 중 고점 대비 -8%
+      5. 위 청산 조건이 없고 net +12% 도달: 50% 1회 부분익절
 
     long-only 7전략이 죽는 하락 구간에서만 켜지므로 구조적으로 음의 상관을 갖는다.
     실행은 일봉 셋업 + REST 가격으로 WS 틱에 비의존(ETF 무틱 블로커 우회).
@@ -116,7 +118,7 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             return []
 
         cp_resp = await self._sqs.get_current_price(code, caller=self.name)
-        current, open_price, ask_price = self._extract_entry_quote(cp_resp)
+        current, open_price, ask_price, change_rate = self._extract_entry_quote(cp_resp)
         if current <= 0:
             self._logger.info({"event": "entry_rejected", "code": code, "reason": "invalid_current_price"})
             return []
@@ -130,6 +132,14 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             self._logger.info({
                 "event": "entry_rejected", "code": code, "reason": "ask_price_unavailable",
                 "current": current,
+            })
+            return []
+        if current <= open_price or change_rate <= 0:
+            self._logger.info({
+                "event": "entry_rejected", "code": code,
+                "reason": "intraday_trend_not_confirmed",
+                "current": current, "open_price": open_price,
+                "change_rate": change_rate,
             })
             return []
         if current <= ma:
@@ -204,7 +214,7 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             return None
 
         cp_resp = await self._sqs.get_current_price(code, caller=self.name)
-        current = self._extract_current_price(cp_resp)
+        current, open_price, _, change_rate = self._extract_entry_quote(cp_resp)
         if current <= 0:
             return None
 
@@ -237,7 +247,17 @@ class InverseEtfRegimeStrategy(LiveStrategy):
         # 2) 하드 스탑: 진입가 대비 net 손절
         elif pnl_pct <= self._cfg.hard_stop_pct:
             reason = f"하드 스탑 손절: PnL(net) {pnl_pct:.2f}% ≤ {self._cfg.hard_stop_pct}%"
-        # 3) 트레일링 스톱: 고점 대비 하락
+        # 3) 장중 추세 무효화: 일봉 bear 캐시와 반대로 인버스가 당일 급락
+        elif (
+            open_price > 0
+            and current < open_price
+            and change_rate <= self._cfg.intraday_invalidation_pct
+        ):
+            reason = (
+                f"장중 추세 무효화: 현재가 {current} < 시가 {open_price}, "
+                f"등락률 {change_rate:.2f}% ≤ {self._cfg.intraday_invalidation_pct}%"
+            )
+        # 4) 트레일링 스톱: 고점 대비 하락
         elif peak_drawdown_pct <= self._cfg.trailing_stop_pct:
             reason = (
                 f"트레일링 스톱: 고점 {state.peak_price} 대비 {peak_drawdown_pct:.2f}% "
@@ -311,14 +331,14 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             return 0
 
     @staticmethod
-    def _extract_entry_quote(resp) -> tuple[int, int, int]:
-        """진입 판단용 현재가·시가·매도1호가를 추출한다."""
+    def _extract_entry_quote(resp) -> tuple[int, int, int, float]:
+        """현재가·시가·매도1호가·전일 대비 등락률을 추출한다."""
         if not resp or getattr(resp, "rt_cd", "") != "0":
-            return 0, 0, 0
+            return 0, 0, 0, 0.0
         data = getattr(resp, "data", None)
         out = data.get("output") if isinstance(data, dict) else data
         if not out:
-            return 0, 0, 0
+            return 0, 0, 0, 0.0
 
         def value(*keys: str) -> int:
             try:
@@ -334,7 +354,19 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             except (TypeError, ValueError):
                 return 0
 
-        return value("stck_prpr"), value("stck_oprc"), value("dmrs_val", "askp1")
+        def decimal_value(key: str) -> float:
+            try:
+                raw = out.get(key, 0) if isinstance(out, dict) else getattr(out, key, 0)
+                return float(raw or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        return (
+            value("stck_prpr"),
+            value("stck_oprc"),
+            value("dmrs_val", "askp1"),
+            decimal_value("prdy_ctrt"),
+        )
 
     @staticmethod
     def _latest_ma(resp) -> Optional[float]:

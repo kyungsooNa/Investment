@@ -136,6 +136,7 @@ def test_strategy_factory_registers_inverse_etf_sleeve_disabled(patched_factory_
     cfg = next(c for c in registered_configs if c.strategy is inverse_strategy)
 
     assert cfg.enabled is False
+    assert cfg.interval_minutes == 1
     assert cfg.max_positions == 1
     assert cfg.force_exit_on_close is False
     assert cfg.allow_pyramiding is False

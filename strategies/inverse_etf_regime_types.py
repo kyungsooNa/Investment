@@ -25,6 +25,7 @@ class InverseEtfRegimeConfig(BaseStrategyConfig):
 
     # 청산
     hard_stop_pct: float = -5.0       # 진입가 대비 net 손절(%)
+    intraday_invalidation_pct: float = -2.0  # 시가 아래에서 당일 이 수익률 이하면 조기 청산
     trailing_stop_pct: float = -8.0   # 고점 대비 트레일링 스톱(%)
     take_profit_pct: float = 12.0     # 순수익률 기준 1회 부분익절 발동(%)
     partial_sell_ratio: float = 0.5   # 부분익절 시 보유 수량의 50% 매도

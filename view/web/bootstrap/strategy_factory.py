@@ -238,7 +238,7 @@ class StrategyFactory:
         )
         scheduler.register(StrategySchedulerConfig(
             strategy=inverse_etf_strategy,
-            interval_minutes=5,
+            interval_minutes=1,
             max_positions=1,            # 단일 종목 슬리브
             order_qty=1,
             enabled=False,              # 수동 활성화 대기 (shadow/paper 관찰)
