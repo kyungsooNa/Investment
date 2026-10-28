@@ -94,6 +94,18 @@ def test_strategy_factory_wires_live_expansion_gate_with_journal_provider(patche
     assert gate._enabled is True
 
 
+def test_strategy_factory_enables_dry_run_from_config(patched_factory_deps):
+    from view.web.bootstrap.strategy_factory import StrategyFactory
+
+    ctx = _make_fake_context()
+    ctx.full_config = SimpleNamespace(strategy_scheduler_dry_run=True)
+
+    StrategyFactory(ctx).build()
+
+    kwargs = patched_factory_deps["StrategyScheduler"].call_args.kwargs
+    assert kwargs["dry_run"] is True
+
+
 def test_strategy_factory_registers_nine_strategies(patched_factory_deps):
     from view.web.bootstrap.strategy_factory import StrategyFactory
 
