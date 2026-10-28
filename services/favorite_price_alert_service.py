@@ -108,7 +108,7 @@ class FavoritePriceAlertService:
                 return False
             self._upper_limit_alerted_codes.add(normalized)
             await self._save_alert_state()
-            return await self._emit_upper_limit_alert(normalized, price, rate_value)
+            return await self._emit_upper_limit_alert(normalized, price, rate_value, catch_up=catch_up)
         if normalized in self._upper_limit_alerted_codes:
             self._upper_limit_alerted_codes.discard(normalized)
             await self._save_alert_state()
@@ -162,16 +162,19 @@ class FavoritePriceAlertService:
         )
         return True
 
-    async def _emit_upper_limit_alert(self, code: str, price, rate_value: float) -> bool:
+    async def _emit_upper_limit_alert(self, code: str, price, rate_value: float, *, catch_up: bool = False) -> bool:
         name = self._stock_name(code)
         signed_rate = self._format_signed_pct(rate_value)
         formatted_price = self._format_price(price)
+        message = f"{code} {name} 현재 {formatted_price}, 전일대비 {signed_rate}"
+        if catch_up:
+            message += "\n※ 첫 시세 확인 시점에 이미 기준 초과 (실제 돌파 시각 아님)"
 
         await self._notification_service.emit(
             NotificationCategory.SYSTEM,
             NotificationLevel.WARNING,
             f"[관심종목] {name} 상한가",
-            f"{code} {name} 현재 {formatted_price}, 전일대비 {signed_rate}",
+            message,
             metadata={
                 "alert_type": "favorite_upper_limit",
                 "code": code,
@@ -180,6 +183,7 @@ class FavoritePriceAlertService:
                 "rate": rate_value,
                 "threshold_pct": 30,
                 "is_upper_limit": True,
+                "catch_up": catch_up,
                 "dedup_key": f"favorite_price:{code}:upper_limit",
                 "force_external": True,
                 "telegram_channel": "report",

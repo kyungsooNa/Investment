@@ -420,3 +420,19 @@ async def test_does_not_mark_alert_as_catch_up_when_crossing_was_observed():
     args, kwargs = notifications.emit.call_args
     assert "첫 시세 확인" not in args[3]
     assert kwargs["metadata"]["catch_up"] is False
+
+
+@pytest.mark.asyncio
+async def test_marks_upper_limit_alert_as_catch_up_when_first_observed_tick_is_upper_limit():
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["080220"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("080220", price="83200", rate="29.99", sign="1")
+
+    args, kwargs = notifications.emit.call_args
+    assert "상한가" in args[2]
+    assert "첫 시세 확인" in args[3]
+    assert kwargs["metadata"]["catch_up"] is True
