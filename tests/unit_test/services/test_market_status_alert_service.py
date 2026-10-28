@@ -609,3 +609,31 @@ def test_buy_sidecar_watch_history_is_reset_per_trading_date():
     service._reset_buy_sidecar_watch_history("20260801")
 
     assert set(service._buy_sidecar_watch_reported_keys_by_date) == {"20260801"}
+
+
+@pytest.mark.asyncio
+async def test_buy_sidecar_watch_is_marked_catch_up_when_first_sample_is_already_past_threshold():
+    """재시작 직후 첫 지수 샘플이 이미 임계치를 넘었으면 실제 돌파 시각이 아님을 표시한다."""
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(operator_alert_service=operator_alert, logger=MagicMock())
+
+    await service.on_index_change("0001", "코스피", 6.22)
+
+    args = operator_alert.report.await_args.args
+    kwargs = operator_alert.report.await_args.kwargs
+    assert "첫 시세 확인" in args[4]
+    assert kwargs["metadata"]["catch_up"] is True
+
+
+@pytest.mark.asyncio
+async def test_buy_sidecar_watch_is_not_catch_up_when_crossing_was_observed():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(operator_alert_service=operator_alert, logger=MagicMock())
+
+    await service.on_index_change("0001", "코스피", 4.10)
+    await service.on_index_change("0001", "코스피", 4.55)
+
+    args = operator_alert.report.await_args.args
+    kwargs = operator_alert.report.await_args.kwargs
+    assert "첫 시세 확인" not in args[4]
+    assert kwargs["metadata"]["catch_up"] is False

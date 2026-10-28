@@ -388,3 +388,68 @@ async def test_add_and_remove_favorite_update_cache_and_reset_alert_state():
     await svc.handle_price_tick("005930", price="75100", rate="10.10")
 
     notifications.emit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_marks_alert_as_catch_up_when_first_observed_tick_is_already_past_threshold():
+    """재시작 직후 첫 틱이 이미 임계치를 넘었으면 실제 돌파 시각이 아님을 표시한다."""
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["000660"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("000660", price="1470000", rate="9.62")
+
+    args, kwargs = notifications.emit.call_args
+    assert "첫 시세 확인" in args[3]
+    assert kwargs["metadata"]["catch_up"] is True
+
+
+@pytest.mark.asyncio
+async def test_does_not_mark_alert_as_catch_up_when_crossing_was_observed():
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["000660"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("000660", price="1400000", rate="4.40")
+    await svc.handle_price_tick("000660", price="1410000", rate="5.03")
+
+    args, kwargs = notifications.emit.call_args
+    assert "첫 시세 확인" not in args[3]
+    assert kwargs["metadata"]["catch_up"] is False
+
+
+@pytest.mark.asyncio
+async def test_marks_upper_limit_alert_as_catch_up_when_first_observed_tick_is_upper_limit():
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["080220"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    svc = FavoritePriceAlertService(repo, notifications)
+
+    await svc.handle_price_tick("080220", price="83200", rate="29.99", sign="1")
+
+    args, kwargs = notifications.emit.call_args
+    assert "상한가" in args[2]
+    assert "첫 시세 확인" in args[3]
+    assert kwargs["metadata"]["catch_up"] is True
+
+
+@pytest.mark.asyncio
+async def test_next_day_gap_alert_is_not_catch_up_when_process_kept_running():
+    """프로세스가 계속 떠 있었다면 다음 날 첫 틱은 실제 관측값이라 catch-up 이 아니다."""
+    repo = MagicMock()
+    repo.get_all = AsyncMock(return_value=["000660"])
+    notifications = MagicMock()
+    notifications.emit = AsyncMock()
+    today = {"value": "20261027"}
+    svc = FavoritePriceAlertService(repo, notifications, today_provider=lambda: today["value"])
+
+    await svc.handle_price_tick("000660", price="1340000", rate="1.20")
+    today["value"] = "20261028"
+    await svc.handle_price_tick("000660", price="1410000", rate="5.22")
+
+    assert notifications.emit.call_args.kwargs["metadata"]["catch_up"] is False
