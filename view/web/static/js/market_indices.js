@@ -36,8 +36,8 @@ const MARKET_INDEX_GROUPS = [
         kind: 'widget',
         scope: 'macro',
         entries: [
-            { label: '금', symbol: 'TVC:GOLD' },
-            { label: 'WTI 유가', symbol: 'TVC:USOIL' },
+            { label: '금', symbol: 'TVC:GOLD', intraday: true },
+            { label: 'WTI 유가', symbol: 'TVC:USOIL', intraday: true },
             { label: '메모리 반도체 ETF', symbol: 'CBOE:DRAM' },
         ],
     },

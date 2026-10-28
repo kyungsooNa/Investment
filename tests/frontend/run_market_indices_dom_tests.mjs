@@ -207,6 +207,26 @@ test("미장 지표는 뉴욕 시간 기준 5분봉 캔들로 당일 흐름을 �
   });
 });
 
+test("금과 WTI는 1D 한 점 위젯 대신 5분봉 당일 차트를 그린다", async () => {
+  const window = await makeWindow(undefined, '<div id="market-indices" data-market-scope="macro"></div>');
+
+  await window.renderMarketIndices();
+
+  ["TVC:GOLD", "TVC:USOIL"].forEach(key => {
+    const card = window.document.querySelector(`.market-index-card[data-key="${key}"]`);
+    assert(card.dataset.scope === "intraday", `${key} 카드가 장중 차트로 표시되지 않음`);
+    const script = card.querySelector(".tradingview-widget-container script");
+    assert(script.src === ADVANCED_WIDGET_SRC, `${key} 고급 차트 src 가 다름: ${script.src}`);
+    const config = JSON.parse(script.textContent);
+    assert(config.symbol === key, `${key} 차트 심볼이 다름: ${config.symbol}`);
+    assert(config.interval === "5", `${key} 차트가 5분봉이 아님: ${config.interval}`);
+    assert(config.range === "1D", `${key} 차트 범위가 당일이 아님: ${config.range}`);
+  });
+
+  const dram = window.document.querySelector('.market-index-card[data-key="CBOE:DRAM"]');
+  assert(dram.dataset.scope !== "intraday", "정상 표시되는 DRAM까지 장중 차트로 바뀜");
+});
+
 test("국장 카드는 KIS API 를 조회해 값과 차트를 그린다", async () => {
   const requested = [];
   const window = await makeWindow(async (url) => {
