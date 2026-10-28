@@ -39,6 +39,9 @@ class MarketStatusAlertService:
         self._futures_sidecar_started_sec_by_code: dict[str, int] = {}
         self._futures_sidecar_direction_by_code: dict[str, str] = {}
         self._buy_sidecar_watch_reported_keys_by_date: dict[str, set[str]] = {}
+        # 이 프로세스에서 지수 샘플을 받은 적 있는 지수. 첫 샘플에서 발행된 경보는
+        # 재시작 전에 이미 넘은 임계치일 수 있어 돌파 시각이 아님을 표시한다.
+        self._observed_index_codes: set[str] = set()
 
     async def on_market_status(self, data: dict[str, Any]) -> None:
         """StreamingService handler entrypoint."""
@@ -99,6 +102,8 @@ class MarketStatusAlertService:
     async def on_index_change(self, index_code: str, index_name: str, change_rate: float) -> None:
         """코스피/코스닥 지수 등락률 기반의 사전경고를 발행한다."""
         direction = "up" if change_rate >= 0 else "down"
+        catch_up = index_code not in self._observed_index_codes
+        self._observed_index_codes.add(index_code)
         active_keys = self._active_index_keys_by_code.setdefault(index_code, set())
         expected_keys: set[str] = set()
         active_move_5_keys = {
@@ -125,7 +130,7 @@ class MarketStatusAlertService:
                     title=f"{index_name} 매수 사이드카 가능 구간",
                     index_code=index_code, index_name=index_name, change_rate=change_rate,
                     threshold_pct=self._BUY_SIDECAR_WATCH_THRESHOLD_PCT,
-                    event_type="buy_sidecar_watch",
+                    event_type="buy_sidecar_watch", catch_up=catch_up,
                 )
         elif active_buy_sidecar_watch_keys and change_rate > self._BUY_SIDECAR_WATCH_RESOLVE_PCT:
             expected_keys.update(active_buy_sidecar_watch_keys)
@@ -138,7 +143,7 @@ class MarketStatusAlertService:
                 key=move_5_key, severity="error",
                 title=f"{index_name} {self._direction_label(direction)} 5% 이상 등락",
                 index_code=index_code, index_name=index_name, change_rate=change_rate,
-                threshold_pct=self._MOVE_5_THRESHOLD_PCT, event_type="move_5",
+                threshold_pct=self._MOVE_5_THRESHOLD_PCT, event_type="move_5", catch_up=catch_up,
             )
         elif active_move_5_keys:
             if abs(change_rate) > self._MOVE_5_RESOLVE_PCT:
@@ -160,7 +165,7 @@ class MarketStatusAlertService:
                 key=key, severity="critical",
                 title=f"{index_name} 하락 8% 이상 — 서킷브레이커 경고",
                 index_code=index_code, index_name=index_name, change_rate=change_rate,
-                threshold_pct=8.0, event_type="fall_8",
+                threshold_pct=8.0, event_type="fall_8", catch_up=catch_up,
             )
 
         if self._operator_alert_service is not None:
@@ -256,15 +261,18 @@ class MarketStatusAlertService:
     async def _report_index_alert(
         self, *, key: str, severity: str, title: str, index_code: str,
         index_name: str, change_rate: float, threshold_pct: float, event_type: str,
+        catch_up: bool = False,
     ) -> None:
         self._index_alert_initial_rate_by_key.setdefault(key, change_rate)
         metadata = {
             "event_type": event_type, "index_code": index_code,
             "index_name": index_name, "change_rate": change_rate,
-            "threshold_pct": threshold_pct, "pre_alert": True,
+            "threshold_pct": threshold_pct, "pre_alert": True, "catch_up": catch_up,
             "telegram_channel": "report", "force_external": True,
         }
         message = f"{index_name}({index_code}) 전일 대비 {change_rate:+.2f}%"
+        if catch_up:
+            message += "\n※ 첫 시세 확인 시점에 이미 기준 초과 (실제 돌파 시각 아님)"
         if self._operator_alert_service is not None:
             await self._operator_alert_service.report(
                 AlertSource.MARKET_STATUS, key, severity, title, message, metadata=metadata,

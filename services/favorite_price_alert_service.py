@@ -49,6 +49,9 @@ class FavoritePriceAlertService:
         self._highest_positive_alert_bucket: dict[str, int] = {}
         self._lowest_negative_alert_bucket: dict[str, int] = {}
         self._upper_limit_alerted_codes: set[str] = set()
+        # 이 프로세스에서 당일 시세를 한 번이라도 평가한 종목. 첫 틱에서 발행된 알림은
+        # 재시작/신규 등록 전에 이미 넘은 임계치일 수 있어 돌파 시각이 아님을 표시한다.
+        self._observed_codes: set[str] = set()
 
     async def add_favorite(self, code: str) -> None:
         normalized = self._normalize_code(code)
@@ -97,6 +100,8 @@ class FavoritePriceAlertService:
         rate_value = self._resolve_signed_rate(normalized, rate_value, rate, sign, change)
         if rate_value is None:
             return False
+        catch_up = normalized not in self._observed_codes
+        self._observed_codes.add(normalized)
 
         if self._is_upper_limit(rate_value, sign=sign, is_upper_limit=is_upper_limit):
             if normalized in self._upper_limit_alerted_codes:
@@ -130,12 +135,15 @@ class FavoritePriceAlertService:
         signed_rate = self._format_signed_pct(rate_value)
         formatted_price = self._format_price(price)
         title_prefix = "[관심종목][NXT]" if price_source == "nxt_tick" else "[관심종목]"
+        message = f"{normalized} {name} 현재 {formatted_price}, 전일대비 {signed_rate}"
+        if catch_up:
+            message += "\n※ 첫 시세 확인 시점에 이미 기준 초과 (실제 돌파 시각 아님)"
 
         await self._notification_service.emit(
             NotificationCategory.SYSTEM,
             NotificationLevel.WARNING,
             f"{title_prefix} {name} {signed_threshold} {direction}",
-            f"{normalized} {name} 현재 {formatted_price}, 전일대비 {signed_rate}",
+            message,
             metadata={
                 "alert_type": "favorite_price_threshold",
                 "code": normalized,
@@ -146,6 +154,7 @@ class FavoritePriceAlertService:
                 "sign": None if sign is None else str(sign),
                 "price_source": price_source,
                 "threshold_pct": threshold_pct,
+                "catch_up": catch_up,
                 "dedup_key": f"favorite_price:{normalized}:{threshold_pct}",
                 "force_external": True,
                 "telegram_channel": "report",
@@ -205,6 +214,7 @@ class FavoritePriceAlertService:
         self._highest_positive_alert_bucket.clear()
         self._lowest_negative_alert_bucket.clear()
         self._upper_limit_alerted_codes.clear()
+        self._observed_codes.clear()
         self._state_date = today
         if not self._state_file:
             return
