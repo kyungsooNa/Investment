@@ -98,16 +98,21 @@ class MinerviniStage2TransitionStrategy(LiveStrategy):
 
     async def _check_entry(self, item: dict) -> Optional[TradeSignal]:
         code = str(item["code"])
+        completed_through = previous_trading_day_str(self._tm.get_current_kst_time())
         current_response, ohlcv_response = await asyncio.gather(
             self._sqs.get_current_price(code, caller=self.name),
             self._sqs.get_recent_daily_ohlcv(
                 code,
                 limit=self._cfg.ohlcv_lookback_days,
-                end_date=previous_trading_day_str(self._tm.get_current_kst_time()),
+                end_date=completed_through,
             ),
         )
         current, trading_value = self._extract_quote(current_response)
-        rows = self._ascending_rows(ohlcv_response)
+        rows = [
+            row for row in self._ascending_rows(ohlcv_response)
+            if not normalize_yyyymmdd(row.get("date") or row.get("stck_bsop_date"))
+            or normalize_yyyymmdd(row.get("date") or row.get("stck_bsop_date")) <= completed_through
+        ]
         if current <= 0:
             self._log_entry_rejected(item, "price_unavailable")
             return None
