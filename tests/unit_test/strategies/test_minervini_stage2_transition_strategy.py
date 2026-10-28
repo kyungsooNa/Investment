@@ -87,6 +87,30 @@ async def test_scan_buys_recent_stage2_transition_on_20day_breakout():
 
 
 @pytest.mark.asyncio
+async def test_scan_excludes_current_day_bar_from_breakout_pivot():
+    rows = _daily_rows()
+    rows.append({
+        "date": "20261015",
+        "open": 120,
+        "high": 121,
+        "low": 119,
+        "close": 121,
+        "volume": 100_000,
+    })
+    strategy, _, _ = _build_strategy(
+        stages=[1] * 255 + [2] * 5,
+        price=121,
+        rows=rows,
+    )
+
+    signals = await strategy.scan()
+
+    assert len(signals) == 1
+    assert signals[0].strategy_id == "minervini_stage2_transition"
+    assert "pivot=120" in signals[0].reason
+
+
+@pytest.mark.asyncio
 async def test_scan_rejects_stage2_that_did_not_transition_recently():
     strategy, _, _ = _build_strategy(stages=[2] * 260, price=121)
 
