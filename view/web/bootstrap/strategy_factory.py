@@ -54,7 +54,11 @@ class StrategyFactory:
             market_clock=ctx.market_clock,
             market_calendar_service=ctx._mcs,
             logger=get_strategy_logger('StrategyScheduler'),
-            dry_run=False,
+            dry_run=bool(getattr(
+                getattr(ctx, "full_config", None),
+                "strategy_scheduler_dry_run",
+                False,
+            )),
             notification_service=ctx.notification_service,
             performance_profiler=ctx.pm,
             price_subscription_service=ctx.price_subscription_service,

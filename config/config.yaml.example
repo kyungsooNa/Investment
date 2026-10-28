@@ -35,6 +35,8 @@ opening_position_reconcile:
 
 # 실전/모의 선택 (true: 모의, false: 실전)
 is_paper_trading: true
+# true이면 국내 전략 신호를 가상 체결로만 기록하고 증권사 주문은 전송하지 않습니다.
+strategy_scheduler_dry_run: false
 
 # 키움증권 REST API
 # 키움 REST API 포털에서 API 사용신청 후 App Key / Secret을 발급받아 입력하세요.

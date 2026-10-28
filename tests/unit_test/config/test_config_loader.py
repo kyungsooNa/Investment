@@ -99,6 +99,7 @@ def test_app_config_defaults_to_paper_trading_when_omitted():
     )
 
     assert config.is_paper_trading is True
+    assert config.strategy_scheduler_dry_run is False
     assert config.strategy_performance_degradation.window_size == 20
     assert config.strategy_performance_degradation.warn_profit_factor_below == 1.0
     assert config.strategy_profitability_gate.min_trades == 30
