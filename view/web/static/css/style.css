@@ -1409,6 +1409,10 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
     gap: 12px;
 }
+.market-indices-grid-intraday {
+    /* TradingView 고급 차트는 좁은 카드에서 오른쪽 가격축이 잘린다. */
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
 .market-index-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -1422,7 +1426,7 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     margin-bottom: 4px;
 }
 .market-index-intraday-chart {
-    height: 320px;
+    height: 250px;
     overflow: hidden;
 }
 .market-index-period-bar {

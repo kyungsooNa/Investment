@@ -205,6 +205,22 @@ def test_widget_height_leaves_room_for_graph_below_header():
     )
 
 
+def test_intraday_widget_is_compact_and_wide_enough_for_right_price_scale():
+    css = Path("view/web/static/css/style.css").read_text(encoding="utf-8")
+    script = _market_indices_js()
+
+    intraday_chart = _css_rule_body(css, ".market-index-intraday-chart")
+    height = re.search(r"height:\s*(\d+)px", intraday_chart)
+    assert height and int(height.group(1)) <= 260, "장중 차트가 세로로 너무 길다"
+
+    intraday_grid = _css_rule_body(css, ".market-indices-grid-intraday")
+    min_width = re.search(r"minmax\((\d+)px,\s*1fr\)", intraday_grid)
+    assert min_width and int(min_width.group(1)) >= 260, (
+        "장중 차트 카드가 좁으면 TradingView 오른쪽 가격축이 잘린다"
+    )
+    assert "market-indices-grid-intraday" in script, "장중 차트 전용 그리드가 적용되지 않았다"
+
+
 def test_sparkline_fits_inside_card_body():
     css = Path("view/web/static/css/style.css").read_text(encoding="utf-8")
 

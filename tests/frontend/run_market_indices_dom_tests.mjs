@@ -204,7 +204,12 @@ test("미장 지표는 뉴욕 시간 기준 5분봉 캔들로 당일 흐름을 �
     assert(config.range === "1D", `${key} 차트 범위가 당일이 아님: ${config.range}`);
     assert(config.timezone === "America/New_York", `${key} 차트 시간대가 뉴욕이 아님: ${config.timezone}`);
     assert(config.style === "1", `${key} 차트가 캔들 형식이 아님: ${config.style}`);
+    assert(config.height === 250, `${key} 차트 높이가 과도함: ${config.height}`);
   });
+  assert(
+    window.document.querySelector(".market-indices-grid").classList.contains("market-indices-grid-intraday"),
+    "장중 차트 그룹에 넓은 카드용 그리드가 적용되지 않음",
+  );
 });
 
 test("금과 WTI는 1D 한 점 위젯 대신 5분봉 당일 차트를 그린다", async () => {
