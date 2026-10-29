@@ -190,7 +190,7 @@ function buildMarketIndexIntradayCard(doc, entry) {
         timezone: 'America/New_York',
         style: '1',
         width: '100%',
-        height: 320,
+        height: 250,
         autosize: false,
         locale: 'kr',
         theme: 'light',
@@ -638,7 +638,9 @@ async function buildMarketIndexGroup(doc, group) {
     section.appendChild(title);
 
     const grid = doc.createElement('div');
-    grid.className = 'market-indices-grid';
+    grid.className = group.entries.some(entry => entry.intraday)
+        ? 'market-indices-grid market-indices-grid-intraday'
+        : 'market-indices-grid';
     const cards = group.kind === 'kis'
         ? await Promise.all(group.entries.map(entry => buildMarketIndexKisCard(doc, entry)))
         : group.entries.map(entry => buildMarketIndexWidgetCard(doc, entry));
