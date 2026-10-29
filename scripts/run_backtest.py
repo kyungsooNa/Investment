@@ -365,6 +365,17 @@ def _wrap_captured_candidate_universe(
     )
 
 
+def _should_wrap_captured_candidate_universe(
+    captured_candidate_dir: str | None,
+    *,
+    variant: Any,
+    reuse_for_variant: bool,
+) -> bool:
+    if not captured_candidate_dir:
+        return False
+    return variant is None or reuse_for_variant
+
+
 def _build_replay_bar_providers(
     replay_sqs: Any,
     *,
@@ -1583,6 +1594,7 @@ async def _run(args: argparse.Namespace) -> None:
             segment=None,
             phase_dates: list[str] | None = None,
             variant=None,
+            reuse_captured_candidates_for_variant: bool = False,
         ) -> BacktestPeriodRunner:
             ledger = BacktestPortfolioLedger(initial_cash=args.initial_cash)
             risk_sizing = _build_risk_sizing_services(
@@ -1610,7 +1622,11 @@ async def _run(args: argparse.Namespace) -> None:
                     backtest_clock=backtest_clock,
                     min_trading_value=args.pit_min_trading_value,
                 )
-            if captured_candidate_dir and variant is None:
+            if _should_wrap_captured_candidate_universe(
+                captured_candidate_dir,
+                variant=variant,
+                reuse_for_variant=reuse_captured_candidates_for_variant,
+            ):
                 variant_universe = _wrap_captured_candidate_universe(
                     variant_universe,
                     replay_dir=captured_candidate_dir,
@@ -1740,7 +1756,10 @@ async def _run(args: argparse.Namespace) -> None:
 
                 async def _stability_variant_runner(variant):
                     print(f"[INFO] parameter-stability sweep 실행: {variant.name}")
-                    return await make_runner(variant=variant).run(dates)
+                    return await make_runner(
+                        variant=variant,
+                        reuse_captured_candidates_for_variant=True,
+                    ).run(dates)
 
                 await _run_parameter_stability_for_result(
                     result, args, run_variant_fn=_stability_variant_runner

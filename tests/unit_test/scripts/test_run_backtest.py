@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import scripts.run_backtest as run_backtest
 
 from config.config_loader import OrderPolicyConfig, PositionSizingConfig, RiskGateConfig
 from core.account_snapshot import AccountSnapshot
@@ -47,6 +48,26 @@ def test_build_dates_accepts_inclusive_start_end_range():
     args = SimpleNamespace(dates=None, start_date="20260501", end_date="20260503")
 
     assert _build_dates(args) == ["20260501", "20260502", "20260503"]
+
+
+def test_parameter_stability_variant_reuses_captured_candidate_universe():
+    variant = SimpleNamespace(name="k_value=0.5")
+
+    assert run_backtest._should_wrap_captured_candidate_universe(
+        "captures",
+        variant=variant,
+        reuse_for_variant=True,
+    ) is True
+
+
+def test_ablation_variant_keeps_existing_universe_isolation():
+    variant = SimpleNamespace(name="without_market_timing")
+
+    assert run_backtest._should_wrap_captured_candidate_universe(
+        "captures",
+        variant=variant,
+        reuse_for_variant=False,
+    ) is False
 
 
 def test_parse_args_accepts_use_risk_sizing(monkeypatch):
