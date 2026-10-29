@@ -1410,8 +1410,13 @@ tr:hover { background: rgba(0, 0, 0, 0.03); }
     gap: 12px;
 }
 .market-indices-grid-intraday {
-    /* TradingView 고급 차트는 좁은 카드에서 오른쪽 가격축이 잘린다. */
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    /* 한 줄 4개는 가격축과 캔들이 답답하므로 데스크톱에서도 2열로 넓게 본다. */
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (max-width: 640px) {
+    .market-indices-grid-intraday {
+        grid-template-columns: 1fr;
+    }
 }
 .market-index-card {
     background: var(--bg-card);

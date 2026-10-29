@@ -205,7 +205,7 @@ def test_widget_height_leaves_room_for_graph_below_header():
     )
 
 
-def test_intraday_widget_is_compact_and_wide_enough_for_right_price_scale():
+def test_intraday_widget_is_compact_and_uses_two_wide_columns():
     css = Path("view/web/static/css/style.css").read_text(encoding="utf-8")
     script = _market_indices_js()
 
@@ -214,10 +214,14 @@ def test_intraday_widget_is_compact_and_wide_enough_for_right_price_scale():
     assert height and int(height.group(1)) <= 260, "장중 차트가 세로로 너무 길다"
 
     intraday_grid = _css_rule_body(css, ".market-indices-grid-intraday")
-    min_width = re.search(r"minmax\((\d+)px,\s*1fr\)", intraday_grid)
-    assert min_width and int(min_width.group(1)) >= 260, (
-        "장중 차트 카드가 좁으면 TradingView 오른쪽 가격축이 잘린다"
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in intraday_grid, (
+        "장중 차트는 데스크톱에서 2열로 배치해 가격축과 캔들 폭을 확보해야 한다"
     )
+    assert re.search(
+        r"@media \(max-width: 640px\)\s*\{\s*\.market-indices-grid-intraday\s*\{\s*"
+        r"grid-template-columns:\s*1fr;",
+        css,
+    ), "작은 화면에서는 장중 차트가 1열로 내려가야 한다"
     assert "market-indices-grid-intraday" in script, "장중 차트 전용 그리드가 적용되지 않았다"
 
 
