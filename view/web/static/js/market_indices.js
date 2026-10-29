@@ -185,7 +185,7 @@ function buildMarketIndexIntradayCard(doc, entry) {
     script.src = MARKET_INDEX_ADVANCED_WIDGET_SRC;
     script.textContent = JSON.stringify({
         symbol: entry.symbol,
-        interval: '5',
+        interval: '15',
         range: '1D',
         timezone: 'America/New_York',
         style: '1',
