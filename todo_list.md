@@ -184,6 +184,7 @@
   - 신규 국내 broker 체결의 실행 환경 구분 추가 (2026-10-26): 매수 체결 시 `broker_paper`/`broker_live`를 원장에 영속화하고 표준 journal `source`로 노출한다. 과거 행은 소급 추정하지 않고 `virtual_trade`로 유지하며, `broker_live`를 canary로 간주하지 않는다. shadow와 canary 단계의 별도 식별은 후속 과제다.
   - 국내 실계좌 운영 프로필 구분 추가 (2026-10-27): 신규 매수 체결을 `broker_canary`/`broker_real_limited`/`broker_real_full`로 기록한다. paper는 `broker_paper`, 프로필을 알 수 없는 레거시 조립 경로는 `broker_live`로 유지한다. 과거 행은 변경하지 않는다.
   - event shadow 표준 journal 통합 (2026-10-27): `logs/strategies/event_shadow/*.jsonl`의 진입·청산 관찰 신호를 각각 `event_shadow`/`event_shadow_exit`, `status=SIGNAL`로 정규화해 일일 리포트의 source별 축적 현황에 합친다. 틱마다 반복된 동일 신호는 거래일·source·전략·종목·action 기준 첫 관찰만 세고 status/health 레코드는 제외한다. shadow 청산은 실제 polling 보유 포지션을 관찰한 신호라 독립적인 가상 체결 쌍이 아니므로 PnL을 만들거나 profitability gate 표본에 넣지 않는다.
+  - 국내 전략 dry-run 원장 구분 추가 (2026-10-29): 스케줄러 dry-run 매수는 `journal_source=strategy_dry_run`으로 영속화해 기존 수동 가상매매(`virtual_trade`)와 분리한다. 매도는 원래 매수 행을 갱신하므로 동일 source를 유지하며, 표준 journal·일일 리포트는 기존 source 집계를 그대로 사용한다.
   - 최소 유지 기준: 실전 override `min_trades=100`, `profit_factor>=1.3`, `payoff_ratio>=1.2`, `win_rate>=40%`, `max_drawdown<=12%`, regime별 최소 거래 30. parameter stability·Monte Carlo·regime balance·multiple testing 보정을 운영 편의로 낮추지 않는다.
 
 주요 파일: `services/strategy_live_expansion_gate_service.py`, `services/strategy_profitability_gate_service.py`, `scheduler/strategy_scheduler.py`, `services/strategy_log_report_service.py`
