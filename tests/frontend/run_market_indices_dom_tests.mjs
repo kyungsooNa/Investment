@@ -188,7 +188,7 @@ test("미장·원자재·가상자산·채권 카드는 TradingView 차트 포�
   }
 });
 
-test("미장 지표는 뉴욕 시간 기준 5분봉 캔들로 당일 흐름을 그린다", async () => {
+test("미장 지표는 뉴욕 시간 기준 15분봉 캔들로 당일 흐름을 그린다", async () => {
   const window = await makeWindow(undefined, '<div id="market-indices" data-market-scope="overseas"></div>');
 
   await window.renderMarketIndices();
@@ -200,7 +200,7 @@ test("미장 지표는 뉴욕 시간 기준 5분봉 캔들로 당일 흐름을 �
     assert(script.src === ADVANCED_WIDGET_SRC, `${key} 고급 차트 src 가 다름: ${script.src}`);
     const config = JSON.parse(script.textContent);
     assert(config.symbol === key, `${key} 차트 심볼이 다름: ${config.symbol}`);
-    assert(config.interval === "5", `${key} 차트가 5분봉이 아님: ${config.interval}`);
+    assert(config.interval === "15", `${key} 차트가 15분봉이 아님: ${config.interval}`);
     assert(config.range === "1D", `${key} 차트 범위가 당일이 아님: ${config.range}`);
     assert(config.timezone === "America/New_York", `${key} 차트 시간대가 뉴욕이 아님: ${config.timezone}`);
     assert(config.style === "1", `${key} 차트가 캔들 형식이 아님: ${config.style}`);
@@ -212,7 +212,7 @@ test("미장 지표는 뉴욕 시간 기준 5분봉 캔들로 당일 흐름을 �
   );
 });
 
-test("금과 WTI는 1D 한 점 위젯 대신 5분봉 당일 차트를 그린다", async () => {
+test("금과 WTI는 1D 한 점 위젯 대신 15분봉 당일 차트를 그린다", async () => {
   const window = await makeWindow(undefined, '<div id="market-indices" data-market-scope="macro"></div>');
 
   await window.renderMarketIndices();
@@ -224,7 +224,7 @@ test("금과 WTI는 1D 한 점 위젯 대신 5분봉 당일 차트를 그린다"
     assert(script.src === ADVANCED_WIDGET_SRC, `${key} 고급 차트 src 가 다름: ${script.src}`);
     const config = JSON.parse(script.textContent);
     assert(config.symbol === key, `${key} 차트 심볼이 다름: ${config.symbol}`);
-    assert(config.interval === "5", `${key} 차트가 5분봉이 아님: ${config.interval}`);
+    assert(config.interval === "15", `${key} 차트가 15분봉이 아님: ${config.interval}`);
     assert(config.range === "1D", `${key} 차트 범위가 당일이 아님: ${config.range}`);
   });
 

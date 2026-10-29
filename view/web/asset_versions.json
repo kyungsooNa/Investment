@@ -44,8 +44,8 @@
     "sha256": "851f0af216300901fa0ed169890d8dd9d13ad72d1f2b174f4ff26320fa93761e"
   },
   "js/market_indices.js": {
-    "version": 21,
-    "sha256": "c96fc139ef2ef7369ac2c306d87fe143edeeeb5af7942b0e328befe45c00188a"
+    "version": 22,
+    "sha256": "9ba8ee337e6a4846c6820010058c5ab2990f30ebc0e07b2f16fe9cf157af0695"
   },
   "js/marketcap.js": {
     "version": 3,
