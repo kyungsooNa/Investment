@@ -1171,6 +1171,7 @@ class StrategyScheduler:
                 self._log_signal_to_order_latency(signal, tid)
                 await self._virtual_trade_service.log_buy_async(
                     signal.strategy_name, signal.code, log_price, dry_qty,
+                    journal_source="strategy_dry_run",
                     **self._virtual_trade_log_kwargs(signal),
                     **self._market_regime_log_kwargs(
                         self._market_regime_service, self.stock_code_repository, signal.code
