@@ -35,6 +35,51 @@ async def test_market_status_alert_service_reports_stock_vi_trigger():
 
 
 @pytest.mark.asyncio
+async def test_stock_vi_alert_enriches_missing_exchange_and_stock_name():
+    operator_alert = AsyncMock()
+    stock_code_repository = MagicMock()
+    stock_code_repository.get_name_by_code.return_value = "제주반도체"
+    stock_code_repository.get_market_by_code.return_value = "KOSDAQ"
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        stock_code_repository=stock_code_repository,
+        logger=MagicMock(),
+    )
+
+    await service.on_market_status({
+        "유가증권단축종목코드": "080220",
+        "거래정지여부": "N",
+        "VI적용구분코드": "Y",
+        "거래소구분코드": "",
+    })
+
+    args = operator_alert.report.await_args.args
+    kwargs = operator_alert.report.await_args.kwargs
+    assert args[1] == "market_status:stock_vi:KOSDAQ:080220"
+    assert args[4] == "KOSDAQ 제주반도체(080220): VI적용구분코드=Y"
+    assert kwargs["metadata"]["stock_name"] == "제주반도체"
+    assert kwargs["metadata"]["exchange"] == "KOSDAQ"
+
+
+@pytest.mark.asyncio
+async def test_market_status_alert_ignores_shifted_multi_character_vi_code():
+    operator_alert = AsyncMock()
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        logger=MagicMock(),
+    )
+
+    await service.on_market_status({
+        "유가증권단축종목코드": "001",
+        "거래정지여부": "080220",
+        "거래정지사유내용": "N",
+        "VI적용구분코드": "55",
+    })
+
+    operator_alert.report.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_market_status_alert_service_resolves_stock_vi_on_normal_status():
     operator_alert = AsyncMock()
     service = MarketStatusAlertService(
