@@ -2813,6 +2813,27 @@ def test_handle_websocket_message_market_status_success(websocket_api_instance):
     assert result["data"]["거래정지사유내용"] == "사이드카 발동"
 
 
+def test_handle_unified_market_status_accepts_body_that_includes_stock_code(
+    websocket_api_instance,
+):
+    api = websocket_api_instance
+    api.on_realtime_message_callback = MagicMock()
+    data_str = "^".join(
+        [
+            "080220", "N", "(null)", "AB1", "112", "", "", "55", "N", "N",
+            "KOSDAQ",
+        ]
+    )
+
+    api._handle_websocket_message(f"0|H0UNMKO0|001|{data_str}")
+
+    result = api.on_realtime_message_callback.call_args.args[0]
+    assert result["data"]["유가증권단축종목코드"] == "080220"
+    assert result["data"]["거래정지여부"] == "N"
+    assert result["data"]["VI적용구분코드"] == "N"
+    assert result["data"]["거래소구분코드"] == "KOSDAQ"
+
+
 def test_handle_websocket_message_krx_market_status_success(websocket_api_instance):
     api = websocket_api_instance
     api.on_realtime_message_callback = MagicMock()

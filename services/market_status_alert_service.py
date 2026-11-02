@@ -26,10 +26,12 @@ class MarketStatusAlertService:
         self,
         operator_alert_service=None,
         notification_service=None,
+        stock_code_repository=None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._operator_alert_service = operator_alert_service
         self._notification_service = notification_service
+        self._stock_code_repository = stock_code_repository
         self._logger = logger or logging.getLogger(__name__)
         self._active_keys_by_code: dict[str, set[str]] = {}
         self._active_index_keys_by_code: dict[str, set[str]] = {}
@@ -51,7 +53,8 @@ class MarketStatusAlertService:
             return
 
         code = self._normalize_code(data.get("유가증권단축종목코드") or data.get("종목코드")) or "UNKNOWN"
-        exchange = str(data.get("거래소구분코드") or data.get("EXCH_CLS_CODE") or "UNKNOWN")
+        exchange = str(data.get("거래소구분코드") or data.get("EXCH_CLS_CODE") or "").strip()
+        stock_name, exchange = self._stock_identity(code, exchange)
         reason = str(data.get("거래정지사유내용") or "").strip()
         direction = self._classify_direction(reason)
         direction_key = f":{direction}" if direction else ""
@@ -59,10 +62,13 @@ class MarketStatusAlertService:
         severity = self._severity_for_event(event_type)
         event_name = self._event_name(event_type)
         title = f"{self._direction_label(direction)} {event_name} 감지".strip()
-        message = self._format_event_message(event_type, exchange, code, reason, data)
+        message = self._format_event_message(
+            event_type, exchange, code, stock_name, reason, data
+        )
         metadata = {
             "event_type": event_type,
             "stock_code": code,
+            "stock_name": stock_name,
             "exchange": exchange,
             "reason": reason,
             "direction": direction,
@@ -306,7 +312,7 @@ class MarketStatusAlertService:
     @classmethod
     def _is_stock_vi_active(cls, data: dict[str, Any]) -> bool:
         vi_code = str(data.get("VI적용구분코드") or "").strip().upper()
-        return vi_code not in cls._NORMAL_VI_CODES
+        return len(vi_code) == 1 and vi_code not in cls._NORMAL_VI_CODES
 
     @staticmethod
     def _severity_for_event(event_type: str) -> str:
@@ -327,13 +333,30 @@ class MarketStatusAlertService:
         event_type: str,
         exchange: str,
         code: str,
+        stock_name: str,
         reason: str,
         data: dict[str, Any],
     ) -> str:
+        stock_label = f"{stock_name}({code})" if stock_name else code
         if event_type == "stock_vi":
             vi_code = str(data.get("VI적용구분코드") or "").strip()
-            return f"{exchange} {code}: VI적용구분코드={vi_code or 'UNKNOWN'}"
-        return f"{exchange} {code}: {reason or '장운영정보 특수 상태 감지'}"
+            return f"{exchange} {stock_label}: VI적용구분코드={vi_code or 'UNKNOWN'}"
+        return f"{exchange} {stock_label}: {reason or '장운영정보 특수 상태 감지'}"
+
+    def _stock_identity(self, code: str, exchange: str) -> tuple[str, str]:
+        stock_name = ""
+        market = ""
+        if self._stock_code_repository is not None:
+            try:
+                stock_name = str(
+                    self._stock_code_repository.get_name_by_code(code) or ""
+                ).strip()
+                market = str(
+                    self._stock_code_repository.get_market_by_code(code) or ""
+                ).strip()
+            except Exception as exc:
+                self._logger.warning("장운영정보 종목 매핑 실패: %s", exc)
+        return stock_name, exchange or market or "통합시장"
 
     @classmethod
     def _signed_rate(

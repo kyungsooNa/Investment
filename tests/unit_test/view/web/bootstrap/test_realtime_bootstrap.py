@@ -31,6 +31,7 @@ def test_realtime_bootstrap_builds_streaming_chain():
     assert ctx.streaming_service is streaming.return_value
     assert streaming.call_args.kwargs["market_status_monitor_codes"] == ["005930"]
     assert streaming.call_args.kwargs["futures_sidecar_monitor_codes"] == ["101AUTO"]
+    assert ctx.market_status_alert_service._stock_code_repository is ctx.stock_code_repository
     assert ctx.orderbook_snapshot_repo is orderbook_repo.return_value
     assert ctx.favorite_price_alert_service is favorite_alert.return_value
     assert price_stream.call_args.kwargs["favorite_price_alert_service"] is favorite_alert.return_value
